@@ -681,22 +681,27 @@ impl StreamingDisk {
 }
 ```
 
-#### Remote HTTP server requirements (Range/CORS/no-transform)
+#### Production backend requirements (Range/CORS/no-transform)
 
-`StreamingDisk` reads remote disk images by issuing HTTP `Range` requests and writing the returned bytes directly into a local sparse cache. The remote image server **MUST** behave like a compliant byte-range server; returning a full `200 OK` body (ignoring `Range`) will corrupt the virtual disk because offsets no longer match.
+`StreamingDisk.remote_url` is expected to point at a production-grade object delivery path (typically **CDN → S3/object store**) that supports efficient random access via `HTTP Range`.
 
-Minimum compliant behavior:
+For full deployment guidance (S3 CORS, CloudFront caching policies, signed cookies/URLs, versioned keys), see: [16 - Remote Disk Image Delivery (Object Store + CDN + HTTP Range)](./16-remote-disk-image-delivery.md)
 
-- The server **MUST** support HTTP `Range` requests for the `bytes` unit (`Accept-Ranges: bytes` is recommended).
+`StreamingDisk` reads remote disk images by issuing `Range` requests and writing returned bytes directly into a local sparse cache. The remote server **must** behave like a compliant byte-range server; returning a full `200 OK` body (ignoring `Range`) will corrupt the virtual disk because offsets no longer match.
+
+Minimum contract:
+
+- `HEAD` must return `Content-Length` (total size) plus `ETag`/`Last-Modified` for versioning.
+- The server **must** support HTTP `Range` requests for the `bytes` unit (`Accept-Ranges: bytes` is recommended).
 - For a satisfiable range request, respond with:
   - `206 Partial Content`
   - `Content-Range: bytes <start>-<end>/<total>` (where `<end>` is inclusive)
 - For an unsatisfiable range request (past EOF), respond with:
   - `416 Range Not Satisfiable`
   - `Content-Range: bytes */<total>`
-- The server **MUST** support:
-  - Open-ended ranges: `Range: bytes=<start>-`
-  - Suffix ranges: `Range: bytes=-<suffix-length>`
+- The server should either:
+  - implement open-ended ranges (`bytes=<start>-`) and suffix ranges (`bytes=-<suffix-length>`), or
+  - explicitly reject them (do not silently ignore the header)
 - Multi-range requests (e.g. `Range: bytes=0-0,100-199`):
   - Recommended: implement full `multipart/byteranges` responses per RFC 9110.
   - If not implemented, reject multi-range requests explicitly (e.g. `400`/`416`) rather than silently ignoring the header.
