@@ -12,6 +12,8 @@ use super::regs::{
 // VGA I/O port block 0x3C0..=0x3DF.
 const PORT_MISC_OUTPUT_WRITE: u16 = 0x3C2;
 const PORT_MISC_OUTPUT_READ: u16 = 0x3CC;
+const PORT_VIDEO_SUBSYSTEM_ENABLE: u16 = 0x3C3;
+const PORT_FEATURE_CONTROL_READ: u16 = 0x3CA;
 
 const PORT_SEQ_INDEX: u16 = 0x3C4;
 const PORT_SEQ_DATA: u16 = 0x3C5;
@@ -24,6 +26,8 @@ const PORT_AC_DATA_READ: u16 = 0x3C1;
 
 const PORT_INPUT_STATUS1_COLOR: u16 = 0x3DA;
 const PORT_INPUT_STATUS1_MONO: u16 = 0x3BA;
+const PORT_FEATURE_CONTROL_WRITE_COLOR: u16 = PORT_INPUT_STATUS1_COLOR;
+const PORT_FEATURE_CONTROL_WRITE_MONO: u16 = PORT_INPUT_STATUS1_MONO;
 
 const PORT_CRTC_INDEX_COLOR: u16 = 0x3D4;
 const PORT_CRTC_DATA_COLOR: u16 = 0x3D5;
@@ -38,6 +42,11 @@ const UNIMPLEMENTED_READ_VALUE: u8 = 0xFF;
 
 pub struct VgaDevice {
     misc_output: u8,
+    /// Video Subsystem Enable register (port `0x3C3`).
+    ///
+    /// When bit 0 is cleared, writes to other VGA ports are ignored.
+    video_subsystem_enable: u8,
+    feature_control: u8,
 
     seq_index: u8,
     seq_regs: Vec<u8>,
@@ -177,6 +186,8 @@ impl VgaDevice {
             // - 0 = 0x3Bx (mono)
             // - 1 = 0x3Dx (colour)
             misc_output: BIOS_MODE3_MISC_OUTPUT,
+            video_subsystem_enable: 0x01,
+            feature_control: 0x00,
 
             seq_index: 0,
             seq_regs: BIOS_MODE3_SEQ_REGS.to_vec(),
@@ -214,6 +225,8 @@ impl VgaDevice {
 
     fn reset_power_on(&mut self) {
         self.misc_output = POWER_ON_MISC_OUTPUT;
+        self.video_subsystem_enable = 0x01;
+        self.feature_control = 0x00;
         self.seq_index = 0;
         self.seq_regs.clear();
         self.seq_regs.resize(SEQ_REGS_INITIAL_LEN, 0);
@@ -257,14 +270,6 @@ impl VgaDevice {
             (PORT_CRTC_INDEX_COLOR, PORT_CRTC_DATA_COLOR)
         } else {
             (PORT_CRTC_INDEX_MONO, PORT_CRTC_DATA_MONO)
-        }
-    }
-
-    fn active_input_status1_port(&self) -> u16 {
-        if self.is_colour_io() {
-            PORT_INPUT_STATUS1_COLOR
-        } else {
-            PORT_INPUT_STATUS1_MONO
         }
     }
 
@@ -424,7 +429,9 @@ impl VgaDevice {
         let (active_crtc_index, active_crtc_data) = self.active_crtc_ports();
 
         match port {
-            PORT_MISC_OUTPUT_READ => self.misc_output,
+            PORT_MISC_OUTPUT_READ | PORT_MISC_OUTPUT_WRITE => self.misc_output,
+            PORT_VIDEO_SUBSYSTEM_ENABLE => self.video_subsystem_enable,
+            PORT_FEATURE_CONTROL_READ => self.feature_control,
 
             PORT_SEQ_INDEX => self.seq_index,
             PORT_SEQ_DATA => self.seq_reg_read(),
@@ -438,7 +445,7 @@ impl VgaDevice {
             }
             PORT_AC_DATA_READ => self.ac_reg_read(),
 
-            p if p == self.active_input_status1_port() => {
+            PORT_INPUT_STATUS1_COLOR | PORT_INPUT_STATUS1_MONO => {
                 // Input Status 1 read resets the attribute controller flip-flop.
                 self.ac_flip_flop_data.set(false);
                 let next = !self.input_status1_vretrace.get();
@@ -453,6 +460,8 @@ impl VgaDevice {
             p if p == active_crtc_index => self.crtc_index,
             p if p == active_crtc_data => self.crtc_reg_read(),
 
+            0x3CB | 0x3CD => 0x00,
+
             // Unimplemented ports.
             0x3C0..=0x3DF => UNIMPLEMENTED_READ_VALUE,
             _ => UNIMPLEMENTED_READ_VALUE,
@@ -460,9 +469,14 @@ impl VgaDevice {
     }
 
     fn write_u8(&mut self, port: u16, val: u8) {
+        if port != PORT_VIDEO_SUBSYSTEM_ENABLE && (self.video_subsystem_enable & 0x01) == 0 {
+            return;
+        }
+
         let (active_crtc_index, active_crtc_data) = self.active_crtc_ports();
 
         match port {
+            PORT_VIDEO_SUBSYSTEM_ENABLE => self.video_subsystem_enable = val,
             PORT_MISC_OUTPUT_WRITE => {
                 self.misc_output = val;
                 self.recompute_derived_state();
@@ -489,6 +503,10 @@ impl VgaDevice {
 
             p if p == active_crtc_index => self.crtc_index = val,
             p if p == active_crtc_data => self.crtc_reg_write(val),
+
+            PORT_FEATURE_CONTROL_WRITE_COLOR | PORT_FEATURE_CONTROL_WRITE_MONO => {
+                self.feature_control = val;
+            }
 
             // Writes to unimplemented ports are ignored.
             _ => {}
