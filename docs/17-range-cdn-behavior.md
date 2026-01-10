@@ -5,7 +5,7 @@
 Aero streams large disk images to the browser using HTTP `Range` requests (`206 Partial Content`). Whether this is fast and cost-effective depends heavily on:
 
 1. **Whether the CDN caches Range responses**, and
-2. **Whether the CDN has a hard maximum object size** (a common gotcha for multi‑GB images).
+2. **Whether the CDN has a hard maximum cacheable response size** (a common gotcha for multi‑GB images).
 
 This document turns the “will the CDN do the right thing?” uncertainty into concrete guidance:
 
@@ -36,6 +36,13 @@ This document turns the “will the CDN do the right thing?” uncertainty into 
   - AWS docs: on a `Range GET`, CloudFront checks the edge cache; if the requested range is missing, it forwards the request to the origin and **“caches it for future requests.”**
 
 **Recommendation for Aero:** Keep the cache key minimal (path + version). Do *not* vary/cache-key on `Range`; doing so will fragment the cache and destroy hit ratio.
+
+**Important operational note:** in practice you should **verify** `206` caching on your own distribution. We have observed public CloudFront distributions where:
+
+- Full-object `GET` (`200`) becomes `X-Cache: Hit from cloudfront`, but
+- Repeated identical `Range` requests (`206`) remain `X-Cache: Miss from cloudfront`.
+
+In that case, CloudFront may still serve ranges from a cached `200` response, but it may not cache arbitrary viewer-requested `206` slices in the way you expect. For Aero’s highly random access pattern, prefer chunk objects (or the no-Range format) if you cannot confirm `206` hits.
 
 ### Q2: Can CloudFront serve/caches Range requests for objects larger than CloudFront’s maximum cacheable file size?
 
@@ -183,7 +190,7 @@ Range: bytes=<rangeStartInChunk>-<rangeEndInChunk>
 
 This strategy:
 
-- Works on CDNs with object-size limits.
+- Works on CDNs with cacheable-size limits.
 - Lets the CDN cache each chunk independently.
 - Makes origin load and cache hit ratios predictable.
 
@@ -265,6 +272,15 @@ Expect on CloudFront:
 - First request: `X-Cache: Miss from cloudfront` (often `Age` absent/0)
 - Second request: `X-Cache: Hit from cloudfront` and `Age: <n>`
 
+If the second request is still a `Miss`, run a full `GET` and try again:
+
+```bash
+curl -fsS -D - -o /dev/null "$URL" | grep -iE '^(x-cache|age|via|x-amz-cf-pop):'
+curl -fsS -D - -o /dev/null -H 'Range: bytes=0-1023' "$URL" | grep -iE '^(x-cache|age|via|x-amz-cf-pop):'
+```
+
+If `GET` becomes a hit but `Range` stays a miss, assume `206` caching is not working for your workload and use chunk objects / no-Range delivery.
+
 ### 3) Different range behavior
 
 ```bash
@@ -277,6 +293,7 @@ This should still be `206`, with an appropriate `Content-Range`, and after repea
 
 Enable origin access logs (or per-request logging) and inspect what the CDN requested from the origin when the viewer asked for `Range: bytes=0-0`.
 
+- CloudFront may request a **larger range than the viewer asked for** (AWS documents this as an optimization). This is usually fine; you’re checking for “downloaded the whole object” vs “downloaded a bounded range.”
 - If the origin sees `Range: bytes=0-0`, the CDN is fetching only the requested bytes (good).
 - If the origin sees a full `GET` with a large transfer size, the CDN is filling cache by downloading the entire object on first Range miss (still works, but makes large single-objects very expensive).
 
