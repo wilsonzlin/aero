@@ -531,6 +531,11 @@ The goal is to validate the UMD is functional *without* needing a full game engi
 
 For system-level smoke testing (separate from these app-level tests), use the validation checklist in `docs/graphics/win7-aerogpu-validation.md` (TDR/vblank stability, `dxdiag` checks, etc).
 
+This repository also contains a guest-side test harness you can use as a starting point:
+
+* `drivers/aerogpu/tests/win7/` (see `drivers/aerogpu/tests/win7/README.md`)
+  * includes `d3d11_triangle` and `readback_sanity` tests that already exercise a large chunk of the Win7 DXGI/D3D11 path.
+
 ### 7.1 D3D10 triangle (windowed)
 
 **Covers:**
@@ -549,6 +554,8 @@ For system-level smoke testing (separate from these app-level tests), use the va
 * `OpenAdapter11` → `CreateDevice`
 * D3D11 binding path (VS/PS only)
 * same draw/present path as above, but via D3D11 runtime/DDI
+
+**Existing in repo:** `drivers/aerogpu/tests/win7/d3d11_triangle/` (builds shaders with `fxc.exe` and validates pixels via staging readback).
 
 ### 7.3 Texture sampling test (2D)
 
