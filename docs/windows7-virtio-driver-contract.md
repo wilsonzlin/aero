@@ -19,130 +19,178 @@ Normative language: **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MA
 
 This contract intentionally specifies a **small, strict, testable** subset of virtio sufficient for reliable Windows 7 operation.
 
-### In scope
+### 0.1 In scope
 
-- **Transport:** `virtio-pci` **legacy** (I/O port BAR), split virtqueues
-- **Devices:** `virtio-blk`, `virtio-net`, `virtio-input`, `virtio-snd`
-- **Interrupts:** legacy PCI INTx (no MSI-X in contract v1)
+- **Transport:** `virtio-pci` **modern** (virtio 1.0+) using PCI vendor-specific capabilities and **MMIO** register blocks.
+- **Virtqueues:** split virtqueues (descriptor table + avail ring + used ring).
+- **Interrupts:** MSI-X preferred (multi-vector), with INTx fallback for platforms that cannot allocate message-signaled interrupts.
 
-### Out of scope (explicitly not required in contract v1)
+### 0.2 Out of scope (explicitly not required in contract v1)
 
-- virtio-pci **modern** transport (PCI capabilities / MMIO common config)
-- Packed rings (`VIRTIO_F_RING_PACKED` / packed virtqueue format)
-- MSI-X, SR-IOV, IOMMU/IOTLB, live migration, device hotplug
-- Host offloads (TSO/CSO/UFO, etc.) beyond what is explicitly described
+- virtio-pci **legacy** / transitional I/O port transport (the BAR0 I/O register map).
+- Packed rings (`VIRTIO_F_RING_PACKED` / packed virtqueue format).
+- SR-IOV, IOMMU/IOTLB (`VIRTIO_F_IOMMU_PLATFORM` / `VIRTIO_F_ACCESS_PLATFORM`), live migration.
+- Host offloads (TSO/CSO/UFO) beyond what is explicitly described.
 
-If any out-of-scope item becomes required, it MUST be added as a **new contract version** (see §5).
+If any out-of-scope item becomes required, it MUST be added as a **new contract major version** (see §4).
 
-## 1. Transport: virtio-pci legacy (I/O port BAR)
+### 0.3 Reference implementations in this repo
+
+This contract describes **device/driver-visible behavior**.
+
+For canonical C layout of the modern common configuration structure, see:
+
+- `drivers/win7/virtio/virtio-core/include/virtio_pci_modern.h`
+
+For a host-buildable Rust crate that locks down struct sizes/offsets used by both sides, see:
+
+- `drivers/protocol/virtio/`
+
+## 1. Transport: virtio-pci modern (PCI capabilities + MMIO)
 
 ### 1.1 PCI identification
 
-All Aero virtio devices are exposed as **virtio-pci legacy** devices with the standard virtio PCI Vendor ID.
+All Aero virtio devices are exposed as **virtio-pci modern** devices with the standard virtio PCI Vendor ID.
 
 **Vendor ID:** `0x1AF4` (virtio)
 
-**PCI Revision ID:** `0x01` (**MUST** match contract major version; see §5)
+**PCI Revision ID:** `0x01` (**MUST** match contract major version; see §4.1)
 
-**PCI Header Type:** `0x00` (normal endpoint)
+**Subsystem Vendor ID:** `0x1AF4`
 
-**Subsystem Vendor ID:** `0x1AF4`  
-**Subsystem Device ID:** device-specific (see per-device sections)
+#### 1.1.1 PCI Device IDs (modern-only ID space)
 
-#### 1.1.1 PCI Device IDs (legacy/transitional ID space)
+Contract v1 uses the virtio 1.0+ “modern” virtio-pci Device ID space:
 
-Contract v1 uses the legacy/transitional virtio-pci device ID space:
+`PCI Device ID = 0x1040 + <virtio device id>`
 
-| Virtio device | Virtio ID | PCI Device ID |
-|--------------|-----------|---------------|
-| virtio-net   | 1         | `0x1000`      |
-| virtio-blk   | 2         | `0x1001`      |
-| virtio-input | 18        | `0x1011`      |
-| virtio-snd   | 25        | `0x1018`      |
+| Virtio device | Virtio device id | PCI Device ID |
+|--------------|------------------|---------------|
+| virtio-net   | 1                | `0x1041`      |
+| virtio-blk   | 2                | `0x1042`      |
+| virtio-input | 18               | `0x1052`      |
+| virtio-snd   | 25               | `0x1059`      |
 
-These IDs are chosen to match the conventional virtio-pci legacy ID scheme used by other hypervisors so that tooling and driver code can re-use well-known constants.
+Drivers MUST bind on Vendor/Device ID and MUST assume the **modern** virtio-pci transport.
 
-> Note: Contract v1 does **not** implement virtio “modern-only” device IDs (`0x1040+` range).
+#### 1.1.2 Subsystem IDs (Aero-specific)
 
-#### 1.1.2 PCI class codes (informational)
+Subsystem Device IDs are used to distinguish device variants (for example, virtio-input keyboard vs mouse).
 
-Drivers MUST match on Vendor/Device ID, not class code. Aero sets class codes as follows to aid OS device categorization:
+| Device instance | Subsystem Device ID |
+|----------------|---------------------|
+| virtio-net     | `0x0001` |
+| virtio-blk     | `0x0002` |
+| virtio-snd     | `0x0003` |
+| virtio-input (keyboard) | `0x0010` |
+| virtio-input (mouse)    | `0x0011` |
 
-| Device        | Base / Sub / ProgIF |
-|--------------|----------------------|
-| virtio-net   | `0x02 / 0x00 / 0x00` (Network / Ethernet) |
-| virtio-blk   | `0x01 / 0x00 / 0x00` (Mass storage / SCSI-like) |
-| virtio-input | `0x09 / 0x00 / 0x00` (Input device) |
-| virtio-snd   | `0x04 / 0x01 / 0x00` (Multimedia / Audio) |
+Drivers MUST NOT rely on these subsystem IDs for correctness; they exist to aid debugging and optional device matching.
 
-### 1.2 BAR layout and register endianness
+### 1.2 BAR layout and endianness
 
-Each virtio device exposes:
+Each Aero virtio device exposes a single MMIO BAR for virtio configuration:
 
-- **BAR0:** I/O space BAR (“port I/O”), **little-endian**, size **at least 0x100 bytes**.
-- No MMIO BARs are required by this contract.
+- **BAR0:** 64-bit **MMIO**, little-endian, size **0x6000 bytes**.
+- No I/O space BARs are required or implemented by contract v1.
 
-All multi-byte register and config accesses are **little-endian**.
+All multi-byte fields in virtio MMIO regions are **little-endian**.
 
-### 1.3 Legacy virtio-pci register map (BAR0)
+### 1.3 PCI capability requirements (virtio vendor-specific caps)
 
-All offsets below are from the BAR0 I/O base.
+The PCI configuration space MUST expose a valid capability list (PCI Status bit 4 set; capability pointer at offset `0x34`), containing the following **vendor-specific** capabilities (PCI cap ID `0x09`):
 
-| Offset | Size | Name | Access | Description |
-|--------|------|------|--------|-------------|
-| `0x00` | 4    | `HOST_FEATURES` | R | Device-offered feature bits `[31:0]`. |
-| `0x04` | 4    | `GUEST_FEATURES` | W | Driver-accepted feature bits `[31:0]`. |
-| `0x08` | 4    | `QUEUE_PFN` | R/W | Queue base physical page number (PFN). |
-| `0x0C` | 2    | `QUEUE_NUM` | R | Queue size (number of descriptors) for selected queue. |
-| `0x0E` | 2    | `QUEUE_SEL` | R/W | Selects which virtqueue subsequent accesses refer to. |
-| `0x10` | 2    | `QUEUE_NOTIFY` | W | Doorbell: writing queue index notifies device. |
-| `0x12` | 1    | `STATUS` | R/W | Virtio device status (see §1.5). |
-| `0x13` | 1    | `ISR` | R | Interrupt status; read-to-ack (see §1.4). |
-| `0x14` | var  | `DEVICE_CONFIG` | R/W* | Device-specific config space (see per-device sections). |
+- `VIRTIO_PCI_CAP_COMMON_CFG` (`cfg_type = 1`)
+- `VIRTIO_PCI_CAP_NOTIFY_CFG` (`cfg_type = 2`)
+- `VIRTIO_PCI_CAP_ISR_CFG` (`cfg_type = 3`)
+- `VIRTIO_PCI_CAP_DEVICE_CFG` (`cfg_type = 4`)
 
-\* Device config is **mostly read-only** in contract v1. Any writeable fields are explicitly called out per device.
+Capability list invariants (enforced by `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`):
 
-#### 1.3.1 Undefined offsets and access widths
+- The list MUST be acyclic (`cap_next` must not loop).
+- Capability pointers MUST be 4-byte aligned.
+- Each `virtio_pci_cap` MUST have `cap_len >= 16`.
+- The notify capability MUST have `cap_len >= 20` (to include `notify_off_multiplier`).
 
-- Only the registers and fields described in this contract are defined behavior.
-- **Undefined reads** from BAR0 MUST return all-zeros for the requested width.
-- **Undefined writes** to BAR0 MUST be ignored.
+If any required virtio capability is missing or malformed, drivers MUST treat the device as unsupported.
 
-Access widths:
+### 1.4 Fixed MMIO layout used by all Aero virtio devices
 
-- Drivers SHOULD access each register using the `Size` shown in §1.3.
-- Devices MUST correctly handle byte/word/dword accesses to the defined registers as if BAR0 were a little-endian byte array.
+Although virtio-pci capabilities allow arbitrary placement, Aero contract v1 fixes a single layout so implementers can verify conformance without guessing.
 
-### 1.4 Interrupt mechanism: INTx + ISR semantics
+All capabilities reference **BAR0** with the following offsets/lengths:
 
-Contract v1 uses **PCI INTx** interrupts only.
+| Capability | `cfg_type` | BAR | Offset | Length |
+|-----------|------------|-----|--------|--------|
+| Common configuration | 1 | 0 | `0x0000` | `0x1000` |
+| Notify configuration | 2 | 0 | `0x1000` | `0x1000` |
+| ISR configuration    | 3 | 0 | `0x2000` | `0x1000` |
+| Device configuration | 4 | 0 | `0x3000` | `0x1000` |
 
-- The device MUST use PCI **INTA#** (interrupt pin = 1).
-- The device MUST assert INTx when it has a pending interrupt reason and the guest has not yet acknowledged it.
+MSI-X structures (PCI-managed; OS consumes these, not the driver):
 
-#### 1.4.1 ISR register (`0x13`)
+| Structure | BAR | Offset | Length |
+|----------|-----|--------|--------|
+| MSI-X Table | 0 | `0x4000` | `0x1000` |
+| MSI-X PBA   | 0 | `0x5000` | `0x1000` |
 
-`ISR` is an 8-bit register with **read-to-ack** semantics:
+#### 1.4.1 Undefined MMIO behavior
 
-- Reading `ISR` returns a bitmask of pending interrupt causes.
-- Reading `ISR` MUST clear all currently returned bits (acknowledge).
-- If no causes are pending, reading returns `0x00`.
+- Reads from undefined MMIO offsets within BAR0 MUST return all-zeros for the requested width.
+- Writes to undefined MMIO offsets within BAR0 MUST be ignored.
 
-Bit assignments:
+### 1.5 Common configuration (`virtio_pci_common_cfg`)
 
-| Bit | Name | Meaning |
-|-----|------|---------|
-| 0   | `QUEUE_INTERRUPT` | Device added entries to a used ring for at least one queue. |
-| 1   | `CONFIG_INTERRUPT` | Device-specific config change. |
-| 2-7 | - | Reserved; MUST be 0. |
+The common configuration region is a MMIO mapping of `struct virtio_pci_common_cfg` (little-endian). For the canonical packed C layout, see `drivers/win7/virtio/virtio-core/include/virtio_pci_modern.h`.
 
-The device MUST deassert INTx after the guest acknowledges all pending causes (i.e., after `ISR` is read and no further causes remain).
+Key semantics:
 
-### 1.5 Reset and status state machine
+#### 1.5.0 Selector register serialization (required for correctness)
 
-#### 1.5.1 Status bits
+The following `common_cfg` fields are **global selectors** that affect subsequent accesses:
 
-`STATUS` is an 8-bit bitmask. The guest driver MUST use the standard virtio initialization flow:
+- `device_feature_select` / `device_feature`
+- `driver_feature_select` / `driver_feature`
+- `queue_select` / all `queue_*` fields
+
+Because these selectors are shared device-global state, any multi-step sequence that uses them MUST be serialized by the driver (for example, by a per-device spinlock) to avoid races between queues/DPCs/power callbacks.
+
+The device MUST implement the selector behavior exactly as described; it MUST NOT provide per-CPU or per-queue selector state.
+
+#### 1.5.1 Feature negotiation (64-bit)
+
+Feature negotiation uses the selector pattern:
+
+- Driver writes `device_feature_select = 0` then reads `device_feature` → low 32 bits.
+- Driver writes `device_feature_select = 1` then reads `device_feature` → high 32 bits.
+
+Similarly for driver features:
+
+- Driver writes `driver_feature_select` then writes `driver_feature`.
+
+Selector behavior:
+
+- `*_feature_select` values other than 0 or 1 MUST be treated as reserved; reads of `*_feature` for reserved selects MUST return 0 and writes MUST be ignored.
+
+#### 1.5.2 Required feature bits
+
+All Aero virtio devices MUST offer and require:
+
+- `VIRTIO_F_VERSION_1` (bit 32) = 1
+
+Drivers MUST set (accept) `VIRTIO_F_VERSION_1`.
+
+#### 1.5.3 Device status and reset
+
+`device_status` implements the virtio device status state machine.
+
+- Writing `device_status = 0` MUST reset the device:
+  - All queues become disabled (`queue_enable = 0`).
+  - All pending interrupts are cleared.
+  - Feature negotiation state is cleared.
+  - Device returns to pre-init state.
+
+Status bits (standard virtio):
 
 | Bit | Name | Meaning |
 |-----|------|---------|
@@ -150,53 +198,112 @@ The device MUST deassert INTx after the guest acknowledges all pending causes (i
 | 1   | `DRIVER` | Guest knows how to drive the device. |
 | 2   | `DRIVER_OK` | Driver is fully initialized. |
 | 3   | `FEATURES_OK` | Driver accepted feature set. |
-| 6   | `DEVICE_NEEDS_RESET` | Device has encountered an error and needs reset. |
-| 7   | `FAILED` | Driver has given up on the device. |
+| 6   | `DEVICE_NEEDS_RESET` | Device encountered an error; guest must reset. |
+| 7   | `FAILED` | Driver has given up. |
 
-Bits not listed MUST be treated as reserved and written as 0 by drivers.
+The device MUST clear `FEATURES_OK` if the driver sets unsupported feature bits.
 
-#### 1.5.2 Reset
+#### 1.5.4 Queue selection and programming
 
-Writing `0x00` to `STATUS` MUST reset the device:
+Queue configuration uses the selector pattern:
 
-- All virtqueues become inactive (`QUEUE_PFN` reads as 0 for all queues).
-- Interrupt state is cleared (INTx deasserted; `ISR` reads as 0).
-- Device returns to the pre-initialization state.
-- Device-specific config is reset to power-on defaults (usually static).
-
-The device MUST tolerate reset at any time.
-
-### 1.6 Feature negotiation (32-bit)
-
-Because contract v1 uses the legacy transport, feature negotiation is limited to **bits 0–31** via `HOST_FEATURES` / `GUEST_FEATURES`.
-
-Rules:
-
-1. Driver MUST read `HOST_FEATURES`, mask to supported features, then write `GUEST_FEATURES`.
-2. Driver MUST set `FEATURES_OK` in `STATUS` and read back `STATUS` to confirm the bit remains set.
-3. The device MUST clear `FEATURES_OK` if the driver requested unsupported features.
-
-Contract v1 never offers features requiring >32-bit feature negotiation (e.g., `VIRTIO_F_VERSION_1`).
-
-## 2. Virtqueue contract (split ring only)
-
-### 2.1 Queue selection and activation (legacy PFN model)
-
-- The driver selects a queue by writing its index to `QUEUE_SEL`.
-- The driver reads `QUEUE_NUM` to obtain the queue size **N** (number of descriptors).
-- The driver allocates a physically contiguous ring region for the queue (see §2.2).
-- The driver writes the ring base PFN (`physical_address >> 12`) to `QUEUE_PFN`.
-
-The queue is considered **active** when `QUEUE_PFN != 0` for that queue.
+- Driver writes `queue_select = <index>`.
+- Driver reads `queue_size` (read-only) and `queue_notify_off` (read-only).
+- Driver writes `queue_desc`, `queue_avail`, `queue_used`.
+- Driver writes `queue_enable = 1` to activate.
 
 Queue index range handling:
 
-- If `QUEUE_SEL` selects a queue index that does not exist for the device:
-  - `QUEUE_NUM` MUST read as `0`.
-  - `QUEUE_PFN` MUST read as `0` and writes MUST be ignored.
-  - Writing that index to `QUEUE_NOTIFY` MUST be ignored.
+- If `queue_select` selects a queue index `>= num_queues`:
+  - `queue_size` MUST read as 0.
+  - `queue_notify_off` MUST read as 0.
+  - Writes to `queue_desc/avail/used` and `queue_enable` MUST be ignored.
 
-### 2.2 Split ring layout, sizes, and alignment
+#### 1.5.5 `config_generation`
+
+- `config_generation` MAY remain 0 for the lifetime of the device if the device config is static.
+- If the device modifies device-specific config at runtime, it MUST increment `config_generation` and SHOULD trigger a config change interrupt (see §1.8).
+
+### 1.6 Notify region (`VIRTIO_PCI_CAP_NOTIFY_CFG`)
+
+The notify region is a MMIO “doorbell” area.
+
+The notify capability MUST set:
+
+- `notify_off_multiplier = 4`
+
+For each queue `q`, the device MUST report:
+
+- `queue_notify_off(q) = q`
+
+To notify a queue, the driver writes the queue index (16-bit) to:
+
+`notify_base + queue_notify_off(q) * notify_off_multiplier`
+
+Device behavior:
+
+- Any write to a valid notify address MUST schedule processing for the corresponding queue.
+- Devices MUST accept both 16-bit and 32-bit writes at notify addresses (some drivers/platforms use 32-bit writes).
+
+### 1.7 ISR region (`VIRTIO_PCI_CAP_ISR_CFG`)
+
+The ISR region contains a single 8-bit interrupt status register at offset 0.
+
+ISR bits:
+
+| Bit | Name | Meaning |
+|-----|------|---------|
+| 0   | `QUEUE_INTERRUPT` | Device added entries to a used ring for at least one queue. |
+| 1   | `CONFIG_INTERRUPT` | Device-specific config change. |
+| 2-7 | - | Reserved; MUST be 0. |
+
+ISR semantics:
+
+- Reading the ISR byte returns the current pending bits and **acknowledges** them (read-to-ack).
+- Reading MUST clear all bits that were returned.
+
+When MSI-X is enabled, drivers SHOULD rely on the MSI-X vector to determine the cause; ISR is primarily for INTx fallback.
+
+### 1.8 Interrupts (MSI-X and INTx)
+
+#### 1.8.1 MSI-X requirement
+
+All Aero virtio devices MUST expose a PCI MSI-X capability and MUST support at least:
+
+- `1 + num_queues` MSI-X vectors
+
+Vector assignment:
+
+- `msix_config` selects the MSI-X vector used for config change interrupts.
+- `queue_msix_vector` selects the MSI-X vector used for interrupts for the selected queue.
+
+A value of `0xFFFF` means “no MSI-X vector assigned”.
+
+#### 1.8.2 Queue interrupt behavior
+
+When the device publishes one or more used-ring entries for a queue:
+
+- If MSI-X is enabled *and* that queue has a valid `queue_msix_vector`, the device MUST signal that MSI-X vector.
+- Otherwise, the device MUST:
+  - set ISR bit 0 (`QUEUE_INTERRUPT`), and
+  - assert the legacy PCI INTx line interrupt.
+
+The device SHOULD suppress interrupts when the driver has set `VRING_AVAIL_F_NO_INTERRUPT` in the avail ring for that queue.
+
+#### 1.8.3 Config interrupt behavior
+
+If device-specific config changes at runtime:
+
+- If MSI-X is enabled *and* `msix_config != 0xFFFF`, the device MUST signal that MSI-X vector.
+- Otherwise, the device MUST:
+  - set ISR bit 1 (`CONFIG_INTERRUPT`), and
+  - assert INTx.
+
+Contract v1 devices SHOULD NOT change config at runtime unless explicitly described in a per-device section.
+
+## 2. Virtqueue contract (split ring only)
+
+### 2.1 Split ring layout
 
 Contract v1 uses the classic “split ring” (`vring`) layout:
 
@@ -231,26 +338,33 @@ struct vring_used {
 };
 ```
 
-#### 2.2.1 Alignment requirements
-
-- Queue base address (the address written via `QUEUE_PFN`) MUST be **4 KiB aligned**.
-- `vring_desc` table starts at offset 0.
-- `vring_avail` MUST be aligned to **2 bytes** (naturally satisfied by the descriptor table size).
-- `vring_used` MUST be aligned to **4 bytes**; i.e. `vring_used` starts at `align_up(avail_end, 4)`.
-
-#### 2.2.2 Size calculations (EVENT_IDX not supported)
+#### 2.1.1 Size formulas (EVENT_IDX not supported in contract v1)
 
 Given queue size **N**:
 
 - `desc_bytes = 16 * N`
 - `avail_bytes = 4 + 2 * N`
 - `used_bytes = 4 + 8 * N`
-- `used_offset = align_up(desc_bytes + avail_bytes, 4)`
-- `total_bytes = used_offset + used_bytes`
 
-The driver MUST allocate at least `total_bytes` bytes of physically contiguous memory per queue.
+Because `VIRTIO_F_RING_EVENT_IDX` is not negotiated in contract v1, there is no `used_event` or `avail_event` field.
 
-### 2.3 Descriptor flags and chaining
+### 2.2 Alignment requirements
+
+The device MUST accept ring addresses with the standard virtio alignment requirements:
+
+- Descriptor table address (`queue_desc`): **16-byte aligned**
+- Avail ring address (`queue_avail`): **2-byte aligned**
+- Used ring address (`queue_used`): **4-byte aligned**
+
+### 2.3 Supported ring/queue feature bits
+
+Contract v1 uses split rings only and defines the following ring-related features:
+
+- `VIRTIO_F_RING_INDIRECT_DESC` (bit 28): **supported and MUST be offered**
+- `VIRTIO_F_RING_EVENT_IDX` (bit 29): **not offered** (always-notify semantics)
+- `VIRTIO_F_RING_PACKED` (bit 34): **not offered**
+
+### 2.4 Descriptor flags and chaining
 
 Supported descriptor flags:
 
@@ -258,70 +372,39 @@ Supported descriptor flags:
 |------|-------|---------|---------|
 | `NEXT` | `1` | This descriptor continues at `next`. | **MUST** |
 | `WRITE` | `2` | Device writes into the buffer. | **MUST** |
-| `INDIRECT` | `4` | Descriptor points to an indirect table. | **MUST** if feature negotiated (see below) |
+| `INDIRECT` | `4` | Descriptor points to an indirect table. | **MUST** when `INDIRECT_DESC` is negotiated |
 
-#### 2.3.1 Indirect descriptors
+#### 2.4.1 Indirect descriptors
 
-Contract v1 supports indirect descriptors via `VIRTIO_RING_F_INDIRECT_DESC` (bit 28).
+If `VIRTIO_F_RING_INDIRECT_DESC` is negotiated:
 
-- If the feature is negotiated, the driver MAY submit a descriptor with `INDIRECT` set.
+- The driver MAY submit a descriptor with `INDIRECT` set.
 - For an indirect descriptor:
   - `addr` points to a guest-physical contiguous array of `vring_desc`.
   - `len` is the size in bytes of that array and MUST be a multiple of 16.
-  - The indirect table entries follow the same rules for flags/chaining.
 
-If the feature is not negotiated, the device MUST treat `INDIRECT` as an error for that request and complete it with a device-specific failure status (see per-device sections).
+If the feature is not negotiated, `INDIRECT` MUST NOT be used.
 
-### 2.4 Notification and interrupt suppression
+### 2.5 Notifications and interrupt suppression
 
-#### 2.4.1 Driver -> device notifications
+- Drivers MUST notify via the notify region (§1.6) after publishing new available entries.
+- Devices MUST raise interrupts on used-ring updates unless suppressed via `VRING_AVAIL_F_NO_INTERRUPT`.
 
-Contract v1 uses **always-notify** semantics (no EVENT_IDX):
+Contract v1 does not use EVENT_IDX; drivers MUST NOT assume `used_event/avail_event` fields exist.
 
-- After making one or more new available entries visible, the driver MUST notify the device by writing the queue index to `QUEUE_NOTIFY`.
-- The device MUST treat any write to `QUEUE_NOTIFY` as a doorbell and schedule processing for that queue.
+### 2.6 Guest physical memory access (DMA model)
 
-The device MAY coalesce doorbells; drivers MUST tolerate spurious wakeups (i.e., device may process even if no new work is found).
-
-#### 2.4.2 Device -> driver interrupts
-
-The device MUST raise an interrupt when it adds at least one entry to any used ring, **unless** the driver has requested suppression:
-
-- If `vring_avail.flags & 0x0001` (the traditional `VRING_AVAIL_F_NO_INTERRUPT`) is set at the time the device is about to interrupt, the device SHOULD suppress the interrupt.
-
-Even when suppressed, the device MUST still update the used ring correctly; the driver will poll.
-
-> Note: Contract v1 does not require the device to implement `VRING_USED_F_NO_NOTIFY` (device suppression of driver doorbells), because the contract uses always-notify semantics. Devices MAY leave `used.flags = 0`; drivers MUST always notify via `QUEUE_NOTIFY` regardless of `used.flags`.
-
-### 2.5 Guest physical memory access (DMA model)
-
-The device performs DMA by reading/writing guest physical memory pointed to by descriptor addresses.
+The device performs DMA by reading/writing guest physical memory pointed to by descriptor addresses and ring addresses.
 
 Rules:
 
-- Descriptor `addr` fields are **guest physical addresses**.
-- The device MUST bounds-check each `(addr, len)` before access:
-  - If any range is outside guest RAM, the device MUST treat the request as failed (device-specific status) and MUST NOT read or write outside guest RAM.
-- The device MUST support reading and writing buffers that are not aligned to any particular boundary.
-- The device MUST support scatter/gather by following descriptor chains.
+- All addresses in rings/descriptors are **guest physical (DMA) addresses**.
+- The device MUST bounds-check each `(addr, len)` before access.
+- The device MUST support unaligned buffer addresses and lengths.
 
-### 2.6 DMA addresses >4 GiB
+### 2.7 DMA addresses >4 GiB
 
-The split ring descriptor `addr` is 64-bit. Contract v1 requires 64-bit DMA correctness:
-
-- The device MUST accept and correctly access guest physical addresses above 4 GiB **if** the guest physical address space includes RAM above 4 GiB.
-- If the guest provides an address above the implemented guest physical map, the device MUST fail the request cleanly (no out-of-bounds accesses).
-
-Drivers MUST NOT assume buffers are below 4 GiB on x64 Windows 7.
-
-### 2.7 Ordering model (what is guaranteed)
-
-To avoid driver/device divergence, contract v1 defines a strict ordering model:
-
-- The device MUST process available descriptors in monotonically increasing `avail.idx` order.
-- The device MUST complete used entries in the same order it processes them for a given queue.
-
-This is stricter than generic virtio (which permits some reordering) and is intended to simplify Windows 7 driver correctness.
+The device MUST accept and correctly access 64-bit guest physical addresses, including addresses above 4 GiB (required for Windows 7 x64 and for DMA frameworks that return high logical addresses).
 
 ## 3. Per-device contracts
 
@@ -332,9 +415,9 @@ All devices inherit the transport and virtqueue rules above.
 #### 3.1.1 PCI IDs
 
 - Vendor ID: `0x1AF4`
-- Device ID: `0x1001`
+- Device ID: `0x1042`
 - Subsystem Vendor ID: `0x1AF4`
-- Subsystem Device ID: `0x0002` (Aero virtio-blk)
+- Subsystem Device ID: `0x0002`
 - Revision ID: `0x01`
 
 #### 3.1.2 Virtqueues
@@ -345,27 +428,26 @@ All devices inherit the transport and virtqueue rules above.
 
 #### 3.1.3 Feature bits
 
-The device MUST offer the following bits in `HOST_FEATURES`:
+The device MUST offer:
 
-- `VIRTIO_RING_F_INDIRECT_DESC` (28) = 1
-- `VIRTIO_BLK_F_SEG_MAX` (2) = 1
-- `VIRTIO_BLK_F_BLK_SIZE` (6) = 1
-- `VIRTIO_BLK_F_FLUSH` (9) = 1
+- `VIRTIO_F_VERSION_1` (32)
+- `VIRTIO_F_RING_INDIRECT_DESC` (28)
+- `VIRTIO_BLK_F_SEG_MAX` (2)
+- `VIRTIO_BLK_F_BLK_SIZE` (6)
+- `VIRTIO_BLK_F_FLUSH` (9)
 
 The device MUST NOT offer:
 
-- `VIRTIO_RING_F_EVENT_IDX` (29)
-- Read-only (`VIRTIO_BLK_F_RO`)
+- `VIRTIO_F_RING_EVENT_IDX` (29)
+- `VIRTIO_BLK_F_RO`
 - Discard / write-zeroes / multi-queue features
 
-The driver MUST accept (set) all offered feature bits listed above.
+#### 3.1.4 Device config layout (`DEVICE_CFG` capability)
 
-#### 3.1.4 Device config layout (BAR0 + `0x14`)
+virtio-blk config (little-endian):
 
-virtio-blk config follows the standard virtio-blk layout (little-endian):
-
-| Offset (from `DEVICE_CONFIG`) | Size | Field | Notes |
-|------------------------------|------|-------|------|
+| Offset | Size | Field | Notes |
+|--------|------|-------|------|
 | `0x00` | 8 | `capacity` | Number of **512-byte sectors**. Read-only. |
 | `0x08` | 4 | `size_max` | Not used; MUST be 0. |
 | `0x0C` | 4 | `seg_max` | Max data segments per request (excludes header + status). |
@@ -381,16 +463,20 @@ Each request is a single descriptor chain:
 
 ```c
 struct virtio_blk_outhdr {
-  le32 type;     // request type
+  le32 type;
   le32 ioprio;   // ignored by Aero; driver MUST set to 0
   le64 sector;   // starting sector (512-byte units)
 };
 ```
 
-2. **Data buffers** (0 or more descriptors):
-   - For `IN` (read): buffers MUST be device-writable (`WRITE` flag set).
-   - For `OUT` (write): buffers MUST be device-readable (`WRITE` flag clear).
-3. **Status byte** (1 byte), device-writable.
+2. **Data buffers** (0 or more descriptors)
+3. **Status byte** (1 byte), device-writable (last descriptor in chain)
+
+Data buffer direction rules:
+
+- For `VIRTIO_BLK_T_IN` (read): all data buffers MUST be device-writable (`WRITE` flag set).
+- For `VIRTIO_BLK_T_OUT` (write): all data buffers MUST be device-readable (`WRITE` flag clear).
+- For `VIRTIO_BLK_T_FLUSH`: no data buffers are present (header + status only).
 
 Supported `type` values:
 
@@ -404,34 +490,32 @@ All other request types MUST complete with status `VIRTIO_BLK_S_UNSUPP`.
 
 Status byte values:
 
-| Name | Value | Meaning |
-|------|-------|---------|
-| `VIRTIO_BLK_S_OK` | 0 | Success. |
-| `VIRTIO_BLK_S_IOERR` | 1 | I/O error (including invalid ranges). |
-| `VIRTIO_BLK_S_UNSUPP` | 2 | Unsupported request type. |
+| Name | Value |
+|------|-------|
+| `VIRTIO_BLK_S_OK` | 0 |
+| `VIRTIO_BLK_S_IOERR` | 1 |
+| `VIRTIO_BLK_S_UNSUPP` | 2 |
 
-#### 3.1.6 I/O semantics
+I/O semantics:
 
-For `IN`/`OUT`:
+- Total data length MUST be a multiple of 512 bytes; otherwise `IOERR`.
+- Requests beyond disk capacity MUST return `IOERR`.
+- The device MUST write the status byte *before* publishing the used-ring entry.
+- The device MUST publish used-ring entries with `used.len = 0` (virtio-blk drivers must not depend on used lengths).
 
-- Total transfer length = sum of data buffer descriptor lengths.
-- Transfer length MUST be a multiple of 512 bytes; otherwise the device MUST return `IOERR`.
-- `(sector * 512 + length)` MUST be within the underlying virtual disk size; otherwise `IOERR`.
-- The device MUST complete a request by writing the status byte *before* placing the used-ring entry.
+Flush semantics:
 
-For `FLUSH`:
-
-- The device MUST ensure all prior completed `OUT` writes are durable in the backing store before completing the flush.
-- If the backing store cannot guarantee durability, the device MUST still complete flush successfully but MUST document the limitation in the emulator implementation notes (not here). (Drivers treat flush as a correctness boundary.)
+- `VIRTIO_BLK_T_FLUSH` MUST not complete until all prior completed `OUT` writes are durable in the backing store.
+- If the backing store cannot provide durability guarantees, the device MUST still implement the ordering property (flush completes after all prior writes are visible) and MUST document any durability limitations in emulator implementation notes.
 
 ### 3.2 virtio-net (network)
 
 #### 3.2.1 PCI IDs
 
 - Vendor ID: `0x1AF4`
-- Device ID: `0x1000`
+- Device ID: `0x1041`
 - Subsystem Vendor ID: `0x1AF4`
-- Subsystem Device ID: `0x0001` (Aero virtio-net)
+- Subsystem Device ID: `0x0001`
 - Revision ID: `0x01`
 
 #### 3.2.2 Virtqueues
@@ -447,33 +531,30 @@ No control queue is implemented in contract v1.
 
 The device MUST offer:
 
-- `VIRTIO_RING_F_INDIRECT_DESC` (28) = 1
-- `VIRTIO_NET_F_MAC` (5) = 1 (MAC address in config)
-- `VIRTIO_NET_F_STATUS` (16) = 1 (link status in config)
+- `VIRTIO_F_VERSION_1` (32)
+- `VIRTIO_F_RING_INDIRECT_DESC` (28)
+- `VIRTIO_NET_F_MAC` (5)
+- `VIRTIO_NET_F_STATUS` (16)
 
 The device MUST NOT offer:
 
 - `VIRTIO_NET_F_MRG_RXBUF` (15)
-- Any checksum/GSO/TSO offload features (driver MUST assume none)
-- Control virtqueue (`VIRTIO_NET_F_CTRL_VQ`)
-- Multi-queue, RSS, VLAN, MTU config, etc.
+- Any checksum/GSO/TSO offload features
+- `VIRTIO_NET_F_CTRL_VQ`
 
-The driver MUST accept all offered bits listed above.
+#### 3.2.4 Device config layout (`DEVICE_CFG` capability)
 
-#### 3.2.4 Device config layout (BAR0 + `0x14`)
-
-virtio-net config (contract v1):
+virtio-net config (little-endian):
 
 | Offset | Size | Field | Notes |
 |--------|------|-------|------|
 | `0x00` | 6 | `mac` | MAC address. Read-only. |
-| `0x06` | 2 | `status` | Link status. Bit0 = `VIRTIO_NET_S_LINK_UP`. Read-only. |
-
-The device MUST report link-up (`status & 1 == 1`) after `DRIVER_OK` and SHOULD keep it up for the lifetime of the VM.
+| `0x06` | 2 | `status` | Bit0 = `VIRTIO_NET_S_LINK_UP`. Read-only. |
+| `0x08` | 2 | `max_virtqueue_pairs` | MUST be 1. Read-only. |
 
 #### 3.2.5 Packet format and virtio-net header expectations
 
-Contract v1 uses the classic `virtio_net_hdr` (10 bytes) and does **not** use the “merged RX buffer” header variant.
+Contract v1 uses `struct virtio_net_hdr` as 12 bytes:
 
 ```c
 struct virtio_net_hdr {
@@ -483,80 +564,79 @@ struct virtio_net_hdr {
   le16 gso_size;
   le16 csum_start;
   le16 csum_offset;
+  le16 num_buffers; // MUST be 0 when MRG_RXBUF is not negotiated
 };
 ```
 
-Because no offload features are negotiated:
+Because no offload or mergeable-RX features are negotiated:
 
 - The driver MUST set all header fields to 0 for TX.
-- The device MUST ignore the header contents for TX and MUST NOT perform offloads.
-- For RX, the device MUST write a zeroed header.
+- The device MUST ignore the header contents for TX.
+- For RX, the device MUST write a zeroed header (including `num_buffers = 0`).
 
-#### 3.2.6 TX (driver → device)
+#### 3.2.6 Frame size rules
 
-Each TX packet submission is a descriptor chain:
+- Minimum frame length: 14 bytes (Ethernet header). Undersized frames MUST be dropped but the descriptor chain MUST still complete successfully.
+- Maximum frame length: 1514 bytes (Ethernet header + 1500 MTU payload). Oversized frames MUST be dropped but the descriptor chain MUST still complete successfully.
 
-1. Descriptor 0: device-readable `virtio_net_hdr` (len >= 10)
-2. Descriptor 1..k: device-readable payload bytes (an entire Ethernet frame, no FCS)
+#### 3.2.7 TX (driver → device)
 
-The device MUST complete the chain by placing a used entry with:
+Each TX submission is a descriptor chain:
 
-- `id = head descriptor index`
-- `len = total bytes consumed` (including the 10-byte header and payload)
+1. Descriptor 0: device-readable `virtio_net_hdr` (len >= 12)
+2. Descriptor 1..k: device-readable Ethernet frame bytes (no FCS)
 
-Oversized/undersized behavior:
+Completion:
 
-- Minimum payload length: **14 bytes** (Ethernet header). If shorter, device MUST drop the frame but still complete the descriptor chain successfully.
-- Maximum payload length: **1514 bytes** (Ethernet header + 1500 MTU payload). If longer, device MUST drop the frame but still complete the chain successfully.
+- The device MUST complete the chain with `used.len = 0` (TX is device-readable only).
+- If the chain contains any writable (`WRITE`) descriptors, the device MUST drop the packet but MUST still complete the chain.
 
-#### 3.2.7 RX (device → driver)
+#### 3.2.8 RX (device → driver)
 
 The driver supplies receive buffers via available descriptor chains.
 
 Buffer requirements (driver):
 
-- Each chain MUST start with a writable buffer of at least 10 bytes for `virtio_net_hdr`.
-- The chain MUST provide at least **1514 bytes** of writable payload space after the header buffer (or at least **1524 bytes** total across all writable buffers), or packets may be dropped.
+- Each chain MUST start with a writable buffer of at least 12 bytes for `virtio_net_hdr`.
+- The chain MUST provide at least 1514 bytes of writable payload space after the header (or packets may be dropped).
 
 Receive behavior (device):
 
 - For each received Ethernet frame, the device consumes exactly one available chain.
 - The device writes:
-  - a zeroed 10-byte header into the first buffer, and
-  - the full Ethernet frame into subsequent buffer space.
-- The device completes the chain with `used.len = 10 + frame_len`.
+  - a zeroed 12-byte header into the first buffer, and
+  - the full Ethernet frame into subsequent writable buffer space.
+- The device completes the chain with `used.len = 12 + frame_len`.
 - If the provided buffers are insufficient, the device MUST drop the incoming frame and MUST NOT consume a chain for it.
 
 ### 3.3 virtio-input (keyboard/mouse)
 
-Contract v1 uses **two separate virtio-input devices**:
+Contract v1 exposes **two virtio-input PCI functions**:
 
-- One keyboard device
-- One mouse device
+- one keyboard virtio-input device
+- one mouse virtio-input device
 
-Both share the same Vendor/Device ID (`0x1AF4:0x1011`) and are distinguished by subsystem IDs and config strings.
+Both share the same Vendor/Device ID (`0x1AF4:0x1052`) and are distinguished by subsystem ID and config strings.
 
 #### 3.3.1 PCI IDs
 
 Keyboard:
 
 - Vendor ID: `0x1AF4`
-- Device ID: `0x1011`
+- Device ID: `0x1052`
 - Subsystem Vendor ID: `0x1AF4`
-- Subsystem Device ID: `0x0010` (Aero virtio-input keyboard)
+- Subsystem Device ID: `0x0010`
 - Revision ID: `0x01`
 
 Mouse:
 
 - Vendor ID: `0x1AF4`
-- Device ID: `0x1011`
+- Device ID: `0x1052`
 - Subsystem Vendor ID: `0x1AF4`
-- Subsystem Device ID: `0x0011` (Aero virtio-input mouse)
+- Subsystem Device ID: `0x0011`
 - Revision ID: `0x01`
 
 #### 3.3.2 Virtqueues
-
-virtio-input defines two queues:
 
 | Queue index | Name | Direction | Queue size |
 |------------|------|-----------|------------|
@@ -567,15 +647,12 @@ virtio-input defines two queues:
 
 The device MUST offer:
 
-- `VIRTIO_RING_F_INDIRECT_DESC` (28) = 1
-
-No device-specific feature bits are required by contract v1.
+- `VIRTIO_F_VERSION_1` (32)
+- `VIRTIO_F_RING_INDIRECT_DESC` (28)
 
 #### 3.3.4 Device config: discovery model
 
-virtio-input uses a “selector” config scheme. The guest writes `select`/`subsel`, then reads `size` and the associated payload.
-
-Config header (little-endian where applicable; most are bytes):
+virtio-input uses a “selector” config scheme.
 
 ```c
 struct virtio_input_config {
@@ -583,129 +660,118 @@ struct virtio_input_config {
   u8 subsel;
   u8 size;
   u8 reserved[5];
-  u8 payload[128]; // meaning depends on (select, subsel)
+  u8 payload[128];
 };
 ```
 
-Contract v1 requires the following selectors to be implemented:
+Contract v1 requires the following selectors:
 
-- `VIRTIO_INPUT_CFG_ID_NAME` → returns a NUL-terminated UTF-8 device name string
-- `VIRTIO_INPUT_CFG_ID_DEVIDS` → returns `virtio_input_devids`
-- `VIRTIO_INPUT_CFG_EV_BITS` → returns event-type bitmaps for supported event types
+- `VIRTIO_INPUT_CFG_ID_NAME`
+- `VIRTIO_INPUT_CFG_ID_DEVIDS`
+- `VIRTIO_INPUT_CFG_EV_BITS`
 
 All other selectors MUST return `size = 0`.
-
-`virtio_input_devids` (payload for `ID_DEVIDS`):
-
-```c
-struct virtio_input_devids {
-  le16 bustype;
-  le16 vendor;
-  le16 product;
-  le16 version;
-};
-```
-
-Required values:
-
-- `bustype = 0x0006` (BUS_VIRTUAL)
-- `vendor = 0x1AF4`
-- `product`:
-  - keyboard: `0x0001`
-  - mouse: `0x0002`
-- `version = 0x0001`
 
 Required `ID_NAME` strings:
 
 - keyboard: `"Aero Virtio Keyboard"`
 - mouse: `"Aero Virtio Mouse"`
 
-#### 3.3.5 Event format and semantics
+Required `ID_DEVIDS` values:
 
-Events are delivered as `virtio_input_event` records (8 bytes):
+- `bustype = 0x0006` (BUS_VIRTUAL)
+- `vendor = 0x1AF4`
+- `product = 0x0001` (keyboard) / `0x0002` (mouse)
+- `version = 0x0001`
+
+#### 3.3.5 Event format
 
 ```c
 struct virtio_input_event {
   le16 type;
   le16 code;
-  le32 value; // signed
+  le32 value;
 };
 ```
 
-The device MUST send events using Linux input event types/codes (as in `input-event-codes.h`).
+The device MUST use Linux input event types/codes (`EV_KEY`, `EV_REL`, `EV_SYN`, etc.) and MUST emit `EV_SYN/SYN_REPORT` after batches.
 
-##### Keyboard events
+##### Event queue (`eventq`) buffer contract
 
-- `type = EV_KEY` for key press/release
-- `value = 1` press, `0` release
-- The device SHOULD NOT send auto-repeat (`value = 2`); Windows handles repeat policy.
-- The device MUST emit `EV_SYN / SYN_REPORT` after a batch of related events.
+- The driver posts writable buffers of size >= 8 bytes.
+- The device MUST write exactly one `virtio_input_event` (8 bytes) per used entry, and complete the entry with `used.len = 8`.
 
-Minimum required supported key codes (device MUST advertise them via `EV_BITS` and may support more):
+##### Keyboard event requirements
 
-- `KEY_A`..`KEY_Z`
-- `KEY_0`..`KEY_9`
-- `KEY_ENTER`, `KEY_ESC`, `KEY_BACKSPACE`, `KEY_TAB`, `KEY_SPACE`
-- `KEY_LEFTSHIFT`, `KEY_RIGHTSHIFT`, `KEY_LEFTCTRL`, `KEY_RIGHTCTRL`, `KEY_LEFTALT`, `KEY_RIGHTALT`
-- `KEY_CAPSLOCK`
-- `KEY_F1`..`KEY_F12`
-- `KEY_UP`, `KEY_DOWN`, `KEY_LEFT`, `KEY_RIGHT`
-- `KEY_INSERT`, `KEY_DELETE`, `KEY_HOME`, `KEY_END`, `KEY_PAGEUP`, `KEY_PAGEDOWN`
+- `type = EV_KEY` for key press/release.
+- `value = 1` press, `0` release.
+- The device SHOULD NOT send auto-repeat (`value = 2`).
+- Minimum required supported key codes (device MUST advertise them via `EV_BITS`; it MAY support more):
+  - `KEY_A`..`KEY_Z`
+  - `KEY_0`..`KEY_9`
+  - `KEY_ENTER`, `KEY_ESC`, `KEY_BACKSPACE`, `KEY_TAB`, `KEY_SPACE`
+  - `KEY_LEFTSHIFT`, `KEY_RIGHTSHIFT`, `KEY_LEFTCTRL`, `KEY_RIGHTCTRL`, `KEY_LEFTALT`, `KEY_RIGHTALT`
+  - `KEY_CAPSLOCK`
+  - `KEY_F1`..`KEY_F12`
+  - `KEY_UP`, `KEY_DOWN`, `KEY_LEFT`, `KEY_RIGHT`
+  - `KEY_INSERT`, `KEY_DELETE`, `KEY_HOME`, `KEY_END`, `KEY_PAGEUP`, `KEY_PAGEDOWN`
 
-##### Mouse events (relative)
+##### Mouse event requirements (relative)
 
 - Relative motion:
   - `type = EV_REL`, `code = REL_X` and `REL_Y`
-  - `value` is a signed delta in “counts” (implementation-defined scaling); drivers MUST treat it as relative motion.
+  - `value` is a signed delta in counts
 - Wheel:
   - `type = EV_REL`, `code = REL_WHEEL`
-  - `value` is positive/negative tick count (typically ±1)
+  - `value` is signed tick count (typically ±1)
 - Buttons:
   - `type = EV_KEY`, `code = BTN_LEFT / BTN_RIGHT / BTN_MIDDLE`
   - `value = 1` press, `0` release
-- The device MUST emit `EV_SYN / SYN_REPORT` after a batch of related events.
 
-##### statusq behavior
+##### Status queue (`statusq`) behavior
 
-The guest MAY send output events (e.g., LED state changes) via `statusq`.
+The guest MAY send output/LED events via `statusq`.
 
 - The device MUST consume and complete all `statusq` descriptors.
 - The device MAY ignore the contents (LEDs need not be modeled in contract v1).
 
 ### 3.4 virtio-snd (audio)
 
-Contract v1 defines a **minimal** virtio-snd device sufficient for Windows 7 audio output.
-
 #### 3.4.1 PCI IDs
 
 - Vendor ID: `0x1AF4`
-- Device ID: `0x1018`
+- Device ID: `0x1059`
 - Subsystem Vendor ID: `0x1AF4`
-- Subsystem Device ID: `0x0020` (Aero virtio-snd)
+- Subsystem Device ID: `0x0003`
 - Revision ID: `0x01`
 
 #### 3.4.2 Virtqueues
 
-virtio-snd requires four queues:
-
 | Queue index | Name | Direction | Queue size |
 |------------|------|-----------|------------|
-| 0 | `controlq` | driver → device (request/response) | **64** |
-| 1 | `eventq` | device → driver (async events) | **64** |
-| 2 | `txq` | driver → device (PCM playback buffers) | **256** |
-| 3 | `rxq` | device → driver (PCM capture buffers) | **64** (unused in v1) |
+| 0 | `controlq` | driver → device | **64** |
+| 1 | `eventq` | device → driver | **64** |
+| 2 | `txq` | driver → device (PCM playback) | **256** |
+| 3 | `rxq` | device → driver (PCM capture) | **64** (unused in v1) |
 
 #### 3.4.3 Feature bits
 
 The device MUST offer:
 
-- `VIRTIO_RING_F_INDIRECT_DESC` (28) = 1
+- `VIRTIO_F_VERSION_1` (32)
+- `VIRTIO_F_RING_INDIRECT_DESC` (28)
 
-No optional virtio-snd feature bits are required in contract v1 (device_features other than the above MUST be 0).
+#### 3.4.4 Minimal PCM capability
 
-#### 3.4.4 Device config layout (BAR0 + `0x14`)
+One playback-only stream (ID 0):
 
-virtio-snd config (standard layout):
+- Channels: 2
+- Format: S16_LE
+- Rate: 48,000 Hz
+
+#### 3.4.5 Device config layout (`DEVICE_CFG` capability)
+
+virtio-snd config (little-endian):
 
 | Offset | Size | Field | Value (contract v1) |
 |--------|------|-------|---------------------|
@@ -713,120 +779,56 @@ virtio-snd config (standard layout):
 | `0x04` | 4 | `streams` | `1` |
 | `0x08` | 4 | `chmaps` | `0` |
 
-Meaning:
+#### 3.4.6 Minimal control flow
 
-- No jack discovery is required.
-- Exactly one PCM stream is exposed: **stream ID 0**.
-- No channel map discovery is required.
+Drivers and devices MUST follow the virtio-snd specification for message formats.
 
-#### 3.4.5 Minimal PCM capability
+Contract v1 requires at minimum the ability to:
 
-The single PCM stream (ID 0) is **playback-only** (output).
+- query stream info (for stream 0)
+- set params (only the fixed params in §3.4.4)
+- prepare/start/stop/release playback
 
-The device MUST support the following PCM parameters:
+All unsupported commands MUST return `NOT_SUPP`.
 
-- Channels: **2** (stereo)
-- Sample format: **signed 16-bit little-endian** (S16_LE)
-- Sample rate: **48,000 Hz**
-- Interleaved samples: `[L0, R0, L1, R1, ...]`
+Playback data path (`txq`):
 
-No other formats/rates are required in contract v1.
+- After start, the driver submits PCM buffers on `txq`.
+- The device MUST play buffers in order and complete each buffer with OK status when consumed.
+- On underrun, the device MUST output silence and continue.
 
-#### 3.4.6 Control flow and required commands
+## 4. Versioning and compatibility
 
-Drivers and devices MUST follow the virtio-snd control model as defined by the virtio-snd specification, with the following minimum supported request types:
-
-- `PCM_INFO` (query stream capabilities)
-- `PCM_SET_PARAMS` (configure the stream)
-- `PCM_PREPARE`
-- `PCM_START`
-- `PCM_STOP`
-- `PCM_RELEASE`
-
-All other requests MUST return `NOT_SUPP`.
-
-The device MUST accept only parameters matching §3.4.5; mismatched params MUST return `NOT_SUPP`.
-
-#### 3.4.7 Playback data path (`txq`)
-
-After `PCM_START`, the driver submits playback buffers on `txq` using the standard virtio-snd PCM transfer message format (request header + data + status), as defined by the virtio-snd specification.
-
-Contract v1 requires:
-
-- The device MUST play PCM buffers in the order submitted on `txq`.
-- The device MUST complete each buffer with an OK status once fully consumed.
-- On underrun (not enough buffers), the device MUST output silence and continue.
-
-`eventq` is present but no events are required in contract v1; it MAY remain idle.
-
-## 4. Compatibility rules and invariants
-
-### 4.1 “No guessing” invariants
-
-These invariants are intentionally strict so implementers do not need to infer QEMU behavior:
-
-1. Only **virtio-pci legacy** I/O port transport is used.
-2. Only **split rings** are used.
-3. Queue sizes are fixed per device in this contract.
-4. Interrupts are **INTx** with virtio ISR semantics.
-5. Each device has an explicit, minimal feature set.
-
-### 4.2 Error handling
-
-If the device detects a malformed descriptor chain (invalid addresses, invalid lengths, unsupported flags when not negotiated):
-
-- For request/response devices (blk/snd control), the device MUST complete the request with the device-specific error status (`IOERR` / `NOT_SUPP` / `BAD_MSG` as appropriate).
-- The device MUST NOT crash or access out-of-bounds guest memory.
-- The device MAY set `DEVICE_NEEDS_RESET` if it cannot continue safely.
-
-Drivers MUST treat `DEVICE_NEEDS_RESET` as fatal and reinitialize from reset.
-
-## 5. Versioning and backwards compatibility
-
-### 5.1 Contract version encoding
+### 4.1 Contract version encoding
 
 Contract major versions are encoded as:
 
-- **PCI Revision ID** (`0x08` in PCI config header): `0x01` for contract v1.
+- **PCI Revision ID**: `0x01` for contract v1.
 
 Drivers MUST refuse to bind to devices with an unknown major version (Revision ID not recognized), unless explicitly built to support it.
 
-### 5.2 Backwards compatibility policy
+### 4.2 Compatibility rules
 
-- **Major version bump (X.0 → X+1.0):** breaking changes allowed (register layout, queue counts, incompatible semantics).
-- **Minor version bump (X.Y → X.Y+1):** only additive changes allowed:
-  - new optional feature bits
-  - new optional device config fields at the end of a config struct (never reordering existing fields)
-  - new optional commands/requests that return `NOT_SUPP` when unimplemented
+- Major version bump: breaking changes allowed.
+- Minor version bump: additive changes only (new optional feature bits, appended config fields, optional commands).
 
-### 5.3 Feature-bit based extensibility
+## 5. Conformance checklist
 
-All new functionality MUST be gated behind:
-
-- a virtio feature bit, and/or
-- a new queue that is only enabled when a feature bit is negotiated.
-
-Drivers MUST ignore unknown feature bits (do not set them in `GUEST_FEATURES`).
-
-## 6. Conformance checklist
-
-### 6.1 Emulator/device-model checklist
+### 5.1 Emulator/device-model checklist
 
 - [ ] Expose PCI IDs exactly as specified (§1.1, §3).
-- [ ] Implement BAR0 I/O register map exactly (§1.3).
-- [ ] Implement INTx + ISR read-to-ack semantics (§1.4).
-- [ ] Implement reset semantics on `STATUS=0` (§1.5.2).
-- [ ] Implement split rings with required alignments and sizes (§2.2).
-- [ ] Implement indirect descriptors when negotiated (§2.3.1).
-- [ ] Bounds-check all guest physical memory accesses (§2.5).
-- [ ] Implement per-device queue sizes, feature bits, and config layouts (§3).
+- [ ] Expose BAR0 MMIO layout and virtio capabilities exactly (§1.2–§1.4).
+- [ ] Implement common_cfg selectors and queue programming semantics (§1.5).
+- [ ] Implement notify doorbell semantics (§1.6).
+- [ ] Implement ISR read-to-ack semantics for INTx fallback (§1.7–§1.8).
+- [ ] Implement MSI-X with at least `1 + num_queues` vectors (§1.8).
+- [ ] Implement split rings and indirect descriptors (§2.1–§2.4).
+- [ ] Bounds-check all guest physical memory accesses (§2.6).
 
-### 6.2 Windows 7 driver checklist
+### 5.2 Windows 7 driver checklist
 
-- [ ] Bind by Vendor/Device IDs; verify PCI Revision ID (`0x01`) (§5.1).
-- [ ] Use virtio legacy BAR0 I/O registers only (§1.3).
-- [ ] Negotiate only defined feature bits; set `FEATURES_OK` (§1.6).
-- [ ] Allocate split rings with correct alignment/size (§2.2).
-- [ ] Always notify via `QUEUE_NOTIFY` (§2.4.1).
-- [ ] Tolerate INTx interrupts and ISR read-to-ack (§1.4).
-- [ ] Treat unknown config fields as zero; do not assume QEMU-only behaviors.
+- [ ] Bind by Vendor/Device IDs; verify PCI Revision ID (`0x01`) (§4.1).
+- [ ] Parse virtio-pci modern capabilities (COMMON/NOTIFY/ISR/DEVICE) (§1.3).
+- [ ] Negotiate `VIRTIO_F_VERSION_1` and required per-device features (§1.5.2, §3).
+- [ ] Program queues via common_cfg, then notify via notify region (§1.5.4, §1.6).
+- [ ] Use MSI-X when available; fall back to INTx + ISR when not (§1.8).
