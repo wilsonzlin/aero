@@ -9,13 +9,20 @@ static const NDIS_OID g_SupportedOids[] = {
     OID_GEN_HARDWARE_STATUS,
     OID_GEN_MEDIA_SUPPORTED,
     OID_GEN_MEDIA_IN_USE,
+    OID_GEN_PHYSICAL_MEDIUM,
     OID_GEN_MAXIMUM_FRAME_SIZE,
+    OID_GEN_MAXIMUM_LOOKAHEAD,
+    OID_GEN_CURRENT_LOOKAHEAD,
     OID_GEN_MAXIMUM_TOTAL_SIZE,
     OID_GEN_LINK_SPEED,
     OID_GEN_TRANSMIT_BLOCK_SIZE,
     OID_GEN_RECEIVE_BLOCK_SIZE,
     OID_GEN_VENDOR_ID,
     OID_GEN_VENDOR_DESCRIPTION,
+    OID_GEN_DRIVER_VERSION,
+    OID_GEN_VENDOR_DRIVER_VERSION,
+    OID_GEN_MAC_OPTIONS,
+    OID_GEN_MEDIA_CONNECT_STATUS,
     OID_GEN_CURRENT_PACKET_FILTER,
     OID_GEN_MAXIMUM_SEND_PACKETS,
     OID_GEN_XMIT_OK,
@@ -35,6 +42,9 @@ static const NDIS_OID g_SupportedOids[] = {
 static const ULONG64 g_DefaultLinkSpeedBps = 1000000000ull;
 
 #define AEROVNET_MAX_TX_SG_ELEMENTS 32u
+
+// OID_GEN_DRIVER_VERSION encoding is major in high byte, minor in low byte.
+#define AEROVNET_OID_DRIVER_VERSION ((USHORT)((6u << 8) | 20u))
 
 static __forceinline ULONG AerovNetSendCompleteFlagsForCurrentIrql(VOID) {
   return (KeGetCurrentIrql() == DISPATCH_LEVEL) ? NDIS_SEND_COMPLETE_FLAGS_DISPATCH_LEVEL : 0;
@@ -516,7 +526,7 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   Adapter->HostFeatures = VirtioPciReadHostFeatures(&Adapter->Vdev);
 
   // Minimal feature set: MAC + status if present, no offloads, no indirect/event idx.
-  Adapter->GuestFeatures = Adapter->HostFeatures & (VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS);
+  Adapter->GuestFeatures = Adapter->HostFeatures & (VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | VIRTIO_F_ANY_LAYOUT);
   VirtioPciWriteGuestFeatures(&Adapter->Vdev, Adapter->GuestFeatures);
 
   VirtioPciAddStatus(&Adapter->Vdev, VIRTIO_STATUS_FEATURES_OK);
@@ -852,7 +862,9 @@ static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_
   }
 
   // Refill RX queue with any buffers we dropped.
-  AerovNetFillRxQueueLocked(Adapter);
+  if (Adapter->State == AerovNetAdapterRunning) {
+    AerovNetFillRxQueueLocked(Adapter);
+  }
 
   // Link state change handling (config interrupt). Keep it cheap: read status only if supported.
   if ((Isr & 0x2) != 0 && (Adapter->GuestFeatures & VIRTIO_NET_F_STATUS) != 0) {
@@ -1060,7 +1072,30 @@ static NDIS_STATUS AerovNetOidQuery(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ P
       break;
     }
 
+    case OID_GEN_PHYSICAL_MEDIUM: {
+      NDIS_PHYSICAL_MEDIUM P = NdisPhysicalMedium802_3;
+      BytesNeeded = sizeof(P);
+      if (OutLen < BytesNeeded) {
+        break;
+      }
+      *(NDIS_PHYSICAL_MEDIUM*)OutBuffer = P;
+      BytesWritten = sizeof(P);
+      break;
+    }
+
     case OID_GEN_MAXIMUM_FRAME_SIZE: {
+      ULONG V = Adapter->Mtu;
+      BytesNeeded = sizeof(V);
+      if (OutLen < BytesNeeded) {
+        break;
+      }
+      *(ULONG*)OutBuffer = V;
+      BytesWritten = sizeof(V);
+      break;
+    }
+
+    case OID_GEN_MAXIMUM_LOOKAHEAD:
+    case OID_GEN_CURRENT_LOOKAHEAD: {
       ULONG V = Adapter->Mtu;
       BytesNeeded = sizeof(V);
       if (OutLen < BytesNeeded) {
@@ -1124,6 +1159,50 @@ static NDIS_STATUS AerovNetOidQuery(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ P
       }
       RtlCopyMemory(OutBuffer, Desc, sizeof(Desc));
       BytesWritten = sizeof(Desc);
+      break;
+    }
+
+    case OID_GEN_DRIVER_VERSION: {
+      USHORT V = AEROVNET_OID_DRIVER_VERSION;
+      BytesNeeded = sizeof(V);
+      if (OutLen < BytesNeeded) {
+        break;
+      }
+      *(USHORT*)OutBuffer = V;
+      BytesWritten = sizeof(V);
+      break;
+    }
+
+    case OID_GEN_VENDOR_DRIVER_VERSION: {
+      ULONG V = 0x00010000; // 1.0
+      BytesNeeded = sizeof(V);
+      if (OutLen < BytesNeeded) {
+        break;
+      }
+      *(ULONG*)OutBuffer = V;
+      BytesWritten = sizeof(V);
+      break;
+    }
+
+    case OID_GEN_MAC_OPTIONS: {
+      ULONG V = NDIS_MAC_OPTION_COPY_LOOKAHEAD_DATA | NDIS_MAC_OPTION_NO_LOOPBACK;
+      BytesNeeded = sizeof(V);
+      if (OutLen < BytesNeeded) {
+        break;
+      }
+      *(ULONG*)OutBuffer = V;
+      BytesWritten = sizeof(V);
+      break;
+    }
+
+    case OID_GEN_MEDIA_CONNECT_STATUS: {
+      NDIS_MEDIA_STATE S = Adapter->LinkUp ? NdisMediaStateConnected : NdisMediaStateDisconnected;
+      BytesNeeded = sizeof(S);
+      if (OutLen < BytesNeeded) {
+        break;
+      }
+      *(NDIS_MEDIA_STATE*)OutBuffer = S;
+      BytesWritten = sizeof(S);
       break;
     }
 
@@ -1326,6 +1405,23 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
 
       Adapter->PacketFilter = Filter;
       BytesRead = sizeof(Filter);
+      break;
+    }
+
+    case OID_GEN_CURRENT_LOOKAHEAD: {
+      ULONG V;
+      BytesNeeded = sizeof(V);
+      if (InLen < BytesNeeded) {
+        break;
+      }
+
+      V = *(ULONG*)InBuffer;
+      if (V > Adapter->Mtu) {
+        return NDIS_STATUS_INVALID_DATA;
+      }
+
+      // We always indicate full frames; treat lookahead as advisory.
+      BytesRead = sizeof(V);
       break;
     }
 
@@ -1830,6 +1926,8 @@ static NDIS_STATUS AerovNetMiniportInitializeEx(_In_ NDIS_HANDLE MiniportAdapter
   Gen.MacOptions = NDIS_MAC_OPTION_COPY_LOOKAHEAD_DATA | NDIS_MAC_OPTION_NO_LOOPBACK;
   Gen.SupportedStatistics = NDIS_STATISTICS_FLAGS_VALID_DIRECTED_FRAMES_RCV | NDIS_STATISTICS_FLAGS_VALID_DIRECTED_FRAMES_XMIT |
                             NDIS_STATISTICS_FLAGS_VALID_DIRECTED_BYTES_RCV | NDIS_STATISTICS_FLAGS_VALID_DIRECTED_BYTES_XMIT;
+  Gen.SupportedOidList = (PVOID)g_SupportedOids;
+  Gen.SupportedOidListLength = sizeof(g_SupportedOids);
 
   Status = NdisMSetMiniportAttributes(MiniportAdapterHandle, (PNDIS_MINIPORT_ADAPTER_ATTRIBUTES)&Gen);
   if (Status != NDIS_STATUS_SUCCESS) {
