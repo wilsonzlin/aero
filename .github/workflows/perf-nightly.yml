@@ -1,15 +1,26 @@
-name: perf-nightly
+name: Perf (nightly)
 
 on:
   schedule:
     - cron: "0 3 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Iterations per benchmark (median-of-N)
+        required: false
+        default: "7"
+
+permissions:
+  contents: write
 
 jobs:
-  perf:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+  perf-nightly:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      NODE_VERSION: "20.11.1"
+      PLAYWRIGHT_VERSION: "1.57.0"
+      PERF_ITERATIONS: ${{ github.event.inputs.iterations || '7' }}
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -19,7 +30,27 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: tools/perf/package-lock.json
+
+      - name: Install perf tool dependencies
+        run: npm ci
+        working-directory: tools/perf
+
+      - name: Install Chromium (Playwright)
+        run: npx --yes playwright@${{ env.PLAYWRIGHT_VERSION }} install --with-deps chromium
+
+      - name: Run browser perf (nightly)
+        run: node tools/perf/run.mjs --out-dir perf-results/nightly --iterations ${{ env.PERF_ITERATIONS }}
+
+      - name: Upload browser perf artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-nightly-${{ github.run_id }}
+          path: perf-results/nightly
+          if-no-files-found: error
 
       - name: Checkout gh-pages (optional; used to load prior history)
         uses: actions/checkout@v4
@@ -35,7 +66,7 @@ jobs:
             cp .gh-pages/history.json bench/history.json
           fi
 
-      - name: Run benchmarks
+      - name: Run microbenchmarks (history)
         run: node bench/run.js --out bench/results.json
 
       - name: Append to history
@@ -72,4 +103,3 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: dist/perf-dashboard
           publish_branch: gh-pages
-

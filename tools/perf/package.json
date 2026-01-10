@@ -1,0 +1,12 @@
+{
+  "name": "aero-perf-tools",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "playwright-core": "1.57.0"
+  }
+}
+

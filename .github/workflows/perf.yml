@@ -1,0 +1,174 @@
+name: Perf (smoke)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: perf-smoke-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  perf-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      NODE_VERSION: "20.11.1"
+      PLAYWRIGHT_VERSION: "1.57.0"
+      PERF_ITERATIONS: "3"
+      PERF_REGRESSION_THRESHOLD_PCT: "15"
+      PERF_EXTREME_CV_THRESHOLD: "0.5"
+    steps:
+      - name: Checkout (candidate)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: head
+
+      - name: Checkout (baseline)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: head/tools/perf/package-lock.json
+
+      - name: Install perf tool dependencies
+        run: npm ci
+        working-directory: head/tools/perf
+
+      - name: Install Chromium (Playwright)
+        run: npx --yes playwright@${{ env.PLAYWRIGHT_VERSION }} install --with-deps chromium
+
+      - name: Run perf smoke (baseline)
+        run: node ../head/tools/perf/run.mjs --out-dir ../head/perf-results/base --iterations ${{ env.PERF_ITERATIONS }}
+        working-directory: base
+
+      - name: Run perf smoke (candidate)
+        run: node tools/perf/run.mjs --out-dir perf-results/head --iterations ${{ env.PERF_ITERATIONS }}
+        working-directory: head
+
+      - name: Compare (fail on regression)
+        run: |
+          node tools/perf/compare.mjs \
+            --baseline perf-results/base/summary.json \
+            --candidate perf-results/head/summary.json \
+            --out-dir perf-results \
+            --regression-threshold-pct ${{ env.PERF_REGRESSION_THRESHOLD_PCT }} \
+            --extreme-cv-threshold ${{ env.PERF_EXTREME_CV_THRESHOLD }}
+        working-directory: head
+
+      - name: Upload perf artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-smoke-${{ github.run_id }}
+          path: head/perf-results
+          if-no-files-found: error
+
+      - name: Comment on PR (summary)
+        if: always() && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("node:fs");
+            const path = require("node:path");
+
+            const summaryPath = path.join(process.env.GITHUB_WORKSPACE, "head", "perf-results", "summary.json");
+            if (!fs.existsSync(summaryPath)) {
+              core.warning(`Perf summary not found at ${summaryPath}; skipping PR comment.`);
+              return;
+            }
+
+            const summary = JSON.parse(fs.readFileSync(summaryPath, "utf8"));
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+
+            const fmtPct = (pct) => `${pct > 0 ? "+" : ""}${(pct * 100).toFixed(1)}%`;
+            const fmtMs = (ms) => `${ms > 0 ? "+" : ""}${ms.toFixed(1)}ms`;
+
+            const lines = [];
+            lines.push("<!-- aero-perf-smoke -->");
+            lines.push("### Perf (smoke)");
+            lines.push("");
+            lines.push(`Report + artifacts: ${runUrl}`);
+            lines.push("");
+            lines.push(`Baseline: \`${summary.baseline?.gitSha ?? "unknown"}\``);
+            lines.push(`Candidate: \`${summary.candidate?.gitSha ?? "unknown"}\``);
+            lines.push(`Threshold: ${summary.regressionThresholdPct}% regression (median-of-${summary.iterations ?? "?"})`);
+
+            if (summary.status === "unstable") {
+              lines.push("");
+              lines.push("Result: **Unstable** (extreme variance detected; see artifacts for raw samples)");
+            } else if (summary.status === "fail") {
+              lines.push("");
+              lines.push("Result: **Regression**");
+            } else if (summary.status === "pass") {
+              lines.push("");
+              lines.push("Result: **No significant regressions**");
+            }
+
+            const bullets = [];
+            const take = (arr) => (Array.isArray(arr) ? arr.slice(0, 5) : []);
+            for (const r of take(summary.topRegressions)) {
+              bullets.push(`- \`${r.name}\`: ${fmtPct(r.pct)} (${fmtMs(r.deltaMs)})`);
+            }
+            if (bullets.length) {
+              lines.push("");
+              lines.push("Top regressions:");
+              lines.push(...bullets);
+            }
+
+            const improvements = [];
+            for (const r of take(summary.topImprovements)) {
+              improvements.push(`- \`${r.name}\`: ${fmtPct(r.pct)} (${fmtMs(r.deltaMs)})`);
+            }
+            if (improvements.length) {
+              lines.push("");
+              lines.push("Top improvements:");
+              lines.push(...improvements);
+            }
+
+            const body = lines.join("\n");
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+
+            const existing = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const marker = "<!-- aero-perf-smoke -->";
+            const botLogin = "github-actions[bot]";
+            const previous = existing.find(
+              (c) => c.user?.login === botLogin && typeof c.body === "string" && c.body.includes(marker),
+            );
+
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: previous.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
+
