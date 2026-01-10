@@ -165,9 +165,11 @@ REM Enable test signing (requires reboot to take effect)
 bcdedit /set testsigning on>>"%LOG%" 2>&1
 
 REM Trust the driver signing certificate (optional; adjust file name/store as needed)
-if exist "%SRC%\Certs\AeroTestRoot.cer" (
-  certutil -addstore -f Root "%SRC%\Certs\AeroTestRoot.cer">>"%LOG%" 2>&1
-  certutil -addstore -f TrustedPublisher "%SRC%\Certs\AeroTestRoot.cer">>"%LOG%" 2>&1
+set CERT=%SRC%\Cert\aero_test.cer
+if not exist "%CERT%" set CERT=%SRC%\Certs\AeroTestRoot.cer
+if exist "%CERT%" (
+  certutil -addstore -f Root "%CERT%">>"%LOG%" 2>&1
+  certutil -addstore -f TrustedPublisher "%CERT%">>"%LOG%" 2>&1
 )
 
 REM Stage/install INF drivers (verify pnputil flags on Win7 SP1)
@@ -209,9 +211,11 @@ This setting does **not** take effect until you reboot.
 Import into both `Root` and `TrustedPublisher`:
 
 ```bat
-certutil -addstore -f Root "%configsetroot%\\Certs\\AeroTestRoot.cer"
-certutil -addstore -f TrustedPublisher "%configsetroot%\\Certs\\AeroTestRoot.cer"
+certutil -addstore -f Root "%configsetroot%\\Cert\\aero_test.cer"
+certutil -addstore -f TrustedPublisher "%configsetroot%\\Cert\\aero_test.cer"
 ```
+
+If you use the older `Certs\\AeroTestRoot.cer` naming, the same commands apply with the path adjusted.
 
 > Verify on real Win7 setup: the best store(s) depend on how the drivers are signed (cross-signed vs. test-signed). The above is a common baseline for test-signed driver packages.
 
