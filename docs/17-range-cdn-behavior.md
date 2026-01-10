@@ -41,12 +41,21 @@ If you are looking for a **deployment runbook** (S3 + CloudFront + signed URLs/c
 
 **Recommendation for Aero:** Keep the cache key minimal (path + version). Do *not* vary/cache-key on `Range`; doing so will fragment the cache and destroy hit ratio.
 
-**Important operational note:** in practice you should **verify** `206` caching on your own distribution. We have observed public CloudFront distributions where:
+**Important operational note:** when validating `206` caching, make sure you’re comparing requests handled by the **same edge cache node**. CloudFront POPs often return multiple IPs and the `Via:` value can change between connections; caches are not necessarily shared across those nodes.
 
-- Full-object `GET` (`200`) becomes `X-Cache: Hit from cloudfront`, but
-- Repeated identical `Range` requests (`206`) remain `X-Cache: Miss from cloudfront`.
+- If you run `curl` twice as separate processes, you can hit different cache nodes and see `X-Cache: Miss from cloudfront` both times even though caching is working.
+- Prefer to either:
+  - reuse the same connection (example below), or
+  - pin to one CloudFront edge IP with `curl --resolve`.
 
-In that case, CloudFront may still serve ranges from a cached `200` response, but it may not cache arbitrary viewer-requested `206` slices in the way you expect. For Aero’s highly random access pattern, prefer chunk objects (or the no-Range format) if you cannot confirm `206` hits.
+Example (single `curl` process, same connection → you should typically see `Miss` then `Hit`):
+
+```bash
+URL='https://d3njjcbhbojbot.cloudfront.net/webapps/r2-builds/front-page/en.app.1cc5a48243bc23fab536.js?cachebust=aero-range-test'
+curl -fsS -D - -o /dev/null -H 'Range: bytes=0-1023' "$URL" \
+  --next -fsS -D - -o /dev/null -H 'Range: bytes=0-1023' "$URL" \
+  | grep -iE '^(x-cache|age|via|x-amz-cf-pop|content-range):'
+```
 
 ### Q2: Can CloudFront serve/caches Range requests for objects larger than CloudFront’s maximum cacheable file size?
 
@@ -264,11 +273,14 @@ Confirm:
 
 ### 2) Cache hit behavior for `206`
 
-Repeat the same request twice:
+Repeat the same request twice.
+
+> Tip: if you run two separate `curl` commands, CloudFront may route you to different edge cache nodes. For the cleanest signal, reuse the same connection with `--next`:
 
 ```bash
-curl -fsS -D - -o /dev/null -H 'Range: bytes=0-1023' "$URL" | grep -iE '^(x-cache|age|via|x-amz-cf-pop):'
-curl -fsS -D - -o /dev/null -H 'Range: bytes=0-1023' "$URL" | grep -iE '^(x-cache|age|via|x-amz-cf-pop):'
+curl -fsS -D - -o /dev/null -H 'Range: bytes=0-1023' "$URL" \
+  --next -fsS -D - -o /dev/null -H 'Range: bytes=0-1023' "$URL" \
+  | grep -iE '^(x-cache|age|via|x-amz-cf-pop):'
 ```
 
 Expect on CloudFront:
