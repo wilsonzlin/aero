@@ -115,3 +115,4 @@ fuzz/Cargo.lock
 # Aero Win7 virtio selftest build outputs (avoid clutter if building with MSVC locally)
 drivers/windows7/tests/guest-selftest/**/Debug/
 drivers/windows7/tests/guest-selftest/**/Release/
+**/*.snap.new

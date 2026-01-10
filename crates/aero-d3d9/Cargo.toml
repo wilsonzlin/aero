@@ -10,4 +10,4 @@ thiserror = "2.0.9"
 [dev-dependencies]
 naga = { version = "24.0.0", default-features = false, features = ["wgsl-in"] }
 pretty_assertions = "1.4.1"
-
+insta = "1.39.0"

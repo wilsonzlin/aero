@@ -1,0 +1,19 @@
+---
+source: crates/aero-d3d9/tests/sm3_ir.rs
+assertion_line: 86
+expression: ir.to_string()
+---
+ps_3_0
+inputs:
+  v0 = TexCoord(0) mask=0x3
+samplers:
+  s0: Texture2D
+const-defs:
+  c0 = [0.50000000, 0.00000000, 0.00000000, 0.00000000]
+body:
+  texld r0, v0, s0
+  if r0.xxxx > c0.xxxx {
+    mov o64, r0
+  } else {
+    mov o64, c0
+  }
