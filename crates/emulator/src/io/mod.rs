@@ -1,10 +1,12 @@
 pub mod net;
+pub mod pci;
+pub mod storage;
+pub mod usb;
 
 /// Trait implemented by devices that respond to x86 IN/OUT instructions.
 ///
 /// `size` is the access size in bytes (1/2/4). Implementations should handle
 /// any size gracefully, even if a port is traditionally byte-wide.
-pub mod usb;
 
 pub trait PortIO {
     fn port_read(&self, port: u16, size: usize) -> u32;
