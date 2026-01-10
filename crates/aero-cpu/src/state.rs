@@ -2,6 +2,8 @@
 
 use aero_core::memory::Memory;
 
+use std::collections::VecDeque;
+
 use crate::descriptors::{
     parse_segment_descriptor, parse_system_descriptor, parse_system_descriptor_64,
     DescriptorTableReg,
@@ -395,6 +397,12 @@ pub struct CpuState {
     pub msrs: Msrs,
 
     pub fpu: FpuState,
+
+    /// FIFO of externally injected interrupts (PIC/APIC).
+    pub external_interrupts: VecDeque<u8>,
+    /// Interrupt shadow after STI (inhibits interrupts for one instruction).
+    pub interrupt_inhibit: u8,
+    pub(crate) interrupt_frames: Vec<crate::interrupts::InterruptStackFrame>,
 }
 
 impl Default for CpuState {
@@ -417,6 +425,9 @@ impl Default for CpuState {
             debug: DebugRegs::default(),
             msrs: Msrs::default(),
             fpu: FpuState::default(),
+            external_interrupts: VecDeque::new(),
+            interrupt_inhibit: 0,
+            interrupt_frames: Vec::new(),
         };
 
         cpu.set_real_mode_segment_defaults();
@@ -556,6 +567,29 @@ impl CpuState {
             0
         } else {
             (self.cs.selector & 0x3) as u8
+        }
+    }
+
+    pub fn cli(&mut self) -> Result<(), Exception> {
+        if !self.is_real_mode() && self.cpl() != 0 {
+            return Err(Exception::GeneralProtection { code: 0 });
+        }
+        self.rflags.set_if(false);
+        Ok(())
+    }
+
+    pub fn sti(&mut self) -> Result<(), Exception> {
+        if !self.is_real_mode() && self.cpl() != 0 {
+            return Err(Exception::GeneralProtection { code: 0 });
+        }
+        self.rflags.set_if(true);
+        self.interrupt_inhibit = 1;
+        Ok(())
+    }
+
+    pub fn retire_instruction(&mut self) {
+        if self.interrupt_inhibit > 0 {
+            self.interrupt_inhibit -= 1;
         }
     }
 

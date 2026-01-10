@@ -15,6 +15,12 @@ pub enum InterruptSource {
     Exception,
 }
 
+/// External interrupt controller interface (PIC/APIC).
+pub trait InterruptController {
+    /// Returns the next pending external interrupt vector, if any.
+    fn poll_interrupt(&mut self) -> Option<u8>;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageFaultErrorCode(u32);
 
@@ -68,7 +74,7 @@ impl StackPtrWidth {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PushWidth {
+pub(crate) enum PushWidth {
     Bits16,
     Bits32,
     Bits64,
@@ -90,6 +96,18 @@ impl PushWidth {
             PushWidth::Bits64 => 0xFFFF_FFFF_FFFF_FFFF,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InterruptStackFrame {
+    Real16,
+    Protected {
+        push_width: PushWidth,
+        stack_switched: bool,
+    },
+    Long64 {
+        stack_switched: bool,
+    },
 }
 
 impl CpuState {
@@ -142,6 +160,57 @@ impl CpuState {
         Ok(())
     }
 
+    fn pop_value<M: Memory>(
+        &mut self,
+        mem: &mut M,
+        sp_width: StackPtrWidth,
+        pop_width: PushWidth,
+    ) -> Result<u64, Exception> {
+        let bytes = pop_width.bytes();
+        let mask = sp_width.wrap_mask();
+        let sp = self.gpr64(Gpr::Rsp) & mask;
+        let addr = self.ss.cache.base.wrapping_add(sp);
+
+        let value = match pop_width {
+            PushWidth::Bits16 => mem.read_u16(addr).map(|v| v as u64),
+            PushWidth::Bits32 => mem.read_u32(addr).map(|v| v as u64),
+            PushWidth::Bits64 => mem.read_u64(addr),
+        };
+        let value = value.map_err(|_| Exception::GeneralProtection { code: 0 })?;
+
+        let new_sp = sp.wrapping_add(bytes) & mask;
+        self.set_gpr64(Gpr::Rsp, (self.gpr64(Gpr::Rsp) & !mask) | new_sp);
+        Ok(value)
+    }
+
+    pub fn inject_external_interrupt(&mut self, vector: u8) {
+        self.external_interrupts.push_back(vector);
+    }
+
+    pub fn poll_and_deliver_external_interrupt<M: Memory, C: InterruptController>(
+        &mut self,
+        mem: &mut M,
+        ctrl: &mut C,
+    ) -> Result<(), Exception> {
+        if let Some(vector) = ctrl.poll_interrupt() {
+            self.inject_external_interrupt(vector);
+        }
+        self.deliver_external_interrupt(mem)
+    }
+
+    pub fn deliver_external_interrupt<M: Memory>(&mut self, mem: &mut M) -> Result<(), Exception> {
+        if !self.rflags.if_flag() {
+            return Ok(());
+        }
+        if self.interrupt_inhibit != 0 {
+            return Ok(());
+        }
+        let Some(vector) = self.external_interrupts.pop_front() else {
+            return Ok(());
+        };
+        self.deliver_interrupt(mem, vector, InterruptSource::External, None)
+    }
+
     pub fn software_interrupt<M: Memory>(
         &mut self,
         mem: &mut M,
@@ -155,10 +224,8 @@ impl CpuState {
         mem: &mut M,
         vector: u8,
     ) -> Result<(), Exception> {
-        if !self.rflags.if_flag() {
-            return Ok(());
-        }
-        self.deliver_interrupt(mem, vector, InterruptSource::External, None)
+        self.inject_external_interrupt(vector);
+        self.deliver_external_interrupt(mem)
     }
 
     pub fn raise_page_fault<M: Memory>(
@@ -250,6 +317,7 @@ impl CpuState {
 
         self.set_segment_real_mode(SegReg::Cs, entry.segment);
         self.set_ip(entry.offset);
+        self.interrupt_frames.push(InterruptStackFrame::Real16);
         Ok(())
     }
 
@@ -376,6 +444,10 @@ impl CpuState {
             GateSize::Bits64 => unreachable!("64-bit gate in protected mode"),
         }
 
+        self.interrupt_frames.push(InterruptStackFrame::Protected {
+            push_width,
+            stack_switched: new_cpl < old_cpl,
+        });
         Ok(())
     }
 
@@ -465,6 +537,127 @@ impl CpuState {
         }
 
         self.rip = gate.offset;
+        self.interrupt_frames.push(InterruptStackFrame::Long64 {
+            stack_switched: used_ist || new_cpl < old_cpl,
+        });
+        Ok(())
+    }
+
+    pub fn iret<M: Memory>(&mut self, mem: &mut M) -> Result<(), Exception> {
+        let Some(frame) = self.interrupt_frames.pop() else {
+            return Err(Exception::GeneralProtection { code: 0 });
+        };
+
+        match frame {
+            InterruptStackFrame::Real16 => self.iret_real(mem),
+            InterruptStackFrame::Protected {
+                push_width,
+                stack_switched,
+            } => self.iret_protected(mem, push_width, stack_switched),
+            InterruptStackFrame::Long64 { stack_switched } => self.iret_long(mem, stack_switched),
+        }
+    }
+
+    fn iret_real<M: Memory>(&mut self, mem: &mut M) -> Result<(), Exception> {
+        let sp_width = StackPtrWidth::Bits16;
+        let push_width = PushWidth::Bits16;
+
+        let ip = self.pop_value(mem, sp_width, push_width)? as u16;
+        let cs = self.pop_value(mem, sp_width, push_width)? as u16;
+        let flags = self.pop_value(mem, sp_width, push_width)?;
+
+        self.set_segment_real_mode(SegReg::Cs, cs);
+        self.set_ip(ip);
+
+        let raw = self.rflags.read();
+        self.rflags
+            .set_raw((raw & !0xFFFF) | (flags & 0xFFFF) | (1 << 1));
+        Ok(())
+    }
+
+    fn iret_protected<M: Memory>(
+        &mut self,
+        mem: &mut M,
+        push_width: PushWidth,
+        stack_switched: bool,
+    ) -> Result<(), Exception> {
+        let sp_width = self.stack_ptr_width();
+
+        let ip = self.pop_value(mem, sp_width, push_width)?;
+        let cs = self.pop_value(mem, sp_width, push_width)? as u16;
+        let flags = self.pop_value(mem, sp_width, push_width)?;
+
+        let current_cpl = self.cpl();
+        let return_cpl = (cs & 0x3) as u8;
+
+        let (new_sp, new_ss) = if stack_switched || return_cpl > current_cpl {
+            let sp = self.pop_value(mem, sp_width, push_width)?;
+            let ss = self.pop_value(mem, sp_width, push_width)? as u16;
+            (Some(sp), Some(ss))
+        } else {
+            (None, None)
+        };
+
+        match push_width {
+            PushWidth::Bits16 => self.set_ip(ip as u16),
+            PushWidth::Bits32 => self.set_eip(ip as u32),
+            PushWidth::Bits64 => unreachable!("64-bit iret in protected mode"),
+        }
+
+        let raw = self.rflags.read();
+        match push_width {
+            PushWidth::Bits16 => self.rflags.set_raw((raw & !0xFFFF) | (flags & 0xFFFF)),
+            PushWidth::Bits32 => self
+                .rflags
+                .set_raw((raw & !0xFFFF_FFFF) | (flags & 0xFFFF_FFFF)),
+            PushWidth::Bits64 => unreachable!("64-bit iret in protected mode"),
+        }
+
+        self.cs.selector = cs;
+        self.load_segment(SegReg::Cs, cs, mem)?;
+
+        if let (Some(sp), Some(ss)) = (new_sp, new_ss) {
+            match push_width {
+                PushWidth::Bits16 => self.set_gpr16(Gpr::Rsp, sp as u16),
+                PushWidth::Bits32 => self.set_gpr32(Gpr::Rsp, sp as u32),
+                PushWidth::Bits64 => unreachable!("64-bit iret in protected mode"),
+            }
+            self.load_segment(SegReg::Ss, ss, mem)?;
+        }
+
+        Ok(())
+    }
+
+    fn iret_long<M: Memory>(&mut self, mem: &mut M, stack_switched: bool) -> Result<(), Exception> {
+        let sp_width = StackPtrWidth::Bits64;
+        let push_width = PushWidth::Bits64;
+
+        let rip = self.pop_value(mem, sp_width, push_width)?;
+        let cs = self.pop_value(mem, sp_width, push_width)? as u16;
+        let rflags = self.pop_value(mem, sp_width, push_width)?;
+
+        let current_cpl = self.cpl();
+        let return_cpl = (cs & 0x3) as u8;
+
+        let (new_rsp, new_ss) = if stack_switched || return_cpl > current_cpl {
+            let rsp = self.pop_value(mem, sp_width, push_width)?;
+            let ss = self.pop_value(mem, sp_width, push_width)? as u16;
+            (Some(rsp), Some(ss))
+        } else {
+            (None, None)
+        };
+
+        self.rip = rip;
+        self.rflags.set_raw(rflags);
+
+        self.cs.selector = cs;
+        self.load_segment(SegReg::Cs, cs, mem)?;
+
+        if let (Some(rsp), Some(ss)) = (new_rsp, new_ss) {
+            self.set_gpr64(Gpr::Rsp, rsp);
+            self.load_segment(SegReg::Ss, ss, mem)?;
+        }
+
         Ok(())
     }
 
@@ -623,6 +816,34 @@ mod tests {
     }
 
     #[test]
+    fn real_mode_iret_restores_cs_ip_flags() {
+        let mut mem = VecMemory::new(0x40000);
+        let mut cpu = CpuState::default();
+
+        cpu.set_segment_real_mode(SegReg::Cs, 0x1000);
+        cpu.set_segment_real_mode(SegReg::Ss, 0x2000);
+        cpu.set_ip(0x0100);
+        cpu.set_gpr16(Gpr::Rsp, 0xFFFE);
+        cpu.rflags.set_raw((1 << 1) | RFLAGS_IF);
+
+        // IVT entry for vector 0x10: handler at 0x3000:0x0200.
+        let entry_addr = 0x10u64 * 4;
+        mem.write_u16(entry_addr, 0x0200).unwrap();
+        mem.write_u16(entry_addr + 2, 0x3000).unwrap();
+
+        cpu.software_interrupt(&mut mem, 0x10).unwrap();
+        assert_eq!(cpu.cs.selector, 0x3000);
+        assert_eq!(cpu.ip(), 0x0200);
+        assert!(!cpu.rflags.if_flag());
+
+        cpu.iret(&mut mem).unwrap();
+        assert_eq!(cpu.cs.selector, 0x1000);
+        assert_eq!(cpu.ip(), 0x0100);
+        assert!(cpu.rflags.if_flag());
+        assert_eq!(cpu.gpr16(Gpr::Rsp), 0xFFFE);
+    }
+
+    #[test]
     fn protected_mode_interrupt_gate_pushes_32bit_frame_and_clears_if() {
         let mut mem = VecMemory::new(0x8000);
         let mut cpu = CpuState::default();
@@ -665,6 +886,45 @@ mod tests {
         assert_eq!(pushed_eip, 0xCAFEBABE);
         assert_eq!(pushed_cs & 0xFFFF, 0x08);
         assert_ne!(pushed_eflags & (RFLAGS_IF as u32), 0);
+    }
+
+    #[test]
+    fn protected_mode_iret_restores_eip_cs_eflags() {
+        let mut mem = VecMemory::new(0x8000);
+        let mut cpu = CpuState::default();
+
+        let gdt_base = 0x1000;
+        write_desc(&mut mem, gdt_base, 0);
+        write_desc(&mut mem, gdt_base + 8, 0x00CF9A000000FFFF);
+        write_desc(&mut mem, gdt_base + 16, 0x00CF92000000FFFF);
+        cpu.lgdt(gdt_base, 0x17);
+        cpu.write_cr0(cpu.control.cr0 | CR0_PE);
+        cpu.load_segment(SegReg::Cs, 0x08, &mem).unwrap();
+        cpu.load_segment(SegReg::Ss, 0x10, &mem).unwrap();
+
+        cpu.set_eip(0xCAFEBABE);
+        cpu.set_gpr32(Gpr::Rsp, 0x3000);
+        cpu.rflags.set_raw((1 << 1) | RFLAGS_IF);
+
+        let idt_base = 0x2000;
+        let handler_offset = 0x12345678u32;
+        let gate: u64 = (handler_offset as u64 & 0xFFFF)
+            | ((0x08u64) << 16)
+            | (0u64 << 32)
+            | (0x8Eu64 << 40)
+            | (((handler_offset as u64) & 0xFFFF_0000) << 32);
+        write_desc(&mut mem, idt_base + (0x80 * 8) as u64, gate);
+        cpu.lidt(idt_base, 0x0FFF);
+
+        cpu.software_interrupt(&mut mem, 0x80).unwrap();
+        assert_eq!(cpu.eip(), handler_offset);
+        assert!(!cpu.rflags.if_flag());
+
+        cpu.iret(&mut mem).unwrap();
+        assert_eq!(cpu.eip(), 0xCAFEBABE);
+        assert_eq!(cpu.cs.selector, 0x08);
+        assert!(cpu.rflags.if_flag());
+        assert_eq!(cpu.gpr32(Gpr::Rsp), 0x3000);
     }
 
     #[test]
@@ -775,6 +1035,71 @@ mod tests {
     }
 
     #[test]
+    fn protected_mode_ring3_interrupt_and_iret_restore_stack() {
+        let mut mem = VecMemory::new(0x20000);
+        let mut cpu = CpuState::default();
+
+        let gdt_base = 0x1000;
+        write_desc(&mut mem, gdt_base, 0);
+        // kernel code/data
+        write_desc(&mut mem, gdt_base + 8, 0x00CF9A000000FFFF);
+        write_desc(&mut mem, gdt_base + 16, 0x00CF92000000FFFF);
+        // user code/data (DPL=3)
+        write_desc(&mut mem, gdt_base + 24, 0x00CFFA000000FFFF);
+        write_desc(&mut mem, gdt_base + 32, 0x00CFF2000000FFFF);
+
+        // 32-bit available TSS descriptor at index 5.
+        let tss_base = 0x1800u32;
+        let tss_limit = 0x67u32;
+        let tss_desc: u64 = (tss_limit as u64 & 0xFFFF)
+            | ((tss_base as u64 & 0xFFFF) << 16)
+            | (((tss_base as u64 >> 16) & 0xFF) << 32)
+            | (0x89u64 << 40)
+            | (((tss_limit as u64 >> 16) & 0xF) << 48)
+            | (((tss_base as u64 >> 24) & 0xFF) << 56);
+        write_desc(&mut mem, gdt_base + 40, tss_desc);
+
+        cpu.lgdt(gdt_base, 0x2F);
+        cpu.write_cr0(cpu.control.cr0 | CR0_PE);
+
+        // Start at CPL=3.
+        cpu.cs.selector = 0x1B;
+        cpu.load_segment(SegReg::Cs, 0x1B, &mem).unwrap();
+        cpu.load_segment(SegReg::Ss, 0x23, &mem).unwrap();
+        cpu.set_gpr32(Gpr::Rsp, 0x9000);
+        cpu.set_eip(0x0040_0000);
+        cpu.rflags.set_raw((1 << 1) | RFLAGS_IF);
+
+        // Fill TSS.ss0/esp0.
+        mem.write_u32(tss_base as u64 + 4, 0x8000).unwrap();
+        mem.write_u16(tss_base as u64 + 8, 0x10).unwrap();
+        cpu.ltr(0x28, &mem).unwrap();
+
+        // IDT gate with DPL=3 so INT is allowed from ring 3.
+        let idt_base = 0x2000;
+        let handler_offset = 0x11223344u32;
+        let gate: u64 = (handler_offset as u64 & 0xFFFF)
+            | ((0x08u64) << 16)
+            | (0u64 << 32)
+            | (0xEEu64 << 40)
+            | (((handler_offset as u64) & 0xFFFF_0000) << 32);
+        write_desc(&mut mem, idt_base + (0x30 * 8) as u64, gate);
+        cpu.lidt(idt_base, 0x0FFF);
+
+        cpu.software_interrupt(&mut mem, 0x30).unwrap();
+        assert_eq!(cpu.cpl(), 0);
+        assert_eq!(cpu.eip(), handler_offset);
+
+        cpu.iret(&mut mem).unwrap();
+        assert_eq!(cpu.cpl(), 3);
+        assert_eq!(cpu.cs.selector, 0x1B);
+        assert_eq!(cpu.ss.selector, 0x23);
+        assert_eq!(cpu.eip(), 0x0040_0000);
+        assert_eq!(cpu.gpr32(Gpr::Rsp), 0x9000);
+        assert!(cpu.rflags.if_flag());
+    }
+
+    #[test]
     fn long_mode_interrupt_pushes_64bit_frame() {
         let mut mem = VecMemory::new(0x20000);
         let mut cpu = CpuState::default();
@@ -821,5 +1146,115 @@ mod tests {
         assert_eq!(pushed_rip, 0x1111_2222_3333_4444);
         assert_eq!(pushed_cs & 0xFFFF, 0x08);
         assert_ne!(pushed_rflags & RFLAGS_IF, 0);
+    }
+
+    #[test]
+    fn sti_shadow_blocks_external_interrupt_until_retire() {
+        let mut mem = VecMemory::new(0x8000);
+        let mut cpu = CpuState::default();
+
+        // Setup protected mode.
+        let gdt_base = 0x1000;
+        write_desc(&mut mem, gdt_base, 0);
+        write_desc(&mut mem, gdt_base + 8, 0x00CF9A000000FFFF);
+        write_desc(&mut mem, gdt_base + 16, 0x00CF92000000FFFF);
+        cpu.lgdt(gdt_base, 0x17);
+        cpu.write_cr0(cpu.control.cr0 | CR0_PE);
+        cpu.load_segment(SegReg::Cs, 0x08, &mem).unwrap();
+        cpu.load_segment(SegReg::Ss, 0x10, &mem).unwrap();
+        cpu.set_gpr32(Gpr::Rsp, 0x3000);
+        cpu.set_eip(0x1111);
+
+        // IDT entry for external interrupt vector 0x20.
+        let idt_base = 0x2000;
+        let handler_offset = 0x2222u32;
+        let gate: u64 = (handler_offset as u64 & 0xFFFF)
+            | ((0x08u64) << 16)
+            | (0u64 << 32)
+            | (0x8Eu64 << 40)
+            | (((handler_offset as u64) & 0xFFFF_0000) << 32);
+        write_desc(&mut mem, idt_base + (0x20 * 8) as u64, gate);
+        cpu.lidt(idt_base, 0x0FFF);
+
+        cpu.cli().unwrap();
+        cpu.sti().unwrap(); // sets IF + shadow
+
+        cpu.inject_external_interrupt(0x20);
+        cpu.deliver_external_interrupt(&mut mem).unwrap();
+        assert_eq!(cpu.eip(), 0x1111);
+
+        cpu.retire_instruction();
+        cpu.deliver_external_interrupt(&mut mem).unwrap();
+        assert_eq!(cpu.eip(), handler_offset);
+    }
+
+    #[test]
+    fn long_mode_ring3_interrupt_and_iretq_restore_user_state() {
+        let mut mem = VecMemory::new(0x40000);
+        let mut cpu = CpuState::default();
+
+        let gdt_base = 0x1000;
+        write_desc(&mut mem, gdt_base, 0);
+        // kernel 64-bit code + data
+        write_desc(&mut mem, gdt_base + 8, 0x00AF9A000000FFFF);
+        write_desc(&mut mem, gdt_base + 16, 0x00CF92000000FFFF);
+        // user 64-bit code + data (DPL=3)
+        write_desc(&mut mem, gdt_base + 24, 0x00AFFA000000FFFF);
+        write_desc(&mut mem, gdt_base + 32, 0x00CFF2000000FFFF);
+
+        // 64-bit available TSS descriptor at index 5.
+        let tss_base = 0x1800u64;
+        let tss_limit = 0x67u32;
+        let tss_desc_low: u64 = (tss_limit as u64 & 0xFFFF)
+            | ((tss_base & 0xFFFF) << 16)
+            | (((tss_base >> 16) & 0xFF) << 32)
+            | (0x89u64 << 40)
+            | (((tss_limit as u64 >> 16) & 0xF) << 48)
+            | (((tss_base >> 24) & 0xFF) << 56);
+        let tss_desc_high: u64 = tss_base >> 32;
+        write_desc(&mut mem, gdt_base + 40, tss_desc_low);
+        write_desc(&mut mem, gdt_base + 48, tss_desc_high);
+
+        cpu.lgdt(gdt_base, 0x3F);
+        cpu.write_cr0(cpu.control.cr0 | CR0_PE);
+        cpu.write_cr4(cpu.control.cr4 | CR4_PAE);
+        cpu.write_msr(IA32_EFER, cpu.msrs.efer | EFER_LME).unwrap();
+        cpu.write_cr0(cpu.control.cr0 | CR0_PG);
+        assert!(cpu.long_mode_active());
+
+        // Start in user mode.
+        cpu.cs.selector = 0x1B;
+        cpu.load_segment(SegReg::Cs, 0x1B, &mem).unwrap();
+        cpu.load_segment(SegReg::Ss, 0x23, &mem).unwrap();
+        cpu.rip = 0x4000_0000;
+        cpu.set_gpr64(Gpr::Rsp, 0x7000);
+        cpu.rflags.set_raw((1 << 1) | RFLAGS_IF);
+
+        // Configure TSS.rsp0.
+        mem.write_u64(tss_base + 4, 0x9000).unwrap();
+        cpu.ltr(0x28, &mem).unwrap();
+
+        // IDT entry.
+        let idt_base = 0x2000;
+        let handler_offset = 0x5000u64;
+        let gate = (handler_offset & 0xFFFF)
+            | ((0x08u64) << 16)
+            | (0u64 << 32)
+            | (0xEEu64 << 40)
+            | (((handler_offset >> 16) & 0xFFFF) << 48);
+        let gate_high = (handler_offset >> 32) as u32 as u64;
+        let gate_u128 = (gate as u128) | ((gate_high as u128) << 64);
+        write_u128(&mut mem, idt_base + (0x80 * 16) as u64, gate_u128);
+        cpu.lidt(idt_base, 0x0FFF);
+
+        cpu.software_interrupt(&mut mem, 0x80).unwrap();
+        assert_eq!(cpu.cpl(), 0);
+        assert_eq!(cpu.rip, handler_offset);
+
+        cpu.iret(&mut mem).unwrap();
+        assert_eq!(cpu.cpl(), 3);
+        assert_eq!(cpu.rip, 0x4000_0000);
+        assert_eq!(cpu.gpr64(Gpr::Rsp), 0x7000);
+        assert!(cpu.rflags.if_flag());
     }
 }
