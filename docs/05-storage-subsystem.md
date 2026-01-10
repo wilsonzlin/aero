@@ -624,6 +624,8 @@ impl CdromDrive {
 
 Operational details for the backend **disk image streaming service** (HTTP `Range`, CORS preflight for `Range`, and cross-origin isolation considerations) are documented in [backend/disk-image-streaming-service.md](./backend/disk-image-streaming-service.md).
 
+The example below uses HTTP `Range` requests for random-access reads. For a CDN-friendly alternative that avoids `Range` (and therefore avoids CORS preflight on cross-origin fetches), see [18 - Chunked Disk Image Format](./18-chunked-disk-image-format.md).
+
 ```rust
 pub struct StreamingDisk {
     // Remote image
