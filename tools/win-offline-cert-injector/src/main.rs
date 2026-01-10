@@ -1,0 +1,359 @@
+#[cfg(any(windows, test))]
+mod pem;
+
+#[cfg(windows)]
+mod winapi;
+
+#[cfg(windows)]
+use std::path::{Path, PathBuf};
+
+#[cfg(windows)]
+#[derive(Debug)]
+enum ToolError {
+    Usage(String),
+    Io(std::io::Error),
+    Pem(String),
+    #[cfg(windows)]
+    Win(winapi::WinError),
+}
+
+#[cfg(windows)]
+impl std::fmt::Display for ToolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Usage(msg) => write!(f, "{msg}"),
+            Self::Io(err) => write!(f, "{err}"),
+            Self::Pem(err) => write!(f, "{err}"),
+            #[cfg(windows)]
+            Self::Win(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl std::error::Error for ToolError {}
+
+#[cfg(windows)]
+impl From<std::io::Error> for ToolError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+#[cfg(windows)]
+impl From<winapi::WinError> for ToolError {
+    fn from(err: winapi::WinError) -> Self {
+        Self::Win(err)
+    }
+}
+
+#[cfg(windows)]
+struct Cli {
+    hive_path: PathBuf,
+    stores: Vec<String>,
+    verify_only: bool,
+    cert_files: Vec<PathBuf>,
+}
+
+#[cfg(windows)]
+const DEFAULT_STORES: &[&str] = &["ROOT", "TrustedPublisher"];
+
+#[cfg(windows)]
+fn usage() -> &'static str {
+    "win-offline-cert-injector\n\
+\n\
+Usage:\n\
+  win-offline-cert-injector --hive <path-to-SOFTWARE> [--store <STORE> ...] [--verify-only] <cert-file>...\n\
+  win-offline-cert-injector --windows-dir <mount-root> [--store <STORE> ...] [--verify-only] <cert-file>...\n\
+\n\
+Stores (case-insensitive): ROOT, TrustedPublisher, TrustedPeople\n\
+Default stores: ROOT + TrustedPublisher\n"
+}
+
+#[cfg(windows)]
+fn normalize_store_name(input: &str) -> Result<&'static str, ToolError> {
+    let upper = input.to_ascii_uppercase();
+    match upper.as_str() {
+        "ROOT" => Ok("ROOT"),
+        "TRUSTEDPUBLISHER" => Ok("TrustedPublisher"),
+        "TRUSTEDPEOPLE" => Ok("TrustedPeople"),
+        _ => Err(ToolError::Usage(format!(
+            "unknown store: {input}\n\n{}",
+            usage()
+        ))),
+    }
+}
+
+#[cfg(windows)]
+fn hex_upper(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0F) as usize] as char);
+    }
+    out
+}
+
+#[cfg(windows)]
+fn parse_args() -> Result<Option<Cli>, ToolError> {
+    let mut hive: Option<PathBuf> = None;
+    let mut windows_dir: Option<PathBuf> = None;
+    let mut stores: Vec<String> = Vec::new();
+    let mut verify_only = false;
+    let mut cert_files: Vec<PathBuf> = Vec::new();
+
+    let mut args = std::env::args_os().skip(1).peekable();
+    while let Some(arg) = args.next() {
+        let Some(arg_str) = arg.to_str() else {
+            return Err(ToolError::Usage(format!(
+                "invalid argument (non-utf8)\n\n{}",
+                usage()
+            )));
+        };
+
+        match arg_str {
+            "-h" | "--help" => {
+                print!("{}", usage());
+                return Ok(None);
+            }
+            "--hive" => {
+                let val = args.next().ok_or_else(|| {
+                    ToolError::Usage(format!("--hive requires a value\n\n{}", usage()))
+                })?;
+                hive = Some(PathBuf::from(val));
+            }
+            "--windows-dir" => {
+                let val = args.next().ok_or_else(|| {
+                    ToolError::Usage(format!("--windows-dir requires a value\n\n{}", usage()))
+                })?;
+                windows_dir = Some(PathBuf::from(val));
+            }
+            "--store" => {
+                let val = args.next().ok_or_else(|| {
+                    ToolError::Usage(format!("--store requires a value\n\n{}", usage()))
+                })?;
+                let Some(val_str) = val.to_str() else {
+                    return Err(ToolError::Usage(format!(
+                        "--store value must be utf-8\n\n{}",
+                        usage()
+                    )));
+                };
+                let store = normalize_store_name(val_str)?.to_string();
+                if !stores.iter().any(|s| s == &store) {
+                    stores.push(store);
+                }
+            }
+            "--verify-only" => verify_only = true,
+            _ if arg_str.starts_with("--") => {
+                return Err(ToolError::Usage(format!(
+                    "unknown flag: {arg_str}\n\n{}",
+                    usage()
+                )));
+            }
+            _ => cert_files.push(PathBuf::from(arg)),
+        }
+    }
+
+    if hive.is_some() && windows_dir.is_some() {
+        return Err(ToolError::Usage(format!(
+            "provide only one of --hive or --windows-dir\n\n{}",
+            usage()
+        )));
+    }
+
+    let hive_path = match (hive, windows_dir) {
+        (Some(hive), None) => hive,
+        (None, Some(dir)) => resolve_hive_from_windows_dir(&dir)?,
+        (None, None) => {
+            return Err(ToolError::Usage(format!(
+                "missing required flag: --hive or --windows-dir\n\n{}",
+                usage()
+            )))
+        }
+        (Some(_), Some(_)) => unreachable!(),
+    };
+
+    if cert_files.is_empty() {
+        return Err(ToolError::Usage(format!(
+            "expected at least one certificate file\n\n{}",
+            usage()
+        )));
+    }
+
+    if stores.is_empty() {
+        stores = DEFAULT_STORES.iter().map(|s| s.to_string()).collect();
+    }
+
+    Ok(Some(Cli {
+        hive_path,
+        stores,
+        verify_only,
+        cert_files,
+    }))
+}
+
+#[cfg(windows)]
+fn resolve_hive_from_windows_dir(dir: &Path) -> Result<PathBuf, ToolError> {
+    let candidate = dir
+        .join("Windows")
+        .join("System32")
+        .join("config")
+        .join("SOFTWARE");
+    if candidate.exists() {
+        return Ok(candidate);
+    }
+    let candidate = dir.join("System32").join("config").join("SOFTWARE");
+    if candidate.exists() {
+        return Ok(candidate);
+    }
+
+    Err(ToolError::Usage(format!(
+        "could not find offline SOFTWARE hive under: {}\n\n{}",
+        dir.display(),
+        usage()
+    )))
+}
+
+#[cfg(not(windows))]
+fn main() {
+    eprintln!("win-offline-cert-injector only runs on Windows");
+    std::process::exit(1);
+}
+
+#[cfg(windows)]
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(code) => code,
+        Err(err) => {
+            eprintln!("error: {err}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
+#[cfg(windows)]
+fn run() -> Result<std::process::ExitCode, ToolError> {
+    let Some(cli) = parse_args()? else {
+        return Ok(std::process::ExitCode::SUCCESS);
+    };
+
+    winapi::enable_required_privileges()?;
+    let mount_name = winapi::choose_unique_mount_name("AERO_OFFLINE_SOFTWARE")?;
+    let mut hive = winapi::LoadedHive::load(&cli.hive_path, &mount_name)?;
+
+    let exit_code = {
+        let hive_root =
+            winapi::RegKey::open(winapi::HKEY_LOCAL_MACHINE, &mount_name, !cli.verify_only)?;
+        let inputs = load_all_input_certs(&cli.cert_files)?;
+
+        if cli.verify_only {
+            verify_all(&hive_root, &cli.stores, &inputs)?
+        } else {
+            inject_all(&hive_root, &cli.stores, &inputs)?
+        }
+    };
+
+    hive.unload()?;
+    Ok(exit_code)
+}
+
+#[cfg(windows)]
+struct InputCert {
+    source_path: PathBuf,
+    source_index: usize,
+    der: Vec<u8>,
+    thumbprint_hex: String,
+}
+
+#[cfg(windows)]
+fn load_all_input_certs(cert_files: &[PathBuf]) -> Result<Vec<InputCert>, ToolError> {
+    let mut out = Vec::new();
+    for path in cert_files {
+        let data = std::fs::read(path)?;
+        let ders = pem::decode_cert_file(&data).map_err(ToolError::Pem)?;
+        for (idx, der) in ders.into_iter().enumerate() {
+            let sha1 = winapi::cert_sha1_thumbprint(&der)?;
+            out.push(InputCert {
+                source_path: path.clone(),
+                source_index: idx,
+                der,
+                thumbprint_hex: hex_upper(&sha1),
+            });
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(windows)]
+fn inject_all(
+    hive_root: &winapi::RegKey,
+    stores: &[String],
+    certs: &[InputCert],
+) -> Result<std::process::ExitCode, ToolError> {
+    for store in stores {
+        let store_key = winapi::RegKey::create(
+            hive_root.raw(),
+            &format!("Microsoft\\SystemCertificates\\{store}"),
+        )?;
+        let _ = winapi::RegKey::create(store_key.raw(), "Certificates")?;
+        let cert_store = winapi::CertStore::open_system_registry(store_key.raw(), false)?;
+        for cert in certs {
+            winapi::cert_add_encoded_cert(&cert_store, &cert.der)?;
+            println!(
+                "{store}\t{}\t{}{}",
+                &cert.thumbprint_hex,
+                cert.source_path.display(),
+                if cert.source_index == 0 {
+                    "".to_string()
+                } else {
+                    format!("#{}", cert.source_index + 1)
+                }
+            );
+        }
+    }
+
+    Ok(std::process::ExitCode::SUCCESS)
+}
+
+#[cfg(windows)]
+fn verify_all(
+    hive_root: &winapi::RegKey,
+    stores: &[String],
+    certs: &[InputCert],
+) -> Result<std::process::ExitCode, ToolError> {
+    let mut missing = false;
+    for store in stores {
+        for cert in certs {
+            let subkey = format!(
+                "Microsoft\\SystemCertificates\\{store}\\Certificates\\{}",
+                cert.thumbprint_hex
+            );
+            let exists = match winapi::RegKey::open(hive_root.raw(), &subkey, false) {
+                Ok(_) => true,
+                Err(err) if err.code == 2 => false,
+                Err(err) => return Err(ToolError::Win(err)),
+            };
+            if !exists {
+                missing = true;
+            }
+            println!(
+                "{store}\t{}\t{}\t{}{}",
+                if exists { "FOUND" } else { "MISSING" },
+                &cert.thumbprint_hex,
+                cert.source_path.display(),
+                if cert.source_index == 0 {
+                    "".to_string()
+                } else {
+                    format!("#{}", cert.source_index + 1)
+                }
+            );
+        }
+    }
+
+    Ok(if missing {
+        std::process::ExitCode::from(2)
+    } else {
+        std::process::ExitCode::SUCCESS
+    })
+}
