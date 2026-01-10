@@ -16,13 +16,48 @@ The chart includes:
 
 - Kubernetes v1.22+ (Ingress v1)
 - Helm v3
-- An Ingress controller:
+- An Ingress controller (example install commands below):
   - `ingress-nginx` (default; uses `configuration-snippet` to add COOP/COEP headers), or
   - Traefik (supported via `Middleware` when `ingress.coopCoep.mode=traefik`)
 - A DNS name pointing at your Ingress load balancer
 - TLS certificate:
   - via cert-manager (recommended), or
   - manually created `Secret` of type `kubernetes.io/tls`
+
+## Optional: install ingress-nginx (example)
+
+If you don’t already have an Ingress controller, you can install ingress-nginx with Helm:
+
+```bash
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+
+helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+  -n ingress-nginx --create-namespace
+```
+
+If you plan to use `ingress.coopCoep.enabled=true` with nginx mode, you may need to allow snippet annotations:
+
+```bash
+helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+  -n ingress-nginx --create-namespace \
+  --set controller.allowSnippetAnnotations=true
+```
+
+> Snippet annotations are a cluster-level security decision; consider using Traefik mode or app-level headers if you prefer to keep them disabled.
+
+## Optional: install cert-manager (example)
+
+If you want automated TLS (`certManager.enabled=true`), install cert-manager:
+
+```bash
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+
+helm upgrade --install cert-manager jetstack/cert-manager \
+  -n cert-manager --create-namespace \
+  --set crds.enabled=true
+```
 
 ## Quickstart (production)
 
