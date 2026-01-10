@@ -100,6 +100,12 @@ dir C:\Windows\Temp\aero-setup.log
 dir C:\Windows\Temp\aero-driver-install.log
 ```
 
+4. (Optional) Confirm Setup attempted to execute `SetupComplete.cmd` by searching Setup logs:
+
+```bat
+findstr /i /c:"setupcomplete" C:\Windows\Panther\setupact.log
+```
+
 What “good” looks like:
 
 * `C:\Windows\Temp\aero-setup.log` exists and includes a timestamp and a line indicating it ran under `SYSTEM`.
@@ -219,6 +225,8 @@ After Windows is installed, logs are copied to:
 * `C:\Windows\Panther\setuperr.log`
 * `C:\Windows\Panther\UnattendGC\setupact.log`
 * `C:\Windows\Panther\UnattendGC\setuperr.log`
+* (If setup failed/rolled back) `C:\Windows\Panther\Rollback\setupact.log`
+* (If setup failed/rolled back) `C:\Windows\Panther\Rollback\setuperr.log`
 
 What each proves:
 
@@ -237,6 +245,7 @@ findstr /i /c:"autounattend" C:\Windows\Panther\setupact.log
 findstr /i /c:"configset" C:\Windows\Panther\setupact.log
 findstr /i /c:"configsetroot" C:\Windows\Panther\setupact.log
 findstr /i /c:"unattend" C:\Windows\Panther\UnattendGC\setupact.log
+findstr /i /c:"setupcomplete" C:\Windows\Panther\setupact.log
 ```
 
 ---
@@ -351,7 +360,22 @@ set configset
 Interpretation:
 
 * **Expected (if Windows Setup treats CD1 as a “configuration set” root):**
-  * `%configsetroot%` is set to something like `D:\` or `E:\`
+  * `%configsetroot%` is a non-empty path to the *configuration set root*.
+  * Depending on how Setup handled the media, it may point to:
+    * the original removable/optical media (for example `D:\` / `E:\`), **or**
+    * a copied/staged location on a local disk.
+  * Prove what it points to by running:
+
+```bat
+echo configsetroot=[%configsetroot%]
+dir "%configsetroot%"
+```
+
+  * If you use a marker file (recommended), also test:
+
+```bat
+dir "%configsetroot%\AERO_CONFIG.MEDIA"
+```
 * **If empty:**
   * Windows Setup may still be using `autounattend.xml`, but it may **not** consider the media a configuration set.
   * In that case, `$OEM$` copy behavior may differ (see [Open questions](#5-explicit-notes-on-the-open-questions-config-set-config-iso-oem)).
@@ -547,7 +571,24 @@ Search for:
 
 Interpretation:
 
-* If `%configsetroot%` is set to your CD1 drive letter and logs mention config-set usage, you can use `%configsetroot%` as your primary reference to find drivers/payload during setup.
+* If `%configsetroot%` is set, **confirm it actually contains your config payload**:
+
+```bat
+dir "%configsetroot%"
+dir "%configsetroot%\AERO_CONFIG.MEDIA"
+```
+
+* If the marker exists there (or you can see your expected folders), you can use `%configsetroot%` as your primary reference to find drivers/payload during setup.
+* If `%configsetroot%` is set but the marker is missing, it may be pointing at a copied/staged config-set location or to a different device than you expect. Don’t guess:
+  * Use the drive-letter scan in [Debug actions](#3-debug-actions-during-setup-shiftf10) to locate the real CD1.
+  * Optionally, after install (once you know which drive is the OS partition), search the system drive for your marker to discover where Setup copied the config set:
+
+```bat
+where /r C:\ AERO_CONFIG.MEDIA
+rem If `where` is not available (some WinPE environments), use:
+dir /s /b C:\AERO_CONFIG.MEDIA 2>nul
+```
+
 * If `%configsetroot%` is empty, do **not** rely on it; treat CD1 as “just another CD drive” and use drive-letter discovery (see [Fallback](#fallback-approach-if-configsetroot--oem--are-unreliable)).
 
 ---
@@ -591,6 +632,27 @@ Corroborate in logs:
 * You may see evidence of unattend parsing without config set detection.
 
 ---
+
+### Question D: Does Windows Setup scan a secondary CD/DVD (CD1) for `autounattend.xml`?
+
+**Expected (but not guaranteed):** Windows Setup will pick up `\autounattend.xml` from some removable/optical media, but the exact search order (and whether it scans a “second CD”) can vary by environment.
+
+How to verify (minimal experiment):
+
+1. Ensure **CD0** is the stock Windows 7 ISO (no answer file).
+2. Put `\autounattend.xml` only on **CD1** and attach it before boot.
+3. Boot and observe:
+   * If Setup is fully unattended, CD1 answer file discovery worked in that environment.
+   * If Setup shows prompts (edition selection, disk selection, EULA), it likely did not scan CD1 for the answer file.
+4. Corroborate in logs:
+   * In WinPE (Shift+F10): `notepad X:\Windows\Panther\setupact.log`
+   * Search for `autounattend.xml` and/or the device path it was loaded from.
+
+Practical fixes if CD1 is not scanned:
+
+* Put `autounattend.xml` on a **USB** device image (often treated as removable media and more consistently scanned), or
+* Patch/rebuild the install ISO so `autounattend.xml` is on **CD0**, or
+* Use a slipstream/media patcher flow so Setup does not depend on “secondary CD answer file discovery”.
 
 ### Fallback approach (if `%configsetroot%` / `$OEM$` are unreliable)
 
