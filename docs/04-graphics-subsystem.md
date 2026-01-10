@@ -192,6 +192,9 @@ impl VgaEmulator {
 
 For DirectX, we intercept GPU commands from the virtual WDDM driver:
 
+> The concrete PCI/MMIO device model and the versioned ring/command ABI are
+> specified in [16-gpu-command-abi.md](./16-gpu-command-abi.md).
+
 ```rust
 pub struct GpuCommandProcessor {
     command_ring: RingBuffer,

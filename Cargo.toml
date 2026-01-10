@@ -8,6 +8,7 @@ resolver = "2"
 members = [
     "crates/aero-acpi",
     "crates/aero-gpu",
+    "crates/aero-gpu-device",
     "crates/aero-gpu-trace",
     "crates/aero-emulator",
     "crates/aero-core",
