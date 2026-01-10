@@ -35,3 +35,21 @@ High-level steps (performed on a Windows build machine with the Windows SDK/WDK 
 
 Exact commands depend on your WDK version and driver type; keep the process scripted so builds are reproducible.
 
+## Offline installs (WIM/WinPE) need the certificate too
+
+If you **slipstream** (offline inject) test-signed drivers into Windows install media, you must also inject the **public** test certificate into the offline certificate stores for **both**:
+
+- `boot.wim` (WinPE / Windows Setup environment; typically index `2`)
+- `install.wim` (the installed OS image; index depends on the edition/SKU)
+
+At minimum, install the certificate into:
+
+- `ROOT`
+- `TrustedPublisher`
+
+The repo’s WIM injector script supports this directly:
+
+```powershell
+.\drivers\scripts\inject-win7-wim.ps1 -WimFile D:\iso\sources\boot.wim -Index 2 -DriverPackRoot .\drivers\out\aero-win7-driver-pack -CertPath .\out\certs\aero-test.cer
+.\drivers\scripts\inject-win7-wim.ps1 -WimFile D:\iso\sources\install.wim -Index 1 -DriverPackRoot .\drivers\out\aero-win7-driver-pack -CertPath .\out\certs\aero-test.cer
+```

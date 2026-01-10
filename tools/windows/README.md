@@ -7,6 +7,7 @@ Patches extracted Windows 7 install media to support **test-signed drivers** by:
 - Enabling `testsigning` (and optionally `nointegritychecks`) in installer BCD stores
 - Mounting and servicing `sources\boot.wim` and `sources\install.wim`
 - Offline-injecting a signing certificate into the image `ROOT` and `TrustedPublisher` stores
+- Validating the offline `SOFTWARE` hive contains `Microsoft\SystemCertificates\{ROOT,TrustedPublisher}\Certificates\<thumbprint>\Blob`
 - (Optional) Injecting driver packages from a directory containing `.inf` files
 - Updating the offline `BCD-Template` inside each selected `install.wim` image
 
@@ -60,4 +61,3 @@ The script prints `bcdedit /store ... /enum {default}` commands you can run to c
   - `efi\microsoft\boot\bcd` (if present)
 - Offline template inside each `install.wim` index:
   - `Windows\System32\Config\BCD-Template`
-

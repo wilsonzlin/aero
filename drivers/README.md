@@ -51,14 +51,16 @@ This uses `pnputil` to add the correct-architecture Win7 driver INFs.
 If you want Windows Setup to see virtio storage/network during install, inject drivers into the WIMs:
 
 1. Build the driver pack and extract it to a folder (or use the staging folder).
-2. Inject into `boot.wim` (setup environment) and `install.wim` (the OS image):
+2. Ensure you have the **Aero test signing certificate** (`.cer`) that was used to sign the driver catalogs.
+   - This repo’s signing pipeline outputs it as: `out/certs/aero-test.cer`
+3. Inject into `boot.wim` (setup environment) and `install.wim` (the OS image). The injector also installs the certificate into the offline stores (`ROOT` + `TrustedPublisher`) so both WinPE and the installed OS trust the drivers:
 
 ```powershell
 # Storage/network available during Windows Setup:
-.\drivers\scripts\inject-win7-wim.ps1 -WimFile D:\iso\sources\boot.wim -Index 2 -DriverPackRoot .\drivers\out\aero-win7-driver-pack
+.\drivers\scripts\inject-win7-wim.ps1 -WimFile D:\iso\sources\boot.wim -Index 2 -DriverPackRoot .\drivers\out\aero-win7-driver-pack -CertPath .\out\certs\aero-test.cer
 
 # Inject into the installed OS image (repeat for each index/edition you care about):
-.\drivers\scripts\inject-win7-wim.ps1 -WimFile D:\iso\sources\install.wim -Index 1 -DriverPackRoot .\drivers\out\aero-win7-driver-pack
+.\drivers\scripts\inject-win7-wim.ps1 -WimFile D:\iso\sources\install.wim -Index 1 -DriverPackRoot .\drivers\out\aero-win7-driver-pack -CertPath .\out\certs\aero-test.cer
 ```
 
 Rebuild the ISO after injection (outside the scope of this repo; use your preferred `oscdimg`/ISO tool).

@@ -9,6 +9,11 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$DriverPackRoot,
 
+  [Parameter(Mandatory = $true)]
+  [string]$CertPath,
+
+  [string[]]$CertStores = @("ROOT", "TrustedPublisher"),
+
   [string]$MountDir = (Join-Path $env:TEMP "aero-wim-mount")
 )
 
@@ -51,10 +56,176 @@ function Map-ArchToPack {
   }
 }
 
+function Get-CertificateInfo {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  if (-not (Test-Path -LiteralPath $Path)) {
+    throw "Certificate file does not exist: $Path"
+  }
+
+  $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Path)
+  if (-not $cert.Thumbprint) {
+    throw "Unable to read certificate thumbprint: $Path"
+  }
+
+  return @{
+    Cert = $cert
+    Thumbprint = $cert.Thumbprint.ToUpperInvariant()
+    RawData = $cert.RawData
+  }
+}
+
+function Get-OfflineSoftwareHivePath {
+  param([Parameter(Mandatory = $true)][string]$WindowsDir)
+
+  $hive = Join-Path $WindowsDir "Windows\System32\config\SOFTWARE"
+  if (-not (Test-Path -LiteralPath $hive)) {
+    throw "Offline SOFTWARE hive not found at expected path: $hive"
+  }
+
+  return $hive
+}
+
+function Get-MissingCertStoresFromOfflineSoftwareHive {
+  param(
+    [Parameter(Mandatory = $true)][string]$WindowsDir,
+    [Parameter(Mandatory = $true)][string[]]$Stores,
+    [Parameter(Mandatory = $true)][string]$Thumbprint
+  )
+
+  $hive = Get-OfflineSoftwareHivePath -WindowsDir $WindowsDir
+  $tempKey = "AERO_OFFLINE_SOFTWARE_$([Guid]::NewGuid().ToString('N'))"
+
+  & reg.exe load "HKLM\$tempKey" $hive | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    throw "reg.exe load failed (exit $LASTEXITCODE)."
+  }
+
+  try {
+    $missing = New-Object System.Collections.Generic.List[string]
+    foreach ($store in $Stores) {
+      $certKey = "Registry::HKEY_LOCAL_MACHINE\$tempKey\Microsoft\SystemCertificates\$store\Certificates\$Thumbprint"
+      if (-not (Test-Path -LiteralPath $certKey)) {
+        $missing.Add($store)
+        continue
+      }
+
+      try {
+        $blob = (Get-ItemProperty -LiteralPath $certKey -Name "Blob" -ErrorAction Stop).Blob
+        if ($null -eq $blob -or $blob.Length -eq 0) {
+          $missing.Add($store)
+        }
+      } catch {
+        $missing.Add($store)
+      }
+    }
+
+    return $missing.ToArray()
+  }
+  finally {
+    & reg.exe unload "HKLM\$tempKey" | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+      throw "reg.exe unload failed (exit $LASTEXITCODE)."
+    }
+  }
+}
+
+function Try-Invoke-WinOfflineCertInjector {
+  param(
+    [Parameter(Mandatory = $true)][string]$WindowsDir,
+    [Parameter(Mandatory = $true)][string]$CertPath,
+    [Parameter(Mandatory = $true)][string[]]$Stores
+  )
+
+  $cmd = Get-Command win-offline-cert-injector -ErrorAction SilentlyContinue
+  if (-not $cmd) {
+    return $false
+  }
+
+  $args = @("--windows-dir", $WindowsDir, "--cert", $CertPath)
+  foreach ($store in $Stores) {
+    $args += @("--store", $store)
+  }
+
+  & win-offline-cert-injector @args | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    throw "win-offline-cert-injector failed (exit $LASTEXITCODE)."
+  }
+
+  return $true
+}
+
+function Inject-CertificateByEditingSoftwareHive {
+  param(
+    [Parameter(Mandatory = $true)][string]$WindowsDir,
+    [Parameter(Mandatory = $true)][string[]]$Stores,
+    [Parameter(Mandatory = $true)][string]$Thumbprint,
+    [Parameter(Mandatory = $true)][byte[]]$RawData
+  )
+
+  $hive = Get-OfflineSoftwareHivePath -WindowsDir $WindowsDir
+  $tempKey = "AERO_OFFLINE_SOFTWARE_$([Guid]::NewGuid().ToString('N'))"
+
+  & reg.exe load "HKLM\$tempKey" $hive | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    throw "reg.exe load failed (exit $LASTEXITCODE)."
+  }
+
+  try {
+    foreach ($store in $Stores) {
+      $certKey = "Registry::HKEY_LOCAL_MACHINE\$tempKey\Microsoft\SystemCertificates\$store\Certificates\$Thumbprint"
+      New-Item -Path $certKey -Force | Out-Null
+      New-ItemProperty -Path $certKey -Name "Blob" -PropertyType Binary -Value $RawData -Force | Out-Null
+    }
+  }
+  finally {
+    & reg.exe unload "HKLM\$tempKey" | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+      throw "reg.exe unload failed (exit $LASTEXITCODE)."
+    }
+  }
+}
+
+function Ensure-OfflineCertTrust {
+  param(
+    [Parameter(Mandatory = $true)][string]$WindowsDir,
+    [Parameter(Mandatory = $true)][string]$CertPath,
+    [Parameter(Mandatory = $true)][string[]]$Stores
+  )
+
+  $certInfo = Get-CertificateInfo -Path $CertPath
+  $thumb = $certInfo.Thumbprint
+  $raw = $certInfo.RawData
+
+  $missingBefore = Get-MissingCertStoresFromOfflineSoftwareHive -WindowsDir $WindowsDir -Stores $Stores -Thumbprint $thumb
+  if ($missingBefore.Count -eq 0) {
+    Write-Host "Certificate already present in offline image ($($Stores -join ', ')): $thumb"
+    return
+  }
+
+  Write-Host "Injecting certificate into offline image ($($Stores -join ', ')): $thumb"
+
+  $usedExternal = Try-Invoke-WinOfflineCertInjector -WindowsDir $WindowsDir -CertPath $CertPath -Stores $Stores
+  if (-not $usedExternal) {
+    Inject-CertificateByEditingSoftwareHive -WindowsDir $WindowsDir -Stores $Stores -Thumbprint $thumb -RawData $raw
+  }
+
+  $missingAfter = Get-MissingCertStoresFromOfflineSoftwareHive -WindowsDir $WindowsDir -Stores $Stores -Thumbprint $thumb
+  if ($missingAfter.Count -ne 0) {
+    throw "Certificate injection validation failed (thumbprint $thumb). Missing stores: $($missingAfter -join ', ')"
+  }
+}
+
 $wim = (Resolve-Path $WimFile).Path
 $pack = (Resolve-Path $DriverPackRoot).Path
+$certPathResolved = (Resolve-Path $CertPath).Path
 
 Assert-IsAdmin
+
+$wimInfo = Get-Item $wim
+if ($wimInfo.Attributes -band [System.IO.FileAttributes]::ReadOnly) {
+  throw "WIM file is read-only and cannot be modified: $wim"
+}
 
 $arch = Map-ArchToPack (Get-WimArchitecture -WimFile $wim -Index $Index)
 $drivers = Join-Path $pack "win7\$arch"
@@ -79,6 +250,7 @@ $commit = $false
 try {
   & dism /English /Mount-Wim /WimFile:$wim /Index:$Index /MountDir:$MountDir | Out-Host
   & dism /English /Image:$MountDir /Add-Driver /Driver:$drivers /Recurse | Out-Host
+  Ensure-OfflineCertTrust -WindowsDir $MountDir -CertPath $certPathResolved -Stores $CertStores
   $commit = $true
 }
 finally {

@@ -231,6 +231,11 @@ function Add-OfflineTrustedCertificate {
       $keyPath = Join-Path -Path $certificatesPath -ChildPath $thumb
       New-Item -Path $keyPath -Force | Out-Null
       New-ItemProperty -Path $keyPath -Name "Blob" -PropertyType Binary -Value $rawBytes -Force | Out-Null
+
+      $blob = (Get-ItemProperty -Path $keyPath -Name "Blob" -ErrorAction Stop).Blob
+      if ($null -eq $blob -or $blob.Length -eq 0) {
+        throw "Offline certificate injection failed validation for store '$storeName' (thumbprint $thumb): missing/empty Blob value."
+      }
     }
   }
   catch {
