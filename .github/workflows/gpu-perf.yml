@@ -1,0 +1,103 @@
+name: GPU Perf (smoke)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gpu-perf-smoke-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gpu-perf-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      NODE_VERSION: "20.11.1"
+      GPU_PERF_REGRESSION_THRESHOLD_PCT: "15"
+    steps:
+      - name: Checkout (candidate)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: head
+
+      - name: Checkout (baseline)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            head/package-lock.json
+            base/package-lock.json
+
+      - name: Install dependencies (baseline)
+        working-directory: base
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Install dependencies (candidate)
+        working-directory: head
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Install Chromium (Playwright)
+        working-directory: head
+        run: npx playwright install --with-deps chromium
+
+      - name: Write scenario params
+        working-directory: head
+        run: |
+          mkdir -p gpu-perf-results
+          cat > gpu-perf-results/scenario_params.json <<'JSON'
+          {
+            "vga_text_scroll": { "frames": 120 },
+            "vbe_lfb_blit": { "frames": 60, "width": 256, "height": 256 }
+          }
+          JSON
+
+      - name: Run GPU perf (baseline)
+        working-directory: base
+        run: |
+          node --experimental-strip-types bench/gpu_bench.ts \
+            --scenarios vga_text_scroll,vbe_lfb_blit \
+            --scenario-params ../head/gpu-perf-results/scenario_params.json \
+            --swiftshader true \
+            --output ../head/gpu-perf-results/base.json
+
+      - name: Run GPU perf (candidate)
+        working-directory: head
+        run: |
+          node --experimental-strip-types bench/gpu_bench.ts \
+            --scenarios vga_text_scroll,vbe_lfb_blit \
+            --scenario-params gpu-perf-results/scenario_params.json \
+            --swiftshader true \
+            --output gpu-perf-results/head.json
+
+      - name: Compare (fail on regression)
+        working-directory: head
+        run: |
+          node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
+            --baseline gpu-perf-results/base.json \
+            --current gpu-perf-results/head.json \
+            --thresholdPct ${{ env.GPU_PERF_REGRESSION_THRESHOLD_PCT }}
+
+      - name: Upload GPU perf artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-perf-smoke-${{ github.run_id }}
+          path: head/gpu-perf-results
+          if-no-files-found: error

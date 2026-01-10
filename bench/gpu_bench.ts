@@ -295,6 +295,17 @@ async function runCli() {
   const outPath = args.output ?? null;
   const headless = args.headless !== "false";
   const swiftshader = args.swiftshader === "true";
+  const scenarioParamsPath = args["scenario-params"] ?? null;
+  const scenarioParamsJson = args["scenario-params-json"] ?? null;
+
+  /** @type {Record<string, any> | undefined} */
+  let scenarioParams;
+  if (scenarioParamsPath) {
+    const text = await fs.readFile(scenarioParamsPath, "utf8");
+    scenarioParams = JSON.parse(text);
+  } else if (scenarioParamsJson) {
+    scenarioParams = JSON.parse(scenarioParamsJson);
+  }
 
   // Lazy import so this file can be imported without Playwright installed.
   /** @type {any} */
@@ -323,7 +334,7 @@ async function runCli() {
 
   try {
     await page.goto(server.url, { waitUntil: "load" });
-    const report = await runGpuBenchmarksInPage(page, { scenarios });
+    const report = await runGpuBenchmarksInPage(page, { scenarios, scenarioParams });
     const json = JSON.stringify(report, null, 2);
     if (outPath) {
       await fs.mkdir(path.dirname(outPath), { recursive: true });

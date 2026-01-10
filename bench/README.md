@@ -49,6 +49,7 @@ node --experimental-strip-types bench/gpu_bench.ts --output gpu_bench.json
 Common options:
 
 - `--scenarios vga_text_scroll,vbe_lfb_blit` (comma-separated)
+- `--scenario-params path/to/params.json` (per-scenario overrides)
 - `--headless false` (run headful)
 - `--swiftshader true` (force software GL for more stable CI; may disable WebGPU on some platforms)
 
