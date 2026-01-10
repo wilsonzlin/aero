@@ -7,7 +7,7 @@ This document defines the wire protocol used by Aero to proxy UDP between:
 
 The protocol has two parts:
 
-- **Signaling** (JSON): used to establish the WebRTC connection (SDP exchange).
+- **Signaling** (JSON): used to establish the WebRTC connection (SDP/ICE exchange).
 - **Data plane** (binary): datagrams sent over a WebRTC DataChannel.
 
 ---
@@ -187,12 +187,15 @@ Implementations MUST treat unknown future versions as unsupported.
 
 ---
 
-## Signaling messages (v1, JSON)
+## Signaling API (JSON)
 
-Signaling is transport-agnostic (HTTP, WebSocket, etc.). This section specifies
-only the JSON payloads.
+The relay supports multiple signaling surfaces:
 
-### Offer request
+- `POST /offer`: versioned JSON, non-trickle ICE (primarily for Go integration tests / backwards compatibility).
+- `GET /webrtc/signal`: WebSocket signaling with trickle ICE (recommended; fastest connect).
+- `POST /webrtc/offer`: HTTP offer → answer (non-trickle ICE fallback; simplest clients/tests).
+
+### POST /offer (v1, versioned JSON, non-trickle ICE)
 
 Client → relay:
 
@@ -206,8 +209,6 @@ Client → relay:
 }
 ```
 
-### Answer response
-
 Relay → client:
 
 ```json
@@ -220,6 +221,110 @@ Relay → client:
 }
 ```
 
-For v1, it is RECOMMENDED to use **non-trickle ICE** (wait for ICE gathering to
-complete so that candidates are embedded in the SDP) to keep the signaling
-surface minimal. Future versions may add explicit ICE candidate messages.
+This endpoint waits for ICE gathering to complete so that candidates are embedded in the SDP.
+
+### WebSocket signaling (trickle ICE)
+
+**Endpoint:** `GET /webrtc/signal` (upgrades to WebSocket)
+
+All signaling messages are JSON objects with a required `type` field.
+
+#### Client → Server messages
+
+Offer:
+
+```json
+{ "type": "offer", "sdp": { "type": "offer", "sdp": "v=0..." } }
+```
+
+Trickle ICE candidate:
+
+```json
+{
+  "type": "candidate",
+  "candidate": {
+    "candidate": "candidate:...",
+    "sdpMid": "0",
+    "sdpMLineIndex": 0
+  }
+}
+```
+
+Notes:
+
+- `usernameFragment` may be included (browser-dependent) and is forwarded to pion.
+- A candidate with an empty `candidate` string is treated as an end-of-candidates signal and ignored.
+
+Close:
+
+```json
+{ "type": "close" }
+```
+
+#### Server → Client messages
+
+Answer:
+
+```json
+{ "type": "answer", "sdp": { "type": "answer", "sdp": "v=0..." } }
+```
+
+Trickle ICE candidate:
+
+```json
+{ "type": "candidate", "candidate": { "candidate": "candidate:...", "sdpMid": "0", "sdpMLineIndex": 0 } }
+```
+
+Error:
+
+```json
+{ "type": "error", "code": "bad_message", "message": "..." }
+```
+
+Error `code` values are currently best-effort and intended for debugging:
+
+- `bad_message` (invalid JSON / schema)
+- `unexpected_message` (invalid ordering such as candidate-before-offer)
+- `unauthorized`
+- `too_many_sessions`
+- `internal_error`
+
+#### WebSocket flow
+
+1. Client connects to `/webrtc/signal`
+2. Client sends `offer`
+3. Server responds immediately with `answer` (does **not** wait for ICE gathering)
+4. Both sides exchange `candidate` messages until connected
+5. Client opens a DataChannel labeled `udp`
+
+### HTTP offer → answer (non-trickle ICE fallback)
+
+**Endpoint:** `POST /webrtc/offer`
+
+Request body:
+
+```json
+{ "sdp": { "type": "offer", "sdp": "v=0..." } }
+```
+
+For convenience, the server also accepts a raw SessionDescription object:
+
+```json
+{ "type": "offer", "sdp": "v=0..." }
+```
+
+Response body:
+
+```json
+{
+  "sessionId": "....",
+  "sdp": { "type": "answer", "sdp": "v=0... (with ICE candidates embedded)" }
+}
+```
+
+The server waits up to a small timeout (configurable; default ~2s) for ICE gathering to complete before returning the answer SDP. If gathering does not complete in time, the returned SDP may be missing candidates and connectivity may fail.
+
+Limitations:
+
+- Because this endpoint does not support trickle ICE, clients should also wait for ICE gathering to complete before sending the offer, otherwise the offer may not contain usable candidates.
+

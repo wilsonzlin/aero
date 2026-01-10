@@ -80,11 +80,13 @@ func main() {
 		PreferV2:                  cfg.PreferV2,
 	}
 	sig := signaling.NewServer(signaling.Config{
-		Sessions:    sessionMgr,
-		WebRTC:      api,
-		ICEServers:  cfg.PeerConnectionICEServers(),
-		RelayConfig: relayCfg,
-		Policy:      destPolicy,
+		Sessions:            sessionMgr,
+		WebRTC:              api,
+		ICEServers:          cfg.PeerConnectionICEServers(),
+		RelayConfig:         relayCfg,
+		Policy:              destPolicy,
+		Authorizer:          signaling.AllowAllAuthorizer{},
+		ICEGatheringTimeout: cfg.ICEGatheringTimeout,
 	})
 	sig.RegisterRoutes(srv.Mux())
 

@@ -15,13 +15,14 @@ import (
 )
 
 const (
-	EnvListenAddr      = "AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR"
-	EnvPublicBaseURL   = "AERO_WEBRTC_UDP_RELAY_PUBLIC_BASE_URL"
-	EnvAllowedOrigins  = "ALLOWED_ORIGINS"
-	EnvLogFormat       = "AERO_WEBRTC_UDP_RELAY_LOG_FORMAT"
-	EnvLogLevel        = "AERO_WEBRTC_UDP_RELAY_LOG_LEVEL"
-	EnvShutdownTimeout = "AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT"
-	EnvMode            = "AERO_WEBRTC_UDP_RELAY_MODE"
+	EnvListenAddr          = "AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR"
+	EnvPublicBaseURL       = "AERO_WEBRTC_UDP_RELAY_PUBLIC_BASE_URL"
+	EnvAllowedOrigins      = "ALLOWED_ORIGINS"
+	EnvLogFormat           = "AERO_WEBRTC_UDP_RELAY_LOG_FORMAT"
+	EnvLogLevel            = "AERO_WEBRTC_UDP_RELAY_LOG_LEVEL"
+	EnvShutdownTimeout     = "AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT"
+	EnvMode                = "AERO_WEBRTC_UDP_RELAY_MODE"
+	EnvICEGatheringTimeout = "AERO_WEBRTC_UDP_RELAY_ICE_GATHERING_TIMEOUT"
 
 	// Relay engine knobs.
 	EnvUDPBindingIdleTimeout     = "UDP_BINDING_IDLE_TIMEOUT"
@@ -54,10 +55,11 @@ const (
 	EnvTURNRESTUsernamePrefix = "TURN_REST_USERNAME_PREFIX"
 	EnvTURNRESTRealm          = "TURN_REST_REALM"
 
-	DefaultListenAddr           = "127.0.0.1:8080"
-	DefaultShutdown             = 15 * time.Second
-	DefaultViolationWindow      = 10 * time.Second
-	DefaultMode            Mode = ModeDev
+	DefaultListenAddr       = "127.0.0.1:8080"
+	DefaultShutdown         = 15 * time.Second
+	DefaultICEGatherTimeout = 2 * time.Second
+	DefaultViolationWindow  = 10 * time.Second
+	DefaultMode        Mode = ModeDev
 
 	DefaultUDPBindingIdleTimeout     = 60 * time.Second
 	DefaultUDPReadBufferBytes        = 65535
@@ -146,13 +148,14 @@ func (c TurnRESTConfig) Enabled() bool {
 }
 
 type Config struct {
-	ListenAddr      string
-	PublicBaseURL   string
-	AllowedOrigins  []string
-	LogFormat       LogFormat
-	LogLevel        slog.Level
-	ShutdownTimeout time.Duration
-	Mode            Mode
+	ListenAddr          string
+	PublicBaseURL       string
+	AllowedOrigins      []string
+	LogFormat           LogFormat
+	LogLevel            slog.Level
+	ShutdownTimeout     time.Duration
+	ICEGatheringTimeout time.Duration
+	Mode                Mode
 
 	// Signaling / WebSocket auth + hardening.
 	AuthMode  AuthMode
@@ -318,6 +321,15 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		shutdownTimeout = d
 	}
 
+	iceGatherTimeout := DefaultICEGatherTimeout
+	if raw, ok := lookup(EnvICEGatheringTimeout); ok && strings.TrimSpace(raw) != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvICEGatheringTimeout, raw, err)
+		}
+		iceGatherTimeout = d
+	}
+
 	maxSessions, err := envIntOrDefault(lookup, EnvMaxSessions, 0)
 	if err != nil {
 		return Config{}, err
@@ -423,7 +435,6 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	webrtcUDPListenIPStr := envOrDefault(lookup, EnvWebRTCUDPListenIP, DefaultWebRTCUDPListenIP)
 	webrtcNAT1To1IPsStr := envOrDefault(lookup, EnvWebRTCNAT1To1IPs, "")
 	webrtcNAT1To1CandidateTypeStr := envOrDefault(lookup, EnvWebRTCNAT1To1IPCandidateType, string(NAT1To1CandidateTypeHost))
-
 	fs := flag.NewFlagSet("aero-webrtc-udp-relay", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -441,6 +452,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.StringVar(&logFormatStr, "log-format", logFormatDefault, "Log format: text or json")
 	fs.StringVar(&logLevelStr, "log-level", logLevelDefault, "Log level: debug, info, warn, error")
 	fs.DurationVar(&shutdownTimeout, "shutdown-timeout", shutdownTimeout, "Graceful shutdown timeout (e.g. 15s)")
+	fs.DurationVar(&iceGatherTimeout, "ice-gather-timeout", iceGatherTimeout, "Max time to wait for ICE gathering on /webrtc/offer (e.g. 2s)")
 	fs.StringVar(&iceServersJSON, "ice-servers-json", iceServersJSON, "ICE server JSON config (AERO_ICE_SERVERS_JSON)")
 	fs.StringVar(&stunURLs, "stun-urls", stunURLs, "comma-separated STUN URLs (AERO_STUN_URLS)")
 	fs.StringVar(&turnURLs, "turn-urls", turnURLs, "comma-separated TURN URLs (AERO_TURN_URLS)")
@@ -518,6 +530,9 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	if shutdownTimeout <= 0 {
 		return Config{}, fmt.Errorf("shutdown timeout must be > 0")
+	}
+	if iceGatherTimeout <= 0 {
+		return Config{}, fmt.Errorf("%s/--ice-gather-timeout must be > 0", EnvICEGatheringTimeout)
 	}
 	if udpBindingIdleTimeout <= 0 {
 		return Config{}, fmt.Errorf("%s/--udp-binding-idle-timeout must be > 0", EnvUDPBindingIdleTimeout)
@@ -610,13 +625,14 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 
 	cfg := Config{
-		ListenAddr:      listenAddr,
-		PublicBaseURL:   publicBaseURL,
-		AllowedOrigins:  allowedOrigins,
-		LogFormat:       logFormat,
-		LogLevel:        level,
-		ShutdownTimeout: shutdownTimeout,
-		Mode:            mode,
+		ListenAddr:          listenAddr,
+		PublicBaseURL:       publicBaseURL,
+		AllowedOrigins:      allowedOrigins,
+		LogFormat:           logFormat,
+		LogLevel:            level,
+		ShutdownTimeout:     shutdownTimeout,
+		ICEGatheringTimeout: iceGatherTimeout,
+		Mode:                mode,
 
 		AuthMode:                      authMode,
 		APIKey:                        apiKey,

@@ -161,25 +161,25 @@ The E2E test builds and runs a small Go relay helper under `e2e/relay-server-go/
   - guarded by the same origin policy as signaling endpoints (to avoid leaking TURN credentials cross-origin)
 - `POST /offer` → signaling: exchange SDP offer/answer (non-trickle ICE) per `PROTOCOL.md`
 - `POST /session` → allocate a server-side session (primarily for quota enforcement; not required by the v1 offer/answer flow)
+- `GET /webrtc/signal` → WebSocket signaling (trickle ICE)
+- `POST /webrtc/offer` → HTTP offer → answer (non-trickle ICE fallback)
 
 ## Implemented
 
 - Minimal production-oriented HTTP server skeleton + middleware
-- Config system (env + flags): listen address, public base URL, log format/level, shutdown timeout, dev/prod mode
+- Config system (env + flags): listen address, public base URL, log format/level, shutdown timeout, ICE gathering timeout, dev/prod mode
 - WebRTC network config (env + flags): ICE UDP port range, UDP listen IP, NAT 1:1 public IP advertisement
 - Configurable ICE servers (STUN/TURN) + client-facing discovery endpoint (`/webrtc/ice`)
-- WebRTC signaling (`POST /offer`) and server-side PeerConnection lifecycle (`pion/webrtc`)
+- WebRTC signaling:
+  - `POST /offer` (non-trickle offer/answer, versioned JSON)
+  - `GET /webrtc/signal` (WebSocket signaling with trickle ICE)
+  - `POST /webrtc/offer` (HTTP offer/answer fallback; non-trickle)
 - WebRTC DataChannel (`udp`) ↔ UDP datagram relay with per-guest-port UDP bindings and destination policy enforcement
-- WebSocket signaling handshake hardening:
-  - auth via first WebSocket message or query params
-  - authentication deadline
-  - per-connection signaling message size + rate limits
 - Protocol documentation (`PROTOCOL.md`)
 - Playwright E2E test harness (`e2e/`) that verifies Chromium ↔ relay interoperability for the `udp` DataChannel.
 
 ## Pending (future tasks)
 
-- Trickle ICE / explicit ICE candidate signaling (v1 uses non-trickle offer/answer)
 - Tighter integration with per-session rate limiting (pps/bps) for the data plane
 - Auth and additional policy controls (allowlists, additional destination restrictions, etc)
 
@@ -188,7 +188,7 @@ The E2E test builds and runs a small Go relay helper under `e2e/relay-server-go/
 - **HTTP**: configurable via `--listen-addr` / `AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR`
   - Default: `127.0.0.1:8080` (local dev)
   - In containers: set `AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR=0.0.0.0:8080` (done in `docker-compose.yml`)
-- **UDP (ICE / relay, upcoming)**: ICE + relay UDP ports will be used once signaling and relay endpoints land.
+- **UDP (ICE / relay)**: ICE + relay UDP ports are used for WebRTC connectivity and UDP relay traffic.
   - Configure the ICE port range with `WEBRTC_UDP_PORT_MIN/MAX` (and publish/open those ports).
 - **TURN (optional, docker-compose `with-turn` profile)**:
   - TURN listening port: `3478/udp`
@@ -206,6 +206,7 @@ The service supports configuration via environment variables and equivalent flag
 - `AERO_WEBRTC_UDP_RELAY_LOG_FORMAT` / `--log-format` (`text` or `json`)
 - `AERO_WEBRTC_UDP_RELAY_LOG_LEVEL` / `--log-level` (`debug`, `info`, `warn`, `error`)
 - `AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT` / `--shutdown-timeout` (default `15s`)
+- `AERO_WEBRTC_UDP_RELAY_ICE_GATHERING_TIMEOUT` / `--ice-gather-timeout` (default `2s`)
 - `AERO_WEBRTC_UDP_RELAY_MODE` / `--mode` (`dev` or `prod`)
 
 ### Relay engine limits (env + flags)

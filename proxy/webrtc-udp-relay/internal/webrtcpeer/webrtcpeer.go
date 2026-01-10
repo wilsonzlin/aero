@@ -14,7 +14,16 @@ func NewAPI(cfg config.Config) (*webrtc.API, error) {
 	if err := ApplyNetworkSettings(&se, cfg); err != nil {
 		return nil, err
 	}
-	api := webrtc.NewAPI(webrtc.WithSettingEngine(se))
+
+	mediaEngine := &webrtc.MediaEngine{}
+	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
+		return nil, fmt.Errorf("register default codecs: %w", err)
+	}
+
+	api := webrtc.NewAPI(
+		webrtc.WithSettingEngine(se),
+		webrtc.WithMediaEngine(mediaEngine),
+	)
 	return api, nil
 }
 
