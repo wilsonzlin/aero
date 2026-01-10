@@ -189,7 +189,7 @@ Input Assembler
 * `pfnIaSetInputLayout`
 * `pfnIaSetVertexBuffers`
 * `pfnIaSetIndexBuffer`
-* `pfnIaSetPrimitiveTopology`
+* `pfnIaSetTopology` (sets `D3D*_PRIMITIVE_TOPOLOGY`; corresponds to `IASetPrimitiveTopology` at the API level)
 
 Shaders
 * `pfnVsSetShader`
@@ -270,6 +270,9 @@ Shaders (initial bring-up)
   * `D3D11DDIARG_CREATEVERTEXSHADER`
 * `pfnCalcPrivatePixelShaderSize` + `pfnCreatePixelShader` + `pfnDestroyPixelShader`
   * `D3D11DDIARG_CREATEPIXELSHADER`
+* Geometry shader (required for `D3D_FEATURE_LEVEL_10_0` and above; can be deferred only if you advertise `D3D_FEATURE_LEVEL_9_x`)
+  * `pfnCalcPrivateGeometryShaderSize` + `pfnCreateGeometryShader` + `pfnDestroyGeometryShader`
+  * `D3D11DDIARG_CREATEGEOMETRYSHADER`
 
 Pipeline state
 * `pfnCalcPrivateElementLayoutSize` + `pfnCreateElementLayout` + `pfnDestroyElementLayout`
@@ -314,13 +317,19 @@ Input Assembler
 * `pfnIaSetInputLayout`
 * `pfnIaSetVertexBuffers`
 * `pfnIaSetIndexBuffer`
-* `pfnIaSetPrimitiveTopology`
+* `pfnIaSetTopology` (sets `D3D*_PRIMITIVE_TOPOLOGY`; corresponds to `IASetPrimitiveTopology` at the API level)
 
-Shaders + resource binding (VS/PS only)
+Shaders + resource binding (VS/PS, plus GS if advertising FL10_0+)
 * `pfnVsSetShader`, `pfnPsSetShader`
 * `pfnVsSetConstantBuffers`, `pfnPsSetConstantBuffers`
 * `pfnVsSetShaderResources`, `pfnPsSetShaderResources`
 * `pfnVsSetSamplers`, `pfnPsSetSamplers`
+
+Geometry shader stage (required for FL10_0+; optional only if you advertise FL9_x)
+* `pfnGsSetShader`
+* `pfnGsSetConstantBuffers`
+* `pfnGsSetShaderResources`
+* `pfnGsSetSamplers`
 
 Rasterizer / Output merger
 * `pfnSetViewports`, `pfnSetScissorRects`
@@ -531,8 +540,9 @@ If you claim `D3D_FEATURE_LEVEL_10_0` but do not implement compute shaders, ensu
 
 To claim `D3D_FEATURE_LEVEL_11_0`, plan these increments:
 
-1. **Geometry shader support** (if not already)
-   * implement `pfnCreateGeometryShader` + bind calls
+1. **Complete the FL10_0 feature set** (if you started at FL9_x for bring-up)
+   * Geometry shader support is expected at FL10_0+:
+     * implement `pfnCreateGeometryShader` and the GS bind/resource entrypoints (`pfnGsSet*`)
 2. **UAV plumbing + compute shaders**
    * `pfnCreateUnorderedAccessView` / `D3D11DDIARG_CREATEUNORDEREDACCESSVIEW`
    * `pfnCreateComputeShader` / `D3D11DDIARG_CREATECOMPUTESHADER`
