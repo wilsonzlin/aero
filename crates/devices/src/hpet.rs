@@ -18,6 +18,26 @@ const REG_TIMER_FSB_ROUTE: u64 = 0x10;
 const GEN_CONF_ENABLE: u64 = 1 << 0;
 const GEN_CONF_LEGACY_ROUTE: u64 = 1 << 1;
 
+/// In ACPI/MADT setups with an interrupt source override (ISO), the legacy PIT IRQ0
+/// is commonly mapped to GSI2 in APIC mode (see `firmware/src/acpi/builder.rs`).
+///
+/// HPET "LegacyReplacementRoute" mode routes Timer0 to the legacy timer interrupt
+/// and Timer1 to the legacy RTC interrupt; we model that using these GSIs.
+const LEGACY_TIMER_GSI: u32 = 2;
+const LEGACY_RTC_GSI: u32 = 8;
+
+fn apply_legacy_replacement_route(legacy: bool, timer_index: usize, programmed_route: u32) -> u32 {
+    if !legacy {
+        return programmed_route;
+    }
+
+    match timer_index {
+        0 => LEGACY_TIMER_GSI,
+        1 => LEGACY_RTC_GSI,
+        _ => programmed_route,
+    }
+}
+
 const TIMER_CFG_INT_LEVEL: u64 = 1 << 1;
 const TIMER_CFG_INT_ENABLE: u64 = 1 << 2;
 const TIMER_CFG_PERIODIC: u64 = 1 << 3;
@@ -281,15 +301,8 @@ impl<C: Clock> Hpet<C> {
             let was_pending = self.general_int_status & status_bit != 0;
             self.general_int_status |= status_bit;
 
-            let gsi = if self.general_config & GEN_CONF_LEGACY_ROUTE != 0 {
-                match idx {
-                    0 => 2,
-                    1 => 8,
-                    _ => timer.route(),
-                }
-            } else {
-                timer.route()
-            };
+            let legacy = self.general_config & GEN_CONF_LEGACY_ROUTE != 0;
+            let gsi = apply_legacy_replacement_route(legacy, idx, timer.route());
 
             if timer.is_level_triggered() {
                 if !timer.irq_asserted {
@@ -347,16 +360,59 @@ impl<C: Clock> Hpet<C> {
         match offset {
             REG_GENERAL_CONFIG => {
                 let before = self.general_config;
+                let before_legacy = before & GEN_CONF_LEGACY_ROUTE != 0;
                 let mut new = (before & !write_mask) | (value & write_mask);
                 new &= GEN_CONF_ENABLE | GEN_CONF_LEGACY_ROUTE;
 
                 let was_enabled = before & GEN_CONF_ENABLE != 0;
                 let now_enabled = new & GEN_CONF_ENABLE != 0;
+                let after_legacy = new & GEN_CONF_LEGACY_ROUTE != 0;
+                let legacy_changed = before_legacy != after_legacy;
                 self.general_config = new;
 
                 if !was_enabled && now_enabled {
                     self.last_update_ns = self.clock.now_ns();
                     self.remainder_fs = 0;
+                }
+
+                // If HPET is disabled while level-triggered lines are asserted, deassert them to
+                // avoid leaving the interrupt controller stuck in an asserted state.
+                if was_enabled && !now_enabled {
+                    for (timer_idx, timer) in self.timers.iter_mut().enumerate() {
+                        if !timer.irq_asserted {
+                            continue;
+                        }
+                        let gsi =
+                            apply_legacy_replacement_route(before_legacy, timer_idx, timer.route());
+                        sink.lower_gsi(gsi);
+                        timer.irq_asserted = false;
+                    }
+                    return;
+                }
+
+                // Legacy replacement changes the effective route of timer0/timer1. If a level
+                // interrupt is currently asserted, move it to the new destination.
+                if legacy_changed {
+                    for (timer_idx, timer) in self.timers.iter_mut().enumerate() {
+                        if !timer.irq_asserted {
+                            continue;
+                        }
+
+                        let before_gsi = apply_legacy_replacement_route(
+                            before_legacy,
+                            timer_idx,
+                            timer.route(),
+                        );
+                        let after_gsi = apply_legacy_replacement_route(
+                            after_legacy,
+                            timer_idx,
+                            timer.route(),
+                        );
+                        if before_gsi != after_gsi {
+                            sink.lower_gsi(before_gsi);
+                            sink.raise_gsi(after_gsi);
+                        }
+                    }
                 }
             }
             REG_GENERAL_INT_STATUS => {
@@ -376,15 +432,8 @@ impl<C: Clock> Hpet<C> {
                         (timer.route(), timer.is_level_triggered(), timer.irq_asserted)
                     };
                     if is_level && is_asserted {
-                        let gsi = if self.general_config & GEN_CONF_LEGACY_ROUTE != 0 {
-                            match timer_idx {
-                                0 => 2,
-                                1 => 8,
-                                _ => route,
-                            }
-                        } else {
-                            route
-                        };
+                        let legacy = self.general_config & GEN_CONF_LEGACY_ROUTE != 0;
+                        let gsi = apply_legacy_replacement_route(legacy, timer_idx, route);
 
                         sink.lower_gsi(gsi);
                         self.timers[timer_idx].irq_asserted = false;
@@ -410,15 +459,9 @@ impl<C: Clock> Hpet<C> {
                         let timer = &mut self.timers[timer_idx];
                         let before = timer.config;
                         let before_route = timer.route();
-                        let before_gsi = if self.general_config & GEN_CONF_LEGACY_ROUTE != 0 {
-                            match timer_idx {
-                                0 => 2,
-                                1 => 8,
-                                _ => before_route,
-                            }
-                        } else {
-                            before_route
-                        };
+                        let legacy = self.general_config & GEN_CONF_LEGACY_ROUTE != 0;
+                        let before_gsi =
+                            apply_legacy_replacement_route(legacy, timer_idx, before_route);
 
                         let mut new = (before & !write_mask) | (value & write_mask);
                         new &= TIMER_WRITABLE_MASK;
@@ -427,27 +470,30 @@ impl<C: Clock> Hpet<C> {
                         timer.config = (timer.config & !TIMER_WRITABLE_MASK) | new;
 
                         let after_route = timer.route();
-                        let after_gsi = if self.general_config & GEN_CONF_LEGACY_ROUTE != 0 {
-                            match timer_idx {
-                                0 => 2,
-                                1 => 8,
-                                _ => after_route,
-                            }
-                        } else {
-                            after_route
-                        };
+                        let after_gsi =
+                            apply_legacy_replacement_route(legacy, timer_idx, after_route);
 
                         let before_int = before & TIMER_CFG_INT_ENABLE != 0;
                         let after_int = timer.config & TIMER_CFG_INT_ENABLE != 0;
+                        let before_level = before & TIMER_CFG_INT_LEVEL != 0;
+                        let after_level = timer.is_level_triggered();
 
-                        if before_int && !after_int && timer.irq_asserted {
-                            sink.lower_gsi(before_gsi);
-                            timer.irq_asserted = false;
-                        }
-
-                        if before_gsi != after_gsi && timer.irq_asserted {
-                            sink.lower_gsi(before_gsi);
-                            sink.raise_gsi(after_gsi);
+                        if timer.irq_asserted {
+                            // If a level interrupt is asserted and the guest either disables the
+                            // interrupt, or switches the timer to edge-triggered mode, deassert it
+                            // immediately.
+                            if (before_int && !after_int) || (before_level && !after_level) {
+                                sink.lower_gsi(before_gsi);
+                                timer.irq_asserted = false;
+                            } else if before_gsi != after_gsi {
+                                // Route changed while asserted; move the line.
+                                sink.lower_gsi(before_gsi);
+                                if after_level {
+                                    sink.raise_gsi(after_gsi);
+                                } else {
+                                    timer.irq_asserted = false;
+                                }
+                            }
                         }
 
                         if timer.config & TIMER_CFG_PERIODIC == 0 {
