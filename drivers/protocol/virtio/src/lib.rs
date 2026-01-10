@@ -126,6 +126,14 @@ pub struct VirtioNetHdr {
   pub gso_size: u16,
   pub csum_start: u16,
   pub csum_offset: u16,
+}
+
+/// virtio-net header used when `VIRTIO_NET_F_MRG_RXBUF` is negotiated
+/// (`struct virtio_net_hdr_mrg_rxbuf`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VirtioNetHdrMrgRxbuf {
+  pub hdr: VirtioNetHdr,
   pub num_buffers: u16,
 }
 
@@ -193,10 +201,15 @@ mod tests {
 
   #[test]
   fn virtio_net_hdr_layout() {
-    assert_eq!(size_of::<VirtioNetHdr>(), 12);
+    assert_eq!(size_of::<VirtioNetHdr>(), 10);
     assert_eq!(offset_of!(VirtioNetHdr, flags), 0);
     assert_eq!(offset_of!(VirtioNetHdr, hdr_len), 2);
-    assert_eq!(offset_of!(VirtioNetHdr, num_buffers), 10);
+  }
+
+  #[test]
+  fn virtio_net_hdr_mrg_rxbuf_layout() {
+    assert_eq!(size_of::<VirtioNetHdrMrgRxbuf>(), 12);
+    assert_eq!(offset_of!(VirtioNetHdrMrgRxbuf, hdr), 0);
+    assert_eq!(offset_of!(VirtioNetHdrMrgRxbuf, num_buffers), 10);
   }
 }
-

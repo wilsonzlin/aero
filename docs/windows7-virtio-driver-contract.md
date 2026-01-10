@@ -23,7 +23,7 @@ This contract intentionally specifies a **small, strict, testable** subset of vi
 
 - **Transport:** `virtio-pci` **modern** (virtio 1.0+) using PCI vendor-specific capabilities and **MMIO** register blocks.
 - **Virtqueues:** split virtqueues (descriptor table + avail ring + used ring).
-- **Interrupts:** MSI-X preferred (multi-vector), with INTx fallback for platforms that cannot allocate message-signaled interrupts.
+- **Interrupts:** PCI **INTx** (required). MSI-X is permitted but is **not required** by contract v1 (see §1.8).
 
 ### 0.2 Out of scope (explicitly not required in contract v1)
 
@@ -91,7 +91,7 @@ Drivers MUST NOT rely on these subsystem IDs for correctness; they exist to aid 
 
 Each Aero virtio device exposes a single MMIO BAR for virtio configuration:
 
-- **BAR0:** 64-bit **MMIO**, little-endian, size **0x6000 bytes**.
+- **BAR0:** 64-bit **MMIO**, little-endian, size **0x4000 bytes**.
 - No I/O space BARs are required or implemented by contract v1.
 
 All multi-byte fields in virtio MMIO regions are **little-endian**.
@@ -122,17 +122,10 @@ All capabilities reference **BAR0** with the following offsets/lengths:
 
 | Capability | `cfg_type` | BAR | Offset | Length |
 |-----------|------------|-----|--------|--------|
-| Common configuration | 1 | 0 | `0x0000` | `0x1000` |
-| Notify configuration | 2 | 0 | `0x1000` | `0x1000` |
-| ISR configuration    | 3 | 0 | `0x2000` | `0x1000` |
-| Device configuration | 4 | 0 | `0x3000` | `0x1000` |
-
-MSI-X structures (PCI-managed; OS consumes these, not the driver):
-
-| Structure | BAR | Offset | Length |
-|----------|-----|--------|--------|
-| MSI-X Table | 0 | `0x4000` | `0x1000` |
-| MSI-X PBA   | 0 | `0x5000` | `0x1000` |
+| Common configuration | 1 | 0 | `0x0000` | `0x0100` |
+| Notify configuration | 2 | 0 | `0x1000` | `0x0100` |
+| ISR configuration    | 3 | 0 | `0x2000` | `0x0020` |
+| Device configuration | 4 | 0 | `0x3000` | `0x0100` |
 
 #### 1.4.1 Undefined MMIO behavior
 
@@ -156,6 +149,31 @@ The following `common_cfg` fields are **global selectors** that affect subsequen
 Because these selectors are shared device-global state, any multi-step sequence that uses them MUST be serialized by the driver (for example, by a per-device spinlock) to avoid races between queues/DPCs/power callbacks.
 
 The device MUST implement the selector behavior exactly as described; it MUST NOT provide per-CPU or per-queue selector state.
+
+##### `common_cfg` MMIO offsets (contract v1)
+
+Within the `COMMON_CFG` capability region (BAR0 + `0x0000`), `virtio_pci_common_cfg` is laid out as follows (little-endian):
+
+| Offset | Size | Field | Access | Notes |
+|--------|------|-------|--------|------|
+| `0x00` | 4 | `device_feature_select` | R/W | Selector (0 = low 32 bits, 1 = high 32 bits). |
+| `0x04` | 4 | `device_feature` | R | Feature bits selected by `device_feature_select`. |
+| `0x08` | 4 | `driver_feature_select` | R/W | Selector (0/1). |
+| `0x0C` | 4 | `driver_feature` | R/W | Feature bits selected by `driver_feature_select`. |
+| `0x10` | 2 | `msix_config` | R/W | MSI-X vector for config interrupts (`0xFFFF` = disabled). Optional in v1. |
+| `0x12` | 2 | `num_queues` | R | Number of virtqueues implemented by the device. |
+| `0x14` | 1 | `device_status` | R/W | Virtio status byte. Writing 0 resets the device. |
+| `0x15` | 1 | `config_generation` | R | Config generation counter. |
+| `0x16` | 2 | `queue_select` | R/W | Selects which queue subsequent `queue_*` fields refer to. |
+| `0x18` | 2 | `queue_size` | R | Maximum size for selected queue (in descriptors). |
+| `0x1A` | 2 | `queue_msix_vector` | R/W | MSI-X vector for selected queue (`0xFFFF` = disabled). Optional in v1. |
+| `0x1C` | 2 | `queue_enable` | R/W | 0 = disabled, 1 = enabled. |
+| `0x1E` | 2 | `queue_notify_off` | R | Notify offset for selected queue. |
+| `0x20` | 8 | `queue_desc` | R/W | 64-bit guest physical address of descriptor table. |
+| `0x28` | 8 | `queue_avail` | R/W | 64-bit guest physical address of avail ring. |
+| `0x30` | 8 | `queue_used` | R/W | 64-bit guest physical address of used ring. |
+
+The structure size is 56 bytes (`0x38`). The offsets above are enforced in the Windows driver code via `C_ASSERT` and in Rust via `drivers/protocol/virtio` unit tests.
 
 #### 1.5.1 Feature negotiation (64-bit)
 
@@ -262,31 +280,23 @@ ISR semantics:
 - Reading the ISR byte returns the current pending bits and **acknowledges** them (read-to-ack).
 - Reading MUST clear all bits that were returned.
 
-When MSI-X is enabled, drivers SHOULD rely on the MSI-X vector to determine the cause; ISR is primarily for INTx fallback.
+If MSI-X is present and enabled, drivers SHOULD rely on the MSI-X vector to determine the cause; ISR is primarily for INTx and MSI fallbacks.
 
-### 1.8 Interrupts (MSI-X and INTx)
+### 1.8 Interrupts
 
-#### 1.8.1 MSI-X requirement
+#### 1.8.1 INTx (required)
 
-All Aero virtio devices MUST expose a PCI MSI-X capability and MUST support at least:
+Contract v1 requires **legacy PCI INTx** support.
 
-- `1 + num_queues` MSI-X vectors
-
-Vector assignment:
-
-- `msix_config` selects the MSI-X vector used for config change interrupts.
-- `queue_msix_vector` selects the MSI-X vector used for interrupts for the selected queue.
-
-A value of `0xFFFF` means “no MSI-X vector assigned”.
+- The device MUST use PCI **INTA#** (interrupt pin = 1).
+- The device MUST assert INTx when it sets any ISR cause bit (queue or config).
+- The device MUST deassert INTx after the guest acknowledges all pending causes (i.e., after `ISR` is read and no further causes remain).
 
 #### 1.8.2 Queue interrupt behavior
 
 When the device publishes one or more used-ring entries for a queue:
 
-- If MSI-X is enabled *and* that queue has a valid `queue_msix_vector`, the device MUST signal that MSI-X vector.
-- Otherwise, the device MUST:
-  - set ISR bit 0 (`QUEUE_INTERRUPT`), and
-  - assert the legacy PCI INTx line interrupt.
+- The device MUST set ISR bit 0 (`QUEUE_INTERRUPT`) and MUST assert INTx.
 
 The device SHOULD suppress interrupts when the driver has set `VRING_AVAIL_F_NO_INTERRUPT` in the avail ring for that queue.
 
@@ -294,12 +304,18 @@ The device SHOULD suppress interrupts when the driver has set `VRING_AVAIL_F_NO_
 
 If device-specific config changes at runtime:
 
-- If MSI-X is enabled *and* `msix_config != 0xFFFF`, the device MUST signal that MSI-X vector.
-- Otherwise, the device MUST:
-  - set ISR bit 1 (`CONFIG_INTERRUPT`), and
-  - assert INTx.
+- The device MUST set ISR bit 1 (`CONFIG_INTERRUPT`) and MUST assert INTx.
 
 Contract v1 devices SHOULD NOT change config at runtime unless explicitly described in a per-device section.
+
+#### 1.8.4 MSI-X (permitted but not required in contract v1)
+
+Devices MAY expose a PCI MSI-X capability and MAY use `msix_config` / `queue_msix_vector` to deliver message-signaled interrupts, but Windows 7 drivers MUST remain functional when only INTx is available.
+
+If MSI-X is implemented, it MUST preserve INTx/ISR semantics as a fallback:
+
+- When MSI-X is enabled and a valid vector is assigned, the device MAY signal MSI-X instead of asserting INTx.
+- When MSI-X is disabled or vectors are unassigned (`0xFFFF`), the device MUST use INTx + ISR as described above.
 
 ## 2. Virtqueue contract (split ring only)
 
@@ -559,7 +575,7 @@ virtio-net config (little-endian):
 
 #### 3.2.5 Packet format and virtio-net header expectations
 
-Contract v1 uses `struct virtio_net_hdr` as 12 bytes:
+Contract v1 uses the classic 10-byte `struct virtio_net_hdr`:
 
 ```c
 struct virtio_net_hdr {
@@ -569,7 +585,6 @@ struct virtio_net_hdr {
   le16 gso_size;
   le16 csum_start;
   le16 csum_offset;
-  le16 num_buffers; // MUST be 0 when MRG_RXBUF is not negotiated
 };
 ```
 
@@ -577,7 +592,7 @@ Because no offload or mergeable-RX features are negotiated:
 
 - The driver MUST set all header fields to 0 for TX.
 - The device MUST ignore the header contents for TX.
-- For RX, the device MUST write a zeroed header (including `num_buffers = 0`).
+- For RX, the device MUST write a zeroed header.
 
 #### 3.2.6 Frame size rules
 
@@ -588,7 +603,7 @@ Because no offload or mergeable-RX features are negotiated:
 
 Each TX submission is a descriptor chain:
 
-1. Descriptor 0: device-readable `virtio_net_hdr` (len >= 12)
+1. Descriptor 0: device-readable `virtio_net_hdr` (len >= 10)
 2. Descriptor 1..k: device-readable Ethernet frame bytes (no FCS)
 
 Completion:
@@ -602,16 +617,16 @@ The driver supplies receive buffers via available descriptor chains.
 
 Buffer requirements (driver):
 
-- Each chain MUST start with a writable buffer of at least 12 bytes for `virtio_net_hdr`.
+- Each chain MUST start with a writable buffer of at least 10 bytes for `virtio_net_hdr`.
 - The chain MUST provide at least 1514 bytes of writable payload space after the header (or packets may be dropped).
 
 Receive behavior (device):
 
 - For each received Ethernet frame, the device consumes exactly one available chain.
 - The device writes:
-  - a zeroed 12-byte header into the first buffer, and
+  - a zeroed 10-byte header into the first buffer, and
   - the full Ethernet frame into subsequent writable buffer space.
-- The device completes the chain with `used.len = 12 + frame_len`.
+- The device completes the chain with `used.len = 10 + frame_len`.
 - If the provided buffers are insufficient, the device MUST drop the incoming frame and MUST NOT consume a chain for it.
 
 ### 3.3 virtio-input (keyboard/mouse)
@@ -825,8 +840,8 @@ Drivers MUST refuse to bind to devices with an unknown major version (Revision I
 - [ ] Expose BAR0 MMIO layout and virtio capabilities exactly (§1.2–§1.4).
 - [ ] Implement common_cfg selectors and queue programming semantics (§1.5).
 - [ ] Implement notify doorbell semantics (§1.6).
-- [ ] Implement ISR read-to-ack semantics for INTx fallback (§1.7–§1.8).
-- [ ] Implement MSI-X with at least `1 + num_queues` vectors (§1.8).
+- [ ] Implement INTx assertion/deassertion and ISR read-to-ack semantics (§1.7–§1.8).
+- [ ] (Optional) If MSI-X is implemented, ensure it cleanly falls back to INTx + ISR when disabled/unavailable (§1.8.4).
 - [ ] Implement split rings and indirect descriptors (§2.1–§2.4).
 - [ ] Bounds-check all guest physical memory accesses (§2.6).
 
@@ -836,4 +851,4 @@ Drivers MUST refuse to bind to devices with an unknown major version (Revision I
 - [ ] Parse virtio-pci modern capabilities (COMMON/NOTIFY/ISR/DEVICE) (§1.3).
 - [ ] Negotiate `VIRTIO_F_VERSION_1` and required per-device features (§1.5.2, §3).
 - [ ] Program queues via common_cfg, then notify via notify region (§1.5.4, §1.6).
-- [ ] Use MSI-X when available; fall back to INTx + ISR when not (§1.8).
+- [ ] Work correctly with INTx + ISR only; use MSI-X only when available and known-good (§1.8).

@@ -37,7 +37,7 @@ typedef struct _virtio_pci_common_cfg {
 #pragma pack(pop)
 
 //
-// CommonCfg offsets are defined by the virtio spec. Assert the layout so any
+// CommonCfg offsets are a strict device/driver ABI. Assert the layout so any
 // accidental padding or stray fields are caught at compile time.
 //
 C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, device_feature_select) == 0x00);
