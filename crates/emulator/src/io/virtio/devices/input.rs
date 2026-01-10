@@ -6,13 +6,13 @@ pub const VIRTIO_ID_INPUT: u16 = 18;
 
 pub const VIRTIO_STATUS_DRIVER_OK: u8 = 0x04;
 
-pub const VIRTIO_INPUT_CFG_UNSET: u16 = 0x00;
-pub const VIRTIO_INPUT_CFG_ID_NAME: u16 = 0x01;
-pub const VIRTIO_INPUT_CFG_ID_SERIAL: u16 = 0x02;
-pub const VIRTIO_INPUT_CFG_ID_DEVIDS: u16 = 0x03;
-pub const VIRTIO_INPUT_CFG_PROP_BITS: u16 = 0x10;
-pub const VIRTIO_INPUT_CFG_EV_BITS: u16 = 0x11;
-pub const VIRTIO_INPUT_CFG_ABS_INFO: u16 = 0x12;
+pub const VIRTIO_INPUT_CFG_UNSET: u8 = 0x00;
+pub const VIRTIO_INPUT_CFG_ID_NAME: u8 = 0x01;
+pub const VIRTIO_INPUT_CFG_ID_SERIAL: u8 = 0x02;
+pub const VIRTIO_INPUT_CFG_ID_DEVIDS: u8 = 0x03;
+pub const VIRTIO_INPUT_CFG_PROP_BITS: u8 = 0x10;
+pub const VIRTIO_INPUT_CFG_EV_BITS: u8 = 0x11;
+pub const VIRTIO_INPUT_CFG_ABS_INFO: u8 = 0x12;
 
 pub const EV_SYN: u16 = 0x00;
 pub const EV_KEY: u16 = 0x01;
@@ -44,6 +44,8 @@ pub const KEY_7: u16 = 8;
 pub const KEY_8: u16 = 9;
 pub const KEY_9: u16 = 10;
 pub const KEY_0: u16 = 11;
+pub const KEY_MINUS: u16 = 12;
+pub const KEY_EQUAL: u16 = 13;
 pub const KEY_BACKSPACE: u16 = 14;
 pub const KEY_TAB: u16 = 15;
 pub const KEY_Q: u16 = 16;
@@ -56,6 +58,8 @@ pub const KEY_U: u16 = 22;
 pub const KEY_I: u16 = 23;
 pub const KEY_O: u16 = 24;
 pub const KEY_P: u16 = 25;
+pub const KEY_LEFTBRACE: u16 = 26;
+pub const KEY_RIGHTBRACE: u16 = 27;
 pub const KEY_ENTER: u16 = 28;
 pub const KEY_LEFTCTRL: u16 = 29;
 pub const KEY_A: u16 = 30;
@@ -67,7 +71,11 @@ pub const KEY_H: u16 = 35;
 pub const KEY_J: u16 = 36;
 pub const KEY_K: u16 = 37;
 pub const KEY_L: u16 = 38;
+pub const KEY_SEMICOLON: u16 = 39;
+pub const KEY_APOSTROPHE: u16 = 40;
+pub const KEY_GRAVE: u16 = 41;
 pub const KEY_LEFTSHIFT: u16 = 42;
+pub const KEY_BACKSLASH: u16 = 43;
 pub const KEY_Z: u16 = 44;
 pub const KEY_X: u16 = 45;
 pub const KEY_C: u16 = 46;
@@ -75,18 +83,41 @@ pub const KEY_V: u16 = 47;
 pub const KEY_B: u16 = 48;
 pub const KEY_N: u16 = 49;
 pub const KEY_M: u16 = 50;
+pub const KEY_COMMA: u16 = 51;
+pub const KEY_DOT: u16 = 52;
+pub const KEY_SLASH: u16 = 53;
 pub const KEY_RIGHTSHIFT: u16 = 54;
 pub const KEY_LEFTALT: u16 = 56;
 pub const KEY_SPACE: u16 = 57;
 pub const KEY_CAPSLOCK: u16 = 58;
+pub const KEY_F1: u16 = 59;
+pub const KEY_F2: u16 = 60;
+pub const KEY_F3: u16 = 61;
+pub const KEY_F4: u16 = 62;
+pub const KEY_F5: u16 = 63;
+pub const KEY_F6: u16 = 64;
+pub const KEY_F7: u16 = 65;
+pub const KEY_F8: u16 = 66;
+pub const KEY_F9: u16 = 67;
+pub const KEY_F10: u16 = 68;
 pub const KEY_NUMLOCK: u16 = 69;
 pub const KEY_SCROLLLOCK: u16 = 70;
+pub const KEY_F11: u16 = 87;
+pub const KEY_F12: u16 = 88;
 pub const KEY_RIGHTCTRL: u16 = 97;
 pub const KEY_RIGHTALT: u16 = 100;
+pub const KEY_HOME: u16 = 102;
+pub const KEY_PAGEUP: u16 = 104;
 pub const KEY_UP: u16 = 103;
 pub const KEY_LEFT: u16 = 105;
 pub const KEY_RIGHT: u16 = 106;
+pub const KEY_END: u16 = 107;
 pub const KEY_DOWN: u16 = 108;
+pub const KEY_PAGEDOWN: u16 = 109;
+pub const KEY_INSERT: u16 = 110;
+pub const KEY_DELETE: u16 = 111;
+pub const KEY_LEFTMETA: u16 = 125;
+pub const KEY_RIGHTMETA: u16 = 126;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
@@ -189,6 +220,8 @@ impl VirtioInputBitmaps {
             KEY_8,
             KEY_9,
             KEY_0,
+            KEY_MINUS,
+            KEY_EQUAL,
             KEY_BACKSPACE,
             KEY_TAB,
             KEY_Q,
@@ -201,6 +234,8 @@ impl VirtioInputBitmaps {
             KEY_I,
             KEY_O,
             KEY_P,
+            KEY_LEFTBRACE,
+            KEY_RIGHTBRACE,
             KEY_ENTER,
             KEY_LEFTCTRL,
             KEY_A,
@@ -212,7 +247,11 @@ impl VirtioInputBitmaps {
             KEY_J,
             KEY_K,
             KEY_L,
+            KEY_SEMICOLON,
+            KEY_APOSTROPHE,
+            KEY_GRAVE,
             KEY_LEFTSHIFT,
+            KEY_BACKSLASH,
             KEY_Z,
             KEY_X,
             KEY_C,
@@ -220,18 +259,41 @@ impl VirtioInputBitmaps {
             KEY_B,
             KEY_N,
             KEY_M,
+            KEY_COMMA,
+            KEY_DOT,
+            KEY_SLASH,
             KEY_RIGHTSHIFT,
             KEY_LEFTALT,
             KEY_RIGHTALT,
             KEY_SPACE,
             KEY_CAPSLOCK,
+            KEY_F1,
+            KEY_F2,
+            KEY_F3,
+            KEY_F4,
+            KEY_F5,
+            KEY_F6,
+            KEY_F7,
+            KEY_F8,
+            KEY_F9,
+            KEY_F10,
+            KEY_F11,
+            KEY_F12,
             KEY_NUMLOCK,
             KEY_SCROLLLOCK,
             KEY_RIGHTCTRL,
+            KEY_LEFTMETA,
+            KEY_RIGHTMETA,
+            KEY_HOME,
             KEY_UP,
+            KEY_PAGEUP,
             KEY_DOWN,
             KEY_LEFT,
             KEY_RIGHT,
+            KEY_END,
+            KEY_PAGEDOWN,
+            KEY_INSERT,
+            KEY_DELETE,
         ]);
         bitmaps.led = Self::with_bits(&[LED_NUML, LED_CAPSL, LED_SCROLLL]);
         bitmaps
@@ -253,8 +315,8 @@ pub struct VirtioInputDevice {
     serial: String,
     devids: VirtioInputDevids,
     status: u8,
-    config_select: u16,
-    config_subsel: u16,
+    config_select: u8,
+    config_subsel: u8,
     pub event_vq: VirtQueue,
     pub status_vq: VirtQueue,
     pending_events: VecDeque<VirtioInputEvent>,
@@ -267,10 +329,10 @@ impl VirtioInputDevice {
     pub fn new(kind: VirtioInputDeviceKind, event_vq: VirtQueue, status_vq: VirtQueue) -> Self {
         let (name, bitmaps) = match kind {
             VirtioInputDeviceKind::Keyboard => (
-                "Aero VirtIO Keyboard".to_string(),
+                "Aero Virtio Keyboard".to_string(),
                 VirtioInputBitmaps::for_keyboard(),
             ),
-            VirtioInputDeviceKind::Mouse => ("Aero VirtIO Mouse".to_string(), VirtioInputBitmaps::for_mouse()),
+            VirtioInputDeviceKind::Mouse => ("Aero Virtio Mouse".to_string(), VirtioInputBitmaps::for_mouse()),
         };
         Self {
             kind,
@@ -483,10 +545,8 @@ impl VirtioInputDevice {
     pub fn write_config(&mut self, offset: usize, data: &[u8]) {
         for (i, &byte) in data.iter().enumerate() {
             match offset.saturating_add(i) {
-                0 => self.config_select = (self.config_select & 0xFF00) | byte as u16,
-                1 => self.config_select = (self.config_select & 0x00FF) | ((byte as u16) << 8),
-                2 => self.config_subsel = (self.config_subsel & 0xFF00) | byte as u16,
-                3 => self.config_subsel = (self.config_subsel & 0x00FF) | ((byte as u16) << 8),
+                0 => self.config_select = byte,
+                1 => self.config_subsel = byte,
                 _ => {}
             }
         }
@@ -501,10 +561,10 @@ impl VirtioInputDevice {
 
     fn config_bytes(&self) -> Vec<u8> {
         let mut cfg = vec![0u8; 8 + 128];
-        cfg[0..2].copy_from_slice(&self.config_select.to_le_bytes());
-        cfg[2..4].copy_from_slice(&self.config_subsel.to_le_bytes());
+        cfg[0] = self.config_select;
+        cfg[1] = self.config_subsel;
         let (size, payload) = self.config_payload();
-        cfg[4] = size;
+        cfg[2] = size;
         cfg[8..8 + 128].copy_from_slice(&payload);
         cfg
     }
@@ -534,9 +594,9 @@ impl VirtioInputDevice {
             VIRTIO_INPUT_CFG_EV_BITS => {
                 let bitmap = match self.config_subsel {
                     0 => &self.bitmaps.ev,
-                    EV_KEY => &self.bitmaps.key,
-                    EV_REL => &self.bitmaps.rel,
-                    EV_LED => &self.bitmaps.led,
+                    x if x == EV_KEY as u8 => &self.bitmaps.key,
+                    x if x == EV_REL as u8 => &self.bitmaps.rel,
+                    x if x == EV_LED as u8 => &self.bitmaps.led,
                     _ => &[0u8; 128],
                 };
                 payload.copy_from_slice(bitmap);
@@ -803,17 +863,16 @@ mod tests {
         let status_vq = VirtQueue::new(8, 0, 0, 0);
         let mut dev = VirtioInputDevice::new(VirtioInputDeviceKind::Keyboard, event_vq, status_vq);
 
-        dev.write_config(0, &VIRTIO_INPUT_CFG_ID_NAME.to_le_bytes());
-        let name_len = dev.read_config(4, 1)[0] as usize;
+        dev.write_config(0, &[VIRTIO_INPUT_CFG_ID_NAME]);
+        let name_len = dev.read_config(2, 1)[0] as usize;
         let name_payload = dev.read_config(8, name_len);
-        assert!(name_payload.starts_with(b"Aero VirtIO Keyboard"));
+        assert!(name_payload.starts_with(b"Aero Virtio Keyboard"));
 
-        dev.write_config(0, &VIRTIO_INPUT_CFG_EV_BITS.to_le_bytes());
-        dev.write_config(2, &0u16.to_le_bytes());
+        dev.write_config(0, &[VIRTIO_INPUT_CFG_EV_BITS, 0]);
         let ev_bitmap = dev.read_config(8, 128);
         assert_ne!(ev_bitmap[(EV_KEY / 8) as usize] & (1u8 << (EV_KEY % 8)), 0);
 
-        dev.write_config(2, &EV_KEY.to_le_bytes());
+        dev.write_config(1, &[EV_KEY as u8]);
         let key_bitmap = dev.read_config(8, 128);
         assert_ne!(key_bitmap[(KEY_A / 8) as usize] & (1u8 << (KEY_A % 8)), 0);
     }

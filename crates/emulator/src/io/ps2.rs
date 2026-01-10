@@ -15,6 +15,7 @@ pub struct Ps2Controller {
 
 #[derive(Debug, Default)]
 pub struct Ps2Keyboard {
+    /// Raw PS/2 set-2 bytes (including `0xE0`/`0xF0` prefixes as applicable).
     pub scancodes: VecDeque<u8>,
 }
 

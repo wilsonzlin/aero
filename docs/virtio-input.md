@@ -11,8 +11,8 @@ See also:
 
 This repo implements **two virtio-input devices**:
 
-- `Aero VirtIO Keyboard`
-- `Aero VirtIO Mouse` (relative pointer)
+- `Aero Virtio Keyboard`
+- `Aero Virtio Mouse` (relative pointer)
 
 Each device is a standard virtio 1.1 device (`VIRTIO_ID_INPUT`).
 

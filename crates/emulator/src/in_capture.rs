@@ -1,12 +1,10 @@
-use crate::io::ps2::{Ps2Controller, Ps2MouseButton};
 use crate::io::input::ps2_set2_bytes_for_key_event;
+use crate::io::ps2::{Ps2Controller, Ps2MouseButton};
 use crate::io::usb::hid::hid_usage_from_js_code;
 use crate::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use crate::io::usb::hid::mouse::UsbHidMouseHandle;
-use crate::io::virtio::devices::input::{
-    VirtioInputHub, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, KEY_A, KEY_B, KEY_ENTER, KEY_ESC, KEY_SPACE,
-    KEY_TAB,
-};
+use crate::io::virtio::devices::input as vio_input;
+use crate::io::virtio::devices::input::VirtioInputHub;
 use crate::io::virtio::vio_core::VirtQueueError;
 use memory::GuestMemory;
 
@@ -241,9 +239,9 @@ impl InputPipeline {
             return Ok(());
         };
         let code = match button {
-            Ps2MouseButton::Left => BTN_LEFT,
-            Ps2MouseButton::Right => BTN_RIGHT,
-            Ps2MouseButton::Middle => BTN_MIDDLE,
+            Ps2MouseButton::Left => vio_input::BTN_LEFT,
+            Ps2MouseButton::Right => vio_input::BTN_RIGHT,
+            Ps2MouseButton::Middle => vio_input::BTN_MIDDLE,
         };
         virtio.mouse.inject_button(mem, code, pressed)?;
         Ok(())
@@ -290,12 +288,91 @@ impl InputPipeline {
 
 fn js_code_to_linux_key(code: &str) -> Option<u16> {
     match code {
-        "Escape" => Some(KEY_ESC),
-        "Tab" => Some(KEY_TAB),
-        "Enter" => Some(KEY_ENTER),
-        "Space" => Some(KEY_SPACE),
-        "KeyA" => Some(KEY_A),
-        "KeyB" => Some(KEY_B),
+        "Escape" => Some(vio_input::KEY_ESC),
+        "Digit1" => Some(vio_input::KEY_1),
+        "Digit2" => Some(vio_input::KEY_2),
+        "Digit3" => Some(vio_input::KEY_3),
+        "Digit4" => Some(vio_input::KEY_4),
+        "Digit5" => Some(vio_input::KEY_5),
+        "Digit6" => Some(vio_input::KEY_6),
+        "Digit7" => Some(vio_input::KEY_7),
+        "Digit8" => Some(vio_input::KEY_8),
+        "Digit9" => Some(vio_input::KEY_9),
+        "Digit0" => Some(vio_input::KEY_0),
+        "Minus" => Some(vio_input::KEY_MINUS),
+        "Equal" => Some(vio_input::KEY_EQUAL),
+        "Backspace" => Some(vio_input::KEY_BACKSPACE),
+        "Tab" => Some(vio_input::KEY_TAB),
+        "KeyQ" => Some(vio_input::KEY_Q),
+        "KeyW" => Some(vio_input::KEY_W),
+        "KeyE" => Some(vio_input::KEY_E),
+        "KeyR" => Some(vio_input::KEY_R),
+        "KeyT" => Some(vio_input::KEY_T),
+        "KeyY" => Some(vio_input::KEY_Y),
+        "KeyU" => Some(vio_input::KEY_U),
+        "KeyI" => Some(vio_input::KEY_I),
+        "KeyO" => Some(vio_input::KEY_O),
+        "KeyP" => Some(vio_input::KEY_P),
+        "BracketLeft" => Some(vio_input::KEY_LEFTBRACE),
+        "BracketRight" => Some(vio_input::KEY_RIGHTBRACE),
+        "Enter" => Some(vio_input::KEY_ENTER),
+        "ControlLeft" => Some(vio_input::KEY_LEFTCTRL),
+        "KeyA" => Some(vio_input::KEY_A),
+        "KeyS" => Some(vio_input::KEY_S),
+        "KeyD" => Some(vio_input::KEY_D),
+        "KeyF" => Some(vio_input::KEY_F),
+        "KeyG" => Some(vio_input::KEY_G),
+        "KeyH" => Some(vio_input::KEY_H),
+        "KeyJ" => Some(vio_input::KEY_J),
+        "KeyK" => Some(vio_input::KEY_K),
+        "KeyL" => Some(vio_input::KEY_L),
+        "Semicolon" => Some(vio_input::KEY_SEMICOLON),
+        "Quote" => Some(vio_input::KEY_APOSTROPHE),
+        "Backquote" => Some(vio_input::KEY_GRAVE),
+        "ShiftLeft" => Some(vio_input::KEY_LEFTSHIFT),
+        "Backslash" => Some(vio_input::KEY_BACKSLASH),
+        "KeyZ" => Some(vio_input::KEY_Z),
+        "KeyX" => Some(vio_input::KEY_X),
+        "KeyC" => Some(vio_input::KEY_C),
+        "KeyV" => Some(vio_input::KEY_V),
+        "KeyB" => Some(vio_input::KEY_B),
+        "KeyN" => Some(vio_input::KEY_N),
+        "KeyM" => Some(vio_input::KEY_M),
+        "Comma" => Some(vio_input::KEY_COMMA),
+        "Period" => Some(vio_input::KEY_DOT),
+        "Slash" => Some(vio_input::KEY_SLASH),
+        "ShiftRight" => Some(vio_input::KEY_RIGHTSHIFT),
+        "AltLeft" => Some(vio_input::KEY_LEFTALT),
+        "Space" => Some(vio_input::KEY_SPACE),
+        "CapsLock" => Some(vio_input::KEY_CAPSLOCK),
+        "F1" => Some(vio_input::KEY_F1),
+        "F2" => Some(vio_input::KEY_F2),
+        "F3" => Some(vio_input::KEY_F3),
+        "F4" => Some(vio_input::KEY_F4),
+        "F5" => Some(vio_input::KEY_F5),
+        "F6" => Some(vio_input::KEY_F6),
+        "F7" => Some(vio_input::KEY_F7),
+        "F8" => Some(vio_input::KEY_F8),
+        "F9" => Some(vio_input::KEY_F9),
+        "F10" => Some(vio_input::KEY_F10),
+        "F11" => Some(vio_input::KEY_F11),
+        "F12" => Some(vio_input::KEY_F12),
+        "NumLock" => Some(vio_input::KEY_NUMLOCK),
+        "ScrollLock" => Some(vio_input::KEY_SCROLLLOCK),
+        "ControlRight" => Some(vio_input::KEY_RIGHTCTRL),
+        "AltRight" => Some(vio_input::KEY_RIGHTALT),
+        "MetaLeft" | "OSLeft" => Some(vio_input::KEY_LEFTMETA),
+        "MetaRight" | "OSRight" => Some(vio_input::KEY_RIGHTMETA),
+        "Home" => Some(vio_input::KEY_HOME),
+        "PageUp" => Some(vio_input::KEY_PAGEUP),
+        "ArrowUp" => Some(vio_input::KEY_UP),
+        "ArrowLeft" => Some(vio_input::KEY_LEFT),
+        "ArrowRight" => Some(vio_input::KEY_RIGHT),
+        "End" => Some(vio_input::KEY_END),
+        "ArrowDown" => Some(vio_input::KEY_DOWN),
+        "PageDown" => Some(vio_input::KEY_PAGEDOWN),
+        "Insert" => Some(vio_input::KEY_INSERT),
+        "Delete" => Some(vio_input::KEY_DELETE),
         _ => None,
     }
 }
