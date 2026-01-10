@@ -23,7 +23,21 @@ param(
   [switch]$AllowSha2CertFallback,
 
   [Parameter()]
-  [string]$ToolchainJson
+  [string]$ToolchainJson,
+
+  # Optional stable signing certificate material for releases.
+  #
+  # If both are provided (either as parameters or via environment variables),
+  # this script will sign driver packages using the provided PFX instead of
+  # generating a new self-signed certificate each run.
+  #
+  # This enables consistent test-signing across releases while keeping the
+  # default behavior fork-friendly (no secrets -> ephemeral cert -> still signs).
+  [Parameter()]
+  [string]$StablePfxBase64 = $env:AERO_DRIVER_PFX_BASE64,
+
+  [Parameter()]
+  [string]$StablePfxPassword = $env:AERO_DRIVER_PFX_PASSWORD
 )
 
 Set-StrictMode -Version Latest
@@ -519,24 +533,57 @@ try {
 
   New-Item -ItemType Directory -Force -Path $certOutDirAbs | Out-Null
   New-Item -ItemType Directory -Force -Path $outDirAbs | Out-Null
-
+ 
   $cerPath = Join-Path $certOutDirAbs "aero-test.cer"
-  $pfxPath = Join-Path $outDirAbs "aero-test.pfx"
-  $pfxPasswordPlain = "aero-test"
-  $pfxPassword = ConvertTo-SecureString -String $pfxPasswordPlain -AsPlainText -Force
+  $useStablePfx = (-not [string]::IsNullOrWhiteSpace($StablePfxBase64)) -and (-not [string]::IsNullOrWhiteSpace($StablePfxPassword))
 
-  $needsSha1 = $DualSign -or ($Digest.ToLowerInvariant() -eq "sha1")
-  $certHashAlgorithm = if ($needsSha1) { "sha1" } else { "sha256" }
+  if ($useStablePfx) {
+    Write-Host "Using stable signing certificate from AERO_DRIVER_PFX_*."
 
-  Ensure-TestSigningCertificate `
-    -CerPath $cerPath `
-    -PfxPath $pfxPath `
-    -PfxPassword $pfxPassword `
-    -HashAlgorithm $certHashAlgorithm `
-    -AllowSha2CertFallback:$AllowSha2CertFallback
+    $pfxPasswordPlain = $StablePfxPassword
+    $pfxPassword = ConvertTo-SecureString -String $pfxPasswordPlain -AsPlainText -Force
 
-  $certForLog = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($cerPath)
-  Write-CertificateInfo -Cert $certForLog
+    $tempDir = $env:RUNNER_TEMP
+    if ([string]::IsNullOrWhiteSpace($tempDir)) { $tempDir = $env:TEMP }
+    if ([string]::IsNullOrWhiteSpace($tempDir)) { $tempDir = $outDirAbs }
+    $pfxPath = Join-Path $tempDir "aero-driver.pfx"
+
+    $pfxB64 = ($StablePfxBase64 -replace '\s', '')
+    [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($pfxB64))
+
+    $cert = $null
+    try {
+      $imported = Import-PfxCertificate -FilePath $pfxPath -Password $pfxPassword -CertStoreLocation 'Cert:\CurrentUser\My'
+      $cert = $imported | Where-Object { $_.HasPrivateKey } | Select-Object -First 1
+    } catch {
+      throw "Failed to import stable PFX for logging/export: $($_.Exception.Message)"
+    }
+    if (-not $cert) {
+      throw "Imported stable PFX successfully, but no certificate with a private key was found."
+    }
+
+    Export-Certificate -Cert $cert -FilePath $cerPath -Force | Out-Null
+    Ensure-TrustedCertificate -CerPath $cerPath
+    Write-CertificateInfo -Cert $cert
+  } else {
+    Write-Host "Using ephemeral self-signed certificate (AERO_DRIVER_PFX_* not provided)."
+    $pfxPath = Join-Path $outDirAbs "aero-test.pfx"
+    $pfxPasswordPlain = "aero-test"
+    $pfxPassword = ConvertTo-SecureString -String $pfxPasswordPlain -AsPlainText -Force
+
+    $needsSha1 = $DualSign -or ($Digest.ToLowerInvariant() -eq "sha1")
+    $certHashAlgorithm = if ($needsSha1) { "sha1" } else { "sha256" }
+
+    Ensure-TestSigningCertificate `
+      -CerPath $cerPath `
+      -PfxPath $pfxPath `
+      -PfxPassword $pfxPassword `
+      -HashAlgorithm $certHashAlgorithm `
+      -AllowSha2CertFallback:$AllowSha2CertFallback
+
+    $certForLog = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($cerPath)
+    Write-CertificateInfo -Cert $certForLog
+  }
 
   Write-Host "File digest: $($Digest.ToLowerInvariant())"
   Write-Host "DualSign:    $DualSign"
