@@ -168,8 +168,8 @@ For a low-level check of the exact bytes written, you can load the store as a hi
 
 ```bat
 reg load HKLM\BCD <path-to-BCD>
-reg query HKLM\BCD\\Objects\\{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}\\Elements\\16000049 /v Element
-reg query HKLM\BCD\\Objects\\{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}\\Elements\\16000048 /v Element
+reg query HKLM\BCD\Objects\{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}\Elements\16000049 /v Element
+reg query HKLM\BCD\Objects\{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}\Elements\16000048 /v Element
 reg unload HKLM\BCD
 ```
 
