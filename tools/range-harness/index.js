@@ -28,6 +28,7 @@ function printUsage(exitCode = 0) {
     '  --chunk-size <bytes>   Size of each Range request (default: 8388608 = 8MiB)',
     '  --count <N>            Number of range requests to perform (default: 32)',
     '  --concurrency <N>      Number of in-flight requests (default: 4)',
+    '  --passes <N>           Repeat the same range plan N times (default: 1; useful for cache hit verification)',
     '  --header <k:v>         Extra request header (repeatable), e.g. --header \"Authorization: Bearer ...\"',
     '  --json                 Emit machine-readable JSON (suppresses human-readable logs)',
     '  --random               Pick random aligned chunks',
@@ -62,6 +63,7 @@ function parseArgs(argv) {
     concurrency: 4,
     mode: 'sequential',
     headers: {},
+    passes: 1,
     json: false,
   };
 
@@ -77,6 +79,8 @@ function parseArgs(argv) {
       opts.count = parsePositiveInt('--count', argv[++i]);
     } else if (arg === '--concurrency') {
       opts.concurrency = parsePositiveInt('--concurrency', argv[++i]);
+    } else if (arg === '--passes') {
+      opts.passes = parsePositiveInt('--passes', argv[++i]);
     } else if (arg === '--header') {
       const raw = argv[++i];
       if (raw == null) {
@@ -331,170 +335,7 @@ function padLeft(str, width) {
   return ' '.repeat(width - s.length) + s;
 }
 
-async function main() {
-  const opts = parseArgs(process.argv.slice(2));
-
-  const log = (...args) => {
-    if (!opts.json) {
-      // eslint-disable-next-line no-console
-      console.log(...args);
-    }
-  };
-
-  log(`URL: ${opts.url}`);
-  log(`Config: chunkSize=${formatBytes(opts.chunkSize)} count=${opts.count} concurrency=${opts.concurrency} mode=${opts.mode}`);
-
-  const info = await getResourceInfo(opts.url, opts.headers);
-  log(`HEAD: status=${info.headStatus ?? 'n/a'} ok=${info.headOk} usedFallback=${info.usedFallback}`);
-  log(
-    `Resource: size=${formatBytes(info.size)} (${info.size} bytes) etag=${info.etag ?? '(missing)'} accept-ranges=${
-      info.acceptRanges ?? '(missing)'
-    }`,
-  );
-
-  const plan = buildPlan({
-    size: info.size,
-    chunkSize: opts.chunkSize,
-    count: opts.count,
-    mode: opts.mode,
-  });
-
-  let startedNs = null;
-  let finishedNs = null;
-
-  let warned200 = false;
-
-  const results = await runPool(plan, opts.concurrency, async (task) => {
-    const expectedLen = task.end - task.start + 1;
-    const rangeValue = `bytes=${task.start}-${task.end}`;
-    const controller = new AbortController();
-
-    const startNs = nowNs();
-    startedNs = startedNs ?? startNs;
-    /** @type {any} */
-    let response;
-    /** @type {string|null} */
-    let fetchError = null;
-    try {
-      response = await fetch(opts.url, {
-        method: 'GET',
-        headers: {
-          ...buildBaseHeaders(opts.headers),
-          Range: rangeValue,
-        },
-        signal: controller.signal,
-      });
-    } catch (err) {
-      fetchError = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err);
-      const endNs = nowNs();
-      const latencyMs = nsToMs(endNs - startNs);
-      log(`[${padLeft(task.index + 1, 2)}] ${rangeValue} status=ERR bytes=0 time=${formatMs(latencyMs)} error=${fetchError}`);
-      return {
-        ...task,
-        expectedLen,
-        status: null,
-        bytes: 0,
-        latencyMs,
-        contentRange: null,
-        xCache: null,
-        ok: false,
-        warnings: [`fetch error: ${fetchError}`],
-      };
-    }
-
-    const status = response.status;
-    const contentRangeHeader = response.headers.get('content-range');
-    const xCache = response.headers.get('x-cache');
-    const resContentLength = response.headers.get('content-length');
-
-    // If the server ignored our Range and returns 200, avoid pulling an entire
-    // disk image into memory by aborting after expectedLen bytes. This still
-    // provides useful signal (it will likely be "slow" and show no Content-Range).
-    let byteLimit = null;
-    const contentLengthNum = resContentLength && /^\d+$/.test(resContentLength) ? Number(resContentLength) : null;
-    if (status === 200 && expectedLen < info.size && (contentLengthNum == null || contentLengthNum > expectedLen)) {
-      byteLimit = expectedLen;
-    }
-
-    const { bytes, abortedEarly } = await readBodyAndCount(response.body, { byteLimit, abortController: controller });
-
-    const endNs = nowNs();
-    finishedNs = endNs;
-    const latencyMs = nsToMs(endNs - startNs);
-
-    const warnings = [];
-    let ok = true;
-
-    if (status === 206) {
-      const parsed = parseContentRange(contentRangeHeader);
-      if (!parsed || parsed.isUnsatisfied || parsed.start == null || parsed.end == null) {
-        ok = false;
-        warnings.push(`invalid Content-Range: ${contentRangeHeader ?? '(missing)'}`);
-      } else {
-        if (parsed.start !== task.start || parsed.end !== task.end) {
-          ok = false;
-          warnings.push(
-            `Content-Range mismatch (got ${parsed.start}-${parsed.end}, expected ${task.start}-${task.end})`,
-          );
-        }
-        if (parsed.total != null && parsed.total !== info.size) {
-          warnings.push(`Content-Range total differs from HEAD (${parsed.total} vs ${info.size})`);
-        }
-      }
-      if (bytes !== expectedLen) {
-        warnings.push(`body bytes (${bytes}) != expected (${expectedLen})`);
-      }
-    } else if (status === 200) {
-      ok = false;
-      if (!warned200) {
-        warned200 = true;
-        warnings.push(
-          'server returned 200 (Range ignored?). Results are still shown, but throughput/latency may not be meaningful.',
-        );
-      } else {
-        warnings.push('server returned 200 (Range ignored?)');
-      }
-      if (abortedEarly) {
-        warnings.push(`aborted after ${bytes} bytes to avoid downloading the full object`);
-      }
-    } else if (status === 416) {
-      ok = false;
-      const parsed = parseContentRange(contentRangeHeader);
-      if (parsed?.isUnsatisfied && parsed.total != null) {
-        warnings.push(`416 Range Not Satisfiable (server reports size=${parsed.total})`);
-      } else {
-        warnings.push(`416 Range Not Satisfiable`);
-      }
-    } else {
-      ok = false;
-      warnings.push(`unexpected status ${status}`);
-    }
-
-    const perReqRate = latencyMs > 0 ? (bytes / (latencyMs / 1000)) : NaN;
-
-    log(
-      `[${padLeft(task.index + 1, 2)}] ${rangeValue} status=${status} bytes=${bytes} time=${formatMs(latencyMs)} rate=${formatRate(
-        perReqRate,
-      )} content-range=${contentRangeHeader ?? '(missing)'} x-cache=${xCache ?? '(missing)'}${
-        warnings.length ? ` WARN=${warnings[0]}` : ''
-      }`,
-    );
-
-    return {
-      ...task,
-      expectedLen,
-      status,
-      bytes,
-      latencyMs,
-      contentRange: contentRangeHeader,
-      xCache,
-      ok,
-      warnings,
-    };
-  });
-
-  finishedNs = finishedNs ?? nowNs();
-
+function computeStats(results, startedNs, finishedNs) {
   const latencies = results.map((r) => r.latencyMs).filter((v) => Number.isFinite(v));
   const avgLatency = latencies.reduce((a, b) => a + b, 0) / Math.max(1, latencies.length);
   const medLatency = median(latencies);
@@ -531,19 +372,260 @@ async function main() {
   const miss = xCacheClassCounts.get('miss') ?? 0;
   const other = xCacheClassCounts.get('other') ?? 0;
   const missing = xCacheClassCounts.get('missing') ?? 0;
+
+  return {
+    okCount,
+    warnCount,
+    avgLatency,
+    medLatency,
+    totalBytes,
+    wallTimeSec,
+    aggRate,
+    statusCounts,
+    statusParts,
+    xCache: {
+      hit,
+      miss,
+      other,
+      missing,
+      exactXCacheCounts,
+    },
+  };
+}
+
+async function main() {
+  const opts = parseArgs(process.argv.slice(2));
+
+  const log = (...args) => {
+    if (!opts.json) {
+      // eslint-disable-next-line no-console
+      console.log(...args);
+    }
+  };
+
+  log(`URL: ${opts.url}`);
+  log(
+    `Config: chunkSize=${formatBytes(opts.chunkSize)} count=${opts.count} concurrency=${opts.concurrency} passes=${opts.passes} mode=${opts.mode}`,
+  );
+
+  const info = await getResourceInfo(opts.url, opts.headers);
+  log(`HEAD: status=${info.headStatus ?? 'n/a'} ok=${info.headOk} usedFallback=${info.usedFallback}`);
+  log(
+    `Resource: size=${formatBytes(info.size)} (${info.size} bytes) etag=${info.etag ?? '(missing)'} accept-ranges=${
+      info.acceptRanges ?? '(missing)'
+    }`,
+  );
+
+  const plan = buildPlan({
+    size: info.size,
+    chunkSize: opts.chunkSize,
+    count: opts.count,
+    mode: opts.mode,
+  });
+
+  let warned200 = false;
+
+  let startedNs = null;
+  let finishedNs = null;
+
+  /** @type {any[]} */
+  const allResults = [];
+  /** @type {any[]} */
+  const passSummaries = [];
+
+  for (let pass = 0; pass < opts.passes; pass++) {
+    let passStartedNs = null;
+    let passFinishedNs = null;
+
+    const passResults = await runPool(
+      plan.map((t) => ({ ...t, pass: pass + 1 })),
+      opts.concurrency,
+      async (task) => {
+        const expectedLen = task.end - task.start + 1;
+        const rangeValue = `bytes=${task.start}-${task.end}`;
+        const controller = new AbortController();
+
+        const label =
+          opts.passes === 1 ? `[${padLeft(task.index + 1, 2)}]` : `[p${task.pass}/${opts.passes} ${padLeft(task.index + 1, 2)}]`;
+
+        const startNs = nowNs();
+        startedNs = startedNs ?? startNs;
+        passStartedNs = passStartedNs ?? startNs;
+        /** @type {any} */
+        let response;
+        /** @type {string|null} */
+        let fetchError = null;
+        try {
+          response = await fetch(opts.url, {
+            method: 'GET',
+            headers: {
+              ...buildBaseHeaders(opts.headers),
+              Range: rangeValue,
+            },
+            signal: controller.signal,
+          });
+        } catch (err) {
+          fetchError = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err);
+          const endNs = nowNs();
+          passFinishedNs = endNs;
+          finishedNs = endNs;
+          const latencyMs = nsToMs(endNs - startNs);
+          log(`${label} ${rangeValue} status=ERR bytes=0 time=${formatMs(latencyMs)} error=${fetchError}`);
+          return {
+            ...task,
+            expectedLen,
+            status: null,
+            bytes: 0,
+            latencyMs,
+            contentRange: null,
+            xCache: null,
+            ok: false,
+            warnings: [`fetch error: ${fetchError}`],
+          };
+        }
+
+        const status = response.status;
+        const contentRangeHeader = response.headers.get('content-range');
+        const xCache = response.headers.get('x-cache');
+        const resContentLength = response.headers.get('content-length');
+
+        // If the server ignored our Range and returns 200, avoid pulling an entire
+        // disk image into memory by aborting after expectedLen bytes. This still
+        // provides useful signal (it will likely be "slow" and show no Content-Range).
+        let byteLimit = null;
+        const contentLengthNum = resContentLength && /^\d+$/.test(resContentLength) ? Number(resContentLength) : null;
+        if (status === 200 && expectedLen < info.size && (contentLengthNum == null || contentLengthNum > expectedLen)) {
+          byteLimit = expectedLen;
+        }
+
+        const { bytes, abortedEarly } = await readBodyAndCount(response.body, { byteLimit, abortController: controller });
+
+        const endNs = nowNs();
+        passFinishedNs = endNs;
+        finishedNs = endNs;
+        const latencyMs = nsToMs(endNs - startNs);
+
+        const warnings = [];
+        let ok = true;
+
+        if (status === 206) {
+          const parsed = parseContentRange(contentRangeHeader);
+          if (!parsed || parsed.isUnsatisfied || parsed.start == null || parsed.end == null) {
+            ok = false;
+            warnings.push(`invalid Content-Range: ${contentRangeHeader ?? '(missing)'}`);
+          } else {
+            if (parsed.start !== task.start || parsed.end !== task.end) {
+              ok = false;
+              warnings.push(
+                `Content-Range mismatch (got ${parsed.start}-${parsed.end}, expected ${task.start}-${task.end})`,
+              );
+            }
+            if (parsed.total != null && parsed.total !== info.size) {
+              warnings.push(`Content-Range total differs from HEAD (${parsed.total} vs ${info.size})`);
+            }
+          }
+          if (bytes !== expectedLen) {
+            warnings.push(`body bytes (${bytes}) != expected (${expectedLen})`);
+          }
+        } else if (status === 200) {
+          ok = false;
+          if (!warned200) {
+            warned200 = true;
+            warnings.push(
+              'server returned 200 (Range ignored?). Results are still shown, but throughput/latency may not be meaningful.',
+            );
+          } else {
+            warnings.push('server returned 200 (Range ignored?)');
+          }
+          if (abortedEarly) {
+            warnings.push(`aborted after ${bytes} bytes to avoid downloading the full object`);
+          }
+        } else if (status === 416) {
+          ok = false;
+          const parsed = parseContentRange(contentRangeHeader);
+          if (parsed?.isUnsatisfied && parsed.total != null) {
+            warnings.push(`416 Range Not Satisfiable (server reports size=${parsed.total})`);
+          } else {
+            warnings.push(`416 Range Not Satisfiable`);
+          }
+        } else {
+          ok = false;
+          warnings.push(`unexpected status ${status}`);
+        }
+
+        const perReqRate = latencyMs > 0 ? (bytes / (latencyMs / 1000)) : NaN;
+
+        log(
+          `${label} ${rangeValue} status=${status} bytes=${bytes} time=${formatMs(latencyMs)} rate=${formatRate(
+            perReqRate,
+          )} content-range=${contentRangeHeader ?? '(missing)'} x-cache=${xCache ?? '(missing)'}${
+            warnings.length ? ` WARN=${warnings[0]}` : ''
+          }`,
+        );
+
+        return {
+          ...task,
+          expectedLen,
+          status,
+          bytes,
+          latencyMs,
+          contentRange: contentRangeHeader,
+          xCache,
+          ok,
+          warnings,
+        };
+      },
+    );
+
+    passFinishedNs = passFinishedNs ?? nowNs();
+    passStartedNs = passStartedNs ?? passFinishedNs;
+
+    allResults.push(...passResults);
+
+    const passStats = computeStats(passResults, passStartedNs, passFinishedNs);
+    passSummaries.push({
+      pass: pass + 1,
+      ...passStats,
+    });
+
+    if (opts.passes > 1) {
+      log(`\nPass ${pass + 1}/${opts.passes}`);
+      log('--------------');
+      log(`Requests: ${passResults.length} ok=${passStats.okCount} withWarnings=${passStats.warnCount}`);
+      log(`Latency: avg=${formatMs(passStats.avgLatency)} median=${formatMs(passStats.medLatency)}`);
+      log(
+        `Throughput: bytes=${formatBytes(passStats.totalBytes)} wall=${passStats.wallTimeSec.toFixed(
+          2,
+        )}s aggregate=${formatRate(passStats.aggRate)}`,
+      );
+      log(`Status codes: ${passStats.statusParts.join(' ')}`);
+      log(
+        `X-Cache: hit=${passStats.xCache.hit} miss=${passStats.xCache.miss} other=${passStats.xCache.other} missing=${passStats.xCache.missing}`,
+      );
+    }
+  }
+
+  finishedNs = finishedNs ?? nowNs();
+
+  const overallStats = computeStats(allResults, startedNs, finishedNs);
+
   log(`\nSummary`);
   log('-------');
-  log(`Requests: ${results.length} ok=${okCount} withWarnings=${warnCount}`);
-  log(`Latency: avg=${formatMs(avgLatency)} median=${formatMs(medLatency)}`);
+  log(`Requests: ${allResults.length} ok=${overallStats.okCount} withWarnings=${overallStats.warnCount}`);
+  log(`Latency: avg=${formatMs(overallStats.avgLatency)} median=${formatMs(overallStats.medLatency)}`);
   log(
-    `Throughput: bytes=${formatBytes(totalBytes)} wall=${wallTimeSec.toFixed(2)}s aggregate=${formatRate(aggRate)}`,
+    `Throughput: bytes=${formatBytes(overallStats.totalBytes)} wall=${overallStats.wallTimeSec.toFixed(2)}s aggregate=${formatRate(
+      overallStats.aggRate,
+    )}`,
   );
-  log(`Status codes: ${statusParts.join(' ')}`);
-  log(`X-Cache: hit=${hit} miss=${miss} other=${other} missing=${missing}`);
+  log(`Status codes: ${overallStats.statusParts.join(' ')}`);
+  log(
+    `X-Cache: hit=${overallStats.xCache.hit} miss=${overallStats.xCache.miss} other=${overallStats.xCache.other} missing=${overallStats.xCache.missing}`,
+  );
 
-  if (!opts.json && exactXCacheCounts.size > 0) {
+  if (!opts.json && overallStats.xCache.exactXCacheCounts.size > 0) {
     log('X-Cache breakdown:');
-    for (const [k, v] of [...exactXCacheCounts.entries()].sort((a, b) => b[1] - a[1])) {
+    for (const [k, v] of [...overallStats.xCache.exactXCacheCounts.entries()].sort((a, b) => b[1] - a[1])) {
       log(`  ${padLeft(v, 3)}  ${k}`);
     }
   }
@@ -558,6 +640,7 @@ async function main() {
             chunkSize: opts.chunkSize,
             count: opts.count,
             concurrency: opts.concurrency,
+            passes: opts.passes,
             mode: opts.mode,
             headers: opts.headers,
           },
@@ -571,29 +654,52 @@ async function main() {
             etag: info.etag,
             acceptRanges: info.acceptRanges,
           },
-          summary: {
-            requests: results.length,
-            ok: okCount,
-            withWarnings: warnCount,
+          passes: passSummaries.map((p) => ({
+            pass: p.pass,
+            requests: opts.count,
+            ok: p.okCount,
+            withWarnings: p.warnCount,
             latencyMs: {
-              avg: avgLatency,
-              median: medLatency,
+              avg: p.avgLatency,
+              median: p.medLatency,
             },
             throughput: {
-              bytes: totalBytes,
-              wallTimeSec,
-              aggregateBytesPerSec: aggRate,
+              bytes: p.totalBytes,
+              wallTimeSec: p.wallTimeSec,
+              aggregateBytesPerSec: p.aggRate,
             },
-            statusCounts: Object.fromEntries(statusCounts.entries()),
+            statusCounts: Object.fromEntries(p.statusCounts.entries()),
             xCache: {
-              hit,
-              miss,
-              other,
-              missing,
-              exact: Object.fromEntries(exactXCacheCounts.entries()),
+              hit: p.xCache.hit,
+              miss: p.xCache.miss,
+              other: p.xCache.other,
+              missing: p.xCache.missing,
+              exact: Object.fromEntries(p.xCache.exactXCacheCounts.entries()),
+            },
+          })),
+          summary: {
+            requests: allResults.length,
+            ok: overallStats.okCount,
+            withWarnings: overallStats.warnCount,
+            latencyMs: {
+              avg: overallStats.avgLatency,
+              median: overallStats.medLatency,
+            },
+            throughput: {
+              bytes: overallStats.totalBytes,
+              wallTimeSec: overallStats.wallTimeSec,
+              aggregateBytesPerSec: overallStats.aggRate,
+            },
+            statusCounts: Object.fromEntries(overallStats.statusCounts.entries()),
+            xCache: {
+              hit: overallStats.xCache.hit,
+              miss: overallStats.xCache.miss,
+              other: overallStats.xCache.other,
+              missing: overallStats.xCache.missing,
+              exact: Object.fromEntries(overallStats.xCache.exactXCacheCounts.entries()),
             },
           },
-          results,
+          results: allResults,
         },
         null,
         2,

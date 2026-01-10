@@ -36,6 +36,7 @@ node tools/range-harness/index.js --url <URL> --random --json > range-results.js
 - `--chunk-size <bytes>`: size of each `Range` request (default: `8388608` = 8MiB)
 - `--count <N>`: number of requests to perform (default: `32`)
 - `--concurrency <N>`: number of in-flight requests (default: `4`)
+- `--passes <N>`: repeat the same range plan `N` times (default: `1`). Useful for verifying that a CDN caches byte ranges (pass 1 is typically `Miss`, pass 2 should become `Hit` if caching is configured).
 - `--header "Name: value"`: extra request header (repeatable). Useful for authenticated endpoints.
 - `--json`: emit machine-readable JSON (suppresses the per-request text output)
 - `--random`: pick random aligned chunks
@@ -79,6 +80,20 @@ CloudFront often includes an `X-Cache` header like:
 - `RefreshHit from cloudfront`
 
 The harness will print both an aggregated hit/miss count and an exact-value breakdown.
+
+## Example: CDN cache hit verification (repeat same ranges)
+
+To verify that your CDN is caching byte-range responses, repeat the same range plan multiple times with `--passes`.
+
+Example: request the same 32 chunks twice (pass 1 warms the cache; pass 2 should skew toward `Hit` if caching is working):
+
+```bash
+node tools/range-harness/index.js \
+  --url "https://d111111abcdef8.cloudfront.net/windows7.img" \
+  --chunk-size 1048576 --count 32 --passes 2 --concurrency 4 --random
+```
+
+The CLI prints per-pass summaries so you can compare pass 1 vs pass 2 `X-Cache` counts.
 
 ## Example: Local MinIO
 
@@ -138,7 +153,7 @@ Example (trimmed):
 
 ```text
 URL: https://d111111abcdef8.cloudfront.net/windows7.img
-Config: chunkSize=8.00MiB count=32 concurrency=4 mode=random
+Config: chunkSize=8.00MiB count=32 concurrency=4 passes=1 mode=random
 ...
 Summary
 -------
