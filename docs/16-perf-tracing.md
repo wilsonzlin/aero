@@ -13,6 +13,10 @@ The capture can be exported in **Chrome Trace Event** format and viewed in:
 - `chrome://tracing`
 - https://ui.perfetto.dev
 
+This document focuses on trace capture/export. For the broader performance tooling workflows (Perf HUD, perf exports, benchmarks, CI perf jobs), see:
+
+- [`docs/16-performance-tooling.md`](./16-performance-tooling.md)
+
 ## API
 
 When running on the main thread, the profiler is exposed as:
