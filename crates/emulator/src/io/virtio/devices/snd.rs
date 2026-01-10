@@ -641,6 +641,122 @@ mod tests {
     }
 
     #[test]
+    fn pcm_set_params_rejects_unsupported_format() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let req_addr = 0x110;
+        let resp_addr = 0x200;
+
+        let mut set_params = Vec::new();
+        set_params.extend_from_slice(&le32(VIRTIO_SND_R_PCM_SET_PARAMS));
+        set_params.extend_from_slice(&le32(PLAYBACK_STREAM_ID));
+        set_params.extend_from_slice(&le32(4096));
+        set_params.extend_from_slice(&le32(1024));
+        set_params.extend_from_slice(&le32(0));
+        set_params.push(1); // channels (unsupported)
+        set_params.push(VIRTIO_SND_PCM_FMT_S16);
+        set_params.push(VIRTIO_SND_PCM_RATE_48000);
+        set_params.push(0);
+        mem.write_from(req_addr, &set_params).unwrap();
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: req_addr,
+                len: set_params.len() as u32,
+                flags: VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            Descriptor {
+                addr: resp_addr,
+                len: 16,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 1, &[0]);
+        init_used(&mut mem, used);
+
+        let control_vq = VirtQueue::new(8, desc_table, avail, used);
+        let tx_vq = VirtQueue::new(8, 0, 0, 0);
+
+        let rb = AudioWorkletRingBuffer::new(1024);
+        let mut dev = VirtioSndDevice::new(rb, control_vq, tx_vq);
+        dev.process_control(&mut mem).unwrap();
+
+        let mut status = [0u8; 4];
+        mem.read_into(resp_addr, &mut status).unwrap();
+        assert_eq!(u32::from_le_bytes(status), VIRTIO_SND_S_NOT_SUPP);
+
+        assert_eq!(dev.playback.state, StreamState::Idle);
+        assert!(dev.playback.params.is_none());
+    }
+
+    #[test]
+    fn control_unknown_command_returns_not_supp() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let req_addr = 0x110;
+        let resp_addr = 0x200;
+
+        let req = 0xdead_beefu32.to_le_bytes();
+        mem.write_from(req_addr, &req).unwrap();
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: req_addr,
+                len: req.len() as u32,
+                flags: VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            Descriptor {
+                addr: resp_addr,
+                len: 16,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 1, &[0]);
+        init_used(&mut mem, used);
+
+        let control_vq = VirtQueue::new(8, desc_table, avail, used);
+        let tx_vq = VirtQueue::new(8, 0, 0, 0);
+
+        let rb = AudioWorkletRingBuffer::new(1024);
+        let mut dev = VirtioSndDevice::new(rb, control_vq, tx_vq);
+        dev.process_control(&mut mem).unwrap();
+
+        let mut status = [0u8; 4];
+        mem.read_into(resp_addr, &mut status).unwrap();
+        assert_eq!(u32::from_le_bytes(status), VIRTIO_SND_S_NOT_SUPP);
+    }
+
+    #[test]
     fn tx_queue_writes_pcm_samples_to_ring_buffer() {
         let mut mem = DenseMemory::new(0x10000).unwrap();
 
@@ -724,5 +840,145 @@ mod tests {
         assert_f32_eq(out[1], -1000.0 / 32768.0);
         assert_f32_eq(out[2], 2000.0 / 32768.0);
         assert_f32_eq(out[3], -2000.0 / 32768.0);
+    }
+
+    #[test]
+    fn tx_queue_requires_running_stream() {
+        let mut mem = DenseMemory::new(0x10000).unwrap();
+
+        let tx_desc = 0x1000;
+        let tx_avail = 0x2000;
+        let tx_used = 0x3000;
+
+        init_used(&mut mem, tx_used);
+
+        let control_vq = VirtQueue::new(8, 0, 0, 0);
+        let tx_vq = VirtQueue::new(8, tx_desc, tx_avail, tx_used);
+
+        let rb = AudioWorkletRingBuffer::new(1024);
+        let mut dev = VirtioSndDevice::new(rb, control_vq, tx_vq);
+
+        let hdr_addr = 0x700;
+        let pcm_addr = 0x800;
+        let resp_addr = 0x900;
+
+        mem.write_u32_le(hdr_addr, PLAYBACK_STREAM_ID).unwrap();
+        mem.write_u32_le(hdr_addr + 4, 0).unwrap();
+        mem.write_from(pcm_addr, &[0u8; 4]).unwrap();
+
+        write_desc(
+            &mut mem,
+            tx_desc,
+            0,
+            Descriptor {
+                addr: hdr_addr,
+                len: 8,
+                flags: VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            tx_desc,
+            1,
+            Descriptor {
+                addr: pcm_addr,
+                len: 4,
+                flags: VRING_DESC_F_NEXT,
+                next: 2,
+            },
+        );
+        write_desc(
+            &mut mem,
+            tx_desc,
+            2,
+            Descriptor {
+                addr: resp_addr,
+                len: 8,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, tx_avail, 0, 1, &[0]);
+
+        dev.process_tx(&mut mem).unwrap();
+
+        let mut resp = [0u8; 8];
+        mem.read_into(resp_addr, &mut resp).unwrap();
+        assert_eq!(u32::from_le_bytes(resp[0..4].try_into().unwrap()), VIRTIO_SND_S_IO_ERR);
+        assert_eq!(dev.sink.buffer_level_frames(), 0);
+    }
+
+    #[test]
+    fn tx_queue_rejects_unknown_stream_id() {
+        let mut mem = DenseMemory::new(0x10000).unwrap();
+
+        let tx_desc = 0x1000;
+        let tx_avail = 0x2000;
+        let tx_used = 0x3000;
+
+        init_used(&mut mem, tx_used);
+
+        let control_vq = VirtQueue::new(8, 0, 0, 0);
+        let tx_vq = VirtQueue::new(8, tx_desc, tx_avail, tx_used);
+
+        let rb = AudioWorkletRingBuffer::new(1024);
+        let mut dev = VirtioSndDevice::new(rb, control_vq, tx_vq);
+        dev.playback.state = StreamState::Running;
+
+        let hdr_addr = 0x700;
+        let pcm_addr = 0x800;
+        let resp_addr = 0x900;
+
+        mem.write_u32_le(hdr_addr, 1).unwrap();
+        mem.write_u32_le(hdr_addr + 4, 0).unwrap();
+        mem.write_from(pcm_addr, &[0u8; 4]).unwrap();
+
+        write_desc(
+            &mut mem,
+            tx_desc,
+            0,
+            Descriptor {
+                addr: hdr_addr,
+                len: 8,
+                flags: VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            tx_desc,
+            1,
+            Descriptor {
+                addr: pcm_addr,
+                len: 4,
+                flags: VRING_DESC_F_NEXT,
+                next: 2,
+            },
+        );
+        write_desc(
+            &mut mem,
+            tx_desc,
+            2,
+            Descriptor {
+                addr: resp_addr,
+                len: 8,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, tx_avail, 0, 1, &[0]);
+
+        dev.process_tx(&mut mem).unwrap();
+
+        let mut resp = [0u8; 8];
+        mem.read_into(resp_addr, &mut resp).unwrap();
+        assert_eq!(
+            u32::from_le_bytes(resp[0..4].try_into().unwrap()),
+            VIRTIO_SND_S_BAD_MSG
+        );
+        assert_eq!(dev.sink.buffer_level_frames(), 0);
     }
 }

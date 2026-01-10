@@ -67,6 +67,12 @@ The device expects a descriptor chain with:
 
 PCM writes are accepted only when the stream has been started; otherwise `VIRTIO_SND_S_IO_ERR` is returned.
 
+### AudioWorklet ring buffer layout
+
+The AudioWorklet ring buffer used by the AU-WORKLET path uses **frame indices** (not sample indices).
+See `web/src/platform/audio.ts` and `web/src/platform/audio-worklet-processor.js` for the canonical
+layout and wrap-around behavior.
+
 ## Audio Output Path
 
 TX PCM samples are written into the same **AudioWorklet ring buffer** abstraction used by the AU-WORKLET layer (`web/src/platform/audio.ts`). The current implementation converts interleaved S16_LE samples into interleaved `f32` samples and writes them into the Float32 ring buffer consumed by `web/src/platform/audio-worklet-processor.js`.
