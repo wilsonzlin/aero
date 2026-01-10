@@ -16,6 +16,16 @@ Related Aero Windows driver references:
 * [`docs/windows-drivers/virtio/virtqueue-dma-strategy.md`](../windows-drivers/virtio/virtqueue-dma-strategy.md) — DMA/common-buffer strategy for split rings + indirect tables on Win7.
 * [`docs/windows/virtio-pci-modern-interrupts.md`](../windows/virtio-pci-modern-interrupts.md) — virtio-pci modern interrupts on Win7 (MSI-X vs INTx).
 
+## Reference implementation in this repo
+
+The working implementation that corresponds to this guide lives at:
+
+* `drivers/windows/virtio/common/` (`virtqueue_split.h/.c`, `virtio_ring.h`, `virtio_osdep.h`)
+
+It includes a user-mode simulation harness in:
+
+* `drivers/windows/virtio/common/tests/` (run `make test`)
+
 ## Scope / non-scope
 
 **In scope**

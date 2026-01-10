@@ -6,6 +6,7 @@ See also:
 
 * [`../../virtio/virtqueue-split-ring-win7.md`](../../virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue algorithms (descriptor mgmt, ordering/barriers, EVENT_IDX, indirect).
 * [`../../windows7-virtio-driver-contract.md`](../../windows7-virtio-driver-contract.md) — Aero’s definitive virtio device/feature/transport contract.
+* `drivers/windows/virtio/common/` — reference split virtqueue implementation (helpers like `VirtqSplitRingMemSize`, `VirtqSplitInit`, `VirtqSplitAddBuffer`, ...).
 
 The focus is on:
 
