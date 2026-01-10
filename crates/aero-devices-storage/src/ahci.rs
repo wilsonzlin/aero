@@ -344,9 +344,9 @@ impl AhciController {
             }
             PORT_REG_IE => port.regs.ie = val,
             PORT_REG_CMD => {
-                // Only allow guest to set ST/FRE and a few common bits; preserve read-only bits.
-                let preserved = port.regs.cmd & (PORT_CMD_FR | PORT_CMD_CR);
-                port.regs.cmd = preserved | (val & (PORT_CMD_ST | PORT_CMD_FRE));
+                // Preserve read-only bits (FR/CR) but otherwise allow the guest to program the
+                // full PxCMD register. Windows sets bits like SUD/POD in addition to ST/FRE.
+                port.regs.cmd = val & !(PORT_CMD_FR | PORT_CMD_CR);
                 port.regs.update_running_bits();
             }
             PORT_REG_SCTL => port.regs.sctl = val,
@@ -525,7 +525,8 @@ impl CommandHeader {
         let ctba_lo = mem.read_u32(addr + 8) as u64;
         let ctba_hi = mem.read_u32(addr + 12) as u64;
         let ctba = ctba_lo | (ctba_hi << 32);
-        let prdtl = ((flags >> 20) & 0x0FFF) as u16;
+        // AHCI command header DW0 bits 16..31 hold the PRDT length (entry count).
+        let prdtl = ((flags >> 16) & 0xFFFF) as u16;
 
         Self { ctba, prdtl }
     }
@@ -659,7 +660,7 @@ mod tests {
     fn write_cmd_header(mem: &mut TestMemory, clb: u64, slot: usize, ctba: u64, prdtl: u16, write: bool) {
         let cfl = 5u32;
         let w = if write { 1u32 << 6 } else { 0 };
-        let flags = cfl | w | ((prdtl as u32) << 20);
+        let flags = cfl | w | ((prdtl as u32) << 16);
         let addr = clb + (slot as u64) * 32;
         mem.write_u32(addr, flags);
         mem.write_u32(addr + 4, 0); // PRDBC

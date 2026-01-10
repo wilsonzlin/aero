@@ -68,7 +68,7 @@ fn boot_sector_read_via_ahci_dma() {
 
     // Command header (slot 0).
     let cfl = 5u32;
-    let prdtl = 1u32 << 20;
+    let prdtl = 1u32 << 16;
     mem.write_u32(clb, cfl | prdtl);
     mem.write_u32(clb + 4, 0);
     mem.write_u32(clb + 8, ctba as u32);
