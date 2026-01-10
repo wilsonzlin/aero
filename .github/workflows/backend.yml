@@ -57,6 +57,7 @@ jobs:
         with:
           name: aero-gateway-dist
           path: backend/aero-gateway/dist
+          if-no-files-found: error
 
   aero-gateway-smoke:
     runs-on: ubuntu-latest
