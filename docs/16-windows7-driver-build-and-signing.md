@@ -1,6 +1,49 @@
 # 16 - Windows 7 Driver Build and Signing
 
-This document collects practical notes for building and test-signing Windows drivers intended to run on Windows 7 SP1.
+This document collects practical notes for building, cataloging, and test-signing Windows drivers intended to run on Windows 7 SP1.
+
+## Toolchain validation (Win7 Inf2Cat)
+
+### Why we validate
+
+Catalog generation is performed with `Inf2Cat.exe`. For Windows 7 we specifically need the OS tokens:
+
+```
+Inf2Cat /os:7_X86,7_X64
+```
+
+Not every Windows Kits / WDK release has historically accepted older `/os:` tokens, and GitHub Actions runner images can change over time. A failing catalog-generation step is easy to miss until late in the build pipeline, so we validate it explicitly.
+
+### Pinned Windows Kits version
+
+CI pins the Windows Kits toolchain to:
+
+- **Windows Kits 10.0.22621.0** (Windows 11 / Windows 10 22H2-era toolset)
+
+The pin is implemented in `ci/install-wdk.ps1` (which installs the Windows SDK/WDK via `winget` on CI if needed) and verified by `ci/validate-toolchain.ps1`.
+
+### How to run locally (Windows)
+
+From PowerShell:
+
+```powershell
+./ci/install-wdk.ps1
+./ci/validate-toolchain.ps1
+```
+
+The scripts write logs/artifacts under:
+
+- `out/toolchain.json` (resolved tool paths)
+- `out/toolchain-validation/` (validation transcript + Inf2Cat output)
+
+### CI workflow
+
+The GitHub Actions workflow `.github/workflows/toolchain-win7-smoke.yml` runs on `windows-latest` and:
+
+1. Resolves/installs the pinned toolchain
+2. Prints tool versions (`Inf2Cat`, `signtool`, `stampinf`, `msbuild`)
+3. Generates a minimal dummy driver package and runs `Inf2Cat /os:7_X86,7_X64`
+4. Uploads the logs as workflow artifacts
 
 ## CI test signing
 

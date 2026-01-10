@@ -1,0 +1,35 @@
+name: Toolchain - Win7 Inf2Cat Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "ci/**"
+      - ".github/workflows/toolchain-win7-smoke.yml"
+      - "docs/16-windows7-driver-build-and-signing.md"
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install / resolve toolchain
+        shell: pwsh
+        run: ./ci/install-wdk.ps1
+
+      - name: Validate toolchain (Inf2Cat Win7 catalog generation)
+        shell: pwsh
+        run: ./ci/validate-toolchain.ps1
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toolchain-win7-smoke-logs
+          if-no-files-found: warn
+          path: |
+            out/toolchain.json
+            out/toolchain-validation/**
+
