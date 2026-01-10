@@ -19,4 +19,6 @@ test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ pa
   expect(result.helper_executions).toBeGreaterThan(0);
   expect(result.interp_executions).toBeGreaterThan(0);
   expect(result.installed_table_index).not.toBeNull();
+  expect(result.runtime_installed_table_index).toBe(result.installed_table_index);
+  expect(result.runtime_installed_entry_rip).toBe(0x1000);
 });

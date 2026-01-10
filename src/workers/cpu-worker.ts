@@ -18,6 +18,8 @@ type CpuWorkerToMainMessage =
       helper_executions: number;
       interp_executions: number;
       installed_table_index: number | null;
+      runtime_installed_entry_rip: number | null;
+      runtime_installed_table_index: number | null;
     }
   | { type: 'CpuWorkerError'; reason: string };
 
@@ -227,12 +229,16 @@ async function runSyntheticProgram(iterations: number, threshold: number) {
   }
 
   const installedIndex = entryRipToIndex.get(ENTRY_RIP) ?? null;
+  const runtimeInstalledTableIndex = counters[3] >= 0 ? counters[3] : null;
+  const runtimeInstalledEntryRip = runtimeInstalledTableIndex !== null ? counters[4] : null;
   postToMain({
     type: 'CpuWorkerResult',
     jit_executions: Atomics.load(counters, 0),
     helper_executions: Atomics.load(counters, 1),
     interp_executions: Atomics.load(counters, 2),
     installed_table_index: installedIndex,
+    runtime_installed_entry_rip: runtimeInstalledEntryRip,
+    runtime_installed_table_index: runtimeInstalledTableIndex,
   });
 }
 

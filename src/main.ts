@@ -37,6 +37,8 @@ type CpuWorkerToMainMessage =
       helper_executions: number;
       interp_executions: number;
       installed_table_index: number | null;
+      runtime_installed_entry_rip: number | null;
+      runtime_installed_table_index: number | null;
     }
   | { type: 'CpuWorkerError'; reason: string };
 
