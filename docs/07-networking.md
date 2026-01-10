@@ -536,6 +536,9 @@ Running a UDP relay makes your server a **network egress point**. If it is reach
 
 **Recommendation:** default to **local-only** deployment (bind on `127.0.0.1` / behind auth) and enforce an explicit destination policy (CIDR + port allowlists) in production.
 
+The WebRTC UDP relay DataChannel framing and signaling schema are specified in
+[`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md).
+
 ```rust
 pub struct UdpProxy {
     peer_connection: RtcPeerConnection,
@@ -576,12 +579,13 @@ impl UdpProxy {
         })
     }
     
-    pub fn send(&self, src_port: u16, dst_ip: Ipv4Addr, dst_port: u16, data: &[u8]) -> Result<()> {
-        // Create UDP proxy header
+    pub fn send(&self, guest_port: u16, remote_ip: Ipv4Addr, remote_port: u16, data: &[u8]) -> Result<()> {
+        // Create v1 UDP relay frame:
+        // guest_port (u16) + remote_ipv4 (4B) + remote_port (u16) + payload
         let mut packet = Vec::with_capacity(8 + data.len());
-        packet.extend_from_slice(&src_port.to_be_bytes());
-        packet.extend_from_slice(&dst_ip.octets());
-        packet.extend_from_slice(&dst_port.to_be_bytes());
+        packet.extend_from_slice(&guest_port.to_be_bytes());
+        packet.extend_from_slice(&remote_ip.octets());
+        packet.extend_from_slice(&remote_port.to_be_bytes());
         packet.extend_from_slice(data);
         
         self.data_channel.send(&packet)?;

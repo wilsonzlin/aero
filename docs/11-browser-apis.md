@@ -657,6 +657,9 @@ class NetworkProxy {
 
 ### WebRTC for UDP
 
+The WebRTC UDP relay wire protocol (signaling + DataChannel framing) is
+specified in [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md).
+
 ```javascript
 async function setupUdpProxy(signalingUrl) {
     const pc = new RTCPeerConnection({
@@ -674,17 +677,22 @@ async function setupUdpProxy(signalingUrl) {
     // Exchange SDP with signaling server
     const response = await fetch(signalingUrl, {
         method: 'POST',
-        body: JSON.stringify({ sdp: pc.localDescription })
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ version: 1, offer: pc.localDescription })
     });
-    const { sdp } = await response.json();
+    const { answer } = await response.json();
     
-    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    await pc.setRemoteDescription(new RTCSessionDescription(answer));
     
     return new Promise(resolve => {
         dc.onopen = () => resolve(dc);
     });
 }
 ```
+
+Once the DataChannel is open, each message is one UDP datagram frame. The v1
+header starts with `guest_port` (u16 big-endian), which corresponds to the
+guest's UDP **source port on outbound** and **destination port on inbound**.
 
 ---
 

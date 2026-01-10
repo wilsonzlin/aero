@@ -1,0 +1,112 @@
+package udpproto
+
+import (
+	"bytes"
+	"errors"
+	"testing"
+)
+
+func TestEncodeDecodeRoundTrip(t *testing.T) {
+	c, err := NewCodec(64)
+	if err != nil {
+		t.Fatalf("NewCodec: %v", err)
+	}
+
+	in := Datagram{
+		GuestPort:  12345,
+		RemoteIP:   [4]byte{1, 2, 3, 4},
+		RemotePort: 443,
+		Payload:    []byte("hello"),
+	}
+
+	buf := make([]byte, 0, 128)
+	encoded, err := c.EncodeDatagram(in, buf)
+	if err != nil {
+		t.Fatalf("EncodeDatagram: %v", err)
+	}
+
+	out, err := c.DecodeDatagram(encoded)
+	if err != nil {
+		t.Fatalf("DecodeDatagram: %v", err)
+	}
+
+	if out.GuestPort != in.GuestPort {
+		t.Fatalf("GuestPort: got %d want %d", out.GuestPort, in.GuestPort)
+	}
+	if out.RemoteIP != in.RemoteIP {
+		t.Fatalf("RemoteIP: got %v want %v", out.RemoteIP, in.RemoteIP)
+	}
+	if out.RemotePort != in.RemotePort {
+		t.Fatalf("RemotePort: got %d want %d", out.RemotePort, in.RemotePort)
+	}
+	if !bytes.Equal(out.Payload, in.Payload) {
+		t.Fatalf("Payload: got %x want %x", out.Payload, in.Payload)
+	}
+}
+
+func TestDecodeTooShort(t *testing.T) {
+	for n := 0; n < HeaderLen; n++ {
+		_, err := DecodeDatagram(make([]byte, n))
+		if !errors.Is(err, ErrTooShort) {
+			t.Fatalf("len=%d: got err=%v, want ErrTooShort", n, err)
+		}
+	}
+}
+
+func TestMaxPayloadEnforced(t *testing.T) {
+	c, err := NewCodec(3)
+	if err != nil {
+		t.Fatalf("NewCodec: %v", err)
+	}
+
+	// Encode should reject payloads over max.
+	_, err = c.EncodeDatagram(Datagram{
+		GuestPort:  1,
+		RemoteIP:   [4]byte{127, 0, 0, 1},
+		RemotePort: 2,
+		Payload:    []byte{0, 1, 2, 3},
+	}, nil)
+	if !errors.Is(err, ErrPayloadTooLarge) {
+		t.Fatalf("encode: got err=%v, want ErrPayloadTooLarge", err)
+	}
+
+	// Decode should reject payloads over max.
+	frame := []byte{
+		0, 1, // guest_port
+		127, 0, 0, 1, // remote_ipv4
+		0, 2, // remote_port
+		0, 1, 2, 3, // payload (4 bytes; max is 3)
+	}
+	_, err = c.DecodeDatagram(frame)
+	if !errors.Is(err, ErrPayloadTooLarge) {
+		t.Fatalf("decode: got err=%v, want ErrPayloadTooLarge", err)
+	}
+}
+
+func TestGoldenVector(t *testing.T) {
+	d := Datagram{
+		GuestPort:  10000,
+		RemoteIP:   [4]byte{192, 0, 2, 1},
+		RemotePort: 53,
+		Payload:    []byte("abc"),
+	}
+
+	got, err := EncodeDatagram(d, nil)
+	if err != nil {
+		t.Fatalf("EncodeDatagram: %v", err)
+	}
+
+	want := []byte{0x27, 0x10, 0xc0, 0x00, 0x02, 0x01, 0x00, 0x35, 0x61, 0x62, 0x63}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("encoded bytes: got %x want %x", got, want)
+	}
+
+	decoded, err := DecodeDatagram(want)
+	if err != nil {
+		t.Fatalf("DecodeDatagram: %v", err)
+	}
+	if decoded.GuestPort != d.GuestPort || decoded.RemoteIP != d.RemoteIP || decoded.RemotePort != d.RemotePort || !bytes.Equal(decoded.Payload, d.Payload) {
+		t.Fatalf("decoded datagram mismatch: got %#v, want %#v", decoded, d)
+	}
+}
+
