@@ -4,7 +4,7 @@
 //! that Windows 7 expects early during boot and during kernel runtime.
 
 use crate::cpuid::{cpuid, CpuFeatures, CpuidResult};
-use crate::exceptions::PendingEvent;
+use crate::exceptions::{Exception as ArchException, PendingEvent};
 use crate::msr::EFER_SCE;
 use crate::time::TimeSource;
 use crate::{msr::MsrState, Exception};
@@ -153,6 +153,7 @@ pub struct Cpu {
 
     /// Tracks nested exception delivery for #DF escalation.
     pub(crate) exception_depth: u32,
+    pub(crate) delivering_exception: Option<ArchException>,
 
     /// Tracks INVLPG calls for integration/testing.
     pub invlpg_log: Vec<u64>,
@@ -214,8 +215,18 @@ impl Cpu {
             tss32: None,
             tss64: None,
             exception_depth: 0,
+            delivering_exception: None,
             invlpg_log: Vec::new(),
         }
+    }
+
+    /// Inhibit maskable interrupts for exactly one instruction.
+    ///
+    /// This is used by `STI` (interrupt shadow) as well as `MOV SS`/`POP SS`
+    /// semantics. The execution engine should call [`Cpu::retire_instruction`]
+    /// after each successfully executed instruction to age this counter.
+    pub fn inhibit_interrupts_for_one_instruction(&mut self) {
+        self.interrupt_inhibit = 1;
     }
 
     /// Current privilege level (CPL), derived from CS.RPL.
@@ -410,7 +421,7 @@ impl Cpu {
         self.require_iopl()?;
         self.set_rflags(self.rflags | Self::RFLAGS_IF);
         // Interrupt shadow for one instruction.
-        self.interrupt_inhibit = 1;
+        self.inhibit_interrupts_for_one_instruction();
         Ok(())
     }
 

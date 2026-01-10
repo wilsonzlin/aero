@@ -1,7 +1,7 @@
 use aero_cpu_core::exceptions::Exception;
 use aero_cpu_core::interrupts::{CpuExit, InterruptController};
-use aero_cpu_core::{Bus, RamBus};
 use aero_cpu_core::system::{Cpu, CpuMode, DescriptorTableRegister, Tss32, Tss64};
+use aero_cpu_core::{Bus, RamBus};
 
 fn write_idt_gate32(
     mem: &mut impl Bus,
@@ -78,7 +78,10 @@ fn int_protected_mode_no_privilege_change_pushes_eflags_cs_eip() -> Result<(), C
 
     let mut cpu = Cpu::default();
     cpu.mode = CpuMode::Protected32;
-    cpu.idtr = DescriptorTableRegister { base: idt_base, limit: 0x7FF };
+    cpu.idtr = DescriptorTableRegister {
+        base: idt_base,
+        limit: 0x7FF,
+    };
     cpu.cs = 0x08;
     cpu.ss = 0x10;
     cpu.rsp = 0x1000;
@@ -107,7 +110,10 @@ fn int_protected_mode_cpl3_to_cpl0_stack_switch_and_iret_restore() -> Result<(),
 
     let mut cpu = Cpu::default();
     cpu.mode = CpuMode::Protected32;
-    cpu.idtr = DescriptorTableRegister { base: idt_base, limit: 0x7FF };
+    cpu.idtr = DescriptorTableRegister {
+        base: idt_base,
+        limit: 0x7FF,
+    };
     cpu.cs = 0x1B; // CPL3
     cpu.ss = 0x23;
     cpu.rsp = 0x8000;
@@ -153,7 +159,10 @@ fn page_fault_sets_cr2_and_pushes_error_code() -> Result<(), CpuExit> {
 
     let mut cpu = Cpu::default();
     cpu.mode = CpuMode::Protected32;
-    cpu.idtr = DescriptorTableRegister { base: idt_base, limit: 0x7FF };
+    cpu.idtr = DescriptorTableRegister {
+        base: idt_base,
+        limit: 0x7FF,
+    };
     cpu.cs = 0x08;
     cpu.ss = 0x10;
     cpu.rsp = 0x2000;
@@ -189,7 +198,10 @@ fn sti_shadow_blocks_immediate_external_interrupt_delivery() -> Result<(), CpuEx
 
     let mut cpu = Cpu::default();
     cpu.mode = CpuMode::Protected32;
-    cpu.idtr = DescriptorTableRegister { base: idt_base, limit: 0x7FF };
+    cpu.idtr = DescriptorTableRegister {
+        base: idt_base,
+        limit: 0x7FF,
+    };
     cpu.cs = 0x08;
     cpu.ss = 0x10;
     cpu.rsp = 0x3000;
@@ -213,6 +225,41 @@ fn sti_shadow_blocks_immediate_external_interrupt_delivery() -> Result<(), CpuEx
 }
 
 #[test]
+fn mov_ss_shadow_blocks_immediate_external_interrupt_delivery() -> Result<(), CpuExit> {
+    let mut mem = RamBus::new(0x20000);
+
+    let idt_base = 0x1000;
+    write_idt_gate32(&mut mem, idt_base, 0x20, 0x08, 0x7777, 0x8E);
+
+    let mut cpu = Cpu::default();
+    cpu.mode = CpuMode::Protected32;
+    cpu.idtr = DescriptorTableRegister {
+        base: idt_base,
+        limit: 0x7FF,
+    };
+    cpu.cs = 0x08;
+    cpu.ss = 0x10;
+    cpu.rsp = 0x3000;
+    cpu.rip = 0x1111;
+    cpu.rflags = Cpu::RFLAGS_FIXED1 | Cpu::RFLAGS_IF;
+
+    // Model MOV SS / POP SS interrupt shadow (does not touch IF).
+    cpu.inhibit_interrupts_for_one_instruction();
+
+    cpu.inject_external_interrupt(0x20);
+    cpu.deliver_external_interrupt(&mut mem)?;
+    assert_eq!(cpu.rip, 0x1111);
+    assert_eq!(cpu.external_interrupts.len(), 1);
+
+    cpu.retire_instruction();
+    cpu.deliver_external_interrupt(&mut mem)?;
+    assert_eq!(cpu.rip, 0x7777);
+    assert_eq!(cpu.external_interrupts.len(), 0);
+
+    Ok(())
+}
+
+#[test]
 fn int_long_mode_cpl3_to_cpl0_uses_rsp0_and_iretq_returns() -> Result<(), CpuExit> {
     let mut mem = RamBus::new(0x40000);
 
@@ -223,7 +270,10 @@ fn int_long_mode_cpl3_to_cpl0_uses_rsp0_and_iretq_returns() -> Result<(), CpuExi
 
     let mut cpu = Cpu::default();
     cpu.mode = CpuMode::Long64;
-    cpu.idtr = DescriptorTableRegister { base: idt_base, limit: 0x0FFF };
+    cpu.idtr = DescriptorTableRegister {
+        base: idt_base,
+        limit: 0x0FFF,
+    };
     cpu.cs = 0x33; // user code (CPL3)
     cpu.ss = 0x2B; // user data
     cpu.rip = 0x4000_0000;
@@ -260,6 +310,43 @@ fn int_long_mode_cpl3_to_cpl0_uses_rsp0_and_iretq_returns() -> Result<(), CpuExi
     Ok(())
 }
 
+#[test]
+fn int_long_mode_ist_overrides_rsp0() -> Result<(), CpuExit> {
+    let mut mem = RamBus::new(0x40000);
+
+    let idt_base = 0x1000;
+    write_idt_gate64(&mut mem, idt_base, 0x81, 0x08, 0x6000, 1, 0xEE);
+
+    let mut cpu = Cpu::default();
+    cpu.mode = CpuMode::Long64;
+    cpu.idtr = DescriptorTableRegister {
+        base: idt_base,
+        limit: 0x0FFF,
+    };
+    cpu.cs = 0x33; // user code (CPL3)
+    cpu.ss = 0x2B; // user data
+    cpu.rip = 0x4000_0000;
+    cpu.rsp = 0x7000;
+    cpu.rflags = 0x202;
+    cpu.tss64 = Some(Tss64 {
+        rsp0: 0x9000,
+        ist: [0xA000, 0, 0, 0, 0, 0, 0],
+        ..Tss64::default()
+    });
+
+    cpu.raise_software_interrupt(0x81, 0x4000_0010);
+    cpu.deliver_pending_event(&mut mem)?;
+
+    // IST1 overrides RSP0.
+    assert_eq!(cpu.rsp, 0xA000 - 40);
+
+    cpu.iret(&mut mem)?;
+    assert_eq!(cpu.rip, 0x4000_0010);
+    assert_eq!(cpu.rsp, 0x7000);
+    assert_eq!(cpu.ss, 0x2B);
+    Ok(())
+}
+
 struct OneShotController(Option<u8>);
 
 impl InterruptController for OneShotController {
@@ -277,7 +364,10 @@ fn poll_and_deliver_external_interrupt_uses_interrupt_controller() -> Result<(),
 
     let mut cpu = Cpu::default();
     cpu.mode = CpuMode::Protected32;
-    cpu.idtr = DescriptorTableRegister { base: idt_base, limit: 0x7FF };
+    cpu.idtr = DescriptorTableRegister {
+        base: idt_base,
+        limit: 0x7FF,
+    };
     cpu.cs = 0x08;
     cpu.ss = 0x10;
     cpu.rsp = 0x3000;

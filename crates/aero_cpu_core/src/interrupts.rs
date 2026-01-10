@@ -23,6 +23,37 @@ enum GateType {
     Task,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExceptionClass {
+    Benign,
+    Contributory,
+    PageFault,
+    DoubleFault,
+}
+
+impl ExceptionClass {
+    fn of(exception: Exception) -> Self {
+        match exception {
+            Exception::PageFault => Self::PageFault,
+            Exception::DoubleFault => Self::DoubleFault,
+            Exception::InvalidTss
+            | Exception::SegmentNotPresent
+            | Exception::StackFault
+            | Exception::GeneralProtection => Self::Contributory,
+            _ => Self::Benign,
+        }
+    }
+}
+
+fn should_double_fault(first: Exception, second: Exception) -> bool {
+    use ExceptionClass as C;
+    match (C::of(first), C::of(second)) {
+        (C::Contributory, C::Contributory | C::PageFault) => true,
+        (C::PageFault, C::Contributory | C::PageFault) => true,
+        _ => false,
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct IdtGate32 {
     offset: u32,
@@ -136,14 +167,17 @@ impl Cpu {
         saved_rip: u64,
         error_code: Option<u32>,
     ) -> Result<(), CpuExit> {
-        // Minimal #DF escalation: if we fault while already delivering an exception, raise #DF.
-        if self.exception_depth > 0 {
-            if exception == Exception::DoubleFault {
+        if let Some(first) = self.delivering_exception {
+            if first == Exception::DoubleFault {
                 return Err(CpuExit::TripleFault);
             }
-            return self.deliver_exception(bus, Exception::DoubleFault, saved_rip, Some(0));
+            if exception != Exception::DoubleFault && should_double_fault(first, exception) {
+                return self.deliver_exception(bus, Exception::DoubleFault, saved_rip, Some(0));
+            }
         }
 
+        let prev_delivering = self.delivering_exception;
+        self.delivering_exception = Some(exception);
         self.exception_depth = self.exception_depth.saturating_add(1);
         let code = if exception.pushes_error_code() {
             Some(error_code.unwrap_or(0))
@@ -161,6 +195,7 @@ impl Cpu {
         );
 
         self.exception_depth = self.exception_depth.saturating_sub(1);
+        self.delivering_exception = prev_delivering;
         res
     }
 
@@ -183,18 +218,18 @@ impl Cpu {
                 is_interrupt,
                 source,
             ),
-            CpuMode::Long64 => self.deliver_long_mode(
-                bus,
-                vector,
-                saved_rip,
-                error_code,
-                is_interrupt,
-                source,
-            ),
+            CpuMode::Long64 => {
+                self.deliver_long_mode(bus, vector, saved_rip, error_code, is_interrupt, source)
+            }
         }
     }
 
-    fn deliver_real_mode<B: Bus>(&mut self, bus: &mut B, vector: u8, saved_rip: u64) -> Result<(), CpuExit> {
+    fn deliver_real_mode<B: Bus>(
+        &mut self,
+        bus: &mut B,
+        vector: u8,
+        saved_rip: u64,
+    ) -> Result<(), CpuExit> {
         let ivt_addr = (vector as u64) * 4;
         let offset = bus.read_u16(ivt_addr) as u64;
         let segment = bus.read_u16(ivt_addr + 2);
@@ -225,9 +260,19 @@ impl Cpu {
         is_interrupt: bool,
         source: InterruptSource,
     ) -> Result<(), CpuExit> {
-        let gate = self.read_idt_gate32(bus, vector).map_err(|_| CpuExit::TripleFault)?;
+        let gate = match self.read_idt_gate32(bus, vector) {
+            Ok(gate) => gate,
+            Err(()) => {
+                return self.deliver_exception(
+                    bus,
+                    Exception::GeneralProtection,
+                    saved_rip,
+                    Some(0),
+                )
+            }
+        };
         if !gate.present {
-            return Err(CpuExit::TripleFault);
+            return self.deliver_exception(bus, Exception::SegmentNotPresent, saved_rip, Some(0));
         }
 
         if gate.gate_type == GateType::Task {
@@ -236,7 +281,12 @@ impl Cpu {
 
         if is_interrupt && source == InterruptSource::Software {
             if self.cpl() > gate.dpl {
-                return self.deliver_exception(bus, Exception::GeneralProtection, saved_rip, Some(0));
+                return self.deliver_exception(
+                    bus,
+                    Exception::GeneralProtection,
+                    saved_rip,
+                    Some(0),
+                );
             }
         }
 
@@ -244,8 +294,18 @@ impl Cpu {
         let new_cpl = (gate.selector & 0x3) as u8;
 
         if new_cpl < current_cpl {
-            let tss = self.tss32.ok_or(CpuExit::TripleFault)?;
-            let (new_ss, new_esp) = tss.stack_for_cpl(new_cpl).ok_or(CpuExit::TripleFault)?;
+            let tss = match self.tss32 {
+                Some(tss) => tss,
+                None => {
+                    return self.deliver_exception(bus, Exception::InvalidTss, saved_rip, Some(0))
+                }
+            };
+            let (new_ss, new_esp) = match tss.stack_for_cpl(new_cpl) {
+                Some(stack) => stack,
+                None => {
+                    return self.deliver_exception(bus, Exception::InvalidTss, saved_rip, Some(0))
+                }
+            };
 
             let old_ss = self.ss;
             let old_esp = self.rsp as u32;
@@ -290,9 +350,19 @@ impl Cpu {
         is_interrupt: bool,
         source: InterruptSource,
     ) -> Result<(), CpuExit> {
-        let gate = self.read_idt_gate64(bus, vector).map_err(|_| CpuExit::TripleFault)?;
+        let gate = match self.read_idt_gate64(bus, vector) {
+            Ok(gate) => gate,
+            Err(()) => {
+                return self.deliver_exception(
+                    bus,
+                    Exception::GeneralProtection,
+                    saved_rip,
+                    Some(0),
+                )
+            }
+        };
         if !gate.present {
-            return Err(CpuExit::TripleFault);
+            return self.deliver_exception(bus, Exception::SegmentNotPresent, saved_rip, Some(0));
         }
 
         if gate.gate_type == GateType::Task {
@@ -301,7 +371,12 @@ impl Cpu {
 
         if is_interrupt && source == InterruptSource::Software {
             if self.cpl() > gate.dpl {
-                return self.deliver_exception(bus, Exception::GeneralProtection, saved_rip, Some(0));
+                return self.deliver_exception(
+                    bus,
+                    Exception::GeneralProtection,
+                    saved_rip,
+                    Some(0),
+                );
             }
         }
 
@@ -313,12 +388,30 @@ impl Cpu {
 
         // Stack switching (IST has priority over CPL-based stacks).
         if gate.ist != 0 {
-            let tss = self.tss64.ok_or(CpuExit::TripleFault)?;
-            let new_rsp = tss.ist_stack(gate.ist).ok_or(CpuExit::TripleFault)?;
+            let tss = match self.tss64 {
+                Some(tss) => tss,
+                None => {
+                    return self.deliver_exception(bus, Exception::InvalidTss, saved_rip, Some(0))
+                }
+            };
+            let new_rsp = match tss.ist_stack(gate.ist) {
+                Some(rsp) => rsp,
+                None => {
+                    return self.deliver_exception(bus, Exception::InvalidTss, saved_rip, Some(0))
+                }
+            };
             self.rsp = new_rsp;
         } else if new_cpl < current_cpl {
-            let tss = self.tss64.ok_or(CpuExit::TripleFault)?;
-            let new_rsp = tss.rsp_for_cpl(new_cpl).ok_or(CpuExit::TripleFault)?;
+            let tss = match self.tss64 {
+                Some(tss) => tss,
+                None => {
+                    return self.deliver_exception(bus, Exception::InvalidTss, saved_rip, Some(0))
+                }
+            };
+            let new_rsp = match tss.rsp_for_cpl(new_cpl) {
+                Some(rsp) if rsp != 0 => rsp,
+                _ => return self.deliver_exception(bus, Exception::InvalidTss, saved_rip, Some(0)),
+            };
             self.rsp = new_rsp;
         }
 
@@ -384,7 +477,8 @@ impl Cpu {
 
         self.rip = new_eip;
         self.cs = new_cs;
-        self.rflags = (self.rflags & !0xFFFF_FFFF) | (new_eflags & 0xFFFF_FFFF) | Cpu::RFLAGS_FIXED1;
+        self.rflags =
+            (self.rflags & !0xFFFF_FFFF) | (new_eflags & 0xFFFF_FFFF) | Cpu::RFLAGS_FIXED1;
 
         if return_cpl > current_cpl {
             let new_esp = self.pop32(bus) as u64;
@@ -525,4 +619,3 @@ impl Cpu {
         value
     }
 }
-
