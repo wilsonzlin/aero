@@ -12,5 +12,6 @@ default = []
 
 [dependencies]
 bitflags = "2"
+perf = { path = "../perf" }
 
 [dev-dependencies]

@@ -1,8 +1,7 @@
-use aero_jit::{Cond, Engine, FuncId, Gpr, JitConfig, Program, Vm};
-use std::time::Instant;
+use aero_jit::{Engine, JitConfig, Program, Vm};
 
 fn build_program() -> Program {
-    use aero_jit::microvm::{Block, Function, Instr, Terminator, Xmm};
+    use aero_jit::microvm::{Block, Cond, Function, Gpr, Instr, Terminator, Xmm};
 
     let r0 = Gpr(0);
     let r1 = Gpr(1);
@@ -24,11 +23,11 @@ fn build_program() -> Program {
             Instr::VImm {
                 dst: x0,
                 imm: 0x3f8000003f8000003f8000003f800000,
-            }, // 1.0 lanes
+            },
             Instr::VImm {
                 dst: x1,
                 imm: 0x40000000400000004000000040000000,
-            }, // 2.0 lanes
+            },
         ],
         term: Terminator::Jmp(1),
     };
@@ -117,36 +116,12 @@ fn init_vm(loop_count: u64) -> Vm {
     vm
 }
 
-fn timed_run(engine: &mut Engine, program: &Program, loop_count: u64) -> (u64, u128) {
-    let mut vm = init_vm(loop_count);
-    let start = Instant::now();
-    let ret = engine.run(&mut vm, program, 0 as FuncId);
-    let elapsed = start.elapsed().as_micros();
-    (ret, elapsed)
-}
-
-fn main() {
+#[test]
+fn pf006_metrics_nonzero_when_jit_enabled() {
     let program = build_program();
-    let loop_count = 200_000u64;
+    let mut vm = init_vm(20_000);
 
-    // Tier-1 only.
-    let mut tier1 = Engine::new(
-        &program,
-        JitConfig {
-            tier1_threshold: 1,
-            tier2_threshold: u64::MAX,
-            ..JitConfig::default()
-        },
-    );
-    // Prime rolling metrics window.
-    let _ = tier1.telemetry_snapshot();
-    // Warm-up compile.
-    let _ = timed_run(&mut tier1, &program, 10_000);
-    let (ret1, us1) = timed_run(&mut tier1, &program, loop_count);
-    let tier1_jit = tier1.telemetry_snapshot();
-
-    // Tier-2 enabled.
-    let mut tier2 = Engine::new(
+    let mut engine = Engine::new(
         &program,
         JitConfig {
             tier1_threshold: 1,
@@ -154,26 +129,51 @@ fn main() {
             ..JitConfig::default()
         },
     );
-    let _ = tier2.telemetry_snapshot();
-    // Warm-up to compile tier2 regions.
-    let _ = timed_run(&mut tier2, &program, 10_000);
-    let (ret2, us2) = timed_run(&mut tier2, &program, loop_count);
-    let tier2_jit = tier2.telemetry_snapshot();
 
-    println!("microbench: loop_count={loop_count}");
-    println!(
-        "tier1-only: ret={ret1} time={}us stats={:?}",
-        us1,
-        tier1.stats()
+    // Prime rolling window.
+    let _ = engine.telemetry_snapshot();
+
+    let _ = engine.run(&mut vm, &program, 0);
+    let snapshot = engine.telemetry_snapshot();
+
+    assert!(snapshot.jit.enabled);
+    assert!(snapshot.jit.totals.tier1.blocks_compiled > 0);
+    assert!(snapshot.jit.totals.tier2.blocks_compiled > 0);
+    assert!(snapshot.jit.totals.tier1.compile_ms > 0.0);
+    assert!(snapshot.jit.totals.tier2.compile_ms > 0.0);
+    assert!(snapshot.jit.totals.cache.used_bytes > 0);
+    assert!(snapshot.jit.totals.cache.capacity_bytes > 0);
+    assert!(snapshot.jit.totals.cache.lookup_hit + snapshot.jit.totals.cache.lookup_miss > 0);
+    assert!(snapshot.jit.rolling.window_ms > 0);
+}
+
+#[test]
+fn pf006_metrics_zero_when_jit_disabled() {
+    let program = build_program();
+    let mut vm = init_vm(1_000);
+
+    let mut engine = Engine::new(
+        &program,
+        JitConfig {
+            tier1_threshold: u64::MAX,
+            tier2_threshold: u64::MAX,
+            ..JitConfig::default()
+        },
     );
-    println!("           {}", tier1_jit.jit_hud_line());
-    println!(
-        "tier2:      ret={ret2} time={}us stats={:?}",
-        us2,
-        tier2.stats()
-    );
-    println!("           {}", tier2_jit.jit_hud_line());
-    if us2 > 0 {
-        println!("speedup: {:.2}x", us1 as f64 / us2 as f64);
-    }
+
+    let _ = engine.telemetry_snapshot();
+    let _ = engine.run(&mut vm, &program, 0);
+    let snapshot = engine.telemetry_snapshot();
+
+    assert!(!snapshot.jit.enabled);
+    assert_eq!(snapshot.jit.totals.tier1.blocks_compiled, 0);
+    assert_eq!(snapshot.jit.totals.tier2.blocks_compiled, 0);
+    assert_eq!(snapshot.jit.totals.cache.lookup_hit, 0);
+    assert_eq!(snapshot.jit.totals.cache.lookup_miss, 0);
+    assert_eq!(snapshot.jit.totals.cache.used_bytes, 0);
+    assert_eq!(snapshot.jit.totals.cache.capacity_bytes, 0);
+    assert_eq!(snapshot.jit.totals.tier1.compile_ms, 0.0);
+    assert_eq!(snapshot.jit.totals.tier2.compile_ms, 0.0);
+    assert_eq!(snapshot.jit.totals.deopt.count, 0);
+    assert_eq!(snapshot.jit.totals.deopt.guard_fail, 0);
 }

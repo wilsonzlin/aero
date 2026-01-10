@@ -184,6 +184,9 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
   const gpuRow = makeRow('GPU (avg)');
   const ioRow = makeRow('IO (avg)');
   const jitRow = makeRow('JIT (avg)');
+  const jitCacheHitRow = makeRow('JIT cache hit');
+  const jitBlocksRow = makeRow('JIT blocks compiled');
+  const jitCompileRateRow = makeRow('JIT compile rate');
   const drawCallsRow = makeRow('Draw calls (avg/frame)');
   const ioBytesRow = makeRow('IO throughput');
   const hostHeapRow = makeRow('Host heap');
@@ -260,6 +263,23 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
     setText(gpuRow, formatMs(breakdown?.gpu));
     setText(ioRow, formatMs(breakdown?.io));
     setText(jitRow, formatMs(breakdown?.jit));
+
+    const jit = snapshot.jit;
+    if (!jit || !jit.enabled || jit.rolling.windowMs === 0) {
+      setText(jitCacheHitRow, '-');
+      setText(jitBlocksRow, '-');
+      setText(jitCompileRateRow, '-');
+    } else {
+      setText(jitCacheHitRow, `${(jit.rolling.cacheHitRate * 100).toFixed(1)}%`);
+
+      const blocksTotal = jit.totals.tier1.blocksCompiled + jit.totals.tier2.blocksCompiled;
+      setText(
+        jitBlocksRow,
+        `${blocksTotal} (t1 ${jit.totals.tier1.blocksCompiled} · t2 ${jit.totals.tier2.blocksCompiled}) · ${jit.rolling.blocksCompiledPerSec.toFixed(1)}/s`,
+      );
+
+      setText(jitCompileRateRow, `${jit.rolling.compileMsPerSec.toFixed(2)} ms/s`);
+    }
 
     setText(drawCallsRow, snapshot.drawCallsPerFrame === undefined ? '-' : snapshot.drawCallsPerFrame.toFixed(1));
     setText(ioBytesRow, formatBytesPerSec(snapshot.ioBytesPerSec));

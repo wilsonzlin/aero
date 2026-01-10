@@ -12,6 +12,53 @@ export type PerfCaptureState = {
   records: number;
 };
 
+export type PerfJitTierTotals = {
+  blocksCompiled: number;
+  compileMs: number;
+};
+
+export type PerfJitTier2PassesMs = {
+  constFold: number;
+  dce: number;
+  regalloc: number;
+};
+
+export type PerfJitTier2Totals = PerfJitTierTotals & {
+  passesMs: PerfJitTier2PassesMs;
+};
+
+export type PerfJitCacheTotals = {
+  lookupHit: number;
+  lookupMiss: number;
+  capacityBytes: number;
+  usedBytes: number;
+};
+
+export type PerfJitDeoptTotals = {
+  count: number;
+  guardFail: number;
+};
+
+export type PerfJitTotals = {
+  tier1: PerfJitTierTotals;
+  tier2: PerfJitTier2Totals;
+  cache: PerfJitCacheTotals;
+  deopt: PerfJitDeoptTotals;
+};
+
+export type PerfJitRolling = {
+  windowMs: number;
+  cacheHitRate: number;
+  compileMsPerSec: number;
+  blocksCompiledPerSec: number;
+};
+
+export type PerfJitSnapshot = {
+  enabled: boolean;
+  totals: PerfJitTotals;
+  rolling: PerfJitRolling;
+};
+
 export type PerfHudSnapshot = {
   nowMs: number;
 
@@ -43,6 +90,8 @@ export type PerfHudSnapshot = {
   gpuEstimatedBytes?: number;
   jitCodeCacheBytes?: number;
   shaderCacheBytes?: number;
+
+  jit?: PerfJitSnapshot;
 
   peakHostJsHeapUsedBytes?: number;
   peakWasmMemoryBytes?: number;

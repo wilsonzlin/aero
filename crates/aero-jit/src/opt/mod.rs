@@ -8,12 +8,14 @@
 //! - lower to a compact executable representation (with a WASM SIMD listing)
 
 use crate::microvm::{
-    simd_f32x4_add, simd_f32x4_mul, set_flags_add, set_flags_logic, set_flags_sub, BlockId, Cond,
+    set_flags_add, set_flags_logic, set_flags_sub, simd_f32x4_add, simd_f32x4_mul, BlockId, Cond,
     FlagMask, FuncId, Function, Instr, Program, Terminator, Vm,
 };
 use crate::profile::FuncProfile;
 use crate::tier::JitConfig;
+use perf::jit::{JitMetrics, JitTier2Pass};
 use std::collections::HashMap;
+use std::time::Instant;
 
 /// A Tier-2 "compiled region".
 ///
@@ -43,8 +45,15 @@ struct CompiledBlock {
 #[derive(Clone)]
 enum CompiledTerm {
     Jump(BlockId),
-    Guard { cond: Cond, expected: bool, hot: BlockId, cold: BlockId },
-    Ret { src: Slot },
+    Guard {
+        cond: Cond,
+        expected: bool,
+        hot: BlockId,
+        cold: BlockId,
+    },
+    Ret {
+        src: Slot,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -52,34 +61,91 @@ struct Slot(u16);
 
 #[derive(Clone)]
 enum CompiledOp {
-    Imm { dst: Slot, imm: u64 },
-    Mov { dst: Slot, src: Slot },
-    Add { dst: Slot, a: Slot, b: Slot, flags: FlagMask },
-    AddImm { dst: Slot, src: Slot, imm: i32, flags: FlagMask },
-    Sub { dst: Slot, a: Slot, b: Slot, flags: FlagMask },
-    Mul { dst: Slot, a: Slot, b: Slot, flags: FlagMask },
-    Shl { dst: Slot, src: Slot, shift: u8, flags: FlagMask },
-    Cmp { a: Slot, b: Slot, flags: FlagMask },
-    SetFlagsConst { value: u8, mask: FlagMask },
+    Imm {
+        dst: Slot,
+        imm: u64,
+    },
+    Mov {
+        dst: Slot,
+        src: Slot,
+    },
+    Add {
+        dst: Slot,
+        a: Slot,
+        b: Slot,
+        flags: FlagMask,
+    },
+    AddImm {
+        dst: Slot,
+        src: Slot,
+        imm: i32,
+        flags: FlagMask,
+    },
+    Sub {
+        dst: Slot,
+        a: Slot,
+        b: Slot,
+        flags: FlagMask,
+    },
+    Mul {
+        dst: Slot,
+        a: Slot,
+        b: Slot,
+        flags: FlagMask,
+    },
+    Shl {
+        dst: Slot,
+        src: Slot,
+        shift: u8,
+        flags: FlagMask,
+    },
+    Cmp {
+        a: Slot,
+        b: Slot,
+        flags: FlagMask,
+    },
+    SetFlagsConst {
+        value: u8,
+        mask: FlagMask,
+    },
 
-    LoadU64 { dst: Slot, addr: Slot },
-    StoreU64 { addr: Slot, value: Slot },
+    LoadU64 {
+        dst: Slot,
+        addr: Slot,
+    },
+    StoreU64 {
+        addr: Slot,
+        value: Slot,
+    },
 
-    VImm { dst: Slot, imm: u128 },
-    VAddF32x4 { dst: Slot, a: Slot, b: Slot },
-    VMulF32x4 { dst: Slot, a: Slot, b: Slot },
+    VImm {
+        dst: Slot,
+        imm: u128,
+    },
+    VAddF32x4 {
+        dst: Slot,
+        a: Slot,
+        b: Slot,
+    },
+    VMulF32x4 {
+        dst: Slot,
+        a: Slot,
+        b: Slot,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExecOutcome {
     Continue(BlockId),
+    GuardFailed(BlockId),
     Deopt(BlockId),
     Return(u64),
 }
 
 impl CompiledRegion {
     pub(crate) fn execute(&self, vm: &mut Vm) -> ExecOutcome {
-        if vm.mem.perm_epoch() != self.guard_perm_epoch || vm.mem.code_epoch() != self.guard_code_epoch
+        if vm.mem.perm_epoch() != self.guard_perm_epoch
+            || vm.mem.code_epoch() != self.guard_code_epoch
         {
             return ExecOutcome::Deopt(self.entry);
         }
@@ -123,12 +189,17 @@ impl CompiledRegion {
 
             match &blk.term {
                 CompiledTerm::Jump(tgt) => cur = *tgt,
-                CompiledTerm::Guard { cond, expected, hot, cold } => {
+                CompiledTerm::Guard {
+                    cond,
+                    expected,
+                    hot,
+                    cold,
+                } => {
                     if cond.eval(flags) == *expected {
                         cur = *hot;
                     } else {
                         flush_guest_state(&self.reg_alloc, &gpr_slots, &xmm_slots, flags, vm);
-                        return ExecOutcome::Continue(*cold);
+                        return ExecOutcome::GuardFailed(*cold);
                     }
                 }
                 CompiledTerm::Ret { src } => {
@@ -144,9 +215,40 @@ impl CompiledRegion {
     pub(crate) fn wasm_simd_listing(&self) -> &[WasmInst] {
         &self.wasm_simd_listing
     }
+
+    pub(crate) fn estimated_size_bytes(&self) -> u64 {
+        use std::mem::size_of;
+
+        let mut total = size_of::<Self>() as u64;
+        total =
+            total.saturating_add((self.blocks.len() as u64) * (size_of::<CompiledBlock>() as u64));
+        total =
+            total.saturating_add((self.preamble.len() as u64) * (size_of::<CompiledOp>() as u64));
+        total = total
+            .saturating_add((self.wasm_simd_listing.len() as u64) * (size_of::<WasmInst>() as u64));
+        total = total
+            .saturating_add((self.reg_alloc.gpr_slots.len() as u64) * (size_of::<Slot>() as u64));
+        total = total
+            .saturating_add((self.reg_alloc.xmm_slots.len() as u64) * (size_of::<Slot>() as u64));
+        total = total.saturating_add(
+            (self.block_index.len() as u64) * ((size_of::<BlockId>() + size_of::<usize>()) as u64),
+        );
+
+        for blk in &self.blocks {
+            total = total.saturating_add((blk.ops.len() as u64) * (size_of::<CompiledOp>() as u64));
+        }
+
+        total
+    }
 }
 
-fn flush_guest_state(alloc: &RegAlloc, gpr_slots: &[u64], xmm_slots: &[u128], flags: u8, vm: &mut Vm) {
+fn flush_guest_state(
+    alloc: &RegAlloc,
+    gpr_slots: &[u64],
+    xmm_slots: &[u128],
+    flags: u8,
+    vm: &mut Vm,
+) {
     for gpr in 0..alloc.guest_gpr_count {
         let slot = alloc.gpr_slots[gpr as usize];
         vm.gprs[gpr as usize] = gpr_slots[slot.0 as usize];
@@ -158,32 +260,58 @@ fn flush_guest_state(alloc: &RegAlloc, gpr_slots: &[u64], xmm_slots: &[u128], fl
     vm.flags = flags;
 }
 
-fn exec_op(op: &CompiledOp, gprs: &mut [u64], xmms: &mut [u128], flags: &mut u8, mem: &mut crate::microvm::Memory) {
+fn exec_op(
+    op: &CompiledOp,
+    gprs: &mut [u64],
+    xmms: &mut [u128],
+    flags: &mut u8,
+    mem: &mut crate::microvm::Memory,
+) {
     match *op {
         CompiledOp::Imm { dst, imm } => gprs[dst.0 as usize] = imm,
         CompiledOp::Mov { dst, src } => gprs[dst.0 as usize] = gprs[src.0 as usize],
-        CompiledOp::Add { dst, a, b, flags: f } => {
+        CompiledOp::Add {
+            dst,
+            a,
+            b,
+            flags: f,
+        } => {
             let aa = gprs[a.0 as usize];
             let bb = gprs[b.0 as usize];
             let rr = aa.wrapping_add(bb);
             gprs[dst.0 as usize] = rr;
             set_flags_add(rr, aa, bb, f, flags);
         }
-        CompiledOp::AddImm { dst, src, imm, flags: f } => {
+        CompiledOp::AddImm {
+            dst,
+            src,
+            imm,
+            flags: f,
+        } => {
             let aa = gprs[src.0 as usize];
             let bb = imm as i64 as u64;
             let rr = aa.wrapping_add(bb);
             gprs[dst.0 as usize] = rr;
             set_flags_add(rr, aa, bb, f, flags);
         }
-        CompiledOp::Sub { dst, a, b, flags: f } => {
+        CompiledOp::Sub {
+            dst,
+            a,
+            b,
+            flags: f,
+        } => {
             let aa = gprs[a.0 as usize];
             let bb = gprs[b.0 as usize];
             let rr = aa.wrapping_sub(bb);
             gprs[dst.0 as usize] = rr;
             set_flags_sub(rr, aa, bb, f, flags);
         }
-        CompiledOp::Mul { dst, a, b, flags: f } => {
+        CompiledOp::Mul {
+            dst,
+            a,
+            b,
+            flags: f,
+        } => {
             let aa = gprs[a.0 as usize];
             let bb = gprs[b.0 as usize];
             let rr = aa.wrapping_mul(bb);
@@ -191,7 +319,12 @@ fn exec_op(op: &CompiledOp, gprs: &mut [u64], xmms: &mut [u128], flags: &mut u8,
             // We model MUL as setting ZF/SF based on result, and clearing CF/OF.
             set_flags_logic(rr, f, flags);
         }
-        CompiledOp::Shl { dst, src, shift, flags: f } => {
+        CompiledOp::Shl {
+            dst,
+            src,
+            shift,
+            flags: f,
+        } => {
             let aa = gprs[src.0 as usize];
             let rr = aa.wrapping_shl(shift as u32);
             gprs[dst.0 as usize] = rr;
@@ -271,6 +404,7 @@ pub(crate) fn compile_region(
     profile: &FuncProfile,
     config: &JitConfig,
     vm: &Vm,
+    metrics: Option<&JitMetrics>,
 ) -> Option<CompiledRegion> {
     let func_ref = &program.functions[func];
     let selection = select_region(func_ref, entry, profile, config)?;
@@ -280,13 +414,31 @@ pub(crate) fn compile_region(
     // enable CSE/const-folding on arithmetic that no longer needs flags.
     compute_flag_liveness(&mut region);
     strength_reduction(&mut region);
-    constant_folding(&mut region);
+    if let Some(metrics) = metrics {
+        let start = Instant::now();
+        constant_folding(&mut region);
+        metrics.add_tier2_pass_time(JitTier2Pass::ConstFold, start.elapsed());
+    } else {
+        constant_folding(&mut region);
+    }
     common_subexpression_elimination(&mut region);
-    dead_code_elimination(&mut region, func_ref);
+    if let Some(metrics) = metrics {
+        let start = Instant::now();
+        dead_code_elimination(&mut region, func_ref);
+        metrics.add_tier2_pass_time(JitTier2Pass::Dce, start.elapsed());
+    } else {
+        dead_code_elimination(&mut region, func_ref);
+    }
     loop_invariant_code_motion(&mut region);
-    dead_code_elimination(&mut region, func_ref);
+    if let Some(metrics) = metrics {
+        let start = Instant::now();
+        dead_code_elimination(&mut region, func_ref);
+        metrics.add_tier2_pass_time(JitTier2Pass::Dce, start.elapsed());
+    } else {
+        dead_code_elimination(&mut region, func_ref);
+    }
 
-    Some(codegen(region, func_ref, config, vm))
+    Some(codegen(region, func_ref, config, vm, metrics))
 }
 
 // -----------------------------------------------------------------------------
@@ -335,7 +487,11 @@ fn select_region(
             Terminator::Jmp(tgt) => {
                 hot_succ = Some(*tgt);
             }
-            Terminator::Br { cond, then_tgt, else_tgt } => {
+            Terminator::Br {
+                cond,
+                then_tgt,
+                else_tgt,
+            } => {
                 let bp = &profile.blocks[cur];
                 let (hot, _cold) = match &bp.branch {
                     Some((_, prof)) => prof.hot_successor(*then_tgt, *else_tgt),
@@ -347,7 +503,11 @@ fn select_region(
             Terminator::Ret { .. } => {}
         }
 
-        out.push(SelectedBlock { orig: cur, hot_succ, term });
+        out.push(SelectedBlock {
+            orig: cur,
+            hot_succ,
+            term,
+        });
 
         match &blk.term {
             Terminator::Jmp(tgt) => cur = *tgt,
@@ -356,7 +516,11 @@ fn select_region(
         }
     }
 
-    if out.is_empty() { None } else { Some(out) }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -387,29 +551,91 @@ struct OptBlock {
 #[derive(Clone, Debug)]
 enum OptTerm {
     Jump(BlockId),
-    Guard { cond: Cond, expected: bool, hot: BlockId, cold: BlockId },
-    Ret { src: GprId },
+    Guard {
+        cond: Cond,
+        expected: bool,
+        hot: BlockId,
+        cold: BlockId,
+    },
+    Ret {
+        src: GprId,
+    },
 }
 
 #[derive(Clone, Debug)]
 enum OptInst {
-    Imm { dst: GprId, imm: u64 },
-    Mov { dst: GprId, src: GprId },
-    Add { dst: GprId, a: GprId, b: GprId, flags: FlagMask },
-    Sub { dst: GprId, a: GprId, b: GprId, flags: FlagMask },
-    Mul { dst: GprId, a: GprId, b: GprId, flags: FlagMask },
-    Shl { dst: GprId, src: GprId, shift: u8, flags: FlagMask },
-    Cmp { a: GprId, b: GprId, flags: FlagMask },
-    SetFlagsConst { value: u8, mask: FlagMask },
+    Imm {
+        dst: GprId,
+        imm: u64,
+    },
+    Mov {
+        dst: GprId,
+        src: GprId,
+    },
+    Add {
+        dst: GprId,
+        a: GprId,
+        b: GprId,
+        flags: FlagMask,
+    },
+    Sub {
+        dst: GprId,
+        a: GprId,
+        b: GprId,
+        flags: FlagMask,
+    },
+    Mul {
+        dst: GprId,
+        a: GprId,
+        b: GprId,
+        flags: FlagMask,
+    },
+    Shl {
+        dst: GprId,
+        src: GprId,
+        shift: u8,
+        flags: FlagMask,
+    },
+    Cmp {
+        a: GprId,
+        b: GprId,
+        flags: FlagMask,
+    },
+    SetFlagsConst {
+        value: u8,
+        mask: FlagMask,
+    },
 
-    AddImm { dst: GprId, src: GprId, imm: i32, flags: FlagMask },
+    AddImm {
+        dst: GprId,
+        src: GprId,
+        imm: i32,
+        flags: FlagMask,
+    },
 
-    LoadU64 { dst: GprId, addr: GprId },
-    StoreU64 { addr: GprId, value: GprId },
+    LoadU64 {
+        dst: GprId,
+        addr: GprId,
+    },
+    StoreU64 {
+        addr: GprId,
+        value: GprId,
+    },
 
-    VImm { dst: XmmId, imm: u128 },
-    VAddF32x4 { dst: XmmId, a: XmmId, b: XmmId },
-    VMulF32x4 { dst: XmmId, a: XmmId, b: XmmId },
+    VImm {
+        dst: XmmId,
+        imm: u128,
+    },
+    VAddF32x4 {
+        dst: XmmId,
+        a: XmmId,
+        b: XmmId,
+    },
+    VMulF32x4 {
+        dst: XmmId,
+        a: XmmId,
+        b: XmmId,
+    },
 }
 
 impl OptInst {
@@ -510,8 +736,14 @@ fn lower_to_opt_ir(func: &Function, selection: &[SelectedBlock]) -> OptRegion {
         let mut insts = Vec::new();
         for instr in &func.blocks[sel.orig].instrs {
             match instr {
-                Instr::Imm { dst, imm } => insts.push(OptInst::Imm { dst: dst.0, imm: *imm }),
-                Instr::Mov { dst, src } => insts.push(OptInst::Mov { dst: dst.0, src: src.0 }),
+                Instr::Imm { dst, imm } => insts.push(OptInst::Imm {
+                    dst: dst.0,
+                    imm: *imm,
+                }),
+                Instr::Mov { dst, src } => insts.push(OptInst::Mov {
+                    dst: dst.0,
+                    src: src.0,
+                }),
                 Instr::Add { dst, a, b } => insts.push(OptInst::Add {
                     dst: dst.0,
                     a: a.0,
@@ -550,7 +782,10 @@ fn lower_to_opt_ir(func: &Function, selection: &[SelectedBlock]) -> OptRegion {
                         imm: *offset,
                         flags: FlagMask::empty(),
                     });
-                    insts.push(OptInst::LoadU64 { dst: dst.0, addr: addr_tmp });
+                    insts.push(OptInst::LoadU64 {
+                        dst: dst.0,
+                        addr: addr_tmp,
+                    });
                 }
                 Instr::Store { base, offset, src } => {
                     let addr_tmp = gpr_count;
@@ -561,15 +796,25 @@ fn lower_to_opt_ir(func: &Function, selection: &[SelectedBlock]) -> OptRegion {
                         imm: *offset,
                         flags: FlagMask::empty(),
                     });
-                    insts.push(OptInst::StoreU64 { addr: addr_tmp, value: src.0 });
+                    insts.push(OptInst::StoreU64 {
+                        addr: addr_tmp,
+                        value: src.0,
+                    });
                 }
-                Instr::VImm { dst, imm } => insts.push(OptInst::VImm { dst: dst.0, imm: *imm }),
-                Instr::VAddF32x4 { dst, a, b } => {
-                    insts.push(OptInst::VAddF32x4 { dst: dst.0, a: a.0, b: b.0 })
-                }
-                Instr::VMulF32x4 { dst, a, b } => {
-                    insts.push(OptInst::VMulF32x4 { dst: dst.0, a: a.0, b: b.0 })
-                }
+                Instr::VImm { dst, imm } => insts.push(OptInst::VImm {
+                    dst: dst.0,
+                    imm: *imm,
+                }),
+                Instr::VAddF32x4 { dst, a, b } => insts.push(OptInst::VAddF32x4 {
+                    dst: dst.0,
+                    a: a.0,
+                    b: b.0,
+                }),
+                Instr::VMulF32x4 { dst, a, b } => insts.push(OptInst::VMulF32x4 {
+                    dst: dst.0,
+                    a: a.0,
+                    b: b.0,
+                }),
                 Instr::Call { .. } => {
                     // Tier-2 regions do not include calls; selection should stop
                     // before them.
@@ -579,16 +824,33 @@ fn lower_to_opt_ir(func: &Function, selection: &[SelectedBlock]) -> OptRegion {
 
         let term = match &sel.term {
             Terminator::Jmp(tgt) => OptTerm::Jump(*tgt),
-            Terminator::Br { cond, then_tgt, else_tgt } => {
+            Terminator::Br {
+                cond,
+                then_tgt,
+                else_tgt,
+            } => {
                 let hot = sel.hot_succ.unwrap();
-                let cold = if hot == *then_tgt { *else_tgt } else { *then_tgt };
+                let cold = if hot == *then_tgt {
+                    *else_tgt
+                } else {
+                    *then_tgt
+                };
                 let expected = hot == *then_tgt;
-                OptTerm::Guard { cond: *cond, expected, hot, cold }
+                OptTerm::Guard {
+                    cond: *cond,
+                    expected,
+                    hot,
+                    cold,
+                }
             }
             Terminator::Ret { src } => OptTerm::Ret { src: src.0 },
         };
 
-        blocks.push(OptBlock { orig: sel.orig, insts, term });
+        blocks.push(OptBlock {
+            orig: sel.orig,
+            insts,
+            term,
+        });
     }
 
     OptRegion {
@@ -629,7 +891,12 @@ fn compute_flag_liveness(region: &mut OptRegion) {
                         out |= FlagMask::ALL;
                     }
                 }
-                OptTerm::Guard { cond, expected: _, hot, cold } => {
+                OptTerm::Guard {
+                    cond,
+                    expected: _,
+                    hot,
+                    cold,
+                } => {
                     out |= cond.uses_flags();
                     if let Some(&succ_idx) = block_index.get(hot) {
                         out |= live_in_flags[succ_idx];
@@ -711,7 +978,12 @@ fn strength_reduction(region: &mut OptRegion) {
                     };
                     if cst.is_power_of_two() {
                         let shift = cst.trailing_zeros() as u8;
-                        *inst = OptInst::Shl { dst, src: var, shift, flags };
+                        *inst = OptInst::Shl {
+                            dst,
+                            src: var,
+                            shift,
+                            flags,
+                        };
                         consts.remove(&dst);
                     } else {
                         consts.remove(&dst);
@@ -758,7 +1030,8 @@ fn constant_folding(region: &mut OptRegion) {
                     }
                 }
                 OptInst::Add { dst, a, b, flags } => {
-                    let (Some(va), Some(vb)) = (const_gpr.get(&a).copied(), const_gpr.get(&b).copied())
+                    let (Some(va), Some(vb)) =
+                        (const_gpr.get(&a).copied(), const_gpr.get(&b).copied())
                     else {
                         const_gpr.remove(&dst);
                         new_insts.push(inst);
@@ -770,11 +1043,15 @@ fn constant_folding(region: &mut OptRegion) {
                     if !flags.is_empty() {
                         let mut tmp_flags = 0u8;
                         set_flags_add(rr, va, vb, flags, &mut tmp_flags);
-                        new_insts.push(OptInst::SetFlagsConst { value: tmp_flags, mask: flags });
+                        new_insts.push(OptInst::SetFlagsConst {
+                            value: tmp_flags,
+                            mask: flags,
+                        });
                     }
                 }
                 OptInst::Sub { dst, a, b, flags } => {
-                    let (Some(va), Some(vb)) = (const_gpr.get(&a).copied(), const_gpr.get(&b).copied())
+                    let (Some(va), Some(vb)) =
+                        (const_gpr.get(&a).copied(), const_gpr.get(&b).copied())
                     else {
                         const_gpr.remove(&dst);
                         new_insts.push(inst);
@@ -786,10 +1063,18 @@ fn constant_folding(region: &mut OptRegion) {
                     if !flags.is_empty() {
                         let mut tmp_flags = 0u8;
                         set_flags_sub(rr, va, vb, flags, &mut tmp_flags);
-                        new_insts.push(OptInst::SetFlagsConst { value: tmp_flags, mask: flags });
+                        new_insts.push(OptInst::SetFlagsConst {
+                            value: tmp_flags,
+                            mask: flags,
+                        });
                     }
                 }
-                OptInst::Shl { dst, src, shift, flags } => {
+                OptInst::Shl {
+                    dst,
+                    src,
+                    shift,
+                    flags,
+                } => {
                     let Some(v) = const_gpr.get(&src).copied() else {
                         const_gpr.remove(&dst);
                         new_insts.push(inst);
@@ -801,11 +1086,15 @@ fn constant_folding(region: &mut OptRegion) {
                     if !flags.is_empty() {
                         let mut tmp_flags = 0u8;
                         set_flags_logic(rr, flags, &mut tmp_flags);
-                        new_insts.push(OptInst::SetFlagsConst { value: tmp_flags, mask: flags });
+                        new_insts.push(OptInst::SetFlagsConst {
+                            value: tmp_flags,
+                            mask: flags,
+                        });
                     }
                 }
                 OptInst::Cmp { a, b, flags } => {
-                    let (Some(va), Some(vb)) = (const_gpr.get(&a).copied(), const_gpr.get(&b).copied())
+                    let (Some(va), Some(vb)) =
+                        (const_gpr.get(&a).copied(), const_gpr.get(&b).copied())
                     else {
                         new_insts.push(inst);
                         continue;
@@ -814,10 +1103,18 @@ fn constant_folding(region: &mut OptRegion) {
                         let rr = va.wrapping_sub(vb);
                         let mut tmp_flags = 0u8;
                         set_flags_sub(rr, va, vb, flags, &mut tmp_flags);
-                        new_insts.push(OptInst::SetFlagsConst { value: tmp_flags, mask: flags });
+                        new_insts.push(OptInst::SetFlagsConst {
+                            value: tmp_flags,
+                            mask: flags,
+                        });
                     }
                 }
-                OptInst::AddImm { dst, src, imm, flags } => {
+                OptInst::AddImm {
+                    dst,
+                    src,
+                    imm,
+                    flags,
+                } => {
                     let Some(v) = const_gpr.get(&src).copied() else {
                         const_gpr.remove(&dst);
                         new_insts.push(inst);
@@ -829,7 +1126,10 @@ fn constant_folding(region: &mut OptRegion) {
                     if !flags.is_empty() {
                         let mut tmp_flags = 0u8;
                         set_flags_add(rr, v, imm as i64 as u64, flags, &mut tmp_flags);
-                        new_insts.push(OptInst::SetFlagsConst { value: tmp_flags, mask: flags });
+                        new_insts.push(OptInst::SetFlagsConst {
+                            value: tmp_flags,
+                            mask: flags,
+                        });
                     }
                 }
                 OptInst::LoadU64 { dst, .. } => {
@@ -932,9 +1232,17 @@ fn common_subexpression_elimination(region: &mut OptRegion) {
         for inst in blk.insts.drain(..) {
             match inst {
                 OptInst::Add { dst, a, b, flags } if flags.is_empty() => {
-                    let va = *vn_of_gpr.entry(a).or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, a));
-                    let vb = *vn_of_gpr.entry(b).or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, b));
-                    let mut key = ExprKey { op: OpKey::Add, a: va, b: vb };
+                    let va = *vn_of_gpr
+                        .entry(a)
+                        .or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, a));
+                    let vb = *vn_of_gpr
+                        .entry(b)
+                        .or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, b));
+                    let mut key = ExprKey {
+                        op: OpKey::Add,
+                        a: va,
+                        b: vb,
+                    };
                     if va > vb {
                         std::mem::swap(&mut key.a, &mut key.b);
                     }
@@ -953,9 +1261,17 @@ fn common_subexpression_elimination(region: &mut OptRegion) {
                     }
                 }
                 OptInst::Mul { dst, a, b, flags } if flags.is_empty() => {
-                    let va = *vn_of_gpr.entry(a).or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, a));
-                    let vb = *vn_of_gpr.entry(b).or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, b));
-                    let mut key = ExprKey { op: OpKey::Mul, a: va, b: vb };
+                    let va = *vn_of_gpr
+                        .entry(a)
+                        .or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, a));
+                    let vb = *vn_of_gpr
+                        .entry(b)
+                        .or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, b));
+                    let mut key = ExprKey {
+                        op: OpKey::Mul,
+                        a: va,
+                        b: vb,
+                    };
                     if va > vb {
                         std::mem::swap(&mut key.a, &mut key.b);
                     }
@@ -974,9 +1290,17 @@ fn common_subexpression_elimination(region: &mut OptRegion) {
                     }
                 }
                 OptInst::Sub { dst, a, b, flags } if flags.is_empty() => {
-                    let va = *vn_of_gpr.entry(a).or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, a));
-                    let vb = *vn_of_gpr.entry(b).or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, b));
-                    let key = ExprKey { op: OpKey::Sub, a: va, b: vb };
+                    let va = *vn_of_gpr
+                        .entry(a)
+                        .or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, a));
+                    let vb = *vn_of_gpr
+                        .entry(b)
+                        .or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, b));
+                    let key = ExprKey {
+                        op: OpKey::Sub,
+                        a: va,
+                        b: vb,
+                    };
                     if let Some(&vn) = expr_to_vn.get(&key) {
                         let src = vn_rep_gpr[&vn];
                         vn_of_gpr.insert(dst, vn);
@@ -991,9 +1315,20 @@ fn common_subexpression_elimination(region: &mut OptRegion) {
                         new_insts.push(OptInst::Sub { dst, a, b, flags });
                     }
                 }
-                OptInst::Shl { dst, src, shift, flags } if flags.is_empty() => {
-                    let vsrc = *vn_of_gpr.entry(src).or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, src));
-                    let key = ExprKey { op: OpKey::Shl(shift), a: vsrc, b: 0 };
+                OptInst::Shl {
+                    dst,
+                    src,
+                    shift,
+                    flags,
+                } if flags.is_empty() => {
+                    let vsrc = *vn_of_gpr
+                        .entry(src)
+                        .or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, src));
+                    let key = ExprKey {
+                        op: OpKey::Shl(shift),
+                        a: vsrc,
+                        b: 0,
+                    };
                     if let Some(&vn) = expr_to_vn.get(&key) {
                         let src_reg = vn_rep_gpr[&vn];
                         vn_of_gpr.insert(dst, vn);
@@ -1005,12 +1340,28 @@ fn common_subexpression_elimination(region: &mut OptRegion) {
                         expr_to_vn.insert(key, vn);
                         vn_of_gpr.insert(dst, vn);
                         vn_rep_gpr.insert(vn, dst);
-                        new_insts.push(OptInst::Shl { dst, src, shift, flags });
+                        new_insts.push(OptInst::Shl {
+                            dst,
+                            src,
+                            shift,
+                            flags,
+                        });
                     }
                 }
-                OptInst::AddImm { dst, src, imm, flags } if flags.is_empty() => {
-                    let vsrc = *vn_of_gpr.entry(src).or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, src));
-                    let key = ExprKey { op: OpKey::AddImm(imm), a: vsrc, b: 0 };
+                OptInst::AddImm {
+                    dst,
+                    src,
+                    imm,
+                    flags,
+                } if flags.is_empty() => {
+                    let vsrc = *vn_of_gpr
+                        .entry(src)
+                        .or_insert_with(|| fresh_vn(&mut next_vn, &mut vn_rep_gpr, src));
+                    let key = ExprKey {
+                        op: OpKey::AddImm(imm),
+                        a: vsrc,
+                        b: 0,
+                    };
                     if let Some(&vn) = expr_to_vn.get(&key) {
                         let src_reg = vn_rep_gpr[&vn];
                         vn_of_gpr.insert(dst, vn);
@@ -1022,7 +1373,12 @@ fn common_subexpression_elimination(region: &mut OptRegion) {
                         expr_to_vn.insert(key, vn);
                         vn_of_gpr.insert(dst, vn);
                         vn_rep_gpr.insert(vn, dst);
-                        new_insts.push(OptInst::AddImm { dst, src, imm, flags });
+                        new_insts.push(OptInst::AddImm {
+                            dst,
+                            src,
+                            imm,
+                            flags,
+                        });
                     }
                 }
                 other => {
@@ -1075,7 +1431,11 @@ fn dead_code_elimination(region: &mut OptRegion, func: &Function) {
     }
 
     let mut live_in = vec![
-        Live { gpr: vec![false; gpr_total], xmm: vec![false; xmm_total], flags: FlagMask::empty() };
+        Live {
+            gpr: vec![false; gpr_total],
+            xmm: vec![false; xmm_total],
+            flags: FlagMask::empty()
+        };
         region.blocks.len()
     ];
     let mut live_out = live_in.clone();
@@ -1097,7 +1457,11 @@ fn dead_code_elimination(region: &mut OptRegion, func: &Function) {
     while changed {
         changed = false;
         for (idx, blk) in region.blocks.iter().enumerate().rev() {
-            let mut out = Live { gpr: vec![false; gpr_total], xmm: vec![false; xmm_total], flags: FlagMask::empty() };
+            let mut out = Live {
+                gpr: vec![false; gpr_total],
+                xmm: vec![false; xmm_total],
+                flags: FlagMask::empty(),
+            };
             match &blk.term {
                 OptTerm::Jump(tgt) => {
                     if let Some(&succ) = block_index.get(tgt) {
@@ -1106,7 +1470,12 @@ fn dead_code_elimination(region: &mut OptRegion, func: &Function) {
                         live_all_exit(&mut out);
                     }
                 }
-                OptTerm::Guard { cond, expected: _, hot, cold } => {
+                OptTerm::Guard {
+                    cond,
+                    expected: _,
+                    hot,
+                    cold,
+                } => {
                     out.flags |= cond.uses_flags();
                     if let Some(&succ) = block_index.get(hot) {
                         union_live(&mut out, &live_in[succ]);
@@ -1240,7 +1609,9 @@ fn dead_code_elimination(region: &mut OptRegion, func: &Function) {
 
 fn loop_invariant_code_motion(region: &mut OptRegion) {
     // Detect a simple backedge: last block jumps to an earlier block.
-    let Some(last) = region.blocks.last() else { return };
+    let Some(last) = region.blocks.last() else {
+        return;
+    };
     let backedge_tgt = match &last.term {
         OptTerm::Jump(tgt) => *tgt,
         _ => return,
@@ -1331,9 +1702,22 @@ fn loop_invariant_code_motion(region: &mut OptRegion) {
 // Codegen + register allocation
 // -----------------------------------------------------------------------------
 
-fn codegen(mut region: OptRegion, func: &Function, config: &JitConfig, vm: &Vm) -> CompiledRegion {
+fn codegen(
+    mut region: OptRegion,
+    func: &Function,
+    config: &JitConfig,
+    vm: &Vm,
+    metrics: Option<&JitMetrics>,
+) -> CompiledRegion {
     // Register allocation: pick hot regs as "locals" and the rest as spill slots.
-    let reg_alloc = allocate_slots(&region, func, config);
+    let reg_alloc = if let Some(metrics) = metrics {
+        let start = Instant::now();
+        let alloc = allocate_slots(&region, func, config);
+        metrics.add_tier2_pass_time(JitTier2Pass::RegAlloc, start.elapsed());
+        alloc
+    } else {
+        allocate_slots(&region, func, config)
+    };
 
     let mut wasm_simd_listing = Vec::new();
 
@@ -1350,13 +1734,33 @@ fn codegen(mut region: OptRegion, func: &Function, config: &JitConfig, vm: &Vm) 
         }
         let term = match blk.term {
             OptTerm::Jump(tgt) => CompiledTerm::Jump(tgt),
-            OptTerm::Guard { cond, expected, hot, cold } => CompiledTerm::Guard { cond, expected, hot, cold },
-            OptTerm::Ret { src } => CompiledTerm::Ret { src: reg_alloc.gpr_slots[src as usize] },
+            OptTerm::Guard {
+                cond,
+                expected,
+                hot,
+                cold,
+            } => CompiledTerm::Guard {
+                cond,
+                expected,
+                hot,
+                cold,
+            },
+            OptTerm::Ret { src } => CompiledTerm::Ret {
+                src: reg_alloc.gpr_slots[src as usize],
+            },
         };
-        blocks.push(CompiledBlock { orig: blk.orig, ops, term });
+        blocks.push(CompiledBlock {
+            orig: blk.orig,
+            ops,
+            term,
+        });
     }
 
-    let block_index: HashMap<BlockId, usize> = blocks.iter().enumerate().map(|(idx, blk)| (blk.orig, idx)).collect();
+    let block_index: HashMap<BlockId, usize> = blocks
+        .iter()
+        .enumerate()
+        .map(|(idx, blk)| (blk.orig, idx))
+        .collect();
     CompiledRegion {
         entry: region.entry,
         blocks,
@@ -1369,9 +1773,17 @@ fn codegen(mut region: OptRegion, func: &Function, config: &JitConfig, vm: &Vm) 
     }
 }
 
-fn lower_inst(inst: &OptInst, alloc: &RegAlloc, out: &mut Vec<CompiledOp>, wasm: &mut Vec<WasmInst>) {
+fn lower_inst(
+    inst: &OptInst,
+    alloc: &RegAlloc,
+    out: &mut Vec<CompiledOp>,
+    wasm: &mut Vec<WasmInst>,
+) {
     match *inst {
-        OptInst::Imm { dst, imm } => out.push(CompiledOp::Imm { dst: alloc.gpr_slots[dst as usize], imm }),
+        OptInst::Imm { dst, imm } => out.push(CompiledOp::Imm {
+            dst: alloc.gpr_slots[dst as usize],
+            imm,
+        }),
         OptInst::Mov { dst, src } => out.push(CompiledOp::Mov {
             dst: alloc.gpr_slots[dst as usize],
             src: alloc.gpr_slots[src as usize],
@@ -1394,7 +1806,12 @@ fn lower_inst(inst: &OptInst, alloc: &RegAlloc, out: &mut Vec<CompiledOp>, wasm:
             b: alloc.gpr_slots[b as usize],
             flags,
         }),
-        OptInst::Shl { dst, src, shift, flags } => out.push(CompiledOp::Shl {
+        OptInst::Shl {
+            dst,
+            src,
+            shift,
+            flags,
+        } => out.push(CompiledOp::Shl {
             dst: alloc.gpr_slots[dst as usize],
             src: alloc.gpr_slots[src as usize],
             shift,
@@ -1405,8 +1822,15 @@ fn lower_inst(inst: &OptInst, alloc: &RegAlloc, out: &mut Vec<CompiledOp>, wasm:
             b: alloc.gpr_slots[b as usize],
             flags,
         }),
-        OptInst::SetFlagsConst { value, mask } => out.push(CompiledOp::SetFlagsConst { value, mask }),
-        OptInst::AddImm { dst, src, imm, flags } => {
+        OptInst::SetFlagsConst { value, mask } => {
+            out.push(CompiledOp::SetFlagsConst { value, mask })
+        }
+        OptInst::AddImm {
+            dst,
+            src,
+            imm,
+            flags,
+        } => {
             out.push(CompiledOp::AddImm {
                 dst: alloc.gpr_slots[dst as usize],
                 src: alloc.gpr_slots[src as usize],
@@ -1422,7 +1846,10 @@ fn lower_inst(inst: &OptInst, alloc: &RegAlloc, out: &mut Vec<CompiledOp>, wasm:
             addr: alloc.gpr_slots[addr as usize],
             value: alloc.gpr_slots[value as usize],
         }),
-        OptInst::VImm { dst, imm } => out.push(CompiledOp::VImm { dst: alloc.xmm_slots[dst as usize], imm }),
+        OptInst::VImm { dst, imm } => out.push(CompiledOp::VImm {
+            dst: alloc.xmm_slots[dst as usize],
+            imm,
+        }),
         OptInst::VAddF32x4 { dst, a, b } => {
             wasm.push(WasmInst::F32x4Add);
             out.push(CompiledOp::VAddF32x4 {
@@ -1449,7 +1876,11 @@ fn allocate_slots(region: &OptRegion, func: &Function, config: &JitConfig) -> Re
     let mut gpr_use = vec![0u32; gpr_total];
     let mut xmm_use = vec![0u32; xmm_total];
 
-    for inst in region.preamble.iter().chain(region.blocks.iter().flat_map(|b| &b.insts)) {
+    for inst in region
+        .preamble
+        .iter()
+        .chain(region.blocks.iter().flat_map(|b| &b.insts))
+    {
         let mut uses = Vec::new();
         inst.uses_gprs(&mut uses);
         for u in uses {

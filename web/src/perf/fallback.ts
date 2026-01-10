@@ -1,4 +1,4 @@
-import type { PerfApi, PerfCaptureState, PerfHudSnapshot, PerfTimeBreakdownMs } from './types';
+import type { PerfApi, PerfCaptureState, PerfHudSnapshot, PerfJitSnapshot, PerfTimeBreakdownMs } from './types';
 
 import { FrameTimeStats } from '../../../packages/aero-stats/src/index.js';
 
@@ -24,6 +24,17 @@ const clampMs = (ms: number): number => {
 };
 
 const isValidNumber = (value: number): boolean => Number.isFinite(value) && !Number.isNaN(value);
+
+const JIT_DISABLED_SNAPSHOT: PerfJitSnapshot = {
+  enabled: false,
+  totals: {
+    tier1: { blocksCompiled: 0, compileMs: 0 },
+    tier2: { blocksCompiled: 0, compileMs: 0, passesMs: { constFold: 0, dce: 0, regalloc: 0 } },
+    cache: { lookupHit: 0, lookupMiss: 0, capacityBytes: 0, usedBytes: 0 },
+    deopt: { count: 0, guardFail: 0 },
+  },
+  rolling: { windowMs: 0, cacheHitRate: 0, compileMsPerSec: 0, blocksCompiledPerSec: 0 },
+};
 
 export class FallbackPerf implements PerfApi {
   readonly guestRamBytes?: number;
@@ -367,6 +378,8 @@ export class FallbackPerf implements PerfApi {
     out.jitCodeCacheBytes = memSample?.jit_code_cache_bytes ?? undefined;
     out.shaderCacheBytes = memSample?.shader_cache_bytes ?? undefined;
 
+    out.jit = JIT_DISABLED_SNAPSHOT;
+
     out.peakHostJsHeapUsedBytes = this.memoryTelemetry.peaks.js_heap_used_bytes ?? undefined;
     out.peakWasmMemoryBytes = this.memoryTelemetry.peaks.wasm_memory_bytes ?? undefined;
     out.peakGpuEstimatedBytes = this.memoryTelemetry.peaks.gpu_total_bytes ?? undefined;
@@ -467,6 +480,7 @@ export class FallbackPerf implements PerfApi {
       durationMs: this.captureActive ? performance.now() - this.captureStartNowMs : this.captureDurationMs,
       droppedRecords: this.captureDroppedRecords,
       guestRamBytes: this.guestRamBytes ?? null,
+      jit: JIT_DISABLED_SNAPSHOT,
       memory: this.memoryTelemetry.export(),
       summary: {
         frameTime: frameTimeStats.summary(),

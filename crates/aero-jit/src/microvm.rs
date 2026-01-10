@@ -105,14 +105,24 @@ pub enum Instr {
     VMulF32x4 { dst: Xmm, a: Xmm, b: Xmm },
 
     /// Call another function, `dst = f(args...)`.
-    Call { dst: Gpr, func: FuncId, args: Vec<Gpr> },
+    Call {
+        dst: Gpr,
+        func: FuncId,
+        args: Vec<Gpr>,
+    },
 }
 
 #[derive(Clone, Debug)]
 pub enum Terminator {
     Jmp(BlockId),
-    Br { cond: Cond, then_tgt: BlockId, else_tgt: BlockId },
-    Ret { src: Gpr },
+    Br {
+        cond: Cond,
+        then_tgt: BlockId,
+        else_tgt: BlockId,
+    },
+    Ret {
+        src: Gpr,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -193,6 +203,10 @@ impl Memory {
 
     pub fn len(&self) -> usize {
         self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
     }
 
     pub fn as_ptr(&self) -> *const u8 {

@@ -4,7 +4,10 @@ use crate::microvm::{
 };
 use crate::opt::{compile_region, CompiledRegion, ExecOutcome};
 use crate::profile::FuncProfile;
+use perf::jit::JitTier;
+use perf::telemetry::{Telemetry, TelemetrySnapshot};
 use std::collections::HashMap;
+use std::time::Instant;
 
 #[derive(Clone, Debug)]
 pub struct JitConfig {
@@ -19,6 +22,12 @@ pub struct JitConfig {
     /// Register allocation: keep the hottest regs in the first N "local" slots.
     pub max_gpr_locals: usize,
     pub max_xmm_locals: usize,
+
+    /// Target capacity for the combined Tier-1 + Tier-2 code cache.
+    ///
+    /// This prototype does not enforce eviction yet, but the value is still
+    /// exported via PF-006 telemetry so cache utilization can be tracked.
+    pub code_cache_capacity_bytes: u64,
 }
 
 impl Default for JitConfig {
@@ -29,6 +38,7 @@ impl Default for JitConfig {
             max_region_blocks: 32,
             max_gpr_locals: 24,
             max_xmm_locals: 16,
+            code_cache_capacity_bytes: 256 * 1024 * 1024,
         }
     }
 }
@@ -47,6 +57,7 @@ pub struct Engine {
     tier1_blocks: HashMap<(FuncId, BlockId), Tier1Block>,
     tier2_regions: HashMap<(FuncId, BlockId), CompiledRegion>,
     stats: EngineStats,
+    telemetry: Telemetry,
 }
 
 impl Engine {
@@ -56,17 +67,28 @@ impl Engine {
             .iter()
             .map(|f| FuncProfile::new(f.blocks.len()))
             .collect();
+        let jit_enabled = config.tier1_threshold != u64::MAX || config.tier2_threshold != u64::MAX;
+        let telemetry = Telemetry::new(jit_enabled);
+        telemetry
+            .jit
+            .set_cache_capacity_bytes(config.code_cache_capacity_bytes);
         Self {
             config,
             profiles,
             tier1_blocks: HashMap::new(),
             tier2_regions: HashMap::new(),
             stats: EngineStats::default(),
+            telemetry,
         }
     }
 
     pub fn stats(&self) -> EngineStats {
         self.stats
+    }
+
+    /// Snapshot PF-006 JIT telemetry (totals + rolling window deltas).
+    pub fn telemetry_snapshot(&self) -> TelemetrySnapshot {
+        self.telemetry.snapshot()
     }
 
     pub fn run(&mut self, vm: &mut Vm, program: &Program, func: FuncId) -> u64 {
@@ -86,6 +108,7 @@ impl Engine {
 
             // Tier-2 has priority.
             if let Some(region) = self.tier2_regions.get(&(func, cur)).cloned() {
+                self.telemetry.jit.record_cache_hit();
                 self.stats.tier2_exec_count = self.stats.tier2_exec_count.wrapping_add(1);
                 match region.execute(vm) {
                     ExecOutcome::Return(v) => return v,
@@ -93,10 +116,17 @@ impl Engine {
                         cur = next;
                         continue;
                     }
+                    ExecOutcome::GuardFailed(next) => {
+                        self.telemetry.jit.record_guard_fail();
+                        cur = next;
+                        continue;
+                    }
                     ExecOutcome::Deopt(next) => {
                         self.stats.tier2_deopt_count = self.stats.tier2_deopt_count.wrapping_add(1);
+                        self.telemetry.jit.record_deopt();
                         // Invalidate and resume in the interpreter / tier1.
                         self.tier2_regions.remove(&(func, cur));
+                        self.sync_code_cache_metrics();
                         cur = next;
                         continue;
                     }
@@ -104,6 +134,7 @@ impl Engine {
             }
 
             if let Some(block) = self.tier1_blocks.get(&(func, cur)).cloned() {
+                self.telemetry.jit.record_cache_hit();
                 match block.execute(self, vm, program, func, cur) {
                     BlockOutcome::Return(v) => return v,
                     BlockOutcome::Next(next) => cur = next,
@@ -111,6 +142,7 @@ impl Engine {
                 continue;
             }
 
+            self.telemetry.jit.record_cache_miss();
             match interpret_block(self, vm, program, func, cur) {
                 BlockOutcome::Return(v) => return v,
                 BlockOutcome::Next(next) => cur = next,
@@ -124,9 +156,15 @@ impl Engine {
             return;
         }
         let blk = &program.functions[func].blocks[block];
+        let start = Instant::now();
         let compiled = Tier1Block::compile(blk);
+        self.telemetry
+            .jit
+            .add_compile_time(JitTier::Tier1, start.elapsed());
+        self.telemetry.jit.record_block_compiled(JitTier::Tier1);
         self.tier1_blocks.insert(key, compiled);
         self.stats.tier1_blocks_compiled += 1;
+        self.sync_code_cache_metrics();
     }
 
     fn maybe_compile_tier2(&mut self, program: &Program, vm: &Vm, func: FuncId, block: BlockId) {
@@ -134,9 +172,21 @@ impl Engine {
             return;
         }
         let prof = &self.profiles[func];
-        if let Some(region) = compile_region(program, func, block, prof, &self.config, vm) {
+        let metrics = self
+            .telemetry
+            .jit
+            .enabled()
+            .then_some(self.telemetry.jit.as_ref());
+        let start = Instant::now();
+        if let Some(region) = compile_region(program, func, block, prof, &self.config, vm, metrics)
+        {
             self.tier2_regions.insert((func, block), region);
             self.stats.tier2_regions_compiled += 1;
+            self.telemetry
+                .jit
+                .add_compile_time(JitTier::Tier2, start.elapsed());
+            self.telemetry.jit.record_block_compiled(JitTier::Tier2);
+            self.sync_code_cache_metrics();
         }
     }
 
@@ -146,6 +196,28 @@ impl Engine {
 
     fn record_call(&mut self, func: FuncId, callee: FuncId) {
         self.profiles[func].record_call(callee);
+    }
+
+    fn estimated_code_cache_bytes(&self) -> u64 {
+        let mut total = 0u64;
+        for block in self.tier1_blocks.values() {
+            total = total.saturating_add(block.estimated_size_bytes());
+        }
+        for region in self.tier2_regions.values() {
+            total = total.saturating_add(region.estimated_size_bytes());
+        }
+        total
+    }
+
+    fn sync_code_cache_metrics(&mut self) {
+        if !self.telemetry.jit.enabled() {
+            return;
+        }
+        let used = self.estimated_code_cache_bytes();
+        self.telemetry.jit.set_cache_used_bytes(used);
+        self.telemetry
+            .jit
+            .set_cache_capacity_bytes(self.config.code_cache_capacity_bytes);
     }
 }
 
@@ -159,7 +231,13 @@ enum BlockOutcome {
     Return(u64),
 }
 
-fn interpret_block(engine: &mut Engine, vm: &mut Vm, program: &Program, func: FuncId, block: BlockId) -> BlockOutcome {
+fn interpret_block(
+    engine: &mut Engine,
+    vm: &mut Vm,
+    program: &Program,
+    func: FuncId,
+    block: BlockId,
+) -> BlockOutcome {
     let func_ref = &program.functions[func];
     let blk = &func_ref.blocks[block];
 
@@ -170,10 +248,20 @@ fn interpret_block(engine: &mut Engine, vm: &mut Vm, program: &Program, func: Fu
     exec_term(engine, vm, func, block, &blk.term)
 }
 
-fn exec_term(engine: &mut Engine, vm: &mut Vm, func: FuncId, block: BlockId, term: &Terminator) -> BlockOutcome {
+fn exec_term(
+    engine: &mut Engine,
+    vm: &mut Vm,
+    func: FuncId,
+    block: BlockId,
+    term: &Terminator,
+) -> BlockOutcome {
     match *term {
         Terminator::Jmp(tgt) => BlockOutcome::Next(tgt),
-        Terminator::Br { cond, then_tgt, else_tgt } => {
+        Terminator::Br {
+            cond,
+            then_tgt,
+            else_tgt,
+        } => {
             let taken_then = cond.eval(vm.flags);
             engine.record_branch(func, block, cond, taken_then);
             BlockOutcome::Next(if taken_then { then_tgt } else { else_tgt })
@@ -247,7 +335,11 @@ fn exec_instr(engine: &mut Engine, vm: &mut Vm, program: &Program, func: FuncId,
             let bb = vm.xmms[b.0 as usize];
             vm.xmms[dst.0 as usize] = crate::microvm::simd_f32x4_mul(aa, bb);
         }
-        Instr::Call { dst, func: callee, args } => {
+        Instr::Call {
+            dst,
+            func: callee,
+            args,
+        } => {
             engine.record_call(func, *callee);
             let ret = call_function(engine, vm, program, *callee, args);
             vm.gprs[dst.0 as usize] = ret;
@@ -255,7 +347,13 @@ fn exec_instr(engine: &mut Engine, vm: &mut Vm, program: &Program, func: FuncId,
     }
 }
 
-fn call_function(engine: &mut Engine, vm: &mut Vm, program: &Program, callee: FuncId, args: &[crate::microvm::Gpr]) -> u64 {
+fn call_function(
+    engine: &mut Engine,
+    vm: &mut Vm,
+    program: &Program,
+    callee: FuncId,
+    args: &[crate::microvm::Gpr],
+) -> u64 {
     let callee_func = &program.functions[callee];
     let mut new_vm = Vm::new(callee_func.gpr_count, callee_func.xmm_count, vm.mem.len());
     // Share memory with the caller (swap in the callee's temporary Memory object).
@@ -285,19 +383,67 @@ struct Tier1Block {
 
 #[derive(Clone)]
 enum Tier1Op {
-    Imm { dst: u16, imm: u64 },
-    Mov { dst: u16, src: u16 },
-    Add { dst: u16, a: u16, b: u16 },
-    Sub { dst: u16, a: u16, b: u16 },
-    Mul { dst: u16, a: u16, b: u16 },
-    Shl { dst: u16, src: u16, shift: u8 },
-    Cmp { a: u16, b: u16 },
-    Load { dst: u16, base: u16, offset: i32 },
-    Store { base: u16, offset: i32, src: u16 },
-    VImm { dst: u16, imm: u128 },
-    VAddF32x4 { dst: u16, a: u16, b: u16 },
-    VMulF32x4 { dst: u16, a: u16, b: u16 },
-    Call { dst: u16, func: FuncId, args: Vec<u16> },
+    Imm {
+        dst: u16,
+        imm: u64,
+    },
+    Mov {
+        dst: u16,
+        src: u16,
+    },
+    Add {
+        dst: u16,
+        a: u16,
+        b: u16,
+    },
+    Sub {
+        dst: u16,
+        a: u16,
+        b: u16,
+    },
+    Mul {
+        dst: u16,
+        a: u16,
+        b: u16,
+    },
+    Shl {
+        dst: u16,
+        src: u16,
+        shift: u8,
+    },
+    Cmp {
+        a: u16,
+        b: u16,
+    },
+    Load {
+        dst: u16,
+        base: u16,
+        offset: i32,
+    },
+    Store {
+        base: u16,
+        offset: i32,
+        src: u16,
+    },
+    VImm {
+        dst: u16,
+        imm: u128,
+    },
+    VAddF32x4 {
+        dst: u16,
+        a: u16,
+        b: u16,
+    },
+    VMulF32x4 {
+        dst: u16,
+        a: u16,
+        b: u16,
+    },
+    Call {
+        dst: u16,
+        func: FuncId,
+        args: Vec<u16>,
+    },
 }
 
 impl Tier1Block {
@@ -305,18 +451,59 @@ impl Tier1Block {
         let mut ops = Vec::new();
         for instr in &blk.instrs {
             match instr {
-                Instr::Imm { dst, imm } => ops.push(Tier1Op::Imm { dst: dst.0, imm: *imm }),
-                Instr::Mov { dst, src } => ops.push(Tier1Op::Mov { dst: dst.0, src: src.0 }),
-                Instr::Add { dst, a, b } => ops.push(Tier1Op::Add { dst: dst.0, a: a.0, b: b.0 }),
-                Instr::Sub { dst, a, b } => ops.push(Tier1Op::Sub { dst: dst.0, a: a.0, b: b.0 }),
-                Instr::Mul { dst, a, b } => ops.push(Tier1Op::Mul { dst: dst.0, a: a.0, b: b.0 }),
-                Instr::Shl { dst, src, shift } => ops.push(Tier1Op::Shl { dst: dst.0, src: src.0, shift: *shift }),
+                Instr::Imm { dst, imm } => ops.push(Tier1Op::Imm {
+                    dst: dst.0,
+                    imm: *imm,
+                }),
+                Instr::Mov { dst, src } => ops.push(Tier1Op::Mov {
+                    dst: dst.0,
+                    src: src.0,
+                }),
+                Instr::Add { dst, a, b } => ops.push(Tier1Op::Add {
+                    dst: dst.0,
+                    a: a.0,
+                    b: b.0,
+                }),
+                Instr::Sub { dst, a, b } => ops.push(Tier1Op::Sub {
+                    dst: dst.0,
+                    a: a.0,
+                    b: b.0,
+                }),
+                Instr::Mul { dst, a, b } => ops.push(Tier1Op::Mul {
+                    dst: dst.0,
+                    a: a.0,
+                    b: b.0,
+                }),
+                Instr::Shl { dst, src, shift } => ops.push(Tier1Op::Shl {
+                    dst: dst.0,
+                    src: src.0,
+                    shift: *shift,
+                }),
                 Instr::Cmp { a, b } => ops.push(Tier1Op::Cmp { a: a.0, b: b.0 }),
-                Instr::Load { dst, base, offset } => ops.push(Tier1Op::Load { dst: dst.0, base: base.0, offset: *offset }),
-                Instr::Store { base, offset, src } => ops.push(Tier1Op::Store { base: base.0, offset: *offset, src: src.0 }),
-                Instr::VImm { dst, imm } => ops.push(Tier1Op::VImm { dst: dst.0, imm: *imm }),
-                Instr::VAddF32x4 { dst, a, b } => ops.push(Tier1Op::VAddF32x4 { dst: dst.0, a: a.0, b: b.0 }),
-                Instr::VMulF32x4 { dst, a, b } => ops.push(Tier1Op::VMulF32x4 { dst: dst.0, a: a.0, b: b.0 }),
+                Instr::Load { dst, base, offset } => ops.push(Tier1Op::Load {
+                    dst: dst.0,
+                    base: base.0,
+                    offset: *offset,
+                }),
+                Instr::Store { base, offset, src } => ops.push(Tier1Op::Store {
+                    base: base.0,
+                    offset: *offset,
+                    src: src.0,
+                }),
+                Instr::VImm { dst, imm } => ops.push(Tier1Op::VImm {
+                    dst: dst.0,
+                    imm: *imm,
+                }),
+                Instr::VAddF32x4 { dst, a, b } => ops.push(Tier1Op::VAddF32x4 {
+                    dst: dst.0,
+                    a: a.0,
+                    b: b.0,
+                }),
+                Instr::VMulF32x4 { dst, a, b } => ops.push(Tier1Op::VMulF32x4 {
+                    dst: dst.0,
+                    a: a.0,
+                    b: b.0,
+                }),
                 Instr::Call { dst, func, args } => ops.push(Tier1Op::Call {
                     dst: dst.0,
                     func: *func,
@@ -324,7 +511,25 @@ impl Tier1Block {
                 }),
             }
         }
-        Self { ops, term: blk.term.clone() }
+        Self {
+            ops,
+            term: blk.term.clone(),
+        }
+    }
+
+    fn estimated_size_bytes(&self) -> u64 {
+        use std::mem::size_of;
+
+        let mut total =
+            size_of::<Self>() as u64 + (self.ops.len() as u64) * (size_of::<Tier1Op>() as u64);
+
+        for op in &self.ops {
+            if let Tier1Op::Call { args, .. } = op {
+                total = total.saturating_add((args.len() as u64) * (size_of::<u16>() as u64));
+            }
+        }
+
+        total
     }
 
     fn execute(
@@ -398,14 +603,21 @@ impl Tier1Block {
                 }
                 Tier1Op::VImm { dst, imm } => xmms[*dst as usize] = *imm,
                 Tier1Op::VAddF32x4 { dst, a, b } => {
-                    xmms[*dst as usize] = crate::microvm::simd_f32x4_add(xmms[*a as usize], xmms[*b as usize]);
+                    xmms[*dst as usize] =
+                        crate::microvm::simd_f32x4_add(xmms[*a as usize], xmms[*b as usize]);
                 }
                 Tier1Op::VMulF32x4 { dst, a, b } => {
-                    xmms[*dst as usize] = crate::microvm::simd_f32x4_mul(xmms[*a as usize], xmms[*b as usize]);
+                    xmms[*dst as usize] =
+                        crate::microvm::simd_f32x4_mul(xmms[*a as usize], xmms[*b as usize]);
                 }
-                Tier1Op::Call { dst, func: callee, args } => {
+                Tier1Op::Call {
+                    dst,
+                    func: callee,
+                    args,
+                } => {
                     engine.record_call(func, *callee);
-                    let arg_regs: Vec<crate::microvm::Gpr> = args.iter().map(|r| crate::microvm::Gpr(*r)).collect();
+                    let arg_regs: Vec<crate::microvm::Gpr> =
+                        args.iter().map(|r| crate::microvm::Gpr(*r)).collect();
                     // Flush locals to vm before call.
                     vm.gprs.clone_from(&gprs);
                     vm.xmms.clone_from(&xmms);
@@ -461,35 +673,84 @@ mod tests {
                 Instr::Imm { dst: r1, imm: 0 },
                 Instr::Imm { dst: r2, imm: 0 },
                 Instr::Imm { dst: r3, imm: 0 },
-                Instr::VImm { dst: x0, imm: 0x3f8000003f8000003f8000003f800000 }, // 1.0 lanes
-                Instr::VImm { dst: x1, imm: 0x40000000400000004000000040000000 }, // 2.0 lanes
+                Instr::VImm {
+                    dst: x0,
+                    imm: 0x3f8000003f8000003f8000003f800000,
+                }, // 1.0 lanes
+                Instr::VImm {
+                    dst: x1,
+                    imm: 0x40000000400000004000000040000000,
+                }, // 2.0 lanes
             ],
             term: Terminator::Jmp(1),
         };
 
         let header = Block {
             instrs: vec![Instr::Cmp { a: r0, b: r3 }],
-            term: Terminator::Br { cond: Cond::Zero, then_tgt: 3, else_tgt: 2 },
+            term: Terminator::Br {
+                cond: Cond::Zero,
+                then_tgt: 3,
+                else_tgt: 2,
+            },
         };
 
         let body = Block {
             instrs: vec![
                 Instr::Imm { dst: r4, imm: 8 },
-                Instr::Mul { dst: r5, a: r1, b: r4 },
-                Instr::Mul { dst: r6, a: r1, b: r4 }, // redundant
-                Instr::Add { dst: r1, a: r5, b: r6 },
-                Instr::Load { dst: r5, base: r2, offset: 16 },
-                Instr::Add { dst: r1, a: r1, b: r5 },
-                Instr::Store { base: r2, offset: 24, src: r1 },
+                Instr::Mul {
+                    dst: r5,
+                    a: r1,
+                    b: r4,
+                },
+                Instr::Mul {
+                    dst: r6,
+                    a: r1,
+                    b: r4,
+                }, // redundant
+                Instr::Add {
+                    dst: r1,
+                    a: r5,
+                    b: r6,
+                },
+                Instr::Load {
+                    dst: r5,
+                    base: r2,
+                    offset: 16,
+                },
+                Instr::Add {
+                    dst: r1,
+                    a: r1,
+                    b: r5,
+                },
+                Instr::Store {
+                    base: r2,
+                    offset: 24,
+                    src: r1,
+                },
                 Instr::Imm { dst: r7, imm: 1 },
-                Instr::Sub { dst: r0, a: r0, b: r7 },
-                Instr::VAddF32x4 { dst: x0, a: x0, b: x1 },
-                Instr::VMulF32x4 { dst: x0, a: x0, b: x1 },
+                Instr::Sub {
+                    dst: r0,
+                    a: r0,
+                    b: r7,
+                },
+                Instr::VAddF32x4 {
+                    dst: x0,
+                    a: x0,
+                    b: x1,
+                },
+                Instr::VMulF32x4 {
+                    dst: x0,
+                    a: x0,
+                    b: x1,
+                },
             ],
             term: Terminator::Jmp(1),
         };
 
-        let exit = Block { instrs: vec![], term: Terminator::Ret { src: r1 } };
+        let exit = Block {
+            instrs: vec![],
+            term: Terminator::Ret { src: r1 },
+        };
 
         Program {
             functions: vec![Function {
@@ -528,7 +789,11 @@ mod tests {
         let mut vm_opt = init_vm(50);
         let mut engine = Engine::new(
             &program,
-            JitConfig { tier1_threshold: 1, tier2_threshold: 5, ..JitConfig::default() },
+            JitConfig {
+                tier1_threshold: 1,
+                tier2_threshold: 5,
+                ..JitConfig::default()
+            },
         );
         let opt_ret = engine.run(&mut vm_opt, &program, 0);
 
@@ -539,8 +804,14 @@ mod tests {
         assert_eq!(vm_opt.mem.load_u64(24), vm_ref.mem.load_u64(24));
 
         let stats = engine.stats();
-        assert!(stats.tier2_regions_compiled > 0, "tier2 should compile at least one region");
-        assert!(stats.tier2_exec_count > 0, "tier2 should execute at least once");
+        assert!(
+            stats.tier2_regions_compiled > 0,
+            "tier2 should compile at least one region"
+        );
+        assert!(
+            stats.tier2_exec_count > 0,
+            "tier2 should execute at least once"
+        );
     }
 
     #[test]
@@ -549,7 +820,11 @@ mod tests {
         let mut vm = init_vm(10);
         let mut engine = Engine::new(
             &program,
-            JitConfig { tier1_threshold: 1, tier2_threshold: 1, ..JitConfig::default() },
+            JitConfig {
+                tier1_threshold: 1,
+                tier2_threshold: 1,
+                ..JitConfig::default()
+            },
         );
 
         let ret1 = engine.run(&mut vm, &program, 0);
@@ -571,17 +846,31 @@ mod tests {
         let mut vm = init_vm(5);
         let mut engine = Engine::new(
             &program,
-            JitConfig { tier1_threshold: 1, tier2_threshold: 1, ..JitConfig::default() },
+            JitConfig {
+                tier1_threshold: 1,
+                tier2_threshold: 1,
+                ..JitConfig::default()
+            },
         );
         let _ = engine.run(&mut vm, &program, 0);
         let mut saw_add = false;
         let mut saw_mul = false;
         for region in engine.tier2_regions.values() {
             let listing = region.wasm_simd_listing();
-            saw_add |= listing.iter().any(|i| matches!(i, crate::opt::WasmInst::F32x4Add));
-            saw_mul |= listing.iter().any(|i| matches!(i, crate::opt::WasmInst::F32x4Mul));
+            saw_add |= listing
+                .iter()
+                .any(|i| matches!(i, crate::opt::WasmInst::F32x4Add));
+            saw_mul |= listing
+                .iter()
+                .any(|i| matches!(i, crate::opt::WasmInst::F32x4Mul));
         }
-        assert!(saw_add, "expected at least one tier2 region to lower f32x4.add");
-        assert!(saw_mul, "expected at least one tier2 region to lower f32x4.mul");
+        assert!(
+            saw_add,
+            "expected at least one tier2 region to lower f32x4.add"
+        );
+        assert!(
+            saw_mul,
+            "expected at least one tier2 region to lower f32x4.mul"
+        );
     }
 }

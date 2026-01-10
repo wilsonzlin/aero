@@ -341,11 +341,12 @@ pub fn ns_to_ms(ns: u64) -> f64 {
 pub fn format_hud_line(jit: &JitExport) -> String {
     let hit_rate_pct = jit.rolling.cache_hit_rate * 100.0;
     format!(
-        "jit: hit_rate={hit_rate_pct:.1}% blocks(t1={t1_blocks},t2={t2_blocks}) compile_ms(t1={t1_ms:.1},t2={t2_ms:.1}) compile_ms/s={compile_rate:.2} deopt={deopt} guard_fail={guard_fail} cache={used}/{cap}B",
+        "jit: hit_rate={hit_rate_pct:.1}% blocks(t1={t1_blocks},t2={t2_blocks}) blocks/s={blocks_rate:.2} compile_ms(t1={t1_ms:.1},t2={t2_ms:.1}) compile_ms/s={compile_rate:.2} deopt={deopt} guard_fail={guard_fail} cache={used}/{cap}B",
         t1_blocks = jit.totals.tier1.blocks_compiled,
         t2_blocks = jit.totals.tier2.blocks_compiled,
         t1_ms = jit.totals.tier1.compile_ms,
         t2_ms = jit.totals.tier2.compile_ms,
+        blocks_rate = jit.rolling.blocks_compiled_per_s,
         compile_rate = jit.rolling.compile_ms_per_s,
         deopt = jit.totals.deopt.count,
         guard_fail = jit.totals.deopt.guard_fail,
