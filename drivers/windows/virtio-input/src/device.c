@@ -4,16 +4,6 @@
 
 #include "virtio_pci_cap_parser.h"
 
-#if DBG
-#define VIOINPUT_TRACE_INFO(...) \
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "virtio-input: " __VA_ARGS__)
-#define VIOINPUT_TRACE_ERROR(...) \
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "virtio-input: " __VA_ARGS__)
-#else
-#define VIOINPUT_TRACE_INFO(...) ((void)0)
-#define VIOINPUT_TRACE_ERROR(...) ((void)0)
-#endif
-
 static ULONG VioInputReadLe32(_In_reads_(4) const UCHAR* p)
 {
     return ((ULONG)p[0]) | ((ULONG)p[1] << 8) | ((ULONG)p[2] << 16) | ((ULONG)p[3] << 24);
@@ -146,10 +136,12 @@ static NTSTATUS VioInputMapBars(_In_ WDFCMRESLIST ResourcesTranslated,
                 Bars[barIndex].Length = desc->u.Memory.Length;
                 Bars[barIndex].Va = MmMapIoSpace(desc->u.Memory.Start, desc->u.Memory.Length, MmNonCached);
                 if (Bars[barIndex].Va == NULL) {
-                    VIOINPUT_TRACE_ERROR("MmMapIoSpace failed for BAR%lu (0x%I64x, len=%lu)\n",
-                                         barIndex,
-                                         (unsigned long long)barAddr,
-                                         desc->u.Memory.Length);
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                        "MmMapIoSpace failed for BAR%lu (0x%I64x, len=%lu)\n",
+                        barIndex,
+                        (unsigned long long)barAddr,
+                        desc->u.Memory.Length);
                     return STATUS_INSUFFICIENT_RESOURCES;
                 }
 
@@ -158,9 +150,11 @@ static NTSTATUS VioInputMapBars(_In_ WDFCMRESLIST ResourcesTranslated,
         }
 
         if (Bars[barIndex].Va == NULL) {
-            VIOINPUT_TRACE_ERROR("missing translated memory resource for BAR%lu (0x%I64x)\n",
-                                 barIndex,
-                                 (unsigned long long)barAddr);
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "missing translated memory resource for BAR%lu (0x%I64x)\n",
+                barIndex,
+                (unsigned long long)barAddr);
             return STATUS_RESOURCE_TYPE_NOT_FOUND;
         }
     }
@@ -204,27 +198,34 @@ static VOID VioInputInputUnlock(_In_opt_ PVOID Context)
 static VOID VioInputEvtConfigChange(_In_ WDFDEVICE Device, _In_opt_ PVOID Context)
 {
     UNREFERENCED_PARAMETER(Device);
-
     PDEVICE_CONTEXT devCtx = (PDEVICE_CONTEXT)Context;
-    if (devCtx != NULL) {
-        InterlockedIncrement(&devCtx->ConfigInterruptCount);
-    }
-
+    LONG cfgCount = -1;
     UCHAR gen = 0;
-    if (devCtx != NULL && devCtx->CommonCfg != NULL) {
-        gen = READ_REGISTER_UCHAR(&devCtx->CommonCfg->config_generation);
+
+    if (devCtx != NULL) {
+        cfgCount = InterlockedIncrement(&devCtx->ConfigInterruptCount);
+        if (devCtx->CommonCfg != NULL) {
+            gen = READ_REGISTER_UCHAR(&devCtx->CommonCfg->config_generation);
+        }
     }
 
-    VIOINPUT_TRACE_INFO("config change interrupt (gen=%u)\n", gen);
+    VIOINPUT_LOG(
+        VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
+        "config change interrupt: gen=%u cfgIrqs=%ld interrupts=%ld dpcs=%ld\n",
+        (ULONG)gen,
+        cfgCount,
+        devCtx ? devCtx->Counters.VirtioInterrupts : -1,
+        devCtx ? devCtx->Counters.VirtioDpcs : -1);
 }
 
 static VOID VioInputEvtDrainQueue(_In_ WDFDEVICE Device, _In_ ULONG QueueIndex, _In_opt_ PVOID Context)
 {
     UNREFERENCED_PARAMETER(Device);
-
     PDEVICE_CONTEXT devCtx = (PDEVICE_CONTEXT)Context;
+    LONG queueCount = -1;
+
     if (devCtx != NULL && QueueIndex < VIRTIO_INPUT_QUEUE_COUNT) {
-        InterlockedIncrement(&devCtx->QueueInterruptCount[QueueIndex]);
+        queueCount = InterlockedIncrement(&devCtx->QueueInterruptCount[QueueIndex]);
     }
 
     //
@@ -238,7 +239,13 @@ static VOID VioInputEvtDrainQueue(_In_ WDFDEVICE Device, _In_ ULONG QueueIndex, 
         VirtioStatusQProcessUsedBuffers(devCtx->StatusQ);
     }
 
-    VIOINPUT_TRACE_INFO("queue interrupt: index=%lu\n", QueueIndex);
+    VIOINPUT_LOG(
+        VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
+        "queue interrupt: index=%lu queueIrqs=%ld interrupts=%ld dpcs=%ld\n",
+        QueueIndex,
+        queueCount,
+        devCtx ? devCtx->Counters.VirtioInterrupts : -1,
+        devCtx ? devCtx->Counters.VirtioDpcs : -1);
 }
 
 static void VirtioInputReportReady(_In_ void *context)
@@ -386,7 +393,10 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
 
     parseResult = virtio_pci_cap_parse(cfgSpace, sizeof(cfgSpace), barAddrs, &caps);
     if (parseResult != VIRTIO_PCI_CAP_PARSE_OK) {
-        VIOINPUT_TRACE_ERROR("virtio_pci_cap_parse failed: %s\n", virtio_pci_cap_parse_result_str(parseResult));
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "virtio_pci_cap_parse failed: %s\n",
+            virtio_pci_cap_parse_result_str(parseResult));
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
 
@@ -397,7 +407,7 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
     }
 
     if (deviceContext->Bars[caps.common_cfg.bar].Va == NULL || deviceContext->Bars[caps.isr_cfg.bar].Va == NULL) {
-        VIOINPUT_TRACE_ERROR("missing BAR mapping for common/isr cfg\n");
+        VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "missing BAR mapping for common/isr cfg\n");
         VioInputUnmapBars(deviceContext->Bars);
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
@@ -408,14 +418,16 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
         commonMinBytes = FIELD_OFFSET(VIRTIO_PCI_COMMON_CFG, queue_msix_vector) + sizeof(USHORT);
         if ((caps.common_cfg.length < commonMinBytes) ||
             (caps.common_cfg.offset + (UINT64)commonMinBytes > (UINT64)deviceContext->Bars[caps.common_cfg.bar].Length)) {
-            VIOINPUT_TRACE_ERROR("common_cfg capability too small for MSI-X vector programming\n");
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "common_cfg capability too small for MSI-X vector programming\n");
             VioInputUnmapBars(deviceContext->Bars);
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 
         if ((caps.isr_cfg.length < 1) ||
             (caps.isr_cfg.offset + 1u > (UINT64)deviceContext->Bars[caps.isr_cfg.bar].Length)) {
-            VIOINPUT_TRACE_ERROR("isr_cfg capability too small\n");
+            VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "isr_cfg capability too small\n");
             VioInputUnmapBars(deviceContext->Bars);
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
@@ -428,9 +440,11 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
     {
         USHORT numQueues = READ_REGISTER_USHORT(&deviceContext->CommonCfg->num_queues);
         if (numQueues < VIRTIO_INPUT_QUEUE_COUNT) {
-            VIOINPUT_TRACE_ERROR("virtio-input reports only %u queues (need %u)\n",
-                                 numQueues,
-                                 (USHORT)VIRTIO_INPUT_QUEUE_COUNT);
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "virtio-input reports only %u queues (need %u)\n",
+                numQueues,
+                (USHORT)VIRTIO_INPUT_QUEUE_COUNT);
             VioInputUnmapBars(deviceContext->Bars);
             deviceContext->CommonCfg = NULL;
             deviceContext->IsrStatus = NULL;
@@ -453,6 +467,9 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
         VioInputUnmapBars(deviceContext->Bars);
         return status;
     }
+
+    deviceContext->Interrupts.InterruptCounter = &deviceContext->Counters.VirtioInterrupts;
+    deviceContext->Interrupts.DpcCounter = &deviceContext->Counters.VirtioDpcs;
 
     return STATUS_SUCCESS;
 }
@@ -485,7 +502,10 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         deviceContext = VirtioInputGetDeviceContext(Device);
         status = VirtioPciInterruptsProgramMsixVectors(&deviceContext->Interrupts, deviceContext->CommonCfg);
         if (!NT_SUCCESS(status)) {
-            VIOINPUT_TRACE_ERROR("VirtioPciInterruptsProgramMsixVectors failed: 0x%08X\n", status);
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "VirtioPciInterruptsProgramMsixVectors failed: %!STATUS!\n",
+                status);
             return status;
         }
     }

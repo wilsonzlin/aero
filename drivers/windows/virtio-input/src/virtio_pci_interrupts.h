@@ -53,6 +53,15 @@ typedef struct _VIRTIO_PCI_INTERRUPTS {
     EVT_VIRTIO_PCI_DRAIN_QUEUE* EvtDrainQueue;
     PVOID CallbackContext;
 
+    /*
+     * Optional diagnostic counters.
+     *
+     * When non-NULL, these are incremented from the ISR / DPC paths. Pointers
+     * must reference non-paged memory (e.g. a field in the KMDF device context).
+     */
+    volatile LONG* InterruptCounter;
+    volatile LONG* DpcCounter;
+
     WDFSPINLOCK* QueueLocks;
     WDFMEMORY QueueLocksMemory;
 
@@ -100,4 +109,3 @@ _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS VirtioPciInterruptsProgramMsixVectors(
     _In_ const PVIRTIO_PCI_INTERRUPTS Interrupts,
     _In_ volatile VIRTIO_PCI_COMMON_CFG* CommonCfg);
-
