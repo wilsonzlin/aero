@@ -87,15 +87,21 @@ Windows Boot Configuration Data (BCD) stores are registry-hive-like files:
 
 - BIOS: `boot/BCD`
 - UEFI: `efi/microsoft/boot/BCD`
-- Template (used by Setup to create new stores): `boot/BCD-Template` (sometimes also under `efi/...`)
+- Template (used by Setup to create new stores): `Windows/System32/Config/BCD-Template`
+  - On install media, this file is **inside** `sources/install.wim` (mount an index to access it).
 
 These patches set OS-loader booleans using their element IDs:
 
 - `testsigning` → `BcdOSLoaderBoolean_AllowPrereleaseSignatures` (`0x16000049`)
 - `nointegritychecks` → `BcdOSLoaderBoolean_DisableIntegrityChecks` (`0x16000048`)
 
-Both patches target the well-known object `{bootloadersettings}` (GUID `6efb52bf-1766-41db-a6b3-0ee5eff72bd7`),
-because typical Win7 OS loader entries (including WinPE) **inherit** from it.
+Both patches target the well-known BCD “library settings” objects which Win7 loader entries commonly inherit:
+
+- `{globalsettings}` (GUID `{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}`)
+- `{bootloadersettings}` (GUID `{6efb52bf-1766-41db-a6b3-0ee5eff72bd7}`)
+
+For maximum robustness across OEM media, you may also need to set these elements on the actual OS loader objects;
+see `docs/win7-bcd-offline-patching.md`.
 
 ### Windows (reg.exe / reg import)
 
@@ -139,6 +145,7 @@ hivexregedit --export /path/to/SOFTWARE | rg -i "<THUMBPRINT>"
 On Windows:
 
 ```bat
+bcdedit /store X:\path\to\BCD /enum {globalsettings} /v
 bcdedit /store X:\path\to\BCD /enum {bootloadersettings} /v
 ```
 
@@ -152,6 +159,8 @@ You should see:
 You can also query the loaded hive directly (after `reg load HKLM\\BCD ...`):
 
 ```bat
+reg query HKLM\BCD\Objects\{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}\Elements\16000049 /v Element
+reg query HKLM\BCD\Objects\{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}\Elements\16000048 /v Element
 reg query HKLM\BCD\Objects\{6efb52bf-1766-41db-a6b3-0ee5eff72bd7}\Elements\16000049 /v Element
 reg query HKLM\BCD\Objects\{6efb52bf-1766-41db-a6b3-0ee5eff72bd7}\Elements\16000048 /v Element
 ```

@@ -3,18 +3,25 @@ Windows Registry Editor Version 5.00
 ; Enables "testsigning" for Windows 7 by setting the BCD OS loader boolean:
 ;   BcdOSLoaderBoolean_AllowPrereleaseSignatures (0x16000049) = 1
 ;
-; This patch targets the well-known BCD object {bootloadersettings}:
-;   GUID: {6efb52bf-1766-41db-a6b3-0ee5eff72bd7}
+; This patch targets the two well-known BCD "library settings" objects that are
+; commonly inherited by Win7 OS loader / WinPE entries:
+;   - {globalsettings}      GUID: {7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}
+;   - {bootloadersettings}  GUID: {6efb52bf-1766-41db-a6b3-0ee5eff72bd7}
 ;
 ; Rationale:
-;   Typical Win7 OS loader entries (including WinPE) inherit from {bootloadersettings},
-;   so setting the element here enables it broadly without needing per-entry GUIDs.
+;   Many Win7 BCD stores apply booleans like testsigning via inheritance from these
+;   library objects, so setting them here avoids needing to know per-entry GUIDs.
+;
+;   For maximum robustness (some OEM media differ), you may also want to set the same
+;   element on the actual OS loader objects. See: docs/win7-bcd-offline-patching.md.
 ;
 ; Apply to an offline BCD store loaded under HKLM\BCD, e.g.:
 ;   reg load HKLM\BCD X:\path\to\boot\BCD
 ;   reg import bcd-testsigning.reg
 ;   reg unload HKLM\BCD
 
-[HKEY_LOCAL_MACHINE\BCD\Objects\{6efb52bf-1766-41db-a6b3-0ee5eff72bd7}\Elements\16000049]
+[HKEY_LOCAL_MACHINE\BCD\Objects\{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}\Elements\16000049]
 "Element"=hex:01,00,00,00
 
+[HKEY_LOCAL_MACHINE\BCD\Objects\{6efb52bf-1766-41db-a6b3-0ee5eff72bd7}\Elements\16000049]
+"Element"=hex:01,00,00,00
