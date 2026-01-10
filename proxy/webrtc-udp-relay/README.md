@@ -7,7 +7,13 @@ This directory contains a standalone Go service intended to proxy UDP between:
 
 See `PROTOCOL.md` for the on-the-wire framing and signaling message shapes.
 
-## Running
+It also includes a turnkey container deployment story:
+
+- `Dockerfile`: multi-stage Go build → minimal runtime image (distroless, non-root)
+- `docker-compose.yml`: run the relay alone, or with a local `coturn` TURN server
+- `turn/turnserver.conf`: minimal TURN config (committed)
+
+## Running (local)
 
 From this directory:
 
@@ -21,6 +27,50 @@ Then:
 curl -sS http://127.0.0.1:8080/healthz
 ```
 
+## Running (Docker / docker-compose)
+
+### Relay only
+
+```bash
+cd proxy/webrtc-udp-relay
+docker compose --profile relay-only up --build
+```
+
+Health check:
+
+```bash
+curl -f http://localhost:8080/healthz
+```
+
+### Relay + TURN (coturn)
+
+Use this when clients are behind NAT/firewalls and direct UDP connectivity is unreliable.
+
+```bash
+cd proxy/webrtc-udp-relay
+
+# For local dev (browser on the same machine), defaults are OK.
+docker compose --profile with-turn up --build
+```
+
+If your browser clients are **not** running on the same machine as Docker, you must advertise a
+publicly reachable hostname/IP:
+
+```bash
+TURN_PUBLIC_HOST=example.com docker compose --profile with-turn up --build
+```
+
+And update `turn/turnserver.conf` (`external-ip=...`) to match.
+
+#### TURN credentials (default)
+
+The bundled `coturn` config uses long-term credentials:
+
+- username: `aero`
+- password: `aero`
+
+Change these before exposing TURN to the internet.
+
 ## HTTP endpoints
 
 - `GET /healthz` → `{"ok":true}`
@@ -30,9 +80,6 @@ curl -sS http://127.0.0.1:8080/healthz
 ## Implemented
 
 - Minimal production-oriented HTTP server skeleton + middleware
-  - `GET /healthz` → `{"ok":true}`
-  - `GET /readyz` → readiness (200 once serving, 503 during shutdown)
-  - `GET /version` → build metadata (commit/build time may be empty)
 - Config system (env + flags): listen address, public base URL, log format/level, shutdown timeout, dev/prod mode
 - Relay/policy primitives (not yet wired to WebRTC signaling)
 - Protocol documentation (`PROTOCOL.md`)
@@ -46,8 +93,14 @@ curl -sS http://127.0.0.1:8080/healthz
 
 ## Ports
 
-- **HTTP**: configurable via `--listen-addr` (default `127.0.0.1:8080`)
-- **UDP (future)**: ICE + relay UDP ports will be introduced once the WebRTC and relay logic lands (expect additional inbound UDP requirements).
+- **HTTP**: configurable via `--listen-addr` / `AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR`
+  - Default: `127.0.0.1:8080` (local dev)
+  - In containers: set `AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR=0.0.0.0:8080` (done in `docker-compose.yml`)
+- **UDP (future)**: ICE + relay UDP ports will be introduced once the WebRTC and relay logic lands.
+  - Expect additional inbound UDP requirements once implemented.
+- **TURN (optional, docker-compose `with-turn` profile)**:
+  - TURN listening port: `3478/udp`
+  - TURN relayed traffic port range: `49152-49200/udp` (must match `turn/turnserver.conf`)
 
 ## Configuration
 
@@ -62,22 +115,56 @@ The service supports configuration via environment variables and equivalent flag
 - `AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT` / `--shutdown-timeout` (default `15s`)
 - `AERO_WEBRTC_UDP_RELAY_MODE` / `--mode` (`dev` or `prod`)
 
+### WebRTC / signaling config (expected by upcoming tasks)
+
+The container + client integration is expected to use the following environment variables once
+signaling and relay endpoints land:
+
+- `AUTH_MODE`: controls request authentication/authorization (implementation-defined).
+- `ALLOWED_ORIGINS`: CORS allow-list for browser clients (comma-separated).
+  - Example: `http://localhost:5173,http://localhost:3000`
+- `WEBRTC_UDP_PORT_MIN` / `WEBRTC_UDP_PORT_MAX`: UDP port range used for ICE candidates.
+  - Must match your firewall rules and any container port publishing (see below).
+  - The provided `docker-compose.yml` defaults the relay to `50000-50100/udp` to avoid colliding
+    with the coturn relay range (`49152-49200/udp`).
+- `AERO_ICE_SERVERS_JSON`: JSON string describing ICE servers that the relay advertises to clients.
+  - For the `with-turn` profile, `docker-compose.yml` sets this automatically to point at the
+    local coturn instance (and uses `TURN_PUBLIC_HOST` for the hostname/IP).
+
+Example `AERO_ICE_SERVERS_JSON`:
+
+```json
+[
+  { "urls": ["stun:stun.l.google.com:19302"] },
+  {
+    "urls": ["turn:example.com:3478?transport=udp"],
+    "username": "aero",
+    "credential": "aero"
+  }
+]
+```
+
 ### Destination policy (UDP egress)
 
-The relay is **network egress**. If you run it on an Internet-reachable host without destination controls, it can become an **open proxy / SSRF primitive** that attackers can use to:
+The relay is **network egress**. If you run it on an Internet-reachable host without destination
+controls, it can become an **open proxy / SSRF primitive** that attackers can use to:
 
 - scan internal networks (`10.0.0.0/8`, `192.168.0.0/16`, etc.)
 - hit cloud metadata endpoints
 - attack link-local services
 - abuse your host as a generic UDP reflector
 
-To mitigate this, the relay enforces an outbound destination policy (`internal/policy.DestinationPolicy`) on **every outbound UDP datagram** (and can also drop inbound datagrams from denied sources).
+To mitigate this, the relay enforces an outbound destination policy
+(`internal/policy.DestinationPolicy`) on **every outbound UDP datagram** (and can also drop inbound
+datagrams from denied sources).
 
 #### Safe defaults
 
-By default, the policy is **deny-by-default** and denies common private/special IPv4 ranges unless explicitly enabled.
+By default, the policy is **deny-by-default** and denies common private/special IPv4 ranges unless
+explicitly enabled.
 
-In other words: if you deploy the relay without any configuration, it should **not** be able to reach arbitrary network targets.
+In other words: if you deploy the relay without any configuration, it should **not** be able to
+reach arbitrary network targets.
 
 #### Policy configuration
 
@@ -116,6 +203,73 @@ Allow any destination (development only):
 export DESTINATION_POLICY_PRESET=dev
 ```
 
+## Why UDP port ranges matter
+
+WebRTC uses ICE candidates, which ultimately require **UDP ports on the server to be reachable
+from the browser**.
+
+There are two independent UDP ranges to keep aligned:
+
+1. **Relay ICE ports**: the port range the relay itself binds to (controlled by
+   `WEBRTC_UDP_PORT_MIN/MAX`).
+2. **TURN relay ports** (when using coturn): the port range coturn allocates for relayed
+   connections (`min-port`/`max-port` in `turnserver.conf`).
+
+If the relay is configured to allocate ports in `[WEBRTC_UDP_PORT_MIN, WEBRTC_UDP_PORT_MAX]`,
+you must:
+
+1. **Open** that UDP range in your firewall/security group.
+2. **Publish** that UDP range to the container (Docker) or hostPorts (Kubernetes), matching the
+   same numeric range.
+3. Keep the range aligned everywhere (relay config, TURN config, container ports).
+
+If you change one side (e.g. `turnserver.conf` uses `min-port=52000`) without updating the
+published ports, ICE will fail in non-obvious ways.
+
+## Smoke verification (manual)
+
+### 1) HTTP liveness
+
+```bash
+curl -v http://localhost:8080/healthz
+```
+
+### 2) Browser sanity check (TURN candidate)
+
+Open your browser DevTools console and run:
+
+```js
+// Replace with your own if not using docker-compose defaults.
+const iceServers = [
+  { urls: ["stun:stun.l.google.com:19302"] },
+  {
+    urls: ["turn:localhost:3478?transport=udp"],
+    username: "aero",
+    credential: "aero",
+  },
+];
+
+const pc = new RTCPeerConnection({ iceServers });
+pc.createDataChannel("smoke");
+
+pc.onicecandidate = (e) => {
+  if (e.candidate) console.log("ICE:", e.candidate.candidate);
+};
+
+await pc.setLocalDescription(await pc.createOffer());
+```
+
+When running with `--profile with-turn`, you should see at least one ICE candidate containing
+`typ relay` (a relayed candidate via TURN). If you only see `typ host` candidates, TURN may not
+be reachable or may be advertising the wrong external address.
+
 ## Security model (read before deploying the relay)
 
 See "Destination policy (UDP egress)" above.
+
+## Build verification
+
+```bash
+cd proxy/webrtc-udp-relay
+docker build .
+```

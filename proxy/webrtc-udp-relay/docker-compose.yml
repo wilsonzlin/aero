@@ -1,0 +1,52 @@
+#
+# Profiles:
+# - relay-only: just the WebRTC UDP relay service
+# - with-turn:  relay + a local coturn instance for NAT traversal
+#
+
+x-relay-base: &relay-base
+  build:
+    context: .
+  restart: unless-stopped
+  ports:
+    - "8080:8080/tcp"
+    # Must align with WEBRTC_UDP_PORT_MIN/MAX and any firewall rules.
+    - "50000-50100:50000-50100/udp"
+  environment:
+    # Must align with the published UDP range above.
+    WEBRTC_UDP_PORT_MIN: "50000"
+    WEBRTC_UDP_PORT_MAX: "50100"
+    # The Go service defaults to 127.0.0.1; bind to all interfaces in containers.
+    AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR: "0.0.0.0:8080"
+
+services:
+  webrtc-udp-relay:
+    <<: *relay-base
+    profiles: ["relay-only"]
+
+  webrtc-udp-relay-with-turn:
+    <<: *relay-base
+    profiles: ["with-turn"]
+    environment:
+      WEBRTC_UDP_PORT_MIN: "50000"
+      WEBRTC_UDP_PORT_MAX: "50100"
+      AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR: "0.0.0.0:8080"
+      # The relay advertises these ICE servers to browser clients.
+      #
+      # IMPORTANT:
+      # - "localhost" works only for clients running on the same machine as docker-compose.
+      # - For production, set TURN_PUBLIC_HOST to a public hostname/IP reachable by browsers.
+      AERO_ICE_SERVERS_JSON: >-
+        [{"urls":["stun:stun.l.google.com:19302"]},{"urls":["turn:${TURN_PUBLIC_HOST:-localhost}:3478?transport=udp"],"username":"aero","credential":"aero"}]
+
+  coturn:
+    image: coturn/coturn:latest
+    profiles: ["with-turn"]
+    restart: unless-stopped
+    command: ["-c", "/etc/coturn/turnserver.conf", "--no-cli"]
+    volumes:
+      - ./turn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    ports:
+      - "3478:3478/udp"
+      # Must align with min-port/max-port in turnserver.conf.
+      - "49152-49200:49152-49200/udp"
