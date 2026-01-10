@@ -25,8 +25,6 @@ const PORT_AC_DATA_READ: u16 = 0x3C1;
 
 const PORT_INPUT_STATUS1_COLOR: u16 = 0x3DA;
 const PORT_INPUT_STATUS1_MONO: u16 = 0x3BA;
-const PORT_FEATURE_CONTROL_WRITE_COLOR: u16 = PORT_INPUT_STATUS1_COLOR;
-const PORT_FEATURE_CONTROL_WRITE_MONO: u16 = PORT_INPUT_STATUS1_MONO;
 
 const PORT_CRTC_INDEX_COLOR: u16 = 0x3D4;
 const PORT_CRTC_DATA_COLOR: u16 = 0x3D5;
@@ -280,6 +278,14 @@ impl VgaDevice {
         }
     }
 
+    fn active_input_status1_port(&self) -> u16 {
+        if self.is_colour_io() {
+            PORT_INPUT_STATUS1_COLOR
+        } else {
+            PORT_INPUT_STATUS1_MONO
+        }
+    }
+
     fn seq_reg_read(&self) -> u8 {
         self.seq_regs
             .get(self.seq_index as usize)
@@ -452,7 +458,7 @@ impl VgaDevice {
             }
             PORT_AC_DATA_READ => self.ac_reg_read(),
 
-            PORT_INPUT_STATUS1_COLOR | PORT_INPUT_STATUS1_MONO => {
+            p if p == self.active_input_status1_port() => {
                 // Input Status 1 read resets the attribute controller flip-flop.
                 self.ac_flip_flop_data.set(false);
                 let next = !self.input_status1_vretrace.get();
@@ -509,7 +515,7 @@ impl VgaDevice {
             p if p == active_crtc_index => self.crtc_index = val,
             p if p == active_crtc_data => self.crtc_reg_write(val),
 
-            PORT_FEATURE_CONTROL_WRITE_COLOR | PORT_FEATURE_CONTROL_WRITE_MONO => {
+            p if p == self.active_input_status1_port() => {
                 self.feature_control = val;
             }
 

@@ -19,6 +19,12 @@ fn feature_control_round_trip() {
     vga.port_write(0x3DA, 1, 0x55);
     assert_eq!(vga.port_read(0x3CA, 1) as u8, 0x55);
 
+    // In colour I/O mode, the mono alias should be ignored.
+    vga.port_write(0x3BA, 1, 0xAA);
+    assert_eq!(vga.port_read(0x3CA, 1) as u8, 0x55);
+
+    // Switch to mono I/O decode: feature control write port becomes 0x3BA.
+    vga.port_write(0x3C2, 1, 0x00);
     vga.port_write(0x3BA, 1, 0xAA);
     assert_eq!(vga.port_read(0x3CA, 1) as u8, 0xAA);
 }
