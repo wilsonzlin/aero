@@ -23,7 +23,7 @@ Windows Registry Editor Version 5.00
 ;   reg unload HKLM\OFFSOFT
 ;
 ; Linux/macOS (offline hive via hivexregedit):
-;   hivexregedit --merge /path/to/SOFTWARE <generated-cert.reg>
+;   hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\SOFTWARE' /path/to/SOFTWARE <generated-cert.reg>
 
 [HKEY_LOCAL_MACHINE\OFFSOFT\Microsoft\SystemCertificates\ROOT\Certificates\__AERO_CERT_SHA1__]
 "Blob"=hex:__AERO_CERT_BLOB_HEX__
