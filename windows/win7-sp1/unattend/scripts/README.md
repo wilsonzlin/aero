@@ -150,6 +150,12 @@ cmd.exe /c mkdir "%WINDIR%\Setup\Scripts" ^&^& copy /y "C:\Aero\Scripts\SetupCom
 
 If your payload is on removable media, you can reference `%configsetroot%` or use the `AERO.TAG` marker mechanism described above.
 
+Example using `%configsetroot%` (configuration set media):
+
+```cmd
+cmd.exe /c mkdir "%WINDIR%\Setup\Scripts" ^&^& copy /y "%configsetroot%\Scripts\SetupComplete.cmd" "%WINDIR%\Setup\Scripts\SetupComplete.cmd"
+```
+
 ## Re-running
 
 To re-run (for debugging), delete the marker files:
