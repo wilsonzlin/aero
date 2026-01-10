@@ -12,6 +12,21 @@ const REG_PORTSC2: u16 = 0x12;
 
 const USBCMD_RUN: u16 = 1 << 0;
 const USBCMD_HCRESET: u16 = 1 << 1;
+const USBCMD_GRESET: u16 = 1 << 2;
+const USBCMD_EGSM: u16 = 1 << 3;
+const USBCMD_FGR: u16 = 1 << 4;
+const USBCMD_SWDBG: u16 = 1 << 5;
+const USBCMD_CF: u16 = 1 << 6;
+const USBCMD_MAXP: u16 = 1 << 7;
+
+const USBCMD_WRITABLE_MASK: u16 = USBCMD_RUN
+    | USBCMD_HCRESET
+    | USBCMD_GRESET
+    | USBCMD_EGSM
+    | USBCMD_FGR
+    | USBCMD_SWDBG
+    | USBCMD_CF
+    | USBCMD_MAXP;
 
 const USBSTS_USBINT: u16 = 1 << 0;
 const USBSTS_USBERRINT: u16 = 1 << 1;
@@ -196,6 +211,22 @@ impl UhciController {
         &mut self.bus
     }
 
+    pub fn io_base(&self) -> u16 {
+        self.io_base
+    }
+
+    pub fn set_io_base(&mut self, io_base: u16) {
+        self.io_base = io_base;
+    }
+
+    pub fn irq_line(&self) -> u8 {
+        self.irq_line
+    }
+
+    pub fn set_irq_line(&mut self, irq_line: u8) {
+        self.irq_line = irq_line;
+    }
+
     pub fn connect_device(&mut self, port: usize, device: Box<dyn crate::usb::UsbDevice>) {
         self.bus.connect(port, device);
         self.ports[port].set_connected(true);
@@ -208,7 +239,9 @@ impl UhciController {
     }
 
     fn reset_controller(&mut self) {
-        self.usbcmd = 0;
+        // Default to 64-byte maximum packet size; Windows programs this bit, but
+        // exposing it as already enabled matches common UHCI implementations.
+        self.usbcmd = USBCMD_MAXP;
         self.usbsts = USBSTS_HC_HALT;
         self.usbintr = 0;
         self.frnum = 0;
@@ -271,12 +304,15 @@ impl UhciController {
         match (offset, size) {
             (REG_USBCMD, 2) => {
                 let was_running = self.running();
-                self.usbcmd = value16 & (USBCMD_RUN | USBCMD_HCRESET);
+                let next_cmd = value16 & USBCMD_WRITABLE_MASK;
 
-                if self.usbcmd & USBCMD_HCRESET != 0 {
+                if next_cmd & (USBCMD_HCRESET | USBCMD_GRESET) != 0 {
                     self.reset_controller();
+                    self.update_irq(irq);
+                    return;
                 }
 
+                self.usbcmd = next_cmd;
                 if was_running && !self.running() {
                     self.usbsts |= USBSTS_HC_HALT;
                 } else if !was_running && self.running() {
@@ -381,20 +417,18 @@ impl UhciController {
             let addr = link & 0xFFFF_FFF0;
             if link & LINK_PTR_Q != 0 {
                 let qh = UhciQh::read(mem, addr);
-                self.process_queue(mem, qh.element);
+                self.process_qh(mem, addr, qh.element);
                 link = qh.head;
                 continue;
             }
 
             let td = UhciTd::read(mem, addr);
-            match self.process_td(mem, addr, td) {
-                TdAdvance::Continue(next) => link = next,
-                TdAdvance::Stop => break,
-            }
+            let _ = self.process_td(mem, addr, td);
+            link = td.link_ptr;
         }
     }
 
-    fn process_queue(&mut self, mem: &mut dyn GuestMemory, mut element: u32) {
+    fn process_qh(&mut self, mem: &mut dyn GuestMemory, qh_addr: u32, mut element: u32) {
         let mut traversed = 0usize;
         while traversed < MAX_LINK_TRAVERSAL {
             traversed += 1;
@@ -404,14 +438,20 @@ impl UhciController {
             let addr = element & 0xFFFF_FFF0;
             if element & LINK_PTR_Q != 0 {
                 let qh = UhciQh::read(mem, addr);
-                self.process_queue(mem, qh.element);
+                self.process_qh(mem, addr, qh.element);
                 element = qh.head;
                 continue;
             }
 
             let td = UhciTd::read(mem, addr);
+            if td.ctrl_sts & TD_CTRL_ACTIVE == 0 {
+                break;
+            }
             match self.process_td(mem, addr, td) {
-                TdAdvance::Continue(next) => element = next,
+                TdAdvance::Continue(next) => {
+                    element = next;
+                    mem.write_u32(qh_addr + 0x04, next);
+                }
                 TdAdvance::Stop => break,
             }
         }
@@ -590,6 +630,103 @@ impl Default for UhciPciConfig {
     }
 }
 
+/// A minimal PCI function wrapper for [`UhciController`].
+///
+/// Windows 7 includes `usbuhci.sys` and can bind to UHCI controllers purely from PCI class codes.
+/// This wrapper models the BAR probe/relocation behaviour required by PCI enumeration code.
+pub struct UhciPciDevice {
+    config: [u8; 256],
+    bar4: u32,
+    bar4_probe: bool,
+    pub controller: UhciController,
+}
+
+impl UhciPciDevice {
+    /// UHCI uses an I/O port register block.
+    pub const IO_BAR_SIZE: u32 = 0x20;
+    /// BAR4 is the traditional location for the UHCI I/O BAR on Intel PIIX/ICH devices.
+    const BAR4_OFFSET: usize = 0x20;
+
+    pub fn new(io_base: u16, irq_line: u8, cfg: UhciPciConfig) -> Self {
+        let mut config = [0u8; 256];
+        config[0x00..0x02].copy_from_slice(&cfg.vendor_id.to_le_bytes());
+        config[0x02..0x04].copy_from_slice(&cfg.device_id.to_le_bytes());
+
+        // Revision + class codes.
+        config[0x08] = cfg.revision_id;
+        config[0x09] = cfg.prog_if;
+        config[0x0A] = cfg.subclass;
+        config[0x0B] = cfg.class_code;
+        config[0x0E] = 0x00; // header type
+
+        // Subsystem IDs: mirror vendor/device by default.
+        config[0x2C..0x2E].copy_from_slice(&cfg.vendor_id.to_le_bytes());
+        config[0x2E..0x30].copy_from_slice(&cfg.device_id.to_le_bytes());
+
+        let bar4 = (u32::from(io_base) & 0xFFFF_FFFC) | 0x1;
+        config[Self::BAR4_OFFSET..Self::BAR4_OFFSET + 4].copy_from_slice(&bar4.to_le_bytes());
+
+        config[0x3C] = irq_line;
+        config[0x3D] = cfg.interrupt_pin;
+
+        Self {
+            config,
+            bar4,
+            bar4_probe: false,
+            controller: UhciController::new(io_base, irq_line),
+        }
+    }
+
+    pub fn config_read(&mut self, offset: u16, size: usize) -> u32 {
+        assert!(matches!(size, 1 | 2 | 4));
+        let off = offset as usize;
+
+        if size == 4 && off == Self::BAR4_OFFSET {
+            return if self.bar4_probe {
+                // I/O BAR size mask response. Bit0 must remain set.
+                (!(Self::IO_BAR_SIZE - 1) & 0xFFFF_FFFC) | 0x1
+            } else {
+                self.bar4
+            };
+        }
+
+        let mut value = 0u32;
+        for i in 0..size {
+            value |= u32::from(self.config[off + i]) << (8 * i);
+        }
+        value
+    }
+
+    pub fn config_write(&mut self, offset: u16, size: usize, value: u32) {
+        assert!(matches!(size, 1 | 2 | 4));
+        let off = offset as usize;
+
+        if size == 4 && off == Self::BAR4_OFFSET {
+            if value == 0xFFFF_FFFF {
+                self.bar4_probe = true;
+                self.bar4 = 0x1;
+            } else {
+                self.bar4_probe = false;
+                self.bar4 = (value & 0xFFFF_FFFC) | 0x1;
+                self.controller
+                    .set_io_base((self.bar4 & 0xFFFF) as u16 & !(Self::IO_BAR_SIZE as u16 - 1));
+            }
+            self.config[off..off + 4].copy_from_slice(&self.bar4.to_le_bytes());
+            return;
+        }
+
+        if size == 1 && off == 0x3C {
+            self.config[off] = value as u8;
+            self.controller.set_irq_line(value as u8);
+            return;
+        }
+
+        for i in 0..size {
+            self.config[off + i] = ((value >> (8 * i)) & 0xFF) as u8;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -717,6 +854,9 @@ mod tests {
         let data = &mem.data[0x4000..0x4004];
         assert_eq!(data, b"ABCD");
 
+        // Hardware should advance the QH element pointer as TDs complete.
+        assert_eq!(mem.read_u32(0x2004), LINK_PTR_T);
+
         let ctrl_sts = mem.read_u32(0x3004);
         assert_eq!(ctrl_sts & TD_CTRL_ACTIVE, 0);
         assert_eq!(ctrl_sts & TD_CTRL_ACTLEN_MASK, 3);
@@ -801,6 +941,7 @@ mod tests {
         let ctrl_sts = mem.read_u32(0x3004);
         assert!(ctrl_sts & TD_CTRL_ACTIVE != 0);
         assert!(ctrl_sts & TD_CTRL_NAK != 0);
+        assert_eq!(mem.read_u32(0x2004), 0x3000);
 
         // Mark device ready and ensure the next frame completes the TD.
         let dev = ctrl
@@ -819,5 +960,25 @@ mod tests {
         let ctrl_sts = mem.read_u32(0x3004);
         assert_eq!(ctrl_sts & TD_CTRL_ACTIVE, 0);
         assert_eq!(mem.data[0x4000..0x4003], [1, 2, 3]);
+        assert_eq!(mem.read_u32(0x2004), LINK_PTR_T);
+    }
+
+    #[test]
+    fn pci_bar_probe_and_relocation_updates_controller_io_base() {
+        let cfg = UhciPciConfig::default();
+        let mut dev = UhciPciDevice::new(0x2000, 11, cfg);
+
+        // BAR probe: write all-1s and read back the size mask.
+        dev.config_write(0x20, 4, 0xFFFF_FFFF);
+        let mask = dev.config_read(0x20, 4);
+        assert_eq!(
+            mask,
+            (!(UhciPciDevice::IO_BAR_SIZE - 1) & 0xFFFF_FFFC) | 0x1
+        );
+
+        // Relocate BAR4.
+        dev.config_write(0x20, 4, 0x4000);
+        assert_eq!(dev.config_read(0x20, 4), 0x4001);
+        assert_eq!(dev.controller.io_base(), 0x4000);
     }
 }

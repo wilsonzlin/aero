@@ -42,6 +42,7 @@ struct Ep0Control {
     in_offset: usize,
     out_expected: usize,
     out_data: Vec<u8>,
+    stalled: bool,
 }
 
 impl Ep0Control {
@@ -53,6 +54,7 @@ impl Ep0Control {
             in_offset: 0,
             out_expected: 0,
             out_data: Vec::new(),
+            stalled: false,
         }
     }
 
@@ -62,6 +64,7 @@ impl Ep0Control {
         self.in_offset = 0;
         self.out_expected = 0;
         self.out_data.clear();
+        self.stalled = false;
 
         if setup.length == 0 {
             self.stage = Ep0Stage::StatusIn;
@@ -337,15 +340,25 @@ impl UsbHidKeyboard {
         }
     }
 
-    fn handle_no_data_request(&mut self, setup: SetupPacket) {
+    fn handle_no_data_request(&mut self, setup: SetupPacket) -> bool {
         match (setup.request_type, setup.request) {
-            (0x00, REQ_SET_ADDRESS) => self.pending_address = Some((setup.value & 0x7F) as u8),
-            (0x00, REQ_SET_CONFIGURATION) => {
-                self.pending_configuration = Some((setup.value & 0xFF) as u8)
+            (0x00, REQ_SET_ADDRESS) => {
+                self.pending_address = Some((setup.value & 0x7F) as u8);
+                true
             }
-            (0x21, REQ_HID_SET_IDLE) => self.idle_rate = (setup.value >> 8) as u8,
-            (0x21, REQ_HID_SET_PROTOCOL) => self.protocol = (setup.value & 0xFF) as u8,
-            _ => {}
+            (0x00, REQ_SET_CONFIGURATION) => {
+                self.pending_configuration = Some((setup.value & 0xFF) as u8);
+                true
+            }
+            (0x21, REQ_HID_SET_IDLE) => {
+                self.idle_rate = (setup.value >> 8) as u8;
+                true
+            }
+            (0x21, REQ_HID_SET_PROTOCOL) => {
+                self.protocol = (setup.value & 0xFF) as u8;
+                true
+            }
+            _ => false,
         }
     }
 }
@@ -388,21 +401,34 @@ impl UsbDevice for UsbHidKeyboard {
     fn handle_setup(&mut self, setup: SetupPacket) {
         self.ep0.begin(setup);
 
-        if setup.length == 0 {
-            self.handle_no_data_request(setup);
-            return;
-        }
+        let supported = if setup.length == 0 {
+            self.handle_no_data_request(setup)
+        } else if setup.request_type & 0x80 != 0 {
+            if let Some(mut data) = self.handle_setup_inner(setup) {
+                data.truncate(setup.length as usize);
+                self.ep0.in_data = data;
+                true
+            } else {
+                false
+            }
+        } else {
+            // OUT requests with data stage: support SET_REPORT for LED/output reports.
+            matches!(
+                (setup.request_type, setup.request),
+                (0x21, REQ_HID_SET_REPORT)
+            )
+        };
 
-        if setup.request_type & 0x80 != 0 {
-            let mut data = self.handle_setup_inner(setup).unwrap_or_default();
-            data.truncate(setup.length as usize);
-            self.ep0.in_data = data;
-            return;
+        if !supported {
+            self.ep0.stalled = true;
         }
     }
 
     fn handle_out(&mut self, ep: u8, data: &[u8]) -> UsbHandshake {
         if ep != 0 {
+            return UsbHandshake::Stall;
+        }
+        if self.ep0.stalled {
             return UsbHandshake::Stall;
         }
 
@@ -443,6 +469,9 @@ impl UsbDevice for UsbHidKeyboard {
         }
 
         if ep != 0 {
+            return UsbHandshake::Stall;
+        }
+        if self.ep0.stalled {
             return UsbHandshake::Stall;
         }
 
@@ -658,15 +687,25 @@ impl UsbHidMouse {
         }
     }
 
-    fn handle_no_data_request(&mut self, setup: SetupPacket) {
+    fn handle_no_data_request(&mut self, setup: SetupPacket) -> bool {
         match (setup.request_type, setup.request) {
-            (0x00, REQ_SET_ADDRESS) => self.pending_address = Some((setup.value & 0x7F) as u8),
-            (0x00, REQ_SET_CONFIGURATION) => {
-                self.pending_configuration = Some((setup.value & 0xFF) as u8)
+            (0x00, REQ_SET_ADDRESS) => {
+                self.pending_address = Some((setup.value & 0x7F) as u8);
+                true
             }
-            (0x21, REQ_HID_SET_IDLE) => self.idle_rate = (setup.value >> 8) as u8,
-            (0x21, REQ_HID_SET_PROTOCOL) => self.protocol = (setup.value & 0xFF) as u8,
-            _ => {}
+            (0x00, REQ_SET_CONFIGURATION) => {
+                self.pending_configuration = Some((setup.value & 0xFF) as u8);
+                true
+            }
+            (0x21, REQ_HID_SET_IDLE) => {
+                self.idle_rate = (setup.value >> 8) as u8;
+                true
+            }
+            (0x21, REQ_HID_SET_PROTOCOL) => {
+                self.protocol = (setup.value & 0xFF) as u8;
+                true
+            }
+            _ => false,
         }
     }
 }
@@ -709,20 +748,33 @@ impl UsbDevice for UsbHidMouse {
     fn handle_setup(&mut self, setup: SetupPacket) {
         self.ep0.begin(setup);
 
-        if setup.length == 0 {
-            self.handle_no_data_request(setup);
-            return;
-        }
+        let supported = if setup.length == 0 {
+            self.handle_no_data_request(setup)
+        } else if setup.request_type & 0x80 != 0 {
+            if let Some(mut data) = self.handle_setup_inner(setup) {
+                data.truncate(setup.length as usize);
+                self.ep0.in_data = data;
+                true
+            } else {
+                false
+            }
+        } else {
+            matches!(
+                (setup.request_type, setup.request),
+                (0x21, REQ_HID_SET_REPORT)
+            )
+        };
 
-        if setup.request_type & 0x80 != 0 {
-            let mut data = self.handle_setup_inner(setup).unwrap_or_default();
-            data.truncate(setup.length as usize);
-            self.ep0.in_data = data;
+        if !supported {
+            self.ep0.stalled = true;
         }
     }
 
     fn handle_out(&mut self, ep: u8, data: &[u8]) -> UsbHandshake {
         if ep != 0 {
+            return UsbHandshake::Stall;
+        }
+        if self.ep0.stalled {
             return UsbHandshake::Stall;
         }
 
@@ -731,7 +783,12 @@ impl UsbDevice for UsbHidMouse {
                 self.ep0.out_data.extend_from_slice(data);
                 if self.ep0.out_data.len() >= self.ep0.out_expected {
                     let setup = self.ep0.setup();
-                    self.handle_no_data_request(setup);
+                    match (setup.request_type, setup.request) {
+                        (0x21, REQ_HID_SET_REPORT) => {}
+                        _ => {
+                            let _ = self.handle_no_data_request(setup);
+                        }
+                    }
                     self.ep0.stage = Ep0Stage::StatusIn;
                 }
                 UsbHandshake::Ack { bytes: data.len() }
@@ -759,6 +816,9 @@ impl UsbDevice for UsbHidMouse {
         if ep != 0 {
             return UsbHandshake::Stall;
         }
+        if self.ep0.stalled {
+            return UsbHandshake::Stall;
+        }
 
         match self.ep0.stage {
             Ep0Stage::DataIn => {
@@ -781,5 +841,40 @@ impl UsbDevice for UsbHidMouse {
             }
             _ => UsbHandshake::Nak,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keyboard_stalls_unknown_descriptor_types() {
+        let mut kb = UsbHidKeyboard::new();
+        kb.handle_setup(SetupPacket {
+            request_type: 0x80,
+            request: REQ_GET_DESCRIPTOR,
+            value: 0x0600, // Device Qualifier (not supported for full-speed only device)
+            index: 0,
+            length: 10,
+        });
+
+        let mut buf = [0u8; 16];
+        assert_eq!(kb.handle_in(0, &mut buf), UsbHandshake::Stall);
+    }
+
+    #[test]
+    fn mouse_stalls_unknown_descriptor_types() {
+        let mut mouse = UsbHidMouse::new();
+        mouse.handle_setup(SetupPacket {
+            request_type: 0x80,
+            request: REQ_GET_DESCRIPTOR,
+            value: 0x0600,
+            index: 0,
+            length: 10,
+        });
+
+        let mut buf = [0u8; 16];
+        assert_eq!(mouse.handle_in(0, &mut buf), UsbHandshake::Stall);
     }
 }
