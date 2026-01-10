@@ -176,6 +176,8 @@ The service includes CORS headers and supports `OPTIONS` preflight for browser u
 
 `HEAD /v1/images/:imageId/range` is also supported for size discovery (mirrors what `StreamingDisk` does against the CloudFront URL).
 
+Note: only **single-range** requests are supported (no `Range: bytes=a-b,c-d`).
+
 ## Notes for browser `StreamingDisk`
 
 The browser side should:

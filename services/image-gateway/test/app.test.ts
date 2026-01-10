@@ -85,6 +85,46 @@ describe("app", () => {
     expect(res.headers["access-control-allow-credentials"]).toBe("true");
   });
 
+  it("rejects multi-range requests", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+    });
+
+    const s3 = {
+      async send() {
+        throw new Error("S3 should not be called for invalid ranges");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        range: "bytes=0-0,2-3",
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({
+      error: { code: "BAD_REQUEST" },
+    });
+  });
+
   it("handles CORS preflight with OPTIONS", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();
@@ -115,4 +155,3 @@ describe("app", () => {
     expect(res.headers["access-control-allow-credentials"]).toBe("true");
   });
 });
-

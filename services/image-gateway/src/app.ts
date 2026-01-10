@@ -450,6 +450,18 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
     }
 
     const requestedRange = typeof req.headers.range === "string" ? req.headers.range : undefined;
+    if (requestedRange) {
+      if (!requestedRange.startsWith("bytes=")) {
+        throw new ApiError(400, "Only bytes ranges are supported", "BAD_REQUEST");
+      }
+      if (requestedRange.includes(",")) {
+        throw new ApiError(
+          400,
+          "Only single-range requests are supported",
+          "BAD_REQUEST"
+        );
+      }
+    }
 
     let s3Res: GetObjectCommandOutput;
     try {
