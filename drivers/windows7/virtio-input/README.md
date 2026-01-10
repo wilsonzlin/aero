@@ -85,6 +85,15 @@ From `drivers/windows7/virtio-input/`:
 powershell -ExecutionPolicy Bypass -File .\scripts\make-cert.ps1
 ```
 
+`make-cert.ps1` defaults to generating a **SHA-1-signed** test certificate for maximum compatibility with stock Windows 7 SP1.
+If your environment cannot create SHA-1 certificates, you can opt into SHA-2 by rerunning with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\make-cert.ps1 -AllowSha2CertFallback
+```
+
+> A SHA-2-signed certificate may require Windows 7 SHA-2 updates (KB3033929 / KB4474419) on the test machine.
+
 Expected outputs:
 
 ```text
