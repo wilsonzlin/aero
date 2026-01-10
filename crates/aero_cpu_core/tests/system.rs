@@ -59,6 +59,11 @@ fn msr_roundtrip_supported() {
     // Unknown MSRs raise #GP(0).
     let err = cpu.rdmsr_value(0xDEAD_BEEF).unwrap_err();
     assert_eq!(err, Exception::GeneralProtection(0));
+
+    // IA32_APIC_BASE reset value has enable + BSP bits set.
+    let apic_base = cpu.rdmsr_value(msr::IA32_APIC_BASE).unwrap();
+    assert_ne!(apic_base & (1 << 11), 0);
+    assert_ne!(apic_base & (1 << 8), 0);
 }
 
 #[test]

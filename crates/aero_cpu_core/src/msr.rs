@@ -66,8 +66,9 @@ impl Default for MsrState {
             fs_base: 0,
             gs_base: 0,
             kernel_gs_base: 0,
-            // Typical reset value: APIC enabled at 0xFEE00000, BSP bit set.
-            apic_base: 0xFEE0_0000 | (1 << 11),
+            // Typical reset value: APIC enabled at 0xFEE00000 with BSP bit set.
+            // (Intel SDM: IA32_APIC_BASE[11]=global enable, [8]=BSP).
+            apic_base: 0xFEE0_0000 | (1 << 11) | (1 << 8),
             tsc_aux: 0,
         }
     }
