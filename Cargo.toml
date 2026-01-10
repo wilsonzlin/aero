@@ -24,6 +24,7 @@ members = [
     "crates/aero-devices-input",
     "server",
     "crates/nt-packetlib",
+    "tools/bcd_patch",
 ]
 
 exclude = ["fuzz"]
