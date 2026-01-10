@@ -119,7 +119,7 @@ Each check produces a `PASS` / `WARN` / `FAIL` result:
 
 - **OS + arch**: version, build, service pack.
 - **KB3033929 (SHA-256 signatures)**: detects whether the hotfix is installed (relevant for SHA-256-signed driver packages on Win7).
-- **Certificate store**: verifies that Guest Tools certificate(s) (from `certs\`, if present) are installed into **Local Machine**:
+- **Certificate store**: verifies that Guest Tools certificate(s) (from `certs\`, e.g. `*.cer`, `*.crt`, `*.p7b`) are installed into **Local Machine**:
   - Trusted Root Certification Authorities (**Root**)
   - Trusted Publishers (**TrustedPublisher**)
 - **Driver packages**: `pnputil -e` output with a heuristic filter for Aero/virtio-related packages.

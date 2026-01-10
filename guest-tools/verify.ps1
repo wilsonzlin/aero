@@ -256,11 +256,30 @@ function Add-DeviceBindingCheck(
     Add-Check $key $title $status $summary $data $details
 }
 
-function Load-CertFromFile([string]$path) {
+function Load-CertsFromFile([string]$path) {
+    # Supports:
+    # - .cer/.crt (single X509Certificate2)
+    # - .p7b (PKCS#7 container with one or more certificates)
+    $ext = ""
+    try { $ext = [System.IO.Path]::GetExtension($path).ToLower() } catch { $ext = "" }
+
+    if ($ext -eq ".p7b") {
+        try {
+            $coll = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
+            $coll.Import($path)
+            $out = @()
+            foreach ($c in $coll) { $out += $c }
+            return $out
+        } catch {
+            return @()
+        }
+    }
+
     try {
-        return New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($path)
+        $c = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($path)
+        return @($c)
     } catch {
-        return $null
+        return @()
     }
 }
 
@@ -450,9 +469,10 @@ $jsonPath = Join-Path $outDir "report.json"
 $txtPath = Join-Path $outDir "report.txt"
 
 $report = @{
+    schema_version = 1
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "1.5.0"
+        version = "1.6.0"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -597,32 +617,40 @@ try {
     foreach ($dir in $certSearchDirs) {
         $certFiles += (Get-ChildItem -Path $dir -Filter *.cer -ErrorAction SilentlyContinue)
         $certFiles += (Get-ChildItem -Path $dir -Filter *.crt -ErrorAction SilentlyContinue)
+        $certFiles += (Get-ChildItem -Path $dir -Filter *.p7b -ErrorAction SilentlyContinue)
     }
 
     $certResults = @()
     foreach ($cf in $certFiles) {
-        $cert = Load-CertFromFile $cf.FullName
-        if (-not $cert) {
+        $certsInFile = Load-CertsFromFile $cf.FullName
+        if (-not $certsInFile -or $certsInFile.Count -eq 0) {
             $certResults += @{
                 file = $cf.Name
+                path = $cf.FullName
                 status = "WARN"
-                error = "Unable to load certificate file."
+                error = "Unable to load any certificates from file."
             }
             continue
         }
 
-        $thumb = "" + $cert.Thumbprint
-        $subj = "" + $cert.Subject
-        $rootLM = Find-CertInStore $thumb "Root" "LocalMachine"
-        $pubLM = Find-CertInStore $thumb "TrustedPublisher" "LocalMachine"
+        $idx = 0
+        foreach ($cert in $certsInFile) {
+            $thumb = "" + $cert.Thumbprint
+            $subj = "" + $cert.Subject
+            $rootLM = Find-CertInStore $thumb "Root" "LocalMachine"
+            $pubLM = Find-CertInStore $thumb "TrustedPublisher" "LocalMachine"
 
-        $certResults += @{
-            file = $cf.Name
-            thumbprint = $thumb
-            subject = $subj
-            not_after = $cert.NotAfter.ToUniversalTime().ToString("o")
-            local_machine_root = $rootLM
-            local_machine_trusted_publisher = $pubLM
+            $certResults += @{
+                file = $cf.Name
+                path = $cf.FullName
+                cert_index = $idx
+                thumbprint = $thumb
+                subject = $subj
+                not_after = $cert.NotAfter.ToUniversalTime().ToString("o")
+                local_machine_root = $rootLM
+                local_machine_trusted_publisher = $pubLM
+            }
+            $idx++
         }
     }
 
@@ -633,24 +661,31 @@ try {
     if (-not $certFiles -or $certFiles.Count -eq 0) {
         $certSummary = "No certificate files found under Guest Tools root/certs; skipping certificate store verification."
     } else {
-        $missing = @()
+        $badCount = 0
+        $missingCount = 0
         foreach ($cr in $certResults) {
-            if ($cr.status -eq "WARN") { $missing += $cr; continue }
-            if (-not $cr.local_machine_root -or -not $cr.local_machine_trusted_publisher) { $missing += $cr }
+            if ($cr.status -eq "WARN") {
+                $badCount++
+                continue
+            }
+            if (-not $cr.local_machine_root -or -not $cr.local_machine_trusted_publisher) {
+                $missingCount++
+            }
         }
 
-        $certSummary = "Certificate file(s) found: " + $certFiles.Count
-        if ($missing.Count -gt 0) {
+        $certSummary = "Certificate file(s) found: " + $certFiles.Count + "; certificates parsed: " + (@($certResults | Where-Object { $_.thumbprint }).Count)
+        if ($badCount -gt 0 -or $missingCount -gt 0) {
             $certStatus = "WARN"
-            $certDetails += ($missing.Count.ToString() + " certificate(s) are not installed in both LocalMachine Root + TrustedPublisher stores.")
-            $certDetails += "Re-run Guest Tools setup as Administrator to install the driver certificate."
+            if ($badCount -gt 0) { $certDetails += ($badCount.ToString() + " certificate file(s) could not be parsed.") }
+            if ($missingCount -gt 0) { $certDetails += ($missingCount.ToString() + " certificate(s) are not installed in both LocalMachine Root + TrustedPublisher stores.") }
+            $certDetails += "Re-run Guest Tools setup as Administrator to install the driver certificate(s)."
         }
     }
 
     $certData = @{
         script_dir = $scriptDir
         search_dirs = $certSearchDirs
-        cert_files = @($certFiles | ForEach-Object { $_.Name })
+        cert_files = @($certFiles | ForEach-Object { $_.FullName })
         certificates = $certResults
     }
     Add-Check "certificate_store" "Certificate Store (driver signing trust)" $certStatus $certSummary $certData $certDetails
