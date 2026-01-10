@@ -15,15 +15,14 @@ impl E1000Device {
         let buf_len = self.rx_buffer_size();
 
         while let Some(frame) = self.rx_queue.front() {
-            // The hardware head (RDH) must not catch up to the software tail (RDT).
-            // Keep one descriptor unused to avoid ambiguity in full/empty conditions.
-            if self.rdh == self.rdt {
-                break;
-            }
-
             let idx = self.rdh % count;
             let desc_addr = base + idx as u64 * 16;
             let mut desc = RxDesc::read(mem, desc_addr);
+
+            // Stop if the guest hasn't cleaned the descriptor yet or hasn't provided a buffer.
+            if (desc.status & RXD_STAT_DD) != 0 || desc.buffer_addr == 0 {
+                break;
+            }
 
             let copy_len = frame.len().min(buf_len);
             mem.write(desc.buffer_addr, &frame[..copy_len]);
@@ -42,4 +41,3 @@ impl E1000Device {
         }
     }
 }
-

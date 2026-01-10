@@ -953,6 +953,89 @@ mod tests {
     }
 
     #[test]
+    fn rx_stops_when_descriptor_missing_buffer_address() {
+        let mut mem = TestMemory::new(0x10000);
+        let mut backend = TestBackend::default();
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        let ring_base = 0x1000u64;
+        let buf_addr = 0x2000u64;
+        let frame = vec![0xaa, 0xbb, 0xcc, 0xdd];
+
+        // Descriptor 0 has no buffer address yet.
+        RxDesc::default().write(&mut mem, ring_base);
+        // Remaining descriptors are valid, but the device should stop at 0.
+        for i in 1..8u64 {
+            RxDesc {
+                buffer_addr: buf_addr + i * 0x100,
+                ..RxDesc::default()
+            }
+            .write(&mut mem, ring_base + i * 16);
+        }
+
+        // Fill a sentinel at address 0x0 so a buggy write to buffer_addr=0 is detectable.
+        mem.write(0, &[0x5a; 16]);
+
+        dev.mmio_write(REG_RDBAL, 4, ring_base as u32);
+        dev.mmio_write(REG_RDBAH, 4, 0);
+        dev.mmio_write(REG_RDLEN, 4, 16 * 8);
+        dev.mmio_write(REG_RDH, 4, 0);
+        dev.mmio_write(REG_RDT, 4, 7);
+        dev.mmio_write(REG_RCTL, 4, RCTL_EN);
+        dev.mmio_write(REG_IMS, 4, ICR_RXT0);
+
+        dev.enqueue_rx_frame(frame);
+        dev.poll(&mut mem, &mut backend);
+
+        assert_eq!(dev.mmio_read(REG_RDH, 4), 0);
+        assert!(!dev.irq_level());
+        assert_eq!(dev.mmio_read(REG_ICR, 4), 0);
+
+        let mut sentinel = [0u8; 16];
+        mem.read(0, &mut sentinel);
+        assert_eq!(sentinel, [0x5a; 16]);
+    }
+
+    #[test]
+    fn rx_stops_when_descriptor_not_cleaned() {
+        let mut mem = TestMemory::new(0x10000);
+        let mut backend = TestBackend::default();
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        let ring_base = 0x1000u64;
+        let buf_addr = 0x2000u64;
+        let frame = vec![0x11, 0x22, 0x33, 0x44];
+
+        // Descriptor 0 is still owned by the guest (DD set).
+        RxDesc {
+            buffer_addr: buf_addr,
+            status: RXD_STAT_DD,
+            ..RxDesc::default()
+        }
+        .write(&mut mem, ring_base);
+        mem.write(buf_addr, &[0x6b; 8]);
+
+        dev.mmio_write(REG_RDBAL, 4, ring_base as u32);
+        dev.mmio_write(REG_RDBAH, 4, 0);
+        dev.mmio_write(REG_RDLEN, 4, 16 * 1);
+        dev.mmio_write(REG_RDH, 4, 0);
+        dev.mmio_write(REG_RDT, 4, 0);
+        dev.mmio_write(REG_RCTL, 4, RCTL_EN);
+        dev.mmio_write(REG_IMS, 4, ICR_RXT0);
+
+        dev.enqueue_rx_frame(frame);
+        dev.poll(&mut mem, &mut backend);
+
+        assert_eq!(dev.mmio_read(REG_RDH, 4), 0);
+        assert!(!dev.irq_level());
+        assert_eq!(dev.mmio_read(REG_ICR, 4), 0);
+
+        let mut buf = [0u8; 8];
+        mem.read(buf_addr, &mut buf);
+        assert_eq!(buf, [0x6b; 8]);
+    }
+
+    #[test]
     fn interrupt_mask_and_icr_read_to_clear() {
         let mut dev = E1000Device::new([0, 1, 2, 3, 4, 5]);
 
