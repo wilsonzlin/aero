@@ -84,9 +84,19 @@ variable "enable_edge_cors_preflight" {
 }
 
 variable "cors_allowed_origins" {
-  description = "Allowed origins for CORS. If empty, no S3 CORS configuration is applied (same-origin only). For edge-handled preflight, use full origins (recommended) or a domain suffix pattern like .example.com."
+  description = "Allowed origins for CORS. If empty, no S3 CORS configuration is applied (same-origin only). Use full origins (including scheme) or \"*\"."
   type        = list(string)
   default     = []
+
+  validation {
+    condition = length([
+      for o in var.cors_allowed_origins : o
+      if o == "*" || (
+        (length(o) >= 7 && substr(o, 0, 7) == "http://") || (length(o) >= 8 && substr(o, 0, 8) == "https://")
+      ) && substr(o, length(o) - 1, 1) != "/"
+    ]) == length(var.cors_allowed_origins)
+    error_message = "The cors_allowed_origins values must be full origins (http:// or https://) or \"*\", and must not end with a slash."
+  }
 }
 
 variable "cors_allowed_methods" {

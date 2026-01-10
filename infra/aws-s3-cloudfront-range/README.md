@@ -184,7 +184,7 @@ When `enable_edge_cors_preflight = true`, a CloudFront Function responds to CORS
 Behavior summary:
 
 - Only handles CORS preflight requests (requests with `Origin` and `Access-Control-Request-Method`).
-- Validates `Origin` against `cors_allowed_origins` (exact origin match like `https://app.example.com`, or domain suffix match like `.example.com`). Bare hostnames match only exactly (no subdomains).
+- Validates `Origin` against `cors_allowed_origins` (exact origin match like `https://app.example.com`, or `*`).
 - Returns `204` and includes:
   - `Access-Control-Allow-Origin: <origin>`
   - `Access-Control-Allow-Methods: GET,HEAD,OPTIONS`

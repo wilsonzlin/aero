@@ -18,41 +18,12 @@ function headerValue(headers, name) {
   return h ? h.value : null;
 }
 
-function endsWith(str, suffix) {
-  if (suffix.length > str.length) {
-    return false;
-  }
-  return str.indexOf(suffix, str.length - suffix.length) !== -1;
-}
-
-function extractHostname(originLower) {
-  // `Origin` is typically `scheme://host[:port]`.
-  var o = originLower;
-  var schemeIndex = o.indexOf("://");
-  if (schemeIndex !== -1) {
-    o = o.substring(schemeIndex + 3);
-  }
-
-  var slashIndex = o.indexOf("/");
-  if (slashIndex !== -1) {
-    o = o.substring(0, slashIndex);
-  }
-
-  var colonIndex = o.indexOf(":");
-  if (colonIndex !== -1) {
-    o = o.substring(0, colonIndex);
-  }
-
-  return o;
-}
-
 function isOriginAllowed(origin) {
   if (!origin) {
     return false;
   }
 
   var originLower = String(origin).toLowerCase();
-  var hostLower = extractHostname(originLower);
 
   for (var i = 0; i < ALLOWED_ORIGINS.length; i++) {
     var pattern = ALLOWED_ORIGINS[i];
@@ -70,21 +41,6 @@ function isOriginAllowed(origin) {
     if (originLower === patternLower) {
       return true;
     }
-
-     // Hostname match (pattern without scheme). For suffix/subdomain matching, use a leading dot
-     // (e.g. ".example.com").
-     if (patternLower.indexOf("://") === -1) {
-       if (patternLower.charAt(0) === ".") {
-         var d = patternLower.substring(1);
-         if (hostLower === d || endsWith(hostLower, patternLower)) {
-           return true;
-         }
-       } else {
-         if (hostLower === patternLower) {
-           return true;
-         }
-       }
-     }
   }
 
   return false;
