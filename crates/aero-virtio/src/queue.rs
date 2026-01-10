@@ -237,6 +237,23 @@ impl VirtQueue {
         Ok(self.needs_interrupt(mem, old_used, self.next_used)?)
     }
 
+    /// Update the `used_event` field (end of the avail ring) when
+    /// `VIRTIO_F_RING_EVENT_IDX` is negotiated.
+    ///
+    /// This tells the guest when it should notify the device about new available
+    /// buffers (guest → device notification suppression).
+    pub fn update_used_event<M: GuestMemory + ?Sized>(
+        &self,
+        mem: &mut M,
+    ) -> Result<(), VirtQueueError> {
+        if !self.event_idx {
+            return Ok(());
+        }
+        let used_event_addr = self.config.avail_addr + 4 + u64::from(self.config.size) * 2;
+        write_u16_le(mem, used_event_addr, self.next_avail)?;
+        Ok(())
+    }
+
     fn needs_interrupt<M: GuestMemory + ?Sized>(
         &self,
         mem: &M,
@@ -258,4 +275,3 @@ impl VirtQueue {
 fn vring_need_event(event: u16, new: u16, old: u16) -> bool {
     new.wrapping_sub(event.wrapping_add(1)) < new.wrapping_sub(old)
 }
-
