@@ -102,6 +102,8 @@ If Chromium fails to launch in CI, ensure the container/runner includes the Play
 - `GET /version` → build metadata (commit/build time may be empty)
 - `GET /webrtc/ice` → ICE server list for browser clients: `{"iceServers":[...]}`
   - guarded by the same origin policy as signaling endpoints (to avoid leaking TURN credentials cross-origin)
+- `POST /offer` → signaling: exchange SDP offer/answer (non-trickle ICE) per `PROTOCOL.md`
+- `POST /session` → allocate a server-side session (primarily for quota enforcement; not required by the v1 offer/answer flow)
 
 ## Implemented
 
@@ -109,16 +111,16 @@ If Chromium fails to launch in CI, ensure the container/runner includes the Play
 - Config system (env + flags): listen address, public base URL, log format/level, shutdown timeout, dev/prod mode
 - WebRTC network config (env + flags): ICE UDP port range, UDP listen IP, NAT 1:1 public IP advertisement
 - Configurable ICE servers (STUN/TURN) + client-facing discovery endpoint (`/webrtc/ice`)
-- Relay/policy primitives (not yet wired to WebRTC signaling)
+- WebRTC signaling (`POST /offer`) and server-side PeerConnection lifecycle (`pion/webrtc`)
+- WebRTC DataChannel (`udp`) ↔ UDP datagram relay with per-guest-port UDP bindings and destination policy enforcement
 - Protocol documentation (`PROTOCOL.md`)
 - Playwright E2E test harness (`e2e/`) that verifies Chromium ↔ relay interoperability for the `udp` DataChannel.
 
 ## Pending (future tasks)
 
-- WebRTC signaling (SDP exchange, ICE candidate handling)
-- WebRTC peer connection lifecycle management (`pion/webrtc`)
-- WebRTC ↔ UDP data plane integration (enforcing policy on every datagram)
-- Auth and additional policy controls (rate limits, allowlists, etc)
+- Trickle ICE / explicit ICE candidate signaling (v1 uses non-trickle offer/answer)
+- Tighter integration with per-session rate limiting (pps/bps) for the data plane
+- Auth and additional policy controls (allowlists, additional destination restrictions, etc)
 
 ## Ports
 
@@ -143,6 +145,13 @@ The service supports configuration via environment variables and equivalent flag
 - `AERO_WEBRTC_UDP_RELAY_LOG_LEVEL` / `--log-level` (`debug`, `info`, `warn`, `error`)
 - `AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT` / `--shutdown-timeout` (default `15s`)
 - `AERO_WEBRTC_UDP_RELAY_MODE` / `--mode` (`dev` or `prod`)
+
+### Relay engine limits (env + flags)
+
+- `MAX_UDP_BINDINGS_PER_SESSION` / `--max-udp-bindings-per-session` (default `128`)
+- `UDP_BINDING_IDLE_TIMEOUT` / `--udp-binding-idle-timeout` (default `60s`)
+- `UDP_READ_BUFFER_BYTES` / `--udp-read-buffer-bytes` (default `65535`)
+- `DATACHANNEL_SEND_QUEUE_BYTES` / `--datachannel-send-queue-bytes` (default `1048576`)
 
 ### WebRTC / ICE config
 
