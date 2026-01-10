@@ -49,6 +49,10 @@ drivers/vendor/
 playwright-report/
 test-results/
 
+# Local test image cache (downloaded by scripts/prepare-*.sh)
+test-images/*
+!test-images/README.md
+
 # Disk images / VM artifacts (do not commit)
 *.iso
 *.img
