@@ -13,6 +13,8 @@ This guide walks you through installing Windows 7 in Aero using the **baseline (
    1. **AHCI → virtio-blk**
    2. **e1000 → virtio-net**
    3. **VGA → Aero GPU**
+   4. (Optional) **PS/2 → virtio-input**
+   5. (Optional) **HDA → virtio-snd**
 5. Run `verify.cmd` as Administrator and check `report.txt`.
 
 ## Contents
@@ -54,6 +56,8 @@ The exact names vary by Aero version/UI, but the mapping is typically:
 | Storage | AHCI (SATA) | virtio-blk | Switch this first; easiest to brick boot if done too early. |
 | Network | Intel e1000 | virtio-net | If networking breaks, switch back to e1000 and boot. |
 | Graphics | VGA | Aero GPU | If you get a black screen, switch back to VGA and recover. |
+| Input | PS/2 keyboard + mouse | virtio-input | Optional; switch last. If input breaks, switch back to PS/2. |
+| Audio | HDA (Intel HD Audio) | virtio-snd | Optional; does not affect boot. If audio breaks, keep HDA. |
 
 ### Why Windows 7 SP1 matters
 
@@ -96,6 +100,7 @@ In Aero, create a new Windows 7 VM/guest and select the **baseline / compatibili
 - **Network:** Intel **e1000**
 - **Graphics:** **VGA**
 - **Input:** PS/2 keyboard + mouse (or Aero’s default input devices)
+- **Audio:** HDA / Intel HD Audio (optional)
 
 Then:
 
@@ -268,6 +273,26 @@ If you get a black screen after switching to the Aero GPU, switch back to **VGA*
 
 - [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md#issue-black-screen-after-switching-to-the-aero-gpu)
 
+### Stage D: switch input (PS/2 → virtio-input) (optional)
+
+If your VM settings expose input devices separately (and you want the virtio input stack):
+
+1. Shut down Windows.
+2. Switch input from **PS/2** to **virtio-input**.
+3. Boot Windows.
+
+If you lose keyboard/mouse input, power off and switch back to **PS/2**. Then troubleshoot:
+
+- [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md#issue-lost-keyboardmouse-after-switching-to-virtio-input)
+
+### Stage E: switch audio (HDA → virtio-snd) (optional)
+
+Virtio audio does not affect boot, so treat it as an optional final step:
+
+1. Shut down Windows.
+2. Switch audio from **HDA** to **virtio-snd**.
+3. Boot Windows and test audio.
+
 ## Step 6: Run `verify.cmd` and interpret `report.txt`
 
 After you can boot with virtio + Aero GPU:
@@ -315,6 +340,14 @@ If you lose networking after switching **e1000 → virtio-net**:
 2. Switch the NIC back to **e1000**.
 3. Boot Windows and troubleshoot virtio-net driver binding from a working desktop.
 
+### Rollback if virtio-input fails
+
+If you lose keyboard/mouse input after switching **PS/2 → virtio-input**:
+
+1. Power off the VM.
+2. Switch input back to **PS/2**.
+3. Boot Windows and troubleshoot virtio-input driver binding from a working desktop.
+
 ### Rollback if Aero GPU fails
 
 If you get a black/blank screen after switching **VGA → Aero GPU**:
@@ -323,6 +356,10 @@ If you get a black/blank screen after switching **VGA → Aero GPU**:
 2. Switch graphics back to **VGA**.
 3. Boot Windows and follow the recovery steps in:
    - [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md#issue-black-screen-after-switching-to-the-aero-gpu)
+
+### Rollback if virtio-snd fails
+
+If audio stops working after switching **HDA → virtio-snd**, you can always switch back to **HDA**. Audio problems do not affect boot.
 
 ## Optional: Slipstream KB3033929 and/or drivers into your Windows 7 ISO
 

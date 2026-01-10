@@ -26,6 +26,7 @@ If you have not installed Guest Tools yet, start here:
   - [Device Manager Code 28 (drivers not installed)](#issue-device-manager-code-28-drivers-not-installed)
   - [Device Manager Code 10 (device cannot start)](#issue-device-manager-code-10-device-cannot-start)
   - [Virtio device not found or Unknown device after switching](#issue-virtio-device-not-found-or-unknown-device-after-switching)
+  - [Lost keyboard/mouse after switching to virtio-input](#issue-lost-keyboardmouse-after-switching-to-virtio-input)
 - Boot failures after switching storage:
   - [Storage controller switch gotchas (boot loops, 0x7B)](#issue-storage-controller-switch-gotchas-boot-loops-0x7b)
   - [No bootable device or BOOTMGR is missing after switching storage](#issue-no-bootable-device-or-bootmgr-is-missing-after-switching-storage)
@@ -263,6 +264,20 @@ Do storage first, then network, then GPU. If you change storage + GPU simultaneo
    - Right-click → Update Driver Software…
    - Browse to the Guest Tools driver folder and ensure you’re selecting the correct architecture.
 4. If installation is blocked by signatures, resolve Code 52 first.
+
+## Issue: Lost keyboard/mouse after switching to virtio-input
+
+**Symptom**
+
+- After switching input devices to **virtio-input**, Windows boots but you have no working keyboard/mouse.
+
+**Fix**
+
+1. Power off the VM.
+2. Switch input back to **PS/2**.
+3. Boot Windows.
+4. Re-run `setup.cmd` as Administrator (so the virtio-input driver package is staged).
+5. If Device Manager shows signing or driver errors for the input device, resolve them first (Code 52 / Code 28 / Code 10), then switch back to virtio-input.
 
 ## Issue: Device Manager Code 28 (drivers not installed)
 
