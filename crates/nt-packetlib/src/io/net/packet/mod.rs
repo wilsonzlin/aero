@@ -48,6 +48,7 @@ impl fmt::Display for PacketError {
     }
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for PacketError {}
 
 /// An Ethernet MAC address.

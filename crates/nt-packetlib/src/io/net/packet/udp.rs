@@ -108,5 +108,36 @@ mod tests {
         assert_eq!(pkt.payload(), &payload);
         assert!(pkt.checksum_valid_ipv4(src_ip, dst_ip));
     }
-}
 
+    #[test]
+    fn udp_checksum_zero_is_transmitted_as_ffff() {
+        let src_ip = Ipv4Addr::new(10, 0, 0, 1);
+        let dst_ip = Ipv4Addr::new(10, 0, 0, 2);
+
+        // Craft a 2-byte payload that makes the computed checksum exactly 0x0000,
+        // then ensure we transmit 0xffff (RFC 768: checksum optional sentinel).
+        let mut base = [0u8; 10];
+        base[0..2].copy_from_slice(&1u16.to_be_bytes());
+        base[2..4].copy_from_slice(&2u16.to_be_bytes());
+        base[4..6].copy_from_slice(&(10u16).to_be_bytes());
+        base[6..8].copy_from_slice(&0u16.to_be_bytes());
+        base[8..10].copy_from_slice(&0u16.to_be_bytes());
+
+        let sum_folded = !checksum::transport_checksum_ipv4(src_ip, dst_ip, 17, &base);
+        let payload_word = 0xffffu16.wrapping_sub(sum_folded);
+        let payload = payload_word.to_be_bytes();
+
+        let builder = UdpPacketBuilder {
+            src_port: 1,
+            dst_port: 2,
+            payload: &payload,
+        };
+        let mut buf = [0u8; 64];
+        let len = builder.write(src_ip, dst_ip, &mut buf).unwrap();
+        let pkt = UdpPacket::parse(&buf[..len]).unwrap();
+
+        assert_eq!(pkt.checksum(), 0xffff);
+        assert!(pkt.checksum_valid_ipv4(src_ip, dst_ip));
+        assert_eq!(checksum::transport_checksum_ipv4(src_ip, dst_ip, 17, pkt.as_bytes()), 0);
+    }
+}

@@ -11,15 +11,27 @@ use super::{ensure_out_buf_len, PacketError};
 #[derive(Clone, Copy, Debug)]
 pub struct DnsQuery<'a> {
     pub id: u16,
+    pub flags: u16,
     pub qname: &'a [u8],
     pub qtype: u16,
     pub qclass: u16,
+}
+
+impl<'a> DnsQuery<'a> {
+    pub fn recursion_desired(&self) -> bool {
+        (self.flags & 0x0100) != 0
+    }
 }
 
 /// Parse a DNS query containing exactly one question.
 pub fn parse_single_query(packet: &[u8]) -> Result<DnsQuery<'_>, PacketError> {
     super::ensure_len(packet, 12)?;
     let id = u16::from_be_bytes([packet[0], packet[1]]);
+    let flags = u16::from_be_bytes([packet[2], packet[3]]);
+    // Must be a query (QR=0).
+    if (flags & 0x8000) != 0 {
+        return Err(PacketError::Malformed("DNS packet is not a query"));
+    }
     let qdcount = u16::from_be_bytes([packet[4], packet[5]]);
     if qdcount != 1 {
         return Err(PacketError::Unsupported("DNS queries with qdcount != 1"));
@@ -47,24 +59,46 @@ pub fn parse_single_query(packet: &[u8]) -> Result<DnsQuery<'_>, PacketError> {
     let qclass = u16::from_be_bytes([packet[off + 2], packet[off + 3]]);
     Ok(DnsQuery {
         id,
+        flags,
         qname,
         qtype,
         qclass,
     })
 }
 
-pub struct DnsAResponseBuilder<'a> {
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DnsResponseCode {
+    NoError = 0,
+    FormatError = 1,
+    ServerFailure = 2,
+    NameError = 3,
+    NotImplemented = 4,
+    Refused = 5,
+}
+
+pub struct DnsResponseBuilder<'a> {
     pub id: u16,
+    /// Recursion desired (echoed from the query).
+    pub rd: bool,
+    pub rcode: DnsResponseCode,
     pub qname: &'a [u8],
-    pub addr: Ipv4Addr,
-    /// TTL in seconds.
+    pub qtype: u16,
+    pub qclass: u16,
+    /// If set, include a single A-record answer in the response.
+    pub answer_a: Option<Ipv4Addr>,
+    /// TTL in seconds for the A record.
     pub ttl: u32,
 }
 
-impl<'a> DnsAResponseBuilder<'a> {
+impl<'a> DnsResponseBuilder<'a> {
     pub fn len(&self) -> usize {
-        // Header (12) + question (qname + 4) + answer (name ptr 2 + type 2 + class 2 + ttl 4 + rdlen 2 + rdata 4)
-        12 + self.qname.len() + 4 + 2 + 2 + 2 + 4 + 2 + 4
+        let mut len = 12 + self.qname.len() + 4;
+        if self.answer_a.is_some() {
+            // Answer: name ptr 2 + type 2 + class 2 + ttl 4 + rdlen 2 + rdata 4
+            len += 2 + 2 + 2 + 4 + 2 + 4;
+        }
+        len
     }
 
     pub fn write(&self, out: &mut [u8]) -> Result<usize, PacketError> {
@@ -73,32 +107,41 @@ impl<'a> DnsAResponseBuilder<'a> {
 
         // Header
         out[0..2].copy_from_slice(&self.id.to_be_bytes());
-        out[2..4].copy_from_slice(&0x8180u16.to_be_bytes()); // standard response, recursion available, no error
+        // Flags: standard response, recursion available, plus caller-specified RD/RCODE.
+        let mut flags = 0x8000u16; // QR=1
+        if self.rd {
+            flags |= 0x0100;
+        }
+        flags |= 0x0080; // RA=1
+        flags |= (self.rcode as u16) & 0x000f;
+        out[2..4].copy_from_slice(&flags.to_be_bytes());
         out[4..6].copy_from_slice(&1u16.to_be_bytes()); // QDCOUNT
-        out[6..8].copy_from_slice(&1u16.to_be_bytes()); // ANCOUNT
+        out[6..8].copy_from_slice(&(self.answer_a.is_some() as u16).to_be_bytes()); // ANCOUNT
         out[8..10].copy_from_slice(&0u16.to_be_bytes()); // NSCOUNT
         out[10..12].copy_from_slice(&0u16.to_be_bytes()); // ARCOUNT
 
         let mut off = 12;
         out[off..off + self.qname.len()].copy_from_slice(self.qname);
         off += self.qname.len();
-        out[off..off + 2].copy_from_slice(&1u16.to_be_bytes()); // QTYPE=A
-        out[off + 2..off + 4].copy_from_slice(&1u16.to_be_bytes()); // QCLASS=IN
+        out[off..off + 2].copy_from_slice(&self.qtype.to_be_bytes());
+        out[off + 2..off + 4].copy_from_slice(&self.qclass.to_be_bytes());
         off += 4;
 
-        // Answer name: pointer to offset 12 (0x0c)
-        out[off..off + 2].copy_from_slice(&0xc00cu16.to_be_bytes());
-        off += 2;
-        out[off..off + 2].copy_from_slice(&1u16.to_be_bytes()); // TYPE=A
-        off += 2;
-        out[off..off + 2].copy_from_slice(&1u16.to_be_bytes()); // CLASS=IN
-        off += 2;
-        out[off..off + 4].copy_from_slice(&self.ttl.to_be_bytes());
-        off += 4;
-        out[off..off + 2].copy_from_slice(&4u16.to_be_bytes());
-        off += 2;
-        out[off..off + 4].copy_from_slice(&self.addr.octets());
-        off += 4;
+        if let Some(addr) = self.answer_a {
+            // Answer name: pointer to offset 12 (0x0c)
+            out[off..off + 2].copy_from_slice(&0xc00cu16.to_be_bytes());
+            off += 2;
+            out[off..off + 2].copy_from_slice(&1u16.to_be_bytes()); // TYPE=A
+            off += 2;
+            out[off..off + 2].copy_from_slice(&1u16.to_be_bytes()); // CLASS=IN
+            off += 2;
+            out[off..off + 4].copy_from_slice(&self.ttl.to_be_bytes());
+            off += 4;
+            out[off..off + 2].copy_from_slice(&4u16.to_be_bytes());
+            off += 2;
+            out[off..off + 4].copy_from_slice(&addr.octets());
+            off += 4;
+        }
 
         debug_assert_eq!(off, len);
         Ok(len)
@@ -118,14 +161,19 @@ mod tests {
         ];
         let q = parse_single_query(&query).unwrap();
         assert_eq!(q.id, 0x1234);
+        assert_eq!(q.flags, 0x0100);
         assert_eq!(q.qname, &[0x01, b'a', 0x00]);
         assert_eq!(q.qtype, 1);
         assert_eq!(q.qclass, 1);
 
-        let builder = DnsAResponseBuilder {
+        let builder = DnsResponseBuilder {
             id: q.id,
+            rd: q.recursion_desired(),
+            rcode: DnsResponseCode::NoError,
             qname: q.qname,
-            addr: Ipv4Addr::new(10, 0, 0, 1),
+            qtype: q.qtype,
+            qclass: q.qclass,
+            answer_a: Some(Ipv4Addr::new(10, 0, 0, 1)),
             ttl: 60,
         };
         let mut buf = [0u8; 128];
@@ -134,5 +182,28 @@ mod tests {
         assert_eq!(u16::from_be_bytes([buf[6], buf[7]]), 1); // ANCOUNT
         assert_eq!(buf[len - 4..len], [10, 0, 0, 1]);
     }
-}
 
+    #[test]
+    fn build_nxdomain_response() {
+        let qname = [0x01u8, b'a', 0x00];
+        let builder = DnsResponseBuilder {
+            id: 0x9999,
+            rd: true,
+            rcode: DnsResponseCode::NameError,
+            qname: &qname,
+            qtype: 1,
+            qclass: 1,
+            answer_a: None,
+            ttl: 0,
+        };
+        let mut buf = [0u8; 128];
+        let len = builder.write(&mut buf).unwrap();
+        assert!(len >= 12 + qname.len() + 4);
+        let flags = u16::from_be_bytes([buf[2], buf[3]]);
+        assert_eq!(flags & 0x8000, 0x8000); // QR=1
+        assert_eq!(flags & 0x0100, 0x0100); // RD echoed
+        assert_eq!(flags & 0x0080, 0x0080); // RA
+        assert_eq!(flags & 0x000f, 3); // NXDOMAIN
+        assert_eq!(u16::from_be_bytes([buf[6], buf[7]]), 0); // ANCOUNT
+    }
+}
