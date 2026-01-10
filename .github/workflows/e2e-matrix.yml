@@ -166,7 +166,7 @@ jobs:
             const result = process.env.E2E_RESULT;
 
             const search = await github.rest.search.issuesAndPullRequests({
-              q: `repo:${owner}/${repo} is:issue is:open in:body \\"aero-e2e-matrix\\"`,
+              q: `repo:${owner}/${repo} is:issue is:open in:body "aero-e2e-matrix"`,
               per_page: 10,
             });
 
