@@ -73,6 +73,50 @@ test('translates keyboard events into PS/2 set-2 scancode sequences', async ({ p
   expect(upMake!.b).toBe(2);
   expect(upMake!.a & 0xff).toBe(0xe0);
   expect((upMake!.a >>> 8) & 0xff).toBe(0x75);
+
+  await page.keyboard.up("ArrowUp");
+  await page.evaluate(() => (globalThis as any).__capture.flushNow());
+  msg = await page.evaluate(() => (globalThis as any).__inputMessages.shift());
+  events = parseBatch(msg.buffer);
+  const upBreak = events.find((e) => e.type === 1);
+  expect(upBreak).toBeTruthy();
+  expect(upBreak!.b).toBe(3);
+  expect(upBreak!.a & 0xff).toBe(0xe0);
+  expect((upBreak!.a >>> 8) & 0xff).toBe(0xf0);
+  expect((upBreak!.a >>> 16) & 0xff).toBe(0x75);
+
+  // PrintScreen uses a multi-byte Set 2 sequence. The make code is 4 bytes and the break code is 6 bytes.
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "PrintScreen", bubbles: true }));
+    (globalThis as any).__capture.flushNow();
+  });
+  msg = await page.evaluate(() => (globalThis as any).__inputMessages.shift());
+  events = parseBatch(msg.buffer);
+  const printMake = events.filter((e) => e.type === 1);
+  expect(printMake).toHaveLength(1);
+  expect(printMake[0]!.b).toBe(4);
+  expect(printMake[0]!.a & 0xff).toBe(0xe0);
+  expect((printMake[0]!.a >>> 8) & 0xff).toBe(0x12);
+  expect((printMake[0]!.a >>> 16) & 0xff).toBe(0xe0);
+  expect((printMake[0]!.a >>> 24) & 0xff).toBe(0x7c);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent("keyup", { code: "PrintScreen", bubbles: true }));
+    (globalThis as any).__capture.flushNow();
+  });
+  msg = await page.evaluate(() => (globalThis as any).__inputMessages.shift());
+  events = parseBatch(msg.buffer);
+  const printBreak = events.filter((e) => e.type === 1);
+  expect(printBreak).toHaveLength(2);
+  expect(printBreak[0]!.b).toBe(4);
+  expect(printBreak[0]!.a & 0xff).toBe(0xe0);
+  expect((printBreak[0]!.a >>> 8) & 0xff).toBe(0xf0);
+  expect((printBreak[0]!.a >>> 16) & 0xff).toBe(0x7c);
+  expect((printBreak[0]!.a >>> 24) & 0xff).toBe(0xe0);
+
+  expect(printBreak[1]!.b).toBe(2);
+  expect(printBreak[1]!.a & 0xff).toBe(0xf0);
+  expect((printBreak[1]!.a >>> 8) & 0xff).toBe(0x12);
 });
 
 test('captures mouse move/buttons/wheel and batches to worker', async ({ page }) => {

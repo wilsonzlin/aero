@@ -1,9 +1,10 @@
 import { InputEventQueue, type InputBatchTarget } from "./event_queue";
 import { PointerLock } from "./pointer_lock";
 import {
+  ps2Set2ScancodeForCode,
   shouldPreventDefaultForKeyboardEvent,
-  translateCodeToSet2MakeCode
 } from "./scancode";
+import type { Ps2Set2Scancode } from "./scancodes";
 
 export interface PointerLockReleaseChord {
   code: string;
@@ -94,8 +95,8 @@ export class InputCapture {
       return;
     }
 
-    const make = translateCodeToSet2MakeCode(event.code);
-    if (!make) {
+    const sc = ps2Set2ScancodeForCode(event.code);
+    if (!sc) {
       return;
     }
 
@@ -108,7 +109,7 @@ export class InputCapture {
     }
 
     const tsUs = toTimestampUs(event.timeStamp);
-    pushSet2ScancodeSequence(this.queue, tsUs, make, true);
+    pushSet2ScancodeSequence(this.queue, tsUs, sc, true);
   };
 
   private readonly handleKeyUp = (event: KeyboardEvent): void => {
@@ -116,8 +117,8 @@ export class InputCapture {
       return;
     }
 
-    const make = translateCodeToSet2MakeCode(event.code);
-    if (!make) {
+    const sc = ps2Set2ScancodeForCode(event.code);
+    if (!sc) {
       return;
     }
 
@@ -128,7 +129,7 @@ export class InputCapture {
     }
 
     const tsUs = toTimestampUs(event.timeStamp);
-    pushSet2ScancodeSequence(this.queue, tsUs, make, false);
+    pushSet2ScancodeSequence(this.queue, tsUs, sc, false);
   };
 
   private readonly handleMouseMove = (event: MouseEvent): void => {
@@ -330,10 +331,8 @@ export class InputCapture {
 
     const nowUs = toTimestampUs(performance.now());
     for (const code of this.pressedCodes) {
-      const make = translateCodeToSet2MakeCode(code);
-      if (make) {
-        pushSet2ScancodeSequence(this.queue, nowUs, make, false);
-      }
+      const sc = ps2Set2ScancodeForCode(code);
+      if (sc) pushSet2ScancodeSequence(this.queue, nowUs, sc, false);
     }
     this.pressedCodes.clear();
   }
@@ -389,33 +388,44 @@ function toTimestampUs(timeStamp: number): number {
 function pushSet2ScancodeSequence(
   queue: InputEventQueue,
   timestampUs: number,
-  makeWithExtendedFlag: number,
+  sc: Ps2Set2Scancode,
   pressed: boolean
 ): void {
-  const make = makeWithExtendedFlag & 0xff;
-  const extended = (makeWithExtendedFlag & 0x100) !== 0;
-
-  let packedBytes: number;
-  let byteLen: number;
-  if (pressed) {
-    if (extended) {
-      packedBytes = 0xe0 | (make << 8);
-      byteLen = 2;
-    } else {
-      packedBytes = make;
-      byteLen = 1;
-    }
-  } else {
-    if (extended) {
-      packedBytes = 0xe0 | (0xf0 << 8) | (make << 16);
-      byteLen = 3;
-    } else {
-      packedBytes = 0xf0 | (make << 8);
-      byteLen = 2;
-    }
+  if (sc.kind === "sequence") {
+    const bytes = pressed ? sc.make : sc.break;
+    pushPackedBytes(queue, timestampUs, bytes);
+    return;
   }
 
-  queue.pushKeyScancode(timestampUs, packedBytes, byteLen);
+  const make = sc.make & 0xff;
+  const extended = sc.extended;
+
+  if (pressed) {
+    if (extended) {
+      queue.pushKeyScancode(timestampUs, 0xe0 | (make << 8), 2);
+    } else {
+      queue.pushKeyScancode(timestampUs, make, 1);
+    }
+    return;
+  }
+
+  if (extended) {
+    queue.pushKeyScancode(timestampUs, 0xe0 | (0xf0 << 8) | (make << 16), 3);
+  } else {
+    queue.pushKeyScancode(timestampUs, 0xf0 | (make << 8), 2);
+  }
+}
+
+function pushPackedBytes(queue: InputEventQueue, timestampUs: number, bytes: readonly number[]): void {
+  for (let i = 0; i < bytes.length; i += 4) {
+    const len = Math.min(4, bytes.length - i);
+    const b0 = bytes[i]! & 0xff;
+    const b1 = len > 1 ? bytes[i + 1]! & 0xff : 0;
+    const b2 = len > 2 ? bytes[i + 2]! & 0xff : 0;
+    const b3 = len > 3 ? bytes[i + 3]! & 0xff : 0;
+    const packed = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+    queue.pushKeyScancode(timestampUs, packed, len);
+  }
 }
 
 function buttonToMask(button: number): number {

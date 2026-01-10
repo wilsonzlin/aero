@@ -527,7 +527,8 @@ The repository includes a concrete browser-side input capture implementation:
 - `web/src/input/input_capture.ts` — attaches listeners to the emulator canvas, manages focus/blur, and requests Pointer Lock on click.
 - `web/src/input/pointer_lock.ts` — minimal Pointer Lock state machine.
 - `web/src/input/event_queue.ts` — allocation-free event queue and batching transport to the I/O worker.
-- `web/src/input/scancode.ts` — `KeyboardEvent.code` → PS/2 Set 2 make code mapping (+ extended flag).
+- `web/src/input/scancodes.ts` — auto-generated `KeyboardEvent.code` → PS/2 Set 2 scancode mapping (including multi-byte sequences like PrintScreen/Pause).
+- `web/src/input/scancode.ts` — small helpers (allocation-free lookup + browser preventDefault policy).
 
 #### Worker Transport / Wire Format
 
@@ -547,7 +548,7 @@ Input batches are delivered to the I/O worker via `postMessage` with:
 
 Event types are defined in `web/src/input/event_queue.ts` (`InputEventType`):
 
-- `KeyScancode (1)`: `a=packedBytesLE`, `b=byteLen` (PS/2 Set 2 sequences including `0xE0`/`0xF0`)
+- `KeyScancode (1)`: `a=packedBytesLE`, `b=byteLen` (PS/2 Set 2 bytes including `0xE0`/`0xF0`). Long sequences are split across multiple `KeyScancode` events in-order (max 4 bytes per event).
 - `MouseMove (2)`: `a=dx`, `b=dy` (PS/2 coords: `dx` right, `dy` up)
 - `MouseButtons (3)`: `a=buttons` (bit0=left, bit1=right, bit2=middle)
 - `MouseWheel (4)`: `a=dz` (positive=wheel up)

@@ -6,5 +6,6 @@ export * from "./pointer_lock";
 export * from "./scancode";
 export * from "./event_router";
 export * from "./queue";
+export * from "./scancodes";
 export * from "./types";
 export * from "./worker_consumer";
