@@ -73,6 +73,7 @@ Notes:
 
 - `.pem` files may contain multiple `BEGIN CERTIFICATE` blocks; the script injects **all** of them.
 - `.pfx` files may contain multiple certificates; the script injects **all unique thumbprints** found.
+- `-PfxPassword` is only required if the `.pfx` is password-protected.
 - Customize which LocalMachine certificate stores are populated (default is `ROOT,TrustedPublisher`):
 
 ```powershell

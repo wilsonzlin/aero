@@ -11,7 +11,7 @@ param(
   [ValidateNotNullOrEmpty()]
   [string]$CertPath,
 
-  # If -CertPath is a .pfx, supply its password via -PfxPassword.
+  # If -CertPath is a password-protected .pfx, supply its password via -PfxPassword.
   [string]$PfxPassword,
 
   # Offline certificate stores to populate in both boot.wim and install.wim.
@@ -432,12 +432,17 @@ function Get-CertificateDerBlobs {
   }
 
   if ($ext -eq '.pfx') {
-    if ([string]::IsNullOrEmpty($PfxPassword)) {
-      throw "CertPath is a .pfx but -PfxPassword was not provided: $Path"
-    }
     $coll = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
     $flags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::DefaultKeySet
-    $coll.Import($Path, $PfxPassword, $flags)
+    try {
+      $coll.Import($Path, $PfxPassword, $flags)
+    } catch {
+      $inner = $_.Exception.Message
+      if ([string]::IsNullOrEmpty($PfxPassword)) {
+        throw "Failed to import PFX: $Path`nIf the PFX is password-protected, supply -PfxPassword.`n$inner"
+      }
+      throw "Failed to import PFX (check -PfxPassword): $Path`n$inner"
+    }
     if ($coll.Count -eq 0) {
       throw "No certificates found in PFX: $Path"
     }
