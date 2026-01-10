@@ -252,8 +252,9 @@ if defined configsetroot (
   if defined AERO_ROOT exit /b 0
 )
 
-REM 3) Scan drive letters for AERO.TAG markers
-call :SCAN_FOR_AERO_TAG
+REM 3) Scan drive letters for common payload layouts and marker files.
+REM    Marker files: AERO.TAG (preferred) or AERO_CONFIG.MEDIA (also accepted).
+call :SCAN_FOR_AERO_MARKER
 exit /b 0
 
 :TRY_AERO_ROOT
@@ -267,7 +268,7 @@ if exist "%AERO_CANDIDATE%\Drivers\" (
 )
 exit /b 1
 
-:SCAN_FOR_AERO_TAG
+:SCAN_FOR_AERO_MARKER
 for %%D in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
   if exist "%%D:\nul" (
     REM Common removable/config media layout (no marker file required):
@@ -279,11 +280,28 @@ for %%D in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
         if defined AERO_ROOT exit /b 0
       )
     )
+    REM Common config media layout at drive root (no marker file required):
+    REM   X:\Drivers\
+    REM   X:\Scripts\
+    if exist "%%D:\Drivers\" (
+      if exist "%%D:\Scripts\" (
+        call :TRY_AERO_ROOT "%%D:\"
+        if defined AERO_ROOT exit /b 0
+      )
+    )
     if exist "%%D:\Aero\AERO.TAG" (
       call :TRY_AERO_ROOT "%%D:\Aero"
       if defined AERO_ROOT exit /b 0
     )
+    if exist "%%D:\Aero\AERO_CONFIG.MEDIA" (
+      call :TRY_AERO_ROOT "%%D:\Aero"
+      if defined AERO_ROOT exit /b 0
+    )
     if exist "%%D:\AERO.TAG" (
+      call :TRY_AERO_ROOT "%%D:\"
+      if defined AERO_ROOT exit /b 0
+    )
+    if exist "%%D:\AERO_CONFIG.MEDIA" (
       call :TRY_AERO_ROOT "%%D:\"
       if defined AERO_ROOT exit /b 0
     )

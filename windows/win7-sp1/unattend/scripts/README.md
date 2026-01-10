@@ -31,16 +31,20 @@ The scripts locate the payload using the following strategy:
 
 1. `C:\Aero\`
 2. `%configsetroot%` (if defined), and `%configsetroot%\Aero`
-3. Scan drive letters `C:` → `Z:` for an `AERO.TAG` marker file:
-   - `X:\Aero\AERO.TAG` (payload root is `X:\Aero\`)
-   - `X:\AERO.TAG` (payload root is `X:\`)
-4. As an additional convenience fallback, scan drive letters for a standard `X:\Aero\` folder that contains both `Drivers\` and `Scripts\` (no marker file required).
+3. Scan drive letters `C:` → `Z:` for common payload layouts (no marker file required):
+   - `X:\Aero\Drivers\` + `X:\Aero\Scripts\` (payload root is `X:\Aero\`)
+   - `X:\Drivers\` + `X:\Scripts\` (payload root is `X:\`)
+4. Scan drive letters for marker files (useful if you want an explicit “this is the payload” indicator):
+   - `AERO.TAG` (preferred) or `AERO_CONFIG.MEDIA` (also accepted)
+   - Supported locations:
+     - `X:\Aero\AERO.TAG` / `X:\Aero\AERO_CONFIG.MEDIA` (payload root is `X:\Aero\`)
+     - `X:\AERO.TAG` / `X:\AERO_CONFIG.MEDIA` (payload root is `X:\`)
 
 The marker file can be an empty file; it is only used to find the payload.
 
 Notes:
 
-- `InstallDriversOnce.cmd` also attempts to infer the payload root from its own location (parent of the `Scripts\` directory) before trying `C:\Aero` / `AERO.TAG` scanning. This makes it robust when the scheduled task runs the script directly from the payload.
+- `InstallDriversOnce.cmd` also attempts to infer the payload root from its own location (parent of the `Scripts\` directory) before trying `C:\Aero` / drive-letter marker scanning. This makes it robust when the scheduled task runs the script directly from the payload.
 
 ## SetupComplete.cmd
 
@@ -157,7 +161,7 @@ Make sure `C:\Windows\Setup\Scripts` exists, then copy:
 cmd.exe /c mkdir "%WINDIR%\Setup\Scripts" ^&^& copy /y "C:\Aero\Scripts\SetupComplete.cmd" "%WINDIR%\Setup\Scripts\SetupComplete.cmd"
 ```
 
-If your payload is on removable media, you can reference `%configsetroot%` or use the `AERO.TAG` marker mechanism described above.
+If your payload is on removable media, you can reference `%configsetroot%` or use the marker mechanism described above (`AERO.TAG` or `AERO_CONFIG.MEDIA`).
 
 Example using `%configsetroot%` (configuration set media):
 
