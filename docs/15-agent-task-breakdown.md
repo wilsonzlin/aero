@@ -317,7 +317,7 @@ for the full browser backend design.
 | ST-006 | Sector caching             | P1       | ST-003       | Medium     |
 | ST-007 | Sparse disk format         | P1       | ST-003       | Medium     |
 | ST-008 | CD-ROM/ATAPI emulation     | P0       | ST-001       | High       |
-| ST-009 | Virtio-blk driver          | P1       | None         | High       |
+| ST-009 | Virtio-blk driver (Win7) (see VIO-011) | P1 | VIO-001..VIO-003 | High    |
 | ST-010 | Storage test suite         | P0       | ST-002       | Medium     |
 
 
@@ -333,7 +333,7 @@ for the full browser backend design.
 | NT-005 | DNS resolution (DoH)     | P1       | None         | Medium     |
 | NT-006 | WebSocket TCP proxy      | P0       | None         | Medium     |
 | NT-007 | WebRTC UDP proxy         | P1       | None         | High       |
-| NT-008 | Virtio-net driver        | P1       | None         | High       |
+| NT-008 | Virtio-net driver (Win7) (see VIO-012) | P1 | VIO-001..VIO-003 | High    |
 | NT-009 | Network test suite       | P0       | NT-001       | Medium     |
 
 
@@ -372,6 +372,25 @@ for the full browser backend design.
 | IN-013 | HID report descriptor + keyboard/mouse mapping                   | P1 | IN-012         | High      |
 | IN-014 | Driver packaging/signing + installation docs                     | P1 | IN-012, IN-013 | Medium    |
 | IN-015 | Virtio-input functional test plan/tooling                        | P1 | IN-011..IN-014 | Medium    |
+
+### Virtio Drivers (Windows 7 guest)
+
+Virtio device-specific drivers (virtio-blk/net/input/etc.) should **not** each reinvent the transport layer. Any Windows 7 virtio driver work presumes shared foundations exist first:
+
+- **Virtio 1.0 PCI modern transport** (capability discovery, BAR mapping, feature negotiation)
+- **Virtqueue split-ring** implementation (descriptor/avail/used rings and DMA-safe memory)
+- **Interrupt handling** (MSI-X and legacy INTx plumbing)
+
+See `docs/16-virtio-drivers-win7.md` for an implementation-oriented overview of these building blocks.
+
+| ID      | Task                                       | Priority | Dependencies        | Complexity |
+| ------- | ------------------------------------------ | -------- | ------------------- | ---------- |
+| VIO-001 | Virtio-pci modern transport library (shared) | P0     | None                | High       |
+| VIO-002 | Virtqueue split-ring implementation (shared) | P0     | VIO-001             | Very High  |
+| VIO-003 | MSI-X + legacy interrupt plumbing (shared)   | P0     | VIO-001             | High       |
+| VIO-010 | Virtio-input driver (Win7)                 | P1       | VIO-001..VIO-003    | Medium     |
+| VIO-011 | Virtio-blk driver (Win7) (Storage lane: ST-009) | P1   | VIO-001..VIO-003    | High       |
+| VIO-012 | Virtio-net driver (Win7) (Network lane: NT-008) | P1   | VIO-001..VIO-003    | High       |
 
 
 ---
