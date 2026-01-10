@@ -7,6 +7,19 @@
 extern "C" {
 #endif
 
+//
+// virtio_dma: small KMDF helper layer for setting up DMA and allocating DMA-safe
+// common buffers (ring memory, indirect descriptor tables, etc).
+//
+// Lifetime model:
+// - VirtioDmaCreate() creates a VIRTIO_DMA_CONTEXT as a WDF object parented to
+//   the WDFDEVICE (caller typically creates in EvtDevicePrepareHardware).
+// - VirtioDmaDestroy() deletes that WDF object (caller typically deletes in
+//   EvtDeviceReleaseHardware for PnP stop/start safety).
+// - VirtioDmaAllocCommonBuffer() parents the WDFCOMMONBUFFER to the DMA context
+//   object. Alternatively, VirtioDmaAllocCommonBufferWithParent() can parent to
+//   a queue/virtqueue object for finer lifetime control.
+//
 #if defined(__cplusplus)
 #define VIRTIO_STATIC_ASSERT(expr, msg) static_assert((expr), msg)
 #else
@@ -36,6 +49,20 @@ VIRTIO_STATIC_ASSERT(FIELD_OFFSET(VIRTIO_VRING_DESC, Addr) == 0, "Addr offset");
 VIRTIO_STATIC_ASSERT(FIELD_OFFSET(VIRTIO_VRING_DESC, Len) == 8, "Len offset");
 VIRTIO_STATIC_ASSERT(FIELD_OFFSET(VIRTIO_VRING_DESC, Flags) == 12, "Flags offset");
 VIRTIO_STATIC_ASSERT(FIELD_OFFSET(VIRTIO_VRING_DESC, Next) == 14, "Next offset");
+
+typedef struct _VIRTIO_VRING_AVAIL_HEADER {
+    UINT16 Flags;
+    UINT16 Idx;
+} VIRTIO_VRING_AVAIL_HEADER;
+
+VIRTIO_STATIC_ASSERT(sizeof(VIRTIO_VRING_AVAIL_HEADER) == 4, "vring avail header must be 4 bytes");
+
+typedef struct _VIRTIO_VRING_USED_HEADER {
+    UINT16 Flags;
+    UINT16 Idx;
+} VIRTIO_VRING_USED_HEADER;
+
+VIRTIO_STATIC_ASSERT(sizeof(VIRTIO_VRING_USED_HEADER) == 4, "vring used header must be 4 bytes");
 
 typedef struct _VIRTIO_VRING_USED_ELEM {
     UINT32 Id;
@@ -83,6 +110,15 @@ NTSTATUS VirtioDmaAllocCommonBuffer(
     _In_ BOOLEAN CacheEnabled,
     _Out_ VIRTIO_COMMON_BUFFER* Out);
 
+_Must_inspect_result_
+NTSTATUS VirtioDmaAllocCommonBufferWithParent(
+    _In_ VIRTIO_DMA_CONTEXT* Ctx,
+    _In_ size_t Length,
+    _In_ size_t Alignment,
+    _In_ BOOLEAN CacheEnabled,
+    _In_ WDFOBJECT ParentObject,
+    _Out_ VIRTIO_COMMON_BUFFER* Out);
+
 VOID VirtioDmaFreeCommonBuffer(_Inout_ VIRTIO_COMMON_BUFFER* Buffer);
 
 __forceinline WDFDMAENABLER VirtioDmaGetEnabler(_In_ VIRTIO_DMA_CONTEXT* Ctx)
@@ -94,4 +130,3 @@ __forceinline WDFDMAENABLER VirtioDmaGetEnabler(_In_ VIRTIO_DMA_CONTEXT* Ctx)
 #ifdef __cplusplus
 } // extern "C"
 #endif
-

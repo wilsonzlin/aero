@@ -68,6 +68,12 @@ NTSTATUS VirtioDmaCreate(
 
     status = WdfDmaEnablerCreate(Device, &dmaConfig, &dmaAttributes, &ctx->DmaEnabler);
     if ((status == STATUS_NOT_SUPPORTED) && Prefer64Bit) {
+        VIRTIO_DMA_TRACE(
+            "profile=%s not supported (status=0x%08x); falling back to %s\n",
+            VirtioDmaProfileName(profile),
+            (unsigned)status,
+            VirtioDmaProfileName(WdfDmaProfileScatterGatherDuplex));
+
         profile = WdfDmaProfileScatterGatherDuplex;
         WDF_DMA_ENABLER_CONFIG_INIT(&dmaConfig, profile, MaxTransferLength);
         status = WdfDmaEnablerCreate(Device, &dmaConfig, &dmaAttributes, &ctx->DmaEnabler);
@@ -113,10 +119,26 @@ NTSTATUS VirtioDmaAllocCommonBuffer(
     _In_ BOOLEAN CacheEnabled,
     _Out_ VIRTIO_COMMON_BUFFER* Out)
 {
+    if (Ctx == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    return VirtioDmaAllocCommonBufferWithParent(Ctx, Length, Alignment, CacheEnabled, Ctx->Object, Out);
+}
+
+_Must_inspect_result_
+NTSTATUS VirtioDmaAllocCommonBufferWithParent(
+    _In_ VIRTIO_DMA_CONTEXT* Ctx,
+    _In_ size_t Length,
+    _In_ size_t Alignment,
+    _In_ BOOLEAN CacheEnabled,
+    _In_ WDFOBJECT ParentObject,
+    _Out_ VIRTIO_COMMON_BUFFER* Out)
+{
     NTSTATUS status;
     ULONG alignmentRequirement;
 
-    if ((Ctx == NULL) || (Out == NULL)) {
+    if ((Ctx == NULL) || (Out == NULL) || (ParentObject == NULL)) {
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -141,7 +163,7 @@ NTSTATUS VirtioDmaAllocCommonBuffer(
 
     WDF_OBJECT_ATTRIBUTES cbAttributes;
     WDF_OBJECT_ATTRIBUTES_INIT(&cbAttributes);
-    cbAttributes.ParentObject = Ctx->Object;
+    cbAttributes.ParentObject = ParentObject;
 
     status = WdfCommonBufferCreateWithConfig(
         Ctx->DmaEnabler,
@@ -186,4 +208,3 @@ VOID VirtioDmaFreeCommonBuffer(_Inout_ VIRTIO_COMMON_BUFFER* Buffer)
 
     RtlZeroMemory(Buffer, sizeof(*Buffer));
 }
-
