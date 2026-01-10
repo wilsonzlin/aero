@@ -61,7 +61,9 @@ Notes:
 - `Scripts/InstallDriversOnce.cmd` is invoked via a scheduled task created by `SetupComplete.cmd` at the next boot.
 - If `Scripts/FirstLogon.cmd` exists, the templates also copy it into `%WINDIR%\\Setup\\Scripts\\FirstLogon.cmd` and run it via `FirstLogonCommands`.
 
-> Verify on real Win7 setup: the availability of `%configsetroot%` after the first reboot depends on how Setup handles configuration sets in your scenario. For robustness, keep the config ISO attached until the desktop appears and/or copy needed files to the system drive during `specialize`.
+> Verify on real Win7 setup: the availability of `%configsetroot%` after the first reboot depends on how Setup handles configuration sets in your scenario. For robustness, keep the config ISO attached until the desktop appears.
+>
+> The templates also include an optional `specialize` copy step that stages `Drivers/`, `Scripts/`, and `Cert*/` into `C:\Aero\` so later phases do not depend on removable/config media drive letters.
 
 ---
 
@@ -82,7 +84,7 @@ Common edits:
 - The `PnpCustomizations*` driver-injection sections:
   - `Microsoft-Windows-PnpCustomizationsWinPE` (`windowsPE`)
   - `Microsoft-Windows-PnpCustomizationsNonWinPE` (`offlineServicing`)
-- The `specialize` `RunSynchronous` command that copies `SetupComplete.cmd` into place.
+- The `specialize` `RunSynchronous` commands that copy `SetupComplete.cmd` into place (and optionally stage the payload to `C:\Aero`).
 
 If you change folder layout (for example, move `Drivers/` or `Scripts/`), update all referenced paths accordingly.
 

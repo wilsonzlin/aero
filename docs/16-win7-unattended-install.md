@@ -251,9 +251,12 @@ The reference templates assume a layout like:
       x86/
   Scripts/
     SetupComplete.cmd
+    InstallDriversOnce.cmd
     FirstLogon.cmd        (optional)
+  Cert/
+    aero_test.cer         (optional; preferred)
   Certs/
-    AeroTestRoot.cer      (optional)
+    AeroTestRoot.cer      (optional; accepted for compatibility)
 ```
 
 ### Keeping access to config content after the first reboot
@@ -262,7 +265,9 @@ The reference templates assume a layout like:
 
 When enabled, Setup treats the media containing `autounattend.xml` as a *configuration set* and copies its contents onto the target disk so later passes can still access them (commonly via `%configsetroot%`).
 
-> Verify on real Win7 setup: the exact copy location and the lifetime/availability of `%configsetroot%` varies across Windows versions and deployment scenarios. For robustness, keep the config ISO attached through first boot *and/or* copy everything you need to a stable on-disk location during `specialize`.
+> Verify on real Win7 setup: the exact copy location and the lifetime/availability of `%configsetroot%` varies across Windows versions and deployment scenarios. For robustness, keep the config ISO attached through first boot.
+>
+> The reference templates (and Aero's Win7 unattended scripts) can stage the payload into `C:\Aero\` during `specialize` so later phases don't depend on removable/config media remaining attached.
 
 ---
 
