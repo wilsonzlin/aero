@@ -17,25 +17,17 @@ rem   stage_packaging_win7.cmd x64 fre          -> fre x64
 rem   stage_packaging_win7.cmd x86 chk          -> chk x86
 rem -----------------------------------------------------------------------------
 
-set "ARG1=%~1"
-set "ARG2=%~2"
-
 set "VARIANT=fre"
 set "ARCH=x64"
 
-if /i "%ARG1%"=="fre" set "VARIANT=fre" & if not "%ARG2%"=="" set "ARCH=%ARG2%"
-if /i "%ARG1%"=="chk" set "VARIANT=chk" & if not "%ARG2%"=="" set "ARCH=%ARG2%"
-if /i "%ARG1%"=="x86" set "ARCH=x86" & if not "%ARG2%"=="" set "VARIANT=%ARG2%"
-if /i "%ARG1%"=="x64" set "ARCH=x64" & if not "%ARG2%"=="" set "VARIANT=%ARG2%"
+if /i "%~1"=="--help" call :usage & exit /b 0
+if /i "%~1"=="-h" call :usage & exit /b 0
+if /i "%~1"=="/?" call :usage & exit /b 0
 
-if /i not "%VARIANT%"=="fre" if /i not "%VARIANT%"=="chk" (
-  echo ERROR: Unknown variant "%VARIANT%" (expected fre or chk)
-  exit /b 1
-)
-if /i not "%ARCH%"=="x86" if /i not "%ARCH%"=="x64" (
-  echo ERROR: Unknown arch "%ARCH%" (expected x86 or x64)
-  exit /b 1
-)
+set "HAVE_VARIANT_ARG=0"
+set "HAVE_ARCH_ARG=0"
+call :apply_arg "%~1" || exit /b 1
+call :apply_arg "%~2" || exit /b 1
 
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%.") do set "SCRIPT_DIR=%%~fI"
@@ -124,3 +116,52 @@ if exist "%PKG_DIR%\aerogpu_d3d10.dll" (
 )
 exit /b 0
 
+:usage
+echo Usage:
+echo   stage_packaging_win7.cmd            ^(defaults to fre x64^)
+echo   stage_packaging_win7.cmd fre x64
+echo   stage_packaging_win7.cmd chk x86
+echo.
+echo Args are order-insensitive:
+echo   stage_packaging_win7.cmd x64 fre
+echo   stage_packaging_win7.cmd x86 chk
+exit /b 0
+
+:apply_arg
+set "ARG=%~1"
+if "%ARG%"=="" exit /b 0
+
+if /i "%ARG%"=="fre" (
+  if "%HAVE_VARIANT_ARG%"=="1" goto :dup_arg
+  set "VARIANT=fre"
+  set "HAVE_VARIANT_ARG=1"
+  exit /b 0
+)
+if /i "%ARG%"=="chk" (
+  if "%HAVE_VARIANT_ARG%"=="1" goto :dup_arg
+  set "VARIANT=chk"
+  set "HAVE_VARIANT_ARG=1"
+  exit /b 0
+)
+
+if /i "%ARG%"=="x86" (
+  if "%HAVE_ARCH_ARG%"=="1" goto :dup_arg
+  set "ARCH=x86"
+  set "HAVE_ARCH_ARG=1"
+  exit /b 0
+)
+if /i "%ARG%"=="x64" (
+  if "%HAVE_ARCH_ARG%"=="1" goto :dup_arg
+  set "ARCH=x64"
+  set "HAVE_ARCH_ARG=1"
+  exit /b 0
+)
+
+echo ERROR: Unknown argument "%ARG%"
+call :usage
+exit /b 1
+
+:dup_arg
+echo ERROR: Conflicting arguments; only one build variant (fre/chk) and one arch (x86/x64) may be specified.
+call :usage
+exit /b 1
