@@ -73,6 +73,7 @@ enum aerogpu_cmd_opcode {
   AEROGPU_CMD_CREATE_TEXTURE2D = 0x101,
   AEROGPU_CMD_DESTROY_RESOURCE = 0x102,
   AEROGPU_CMD_RESOURCE_DIRTY_RANGE = 0x103,
+  AEROGPU_CMD_UPLOAD_RESOURCE = 0x104,
 
   /* Shaders */
   AEROGPU_CMD_CREATE_SHADER_DXBC = 0x200,
@@ -221,6 +222,30 @@ struct aerogpu_cmd_resource_dirty_range {
 #pragma pack(pop)
 
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_resource_dirty_range) == 32);
+
+/*
+ * UPLOAD_RESOURCE:
+ * Copies raw bytes into a resource.
+ *
+ * Payload format:
+ *   struct aerogpu_cmd_upload_resource
+ *   uint8_t data[size_bytes]
+ *   padding to 4-byte alignment
+ *
+ * This is primarily intended for bring-up / system-memory-backed resources
+ * where the emulator/host does not have direct access to the guest allocation.
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_upload_resource {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_UPLOAD_RESOURCE */
+  aerogpu_handle_t resource_handle;
+  uint32_t reserved0;
+  uint64_t offset_bytes;
+  uint64_t size_bytes;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_upload_resource) == 32);
 
 /* -------------------------------- Shaders -------------------------------- */
 

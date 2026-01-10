@@ -518,7 +518,10 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
 
   res->locked = false;
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  // For bring-up we inline resource updates directly into the command stream so
+  // the host/emulator does not need to dereference guest allocations.
+  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+      AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + offset, size);
   cmd->resource_handle = res->handle;
   cmd->reserved0 = 0;
   cmd->offset_bytes = offset;
