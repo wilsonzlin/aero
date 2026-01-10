@@ -11,7 +11,7 @@ The open-source Aero emulator can read disk bytes from a URL using HTTP `Range` 
 
 This document defines the disk image lifecycle, access control, and persistence strategies for a hosted Aero backend. It is written so a backend engineer can implement the flows without needing external references.
 
-> Integration note: this document assumes the streaming/lease mechanism described in `docs/16-disk-image-streaming-auth.md` (lease issuance + using a short-lived bearer token to authorize `Range` reads). This doc extends that model to cover uploads, ownership, sharing, and writeback.
+> Integration note: this document assumes the streaming/lease mechanism described in [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md). Leases/capabilities may be presented as signed URLs, cookies, and/or `Authorization` headers (see that doc for tradeoffs). This doc extends that model to cover uploads, ownership, sharing, and writeback.
 
 ---
 
@@ -37,7 +37,7 @@ This document defines the disk image lifecycle, access control, and persistence 
 3) When the VM starts, the browser requests short-lived `disk:read` leases for:
    - the ISO (CD-ROM) and
    - the disk base (empty disk base or uploaded base).
-4) The browser streams data via `Range` reads from `/disk/{id}`.
+4) The browser streams data via `Range` reads from the disk bytes endpoint (e.g., `GET /disks/{diskId}/bytes`, sometimes routed as `/disk/{id}`; see [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md)).
 5) Persistence:
    - **Strategy 1 (early default):** all writes go to an OPFS delta local to the browser.
    - **Strategy 2/3:** writes are persisted remotely under `disk:write`.
@@ -339,12 +339,17 @@ Cons:
 
 ### Data plane endpoint
 
-The browser streams image bytes from the Aero service via a `Range`-capable endpoint:
+The browser streams image bytes via a `Range`-capable **disk bytes endpoint**, as specified in [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md):
 
-- `GET /disk/{imageId}` (or `/v1/disk/{imageId}`), supports `Range: bytes=...`
-- Always require a **lease token** unless the image is explicitly public.
+- `GET /disks/{diskId}/bytes` (and `HEAD /disks/{diskId}/bytes`), supports `Range: bytes=...` (often routed as `GET /disk/{id}` in simplified deployments)
 
-The service must not return permanent direct object-storage URLs for private images. The Aero service should fetch from object storage using its own credentials and stream to the client.
+Private images MUST require a valid lease/capability (or equivalent authorization) on every request; public images may be cacheable and unauthenticated depending on policy.
+
+Implementation detail: the disk bytes endpoint can be implemented as either:
+- A same-origin service endpoint that proxies to object storage using backend credentials, or
+- A CDN/object-storage URL gated by a short-lived signed URL/cookie lease.
+
+The service SHOULD NOT hand out long-lived, permanent object-storage URLs for private images.
 
 ### End-to-end diagram (auth → lease → streaming)
 
@@ -359,16 +364,17 @@ The service must not return permanent direct object-storage URLs for private ima
        │                           │                               │
        │ 2) Request lease:         │                               │
        │    POST /v1/leases        │                               │
-       │    { imageId, scopes }    │                               │
+       │    { diskId, scopes }     │                               │
        │──────────────────────────▶│                               │
        │                           │ 3) Issue short-lived lease    │
-       │                           │    (e.g., JWT)                │
+       │                           │    (e.g., signed URL or JWT)  │
        │◀──────────────────────────│                               │
        │                           │                               │
        │ 4) Stream bytes:          │                               │
-       │    GET /disk/{id}         │                               │
+       │    GET /disks/{id}/bytes  │                               │
+       │    (aka /disk/{id})       │                               │
        │    Range: bytes=...       │                               │
-       │    Authorization: Bearer  │                               │
+       │    (auth via lease)       │                               │
        │──────────────────────────────────────────────────────────▶│
        │                           │                               │
        │ 5) 206 Partial Content    │                               │
@@ -379,7 +385,7 @@ The service must not return permanent direct object-storage URLs for private ima
 Lease scope enforcement:
 - The disk endpoint verifies:
   - lease validity (`exp`, signature, `aud`)
-  - `imageId` binding
+  - resource ID binding (e.g., `diskId`)
   - required scope (`disk:read` for reads; `disk:write` for writes where applicable)
   - optional rate limits / byte limits
 
@@ -519,7 +525,8 @@ Beyond the baseline `disk:read`, the hosted service should define these scopes:
 Signed URLs (upload) and lease tokens (streaming) are bearer secrets.
 
 Client guidance:
-- Do not put tokens in the **page URL** (no `?token=...`).
+- Do not put long-lived user/session tokens in the **page URL** (no `?access_token=...`).
+- If using signed URL leases for streaming (e.g., `?cap=...`), treat the full URL as a secret: do not persist it, do not log it, and keep expirations short (minutes).
 - Do not persist signed URLs or leases in `localStorage` / `indexedDB`. Keep them in memory; re-issue when needed.
 - Set `Referrer-Policy: no-referrer` (or at least `strict-origin`) on pages that may ever handle signed URLs to reduce accidental leakage via the `Referer` header.
 

@@ -16,7 +16,7 @@ This spec is written for both:
 
 **Normative language:** The terms **MUST**, **SHOULD**, and **MAY** are used as in RFC 2119.
 
-Related: [Storage Subsystem](./05-storage-subsystem.md) (streaming disk design) and [Browser APIs](./11-browser-apis.md) (threads + cross-origin isolation context).
+Related: [Storage Subsystem](./05-storage-subsystem.md) (streaming disk design), [Disk Image Lifecycle and Access Control](./17-disk-image-lifecycle-and-access-control.md) (uploads/ownership/sharing/writeback), and [Browser APIs](./11-browser-apis.md) (threads + cross-origin isolation context).
 
 ---
 
