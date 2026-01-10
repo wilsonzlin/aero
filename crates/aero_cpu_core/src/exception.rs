@@ -16,6 +16,12 @@ pub enum Exception {
     /// faults (#PF/#GP) once paging/MMIO are modeled. For now, Tier-0 uses this
     /// as a catch-all for bus failures.
     MemoryFault,
+    /// #NP(error_code)
+    SegmentNotPresent(u16),
+    /// #SS(error_code)
+    StackSegment(u16),
+    /// #TS(error_code)
+    InvalidTss(u16),
     /// #UD
     InvalidOpcode,
     /// Instruction was decoded but is not yet implemented.
@@ -27,6 +33,26 @@ impl Exception {
     pub fn gp0() -> Self {
         Self::GeneralProtection(0)
     }
+
+    #[inline]
+    pub fn gp(code: u16) -> Self {
+        Self::GeneralProtection(code)
+    }
+
+    #[inline]
+    pub fn np(code: u16) -> Self {
+        Self::SegmentNotPresent(code)
+    }
+
+    #[inline]
+    pub fn ss(code: u16) -> Self {
+        Self::StackSegment(code)
+    }
+
+    #[inline]
+    pub fn ts(code: u16) -> Self {
+        Self::InvalidTss(code)
+    }
 }
 
 impl fmt::Display for Exception {
@@ -35,6 +61,9 @@ impl fmt::Display for Exception {
             Exception::GeneralProtection(code) => write!(f, "#GP({code})"),
             Exception::DivideError => write!(f, "#DE"),
             Exception::MemoryFault => write!(f, "memory fault"),
+            Exception::SegmentNotPresent(code) => write!(f, "#NP({code})"),
+            Exception::StackSegment(code) => write!(f, "#SS({code})"),
+            Exception::InvalidTss(code) => write!(f, "#TS({code})"),
             Exception::InvalidOpcode => write!(f, "#UD"),
             Exception::Unimplemented(name) => write!(f, "unimplemented: {name}"),
         }

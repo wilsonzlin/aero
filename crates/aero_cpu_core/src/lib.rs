@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Core architectural CPU state and privileged instruction helpers used by Aero.
 //!
 //! This crate serves multiple purposes:
@@ -5,12 +7,16 @@
 //! - Privileged/system instruction surface (CPUID/MSR/SYSCALL/SYSENTER/IN/OUT) required by
 //!   Windows 7 boot and kernel runtime.
 //! - Interpreter helpers used by unit tests (string ops + REP semantics).
+//!
+//! In addition, it contains the segmentation/descriptor-table model needed for
+//! real → protected → long mode transitions.
 
 mod exception;
 
 pub mod bus;
 pub mod cpu;
 pub mod cpuid;
+pub mod descriptors;
 pub mod exceptions;
 pub mod exec;
 pub mod fpu;
@@ -18,7 +24,9 @@ pub mod interp;
 pub mod jit;
 pub mod interrupts;
 pub mod mem;
+pub mod mode;
 pub mod msr;
+pub mod segmentation;
 pub mod sse_state;
 pub mod state;
 pub mod system;
@@ -36,18 +44,68 @@ use crate::sse_state::{SseState, MXCSR_MASK};
 /// The architectural size of the FXSAVE/FXRSTOR memory image.
 pub const FXSAVE_AREA_SIZE: usize = 512;
 
+/// Memory interface used by segmentation/descriptor-table logic.
+///
+/// This is intentionally minimal: paging/MMU integration can wrap or implement
+/// this trait and return the appropriate exceptions (e.g. #PF).
+pub trait CpuBus {
+    fn read_u8(&mut self, addr: u64) -> Result<u8, Exception>;
+
+    fn read_u16(&mut self, addr: u64) -> Result<u16, Exception> {
+        let b0 = self.read_u8(addr)? as u16;
+        let b1 = self.read_u8(addr + 1)? as u16;
+        Ok(b0 | (b1 << 8))
+    }
+
+    fn read_u32(&mut self, addr: u64) -> Result<u32, Exception> {
+        let lo = self.read_u16(addr)? as u32;
+        let hi = self.read_u16(addr + 2)? as u32;
+        Ok(lo | (hi << 16))
+    }
+
+    fn read_u64(&mut self, addr: u64) -> Result<u64, Exception> {
+        let lo = self.read_u32(addr)? as u64;
+        let hi = self.read_u32(addr + 4)? as u64;
+        Ok(lo | (hi << 32))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuState {
     pub fpu: FpuState,
     pub sse: SseState,
+
+    // Segmentation + descriptor-table state.
+    pub segments: segmentation::SegmentRegisters,
+
+    pub gdtr: descriptors::TableRegister,
+    pub idtr: descriptors::TableRegister,
+
+    pub ldtr: descriptors::SystemSegmentRegister,
+    pub tr: descriptors::SystemSegmentRegister,
+
+    pub cr0: u64,
+    pub cr4: u64,
+    pub efer: u64,
+    /// Long-mode active state (EFER.LMA on real hardware).
+    pub lma: bool,
+
+    pub msr_fs_base: u64,
+    pub msr_gs_base: u64,
+    pub msr_kernel_gs_base: u64,
+
+    /// Current privilege level (CPL). In protected/long mode this is derived
+    /// from CS, but we track it explicitly so conforming code segments can be
+    /// represented correctly.
+    pub cpl: u8,
+
+    /// Whether the A20 gate is enabled (real mode address wrap behaviour).
+    pub a20_enabled: bool,
 }
 
 impl Default for CpuState {
     fn default() -> Self {
-        Self {
-            fpu: FpuState::default(),
-            sse: SseState::default(),
-        }
+        Self::new()
     }
 }
 
@@ -60,6 +118,33 @@ pub enum FxStateError {
 }
 
 impl CpuState {
+    pub fn new() -> Self {
+        Self {
+            fpu: FpuState::default(),
+            sse: SseState::default(),
+
+            segments: segmentation::SegmentRegisters::new_real_mode(),
+
+            gdtr: descriptors::TableRegister::default(),
+            idtr: descriptors::TableRegister::default(),
+
+            ldtr: descriptors::SystemSegmentRegister::default(),
+            tr: descriptors::SystemSegmentRegister::default(),
+
+            cr0: 0,
+            cr4: 0,
+            efer: 0,
+            lma: false,
+
+            msr_fs_base: 0,
+            msr_gs_base: 0,
+            msr_kernel_gs_base: 0,
+
+            cpl: 0,
+            a20_enabled: true,
+        }
+    }
+
     /// Implements `FNINIT` / `FINIT`.
     pub fn fninit(&mut self) {
         self.fpu.reset();
