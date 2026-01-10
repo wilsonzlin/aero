@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
@@ -57,10 +58,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	build := httpserver.BuildInfo{
-		Commit:    buildCommit,
-		BuildTime: buildTime,
-	}
+	build := resolveBuildInfo(buildCommit, buildTime)
 
 	srv := httpserver.New(cfg, logger, build)
 
@@ -93,5 +91,29 @@ func main() {
 	if err := <-errCh; err != nil && !errors.Is(err, httpserver.ErrServerClosed) {
 		logger.Error("http server exited after shutdown", "err", err)
 		os.Exit(1)
+	}
+}
+
+func resolveBuildInfo(commit, buildTime string) httpserver.BuildInfo {
+	// Prefer ldflags-injected values (production builds) but fall back to the Go
+	// build info when available (useful for `go run` / dev builds).
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				if commit == "" {
+					commit = s.Value
+				}
+			case "vcs.time":
+				if buildTime == "" {
+					buildTime = s.Value
+				}
+			}
+		}
+	}
+
+	return httpserver.BuildInfo{
+		Commit:    commit,
+		BuildTime: buildTime,
 	}
 }
