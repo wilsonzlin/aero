@@ -101,6 +101,46 @@ returned by `CertGetCertificateContextProperty()`, but some property IDs (notabl
 `CERT_KEY_PROV_INFO_PROP_ID`) use an internal serialized form suitable for
 persistence (i.e., not raw process pointers).
 
+### `CERT_FRIENDLY_NAME_PROP_ID` (11)
+
+- Value is a UTF-16LE string (typically NUL-terminated).
+- `cbValue` is the byte length of the UTF-16LE buffer stored in the blob.
+
+### `CERT_KEY_PROV_INFO_PROP_ID` (2)
+
+The `CERT_KEY_PROV_INFO` property is documented as a `CRYPT_KEY_PROV_INFO`
+structure containing pointers, but the persisted bytes inside the registry
+`Blob` must be architecture-independent.
+
+The included harness prints a heuristic decode of the property value that
+matches an **offset-based** serialization (32-bit offsets from the start of the
+property value) of the form:
+
+```c
+// Little-endian, offsets are relative to the start of this value blob.
+// Strings are UTF-16LE and typically NUL-terminated.
+struct Win7PersistedCryptKeyProvInfo {
+    u32 offContainerName;     // -> wchar_t[]
+    u32 offProvName;          // -> wchar_t[]
+    u32 dwProvType;
+    u32 dwFlags;
+    u32 cProvParam;
+    u32 offProvParamArray;    // -> Win7PersistedCryptKeyProvParam[cProvParam] (or 0 if none)
+    u32 dwKeySpec;
+    // ...variable data (strings, params, param data)...
+};
+
+struct Win7PersistedCryptKeyProvParam {
+    u32 dwParam;
+    u32 offData;              // -> u8[cbData]
+    u32 cbData;
+    u32 dwFlags;
+};
+```
+
+If you need to generate byte-identical `CERT_KEY_PROV_INFO_PROP_ID` payloads,
+run the harness on Win7 and use the printed offsets/bytes as the reference.
+
 ## Annotated hexdumps (from the harness)
 
 The harness (`tools/win-blob-dump/win_blob_dump.c`) prints full hexdumps.

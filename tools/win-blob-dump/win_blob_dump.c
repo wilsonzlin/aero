@@ -38,6 +38,21 @@ static uint32_t read_u32le(const BYTE *p) {
            ((uint32_t)p[3] << 24u);
 }
 
+static const char *cert_prop_name(DWORD propId) {
+    switch (propId) {
+    case CERT_KEY_PROV_INFO_PROP_ID:
+        return "CERT_KEY_PROV_INFO_PROP_ID";
+    case CERT_SHA1_HASH_PROP_ID:
+        return "CERT_SHA1_HASH_PROP_ID";
+    case CERT_FRIENDLY_NAME_PROP_ID:
+        return "CERT_FRIENDLY_NAME_PROP_ID";
+    case CERT_ARCHIVED_PROP_ID:
+        return "CERT_ARCHIVED_PROP_ID";
+    default:
+        return NULL;
+    }
+}
+
 static void hexdump(const BYTE *buf, DWORD len) {
     for (DWORD off = 0; off < len; off += 16) {
         printf("%08lx: ", (unsigned long)off);
@@ -76,6 +91,135 @@ static void print_thumbprint_hex(PCCERT_CONTEXT cert, wchar_t out_hex[41]) {
         out_hex[i * 2 + 1] = hex[hash[i] & 0xF];
     }
     out_hex[40] = 0;
+}
+
+static void hexdump_limit(const BYTE *buf, DWORD len, DWORD max_len) {
+    DWORD n = len;
+    if (n > max_len) {
+        n = max_len;
+    }
+    hexdump(buf, n);
+    if (n != len) {
+        printf("(truncated; total %lu bytes)\n", (unsigned long)len);
+    }
+}
+
+static int try_print_utf16le_string(const BYTE *buf, DWORD len) {
+    if ((len % 2) != 0) {
+        return 0;
+    }
+    const wchar_t *ws = (const wchar_t *)buf;
+    DWORD cch = len / 2;
+    DWORD max = cch;
+    // Prefer to stop on NUL if present.
+    for (DWORD i = 0; i < cch; i++) {
+        if (ws[i] == 0) {
+            max = i;
+            break;
+        }
+    }
+
+    int cbUtf8 = WideCharToMultiByte(CP_UTF8, 0, ws, (int)max, NULL, 0, NULL, NULL);
+    if (cbUtf8 <= 0) {
+        return 0;
+    }
+    char *utf8 = (char *)malloc((size_t)cbUtf8 + 1);
+    if (!utf8) {
+        die(L"malloc failed");
+    }
+    if (WideCharToMultiByte(CP_UTF8, 0, ws, (int)max, utf8, cbUtf8, NULL, NULL) != cbUtf8) {
+        free(utf8);
+        return 0;
+    }
+    utf8[cbUtf8] = 0;
+    printf("%s", utf8);
+    free(utf8);
+    return 1;
+}
+
+static void dump_key_prov_info_guess(const BYTE *val, DWORD cbVal) {
+    // The CERT_KEY_PROV_INFO property returned by CertGetCertificateContextProperty
+    // is documented as a CRYPT_KEY_PROV_INFO with pointers, but the persisted form
+    // inside serialized store elements must be architecture-independent.
+    //
+    // On Windows 7 this appears to be a 32-bit "offset-based" serialization:
+    //
+    //   u32 offContainerName;
+    //   u32 offProvName;
+    //   u32 dwProvType;
+    //   u32 dwFlags;
+    //   u32 cProvParam;
+    //   u32 offProvParamArray; // array of serialized CRYPT_KEY_PROV_PARAM
+    //   u32 dwKeySpec;
+    //
+    // followed by UTF-16LE strings and optional provider params.
+    //
+    // This function decodes that layout heuristically. If the heuristics don't
+    // match the blob, it prints nothing.
+    if (cbVal < 28) {
+        return;
+    }
+    uint32_t offContainer = read_u32le(val + 0);
+    uint32_t offProv = read_u32le(val + 4);
+    uint32_t dwProvType = read_u32le(val + 8);
+    uint32_t dwFlags = read_u32le(val + 12);
+    uint32_t cProvParam = read_u32le(val + 16);
+    uint32_t offParams = read_u32le(val + 20);
+    uint32_t dwKeySpec = read_u32le(val + 24);
+
+    if (offContainer >= cbVal || offProv >= cbVal) {
+        return;
+    }
+    if ((offContainer % 2) != 0 || (offProv % 2) != 0) {
+        return;
+    }
+
+    printf("    KeyProvInfo (heuristic decode):\n");
+    printf("      dwProvType  = %lu (0x%lx)\n", (unsigned long)dwProvType,
+           (unsigned long)dwProvType);
+    printf("      dwFlags     = %lu (0x%lx)\n", (unsigned long)dwFlags, (unsigned long)dwFlags);
+    printf("      dwKeySpec   = %lu (0x%lx)\n", (unsigned long)dwKeySpec,
+           (unsigned long)dwKeySpec);
+    printf("      cProvParam  = %lu\n", (unsigned long)cProvParam);
+    printf("      offContainerName = 0x%lx\n", (unsigned long)offContainer);
+    printf("      offProvName      = 0x%lx\n", (unsigned long)offProv);
+    printf("      offProvParamArr  = 0x%lx\n", (unsigned long)offParams);
+
+    printf("      ContainerName = ");
+    if (!try_print_utf16le_string(val + offContainer, cbVal - offContainer)) {
+        printf("(unprintable)\n");
+    } else {
+        printf("\n");
+    }
+    printf("      ProviderName  = ");
+    if (!try_print_utf16le_string(val + offProv, cbVal - offProv)) {
+        printf("(unprintable)\n");
+    } else {
+        printf("\n");
+    }
+
+    if (cProvParam != 0 && offParams != 0 && offParams < cbVal) {
+        // Guess that params are an array of 16-byte entries:
+        //   dwParam, offData, cbData, dwFlags
+        size_t off = offParams;
+        for (uint32_t i = 0; i < cProvParam; i++) {
+            if (off + 16 > cbVal) {
+                break;
+            }
+            uint32_t dwParam = read_u32le(val + off + 0);
+            uint32_t offData = read_u32le(val + off + 4);
+            uint32_t cbData = read_u32le(val + off + 8);
+            uint32_t dwPFlags = read_u32le(val + off + 12);
+            printf("      ProvParam[%lu]: dwParam=%lu offData=0x%lx cbData=%lu dwFlags=0x%lx\n",
+                   (unsigned long)i, (unsigned long)dwParam, (unsigned long)offData,
+                   (unsigned long)cbData, (unsigned long)dwPFlags);
+            if (offData < cbVal && offData + cbData <= cbVal) {
+                printf("        data (first 64 bytes):\n");
+                hexdump_limit(val + offData, cbData, 64);
+            }
+            off += 16;
+        }
+    }
 }
 
 static void dump_serialized_cert_blob(const BYTE *buf, DWORD len) {
@@ -161,8 +305,13 @@ static void dump_serialized_cert_blob(const BYTE *buf, DWORD len) {
         }
         DWORD propId = (DWORD)read_u32le(buf + off);
         DWORD cbProp = (DWORD)read_u32le(buf + off + 4);
-        printf("  [0x%04zx] Property[%lu].dwPropId  = %lu (0x%lx)\n", off,
-               (unsigned long)i, (unsigned long)propId, (unsigned long)propId);
+        const char *name = cert_prop_name(propId);
+        printf("  [0x%04zx] Property[%lu].dwPropId  = %lu (0x%lx)", off, (unsigned long)i,
+               (unsigned long)propId, (unsigned long)propId);
+        if (name) {
+            printf(" [%s]", name);
+        }
+        printf("\n");
         printf("  [0x%04zx] Property[%lu].cbValue   = %lu (0x%lx)\n", off + 4,
                (unsigned long)i, (unsigned long)cbProp, (unsigned long)cbProp);
         off += 8;
@@ -175,17 +324,18 @@ static void dump_serialized_cert_blob(const BYTE *buf, DWORD len) {
             // FriendlyName is UTF-16LE, usually NUL-terminated.
             printf("  [0x%04zx] Property[%lu].value (FriendlyName UTF-16LE): ", off,
                    (unsigned long)i);
-            DWORD cch = cbProp / 2;
-            const wchar_t *ws = (const wchar_t *)(buf + off);
-            // Print up to first NUL or end.
-            for (DWORD j = 0; j < cch; j++) {
-                wchar_t ch = ws[j];
-                if (!ch)
-                    break;
-                putwchar(ch);
+            if (!try_print_utf16le_string(buf + off, cbProp)) {
+                printf("(unprintable)");
             }
-            putwchar(L'\n');
+            printf("\n");
         }
+        if (propId == CERT_KEY_PROV_INFO_PROP_ID) {
+            dump_key_prov_info_guess(buf + off, cbProp);
+        }
+
+        printf("  [0x%04zx] Property[%lu].value bytes (first 128):\n", off,
+               (unsigned long)i);
+        hexdump_limit(buf + off, cbProp, 128);
 
         off += cbProp;
         size_t off2 = align4(off);
@@ -242,12 +392,28 @@ static void try_set_friendly_name(PCCERT_CONTEXT cert) {
     }
 }
 
+static const wchar_t *g_key_container = L"AERO_BLOB_DUMP_CONTAINER";
+static const wchar_t *g_key_provider =
+    MS_ENHANCED_PROV_W; // "Microsoft Enhanced Cryptographic Provider v1.0"
+static DWORD g_key_provider_type = PROV_RSA_FULL;
+static int g_created_keyset = 0;
+
+static void cleanup_temp_key_container(void) {
+    if (!g_created_keyset) {
+        return;
+    }
+    HCRYPTPROV hDel = 0;
+    // For CRYPT_DELETEKEYSET, the handle is not used.
+    CryptAcquireContextW(&hDel, g_key_container, g_key_provider, g_key_provider_type,
+                         CRYPT_DELETEKEYSET);
+}
+
 static void try_set_key_prov_info(PCCERT_CONTEXT cert) {
     // Create a throwaway key container in the legacy CryptoAPI provider.
     // This should exist on Windows 7.
-    const wchar_t *container = L"AERO_BLOB_DUMP_CONTAINER";
-    const wchar_t *provName = MS_ENHANCED_PROV_W; // "Microsoft Enhanced Cryptographic Provider v1.0"
-    DWORD provType = PROV_RSA_FULL;
+    const wchar_t *container = g_key_container;
+    const wchar_t *provName = g_key_provider;
+    DWORD provType = g_key_provider_type;
 
     HCRYPTPROV hProv = 0;
     if (!CryptAcquireContextW(&hProv, container, provName, provType,
@@ -264,6 +430,8 @@ static void try_set_key_prov_info(PCCERT_CONTEXT cert) {
                      (unsigned long)err);
             return;
         }
+    } else {
+        g_created_keyset = 1;
     }
 
     HCRYPTKEY hKey = 0;
@@ -291,6 +459,170 @@ static void try_set_key_prov_info(PCCERT_CONTEXT cert) {
     }
 
     CryptReleaseContext(hProv, 0);
+}
+
+static void dump_context_properties(PCCERT_CONTEXT cert) {
+    printf("Certificate context properties (CertEnumCertificateContextProperties):\n");
+    DWORD propId = 0;
+    for (;;) {
+        propId = CertEnumCertificateContextProperties(cert, propId);
+        if (propId == 0) {
+            break;
+        }
+        const char *name = cert_prop_name(propId);
+        if (name) {
+            printf("  %lu (0x%lx) [%s]\n", (unsigned long)propId, (unsigned long)propId, name);
+        } else {
+            printf("  %lu (0x%lx)\n", (unsigned long)propId, (unsigned long)propId);
+        }
+    }
+}
+
+static void dump_context_property_bytes(PCCERT_CONTEXT cert, DWORD propId) {
+    DWORD cb = 0;
+    if (!CertGetCertificateContextProperty(cert, propId, NULL, &cb)) {
+        return;
+    }
+    BYTE *buf = (BYTE *)malloc(cb);
+    if (!buf) {
+        die(L"malloc failed");
+    }
+    if (!CertGetCertificateContextProperty(cert, propId, buf, &cb)) {
+        free(buf);
+        return;
+    }
+    const char *name = cert_prop_name(propId);
+    if (name) {
+        printf("Property %lu [%s] from CertGetCertificateContextProperty (%lu bytes):\n",
+               (unsigned long)propId, name, (unsigned long)cb);
+    } else {
+        printf("Property %lu from CertGetCertificateContextProperty (%lu bytes):\n",
+               (unsigned long)propId, (unsigned long)cb);
+    }
+    hexdump_limit(buf, cb, 256);
+    free(buf);
+}
+
+static int parse_serialized_cert_for_props(const BYTE *buf, DWORD len, size_t *props_off_out,
+                                           DWORD *props_count_out) {
+    if (len < 8) {
+        return 0;
+    }
+    uint32_t v0 = read_u32le(buf + 0);
+    uint32_t v1 = read_u32le(buf + 4);
+    uint32_t cbCert = 0;
+    size_t cert_off = 0;
+    if ((v0 == CERT_STORE_CERTIFICATE_CONTEXT || v0 == CERT_STORE_CRL_CONTEXT ||
+         v0 == CERT_STORE_CTL_CONTEXT) &&
+        (v1 == X509_ASN_ENCODING || v1 == (X509_ASN_ENCODING | PKCS_7_ASN_ENCODING) ||
+         v1 == PKCS_7_ASN_ENCODING)) {
+        if (len < 12) {
+            return 0;
+        }
+        cbCert = read_u32le(buf + 8);
+        cert_off = 12;
+    } else {
+        cbCert = v1;
+        cert_off = 8;
+    }
+    size_t off = cert_off + (size_t)cbCert;
+    if (off > len) {
+        return 0;
+    }
+    off = align4(off);
+    if (off + 4 > len) {
+        return 0;
+    }
+    *props_off_out = off;
+    *props_count_out = (DWORD)read_u32le(buf + off);
+    return 1;
+}
+
+static int find_serialized_property(const BYTE *buf, DWORD len, DWORD propIdWanted,
+                                    const BYTE **out_val, DWORD *out_len) {
+    size_t props_off = 0;
+    DWORD cProps = 0;
+    if (!parse_serialized_cert_for_props(buf, len, &props_off, &cProps)) {
+        return 0;
+    }
+    size_t off = props_off + 4;
+    for (DWORD i = 0; i < cProps; i++) {
+        if (off + 8 > len) {
+            return 0;
+        }
+        DWORD propId = (DWORD)read_u32le(buf + off);
+        DWORD cbProp = (DWORD)read_u32le(buf + off + 4);
+        off += 8;
+        if (off + cbProp > len) {
+            return 0;
+        }
+        if (propId == propIdWanted) {
+            *out_val = buf + off;
+            *out_len = cbProp;
+            return 1;
+        }
+        off += cbProp;
+        off = align4(off);
+    }
+    return 0;
+}
+
+static BYTE *get_context_property_alloc(PCCERT_CONTEXT cert, DWORD propId, DWORD *out_len) {
+    DWORD cb = 0;
+    if (!CertGetCertificateContextProperty(cert, propId, NULL, &cb)) {
+        return NULL;
+    }
+    BYTE *buf = (BYTE *)malloc(cb);
+    if (!buf) {
+        die(L"malloc failed");
+    }
+    if (!CertGetCertificateContextProperty(cert, propId, buf, &cb)) {
+        free(buf);
+        return NULL;
+    }
+    *out_len = cb;
+    return buf;
+}
+
+static void compare_serialized_property_with_context(PCCERT_CONTEXT cert, const BYTE *ser,
+                                                     DWORD cbSer, DWORD propId) {
+    const BYTE *serVal = NULL;
+    DWORD cbSerVal = 0;
+    if (!find_serialized_property(ser, cbSer, propId, &serVal, &cbSerVal)) {
+        const char *name = cert_prop_name(propId);
+        if (name) {
+            printf("Property %lu [%s]: not present in serialized blob\n", (unsigned long)propId,
+                   name);
+        } else {
+            printf("Property %lu: not present in serialized blob\n", (unsigned long)propId);
+        }
+        return;
+    }
+
+    DWORD cbCtx = 0;
+    BYTE *ctxVal = get_context_property_alloc(cert, propId, &cbCtx);
+
+    const char *name = cert_prop_name(propId);
+    if (name) {
+        printf("Property %lu [%s]: serialized cb=%lu, context cb=%lu\n", (unsigned long)propId,
+               name, (unsigned long)cbSerVal, (unsigned long)cbCtx);
+    } else {
+        printf("Property %lu: serialized cb=%lu, context cb=%lu\n", (unsigned long)propId,
+               (unsigned long)cbSerVal, (unsigned long)cbCtx);
+    }
+
+    if (ctxVal && cbCtx == cbSerVal && memcmp(ctxVal, serVal, cbSerVal) == 0) {
+        printf("  -> bytes MATCH CertGetCertificateContextProperty output\n");
+    } else {
+        printf("  -> bytes DIFFER from CertGetCertificateContextProperty output\n");
+    }
+    printf("  Serialized bytes (first 128):\n");
+    hexdump_limit(serVal, cbSerVal, 128);
+    if (ctxVal) {
+        printf("  Context bytes (first 128):\n");
+        hexdump_limit(ctxVal, cbCtx, 128);
+    }
+    free(ctxVal);
 }
 
 static BYTE *serialize_cert(PCCERT_CONTEXT cert, DWORD *out_len) {
@@ -422,11 +754,13 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     printf("=== CertSerializeCertificateStoreElement (no extra properties) ===\n");
+    dump_context_properties(certNoProps);
     DWORD cbSer0 = 0;
     BYTE *ser0 = serialize_cert(certNoProps, &cbSer0);
     printf("Serialized size: %lu byte(s)\n", (unsigned long)cbSer0);
     dump_serialized_cert_blob(ser0, cbSer0);
     hexdump(ser0, cbSer0);
+    compare_serialized_property_with_context(certNoProps, ser0, cbSer0, CERT_SHA1_HASH_PROP_ID);
     roundtrip_via_add_serialized(ser0, cbSer0);
     free(ser0);
     CertFreeCertificateContext(certNoProps);
@@ -443,11 +777,16 @@ int wmain(int argc, wchar_t **argv) {
     try_set_key_prov_info(certProps);
 
     printf("\n=== CertSerializeCertificateStoreElement (with FriendlyName + KeyProvInfo) ===\n");
+    dump_context_properties(certProps);
+    dump_context_property_bytes(certProps, CERT_FRIENDLY_NAME_PROP_ID);
+    dump_context_property_bytes(certProps, CERT_KEY_PROV_INFO_PROP_ID);
     DWORD cbSer1 = 0;
     BYTE *ser1 = serialize_cert(certProps, &cbSer1);
     printf("Serialized size: %lu byte(s)\n", (unsigned long)cbSer1);
     dump_serialized_cert_blob(ser1, cbSer1);
     hexdump(ser1, cbSer1);
+    compare_serialized_property_with_context(certProps, ser1, cbSer1, CERT_FRIENDLY_NAME_PROP_ID);
+    compare_serialized_property_with_context(certProps, ser1, cbSer1, CERT_KEY_PROV_INFO_PROP_ID);
     roundtrip_via_add_serialized(ser1, cbSer1);
 
     // Cross-check against registry provider by adding to a real system store.
@@ -470,8 +809,13 @@ int wmain(int argc, wchar_t **argv) {
             BYTE *serStore = serialize_cert(added, &cbSerStore);
             printf("\n=== CertSerializeCertificateStoreElement (context returned from system store) ===\n");
             printf("Serialized size: %lu byte(s)\n", (unsigned long)cbSerStore);
+            dump_context_properties(added);
             dump_serialized_cert_blob(serStore, cbSerStore);
             hexdump(serStore, cbSerStore);
+            compare_serialized_property_with_context(added, serStore, cbSerStore,
+                                                     CERT_FRIENDLY_NAME_PROP_ID);
+            compare_serialized_property_with_context(added, serStore, cbSerStore,
+                                                     CERT_KEY_PROV_INFO_PROP_ID);
 
             compare_registry_blob(storeName, added, serStore, cbSerStore);
             free(serStore);
@@ -485,5 +829,7 @@ int wmain(int argc, wchar_t **argv) {
     free(ser1);
     CertFreeCertificateContext(certProps);
     free(der);
+
+    cleanup_temp_key_container();
     return 0;
 }
