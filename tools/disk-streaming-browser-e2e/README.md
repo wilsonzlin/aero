@@ -32,6 +32,11 @@ npm test
 Prerequisites:
 
 - A Rust toolchain (`cargo`) capable of building `server/disk-gateway`.
+- On minimal Linux environments, Playwright may require extra system packages. If `npm test` fails with
+  missing shared libraries, install them via:
+  ```bash
+  npx playwright install --with-deps chromium
+  ```
 
 ## Fixtures
 
