@@ -627,15 +627,30 @@ impl CdromDrive {
 
 ### Image Download and Streaming
 
+Remote disk images can be streamed on-demand using HTTP `Range` requests while opportunistically caching fetched data into a local sparse file (OPFS).
+To maximize cache hit-rate (especially when a CDN sits in front of the disk server), the client should:
+
+- **Align reads to a fixed `CHUNK_SIZE`** (e.g., 1 MiB).
+- **Reuse the same chunk boundaries** for all requests (always fetch whole chunks like `bytes=N..N+CHUNK_SIZE-1`), rather than issuing variable-sized ranges.
+
 Operational details for the backend **disk image streaming service** (HTTP `Range`, CORS preflight for `Range`, and cross-origin isolation considerations) are documented in [backend/disk-image-streaming-service.md](./backend/disk-image-streaming-service.md).
 
 The example below uses HTTP `Range` requests for random-access reads. For a CDN-friendly alternative that avoids `Range` (and therefore avoids CORS preflight on cross-origin fetches), see [18 - Chunked Disk Image Format](./18-chunked-disk-image-format.md).
 For how disk/ISO images are uploaded/imported into a hosted service and kept private over time (including lease scopes and writeback options), see [Disk Image Lifecycle and Access Control](./17-disk-image-lifecycle-and-access-control.md).
 
 ```rust
-pub struct StreamingDisk {
-    // Remote image
+pub struct DiskAccessLease {
+    // Prefer a same-origin URL such as `/disk/<lease_id>` to avoid CORS preflight.
     remote_url: String,
+
+    // Opaque token (or JWT) minted by the backend; short-lived.
+    bearer_token: String,
+    expires_at: SystemTime,
+}
+
+pub struct StreamingDisk {
+    // Remote image access (may be unauthenticated for public images)
+    lease: DiskAccessLease,
     total_size: u64,
     
     // Local cache
@@ -660,7 +675,7 @@ impl StreamingDisk {
         // Need to fetch from remote
         let chunk_start = (byte_offset / CHUNK_SIZE) * CHUNK_SIZE;
         let chunk_end = ((byte_end + CHUNK_SIZE - 1) / CHUNK_SIZE) * CHUNK_SIZE;
-        
+         
         // Fetch chunk
         let data = self.fetch_range(chunk_start, chunk_end).await?;
         
@@ -675,14 +690,40 @@ impl StreamingDisk {
         Ok(())
     }
     
-    async fn fetch_range(&self, start: u64, end: u64) -> Result<Vec<u8>> {
-        let response = fetch(&self.remote_url, FetchOptions {
+    async fn fetch_range(&mut self, start: u64, end: u64) -> Result<Vec<u8>> {
+        // Proactively refresh shortly before expiry so long-running sessions don't stall on auth.
+        if SystemTime::now() + LEASE_REFRESH_SKEW >= self.lease.expires_at {
+            self.refresh_lease().await?;
+        }
+
+        // NOTE: Using `Range` and `Authorization` headers will trigger a CORS preflight when
+        // fetching cross-origin (same-origin `/disk/...` avoids CORS entirely).
+        let mut response = fetch(&self.lease.remote_url, FetchOptions {
             headers: vec![
                 ("Range".to_string(), format!("bytes={}-{}", start, end - 1)),
+                ("Authorization".to_string(), format!("Bearer {}", self.lease.bearer_token)),
             ],
         }).await?;
         
+        // If the token expires (or is revoked) mid-run, refresh the lease and retry once.
+        if response.status() == 401 || response.status() == 403 {
+            self.refresh_lease().await?;
+            response = fetch(&self.lease.remote_url, FetchOptions {
+                headers: vec![
+                    ("Range".to_string(), format!("bytes={}-{}", start, end - 1)),
+                    ("Authorization".to_string(), format!("Bearer {}", self.lease.bearer_token)),
+                ],
+            }).await?;
+        }
+
         Ok(response.bytes().await?)
+    }
+
+    async fn refresh_lease(&mut self) -> Result<()> {
+        // Fetch a new short-lived disk access lease (remote_url + token) from the backend.
+        // The previous token/URL should be treated as secret and discarded.
+        self.lease = request_new_lease_from_backend().await?;
+        Ok(())
     }
 }
 ```
@@ -719,8 +760,9 @@ Critical implementation constraints:
   - Ensure `Content-Encoding` is absent or `identity`
 - Cross-origin access (CORS):
   - `Range` is not a CORS-safelisted request header, so browsers will send an `OPTIONS` preflight.
-  - The server must allow the request header (`Access-Control-Allow-Headers: Range`) and expose the response header (`Access-Control-Expose-Headers: Content-Range`).
+  - The server must allow the request headers used by the client (at minimum `Range`, and `Authorization` if using bearer tokens) and expose the response header (`Access-Control-Expose-Headers: Content-Range`).
 - If Aero is deployed with COOP/COEP to enable `SharedArrayBuffer` (`crossOriginIsolated`), disk image resources must be CORS-enabled (`Access-Control-Allow-Origin`) or served with a compatible `Cross-Origin-Resource-Policy` header; otherwise the browser will block the fetch.
+  - See the [disk image streaming service runbook](./backend/disk-image-streaming-service.md) for the required CORS/COEP/CORP headers when using authenticated and/or cross-origin streaming.
 
 Concrete examples:
 
@@ -740,6 +782,44 @@ curl -i -H 'Range: bytes=-512' https://example.com/windows7.img
 # HTTP/1.1 206 Partial Content
 # Content-Range: bytes <total-512>-<total-1>/<total>
 ```
+### Authenticated / Private Remote Images
+
+The `StreamingDisk` design supports both **public** and **private** remote disk images.
+
+- **Public images**: `remote_url` can point directly at a CDN/object store URL and `bearer_token` can be omitted or left empty (implementation-defined).
+- **Private images**: access is controlled per-user/per-session and requires a short-lived credential (bearer token *or* a signed URL).
+
+For private images, treat the following as **secrets**:
+
+- `remote_url` (if it contains a signed query parameter)
+- `bearer_token` / session cookies / any auth material
+
+Do **not** persist these secrets to OPFS/IndexedDB “for convenience”. Persist stable identifiers instead (e.g., `image_id`, `snapshot_id`) and reacquire credentials each time a VM session starts.
+
+#### Disk access lease acquisition
+
+Before the emulator sets `StreamingDisk.lease.remote_url`, it should obtain a **disk access lease** from a trusted backend (after user authentication/authorization). The lease is a short-lived blob containing the information needed to stream ranges:
+
+- where to fetch (`remote_url`, preferably same-origin like `/disk/<lease_id>`)
+- how to authenticate (e.g., `bearer_token`, or a signed URL embedded into `remote_url`)
+- when it expires (`expires_at`)
+
+This keeps long-lived credentials out of the browser and enables fine-grained revocation.
+
+#### Token refresh strategy
+
+Disk streaming is continuous during boot and can run for hours, so the client must handle credential expiry:
+
+- **Proactive refresh**: refresh the lease shortly before `expires_at` (e.g., 30-60s skew) to avoid stalling on the first expired request.
+- **Reactive refresh**: if any `fetch_range` request returns `401`/`403`, treat the lease as expired/revoked, request a new lease, then retry the same range once. If it still fails, surface a fatal disk I/O error to the VM session.
+
+If you prefer the **signed URL** style instead of an `Authorization` header, the refresh flow is the same, but it updates `remote_url` rather than `bearer_token`.
+
+#### CORS/COEP constraints for Range streaming
+
+- `Range` header → **CORS preflight on cross-origin** requests.
+- Prefer a **same-origin** disk streaming endpoint (e.g., `/disk/...`) to avoid preflight and simplify COEP/cross-origin isolation.
+- If cross-origin is unavoidable, the disk server must return the CORS/COEP/CORP headers defined in the [disk image streaming service runbook](./backend/disk-image-streaming-service.md).
 
 ---
 
@@ -759,4 +839,5 @@ curl -i -H 'Range: bytes=-512' https://example.com/windows7.img
 
 - See [Audio Subsystem](./06-audio-subsystem.md) for sound emulation
 - See [Browser APIs](./11-browser-apis.md) for OPFS details
+- See the [disk image streaming service runbook](./backend/disk-image-streaming-service.md) for authenticated Range streaming requirements
 - See [Task Breakdown](./15-agent-task-breakdown.md) for storage tasks
