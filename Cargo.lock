@@ -83,10 +83,12 @@ dependencies = [
 name = "aero-d3d11"
 version = "0.1.0"
 dependencies = [
+ "aero-dxbc",
  "aero-gpu",
  "anyhow",
  "bytemuck",
  "futures-intrusive",
+ "naga 24.0.0",
  "pollster",
  "wgpu",
 ]

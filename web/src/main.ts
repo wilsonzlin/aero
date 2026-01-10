@@ -9,7 +9,6 @@ import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatur
 import { importFileToOpfs } from "./platform/opfs";
 import { RemoteStreamingDisk } from "./platform/remote_disk";
 import { ensurePersistentStorage, getPersistentStorageInfo, getStorageEstimate } from "./platform/storage_quota";
-import { requestWebGpuDevice } from "./platform/webgpu";
 import { initAeroStatusApi } from "./api/status";
 import { KeyboardCapture } from "./input/keyboard";
 import { MouseCapture } from "./input/mouse";
@@ -17,6 +16,7 @@ import { installPerfHud } from "./perf/hud_entry";
 import { HEADER_INDEX_FRAME_COUNTER, HEADER_INDEX_HEIGHT, HEADER_INDEX_WIDTH, wrapSharedFramebuffer } from "./display/framebuffer_protocol";
 import { VgaPresenter } from "./display/vga_presenter";
 import { installAeroGlobal } from "./runtime/aero_global";
+import { createWebGpuCanvasContext, requestWebGpuDevice } from "./platform/webgpu";
 import { WorkerCoordinator } from "./runtime/coordinator";
 import { initWasm } from "./runtime/wasm_loader";
 import { DEFAULT_GUEST_RAM_MIB, GUEST_RAM_PRESETS_MIB, type GuestRamMiB, type WorkerRole } from "./runtime/shared_layout";
@@ -146,6 +146,7 @@ function render(): void {
     renderGraphicsPanel(report),
     renderWebGpuPanel(),
     renderGpuWorkerPanel(),
+    renderSm5TrianglePanel(),
     renderOpfsPanel(),
     renderRemoteDiskPanel(),
     renderAudioPanel(),
@@ -344,6 +345,138 @@ function renderGpuWorkerPanel(): HTMLElement {
     { class: "panel" },
     el("h2", { text: "GPU Worker" }),
     el("div", { class: "row" }, button, canvas),
+    output,
+  );
+}
+
+function renderSm5TrianglePanel(): HTMLElement {
+  const output = el("pre", { text: "" });
+  const canvas = el("canvas") as HTMLCanvasElement;
+
+  const cssWidth = 320;
+  const cssHeight = 320;
+  const devicePixelRatio = window.devicePixelRatio || 1;
+
+  canvas.width = Math.max(1, Math.round(cssWidth * devicePixelRatio));
+  canvas.height = Math.max(1, Math.round(cssHeight * devicePixelRatio));
+  canvas.style.width = `${cssWidth}px`;
+  canvas.style.height = `${cssHeight}px`;
+  canvas.style.border = "1px solid #2a2a2a";
+
+  // WGSL below is intentionally kept in sync with the current output of the
+  // `crates/aero-d3d11` bootstrap DXBC→WGSL translator for the synthetic SM5
+  // passthrough shaders (mov o*, v*; ret).
+  const vsWgsl = `
+struct VsIn {
+  @location(0) v0: vec4<f32>,
+  @location(1) v1: vec4<f32>,
+};
+
+struct VsOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) o1: vec4<f32>,
+};
+
+@vertex
+fn main(input: VsIn) -> VsOut {
+  var out: VsOut;
+  out.pos = input.v0;
+  out.o1 = input.v1;
+  return out;
+}
+`;
+
+  const psWgsl = `
+struct PsIn {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) v1: vec4<f32>,
+};
+
+@fragment
+fn main(input: PsIn) -> @location(0) vec4<f32> {
+  return input.v1;
+}
+`;
+
+  const button = el("button", {
+    text: "Render SM5 passthrough triangle",
+    onclick: async () => {
+      output.textContent = "";
+      try {
+        const { device, preferredFormat } = await requestWebGpuDevice({ powerPreference: "high-performance" });
+        const context = createWebGpuCanvasContext(canvas, device, preferredFormat);
+
+        const vertexModule = device.createShaderModule({ code: vsWgsl });
+        const fragmentModule = device.createShaderModule({ code: psWgsl });
+
+        const pipeline = device.createRenderPipeline({
+          layout: "auto",
+          vertex: {
+            module: vertexModule,
+            entryPoint: "main",
+            buffers: [
+              {
+                arrayStride: 32,
+                attributes: [
+                  { shaderLocation: 0, offset: 0, format: "float32x4" },
+                  { shaderLocation: 1, offset: 16, format: "float32x4" },
+                ],
+              },
+            ],
+          },
+          fragment: {
+            module: fragmentModule,
+            entryPoint: "main",
+            targets: [{ format: preferredFormat }],
+          },
+          primitive: {
+            topology: "triangle-list",
+          },
+        });
+
+        const vertices = new Float32Array([
+          // position (x,y,z,w), color (r,g,b,a)
+          0.0, 0.7, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0,
+          -0.7, -0.7, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0,
+          0.7, -0.7, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0,
+        ]);
+
+        const vertexBuffer = device.createBuffer({
+          size: vertices.byteLength,
+          usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        });
+        device.queue.writeBuffer(vertexBuffer, 0, vertices);
+
+        const encoder = device.createCommandEncoder();
+        const pass = encoder.beginRenderPass({
+          colorAttachments: [
+            {
+              view: context.getCurrentTexture().createView(),
+              clearValue: { r: 0.06, g: 0.06, b: 0.08, a: 1.0 },
+              loadOp: "clear",
+              storeOp: "store",
+            },
+          ],
+        });
+        pass.setPipeline(pipeline);
+        pass.setVertexBuffer(0, vertexBuffer);
+        pass.draw(3, 1, 0, 0);
+        pass.end();
+
+        device.queue.submit([encoder.finish()]);
+        output.textContent = "Rendered.";
+      } catch (err) {
+        output.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "SM5 passthrough triangle (WebGPU)" }),
+    el("div", { class: "row" }, button),
+    canvas,
     output,
   );
 }
