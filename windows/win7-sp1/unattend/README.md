@@ -63,6 +63,8 @@ Notes:
 
 > Verify on real Win7 setup: the availability of `%configsetroot%` after the first reboot depends on how Setup handles configuration sets in your scenario. For robustness, keep the config ISO attached until the desktop appears.
 >
+> See `scripts/README.md` for the payload layout expected by the reference scripts (including the optional `AERO.TAG` marker file strategy).
+>
 > The templates also include an optional `specialize` copy step that stages `Scripts/` and `Cert*/`, plus **only the matching architecture** driver folders (`Drivers\WinPE\<arch>` + `Drivers\Offline\<arch>`) into `C:\Aero\` so later phases do not depend on removable/config media drive letters.
 
 ---

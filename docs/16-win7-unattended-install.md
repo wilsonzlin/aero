@@ -139,7 +139,12 @@ This repo includes Win7 SP1-compatible post-install automation scripts that:
 - Install all `*.inf` packages under a `Drivers\` folder via `pnputil`
 - Avoid reboot loops via marker files and self-deleting scheduled tasks
 
-See: [`windows/win7-sp1/unattend/scripts/`](../windows/win7-sp1/unattend/scripts/)
+See:
+
+- [`windows/win7-sp1/unattend/scripts/`](../windows/win7-sp1/unattend/scripts/)
+- [`windows/win7-sp1/unattend/scripts/README.md`](../windows/win7-sp1/unattend/scripts/README.md)
+- [`windows/win7-sp1/unattend/scripts/SetupComplete.cmd`](../windows/win7-sp1/unattend/scripts/SetupComplete.cmd)
+- [`windows/win7-sp1/unattend/scripts/InstallDriversOnce.cmd`](../windows/win7-sp1/unattend/scripts/InstallDriversOnce.cmd)
 
 ### Example: `SetupComplete.cmd` skeleton
 
