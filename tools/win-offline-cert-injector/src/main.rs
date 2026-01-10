@@ -331,7 +331,7 @@ fn verify_all(
             );
             let exists = match winapi::RegKey::open(hive_root.raw(), &subkey, false) {
                 Ok(_) => true,
-                Err(err) if err.code == 2 => false,
+                Err(err) if err.code == 2 || err.code == 3 => false,
                 Err(err) => return Err(ToolError::Win(err)),
             };
             if !exists {

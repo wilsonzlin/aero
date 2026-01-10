@@ -49,6 +49,7 @@ pub const HKEY_CURRENT_USER: HKEY = 0x80000001u32 as i32 as isize;
 
 const ERROR_SUCCESS: DWORD = 0;
 const ERROR_FILE_NOT_FOUND: DWORD = 2;
+const ERROR_PATH_NOT_FOUND: DWORD = 3;
 const ERROR_NOT_ALL_ASSIGNED: DWORD = 1300;
 
 const TOKEN_ADJUST_PRIVILEGES: DWORD = 0x0020;
@@ -273,7 +274,7 @@ fn reg_key_exists(parent: HKEY, subkey: &str) -> Result<bool, WinError> {
         }
         return Ok(true);
     }
-    if status == ERROR_FILE_NOT_FOUND {
+    if status == ERROR_FILE_NOT_FOUND || status == ERROR_PATH_NOT_FOUND {
         return Ok(false);
     }
     Err(WinError {
@@ -422,7 +423,7 @@ pub fn reg_save_key(hkey: HKEY, file_path: &Path) -> Result<(), WinError> {
 pub fn reg_delete_tree(parent: HKEY, subkey: &str) -> Result<(), WinError> {
     let subkey_w = wide_null_from_str(subkey);
     let status = unsafe { RegDeleteTreeW(parent, subkey_w.as_ptr()) };
-    if status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND {
+    if status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND || status == ERROR_PATH_NOT_FOUND {
         return Ok(());
     }
     Err(WinError {
