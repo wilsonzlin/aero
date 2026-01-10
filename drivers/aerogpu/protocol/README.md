@@ -12,6 +12,7 @@ The contract is expressed as C/C++ headers suitable for **WDK 7.1** builds and f
 - `aerogpu_pci.h` – PCI IDs, BAR layout, MMIO register map, shared enums.
 - `aerogpu_ring.h` – ring header layout, submission descriptor, allocation table, fence page.
 - `aerogpu_cmd.h` – command stream packet formats and opcodes (“AeroGPU IR”).
+- `aerogpu_dbgctl_escape.h` – driver-private `DxgkDdiEscape` packets used by bring-up tooling (`drivers/aerogpu/tools/win7_dbgctl`).
 - `vblank.md` – vblank IRQ + timing registers required for Win7 DWM/D3D pacing.
 
 ## Versioning model
