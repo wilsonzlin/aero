@@ -1,4 +1,4 @@
-import { InputEventQueue, type InputBatchTarget } from "./event_queue";
+import { InputEventQueue, type InputBatchRecycleMessage, type InputBatchTarget } from "./event_queue";
 import { PointerLock } from "./pointer_lock";
 import {
   ps2Set2ScancodeForCode,
@@ -42,10 +42,18 @@ export interface InputCaptureOptions {
    * under one frame (16ms) in typical cases.
    */
   logCaptureLatency?: boolean;
+  /**
+   * If enabled, request that the I/O worker transfers input batch buffers back
+   * for reuse. This avoids allocating a new ArrayBuffer per flush.
+   *
+   * The worker must support `{ type: "in:input-batch", recycle: true }` and
+   * respond with `{ type: "in:input-batch-recycle", buffer }`.
+   */
+  recycleBuffers?: boolean;
 }
 
 export class InputCapture {
-  private readonly queue = new InputEventQueue();
+  private readonly queue: InputEventQueue;
   private readonly pointerLock: PointerLock;
   private readonly pressedCodes = new Set<string>();
 
@@ -53,6 +61,28 @@ export class InputCapture {
   private readonly mouseSensitivity: number;
   private readonly releaseChord?: PointerLockReleaseChord;
   private readonly logCaptureLatency: boolean;
+  private readonly recycleBuffers: boolean;
+
+  private readonly recycledBuffersBySize = new Map<number, ArrayBuffer[]>();
+  private readonly handleWorkerMessage = (event: MessageEvent<unknown>): void => {
+    if (!this.recycleBuffers) {
+      return;
+    }
+    const data = event.data as Partial<InputBatchRecycleMessage> | undefined;
+    if (!data || data.type !== "in:input-batch-recycle") {
+      return;
+    }
+    if (!(data.buffer instanceof ArrayBuffer)) {
+      return;
+    }
+    const size = data.buffer.byteLength;
+    const bucket = this.recycledBuffersBySize.get(size);
+    if (bucket) {
+      bucket.push(data.buffer);
+    } else {
+      this.recycledBuffersBySize.set(size, [data.buffer]);
+    }
+  };
 
   private flushTimer: number | null = null;
 
@@ -207,13 +237,15 @@ export class InputCapture {
       mouseSensitivity = 1.0,
       flushHz = 125,
       releasePointerLockChord,
-      logCaptureLatency = false
+      logCaptureLatency = false,
+      recycleBuffers = true,
     }: InputCaptureOptions = {}
   ) {
     this.mouseSensitivity = mouseSensitivity;
     this.flushHz = flushHz;
     this.releaseChord = releasePointerLockChord;
     this.logCaptureLatency = logCaptureLatency;
+    this.recycleBuffers = recycleBuffers;
 
     // Ensure the canvas can receive keyboard focus.
     if (this.canvas.tabIndex < 0) {
@@ -221,12 +253,18 @@ export class InputCapture {
     }
 
     this.pointerLock = new PointerLock(this.canvas);
+
+    this.queue = new InputEventQueue(128, (byteLength) => this.takeRecycledBuffer(byteLength));
   }
 
   start(): void {
     if (this.flushTimer !== null) {
       return;
     }
+
+    // Optional: listen for recycled buffers from the worker.
+    const workerWithEvents = this.ioWorker as unknown as MessageEventTarget;
+    workerWithEvents.addEventListener?.("message", this.handleWorkerMessage);
 
     this.canvas.addEventListener('click', this.handleClick);
     this.canvas.addEventListener('focus', this.handleFocus);
@@ -259,6 +297,9 @@ export class InputCapture {
     window.clearInterval(this.flushTimer);
     this.flushTimer = null;
 
+    const workerWithEvents = this.ioWorker as unknown as MessageEventTarget;
+    workerWithEvents.removeEventListener?.("message", this.handleWorkerMessage);
+
     this.canvas.removeEventListener('click', this.handleClick);
     this.canvas.removeEventListener('focus', this.handleFocus);
     this.canvas.removeEventListener('blur', this.handleBlur);
@@ -281,7 +322,7 @@ export class InputCapture {
   }
 
   flushNow(): void {
-    const latencyUs = this.queue.flush(this.ioWorker);
+    const latencyUs = this.queue.flush(this.ioWorker, { recycle: this.recycleBuffers });
     if (latencyUs === null || !this.logCaptureLatency) {
       return;
     }
@@ -357,7 +398,23 @@ export class InputCapture {
     this.mouseFracY -= whole;
     return whole | 0;
   }
+
+  private takeRecycledBuffer(byteLength: number): ArrayBuffer {
+    if (this.recycleBuffers) {
+      const bucket = this.recycledBuffersBySize.get(byteLength);
+      const buf = bucket?.pop();
+      if (buf) {
+        return buf;
+      }
+    }
+    return new ArrayBuffer(byteLength);
+  }
 }
+
+type MessageEventTarget = {
+  addEventListener?: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => void;
+  removeEventListener?: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => void;
+};
 
 function chordMatches(event: KeyboardEvent, chord: PointerLockReleaseChord): boolean {
   if (event.code !== chord.code) {

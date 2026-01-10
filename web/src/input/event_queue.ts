@@ -36,6 +36,17 @@ export enum InputEventType {
 export interface InputBatchMessage {
   type: 'in:input-batch';
   buffer: ArrayBuffer;
+  /**
+   * If set, the receiver should transfer `buffer` back to the sender once it is
+   * done processing the batch. This allows the sender to reuse buffers and
+   * avoid per-flush allocations.
+   */
+  recycle?: true;
+}
+
+export interface InputBatchRecycleMessage {
+  type: "in:input-batch-recycle";
+  buffer: ArrayBuffer;
 }
 
 export type InputBatchTarget = {
@@ -46,6 +57,7 @@ const HEADER_WORDS = 2;
 const WORDS_PER_EVENT = 4;
 
 let nextInputBatchId = 1;
+type BufferFactory = (byteLength: number) => ArrayBuffer;
 
 /**
   * High-throughput queue for input events. Pushes are allocation-free until the
@@ -63,10 +75,12 @@ export class InputEventQueue {
   private capacityEvents: number;
   private count = 0;
   private minTimestampUs = 0;
+  private readonly bufferFactory: BufferFactory;
 
-  constructor(capacityEvents = 128) {
+  constructor(capacityEvents = 128, bufferFactory: BufferFactory = (byteLength) => new ArrayBuffer(byteLength)) {
     this.capacityEvents = capacityEvents;
-    this.buf = new ArrayBuffer((HEADER_WORDS + capacityEvents * WORDS_PER_EVENT) * 4);
+    this.bufferFactory = bufferFactory;
+    this.buf = this.allocateBuffer((HEADER_WORDS + capacityEvents * WORDS_PER_EVENT) * 4);
     this.words = new Int32Array(this.buf);
   }
 
@@ -116,7 +130,7 @@ export class InputEventQueue {
    * Returns the host-side latency in microseconds from the first event in the
    * batch to when the batch is sent, or `null` if the queue was empty.
    */
-  flush(target: InputBatchTarget): number | null {
+  flush(target: InputBatchTarget, opts: { recycle?: boolean } = {}): number | null {
     if (this.count === 0) {
       return null;
     }
@@ -150,10 +164,14 @@ export class InputEventQueue {
 
     const byteLength = this.buf.byteLength;
     const buffer = this.buf;
-    target.postMessage({ type: 'in:input-batch', buffer }, [buffer]);
+    if (opts.recycle) {
+      target.postMessage({ type: "in:input-batch", buffer, recycle: true }, [buffer]);
+    } else {
+      target.postMessage({ type: "in:input-batch", buffer }, [buffer]);
+    }
 
     // The transferred buffer is now detached; allocate a fresh one.
-    this.buf = new ArrayBuffer(byteLength);
+    this.buf = this.allocateBuffer(byteLength);
     this.words = new Int32Array(this.buf);
     this.count = 0;
     this.minTimestampUs = 0;
@@ -181,10 +199,21 @@ export class InputEventQueue {
 
   private grow(): void {
     const nextCapacity = this.capacityEvents * 2;
-    const nextBuf = new ArrayBuffer((HEADER_WORDS + nextCapacity * WORDS_PER_EVENT) * 4);
+    const nextBuf = this.allocateBuffer((HEADER_WORDS + nextCapacity * WORDS_PER_EVENT) * 4);
     new Int32Array(nextBuf).set(this.words);
     this.capacityEvents = nextCapacity;
     this.buf = nextBuf;
     this.words = new Int32Array(this.buf);
+  }
+
+  private allocateBuffer(byteLength: number): ArrayBuffer {
+    const buf = this.bufferFactory(byteLength);
+    if (!(buf instanceof ArrayBuffer)) {
+      throw new Error("InputEventQueue bufferFactory must return an ArrayBuffer");
+    }
+    if (buf.byteLength !== byteLength) {
+      throw new Error(`InputEventQueue bufferFactory returned ${buf.byteLength} bytes, expected ${byteLength}`);
+    }
+    return buf;
   }
 }

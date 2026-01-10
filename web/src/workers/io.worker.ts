@@ -22,6 +22,8 @@ let started = false;
 let pollTimer: number | undefined;
 
 type InputBatchMessage = { type: "in:input-batch"; buffer: ArrayBuffer };
+type InputBatchRecycleMessage = { type: "in:input-batch-recycle"; buffer: ArrayBuffer };
+
 type OpenActiveDiskRequest = { id: number; type: "openActiveDisk"; token: WorkerOpenToken };
 type SetMicrophoneRingBufferMessage = {
   type: "setMicrophoneRingBuffer";
@@ -161,8 +163,13 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
   if ((data as Partial<InputBatchMessage>).type === "in:input-batch") {
     const msg = data as Partial<InputBatchMessage>;
     if (!(msg.buffer instanceof ArrayBuffer)) return;
-    if (!started) return;
-    handleInputBatch(msg.buffer);
+    const buffer = msg.buffer;
+    if (started) {
+      handleInputBatch(buffer);
+    }
+    if ((msg as { recycle?: unknown }).recycle === true) {
+      ctx.postMessage({ type: "in:input-batch-recycle", buffer } satisfies InputBatchRecycleMessage, [buffer]);
+    }
     return;
   }
 };

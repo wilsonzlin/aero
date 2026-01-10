@@ -535,7 +535,7 @@ The repository includes a concrete browser-side input capture implementation:
 Input batches are delivered to the I/O worker via `postMessage` with:
 
 ```ts
-{ type: 'in:input-batch', buffer: ArrayBuffer }
+{ type: 'in:input-batch', buffer: ArrayBuffer, recycle?: true }
 ```
 
 `buffer` contains a small `Int32Array`-compatible payload:
@@ -555,6 +555,17 @@ Event types are defined in `web/src/input/event_queue.ts` (`InputEventType`):
 
 This keeps the hot path allocation-free and allows the worker to convert to
 i8042 keyboard/mouse bytes with minimal overhead.
+
+##### Optional buffer recycling
+
+If `recycle: true` is set on the batch, the worker may transfer the same buffer
+back to the sender once processed:
+
+```ts
+{ type: 'in:input-batch-recycle', buffer: ArrayBuffer }
+```
+
+This avoids allocating a new `ArrayBuffer` per flush on the main thread.
 
 ### Event Handler
 
