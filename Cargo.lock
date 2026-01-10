@@ -44,6 +44,9 @@ dependencies = [
 [[package]]
 name = "aero-audio"
 version = "0.1.0"
+dependencies = [
+ "aero-platform",
+]
 
 [[package]]
 name = "aero-bios"

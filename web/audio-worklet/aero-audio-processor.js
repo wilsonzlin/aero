@@ -1,87 +1,96 @@
 // Runs in the AudioWorklet global scope.
 //
-// The emulator writes interleaved stereo f32 frames into a SharedArrayBuffer
-// ring buffer; this worklet consumes them with Atomics-synchronized indices for
-// low-latency playback.
+// This file mirrors `web/src/platform/audio-worklet-processor.js` so that
+// non-bundled consumers can load the processor directly.
 //
-// SharedArrayBuffer layout:
-//   Int32Array header (4 elements):
-//     [0] writeIndexFrames (u32 counter, producer-owned; updated with Atomics.store)
-//     [1] readIndexFrames  (u32 counter, consumer-owned; updated with Atomics.store)
-//     [2] underrunFrames   (u32 counter, consumer-owned; Atomics.add)
-//     [3] overrunFrames    (u32 counter, producer-owned; optional)
-//   Float32Array data (interleaved stereo): capacityFrames * channels elements.
+// Ring buffer layout is described in `web/src/platform/audio.ts`:
+// - u32 readFrameIndex (bytes 0..4)
+// - u32 writeFrameIndex (bytes 4..8)
+// - u32 underrunCount (bytes 8..12)
+// - u32 reserved (bytes 12..16)
+// - f32 samples[] (bytes 16..), interleaved by channel: L0, R0, L1, R1, ...
+
+const READ_FRAME_INDEX = 0;
+const WRITE_FRAME_INDEX = 1;
+const UNDERRUN_COUNT = 2;
+
+function framesAvailable(readFrameIndex, writeFrameIndex) {
+  return (writeFrameIndex - readFrameIndex) >>> 0;
+}
 
 class AeroAudioProcessor extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options) {
     super();
-    this._header = null;
-    this._data = null;
-    this._capacityFrames = 0;
-    this._mask = 0;
-    this._channels = 2;
-    this._telemetryCountdown = 0;
 
-    this.port.onmessage = (event) => {
-      const msg = event.data;
-      if (!msg || msg.type !== "init") return;
-      const sab = msg.sab;
-      this._channels = msg.channels ?? 2;
-      this._capacityFrames = msg.capacityFrames >>> 0;
-      if ((this._capacityFrames & (this._capacityFrames - 1)) !== 0) {
-        throw new Error("capacityFrames must be a power of two");
-      }
-      this._mask = this._capacityFrames - 1;
-      this._header = new Int32Array(sab, 0, 4);
-      this._data = new Float32Array(sab, 16);
-      this._telemetryCountdown = 0;
-    };
+    const ringBuffer = options?.processorOptions?.ringBuffer;
+    const channelCount = options?.processorOptions?.channelCount;
+    const capacityFrames = options?.processorOptions?.capacityFrames;
+
+    if (ringBuffer instanceof SharedArrayBuffer) {
+      this._header = new Uint32Array(ringBuffer, 0, 4);
+      this._samples = new Float32Array(ringBuffer, 16);
+      this._channelCount = typeof channelCount === "number" ? channelCount : null;
+      this._capacityFrames = typeof capacityFrames === "number" ? capacityFrames : null;
+    } else {
+      this._header = null;
+      this._samples = null;
+      this._channelCount = null;
+      this._capacityFrames = null;
+    }
   }
 
   process(_inputs, outputs) {
     const output = outputs[0];
-    const frames = output[0].length;
+    if (!output) return true;
 
-    if (!this._data) {
-      // Not initialized yet: output silence.
-      for (let ch = 0; ch < output.length; ch++) output[ch].fill(0);
+    if (!this._header || !this._samples) {
+      for (let c = 0; c < output.length; c++) output[c].fill(0);
       return true;
     }
 
-    let write = Atomics.load(this._header, 0) >>> 0;
-    let read = Atomics.load(this._header, 1) >>> 0;
-    let available = (write - read) >>> 0;
+    const channelCount = Math.min(this._channelCount ?? output.length, output.length);
+    const framesNeeded = output[0]?.length ?? 0;
+    const capacityFrames = this._capacityFrames ?? Math.floor(this._samples.length / channelCount);
 
-    let underrun = 0;
-    for (let i = 0; i < frames; i++) {
-      if (available === 0) {
-        output[0][i] = 0;
-        if (output.length > 1) output[1][i] = 0;
-        underrun++;
-        continue;
+    const readFrameIndex = Atomics.load(this._header, READ_FRAME_INDEX) >>> 0;
+    const writeFrameIndex = Atomics.load(this._header, WRITE_FRAME_INDEX) >>> 0;
+    const available = Math.min(framesAvailable(readFrameIndex, writeFrameIndex), capacityFrames);
+    const framesToRead = Math.min(framesNeeded, available);
+
+    const samples = this._samples;
+    const cc = channelCount;
+
+    const readPos = readFrameIndex % capacityFrames;
+    const firstFrames = Math.min(framesToRead, capacityFrames - readPos);
+    const secondFrames = framesToRead - firstFrames;
+
+    // Copy first contiguous chunk.
+    for (let i = 0; i < firstFrames; i++) {
+      const base = (readPos + i) * cc;
+      for (let c = 0; c < cc; c++) {
+        output[c][i] = samples[base + c];
       }
-
-      const frameIdx = read & this._mask;
-      const base = frameIdx * this._channels;
-      output[0][i] = this._data[base + 0];
-      if (output.length > 1) output[1][i] = this._data[base + 1];
-
-      read = (read + 1) >>> 0;
-      available--;
     }
 
-    Atomics.store(this._header, 1, read | 0);
-    if (underrun !== 0) Atomics.add(this._header, 2, underrun);
+    // Copy wrapped chunk.
+    for (let i = 0; i < secondFrames; i++) {
+      const base = i * cc;
+      for (let c = 0; c < cc; c++) {
+        output[c][firstFrames + i] = samples[base + c];
+      }
+    }
 
-    // Lightweight telemetry (avoid spamming the main thread).
-    if (this._telemetryCountdown === 0) {
-      const writeNow = Atomics.load(this._header, 0) >>> 0;
-      const readNow = Atomics.load(this._header, 1) >>> 0;
-      const level = (writeNow - readNow) >>> 0;
-      this.port.postMessage({ type: "bufferLevel", availableFrames: level });
-      this._telemetryCountdown = 20;
-    } else {
-      this._telemetryCountdown--;
+    // Zero-fill any missing frames (underrun).
+    if (framesToRead < framesNeeded) {
+      for (let c = 0; c < output.length; c++) {
+        output[c].fill(0, framesToRead);
+      }
+      const newCount = Atomics.add(this._header, UNDERRUN_COUNT, 1) + 1;
+      this.port.postMessage({ type: "underrun", underrunCount: newCount });
+    }
+
+    if (framesToRead > 0) {
+      Atomics.store(this._header, READ_FRAME_INDEX, readFrameIndex + framesToRead);
     }
 
     return true;
@@ -89,4 +98,3 @@ class AeroAudioProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor("aero-audio-processor", AeroAudioProcessor);
-
