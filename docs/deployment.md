@@ -1,11 +1,13 @@
 # Deployment & Hosting (COOP/COEP / cross-origin isolation)
 
 Aero performs best with **WebAssembly threads / shared memory** (SharedArrayBuffer + Atomics).
-Browsers only enable these capabilities in a **cross-origin isolated** context.
+Browsers only enable these capabilities in a **cross-origin isolated** context (see
+[ADR 0002](./adr/0002-cross-origin-isolation.md)).
 
-This repo also ships a **non-shared-memory fallback** WASM build. When COOP/COEP headers
-are missing, the web runtime will automatically load the single-threaded/non-shared
-variant so the app can still start (degraded functionality/performance is expected).
+This repo also ships a **non-shared-memory fallback** WASM build (see
+[ADR 0004](./adr/0004-wasm-build-variants.md)). When COOP/COEP headers are missing,
+the web runtime will automatically load the single-threaded/non-shared variant so
+the app can still start (degraded functionality/performance is expected).
 
 That means your deployment **must** send these headers on the top-level document
 and all subresources (JS, WASM, worker scripts, etc.):

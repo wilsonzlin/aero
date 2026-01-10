@@ -2,7 +2,8 @@
 
 Aero needs a stricter-than-usual set of browser capabilities:
 
-- **WebAssembly threads / `SharedArrayBuffer`** → requires **cross-origin isolation** (COOP/COEP).
+- **WebAssembly threads / `SharedArrayBuffer`** → requires **cross-origin isolation** (COOP/COEP).  
+  See [ADR 0002](./adr/0002-cross-origin-isolation.md) and [ADR 0004](./adr/0004-wasm-build-variants.md) for how this ties into threaded vs single-threaded builds.
 - **Dynamic WebAssembly compilation** for JIT blocks (e.g. `WebAssembly.compile`, `WebAssembly.instantiate`, `WebAssembly.compileStreaming`) → requires CSP **`'wasm-unsafe-eval'`**.
 - **Web Workers / module workers** (and potentially bundler-generated `blob:` workers) → requires CSP **`worker-src 'self' blob:`**.
 - **WebGPU** + **OPFS** do not require CSP directives, but CSP should avoid accidentally blocking the resources needed to start the app (scripts, workers, WASM fetches, WebSocket proxy).
