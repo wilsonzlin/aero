@@ -86,8 +86,14 @@ pub struct ResolvedByteRange {
 
 impl ResolvedByteRange {
     pub fn len(&self) -> u64 {
-        // Invariant: start <= end.
-        self.end - self.start + 1
+        self.end
+            .checked_sub(self.start)
+            .and_then(|delta| delta.checked_add(1))
+            .unwrap_or(0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -295,4 +301,3 @@ fn coalesce_sorted(mut ranges: Vec<ResolvedByteRange>) -> Vec<ResolvedByteRange>
     out.push(cur);
     out
 }
-

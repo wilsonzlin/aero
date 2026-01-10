@@ -51,7 +51,7 @@ proptest! {
     // Parser should never panic on arbitrary inputs.
     #[test]
     fn parse_never_panics(input in ".*") {
-        let _ = std::panic::catch_unwind(|| {
+        std::panic::catch_unwind(|| {
             let _ = parse_range_header(&input);
         }).expect("parse_range_header panicked");
     }
