@@ -1,0 +1,97 @@
+import assert from 'node:assert/strict';
+import * as dgram from 'node:dgram';
+import test from 'node:test';
+
+import { buildServer } from '../src/server.js';
+import { decodeDnsHeader, decodeFirstQuestion, encodeDnsQuery, encodeDnsResponseA } from '../src/dns/codec.js';
+
+const baseConfig = {
+  HOST: '127.0.0.1',
+  PORT: 0,
+  LOG_LEVEL: 'silent' as const,
+  ALLOWED_ORIGINS: ['http://localhost'],
+  PUBLIC_BASE_URL: 'http://localhost',
+  SHUTDOWN_GRACE_MS: 100,
+  CROSS_ORIGIN_ISOLATION: false,
+  TRUST_PROXY: false,
+
+  RATE_LIMIT_REQUESTS_PER_MINUTE: 0,
+
+  TCP_PROXY_MAX_CONNECTIONS: 0,
+  TCP_PROXY_MAX_CONNECTIONS_PER_IP: 0,
+
+  DNS_UPSTREAMS: ['127.0.0.1:53'],
+  DNS_UPSTREAM_TIMEOUT_MS: 500,
+  DNS_CACHE_MAX_ENTRIES: 1000,
+  DNS_CACHE_MAX_TTL_SECONDS: 300,
+  DNS_CACHE_NEGATIVE_TTL_SECONDS: 60,
+  DNS_MAX_QUERY_BYTES: 4096,
+  DNS_MAX_RESPONSE_BYTES: 4096,
+  DNS_ALLOW_ANY: true,
+  DNS_ALLOW_PRIVATE_PTR: true,
+  DNS_QPS_PER_IP: 1000,
+  DNS_BURST_PER_IP: 1000,
+};
+
+async function listen(app: import('fastify').FastifyInstance): Promise<number> {
+  await app.listen({ host: '127.0.0.1', port: 0 });
+  const address = app.server.address();
+  if (!address || typeof address === 'string') throw new Error('Expected TCP address');
+  return address.port;
+}
+
+test('GET /dns-json resolves via UDP upstream and shares cache with /dns-query', async () => {
+  const upstream = dgram.createSocket('udp4');
+  let queryCount = 0;
+
+  upstream.on('message', (msg, rinfo) => {
+    queryCount += 1;
+    const header = decodeDnsHeader(msg);
+    const question = decodeFirstQuestion(msg);
+    const response = encodeDnsResponseA({
+      id: header.id,
+      question,
+      answers: [{ name: question.name, ttl: 60, address: '203.0.113.1' }],
+    });
+    upstream.send(response, rinfo.port, rinfo.address);
+  });
+
+  await new Promise<void>((resolve) => upstream.bind(0, '127.0.0.1', resolve));
+  const upstreamAddr = upstream.address();
+  if (!upstreamAddr || typeof upstreamAddr === 'string') throw new Error('Expected UDP address');
+
+  const { app } = buildServer({
+    ...baseConfig,
+    DNS_UPSTREAMS: [`127.0.0.1:${upstreamAddr.port}`],
+  });
+  await app.ready();
+  const port = await listen(app);
+
+  try {
+    const r1 = await fetch(`http://127.0.0.1:${port}/dns-json?name=example.com&type=A`);
+    assert.equal(r1.status, 200);
+    assert.ok((r1.headers.get('content-type') ?? '').startsWith('application/dns-json'));
+    const json = await r1.json();
+    assert.equal(json.Status, 0);
+    assert.equal(json.Answer?.[0]?.data, '203.0.113.1');
+    assert.equal(queryCount, 1);
+
+    const q2 = encodeDnsQuery({ id: 0x1234, name: 'example.com', type: 1 });
+    const r2 = await fetch(`http://127.0.0.1:${port}/dns-query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/dns-message' },
+      body: q2,
+    });
+    assert.equal(r2.status, 200);
+    assert.ok((r2.headers.get('content-type') ?? '').startsWith('application/dns-message'));
+    const b2 = Buffer.from(await r2.arrayBuffer());
+
+    const header2 = decodeDnsHeader(b2);
+    assert.equal(header2.id, 0x1234);
+    assert.equal(queryCount, 1, 'second query should be served from shared cache');
+  } finally {
+    upstream.close();
+    await app.close();
+  }
+});
+

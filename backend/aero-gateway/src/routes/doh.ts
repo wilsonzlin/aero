@@ -5,6 +5,7 @@ import type { DnsMetrics } from '../metrics.js';
 import { decodeDnsHeader, decodeFirstQuestion, encodeDnsErrorResponse } from '../dns/codec.js';
 import { DnsResolver, qtypeToString, rcodeToString } from '../dns/resolver.js';
 import { TokenBucketRateLimiter } from '../dns/rateLimit.js';
+import { setupDnsJsonRoutes } from './dnsJson.js';
 
 export function decodeBase64UrlToBuffer(base64url: string): Buffer {
   if (!/^[A-Za-z0-9_-]+$/.test(base64url)) throw new Error('Invalid base64url');
@@ -21,6 +22,7 @@ type DohQuery = { dns?: string };
 export function setupDohRoutes(app: FastifyInstance, config: Config, metrics: DnsMetrics): void {
   const resolver = new DnsResolver(config, metrics);
   const rateLimiter = new TokenBucketRateLimiter(config.DNS_QPS_PER_IP, config.DNS_BURST_PER_IP);
+  setupDnsJsonRoutes(app, config, { resolver, rateLimiter });
 
   function sendDnsMessage(reply: import('fastify').FastifyReply, statusCode: number, message: Buffer) {
     reply.code(statusCode);

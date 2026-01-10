@@ -382,6 +382,23 @@ Some deployments may additionally expose a JSON endpoint intended for debugging 
 - `GET /dns-json?name=example.com&type=A`
 - Response `Content-Type: application/dns-json`
 
+The response body is compatible with Cloudflare’s `application/dns-json` schema subset:
+
+```json
+{
+  "Status": 0,
+  "TC": false,
+  "RD": true,
+  "RA": true,
+  "AD": false,
+  "CD": false,
+  "Question": [{ "name": "example.com", "type": 1 }],
+  "Answer": [{ "name": "example.com", "type": 1, "TTL": 60, "data": "93.184.216.34" }]
+}
+```
+
+Supported `type` values: `A`, `AAAA`, `CNAME` (or their numeric equivalents).
+
 `/dns-query` remains the canonical DoH interface and the only endpoint described by the OpenAPI spec.
 
 ---
