@@ -6,6 +6,7 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
 - `GET` Range requests work (`206` + correct `Content-Range`)
 - Unsatisfiable ranges fail correctly (`416` + `Content-Range: bytes */<size>`)
 - CORS preflight (`OPTIONS`) allows the `Range` and `Authorization` headers
+- CORS responses expose required headers (`Access-Control-Expose-Headers` for `Accept-Ranges`, `Content-Length`, `Content-Range`)
 - (Private images) unauthenticated requests are denied, authenticated requests succeed
 
 The script is dependency-free (Python stdlib only) and exits non-zero on failures (CI-friendly).
@@ -19,6 +20,8 @@ python3 tools/disk-streaming-conformance/conformance.py \
   --base-url 'https://aero.example.com/disk/my-image' \
   --origin 'https://app.example.com'
 ```
+
+Note: `--origin` / `ORIGIN` defaults to `https://example.com`. Set it to your real app origin to test your deployed CORS allowlist.
 
 You can also use environment variables:
 

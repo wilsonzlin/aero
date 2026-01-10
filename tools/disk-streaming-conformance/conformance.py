@@ -134,6 +134,34 @@ def _header(resp: HttpResponse, name: str) -> str | None:
     return resp.headers.get(name.lower())
 
 
+def _require_allow_origin(resp: HttpResponse, origin: str) -> None:
+    allow_origin = _header(resp, "Access-Control-Allow-Origin")
+    _require(allow_origin is not None, "missing Access-Control-Allow-Origin")
+    allow_origin = allow_origin.strip()
+    _require(
+        allow_origin == "*" or allow_origin == origin,
+        f"expected Access-Control-Allow-Origin '*' or {origin!r}, got {allow_origin!r}",
+    )
+
+
+def _require_expose_headers(resp: HttpResponse, required: set[str]) -> None:
+    expose = _header(resp, "Access-Control-Expose-Headers")
+    _require(expose is not None, "missing Access-Control-Expose-Headers")
+    tokens = _csv_tokens(expose)
+    _require(
+        "*" in tokens or required.issubset(tokens),
+        f"expected Access-Control-Expose-Headers to include {sorted(required)}, got {expose!r}",
+    )
+
+
+def _require_cors(resp: HttpResponse, origin: str | None, *, expose: set[str] | None = None) -> None:
+    if origin is None:
+        return
+    _require_allow_origin(resp, origin)
+    if expose is not None:
+        _require_expose_headers(resp, expose)
+
+
 def _print_result(result: TestResult) -> None:
     line = f"{result.status:<4} {result.name}"
     if result.details:
@@ -144,21 +172,24 @@ def _print_result(result: TestResult) -> None:
 def _test_private_requires_auth(
     *,
     base_url: str,
-    origin: str,
+    origin: str | None,
     timeout_s: float,
 ) -> TestResult:
     name = "private: unauthenticated request is denied (401/403)"
     try:
+        headers: dict[str, str] = {
+            "Accept-Encoding": "identity",
+            "Range": "bytes=0-0",
+        }
+        if origin is not None:
+            headers["Origin"] = origin
         resp = _request(
             url=base_url,
             method="GET",
-            headers={
-                "Accept-Encoding": "identity",
-                "Origin": origin,
-                "Range": "bytes=0-0",
-            },
+            headers=headers,
             timeout_s=timeout_s,
         )
+        _require_cors(resp, origin)
         _require(resp.status in (401, 403), f"expected 401/403, got {resp.status}")
         return TestResult(name=name, status="PASS", details=f"status={resp.status}")
     except TestFailure as e:
@@ -168,7 +199,7 @@ def _test_private_requires_auth(
 def _test_head(
     *,
     base_url: str,
-    origin: str,
+    origin: str | None,
     authorization: str | None,
     timeout_s: float,
 ) -> tuple[TestResult, int | None]:
@@ -176,8 +207,9 @@ def _test_head(
     try:
         headers: dict[str, str] = {
             "Accept-Encoding": "identity",
-            "Origin": origin,
         }
+        if origin is not None:
+            headers["Origin"] = origin
         if authorization is not None:
             headers["Authorization"] = authorization
 
@@ -198,6 +230,7 @@ def _test_head(
         except ValueError:
             raise TestFailure(f"invalid Content-Length {content_length!r}") from None
         _require(size > 0, f"Content-Length must be > 0, got {size}")
+        _require_cors(resp, origin, expose={"accept-ranges", "content-length"})
         return (
             TestResult(
                 name=name,
@@ -222,7 +255,7 @@ def _parse_content_range(value: str) -> tuple[int, int, int]:
 def _test_get_valid_range(
     *,
     base_url: str,
-    origin: str,
+    origin: str | None,
     authorization: str | None,
     timeout_s: float,
     size: int | None,
@@ -236,9 +269,10 @@ def _test_get_valid_range(
         req_end = 0
         headers: dict[str, str] = {
             "Accept-Encoding": "identity",
-            "Origin": origin,
             "Range": f"bytes={req_start}-{req_end}",
         }
+        if origin is not None:
+            headers["Origin"] = origin
         if authorization is not None:
             headers["Authorization"] = authorization
 
@@ -247,6 +281,7 @@ def _test_get_valid_range(
 
         content_range = _header(resp, "Content-Range")
         _require(content_range is not None, "missing Content-Range header")
+        _require_cors(resp, origin, expose={"content-range"})
         start, end, total = _parse_content_range(content_range)
         _require(start == req_start and end == req_end, f"expected bytes {req_start}-{req_end}, got {start}-{end}")
         _require(total == size, f"expected total size {size}, got {total}")
@@ -270,7 +305,7 @@ def _test_get_valid_range(
 def _test_get_unsatisfiable_range(
     *,
     base_url: str,
-    origin: str,
+    origin: str | None,
     authorization: str | None,
     timeout_s: float,
     size: int | None,
@@ -285,9 +320,10 @@ def _test_get_unsatisfiable_range(
         end = size + 10
         headers: dict[str, str] = {
             "Accept-Encoding": "identity",
-            "Origin": origin,
             "Range": f"bytes={start}-{end}",
         }
+        if origin is not None:
+            headers["Origin"] = origin
         if authorization is not None:
             headers["Authorization"] = authorization
 
@@ -296,6 +332,7 @@ def _test_get_unsatisfiable_range(
 
         content_range = _header(resp, "Content-Range")
         _require(content_range is not None, "missing Content-Range header")
+        _require_cors(resp, origin, expose={"content-range"})
 
         # Example: "bytes */12345"
         m = re.fullmatch(r"\s*bytes\s+\*/(\d+)\s*", content_range, flags=re.IGNORECASE)
@@ -311,10 +348,12 @@ def _test_get_unsatisfiable_range(
 def _test_options_preflight(
     *,
     base_url: str,
-    origin: str,
+    origin: str | None,
     timeout_s: float,
 ) -> TestResult:
     name = "OPTIONS: CORS preflight allows Range + Authorization headers"
+    if origin is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no origin provided)")
     try:
         resp = _request(
             url=base_url,
@@ -386,6 +425,8 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         parser.error("Missing --base-url (or env BASE_URL)")
     args.base_url = args.base_url.strip()
     args.origin = args.origin.strip()
+    if args.origin == "":
+        args.origin = None
     if args.token is not None:
         args.token = args.token.strip()
         if args.token == "":
@@ -396,7 +437,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
 def main(argv: Sequence[str]) -> int:
     args = _parse_args(argv)
     base_url: str = args.base_url
-    origin: str = args.origin
+    origin: str | None = args.origin
     timeout_s: float = args.timeout
 
     token: str | None = args.token
@@ -404,7 +445,7 @@ def main(argv: Sequence[str]) -> int:
 
     print("Disk streaming conformance")
     print(f"  BASE_URL: {base_url}")
-    print(f"  ORIGIN:   {origin}")
+    print(f"  ORIGIN:   {origin or '(none)'}")
     if authorization is None:
         print("  AUTH:     (none)")
     else:
