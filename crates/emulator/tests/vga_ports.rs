@@ -77,6 +77,19 @@ fn input_status1_vertical_retrace_bit_changes() {
 }
 
 #[test]
+fn input_status1_inactive_port_does_not_reset_attribute_flip_flop() {
+    let mut vga = VgaDevice::new();
+
+    // Default mode 3 uses colour I/O decode, so 0x3BA is inactive.
+    vga.port_write(0x3C0, 1, 0x10);
+    vga.port_read(0x3BA, 1);
+
+    // Still in data phase: this should write AC register 0x10, not set a new index.
+    vga.port_write(0x3C0, 1, 0xAA);
+    assert_eq!(vga.port_read(0x3C1, 1) as u8, 0xAA);
+}
+
+#[test]
 fn out_of_range_indices_do_not_panic() {
     let mut vga = VgaDevice::new();
 
