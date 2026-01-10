@@ -1,0 +1,21 @@
+[package]
+name = "aero-ipc"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+# Enables wasm-bindgen + js-sys helpers for working directly with a JS
+# `SharedArrayBuffer` from Rust/WASM. The core queue/protocol code is
+# intentionally `std`-only so it can be tested on the host.
+wasm = []
+
+[dependencies]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2", optional = false }
+js-sys = { version = "0.3", optional = false }
+
+[dev-dependencies]

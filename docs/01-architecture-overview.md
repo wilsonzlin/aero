@@ -269,40 +269,17 @@ Note: Aero’s baseline browser build uses wasm32 and is therefore constrained t
 
 ### Message Types
 
-```typescript
-// Worker message protocol
-interface WorkerMessage {
-  type: MessageType;
-  id: number;        // For request/response correlation
-  payload: unknown;
-}
+The production IPC layer uses a **binary protocol** carried over **lock-free ring
+buffers** in a `SharedArrayBuffer` (rather than `postMessage` JSON).
 
-enum MessageType {
-  // CPU → Coordinator
-  CPU_HALTED = 'cpu_halted',
-  CPU_TRIPLE_FAULT = 'cpu_triple_fault',
-  MMIO_READ = 'mmio_read',
-  MMIO_WRITE = 'mmio_write',
-  PORT_READ = 'port_read',
-  PORT_WRITE = 'port_write',
-  
-  // GPU → Coordinator
-  FRAME_READY = 'frame_ready',
-  GPU_COMMAND_COMPLETE = 'gpu_cmd_complete',
-  
-  // I/O → Coordinator
-  IRQ_RAISE = 'irq_raise',
-  IRQ_LOWER = 'irq_lower',
-  DMA_REQUEST = 'dma_request',
-  
-  // Coordinator → Workers
-  START = 'start',
-  STOP = 'stop',
-  RESET = 'reset',
-  STATE_SAVE = 'state_save',
-  STATE_RESTORE = 'state_restore',
-}
-```
+The protocol and shared-memory layout are defined in:
+
+- [`docs/ipc-protocol.md`](./ipc-protocol.md)
+
+In code:
+
+- Rust: `crates/aero-ipc/`
+- TypeScript: `web/src/ipc/`
 
 ### Shared Memory Protocol
 
@@ -334,32 +311,15 @@ Consumers sleep on `head` changes:
 
 ### Synchronization Primitives
 
-```typescript
-// Lock-free ring buffer for command passing
-class RingBuffer {
-  private buffer: SharedArrayBuffer;
-  private head: Int32Array;  // Write position (atomic)
-  private tail: Int32Array;  // Read position (atomic)
-  
-  push(data: Uint8Array): boolean {
-    // Atomic compare-and-swap for thread-safe push
-    // Returns false if buffer full
-  }
-  
-  pop(): Uint8Array | null {
-    // Atomic load for thread-safe pop
-    // Returns null if buffer empty
-  }
-  
-  waitForData(): void {
-    // Atomics.wait() for efficient blocking
-  }
-  
-  notifyData(): void {
-    // Atomics.notify() to wake waiters
-  }
-}
-```
+Queues are implemented as a **bounded variable-length MPSC/SPSC ring buffer**
+with:
+
+- `head`: consumer cursor
+- `tail_reserve`: producer reservation cursor
+- `tail_commit`: producer commit cursor (published/visible tail)
+
+This makes the queue safe for **multi-producer single-consumer** use (global log
+queue), while still being efficient for **SPSC** use (per-worker cmd/evt).
 
 ---
 
