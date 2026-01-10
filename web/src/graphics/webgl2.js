@@ -6,6 +6,26 @@ function assertNonNull(value, msg) {
 }
 
 /**
+ * @param {ArrayBufferView} view
+ * @returns {Uint8Array}
+ */
+function asU8(view) {
+  return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+}
+
+/**
+ * @param {ArrayBufferView} view
+ * @returns {Uint16Array}
+ */
+function asU16(view) {
+  if (view instanceof Uint16Array) return view;
+  if (view.byteOffset % 2 !== 0 || view.byteLength % 2 !== 0) {
+    throw new Error('rgb565 buffers must be 2-byte aligned');
+  }
+  return new Uint16Array(view.buffer, view.byteOffset, view.byteLength / 2);
+}
+
+/**
  * @param {WebGL2RenderingContext} gl
  * @param {number} type
  * @param {string} source
@@ -371,7 +391,7 @@ export class WebGl2Backend {
     const { width, height, format } = framebuffer;
 
     if (format === 'indexed8') {
-      const indices = /** @type {Uint8Array} */ (framebuffer.data);
+      const indices = asU8(framebuffer.data);
       gl.bindTexture(gl.TEXTURE_2D, this._indexTex);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
       gl.texSubImage2D(
@@ -399,7 +419,7 @@ export class WebGl2Backend {
     gl.bindTexture(gl.TEXTURE_2D, this._frameTex);
 
     if (format === 'rgb565') {
-      const src = /** @type {Uint16Array} */ (framebuffer.data);
+      const src = asU16(framebuffer.data);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 2);
       gl.texSubImage2D(
         gl.TEXTURE_2D,
@@ -418,7 +438,7 @@ export class WebGl2Backend {
 
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     if (format === 'bgra8') {
-      const src = /** @type {Uint8Array} */ (framebuffer.data);
+      const src = asU8(framebuffer.data);
       if (this._bgraExt && this._bgraExt.BGRA_EXT) {
         gl.texSubImage2D(
           gl.TEXTURE_2D,
@@ -443,7 +463,7 @@ export class WebGl2Backend {
     }
 
     if (format === 'rgba8') {
-      const src = /** @type {Uint8Array} */ (framebuffer.data);
+      const src = asU8(framebuffer.data);
       gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, src);
       gl.bindTexture(gl.TEXTURE_2D, null);
       return;
@@ -453,11 +473,11 @@ export class WebGl2Backend {
     let rgba;
     if (format === 'indexed8') {
       if (!framebuffer.paletteRgba8) throw new Error('indexed8 framebuffer missing paletteRgba8');
-      rgba = indexed8ToRgba8(/** @type {Uint8Array} */ (framebuffer.data), framebuffer.paletteRgba8);
+      rgba = indexed8ToRgba8(asU8(framebuffer.data), framebuffer.paletteRgba8);
     } else if (format === 'rgb565') {
-      rgba = rgb565ToRgba8(/** @type {Uint16Array} */ (framebuffer.data));
+      rgba = rgb565ToRgba8(asU16(framebuffer.data));
     } else if (format === 'bgra8') {
-      rgba = bgra8ToRgba8(/** @type {Uint8Array} */ (framebuffer.data));
+      rgba = bgra8ToRgba8(asU8(framebuffer.data));
     } else {
       throw new Error(`Unsupported framebuffer format: ${format}`);
     }
@@ -528,14 +548,14 @@ export class WebGl2Backend {
       for (const blit of blits) {
         let rgba;
         if (blit.format === 'rgba8') {
-          rgba = /** @type {Uint8Array} */ (blit.data);
+          rgba = asU8(blit.data);
         } else if (blit.format === 'bgra8') {
-          rgba = bgra8ToRgba8(/** @type {Uint8Array} */ (blit.data));
+          rgba = bgra8ToRgba8(asU8(blit.data));
         } else if (blit.format === 'rgb565') {
-          rgba = rgb565ToRgba8(/** @type {Uint16Array} */ (blit.data));
+          rgba = rgb565ToRgba8(asU16(blit.data));
         } else if (blit.format === 'indexed8') {
           if (!blit.paletteRgba8) throw new Error('indexed8 blit missing paletteRgba8');
-          rgba = indexed8ToRgba8(/** @type {Uint8Array} */ (blit.data), blit.paletteRgba8);
+          rgba = indexed8ToRgba8(asU8(blit.data), blit.paletteRgba8);
         } else {
           throw new Error(`Unsupported blit format: ${blit.format}`);
         }

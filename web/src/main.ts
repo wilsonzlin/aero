@@ -117,6 +117,7 @@ function render(): void {
       renderCapabilityTable(report),
     ),
     renderWasmPanel(),
+    renderGraphicsPanel(report),
     renderWebGpuPanel(),
     renderGpuWorkerPanel(),
     renderOpfsPanel(),
@@ -134,6 +135,7 @@ function renderCapabilityTable(report: PlatformFeatureReport): HTMLTableElement 
     "wasmSimd",
     "wasmThreads",
     "webgpu",
+    "webgl2",
     "opfs",
     "audioWorklet",
     "offscreenCanvas",
@@ -184,6 +186,25 @@ function renderWasmPanel(): HTMLElement {
     status,
     output,
     error,
+  );
+}
+
+function renderGraphicsPanel(report: PlatformFeatureReport): HTMLElement {
+  const selected =
+    report.webgpu ? "WebGPU" : report.webgl2 ? "WebGL2 (fallback)" : "Unavailable (no WebGPU/WebGL2)";
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Graphics backend" }),
+    el("div", { class: "row" }, el("strong", { text: `Auto selection: ${selected}` })),
+    el(
+      "div",
+      {},
+      "Open the standalone fallback demo: ",
+      el("a", { href: "/webgl2_fallback_demo.html" }, "/webgl2_fallback_demo.html"),
+      ".",
+    ),
   );
 }
 

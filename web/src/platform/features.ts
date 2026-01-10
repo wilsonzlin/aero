@@ -25,6 +25,8 @@ export type PlatformFeatureReport = {
   wasmThreads: boolean;
   /** Whether WebGPU is exposed (`navigator.gpu`). */
   webgpu: boolean;
+  /** Whether WebGL2 is available (via `getContext("webgl2")`). */
+  webgl2: boolean;
   /** Whether OPFS is exposed (`navigator.storage.getDirectory`). */
   opfs: boolean;
   /** Whether AudioWorklet is available. */
@@ -72,6 +74,28 @@ function getAudioContextCtor(): typeof AudioContext | undefined {
   );
 }
 
+function detectWebGl2(): boolean {
+  try {
+    if (typeof OffscreenCanvas !== "undefined") {
+      const canvas = new OffscreenCanvas(1, 1);
+      return !!canvas.getContext("webgl2");
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    if (typeof document !== "undefined") {
+      const canvas = document.createElement("canvas");
+      return !!canvas.getContext("webgl2");
+    }
+  } catch {
+    // ignore
+  }
+
+  return false;
+}
+
 export function detectPlatformFeatures(): PlatformFeatureReport {
   const crossOriginIsolated = (globalThis as typeof globalThis & { crossOriginIsolated?: boolean })
     .crossOriginIsolated === true;
@@ -80,6 +104,7 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
   const wasmThreads = detectWasmThreads(crossOriginIsolated, sharedArrayBuffer);
 
   const webgpu = typeof navigator !== "undefined" && !!(navigator as Navigator & { gpu?: unknown }).gpu;
+  const webgl2 = detectWebGl2();
   const opfs =
     typeof navigator !== "undefined" &&
     typeof navigator.storage !== "undefined" &&
@@ -96,6 +121,7 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
     wasmSimd,
     wasmThreads,
     webgpu,
+    webgl2,
     opfs,
     audioWorklet,
     offscreenCanvas,
@@ -139,9 +165,9 @@ export function explainMissingRequirements(
     );
   }
 
-  if (!report.webgpu) {
+  if (!report.webgpu && !report.webgl2) {
     messages.push(
-      "WebGPU is unavailable. Aero requires WebGPU for GPU-accelerated rendering (Chrome/Edge 113+; Firefox/Safari support may require flags).",
+      "Neither WebGPU nor WebGL2 is available. Aero needs a GPU API for graphics; WebGL2 is a reduced-capability fallback when WebGPU is unavailable.",
     );
   }
 

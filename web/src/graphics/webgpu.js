@@ -9,6 +9,18 @@ function asU8(view) {
 }
 
 /**
+ * @param {ArrayBufferView} view
+ * @returns {Uint16Array}
+ */
+function asU16(view) {
+  if (view instanceof Uint16Array) return view;
+  if (view.byteOffset % 2 !== 0 || view.byteLength % 2 !== 0) {
+    throw new Error('rgb565 buffers must be 2-byte aligned');
+  }
+  return new Uint16Array(view.buffer, view.byteOffset, view.byteLength / 2);
+}
+
+/**
  * @param {import('./index.js').Framebuffer} framebuffer
  * @returns {{ width: number, height: number, rgba8: Uint8Array }}
  */
@@ -33,7 +45,7 @@ function toRgba8(framebuffer) {
     return {
       width: framebuffer.width,
       height: framebuffer.height,
-      rgba8: rgb565ToRgba8(/** @type {Uint16Array} */ (framebuffer.data)),
+      rgba8: rgb565ToRgba8(asU16(framebuffer.data)),
     };
   }
 
