@@ -73,6 +73,16 @@ fn build_string_descriptor_utf16le(s: &str) -> Vec<u8> {
 /// reports for [`keyboard::UsbHidKeyboard`].
 pub fn hid_usage_from_js_code(code: &str) -> Option<u8> {
     Some(match code {
+        // Modifiers.
+        "ControlLeft" => 0xe0,
+        "ShiftLeft" => 0xe1,
+        "AltLeft" => 0xe2,
+        "MetaLeft" => 0xe3, // "GUI" in USB HID terminology.
+        "ControlRight" => 0xe4,
+        "ShiftRight" => 0xe5,
+        "AltRight" => 0xe6,
+        "MetaRight" => 0xe7,
+
         "KeyA" => 0x04,
         "KeyB" => 0x05,
         "KeyC" => 0x06,
@@ -157,6 +167,9 @@ pub fn hid_usage_from_js_code(code: &str) -> Option<u8> {
         "ArrowLeft" => 0x50,
         "ArrowDown" => 0x51,
         "ArrowUp" => 0x52,
+
+        "NumpadEnter" => 0x58,
+        "NumpadDivide" => 0x54,
 
         _ => return None,
     })

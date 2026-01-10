@@ -37,6 +37,7 @@ impl MouseReport {
     }
 }
 
+#[derive(Debug)]
 pub struct UsbHidMouse {
     address: u8,
     configuration: u8,
@@ -54,12 +55,16 @@ pub struct UsbHidMouse {
 }
 
 /// Shareable handle for a USB HID mouse model.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UsbHidMouseHandle(Rc<RefCell<UsbHidMouse>>);
 
 impl UsbHidMouseHandle {
     pub fn new() -> Self {
         Self(Rc::new(RefCell::new(UsbHidMouse::new())))
+    }
+
+    pub fn configured(&self) -> bool {
+        self.0.borrow().configuration != 0
     }
 
     pub fn button_event(&self, button_bit: u8, pressed: bool) {

@@ -1,6 +1,10 @@
 use crate::io::ps2::{Ps2Controller, Ps2MouseButton};
+use crate::io::usb::hid::hid_usage_from_js_code;
+use crate::io::usb::hid::keyboard::UsbHidKeyboardHandle;
+use crate::io::usb::hid::mouse::UsbHidMouseHandle;
 use crate::io::virtio::devices::input::{
-    VirtioInputHub, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, KEY_A, KEY_B, KEY_ENTER, KEY_ESC, KEY_SPACE, KEY_TAB,
+    VirtioInputHub, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, KEY_A, KEY_B, KEY_ENTER, KEY_ESC, KEY_SPACE,
+    KEY_TAB,
 };
 use crate::io::virtio::vio_core::VirtQueueError;
 use memory::GuestMemory;
@@ -9,6 +13,7 @@ use memory::GuestMemory;
 pub enum InputRoutingPolicy {
     Ps2Only,
     VirtioOnly,
+    UsbOnly,
     Auto,
 }
 
@@ -16,12 +21,34 @@ pub enum InputRoutingPolicy {
 pub struct InputPipeline {
     pub ps2: Option<Ps2Controller>,
     pub virtio: Option<VirtioInputHub>,
+    pub usb_keyboard: Option<UsbHidKeyboardHandle>,
+    pub usb_mouse: Option<UsbHidMouseHandle>,
     pub policy: InputRoutingPolicy,
 }
 
 impl InputPipeline {
-    pub fn new(ps2: Option<Ps2Controller>, virtio: Option<VirtioInputHub>, policy: InputRoutingPolicy) -> Self {
-        Self { ps2, virtio, policy }
+    pub fn new(
+        ps2: Option<Ps2Controller>,
+        virtio: Option<VirtioInputHub>,
+        policy: InputRoutingPolicy,
+    ) -> Self {
+        Self {
+            ps2,
+            virtio,
+            usb_keyboard: None,
+            usb_mouse: None,
+            policy,
+        }
+    }
+
+    pub fn with_usb_hid(
+        mut self,
+        keyboard: UsbHidKeyboardHandle,
+        mouse: UsbHidMouseHandle,
+    ) -> Self {
+        self.usb_keyboard = Some(keyboard);
+        self.usb_mouse = Some(mouse);
+        self
     }
 
     pub fn handle_key(
@@ -33,13 +60,16 @@ impl InputPipeline {
         match self.policy {
             InputRoutingPolicy::Ps2Only => self.inject_key_ps2(code, pressed),
             InputRoutingPolicy::VirtioOnly => self.inject_key_virtio(mem, code, pressed)?,
+            InputRoutingPolicy::UsbOnly => self.inject_key_usb(code, pressed),
             InputRoutingPolicy::Auto => {
-                if self
-                    .virtio
-                    .as_ref()
-                    .is_some_and(|v| v.keyboard.driver_ok())
-                {
+                if self.virtio.as_ref().is_some_and(|v| v.keyboard.driver_ok()) {
                     self.inject_key_virtio(mem, code, pressed)?
+                } else if self
+                    .usb_keyboard
+                    .as_ref()
+                    .is_some_and(|kbd| kbd.configured())
+                {
+                    self.inject_key_usb(code, pressed)
                 } else {
                     self.inject_key_ps2(code, pressed)
                 }
@@ -57,9 +87,16 @@ impl InputPipeline {
         match self.policy {
             InputRoutingPolicy::Ps2Only => self.inject_mouse_move_ps2(dx, dy),
             InputRoutingPolicy::VirtioOnly => self.inject_mouse_move_virtio(mem, dx, dy)?,
+            InputRoutingPolicy::UsbOnly => self.inject_mouse_move_usb(dx, dy),
             InputRoutingPolicy::Auto => {
                 if self.virtio.as_ref().is_some_and(|v| v.mouse.driver_ok()) {
                     self.inject_mouse_move_virtio(mem, dx, dy)?
+                } else if self
+                    .usb_mouse
+                    .as_ref()
+                    .is_some_and(|mouse| mouse.configured())
+                {
+                    self.inject_mouse_move_usb(dx, dy)
                 } else {
                     self.inject_mouse_move_ps2(dx, dy)
                 }
@@ -76,10 +113,19 @@ impl InputPipeline {
     ) -> Result<(), VirtQueueError> {
         match self.policy {
             InputRoutingPolicy::Ps2Only => self.inject_mouse_button_ps2(button, pressed),
-            InputRoutingPolicy::VirtioOnly => self.inject_mouse_button_virtio(mem, button, pressed)?,
+            InputRoutingPolicy::VirtioOnly => {
+                self.inject_mouse_button_virtio(mem, button, pressed)?
+            }
+            InputRoutingPolicy::UsbOnly => self.inject_mouse_button_usb(button, pressed),
             InputRoutingPolicy::Auto => {
                 if self.virtio.as_ref().is_some_and(|v| v.mouse.driver_ok()) {
                     self.inject_mouse_button_virtio(mem, button, pressed)?
+                } else if self
+                    .usb_mouse
+                    .as_ref()
+                    .is_some_and(|mouse| mouse.configured())
+                {
+                    self.inject_mouse_button_usb(button, pressed)
                 } else {
                     self.inject_mouse_button_ps2(button, pressed)
                 }
@@ -88,13 +134,24 @@ impl InputPipeline {
         Ok(())
     }
 
-    pub fn handle_mouse_wheel(&mut self, mem: &mut impl GuestMemory, delta: i32) -> Result<(), VirtQueueError> {
+    pub fn handle_mouse_wheel(
+        &mut self,
+        mem: &mut impl GuestMemory,
+        delta: i32,
+    ) -> Result<(), VirtQueueError> {
         match self.policy {
             InputRoutingPolicy::Ps2Only => self.inject_mouse_wheel_ps2(delta),
             InputRoutingPolicy::VirtioOnly => self.inject_mouse_wheel_virtio(mem, delta)?,
+            InputRoutingPolicy::UsbOnly => self.inject_mouse_wheel_usb(delta),
             InputRoutingPolicy::Auto => {
                 if self.virtio.as_ref().is_some_and(|v| v.mouse.driver_ok()) {
                     self.inject_mouse_wheel_virtio(mem, delta)?
+                } else if self
+                    .usb_mouse
+                    .as_ref()
+                    .is_some_and(|mouse| mouse.configured())
+                {
+                    self.inject_mouse_wheel_usb(delta)
                 } else {
                     self.inject_mouse_wheel_ps2(delta)
                 }
@@ -129,6 +186,16 @@ impl InputPipeline {
         Ok(())
     }
 
+    fn inject_key_usb(&mut self, code: &str, pressed: bool) {
+        let Some(kbd) = self.usb_keyboard.as_ref().filter(|k| k.configured()) else {
+            return;
+        };
+        let Some(usage) = hid_usage_from_js_code(code) else {
+            return;
+        };
+        kbd.key_event(usage, pressed);
+    }
+
     fn inject_mouse_move_ps2(&mut self, dx: i32, dy: i32) {
         let Some(ps2) = self.ps2.as_mut() else {
             return;
@@ -147,6 +214,13 @@ impl InputPipeline {
         };
         virtio.mouse.inject_rel_move(mem, dx, dy)?;
         Ok(())
+    }
+
+    fn inject_mouse_move_usb(&mut self, dx: i32, dy: i32) {
+        let Some(mouse) = self.usb_mouse.as_ref().filter(|m| m.configured()) else {
+            return;
+        };
+        mouse.movement(dx, dy);
     }
 
     fn inject_mouse_button_ps2(&mut self, button: Ps2MouseButton, pressed: bool) {
@@ -174,6 +248,18 @@ impl InputPipeline {
         Ok(())
     }
 
+    fn inject_mouse_button_usb(&mut self, button: Ps2MouseButton, pressed: bool) {
+        let Some(mouse) = self.usb_mouse.as_ref().filter(|m| m.configured()) else {
+            return;
+        };
+        let bit = match button {
+            Ps2MouseButton::Left => 0x01,
+            Ps2MouseButton::Right => 0x02,
+            Ps2MouseButton::Middle => 0x04,
+        };
+        mouse.button_event(bit, pressed);
+    }
+
     fn inject_mouse_wheel_ps2(&mut self, delta: i32) {
         let Some(ps2) = self.ps2.as_mut() else {
             return;
@@ -191,6 +277,13 @@ impl InputPipeline {
         };
         virtio.mouse.inject_wheel(mem, delta)?;
         Ok(())
+    }
+
+    fn inject_mouse_wheel_usb(&mut self, delta: i32) {
+        let Some(mouse) = self.usb_mouse.as_ref().filter(|m| m.configured()) else {
+            return;
+        };
+        mouse.wheel(delta);
     }
 }
 
@@ -221,7 +314,9 @@ fn js_code_to_ps2_set2_scancode(code: &str) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::virtio::devices::input::{VirtioInputDevice, VirtioInputDeviceKind, VirtioInputEvent, EV_KEY};
+    use crate::io::virtio::devices::input::{
+        VirtioInputDevice, VirtioInputDeviceKind, VirtioInputEvent, EV_KEY,
+    };
     use crate::io::virtio::vio_core::{Descriptor, VirtQueue, VRING_DESC_F_WRITE};
     use memory::DenseMemory;
 
@@ -237,8 +332,7 @@ mod tests {
         mem.write_u16_le(avail, 0).unwrap();
         mem.write_u16_le(avail + 2, heads.len() as u16).unwrap();
         for (i, head) in heads.iter().enumerate() {
-            mem.write_u16_le(avail + 4 + (i as u64) * 2, *head)
-                .unwrap();
+            mem.write_u16_le(avail + 4 + (i as u64) * 2, *head).unwrap();
         }
     }
 

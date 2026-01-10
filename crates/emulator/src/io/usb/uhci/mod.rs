@@ -13,6 +13,8 @@ pub mod regs;
 use memory::MemoryBus;
 
 use crate::io::pci::{PciConfigSpace, PciDevice};
+use crate::io::usb::hid::keyboard::UsbHidKeyboardHandle;
+use crate::io::usb::hid::mouse::UsbHidMouseHandle;
 use crate::io::usb::hub::RootHub;
 use crate::io::PortIO;
 
@@ -177,6 +179,15 @@ impl UhciPciDevice {
 
     pub fn irq_level(&self) -> bool {
         self.controller.irq_level()
+    }
+
+    pub fn new_with_hid(io_base: u16) -> (Self, UsbHidKeyboardHandle, UsbHidMouseHandle) {
+        let mut controller = UhciController::new();
+        let keyboard = UsbHidKeyboardHandle::new();
+        let mouse = UsbHidMouseHandle::new();
+        controller.hub_mut().attach(0, Box::new(keyboard.clone()));
+        controller.hub_mut().attach(1, Box::new(mouse.clone()));
+        (Self::new(controller, io_base), keyboard, mouse)
     }
 
     pub fn tick_1ms(&mut self, mem: &mut dyn MemoryBus) {

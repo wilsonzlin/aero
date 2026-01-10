@@ -42,6 +42,7 @@ impl KeyboardReport {
     }
 }
 
+#[derive(Debug)]
 pub struct UsbHidKeyboard {
     address: u8,
     configuration: u8,
@@ -62,12 +63,16 @@ pub struct UsbHidKeyboard {
 ///
 /// The UHCI root hub stores devices behind `Box<dyn UsbDeviceModel>`; by cloning this handle
 /// before attaching, the platform/input layer can continue to inject key events.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UsbHidKeyboardHandle(Rc<RefCell<UsbHidKeyboard>>);
 
 impl UsbHidKeyboardHandle {
     pub fn new() -> Self {
         Self(Rc::new(RefCell::new(UsbHidKeyboard::new())))
+    }
+
+    pub fn configured(&self) -> bool {
+        self.0.borrow().configuration != 0
     }
 
     pub fn key_event(&self, usage: u8, pressed: bool) {
