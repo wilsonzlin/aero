@@ -64,6 +64,12 @@ func normalizeOriginHeader(originHeader string) (normalizedOrigin string, host s
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return "", "", false
 	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", "", false
+	}
+	if u.Path != "" && u.Path != "/" {
+		return "", "", false
+	}
 
 	scheme := strings.ToLower(u.Scheme)
 	host = strings.ToLower(u.Host)

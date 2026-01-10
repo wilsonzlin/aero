@@ -797,6 +797,12 @@ func parseAllowedOrigins(raw string) ([]string, error) {
 		if err != nil || u.Scheme == "" || u.Host == "" {
 			return nil, fmt.Errorf("invalid origin %q (expected full origin like https://example.com)", entry)
 		}
+		if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return nil, fmt.Errorf("invalid origin %q (must not include credentials, query, or fragment)", entry)
+		}
+		if u.Path != "" && u.Path != "/" {
+			return nil, fmt.Errorf("invalid origin %q (must not include a path)", entry)
+		}
 
 		out = append(out, strings.ToLower(u.Scheme)+"://"+strings.ToLower(u.Host))
 	}

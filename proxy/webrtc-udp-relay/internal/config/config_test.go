@@ -168,3 +168,43 @@ func TestWebRTCUDPListenIP_Invalid(t *testing.T) {
 		t.Fatalf("expected error, got nil")
 	}
 }
+
+func TestParseAllowedOrigins_NormalizesAndValidates(t *testing.T) {
+	got, err := parseAllowedOrigins("HTTPS://Example.COM:443, http://localhost:5173/")
+	if err != nil {
+		t.Fatalf("parseAllowedOrigins: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len=%d, want 2 (%v)", len(got), got)
+	}
+	if got[0] != "https://example.com:443" {
+		t.Fatalf("got[0]=%q, want %q", got[0], "https://example.com:443")
+	}
+	if got[1] != "http://localhost:5173" {
+		t.Fatalf("got[1]=%q, want %q", got[1], "http://localhost:5173")
+	}
+}
+
+func TestParseAllowedOrigins_AllowsStarAndNull(t *testing.T) {
+	got, err := parseAllowedOrigins("*,null")
+	if err != nil {
+		t.Fatalf("parseAllowedOrigins: %v", err)
+	}
+	if len(got) != 2 || got[0] != "*" || got[1] != "null" {
+		t.Fatalf("got=%v, want [* null]", got)
+	}
+}
+
+func TestParseAllowedOrigins_RejectsPathQueryAndCredentials(t *testing.T) {
+	cases := []string{
+		"https://example.com/path",
+		"https://example.com/?q=1",
+		"https://user@example.com",
+		"https://example.com/#frag",
+	}
+	for _, raw := range cases {
+		if _, err := parseAllowedOrigins(raw); err == nil {
+			t.Fatalf("expected error for %q, got nil", raw)
+		}
+	}
+}
