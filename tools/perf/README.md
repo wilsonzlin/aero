@@ -27,6 +27,8 @@ When the perf export includes a `jit` section, `run.mjs` also embeds it under `m
 
 This is meant to make perf regressions easier to attribute (e.g. throughput drop because JIT compile time spiked), without affecting timed samples (perf export capture happens after the timed microbench loop).
 
+`compare.mjs` will include these JIT metrics in `compare.md` when present so the GitHub Actions job summary shows them alongside benchmark deltas.
+
 ## Usage
 
 Run locally (requires a Playwright Chromium install):

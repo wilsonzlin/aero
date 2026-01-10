@@ -80,6 +80,38 @@ function mdEscape(s) {
   return String(s).replaceAll("|", "\\|");
 }
 
+function fmtCount(n) {
+  if (!Number.isFinite(n)) return "n/a";
+  return Math.round(n).toString();
+}
+
+function fmtBytes(bytes) {
+  if (!Number.isFinite(bytes)) return "n/a";
+  const abs = Math.abs(bytes);
+  if (abs < 1024) return `${bytes.toFixed(0)} B`;
+  if (abs < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (abs < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function fmtSignedNumber(n, decimals) {
+  if (!Number.isFinite(n)) return "n/a";
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toFixed(decimals)}`;
+}
+
+function fmtSignedBytes(bytes) {
+  if (!Number.isFinite(bytes)) return "n/a";
+  const sign = bytes > 0 ? "+" : "";
+  return `${sign}${fmtBytes(bytes)}`;
+}
+
+function fmtSignedCount(n) {
+  if (!Number.isFinite(n)) return "n/a";
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${Math.round(n)}`;
+}
+
 async function readJson(file) {
   return JSON.parse(await fs.readFile(file, "utf8"));
 }
@@ -162,6 +194,121 @@ async function main() {
     reportLines.push("Result: **Regression detected**");
   } else {
     reportLines.push("Result: **No significant regressions**");
+  }
+
+  const baseJit = baseline.meta?.aeroPerf?.jit;
+  const candJit = candidate.meta?.aeroPerf?.jit;
+  if (baseJit !== undefined || candJit !== undefined) {
+    const asNum = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    const asBool = (v) => (typeof v === "boolean" ? v : null);
+
+    const summarize = (jit) => {
+      if (!jit || typeof jit !== "object") return null;
+      const tier1 = jit.totals?.tier1;
+      const tier2 = jit.totals?.tier2;
+      const cache = jit.totals?.cache;
+      const deopt = jit.totals?.deopt;
+      const passes = tier2?.passesMs;
+      return {
+        enabled: asBool(jit.enabled),
+        t1Blocks: asNum(tier1?.blocksCompiled),
+        t2Blocks: asNum(tier2?.blocksCompiled),
+        t1CompileMs: asNum(tier1?.compileMs),
+        t2CompileMs: asNum(tier2?.compileMs),
+        t2ConstFoldMs: asNum(passes?.constFold),
+        t2DceMs: asNum(passes?.dce),
+        t2RegallocMs: asNum(passes?.regalloc),
+        cacheHits: asNum(cache?.lookupHit),
+        cacheMisses: asNum(cache?.lookupMiss),
+        cacheUsedBytes: asNum(cache?.usedBytes),
+        cacheCapacityBytes: asNum(cache?.capacityBytes),
+        deopt: asNum(deopt?.count),
+        guardFail: asNum(deopt?.guardFail),
+      };
+    };
+
+    const base = summarize(baseJit);
+    const cand = summarize(candJit);
+
+    const cacheHitRate = (s) => {
+      if (!s) return null;
+      if (s.cacheHits == null || s.cacheMisses == null) return null;
+      const total = s.cacheHits + s.cacheMisses;
+      if (total <= 0) return 0;
+      return s.cacheHits / total;
+    };
+
+    reportLines.push("");
+    reportLines.push("## Aero JIT metrics (PF-006)");
+    reportLines.push("");
+    reportLines.push("| Metric | Baseline | Candidate | Δ |");
+    reportLines.push("| --- | ---: | ---: | ---: |");
+
+    const addRow = (label, b, c, opts) => {
+      const { fmt, fmtDelta } = opts;
+      const bText = b == null ? "n/a" : fmt(b);
+      const cText = c == null ? "n/a" : fmt(c);
+      const deltaText = b == null || c == null ? "n/a" : fmtDelta(c - b);
+      reportLines.push(`| ${mdEscape(label)} | ${bText} | ${cText} | ${deltaText} |`);
+    };
+
+    // Enabled: show baseline/candidate, no delta.
+    reportLines.push(
+      `| enabled | ${base?.enabled == null ? "n/a" : base.enabled ? "true" : "false"} | ${
+        cand?.enabled == null ? "n/a" : cand.enabled ? "true" : "false"
+      } | — |`,
+    );
+
+    addRow("tier1 blocks compiled", base?.t1Blocks, cand?.t1Blocks, {
+      fmt: fmtCount,
+      fmtDelta: fmtSignedCount,
+    });
+    addRow("tier2 blocks compiled", base?.t2Blocks, cand?.t2Blocks, {
+      fmt: fmtCount,
+      fmtDelta: fmtSignedCount,
+    });
+    addRow("tier1 compile ms (total)", base?.t1CompileMs, cand?.t1CompileMs, {
+      fmt: (n) => `${n.toFixed(2)}ms`,
+      fmtDelta: (n) => `${fmtSignedNumber(n, 2)}ms`,
+    });
+    addRow("tier2 compile ms (total)", base?.t2CompileMs, cand?.t2CompileMs, {
+      fmt: (n) => `${n.toFixed(2)}ms`,
+      fmtDelta: (n) => `${fmtSignedNumber(n, 2)}ms`,
+    });
+    addRow("tier2 pass ms: const-fold", base?.t2ConstFoldMs, cand?.t2ConstFoldMs, {
+      fmt: (n) => `${n.toFixed(2)}ms`,
+      fmtDelta: (n) => `${fmtSignedNumber(n, 2)}ms`,
+    });
+    addRow("tier2 pass ms: DCE", base?.t2DceMs, cand?.t2DceMs, {
+      fmt: (n) => `${n.toFixed(2)}ms`,
+      fmtDelta: (n) => `${fmtSignedNumber(n, 2)}ms`,
+    });
+    addRow("tier2 pass ms: regalloc", base?.t2RegallocMs, cand?.t2RegallocMs, {
+      fmt: (n) => `${n.toFixed(2)}ms`,
+      fmtDelta: (n) => `${fmtSignedNumber(n, 2)}ms`,
+    });
+    addRow("cache lookups (hit)", base?.cacheHits, cand?.cacheHits, {
+      fmt: fmtCount,
+      fmtDelta: fmtSignedCount,
+    });
+    addRow("cache lookups (miss)", base?.cacheMisses, cand?.cacheMisses, {
+      fmt: fmtCount,
+      fmtDelta: fmtSignedCount,
+    });
+    addRow("cache hit rate (total)", cacheHitRate(base), cacheHitRate(cand), {
+      fmt: (n) => `${(n * 100).toFixed(1)}%`,
+      fmtDelta: (n) => `${fmtSignedNumber(n * 100, 1)}%`,
+    });
+    addRow("code cache used", base?.cacheUsedBytes, cand?.cacheUsedBytes, {
+      fmt: fmtBytes,
+      fmtDelta: fmtSignedBytes,
+    });
+    addRow("code cache capacity", base?.cacheCapacityBytes, cand?.cacheCapacityBytes, {
+      fmt: fmtBytes,
+      fmtDelta: fmtSignedBytes,
+    });
+    addRow("deopt count", base?.deopt, cand?.deopt, { fmt: fmtCount, fmtDelta: fmtSignedCount });
+    addRow("guard fail count", base?.guardFail, cand?.guardFail, { fmt: fmtCount, fmtDelta: fmtSignedCount });
   }
 
   const summary = {
