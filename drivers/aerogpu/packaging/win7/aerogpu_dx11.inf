@@ -10,10 +10,10 @@
 ;
 ; Expected package contents (same directory as this INF):
 ;   - aerogpu.sys                 (kernel-mode miniport)
-;   - aerogpu_d3d9_umd.dll        (32-bit D3D9 UMD)
-;   - aerogpu_d3d9_umd_x64.dll    (64-bit D3D9 UMD)
-;   - aerogpu_d3d10_11_umd.dll        (32-bit D3D10/11 UMD)
-;   - aerogpu_d3d10_11_umd_x64.dll    (64-bit D3D10/11 UMD)
+;   - aerogpu_d3d9.dll            (32-bit D3D9 UMD)
+;   - aerogpu_d3d9_x64.dll        (64-bit D3D9 UMD)
+;   - aerogpu_d3d10.dll           (32-bit D3D10/11 UMD)
+;   - aerogpu_d3d10_x64.dll       (64-bit D3D10/11 UMD)
 ;
 
 [Version]
@@ -60,16 +60,16 @@ AddService = AeroGPU,0x00000002,AeroGPU_Service_Install
 aerogpu.sys
 
 [AeroGPU_UMD_x86.CopyFiles]
-aerogpu_d3d9_umd.dll
-aerogpu_d3d10_11_umd.dll
+aerogpu_d3d9.dll
+aerogpu_d3d10.dll
 
 [AeroGPU_UMD_x64.CopyFiles]
-aerogpu_d3d9_umd_x64.dll
-aerogpu_d3d10_11_umd_x64.dll
+aerogpu_d3d9_x64.dll
+aerogpu_d3d10_x64.dll
 
 [AeroGPU_UMD_Wow64.CopyFiles]
-aerogpu_d3d9_umd.dll
-aerogpu_d3d10_11_umd.dll
+aerogpu_d3d9.dll
+aerogpu_d3d10.dll
 
 [DestinationDirs]
 DefaultDestDir              = 11
@@ -86,21 +86,21 @@ AeroGPU_UMD_Wow64.CopyFiles = 10,SysWOW64
 HKR,,FeatureScore,0x00010001,0x000000F8
 
 ; D3D9 UMD registration (32-bit).
-HKR,,InstalledDisplayDrivers,0x00010000,"aerogpu_d3d9_umd"
+HKR,,InstalledDisplayDrivers,0x00010000,"aerogpu_d3d9"
 
 ; D3D10/11 UMD registration (32-bit).
-HKR,,UserModeDriverName,0,"aerogpu_d3d10_11_umd.dll"
+HKR,,UserModeDriverName,0,"aerogpu_d3d10.dll"
 
 [AeroGPU_Device_AddReg_amd64]
 HKR,,FeatureScore,0x00010001,0x000000F8
 
 ; D3D9 UMD registration (64-bit + WoW32).
-HKR,,InstalledDisplayDrivers,0x00010000,"aerogpu_d3d9_umd_x64"
-HKR,,InstalledDisplayDriversWow,0x00010000,"aerogpu_d3d9_umd"
+HKR,,InstalledDisplayDrivers,0x00010000,"aerogpu_d3d9_x64"
+HKR,,InstalledDisplayDriversWow,0x00010000,"aerogpu_d3d9"
 
 ; D3D10/11 UMD registration (64-bit + WoW32).
-HKR,,UserModeDriverName,0,"aerogpu_d3d10_11_umd_x64.dll"
-HKR,,UserModeDriverNameWow,0,"aerogpu_d3d10_11_umd.dll"
+HKR,,UserModeDriverName,0,"aerogpu_d3d10_x64.dll"
+HKR,,UserModeDriverNameWow,0,"aerogpu_d3d10.dll"
 
 ; -------------------------------
 ; Service installation
@@ -121,16 +121,16 @@ LoadOrderGroup = Video
 
 [SourceDisksFiles.x86]
 aerogpu.sys = 1
-aerogpu_d3d9_umd.dll = 1
-aerogpu_d3d10_11_umd.dll = 1
+aerogpu_d3d9.dll = 1
+aerogpu_d3d10.dll = 1
 
 [SourceDisksFiles.amd64]
 aerogpu.sys = 1
-aerogpu_d3d9_umd_x64.dll = 1
-aerogpu_d3d10_11_umd_x64.dll = 1
+aerogpu_d3d9_x64.dll = 1
+aerogpu_d3d10_x64.dll = 1
 ; x64 installs need WoW32 UMDs as well.
-aerogpu_d3d9_umd.dll = 1
-aerogpu_d3d10_11_umd.dll = 1
+aerogpu_d3d9.dll = 1
+aerogpu_d3d10.dll = 1
 
 [Strings]
 AeroGPU.Provider     = "AeroGPU"

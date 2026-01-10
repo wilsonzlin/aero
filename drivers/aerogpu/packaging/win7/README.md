@@ -28,13 +28,8 @@ Copy the built driver binaries into this directory (same folder as the `.inf` fi
 | File | Arch | Destination after install |
 |------|------|---------------------------|
 | `aerogpu.sys` | x86/x64 | `C:\Windows\System32\drivers\` |
-| `aerogpu_d3d9_umd.dll` | x86 | `C:\Windows\System32\` (x86 OS) / `C:\Windows\SysWOW64\` (x64 OS) |
-| `aerogpu_d3d9_umd_x64.dll` | x64 | `C:\Windows\System32\` (x64 OS) |
-
-Notes:
-
-- `aerogpu.sys` must match the target OS architecture (x86 build for Win7 x86, x64 build for Win7 x64).
-- If your build system produces the same D3D9 UMD filename for both architectures, rename the 64-bit DLL to `*_x64.dll` when copying it into this package.
+| `aerogpu_d3d9.dll` | x86 | `C:\Windows\System32\` (x86 OS) / `C:\Windows\SysWOW64\` (x64 OS) |
+| `aerogpu_d3d9_x64.dll` | x64 | `C:\Windows\System32\` (x64 OS) |
 
 ### Optional (D3D10/11)
 
@@ -42,12 +37,8 @@ Only needed if you install using `aerogpu_dx11.inf`:
 
 | File | Arch | Destination after install |
 |------|------|---------------------------|
-| `aerogpu_d3d10_11_umd.dll` | x86 | `C:\Windows\SysWOW64\` (x64 OS) |
-| `aerogpu_d3d10_11_umd_x64.dll` | x64 | `C:\Windows\System32\` (x64 OS) |
-
-Notes:
-
-- The `drivers/aerogpu/umd/d3d10_11/` project currently outputs `aerogpu_d3d10_11_umd.dll` for both Win32 and x64 builds. To ship both, copy the x64 build output and rename it to `aerogpu_d3d10_11_umd_x64.dll`.
+| `aerogpu_d3d10.dll` | x86 | `C:\Windows\System32\` (x86 OS) / `C:\Windows\SysWOW64\` (x64 OS) |
+| `aerogpu_d3d10_x64.dll` | x64 | `C:\Windows\System32\` (x64 OS) |
 
 ## 2) Set the correct PCI Hardware ID (required)
 
@@ -130,10 +121,12 @@ On a clean Win7 SP1 VM:
 2. No **Code 52** (signature), **Code 39**, or **Code 43**.
 3. Confirm UMD DLL placement:
     - x64 VM:
-      - `C:\Windows\System32\aerogpu_d3d9_umd_x64.dll` exists
-      - `C:\Windows\SysWOW64\aerogpu_d3d9_umd.dll` exists
+      - `C:\Windows\System32\aerogpu_d3d9_x64.dll` exists
+      - `C:\Windows\SysWOW64\aerogpu_d3d9.dll` exists
+      - (if you installed `aerogpu_dx11.inf`) `C:\Windows\System32\aerogpu_d3d10_x64.dll` exists and `C:\Windows\SysWOW64\aerogpu_d3d10.dll` exists
     - x86 VM:
-      - `C:\Windows\System32\aerogpu_d3d9_umd.dll` exists
+      - `C:\Windows\System32\aerogpu_d3d9.dll` exists
+      - (if you installed `aerogpu_dx11.inf`) `C:\Windows\System32\aerogpu_d3d10.dll` exists
 
 ## 7) Run the guest-side Direct3D validation suite (recommended)
 

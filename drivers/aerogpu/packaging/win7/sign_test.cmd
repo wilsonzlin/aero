@@ -159,9 +159,9 @@ echo [INFO] Inf2Cat target: %INF2CAT_OS% (arch=%INF2CAT_ARCH%)
 rem Always generate the base catalog if the base INF is present.
 if exist "aerogpu.inf" (
   if /i "%INF2CAT_ARCH%"=="amd64" (
-    call :Inf2CatOne "aerogpu.inf" "aerogpu.cat" aerogpu.sys aerogpu_d3d9_umd.dll aerogpu_d3d9_umd_x64.dll
+    call :Inf2CatOne "aerogpu.inf" "aerogpu.cat" aerogpu.sys aerogpu_d3d9.dll aerogpu_d3d9_x64.dll
   ) else (
-    call :Inf2CatOne "aerogpu.inf" "aerogpu.cat" aerogpu.sys aerogpu_d3d9_umd.dll
+    call :Inf2CatOne "aerogpu.inf" "aerogpu.cat" aerogpu.sys aerogpu_d3d9.dll
   )
   if not "%ERRORLEVEL%"=="0" goto :Inf2CatFail
 )
@@ -169,15 +169,15 @@ if exist "aerogpu.inf" (
 rem Only generate the optional DX11 catalog if its files are present.
 if exist "aerogpu_dx11.inf" (
   if /i "%INF2CAT_ARCH%"=="amd64" (
-    if exist "aerogpu_d3d10_11_umd.dll" if exist "aerogpu_d3d10_11_umd_x64.dll" (
-      call :Inf2CatOne "aerogpu_dx11.inf" "aerogpu_dx11.cat" aerogpu.sys aerogpu_d3d9_umd.dll aerogpu_d3d9_umd_x64.dll aerogpu_d3d10_11_umd.dll aerogpu_d3d10_11_umd_x64.dll
+    if exist "aerogpu_d3d10.dll" if exist "aerogpu_d3d10_x64.dll" (
+      call :Inf2CatOne "aerogpu_dx11.inf" "aerogpu_dx11.cat" aerogpu.sys aerogpu_d3d9.dll aerogpu_d3d9_x64.dll aerogpu_d3d10.dll aerogpu_d3d10_x64.dll
       if not "%ERRORLEVEL%"=="0" goto :Inf2CatFail
     ) else (
       echo [INFO] Skipping aerogpu_dx11.inf catalog generation (optional D3D10/11 UMDs not found).
     )
   ) else (
-    if exist "aerogpu_d3d10_11_umd.dll" (
-      call :Inf2CatOne "aerogpu_dx11.inf" "aerogpu_dx11.cat" aerogpu.sys aerogpu_d3d9_umd.dll aerogpu_d3d10_11_umd.dll
+    if exist "aerogpu_d3d10.dll" (
+      call :Inf2CatOne "aerogpu_dx11.inf" "aerogpu_dx11.cat" aerogpu.sys aerogpu_d3d9.dll aerogpu_d3d10.dll
       if not "%ERRORLEVEL%"=="0" goto :Inf2CatFail
     ) else (
       echo [INFO] Skipping aerogpu_dx11.inf catalog generation (optional D3D10/11 UMDs not found).
