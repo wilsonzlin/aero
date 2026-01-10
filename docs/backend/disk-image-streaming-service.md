@@ -146,7 +146,7 @@ Recommended policy:
   - `Cache-Control: no-cache`
   - Always send `ETag`
   - Support `If-None-Match` on `GET`/`HEAD` (return `304` when matched)
-- **Data** (`/v1/images/{image_id}` or `/v1/images/{image_id}/data`)
+- **Data** (`/disks/{disk_id}/bytes`)
   - Send `ETag` and `Last-Modified` when available
   - `Accept-Ranges: bytes`
   - Public images: `Cache-Control: public, max-age=<n>, no-transform` (max-age configurable)
