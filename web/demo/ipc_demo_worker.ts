@@ -1,18 +1,17 @@
 /// <reference lib="webworker" />
 
 import { decodeCommand, encodeEvent } from "../src/ipc/protocol";
-import { RingBuffer } from "../src/ipc/ring_buffer";
+import { queueKind } from "../src/ipc/layout";
+import { openRingByKind } from "../src/ipc/ipc";
 
 type InitMessage = {
   sab: SharedArrayBuffer;
-  cmdOffset: number;
-  evtOffset: number;
 };
 
 self.onmessage = (ev: MessageEvent<InitMessage>) => {
-  const { sab, cmdOffset, evtOffset } = ev.data;
-  const cmdQ = new RingBuffer(sab, cmdOffset);
-  const evtQ = new RingBuffer(sab, evtOffset);
+  const { sab } = ev.data;
+  const cmdQ = openRingByKind(sab, queueKind.CMD);
+  const evtQ = openRingByKind(sab, queueKind.EVT);
 
   // Main loop: block for data, respond with ack.
   for (;;) {
@@ -30,4 +29,3 @@ self.onmessage = (ev: MessageEvent<InitMessage>) => {
     }
   }
 };
-

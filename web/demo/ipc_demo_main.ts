@@ -1,4 +1,5 @@
-import { alignUp, ringCtrl } from "../src/ipc/layout";
+import { queueKind } from "../src/ipc/layout";
+import { createIpcBuffer } from "../src/ipc/ipc";
 import { decodeEvent, encodeCommand } from "../src/ipc/protocol";
 import { RingBuffer } from "../src/ipc/ring_buffer";
 
@@ -26,21 +27,20 @@ startBtn.onclick = () => {
   const CMD_CAP = 1 << 20; // 1 MiB
   const EVT_CAP = 1 << 20;
 
-  const cmdOffset = 0;
-  const evtOffset = alignUp(cmdOffset + ringCtrl.BYTES + CMD_CAP, 4);
-  const totalBytes = evtOffset + ringCtrl.BYTES + EVT_CAP;
+  const { buffer: sab, queues } = createIpcBuffer([
+    { kind: queueKind.CMD, capacityBytes: CMD_CAP },
+    { kind: queueKind.EVT, capacityBytes: EVT_CAP },
+  ]);
 
-  const sab = new SharedArrayBuffer(totalBytes);
+  const cmdQueue = queues.find((q) => q.kind === queueKind.CMD);
+  const evtQueue = queues.find((q) => q.kind === queueKind.EVT);
+  if (!cmdQueue || !evtQueue) throw new Error("missing queues");
 
-  // Init ring headers (head/tail reserved/commit = 0; capacity set).
-  new Int32Array(sab, cmdOffset, ringCtrl.WORDS).set([0, 0, 0, CMD_CAP]);
-  new Int32Array(sab, evtOffset, ringCtrl.WORDS).set([0, 0, 0, EVT_CAP]);
-
-  const cmdQ = new RingBuffer(sab, cmdOffset);
-  const evtQ = new RingBuffer(sab, evtOffset);
+  const cmdQ = new RingBuffer(sab, cmdQueue.offsetBytes);
+  const evtQ = new RingBuffer(sab, evtQueue.offsetBytes);
 
   worker = new Worker(new URL("./ipc_demo_worker.ts", import.meta.url), { type: "module" });
-  worker.postMessage({ sab, cmdOffset, evtOffset });
+  worker.postMessage({ sab });
 
   let sent = 0;
   let received = 0;
@@ -93,4 +93,3 @@ stopBtn.onclick = () => {
   stopBtn.disabled = true;
   statsEl.textContent = "stopped";
 };
-

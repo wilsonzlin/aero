@@ -189,5 +189,6 @@ Log levels:
 - Rust: `crates/aero-ipc/src/{layout,ring,protocol}.rs`
 - WASM + JS Atomics glue: `crates/aero-ipc/src/wasm.rs`
 - TypeScript: `web/src/ipc/{layout,ring_buffer,protocol}.ts`
+- TypeScript (layout builder/parser): `web/src/ipc/ipc.ts`
 - Browser demo: `web/demo/ipc_demo.html`
  
