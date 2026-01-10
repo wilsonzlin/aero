@@ -83,6 +83,8 @@ npm test
 
 `npm test` runs `playwright install chromium` automatically (via `pretest`) to ensure the browser binary is available.
 
+This E2E test also requires a working Go toolchain (it builds a small local relay helper).
+
 ### System dependencies (Playwright)
 
 On Debian/Ubuntu, Playwright can install its required shared libraries automatically:
@@ -93,7 +95,7 @@ npx playwright install --with-deps chromium
 
 If Chromium fails to launch in CI, ensure the container/runner includes the Playwright Linux dependencies.
 
-> Note: the E2E test currently runs a small Node-based relay implementation under `e2e/relay-server/` while the Go relay's WebRTC endpoints are under active development.
+The E2E test builds and runs a small Go relay helper under `e2e/relay-server-go/` (using `pion/webrtc`) to exercise Chromium interoperability end-to-end.
 
 ## HTTP endpoints
 

@@ -1,7 +1,9 @@
 import { test, expect } from "@playwright/test";
 import dgram from "node:dgram";
+import fs from "node:fs/promises";
 import http from "node:http";
-import { spawn } from "node:child_process";
+import os from "node:os";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -45,9 +47,20 @@ async function startWebServer() {
 }
 
 async function spawnRelayServer() {
-  const relayPath = path.join(__dirname, "..", "relay-server", "server.mjs");
+  const moduleDir = path.join(__dirname, "..", "..");
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aero-webrtc-udp-relay-e2e-"));
+  const binPath = path.join(tmpDir, "relay-server-go");
 
-  const child = spawn(process.execPath, [relayPath], {
+  const build = spawnSync("go", ["build", "-o", binPath, "./e2e/relay-server-go"], {
+    cwd: moduleDir,
+    stdio: "inherit",
+  });
+  if (build.status !== 0) {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+    throw new Error(`failed to build Go relay server (exit ${build.status ?? "unknown"})`);
+  }
+
+  const child = spawn(binPath, [], {
     env: {
       ...process.env,
       AUTH_MODE: "none",
@@ -82,6 +95,7 @@ async function spawnRelayServer() {
 
     child.on("exit", (code) => {
       clearTimeout(timeout);
+      fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
       reject(new Error(`relay exited early (${code ?? "unknown"})`));
     });
   });
@@ -89,9 +103,11 @@ async function spawnRelayServer() {
   return {
     port,
     kill: async () => {
-      if (child.exitCode !== null) return;
-      child.kill("SIGTERM");
-      await new Promise((resolve) => child.once("exit", resolve));
+      if (child.exitCode === null) {
+        child.kill("SIGTERM");
+        await new Promise((resolve) => child.once("exit", resolve));
+      }
+      await fs.rm(tmpDir, { recursive: true, force: true });
     },
   };
 }
