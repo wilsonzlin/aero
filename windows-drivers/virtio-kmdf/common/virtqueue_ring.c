@@ -18,88 +18,6 @@ VirtqueueRingIsAligned64(
     return (Value & (Alignment - 1)) == 0;
 }
 
-static VOID
-VirtioCommonBufferZeroInit(
-    _Out_ VIRTIO_COMMON_BUFFER* CommonBuffer)
-{
-    RtlZeroMemory(CommonBuffer, sizeof(*CommonBuffer));
-}
-
-static VOID
-VirtioCommonBufferFree(
-    _Inout_ VIRTIO_COMMON_BUFFER* CommonBuffer)
-{
-    if (CommonBuffer->WdfCommonBuffer != NULL) {
-        WdfObjectDelete(CommonBuffer->WdfCommonBuffer);
-    }
-
-    VirtioCommonBufferZeroInit(CommonBuffer);
-}
-
-/*
- * Minimal common buffer allocator wrapper.
- *
- * KMDF common buffers are already DMA-safe and non-paged. The aligned logical
- * address returned by WdfCommonBufferGetAlignedLogicalAddress() must satisfy
- * the virtqueue descriptor table's 16-byte alignment requirement; callers can
- * request a stronger alignment (e.g. PAGE_SIZE) if the DMA enabler supports it.
- */
-_Must_inspect_result_
-static NTSTATUS
-VirtioDmaAllocCommonBuffer(
-    _In_ WDFDMAENABLER DmaEnabler,
-    _In_opt_ WDFOBJECT ParentObject,
-    _In_ SIZE_T Length,
-    _In_ SIZE_T Alignment,
-    _Out_ VIRTIO_COMMON_BUFFER* CommonBuffer)
-{
-    NTSTATUS status;
-    WDF_OBJECT_ATTRIBUTES attributes;
-    WDFCOMMONBUFFER wdfCommonBuffer = NULL;
-    PVOID va;
-    PHYSICAL_ADDRESS pa;
-
-    if (CommonBuffer == NULL || Length == 0) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    VirtioCommonBufferZeroInit(CommonBuffer);
-
-    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
-    if (ParentObject != NULL) {
-        attributes.ParentObject = ParentObject;
-    }
-
-    status = WdfCommonBufferCreate(DmaEnabler, Length, &attributes, &wdfCommonBuffer);
-    if (!NT_SUCCESS(status)) {
-        return status;
-    }
-
-    va = WdfCommonBufferGetAlignedVirtualAddress(wdfCommonBuffer);
-    pa = WdfCommonBufferGetAlignedLogicalAddress(wdfCommonBuffer);
-
-    /*
-     * WDF guarantees that the returned "aligned" addresses honor the alignment
-     * requirement of the DMA enabler. Verify that it also meets the alignment
-     * requested by the caller.
-     */
-    if (Alignment < 16) {
-        Alignment = 16;
-    }
-
-    if (!VirtqueueRingIsAligned64((UINT64)(ULONG_PTR)va, (UINT64)Alignment) ||
-        !VirtqueueRingIsAligned64((UINT64)pa.QuadPart, (UINT64)Alignment)) {
-        WdfObjectDelete(wdfCommonBuffer);
-        return STATUS_DATATYPE_MISALIGNMENT;
-    }
-
-    CommonBuffer->WdfCommonBuffer = wdfCommonBuffer;
-    CommonBuffer->VirtualAddress = va;
-    CommonBuffer->LogicalAddress = pa;
-    CommonBuffer->Length = Length;
-    return STATUS_SUCCESS;
-}
-
 NTSTATUS
 VirtqueueRingLayoutCompute(
     _In_ USHORT QueueSize,
@@ -149,6 +67,22 @@ VirtqueueRingLayoutCompute(
 
 _Must_inspect_result_
 static NTSTATUS
+VirtqueueRingDmaAllocCommonBuffer(
+    _In_ VIRTIO_DMA_CONTEXT* DmaCtx,
+    _In_opt_ WDFOBJECT ParentObject,
+    _In_ size_t Length,
+    _In_ size_t Alignment,
+    _Out_ VIRTIO_COMMON_BUFFER* OutBuffer)
+{
+    if (ParentObject != NULL) {
+        return VirtioDmaAllocCommonBufferWithParent(DmaCtx, Length, Alignment, FALSE, ParentObject, OutBuffer);
+    }
+
+    return VirtioDmaAllocCommonBuffer(DmaCtx, Length, Alignment, FALSE, OutBuffer);
+}
+
+_Must_inspect_result_
+static NTSTATUS
 VirtqueueRingDmaValidateAlignment(
     _In_ const VIRTQUEUE_RING_DMA* Ring)
 {
@@ -163,7 +97,7 @@ VirtqueueRingDmaValidateAlignment(
 
 NTSTATUS
 VirtqueueRingDmaAlloc(
-    _In_ WDFDMAENABLER DmaEnabler,
+    _In_ VIRTIO_DMA_CONTEXT* DmaCtx,
     _In_opt_ WDFOBJECT ParentObject,
     _In_ USHORT QueueSize,
     _In_ BOOLEAN EventIdxEnabled,
@@ -176,7 +110,7 @@ VirtqueueRingDmaAlloc(
 
     PAGED_CODE();
 
-    if (Ring == NULL || QueueSize == 0) {
+    if (DmaCtx == NULL || Ring == NULL || QueueSize == 0) {
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -189,19 +123,19 @@ VirtqueueRingDmaAlloc(
     }
 
     /* Prefer page alignment but accept 16-byte alignment as a minimum. */
-    status = VirtioDmaAllocCommonBuffer(DmaEnabler, ParentObject, layout.TotalSize, PAGE_SIZE, &Ring->CommonBuffer);
-    if (status == STATUS_DATATYPE_MISALIGNMENT) {
-        status = VirtioDmaAllocCommonBuffer(DmaEnabler, ParentObject, layout.TotalSize, 16, &Ring->CommonBuffer);
+    status = VirtqueueRingDmaAllocCommonBuffer(DmaCtx, ParentObject, layout.TotalSize, PAGE_SIZE, &Ring->CommonBuffer);
+    if (!NT_SUCCESS(status)) {
+        status = VirtqueueRingDmaAllocCommonBuffer(DmaCtx, ParentObject, layout.TotalSize, 16, &Ring->CommonBuffer);
     }
     if (!NT_SUCCESS(status)) {
         RtlZeroMemory(Ring, sizeof(*Ring));
         return status;
     }
 
-    RtlZeroMemory(Ring->CommonBuffer.VirtualAddress, layout.TotalSize);
+    RtlZeroMemory(Ring->CommonBuffer.Va, layout.TotalSize);
 
-    baseVa = (PUCHAR)Ring->CommonBuffer.VirtualAddress;
-    baseDma = (UINT64)Ring->CommonBuffer.LogicalAddress.QuadPart;
+    baseVa = (PUCHAR)Ring->CommonBuffer.Va;
+    baseDma = Ring->CommonBuffer.Dma;
 
     Ring->Desc = (volatile struct virtq_desc*)(baseVa + layout.DescOffset);
     Ring->Avail = (volatile struct virtq_avail*)(baseVa + layout.AvailOffset);
@@ -236,7 +170,7 @@ VirtqueueRingDmaFree(
         return;
     }
 
-    VirtioCommonBufferFree(&Ring->CommonBuffer);
+    VirtioDmaFreeCommonBuffer(&Ring->CommonBuffer);
     RtlZeroMemory(Ring, sizeof(*Ring));
 }
 

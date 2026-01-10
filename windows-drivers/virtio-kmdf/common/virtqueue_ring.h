@@ -12,8 +12,7 @@
  * It does NOT implement descriptor management or request tracking.
  */
 
-#include <ntddk.h>
-#include <wdf.h>
+#include "virtio_dma.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -93,17 +92,6 @@ typedef struct _VIRTQUEUE_RING_LAYOUT {
     SIZE_T TotalSize;
 } VIRTQUEUE_RING_LAYOUT;
 
-/*
- * Minimal "common buffer" wrapper. Drivers using KMDF should allocate this with
- * a WDFDMAENABLER created for the device.
- */
-typedef struct _VIRTIO_COMMON_BUFFER {
-    WDFCOMMONBUFFER WdfCommonBuffer;
-    PVOID VirtualAddress;           /* CPU VA (non-paged) */
-    PHYSICAL_ADDRESS LogicalAddress; /* device DMA address */
-    SIZE_T Length;
-} VIRTIO_COMMON_BUFFER;
-
 typedef struct _VIRTQUEUE_RING_DMA {
     volatile struct virtq_desc* Desc;  /* CPU VA */
     volatile struct virtq_avail* Avail; /* CPU VA */
@@ -136,7 +124,7 @@ VirtqueueRingLayoutCompute(
 _Must_inspect_result_
 NTSTATUS
 VirtqueueRingDmaAlloc(
-    _In_ WDFDMAENABLER DmaEnabler,
+    _In_ VIRTIO_DMA_CONTEXT* DmaCtx,
     _In_opt_ WDFOBJECT ParentObject,
     _In_ USHORT QueueSize,
     _In_ BOOLEAN EventIdxEnabled,
