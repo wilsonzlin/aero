@@ -1,0 +1,12 @@
+{{- if .Values.config.create -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aero-gateway.configName" . }}
+  labels:
+    {{- include "aero-gateway.labels" . | nindent 4 }}
+data:
+  {{- range $key, $val := .Values.config.data }}
+  {{ $key }}: {{ $val | quote }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,23 @@
+{{- $mode := default "auto" .Values.ingress.coopCoep.mode -}}
+{{- if eq $mode "auto" -}}
+  {{- if contains "traefik" (default "" .Values.ingress.className) -}}
+    {{- $mode = "traefik" -}}
+  {{- else -}}
+    {{- $mode = "nginx" -}}
+  {{- end -}}
+{{- end -}}
+{{- if and .Values.ingress.enabled .Values.ingress.coopCoep.enabled (eq $mode "traefik") (default true .Values.ingress.traefik.createMiddleware) -}}
+apiVersion: {{ .Values.ingress.traefik.middlewareApiVersion }}
+kind: Middleware
+metadata:
+  name: {{ include "aero-gateway.fullname" . }}-headers
+  labels:
+    {{- include "aero-gateway.labels" . | nindent 4 }}
+spec:
+  headers:
+    customResponseHeaders:
+      Cross-Origin-Opener-Policy: {{ .Values.ingress.coopCoep.coop | quote }}
+      Cross-Origin-Embedder-Policy: {{ .Values.ingress.coopCoep.coep | quote }}
+      Cross-Origin-Resource-Policy: {{ .Values.ingress.coopCoep.corp | quote }}
+      Origin-Agent-Cluster: {{ .Values.ingress.coopCoep.originAgentCluster | quote }}
+{{- end }}

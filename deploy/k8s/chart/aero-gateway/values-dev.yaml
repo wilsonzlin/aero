@@ -1,0 +1,17 @@
+# Example values for local/dev clusters.
+# This file intentionally uses placeholder secrets; override in a local file for real use.
+
+gateway:
+  replicaCount: 1
+  image:
+    tag: "dev"
+
+ingress:
+  host: "aero.local"
+  tls:
+    enabled: false
+
+secrets:
+  data:
+    SESSION_SECRET: "__REPLACE_ME__"
+    ADMIN_API_KEY: "__REPLACE_ME__"

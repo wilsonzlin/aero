@@ -1,0 +1,59 @@
+{{- if .Values.ingress.enabled -}}
+{{- $fullName := include "aero-gateway.fullname" . -}}
+{{- $svcPort := .Values.service.port -}}
+{{- $mode := default "auto" .Values.ingress.coopCoep.mode -}}
+{{- if eq $mode "auto" -}}
+  {{- if contains "traefik" (default "" .Values.ingress.className) -}}
+    {{- $mode = "traefik" -}}
+  {{- else -}}
+    {{- $mode = "nginx" -}}
+  {{- end -}}
+{{- end -}}
+{{- $annotations := dict -}}
+{{- if and .Values.ingress.websocket.enabled (eq $mode "nginx") -}}
+{{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-http-version" "1.1" -}}
+{{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-read-timeout" (printf "%d" .Values.ingress.websocket.readTimeoutSeconds) -}}
+{{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-send-timeout" (printf "%d" .Values.ingress.websocket.sendTimeoutSeconds) -}}
+{{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-buffering" "off" -}}
+{{- end -}}
+{{- if and .Values.ingress.coopCoep.enabled (eq $mode "nginx") -}}
+{{- $_ := set $annotations "nginx.ingress.kubernetes.io/configuration-snippet" (include "aero-gateway.coopCoepSnippet" .) -}}
+{{- end -}}
+{{- if and .Values.ingress.coopCoep.enabled (eq $mode "traefik") (default true .Values.ingress.traefik.createMiddleware) -}}
+{{- $_ := set $annotations "traefik.ingress.kubernetes.io/router.middlewares" (printf "%s-%s-headers@kubernetescrd" .Release.Namespace $fullName) -}}
+{{- end -}}
+{{- range $key, $value := .Values.ingress.annotations -}}
+{{- $_ := set $annotations $key $value -}}
+{{- end -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "aero-gateway.labels" . | nindent 4 }}
+  {{- if $annotations }}
+  annotations:
+    {{- toYaml $annotations | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: {{ .Values.ingress.path }}
+            pathType: {{ .Values.ingress.pathType }}
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  number: {{ $svcPort }}
+{{- end }}

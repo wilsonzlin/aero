@@ -1,0 +1,19 @@
+{{- if .Values.redis.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aero-gateway.redisFullname" . }}
+  labels:
+    {{- include "aero-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: {{ .Values.redis.port }}
+      protocol: TCP
+      targetPort: redis
+  selector:
+    {{- include "aero-gateway.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+{{- end }}

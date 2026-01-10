@@ -1,0 +1,53 @@
+{{- if .Values.networkPolicy.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aero-gateway.fullname" . }}
+  labels:
+    {{- include "aero-gateway.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aero-gateway.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.gateway.containerPort }}
+      {{- if .Values.networkPolicy.ingress.allowedNamespaces }}
+      from:
+        {{- range $ns := .Values.networkPolicy.ingress.allowedNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns | quote }}
+        {{- end }}
+      {{- end }}
+  egress:
+    # DNS (kube-system) so the gateway can resolve names.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "kube-system"
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if .Values.redis.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "aero-gateway.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.port }}
+    {{- end }}
+    {{- range $cidr := .Values.networkPolicy.egress.allowedCIDRs }}
+    - to:
+        - ipBlock:
+            cidr: {{ $cidr | quote }}
+    {{- end }}
+{{- end }}

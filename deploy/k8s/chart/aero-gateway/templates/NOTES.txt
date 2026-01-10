@@ -1,0 +1,24 @@
+1. Gateway URL:
+   {{- if .Values.ingress.enabled }}
+   {{- if .Values.ingress.tls.enabled }}
+   https://{{ .Values.ingress.host }}
+   {{- else }}
+   http://{{ .Values.ingress.host }}
+   {{- end }}
+   {{- else }}
+   (Ingress disabled; use kubectl port-forward or expose the Service)
+   {{- end }}
+
+2. Verify COOP/COEP headers (required for SharedArrayBuffer):
+   {{- if .Values.ingress.tls.enabled }}
+   curl -sI https://{{ .Values.ingress.host }}/ | egrep -i 'cross-origin-(opener|embedder|resource)-policy|origin-agent-cluster'
+   {{- else }}
+   curl -sI http://{{ .Values.ingress.host }}/ | egrep -i 'cross-origin-(opener|embedder|resource)-policy|origin-agent-cluster'
+   {{- end }}
+
+3. Verify WebSocket handshake:
+   {{- if .Values.ingress.tls.enabled }}
+   websocat -v 'wss://{{ .Values.ingress.host }}/tcp?host=example.com&port=80'
+   {{- else }}
+   websocat -v 'ws://{{ .Values.ingress.host }}/tcp?host=example.com&port=80'
+   {{- end }}

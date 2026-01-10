@@ -1,0 +1,114 @@
+# Default values are intentionally "safe" and should be overridden for real environments.
+# Create a local values file (do not commit it) and set at minimum:
+#   - gateway.image.tag
+#   - ingress.host (+ TLS settings for production)
+#   - secrets.data.SESSION_SECRET / secrets.data.ADMIN_API_KEY
+
+nameOverride: ""
+fullnameOverride: ""
+
+gateway:
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/wilsonzlin/aero-gateway
+    tag: "" # Defaults to Chart.appVersion if unset.
+    pullPolicy: IfNotPresent
+
+  containerPort: 8080
+
+  # Extra environment variables to set directly on the container.
+  # Example:
+  # extraEnv:
+  #   - name: LOG_LEVEL
+  #     value: debug
+  extraEnv: []
+
+  podAnnotations: {}
+  podSecurityContext: {}
+  securityContext: {}
+
+  resources: {}
+
+service:
+  type: ClusterIP
+  port: 80
+
+config:
+  create: true
+  name: ""
+  data: {}
+
+secrets:
+  # For production, prefer ExternalSecrets/SealedSecrets/etc and set create=false + existingSecret.
+  create: true
+  name: ""
+  existingSecret: ""
+  data:
+    # Placeholders only; override in your local values file.
+    SESSION_SECRET: "__REPLACE_ME__"
+    ADMIN_API_KEY: "__REPLACE_ME__"
+
+ingress:
+  enabled: true
+  className: nginx
+  host: aero.example.com
+  path: /
+  pathType: Prefix
+
+  tls:
+    enabled: false
+    secretName: ""
+
+  annotations: {}
+
+  websocket:
+    enabled: true
+    readTimeoutSeconds: 3600
+    sendTimeoutSeconds: 3600
+
+  coopCoep:
+    enabled: true
+    # mode:
+    #   - auto (default): nginx unless ingress.className contains "traefik"
+    #   - nginx: use ingress-nginx snippet annotations
+    #   - traefik: use a Traefik Middleware resource
+    mode: auto
+    coop: same-origin
+    coep: require-corp
+    corp: same-origin
+    originAgentCluster: "?1"
+
+  traefik:
+    createMiddleware: true
+    middlewareApiVersion: traefik.io/v1alpha1
+
+redis:
+  enabled: false
+  port: 6379
+
+  # If you use an external Redis, leave redis.enabled=false and set redis.url instead.
+  url: ""
+
+  image:
+    repository: redis
+    tag: 7-alpine
+    pullPolicy: IfNotPresent
+
+  persistence:
+    enabled: false
+    size: 1Gi
+    storageClass: ""
+
+networkPolicy:
+  enabled: false
+
+  # Namespaces allowed to connect to the gateway.
+  # For ingress-nginx the namespace is typically "ingress-nginx".
+  ingress:
+    allowedNamespaces:
+      - ingress-nginx
+
+  egress:
+    # Destination CIDRs to allow (example: ["0.0.0.0/0"] to allow all).
+    allowedCIDRs: []

@@ -1,0 +1,29 @@
+# Example values for production clusters.
+# Copy this file locally and replace placeholders before deploying.
+
+gateway:
+  replicaCount: 2
+  image:
+    tag: "<REPLACE_WITH_IMAGE_TAG>"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+ingress:
+  host: "aero.example.com"
+  tls:
+    enabled: true
+    secretName: "aero-tls"
+
+# Recommended for multi-replica deployments.
+redis:
+  enabled: true
+
+secrets:
+  data:
+    SESSION_SECRET: "<REPLACE_WITH_RANDOM_SECRET>"
+    ADMIN_API_KEY: "<REPLACE_WITH_RANDOM_KEY>"
