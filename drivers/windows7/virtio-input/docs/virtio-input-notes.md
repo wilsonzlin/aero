@@ -11,11 +11,16 @@ In this project, the Windows 7 guest will see a **PCI** device, and the Aero dri
 Commonly observed IDs:
 
 - Vendor ID: `0x1AF4` (Red Hat / virtio)
-- Device ID (modern, virtio 1.0+): `0x1052`
+- Device ID (legacy/transitional virtio-pci ID space): `0x1011`
+  - Derived as: `0x1000 + (virtio_device_type - 1)`
+  - virtio device type for input is **18**, so `0x1000 + (18 - 1) = 0x1011`
+- Device ID (modern virtio-pci ID space): `0x1052`
   - Derived as: `0x1040 + virtio_device_type`
   - virtio device type for input is **18**, so `0x1040 + 18 = 0x1052`
 
-If the emulator uses a transitional or non-standard ID, update:
+The Aero emulator’s Windows 7 virtio contract v1 uses the **legacy/transitional** ID (`0x1011`).
+
+If the emulator uses a non-standard ID, update:
 
 - `inf/virtio-input.inf` → `[Aero.NTx86]` and `[Aero.NTamd64]`
 
@@ -47,4 +52,3 @@ The packaging assumes:
 - Service name: `aero_virtio_input`
 
 Implementation tasks will fill in the actual HID report descriptors and I/O paths.
-

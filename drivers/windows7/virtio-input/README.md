@@ -16,7 +16,8 @@ This directory contains **packaging + installation infrastructure** for the Aero
 | `scripts/` | Utilities for generating a test cert, generating the catalog, and signing. |
 | `cert/` | **Local-only** output directory for `.cer/.pfx` (ignored by git). |
 | `docs/` | Driver-specific notes and references. |
-| `tools/` | Placeholder for future user-mode test/diagnostic tools. |
+| `tools/` | User-mode test/diagnostic tools (currently includes `hidtest`). |
+| `tests/` | Manual test plans (QEMU) and offline-install/injection notes. |
 
 ## Prerequisites (host build/sign machine)
 
@@ -44,11 +45,14 @@ You need the following tools in `PATH` (usually by opening a WDK Developer Comma
 
 ## Hardware IDs (PnP IDs)
 
-The INF currently matches the **modern virtio PCI ID** for virtio-input:
+The INF matches both common PCI device ID schemes for virtio-input:
 
-- `PCI\VEN_1AF4&DEV_1052` (virtio device type 18 → `0x1040 + 18 = 0x1052`)
+- **Legacy/transitional** virtio-pci ID: `PCI\VEN_1AF4&DEV_1011`
+  - `0x1000 + (18 - 1) = 0x1011`
+- **Modern** virtio-pci ID: `PCI\VEN_1AF4&DEV_1052`
+  - `0x1040 + 18 = 0x1052`
 
-If your emulator/QEMU build uses a different PCI device ID (e.g. transitional vs non-transitional variants), update:
+If your emulator/QEMU build uses a different PCI device ID, update:
 
 - `drivers/windows7/virtio-input/inf/virtio-input.inf` → `[Aero.NTx86]` / `[Aero.NTamd64]`
 
@@ -180,7 +184,7 @@ virtio-input appears as a **PCI virtio** function. In QEMU this is typically cre
 - `virtio-mouse-pci`
 - `virtio-tablet-pci`
 
-All of these use the virtio-input transport and should enumerate with `VEN_1AF4` and the virtio-input device ID (commonly `DEV_1052`).
+All of these use the virtio-input transport and should enumerate with `VEN_1AF4` and a virtio-input device ID (commonly `DEV_1011` for legacy/transitional or `DEV_1052` for modern).
 
 ## Known limitations
 

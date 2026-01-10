@@ -35,19 +35,37 @@ aero_virtio_input.sys = 1
 ;------------------------------------------------------------------------------
 ; virtio-input over PCI uses vendor ID 0x1AF4 (Red Hat / virtio).
 ;
-; Modern virtio device IDs follow: DEV = 0x1040 + virtio_device_type
-; - virtio_device_type 18 = virtio-input => DEV_1052
+; virtio-input is virtio device type 18.
 ;
-; If your device enumerates with a different DEV id (e.g. a transitional variant),
-; add it here. You can confirm in Device Manager -> Details -> Hardware Ids.
+; It commonly enumerates with one of two PCI device ID schemes:
+;
+;   1) Legacy / transitional virtio-pci ID space:
+;        DEV = 0x1000 + (virtio_device_type - 1)
+;        => 0x1000 + (18 - 1) = 0x1011
+;
+;   2) Modern virtio-pci ID space:
+;        DEV = 0x1040 + virtio_device_type
+;        => 0x1040 + 18 = 0x1052
+;
+; Aero’s Windows 7 virtio contract v1 uses the legacy/transitional ID (0x1011).
+; QEMU may expose either ID depending on device model and disable-legacy settings.
+;
+; If your device enumerates with a different DEV id, add it here.
+; You can confirm in Device Manager -> Details -> Hardware Ids.
 
 [Aero.NTx86]
+%VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1011
 %VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052
-; %VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_XXXX  ; TODO: transitional/legacy virtio-input PCI ID (if applicable)
+; Optional: restrict binding by subsystem IDs if the environment exposes multiple virtio-input
+; functions and you want separate model strings per function.
+; %VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1011&SUBSYS_00101AF4  ; keyboard (example)
+; %VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1011&SUBSYS_00111AF4  ; mouse (example)
 
 [Aero.NTamd64]
+%VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1011
 %VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052
-; %VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_XXXX  ; TODO: transitional/legacy virtio-input PCI ID (if applicable)
+; %VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1011&SUBSYS_00101AF4  ; keyboard (example)
+; %VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1011&SUBSYS_00111AF4  ; mouse (example)
 
 ;------------------------------------------------------------------------------
 ; DDInstall (x86)
