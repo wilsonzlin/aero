@@ -345,6 +345,39 @@ static void TestNeedEventBoundaryCases(void)
 	ASSERT_TRUE(VirtqNeedEvent(0x0001, 0x0001, 0xFFFE) == FALSE);
 }
 
+static void TestRingLayoutEventIdx(void)
+{
+	const UINT16 qsz = 8;
+	const UINT32 align = 16;
+
+	size_t desc_sz = sizeof(VIRTQ_DESC) * (size_t)qsz;
+	size_t avail_sz = 4 + (2 * (size_t)qsz) + 2; /* flags+idx + ring + used_event */
+	size_t used_off = VIRTIO_ALIGN_UP(desc_sz + avail_sz, align);
+	size_t used_sz = 4 + (sizeof(VIRTQ_USED_ELEM) * (size_t)qsz) + 2; /* flags+idx + ring + avail_event */
+	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, TRUE);
+
+	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, VirtqSplitStateSize(qsz));
+	void *ring = calloc(1, ring_bytes);
+
+	ASSERT_TRUE(vq != NULL);
+	ASSERT_TRUE(ring != NULL);
+
+	ASSERT_EQ_U64((UINT64)ring_bytes, (UINT64)(used_off + used_sz));
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitInit(vq, qsz, TRUE, FALSE, ring, (UINT64)(uintptr_t)ring, align, NULL, 0, 0, 0)));
+
+	ASSERT_TRUE((void *)vq->desc == ring);
+	ASSERT_TRUE((void *)vq->avail == (void *)((UINT8 *)ring + desc_sz));
+	ASSERT_TRUE((void *)vq->used == (void *)((UINT8 *)ring + used_off));
+	ASSERT_TRUE((((uintptr_t)vq->used) & (align - 1)) == 0);
+
+	ASSERT_TRUE((void *)VirtqAvailUsedEvent(vq->avail, qsz) == (void *)((UINT8 *)vq->avail + 4 + (2 * (size_t)qsz)));
+	ASSERT_TRUE((void *)VirtqUsedAvailEvent(vq->used, qsz) ==
+		    (void *)((UINT8 *)vq->used + 4 + (sizeof(VIRTQ_USED_ELEM) * (size_t)qsz)));
+
+	free(ring);
+	free(vq);
+}
+
 static void TestEventIdxKickPrepare(void)
 {
 	const UINT16 qsz = 8;
@@ -646,6 +679,7 @@ int main(void)
 	TestWraparound();
 	TestOutOfOrderCompletion();
 	TestNeedEventBoundaryCases();
+	TestRingLayoutEventIdx();
 	TestEventIdxKickPrepare();
 	TestNoNotifyKickPrepare();
 	TestInterruptSuppressionNoEventIdx();
