@@ -10,6 +10,8 @@
 
 #include <ntddk.h>
 
+#include "virtio_spec.h"
+
 /*
  * Standard PCI capability ID for vendor-specific capabilities.
  * (Do not rely on WDK's PCI_CAPABILITY_ID_* naming, keep this local.)
@@ -72,6 +74,8 @@ typedef struct _VIRTIO_PCI_CAPS {
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS
-VirtioPciCapsDiscover(_In_ PPCI_BUS_INTERFACE_STANDARD PciInterface, _Out_ PVIRTIO_PCI_CAPS Caps);
+VirtioPciCapsDiscover(_In_ PPCI_BUS_INTERFACE_STANDARD PciInterface,
+                      _In_ const ULONGLONG BarBases[VIRTIO_PCI_MAX_BARS],
+                      _Out_ PVIRTIO_PCI_CAPS Caps);
 
 #endif /* VIRTIO_PCI_CAPS_H_ */

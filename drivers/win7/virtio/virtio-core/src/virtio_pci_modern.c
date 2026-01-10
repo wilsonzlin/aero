@@ -250,7 +250,17 @@ VirtioPciModernInit(_In_ WDFDEVICE WdfDevice, _Out_ PVIRTIO_PCI_MODERN_DEVICE De
         return status;
     }
 
-    status = VirtioPciCapsDiscover(&Dev->PciInterface, &Dev->Caps);
+    {
+        ULONGLONG barBases[VIRTIO_PCI_MAX_BARS];
+        ULONG i;
+
+        RtlZeroMemory(barBases, sizeof(barBases));
+        for (i = 0; i < VIRTIO_PCI_MAX_BARS; i++) {
+            barBases[i] = Dev->Bars[i].Base;
+        }
+
+        status = VirtioPciCapsDiscover(&Dev->PciInterface, barBases, &Dev->Caps);
+    }
     if (!NT_SUCCESS(status)) {
         VirtioPciModernUninit(Dev);
         return status;

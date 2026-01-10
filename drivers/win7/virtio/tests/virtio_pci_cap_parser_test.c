@@ -145,11 +145,11 @@ static void test_duplicated_cap_type(void) {
     write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
     cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
 
-    add_virtio_cap(cfg, 0x40, 0x50, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
-    add_virtio_cap(cfg, 0x50, 0x64, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1100, 0x100, 16);
-    add_virtio_notify_cap(cfg, 0x64, 0x78, 2, 0x2000, 0x200, 4);
-    add_virtio_cap(cfg, 0x78, 0x88, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 1, 0x3000, 0x10, 16);
-    add_virtio_cap(cfg, 0x88, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 4, 0x4000, 0x400, 16);
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x6C, 2, 0x2000, 0x100, 4);
+    add_virtio_notify_cap(cfg, 0x6C, 0x80, 2, 0x2100, 0x200, 8);
+    add_virtio_cap(cfg, 0x80, 0x90, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 1, 0x3000, 0x10, 16);
+    add_virtio_cap(cfg, 0x90, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 4, 0x4000, 0x400, 16);
 
     bars[0] = 0xA0000000ULL;
     bars[1] = 0xB0000000ULL;
@@ -157,7 +157,13 @@ static void test_duplicated_cap_type(void) {
     bars[4] = 0xD0000000ULL;
 
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
-    expect_result("duplicated_cap_type.res", res, VIRTIO_PCI_CAP_PARSE_ERR_DUPLICATE_CFG_TYPE);
+    expect_result("duplicated_cap_type.res", res, VIRTIO_PCI_CAP_PARSE_OK);
+    if (res != VIRTIO_PCI_CAP_PARSE_OK) {
+        return;
+    }
+
+    expect_u64("duplicated_cap_type.notify.addr", caps.notify_cfg.addr, 0xC0002100ULL);
+    expect_u32("duplicated_cap_type.notify.mult", caps.notify_off_multiplier, 8);
 }
 
 static void test_missing_notify_cap(void) {
@@ -400,12 +406,22 @@ static void test_no_cap_list_status(void) {
     memset(cfg, 0, sizeof(cfg));
     memset(bars, 0, sizeof(bars));
 
-    /* Status bit is clear => parser should not try to walk the list. */
+    /* Status bit is clear, but cap_ptr and capabilities are still valid. */
     write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], 0);
     cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
 
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x70, 2, 0x2000, 0x200, 4);
+    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 1, 0x3000, 0x10, 16);
+    add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 4, 0x4000, 0x400, 16);
+
+    bars[0] = 0xA0000000ULL;
+    bars[1] = 0xB0000000ULL;
+    bars[2] = 0xC0000000ULL;
+    bars[4] = 0xD0000000ULL;
+
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
-    expect_result("no_cap_list_status.res", res, VIRTIO_PCI_CAP_PARSE_ERR_NO_CAP_LIST);
+    expect_result("no_cap_list_status.res", res, VIRTIO_PCI_CAP_PARSE_OK);
 }
 
 static void test_cap_ptr_out_of_range(void) {
