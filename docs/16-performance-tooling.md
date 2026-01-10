@@ -218,6 +218,15 @@ npx --yes playwright@$(node -p "require('./package.json').dependencies['playwrig
 cd ../..
 ```
 
+If your shell doesn’t support `$(...)` command substitution (or you’re on Windows PowerShell), run:
+
+```bash
+cd tools/perf
+node -p "require('./package.json').dependencies['playwright-core']"
+# Then substitute the printed version into:
+#   npx --yes playwright@<version> install chromium
+```
+
 ```bash
 node bench/run --scenario microbench --iterations 7
 ```
