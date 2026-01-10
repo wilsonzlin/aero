@@ -495,3 +495,9 @@ Notes:
 
 * `cap` is an example capability token; the exact format is implementation-defined.
 * Leases SHOULD be valid for minutes, not hours, and SHOULD be renewable by re-calling the lease API.
+
+---
+
+## 9) Deployment profiles
+
+- **AWS/CloudFront profile:** [`./deployment/cloudfront-disk-streaming.md`](./deployment/cloudfront-disk-streaming.md)
