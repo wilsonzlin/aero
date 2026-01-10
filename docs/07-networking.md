@@ -530,6 +530,12 @@ console.log('Proxy server running on ws://localhost:8080');
 
 ## WebRTC UDP Proxy
 
+### Security warning (server-side relay)
+
+Running a UDP relay makes your server a **network egress point**. If it is reachable by untrusted clients and forwards UDP to arbitrary destinations, it can be abused as an **open proxy / SSRF primitive** (internal network scanning, hitting link-local services, etc.).
+
+**Recommendation:** default to **local-only** deployment (bind on `127.0.0.1` / behind auth) and enforce an explicit destination policy (CIDR + port allowlists) in production.
+
 ```rust
 pub struct UdpProxy {
     peer_connection: RtcPeerConnection,
