@@ -8,10 +8,12 @@ import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatur
 import { importFileToOpfs } from "./platform/opfs";
 import { requestWebGpuDevice } from "./platform/webgpu";
 import { installPerfHud } from "./perf/hud_entry";
+import { installAeroGlobal } from "./runtime/aero_global";
 import { WorkerCoordinator } from "./runtime/coordinator";
 import { DEFAULT_GUEST_RAM_MIB, GUEST_RAM_PRESETS_MIB, type GuestRamMiB } from "./runtime/shared_layout";
 
 installPerfHud({ guestRamBytes: DEFAULT_GUEST_RAM_MIB * 1024 * 1024 });
+installAeroGlobal();
 
 const workerCoordinator = new WorkerCoordinator();
 

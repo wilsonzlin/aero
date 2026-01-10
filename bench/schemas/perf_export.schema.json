@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aero.example/schemas/perf_export.schema.json",
+  "title": "Aero perf export",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["benchmarks"],
+  "properties": {
+    "benchmarks": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "webgpu": {
+          "anyOf": [{ "$ref": "./webgpu_bench.schema.json" }, { "type": "null" }]
+        }
+      }
+    }
+  }
+}

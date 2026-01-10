@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aero.example/schemas/webgpu_bench.schema.json",
+  "title": "Aero WebGPU bench result",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["supported", "reason"],
+      "properties": {
+        "supported": { "const": false },
+        "reason": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "supported",
+        "adapter",
+        "capabilities",
+        "frames",
+        "fps",
+        "drawCallsPerFrame",
+        "pipelineSwitchesPerFrame",
+        "cpuEncodeTimeMs",
+        "gpuTimeMs",
+        "compute"
+      ],
+      "properties": {
+        "supported": { "const": true },
+        "adapter": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "vendor": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                "architecture": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                "device": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                "description": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+              }
+            }
+          ]
+        },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["timestampQuery"],
+          "properties": {
+            "timestampQuery": { "type": "boolean" }
+          }
+        },
+        "frames": { "type": "integer", "minimum": 1 },
+        "fps": { "type": "number", "minimum": 0 },
+        "drawCallsPerFrame": { "type": "integer", "minimum": 1 },
+        "pipelineSwitchesPerFrame": { "type": "integer", "minimum": 0 },
+        "cpuEncodeTimeMs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["avg", "p95"],
+          "properties": {
+            "avg": { "type": "number", "minimum": 0 },
+            "p95": { "type": "number", "minimum": 0 }
+          }
+        },
+        "gpuTimeMs": { "anyOf": [{ "type": "number", "minimum": 0 }, { "type": "null" }] },
+        "compute": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "workgroups"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "workgroups": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    }
+  ]
+}

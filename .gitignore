@@ -49,6 +49,12 @@ drivers/vendor/
 .playwright/
 playwright-report/
 test-results/
+.playwright/
+
+# Perf / bench outputs
+bench/results/
+bench/results.json
+perf-results/
 
 # Local test image cache (downloaded by scripts/prepare-*.sh)
 test-images/*
