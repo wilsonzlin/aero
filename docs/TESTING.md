@@ -8,11 +8,55 @@ This document is the practical companion to [`12-testing-strategy.md`](./12-test
 
 ## Quick start: run the full test suite
 
+### Unified runner (recommended)
+
 From the repo root:
 
 ```bash
-# Rust (host) tests
-cargo test --workspace
+./scripts/test-all.sh
+```
+
+The unified runner executes (in order):
+
+1. `cargo fmt --all -- --check`
+2. `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+3. `cargo test --workspace --all-features`
+4. `wasm-pack test --node` (in the WASM crate)
+5. `npm run test:unit`
+6. `npm run test:e2e`
+
+By default it sets `AERO_REQUIRE_WEBGPU=0` (matching CI) unless you explicitly enable it.
+
+Common options:
+
+```bash
+# Skip the slowest step
+./scripts/test-all.sh --skip-e2e
+
+# Require WebGPU for tests that gate on it
+./scripts/test-all.sh --webgpu
+
+# Select Playwright projects (repeatable)
+./scripts/test-all.sh --pw-project chromium --pw-project firefox
+
+# Forward additional Playwright CLI args (everything after --)
+./scripts/test-all.sh --pw-project chromium -- --grep smoke
+```
+
+If your repo layout differs from the defaults, override directories:
+
+- `AERO_NODE_DIR` / `--node-dir`: the directory containing `package.json`
+- `AERO_WASM_CRATE_DIR` / `--wasm-crate-dir`: the crate directory containing the WASM `Cargo.toml`
+
+### Manual (equivalent) commands
+
+From the repo root:
+
+```bash
+# Rust format/lint/test (host)
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
 
 # Rust → WASM tests (run from the WASM crate directory; see below)
 # wasm-pack test --node
@@ -73,6 +117,11 @@ For crates that use `wasm-bindgen-test`, run tests in a Node environment:
 # From the WASM crate directory (where Cargo.toml for the WASM crate lives)
 wasm-pack test --node
 ```
+
+Notes:
+
+- `scripts/test-all.sh` auto-detects the WASM crate via `cargo metadata` (first crate with a `cdylib` target).
+  - Override with `AERO_WASM_CRATE_DIR` / `--wasm-crate-dir` if needed.
 
 Common pitfalls:
 
@@ -230,6 +279,7 @@ Expected behavior when `AERO_REQUIRE_WEBGPU=1` is set:
 
 CI should be reproducible locally with the same top-level commands:
 
+- Full stack (recommended): `./scripts/test-all.sh`
 - Rust: `cargo test --workspace`
 - WASM (Node): `wasm-pack test --node`
 - TypeScript unit tests: `npm run test:unit` (often with coverage enabled)
