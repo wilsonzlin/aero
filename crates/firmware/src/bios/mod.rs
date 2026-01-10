@@ -236,6 +236,27 @@ mod tests {
     }
 
     #[test]
+    fn bios_rom_contains_a_reset_vector_far_jump() {
+        let rom_image = rom::build_bios_rom();
+        assert_eq!(rom_image.len(), BIOS_SIZE);
+
+        // Reset vector at F000:FFF0 should be a FAR JMP to F000:E000.
+        let off = 0xFFF0usize;
+        assert_eq!(rom_image[off + 0], 0xEA);
+        assert_eq!(
+            &rom_image[off + 1..off + 5],
+            &[0x00, 0xE0, 0x00, 0xF0]
+        );
+
+        // Fallback stub at F000:E000: `cli; hlt; jmp $-2`.
+        let stub = 0xE000usize;
+        assert_eq!(&rom_image[stub..stub + 4], &[0xFA, 0xF4, 0xEB, 0xFE]);
+
+        // ROM signature (optional).
+        assert_eq!(&rom_image[BIOS_SIZE - 2..], &[0x55, 0xAA]);
+    }
+
+    #[test]
     fn post_initializes_ivt_vectors() {
         let mut bios = Bios::new(BiosConfig::default());
         let mut cpu = CpuState::default();

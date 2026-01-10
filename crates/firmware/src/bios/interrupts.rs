@@ -607,6 +607,11 @@ fn handle_int1a(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
 
 fn build_e820_map(total_memory: u64) -> Vec<E820Entry> {
     let mut map = Vec::new();
+    const ONE_MIB: u64 = 0x0010_0000;
+    // Typical x86 systems reserve a PCI/MMIO window below 4GiB. This must be
+    // reported via E820 so OSes (notably Windows) do not treat device MMIO as RAM.
+    const PCI_HOLE_START: u64 = 0xC000_0000;
+    const PCI_HOLE_END: u64 = 0x1_0000_0000;
 
     // Conventional memory (0 - EBDA).
     map.push(E820Entry {
@@ -648,15 +653,45 @@ fn build_e820_map(total_memory: u64) -> Vec<E820Entry> {
         extended_attributes: 1,
     });
 
-    // Extended memory (1MiB+).
-    if total_memory > 0x0010_0000 {
-        let length = total_memory - 0x0010_0000;
-        map.push(E820Entry {
-            base: 0x0010_0000,
-            length,
-            region_type: E820_RAM,
-            extended_attributes: 1,
-        });
+    // Extended memory (1MiB+), split around the PCI hole when necessary.
+    if total_memory > ONE_MIB {
+        if total_memory <= PCI_HOLE_START {
+            map.push(E820Entry {
+                base: ONE_MIB,
+                length: total_memory - ONE_MIB,
+                region_type: E820_RAM,
+                extended_attributes: 1,
+            });
+        } else {
+            // RAM below the PCI hole.
+            map.push(E820Entry {
+                base: ONE_MIB,
+                length: PCI_HOLE_START - ONE_MIB,
+                region_type: E820_RAM,
+                extended_attributes: 1,
+            });
+
+            // PCI/MMIO hole (includes e.g. VBE linear framebuffer aperture).
+            map.push(E820Entry {
+                base: PCI_HOLE_START,
+                length: PCI_HOLE_END - PCI_HOLE_START,
+                region_type: E820_RESERVED,
+                extended_attributes: 1,
+            });
+
+            // Remap any RAM that would overlap the PCI hole above 4GiB.
+            let remap_len = total_memory - PCI_HOLE_START;
+            map.push(E820Entry {
+                base: PCI_HOLE_END,
+                length: remap_len,
+                region_type: E820_RAM,
+                extended_attributes: 1,
+            });
+        }
+    } else if total_memory > 0 {
+        // Guest RAM smaller than 1MiB is unusual, but keep the map well-formed.
+        // The conventional memory entry already describes 0..EBDA; truncate it if needed.
+        map[0].length = map[0].length.min(total_memory);
     }
 
     map
@@ -788,7 +823,10 @@ mod tests {
             Case {
                 mem: 4 * 1024 * 1024 * 1024,
                 ax: 0x3C00,
-                bx: 0xFF00,
+                // With a 3GiB PCI/MMIO hole (0xC0000000..4GiB), only 3GiB of RAM
+                // exists below 4GiB. The remainder is remapped above 4GiB and does
+                // not count toward INT 15h E801's BX value.
+                bx: 0xBF00,
             },
         ];
 
