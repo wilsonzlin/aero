@@ -53,7 +53,8 @@ At minimum, provide exports matching the DDI your driver supports:
 * D3D10: `OpenAdapter10` (and optionally `OpenAdapter10_2` for 10.1)
   * signature: `HRESULT APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER *pOpenData)`
 * D3D11: `OpenAdapter11`
-  * signature: `HRESULT APIENTRY OpenAdapter11(D3D11DDIARG_OPENADAPTER *pOpenData)`
+  * signature: `HRESULT APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER *pOpenData)`
+  * note: on Win7/WDDM 1.1 the D3D11 runtime still uses the `D3D10DDIARG_OPENADAPTER` container for adapter open; the D3D11-specific DDI begins with `D3D11DDIARG_CREATEDEVICE` / `D3D11DDIARG_GETCAPS`.
 
 These are declared in the WDK headers (`d3d10umddi.h`, `d3d11umddi.h`) and receive a single `_Inout_ ...ARG_OPENADAPTER*` which contains:
 
