@@ -12,6 +12,10 @@ This document specifies a complete alternative delivery format for *read-only ba
 
 This format is designed to back the `StreamingDisk` concept described in [05 - Storage Subsystem](./05-storage-subsystem.md#image-download-and-streaming).
 
+For how disk images are uploaded/imported and kept private in a hosted service (ownership/sharing/writeback strategies), see: [Disk Image Lifecycle and Access Control](./17-disk-image-lifecycle-and-access-control.md).
+
+For auth/CORS/COOP/COEP guidance that also applies to chunk manifests and chunk objects (even though this format avoids `Range`), see: [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md).
+
 ---
 
 ## Goals / Non-goals
@@ -27,6 +31,39 @@ This format is designed to back the `StreamingDisk` concept described in [05 - S
 
 - This format does **not** support remote writes. Writes still go to a local overlay (e.g., OPFS sparse file / IndexedDB cache).
 - This format does **not** attempt to deduplicate across images (that is a separate concern).
+
+---
+
+## Authorization and privacy (hosted service)
+
+Chunked delivery changes *how* bytes are fetched (plain `GET` of chunk objects), but it does not change the fact that:
+
+- Private per-user images must remain private.
+- A crossOriginIsolated app still needs COEP-compatible responses.
+- The browser must be able to stream bytes without leaking long-lived credentials.
+
+### What must be protected
+
+For a private image, treat all of these as sensitive:
+
+- `manifest.json`
+- every chunk object under `chunks/`
+
+The manifest is effectively an index of where to fetch bytes from; if a private manifest is publicly readable, the chunks must not be, and vice versa.
+
+### How to authorize chunk reads without reintroducing preflight
+
+The main goal of chunked delivery is to avoid `Range` preflights, so prefer auth mechanisms that do not require non-safelisted headers:
+
+- **Same-origin + session cookies** (no CORS, no preflight): best when you can serve chunks from the same origin as the app.
+- **Signed URLs / signed cookies at the CDN**: allows cross-origin delivery while keeping requests as “simple” `GET`s.
+
+Avoid relying on `Authorization: Bearer ...` for cross-origin chunk fetches if you are trying to eliminate preflights, because `Authorization` is not CORS-safelisted and will trigger preflight even without `Range`.
+
+### CORS and COEP notes
+
+- Cross-origin chunk fetches still require correct CORS headers if the bytes are read by JavaScript (which they are for `StreamingDisk`).
+- If the app uses `COEP: require-corp` to enable `SharedArrayBuffer`, chunk and manifest responses must be COEP-compatible (CORS-enabled and/or appropriate `Cross-Origin-Resource-Policy`), just like a Range-based disk bytes endpoint.
 
 ---
 

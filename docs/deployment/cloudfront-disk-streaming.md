@@ -2,6 +2,11 @@
 
 This guide describes a concrete AWS setup for serving **large, private disk images** (S3) through **CloudFront** with **authenticated `Range` requests** that work in browsers with **COOP/COEP** (for `SharedArrayBuffer`) and do not leak private data through caching.
 
+Related docs:
+- [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](../16-disk-image-streaming-auth.md) (normative protocol + CORS/COEP requirements)
+- [Disk Image Lifecycle and Access Control](../17-disk-image-lifecycle-and-access-control.md) (uploads/ownership/sharing/writeback scopes for hosted service)
+- [Remote Disk Image Delivery](../16-remote-disk-image-delivery.md) (object store + CDN delivery contract)
+
 The intended use case is:
 
 - Disk images stored in **S3** (private bucket).
