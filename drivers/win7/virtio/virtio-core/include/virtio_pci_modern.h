@@ -169,6 +169,26 @@ VirtioPciReadQueueSizeLocked(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev, _In_ USHORT 
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
 USHORT
+VirtioPciReadQueueMsixVector(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev, _In_ USHORT QueueIndex);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+USHORT
+VirtioPciReadQueueMsixVectorLocked(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev, _In_ USHORT QueueIndex);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtioPciWriteQueueMsixVector(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
+                              _In_ USHORT QueueIndex,
+                              _In_ USHORT Vector);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtioPciWriteQueueMsixVectorLocked(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
+                                    _In_ USHORT QueueIndex,
+                                    _In_ USHORT Vector);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+USHORT
 VirtioPciReadQueueNotifyOffset(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev, _In_ USHORT QueueIndex);
 
 _IRQL_requires_max_(DISPATCH_LEVEL)

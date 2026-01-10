@@ -744,6 +744,68 @@ VirtioPciReadQueueSizeLocked(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev, _In_ USHORT 
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
 USHORT
+VirtioPciReadQueueMsixVector(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev, _In_ USHORT QueueIndex)
+{
+    USHORT vector;
+
+    NT_ASSERT(Dev != NULL);
+    NT_ASSERT(Dev->CommonCfg != NULL);
+
+    VirtioPciCommonCfgLock(Dev);
+    vector = VirtioPciReadQueueMsixVectorLocked(Dev, QueueIndex);
+    VirtioPciCommonCfgUnlock(Dev);
+
+    return vector;
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+USHORT
+VirtioPciReadQueueMsixVectorLocked(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev, _In_ USHORT QueueIndex)
+{
+    NT_ASSERT(Dev != NULL);
+    NT_ASSERT(Dev->CommonCfg != NULL);
+
+#if DBG
+    NT_ASSERT(Dev->CommonCfgLockOwner == KeGetCurrentThread());
+#endif
+
+    VirtioPciSelectQueueLocked(Dev, QueueIndex);
+    return READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_msix_vector);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtioPciWriteQueueMsixVector(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
+                              _In_ USHORT QueueIndex,
+                              _In_ USHORT Vector)
+{
+    NT_ASSERT(Dev != NULL);
+    NT_ASSERT(Dev->CommonCfg != NULL);
+
+    VirtioPciCommonCfgLock(Dev);
+    VirtioPciWriteQueueMsixVectorLocked(Dev, QueueIndex, Vector);
+    VirtioPciCommonCfgUnlock(Dev);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtioPciWriteQueueMsixVectorLocked(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
+                                    _In_ USHORT QueueIndex,
+                                    _In_ USHORT Vector)
+{
+    NT_ASSERT(Dev != NULL);
+    NT_ASSERT(Dev->CommonCfg != NULL);
+
+#if DBG
+    NT_ASSERT(Dev->CommonCfgLockOwner == KeGetCurrentThread());
+#endif
+
+    VirtioPciSelectQueueLocked(Dev, QueueIndex);
+    WRITE_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_msix_vector, Vector);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+USHORT
 VirtioPciReadQueueNotifyOffset(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev, _In_ USHORT QueueIndex)
 {
     USHORT notifyOff;
