@@ -474,6 +474,7 @@ NTSTATUS VirtioPciProgramMsixVectors(
         queueVector = QueueVectors[q];
 
         WRITE_REGISTER_USHORT(&CommonCfg->queue_select, (USHORT)q);
+        (VOID)READ_REGISTER_USHORT(&CommonCfg->queue_select);
         WRITE_REGISTER_USHORT(&CommonCfg->queue_msix_vector, queueVector);
         readVector = READ_REGISTER_USHORT(&CommonCfg->queue_msix_vector);
 
