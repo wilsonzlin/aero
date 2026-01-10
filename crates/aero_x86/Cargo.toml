@@ -5,4 +5,4 @@ edition = "2021"
 
 [dependencies]
 iced-x86 = { version = "1.21.0", default-features = false, features = ["decoder", "std"] }
-
+aero_types = { path = "../aero_types" }

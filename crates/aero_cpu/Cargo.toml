@@ -1,0 +1,8 @@
+[package]
+name = "aero_cpu"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aero_types = { path = "../aero_types" }
+

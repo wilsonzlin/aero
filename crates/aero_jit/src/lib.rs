@@ -9,4 +9,13 @@ pub mod t2_ir;
 pub mod trace;
 pub mod wasm;
 
+// Tier-1 front-end (baseline): basic block discovery + x86→IR lowering used by
+// unit tests and early JIT bring-up.
+pub mod block;
+pub mod tier1_ir;
+pub mod translate;
+
+pub use block::{discover_block, BasicBlock, BlockEndKind, BlockLimits};
 pub use cpu::{CpuState, Reg};
+pub use translate::translate_block;
+

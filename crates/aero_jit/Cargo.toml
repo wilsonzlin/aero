@@ -6,6 +6,9 @@ edition = "2021"
 [dependencies]
 wasm-encoder = "0.244.0"
 thiserror = "2.0.17"
+aero_cpu = { path = "../aero_cpu" }
+aero_types = { path = "../aero_types" }
+aero_x86 = { path = "../aero_x86" }
 
 [dev-dependencies]
 rand = "0.8.5"

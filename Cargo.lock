@@ -433,6 +433,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero_cpu"
+version = "0.1.0"
+dependencies = [
+ "aero_types",
+]
+
+[[package]]
 name = "aero_cpu_core"
 version = "0.1.0"
 dependencies = [
@@ -444,6 +451,9 @@ dependencies = [
 name = "aero_jit"
 version = "0.1.0"
 dependencies = [
+ "aero_cpu",
+ "aero_types",
+ "aero_x86",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "thiserror 2.0.17",
@@ -454,9 +464,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero_types"
+version = "0.1.0"
+
+[[package]]
 name = "aero_x86"
 version = "0.1.0"
 dependencies = [
+ "aero_types",
  "iced-x86",
 ]
 
