@@ -389,16 +389,13 @@ function Get-BcdIdentifiers {
 
   $out = Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/enum', 'all')
 
+  # Avoid depending on localized labels like "identifier" by extracting all BCD object IDs in braces.
+  # This will include non-loader objects (e.g. {ramdiskoptions}); we filter those by attempting to
+  # set the desired option and only recording IDs that accept the setting.
+  $outText = ($out | Out-String)
   $ids = @()
-  foreach ($line in $out) {
-    $trimmed = $line.Trim()
-    if (-not $trimmed) {
-      continue
-    }
-    $m = [Regex]::Match($trimmed, '^identifier\s+(?<id>\{[^\}]+\})\s*$')
-    if ($m.Success) {
-      $ids += $m.Groups['id'].Value
-    }
+  foreach ($m in [Regex]::Matches($outText, '\{[^\}]+\}')) {
+    $ids += $m.Value
   }
 
   return @($ids | Sort-Object -Unique)
