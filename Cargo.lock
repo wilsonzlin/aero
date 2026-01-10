@@ -30,6 +30,7 @@ dependencies = [
 name = "aero-devices"
 version = "0.1.0"
 dependencies = [
+ "aero-acpi",
  "aero-platform",
  "memory",
 ]

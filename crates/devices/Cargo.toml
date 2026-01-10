@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 aero-platform = { path = "../platform" }
 memory = { path = "../memory" }
+
+[dev-dependencies]
+aero-acpi = { path = "../aero-acpi" }
