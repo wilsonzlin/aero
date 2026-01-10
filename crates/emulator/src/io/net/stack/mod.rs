@@ -10,6 +10,7 @@ use std::net::Ipv4Addr;
 use super::NetworkBackend;
 
 pub mod arp;
+pub mod backend;
 pub mod dhcp;
 pub mod dns;
 pub mod ethernet;

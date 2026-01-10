@@ -331,6 +331,12 @@ impl<B: NetworkBackend> NetworkBackend for TracingBackend<'_, B> {
         self.tracer.record_ethernet(FrameDirection::GuestTx, &frame);
         self.inner.transmit(frame);
     }
+
+    fn poll_receive(&mut self) -> Option<Vec<u8>> {
+        let frame = self.inner.poll_receive()?;
+        self.tracer.record_ethernet(FrameDirection::GuestRx, &frame);
+        Some(frame)
+    }
 }
 
 pub trait E1000DeviceTraceExt {
