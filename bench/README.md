@@ -171,3 +171,23 @@ Macrobench scenarios should report consistent metric IDs/units:
 - `desktop_fps` (`fps`): steady-state FPS over an interval
 - `app_launch_time_ms` (`ms`): trigger → first stable frame
 - `input_latency_ms` (`ms`): representative latency while desktop is active
+
+## Browser macrobench harness (Playwright)
+
+Playwright-driven runner that loads the app in Chromium, executes scenarios, and captures `window.aero.perf.export()` after each iteration.
+
+```bash
+node bench/run --scenario microbench --iterations 5 --output out.json
+```
+
+Outputs:
+
+- `bench/results/<run-id>.json` — raw per-iteration results and perf exports
+- `bench/results/<run-id>.summary.json` — aggregated stats (median/stdev/CoV)
+- `out.json` — optional copy of the summary (`--output`)
+
+### Scenarios
+
+- `startup`: navigation → `window.aero.isReady()` time + wasm timing hints from perf export (if present)
+- `microbench`: runs `window.aero.bench.runMicrobenchSuite()`
+- `idle_raf`: idle requestAnimationFrame loop for `--idle-seconds` and reports FPS + frame-time percentiles

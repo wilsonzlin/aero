@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 
-// Convenience wrapper around `tools/perf/run.mjs` for contributors.
+// `bench/run` serves two audiences:
 //
-// Why this exists:
-// - The CI perf workflows run `tools/perf/*` directly.
-// - The contributor docs want a short, memorable command for local microbench runs.
+// 1) CI/browser microbenches (delegates to `tools/perf/run.mjs`).
+// 2) Aero macrobench runs that consume `window.aero.perf.export()` (implemented in `bench/runner.js`).
 //
-// Example:
-//   node bench/run --scenario microbench --iterations 7
+// Mode selection:
+// - If macro-only flags like `--output` / `--results-dir` / `--warmup` are present, we run the macrobench harness.
+// - Otherwise, we keep the existing `tools/perf` wrapper behavior for contributor docs and CI parity.
 
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { parseArgs as parseNodeArgs } from "node:util";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,12 +32,13 @@ function getPlaywrightCoreVersionHint(repoRoot) {
   }
 }
 
-function usage(exitCode = 0) {
+function usagePerfWrapper(exitCode = 0) {
   const repoRoot = path.resolve(__dirname, "..");
   const version = getPlaywrightCoreVersionHint(repoRoot);
   const installCmd = version
     ? `cd tools/perf && npm ci && npx --yes playwright@${version} install chromium`
     : "cd tools/perf && npm ci && npx --yes playwright install chromium";
+
   // Keep this in sync with `docs/16-performance-tooling.md`.
   console.log(`Usage: node bench/run --scenario <name> --iterations <n> [--url <url>] [--out-dir <dir>]
 
@@ -55,7 +57,7 @@ Notes:
   process.exit(exitCode);
 }
 
-function parseArgs(argv) {
+function parsePerfWrapperArgs(argv) {
   const opts = {
     scenario: "microbench",
     iterations: 7,
@@ -68,7 +70,7 @@ function parseArgs(argv) {
     switch (arg) {
       case "--help":
       case "-h":
-        usage(0);
+        usagePerfWrapper(0);
         break;
       case "--scenario":
         opts.scenario = argv[++i];
@@ -84,17 +86,17 @@ function parseArgs(argv) {
         break;
       default:
         console.error(`Unknown arg: ${arg}`);
-        usage(1);
+        usagePerfWrapper(1);
     }
   }
 
   if (!opts.scenario) {
     console.error("--scenario is required");
-    usage(1);
+    usagePerfWrapper(1);
   }
   if (!Number.isFinite(opts.iterations) || opts.iterations <= 0) {
     console.error("--iterations must be a positive integer");
-    usage(1);
+    usagePerfWrapper(1);
   }
 
   return opts;
@@ -110,8 +112,8 @@ function fmtCv(cv) {
   return cv === 0 ? "0" : `${(cv * 100).toFixed(2)}%`;
 }
 
-function main() {
-  const opts = parseArgs(process.argv.slice(2));
+function runPerfWrapper(argv) {
+  const opts = parsePerfWrapperArgs(argv);
 
   const repoRoot = path.resolve(__dirname, "..");
   const runnerPath = path.join(repoRoot, "tools", "perf", "run.mjs");
@@ -119,6 +121,7 @@ function main() {
     console.error(`Missing perf runner: ${path.relative(process.cwd(), runnerPath)}`);
     process.exit(1);
   }
+
   const playwrightCoreInTools = path.join(repoRoot, "tools", "perf", "node_modules", "playwright-core");
   if (!fs.existsSync(playwrightCoreInTools)) {
     const version = getPlaywrightCoreVersionHint(repoRoot);
@@ -182,10 +185,133 @@ function main() {
   printBench(benchName);
 }
 
+function usageMacro(exitCode = 0) {
+  console.log(`Usage: node bench/run --scenario <name> --iterations <n> --output <path> [macro options]
+
+Macrobench scenarios:
+  - startup
+  - microbench
+  - idle_raf
+
+Macrobench options:
+  --warmup <n>              Warmup iterations per scenario (default: 1)
+  --idle-seconds <n>        idle_raf duration per iteration (default: 5)
+  --url <url>               Use an existing URL instead of building/serving
+  --skip-build              Skip build step when --url is not provided
+  --output <path>           Write summary JSON to this path (in addition to bench/results)
+  --results-dir <path>      Results directory (default: bench/results)
+  --run-id <id>             Override run id
+  --timeout-ms <n>          Per-page readiness timeout (default: 60000)
+  --unstable-cov <n>        Mark metric unstable if CoV exceeds this (default: 0.1)
+  --headed                  Run Chromium headed (default: headless)
+`);
+  process.exit(exitCode);
+}
+
+function parseMacroArgs(argv) {
+  const parsed = parseNodeArgs({
+    options: {
+      scenario: { type: "string", multiple: true },
+      iterations: { type: "string" },
+      warmup: { type: "string" },
+      "idle-seconds": { type: "string" },
+      url: { type: "string" },
+      output: { type: "string" },
+      "results-dir": { type: "string" },
+      "run-id": { type: "string" },
+      "timeout-ms": { type: "string" },
+      "unstable-cov": { type: "string" },
+      "skip-build": { type: "boolean", default: false },
+      headed: { type: "boolean", default: false },
+      help: { type: "boolean", default: false },
+    },
+    allowPositionals: false,
+    args: argv,
+  });
+
+  if (parsed.values.help) usageMacro(0);
+
+  const scenariosRaw = parsed.values.scenario ?? [];
+  const scenarios = scenariosRaw.flatMap((s) => String(s).split(",").map((v) => v.trim()).filter(Boolean));
+
+  const iterations = parsed.values.iterations ? Number(parsed.values.iterations) : 5;
+  const warmupIterations = parsed.values.warmup ? Number(parsed.values.warmup) : 1;
+  const idleSeconds = parsed.values["idle-seconds"] ? Number(parsed.values["idle-seconds"]) : 5;
+  const timeoutMs = parsed.values["timeout-ms"] ? Number(parsed.values["timeout-ms"]) : 60_000;
+  const unstableCov = parsed.values["unstable-cov"] ? Number(parsed.values["unstable-cov"]) : 0.1;
+
+  for (const [name, value] of [
+    ["iterations", iterations],
+    ["warmup", warmupIterations],
+    ["idle-seconds", idleSeconds],
+    ["timeout-ms", timeoutMs],
+    ["unstable-cov", unstableCov],
+  ]) {
+    if (!Number.isFinite(value) || value < 0) throw new Error(`Invalid --${name}: ${value}`);
+  }
+
+  return {
+    scenarios,
+    iterations,
+    warmupIterations,
+    idleSeconds,
+    url: parsed.values.url,
+    outputPath: parsed.values.output,
+    resultsDir: parsed.values["results-dir"],
+    runId: parsed.values["run-id"],
+    timeoutMs,
+    unstableCov,
+    skipBuild: parsed.values["skip-build"],
+    headless: !parsed.values.headed,
+  };
+}
+
+async function runMacro(argv) {
+  const opts = parseMacroArgs(argv);
+  const mod = await import("./runner.js");
+  const runBench = mod.runBench ?? mod.default?.runBench;
+  if (typeof runBench !== "function") throw new Error("bench/runner.js did not export runBench()");
+  await runBench(opts);
+}
+
+function extractScenarioFlags(argv) {
+  /** @type {string[]} */
+  const out = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === "--scenario" && argv[i + 1]) {
+      out.push(...argv[i + 1].split(",").map((v) => v.trim()).filter(Boolean));
+      i += 1;
+    }
+  }
+  return out;
+}
+
+function shouldUseMacroHarness(argv) {
+  const macroFlags = new Set([
+    "--output",
+    "--results-dir",
+    "--warmup",
+    "--idle-seconds",
+    "--timeout-ms",
+    "--unstable-cov",
+    "--run-id",
+    "--skip-build",
+    "--headed",
+  ]);
+  if (argv.some((a) => macroFlags.has(a))) return true;
+  const scenarios = extractScenarioFlags(argv);
+  return scenarios.includes("idle_raf");
+}
+
+async function main() {
+  const argv = process.argv.slice(2);
+  if (shouldUseMacroHarness(argv)) await runMacro(argv);
+  else runPerfWrapper(argv);
+}
+
 try {
-  main();
+  await main();
 } catch (err) {
   console.error(err?.stack ?? String(err));
   process.exitCode = 1;
 }
-
