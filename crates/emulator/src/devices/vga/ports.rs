@@ -131,10 +131,15 @@ impl VgaDevice {
         self.crtc_regs.resize(CRTC_REGS_INITIAL_LEN, 0);
         self.crtc_regs.copy_from_slice(&table.crtc);
 
-        // Ensure the protected CRTC registers are unlocked while programming.
         if self.crtc_regs.len() > 0x11 {
+            // Real VGA hardware protects CRTC registers 0..=7 when CRTC[0x11].7 is set.
+            // VGA BIOSes typically clear it while programming the mode tables and then
+            // restore it afterwards. We keep the final value from the mode table, but
+            // still force CRTC[0x03].7 which is set in all standard VGA modes.
+            let protect = self.crtc_regs[0x11] & 0x80;
+            self.crtc_regs[0x11] &= !0x80; // unlock (no-op for direct register writes)
+            self.crtc_regs[0x11] |= protect; // restore protect bit from table
             self.crtc_regs[0x03] |= 0x80;
-            self.crtc_regs[0x11] &= !0x80;
         }
 
         self.ac_regs.resize(AC_REGS_INITIAL_LEN, 0);
