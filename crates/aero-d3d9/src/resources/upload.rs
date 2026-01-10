@@ -9,11 +9,6 @@ pub(crate) enum UploadOp {
         src_offset: u64,
         size: u64,
     },
-    QueueWriteBuffer {
-        dst: Arc<wgpu::Buffer>,
-        dst_offset: u64,
-        data: Vec<u8>,
-    },
     Texture {
         dst: Arc<wgpu::Texture>,
         dst_mip_level: u32,
@@ -57,17 +52,16 @@ impl UploadQueue {
             return;
         }
 
-        // `copy_buffer_to_buffer` requires offsets and sizes to be a multiple of 4. If the guest
-        // requests an odd-sized update, fall back to `queue.write_buffer` for correctness.
-        let align = wgpu::COPY_BUFFER_ALIGNMENT as u64;
-        if (dst_offset % align) != 0 || (data.len() as u64 % align) != 0 {
-            self.ops.push(UploadOp::QueueWriteBuffer {
-                dst: Arc::clone(buffer),
-                dst_offset,
-                data: data.to_vec(),
-            });
-            return;
-        }
+        debug_assert_eq!(
+            dst_offset % wgpu::COPY_BUFFER_ALIGNMENT,
+            0,
+            "buffer uploads must be 4-byte aligned"
+        );
+        debug_assert_eq!(
+            data.len() as u64 % wgpu::COPY_BUFFER_ALIGNMENT,
+            0,
+            "buffer uploads must be 4-byte aligned"
+        );
 
         let align = wgpu::COPY_BUFFER_ALIGNMENT as usize;
         let src_offset = align_up(self.staging.len(), align);
@@ -118,29 +112,14 @@ impl UploadQueue {
     }
 
     pub fn encode_and_clear(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
-        self.encode_and_clear_with_queue(device, None, encoder);
-    }
-
-    pub fn encode_and_clear_with_queue(
-        &mut self,
-        device: &wgpu::Device,
-        queue: Option<&wgpu::Queue>,
-        encoder: &mut wgpu::CommandEncoder,
-    ) {
         if self.ops.is_empty() {
             return;
         }
 
-        let needs_staging = self
-            .ops
-            .iter()
-            .any(|op| matches!(op, UploadOp::Buffer { .. } | UploadOp::Texture { .. }));
-        let staging = needs_staging.then(|| {
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("aero-d3d9.upload_staging"),
-                contents: &self.staging,
-                usage: wgpu::BufferUsages::COPY_SRC,
-            })
+        let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("aero-d3d9.upload_staging"),
+            contents: &self.staging,
+            usage: wgpu::BufferUsages::COPY_SRC,
         });
 
         for op in self.ops.drain(..) {
@@ -151,16 +130,7 @@ impl UploadQueue {
                     src_offset,
                     size,
                 } => {
-                    let staging = staging.as_ref().expect("staging buffer");
-                    encoder.copy_buffer_to_buffer(staging, src_offset, &*dst, dst_offset, size);
-                }
-                UploadOp::QueueWriteBuffer {
-                    dst,
-                    dst_offset,
-                    data,
-                } => {
-                    let queue = queue.expect("queue required for QueueWriteBuffer");
-                    queue.write_buffer(&*dst, dst_offset, &data);
+                    encoder.copy_buffer_to_buffer(&staging, src_offset, &*dst, dst_offset, size);
                 }
                 UploadOp::Texture {
                     dst,
@@ -171,11 +141,10 @@ impl UploadQueue {
                     mut layout,
                     src_offset,
                 } => {
-                    let staging = staging.as_ref().expect("staging buffer");
                     layout.offset = src_offset;
                     encoder.copy_buffer_to_texture(
                         wgpu::ImageCopyBuffer {
-                            buffer: staging,
+                            buffer: &staging,
                             layout,
                         },
                         wgpu::ImageCopyTexture {

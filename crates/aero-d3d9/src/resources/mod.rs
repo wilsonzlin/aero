@@ -140,8 +140,7 @@ impl ResourceManager {
     /// Encode any pending uploads into `encoder` before rendering commands that consume the
     /// updated resources.
     pub fn encode_uploads(&mut self, encoder: &mut wgpu::CommandEncoder) {
-        self.uploads
-            .encode_and_clear_with_queue(&self.device, Some(&self.queue), encoder);
+        self.uploads.encode_and_clear(&self.device, encoder);
     }
 
     /// Submit `encoder` and commit any queued uploads.

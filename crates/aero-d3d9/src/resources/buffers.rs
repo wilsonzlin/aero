@@ -109,6 +109,15 @@ impl VertexBuffer {
             return Err(anyhow!("lock range out of bounds"));
         }
 
+        let align = wgpu::COPY_BUFFER_ALIGNMENT;
+        if (offset as u64) % align != 0 || (size as u64) % align != 0 {
+            return Err(anyhow!(
+                "vertex buffer lock range must be 4-byte aligned (offset {}, size {})",
+                offset,
+                size
+            ));
+        }
+
         if flags.contains(LockFlags::READONLY) && self.shadow.is_none() {
             return Err(anyhow!("READONLY lock requires managed shadow data"));
         }
@@ -153,6 +162,15 @@ impl VertexBuffer {
         };
 
         if !lock.flags.contains(LockFlags::READONLY) {
+            let align = wgpu::COPY_BUFFER_ALIGNMENT;
+            if (lock.offset as u64) % align != 0 || (lock.size as u64) % align != 0 {
+                return Err(anyhow!(
+                    "vertex buffer unlock range must be 4-byte aligned (offset {}, size {})",
+                    lock.offset,
+                    lock.size
+                ));
+            }
+
             uploads.write_buffer(&self.gpu, lock.offset as u64, &self.lock_data);
 
             if let Some(shadow) = &mut self.shadow {
@@ -170,7 +188,7 @@ impl VertexBuffer {
 pub struct IndexBuffer {
     desc: IndexBufferDesc,
     gpu: Arc<wgpu::Buffer>,
-    shadow: Option<Vec<u8>>,
+    shadow: Vec<u8>,
 
     lock: Option<LockState>,
     lock_data: Vec<u8>,
@@ -230,12 +248,9 @@ impl IndexBuffer {
             return Err(anyhow!("lock range out of bounds"));
         }
 
-        if flags.contains(LockFlags::READONLY) && self.shadow.is_none() {
-            return Err(anyhow!("READONLY lock requires managed shadow data"));
-        }
-
         if flags.contains(LockFlags::DISCARD) && self.is_dynamic() {
-            self.gpu = Self::create_gpu(device, self.desc.size_bytes as u64);
+            self.shadow.fill(0);
+            self.gpu = Self::create_gpu(device, self.shadow.len() as u64);
         }
 
         self.lock = Some(LockState {
@@ -246,21 +261,17 @@ impl IndexBuffer {
         self.lock_data.resize(size as usize, 0);
 
         if flags.contains(LockFlags::READONLY) {
-            if let Some(shadow) = &self.shadow {
-                let start = offset as usize;
-                let end = start + size as usize;
-                self.lock_data
-                    .as_mut_slice()
-                    .copy_from_slice(&shadow[start..end]);
-            }
+            let start = offset as usize;
+            let end = start + size as usize;
+            self.lock_data
+                .as_mut_slice()
+                .copy_from_slice(&self.shadow[start..end]);
         } else if !flags.contains(LockFlags::DISCARD) {
-            if let Some(shadow) = &self.shadow {
-                let start = offset as usize;
-                let end = start + size as usize;
-                self.lock_data
-                    .as_mut_slice()
-                    .copy_from_slice(&shadow[start..end]);
-            }
+            let start = offset as usize;
+            let end = start + size as usize;
+            self.lock_data
+                .as_mut_slice()
+                .copy_from_slice(&self.shadow[start..end]);
         }
 
         Ok(&mut self.lock_data)
@@ -272,13 +283,23 @@ impl IndexBuffer {
         };
 
         if !lock.flags.contains(LockFlags::READONLY) {
-            uploads.write_buffer(&self.gpu, lock.offset as u64, &self.lock_data);
+            let start = lock.offset as usize;
+            let end = start + lock.size as usize;
+            self.shadow[start..end].copy_from_slice(&self.lock_data);
 
-            if let Some(shadow) = &mut self.shadow {
-                let start = lock.offset as usize;
-                let end = start + lock.size as usize;
-                shadow[start..end].copy_from_slice(&self.lock_data);
-            }
+            let aligned_start = align_down_u32(lock.offset, wgpu::COPY_BUFFER_ALIGNMENT as u32);
+            let aligned_end = align_up_u32(
+                lock.offset.saturating_add(lock.size),
+                wgpu::COPY_BUFFER_ALIGNMENT as u32,
+            );
+            let aligned_start = aligned_start as usize;
+            let aligned_end = aligned_end.min(self.shadow.len() as u32) as usize;
+
+            uploads.write_buffer(
+                &self.gpu,
+                aligned_start as u64,
+                &self.shadow[aligned_start..aligned_end],
+            );
         }
 
         Ok(())
@@ -363,6 +384,16 @@ fn align_up_u64(value: u64, alignment: u64) -> u64 {
     (value + alignment - 1) & !(alignment - 1)
 }
 
+fn align_down_u32(value: u32, alignment: u32) -> u32 {
+    debug_assert!(alignment.is_power_of_two());
+    value & !(alignment - 1)
+}
+
+fn align_up_u32(value: u32, alignment: u32) -> u32 {
+    debug_assert!(alignment.is_power_of_two());
+    value.saturating_add(alignment - 1) & !(alignment - 1)
+}
+
 impl ResourceManager {
     pub fn create_vertex_buffer(
         &mut self,
@@ -371,6 +402,13 @@ impl ResourceManager {
     ) -> Result<()> {
         if self.vertex_buffers.contains_key(&id) {
             return Err(anyhow!("vertex buffer id already exists: {}", id));
+        }
+
+        if (desc.size_bytes as u64) % wgpu::COPY_BUFFER_ALIGNMENT != 0 {
+            return Err(anyhow!(
+                "vertex buffer size must be 4-byte aligned for WebGPU copies (got {})",
+                desc.size_bytes
+            ));
         }
 
         let gpu = VertexBuffer::create_gpu(&self.device, desc.size_bytes as u64);
@@ -441,11 +479,9 @@ impl ResourceManager {
             return Err(anyhow!("index buffer id already exists: {}", id));
         }
 
-        let gpu = IndexBuffer::create_gpu(&self.device, desc.size_bytes as u64);
-        let shadow = match desc.pool {
-            D3DPool::Managed => Some(vec![0u8; desc.size_bytes as usize]),
-            D3DPool::Default => None,
-        };
+        let padded_size = align_up_u32(desc.size_bytes, wgpu::COPY_BUFFER_ALIGNMENT as u32);
+        let gpu = IndexBuffer::create_gpu(&self.device, padded_size as u64);
+        let shadow = vec![0u8; padded_size as usize];
 
         self.index_buffers.insert(
             id,
