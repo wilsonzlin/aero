@@ -293,15 +293,10 @@ impl PciConfigSpace {
             return effects;
         }
 
-        if offset == 0x04 && size == 2 {
-            let old = self.command();
-            let new = value as u16;
-            self.set_command(new);
-            if old != new {
-                effects.command = PciCommandChange::Changed { old, new };
-            }
-            return effects;
-        }
+        // The command register is 16 bits at 0x04..=0x05. Guests typically write it as a
+        // 16-bit word, but the config mechanism supports byte and dword accesses too.
+        let command_overlaps = offset < 0x06 && offset + size > 0x04;
+        let old_command = if command_overlaps { self.command() } else { 0 };
 
         for i in 0..size {
             let addr = offset + i;
@@ -309,6 +304,16 @@ impl PciConfigSpace {
                 continue;
             }
             self.bytes[addr] = ((value >> (8 * i)) & 0xff) as u8;
+        }
+
+        if command_overlaps {
+            let new_command = self.command();
+            if old_command != new_command {
+                effects.command = PciCommandChange::Changed {
+                    old: old_command,
+                    new: new_command,
+                };
+            }
         }
 
         self.sync_capabilities_from_config();

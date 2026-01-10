@@ -207,6 +207,11 @@ pub struct PciConfigMechanism1 {
     addr: u32,
 }
 
+const CONFIG_ADDRESS_PORT: u16 = 0xCF8;
+const CONFIG_ADDRESS_PORT_END: u16 = CONFIG_ADDRESS_PORT + 3;
+const CONFIG_DATA_PORT: u16 = 0xCFC;
+const CONFIG_DATA_PORT_END: u16 = CONFIG_DATA_PORT + 3;
+
 impl PciConfigMechanism1 {
     pub fn new() -> Self {
         Self { addr: 0 }
@@ -214,8 +219,16 @@ impl PciConfigMechanism1 {
 
     pub fn io_read(&mut self, pci: &mut PciBus, port: u16, size: u8) -> u32 {
         match port {
-            0xCF8..=0xCFB => read_u32_part(self.addr, port, size),
-            0xCFC..=0xCFF => {
+            CONFIG_ADDRESS_PORT..=CONFIG_ADDRESS_PORT_END => {
+                if !valid_dword_window_access(port, size, CONFIG_ADDRESS_PORT) {
+                    return all_ones(size);
+                }
+                read_u32_part(self.addr, port, size, CONFIG_ADDRESS_PORT)
+            }
+            CONFIG_DATA_PORT..=CONFIG_DATA_PORT_END => {
+                if !valid_dword_window_access(port, size, CONFIG_DATA_PORT) {
+                    return all_ones(size);
+                }
                 if (self.addr & 0x8000_0000) == 0 {
                     return all_ones(size);
                 }
@@ -223,7 +236,7 @@ impl PciConfigMechanism1 {
                 let device = ((self.addr >> 11) & 0x1F) as u8;
                 let function = ((self.addr >> 8) & 0x07) as u8;
                 let reg = (self.addr & 0xFC) as u16;
-                let offset = reg + u16::from(port - 0xCFC);
+                let offset = reg + u16::from(port - CONFIG_DATA_PORT);
                 pci.read_config(PciBdf::new(bus, device, function), offset, size)
             }
             _ => all_ones(size),
@@ -232,12 +245,18 @@ impl PciConfigMechanism1 {
 
     pub fn io_write(&mut self, pci: &mut PciBus, port: u16, size: u8, value: u32) {
         match port {
-            0xCF8..=0xCFB => {
-                self.addr = write_u32_part(self.addr, port, size, value);
-                // Bits 1:0 are reserved (DWORD-aligned register number).
+            CONFIG_ADDRESS_PORT..=CONFIG_ADDRESS_PORT_END => {
+                if !valid_dword_window_access(port, size, CONFIG_ADDRESS_PORT) {
+                    return;
+                }
+                self.addr = write_u32_part(self.addr, port, size, value, CONFIG_ADDRESS_PORT);
+                // Bits 1:0 are reserved (DWORD-aligned register number) and always read back as 0.
                 self.addr &= !0x3;
             }
-            0xCFC..=0xCFF => {
+            CONFIG_DATA_PORT..=CONFIG_DATA_PORT_END => {
+                if !valid_dword_window_access(port, size, CONFIG_DATA_PORT) {
+                    return;
+                }
                 if (self.addr & 0x8000_0000) == 0 {
                     return;
                 }
@@ -245,7 +264,7 @@ impl PciConfigMechanism1 {
                 let device = ((self.addr >> 11) & 0x1F) as u8;
                 let function = ((self.addr >> 8) & 0x07) as u8;
                 let reg = (self.addr & 0xFC) as u16;
-                let offset = reg + u16::from(port - 0xCFC);
+                let offset = reg + u16::from(port - CONFIG_DATA_PORT);
                 pci.write_config(PciBdf::new(bus, device, function), offset, size, value);
             }
             _ => {}
@@ -253,8 +272,16 @@ impl PciConfigMechanism1 {
     }
 }
 
-fn read_u32_part(value: u32, port: u16, size: u8) -> u32 {
-    let shift = u32::from(port - 0xCF8) * 8;
+fn valid_dword_window_access(port: u16, size: u8, base_port: u16) -> bool {
+    let offset = port - base_port;
+    match size {
+        1 | 2 | 4 => u32::from(offset) + u32::from(size) <= 4,
+        _ => false,
+    }
+}
+
+fn read_u32_part(value: u32, port: u16, size: u8, base_port: u16) -> u32 {
+    let shift = u32::from(port - base_port) * 8;
     match size {
         1 => (value >> shift) & 0xFF,
         2 => (value >> shift) & 0xFFFF,
@@ -263,11 +290,17 @@ fn read_u32_part(value: u32, port: u16, size: u8) -> u32 {
     }
 }
 
-fn write_u32_part(old: u32, port: u16, size: u8, value: u32) -> u32 {
-    let shift = u32::from(port - 0xCF8) * 8;
+fn write_u32_part(old: u32, port: u16, size: u8, value: u32, base_port: u16) -> u32 {
+    let shift = u32::from(port - base_port) * 8;
     match size {
-        1 => (old & !(0xFFu32 << shift)) | ((value & 0xFF) << shift),
-        2 => (old & !(0xFFFFu32 << shift)) | ((value & 0xFFFF) << shift),
+        1 => {
+            let mask = 0xFFu32 << shift;
+            (old & !mask) | ((value & 0xFF) << shift)
+        }
+        2 => {
+            let mask = 0xFFFFu32 << shift;
+            (old & !mask) | ((value & 0xFFFF) << shift)
+        }
         4 => value,
         _ => panic!("invalid write size {size}"),
     }
@@ -327,10 +360,20 @@ mod tests {
         dev.cfg.set_class_code(0x01, 0x06, 0x01, 0x02);
         bus.add_device(PciBdf::new(0x12, 3, 5), Box::new(dev));
 
-        cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0x12, 3, 5, 0x00));
+        let addr0 = cfg_addr(0x12, 3, 5, 0x00);
+        cfg.io_write(&mut bus, 0xCF8, 4, addr0);
+        assert_eq!(cfg.io_read(&mut bus, 0xCF8, 4), addr0);
+        assert_eq!(cfg.io_read(&mut bus, 0xCF8 + 1, 1), (addr0 >> 8) & 0xFF);
+        assert_eq!(cfg.io_read(&mut bus, 0xCF8 + 2, 2), (addr0 >> 16) & 0xFFFF);
+
         assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0xABCD_1234);
         assert_eq!(cfg.io_read(&mut bus, 0xCFC + 2, 2), 0xABCD);
         assert_eq!(cfg.io_read(&mut bus, 0xCFC + 1, 1), 0x12);
+
+        // Byte writes to 0xCFB should update the enable bit (bit 31).
+        cfg.io_write(&mut bus, 0xCF8 + 3, 1, 0x00);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0xFFFF_FFFF);
+        cfg.io_write(&mut bus, 0xCF8 + 3, 1, 0x80);
 
         cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0x12, 3, 5, 0x08));
         // revision=0x02 prog_if=0x01 subclass=0x06 class=0x01
@@ -385,5 +428,39 @@ mod tests {
 
         cfg.io_write(&mut bus, 0xCFC, 4, 0x0000_0C20);
         assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0x0000_0C21);
+    }
+
+    #[test]
+    fn command_register_byte_write_updates_decoding() {
+        let mut bus = PciBus::new();
+        let bdf = PciBdf::new(0, 4, 0);
+
+        let mut dev = Stub::new(0x1234, 0x0002);
+        dev.cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        dev.cfg.set_bar_base(0, 0xE000_0000);
+        bus.add_device(bdf, Box::new(dev));
+
+        assert!(bus.mapped_bars().is_empty());
+
+        // Enable memory decoding via a byte write to the command register.
+        bus.write_config(bdf, 0x04, 1, 0x02);
+        let mapped = bus.mapped_mmio_bars();
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].bdf, bdf);
+        assert_eq!(mapped[0].bar, 0);
+
+        // Disable decoding again and ensure the mapping is dropped.
+        bus.write_config(bdf, 0x04, 1, 0x00);
+        assert!(bus.mapped_bars().is_empty());
+
+        // Dword writes that cover the command register should also refresh decoding.
+        bus.write_config(bdf, 0x04, 4, 0x0000_0002);
+        assert_eq!(bus.mapped_mmio_bars().len(), 1);
     }
 }
