@@ -63,8 +63,8 @@ fn usage() -> &'static str {
     "win-offline-cert-injector\n\
 \n\
 Usage:\n\
-  win-offline-cert-injector --hive <path-to-SOFTWARE> [--store <STORE> ...] [--verify-only] <cert-file>...\n\
-  win-offline-cert-injector --windows-dir <mount-root> [--store <STORE> ...] [--verify-only] <cert-file>...\n\
+  win-offline-cert-injector --hive <path-to-SOFTWARE> [--store <STORE> ...] [--verify-only] [--cert <cert-file> ...] [<cert-file>...]\n\
+  win-offline-cert-injector --windows-dir <mount-root> [--store <STORE> ...] [--verify-only] [--cert <cert-file> ...] [<cert-file>...]\n\
 \n\
 Stores (case-insensitive): ROOT, TrustedPublisher, TrustedPeople\n\
 Default stores: ROOT + TrustedPublisher\n"
@@ -143,6 +143,12 @@ fn parse_args() -> Result<Option<Cli>, ToolError> {
                 if !stores.iter().any(|s| s == &store) {
                     stores.push(store);
                 }
+            }
+            "--cert" => {
+                let val = args.next().ok_or_else(|| {
+                    ToolError::Usage(format!("--cert requires a value\n\n{}", usage()))
+                })?;
+                cert_files.push(PathBuf::from(val));
             }
             "--verify-only" => verify_only = true,
             _ if arg_str.starts_with("--") => {

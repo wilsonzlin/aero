@@ -14,8 +14,8 @@ cargo build --release
 ## Usage
 
 ```text
-win-offline-cert-injector --hive <path-to-SOFTWARE> [--store <STORE> ...] [--verify-only] <cert-file>...
-win-offline-cert-injector --windows-dir <mount-root> [--store <STORE> ...] [--verify-only] <cert-file>...
+win-offline-cert-injector --hive <path-to-SOFTWARE> [--store <STORE> ...] [--verify-only] [--cert <cert-file> ...] [<cert-file>...]
+win-offline-cert-injector --windows-dir <mount-root> [--store <STORE> ...] [--verify-only] [--cert <cert-file> ...] [<cert-file>...]
 
 Stores (case-insensitive):
   ROOT
@@ -35,7 +35,7 @@ Inject into the default stores (`ROOT` + `TrustedPublisher`) using an explicit h
 ```powershell
 win-offline-cert-injector `
   --hive X:\mount\Windows\System32\config\SOFTWARE `
-  .\aero-root.cer .\aero-publisher.cer
+  --cert .\aero-root.cer --cert .\aero-publisher.cer
 ```
 
 Inject into `TrustedPeople` only:
@@ -44,7 +44,7 @@ Inject into `TrustedPeople` only:
 win-offline-cert-injector `
   --windows-dir X:\mount `
   --store TrustedPeople `
-  .\aero-signer.cer
+  --cert .\aero-signer.cer
 ```
 
 Verify-only (does not modify the hive):
@@ -53,7 +53,7 @@ Verify-only (does not modify the hive):
 win-offline-cert-injector `
   --hive X:\mount\Windows\System32\config\SOFTWARE `
   --verify-only `
-  .\aero-root.cer
+  --cert .\aero-root.cer
 ```
 
 ## Manual verification
@@ -73,4 +73,3 @@ reg unload HKLM\AERO_OFFLINE_SOFTWARE
 ```
 
 The tool prints each certificate SHA1 thumbprint it injected; that thumbprint is the registry subkey name.
-
