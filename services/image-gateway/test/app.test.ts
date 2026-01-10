@@ -125,6 +125,50 @@ describe("app", () => {
     });
   });
 
+  it("returns 416 with RFC-style Content-Range when S3 rejects the range", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+      size: 100,
+    });
+
+    const s3 = {
+      async send() {
+        const err = new Error("InvalidRange") as Error & {
+          $metadata?: { httpStatusCode?: number };
+        };
+        err.$metadata = { httpStatusCode: 416 };
+        throw err;
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        range: "bytes=999-1000",
+      },
+    });
+
+    expect(res.statusCode).toBe(416);
+    expect(res.headers["accept-ranges"]).toBe("bytes");
+    expect(res.headers["content-range"]).toBe("bytes */100");
+  });
+
   it("handles CORS preflight with OPTIONS", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();

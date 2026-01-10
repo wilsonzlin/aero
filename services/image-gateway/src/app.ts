@@ -478,7 +478,15 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       ).$metadata?.httpStatusCode;
       if (typeof maybeStatus === "number") {
         if (maybeStatus === 416) {
-          throw new ApiError(416, "Requested Range Not Satisfiable", "INVALID_RANGE");
+          const totalSize = record.size;
+          const headers: Record<string, string> = {
+            "accept-ranges": "bytes",
+          };
+          if (typeof totalSize === "number") {
+            headers["content-range"] = `bytes */${totalSize}`;
+          }
+          reply.status(416).headers(headers).send();
+          return;
         }
         if (maybeStatus === 404) {
           throw new ApiError(404, "Image object not found", "NOT_FOUND");
@@ -492,6 +500,16 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
 
     if (!s3Res.Body) {
       throw new ApiError(502, "S3 did not return a response body", "S3_ERROR");
+    }
+
+    if (requestedRange && !s3Res.ContentRange) {
+      // If Range was requested, we must not accidentally stream the entire object.
+      // Some backends may ignore malformed Range headers and return 200 without Content-Range.
+      throw new ApiError(
+        502,
+        "S3 did not return Content-Range for a ranged request",
+        "S3_ERROR"
+      );
     }
 
     const proxy = buildRangeProxyResponse({ s3: s3Res });
