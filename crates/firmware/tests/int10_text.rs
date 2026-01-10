@@ -79,3 +79,26 @@ fn int10_write_char_attr_repeats_without_moving_cursor() {
     // Cursor remains unchanged.
     assert_eq!(BiosDataArea::read_cursor_pos_page0(&mem), (0, 0));
 }
+
+#[test]
+fn int10_set_mode_03h_respects_no_clear_bit() {
+    let mut mem = VecMemory::new(2 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Set mode 03h (clear).
+    cpu.set_ax(0x0003);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // Write a marker into the top-left cell.
+    mem.write_u8(0xB8000, b'A');
+    mem.write_u8(0xB8001, 0x1F);
+
+    // Set mode 03h again with bit7 set => no clear.
+    cpu.set_ax(0x0083);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    assert_eq!(BiosDataArea::read_video_mode(&mem), 0x03);
+    assert_eq!(mem.read_u8(0xB8000), b'A');
+    assert_eq!(mem.read_u8(0xB8001), 0x1F);
+}

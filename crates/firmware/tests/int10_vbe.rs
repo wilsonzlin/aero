@@ -96,6 +96,11 @@ fn int10_vbe_set_mode_clears_framebuffer_and_reports_current_mode() {
     assert_eq!(cpu.ax(), 0x004F);
     assert_eq!(cpu.bx(), 0x118);
 
+    // INT 10h AH=0F should report "VESA mode active" via AL=0x6F.
+    cpu.set_ax(0x0F00);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.al(), 0x6F);
+
     // 4F02: set mode again with no-clear, after writing a pattern.
     for i in 0..4096u64 {
         mem.write_u8(fb_base + i, 0x55);
