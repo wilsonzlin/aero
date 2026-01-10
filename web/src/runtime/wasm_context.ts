@@ -1,3 +1,5 @@
+import { initWasm } from "./wasm_loader";
+
 export type WasmVariant = "single" | "threaded";
 
 export type WasmApi = {
@@ -77,18 +79,29 @@ function toWasmApi(exports: WebAssembly.Exports): WasmApi {
 export async function initWasmForContext(): Promise<InitResult> {
   if (!initPromise) {
     initPromise = (async () => {
-      const variant = selectVariantForContext();
-      const wasmUrl =
-        variant === "threaded"
-          ? new URL("../wasm/aero_demo_threaded.wasm", import.meta.url)
-          : new URL("../wasm/aero_demo_single.wasm", import.meta.url);
+      try {
+        const { api, variant } = await initWasm();
+        if (typeof api.version !== "function" || typeof api.sum !== "function") {
+          throw new Error('WASM package missing expected exports: "version" and "sum"');
+        }
+        return { api, variant };
+      } catch (err) {
+        // Keep the legacy "embedded demo wasm" path as a fallback so the worker harness can
+        // still run in a fresh checkout (before running `npm run wasm:build`).
+        console.warn("wasm_loader init failed; falling back to embedded demo wasm", err);
 
-      const { instance } = await instantiateWasm(wasmUrl);
-      const api = toWasmApi(instance.exports);
-      return { api, variant };
+        const variant = selectVariantForContext();
+        const wasmUrl =
+          variant === "threaded"
+            ? new URL("../wasm/aero_demo_threaded.wasm", import.meta.url)
+            : new URL("../wasm/aero_demo_single.wasm", import.meta.url);
+
+        const { instance } = await instantiateWasm(wasmUrl);
+        const api = toWasmApi(instance.exports);
+        return { api, variant };
+      }
     })();
   }
 
   return initPromise;
 }
-

@@ -58,7 +58,7 @@ const outDir = path.join(repoRoot, "web/src/wasm", variant === "threaded" ? "pkg
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
-const targetFeatures = isThreaded ? ["+atomics", "+bulk-memory", "+mutable-globals"] : ["-atomics"];
+const targetFeatures = isThreaded ? ["+atomics", "+bulk-memory", "+mutable-globals"] : [];
 
 if (process.env.AERO_WASM_SIMD === "1" || process.env.AERO_WASM_SIMD === "true") {
     targetFeatures.push("+simd128");

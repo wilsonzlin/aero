@@ -3,6 +3,8 @@ export type WasmVariant = "threaded" | "single";
 export interface WasmApi {
     greet(name: string): string;
     add(a: number, b: number): number;
+    version: () => number;
+    sum: (a: number, b: number) => number;
     AeroApi: new () => { version(): string; free(): void };
     // Optional audio exports (present when the WASM build includes the audio worklet bridge).
     WorkletBridge?: new (capacityFrames: number, channelCount: number) => {
@@ -99,6 +101,8 @@ function toApi(mod: RawWasmModule): WasmApi {
     return {
         greet: mod.greet,
         add: mod.add,
+        version: mod.version,
+        sum: mod.sum,
         AeroApi: mod.AeroApi,
         WorkletBridge: mod.WorkletBridge,
         create_worklet_bridge: mod.create_worklet_bridge,

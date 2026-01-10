@@ -40,6 +40,20 @@ pub fn add(a: u32, b: u32) -> u32 {
     a + b
 }
 
+/// Tiny numeric API used by the worker harness (`web/src/runtime/wasm_context.ts`).
+///
+/// NOTE: This coexists with `AeroApi::version()` (string) and is intentionally
+/// cheap to call (no allocations).
+#[wasm_bindgen]
+pub fn version() -> u32 {
+    1
+}
+
+#[wasm_bindgen]
+pub fn sum(a: i32, b: i32) -> i32 {
+    a + b
+}
+
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn create_worklet_bridge(capacity_frames: u32, channel_count: u32) -> Result<WorkletBridge, JsValue> {
