@@ -67,8 +67,9 @@ Why this works: Windows can only boot from a storage controller if its driver is
 4. **Reinstall the driver:**
    - Re-run `setup.cmd` as Administrator.
    - Or in Device Manager:
-     - Right-click the device → Update Driver Software
-      - Browse to your Guest Tools driver folder
+     - Right-click the device → **Update Driver Software…**
+     - Choose **Browse my computer for driver software**
+     - Browse to your Guest Tools driver folder
 
 5. **Confirm the driver package is staged in the driver store (optional but useful):**
    - In an elevated Command Prompt:
