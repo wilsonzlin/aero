@@ -1,4 +1,12 @@
-use nt_packetlib::io::net::packet::{arp::ArpPacket, ethernet::EthernetFrame, icmp::Icmpv4Packet, ipv4::Ipv4Packet, tcp::TcpSegment, udp::UdpPacket};
+use nt_packetlib::io::net::packet::{
+    arp::ArpPacket,
+    dns::parse_single_query,
+    ethernet::EthernetFrame,
+    icmp::Icmpv4Packet,
+    ipv4::Ipv4Packet,
+    tcp::TcpSegment,
+    udp::UdpPacket,
+};
 
 struct XorShift64(u64);
 
@@ -38,6 +46,6 @@ fn fuzz_parsers_do_not_panic() {
         let _ = UdpPacket::parse(&data);
         let _ = TcpSegment::parse(&data);
         let _ = Icmpv4Packet::parse(&data);
+        let _ = parse_single_query(&data);
     }
 }
-
