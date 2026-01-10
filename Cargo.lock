@@ -421,6 +421,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-tier0"
+version = "0.1.0"
+dependencies = [
+ "rustc-hash 1.1.0",
+]
+
+[[package]]
 name = "aero-usb"
 version = "0.1.0"
 
