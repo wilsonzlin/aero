@@ -854,6 +854,8 @@ If you prefer the **signed URL** style instead of an `Authorization` header, the
 #### CORS/COEP constraints for Range streaming
 
 - `Range` header → **CORS preflight on cross-origin** requests.
+- If cross-origin fetches are unavoidable, configure the disk endpoint to cache preflights via
+  `Access-Control-Max-Age` (see the spec doc for recommended values and caveats).
 - If using bearer tokens via `Authorization`, cross-origin fetches also require allowing the
   `Authorization` request header in CORS preflight.
 - Prefer a **same-origin** disk streaming endpoint (e.g., `/disk/...`) to avoid preflight and simplify COEP/cross-origin isolation.
