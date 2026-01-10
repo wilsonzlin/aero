@@ -72,6 +72,9 @@ func normalizeOriginHeader(originHeader string) (normalizedOrigin string, host s
 	}
 
 	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", "", false
+	}
 	host = strings.ToLower(u.Host)
 	return scheme + "://" + host, host, true
 }

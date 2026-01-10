@@ -804,7 +804,11 @@ func parseAllowedOrigins(raw string) ([]string, error) {
 			return nil, fmt.Errorf("invalid origin %q (must not include a path)", entry)
 		}
 
-		out = append(out, strings.ToLower(u.Scheme)+"://"+strings.ToLower(u.Host))
+		scheme := strings.ToLower(u.Scheme)
+		if scheme != "http" && scheme != "https" {
+			return nil, fmt.Errorf("invalid origin %q (unsupported scheme %q)", entry, u.Scheme)
+		}
+		out = append(out, scheme+"://"+strings.ToLower(u.Host))
 	}
 
 	return out, nil

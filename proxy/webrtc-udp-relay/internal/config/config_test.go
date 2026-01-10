@@ -197,6 +197,7 @@ func TestParseAllowedOrigins_AllowsStarAndNull(t *testing.T) {
 
 func TestParseAllowedOrigins_RejectsPathQueryAndCredentials(t *testing.T) {
 	cases := []string{
+		"ftp://example.com",
 		"https://example.com/path",
 		"https://example.com/?q=1",
 		"https://user@example.com",

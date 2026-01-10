@@ -203,6 +203,35 @@ func TestOriginMiddleware_RejectsInvalidOrigin(t *testing.T) {
 	}
 }
 
+func TestOriginMiddleware_RejectsNonHTTPOrigin(t *testing.T) {
+	cfg := config.Config{
+		ListenAddr:      "127.0.0.1:0",
+		LogFormat:       config.LogFormatText,
+		LogLevel:        slog.LevelInfo,
+		ShutdownTimeout: 2 * time.Second,
+		Mode:            config.ModeDev,
+		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
+	}
+
+	baseURL := startTestServer(t, cfg, nil)
+
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Origin", "ftp://evil.example.com")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", resp.StatusCode)
+	}
+}
+
 func TestICEEndpoint_AllowsConfiguredOrigin(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
