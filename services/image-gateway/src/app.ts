@@ -3,7 +3,9 @@ import {
   CreateMultipartUploadCommand,
   GetObjectCommand,
   type GetObjectCommandOutput,
+  HeadBucketCommand,
   HeadObjectCommand,
+  type HeadObjectCommandOutput,
   UploadPartCommand,
   type S3Client,
 } from "@aws-sdk/client-s3";
@@ -84,7 +86,7 @@ function applyCorsHeaders(reply: FastifyReply, config: Config): void {
 function applyCorsPreflight(req: FastifyRequest, reply: FastifyReply): void {
   const requestedHeaders = req.headers["access-control-request-headers"];
   reply
-    .header("access-control-allow-methods", "GET,POST,OPTIONS")
+    .header("access-control-allow-methods", "GET,HEAD,POST,OPTIONS")
     .header(
       "access-control-allow-headers",
       typeof requestedHeaders === "string"
@@ -92,6 +94,8 @@ function applyCorsPreflight(req: FastifyRequest, reply: FastifyReply): void {
         : "range,if-range,content-type,x-user-id"
     )
     .header("access-control-max-age", "86400");
+
+  reply.header("vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers");
 }
 
 function buildSelfUrl(req: FastifyRequest, path: string): string {
@@ -118,7 +122,7 @@ function buildSelfUrl(req: FastifyRequest, path: string): string {
 
 export function buildApp(deps: BuildAppDeps): FastifyInstance {
   const app = fastify({
-    logger: true,
+    logger: process.env.NODE_ENV !== "test",
   });
 
   app.addHook("onRequest", async (req, reply) => {
@@ -153,6 +157,21 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
   });
 
   app.get("/health", async () => ({ ok: true }));
+  app.get("/healthz", async () => ({ ok: true }));
+
+  app.get("/readyz", async () => {
+    try {
+      await deps.s3.send(
+        new HeadBucketCommand({
+          Bucket: deps.config.s3Bucket,
+        })
+      );
+    } catch {
+      throw new ApiError(503, "S3 bucket not reachable", "S3_UNAVAILABLE");
+    }
+
+    return { ok: true };
+  });
 
   app.post("/v1/images", async (req, reply) => {
     const callerUserId = getCallerUserId(req, deps.config);
@@ -470,6 +489,47 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       .headers(proxy.headers);
 
     return reply.send(s3Res.Body);
+  });
+
+  app.head("/v1/images/:imageId/range", async (req, reply) => {
+    const callerUserId = getCallerUserId(req, deps.config);
+    const imageId = (req.params as { imageId: string }).imageId;
+    const record = requireImage(deps.store, imageId);
+    assertOwner(record, callerUserId);
+
+    if (record.status !== "complete") {
+      throw new ApiError(409, "Image is not complete", "INVALID_STATE");
+    }
+
+    let head: HeadObjectCommandOutput;
+    try {
+      head = await deps.s3.send(
+        new HeadObjectCommand({
+          Bucket: deps.config.s3Bucket,
+          Key: record.s3Key,
+        })
+      );
+    } catch (err) {
+      const maybeStatus = (
+        err as Partial<{ $metadata?: { httpStatusCode?: unknown } }>
+      ).$metadata?.httpStatusCode;
+      if (typeof maybeStatus === "number" && maybeStatus === 404) {
+        throw new ApiError(404, "Image object not found", "NOT_FOUND");
+      }
+      throw err;
+    }
+
+    const proxy = buildRangeProxyResponse({
+      s3: {
+        ContentLength: head.ContentLength,
+        ContentRange: undefined,
+        ETag: head.ETag,
+        LastModified: head.LastModified,
+        ContentType: head.ContentType,
+      },
+    });
+
+    reply.status(proxy.statusCode).headers(proxy.headers).send();
   });
 
   return app;

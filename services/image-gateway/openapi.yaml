@@ -180,6 +180,57 @@ components:
       required: [url, auth]
 
 paths:
+  /health:
+    get:
+      summary: Liveness check
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
+
+  /healthz:
+    get:
+      summary: Liveness check (alias)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
+
+  /readyz:
+    get:
+      summary: Readiness check (verifies S3 bucket connectivity)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
   /v1/images:
     post:
       summary: Create a new image record and start an S3 multipart upload
@@ -345,3 +396,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
 
+    head:
+      summary: Range proxy metadata (HEAD)
+      parameters:
+        - $ref: "#/components/parameters/XUserId"
+        - name: imageId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"

@@ -86,6 +86,11 @@ Then set:
 npm run dev
 ```
 
+Health endpoints:
+
+- `GET /health` / `GET /healthz` (liveness)
+- `GET /readyz` (checks S3 bucket reachability)
+
 ## Multipart upload flow (curl)
 
 These are illustrative; real clients should upload parts from the browser using `File.slice()` and `fetch()` / `PUT`.
@@ -168,6 +173,8 @@ set `CLOUDFRONT_AUTH_MODE=url` to return a signed URL instead.
 This is useful when you don't have CloudFront locally, but it proxies all bytes through the app (not recommended for production).
 
 The service includes CORS headers and supports `OPTIONS` preflight for browser use. Set `CORS_ALLOW_ORIGIN` as needed.
+
+`HEAD /v1/images/:imageId/range` is also supported for size discovery (mirrors what `StreamingDisk` does against the CloudFront URL).
 
 ## Notes for browser `StreamingDisk`
 
