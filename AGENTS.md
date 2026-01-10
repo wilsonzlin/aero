@@ -6,6 +6,21 @@
 
 ---
 
+## ⚠️ Memory Limits for Concurrent Execution
+
+**If running many agents concurrently**, enforce **memory limits**. CPU and disk I/O contention are handled fine by the Linux scheduler, but memory exhaustion will OOM-kill the host.
+
+**The one rule:** Use `./scripts/mem-limit.sh 12G <command>` for memory-hungry operations (mainly `cargo build --release`).
+
+```bash
+source ./scripts/agent-env.sh                           # Set recommended env vars
+./scripts/mem-limit.sh 12G cargo build --release        # Memory-limited build
+```
+
+See [Agent Resource Limits Guide](./docs/agent-resource-limits.md) for details.
+
+---
+
 ## Executive Summary
 
 This document coordinates the development of a high-performance Windows 7 emulator that runs entirely in the browser. Unlike existing projects (v86, JSLinux) that target older operating systems, Aero specifically targets Windows 7—a significantly more complex OS requiring:
@@ -65,6 +80,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 40. [Guest CPU Instruction Throughput Benchmarks (PF-008)](./docs/16-guest-cpu-benchmark-suite.md)
 41. [Driver Packaging, Catalogs, and WDK Redistributables](./docs/16-driver-packaging-and-signing.md)
 42. [Architecture Decision Records (ADRs)](./docs/adr/README.md)
+43. [Agent Resource Limits & Concurrency](./docs/agent-resource-limits.md)
 
 ---
 
@@ -321,11 +337,12 @@ pub trait DisplayAdapter {
 ## Getting Started
 
 1. Read [`LEGAL.md`](./LEGAL.md) and [`CONTRIBUTING.md`](./CONTRIBUTING.md) (clean-room rules, licensing, and distribution constraints)
-2. Read [Architecture Overview](./docs/01-architecture-overview.md) for system design
-3. Review the documentation for your area of focus
-4. Understand the [Interface Contracts](./docs/15-agent-task-breakdown.md#interface-contracts)
-5. Check [Project Milestones](./docs/14-project-milestones.md) for timeline
-6. Begin implementation following test-driven development
+2. **If running concurrently with other agents:** Read [Agent Resource Limits](./docs/agent-resource-limits.md) and ensure limits are enforced
+3. Read [Architecture Overview](./docs/01-architecture-overview.md) for system design
+4. Review the documentation for your area of focus
+5. Understand the [Interface Contracts](./docs/15-agent-task-breakdown.md#interface-contracts)
+6. Check [Project Milestones](./docs/14-project-milestones.md) for timeline
+7. Begin implementation following test-driven development
 
 ---
 
@@ -381,6 +398,7 @@ pub trait DisplayAdapter {
 | [16-windows7-install-media-prep.md](./docs/16-windows7-install-media-prep.md) | Preparing a Win7 SP1 ISO with Aero drivers/certs | All |
 | [16-guest-tools-packaging.md](./docs/16-guest-tools-packaging.md)       | Guest Tools ISO/zip packaging          | Infrastructure    |
 | [16-guest-cpu-benchmark-suite.md](./docs/16-guest-cpu-benchmark-suite.md) | Guest CPU throughput benchmarks (PF-008) | Performance       |
+| [agent-resource-limits.md](./docs/agent-resource-limits.md)             | Resource limits for concurrent agent execution | Infrastructure    |
 
 
 ---
