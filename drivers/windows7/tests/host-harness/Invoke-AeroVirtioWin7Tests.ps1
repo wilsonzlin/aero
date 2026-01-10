@@ -223,6 +223,16 @@ try {
       }
       exit 1
     }
+    "QEMU_EXITED" {
+      $exitCode = $null
+      try { $exitCode = $proc.ExitCode } catch { }
+      Write-Host "FAIL: QEMU exited before selftest result marker (exit code: $exitCode)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      exit 3
+    }
     "TIMEOUT" {
       Write-Host "FAIL: timed out waiting for AERO_VIRTIO_SELFTEST result marker"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
@@ -237,7 +247,7 @@ try {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
       }
-      exit 3
+      exit 4
     }
   }
 } finally {
