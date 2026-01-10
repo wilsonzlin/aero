@@ -2,6 +2,7 @@
 # Profiles:
 # - relay-only: just the WebRTC UDP relay service
 # - with-turn:  relay + a local coturn instance for NAT traversal
+# - with-turn-rest: relay + a local coturn instance using TURN REST (auth-secret) credentials
 #
 
 x-relay-base: &relay-base
@@ -42,6 +43,18 @@ services:
       AERO_ICE_SERVERS_JSON: >-
         [{"urls":["stun:stun.l.google.com:19302"]},{"urls":["turn:${TURN_PUBLIC_HOST:-localhost}:3478?transport=udp"],"username":"aero","credential":"aero"}]
 
+  webrtc-udp-relay-with-turn-rest:
+    <<: *relay-base
+    profiles: ["with-turn-rest"]
+    environment:
+      WEBRTC_UDP_PORT_MIN: "50000"
+      WEBRTC_UDP_PORT_MAX: "50100"
+      AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR: "0.0.0.0:8080"
+      TURN_REST_SHARED_SECRET: "${TURN_REST_SHARED_SECRET:-aero-turn-rest-secret}"
+      TURN_REST_REALM: "${TURN_REST_REALM:-aero.local}"
+      AERO_ICE_SERVERS_JSON: >-
+        [{"urls":["stun:stun.l.google.com:19302"]},{"urls":["turn:${TURN_PUBLIC_HOST:-localhost}:3478?transport=udp"]}]
+
   coturn:
     image: coturn/coturn:latest
     profiles: ["with-turn"]
@@ -52,4 +65,23 @@ services:
     ports:
       - "3478:3478/udp"
       # Must align with min-port/max-port in turnserver.conf.
+      - "49152-49200:49152-49200/udp"
+
+  coturn-rest:
+    image: coturn/coturn:latest
+    profiles: ["with-turn-rest"]
+    restart: unless-stopped
+    command:
+      [
+        "-c",
+        "/etc/coturn/turnserver-rest.conf",
+        "--no-cli",
+        "--static-auth-secret=${TURN_REST_SHARED_SECRET:-aero-turn-rest-secret}",
+        "--realm=${TURN_REST_REALM:-aero.local}"
+      ]
+    volumes:
+      - ./turn/turnserver-rest.conf:/etc/coturn/turnserver-rest.conf:ro
+    ports:
+      - "3478:3478/udp"
+      # Must align with min-port/max-port in turnserver-rest.conf.
       - "49152-49200:49152-49200/udp"

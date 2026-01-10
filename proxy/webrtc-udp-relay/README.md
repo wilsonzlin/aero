@@ -70,6 +70,13 @@ cd proxy/webrtc-udp-relay
 docker compose --profile with-turn up --build
 ```
 
+For TURN REST (ephemeral) credentials (recommended), use the `with-turn-rest`
+profile instead:
+
+```bash
+docker compose --profile with-turn-rest up --build
+```
+
 If your browser clients are **not** running on the same machine as Docker, you must advertise a
 publicly reachable hostname/IP:
 
@@ -103,6 +110,10 @@ turnserver \
   --static-auth-secret="${TURN_REST_SHARED_SECRET}" \
   --realm="${TURN_REST_REALM:-example.com}"
 ```
+
+For docker-compose local dev, `docker-compose.yml` provides a `with-turn-rest`
+profile that runs coturn with `--use-auth-secret` and passes `--static-auth-secret`
+from `TURN_REST_SHARED_SECRET`.
 
 Relay env:
 
