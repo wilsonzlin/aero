@@ -395,7 +395,9 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
     HDEVINFO devinfo;
     SP_DEVICE_INTERFACE_DATA iface;
     DWORD iface_index;
-    int have_filters;
+    int have_hard_filters;
+    int have_usage_filter;
+    int usage_only;
     SELECTED_DEVICE fallback_any;
     SELECTED_DEVICE fallback_virtio;
 
@@ -415,7 +417,9 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
     }
 
     iface_index = 0;
-    have_filters = opt->have_index || opt->have_vid || opt->have_pid || opt->want_keyboard || opt->want_mouse;
+    have_hard_filters = opt->have_index || opt->have_vid || opt->have_pid;
+    have_usage_filter = opt->want_keyboard || opt->want_mouse;
+    usage_only = have_usage_filter && !have_hard_filters;
     for (;;) {
         DWORD required = 0;
         PSP_DEVICE_INTERFACE_DETAIL_DATA_W detail = NULL;
@@ -548,11 +552,11 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         }
 
         // Selection rules:
-        // 1) If user requested a specific device (keyboard/mouse/index/vid/pid), pick the first match.
-        // 2) Otherwise, prefer a virtio keyboard top-level collection (VID 0x1AF4 + Usage=Keyboard).
-        // 3) Otherwise, prefer the first virtio (VID 0x1AF4) device interface.
-        // 4) Otherwise, fall back to the first openable HID interface.
-        if (have_filters) {
+        // - With hard filters (--index/--vid/--pid): pick the first match.
+        // - With only usage filters (--keyboard/--mouse): prefer a matching virtio interface,
+        //   otherwise fall back to the first matching interface of that usage.
+        // - With no filters: prefer virtio keyboard, then first virtio, then first HID interface.
+        if (have_hard_filters) {
             if (match) {
                 out->handle = handle;
                 out->desired_access = desired_access;
@@ -567,6 +571,44 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
                 break;
             }
             CloseHandle(handle);
+        } else if (usage_only) {
+            if (!match) {
+                CloseHandle(handle);
+                free(detail);
+                iface_index++;
+                continue;
+            }
+
+            if (is_virtio) {
+                out->handle = handle;
+                out->desired_access = desired_access;
+                out->path = wcsdup_heap(detail->DevicePath);
+                out->attr = attr;
+                out->attr_valid = attr_valid;
+                out->caps = caps;
+                out->caps_valid = caps_valid;
+                out->report_desc_len = report_desc_len;
+                out->report_desc_valid = report_desc_valid;
+
+                free_selected_device(&fallback_any);
+
+                free(detail);
+                break;
+            }
+
+            if (fallback_any.handle == INVALID_HANDLE_VALUE) {
+                fallback_any.handle = handle;
+                fallback_any.desired_access = desired_access;
+                fallback_any.path = wcsdup_heap(detail->DevicePath);
+                fallback_any.attr = attr;
+                fallback_any.attr_valid = attr_valid;
+                fallback_any.caps = caps;
+                fallback_any.caps_valid = caps_valid;
+                fallback_any.report_desc_len = report_desc_len;
+                fallback_any.report_desc_valid = report_desc_valid;
+            } else {
+                CloseHandle(handle);
+            }
         } else if (is_virtio && is_keyboard) {
             out->handle = handle;
             out->desired_access = desired_access;
@@ -617,14 +659,16 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         return 1;
     }
 
-    if (out->handle == INVALID_HANDLE_VALUE && fallback_virtio.handle != INVALID_HANDLE_VALUE) {
-        *out = fallback_virtio;
-        ZeroMemory(&fallback_virtio, sizeof(fallback_virtio));
-        fallback_virtio.handle = INVALID_HANDLE_VALUE;
-    } else if (out->handle == INVALID_HANDLE_VALUE && fallback_any.handle != INVALID_HANDLE_VALUE) {
-        *out = fallback_any;
-        ZeroMemory(&fallback_any, sizeof(fallback_any));
-        fallback_any.handle = INVALID_HANDLE_VALUE;
+    if (out->handle == INVALID_HANDLE_VALUE) {
+        if (!usage_only && fallback_virtio.handle != INVALID_HANDLE_VALUE) {
+            *out = fallback_virtio;
+            ZeroMemory(&fallback_virtio, sizeof(fallback_virtio));
+            fallback_virtio.handle = INVALID_HANDLE_VALUE;
+        } else if (fallback_any.handle != INVALID_HANDLE_VALUE) {
+            *out = fallback_any;
+            ZeroMemory(&fallback_any, sizeof(fallback_any));
+            fallback_any.handle = INVALID_HANDLE_VALUE;
+        }
     }
 
     if (fallback_any.handle != INVALID_HANDLE_VALUE) {
@@ -653,6 +697,10 @@ static int send_keyboard_led_report(const SELECTED_DEVICE *dev, BYTE led_mask)
     }
     if (!dev->caps_valid) {
         wprintf(L"LED write requested, but HID caps are not available.\n");
+        return 0;
+    }
+    if (!(dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06)) {
+        wprintf(L"LED write requested, but selected interface is not a keyboard collection.\n");
         return 0;
     }
 

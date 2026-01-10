@@ -43,6 +43,14 @@ The output `virtioinput.sys` will be placed under the WDK `objfre_*` output dire
 
 After installation, Device Manager should show the device using `virtioinput.sys`.
 
+## Quick user-mode validation (hidtest)
+
+For quick sanity checks of HID enumeration and the report IOCTL surface, a small Win32 console test tool lives under:
+
+`drivers/windows/virtio-input/tools/hidtest/`
+
+It can enumerate HID interfaces, print VID/PID + report descriptor length, read input reports via `ReadFile`, and optionally write the keyboard LED output report (ReportID=1) to exercise the `IOCTL_HID_WRITE_REPORT` path.
+
 ## Notes on KMDF versioning
 
 The INF pins `KmdfLibraryVersion=1.9`, which is the in-box KMDF version for Windows 7. If you build with a newer WDK and target a newer KMDF version, you must ship the matching **KMDF coinstaller** in the driver package and update the INF accordingly.
