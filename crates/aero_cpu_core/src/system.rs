@@ -800,9 +800,19 @@ impl Cpu {
         self.cs = cs_base.wrapping_add(16) | 0b11;
         self.ss = cs_base.wrapping_add(24) | 0b11;
 
-        // Return target and stack are provided in ECX/EDX.
-        self.rip = (self.rcx as u32) as u64;
-        self.rsp = (self.rdx as u32) as u64;
+        // Intel SDM: in 32-bit mode, `SYSEXIT` loads EIP from EDX and ESP from ECX.
+        // In long mode it uses RCX/RDX.
+        match self.mode {
+            CpuMode::Protected32 => {
+                self.rip = (self.rdx as u32) as u64;
+                self.rsp = (self.rcx as u32) as u64;
+            }
+            CpuMode::Long64 => {
+                self.rip = self.rcx;
+                self.rsp = self.rdx;
+            }
+            CpuMode::Real => unreachable!("handled above"),
+        }
         Ok(())
     }
 

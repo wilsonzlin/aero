@@ -126,8 +126,8 @@ fn sysenter_sysexit_transitions_32bit() {
     assert_eq!(cpu.rsp, 0xC000_2000);
 
     // Setup return state for SYSEXIT.
-    cpu.rcx = 0xB800_0000; // user EIP
-    cpu.rdx = 0x0012_3400; // user ESP
+    cpu.rdx = 0xB800_0000; // user EIP (EDX)
+    cpu.rcx = 0x0012_3400; // user ESP (ECX)
     cpu.sysexit().unwrap();
 
     assert_eq!(cpu.cpl(), 3);
