@@ -1,11 +1,10 @@
 import type { PerfAggregator, AggregatedFrame } from "./aggregator.js";
 import type { PerfChannel } from "./shared.js";
-import type { PerfWriter } from "./writer.js";
 
 import { PerfAggregator as PerfAggregatorImpl } from "./aggregator.js";
-import { WorkerKind } from "./record.js";
+import { encodeFrameSampleRecord, msToUsU32, PERF_RECORD_SIZE_BYTES, WorkerKind } from "./record.js";
+import { SpscRingBuffer } from "./ring_buffer.js";
 import { createPerfChannel } from "./shared.js";
-import { PerfWriter as PerfWriterImpl } from "./writer.js";
 import type { ByteSizedCacheTracker, GpuAllocationTracker } from "./memory";
 import { WASM_PAGE_SIZE_BYTES } from "./memory";
 import type { PerfApi, PerfHudSnapshot, PerfTimeBreakdownMs } from "./types";
@@ -47,14 +46,39 @@ export class PerfSession implements PerfApi {
   readonly shaderCacheTracker?: ByteSizedCacheTracker;
 
   readonly channel: PerfChannel;
+  private readonly runStartNowMs: number;
+  private readonly mainRing: SpscRingBuffer;
+  private readonly mainRecord: {
+    workerKind: number;
+    frameId: number;
+    tUs: number;
+    frameUs: number;
+    cpuUs: number;
+    gpuUs: number;
+    ioUs: number;
+    jitUs: number;
+    instructionsLo: number;
+    instructionsHi: number;
+    memoryLo: number;
+    memoryHi: number;
+    drawCalls: number;
+    ioReadBytes: number;
+    ioWriteBytes: number;
+  };
+  private readonly encodeMainRecord: (view: DataView, byteOffset: number) => void;
 
-  private readonly writer: PerfWriter;
   private aggregator: PerfAggregator;
 
   private hudActive = false;
   private captureActive = false;
   private captureStartNowMs = 0;
   private captureDurationMs = 0;
+  private captureDroppedBase = 0;
+  private captureDropped = 0;
+  private captureRecords = 0;
+  private captureStartFrameId: number | null = null;
+  private captureEndFrameId: number | null = null;
+  private captureExport: unknown | null = null;
 
   private frameId = 0;
   private raf: number | null = null;
@@ -84,16 +108,33 @@ export class PerfSession implements PerfApi {
     this.shaderCacheTracker = options.shaderCacheTracker;
 
     this.channel = createPerfChannel();
+    this.runStartNowMs = this.channel.runStartEpochMs - performance.timeOrigin;
     const mainBuffer = this.channel.buffers[WorkerKind.Main];
     if (!(mainBuffer instanceof SharedArrayBuffer)) {
       throw new Error("PerfSession expected main perf buffer to be a SharedArrayBuffer.");
     }
 
-    this.writer = new PerfWriterImpl(mainBuffer, {
+    this.mainRing = new SpscRingBuffer(mainBuffer, { expectedRecordSize: PERF_RECORD_SIZE_BYTES });
+    this.mainRecord = {
       workerKind: WorkerKind.Main,
-      runStartEpochMs: this.channel.runStartEpochMs,
-      enabled: false,
-    });
+      frameId: 0,
+      tUs: 0,
+      frameUs: 0,
+      cpuUs: 0,
+      gpuUs: 0,
+      ioUs: 0,
+      jitUs: 0,
+      instructionsLo: 0,
+      instructionsHi: 0,
+      memoryLo: 0,
+      memoryHi: 0,
+      drawCalls: 0,
+      ioReadBytes: 0,
+      ioWriteBytes: 0,
+    };
+    this.encodeMainRecord = (view: DataView, byteOffset: number) => {
+      encodeFrameSampleRecord(view, byteOffset, this.mainRecord);
+    };
 
     this.aggregator = new PerfAggregatorImpl(this.channel, this.aggregatorOptions);
   }
@@ -135,35 +176,33 @@ export class PerfSession implements PerfApi {
     this.captureActive = true;
     this.captureStartNowMs = performance.now();
     this.captureDurationMs = 0;
+    this.captureDroppedBase = this.getDroppedRecords();
+    this.captureDropped = 0;
+    this.captureRecords = 0;
+    this.captureStartFrameId = (this.frameId + 1) >>> 0;
+    this.captureEndFrameId = null;
+    this.captureExport = null;
     this.syncLoops();
   }
 
   captureStop(): void {
     if (!this.captureActive) return;
+    this.aggregator.drain();
     this.captureDurationMs = performance.now() - this.captureStartNowMs;
     this.captureActive = false;
+    this.captureEndFrameId = this.frameId >>> 0;
+    this.captureDropped = Math.max(0, this.getDroppedRecords() - this.captureDroppedBase);
+    const out = this.buildCaptureExport() as Record<string, unknown>;
+    out.responsiveness = this.responsiveness.export();
+    this.captureExport = out;
     this.syncLoops();
   }
 
   captureReset(): void {
-    const shouldRunAfter = this.shouldRun();
-
-    this.writer.setEnabled(false);
-    this.stopRaf();
-    this.stopDrainTimer();
-
-    // Reset the underlying ring buffers (drops counters + head/tail) before
-    // recreating the aggregator to avoid re-processing old samples.
-    for (const ring of this.aggregator.readers.values()) {
-      ring.reset();
-    }
-
-    this.aggregator = new PerfAggregatorImpl(this.channel, this.aggregatorOptions);
-    this.frameId = 0;
-
-    if (this.captureActive) {
-      this.captureStartNowMs = performance.now();
-    }
+    this.captureExport = null;
+    this.captureRecords = 0;
+    this.captureDroppedBase = this.getDroppedRecords();
+    this.captureDropped = 0;
     this.captureDurationMs = 0;
 
     this.peakHostJsHeapUsedBytes = undefined;
@@ -171,16 +210,28 @@ export class PerfSession implements PerfApi {
     this.peakGpuEstimatedBytes = undefined;
     this.responsiveness.reset();
 
-    if (shouldRunAfter) {
-      this.writer.setEnabled(true);
-      this.syncLoops();
+    if (this.captureActive) {
+      this.captureStartNowMs = performance.now();
+      this.captureStartFrameId = (this.frameId + 1) >>> 0;
+      this.captureEndFrameId = null;
+    } else {
+      // Represent an empty capture interval so downloads after reset produce an
+      // empty capture until Start is pressed again.
+      this.captureStartFrameId = (this.frameId + 1) >>> 0;
+      this.captureEndFrameId = this.frameId >>> 0;
     }
   }
 
   export(): unknown {
+    if (!this.captureActive && this.captureExport) {
+      return this.captureExport;
+    }
     this.aggregator.drain();
-    const out = this.aggregator.export() as Record<string, unknown>;
+    const out = this.buildCaptureExport() as Record<string, unknown>;
     out.responsiveness = this.responsiveness.export();
+    if (!this.captureActive) {
+      this.captureExport = out;
+    }
     return out;
   }
 
@@ -246,8 +297,10 @@ export class PerfSession implements PerfApi {
     const capture = out.capture;
     capture.active = this.captureActive;
     capture.durationMs = captureDurationMs;
-    capture.droppedRecords = this.getDroppedRecords();
-    capture.records = this.aggregator.completedFrameIds.length;
+    capture.droppedRecords = this.captureActive
+      ? Math.max(0, this.getDroppedRecords() - this.captureDroppedBase)
+      : this.captureDropped;
+    capture.records = this.captureRecords;
 
     return out;
   }
@@ -260,7 +313,6 @@ export class PerfSession implements PerfApi {
     const shouldRun = this.shouldRun();
 
     this.responsiveness.setActive(shouldRun);
-    this.writer.setEnabled(shouldRun);
     if (shouldRun) {
       this.startRaf();
       // When the HUD is visible, `getHudSnapshot()` is called frequently enough to
@@ -302,7 +354,14 @@ export class PerfSession implements PerfApi {
 
       this.frameId = (this.frameId + 1) >>> 0;
       this.responsiveness.notePresent(nowMs);
-      this.writer.frameSample(this.frameId, { durations: { frame_ms: frameTimeMs } });
+      this.mainRecord.frameId = this.frameId;
+      this.mainRecord.frameUs = msToUsU32(frameTimeMs);
+      const tUs = Math.max(0, Math.min(0xffff_ffff, Math.round((nowMs - this.runStartNowMs) * 1000))) >>> 0;
+      this.mainRecord.tUs = tUs;
+      const wrote = this.mainRing.tryWriteRecord(this.encodeMainRecord);
+      if (this.captureActive && wrote) {
+        this.captureRecords += 1;
+      }
     };
     this.raf = requestAnimationFrame(tick);
   }
@@ -319,6 +378,74 @@ export class PerfSession implements PerfApi {
       dropped += ring.getDroppedCount();
     }
     return dropped;
+  }
+
+  private buildCaptureExport(): unknown {
+    const base = this.aggregator.export() as Record<string, unknown>;
+
+    const startFrameId = this.captureStartFrameId;
+    const endFrameId = this.captureEndFrameId ?? (this.captureActive ? (this.frameId >>> 0) : null);
+
+    const samples = (base.samples as Record<string, unknown>) ?? {};
+    const framesRaw = samples.frames;
+    if (!Array.isArray(framesRaw)) {
+      return base;
+    }
+
+    if (startFrameId == null || endFrameId == null) {
+      samples.frame_count = 0;
+      samples.frames = [];
+      base.samples = samples;
+      base.capture = { start_t_us: 0, end_t_us: 0, duration_ms: 0 };
+      base.capture_control = {
+        start_frame_id: startFrameId,
+        end_frame_id: endFrameId,
+        dropped_records: this.captureActive
+          ? Math.max(0, this.getDroppedRecords() - this.captureDroppedBase)
+          : this.captureDropped,
+        records: this.captureRecords,
+      };
+      return base;
+    }
+
+    const frames = [];
+    let startUs = 0;
+    let endUs = 0;
+
+    for (const frame of framesRaw) {
+      if (!frame || typeof frame !== "object") continue;
+      const id = (frame as { frame_id?: unknown }).frame_id;
+      if (typeof id !== "number") continue;
+      if (id < startFrameId || id > endFrameId) continue;
+      frames.push(frame);
+
+      const tUs = (frame as { t_us?: unknown }).t_us;
+      if (typeof tUs === "number" && tUs > 0) {
+        if (startUs === 0 || tUs < startUs) startUs = tUs;
+        if (tUs > endUs) endUs = tUs;
+      }
+    }
+
+    samples.frame_count = frames.length;
+    samples.frames = frames;
+    base.samples = samples;
+
+    base.capture = {
+      start_t_us: startUs,
+      end_t_us: endUs,
+      duration_ms: endUs >= startUs ? (endUs - startUs) / 1000 : 0,
+    };
+
+    base.capture_control = {
+      start_frame_id: startFrameId,
+      end_frame_id: endFrameId,
+      dropped_records: this.captureActive
+        ? Math.max(0, this.getDroppedRecords() - this.captureDroppedBase)
+        : this.captureDropped,
+      records: this.captureRecords,
+    };
+
+    return base;
   }
 
   private computeWindowAggregates(): {
