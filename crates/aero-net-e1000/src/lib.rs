@@ -1002,10 +1002,12 @@ impl E1000Device {
                         should_raise_txdw = true;
                     }
 
-                    // Context descriptors have a different upper dword layout. We
-                    // best-effort mark completion in the last byte without
-                    // clobbering MSS/hdr_len.
-                    desc_bytes[15] |= TXD_STAT_DD;
+                    // For advanced context descriptors, the DD bit lives in the
+                    // same status location as advanced data descriptors (the
+                    // low bits of dword 3). This overlaps with MSS; real
+                    // hardware overwrites the context descriptor on completion
+                    // and drivers only care about the DD bit.
+                    desc_bytes[12] |= TXD_STAT_DD;
                     write_desc(mem, desc_addr, &desc_bytes);
                 }
                 TxDescriptor::Legacy(mut desc) => {

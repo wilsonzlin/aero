@@ -168,6 +168,9 @@ fn tso_context_descriptor_segments_and_inserts_checksums() {
 
     dev.mmio_write_u32(&mut dma, REG_TDT, 2);
 
+    assert_ne!(dma.mem[0x1000 + 12] & 0x01, 0, "context descriptor should be marked DD");
+    assert_ne!(dma.mem[0x1010 + 12] & 0x01, 0, "data descriptor should be marked DD");
+
     let mut out = Vec::new();
     while let Some(frame) = dev.pop_tx_frame() {
         out.push(frame);
@@ -235,6 +238,9 @@ fn checksum_offload_udp_inserts_checksums() {
     );
 
     dev.mmio_write_u32(&mut dma, REG_TDT, 2);
+
+    assert_ne!(dma.mem[0x2000 + 12] & 0x01, 0, "context descriptor should be marked DD");
+    assert_ne!(dma.mem[0x2010 + 12] & 0x01, 0, "data descriptor should be marked DD");
 
     let out = dev.pop_tx_frame().expect("frame");
     assert!(dev.pop_tx_frame().is_none());
