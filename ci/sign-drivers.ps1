@@ -43,7 +43,18 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-Import-Module -Name PKI -ErrorAction SilentlyContinue
+try {
+  Import-Module -Name PKI -ErrorAction Stop
+} catch {
+  # PowerShell 7 often needs WindowsPowerShell-compat import for inbox modules like PKI.
+  if ($PSVersionTable.PSVersion.Major -ge 7) {
+    try {
+      Import-Module -Name PKI -UseWindowsPowerShell -ErrorAction Stop
+    } catch {
+      # Fall through; we'll error later if New-SelfSignedCertificate is still unavailable.
+    }
+  }
+}
 
 function Resolve-AbsolutePath {
   param(
