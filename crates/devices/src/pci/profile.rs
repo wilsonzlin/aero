@@ -386,7 +386,9 @@ pub const VIRTIO_SND: PciDeviceProfile = PciDeviceProfile {
     subsystem_vendor_id: PCI_VENDOR_ID_VIRTIO,
     subsystem_id: 25,
     revision_id: 0,
-    class: PciClassCode::new(0x04, 0x03, 0x00),
+    // Report as a generic multimedia audio device rather than HDA (0x0403), since the
+    // virtio-snd programming model is not compatible with Intel HD Audio drivers.
+    class: PciClassCode::new(0x04, 0x01, 0x00),
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),
     bars: &VIRTIO_BARS,

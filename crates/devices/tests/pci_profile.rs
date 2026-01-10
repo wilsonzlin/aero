@@ -32,6 +32,11 @@ fn canonical_ids_and_class_codes() {
     assert_eq!(NIC_RTL8139.vendor_id, 0x10ec);
     assert_eq!(NIC_RTL8139.device_id, 0x8139);
     assert_eq!(NIC_RTL8139.class.as_u32(), 0x020000);
+
+    assert_eq!(VIRTIO_NET.class.as_u32(), 0x020000);
+    assert_eq!(VIRTIO_BLK.class.as_u32(), 0x010000);
+    assert_eq!(VIRTIO_INPUT.class.as_u32(), 0x098000);
+    assert_eq!(VIRTIO_SND.class.as_u32(), 0x040100);
 }
 
 #[test]
