@@ -10,6 +10,7 @@ const baseConfig = {
   PUBLIC_BASE_URL: 'http://localhost',
   SHUTDOWN_GRACE_MS: 100,
   CROSS_ORIGIN_ISOLATION: true,
+  TRUST_PROXY: false,
   RATE_LIMIT_REQUESTS_PER_MINUTE: 0,
   TCP_PROXY_MAX_CONNECTIONS: 0,
   TCP_PROXY_MAX_CONNECTIONS_PER_IP: 0,
@@ -30,4 +31,3 @@ test('CROSS_ORIGIN_ISOLATION injects COOP/COEP headers', async () => {
 
   await app.close();
 });
-
