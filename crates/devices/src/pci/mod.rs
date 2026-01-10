@@ -1,14 +1,30 @@
+//! PCI core types and platform topology used by Aero.
+
 pub mod capabilities;
 pub mod config;
 pub mod irq_router;
 pub mod msi;
 pub mod profile;
 
-pub use config::PciConfigSpace;
+mod acpi;
+mod bios;
+mod bus;
+mod platform;
+mod resources;
+
+pub use acpi::{build_prt_bus0, dsdt_asl, PciPrtEntry, ACPI_PCI_ROOT_NAME};
+pub use bios::bios_post;
+pub use bus::{PciBus, PciConfigMechanism1, PciMappedBar};
+pub use config::{
+    PciBarDefinition, PciBarKind, PciBarRange, PciCommandChange, PciConfigSpace,
+    PciConfigWriteEffects, PciDevice, PciSubsystemIds, PciVendorDeviceId,
+};
 pub use irq_router::{
     GsiLevelSink, IoApicPicMirrorSink, PciIntxRouter, PciIntxRouterConfig, PicIrqLevelSink,
 };
 pub use msi::MsiCapability;
+pub use platform::{PciHostBridge, PciIsaBridge, PciPlatform};
+pub use resources::{PciResourceAllocator, PciResourceAllocatorConfig, PciResourceError};
 
 /// PCI bus/device/function identifier.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -24,11 +40,19 @@ impl PciBdf {
     /// The caller is responsible for ensuring the values are within the PCI ranges:
     /// bus < 256, device < 32, function < 8.
     pub const fn new(bus: u8, device: u8, function: u8) -> Self {
-        Self {
-            bus,
-            device,
-            function,
-        }
+        Self { bus, device, function }
+    }
+}
+
+impl core::cmp::Ord for PciBdf {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        (self.bus, self.device, self.function).cmp(&(other.bus, other.device, other.function))
+    }
+}
+
+impl core::cmp::PartialOrd for PciBdf {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -66,3 +90,4 @@ impl PciInterruptPin {
         }
     }
 }
+
