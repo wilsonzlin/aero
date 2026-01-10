@@ -150,20 +150,24 @@ export function present_test_pattern(): void {
   const halfH = Math.floor(pixelHeight / 2);
 
   // Note: WebGL scissor origin is bottom-left.
+  // Bottom-left quadrant -> blue
   gl.scissor(0, 0, halfW, halfH);
-  gl.clearColor(1, 0, 0, 1);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-
-  gl.scissor(halfW, 0, pixelWidth - halfW, halfH);
-  gl.clearColor(0, 1, 0, 1);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-
-  gl.scissor(0, halfH, halfW, pixelHeight - halfH);
   gl.clearColor(0, 0, 1, 1);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
-  gl.scissor(halfW, halfH, pixelWidth - halfW, pixelHeight - halfH);
+  // Bottom-right quadrant -> white
+  gl.scissor(halfW, 0, pixelWidth - halfW, halfH);
   gl.clearColor(1, 1, 1, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  // Top-left quadrant -> red
+  gl.scissor(0, halfH, halfW, pixelHeight - halfH);
+  gl.clearColor(1, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  // Top-right quadrant -> green
+  gl.scissor(halfW, halfH, pixelWidth - halfW, pixelHeight - halfH);
+  gl.clearColor(0, 1, 0, 1);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
   gl.disable(gl.SCISSOR_TEST);
@@ -188,4 +192,3 @@ export function request_screenshot(): Uint8Array {
   }
   return flipped;
 }
-

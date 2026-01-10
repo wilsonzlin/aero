@@ -30,6 +30,8 @@ let initPromise: Promise<void> | null = null;
 let isReady = false;
 let pendingResize: GpuWorkerResizeMessage | null = null;
 
+let messageQueue: Promise<void> = Promise.resolve();
+
 let cssWidth = 0;
 let cssHeight = 0;
 let devicePixelRatio = 1;
@@ -324,24 +326,33 @@ scope.addEventListener("message", (event: MessageEvent) => {
     return;
   }
 
-  switch (message.type) {
-    case "init":
-      void handleInit(message);
-      break;
-    case "resize":
-      void handleResize(message);
-      break;
-    case "present_test_pattern":
-      void handlePresentTestPattern();
-      break;
-    case "request_screenshot":
-      void handleRequestScreenshot(message.requestId);
-      break;
-    case "shutdown":
-      void handleShutdown();
-      break;
-    default:
-      forwardNonFatal("unexpected", new Error(`Unknown aero-gpu-worker message type: ${(message as { type: string }).type}`));
-      break;
-  }
+  const run = async () => {
+    switch (message.type) {
+      case "init":
+        await handleInit(message);
+        break;
+      case "resize":
+        await handleResize(message);
+        break;
+      case "present_test_pattern":
+        await handlePresentTestPattern();
+        break;
+      case "request_screenshot":
+        await handleRequestScreenshot(message.requestId);
+        break;
+      case "shutdown":
+        await handleShutdown();
+        break;
+      default:
+        forwardNonFatal(
+          "unexpected",
+          new Error(`Unknown aero-gpu-worker message type: ${(message as { type: string }).type}`),
+        );
+        break;
+    }
+  };
+
+  messageQueue = messageQueue.then(run, run).catch((err) => {
+    forwardNonFatal("unexpected", err);
+  });
 });

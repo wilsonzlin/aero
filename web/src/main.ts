@@ -59,23 +59,23 @@ function createExpectedTestPattern(width: number, height: number): Uint8Array {
       const isTop = y < halfH;
 
       // Top-left origin:
-      // - top-left: blue
-      // - top-right: white
-      // - bottom-left: red
-      // - bottom-right: green
+      // - top-left: red
+      // - top-right: green
+      // - bottom-left: blue
+      // - bottom-right: white
       let r = 0;
       let g = 0;
       let b = 0;
       if (isTop && isLeft) {
-        b = 255;
+        r = 255;
       } else if (isTop && !isLeft) {
+        g = 255;
+      } else if (!isTop && isLeft) {
+        b = 255;
+      } else {
         r = 255;
         g = 255;
         b = 255;
-      } else if (!isTop && isLeft) {
-        r = 255;
-      } else {
-        g = 255;
       }
 
       out[i] = r;
