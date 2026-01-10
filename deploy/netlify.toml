@@ -11,7 +11,7 @@
     Origin-Agent-Cluster = "?1"
 
     # Content Security Policy (supports dynamic WASM compilation for JIT)
-    Content-Security-Policy = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-proxy.invalid wss://aero-proxy.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'"
+    Content-Security-Policy = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-gateway.invalid wss://aero-gateway.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'"
 
     # Other security headers
     Referrer-Policy = "no-referrer"
