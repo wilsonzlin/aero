@@ -48,6 +48,14 @@ impl Default for RedirectionEntry {
 }
 
 impl RedirectionEntry {
+    fn interpret_level(self, raw_level: bool) -> bool {
+        if self.polarity_low {
+            !raw_level
+        } else {
+            raw_level
+        }
+    }
+
     fn read_low(self) -> u32 {
         let mut v = 0u32;
         v |= u32::from(self.vector);
@@ -106,7 +114,13 @@ pub struct IoApic {
     id: IoApicId,
     ioregsel: u8,
     redirection: Vec<RedirectionEntry>,
-    irq_level: Vec<bool>,
+    /// Physical wiring polarity for each input pin (true = active-low).
+    ///
+    /// This models the *board wiring* (e.g. typical PC PCI INTx + SCI lines are active-low),
+    /// independent of how the guest programs the redirection table's polarity bit.
+    pin_active_low: Vec<bool>,
+    /// Raw electrical level on each IOAPIC input pin (true = high).
+    pin_level: Vec<bool>,
     lapic: Arc<dyn LapicInterruptSink>,
 }
 
@@ -118,12 +132,32 @@ impl IoApic {
     }
 
     pub fn with_entries(id: IoApicId, lapic: Arc<dyn LapicInterruptSink>, entries: usize) -> Self {
+        let mut pin_active_low = vec![false; entries];
+        for (gsi, active_low) in pin_active_low.iter_mut().enumerate() {
+            // Default PC wiring:
+            // - ISA IRQs are typically active-high (except SCI via ACPI ISO)
+            // - PCI INTx lines are active-low (GSIs 16+ on typical chipsets)
+            *active_low = gsi == 9 || gsi >= 16;
+        }
+        // Initialise pins to the deasserted electrical level for the assumed wiring.
+        let pin_level = pin_active_low.clone();
         Self {
             id,
             ioregsel: 0,
             redirection: vec![RedirectionEntry::default(); entries],
-            irq_level: vec![false; entries],
+            pin_active_low,
+            pin_level,
             lapic,
+        }
+    }
+
+    pub fn set_pin_active_low(&mut self, gsi: u32, active_low: bool) {
+        if let Some(slot) = self.pin_active_low.get_mut(gsi as usize) {
+            *slot = active_low;
+        }
+        if let Some(level) = self.pin_level.get_mut(gsi as usize) {
+            // Keep the pin deasserted when adjusting wiring assumptions.
+            *level = active_low;
         }
     }
 
@@ -204,34 +238,42 @@ impl IoApic {
 
     /// Update the input IRQ line level for a given GSI.
     ///
-    /// The `level` parameter is the *asserted* state (true = asserted/high, false = deasserted/low),
-    /// not an electrical voltage level. This mirrors common virtual interrupt wiring: device models
-    /// don't need to care about IOAPIC polarity configuration.
+    /// The `level` parameter is the *asserted* state from the device's perspective.
+    ///
+    /// Internally, the IOAPIC converts this to a raw electrical pin level using a fixed per-pin
+    /// polarity (`pin_active_low`), and then applies the *guest-programmable* redirection table
+    /// polarity bit when deciding whether the interrupt is asserted (mirroring real hardware).
     pub fn set_irq_level(&mut self, gsi: u32, level: bool) {
-        let Some(prev_level) = self.irq_level.get_mut(gsi as usize) else {
+        let idx = gsi as usize;
+        let Some(prev_level) = self.pin_level.get_mut(idx) else {
             return;
         };
 
-        let prev = *prev_level;
-        *prev_level = level;
+        let prev_raw = *prev_level;
+        let active_low = *self.pin_active_low.get(idx).unwrap_or(&false);
+        let new_raw = level != active_low;
+        *prev_level = new_raw;
 
-        if gsi as usize >= self.redirection.len() {
+        if idx >= self.redirection.len() {
             return;
         }
-        let entry = self.redirection[gsi as usize];
+        let entry = self.redirection[idx];
 
         if entry.mask {
             return;
         }
 
+        let prev = entry.interpret_level(prev_raw);
+        let asserted = entry.interpret_level(new_raw);
+
         match entry.trigger_mode {
             TriggerMode::Edge => {
-                if !prev && level {
+                if !prev && asserted {
                     self.deliver(gsi);
                 }
             }
             TriggerMode::Level => {
-                if level {
+                if asserted {
                     self.maybe_deliver_level(gsi);
                 } else if let Some(entry) = self.redirection.get_mut(gsi as usize) {
                     // Real hardware clears Remote-IRR on EOI from the LAPIC, but in early
@@ -264,7 +306,7 @@ impl IoApic {
 
             entry.remote_irr = false;
 
-            if self.irq_level[gsi] && !entry.mask {
+            if entry.interpret_level(self.pin_level[gsi]) && !entry.mask {
                 pending_redelivery.push(gsi as u32);
             }
         }
@@ -275,11 +317,12 @@ impl IoApic {
     }
 
     fn maybe_deliver_level(&mut self, gsi: u32) {
-        let entry = &mut self.redirection[gsi as usize];
+        let idx = gsi as usize;
+        let entry = self.redirection[idx];
         if entry.trigger_mode != TriggerMode::Level {
             return;
         }
-        if entry.mask || entry.remote_irr || !self.irq_level[gsi as usize] {
+        if entry.mask || entry.remote_irr || !entry.interpret_level(self.pin_level[idx]) {
             return;
         }
 

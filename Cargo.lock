@@ -960,6 +960,7 @@ dependencies = [
  "aero-bios",
  "anyhow",
  "criterion",
+ "aero-devices",
  "hyper 0.14.32",
  "image",
  "memory",
