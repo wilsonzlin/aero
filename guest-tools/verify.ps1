@@ -538,7 +538,7 @@ $report = @{
     schema_version = 1
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "2.0.0"
+        version = "2.0.1"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -1328,11 +1328,19 @@ try {
             $p = $p.Trim('"')
             $p = [Environment]::ExpandEnvironmentVariables($p)
             if ($p.StartsWith("\??\")) { $p = $p.Substring(4) }
+
+            # Common driver ImagePath formats:
+            #   \SystemRoot\System32\drivers\foo.sys
+            #   system32\drivers\foo.sys
+            #   C:\Windows\System32\drivers\foo.sys
             if ($p.StartsWith("\SystemRoot", [StringComparison]::OrdinalIgnoreCase)) {
-                $p = $env:SystemRoot + $p.Substring(11)
+                $tail = $p.Substring(10) # length of "\SystemRoot"
+                $tail = $tail.TrimStart('\')
+                $p = Join-Path $env:SystemRoot $tail
             } elseif ($p.StartsWith("System32\", [StringComparison]::OrdinalIgnoreCase)) {
                 $p = Join-Path $env:SystemRoot $p
             }
+
             $resolvedImagePath = $p
             $resolvedImageExists = Test-Path $resolvedImagePath
         }
