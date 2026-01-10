@@ -57,9 +57,17 @@ const INTCTL_GIE: u32 = 1 << 31;
 const INTSTS_CIS: u32 = 1 << 30;
 const INTSTS_GIS: u32 = 1 << 31;
 
-const CORBCTL_RUN: u8 = 1 << 0;
-const RIRBCTL_RUN: u8 = 1 << 0;
-const RIRBCTL_RINTCTL: u8 = 1 << 1;
+// CORBCTL/RIRBCTL bit positions follow the Intel HDA spec:
+// - bit 1: DMA engine run
+// - bit 0 (RIRBCTL only): response interrupt enable
+const CORBCTL_RUN: u8 = 1 << 1;
+const RIRBCTL_RUN: u8 = 1 << 1;
+const RIRBCTL_RINTCTL: u8 = 1 << 0;
+
+// CORBSIZE/RIRBSIZE capability bits (RO) as defined by the Intel HDA spec.
+const RING_SIZE_CAP_2: u8 = 1 << 4;
+const RING_SIZE_CAP_16: u8 = 1 << 5;
+const RING_SIZE_CAP_256: u8 = 1 << 6;
 
 const DPLBASE_ENABLE: u32 = 1 << 0;
 const DPLBASE_ADDR_MASK: u32 = !0x7f;
@@ -488,7 +496,7 @@ impl HdaController {
             corbrp: 0,
             corbctl: 0,
             corbsts: 0,
-            corbsize: 0x2, // 256 entries
+            corbsize: RING_SIZE_CAP_2 | RING_SIZE_CAP_16 | RING_SIZE_CAP_256 | 0x2, // 256 entries
 
             rirblbase: 0,
             rirbubase: 0,
@@ -496,7 +504,7 @@ impl HdaController {
             rintcnt: 0,
             rirbctl: 0,
             rirbsts: 0,
-            rirbsize: 0x2, // 256 entries
+            rirbsize: RING_SIZE_CAP_2 | RING_SIZE_CAP_16 | RING_SIZE_CAP_256 | 0x2, // 256 entries
 
             streams: vec![StreamDescriptor::default(); num_streams],
             stream_rt: (0..num_streams)
@@ -650,7 +658,10 @@ impl HdaController {
             (REG_CORBSTS, 1) => {
                 self.corbsts &= !(value as u8);
             }
-            (REG_CORBSIZE, 1) => self.corbsize = value as u8,
+            (REG_CORBSIZE, 1) => {
+                // Only the size selection bits (1:0) are writable; capability bits are RO.
+                self.corbsize = (self.corbsize & !0x3) | (value as u8 & 0x3);
+            }
 
             (REG_RIRBLBASE, 4) => self.rirblbase = value as u32,
             (REG_RIRBUBASE, 4) => self.rirbubase = value as u32,
@@ -665,7 +676,9 @@ impl HdaController {
             (REG_RINTCNT, 2) => self.rintcnt = value as u16,
             (REG_RIRBCTL, 1) => self.rirbctl = value as u8,
             (REG_RIRBSTS, 1) => self.rirbsts &= !(value as u8),
-            (REG_RIRBSIZE, 1) => self.rirbsize = value as u8,
+            (REG_RIRBSIZE, 1) => {
+                self.rirbsize = (self.rirbsize & !0x3) | (value as u8 & 0x3);
+            }
 
             (REG_DPLBASE, 4) => {
                 let v = value as u32;
@@ -720,13 +733,13 @@ impl HdaController {
         self.corbrp = 0;
         self.corbctl = 0;
         self.corbsts = 0;
-        self.corbsize = 0x2;
+        self.corbsize = RING_SIZE_CAP_2 | RING_SIZE_CAP_16 | RING_SIZE_CAP_256 | 0x2;
 
         self.rirbwp = 0;
         self.rintcnt = 0;
         self.rirbctl = 0;
         self.rirbsts = 0;
-        self.rirbsize = 0x2;
+        self.rirbsize = RING_SIZE_CAP_2 | RING_SIZE_CAP_16 | RING_SIZE_CAP_256 | 0x2;
 
         for (sd, rt) in self.streams.iter_mut().zip(self.stream_rt.iter_mut()) {
             *sd = StreamDescriptor::default();
