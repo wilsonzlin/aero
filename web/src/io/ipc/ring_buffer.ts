@@ -6,6 +6,21 @@ const HEADER_TAIL_I32 = 1;
 const HEADER_CAPACITY_I32 = 2;
 const HEADER_STRIDE_I32 = 3;
 
+function canBlockAtomicsWait(): boolean {
+  // Browser main thread disallows Atomics.wait; workers and Node allow it.
+  // There's no perfect feature test; this is conservative and matches the
+  // approach used by the other shared-memory IPC utilities.
+  return typeof Atomics.wait === "function" && (globalThis as any).document === undefined;
+}
+
+function assertCanBlockAtomicsWait(): void {
+  if (canBlockAtomicsWait()) return;
+  throw new Error(
+    "Blocking Atomics.wait() is not allowed in this context (likely the browser main thread). " +
+      "Use non-blocking ring operations (push/popInto) and poll, or add an async wait based on Atomics.waitAsync().",
+  );
+}
+
 export interface SharedRingBufferCreateOptions {
   capacity: number;
   stride: number;
@@ -97,6 +112,7 @@ export class SharedRingBuffer {
    * Returns true if pushed, false if timed out.
    */
   pushBlocking(slot: ArrayLike<number>, timeoutMs?: number): boolean {
+    assertCanBlockAtomicsWait();
     if (slot.length !== this.stride) {
       throw new Error(`push slot length ${slot.length} != stride ${this.stride}`);
     }
@@ -153,6 +169,7 @@ export class SharedRingBuffer {
    * slot was read, false if timed out.
    */
   popBlockingInto(out: Uint32Array, timeoutMs?: number): boolean {
+    assertCanBlockAtomicsWait();
     if (out.length !== this.stride) {
       throw new Error(`popBlockingInto out length ${out.length} != stride ${this.stride}`);
     }
@@ -185,4 +202,3 @@ export class SharedRingBuffer {
     return Atomics.load(this.header, HEADER_HEAD_I32) === Atomics.load(this.header, HEADER_TAIL_I32);
   }
 }
-
