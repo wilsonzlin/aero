@@ -10,6 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "serve:coi": "vite build --emptyOutDir && vite preview --host 127.0.0.1 --port 4173 --strictPort",
+    "gen:scancodes": "node tools/gen_scancodes/gen_scancodes.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "test": "npm run test:unit",
     "demo": "node web/demo/server.js",

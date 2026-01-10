@@ -596,111 +596,20 @@ impl InputCapture {
 ### Scancode Translation
 
 ```rust
-pub fn js_keycode_to_scancode(code: &str) -> u8 {
-    // Map JavaScript key codes to PS/2 Set 2 scancodes
-    match code {
-        "Escape" => 0x76,
-        "F1" => 0x05,
-        "F2" => 0x06,
-        "F3" => 0x04,
-        "F4" => 0x0C,
-        "F5" => 0x03,
-        "F6" => 0x0B,
-        "F7" => 0x83,
-        "F8" => 0x0A,
-        "F9" => 0x01,
-        "F10" => 0x09,
-        "F11" => 0x78,
-        "F12" => 0x07,
-        
-        "Backquote" => 0x0E,
-        "Digit1" => 0x16,
-        "Digit2" => 0x1E,
-        "Digit3" => 0x26,
-        "Digit4" => 0x25,
-        "Digit5" => 0x2E,
-        "Digit6" => 0x36,
-        "Digit7" => 0x3D,
-        "Digit8" => 0x3E,
-        "Digit9" => 0x46,
-        "Digit0" => 0x45,
-        "Minus" => 0x4E,
-        "Equal" => 0x55,
-        "Backspace" => 0x66,
-        
-        "Tab" => 0x0D,
-        "KeyQ" => 0x15,
-        "KeyW" => 0x1D,
-        "KeyE" => 0x24,
-        "KeyR" => 0x2D,
-        "KeyT" => 0x2C,
-        "KeyY" => 0x35,
-        "KeyU" => 0x3C,
-        "KeyI" => 0x43,
-        "KeyO" => 0x44,
-        "KeyP" => 0x4D,
-        "BracketLeft" => 0x54,
-        "BracketRight" => 0x5B,
-        "Backslash" => 0x5D,
-        
-        "CapsLock" => 0x58,
-        "KeyA" => 0x1C,
-        "KeyS" => 0x1B,
-        "KeyD" => 0x23,
-        "KeyF" => 0x2B,
-        "KeyG" => 0x34,
-        "KeyH" => 0x33,
-        "KeyJ" => 0x3B,
-        "KeyK" => 0x42,
-        "KeyL" => 0x4B,
-        "Semicolon" => 0x4C,
-        "Quote" => 0x52,
-        "Enter" => 0x5A,
-        
-        "ShiftLeft" => 0x12,
-        "KeyZ" => 0x1A,
-        "KeyX" => 0x22,
-        "KeyC" => 0x21,
-        "KeyV" => 0x2A,
-        "KeyB" => 0x32,
-        "KeyN" => 0x31,
-        "KeyM" => 0x3A,
-        "Comma" => 0x41,
-        "Period" => 0x49,
-        "Slash" => 0x4A,
-        "ShiftRight" => 0x59,
-        
-        "ControlLeft" => 0x14,
-        "AltLeft" => 0x11,
-        "Space" => 0x29,
-        
-        // Extended keys (need 0xE0 prefix)
-        "ArrowUp" => 0x75,     // E0 75
-        "ArrowDown" => 0x72,   // E0 72
-        "ArrowLeft" => 0x6B,   // E0 6B
-        "ArrowRight" => 0x74,  // E0 74
-        "Home" => 0x6C,        // E0 6C
-        "End" => 0x69,         // E0 69
-        "PageUp" => 0x7D,      // E0 7D
-        "PageDown" => 0x7A,    // E0 7A
-        "Insert" => 0x70,      // E0 70
-        "Delete" => 0x71,      // E0 71
-        
-        _ => {
-            log::debug!("Unknown key code: {}", code);
-            0x00
-        }
-    }
-}
+// Scancode translation is generated from a single source-of-truth table:
+//
+//   tools/gen_scancodes/scancodes.json
+//
+// Outputs:
+//   - web/src/input/scancodes.ts
+//   - crates/emulator/src/io/input/scancodes.rs
+//
+// This keeps the JS capture side and Rust/WASM side in sync, including extended
+// keys (0xE0 prefix) and special multi-byte sequences like PrintScreen/Pause.
+use crate::io::input::scancodes::ps2_set2_scancode_for_code;
 
-pub fn is_extended_key(code: &str) -> bool {
-    matches!(code, 
-        "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" |
-        "Home" | "End" | "PageUp" | "PageDown" |
-        "Insert" | "Delete" |
-        "ControlRight" | "AltRight" |
-        "NumpadEnter" | "NumpadDivide"
-    )
+pub fn key_event_bytes(code: &str, pressed: bool) -> Option<Vec<u8>> {
+    ps2_set2_scancode_for_code(code).map(|sc| sc.bytes(pressed))
 }
 ```
 
