@@ -39,6 +39,7 @@ Why this works: Windows can only boot from a storage controller if its driver is
 - The Aero driver signing certificate was not installed into the correct certificate stores.
 - Windows 7 is missing **KB3033929**, so it cannot validate **SHA-256** signatures.
 - You installed the wrong-architecture driver package (x86 vs x64).
+  - Windows 7 **x86**: drivers can install with warnings, but you can still end up with Code 52 if the package is malformed or not trusted as expected.
 
 ### Fix steps
 
@@ -66,6 +67,16 @@ Why this works: Windows can only boot from a storage controller if its driver is
      - Right-click the device → Update Driver Software
      - Browse to your Guest Tools driver folder
 
+### One-time bypass (not recommended as the primary path)
+
+On Windows 7 x64 you can sometimes boot once with driver signature enforcement disabled:
+
+1. Reboot.
+2. Press **F8** before Windows starts.
+3. Select **Disable Driver Signature Enforcement**.
+
+This only affects that one boot. For a repeatable setup, prefer installing properly signed/test-signed drivers and configuring test signing as required.
+
 ## Issue: Missing KB3033929 (SHA-256 signature support)
 
 Windows 7 needs KB3033929 to validate many SHA-256 signatures. Without it, drivers that are correctly signed may still appear “unsigned”.
@@ -83,6 +94,8 @@ Windows 7 needs KB3033929 to validate many SHA-256 signatures. Without it, drive
    - Windows 7 x64 → x64 update
 2. Copy the `.msu` into the VM (ISO, network, or shared folder).
 3. Run the `.msu` inside the VM and reboot.
+
+If the update fails to install, ensure you are on Windows 7 SP1 and consider installing the latest Windows 7 servicing stack update first.
 
 ### Recommended signing algorithm policy (for compatibility)
 
@@ -137,6 +150,41 @@ Do storage first, then network, then GPU. If you change storage + GPU simultaneo
    - Browse to the Guest Tools driver folder and ensure you’re selecting the correct architecture.
 4. If installation is blocked by signatures, resolve Code 52 first.
 
+## Issue: Black screen after switching to the Aero GPU
+
+**Symptom**
+
+- After switching **VGA → Aero GPU**, Windows appears to boot but the display is blank/black, or you cannot reach a usable desktop.
+
+**Fix / recovery**
+
+1. Power off the VM.
+2. Switch graphics back to **VGA** in the VM settings.
+3. Boot Windows.
+4. Check Device Manager for the Aero GPU device status:
+   - If you see Code 52, fix signing/trust first.
+   - If you see an unknown device, reinstall drivers (run `setup.cmd` as Administrator).
+5. Try switching to Aero GPU again.
+
+If you must keep the Aero GPU selected while recovering, use Safe Mode (below) since it typically avoids loading third-party display drivers.
+
+## Issue: Aero theme not available / stuck in basic graphics mode
+
+**Symptoms**
+
+- Only “Windows 7 Basic” / classic themes are available.
+- Resolution options are limited (often 800×600) or color depth is wrong.
+
+**Fix**
+
+1. Confirm the Aero GPU driver is actually loaded:
+   - Device Manager → Display adapters should show the Aero GPU device without warnings.
+2. Run the Windows Experience Index assessment (often enables Aero):
+   - Open an elevated Command Prompt and run: `winsat formal`
+   - Reboot.
+3. Then select an Aero theme:
+   - Desktop right-click → Personalize → pick a theme under **Aero Themes**.
+
 ## Safe Mode recovery tips
 
 Safe Mode is useful if the system boots but a driver (commonly display) causes instability.
@@ -173,4 +221,3 @@ Only disable test signing if you are sure you have production-signed drivers ins
   - Reboot
 
 If you disable it too early, the drivers may stop loading and devices may fall back to “unknown” or Code 52.
-

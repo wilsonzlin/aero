@@ -21,6 +21,14 @@ This guide walks you through installing Windows 7 in Aero using the **baseline (
 
 Windows 7 RTM is missing years of fixes. SP1 significantly reduces installer and driver friction.
 
+### Supported Windows 7 ISOs / editions
+
+Aero Guest Tools is intended for **Windows 7 SP1**:
+
+- ✅ Windows 7 **SP1 x86** and **SP1 x64**
+- ✅ Most editions should work (Home Premium / Professional / Ultimate / Enterprise), as long as your license matches the media.
+- ❌ Windows 7 **RTM (no SP1)** is not recommended (higher chance of installer/driver/update failures).
+
 ### SHA-256 / KB3033929 note (important for x64)
 
 If Aero’s driver packages are signed with **SHA-256**, Windows 7 requires **KB3033929** to validate those signatures.
@@ -91,7 +99,7 @@ Installs Aero’s driver signing certificate into the **Local Machine** certific
 May update the boot configuration database via `bcdedit`, for example:
 
 - Enabling **Test Signing** (`testsigning on`) so test-signed kernel drivers load on Windows 7 x64.
-- Optionally setting a legacy boot menu policy to make **F8 / Safe Mode** easier to access.
+- Optionally increasing Boot Manager timeouts so recovery options are easier to reach in an emulator (for example, setting a non-zero `timeout`).
 
 ### 3) Driver store / PnP staging
 
@@ -143,6 +151,7 @@ Expected behavior:
 - The screen may flicker as Windows binds the new display driver.
 - You should be able to set higher resolutions.
 - To enable the Aero Glass theme, you may need to select a Windows 7 theme in **Personalization** and/or run **Performance Information and Tools** once.
+  - If “Aero” themes are unavailable, running `winsat formal` (from an elevated Command Prompt) often enables them after reboot.
 
 ## Step 6: Run `verify.cmd` and interpret `report.txt`
 
@@ -194,15 +203,32 @@ Slipstreaming is optional, but can reduce first-boot driver/signature problems (
 
 On a Windows 10/11 host (or a Windows VM), you can use DISM:
 
-1. Copy ISO contents to a working folder.
-2. Mount `sources\\install.wim` for the edition you plan to install.
-3. `dism /image:<mount> /add-package` for KB3033929.
-4. `dism /image:<mount> /add-driver /driver:<path> /recurse` to add drivers.
-5. Commit/unmount the WIM.
+1. Copy ISO contents to a working folder (example: `C:\win7-iso\`).
+2. Identify your `install.wim` index:
+   - `dism /Get-WimInfo /WimFile:C:\win7-iso\sources\install.wim`
+3. Mount `install.wim` (example index `1`):
+   - `mkdir C:\wim\mount`
+   - `dism /Mount-Wim /WimFile:C:\win7-iso\sources\install.wim /Index:1 /MountDir:C:\wim\mount`
+4. Add KB3033929:
+   - `dism /Image:C:\wim\mount /Add-Package /PackagePath:C:\updates\KB3033929-x64.msu`
+   - If DISM refuses the `.msu`, extract it first and add the `.cab` instead:
+     - `expand -F:* C:\updates\KB3033929-x64.msu C:\updates\KB3033929\`
+     - `dism /Image:C:\wim\mount /Add-Package /PackagePath:C:\updates\KB3033929\Windows6.1-KB3033929-x64.cab`
+5. Add Aero drivers:
+   - `dism /Image:C:\wim\mount /Add-Driver /Driver:C:\drivers\aero\ /Recurse`
+6. Commit and unmount:
+   - `dism /Unmount-Wim /MountDir:C:\wim\mount /Commit`
 
 If you want Windows Setup itself to see a virtio-blk disk during installation, you must also add the storage driver to `sources\\boot.wim` (indexes 1 and 2).
+
+### Rebuilding a bootable ISO (optional)
+
+After modifying the WIM(s), you must rebuild a bootable ISO from your working folder. A common approach on Windows is `oscdimg` (Windows ADK):
+
+- `oscdimg -m -o -u2 -udfver102 -bootdata:2#p0,e,bC:\win7-iso\boot\etfsboot.com#pEF,e,bC:\win7-iso\efi\microsoft\boot\efisys.bin C:\win7-iso C:\win7-slipstream.iso`
+
+If your source ISO does not contain `efi\microsoft\boot\efisys.bin`, omit the UEFI boot entry.
 
 For detailed recovery and switch-over pitfalls, see the troubleshooting guide:
 
 - [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md)
-
