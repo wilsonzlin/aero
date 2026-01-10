@@ -60,7 +60,10 @@ Do not commit or upload (including in issues/PRs):
 
 - Windows ISOs, WIM/ESD files, update packages, or extracted file trees
 - `.exe`, `.dll`, `.sys`, `.msi`, `.cab`, `.msu`, etc. from Windows
-- Disk images: `.vhd`, `.vhdx`, `.vmdk`, `.qcow2`, `.img`, `.raw`, etc.
+- Disk/VM images: `.vhd`, `.vhdx`, `.vmdk`, `.qcow2`, `.img`, `.raw`, etc.
+  - Exception: a small number of **tiny, deterministic, license-safe** boot/test
+    fixtures are allowlisted (see `docs/FIXTURES.md`, e.g.
+    `tests/fixtures/boot/*.{bin,img}`).
 - ROM/firmware dumps from real hardware
 - Captured traces/dumps that contain copyrighted payloads
 
