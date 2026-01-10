@@ -502,6 +502,41 @@ impl Ps2Mouse {
 
 ## Browser Event Capture
 
+### TypeScript Host Input Capture (Implemented)
+
+The repository includes a concrete browser-side input capture implementation:
+
+- `web/src/input/input_capture.ts` — attaches listeners to the emulator canvas, manages focus/blur, and requests Pointer Lock on click.
+- `web/src/input/pointer_lock.ts` — minimal Pointer Lock state machine.
+- `web/src/input/event_queue.ts` — allocation-free event queue and batching transport to the I/O worker.
+- `web/src/input/scancode.ts` — `KeyboardEvent.code` → PS/2 Set 2 make code mapping (+ extended flag).
+
+#### Worker Transport / Wire Format
+
+Input batches are delivered to the I/O worker via `postMessage` with:
+
+```ts
+{ type: 'in:input-batch', buffer: ArrayBuffer }
+```
+
+`buffer` contains a small `Int32Array`-compatible payload:
+
+| Word | Meaning |
+|------|---------|
+| 0 | `count` (number of events) |
+| 1 | `batchSendTimestampUs` (u32, `performance.now()*1000`, wraps) |
+| 2.. | `count` events, each 4 words: `[type, eventTimestampUs, a, b]` |
+
+Event types are defined in `web/src/input/event_queue.ts` (`InputEventType`):
+
+- `KeyScancode (1)`: `a=packedBytesLE`, `b=byteLen` (PS/2 Set 2 sequences including `0xE0`/`0xF0`)
+- `MouseMove (2)`: `a=dx`, `b=dy` (PS/2 coords: `dx` right, `dy` up)
+- `MouseButtons (3)`: `a=buttons` (bit0=left, bit1=right, bit2=middle)
+- `MouseWheel (4)`: `a=dz` (positive=wheel up)
+
+This keeps the hot path allocation-free and allows the worker to convert to
+i8042 keyboard/mouse bytes with minimal overhead.
+
 ### Event Handler
 
 ```rust

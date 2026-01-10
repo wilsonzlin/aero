@@ -3,6 +3,13 @@ export type Set2Scancode = {
   extended: boolean;
 };
 
+// JavaScript `KeyboardEvent.code` → PS/2 Set 2 make code mapping.
+//
+// Notes:
+// - For extended keys, PS/2 prepends 0xE0.
+// - Break code is 0xF0 + make code (and for extended, 0xE0 0xF0 ...).
+//
+// Keep this table small and extend it as guest software requires more keys.
 const SET2_BY_CODE: Record<string, Set2Scancode> = {
   Escape: { code: 0x76, extended: false },
   F1: { code: 0x05, extended: false },
@@ -99,11 +106,49 @@ export function codeToSet2(code: string): Set2Scancode | null {
   return SET2_BY_CODE[code] ?? null;
 }
 
+/**
+ * Allocation-free mapping used by the batched input pipeline.
+ *
+ * Returns a Set 2 make code plus an "extended" flag:
+ * - low 8 bits: make byte
+ * - bit 8: extended (requires 0xE0 prefix)
+ *
+ * Returns 0 if the code is not mapped.
+ */
+export function translateCodeToSet2MakeCode(code: string): number {
+  const sc = SET2_BY_CODE[code];
+  if (!sc) return 0;
+  return sc.code | (sc.extended ? 0x100 : 0);
+}
+
 export function set2Make(sc: Set2Scancode): number[] {
   return sc.extended ? [0xe0, sc.code] : [sc.code];
 }
 
 export function set2Break(sc: Set2Scancode): number[] {
   return sc.extended ? [0xe0, 0xf0, sc.code] : [0xf0, sc.code];
+}
+
+const DEFAULT_PREVENT_DEFAULT_CODES = new Set<string>([
+  "Escape",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Space",
+  "PageUp",
+  "PageDown",
+  "Home",
+  "End",
+  "Tab",
+  "Backspace",
+]);
+
+export function shouldPreventDefaultForKeyboardEvent(event: KeyboardEvent): boolean {
+  if (event.ctrlKey || event.metaKey) {
+    // Let browser shortcuts (copy/paste/tab close/etc.) win by default.
+    return false;
+  }
+  return DEFAULT_PREVENT_DEFAULT_CODES.has(event.code);
 }
 

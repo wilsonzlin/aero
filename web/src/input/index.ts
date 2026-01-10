@@ -1,4 +1,6 @@
+export * from "./event_queue";
+export * from "./input_capture";
 export * from "./keyboard";
 export * from "./mouse";
+export * from "./pointer_lock";
 export * from "./scancode";
-

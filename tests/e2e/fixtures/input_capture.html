@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Input Capture Fixture</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+      }
+      canvas {
+        width: 640px;
+        height: 480px;
+        border: 1px solid #000;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="emu" width="640" height="480"></canvas>
+    <script type="module">
+      import { InputCapture } from '/web/src/input/input_capture.ts';
+
+      const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById('emu'));
+
+      // Deterministic pointer lock shim for headless tests.
+      let plElement = null;
+      Object.defineProperty(document, 'pointerLockElement', {
+        configurable: true,
+        get() {
+          return plElement;
+        }
+      });
+
+      canvas.requestPointerLock = () => {
+        window.__plRequestCount = (window.__plRequestCount || 0) + 1;
+        plElement = canvas;
+        document.dispatchEvent(new Event('pointerlockchange'));
+      };
+
+      document.exitPointerLock = () => {
+        plElement = null;
+        document.dispatchEvent(new Event('pointerlockchange'));
+      };
+
+      window.__inputMessages = [];
+      const fakeWorker = {
+        postMessage(msg, transfer) {
+          window.__inputMessages.push(msg);
+          // Keep transfer list referenced so structured clone doesn't complain in some engines.
+          void transfer;
+        }
+      };
+
+      window.__capture = new InputCapture(canvas, fakeWorker, {
+        flushHz: 1000, // tests call flush manually; keep timer fast just in case
+        mouseSensitivity: 1.0
+      });
+
+      window.__capture.start();
+    </script>
+  </body>
+</html>
