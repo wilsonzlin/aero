@@ -97,7 +97,9 @@ function Get-MSBuildExe {
   $vswhere = Get-VsWhereExe
   if ($null -ne $vswhere) {
     $findPatterns = @(
+      'MSBuild\Current\Bin\amd64\MSBuild.exe',
       'MSBuild\Current\Bin\MSBuild.exe',
+      'MSBuild\**\Bin\amd64\MSBuild.exe',
       'MSBuild\**\Bin\MSBuild.exe'
     )
 
