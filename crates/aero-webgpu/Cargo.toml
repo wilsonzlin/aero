@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 bytemuck = { version = "1.14", features = ["derive"] }
+futures-intrusive = "0.5"
 thiserror = "1.0"
 wgpu = { version = "0.20", features = ["webgl"] }
 

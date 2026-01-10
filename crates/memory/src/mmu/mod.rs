@@ -33,7 +33,7 @@ pub enum TranslateError {
 
 /// Legacy alias: older call sites treated all translation faults as "page faults".
 ///
-/// Today translation can also fail with a long-mode #GP for non-canonical addresses, so the
+/// Translation can also fail with a long-mode #GP for non-canonical addresses, so the
 /// underlying type is [`TranslateError`].
 pub type PageFault = TranslateError;
 

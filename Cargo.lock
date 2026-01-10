@@ -426,6 +426,7 @@ name = "aero-webgpu"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "futures-intrusive",
  "pollster",
  "thiserror 1.0.69",
  "web-sys",

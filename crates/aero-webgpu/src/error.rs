@@ -29,11 +29,20 @@ pub enum PresentError {
     #[error("framebuffer dimensions must be non-zero")]
     InvalidFramebufferSize,
 
+    #[error("framebuffer stride too small (stride {stride} bytes, need at least {min} bytes)")]
+    InvalidFramebufferStride { stride: u32, min: u32 },
+
     #[error("framebuffer length mismatch (expected {expected} bytes, got {actual} bytes)")]
     InvalidFramebufferLength { expected: usize, actual: usize },
 
     #[error("surface error: {0}")]
     Surface(#[from] wgpu::SurfaceError),
+
+    #[error("failed to map screenshot/readback buffer: {0}")]
+    MapRead(#[from] wgpu::BufferAsyncError),
+
+    #[error("screenshot mapping channel was closed unexpectedly")]
+    ScreenshotChannelClosed,
 
     #[error("WebGL2 presentation is not implemented yet")]
     WebGl2NotImplemented,

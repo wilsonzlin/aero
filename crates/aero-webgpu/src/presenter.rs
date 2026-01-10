@@ -30,14 +30,25 @@ pub enum AspectMode {
     /// Stretch to fill the canvas/surface.
     Stretch,
     /// Preserve aspect ratio (letterboxing/pillarboxing).
-    Fit,
+    FitKeepAspect,
+    /// Preserve aspect ratio using an integer scale factor when possible.
+    ///
+    /// If the surface is smaller than the framebuffer, this falls back to `FitKeepAspect`.
+    IntegerScale,
+}
+
+impl Default for AspectMode {
+    fn default() -> Self {
+        Self::FitKeepAspect
+    }
 }
 
 impl AspectMode {
     fn as_u32(self) -> u32 {
         match self {
             AspectMode::Stretch => 0,
-            AspectMode::Fit => 1,
+            AspectMode::FitKeepAspect => 1,
+            AspectMode::IntegerScale => 2,
         }
     }
 }
@@ -81,9 +92,17 @@ impl<'a> FramebufferPresenter<'a> {
         &mut self,
         pixels: &[u8],
         size: FramebufferSize,
+        stride_bytes: u32,
     ) -> Result<(), PresentError> {
         match self {
-            FramebufferPresenter::Wgpu(p) => p.present_rgba8(pixels, size),
+            FramebufferPresenter::Wgpu(p) => p.present_rgba8(pixels, size, stride_bytes),
+            FramebufferPresenter::WebGl2Stub(_) => Err(PresentError::WebGl2NotImplemented),
+        }
+    }
+
+    pub async fn screenshot_high_level(&self) -> Result<Vec<u8>, PresentError> {
+        match self {
+            FramebufferPresenter::Wgpu(p) => p.screenshot_high_level().await,
             FramebufferPresenter::WebGl2Stub(_) => Err(PresentError::WebGl2NotImplemented),
         }
     }
@@ -131,7 +150,7 @@ impl<'a> FramebufferPresenter<'a> {
         canvas: web_sys::HtmlCanvasElement,
         options: crate::BackendOptions,
     ) -> Result<FramebufferPresenter<'static>, BackendError> {
-        let size = FramebufferSize::new(canvas.width(), canvas.height()).clamped_for_surface();
+        let size = FramebufferSize::new(canvas.width(), canvas.height());
         let requested = options.requested_backend;
         let allow_fallback =
             options.allow_webgl2_fallback && matches!(requested, RequestedBackend::Auto);
@@ -198,7 +217,7 @@ impl<'a> FramebufferPresenter<'a> {
         canvas: web_sys::OffscreenCanvas,
         options: crate::BackendOptions,
     ) -> Result<FramebufferPresenter<'static>, BackendError> {
-        let size = FramebufferSize::new(canvas.width(), canvas.height()).clamped_for_surface();
+        let size = FramebufferSize::new(canvas.width(), canvas.height());
         let requested = options.requested_backend;
         let allow_fallback =
             options.allow_webgl2_fallback && matches!(requested, RequestedBackend::Auto);
@@ -342,7 +361,8 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
         backend_kind: BackendKind,
         options: WebGpuInitOptions,
     ) -> Result<Self, WebGpuInitError> {
-        let surface_size = surface_size.clamped_for_surface();
+        let surface_size = surface_size;
+        let config_size = surface_size.clamped_for_surface();
 
         let context =
             WebGpuContext::request_with_surface(instance, backend_kind, options, &surface).await?;
@@ -357,8 +377,8 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: surface_size.width,
-            height: surface_size.height,
+            width: config_size.width,
+            height: config_size.height,
             present_mode,
             alpha_mode,
             desired_maximum_frame_latency: 2,
@@ -458,7 +478,7 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             _surface_format: surface_format,
             config,
             surface_size,
-            aspect_mode: AspectMode::Fit,
+            aspect_mode: AspectMode::default(),
             pipeline,
             bind_group_layout,
             sampler,
@@ -469,10 +489,10 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
     }
 
     pub fn resize(&mut self, new_size: FramebufferSize) -> Result<(), PresentError> {
-        let new_size = new_size.clamped_for_surface();
         self.surface_size = new_size;
-        self.config.width = new_size.width;
-        self.config.height = new_size.height;
+        let config_size = new_size.clamped_for_surface();
+        self.config.width = config_size.width;
+        self.config.height = config_size.height;
         self.surface.configure(self.context.device(), &self.config);
         Ok(())
     }
@@ -485,21 +505,30 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
         &mut self,
         pixels: &[u8],
         size: FramebufferSize,
+        stride_bytes: u32,
     ) -> Result<(), PresentError> {
         if size.width == 0 || size.height == 0 {
-            return Err(PresentError::InvalidFramebufferSize);
+            return Ok(());
         }
 
-        let expected_len = size.width as usize * size.height as usize * 4;
-        if pixels.len() != expected_len {
+        let min_stride = size.width.saturating_mul(4);
+        if stride_bytes < min_stride {
+            return Err(PresentError::InvalidFramebufferStride {
+                stride: stride_bytes,
+                min: min_stride,
+            });
+        }
+
+        let required_len = (stride_bytes as u64) * (size.height as u64);
+        if (pixels.len() as u64) < required_len {
             return Err(PresentError::InvalidFramebufferLength {
-                expected: expected_len,
+                expected: required_len as usize,
                 actual: pixels.len(),
             });
         }
 
         self.ensure_source_texture(size)?;
-        self.upload_rgba8(pixels, size);
+        self.upload_rgba8(pixels, size, stride_bytes);
         self.draw()?;
         Ok(())
     }
@@ -525,8 +554,10 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -558,24 +589,27 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
         Ok(())
     }
 
-    fn upload_rgba8(&mut self, pixels: &[u8], size: FramebufferSize) {
+    fn upload_rgba8(&mut self, pixels: &[u8], size: FramebufferSize, stride_bytes: u32) {
         let queue = self.context.queue();
         let src = self.source.as_ref().expect("source texture must exist");
 
         let unpadded_bpr = size.width * 4;
-        let needs_padding = (unpadded_bpr % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) != 0;
+        let required_len = (stride_bytes as usize) * (size.height as usize);
+        let can_upload_direct = (stride_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) == 0;
 
-        let (src_bytes, bytes_per_row) = if !needs_padding {
-            (pixels, unpadded_bpr)
+        let (src_bytes, bytes_per_row) = if can_upload_direct {
+            (&pixels[..required_len], stride_bytes)
         } else {
             let padded_bpr = padded_bytes_per_row(unpadded_bpr);
             let padded_len = padded_bpr as usize * size.height as usize;
             self.staging_rgba.resize(padded_len, 0);
 
             for y in 0..size.height as usize {
-                let src_row = &pixels[y * unpadded_bpr as usize..(y + 1) * unpadded_bpr as usize];
-                let dst_row = &mut self.staging_rgba
-                    [y * padded_bpr as usize..y * padded_bpr as usize + unpadded_bpr as usize];
+                let src_off = y * stride_bytes as usize;
+                let dst_off = y * padded_bpr as usize;
+                let src_row = &pixels[src_off..src_off + unpadded_bpr as usize];
+                let dst_row =
+                    &mut self.staging_rgba[dst_off..dst_off + unpadded_bpr as usize];
                 dst_row.copy_from_slice(src_row);
             }
 
@@ -615,12 +649,16 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
     }
 
     fn draw(&mut self) -> Result<(), PresentError> {
+        if self.surface_size.width == 0 || self.surface_size.height == 0 {
+            return Ok(());
+        }
+
         let device = self.context.device();
         let queue = self.context.queue();
 
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Timeout) => {
                 // Window resize / swap chain invalidation; reconfigure and retry once.
                 self.surface.configure(device, &self.config);
                 self.surface.get_current_texture()?
@@ -663,6 +701,85 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
         queue.submit(Some(encoder.finish()));
         frame.present();
         Ok(())
+    }
+
+    pub async fn screenshot_high_level(&self) -> Result<Vec<u8>, PresentError> {
+        let Some(src) = self.source.as_ref() else {
+            return Ok(Vec::new());
+        };
+
+        if src.size.width == 0 || src.size.height == 0 {
+            return Ok(Vec::new());
+        }
+
+        let device = self.context.device();
+        let queue = self.context.queue();
+
+        let bytes_per_pixel = 4u32;
+        let unpadded_bpr = src.size.width * bytes_per_pixel;
+        let padded_bpr = padded_bytes_per_row(unpadded_bpr);
+        let buffer_size = padded_bpr as u64 * src.size.height as u64;
+
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero presenter screenshot buffer"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("aero presenter screenshot encoder"),
+        });
+
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                texture: &src.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &readback,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bpr),
+                    rows_per_image: Some(src.size.height),
+                },
+            },
+            wgpu::Extent3d {
+                width: src.size.width,
+                height: src.size.height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        queue.submit(Some(encoder.finish()));
+
+        let slice = readback.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |res| {
+            sender.send(res).ok();
+        });
+        device.poll(wgpu::Maintain::Wait);
+
+        match receiver.receive().await {
+            Some(Ok(())) => {}
+            Some(Err(err)) => return Err(err.into()),
+            None => return Err(PresentError::ScreenshotChannelClosed),
+        }
+
+        let mapped = slice.get_mapped_range();
+        let mut rgba = vec![0u8; (unpadded_bpr as usize) * src.size.height as usize];
+        for y in 0..src.size.height as usize {
+            let src_off = y * padded_bpr as usize;
+            let dst_off = y * unpadded_bpr as usize;
+            rgba[dst_off..dst_off + unpadded_bpr as usize]
+                .copy_from_slice(&mapped[src_off..src_off + unpadded_bpr as usize]);
+        }
+        drop(mapped);
+        readback.unmap();
+
+        Ok(rgba)
     }
 }
 
@@ -727,29 +844,33 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4<f32> {
 
 @fragment
 fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-    var uv = pos.xy / u.output_size;
+    // Stretch: map directly.
+    if (u.mode == 0u) {
+        let uv = pos.xy / u.output_size;
+        return textureSample(src_tex, src_samp, uv);
+    }
 
-    if (u.mode == 1u) {
-        let src_aspect = u.input_size.x / u.input_size.y;
-        let dst_aspect = u.output_size.x / u.output_size.y;
+    let dst = u.output_size;
+    let src = u.input_size;
 
-        if (dst_aspect > src_aspect) {
-            let ratio = src_aspect / dst_aspect;
-            let x = (uv.x - 0.5) / ratio + 0.5;
-            if (x < 0.0 || x > 1.0) {
-                return vec4<f32>(0.0, 0.0, 0.0, 1.0);
-            }
-            uv = vec2<f32>(x, uv.y);
-        } else {
-            let ratio = dst_aspect / src_aspect;
-            let y = (uv.y - 0.5) / ratio + 0.5;
-            if (y < 0.0 || y > 1.0) {
-                return vec4<f32>(0.0, 0.0, 0.0, 1.0);
-            }
-            uv = vec2<f32>(uv.x, y);
+    // FitKeepAspect / IntegerScale: compute a centered destination rect.
+    var scale = min(dst.x / src.x, dst.y / src.y);
+    if (u.mode == 2u) {
+        let int_scale = floor(scale);
+        if (int_scale >= 1.0) {
+            scale = int_scale;
         }
     }
 
+    let scaled = src * scale;
+    let offset = (dst - scaled) * 0.5;
+    let p = pos.xy - offset;
+
+    if (p.x < 0.0 || p.y < 0.0 || p.x >= scaled.x || p.y >= scaled.y) {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+
+    let uv = p / scaled;
     return textureSample(src_tex, src_samp, uv);
 }
 "#;
