@@ -1,9 +1,17 @@
 pub fn decode_cert_file(contents: &[u8]) -> Result<Vec<Vec<u8>>, String> {
     // Many Windows-generated PEMs may include a UTF-8 BOM or other leading bytes. Instead of
-    // requiring the file to *start* with the PEM header, treat it as PEM if it contains at least
-    // one `BEGIN CERTIFICATE` block.
-    if find_bytes(contents, b"-----BEGIN CERTIFICATE-----").is_some() {
+    // requiring the file to *start* with the PEM header, treat it as PEM if it contains a
+    // `BEGIN CERTIFICATE` block near the start of the file.
+    //
+    // If the file appears to be PEM (it has a `BEGIN ...` header) but does not contain any
+    // certificates, return a clearer error rather than trying to treat it as DER.
+    let search_len = contents.len().min(4096);
+    let head = &contents[..search_len];
+
+    if find_bytes(head, b"-----BEGIN CERTIFICATE-----").is_some() {
         parse_pem_certificates(contents)
+    } else if find_bytes(head, b"-----BEGIN").is_some() {
+        Err("PEM did not contain any CERTIFICATE blocks".to_string())
     } else {
         Ok(vec![contents.to_vec()])
     }
@@ -139,5 +147,11 @@ mod tests {
         let certs = decode_cert_file(pem).unwrap();
         assert_eq!(certs.len(), 1);
         assert_eq!(certs[0], b"M");
+    }
+
+    #[test]
+    fn pem_without_certs_errors() {
+        let pem = b"-----BEGIN PRIVATE KEY-----\nTQ==\n-----END PRIVATE KEY-----\n";
+        assert!(decode_cert_file(pem).is_err());
     }
 }
