@@ -1,0 +1,666 @@
+use crate::clock::Clock;
+use crate::irq::IrqLine;
+use aero_platform::io::PortIoDevice;
+
+const CMOS_LEN: usize = 128;
+
+const PORT_INDEX: u16 = 0x70;
+const PORT_DATA: u16 = 0x71;
+
+const REG_SECONDS: u8 = 0x00;
+const REG_SECONDS_ALARM: u8 = 0x01;
+const REG_MINUTES: u8 = 0x02;
+const REG_MINUTES_ALARM: u8 = 0x03;
+const REG_HOURS: u8 = 0x04;
+const REG_HOURS_ALARM: u8 = 0x05;
+const REG_DAY_OF_WEEK: u8 = 0x06;
+const REG_DAY_OF_MONTH: u8 = 0x07;
+const REG_MONTH: u8 = 0x08;
+const REG_YEAR: u8 = 0x09;
+const REG_STATUS_A: u8 = 0x0A;
+const REG_STATUS_B: u8 = 0x0B;
+const REG_STATUS_C: u8 = 0x0C;
+const REG_STATUS_D: u8 = 0x0D;
+
+const REG_CENTURY: u8 = 0x32;
+
+const REG_B_SET: u8 = 1 << 7;
+const REG_B_PIE: u8 = 1 << 6;
+const REG_B_AIE: u8 = 1 << 5;
+const REG_B_UIE: u8 = 1 << 4;
+const REG_B_DM_BINARY: u8 = 1 << 2;
+const REG_B_24H: u8 = 1 << 1;
+
+const REG_C_IRQF: u8 = 1 << 7;
+const REG_C_PF: u8 = 1 << 6;
+const REG_C_AF: u8 = 1 << 5;
+const REG_C_UF: u8 = 1 << 4;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RtcDateTime {
+    pub year: i32,
+    pub month: u8,
+    pub day: u8,
+    pub hour: u8,
+    pub minute: u8,
+    pub second: u8,
+}
+
+impl RtcDateTime {
+    fn is_valid(&self) -> bool {
+        if !(1..=12).contains(&self.month) {
+            return false;
+        }
+        if self.day == 0 || self.day > days_in_month(self.year, self.month) {
+            return false;
+        }
+        self.hour < 24 && self.minute < 60 && self.second < 60
+    }
+}
+
+pub struct RtcCmos<C: Clock, I: IrqLine> {
+    clock: C,
+    irq8: I,
+    index: u8,
+    nmi_disabled: bool,
+    nvram: [u8; CMOS_LEN],
+    reg_a: u8,
+    reg_b: u8,
+    reg_c_flags: u8,
+    offset_seconds: i64,
+    set_mode: bool,
+    frozen_seconds: i64,
+    last_rtc_seconds: i64,
+    periodic_interval_ns: Option<u128>,
+    next_periodic_ns: Option<u128>,
+    irq_level: bool,
+}
+
+impl<C: Clock, I: IrqLine> RtcCmos<C, I> {
+    pub fn new(clock: C, irq8: I) -> Self {
+        Self::with_datetime(
+            clock,
+            irq8,
+            RtcDateTime {
+                year: 2000,
+                month: 1,
+                day: 1,
+                hour: 0,
+                minute: 0,
+                second: 0,
+            },
+        )
+    }
+
+    pub fn with_datetime(clock: C, irq8: I, datetime: RtcDateTime) -> Self {
+        let mut rtc = Self {
+            clock,
+            irq8,
+            index: 0,
+            nmi_disabled: false,
+            nvram: [0; CMOS_LEN],
+            reg_a: 0x26,
+            reg_b: REG_B_24H,
+            reg_c_flags: 0,
+            offset_seconds: 0,
+            set_mode: false,
+            frozen_seconds: 0,
+            last_rtc_seconds: 0,
+            periodic_interval_ns: None,
+            next_periodic_ns: None,
+            irq_level: false,
+        };
+
+        rtc.init_nvram();
+        rtc.set_rtc_seconds(0, datetime_to_unix_seconds(datetime));
+        let now_ns = rtc.clock.now_ns();
+        rtc.last_rtc_seconds = rtc.rtc_seconds_at(now_ns);
+        rtc.recompute_periodic(now_ns as u128);
+        rtc
+    }
+
+    pub fn tick(&mut self) {
+        let now_ns = self.clock.now_ns();
+        self.tick_at(now_ns);
+    }
+
+    pub fn irq_level(&self) -> bool {
+        self.irq_level
+    }
+
+    fn init_nvram(&mut self) {
+        let base_kb: u16 = 640;
+        self.nvram[0x15] = (base_kb & 0xFF) as u8;
+        self.nvram[0x16] = (base_kb >> 8) as u8;
+    }
+
+    fn tick_at(&mut self, now_ns: u64) {
+        self.handle_periodic(now_ns as u128);
+
+        if !self.set_mode {
+            let rtc_now = self.rtc_seconds_at(now_ns);
+            if rtc_now != self.last_rtc_seconds {
+                self.last_rtc_seconds = rtc_now;
+                self.handle_second_edge(rtc_now);
+            }
+        }
+
+        self.update_irq_line();
+    }
+
+    fn handle_periodic(&mut self, now_ns: u128) {
+        let Some(interval_ns) = self.periodic_interval_ns else {
+            self.next_periodic_ns = None;
+            return;
+        };
+
+        let next_ns = self.next_periodic_ns.get_or_insert(now_ns + interval_ns);
+        if now_ns < *next_ns {
+            return;
+        }
+
+        self.reg_c_flags |= REG_C_PF;
+
+        let elapsed = now_ns - *next_ns;
+        let missed = elapsed / interval_ns + 1;
+        *next_ns = next_ns.saturating_add(missed * interval_ns);
+    }
+
+    fn handle_second_edge(&mut self, rtc_seconds: i64) {
+        if self.reg_b & REG_B_UIE != 0 {
+            self.reg_c_flags |= REG_C_UF;
+        }
+
+        if self.reg_b & REG_B_AIE != 0 {
+            let now_dt = unix_seconds_to_datetime(rtc_seconds);
+            if self.alarm_matches(now_dt) {
+                self.reg_c_flags |= REG_C_AF;
+            }
+        }
+    }
+
+    fn alarm_matches(&self, now: RtcDateTime) -> bool {
+        fn matches_field(now: u8, alarm_raw: u8, decode: impl Fn(u8) -> u8) -> bool {
+            if alarm_raw & 0xC0 == 0xC0 {
+                return true;
+            }
+            decode(alarm_raw) == now
+        }
+
+        matches_field(now.second, self.nvram[REG_SECONDS_ALARM as usize], |v| {
+            self.decode_bcd(v)
+        }) && matches_field(now.minute, self.nvram[REG_MINUTES_ALARM as usize], |v| {
+            self.decode_bcd(v)
+        }) && {
+            let alarm_raw = self.nvram[REG_HOURS_ALARM as usize];
+            if alarm_raw & 0xC0 == 0xC0 {
+                true
+            } else {
+                self.decode_hours(alarm_raw) == now.hour
+            }
+        }
+    }
+
+    fn update_irq_line(&mut self) {
+        let asserted = self.reg_c_flags & (REG_C_PF | REG_C_AF | REG_C_UF) != 0;
+        if asserted != self.irq_level {
+            self.irq_level = asserted;
+            self.irq8.set_level(asserted);
+        }
+    }
+
+    fn rtc_seconds_at(&self, now_ns: u64) -> i64 {
+        if self.set_mode {
+            self.frozen_seconds
+        } else {
+            (now_ns / 1_000_000_000) as i64 + self.offset_seconds
+        }
+    }
+
+    fn set_rtc_seconds(&mut self, now_ns: u64, unix_seconds: i64) {
+        if self.set_mode {
+            self.frozen_seconds = unix_seconds;
+            self.last_rtc_seconds = unix_seconds;
+        } else {
+            self.offset_seconds = unix_seconds - (now_ns / 1_000_000_000) as i64;
+            self.last_rtc_seconds = unix_seconds;
+        }
+    }
+
+    fn encode_bcd(&self, value: u8) -> u8 {
+        if self.reg_b & REG_B_DM_BINARY != 0 {
+            value
+        } else {
+            ((value / 10) << 4) | (value % 10)
+        }
+    }
+
+    fn decode_bcd(&self, raw: u8) -> u8 {
+        if self.reg_b & REG_B_DM_BINARY != 0 {
+            raw
+        } else {
+            ((raw >> 4) & 0x0F) * 10 + (raw & 0x0F)
+        }
+    }
+
+    fn encode_hours(&self, hour_24: u8) -> u8 {
+        if self.reg_b & REG_B_24H != 0 {
+            self.encode_bcd(hour_24)
+        } else {
+            let (mut hour_12, pm) = match hour_24 {
+                0 => (12, false),
+                1..=11 => (hour_24, false),
+                12 => (12, true),
+                13..=23 => (hour_24 - 12, true),
+                _ => (12, false),
+            };
+            hour_12 = self.encode_bcd(hour_12);
+            if pm {
+                hour_12 | 0x80
+            } else {
+                hour_12
+            }
+        }
+    }
+
+    fn decode_hours(&self, raw: u8) -> u8 {
+        if self.reg_b & REG_B_24H != 0 {
+            self.decode_bcd(raw)
+        } else {
+            let pm = raw & 0x80 != 0;
+            let hour = self.decode_bcd(raw & 0x7F);
+            match (hour, pm) {
+                (12, false) => 0,
+                (12, true) => 12,
+                (1..=11, false) => hour,
+                (1..=11, true) => hour + 12,
+                _ => 0,
+            }
+        }
+    }
+
+    fn update_in_progress(&self, now_ns: u64) -> bool {
+        if self.set_mode {
+            return false;
+        }
+        let subsec_ns = (now_ns % 1_000_000_000) as u32;
+        subsec_ns >= 1_000_000_000 - 244_000
+    }
+
+    fn recompute_periodic(&mut self, now_ns: u128) {
+        if self.reg_b & REG_B_PIE == 0 {
+            self.periodic_interval_ns = None;
+            self.next_periodic_ns = None;
+            return;
+        }
+
+        let rs = self.reg_a & 0x0F;
+        if rs == 0 {
+            self.periodic_interval_ns = None;
+            self.next_periodic_ns = None;
+            return;
+        }
+
+        let shift = rs.saturating_sub(1);
+        let freq_hz = 32_768u32 >> shift;
+        let interval_ns = (1_000_000_000u128 / freq_hz as u128).max(1);
+
+        self.periodic_interval_ns = Some(interval_ns);
+        self.next_periodic_ns = Some(now_ns + interval_ns);
+    }
+
+    fn read_selected(&mut self, now_ns: u64) -> u8 {
+        let idx = self.index & 0x7F;
+        match idx {
+            REG_SECONDS => {
+                self.encode_bcd(unix_seconds_to_datetime(self.rtc_seconds_at(now_ns)).second)
+            }
+            REG_MINUTES => {
+                self.encode_bcd(unix_seconds_to_datetime(self.rtc_seconds_at(now_ns)).minute)
+            }
+            REG_HOURS => self.encode_hours(unix_seconds_to_datetime(self.rtc_seconds_at(now_ns)).hour),
+            REG_DAY_OF_WEEK => {
+                let weekday = weekday_from_unix_seconds(self.rtc_seconds_at(now_ns));
+                self.encode_bcd(weekday)
+            }
+            REG_DAY_OF_MONTH => {
+                self.encode_bcd(unix_seconds_to_datetime(self.rtc_seconds_at(now_ns)).day)
+            }
+            REG_MONTH => self.encode_bcd(unix_seconds_to_datetime(self.rtc_seconds_at(now_ns)).month),
+            REG_YEAR => {
+                let year = unix_seconds_to_datetime(self.rtc_seconds_at(now_ns)).year;
+                self.encode_bcd(year.rem_euclid(100) as u8)
+            }
+            REG_CENTURY => {
+                let year = unix_seconds_to_datetime(self.rtc_seconds_at(now_ns)).year;
+                self.encode_bcd(year.div_euclid(100) as u8)
+            }
+            REG_STATUS_A => {
+                let uip = if self.update_in_progress(now_ns) {
+                    0x80
+                } else {
+                    0x00
+                };
+                (self.reg_a & 0x7F) | uip
+            }
+            REG_STATUS_B => self.reg_b,
+            REG_STATUS_C => {
+                let mut value = self.reg_c_flags & (REG_C_PF | REG_C_AF | REG_C_UF);
+                if value != 0 {
+                    value |= REG_C_IRQF;
+                }
+                self.reg_c_flags = 0;
+                self.update_irq_line();
+                value
+            }
+            REG_STATUS_D => 0x80,
+            _ => self.nvram[idx as usize],
+        }
+    }
+
+    fn write_selected(&mut self, now_ns: u64, value: u8) {
+        let idx = self.index & 0x7F;
+        match idx {
+            REG_SECONDS | REG_MINUTES | REG_HOURS | REG_DAY_OF_MONTH | REG_MONTH | REG_YEAR
+            | REG_CENTURY => {
+                self.write_datetime_field(now_ns, idx, value);
+            }
+            REG_STATUS_A => {
+                self.reg_a = value & 0x7F;
+                self.recompute_periodic(now_ns as u128);
+            }
+            REG_STATUS_B => {
+                self.write_reg_b(now_ns, value);
+            }
+            REG_STATUS_C | REG_STATUS_D => {}
+            _ => self.nvram[idx as usize] = value,
+        }
+    }
+
+    fn write_reg_b(&mut self, now_ns: u64, value: u8) {
+        let old_set = self.set_mode;
+        let new_set = value & REG_B_SET != 0;
+
+        if !old_set && new_set {
+            self.frozen_seconds = self.rtc_seconds_at(now_ns);
+            self.set_mode = true;
+            self.last_rtc_seconds = self.frozen_seconds;
+        } else if old_set && !new_set {
+            self.set_mode = false;
+            self.offset_seconds = self.frozen_seconds - (now_ns / 1_000_000_000) as i64;
+            self.last_rtc_seconds = self.rtc_seconds_at(now_ns);
+        }
+
+        self.reg_b = value;
+        self.recompute_periodic(now_ns as u128);
+    }
+
+    fn write_datetime_field(&mut self, now_ns: u64, idx: u8, raw: u8) {
+        let mut dt = unix_seconds_to_datetime(self.rtc_seconds_at(now_ns));
+        match idx {
+            REG_SECONDS => dt.second = self.decode_bcd(raw),
+            REG_MINUTES => dt.minute = self.decode_bcd(raw),
+            REG_HOURS => dt.hour = self.decode_hours(raw),
+            REG_DAY_OF_MONTH => dt.day = self.decode_bcd(raw),
+            REG_MONTH => dt.month = self.decode_bcd(raw),
+            REG_YEAR => {
+                let year = self.decode_bcd(raw) as i32;
+                dt.year = dt.year.div_euclid(100) * 100 + year;
+            }
+            REG_CENTURY => {
+                let century = self.decode_bcd(raw) as i32;
+                dt.year = century * 100 + dt.year.rem_euclid(100);
+            }
+            _ => return,
+        }
+
+        if !dt.is_valid() {
+            return;
+        }
+
+        self.set_rtc_seconds(now_ns, datetime_to_unix_seconds(dt));
+    }
+
+    fn read_u8(&mut self, port: u16) -> u8 {
+        match port {
+            PORT_INDEX => (self.index & 0x7F) | if self.nmi_disabled { 0x80 } else { 0x00 },
+            PORT_DATA => {
+                let now_ns = self.clock.now_ns();
+                self.tick_at(now_ns);
+                self.read_selected(now_ns)
+            }
+            _ => 0xFF,
+        }
+    }
+
+    fn write_u8(&mut self, port: u16, value: u8) {
+        match port {
+            PORT_INDEX => {
+                self.index = value & 0x7F;
+                self.nmi_disabled = value & 0x80 != 0;
+            }
+            PORT_DATA => {
+                let now_ns = self.clock.now_ns();
+                self.tick_at(now_ns);
+                self.write_selected(now_ns, value);
+            }
+            _ => {}
+        }
+    }
+}
+
+impl<C: Clock, I: IrqLine> PortIoDevice for RtcCmos<C, I> {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        match size {
+            1 => u32::from(self.read_u8(port)),
+            2 => {
+                let lo = self.read_u8(port);
+                let hi = self.read_u8(port.wrapping_add(1));
+                u32::from(u16::from_le_bytes([lo, hi]))
+            }
+            4 => {
+                let b0 = self.read_u8(port);
+                let b1 = self.read_u8(port.wrapping_add(1));
+                let b2 = self.read_u8(port.wrapping_add(2));
+                let b3 = self.read_u8(port.wrapping_add(3));
+                u32::from_le_bytes([b0, b1, b2, b3])
+            }
+            _ => 0,
+        }
+    }
+
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        match size {
+            1 => self.write_u8(port, value as u8),
+            2 => {
+                let [b0, b1] = (value as u16).to_le_bytes();
+                self.write_u8(port, b0);
+                self.write_u8(port.wrapping_add(1), b1);
+            }
+            4 => {
+                let [b0, b1, b2, b3] = value.to_le_bytes();
+                self.write_u8(port, b0);
+                self.write_u8(port.wrapping_add(1), b1);
+                self.write_u8(port.wrapping_add(2), b2);
+                self.write_u8(port.wrapping_add(3), b3);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn days_from_civil(year: i32, month: u8, day: u8) -> i64 {
+    let mut y = year as i64;
+    let m = month as i64;
+    let d = day as i64;
+    y -= if m <= 2 { 1 } else { 0 };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = m + if m > 2 { -3 } else { 9 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+fn civil_from_days(days: i64) -> (i32, u8, u8) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+    (year as i32, m as u8, d as u8)
+}
+
+fn datetime_to_unix_seconds(dt: RtcDateTime) -> i64 {
+    let days = days_from_civil(dt.year, dt.month, dt.day);
+    let seconds_in_day = dt.hour as i64 * 3600 + dt.minute as i64 * 60 + dt.second as i64;
+    days * 86_400 + seconds_in_day
+}
+
+fn unix_seconds_to_datetime(unix_seconds: i64) -> RtcDateTime {
+    let days = unix_seconds.div_euclid(86_400);
+    let seconds_in_day = unix_seconds.rem_euclid(86_400);
+    let hour = (seconds_in_day / 3600) as u8;
+    let minute = ((seconds_in_day % 3600) / 60) as u8;
+    let second = (seconds_in_day % 60) as u8;
+    let (year, month, day) = civil_from_days(days);
+    RtcDateTime {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+    }
+}
+
+fn weekday_from_unix_seconds(unix_seconds: i64) -> u8 {
+    let days = unix_seconds.div_euclid(86_400);
+    (days + 4).rem_euclid(7) as u8 + 1
+}
+
+fn days_in_month(year: i32, month: u8) -> u8 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if is_leap_year(year) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 0,
+    }
+}
+
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clock::ManualClock;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    #[derive(Clone)]
+    struct TestIrq(Rc<Cell<bool>>);
+
+    impl TestIrq {
+        fn new() -> Self {
+            Self(Rc::new(Cell::new(false)))
+        }
+
+        fn level(&self) -> bool {
+            self.0.get()
+        }
+    }
+
+    impl IrqLine for TestIrq {
+        fn set_level(&self, level: bool) {
+            self.0.set(level);
+        }
+    }
+
+    fn read_reg(rtc: &mut impl PortIoDevice, idx: u8) -> u8 {
+        rtc.write(PORT_INDEX, 1, idx as u32);
+        rtc.read(PORT_DATA, 1) as u8
+    }
+
+    fn write_reg(rtc: &mut impl PortIoDevice, idx: u8, value: u8) {
+        rtc.write(PORT_INDEX, 1, idx as u32);
+        rtc.write(PORT_DATA, 1, value as u32);
+    }
+
+    #[test]
+    fn time_registers_update_on_second_edges() {
+        let clock = ManualClock::new();
+        let irq = TestIrq::new();
+        let mut rtc = RtcCmos::new(clock.clone(), irq);
+
+        let s0 = read_reg(&mut rtc, REG_SECONDS);
+        clock.advance_ns(500_000_000);
+        let s1 = read_reg(&mut rtc, REG_SECONDS);
+        assert_eq!(s0, s1);
+
+        clock.advance_ns(600_000_000);
+        let s2 = read_reg(&mut rtc, REG_SECONDS);
+        assert_eq!(s2, 0x01);
+    }
+
+    #[test]
+    fn status_c_read_clears_interrupt_flags() {
+        let clock = ManualClock::new();
+        let irq = TestIrq::new();
+        let mut rtc = RtcCmos::new(clock.clone(), irq.clone());
+
+        write_reg(&mut rtc, REG_STATUS_B, REG_B_24H | REG_B_UIE);
+
+        clock.advance_ns(1_000_000_000);
+        rtc.tick();
+        assert!(irq.level());
+
+        let c = read_reg(&mut rtc, REG_STATUS_C);
+        assert_eq!(c & (REG_C_IRQF | REG_C_UF), REG_C_IRQF | REG_C_UF);
+        assert!(!irq.level());
+
+        let c2 = read_reg(&mut rtc, REG_STATUS_C);
+        assert_eq!(c2, 0);
+    }
+
+    #[test]
+    fn irq8_asserts_only_when_enabled_and_event_occurs() {
+        let clock = ManualClock::new();
+        let irq = TestIrq::new();
+        let mut rtc = RtcCmos::new(clock.clone(), irq.clone());
+
+        clock.advance_ns(1_000_000_000);
+        rtc.tick();
+        assert!(!irq.level());
+
+        write_reg(&mut rtc, REG_STATUS_B, REG_B_24H | REG_B_UIE);
+        clock.advance_ns(1_000_000_000);
+        rtc.tick();
+        assert!(irq.level());
+
+        let _ = read_reg(&mut rtc, REG_STATUS_C);
+        assert!(!irq.level());
+
+        write_reg(&mut rtc, REG_STATUS_A, 0x26);
+        write_reg(&mut rtc, REG_STATUS_B, REG_B_24H | REG_B_PIE);
+        clock.advance_ns(2_000_000);
+        rtc.tick();
+        assert!(irq.level());
+
+        let c = read_reg(&mut rtc, REG_STATUS_C);
+        assert_ne!(c & REG_C_PF, 0);
+        assert!(!irq.level());
+    }
+}

@@ -10,9 +10,12 @@ pub mod pit8254;
 pub mod io;
 pub mod storage;
 
-pub use pic8259::DualPic8259;
-pub use pit8254::Pit8254;
-
 pub mod clock;
 pub mod hpet;
 pub mod ioapic;
+pub mod irq;
+pub mod rtc_cmos;
+
+pub use pic8259::DualPic8259;
+pub use pit8254::Pit8254;
+pub use rtc_cmos::{RtcCmos, RtcDateTime};
