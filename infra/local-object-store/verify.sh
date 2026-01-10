@@ -95,6 +95,19 @@ echo "$preflight_origin" | grep -i "^access-control-allow-origin: ${allowed_orig
 echo "$preflight_origin" | grep -i '^access-control-allow-methods:.*GET'
 echo "$preflight_origin" | grep -i '^access-control-allow-headers:.*range'
 
+echo "==> Verifying origin does not allow arbitrary CORS origins..."
+preflight_origin_bad="$(curl -fsS -D - -o /dev/null -X OPTIONS \
+  -H "Origin: http://example.com" \
+  -H "Access-Control-Request-Method: GET" \
+  -H "Access-Control-Request-Headers: range" \
+  "${origin}/${bucket}/${obj}")"
+require_status "$preflight_origin_bad" '^HTTP/[^ ]+ (200|204) '
+if echo "$preflight_origin_bad" | grep -qi '^access-control-allow-origin:'; then
+  echo "error: origin unexpectedly returned Access-Control-Allow-Origin for disallowed Origin" >&2
+  echo "$preflight_origin_bad" >&2
+  exit 1
+fi
+
 echo "==> Starting proxy (optional CDN/edge emulation)..."
 docker compose --profile proxy up -d minio-proxy
 
