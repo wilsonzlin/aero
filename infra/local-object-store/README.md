@@ -107,6 +107,21 @@ docker compose --profile tools run --rm mc ls local/disk-images
 
 > These examples assume you uploaded `large.bin` to `disk-images/large.bin`.
 
+### Verify HEAD / size discovery
+
+The streaming disk client typically starts with a `HEAD` request to discover the object size (`Content-Length`).
+
+```bash
+curl -s -D - -o /dev/null -I \
+  http://localhost:9000/disk-images/large.bin
+```
+
+Look for:
+
+- `HTTP/1.1 200 OK`
+- `Content-Length: ...`
+- `Accept-Ranges: bytes`
+
 ### Direct to MinIO origin
 
 ```bash
