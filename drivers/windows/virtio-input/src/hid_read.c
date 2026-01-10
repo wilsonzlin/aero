@@ -355,6 +355,7 @@ NTSTATUS VirtioInputReadReportQueuesInitialize(_In_ WDFDEVICE Device)
     NTSTATUS status;
     WDF_OBJECT_ATTRIBUTES lockAttributes;
     WDF_OBJECT_ATTRIBUTES queueAttributes;
+    UCHAR i;
 
     devCtx = VirtioInputGetDeviceContext(Device);
 
@@ -375,14 +376,14 @@ NTSTATUS VirtioInputReadReportQueuesInitialize(_In_ WDFDEVICE Device)
 
     devCtx->ReadReportsEnabled = TRUE;
 
-    for (UCHAR i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
+    for (i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
         VirtioInputPendingRingInit(&devCtx->PendingReportRing[i]);
     }
 
     WDF_OBJECT_ATTRIBUTES_INIT(&queueAttributes);
     queueAttributes.ParentObject = Device;
 
-    for (UCHAR i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
+    for (i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
         WDF_IO_QUEUE_CONFIG queueConfig;
         WDF_IO_QUEUE_CONFIG_INIT(&queueConfig, WdfIoQueueDispatchManual);
 
@@ -401,6 +402,7 @@ NTSTATUS VirtioInputReadReportQueuesInitialize(_In_ WDFDEVICE Device)
 VOID VirtioInputReadReportQueuesStart(_In_ WDFDEVICE Device)
 {
     PDEVICE_CONTEXT devCtx;
+    UCHAR i;
 
     devCtx = VirtioInputGetDeviceContext(Device);
 
@@ -408,7 +410,7 @@ VOID VirtioInputReadReportQueuesStart(_In_ WDFDEVICE Device)
 
     WdfSpinLockAcquire(devCtx->ReadReportLock);
     devCtx->ReadReportsEnabled = TRUE;
-    for (UCHAR i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
+    for (i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
         VirtioInputPendingRingInit(&devCtx->PendingReportRing[i]);
     }
     WdfSpinLockRelease(devCtx->ReadReportLock);
@@ -419,6 +421,7 @@ VOID VirtioInputReadReportQueuesStart(_In_ WDFDEVICE Device)
 VOID VirtioInputReadReportQueuesStopAndFlush(_In_ WDFDEVICE Device, _In_ NTSTATUS CompletionStatus)
 {
     PDEVICE_CONTEXT devCtx;
+    UCHAR i;
 
     devCtx = VirtioInputGetDeviceContext(Device);
 
@@ -426,12 +429,12 @@ VOID VirtioInputReadReportQueuesStopAndFlush(_In_ WDFDEVICE Device, _In_ NTSTATU
 
     WdfSpinLockAcquire(devCtx->ReadReportLock);
     devCtx->ReadReportsEnabled = FALSE;
-    for (UCHAR i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
+    for (i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
         VirtioInputPendingRingInit(&devCtx->PendingReportRing[i]);
     }
     WdfSpinLockRelease(devCtx->ReadReportLock);
 
-    for (UCHAR i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
+    for (i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
         WDFREQUEST request;
         while (NT_SUCCESS(WdfIoQueueRetrieveNextRequest(devCtx->ReadReportQueue[i], &request))) {
             VioInputCounterInc(&devCtx->Counters.ReadReportCancelled);
