@@ -4,5 +4,6 @@ pub mod bus;
 pub mod mmu;
 pub mod phys;
 
-pub use bus::MemoryBus;
+pub use bus::{Bus, MemoryBus, MmioHandler};
+pub use mmu::{AccessType, Mmu, PageFault};
 pub use phys::{DenseMemory, GuestMemory, GuestMemoryError, GuestMemoryResult, SparseMemory};

@@ -24,3 +24,5 @@ members = [
     "server",
     "crates/nt-packetlib",
 ]
+
+exclude = ["fuzz"]

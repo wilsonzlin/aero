@@ -99,3 +99,8 @@ dumps/
 *.core
 *.trace
 *.log
+
+# cargo-fuzz
+fuzz/artifacts/
+fuzz/corpus/
+fuzz/Cargo.lock

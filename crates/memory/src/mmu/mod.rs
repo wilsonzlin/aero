@@ -59,6 +59,48 @@ pub const EFER_LME: u64 = 1 << 8;
 pub const EFER_LMA: u64 = 1 << 10;
 pub const EFER_NXE: u64 = 1 << 11;
 
+/// Minimal MMU register bundle used for address translation.
+#[derive(Debug, Clone, Copy)]
+pub struct Mmu {
+    pub cr0: u64,
+    pub cr3: u64,
+    pub cr4: u64,
+    pub efer: u64,
+    pub cpl: u8,
+}
+
+impl Default for Mmu {
+    fn default() -> Self {
+        Self {
+            cr0: 0,
+            cr3: 0,
+            cr4: 0,
+            efer: 0,
+            cpl: 0,
+        }
+    }
+}
+
+impl Mmu {
+    pub fn translate(
+        &self,
+        bus: &mut impl MemoryBus,
+        linear: u64,
+        access: AccessType,
+    ) -> Result<u64, PageFault> {
+        translate(
+            bus,
+            linear,
+            access,
+            self.cpl,
+            self.cr0 as u32,
+            self.cr3 as u32,
+            self.cr4 as u32,
+            self.efer,
+        )
+    }
+}
+
 /// Translate a linear address to a physical address.
 ///
 /// Supported translation modes:

@@ -1,0 +1,25 @@
+name: Fuzz (smoke)
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: fuzz_mmu_translate (10s)
+        run: cargo +nightly fuzz run fuzz_mmu_translate -- -max_total_time=10
+
+      - name: fuzz_bus_rw (10s)
+        run: cargo +nightly fuzz run fuzz_bus_rw -- -max_total_time=10
+
