@@ -6,6 +6,7 @@ pub mod apic;
 pub mod pci;
 pub mod pic8259;
 pub mod pit8254;
+pub mod i8042;
 
 pub mod io;
 pub mod storage;
@@ -15,7 +16,6 @@ pub mod hpet;
 pub mod ioapic;
 pub mod irq;
 pub mod rtc_cmos;
-pub mod i8042;
 pub mod reset_ctrl;
 
 pub use pic8259::DualPic8259;
