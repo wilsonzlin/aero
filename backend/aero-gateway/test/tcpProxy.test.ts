@@ -65,12 +65,14 @@ describe("tcpProxy route", () => {
 
     const proxyServer = http.createServer();
     proxyServer.on("upgrade", (req, socket, head) => {
-      handleTcpProxyUpgrade(req, socket, head);
+      handleTcpProxyUpgrade(req, socket, head, {
+        createConnection: (() => net.createConnection({ host: "127.0.0.1", port: echoPort })) as typeof net.createConnection,
+      });
     });
     const proxyPort = await listen(proxyServer, "127.0.0.1");
 
     const ws = await openWebSocket(
-      `ws://127.0.0.1:${proxyPort}/tcp?host=127.0.0.1&port=${echoPort}`,
+      `ws://127.0.0.1:${proxyPort}/tcp?host=8.8.8.8&port=${echoPort}`,
     );
 
     try {
@@ -93,12 +95,14 @@ describe("tcpProxy route", () => {
 
     const proxyServer = http.createServer();
     proxyServer.on("upgrade", (req, socket, head) => {
-      handleTcpProxyUpgrade(req, socket, head);
+      handleTcpProxyUpgrade(req, socket, head, {
+        createConnection: (() => net.createConnection({ host: "127.0.0.1", port: echoPort })) as typeof net.createConnection,
+      });
     });
     const proxyPort = await listen(proxyServer, "127.0.0.1");
 
     const ws = await openWebSocket(
-      `ws://127.0.0.1:${proxyPort}/tcp?target=127.0.0.1:${echoPort}&host=256.256.256.256&port=1`,
+      `ws://127.0.0.1:${proxyPort}/tcp?target=8.8.8.8:${echoPort}&host=256.256.256.256&port=1`,
     );
 
     try {

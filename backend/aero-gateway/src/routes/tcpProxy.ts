@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import net from "node:net";
 import type http from "node:http";
 import type { Duplex } from "node:stream";
@@ -6,14 +7,36 @@ import type { Duplex } from "node:stream";
 import type { TcpTarget } from "../protocol/tcpTarget.js";
 import { TcpTargetParseError, parseTcpTargetFromUrl } from "../protocol/tcpTarget.js";
 import { validateTcpTargetPolicy, validateWsUpgradePolicy, type TcpProxyUpgradePolicy } from "./tcpPolicy.js";
+import {
+  evaluateTcpHostPolicy,
+  parseTcpHostnameEgressPolicyFromEnv,
+  type TcpHostPolicyDecision,
+} from "../security/egressPolicy.js";
+import { isPublicIpAddress } from "../security/ipPolicy.js";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+export const tcpProxyMetrics = {
+  blockedByHostPolicy: 0,
+  blockedByIpPolicy: 0,
+};
+
+export class TcpProxyTargetError extends Error {
+  readonly kind: "host-policy" | "ip-policy" | "dns";
+  readonly statusCode: number;
+
+  constructor(kind: "host-policy" | "ip-policy" | "dns", message: string, statusCode: number) {
+    super(message);
+    this.kind = kind;
+    this.statusCode = statusCode;
+  }
+}
 
 export function handleTcpProxyUpgrade(
   req: http.IncomingMessage,
   socket: Duplex,
   head: Buffer,
-  opts: TcpProxyUpgradePolicy = {},
+  opts: TcpProxyUpgradePolicy & { createConnection?: typeof net.createConnection } = {},
 ): void {
   const upgradeDecision = validateWsUpgradePolicy(req, opts);
   if (!upgradeDecision.ok) {
@@ -40,32 +63,48 @@ export function handleTcpProxyUpgrade(
     return;
   }
 
-  const key = req.headers["sec-websocket-key"];
-  if (typeof key !== "string" || key === "") {
+  const keyHeader = req.headers["sec-websocket-key"];
+  if (typeof keyHeader !== "string" || keyHeader === "") {
     respondHttp(socket, 400, "Missing required header: Sec-WebSocket-Key");
     return;
   }
+  const key = keyHeader;
 
-  const accept = createHash("sha1").update(key + WS_GUID).digest("base64");
-  socket.write(
-    [
-      "HTTP/1.1 101 Switching Protocols",
-      "Upgrade: websocket",
-      "Connection: Upgrade",
-      `Sec-WebSocket-Accept: ${accept}`,
-      "\r\n",
-    ].join("\r\n"),
-  );
+  void (async () => {
+    let resolved: { ip: string; port: number; hostname?: string };
+    try {
+      resolved = await resolveTcpProxyTarget(target.host, target.port);
+    } catch (err) {
+      if (err instanceof TcpProxyTargetError) {
+        respondHttp(socket, err.statusCode, err.message);
+        return;
+      }
+      respondHttp(socket, 502, formatUpgradeError(err));
+      return;
+    }
 
-  if ("setNoDelay" in socket && typeof socket.setNoDelay === "function") {
-    socket.setNoDelay(true);
-  }
+    const accept = createHash("sha1").update(key + WS_GUID).digest("base64");
+    socket.write(
+      [
+        "HTTP/1.1 101 Switching Protocols",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Accept: ${accept}`,
+        "\r\n",
+      ].join("\r\n"),
+    );
 
-  const tcpSocket = net.createConnection({ host: target.host, port: target.port });
-  tcpSocket.setNoDelay(true);
+    if ("setNoDelay" in socket && typeof socket.setNoDelay === "function") {
+      socket.setNoDelay(true);
+    }
 
-  const bridge = new WebSocketTcpBridge(socket, tcpSocket);
-  bridge.start(head);
+    const createConnection = opts.createConnection ?? net.createConnection;
+    const tcpSocket = createConnection({ host: resolved.ip, port: resolved.port });
+    tcpSocket.setNoDelay(true);
+
+    const bridge = new WebSocketTcpBridge(socket, tcpSocket);
+    bridge.start(head);
+  })();
 }
 
 function respondHttp(socket: Duplex, status: number, message: string): void {
@@ -90,6 +129,8 @@ function httpStatusText(status: number): string {
       return "Forbidden";
     case 404:
       return "Not Found";
+    case 502:
+      return "Bad Gateway";
     default:
       return "Error";
   }
@@ -332,4 +373,48 @@ function encodeFrame(opcode: number, payload: Buffer): Buffer {
   header.writeUInt32BE(0, 2);
   header.writeUInt32BE(length, 6);
   return Buffer.concat([header, payload]);
+}
+
+export async function resolveTcpProxyTarget(
+  rawHost: string,
+  port: number,
+  env: Record<string, string | undefined> = process.env,
+): Promise<{ ip: string; port: number; hostname?: string }> {
+  const hostPolicy = parseTcpHostnameEgressPolicyFromEnv(env);
+  const decision = evaluateTcpHostPolicy(rawHost, hostPolicy);
+  if (!decision.allowed) {
+    tcpProxyMetrics.blockedByHostPolicy++;
+    const statusCode = decision.reason === "invalid-hostname" ? 400 : 403;
+    throw new TcpProxyTargetError("host-policy", formatHostPolicyRejection(decision), statusCode);
+  }
+
+  if (decision.target.kind === "ip") {
+    if (!isPublicIpAddress(decision.target.ip)) {
+      tcpProxyMetrics.blockedByIpPolicy++;
+      throw new TcpProxyTargetError("ip-policy", "Target IP is not allowed by IP egress policy", 403);
+    }
+    return { ip: decision.target.ip, port };
+  }
+
+  // Host policy is enforced before DNS. After that, still enforce IP egress
+  // policy on the resolved targets, selecting the first allowed public IP.
+  let addresses: { address: string }[];
+  try {
+    addresses = await lookup(decision.target.hostname, { all: true, verbatim: true });
+  } catch (err) {
+    throw new TcpProxyTargetError("dns", `DNS lookup failed for ${decision.target.hostname}`, 502);
+  }
+
+  for (const { address } of addresses) {
+    if (isPublicIpAddress(address)) {
+      return { ip: address, port, hostname: decision.target.hostname };
+    }
+  }
+
+  tcpProxyMetrics.blockedByIpPolicy++;
+  throw new TcpProxyTargetError("ip-policy", "All resolved IPs are blocked by IP egress policy", 403);
+}
+
+function formatHostPolicyRejection(decision: Extract<TcpHostPolicyDecision, { allowed: false }>): string {
+  return `${decision.reason}: ${decision.message}`;
 }

@@ -576,6 +576,33 @@ The gateway must enforce (at minimum):
 
 For workloads that need many concurrent TCP connections, the gateway can optionally expose a multiplexed WebSocket endpoint (`/tcp-mux`) that carries many logical TCP streams over a single socket. This reduces WebSocket overhead and avoids browser connection limits. See the [Aero Gateway API](./backend/01-aero-gateway-api.md) for details.
 
+#### TCP Egress Policy (Recommended for Public Deployments)
+
+When exposing the TCP proxy publicly, it's recommended to restrict outbound
+connections to a safe subset of domains to reduce abuse risk.
+
+Environment variables:
+
+- `TCP_ALLOWED_HOSTS` (default: empty / allow-all)
+  - Comma-separated hostname patterns.
+  - Supports exact matches (`example.com`) and wildcard subdomain matches
+    (`*.example.com`).
+  - If non-empty, the target **must** match at least one pattern.
+- `TCP_BLOCKED_HOSTS` (default: empty)
+  - Comma-separated hostname patterns using the same syntax.
+  - Always enforced; deny overrides allow.
+- `TCP_REQUIRE_DNS_NAME` (default: `0`)
+  - When set to `1`, disallows IP-literal targets entirely (forces DNS names).
+
+Notes:
+
+- Hostnames are normalized before matching (lowercased, IDNA/punycode for
+  international domains). Invalid hostnames are rejected.
+- Hostname allow/deny decisions are applied **before** DNS resolution.
+- Private/reserved IP blocking still applies after DNS resolution. If a hostname
+  resolves to multiple IPs, the proxy connects only to the **first** allowed
+  public IP.
+
 ---
 
 ## WebRTC UDP Proxy
