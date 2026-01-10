@@ -1,6 +1,7 @@
 use memory::MemoryBus;
 
 use super::regs::*;
+use crate::io::audio::dsp::pcm::{PcmSampleFormat, PcmSpec};
 
 #[derive(Debug, Clone)]
 pub struct AudioRingBuffer {
@@ -170,6 +171,32 @@ impl StreamFormat {
             bits_per_sample: bits,
             channels,
         }
+    }
+
+    /// Convert this HDA stream format into a DSP [`PcmSpec`].
+    ///
+    /// HDA encodes integer PCM formats only; floating-point formats are not
+    /// expressible in the stream `FMT` register.
+    pub fn to_pcm_spec(&self) -> Option<PcmSpec> {
+        let format = match self.bits_per_sample {
+            8 => PcmSampleFormat::U8,
+            16 => PcmSampleFormat::I16,
+            20 => PcmSampleFormat::I20In32,
+            24 => PcmSampleFormat::I24In32,
+            32 => PcmSampleFormat::I32,
+            _ => return None,
+        };
+
+        let channels = self.channels as usize;
+        if channels == 0 {
+            return None;
+        }
+
+        Some(PcmSpec {
+            format,
+            channels,
+            sample_rate: self.sample_rate,
+        })
     }
 }
 
@@ -459,6 +486,8 @@ fn mask_for_size(size: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::AudioRingBuffer;
+    use super::StreamFormat;
+    use crate::io::audio::dsp::pcm::PcmSampleFormat;
 
     #[test]
     fn ring_buffer_push_and_drain_roundtrip() {
@@ -495,5 +524,18 @@ mod tests {
         assert_eq!(rb.pop_into(&mut out), 3);
         assert_eq!(out, [1, 2, 3]);
         assert_eq!(rb.drain_all(), vec![4]);
+    }
+
+    #[test]
+    fn stream_format_to_pcm_spec_maps_bits_and_channels() {
+        let fmt = StreamFormat {
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            channels: 2,
+        };
+        let spec = fmt.to_pcm_spec().unwrap();
+        assert_eq!(spec.format, PcmSampleFormat::I16);
+        assert_eq!(spec.channels, 2);
+        assert_eq!(spec.sample_rate, 48_000);
     }
 }
