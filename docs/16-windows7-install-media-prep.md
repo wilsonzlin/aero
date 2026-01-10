@@ -13,6 +13,12 @@ This document describes an **auditable, reproducible** process for preparing a W
 
 This is written to be executable manually today, and to serve as a reference for future automation (see `tools/win7-slipstream/templates/`).
 
+Related references in this repo:
+
+- `docs/16-win7-image-servicing.md` (more detailed, Windows-first DISM/reg/bcd workflows)
+- `docs/16-win7-unattended-install.md` (unattended install details and hooks)
+- `tools/win7-slipstream/patches/README.md` (auditable `.reg` patches for offline BCD + SOFTWARE hives)
+
 ---
 
 ## Supported input ISOs (expected layout)
@@ -236,7 +242,7 @@ Windows stores LocalMachine certificate stores under the SOFTWARE hive at:
 - `…\\Microsoft\\SystemCertificates\\ROOT\\Certificates\\<thumbprint>`
 - `…\\Microsoft\\SystemCertificates\\TrustedPublisher\\Certificates\\<thumbprint>`
 
-The key name is the certificate SHA1 thumbprint (uppercase hex, no spaces).
+The key name is the certificate **SHA-1 thumbprint of the certificate DER bytes** (uppercase hex, no spaces).
 
 PowerShell helper (repeat for each mounted image where you need trust):
 
@@ -247,16 +253,17 @@ function Add-CertToOfflineHive {
     [Parameter(Mandatory=$true)][string]$CertPath
   )
 
-  $bytes = [System.IO.File]::ReadAllBytes($CertPath)
-  $thumb = (Get-FileHash -Algorithm SHA1 -Path $CertPath).Hash.ToUpperInvariant()
+  # Use X509Certificate2 so PEM/Base64-encoded .cer files work too.
+  $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CertPath)
+  $thumb = $cert.Thumbprint.ToUpperInvariant()
+  $der = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
 
   reg load HKLM\\AERO_OFFLINE "$OfflineSoftwareHivePath" | Out-Null
 
   foreach ($store in @("ROOT","TrustedPublisher")) {
     $k = "HKLM\\AERO_OFFLINE\\Microsoft\\SystemCertificates\\$store\\Certificates\\$thumb"
     reg add $k /f | Out-Null
-    reg add $k /v Blob /t REG_BINARY /d ([BitConverter]::ToString($bytes).Replace("-","")) /f | Out-Null
-    reg add $k /v EncodingType /t REG_DWORD /d 1 /f | Out-Null
+    reg add $k /v Blob /t REG_BINARY /d ([BitConverter]::ToString($der).Replace("-","")) /f | Out-Null
   }
 
   reg unload HKLM\\AERO_OFFLINE | Out-Null
@@ -395,13 +402,13 @@ Even with unattend-based driver paths, you must still ensure WinPE and the insta
 - Patch `BCD-Template` inside the target install.wim index so the installed OS boots with the same signing policy.
 - Install Aero’s test root cert into offline SOFTWARE hives for boot.wim + install.wim.
 
-If you cannot perform these steps natively on your host OS, do them in a Windows VM while pointing at the extracted ISO tree / mounted WIM directories.
+If you don’t have Windows tooling available, these steps can still be done cross-platform by editing the offline registry hives directly (see `tools/win7-slipstream/patches/README.md` and the example below).
 
-#### Example: offline certificate injection on Linux/macOS (wimlib + hivex)
+#### Example: offline certificate + BCD patching on Linux/macOS (wimlib + hivexregedit)
 
 If you prefer not to use Windows tooling for certificate injection, you can edit the offline SOFTWARE hive directly.
 
-This example mounts `boot.wim` index 2 read-write, merges a generated `.reg` file into the hive, then commits.
+This example mounts `boot.wim` index 2 read-write, generates a `.reg` certificate patch, merges it into the hive, then commits.
 
 Prerequisites:
 
@@ -416,27 +423,14 @@ CERT_PATH="iso-root/aero/certs/aero-test-root.cer"
 mkdir -p mnt
 wimlib-imagex mount iso-root/sources/boot.wim 2 mnt --read-write
 
-# Generate a minimal .reg file that adds the cert to ROOT + TrustedPublisher.
-python3 - <<'PY' > cert.reg
-import hashlib, pathlib
+# Generate an importable .reg patch for an offline SOFTWARE hive.
+# (Handles both DER and PEM certificates.)
+python3 tools/win7-slipstream/scripts/cert-to-reg.py \
+  --mount-key SOFTWARE \
+  --out aero-cert.reg \
+  "$CERT_PATH"
 
-cert_path = pathlib.Path("iso-root/aero/certs/aero-test-root.cer")
-cert = cert_path.read_bytes()
-thumb = hashlib.sha1(cert).hexdigest().upper()
-
-def hex_bytes(data):
-    return ",".join(f"{b:02x}" for b in data)
-
-blob = hex_bytes(cert)
-
-print("Windows Registry Editor Version 5.00\\n")
-for store in ("ROOT", "TrustedPublisher"):
-    print(f"[\\\\Microsoft\\\\SystemCertificates\\\\{store}\\\\Certificates\\\\{thumb}]")
-    print(f"\\"Blob\\"=hex:{blob}")
-    print("\\"EncodingType\\"=dword:00000001\\n")
-PY
-
-hivexregedit --merge mnt/Windows/System32/config/SOFTWARE cert.reg
+hivexregedit --merge mnt/Windows/System32/config/SOFTWARE aero-cert.reg
 wimlib-imagex unmount mnt --commit
 ```
 
@@ -444,6 +438,15 @@ Repeat this for:
 
 - `boot.wim` index 1 and 2
 - each `install.wim` index you will install (or all indexes if unsure)
+
+You can also patch BCD stores cross-platform using the auditable `.reg` patches in `tools/win7-slipstream/patches/`:
+
+```sh
+hivexregedit --merge iso-root/boot/BCD tools/win7-slipstream/patches/bcd-testsigning.reg
+
+# If your ISO has a UEFI BCD store too:
+hivexregedit --merge iso-root/efi/microsoft/boot/BCD tools/win7-slipstream/patches/bcd-testsigning.reg
+```
 
 ### 6) Rebuild the ISO (Linux/macOS: xorriso)
 
