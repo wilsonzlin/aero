@@ -14,6 +14,9 @@ on:
 jobs:
   build:
     runs-on: windows-2022
+    env:
+      # Cache only the installer/downloads (not the installed WDK toolchain).
+      WDK_DOWNLOAD_CACHE: C:\wdk-download-cache
 
     steps:
       - uses: actions/checkout@v4
@@ -21,12 +24,28 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Install Windows Driver Kit (WDK)
-        shell: powershell
+      - name: Prepare WDK download cache directory
+        shell: pwsh
         run: |
-          # GitHub-hosted runners do not ship with the WDK by default.
-          # The Chocolatey package name is stable across WDK releases.
-          choco install windows-driver-kit -y --no-progress
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path $env:WDK_DOWNLOAD_CACHE | Out-Null
+
+      - name: Cache WDK downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.WDK_DOWNLOAD_CACHE }}
+          key: wdk-download-${{ runner.os }}-${{ hashFiles('ci/install-wdk.ps1', 'ci/lib/Toolchain.psm1') }}
+          restore-keys: |
+            wdk-download-${{ runner.os }}-
+
+      - name: Provision toolchain (ci/install-wdk.ps1)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!(Test-Path -LiteralPath 'ci\install-wdk.ps1')) {
+            throw "Expected script ci\install-wdk.ps1 to exist."
+          }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\install-wdk.ps1'
 
       - name: Build (Release x64)
         run: msbuild .\guest\windows\aerogpu_driver.sln /m /p:Configuration=Release /p:Platform=x64
@@ -44,4 +63,3 @@ jobs:
         with:
           name: aerogpu-windows-drivers
           path: out/
-
