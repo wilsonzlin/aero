@@ -35,3 +35,7 @@ path = "../../tests/state_translate.rs"
 [[test]]
 name = "d3d9_blend_depth_stencil"
 path = "../../tests/d3d9_blend_depth_stencil.rs"
+
+[[test]]
+name = "d3d9_vertex_input"
+path = "../../tests/d3d9_vertex_input.rs"
