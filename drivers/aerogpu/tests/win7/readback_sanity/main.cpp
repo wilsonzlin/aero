@@ -16,8 +16,24 @@ static int RunReadbackSanity(int argc, char** argv) {
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
-  const bool has_require_vid = aerogpu_test::GetArgUint32(argc, argv, "--require-vid", &require_vid);
-  const bool has_require_did = aerogpu_test::GetArgUint32(argc, argv, "--require-did", &require_did);
+  bool has_require_vid = false;
+  bool has_require_did = false;
+  std::string require_vid_str;
+  std::string require_did_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
+    std::string err;
+    if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
+      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+    }
+    has_require_vid = true;
+  }
+  if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
+    std::string err;
+    if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
+      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+    }
+    has_require_did = true;
+  }
 
   D3D_FEATURE_LEVEL feature_levels[] = {D3D_FEATURE_LEVEL_11_0,
                                        D3D_FEATURE_LEVEL_10_1,

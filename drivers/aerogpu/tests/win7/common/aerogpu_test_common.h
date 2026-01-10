@@ -13,6 +13,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <errno.h>
 
 #include <string>
 #include <vector>
@@ -71,10 +72,47 @@ static inline bool GetArgValue(int argc, char** argv, const char* key, std::stri
         *out = std::string(argv[i + 1]);
         return true;
       }
-      return false;
+      // Key present, but missing value.
+      out->clear();
+      return true;
     }
   }
   return false;
+}
+
+static inline bool ParseUint32(const std::string& s, uint32_t* out, std::string* err) {
+  if (s.empty()) {
+    if (err) {
+      *err = "missing value";
+    }
+    return false;
+  }
+  errno = 0;
+  char* end = NULL;
+  unsigned long v = strtoul(s.c_str(), &end, 0);
+  if (errno == ERANGE) {
+    if (err) {
+      *err = "out of range";
+    }
+    return false;
+  }
+  if (!end || end == s.c_str() || *end != 0) {
+    if (err) {
+      *err = "not a valid integer";
+    }
+    return false;
+  }
+  // On MSVC, unsigned long is 32-bit even on x64, but guard for other compilers anyway.
+  if (v > 0xFFFFFFFFul) {
+    if (err) {
+      *err = "out of uint32 range";
+    }
+    return false;
+  }
+  if (out) {
+    *out = (uint32_t)v;
+  }
+  return true;
 }
 
 static inline bool GetArgUint32(int argc, char** argv, const char* key, uint32_t* out) {
