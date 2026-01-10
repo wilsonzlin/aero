@@ -45,12 +45,22 @@ async function waitForHttpOk(url, { timeoutMs, shouldAbort }) {
         throw new Error(reason);
       }
     }
+    let res;
     try {
-      const res = await fetch(url, { method: 'HEAD' });
-      if (res.ok) return;
+      res = await fetch(url, { method: 'HEAD' });
     } catch {
       // connection refused / not up yet
+      await sleep(100);
+      continue;
     }
+
+    if (res.ok) return;
+
+    // We successfully connected to the server, so it is "up" but not returning
+    // the expected response. That's almost always a configuration/boot failure,
+    // so fail fast instead of waiting for the full timeout.
+    throw new Error(`Unexpected HTTP ${res.status} from ${url} while waiting for readiness`);
+
     await sleep(100);
   }
   throw new Error(`Timed out waiting for ${url}`);
@@ -295,12 +305,16 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
   } catch (err) {
     await killChildProcess(child);
     await fs.rm(tmpRoot, { recursive: true, force: true });
-    if (child.exitCode !== null) {
-      throw new Error(
-        `disk-gateway failed to start (exit ${child.exitCode}). Output:\n${output}`,
-      );
+    const exitCode = child.exitCode;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('Output:\n')) {
+      throw err;
     }
-    throw err;
+    const prefix =
+      exitCode === null
+        ? 'disk-gateway failed to become ready.'
+        : `disk-gateway failed to start (exit ${exitCode}).`;
+    throw new Error(`${prefix} ${msg}\n\nOutput:\n${output}`);
   }
 
   return {
