@@ -79,6 +79,14 @@ enum aerogpu_cmd_opcode {
   AEROGPU_CMD_DESTROY_SHADER = 0x201,
   AEROGPU_CMD_BIND_SHADERS = 0x202,
 
+  /* D3D9-style shader constant updates (float4 registers). */
+  AEROGPU_CMD_SET_SHADER_CONSTANTS_F = 0x203,
+
+  /* D3D9 vertex declaration / D3D10+ input layout blob (opaque to protocol). */
+  AEROGPU_CMD_CREATE_INPUT_LAYOUT = 0x204,
+  AEROGPU_CMD_DESTROY_INPUT_LAYOUT = 0x205,
+  AEROGPU_CMD_SET_INPUT_LAYOUT = 0x206,
+
   /* Pipeline state */
   AEROGPU_CMD_SET_BLEND_STATE = 0x300,
   AEROGPU_CMD_SET_DEPTH_STENCIL_STATE = 0x301,
@@ -92,6 +100,12 @@ enum aerogpu_cmd_opcode {
   /* Input assembler */
   AEROGPU_CMD_SET_VERTEX_BUFFERS = 0x500,
   AEROGPU_CMD_SET_INDEX_BUFFER = 0x501,
+  AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY = 0x502,
+
+  /* Resource binding / state (initially D3D9-centric; can be generalized). */
+  AEROGPU_CMD_SET_TEXTURE = 0x510,
+  AEROGPU_CMD_SET_SAMPLER_STATE = 0x511,
+  AEROGPU_CMD_SET_RENDER_STATE = 0x512,
 
   /* Drawing */
   AEROGPU_CMD_CLEAR = 0x600,
@@ -111,6 +125,15 @@ enum aerogpu_shader_stage {
 enum aerogpu_index_format {
   AEROGPU_INDEX_FORMAT_UINT16 = 0,
   AEROGPU_INDEX_FORMAT_UINT32 = 1,
+};
+
+enum aerogpu_primitive_topology {
+  AEROGPU_TOPOLOGY_POINTLIST = 1,
+  AEROGPU_TOPOLOGY_LINELIST = 2,
+  AEROGPU_TOPOLOGY_LINESTRIP = 3,
+  AEROGPU_TOPOLOGY_TRIANGLELIST = 4,
+  AEROGPU_TOPOLOGY_TRIANGLESTRIP = 5,
+  AEROGPU_TOPOLOGY_TRIANGLEFAN = 6,
 };
 
 /* --------------------------- Resource management ------------------------- */
@@ -241,6 +264,67 @@ struct aerogpu_cmd_bind_shaders {
 #pragma pack(pop)
 
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_bind_shaders) == 24);
+
+/*
+ * SET_SHADER_CONSTANTS_F:
+ * D3D9-style float4 constants.
+ *
+ * Payload format:
+ *   struct aerogpu_cmd_set_shader_constants_f
+ *   float data[vec4_count * 4]
+ *   padding to 4-byte alignment
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_set_shader_constants_f {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_SHADER_CONSTANTS_F */
+  uint32_t stage; /* enum aerogpu_shader_stage */
+  uint32_t start_register;
+  uint32_t vec4_count;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_shader_constants_f) == 24);
+
+/*
+ * CREATE_INPUT_LAYOUT:
+ * Opaque blob that describes the vertex input layout.
+ *
+ * Payload format:
+ *   struct aerogpu_cmd_create_input_layout
+ *   uint8_t blob[blob_size_bytes]
+ *   padding to 4-byte alignment
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_create_input_layout {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_CREATE_INPUT_LAYOUT */
+  aerogpu_handle_t input_layout_handle;
+  uint32_t blob_size_bytes;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_create_input_layout) == 20);
+
+#pragma pack(push, 1)
+struct aerogpu_cmd_destroy_input_layout {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_DESTROY_INPUT_LAYOUT */
+  aerogpu_handle_t input_layout_handle;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_destroy_input_layout) == 16);
+
+#pragma pack(push, 1)
+struct aerogpu_cmd_set_input_layout {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_INPUT_LAYOUT */
+  aerogpu_handle_t input_layout_handle; /* 0 = unbind */
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_input_layout) == 16);
 
 /* ------------------------------ Pipeline state --------------------------- */
 
@@ -435,6 +519,50 @@ struct aerogpu_cmd_set_index_buffer {
 #pragma pack(pop)
 
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_index_buffer) == 24);
+
+#pragma pack(push, 1)
+struct aerogpu_cmd_set_primitive_topology {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY */
+  uint32_t topology; /* enum aerogpu_primitive_topology */
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_primitive_topology) == 16);
+
+#pragma pack(push, 1)
+struct aerogpu_cmd_set_texture {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_TEXTURE */
+  uint32_t shader_stage; /* enum aerogpu_shader_stage */
+  uint32_t slot;
+  aerogpu_handle_t texture; /* 0 = unbind */
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_texture) == 24);
+
+#pragma pack(push, 1)
+struct aerogpu_cmd_set_sampler_state {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_SAMPLER_STATE */
+  uint32_t shader_stage; /* enum aerogpu_shader_stage */
+  uint32_t slot;
+  uint32_t state; /* D3D9 sampler state ID */
+  uint32_t value; /* D3D9 sampler state value */
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_sampler_state) == 24);
+
+#pragma pack(push, 1)
+struct aerogpu_cmd_set_render_state {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_RENDER_STATE */
+  uint32_t state; /* D3D9 render state ID */
+  uint32_t value; /* D3D9 render state value */
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_render_state) == 16);
 
 /* -------------------------------- Drawing -------------------------------- */
 
