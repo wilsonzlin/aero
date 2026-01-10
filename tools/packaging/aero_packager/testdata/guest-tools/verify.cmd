@@ -1,2 +1,3 @@
 @echo off
+rem Minimal fixture used by `aero_packager` tests.
 echo Verifying Aero Guest Tools...

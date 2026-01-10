@@ -138,6 +138,14 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
     }
 
     // Guest tools config (expected device IDs / service names).
+    // setup.cmd requires this for boot-critical virtio-blk pre-seeding.
+    let config_devices = config.guest_tools_dir.join("config").join("devices.cmd");
+    if !config_devices.is_file() {
+        bail!(
+            "guest tools missing required file: {}",
+            config_devices.to_string_lossy()
+        );
+    }
     let config_dir = config.guest_tools_dir.join("config");
     if !config_dir.is_dir() {
         bail!(
@@ -188,6 +196,7 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
         );
     }
     let mut certs = Vec::new();
+    let mut found_cert = false;
     for entry in walkdir::WalkDir::new(&certs_dir)
         .follow_links(false)
         .sort_by_file_name()
@@ -203,12 +212,13 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
         let rel_str = path_to_slash(rel);
         let lower = rel_str.to_ascii_lowercase();
         // Include only public certificate artifacts and docs (no private keys).
-        if !(lower.ends_with(".cer")
-            || lower.ends_with(".crt")
-            || lower.ends_with(".p7b")
-            || lower == "readme.md")
-        {
+        let is_cert = lower.ends_with(".cer") || lower.ends_with(".crt") || lower.ends_with(".p7b");
+        let is_doc = lower == "readme.md";
+        if !(is_cert || is_doc) {
             continue;
+        }
+        if is_cert {
+            found_cert = true;
         }
         certs.push(FileToPackage {
             rel_path: format!("certs/{}", rel_str),
@@ -216,9 +226,9 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
                 .with_context(|| format!("read {}", entry.path().display()))?,
         });
     }
-    if certs.is_empty() {
+    if !found_cert {
         bail!(
-            "guest tools certs directory contains no .cer/.crt/.p7b files: {}",
+            "guest tools certs directory contains no certificate files (*.cer/*.crt/*.p7b): {}",
             certs_dir.to_string_lossy()
         );
     }
