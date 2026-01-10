@@ -352,8 +352,10 @@ impl TransientBufferArena {
         data: &[u8],
         alignment: u64,
     ) -> (Arc<wgpu::Buffer>, u64, u64) {
-        let aligned = align_up_u64(self.cursor, alignment.max(4));
-        let required = aligned + data.len() as u64;
+        let copy_alignment = wgpu::COPY_BUFFER_ALIGNMENT as u64;
+        let aligned = align_up_u64(self.cursor, alignment.max(copy_alignment));
+        let padded_len = align_up_u64(data.len() as u64, copy_alignment);
+        let required = aligned + padded_len;
 
         if required > self.capacity {
             // Grow to next power-of-two-ish, but at least `required`.
@@ -372,10 +374,17 @@ impl TransientBufferArena {
             return self.allocate(device, uploads, data, alignment);
         }
 
-        uploads.write_buffer(&self.buffer, aligned, data);
+        if padded_len == data.len() as u64 {
+            uploads.write_buffer(&self.buffer, aligned, data);
+        } else {
+            let mut padded = vec![0u8; padded_len as usize];
+            padded[..data.len()].copy_from_slice(data);
+            uploads.write_buffer(&self.buffer, aligned, &padded);
+        }
         self.cursor = required;
 
-        (Arc::clone(&self.buffer), aligned, data.len() as u64)
+        // Return the padded size for safe `wgpu` binding ranges.
+        (Arc::clone(&self.buffer), aligned, padded_len)
     }
 }
 
@@ -566,6 +575,10 @@ impl ResourceManager {
         }
     }
 
+    /// Uploads vertex data for `DrawPrimitiveUP`.
+    ///
+    /// The returned size is padded to 4 bytes so callers can use it directly for WebGPU binding
+    /// ranges (WebGPU requires buffer binding sizes to be 4-byte aligned).
     pub fn upload_user_vertex_data(&mut self, data: &[u8]) -> (Arc<wgpu::Buffer>, u64, u64) {
         self.ensure_transient_arenas();
         self.transient_vertex
@@ -574,6 +587,10 @@ impl ResourceManager {
             .allocate(&self.device, &mut self.uploads, data, 4)
     }
 
+    /// Uploads index data for `DrawIndexedPrimitiveUP`.
+    ///
+    /// The returned size is padded to 4 bytes so callers can use it directly for WebGPU binding
+    /// ranges (WebGPU requires buffer binding sizes to be 4-byte aligned).
     pub fn upload_user_index_data(&mut self, data: &[u8]) -> (Arc<wgpu::Buffer>, u64, u64) {
         self.ensure_transient_arenas();
         self.transient_index
