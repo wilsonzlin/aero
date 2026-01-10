@@ -65,7 +65,11 @@ impl Memory for TestMemory {
 struct DummyDisk;
 
 impl BlockDevice for DummyDisk {
-    fn read_sector(&self, _lba: u64, _buf512: &mut [u8; 512]) -> Result<(), DiskError> {
+    fn read_sector(&mut self, _lba: u64, _buf512: &mut [u8; 512]) -> Result<(), DiskError> {
+        Err(DiskError::IoError)
+    }
+
+    fn write_sector(&mut self, _lba: u64, _buf512: &[u8; 512]) -> Result<(), DiskError> {
         Err(DiskError::IoError)
     }
 
@@ -75,9 +79,9 @@ impl BlockDevice for DummyDisk {
 }
 
 fn call_int10(bios: &mut Bios, cpu: &mut RealModeCpu, mem: &mut TestMemory) {
-    let disk = DummyDisk;
+    let mut disk = DummyDisk;
     let mut kbd = NullKeyboard;
-    bios.handle_interrupt(0x10, cpu, mem, &disk, &mut kbd);
+    bios.handle_interrupt(0x10, cpu, mem, &mut disk, &mut kbd);
 }
 
 fn read_text_cell(mem: &TestMemory, row: u32, col: u32) -> (u8, u8) {

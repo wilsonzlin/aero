@@ -92,8 +92,15 @@ pub trait Memory {
 }
 
 pub trait BlockDevice {
-    fn read_sector(&self, lba: u64, buf512: &mut [u8; 512]) -> Result<(), DiskError>;
+    fn read_sector(&mut self, lba: u64, buf512: &mut [u8; 512]) -> Result<(), DiskError>;
+
+    fn write_sector(&mut self, lba: u64, buf512: &[u8; 512]) -> Result<(), DiskError>;
+
     fn sector_count(&self) -> u64;
+
+    fn is_read_only(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +108,7 @@ pub enum DiskError {
     OutOfRange,
     IoError,
     InvalidPacket,
+    ReadOnly,
 }
 
 pub trait Keyboard {
@@ -170,6 +178,8 @@ pub struct Bios {
     e820: Vec<E820Entry>,
     pci_devices: Vec<PciDevice>,
     acpi: Option<AcpiTables>,
+    a20_enabled: bool,
+    last_disk_status: u8,
 
     // Legacy VGA BIOS-visible state.
     video_mode: u8,
@@ -223,6 +233,8 @@ impl Bios {
             e820,
             pci_devices: Vec::new(),
             acpi,
+            a20_enabled: true,
+            last_disk_status: 0,
             video_mode: 0x03,
             active_page: 0,
             text_cols: 80,
@@ -245,7 +257,7 @@ impl Bios {
         &mut self,
         cpu: &mut RealModeCpu,
         mem: &mut M,
-        disk: &D,
+        disk: &mut D,
     ) {
         let mut null_kbd = NullKeyboard;
         self.post_with_devices(cpu, mem, disk, &mut null_kbd, None);
@@ -256,7 +268,7 @@ impl Bios {
         &mut self,
         cpu: &mut RealModeCpu,
         mem: &mut M,
-        disk: &D,
+        disk: &mut D,
         _kbd: &mut K,
         mut pci: Option<&mut dyn PciConfigSpace>,
     ) {
@@ -299,7 +311,7 @@ impl Bios {
         int_no: u8,
         cpu: &mut RealModeCpu,
         mem: &mut M,
-        disk: &D,
+        disk: &mut D,
         kbd: &mut K,
     ) {
         match int_no {
@@ -897,13 +909,24 @@ impl Bios {
         cpu.set_cf(false);
     }
 
-    fn int13<M: Memory, D: BlockDevice>(&mut self, cpu: &mut RealModeCpu, mem: &mut M, disk: &D) {
+    fn int13<M: Memory, D: BlockDevice>(
+        &mut self,
+        cpu: &mut RealModeCpu,
+        mem: &mut M,
+        disk: &mut D,
+    ) {
         let ah = cpu.ah();
         match ah {
             0x00 => {
                 // Reset.
+                self.last_disk_status = 0;
                 cpu.set_cf(false);
                 cpu.set_ah(0);
+            }
+            0x01 => {
+                // Get status of last operation.
+                cpu.set_ah(self.last_disk_status);
+                cpu.set_cf(self.last_disk_status != 0);
             }
             0x02 => {
                 // Read sectors (CHS).
@@ -916,10 +939,34 @@ impl Bios {
                 let buffer = (cpu.es_base() + cpu.bx() as u32) as u32;
                 match chs_read(disk, cyl, head, sector, count, mem, buffer) {
                     Ok(()) => {
+                        self.last_disk_status = 0;
                         cpu.set_cf(false);
                         cpu.set_ah(0);
                     }
                     Err(status) => {
+                        self.last_disk_status = status;
+                        cpu.set_cf(true);
+                        cpu.set_ah(status);
+                    }
+                }
+            }
+            0x03 => {
+                // Write sectors (CHS).
+                let count = cpu.al() as u16;
+                let cx = cpu.cx();
+                let cyl = ((cx >> 8) as u16) | (((cx & 0x00C0) as u16) << 2);
+                let sector = (cx & 0x003F) as u16;
+                let head = cpu.dh() as u16;
+
+                let buffer = (cpu.es_base() + cpu.bx() as u32) as u32;
+                match chs_write(disk, cyl, head, sector, count, mem, buffer) {
+                    Ok(()) => {
+                        self.last_disk_status = 0;
+                        cpu.set_cf(false);
+                        cpu.set_ah(0);
+                    }
+                    Err(status) => {
+                        self.last_disk_status = status;
                         cpu.set_cf(true);
                         cpu.set_ah(status);
                     }
@@ -932,6 +979,7 @@ impl Bios {
                 let heads = 16u16;
                 let spt = 63u16;
 
+                self.last_disk_status = 0;
                 cpu.set_cf(false);
                 cpu.set_ah(0);
 
@@ -952,15 +1000,18 @@ impl Bios {
                 } else {
                     cpu.eax = 0x0300; // hard disk
                 }
+                self.last_disk_status = 0;
                 cpu.set_cf(false);
             }
             0x41 => {
                 // Check extensions present (EDD).
                 if cpu.bx() != 0x55AA {
+                    self.last_disk_status = 0x01;
                     cpu.set_cf(true);
                     cpu.set_ah(0x01);
                     return;
                 }
+                self.last_disk_status = 0;
                 cpu.set_cf(false);
                 cpu.set_bx(0xAA55);
                 // Report EDD 3.0 (AH=0x30).
@@ -979,6 +1030,7 @@ impl Bios {
                         for _ in 0..dap.sectors {
                             let mut sector = [0u8; 512];
                             if disk.read_sector(lba, &mut sector).is_err() {
+                                self.last_disk_status = 0x01;
                                 cpu.set_cf(true);
                                 cpu.set_ah(0x01);
                                 return;
@@ -987,10 +1039,51 @@ impl Bios {
                             lba += 1;
                             buf = buf.wrapping_add(512);
                         }
+                        self.last_disk_status = 0;
                         cpu.set_cf(false);
                         cpu.set_ah(0);
                     }
                     Err(_) => {
+                        self.last_disk_status = 0x01;
+                        cpu.set_cf(true);
+                        cpu.set_ah(0x01);
+                    }
+                }
+            }
+            0x43 => {
+                // Extended write.
+                if disk.is_read_only() {
+                    self.last_disk_status = 0x03;
+                    cpu.set_cf(true);
+                    cpu.set_ah(0x03);
+                    return;
+                }
+
+                let pkt_addr = cpu.ds_base() + (cpu.esi as u32);
+                match read_dap(mem, pkt_addr) {
+                    Ok(dap) => {
+                        let mut lba = dap.lba;
+                        let mut buf = dap.buffer;
+                        for _ in 0..dap.sectors {
+                            let mut sector = [0u8; 512];
+                            for i in 0..512u32 {
+                                sector[i as usize] = mem.read_u8(buf.wrapping_add(i));
+                            }
+                            if disk.write_sector(lba, &sector).is_err() {
+                                self.last_disk_status = 0x03;
+                                cpu.set_cf(true);
+                                cpu.set_ah(0x03);
+                                return;
+                            }
+                            lba += 1;
+                            buf = buf.wrapping_add(512);
+                        }
+                        self.last_disk_status = 0;
+                        cpu.set_cf(false);
+                        cpu.set_ah(0);
+                    }
+                    Err(_) => {
+                        self.last_disk_status = 0x01;
                         cpu.set_cf(true);
                         cpu.set_ah(0x01);
                     }
@@ -1001,10 +1094,12 @@ impl Bios {
                 // Output a minimal EDD 3.0 parameter table.
                 let table_addr = cpu.ds_base() + (cpu.esi as u32);
                 write_drive_params(mem, table_addr, disk.sector_count());
+                self.last_disk_status = 0;
                 cpu.set_cf(false);
                 cpu.set_ah(0);
             }
             _ => {
+                self.last_disk_status = 0x01;
                 cpu.set_cf(true);
                 cpu.set_ah(0x01);
             }
@@ -1032,6 +1127,69 @@ impl Bios {
             };
             cpu.set_cf(false);
             return;
+        }
+
+        match cpu.ax() {
+            0x2400 => {
+                // Disable A20 line (best-effort; we model the state but may not toggle hardware).
+                self.a20_enabled = false;
+                cpu.set_cf(false);
+                cpu.set_ah(0);
+                return;
+            }
+            0x2401 => {
+                // Enable A20 line.
+                self.a20_enabled = true;
+                cpu.set_cf(false);
+                cpu.set_ah(0);
+                return;
+            }
+            0x2402 => {
+                // Query A20 state: AL=0 disabled, 1 enabled.
+                cpu.set_al(if self.a20_enabled { 1 } else { 0 });
+                cpu.set_ah(0);
+                cpu.set_cf(false);
+                return;
+            }
+            0x2403 => {
+                // Query A20 support. We claim keyboard-controller and fast-A20 support.
+                cpu.set_bx(0x0003);
+                cpu.set_cf(false);
+                cpu.set_ah(0);
+                return;
+            }
+            0xE801 => {
+                // Get memory size for >64MiB systems (legacy).
+                //
+                // Return:
+                // - AX = KB between 1MiB and 16MiB
+                // - BX = number of 64KiB blocks above 16MiB
+                // - CX, DX may mirror AX/BX (many BIOSes do)
+                const SIXTEEN_MIB: u64 = 16 * 1024 * 1024;
+                const ONE_MIB: u64 = 1024 * 1024;
+                let mut ext_bytes = 0u64;
+                for entry in &self.e820 {
+                    if entry.base >= ONE_MIB
+                        && matches!(entry.region_type, E820_TYPE_RAM | E820_TYPE_ACPI)
+                    {
+                        ext_bytes = ext_bytes.saturating_add(entry.length);
+                    }
+                }
+
+                let below_16m = ext_bytes.min(SIXTEEN_MIB.saturating_sub(ONE_MIB));
+                let above_16m = ext_bytes.saturating_sub(SIXTEEN_MIB.saturating_sub(ONE_MIB));
+
+                let ax_kb = (below_16m / 1024).min(0xFFFF) as u16;
+                let bx_blocks = (above_16m / 65_536).min(0xFFFF) as u16;
+
+                cpu.set_ax(ax_kb);
+                cpu.set_bx(bx_blocks);
+                cpu.set_cx(ax_kb);
+                cpu.set_dx(bx_blocks);
+                cpu.set_cf(false);
+                return;
+            }
+            _ => {}
         }
 
         match cpu.ah() {
@@ -1085,7 +1243,12 @@ impl Bios {
         }
     }
 
-    fn int19<M: Memory, D: BlockDevice>(&mut self, cpu: &mut RealModeCpu, mem: &mut M, disk: &D) {
+    fn int19<M: Memory, D: BlockDevice>(
+        &mut self,
+        cpu: &mut RealModeCpu,
+        mem: &mut M,
+        disk: &mut D,
+    ) {
         // Load LBA0 (MBR / boot sector) to 0x0000:0x7C00.
         let mut sector = [0u8; 512];
         let res = disk.read_sector(0, &mut sector);
@@ -1255,67 +1418,83 @@ fn acpi_region_from_tables(tables: &AcpiTables) -> (u64, u64) {
 
 fn build_e820_map(total_memory_bytes: u64, acpi_region: Option<(u64, u64)>) -> Vec<E820Entry> {
     // Keep this conservative and OS-friendly:
-    // - 0x00000000..0x0009F000 : usable
-    // - 0x0009F000..0x00100000 : reserved (EBDA + video + BIOS ROM shadow)
-    // - 0x00100000..total      : usable (except optional ACPI table blob region)
+    // - 0x00000000..0x0009F000 : usable conventional memory
+    // - 0x0009F000..0x00100000 : reserved (EBDA + VGA + BIOS ROM)
+    // - 0x00100000..(3GiB)     : usable, except optional ACPI table blob
+    // - 0xC0000000..0x100000000: reserved PCI MMIO window ("PCI hole") if total RAM exceeds 3GiB
+    // - 0x100000000..          : high memory, except optional ACPI table blob (rare)
+    const ONE_MIB: u64 = 0x0010_0000;
+    const PCI_HOLE_START: u64 = 0xC000_0000;
+    const PCI_HOLE_END: u64 = 0x1_0000_0000;
+
+    fn push_region(entries: &mut Vec<E820Entry>, base: u64, end: u64, region_type: u32) {
+        if end <= base {
+            return;
+        }
+        entries.push(E820Entry {
+            base,
+            length: end - base,
+            region_type,
+            extended_attributes: 1,
+        });
+    }
+
+    fn push_ram_split_by_acpi(
+        entries: &mut Vec<E820Entry>,
+        base: u64,
+        end: u64,
+        acpi_region: Option<(u64, u64)>,
+    ) {
+        if end <= base {
+            return;
+        }
+        let Some((acpi_base, acpi_len)) = acpi_region else {
+            push_region(entries, base, end, E820_TYPE_RAM);
+            return;
+        };
+
+        let acpi_end = acpi_base.saturating_add(acpi_len);
+        let a_start = acpi_base.clamp(base, end);
+        let a_end = acpi_end.clamp(base, end);
+
+        if a_start > base {
+            push_region(entries, base, a_start, E820_TYPE_RAM);
+        }
+        if a_end > a_start {
+            push_region(entries, a_start, a_end, E820_TYPE_ACPI);
+        }
+        if end > a_end {
+            push_region(entries, a_end, end, E820_TYPE_RAM);
+        }
+    }
+
     let mut entries = Vec::new();
 
-    entries.push(E820Entry {
-        base: 0x0000_0000,
-        length: 0x0009_F000,
-        region_type: E820_TYPE_RAM,
-        extended_attributes: 1,
-    });
-    entries.push(E820Entry {
-        base: 0x0009_F000,
-        length: 0x0006_1000,
-        region_type: E820_TYPE_RESERVED,
-        extended_attributes: 1,
-    });
+    // Conventional memory.
+    push_region(&mut entries, 0x0000_0000, 0x0009_F000, E820_TYPE_RAM);
 
-    let usable_base = 0x0010_0000u64;
-    if total_memory_bytes > usable_base {
-        if let Some((acpi_base, acpi_len)) = acpi_region {
-            let acpi_base = acpi_base.max(usable_base);
-            let acpi_end = acpi_base.saturating_add(acpi_len).min(total_memory_bytes);
+    // EBDA/VGA/BIOS.
+    push_region(&mut entries, 0x0009_F000, ONE_MIB, E820_TYPE_RESERVED);
 
-            // RAM below ACPI blob.
-            if acpi_base > usable_base {
-                entries.push(E820Entry {
-                    base: usable_base,
-                    length: acpi_base - usable_base,
-                    region_type: E820_TYPE_RAM,
-                    extended_attributes: 1,
-                });
-            }
+    if total_memory_bytes <= ONE_MIB {
+        return entries;
+    }
 
-            // ACPI reclaimable memory.
-            if acpi_end > acpi_base {
-                entries.push(E820Entry {
-                    base: acpi_base,
-                    length: acpi_end - acpi_base,
-                    region_type: E820_TYPE_ACPI,
-                    extended_attributes: 1,
-                });
-            }
+    // Model a PCI hole once we exceed 3GiB of RAM. Remaining RAM is placed above 4GiB.
+    let low_ram_end = total_memory_bytes.min(PCI_HOLE_START);
+    push_ram_split_by_acpi(&mut entries, ONE_MIB, low_ram_end, acpi_region);
 
-            // Remaining RAM after ACPI blob.
-            if total_memory_bytes > acpi_end {
-                entries.push(E820Entry {
-                    base: acpi_end,
-                    length: total_memory_bytes - acpi_end,
-                    region_type: E820_TYPE_RAM,
-                    extended_attributes: 1,
-                });
-            }
-        } else {
-            entries.push(E820Entry {
-                base: usable_base,
-                length: total_memory_bytes - usable_base,
-                region_type: E820_TYPE_RAM,
-                extended_attributes: 1,
-            });
-        }
+    if total_memory_bytes > PCI_HOLE_START {
+        push_region(
+            &mut entries,
+            PCI_HOLE_START,
+            PCI_HOLE_END,
+            E820_TYPE_RESERVED,
+        );
+
+        let high_ram_len = total_memory_bytes - PCI_HOLE_START;
+        let high_ram_end = PCI_HOLE_END.saturating_add(high_ram_len);
+        push_ram_split_by_acpi(&mut entries, PCI_HOLE_END, high_ram_end, acpi_region);
     }
 
     entries
@@ -1333,7 +1512,7 @@ fn write_e820_entry<M: Memory>(mem: &mut M, paddr: u32, entry: E820Entry) {
 }
 
 fn chs_read<M: Memory, D: BlockDevice>(
-    disk: &D,
+    disk: &mut D,
     cylinder: u16,
     head: u16,
     sector1: u16,
@@ -1354,6 +1533,40 @@ fn chs_read<M: Memory, D: BlockDevice>(
         let mut sector = [0u8; 512];
         disk.read_sector(lba, &mut sector).map_err(|_| 0x01)?;
         mem.write_bytes(buf, &sector);
+        lba += 1;
+        buf = buf.wrapping_add(512);
+    }
+    Ok(())
+}
+
+fn chs_write<M: Memory, D: BlockDevice>(
+    disk: &mut D,
+    cylinder: u16,
+    head: u16,
+    sector1: u16,
+    count: u16,
+    mem: &M,
+    mut buf: u32,
+) -> Result<(), u8> {
+    if sector1 == 0 {
+        return Err(0x01);
+    }
+
+    if disk.is_read_only() {
+        return Err(0x03);
+    }
+
+    // Conventional "translation" geometry.
+    const HEADS: u64 = 16;
+    const SPT: u64 = 63;
+
+    let mut lba = ((cylinder as u64 * HEADS) + head as u64) * SPT + (sector1 as u64 - 1);
+    for _ in 0..count {
+        let mut sector = [0u8; 512];
+        for i in 0..512u32 {
+            sector[i as usize] = mem.read_u8(buf.wrapping_add(i));
+        }
+        disk.write_sector(lba, &sector).map_err(|_| 0x03)?;
         lba += 1;
         buf = buf.wrapping_add(512);
     }

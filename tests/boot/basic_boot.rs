@@ -61,7 +61,7 @@ impl VecDisk {
 }
 
 impl BlockDevice for VecDisk {
-    fn read_sector(&self, lba: u64, buf512: &mut [u8; 512]) -> Result<(), DiskError> {
+    fn read_sector(&mut self, lba: u64, buf512: &mut [u8; 512]) -> Result<(), DiskError> {
         let start = lba
             .checked_mul(512)
             .and_then(|v| usize::try_from(v).ok())
@@ -69,6 +69,20 @@ impl BlockDevice for VecDisk {
         let end = start.checked_add(512).ok_or(DiskError::OutOfRange)?;
         let slice = self.bytes.get(start..end).ok_or(DiskError::OutOfRange)?;
         buf512.copy_from_slice(slice);
+        Ok(())
+    }
+
+    fn write_sector(&mut self, lba: u64, buf512: &[u8; 512]) -> Result<(), DiskError> {
+        let start = lba
+            .checked_mul(512)
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or(DiskError::OutOfRange)?;
+        let end = start.checked_add(512).ok_or(DiskError::OutOfRange)?;
+        let slice = self
+            .bytes
+            .get_mut(start..end)
+            .ok_or(DiskError::OutOfRange)?;
+        slice.copy_from_slice(buf512);
         Ok(())
     }
 
@@ -154,7 +168,7 @@ fn run_real_mode_program(
     bios: &mut Bios,
     cpu: &mut RealModeCpu,
     mem: &mut SimpleMemory,
-    disk: &VecDisk,
+    disk: &mut VecDisk,
     kbd: &mut impl Keyboard,
 ) {
     // Extremely small instruction subset interpreter sufficient for the test
@@ -355,7 +369,7 @@ fn parse_smbios_table(table: &[u8]) -> Vec<ParsedStructure> {
 #[test]
 fn boots_a_tiny_boot_sector_and_prints_text() {
     let boot = make_test_boot_sector();
-    let disk = VecDisk::new(boot.to_vec());
+    let mut disk = VecDisk::new(boot.to_vec());
 
     let mut mem = SimpleMemory::new(2 * 1024 * 1024);
     let mut cpu = RealModeCpu::default();
@@ -365,7 +379,7 @@ fn boots_a_tiny_boot_sector_and_prints_text() {
         ..BiosConfig::default()
     });
 
-    bios.post(&mut cpu, &mut mem, &disk);
+    bios.post(&mut cpu, &mut mem, &mut disk);
 
     // BIOS must have loaded the boot sector.
     assert_eq!(&mem.bytes[0x7C00..0x7C00 + 512], &boot);
@@ -376,7 +390,7 @@ fn boots_a_tiny_boot_sector_and_prints_text() {
     assert_eq!(&mem.bytes[rsdp..rsdp + 8], b"RSD PTR ");
 
     let mut kbd = NullKeyboard;
-    run_real_mode_program(&mut bios, &mut cpu, &mut mem, &disk, &mut kbd);
+    run_real_mode_program(&mut bios, &mut cpu, &mut mem, &mut disk, &mut kbd);
 
     // Boot sector marker.
     assert_eq!(mem.read_u8(0x0500), 0x42);
@@ -472,7 +486,7 @@ fn bios_rom_contains_a_valid_reset_vector_jump() {
 #[test]
 fn int15_e820_returns_a_simple_memory_map() {
     // Disk isn't used by INT 15h, but the firmware API needs one.
-    let disk = VecDisk::new(vec![0u8; 512]);
+    let mut disk = VecDisk::new(vec![0u8; 512]);
     let mut mem = SimpleMemory::new(2 * 1024 * 1024);
     let mut cpu = RealModeCpu::default();
     let mut bios = Bios::new(BiosConfig {
@@ -492,7 +506,7 @@ fn int15_e820_returns_a_simple_memory_map() {
         cpu.edx = 0x534D_4150; // 'SMAP'
         cpu.ecx = 24;
         cpu.ebx = cont;
-        bios.handle_interrupt(0x15, &mut cpu, &mut mem, &disk, &mut kbd);
+        bios.handle_interrupt(0x15, &mut cpu, &mut mem, &mut disk, &mut kbd);
 
         assert!(!cpu.cf());
         assert_eq!(cpu.eax, 0x534D_4150);
@@ -539,7 +553,7 @@ fn int13_extended_and_chs_reads_copy_sectors_into_memory() {
     bytes[511] = 0xAA;
     bytes[1 * 512..2 * 512].fill(0xA5);
     bytes[2 * 512..3 * 512].fill(0x5A);
-    let disk = VecDisk::new(bytes);
+    let mut disk = VecDisk::new(bytes);
 
     let mut mem = SimpleMemory::new(2 * 1024 * 1024);
     let mut cpu = RealModeCpu::default();
@@ -559,7 +573,7 @@ fn int13_extended_and_chs_reads_copy_sectors_into_memory() {
     cpu.esi = 0x0600;
     cpu.set_ah(0x42);
     cpu.set_dl(0x80);
-    bios.handle_interrupt(0x13, &mut cpu, &mut mem, &disk, &mut kbd);
+    bios.handle_interrupt(0x13, &mut cpu, &mut mem, &mut disk, &mut kbd);
     assert!(!cpu.cf());
     assert_eq!(&mem.bytes[0x0800..0x0800 + 512], vec![0xA5; 512]);
 
@@ -571,9 +585,59 @@ fn int13_extended_and_chs_reads_copy_sectors_into_memory() {
     cpu.set_cx(0x0002); // CH=0, CL=2
     cpu.set_dh(0); // head 0
     cpu.set_dl(0x80);
-    bios.handle_interrupt(0x13, &mut cpu, &mut mem, &disk, &mut kbd);
+    bios.handle_interrupt(0x13, &mut cpu, &mut mem, &mut disk, &mut kbd);
     assert!(!cpu.cf());
     assert_eq!(&mem.bytes[0x0900..0x0900 + 512], vec![0xA5; 512]);
+}
+
+#[test]
+fn int13_chs_and_extended_writes_persist_to_disk() {
+    // 3-sector disk: [MBR][sector1][sector2]
+    let mut bytes = vec![0u8; 3 * 512];
+    bytes[510] = 0x55;
+    bytes[511] = 0xAA;
+    let mut disk = VecDisk::new(bytes);
+
+    let mut mem = SimpleMemory::new(2 * 1024 * 1024);
+    let mut cpu = RealModeCpu::default();
+    let mut bios = Bios::new(BiosConfig::default());
+    let mut kbd = NullKeyboard;
+
+    // CHS write: write LBA1 (CH=0, DH=0, CL=2) from 0x0800.
+    mem.bytes[0x0800..0x0800 + 512].fill(0xCC);
+    cpu.set_ah(0x03);
+    cpu.set_al(1);
+    cpu.es = 0;
+    cpu.set_bx(0x0800);
+    cpu.set_cx(0x0002);
+    cpu.set_dh(0);
+    cpu.set_dl(0x80);
+    bios.handle_interrupt(0x13, &mut cpu, &mut mem, &mut disk, &mut kbd);
+    assert!(!cpu.cf());
+
+    let mut sector = [0u8; 512];
+    disk.read_sector(1, &mut sector).unwrap();
+    assert_eq!(sector, [0xCCu8; 512]);
+
+    // Extended write (DAP) for LBA2 from 0x0900.
+    mem.bytes[0x0900..0x0900 + 512].fill(0xDD);
+    mem.write_u8(0x0600, 0x10); // size
+    mem.write_u8(0x0601, 0); // reserved
+    mem.write_u16(0x0602, 1); // sectors
+    mem.write_u16(0x0604, 0x0900); // buffer offset
+    mem.write_u16(0x0606, 0x0000); // buffer segment
+    mem.write_u32(0x0608, 2); // lba low
+    mem.write_u32(0x060C, 0); // lba high
+
+    cpu.ds = 0;
+    cpu.esi = 0x0600;
+    cpu.set_ah(0x43);
+    cpu.set_dl(0x80);
+    bios.handle_interrupt(0x13, &mut cpu, &mut mem, &mut disk, &mut kbd);
+    assert!(!cpu.cf());
+
+    disk.read_sector(2, &mut sector).unwrap();
+    assert_eq!(sector, [0xDDu8; 512]);
 }
 
 #[test]
@@ -581,25 +645,25 @@ fn int11_and_int12_reflect_bda_equipment_and_conventional_memory() {
     let mut boot = [0u8; 512];
     boot[510] = 0x55;
     boot[511] = 0xAA;
-    let disk = VecDisk::new(boot.to_vec());
+    let mut disk = VecDisk::new(boot.to_vec());
 
     let mut mem = SimpleMemory::new(2 * 1024 * 1024);
     let mut cpu = RealModeCpu::default();
     let mut bios = Bios::new(BiosConfig::default());
     let mut kbd = NullKeyboard;
 
-    bios.post(&mut cpu, &mut mem, &disk);
+    bios.post(&mut cpu, &mut mem, &mut disk);
 
-    bios.handle_interrupt(0x11, &mut cpu, &mut mem, &disk, &mut kbd);
+    bios.handle_interrupt(0x11, &mut cpu, &mut mem, &mut disk, &mut kbd);
     assert_eq!(cpu.ax(), mem.read_u16(0x0410));
 
-    bios.handle_interrupt(0x12, &mut cpu, &mut mem, &disk, &mut kbd);
+    bios.handle_interrupt(0x12, &mut cpu, &mut mem, &mut disk, &mut kbd);
     assert_eq!(cpu.ax(), mem.read_u16(0x0413));
 }
 
 #[test]
 fn int1a_time_services_return_bcd_values() {
-    let disk = VecDisk::new(vec![0u8; 512]);
+    let mut disk = VecDisk::new(vec![0u8; 512]);
     let mut mem = SimpleMemory::new(2 * 1024 * 1024);
     let mut cpu = RealModeCpu::default();
     let mut bios = Bios::new(BiosConfig::default());
@@ -607,14 +671,14 @@ fn int1a_time_services_return_bcd_values() {
 
     // AH=00h: ticks since midnight.
     cpu.set_ah(0x00);
-    bios.handle_interrupt(0x1A, &mut cpu, &mut mem, &disk, &mut kbd);
+    bios.handle_interrupt(0x1A, &mut cpu, &mut mem, &mut disk, &mut kbd);
     assert!(!cpu.cf());
     let ticks = ((cpu.cx() as u32) << 16) | cpu.dx() as u32;
     assert!(ticks < 1_573_040);
 
     // AH=02h: RTC time (BCD).
     cpu.set_ah(0x02);
-    bios.handle_interrupt(0x1A, &mut cpu, &mut mem, &disk, &mut kbd);
+    bios.handle_interrupt(0x1A, &mut cpu, &mut mem, &mut disk, &mut kbd);
     assert!(!cpu.cf());
     let hour = (cpu.cx() >> 8) as u8;
     let min = cpu.cx() as u8;
@@ -633,7 +697,7 @@ fn int1a_time_services_return_bcd_values() {
 
     // AH=04h: RTC date (BCD). Ensure digits decode to a plausible range.
     cpu.set_ah(0x04);
-    bios.handle_interrupt(0x1A, &mut cpu, &mut mem, &disk, &mut kbd);
+    bios.handle_interrupt(0x1A, &mut cpu, &mut mem, &mut disk, &mut kbd);
     assert!(!cpu.cf());
     let century = bcd_to_u8((cpu.cx() >> 8) as u8);
     let year = bcd_to_u8(cpu.cx() as u8);
@@ -643,4 +707,116 @@ fn int1a_time_services_return_bcd_values() {
     assert!(year <= 99);
     assert!((1..=12).contains(&month));
     assert!((1..=31).contains(&day));
+}
+
+#[test]
+fn int15_e801_reports_extended_memory_sizing() {
+    let mut disk = VecDisk::new(vec![0u8; 512]);
+    let mut mem = SimpleMemory::new(2 * 1024 * 1024);
+    let mut cpu = RealModeCpu::default();
+    let mut bios = Bios::new(BiosConfig {
+        total_memory_bytes: 64 * 1024 * 1024,
+        ..BiosConfig::default()
+    });
+    let mut kbd = NullKeyboard;
+
+    cpu.set_ax(0xE801);
+    bios.handle_interrupt(0x15, &mut cpu, &mut mem, &mut disk, &mut kbd);
+    assert!(!cpu.cf());
+
+    // 1MiB..16MiB = 15MiB = 15360 KiB.
+    assert_eq!(cpu.ax(), 0x3C00);
+    assert_eq!(cpu.cx(), 0x3C00);
+
+    // Remaining 48MiB above 16MiB => 48MiB / 64KiB = 768 blocks.
+    assert_eq!(cpu.bx(), 0x0300);
+    assert_eq!(cpu.dx(), 0x0300);
+}
+
+#[test]
+fn int15_a20_enable_disable_query_roundtrips() {
+    let mut disk = VecDisk::new(vec![0u8; 512]);
+    let mut mem = SimpleMemory::new(2 * 1024 * 1024);
+    let mut cpu = RealModeCpu::default();
+    let mut bios = Bios::new(BiosConfig::default());
+    let mut kbd = NullKeyboard;
+
+    cpu.set_ax(0x2402);
+    bios.handle_interrupt(0x15, &mut cpu, &mut mem, &mut disk, &mut kbd);
+    assert!(!cpu.cf());
+    assert_eq!(cpu.al(), 1);
+
+    cpu.set_ax(0x2400);
+    bios.handle_interrupt(0x15, &mut cpu, &mut mem, &mut disk, &mut kbd);
+    assert!(!cpu.cf());
+
+    cpu.set_ax(0x2402);
+    bios.handle_interrupt(0x15, &mut cpu, &mut mem, &mut disk, &mut kbd);
+    assert!(!cpu.cf());
+    assert_eq!(cpu.al(), 0);
+
+    cpu.set_ax(0x2401);
+    bios.handle_interrupt(0x15, &mut cpu, &mut mem, &mut disk, &mut kbd);
+    assert!(!cpu.cf());
+
+    cpu.set_ax(0x2402);
+    bios.handle_interrupt(0x15, &mut cpu, &mut mem, &mut disk, &mut kbd);
+    assert!(!cpu.cf());
+    assert_eq!(cpu.al(), 1);
+
+    cpu.set_ax(0x2403);
+    bios.handle_interrupt(0x15, &mut cpu, &mut mem, &mut disk, &mut kbd);
+    assert!(!cpu.cf());
+    assert_eq!(cpu.bx(), 0x0003);
+}
+
+#[test]
+fn int15_e820_includes_pci_hole_for_large_memory() {
+    let mut disk = VecDisk::new(vec![0u8; 512]);
+    let mut mem = SimpleMemory::new(2 * 1024 * 1024);
+    let mut cpu = RealModeCpu::default();
+    let mut bios = Bios::new(BiosConfig {
+        total_memory_bytes: 4 * 1024 * 1024 * 1024,
+        ..BiosConfig::default()
+    });
+    let mut kbd = NullKeyboard;
+
+    cpu.es = 0;
+    cpu.edi = 0x0500;
+
+    let mut cont = 0u32;
+    let mut entries = Vec::new();
+    loop {
+        cpu.eax = 0xE820;
+        cpu.edx = 0x534D_4150;
+        cpu.ecx = 24;
+        cpu.ebx = cont;
+        bios.handle_interrupt(0x15, &mut cpu, &mut mem, &mut disk, &mut kbd);
+
+        assert!(!cpu.cf());
+        let base = mem.read_u32(0x0500) as u64 | ((mem.read_u32(0x0504) as u64) << 32);
+        let len = mem.read_u32(0x0508) as u64 | ((mem.read_u32(0x050C) as u64) << 32);
+        let typ = mem.read_u32(0x0510);
+        entries.push((base, len, typ));
+
+        cont = cpu.ebx;
+        if cont == 0 {
+            break;
+        }
+        assert!(entries.len() < 64, "E820 map unexpectedly large");
+    }
+
+    assert!(
+        entries
+            .iter()
+            .any(|&(base, len, typ)| base == 0xC000_0000 && len == 0x4000_0000 && typ == 2),
+        "expected a PCI hole reserved entry, got: {entries:?}"
+    );
+
+    assert!(
+        entries
+            .iter()
+            .any(|&(base, len, typ)| base == 0x1_0000_0000 && len > 0 && typ == 1),
+        "expected a high RAM entry above 4GiB, got: {entries:?}"
+    );
 }
