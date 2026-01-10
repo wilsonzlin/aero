@@ -317,6 +317,17 @@ function ConvertTo-JsonCompat($obj) {
     }
 }
 
+function Parse-JsonCompat([string]$json) {
+    try {
+        [void][System.Reflection.Assembly]::LoadWithPartialName("System.Web.Extensions")
+        $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+        $serializer.MaxJsonLength = 104857600
+        return $serializer.DeserializeObject($json)
+    } catch {
+        return $null
+    }
+}
+
 function Format-Json([string]$json) {
     # Tiny JSON pretty-printer compatible with PowerShell 2.0.
     # Assumes input is valid JSON with no comments.
@@ -402,7 +413,7 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         [void]$sb.Append($report.overall.summary + $nl)
     }
 
-    foreach ($key in @("os","kb3033929","certificate_store","signature_mode","driver_packages","bound_devices","device_binding_storage","device_binding_network","device_binding_graphics","device_binding_audio","device_binding_input","virtio_blk_service","virtio_blk_boot_critical","smoke_disk","smoke_network","smoke_graphics","smoke_audio","smoke_input")) {
+    foreach ($key in @("os","guest_tools_manifest","kb3033929","certificate_store","signature_mode","driver_packages","bound_devices","device_binding_storage","device_binding_network","device_binding_graphics","device_binding_audio","device_binding_input","virtio_blk_service","virtio_blk_boot_critical","smoke_disk","smoke_network","smoke_graphics","smoke_audio","smoke_input")) {
         if (-not $report.checks.ContainsKey($key)) { continue }
         $chk = $report.checks[$key]
         [void]$sb.Append($nl)
@@ -472,7 +483,7 @@ $report = @{
     schema_version = 1
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "1.6.0"
+        version = "1.7.0"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -556,6 +567,39 @@ try {
     Add-Check "os" "OS + Architecture" $osStatus $osSummary $osInfo $osDetails
 } catch {
     Add-Check "os" "OS + Architecture" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
+# --- Guest Tools manifest (version/build provenance) ---
+try {
+    $manifestPath = Join-Path $scriptDir "manifest.json"
+    $manifestData = $null
+    $mStatus = "PASS"
+    $mSummary = ""
+    $mDetails = @()
+
+    if (-not (Test-Path $manifestPath)) {
+        $mStatus = "WARN"
+        $mSummary = "manifest.json not found next to verify.ps1; Guest Tools build metadata unavailable."
+    } else {
+        $raw = Get-Content -Path $manifestPath -ErrorAction Stop | Out-String
+        $parsed = Parse-JsonCompat $raw
+        if (-not $parsed) {
+            $mStatus = "WARN"
+            $mSummary = "manifest.json exists but could not be parsed."
+        } else {
+            $manifestData = @{
+                path = $manifestPath
+                version = (if ($parsed.ContainsKey("version")) { $parsed["version"] } else { $null })
+                build_id = (if ($parsed.ContainsKey("build_id")) { $parsed["build_id"] } else { $null })
+                source_date_epoch = (if ($parsed.ContainsKey("source_date_epoch")) { $parsed["source_date_epoch"] } else { $null })
+            }
+            $mSummary = "Guest Tools: version=" + $manifestData.version + ", build_id=" + $manifestData.build_id
+        }
+    }
+
+    Add-Check "guest_tools_manifest" "Guest Tools Manifest" $mStatus $mSummary $manifestData $mDetails
+} catch {
+    Add-Check "guest_tools_manifest" "Guest Tools Manifest" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
 # --- Hotfix: KB3033929 (SHA-256 signature support) ---
