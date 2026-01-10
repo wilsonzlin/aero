@@ -16,6 +16,23 @@ Related Aero Windows driver references:
 * [`docs/windows-drivers/virtio/virtqueue-dma-strategy.md`](../windows-drivers/virtio/virtqueue-dma-strategy.md) — DMA/common-buffer strategy for split rings + indirect tables on Win7.
 * [`docs/windows/virtio-pci-modern-interrupts.md`](../windows/virtio-pci-modern-interrupts.md) — virtio-pci modern interrupts on Win7 (MSI-X vs INTx).
 
+## Contents
+
+* [Reference implementation in this repo](#reference-implementation-in-this-repo)
+* [Scope / non-scope](#scope-non-scope)
+* [Terminology](#terminology-virtio-spec-linux-vringh-names)
+* [Split ring layout and field semantics](#1-split-ring-layout-and-field-semantics)
+* [Ring memory layout, sizing, and alignment](#2-ring-memory-layout-sizing-and-alignment)
+* [Driver-side virtqueue state](#3-driver-side-virtqueue-state-what-to-track)
+* [Descriptor allocation/free](#4-descriptor-allocationfree-free-list-cookie-mapping)
+* [Publishing to the avail ring](#5-publishing-to-the-avail-ring-driver-device)
+* [Consuming the used ring](#6-consuming-the-used-ring-device-driver)
+* [`VIRTIO_F_RING_EVENT_IDX`](#7-virtio_f_ring_event_idx-event-index)
+* [`VIRTIO_F_RING_INDIRECT_DESC`](#8-virtio_f_ring_indirect_desc-indirect-descriptors)
+* [Windows 7 / KMDF specifics](#9-windows-7-kmdf-specifics-practical-constraints)
+* [End-to-end pseudocode example](#10-end-to-end-pseudocode-example-virtio-input-style-rx-queue)
+* [Common pitfalls](#11-common-pitfalls-things-that-break-real-drivers)
+
 ## Reference implementation in this repo
 
 The working implementation that corresponds to this guide lives at:
@@ -223,7 +240,7 @@ Use a DMA common buffer so the ring is device-accessible and nonpaged:
 * Use `WdfCommonBufferGetAlignedLogicalAddress()` (or the DMA enabler’s logical address) for the device-visible address used in descriptors or queue config.
 * **Initialize the ring memory** before enabling the queue:
   * easiest: zero the whole allocated ring buffer
-  * at minimum: set `avail->flags/idx` and `used->flags/idx` to 0 so the first `last_used_idx` starts from a known value.
+  * at minimum: set `avail->flags/idx` and `used->flags/idx` (and `used->idx`) to 0 so the first `last_used_idx` starts from a known value.
 
 Even when the transport supports non-contiguous memory via IOMMU, a single common buffer keeps the implementation simple and Win7-friendly.
 
