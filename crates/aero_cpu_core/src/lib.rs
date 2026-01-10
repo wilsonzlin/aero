@@ -34,6 +34,7 @@ pub mod time;
 pub mod time_insn;
 
 pub use exception::{AssistReason, Exception};
+pub use mem::CpuBus;
 
 pub use bus::{Bus, RamBus};
 pub use cpu::{Cpu, CpuMode, Segment};
@@ -43,32 +44,6 @@ use crate::sse_state::{SseState, MXCSR_MASK};
 
 /// The architectural size of the FXSAVE/FXRSTOR memory image.
 pub const FXSAVE_AREA_SIZE: usize = 512;
-
-/// Memory interface used by segmentation/descriptor-table logic.
-///
-/// This is intentionally minimal: paging/MMU integration can wrap or implement
-/// this trait and return the appropriate exceptions (e.g. #PF).
-pub trait CpuBus {
-    fn read_u8(&mut self, addr: u64) -> Result<u8, Exception>;
-
-    fn read_u16(&mut self, addr: u64) -> Result<u16, Exception> {
-        let b0 = self.read_u8(addr)? as u16;
-        let b1 = self.read_u8(addr + 1)? as u16;
-        Ok(b0 | (b1 << 8))
-    }
-
-    fn read_u32(&mut self, addr: u64) -> Result<u32, Exception> {
-        let lo = self.read_u16(addr)? as u32;
-        let hi = self.read_u16(addr + 2)? as u32;
-        Ok(lo | (hi << 16))
-    }
-
-    fn read_u64(&mut self, addr: u64) -> Result<u64, Exception> {
-        let lo = self.read_u32(addr)? as u64;
-        let hi = self.read_u32(addr + 4)? as u64;
-        Ok(lo | (hi << 32))
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuState {

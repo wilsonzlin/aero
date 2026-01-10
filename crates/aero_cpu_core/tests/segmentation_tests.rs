@@ -1,7 +1,8 @@
 use aero_cpu_core::descriptors::{parse_descriptor_8, Descriptor};
+use aero_cpu_core::mem::FlatTestBus;
 use aero_cpu_core::mode::{CodeMode, CpuMode, CR0_PG, CR4_PAE, EFER_LME};
 use aero_cpu_core::segmentation::{AccessType, LoadReason, Seg};
-use aero_cpu_core::{CpuBus, CpuState, Exception};
+use aero_cpu_core::{CpuState, Exception};
 
 fn make_descriptor(
     base: u32,
@@ -29,29 +30,27 @@ fn make_descriptor(
     raw
 }
 
-#[derive(Default)]
-struct TestBus {
-    mem: Vec<u8>,
-}
-
-impl TestBus {
-    fn with_size(size: usize) -> Self {
-        Self { mem: vec![0; size] }
-    }
-
-    fn write_u64(&mut self, addr: u64, value: u64) {
-        let addr = addr as usize;
-        self.mem[addr..addr + 8].copy_from_slice(&value.to_le_bytes());
-    }
-}
-
-impl CpuBus for TestBus {
-    fn read_u8(&mut self, addr: u64) -> Result<u8, Exception> {
-        self.mem
-            .get(addr as usize)
-            .copied()
-            .ok_or_else(Exception::gp0)
-    }
+fn make_system_descriptor_16(
+    base: u64,
+    limit_raw: u32,
+    typ: u8,
+    dpl: u8,
+    present: bool,
+) -> (u64, u64) {
+    let low = make_descriptor(
+        base as u32,
+        limit_raw,
+        typ,
+        false,
+        dpl,
+        present,
+        false,
+        false,
+        false,
+        false,
+    );
+    let high = (base >> 32) & 0xFFFF_FFFF;
+    (low, high)
 }
 
 #[test]
@@ -73,9 +72,9 @@ fn parse_segment_descriptor_limit_granularity() {
     }
 }
 
-fn setup_gdt(bus: &mut TestBus, gdt_base: u64, descriptors: &[u64]) {
+fn setup_gdt(bus: &mut FlatTestBus, gdt_base: u64, descriptors: &[u64]) {
     for (i, &desc) in descriptors.iter().enumerate() {
-        bus.write_u64(gdt_base + (i as u64) * 8, desc);
+        bus.load(gdt_base + (i as u64) * 8, &desc.to_le_bytes());
     }
 }
 
@@ -85,7 +84,7 @@ fn load_ds_null_selector_allowed_and_faults_on_use() {
     cpu.set_protected_enable(true);
     assert_eq!(cpu.cpu_mode(), CpuMode::Protected);
 
-    let mut bus = TestBus::with_size(0x2000);
+    let mut bus = FlatTestBus::new(0x2000);
     let gdt_base = 0x100;
     let null = 0u64;
     let code32 = make_descriptor(0, 0xFFFFF, 0xA, true, 0, true, false, false, true, true);
@@ -109,7 +108,7 @@ fn load_ds_null_selector_allowed_and_faults_on_use() {
 fn load_ss_null_selector_faults() {
     let mut cpu = CpuState::new();
     cpu.set_protected_enable(true);
-    let mut bus = TestBus::with_size(0x100);
+    let mut bus = FlatTestBus::new(0x100);
 
     assert_eq!(
         cpu.load_seg(&mut bus, Seg::SS, 0, LoadReason::Stack),
@@ -122,7 +121,7 @@ fn load_non_present_descriptor_raises_np_or_ss() {
     let mut cpu = CpuState::new();
     cpu.set_protected_enable(true);
 
-    let mut bus = TestBus::with_size(0x2000);
+    let mut bus = FlatTestBus::new(0x2000);
     let gdt_base = 0x100;
     let null = 0u64;
     let code32 = make_descriptor(0, 0xFFFFF, 0xA, true, 0, true, false, false, true, true);
@@ -148,7 +147,7 @@ fn privilege_check_on_data_segment_load() {
     cpu.set_protected_enable(true);
     cpu.cpl = 3;
 
-    let mut bus = TestBus::with_size(0x2000);
+    let mut bus = FlatTestBus::new(0x2000);
     let gdt_base = 0x100;
     let null = 0u64;
     let code_ring3 = make_descriptor(0, 0xFFFFF, 0xA, true, 3, true, false, false, true, true);
@@ -172,7 +171,7 @@ fn real_to_protected_to_long_transition() {
     assert_eq!(cpu.cpu_mode(), CpuMode::Real);
     assert_eq!(cpu.code_mode(), CodeMode::Real16);
 
-    let mut bus = TestBus::with_size(0x4000);
+    let mut bus = FlatTestBus::new(0x4000);
     let gdt_base = 0x200;
     let null = 0u64;
     let code32 = make_descriptor(0, 0xFFFFF, 0xA, true, 0, true, false, false, true, true);
@@ -202,7 +201,7 @@ fn long_mode_fs_gs_base_and_swapgs() {
     let mut cpu = CpuState::new();
     cpu.set_protected_enable(true);
 
-    let mut bus = TestBus::with_size(0x2000);
+    let mut bus = FlatTestBus::new(0x2000);
     let gdt_base = 0x100;
     let null = 0u64;
     let code64 = make_descriptor(0, 0xFFFFF, 0xA, true, 0, true, false, true, false, true);
@@ -238,4 +237,218 @@ fn long_mode_fs_gs_base_and_swapgs() {
         cpu.linearize(Seg::DS, 0x0001_0000_0000_0000, AccessType::read(1)),
         Err(Exception::gp0())
     );
+}
+
+#[test]
+fn conforming_code_segment_does_not_change_cpl() {
+    let mut cpu = CpuState::new();
+    cpu.set_protected_enable(true);
+    cpu.cpl = 3;
+
+    let mut bus = FlatTestBus::new(0x2000);
+    let gdt_base = 0x100;
+    let null = 0u64;
+    let code_ring3 = make_descriptor(0, 0xFFFFF, 0xA, true, 3, true, false, false, true, true);
+    let conforming_ring0 =
+        make_descriptor(0, 0xFFFFF, 0xE, true, 0, true, false, false, true, true);
+    setup_gdt(&mut bus, gdt_base, &[null, code_ring3, conforming_ring0]);
+    cpu.set_gdtr(gdt_base, (3 * 8 - 1) as u16);
+
+    cpu.load_seg(&mut bus, Seg::CS, 0x08 | 3, LoadReason::FarControlTransfer)
+        .unwrap();
+    assert_eq!(cpu.cpl, 3);
+
+    cpu.load_seg(&mut bus, Seg::CS, 0x10 | 3, LoadReason::FarControlTransfer)
+        .unwrap();
+    assert_eq!(cpu.cpl, 3);
+    assert_eq!(cpu.segments.cs.selector & 0x3, 3);
+    assert!(cpu.segments.cs.cache.attrs.code_conforming());
+}
+
+#[test]
+fn expand_down_segment_enforces_lower_bound() {
+    let mut cpu = CpuState::new();
+    cpu.set_protected_enable(true);
+
+    let mut bus = FlatTestBus::new(0x2000);
+    let gdt_base = 0x100;
+    let null = 0u64;
+    let code32 = make_descriptor(0, 0xFFFFF, 0xA, true, 0, true, false, false, true, true);
+    // 16-bit expand-down writable data segment with limit 0x0FFF.
+    let expand_down = make_descriptor(
+        0x1234_0000,
+        0x0FFF,
+        0x6,
+        true,
+        0,
+        true,
+        false,
+        false,
+        false,
+        false,
+    );
+    setup_gdt(&mut bus, gdt_base, &[null, code32, expand_down]);
+    cpu.set_gdtr(gdt_base, (3 * 8 - 1) as u16);
+
+    cpu.load_seg(&mut bus, Seg::CS, 0x08, LoadReason::FarControlTransfer)
+        .unwrap();
+    cpu.load_seg(&mut bus, Seg::DS, 0x10, LoadReason::Data)
+        .unwrap();
+
+    assert_eq!(
+        cpu.linearize(Seg::DS, 0x0FFF, AccessType::read(1)),
+        Err(Exception::gp0())
+    );
+
+    assert_eq!(
+        cpu.linearize(Seg::DS, 0x1000, AccessType::read(1)).unwrap(),
+        0x1234_0000u64 + 0x1000
+    );
+}
+
+#[test]
+fn descriptor_table_limit_violation_raises_gp() {
+    let mut cpu = CpuState::new();
+    cpu.set_protected_enable(true);
+
+    let mut bus = FlatTestBus::new(0x1000);
+    let gdt_base = 0x100;
+    let null = 0u64;
+    let code32 = make_descriptor(0, 0xFFFFF, 0xA, true, 0, true, false, false, true, true);
+    setup_gdt(&mut bus, gdt_base, &[null, code32]);
+    cpu.set_gdtr(gdt_base, (2 * 8 - 1) as u16);
+
+    cpu.load_seg(&mut bus, Seg::CS, 0x08, LoadReason::FarControlTransfer)
+        .unwrap();
+
+    assert_eq!(
+        cpu.load_seg(&mut bus, Seg::DS, 0x10, LoadReason::Data),
+        Err(Exception::gp(0x10))
+    );
+}
+
+#[test]
+fn load_ldtr_allows_accessing_ldt_descriptors() {
+    let mut cpu = CpuState::new();
+    cpu.set_protected_enable(true);
+
+    let mut bus = FlatTestBus::new(0x4000);
+    let gdt_base = 0x100;
+    let ldt_base = 0x800;
+
+    let null = 0u64;
+    let code32 = make_descriptor(0, 0xFFFFF, 0xA, true, 0, true, false, false, true, true);
+    let ldt_desc = make_descriptor(
+        ldt_base as u32,
+        0x0F,
+        0x2,
+        false,
+        0,
+        true,
+        false,
+        false,
+        false,
+        false,
+    );
+    setup_gdt(&mut bus, gdt_base, &[null, code32, ldt_desc]);
+    cpu.set_gdtr(gdt_base, (3 * 8 - 1) as u16);
+
+    // LDT entry 1: flat data segment with base 0x1234_0000.
+    let ldt_data = make_descriptor(
+        0x1234_0000,
+        0xFFFF,
+        0x2,
+        true,
+        0,
+        true,
+        false,
+        false,
+        false,
+        false,
+    );
+    bus.load(ldt_base + 8, &ldt_data.to_le_bytes());
+
+    cpu.load_seg(&mut bus, Seg::CS, 0x08, LoadReason::FarControlTransfer)
+        .unwrap();
+    cpu.load_ldtr(&mut bus, 0x10).unwrap();
+
+    // Selector index 1 in LDT: (1<<3) | TI.
+    cpu.load_seg(&mut bus, Seg::DS, 0x0C, LoadReason::Data)
+        .unwrap();
+    assert_eq!(cpu.seg_base(Seg::DS), 0x1234_0000);
+}
+
+#[test]
+fn tss32_ring0_stack_read() {
+    let mut cpu = CpuState::new();
+    cpu.set_protected_enable(true);
+
+    let mut bus = FlatTestBus::new(0x4000);
+    let gdt_base = 0x100;
+    let tss_base = 0x900;
+
+    let null = 0u64;
+    let code32 = make_descriptor(0, 0xFFFFF, 0xA, true, 0, true, false, false, true, true);
+    let tss_desc = make_descriptor(
+        tss_base as u32,
+        0x67,
+        0x9,
+        false,
+        0,
+        true,
+        false,
+        false,
+        false,
+        false,
+    );
+    setup_gdt(&mut bus, gdt_base, &[null, code32, tss_desc]);
+    cpu.set_gdtr(gdt_base, (3 * 8 - 1) as u16);
+
+    cpu.load_seg(&mut bus, Seg::CS, 0x08, LoadReason::FarControlTransfer)
+        .unwrap();
+    cpu.load_tr(&mut bus, 0x10).unwrap();
+
+    let esp0 = 0xDEAD_BEEFu32;
+    let ss0 = 0x10u16;
+    bus.load(tss_base + 4, &esp0.to_le_bytes());
+    bus.load(tss_base + 8, &ss0.to_le_bytes());
+
+    assert_eq!(cpu.tss32_ring0_stack(&mut bus).unwrap(), (ss0, esp0));
+}
+
+#[test]
+fn tss64_rsp0_and_ist_reads() {
+    let mut cpu = CpuState::new();
+    cpu.set_protected_enable(true);
+
+    let mut bus = FlatTestBus::new(0x8000);
+    let gdt_base = 0x100;
+    let tss_base = 0x2000u64;
+
+    let null = 0u64;
+    let code64 = make_descriptor(0, 0xFFFFF, 0xA, true, 0, true, false, true, false, true);
+    let (tss_low, tss_high) = make_system_descriptor_16(tss_base, 0x67, 0x9, 0, true);
+    setup_gdt(&mut bus, gdt_base, &[null, code64, tss_low, tss_high]);
+    cpu.set_gdtr(gdt_base, (4 * 8 - 1) as u16);
+
+    cpu.set_cr4(cpu.cr4 | CR4_PAE);
+    cpu.set_efer(cpu.efer | EFER_LME);
+    cpu.set_cr0(cpu.cr0 | CR0_PG);
+    cpu.load_seg(&mut bus, Seg::CS, 0x08, LoadReason::FarControlTransfer)
+        .unwrap();
+    assert_eq!(cpu.cpu_mode(), CpuMode::Long);
+
+    cpu.load_tr(&mut bus, 0x10).unwrap();
+
+    let rsp0 = 0xFFFF_8000_0000_1234u64;
+    let ist1 = 0xFFFF_8000_0000_2000u64;
+    let iomap_base = 0x70u16;
+    bus.load(tss_base + 4, &rsp0.to_le_bytes());
+    bus.load(tss_base + 0x24, &ist1.to_le_bytes());
+    bus.load(tss_base + 0x66, &iomap_base.to_le_bytes());
+
+    assert_eq!(cpu.tss64_rsp0(&mut bus).unwrap(), rsp0);
+    assert_eq!(cpu.tss64_ist(&mut bus, 1).unwrap(), ist1);
+    assert_eq!(cpu.tss64_iomap_base(&mut bus).unwrap(), iomap_base);
+    assert_eq!(cpu.tss64_ist(&mut bus, 0), Err(Exception::ts(0)));
 }
