@@ -413,6 +413,81 @@ fn rep_movsb_overlap_hazard_falls_back_to_element_wise() {
 }
 
 #[test]
+fn rep_movsb_df1_overlap_safe_uses_bulk_copy() {
+    // DF=1 copies high->low. When destination starts inside the source range at a higher
+    // address, this direction is safe (equivalent to memmove).
+    let count = 4096u32;
+    let src_start = 0x100u64;
+    let dst_start = 0x101u64;
+
+    let mut cpu = Cpu::new(CpuMode::Protected32);
+    cpu.rflags.set_df(true);
+    cpu.segs.ds.base = 0;
+    cpu.segs.es.base = 0;
+    cpu.regs
+        .set_esi((src_start + count as u64 - 1) as u32, CpuMode::Protected32);
+    cpu.regs
+        .set_edi((dst_start + count as u64 - 1) as u32, CpuMode::Protected32);
+    cpu.regs.set_ecx(count, CpuMode::Protected32);
+
+    let mut bus = CountingBus::new(0x4000);
+    for i in 0..count as u64 {
+        bus.write_u8(src_start + i, (i ^ 0x5Au64) as u8);
+    }
+
+    cpu.execute_bytes(&mut bus, &[0xF3, 0xA4]).unwrap(); // REP MOVSB
+
+    assert_eq!(bus.bulk_copy_calls, 1);
+    assert_eq!(cpu.regs.ecx(), 0);
+    assert_eq!(cpu.regs.esi(), (src_start - 1) as u32);
+    assert_eq!(cpu.regs.edi(), (dst_start - 1) as u32);
+
+    for i in 0..count as u64 {
+        assert_eq!(bus.read_u8(dst_start + i), (i ^ 0x5Au64) as u8);
+    }
+}
+
+#[test]
+fn rep_movsb_df1_overlap_hazard_falls_back_to_element_wise() {
+    // DF=1 copies high->low. Hazard case: destination starts inside the source range at a lower
+    // address. This causes propagation of the last source byte when the shift is -1.
+    let count = 4096u32;
+    let src_start = 0x101u64;
+    let dst_start = 0x100u64;
+    let expected = (count as u64 - 1) as u8;
+
+    let mut cpu = Cpu::new(CpuMode::Protected32);
+    cpu.rflags.set_df(true);
+    cpu.segs.ds.base = 0;
+    cpu.segs.es.base = 0;
+    cpu.regs
+        .set_esi((src_start + count as u64 - 1) as u32, CpuMode::Protected32);
+    cpu.regs
+        .set_edi((dst_start + count as u64 - 1) as u32, CpuMode::Protected32);
+    cpu.regs.set_ecx(count, CpuMode::Protected32);
+
+    let mut bus = CountingBus::new(0x4000);
+    for i in 0..count as u64 {
+        bus.write_u8(src_start + i, i as u8);
+    }
+
+    cpu.execute_bytes(&mut bus, &[0xF3, 0xA4]).unwrap(); // REP MOVSB
+
+    assert_eq!(bus.bulk_copy_calls, 0);
+    assert_eq!(cpu.regs.ecx(), 0);
+    assert_eq!(cpu.regs.esi(), (src_start - 1) as u32);
+    assert_eq!(cpu.regs.edi(), (dst_start - 1) as u32);
+
+    for i in 0..count as u64 {
+        assert_eq!(
+            bus.read_u8(dst_start + i),
+            expected,
+            "DF=1 overlap hazard should propagate last byte"
+        );
+    }
+}
+
+#[test]
 fn rep_stosd_uses_bulk_set() {
     let mut cpu = Cpu::new(CpuMode::Protected32);
     cpu.segs.es.base = 0;
