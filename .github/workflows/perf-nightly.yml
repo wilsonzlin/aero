@@ -13,6 +13,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: perf-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   perf-nightly:
     runs-on: ubuntu-22.04
@@ -157,6 +161,7 @@ jobs:
           name: perf-nightly-${{ github.run_id }}
           path: perf-results/nightly
           if-no-files-found: error
+          retention-days: 14
 
       - name: Checkout gh-pages (optional; used to load prior history)
         uses: actions/checkout@v4
@@ -198,6 +203,7 @@ jobs:
         with:
           name: perf-history-dashboard
           path: dist/perf-dashboard
+          retention-days: 14
 
       - name: Publish dashboard to gh-pages
         if: github.repository == 'wilsonzlin/aero' && github.ref == 'refs/heads/main'

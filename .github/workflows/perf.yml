@@ -244,6 +244,7 @@ jobs:
           name: perf-smoke-${{ github.run_id }}
           path: head/perf-results
           if-no-files-found: error
+          retention-days: 14
 
   perf-comment:
     name: PR comment (perf smoke)
