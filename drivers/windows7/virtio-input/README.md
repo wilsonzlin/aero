@@ -63,7 +63,7 @@ To confirm the IDs on Windows 7:
 
 ## Build (placeholder)
 
-This repo does not contain the driver sources yet. Once the driver project exists, the build output must produce:
+This packaging directory does not include the driver sources. Once the driver build exists, it must produce:
 
 - `aero_virtio_input.sys`
 
