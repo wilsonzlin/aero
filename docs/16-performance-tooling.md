@@ -249,7 +249,7 @@ node -p "require('./package.json').dependencies['playwright-core']"
 ```
 
 ```bash
-node bench/run --scenario microbench --iterations 7
+node tools/perf/run.mjs --out-dir perf-results/local --iterations 7
 ```
 
 What to expect:
@@ -260,7 +260,7 @@ What to expect:
 To benchmark a specific URL (e.g. your local preview server), pass `--url`:
 
 ```bash
-node bench/run --scenario microbench --iterations 7 --url http://127.0.0.1:4173/
+node tools/perf/run.mjs --out-dir perf-results/local --iterations 7 --url http://127.0.0.1:4173/
 ```
 
 ### Run the GPU benchmark scenarios (Playwright + WebGPU/WebGL2)
@@ -395,9 +395,9 @@ Capture a perf export:
 Run the microbench benchmark locally:
 
 1. `cd tools/perf && npm ci && npx playwright install chromium && cd ../..` (one-time)
-2. `node bench/run --scenario microbench --iterations 7`
+2. `node tools/perf/run.mjs --out-dir perf-results/local --iterations 7`
 
 To benchmark your locally served build instead of the built-in `data:` page:
 
 1. `npm ci && npm run serve:coi`
-2. `node bench/run --scenario microbench --iterations 7 --url http://127.0.0.1:4173/`
+2. `node tools/perf/run.mjs --out-dir perf-results/local --iterations 7 --url http://127.0.0.1:4173/`
