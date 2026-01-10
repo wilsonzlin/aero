@@ -275,6 +275,48 @@ fn fxrstor64_rejects_reserved_mxcsr_without_modifying_state() {
 }
 
 #[test]
+fn fxsave_legacy_does_not_store_upper_xmm_registers() {
+    let mut cpu = CpuState::default();
+    for i in 0..16 {
+        cpu.sse.xmm[i] = patterned_u128(0x50 + i as u8);
+    }
+
+    let mut image = [0u8; FXSAVE_AREA_SIZE];
+    cpu.fxsave(&mut image);
+
+    // Legacy FXSAVE only stores XMM0-7; the remaining slots are reserved and
+    // should be left as zero in the memory image.
+    for i in 8..16 {
+        let start = 160 + i * 16;
+        assert_eq!(&image[start..start + 16], &[0u8; 16]);
+    }
+}
+
+#[test]
+fn fxrstor_legacy_does_not_clobber_upper_xmm_registers() {
+    let mut cpu = CpuState::default();
+    for i in 0..16 {
+        cpu.sse.xmm[i] = patterned_u128(0x60 + i as u8);
+    }
+    let original_upper = cpu.sse.xmm[8..16].to_vec();
+
+    let mut image = [0u8; FXSAVE_AREA_SIZE];
+    cpu.fxsave(&mut image);
+
+    // Overwrite the stored XMM0-7 slots to simulate a different saved context.
+    for i in 0..8 {
+        let start = 160 + i * 16;
+        image[start..start + 16].copy_from_slice(&patterned_u128(0xA0 + i as u8).to_le_bytes());
+    }
+
+    cpu.fxrstor(&image).unwrap();
+    for i in 0..8 {
+        assert_eq!(cpu.sse.xmm[i], patterned_u128(0xA0 + i as u8));
+    }
+    assert_eq!(cpu.sse.xmm[8..16], original_upper[..]);
+}
+
+#[test]
 fn fninit_resets_x87_state_but_preserves_sse() {
     let mut cpu = CpuState::default();
     cpu.fpu.fcw = 0x1234;
