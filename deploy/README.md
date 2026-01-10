@@ -45,7 +45,13 @@ Example:
 
 ## Environment variables
 
-Set these in your shell or a `.env` file next to `deploy/docker-compose.yml`:
+Set these in your shell or a `.env` file next to `deploy/docker-compose.yml`.
+
+Quick start:
+
+```bash
+cp deploy/.env.example deploy/.env
+```
 
 - `AERO_DOMAIN` (default: `localhost`)
   - `localhost` for local dev
@@ -135,7 +141,9 @@ To reliably get `SharedArrayBuffer` + WASM threads working in production:
 ### 1) Check the headers
 
 ```bash
-curl -I https://localhost/
+# If you haven't trusted the local Caddy CA yet, add `-k` (insecure) or trust the
+# CA as described below.
+curl -kI https://localhost/
 ```
 
 Expect:
@@ -175,7 +183,9 @@ You can validate that the TLS + upgrade path works with a CLI client like
 
 ```bash
 # With the deploy stub gateway (no query params required):
-npx wscat -c "wss://localhost/tcp"
+# If you haven't trusted the local Caddy CA yet, you may need:
+#   NODE_TLS_REJECT_UNAUTHORIZED=0
+NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/tcp"
 
 # With a real Aero gateway, adjust query params to match its /tcp contract.
 # Canonical (v1):
