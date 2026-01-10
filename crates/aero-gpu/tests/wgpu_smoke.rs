@@ -30,7 +30,7 @@ fn wgpu_backend_create_destroy_smoke() {
         .create_texture(TextureDesc {
             label: Some("tex".into()),
             size: Extent3d {
-                width: 1,
+                width: 64,
                 height: 1,
                 depth_or_array_layers: 1,
             },
@@ -41,10 +41,33 @@ fn wgpu_backend_create_destroy_smoke() {
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         })
         .unwrap();
+    backend
+        .write_texture(
+            TextureWriteDesc {
+                texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                layout: ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(64 * 4),
+                    rows_per_image: Some(1),
+                },
+                size: Extent3d {
+                    width: 64,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            },
+            &[0u8; 64 * 4],
+        )
+        .unwrap();
     let view = backend
         .create_texture_view(texture, TextureViewDesc::default())
         .unwrap();
     backend.destroy_texture_view(view).unwrap();
+    // `Queue::write_texture` is executed as part of submission. Ensure the upload is flushed
+    // before destroying the texture to avoid wgpu validation errors.
+    backend.submit(&[]).unwrap();
     backend.destroy_texture(texture).unwrap();
 
     let sampler = backend.create_sampler(SamplerDesc::default()).unwrap();

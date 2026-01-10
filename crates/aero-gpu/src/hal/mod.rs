@@ -143,6 +143,34 @@ pub struct Extent3d {
     pub depth_or_array_layers: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Origin3d {
+    pub x: u32,
+    pub y: u32,
+    pub z: u32,
+}
+
+impl Origin3d {
+    pub const ZERO: Self = Self { x: 0, y: 0, z: 0 };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageDataLayout {
+    pub offset: u64,
+    pub bytes_per_row: Option<u32>,
+    pub rows_per_image: Option<u32>,
+}
+
+impl Default for ImageDataLayout {
+    fn default() -> Self {
+        Self {
+            offset: 0,
+            bytes_per_row: None,
+            rows_per_image: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TextureDesc {
     pub label: Option<String>,
@@ -156,6 +184,15 @@ pub struct TextureDesc {
 
 #[derive(Debug, Clone, Default)]
 pub struct TextureViewDesc {}
+
+#[derive(Debug, Clone)]
+pub struct TextureWriteDesc {
+    pub texture: TextureId,
+    pub mip_level: u32,
+    pub origin: Origin3d,
+    pub layout: ImageDataLayout,
+    pub size: Extent3d,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FilterMode {
@@ -366,6 +403,9 @@ pub trait GpuBackend {
 
     fn create_texture(&mut self, desc: TextureDesc) -> Result<TextureId, GpuError>;
     fn destroy_texture(&mut self, id: TextureId) -> Result<(), GpuError>;
+    fn write_texture(&mut self, _desc: TextureWriteDesc, _data: &[u8]) -> Result<(), GpuError> {
+        Err(GpuError::Unsupported("write_texture"))
+    }
 
     fn create_texture_view(
         &mut self,

@@ -140,6 +140,10 @@ impl GpuBackend for GpuContext {
         self.backend.destroy_texture(id)
     }
 
+    fn write_texture(&mut self, desc: hal::TextureWriteDesc, data: &[u8]) -> Result<(), GpuError> {
+        self.backend.write_texture(desc, data)
+    }
+
     fn create_texture_view(
         &mut self,
         texture: hal::TextureId,

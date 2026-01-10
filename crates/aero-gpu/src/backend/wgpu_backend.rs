@@ -284,6 +284,45 @@ impl GpuBackend for WgpuBackend {
         Ok(())
     }
 
+    fn write_texture(&mut self, desc: TextureWriteDesc, data: &[u8]) -> Result<(), GpuError> {
+        let texture = self.textures.get(desc.texture)?;
+        if desc.layout.bytes_per_row == Some(0) {
+            return Err(GpuError::Backend(
+                "ImageDataLayout.bytes_per_row must be non-zero".into(),
+            ));
+        }
+        if desc.layout.rows_per_image == Some(0) {
+            return Err(GpuError::Backend(
+                "ImageDataLayout.rows_per_image must be non-zero".into(),
+            ));
+        }
+
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture,
+                mip_level: desc.mip_level,
+                origin: wgpu::Origin3d {
+                    x: desc.origin.x,
+                    y: desc.origin.y,
+                    z: desc.origin.z,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::ImageDataLayout {
+                offset: desc.layout.offset,
+                bytes_per_row: desc.layout.bytes_per_row,
+                rows_per_image: desc.layout.rows_per_image,
+            },
+            wgpu::Extent3d {
+                width: desc.size.width,
+                height: desc.size.height,
+                depth_or_array_layers: desc.size.depth_or_array_layers,
+            },
+        );
+        Ok(())
+    }
+
     fn create_texture_view(
         &mut self,
         texture: TextureId,
