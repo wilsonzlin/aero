@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,12 +16,15 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 )
 
-func startTestServer(t *testing.T, cfg config.Config) (baseURL string) {
+func startTestServer(t *testing.T, cfg config.Config, register func(*Server)) string {
 	t.Helper()
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	build := BuildInfo{Commit: "abc", BuildTime: "time"}
 	srv := New(cfg, log, build)
+	if register != nil {
+		register(srv)
+	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -51,7 +55,7 @@ func TestHealthzReadyzVersion(t *testing.T) {
 		Mode:            config.ModeDev,
 	}
 
-	baseURL := startTestServer(t, cfg)
+	baseURL := startTestServer(t, cfg, nil)
 
 	t.Run("healthz", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/healthz")
@@ -115,7 +119,7 @@ func TestICEEndpointSchema(t *testing.T) {
 		},
 	}
 
-	baseURL := startTestServer(t, cfg)
+	baseURL := startTestServer(t, cfg, nil)
 
 	resp, err := http.Get(baseURL + "/webrtc/ice")
 	if err != nil {
@@ -151,7 +155,7 @@ func TestICEEndpoint_RejectsCrossOrigin(t *testing.T) {
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
 
-	baseURL := startTestServer(t, cfg)
+	baseURL := startTestServer(t, cfg, nil)
 
 	req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
 	if err != nil {
@@ -181,7 +185,7 @@ func TestReadyzFailsOnInvalidICEConfig(t *testing.T) {
 		t.Fatalf("expected ICE config error to be captured for readiness")
 	}
 
-	baseURL := startTestServer(t, cfg)
+	baseURL := startTestServer(t, cfg, nil)
 
 	resp, err := http.Get(baseURL + "/readyz")
 	if err != nil {
@@ -191,5 +195,106 @@ func TestReadyzFailsOnInvalidICEConfig(t *testing.T) {
 
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", resp.StatusCode)
+	}
+}
+
+func TestRequestIDMiddleware(t *testing.T) {
+	cfg := config.Config{
+		ListenAddr:      "127.0.0.1:0",
+		LogFormat:       config.LogFormatText,
+		LogLevel:        slog.LevelInfo,
+		ShutdownTimeout: 2 * time.Second,
+		Mode:            config.ModeDev,
+	}
+
+	baseURL := startTestServer(t, cfg, func(srv *Server) {
+		srv.Mux().HandleFunc("GET /echo-request-id", func(w http.ResponseWriter, r *http.Request) {
+			WriteJSON(w, http.StatusOK, map[string]any{"requestId": r.Header.Get("X-Request-ID")})
+		})
+	})
+
+	t.Run("generated when missing", func(t *testing.T) {
+		resp, err := http.Get(baseURL + "/echo-request-id")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
+		}
+
+		reqID := strings.TrimSpace(resp.Header.Get("X-Request-ID"))
+		if reqID == "" {
+			t.Fatalf("expected X-Request-ID header to be set")
+		}
+
+		var body struct {
+			RequestID string `json:"requestId"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if strings.TrimSpace(body.RequestID) != reqID {
+			t.Fatalf("body requestId=%q, want %q", body.RequestID, reqID)
+		}
+	})
+
+	t.Run("preserves provided ID", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, baseURL+"/echo-request-id", nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("X-Request-ID", "my-custom-id")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
+		}
+
+		if got := resp.Header.Get("X-Request-ID"); got != "my-custom-id" {
+			t.Fatalf("X-Request-ID=%q, want %q", got, "my-custom-id")
+		}
+	})
+}
+
+func TestRecoverMiddleware(t *testing.T) {
+	cfg := config.Config{
+		ListenAddr:      "127.0.0.1:0",
+		LogFormat:       config.LogFormatText,
+		LogLevel:        slog.LevelInfo,
+		ShutdownTimeout: 2 * time.Second,
+		Mode:            config.ModeDev,
+	}
+
+	baseURL := startTestServer(t, cfg, func(srv *Server) {
+		srv.Mux().HandleFunc("GET /panic", func(w http.ResponseWriter, r *http.Request) {
+			panic("boom")
+		})
+	})
+
+	resp, err := http.Get(baseURL + "/panic")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusInternalServerError)
+	}
+
+	// The server should still be alive after recovering.
+	resp2, err := http.Get(baseURL + "/healthz")
+	if err != nil {
+		t.Fatalf("get healthz: %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("healthz status=%d, want %d", resp2.StatusCode, http.StatusOK)
 	}
 }
