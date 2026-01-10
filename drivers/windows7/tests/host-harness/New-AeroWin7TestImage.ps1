@@ -29,7 +29,16 @@ param(
   # Optional: bake a fixed virtio-blk test directory into the scheduled task.
   # Example: "D:\\aero-virtio-selftest\\"
   [Parameter(Mandatory = $false)]
-  [string]$BlkRoot = ""
+  [string]$BlkRoot = "",
+
+  # For unsigned/test-signed drivers on Windows 7 x64, test-signing mode must be enabled.
+  # If set, the provisioning script will run: bcdedit /set testsigning on
+  [Parameter(Mandatory = $false)]
+  [switch]$EnableTestSigning,
+
+  # If set (and typically used with -EnableTestSigning), the provisioning script will reboot the VM at the end.
+  [Parameter(Mandatory = $false)]
+  [switch]$AutoReboot
 )
 
 Set-StrictMode -Version Latest
@@ -72,6 +81,23 @@ if (-not [string]::IsNullOrEmpty($BlkRoot)) {
   $blkArg = " --blk-root $BlkRoot"
 }
 
+$enableTestSigningCmd = ""
+if ($EnableTestSigning) {
+  $enableTestSigningCmd = @"
+REM Enable Windows test-signing mode (required for unsigned/test-signed kernel drivers on Win7 x64).
+echo [AERO] enabling testsigning... >> "%LOG%"
+bcdedit /set testsigning on >> "%LOG%" 2>&1
+"@
+}
+
+$autoRebootCmd = ""
+if ($AutoReboot) {
+  $autoRebootCmd = @"
+echo [AERO] rebooting... >> "%LOG%"
+shutdown /r /t 0 >> "%LOG%" 2>&1
+"@
+}
+
 $provisionCmd = @"
 @echo off
 setlocal enableextensions enabledelayedexpansion
@@ -103,11 +129,14 @@ REM Install selftest binary.
 mkdir C:\AeroTests >> "%LOG%" 2>&1
 copy /y "%MEDIA%\AERO\selftest\aero-virtio-selftest.exe" C:\AeroTests\ >> "%LOG%" 2>&1
 
+$enableTestSigningCmd
+
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
   /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url $HttpUrl --dns-host $DnsHost$blkArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
+$autoRebootCmd
 exit /b 0
 "@
 
@@ -139,6 +168,7 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
 Notes:
 - The virtio-blk selftest requires a usable/mounted virtio volume. If your VM boots from a non-virtio disk,
   consider attaching a separate virtio data disk with a drive letter and using the selftest option `--blk-root`.
+- For unsigned/test-signed drivers on Win7 x64, consider generating this media with `-EnableTestSigning -AutoReboot`.
 "@
 
 Write-TextFileUtf8NoBom -Path (Join-Path $OutputDir "README.txt") -Content $readme

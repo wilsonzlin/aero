@@ -103,6 +103,21 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -BlkRoot "D:\aero-virtio-selftest\"
 ```
 
+### Enabling test-signing mode (unsigned / test-signed drivers)
+
+On Windows 7 x64, kernel drivers must be signed (or the machine must be in test-signing mode).
+
+If your Aero virtio drivers are not yet production-signed, `New-AeroWin7TestImage.ps1` can embed a `bcdedit /set testsigning on`
+step into the provisioning script:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
+  -SelftestExePath ./aero-virtio-selftest.exe `
+  -DriversDir ./drivers-out `
+  -EnableTestSigning `
+  -AutoReboot
+```
+
 ### Installing Windows 7 from a user-supplied ISO (interactive)
 
 If you don't already have a prepared VM, `Start-AeroWin7Installer.ps1` can launch an interactive Windows 7 install
