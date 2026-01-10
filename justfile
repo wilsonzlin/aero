@@ -306,3 +306,39 @@ lint:
   fi
 
   just _maybe_run_web_script lint
+
+object-store-up:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  if ! command -v docker >/dev/null; then
+    echo "error: docker is required to run the local object store" >&2
+    exit 1
+  fi
+  (cd infra/local-object-store && docker compose up)
+
+object-store-up-proxy:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  if ! command -v docker >/dev/null; then
+    echo "error: docker is required to run the local object store" >&2
+    exit 1
+  fi
+  (cd infra/local-object-store && docker compose --profile proxy up)
+
+object-store-down:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  if ! command -v docker >/dev/null; then
+    echo "error: docker is required to manage the local object store" >&2
+    exit 1
+  fi
+  (cd infra/local-object-store && docker compose down)
+
+object-store-reset:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  if ! command -v docker >/dev/null; then
+    echo "error: docker is required to manage the local object store" >&2
+    exit 1
+  fi
+  (cd infra/local-object-store && docker compose down -v)

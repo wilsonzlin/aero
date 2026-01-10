@@ -37,6 +37,12 @@ From this directory:
 docker compose up
 ```
 
+From the repo root (using `just`):
+
+```bash
+just object-store-up
+```
+
 You can override defaults by exporting environment variables before starting (or by creating a `.env` file in this directory), for example:
 
 ```bash
@@ -70,6 +76,12 @@ Enable the proxy container with a Compose profile:
 
 ```bash
 docker compose --profile proxy up
+```
+
+Or from the repo root:
+
+```bash
+just object-store-up-proxy
 ```
 
 The proxy is useful for reproducing “edge” behaviors (for example, overriding CORS headers and handling preflights at the proxy instead of the origin).
