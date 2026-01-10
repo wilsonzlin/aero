@@ -65,6 +65,12 @@ impl Set2ToSet1 {
                 self.saw_e0 = true;
                 vec![0xE0]
             }
+            // Used by Pause/Break.
+            0xE1 => {
+                self.saw_e0 = false;
+                self.saw_f0 = false;
+                vec![0xE1]
+            }
             0xF0 => {
                 self.saw_f0 = true;
                 Vec::new()
@@ -157,6 +163,23 @@ fn set2_to_set1(code: u8, extended: bool) -> u8 {
         (0x09, false) => 0x44, // F10
         (0x78, false) => 0x57, // F11
         (0x07, false) => 0x58, // F12
+        (0x77, false) => 0x45, // NumLock
+        (0x7E, false) => 0x46, // ScrollLock
+        (0x6C, false) => 0x47, // Numpad7
+        (0x75, false) => 0x48, // Numpad8
+        (0x7D, false) => 0x49, // Numpad9
+        (0x7B, false) => 0x4A, // NumpadSubtract
+        (0x6B, false) => 0x4B, // Numpad4
+        (0x73, false) => 0x4C, // Numpad5
+        (0x74, false) => 0x4D, // Numpad6
+        (0x79, false) => 0x4E, // NumpadAdd
+        (0x69, false) => 0x4F, // Numpad1
+        (0x72, false) => 0x50, // Numpad2
+        (0x7A, false) => 0x51, // Numpad3
+        (0x70, false) => 0x52, // Numpad0
+        (0x71, false) => 0x53, // NumpadDecimal
+        (0x7C, false) => 0x37, // NumpadMultiply
+        (0x61, false) => 0x56, // IntlBackslash (ISO 102-key)
         // Extended
         (0x14, true) => 0x1D, // Right Ctrl
         (0x11, true) => 0x38, // Right Alt
@@ -172,6 +195,11 @@ fn set2_to_set1(code: u8, extended: bool) -> u8 {
         (0x71, true) => 0x53, // Delete
         (0x5A, true) => 0x1C, // Numpad Enter
         (0x4A, true) => 0x35, // Numpad Divide
+        (0x1F, true) => 0x5B, // Left Meta / Windows
+        (0x27, true) => 0x5C, // Right Meta / Windows
+        (0x2F, true) => 0x5D, // ContextMenu
+        (0x12, true) => 0x2A, // PrintScreen sequence
+        (0x7C, true) => 0x37, // PrintScreen sequence
         _ => code,
     }
 }

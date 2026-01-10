@@ -603,6 +603,7 @@ impl InputCapture {
 // Outputs:
 //   - web/src/input/scancodes.ts
 //   - crates/emulator/src/io/input/scancodes.rs
+//   - crates/aero-devices-input/src/scancodes_generated.rs
 //
 // This keeps the JS capture side and Rust/WASM side in sync, including extended
 // keys (0xE0 prefix) and special multi-byte sequences like PrintScreen/Pause.
