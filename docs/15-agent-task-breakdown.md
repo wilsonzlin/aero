@@ -545,7 +545,7 @@ At any given time, these work streams can proceed independently:
 6. Storage cache (ST-006..007)
 7. Network (NT-001..008)
 8. Audio (AU-001..005)
-9. Input (IN-001..006)
+9. Input (IN-001..006, IN-011..015)
 10. Profiling (PF-001..005)
 
 ---
