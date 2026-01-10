@@ -125,3 +125,21 @@ On a clean Win7 SP1 VM:
      - `C:\Windows\SysWOW64\aerogpu_d3d9.dll` exists
    - x86 VM:
      - `C:\Windows\System32\aerogpu_d3d9.dll` exists
+
+## 7) Run the guest-side Direct3D validation suite (recommended)
+
+After installation, run the small guest-side Direct3D tests under:
+
+* `drivers/aerogpu/tests/win7/`
+
+These programs render a known pattern and validate GPU readback (`PASS:`/`FAIL:` + non-zero exit code on failure). The suite includes a `run_all.cmd` harness.
+
+Example:
+
+```bat
+cd \path\to\repo\drivers\aerogpu\tests\win7
+build_all_vs2010.cmd
+run_all.cmd --require-vid=0x1234 --require-did=0x1111
+```
+
+Replace the VID/DID with the value shown in Device Manager → Display adapters → Properties → Details → **Hardware Ids**, or the HW ID used in the `[AeroGPU_Models.*]` sections of the INF.
