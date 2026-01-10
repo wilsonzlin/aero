@@ -238,6 +238,29 @@ fn decode_vs2_output_registers() {
 }
 
 #[test]
+fn decode_vs3_output_register_type6_is_generic_output() {
+    // vs_3_0 mov o0, v0
+    let tokens = vec![
+        version_token(ShaderStage::Vertex, 3, 0),
+        opcode_token(1, 2),
+        dst_token(6, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        0x0000_FFFF,
+    ];
+
+    let shader = decode_u32_tokens(&tokens).unwrap();
+    let mov = &shader.instructions[0];
+    assert_eq!(mov.opcode, Opcode::Mov);
+
+    let dst = match &mov.operands[0] {
+        Operand::Dst(dst) => dst,
+        _ => panic!("expected dst operand"),
+    };
+    assert_eq!(dst.reg.file, RegisterFile::Output);
+    assert_eq!(dst.reg.index, 0);
+}
+
+#[test]
 fn decode_ps2_dcl_texcoord_t0() {
     // ps_2_0 dcl t0.xy
     let tokens = vec![
