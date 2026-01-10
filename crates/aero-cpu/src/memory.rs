@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use aero_core::memory::{Memory as CoreMemory, MemoryError};
 use aero_jit::block::CodeSource;
 
 /// Flat guest memory used by the baseline CPU worker.
@@ -75,5 +76,31 @@ impl CodeSource for Memory {
         }
         let start = addr as usize;
         Some(&self.bytes[start..start + len])
+    }
+}
+
+impl CoreMemory for Memory {
+    fn read(&self, addr: u64, buf: &mut [u8]) -> Result<(), MemoryError> {
+        if !self.in_bounds(addr, buf.len()) {
+            return Err(MemoryError::OutOfBounds {
+                addr,
+                len: buf.len(),
+            });
+        }
+        let start = addr as usize;
+        buf.copy_from_slice(&self.bytes[start..start + buf.len()]);
+        Ok(())
+    }
+
+    fn write(&mut self, addr: u64, buf: &[u8]) -> Result<(), MemoryError> {
+        if !self.in_bounds(addr, buf.len()) {
+            return Err(MemoryError::OutOfBounds {
+                addr,
+                len: buf.len(),
+            });
+        }
+        let start = addr as usize;
+        self.bytes[start..start + buf.len()].copy_from_slice(buf);
+        Ok(())
     }
 }
