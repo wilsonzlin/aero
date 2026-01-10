@@ -94,6 +94,10 @@ The graphics subsystem is one of the most challenging components. Windows 7 uses
 
 For BIOS, boot loader, and legacy applications:
 
+For Windows 7 specifically, the **primary boot display** must be provided by the same virtual GPU that will later run WDDM. In Aero, this means the AeroGPU virtual PCI device must be **VGA/VBE-compatible** (legacy VGA ports + legacy VRAM window + VBE linear framebuffer modes) and the emulator must present that framebuffer on the canvas until the WDDM driver claims scanout.
+
+See: [AeroGPU Legacy VGA/VBE Compatibility](./16-aerogpu-vga-vesa-compat.md)
+
 ```rust
 pub struct VgaEmulator {
     // VGA registers

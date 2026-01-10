@@ -486,6 +486,10 @@ For each inlined memory access:
 
 ### Physical Memory Regions
 
+Even though `0x000A_0000–0x000B_FFFF` sits in the “conventional memory” area, it must be treated as device memory: the emulator should register an `MmioRegion` for the **AeroGPU legacy VGA window**, so BIOS/bootloader/Windows writes to `0xB8000` (text mode) and VBE LFB modes are visible on the canvas.
+
+See: [AeroGPU Legacy VGA/VBE Compatibility](./16-aerogpu-vga-vesa-compat.md)
+
 ```rust
 pub struct MemoryBus {
     // Main RAM (guest physical memory)

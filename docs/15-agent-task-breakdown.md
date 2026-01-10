@@ -213,6 +213,18 @@ pub trait GpuCommandProcessor {
 | VG-007 | VGA DAC                     | P0       | VG-006       | Low        |
 | VG-008 | VGA BIOS interrupt handlers | P0       | VG-002       | Medium     |
 
+### AeroGPU Tasks (Boot VGA + WDDM)
+
+These tasks wire the generic VGA/VBE work into the **AeroGPU virtual PCI device** so Windows 7 can boot and install without a second “legacy VGA” adapter.
+
+See: [AeroGPU Legacy VGA/VBE Compatibility](./16-aerogpu-vga-vesa-compat.md)
+
+| ID                   | Task                                                                 | Priority | Dependencies                 | Complexity |
+| -------------------- | -------------------------------------------------------------------- | -------- | ---------------------------- | ---------- |
+| AeroGPU-EMU-DEV-001  | Base AeroGPU PCI device model (BARs, interrupts, MMIO register space) | P0       | DM-007, DM-008               | High       |
+| AeroGPU-EMU-DEV-002  | VGA legacy decode + VBE LFB modes + scanout handoff to WDDM           | P0       | AeroGPU-EMU-DEV-001, VG-005  | High       |
+| AeroGPU-EMU-DEV-003  | WDDM scanout registers + present path (canvas)                        | P0       | AeroGPU-EMU-DEV-001          | High       |
+
 
 ### DirectX-9 Tasks
 

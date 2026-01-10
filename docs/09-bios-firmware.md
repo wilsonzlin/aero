@@ -177,6 +177,11 @@ impl Bios {
 
 ### BIOS Interrupt Services
 
+Windows 7 boot and setup rely on **VBE (VESA BIOS Extensions)** for early boot graphics, before any vendor WDDM driver is loaded. INT 10h must therefore implement both:
+
+- legacy VGA text services (e.g. AH=0x0E TTY write), and
+- VBE services (AX=4Fxx) to set a linear framebuffer mode (see [AeroGPU Legacy VGA/VBE Compatibility](./16-aerogpu-vga-vesa-compat.md)).
+
 ```rust
 impl Bios {
     pub fn handle_int10(&mut self, cpu: &mut CpuState, memory: &mut MemoryBus) {
@@ -188,6 +193,10 @@ impl Bios {
                 // Set video mode
                 let mode = cpu.rax as u8;
                 self.set_video_mode(mode, memory);
+            }
+            0x4F => {
+                // VBE (VESA BIOS Extensions)
+                self.handle_int10_vbe(cpu, memory);
             }
             0x01 => {
                 // Set cursor shape
@@ -214,6 +223,60 @@ impl Bios {
             }
             _ => {
                 log::debug!("Unhandled INT 10h function: {:02x}", function);
+            }
+        }
+    }
+
+    fn handle_int10_vbe(&mut self, cpu: &mut CpuState, memory: &mut MemoryBus) {
+        // VBE entry point: AX=4Fxx, subfunction in AL.
+        //
+        // Minimal set required for Windows boot:
+        //  - 4F00h: Get Controller Info
+        //  - 4F01h: Get Mode Info
+        //  - 4F02h: Set Mode (bit 14 = LFB)
+        //  - 4F03h: Get Current Mode
+        let sub = cpu.rax as u8; // AL
+
+        match sub {
+            0x00 => {
+                // ES:DI -> VbeInfoBlock (512 bytes)
+                let dst = ((cpu.es.selector as u64) << 4) + (cpu.rdi & 0xFFFF);
+                self.write_vbe_controller_info(dst, memory);
+                cpu.rax = 0x004F; // success (AL=4Fh, AH=00h)
+                cpu.rflags &= !FLAG_CF;
+            }
+            0x01 => {
+                // CX = mode, ES:DI -> ModeInfoBlock (256 bytes)
+                let mode = cpu.rcx as u16;
+                let dst = ((cpu.es.selector as u64) << 4) + (cpu.rdi & 0xFFFF);
+                if self.write_vbe_mode_info(mode, dst, memory).is_ok() {
+                    cpu.rax = 0x004F;
+                    cpu.rflags &= !FLAG_CF;
+                } else {
+                    cpu.rax = 0x014F;
+                    cpu.rflags |= FLAG_CF;
+                }
+            }
+            0x02 => {
+                // BX = mode (bit 14 enables LFB). Return status in AX.
+                let mode = cpu.rbx as u16;
+                if self.set_vbe_mode(mode, memory).is_ok() {
+                    cpu.rax = 0x004F;
+                    cpu.rflags &= !FLAG_CF;
+                } else {
+                    cpu.rax = 0x014F;
+                    cpu.rflags |= FLAG_CF;
+                }
+            }
+            0x03 => {
+                // Get current mode -> BX
+                cpu.rbx = self.current_vbe_mode() as u64;
+                cpu.rax = 0x004F;
+                cpu.rflags &= !FLAG_CF;
+            }
+            _ => {
+                cpu.rax = 0x014F; // function unsupported
+                cpu.rflags |= FLAG_CF;
             }
         }
     }

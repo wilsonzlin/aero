@@ -441,6 +441,43 @@ async fn test_vga_text_mode() {
 }
 
 #[wasm_bindgen_test]
+async fn test_vbe_lfb_mode_1024x768x32() {
+    let mut gpu = AeroGpuEmulator::new();
+
+    // Set VBE mode (0x118 suggested) with linear framebuffer bit set.
+    gpu.bios_int10_vbe_set_mode(0x118 | (1 << 14));
+
+    // Draw a simple pattern into the reported LFB physical address.
+    let lfb = gpu.current_scanout().base_paddr();
+    gpu.mem_write_u32(lfb, 0x00FF_0000); // top-left pixel: red (B8G8R8X8)
+
+    let frame = gpu.present().await;
+    assert_eq!(frame.resolution(), (1024, 768));
+    assert_eq!(frame.pixel(0, 0), Rgba::new(255, 0, 0, 255));
+}
+
+#[wasm_bindgen_test]
+async fn test_scanout_handoff_vbe_to_wddm() {
+    let mut gpu = AeroGpuEmulator::new();
+
+    // Boot uses VBE LFB.
+    gpu.bios_int10_vbe_set_mode(0x118 | (1 << 14));
+    let legacy_lfb = gpu.current_scanout().base_paddr();
+    gpu.mem_write_u32(legacy_lfb, 0x0000_FF00); // green
+    let legacy_frame = gpu.present().await;
+    assert_eq!(legacy_frame.pixel(0, 0), Rgba::new(0, 255, 0, 255));
+
+    // WDDM driver claims scanout via AeroGPU MMIO registers.
+    let wddm_fb = gpu.allocate_wddm_framebuffer(1024, 768, PixelFormat::B8G8R8X8);
+    gpu.mem_write_u32(wddm_fb.base_paddr(), 0x0000_0000); // black
+    gpu.mmio_set_scanout(wddm_fb.base_paddr(), 1024, 768, 1024 * 4, PixelFormat::B8G8R8X8);
+
+    // Now the visible frame must come from the WDDM-programmed framebuffer.
+    let wddm_frame = gpu.present().await;
+    assert_eq!(wddm_frame.pixel(0, 0), Rgba::new(0, 0, 0, 255));
+}
+
+#[wasm_bindgen_test]
 async fn test_directx_triangle() {
     let mut gpu = GpuEmulator::new().await;
     

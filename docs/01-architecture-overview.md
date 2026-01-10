@@ -170,7 +170,7 @@
 │ Address Range        │ Size     │ Description                   │
 ├─────────────────────────────────────────────────────────────────┤
 │ 0x0000_0000 - 0x0009_FFFF │ 640 KB   │ Conventional Memory       │
-│ 0x000A_0000 - 0x000B_FFFF │ 128 KB   │ VGA Video Memory          │
+│ 0x000A_0000 - 0x000B_FFFF │ 128 KB   │ AeroGPU legacy VGA window │
 │ 0x000C_0000 - 0x000C_7FFF │ 32 KB    │ Video BIOS                │
 │ 0x000C_8000 - 0x000E_FFFF │ 160 KB   │ Adapter ROM Area          │
 │ 0x000F_0000 - 0x000F_FFFF │ 64 KB    │ System BIOS               │
@@ -205,7 +205,7 @@ Note: Aero’s baseline browser build uses wasm32 and is therefore constrained t
 │ 0x01F0-0x01F7  │ IDE Primary                                    │
 │ 0x0278-0x027A  │ Parallel Port (LPT)                            │
 │ 0x02F8-0x02FF  │ COM2 Serial                                    │
-│ 0x03C0-0x03DF  │ VGA Registers                                  │
+│ 0x03C0-0x03DF  │ AeroGPU legacy VGA registers                    │
 │ 0x03F0-0x03F7  │ Floppy Controller                              │
 │ 0x03F8-0x03FF  │ COM1 Serial                                    │
 │ 0x0CF8-0x0CFF  │ PCI Configuration                              │
