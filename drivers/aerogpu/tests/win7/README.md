@@ -90,6 +90,12 @@ set AEROGPU_TEST_TIMEOUT_MS=120000
 run_all.cmd
 ```
 
+Or (equivalently) pass it as an argument:
+
+```cmd
+run_all.cmd --timeout-ms=120000
+```
+
 To require a specific PCI VID/DID (recommended for automation):
 
 ```cmd

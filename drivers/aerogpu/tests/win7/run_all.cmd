@@ -4,9 +4,16 @@ setlocal enabledelayedexpansion
 set "TIMEOUT_MS=%AEROGPU_TEST_TIMEOUT_MS%"
 if "%TIMEOUT_MS%"=="" set "TIMEOUT_MS=30000"
 
-if /I "%~1"=="--help" goto :help
-if /I "%~1"=="-h" goto :help
-if "%~1"=="/?" goto :help
+set "SHOW_HELP="
+for %%A in (%*) do (
+  if /I "%%~A"=="--help" set "SHOW_HELP=1"
+  if /I "%%~A"=="-h" set "SHOW_HELP=1"
+  if "%%~A"=="/?" set "SHOW_HELP=1"
+  for /f "tokens=1,2 delims==" %%a in ("%%~A") do (
+    if /I "%%a"=="--timeout-ms" if not "%%b"=="" set "TIMEOUT_MS=%%b"
+  )
+)
+if defined SHOW_HELP goto :help
 
 set "BIN=%~dp0bin"
 set "RUNNER=%BIN%\\aerogpu_timeout_runner.exe"
@@ -59,12 +66,12 @@ if errorlevel 1 (
 exit /b 0
 
 :help
-echo Usage: run_all.cmd [--dump] [--hidden] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--allow-remote]
+echo Usage: run_all.cmd [--dump] [--hidden] [--timeout-ms=NNNN] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--allow-remote]
 echo.
 echo Notes:
 echo   --require-vid/--require-did helps avoid false PASS when AeroGPU isn't active.
 echo   Rendering tests expect adapter description to contain "AeroGPU" unless --allow-non-aerogpu is provided.
 echo   --allow-remote only affects d3d9ex_dwm_probe; other tests ignore it.
-echo   Set AEROGPU_TEST_TIMEOUT_MS to override the default per-test timeout (%TIMEOUT_MS% ms) when aerogpu_timeout_runner.exe is present.
+echo   Use --timeout-ms=NNNN or set AEROGPU_TEST_TIMEOUT_MS to override the default per-test timeout (%TIMEOUT_MS% ms) when aerogpu_timeout_runner.exe is present.
 exit /b 0
 
