@@ -313,6 +313,32 @@ fn pae_2mb_large_page_translation() {
 }
 
 #[test]
+fn pae_pdpt_reserved_bits_cause_rsvd_page_fault() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x20000);
+
+    let pdpt_base = 0x1000u64;
+    let pd_base = 0x2000u64;
+
+    // Set a reserved bit (bit 1) in the PDPTE; in IA-32 PAE this must generate
+    // a reserved-bit violation page fault when used.
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64 | PTE_RW64);
+
+    mmu.set_cr3(pdpt_base);
+    mmu.set_cr4(CR4_PAE);
+    mmu.set_cr0(CR0_PG);
+
+    let vaddr = 0x1234u64;
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 0),
+        Err(TranslateFault::PageFault(PageFault {
+            addr: vaddr,
+            error_code: pf_error_code(true, AccessType::Read, false, true),
+        }))
+    );
+}
+
+#[test]
 fn long4_large_pages_2mb_and_1gb_translation() {
     // 2MB translation via PDE.PS
     {
