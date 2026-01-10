@@ -21,8 +21,21 @@ static NTSTATUS VirtioInputWriteRequestOutputBuffer(
 
 static NTSTATUS VirtioInputWriteRequestOutputString(_In_ WDFREQUEST Request, _In_ PCWSTR SourceString, _Out_ size_t *BytesWritten)
 {
-    size_t cch = wcslen(SourceString) + 1;
-    size_t cb = cch * sizeof(WCHAR);
+    const WCHAR *p;
+    size_t cch;
+    size_t cb;
+
+    if (SourceString == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    p = SourceString;
+    while (*p != L'\0') {
+        p++;
+    }
+
+    cch = (size_t)(p - SourceString) + 1;
+    cb = cch * sizeof(WCHAR);
 
     return VirtioInputWriteRequestOutputBuffer(Request, SourceString, cb, BytesWritten);
 }
