@@ -418,6 +418,28 @@ impl DhcpClient {
 
 ## WebSocket TCP Proxy
 
+### Reference implementation: `net-proxy/`
+
+This repository includes a standalone WebSocket → TCP/UDP relay service in [`net-proxy/`](../net-proxy/). It is suitable for:
+
+- local development (run alongside `vite dev`)
+- E2E testing (no public internet required)
+- eventual production deployments (configure allowlists)
+
+To run in trusted local development mode (allows `127.0.0.1`, RFC1918, etc):
+
+```bash
+cd net-proxy
+npm ci
+AERO_PROXY_OPEN=1 npm run dev
+```
+
+Health check:
+
+```bash
+curl http://127.0.0.1:8081/healthz
+```
+
 ### Client-side (Browser)
 
 ```rust
