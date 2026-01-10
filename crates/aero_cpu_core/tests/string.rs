@@ -229,6 +229,24 @@ fn repe_cmpsb_stops_on_mismatch() {
 }
 
 #[test]
+fn cmpsb_df0_increments_si_di_and_sets_flags() {
+    let mut cpu = Cpu::new(CpuMode::Protected32);
+    cpu.segs.ds.base = 0x1000;
+    cpu.segs.es.base = 0x2000;
+    cpu.regs.set_esi(0x12, CpuMode::Protected32);
+    cpu.regs.set_edi(0x22, CpuMode::Protected32);
+
+    let mut bus = setup_bus();
+    bus.write_u8(0x1000 + 0x12, 0x5A);
+    bus.write_u8(0x2000 + 0x22, 0x5A);
+
+    cpu.execute_bytes(&mut bus, &[0xA6]).unwrap(); // CMPSB
+    assert_eq!(cpu.regs.esi(), 0x13);
+    assert_eq!(cpu.regs.edi(), 0x23);
+    assert!(cpu.rflags.zf());
+}
+
+#[test]
 fn repne_scasb_stops_on_match() {
     let mut cpu = Cpu::new(CpuMode::Protected32);
     cpu.segs.es.base = 0x3000;
@@ -265,6 +283,21 @@ fn cmpsb_df1_decrements_si_di_and_sets_flags() {
     cpu.execute_bytes(&mut bus, &[0xA6]).unwrap(); // CMPSB
     assert_eq!(cpu.regs.esi(), 0x11);
     assert_eq!(cpu.regs.edi(), 0x21);
+    assert!(cpu.rflags.zf());
+}
+
+#[test]
+fn scasb_df0_increments_di_and_sets_flags() {
+    let mut cpu = Cpu::new(CpuMode::Protected32);
+    cpu.segs.es.base = 0x3000;
+    cpu.regs.set_edi(0x10, CpuMode::Protected32);
+    cpu.regs.set_al(0x42);
+
+    let mut bus = setup_bus();
+    bus.write_u8(0x3000 + 0x10, 0x42);
+
+    cpu.execute_bytes(&mut bus, &[0xAE]).unwrap(); // SCASB
+    assert_eq!(cpu.regs.edi(), 0x11);
     assert!(cpu.rflags.zf());
 }
 
