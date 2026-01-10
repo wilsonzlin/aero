@@ -1,0 +1,46 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { Worker } from "node:worker_threads";
+import { once } from "node:events";
+
+import { SharedRingBuffer } from "../src/io/ipc/ring_buffer.ts";
+import { IO_MESSAGE_STRIDE_U32 } from "../src/io/ipc/io_protocol.ts";
+
+test("I/O worker: PCI config (0xCF8/0xCFC) + BAR-backed MMIO dispatch", async () => {
+  const req = SharedRingBuffer.create({ capacity: 128, stride: IO_MESSAGE_STRIDE_U32 });
+  const resp = SharedRingBuffer.create({ capacity: 128, stride: IO_MESSAGE_STRIDE_U32 });
+
+  const ioWorker = new Worker(new URL("../src/workers/io_worker_node.ts", import.meta.url), {
+    type: "module",
+    workerData: {
+      requestRing: req.sab,
+      responseRing: resp.sab,
+      devices: ["pci_test"],
+      tickIntervalMs: 1,
+    },
+    execArgv: ["--experimental-strip-types"],
+  });
+
+  const cpuWorker = new Worker(new URL("./workers/cpu_sequence_worker.ts", import.meta.url), {
+    type: "module",
+    workerData: {
+      scenario: "pci_test",
+      requestRing: req.sab,
+      responseRing: resp.sab,
+    },
+    execArgv: ["--experimental-strip-types"],
+  });
+
+  const [result] = (await once(cpuWorker, "message")) as [
+    { ok: boolean; idDword: number; bar0: number; mmioReadback: number },
+  ];
+
+  assert.equal(result.ok, true);
+  assert.equal(result.idDword >>> 0, 0x5678_1234);
+  assert.equal(result.bar0 >>> 0, 0xe000_0000);
+  assert.equal(result.mmioReadback >>> 0, 0x1234_5678);
+
+  await cpuWorker.terminate();
+  await ioWorker.terminate();
+});
+
