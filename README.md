@@ -205,6 +205,42 @@ http://localhost:8080/
 
 If allocation fails, try a smaller guest RAM size (browser/OS dependent).
 
+## Storage I/O microbench (PF-008)
+
+The `web/` app exposes an early, emulator-independent browser storage benchmark:
+
+- OPFS (Origin Private File System) via `navigator.storage.getDirectory()` when available
+- IndexedDB fallback when OPFS is unavailable
+
+### In-app API
+
+Run from the browser devtools console:
+
+```js
+await window.aero.bench.runStorageBench();
+await window.aero.perf.export();
+```
+
+### Playwright scenario runner
+
+Run the `storage_io` scenario (writes results under `bench-results/`):
+
+```bash
+node --experimental-strip-types bench/runner.ts storage_io
+```
+
+Skip the storage I/O scenario (useful for noisy CI environments):
+
+```bash
+AERO_BENCH_SKIP_STORAGE_IO=1 node --experimental-strip-types bench/runner.ts storage_io
+```
+
+Check default thresholds (informational by default; add `--enforce` for CI gating):
+
+```bash
+node --experimental-strip-types bench/compare.ts --input bench-results/<run>/perf_export.json
+```
+
 ## Troubleshooting
 
 ### `crossOriginIsolated` is `false` / `SharedArrayBuffer` is not defined

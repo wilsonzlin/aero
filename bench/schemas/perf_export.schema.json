@@ -12,6 +12,9 @@
       "properties": {
         "webgpu": {
           "anyOf": [{ "$ref": "./webgpu_bench.schema.json" }, { "type": "null" }]
+        },
+        "storage": {
+          "anyOf": [{ "$ref": "./storage_bench.schema.json" }, { "type": "null" }]
         }
       }
     }

@@ -1,12 +1,16 @@
 import { runWebGpuBench, type WebGpuBenchOptions, type WebGpuBenchResult } from "../bench/webgpu_bench";
+import { runStorageBench } from "../bench/storage_bench";
+import type { StorageBenchOpts, StorageBenchResult } from "../bench/storage_types";
 
 type AeroGlobal = NonNullable<Window["aero"]> & {
   bench?: {
     runWebGpuBench?: (opts?: WebGpuBenchOptions) => Promise<WebGpuBenchResult>;
+    runStorageBench?: (opts?: StorageBenchOpts) => Promise<StorageBenchResult>;
   };
 };
 
 let lastWebGpuBench: WebGpuBenchResult | undefined;
+let lastStorageBench: StorageBenchResult | undefined;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -32,6 +36,7 @@ function wrapPerfExport(aero: AeroGlobal): void {
     const base = perfAny.__aeroBenchOriginalExport?.();
 
     const webgpu = lastWebGpuBench ?? null;
+    const storage = lastStorageBench ?? null;
 
     if (isRecord(base)) {
       const existing = isRecord(base.benchmarks) ? (base.benchmarks as Record<string, unknown>) : {};
@@ -40,13 +45,14 @@ function wrapPerfExport(aero: AeroGlobal): void {
         benchmarks: {
           ...existing,
           webgpu,
+          storage,
         },
       };
     }
 
     return {
       capture: base ?? null,
-      benchmarks: { webgpu },
+      benchmarks: { webgpu, storage },
     };
   };
 }
@@ -67,6 +73,12 @@ export function installAeroGlobal(): void {
     return result;
   };
 
+  aero.bench.runStorageBench = async (opts?: StorageBenchOpts): Promise<StorageBenchResult> => {
+    const result = await runStorageBench(opts);
+    lastStorageBench = result;
+    wrapPerfExport(aero);
+    return result;
+  };
+
   wrapPerfExport(aero);
 }
-

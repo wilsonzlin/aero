@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aero.example/schemas/storage_bench.schema.json",
+  "title": "Aero storage I/O benchmark",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["version", "run_id", "backend", "api_mode", "sequential_write", "sequential_read", "random_read_4k"],
+  "properties": {
+    "version": { "type": "number" },
+    "run_id": { "type": "string" },
+    "backend": { "enum": ["opfs", "indexeddb"] },
+    "api_mode": { "enum": ["sync_access_handle", "async"] },
+    "config": { "type": "object", "additionalProperties": true },
+    "sequential_write": { "$ref": "#/$defs/throughputSummary" },
+    "sequential_read": { "$ref": "#/$defs/throughputSummary" },
+    "random_read_4k": { "$ref": "#/$defs/latencySummary" },
+    "random_write_4k": {
+      "anyOf": [{ "$ref": "#/$defs/latencySummary" }, { "type": "null" }]
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "throughputRun": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["bytes", "duration_ms", "mb_per_s"],
+      "properties": {
+        "bytes": { "type": "number" },
+        "duration_ms": { "type": "number" },
+        "mb_per_s": { "type": "number" }
+      }
+    },
+    "throughputSummary": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["runs", "mean_mb_per_s", "stdev_mb_per_s"],
+      "properties": {
+        "runs": { "type": "array", "items": { "$ref": "#/$defs/throughputRun" } },
+        "mean_mb_per_s": { "type": "number" },
+        "stdev_mb_per_s": { "type": "number" }
+      }
+    },
+    "latencyRun": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["ops", "block_bytes", "min_ms", "max_ms", "mean_ms", "stdev_ms", "p50_ms", "p95_ms"],
+      "properties": {
+        "ops": { "type": "number" },
+        "block_bytes": { "type": "number" },
+        "min_ms": { "type": "number" },
+        "max_ms": { "type": "number" },
+        "mean_ms": { "type": "number" },
+        "stdev_ms": { "type": "number" },
+        "p50_ms": { "type": "number" },
+        "p95_ms": { "type": "number" }
+      }
+    },
+    "latencySummary": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["runs", "mean_p50_ms", "mean_p95_ms", "stdev_p50_ms", "stdev_p95_ms"],
+      "properties": {
+        "runs": { "type": "array", "items": { "$ref": "#/$defs/latencyRun" } },
+        "mean_p50_ms": { "type": "number" },
+        "mean_p95_ms": { "type": "number" },
+        "stdev_p50_ms": { "type": "number" },
+        "stdev_p95_ms": { "type": "number" }
+      }
+    }
+  }
+}
+

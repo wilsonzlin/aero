@@ -81,6 +81,9 @@ perf-results/
 test-images/*
 !test-images/README.md
 
+# Benchmark outputs (do not commit)
+bench-results/
+
 # Disk images / VM artifacts (do not commit)
 *.iso
 *.img
