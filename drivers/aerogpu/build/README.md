@@ -71,6 +71,9 @@ drivers\aerogpu\build\build_all.cmd
   * D3D9 UMD is required
   * D3D10/11 UMD is optional (only built if its `.sln` exists)
 
+> Note: on **Win7 x64**, the display driver package installs both 64-bit and 32-bit (SysWOW64) UMDs.
+> That means you still need the **x86 UMD build** even if you only care about an x64 VM.
+
 ### Build only one variant / arch
 `build_all.cmd` accepts optional arguments:
 

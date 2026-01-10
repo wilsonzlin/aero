@@ -84,11 +84,25 @@ del /f /q "%PKG_DIR%\aerogpu.cat" "%PKG_DIR%\aerogpu_dx11.cat" >nul 2>nul
 copy /y "%KMD_SYS%" "%PKG_DIR%\" >nul
 
 copy /y "%UMD_X86_DIR%\aerogpu_d3d9.dll" "%PKG_DIR%\" >nul
-if exist "%UMD_X86_DIR%\aerogpu_d3d10.dll" copy /y "%UMD_X86_DIR%\aerogpu_d3d10.dll" "%PKG_DIR%\" >nul
+if exist "%UMD_X86_DIR%\aerogpu_d3d10.dll" (
+  if /i "%ARCH%"=="x64" (
+    if exist "%UMD_X64_DIR%\aerogpu_d3d10_x64.dll" (
+      copy /y "%UMD_X86_DIR%\aerogpu_d3d10.dll" "%PKG_DIR%\" >nul
+    ) else (
+      echo NOTE: Skipping optional aerogpu_d3d10.dll because aerogpu_d3d10_x64.dll was not found.
+    )
+  ) else (
+    copy /y "%UMD_X86_DIR%\aerogpu_d3d10.dll" "%PKG_DIR%\" >nul
+  )
+)
 
 if /i "%ARCH%"=="x64" (
   copy /y "%UMD_X64_DIR%\aerogpu_d3d9_x64.dll" "%PKG_DIR%\" >nul
-  if exist "%UMD_X64_DIR%\aerogpu_d3d10_x64.dll" copy /y "%UMD_X64_DIR%\aerogpu_d3d10_x64.dll" "%PKG_DIR%\" >nul
+  if exist "%UMD_X64_DIR%\aerogpu_d3d10_x64.dll" (
+    if exist "%UMD_X86_DIR%\aerogpu_d3d10.dll" (
+      copy /y "%UMD_X64_DIR%\aerogpu_d3d10_x64.dll" "%PKG_DIR%\" >nul
+    )
+  )
 )
 
 echo OK: staged binaries.
