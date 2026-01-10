@@ -131,6 +131,12 @@ This directory includes a small script that will:
 ./verify.sh
 ```
 
+Or from the repo root:
+
+```bash
+just object-store-verify
+```
+
 To stop containers at the end:
 
 ```bash

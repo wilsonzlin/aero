@@ -342,3 +342,8 @@ object-store-reset:
     exit 1
   fi
   (cd infra/local-object-store && docker compose down -v)
+
+object-store-verify *args:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  (cd infra/local-object-store && ./verify.sh {{args}})
