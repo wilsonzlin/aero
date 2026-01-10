@@ -9,4 +9,9 @@ It is designed for the default workflow:
 3. Power off / reboot and switch the VM devices to Aero virtio devices (virtio-blk/net/snd/input + Aero WDDM GPU).
 4. Boot and let Plug and Play bind the newly-present devices to the staged driver packages.
 
-See `guest-tools/README.md` for full instructions, troubleshooting, and recovery steps.
+End-user guides:
+
+- [`windows7-guest-tools.md`](./windows7-guest-tools.md)
+- [`windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md)
+
+See `guest-tools/README.md` for the authoritative ISO contents, script flags, and implementation details.
