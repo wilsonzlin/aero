@@ -738,7 +738,7 @@ impl StreamingDisk {
 
         let mut response = fetch(&self.lease.remote_url, FetchOptions { headers }).await?;
         
-        // If the token expires (or is revoked) mid-run, refresh the lease and retry once.
+        // If the lease expires (or is revoked) mid-run, refresh the lease and retry once.
         if response.status() == 401 || response.status() == 403 {
             self.refresh_lease().await?;
 
@@ -795,7 +795,8 @@ Critical implementation constraints:
   - Ensure `Content-Encoding` is absent or `identity`
 - Cross-origin access (CORS):
   - `Range` is not a CORS-safelisted request header, so browsers will send an `OPTIONS` preflight.
-  - The server must allow the request headers used by the client (at minimum `Range`, and `Authorization` if using bearer tokens) and expose the response header (`Access-Control-Expose-Headers: Content-Range`).
+  - The server must allow the request headers used by the client (at minimum `Range`, and `Authorization` if using bearer tokens).
+  - The server must expose the response headers needed by the client (see the spec doc for the complete list; typically `Accept-Ranges`, `Content-Range`, `Content-Length`, `ETag`).
 - If Aero is deployed with COOP/COEP to enable `SharedArrayBuffer` (`crossOriginIsolated`), disk image resources must be CORS-enabled (`Access-Control-Allow-Origin`) or served with a compatible `Cross-Origin-Resource-Policy` header; otherwise the browser will block the fetch.
   - See [16 - Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md) for the required CORS/COEP/CORP headers when using authenticated and/or cross-origin streaming.
 
