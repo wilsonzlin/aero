@@ -1,6 +1,7 @@
 //! Paging / MMU helpers.
 
 pub mod mode32;
+pub mod pae;
 
 use crate::bus::MemoryBus;
 
@@ -52,11 +53,15 @@ pub const CR0_WP: u32 = 1 << 16;
 pub const CR4_PSE: u32 = 1 << 4;
 pub const CR4_PAE: u32 = 1 << 5;
 
+pub const EFER_LME: u64 = 1 << 8;
+pub const EFER_NXE: u64 = 1 << 11;
+
 /// Translate a linear address to a physical address.
 ///
 /// Currently supports:
 /// - paging disabled: identity mapping (32-bit mask)
 /// - 32-bit non-PAE paging: `CR0.PG=1` and `CR4.PAE=0`
+/// - PAE paging (3-level): `CR0.PG=1` and `CR4.PAE=1` and `EFER.LME=0`
 pub fn translate(
     bus: &mut impl MemoryBus,
     linear: u64,
@@ -65,6 +70,7 @@ pub fn translate(
     cr0: u32,
     cr3: u32,
     cr4: u32,
+    efer: u64,
 ) -> Result<u64, PageFault> {
     let vaddr = (linear & 0xFFFF_FFFF) as u32;
     if (cr0 & CR0_PG) == 0 {
@@ -72,8 +78,11 @@ pub fn translate(
     }
 
     if (cr4 & CR4_PAE) != 0 {
-        // PAE/long-mode walks are implemented in other modules.
-        // For now fail with a deterministic reserved-bit violation.
+        if (efer & EFER_LME) == 0 {
+            return pae::translate(bus, vaddr as u64, access, cpl, cr0, cr3, efer);
+        }
+
+        // 4-level paging (long mode) not yet implemented.
         return Err(PageFault::new(
             vaddr,
             true,
@@ -84,6 +93,5 @@ pub fn translate(
         ));
     }
 
-    mode32::translate(bus, vaddr as u64, access, cpl, cr0, cr3, cr4)
+    mode32::translate(bus, vaddr as u64, access, cpl, cr0, cr3, cr4, efer)
 }
-

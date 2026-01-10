@@ -33,6 +33,7 @@ pub fn translate(
     cr0: u32,
     cr3: u32,
     cr4: u32,
+    _efer: u64,
 ) -> Result<u64, PageFault> {
     let vaddr = (linear & 0xFFFF_FFFF) as u32;
     let is_write = access == AccessType::Write;
@@ -211,6 +212,7 @@ mod tests {
             CR0_PG,
             cr3,
             0,
+            0,
         )
         .unwrap();
         assert_eq!(paddr, 0x3000);
@@ -228,6 +230,7 @@ mod tests {
             3,
             CR0_PG,
             cr3,
+            0,
             0,
         )
         .unwrap();
@@ -257,6 +260,7 @@ mod tests {
             CR0_PG,
             cr3,
             CR4_PSE,
+            0,
         )
         .unwrap();
         assert_eq!(paddr, 0x0200_0000u64 + (vaddr & PAGE_OFFSET_MASK_4M as u64));
@@ -291,6 +295,7 @@ mod tests {
             3,
             CR0_PG,
             cr3,
+            0,
             0,
         )
         .unwrap_err();
@@ -329,6 +334,7 @@ mod tests {
             CR0_PG,
             cr3,
             0,
+            0,
         )
         .unwrap();
         assert_eq!(paddr, 0x3000);
@@ -341,6 +347,7 @@ mod tests {
             0,
             CR0_PG | CR0_WP,
             cr3,
+            0,
             0,
         )
         .unwrap_err();
@@ -371,6 +378,7 @@ mod tests {
             0,
             CR0_PG,
             cr3,
+            0,
             0,
         )
         .unwrap_err();
