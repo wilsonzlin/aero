@@ -204,6 +204,9 @@ if /i "%~x1"==".cer" (
 if /i "%~x1"==".crt" (
   call :record_cert_thumbprint "%CERT_FILE%"
 )
+if /i "%~x1"==".p7b" (
+  call :record_cert_thumbprint "%CERT_FILE%"
+)
 
 "%SYS32%\certutil.exe" -addstore -f Root "%CERT_FILE%" >>"%LOG%" 2>&1
 if errorlevel 1 (
@@ -229,25 +232,32 @@ if errorlevel 1 (
   exit /b 0
 )
 
-set "THUMB="
-for /f "tokens=2 delims=:" %%H in ('findstr /i "Cert Hash(sha1)" "%DUMP_FILE%"') do set "THUMB=%%H"
+rem certutil -dump prints one "Cert Hash(sha1)" for .cer/.crt, but can print many for .p7b.
+for /f "tokens=2 delims=:" %%H in ('findstr /i "Cert Hash(sha1)" "%DUMP_FILE%"') do (
+  set "RAW_THUMB=%%H"
+  call :record_one_thumbprint "!RAW_THUMB!"
+)
 del /q "%DUMP_FILE%" >nul 2>&1
 
+exit /b 0
+
+:record_one_thumbprint
+set "THUMB=%~1"
 if not defined THUMB exit /b 0
 
 rem Trim leading spaces and remove embedded spaces.
-for /f "tokens=* delims= " %%T in ("!THUMB!") do set "THUMB=%%T"
-set "THUMB=!THUMB: =!"
+for /f "tokens=* delims= " %%T in ("%THUMB%") do set "THUMB=%%T"
+set "THUMB=%THUMB: =%"
 
 if not defined THUMB exit /b 0
 
 if not exist "%CERT_LIST%" (
-  >"%CERT_LIST%" echo !THUMB!
+  >"%CERT_LIST%" echo %THUMB%
   exit /b 0
 )
 
-findstr /i /x "!THUMB!" "%CERT_LIST%" >nul 2>&1
-if errorlevel 1 >>"%CERT_LIST%" echo !THUMB!
+findstr /i /x "%THUMB%" "%CERT_LIST%" >nul 2>&1
+if errorlevel 1 >>"%CERT_LIST%" echo %THUMB%
 exit /b 0
 
 :maybe_enable_testsigning
