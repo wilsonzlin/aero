@@ -358,6 +358,23 @@ function Get-WingetExe {
   return $null
 }
 
+function Get-ChocoExe {
+  [CmdletBinding()]
+  param()
+
+  $cmd = Get-Command choco.exe -ErrorAction SilentlyContinue
+  if ($null -ne $cmd -and -not [string]::IsNullOrWhiteSpace($cmd.Source) -and (Test-Path -LiteralPath $cmd.Source)) {
+    return (Resolve-ExistingPath -LiteralPath $cmd.Source)
+  }
+
+  $cmd = Get-Command choco -ErrorAction SilentlyContinue
+  if ($null -ne $cmd -and -not [string]::IsNullOrWhiteSpace($cmd.Source) -and (Test-Path -LiteralPath $cmd.Source)) {
+    return (Resolve-ExistingPath -LiteralPath $cmd.Source)
+  }
+
+  return $null
+}
+
 function Test-IsAdministrator {
   [CmdletBinding()]
   param()
@@ -516,6 +533,27 @@ You can inspect available versions with:
   throw "winget install failed for $WingetId with all supported flag combinations."
 }
 
+function Install-WdkViaChocolatey {
+  [CmdletBinding()]
+  param()
+
+  $choco = Get-ChocoExe
+  if ($null -eq $choco) {
+    throw 'choco.exe was not found.'
+  }
+
+  $args = @(
+    'install',
+    'windows-driver-kit',
+    '-y',
+    '--no-progress'
+  )
+
+  Invoke-ExternalCommand -FilePath $choco -Arguments $args -FailureHint @"
+If this is a CI runner and Chocolatey package installation is flaky, prefer using winget by installing the Windows SDK/WDK manually.
+"@
+}
+
 function Ensure-WindowsKitToolchain {
   [CmdletBinding()]
   param(
@@ -551,7 +589,22 @@ Remediation:
 "@
   }
 
-  Write-ToolchainLog -Level WARN -Message "Required Windows Kits tooling not found ($($missing -join ', ')). Attempting to install via winget..."
+  Write-ToolchainLog -Level WARN -Message "Required Windows Kits tooling not found ($($missing -join ', ')). Attempting to install via winget (preferred) with Chocolatey fallback..."
+
+  $winget = Get-WingetExe
+  if ($null -eq $winget) {
+    Write-ToolchainLog -Level WARN -Message 'winget.exe was not found. Falling back to Chocolatey (windows-driver-kit) if available...'
+    try {
+      Install-WdkViaChocolatey
+    } catch {
+      Write-ToolchainLog -Level WARN -Message "Chocolatey WDK install attempt failed: $($_.Exception.Message)"
+    }
+
+    $toolchain = Resolve-WindowsKitToolchain -RequireWin7Inf2Cat
+    if ($null -ne $toolchain) {
+      return $toolchain
+    }
+  }
 
   # winget versions for SDK/WDK installers do not always match the installed Kit version exactly.
   $versionCandidates = @(
@@ -612,6 +665,20 @@ Remediation:
 
   if (-not $installAttempted) {
     throw 'No toolchain installation attempt was made; version candidates list was empty.'
+  }
+
+  $choco = Get-ChocoExe
+  if ($null -ne $choco) {
+    Write-ToolchainLog -Level WARN -Message 'Toolchain is still missing after winget attempts; trying Chocolatey (windows-driver-kit) as a fallback...'
+    try {
+      Install-WdkViaChocolatey
+      $toolchain = Resolve-WindowsKitToolchain -RequireWin7Inf2Cat
+      if ($null -ne $toolchain) {
+        return $toolchain
+      }
+    } catch {
+      Write-ToolchainLog -Level WARN -Message "Chocolatey WDK install attempt failed: $($_.Exception.Message)"
+    }
   }
 
   throw @"
