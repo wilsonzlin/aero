@@ -606,7 +606,7 @@ Windows flips/sets scanout via `DxgkDdiSetVidPnSourceAddress`. In our driver:
 4. Emulator reads scanout surface from guest memory and displays it.
  
 ### 6.3 Vblank/vsync simulation (DWM stability)
- 
+  
 DWM’s scheduling expects periodic vblank events. Because AeroGPU is virtual:
  
 - The emulator will generate a **fixed-rate vsync** (default 60Hz) using its host timer.
@@ -618,9 +618,14 @@ DWM’s scheduling expects periodic vblank events. Because AeroGPU is virtual:
  
 - A simple time-based estimate: `scanline = (t % frame_time) * height / frame_time`
 - Or a constant “in vblank” response if acceptable for early bring-up
- 
+  
 **MVP requirement:** vsync interrupts must be regular enough that DWM does not hang or TDR due to missed presents.
- 
+
+For the concrete “minimal contract” (what Win7 expects) and the recommended device model/registers, see:
+
+- `docs/graphics/win7-vblank-present-requirements.md`
+- `drivers/aerogpu/protocol/vblank.md` (adds `AEROGPU_IRQ_SCANOUT_VBLANK` + `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_*` timing registers)
+  
 ---
  
 ## 7. Command transport boundary (device ↔ emulator)
