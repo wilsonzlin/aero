@@ -44,6 +44,8 @@ export CORS_ALLOWED_ORIGIN=http://localhost:3000
 docker compose up
 ```
 
+There is an `.env.example` in this directory that you can copy to `.env` to get started.
+
 If you change `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`, also reset volumes so the persisted `mc` config is regenerated:
 
 ```bash

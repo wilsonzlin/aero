@@ -1,0 +1,2 @@
+# Local-only test artifacts (avoid accidentally committing large files).
+*.bin
