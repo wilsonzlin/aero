@@ -72,7 +72,7 @@ func startIPv6UDPEchoServer(t *testing.T) (*net.UDPConn, netip.AddrPort) {
 
 	conn, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.IPv6loopback, Port: 0})
 	if err != nil {
-		t.Fatalf("ListenUDP(udp6): %v", err)
+		t.Skipf("ipv6 not supported: %v", err)
 	}
 	addr := conn.LocalAddr().(*net.UDPAddr).AddrPort()
 

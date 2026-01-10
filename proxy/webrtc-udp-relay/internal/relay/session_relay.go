@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,6 +49,8 @@ type SessionRelay struct {
 
 	closeOnce sync.Once
 	closed    atomic.Bool
+
+	clientSupportsV2 atomic.Bool
 }
 
 func NewSessionRelay(dc DataChannelSender, cfg Config, policy DestinationPolicy) *SessionRelay {
@@ -180,7 +183,7 @@ func (s *SessionRelay) getOrCreateBinding(guestPort uint16) (*UdpPortBinding, er
 		return nil, errors.New("max udp bindings exceeded")
 	}
 
-	b, err := newUdpPortBinding(guestPort, s.cfg, s.codec, s.queue)
+	b, err := newUdpPortBinding(guestPort, s.cfg, s.codec, s.queue, &s.clientSupportsV2)
 	if err != nil {
 		s.mu.Unlock()
 		if evicted != nil {
@@ -226,9 +229,13 @@ func (s *SessionRelay) HandleDataChannelMessage(msg []byte) {
 		return
 	}
 
-	d, err := s.codec.DecodeDatagram(msg)
+	f, err := s.codec.DecodeFrame(msg)
 	if err != nil {
 		return
+	}
+
+	if f.Version == 2 {
+		s.clientSupportsV2.Store(true)
 	}
 
 	if s.policy == nil {
@@ -236,14 +243,14 @@ func (s *SessionRelay) HandleDataChannelMessage(msg []byte) {
 		return
 	}
 
-	remoteIP := net.IPv4(d.RemoteIP[0], d.RemoteIP[1], d.RemoteIP[2], d.RemoteIP[3])
-	if err := s.policy.AllowUDP(remoteIP, d.RemotePort); err != nil {
+	remoteIP := net.IP(f.RemoteIP.AsSlice())
+	if err := s.policy.AllowUDP(remoteIP, f.RemotePort); err != nil {
 		return
 	}
 
-	remote := &net.UDPAddr{IP: remoteIP, Port: int(d.RemotePort)}
+	remote := net.UDPAddrFromAddrPort(netip.AddrPortFrom(f.RemoteIP, f.RemotePort))
 
-	b, err := s.getOrCreateBinding(d.GuestPort)
+	b, err := s.getOrCreateBinding(f.GuestPort)
 	if err != nil {
 		return
 	}
@@ -252,5 +259,5 @@ func (s *SessionRelay) HandleDataChannelMessage(msg []byte) {
 	b.touch(now)
 	b.AllowRemote(remote, now)
 
-	_, _ = b.conn.WriteToUDP(d.Payload, remote)
+	_ = b.WriteTo(remote, f.Payload)
 }

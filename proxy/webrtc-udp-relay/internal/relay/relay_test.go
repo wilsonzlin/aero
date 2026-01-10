@@ -2,6 +2,7 @@ package relay
 
 import (
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -151,7 +152,7 @@ func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 		b := r.bindings[guestPort]
 		r.mu.Unlock()
 		if b != nil {
-			localPort := b.conn.LocalAddr().(*net.UDPAddr).Port
+			localPort := b.conn4.LocalAddr().(*net.UDPAddr).Port
 			bindingAddr = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: localPort}
 			break
 		}
@@ -204,5 +205,142 @@ func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 		t.Fatalf("unexpected packet forwarded from disallowed remote")
 	case <-time.After(150 * time.Millisecond):
 		// ok
+	}
+}
+
+func TestSessionRelay_IPv6EchoV2(t *testing.T) {
+	echoConn, echoAddr := startIPv6UDPEchoServer(t)
+	defer echoConn.Close()
+
+	dc := &fakeDataChannel{sent: make(chan []byte, 128)}
+	p := policy.NewDevDestinationPolicy()
+	cfg := DefaultConfig()
+	cfg.UDPBindingIdleTimeout = time.Minute
+	cfg.RemoteAllowlistIdleTimeout = time.Minute
+	cfg.UDPReadBufferBytes = 2048
+	cfg.DataChannelSendQueueBytes = 1 << 20
+
+	r := NewSessionRelay(dc, cfg, p)
+	t.Cleanup(r.Close)
+
+	payload := []byte("hello over ipv6")
+	inFrame := udpproto.Frame{
+		GuestPort:  4321,
+		RemoteIP:   echoAddr.Addr(),
+		RemotePort: echoAddr.Port(),
+		Payload:    payload,
+	}
+	inPkt, err := udpproto.EncodeV2(inFrame)
+	if err != nil {
+		t.Fatalf("EncodeV2: %v", err)
+	}
+
+	r.HandleDataChannelMessage(inPkt)
+
+	var outPkt []byte
+	select {
+	case outPkt = <-dc.sent:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for relay response")
+	}
+
+	gotFrame, err := udpproto.Decode(outPkt)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if gotFrame.Version != 2 {
+		t.Fatalf("gotFrame.Version = %d, want 2", gotFrame.Version)
+	}
+	if gotFrame.GuestPort != inFrame.GuestPort {
+		t.Fatalf("gotFrame.GuestPort = %d, want %d", gotFrame.GuestPort, inFrame.GuestPort)
+	}
+	if gotFrame.RemoteIP != inFrame.RemoteIP || gotFrame.RemotePort != inFrame.RemotePort {
+		t.Fatalf("gotFrame remote = %s:%d, want %s:%d", gotFrame.RemoteIP, gotFrame.RemotePort, inFrame.RemoteIP, inFrame.RemotePort)
+	}
+	if string(gotFrame.Payload) != string(payload) {
+		t.Fatalf("got payload %q, want %q", gotFrame.Payload, payload)
+	}
+}
+
+func TestSessionRelay_PreferV2NegotiatedForIPv4(t *testing.T) {
+	dc := &fakeDataChannel{sent: make(chan []byte, 128)}
+	p := policy.NewDevDestinationPolicy()
+	cfg := DefaultConfig()
+	cfg.PreferV2 = true
+	cfg.InboundFilterMode = InboundFilterAddressAndPort
+	cfg.RemoteAllowlistIdleTimeout = time.Minute
+	cfg.UDPBindingIdleTimeout = time.Minute
+	cfg.UDPReadBufferBytes = 2048
+	cfg.DataChannelSendQueueBytes = 1 << 20
+
+	r := NewSessionRelay(dc, cfg, p)
+	t.Cleanup(r.Close)
+
+	remote, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("listen remote: %v", err)
+	}
+	defer remote.Close()
+	remoteAddr := remote.LocalAddr().(*net.UDPAddr)
+
+	// Send a v2 frame (IPv4) to demonstrate v2 support.
+	inFrame := udpproto.Frame{
+		GuestPort:  1234,
+		RemoteIP:   remoteAddr.AddrPort().Addr(),
+		RemotePort: uint16(remoteAddr.Port),
+		Payload:    []byte("ping"),
+	}
+	inPkt, err := udpproto.EncodeV2(inFrame)
+	if err != nil {
+		t.Fatalf("EncodeV2: %v", err)
+	}
+	r.HandleDataChannelMessage(inPkt)
+
+	var bindingAddr *net.UDPAddr
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		b := r.bindings[inFrame.GuestPort]
+		r.mu.Unlock()
+		if b != nil {
+			localPort := b.conn4.LocalAddr().(*net.UDPAddr).Port
+			bindingAddr = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: localPort}
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if bindingAddr == nil {
+		t.Fatalf("binding was not created")
+	}
+
+	if _, err := remote.WriteToUDP([]byte("pong"), bindingAddr); err != nil {
+		t.Fatalf("remote write: %v", err)
+	}
+
+	var got []byte
+	select {
+	case got = <-dc.sent:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("timed out waiting for forwarded packet")
+	}
+
+	f, err := udpproto.Decode(got)
+	if err != nil {
+		t.Fatalf("decode forwarded packet: %v", err)
+	}
+	if f.Version != 2 {
+		t.Fatalf("expected v2 frame, got v%d", f.Version)
+	}
+	if f.GuestPort != inFrame.GuestPort {
+		t.Fatalf("guest port mismatch: %d != %d", f.GuestPort, inFrame.GuestPort)
+	}
+	if f.RemotePort != uint16(remoteAddr.Port) {
+		t.Fatalf("remote port mismatch: %d != %d", f.RemotePort, remoteAddr.Port)
+	}
+	if f.RemoteIP != netip.MustParseAddr("127.0.0.1") {
+		t.Fatalf("remote ip mismatch: %v", f.RemoteIP)
+	}
+	if string(f.Payload) != "pong" {
+		t.Fatalf("payload mismatch: %q", f.Payload)
 	}
 }

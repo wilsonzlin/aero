@@ -31,6 +31,12 @@ type Config struct {
 	// MaxDatagramPayloadBytes is enforced on inbound client->server WebRTC frames.
 	MaxDatagramPayloadBytes int
 
+	// PreferV2 controls the encoding used for relay->client frames when the client
+	// has demonstrated v2 support.
+	//
+	// v2 is always used for IPv6 packets (v1 cannot represent IPv6).
+	PreferV2 bool
+
 	InboundFilterMode InboundFilterMode
 
 	// RemoteAllowlistIdleTimeout expires allowlist entries. If zero, defaults to
@@ -82,12 +88,14 @@ func (c Config) WithDefaults() Config {
 // variables.
 //
 // Environment variables:
+//   - PREFER_V2 (bool) - prefer v2 relay->client frames once the client has demonstrated v2 support
 //   - MAX_UDP_BINDINGS_PER_SESSION (int)
 //   - UDP_BINDING_IDLE_TIMEOUT (duration, e.g. 60s)
 //   - UDP_READ_BUFFER_BYTES (int)
 //   - DATACHANNEL_SEND_QUEUE_BYTES (int)
 func ConfigFromEnv() Config {
 	c := DefaultConfig()
+	c.PreferV2 = udpproto.PreferV2FromEnv()
 	if v := os.Getenv("MAX_UDP_BINDINGS_PER_SESSION"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 {
 			c.MaxUDPBindingsPerSession = i

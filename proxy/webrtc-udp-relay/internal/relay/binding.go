@@ -3,6 +3,7 @@ package relay
 import (
 	"errors"
 	"net"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -10,28 +11,23 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
-type remoteKey struct {
-	ip   [4]byte
-	port uint16
-}
+type remoteKey netip.AddrPort
 
 func makeRemoteKey(addr *net.UDPAddr) (remoteKey, bool) {
 	if addr == nil {
 		return remoteKey{}, false
 	}
-	ip4 := addr.IP.To4()
-	if ip4 == nil {
+	ap := addr.AddrPort()
+	if !ap.Addr().IsValid() {
 		return remoteKey{}, false
 	}
-	var k remoteKey
-	copy(k.ip[:], ip4)
-	k.port = uint16(addr.Port)
-	return k, true
+	return remoteKey(ap), true
 }
 
 type UdpPortBinding struct {
 	guestPort uint16
-	conn      *net.UDPConn
+	conn4     *net.UDPConn
+	conn6     *net.UDPConn
 	cfg       Config
 	codec     udpproto.Codec
 	queue     *sendQueue
@@ -41,22 +37,34 @@ type UdpPortBinding struct {
 	allowedMu sync.Mutex
 	allowed   map[remoteKey]time.Time
 
+	clientSupportsV2 *atomic.Bool
+
 	closed atomic.Bool
 	once   sync.Once
 }
 
-func newUdpPortBinding(guestPort uint16, cfg Config, codec udpproto.Codec, queue *sendQueue) (*UdpPortBinding, error) {
-	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+func newUdpPortBinding(guestPort uint16, cfg Config, codec udpproto.Codec, queue *sendQueue, clientSupportsV2 *atomic.Bool) (*UdpPortBinding, error) {
+	conn4, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		return nil, err
 	}
+
+	// IPv6 is optional at runtime: if the host/kernel doesn't support it, we
+	// still keep IPv4 relay working.
+	conn6, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.IPv6zero, Port: 0})
+	if err != nil {
+		conn6 = nil
+	}
+
 	b := &UdpPortBinding{
-		guestPort: guestPort,
-		conn:      conn,
-		cfg:       cfg,
-		codec:     codec,
-		queue:     queue,
-		allowed:   make(map[remoteKey]time.Time),
+		guestPort:        guestPort,
+		conn4:            conn4,
+		conn6:            conn6,
+		cfg:              cfg,
+		codec:            codec,
+		queue:            queue,
+		allowed:          make(map[remoteKey]time.Time),
+		clientSupportsV2: clientSupportsV2,
 	}
 	b.touch(time.Now())
 	return b, nil
@@ -73,7 +81,10 @@ func (b *UdpPortBinding) LastUsed() time.Time {
 func (b *UdpPortBinding) Close() {
 	b.once.Do(func() {
 		b.closed.Store(true)
-		_ = b.conn.Close()
+		_ = b.conn4.Close()
+		if b.conn6 != nil {
+			_ = b.conn6.Close()
+		}
 	})
 }
 
@@ -114,9 +125,26 @@ func (b *UdpPortBinding) remoteAllowed(remote *net.UDPAddr, now time.Time) bool 
 }
 
 func (b *UdpPortBinding) readLoop() {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		b.readLoopConn(b.conn4)
+	}()
+	if b.conn6 != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			b.readLoopConn(b.conn6)
+		}()
+	}
+	wg.Wait()
+}
+
+func (b *UdpPortBinding) readLoopConn(conn *net.UDPConn) {
 	buf := make([]byte, b.cfg.UDPReadBufferBytes)
 	for {
-		n, remote, err := b.conn.ReadFromUDP(buf)
+		n, remote, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) || b.closed.Load() {
 				return
@@ -131,22 +159,47 @@ func (b *UdpPortBinding) readLoop() {
 			continue
 		}
 
-		ip4 := remote.IP.To4()
-		if ip4 == nil {
+		ap := remote.AddrPort()
+		if !ap.Addr().IsValid() {
 			continue
 		}
-		var rip [4]byte
-		copy(rip[:], ip4)
 
-		frame, err := b.codec.EncodeDatagram(udpproto.Datagram{
+		frame := udpproto.Frame{
 			GuestPort:  b.guestPort,
-			RemoteIP:   rip,
-			RemotePort: uint16(remote.Port),
+			RemoteIP:   ap.Addr(),
+			RemotePort: ap.Port(),
 			Payload:    buf[:n],
-		}, nil)
+		}
+
+		var out []byte
+		if frame.RemoteIP.Is6() {
+			out, err = b.codec.EncodeFrameV2(frame)
+		} else {
+			useV2 := b.cfg.PreferV2 && b.clientSupportsV2 != nil && b.clientSupportsV2.Load()
+			if useV2 {
+				out, err = b.codec.EncodeFrameV2(frame)
+			} else {
+				out, err = b.codec.EncodeFrameV1(frame)
+			}
+		}
 		if err != nil {
 			continue
 		}
-		b.queue.Enqueue(frame)
+		b.queue.Enqueue(out)
 	}
+}
+
+func (b *UdpPortBinding) WriteTo(remote *net.UDPAddr, payload []byte) error {
+	if remote == nil {
+		return errors.New("udp binding: remote is nil")
+	}
+	if ip4 := remote.IP.To4(); ip4 != nil {
+		_, err := b.conn4.WriteToUDP(payload, remote)
+		return err
+	}
+	if b.conn6 == nil {
+		return errors.New("udp binding: ipv6 not supported")
+	}
+	_, err := b.conn6.WriteToUDP(payload, remote)
+	return err
 }
