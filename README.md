@@ -1,7 +1,37 @@
-# Aero (design docs + browser PoCs)
+# Aero
 
-This repository contains Aero’s architecture/design documentation plus browser-side
-proofs-of-concept and web scaffolding used to validate feasibility constraints.
+This repository contains Aero’s architecture/design documentation plus browser-side proofs-of-concept and web scaffolding used to validate feasibility constraints.
+
+## Developer workflow (canonical)
+
+Use [`just`](https://github.com/casey/just) from the repo root so contributors don’t need to remember multi-step Rust + WASM + web commands.
+
+### Prerequisites
+
+- Rust (via `rustup`)
+- Node.js + npm
+- `just` (task runner)
+  - Install via `cargo install just` or your OS package manager.
+
+### Common workflows
+
+```bash
+just setup   # install wasm target, install JS deps, sanity-check toolchain
+just wasm    # build the Rust→WASM package used by the web app (if present)
+just dev     # run the Vite dev server (prints the local URL)
+just build   # wasm + web production build
+just test    # Rust tests + web unit tests
+just fmt     # formatting (if configured)
+just lint    # linting (if configured)
+```
+
+#### Optional configuration
+
+The `justfile` is intentionally configurable so it can survive repo refactors:
+
+- `WEB_DIR` (default: `web`)
+- `WASM_CRATE_DIR` (default: auto-detected from common locations)
+- `WASM_PKG_DIR` (default: `web/src/wasm_pkg` when `web/` exists)
 
 ## Documentation
 
@@ -12,9 +42,18 @@ proofs-of-concept and web scaffolding used to validate feasibility constraints.
 
 The `web/` app is configured for **cross-origin isolation** in both dev and preview mode.
 
+Canonical:
+
+```sh
+just setup
+just dev
+```
+
+Manual equivalent:
+
 ```sh
 cd web
-npm install
+npm ci
 npm run dev
 ```
 
@@ -96,6 +135,7 @@ Terminal 2 (frontend):
 ```bash
 cd web
 npm ci
+
 npm run dev
 ```
 
@@ -114,9 +154,7 @@ Modern browsers impose practical limits around **wasm32** addressability and `Sh
 - `SharedArrayBuffer` requires a **cross-origin isolated** page (`COOP` + `COEP` response headers).
 - `WebAssembly.Memory` (wasm32) is **≤ 4GiB** addressable, and many browsers cap shared memories below that in practice.
 
-This PoC allocates a configurable-size shared `WebAssembly.Memory` for guest RAM **plus** separate `SharedArrayBuffer`s
-for control/command/event data, then demonstrates cross-thread reads/writes and `Atomics` synchronization between the
-main thread and a worker.
+This PoC allocates a configurable-size shared `WebAssembly.Memory` for guest RAM **plus** separate `SharedArrayBuffer`s for control/command/event data, then demonstrates cross-thread reads/writes and `Atomics` synchronization between the main thread and a worker.
 
 ### Run
 
@@ -131,3 +169,31 @@ http://localhost:8080/
 ```
 
 If allocation fails, try a smaller guest RAM size (browser/OS dependent).
+
+## Troubleshooting
+
+### `crossOriginIsolated` is `false` / `SharedArrayBuffer` is not defined
+
+Aero relies on WASM threads + `SharedArrayBuffer`, which requires the page to be **cross-origin isolated**. In practice that means:
+
+- Serve over a secure context (`https://…` or `http://localhost`)
+- Send these response headers:
+  - `Cross-Origin-Opener-Policy: same-origin`
+  - `Cross-Origin-Embedder-Policy: require-corp`
+
+If you see errors like:
+
+- `SharedArrayBuffer is not defined`
+- `crossOriginIsolated is false`
+- `WebAssembly.Memory(): shared requires SharedArrayBuffer`
+
+…then the page isn’t cross-origin isolated.
+
+**Things to check:**
+
+1. **Verify headers** in DevTools → Network → your document response headers.
+2. **Avoid third-party subresources** (CDN scripts, images, fonts) unless they’re served with
+   CORS/CORP that satisfies COEP. A single non-compliant subresource can break isolation.
+3. **Vite dev server headers:** if the dev server doesn’t set COOP/COEP by default, add headers in
+   `vite.config.*` via `server.headers` and (for preview) `preview.headers`.
+
