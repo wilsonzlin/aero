@@ -1,0 +1,17 @@
+TARGETNAME=virtioinput
+TARGETTYPE=DRIVER
+
+SOURCES= \
+    src\driver.c \
+    src\device.c \
+    src\queue.c
+
+INCLUDES=$(INCLUDES);src
+
+KMDF_VERSION_MAJOR=1
+KMDF_VERSION_MINOR=9
+
+TARGETLIBS=$(TARGETLIBS) \
+    $(KMDF_LIB_PATH)\WdfDriverEntry.lib \
+    $(DDK_LIB_PATH)\hidclass.lib
+

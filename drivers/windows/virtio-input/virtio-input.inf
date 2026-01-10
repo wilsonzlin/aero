@@ -1,0 +1,58 @@
+[Version]
+Signature="$Windows NT$"
+Class=HIDClass
+ClassGuid={745A17A0-74D3-11D0-B6FE-00A0C90F57DA}
+Provider=%Aero%
+DriverVer=01/10/2026,0.1.0.0
+CatalogFile=virtio-input.cat
+
+[Manufacturer]
+%Aero%=Aero,NTx86,NTamd64
+
+[Aero.NTx86]
+%VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1052
+
+[Aero.NTamd64]
+%VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1052
+
+[DestinationDirs]
+VirtioInput.CopyFiles=12
+
+[SourceDisksNames]
+1=%DiskName%,,,
+
+[SourceDisksFiles]
+virtioinput.sys=1
+
+[VirtioInput_Install.NT]
+CopyFiles=VirtioInput.CopyFiles
+AddReg=VirtioInput.AddReg
+
+[VirtioInput.CopyFiles]
+virtioinput.sys
+
+[VirtioInput.AddReg]
+HKR,,UpperFilters,0x00010008,"HidClass"
+
+[VirtioInput_Install.NT.Services]
+AddService=virtioinput,0x00000002,VirtioInput_ServiceInstall
+
+[VirtioInput_ServiceInstall]
+DisplayName=%VirtioInput.ServiceDesc%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%12%\virtioinput.sys
+
+[VirtioInput_Install.NT.Wdf]
+KmdfService=virtioinput, VirtioInput_WdfSect
+
+[VirtioInput_WdfSect]
+KmdfLibraryVersion=1.9
+
+[Strings]
+Aero="Aero"
+DiskName="Aero virtio-input Installation Disk"
+VirtioInput.DeviceDesc="Aero Virtio Input (virtio-input-pci)"
+VirtioInput.ServiceDesc="Aero Virtio Input KMDF HID minidriver"
+

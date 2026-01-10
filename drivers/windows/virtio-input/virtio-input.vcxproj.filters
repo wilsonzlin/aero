@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{18AF95D4-EC37-4BA0-91E2-8813D0C7CC8D}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{F116CDDD-20DF-4903-9495-110C0E30ED7B}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Package">
+      <UniqueIdentifier>{541FE4FE-356D-4BDE-B4B5-8BEA5F0A2B4E}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\driver.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\device.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\queue.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\virtio_input.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="virtio-input.inf">
+      <Filter>Package</Filter>
+    </None>
+    <None Include="sources">
+      <Filter>Package</Filter>
+    </None>
+    <None Include="makefile">
+      <Filter>Package</Filter>
+    </None>
+    <None Include="README.md">
+      <Filter>Package</Filter>
+    </None>
+  </ItemGroup>
+</Project>
+
