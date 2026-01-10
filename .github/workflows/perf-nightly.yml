@@ -35,14 +35,6 @@ jobs:
             tools/perf/package-lock.json
             package-lock.json
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ env.PLAYWRIGHT_VERSION }}-chromium
-          restore-keys: |
-            ${{ runner.os }}-playwright-${{ env.PLAYWRIGHT_VERSION }}-
-
       - name: Determine Playwright version
         id: playwright-version
         run: |
@@ -56,12 +48,21 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium
+          restore-keys: |
+            ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-
+
       - name: Install perf tool dependencies
         run: npm ci
         working-directory: tools/perf
 
       - name: Install Chromium (Playwright)
-        run: npx --yes playwright@${{ steps.playwright-version.outputs.version }} install --with-deps chromium
+        run: node node_modules/playwright-core/cli.js install --with-deps chromium
+        working-directory: tools/perf
 
       - name: Install app dependencies (nightly)
         run: npm ci
