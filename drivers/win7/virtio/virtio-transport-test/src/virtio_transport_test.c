@@ -147,6 +147,12 @@ NTSTATUS VirtioTestEvtDevicePrepareHardware(
     }
 
     negotiated = 0;
+    {
+        UINT64 deviceFeatures = VirtioPciReadDeviceFeatures(&ctx->Vdev);
+        UCHAR statusByte = VirtioPciGetStatus(&ctx->Vdev);
+        DbgPrint("virtio-transport-test: device features 0x%I64X (status=0x%02X)\n", deviceFeatures, statusByte);
+    }
+
     status = VirtioPciNegotiateFeatures(&ctx->Vdev, VIRTIO_F_VERSION_1, VIRTIO_F_VERSION_1, &negotiated);
     if (!NT_SUCCESS(status)) {
         DbgPrint("virtio-transport-test: VirtioPciNegotiateFeatures failed 0x%08X\n", status);
@@ -156,7 +162,10 @@ NTSTATUS VirtioTestEvtDevicePrepareHardware(
         return status;
     }
 
-    DbgPrint("virtio-transport-test: negotiated features 0x%I64X\n", negotiated);
+    DbgPrint(
+        "virtio-transport-test: negotiated features 0x%I64X (status=0x%02X)\n",
+        negotiated,
+        VirtioPciGetStatus(&ctx->Vdev));
 
     return STATUS_SUCCESS;
 }
