@@ -33,7 +33,7 @@ export interface PresentationBackend {
     height: number,
     dirtyRects?: readonly DirtyRect[],
   ): void;
-  present(): void;
+  present(): void | Promise<void>;
   captureFrame(): Promise<CapturedFrame>;
   getCapabilities(): BackendCapabilities;
 }

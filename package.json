@@ -2,9 +2,7 @@
   "name": "aero",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "packages/*"
-  ],
+  "workspaces": ["packages/*"],
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -12,8 +10,8 @@
     "serve:coi": "vite build --emptyOutDir && vite preview --host 127.0.0.1 --port 4173 --strictPort",
     "gen:scancodes": "node tools/gen_scancodes/gen_scancodes.mjs",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "npm run test:unit",
     "demo": "node web/demo/server.js",
+    "test": "npm run test:unit",
     "bench:gpu": "node --experimental-strip-types bench/gpu_bench.ts",
     "compare:gpu": "node --experimental-strip-types scripts/compare_gpu_benchmarks.ts",
     "test:protocol": "node --test --experimental-strip-types emulator/protocol/tests/*.test.ts",
@@ -30,6 +28,7 @@
     "@webgpu/types": "^0.1.68",
     "@types/pixelmatch": "^5.2.6",
     "@types/pngjs": "^6.0.5",
+    "esbuild": "^0.20.0",
     "pixelmatch": "^5.3.0",
     "pngjs": "^7.0.0",
     "typescript": "^5.3.3",

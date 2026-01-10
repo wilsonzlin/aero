@@ -240,7 +240,7 @@ export class WebGPUBackend implements PresentationBackend {
     );
   }
 
-  present(): void {
+  async present(): Promise<void> {
     const device = this.device;
     const context = this.context;
     const pipeline = this.pipeline;
@@ -256,6 +256,7 @@ export class WebGPUBackend implements PresentationBackend {
       const displayWidth = Math.max(1, Math.round(canvas.clientWidth * dpr));
       const displayHeight = Math.max(1, Math.round(canvas.clientHeight * dpr));
       if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+        await device.queue.onSubmittedWorkDone();
         canvas.width = displayWidth;
         canvas.height = displayHeight;
         if (!this.format) throw new Error('Backend not initialized');
@@ -289,6 +290,7 @@ export class WebGPUBackend implements PresentationBackend {
     pass.end();
 
     device.queue.submit([encoder.finish()]);
+    await device.queue.onSubmittedWorkDone();
   }
 
   async captureFrame(): Promise<CapturedFrame> {

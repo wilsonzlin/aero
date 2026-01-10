@@ -114,6 +114,37 @@ export class WebGL2Backend implements PresentationBackend {
   private filterMode: FilterMode = 'nearest';
   private preserveAspectRatio = true;
 
+  private waitForSync(gl: WebGL2RenderingContext, sync: WebGLSync | null): Promise<void> {
+    if (!sync) return Promise.resolve();
+
+    return new Promise((resolve) => {
+      const poll = () => {
+        let status: number;
+        try {
+          status = gl.clientWaitSync(sync, 0, 0);
+        } catch {
+          gl.deleteSync(sync);
+          resolve();
+          return;
+        }
+
+        if (
+          status === gl.ALREADY_SIGNALED ||
+          status === gl.CONDITION_SATISFIED ||
+          status === gl.WAIT_FAILED
+        ) {
+          gl.deleteSync(sync);
+          resolve();
+          return;
+        }
+
+        setTimeout(poll, 0);
+      };
+
+      poll();
+    });
+  }
+
   async init(canvas: MaybeCanvas, options?: BackendInitOptions): Promise<void> {
     this.filterMode = options?.filter ?? 'nearest';
     this.preserveAspectRatio = options?.preserveAspectRatio ?? true;
@@ -250,7 +281,7 @@ export class WebGL2Backend implements PresentationBackend {
     gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
-  present(): void {
+  present(): Promise<void> {
     const gl = this.gl;
     const canvas = this.canvas;
     const program = this.program;
@@ -295,6 +326,10 @@ export class WebGL2Backend implements PresentationBackend {
     gl.bindTexture(gl.TEXTURE_2D, null);
     gl.bindVertexArray(null);
     gl.useProgram(null);
+
+    const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    return this.waitForSync(gl, sync);
   }
 
   async captureFrame(): Promise<CapturedFrame> {

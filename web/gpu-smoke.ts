@@ -135,7 +135,7 @@ async function main() {
 
     const frame = generateQuadrantPattern(width, height);
     backend.uploadFrameRGBA(frame, width, height);
-    backend.present();
+    await backend.present();
 
     const status = document.getElementById('status');
     const caps = backend.getCapabilities();
