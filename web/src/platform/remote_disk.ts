@@ -2,6 +2,8 @@ import { openFileHandle, removeOpfsEntry } from "./opfs";
 
 export type ByteRange = { start: number; end: number };
 
+export const REMOTE_DISK_SECTOR_SIZE = 512;
+
 function rangeLen(r: ByteRange): number {
   return r.end - r.start;
 }
@@ -207,10 +209,11 @@ export class RemoteStreamingDisk {
     };
   }
 
-  async read(offset: number, length: number, onLog?: (msg: string) => void): Promise<Uint8Array> {
+  async readInto(offset: number, dest: Uint8Array, onLog?: (msg: string) => void): Promise<void> {
+    const length = dest.byteLength;
     if (length === 0) {
       this.lastReadEnd = offset;
-      return new Uint8Array();
+      return;
     }
     if (offset + length > this.totalSize) {
       throw new Error("Read beyond end of image.");
@@ -219,20 +222,34 @@ export class RemoteStreamingDisk {
     const startBlock = Math.floor(offset / this.blockSize);
     const endBlock = Math.floor((offset + length - 1) / this.blockSize);
 
-    const out = new Uint8Array(length);
     let written = 0;
-
     for (let block = startBlock; block <= endBlock; block++) {
       const bytes = await this.getBlock(block, onLog);
       const blockStart = block * this.blockSize;
       const inBlockStart = offset > blockStart ? offset - blockStart : 0;
       const toCopy = Math.min(length - written, bytes.length - inBlockStart);
-      out.set(bytes.subarray(inBlockStart, inBlockStart + toCopy), written);
+      dest.set(bytes.subarray(inBlockStart, inBlockStart + toCopy), written);
       written += toCopy;
     }
 
     await this.maybePrefetch(offset, length, onLog);
+  }
+
+  async read(offset: number, length: number, onLog?: (msg: string) => void): Promise<Uint8Array> {
+    const out = new Uint8Array(length);
+    await this.readInto(offset, out, onLog);
     return out;
+  }
+
+  async readSectors(lba: number, buffer: Uint8Array, onLog?: (msg: string) => void): Promise<void> {
+    if (buffer.byteLength % REMOTE_DISK_SECTOR_SIZE !== 0) {
+      throw new Error(`unaligned buffer length ${buffer.byteLength} (expected multiple of ${REMOTE_DISK_SECTOR_SIZE})`);
+    }
+    const offset = lba * REMOTE_DISK_SECTOR_SIZE;
+    if (!Number.isSafeInteger(offset)) {
+      throw new Error(`offset overflow (lba=${lba})`);
+    }
+    await this.readInto(offset, buffer, onLog);
   }
 
   private async maybePrefetch(offset: number, length: number, onLog?: (msg: string) => void): Promise<void> {
@@ -390,4 +407,3 @@ async function stableCacheKey(url: string): Promise<string> {
     return encodeURIComponent(url).replaceAll("%", "_").slice(0, 128);
   }
 }
-
