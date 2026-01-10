@@ -91,13 +91,15 @@ spec:
             {{- with .Values.gateway.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- if or .Values.config.create (or .Values.secrets.create .Values.secrets.existingSecret) }}
+          {{- $configEnabled := or .Values.config.create .Values.config.name -}}
+          {{- $secretEnabled := or .Values.secrets.create .Values.secrets.existingSecret -}}
+          {{- if or $configEnabled $secretEnabled }}
           envFrom:
-            {{- if .Values.config.create }}
+            {{- if $configEnabled }}
             - configMapRef:
                 name: {{ include "aero-gateway.configName" . }}
             {{- end }}
-            {{- if or .Values.secrets.create .Values.secrets.existingSecret }}
+            {{- if $secretEnabled }}
             - secretRef:
                 name: {{ include "aero-gateway.effectiveSecretName" . }}
             {{- end }}

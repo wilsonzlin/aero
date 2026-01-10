@@ -84,6 +84,7 @@ service:
 
 config:
   create: true
+  # If create=false and name is set, the Deployment will reference an existing ConfigMap.
   name: ""
   data: {}
 

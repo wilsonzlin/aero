@@ -99,6 +99,15 @@ helm upgrade --install aero-gateway ./deploy/k8s/chart/aero-gateway \
   -f ./aero-values.yaml
 ```
 
+### Using an existing ConfigMap (optional)
+
+If you already manage non-secret configuration via a `ConfigMap`, set:
+
+- `config.create=false`
+- `config.name=<existing-configmap-name>`
+
+The chart will reference it via `envFrom`.
+
 4) Install / upgrade:
 
 ```bash
