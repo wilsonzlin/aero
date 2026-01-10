@@ -15,6 +15,8 @@ set "SCRIPT_DIR=%~dp0"
 set "PS_SCRIPT=%SCRIPT_DIR%verify.ps1"
 set "PS_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 if defined PROCESSOR_ARCHITEW6432 set "PS_EXE=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+set "SYS32=%SystemRoot%\System32"
+if defined PROCESSOR_ARCHITEW6432 set "SYS32=%SystemRoot%\Sysnative"
 
 if not exist "%PS_SCRIPT%" (
   echo ERROR: Missing "%PS_SCRIPT%".
@@ -22,7 +24,7 @@ if not exist "%PS_SCRIPT%" (
 )
 
 REM Quick elevation hint. (This does not auto-elevate; it only warns.)
-net session >nul 2>&1
+"%SYS32%\fsutil.exe" dirty query %SystemDrive% >nul 2>&1
 if not "%ERRORLEVEL%"=="0" (
   echo WARNING: Not running elevated. Right-click ^> "Run as administrator" for full checks.
   echo.
