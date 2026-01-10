@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aero - Browser Memory Model PoC</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
+          Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        margin: 16px;
+        line-height: 1.4;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      #log {
+        white-space: pre-wrap;
+        border: 1px solid rgba(127, 127, 127, 0.4);
+        padding: 12px;
+        border-radius: 8px;
+        height: 50vh;
+        overflow: auto;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Aero - Browser Memory Model PoC</h1>
+    <p>
+      Allocates a shared <code>WebAssembly.Memory</code> (guest RAM) plus separate
+      <code>SharedArrayBuffer</code> control buffers. Demonstrates worker sharing
+      and <code>Atomics</code> synchronization.
+    </p>
+
+    <div class="row">
+      <label for="ram">Guest RAM:</label>
+      <select id="ram"></select>
+      <button id="start">Allocate + Start Worker</button>
+      <button id="run" disabled>Run Increment Command</button>
+    </div>
+
+    <h2>Log</h2>
+    <div id="log"></div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
+

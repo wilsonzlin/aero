@@ -61,30 +61,40 @@ const wasmFeatures = {
 ### Memory Management
 
 ```javascript
-// Allocate 4GB memory for guest
-const GUEST_MEMORY_SIZE = 4 * 1024 * 1024 * 1024;
+// Guest RAM is configurable and must fit within wasm32 + browser limits.
+// In practice, shared WebAssembly.Memory often tops out below 4GiB.
+const GUEST_RAM_MIB = 1024; // 512 / 1024 / 2048 / 3072 (best-effort)
+const GUEST_RAM_BYTES = GUEST_RAM_MIB * 1024 * 1024;
+const WASM_PAGE_BYTES = 64 * 1024;
 
 async function initializeMemory() {
-    // SharedArrayBuffer for multi-threaded access
-    const memory = new WebAssembly.Memory({
-        initial: Math.ceil(GUEST_MEMORY_SIZE / 65536),
-        maximum: Math.ceil(GUEST_MEMORY_SIZE / 65536),
-        shared: true
+    if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
+        throw new Error('SharedArrayBuffer requires COOP/COEP (cross-origin isolated page)');
+    }
+
+    // Shared guest RAM (wasm32).
+    const guestPages = Math.ceil(GUEST_RAM_BYTES / WASM_PAGE_BYTES);
+    const guestMemory = new WebAssembly.Memory({
+        initial: guestPages,
+        maximum: guestPages,
+        shared: true,
     });
+
+    // Separate small SABs for state + command/event rings (no >4GiB offsets).
+    const stateSab = new SharedArrayBuffer(64 * 1024);
+    const cmdSab = new SharedArrayBuffer(64 * 1024);
+    const eventSab = new SharedArrayBuffer(64 * 1024);
     
     // Create views
     const views = {
-        u8: new Uint8Array(memory.buffer),
-        u16: new Uint16Array(memory.buffer),
-        u32: new Uint32Array(memory.buffer),
-        u64: new BigUint64Array(memory.buffer),
-        i8: new Int8Array(memory.buffer),
-        i32: new Int32Array(memory.buffer),
-        f32: new Float32Array(memory.buffer),
-        f64: new Float64Array(memory.buffer),
+        guestU8: new Uint8Array(guestMemory.buffer),
+        guestU32: new Uint32Array(guestMemory.buffer),
+        stateI32: new Int32Array(stateSab),
+        cmdI32: new Int32Array(cmdSab),
+        eventU8: new Uint8Array(eventSab),
     };
     
-    return { memory, views };
+    return { guestMemory, stateSab, cmdSab, eventSab, views };
 }
 ```
 
@@ -331,24 +341,37 @@ class WorkerCoordinator {
         this.gpuWorker = new Worker('gpu-worker.js', { type: 'module' });
         this.ioWorker = new Worker('io-worker.js', { type: 'module' });
         this.jitWorker = new Worker('jit-worker.js', { type: 'module' });
-        
-        // Shared memory
-        this.sharedMemory = new SharedArrayBuffer(5 * 1024 * 1024 * 1024);
-        this.statusFlags = new Int32Array(this.sharedMemory, 0, 256);
-        
+    }
+
+    static async create() {
+        const coordinator = new WorkerCoordinator();
+        await coordinator.initSharedMemory();
+        return coordinator;
+    }
+
+    async initSharedMemory() {
+        // Shared buffers (split; no >4GiB offsets).
+        const { guestMemory, stateSab, cmdSab, eventSab } = await initializeMemory();
+        this.guestMemory = guestMemory;
+        this.stateSab = stateSab;
+        this.cmdSab = cmdSab;
+        this.eventSab = eventSab;
+        this.statusFlags = new Int32Array(this.stateSab, 0, 256);
+
         // Initialize workers with shared memory
         [this.cpuWorker, this.gpuWorker, this.ioWorker, this.jitWorker].forEach(worker => {
             worker.postMessage({
                 type: 'init',
-                sharedMemory: this.sharedMemory
+                guestMemory: this.guestMemory,
+                stateSab: this.stateSab,
+                cmdSab: this.cmdSab,
+                eventSab: this.eventSab,
             });
         });
     }
     
-    // Wait for CPU worker using Atomics
-    waitForCpu() {
-        Atomics.wait(this.statusFlags, STATUS_CPU_RUNNING, 1);
-    }
+    // Note: Atomics.wait() is only allowed in workers. The main thread can use
+    // Atomics.waitAsync() (where available) or poll/await messages.
     
     // Signal CPU to resume
     signalCpu() {
@@ -365,8 +388,8 @@ class WorkerCoordinator {
 import init, { CpuEmulator } from './aero_cpu.js';
 
 let emulator = null;
-let sharedMemory = null;
-let statusFlags = null;
+let guestMemory = null;
+let statusFlags = null; // Int32Array over `stateSab`
 
 self.onmessage = async (event) => {
     const { type, data } = event.data;
@@ -374,9 +397,9 @@ self.onmessage = async (event) => {
     switch (type) {
         case 'init':
             await init();
-            sharedMemory = event.data.sharedMemory;
-            statusFlags = new Int32Array(sharedMemory, 0, 256);
-            emulator = new CpuEmulator(sharedMemory);
+            guestMemory = event.data.guestMemory;
+            statusFlags = new Int32Array(event.data.stateSab, 0, 256);
+            emulator = new CpuEmulator(guestMemory);
             break;
             
         case 'run':

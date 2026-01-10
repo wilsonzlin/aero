@@ -176,17 +176,16 @@
 │ 0x000F_0000 - 0x000F_FFFF │ 64 KB    │ System BIOS               │
 │ 0x0010_0000 - 0x00EF_FFFF │ 14 MB    │ Extended Memory (ISA hole)│
 │ 0x00F0_0000 - 0x00FF_FFFF │ 1 MB     │ ISA Memory Hole           │
-│ 0x0100_0000 - 0xBFFF_FFFF │ ~3 GB    │ Extended Memory           │
+│ 0x0100_0000 - 0xBFFF_FFFF │ ~3 GB    │ Extended Memory (config-dependent)│
 │ 0xC000_0000 - 0xFEBF_FFFF │ ~1 GB    │ PCI MMIO Space            │
 │ 0xFEC0_0000 - 0xFEC0_0FFF │ 4 KB     │ I/O APIC                  │
 │ 0xFED0_0000 - 0xFED0_03FF │ 1 KB     │ HPET                      │
 │ 0xFEE0_0000 - 0xFEE0_0FFF │ 4 KB     │ Local APIC               │
 │ 0xFFFF_0000 - 0xFFFF_FFFF │ 64 KB    │ BIOS Shadow / Reset Vec   │
-├─────────────────────────────────────────────────────────────────┤
-│ 64-bit extensions (if enabled):                                  │
-│ 0x1_0000_0000+           │ variable │ Extended RAM > 4GB         │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+Note: Aero’s baseline browser build uses wasm32 and is therefore constrained to **< 4GiB** of contiguous guest RAM. Supporting guest RAM above 4GiB would require either wasm `memory64` (not assumed) or a segmented/sparse host backing model.
 
 ### I/O Port Map (Selected)
 
@@ -307,25 +306,16 @@ enum MessageType {
 
 ### Shared Memory Protocol
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                   SharedArrayBuffer Layout                       │
-├─────────────────────────────────────────────────────────────────┤
-│ Offset      │ Size      │ Description                           │
-├─────────────────────────────────────────────────────────────────┤
-│ 0x0000_0000 │ 4 GB      │ Guest Physical Memory                 │
-│ 0x1_0000_0000 │ 64 MB   │ Command Ring Buffers                  │
-│ 0x1_0400_0000 │ 64 MB   │ Event Ring Buffers                    │
-│ 0x1_0800_0000 │ 4 KB    │ CPU State (registers, flags)          │
-│ 0x1_0801_0000 │ 4 KB    │ APIC State                            │
-│ 0x1_0802_0000 │ 64 KB   │ TLB Cache                             │
-│ 0x1_0812_0000 │ 1 MB    │ JIT Code Cache Metadata               │
-│ 0x1_0912_0000 │ 16 MB   │ GPU Command Buffer                    │
-│ 0x1_1912_0000 │ 32 MB   │ Framebuffer (double buffered)         │
-│ 0x1_3912_0000 │ 4 MB    │ Audio Buffer (ring)                   │
-│ 0x1_3D12_0000 │ ...     │ Reserved for expansion                │
-└─────────────────────────────────────────────────────────────────┘
-```
+Browsers cannot reliably allocate a single 5+GiB `SharedArrayBuffer`, and wasm32 linear memory is fundamentally **≤ 4GiB** addressable. To keep the architecture implementable today, Aero uses **Option B: split buffers**.
+
+| Buffer | Type | Typical Size | Contents | Access Pattern |
+|--------|------|--------------|----------|----------------|
+| `guestMemory` | `WebAssembly.Memory` (`shared: true`) | **512MiB / 1GiB / 2GiB / 3GiB** (best-effort) | Guest physical RAM | Shared read/write; the only region directly accessible from wasm today |
+| `stateSab` | `SharedArrayBuffer` | 64KiB | Small global state (run/pause/stop flags, liveness, stats) | Mostly atomic loads/stores |
+| `cmdSab` | `SharedArrayBuffer` | 64KiB+ | Command ring buffers (SPSC per producer/consumer pair) | Atomic head/tail + `Atomics.wait/notify` |
+| `eventSab` | `SharedArrayBuffer` | 64KiB+ | Event ring buffers (responses, interrupts, input events) | Atomic head/tail + `Atomics.wait/notify` |
+
+This avoids >4GiB offsets entirely: each buffer is independently addressable and can be sized/failed independently.
 
 ### Synchronization Primitives
 
@@ -370,7 +360,8 @@ class RingBuffer {
 │         └─▶ Initialize Coordinator                               │
 │                                                                  │
 │  2. Resource Allocation                                          │
-│     └─▶ Allocate SharedArrayBuffer (5+ GB)                       │
+│     └─▶ Allocate shared `WebAssembly.Memory` (guest RAM, configurable) │
+│     └─▶ Allocate small `SharedArrayBuffer`s (state/cmd/event)     │
 │         └─▶ Request storage access (OPFS)                        │
 │             └─▶ Load/create disk image                           │
 │                                                                  │
