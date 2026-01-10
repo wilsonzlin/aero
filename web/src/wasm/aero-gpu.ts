@@ -3,17 +3,19 @@
 // Task dependency note:
 // - Task 109 is expected to provide real wasm exports with this shape.
 // - Until then, this stub lets the browser worker harness compile and provides
-//   a deterministic WebGL2 test pattern + screenshot path for smoke testing.
+//   deterministic WebGPU/WebGL2 test pattern + screenshot paths for smoke testing.
 
 import type { BackendKind, GpuAdapterInfo, GpuWorkerInitOptions } from '../ipc/gpu-messages';
 
-type WebGl2 = WebGL2RenderingContext;
+import type { PresentationBackend } from '../../gpu/backend';
+import { WebGL2Backend } from '../../gpu/webgl2_backend';
+import { WebGPUBackend } from '../../gpu/webgpu_backend';
 
 let backend: BackendKind | null = null;
+let backendImpl: PresentationBackend | null = null;
 let adapterInfo: GpuAdapterInfo | undefined;
 
 let canvas: OffscreenCanvas | null = null;
-let gl: WebGl2 | null = null;
 
 let cssWidth = 0;
 let cssHeight = 0;
@@ -39,10 +41,6 @@ function resizeInternal(width: number, height: number, dpr: number): void {
     canvas.width = pixelWidth;
     canvas.height = pixelHeight;
   }
-
-  if (gl) {
-    gl.viewport(0, 0, pixelWidth, pixelHeight);
-  }
 }
 
 export default async function wasmInit(): Promise<void> {
@@ -56,49 +54,23 @@ export async function init_gpu(
   dpr: number,
   options: GpuWorkerInitOptions = {},
 ): Promise<void> {
-  // Simulate a WebGPU attempt (the real implementation lives in wasm).
-  if (options.preferWebGpu && !options.disableWebGpu) {
-    throw new Error('WebGPU init not implemented in JS stub (expected from wasm).');
-  }
-
   canvas = offscreenCanvas;
-
-  // Preserve drawing buffer so `readPixels` consistently captures after present.
-  gl = canvas.getContext('webgl2', {
-    alpha: false,
-    antialias: false,
-    depth: false,
-    stencil: false,
-    preserveDrawingBuffer: true,
-  }) as WebGl2 | null;
-
-  if (!gl) {
-    backend = null;
-    throw new Error('WebGL2 context unavailable.');
-  }
-
-  backend = 'webgl2';
-
-  const debugInfo = gl.getExtension('WEBGL_debug_renderer_info') as
-    | {
-        UNMASKED_VENDOR_WEBGL: number;
-        UNMASKED_RENDERER_WEBGL: number;
-      }
-    | null;
-  if (debugInfo) {
-    adapterInfo = {
-      vendor: gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL),
-      renderer: gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL),
-    };
-  } else {
-    adapterInfo = undefined;
-  }
+  backendImpl = null;
+  backend = null;
+  adapterInfo = undefined;
 
   resizeInternal(width, height, dpr);
+
+  const wantWebGpu = options.preferWebGpu === true && options.disableWebGpu !== true;
+  const impl: PresentationBackend = wantWebGpu ? new WebGPUBackend() : new WebGL2Backend();
+  await impl.init(offscreenCanvas);
+
+  backendImpl = impl;
+  backend = impl.getCapabilities().kind;
 }
 
 export function resize(width: number, height: number, dpr: number): void {
-  if (!gl || !canvas) return;
+  if (!backendImpl || !canvas) return;
   resizeInternal(width, height, dpr);
 }
 
@@ -114,7 +86,7 @@ export function adapter_info(): GpuAdapterInfo | undefined {
 }
 
 export function capabilities(): unknown {
-  if (!gl || !backend) {
+  if (!backendImpl || !backend) {
     return { initialized: false };
   }
 
@@ -124,71 +96,63 @@ export function capabilities(): unknown {
     cssSize: { width: cssWidth, height: cssHeight },
     devicePixelRatio,
     pixelSize: { width: pixelWidth, height: pixelHeight },
-    gl: {
-      version: gl.getParameter(gl.VERSION),
-      shadingLanguageVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
-      vendor: gl.getParameter(gl.VENDOR),
-      renderer: gl.getParameter(gl.RENDERER),
-      maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
-      maxViewportDims: gl.getParameter(gl.MAX_VIEWPORT_DIMS),
-      supportedExtensions: gl.getSupportedExtensions(),
-    },
   };
 }
 
 export function present_test_pattern(): void {
-  if (!gl) {
+  if (!backendImpl) {
     throw new Error('GPU backend not initialized.');
   }
 
-  gl.disable(gl.DITHER);
-  gl.disable(gl.BLEND);
+  const width = pixelWidth;
+  const height = pixelHeight;
 
-  gl.enable(gl.SCISSOR_TEST);
+  const halfW = Math.floor(width / 2);
+  const halfH = Math.floor(height / 2);
+  const rgba = new Uint8Array(width * height * 4);
 
-  const halfW = Math.floor(pixelWidth / 2);
-  const halfH = Math.floor(pixelHeight / 2);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const left = x < halfW;
+      const top = y < halfH;
 
-  // Note: WebGL scissor origin is bottom-left.
-  // Bottom-left quadrant -> blue
-  gl.scissor(0, 0, halfW, halfH);
-  gl.clearColor(0, 0, 1, 1);
-  gl.clear(gl.COLOR_BUFFER_BIT);
+      // Top-left origin:
+      // - top-left: red
+      // - top-right: green
+      // - bottom-left: blue
+      // - bottom-right: white
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      if (top && left) {
+        r = 255;
+      } else if (top && !left) {
+        g = 255;
+      } else if (!top && left) {
+        b = 255;
+      } else {
+        r = 255;
+        g = 255;
+        b = 255;
+      }
 
-  // Bottom-right quadrant -> white
-  gl.scissor(halfW, 0, pixelWidth - halfW, halfH);
-  gl.clearColor(1, 1, 1, 1);
-  gl.clear(gl.COLOR_BUFFER_BIT);
+      rgba[i + 0] = r;
+      rgba[i + 1] = g;
+      rgba[i + 2] = b;
+      rgba[i + 3] = 255;
+    }
+  }
 
-  // Top-left quadrant -> red
-  gl.scissor(0, halfH, halfW, pixelHeight - halfH);
-  gl.clearColor(1, 0, 0, 1);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-
-  // Top-right quadrant -> green
-  gl.scissor(halfW, halfH, pixelWidth - halfW, pixelHeight - halfH);
-  gl.clearColor(0, 1, 0, 1);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-
-  gl.disable(gl.SCISSOR_TEST);
-  gl.finish();
+  backendImpl.uploadFrameRGBA(rgba, width, height);
+  backendImpl.present();
 }
 
-export function request_screenshot(): Uint8Array {
-  if (!gl) {
+export async function request_screenshot(): Promise<Uint8Array> {
+  if (!backendImpl) {
     throw new Error('GPU backend not initialized.');
   }
 
-  const pixels = new Uint8Array(pixelWidth * pixelHeight * 4);
-  gl.readPixels(0, 0, pixelWidth, pixelHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-
-  // Convert to top-left origin for easier hashing/comparison on the main thread.
-  const rowStride = pixelWidth * 4;
-  const flipped = new Uint8Array(pixels.length);
-  for (let y = 0; y < pixelHeight; y += 1) {
-    const srcStart = (pixelHeight - 1 - y) * rowStride;
-    const dstStart = y * rowStride;
-    flipped.set(pixels.subarray(srcStart, srcStart + rowStride), dstStart);
-  }
-  return flipped;
+  const captured = await backendImpl.captureFrame();
+  return new Uint8Array(captured.data.buffer, captured.data.byteOffset, captured.data.byteLength);
 }
