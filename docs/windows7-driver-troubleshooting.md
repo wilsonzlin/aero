@@ -40,8 +40,12 @@ If you have not installed Guest Tools yet, start here:
   - [Safe Mode recovery tips](#safe-mode-recovery-tips)
 - Expected behavior:
   - [Test Mode watermark on the desktop (x64)](#issue-test-mode-watermark-on-the-desktop-x64)
+- Diagnostics:
+  - [Collecting useful logs](#collecting-useful-logs)
+  - [Finding device Hardware IDs](#finding-device-hardware-ids)
+  - [Capturing BSOD stop codes](#capturing-bsod-stop-codes)
 
-## Collecting useful logs (for troubleshooting or bug reports)
+## Collecting useful logs
 
 If you need to debug driver install failures, these are the most useful artifacts to gather:
 
@@ -56,7 +60,7 @@ If you need to debug driver install failures, these are the most useful artifact
   - `C:\Windows\inf\setupapi.dev.log`
     - Tip: open it and search for the device’s Hardware ID or the `.inf` name.
 
-## Finding a device's Hardware IDs (to pick the right driver)
+## Finding device Hardware IDs
 
 If you are manually binding a driver (or filing a bug), the **Hardware IDs** are the most useful identifier.
 
@@ -71,7 +75,7 @@ You can use these IDs to:
 - verify you are installing the correct driver package (especially x86 vs x64 and device class),
 - search `setupapi.dev.log` to see why a driver did (or didn’t) bind.
 
-## Tip: capture the BSOD stop code (instead of reboot loops)
+## Capturing BSOD stop codes
 
 If Windows blue-screens and immediately reboots, you lose the most important clue (the stop code).
 
