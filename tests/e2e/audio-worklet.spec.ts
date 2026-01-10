@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 test("AudioWorklet output runs and does not underrun with synthetic tone", async ({ page }) => {
+  test.skip(test.info().project.name !== "chromium", "AudioWorklet output test only runs on Chromium.");
+
   await page.goto("http://127.0.0.1:4173/", { waitUntil: "load" });
 
   await page.click("#init-audio-output");
@@ -28,4 +30,3 @@ test("AudioWorklet output runs and does not underrun with synthetic tone", async
   expect(result.state).toBe("running");
   expect(result.underruns).toBe(0);
 });
-
