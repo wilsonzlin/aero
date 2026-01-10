@@ -10,6 +10,8 @@ import { RemoteStreamingDisk } from "./platform/remote_disk";
 import { requestWebGpuDevice } from "./platform/webgpu";
 import { initAeroStatusApi } from "./api/status";
 import { installPerfHud } from "./perf/hud_entry";
+import { HEADER_INDEX_FRAME_COUNTER, HEADER_INDEX_HEIGHT, HEADER_INDEX_WIDTH, wrapSharedFramebuffer } from "./display/framebuffer_protocol";
+import { VgaPresenter } from "./display/vga_presenter";
 import { installAeroGlobal } from "./runtime/aero_global";
 import { WorkerCoordinator } from "./runtime/coordinator";
 import { initWasm } from "./runtime/wasm_loader";
@@ -608,6 +610,47 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       : support.reason ?? "SharedArrayBuffer unavailable.",
   });
 
+  const vgaCanvas = el("canvas") as HTMLCanvasElement;
+  vgaCanvas.style.width = "640px";
+  vgaCanvas.style.height = "480px";
+  vgaCanvas.style.border = "1px solid #333";
+  vgaCanvas.style.background = "#000";
+
+  const vgaInfoLine = el("div", { class: "mono", text: "" });
+
+  let vgaPresenter: VgaPresenter | null = null;
+  let vgaShared: ReturnType<typeof wrapSharedFramebuffer> | null = null;
+  let vgaSab: SharedArrayBuffer | null = null;
+
+  function ensureVgaPresenter(): void {
+    const sab = workerCoordinator.getVgaFramebuffer();
+    if (!sab) return;
+
+    if (sab !== vgaSab) {
+      vgaSab = sab;
+      vgaShared = wrapSharedFramebuffer(sab, 0);
+      if (vgaPresenter) {
+        vgaPresenter.setSharedFramebuffer(vgaShared);
+      }
+    }
+
+    if (!vgaPresenter && vgaShared) {
+      vgaPresenter = new VgaPresenter(vgaCanvas, { scaleMode: "auto", integerScaling: true, maxPresentHz: 60 });
+      vgaPresenter.setSharedFramebuffer(vgaShared);
+      vgaPresenter.start();
+    }
+  }
+
+  function teardownVgaPresenter(): void {
+    if (vgaPresenter) {
+      vgaPresenter.destroy();
+      vgaPresenter = null;
+    }
+    vgaShared = null;
+    vgaSab = null;
+    vgaInfoLine.textContent = "";
+  }
+
   function update(): void {
     const statuses = workerCoordinator.getWorkerStatuses();
     const anyActive = Object.values(statuses).some((s) => s.state !== "stopped");
@@ -635,6 +678,18 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       `status[HeartbeatCounter]=${workerCoordinator.getHeartbeatCounter()}  ` +
       `ring[Heartbeat]=${workerCoordinator.getLastHeartbeatFromRing()}  ` +
       `guestI32[0]=${workerCoordinator.getGuestCounter0()}`;
+
+    if (anyActive) {
+      ensureVgaPresenter();
+      if (vgaShared) {
+        const w = Atomics.load(vgaShared.header, HEADER_INDEX_WIDTH);
+        const h = Atomics.load(vgaShared.header, HEADER_INDEX_HEIGHT);
+        const frame = Atomics.load(vgaShared.header, HEADER_INDEX_FRAME_COUNTER);
+        vgaInfoLine.textContent = `vga ${w}x${h} frame=${frame}`;
+      }
+    } else {
+      teardownVgaPresenter();
+    }
   }
 
   update();
@@ -646,6 +701,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     el("h2", { text: "Workers" }),
     hint,
     el("div", { class: "row" }, el("label", { text: "Guest RAM:" }), guestRamSelect, startButton, stopButton),
+    el("div", { class: "row" }, vgaCanvas),
+    vgaInfoLine,
     heartbeatLine,
     statusList,
     error,

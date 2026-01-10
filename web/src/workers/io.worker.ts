@@ -24,7 +24,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
   if ((data as Partial<WorkerInitMessage>).kind === "init") {
     const init = data as Partial<WorkerInitMessage>;
     role = init.role ?? "io";
-    const segments = { control: init.controlSab!, guestMemory: init.guestMemory! };
+    const segments = { control: init.controlSab!, guestMemory: init.guestMemory!, vgaFramebuffer: init.vgaFramebuffer! };
     status = createSharedMemoryViews(segments).status;
     const regions = ringRegionsForWorker(role);
     commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);

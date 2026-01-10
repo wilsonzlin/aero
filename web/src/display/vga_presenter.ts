@@ -225,10 +225,17 @@ export class VgaPresenter {
     }
 
     const configCounter = loadHeaderI32(header, HEADER_INDEX_CONFIG_COUNTER);
+    if (configCounter === 0) {
+      // Not initialized yet.
+      return;
+    }
     if (configCounter !== this.lastConfigCounter) {
       const width = loadHeaderI32(header, HEADER_INDEX_WIDTH);
       const height = loadHeaderI32(header, HEADER_INDEX_HEIGHT);
       const strideBytes = loadHeaderI32(header, HEADER_INDEX_STRIDE_BYTES);
+      if (width <= 0 || height <= 0 || strideBytes < width * 4) {
+        return;
+      }
       this.reconfigureSource(width, height, strideBytes, format, shared.pixelsU8Clamped);
       this.lastConfigCounter = configCounter;
     }

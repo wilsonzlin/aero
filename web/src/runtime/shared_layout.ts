@@ -1,4 +1,5 @@
 import { RingBuffer } from "./ring_buffer";
+import { requiredFramebufferBytes } from "../display/framebuffer_protocol";
 
 export const WORKER_ROLES = ["cpu", "gpu", "io", "jit"] as const;
 export type WorkerRole = (typeof WORKER_ROLES)[number];
@@ -46,6 +47,11 @@ export const DEFAULT_GUEST_RAM_MIB: GuestRamMiB = 512;
 
 const WASM_PAGE_BYTES = 64 * 1024;
 
+// Early VGA/VBE framebuffer sizing. The buffer is reused across mode changes;
+// the active dimensions live in the framebuffer header.
+const VGA_FRAMEBUFFER_MAX_WIDTH = 1024;
+const VGA_FRAMEBUFFER_MAX_HEIGHT = 768;
+
 function mibToBytes(mib: number): number {
   return mib * 1024 * 1024;
 }
@@ -57,6 +63,7 @@ function bytesToPages(bytes: number): number {
 export interface SharedMemorySegments {
   control: SharedArrayBuffer;
   guestMemory: WebAssembly.Memory;
+  vgaFramebuffer: SharedArrayBuffer;
 }
 
 export interface RingRegions {
@@ -69,6 +76,7 @@ export interface SharedMemoryViews {
   status: Int32Array;
   guestU8: Uint8Array;
   guestI32: Int32Array;
+  vgaFramebuffer: SharedArrayBuffer;
 }
 
 function align(value: number, alignment: number): number {
@@ -142,6 +150,12 @@ export function allocateSharedMemorySegments(options?: {
   return {
     control: new SharedArrayBuffer(CONTROL_BYTES),
     guestMemory,
+    // A single shared RGBA8888 framebuffer region used for early VGA/VBE display.
+    // This is sized for a modest SVGA mode; actual modes are communicated via the
+    // framebuffer protocol header.
+    vgaFramebuffer: new SharedArrayBuffer(
+      requiredFramebufferBytes(VGA_FRAMEBUFFER_MAX_WIDTH, VGA_FRAMEBUFFER_MAX_HEIGHT, VGA_FRAMEBUFFER_MAX_WIDTH * 4),
+    ),
   };
 }
 
@@ -149,7 +163,7 @@ export function createSharedMemoryViews(segments: SharedMemorySegments): SharedM
   const status = new Int32Array(segments.control, CONTROL_LAYOUT.statusOffset, STATUS_INTS);
   const guestU8 = new Uint8Array(segments.guestMemory.buffer);
   const guestI32 = new Int32Array(segments.guestMemory.buffer);
-  return { segments, status, guestU8, guestI32 };
+  return { segments, status, guestU8, guestI32, vgaFramebuffer: segments.vgaFramebuffer };
 }
 
 export function checkSharedMemorySupport(): { ok: boolean; reason?: string } {

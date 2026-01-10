@@ -4,6 +4,18 @@ import { initWasmForContext } from "../runtime/wasm_context";
 import { RingBuffer } from "../runtime/ring_buffer";
 import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
 import {
+  FRAMEBUFFER_FORMAT_RGBA8888,
+  HEADER_INDEX_CONFIG_COUNTER,
+  HEADER_INDEX_FRAME_COUNTER,
+  HEADER_INDEX_HEIGHT,
+  HEADER_INDEX_STRIDE_BYTES,
+  HEADER_INDEX_WIDTH,
+  addHeaderI32,
+  initFramebufferHeader,
+  storeHeaderI32,
+  wrapSharedFramebuffer,
+} from "../display/framebuffer_protocol";
+import {
   MessageType,
   type ProtocolMessage,
   type WorkerInitMessage,
@@ -18,6 +30,7 @@ let status!: Int32Array;
 let commandRing!: RingBuffer;
 let eventRing!: RingBuffer;
 let guestI32!: Int32Array;
+let vgaFramebuffer: ReturnType<typeof wrapSharedFramebuffer> | null = null;
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   const init = ev.data as Partial<WorkerInitMessage>;
@@ -27,10 +40,18 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
 async function initAndRun(init: WorkerInitMessage): Promise<void> {
   role = init.role ?? "cpu";
-  const segments = { control: init.controlSab!, guestMemory: init.guestMemory! };
+  const segments = { control: init.controlSab!, guestMemory: init.guestMemory!, vgaFramebuffer: init.vgaFramebuffer! };
   const views = createSharedMemoryViews(segments);
   status = views.status;
   guestI32 = views.guestI32;
+  vgaFramebuffer = wrapSharedFramebuffer(segments.vgaFramebuffer, 0);
+
+  initFramebufferHeader(vgaFramebuffer.header, {
+    width: 320,
+    height: 200,
+    strideBytes: 320 * 4,
+    format: FRAMEBUFFER_FORMAT_RGBA8888,
+  });
 
   const regions = ringRegionsForWorker(role);
   commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
@@ -58,7 +79,20 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
 function runLoop(): void {
   let running = false;
   const heartbeatIntervalMs = 250;
-  let nextHeartbeatAt = 0;
+  const frameIntervalMs = 1000 / 60;
+  const modeSwitchIntervalMs = 2500;
+
+  let nextHeartbeatMs = performance.now();
+  let nextFrameMs = performance.now();
+  let nextModeSwitchMs = performance.now() + modeSwitchIntervalMs;
+
+  const modes = [
+    { width: 320, height: 200 },
+    { width: 640, height: 480 },
+    { width: 1024, height: 768 },
+  ] as const;
+  let modeIndex = 0;
+  let mode = modes[0];
 
   while (true) {
     // Drain commands.
@@ -70,7 +104,9 @@ function runLoop(): void {
 
       if (cmd.type === MessageType.START) {
         running = true;
-        nextHeartbeatAt = Date.now();
+        nextHeartbeatMs = performance.now();
+        nextFrameMs = performance.now();
+        nextModeSwitchMs = performance.now() + modeSwitchIntervalMs;
       } else if (cmd.type === MessageType.STOP) {
         Atomics.store(status, StatusIndex.StopRequested, 1);
       }
@@ -78,20 +114,70 @@ function runLoop(): void {
 
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
 
-    const now = Date.now();
-    if (running && now >= nextHeartbeatAt) {
-      const counter = Atomics.add(status, StatusIndex.HeartbeatCounter, 1) + 1;
-      Atomics.add(guestI32, 0, 1);
-      // Best-effort: heartbeat events are allowed to drop if the ring is full.
-      eventRing.push(encodeProtocolMessage({ type: MessageType.HEARTBEAT, role, counter }));
-      nextHeartbeatAt = now + heartbeatIntervalMs;
+    if (running) {
+      const now = performance.now();
+
+      if (now >= nextHeartbeatMs) {
+        const counter = Atomics.add(status, StatusIndex.HeartbeatCounter, 1) + 1;
+        Atomics.add(guestI32, 0, 1);
+        // Best-effort: heartbeat events are allowed to drop if the ring is full.
+        eventRing.push(encodeProtocolMessage({ type: MessageType.HEARTBEAT, role, counter }));
+        nextHeartbeatMs = now + heartbeatIntervalMs;
+      }
+
+      if (vgaFramebuffer && now >= nextFrameMs) {
+        if (now >= nextModeSwitchMs) {
+          modeIndex = (modeIndex + 1) % modes.length;
+          mode = modes[modeIndex];
+
+          const strideBytes = mode.width * 4;
+          storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_WIDTH, mode.width);
+          storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_HEIGHT, mode.height);
+          storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_STRIDE_BYTES, strideBytes);
+          addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_CONFIG_COUNTER, 1);
+
+          nextModeSwitchMs = now + modeSwitchIntervalMs;
+        }
+
+        renderTestPattern(vgaFramebuffer, mode.width, mode.height, now);
+        addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_FRAME_COUNTER, 1);
+        nextFrameMs = now + frameIntervalMs;
+      }
     }
 
     // Sleep until either new commands arrive or the next heartbeat tick.
-    const timeoutMs = running ? Math.max(0, nextHeartbeatAt - Date.now()) : undefined;
-    commandRing.waitForData(timeoutMs);
+    if (!running) {
+      commandRing.waitForData();
+      continue;
+    }
+
+    const now = performance.now();
+    const until = Math.min(nextHeartbeatMs, nextFrameMs, nextModeSwitchMs) - now;
+    commandRing.waitForData(Math.max(0, Math.min(heartbeatIntervalMs, until)));
   }
 
   setReadyFlag(status, role, false);
   ctx.close();
+}
+
+function renderTestPattern(
+  fb: ReturnType<typeof wrapSharedFramebuffer>,
+  width: number,
+  height: number,
+  nowMs: number,
+): void {
+  const pixels = fb.pixelsU8Clamped;
+  const strideBytes = width * 4;
+  const t = nowMs * 0.001;
+
+  for (let y = 0; y < height; y++) {
+    const base = y * strideBytes;
+    for (let x = 0; x < width; x++) {
+      const i = base + x * 4;
+      pixels[i + 0] = (x + t * 60) & 255;
+      pixels[i + 1] = (y + t * 35) & 255;
+      pixels[i + 2] = ((x ^ y) + t * 20) & 255;
+      pixels[i + 3] = 255;
+    }
+  }
 }

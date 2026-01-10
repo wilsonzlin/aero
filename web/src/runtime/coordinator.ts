@@ -126,6 +126,7 @@ export class WorkerCoordinator {
         role,
         controlSab: segments.control,
         guestMemory: segments.guestMemory,
+        vgaFramebuffer: segments.vgaFramebuffer,
       };
       worker.postMessage(initMessage);
     }
@@ -183,6 +184,10 @@ export class WorkerCoordinator {
   getGuestCounter0(): number {
     if (!this.shared) return 0;
     return Atomics.load(this.shared.guestI32, 0);
+  }
+
+  getVgaFramebuffer(): SharedArrayBuffer | null {
+    return this.shared?.vgaFramebuffer ?? null;
   }
 
   private onWorkerMessage(role: WorkerRole, data: unknown): void {

@@ -15,7 +15,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
   if (init?.kind !== "init") return;
 
   role = init.role ?? "gpu";
-  const segments = { control: init.controlSab!, guestMemory: init.guestMemory! };
+  const segments = { control: init.controlSab!, guestMemory: init.guestMemory!, vgaFramebuffer: init.vgaFramebuffer! };
   status = createSharedMemoryViews(segments).status;
   const regions = ringRegionsForWorker(role);
   commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);

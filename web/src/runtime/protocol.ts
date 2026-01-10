@@ -99,6 +99,7 @@ export type WorkerInitMessage = {
   role: WorkerRole;
   controlSab: SharedArrayBuffer;
   guestMemory: WebAssembly.Memory;
+  vgaFramebuffer: SharedArrayBuffer;
 };
 
 const textEncoder = new TextEncoder();
