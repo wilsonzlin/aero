@@ -1,31 +1,52 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use anyhow::{Context, Result};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum ToggleArg {
+use bcd_patch::{patch_bcd_store, patch_win7_tree, PatchOpts};
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum OnOff {
     On,
     Off,
 }
 
-impl From<ToggleArg> for bcd_patch::Toggle {
-    fn from(value: ToggleArg) -> Self {
-        match value {
-            ToggleArg::On => bcd_patch::Toggle::On,
-            ToggleArg::Off => bcd_patch::Toggle::Off,
+#[derive(Debug, Clone, Args)]
+struct PatchArgs {
+    /// Enable/disable testsigning (default: on).
+    #[arg(long, value_enum)]
+    testsigning: Option<OnOff>,
+
+    /// Enable/disable nointegritychecks (default: on).
+    #[arg(long, value_enum)]
+    nointegritychecks: Option<OnOff>,
+}
+
+impl PatchArgs {
+    fn to_opts(&self) -> PatchOpts {
+        PatchOpts {
+            testsigning: matches!(self.testsigning, None | Some(OnOff::On)),
+            nointegritychecks: matches!(self.nointegritychecks, None | Some(OnOff::On)),
         }
     }
 }
 
-#[derive(Parser, Debug)]
+#[derive(Debug, Parser)]
 #[command(name = "bcd_patch")]
-#[command(about = "Offline BCD patcher utilities")]
+#[command(about = "Offline patching of Windows BCD stores (REGF hives)")]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
+
+    /// Path to the offline BCD store file (e.g. boot/BCD).
+    #[arg(long)]
+    store: Option<PathBuf>,
+
+    #[command(flatten)]
+    patch: PatchArgs,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Debug, Subcommand)]
 enum Commands {
     /// Patch all relevant Windows 7 BCD stores in an extracted ISO/tree.
     Win7Tree {
@@ -33,13 +54,8 @@ enum Commands {
         #[arg(long)]
         root: PathBuf,
 
-        /// Toggle testsigning.
-        #[arg(long, value_enum, default_value_t = ToggleArg::On)]
-        testsigning: ToggleArg,
-
-        /// Toggle nointegritychecks.
-        #[arg(long, value_enum, default_value_t = ToggleArg::On)]
-        nointegritychecks: ToggleArg,
+        #[command(flatten)]
+        patch: PatchArgs,
 
         /// Treat any missing store as an error.
         #[arg(long)]
@@ -47,29 +63,16 @@ enum Commands {
     },
 }
 
-fn main() {
-    if let Err(err) = run() {
-        eprintln!("error: {err}");
-        std::process::exit(1);
-    }
-}
-
-fn run() -> anyhow::Result<()> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Win7Tree {
+        Some(Commands::Win7Tree {
             root,
-            testsigning,
-            nointegritychecks,
+            patch,
             strict,
-        } => {
-            let opts = bcd_patch::PatchOptions {
-                testsigning: testsigning.into(),
-                nointegritychecks: nointegritychecks.into(),
-            };
-
-            let report = bcd_patch::patch_win7_tree(&root, opts, strict)?;
+        }) => {
+            let report = patch_win7_tree(&root, patch.to_opts(), strict)?;
 
             for missing in &report.missing {
                 eprintln!("warning: missing BCD store: {missing}");
@@ -88,8 +91,14 @@ fn run() -> anyhow::Result<()> {
                 report.patched.len(),
                 report.missing.len()
             );
+
+            Ok(())
+        }
+        None => {
+            let store = cli
+                .store
+                .context("--store is required (unless using the win7-tree subcommand)")?;
+            patch_bcd_store(&store, cli.patch.to_opts())
         }
     }
-
-    Ok(())
 }

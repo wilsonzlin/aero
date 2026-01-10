@@ -27,10 +27,6 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Python
-__pycache__/
-*.pyc
-
 # Build outputs (common)
 node_modules/
 coverage/

@@ -1,17 +1,33 @@
+mod common;
+
 use std::fs;
 
+use common::*;
 use predicates::prelude::*;
+use regf::RegistryHive;
 use tempfile::tempdir;
 
 fn write_synth_bcd(path: &std::path::Path) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).unwrap();
     }
-    fs::write(path, "testsigning=off\nnointegritychecks=off\n").unwrap();
+    fs::write(path, build_minimal_bcd_hive(false)).unwrap();
 }
 
-fn read_file(path: &std::path::Path) -> String {
-    fs::read_to_string(path).unwrap()
+fn assert_store_patched(path: &std::path::Path) {
+    let hive = RegistryHive::from_file(path).unwrap();
+    assert_boolean_element(
+        &hive,
+        OBJ_GLOBALSETTINGS,
+        ELEM_DISABLE_INTEGRITY_CHECKS,
+        true,
+    );
+    assert_boolean_element(
+        &hive,
+        OBJ_GLOBALSETTINGS,
+        ELEM_ALLOW_PRERELEASE_SIGNATURES,
+        true,
+    );
 }
 
 #[test]
@@ -42,12 +58,12 @@ fn patches_all_present_stores_case_insensitively() {
         .args(["--testsigning", "on", "--nointegritychecks", "on"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("summary: patched 3 store(s), missing 0 store(s)"));
+        .stdout(predicate::str::contains(
+            "summary: patched 3 store(s), missing 0 store(s)",
+        ));
 
     for path in [&bios, &uefi, &template] {
-        let contents = read_file(path);
-        assert!(contents.contains("testsigning=on"), "{path:?} not patched");
-        assert!(contents.contains("nointegritychecks=on"), "{path:?} not patched");
+        assert_store_patched(path);
     }
 }
 
@@ -64,11 +80,11 @@ fn missing_stores_warn_in_non_strict_mode() {
         .assert()
         .success()
         .stderr(predicate::str::contains("warning: missing BCD store"))
-        .stdout(predicate::str::contains("summary: patched 1 store(s), missing 2 store(s)"));
+        .stdout(predicate::str::contains(
+            "summary: patched 1 store(s), missing 2 store(s)",
+        ));
 
-    let contents = read_file(&bios);
-    assert!(contents.contains("testsigning=on"));
-    assert!(contents.contains("nointegritychecks=on"));
+    assert_store_patched(&bios);
 }
 
 #[test]
@@ -77,6 +93,7 @@ fn missing_stores_fail_in_strict_mode_without_patching() {
 
     let bios = dir.path().join("boot").join("BCD");
     write_synth_bcd(&bios);
+    let before = fs::read(&bios).unwrap();
 
     assert_cmd::cargo::cargo_bin_cmd!("bcd_patch")
         .args(["win7-tree", "--root"])
@@ -85,7 +102,6 @@ fn missing_stores_fail_in_strict_mode_without_patching() {
         .assert()
         .failure();
 
-    let contents = read_file(&bios);
-    assert!(contents.contains("testsigning=off"));
-    assert!(contents.contains("nointegritychecks=off"));
+    let after = fs::read(&bios).unwrap();
+    assert_eq!(before, after);
 }

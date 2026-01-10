@@ -1,40 +1,123 @@
+//! Offline patching of Windows Boot Configuration Data (BCD) stores.
+//!
+//! Windows stores the BCD database as a REGF registry hive. This crate edits the hive directly,
+//! making it possible to patch Windows 7 installation media/templates on non-Windows hosts
+//! (Linux/macOS CI) without `bcdedit.exe`.
+
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Toggle {
-    On,
-    Off,
+use anyhow::{anyhow, Context, Result};
+use regf::hive::RegistryKey;
+use regf::{DataType, HiveBuilder, KeyTreeNode, KeyTreeValue, RegistryHive};
+use uuid::Uuid;
+
+const BCD_KEY_OBJECTS: &str = "Objects";
+const BCD_KEY_ELEMENTS: &str = "Elements";
+const BCD_VALUE_ELEMENT: &str = "Element";
+
+// Well-known BCD object identifiers.
+const OBJ_GLOBALSETTINGS: &str = "{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}";
+const OBJ_BOOTLOADERSETTINGS: &str = "{6efb52bf-1766-41db-a6b3-0ee5eff72bd7}";
+const OBJ_BOOTMGR: &str = "{9dea862c-5cdd-4e70-acc1-f32b344d4795}";
+
+// BCD element types (Win7).
+const ELEM_APPLICATION_PATH: u32 = 0x1200_0002;
+const ELEM_DISABLE_INTEGRITY_CHECKS: u32 = 0x1600_0048;
+const ELEM_ALLOW_PRERELEASE_SIGNATURES: u32 = 0x1600_0049;
+const ELEM_BOOTMGR_DISPLAY_ORDER: u32 = 0x2400_0001;
+const ELEM_BOOTMGR_DEFAULT_OBJECT: u32 = 0x2300_0003;
+
+/// Options controlling which BCD flags are enabled/disabled.
+#[derive(Debug, Clone, Copy)]
+pub struct PatchOpts {
+    /// Enable/disable the `testsigning` BCD flag.
+    pub testsigning: bool,
+    /// Enable/disable the `nointegritychecks` BCD flag.
+    pub nointegritychecks: bool,
 }
 
-impl Toggle {
-    pub fn as_bool(self) -> bool {
-        match self {
-            Toggle::On => true,
-            Toggle::Off => false,
+impl Default for PatchOpts {
+    fn default() -> Self {
+        Self {
+            testsigning: true,
+            nointegritychecks: true,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PatchOptions {
-    pub testsigning: Toggle,
-    pub nointegritychecks: Toggle,
-}
-
+/// Result of patching one store file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PatchFileResult {
     pub path: PathBuf,
     pub changed: bool,
 }
 
+/// Report for patching all relevant Win7 stores in an extracted tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Win7TreePatchReport {
     pub patched: Vec<PatchFileResult>,
     pub missing: Vec<String>,
 }
 
-pub fn resolve_case_insensitive_path(root: &Path, segments: &[&str]) -> anyhow::Result<Option<PathBuf>> {
+/// Patch an offline BCD store (REGF hive) at `path`.
+///
+/// This function is intentionally cross-platform: it edits the offline hive directly instead of
+/// calling Windows APIs.
+pub fn patch_bcd_store(path: &Path, opts: PatchOpts) -> Result<()> {
+    let _ = patch_bcd_store_inner(path, opts)?;
+    Ok(())
+}
+
+fn patch_bcd_store_inner(path: &Path, opts: PatchOpts) -> Result<bool> {
+    let original_bytes =
+        fs::read(path).with_context(|| format!("read BCD store {}", path.display()))?;
+    let hive = RegistryHive::from_bytes(original_bytes.clone())
+        .map_err(|e| anyhow!("parse REGF hive {}: {e}", path.display()))?;
+
+    let targets = select_target_objects(&hive)?;
+    if targets.is_empty() {
+        return Err(anyhow!(
+            "no patch targets found in {}; is this a BCD store?",
+            path.display()
+        ));
+    }
+
+    let (major, minor) = hive.version();
+
+    let mut tree = hive_to_tree(
+        &hive
+            .root_key()
+            .map_err(|e| anyhow!("read hive root key: {e}"))?,
+    )
+    .context("convert hive to editable tree")?;
+
+    for obj in &targets {
+        patch_object(&mut tree, obj, opts)?;
+    }
+
+    sort_tree(&mut tree);
+
+    let mut builder = HiveBuilder::from_tree_with_version(tree, major, minor);
+    let mut new_bytes = builder
+        .to_bytes()
+        .with_context(|| format!("serialize patched hive for {}", path.display()))?;
+
+    preserve_base_block(&original_bytes, &mut new_bytes)
+        .context("preserve base block metadata for deterministic output")?;
+
+    if new_bytes == original_bytes {
+        return Ok(false);
+    }
+
+    write_atomic(path, &new_bytes)
+        .with_context(|| format!("write patched hive to {}", path.display()))?;
+    Ok(true)
+}
+
+/// Resolve a path under `root` case-insensitively (for case-sensitive host filesystems).
+pub fn resolve_case_insensitive_path(root: &Path, segments: &[&str]) -> Result<Option<PathBuf>> {
     let mut current = root.to_path_buf();
     for (idx, seg) in segments.iter().enumerate() {
         if !current.is_dir() {
@@ -58,10 +141,10 @@ pub fn resolve_case_insensitive_path(root: &Path, segments: &[&str]) -> anyhow::
             1 => current = matches.remove(0),
             _ => {
                 let display_root = if idx == 0 { root } else { &current };
-                anyhow::bail!(
+                return Err(anyhow!(
                     "ambiguous case-insensitive match for path segment {seg:?} under {}",
                     display_root.display()
-                );
+                ));
             }
         }
     }
@@ -69,14 +152,24 @@ pub fn resolve_case_insensitive_path(root: &Path, segments: &[&str]) -> anyhow::
     Ok(Some(current))
 }
 
-pub fn patch_win7_tree(root: &Path, opts: PatchOptions, strict: bool) -> anyhow::Result<Win7TreePatchReport> {
+/// Patch all relevant Win7 BCD stores in an extracted tree.
+///
+/// This is a convenience wrapper around [`patch_bcd_store`] that looks for the standard Win7
+/// store locations:
+/// - `boot/BCD`
+/// - `efi/microsoft/boot/BCD`
+/// - `Windows/System32/Config/BCD-Template`
+pub fn patch_win7_tree(root: &Path, opts: PatchOpts, strict: bool) -> Result<Win7TreePatchReport> {
     if !root.is_dir() {
-        anyhow::bail!("root is not a directory: {}", root.display());
+        return Err(anyhow!("root is not a directory: {}", root.display()));
     }
 
     let targets: [(&str, &[&str]); 3] = [
         ("boot/BCD", &["boot", "BCD"]),
-        ("efi/microsoft/boot/BCD", &["efi", "microsoft", "boot", "BCD"]),
+        (
+            "efi/microsoft/boot/BCD",
+            &["efi", "microsoft", "boot", "BCD"],
+        ),
         (
             "Windows/System32/Config/BCD-Template",
             &["Windows", "System32", "Config", "BCD-Template"],
@@ -93,99 +186,424 @@ pub fn patch_win7_tree(root: &Path, opts: PatchOptions, strict: bool) -> anyhow:
     }
 
     if strict && !missing.is_empty() {
-        anyhow::bail!("missing {} required BCD store(s): {}", missing.len(), missing.join(", "));
+        return Err(anyhow!(
+            "missing {} required BCD store(s): {}",
+            missing.len(),
+            missing.join(", ")
+        ));
     }
 
     let mut patched = Vec::new();
     for (_label, path) in resolved {
-        let changed = patch_bcd_store_file(&path, opts)?;
+        let changed = patch_bcd_store_inner(&path, opts)?;
         patched.push(PatchFileResult { path, changed });
     }
 
     Ok(Win7TreePatchReport { patched, missing })
 }
 
-fn parse_toggle(value: &str) -> Option<Toggle> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "on" | "1" | "true" | "yes" => Some(Toggle::On),
-        "off" | "0" | "false" | "no" => Some(Toggle::Off),
-        _ => None,
-    }
-}
+fn preserve_base_block(original: &[u8], out: &mut [u8]) -> Result<()> {
+    const BASE_BLOCK_SIZE: usize = 4096;
 
-fn format_toggle(toggle: Toggle) -> &'static str {
-    match toggle {
-        Toggle::On => "on",
-        Toggle::Off => "off",
-    }
-}
-
-/// Patch a single BCD store file in-place.
-///
-/// This project treats test fixtures as "synthetic BCD hives": simple key/value text files.
-/// Real Windows BCD stores are registry hives (`regf`) and require proper hive mutation logic.
-///
-/// The wrapper CLI (`bcd_patch win7-tree`) intentionally calls this library function so that
-/// all mutation logic stays in one place.
-pub fn patch_bcd_store_file(path: &Path, opts: PatchOptions) -> anyhow::Result<bool> {
-    let data = fs::read(path)?;
-    let content = String::from_utf8_lossy(&data);
-
-    let mut lines: Vec<String> = Vec::new();
-    let mut seen_testsigning = false;
-    let mut seen_nointegritychecks = false;
-    let mut changed = false;
-
-    for raw_line in content.lines() {
-        let mut line = raw_line.to_string();
-        if let Some((k, v)) = raw_line.split_once('=') {
-            let key = k.trim();
-            let val = v.trim();
-            if key.eq_ignore_ascii_case("testsigning") {
-                seen_testsigning = true;
-                let existing = parse_toggle(val)
-                    .ok_or_else(|| anyhow::anyhow!("invalid testsigning value {val:?} in {}", path.display()))?;
-                if existing != opts.testsigning {
-                    changed = true;
-                }
-                line = format!("testsigning={}", format_toggle(opts.testsigning));
-            } else if key.eq_ignore_ascii_case("nointegritychecks") {
-                seen_nointegritychecks = true;
-                let existing = parse_toggle(val).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "invalid nointegritychecks value {val:?} in {}",
-                        path.display()
-                    )
-                })?;
-                if existing != opts.nointegritychecks {
-                    changed = true;
-                }
-                line = format!("nointegritychecks={}", format_toggle(opts.nointegritychecks));
-            }
-        }
-
-        lines.push(line);
-    }
-
-    if !seen_testsigning {
-        changed = true;
-        lines.push(format!("testsigning={}", format_toggle(opts.testsigning)));
-    }
-    if !seen_nointegritychecks {
-        changed = true;
-        lines.push(format!(
-            "nointegritychecks={}",
-            format_toggle(opts.nointegritychecks)
+    if original.len() < BASE_BLOCK_SIZE || out.len() < BASE_BLOCK_SIZE {
+        return Err(anyhow!(
+            "REGF hive too small (original {} bytes, out {} bytes)",
+            original.len(),
+            out.len()
         ));
     }
 
-    // Always end the file with a trailing newline for stable diffs.
-    let mut out = lines.join("\n");
-    out.push('\n');
+    // Keep the layout-dependent fields from the regenerated hive.
+    // Offsets based on regf base block structure:
+    // - root_cell_offset @ 0x24 (36)
+    // - hive_bins_data_size @ 0x28 (40)
+    let root_cell_offset = out[36..40].to_vec();
+    let hive_bins_data_size = out[40..44].to_vec();
 
-    if changed {
-        fs::write(path, out.as_bytes())?;
+    // Copy the base block from the original hive. This preserves sequence numbers and timestamps,
+    // avoiding "rewrite noise" (and making the patch operation deterministic across runs).
+    out[..BASE_BLOCK_SIZE].copy_from_slice(&original[..BASE_BLOCK_SIZE]);
+
+    // Restore layout-dependent fields.
+    out[36..40].copy_from_slice(&root_cell_offset);
+    out[40..44].copy_from_slice(&hive_bins_data_size);
+
+    // Recompute and update checksum at 0x1FC (508) over the first 508 bytes.
+    let checksum = calculate_regf_checksum(&out[..512]);
+    out[508..512].copy_from_slice(&checksum.to_le_bytes());
+
+    Ok(())
+}
+
+fn calculate_regf_checksum(header: &[u8]) -> u32 {
+    assert!(header.len() >= 512);
+
+    let mut checksum: u32 = 0;
+    for chunk in header[..508].chunks_exact(4) {
+        let value = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        checksum ^= value;
     }
 
-    Ok(changed)
+    if checksum == 0xFFFF_FFFF {
+        0xFFFF_FFFE
+    } else if checksum == 0 {
+        1
+    } else {
+        checksum
+    }
+}
+
+fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("BCD");
+    let tmp_name = format!(".{file_name}.bcd_patch.tmp");
+    let tmp_path = parent.join(tmp_name);
+
+    fs::write(&tmp_path, data)
+        .with_context(|| format!("write temp file {}", tmp_path.display()))?;
+
+    // `rename` doesn't replace on Windows.
+    #[cfg(windows)]
+    {
+        let _ = fs::remove_file(path);
+    }
+
+    fs::rename(&tmp_path, path).with_context(|| {
+        format!(
+            "rename temp file {} to {}",
+            tmp_path.display(),
+            path.display()
+        )
+    })?;
+
+    Ok(())
+}
+
+fn select_target_objects(hive: &RegistryHive) -> Result<HashSet<String>> {
+    let objects_key = hive
+        .open_key(BCD_KEY_OBJECTS)
+        .map_err(|e| anyhow!("open key '{}': {e}", BCD_KEY_OBJECTS))?;
+
+    let object_names = objects_key
+        .subkeys()
+        .map_err(|e| anyhow!("enumerate BCD objects: {e}"))?;
+
+    let mut by_upper: HashMap<String, String> = HashMap::new();
+    for obj in &object_names {
+        by_upper.insert(obj.name().to_uppercase(), obj.name());
+    }
+
+    let mut targets: HashSet<String> = HashSet::new();
+
+    for known in [OBJ_GLOBALSETTINGS, OBJ_BOOTLOADERSETTINGS] {
+        if let Some(actual) = by_upper.get(&known.to_uppercase()) {
+            targets.insert(actual.clone());
+        }
+    }
+
+    // Patch all loader objects (winload/winresume) by ApplicationPath element.
+    for obj in &object_names {
+        if let Some(app_path) = read_bcd_string_element(hive, &obj.name(), ELEM_APPLICATION_PATH)? {
+            if is_win_loader_path(&app_path) {
+                targets.insert(obj.name());
+            }
+        }
+    }
+
+    // Fallback/extra coverage: objects referenced by bootmgr display order + default entry.
+    if let Some(bootmgr) = by_upper.get(&OBJ_BOOTMGR.to_uppercase()) {
+        if let Some(default_obj) =
+            read_bcd_guid_element(hive, bootmgr, ELEM_BOOTMGR_DEFAULT_OBJECT)?
+        {
+            if let Some(actual) = by_upper.get(&format_guid_key(&default_obj).to_uppercase()) {
+                targets.insert(actual.clone());
+            }
+        }
+
+        if let Some(order) = read_bcd_guid_list_element(hive, bootmgr, ELEM_BOOTMGR_DISPLAY_ORDER)?
+        {
+            for guid in order {
+                if let Some(actual) = by_upper.get(&format_guid_key(&guid).to_uppercase()) {
+                    targets.insert(actual.clone());
+                }
+            }
+        }
+    }
+
+    Ok(targets)
+}
+
+fn patch_object(tree: &mut KeyTreeNode, object_name: &str, opts: PatchOpts) -> Result<()> {
+    let base = format!("{BCD_KEY_OBJECTS}\\{object_name}\\{BCD_KEY_ELEMENTS}");
+
+    let nointegrity_key = format!(
+        "{base}\\{}",
+        element_key_name(ELEM_DISABLE_INTEGRITY_CHECKS)
+    );
+    let testsigning_key = format!(
+        "{base}\\{}",
+        element_key_name(ELEM_ALLOW_PRERELEASE_SIGNATURES)
+    );
+
+    set_binary_value(
+        tree,
+        &nointegrity_key,
+        BCD_VALUE_ELEMENT,
+        &bcd_encode_boolean(ELEM_DISABLE_INTEGRITY_CHECKS, opts.nointegritychecks),
+    )?;
+
+    set_binary_value(
+        tree,
+        &testsigning_key,
+        BCD_VALUE_ELEMENT,
+        &bcd_encode_boolean(ELEM_ALLOW_PRERELEASE_SIGNATURES, opts.testsigning),
+    )?;
+
+    Ok(())
+}
+
+fn set_binary_value(tree: &mut KeyTreeNode, key_path: &str, name: &str, data: &[u8]) -> Result<()> {
+    let node = tree_get_or_create_path(tree, key_path);
+    upsert_value(node, name, DataType::Binary, data.to_vec());
+    Ok(())
+}
+
+fn upsert_value(node: &mut KeyTreeNode, name: &str, data_type: DataType, data: Vec<u8>) {
+    if let Some(existing) = node
+        .values
+        .iter_mut()
+        .find(|v| v.name.eq_ignore_ascii_case(name))
+    {
+        existing.data_type = data_type;
+        existing.data = data;
+        return;
+    }
+
+    node.values.push(KeyTreeValue {
+        name: name.to_string(),
+        data_type,
+        data,
+    });
+}
+
+fn tree_get_or_create_path<'a>(root: &'a mut KeyTreeNode, path: &str) -> &'a mut KeyTreeNode {
+    if path.is_empty() {
+        return root;
+    }
+
+    let parts = path.split('\\').filter(|p| !p.is_empty());
+    let mut cur = root;
+    for part in parts {
+        let idx = cur
+            .children
+            .iter()
+            .position(|c| c.name.eq_ignore_ascii_case(part));
+        if let Some(idx) = idx {
+            cur = &mut cur.children[idx];
+        } else {
+            cur.children.push(KeyTreeNode::new(part));
+            let len = cur.children.len();
+            cur = &mut cur.children[len - 1];
+        }
+    }
+    cur
+}
+
+fn sort_tree(node: &mut KeyTreeNode) {
+    node.children
+        .sort_by(|a, b| a.name.to_uppercase().cmp(&b.name.to_uppercase()));
+    node.values
+        .sort_by(|a, b| a.name.to_uppercase().cmp(&b.name.to_uppercase()));
+    for child in &mut node.children {
+        sort_tree(child);
+    }
+}
+
+fn hive_to_tree(key: &RegistryKey<'_>) -> Result<KeyTreeNode> {
+    let mut node = KeyTreeNode::new(&key.name());
+
+    let mut values = key.values().map_err(|e| anyhow!("read values: {e}"))?;
+    // Ensure stable output bytes: sort values by name before storing.
+    values.sort_by(|a, b| a.name().to_uppercase().cmp(&b.name().to_uppercase()));
+
+    for value in values {
+        node.values.push(KeyTreeValue {
+            name: value.name(),
+            data_type: value.data_type(),
+            data: value
+                .raw_data()
+                .map_err(|e| anyhow!("read value data: {e}"))?,
+        });
+    }
+
+    let mut subkeys = key.subkeys().map_err(|e| anyhow!("read subkeys: {e}"))?;
+    subkeys.sort_by(|a, b| a.name().to_uppercase().cmp(&b.name().to_uppercase()));
+
+    for subkey in subkeys {
+        node.children.push(hive_to_tree(&subkey)?);
+    }
+
+    Ok(node)
+}
+
+fn element_key_name(element_type: u32) -> String {
+    format!("{element_type:08X}")
+}
+
+fn is_win_loader_path(path: &str) -> bool {
+    let p = path.to_ascii_lowercase();
+    p.contains("winload") || p.contains("winresume")
+}
+
+fn read_bcd_element_value(
+    hive: &RegistryHive,
+    object_name: &str,
+    element_type: u32,
+) -> Result<Option<Vec<u8>>> {
+    let path = format!(
+        "{BCD_KEY_OBJECTS}\\{object_name}\\{BCD_KEY_ELEMENTS}\\{}",
+        element_key_name(element_type)
+    );
+
+    let key = match hive.open_key(&path) {
+        Ok(k) => k,
+        Err(regf::Error::KeyNotFound(_)) => return Ok(None),
+        Err(e) => return Err(anyhow!("open key '{path}': {e}")),
+    };
+
+    let value = match key.value(BCD_VALUE_ELEMENT) {
+        Ok(v) => v,
+        Err(regf::Error::ValueNotFound(_)) => return Ok(None),
+        Err(e) => return Err(anyhow!("read value '{path}\\{BCD_VALUE_ELEMENT}': {e}")),
+    };
+
+    if value.data_type() != DataType::Binary {
+        return Ok(None);
+    }
+
+    Ok(Some(value.raw_data().map_err(|e| {
+        anyhow!("read binary value '{path}\\{BCD_VALUE_ELEMENT}': {e}")
+    })?))
+}
+
+fn read_bcd_string_element(
+    hive: &RegistryHive,
+    object_name: &str,
+    element_type: u32,
+) -> Result<Option<String>> {
+    let Some(bytes) = read_bcd_element_value(hive, object_name, element_type)? else {
+        return Ok(None);
+    };
+    Ok(bcd_decode_string(&bytes, element_type))
+}
+
+fn read_bcd_guid_element(
+    hive: &RegistryHive,
+    object_name: &str,
+    element_type: u32,
+) -> Result<Option<Uuid>> {
+    let Some(bytes) = read_bcd_element_value(hive, object_name, element_type)? else {
+        return Ok(None);
+    };
+    Ok(bcd_decode_guid(&bytes, element_type))
+}
+
+fn read_bcd_guid_list_element(
+    hive: &RegistryHive,
+    object_name: &str,
+    element_type: u32,
+) -> Result<Option<Vec<Uuid>>> {
+    let Some(bytes) = read_bcd_element_value(hive, object_name, element_type)? else {
+        return Ok(None);
+    };
+    Ok(bcd_decode_guid_list(&bytes, element_type))
+}
+
+fn format_guid_key(guid: &Uuid) -> String {
+    format!("{{{guid}}}")
+}
+
+fn bcd_encode_boolean(element_type: u32, value: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8);
+    out.extend_from_slice(&element_type.to_le_bytes());
+    out.extend_from_slice(&(if value { 1u32 } else { 0u32 }).to_le_bytes());
+    out
+}
+
+fn bcd_decode_string(bytes: &[u8], expected_type: u32) -> Option<String> {
+    let (ty, payload) = bcd_payload(bytes)?;
+    if ty != expected_type {
+        return None;
+    }
+
+    // Some stores include a u32 length prefix before the UTF-16LE string.
+    let payload = if payload.len() >= 4 {
+        let n = u32::from_le_bytes(payload[0..4].try_into().ok()?) as usize;
+        if n == payload.len().saturating_sub(4) {
+            &payload[4..]
+        } else {
+            payload
+        }
+    } else {
+        payload
+    };
+
+    decode_utf16le_nul_terminated(payload)
+}
+
+fn bcd_decode_guid(bytes: &[u8], expected_type: u32) -> Option<Uuid> {
+    let (ty, payload) = bcd_payload(bytes)?;
+    if ty != expected_type {
+        return None;
+    }
+
+    for start in [0usize, 4, 8] {
+        if payload.len() == start + 16 {
+            let raw: [u8; 16] = payload[start..start + 16].try_into().ok()?;
+            return Some(Uuid::from_bytes_le(raw));
+        }
+    }
+    None
+}
+
+fn bcd_decode_guid_list(bytes: &[u8], expected_type: u32) -> Option<Vec<Uuid>> {
+    let (ty, payload) = bcd_payload(bytes)?;
+    if ty != expected_type {
+        return None;
+    }
+
+    let list_bytes = [0usize, 4, 8].into_iter().find_map(|start| {
+        if payload.len() >= start && (payload.len() - start) % 16 == 0 {
+            Some(&payload[start..])
+        } else {
+            None
+        }
+    })?;
+
+    let mut out = Vec::new();
+    for chunk in list_bytes.chunks_exact(16) {
+        let raw: [u8; 16] = chunk.try_into().ok()?;
+        out.push(Uuid::from_bytes_le(raw));
+    }
+    Some(out)
+}
+
+fn bcd_payload(bytes: &[u8]) -> Option<(u32, &[u8])> {
+    if bytes.len() < 4 {
+        return None;
+    }
+    let ty = u32::from_le_bytes(bytes[0..4].try_into().ok()?);
+    Some((ty, &bytes[4..]))
+}
+
+fn decode_utf16le_nul_terminated(bytes: &[u8]) -> Option<String> {
+    let mut u16s = Vec::new();
+    for chunk in bytes.chunks_exact(2) {
+        let val = u16::from_le_bytes(chunk.try_into().ok()?);
+        if val == 0 {
+            break;
+        }
+        u16s.push(val);
+    }
+    String::from_utf16(&u16s).ok()
 }
