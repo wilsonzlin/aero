@@ -259,12 +259,19 @@ impl IoApic {
         }
         let entry = self.redirection[idx];
 
-        if entry.mask {
-            return;
-        }
-
         let prev = entry.interpret_level(prev_raw);
         let asserted = entry.interpret_level(new_raw);
+
+        if entry.mask {
+            if entry.trigger_mode == TriggerMode::Level && !asserted {
+                // See the comment below: in the absence of a full LAPIC EOI feedback path,
+                // clearing Remote-IRR on deassert is used as a pragmatic approximation.
+                if let Some(entry) = self.redirection.get_mut(gsi as usize) {
+                    entry.remote_irr = false;
+                }
+            }
+            return;
+        }
 
         match entry.trigger_mode {
             TriggerMode::Edge => {
@@ -441,5 +448,39 @@ mod tests {
         // Now emulate EOI while still asserted; should re-deliver (remote IRR cleared).
         ioapic.notify_eoi(0x21);
         assert_eq!(service_next(&lapic), Some(0x21));
+    }
+
+    #[test]
+    fn level_triggered_deassert_while_masked_clears_remote_irr() {
+        let (mut ioapic, lapic) = mk_ioapic();
+
+        let gsi = 2u32;
+        let vector = 0x22u32;
+        let redtbl = 0x10u32 + gsi * 2;
+
+        // Configure entry as level-triggered and unmasked.
+        ioapic.mmio_write(0x00, 4, u64::from(redtbl));
+        ioapic.mmio_write(0x10, 4, u64::from(vector | (1 << 15)));
+
+        // Assert the line: should deliver once and set Remote-IRR.
+        ioapic.set_irq_level(gsi, true);
+        assert_eq!(service_next(&lapic), Some(vector as u8));
+
+        ioapic.mmio_write(0x00, 4, u64::from(redtbl));
+        let low = ioapic.mmio_read(0x10, 4) as u32;
+        assert_ne!(low & (1 << 14), 0);
+
+        // Mask, deassert while masked, then unmask. Without clearing Remote-IRR on deassert
+        // the next assertion would be suppressed forever (no EOI feedback path in this test).
+        ioapic.mmio_write(0x00, 4, u64::from(redtbl));
+        ioapic.mmio_write(0x10, 4, u64::from(low | (1 << 16)));
+
+        ioapic.set_irq_level(gsi, false);
+
+        ioapic.mmio_write(0x00, 4, u64::from(redtbl));
+        ioapic.mmio_write(0x10, 4, u64::from(vector | (1 << 15)));
+
+        ioapic.set_irq_level(gsi, true);
+        assert_eq!(service_next(&lapic), Some(vector as u8));
     }
 }
