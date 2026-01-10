@@ -140,3 +140,89 @@ jobs:
             echo "- Project: \`${{ matrix.project }}\`"
             echo "- Artifacts: \`playwright-artifacts-${{ matrix.project }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  notify:
+    name: Notify (scheduled failures)
+    runs-on: ubuntu-latest
+    needs: [e2e]
+    if: github.event_name == 'schedule' && always()
+    permissions:
+      contents: read
+      issues: write
+    env:
+      E2E_RESULT: ${{ needs.e2e.result }}
+    steps:
+      - name: Create/close issue for scheduled failures
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = "<!-- aero-e2e-matrix -->";
+            const title = "Cross-browser E2E matrix failing";
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const sha = context.sha;
+            const result = process.env.E2E_RESULT;
+
+            const search = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${owner}/${repo} is:issue is:open in:body \\"aero-e2e-matrix\\"`,
+              per_page: 10,
+            });
+
+            const existing = search.data.items.find((item) => item.title === title);
+
+            if (result !== "success") {
+              const body = [
+                marker,
+                "The scheduled cross-browser Playwright E2E workflow is failing.",
+                "",
+                `Latest run: ${runUrl}`,
+                `Commit: \`${sha}\``,
+                "",
+                "Artifacts (HTML report + traces) are available on the workflow run page.",
+              ].join("\\n");
+
+              if (existing) {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: existing.number,
+                  body,
+                });
+                core.notice(`Updated existing issue #${existing.number}`);
+              } else {
+                const created = await github.rest.issues.create({
+                  owner,
+                  repo,
+                  title,
+                  body,
+                });
+                core.notice(`Created issue #${created.data.number}`);
+              }
+              return;
+            }
+
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: existing.number,
+                body: [
+                  marker,
+                  "Scheduled cross-browser Playwright E2E is green again.",
+                  "",
+                  `Latest successful run: ${runUrl}`,
+                  `Commit: \`${sha}\``,
+                ].join("\\n"),
+              });
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: existing.number,
+                state: "closed",
+              });
+              core.notice(`Closed issue #${existing.number}`);
+            } else {
+              core.notice("No open failure issue found; nothing to close.");
+            }
