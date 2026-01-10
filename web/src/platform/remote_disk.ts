@@ -215,6 +215,7 @@ export class RemoteStreamingDisk {
   private meta: CacheMeta;
   private rangeSet: RangeSet;
   private lastReadEnd: number | null = null;
+  private readonly inflight = new Map<number, Promise<Uint8Array>>();
 
   private constructor(url: string, totalSize: number, cacheKey: string, options: Required<RemoteDiskOptions>) {
     this.url = url;
@@ -325,6 +326,22 @@ export class RemoteStreamingDisk {
     await this.readInto(offset, buffer, onLog);
   }
 
+  async clearCache(): Promise<void> {
+    await removeOpfsEntry(`state/remote-cache/${this.cacheKey}`, { recursive: true });
+    this.meta = {
+      version: 1,
+      url: this.url,
+      totalSize: this.totalSize,
+      blockSize: this.blockSize,
+      downloaded: [],
+      accessCounter: 0,
+      blockLastAccess: {},
+    };
+    this.rangeSet = new RangeSet();
+    this.lastReadEnd = null;
+    this.inflight.clear();
+  }
+
   private async maybePrefetch(offset: number, length: number, onLog?: (msg: string) => void): Promise<void> {
     const sequential = this.lastReadEnd !== null && this.lastReadEnd === offset;
     this.lastReadEnd = offset + length;
@@ -386,27 +403,41 @@ export class RemoteStreamingDisk {
       await this.persistMeta();
     }
 
-    onLog?.(`cache miss: fetching bytes=${r.start}-${r.end - 1}`);
-    const resp = await fetch(this.url, { headers: { Range: `bytes=${r.start}-${r.end - 1}` } });
-    if (resp.status !== 206) {
-      throw new Error(`Expected 206 Partial Content, got ${resp.status}`);
-    }
-    const buf = new Uint8Array(await resp.arrayBuffer());
-    if (buf.length !== r.end - r.start) {
-      throw new Error(`Unexpected range length: expected ${r.end - r.start}, got ${buf.length}`);
+    const existing = this.inflight.get(blockIndex);
+    if (existing) {
+      return await existing;
     }
 
-    const handle = await openFileHandle(this.blockPath(blockIndex), { create: true });
-    const writable = await handle.createWritable();
-    await writable.write(buf);
-    await writable.close();
+    const task = (async () => {
+      onLog?.(`cache miss: fetching bytes=${r.start}-${r.end - 1}`);
+      const resp = await fetch(this.url, { headers: { Range: `bytes=${r.start}-${r.end - 1}` } });
+      if (resp.status !== 206) {
+        throw new Error(`Expected 206 Partial Content, got ${resp.status}`);
+      }
+      const buf = new Uint8Array(await resp.arrayBuffer());
+      if (buf.length !== r.end - r.start) {
+        throw new Error(`Unexpected range length: expected ${r.end - r.start}, got ${buf.length}`);
+      }
 
-    this.rangeSet.insert(r.start, r.end);
-    this.noteAccess(blockIndex);
-    this.meta.downloaded = this.rangeSet.getRanges();
-    await this.persistMeta();
-    await this.enforceCacheLimit(blockIndex);
-    return buf;
+      const handle = await openFileHandle(this.blockPath(blockIndex), { create: true });
+      const writable = await handle.createWritable();
+      await writable.write(buf);
+      await writable.close();
+
+      this.rangeSet.insert(r.start, r.end);
+      this.noteAccess(blockIndex);
+      this.meta.downloaded = this.rangeSet.getRanges();
+      await this.persistMeta();
+      await this.enforceCacheLimit(blockIndex);
+      return buf;
+    })();
+
+    this.inflight.set(blockIndex, task);
+    try {
+      return await task;
+    } finally {
+      this.inflight.delete(blockIndex);
+    }
   }
 
   private async enforceCacheLimit(protectedBlock: number): Promise<void> {

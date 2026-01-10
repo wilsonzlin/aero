@@ -348,6 +348,7 @@ function renderRemoteDiskPanel(): HTMLElement {
 
   const probeButton = el('button', { text: 'Probe Range support' }) as HTMLButtonElement;
   const readButton = el('button', { text: 'Read sample bytes' }) as HTMLButtonElement;
+  const clearButton = el('button', { text: 'Clear cache' }) as HTMLButtonElement;
   const progress = el('progress', { value: '0', max: '1', style: 'width: 320px' }) as HTMLProgressElement;
 
   let disk: RemoteStreamingDisk | null = null;
@@ -356,6 +357,7 @@ function renderRemoteDiskPanel(): HTMLElement {
     const enabled = enabledInput.checked;
     probeButton.disabled = !enabled;
     readButton.disabled = !enabled;
+    clearButton.disabled = !enabled || !disk;
   }
 
   enabledInput.addEventListener('change', updateButtons);
@@ -383,6 +385,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       });
       const status = await disk.getCacheStatus();
       output.textContent = JSON.stringify(status, null, 2);
+      updateButtons();
     } catch (err) {
       output.textContent = err instanceof Error ? err.message : String(err);
     }
@@ -404,6 +407,7 @@ function renderRemoteDiskPanel(): HTMLElement {
         const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
         disk = await RemoteStreamingDisk.open(url, { blockSize, cacheLimitBytes, prefetchSequentialBlocks: 2 });
       }
+      updateButtons();
 
       const logLines: string[] = [];
       const bytes = await disk.read(1024, 16, (msg) => {
@@ -418,6 +422,23 @@ function renderRemoteDiskPanel(): HTMLElement {
         2,
       );
       progress.value = 1;
+    } catch (err) {
+      output.textContent = err instanceof Error ? err.message : String(err);
+    }
+  };
+
+  clearButton.onclick = async () => {
+    output.textContent = '';
+    progress.value = 0;
+    try {
+      if (!disk) {
+        output.textContent = 'Nothing to clear (probe/open first).';
+        return;
+      }
+      await disk.clearCache();
+      const status = await disk.getCacheStatus();
+      output.textContent = JSON.stringify({ cleared: true, cache: status }, null, 2);
+      updateButtons();
     } catch (err) {
       output.textContent = err instanceof Error ? err.message : String(err);
     }
@@ -445,6 +466,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       cacheLimitInput,
       probeButton,
       readButton,
+      clearButton,
       progress,
     ),
     output,
