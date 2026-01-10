@@ -931,7 +931,8 @@ impl ShaderCache {
 ---
 
 ## Next Steps
-
+ 
+- See [`docs/graphics/win7-wddm11-aerogpu-driver.md`](./graphics/win7-wddm11-aerogpu-driver.md) for the Windows 7 WDDM 1.1 (KMD+UMD) architecture and command transport boundary.
 - See [Audio Subsystem](./06-audio-subsystem.md) for sound emulation
 - See [Performance Optimization](./10-performance-optimization.md) for GPU perf tips
 - See [Task Breakdown](./15-agent-task-breakdown.md) for graphics tasks
