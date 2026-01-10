@@ -4,7 +4,9 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const testRoot = path.join(projectRoot, 'test');
+const testRoot = process.argv[2]
+  ? path.resolve(projectRoot, process.argv[2])
+  : path.join(projectRoot, 'test');
 
 const testFilePattern = /\.test\.(c|m)?(j|t)s$/;
 
@@ -57,4 +59,3 @@ if (testFiles.length === 0) {
     process.exit(code ?? 1);
   });
 }
-

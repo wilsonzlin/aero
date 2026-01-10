@@ -11,6 +11,7 @@
     "lint": "tsc -p tsconfig.lint.json",
     "test": "node ./scripts/run-tests.js",
     "test:e2e": "playwright test",
+    "test:property": "node ./scripts/run-tests.js test/property",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "bench": "node bench/run.mjs --mode local --json bench/results.json",
@@ -27,6 +28,7 @@
     "@types/node": "^20.11.30",
     "autocannon": "^7.15.0",
     "dns-packet": "^5.6.1",
+    "fast-check": "^3.16.0",
     "tsx": "^4.19.2",
     "typescript": "^5.4.5",
     "ws": "^8.18.0"
