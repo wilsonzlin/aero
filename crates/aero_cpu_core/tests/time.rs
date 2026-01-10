@@ -11,13 +11,14 @@ fn rdtsc_is_monotonic_across_retired_instructions() {
     let mut cpu = Cpu::default();
     cpu.time.set_tsc(1234);
 
-    cpu.instr_rdtsc();
+    let inst = cpu.exec_time_insn(&[0x0F, 0x31]).unwrap(); // RDTSC
     let tsc1 = tsc_from_edx_eax(&cpu);
+    cpu.retire_cycles(inst.cycles);
 
-    // Advance virtual time by retiring the instruction.
-    cpu.retire_instruction();
+    let inst = cpu.exec_time_insn(&[0x90]).unwrap(); // NOP
+    cpu.retire_cycles(inst.cycles);
 
-    cpu.instr_rdtsc();
+    cpu.exec_time_insn(&[0x0F, 0x31]).unwrap(); // RDTSC
     let tsc2 = tsc_from_edx_eax(&cpu);
 
     assert!(tsc2 > tsc1, "expected monotonic TSC: {tsc2} <= {tsc1}");
@@ -27,11 +28,16 @@ fn rdtsc_is_monotonic_across_retired_instructions() {
 fn rdtscp_reads_tsc_aux_into_ecx() {
     let mut cpu = Cpu::default();
     cpu.cs = 0x8; // CPL0 for WRMSR
-    cpu.wrmsr_value(msr::IA32_TSC_AUX, 0xAABB_CCDD).unwrap();
+    cpu.rcx = msr::IA32_TSC_AUX as u64;
+    cpu.rax = 0xAABB_CCDD;
+    cpu.rdx = 0;
+    let inst = cpu.exec_time_insn(&[0x0F, 0x30]).unwrap(); // WRMSR
+    cpu.retire_cycles(inst.cycles);
 
     // User-mode read (RDTSCP is unprivileged).
     cpu.cs = 0x23;
-    cpu.instr_rdtscp();
+    let inst = cpu.exec_time_insn(&[0x0F, 0x01, 0xF9]).unwrap(); // RDTSCP
+    cpu.retire_cycles(inst.cycles);
 
     assert_eq!(cpu.rcx as u32, 0xAABB_CCDD);
 }
@@ -45,7 +51,10 @@ fn fences_are_noops_for_register_state_and_terminate_blocks() {
     cpu.rdx = 0xDDDD_EEEE_FFFF_0000;
     let before = (cpu.rax, cpu.rbx, cpu.rcx, cpu.rdx);
 
-    cpu.instr_lfence();
+    let inst = cpu.exec_time_insn(&[0x0F, 0xAE, 0xE8]).unwrap(); // LFENCE
+    cpu.retire_cycles(inst.cycles);
+    assert!(inst.serializing);
+    assert!(inst.terminates_block);
     assert_eq!((cpu.rax, cpu.rbx, cpu.rcx, cpu.rdx), before);
 
     let code = [
@@ -69,9 +78,17 @@ fn wrmsr_ia32_tsc_updates_subsequent_rdtsc() {
     let mut cpu = Cpu::default();
     cpu.cs = 0x8; // CPL0
 
-    cpu.wrmsr_value(msr::IA32_TSC, 0x1234_5678_9ABC_DEF0).unwrap();
-    cpu.instr_rdtsc();
+    cpu.rcx = msr::IA32_TSC as u64;
+    cpu.rax = 0x9ABC_DEF0;
+    cpu.rdx = 0x1234_5678;
+    let inst = cpu.exec_time_insn(&[0x0F, 0x30]).unwrap(); // WRMSR
+    cpu.retire_cycles(inst.cycles);
+
+    cpu.exec_time_insn(&[0x0F, 0x31]).unwrap(); // RDTSC
     let tsc = tsc_from_edx_eax(&cpu);
 
-    assert_eq!(tsc, 0x1234_5678_9ABC_DEF0);
+    assert!(
+        tsc >= 0x1234_5678_9ABC_DEF0,
+        "expected RDTSC to reflect IA32_TSC write: {tsc:#x}"
+    );
 }

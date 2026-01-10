@@ -481,6 +481,40 @@ impl Cpu {
         core::hint::spin_loop();
     }
 
+    /// Decode and execute a time/serialization primitive instruction.
+    ///
+    /// This is intentionally a narrow helper for instruction encodings that are relied upon by
+    /// Windows 7 early during boot/runtime (RDTSC/RDTSCP, fences, PAUSE, CPUID, RDMSR/WRMSR).
+    ///
+    /// The caller is responsible for advancing `rip` and calling `retire_cycles(inst.cycles)`
+    /// after successful execution.
+    pub fn exec_time_insn(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<crate::time_insn::DecodedInstruction, Exception> {
+        use crate::time_insn::InstructionKind;
+
+        let inst = crate::time_insn::decode_instruction(bytes)?;
+        match inst.kind {
+            InstructionKind::Rdtsc => self.instr_rdtsc(),
+            InstructionKind::Rdtscp => self.instr_rdtscp(),
+            InstructionKind::Lfence => self.instr_lfence(),
+            InstructionKind::Sfence => self.instr_sfence(),
+            InstructionKind::Mfence => self.instr_mfence(),
+            InstructionKind::Cpuid => self.instr_cpuid(),
+            InstructionKind::Pause => self.instr_pause(),
+            InstructionKind::Nop => {}
+            InstructionKind::Rdmsr => {
+                self.instr_rdmsr()?;
+            }
+            InstructionKind::Wrmsr => {
+                self.instr_wrmsr()?;
+            }
+        }
+
+        Ok(inst)
+    }
+
     // --- MSR ---
 
     pub fn rdmsr_value(&mut self, msr_index: u32) -> Result<u64, Exception> {
