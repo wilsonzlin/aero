@@ -7,3 +7,4 @@ edition = "2021"
 memory = { path = "../memory" }
 
 [dev-dependencies]
+image = { version = "0.25.5", default-features = false, features = ["png"] }
