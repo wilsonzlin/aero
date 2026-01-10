@@ -204,6 +204,7 @@ impl IsoBuilder {
                 run(&mut cmd, verbose).context("xorriso mkisofs failed")
             }
             IsoBuilderKind::Oscdimg { exe } => {
+                let bios_boot_rel = Path::new("boot").join("etfsboot.com");
                 let mut cmd = Command::new(exe);
                 cmd.arg("-m")
                     .arg("-o")
@@ -213,15 +214,16 @@ impl IsoBuilder {
                     .arg(format!("-l{}", volume_id));
 
                 if let Some(uefi_boot) = uefi_boot {
+                    let uefi_boot_rel = uefi_boot.strip_prefix(iso_root).unwrap_or(&uefi_boot);
                     cmd.arg(format!(
                         "-bootdata:2#p0,e,b{}#pEF,e,b{}",
-                        to_oscdimg_path(&bios_boot).display(),
-                        to_oscdimg_path(&uefi_boot).display()
+                        to_oscdimg_path(&bios_boot_rel).display(),
+                        to_oscdimg_path(uefi_boot_rel).display()
                     ));
                 } else {
                     cmd.arg(format!(
                         "-bootdata:1#p0,e,b{}",
-                        to_oscdimg_path(&bios_boot).display()
+                        to_oscdimg_path(&bios_boot_rel).display()
                     ));
                 }
 

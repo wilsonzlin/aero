@@ -42,7 +42,12 @@ pub struct Manifest {
 impl Manifest {
     pub fn to_json_pretty(&self) -> Result<String> {
         let mut sorted = self.clone();
-        sorted.patched_paths.sort_by(|a, b| a.path.cmp(&b.path));
+        sorted
+            .patched_paths
+            .sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.kind.cmp(&b.kind)));
+        sorted
+            .patched_paths
+            .dedup_by(|a, b| a.path == b.path && a.kind == b.kind);
         serde_json::to_string_pretty(&sorted).context("Failed to serialize manifest as JSON")
     }
 
@@ -73,7 +78,7 @@ impl PatchedPath {
     }
 }
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
 #[serde(rename_all = "kebab-case")]
 pub enum PatchedPathKind {
     File,
@@ -102,4 +107,3 @@ mod tests {
         assert!(json.contains("\"boot/BCD\""));
     }
 }
-

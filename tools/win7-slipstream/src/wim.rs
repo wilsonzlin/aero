@@ -36,10 +36,17 @@ impl Arch {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
 pub enum SigningMode {
+    #[value(name = "none")]
+    #[serde(rename = "none")]
     None,
+    // Match the CLI/user-story spelling ("testsigning") while still accepting the more common
+    // hyphenated form as an alias.
+    #[value(name = "testsigning", alias = "test-signing")]
+    #[serde(rename = "testsigning")]
     TestSigning,
+    #[value(name = "nointegritychecks", alias = "no-integrity-checks")]
+    #[serde(rename = "nointegritychecks")]
     NoIntegrityChecks,
 }
 

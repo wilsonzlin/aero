@@ -75,6 +75,7 @@ exclude = [
     # Standalone tools with their own lockfiles (build by `cd tools/<name> && cargo ...`).
     "tools/win-offline-cert-injector",
     "tools/win-certstore-regblob-export",
+    "tools/win7-slipstream",
 ]
 
 [dev-dependencies]
