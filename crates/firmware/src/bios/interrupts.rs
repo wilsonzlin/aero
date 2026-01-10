@@ -97,8 +97,8 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
                 // INT 13h AH=02h uses AL=0 as 256 sectors.
                 count = 256;
             }
-            let ch = (cpu.rcx & 0xFF) as u8;
-            let cl = ((cpu.rcx >> 8) & 0xFF) as u8;
+            let cl = (cpu.rcx & 0xFF) as u8;
+            let ch = ((cpu.rcx >> 8) & 0xFF) as u8;
             let dh = ((cpu.rdx >> 8) & 0xFF) as u8;
 
             let sector = (cl & 0x3F) as u16;
@@ -126,14 +126,16 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
                     Err(e) => {
                         cpu.rflags |= FLAG_CF;
                         let status = disk_err_to_int13_status(e);
-                        cpu.rax = (cpu.rax & 0xFF) | ((status as u64) << 8);
+                        cpu.rax = (cpu.rax & !0xFFFF) | ((status as u64) << 8);
                         return;
                     }
                 }
             }
 
             cpu.rflags &= !FLAG_CF;
-            cpu.rax &= !0xFF00u64; // AH=0
+            // AH=0 on success, AL = sectors transferred.
+            let transferred = if count == 256 { 0u64 } else { count as u64 };
+            cpu.rax = (cpu.rax & !0xFFFF) | transferred;
             let _ = drive;
         }
         0x08 => {
@@ -148,8 +150,9 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
             let cl = (spt & 0x3F) | (((cyl_minus1 >> 2) as u8) & 0xC0);
             let dh = heads - 1;
 
-            cpu.rcx = (cpu.rcx & !0xFFFF) | (ch as u64) | ((cl as u64) << 8);
-            cpu.rdx = (cpu.rdx & !0xFF00) | ((dh as u64) << 8);
+            cpu.rcx = (cpu.rcx & !0xFFFF) | (cl as u64) | ((ch as u64) << 8);
+            // DL = number of drives; DH = max head.
+            cpu.rdx = (cpu.rdx & !0xFFFF) | 1u64 | ((dh as u64) << 8);
             cpu.rax &= !0xFF00u64;
             cpu.rflags &= !FLAG_CF;
         }
@@ -333,6 +336,11 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
                 cpu.rax = (cpu.rax & 0xFF) | (0x86u64 << 8);
                 return;
             }
+            let req_size = (cpu.rcx & 0xFFFF_FFFF) as u32;
+            if req_size < 20 {
+                cpu.rflags |= FLAG_CF;
+                return;
+            }
 
             if bios.e820_map.is_empty() {
                 bios.e820_map = build_e820_map(bios.config.memory_size_bytes);
@@ -350,9 +358,13 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             bus.write_u64(dst, entry.base);
             bus.write_u64(dst + 8, entry.length);
             bus.write_u32(dst + 16, entry.region_type);
+            let resp_size = if req_size >= 24 { 24 } else { 20 };
+            if resp_size >= 24 {
+                bus.write_u32(dst + 20, entry.extended_attributes);
+            }
 
             cpu.rax = 0x534D_4150;
-            cpu.rcx = 20;
+            cpu.rcx = resp_size as u64;
             cpu.rbx = if idx + 1 < bios.e820_map.len() {
                 (idx as u64) + 1
             } else {
