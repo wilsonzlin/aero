@@ -10,6 +10,7 @@ Files:
 
 - `autounattend_amd64.xml` (Windows 7 x64)
 - `autounattend_x86.xml` (Windows 7 x86)
+- `scripts/` (Win7 SP1 `cmd.exe` post-install automation: test signing + unattended driver install)
 
 These templates are intentionally minimal; users are expected to edit image selection, locale, and account settings.
 
@@ -43,10 +44,13 @@ The templates reference driver and script paths relative to `%configsetroot%`:
       amd64/
       x86/
   Scripts/
-    SetupComplete.cmd
+    SetupComplete.cmd        (copy from `windows/win7-sp1/unattend/scripts/SetupComplete.cmd`)
+    InstallDriversOnce.cmd   (copy from `windows/win7-sp1/unattend/scripts/InstallDriversOnce.cmd`)
     FirstLogon.cmd        (optional)
+  Cert/
+    aero_test.cer         (optional; preferred name for the unattended scripts)
   Certs/
-    AeroTestRoot.cer      (optional)
+    AeroTestRoot.cer      (optional; accepted for compatibility)
 ```
 
 Notes:
@@ -54,6 +58,7 @@ Notes:
 - **WinPE drivers** (`Drivers/WinPE/...`) are for storage/NIC drivers needed by Setup itself.
 - **Offline drivers** (`Drivers/Offline/...`) are staged into the installed OS driver store during `offlineServicing`.
 - `Scripts/SetupComplete.cmd` is copied into `%WINDIR%\\Setup\\Scripts\\SetupComplete.cmd` during the `specialize` pass.
+- `Scripts/InstallDriversOnce.cmd` is invoked via a scheduled task created by `SetupComplete.cmd` at the next boot.
 - If `Scripts/FirstLogon.cmd` exists, the templates also copy it into `%WINDIR%\\Setup\\Scripts\\FirstLogon.cmd` and run it via `FirstLogonCommands`.
 
 > Verify on real Win7 setup: the availability of `%configsetroot%` after the first reboot depends on how Setup handles configuration sets in your scenario. For robustness, keep the config ISO attached until the desktop appears and/or copy needed files to the system drive during `specialize`.

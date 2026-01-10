@@ -126,6 +126,17 @@ This is often the easiest place to:
 - Install INF drivers via `pnputil` (Win7 has `pnputil.exe`; exact flags differ by OS version—verify on Win7 SP1)
 - Trigger a reboot (for example after enabling test signing)
 
+### Recommended: use Aero's unattended scripts
+
+This repo includes Win7 SP1-compatible post-install automation scripts that:
+
+- Import an optional test certificate
+- Enable test signing (`bcdedit /set testsigning on`)
+- Install all `*.inf` packages under a `Drivers\` folder via `pnputil`
+- Avoid reboot loops via marker files and self-deleting scheduled tasks
+
+See: [`windows/win7-sp1/unattend/scripts/`](../windows/win7-sp1/unattend/scripts/)
+
 ### Example: `SetupComplete.cmd` skeleton
 
 If you ship a config ISO that includes `Scripts\\SetupComplete.cmd`, you can use it to enable test signing, trust your signing certificate, and stage/install drivers.

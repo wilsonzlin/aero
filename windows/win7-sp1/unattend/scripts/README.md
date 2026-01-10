@@ -33,6 +33,10 @@ The scripts locate the payload using the following strategy:
 
 The marker file can be an empty file; it is only used to find the payload.
 
+Notes:
+
+- `InstallDriversOnce.cmd` also attempts to infer the payload root from its own location (parent of the `Scripts\` directory) before trying `C:\Aero` / `AERO.TAG` scanning. This makes it robust when the scheduled task runs the script directly from the payload.
+
 ## SetupComplete.cmd
 
 `SetupComplete.cmd` is intended to be copied to:
@@ -61,6 +65,9 @@ Logs are appended to:
 2. If `Cert\aero_test.cer` exists, imports it into:
    - `Root`
    - `TrustedPublisher`
+
+   For compatibility with existing config media layouts, it will also accept:
+   - `Certs\AeroTestRoot.cer`
 3. Enables test signing via `bcdedit /set testsigning on`
 4. Creates a scheduled task (`Aero-InstallDriversOnce`) that runs `InstallDriversOnce.cmd` at next boot as `SYSTEM`.
 5. Reboots immediately to apply boot configuration changes.

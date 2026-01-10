@@ -46,6 +46,7 @@ if not defined AERO_ROOT (
 echo Using Aero payload root: "%AERO_ROOT%"
 
 set "AERO_CERT_FILE=%AERO_ROOT%\Cert\aero_test.cer"
+if not exist "%AERO_CERT_FILE%" set "AERO_CERT_FILE=%AERO_ROOT%\Certs\AeroTestRoot.cer"
 if exist "%AERO_CERT_FILE%" (
   echo Importing test certificate: "%AERO_CERT_FILE%"
   certutil -addstore -f Root "%AERO_CERT_FILE%"
@@ -53,7 +54,7 @@ if exist "%AERO_CERT_FILE%" (
   certutil -addstore -f TrustedPublisher "%AERO_CERT_FILE%"
   echo certutil TrustedPublisher exit code: !errorlevel!
 ) else (
-  echo No certificate found at "%AERO_CERT_FILE%". Skipping certificate import.
+  echo No certificate found at "%AERO_ROOT%\Cert\aero_test.cer" (or "%AERO_ROOT%\Certs\AeroTestRoot.cer"). Skipping certificate import.
 )
 
 echo Enabling test signing...

@@ -113,6 +113,11 @@ schtasks /Delete /TN "%AERO_TASK_NAME%" /F
 exit /b 0
 
 :FIND_AERO_ROOT
+REM 0) If this script is running from within a payload's "Scripts\" directory,
+REM    use the parent directory as the payload root.
+call :TRY_AERO_ROOT_FROM_SCRIPT_DIR
+if defined AERO_ROOT exit /b 0
+
 REM 1) Primary expected location
 call :TRY_AERO_ROOT "C:\Aero"
 if defined AERO_ROOT exit /b 0
@@ -127,6 +132,13 @@ if defined configsetroot (
 
 REM 3) Scan drive letters for AERO.TAG markers
 call :SCAN_FOR_AERO_TAG
+exit /b 0
+
+:TRY_AERO_ROOT_FROM_SCRIPT_DIR
+set "AERO_SCRIPT_DIR=%~dp0"
+if "%AERO_SCRIPT_DIR%"=="" exit /b 1
+for %%P in ("%AERO_SCRIPT_DIR%..") do set "AERO_CANDIDATE=%%~fP"
+call :TRY_AERO_ROOT "%AERO_CANDIDATE%"
 exit /b 0
 
 :TRY_AERO_ROOT
