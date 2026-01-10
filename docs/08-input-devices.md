@@ -30,11 +30,11 @@ For best performance and lowest complexity on the host side, we also plan a **pa
 │       │                                                          │
 │       ▼                                                          │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │  Scancode Translation                                    │    │
-│  │    - Browser keyCode → PS/2 scancode                     │    │
-│  │    - Mouse movement → PS/2 packets                       │    │
-│  │    - USB HID report generation                           │    │
-│  │    - Browser events → virtio-input events                │    │
+│  │  Translation + Routing                                   │    │
+│  │    - Browser keyCode → PS/2 scancode (early boot)         │    │
+│  │    - Browser keyCode → virtio-input events (fast path)    │    │
+│  │    - Mouse movement → PS/2 packets or virtio-input REL_*  │    │
+│  │    - USB HID report generation (optional)                 │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │       │                                                          │
 │       ▼                                                          │
@@ -855,3 +855,4 @@ impl GamepadHandler {
 - See [BIOS/Firmware](./09-bios-firmware.md) for system initialization
 - See [Browser APIs](./11-browser-apis.md) for Pointer Lock API details
 - See [Task Breakdown](./15-agent-task-breakdown.md) for input tasks
+- See [virtio-input](./virtio-input.md) for the paravirtual keyboard/mouse fast path
