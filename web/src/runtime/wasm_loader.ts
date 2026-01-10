@@ -112,7 +112,16 @@ async function loadSingle(): Promise<WasmApi> {
     const importer = wasmImporters["../wasm/pkg-single/aero_wasm.js"];
     if (!importer) {
         throw new Error(
-            "Missing single-thread WASM package. Build it with: node ./scripts/build_wasm.mjs single",
+            [
+                "Missing single-thread WASM package.",
+                "",
+                "Build it with:",
+                "  cd web",
+                "  npm run wasm:build:single",
+                "",
+                "Or build both variants:",
+                "  npm run wasm:build",
+            ].join("\n"),
         );
     }
     const mod = (await importer()) as RawWasmModule;
@@ -124,7 +133,16 @@ async function loadThreaded(): Promise<WasmApi> {
     const importer = wasmImporters["../wasm/pkg-threaded/aero_wasm.js"];
     if (!importer) {
         throw new Error(
-            "Missing threaded WASM package. Build it with: node ./scripts/build_wasm.mjs threaded",
+            [
+                "Missing threaded WASM package.",
+                "",
+                "Build it with:",
+                "  cd web",
+                "  npm run wasm:build:threaded",
+                "",
+                "Or build both variants:",
+                "  npm run wasm:build",
+            ].join("\n"),
         );
     }
     const mod = (await importer()) as RawWasmModule;
@@ -163,7 +181,16 @@ export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitR
     }
 
     if (threadSupport.supported) {
-        return { api: await loadThreaded(), variant: "threaded", reason: threadSupport.reason };
+        try {
+            return { api: await loadThreaded(), variant: "threaded", reason: threadSupport.reason };
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            return {
+                api: await loadSingle(),
+                variant: "single",
+                reason: `Threaded WASM init failed; falling back to single. Error: ${message}`,
+            };
+        }
     }
 
     return { api: await loadSingle(), variant: "single", reason: threadSupport.reason };
