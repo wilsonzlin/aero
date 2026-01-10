@@ -1,4 +1,4 @@
-use aero_net_e1000::{E1000Device, E1000_MMIO_SIZE, ICR_RXT0, ICR_TXDW};
+use aero_net_e1000::{E1000Device, E1000_IO_SIZE, E1000_MMIO_SIZE, ICR_RXT0, ICR_TXDW};
 use memory::MemoryBus;
 
 struct TestDma {
@@ -61,7 +61,7 @@ fn write_rx_desc(dma: &mut TestDma, addr: u64, buf_addr: u64, status: u8) {
 }
 
 #[test]
-fn pci_bar0_probe_and_program() {
+fn pci_bars_probe_and_program() {
     let mut dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
 
     // Probe BAR0 size.
@@ -72,6 +72,15 @@ fn pci_bar0_probe_and_program() {
     // Program BAR0.
     dev.pci_write_u32(0x10, 0xFEBF_0000);
     assert_eq!(dev.pci_read_u32(0x10), 0xFEBF_0000);
+
+    // Probe BAR1 size (I/O BAR).
+    dev.pci_write_u32(0x14, 0xFFFF_FFFF);
+    let mask = dev.pci_read_u32(0x14);
+    assert_eq!(mask, ((!(E1000_IO_SIZE - 1)) & 0xFFFF_FFFC) | 0x1);
+
+    // Program BAR1 (bit0 must remain set).
+    dev.pci_write_u32(0x14, 0xC000);
+    assert_eq!(dev.pci_read_u32(0x14), 0xC001);
 }
 
 #[test]

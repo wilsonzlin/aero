@@ -105,6 +105,13 @@ mod tests {
         dev.config_write(0x10, 4, 0xffff_ffff);
         let mask = dev.config_read(0x10, 4);
         assert_eq!(mask, (!(aero_net_e1000::E1000_MMIO_SIZE - 1)) & 0xffff_fff0);
+
+        dev.config_write(0x14, 4, 0xffff_ffff);
+        let mask = dev.config_read(0x14, 4);
+        assert_eq!(
+            mask,
+            ((!(aero_net_e1000::E1000_IO_SIZE - 1)) & 0xffff_fffc) | 0x1
+        );
     }
 
     #[test]

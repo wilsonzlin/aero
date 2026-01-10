@@ -2,7 +2,7 @@
 //!
 //! This crate intentionally models only the subset of the device required for
 //! basic Windows 7 networking driver bring-up:
-//! - Basic PCI config space (vendor/device IDs + BAR0 probing/programming)
+//! - Basic PCI config space (vendor/device IDs + BAR0/BAR1 probing/programming)
 //! - MMIO register interface for init, RX/TX rings, and interrupts
 //! - Legacy RX/TX descriptor rings with DMA read/write via [`memory::MemoryBus`]
 //! - Simple host-facing frame queues
@@ -20,6 +20,8 @@ use offload::{apply_checksum_offload, tso_segment, TxChecksumFlags, TxOffloadCon
 
 /// Size of the E1000 MMIO BAR.
 pub const E1000_MMIO_SIZE: u32 = 0x20_000;
+/// Size of the E1000 I/O BAR (IOADDR/IODATA window).
+pub const E1000_IO_SIZE: u32 = 0x40;
 
 // MMIO register offsets (subset).
 const REG_CTRL: u32 = 0x0000;
@@ -296,6 +298,8 @@ pub struct PciConfig {
     regs: [u8; 256],
     bar0: u32,
     bar0_probe: bool,
+    bar1: u32,
+    bar1_probe: bool,
 }
 
 impl PciConfig {
@@ -323,11 +327,17 @@ impl PciConfig {
             regs,
             bar0: 0,
             bar0_probe: false,
+            bar1: 0x1, // I/O BAR indicator bit set.
+            bar1_probe: false,
         }
     }
 
     pub fn bar0(&self) -> u32 {
         self.bar0
+    }
+
+    pub fn bar1(&self) -> u32 {
+        self.bar1
     }
 
     fn read_u32_raw(&self, offset: usize) -> u32 {
@@ -349,6 +359,14 @@ impl PciConfig {
                         (!(E1000_MMIO_SIZE - 1)) & 0xffff_fff0
                     } else {
                         self.bar0
+                    };
+                }
+                if offset == 0x14 {
+                    return if self.bar1_probe {
+                        // I/O BAR: bit0 must remain set.
+                        (!(E1000_IO_SIZE - 1) & 0xffff_fffc) | 0x1
+                    } else {
+                        self.bar1
                     };
                 }
                 self.read_u32_raw(offset)
@@ -374,6 +392,17 @@ impl PciConfig {
                     self.write_u32_raw(offset, self.bar0);
                     return;
                 }
+                if offset == 0x14 {
+                    if value == 0xffff_ffff {
+                        self.bar1_probe = true;
+                        self.bar1 = 0x1;
+                    } else {
+                        self.bar1_probe = false;
+                        self.bar1 = (value & 0xffff_fffc) | 0x1;
+                    }
+                    self.write_u32_raw(offset, self.bar1);
+                    return;
+                }
                 self.write_u32_raw(offset, value);
             }
             _ => {}
@@ -394,6 +423,7 @@ impl PciConfig {
 /// The device exposes:
 /// - PCI config space via [`pci_read_u32`] / [`pci_write_u32`]
 /// - BAR0 MMIO via [`mmio_read_u32`] / [`mmio_write_u32`]
+/// - BAR1 I/O via [`io_read`] / [`io_write`]
 /// - host networking queues: RX in (`receive_frame`), TX out (`pop_tx_frame`)
 #[derive(Debug)]
 pub struct E1000Device {
@@ -406,6 +436,7 @@ pub struct E1000Device {
     eerd: u32,
     ctrl_ext: u32,
     mdic: u32,
+    io_reg: u32,
 
     icr: u32,
     ims: u32,
@@ -430,6 +461,7 @@ pub struct E1000Device {
     tx_state: Option<TxPacketState>,
 
     mac_addr: [u8; 6],
+    ra_valid: bool,
     eeprom: [u16; 64],
     phy: [u16; 32],
     other_regs: HashMap<u32, u32>,
@@ -447,7 +479,8 @@ impl E1000Device {
             eecd: EECD_EE_PRES,
             eerd: 0,
             ctrl_ext: 0,
-            mdic: 0,
+            mdic: MDIC_READY,
+            io_reg: 0,
             icr: 0,
             ims: 0,
             irq_level: false,
@@ -467,6 +500,7 @@ impl E1000Device {
             tx_ctx: TxOffloadContext::default(),
             tx_state: None,
             mac_addr,
+            ra_valid: true,
             eeprom: [0xFFFF; 64],
             phy: [0; 32],
             other_regs: HashMap::new(),
@@ -573,6 +607,50 @@ impl E1000Device {
         self.mmio_write(mem, offset as u64, 4, value);
     }
 
+    /// Read from the device's I/O BAR (IOADDR/IODATA window).
+    pub fn io_read(&mut self, offset: u32, size: usize) -> u32 {
+        match offset {
+            // IOADDR (selected MMIO register offset).
+            0x0..=0x3 => {
+                let shift = ((offset & 3) * 8) as u32;
+                match size {
+                    4 => self.io_reg,
+                    2 => (self.io_reg >> shift) & 0xffff,
+                    1 => (self.io_reg >> shift) & 0xff,
+                    _ => 0,
+                }
+            }
+            // IODATA (MMIO window to the selected register).
+            0x4..=0x7 => self.mmio_read((self.io_reg + (offset - 0x4)) as u64, size),
+            _ => 0,
+        }
+    }
+
+    /// Write to the device's I/O BAR (IOADDR/IODATA window).
+    pub fn io_write(&mut self, mem: &mut dyn MemoryBus, offset: u32, size: usize, value: u32) {
+        match offset {
+            0x0..=0x3 => {
+                let shift = ((offset & 3) * 8) as u32;
+                if size == 4 {
+                    self.io_reg = value & !3;
+                    return;
+                }
+
+                let mask = match size {
+                    2 => 0xffffu32 << shift,
+                    1 => 0xffu32 << shift,
+                    _ => 0,
+                };
+                let cur = self.io_reg;
+                self.io_reg = ((cur & !mask) | ((value << shift) & mask)) & !3;
+            }
+            0x4..=0x7 => {
+                self.mmio_write(mem, (self.io_reg + (offset - 0x4)) as u64, size, value);
+            }
+            _ => {}
+        }
+    }
+
     pub fn poll(&mut self, mem: &mut dyn MemoryBus) {
         self.process_tx(mem);
         self.flush_rx_pending(mem);
@@ -610,7 +688,8 @@ impl E1000Device {
         self.eecd = EECD_EE_PRES;
         self.eerd = 0;
         self.ctrl_ext = 0;
-        self.mdic = 0;
+        self.mdic = MDIC_READY;
+        self.io_reg = 0;
 
         self.icr = 0;
         self.ims = 0;
@@ -638,6 +717,7 @@ impl E1000Device {
         self.rx_pending.clear();
         self.tx_out.clear();
 
+        self.ra_valid = true;
         self.init_eeprom_from_mac();
         self.init_phy();
     }
@@ -683,7 +763,9 @@ impl E1000Device {
             ]),
             REG_RAH0 => {
                 let mut v = u32::from_le_bytes([self.mac_addr[4], self.mac_addr[5], 0, 0]);
-                v |= 1u32 << 31; // AV bit
+                if self.ra_valid {
+                    v |= 1u32 << 31; // AV bit
+                }
                 v
             }
             _ => *self.other_regs.get(&offset).unwrap_or(&0),
@@ -790,6 +872,7 @@ impl E1000Device {
                 let bytes = value.to_le_bytes();
                 self.mac_addr[4] = bytes[0];
                 self.mac_addr[5] = bytes[1];
+                self.ra_valid = (value & (1 << 31)) != 0;
                 self.init_eeprom_from_mac();
             }
             _ => {
@@ -1133,6 +1216,27 @@ mod tests {
         };
         let bytes = desc.to_bytes();
         assert_eq!(RxDesc::from_bytes(bytes), desc);
+    }
+
+    #[test]
+    fn mdic_starts_ready() {
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        assert_ne!(dev.mmio_read_u32(REG_MDIC) & MDIC_READY, 0);
+    }
+
+    #[test]
+    fn ioaddr_iodata_interface_maps_to_mmio_registers() {
+        let mut mem = TestMem::new(0x1000);
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        dev.mmio_write_u32(&mut mem, REG_IMS, 0x1234_5678);
+
+        dev.io_write(&mut mem, 0x0, 4, REG_IMS);
+        assert_eq!(dev.io_read(0x4, 4), 0x1234_5678);
+
+        dev.io_write(&mut mem, 0x0, 4, REG_IMC);
+        dev.io_write(&mut mem, 0x4, 4, 0x1234_0000);
+        assert_eq!(dev.mmio_read_u32(REG_IMS), 0x0000_5678);
     }
 
     #[test]
