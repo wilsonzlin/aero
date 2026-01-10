@@ -258,6 +258,15 @@ exit /b 1
 :SCAN_FOR_AERO_TAG
 for %%D in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
   if exist "%%D:\nul" (
+    REM Common removable/config media layout (no marker file required):
+    REM   X:\Aero\Drivers\
+    REM   X:\Aero\Scripts\
+    if exist "%%D:\Aero\Drivers\" (
+      if exist "%%D:\Aero\Scripts\" (
+        call :TRY_AERO_ROOT "%%D:\Aero"
+        if defined AERO_ROOT exit /b 0
+      )
+    )
     if exist "%%D:\Aero\AERO.TAG" (
       call :TRY_AERO_ROOT "%%D:\Aero"
       if defined AERO_ROOT exit /b 0

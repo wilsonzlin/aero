@@ -30,6 +30,7 @@ The scripts locate the payload using the following strategy:
 3. Scan drive letters `C:` → `Z:` for an `AERO.TAG` marker file:
    - `X:\Aero\AERO.TAG` (payload root is `X:\Aero\`)
    - `X:\AERO.TAG` (payload root is `X:\`)
+4. As an additional convenience fallback, scan drive letters for a standard `X:\Aero\` folder that contains both `Drivers\` and `Scripts\` (no marker file required).
 
 The marker file can be an empty file; it is only used to find the payload.
 
