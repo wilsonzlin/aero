@@ -4,9 +4,8 @@ use crate::io::PortIO;
 
 use super::{modeset, LegacyBdaInfo};
 use super::regs::{
-    AC_REGS_INITIAL_LEN, BIOS_MODE3_AC_REGS, BIOS_MODE3_CRTC_REGS, BIOS_MODE3_GC_REGS,
-    BIOS_MODE3_MISC_OUTPUT, BIOS_MODE3_SEQ_REGS, CRTC_REGS_INITIAL_LEN, GC_REGS_INITIAL_LEN,
-    POWER_ON_MISC_OUTPUT, SEQ_REGS_INITIAL_LEN, VgaDerivedState, VgaPlanarShift,
+    AC_REGS_INITIAL_LEN, CRTC_REGS_INITIAL_LEN, GC_REGS_INITIAL_LEN, POWER_ON_MISC_OUTPUT,
+    SEQ_REGS_INITIAL_LEN, VgaDerivedState, VgaPlanarShift,
 };
 
 // VGA I/O port block 0x3C0..=0x3DF.
@@ -82,9 +81,7 @@ pub struct VgaDevice {
 
 impl Default for VgaDevice {
     fn default() -> Self {
-        let mut vga = Self::new_with_bios_mode3_defaults();
-        vga.recompute_derived_state();
-        vga
+        Self::new_with_bios_mode3_defaults()
     }
 }
 
@@ -181,46 +178,50 @@ impl VgaDevice {
     }
 
     fn new_with_bios_mode3_defaults() -> Self {
-        Self {
+        let mut vga = Self {
             // VGA Misc Output Register bit 0 selects the I/O base:
             // - 0 = 0x3Bx (mono)
             // - 1 = 0x3Dx (colour)
-            misc_output: BIOS_MODE3_MISC_OUTPUT,
+            misc_output: POWER_ON_MISC_OUTPUT,
             video_subsystem_enable: 0x01,
             feature_control: 0x00,
 
             seq_index: 0,
-            seq_regs: BIOS_MODE3_SEQ_REGS.to_vec(),
+            seq_regs: vec![0; SEQ_REGS_INITIAL_LEN],
 
             gc_index: 0,
-            gc_regs: BIOS_MODE3_GC_REGS.to_vec(),
+            gc_regs: vec![0; GC_REGS_INITIAL_LEN],
 
             crtc_index: 0,
-            crtc_regs: BIOS_MODE3_CRTC_REGS.to_vec(),
+            crtc_regs: vec![0; CRTC_REGS_INITIAL_LEN],
 
             ac_index: 0,
-            ac_regs: BIOS_MODE3_AC_REGS.to_vec(),
+            ac_regs: vec![0; AC_REGS_INITIAL_LEN],
             ac_flip_flop_data: Cell::new(false),
-            ac_display_enabled: true,
+            ac_display_enabled: false,
 
             input_status1_vretrace: Cell::new(false),
 
             vram: vec![0; 256 * 1024],
 
-            legacy_bda: modeset::legacy_mode_table(0x03)
-                .map(|t| t.bda_info)
-                .unwrap_or(LegacyBdaInfo {
-                    video_mode: 0x03,
-                    columns: 80,
-                    rows: 25,
-                    page_size: 0x1000,
-                    text_base_segment: 0xB800,
-                    cursor_pos: [0; 8],
-                    active_page: 0,
-                }),
+            legacy_bda: LegacyBdaInfo {
+                video_mode: 0,
+                columns: 0,
+                rows: 0,
+                page_size: 0,
+                text_base_segment: 0,
+                cursor_pos: [0; 8],
+                active_page: 0,
+            },
 
             derived: VgaDerivedState::default(),
-        }
+        };
+
+        // Seed a sane "BIOS mode 3" (80x25 text) baseline. This matches the same
+        // register tables used by `set_legacy_mode`, ensuring a single source of
+        // truth for our default state.
+        vga.set_legacy_mode(0x03, true);
+        vga
     }
 
     fn reset_power_on(&mut self) {
