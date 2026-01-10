@@ -2,14 +2,29 @@
 
 #include <ntintsafe.h>
 
-static __forceinline SIZE_T
+static __forceinline _Must_inspect_result_ NTSTATUS
 VirtqueueRingAlignUp(
     _In_ SIZE_T Value,
-    _In_ SIZE_T Alignment)
+    _In_ SIZE_T Alignment,
+    _Out_ SIZE_T* OutAligned)
 {
+    NTSTATUS status;
+    SIZE_T tmp;
+
+    if (OutAligned == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
     NT_ASSERT(Alignment != 0);
     NT_ASSERT((Alignment & (Alignment - 1)) == 0); /* power-of-two */
-    return (Value + (Alignment - 1)) & ~(Alignment - 1);
+
+    status = RtlSizeTAdd(Value, Alignment - 1, &tmp);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    *OutAligned = tmp & ~(Alignment - 1);
+    return STATUS_SUCCESS;
 }
 
 static __forceinline BOOLEAN
@@ -48,7 +63,10 @@ VirtqueueRingLayoutCompute(
      *   avail = 4 + (2 * queueSize) + (eventIdx ? 2 : 0)
      *   used  = 4 + (8 * queueSize) + (eventIdx ? 2 : 0)
      */
-    descOffset = VirtqueueRingAlignUp(0, 16);
+    status = VirtqueueRingAlignUp(0, 16, &descOffset);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
 
     status = RtlSizeTMult(sizeof(struct virtq_desc), (SIZE_T)QueueSize, &descSize);
     if (!NT_SUCCESS(status)) {
@@ -80,13 +98,19 @@ VirtqueueRingLayoutCompute(
     if (!NT_SUCCESS(status)) {
         return status;
     }
-    availOffset = VirtqueueRingAlignUp(descEnd, 2);
+    status = VirtqueueRingAlignUp(descEnd, 2, &availOffset);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
 
     status = RtlSizeTAdd(availOffset, availSize, &availEnd);
     if (!NT_SUCCESS(status)) {
         return status;
     }
-    usedOffset = VirtqueueRingAlignUp(availEnd, 4);
+    status = VirtqueueRingAlignUp(availEnd, 4, &usedOffset);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
 
     status = RtlSizeTAdd(usedOffset, usedSize, &totalSize);
     if (!NT_SUCCESS(status)) {
