@@ -1,0 +1,124 @@
+// AeroGPU PCI/MMIO constants and ABI version helpers.
+//
+// Source of truth: `drivers/aerogpu/protocol/aerogpu_pci.h`.
+
+export const AEROGPU_ABI_MAJOR = 1;
+export const AEROGPU_ABI_MINOR = 0;
+export const AEROGPU_ABI_VERSION_U32 = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
+
+export function abiMajor(versionU32: number): number {
+  return (versionU32 >>> 16) & 0xffff;
+}
+
+export function abiMinor(versionU32: number): number {
+  return versionU32 & 0xffff;
+}
+
+export class AerogpuAbiError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AerogpuAbiError";
+  }
+}
+
+/**
+ * Parse + validate an ABI version.
+ *
+ * Versioning rules:
+ * - reject unsupported major versions
+ * - accept unknown minor versions (treat as backwards-compatible extensions)
+ */
+export function parseAndValidateAbiVersionU32(versionU32: number): { major: number; minor: number } {
+  const major = abiMajor(versionU32);
+  const minor = abiMinor(versionU32);
+
+  if (major !== AEROGPU_ABI_MAJOR) {
+    throw new AerogpuAbiError(`Unsupported major ABI version: ${major}`);
+  }
+
+  return { major, minor };
+}
+
+/* -------------------------------- PCI IDs -------------------------------- */
+
+export const AEROGPU_PCI_VENDOR_ID = 0xa3a0;
+export const AEROGPU_PCI_DEVICE_ID = 0x0001;
+export const AEROGPU_PCI_SUBSYSTEM_VENDOR_ID = AEROGPU_PCI_VENDOR_ID;
+export const AEROGPU_PCI_SUBSYSTEM_ID = 0x0001;
+
+export const AEROGPU_PCI_BAR0_INDEX = 0;
+export const AEROGPU_PCI_BAR0_SIZE_BYTES = 64 * 1024;
+
+/* ------------------------------ MMIO registers ---------------------------- */
+
+export const AEROGPU_MMIO_REG_MAGIC = 0x0000;
+export const AEROGPU_MMIO_REG_ABI_VERSION = 0x0004;
+export const AEROGPU_MMIO_REG_FEATURES_LO = 0x0008;
+export const AEROGPU_MMIO_REG_FEATURES_HI = 0x000c;
+
+export const AEROGPU_MMIO_MAGIC = 0x55504741;
+
+export const AEROGPU_FEATURE_FENCE_PAGE = 1n << 0n;
+export const AEROGPU_FEATURE_CURSOR = 1n << 1n;
+export const AEROGPU_FEATURE_SCANOUT = 1n << 2n;
+
+export const AEROGPU_MMIO_REG_RING_GPA_LO = 0x0100;
+export const AEROGPU_MMIO_REG_RING_GPA_HI = 0x0104;
+export const AEROGPU_MMIO_REG_RING_SIZE_BYTES = 0x0108;
+export const AEROGPU_MMIO_REG_RING_CONTROL = 0x010c;
+
+export const AEROGPU_RING_CONTROL_ENABLE = 1 << 0;
+export const AEROGPU_RING_CONTROL_RESET = 1 << 1;
+
+export const AEROGPU_MMIO_REG_FENCE_GPA_LO = 0x0120;
+export const AEROGPU_MMIO_REG_FENCE_GPA_HI = 0x0124;
+
+export const AEROGPU_MMIO_REG_COMPLETED_FENCE_LO = 0x0130;
+export const AEROGPU_MMIO_REG_COMPLETED_FENCE_HI = 0x0134;
+
+export const AEROGPU_MMIO_REG_DOORBELL = 0x0200;
+
+export const AEROGPU_MMIO_REG_IRQ_STATUS = 0x0300;
+export const AEROGPU_MMIO_REG_IRQ_ENABLE = 0x0304;
+export const AEROGPU_MMIO_REG_IRQ_ACK = 0x0308;
+
+export const AEROGPU_IRQ_FENCE = 1 << 0;
+export const AEROGPU_IRQ_SCANOUT_VBLANK = 1 << 1;
+export const AEROGPU_IRQ_ERROR = 1 << 31;
+
+export const AEROGPU_MMIO_REG_SCANOUT0_ENABLE = 0x0400;
+export const AEROGPU_MMIO_REG_SCANOUT0_WIDTH = 0x0404;
+export const AEROGPU_MMIO_REG_SCANOUT0_HEIGHT = 0x0408;
+export const AEROGPU_MMIO_REG_SCANOUT0_FORMAT = 0x040c;
+export const AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES = 0x0410;
+export const AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO = 0x0414;
+export const AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI = 0x0418;
+
+export const AEROGPU_MMIO_REG_CURSOR_ENABLE = 0x0500;
+export const AEROGPU_MMIO_REG_CURSOR_X = 0x0504;
+export const AEROGPU_MMIO_REG_CURSOR_Y = 0x0508;
+export const AEROGPU_MMIO_REG_CURSOR_HOT_X = 0x050c;
+export const AEROGPU_MMIO_REG_CURSOR_HOT_Y = 0x0510;
+export const AEROGPU_MMIO_REG_CURSOR_WIDTH = 0x0514;
+export const AEROGPU_MMIO_REG_CURSOR_HEIGHT = 0x0518;
+export const AEROGPU_MMIO_REG_CURSOR_FORMAT = 0x051c;
+export const AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO = 0x0520;
+export const AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI = 0x0524;
+export const AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES = 0x0528;
+
+/* ---------------------------------- Enums -------------------------------- */
+
+export const AerogpuFormat = {
+  Invalid: 0,
+  B8G8R8A8Unorm: 1,
+  B8G8R8X8Unorm: 2,
+  R8G8B8A8Unorm: 3,
+  R8G8B8X8Unorm: 4,
+  B5G6R5Unorm: 5,
+  B5G5R5A1Unorm: 6,
+  D24UnormS8Uint: 32,
+  D32Float: 33,
+} as const;
+
+export type AerogpuFormat = (typeof AerogpuFormat)[keyof typeof AerogpuFormat];
+

@@ -236,6 +236,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-protocol"
+version = "0.1.0"
+
+[[package]]
 name = "aero-storage"
 version = "0.1.0"
 dependencies = [

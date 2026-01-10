@@ -52,6 +52,7 @@ members = [
     "crates/st-idb",
     "crates/aero-net",
     "tools/net-proxy-server",
+    "emulator/protocol",
 ]
 
 exclude = ["fuzz"]
