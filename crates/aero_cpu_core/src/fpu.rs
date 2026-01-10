@@ -1,4 +1,9 @@
 /// x87 / MMX architectural state sufficient for `FXSAVE`/`FXRSTOR`.
+///
+/// Note: in the `FXSAVE` area each x87 register occupies a 16-byte slot, but
+/// only the low 10 bytes are architecturally meaningful (80-bit extended
+/// precision). The upper 6 bytes are reserved and are treated as zero on save
+/// and ignored on restore.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FpuState {
     /// FPU Control Word.
@@ -22,6 +27,14 @@ pub struct FpuState {
     /// ST0..ST7 register image (each element is the 16-byte slot in the FXSAVE
     /// area: 80-bit value + 6 reserved bytes).
     pub st: [u128; 8],
+}
+
+/// Mask for the architecturally meaningful 80-bit portion of an x87 register
+/// slot as stored in the FXSAVE area.
+pub const ST80_MASK: u128 = (1u128 << 80) - 1;
+
+pub fn canonicalize_st(raw: u128) -> u128 {
+    raw & ST80_MASK
 }
 
 impl Default for FpuState {

@@ -1,11 +1,25 @@
 use aero_cpu_core::{sse_state::MXCSR_MASK, CpuState, FXSAVE_AREA_SIZE};
 
+const ST80_MASK: u128 = (1u128 << 80) - 1;
+
 fn patterned_u128(seed: u8) -> u128 {
     let mut bytes = [0u8; 16];
     for (i, b) in bytes.iter_mut().enumerate() {
         *b = seed.wrapping_add(i as u8);
     }
     u128::from_le_bytes(bytes)
+}
+
+fn patterned_st80(seed: u8) -> u128 {
+    let mut bytes = [0u8; 16];
+    for i in 0..10 {
+        bytes[i] = seed.wrapping_add(i as u8);
+    }
+    u128::from_le_bytes(bytes)
+}
+
+fn mask_st80(raw: u128) -> u128 {
+    raw & ST80_MASK
 }
 
 #[test]
@@ -24,6 +38,7 @@ fn fxsave_legacy_layout_matches_intel_sdm() {
     cpu.sse.mxcsr = 0xAABB_CCDD;
 
     for i in 0..8 {
+        // Fill the reserved bytes to ensure FXSAVE zeroes them in the output.
         cpu.fpu.st[i] = patterned_u128(0x10 + i as u8);
     }
 
@@ -48,7 +63,7 @@ fn fxsave_legacy_layout_matches_intel_sdm() {
 
     for i in 0..8 {
         let start = 32 + i * 16;
-        expected[start..start + 16].copy_from_slice(&cpu.fpu.st[i].to_le_bytes());
+        expected[start..start + 16].copy_from_slice(&patterned_st80(0x10 + i as u8).to_le_bytes());
     }
 
     for i in 0..8 {
@@ -100,7 +115,7 @@ fn fxrstor_legacy_restores_state() {
     assert_eq!(cpu.sse.mxcsr, 0x1F80);
 
     for i in 0..8 {
-        assert_eq!(cpu.fpu.st[i], patterned_u128(0x20 + i as u8));
+        assert_eq!(cpu.fpu.st[i], mask_st80(patterned_u128(0x20 + i as u8)));
         assert_eq!(cpu.sse.xmm[i], patterned_u128(0xA0 + i as u8));
     }
 }
@@ -119,7 +134,7 @@ fn fxsave64_roundtrip_restores_state() {
     original.sse.mxcsr = 0x1F80;
 
     for i in 0..8 {
-        original.fpu.st[i] = patterned_u128(0x40 + i as u8);
+        original.fpu.st[i] = patterned_st80(0x40 + i as u8);
     }
     for i in 0..16 {
         original.sse.xmm[i] = patterned_u128(0xC0 + i as u8);

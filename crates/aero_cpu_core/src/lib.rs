@@ -22,7 +22,7 @@ pub use exception::Exception;
 pub use bus::{Bus, RamBus};
 pub use cpu::{Cpu, CpuMode, Segment};
 
-use crate::fpu::FpuState;
+use crate::fpu::{canonicalize_st, FpuState};
 use crate::sse_state::{SseState, MXCSR_MASK};
 
 /// The architectural size of the FXSAVE/FXRSTOR memory image.
@@ -104,7 +104,7 @@ impl CpuState {
         // 0x20..0xA0: ST/MM register image.
         for (i, reg) in self.fpu.st.iter().enumerate() {
             let start = 32 + i * 16;
-            out[start..start + 16].copy_from_slice(&reg.to_le_bytes());
+            out[start..start + 16].copy_from_slice(&canonicalize_st(*reg).to_le_bytes());
         }
 
         // 0xA0..0x120: XMM0-7 register image.
@@ -135,7 +135,7 @@ impl CpuState {
 
         for i in 0..8 {
             let start = 32 + i * 16;
-            self.fpu.st[i] = read_u128(src, start);
+            self.fpu.st[i] = canonicalize_st(read_u128(src, start));
         }
 
         for i in 0..8 {
@@ -166,7 +166,7 @@ impl CpuState {
 
         for (i, reg) in self.fpu.st.iter().enumerate() {
             let start = 32 + i * 16;
-            out[start..start + 16].copy_from_slice(&reg.to_le_bytes());
+            out[start..start + 16].copy_from_slice(&canonicalize_st(*reg).to_le_bytes());
         }
 
         // 16 XMM registers in 64-bit mode.
@@ -193,7 +193,7 @@ impl CpuState {
 
         for i in 0..8 {
             let start = 32 + i * 16;
-            self.fpu.st[i] = read_u128(src, start);
+            self.fpu.st[i] = canonicalize_st(read_u128(src, start));
         }
 
         for i in 0..16 {
