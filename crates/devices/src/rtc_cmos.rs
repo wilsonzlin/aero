@@ -651,7 +651,9 @@ mod tests {
     use super::*;
     use crate::clock::ManualClock;
     use crate::irq::PlatformIrqLine;
-    use aero_platform::interrupts::{InterruptController, PlatformInterrupts};
+    use aero_platform::interrupts::{
+        InterruptController, IoApicRedirectionEntry, PlatformInterruptMode, PlatformInterrupts,
+    };
     use std::cell::Cell;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -789,6 +791,53 @@ mod tests {
         clock.advance_ns(1_000_000_000);
         rtc.borrow_mut().tick();
         assert_eq!(interrupts.borrow().get_pending(), Some(0x28));
+    }
+
+    #[test]
+    fn irq8_routes_via_ioapic_in_apic_mode() {
+        let clock = ManualClock::new();
+
+        let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+        interrupts
+            .borrow_mut()
+            .set_mode(PlatformInterruptMode::Apic);
+
+        let vector = 0x48u8;
+        let mut entry = IoApicRedirectionEntry::fixed(vector, 0);
+        entry.masked = false;
+        interrupts.borrow_mut().ioapic_mut().set_entry(8, entry);
+
+        let irq_line = PlatformIrqLine::isa(interrupts.clone(), 8);
+        let rtc = Rc::new(RefCell::new(RtcCmos::new(clock.clone(), irq_line)));
+
+        let mut bus = IoPortBus::new();
+        register_rtc_cmos(&mut bus, rtc.clone());
+
+        bus.write_u8(PORT_INDEX, REG_STATUS_B);
+        bus.write_u8(PORT_DATA, REG_B_24H | REG_B_UIE);
+
+        clock.advance_ns(1_000_000_000);
+        rtc.borrow_mut().tick();
+        assert_eq!(interrupts.borrow().get_pending(), Some(vector));
+
+        interrupts.borrow_mut().acknowledge(vector);
+        interrupts.borrow_mut().eoi(vector);
+        assert_eq!(interrupts.borrow().get_pending(), None);
+
+        clock.advance_ns(1_000_000_000);
+        rtc.borrow_mut().tick();
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            None,
+            "IRQ8 stays asserted until Status C is read, so edge-triggered IOAPIC should not re-fire",
+        );
+
+        bus.write_u8(PORT_INDEX, REG_STATUS_C);
+        let _ = bus.read_u8(PORT_DATA);
+
+        clock.advance_ns(1_000_000_000);
+        rtc.borrow_mut().tick();
+        assert_eq!(interrupts.borrow().get_pending(), Some(vector));
     }
 
     #[test]
