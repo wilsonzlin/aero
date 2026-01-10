@@ -8,6 +8,8 @@ pub mod memory;
 pub mod render;
 pub mod vbe;
 
+use crate::io::PortIO;
+
 pub use dac::VgaDac;
 pub use memory::VgaMemory;
 pub use ports::VgaDevice;
@@ -177,5 +179,165 @@ impl VgaSharedFramebufferOutput {
             .ok_or(FramebufferError::InvalidDimensions)?;
         let bytes = unsafe { core::slice::from_raw_parts(pixels.as_ptr() as *const u8, bytes_len) };
         self.present_rgba8888(width as u32, height as u32, bytes)
+    }
+}
+
+/// A minimal VGA device bundle (registers + VRAM + DAC) with a Mode 13h renderer.
+///
+/// This is intentionally scoped to what we need for early bring-up:
+/// - register/port I/O via [`PortIO`]
+/// - a packed-pixel Mode 13h rasterizer via [`VgaRenderer`]
+/// - palette writes via the standard DAC ports (0x3C8/0x3C9) and PEL mask (0x3C6)
+#[derive(Debug)]
+pub struct Vga {
+    regs: VgaDevice,
+    vram: VgaMemory,
+    dac: VgaDac,
+    renderer: VgaRenderer,
+
+    dac_write_index: u8,
+    dac_write_component: u8,
+    dac_write_latch: [u8; 3],
+}
+
+impl Default for Vga {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Vga {
+    pub fn new() -> Self {
+        Self {
+            regs: VgaDevice::new(),
+            vram: VgaMemory::new(),
+            dac: VgaDac::new(),
+            renderer: VgaRenderer::new(),
+            dac_write_index: 0,
+            dac_write_component: 0,
+            dac_write_latch: [0; 3],
+        }
+    }
+
+    pub fn regs(&self) -> &VgaDevice {
+        &self.regs
+    }
+
+    pub fn regs_mut(&mut self) -> &mut VgaDevice {
+        &mut self.regs
+    }
+
+    pub fn dac(&self) -> &VgaDac {
+        &self.dac
+    }
+
+    pub fn dac_mut(&mut self) -> &mut VgaDac {
+        &mut self.dac
+    }
+
+    pub fn write_vram(&mut self, offset: usize, data: &[u8]) {
+        self.vram.write(offset, data);
+    }
+
+    pub fn write_vram_u8(&mut self, offset: usize, value: u8) {
+        self.vram.write(offset, &[value]);
+    }
+
+    pub fn render(&mut self) -> Option<(usize, usize, &[u32])> {
+        self.renderer.render(&self.regs, &mut self.vram, &mut self.dac)
+    }
+
+    fn dac_port_write_u8(&mut self, port: u16, val: u8) {
+        match port {
+            // PEL mask.
+            0x3C6 => {
+                self.dac.set_pel_mask(val);
+            }
+            // DAC write index.
+            0x3C8 => {
+                self.dac_write_index = val;
+                self.dac_write_component = 0;
+            }
+            // DAC data.
+            0x3C9 => {
+                let component = (val & 0x3F) as u8;
+                let idx = (self.dac_write_component as usize).min(2);
+                self.dac_write_latch[idx] = component;
+                self.dac_write_component = self.dac_write_component.wrapping_add(1);
+                if self.dac_write_component >= 3 {
+                    self.dac.set_entry_6bit(
+                        self.dac_write_index,
+                        self.dac_write_latch[0],
+                        self.dac_write_latch[1],
+                        self.dac_write_latch[2],
+                    );
+                    self.dac_write_index = self.dac_write_index.wrapping_add(1);
+                    self.dac_write_component = 0;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn dac_port_read_u8(&self, port: u16) -> Option<u8> {
+        match port {
+            0x3C6 => Some(self.dac.pel_mask()),
+            0x3C8 => Some(self.dac_write_index),
+            0x3C9 => Some(0),
+            _ => None,
+        }
+    }
+}
+
+impl PortIO for Vga {
+    fn port_read(&self, port: u16, size: usize) -> u32 {
+        match size {
+            1 => {
+                if let Some(val) = self.dac_port_read_u8(port) {
+                    u32::from(val)
+                } else {
+                    self.regs.port_read(port, 1)
+                }
+            }
+            2 => {
+                let lo = self.port_read(port, 1) as u8;
+                let hi = self.port_read(port.wrapping_add(1), 1) as u8;
+                u32::from(u16::from_le_bytes([lo, hi]))
+            }
+            4 => {
+                let b0 = self.port_read(port, 1) as u8;
+                let b1 = self.port_read(port.wrapping_add(1), 1) as u8;
+                let b2 = self.port_read(port.wrapping_add(2), 1) as u8;
+                let b3 = self.port_read(port.wrapping_add(3), 1) as u8;
+                u32::from_le_bytes([b0, b1, b2, b3])
+            }
+            _ => 0,
+        }
+    }
+
+    fn port_write(&mut self, port: u16, size: usize, val: u32) {
+        match size {
+            1 => {
+                let b0 = val as u8;
+                if matches!(port, 0x3C6 | 0x3C8 | 0x3C9) {
+                    self.dac_port_write_u8(port, b0);
+                } else {
+                    self.regs.port_write(port, 1, val);
+                }
+            }
+            2 => {
+                let [b0, b1] = (val as u16).to_le_bytes();
+                self.port_write(port, 1, b0 as u32);
+                self.port_write(port.wrapping_add(1), 1, b1 as u32);
+            }
+            4 => {
+                let [b0, b1, b2, b3] = val.to_le_bytes();
+                self.port_write(port, 1, b0 as u32);
+                self.port_write(port.wrapping_add(1), 1, b1 as u32);
+                self.port_write(port.wrapping_add(2), 1, b2 as u32);
+                self.port_write(port.wrapping_add(3), 1, b3 as u32);
+            }
+            _ => {}
+        }
     }
 }

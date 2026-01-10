@@ -39,6 +39,7 @@ const PORT_CRTC_DATA_MONO: u16 = 0x3B5;
 /// unmapped ports).
 const UNIMPLEMENTED_READ_VALUE: u8 = 0xFF;
 
+#[derive(Debug)]
 pub struct VgaDevice {
     misc_output: u8,
     /// Video Subsystem Enable register (port `0x3C3`).
