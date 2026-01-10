@@ -15,7 +15,7 @@
     "test:unit:coverage": "vitest run --coverage"
   },
   "devDependencies": {
-    "@types/node": "^20.11.30",
+    "@types/node": "^25.0.5",
     "@types/wicg-file-system-access": "^2023.10.7",
     "@vitest/coverage-v8": "^1.6.0",
     "@webgpu/types": "^0.1.68",
