@@ -398,7 +398,7 @@ Implementation references:
 | IN-009 | Gamepad support          | P2       | None           | Medium     |
 | IN-010 | Input test suite         | P0       | IN-001..IN-003 | Medium     |
 | IN-011 | Virtio-input device model (device config + event/status queues) | P1 | DM-008, VTP-002 | High     |
-| IN-012 | Windows 7 virtio-input KMDF HID minidriver                      | P1 | VIO-001..VIO-003 | Very High |
+| IN-012 | Windows 7 virtio-input KMDF HID minidriver (see VIO-010)         | P1 | VIO-001..VIO-003 | Very High |
 | IN-013 | HID report descriptor + keyboard/mouse mapping                   | P1 | IN-012         | High      |
 | IN-014 | Driver packaging/signing + installation docs                     | P1 | IN-012, IN-013 | Medium    |
 | IN-015 | Browser events → virtio-input events (EV_KEY/EV_REL + SYN)        | P1 | IN-005         | Medium    |
@@ -568,7 +568,7 @@ PF-008 specifically includes a **guest CPU instruction throughput** microbenchma
 │       │                │                │                       │
 │       ▼                ▼                ▼                       │
 │  ┌──────────┐     ┌──────────┐     ┌──────────┐                │
-│  │ D9-001   │     │ AU-001   │     │ IN-001,11│                │
+│  │ D9-001   │     │ AU-001   │     │ IN-001,011│               │
 │  └────┬─────┘     └────┬─────┘     └────┬─────┘                │
 │       │                │                │                       │
 │       ▼                ▼                ▼                       │
