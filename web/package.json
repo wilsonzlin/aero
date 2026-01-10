@@ -21,7 +21,10 @@
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
-    "test:unit:coverage": "vitest run --coverage"
+    "test:unit:coverage": "vitest run --coverage",
+    "wasm:build:dev": "node ./scripts/build_wasm.mjs single dev",
+    "wasm:build:release": "npm run wasm:build",
+    "wasm:size": "node ./scripts/wasm-size.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

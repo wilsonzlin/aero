@@ -70,7 +70,9 @@ bench/output/
 drivers/aerogpu/build/out/
 
 # wasm-pack output (generated)
-web/src/wasm/
+/web/pkg/
+/web/pkg-dev/
+/web/pkg-release/
 
 # Driver workspace outputs (do not commit)
 drivers/out/

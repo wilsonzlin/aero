@@ -20,6 +20,7 @@ members = [
     "crates/aero-tests",
     "crates/aero-http-range",
     "crates/aero-ipc",
+    "crates/aero-wasm",
     "crates/aero-bios",
     "crates/aero_jit",
     "crates/aero-microbench",
@@ -57,7 +58,6 @@ members = [
     "crates/aero-devices-input",
     "crates/aero-devices-nvme",
     "crates/aero-devices-storage",
-    "crates/aero-wasm",
     "crates/nt-packetlib",
     # `server/` is a Node/JS service (no Cargo.toml); keep it out of the Rust workspace.
     "tools/bcd_patch",

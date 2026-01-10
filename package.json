@@ -29,7 +29,10 @@
     "test:coi": "playwright test tests/e2e/coi.spec.ts",
     "test:webgpu": "playwright test --project=chromium-webgpu",
     "generate:goldens": "node tests/golden/generate_goldens.cjs",
-    "test:gpu": "playwright test -c playwright.gpu.config.ts tests/playwright/gpu_golden.spec.ts"
+    "test:gpu": "playwright test -c playwright.gpu.config.ts tests/playwright/gpu_golden.spec.ts",
+    "wasm:build:dev": "npm --prefix web run wasm:build:dev",
+    "wasm:build:release": "npm --prefix web run wasm:build:release",
+    "wasm:size": "npm --prefix web run wasm:size"
   },
   "devDependencies": {
     "@playwright/test": "^1.41.2",
