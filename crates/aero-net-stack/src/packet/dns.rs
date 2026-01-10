@@ -13,6 +13,7 @@ pub enum DnsResponseCode {
     FormatError = 1,
     ServerFailure = 2,
     NameError = 3,
+    NotImplemented = 4,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,10 +65,12 @@ impl DnsMessage {
         })
     }
 
-    pub fn build_a_response(
+    pub fn build_response(
         id: u16,
         rd: bool,
         question_name: &str,
+        question_type: u16,
+        question_class: u16,
         addr: Option<[u8; 4]>,
         ttl_secs: u32,
         rcode: DnsResponseCode,
@@ -83,16 +86,21 @@ impl DnsMessage {
         flags |= rcode as u16;
         out.extend_from_slice(&flags.to_be_bytes());
         out.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
-        out.extend_from_slice(&(if addr.is_some() { 1u16 } else { 0u16 }).to_be_bytes()); // ANCOUNT
+        let include_answer = addr.is_some()
+            && question_type == DnsType::A as u16
+            && question_class == 1
+            && rcode == DnsResponseCode::NoError;
+        out.extend_from_slice(&(if include_answer { 1u16 } else { 0u16 }).to_be_bytes()); // ANCOUNT
         out.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
         out.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
 
         let question_offset = out.len();
         encode_name(question_name, &mut out);
-        out.extend_from_slice(&(DnsType::A as u16).to_be_bytes());
-        out.extend_from_slice(&1u16.to_be_bytes()); // IN
+        out.extend_from_slice(&question_type.to_be_bytes());
+        out.extend_from_slice(&question_class.to_be_bytes());
 
-        if let Some(addr) = addr {
+        if include_answer {
+            let addr = addr.expect("include_answer implies addr");
             // NAME pointer to question name.
             out.extend_from_slice(
                 &((0b1100_0000u16 << 8) | (question_offset as u16)).to_be_bytes(),
@@ -104,6 +112,26 @@ impl DnsMessage {
             out.extend_from_slice(&addr);
         }
         out
+    }
+
+    pub fn build_a_response(
+        id: u16,
+        rd: bool,
+        question_name: &str,
+        addr: Option<[u8; 4]>,
+        ttl_secs: u32,
+        rcode: DnsResponseCode,
+    ) -> Vec<u8> {
+        Self::build_response(
+            id,
+            rd,
+            question_name,
+            DnsType::A as u16,
+            1,
+            addr,
+            ttl_secs,
+            rcode,
+        )
     }
 }
 

@@ -32,7 +32,7 @@ fn dhcp_dns_tcp_flow() {
     stack.set_network_enabled(true);
 
     // --- DNS lookup ---
-    let dns_query = build_dns_query(0x1234, "example.com");
+    let dns_query = build_dns_query(0x1234, "example.com", DnsType::A as u16);
     let dns_frame = wrap_udp_ipv4_eth(
         guest_mac,
         stack.config().our_mac,
@@ -145,6 +145,32 @@ fn dhcp_dns_tcp_flow() {
         seg.flags & (TcpFlags::ACK | TcpFlags::PSH),
         TcpFlags::ACK | TcpFlags::PSH
     );
+}
+
+#[test]
+fn dns_aaaa_query_returns_notimp() {
+    let mut stack = NetworkStack::new(StackConfig::default());
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    dhcp_handshake(&mut stack, guest_mac);
+    stack.set_network_enabled(true);
+
+    let query = build_dns_query(0x2222, "example.com", 28 /* AAAA */);
+    let frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        stack.config().dns_ip,
+        53001,
+        53,
+        &query,
+    );
+    let actions = stack.process_outbound_ethernet(&frame, 0);
+    assert!(actions
+        .iter()
+        .all(|a| !matches!(a, Action::DnsResolve { .. })));
+
+    let resp_frame = extract_single_frame(&actions);
+    assert_dns_response_has_rcode(&resp_frame, 0x2222, DnsResponseCode::NotImplemented);
 }
 
 #[test]
@@ -423,6 +449,21 @@ fn assert_dns_response_has_a_record(frame: &[u8], id: u16, addr: [u8; 4]) {
     assert_eq!(&dns[dns.len() - 4..], &addr);
 }
 
+fn assert_dns_response_has_rcode(frame: &[u8], id: u16, rcode: DnsResponseCode) {
+    let eth = EthernetFrame::parse(frame).unwrap();
+    let ip = Ipv4Packet::parse(eth.payload).unwrap();
+    let udp = UdpDatagram::parse(ip.payload).unwrap();
+    assert_eq!(udp.src_port, 53);
+    let dns = udp.payload;
+    assert_eq!(&dns[0..2], &id.to_be_bytes());
+    // QR=1
+    assert_eq!(dns[2] & 0x80, 0x80);
+    let flags = u16::from_be_bytes([dns[2], dns[3]]);
+    assert_eq!((flags & 0x000f) as u16, rcode as u16);
+    // No answers expected for error responses.
+    assert_eq!(&dns[6..8], &0u16.to_be_bytes());
+}
+
 fn wrap_udp_ipv4_eth(
     src_mac: MacAddr,
     dst_mac: MacAddr,
@@ -493,7 +534,7 @@ fn build_dhcp_request(
     out
 }
 
-fn build_dns_query(id: u16, name: &str) -> Vec<u8> {
+fn build_dns_query(id: u16, name: &str, qtype: u16) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(&id.to_be_bytes());
     out.extend_from_slice(&0x0100u16.to_be_bytes()); // RD
@@ -506,7 +547,7 @@ fn build_dns_query(id: u16, name: &str) -> Vec<u8> {
         out.extend_from_slice(label.as_bytes());
     }
     out.push(0);
-    out.extend_from_slice(&(DnsType::A as u16).to_be_bytes());
+    out.extend_from_slice(&qtype.to_be_bytes());
     out.extend_from_slice(&1u16.to_be_bytes());
     out
 }

@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
 
 use crate::packet::{
-    ArpOperation, ArpPacket, DhcpMessage, DhcpMessageType, DnsMessage, DnsResponseCode, EtherType,
-    EthernetFrame, IcmpEchoPacket, Ipv4Packet, Ipv4Protocol, MacAddr, TcpFlags, TcpSegment,
-    UdpDatagram,
+    ArpOperation, ArpPacket, DhcpMessage, DhcpMessageType, DnsMessage, DnsResponseCode, DnsType,
+    EtherType, EthernetFrame, IcmpEchoPacket, Ipv4Packet, Ipv4Protocol, MacAddr, TcpFlags,
+    TcpSegment, UdpDatagram,
 };
 use crate::policy::HostPolicy;
 use core::net::Ipv4Addr;
@@ -150,6 +150,8 @@ struct PendingDns {
     txid: u16,
     src_port: u16,
     name: String,
+    qtype: u16,
+    qclass: u16,
     rd: bool,
 }
 
@@ -342,10 +344,12 @@ impl NetworkStack {
             Some(addr) => (Some(addr.octets()), DnsResponseCode::NoError),
             None => (None, DnsResponseCode::NameError),
         };
-        let dns_payload = DnsMessage::build_a_response(
+        let dns_payload = DnsMessage::build_response(
             pending.txid,
             pending.rd,
             &pending.name,
+            pending.qtype,
+            pending.qclass,
             addr_opt,
             resolved.ttl_secs,
             rcode,
@@ -476,14 +480,34 @@ impl NetworkStack {
         };
 
         let name = question.name.trim_end_matches('.').to_ascii_lowercase();
+        let rd = (msg.flags & (1 << 8)) != 0;
+        let qtype = question.qtype;
+        let qclass = question.qclass;
 
         // Enforce domain policy early.
         if !self.cfg.host_policy.enabled || !self.cfg.host_policy.allows_domain(&name) {
-            return self.emit_dns_nxdomain(
+            return self.emit_dns_error(
                 msg.id,
                 &name,
+                qtype,
+                qclass,
                 udp.src_port,
-                (msg.flags & (1 << 8)) != 0,
+                rd,
+                DnsResponseCode::NameError,
+            );
+        }
+
+        // We only implement A/IN. For AAAA and friends, return NOTIMP so clients can fall back to
+        // A queries instead of treating the name as missing.
+        if qtype != DnsType::A as u16 || qclass != 1 {
+            return self.emit_dns_error(
+                msg.id,
+                &name,
+                qtype,
+                qclass,
+                udp.src_port,
+                rd,
+                DnsResponseCode::NotImplemented,
             );
         }
 
@@ -493,10 +517,12 @@ impl NetworkStack {
                     Some(m) => m,
                     None => return Vec::new(),
                 };
-                let dns_payload = DnsMessage::build_a_response(
+                let dns_payload = DnsMessage::build_response(
                     msg.id,
-                    (msg.flags & (1 << 8)) != 0,
+                    rd,
                     &name,
+                    qtype,
+                    qclass,
                     Some(entry.addr.octets()),
                     ((entry.expires_at_ms - now_ms) / 1000) as u32,
                     DnsResponseCode::NoError,
@@ -530,19 +556,29 @@ impl NetworkStack {
                 txid: msg.id,
                 src_port: udp.src_port,
                 name: name.clone(),
-                rd: (msg.flags & (1 << 8)) != 0,
+                qtype,
+                qclass,
+                rd,
             },
         );
         vec![Action::DnsResolve { request_id, name }]
     }
 
-    fn emit_dns_nxdomain(&mut self, txid: u16, name: &str, dst_port: u16, rd: bool) -> Vec<Action> {
+    fn emit_dns_error(
+        &mut self,
+        txid: u16,
+        name: &str,
+        qtype: u16,
+        qclass: u16,
+        dst_port: u16,
+        rd: bool,
+        rcode: DnsResponseCode,
+    ) -> Vec<Action> {
         let guest_mac = match self.guest_mac {
             Some(m) => m,
             None => return Vec::new(),
         };
-        let dns_payload =
-            DnsMessage::build_a_response(txid, rd, name, None, 0, DnsResponseCode::NameError);
+        let dns_payload = DnsMessage::build_response(txid, rd, name, qtype, qclass, None, 0, rcode);
         let udp = UdpDatagram::serialize(
             self.cfg.dns_ip,
             self.cfg.guest_ip,
