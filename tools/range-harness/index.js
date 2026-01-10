@@ -559,16 +559,17 @@ async function main() {
                 `Content-Range mismatch (got ${parsed.start}-${parsed.end}, expected ${task.start}-${task.end})`,
               );
             }
-            if (parsed.total != null && parsed.total !== info.size) {
-              warnings.push(`Content-Range total differs from HEAD (${parsed.total} vs ${info.size})`);
-            }
-          }
-          if (bytes !== expectedLen) {
-            warnings.push(`body bytes (${bytes}) != expected (${expectedLen})`);
-          }
-        } else if (status === 200) {
-          ok = false;
-          if (!warned200) {
+        if (parsed.total != null && parsed.total !== info.size) {
+          warnings.push(`Content-Range total differs from HEAD (${parsed.total} vs ${info.size})`);
+        }
+      }
+      if (bytes !== expectedLen) {
+        ok = false;
+        warnings.push(`body bytes (${bytes}) != expected (${expectedLen})`);
+      }
+    } else if (status === 200) {
+      ok = false;
+      if (!warned200) {
             warned200 = true;
             warnings.push(
               'server returned 200 (Range ignored?). Results are still shown, but throughput/latency may not be meaningful.',
