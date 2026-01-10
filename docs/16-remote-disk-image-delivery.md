@@ -80,6 +80,8 @@ Recommended characteristics:
 
 Use this for images that must not be shared across users.
 
+For the full hosted-service model (upload/import flows, ownership/visibility/sharing, and writeback strategies), see: [Disk Image Lifecycle and Access Control](./17-disk-image-lifecycle-and-access-control.md).
+
 Goals:
 
 - Strong access control (only the owning user can fetch ranges).

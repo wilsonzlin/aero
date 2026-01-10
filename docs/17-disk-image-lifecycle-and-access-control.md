@@ -442,7 +442,7 @@ Different products will choose different persistence models. The hosted service 
 - Browser reads base + delta; writes are sent to the delta.
 
 Recommended server-side delta representation:
-- Fixed-size blocks (e.g., 1 MiB) addressed by `(imageId, blockIndex)`.
+- Fixed-size blocks (e.g., 1 MiB) addressed by `(deltaId, blockIndex)`.
 - Store only written blocks (sparse).
 - Optionally compact/merge blocks in the background.
 
@@ -536,7 +536,7 @@ Client guidance:
 - Do not put long-lived user/session tokens in the **page URL** (no `?access_token=...`).
 - If using signed URL leases for streaming (e.g., `?cap=...`), treat the full URL as a secret: do not persist it, do not log it, and keep expirations short (minutes).
 - Do not persist signed URLs or leases in `localStorage` / `indexedDB`. Keep them in memory; re-issue when needed.
-- Set `Referrer-Policy: no-referrer` (or at least `strict-origin`) on pages that may ever handle signed URLs to reduce accidental leakage via the `Referer` header.
+- Set `Referrer-Policy: no-referrer` (or at least `strict-origin`) on pages that may ever handle signed URLs to reduce accidental leakage via the `Referer` header. See also: [Security headers](./security-headers.md).
 
 Server guidance:
 - Return signed URLs only over HTTPS.
