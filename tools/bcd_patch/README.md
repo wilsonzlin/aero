@@ -30,6 +30,9 @@ Flags default to **on** unless explicitly set to **off**:
 - `testsigning` → BCD element type `0x16000049` (BcdLibraryBoolean_AllowPrereleaseSignatures)
 - `nointegritychecks` → BCD element type `0x16000048` (BcdLibraryBoolean_DisableIntegrityChecks)
 
+For background on why we patch these flags, which store files matter on Win7 media,
+and how to verify results with `bcdedit`, see: `docs/win7-bcd-offline-patching.md`.
+
 ## What gets patched (object selection)
 
 `bcd_patch` edits the offline hive structure:
