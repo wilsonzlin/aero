@@ -159,6 +159,74 @@ Roles/principals:
 
 ---
 
+## Suggested data model (relational)
+
+This section is optional, but it is a good starting point for implementing the ownership/sharing semantics above.
+
+### `images`
+
+One row per uploaded/imported image.
+
+- `id` (PK)
+- `owner_user_id` (indexed)
+- `kind` (`iso` | `disk`)
+- `canonical_format` (`iso` | `raw`)
+- `canonical_object_key` (object storage key; immutable once `ready`)
+- `source_object_key` (nullable; original upload)
+- `size_bytes`
+- `state` (`uploading` | `processing` | `ready` | `failed` | `deleted`)
+- `visibility` (`private` | `shared` | `public`)
+- `created_at`, `updated_at`
+
+### `image_acl`
+
+Explicit grants for “shared” images.
+
+- `id` (PK)
+- `image_id` (FK → `images.id`, indexed)
+- `principal_type` (`user` | `share_link`)
+- `principal_id` (e.g., `userId` or `shareLinkId`)
+- `permission` (`read` | `write`)
+- `created_at`
+
+> Policy suggestion: avoid “delete/share/upload” in ACL grants unless you have a strong use case; keep those owner-only.
+
+### `share_links`
+
+Share links are principals; callers prove possession of the link token during the management-plane “redeem” flow or directly during lease issuance.
+
+- `id` (PK)
+- `image_id` (FK → `images.id`, indexed)
+- `token_hash` (store a salted hash; never store the raw token)
+- `permission` (`read` | `write`), but default to `read`
+- `expires_at` (nullable)
+- `revoked_at` (nullable)
+- `created_at`
+
+### `uploads` (optional)
+
+Track resumable uploads and multipart state.
+
+- `id` (PK)
+- `image_id` (FK → `images.id`, indexed)
+- `provider` (`direct` | `s3` | `gcs` | …)
+- `provider_upload_id` (multipart upload ID / resumable session ID)
+- `state` (`active` | `completed` | `aborted`)
+- `part_size_bytes`
+- `created_at`, `expires_at`
+
+### `deltas` (Strategies 2/3)
+
+Track remotely persisted writable state.
+
+- `id` (PK)
+- `owner_user_id` (indexed)
+- `base_image_id` (FK → `images.id`, indexed)
+- `block_size_bytes`
+- `created_at`, `updated_at`
+
+---
+
 ## Lifecycle states and transitions
 
 ### Suggested state machine
