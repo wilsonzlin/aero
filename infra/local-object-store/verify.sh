@@ -41,7 +41,7 @@ wait_for_http() {
   local delay="${3:-0.2}"
   local i=0
   while [[ $i -lt $tries ]]; do
-    if curl -fsS -o /dev/null "$url"; then
+    if curl -fsS -o /dev/null "$url" >/dev/null 2>&1; then
       return 0
     fi
     sleep "$delay"
@@ -49,6 +49,12 @@ wait_for_http() {
   done
   echo "error: timed out waiting for $url" >&2
   return 1
+}
+
+require_status() {
+  local headers="$1"
+  local pattern="$2"
+  echo "$headers" | head -n 1 | grep -qE "$pattern"
 }
 
 echo "==> Starting MinIO (origin)..."
@@ -64,31 +70,60 @@ echo "==> Uploading test object: s3://${bucket}/${obj}"
 docker compose --profile tools run --rm mc cp "$tmpfile" "local/${bucket}/${obj}" >/dev/null
 
 echo "==> Verifying HEAD (Content-Length + Accept-Ranges)..."
-curl -fsS -D - -o /dev/null -I "${origin}/${bucket}/${obj}" | grep -iE '^(HTTP/|content-length:|accept-ranges:)'
+head_origin="$(curl -fsS -D - -o /dev/null -I -H "Origin: ${allowed_origin}" "${origin}/${bucket}/${obj}")"
+require_status "$head_origin" '^HTTP/[^ ]+ 200 '
+echo "$head_origin" | grep -i '^content-length:'
+echo "$head_origin" | grep -i '^accept-ranges: *bytes'
+echo "$head_origin" | grep -i "^access-control-allow-origin: ${allowed_origin}"
+echo "$head_origin" | grep -i '^access-control-expose-headers:.*content-length'
 
 echo "==> Verifying Range GET (206 + Content-Range) against origin..."
-curl -fsS -D - -o /dev/null -H 'Range: bytes=0-15' "${origin}/${bucket}/${obj}" | grep -iE '^(HTTP/|content-range:)'
+range_origin="$(curl -fsS -D - -o /dev/null -H "Origin: ${allowed_origin}" -H 'Range: bytes=0-15' "${origin}/${bucket}/${obj}")"
+require_status "$range_origin" '^HTTP/[^ ]+ 206 '
+echo "$range_origin" | grep -i '^content-range:'
+echo "$range_origin" | grep -i "^access-control-allow-origin: ${allowed_origin}"
+echo "$range_origin" | grep -i '^access-control-expose-headers:.*content-range'
 
 echo "==> Verifying browser-style CORS preflight against origin..."
-curl -fsS -D - -o /dev/null -X OPTIONS \
+preflight_origin="$(curl -fsS -D - -o /dev/null -X OPTIONS \
   -H "Origin: ${allowed_origin}" \
   -H "Access-Control-Request-Method: GET" \
   -H "Access-Control-Request-Headers: range" \
-  "${origin}/${bucket}/${obj}" | grep -iE '^(HTTP/|access-control-allow-origin:)'
+  "${origin}/${bucket}/${obj}")"
+require_status "$preflight_origin" '^HTTP/[^ ]+ (200|204) '
+echo "$preflight_origin" | grep -i "^access-control-allow-origin: ${allowed_origin}"
+echo "$preflight_origin" | grep -i '^access-control-allow-methods:.*GET'
+echo "$preflight_origin" | grep -i '^access-control-allow-headers:.*range'
 
 echo "==> Starting proxy (optional CDN/edge emulation)..."
 docker compose --profile proxy up -d minio-proxy
 
 wait_for_http "${proxy}/minio/health/ready"
 
+echo "==> Verifying HEAD against proxy..."
+head_proxy="$(curl -fsS -D - -o /dev/null -I -H "Origin: ${allowed_origin}" "${proxy}/${bucket}/${obj}")"
+require_status "$head_proxy" '^HTTP/[^ ]+ 200 '
+echo "$head_proxy" | grep -i '^content-length:'
+echo "$head_proxy" | grep -i '^accept-ranges: *bytes'
+echo "$head_proxy" | grep -i "^access-control-allow-origin: ${allowed_origin}"
+echo "$head_proxy" | grep -i '^access-control-expose-headers:.*content-length'
+
 echo "==> Verifying Range GET against proxy..."
-curl -fsS -D - -o /dev/null -H 'Range: bytes=0-15' "${proxy}/${bucket}/${obj}" | grep -iE '^(HTTP/|content-range:|access-control-allow-origin:)'
+range_proxy="$(curl -fsS -D - -o /dev/null -H "Origin: ${allowed_origin}" -H 'Range: bytes=0-15' "${proxy}/${bucket}/${obj}")"
+require_status "$range_proxy" '^HTTP/[^ ]+ 206 '
+echo "$range_proxy" | grep -i '^content-range:'
+echo "$range_proxy" | grep -i "^access-control-allow-origin: ${allowed_origin}"
+echo "$range_proxy" | grep -i '^access-control-expose-headers:.*content-range'
 
 echo "==> Verifying CORS preflight against proxy..."
-curl -fsS -D - -o /dev/null -X OPTIONS \
+preflight_proxy="$(curl -fsS -D - -o /dev/null -X OPTIONS \
   -H "Origin: ${allowed_origin}" \
   -H "Access-Control-Request-Method: GET" \
   -H "Access-Control-Request-Headers: range" \
-  "${proxy}/${bucket}/${obj}" | grep -iE '^(HTTP/|access-control-allow-origin:)'
+  "${proxy}/${bucket}/${obj}")"
+require_status "$preflight_proxy" '^HTTP/[^ ]+ (200|204) '
+echo "$preflight_proxy" | grep -i "^access-control-allow-origin: ${allowed_origin}"
+echo "$preflight_proxy" | grep -i '^access-control-allow-methods:.*GET'
+echo "$preflight_proxy" | grep -i '^access-control-allow-headers:.*range'
 
 echo "==> Success."
