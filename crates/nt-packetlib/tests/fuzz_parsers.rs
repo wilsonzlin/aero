@@ -1,5 +1,6 @@
 use nt_packetlib::io::net::packet::{
     arp::ArpPacket,
+    dhcp::DhcpMessage,
     dns::parse_single_query,
     ethernet::EthernetFrame,
     icmp::Icmpv4Packet,
@@ -47,5 +48,6 @@ fn fuzz_parsers_do_not_panic() {
         let _ = TcpSegment::parse(&data);
         let _ = Icmpv4Packet::parse(&data);
         let _ = parse_single_query(&data);
+        let _ = DhcpMessage::parse(&data);
     }
 }
