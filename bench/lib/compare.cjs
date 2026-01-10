@@ -5,6 +5,174 @@ const { coefficientOfVariation, median } = require('./stats.cjs');
 const RESULTS_SCHEMA_VERSION = 1;
 const THRESHOLDS_SCHEMA_VERSION = 1;
 
+function inferBetter(name, unit) {
+  const metricName = String(name ?? '');
+  const metricUnit = String(unit ?? '');
+
+  if (
+    metricUnit === 'ms' ||
+    metricUnit === 's' ||
+    metricUnit === 'sec' ||
+    metricName.endsWith('_ms') ||
+    metricName.includes('time')
+  ) {
+    return 'lower';
+  }
+
+  if (metricUnit === 'fps' || metricName.includes('fps')) return 'higher';
+
+  if (
+    metricUnit.includes('ops') ||
+    metricUnit.includes('op') ||
+    metricName.includes('ops') ||
+    metricName.includes('ips')
+  ) {
+    return 'higher';
+  }
+
+  return 'lower';
+}
+
+function normalizeScenarioRunnerReport(label, report) {
+  const scenarioId = report.scenarioId;
+  if (typeof scenarioId !== 'string' || scenarioId.length === 0) {
+    throw new Error(`${label}: scenario runner report missing scenarioId`);
+  }
+
+  if (report.status && report.status !== 'ok') {
+    throw new Error(`${label}: scenario runner report status is ${String(report.status)} (expected ok)`);
+  }
+
+  if (!Array.isArray(report.metrics)) {
+    throw new Error(`${label}: scenario runner report missing metrics array`);
+  }
+
+  const metrics = {};
+  for (const metric of report.metrics) {
+    if (!metric || typeof metric !== 'object') {
+      throw new Error(`${label}: scenario runner metric must be an object`);
+    }
+    if (typeof metric.id !== 'string' || metric.id.length === 0) {
+      throw new Error(`${label}: scenario runner metric.id must be a non-empty string`);
+    }
+    if (typeof metric.unit !== 'string' || metric.unit.length === 0) {
+      throw new Error(`${label}: scenario runner metric ${metric.id} must provide unit`);
+    }
+    if (typeof metric.value !== 'number' || !Number.isFinite(metric.value)) {
+      throw new Error(`${label}: scenario runner metric ${metric.id} must provide finite value`);
+    }
+
+    metrics[metric.id] = {
+      unit: metric.unit,
+      better: inferBetter(metric.id, metric.unit),
+      samples: [metric.value],
+    };
+  }
+
+  const finishedAtMs = report.finishedAtMs;
+  const recordedAt =
+    typeof finishedAtMs === 'number' && Number.isFinite(finishedAtMs)
+      ? new Date(finishedAtMs).toISOString()
+      : undefined;
+
+  return {
+    schemaVersion: RESULTS_SCHEMA_VERSION,
+    meta: {
+      recordedAt,
+      scenarioId,
+      scenarioName: typeof report.scenarioName === 'string' ? report.scenarioName : undefined,
+      source: 'scenario-runner',
+    },
+    scenarios: {
+      [scenarioId]: {
+        metrics,
+      },
+    },
+  };
+}
+
+function normalizePerfToolResult(label, result) {
+  const scenarioId = 'perf';
+  if (!Array.isArray(result.benchmarks)) {
+    throw new Error(`${label}: tools/perf payload missing benchmarks array`);
+  }
+
+  const metrics = {};
+  for (const bench of result.benchmarks) {
+    if (!bench || typeof bench !== 'object') {
+      throw new Error(`${label}: tools/perf benchmark must be an object`);
+    }
+    if (typeof bench.name !== 'string' || bench.name.length === 0) {
+      throw new Error(`${label}: tools/perf benchmark missing name`);
+    }
+    if (typeof bench.unit !== 'string' || bench.unit.length === 0) {
+      throw new Error(`${label}: tools/perf benchmark ${bench.name} missing unit`);
+    }
+
+    let samples = bench.samples;
+    if (!Array.isArray(samples) || samples.length === 0) {
+      const medianFromStats = bench.stats?.median;
+      if (typeof medianFromStats === 'number' && Number.isFinite(medianFromStats)) {
+        samples = [medianFromStats];
+      } else {
+        throw new Error(`${label}: tools/perf benchmark ${bench.name} missing samples`);
+      }
+    }
+
+    metrics[bench.name] = {
+      unit: bench.unit,
+      better: inferBetter(bench.name, bench.unit),
+      samples,
+    };
+  }
+
+  const perfMeta = result.meta && typeof result.meta === 'object' ? result.meta : {};
+  const recordedAt =
+    typeof perfMeta.collectedAt === 'string'
+      ? perfMeta.collectedAt
+      : typeof perfMeta.generatedAt === 'string'
+        ? perfMeta.generatedAt
+        : undefined;
+
+  return {
+    schemaVersion: RESULTS_SCHEMA_VERSION,
+    meta: {
+      recordedAt,
+      gitSha: perfMeta.gitSha,
+      gitRef: perfMeta.gitRef,
+      nodeVersion: perfMeta.nodeVersion,
+      source: 'tools/perf',
+    },
+    scenarios: {
+      [scenarioId]: {
+        metrics,
+      },
+    },
+  };
+}
+
+function normalizeResultsFile(label, data) {
+  if (!data || typeof data !== 'object') {
+    throw new Error(`${label}: expected an object`);
+  }
+
+  if (data.schemaVersion === RESULTS_SCHEMA_VERSION && data.scenarios && typeof data.scenarios === 'object') {
+    return data;
+  }
+
+  if (typeof data.scenarioId === 'string' && Array.isArray(data.metrics)) {
+    return normalizeScenarioRunnerReport(label, data);
+  }
+
+  if (data.meta && Array.isArray(data.benchmarks)) {
+    return normalizePerfToolResult(label, data);
+  }
+
+  throw new Error(
+    `${label}: unsupported benchmark result format (expected {schemaVersion:1, scenarios}, scenario runner report.json, or tools/perf {meta, benchmarks})`,
+  );
+}
+
 function validateResultsFile(label, data) {
   if (!data || typeof data !== 'object') {
     throw new Error(`${label}: expected an object`);
@@ -218,22 +386,25 @@ function compareMetric({
 }
 
 function compareResults({ baseline, current, thresholds, profileName }) {
-  validateResultsFile('baseline', baseline);
-  validateResultsFile('current', current);
+  const normalizedBaseline = normalizeResultsFile('baseline', baseline);
+  const normalizedCurrent = normalizeResultsFile('current', current);
+
+  validateResultsFile('baseline', normalizedBaseline);
+  validateResultsFile('current', normalizedCurrent);
   validateThresholdsFile(thresholds);
   const profile = pickThresholdProfile(thresholds, profileName);
 
   const scenarios = new Set([
-    ...Object.keys(baseline.scenarios ?? {}),
-    ...Object.keys(current.scenarios ?? {}),
+    ...Object.keys(normalizedBaseline.scenarios ?? {}),
+    ...Object.keys(normalizedCurrent.scenarios ?? {}),
   ]);
 
   const comparisons = [];
   const warnings = [];
 
   for (const scenarioName of [...scenarios].sort()) {
-    const baselineScenario = baseline.scenarios?.[scenarioName];
-    const currentScenario = current.scenarios?.[scenarioName];
+    const baselineScenario = normalizedBaseline.scenarios?.[scenarioName];
+    const currentScenario = normalizedCurrent.scenarios?.[scenarioName];
 
     const metricNames = new Set([
       ...Object.keys(baselineScenario?.metrics ?? {}),
@@ -279,8 +450,8 @@ function compareResults({ baseline, current, thresholds, profileName }) {
   return {
     schemaVersion: 1,
     profile: profileName,
-    baselineMeta: baseline.meta ?? {},
-    currentMeta: current.meta ?? {},
+    baselineMeta: normalizedBaseline.meta ?? {},
+    currentMeta: normalizedCurrent.meta ?? {},
     summary: {
       total: comparisons.length,
       regressions: regressionCount,
@@ -301,6 +472,7 @@ module.exports = {
   computeDeltaPct,
   computeRegressionPct,
   mergeThresholdRules,
+  normalizeResultsFile,
   pickThresholdProfile,
   resolveThresholdRule,
 };

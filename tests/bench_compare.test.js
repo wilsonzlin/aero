@@ -153,3 +153,40 @@ test("compareResults: flags variance warnings when cv exceeds threshold", () => 
   assert.ok(result.comparisons[0].varianceWarnings.length > 0);
 });
 
+test("compareResults: accepts scenario runner report.json inputs", () => {
+  const baseline = {
+    schemaVersion: 1,
+    scenarios: {
+      storage_io: {
+        metrics: {
+          boot_time_ms: { unit: "ms", better: "lower", samples: [100, 100, 100] },
+        },
+      },
+    },
+  };
+
+  const current = {
+    scenarioId: "storage_io",
+    scenarioName: "Storage I/O",
+    status: "ok",
+    finishedAtMs: Date.now(),
+    metrics: [{ id: "boot_time_ms", unit: "ms", value: 130 }],
+  };
+
+  const thresholds = {
+    schemaVersion: 1,
+    profiles: {
+      pr: {
+        metrics: {
+          boot_time_ms: { maxRegressionPct: 0.1 },
+        },
+      },
+    },
+  };
+
+  const result = compareResults({ baseline, current, thresholds, profileName: "pr" });
+  assert.equal(result.summary.total, 1);
+  assert.equal(result.summary.regressions, 1);
+  assert.equal(result.comparisons[0].scenario, "storage_io");
+  assert.equal(result.comparisons[0].metric, "boot_time_ms");
+});

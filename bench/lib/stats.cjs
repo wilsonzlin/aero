@@ -32,7 +32,7 @@ function stddev(samples) {
     const diff = value - avg;
     acc += diff * diff;
   }
-  return Math.sqrt(acc / samples.length);
+  return Math.sqrt(acc / (samples.length - 1));
 }
 
 function coefficientOfVariation(samples) {
