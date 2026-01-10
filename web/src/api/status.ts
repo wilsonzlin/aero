@@ -1,5 +1,5 @@
 import type { AeroGlobalApi } from '../../../shared/aero_api.ts';
-import { isAeroPhase, type AeroPhase, type AeroStatusSnapshot } from '../../../shared/aero_status.ts';
+import { AERO_PHASES, isAeroPhase, type AeroPhase, type AeroStatusSnapshot } from '../../../shared/aero_status.ts';
 
 export interface AeroStatusApi {
   status: AeroStatusSnapshot;
@@ -24,6 +24,10 @@ function isEventTarget(value: unknown): value is EventTarget {
     typeof maybe.removeEventListener === 'function' &&
     typeof maybe.dispatchEvent === 'function'
   );
+}
+
+function phaseAtLeast(current: AeroPhase, target: AeroPhase): boolean {
+  return AERO_PHASES.indexOf(current) >= AERO_PHASES.indexOf(target);
 }
 
 export function initAeroStatusApi(initialPhase: AeroPhase = 'booting'): AeroStatusApi {
@@ -66,6 +70,19 @@ export function initAeroStatusApi(initialPhase: AeroPhase = 'booting'): AeroStat
   }
 
   function waitForEvent<T = unknown>(name: string, options?: { timeoutMs?: number }): Promise<T> {
+    // Make common milestone waits race-free by resolving immediately when the
+    // current status already satisfies the requested signal.
+    if (name === 'desktop_ready') {
+      if (phaseAtLeast(status.phase, 'desktop')) return Promise.resolve(undefined as T);
+    } else if (name === 'idle_ready') {
+      if (phaseAtLeast(status.phase, 'idle')) return Promise.resolve(undefined as T);
+    } else if (name.startsWith('phase:')) {
+      const rawPhase = name.slice('phase:'.length);
+      if (isAeroPhase(rawPhase) && phaseAtLeast(status.phase, rawPhase)) {
+        return Promise.resolve(undefined as T);
+      }
+    }
+
     return new Promise((resolve, reject) => {
       const listener = (event: Event) => {
         if (timeoutId !== undefined) clearTimeout(timeoutId);
