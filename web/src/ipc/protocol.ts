@@ -17,6 +17,7 @@ export type Event =
   | { kind: "irqRaise"; irq: number }
   | { kind: "irqLower"; irq: number }
   | { kind: "log"; level: LogLevel; message: string }
+  | { kind: "serialOutput"; port: number; data: Uint8Array }
   | { kind: "panic"; message: string }
   | { kind: "tripleFault" };
 
@@ -31,6 +32,7 @@ const EVT_TAG_FRAME_READY = 0x1200;
 const EVT_TAG_IRQ_RAISE = 0x1300;
 const EVT_TAG_IRQ_LOWER = 0x1301;
 const EVT_TAG_LOG = 0x1400;
+const EVT_TAG_SERIAL_OUTPUT = 0x1500;
 const EVT_TAG_PANIC = 0x1ffe;
 const EVT_TAG_TRIPLE_FAULT = 0x1fff;
 
@@ -180,6 +182,13 @@ export function encodeEvent(evt: Event): Uint8Array {
       for (const b of msg) pushU8(b);
       break;
     }
+    case "serialOutput": {
+      pushU16(EVT_TAG_SERIAL_OUTPUT);
+      pushU16(evt.port);
+      pushU32(evt.data.byteLength);
+      for (const b of evt.data) pushU8(b);
+      break;
+    }
     case "panic": {
       pushU16(EVT_TAG_PANIC);
       const msg = encoder.encode(evt.message);
@@ -244,6 +253,14 @@ export function decodeEvent(bytes: Uint8Array): Event {
       const msg = decoder.decode(bytes.slice(off, off + len));
       off += len;
       evt = { kind: "log", level, message: msg };
+      break;
+    }
+    case EVT_TAG_SERIAL_OUTPUT: {
+      const port = readU16();
+      const len = readU32();
+      const data = bytes.slice(off, off + len);
+      off += len;
+      evt = { kind: "serialOutput", port, data };
       break;
     }
     case EVT_TAG_PANIC: {

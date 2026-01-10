@@ -42,6 +42,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-debug"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "aero-devices"
 version = "0.1.0"
 dependencies = [

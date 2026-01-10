@@ -39,6 +39,10 @@ fn event_roundtrip() {
             level: LogLevel::Info,
             message: "hello".to_string(),
         },
+        Event::SerialOutput {
+            port: 0x3F8,
+            data: b"Hi".to_vec(),
+        },
         Event::Panic {
             message: "oh no".to_string(),
         },
@@ -57,4 +61,3 @@ fn decode_rejects_unknown_tag() {
     let err = decode_command(&[0xFF, 0xFF]).unwrap_err();
     assert_eq!(err, DecodeError::UnknownTag);
 }
-

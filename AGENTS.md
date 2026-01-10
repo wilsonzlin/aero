@@ -338,6 +338,7 @@ pub trait DisplayAdapter {
 | [13-legal-considerations.md](./docs/13-legal-considerations.md)         | Licensing, IP concerns                 | All               |
 | [14-project-milestones.md](./docs/14-project-milestones.md)             | Timeline, deliverables                 | All               |
 | [15-agent-task-breakdown.md](./docs/15-agent-task-breakdown.md)         | Parallelizable work items              | All               |
+| [16-debugging-and-introspection.md](./docs/16-debugging-and-introspection.md) | Developer debugging surfaces (serial, state, trace) | All |
 | [16-performance-tooling.md](./docs/16-performance-tooling.md)           | Profiling HUD, traces, benchmarks      | Performance       |
 | [16-d3d9ex-dwm-compatibility.md](./docs/16-d3d9ex-dwm-compatibility.md) | D3D9Ex surface + DWM requirements      | Graphics          |
 | [16-d3d10-11-translation.md](./docs/16-d3d10-11-translation.md)          | Direct3D 10/11 translation details     | Graphics          |

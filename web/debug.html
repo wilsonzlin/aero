@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aero Debug Tools</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1>Aero Debug Tools</h1>
+        <div class="toolbar">
+          <button id="pauseBtn" type="button">Pause</button>
+          <button id="resumeBtn" type="button">Resume</button>
+          <button id="stepBtn" type="button">Step</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="pane">
+          <h2>Serial Console</h2>
+          <div class="pane-toolbar">
+            <button id="serialCopyBtn" type="button">Copy</button>
+            <button id="serialSaveBtn" type="button">Save</button>
+            <button id="serialClearBtn" type="button">Clear</button>
+          </div>
+          <textarea id="serialText" readonly spellcheck="false"></textarea>
+        </section>
+
+        <section class="pane">
+          <h2>CPU State & Breakpoints</h2>
+          <div class="row">
+            <label>
+              RIP (hex):
+              <input id="bpRip" type="text" value="00000000" />
+            </label>
+            <button id="bpAddBtn" type="button">Add BP</button>
+            <button id="bpClearBtn" type="button">Clear BPs</button>
+          </div>
+          <pre id="breakpointsPre">(no breakpoints)</pre>
+          <pre id="cpuStatePre">(no state yet)</pre>
+        </section>
+
+        <section class="pane">
+          <h2>Device State (PIC/APIC/PIT/PCI)</h2>
+          <div class="pane-toolbar">
+            <button id="deviceRefreshBtn" type="button">Refresh</button>
+          </div>
+          <pre id="deviceStatePre">(no device state yet)</pre>
+        </section>
+
+        <section class="pane">
+          <h2>Memory Viewer</h2>
+          <div class="row">
+            <label>
+              Address (hex):
+              <input id="memAddr" type="text" value="00000000" />
+            </label>
+            <label>
+              Length:
+              <input id="memLen" type="number" value="256" min="1" max="4096" />
+            </label>
+            <button id="memReadBtn" type="button">Read</button>
+          </div>
+          <pre id="memDumpPre">(no data yet)</pre>
+        </section>
+
+        <section class="pane">
+          <h2>Trace Log</h2>
+          <div class="pane-toolbar">
+            <button id="traceExportBtn" type="button">Export</button>
+            <button id="traceClearBtn" type="button">Clear</button>
+          </div>
+          <pre id="tracePre">(no trace yet)</pre>
+        </section>
+      </main>
+
+      <footer>
+        <small>
+          Wire this page to the emulator by calling <code>window.aeroDebug.onEvent(event)</code> and
+          listening for <code>aero-debug-command</code> events.
+        </small>
+      </footer>
+    </div>
+
+    <script type="module" src="./debug-ui.js"></script>
+  </body>
+</html>
+

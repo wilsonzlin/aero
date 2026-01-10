@@ -22,6 +22,7 @@ members = [
     "crates/aero_x86",
     "crates/aero-dxbc",
     "crates/aero-d3d9",
+    "crates/aero-debug",
     "crates/devices",
     "crates/emulator",
     "crates/firmware",

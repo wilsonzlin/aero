@@ -42,6 +42,9 @@ pub enum Event {
     /// Structured log record (UTF-8).
     Log { level: LogLevel, message: String },
 
+    /// Bytes written to a legacy serial port (16550).
+    SerialOutput { port: u16, data: Vec<u8> },
+
     /// Worker encountered a fatal error (panic or triple fault).
     Panic { message: String },
     TripleFault,
@@ -116,6 +119,7 @@ const EVT_TAG_FRAME_READY: u16 = 0x1200;
 const EVT_TAG_IRQ_RAISE: u16 = 0x1300;
 const EVT_TAG_IRQ_LOWER: u16 = 0x1301;
 const EVT_TAG_LOG: u16 = 0x1400;
+const EVT_TAG_SERIAL_OUTPUT: u16 = 0x1500;
 const EVT_TAG_PANIC: u16 = 0x1FFE;
 const EVT_TAG_TRIPLE_FAULT: u16 = 0x1FFF;
 
@@ -187,6 +191,12 @@ pub fn encode_event_into(evt: &Event, out: &mut Vec<u8>) {
             push_u32(out, msg.len() as u32);
             out.extend_from_slice(msg);
         }
+        Event::SerialOutput { port, data } => {
+            push_u16(out, EVT_TAG_SERIAL_OUTPUT);
+            push_u16(out, *port);
+            push_u32(out, data.len() as u32);
+            out.extend_from_slice(data);
+        }
         Event::Panic { message } => {
             push_u16(out, EVT_TAG_PANIC);
             let msg = message.as_bytes();
@@ -257,6 +267,12 @@ pub fn decode_event(bytes: &[u8]) -> Result<Event, DecodeError> {
                 level,
                 message: message.to_string(),
             }
+        }
+        EVT_TAG_SERIAL_OUTPUT => {
+            let port = r.read_u16()?;
+            let len = r.read_u32()? as usize;
+            let data = r.read_bytes(len)?.to_vec();
+            Event::SerialOutput { port, data }
         }
         EVT_TAG_PANIC => {
             let len = r.read_u32()? as usize;
