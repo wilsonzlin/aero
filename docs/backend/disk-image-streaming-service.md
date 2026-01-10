@@ -6,6 +6,18 @@ This document covers operational concerns for the **disk image streaming service
 
 The disk image streaming service exists to make multi‑GB disk images usable in the browser without downloading them up front.
 
+## Reference implementation in this repo
+
+This repository includes a minimal reference service at [`services/image-gateway/`](../../services/image-gateway/) that implements:
+
+- S3 multipart uploads (presigned `UploadPart` URLs)
+- immutable/versioned object keys for stable CDN URLs
+- CloudFront signed cookies (preferred) or signed URLs for viewer authorization
+- a local-dev `Range` proxy fallback endpoint
+
+The exact paths differ from the “planned” section below (which focuses on a simplified pure-streaming service),
+but the HTTP semantics and header requirements are the same.
+
 On the client side, the storage subsystem uses `StreamingDisk` (see [05 - Storage Subsystem](../05-storage-subsystem.md)) to:
 
 1. Read sectors from a *virtual* disk.

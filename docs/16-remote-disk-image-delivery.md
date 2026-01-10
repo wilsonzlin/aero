@@ -19,6 +19,8 @@ For the normative auth + CORS + COOP/COEP behavior of the disk bytes endpoint, s
   - [`infra/local-object-store/README.md`](../infra/local-object-store/README.md)
 - AWS production reference (S3 + CloudFront tuned for Range + CORS):
   - [`infra/aws-s3-cloudfront-range/README.md`](../infra/aws-s3-cloudfront-range/README.md)
+- Reference backend for user-uploaded/private images (S3 multipart upload + CloudFront signed access):
+  - [`services/image-gateway/`](../services/image-gateway/)
 
 Companion tools:
 

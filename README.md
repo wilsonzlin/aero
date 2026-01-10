@@ -182,6 +182,16 @@ The proxy exposes:
 
 See `net-proxy/README.md` for allowlisting and client URL examples.
 
+## Optional disk image gateway (S3 + CloudFront Range streaming)
+
+For large disk images (20GB+), Aero’s browser storage stack can stream missing byte ranges on-demand using HTTP `Range`.
+
+This repo includes a reference backend service at [`services/image-gateway/`](./services/image-gateway/) that:
+
+- supports S3 multipart upload with presigned part URLs
+- returns CloudFront signed-cookie (preferred) or signed-URL auth material for a stable, cacheable image URL
+- includes a dev-only `Range` proxy fallback for local testing without CloudFront
+
 ## Browser memory model PoC (SharedArrayBuffer + WebAssembly.Memory)
 
 Modern browsers impose practical limits around **wasm32** addressability and `SharedArrayBuffer` usage:
