@@ -19,7 +19,23 @@ export type Config = Readonly<{
   // Placeholders for upcoming features (not implemented in this skeleton).
   TCP_PROXY_MAX_CONNECTIONS: number;
   TCP_PROXY_MAX_CONNECTIONS_PER_IP: number;
+
+  // DNS-over-HTTPS (RFC8484)
   DNS_UPSTREAMS: string[];
+  DNS_UPSTREAM_TIMEOUT_MS: number;
+
+  DNS_CACHE_MAX_ENTRIES: number;
+  DNS_CACHE_MAX_TTL_SECONDS: number;
+  DNS_CACHE_NEGATIVE_TTL_SECONDS: number;
+
+  DNS_MAX_QUERY_BYTES: number;
+  DNS_MAX_RESPONSE_BYTES: number;
+
+  DNS_ALLOW_ANY: boolean;
+  DNS_ALLOW_PRIVATE_PTR: boolean;
+
+  DNS_QPS_PER_IP: number;
+  DNS_BURST_PER_IP: number;
 }>;
 
 type Env = Record<string, string | undefined>;
@@ -38,7 +54,7 @@ function normalizeOrigin(maybeOrigin: string): string {
   let url: URL;
   try {
     url = new URL(trimmed);
-  } catch (err) {
+  } catch {
     throw new Error(`Invalid origin "${trimmed}". Expected a full origin like "https://example.com".`);
   }
 
@@ -60,7 +76,22 @@ const envSchema = z.object({
   // Placeholders (unused today).
   TCP_PROXY_MAX_CONNECTIONS: z.coerce.number().int().min(0).default(0),
   TCP_PROXY_MAX_CONNECTIONS_PER_IP: z.coerce.number().int().min(0).default(0),
-  DNS_UPSTREAMS: z.string().optional().default(''),
+
+  DNS_UPSTREAMS: z.string().optional().default('1.1.1.1:53,8.8.8.8:53'),
+  DNS_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1).default(2000),
+
+  DNS_CACHE_MAX_ENTRIES: z.coerce.number().int().min(0).default(10_000),
+  DNS_CACHE_MAX_TTL_SECONDS: z.coerce.number().int().min(0).default(300),
+  DNS_CACHE_NEGATIVE_TTL_SECONDS: z.coerce.number().int().min(0).default(60),
+
+  DNS_MAX_QUERY_BYTES: z.coerce.number().int().min(0).default(4096),
+  DNS_MAX_RESPONSE_BYTES: z.coerce.number().int().min(0).default(4096),
+
+  DNS_ALLOW_ANY: z.string().optional().default('0'),
+  DNS_ALLOW_PRIVATE_PTR: z.string().optional().default('0'),
+
+  DNS_QPS_PER_IP: z.coerce.number().min(0).default(10),
+  DNS_BURST_PER_IP: z.coerce.number().min(0).default(20),
 });
 
 export function loadConfig(env: Env = process.env): Config {
@@ -75,7 +106,7 @@ export function loadConfig(env: Env = process.env): Config {
   let publicBaseUrlParsed: URL;
   try {
     publicBaseUrlParsed = new URL(publicBaseUrl);
-  } catch (err) {
+  } catch {
     throw new Error(`Invalid PUBLIC_BASE_URL "${publicBaseUrl}". Expected a URL like "https://example.com".`);
   }
 
@@ -97,6 +128,21 @@ export function loadConfig(env: Env = process.env): Config {
 
     TCP_PROXY_MAX_CONNECTIONS: raw.TCP_PROXY_MAX_CONNECTIONS,
     TCP_PROXY_MAX_CONNECTIONS_PER_IP: raw.TCP_PROXY_MAX_CONNECTIONS_PER_IP,
+
     DNS_UPSTREAMS: splitCommaList(raw.DNS_UPSTREAMS),
+    DNS_UPSTREAM_TIMEOUT_MS: raw.DNS_UPSTREAM_TIMEOUT_MS,
+
+    DNS_CACHE_MAX_ENTRIES: raw.DNS_CACHE_MAX_ENTRIES,
+    DNS_CACHE_MAX_TTL_SECONDS: raw.DNS_CACHE_MAX_TTL_SECONDS,
+    DNS_CACHE_NEGATIVE_TTL_SECONDS: raw.DNS_CACHE_NEGATIVE_TTL_SECONDS,
+
+    DNS_MAX_QUERY_BYTES: raw.DNS_MAX_QUERY_BYTES,
+    DNS_MAX_RESPONSE_BYTES: raw.DNS_MAX_RESPONSE_BYTES,
+
+    DNS_ALLOW_ANY: raw.DNS_ALLOW_ANY === '1',
+    DNS_ALLOW_PRIVATE_PTR: raw.DNS_ALLOW_PRIVATE_PTR === '1',
+
+    DNS_QPS_PER_IP: raw.DNS_QPS_PER_IP,
+    DNS_BURST_PER_IP: raw.DNS_BURST_PER_IP,
   };
 }

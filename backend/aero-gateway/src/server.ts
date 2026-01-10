@@ -10,6 +10,7 @@ import { setupRequestIdHeader } from './middleware/requestId.js';
 import { setupRateLimit } from './middleware/rateLimit.js';
 import { setupSecurityHeaders } from './middleware/securityHeaders.js';
 import { setupMetrics } from './metrics.js';
+import { setupDohRoutes } from './routes/doh.js';
 import { getVersionInfo } from './version.js';
 import { handleTcpProxyUpgrade } from './routes/tcpProxy.js';
 
@@ -65,7 +66,7 @@ export function buildServer(config: Config): ServerBundle {
     await originGuard(request, reply, { allowedOrigins: config.ALLOWED_ORIGINS });
   });
 
-  setupMetrics(app);
+  const metrics = setupMetrics(app);
 
   app.get('/healthz', async () => ({ ok: true }));
 
@@ -79,6 +80,8 @@ export function buildServer(config: Config): ServerBundle {
   app.server.on('upgrade', (request, socket, head) => {
     handleTcpProxyUpgrade(request, socket, head, { allowedOrigins: config.ALLOWED_ORIGINS });
   });
+
+  setupDohRoutes(app, config, metrics.dns);
 
   // Handle CORS preflight requests, even when no route matches.
   app.options('/*', async (_request, reply) => reply.code(204).send());
