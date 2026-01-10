@@ -430,6 +430,8 @@ Implementation detail: the disk bytes endpoint can be implemented as either:
 
 The service SHOULD NOT hand out long-lived, permanent object-storage URLs for private images.
 
+> Note: For some deployments, read-only base images may be delivered via a **chunked manifest + chunk objects** format to avoid `Range` and reduce CDN/cross-origin friction. In that mode, the same ownership/lease principles apply, but the data plane is `GET manifest.json` + `GET chunks/*.bin` instead of `Range` reads. See: [Chunked Disk Image Format](./18-chunked-disk-image-format.md).
+
 ### End-to-end diagram (auth → lease → streaming)
 
 ```
