@@ -2,9 +2,14 @@ import { defineConfig, devices } from '@playwright/test';
 
 const DEV_PORT = 5173;
 const PREVIEW_PORT = 4173;
-const EXPOSE_GC = process.env.AERO_PLAYWRIGHT_EXPOSE_GC === '1';
-const CHROMIUM_ARGS = ['--enable-unsafe-webgpu', ...(EXPOSE_GC ? ['--js-flags=--expose-gc'] : [])];
 const CSP_POC_PORT = 4180;
+const EXPOSE_GC = process.env.AERO_PLAYWRIGHT_EXPOSE_GC === '1';
+const CHROMIUM_ARGS = [
+  '--enable-unsafe-webgpu',
+  // Keep screenshot colors deterministic across environments.
+  '--force-color-profile=srgb',
+  ...(EXPOSE_GC ? ['--js-flags=--expose-gc'] : []),
+];
 
 /**
  * Extra Chromium flags used for the `chromium-webgpu` project.
@@ -35,10 +40,17 @@ export default defineConfig({
   timeout: 30_000,
   expect: {
     timeout: 5_000,
+    // Default tolerance for screenshot comparisons.
+    // Keep this low so that real visual regressions are caught,
+    // while allowing for tiny anti-aliasing diffs in CI.
+    toHaveScreenshot: {
+      maxDiffPixelRatio: 0.005,
+    },
   },
   testDir: './tests',
   testMatch: ['e2e/**/*.spec.ts', 'playwright/**/*.spec.ts'],
   fullyParallel: true,
+  forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI
     ? [
@@ -46,11 +58,22 @@ export default defineConfig({
         ['junit', { outputFile: 'test-results/junit.xml' }],
         ['html', { open: 'never', outputFolder: 'playwright-report' }],
       ]
-    : 'list',
+    : [
+        ['list'],
+        ['html', { open: 'never', outputFolder: 'playwright-report' }],
+      ],
+  outputDir: 'test-results',
+  // Keep screenshot baselines in a dedicated, predictable location next to the spec.
+  snapshotPathTemplate:
+    '{testDir}/{testFileDir}/__screenshots__/{testFileName}/{arg}{-projectName}{-platform}{ext}',
   use: {
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
+    reducedMotion: 'reduce',
+    colorScheme: 'light',
+    locale: 'en-US',
+    timezoneId: 'UTC',
   },
   projects: [
     {

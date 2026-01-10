@@ -67,9 +67,6 @@ drivers/aerogpu/build/out/
 # wasm-pack output (generated)
 web/src/wasm/
 
-# Coverage
-coverage/
-
 # Driver workspace outputs (do not commit)
 drivers/out/
 drivers/tmp/
@@ -79,7 +76,6 @@ drivers/vendor/
 .playwright/
 playwright-report/
 test-results/
-.playwright/
 
 # Perf / bench outputs
 bench/results/

@@ -1039,6 +1039,54 @@ npm run test:gpu
 
 ---
 
+## Visual regression (Playwright screenshots)
+
+We use **Playwright screenshot assertions** as a "golden image" visual regression suite.
+
+### Conventions
+
+- **Snapshot location:** `tests/e2e/__screenshots__/…`
+  - Configured via `playwright.config.ts` `snapshotPathTemplate`.
+- **Naming:** each screenshot name is tied to:
+  - test file path (`{testFilePath}`)
+  - the screenshot name passed to `toHaveScreenshot('…')` (`{arg}`)
+  - Playwright project (`{-projectName}`; typically `chromium`)
+  - OS platform (`{-platform}`; `linux`/`darwin`/`win32`) to avoid cross-OS font rasterization churn.
+  - Example: `tests/e2e/__screenshots__/visual.spec.ts/aero-window-chromium-linux.png`
+- **Scope:** snapshots must only cover **synthetic scenes/UI we own**.
+  - Do **not** add screenshots of Windows 7 or any copyrighted imagery.
+
+### Rendering stability
+
+Defaults live in `playwright.config.ts`:
+
+- Fixed `viewport` and `deviceScaleFactor` for deterministic output.
+- `reducedMotion: 'reduce'` + test-injected CSS to disable animations/transitions.
+- Deterministic fonts: prefer explicitly declaring a font family known to exist in CI (e.g. `DejaVu Sans` on Linux) instead of relying on `system-ui`.
+- Screenshot tolerance via:
+  - `expect.toHaveScreenshot.maxDiffPixelRatio`
+  - per-test overrides when needed.
+
+### Developer workflow
+
+- Run E2E + visual regression tests:
+  - `npm run test:e2e`
+- Update screenshot baselines after an intentional UI change:
+  - `npm run test:e2e:update`
+- Review diffs locally in the HTML report:
+  - `npm run test:e2e:report` (opens `playwright-report/`)
+
+### CI integration
+
+The GitHub Actions workflow uploads artifacts on failures (including screenshot diffs):
+
+- `playwright-report/` (HTML report)
+- `test-results/` (attachments: diffs, traces, videos)
+
+This makes snapshot mismatches easy to review directly from CI.
+
+---
+
 ## Continuous Integration
 
 ### Running WASM unit tests locally

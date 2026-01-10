@@ -21,6 +21,8 @@
     "test:unit": "npm run typecheck && node -e \"require('node:fs').mkdirSync('test-results', { recursive: true })\" && node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/node-junit.xml --experimental-strip-types --loader ./scripts/ts-strip-loader.mjs backend/aero-gateway/test/originGuard.test.ts backend/aero-gateway/test/tcp*.test.ts backend/aero-gateway/src/**/*.test.ts tests/*.test.js bench/history.test.js packages/aero-stats/test/*.test.js web/test/*.test.ts emulator/protocol/tests/*.test.ts && vitest run --reporter=default --reporter=junit --outputFile=test-results/vitest-junit.xml",
     "test:unit:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:update": "playwright test --update-snapshots",
+    "test:e2e:report": "playwright show-report",
     "test:coi": "playwright test tests/e2e/coi.spec.ts",
     "test:webgpu": "playwright test --project=chromium-webgpu",
     "generate:goldens": "node tests/golden/generate_goldens.cjs",
