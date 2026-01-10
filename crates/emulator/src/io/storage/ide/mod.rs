@@ -14,6 +14,7 @@ pub use busmaster::{BusMasterChannel, PrdEntry};
 
 use crate::io::storage::SECTOR_SIZE;
 use memory::MemoryBus;
+use crate::io::pci::PciDevice;
 
 const IDE_STATUS_BSY: u8 = 0x80;
 const IDE_STATUS_DRDY: u8 = 0x40;
@@ -508,6 +509,14 @@ pub struct IdeController {
     bus_master_base: u16,
     bus_master: [BusMasterChannel; 2],
     pci_regs: [u8; 256],
+    bar0: u32,
+    bar0_probe: bool,
+    bar1: u32,
+    bar1_probe: bool,
+    bar2: u32,
+    bar2_probe: bool,
+    bar3: u32,
+    bar3_probe: bool,
     bar4: u32,
     bar4_probe: bool,
 }
@@ -528,10 +537,14 @@ impl IdeController {
         pci_regs[0x0E] = 0x00; // header type
 
         // BAR0-3: legacy I/O windows (command/control blocks). We keep these fixed.
-        pci_regs[0x10..0x14].copy_from_slice(&(0x1F0u32 | 0x01).to_le_bytes());
-        pci_regs[0x14..0x18].copy_from_slice(&(0x3F4u32 | 0x01).to_le_bytes());
-        pci_regs[0x18..0x1C].copy_from_slice(&(0x170u32 | 0x01).to_le_bytes());
-        pci_regs[0x1C..0x20].copy_from_slice(&(0x374u32 | 0x01).to_le_bytes());
+        let bar0 = 0x1F0u32 | 0x01;
+        let bar1 = 0x3F4u32 | 0x01;
+        let bar2 = 0x170u32 | 0x01;
+        let bar3 = 0x374u32 | 0x01;
+        pci_regs[0x10..0x14].copy_from_slice(&bar0.to_le_bytes());
+        pci_regs[0x14..0x18].copy_from_slice(&bar1.to_le_bytes());
+        pci_regs[0x18..0x1C].copy_from_slice(&bar2.to_le_bytes());
+        pci_regs[0x1C..0x20].copy_from_slice(&bar3.to_le_bytes());
         // BAR4: Bus Master IDE.
         let bar4 = (bus_master_base as u32) | 0x01;
         pci_regs[0x20..0x24].copy_from_slice(&bar4.to_le_bytes());
@@ -545,6 +558,14 @@ impl IdeController {
             bus_master_base,
             bus_master: [BusMasterChannel::new(), BusMasterChannel::new()],
             pci_regs,
+            bar0,
+            bar0_probe: false,
+            bar1,
+            bar1_probe: false,
+            bar2,
+            bar2_probe: false,
+            bar3,
+            bar3_probe: false,
             bar4,
             bar4_probe: false,
         }
@@ -680,16 +701,48 @@ impl IdeController {
             1 => self.pci_regs[offset] as u32,
             2 => u16::from_le_bytes(self.pci_regs[offset..offset + 2].try_into().unwrap()) as u32,
             4 => {
-                if offset == 0x20 {
-                    // BAR4: Bus Master IDE.
-                    if self.bar4_probe {
-                        // Size mask response (16-byte I/O BAR).
-                        !(0x10u32 - 1) & 0xffff_fffc | 0x01
-                    } else {
-                        self.bar4
+                match offset {
+                    0x10 => {
+                        if self.bar0_probe {
+                            // 8-byte I/O BAR.
+                            (!(0x08u32 - 1) & 0xffff_fffc) | 0x01
+                        } else {
+                            self.bar0
+                        }
                     }
-                } else {
-                    u32::from_le_bytes(self.pci_regs[offset..offset + 4].try_into().unwrap())
+                    0x14 => {
+                        if self.bar1_probe {
+                            // 4-byte I/O BAR.
+                            (!(0x04u32 - 1) & 0xffff_fffc) | 0x01
+                        } else {
+                            self.bar1
+                        }
+                    }
+                    0x18 => {
+                        if self.bar2_probe {
+                            // 8-byte I/O BAR.
+                            (!(0x08u32 - 1) & 0xffff_fffc) | 0x01
+                        } else {
+                            self.bar2
+                        }
+                    }
+                    0x1C => {
+                        if self.bar3_probe {
+                            // 4-byte I/O BAR.
+                            (!(0x04u32 - 1) & 0xffff_fffc) | 0x01
+                        } else {
+                            self.bar3
+                        }
+                    }
+                    0x20 => {
+                        // BAR4: Bus Master IDE (16 bytes).
+                        if self.bar4_probe {
+                            (!(0x10u32 - 1) & 0xffff_fffc) | 0x01
+                        } else {
+                            self.bar4
+                        }
+                    }
+                    _ => u32::from_le_bytes(self.pci_regs[offset..offset + 4].try_into().unwrap()),
                 }
             }
             _ => 0,
@@ -706,18 +759,71 @@ impl IdeController {
             1 => self.pci_regs[offset] = val as u8,
             2 => self.pci_regs[offset..offset + 2].copy_from_slice(&(val as u16).to_le_bytes()),
             4 => {
-                if offset == 0x20 {
-                    // BAR4: Bus Master IDE base.
-                    if val == 0xffff_ffff {
-                        self.bar4_probe = true;
-                        self.bar4 = 0;
-                    } else {
-                        self.bar4_probe = false;
-                        self.bar4 = (val & 0xffff_fff0) | 0x01;
-                        self.bus_master_base = (self.bar4 as u16) & 0xfff0;
+                match offset {
+                    0x10 => {
+                        if val == 0xffff_ffff {
+                            self.bar0_probe = true;
+                            self.bar0 = 0;
+                        } else {
+                            self.bar0_probe = false;
+                            self.bar0 = (val & !(0x08u32 - 1) & 0xffff_fffc) | 0x01;
+                            self.primary.ports.cmd_base = (self.bar0 & 0xffff_fffc) as u16;
+                        }
+                        self.pci_regs[offset..offset + 4].copy_from_slice(&self.bar0.to_le_bytes());
+                        return;
                     }
-                    self.pci_regs[offset..offset + 4].copy_from_slice(&self.bar4.to_le_bytes());
-                    return;
+                    0x14 => {
+                        if val == 0xffff_ffff {
+                            self.bar1_probe = true;
+                            self.bar1 = 0;
+                        } else {
+                            self.bar1_probe = false;
+                            self.bar1 = (val & !(0x04u32 - 1) & 0xffff_fffc) | 0x01;
+                            let base = (self.bar1 & 0xffff_fffc) as u16;
+                            self.primary.ports.ctrl_base = base.wrapping_add(2);
+                        }
+                        self.pci_regs[offset..offset + 4].copy_from_slice(&self.bar1.to_le_bytes());
+                        return;
+                    }
+                    0x18 => {
+                        if val == 0xffff_ffff {
+                            self.bar2_probe = true;
+                            self.bar2 = 0;
+                        } else {
+                            self.bar2_probe = false;
+                            self.bar2 = (val & !(0x08u32 - 1) & 0xffff_fffc) | 0x01;
+                            self.secondary.ports.cmd_base = (self.bar2 & 0xffff_fffc) as u16;
+                        }
+                        self.pci_regs[offset..offset + 4].copy_from_slice(&self.bar2.to_le_bytes());
+                        return;
+                    }
+                    0x1C => {
+                        if val == 0xffff_ffff {
+                            self.bar3_probe = true;
+                            self.bar3 = 0;
+                        } else {
+                            self.bar3_probe = false;
+                            self.bar3 = (val & !(0x04u32 - 1) & 0xffff_fffc) | 0x01;
+                            let base = (self.bar3 & 0xffff_fffc) as u16;
+                            self.secondary.ports.ctrl_base = base.wrapping_add(2);
+                        }
+                        self.pci_regs[offset..offset + 4].copy_from_slice(&self.bar3.to_le_bytes());
+                        return;
+                    }
+                    0x20 => {
+                        // BAR4: Bus Master IDE base.
+                        if val == 0xffff_ffff {
+                            self.bar4_probe = true;
+                            self.bar4 = 0;
+                        } else {
+                            self.bar4_probe = false;
+                            self.bar4 = (val & !(0x10u32 - 1) & 0xffff_fffc) | 0x01;
+                            self.bus_master_base = (self.bar4 & 0xffff_fffc) as u16;
+                        }
+                        self.pci_regs[offset..offset + 4].copy_from_slice(&self.bar4.to_le_bytes());
+                        return;
+                    }
+                    _ => {}
                 }
 
                 self.pci_regs[offset..offset + 4].copy_from_slice(&val.to_le_bytes());
@@ -997,6 +1103,22 @@ impl IdeController {
 
     pub fn clear_secondary_irq(&mut self) {
         self.secondary.clear_irq();
+    }
+}
+
+impl PciDevice for IdeController {
+    fn config_read(&self, offset: u16, size: usize) -> u32 {
+        match size {
+            1 | 2 | 4 => self.pci_config_read(offset, size as u8),
+            _ => 0,
+        }
+    }
+
+    fn config_write(&mut self, offset: u16, size: usize, value: u32) {
+        match size {
+            1 | 2 | 4 => self.pci_config_write(offset, size as u8, value),
+            _ => {}
+        }
     }
 }
 
