@@ -53,6 +53,14 @@ jobs:
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('head/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-chromium-
+
       - name: Install Chromium (Playwright)
         working-directory: head
         run: npx playwright install --with-deps chromium
