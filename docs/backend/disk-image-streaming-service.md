@@ -14,6 +14,8 @@ On the client side, the storage subsystem uses `StreamingDisk` (see [05 - Storag
 
 This allows the emulator to boot quickly and only download the parts of the OS/image that are actually accessed.
 
+For the hosted-service model (user uploads, ownership/visibility, lease scopes, and writeback options), see: [Disk Image Lifecycle and Access Control](../17-disk-image-lifecycle-and-access-control.md).
+
 ## How it interacts with `StreamingDisk`
 
 `StreamingDisk` issues HTTP requests like:

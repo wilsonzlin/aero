@@ -13,6 +13,13 @@ This document defines the disk image lifecycle, access control, and persistence 
 
 > Integration note: this document assumes the streaming/lease mechanism described in [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md). Leases/capabilities may be presented as signed URLs, cookies, and/or `Authorization` headers (see that doc for tradeoffs). This doc extends that model to cover uploads, ownership, sharing, and writeback.
 
+Related documents (deployment/ops details):
+- Streaming auth, CORS, COOP/COEP: [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md)
+- CDN/object-store delivery: [Remote Disk Image Delivery (Object Store + CDN + HTTP Range)](./16-remote-disk-image-delivery.md)
+- Range behavior + CDN limits (CloudFront): [HTTP Range + CDN Behavior](./17-range-cdn-behavior.md)
+- CDN-friendly alternative to `Range`: [Chunked Disk Image Format](./18-chunked-disk-image-format.md)
+- Ops runbook for the bytes endpoint: [backend/disk-image-streaming-service.md](./backend/disk-image-streaming-service.md)
+
 ---
 
 ## Terminology
@@ -24,6 +31,7 @@ This document defines the disk image lifecycle, access control, and persistence 
 - **Delta / overlay**: Copy-on-write state layered over a base (local or remote).
 - **Lease token**: Short-lived token granting a narrow capability (e.g., `disk:read` for a specific image).
 - **User session**: Long-lived authentication (cookie/OAuth) used to call management APIs and request leases.
+- **`imageId` / `diskId`**: stable identifier for an image. This doc uses `imageId` for management-plane APIs; the streaming auth spec uses `diskId` for the disk-bytes endpoint. They can be the same underlying ID.
 
 ---
 
@@ -534,3 +542,85 @@ Server guidance:
 - Return signed URLs only over HTTPS.
 - Use tight expirations (minutes) and scope the URL to a single part/object.
 - Set `Cache-Control: no-store` on responses that contain any secrets (leases, signed URLs).
+
+---
+
+## Appendix: Suggested API surface (v1)
+
+Exact paths are implementation-defined; the goal is a clean separation between:
+
+- **Management plane** (user session auth, slower, higher privilege): create images, upload initiation, share, delete, request leases.
+- **Data plane** (lease/capability auth, high volume): `Range` reads and (optionally) writeback.
+
+### Image management (management plane)
+
+Common endpoints (cookie/OAuth session auth; permission checks per the matrix above):
+
+- `GET /v1/images` — list images visible to the caller.
+- `GET /v1/images/{imageId}` — metadata (kind, size, owner, state, visibility).
+- `PATCH /v1/images/{imageId}` — update metadata (e.g., display name, visibility).
+- `DELETE /v1/images/{imageId}` — delete image + derived data (deltas, shares, share links).
+
+### Upload (management plane + upload lease)
+
+- `POST /v1/images` — create an image record in `uploading`.
+- `POST /v1/images/{imageId}/upload:begin` — return either:
+  - an upload lease for direct API upload, or
+  - multipart instructions + signed URLs for direct-to-object-storage upload.
+- `PUT /v1/images/{imageId}/content` — (approach A) upload bytes to the API (optionally `Content-Range` resumable).
+- `POST /v1/images/{imageId}/upload:complete` — (approach B) complete multipart upload by providing ETags.
+- `POST /v1/images/{imageId}/upload:finalize` — transition to `processing` and start validation/conversion.
+
+### Sharing (management plane)
+
+- `POST /v1/images/{imageId}/shares` — grant another user read or write (creates an ACL entry).
+- `DELETE /v1/images/{imageId}/shares/{shareId}` — revoke an ACL entry.
+- `POST /v1/images/{imageId}/share-links` — create a share link principal (store hashed token).
+- `DELETE /v1/images/{imageId}/share-links/{linkId}` — revoke a share link.
+
+### Lease issuance (management plane)
+
+The management plane mints short-lived leases/capabilities compatible with the disk-bytes endpoint described in [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md).
+
+One possible shape:
+
+`POST /v1/leases`
+```json
+{ "diskId": "img_...", "scopes": ["disk:read"], "ttlSeconds": 600 }
+```
+
+Response (signed URL example):
+```json
+{
+  "diskId": "img_...",
+  "url": "https://app.example.com/disks/img_.../bytes?cap=...",
+  "expiresAt": "2026-01-10T12:34:56Z"
+}
+```
+
+Response (bearer token example):
+```json
+{
+  "diskId": "img_...",
+  "authorization": "Bearer ...",
+  "expiresAt": "2026-01-10T12:34:56Z"
+}
+```
+
+### Writeback endpoints (Strategies 2 and 3)
+
+If the service supports remote persistence, keep write endpoints separate from the read-only base:
+
+- **Strategy 2 (remote delta):**
+  - Create a delta resource owned by the user (or per-VM), e.g. `deltaId`.
+  - Writes go to the delta only; reads combine base + delta.
+- **Strategy 3 (fully remote read-write):**
+  - Treat the disk itself as a mutable resource, but still prefer immutable generations/snapshots under the hood.
+
+A simple, CDN-agnostic write API uses fixed-size blocks:
+
+- `PUT /v1/deltas/{deltaId}/blocks/{blockIndex}` — write an entire block (e.g., 1 MiB).
+  - Requires a `disk:write` lease scoped to `{deltaId}` (or the effective disk resource).
+  - Recommend `If-Match: "<generation>"` (or similar) to enforce single-writer semantics.
+- `GET /v1/deltas/{deltaId}/blocks/{blockIndex}` — read a block (optional; many designs can serve reads via the normal disk-bytes endpoint).
+- `POST /v1/deltas/{deltaId}:flush` — optional explicit flush/commit point (often a no-op if each block write is durable).
