@@ -31,6 +31,17 @@ type RangeFetchFn = (
   extraHeaders?: Record<string, string>,
 ) => Promise<RangeFetchResult>;
 
+type HeadFetchOkResult = {
+  ok: true;
+  status: number;
+  acceptRanges: string | null;
+  contentLength: string | null;
+};
+
+type HeadFetchErrorResult = { ok: false; error: string };
+
+type HeadFetchResult = HeadFetchOkResult | HeadFetchErrorResult;
+
 function expectedBytes(start: number, endInclusive: number): number[] {
   const out: number[] = [];
   for (let i = start; i <= endInclusive; i += 1) out.push(i & 0xff);
@@ -51,6 +62,33 @@ async function runRangeFetch(
       return await rangeFetch(targetUrl, range, extraHeaders);
     },
     { targetUrl: opts.url, range: opts.rangeHeaderValue, extraHeaders: opts.extraHeaders },
+  );
+}
+
+async function runHeadFetch(
+  page: Page,
+  opts: { pageOrigin: string; url: string; extraHeaders?: Record<string, string> },
+): Promise<HeadFetchResult> {
+  await page.goto(`${opts.pageOrigin}/`, { waitUntil: "load" });
+  return await page.evaluate<HeadFetchResult, { targetUrl: string; extraHeaders?: Record<string, string> }>(
+    async ({ targetUrl, extraHeaders }) => {
+      try {
+        const response = await fetch(targetUrl, {
+          method: "HEAD",
+          mode: "cors",
+          headers: extraHeaders ?? {},
+        });
+        return {
+          ok: true,
+          status: response.status,
+          acceptRanges: response.headers.get("Accept-Ranges"),
+          contentLength: response.headers.get("Content-Length"),
+        };
+      } catch (err) {
+        return { ok: false, error: String(err) };
+      }
+    },
+    { targetUrl: opts.url, extraHeaders: opts.extraHeaders },
   );
 }
 
@@ -207,6 +245,19 @@ test.describe("disk-image Range fetch (cross origin CORS + preflight)", () => {
     expect(headerValue(rangeReq?.headers["x-force-preflight"]), "Browser must include extra header").toBe(
       "1",
     );
+  });
+
+  test("cross-origin HEAD exposes Content-Length and Accept-Ranges", async ({ page }) => {
+    const result = await runHeadFetch(page, { pageOrigin: pageServer.origin, url: diskServer.url("/disk.img") });
+    if (!result.ok) throw new Error(`Cross-origin HEAD failed (likely CORS): ${result.error}`);
+
+    expect(result.status).toBe(200);
+    expect(result.acceptRanges, "Accept-Ranges must be exposed").toBe("bytes");
+    expect(result.contentLength, "Content-Length must be exposed").toBe(String(IMAGE_SIZE));
+
+    const headReq = diskServer.requests.find((req) => req.method === "HEAD");
+    expect(headReq, "Browser should issue a HEAD request").toBeTruthy();
+    expect(headerValue(headReq?.headers.origin), "Browser must send Origin header").toBe(pageServer.origin);
   });
 });
 
