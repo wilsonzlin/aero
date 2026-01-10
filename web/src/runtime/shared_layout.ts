@@ -16,6 +16,10 @@ export enum StatusIndex {
   HeartbeatCounter = 0,
   StopRequested = 1,
 
+  // I/O worker input telemetry (optional; used by tests and perf instrumentation).
+  IoInputBatchCounter = 2,
+  IoInputEventCounter = 3,
+
   CpuReady = 8,
   GpuReady = 9,
   IoReady = 10,
