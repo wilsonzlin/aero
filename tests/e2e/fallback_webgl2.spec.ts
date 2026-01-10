@@ -37,7 +37,6 @@ function expectPattern(samples: SampleResult) {
 function isWebGPURequired() {
   return process.env.AERO_REQUIRE_WEBGPU === '1';
 }
-
 test('Chromium: WebGPU path renders expected pattern when available @webgpu', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium');
 
@@ -61,14 +60,21 @@ test('Chromium: WebGPU path renders expected pattern when available @webgpu', as
 
   await page.goto('http://127.0.0.1:5173/web/gpu-smoke.html?backend=webgpu', { waitUntil: 'load' });
 
+  await waitForReady(page);
+  const initState = await page.evaluate(() => (window as any).__aeroTest);
+  if (initState?.error) {
+    if (isWebGPURequired()) {
+      throw new Error(`WebGPU init failed: ${String(initState.error)}`);
+    }
+    test.skip(true, `WebGPU init failed: ${String(initState.error)}`);
+  }
+
   const samples = await getSamples(page);
   expect(samples.backend).toBe('webgpu');
   expectPattern(samples);
 });
 
-test('WebKit/Firefox: WebGL2 fallback renders expected pattern', async ({ page, browserName }) => {
-  test.skip(browserName === 'chromium');
-
+test('WebGL2: forced backend renders expected pattern', async ({ page }) => {
   await page.goto('http://127.0.0.1:5173/web/gpu-smoke.html?backend=webgl2', { waitUntil: 'load' });
   const samples = await getSamples(page);
   expect(samples.backend).toBe('webgl2');
