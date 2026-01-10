@@ -13,6 +13,7 @@ Outputs:
 
 - Writes `out/toolchain.json` (absolute paths + provenance) for use by other scripts.
 - In GitHub Actions, also exports tool paths via `$GITHUB_OUTPUT`, `$GITHUB_ENV`, and `$GITHUB_PATH`.
+- If `WDK_DOWNLOAD_CACHE` is set, `winget` downloads are directed there (so CI can cache installers across runs).
 
 Example local usage:
 
