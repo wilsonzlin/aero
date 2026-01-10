@@ -86,6 +86,12 @@ static NTSTATUS
 VirtqueueRingDmaValidateAlignment(
     _In_ const VIRTQUEUE_RING_DMA* Ring)
 {
+    if (!VirtqueueRingIsAligned64((UINT64)(ULONG_PTR)Ring->Desc, 16) ||
+        !VirtqueueRingIsAligned64((UINT64)(ULONG_PTR)Ring->Avail, 2) ||
+        !VirtqueueRingIsAligned64((UINT64)(ULONG_PTR)Ring->Used, 4)) {
+        return STATUS_DATATYPE_MISALIGNMENT;
+    }
+
     if (!VirtqueueRingIsAligned64(Ring->DescDma, 16) ||
         !VirtqueueRingIsAligned64(Ring->AvailDma, 2) ||
         !VirtqueueRingIsAligned64(Ring->UsedDma, 4)) {
@@ -181,6 +187,10 @@ VirtqueueRingDmaSelfTest(
 {
     ASSERT(Ring != NULL);
     ASSERT(Ring->QueueSize != 0);
+
+    ASSERT(VirtqueueRingIsAligned64((UINT64)(ULONG_PTR)Ring->Desc, 16));
+    ASSERT(VirtqueueRingIsAligned64((UINT64)(ULONG_PTR)Ring->Avail, 2));
+    ASSERT(VirtqueueRingIsAligned64((UINT64)(ULONG_PTR)Ring->Used, 4));
 
     ASSERT(VirtqueueRingIsAligned64(Ring->DescDma, 16));
     ASSERT(VirtqueueRingIsAligned64(Ring->AvailDma, 2));

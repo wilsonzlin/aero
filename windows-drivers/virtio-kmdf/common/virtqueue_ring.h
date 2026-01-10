@@ -53,11 +53,19 @@ struct virtq_desc {
     UINT16 next;
 };
 
+/* Descriptor flags (virtio spec). */
+#define VIRTQ_DESC_F_NEXT 1
+#define VIRTQ_DESC_F_WRITE 2
+#define VIRTQ_DESC_F_INDIRECT 4
+
 struct virtq_avail {
     UINT16 flags;
     UINT16 idx;
     UINT16 ring[ANYSIZE_ARRAY]; /* queueSize entries, then optional used_event */
 };
+
+/* Available ring flags (virtio spec). */
+#define VIRTQ_AVAIL_F_NO_INTERRUPT 1
 
 struct virtq_used_elem {
     UINT32 id;
@@ -70,6 +78,9 @@ struct virtq_used {
     struct virtq_used_elem ring[ANYSIZE_ARRAY]; /* queueSize entries, then optional avail_event */
 };
 
+/* Used ring flags (virtio spec). */
+#define VIRTQ_USED_F_NO_NOTIFY 1
+
 #include <poppack.h>
 
 /* Compile-time validation of virtq_desc layout (required by the virtio spec). */
@@ -79,6 +90,33 @@ C_ASSERT(FIELD_OFFSET(struct virtq_desc, len) == 8);
 C_ASSERT(FIELD_OFFSET(struct virtq_desc, flags) == 12);
 C_ASSERT(FIELD_OFFSET(struct virtq_desc, next) == 14);
 C_ASSERT(sizeof(struct virtq_used_elem) == 8);
+C_ASSERT(FIELD_OFFSET(struct virtq_used_elem, id) == 0);
+C_ASSERT(FIELD_OFFSET(struct virtq_used_elem, len) == 4);
+
+C_ASSERT(FIELD_OFFSET(struct virtq_avail, flags) == 0);
+C_ASSERT(FIELD_OFFSET(struct virtq_avail, idx) == 2);
+C_ASSERT(FIELD_OFFSET(struct virtq_avail, ring) == 4);
+
+C_ASSERT(FIELD_OFFSET(struct virtq_used, flags) == 0);
+C_ASSERT(FIELD_OFFSET(struct virtq_used, idx) == 2);
+C_ASSERT(FIELD_OFFSET(struct virtq_used, ring) == 4);
+
+/* EVENT_IDX helper accessors (only valid if the feature is negotiated). */
+__forceinline volatile UINT16*
+VirtqAvailUsedEvent(
+    _In_ volatile struct virtq_avail* Avail,
+    _In_ USHORT QueueSize)
+{
+    return (volatile UINT16*)&Avail->ring[QueueSize];
+}
+
+__forceinline volatile UINT16*
+VirtqUsedAvailEvent(
+    _In_ volatile struct virtq_used* Used,
+    _In_ USHORT QueueSize)
+{
+    return (volatile UINT16*)&Used->ring[QueueSize];
+}
 
 typedef struct _VIRTQUEUE_RING_LAYOUT {
     SIZE_T DescSize;

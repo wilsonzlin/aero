@@ -1,4 +1,4 @@
-#include "virtio_dma.h"
+#include "virtqueue_ring.h"
 
 //
 // Minimal usage example for the virtio_dma module.
@@ -12,6 +12,7 @@ NTSTATUS VirtioTestQueueAllocAndLog(_In_ WDFDEVICE Device)
     NTSTATUS status;
     VIRTIO_DMA_CONTEXT* dma = NULL;
     VIRTIO_COMMON_BUFFER buf;
+    VIRTQUEUE_RING_DMA ring;
 
     status = VirtioDmaCreate(Device, 64 * 1024, 32, TRUE, &dma);
     if (!NT_SUCCESS(status)) {
@@ -24,7 +25,19 @@ NTSTATUS VirtioTestQueueAllocAndLog(_In_ WDFDEVICE Device)
         VirtioDmaFreeCommonBuffer(&buf);
     }
 
+    status = VirtqueueRingDmaAlloc(dma, NULL, 256, FALSE, &ring);
+    if (NT_SUCCESS(status)) {
+        VIRTIO_DMA_TRACE(
+            "test queue ring desc=%p avail=%p used=%p descDma=0x%I64x availDma=0x%I64x usedDma=0x%I64x\n",
+            ring.Desc,
+            ring.Avail,
+            ring.Used,
+            (unsigned long long)ring.DescDma,
+            (unsigned long long)ring.AvailDma,
+            (unsigned long long)ring.UsedDma);
+        VirtqueueRingDmaFree(&ring);
+    }
+
     VirtioDmaDestroy(&dma);
     return status;
 }
-
