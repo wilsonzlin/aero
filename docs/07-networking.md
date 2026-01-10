@@ -4,6 +4,11 @@
 
 Windows 7 networking requires TCP/IP stack emulation. Browser constraints mean we must use WebSockets for TCP and WebRTC for UDP.
 
+> **Architecture note:** This document was written in the “in-browser slirp/NAT” direction.
+> The current recommended direction is to **tunnel Ethernet frames (L2) to a proxy that runs the
+> user-space stack**, to keep browser CPU usage low and avoid implementing TCP in WASM.
+> See [`networking-architecture-rfc.md`](./networking-architecture-rfc.md).
+
 ---
 
 ## Network Architecture
