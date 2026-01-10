@@ -109,6 +109,18 @@ echo OK: staged binaries.
 echo Next (in a Win7 VM, as Administrator):
 echo   cd drivers\\aerogpu\\packaging\\win7
 echo   sign_test.cmd
-echo   install.cmd
+if exist "%PKG_DIR%\aerogpu_d3d10.dll" (
+  if /i "%ARCH%"=="x64" (
+    if exist "%PKG_DIR%\aerogpu_d3d10_x64.dll" (
+      echo   install.cmd aerogpu_dx11.inf
+    ) else (
+      echo   install.cmd
+    )
+  ) else (
+    echo   install.cmd aerogpu_dx11.inf
+  )
+) else (
+  echo   install.cmd
+)
 exit /b 0
 
