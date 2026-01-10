@@ -352,7 +352,7 @@ fn exec_cmpxchg<B: Bus>(
             return Err(ExecError::InvalidOpcode(0));
         }
         let dst = cpu.regs.get(inst.modrm.rm, size, rex_present);
-        alu::update_sub_flags(&mut cpu.rflags, dst, expected, size);
+        alu::update_sub_flags(&mut cpu.rflags, expected, dst, size);
         if dst == expected {
             cpu.regs
                 .set(inst.modrm.rm, size, rex_present, src, cpu.mode);
@@ -371,13 +371,13 @@ fn exec_cmpxchg<B: Bus>(
                 (old, (old, false))
             }
         })?;
-        alu::update_sub_flags(&mut cpu.rflags, old, expected, size);
+        alu::update_sub_flags(&mut cpu.rflags, expected, old, size);
         if !swapped {
             cpu.regs.set(0, size, rex_present, old, cpu.mode);
         }
     } else {
         let old = read_mem_sized(cpu, bus, addr, size);
-        alu::update_sub_flags(&mut cpu.rflags, old, expected, size);
+        alu::update_sub_flags(&mut cpu.rflags, expected, old, size);
         if old == expected {
             write_mem_sized(cpu, bus, addr, size, src);
         } else {

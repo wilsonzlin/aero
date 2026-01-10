@@ -47,8 +47,9 @@ fn lock_cmpxchg_rmw_sizes_success_and_failure() {
         assert_eq!(bus.read_u8(addr), 0x80);
         assert_eq!(cpu.regs.al(), 0x80);
         assert!(!cpu.rflags.zf());
-        assert!(!cpu.rflags.get(RFlags::CF));
+        assert!(cpu.rflags.get(RFlags::CF));
         assert!(cpu.rflags.get(RFlags::OF));
+        assert!(cpu.rflags.get(RFlags::SF));
     }
 
     // r/m16, r16
@@ -70,7 +71,7 @@ fn lock_cmpxchg_rmw_sizes_success_and_failure() {
         assert!(!cpu.rflags.get(RFlags::CF));
     }
 
-    // r/m16, r16 failure (exercise CF for subtraction borrow).
+    // r/m16, r16 failure.
     {
         let mut cpu = Cpu::new(CpuMode::Long64);
         let mut bus = setup_bus();
@@ -86,7 +87,7 @@ fn lock_cmpxchg_rmw_sizes_success_and_failure() {
         assert_eq!(bus.read_u16(addr), 0x0001);
         assert_eq!(cpu.regs.ax(), 0x0001);
         assert!(!cpu.rflags.zf());
-        assert!(cpu.rflags.get(RFlags::CF));
+        assert!(!cpu.rflags.get(RFlags::CF));
         assert!(!cpu.rflags.get(RFlags::OF));
     }
 
@@ -124,7 +125,7 @@ fn lock_cmpxchg_rmw_sizes_success_and_failure() {
         assert_eq!(bus.read_u32(addr), 1);
         assert_eq!(cpu.regs.eax(), 1);
         assert!(!cpu.rflags.zf());
-        assert!(cpu.rflags.get(RFlags::CF));
+        assert!(!cpu.rflags.get(RFlags::CF));
     }
 
     // r/m64, r64
@@ -161,7 +162,7 @@ fn lock_cmpxchg_rmw_sizes_success_and_failure() {
         assert_eq!(bus.read_u64(addr), 1);
         assert_eq!(cpu.regs.rax, 1);
         assert!(!cpu.rflags.zf());
-        assert!(cpu.rflags.get(RFlags::CF));
+        assert!(!cpu.rflags.get(RFlags::CF));
     }
 }
 
