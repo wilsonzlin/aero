@@ -179,10 +179,19 @@ NTSTATUS VirtioDmaAllocCommonBufferWithParent(
     Out->Dma = VirtioDmaLogicalAddressToU64(WdfCommonBufferGetAlignedLogicalAddress(Out->Handle));
     Out->Length = Length;
 
-    NT_ASSERT(Out->Va != NULL);
+    if (Out->Va == NULL) {
+        WdfObjectDelete(Out->Handle);
+        RtlZeroMemory(Out, sizeof(*Out));
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
     if (Alignment != 0) {
-        NT_ASSERT(((ULONG_PTR)Out->Va & (Alignment - 1)) == 0);
-        NT_ASSERT((Out->Dma & (Alignment - 1)) == 0);
+        const size_t mask = Alignment - 1;
+        if ((((ULONG_PTR)Out->Va & mask) != 0) || ((Out->Dma & mask) != 0)) {
+            WdfObjectDelete(Out->Handle);
+            RtlZeroMemory(Out, sizeof(*Out));
+            return STATUS_DATATYPE_MISALIGNMENT;
+        }
     }
 
     VIRTIO_DMA_TRACE(
