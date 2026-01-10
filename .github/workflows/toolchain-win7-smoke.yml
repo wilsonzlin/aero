@@ -11,9 +11,26 @@ on:
 jobs:
   validate:
     runs-on: windows-latest
+    env:
+      # Cache only the installer/downloads (not the installed WDK toolchain).
+      WDK_DOWNLOAD_CACHE: C:\wdk-download-cache
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Prepare WDK download cache directory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path $env:WDK_DOWNLOAD_CACHE | Out-Null
+
+      - name: Cache WDK downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.WDK_DOWNLOAD_CACHE }}
+          key: wdk-download-${{ runner.os }}-${{ hashFiles('ci/install-wdk.ps1', 'ci/lib/Toolchain.psm1') }}
+          restore-keys: |
+            wdk-download-${{ runner.os }}-
 
       - name: Install / resolve toolchain
         shell: pwsh
@@ -32,4 +49,3 @@ jobs:
           path: |
             out/toolchain.json
             out/toolchain-validation/**
-
