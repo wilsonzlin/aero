@@ -167,6 +167,13 @@ ensure_wasm_crate_dir() {
     return
   fi
 
+  # Prefer the canonical wasm-pack crate when present to avoid ambiguous
+  # auto-detection (the workspace contains multiple `cdylib` crates).
+  if [[ -f "$ROOT_DIR/crates/aero-wasm/Cargo.toml" ]]; then
+    WASM_CRATE_DIR="$ROOT_DIR/crates/aero-wasm"
+    return
+  fi
+
   need_cmd cargo
   need_cmd python3
   [[ -f "$ROOT_DIR/Cargo.toml" ]] || die "Cargo.toml not found at repo root: $ROOT_DIR"
