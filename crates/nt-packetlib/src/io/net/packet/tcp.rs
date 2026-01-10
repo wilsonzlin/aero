@@ -221,10 +221,9 @@ impl<'a> TcpSegmentBuilder<'a> {
         out[20..header_len].copy_from_slice(self.options);
         out[header_len..len].copy_from_slice(self.payload);
 
-        let mut csum = checksum::transport_checksum_ipv4(src_ip, dst_ip, 6, &out[..len]);
-        if csum == 0 {
-            csum = 0xffff;
-        }
+        // Unlike UDP, TCP has no "checksum disabled" sentinel value; a computed checksum
+        // of 0x0000 is valid and must be written as-is.
+        let csum = checksum::transport_checksum_ipv4(src_ip, dst_ip, 6, &out[..len]);
         out[16..18].copy_from_slice(&csum.to_be_bytes());
         Ok(len)
     }
@@ -248,5 +247,48 @@ mod tests {
         assert_eq!(seg.flags(), TcpFlags::SYN | TcpFlags::ACK);
         assert!(seg.checksum_valid_ipv4(src_ip, dst_ip));
     }
-}
 
+    #[test]
+    fn tcp_checksum_can_be_zero() {
+        let src_ip = Ipv4Addr::new(10, 0, 0, 1);
+        let dst_ip = Ipv4Addr::new(10, 0, 0, 2);
+
+        // Construct a minimal TCP segment whose correct checksum is exactly 0x0000.
+        // (This is valid for TCP; only UDP treats 0x0000 as a special "checksum disabled"
+        // marker.)
+        let mut base = [0u8; 22];
+        base[0..2].copy_from_slice(&1u16.to_be_bytes());
+        base[2..4].copy_from_slice(&2u16.to_be_bytes());
+        base[4..8].copy_from_slice(&1u32.to_be_bytes());
+        base[8..12].copy_from_slice(&0u32.to_be_bytes());
+        base[12] = 0x50; // data offset = 5
+        base[13] = TcpFlags::ACK.0 as u8;
+        base[14..16].copy_from_slice(&1024u16.to_be_bytes());
+        base[16..18].copy_from_slice(&0u16.to_be_bytes());
+        base[18..20].copy_from_slice(&0u16.to_be_bytes());
+        base[20..22].copy_from_slice(&0u16.to_be_bytes());
+
+        let sum_folded = !checksum::transport_checksum_ipv4(src_ip, dst_ip, 6, &base);
+        let payload_word = 0xffffu16.wrapping_sub(sum_folded);
+        let payload = payload_word.to_be_bytes();
+
+        let builder = TcpSegmentBuilder {
+            src_port: 1,
+            dst_port: 2,
+            seq_number: 1,
+            ack_number: 0,
+            flags: TcpFlags::ACK,
+            window_size: 1024,
+            urgent_pointer: 0,
+            options: &[],
+            payload: &payload,
+        };
+        let mut buf = [0u8; 64];
+        let len = builder.write(src_ip, dst_ip, &mut buf).unwrap();
+        let seg = TcpSegment::parse(&buf[..len]).unwrap();
+
+        assert_eq!(seg.checksum(), 0);
+        assert!(seg.checksum_valid_ipv4(src_ip, dst_ip));
+        assert_eq!(checksum::transport_checksum_ipv4(src_ip, dst_ip, 6, &buf[..len]), 0);
+    }
+}
