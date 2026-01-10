@@ -8,6 +8,10 @@ gateway:
   image:
     tag: "<REPLACE_WITH_IMAGE_TAG>"
 
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
 ingress:
   host: "aero.example.com"
   tls:
