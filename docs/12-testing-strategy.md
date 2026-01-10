@@ -639,6 +639,16 @@ async fn test_internet_explorer() {
 }
 ```
 
+### Guest-side GPU driver validation (Windows 7)
+
+To validate the AeroGPU WDDM driver stack end-to-end **inside a Windows 7 guest**, use the guest-side test suite in:
+
+* `drivers/aerogpu/tests/win7/`
+
+This suite contains small D3D9Ex/D3D11 programs that render a known pattern, read back pixels to assert correctness, and print a clear `PASS:`/`FAIL:` line (non-zero exit code on failure). A `run_all.cmd` harness is included to execute the suite and aggregate results.
+
+These tests are intended for Win7 VMs with AeroGPU installed and are not expected to run in default OSS CI.
+
 ### Performance Benchmarks
 
 ```rust
