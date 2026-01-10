@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import type { IncomingHttpHeaders } from 'node:http';
 import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,7 +17,7 @@ async function httpsRequest(
   hostname: string,
   port: number,
   pathName: string,
-): Promise<{ statusCode: number; headers: https.IncomingHttpHeaders; body: string }> {
+): Promise<{ statusCode: number; headers: IncomingHttpHeaders; body: string }> {
   return await new Promise((resolve, reject) => {
     const req = https.request(
       { hostname, port, path: pathName, method: 'GET', rejectUnauthorized: false },
@@ -95,6 +96,16 @@ test('HTTPS server starts and serves /healthz', async (t) => {
     TCP_PROXY_MAX_CONNECTIONS: 0,
     TCP_PROXY_MAX_CONNECTIONS_PER_IP: 0,
     DNS_UPSTREAMS: [],
+    DNS_UPSTREAM_TIMEOUT_MS: 200,
+    DNS_CACHE_MAX_ENTRIES: 0,
+    DNS_CACHE_MAX_TTL_SECONDS: 0,
+    DNS_CACHE_NEGATIVE_TTL_SECONDS: 0,
+    DNS_MAX_QUERY_BYTES: 4096,
+    DNS_MAX_RESPONSE_BYTES: 4096,
+    DNS_ALLOW_ANY: false,
+    DNS_ALLOW_PRIVATE_PTR: false,
+    DNS_QPS_PER_IP: 0,
+    DNS_BURST_PER_IP: 0,
   });
 
   await app.listen({ host: '127.0.0.1', port: 0 });
@@ -116,4 +127,3 @@ test('HTTPS server starts and serves /healthz', async (t) => {
   const cookieHeader = Array.isArray(setCookie) ? setCookie.join('; ') : setCookie;
   assert.match(cookieHeader, /\bSecure\b/, 'expected Secure cookie attribute when served over HTTPS');
 });
-

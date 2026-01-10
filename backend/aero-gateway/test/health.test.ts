@@ -12,7 +12,6 @@ const baseConfig = {
   CROSS_ORIGIN_ISOLATION: false,
   TRUST_PROXY: false,
   RATE_LIMIT_REQUESTS_PER_MINUTE: 0,
-  TRUST_PROXY: false,
   TLS_ENABLED: false,
   TLS_CERT_PATH: '',
   TLS_KEY_PATH: '',
