@@ -60,6 +60,20 @@ test("normaliseBenchResult supports tools/perf raw.json format", () => {
   assert.equal(scenarios.browser.metrics.chromium_startup_ms.value, 20);
 });
 
+test("normaliseBenchResult supports scenario runner report.json format", () => {
+  const { scenarios } = normaliseBenchResult({
+    scenarioId: "system_boot",
+    status: "ok",
+    metrics: [{ id: "boot_time_ms", unit: "ms", value: 1234 }],
+  });
+
+  assert.equal(scenarios.system_boot.metrics.boot_time_ms.value, 1234);
+  assert.equal(scenarios.system_boot.metrics.boot_time_ms.unit, "ms");
+  assert.equal(scenarios.system_boot.metrics.boot_time_ms.better, "lower");
+  assert.equal(scenarios.system_boot.metrics.boot_time_ms.samples.n, 1);
+  assert.equal(scenarios.system_boot.metrics.boot_time_ms.samples.stdev, 0);
+});
+
 test("formatDelta respects metric directionality", () => {
   assert.equal(
     formatDelta({ prev: 100, next: 110, better: "higher", unit: "ops/s" }).className,

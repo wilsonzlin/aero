@@ -309,7 +309,9 @@ Where to find artifacts:
 What CI currently uploads (subject to change):
 
 - **PR perf:** `perf-smoke-<run_id>` (includes baseline + candidate summaries and `compare.md`)
-- **Nightly perf:** `perf-nightly-<run_id>` (browser perf run output) and `perf-history-dashboard` (microbench history + dashboard bundle)
+- **Nightly perf:** `perf-nightly-<run_id>` (browser perf run output) and `perf-history-dashboard` (time-series history + static dashboard bundle)
+
+For the canonical repo, the nightly workflow also publishes the dashboard to `gh-pages` (GitHub Pages) so trends are visible without downloading artifacts.
 
 ---
 

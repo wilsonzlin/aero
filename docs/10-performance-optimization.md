@@ -699,10 +699,10 @@ impl<T> LockFreeQueue<T> {
 
 ### Nightly benchmark history
 
-This repo includes a small, dependency-free benchmark harness in `bench/` and a scheduled workflow (`.github/workflows/perf-nightly.yml`) that:
+This repo includes a versioned performance history (`bench/history.json`) and a scheduled workflow (`.github/workflows/perf-nightly.yml`) that:
 
-- runs the benchmarks on a nightly schedule
-- appends results into a versioned `history.json` time series (mean + variance indicators)
+- runs a stable browser benchmark suite (Playwright/Chromium via `tools/perf/`)
+- appends results into the `history.json` time series (mean + variance indicators)
 - publishes a static dashboard (trend graphs + commit links) as a workflow artifact and (optionally) to `gh-pages`
 
 ### Built-in Profiler

@@ -37,6 +37,17 @@ node bench/history.js append \
   --repository "wilsonzlin/aero"
 ```
 
+You can also append a macrobench scenario runner output (`bench/runner.ts` writes `report.json`) — metrics are treated as single-sample values (n=1):
+
+```bash
+node bench/history.js append \
+  --history bench/history.json \
+  --input perf-results/local/report.json \
+  --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --commit "$(git rev-parse HEAD)" \
+  --repository "wilsonzlin/aero"
+```
+
 Generate a lightweight markdown report:
 
 ```bash

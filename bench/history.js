@@ -66,11 +66,14 @@ export function normaliseBenchResult(result) {
   if (result.schemaVersion === 1) {
     return normaliseLegacyBenchResult(result);
   }
+  if (typeof result.scenarioId === "string" && Array.isArray(result.metrics)) {
+    return normaliseScenarioRunnerReport(result);
+  }
   if (result.meta && Array.isArray(result.benchmarks)) {
     return normalisePerfToolResult(result);
   }
   throw new Error(
-    "Unsupported benchmark result format (expected schemaVersion=1 scenarios or tools/perf {meta, benchmarks})",
+    "Unsupported benchmark result format (expected schemaVersion=1 scenarios, scenario runner report.json, or tools/perf {meta, benchmarks})",
   );
 }
 
@@ -138,6 +141,48 @@ function inferBetter(name, unit) {
   if (unit === "fps" || name.includes("fps")) return "higher";
   if (unit.includes("ops") || unit.includes("op") || name.includes("ops") || name.includes("ips")) return "higher";
   return "lower";
+}
+
+function normaliseScenarioRunnerReport(result) {
+  if (result.status && result.status !== "ok") {
+    throw new Error(`Scenario runner report status is ${String(result.status)} (expected ok)`);
+  }
+
+  const metrics = {};
+  for (const metric of result.metrics) {
+    if (metric === null || typeof metric !== "object") {
+      throw new Error("Scenario runner metric must be an object");
+    }
+    if (typeof metric.id !== "string" || metric.id.length === 0) {
+      throw new Error("Scenario runner metric.id must be a non-empty string");
+    }
+    if (typeof metric.unit !== "string" || metric.unit.length === 0) {
+      throw new Error(`Scenario runner metric ${metric.id} must provide unit`);
+    }
+    if (typeof metric.value !== "number" || !Number.isFinite(metric.value)) {
+      throw new Error(`Scenario runner metric ${metric.id} must provide finite value`);
+    }
+
+    const better = inferBetter(metric.id, metric.unit);
+    metrics[metric.id] = {
+      value: metric.value,
+      unit: metric.unit,
+      better,
+      samples: {
+        n: 1,
+        min: metric.value,
+        max: metric.value,
+        stdev: 0,
+        cv: 0,
+      },
+    };
+  }
+
+  return {
+    scenarios: {
+      [result.scenarioId]: { metrics },
+    },
+  };
 }
 
 function normalisePerfToolResult(result) {
