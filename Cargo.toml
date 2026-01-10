@@ -15,4 +15,5 @@ members = [
     "crates/memory",
     "crates/platform",
     "crates/aero-devices-input",
+    "server",
 ]
