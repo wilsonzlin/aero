@@ -202,6 +202,40 @@ Do storage first, then network, then GPU. If you change storage + GPU simultaneo
    - Browse to the Guest Tools driver folder and ensure you’re selecting the correct architecture.
 4. If installation is blocked by signatures, resolve Code 52 first.
 
+## Issue: Device Manager “Code 28” (drivers not installed)
+
+**Symptom**
+
+- Device Manager shows:
+  - `The drivers for this device are not installed. (Code 28)`
+
+**Fix**
+
+1. Run `setup.cmd` as Administrator again (it should stage the missing drivers).
+2. Or install the driver manually:
+   - Right-click the device → **Update Driver Software…**
+   - **Browse my computer for driver software**
+   - Point it at your Guest Tools driver folder.
+
+## Issue: Device Manager “Code 10” (device cannot start)
+
+**Symptom**
+
+- Device Manager shows:
+  - `This device cannot start. (Code 10)`
+
+**Common causes**
+
+- Wrong driver (x86 vs x64, or the wrong device class).
+- Driver is present but blocked by signing/trust (sometimes appears as Code 10 or Code 52 depending on the device).
+- Incomplete/mismatched driver package (mixed versions).
+
+**Fix**
+
+1. Check signature/trust first (Code 52 section, KB3033929, correct clock).
+2. Re-run `setup.cmd` as Administrator.
+3. If you recently changed multiple VM devices, roll back and switch one device class at a time to isolate the failure.
+
 ## Issue: Windows Setup can’t see a virtio-blk disk (slipstream installs)
 
 This only applies if you are attempting to install Windows directly onto **virtio-blk** during Windows Setup.

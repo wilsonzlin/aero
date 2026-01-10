@@ -182,8 +182,13 @@ If you are using production-signed drivers, keep test signing off.
 
 Use either `pnputil` (Windows 7 built-in) or DISM:
 
-- `pnputil -i -a X:\path\to\drivers\*.inf`
-- or: `dism /online /add-driver /driver:X:\path\to\drivers\ /recurse`
+- Recommended (recursively add everything under a folder):
+  - `dism /online /add-driver /driver:X:\path\to\drivers\ /recurse`
+- Alternative (if you prefer `pnputil`):
+  - `pnputil -i -a X:\path\to\driver.inf`
+  - To bulk-install multiple INFs from an elevated Command Prompt:
+    - `for /r X:\path\to\drivers %i in (*.inf) do pnputil -i -a %i`
+    - If you put this into a `.cmd` file, use `%%i` instead of `%i`.
 
 After staging, reboot once while still on baseline devices.
 
