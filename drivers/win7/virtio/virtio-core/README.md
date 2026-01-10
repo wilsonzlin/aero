@@ -80,6 +80,22 @@ After `VirtioPciModernMapBars` succeeds, the driver can use:
 - `Dev->IsrStatus`
 - `Dev->DeviceCfg`
 
+## Concurrency and selector-based CommonCfg registers
+
+`virtio_pci_common_cfg` contains global selector registers (`device_feature_select`,
+`driver_feature_select`, `queue_select`). All CommonCfg fields that depend on those
+selectors (feature halves, per-queue fields) **must be serialized** when accessed
+from multiple threads/queues/DPCs.
+
+This library provides a per-device `WDFSPINLOCK` for that purpose:
+
+- Use `VirtioPciCommonCfgLock()` / `VirtioPciCommonCfgUnlock()` to perform a
+  multi-step CommonCfg sequence atomically (IRQL <= DISPATCH_LEVEL).
+- Prefer the provided helper APIs (`VirtioPciReadDeviceFeatures`,
+  `VirtioPciWriteDriverFeatures`, `VirtioPciReadQueue*`, `VirtioPciWriteQueue*`).
+- If you need to batch operations, call the corresponding `*Locked()` helpers
+  while holding the CommonCfg lock.
+
 ## Diagnostics
 
 To enable `DbgPrintEx` output from this library, set a compile-time define:
@@ -92,4 +108,3 @@ When enabled, `VirtioPciModernDumpBars()` and `VirtioPciModernDumpCaps()` emit:
 
 - all virtio vendor capabilities discovered in PCI config space
 - BAR base addresses, resource lengths, and mapped virtual addresses
-
