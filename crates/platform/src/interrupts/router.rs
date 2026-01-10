@@ -1,6 +1,9 @@
 use super::ioapic::{IoApic, IoApicDelivery};
 use super::local_apic::LocalApic;
 use super::pic::Pic8259;
+use crate::io::{IoPortBus, PortIoDevice};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlatformInterruptMode {
@@ -13,6 +16,10 @@ pub enum InterruptInput {
     IsaIrq(u8),
     Gsi(u32),
 }
+
+pub const IMCR_SELECT_PORT: u16 = 0x22;
+pub const IMCR_DATA_PORT: u16 = 0x23;
+pub const IMCR_INDEX: u8 = 0x70;
 
 pub trait InterruptController {
     fn get_pending(&self) -> Option<u8>;
@@ -29,6 +36,46 @@ pub struct PlatformInterrupts {
     lapic: LocalApic,
     imcr_select: u8,
     imcr: u8,
+}
+
+pub type SharedPlatformInterrupts = Rc<RefCell<PlatformInterrupts>>;
+
+struct ImcrPort {
+    interrupts: SharedPlatformInterrupts,
+    port: u16,
+}
+
+impl ImcrPort {
+    fn new(interrupts: SharedPlatformInterrupts, port: u16) -> Self {
+        Self { interrupts, port }
+    }
+}
+
+impl PortIoDevice for ImcrPort {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        debug_assert_eq!(port, self.port);
+        let value = self.interrupts.borrow().imcr_port_read_u8(port) as u32;
+        match size {
+            1 => value,
+            2 => value | (value << 8),
+            4 => value | (value << 8) | (value << 16) | (value << 24),
+            _ => value,
+        }
+    }
+
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        debug_assert_eq!(port, self.port);
+        let mut interrupts = self.interrupts.borrow_mut();
+        match size {
+            1 => interrupts.imcr_port_write(port, value as u8),
+            2 | 4 => {
+                for i in 0..(size as usize) {
+                    interrupts.imcr_port_write(port, (value >> (i * 8)) as u8);
+                }
+            }
+            _ => interrupts.imcr_port_write(port, value as u8),
+        }
+    }
 }
 
 impl PlatformInterrupts {
@@ -143,9 +190,9 @@ impl PlatformInterrupts {
     /// - write bit0 to port `0x23` (`0` = PIC, `1` = APIC)
     pub fn imcr_port_write(&mut self, port: u16, value: u8) {
         match port {
-            0x22 => self.imcr_select = value,
-            0x23 => {
-                if self.imcr_select == 0x70 {
+            IMCR_SELECT_PORT => self.imcr_select = value,
+            IMCR_DATA_PORT => {
+                if self.imcr_select == IMCR_INDEX {
                     self.imcr = value & 1;
                     self.set_mode(if self.imcr != 0 {
                         PlatformInterruptMode::Apic
@@ -156,6 +203,25 @@ impl PlatformInterrupts {
             }
             _ => {}
         }
+    }
+
+    pub fn imcr_port_read_u8(&self, port: u16) -> u8 {
+        match port {
+            IMCR_SELECT_PORT => self.imcr_select,
+            IMCR_DATA_PORT => {
+                if self.imcr_select == IMCR_INDEX {
+                    self.imcr
+                } else {
+                    0
+                }
+            }
+            _ => 0,
+        }
+    }
+
+    pub fn register_imcr_ports(bus: &mut IoPortBus, interrupts: SharedPlatformInterrupts) {
+        bus.register(IMCR_SELECT_PORT, Box::new(ImcrPort::new(interrupts.clone(), IMCR_SELECT_PORT)));
+        bus.register(IMCR_DATA_PORT, Box::new(ImcrPort::new(interrupts, IMCR_DATA_PORT)));
     }
 
     fn raise_gsi(&mut self, gsi: u32) {
@@ -230,6 +296,21 @@ impl InterruptController for PlatformInterrupts {
 mod tests {
     use super::*;
     use crate::interrupts::{IoApicRedirectionEntry, TriggerMode};
+
+    #[test]
+    fn imcr_ports_switch_mode_via_io_bus() {
+        let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+        let mut bus = IoPortBus::new();
+        PlatformInterrupts::register_imcr_ports(&mut bus, interrupts.clone());
+
+        bus.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+        bus.write_u8(IMCR_DATA_PORT, 0x01);
+        assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+        bus.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+        bus.write_u8(IMCR_DATA_PORT, 0x00);
+        assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::LegacyPic);
+    }
 
     #[test]
     fn legacy_pic_irq1_delivers_pic_vector() {
@@ -322,12 +403,12 @@ mod tests {
         let mut ints = PlatformInterrupts::new();
         assert_eq!(ints.mode(), PlatformInterruptMode::LegacyPic);
 
-        ints.imcr_port_write(0x22, 0x70);
-        ints.imcr_port_write(0x23, 0x01);
+        ints.imcr_port_write(IMCR_SELECT_PORT, IMCR_INDEX);
+        ints.imcr_port_write(IMCR_DATA_PORT, 0x01);
         assert_eq!(ints.mode(), PlatformInterruptMode::Apic);
 
-        ints.imcr_port_write(0x22, 0x70);
-        ints.imcr_port_write(0x23, 0x00);
+        ints.imcr_port_write(IMCR_SELECT_PORT, IMCR_INDEX);
+        ints.imcr_port_write(IMCR_DATA_PORT, 0x00);
         assert_eq!(ints.mode(), PlatformInterruptMode::LegacyPic);
     }
 }
