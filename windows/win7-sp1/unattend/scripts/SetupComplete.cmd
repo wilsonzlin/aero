@@ -106,9 +106,10 @@ if not exist "%AERO_INSTALL_SCRIPT%" (
 )
 
 echo Creating scheduled task "%AERO_TASK_NAME%" to install Aero drivers on next boot...
-REM Note: quoting here is intentionally gnarly; the resulting task action is:
+REM The task action we want is:
 REM   cmd.exe /c ""C:\...\InstallDriversOnce.cmd""
-schtasks /Create /F /SC ONSTART /TN "%AERO_TASK_NAME%" /RU SYSTEM /RL HIGHEST /TR "cmd.exe /c """"%AERO_INSTALL_SCRIPT%"""""
+echo Task action: cmd.exe /c ""%AERO_INSTALL_SCRIPT%""
+schtasks /Create /F /SC ONSTART /TN "%AERO_TASK_NAME%" /RU SYSTEM /RL HIGHEST /TR "cmd.exe /c ""%AERO_INSTALL_SCRIPT%"""
 if errorlevel 1 (
   echo ERROR: Failed to create scheduled task "%AERO_TASK_NAME%".
   exit /b 31

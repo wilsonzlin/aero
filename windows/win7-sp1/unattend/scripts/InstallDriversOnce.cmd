@@ -31,6 +31,16 @@ if exist "%AERO_MARKER_FILE%" (
   exit /b 0
 )
 
+set "AERO_PNPUTIL="
+call :FIND_PNPUTIL
+echo Using pnputil: "%AERO_PNPUTIL%"
+"%AERO_PNPUTIL%" /? >nul 2>&1
+if errorlevel 1 (
+  echo ERROR: pnputil is not available; cannot install driver packages.
+  call :DELETE_TASK
+  exit /b 12
+)
+
 set "AERO_ROOT="
 call :FIND_AERO_ROOT
 if not defined AERO_ROOT (
@@ -61,7 +71,7 @@ for /r "%AERO_DRIVERS_DIR%" %%F in (*.inf) do (
   set "AERO_FOUND_INF=1"
   echo ------------------------------------------------
   echo Installing driver package: "%%F"
-  pnputil -i -a "%%F"
+  "%AERO_PNPUTIL%" -i -a "%%F"
   set "RC=!errorlevel!"
   if not "!RC!"=="0" (
     echo ERROR: pnputil failed with exit code !RC! for "%%F"
@@ -110,6 +120,16 @@ if errorlevel 1 (
 )
 echo Deleting scheduled task "%AERO_TASK_NAME%"...
 schtasks /Delete /TN "%AERO_TASK_NAME%" /F
+exit /b 0
+
+:FIND_PNPUTIL
+set "AERO_PNPUTIL=%WINDIR%\Sysnative\pnputil.exe"
+if exist "%AERO_PNPUTIL%" exit /b 0
+set "AERO_PNPUTIL=%WINDIR%\System32\pnputil.exe"
+if exist "%AERO_PNPUTIL%" exit /b 0
+set "AERO_PNPUTIL=%WINDIR%\SysWOW64\pnputil.exe"
+if exist "%AERO_PNPUTIL%" exit /b 0
+set "AERO_PNPUTIL=pnputil.exe"
 exit /b 0
 
 :FIND_AERO_ROOT
