@@ -654,7 +654,11 @@ impl VgaDevice {
         let (active_crtc_index, active_crtc_data) = self.active_crtc_ports();
 
         match port {
-            PORT_MISC_OUTPUT_READ | PORT_MISC_OUTPUT_WRITE => self.misc_output,
+            PORT_MISC_OUTPUT_READ => self.misc_output,
+            // Input Status 0 shares the 0x3C2 address with Misc Output writes.
+            // Most software uses 0x3CC to read back misc_output; return a
+            // conservative fixed value here.
+            PORT_MISC_OUTPUT_WRITE => 0x00,
             PORT_VIDEO_SUBSYSTEM_ENABLE => self.video_subsystem_enable,
             PORT_FEATURE_CONTROL_READ => self.feature_control,
 

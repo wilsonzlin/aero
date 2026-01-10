@@ -149,3 +149,14 @@ fn unimplemented_vga_ports_return_ff() {
     assert_eq!(vga.port_read(0x3CB, 1) as u8, 0xFF);
     assert_eq!(vga.port_read(0x3CD, 1) as u8, 0xFF);
 }
+
+#[test]
+fn misc_output_readback_is_on_3cc_not_3c2() {
+    let mut vga = VgaDevice::new();
+
+    vga.port_write(0x3C2, 1, 0x5A);
+    assert_eq!(vga.port_read(0x3CC, 1) as u8, 0x5A);
+
+    // 0x3C2 reads are Input Status 0, not misc_output.
+    assert_eq!(vga.port_read(0x3C2, 1) as u8, 0x00);
+}
