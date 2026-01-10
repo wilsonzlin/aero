@@ -17,8 +17,6 @@ export type Config = Readonly<{
 
   RATE_LIMIT_REQUESTS_PER_MINUTE: number;
 
-  TRUST_PROXY: boolean;
-
   TLS_ENABLED: boolean;
   TLS_CERT_PATH: string;
   TLS_KEY_PATH: string;
@@ -87,11 +85,9 @@ const envSchema = z.object({
   PUBLIC_BASE_URL: z.string().optional().default(''),
   SHUTDOWN_GRACE_MS: z.coerce.number().int().min(0).default(10_000),
   CROSS_ORIGIN_ISOLATION: z.string().optional().default('0'),
-  TRUST_PROXY: z.string().optional().default('0'),
+  TRUST_PROXY: z.enum(['0', '1']).optional().default('0'),
 
   RATE_LIMIT_REQUESTS_PER_MINUTE: z.coerce.number().int().min(0).default(0),
-
-  TRUST_PROXY: z.enum(['0', '1']).optional().default('0'),
 
   TLS_ENABLED: z.enum(['0', '1']).optional().default('0'),
   TLS_CERT_PATH: z.string().optional().default(''),
@@ -166,11 +162,9 @@ export function loadConfig(env: Env = process.env): Config {
     PUBLIC_BASE_URL: publicBaseUrlParsed.toString().replace(/\/$/, ''),
     SHUTDOWN_GRACE_MS: raw.SHUTDOWN_GRACE_MS,
     CROSS_ORIGIN_ISOLATION: raw.CROSS_ORIGIN_ISOLATION === '1',
-    TRUST_PROXY: raw.TRUST_PROXY === '1',
+    TRUST_PROXY: trustProxy,
 
     RATE_LIMIT_REQUESTS_PER_MINUTE: raw.RATE_LIMIT_REQUESTS_PER_MINUTE,
-
-    TRUST_PROXY: trustProxy,
 
     TLS_ENABLED: tlsEnabled,
     TLS_CERT_PATH: tlsCertPath,

@@ -38,7 +38,6 @@ async function main(): Promise<void> {
       trustProxy: config.TRUST_PROXY,
       allowedOrigins: config.ALLOWED_ORIGINS,
       crossOriginIsolation: config.CROSS_ORIGIN_ISOLATION,
-      trustProxy: config.TRUST_PROXY,
     },
     'aero-gateway listening',
   );
