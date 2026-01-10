@@ -15,6 +15,18 @@ This guide walks you through installing Windows 7 in Aero using the **baseline (
    3. **VGA → Aero GPU**
 5. Run `verify.cmd` as Administrator and check `report.txt`.
 
+## Contents
+
+- [Prerequisites](#prerequisites)
+- [Step 1: Install Windows 7 using baseline devices](#step-1-install-windows-7-using-baseline-compatibility-devices)
+- [Step 2: Mount `aero-guest-tools.iso`](#step-2-mount-aero-guest-toolsiso)
+- [Step 3: Run `setup.cmd` as Administrator](#step-3-run-setupcmd-as-administrator)
+- [Step 5: Switch to virtio + Aero GPU](#step-5-switch-to-virtio--aero-gpu-recommended-order)
+- [Step 6: Run `verify.cmd` / read `report.txt`](#step-6-run-verifycmd-and-interpret-reporttxt)
+- [Rollback paths](#safe-rollback-path-if-virtio-blk-boot-fails)
+- [Optional: slipstream KB3033929 and drivers](#optional-slipstream-kb3033929-andor-drivers-into-your-windows-7-iso)
+- [Troubleshooting](./windows7-driver-troubleshooting.md)
+
 ## Prerequisites
 
 ### What you need
