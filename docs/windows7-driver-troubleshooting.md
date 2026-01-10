@@ -14,6 +14,7 @@ If you have not installed Guest Tools yet, start here:
    - Windows 7 **x86** requires x86 drivers.
    - Windows 7 **x64** requires x64 drivers. (32-bit drivers cannot load.)
 4. If you changed multiple VM devices at once (storage + GPU + network), consider rolling back and switching **one class at a time** so failures are easier to isolate.
+5. Confirm the guest **date/time** is correct. If the clock is far off, Windows may treat certificates as “not yet valid” or “expired” and driver signature validation can fail.
 
 ## Safe rollback path (storage boot failure)
 
@@ -41,6 +42,7 @@ Why this works: Windows can only boot from a storage controller if its driver is
 - Windows 7 is missing **KB3033929**, so it cannot validate **SHA-256** signatures.
 - You installed the wrong-architecture driver package (x86 vs x64).
   - Windows 7 **x86**: drivers can install with warnings, but you can still end up with Code 52 if the package is malformed or not trusted as expected.
+- The guest clock is incorrect, so certificate validity checks fail.
 
 ### Fix steps
 

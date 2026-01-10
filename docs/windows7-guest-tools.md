@@ -106,6 +106,14 @@ During installation you may see driver install prompts:
 
 When `setup.cmd` finishes, reboot Windows if prompted.
 
+### x64: “Test Mode” is expected if test signing is enabled
+
+If Guest Tools enables test signing on Windows 7 x64, you may see a desktop watermark like:
+
+- `Test Mode Windows 7 ...`
+
+This is normal for test-signed drivers. Only disable test signing after you have confirmed you are using production-signed drivers (see the troubleshooting guide).
+
 ## What `setup.cmd` changes
 
 The exact actions depend on the Guest Tools version, but the workflow generally includes:
