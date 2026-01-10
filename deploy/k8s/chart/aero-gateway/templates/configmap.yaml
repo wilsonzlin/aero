@@ -6,7 +6,11 @@ metadata:
   labels:
     {{- include "aero-gateway.labels" . | nindent 4 }}
 data:
+  {{- if .Values.config.data }}
   {{- range $key, $val := .Values.config.data }}
   {{ $key }}: {{ $val | quote }}
+  {{- end }}
+  {{- else }}
+  {}
   {{- end }}
 {{- end }}
