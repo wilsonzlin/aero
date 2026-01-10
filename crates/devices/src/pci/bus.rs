@@ -214,10 +214,7 @@ impl PciConfigMechanism1 {
 
     pub fn io_read(&mut self, pci: &mut PciBus, port: u16, size: u8) -> u32 {
         match port {
-            0xCF8 => {
-                // Only 32-bit reads are meaningful, but return the stored value.
-                read_u32_part(self.addr, port, size)
-            }
+            0xCF8..=0xCFB => read_u32_part(self.addr, port, size),
             0xCFC..=0xCFF => {
                 if (self.addr & 0x8000_0000) == 0 {
                     return all_ones(size);
@@ -235,8 +232,10 @@ impl PciConfigMechanism1 {
 
     pub fn io_write(&mut self, pci: &mut PciBus, port: u16, size: u8, value: u32) {
         match port {
-            0xCF8 => {
-                self.addr = write_u32_part(self.addr, size, value);
+            0xCF8..=0xCFB => {
+                self.addr = write_u32_part(self.addr, port, size, value);
+                // Bits 1:0 are reserved (DWORD-aligned register number).
+                self.addr &= !0x3;
             }
             0xCFC..=0xCFF => {
                 if (self.addr & 0x8000_0000) == 0 {
@@ -254,19 +253,21 @@ impl PciConfigMechanism1 {
     }
 }
 
-fn read_u32_part(value: u32, _port: u16, size: u8) -> u32 {
+fn read_u32_part(value: u32, port: u16, size: u8) -> u32 {
+    let shift = u32::from(port - 0xCF8) * 8;
     match size {
-        1 => value & 0xFF,
-        2 => value & 0xFFFF,
+        1 => (value >> shift) & 0xFF,
+        2 => (value >> shift) & 0xFFFF,
         4 => value,
         _ => panic!("invalid read size {size}"),
     }
 }
 
-fn write_u32_part(old: u32, size: u8, value: u32) -> u32 {
+fn write_u32_part(old: u32, port: u16, size: u8, value: u32) -> u32 {
+    let shift = u32::from(port - 0xCF8) * 8;
     match size {
-        1 => (old & !0xFF) | (value & 0xFF),
-        2 => (old & !0xFFFF) | (value & 0xFFFF),
+        1 => (old & !(0xFFu32 << shift)) | ((value & 0xFF) << shift),
+        2 => (old & !(0xFFFFu32 << shift)) | ((value & 0xFFFF) << shift),
         4 => value,
         _ => panic!("invalid write size {size}"),
     }

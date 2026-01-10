@@ -1,0 +1,189 @@
+use aero_platform::io::{IoPortBus, PortIoDevice};
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::rc::Rc;
+
+/// Minimal 16550 UART.
+///
+/// This is primarily for early boot debugging (BIOS logging / kernel serial
+/// console). Interrupt-driven operation is not implemented yet.
+#[derive(Debug)]
+pub struct Serial16550 {
+    base: u16,
+    ier: u8,
+    lcr: u8,
+    mcr: u8,
+    lsr: u8,
+    msr: u8,
+    scr: u8,
+    dll: u8,
+    dlm: u8,
+    rx: VecDeque<u8>,
+    tx: Vec<u8>,
+}
+
+impl Serial16550 {
+    pub fn new(base: u16) -> Self {
+        Self {
+            base,
+            ier: 0,
+            lcr: 0x03,
+            mcr: 0,
+            // THR empty + transmitter empty.
+            lsr: 0x60,
+            msr: 0,
+            scr: 0,
+            dll: 1,
+            dlm: 0,
+            rx: VecDeque::new(),
+            tx: Vec::new(),
+        }
+    }
+
+    pub fn push_rx(&mut self, byte: u8) {
+        self.rx.push_back(byte);
+    }
+
+    pub fn take_tx(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.tx)
+    }
+
+    fn dlab(&self) -> bool {
+        self.lcr & 0x80 != 0
+    }
+
+    fn offset(&self, port: u16) -> Option<u16> {
+        port.checked_sub(self.base).filter(|o| *o < 8)
+    }
+
+    pub fn read_u8(&mut self, port: u16) -> u8 {
+        let Some(off) = self.offset(port) else {
+            return 0xFF;
+        };
+
+        match off {
+            0 => {
+                if self.dlab() {
+                    self.dll
+                } else {
+                    self.rx.pop_front().unwrap_or(0)
+                }
+            }
+            1 => {
+                if self.dlab() {
+                    self.dlm
+                } else {
+                    self.ier
+                }
+            }
+            2 => 0x01, // IIR: no interrupt pending.
+            3 => self.lcr,
+            4 => self.mcr,
+            5 => {
+                let mut lsr = self.lsr | 0x60;
+                if !self.rx.is_empty() {
+                    lsr |= 0x01;
+                }
+                lsr
+            }
+            6 => self.msr,
+            7 => self.scr,
+            _ => 0xFF,
+        }
+    }
+
+    pub fn write_u8(&mut self, port: u16, value: u8) {
+        let Some(off) = self.offset(port) else {
+            return;
+        };
+
+        match off {
+            0 => {
+                if self.dlab() {
+                    self.dll = value;
+                } else {
+                    self.tx.push(value);
+                }
+            }
+            1 => {
+                if self.dlab() {
+                    self.dlm = value;
+                } else {
+                    self.ier = value;
+                }
+            }
+            2 => {
+                // FCR write; ignore for now.
+            }
+            3 => self.lcr = value,
+            4 => self.mcr = value,
+            7 => self.scr = value,
+            _ => {}
+        }
+    }
+}
+
+pub type SharedSerial16550 = Rc<RefCell<Serial16550>>;
+
+pub struct Serial16550Port {
+    uart: SharedSerial16550,
+    port: u16,
+}
+
+impl Serial16550Port {
+    pub fn new(uart: SharedSerial16550, port: u16) -> Self {
+        Self { uart, port }
+    }
+}
+
+impl PortIoDevice for Serial16550Port {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        debug_assert_eq!(port, self.port);
+        let mut uart = self.uart.borrow_mut();
+        match size {
+            1 => u32::from(uart.read_u8(port)),
+            2 => {
+                let lo = uart.read_u8(port) as u16;
+                let hi = uart.read_u8(port.wrapping_add(1)) as u16;
+                u32::from(lo | (hi << 8))
+            }
+            4 => {
+                let b0 = uart.read_u8(port);
+                let b1 = uart.read_u8(port.wrapping_add(1));
+                let b2 = uart.read_u8(port.wrapping_add(2));
+                let b3 = uart.read_u8(port.wrapping_add(3));
+                u32::from_le_bytes([b0, b1, b2, b3])
+            }
+            _ => u32::from(uart.read_u8(port)),
+        }
+    }
+
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        debug_assert_eq!(port, self.port);
+        let mut uart = self.uart.borrow_mut();
+        match size {
+            1 => uart.write_u8(port, value as u8),
+            2 => {
+                let [b0, b1] = (value as u16).to_le_bytes();
+                uart.write_u8(port, b0);
+                uart.write_u8(port.wrapping_add(1), b1);
+            }
+            4 => {
+                let [b0, b1, b2, b3] = value.to_le_bytes();
+                uart.write_u8(port, b0);
+                uart.write_u8(port.wrapping_add(1), b1);
+                uart.write_u8(port.wrapping_add(2), b2);
+                uart.write_u8(port.wrapping_add(3), b3);
+            }
+            _ => uart.write_u8(port, value as u8),
+        }
+    }
+}
+
+pub fn register_serial16550(bus: &mut IoPortBus, uart: SharedSerial16550) {
+    let base = uart.borrow().base;
+    for offset in 0..8u16 {
+        let port = base + offset;
+        bus.register(port, Box::new(Serial16550Port::new(uart.clone(), port)));
+    }
+}

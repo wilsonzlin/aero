@@ -5,10 +5,12 @@ pub mod clock;
 pub mod a20_gate;
 pub mod acpi_pm;
 pub mod apic;
+pub mod dma;
 pub mod pci;
 pub mod pic8259;
 pub mod pit8254;
 pub mod i8042;
+pub mod serial;
 
 pub mod io;
 pub mod storage;

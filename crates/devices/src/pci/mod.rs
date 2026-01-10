@@ -9,6 +9,7 @@ pub mod profile;
 mod acpi;
 mod bios;
 mod bus;
+mod ports;
 mod platform;
 mod resources;
 
@@ -23,6 +24,10 @@ pub use irq_router::{
     GsiLevelSink, IoApicPicMirrorSink, PciIntxRouter, PciIntxRouterConfig, PicIrqLevelSink,
 };
 pub use msi::MsiCapability;
+pub use ports::{
+    register_pci_config_ports, PciConfigPort, PciConfigPorts, SharedPciConfigPorts, PCI_CFG_ADDR_PORT,
+    PCI_CFG_DATA_PORT,
+};
 pub use platform::{PciHostBridge, PciIsaBridge, PciPlatform};
 pub use resources::{PciResourceAllocator, PciResourceAllocatorConfig, PciResourceError};
 
@@ -90,4 +95,3 @@ impl PciInterruptPin {
         }
     }
 }
-
