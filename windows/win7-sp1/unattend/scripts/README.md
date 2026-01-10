@@ -82,6 +82,18 @@ set "AERO_ENABLE_NOINTEGRITYCHECKS=0"
 
 Set to `1` only if you specifically need it.
 
+### Optional: copy payload to C:\Aero
+
+By default, `SetupComplete.cmd` copies the located payload (Drivers/Scripts/Cert) to `C:\Aero\` before enabling test signing and scheduling the driver install task.
+
+This makes the next-boot driver installation independent of removable/config media drive letters.
+
+To disable this behaviour, set:
+
+```
+set "AERO_COPY_PAYLOAD_TO_C=0"
+```
+
 ### Disabling test signing / integrity changes later
 
 These scripts enable test signing via `bcdedit`. To revert to normal mode later:

@@ -16,6 +16,10 @@ REM   - testsigning is required for test-signed drivers
 REM   - nointegritychecks is a stronger setting and reduces security
 set "AERO_ENABLE_NOINTEGRITYCHECKS=0"
 
+REM Set to 1 to copy the located payload to C:\Aero (recommended).
+REM This makes the next-boot driver install independent of removable/config media.
+set "AERO_COPY_PAYLOAD_TO_C=1"
+
 set "AERO_LOG_FILE=%WINDIR%\Temp\aero-setup.log"
 if not exist "%WINDIR%\Temp" mkdir "%WINDIR%\Temp" >nul 2>&1
 
@@ -44,6 +48,25 @@ if not defined AERO_ROOT (
 )
 
 echo Using Aero payload root: "%AERO_ROOT%"
+
+if /i "%AERO_COPY_PAYLOAD_TO_C%"=="1" (
+  if /i not "%AERO_ROOT%"=="C:\Aero" (
+    echo Copying payload to "C:\Aero" for persistence across reboot...
+    set "AERO_ORIG_ROOT=%AERO_ROOT%"
+    call :COPY_PAYLOAD_TO_C "%AERO_ROOT%" "C:\Aero"
+    if errorlevel 1 (
+      echo WARNING: Failed to copy payload to "C:\Aero". Continuing with "%AERO_ORIG_ROOT%".
+      set "AERO_ROOT=%AERO_ORIG_ROOT%"
+    ) else (
+      set "AERO_ROOT=C:\Aero"
+      echo Payload copy complete. Using local payload root: "%AERO_ROOT%"
+    )
+  ) else (
+    echo Payload already located at "C:\Aero"; copy not needed.
+  )
+) else (
+  echo Payload copy disabled (AERO_COPY_PAYLOAD_TO_C=%AERO_COPY_PAYLOAD_TO_C%).
+)
 
 set "AERO_CERT_FILE=%AERO_ROOT%\Cert\aero_test.cer"
 if not exist "%AERO_CERT_FILE%" set "AERO_CERT_FILE=%AERO_ROOT%\Certs\AeroTestRoot.cer"
@@ -106,6 +129,66 @@ if errorlevel 1 (
 
 echo Rebooting now to apply boot configuration changes...
 shutdown /r /t 0
+exit /b 0
+
+:COPY_PAYLOAD_TO_C
+set "AERO_SRC_ROOT=%~1"
+set "AERO_DST_ROOT=%~2"
+if "%AERO_SRC_ROOT%"=="" exit /b 1
+if "%AERO_DST_ROOT%"=="" exit /b 1
+
+mkdir "%AERO_DST_ROOT%" >nul 2>&1
+
+set "AERO_COPY_FAILED=0"
+
+if exist "%AERO_SRC_ROOT%\Drivers\" (
+  echo [COPY] Drivers\ -> "%AERO_DST_ROOT%\Drivers\"
+  xcopy "%AERO_SRC_ROOT%\Drivers" "%AERO_DST_ROOT%\Drivers\" /E /I /H /R /Y /C /Q
+  set "RC=!errorlevel!"
+  echo [COPY] xcopy Drivers exit code: !RC!
+  if !RC! GEQ 4 set "AERO_COPY_FAILED=1"
+) else (
+  echo [COPY] WARNING: "%AERO_SRC_ROOT%\Drivers\" not found.
+  set "AERO_COPY_FAILED=1"
+)
+
+if exist "%AERO_SRC_ROOT%\Scripts\" (
+  echo [COPY] Scripts\ -> "%AERO_DST_ROOT%\Scripts\"
+  xcopy "%AERO_SRC_ROOT%\Scripts" "%AERO_DST_ROOT%\Scripts\" /E /I /H /R /Y /C /Q
+  set "RC=!errorlevel!"
+  echo [COPY] xcopy Scripts exit code: !RC!
+  if !RC! GEQ 4 set "AERO_COPY_FAILED=1"
+) else (
+  echo [COPY] WARNING: "%AERO_SRC_ROOT%\Scripts\" not found.
+  set "AERO_COPY_FAILED=1"
+)
+
+if exist "%AERO_SRC_ROOT%\Cert\" (
+  echo [COPY] Cert\ -> "%AERO_DST_ROOT%\Cert\"
+  xcopy "%AERO_SRC_ROOT%\Cert" "%AERO_DST_ROOT%\Cert\" /E /I /H /R /Y /C /Q
+  echo [COPY] xcopy Cert exit code: !errorlevel!
+)
+
+if exist "%AERO_SRC_ROOT%\Certs\" (
+  echo [COPY] Certs\ -> "%AERO_DST_ROOT%\Certs\"
+  xcopy "%AERO_SRC_ROOT%\Certs" "%AERO_DST_ROOT%\Certs\" /E /I /H /R /Y /C /Q
+  echo [COPY] xcopy Certs exit code: !errorlevel!
+)
+
+if not exist "%AERO_DST_ROOT%\Drivers\" (
+  echo [COPY] ERROR: Destination missing required folder: "%AERO_DST_ROOT%\Drivers\"
+  exit /b 2
+)
+if not exist "%AERO_DST_ROOT%\Scripts\" (
+  echo [COPY] ERROR: Destination missing required folder: "%AERO_DST_ROOT%\Scripts\"
+  exit /b 2
+)
+
+if "%AERO_COPY_FAILED%"=="1" (
+  echo [COPY] ERROR: One or more required payload folders failed to copy.
+  exit /b 3
+)
+
 exit /b 0
 
 :FIND_AERO_ROOT
