@@ -80,6 +80,25 @@ redis:
 EOF
 ```
 
+### Using an existing Secret (recommended for real production)
+
+In real clusters you will often manage secrets via:
+
+- ExternalSecrets Operator
+- SealedSecrets
+- SOPS
+- your CI/CD system
+
+In that case, create the Secret separately (must contain keys like `SESSION_SECRET`, `ADMIN_API_KEY`, etc.) and configure Helm to use it:
+
+```bash
+helm upgrade --install aero-gateway ./deploy/k8s/chart/aero-gateway \
+  -n aero \
+  --set secrets.create=false \
+  --set secrets.existingSecret=aero-gateway-secrets \
+  -f ./aero-values.yaml
+```
+
 4) Install / upgrade:
 
 ```bash
