@@ -116,7 +116,7 @@ const QUAD_SHADER: &str = r#"
 struct VsOut {
   @builtin(position) pos: vec4<f32>,
   @location(0) uv: vec2<f32>,
-  @location(1) green: f32,
+  @location(1) red: f32,
 }
 
 @vertex
@@ -128,13 +128,13 @@ fn vs_main(
   var out: VsOut;
   out.pos = vec4<f32>(pos, 1.0);
   out.uv = uv;
-  out.green = color.y;
+  out.red = color.x;
   return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-  return vec4<f32>(in.uv, in.green, 1.0);
+  return vec4<f32>(in.uv, in.red, 1.0);
 }
 "#;
 
@@ -317,7 +317,6 @@ fn render_single_stream_position_color_uv() {
     )
     .unwrap();
 
-    assert!(translated.conversions.is_empty());
     assert_eq!(translated.buffers.len(), 1);
 
     let layouts: Vec<_> = translated
@@ -333,18 +332,24 @@ fn render_single_stream_position_color_uv() {
     let (device, queue) = create_device();
     let pipeline = create_pipeline(&device, QUAD_SHADER, &layouts);
 
-    let color_green: u32 = 0xff00_ff00;
+    let color_red: u32 = 0xffff_0000;
     let positions = quad_positions();
     let uvs = quad_uvs();
     let vertices: Vec<VertexPosColorUv> = positions
         .into_iter()
         .zip(uvs.into_iter())
-        .map(|(pos, uv)| VertexPosColorUv { pos, color: color_green, uv })
+        .map(|(pos, uv)| VertexPosColorUv { pos, color: color_red, uv })
         .collect();
 
+    let vb_bytes = if let Some(plan) = translated.conversions.get(&0) {
+        plan.convert_vertices(bytemuck::cast_slice(&vertices), vertices.len())
+            .unwrap()
+    } else {
+        bytemuck::cast_slice(&vertices).to_vec()
+    };
     let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("vb"),
-        contents: bytemuck::cast_slice(&vertices),
+        contents: &vb_bytes,
         usage: wgpu::BufferUsages::VERTEX,
     });
 
@@ -378,12 +383,12 @@ fn render_single_stream_position_color_uv() {
     let pixels = read_texture_rgba8(&device, &queue, &target, 64, 64);
     let center = sample_rgba(&pixels, 64, 32, 32);
 
-    // We output `vec4(uv.x, uv.y, color.g, 1.0)`. The center pixel is ~0.5, 0.5.
+    // We output `vec4(uv.x, uv.y, color.r, 1.0)`. The center pixel is ~0.5, 0.5.
     let expected_x = unorm8((32.0 + 0.5) / 64.0);
     let expected_y = unorm8((32.0 + 0.5) / 64.0);
     assert_channel_near(center[0], expected_x, 10, "uv.x");
     assert_channel_near(center[1], expected_y, 10, "uv.y");
-    assert_channel_near(center[2], 255, 0, "color.g");
+    assert_channel_near(center[2], 255, 0, "color.r");
     assert_channel_near(center[3], 255, 0, "alpha");
 }
 
@@ -435,7 +440,6 @@ fn render_two_stream_position_uv_color() {
     )
     .unwrap();
 
-    assert!(translated.conversions.is_empty());
     assert_eq!(translated.buffers.len(), 2);
 
     let layouts: Vec<_> = translated
@@ -455,20 +459,32 @@ fn render_two_stream_position_uv_color() {
     let uvs = quad_uvs();
     let vertices_pos: Vec<VertexPos> = positions.into_iter().map(|pos| VertexPos { pos }).collect();
 
-    let color_green: u32 = 0xff00_ff00;
+    let color_red: u32 = 0xffff_0000;
     let vertices_extra: Vec<VertexUvColor> = uvs
         .into_iter()
-        .map(|uv| VertexUvColor { uv, color: color_green })
+        .map(|uv| VertexUvColor { uv, color: color_red })
         .collect();
 
+    let vb0_bytes = if let Some(plan) = translated.conversions.get(&0) {
+        plan.convert_vertices(bytemuck::cast_slice(&vertices_pos), vertices_pos.len())
+            .unwrap()
+    } else {
+        bytemuck::cast_slice(&vertices_pos).to_vec()
+    };
     let vb0 = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("vb pos"),
-        contents: bytemuck::cast_slice(&vertices_pos),
+        contents: &vb0_bytes,
         usage: wgpu::BufferUsages::VERTEX,
     });
+    let vb1_bytes = if let Some(plan) = translated.conversions.get(&1) {
+        plan.convert_vertices(bytemuck::cast_slice(&vertices_extra), vertices_extra.len())
+            .unwrap()
+    } else {
+        bytemuck::cast_slice(&vertices_extra).to_vec()
+    };
     let vb1 = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("vb uv+color"),
-        contents: bytemuck::cast_slice(&vertices_extra),
+        contents: &vb1_bytes,
         usage: wgpu::BufferUsages::VERTEX,
     });
 
@@ -510,7 +526,7 @@ fn render_two_stream_position_uv_color() {
     let expected_y = unorm8((32.0 + 0.5) / 64.0);
     assert_channel_near(center[0], expected_x, 10, "uv.x");
     assert_channel_near(center[1], expected_y, 10, "uv.y");
-    assert_channel_near(center[2], 255, 0, "color.g");
+    assert_channel_near(center[2], 255, 0, "color.r");
     assert_channel_near(center[3], 255, 0, "alpha");
 }
 
@@ -558,7 +574,6 @@ fn render_instanced_draw_per_instance_color() {
     )
     .unwrap();
 
-    assert!(translated.conversions.is_empty());
     assert_eq!(translated.instancing.draw_instances(), 2);
 
     let layouts: Vec<_> = translated
@@ -583,10 +598,10 @@ fn render_instanced_draw_per_instance_color() {
         VertexPos2 { pos: [0.3, 0.5] },
     ];
 
-    // Use colors invariant under potential R/B channel ordering differences.
+    // Use colors that catch D3DCOLOR byte-order mismatches (red/blue swapping).
     let instance_colors: [u32; 2] = [
-        0xff00_ff00, // green
-        0xffff_00ff, // magenta
+        0xffff_0000, // red
+        0xff00_00ff, // blue
     ];
 
     let vb0 = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -594,9 +609,15 @@ fn render_instanced_draw_per_instance_color() {
         contents: bytemuck::cast_slice(&base_quad),
         usage: wgpu::BufferUsages::VERTEX,
     });
+    let vb1_bytes = if let Some(plan) = translated.conversions.get(&1) {
+        plan.convert_vertices(bytemuck::cast_slice(&instance_colors), instance_colors.len())
+            .unwrap()
+    } else {
+        bytemuck::cast_slice(&instance_colors).to_vec()
+    };
     let vb1 = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("vb instance colors"),
-        contents: bytemuck::cast_slice(&instance_colors),
+        contents: &vb1_bytes,
         usage: wgpu::BufferUsages::VERTEX,
     });
 
@@ -635,12 +656,12 @@ fn render_instanced_draw_per_instance_color() {
     let left = sample_rgba(&pixels, 64, 16, 32);
     let right = sample_rgba(&pixels, 64, 48, 32);
 
-    assert_channel_near(left[0], 0, 2, "left.r");
-    assert_channel_near(left[1], 255, 2, "left.g");
+    assert_channel_near(left[0], 255, 2, "left.r");
+    assert_channel_near(left[1], 0, 2, "left.g");
     assert_channel_near(left[2], 0, 2, "left.b");
     assert_channel_near(left[3], 255, 2, "left.a");
 
-    assert_channel_near(right[0], 255, 2, "right.r");
+    assert_channel_near(right[0], 0, 2, "right.r");
     assert_channel_near(right[1], 0, 2, "right.g");
     assert_channel_near(right[2], 255, 2, "right.b");
     assert_channel_near(right[3], 255, 2, "right.a");

@@ -20,6 +20,9 @@ pub struct ElementFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElementConversion {
     None,
+    /// Convert a D3D9 `D3DCOLOR` (A8R8G8B8, stored as BGRA bytes on little-endian) into RGBA byte
+    /// order expected by WebGPU `unorm8x4` vertex fetch.
+    D3dColorBgraToRgbaUnorm8x4,
     /// Convert a half-float vector to 32-bit floats.
     HalfToF32 { components: u8 },
     /// Convert D3D9 `DEC3N` packed 10-10-10 to `float32x3`.
@@ -50,7 +53,12 @@ pub(super) fn map_element_format(ty: DeclType, caps: WebGpuVertexCaps) -> Result
             byte_size: 16,
             conversion: ElementConversion::None,
         },
-        DeclType::D3dColor | DeclType::UByte4N => ElementFormat {
+        DeclType::D3dColor => ElementFormat {
+            format: VertexFormat::Unorm8x4,
+            byte_size: 4,
+            conversion: ElementConversion::D3dColorBgraToRgbaUnorm8x4,
+        },
+        DeclType::UByte4N => ElementFormat {
             format: VertexFormat::Unorm8x4,
             byte_size: 4,
             conversion: ElementConversion::None,
@@ -147,6 +155,16 @@ pub(super) fn convert_element(
         ElementConversion::None => {
             let bytes = plan.src_type.byte_size() as usize;
             dst[..bytes].copy_from_slice(&src[..bytes]);
+            Ok(())
+        }
+        ElementConversion::D3dColorBgraToRgbaUnorm8x4 => {
+            // D3DCOLOR is defined as 0xAARRGGBB. On little-endian hosts and in vertex buffers the
+            // bytes are stored in memory as BB GG RR AA (BGRA). WebGPU's `unorm8x4` interprets the
+            // bytes in-order as RGBA, so we swap the red/blue channels.
+            dst[0] = src[2]; // R
+            dst[1] = src[1]; // G
+            dst[2] = src[0]; // B
+            dst[3] = src[3]; // A
             Ok(())
         }
         ElementConversion::HalfToF32 { components } => {

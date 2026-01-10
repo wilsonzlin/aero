@@ -54,7 +54,8 @@ fn translate_single_stream_position_color_uv() {
 
     assert_eq!(translated.buffers.len(), 1);
     assert_eq!(translated.stream_to_buffer_slot.get(&0), Some(&0));
-    assert_eq!(translated.conversions.len(), 0);
+    assert_eq!(translated.conversions.len(), 1);
+    assert!(translated.conversions.contains_key(&0));
     assert_eq!(translated.instancing.draw_instances(), 1);
 
     let b0 = &translated.buffers[0];
@@ -132,6 +133,8 @@ fn translate_two_stream_layout() {
     assert_eq!(translated.buffers.len(), 2);
     assert_eq!(translated.stream_to_buffer_slot.get(&0), Some(&0));
     assert_eq!(translated.stream_to_buffer_slot.get(&1), Some(&1));
+    assert_eq!(translated.conversions.len(), 1);
+    assert!(translated.conversions.contains_key(&1));
 
     let b0 = &translated.buffers[0];
     assert_eq!(b0.array_stride, 12);
@@ -217,6 +220,8 @@ fn translate_instanced_color_stream() {
         translated.buffers[1].step_mode,
         wgpu::VertexStepMode::Instance
     );
+    assert_eq!(translated.conversions.len(), 1);
+    assert!(translated.conversions.contains_key(&1));
 }
 
 #[test]
@@ -328,6 +333,9 @@ fn fvf_decode_produces_declaration_compatible_with_fixed_function_locations() {
         &FixedFunctionLocationMap,
     )
     .unwrap();
+
+    assert_eq!(translated.conversions.len(), 1);
+    assert!(translated.conversions.contains_key(&0));
 
     let attrs = &translated.buffers[0].attributes;
     assert_eq!(
