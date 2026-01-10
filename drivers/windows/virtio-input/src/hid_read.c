@@ -120,18 +120,18 @@ static NTSTATUS VirtioInputGetTransferPacket(
     PHID_XFER_PACKET xfer;
     size_t len;
 
+    UNREFERENCED_PARAMETER(OutputBufferLength);
+
     status = WdfRequestRetrieveInputBuffer(Request, sizeof(HID_XFER_PACKET), (PVOID *)&xfer, &len);
     if (NT_SUCCESS(status) && len >= sizeof(HID_XFER_PACKET)) {
         *XferPacketOut = xfer;
         return STATUS_SUCCESS;
     }
 
-    if (OutputBufferLength >= sizeof(HID_XFER_PACKET)) {
-        status = WdfRequestRetrieveOutputBuffer(Request, sizeof(HID_XFER_PACKET), (PVOID *)&xfer, &len);
-        if (NT_SUCCESS(status) && len >= sizeof(HID_XFER_PACKET)) {
-            *XferPacketOut = xfer;
-            return STATUS_SUCCESS;
-        }
+    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(HID_XFER_PACKET), (PVOID *)&xfer, &len);
+    if (NT_SUCCESS(status) && len >= sizeof(HID_XFER_PACKET)) {
+        *XferPacketOut = xfer;
+        return STATUS_SUCCESS;
     }
 
     return STATUS_INVALID_PARAMETER;
