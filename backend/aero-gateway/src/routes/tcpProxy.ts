@@ -3,8 +3,9 @@ import net from "node:net";
 import type http from "node:http";
 import type { Duplex } from "node:stream";
 
-import { TcpTargetParseError, parseTcpTargetFromUrl } from "../protocol/tcpTarget.js";
 import { isOriginAllowed } from "../middleware/originGuard.js";
+import type { TcpTarget } from "../protocol/tcpTarget.js";
+import { TcpTargetParseError, parseTcpTargetFromUrl } from "../protocol/tcpTarget.js";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -28,7 +29,7 @@ export function handleTcpProxyUpgrade(
     }
   }
 
-  let target: { host: string; port: number; version: number };
+  let target: TcpTarget;
   try {
     const url = new URL(req.url ?? "", "http://localhost");
     if (url.pathname !== "/tcp") {

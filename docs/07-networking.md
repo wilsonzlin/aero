@@ -459,13 +459,13 @@ impl TcpProxy {
         let id = self.next_id;
         self.next_id += 1;
         
-        // Connect to proxy server with target info
-        let url = format!(
-            "{}/tcp?target={}:{}",
+         // Connect to proxy server with target info
+         let url = format!(
+            "{}/tcp?v=1&target={}:{}",
             self.proxy_url,
             remote_ip,
             remote_port
-        );
+         );
         
         let ws = WebSocket::new(&url)?;
         

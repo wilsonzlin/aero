@@ -848,9 +848,10 @@ class NetworkProxy {
     }
     
     async connect(host, port) {
-        const ws = new WebSocket(`${this.proxyUrl}/tcp?host=${host}&port=${port}`);
+        const target = host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`;
+        const ws = new WebSocket(`${this.proxyUrl}/tcp?v=1&target=${encodeURIComponent(target)}`);
         ws.binaryType = 'arraybuffer';
-        
+         
         return new Promise((resolve, reject) => {
             ws.onopen = () => {
                 const id = this.nextId++;

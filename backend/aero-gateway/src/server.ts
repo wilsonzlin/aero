@@ -11,6 +11,7 @@ import { setupRateLimit } from './middleware/rateLimit.js';
 import { setupSecurityHeaders } from './middleware/securityHeaders.js';
 import { setupMetrics } from './metrics.js';
 import { getVersionInfo } from './version.js';
+import { handleTcpProxyUpgrade } from './routes/tcpProxy.js';
 
 type ServerBundle = {
   app: FastifyInstance;
@@ -74,6 +75,10 @@ export function buildServer(config: Config): ServerBundle {
   });
 
   app.get('/version', async () => getVersionInfo());
+
+  app.server.on('upgrade', (request, socket, head) => {
+    handleTcpProxyUpgrade(request, socket, head, { allowedOrigins: config.ALLOWED_ORIGINS });
+  });
 
   // Handle CORS preflight requests, even when no route matches.
   app.options('/*', async (_request, reply) => reply.code(204).send());
