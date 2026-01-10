@@ -121,4 +121,12 @@ NTSTATUS VirtqSplitGetUsed(VIRTQ_SPLIT *vq, void **cookie_out, UINT32 *len_out);
 VOID VirtqSplitDisableInterrupts(VIRTQ_SPLIT *vq);
 BOOLEAN VirtqSplitEnableInterrupts(VIRTQ_SPLIT *vq);
 
+#ifdef VIRTQ_DEBUG
+/*
+ * Optional debug helper for unit tests and diagnostics. This is compiled out
+ * for normal kernel builds.
+ */
+VOID VirtqSplitDump(const VIRTQ_SPLIT *vq, void (*logfn)(const char *line, void *ctx), void *ctx);
+#endif
+
 #endif /* VIRTQUEUE_SPLIT_H_ */

@@ -516,3 +516,67 @@ BOOLEAN VirtqSplitEnableInterrupts(VIRTQ_SPLIT *vq)
 	used_idx = VirtioReadU16((volatile UINT16 *)&vq->used->idx);
 	return used_idx == vq->last_used_idx;
 }
+
+#ifdef VIRTQ_DEBUG
+#if !VIRTIO_OSDEP_KERNEL_MODE
+#include <stdarg.h>
+#include <stdio.h>
+
+static void VirtqSplitDumpLog(void (*logfn)(const char *line, void *ctx), void *ctx, const char *fmt, ...)
+{
+	char buf[256];
+	va_list ap;
+
+	va_start(ap, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+
+	logfn(buf, ctx);
+}
+
+VOID VirtqSplitDump(const VIRTQ_SPLIT *vq, void (*logfn)(const char *line, void *ctx), void *ctx)
+{
+	if (vq == NULL || logfn == NULL) {
+		return;
+	}
+
+	VirtqSplitDumpLog(logfn, ctx,
+			  "VIRTQ_SPLIT qsz=%u event_idx=%u indirect=%u ring_align=%u", (unsigned)vq->qsz,
+			  (unsigned)(vq->event_idx != FALSE), (unsigned)(vq->indirect != FALSE),
+			  (unsigned)vq->ring_align);
+	VirtqSplitDumpLog(logfn, ctx,
+			  "  avail_idx=%u last_used_idx=%u num_added=%u", (unsigned)vq->avail_idx,
+			  (unsigned)vq->last_used_idx, (unsigned)vq->num_added);
+	VirtqSplitDumpLog(logfn, ctx,
+			  "  free_head=%u num_free=%u", (unsigned)vq->free_head, (unsigned)vq->num_free);
+
+	VirtqSplitDumpLog(logfn, ctx,
+			  "  avail->idx=%u avail->flags=0x%04x", (unsigned)VirtioReadU16((volatile UINT16 *)&vq->avail->idx),
+			  (unsigned)VirtioReadU16((volatile UINT16 *)&vq->avail->flags));
+	VirtqSplitDumpLog(logfn, ctx,
+			  "  used->idx=%u used->flags=0x%04x", (unsigned)VirtioReadU16((volatile UINT16 *)&vq->used->idx),
+			  (unsigned)VirtioReadU16((volatile UINT16 *)&vq->used->flags));
+
+	if (vq->event_idx) {
+		VirtqSplitDumpLog(logfn, ctx,
+				  "  used_event=%u avail_event=%u", (unsigned)VirtioReadU16(VirtqAvailUsedEvent(vq->avail, vq->qsz)),
+				  (unsigned)VirtioReadU16(VirtqUsedAvailEvent(vq->used, vq->qsz)));
+	}
+
+	if (vq->indirect_pool_va != NULL) {
+		VirtqSplitDumpLog(logfn, ctx,
+				  "  indirect_table_count=%u indirect_num_free=%u indirect_free_head=%u indirect_threshold=%u max_desc=%u",
+				  (unsigned)vq->indirect_table_count, (unsigned)vq->indirect_num_free,
+				  (unsigned)vq->indirect_free_head, (unsigned)vq->indirect_threshold,
+				  (unsigned)vq->indirect_max_desc);
+	}
+}
+#else
+VOID VirtqSplitDump(const VIRTQ_SPLIT *vq, void (*logfn)(const char *line, void *ctx), void *ctx)
+{
+	(void)vq;
+	(void)logfn;
+	(void)ctx;
+}
+#endif
+#endif
