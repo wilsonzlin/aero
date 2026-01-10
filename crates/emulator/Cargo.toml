@@ -13,6 +13,7 @@ sinc-resampler = []
 [dependencies]
 aero-devices = { path = "../devices" }
 memory = { path = "../memory" }
+aero-net-e1000 = { path = "../aero-net-e1000" }
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

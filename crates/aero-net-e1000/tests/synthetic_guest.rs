@@ -1,4 +1,5 @@
-use aero_net_e1000::{Dma, E1000Device, E1000_MMIO_SIZE, ICR_RXT0, ICR_TXDW};
+use aero_net_e1000::{E1000Device, E1000_MMIO_SIZE, ICR_RXT0, ICR_TXDW};
+use memory::MemoryBus;
 
 struct TestDma {
     mem: Vec<u8>,
@@ -6,7 +7,9 @@ struct TestDma {
 
 impl TestDma {
     fn new(size: usize) -> Self {
-        Self { mem: vec![0u8; size] }
+        Self {
+            mem: vec![0u8; size],
+        }
     }
 
     fn write(&mut self, addr: u64, bytes: &[u8]) {
@@ -20,13 +23,13 @@ impl TestDma {
     }
 }
 
-impl Dma for TestDma {
-    fn read(&mut self, paddr: u64, buf: &mut [u8]) {
+impl MemoryBus for TestDma {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
         let addr = paddr as usize;
         buf.copy_from_slice(&self.mem[addr..addr + buf.len()]);
     }
 
-    fn write(&mut self, paddr: u64, buf: &[u8]) {
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
         let addr = paddr as usize;
         self.mem[addr..addr + buf.len()].copy_from_slice(buf);
     }
@@ -78,7 +81,7 @@ fn eeprom_read_returns_mac_words() {
     let mut dma = TestDma::new(0x1000);
 
     // Read EEPROM word 0.
-    dev.mmio_write_u32(0x0014, 1 | (0 << 8), &mut dma); // START + addr
+    dev.mmio_write_u32(&mut dma, 0x0014, 1 | (0 << 8)); // START + addr
     let eerd = dev.mmio_read_u32(0x0014);
     let data = (eerd >> 16) as u16;
     assert_eq!(data, u16::from_le_bytes([mac[0], mac[1]]));
@@ -90,23 +93,23 @@ fn synthetic_guest_tx_and_rx() {
     let mut dma = TestDma::new(0x40_000);
 
     // Enable interrupts for both RX and TX.
-    dev.mmio_write_u32(0x00D0, ICR_RXT0 | ICR_TXDW, &mut dma); // IMS
+    dev.mmio_write_u32(&mut dma, 0x00D0, ICR_RXT0 | ICR_TXDW); // IMS
 
     // Configure TX ring: 4 descriptors at 0x1000.
-    dev.mmio_write_u32(0x3800, 0x1000, &mut dma); // TDBAL
-    dev.mmio_write_u32(0x3804, 0, &mut dma); // TDBAH
-    dev.mmio_write_u32(0x3808, 4 * 16, &mut dma); // TDLEN
-    dev.mmio_write_u32(0x3810, 0, &mut dma); // TDH
-    dev.mmio_write_u32(0x3818, 0, &mut dma); // TDT
-    dev.mmio_write_u32(0x0400, 1 << 1, &mut dma); // TCTL.EN
+    dev.mmio_write_u32(&mut dma, 0x3800, 0x1000); // TDBAL
+    dev.mmio_write_u32(&mut dma, 0x3804, 0); // TDBAH
+    dev.mmio_write_u32(&mut dma, 0x3808, 4 * 16); // TDLEN
+    dev.mmio_write_u32(&mut dma, 0x3810, 0); // TDH
+    dev.mmio_write_u32(&mut dma, 0x3818, 0); // TDT
+    dev.mmio_write_u32(&mut dma, 0x0400, 1 << 1); // TCTL.EN
 
     // Configure RX ring: 2 descriptors at 0x2000.
-    dev.mmio_write_u32(0x2800, 0x2000, &mut dma); // RDBAL
-    dev.mmio_write_u32(0x2804, 0, &mut dma); // RDBAH
-    dev.mmio_write_u32(0x2808, 2 * 16, &mut dma); // RDLEN
-    dev.mmio_write_u32(0x2810, 0, &mut dma); // RDH
-    dev.mmio_write_u32(0x2818, 1, &mut dma); // RDT (driver-owned; model uses status bits)
-    dev.mmio_write_u32(0x0100, 1 << 1, &mut dma); // RCTL.EN (defaults to 2048 buffer)
+    dev.mmio_write_u32(&mut dma, 0x2800, 0x2000); // RDBAL
+    dev.mmio_write_u32(&mut dma, 0x2804, 0); // RDBAH
+    dev.mmio_write_u32(&mut dma, 0x2808, 2 * 16); // RDLEN
+    dev.mmio_write_u32(&mut dma, 0x2810, 0); // RDH
+    dev.mmio_write_u32(&mut dma, 0x2818, 1); // RDT
+    dev.mmio_write_u32(&mut dma, 0x0100, 1 << 1); // RCTL.EN (defaults to 2048 buffer)
 
     // Populate RX descriptors with guest buffers.
     write_rx_desc(&mut dma, 0x2000, 0x3000, 0);
@@ -115,8 +118,15 @@ fn synthetic_guest_tx_and_rx() {
     // Guest TX: descriptor 0 points at packet buffer 0x4000.
     let pkt_out = b"guest->host";
     dma.write(0x4000, pkt_out);
-    write_tx_desc(&mut dma, 0x1000, 0x4000, pkt_out.len() as u16, 0b0000_1001, 0); // EOP|RS
-    dev.mmio_write_u32(0x3818, 1, &mut dma); // TDT = 1 triggers TX processing.
+    write_tx_desc(
+        &mut dma,
+        0x1000,
+        0x4000,
+        pkt_out.len() as u16,
+        0b0000_1001,
+        0,
+    ); // EOP|RS
+    dev.mmio_write_u32(&mut dma, 0x3818, 1); // TDT = 1 triggers TX processing.
 
     assert_eq!(dev.pop_tx_frame().as_deref(), Some(pkt_out.as_slice()));
     assert!(dev.irq_level());
@@ -125,7 +135,7 @@ fn synthetic_guest_tx_and_rx() {
 
     // Host RX: deliver frame into guest ring.
     let pkt_in = b"host->guest";
-    dev.receive_frame(pkt_in, &mut dma);
+    dev.receive_frame(&mut dma, pkt_in);
 
     assert_eq!(dma.read_vec(0x3000, pkt_in.len()), pkt_in);
     assert!(dev.irq_level());

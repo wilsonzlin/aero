@@ -223,6 +223,9 @@ dependencies = [
 [[package]]
 name = "aero-net-e1000"
 version = "0.1.0"
+dependencies = [
+ "memory",
+]
 
 [[package]]
 name = "aero-net-proxy-server"
@@ -1350,6 +1353,7 @@ version = "0.1.0"
 dependencies = [
  "aero-bios",
  "aero-devices",
+ "aero-net-e1000",
  "anyhow",
  "criterion",
  "hyper 0.14.32",

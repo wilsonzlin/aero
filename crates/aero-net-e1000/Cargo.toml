@@ -10,3 +10,5 @@ path = "src/lib.rs"
 [features]
 default = []
 
+[dependencies]
+memory = { path = "../memory" }

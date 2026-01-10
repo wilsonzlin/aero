@@ -4,22 +4,15 @@
 //! basic Windows 7 networking driver bring-up:
 //! - Basic PCI config space (vendor/device IDs + BAR0 probing/programming)
 //! - MMIO register interface for init, RX/TX rings, and interrupts
-//! - Legacy RX/TX descriptor rings with DMA read/write via [`Dma`]
+//! - Legacy RX/TX descriptor rings with DMA read/write via [`memory::MemoryBus`]
 //! - Simple host-facing frame queues
 //!
 //! The implementation aims to be "good enough" for driver compatibility
 //! without chasing every obscure corner case of real silicon.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
-/// DMA interface used by the device to access guest physical memory.
-///
-/// The wider project calls this "MemoryBus DMA helpers". The E1000 model keeps
-/// the surface area intentionally small: raw reads/writes.
-pub trait Dma {
-    fn read(&mut self, paddr: u64, buf: &mut [u8]);
-    fn write(&mut self, paddr: u64, buf: &[u8]);
-}
+use memory::MemoryBus;
 
 /// Size of the E1000 MMIO BAR.
 pub const E1000_MMIO_SIZE: u32 = 0x20_000;
@@ -179,90 +172,111 @@ impl TxDesc {
     }
 }
 
-fn read_desc<const N: usize>(dma: &mut dyn Dma, addr: u64) -> [u8; N] {
+fn read_desc<const N: usize>(mem: &mut dyn MemoryBus, addr: u64) -> [u8; N] {
     let mut buf = [0u8; N];
-    dma.read(addr, &mut buf);
+    mem.read_physical(addr, &mut buf);
     buf
 }
 
-fn write_desc(dma: &mut dyn Dma, addr: u64, bytes: &[u8]) {
-    dma.write(addr, bytes);
+fn write_desc(mem: &mut dyn MemoryBus, addr: u64, bytes: &[u8]) {
+    mem.write_physical(addr, bytes);
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct PciConfig {
-    /// BAR0 address programmed by the guest.
+    regs: [u8; 256],
     bar0: u32,
     bar0_probe: bool,
-    command: u16,
-    status: u16,
-    interrupt_line: u8,
-}
-
-impl Default for PciConfig {
-    fn default() -> Self {
-        Self {
-            bar0: 0,
-            bar0_probe: false,
-            command: 0,
-            status: 0,
-            interrupt_line: 0,
-        }
-    }
 }
 
 impl PciConfig {
     pub const VENDOR_ID: u16 = 0x8086;
     pub const DEVICE_ID: u16 = 0x100E; // 82540EM (QEMU default)
 
-    pub fn read_u32(&mut self, offset: u16) -> u32 {
-        match offset {
-            0x00 => (Self::DEVICE_ID as u32) << 16 | (Self::VENDOR_ID as u32),
-            0x04 => (self.status as u32) << 16 | (self.command as u32),
-            0x08 => {
-                // Revision ID / class code.
-                // Class code: 0x02 (network), subclass 0x00 (ethernet), prog-if 0x00.
-                0x00_00_00_00 | (0x02u32 << 24)
-            }
-            0x0C => {
-                // Header type 0x00.
-                0x00 << 16
-            }
-            0x10 => {
-                if self.bar0_probe {
-                    // Memory BAR size mask.
-                    // BAR reports 128KiB region, naturally aligned.
-                    // For a 32-bit memory BAR the low bits are flags; we expose a simple mask.
-                    let size = E1000_MMIO_SIZE;
-                    (!(size - 1)) & 0xFFFF_FFF0
-                } else {
-                    self.bar0 & 0xFFFF_FFF0
+    pub fn new() -> Self {
+        let mut regs = [0u8; 256];
+        regs[0x00..0x02].copy_from_slice(&Self::VENDOR_ID.to_le_bytes());
+        regs[0x02..0x04].copy_from_slice(&Self::DEVICE_ID.to_le_bytes());
+
+        // Class code: Network controller / Ethernet controller.
+        regs[0x0a] = 0x00; // subclass
+        regs[0x0b] = 0x02; // class
+        regs[0x0e] = 0x00; // header type
+
+        // Subsystem IDs (keep Intel for familiarity).
+        regs[0x2c..0x2e].copy_from_slice(&Self::VENDOR_ID.to_le_bytes());
+        regs[0x2e..0x30].copy_from_slice(&Self::DEVICE_ID.to_le_bytes());
+
+        // INTA#
+        regs[0x3d] = 0x01;
+
+        Self {
+            regs,
+            bar0: 0,
+            bar0_probe: false,
+        }
+    }
+
+    pub fn bar0(&self) -> u32 {
+        self.bar0
+    }
+
+    fn read_u32_raw(&self, offset: usize) -> u32 {
+        u32::from_le_bytes(self.regs[offset..offset + 4].try_into().unwrap())
+    }
+
+    fn write_u32_raw(&mut self, offset: usize, value: u32) {
+        self.regs[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    pub fn read(&self, offset: u16, size: usize) -> u32 {
+        let offset = offset as usize;
+        match size {
+            1 => self.regs[offset] as u32,
+            2 => u16::from_le_bytes(self.regs[offset..offset + 2].try_into().unwrap()) as u32,
+            4 => {
+                if offset == 0x10 {
+                    return if self.bar0_probe {
+                        (!(E1000_MMIO_SIZE - 1)) & 0xffff_fff0
+                    } else {
+                        self.bar0
+                    };
                 }
+                self.read_u32_raw(offset)
             }
-            0x3C => (1u32 << 8) | (self.interrupt_line as u32), // INTA#
             _ => 0,
         }
     }
 
-    pub fn write_u32(&mut self, offset: u16, value: u32) {
-        match offset {
-            0x04 => {
-                self.command = value as u16;
-                self.status = (value >> 16) as u16;
-            }
-            0x10 => {
-                if value == 0xFFFF_FFFF {
-                    self.bar0_probe = true;
-                } else {
-                    self.bar0_probe = false;
-                    self.bar0 = value & 0xFFFF_FFF0;
+    pub fn write(&mut self, offset: u16, size: usize, value: u32) {
+        let offset = offset as usize;
+        match size {
+            1 => self.regs[offset] = value as u8,
+            2 => self.regs[offset..offset + 2].copy_from_slice(&(value as u16).to_le_bytes()),
+            4 => {
+                if offset == 0x10 {
+                    if value == 0xffff_ffff {
+                        self.bar0_probe = true;
+                        self.bar0 = 0;
+                    } else {
+                        self.bar0_probe = false;
+                        self.bar0 = value & 0xffff_fff0;
+                    }
+                    self.write_u32_raw(offset, self.bar0);
+                    return;
                 }
-            }
-            0x3C => {
-                self.interrupt_line = (value & 0xFF) as u8;
+                self.write_u32_raw(offset, value);
             }
             _ => {}
         }
+    }
+
+    pub fn read_u32(&self, offset: u16) -> u32 {
+        self.read(offset, 4)
+    }
+
+    pub fn write_u32(&mut self, offset: u16, value: u32) {
+        self.write(offset, 4, value)
     }
 }
 
@@ -302,10 +316,12 @@ pub struct E1000Device {
     tdlen: u32,
     tdh: u32,
     tdt: u32,
+    tx_partial: Vec<u8>,
 
     mac_addr: [u8; 6],
     eeprom: [u16; 64],
     phy: [u16; 32],
+    other_regs: HashMap<u32, u32>,
 
     rx_pending: VecDeque<Vec<u8>>,
     tx_out: VecDeque<Vec<u8>>,
@@ -314,7 +330,7 @@ pub struct E1000Device {
 impl E1000Device {
     pub fn new(mac_addr: [u8; 6]) -> Self {
         let mut dev = Self {
-            pci: PciConfig::default(),
+            pci: PciConfig::new(),
             ctrl: 0,
             status: STATUS_LU | STATUS_FD | STATUS_SPEED_1000,
             eecd: EECD_EE_PRES,
@@ -336,9 +352,11 @@ impl E1000Device {
             tdlen: 0,
             tdh: 0,
             tdt: 0,
+            tx_partial: Vec::new(),
             mac_addr,
             eeprom: [0xFFFF; 64],
             phy: [0; 32],
+            other_regs: HashMap::new(),
             rx_pending: VecDeque::new(),
             tx_out: VecDeque::new(),
         };
@@ -380,7 +398,15 @@ impl E1000Device {
         self.irq_level
     }
 
-    pub fn pci_read_u32(&mut self, offset: u16) -> u32 {
+    pub fn pci_config_read(&self, offset: u16, size: usize) -> u32 {
+        self.pci.read(offset, size)
+    }
+
+    pub fn pci_config_write(&mut self, offset: u16, size: usize, value: u32) {
+        self.pci.write(offset, size, value)
+    }
+
+    pub fn pci_read_u32(&self, offset: u16) -> u32 {
         self.pci.read_u32(offset)
     }
 
@@ -388,160 +414,77 @@ impl E1000Device {
         self.pci.write_u32(offset, value)
     }
 
-    pub fn mmio_read_u32(&mut self, offset: u32) -> u32 {
-        match offset {
-            REG_CTRL => self.ctrl,
-            REG_STATUS => self.status,
-            REG_EECD => self.eecd,
-            REG_EERD => self.eerd,
-            REG_CTRL_EXT => self.ctrl_ext,
-            REG_MDIC => self.mdic,
-
-            REG_ICR => {
-                let v = self.icr;
-                self.icr = 0;
-                self.update_irq_level();
-                v
-            }
-            REG_IMS => self.ims,
-            REG_IMC => 0,
-
-            REG_RCTL => self.rctl,
-            REG_TCTL => self.tctl,
-
-            REG_RDBAL => self.rdbal,
-            REG_RDBAH => self.rdbah,
-            REG_RDLEN => self.rdlen,
-            REG_RDH => self.rdh,
-            REG_RDT => self.rdt,
-
-            REG_TDBAL => self.tdbal,
-            REG_TDBAH => self.tdbah,
-            REG_TDLEN => self.tdlen,
-            REG_TDH => self.tdh,
-            REG_TDT => self.tdt,
-
-            REG_RAL0 => {
-                u32::from_le_bytes([self.mac_addr[0], self.mac_addr[1], self.mac_addr[2], self.mac_addr[3]])
-            }
-            REG_RAH0 => {
-                let mut v = u32::from_le_bytes([self.mac_addr[4], self.mac_addr[5], 0, 0]);
-                v |= 1u32 << 31; // AV bit
-                v
-            }
+    pub fn mmio_read(&mut self, offset: u64, size: usize) -> u32 {
+        let aligned = (offset & !3) as u32;
+        let shift = ((offset & 3) * 8) as u32;
+        let value = self.mmio_read_u32_aligned(aligned);
+        match size {
+            4 => value,
+            2 => (value >> shift) & 0xffff,
+            1 => (value >> shift) & 0xff,
             _ => 0,
         }
     }
 
-    pub fn mmio_write_u32(&mut self, offset: u32, value: u32, dma: &mut dyn Dma) {
-        match offset {
-            REG_CTRL => {
-                self.ctrl = value;
-                if (value & CTRL_RST) != 0 {
-                    self.reset();
-                }
-            }
-            REG_EECD => self.eecd = value | EECD_EE_PRES,
-            REG_EERD => {
-                self.eerd = value;
-                if (value & EERD_START) != 0 {
-                    let addr = ((value >> EERD_ADDR_SHIFT) & 0x3F) as usize;
-                    let data = self.eeprom.get(addr).copied().unwrap_or(0xFFFF) as u32;
-                    self.eerd = (addr as u32) << EERD_ADDR_SHIFT
-                        | EERD_DONE
-                        | (data << EERD_DATA_SHIFT);
-                }
-            }
-            REG_CTRL_EXT => self.ctrl_ext = value,
-            REG_MDIC => {
-                let reg = ((value & MDIC_REG_MASK) >> MDIC_REG_SHIFT) as usize;
-                let data = (value & MDIC_DATA_MASK) as u16;
+    pub fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+        let aligned = (offset & !3) as u32;
+        let shift = ((offset & 3) * 8) as u32;
 
-                // Only a single PHY at address 1 is modeled. If another address is used, we
-                // still return READY with 0 data.
-                let _phy = ((value & MDIC_PHY_MASK) >> MDIC_PHY_SHIFT) as u8;
+        let value32 = match size {
+            4 => value,
+            2 => (value & 0xffff) << shift,
+            1 => (value & 0xff) << shift,
+            _ => return,
+        };
 
-                if (value & MDIC_OP_READ) != 0 {
-                    let v = self.phy.get(reg).copied().unwrap_or(0) as u32;
-                    self.mdic = (value & (MDIC_REG_MASK | MDIC_PHY_MASK)) | MDIC_READY | v;
-                } else if (value & MDIC_OP_WRITE) != 0 {
-                    if let Some(slot) = self.phy.get_mut(reg) {
-                        *slot = data;
-                    }
-                    self.mdic = (value & (MDIC_REG_MASK | MDIC_PHY_MASK)) | MDIC_READY | data as u32;
-                } else {
-                    self.mdic = value | MDIC_READY;
-                }
-            }
+        let merged = if size == 4 {
+            value32
+        } else {
+            let cur = self.mmio_peek_u32(aligned);
+            let mask = match size {
+                2 => 0xffffu32 << shift,
+                1 => 0xffu32 << shift,
+                _ => 0,
+            };
+            (cur & !mask) | value32
+        };
 
-            REG_ICS => {
-                self.icr |= value;
-                self.update_irq_level();
-            }
-            REG_IMS => {
-                self.ims |= value;
-                self.update_irq_level();
-            }
-            REG_IMC => {
-                self.ims &= !value;
-                self.update_irq_level();
-            }
-
-            REG_RCTL => {
-                self.rctl = value;
-                self.flush_rx_pending(dma);
-            }
-            REG_TCTL => self.tctl = value,
-
-            REG_RDBAL => self.rdbal = value,
-            REG_RDBAH => self.rdbah = value,
-            REG_RDLEN => self.rdlen = value,
-            REG_RDH => self.rdh = value,
-            REG_RDT => {
-                self.rdt = value;
-                self.flush_rx_pending(dma);
-            }
-
-            REG_TDBAL => self.tdbal = value,
-            REG_TDBAH => self.tdbah = value,
-            REG_TDLEN => self.tdlen = value,
-            REG_TDH => self.tdh = value,
-            REG_TDT => {
-                self.tdt = value;
-                self.process_tx(dma);
-            }
-
-            REG_RAL0 => {
-                let bytes = value.to_le_bytes();
-                self.mac_addr[0..4].copy_from_slice(&bytes);
-                self.init_eeprom_from_mac();
-            }
-            REG_RAH0 => {
-                let bytes = value.to_le_bytes();
-                self.mac_addr[4] = bytes[0];
-                self.mac_addr[5] = bytes[1];
-                self.init_eeprom_from_mac();
-            }
-            _ => {}
-        }
+        self.mmio_write_u32_aligned(mem, aligned, merged);
     }
 
-    pub fn poll(&mut self, dma: &mut dyn Dma) {
-        self.flush_rx_pending(dma);
+    pub fn mmio_read_u32(&mut self, offset: u32) -> u32 {
+        self.mmio_read(offset as u64, 4)
+    }
+
+    pub fn mmio_write_u32(&mut self, mem: &mut dyn MemoryBus, offset: u32, value: u32) {
+        self.mmio_write(mem, offset as u64, 4, value);
+    }
+
+    pub fn poll(&mut self, mem: &mut dyn MemoryBus) {
+        self.process_tx(mem);
+        self.flush_rx_pending(mem);
+    }
+
+    /// Queue a host→guest Ethernet frame for later delivery.
+    ///
+    /// The caller is expected to invoke [`poll`] (or [`receive_frame`]) to flush
+    /// pending frames into the RX descriptor ring when buffers are available.
+    pub fn enqueue_rx_frame(&mut self, frame: Vec<u8>) {
+        // Keep memory bounded even if the guest never enables RX.
+        const MAX_PENDING: usize = 256;
+        if self.rx_pending.len() >= MAX_PENDING {
+            self.rx_pending.pop_front();
+        }
+        self.rx_pending.push_back(frame);
     }
 
     /// Host → guest path.
     ///
     /// Frames are queued and then copied into guest RX buffers when the guest
     /// has enabled reception and made descriptors available.
-    pub fn receive_frame(&mut self, frame: &[u8], dma: &mut dyn Dma) {
-        // Keep memory bounded even if the guest never enables RX.
-        const MAX_PENDING: usize = 256;
-        if self.rx_pending.len() >= MAX_PENDING {
-            self.rx_pending.pop_front();
-        }
-        self.rx_pending.push_back(frame.to_vec());
-        self.flush_rx_pending(dma);
+    pub fn receive_frame(&mut self, mem: &mut dyn MemoryBus, frame: &[u8]) {
+        self.enqueue_rx_frame(frame.to_vec());
+        self.flush_rx_pending(mem);
     }
 
     /// Guest → host path. Returns the next frame transmitted by the guest.
@@ -574,7 +517,9 @@ impl E1000Device {
         self.tdlen = 0;
         self.tdh = 0;
         self.tdt = 0;
+        self.tx_partial.clear();
 
+        self.other_regs.clear();
         self.rx_pending.clear();
         self.tx_out.clear();
 
@@ -584,6 +529,158 @@ impl E1000Device {
 
     fn update_irq_level(&mut self) {
         self.irq_level = (self.icr & self.ims) != 0;
+    }
+
+    fn mmio_peek_u32(&self, offset: u32) -> u32 {
+        match offset {
+            REG_CTRL => self.ctrl,
+            REG_STATUS => self.status,
+            REG_EECD => self.eecd,
+            REG_EERD => self.eerd,
+            REG_CTRL_EXT => self.ctrl_ext,
+            REG_MDIC => self.mdic,
+
+            REG_ICR => self.icr,
+            REG_ICS => 0,
+            REG_IMS => self.ims,
+            REG_IMC => 0,
+
+            REG_RCTL => self.rctl,
+            REG_TCTL => self.tctl,
+
+            REG_RDBAL => self.rdbal,
+            REG_RDBAH => self.rdbah,
+            REG_RDLEN => self.rdlen,
+            REG_RDH => self.rdh,
+            REG_RDT => self.rdt,
+
+            REG_TDBAL => self.tdbal,
+            REG_TDBAH => self.tdbah,
+            REG_TDLEN => self.tdlen,
+            REG_TDH => self.tdh,
+            REG_TDT => self.tdt,
+
+            REG_RAL0 => u32::from_le_bytes([
+                self.mac_addr[0],
+                self.mac_addr[1],
+                self.mac_addr[2],
+                self.mac_addr[3],
+            ]),
+            REG_RAH0 => {
+                let mut v = u32::from_le_bytes([self.mac_addr[4], self.mac_addr[5], 0, 0]);
+                v |= 1u32 << 31; // AV bit
+                v
+            }
+            _ => *self.other_regs.get(&offset).unwrap_or(&0),
+        }
+    }
+
+    fn mmio_read_u32_aligned(&mut self, offset: u32) -> u32 {
+        match offset {
+            REG_ICR => {
+                let v = self.icr;
+                self.icr = 0;
+                self.update_irq_level();
+                v
+            }
+            _ => self.mmio_peek_u32(offset),
+        }
+    }
+
+    fn mmio_write_u32_aligned(&mut self, mem: &mut dyn MemoryBus, offset: u32, value: u32) {
+        match offset {
+            REG_CTRL => {
+                if (value & CTRL_RST) != 0 {
+                    self.reset();
+                } else {
+                    self.ctrl = value;
+                }
+            }
+            REG_EECD => self.eecd = value | EECD_EE_PRES,
+            REG_EERD => {
+                self.eerd = value;
+                if (value & EERD_START) != 0 {
+                    let addr = ((value >> EERD_ADDR_SHIFT) & 0xFF) as usize;
+                    let data = self.eeprom.get(addr).copied().unwrap_or(0xFFFF) as u32;
+                    self.eerd =
+                        (addr as u32) << EERD_ADDR_SHIFT | EERD_DONE | (data << EERD_DATA_SHIFT);
+                }
+            }
+            REG_CTRL_EXT => self.ctrl_ext = value,
+            REG_MDIC => {
+                let reg = ((value & MDIC_REG_MASK) >> MDIC_REG_SHIFT) as usize;
+                let data = (value & MDIC_DATA_MASK) as u16;
+
+                // Only a single PHY at address 1 is modeled. If another address is used, we
+                // still return READY with 0 data.
+                let _phy = ((value & MDIC_PHY_MASK) >> MDIC_PHY_SHIFT) as u8;
+
+                if (value & MDIC_OP_READ) != 0 {
+                    let v = self.phy.get(reg).copied().unwrap_or(0) as u32;
+                    self.mdic = (value & (MDIC_REG_MASK | MDIC_PHY_MASK)) | MDIC_READY | v;
+                } else if (value & MDIC_OP_WRITE) != 0 {
+                    if let Some(slot) = self.phy.get_mut(reg) {
+                        *slot = data;
+                    }
+                    self.mdic =
+                        (value & (MDIC_REG_MASK | MDIC_PHY_MASK)) | MDIC_READY | data as u32;
+                } else {
+                    self.mdic = value | MDIC_READY;
+                }
+            }
+
+            REG_ICS => {
+                self.icr |= value;
+                self.update_irq_level();
+            }
+            REG_IMS => {
+                self.ims |= value;
+                self.update_irq_level();
+            }
+            REG_IMC => {
+                self.ims &= !value;
+                self.update_irq_level();
+            }
+
+            REG_RCTL => {
+                self.rctl = value;
+                self.flush_rx_pending(mem);
+            }
+            REG_TCTL => self.tctl = value,
+
+            REG_RDBAL => self.rdbal = value,
+            REG_RDBAH => self.rdbah = value,
+            REG_RDLEN => self.rdlen = value,
+            REG_RDH => self.rdh = value,
+            REG_RDT => {
+                self.rdt = value;
+                self.flush_rx_pending(mem);
+            }
+
+            REG_TDBAL => self.tdbal = value,
+            REG_TDBAH => self.tdbah = value,
+            REG_TDLEN => self.tdlen = value,
+            REG_TDH => self.tdh = value,
+            REG_TDT => {
+                self.tdt = value;
+                self.process_tx(mem);
+            }
+
+            REG_RAL0 => {
+                let bytes = value.to_le_bytes();
+                self.mac_addr[0..4].copy_from_slice(&bytes);
+                self.init_eeprom_from_mac();
+            }
+            REG_RAH0 => {
+                let bytes = value.to_le_bytes();
+                self.mac_addr[4] = bytes[0];
+                self.mac_addr[5] = bytes[1];
+                self.init_eeprom_from_mac();
+            }
+            _ => {
+                self.other_regs.insert(offset, value);
+            }
+        }
     }
 
     fn rx_ring_desc_count(&self) -> Option<u32> {
@@ -625,7 +722,7 @@ impl E1000Device {
         }
     }
 
-    fn flush_rx_pending(&mut self, dma: &mut dyn Dma) {
+    fn flush_rx_pending(&mut self, mem: &mut dyn MemoryBus) {
         if (self.rctl & RCTL_EN) == 0 {
             return;
         }
@@ -639,15 +736,15 @@ impl E1000Device {
         let buf_len = self.rx_buf_len();
 
         while let Some(frame) = self.rx_pending.front() {
-            let idx = (self.rdh % desc_count) as u64;
-            let desc_addr = base + idx * RxDesc::LEN as u64;
-            let desc_bytes = read_desc::<{ RxDesc::LEN }>(dma, desc_addr);
-            let mut desc = RxDesc::from_bytes(desc_bytes);
-
-            // If the guest hasn't cleaned the descriptor yet, stop.
-            if (desc.status & RXD_STAT_DD) != 0 {
+            // The hardware head (RDH) must not catch up to the software tail (RDT).
+            // Keep one descriptor unused to avoid ambiguity in full/empty conditions.
+            if self.rdh == self.rdt {
                 break;
             }
+            let idx = (self.rdh % desc_count) as u64;
+            let desc_addr = base + idx * RxDesc::LEN as u64;
+            let desc_bytes = read_desc::<{ RxDesc::LEN }>(mem, desc_addr);
+            let mut desc = RxDesc::from_bytes(desc_bytes);
 
             if desc.buffer_addr == 0 {
                 // Driver hasn't set up this descriptor; stop.
@@ -655,13 +752,13 @@ impl E1000Device {
             }
 
             let copy_len = frame.len().min(buf_len);
-            dma.write(desc.buffer_addr, &frame[..copy_len]);
+            mem.write_physical(desc.buffer_addr, &frame[..copy_len]);
 
             desc.length = copy_len as u16;
             desc.checksum = 0;
             desc.errors = 0;
             desc.status = RXD_STAT_DD | RXD_STAT_EOP;
-            write_desc(dma, desc_addr, &desc.to_bytes());
+            write_desc(mem, desc_addr, &desc.to_bytes());
 
             self.rx_pending.pop_front();
 
@@ -672,7 +769,7 @@ impl E1000Device {
         }
     }
 
-    fn process_tx(&mut self, dma: &mut dyn Dma) {
+    fn process_tx(&mut self, mem: &mut dyn MemoryBus) {
         if (self.tctl & TCTL_EN) == 0 {
             return;
         }
@@ -684,24 +781,23 @@ impl E1000Device {
         }
         let base = self.tx_desc_base();
 
-        let mut current_packet = Vec::new();
         let mut should_raise_txdw = false;
 
         while self.tdh != self.tdt {
             let idx = (self.tdh % desc_count) as u64;
             let desc_addr = base + idx * TxDesc::LEN as u64;
-            let desc_bytes = read_desc::<{ TxDesc::LEN }>(dma, desc_addr);
+            let desc_bytes = read_desc::<{ TxDesc::LEN }>(mem, desc_addr);
             let mut desc = TxDesc::from_bytes(desc_bytes);
 
             if desc.buffer_addr != 0 && desc.length != 0 {
                 let mut buf = vec![0u8; desc.length as usize];
-                dma.read(desc.buffer_addr, &mut buf);
-                current_packet.extend_from_slice(&buf);
+                mem.read_physical(desc.buffer_addr, &mut buf);
+                self.tx_partial.extend_from_slice(&buf);
             }
 
             // Mark descriptor done.
             desc.status |= TXD_STAT_DD;
-            write_desc(dma, desc_addr, &desc.to_bytes());
+            write_desc(mem, desc_addr, &desc.to_bytes());
 
             if (desc.cmd & TXD_CMD_RS) != 0 {
                 should_raise_txdw = true;
@@ -709,8 +805,8 @@ impl E1000Device {
 
             let eop = (desc.cmd & TXD_CMD_EOP) != 0;
             if eop {
-                if !current_packet.is_empty() {
-                    self.tx_out.push_back(std::mem::take(&mut current_packet));
+                if !self.tx_partial.is_empty() {
+                    self.tx_out.push_back(std::mem::take(&mut self.tx_partial));
                 }
             }
 
@@ -728,13 +824,15 @@ impl E1000Device {
 mod tests {
     use super::*;
 
-    struct TestDma {
+    struct TestMem {
         mem: Vec<u8>,
     }
 
-    impl TestDma {
+    impl TestMem {
         fn new(size: usize) -> Self {
-            Self { mem: vec![0u8; size] }
+            Self {
+                mem: vec![0u8; size],
+            }
         }
 
         fn write_bytes(&mut self, addr: u64, bytes: &[u8]) {
@@ -748,13 +846,13 @@ mod tests {
         }
     }
 
-    impl Dma for TestDma {
-        fn read(&mut self, paddr: u64, buf: &mut [u8]) {
+    impl MemoryBus for TestMem {
+        fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
             let addr = paddr as usize;
             buf.copy_from_slice(&self.mem[addr..addr + buf.len()]);
         }
 
-        fn write(&mut self, paddr: u64, buf: &[u8]) {
+        fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
             let addr = paddr as usize;
             self.mem[addr..addr + buf.len()].copy_from_slice(buf);
         }
@@ -791,7 +889,7 @@ mod tests {
 
     #[test]
     fn tx_processing_emits_frame_and_sets_dd() {
-        let mut dma = TestDma::new(0x10_000);
+        let mut mem = TestMem::new(0x10_000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 
         // Set up TX ring at 0x1000 with 4 descriptors.
@@ -804,7 +902,7 @@ mod tests {
 
         // Packet buffer at 0x2000.
         let pkt = b"hello";
-        dma.write_bytes(0x2000, pkt);
+        mem.write_bytes(0x2000, pkt);
 
         let desc0 = TxDesc {
             buffer_addr: 0x2000,
@@ -815,14 +913,14 @@ mod tests {
             css: 0,
             special: 0,
         };
-        dma.write_bytes(0x1000, &desc0.to_bytes());
+        mem.write_bytes(0x1000, &desc0.to_bytes());
 
         // Guest updates tail to 1.
-        dev.mmio_write_u32(REG_TDT, 1, &mut dma);
+        dev.mmio_write_u32(&mut mem, REG_TDT, 1);
 
         assert_eq!(dev.pop_tx_frame().as_deref(), Some(pkt.as_slice()));
 
-        let updated = TxDesc::from_bytes(read_desc::<{ TxDesc::LEN }>(&mut dma, 0x1000));
+        let updated = TxDesc::from_bytes(read_desc::<{ TxDesc::LEN }>(&mut mem, 0x1000));
         assert_ne!(updated.status & TXD_STAT_DD, 0);
 
         assert!(dev.irq_level());
@@ -833,13 +931,14 @@ mod tests {
 
     #[test]
     fn rx_processing_writes_frame_and_sets_dd() {
-        let mut dma = TestDma::new(0x20_000);
+        let mut mem = TestMem::new(0x20_000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 
         // RX ring at 0x3000 with 2 descriptors.
         dev.rdbal = 0x3000;
         dev.rdlen = (RxDesc::LEN as u32) * 2;
         dev.rdh = 0;
+        dev.rdt = 1;
         dev.rctl = RCTL_EN;
         dev.ims = ICR_RXT0;
 
@@ -852,17 +951,23 @@ mod tests {
             errors: 0,
             special: 0,
         };
-        let desc1 = RxDesc { buffer_addr: 0x5000, ..desc0 };
-        dma.write_bytes(0x3000, &desc0.to_bytes());
-        dma.write_bytes(0x3010, &desc1.to_bytes());
+        let desc1 = RxDesc {
+            buffer_addr: 0x5000,
+            ..desc0
+        };
+        mem.write_bytes(0x3000, &desc0.to_bytes());
+        mem.write_bytes(0x3010, &desc1.to_bytes());
 
         let frame = b"frame-data";
-        dev.receive_frame(frame, &mut dma);
+        dev.receive_frame(&mut mem, frame);
 
-        assert_eq!(dma.read_bytes(0x4000, frame.len()), frame);
-        let updated = RxDesc::from_bytes(read_desc::<{ RxDesc::LEN }>(&mut dma, 0x3000));
+        assert_eq!(mem.read_bytes(0x4000, frame.len()), frame);
+        let updated = RxDesc::from_bytes(read_desc::<{ RxDesc::LEN }>(&mut mem, 0x3000));
         assert_eq!(updated.length as usize, frame.len());
-        assert_eq!(updated.status & (RXD_STAT_DD | RXD_STAT_EOP), RXD_STAT_DD | RXD_STAT_EOP);
+        assert_eq!(
+            updated.status & (RXD_STAT_DD | RXD_STAT_EOP),
+            RXD_STAT_DD | RXD_STAT_EOP
+        );
 
         assert!(dev.irq_level());
         let icr = dev.mmio_read_u32(REG_ICR);
