@@ -16,26 +16,6 @@ function mergeConfig(base, overrides) {
   };
 }
 
-function withTimeout(promise, { timeoutMs, message }) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
-
-  const wrapped = promise.then(
-    (value) => {
-      clearTimeout(timer);
-      return value;
-    },
-    (err) => {
-      clearTimeout(timer);
-      throw err;
-    },
-  );
-
-  return Promise.race([wrapped, timeout]);
-}
-
 export class VmCoordinator extends EventTarget {
   constructor({ config = {}, workerUrl = new URL('./cpuWorker.js', import.meta.url) } = {}) {
     super();
@@ -69,18 +49,12 @@ export class VmCoordinator extends EventTarget {
     this.worker.on('error', (err) => this._onWorkerError(err));
     this.worker.on('exit', (code) => this._onWorkerExit(code));
 
-    await withTimeout(this._waitForAck('ready'), {
-      timeoutMs: 2000,
-      message: 'Timed out waiting for CPU worker to initialize.',
-    });
+    await this._awaitAck('ready', { timeoutMs: 2000, message: 'Timed out waiting for CPU worker to initialize.' });
 
     this._startWatchdog();
     this._send({ type: 'start', mode });
 
-    await withTimeout(this._waitForAck('started'), {
-      timeoutMs: 2000,
-      message: 'Timed out waiting for CPU worker to start.',
-    });
+    await this._awaitAck('started', { timeoutMs: 2000, message: 'Timed out waiting for CPU worker to start.' });
 
     this._setState('running');
   }
@@ -89,10 +63,7 @@ export class VmCoordinator extends EventTarget {
     if (!this.worker) return;
     if (this.state !== 'running') return;
     this._send({ type: 'pause' });
-    await withTimeout(this._waitForAck('paused'), {
-      timeoutMs: 2000,
-      message: 'Timed out waiting for CPU worker to pause.',
-    });
+    await this._awaitAck('paused', { timeoutMs: 2000, message: 'Timed out waiting for CPU worker to pause.' });
     this._setState('paused');
   }
 
@@ -100,10 +71,7 @@ export class VmCoordinator extends EventTarget {
     if (!this.worker) return;
     if (this.state !== 'paused') return;
     this._send({ type: 'resume' });
-    await withTimeout(this._waitForAck('resumed'), {
-      timeoutMs: 2000,
-      message: 'Timed out waiting for CPU worker to resume.',
-    });
+    await this._awaitAck('resumed', { timeoutMs: 2000, message: 'Timed out waiting for CPU worker to resume.' });
     this.lastHeartbeatAt = Date.now();
     this._setState('running');
   }
@@ -112,14 +80,8 @@ export class VmCoordinator extends EventTarget {
     if (!this.worker) return;
     if (this.state !== 'paused') return;
     this._send({ type: 'step' });
-    await withTimeout(this._waitForAck('stepped'), {
-      timeoutMs: 2000,
-      message: 'Timed out waiting for CPU worker to step.',
-    });
-    await withTimeout(this._waitForAck('paused'), {
-      timeoutMs: 2000,
-      message: 'Timed out waiting for CPU worker to pause after step.',
-    });
+    await this._awaitAck('stepped', { timeoutMs: 2000, message: 'Timed out waiting for CPU worker to step.' });
+    await this._awaitAck('paused', { timeoutMs: 2000, message: 'Timed out waiting for CPU worker to pause after step.' });
     this._setState('paused');
   }
 
@@ -131,10 +93,7 @@ export class VmCoordinator extends EventTarget {
   async requestSnapshot({ reason = 'manual' } = {}) {
     if (!this.worker) return null;
     this._send({ type: 'requestSnapshot', reason });
-    const msg = await withTimeout(this._waitForAck('snapshot'), {
-      timeoutMs: 2000,
-      message: 'Timed out waiting for snapshot.',
-    });
+    const msg = await this._awaitAck('snapshot', { timeoutMs: 2000, message: 'Timed out waiting for snapshot.' });
     return msg.snapshot;
   }
 
@@ -142,10 +101,7 @@ export class VmCoordinator extends EventTarget {
     if (!this.worker) throw new Error('VM is not running');
     const requestId = this._nextRequestId++;
     this._send({ type: 'cacheWrite', requestId, cache, sizeBytes, key });
-    const msg = await withTimeout(this._waitForAck('cacheWriteResult'), {
-      timeoutMs: 2000,
-      message: 'Timed out waiting for cache write result.',
-    });
+    const msg = await this._awaitAck('cacheWriteResult', { timeoutMs: 2000, message: 'Timed out waiting for cache write result.' });
     if (msg?.requestId !== requestId) {
       throw new Error('Received mismatched cache write response.');
     }
@@ -259,11 +215,62 @@ export class VmCoordinator extends EventTarget {
   }
 
   _waitForAck(type) {
+    return this._waitForAckWithOptions(type, undefined);
+  }
+
+  _waitForAckWithOptions(type, options) {
+    const timeoutMs = options?.timeoutMs ?? undefined;
+    const message = options?.message ?? 'Timed out waiting for worker response.';
+
     return new Promise((resolve, reject) => {
+      let timer = null;
       const queue = this._ackQueues.get(type) ?? [];
-      queue.push({ resolve, reject });
+
+      const entry = {
+        resolve: (value) => {
+          if (timer !== null) clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (err) => {
+          if (timer !== null) clearTimeout(timer);
+          reject(err);
+        },
+      };
+
+      queue.push(entry);
       this._ackQueues.set(type, queue);
+
+      if (timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          const pendingQueue = this._ackQueues.get(type);
+          if (pendingQueue) {
+            const idx = pendingQueue.indexOf(entry);
+            if (idx >= 0) pendingQueue.splice(idx, 1);
+            if (pendingQueue.length === 0) this._ackQueues.delete(type);
+          }
+          entry.reject(new Error(message));
+        }, timeoutMs);
+      }
     });
+  }
+
+  async _awaitAck(type, options) {
+    try {
+      return await this._waitForAckWithOptions(type, options);
+    } catch (err) {
+      if (this.state !== 'error') {
+        this._emitError(
+          {
+            code: ErrorCode.WorkerCrashed,
+            message: options?.message ?? 'Worker became unresponsive.',
+            details: { ackType: type },
+            suggestion: 'The worker was terminated to keep the UI responsive. Reset the VM to continue.',
+          },
+          { snapshot: this.lastSnapshot },
+        );
+      }
+      throw err;
+    }
   }
 
   _rejectAllAcks(err) {
