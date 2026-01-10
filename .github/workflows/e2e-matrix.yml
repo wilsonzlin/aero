@@ -153,6 +153,7 @@ jobs:
       E2E_RESULT: ${{ needs.e2e.result }}
     steps:
       - name: Create/close issue for scheduled failures
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
