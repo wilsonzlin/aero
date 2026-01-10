@@ -1,0 +1,19 @@
+[package]
+name = "aero-cpu-decoder"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+# We intentionally depend on a proven, table-driven decoder backend (iced-x86)
+# to get broad ISA coverage immediately without per-instruction allocations.
+#
+# This crate wraps it in an Aero-specific API that the interpreter/JIT can
+# depend on, so we can swap backends later if desired.
+iced-x86 = { version = "1.21.0", default-features = false, features = ["decoder", "std"] }
+
+[dev-dependencies]
+capstone = "0.12.0"
+proptest = "1.5.0"
+

@@ -26,6 +26,7 @@ members = [
     "crates/aero-webgpu",
     "crates/aero_cpu_core",
     "crates/aero_x86",
+    "crates/aero-cpu-decoder",
     "crates/aero-dxbc",
     "crates/aero-d3d9",
     "crates/aero-debug",
