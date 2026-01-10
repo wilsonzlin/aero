@@ -27,6 +27,11 @@ target/
 # Coverage
 coverage/
 
+# Driver workspace outputs (do not commit)
+drivers/out/
+drivers/tmp/
+drivers/vendor/
+
 # Playwright
 playwright-report/
 test-results/

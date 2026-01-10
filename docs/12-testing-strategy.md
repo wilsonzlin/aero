@@ -675,9 +675,20 @@ jobs:
       - name: Run benchmarks
         run: cargo bench
       
-      - name: Compare with baseline
-        run: ./scripts/compare-benchmarks.sh
+       - name: Compare with baseline
+         run: ./scripts/compare-benchmarks.sh
 ```
+
+---
+
+## Guest driver validation (virtio)
+
+For the paravirtualized “fast path” devices (virtio-blk/net/snd/input), validation requires both:
+
+1. Host-side/unit tests for shared protocol structs (layout/ABI), and
+2. In-guest smoke tests (Device Manager binding + basic throughput checks).
+
+See `drivers/README.md` for the current driver-pack workflow and the minimal in-guest validation checklist.
 
 ---
 

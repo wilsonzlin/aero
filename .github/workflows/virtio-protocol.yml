@@ -1,0 +1,21 @@
+name: virtio protocol tests
+
+on:
+  push:
+    paths:
+      - "drivers/protocol/virtio/**"
+      - ".github/workflows/virtio-protocol.yml"
+  pull_request:
+    paths:
+      - "drivers/protocol/virtio/**"
+      - ".github/workflows/virtio-protocol.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo test (virtio protocol)
+        run: cargo test --manifest-path drivers/protocol/virtio/Cargo.toml
+
