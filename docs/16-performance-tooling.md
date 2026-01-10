@@ -107,14 +107,13 @@ Aero traces should be emitted in **Chrome Trace Event** JSON format so they can 
 
 ### Capturing a trace
 
-Trace capture is an optional/advanced feature; not every build exposes it yet. When available, the API is expected to be:
-
 In the DevTools console:
 
 ```js
 window.aero.perf.traceStart();
 // Reproduce the problem for ~5-15 seconds.
-const trace = await window.aero.perf.traceStop();
+window.aero.perf.traceStop();
+const trace = await window.aero.perf.exportTrace();
 ```
 
 Notes:
@@ -124,7 +123,7 @@ Notes:
 
 ### Opening a trace in Perfetto
 
-1. Save the trace JSON returned by `traceStop()` to a file (or use your build’s download button if present).
+1. Save the trace JSON returned by `exportTrace()` to a file.
 2. Open https://ui.perfetto.dev/
 3. Drag-and-drop the JSON file into the UI.
 
@@ -132,7 +131,15 @@ Notes:
 
 1. Open `chrome://tracing` in a Chromium-based browser.
 2. Click **Load**.
-3. Select the trace JSON file you saved from `traceStop()`.
+3. Select the trace JSON file you saved from `exportTrace()`.
+
+### Capturing a trace from startup
+
+Some builds support starting tracing automatically via URL param:
+
+- `http://127.0.0.1:4173/?trace`
+
+This is useful when investigating early startup costs (shader compilation, worker startup, cache warmup).
 
 ### Interpreting lanes / tracks
 
