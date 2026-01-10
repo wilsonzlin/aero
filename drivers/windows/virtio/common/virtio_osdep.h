@@ -108,6 +108,26 @@ typedef void VOID;
 #endif
 
 /* -------------------------------------------------------------------------- */
+/* Memory helpers                                                             */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Prefer WDK primitives in kernel-mode builds to avoid CRT dependencies.
+ */
+#if defined(_WIN32) && defined(_KERNEL_MODE)
+static __inline VOID VirtioZeroMemory(void *dst, size_t len)
+{
+	RtlZeroMemory(dst, len);
+}
+#else
+#include <string.h>
+static __inline VOID VirtioZeroMemory(void *dst, size_t len)
+{
+	memset(dst, 0, len);
+}
+#endif
+
+/* -------------------------------------------------------------------------- */
 /* Volatile (READ_ONCE/WRITE_ONCE-style) accessors                             */
 /* -------------------------------------------------------------------------- */
 

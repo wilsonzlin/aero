@@ -76,7 +76,7 @@ static UINT16 DeviceConsumeAvailOne(VIRTQ_SPLIT *vq, UINT16 *dev_avail_idx, UINT
 	avail_idx = VirtioReadU16((volatile UINT16 *)&vq->avail->idx);
 	ASSERT_TRUE(*dev_avail_idx != avail_idx);
 
-	head = VirtioReadU16((volatile UINT16 *)&vq->avail->ring[(UINT16)(*dev_avail_idx % vq->qsz)]);
+	head = VirtioReadU16((volatile UINT16 *)&VirtqAvailRing(vq->avail)[(UINT16)(*dev_avail_idx % vq->qsz)]);
 
 	/* Validate descriptor chain as the device would. */
 	{
@@ -126,8 +126,11 @@ static UINT16 DeviceConsumeAvailOne(VIRTQ_SPLIT *vq, UINT16 *dev_avail_idx, UINT
 	}
 
 	used_slot = (UINT16)(*dev_used_idx % vq->qsz);
-	VirtioWriteU32((volatile UINT32 *)&vq->used->ring[used_slot].id, head);
-	VirtioWriteU32((volatile UINT32 *)&vq->used->ring[used_slot].len, used_len);
+	{
+		VIRTQ_USED_ELEM *used_ring = VirtqUsedRing(vq->used);
+		VirtioWriteU32((volatile UINT32 *)&used_ring[used_slot].id, head);
+		VirtioWriteU32((volatile UINT32 *)&used_ring[used_slot].len, used_len);
+	}
 	(*dev_used_idx)++;
 	(*dev_avail_idx)++;
 
@@ -352,4 +355,3 @@ int main(void)
 	printf("virtqueue_split_test: all tests passed\n");
 	return 0;
 }
-

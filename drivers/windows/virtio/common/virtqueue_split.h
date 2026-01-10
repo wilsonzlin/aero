@@ -80,12 +80,14 @@ typedef struct _VIRTQ_SPLIT {
 	 *
 	 * Use VirtqSplitStateSize(qsz) to compute the required allocation size.
 	 */
-	UINT8 storage[];
+	UINT8 storage[1];
 } VIRTQ_SPLIT;
+
+VIRTIO_STATIC_ASSERT((offsetof(VIRTQ_SPLIT, storage) % sizeof(void *)) == 0, virtq_split_storage_align);
 
 static __inline size_t VirtqSplitStateSize(UINT16 qsz)
 {
-	size_t sz = sizeof(VIRTQ_SPLIT);
+	size_t sz = offsetof(VIRTQ_SPLIT, storage);
 	sz += sizeof(void *) * (size_t)qsz;
 	sz = VIRTIO_ALIGN_UP(sz, (UINT32)sizeof(UINT16));
 	sz += sizeof(UINT16) * (size_t)qsz;

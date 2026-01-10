@@ -1,7 +1,5 @@
 #include "virtqueue_split.h"
 
-#include <string.h>
-
 static __inline size_t VirtqSplitAvailSize(UINT16 qsz, BOOLEAN event_idx)
 {
 	size_t sz = sizeof(UINT16) * 2; /* flags + idx */
@@ -46,11 +44,13 @@ size_t VirtqSplitRingMemSize(UINT16 qsz, UINT32 align, BOOLEAN event_idx)
 
 static __inline void VirtqSplitInitStorage(VIRTQ_SPLIT *vq)
 {
+	UINT8 *base;
 	size_t cookie_bytes = sizeof(void *) * (size_t)vq->qsz;
 	size_t head_indirect_off = VIRTIO_ALIGN_UP(cookie_bytes, (UINT32)sizeof(UINT16));
 
-	vq->cookies = (void **)vq->storage;
-	vq->head_indirect = (UINT16 *)(vq->storage + head_indirect_off);
+	base = (UINT8 *)vq + offsetof(VIRTQ_SPLIT, storage);
+	vq->cookies = (void **)base;
+	vq->head_indirect = (UINT16 *)(base + head_indirect_off);
 }
 
 static __inline UINT16 VirtqSplitAllocDesc(VIRTQ_SPLIT *vq)
@@ -145,7 +145,7 @@ NTSTATUS VirtqSplitInit(VIRTQ_SPLIT *vq, UINT16 qsz, BOOLEAN event_idx, BOOLEAN 
 		return STATUS_INVALID_PARAMETER;
 	}
 
-	memset(vq, 0, sizeof(*vq));
+	VirtioZeroMemory(vq, sizeof(*vq));
 
 	vq->qsz = qsz;
 	vq->event_idx = event_idx ? TRUE : FALSE;
@@ -369,7 +369,7 @@ VOID VirtqSplitPublish(VIRTQ_SPLIT *vq, UINT16 head)
 	}
 
 	slot = (UINT16)(vq->avail_idx % vq->qsz);
-	VirtioWriteU16((volatile UINT16 *)&vq->avail->ring[slot], head);
+	VirtioWriteU16((volatile UINT16 *)&VirtqAvailRing(vq->avail)[slot], head);
 
 	new_idx = (UINT16)(vq->avail_idx + 1);
 	vq->avail_idx = new_idx;
@@ -445,8 +445,11 @@ NTSTATUS VirtqSplitGetUsed(VIRTQ_SPLIT *vq, void **cookie_out, UINT32 *len_out)
 	VIRTIO_RMB();
 
 	slot = (UINT16)(vq->last_used_idx % vq->qsz);
-	id = VirtioReadU32((volatile UINT32 *)&vq->used->ring[slot].id);
-	len = VirtioReadU32((volatile UINT32 *)&vq->used->ring[slot].len);
+	{
+		VIRTQ_USED_ELEM *used_ring = VirtqUsedRing(vq->used);
+		id = VirtioReadU32((volatile UINT32 *)&used_ring[slot].id);
+		len = VirtioReadU32((volatile UINT32 *)&used_ring[slot].len);
+	}
 
 	if (id >= vq->qsz) {
 		return STATUS_INVALID_PARAMETER;

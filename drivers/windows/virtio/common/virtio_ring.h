@@ -36,7 +36,13 @@ typedef struct _VIRTQ_DESC {
 typedef struct _VIRTQ_AVAIL {
 	UINT16 flags;
 	UINT16 idx;
-	UINT16 ring[];
+	/*
+	 * Variable-length array (qsz entries).
+	 *
+	 * Note: WDK 7.1 toolchains do not support C99 flexible array members, so
+	 * this is declared as a single element and accessed via helper functions.
+	 */
+	UINT16 ring[1];
 	/* Optional: UINT16 used_event; (only if VIRTIO_F_RING_EVENT_IDX) */
 } VIRTQ_AVAIL;
 
@@ -48,7 +54,8 @@ typedef struct _VIRTQ_USED_ELEM {
 typedef struct _VIRTQ_USED {
 	UINT16 flags;
 	UINT16 idx;
-	VIRTQ_USED_ELEM ring[];
+	/* Variable-length array (qsz entries); see VIRTQ_AVAIL::ring notes. */
+	VIRTQ_USED_ELEM ring[1];
 	/* Optional: UINT16 avail_event; (only if VIRTIO_F_RING_EVENT_IDX) */
 } VIRTQ_USED;
 
@@ -64,18 +71,31 @@ VIRTIO_STATIC_ASSERT(offsetof(VIRTQ_USED_ELEM, len) == 4, virtq_used_elem_len_of
 
 VIRTIO_STATIC_ASSERT(offsetof(VIRTQ_AVAIL, flags) == 0, virtq_avail_flags_off_0);
 VIRTIO_STATIC_ASSERT(offsetof(VIRTQ_AVAIL, idx) == 2, virtq_avail_idx_off_2);
+VIRTIO_STATIC_ASSERT(offsetof(VIRTQ_AVAIL, ring) == 4, virtq_avail_ring_off_4);
 
 VIRTIO_STATIC_ASSERT(offsetof(VIRTQ_USED, flags) == 0, virtq_used_flags_off_0);
 VIRTIO_STATIC_ASSERT(offsetof(VIRTQ_USED, idx) == 2, virtq_used_idx_off_2);
+VIRTIO_STATIC_ASSERT(offsetof(VIRTQ_USED, ring) == 4, virtq_used_ring_off_4);
+
+static __inline UINT16 *VirtqAvailRing(VIRTQ_AVAIL *avail)
+{
+	return (UINT16 *)((UINT8 *)avail + offsetof(VIRTQ_AVAIL, ring));
+}
+
+static __inline VIRTQ_USED_ELEM *VirtqUsedRing(VIRTQ_USED *used)
+{
+	return (VIRTQ_USED_ELEM *)((UINT8 *)used + offsetof(VIRTQ_USED, ring));
+}
 
 static __inline volatile UINT16 *VirtqAvailUsedEvent(VIRTQ_AVAIL *avail, UINT16 qsz)
 {
-	return (volatile UINT16 *)&avail->ring[qsz];
+	return (volatile UINT16 *)((UINT8 *)avail + offsetof(VIRTQ_AVAIL, ring) + sizeof(UINT16) * (size_t)qsz);
 }
 
 static __inline volatile UINT16 *VirtqUsedAvailEvent(VIRTQ_USED *used, UINT16 qsz)
 {
-	return (volatile UINT16 *)&used->ring[qsz];
+	return (volatile UINT16 *)((UINT8 *)used + offsetof(VIRTQ_USED, ring) +
+				   sizeof(VIRTQ_USED_ELEM) * (size_t)qsz);
 }
 
 #endif /* VIRTIO_RING_H_ */
