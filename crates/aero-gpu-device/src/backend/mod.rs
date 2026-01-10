@@ -5,10 +5,12 @@
 //! deterministic software backend.
 
 mod soft;
+mod webgpu;
 
 use core::fmt;
 
 pub use soft::SoftGpuBackend;
+pub use webgpu::WebGpuBackend;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PresentedFrame {

@@ -226,6 +226,9 @@ name = "aero-gpu-device"
 version = "0.1.0"
 dependencies = [
  "aero-gpu-trace",
+ "aero-webgpu",
+ "pollster",
+ "wgpu",
 ]
 
 [[package]]

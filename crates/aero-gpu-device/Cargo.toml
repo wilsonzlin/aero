@@ -5,5 +5,8 @@ edition = "2021"
 
 [dependencies]
 aero-gpu-trace = { path = "../aero-gpu-trace" }
+aero-webgpu = { path = "../aero-webgpu" }
+wgpu = "0.20"
 
 [dev-dependencies]
+pollster = "0.3"

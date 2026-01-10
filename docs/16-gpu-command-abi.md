@@ -171,6 +171,15 @@ Early milestones are focused on “draw a triangle and present”.
 - `DESTROY_TEXTURE`
 - `WRITE_TEXTURE2D` / `READ_TEXTURE2D`
 
+#### Usage bit expectations (enforced by the WebGPU backend)
+
+To keep the ABI explicit and make backends validate intent:
+
+- `WRITE_BUFFER` requires the buffer to have `TRANSFER_DST`.
+- `READ_BUFFER` requires the buffer to have `TRANSFER_SRC`.
+- `WRITE_TEXTURE2D` requires the texture to have `TRANSFER_DST`.
+- `READ_TEXTURE2D` and `PRESENT` require the texture to have `TRANSFER_SRC`.
+
 ### Rendering / state
 
 - `SET_RENDER_TARGET`
@@ -208,4 +217,3 @@ See:
 
 - `aero_gpu_device::guest::SyntheticGuest`
 - `crates/aero-gpu-device/tests/golden_triangle.rs`
-
