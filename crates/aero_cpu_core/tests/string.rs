@@ -4,6 +4,99 @@ fn setup_bus() -> RamBus {
     RamBus::new(0x10_000)
 }
 
+#[derive(Debug)]
+struct CountingBus {
+    inner: RamBus,
+    bulk_copy_calls: usize,
+    bulk_set_calls: usize,
+}
+
+impl CountingBus {
+    fn new(size: usize) -> Self {
+        Self {
+            inner: RamBus::new(size),
+            bulk_copy_calls: 0,
+            bulk_set_calls: 0,
+        }
+    }
+}
+
+impl Bus for CountingBus {
+    fn read_u8(&mut self, addr: u64) -> u8 {
+        self.inner.read_u8(addr)
+    }
+
+    fn write_u8(&mut self, addr: u64, value: u8) {
+        self.inner.write_u8(addr, value);
+    }
+
+    fn supports_bulk_copy(&self) -> bool {
+        true
+    }
+
+    fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> bool {
+        self.bulk_copy_calls += 1;
+        Bus::bulk_copy(&mut self.inner, dst, src, len)
+    }
+
+    fn supports_bulk_set(&self) -> bool {
+        true
+    }
+
+    fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> bool {
+        self.bulk_set_calls += 1;
+        Bus::bulk_set(&mut self.inner, dst, pattern, repeat)
+    }
+}
+
+#[derive(Debug)]
+struct OpLimitBus {
+    inner: RamBus,
+    ops: usize,
+    max_ops: usize,
+}
+
+impl OpLimitBus {
+    fn new(size: usize, max_ops: usize) -> Self {
+        Self {
+            inner: RamBus::new(size),
+            ops: 0,
+            max_ops,
+        }
+    }
+
+    fn bump(&mut self) {
+        self.ops += 1;
+        assert!(
+            self.ops <= self.max_ops,
+            "bus op limit exceeded: ops={} max_ops={}",
+            self.ops,
+            self.max_ops
+        );
+    }
+}
+
+impl Bus for OpLimitBus {
+    fn read_u8(&mut self, addr: u64) -> u8 {
+        self.bump();
+        self.inner.read_u8(addr)
+    }
+
+    fn write_u8(&mut self, addr: u64, value: u8) {
+        self.bump();
+        self.inner.write_u8(addr, value);
+    }
+
+    // Disable bulk operations so we can bound loops deterministically in tests.
+    fn supports_bulk_copy(&self) -> bool {
+        false
+    }
+
+    fn supports_bulk_set(&self) -> bool {
+        false
+    }
+}
+
 #[test]
 fn movsb_df0_and_df1() {
     // DF=0 increments.
@@ -258,4 +351,111 @@ fn segment_override_applies_to_source_only_for_movs() {
 
     // Segment override must not change the destination segment (still ES).
     assert_ne!(bus.read_u8(0x1000 + 0x20), 0xBB);
+}
+
+#[test]
+fn rep_movsb_uses_bulk_copy_when_safe() {
+    let mut cpu = Cpu::new(CpuMode::Protected32);
+    cpu.segs.ds.base = 0;
+    cpu.segs.es.base = 0;
+    cpu.regs.set_esi(0x100, CpuMode::Protected32);
+    cpu.regs.set_edi(0x2000, CpuMode::Protected32);
+    cpu.regs.set_ecx(4096, CpuMode::Protected32);
+
+    let mut bus = CountingBus::new(0x4000);
+    for i in 0..4096u64 {
+        bus.write_u8(0x100 + i, (i ^ 0x5Au64) as u8);
+    }
+
+    cpu.execute_bytes(&mut bus, &[0xF3, 0xA4]).unwrap(); // REP MOVSB
+
+    assert_eq!(bus.bulk_copy_calls, 1);
+    assert_eq!(cpu.regs.ecx(), 0);
+    assert_eq!(cpu.regs.esi(), 0x1100);
+    assert_eq!(cpu.regs.edi(), 0x3000);
+
+    for i in 0..4096u64 {
+        assert_eq!(bus.read_u8(0x2000 + i), (i ^ 0x5Au64) as u8);
+    }
+}
+
+#[test]
+fn rep_movsb_overlap_hazard_falls_back_to_element_wise() {
+    // Hazard case: DF=0 copies low->high, and destination starts inside the source range at a
+    // higher address. The result differs from memmove; we must not take the bulk-copy fast path.
+    let mut cpu = Cpu::new(CpuMode::Protected32);
+    cpu.segs.ds.base = 0;
+    cpu.segs.es.base = 0;
+    cpu.regs.set_esi(0x100, CpuMode::Protected32);
+    cpu.regs.set_edi(0x101, CpuMode::Protected32);
+    cpu.regs.set_ecx(4096, CpuMode::Protected32);
+
+    let mut bus = CountingBus::new(0x4000);
+    bus.write_u8(0x100, 0xAA);
+    for i in 1..=4097u64 {
+        bus.write_u8(0x100 + i, i as u8);
+    }
+
+    cpu.execute_bytes(&mut bus, &[0xF3, 0xA4]).unwrap(); // REP MOVSB
+
+    assert_eq!(bus.bulk_copy_calls, 0);
+    assert_eq!(cpu.regs.ecx(), 0);
+    assert_eq!(cpu.regs.esi(), 0x1100);
+    assert_eq!(cpu.regs.edi(), 0x1101);
+
+    for i in 1..=4096u64 {
+        assert_eq!(
+            bus.read_u8(0x100 + i),
+            0xAA,
+            "overlap hazard should propagate first byte"
+        );
+    }
+}
+
+#[test]
+fn rep_stosd_uses_bulk_set() {
+    let mut cpu = Cpu::new(CpuMode::Protected32);
+    cpu.segs.es.base = 0;
+    cpu.regs.set_edi(0x200, CpuMode::Protected32);
+    cpu.regs.set_ecx(1024, CpuMode::Protected32); // 1024 * 4 = 4096 bytes (definitely "large")
+    cpu.regs.set_eax(0xAABB_CCDD, CpuMode::Protected32);
+
+    let mut bus = CountingBus::new(0x2000);
+    cpu.execute_bytes(&mut bus, &[0xF3, 0xAB]).unwrap(); // REP STOSD
+
+    assert_eq!(bus.bulk_set_calls, 1);
+    assert_eq!(cpu.regs.ecx(), 0);
+    assert_eq!(cpu.regs.edi(), 0x1200);
+
+    for i in 0..1024u64 {
+        assert_eq!(bus.read_u32(0x200 + i * 4), 0xAABB_CCDD);
+    }
+}
+
+#[test]
+fn rep_count_uses_cx_in_16bit_addr_size_even_with_32bit_elements() {
+    // In 16-bit mode, `66 A5` is MOVSD but the repeat counter is still CX unless 0x67 overrides
+    // the address size.
+    let mut cpu = Cpu::new(CpuMode::Real16);
+    cpu.segs.ds.base = 0;
+    cpu.segs.es.base = 0;
+    cpu.regs.set_si(0x10);
+    cpu.regs.set_di(0x40);
+    cpu.regs.set_rcx(0x0000_0000_0001_0002); // ECX=0x0001_0002, CX=2
+
+    let mut bus = OpLimitBus::new(0x400, 200);
+    // Two dwords of source data.
+    bus.write_u32(0x10, 0x1122_3344);
+    bus.write_u32(0x14, 0x5566_7788);
+
+    cpu.execute_bytes(&mut bus, &[0xF3, 0x66, 0xA5]).unwrap(); // REP MOVSD
+
+    assert_eq!(cpu.regs.cx(), 0);
+    // Upper bits should remain unchanged because CX is the counter in this mode.
+    assert_eq!(cpu.regs.rcx, 0x0000_0000_0001_0000);
+
+    assert_eq!(bus.read_u32(0x40), 0x1122_3344);
+    assert_eq!(bus.read_u32(0x44), 0x5566_7788);
+    assert_eq!(cpu.regs.si(), 0x18);
+    assert_eq!(cpu.regs.di(), 0x48);
 }
