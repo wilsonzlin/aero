@@ -1,0 +1,362 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { convertToAeroSparse, detectFormat } from "../src/storage/import_convert.ts";
+import { crc32Final, crc32Init, crc32ToHex, crc32Update } from "../src/storage/crc32.ts";
+
+class MemSource {
+  readonly size: number;
+  private readonly data: Uint8Array;
+
+  constructor(data: Uint8Array) {
+    this.data = data;
+    this.size = data.byteLength;
+  }
+
+  async readAt(offset: number, length: number): Promise<Uint8Array> {
+    const end = offset + length;
+    if (offset < 0 || length < 0 || end > this.data.byteLength) {
+      throw new RangeError(`readAt out of range: ${offset}+${length} (size=${this.data.byteLength})`);
+    }
+    return this.data.slice(offset, end);
+  }
+}
+
+class MemSyncAccessHandle {
+  private buf = new Uint8Array(0);
+
+  read(buffer: ArrayBufferView, options?: { at: number }): number {
+    const at = options?.at ?? 0;
+    const view = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const avail = Math.max(0, Math.min(view.byteLength, this.buf.byteLength - at));
+    view.set(this.buf.subarray(at, at + avail));
+    if (avail < view.byteLength) view.fill(0, avail);
+    return avail;
+  }
+
+  write(buffer: ArrayBufferView, options?: { at: number }): number {
+    const at = options?.at ?? 0;
+    const view = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const end = at + view.byteLength;
+    if (end > this.buf.byteLength) {
+      const next = new Uint8Array(end);
+      next.set(this.buf);
+      this.buf = next;
+    }
+    this.buf.set(view, at);
+    return view.byteLength;
+  }
+
+  flush(): void {}
+  close(): void {}
+
+  getSize(): number {
+    return this.buf.byteLength;
+  }
+
+  truncate(size: number): void {
+    if (!Number.isSafeInteger(size) || size < 0) throw new Error(`truncate: invalid size=${size}`);
+    if (size === this.buf.byteLength) return;
+    if (size < this.buf.byteLength) {
+      this.buf = this.buf.slice(0, size);
+      return;
+    }
+    const next = new Uint8Array(size);
+    next.set(this.buf);
+    this.buf = next;
+  }
+
+  toBytes(): Uint8Array {
+    return this.buf.slice();
+  }
+}
+
+function writeU32BE(buf: Uint8Array, offset: number, value: number): void {
+  buf[offset] = (value >>> 24) & 0xff;
+  buf[offset + 1] = (value >>> 16) & 0xff;
+  buf[offset + 2] = (value >>> 8) & 0xff;
+  buf[offset + 3] = value & 0xff;
+}
+
+function writeU64BE(buf: Uint8Array, offset: number, value: bigint): void {
+  writeU32BE(buf, offset, Number((value >> 32n) & 0xffff_ffffn));
+  writeU32BE(buf, offset + 4, Number(value & 0xffff_ffffn));
+}
+
+function u64le(v: bigint): Uint8Array {
+  const out = new Uint8Array(8);
+  let x = v;
+  for (let i = 0; i < 8; i++) {
+    out[i] = Number(x & 0xffn);
+    x >>= 8n;
+  }
+  return out;
+}
+
+function vhdChecksum(bytes: Uint8Array, checksumOffset: number): number {
+  const copy = bytes.slice();
+  copy.fill(0, checksumOffset, checksumOffset + 4);
+  let sum = 0;
+  for (const b of copy) sum = (sum + b) >>> 0;
+  return (~sum) >>> 0;
+}
+
+function buildQcow2Fixture(): { file: Uint8Array; logical: Uint8Array } {
+  const clusterSize = 512;
+  const logicalSize = 1024;
+
+  const l1Offset = 512;
+  const l2Offset = 1024;
+  const data0Offset = 1536;
+  const fileSize = data0Offset + clusterSize;
+
+  const file = new Uint8Array(fileSize);
+  // magic "QFI\xfb"
+  file.set([0x51, 0x46, 0x49, 0xfb], 0);
+  writeU32BE(file, 4, 2); // version
+  writeU64BE(file, 8, 0n); // backing file offset
+  writeU32BE(file, 16, 0); // backing file size
+  writeU32BE(file, 20, 9); // cluster bits (512B clusters)
+  writeU64BE(file, 24, BigInt(logicalSize));
+  writeU32BE(file, 32, 0); // crypt method
+  writeU32BE(file, 36, 1); // l1 size
+  writeU64BE(file, 40, BigInt(l1Offset));
+  // nb_snapshots at 60 is 0 by default.
+
+  // L1 table (1 entry)
+  writeU64BE(file, l1Offset + 0, BigInt(l2Offset));
+
+  // L2 table (64 entries, but we only need 2)
+  writeU64BE(file, l2Offset + 0, BigInt(data0Offset)); // cluster 0 allocated
+  writeU64BE(file, l2Offset + 8, 0n); // cluster 1 unallocated
+
+  const cluster0 = new Uint8Array(clusterSize);
+  for (let i = 0; i < cluster0.length; i++) cluster0[i] = i & 0xff;
+  file.set(cluster0, data0Offset);
+
+  const logical = new Uint8Array(logicalSize);
+  logical.set(cluster0, 0);
+  return { file, logical };
+}
+
+function buildDynamicVhdFixture(): { file: Uint8Array; logical: Uint8Array } {
+  const footerSize = 512;
+  const dynHeaderOffset = 512;
+  const dynHeaderSize = 1024;
+  const batOffset = 1536;
+  const blockOff = 2048;
+
+  const blockSize = 1024; // 2 sectors
+  const bitmapSize = 512;
+  const logicalSize = 1024;
+
+  const footer = new Uint8Array(footerSize);
+  footer.set(new TextEncoder().encode("conectix"), 0);
+  writeU64BE(footer, 16, BigInt(dynHeaderOffset)); // data offset
+  writeU64BE(footer, 48, BigInt(logicalSize)); // current size
+  writeU32BE(footer, 60, 3); // disk type dynamic
+  writeU32BE(footer, 64, vhdChecksum(footer, 64));
+
+  const dyn = new Uint8Array(dynHeaderSize);
+  dyn.set(new TextEncoder().encode("cxsparse"), 0);
+  writeU64BE(dyn, 16, BigInt(batOffset));
+  writeU32BE(dyn, 28, 1); // max table entries
+  writeU32BE(dyn, 32, blockSize);
+  writeU32BE(dyn, 36, vhdChecksum(dyn, 36));
+
+  const fileSize = blockOff + bitmapSize + blockSize + footerSize;
+  const file = new Uint8Array(fileSize);
+
+  // Optional first footer copy (helps magic detection at offset 0).
+  file.set(footer, 0);
+  file.set(dyn, dynHeaderOffset);
+
+  // BAT (one entry): sector offset of block (big-endian u32)
+  writeU32BE(file, batOffset, blockOff / 512);
+
+  // Block bitmap + data.
+  file[blockOff] = 0x80; // sector 0 allocated, sector 1 unallocated
+  const dataBase = blockOff + bitmapSize;
+  const sector0 = new Uint8Array(512);
+  for (let i = 0; i < sector0.length; i++) sector0[i] = (0xa0 + i) & 0xff;
+  file.set(sector0, dataBase);
+  file.fill(0x55, dataBase + 512, dataBase + 1024); // should be ignored (bitmap bit clear)
+
+  // Footer at end.
+  file.set(footer, fileSize - footerSize);
+
+  const logical = new Uint8Array(logicalSize);
+  logical.set(sector0, 0);
+  return { file, logical };
+}
+
+function buildIsoFixture(): Uint8Array {
+  const size = 0x8001 + 5;
+  const file = new Uint8Array(size);
+  file.set(new TextEncoder().encode("CD001"), 0x8001);
+  return file;
+}
+
+type ParsedSparse = {
+  blockSizeBytes: number;
+  diskSizeBytes: number;
+  table: number[];
+  file: Uint8Array;
+};
+
+function parseAeroSparse(file: Uint8Array): ParsedSparse {
+  assert.ok(file.byteLength >= 64, "file too small");
+  const magic = new TextDecoder().decode(file.slice(0, 8));
+  assert.equal(magic, "AEROSPAR");
+  const view = new DataView(file.buffer, file.byteOffset, file.byteLength);
+  const version = view.getUint32(8, true);
+  assert.equal(version, 1);
+  const headerSize = view.getUint32(12, true);
+  assert.equal(headerSize, 64);
+  const blockSizeBytes = view.getUint32(16, true);
+  const diskSizeBytes = Number(view.getBigUint64(24, true));
+  const tableOffset = Number(view.getBigUint64(32, true));
+  assert.equal(tableOffset, 64);
+  const tableEntries = Number(view.getBigUint64(40, true));
+  const tableBytes = tableEntries * 8;
+  assert.ok(tableOffset + tableBytes <= file.byteLength, "table out of range");
+  const tableView = new DataView(file.buffer, file.byteOffset + tableOffset, tableBytes);
+  const table = new Array<number>(tableEntries);
+  for (let i = 0; i < tableEntries; i++) {
+    table[i] = Number(tableView.getBigUint64(i * 8, true));
+  }
+  return { blockSizeBytes, diskSizeBytes, table, file };
+}
+
+function readLogical(parsed: ParsedSparse, offset: number, length: number): Uint8Array {
+  assert.ok(offset >= 0 && length >= 0);
+  const end = offset + length;
+  assert.ok(end <= parsed.diskSizeBytes, "read past end");
+  const out = new Uint8Array(length);
+
+  let pos = 0;
+  while (pos < length) {
+    const abs = offset + pos;
+    const blockIndex = Math.floor(abs / parsed.blockSizeBytes);
+    const within = abs % parsed.blockSizeBytes;
+    const chunkLen = Math.min(parsed.blockSizeBytes - within, length - pos);
+    const phys = parsed.table[blockIndex] ?? 0;
+    if (phys !== 0) {
+      out.set(parsed.file.subarray(phys + within, phys + within + chunkLen), pos);
+    }
+    pos += chunkLen;
+  }
+  return out;
+}
+
+function sparseChecksumCrc32(parsed: ParsedSparse): string {
+  let crc = crc32Init();
+  for (let blockIndex = 0; blockIndex < parsed.table.length; blockIndex++) {
+    const phys = parsed.table[blockIndex]!;
+    if (phys === 0) continue;
+    const block = parsed.file.subarray(phys, phys + parsed.blockSizeBytes);
+    crc = crc32Update(crc, u64le(BigInt(blockIndex)));
+    crc = crc32Update(crc, block);
+  }
+  return crc32ToHex(crc32Final(crc));
+}
+
+test("detectFormat: qcow2/vhd/iso signatures", async () => {
+  {
+    const { file } = buildQcow2Fixture();
+    const fmt = await detectFormat(new MemSource(file), "disk.unknown");
+    assert.equal(fmt, "qcow2");
+  }
+  {
+    const { file } = buildDynamicVhdFixture();
+    const fmt = await detectFormat(new MemSource(file), "disk.unknown");
+    assert.equal(fmt, "vhd");
+  }
+  {
+    const file = buildIsoFixture();
+    const fmt = await detectFormat(new MemSource(file), "disk.unknown");
+    assert.equal(fmt, "iso");
+  }
+});
+
+test("convertToAeroSparse: raw roundtrip preserves logical bytes and sparseness", async () => {
+  const blockSize = 512;
+  const logical = new Uint8Array(blockSize * 3);
+  // block 0: all zero (should not allocate)
+  for (let i = 0; i < blockSize; i++) logical[blockSize + i] = (0x10 + i) & 0xff;
+  logical[blockSize * 2] = 0xaa;
+  logical[blockSize * 2 + 1] = 0xbb;
+
+  const src = new MemSource(logical);
+  const sync = new MemSyncAccessHandle();
+  const { manifest } = await convertToAeroSparse(src, "raw", sync, { blockSizeBytes: blockSize });
+  assert.equal(manifest.originalFormat, "raw");
+  assert.equal(manifest.convertedFormat, "aerosparse");
+  assert.equal(manifest.logicalSize, logical.byteLength);
+  assert.equal(manifest.blockSizeBytes, blockSize);
+
+  const parsed = parseAeroSparse(sync.toBytes());
+  assert.equal(parsed.blockSizeBytes, blockSize);
+  assert.equal(parsed.diskSizeBytes, logical.byteLength);
+  assert.equal(parsed.table.length, 3);
+  assert.equal(parsed.table[0], 0);
+  assert.notEqual(parsed.table[1], 0);
+  assert.notEqual(parsed.table[2], 0);
+
+  const roundtrip = readLogical(parsed, 0, logical.byteLength);
+  assert.deepEqual(roundtrip, logical);
+  assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
+});
+
+test("convertToAeroSparse: qcow2 sparse copy preserves logical bytes", async () => {
+  const { file, logical } = buildQcow2Fixture();
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  const { manifest } = await convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 });
+  assert.equal(manifest.originalFormat, "qcow2");
+  assert.equal(manifest.logicalSize, logical.byteLength);
+
+  const parsed = parseAeroSparse(sync.toBytes());
+  const roundtrip = readLogical(parsed, 0, logical.byteLength);
+  assert.deepEqual(roundtrip, logical);
+  assert.equal(parsed.table.length, 2);
+  assert.notEqual(parsed.table[0], 0);
+  assert.equal(parsed.table[1], 0, "unallocated qcow2 cluster should remain sparse");
+  assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
+});
+
+test("convertToAeroSparse: dynamic VHD respects BAT + sector bitmap", async () => {
+  const { file, logical } = buildDynamicVhdFixture();
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  const { manifest } = await convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 });
+  assert.equal(manifest.originalFormat, "vhd");
+  assert.equal(manifest.logicalSize, logical.byteLength);
+
+  const parsed = parseAeroSparse(sync.toBytes());
+  const roundtrip = readLogical(parsed, 0, logical.byteLength);
+  assert.deepEqual(roundtrip, logical);
+  assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
+});
+
+test("convertToAeroSparse: supports cancellation via AbortSignal", async () => {
+  const blockSize = 512;
+  const logical = new Uint8Array(blockSize * 8);
+  logical[blockSize * 4] = 0x5a;
+
+  const src = new MemSource(logical);
+  const sync = new MemSyncAccessHandle();
+  const ac = new AbortController();
+
+  await assert.rejects(
+    convertToAeroSparse(src, "raw", sync, {
+      blockSizeBytes: blockSize,
+      signal: ac.signal,
+      onProgress(p) {
+        if (p.processedBytes >= blockSize) ac.abort();
+      },
+    }),
+    (err: any) => err instanceof DOMException && err.name === "AbortError",
+  );
+});
+
