@@ -257,6 +257,7 @@ export function createAeroMemoryModel(config) {
 
   const guestU8 = new Uint8Array(guestMemory.buffer);
   const guestU32 = new Uint32Array(guestMemory.buffer);
+  const guestI32 = new Int32Array(guestMemory.buffer);
 
   const stateI32 = new Int32Array(stateSab);
   const cmdI32 = new Int32Array(cmdSab);
@@ -285,6 +286,7 @@ export function createAeroMemoryModel(config) {
     views: {
       guestU8,
       guestU32,
+      guestI32,
       stateI32,
       cmdI32,
       eventI32,

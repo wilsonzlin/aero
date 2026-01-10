@@ -11,8 +11,8 @@ let cmdRing = null;
 /** @type {RingBufferI32 | null} */
 let eventRing = null;
 
-/** @type {Uint32Array | null} */
-let guestU32 = null;
+/** @type {Int32Array | null} */
+let guestI32 = null;
 
 self.onmessage = (ev) => {
   const msg = ev.data;
@@ -21,7 +21,7 @@ self.onmessage = (ev) => {
   guestMemory = msg.guestMemory;
   cmdRing = new RingBufferI32(new Int32Array(msg.cmdSab));
   eventRing = new RingBufferI32(new Int32Array(msg.eventSab));
-  guestU32 = new Uint32Array(guestMemory.buffer);
+  guestI32 = new Int32Array(guestMemory.buffer);
 
   wlog("init: received shared guestMemory + cmdSab + eventSab");
   wlog(`init: guestMemory bytes = ${guestMemory.buffer.byteLength}`);
@@ -30,7 +30,7 @@ self.onmessage = (ev) => {
 };
 
 function mainLoop() {
-  if (!cmdRing || !eventRing || !guestU32) return;
+  if (!cmdRing || !eventRing || !guestI32) return;
 
   wlog("ready: waiting for commands via Atomics.wait()");
 
@@ -47,9 +47,8 @@ function mainLoop() {
     if (opcode === PROTOCOL.OP_INC32_AT_OFFSET) {
       const byteOffset = a0 >>> 0;
       const index = byteOffset >>> 2;
-      const before = guestU32[index] >>> 0;
-      const after = (before + 1) >>> 0;
-      guestU32[index] = after;
+      const before = Atomics.add(guestI32, index, 1);
+      const after = before + 1;
 
       const ok = eventRing.pushMessage([opcode, after | 0, 0, 0]);
       if (!ok) {
@@ -57,7 +56,7 @@ function mainLoop() {
         continue;
       }
       eventRing.notifyData();
-      wlog(`cmd: INC32 @ ${byteOffset} => ${before} -> ${after}`);
+      wlog(`cmd: Atomics.add(guestI32[${index}]) @ ${byteOffset} => ${before} -> ${after}`);
       continue;
     }
 

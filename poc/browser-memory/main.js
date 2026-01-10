@@ -98,11 +98,11 @@ startBtn.addEventListener("click", async () => {
 runBtn.addEventListener("click", async () => {
   if (!model || !cmdRing || !eventRing) return;
 
-  const { guestU32 } = model.views;
+  const { guestI32 } = model.views;
 
   // Put a value in guest RAM that the worker will mutate.
-  guestU32[0] = 41;
-  log(`main: wrote guestU32[0] = ${guestU32[0]}`);
+  Atomics.store(guestI32, 0, 41);
+  log(`main: wrote Atomics.store(guestI32[0]) = ${Atomics.load(guestI32, 0)}`);
 
   // Command message: [opcode, a0(byteOffset), a1, a2]
   if (!cmdRing.pushMessage([PROTOCOL.OP_INC32_AT_OFFSET, 0, 0, 0])) {
@@ -130,5 +130,5 @@ runBtn.addEventListener("click", async () => {
 
   const [opcode, result0, error] = evt;
   log(`main: got event opcode=${opcode}, result0=${result0}, error=${error}`);
-  log(`main: after worker ran, guestU32[0] = ${guestU32[0]}`);
+  log(`main: after worker ran, guestI32[0] = ${Atomics.load(guestI32, 0)}`);
 });
