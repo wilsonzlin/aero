@@ -71,6 +71,30 @@ The bundled `coturn` config uses long-term credentials:
 
 Change these before exposing TURN to the internet.
 
+## E2E interoperability test (Playwright)
+
+`e2e/` contains a Playwright test that launches headless Chromium and exercises the WebRTC `udp` DataChannel framing against a local UDP echo server.
+
+```bash
+cd proxy/webrtc-udp-relay/e2e
+npm ci
+npm test
+```
+
+`npm test` runs `playwright install chromium` automatically (via `pretest`) to ensure the browser binary is available.
+
+### System dependencies (Playwright)
+
+On Debian/Ubuntu, Playwright can install its required shared libraries automatically:
+
+```bash
+npx playwright install --with-deps chromium
+```
+
+If Chromium fails to launch in CI, ensure the container/runner includes the Playwright Linux dependencies.
+
+> Note: the E2E test currently runs a small Node-based relay implementation under `e2e/relay-server/` while the Go relay's WebRTC endpoints are under active development.
+
 ## HTTP endpoints
 
 - `GET /healthz` → `{"ok":true}`
@@ -84,6 +108,7 @@ Change these before exposing TURN to the internet.
 - WebRTC network config (env + flags): ICE UDP port range, UDP listen IP, NAT 1:1 public IP advertisement
 - Relay/policy primitives (not yet wired to WebRTC signaling)
 - Protocol documentation (`PROTOCOL.md`)
+- Playwright E2E test harness (`e2e/`) that verifies Chromium ↔ relay interoperability for the `udp` DataChannel.
 
 ## Pending (future tasks)
 
