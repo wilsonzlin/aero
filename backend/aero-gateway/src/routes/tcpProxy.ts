@@ -3,9 +3,9 @@ import net from "node:net";
 import type http from "node:http";
 import type { Duplex } from "node:stream";
 
-import { isOriginAllowed } from "../middleware/originGuard.js";
 import type { TcpTarget } from "../protocol/tcpTarget.js";
 import { TcpTargetParseError, parseTcpTargetFromUrl } from "../protocol/tcpTarget.js";
+import { validateTcpTargetPolicy, validateWsUpgradePolicy, type TcpProxyUpgradePolicy } from "./tcpPolicy.js";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -13,20 +13,12 @@ export function handleTcpProxyUpgrade(
   req: http.IncomingMessage,
   socket: Duplex,
   head: Buffer,
-  opts: { allowedOrigins?: readonly string[] } = {},
+  opts: TcpProxyUpgradePolicy = {},
 ): void {
-  const originHeader = req.headers.origin;
-  const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
-  if (origin) {
-    const allowedOrigins = opts.allowedOrigins;
-    if (!allowedOrigins || allowedOrigins.length === 0) {
-      respondHttp(socket, 403, "Origin not allowed");
-      return;
-    }
-    if (!isOriginAllowed(origin, allowedOrigins)) {
-      respondHttp(socket, 403, "Origin not allowed");
-      return;
-    }
+  const upgradeDecision = validateWsUpgradePolicy(req, opts);
+  if (!upgradeDecision.ok) {
+    respondHttp(socket, upgradeDecision.status, upgradeDecision.message);
+    return;
   }
 
   let target: TcpTarget;
@@ -39,6 +31,12 @@ export function handleTcpProxyUpgrade(
     target = parseTcpTargetFromUrl(url);
   } catch (err) {
     respondHttp(socket, 400, formatUpgradeError(err));
+    return;
+  }
+
+  const targetDecision = validateTcpTargetPolicy(target.host, target.port, opts);
+  if (!targetDecision.ok) {
+    respondHttp(socket, targetDecision.status, targetDecision.message);
     return;
   }
 

@@ -486,6 +486,13 @@ Health check:
 curl http://127.0.0.1:8081/healthz
 ```
 
+The simplest approach is one WebSocket per TCP connection (`/tcp`). For high
+connection counts (thousands of concurrent guest sockets), the gateway should
+support multiplexing many TCP streams over a single WebSocket connection
+(`GET /tcp-mux`, subprotocol `aero-tcp-mux-v1`). See
+[`docs/backend/01-aero-gateway-api.md`](./backend/01-aero-gateway-api.md) for the
+wire protocol.
+
 ### Client-side (Browser)
 
 ```rust

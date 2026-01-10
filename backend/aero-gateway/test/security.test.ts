@@ -5,6 +5,13 @@ import test from 'node:test';
 import { buildServer } from '../src/server.js';
 import { decodeDnsHeader, encodeDnsQuery, getRcodeFromFlags } from '../src/dns/codec.js';
 
+function bufferToArrayBuffer(buf: Buffer): ArrayBuffer {
+  // Node buffers are backed by ArrayBuffer at runtime, but the type is
+  // `ArrayBufferLike`. Cast to satisfy `fetch`/undici typings.
+  const ab = buf.buffer as ArrayBuffer;
+  return ab.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+}
+
 const baseConfig = {
   HOST: '127.0.0.1',
   PORT: 0,
@@ -50,7 +57,7 @@ test('ANY query is blocked by default', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/dns-query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/dns-message' },
-      body: query,
+      body: bufferToArrayBuffer(query),
     });
 
     assert.equal(res.status, 200);
@@ -89,7 +96,7 @@ test('response size cap rejects large upstream responses', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/dns-query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/dns-message' },
-      body: query,
+      body: bufferToArrayBuffer(query),
     });
 
     assert.equal(res.status, 200);

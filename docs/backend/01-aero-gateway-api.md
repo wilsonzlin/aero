@@ -282,6 +282,106 @@ Browsers limit concurrent WebSockets per origin and each socket has overhead. Fo
 
 ---
 
+## 3.5) `/tcp-mux` WebSocket multiplexed TCP proxy protocol
+
+`/tcp-mux` is an additive optimization over `/tcp` that avoids the overhead of one-WebSocket-per-guest-TCP-connection. A single WebSocket carries **many concurrent TCP streams** (similar to SSH channel multiplexing).
+
+### Endpoint
+
+`GET /tcp-mux` **upgraded to WebSocket**.
+
+The client MUST negotiate the WebSocket subprotocol:
+
+- `Sec-WebSocket-Protocol: aero-tcp-mux-v1`
+
+If the subprotocol is missing, the gateway must reject the upgrade (no WebSocket).
+
+### Transport model
+
+All `/tcp-mux` WebSocket **binary** messages are treated as a byte stream carrying one or more `aero-tcp-mux-v1` protocol frames. Frames MAY be:
+
+- sent one-per-WebSocket-message, OR
+- concatenated into a single WebSocket message, OR
+- split across multiple WebSocket messages.
+
+Receivers MUST buffer and reassemble.
+
+All multi-byte integer fields are **big-endian** (network byte order).
+
+### Frame header (fixed 9 bytes)
+
+| Field | Type | Description |
+|---|---:|---|
+| `msg_type` | `u8` | Message type (see below) |
+| `stream_id` | `u32` | Client-assigned stream identifier. `0` is reserved for connection-level messages (PING/PONG). |
+| `length` | `u32` | Payload length in bytes |
+| `payload` | `bytes[length]` | Message payload |
+
+### Message types
+
+| Name | `msg_type` | Direction | Description |
+|---|---:|---|---|
+| `OPEN` | `1` | C→S | Open a new TCP stream (dial target) |
+| `DATA` | `2` | C↔S | Raw TCP bytes for a stream |
+| `CLOSE` | `3` | C↔S | Half/full close a stream |
+| `ERROR` | `4` | C↔S | Stream-level error (dial failure, policy denial, protocol error, etc.) |
+| `PING` | `5` | C↔S | Keepalive / RTT probe; peer replies with `PONG` (same payload) |
+| `PONG` | `6` | C↔S | Reply to `PING` |
+
+### `OPEN` payload
+
+Dial target encoded as:
+
+| Field | Type | Description |
+|---|---:|---|
+| `host_len` | `u16` | Number of bytes in `host` |
+| `host` | `bytes[host_len]` | UTF-8 hostname or IP literal |
+| `port` | `u16` | TCP port |
+| `metadata_len` | `u16` | Number of bytes in `metadata` (may be `0`) |
+| `metadata` | `bytes[metadata_len]` | Optional UTF-8 metadata blob (typically JSON) |
+
+`stream_id` MUST be non-zero and MUST be unique for the lifetime of the WebSocket connection.
+
+There is no explicit “OPEN-OK” response; success is implicit. On failure, the gateway sends `ERROR` for the `stream_id`.
+
+### `DATA` payload
+
+Payload is raw TCP bytes for the stream.
+
+### `CLOSE` payload
+
+| Field | Type | Description |
+|---|---:|---|
+| `flags` | `u8` | Close flags |
+
+`flags` bit meanings:
+
+- `0x01` (`FIN`): sender will not send more data on this stream (half-close).
+- `0x02` (`RST`): abort the stream immediately (full close).
+
+### `ERROR` payload
+
+| Field | Type | Description |
+|---|---:|---|
+| `code` | `u16` | Error code |
+| `message_len` | `u16` | Number of bytes in `message` |
+| `message` | `bytes[message_len]` | UTF-8 error message |
+
+Recommended error codes:
+
+| Code | Name | Meaning |
+|---:|---|---|
+| `1` | `POLICY_DENIED` | Target denied by policy (host/port allowlist, etc.) |
+| `2` | `DIAL_FAILED` | TCP connection could not be established |
+| `3` | `PROTOCOL_ERROR` | Malformed frame/payload |
+| `4` | `UNKNOWN_STREAM` | `stream_id` does not exist |
+| `5` | `STREAM_LIMIT_EXCEEDED` | Connection hit max multiplexed streams |
+| `6` | `STREAM_BUFFER_OVERFLOW` | Stream buffered too much pending data |
+
+### Policy failures
+
+Policy denials MUST be returned as `ERROR` on the affected `stream_id` without closing the entire mux WebSocket connection.
+
 ## 4) `/dns-query` DNS-over-HTTPS (DoH)
 
 The gateway exposes a DNS-over-HTTPS endpoint compatible with **RFC 8484** at:

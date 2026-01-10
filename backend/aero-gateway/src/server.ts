@@ -3,6 +3,8 @@ import fastifyStatic from '@fastify/static';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import type http from 'node:http';
+import type { Duplex } from 'node:stream';
 import type { Config } from './config.js';
 import { setupCrossOriginIsolation } from './middleware/crossOriginIsolation.js';
 import { originGuard } from './middleware/originGuard.js';
@@ -11,6 +13,7 @@ import { setupRateLimit } from './middleware/rateLimit.js';
 import { setupSecurityHeaders } from './middleware/securityHeaders.js';
 import { setupMetrics } from './metrics.js';
 import { setupDohRoutes } from './routes/doh.js';
+import { handleTcpMuxUpgrade } from './routes/tcpMux.js';
 import { handleTcpProxyUpgrade } from './routes/tcpProxy.js';
 import { getVersionInfo } from './version.js';
 
@@ -39,6 +42,35 @@ function findFrontendDistDir(): string | null {
   }
 
   return null;
+}
+
+function respondUpgradeHttp(socket: Duplex, status: number, message: string): void {
+  const body = `${message}\n`;
+  socket.end(
+    [
+      `HTTP/1.1 ${status} ${httpStatusText(status)}`,
+      'Content-Type: text/plain; charset=utf-8',
+      `Content-Length: ${Buffer.byteLength(body)}`,
+      'Connection: close',
+      '\r\n',
+      body,
+    ].join('\r\n'),
+  );
+}
+
+function httpStatusText(status: number): string {
+  switch (status) {
+    case 400:
+      return 'Bad Request';
+    case 403:
+      return 'Forbidden';
+    case 404:
+      return 'Not Found';
+    case 503:
+      return 'Service Unavailable';
+    default:
+      return 'Error';
+  }
 }
 
 export function buildServer(config: Config): ServerBundle {
@@ -77,8 +109,33 @@ export function buildServer(config: Config): ServerBundle {
 
   app.get('/version', async () => getVersionInfo());
 
-  app.server.on('upgrade', (request, socket, head) => {
-    handleTcpProxyUpgrade(request, socket, head, { allowedOrigins: config.ALLOWED_ORIGINS });
+  // WebSocket upgrade endpoints (/tcp and /tcp-mux) are handled at the Node HTTP
+  // server layer (Fastify does not natively handle arbitrary upgrade routing).
+  app.server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
+    if (shuttingDown) {
+      respondUpgradeHttp(socket, 503, 'Shutting down');
+      return;
+    }
+
+    let url: URL;
+    try {
+      url = new URL(req.url ?? '', 'http://localhost');
+    } catch {
+      respondUpgradeHttp(socket, 400, 'Invalid request URL');
+      return;
+    }
+
+    if (url.pathname === '/tcp') {
+      handleTcpProxyUpgrade(req, socket, head, { allowedOrigins: config.ALLOWED_ORIGINS });
+      return;
+    }
+
+    if (url.pathname === '/tcp-mux') {
+      handleTcpMuxUpgrade(req, socket, head, { allowedOrigins: config.ALLOWED_ORIGINS });
+      return;
+    }
+
+    respondUpgradeHttp(socket, 404, 'Not Found');
   });
 
   setupDohRoutes(app, config, metrics.dns);
@@ -242,4 +299,3 @@ function e2ePageHtml(): string {
   </body>
 </html>`;
 }
-

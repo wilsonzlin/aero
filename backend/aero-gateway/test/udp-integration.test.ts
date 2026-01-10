@@ -5,6 +5,11 @@ import test from 'node:test';
 import { buildServer } from '../src/server.js';
 import { decodeDnsHeader, decodeFirstQuestion, encodeDnsQuery, encodeDnsResponseA } from '../src/dns/codec.js';
 
+function bufferToArrayBuffer(buf: Buffer): ArrayBuffer {
+  const ab = buf.buffer as ArrayBuffer;
+  return ab.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+}
+
 const baseConfig = {
   HOST: '127.0.0.1',
   PORT: 0,
@@ -72,7 +77,7 @@ test('DoH POST resolves via UDP upstream and hits cache on subsequent queries', 
     const r1 = await fetch(`http://127.0.0.1:${port}/dns-query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/dns-message' },
-      body: q1,
+      body: bufferToArrayBuffer(q1),
     });
     assert.equal(r1.status, 200);
     assert.ok((r1.headers.get('content-type') ?? '').startsWith('application/dns-message'));
@@ -90,7 +95,7 @@ test('DoH POST resolves via UDP upstream and hits cache on subsequent queries', 
     const r2 = await fetch(`http://127.0.0.1:${port}/dns-query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/dns-message' },
-      body: q2,
+      body: bufferToArrayBuffer(q2),
     });
     assert.equal(r2.status, 200);
     const b2 = Buffer.from(await r2.arrayBuffer());
