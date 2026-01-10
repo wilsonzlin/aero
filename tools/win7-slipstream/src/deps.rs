@@ -85,7 +85,7 @@ pub fn print_deps(ctx: &DepContext) {
         &["Windows: DISM is built-in on modern Windows; ensure it's in PATH"],
     );
     line(
-        "bcdedit (patch BCD stores on Windows)",
+        "bcdedit (inspect/verify BCD stores on Windows)",
         &ctx.bcdedit,
         &["Windows: bcdedit is built-in; ensure it's in PATH"],
     );

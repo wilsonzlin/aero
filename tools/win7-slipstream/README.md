@@ -46,12 +46,15 @@ Required:
   - `winget install 7zip.7zip`
 - **Windows ADK** “Deployment Tools” for `oscdimg.exe` (ISO rebuild)
 - **DISM** (`dism.exe`) for mounting/patching WIMs
-- **bcdedit.exe** for BCD editing
 - **reg.exe** for offline registry edits
 
 Fallbacks:
 
 - If `oscdimg` is not available, install `xorriso` and the tool will fall back to it.
+
+Recommended (for `verify-iso` on Windows):
+
+- **bcdedit.exe** (built-in) to inspect BCD stores without extra tooling.
 
 ### Linux/macOS (backend: `cross-wimlib`)
 
@@ -112,4 +115,3 @@ The patched ISO contains (at minimum):
   - `wimlib-imagex` is installed,
   - FUSE is available and usable by your user.
 - If verification fails on BCD policy checks, ensure you built with a backend that can inspect hives (`bcdedit` on Windows or `hivexregedit` on Linux/macOS).
-
