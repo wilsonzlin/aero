@@ -51,7 +51,9 @@ App
 At minimum, provide exports matching the DDI your driver supports:
 
 * D3D10: `OpenAdapter10` (and optionally `OpenAdapter10_2` for 10.1)
+  * signature: `HRESULT APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER *pOpenData)`
 * D3D11: `OpenAdapter11`
+  * signature: `HRESULT APIENTRY OpenAdapter11(D3D11DDIARG_OPENADAPTER *pOpenData)`
 
 These are declared in the WDK headers (`d3d10umddi.h`, `d3d11umddi.h`) and receive a single `_Inout_ ...ARG_OPENADAPTER*` which contains:
 
@@ -234,6 +236,9 @@ Command submission
     * must report supported `D3D_FEATURE_LEVEL` list (initial: **`D3D_FEATURE_LEVEL_10_0` only**)
   * `pfnCalcPrivateDeviceSize`
   * `pfnCreateDevice` → uses `D3D11DDIARG_CREATEDEVICE`
+    * `D3D11DDIARG_CREATEDEVICE` is where the driver returns both:
+      * `D3D11DDI_DEVICEFUNCS` (device/object creation)
+      * `D3D11DDI_DEVICECONTEXTFUNCS` (immediate context draw/state/update entrypoints)
   * `pfnCloseAdapter`
 
 #### 2.2.2 Mandatory device/object creation
@@ -279,7 +284,7 @@ Pipeline state
 
 **Initially NOT_SUPPORTED (recommended):**
 
-These can return `E_NOTIMPL` / set error until the driver claims a higher feature level.
+These can return `E_NOTIMPL` / set error until the driver claims a higher feature level (or otherwise advertises the corresponding capability as unsupported).
 
 * Tessellation stages (requires FL11_0):
   * `pfnCreateHullShader` / `D3D11DDIARG_CREATEHULLSHADER`
@@ -291,8 +296,12 @@ These can return `E_NOTIMPL` / set error until the driver claims a higher featur
 * UAVs:
   * `pfnCalcPrivateUnorderedAccessViewSize` / `pfnCreateUnorderedAccessView` / `pfnDestroyUnorderedAccessView`
   * `D3D11DDIARG_CREATEUNORDEREDACCESSVIEW`
-* Geometry shader (required for full FL10_0+ conformance; commonly used by some engines):
-  * `pfnCreateGeometryShader` / `D3D11DDIARG_CREATEGEOMETRYSHADER`
+
+Geometry shader note:
+
+* Geometry shaders are part of the D3D10-class pipeline and are expected at `D3D_FEATURE_LEVEL_10_0` and above.
+* If you advertise **FL10_0** (or higher) from `pfnGetCaps`, implement `pfnCreateGeometryShader` / `D3D11DDIARG_CREATEGEOMETRYSHADER` (and the corresponding bind/state entrypoints) even if the first implementation is “limited but functional”.
+* If you are not ready to support GS yet, prefer advertising only `D3D_FEATURE_LEVEL_9_x` for D3D11 (while still supporting D3D10 separately), or be explicit that some FL10_0 apps will fail when they create/bind GS.
 
 #### 2.2.3 Mandatory context/state binding + draw path
 
