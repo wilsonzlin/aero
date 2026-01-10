@@ -75,19 +75,20 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
   const DWORD kGreen = D3DCOLOR_XRGB(0, 255, 0);
 
   Vertex verts[3];
-  // Large triangle that covers the backbuffer center (kWidth/2, kHeight/2).
-  verts[0].x = 0.0f;
-  verts[0].y = 0.0f;
+  // Triangle that covers the center pixel while leaving the top-left corner untouched, so we
+  // can validate both the clear color and the draw.
+  verts[0].x = (float)kWidth * 0.25f;
+  verts[0].y = (float)kHeight * 0.25f;
   verts[0].z = 0.5f;
   verts[0].rhw = 1.0f;
   verts[0].color = kGreen;
-  verts[1].x = (float)kWidth;
-  verts[1].y = 0.0f;
+  verts[1].x = (float)kWidth * 0.75f;
+  verts[1].y = (float)kHeight * 0.25f;
   verts[1].z = 0.5f;
   verts[1].rhw = 1.0f;
   verts[1].color = kGreen;
   verts[2].x = (float)kWidth * 0.5f;
-  verts[2].y = (float)kHeight;
+  verts[2].y = (float)kHeight * 0.75f;
   verts[2].z = 0.5f;
   verts[2].rhw = 1.0f;
   verts[2].color = kGreen;
@@ -119,12 +120,8 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::EndScene", hr);
   }
 
-  hr = dev->PresentEx(NULL, NULL, NULL, NULL, 0);
-  if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::PresentEx", hr);
-  }
-
-  // Read back the backbuffer center pixel. We only compare RGB (ignore alpha/unused byte).
+  // Read back the backbuffer. Do this before PresentEx: with D3DSWAPEFFECT_DISCARD the contents
+  // after Present are undefined.
   ComPtr<IDirect3DSurface9> backbuffer;
   hr = dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, backbuffer.put());
   if (FAILED(hr)) {
@@ -163,10 +160,13 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
 
   const int cx = (int)desc.Width / 2;
   const int cy = (int)desc.Height / 2;
-  const uint32_t pixel = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
+  const uint32_t center = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
+  const uint32_t corner = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, 5, 5);
 
   const uint32_t expected = 0xFF00FF00u;  // BGRA = (0, 255, 0, 255).
-  if ((pixel & 0x00FFFFFFu) != (expected & 0x00FFFFFFu)) {
+  const uint32_t expected_corner = 0xFFFF0000u;  // BGRA = (0, 0, 255, 255).
+  if ((center & 0x00FFFFFFu) != (expected & 0x00FFFFFFu) ||
+      (corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
     if (dump) {
       std::string err;
       aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(),
@@ -179,9 +179,9 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
     }
     sysmem->UnlockRect();
     return aerogpu_test::Fail(kTestName,
-                              "center pixel mismatch: got 0x%08lX expected ~0x%08lX",
-                              (unsigned long)pixel,
-                              (unsigned long)expected);
+                              "pixel mismatch: center=0x%08lX corner(5,5)=0x%08lX",
+                              (unsigned long)center,
+                              (unsigned long)corner);
   }
 
   sysmem->UnlockRect();
@@ -202,6 +202,11 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
       }
       sysmem->UnlockRect();
     }
+  }
+
+  hr = dev->PresentEx(NULL, NULL, NULL, NULL, 0);
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::PresentEx", hr);
   }
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
