@@ -28,6 +28,20 @@ npm run build
 npm start
 ```
 
+## Lint
+
+```bash
+cd backend/aero-gateway
+npm run lint
+```
+
+## Test
+
+```bash
+cd backend/aero-gateway
+npm test
+```
+
 ## Environment variables
 
 Required / commonly used:
@@ -80,4 +94,3 @@ Make sure to set:
 
 - `PUBLIC_BASE_URL=https://<your-domain>`
 - `ALLOWED_ORIGINS=https://<your-domain>` (or leave unset to default to `PUBLIC_BASE_URL`)
-

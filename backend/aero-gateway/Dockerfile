@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1
 FROM node:20-alpine AS build
-
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -14,7 +13,6 @@ ENV AERO_GATEWAY_VERSION=$GIT_SHA
 RUN npm run build
 
 FROM node:20-alpine AS runtime
-
 WORKDIR /app
 
 ENV NODE_ENV=production

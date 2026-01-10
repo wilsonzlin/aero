@@ -3,5 +3,7 @@ dist
 npm-debug.log
 Dockerfile
 .git
+.github
+.env
+.env.*
 .DS_Store
-
