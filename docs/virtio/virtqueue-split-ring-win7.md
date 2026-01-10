@@ -40,6 +40,15 @@ Project context (Aero): this guide is **transport-agnostic** and focuses only on
 
 Virtio fields are defined as **little-endian** (`__le16`, `__le32`, `__le64`). Windows 7 x86/x64 is little-endian, so byte swaps are typically no-ops, but you should still treat the on-wire/in-memory format as little-endian.
 
+### Windows-friendly note on “READ_ONCE/WRITE_ONCE” and endian helpers
+
+This document uses a few Linux-style helper names in pseudocode because they precisely describe intent:
+
+* `READ_ONCE(x)` / `WRITE_ONCE(x, v)` mean “perform exactly one load/store of this shared field and don’t let the compiler fold or duplicate it”.
+  * In a Windows KMDF driver, this is commonly achieved with a `volatile` access to the ring field (plus the explicit `KeMemoryBarrier()` ordering points described later).
+* `cpu_to_le16/32/64()` and `le16/32/64_to_cpu()` are endian conversion helpers.
+  * On Windows 7 x86/x64 these are identity operations, but keeping them in code makes the virtio format explicit.
+
 ## 1) Split ring layout and field semantics
 
 ### 1.1 Descriptor table (`struct vring_desc`)
@@ -350,6 +359,8 @@ UINT16 pending = (UINT16)(used_idx - vq->last_used_idx);
 
 `VIRTIO_F_RING_EVENT_IDX` replaces the coarse “NO_NOTIFY/NO_INTERRUPT” hints with explicit indices to reduce notification overhead and prevent lost wakeups.
 
+* Virtio 1.0 feature bit: **29**
+
 ### 7.1 Extra fields in ring layout
 
 When negotiated, two extra `u16` fields are defined:
@@ -484,6 +495,8 @@ for (;;) {
 
 Indirect descriptors let you represent a request with an arbitrary-length scatter/gather list while consuming only **one** descriptor in the main descriptor table.
 
+* Virtio 1.0 feature bit: **28**
+
 ### 8.1 How indirect works
 
 Instead of a normal chain in the main `desc[]`, the driver posts a single descriptor:
@@ -521,6 +534,49 @@ For Windows 7 KMDF, a practical approach is to preallocate a fixed pool of indir
   * return the indirect table to the pool
 
 This avoids dynamic allocation at DISPATCH_LEVEL and guarantees DMA-accessible, aligned memory.
+
+### 8.4 Minimal indirect descriptor example (pseudocode)
+
+Assume you want to submit a request with `k` scatter/gather segments, but only spend **one** main-ring descriptor:
+
+```c
+/* Allocate one main-ring head descriptor (as usual) */
+UINT16 head = VqAllocDesc(vq);
+
+/* Allocate an indirect table from a preallocated common-buffer-backed pool */
+INDIRECT_TABLE *t = IndirectPoolAlloc(vq->indirect_pool);
+struct vring_desc *it = t->va;          /* CPU VA to table */
+UINT64 it_pa = t->pa.QuadPart;          /* DMA address of table */
+
+/* Fill k indirect descriptors */
+for (UINT16 i = 0; i < k; i++) {
+    UINT16 flags = segments[i].device_writes ? VRING_DESC_F_WRITE : 0;
+    if (i != k - 1) {
+        flags |= VRING_DESC_F_NEXT;
+    }
+    it[i].addr  = cpu_to_le64(segments[i].pa);
+    it[i].len   = cpu_to_le32(segments[i].len);
+    it[i].flags = cpu_to_le16(flags);
+    it[i].next  = cpu_to_le16((i != k - 1) ? (i + 1) : 0);
+}
+/* Last entry must not have NEXT set (and next is ignored). */
+
+/* Publish the indirect table via the single main descriptor */
+vq->desc[head].addr  = cpu_to_le64(it_pa);
+vq->desc[head].len   = cpu_to_le32((UINT32)(k * sizeof(struct vring_desc)));
+vq->desc[head].flags = cpu_to_le16(VRING_DESC_F_INDIRECT);
+
+/* Track the indirect table in the per-head cookie/state so it can be freed on completion */
+vq->cookie[head] = MakeCookie(ctx, t);
+
+/* Then publish head into avail ring as usual (§5) */
+```
+
+Key points:
+
+* The indirect table must be DMA-accessible and 16-byte aligned.
+* Do not set `VRING_DESC_F_INDIRECT` on any **indirect table entry** (no nesting).
+* Free the indirect table back to the pool when `used_elem.id == head` completes.
 
 ## 9) Windows 7 / KMDF specifics (practical constraints)
 
