@@ -1,14 +1,15 @@
 @echo off
 setlocal enabledelayedexpansion
 
+set "TIMEOUT_MS=%AEROGPU_TEST_TIMEOUT_MS%"
+if "%TIMEOUT_MS%"=="" set "TIMEOUT_MS=30000"
+
 if /I "%~1"=="--help" goto :help
 if /I "%~1"=="-h" goto :help
 if "%~1"=="/?" goto :help
 
 set "BIN=%~dp0bin"
 set "RUNNER=%BIN%\\aerogpu_timeout_runner.exe"
-set "TIMEOUT_MS=%AEROGPU_TEST_TIMEOUT_MS%"
-if "%TIMEOUT_MS%"=="" set "TIMEOUT_MS=30000"
 set /a FAILURES=0
 
 call :run_test d3d9ex_dwm_probe %*
