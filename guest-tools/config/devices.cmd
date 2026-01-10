@@ -31,5 +31,6 @@ set AERO_VIRTIO_NET_HWIDS="PCI\VEN_1AF4&DEV_1000" "PCI\VEN_1AF4&DEV_1041"
 set AERO_VIRTIO_INPUT_HWIDS="PCI\VEN_1AF4&DEV_1011" "PCI\VEN_1AF4&DEV_1052"
 set AERO_VIRTIO_SND_HWIDS="PCI\VEN_1AF4&DEV_1018" "PCI\VEN_1AF4&DEV_1059"
 
-rem Aero WDDM GPU stack (placeholder IDs; must match emulator + INFs).
-set AERO_GPU_HWIDS="PCI\VEN_1AE0&DEV_0001"
+rem Aero WDDM GPU stack.
+rem Must match emulator-presented IDs and the AeroGPU display driver INF.
+set AERO_GPU_HWIDS="PCI\VEN_A3A0&DEV_0001"

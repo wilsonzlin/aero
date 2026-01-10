@@ -99,7 +99,7 @@ run_all.cmd --timeout-ms=120000
 To require a specific PCI VID/DID (recommended for automation):
 
 ```cmd
-run_all.cmd --require-vid=0x1234 --require-did=0x1111
+run_all.cmd --require-vid=0xA3A0 --require-did=0x0001
 ```
 
 You can find the correct VID/DID in the Win7 guest via:
