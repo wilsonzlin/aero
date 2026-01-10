@@ -67,6 +67,17 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CreateDeviceEx", hr);
   }
 
+  D3DADAPTER_IDENTIFIER9 ident;
+  ZeroMemory(&ident, sizeof(ident));
+  hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
+  if (SUCCEEDED(hr)) {
+    aerogpu_test::PrintfStdout("INFO: %s: adapter: %s (VID=0x%04X DID=0x%04X)",
+                               kTestName,
+                               ident.Description,
+                               (unsigned)ident.VendorId,
+                               (unsigned)ident.DeviceId);
+  }
+
   dev->SetRenderState(D3DRS_LIGHTING, FALSE);
   dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
   dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
