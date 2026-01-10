@@ -71,6 +71,9 @@ Vite requires configuring both the dev server and the preview server:
 
 See `vite.config.ts` in the repo for the canonical header values.
 
+For production hosting templates (Netlify / Cloudflare Pages) and caching defaults, see
+[`docs/deployment.md`](./deployment.md).
+
 ### Debugging when `SharedArrayBuffer` is undefined
 
 If `typeof SharedArrayBuffer === 'undefined'` (or `crossOriginIsolated === false`):

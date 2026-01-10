@@ -4,6 +4,7 @@ const crossOriginIsolationHeaders = {
   // Aero relies on SharedArrayBuffer + WASM threads, which require cross-origin isolation.
   "Cross-Origin-Opener-Policy": "same-origin",
   "Cross-Origin-Embedder-Policy": "require-corp",
+  "Cross-Origin-Resource-Policy": "same-origin",
 } as const;
 
 export default defineConfig({
