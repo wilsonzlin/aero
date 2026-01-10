@@ -29,6 +29,7 @@ This guide walks you through installing Windows 7 in Aero using the **baseline (
 - [Step 5: Switch to virtio + Aero GPU](#step-5-switch-to-virtio--aero-gpu-recommended-order)
 - [Step 6: Run `verify.cmd` / read `report.txt`](#step-6-run-verifycmd-and-interpret-reporttxt)
 - [Rollback paths](#safe-rollback-path-if-virtio-blk-boot-fails)
+- [Optional: uninstall Guest Tools](#optional-uninstall-guest-tools)
 - [Optional: slipstream KB3033929 and drivers](#optional-slipstream-kb3033929-andor-drivers-into-your-windows-7-iso)
 - [Troubleshooting](./windows7-driver-troubleshooting.md)
 
@@ -152,6 +153,12 @@ During installation you may see driver install prompts:
 
 When `setup.cmd` finishes, reboot Windows if prompted.
 
+If `setup.cmd` fails or prints warnings, **do not** switch the boot disk to virtio-blk yet. Review:
+
+- `C:\AeroGuestTools\install.log`
+
+It is safe (and often recommended) to re-run `setup.cmd` after fixing the underlying problem.
+
 ### `setup.cmd` output files
 
 If you need to troubleshoot an installation, start by reviewing:
@@ -171,6 +178,10 @@ Guest Tools may support additional command-line flags. Common examples include:
 - `setup.cmd /testsigning` / `setup.cmd /notestsigning` (x64: control test-signing changes)
 - `setup.cmd /nointegritychecks` (x64: disables signature enforcement entirely; **not recommended**)
 - `setup.cmd /noreboot` (do not prompt for reboot/shutdown at the end)
+
+To see the supported options for your build, you can also run:
+
+- `setup.cmd /?`
 
 If the Guest Tools media includes a `README.md`, consult it for the definitive list of supported flags for your build.
 
@@ -339,6 +350,15 @@ Running `verify.cmd` typically writes:
 - `C:\AeroGuestTools\report.txt` (human-readable)
 - `C:\AeroGuestTools\report.json` (machine-readable)
 
+### Optional `verify.cmd` parameters (advanced)
+
+Some Guest Tools builds support extra diagnostics flags, for example:
+
+- `verify.cmd -PingTarget 192.168.0.1` (override the ping target)
+- `verify.cmd -PlayTestSound` (attempt to play a test sound)
+
+If `-PingTarget` is not provided, the script may attempt to ping the default gateway (if present).
+
 Depending on your Guest Tools version, the report may include:
 
 - OS version and architecture (x86 vs x64)
@@ -398,6 +418,20 @@ If you get a black/blank screen after switching **VGA → Aero GPU**:
 ### Rollback if virtio-snd fails
 
 If audio stops working after switching **HDA → virtio-snd**, you can always switch back to **HDA**. Audio problems do not affect boot.
+
+## Optional: uninstall Guest Tools
+
+Guest Tools also includes `uninstall.cmd` for best-effort cleanup (useful for testing or reverting a VM back to baseline drivers).
+
+1. Boot Windows.
+2. (Recommended) If your boot disk is currently virtio-blk, switch back to **AHCI** first and boot successfully.
+3. Run `uninstall.cmd` as Administrator from:
+   - the mounted CD/DVD, or
+   - `C:\AeroGuestTools\media\` (if you copied the files locally)
+4. Review:
+   - `C:\AeroGuestTools\uninstall.log`
+
+Uninstall is best-effort and may not remove drivers that are currently in use.
 
 ## Optional: Slipstream KB3033929 and/or drivers into your Windows 7 ISO
 
