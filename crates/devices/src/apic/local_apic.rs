@@ -48,7 +48,10 @@ impl LapicState {
         Self {
             id,
             tpr: 0,
-            svr: 0,
+            // Real hardware resets the spurious vector register to 0xFF (software
+            // enable bit cleared). Keeping the vector non-zero helps guests that
+            // read SVR before programming it.
+            svr: 0xFF,
             icr_low: 0,
             icr_high: 0,
             irr: [0; 8],
@@ -340,6 +343,11 @@ impl LocalApic {
         state.highest_deliverable_vector(ppr)
     }
 
+    pub fn is_pending(&self, vector: u8) -> bool {
+        let state = self.state.lock().unwrap();
+        bitmap_is_set(&state.irr, vector)
+    }
+
     /// Acknowledge delivery of `vector`, moving it from IRR → ISR.
     pub fn ack(&self, vector: u8) -> bool {
         let now = self.clock.now_ns();
@@ -601,5 +609,26 @@ mod tests {
         clock.advance(10);
         apic.poll();
         assert_eq!(apic.get_pending_vector(), Some(0x40));
+    }
+
+    #[test]
+    fn one_shot_timer_fires_once() {
+        let clock = Arc::new(TestClock::default());
+        let apic = LocalApic::with_clock(clock.clone(), 0);
+
+        write_u32(&apic, REG_SVR, 1 << 8);
+        write_u32(&apic, REG_LVT_TIMER, 0x40); // one-shot (no periodic bit)
+        write_u32(&apic, REG_DIVIDE_CONFIG, 0xB);
+        write_u32(&apic, REG_INITIAL_COUNT, 10);
+
+        clock.advance(10);
+        apic.poll();
+        assert_eq!(apic.get_pending_vector(), Some(0x40));
+        assert!(apic.ack(0x40));
+        apic.eoi();
+
+        clock.advance(10);
+        apic.poll();
+        assert_eq!(apic.get_pending_vector(), None);
     }
 }
