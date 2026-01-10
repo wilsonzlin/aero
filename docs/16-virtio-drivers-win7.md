@@ -34,6 +34,19 @@ Notes for Windows driver authors:
 - Map BAR memory from the translated resource list (`CmResourceTypeMemory`) and compute each capability’s effective virtual address as `bar_va + cap.offset`.
 - Multiple virtio capabilities can live in the same BAR; only map each BAR once.
 
+#### Portable capability-list parser (hardware-free regression tests)
+
+This repo includes a small **portable C99** module that implements the capability-list walk + `virtio_pci_cap` parsing logic, along with synthetic config-space unit tests that run on Linux CI:
+
+- Parser: `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.{h,c}`
+- Tests: `drivers/win7/virtio/tests/virtio_pci_cap_parser_test.c`
+
+Run locally:
+
+```bash
+./drivers/win7/virtio/tests/build_and_run.sh
+```
+
 ### Required MMIO regions
 
 A minimal modern virtio driver should expect to map these regions:
@@ -203,4 +216,3 @@ A typical WDF flow is:
    - complete pending requests / indicate packets / report input events
 
 Device-specific drivers should avoid doing heavy work in the ISR.
-
