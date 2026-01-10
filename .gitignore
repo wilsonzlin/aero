@@ -11,6 +11,12 @@ __pycache__/
 .env.*
 !.env.example
 
+# Local Helm values files (often contain secrets)
+aero-values.yaml
+aero-values*.yaml
+values.local.yaml
+values-local.yaml
+
 # OS / editor files
 .DS_Store
 Thumbs.db
