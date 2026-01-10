@@ -291,6 +291,29 @@ fn wasm_simd_pshufb_swizzle() {
 }
 
 #[test]
+fn wasm_simd_pslld_psrld_imm() {
+    let mut rng = StdRng::seed_from_u64(5);
+    let xmm0 = XmmReg::new(0).unwrap();
+
+    let mut state = SseState::default();
+    state.xmm[xmm0.index()] = rng.gen::<u128>();
+
+    let program = Program {
+        insts: vec![
+            Inst::PslldImm { dst: xmm0, imm: 3 },
+            Inst::PsrldImm { dst: xmm0, imm: 1 },
+        ],
+    };
+
+    let mem = vec![0u8; 64];
+    assert_jit_matches_interp(program.clone(), state.clone(), mem.clone());
+
+    let (_, _, wasm) = run_jit(&program, &state, &mem);
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::I32x4Shl));
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::I32x4ShrU));
+}
+
+#[test]
 fn mxcsr_gate_traps_for_float_ops() {
     let xmm0 = XmmReg::new(0).unwrap();
     let xmm1 = XmmReg::new(1).unwrap();
@@ -364,4 +387,3 @@ fn pshufb_requires_ssse3_option() {
         "requires SSSE3 (PSHUFB) but JIT options have SSSE3 disabled"
     );
 }
-

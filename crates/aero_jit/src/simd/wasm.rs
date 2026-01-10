@@ -86,6 +86,11 @@ pub fn compile_wasm_simd(
             Inst::Pxor { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::V128Xor)?,
 
             Inst::Pshufb { dst, src } => emit_pshufb(&mut func, dst, src, layout)?,
+
+            Inst::PslldImm { dst, imm } => emit_shift_imm(&mut func, dst, imm, ShiftOp::I32x4Shl, layout)?,
+            Inst::PsrldImm { dst, imm } => {
+                emit_shift_imm(&mut func, dst, imm, ShiftOp::I32x4ShrU, layout)?
+            }
         }
     }
 
@@ -149,6 +154,12 @@ enum Local {
     Tmp2 = 2,
 }
 
+#[derive(Clone, Copy)]
+enum ShiftOp {
+    I32x4Shl,
+    I32x4ShrU,
+}
+
 fn emit_binop(
     func: &mut Function,
     dst: XmmReg,
@@ -159,6 +170,31 @@ fn emit_binop(
     emit_load_reg(dst, func, layout)?;
     emit_load_operand(src, func, layout)?;
     func.instruction(&op);
+    func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
+    emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
+    Ok(())
+}
+
+fn emit_shift_imm(
+    func: &mut Function,
+    dst: XmmReg,
+    imm: u8,
+    op: ShiftOp,
+    layout: WasmLayout,
+) -> Result<(), JitError> {
+    if imm > 31 {
+        func.instruction(&Instruction::V128Const(0));
+        func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
+        emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
+        return Ok(());
+    }
+
+    emit_load_reg(dst, func, layout)?;
+    func.instruction(&Instruction::I32Const(imm as i32));
+    match op {
+        ShiftOp::I32x4Shl => func.instruction(&Instruction::I32x4Shl),
+        ShiftOp::I32x4ShrU => func.instruction(&Instruction::I32x4ShrU),
+    };
     func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
     emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
     Ok(())
@@ -313,4 +349,3 @@ pub enum JitError {
     #[error("address arithmetic overflow while lowering to wasm")]
     AddressOverflow,
 }
-

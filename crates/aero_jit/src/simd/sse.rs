@@ -60,10 +60,14 @@ pub enum Inst {
 
     /// `PSHUFB xmm, xmm/m128` (SSSE3)
     Pshufb { dst: XmmReg, src: Operand },
+
+    /// `PSLLD xmm, imm8` (SSE2)
+    PslldImm { dst: XmmReg, imm: u8 },
+    /// `PSRLD xmm, imm8` (SSE2)
+    PsrldImm { dst: XmmReg, imm: u8 },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Program {
     pub insts: Vec<Inst>,
 }
-

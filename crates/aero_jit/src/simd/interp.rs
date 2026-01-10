@@ -76,6 +76,15 @@ pub fn interpret(program: &Program, state: &mut SseState, mem: &mut [u8]) -> Res
                 }
                 state.xmm[dst.index()] = u128::from_le_bytes(out);
             }
+
+            Inst::PslldImm { dst, imm } => {
+                let v = state.xmm[dst.index()];
+                state.xmm[dst.index()] = shift_i32x4(v, imm, ShiftDir::Left);
+            }
+            Inst::PsrldImm { dst, imm } => {
+                let v = state.xmm[dst.index()];
+                state.xmm[dst.index()] = shift_i32x4(v, imm, ShiftDir::RightLogical);
+            }
         }
     }
 
@@ -163,6 +172,33 @@ fn f64x2_binop(a: u128, b: u128, f: impl Fn(f64, f64) -> f64) -> u128 {
     u128::from_le_bytes(out)
 }
 
+#[derive(Clone, Copy)]
+enum ShiftDir {
+    Left,
+    RightLogical,
+}
+
+fn shift_i32x4(v: u128, imm: u8, dir: ShiftDir) -> u128 {
+    // x86 packed shifts treat counts >= lane_bits as producing all-zero elements.
+    // (Unlike WebAssembly SIMD shifts, which mask the count.)
+    if imm > 31 {
+        return 0;
+    }
+
+    let bytes = v.to_le_bytes();
+    let mut out = [0u8; 16];
+    for lane in 0..4 {
+        let off = lane * 4;
+        let x = u32::from_le_bytes(bytes[off..off + 4].try_into().expect("slice len matches"));
+        let y = match dir {
+            ShiftDir::Left => x.wrapping_shl(imm as u32),
+            ShiftDir::RightLogical => x.wrapping_shr(imm as u32),
+        };
+        out[off..off + 4].copy_from_slice(&y.to_le_bytes());
+    }
+    u128::from_le_bytes(out)
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ExecError {
     #[error("guest memory out of bounds: addr={addr} access_size={access_size} mem_len={mem_len}")]
@@ -172,4 +208,3 @@ pub enum ExecError {
         mem_len: usize,
     },
 }
-
