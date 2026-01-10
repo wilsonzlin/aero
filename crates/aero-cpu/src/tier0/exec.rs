@@ -2,6 +2,7 @@ use super::bus::{MemoryBus, PortIo};
 use super::cpu::{CpuMode, CpuState};
 use super::error::EmuException;
 use super::flags::{parity_even, Flag, LazyFlags, LazyOp, FLAG_IF, FLAG_TF};
+use crate::msr::{IA32_TSC, IA32_TSC_AUX};
 use iced_x86::{Code, Decoder, DecoderOptions, Instruction, Mnemonic, OpKind, Register};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,6 +292,15 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
             }
             Mnemonic::Rdtsc => {
                 self.exec_rdtsc()?;
+                Ok(false)
+            }
+            Mnemonic::Rdtscp => {
+                self.exec_rdtscp()?;
+                Ok(false)
+            }
+            Mnemonic::Lfence | Mnemonic::Sfence | Mnemonic::Mfence => Ok(false),
+            Mnemonic::Pause => {
+                self.exec_pause();
                 Ok(false)
             }
             Mnemonic::Rdmsr => {
@@ -1296,10 +1306,18 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
                 let ecx = 0;
                 (eax, 0, ecx, edx)
             }
-            0x8000_0000 => (0x8000_0001, 0, 0, 0),
+            0x8000_0000 => (0x8000_0007, 0, 0, 0),
             0x8000_0001 => {
-                // Long mode bit.
-                let edx = 1 << 29;
+                // Extended feature flags.
+                // - Bit 29: Long Mode (AMD64)
+                // - Bit 27: RDTSCP
+                let edx = (1 << 29) | (1 << 27);
+                (0, 0, 0, edx)
+            }
+            0x8000_0007 => {
+                // Advanced power management info.
+                // - EDX bit 8: Invariant TSC
+                let edx = 1 << 8;
                 (0, 0, 0, edx)
             }
             _ => {
@@ -1323,9 +1341,28 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
         Ok(())
     }
 
+    fn exec_rdtscp(&mut self) -> Result<(), EmuException> {
+        let tsc = self.cpu.tsc;
+        let aux = self
+            .cpu
+            .msr
+            .get(&IA32_TSC_AUX)
+            .copied()
+            .unwrap_or(0) as u32;
+        self.cpu
+            .write_reg(Register::EAX, (tsc & 0xffff_ffff) as u64)?;
+        self.cpu.write_reg(Register::EDX, (tsc >> 32) as u64)?;
+        self.cpu.write_reg(Register::ECX, aux as u64)?;
+        Ok(())
+    }
+
     fn exec_rdmsr(&mut self) -> Result<(), EmuException> {
         let msr = self.cpu.read_reg(Register::ECX)? as u32;
-        let val = *self.cpu.msr.get(&msr).unwrap_or(&0);
+        let val = match msr {
+            IA32_TSC => self.cpu.tsc,
+            IA32_TSC_AUX => self.cpu.msr.get(&msr).copied().unwrap_or(0) & 0xffff_ffff,
+            _ => *self.cpu.msr.get(&msr).unwrap_or(&0),
+        };
         self.cpu
             .write_reg(Register::EAX, (val & 0xffff_ffff) as u64)?;
         self.cpu.write_reg(Register::EDX, (val >> 32) as u64)?;
@@ -1337,8 +1374,25 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
         let lo = self.cpu.read_reg(Register::EAX)? & 0xffff_ffff;
         let hi = self.cpu.read_reg(Register::EDX)? & 0xffff_ffff;
         let val = lo | (hi << 32);
-        self.cpu.msr.insert(msr, val);
+        match msr {
+            IA32_TSC => {
+                // Canonicalize IA32_TSC through the dedicated CPU TSC field.
+                self.cpu.tsc = val;
+                self.cpu.msr.remove(&msr);
+            }
+            IA32_TSC_AUX => {
+                // Only the low 32 bits are architecturally visible.
+                self.cpu.msr.insert(msr, val & 0xffff_ffff);
+            }
+            _ => {
+                self.cpu.msr.insert(msr, val);
+            }
+        }
         Ok(())
+    }
+
+    fn exec_pause(&self) {
+        std::hint::spin_loop();
     }
 
     fn exec_in(&mut self, instr: &Instruction) -> Result<(), EmuException> {
