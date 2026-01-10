@@ -155,7 +155,7 @@ fn decode_memory_state(bytes: &[u8]) -> Result<(bool, Vec<Range<u64>>), Snapshot
 }
 
 fn encode_bios_state(vm: &Vm<impl BlockDevice>) -> Result<Vec<u8>, SnapshotError> {
-    let snapshot = vm.bios.snapshot();
+    let snapshot = vm.bios.snapshot(&vm.mem);
     let mut buf = Vec::new();
     snapshot.encode(&mut buf)?;
     Ok(buf)
@@ -257,7 +257,7 @@ impl<D: BlockDevice> SnapshotTarget for Vm<D> {
                 }
                 id if id == DeviceId::BIOS && state.version == 1 => {
                     if let Ok(snapshot) = decode_bios_state(&state.data) {
-                        self.bios.restore_snapshot(snapshot);
+                        self.bios.restore_snapshot(snapshot, &mut self.mem);
                     }
                 }
                 _ => {}

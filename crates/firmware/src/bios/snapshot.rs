@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 
+use crate::bda::BiosDataArea;
+use crate::memory::MemoryBus;
 use crate::rtc::CmosRtcSnapshot;
 
 use super::bda_time::BdaTimeSnapshot;
@@ -138,26 +140,29 @@ impl BiosSnapshot {
 }
 
 impl Bios {
-    pub fn snapshot(&self) -> BiosSnapshot {
+    pub fn snapshot(&self, memory: &impl MemoryBus) -> BiosSnapshot {
         BiosSnapshot {
             config: self.config.clone(),
             rtc: self.rtc.snapshot(),
             bda_time: self.bda_time.snapshot(),
             e820_map: self.e820_map.clone(),
             keyboard_queue: self.keyboard_queue.iter().copied().collect(),
-            video_mode: self.video_mode,
+            // Video mode lives in the BIOS Data Area (BDA), which is part of guest RAM.
+            // Capture it explicitly so snapshot payloads stay self-contained even if callers
+            // choose a RAM snapshot mode that does not include low memory.
+            video_mode: BiosDataArea::read_video_mode(memory),
             tty_output: self.tty_output.clone(),
             rsdp_addr: self.rsdp_addr,
         }
     }
 
-    pub fn restore_snapshot(&mut self, snapshot: BiosSnapshot) {
+    pub fn restore_snapshot(&mut self, snapshot: BiosSnapshot, memory: &mut impl MemoryBus) {
         self.config = snapshot.config;
         self.rtc.restore_snapshot(snapshot.rtc);
         self.bda_time.restore_snapshot(snapshot.bda_time);
         self.e820_map = snapshot.e820_map;
         self.keyboard_queue = VecDeque::from(snapshot.keyboard_queue);
-        self.video_mode = snapshot.video_mode;
+        BiosDataArea::write_video_mode(memory, snapshot.video_mode);
         self.tty_output = snapshot.tty_output;
         self.rsdp_addr = snapshot.rsdp_addr;
     }
