@@ -7,6 +7,8 @@ const DEFAULT_CONFIG = Object.freeze({
   autoSaveSnapshotOnCrash: false,
 });
 
+const LOCAL_STORAGE_CRASH_SNAPSHOT_KEY = "aero:lastCrashSnapshot";
+
 function mergeConfig(base, overrides) {
   return {
     ...base,
@@ -15,24 +17,18 @@ function mergeConfig(base, overrides) {
   };
 }
 
-function withTimeout(promise, { timeoutMs, message }) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
-
-  const wrapped = promise.then(
-    (value) => {
-      clearTimeout(timer);
-      return value;
-    },
-    (err) => {
-      clearTimeout(timer);
-      throw err;
-    },
-  );
-
-  return Promise.race([wrapped, timeout]);
+async function trySaveSnapshotToOpfs(snapshot) {
+  try {
+    const { getOpfsStateDir } = await import("../platform/opfs");
+    const dir = await getOpfsStateDir();
+    const handle = await dir.getFileHandle("last-crash-snapshot.json", { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(JSON.stringify(snapshot, null, 2));
+    await writable.close();
+    return "opfs:state/last-crash-snapshot.json";
+  } catch {
+    return null;
+  }
 }
 
 export class VmCoordinator extends EventTarget {
@@ -45,10 +41,30 @@ export class VmCoordinator extends EventTarget {
     this.lastHeartbeatAt = 0;
     this.lastHeartbeat = null;
     this.lastSnapshot = null;
+    this.lastSnapshotSavedTo = null;
 
     this._ackQueues = new Map();
     this._watchdogTimer = null;
     this._terminated = false;
+  }
+
+  async _awaitAck(type, options) {
+    try {
+      return await this._waitForAck(type, options);
+    } catch (err) {
+      if (this.state !== "error") {
+        this._emitError(
+          {
+            code: ErrorCode.WorkerCrashed,
+            message: options?.message ?? "Worker became unresponsive.",
+            details: { ackType: type },
+            suggestion: "The worker was terminated to keep the UI responsive. Reset the VM to continue.",
+          },
+          { snapshot: this.lastSnapshot },
+        );
+      }
+      throw err;
+    }
   }
 
   async start({ mode = "cooperativeInfiniteLoop" } = {}) {
@@ -57,6 +73,7 @@ export class VmCoordinator extends EventTarget {
     this._setState("starting");
     this._terminated = false;
     this.lastHeartbeatAt = Date.now();
+    this.lastSnapshotSavedTo = null;
 
     const worker = new Worker(this.workerUrl, { type: "module" });
     this.worker = worker;
@@ -73,7 +90,7 @@ export class VmCoordinator extends EventTarget {
 
     worker.postMessage({ type: "init", config: this.config });
 
-    await withTimeout(this._waitForAck("ready"), {
+    await this._awaitAck("ready", {
       timeoutMs: 2000,
       message: "Timed out waiting for CPU worker to initialize.",
     });
@@ -81,7 +98,7 @@ export class VmCoordinator extends EventTarget {
     this._startWatchdog();
     this._send({ type: "start", mode });
 
-    await withTimeout(this._waitForAck("started"), {
+    await this._awaitAck("started", {
       timeoutMs: 2000,
       message: "Timed out waiting for CPU worker to start.",
     });
@@ -93,7 +110,7 @@ export class VmCoordinator extends EventTarget {
     if (!this.worker) return;
     if (this.state !== "running") return;
     this._send({ type: "pause" });
-    await withTimeout(this._waitForAck("paused"), {
+    await this._awaitAck("paused", {
       timeoutMs: 2000,
       message: "Timed out waiting for CPU worker to pause.",
     });
@@ -104,7 +121,7 @@ export class VmCoordinator extends EventTarget {
     if (!this.worker) return;
     if (this.state !== "paused") return;
     this._send({ type: "resume" });
-    await withTimeout(this._waitForAck("resumed"), {
+    await this._awaitAck("resumed", {
       timeoutMs: 2000,
       message: "Timed out waiting for CPU worker to resume.",
     });
@@ -116,11 +133,11 @@ export class VmCoordinator extends EventTarget {
     if (!this.worker) return;
     if (this.state !== "paused") return;
     this._send({ type: "step" });
-    await withTimeout(this._waitForAck("stepped"), {
+    await this._awaitAck("stepped", {
       timeoutMs: 2000,
       message: "Timed out waiting for CPU worker to step.",
     });
-    await withTimeout(this._waitForAck("paused"), {
+    await this._awaitAck("paused", {
       timeoutMs: 2000,
       message: "Timed out waiting for CPU worker to pause after step.",
     });
@@ -135,7 +152,7 @@ export class VmCoordinator extends EventTarget {
   async requestSnapshot({ reason = "manual" } = {}) {
     if (!this.worker) return null;
     this._send({ type: "requestSnapshot", reason });
-    const msg = await withTimeout(this._waitForAck("snapshot"), {
+    const msg = await this._awaitAck("snapshot", {
       timeoutMs: 2000,
       message: "Timed out waiting for snapshot.",
     });
@@ -232,11 +249,43 @@ export class VmCoordinator extends EventTarget {
     this._watchdogTimer = null;
   }
 
-  _waitForAck(type) {
+  _waitForAck(type, options) {
+    return this._waitForAckWithOptions(type, options);
+  }
+
+  _waitForAckWithOptions(type, options) {
+    const timeoutMs = options?.timeoutMs ?? undefined;
+    const message = options?.message ?? "Timed out waiting for worker response.";
+
     return new Promise((resolve, reject) => {
+      let timer = null;
       const queue = this._ackQueues.get(type) ?? [];
-      queue.push({ resolve, reject });
+
+      const entry = {
+        resolve: (value) => {
+          if (timer !== null) clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (err) => {
+          if (timer !== null) clearTimeout(timer);
+          reject(err);
+        },
+      };
+
+      queue.push(entry);
       this._ackQueues.set(type, queue);
+
+      if (timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          const pendingQueue = this._ackQueues.get(type);
+          if (pendingQueue) {
+            const idx = pendingQueue.indexOf(entry);
+            if (idx >= 0) pendingQueue.splice(idx, 1);
+            if (pendingQueue.length === 0) this._ackQueues.delete(type);
+          }
+          entry.reject(new Error(message));
+        }, timeoutMs);
+      }
     });
   }
 
@@ -252,7 +301,26 @@ export class VmCoordinator extends EventTarget {
 
   _emitError(error, { snapshot } = {}) {
     const structured = error && typeof error === "object" ? error : { code: ErrorCode.InternalError, message: String(error) };
-    if (this.config.autoSaveSnapshotOnCrash) this.lastSnapshot = snapshot ?? this.lastSnapshot;
+    if (this.config.autoSaveSnapshotOnCrash) {
+      this.lastSnapshot = snapshot ?? this.lastSnapshot;
+      const snapshotToSave = this.lastSnapshot;
+      if (snapshotToSave) {
+        try {
+          if (typeof localStorage !== "undefined") {
+            localStorage.setItem(LOCAL_STORAGE_CRASH_SNAPSHOT_KEY, JSON.stringify(snapshotToSave));
+            this.lastSnapshotSavedTo = `localStorage:${LOCAL_STORAGE_CRASH_SNAPSHOT_KEY}`;
+          }
+        } catch {
+          // Ignore localStorage failures (privacy mode, quota exceeded, etc).
+        }
+
+        void trySaveSnapshotToOpfs(snapshotToSave).then((savedTo) => {
+          if (!savedTo) return;
+          this.lastSnapshotSavedTo = savedTo;
+          this.dispatchEvent(new CustomEvent("snapshotSaved", { detail: { savedTo } }));
+        });
+      }
+    }
     this.dispatchEvent(new CustomEvent("error", { detail: { error: structured, snapshot } }));
     this._rejectAllAcks(new Error(structured.message));
     this._stopWatchdog();
@@ -280,4 +348,3 @@ export class VmCoordinator extends EventTarget {
     this.dispatchEvent(new CustomEvent("statechange", { detail: { state: next } }));
   }
 }
-

@@ -46,3 +46,22 @@ test('VM reports resource limit errors and can reset without reload', async ({ p
   await page.click('#vm-start-coop');
   await page.waitForFunction(() => window.__aeroVm?.lastHeartbeatAt && window.__aeroVm.lastHeartbeatAt > 0);
 });
+
+test('VM auto-saves a crash snapshot when enabled', async ({ page }) => {
+  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+  await page.waitForSelector('#vm-safety-panel');
+
+  await page.check('#vm-auto-snapshot');
+  await page.click('#vm-start-crash');
+
+  await page.waitForFunction(() => {
+    const text = document.querySelector('#vm-error')?.textContent ?? '';
+    return text.includes('InternalError');
+  });
+
+  const raw = await page.evaluate(() => localStorage.getItem('aero:lastCrashSnapshot'));
+  expect(raw).not.toBeNull();
+
+  const parsed = JSON.parse(raw!);
+  expect(parsed.reason).toBe('crash');
+});

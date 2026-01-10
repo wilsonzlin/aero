@@ -286,6 +286,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
   const stateLine = el('div', { class: 'mono', id: 'vm-state', text: 'state=stopped' });
   const heartbeatLine = el('div', { class: 'mono', id: 'vm-heartbeat', text: 'heartbeat=0' });
   const tickLine = el('div', { class: 'mono', id: 'vm-ticks', text: 'uiTicks=0' });
+  const snapshotSavedLine = el('div', { class: 'mono', id: 'vm-snapshot-saved', text: 'snapshotSavedTo=none' });
 
   const errorOut = el('pre', { id: 'vm-error', text: '' });
   const snapshotOut = el('pre', { id: 'vm-snapshot', text: '' });
@@ -306,6 +307,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
     const totalInstructions = lastHeartbeat?.totalInstructions ?? 0;
     heartbeatLine.textContent = `lastHeartbeatAt=${vm?.lastHeartbeatAt ?? 0} totalInstructions=${totalInstructions}`;
     tickLine.textContent = `uiTicks=${window.__aeroUiTicks ?? 0}`;
+    snapshotSavedLine.textContent = `snapshotSavedTo=${vm?.lastSnapshotSavedTo ?? 'none'}`;
 
     if (vm?.lastSnapshot) {
       snapshotOut.textContent = JSON.stringify(vm.lastSnapshot, null, 2);
@@ -337,6 +339,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
 
     vm.addEventListener('statechange', update);
     vm.addEventListener('heartbeat', update);
+    vm.addEventListener('snapshotSaved', update);
     vm.addEventListener('error', (event) => {
       const detail = (event as CustomEvent).detail as unknown;
       errorOut.textContent = JSON.stringify(detail, null, 2);
@@ -478,6 +481,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
     stateLine,
     heartbeatLine,
     tickLine,
+    snapshotSavedLine,
     el('h3', { text: 'Last error' }),
     errorOut,
     el('h3', { text: 'Last snapshot' }),

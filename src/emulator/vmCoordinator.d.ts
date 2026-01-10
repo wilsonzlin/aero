@@ -28,6 +28,7 @@ export class VmCoordinator extends EventTarget {
   lastHeartbeatAt: number;
   lastHeartbeat: unknown;
   lastSnapshot: unknown;
+  lastSnapshotSavedTo: string | null;
 
   start(options?: VmCoordinatorStartOptions): Promise<void>;
   pause(): Promise<void>;
@@ -38,4 +39,3 @@ export class VmCoordinator extends EventTarget {
   shutdown(): void;
   reset(): void;
 }
-
