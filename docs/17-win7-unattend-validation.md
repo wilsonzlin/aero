@@ -74,6 +74,35 @@ If any prompt appears, skip to [Failure modes + fixes](#4-failure-modes--fixes) 
 
 ---
 
+#### Optional: post-install sanity checks (edition + partitioning)
+
+These checks help prove that unattended *selection* worked (correct edition/arch) and that unattended *disk config* did what you intended.
+
+**Confirm edition + architecture**
+
+```bat
+wmic os get caption,osarchitecture,version
+```
+
+You should see the expected edition (for example “Windows 7 Professional”) and architecture (“32-bit” / “64-bit”).
+
+**Confirm partition layout**
+
+Interactive:
+
+```bat
+diskpart
+list disk
+list vol
+exit
+```
+
+Non-interactive one-liner (convenient for copy/paste):
+
+```bat
+(echo list disk & echo list vol & echo exit) | diskpart
+```
+
 ### C. Prove scripts ran (SetupComplete, testsigning, scheduled task lifecycle, drivers)
 
 After the first boot to the desktop (or to the login screen, depending on your unattend), validate in this order.
@@ -218,6 +247,8 @@ During setup (WinPE), logs are written to the WinPE RAM disk:
 * `X:\Windows\Panther\setuperr.log`
 * `X:\Windows\Panther\UnattendGC\setupact.log`
 * `X:\Windows\Panther\UnattendGC\setuperr.log`
+* `X:\Windows\Panther\UnattendGC\diagerr.xml` (unattend parse/validation errors, when present)
+* `X:\Windows\Panther\UnattendGC\diagwrn.xml` (unattend parse/validation warnings, when present)
 
 After Windows is installed, logs are copied to:
 
@@ -225,6 +256,8 @@ After Windows is installed, logs are copied to:
 * `C:\Windows\Panther\setuperr.log`
 * `C:\Windows\Panther\UnattendGC\setupact.log`
 * `C:\Windows\Panther\UnattendGC\setuperr.log`
+* `C:\Windows\Panther\UnattendGC\diagerr.xml` (unattend parse/validation errors, when present)
+* `C:\Windows\Panther\UnattendGC\diagwrn.xml` (unattend parse/validation warnings, when present)
 * (If setup failed/rolled back) `C:\Windows\Panther\Rollback\setupact.log`
 * (If setup failed/rolled back) `C:\Windows\Panther\Rollback\setuperr.log`
 
@@ -475,8 +508,8 @@ Typical fixes:
 * If using a test certificate, import it into the correct stores (TrustedPublisher and/or Root) before installing drivers:
 
 ```bat
-certutil -addstore TrustedPublisher C:\Aero\certs\aero-test.cer
-certutil -addstore Root C:\Aero\certs\aero-root.cer
+certutil -addstore -f TrustedPublisher C:\Aero\certs\aero-test.cer
+certutil -addstore -f Root C:\Aero\certs\aero-root.cer
 ```
 
 Notes:
