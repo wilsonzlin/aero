@@ -20,6 +20,16 @@ if (-not (Test-Path -LiteralPath $outDir)) {
 $msbuildExe = Get-MSBuildExe
 Write-ToolchainLog -Message "Resolved msbuild.exe: $msbuildExe"
 
+$vsDevCmd = Get-VsDevCmdBat
+$vcVarsAll = Get-VcVarsAllBat
+if ($null -ne $vsDevCmd -and -not [string]::IsNullOrWhiteSpace($vsDevCmd)) {
+  Write-ToolchainLog -Message "Resolved VsDevCmd.bat: $vsDevCmd"
+} elseif ($null -ne $vcVarsAll -and -not [string]::IsNullOrWhiteSpace($vcVarsAll)) {
+  Write-ToolchainLog -Message "Resolved vcvarsall.bat: $vcVarsAll"
+} else {
+  Write-ToolchainLog -Level WARN -Message 'Visual Studio developer environment batch files (VsDevCmd.bat / vcvarsall.bat) were not found. MSBuild may still work, but if driver builds fail to locate CL/Link, install Visual Studio Build Tools.'
+}
+
 $kitToolchain = Ensure-WindowsKitToolchain -PreferredWdkWingetId 'Microsoft.WindowsWDK' -PreferredWdkKitVersion '10.0.22621.0'
 
 if ($null -eq $kitToolchain.StampInfExe -or [string]::IsNullOrWhiteSpace($kitToolchain.StampInfExe)) {
@@ -45,11 +55,25 @@ if ($null -ne $kitToolchain.StampInfExe -and -not [string]::IsNullOrWhiteSpace($
 }
 
 $toolchain = [pscustomobject]@{
+  # Common property names expected by other CI scripts.
+  MSBuild = $msbuildExe
+  MSBuildPath = $msbuildExe
+  Inf2Cat = $kitToolchain.Inf2CatExe
+  Inf2CatPath = $kitToolchain.Inf2CatExe
+  SignTool = $kitToolchain.SignToolExe
+  SignToolPath = $kitToolchain.SignToolExe
+  StampInf = $kitToolchain.StampInfExe
+  StampInfPath = $kitToolchain.StampInfExe
+  VsDevCmd = $vsDevCmd
+  VcVarsAll = $vcVarsAll
+
+  # Backward/explicit names.
   MSBuildExe = $msbuildExe
   Inf2CatExe = $kitToolchain.Inf2CatExe
   SignToolExe = $kitToolchain.SignToolExe
   StampInfExe = $kitToolchain.StampInfExe
   WindowsKits = $kitToolchain.WindowsKits
+  ToolchainJson = $outFile
 }
 
 $toolchainJson = $toolchain | ConvertTo-Json -Depth 6

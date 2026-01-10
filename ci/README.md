@@ -1,4 +1,28 @@
-# Driver package stamping & catalog generation
+# Windows 7 driver CI scripts
+
+## `ci/install-wdk.ps1`
+
+Provisions the Windows driver build toolchain for CI/local builds:
+
+- `msbuild.exe` (Visual Studio Build Tools / MSBuild)
+- `Inf2Cat.exe` (WDK; validated to support `/os:7_X86,7_X64`)
+- `signtool.exe` (Windows SDK)
+- `stampinf.exe` (optional but recommended)
+
+Outputs:
+
+- Writes `out/toolchain.json` (absolute paths + provenance) for use by other scripts.
+- In GitHub Actions, also exports tool paths via `$GITHUB_OUTPUT`, `$GITHUB_ENV`, and `$GITHUB_PATH`.
+
+Example local usage:
+
+```powershell
+pwsh -File ci/install-wdk.ps1
+pwsh -File ci/build-drivers.ps1 -ToolchainJson out/toolchain.json
+pwsh -File ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
+pwsh -File ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
+pwsh -File ci/package-drivers.ps1
+```
 
 ## `ci/stamp-infs.ps1`
 

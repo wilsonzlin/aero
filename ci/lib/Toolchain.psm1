@@ -35,6 +35,61 @@ function Get-VsWhereExe {
   return $null
 }
 
+function Get-VsInstallationPath {
+  [CmdletBinding()]
+  param()
+
+  $vswhere = Get-VsWhereExe
+  if ($null -ne $vswhere) {
+    $installPath = & $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -property installationPath 2>$null
+    $installPath = [string]$installPath
+    $installPath = $installPath.Trim()
+    if (-not [string]::IsNullOrWhiteSpace($installPath) -and (Test-Path -LiteralPath $installPath)) {
+      return (Resolve-ExistingPath -LiteralPath $installPath)
+    }
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($env:VSINSTALLDIR) -and (Test-Path -LiteralPath $env:VSINSTALLDIR)) {
+    return (Resolve-ExistingPath -LiteralPath $env:VSINSTALLDIR)
+  }
+
+  return $null
+}
+
+function Get-VsDevCmdBat {
+  [CmdletBinding()]
+  param()
+
+  $installPath = Get-VsInstallationPath
+  if ($null -eq $installPath) {
+    return $null
+  }
+
+  $candidate = Join-Path $installPath 'Common7\Tools\VsDevCmd.bat'
+  if (Test-Path -LiteralPath $candidate) {
+    return (Resolve-ExistingPath -LiteralPath $candidate)
+  }
+
+  return $null
+}
+
+function Get-VcVarsAllBat {
+  [CmdletBinding()]
+  param()
+
+  $installPath = Get-VsInstallationPath
+  if ($null -eq $installPath) {
+    return $null
+  }
+
+  $candidate = Join-Path $installPath 'VC\Auxiliary\Build\vcvarsall.bat'
+  if (Test-Path -LiteralPath $candidate) {
+    return (Resolve-ExistingPath -LiteralPath $candidate)
+  }
+
+  return $null
+}
+
 function Get-MSBuildExe {
   [CmdletBinding()]
   param()
@@ -468,6 +523,7 @@ function Publish-ToolchainToGitHubActions {
   )
 
   $outputs = @{
+    'toolchain_json' = $Toolchain.ToolchainJson
     'msbuild_exe'  = $Toolchain.MSBuildExe
     'inf2cat_exe'  = $Toolchain.Inf2CatExe
     'signtool_exe' = $Toolchain.SignToolExe
@@ -512,6 +568,8 @@ function Publish-ToolchainToGitHubActions {
 
 Export-ModuleMember -Function `
   Write-ToolchainLog, `
+  Get-VsDevCmdBat, `
+  Get-VcVarsAllBat, `
   Get-MSBuildExe, `
   Ensure-WindowsKitToolchain, `
   Add-PathEntry, `

@@ -85,7 +85,7 @@ jobs:
           if (!(Test-Path -LiteralPath 'ci\build-drivers.ps1')) {
             throw "Expected script ci\build-drivers.ps1 to exist."
           }
-          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\build-drivers.ps1'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\build-drivers.ps1' -ToolchainJson 'out\toolchain.json'
 
       - name: Generate catalogs (ci/make-catalogs.ps1)
         if: steps.detect.outputs.skip != 'true'
@@ -95,7 +95,7 @@ jobs:
           if (!(Test-Path -LiteralPath 'ci\make-catalogs.ps1')) {
             throw "Expected script ci\make-catalogs.ps1 to exist."
           }
-          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\make-catalogs.ps1'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\make-catalogs.ps1' -ToolchainJson 'out\toolchain.json'
 
       - name: Test-sign drivers (ci/sign-drivers.ps1)
         if: steps.detect.outputs.skip != 'true'
@@ -105,7 +105,7 @@ jobs:
           if (!(Test-Path -LiteralPath 'ci\sign-drivers.ps1')) {
             throw "Expected script ci\sign-drivers.ps1 to exist."
           }
-          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\sign-drivers.ps1'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\sign-drivers.ps1' -ToolchainJson 'out\toolchain.json'
 
       - name: Package artifacts (ci/package-drivers.ps1)
         if: steps.detect.outputs.skip != 'true'
