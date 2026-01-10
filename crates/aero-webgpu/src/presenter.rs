@@ -6,6 +6,8 @@ use crate::{
 #[cfg(target_arch = "wasm32")]
 use crate::RequestedBackend;
 
+use crate::upload::Rgba8TextureUploader;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FramebufferSize {
     pub width: u32,
@@ -350,7 +352,7 @@ pub struct WebGpuFramebufferPresenter<'a> {
     uniform_buffer: wgpu::Buffer,
 
     source: Option<SourceTexture>,
-    staging_rgba: Vec<u8>,
+    uploader: Rgba8TextureUploader,
 }
 
 impl<'a> WebGpuFramebufferPresenter<'a> {
@@ -419,44 +421,19 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             ],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("aero framebuffer presenter pipeline layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("aero framebuffer presenter shader"),
             source: wgpu::ShaderSource::Wgsl(PRESENT_WGSL.into()),
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("aero framebuffer presenter pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+        let pipeline = crate::pipeline::create_fullscreen_triangle_pipeline(
+            device,
+            &bind_group_layout,
+            &shader,
+            "fs_main",
+            surface_format,
+            Some("aero framebuffer presenter pipeline"),
+        );
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("aero framebuffer presenter sampler"),
@@ -484,7 +461,7 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             sampler,
             uniform_buffer,
             source: None,
-            staging_rgba: Vec::new(),
+            uploader: Rgba8TextureUploader::new(),
         })
     }
 
@@ -592,48 +569,13 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
     fn upload_rgba8(&mut self, pixels: &[u8], size: FramebufferSize, stride_bytes: u32) {
         let queue = self.context.queue();
         let src = self.source.as_ref().expect("source texture must exist");
-
-        let unpadded_bpr = size.width * 4;
-        let required_len = (stride_bytes as usize) * (size.height as usize);
-        let can_upload_direct = (stride_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) == 0;
-
-        let (src_bytes, bytes_per_row) = if can_upload_direct {
-            (&pixels[..required_len], stride_bytes)
-        } else {
-            let padded_bpr = padded_bytes_per_row(unpadded_bpr);
-            let padded_len = padded_bpr as usize * size.height as usize;
-            self.staging_rgba.resize(padded_len, 0);
-
-            for y in 0..size.height as usize {
-                let src_off = y * stride_bytes as usize;
-                let dst_off = y * padded_bpr as usize;
-                let src_row = &pixels[src_off..src_off + unpadded_bpr as usize];
-                let dst_row =
-                    &mut self.staging_rgba[dst_off..dst_off + unpadded_bpr as usize];
-                dst_row.copy_from_slice(src_row);
-            }
-
-            (&self.staging_rgba[..], padded_bpr)
-        };
-
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &src.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            src_bytes,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(bytes_per_row),
-                rows_per_image: Some(size.height),
-            },
-            wgpu::Extent3d {
-                width: size.width,
-                height: size.height,
-                depth_or_array_layers: 1,
-            },
+        self.uploader.write_texture_with_stride(
+            queue,
+            &src.texture,
+            size.width,
+            size.height,
+            pixels,
+            stride_bytes,
         );
 
         let uniforms = PresentUniforms {
@@ -658,7 +600,11 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
 
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Timeout) => {
+            Err(
+                wgpu::SurfaceError::Lost
+                | wgpu::SurfaceError::Outdated
+                | wgpu::SurfaceError::Timeout,
+            ) => {
                 // Window resize / swap chain invalidation; reconfigure and retry once.
                 self.surface.configure(device, &self.config);
                 self.surface.get_current_texture()?

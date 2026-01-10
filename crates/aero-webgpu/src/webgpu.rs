@@ -186,7 +186,8 @@ fn negotiated_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     if available.contains(wgpu::Features::TIMESTAMP_QUERY)
         && available.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
     {
-        requested |= wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+        requested |=
+            wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
     }
 
     requested
