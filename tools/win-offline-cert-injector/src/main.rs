@@ -357,3 +357,106 @@ fn verify_all(
         std::process::ExitCode::SUCCESS
     })
 }
+
+#[cfg(all(windows, test))]
+mod windows_smoke_tests {
+    use super::*;
+
+    const TEST_CERT_PEM: &str = "-----BEGIN CERTIFICATE-----\n\
+MIIDUzCCAjugAwIBAgIUICH8ziCYcB5uSzL9TOKgv2ixnGgwDQYJKoZIhvcNAQEL\n\
+BQAwOTEoMCYGA1UEAwwfQWVybyBPZmZsaW5lIENlcnQgSW5qZWN0b3IgVGVzdDEN\n\
+MAsGA1UECgwEQWVybzAeFw0yNjAxMTAxMTM1NTlaFw0zNjAxMDgxMTM1NTlaMDkx\n\
+KDAmBgNVBAMMH0Flcm8gT2ZmbGluZSBDZXJ0IEluamVjdG9yIFRlc3QxDTALBgNV\n\
+BAoMBEFlcm8wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC36peoVuu4\n\
+l9MeGecg1Et96wPum/ic4O7Zx4FIaJTeH2YcvWK3/u9yRfCugCmEEWW/RxCLIhqB\n\
+GqBRvgJcipYDOGnBjhwD/9CsADrjvMLZsxqttTAeSIhkyjq9i4xD/D9p2mSIw5gj\n\
++MSxflQ9tNlnRzLlDlYLrvwP+vvrd1MwCw5fJF6BP6Jb/FapQjDZbuVYgxvy1aiS\n\
+KrXK576Z+LOl5UFoi2bljdtVBfa51+s/wt5E6D6VwNMoOp5mH2Nyz4wazibpxECx\n\
+HYEu5+9cWcjuNsjVhckNExs/p8r19WExGvnLMZaW3kla7VqGijSJ9912rTeOjp8A\n\
+X/yxDnRcu/OlAgMBAAGjUzBRMB0GA1UdDgQWBBSFKMOlLLiu5TNqWQOYdNGVRFB/\n\
+VjAfBgNVHSMEGDAWgBSFKMOlLLiu5TNqWQOYdNGVRFB/VjAPBgNVHRMBAf8EBTAD\n\
+AQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAGiOM4IRGShmI3cp77/Fcbld3HY1a2xYAj\n\
+TWSzgDkZAyRvfIWwVs2oc6o/BPeVe0lHRUuRsI8L+Flqe+OnUNz7ePneOi7V1YJ3\n\
+Jj6Ahb3yiPF/g4hGXkq8oXEvoTbXw3ah8KeK+PEbG6e0VC7oiCkxqI8JkOsJaOGW\n\
+S48MU/8ElN1JL71zP6LR69thzOqdP4ihrjs7R+BKBblkiSCZcx6kG/65HHUlLO9c\n\
+bYJVna6IxwbidSCB6WtEieXNX88nMksxvnqZZH7dXf3Cjb/SoHHTWJa5C2BWsAm+\n\
+3HEgrHfJAffW5IeZWaFcGTBpWwDGMaoocVBdkLngqv1qw097zWWo\n\
+-----END CERTIFICATE-----\n";
+
+    fn temp_hive_path() -> PathBuf {
+        let pid = std::process::id();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!("aero_offline_cert_injector_test_{pid}_{now}.hiv"))
+    }
+
+    #[test]
+    fn offline_hive_inject_and_verify() {
+        if let Err(err) = winapi::enable_required_privileges() {
+            eprintln!("skipping offline hive smoke test (privileges unavailable): {err}");
+            return;
+        }
+
+        let hive_path = temp_hive_path();
+        let _ = std::fs::remove_file(&hive_path);
+
+        // Create a minimal hive file by saving a temporary HKCU key. The resulting file can be
+        // loaded via RegLoadKeyW and is sufficient for exercising offline injection.
+        let pid = std::process::id();
+        let test_key_path = format!("Software\\AeroOfflineCertInjectorTest\\{pid}");
+        let test_leaf_path = format!(
+            "{test_key_path}\\{}",
+            hive_path.file_stem().unwrap().to_string_lossy()
+        );
+        let test_key =
+            winapi::RegKey::create_path(winapi::HKEY_CURRENT_USER, &test_leaf_path).unwrap();
+        winapi::reg_save_key(test_key.raw(), &hive_path).unwrap();
+        drop(test_key);
+        let _ = winapi::reg_delete_tree(winapi::HKEY_CURRENT_USER, &test_key_path);
+
+        let der = pem::decode_cert_file(TEST_CERT_PEM.as_bytes())
+            .expect("parse test cert PEM")
+            .into_iter()
+            .next()
+            .expect("test cert PEM contained one certificate");
+        let sha1 = winapi::cert_sha1_thumbprint(&der).expect("compute test cert SHA1 thumbprint");
+        let certs = vec![InputCert {
+            source_path: PathBuf::from("<embedded>"),
+            source_index: 0,
+            der,
+            thumbprint_hex: hex_upper(&sha1),
+        }];
+
+        let stores = vec![
+            "ROOT".to_string(),
+            "TrustedPublisher".to_string(),
+            "TrustedPeople".to_string(),
+        ];
+
+        let mount_name = winapi::choose_unique_mount_name("AERO_OFFLINE_SOFTWARE_TEST")
+            .expect("choose unique hive mount name");
+        let mut hive = winapi::LoadedHive::load(&hive_path, &mount_name).expect("load hive");
+        {
+            let hive_root =
+                winapi::RegKey::open(winapi::HKEY_LOCAL_MACHINE, &mount_name, true).unwrap();
+
+            let before = verify_all(&hive_root, &stores, &certs).unwrap();
+            assert_eq!(before.code(), Some(2));
+
+            let inject1 = inject_all(&hive_root, &stores, &certs).unwrap();
+            assert_eq!(inject1.code(), Some(0));
+
+            let after = verify_all(&hive_root, &stores, &certs).unwrap();
+            assert_eq!(after.code(), Some(0));
+
+            // Idempotency: adding again should not fail.
+            let inject2 = inject_all(&hive_root, &stores, &certs).unwrap();
+            assert_eq!(inject2.code(), Some(0));
+        }
+        hive.unload().expect("unload hive");
+
+        let _ = std::fs::remove_file(&hive_path);
+    }
+}

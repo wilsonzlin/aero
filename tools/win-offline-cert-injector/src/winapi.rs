@@ -45,6 +45,7 @@ pub fn wide_null_from_str(s: &str) -> Vec<u16> {
 }
 
 pub const HKEY_LOCAL_MACHINE: HKEY = 0x80000002u32 as i32 as isize;
+pub const HKEY_CURRENT_USER: HKEY = 0x80000001u32 as i32 as isize;
 
 const ERROR_SUCCESS: DWORD = 0;
 const ERROR_FILE_NOT_FOUND: DWORD = 2;
@@ -96,6 +97,8 @@ pub type PCCERT_CONTEXT = *const CERT_CONTEXT;
 extern "system" {
     fn RegLoadKeyW(hkey: HKEY, lp_sub_key: *const u16, lp_file: *const u16) -> DWORD;
     fn RegUnLoadKeyW(hkey: HKEY, lp_sub_key: *const u16) -> DWORD;
+    fn RegSaveKeyW(hkey: HKEY, lp_file: *const u16, lp_security_attributes: *mut c_void) -> DWORD;
+    fn RegDeleteTreeW(hkey: HKEY, lp_sub_key: *const u16) -> DWORD;
     fn RegOpenKeyExW(
         hkey: HKEY,
         lp_sub_key: *const u16,
@@ -402,6 +405,30 @@ impl Drop for RegKey {
             RegCloseKey(self.0);
         }
     }
+}
+
+pub fn reg_save_key(hkey: HKEY, file_path: &Path) -> Result<(), WinError> {
+    let file_w = wide_null_from_path(file_path);
+    let status = unsafe { RegSaveKeyW(hkey, file_w.as_ptr(), std::ptr::null_mut()) };
+    if status != ERROR_SUCCESS {
+        return Err(WinError {
+            context: format!("RegSaveKeyW({})", file_path.display()),
+            code: status,
+        });
+    }
+    Ok(())
+}
+
+pub fn reg_delete_tree(parent: HKEY, subkey: &str) -> Result<(), WinError> {
+    let subkey_w = wide_null_from_str(subkey);
+    let status = unsafe { RegDeleteTreeW(parent, subkey_w.as_ptr()) };
+    if status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND {
+        return Ok(());
+    }
+    Err(WinError {
+        context: format!("RegDeleteTreeW({subkey})"),
+        code: status,
+    })
 }
 
 pub struct CertStore(HCERTSTORE);
