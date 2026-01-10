@@ -125,6 +125,7 @@ This directory includes a small script that will:
 
 - start the containers
 - upload a small random file
+- (by default) upload it to `disk-images/_smoke/range-test.bin` (overwriting on each run)
 - verify `HEAD`, `206` Range responses, and preflight behavior against both the origin and the proxy
 
 ```bash

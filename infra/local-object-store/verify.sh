@@ -30,7 +30,7 @@ tmpfile="$(mktemp -t aero-minio-range-test.XXXXXX.bin)"
 trap 'rm -f "$tmpfile"' EXIT
 dd if=/dev/urandom of="$tmpfile" bs=1M count=2 status=none
 
-obj="range-test-$(date +%s).bin"
+obj="${SMOKE_OBJECT_KEY:-_smoke/range-test.bin}"
 echo "==> Uploading test object: s3://${bucket}/${obj}"
 docker compose --profile tools run --rm mc cp "$tmpfile" "local/${bucket}/${obj}" >/dev/null
 
