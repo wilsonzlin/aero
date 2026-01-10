@@ -28,7 +28,11 @@ func (r *UDPRelay) Send(remote *net.UDPAddr, payload []byte) error {
 		return err
 	}
 
-	conn, err := net.DialUDP("udp", nil, remote)
+	network := "udp6"
+	if remote.IP.To4() != nil {
+		network = "udp4"
+	}
+	conn, err := net.DialUDP(network, nil, remote)
 	if err != nil {
 		return fmt.Errorf("udp relay: dial %s: %w", remote.String(), err)
 	}

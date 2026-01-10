@@ -75,3 +75,22 @@ func TestPortAllowDeny(t *testing.T) {
 		t.Fatalf("expected non-allowlisted port to be denied")
 	}
 }
+
+func TestCIDRIPv6AllowlistAndDenylist(t *testing.T) {
+	p := &DestinationPolicy{
+		DefaultAllow:         false,
+		AllowPrivateNetworks: true,
+		AllowCIDRs:           []*net.IPNet{mustCIDR("2001:db8::/32")},
+		DenyCIDRs:            []*net.IPNet{mustCIDR("2001:db8::1/128")},
+	}
+
+	if err := p.AllowUDP(net.ParseIP("2001:db8::1"), 53); err == nil {
+		t.Fatalf("expected deny to override allow for IPv6")
+	}
+	if err := p.AllowUDP(net.ParseIP("2001:db8::2"), 53); err != nil {
+		t.Fatalf("expected allow for IPv6 in allowlist, got %v", err)
+	}
+	if err := p.AllowUDP(net.ParseIP("2001:db9::1"), 53); err == nil {
+		t.Fatalf("expected deny when IPv6 destination is not in allowlist")
+	}
+}

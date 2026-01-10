@@ -601,7 +601,11 @@ impl UdpProxy {
 }
 ```
 
----
+**IPv6 note:** The 8-byte header shown above is the legacy **v1** framing and is
+IPv4-only. Relaying to IPv6 destinations (and receiving IPv6 datagrams) requires
+the versioned **v2** framing defined in `proxy/webrtc-udp-relay/PROTOCOL.md`.
+ 
+ ---
 
 ## DNS Resolution
 

@@ -3,6 +3,7 @@ package udpproto
 import (
 	"bytes"
 	"errors"
+	"net/netip"
 	"testing"
 )
 
@@ -107,5 +108,45 @@ func TestGoldenVector(t *testing.T) {
 	}
 	if decoded.GuestPort != d.GuestPort || decoded.RemoteIP != d.RemoteIP || decoded.RemotePort != d.RemotePort || !bytes.Equal(decoded.Payload, d.Payload) {
 		t.Fatalf("decoded datagram mismatch: got %#v, want %#v", decoded, d)
+	}
+}
+
+func TestEncodeDecodeV2IPv6Vector(t *testing.T) {
+	ip := netip.MustParseAddr("2001:db8::1")
+	f := Frame{
+		GuestPort:  0xBEEF,
+		RemoteIP:   ip,
+		RemotePort: 0xCAFE,
+		Payload:    []byte{0x01, 0x02, 0x03},
+	}
+
+	got, err := EncodeV2(f)
+	if err != nil {
+		t.Fatalf("EncodeV2: %v", err)
+	}
+
+	want := []byte{
+		0xA2, 0x02, 0x06, 0x00,
+		0xBE, 0xEF,
+		0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+		0xCA, 0xFE,
+		0x01, 0x02, 0x03,
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("EncodeV2 mismatch:\n got: %x\nwant: %x", got, want)
+	}
+
+	decoded, err := Decode(got)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if decoded.Version != 2 {
+		t.Fatalf("decoded.Version = %d, want 2", decoded.Version)
+	}
+	if decoded.GuestPort != f.GuestPort || decoded.RemotePort != f.RemotePort || decoded.RemoteIP != f.RemoteIP {
+		t.Fatalf("decoded header mismatch: %+v vs %+v", decoded, f)
+	}
+	if !bytes.Equal(decoded.Payload, f.Payload) {
+		t.Fatalf("decoded payload = %x, want %x", decoded.Payload, f.Payload)
 	}
 }
