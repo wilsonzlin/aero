@@ -282,52 +282,214 @@ impl PhysicalMemory {
     }
 
     pub fn try_read_u8(&self, addr: u64) -> Result<u8, PhysicalMemoryError> {
-        let mut buf = [0u8; 1];
-        self.try_read_bytes(addr, &mut buf)?;
-        Ok(buf[0])
+        self.check_bounds(addr, 1)?;
+        let chunk_idx = self.chunk_index(addr);
+        let chunk_off = self.chunk_offset(addr);
+        Ok(self
+            .get_chunk(chunk_idx)
+            .map(|chunk| {
+                let guard = chunk
+                    .bytes
+                    .read()
+                    .expect("physical memory chunk lock poisoned");
+                guard[chunk_off]
+            })
+            .unwrap_or(0))
     }
 
     pub fn try_read_u16(&self, addr: u64) -> Result<u16, PhysicalMemoryError> {
+        self.check_bounds(addr, 2)?;
+        let chunk_idx = self.chunk_index(addr);
+        let chunk_off = self.chunk_offset(addr);
+        if chunk_off + 2 <= self.chunk_size {
+            if let Some(chunk) = self.get_chunk(chunk_idx) {
+                let guard = chunk
+                    .bytes
+                    .read()
+                    .expect("physical memory chunk lock poisoned");
+                return Ok(u16::from_le_bytes([guard[chunk_off], guard[chunk_off + 1]]));
+            }
+            return Ok(0);
+        }
+
         let mut buf = [0u8; 2];
         self.try_read_bytes(addr, &mut buf)?;
         Ok(u16::from_le_bytes(buf))
     }
 
     pub fn try_read_u32(&self, addr: u64) -> Result<u32, PhysicalMemoryError> {
+        self.check_bounds(addr, 4)?;
+        let chunk_idx = self.chunk_index(addr);
+        let chunk_off = self.chunk_offset(addr);
+        if chunk_off + 4 <= self.chunk_size {
+            if let Some(chunk) = self.get_chunk(chunk_idx) {
+                let guard = chunk
+                    .bytes
+                    .read()
+                    .expect("physical memory chunk lock poisoned");
+                return Ok(u32::from_le_bytes([
+                    guard[chunk_off],
+                    guard[chunk_off + 1],
+                    guard[chunk_off + 2],
+                    guard[chunk_off + 3],
+                ]));
+            }
+            return Ok(0);
+        }
+
         let mut buf = [0u8; 4];
         self.try_read_bytes(addr, &mut buf)?;
         Ok(u32::from_le_bytes(buf))
     }
 
     pub fn try_read_u64(&self, addr: u64) -> Result<u64, PhysicalMemoryError> {
+        self.check_bounds(addr, 8)?;
+        let chunk_idx = self.chunk_index(addr);
+        let chunk_off = self.chunk_offset(addr);
+        if chunk_off + 8 <= self.chunk_size {
+            if let Some(chunk) = self.get_chunk(chunk_idx) {
+                let guard = chunk
+                    .bytes
+                    .read()
+                    .expect("physical memory chunk lock poisoned");
+                return Ok(u64::from_le_bytes([
+                    guard[chunk_off],
+                    guard[chunk_off + 1],
+                    guard[chunk_off + 2],
+                    guard[chunk_off + 3],
+                    guard[chunk_off + 4],
+                    guard[chunk_off + 5],
+                    guard[chunk_off + 6],
+                    guard[chunk_off + 7],
+                ]));
+            }
+            return Ok(0);
+        }
+
         let mut buf = [0u8; 8];
         self.try_read_bytes(addr, &mut buf)?;
         Ok(u64::from_le_bytes(buf))
     }
 
     pub fn try_read_u128(&self, addr: u64) -> Result<u128, PhysicalMemoryError> {
+        self.check_bounds(addr, 16)?;
+        let chunk_idx = self.chunk_index(addr);
+        let chunk_off = self.chunk_offset(addr);
+        if chunk_off + 16 <= self.chunk_size {
+            if let Some(chunk) = self.get_chunk(chunk_idx) {
+                let guard = chunk
+                    .bytes
+                    .read()
+                    .expect("physical memory chunk lock poisoned");
+                return Ok(u128::from_le_bytes([
+                    guard[chunk_off],
+                    guard[chunk_off + 1],
+                    guard[chunk_off + 2],
+                    guard[chunk_off + 3],
+                    guard[chunk_off + 4],
+                    guard[chunk_off + 5],
+                    guard[chunk_off + 6],
+                    guard[chunk_off + 7],
+                    guard[chunk_off + 8],
+                    guard[chunk_off + 9],
+                    guard[chunk_off + 10],
+                    guard[chunk_off + 11],
+                    guard[chunk_off + 12],
+                    guard[chunk_off + 13],
+                    guard[chunk_off + 14],
+                    guard[chunk_off + 15],
+                ]));
+            }
+            return Ok(0);
+        }
+
         let mut buf = [0u8; 16];
         self.try_read_bytes(addr, &mut buf)?;
         Ok(u128::from_le_bytes(buf))
     }
 
     pub fn try_write_u8(&self, addr: u64, value: u8) -> Result<(), PhysicalMemoryError> {
-        self.try_write_bytes(addr, &[value])
+        self.check_bounds(addr, 1)?;
+        let chunk_idx = self.chunk_index(addr);
+        let chunk_off = self.chunk_offset(addr);
+        let chunk = self.get_or_alloc_chunk(chunk_idx);
+        let mut guard = chunk
+            .bytes
+            .write()
+            .expect("physical memory chunk lock poisoned");
+        guard[chunk_off] = value;
+        Ok(())
     }
 
     pub fn try_write_u16(&self, addr: u64, value: u16) -> Result<(), PhysicalMemoryError> {
+        self.check_bounds(addr, 2)?;
+        let chunk_idx = self.chunk_index(addr);
+        let chunk_off = self.chunk_offset(addr);
+        if chunk_off + 2 <= self.chunk_size {
+            let chunk = self.get_or_alloc_chunk(chunk_idx);
+            let mut guard = chunk
+                .bytes
+                .write()
+                .expect("physical memory chunk lock poisoned");
+            let bytes = value.to_le_bytes();
+            guard[chunk_off] = bytes[0];
+            guard[chunk_off + 1] = bytes[1];
+            return Ok(());
+        }
         self.try_write_bytes(addr, &value.to_le_bytes())
     }
 
     pub fn try_write_u32(&self, addr: u64, value: u32) -> Result<(), PhysicalMemoryError> {
+        self.check_bounds(addr, 4)?;
+        let chunk_idx = self.chunk_index(addr);
+        let chunk_off = self.chunk_offset(addr);
+        if chunk_off + 4 <= self.chunk_size {
+            let chunk = self.get_or_alloc_chunk(chunk_idx);
+            let mut guard = chunk
+                .bytes
+                .write()
+                .expect("physical memory chunk lock poisoned");
+            let bytes = value.to_le_bytes();
+            guard[chunk_off] = bytes[0];
+            guard[chunk_off + 1] = bytes[1];
+            guard[chunk_off + 2] = bytes[2];
+            guard[chunk_off + 3] = bytes[3];
+            return Ok(());
+        }
         self.try_write_bytes(addr, &value.to_le_bytes())
     }
 
     pub fn try_write_u64(&self, addr: u64, value: u64) -> Result<(), PhysicalMemoryError> {
+        self.check_bounds(addr, 8)?;
+        let chunk_idx = self.chunk_index(addr);
+        let chunk_off = self.chunk_offset(addr);
+        if chunk_off + 8 <= self.chunk_size {
+            let chunk = self.get_or_alloc_chunk(chunk_idx);
+            let mut guard = chunk
+                .bytes
+                .write()
+                .expect("physical memory chunk lock poisoned");
+            let bytes = value.to_le_bytes();
+            guard[chunk_off..chunk_off + 8].copy_from_slice(&bytes);
+            return Ok(());
+        }
         self.try_write_bytes(addr, &value.to_le_bytes())
     }
 
     pub fn try_write_u128(&self, addr: u64, value: u128) -> Result<(), PhysicalMemoryError> {
+        self.check_bounds(addr, 16)?;
+        let chunk_idx = self.chunk_index(addr);
+        let chunk_off = self.chunk_offset(addr);
+        if chunk_off + 16 <= self.chunk_size {
+            let chunk = self.get_or_alloc_chunk(chunk_idx);
+            let mut guard = chunk
+                .bytes
+                .write()
+                .expect("physical memory chunk lock poisoned");
+            let bytes = value.to_le_bytes();
+            guard[chunk_off..chunk_off + 16].copy_from_slice(&bytes);
+            return Ok(());
+        }
         self.try_write_bytes(addr, &value.to_le_bytes())
     }
 

@@ -1,4 +1,5 @@
 use aero_mem::{PhysicalMemory, PhysicalMemoryOptions};
+use std::sync::Arc;
 
 #[test]
 fn sparse_allocation_only_on_write() {
@@ -24,4 +25,34 @@ fn sparse_allocation_only_on_write() {
 
     mem.write_u8(0x3000, 0xCC);
     assert_eq!(mem.allocated_chunks(), 2, "different chunk should allocate");
+}
+
+#[test]
+fn concurrent_writes_to_disjoint_ranges() {
+    let mem = Arc::new(
+        PhysicalMemory::with_options(0x8000, PhysicalMemoryOptions { chunk_size: 4096 }).unwrap(),
+    );
+
+    let mut threads = Vec::new();
+    for i in 0u64..8 {
+        let mem = mem.clone();
+        threads.push(std::thread::spawn(move || {
+            let start = i * 0x1000;
+            mem.write_bytes(start, &vec![i as u8; 0x1000]);
+        }));
+    }
+
+    for t in threads {
+        t.join().expect("thread panicked");
+    }
+
+    // Each thread touched a distinct chunk.
+    assert_eq!(mem.allocated_chunks(), 8);
+
+    let mut buf = vec![0u8; 0x1000];
+    for i in 0u64..8 {
+        let start = i * 0x1000;
+        mem.read_bytes(start, &mut buf);
+        assert!(buf.iter().all(|b| *b == i as u8));
+    }
 }

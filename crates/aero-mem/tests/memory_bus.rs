@@ -160,3 +160,53 @@ fn dma_rejects_rom_without_partial_read() {
     assert!(matches!(err, aero_mem::MemoryBusError::RomAccess { .. }));
     assert_eq!(dst, [0xAAu8; 8]);
 }
+
+#[test]
+fn overlapping_mappings_are_rejected() {
+    let ram = make_ram(0x1000);
+    let mut bus = MemoryBus::new(ram);
+
+    bus.register_rom(0x100, Arc::from([0u8; 16])).unwrap();
+
+    let err = bus
+        .register_mmio(0x108..0x110, Arc::new(CountingMmio::default()))
+        .unwrap_err();
+    assert!(matches!(err, aero_mem::MemoryBusError::Overlap { .. }));
+
+    // Non-overlapping mapping should succeed.
+    bus.register_mmio(0x200..0x210, Arc::new(CountingMmio::default()))
+        .unwrap();
+}
+
+#[test]
+fn invalid_ranges_are_rejected() {
+    let ram = make_ram(0x1000);
+    let mut bus = MemoryBus::new(ram);
+
+    let err = bus
+        .register_mmio(0x200..0x200, Arc::new(CountingMmio::default()))
+        .unwrap_err();
+    assert!(matches!(err, aero_mem::MemoryBusError::InvalidRange { .. }));
+
+    let err = bus.register_rom(0x300, Arc::from([])).unwrap_err();
+    assert!(matches!(err, aero_mem::MemoryBusError::InvalidRange { .. }));
+}
+
+#[test]
+fn bulk_address_overflow_is_reported() {
+    let ram = make_ram(0x1000);
+    let bus = MemoryBus::new(ram);
+
+    let mut dst = [0u8; 2];
+    let err = bus.try_read_bytes(u64::MAX - 1, &mut dst).unwrap_err();
+    assert!(matches!(
+        err,
+        aero_mem::MemoryBusError::AddressOverflow { .. }
+    ));
+
+    let err = bus.try_write_bytes(u64::MAX - 1, &[0u8; 2]).unwrap_err();
+    assert!(matches!(
+        err,
+        aero_mem::MemoryBusError::AddressOverflow { .. }
+    ));
+}
