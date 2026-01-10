@@ -1,5 +1,5 @@
-use aero_x86::inst::{Operand, OperandSize, RepPrefix, SegmentReg};
 use aero_x86::decoder::{decode, DecodeError, DecodeMode};
+use aero_x86::inst::{Operand, OperandSize, RepPrefix, SegmentReg};
 
 #[test]
 fn prefixes_precedence_and_rex_high8() {
@@ -270,4 +270,18 @@ fn reserved_nop_0f18_models_rm_and_reg_operands() {
             .iter()
             .any(|op| matches!(op, Operand::Gpr { .. })));
     }
+}
+
+#[test]
+fn decodes_vex_encoded_instruction_via_iced_backend() {
+    // A VEX-encoded SIMD instruction. `yaxpeax-x86` has gaps in 16/32-bit AVX/VEX decoding, so the
+    // structured decoder falls back to the project-standard iced-x86 backend for these cases.
+    let bytes = [0xC4, 0xE3, 0xE9, 0x5C, 0x06, 0x00];
+    let inst = decode(&bytes, DecodeMode::Bits32, 0).unwrap();
+    assert_eq!(inst.length, 6);
+    assert!(inst.operands.iter().any(|op| matches!(op, Operand::Memory(_))));
+    assert!(inst
+        .operands
+        .iter()
+        .any(|op| matches!(op, Operand::Xmm { .. } | Operand::OtherReg { .. })));
 }

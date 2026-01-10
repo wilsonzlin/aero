@@ -40,7 +40,7 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
     let operand_size = effective_operand_size(mode, prefixes);
     let address_size = effective_address_size(mode, prefixes);
 
-    let (mut opcode, opcode_len) = parse_opcode(bytes, prefix_len)?;
+    let (mut opcode, opcode_len) = parse_opcode(bytes, mode, prefix_len)?;
 
     // For group opcodes, include ModRM.reg in `opcode_ext` where it matters.
     if opcode_uses_modrm_reg(opcode.map, opcode.opcode) {
@@ -55,6 +55,35 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
         && opcode.opcode_ext != Some(0)
     {
         return Err(DecodeError::Invalid);
+    }
+
+    if opcode.map == OpcodeMap::Extended {
+        let (mut operands, inst_len) =
+            decode_with_aero_cpu_decoder(bytes, mode, ip, prefixes, address_size)?;
+
+        if inst_len > MAX_INST_LEN {
+            return Err(DecodeError::TooLong);
+        }
+
+        fixup_implicit_operands(
+            opcode,
+            mode,
+            prefixes,
+            operand_size,
+            address_size,
+            &mut operands,
+        );
+        let flags = classify_inst(opcode, &operands);
+
+        return Ok(DecodedInst {
+            length: inst_len as u8,
+            opcode,
+            prefixes,
+            operand_size,
+            address_size,
+            operands,
+            flags,
+        });
     }
 
     // Some relative branch/call opcodes have operand-size-dependent immediate widths, and not all
@@ -447,7 +476,11 @@ fn effective_address_size(mode: DecodeMode, prefixes: Prefixes) -> AddressSize {
     }
 }
 
-fn parse_opcode(bytes: &[u8], off: usize) -> Result<(OpcodeBytes, usize), DecodeError> {
+fn parse_opcode(
+    bytes: &[u8],
+    mode: DecodeMode,
+    off: usize,
+) -> Result<(OpcodeBytes, usize), DecodeError> {
     let b0 = *bytes.get(off).ok_or(DecodeError::UnexpectedEof)?;
     if b0 == 0x0F {
         let b1 = *bytes.get(off + 1).ok_or(DecodeError::UnexpectedEof)?;
@@ -482,11 +515,18 @@ fn parse_opcode(bytes: &[u8], off: usize) -> Result<(OpcodeBytes, usize), Decode
             ))
         }
     } else if matches!(b0, 0xC4 | 0xC5 | 0x62) {
-        // VEX2/VEX3/EVEX start bytes. Full decode is delegated to yaxpeax, but we flag these as
-        // "extended" so downstream users don't accidentally treat them as legacy one-byte opcodes.
+        // VEX/EVEX prefixes share their first byte with legacy opcodes (LES/LDS/BOUND). In 16/32-bit
+        // modes, the CPU disambiguates them by requiring the following byte to have ModRM.mod=3,
+        // which would make the legacy opcodes invalid (they require a memory operand).
+        let b1 = *bytes.get(off + 1).ok_or(DecodeError::UnexpectedEof)?;
+        let is_extended = mode == DecodeMode::Bits64 || (b1 & 0xC0) == 0xC0;
         Ok((
             OpcodeBytes {
-                map: OpcodeMap::Extended,
+                map: if is_extended {
+                    OpcodeMap::Extended
+                } else {
+                    OpcodeMap::Primary
+                },
                 opcode: b0,
                 opcode_ext: None,
             },
@@ -714,6 +754,698 @@ fn decode_with_yaxpeax(
             Ok((ops, len))
         }
     }
+}
+
+fn decode_with_aero_cpu_decoder(
+    bytes: &[u8],
+    mode: DecodeMode,
+    ip: u64,
+    prefixes: Prefixes,
+    address_size: AddressSize,
+) -> Result<(Vec<Operand>, usize), DecodeError> {
+    use aero_cpu_decoder::{decode_instruction, DecodeError as IcedErr, DecodeMode as IcedMode};
+
+    let mode = match mode {
+        DecodeMode::Bits16 => IcedMode::Bits16,
+        DecodeMode::Bits32 => IcedMode::Bits32,
+        DecodeMode::Bits64 => IcedMode::Bits64,
+    };
+
+    let bytes = if bytes.len() > MAX_INST_LEN {
+        &bytes[..MAX_INST_LEN]
+    } else {
+        bytes
+    };
+
+    let inst = decode_instruction(mode, ip, bytes).map_err(|e| match e {
+        IcedErr::EmptyInput | IcedErr::UnexpectedEof => DecodeError::UnexpectedEof,
+        IcedErr::InvalidInstruction => DecodeError::Invalid,
+    })?;
+
+    let len = inst.len() as usize;
+    if len == 0 || len > MAX_INST_LEN {
+        return Err(DecodeError::Invalid);
+    }
+    let next_ip = ip.wrapping_add(len as u64);
+
+    let mut out = Vec::with_capacity(inst.op_count() as usize);
+    for i in 0..inst.op_count() {
+        out.extend(convert_iced_operand(
+            &inst,
+            i,
+            prefixes,
+            address_size,
+            next_ip,
+        ));
+    }
+
+    Ok((out, len))
+}
+
+fn convert_iced_operand(
+    inst: &aero_cpu_decoder::Instruction,
+    idx: u32,
+    prefixes: Prefixes,
+    address_size: AddressSize,
+    next_ip: u64,
+) -> Option<Operand> {
+    use aero_cpu_decoder::OpKind;
+
+    match inst.op_kind(idx) {
+        OpKind::Register => map_iced_register(inst.op_register(idx)),
+        OpKind::Memory => Some(Operand::Memory(map_iced_memory(
+            inst,
+            prefixes,
+            address_size,
+            next_ip,
+        ))),
+        OpKind::NearBranch16 => Some(Operand::Relative {
+            target: inst.near_branch_target(),
+            size: OperandSize::Bits16,
+        }),
+        OpKind::NearBranch32 => Some(Operand::Relative {
+            target: inst.near_branch_target(),
+            size: OperandSize::Bits32,
+        }),
+        OpKind::NearBranch64 => Some(Operand::Relative {
+            target: inst.near_branch_target(),
+            size: OperandSize::Bits64,
+        }),
+        OpKind::Immediate8 => Some(Operand::Immediate(Immediate {
+            value: inst.immediate8() as u64,
+            size: OperandSize::Bits8,
+            is_signed: false,
+        })),
+        OpKind::Immediate8_2nd => Some(Operand::Immediate(Immediate {
+            value: inst.immediate8_2nd() as u64,
+            size: OperandSize::Bits8,
+            is_signed: false,
+        })),
+        OpKind::Immediate16 => Some(Operand::Immediate(Immediate {
+            value: inst.immediate16() as u64,
+            size: OperandSize::Bits16,
+            is_signed: false,
+        })),
+        OpKind::Immediate32 => Some(Operand::Immediate(Immediate {
+            value: inst.immediate32() as u64,
+            size: OperandSize::Bits32,
+            is_signed: false,
+        })),
+        OpKind::Immediate64 => Some(Operand::Immediate(Immediate {
+            value: inst.immediate64(),
+            size: OperandSize::Bits64,
+            is_signed: false,
+        })),
+        OpKind::Immediate8to16 => Some(Operand::Immediate(Immediate {
+            value: inst.immediate8to16() as u16 as u64,
+            size: OperandSize::Bits16,
+            is_signed: true,
+        })),
+        OpKind::Immediate8to32 => Some(Operand::Immediate(Immediate {
+            value: inst.immediate8to32() as u32 as u64,
+            size: OperandSize::Bits32,
+            is_signed: true,
+        })),
+        OpKind::Immediate8to64 => Some(Operand::Immediate(Immediate {
+            value: inst.immediate8to64() as u64,
+            size: OperandSize::Bits64,
+            is_signed: true,
+        })),
+        OpKind::Immediate32to64 => Some(Operand::Immediate(Immediate {
+            value: inst.immediate32to64() as u64,
+            size: OperandSize::Bits64,
+            is_signed: true,
+        })),
+        _ => None,
+    }
+}
+
+fn map_iced_memory(
+    inst: &aero_cpu_decoder::Instruction,
+    prefixes: Prefixes,
+    address_size: AddressSize,
+    next_ip: u64,
+) -> crate::inst::MemoryOperand {
+    use aero_cpu_decoder::Register;
+
+    let base = inst.memory_base();
+    let index = inst.memory_index();
+    let mut disp = inst.memory_displacement64() as i128;
+    let mut rip_relative = false;
+    let base_gpr = if base == Register::RIP {
+        // iced-x86 represents RIP-relative displacement as an absolute address (next_ip + disp32).
+        // Convert back to disp32 so downstream EA calculation can treat it uniformly.
+        rip_relative = true;
+        disp -= next_ip as i128;
+        None
+    } else {
+        gpr_from_iced_register(base)
+    };
+
+    crate::inst::MemoryOperand {
+        segment: prefixes.segment,
+        addr_size: address_size,
+        base: base_gpr,
+        index: gpr_from_iced_register(index),
+        scale: inst.memory_index_scale() as u8,
+        disp: disp as i64,
+        rip_relative,
+    }
+}
+
+fn gpr_from_iced_register(reg: aero_cpu_decoder::Register) -> Option<crate::inst::Gpr> {
+    use aero_cpu_decoder::Register;
+    let idx = match reg {
+        Register::None => return None,
+        Register::AL | Register::AX | Register::EAX | Register::RAX => 0,
+        Register::CL | Register::CX | Register::ECX | Register::RCX => 1,
+        Register::DL | Register::DX | Register::EDX | Register::RDX => 2,
+        Register::BL | Register::BX | Register::EBX | Register::RBX => 3,
+        Register::SPL | Register::SP | Register::ESP | Register::RSP => 4,
+        Register::BPL | Register::BP | Register::EBP | Register::RBP => 5,
+        Register::SIL | Register::SI | Register::ESI | Register::RSI => 6,
+        Register::DIL | Register::DI | Register::EDI | Register::RDI => 7,
+        Register::R8L | Register::R8W | Register::R8D | Register::R8 => 8,
+        Register::R9L | Register::R9W | Register::R9D | Register::R9 => 9,
+        Register::R10L | Register::R10W | Register::R10D | Register::R10 => 10,
+        Register::R11L | Register::R11W | Register::R11D | Register::R11 => 11,
+        Register::R12L | Register::R12W | Register::R12D | Register::R12 => 12,
+        Register::R13L | Register::R13W | Register::R13D | Register::R13 => 13,
+        Register::R14L | Register::R14W | Register::R14D | Register::R14 => 14,
+        Register::R15L | Register::R15W | Register::R15D | Register::R15 => 15,
+        _ => return None,
+    };
+    Some(crate::inst::Gpr { index: idx })
+}
+
+fn map_iced_register(reg: aero_cpu_decoder::Register) -> Option<Operand> {
+    use aero_cpu_decoder::Register::*;
+    let (idx, size, high8) = match reg {
+        AL => (0, OperandSize::Bits8, false),
+        CL => (1, OperandSize::Bits8, false),
+        DL => (2, OperandSize::Bits8, false),
+        BL => (3, OperandSize::Bits8, false),
+        SPL => (4, OperandSize::Bits8, false),
+        BPL => (5, OperandSize::Bits8, false),
+        SIL => (6, OperandSize::Bits8, false),
+        DIL => (7, OperandSize::Bits8, false),
+        R8L => (8, OperandSize::Bits8, false),
+        R9L => (9, OperandSize::Bits8, false),
+        R10L => (10, OperandSize::Bits8, false),
+        R11L => (11, OperandSize::Bits8, false),
+        R12L => (12, OperandSize::Bits8, false),
+        R13L => (13, OperandSize::Bits8, false),
+        R14L => (14, OperandSize::Bits8, false),
+        R15L => (15, OperandSize::Bits8, false),
+
+        AH => (0, OperandSize::Bits8, true),
+        CH => (1, OperandSize::Bits8, true),
+        DH => (2, OperandSize::Bits8, true),
+        BH => (3, OperandSize::Bits8, true),
+
+        AX => (0, OperandSize::Bits16, false),
+        CX => (1, OperandSize::Bits16, false),
+        DX => (2, OperandSize::Bits16, false),
+        BX => (3, OperandSize::Bits16, false),
+        SP => (4, OperandSize::Bits16, false),
+        BP => (5, OperandSize::Bits16, false),
+        SI => (6, OperandSize::Bits16, false),
+        DI => (7, OperandSize::Bits16, false),
+        R8W => (8, OperandSize::Bits16, false),
+        R9W => (9, OperandSize::Bits16, false),
+        R10W => (10, OperandSize::Bits16, false),
+        R11W => (11, OperandSize::Bits16, false),
+        R12W => (12, OperandSize::Bits16, false),
+        R13W => (13, OperandSize::Bits16, false),
+        R14W => (14, OperandSize::Bits16, false),
+        R15W => (15, OperandSize::Bits16, false),
+
+        EAX => (0, OperandSize::Bits32, false),
+        ECX => (1, OperandSize::Bits32, false),
+        EDX => (2, OperandSize::Bits32, false),
+        EBX => (3, OperandSize::Bits32, false),
+        ESP => (4, OperandSize::Bits32, false),
+        EBP => (5, OperandSize::Bits32, false),
+        ESI => (6, OperandSize::Bits32, false),
+        EDI => (7, OperandSize::Bits32, false),
+        R8D => (8, OperandSize::Bits32, false),
+        R9D => (9, OperandSize::Bits32, false),
+        R10D => (10, OperandSize::Bits32, false),
+        R11D => (11, OperandSize::Bits32, false),
+        R12D => (12, OperandSize::Bits32, false),
+        R13D => (13, OperandSize::Bits32, false),
+        R14D => (14, OperandSize::Bits32, false),
+        R15D => (15, OperandSize::Bits32, false),
+
+        RAX => (0, OperandSize::Bits64, false),
+        RCX => (1, OperandSize::Bits64, false),
+        RDX => (2, OperandSize::Bits64, false),
+        RBX => (3, OperandSize::Bits64, false),
+        RSP => (4, OperandSize::Bits64, false),
+        RBP => (5, OperandSize::Bits64, false),
+        RSI => (6, OperandSize::Bits64, false),
+        RDI => (7, OperandSize::Bits64, false),
+        R8 => (8, OperandSize::Bits64, false),
+        R9 => (9, OperandSize::Bits64, false),
+        R10 => (10, OperandSize::Bits64, false),
+        R11 => (11, OperandSize::Bits64, false),
+        R12 => (12, OperandSize::Bits64, false),
+        R13 => (13, OperandSize::Bits64, false),
+        R14 => (14, OperandSize::Bits64, false),
+        R15 => (15, OperandSize::Bits64, false),
+
+        ES => {
+            return Some(Operand::Segment {
+                reg: SegmentReg::ES,
+            })
+        }
+        CS => {
+            return Some(Operand::Segment {
+                reg: SegmentReg::CS,
+            })
+        }
+        SS => {
+            return Some(Operand::Segment {
+                reg: SegmentReg::SS,
+            })
+        }
+        DS => {
+            return Some(Operand::Segment {
+                reg: SegmentReg::DS,
+            })
+        }
+        FS => {
+            return Some(Operand::Segment {
+                reg: SegmentReg::FS,
+            })
+        }
+        GS => {
+            return Some(Operand::Segment {
+                reg: SegmentReg::GS,
+            })
+        }
+
+        CR0 => return Some(Operand::Control { index: 0 }),
+        CR1 => return Some(Operand::Control { index: 1 }),
+        CR2 => return Some(Operand::Control { index: 2 }),
+        CR3 => return Some(Operand::Control { index: 3 }),
+        CR4 => return Some(Operand::Control { index: 4 }),
+        CR5 => return Some(Operand::Control { index: 5 }),
+        CR6 => return Some(Operand::Control { index: 6 }),
+        CR7 => return Some(Operand::Control { index: 7 }),
+        CR8 => return Some(Operand::Control { index: 8 }),
+        CR9 => return Some(Operand::Control { index: 9 }),
+        CR10 => return Some(Operand::Control { index: 10 }),
+        CR11 => return Some(Operand::Control { index: 11 }),
+        CR12 => return Some(Operand::Control { index: 12 }),
+        CR13 => return Some(Operand::Control { index: 13 }),
+        CR14 => return Some(Operand::Control { index: 14 }),
+        CR15 => return Some(Operand::Control { index: 15 }),
+
+        DR0 => return Some(Operand::Debug { index: 0 }),
+        DR1 => return Some(Operand::Debug { index: 1 }),
+        DR2 => return Some(Operand::Debug { index: 2 }),
+        DR3 => return Some(Operand::Debug { index: 3 }),
+        DR4 => return Some(Operand::Debug { index: 4 }),
+        DR5 => return Some(Operand::Debug { index: 5 }),
+        DR6 => return Some(Operand::Debug { index: 6 }),
+        DR7 => return Some(Operand::Debug { index: 7 }),
+        DR8 => return Some(Operand::Debug { index: 8 }),
+        DR9 => return Some(Operand::Debug { index: 9 }),
+        DR10 => return Some(Operand::Debug { index: 10 }),
+        DR11 => return Some(Operand::Debug { index: 11 }),
+        DR12 => return Some(Operand::Debug { index: 12 }),
+        DR13 => return Some(Operand::Debug { index: 13 }),
+        DR14 => return Some(Operand::Debug { index: 14 }),
+        DR15 => return Some(Operand::Debug { index: 15 }),
+
+        XMM0 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 0 },
+            })
+        }
+        XMM1 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 1 },
+            })
+        }
+        XMM2 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 2 },
+            })
+        }
+        XMM3 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 3 },
+            })
+        }
+        XMM4 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 4 },
+            })
+        }
+        XMM5 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 5 },
+            })
+        }
+        XMM6 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 6 },
+            })
+        }
+        XMM7 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 7 },
+            })
+        }
+        XMM8 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 8 },
+            })
+        }
+        XMM9 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 9 },
+            })
+        }
+        XMM10 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 10 },
+            })
+        }
+        XMM11 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 11 },
+            })
+        }
+        XMM12 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 12 },
+            })
+        }
+        XMM13 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 13 },
+            })
+        }
+        XMM14 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 14 },
+            })
+        }
+        XMM15 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 15 },
+            })
+        }
+        XMM16 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 16 },
+            })
+        }
+        XMM17 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 17 },
+            })
+        }
+        XMM18 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 18 },
+            })
+        }
+        XMM19 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 19 },
+            })
+        }
+        XMM20 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 20 },
+            })
+        }
+        XMM21 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 21 },
+            })
+        }
+        XMM22 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 22 },
+            })
+        }
+        XMM23 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 23 },
+            })
+        }
+        XMM24 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 24 },
+            })
+        }
+        XMM25 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 25 },
+            })
+        }
+        XMM26 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 26 },
+            })
+        }
+        XMM27 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 27 },
+            })
+        }
+        XMM28 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 28 },
+            })
+        }
+        XMM29 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 29 },
+            })
+        }
+        XMM30 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 30 },
+            })
+        }
+        XMM31 => {
+            return Some(Operand::Xmm {
+                reg: crate::inst::Xmm { index: 31 },
+            })
+        }
+
+        YMM0 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 0,
+            })
+        }
+        YMM1 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 1,
+            })
+        }
+        YMM2 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 2,
+            })
+        }
+        YMM3 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 3,
+            })
+        }
+        YMM4 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 4,
+            })
+        }
+        YMM5 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 5,
+            })
+        }
+        YMM6 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 6,
+            })
+        }
+        YMM7 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 7,
+            })
+        }
+        YMM8 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 8,
+            })
+        }
+        YMM9 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 9,
+            })
+        }
+        YMM10 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 10,
+            })
+        }
+        YMM11 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 11,
+            })
+        }
+        YMM12 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 12,
+            })
+        }
+        YMM13 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 13,
+            })
+        }
+        YMM14 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 14,
+            })
+        }
+        YMM15 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 15,
+            })
+        }
+        YMM16 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 16,
+            })
+        }
+        YMM17 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 17,
+            })
+        }
+        YMM18 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 18,
+            })
+        }
+        YMM19 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 19,
+            })
+        }
+        YMM20 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 20,
+            })
+        }
+        YMM21 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 21,
+            })
+        }
+        YMM22 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 22,
+            })
+        }
+        YMM23 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 23,
+            })
+        }
+        YMM24 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 24,
+            })
+        }
+        YMM25 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 25,
+            })
+        }
+        YMM26 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 26,
+            })
+        }
+        YMM27 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 27,
+            })
+        }
+        YMM28 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 28,
+            })
+        }
+        YMM29 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 29,
+            })
+        }
+        YMM30 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 30,
+            })
+        }
+        YMM31 => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Ymm,
+                index: 31,
+            })
+        }
+
+        _ => {
+            return Some(Operand::OtherReg {
+                class: crate::inst::OtherRegClass::Unknown,
+                index: 0,
+            })
+        }
+    };
+
+    Some(Operand::Gpr {
+        reg: crate::inst::Gpr { index: idx },
+        size,
+        high8,
+    })
 }
 
 fn convert_operands_real(
