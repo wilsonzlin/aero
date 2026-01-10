@@ -57,13 +57,15 @@ pub fn interpret_block(block: &IrBlock, cpu: &mut CpuState, mem: &mut [u8]) -> u
             }
             IrOp::Load { dst, addr, size } => {
                 let addr = eval_operand(addr, cpu, &temps) as u64;
-                let v = load_mem(mem, addr, size);
+                let host = cpu.ram_base.wrapping_add(addr);
+                let v = load_mem(mem, host, size);
                 write_place(dst, v as i64, cpu, &mut temps);
             }
             IrOp::Store { addr, value, size } => {
                 let addr = eval_operand(addr, cpu, &temps) as u64;
                 let v = eval_operand(value, cpu, &temps) as u64;
-                store_mem(mem, addr, v, size);
+                let host = cpu.ram_base.wrapping_add(addr);
+                store_mem(mem, host, v, size);
             }
             IrOp::Exit { next_rip: rip } => {
                 let rip = eval_operand(rip, cpu, &temps) as u64;
