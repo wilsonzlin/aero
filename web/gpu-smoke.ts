@@ -17,8 +17,25 @@ declare global {
         bottomLeft: number[];
         bottomRight: number[];
       }>;
+      captureFrameBase64?: () => Promise<{
+        backend: string;
+        width: number;
+        height: number;
+        rgbaBase64: string;
+      }>;
     };
   }
+}
+
+function u8ToBase64(u8: Uint8Array): string {
+  // Avoid `btoa(String.fromCharCode(...))` stack limits by chunking.
+  const chunkSize = 0x8000;
+  let binary = '';
+  for (let i = 0; i < u8.length; i += chunkSize) {
+    const chunk = u8.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
 }
 
 function renderError(message: string) {
@@ -165,6 +182,16 @@ async function main() {
           topRight: sample(captured.width - 9, 8),
           bottomLeft: sample(8, captured.height - 9),
           bottomRight: sample(captured.width - 9, captured.height - 9),
+        };
+      },
+      captureFrameBase64: async () => {
+        const captured: CapturedFrame = await backend.captureFrame();
+        const bytes = new Uint8Array(captured.data.buffer, captured.data.byteOffset, captured.data.byteLength);
+        return {
+          backend: caps.kind,
+          width: captured.width,
+          height: captured.height,
+          rgbaBase64: u8ToBase64(bytes),
         };
       },
     };

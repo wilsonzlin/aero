@@ -23,6 +23,52 @@ function writePng(filePath, width, height, rgba) {
   fs.writeFileSync(filePath, PNG.sync.write(png));
 }
 
+function generateGpuSmokeQuadrantsRGBA(width, height) {
+  const rgba = new Uint8Array(width * height * 4);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const left = x < width / 2;
+      const top = y < height / 2;
+      if (top && left) {
+        rgba[i + 0] = 255;
+        rgba[i + 1] = 0;
+        rgba[i + 2] = 0;
+        rgba[i + 3] = 255;
+      } else if (top && !left) {
+        rgba[i + 0] = 0;
+        rgba[i + 1] = 255;
+        rgba[i + 2] = 0;
+        rgba[i + 3] = 255;
+      } else if (!top && left) {
+        rgba[i + 0] = 0;
+        rgba[i + 1] = 0;
+        rgba[i + 2] = 255;
+        rgba[i + 3] = 255;
+      } else {
+        rgba[i + 0] = 255;
+        rgba[i + 1] = 255;
+        rgba[i + 2] = 255;
+        rgba[i + 3] = 255;
+      }
+    }
+  }
+
+  return rgba;
+}
+
+function generateSolidColorRGBA(width, height, r, g, b, a) {
+  const rgba = new Uint8Array(width * height * 4);
+  for (let i = 0; i < rgba.length; i += 4) {
+    rgba[i + 0] = r;
+    rgba[i + 1] = g;
+    rgba[i + 2] = b;
+    rgba[i + 3] = a;
+  }
+  return rgba;
+}
+
 function main() {
   const outDir = __dirname;
 
@@ -35,6 +81,13 @@ function main() {
   const quad64 = generateQuadrantsImageRGBA(64, 64);
   writePng(path.join(outDir, 'webgl2_quadrants_64.png'), 64, 64, quad64);
   writePng(path.join(outDir, 'webgpu_quadrants_64.png'), 64, 64, quad64);
+
+  const smoke64 = generateGpuSmokeQuadrantsRGBA(64, 64);
+  writePng(path.join(outDir, 'gpu_smoke_quadrants_64.png'), 64, 64, smoke64);
+
+  // Trace replay "triangle" fixture is expected to clear/present solid red.
+  const traceRed64 = generateSolidColorRGBA(64, 64, 255, 0, 0, 255);
+  writePng(path.join(outDir, 'gpu_trace_triangle_red_64.png'), 64, 64, traceRed64);
 
   // eslint-disable-next-line no-console
   console.log(`Wrote goldens to ${outDir}`);

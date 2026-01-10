@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -11,6 +12,8 @@ const GOLDEN_VGA_TEXT_MODE = 'vga_text_mode';
 const GOLDEN_VBE_LFB_COLOR_BARS = 'vbe_lfb_color_bars_320x200';
 const GOLDEN_WEBGL2_QUADRANTS = 'webgl2_quadrants_64';
 const GOLDEN_WEBGPU_QUADRANTS = 'webgpu_quadrants_64';
+const GOLDEN_GPU_SMOKE_QUADRANTS = 'gpu_smoke_quadrants_64';
+const GOLDEN_GPU_TRACE_TRIANGLE_RED = 'gpu_trace_triangle_red_64';
 
 function base64ToBuffer(base64: string): Buffer {
   return Buffer.from(base64, 'base64');
@@ -50,6 +53,22 @@ async function captureCanvas2dRGBA(page: Page, selector: string): Promise<RgbaIm
     width: result.width,
     height: result.height,
     rgba: base64ToBuffer(result.rgbaBase64)
+  };
+}
+
+async function captureGpuSmokeFrameRGBA(page: Page): Promise<RgbaImage> {
+  await page.waitForFunction(() => (window as any).__aeroTest?.ready === true);
+  const result = await page.evaluate(async () => {
+    const api = (window as any).__aeroTest;
+    if (api?.error) throw new Error(`gpu-smoke error: ${api.error}`);
+    if (!api?.captureFrameBase64) throw new Error('__aeroTest.captureFrameBase64 missing');
+    return await api.captureFrameBase64();
+  });
+
+  return {
+    width: result.width,
+    height: result.height,
+    rgba: base64ToBuffer(result.rgbaBase64),
   };
 }
 
@@ -320,4 +339,70 @@ test('WebGPU microtest (scissored quad) matches golden', async ({ page }, testIn
   };
 
   await expectRgbaToMatchGolden(testInfo, GOLDEN_WEBGPU_QUADRANTS, actual, { maxDiffPixels: 0, threshold: 0 });
+});
+
+test('GPU backend smoke: WebGL2 presents expected frame (golden)', async ({ page }, testInfo) => {
+  await page.goto('http://127.0.0.1:5173/web/gpu-smoke.html?backend=webgl2&filter=nearest&aspect=stretch', {
+    waitUntil: 'load',
+  });
+  const actual = await captureGpuSmokeFrameRGBA(page);
+  await expectRgbaToMatchGolden(testInfo, GOLDEN_GPU_SMOKE_QUADRANTS, actual, { maxDiffPixels: 0, threshold: 0 });
+});
+
+test('GPU backend smoke: WebGPU presents expected frame (golden)', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-webgpu', 'WebGPU smoke only runs on Chromium WebGPU project.');
+
+  await page.goto('http://127.0.0.1:5173/web/gpu-smoke.html?backend=webgpu&filter=nearest&aspect=stretch', {
+    waitUntil: 'load',
+  });
+  const actual = await captureGpuSmokeFrameRGBA(page);
+  await expectRgbaToMatchGolden(testInfo, GOLDEN_GPU_SMOKE_QUADRANTS, actual, { maxDiffPixels: 0, threshold: 0 });
+});
+
+test('GPU trace replay: triangle trace renders deterministically (golden)', async ({ page }, testInfo) => {
+  const toolPath = path.resolve(TEST_DIR, '../../web/tools/gpu_trace_replay.ts');
+  const tracePath = path.resolve(TEST_DIR, '../fixtures/triangle.aerogputrace');
+  const traceB64 = fs.readFileSync(tracePath).toString('base64');
+
+  await page.setContent(`<canvas id="c" width="64" height="64"></canvas>`);
+  await page.addScriptTag({ path: toolPath });
+
+  const result = await page.evaluate(async (b64) => {
+    const raw = atob(b64);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+
+    const canvas = document.getElementById('c');
+    if (!(canvas instanceof HTMLCanvasElement)) throw new Error('missing canvas');
+    const gl = canvas.getContext('webgl2');
+    if (!gl) throw new Error('WebGL2 unavailable in test environment');
+
+    const replayer = await (window as any).AeroGpuTraceReplay.load(bytes, canvas, { backend: 'webgl2' });
+    await replayer.replayFrame(0);
+
+    const w = canvas.width;
+    const h = canvas.height;
+    const pixels = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+    // WebGL origin is bottom-left; flip to top-left.
+    const flipped = new Uint8Array(w * h * 4);
+    const rowSize = w * 4;
+    for (let y = 0; y < h; y++) {
+      const srcStart = y * rowSize;
+      const dstStart = (h - 1 - y) * rowSize;
+      flipped.set(pixels.subarray(srcStart, srcStart + rowSize), dstStart);
+    }
+
+    const rgbaBase64 = (window as any).__aeroUint8ToBase64(flipped);
+    return { width: w, height: h, rgbaBase64 };
+  }, traceB64);
+
+  const actual: RgbaImage = {
+    width: result.width,
+    height: result.height,
+    rgba: base64ToBuffer(result.rgbaBase64),
+  };
+
+  await expectRgbaToMatchGolden(testInfo, GOLDEN_GPU_TRACE_TRIANGLE_RED, actual, { maxDiffPixels: 0, threshold: 0 });
 });
