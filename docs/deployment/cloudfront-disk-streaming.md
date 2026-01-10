@@ -154,6 +154,12 @@ Create an **origin request policy** for disk objects that forwards:
 - `Range`
 - `If-Range` (optional)
 
+If you use an **S3 origin** and expect S3 to answer browser CORS preflights, also forward the CORS preflight headers so S3 can evaluate its CORS rules:
+
+- `Origin`
+- `Access-Control-Request-Method`
+- `Access-Control-Request-Headers`
+
 Do not forward cookies/query strings to S3 unless you have a specific need.
 
 #### 6) Response headers policy (CORS + CORP)
@@ -340,7 +346,7 @@ If using signed cookies across origins, you must allow credentials (and you must
 ```
 Access-Control-Allow-Origin: https://app.example.com
 Access-Control-Allow-Methods: GET, HEAD, OPTIONS
-Access-Control-Allow-Headers: Range, Authorization, Content-Type, If-None-Match
+Access-Control-Allow-Headers: Range, If-Range, Authorization, Content-Type, If-None-Match
 Access-Control-Allow-Credentials: true
 Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag
 Access-Control-Max-Age: 86400
@@ -350,7 +356,11 @@ If you are using signed URLs and do not need cookies, you can use:
 
 ```
 Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, HEAD, OPTIONS
+Access-Control-Allow-Headers: Range, If-Range
 Access-Control-Allow-Credentials: false
+Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag
+Access-Control-Max-Age: 86400
 ```
 
 #### CORP (for COEP)
@@ -377,7 +387,7 @@ S3 CORS rules are evaluated using:
 
 - `Origin`
 - `Access-Control-Request-Method`
-- `Access-Control-Request-Headers` (e.g. `range, authorization`)
+- `Access-Control-Request-Headers` (e.g. `range, if-range, authorization`)
 
 A permissive starting point for a single app origin:
 
@@ -386,7 +396,7 @@ A permissive starting point for a single app origin:
   {
     "AllowedOrigins": ["https://app.example.com"],
     "AllowedMethods": ["GET", "HEAD", "OPTIONS"],
-    "AllowedHeaders": ["Range", "Authorization", "Content-Type", "If-None-Match", "Origin"],
+    "AllowedHeaders": ["Range", "If-Range", "Authorization", "Content-Type", "If-None-Match", "Origin"],
     "ExposeHeaders": ["Accept-Ranges", "Content-Range", "Content-Length", "ETag"],
     "MaxAgeSeconds": 86400
   }
@@ -409,10 +419,22 @@ Access-Control-Request-Method: GET
 Access-Control-Request-Headers: range
 ```
 
+If you also send `If-Range` (recommended for resumable reads), it becomes:
+
+```
+Access-Control-Request-Headers: range, if-range
+```
+
 If you send `Authorization`, it becomes:
 
 ```
 Access-Control-Request-Headers: range, authorization
+```
+
+If you also send `If-Range`, include it as well:
+
+```
+Access-Control-Request-Headers: range, if-range, authorization
 ```
 
 Your CloudFront behavior must allow `OPTIONS`, and your response headers must allow `Range` (and `Authorization` if used), otherwise the browser will fail before the first byte is fetched.
