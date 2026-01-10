@@ -34,6 +34,7 @@ impl Bios {
         self.video
             .vga
             .set_text_mode_03h(&mut BiosMemoryBus::new(bus), true);
+        self.video_mode = 0x03;
 
         // 3) Interrupt Vector Table.
         ivt::init_ivt(bus);

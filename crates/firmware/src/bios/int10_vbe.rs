@@ -38,6 +38,7 @@ impl Bios {
                     // Many BIOSes report "VESA mode active" via INT 10h AH=0F by storing 0x6F in
                     // the BDA's video mode byte.
                     BiosDataArea::write_video_mode(memory, 0x6F);
+                    self.video_mode = 0x6F;
                     vbe_success(cpu);
                 } else {
                     vbe_failure(cpu);

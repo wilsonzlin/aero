@@ -161,24 +161,25 @@ impl VgaDevice {
             return;
         }
 
-        let cols = BiosDataArea::read_screen_cols(mem) as u8;
-        let rows = 25u8;
-        let (mut row, mut col) = BiosDataArea::read_cursor_pos_page0(mem);
-
-        for _ in 0..count {
-            self.write_text_cell(mem, row, col, ch, attr);
-            col = col.wrapping_add(1);
-            if col >= cols {
-                col = 0;
-                row = row.wrapping_add(1);
-            }
-            if row >= rows {
-                self.scroll_up(mem, 0, 1, self.default_attr, 0, 0, rows - 1, cols - 1);
-                row = rows - 1;
-            }
+        if count == 0 {
+            return;
         }
 
-        BiosDataArea::write_cursor_pos_page0(mem, row, col);
+        let cols = BiosDataArea::read_screen_cols(mem).max(1) as u8;
+        let rows = 25u8;
+        let (row0, col0) = BiosDataArea::read_cursor_pos_page0(mem);
+
+        let mut linear = row0 as u32 * cols as u32 + col0 as u32;
+        let max = rows as u32 * cols as u32;
+        for _ in 0..count {
+            if linear >= max {
+                break;
+            }
+            let row = (linear / cols as u32) as u8;
+            let col = (linear % cols as u32) as u8;
+            self.write_text_cell(mem, row, col, ch, attr);
+            linear += 1;
+        }
     }
 
     fn clear_text_buffer(&self, mem: &mut impl MemoryBus, attr: u8) {

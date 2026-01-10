@@ -45,3 +45,37 @@ fn int10_text_mode_teletype_updates_text_buffer_and_cursor() {
     // Sanity check: BDA video mode lives at 0x0449.
     assert_eq!(BDA_VIDEO_MODE_ADDR, 0x0449);
 }
+
+#[test]
+fn int10_write_char_attr_repeats_without_moving_cursor() {
+    let mut mem = VecMemory::new(2 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Set mode 03h.
+    cpu.set_ax(0x0003);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // Place cursor at (0,0).
+    cpu.set_ax(0x0200);
+    cpu.set_bx(0x0000);
+    cpu.set_dx(0x0000);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(BiosDataArea::read_cursor_pos_page0(&mem), (0, 0));
+
+    // AH=09: write 'X' with attribute 0x1E, three times.
+    cpu.set_ax(0x0958); // AH=09, AL='X'
+    cpu.set_bx(0x001E); // BH=0 page, BL=attr
+    cpu.set_cx(3);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    assert_eq!(mem.read_u8(0xB8000), b'X');
+    assert_eq!(mem.read_u8(0xB8001), 0x1E);
+    assert_eq!(mem.read_u8(0xB8002), b'X');
+    assert_eq!(mem.read_u8(0xB8003), 0x1E);
+    assert_eq!(mem.read_u8(0xB8004), b'X');
+    assert_eq!(mem.read_u8(0xB8005), 0x1E);
+
+    // Cursor remains unchanged.
+    assert_eq!(BiosDataArea::read_cursor_pos_page0(&mem), (0, 0));
+}

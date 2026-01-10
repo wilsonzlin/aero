@@ -18,6 +18,7 @@ impl Bios {
                 if mode == 0x03 {
                     self.video.vbe.current_mode = None;
                     self.video.vga.set_text_mode_03h(memory, clear);
+                    self.video_mode = 0x03;
                 }
             }
             0x0F => {

@@ -136,6 +136,11 @@ pub struct Bios {
     config: BiosConfig,
     e820_map: Vec<E820Entry>,
     keyboard_queue: VecDeque<u16>,
+    /// Cached value for INT 10h AH=0F "Get current video mode" for snapshotting.
+    ///
+    /// The real-mode-visible source of truth lives in the BIOS Data Area (0x0449). This field
+    /// exists so BIOS snapshots can restore the last reported mode without needing a memory bus.
+    video_mode: u8,
     tty_output: Vec<u8>,
     /// INT 13h status code from the most recent disk operation (AH=01h).
     last_int13_status: u8,
@@ -161,6 +166,7 @@ impl Bios {
             config,
             e820_map: Vec::new(),
             keyboard_queue: VecDeque::new(),
+            video_mode: 0x03,
             tty_output: Vec::new(),
             last_int13_status: 0,
             rsdp_addr: None,
