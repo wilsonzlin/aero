@@ -1,0 +1,43 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  detectPlatformFeatures,
+  explainMissingRequirements,
+} from "../web/src/platform/features.ts";
+import { requestWebGpuDevice } from "../web/src/platform/webgpu.ts";
+import { getOpfsRoot, OpfsUnavailableError } from "../web/src/platform/opfs.ts";
+
+test("detectPlatformFeatures returns a stable boolean report shape", () => {
+  const report = detectPlatformFeatures();
+  for (const [key, value] of Object.entries(report)) {
+    assert.equal(typeof value, "boolean", `${key} must be boolean`);
+  }
+});
+
+test("explainMissingRequirements is empty when all capabilities are present", () => {
+  const allTrue = {
+    crossOriginIsolated: true,
+    sharedArrayBuffer: true,
+    wasmSimd: true,
+    wasmThreads: true,
+    webgpu: true,
+    opfs: true,
+    audioWorklet: true,
+    offscreenCanvas: true,
+  };
+
+  assert.deepEqual(explainMissingRequirements(allTrue), []);
+});
+
+test("requestWebGpuDevice fails gracefully when WebGPU is unavailable", async () => {
+  await assert.rejects(() => requestWebGpuDevice(), /WebGPU is not available/);
+});
+
+test("getOpfsRoot fails gracefully when OPFS is unavailable", async () => {
+  await assert.rejects(
+    () => getOpfsRoot(),
+    (err) => err instanceof OpfsUnavailableError,
+  );
+});
+
