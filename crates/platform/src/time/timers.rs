@@ -475,4 +475,71 @@ mod tests {
             vec![30, 40, 50]
         );
     }
+
+    #[test]
+    fn same_deadline_is_ordered_by_timer_id() {
+        let mut clock = Clock::new();
+        let mut sched = TimerScheduler::new();
+
+        let t1 = sched.alloc_timer();
+        let t2 = sched.alloc_timer();
+        sched.arm_one_shot(t2, 10).unwrap();
+        sched.arm_one_shot(t1, 10).unwrap();
+
+        clock.advance(10);
+        let events = sched.advance_to(clock.now_ns());
+        assert_eq!(
+            events,
+            vec![
+                TimerEvent {
+                    timer_id: t1,
+                    deadline_ns: 10
+                },
+                TimerEvent {
+                    timer_id: t2,
+                    deadline_ns: 10
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn disarm_cancels_pending_event_and_next_deadline_skips_stale_entries() {
+        let mut clock = Clock::new();
+        let mut sched = TimerScheduler::new();
+        let t = sched.alloc_timer();
+
+        sched.arm_one_shot(t, 10).unwrap();
+        sched.disarm(t).unwrap();
+
+        assert_eq!(sched.next_deadline_ns(), None);
+
+        clock.advance(20);
+        assert!(sched.advance_to(clock.now_ns()).is_empty());
+    }
+
+    #[test]
+    fn rearm_overwrites_previous_deadline_without_firing_old_entry() {
+        let mut clock = Clock::new();
+        let mut sched = TimerScheduler::new();
+        let t = sched.alloc_timer();
+
+        sched.arm_one_shot(t, 10).unwrap();
+        sched.arm_one_shot(t, 20).unwrap();
+
+        assert_eq!(sched.next_deadline_ns(), Some(20));
+
+        clock.advance(15);
+        assert!(sched.advance_to(clock.now_ns()).is_empty());
+
+        clock.advance(5);
+        let events = sched.advance_to(clock.now_ns());
+        assert_eq!(
+            events,
+            vec![TimerEvent {
+                timer_id: t,
+                deadline_ns: 20
+            }]
+        );
+    }
 }
