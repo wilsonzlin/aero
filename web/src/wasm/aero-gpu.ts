@@ -67,6 +67,35 @@ export async function init_gpu(
 
   backendImpl = impl;
   backend = impl.getCapabilities().kind;
+
+  if (backend === 'webgl2') {
+    try {
+      const gl = (impl as any).gl as WebGL2RenderingContext | null | undefined;
+      if (gl) {
+        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info') as
+          | {
+              UNMASKED_VENDOR_WEBGL: number;
+              UNMASKED_RENDERER_WEBGL: number;
+            }
+          | null;
+
+        if (debugInfo) {
+          adapterInfo = {
+            vendor: String(gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL)),
+            renderer: String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)),
+          };
+        } else {
+          // Best-effort fallback.
+          adapterInfo = {
+            vendor: String(gl.getParameter(gl.VENDOR)),
+            renderer: String(gl.getParameter(gl.RENDERER)),
+          };
+        }
+      }
+    } catch {
+      adapterInfo = undefined;
+    }
+  }
 }
 
 export function resize(width: number, height: number, dpr: number): void {
@@ -93,6 +122,7 @@ export function capabilities(): unknown {
   return {
     initialized: true,
     backend,
+    backendCapabilities: backendImpl.getCapabilities(),
     cssSize: { width: cssWidth, height: cssHeight },
     devicePixelRatio,
     pixelSize: { width: pixelWidth, height: pixelHeight },
