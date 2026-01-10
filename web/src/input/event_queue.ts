@@ -45,9 +45,11 @@ export type InputBatchTarget = {
 const HEADER_WORDS = 2;
 const WORDS_PER_EVENT = 4;
 
+let nextInputBatchId = 1;
+
 /**
- * High-throughput queue for input events. Pushes are allocation-free until the
- * backing buffer grows (rare) or the batch is flushed (by design).
+  * High-throughput queue for input events. Pushes are allocation-free until the
+  * backing buffer grows (rare) or the batch is flushed (by design).
  *
  * Wire format (Int32 little-endian):
  *   [0] count
@@ -123,6 +125,28 @@ export class InputEventQueue {
     const sendTimestampUs = Math.round(performance.now() * 1000) >>> 0;
     this.words[1] = sendTimestampUs;
     const minTimestampUs = this.minTimestampUs;
+
+    // Best-effort responsiveness telemetry hook. This avoids adding a hard perf
+    // dependency to the input pipeline; the perf API is optional and may be
+    // absent in minimal builds.
+    const maybePerf = (globalThis as any).aero?.perf as
+      | {
+          noteInputCaptured?: (id: number, tCaptureMs?: number) => void;
+          noteInputInjected?: (
+            id: number,
+            tInjectedMs?: number,
+            queueDepth?: number,
+            queueOldestCaptureMs?: number | null,
+          ) => void;
+        }
+      | undefined;
+    if (maybePerf?.noteInputCaptured || maybePerf?.noteInputInjected) {
+      const id = nextInputBatchId++;
+      const tCaptureMs = (minTimestampUs >>> 0) / 1000;
+      const tInjectedMs = (sendTimestampUs >>> 0) / 1000;
+      maybePerf.noteInputCaptured?.(id, tCaptureMs);
+      maybePerf.noteInputInjected?.(id, tInjectedMs, this.count, tCaptureMs);
+    }
 
     const byteLength = this.buf.byteLength;
     const buffer = this.buf;
