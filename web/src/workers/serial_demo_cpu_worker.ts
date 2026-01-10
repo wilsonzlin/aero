@@ -1,0 +1,43 @@
+/// <reference lib="webworker" />
+
+import { IoClient } from "../io/ipc/io_client.ts";
+import { SharedRingBuffer } from "../io/ipc/ring_buffer.ts";
+
+type InitMessage = {
+  type: "init";
+  requestRing: SharedArrayBuffer;
+  responseRing: SharedArrayBuffer;
+  text?: string;
+};
+
+function encodeBytes(text: string): number[] {
+  const encoder = new TextEncoder();
+  return Array.from(encoder.encode(text));
+}
+
+globalThis.onmessage = (ev: MessageEvent<InitMessage>) => {
+  if (ev.data?.type !== "init") return;
+
+  const req = SharedRingBuffer.from(ev.data.requestRing);
+  const resp = SharedRingBuffer.from(ev.data.responseRing);
+
+  const io = new IoClient(req, resp, {
+    onSerialOutput: (port, data) => {
+      // Mirror the debug UI event shape.
+      (globalThis as DedicatedWorkerGlobalScope).postMessage({
+        type: "SerialOutput",
+        port,
+        data: Array.from(data),
+      });
+    },
+  });
+
+  const text = ev.data.text ?? "Hello from COM1!\r\n";
+  const bytes = encodeBytes(text);
+  for (const b of bytes) {
+    io.portWrite(0x3f8, 1, b);
+  }
+
+  (globalThis as DedicatedWorkerGlobalScope).postMessage({ type: "done" });
+};
+

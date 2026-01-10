@@ -8,6 +8,13 @@ export const IO_OP_IRQ_RAISE = 6;
 export const IO_OP_IRQ_LOWER = 7;
 export const IO_OP_A20_SET = 8;
 export const IO_OP_RESET_REQUEST = 9;
+// Asynchronous serial output from devices (e.g. 16550 UART).
+//
+// Encoding:
+// - addrLo: port (u16)
+// - size: byte count (1-4)
+// - value: packed little-endian bytes (LSB = first byte)
+export const IO_OP_SERIAL_OUT = 10;
 
 export const IO_MESSAGE_STRIDE_U32 = 6;
 

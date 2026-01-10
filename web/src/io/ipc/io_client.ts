@@ -10,6 +10,7 @@ import {
   IO_OP_PORT_WRITE,
   IO_OP_RESP,
   IO_OP_RESET_REQUEST,
+  IO_OP_SERIAL_OUT,
   decodeU64,
   encodeU64,
   writeIoMessage,
@@ -18,11 +19,13 @@ import {
 export type IrqCallback = (irq: number, level: boolean) => void;
 export type A20Callback = (enabled: boolean) => void;
 export type ResetCallback = () => void;
+export type SerialOutputCallback = (port: number, data: Uint8Array) => void;
 
 export interface IoClientOptions {
   onIrq?: IrqCallback;
   onA20?: A20Callback;
   onReset?: ResetCallback;
+  onSerialOutput?: SerialOutputCallback;
 }
 
 /**
@@ -35,6 +38,7 @@ export class IoClient {
   readonly #onIrq?: IrqCallback;
   readonly #onA20?: A20Callback;
   readonly #onReset?: ResetCallback;
+  readonly #onSerialOutput?: SerialOutputCallback;
 
   #nextId = 1;
 
@@ -53,6 +57,7 @@ export class IoClient {
     this.#onIrq = opts.onIrq;
     this.#onA20 = opts.onA20;
     this.#onReset = opts.onReset;
+    this.#onSerialOutput = opts.onSerialOutput;
   }
 
   portRead(port: number, size: number): number {
@@ -126,6 +131,18 @@ export class IoClient {
 
       if (type === IO_OP_RESET_REQUEST) {
         this.#onReset?.();
+        continue;
+      }
+
+      if (type === IO_OP_SERIAL_OUT) {
+        const port = this.#rx[2]! & 0xffff;
+        const len = this.#rx[4]! & 0xff;
+        const value = this.#rx[5]!;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = (value >>> (i * 8)) & 0xff;
+        }
+        this.#onSerialOutput?.(port, bytes);
         continue;
       }
 

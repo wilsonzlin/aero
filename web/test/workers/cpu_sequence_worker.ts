@@ -8,6 +8,7 @@ const resp = SharedRingBuffer.from(workerData.responseRing as SharedArrayBuffer)
 const irqEvents: Array<{ irq: number; level: boolean }> = [];
 const a20Events: boolean[] = [];
 let resetRequests = 0;
+const serialBytes: number[] = [];
 const io = new IoClient(req, resp, {
   onIrq: (irq, level) => {
     irqEvents.push({ irq, level });
@@ -17,6 +18,9 @@ const io = new IoClient(req, resp, {
   },
   onReset: () => {
     resetRequests++;
+  },
+  onSerialOutput: (_port, data) => {
+    for (const b of data) serialBytes.push(b);
   },
 });
 
@@ -85,6 +89,19 @@ try {
     const mmioReadback = io.mmioRead(base + 0n, 4);
 
     parentPort!.postMessage({ ok: true, idDword, bar0, mmioReadback, irqEvents });
+  } else if (workerData.scenario === "uart16550") {
+    const lsrBefore = io.portRead(0x3f8 + 5, 1);
+    io.portWrite(0x3f8, 1, "H".charCodeAt(0));
+    io.portWrite(0x3f8, 1, "i".charCodeAt(0));
+    const lsrAfter = io.portRead(0x3f8 + 5, 1);
+
+    parentPort!.postMessage({
+      ok: true,
+      lsrBefore,
+      lsrAfter,
+      serialBytes,
+      irqEvents,
+    });
   } else {
     parentPort!.postMessage({ ok: false, error: `unknown scenario: ${workerData.scenario}` });
   }

@@ -1,6 +1,7 @@
 import { DeviceManager } from "../io/device_manager.ts";
 import { I8042Controller } from "../io/devices/i8042.ts";
 import { PciTestDevice } from "../io/devices/pci_test_device.ts";
+import { UART_COM1, Uart16550 } from "../io/devices/uart16550.ts";
 import { IoServer } from "../io/ipc/io_server.ts";
 import { SharedRingBuffer } from "../io/ipc/ring_buffer.ts";
 import {
@@ -9,9 +10,11 @@ import {
   IO_OP_IRQ_LOWER,
   IO_OP_IRQ_RAISE,
   IO_OP_RESET_REQUEST,
+  IO_OP_SERIAL_OUT,
   writeIoMessage,
 } from "../io/ipc/io_protocol.ts";
 import type { IrqSink } from "../io/device_manager.ts";
+import type { SerialOutputSink } from "../io/devices/uart16550.ts";
 
 export interface IoWorkerInitOptions {
   requestRing: SharedArrayBuffer;
@@ -28,6 +31,7 @@ export function runIoWorkerServer(opts: IoWorkerInitOptions): never {
   }
 
   const irqTx = new Uint32Array(IO_MESSAGE_STRIDE_U32);
+  const serialTx = new Uint32Array(IO_MESSAGE_STRIDE_U32);
   const irqSink: IrqSink = {
     raiseIrq: (irq) => {
       writeIoMessage(irqTx, { type: IO_OP_IRQ_RAISE, id: 0, addrLo: irq & 0xff, addrHi: 0, size: 0, value: 0 });
@@ -51,6 +55,28 @@ export function runIoWorkerServer(opts: IoWorkerInitOptions): never {
     },
   };
 
+  const serialSink: SerialOutputSink = {
+    write: (port, data) => {
+      for (let i = 0; i < data.byteLength; i += 4) {
+        const chunk = data.subarray(i, i + 4);
+        let packed = 0;
+        for (let j = 0; j < chunk.byteLength; j++) {
+          packed |= (chunk[j]! & 0xff) << (j * 8);
+        }
+
+        writeIoMessage(serialTx, {
+          type: IO_OP_SERIAL_OUT,
+          id: 0,
+          addrLo: port & 0xffff,
+          addrHi: 0,
+          size: chunk.byteLength & 0xff,
+          value: packed >>> 0,
+        });
+        respRing.pushBlocking(serialTx);
+      }
+    },
+  };
+
   const devices = opts.devices ?? ["i8042"];
   const mgr = new DeviceManager(irqSink);
 
@@ -63,6 +89,11 @@ export function runIoWorkerServer(opts: IoWorkerInitOptions): never {
 
   if (devices.includes("pci_test")) {
     mgr.registerPciDevice(new PciTestDevice());
+  }
+
+  if (devices.includes("uart16550")) {
+    const uart = new Uart16550(UART_COM1, serialSink);
+    mgr.registerPortIo(uart.basePort, uart.basePort + 7, uart);
   }
 
   const server = new IoServer(reqRing, respRing, mgr, { tickIntervalMs: opts.tickIntervalMs });
