@@ -1,6 +1,23 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
+fn rational_deadline_ns(
+    base_deadline_ns: u64,
+    period_num_ns: u64,
+    period_denom: u64,
+    index: u64,
+) -> u64 {
+    debug_assert!(period_num_ns > 0);
+    debug_assert!(period_denom > 0);
+    let offset_ns = ((index as u128) * (period_num_ns as u128)) / (period_denom as u128);
+    let offset_ns: u64 = offset_ns
+        .try_into()
+        .expect("timer rational offset exceeded u64::MAX");
+    base_deadline_ns
+        .checked_add(offset_ns)
+        .expect("timer deadline overflowed u64::MAX")
+}
+
 /// A stable identifier for a timer allocated from a [`TimerScheduler`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TimerId(u64);
@@ -23,12 +40,22 @@ pub struct TimerEvent {
 pub enum TimerKind {
     OneShot,
     Periodic { period_ns: u64 },
+    /// Periodic timer with a fractional nanosecond period, represented as
+    /// `period_num_ns / period_denom`.
+    ///
+    /// This is useful for devices whose clock rates do not divide evenly into
+    /// 1GHz (e.g. ACPI PM timer, RTC periodic rates).
+    PeriodicRational {
+        period_num_ns: u64,
+        period_denom: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TimerError {
     UnknownTimer(TimerId),
     InvalidPeriodNs,
+    InvalidRationalPeriod,
 }
 
 impl std::fmt::Display for TimerError {
@@ -36,6 +63,9 @@ impl std::fmt::Display for TimerError {
         match self {
             Self::UnknownTimer(id) => write!(f, "unknown timer id {}", id.as_u64()),
             Self::InvalidPeriodNs => write!(f, "invalid period_ns (must be > 0)"),
+            Self::InvalidRationalPeriod => {
+                write!(f, "invalid rational period (num_ns and denom must be > 0)")
+            }
         }
     }
 }
@@ -52,6 +82,12 @@ struct TimerSlot {
 enum TimerKindState {
     OneShot { deadline_ns: u64 },
     Periodic { next_deadline_ns: u64, period_ns: u64 },
+    PeriodicRational {
+        base_deadline_ns: u64,
+        next_index: u64,
+        period_num_ns: u64,
+        period_denom: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,6 +195,46 @@ impl TimerScheduler {
         Ok(())
     }
 
+    /// Arms an existing timer as periodic, with the period expressed as a
+    /// rational number of nanoseconds.
+    ///
+    /// The `k`th firing time is:
+    ///
+    /// `first_deadline_ns + floor(k * period_num_ns / period_denom)`
+    ///
+    /// This ensures phase is maintained even when the period is not an integer
+    /// number of nanoseconds.
+    pub fn arm_periodic_rational_ns(
+        &mut self,
+        timer_id: TimerId,
+        first_deadline_ns: u64,
+        period_num_ns: u64,
+        period_denom: u64,
+    ) -> Result<(), TimerError> {
+        if period_num_ns == 0 || period_denom == 0 {
+            return Err(TimerError::InvalidRationalPeriod);
+        }
+
+        let slot = self
+            .timers
+            .get_mut(&timer_id)
+            .ok_or(TimerError::UnknownTimer(timer_id))?;
+
+        slot.generation = slot.generation.wrapping_add(1);
+        slot.kind = Some(TimerKindState::PeriodicRational {
+            base_deadline_ns: first_deadline_ns,
+            next_index: 0,
+            period_num_ns,
+            period_denom,
+        });
+        self.queue.push(std::cmp::Reverse(QueueEntry {
+            deadline_ns: first_deadline_ns,
+            timer_id,
+            generation: slot.generation,
+        }));
+        Ok(())
+    }
+
     /// Disarms a timer.
     pub fn disarm(&mut self, timer_id: TimerId) -> Result<(), TimerError> {
         let slot = self
@@ -244,6 +320,47 @@ impl TimerScheduler {
                         generation: slot.generation,
                     }));
                 }
+                TimerKindState::PeriodicRational {
+                    base_deadline_ns,
+                    mut next_index,
+                    period_num_ns,
+                    period_denom,
+                } => {
+                    let expected_deadline_ns = rational_deadline_ns(
+                        base_deadline_ns,
+                        period_num_ns,
+                        period_denom,
+                        next_index,
+                    );
+                    debug_assert_eq!(expected_deadline_ns, entry.deadline_ns);
+
+                    events.push(TimerEvent {
+                        timer_id: entry.timer_id,
+                        deadline_ns: expected_deadline_ns,
+                    });
+
+                    next_index = next_index
+                        .checked_add(1)
+                        .expect("periodic timer index overflowed u64::MAX");
+                    let new_deadline = rational_deadline_ns(
+                        base_deadline_ns,
+                        period_num_ns,
+                        period_denom,
+                        next_index,
+                    );
+
+                    slot.kind = Some(TimerKindState::PeriodicRational {
+                        base_deadline_ns,
+                        next_index,
+                        period_num_ns,
+                        period_denom,
+                    });
+                    self.queue.push(std::cmp::Reverse(QueueEntry {
+                        deadline_ns: new_deadline,
+                        timer_id: entry.timer_id,
+                        generation: slot.generation,
+                    }));
+                }
             }
         }
 
@@ -267,6 +384,17 @@ impl TimerScheduler {
                     }) => Some(TimerKindStateRepr::Periodic {
                         next_deadline_ns,
                         period_ns,
+                    }),
+                    Some(TimerKindState::PeriodicRational {
+                        base_deadline_ns,
+                        next_index,
+                        period_num_ns,
+                        period_denom,
+                    }) => Some(TimerKindStateRepr::PeriodicRational {
+                        base_deadline_ns,
+                        next_index,
+                        period_num_ns,
+                        period_denom,
                     }),
                 },
             })
@@ -311,6 +439,30 @@ impl TimerScheduler {
                         period_ns,
                     })
                 }
+                Some(TimerKindStateRepr::PeriodicRational {
+                    base_deadline_ns,
+                    next_index,
+                    period_num_ns,
+                    period_denom,
+                }) => {
+                    let deadline_ns = rational_deadline_ns(
+                        base_deadline_ns,
+                        period_num_ns,
+                        period_denom,
+                        next_index,
+                    );
+                    scheduler.queue.push(std::cmp::Reverse(QueueEntry {
+                        deadline_ns,
+                        timer_id: timer.timer_id,
+                        generation: 0,
+                    }));
+                    Some(TimerKindState::PeriodicRational {
+                        base_deadline_ns,
+                        next_index,
+                        period_num_ns,
+                        period_denom,
+                    })
+                }
             };
 
             scheduler.timers.insert(
@@ -351,6 +503,17 @@ impl TimerScheduler {
                 TimerKindState::Periodic {
                     next_deadline_ns, ..
                 } => next_deadline_ns,
+                TimerKindState::PeriodicRational {
+                    base_deadline_ns,
+                    next_index,
+                    period_num_ns,
+                    period_denom,
+                } => rational_deadline_ns(
+                    base_deadline_ns,
+                    period_num_ns,
+                    period_denom,
+                    next_index,
+                ),
             };
 
             if active_deadline_ns != entry.deadline_ns {
@@ -379,6 +542,12 @@ pub struct TimerState {
 pub enum TimerKindStateRepr {
     OneShot { deadline_ns: u64 },
     Periodic { next_deadline_ns: u64, period_ns: u64 },
+    PeriodicRational {
+        base_deadline_ns: u64,
+        next_index: u64,
+        period_num_ns: u64,
+        period_denom: u64,
+    },
 }
 
 #[cfg(test)]
@@ -540,6 +709,55 @@ mod tests {
                 timer_id: t,
                 deadline_ns: 20
             }]
+        );
+    }
+
+    #[test]
+    fn periodic_rational_maintains_phase_across_chunking() {
+        // 2.5ns period: deadlines should alternate between +2 and +3.
+        let mut clock = Clock::new();
+        let mut sched = TimerScheduler::new();
+        let t = sched.alloc_timer();
+
+        sched.arm_periodic_rational_ns(t, 10, 5, 2).unwrap();
+
+        // Single-step to 20.
+        clock.advance(20);
+        let events = sched.advance_to(clock.now_ns());
+        let deadlines: Vec<u64> = events.iter().map(|e| e.deadline_ns).collect();
+        assert_eq!(deadlines, vec![10, 12, 15, 17, 20]);
+
+        // Advance in chunks and ensure the schedule continues without drift.
+        clock.advance(1);
+        assert!(sched.advance_to(clock.now_ns()).is_empty());
+        clock.advance(4);
+        let events = sched.advance_to(clock.now_ns());
+        let deadlines: Vec<u64> = events.iter().map(|e| e.deadline_ns).collect();
+        assert_eq!(deadlines, vec![22, 25]);
+    }
+
+    #[test]
+    fn save_restore_round_trip_preserves_future_events_for_rational_periodic() {
+        let mut clock = Clock::new();
+        let mut sched = TimerScheduler::new();
+        let t = sched.alloc_timer();
+        sched.arm_periodic_rational_ns(t, 10, 5, 2).unwrap();
+
+        clock.advance(17);
+        let events_before = sched.advance_to(clock.now_ns());
+        assert_eq!(
+            events_before.iter().map(|e| e.deadline_ns).collect::<Vec<_>>(),
+            vec![10, 12, 15, 17]
+        );
+
+        let state = sched.save_state();
+        let mut restored = TimerScheduler::restore_state(state);
+
+        clock.advance(8); // now 25
+        let events_after = restored.advance_to(clock.now_ns());
+        assert_eq!(
+            events_after.iter().map(|e| e.deadline_ns).collect::<Vec<_>>(),
+            vec![20, 22, 25]
         );
     }
 }
