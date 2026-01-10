@@ -12,7 +12,7 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
 
 | BDF      | Device | Vendor:Device | Class (base/sub/progif) | INTx pin | Notes |
 |----------|--------|---------------|--------------------------|----------|-------|
-| 00:01.1  | IDE    | 8086:7010     | 01/01/80                 | INTA     | PIIX3-compatible PCI IDE (legacy-compatible) |
+| 00:01.1  | IDE    | 8086:7010     | 01/01/8A                 | INTA     | PIIX3-compatible PCI IDE (legacy compatibility mode, bus mastering DMA) |
 | 00:01.2  | USB1   | 8086:7020     | 0C/03/00                 | INTA     | UHCI (USB 1.1) |
 | 00:02.0  | SATA   | 8086:2922     | 01/06/01                 | INTA     | AHCI (SATA) |
 | 00:03.0  | NVMe   | 1B36:0010     | 01/08/02                 | INTA     | NVMe controller (optional) |
@@ -81,7 +81,7 @@ For Windows 7 and Linux to bind drivers predictably:
 
 1. **Vendor ID / Device ID** must match the expected device model.
 2. **Class/Subclass/ProgIF** must match:
-   - IDE: `01/01/*` (Aero uses `prog-if=0x80` for bus-master IDE)
+   - IDE: `01/01/*` (PIIX3 uses `prog-if=0x8A` for legacy-compat + bus-master IDE)
    - AHCI: `01/06/01`
    - NVMe: `01/08/02`
    - HDA: `04/03/00`

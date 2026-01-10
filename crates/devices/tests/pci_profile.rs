@@ -7,7 +7,7 @@ use aero_devices::pci::profile::*;
 fn canonical_ids_and_class_codes() {
     assert_eq!(IDE_PIIX3.vendor_id, 0x8086);
     assert_eq!(IDE_PIIX3.device_id, 0x7010);
-    assert_eq!(IDE_PIIX3.class.as_u32(), 0x010180);
+    assert_eq!(IDE_PIIX3.class.as_u32(), 0x01018a);
 
     assert_eq!(USB_UHCI_PIIX3.vendor_id, 0x8086);
     assert_eq!(USB_UHCI_PIIX3.device_id, 0x7020);
@@ -72,10 +72,7 @@ fn config_space_builder_matches_profile() {
         assert_eq!(cfg.read(0x2c, 2) as u16, profile.subsystem_vendor_id);
         assert_eq!(cfg.read(0x2e, 2) as u16, profile.subsystem_id);
 
-        let expected_pin = profile
-            .interrupt_pin
-            .map(|p| p.to_config_u8())
-            .unwrap_or(0);
+        let expected_pin = profile.interrupt_pin.map(|p| p.to_config_u8()).unwrap_or(0);
         assert_eq!(cfg.read(0x3d, 1) as u8, expected_pin);
     }
 }

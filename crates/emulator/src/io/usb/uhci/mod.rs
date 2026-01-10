@@ -148,10 +148,13 @@ impl Default for UhciController {
 pub struct UhciPciDevice {
     config: PciConfigSpace,
     pub io_base: u16,
+    io_base_probe: bool,
     pub controller: UhciController,
 }
 
 impl UhciPciDevice {
+    const IO_BAR_SIZE: u32 = 0x20;
+
     pub fn new(controller: UhciController, io_base: u16) -> Self {
         let mut config = PciConfigSpace::new();
 
@@ -173,6 +176,7 @@ impl UhciPciDevice {
         Self {
             config,
             io_base,
+            io_base_probe: false,
             controller,
         }
     }
@@ -197,12 +201,31 @@ impl UhciPciDevice {
 
 impl PciDevice for UhciPciDevice {
     fn config_read(&self, offset: u16, size: usize) -> u32 {
+        if offset == 0x20 && size == 4 {
+            return if self.io_base_probe {
+                // BAR4: 32-byte I/O window.
+                (!(Self::IO_BAR_SIZE - 1) & 0xffff_fffc) | 0x1
+            } else {
+                u32::from(self.io_base) | 0x1
+            };
+        }
         self.config.read(offset, size)
     }
 
     fn config_write(&mut self, offset: u16, size: usize, value: u32) {
         if offset == 0x20 && size == 4 {
+            if value == 0xffff_ffff {
+                self.io_base_probe = true;
+                self.io_base = 0;
+                self.config.write(offset, size, 0);
+                return;
+            }
+
+            self.io_base_probe = false;
             self.io_base = (value as u16) & 0xfff0;
+            let encoded = u32::from(self.io_base) | 0x1;
+            self.config.write(offset, size, encoded);
+            return;
         }
         self.config.write(offset, size, value);
     }

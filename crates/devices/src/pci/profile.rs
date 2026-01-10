@@ -133,9 +133,8 @@ impl PciDeviceProfile {
         for cap in self.capabilities {
             match cap {
                 PciCapabilityProfile::VendorSpecific { payload } => {
-                    config.add_capability(Box::new(VendorSpecificCapability::new(
-                        payload.to_vec(),
-                    )));
+                    config
+                        .add_capability(Box::new(VendorSpecificCapability::new(payload.to_vec())));
                 }
             }
         }
@@ -196,75 +195,19 @@ pub const RTL8139_BARS: [PciBarProfile; 2] = [
 pub const VIRTIO_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(0, 0x4000, false)];
 
 pub const VIRTIO_CAP_COMMON: [u8; 14] = [
-    16,
-    1,
-    0,
-    0,
-    0,
-    0,
-    0x00,
-    0x00,
-    0x00,
-    0x00,
-    0x00,
-    0x01,
-    0x00,
-    0x00,
+    16, 1, 0, 0, 0, 0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
 ];
 
 pub const VIRTIO_CAP_NOTIFY: [u8; 18] = [
-    20,
-    2,
-    0,
-    0,
-    0,
-    0,
-    0x00,
-    0x10,
-    0x00,
-    0x00,
-    0x00,
-    0x01,
-    0x00,
-    0x00,
-    0x04,
-    0x00,
-    0x00,
-    0x00,
+    20, 2, 0, 0, 0, 0, 0x00, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
 ];
 
 pub const VIRTIO_CAP_ISR: [u8; 14] = [
-    16,
-    3,
-    0,
-    0,
-    0,
-    0,
-    0x00,
-    0x20,
-    0x00,
-    0x00,
-    0x20,
-    0x00,
-    0x00,
-    0x00,
+    16, 3, 0, 0, 0, 0, 0x00, 0x20, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00,
 ];
 
 pub const VIRTIO_CAP_DEVICE: [u8; 14] = [
-    16,
-    4,
-    0,
-    0,
-    0,
-    0,
-    0x00,
-    0x30,
-    0x00,
-    0x00,
-    0x00,
-    0x01,
-    0x00,
-    0x00,
+    16, 4, 0, 0, 0, 0, 0x00, 0x30, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
 ];
 
 pub const VIRTIO_CAPS: [PciCapabilityProfile; 4] = [
@@ -290,7 +233,10 @@ pub const IDE_PIIX3: PciDeviceProfile = PciDeviceProfile {
     subsystem_vendor_id: 0,
     subsystem_id: 0,
     revision_id: 0,
-    class: PciClassCode::new(0x01, 0x01, 0x80),
+    // PIIX3 uses a programming interface of 0x8A:
+    // - bus master DMA present (bit 7)
+    // - both channels in legacy-compat mode but programmable (bits 1 and 3)
+    class: PciClassCode::new(0x01, 0x01, 0x8a),
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),
     bars: &IDE_BARS,

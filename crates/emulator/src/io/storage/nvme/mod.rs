@@ -7,15 +7,16 @@ mod registers;
 use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
 use crate::io::storage::disk::{DiskBackend, DiskError};
 use commands::{
-    build_identify_controller, build_identify_namespace, NvmeCommand, NvmeStatus, FID_NUMBER_OF_QUEUES,
-    OPC_ADMIN_ASYNC_EVENT_REQUEST, OPC_ADMIN_CREATE_IO_CQ, OPC_ADMIN_CREATE_IO_SQ, OPC_ADMIN_DELETE_IO_CQ,
-    OPC_ADMIN_DELETE_IO_SQ, OPC_ADMIN_GET_FEATURES, OPC_ADMIN_GET_LOG_PAGE, OPC_ADMIN_IDENTIFY,
-    OPC_ADMIN_KEEP_ALIVE, OPC_ADMIN_SET_FEATURES, OPC_NVM_FLUSH, OPC_NVM_READ, OPC_NVM_WRITE,
+    build_identify_controller, build_identify_namespace, NvmeCommand, NvmeStatus,
+    FID_NUMBER_OF_QUEUES, OPC_ADMIN_ASYNC_EVENT_REQUEST, OPC_ADMIN_CREATE_IO_CQ,
+    OPC_ADMIN_CREATE_IO_SQ, OPC_ADMIN_DELETE_IO_CQ, OPC_ADMIN_DELETE_IO_SQ,
+    OPC_ADMIN_GET_FEATURES, OPC_ADMIN_GET_LOG_PAGE, OPC_ADMIN_IDENTIFY, OPC_ADMIN_KEEP_ALIVE,
+    OPC_ADMIN_SET_FEATURES, OPC_NVM_FLUSH, OPC_NVM_READ, OPC_NVM_WRITE,
 };
 use memory::MemoryBus;
 use queue::{
-    dma_read, dma_write, dma_write_zeros, read_command_dwords, CompletionQueue, PrpError, QueuePair,
-    SubmissionQueue,
+    dma_read, dma_write, dma_write_zeros, read_command_dwords, CompletionQueue, PrpError,
+    QueuePair, SubmissionQueue,
 };
 use registers::*;
 use std::collections::HashMap;
@@ -209,9 +210,13 @@ impl NvmeController {
             }
             NVME_REG_AQA => self.aqa = value,
             NVME_REG_ASQ => self.asq = (self.asq & 0xffff_ffff_0000_0000) | value as u64,
-            NVME_REG_ASQ_HI => self.asq = (self.asq & 0x0000_0000_ffff_ffff) | ((value as u64) << 32),
+            NVME_REG_ASQ_HI => {
+                self.asq = (self.asq & 0x0000_0000_ffff_ffff) | ((value as u64) << 32)
+            }
             NVME_REG_ACQ => self.acq = (self.acq & 0xffff_ffff_0000_0000) | value as u64,
-            NVME_REG_ACQ_HI => self.acq = (self.acq & 0x0000_0000_ffff_ffff) | ((value as u64) << 32),
+            NVME_REG_ACQ_HI => {
+                self.acq = (self.acq & 0x0000_0000_ffff_ffff) | ((value as u64) << 32)
+            }
             _ if offset >= NVME_DOORBELL_BASE => self.handle_doorbell(mem, offset, value),
             _ => {}
         }
@@ -520,7 +525,10 @@ impl NvmeController {
         let sector_size = self.disk.sector_size() as usize;
         let slba = cmd.slba();
         let nlb = cmd.nlb() as u64;
-        if slba.checked_add(nlb).map_or(true, |end| end > self.disk.total_sectors()) {
+        if slba
+            .checked_add(nlb)
+            .map_or(true, |end| end > self.disk.total_sectors())
+        {
             return (0, NvmeStatus::lba_out_of_range());
         }
 
@@ -543,7 +551,10 @@ impl NvmeController {
         let sector_size = self.disk.sector_size() as usize;
         let slba = cmd.slba();
         let nlb = cmd.nlb() as u64;
-        if slba.checked_add(nlb).map_or(true, |end| end > self.disk.total_sectors()) {
+        if slba
+            .checked_add(nlb)
+            .map_or(true, |end| end > self.disk.total_sectors())
+        {
             return (0, NvmeStatus::lba_out_of_range());
         }
 
@@ -611,12 +622,13 @@ impl NvmeController {
 
 pub struct NvmePciDevice {
     config: PciConfigSpace,
-    pub bar0: u32,
+    pub bar0: u64,
+    bar0_probe: bool,
     pub controller: NvmeController,
 }
 
 impl NvmePciDevice {
-    pub fn new(controller: NvmeController, bar0: u32) -> Self {
+    pub fn new(controller: NvmeController, bar0: u64) -> Self {
         let mut config = PciConfigSpace::new();
         config.set_u16(0x00, 0x1b36);
         config.set_u16(0x02, 0x0010);
@@ -625,12 +637,15 @@ impl NvmePciDevice {
         config.write(0x0a, 1, 0x08);
         config.write(0x0b, 1, 0x01);
 
-        config.set_u32(0x10, bar0 & 0xffff_fff0);
+        // BAR0/BAR1: 64-bit non-prefetchable MMIO.
+        config.set_u32(0x10, (bar0 as u32 & 0xffff_fff0) | 0x4);
+        config.set_u32(0x14, (bar0 >> 32) as u32);
         config.write(0x3d, 1, 1);
 
         Self {
             config,
             bar0,
+            bar0_probe: false,
             controller,
         }
     }
@@ -638,12 +653,50 @@ impl NvmePciDevice {
 
 impl PciDevice for NvmePciDevice {
     fn config_read(&self, offset: u16, size: usize) -> u32 {
+        if offset == 0x10 && size == 4 {
+            return if self.bar0_probe {
+                (!(NvmeController::BAR0_SIZE as u32 - 1) & 0xffff_fff0) | 0x4
+            } else {
+                (self.bar0 as u32 & 0xffff_fff0) | 0x4
+            };
+        }
+        if offset == 0x14 && size == 4 {
+            return if self.bar0_probe {
+                0xffff_ffff
+            } else {
+                (self.bar0 >> 32) as u32
+            };
+        }
         self.config.read(offset, size)
     }
 
     fn config_write(&mut self, offset: u16, size: usize, value: u32) {
         if offset == 0x10 && size == 4 {
-            self.bar0 = value & 0xffff_fff0;
+            if value == 0xffff_ffff {
+                self.bar0_probe = true;
+                self.bar0 = 0;
+                self.config.write(offset, size, 0);
+                return;
+            }
+
+            self.bar0_probe = false;
+            let addr_lo = (value & 0xffff_fff0) as u64;
+            self.bar0 = (self.bar0 & 0xffff_ffff_0000_0000) | addr_lo;
+            self.config.write(offset, size, (addr_lo as u32) | 0x4);
+            return;
+        }
+        if offset == 0x14 && size == 4 {
+            if value == 0xffff_ffff {
+                self.bar0_probe = true;
+                self.bar0 &= 0xffff_ffff;
+                self.config.write(offset, size, 0);
+                return;
+            }
+
+            self.bar0_probe = false;
+            self.bar0 = (self.bar0 & 0x0000_0000_ffff_ffff) | ((value as u64) << 32);
+            self.config.write(offset, size, value);
+            return;
         }
         self.config.write(offset, size, value);
     }
@@ -683,7 +736,9 @@ mod tests {
 
     impl VecMemory {
         fn new(size: usize) -> Self {
-            Self { data: vec![0; size] }
+            Self {
+                data: vec![0; size],
+            }
         }
 
         fn range(&self, paddr: u64, len: usize) -> core::ops::Range<usize> {
@@ -762,7 +817,12 @@ mod tests {
         assert_eq!(vid, 0x1b36);
     }
 
-    fn admin_create_io_queues(ctrl: &mut NvmeController, mem: &mut VecMemory, io_sq: u64, io_cq: u64) {
+    fn admin_create_io_queues(
+        ctrl: &mut NvmeController,
+        mem: &mut VecMemory,
+        io_sq: u64,
+        io_cq: u64,
+    ) {
         let mut cid = 1u16;
 
         let mut cmd = [0u32; 16];

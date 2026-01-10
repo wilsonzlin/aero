@@ -1,10 +1,14 @@
-use aero_devices::pci::profile::{HDA_ICH6, NIC_E1000_82540EM, SATA_AHCI_ICH9, USB_UHCI_PIIX3};
+use aero_devices::pci::profile::{
+    HDA_ICH6, IDE_PIIX3, NIC_E1000_82540EM, NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3,
+};
 
 use emulator::io::audio::hda::HdaPciDevice;
 use emulator::io::net::e1000_aero::{E1000Device, E1000PciDevice};
 use emulator::io::pci::PciDevice;
 use emulator::io::storage::ahci::{AhciController, AhciPciDevice};
 use emulator::io::storage::disk::MemDisk;
+use emulator::io::storage::ide::IdeController;
+use emulator::io::storage::nvme::{NvmeController, NvmePciDevice};
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
 
 fn read_u8(dev: &dyn PciDevice, offset: u16) -> u8 {
@@ -75,6 +79,11 @@ fn uhci_pci_config_matches_canonical_profile() {
 
     // UHCI uses BAR4 (I/O) at 0x20.
     assert_eq!(read_u32(&uhci, 0x20) & 0x1, 0x1);
+
+    let mut uhci = uhci;
+    uhci.config_write(0x20, 4, 0xffff_ffff);
+    let mask = uhci.config_read(0x20, 4);
+    assert_eq!(mask, (!(0x20u32 - 1) & 0xffff_fffc) | 0x1);
 }
 
 #[test]
@@ -109,4 +118,31 @@ fn hda_pci_config_matches_canonical_profile() {
 fn e1000_pci_config_matches_canonical_profile() {
     let dev = E1000PciDevice::new(E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]));
     assert_basic_identity(&dev, NIC_E1000_82540EM);
+}
+
+#[test]
+fn nvme_pci_config_matches_canonical_profile() {
+    let disk = Box::new(MemDisk::new(16));
+    let ctrl = NvmeController::new(disk);
+    let dev = NvmePciDevice::new(ctrl, 0xfebf_0000);
+    assert_basic_identity(&dev, NVME_CONTROLLER);
+
+    // BAR0 is a 64-bit MMIO BAR.
+    assert_eq!(read_u32(&dev, 0x10) & 0x7, 0x4);
+
+    let mut dev = dev;
+    dev.config_write(0x10, 4, 0xffff_ffff);
+    let mask_lo = dev.config_read(0x10, 4);
+    let mask_hi = dev.config_read(0x14, 4);
+    assert_eq!(
+        mask_lo,
+        (!(NvmeController::BAR0_SIZE as u32 - 1) & 0xffff_fff0) | 0x4
+    );
+    assert_eq!(mask_hi, 0xffff_ffff);
+}
+
+#[test]
+fn ide_pci_config_matches_canonical_profile() {
+    let dev = IdeController::new(0);
+    assert_basic_identity(&dev, IDE_PIIX3);
 }
