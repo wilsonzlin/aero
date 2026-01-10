@@ -4,9 +4,11 @@
 //! that Windows 7 expects early during boot and during kernel runtime.
 
 use crate::cpuid::{cpuid, CpuFeatures, CpuidResult};
+use crate::exceptions::PendingEvent;
 use crate::msr::EFER_SCE;
 use crate::time::TimeSource;
 use crate::{msr::MsrState, Exception};
+use std::collections::VecDeque;
 
 /// A device/bus surface for port I/O instructions.
 pub trait PortIo {
@@ -29,6 +31,53 @@ pub enum CpuMode {
 pub struct DescriptorTableRegister {
     pub limit: u16,
     pub base: u64,
+}
+
+/// Minimal subset of the legacy (32-bit) task state segment used for ring stack switching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Tss32 {
+    pub ss0: u16,
+    pub esp0: u32,
+    pub ss1: u16,
+    pub esp1: u32,
+    pub ss2: u16,
+    pub esp2: u32,
+}
+
+impl Tss32 {
+    pub fn stack_for_cpl(&self, cpl: u8) -> Option<(u16, u32)> {
+        match cpl {
+            0 => Some((self.ss0, self.esp0)),
+            1 => Some((self.ss1, self.esp1)),
+            2 => Some((self.ss2, self.esp2)),
+            _ => None,
+        }
+    }
+}
+
+/// Minimal subset of the 64-bit task state segment used for stack switching (RSP{0,1,2} + IST).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Tss64 {
+    pub rsp0: u64,
+    pub rsp1: u64,
+    pub rsp2: u64,
+    pub ist: [u64; 7],
+}
+
+impl Tss64 {
+    pub fn rsp_for_cpl(&self, cpl: u8) -> Option<u64> {
+        match cpl {
+            0 => Some(self.rsp0),
+            1 => Some(self.rsp1),
+            2 => Some(self.rsp2),
+            _ => None,
+        }
+    }
+
+    pub fn ist_stack(&self, ist: u8) -> Option<u64> {
+        let idx = ist.checked_sub(1)? as usize;
+        self.ist.get(idx).copied().filter(|val| *val != 0)
+    }
 }
 
 /// Minimal CPU core state required by the system instruction surface.
@@ -93,6 +142,18 @@ pub struct Cpu {
     /// Interrupt shadow after STI (inhibits interrupts for one instruction).
     pub interrupt_inhibit: u8,
 
+    /// Deferred exception/interrupt delivery (raised by interpreter/JIT slow paths).
+    pub pending_event: Option<PendingEvent>,
+    /// FIFO of externally injected interrupts (PIC/APIC).
+    pub external_interrupts: VecDeque<u8>,
+
+    /// Ring-stack configuration (normally sourced from the TSS).
+    pub tss32: Option<Tss32>,
+    pub tss64: Option<Tss64>,
+
+    /// Tracks nested exception delivery for #DF escalation.
+    pub(crate) exception_depth: u32,
+
     /// Tracks INVLPG calls for integration/testing.
     pub invlpg_log: Vec<u64>,
 }
@@ -148,6 +209,11 @@ impl Cpu {
             time: TimeSource::default(),
             halted: false,
             interrupt_inhibit: 0,
+            pending_event: None,
+            external_interrupts: VecDeque::new(),
+            tss32: None,
+            tss64: None,
+            exception_depth: 0,
             invlpg_log: Vec::new(),
         }
     }
