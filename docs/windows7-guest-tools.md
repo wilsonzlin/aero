@@ -242,12 +242,18 @@ After you can boot with virtio + Aero GPU:
 Typical things `verify.cmd` reports:
 
 - OS version and architecture (x86 vs x64)
-- Whether **Test Signing** is enabled (important on x64 if drivers are test-signed)
-- Whether the Aero certificate is present in the expected certificate stores
-- Device/driver binding status for:
+- Whether **KB3033929** is installed (required for validating many SHA-256-signed driver catalogs on Windows 7)
+- Whether **Test Signing** / signature enforcement is configured correctly (`testsigning`, `nointegritychecks`)
+- Whether the Aero driver certificate(s) are installed into the expected certificate stores (**Local Machine** `Root` + `TrustedPublisher`)
+- Device/driver binding status (Device Manager health) for:
   - virtio-blk storage
   - virtio-net networking
-  - Aero GPU graphics
+  - virtio-snd audio
+  - virtio-input
+  - Aero GPU / virtio-gpu graphics
+- Boot-critical storage readiness for switching AHCI → virtio-blk:
+  - storage service `Start=0` (BOOT_START)
+  - `CriticalDeviceDatabase` mappings for the expected virtio-blk PCI HWIDs (prevents `0x7B INACCESSIBLE_BOOT_DEVICE`)
 
 If `report.txt` shows failures or warnings, see:
 
