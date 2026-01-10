@@ -45,6 +45,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 20. [Windows 7 Virtio Device Contract](./docs/windows7-virtio-driver-contract.md)
 21. [Security Headers & Deployment Hardening](./docs/security-headers.md)
 22. [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./docs/16-disk-image-streaming-auth.md)
+23. [HTTP Range + CDN Behavior](./docs/17-range-cdn-behavior.md)
 
 ---
 
@@ -329,6 +330,7 @@ pub trait DisplayAdapter {
 | [14-project-milestones.md](./docs/14-project-milestones.md)             | Timeline, deliverables                 | All               |
 | [15-agent-task-breakdown.md](./docs/15-agent-task-breakdown.md)         | Parallelizable work items              | All               |
 | [16-d3d10-11-translation.md](./docs/16-d3d10-11-translation.md)          | Direct3D 10/11 translation details     | Graphics          |
+| [17-range-cdn-behavior.md](./docs/17-range-cdn-behavior.md)             | HTTP Range + CDN caching/limits        | Infrastructure    |
 | [18-chunked-disk-image-format.md](./docs/18-chunked-disk-image-format.md) | Chunked disk image delivery (no HTTP Range) | I/O               |
 | [windows7-guest-tools.md](./docs/windows7-guest-tools.md)               | End-user guide: install Guest Tools and switch to virtio + Aero GPU | All |
 | [windows7-driver-troubleshooting.md](./docs/windows7-driver-troubleshooting.md) | End-user guide: Windows 7 driver/signing troubleshooting | All |
