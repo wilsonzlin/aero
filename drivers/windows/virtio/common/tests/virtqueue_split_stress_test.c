@@ -185,7 +185,7 @@ static void AssertInvariants(VQ_CTX *ctx)
 	}
 }
 
-static void CtxInit(VQ_CTX *ctx, UINT16 qsz, BOOLEAN event_idx, BOOLEAN indirect)
+static void CtxInitEx(VQ_CTX *ctx, UINT16 qsz, BOOLEAN event_idx, BOOLEAN indirect, UINT16 indirect_table_count)
 {
 	const UINT32 align = 16;
 
@@ -199,8 +199,8 @@ static void CtxInit(VQ_CTX *ctx, UINT16 qsz, BOOLEAN event_idx, BOOLEAN indirect
 	ctx->event_idx = event_idx ? TRUE : FALSE;
 	ctx->indirect = indirect ? TRUE : FALSE;
 
-	ctx->indirect_table_count = qsz;
-	ctx->indirect_max_desc = 16;
+	ctx->indirect_table_count = indirect ? indirect_table_count : 0;
+	ctx->indirect_max_desc = indirect ? 16 : 0;
 
 	vq_bytes = VirtqSplitStateSize(qsz);
 	ring_bytes = VirtqSplitRingMemSize(qsz, align, ctx->event_idx);
@@ -210,7 +210,7 @@ static void CtxInit(VQ_CTX *ctx, UINT16 qsz, BOOLEAN event_idx, BOOLEAN indirect
 	ASSERT_TRUE(ctx->vq != NULL);
 	ASSERT_TRUE(ctx->ring != NULL);
 
-	if (ctx->indirect) {
+	if (ctx->indirect && ctx->indirect_table_count != 0) {
 		pool_bytes = (size_t)ctx->indirect_table_count * (size_t)ctx->indirect_max_desc * sizeof(VIRTQ_DESC);
 		ctx->pool = calloc(1, pool_bytes);
 		ASSERT_TRUE(ctx->pool != NULL);
@@ -242,6 +242,11 @@ static void CtxInit(VQ_CTX *ctx, UINT16 qsz, BOOLEAN event_idx, BOOLEAN indirect
 	ctx->dev_used_idx = 0;
 	ModelReset(ctx);
 	AssertInvariants(ctx);
+}
+
+static void CtxInit(VQ_CTX *ctx, UINT16 qsz, BOOLEAN event_idx, BOOLEAN indirect)
+{
+	CtxInitEx(ctx, qsz, event_idx, indirect, indirect ? qsz : 0);
 }
 
 static void CtxDestroy(VQ_CTX *ctx)
@@ -497,6 +502,13 @@ static void ScenarioRingFullBackpressure(BOOLEAN event_idx, BOOLEAN indirect)
 			AssertInvariants(&ctx);
 		}
 
+		/* Device consumes the newly published heads as well. */
+		{
+			UINT16 new_heads[32];
+			ASSERT_EQ_U16(DeviceConsumeAvail(&ctx, new_heads, (UINT16)(sizeof(new_heads) / sizeof(new_heads[0]))),
+				      complete_n);
+		}
+
 		free(exp_len);
 		free(exp_cookie);
 		free(exp_head);
@@ -526,6 +538,116 @@ static void ScenarioRingFullBackpressure(BOOLEAN event_idx, BOOLEAN indirect)
 	AssertInvariants(&ctx);
 	ASSERT_EQ_U16(ctx.vq->num_free, qsz);
 
+	CtxDestroy(&ctx);
+}
+
+static void ScenarioIndirectPoolExhaustionFallback(BOOLEAN event_idx)
+{
+	/*
+	 * Exercise a tricky corner of the indirect feature: the driver may have
+	 * negotiated indirect descriptors, but the indirect table pool can be
+	 * smaller than the ring size. In that case VirtqSplitAddBuffer() must fall
+	 * back to direct chains without corrupting head_indirect[] bookkeeping.
+	 */
+	const UINT16 qsz = 8;
+	const UINT16 sg_count = 3;
+	const UINT16 pool_tables = 1;
+
+	VQ_CTX ctx;
+	VIRTQ_SG sg[sg_count];
+	UINT16 heads[4];
+	UINT16 i;
+
+	PRNG rng = {.state = 0x51515555ULL ^ (UINT64)(event_idx ? 1 : 0)};
+
+	CtxInitEx(&ctx, qsz, event_idx, TRUE, pool_tables);
+	ASSERT_TRUE(ctx.vq->indirect_pool_va != NULL);
+	ASSERT_EQ_U16(ctx.vq->indirect_table_count, pool_tables);
+
+	for (i = 0; i < sg_count; i++) {
+		sg[i].addr = 0x900000 + (UINT64)i * 0x100;
+		sg[i].len = 32 + (UINT32)i;
+		sg[i].write = (i == (UINT16)(sg_count - 1)) ? TRUE : FALSE;
+	}
+
+	/* First buffer should use indirect (pool has 1 table). */
+	{
+		void *cookie = (void *)(uintptr_t)0x60000001u;
+		UINT16 head;
+		ASSERT_TRUE(NT_SUCCESS(VirtqSplitAddBuffer(ctx.vq, sg, sg_count, cookie, &head)));
+		ModelOnAdd(&ctx, head, sg_count, cookie);
+		ASSERT_VQ(ctx.vq, ctx.vq->head_indirect[head] != VIRTQ_SPLIT_NO_DESC);
+		VirtqSplitPublish(ctx.vq, head);
+		AssertInvariants(&ctx);
+	}
+
+	/* Subsequent buffers must use direct chains because the pool is exhausted. */
+	for (i = 0; i < 2; i++) {
+		void *cookie = (void *)(uintptr_t)(0x60000010u + i);
+		UINT16 head;
+		ASSERT_TRUE(NT_SUCCESS(VirtqSplitAddBuffer(ctx.vq, sg, sg_count, cookie, &head)));
+		ModelOnAdd(&ctx, head, sg_count, cookie);
+		ASSERT_VQ(ctx.vq, ctx.vq->head_indirect[head] == VIRTQ_SPLIT_NO_DESC);
+		VirtqSplitPublish(ctx.vq, head);
+		AssertInvariants(&ctx);
+	}
+
+	/* Device consumes + completes all published buffers out of order. */
+	{
+		UINT16 consumed = DeviceConsumeAvail(&ctx, heads, (UINT16)(sizeof(heads) / sizeof(heads[0])));
+		void *exp_cookie[4];
+		UINT32 exp_len[4];
+		UINT16 exp_head[4];
+
+		ASSERT_EQ_U16(consumed, 3);
+		ShuffleU16(&rng, heads, consumed);
+
+		for (i = 0; i < consumed; i++) {
+			exp_head[i] = heads[i];
+			exp_cookie[i] = ctx.expected_cookie[heads[i]];
+			exp_len[i] = 0x11110000u + i;
+			DeviceWriteUsed(&ctx, heads[i], exp_len[i]);
+		}
+		DeviceCommitUsed(&ctx);
+
+		for (i = 0; i < consumed; i++) {
+			void *cookie_out = NULL;
+			UINT32 len_out = 0;
+			ASSERT_TRUE(NT_SUCCESS(VirtqSplitGetUsed(ctx.vq, &cookie_out, &len_out)));
+			ASSERT_TRUE(cookie_out == exp_cookie[i]);
+			ASSERT_EQ_U32(len_out, exp_len[i]);
+			ModelOnPop(&ctx, exp_head[i]);
+			AssertInvariants(&ctx);
+		}
+	}
+
+	ASSERT_EQ_U16(ctx.vq->num_free, qsz);
+	ASSERT_EQ_U16(ctx.vq->indirect_num_free, pool_tables);
+
+	/* Verify an indirect buffer can be posted again after the table is freed. */
+	{
+		UINT16 head;
+		void *cookie = (void *)(uintptr_t)0x60000099u;
+		ASSERT_TRUE(NT_SUCCESS(VirtqSplitAddBuffer(ctx.vq, sg, sg_count, cookie, &head)));
+		ModelOnAdd(&ctx, head, sg_count, cookie);
+		ASSERT_VQ(ctx.vq, ctx.vq->head_indirect[head] != VIRTQ_SPLIT_NO_DESC);
+		VirtqSplitPublish(ctx.vq, head);
+
+		ASSERT_EQ_U16(DeviceConsumeAvail(&ctx, heads, (UINT16)(sizeof(heads) / sizeof(heads[0]))), 1);
+		DeviceWriteUsed(&ctx, heads[0], 0xCAFE);
+		DeviceCommitUsed(&ctx);
+
+		void *cookie_out = NULL;
+		UINT32 len_out = 0;
+		ASSERT_TRUE(NT_SUCCESS(VirtqSplitGetUsed(ctx.vq, &cookie_out, &len_out)));
+		ASSERT_TRUE(cookie_out == cookie);
+		ASSERT_EQ_U32(len_out, 0xCAFE);
+		ModelOnPop(&ctx, heads[0]);
+		AssertInvariants(&ctx);
+	}
+
+	ASSERT_EQ_U16(ctx.vq->num_free, qsz);
+	ASSERT_EQ_U16(ctx.vq->indirect_num_free, pool_tables);
 	CtxDestroy(&ctx);
 }
 
@@ -759,6 +881,9 @@ int main(void)
 		ScenarioNotifyDecisionSanity(event_idx, indirect);
 		ScenarioOutOfOrderCompletion(event_idx, indirect);
 		ScenarioRingFullBackpressure(event_idx, indirect);
+		if (indirect) {
+			ScenarioIndirectPoolExhaustionFallback(event_idx);
+		}
 		ScenarioWraparoundTorture(event_idx, indirect);
 	}
 
