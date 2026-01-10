@@ -1,4 +1,4 @@
-use aero_platform::time::{Clock, TimerScheduler};
+use aero_platform::time::VirtualTime;
 
 /// Integration-style test that demonstrates how device models (e.g. PIT/HPET)
 /// can be driven deterministically via the shared virtual clock + scheduler.
@@ -9,28 +9,30 @@ fn pit_and_hpet_interrupt_rates_are_deterministic() {
     const SIM_TIME_NS: u64 = 10_000_000; // 10 ms
 
     fn simulate(steps: &[u64]) -> (Vec<u64>, Vec<u64>) {
-        let mut clock = Clock::new();
-        let mut sched = TimerScheduler::new();
+        let mut time = VirtualTime::new();
 
         // PIT: periodic interrupt source.
-        let pit_timer = sched.alloc_timer();
-        sched
+        let pit_timer = time.timers_mut().alloc_timer();
+        time.timers_mut()
             .arm_periodic(pit_timer, PIT_PERIOD_NS, PIT_PERIOD_NS)
             .unwrap();
 
         // HPET: modeled as a one-shot comparator that the device re-arms using the
         // previous deadline (not "now") to avoid phase drift when time advances in
         // large chunks.
-        let hpet_timer = sched.alloc_timer();
-        sched.arm_one_shot(hpet_timer, HPET_PERIOD_NS).unwrap();
+        let hpet_timer = time.timers_mut().alloc_timer();
+        time.timers_mut()
+            .arm_one_shot(hpet_timer, HPET_PERIOD_NS)
+            .unwrap();
 
         let mut pit_irqs = Vec::new();
         let mut hpet_irqs = Vec::new();
 
         for &step in steps {
-            clock.advance(step);
+            time.clock_mut().advance(step);
             loop {
-                let events = sched.advance_to(clock.now_ns());
+                let now = time.now_ns();
+                let events = time.timers_mut().advance_to(now);
                 if events.is_empty() {
                     break;
                 }
@@ -40,7 +42,7 @@ fn pit_and_hpet_interrupt_rates_are_deterministic() {
                     } else if event.timer_id == hpet_timer {
                         hpet_irqs.push(event.deadline_ns);
                         let next = event.deadline_ns + HPET_PERIOD_NS;
-                        sched.arm_one_shot(hpet_timer, next).unwrap();
+                        time.timers_mut().arm_one_shot(hpet_timer, next).unwrap();
                     } else {
                         panic!("unexpected timer id {}", event.timer_id.as_u64());
                     }

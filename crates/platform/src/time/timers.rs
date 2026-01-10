@@ -363,7 +363,7 @@ impl TimerScheduler {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TimerSchedulerState {
     pub next_timer_id: u64,
     pub timers: Vec<TimerState>,
