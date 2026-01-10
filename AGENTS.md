@@ -62,6 +62,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 37. [Virtio PCI: Legacy + Transitional Devices](./docs/16-virtio-pci-legacy-transitional.md)
 38. [Driver Install Media (FAT Image)](./docs/16-driver-install-media.md)
 39. [Windows 7 Driver Build and Signing](./docs/16-windows7-driver-build-and-signing.md)
+40. [Guest CPU Instruction Throughput Benchmarks (PF-008)](./docs/16-guest-cpu-benchmark-suite.md)
 
 ---
 
@@ -372,6 +373,7 @@ pub trait DisplayAdapter {
 | [17-win7-unattend-validation.md](./docs/17-win7-unattend-validation.md) | Validate/debug Win7 unattended installs (logs, config-set, SetupComplete) | All |
 | [16-windows7-install-media-prep.md](./docs/16-windows7-install-media-prep.md) | Preparing a Win7 SP1 ISO with Aero drivers/certs | All |
 | [16-guest-tools-packaging.md](./docs/16-guest-tools-packaging.md)       | Guest Tools ISO/zip packaging          | Infrastructure    |
+| [16-guest-cpu-benchmark-suite.md](./docs/16-guest-cpu-benchmark-suite.md) | Guest CPU throughput benchmarks (PF-008) | Performance       |
 
 
 ---

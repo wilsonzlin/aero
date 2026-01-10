@@ -515,6 +515,8 @@ See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitiona
 | PF-008 | Benchmark suite              | P0       | None           | High       |
 | PF-009 | Regression tracking          | P0       | PF-008         | Medium     |
 
+PF-008 specifically includes a **guest CPU instruction throughput** microbenchmark suite (no OS images) with checksum validation, perf export integration, and a Playwright scenario. See: [Guest CPU Instruction Throughput Benchmarks (PF-008)](./16-guest-cpu-benchmark-suite.md).
+
 
 ---
 

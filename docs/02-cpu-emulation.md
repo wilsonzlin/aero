@@ -1021,6 +1021,8 @@ Target performance on modern hardware (2024 desktop):
 | Boot time | < 30s | Windows 7 to desktop |
 | SPEC-like | ≥ 20% native | Mixed workloads |
 
+For deterministic emulator-core throughput tracking (no OS images), use the guest CPU instruction throughput microbench suite (PF-008): [Guest CPU Instruction Throughput Benchmarks](./16-guest-cpu-benchmark-suite.md).
+
 ---
 
 ## Next Steps

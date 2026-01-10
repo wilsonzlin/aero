@@ -782,6 +782,14 @@ Verification criteria:
 - With JIT enabled: `blocks_compiled_total > 0` and `compile_ms_total > 0` in exported/printed metrics.
 - With compilation disabled (interpreter-only): all `jit.*` totals remain `0`, and benchmark overhead stays minimal.
 
+### Guest CPU Throughput Benchmarks (PF-008)
+
+To measure emulator CPU performance **without** booting an OS image, run small deterministic x86/x86-64 payloads inside the CPU core and compute IPS/MIPS from retired instruction counts.
+
+These benches are designed to run as soon as the interpreter exists and to show clear speedups when JIT tiers land. They must validate correctness via checksums and **fail the run** on mismatches.
+
+See: [Guest CPU Instruction Throughput Benchmarks](./16-guest-cpu-benchmark-suite.md).
+
 ---
 
 ## Conformance Testing

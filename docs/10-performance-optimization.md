@@ -19,6 +19,8 @@ Achieving acceptable performance for Windows 7 emulation requires aggressive opt
 | Memory Overhead | < 1.5x | < 2x |
 | IPS (MIPS) | ≥ 500 | ≥ 200 |
 
+For CPU throughput tracking, prefer the **guest CPU microbenchmark suite (PF-008)** rather than full-system boot/app workloads. See: [Guest CPU Instruction Throughput Benchmarks](./16-guest-cpu-benchmark-suite.md).
+
 ### Performance Breakdown (Target)
 
 ```
@@ -1162,3 +1164,4 @@ To avoid drift between in-app HUD, exported perf summaries, and benchmark toolin
 - See [Testing Strategy](./12-testing-strategy.md) for performance testing
 - See [Performance Tooling](./16-performance-tooling.md) for profiling HUD, trace capture, and benchmarks
 - See [Task Breakdown](./15-agent-task-breakdown.md) for optimization tasks
+- See [Guest CPU Instruction Throughput Benchmarks](./16-guest-cpu-benchmark-suite.md) for instruction-throughput regression tracking
