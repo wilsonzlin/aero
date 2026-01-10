@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import http.server
 import os
+import shlex
 import socketserver
 import subprocess
 import sys
@@ -134,7 +135,9 @@ def main() -> int:
             drive,
         ] + qemu_extra
 
-        proc = subprocess.Popen(qemu_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print("Launching QEMU:")
+        print("  " + " ".join(shlex.quote(str(a)) for a in qemu_args))
+        proc = subprocess.Popen(qemu_args)
         try:
             pos = 0
             tail = b""
