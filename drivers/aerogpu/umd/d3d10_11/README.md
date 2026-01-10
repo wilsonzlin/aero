@@ -13,6 +13,7 @@ This implementation is intentionally conservative and targets **the minimum func
 - Vertex/pixel shaders (DXBC payload passthrough)
 - Input layout + vertex/index buffers
 - RTV + clear + draw/draw-indexed
+- Blend/raster/depth state objects (accepted; currently conservative/stubbed)
 - Windowed swapchain present (sync interval 0/1) via `AEROGPU_CMD_PRESENT`
 
 Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDARG`) rather than crashing or dereferencing null DDI function pointers.
@@ -45,4 +46,3 @@ Build files provided:
 - `aerogpu_d3d10_11.vcxproj` (Win32 + x64)
 
 The project expects the Windows SDK/WDK to provide D3D10/11 DDI headers (e.g. `d3d10umddi.h`, `d3d11umddi.h`) when building the real UMD.
-

@@ -103,11 +103,32 @@ struct AeroGpuRenderTargetView {
   uint32_t alloc_index = kInvalidAllocIndex;
 };
 
+struct AeroGpuDepthStencilView {
+  uint32_t alloc_index = kInvalidAllocIndex;
+};
+
+// The initial milestone treats pipeline state objects as opaque handles. They
+// are accepted and can be bound, but the host translator currently relies on
+// conservative defaults for any state not explicitly encoded in the command
+// stream.
+struct AeroGpuBlendState {
+  uint32_t dummy = 0;
+};
+
+struct AeroGpuRasterizerState {
+  uint32_t dummy = 0;
+};
+
+struct AeroGpuDepthStencilState {
+  uint32_t dummy = 0;
+};
+
 struct AeroGpuDevice {
   AeroGpuAdapter *adapter = nullptr;
   AeroGpuCommandStream cs;
 
   uint32_t current_rtv_alloc = kInvalidAllocIndex;
+  uint32_t current_dsv_alloc = kInvalidAllocIndex;
 
   uint32_t current_vb_alloc = kInvalidAllocIndex;
   uint32_t current_vb_stride = 0;
@@ -119,6 +140,8 @@ struct AeroGpuDevice {
 
   uint32_t current_vs_id = kInvalidShaderId;
   uint32_t current_ps_id = kInvalidShaderId;
+
+  uint32_t current_topology = 0;
 
   bool viewport_set = false;
   AEROGPU_DDI_VIEWPORT viewport = {};
@@ -348,17 +371,125 @@ void AEROGPU_APIENTRY DestroyRTV(D3D10DDI_HDEVICE, D3D10DDI_HRENDERTARGETVIEW hR
   rtv->~AeroGpuRenderTargetView();
 }
 
-void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETVIEW hRtv) {
-  if (!hDevice.pDrvPrivate || !hRtv.pDrvPrivate) {
+SIZE_T AEROGPU_APIENTRY CalcPrivateDSVSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW *) {
+  return sizeof(AeroGpuDepthStencilView);
+}
+
+HRESULT AEROGPU_APIENTRY CreateDSV(D3D10DDI_HDEVICE hDevice,
+                                   const AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW *pDesc,
+                                   D3D10DDI_HDEPTHSTENCILVIEW hDsv) {
+  if (!hDevice.pDrvPrivate || !pDesc || !hDsv.pDrvPrivate || !pDesc->hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto *res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pDesc->hResource);
+  auto *dsv = new (hDsv.pDrvPrivate) AeroGpuDepthStencilView();
+  dsv->alloc_index = res->alloc_index;
+  return S_OK;
+}
+
+void AEROGPU_APIENTRY DestroyDSV(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILVIEW hDsv) {
+  if (!hDsv.pDrvPrivate) {
+    return;
+  }
+  auto *dsv = FromHandle<D3D10DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv);
+  dsv->~AeroGpuDepthStencilView();
+}
+
+SIZE_T AEROGPU_APIENTRY CalcPrivateBlendStateSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATEBLENDSTATE *) {
+  return sizeof(AeroGpuBlendState);
+}
+
+HRESULT AEROGPU_APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
+                                          const AEROGPU_DDIARG_CREATEBLENDSTATE *,
+                                          D3D10DDI_HBLENDSTATE hState) {
+  if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  new (hState.pDrvPrivate) AeroGpuBlendState();
+  return S_OK;
+}
+
+void AEROGPU_APIENTRY DestroyBlendState(D3D10DDI_HDEVICE, D3D10DDI_HBLENDSTATE hState) {
+  if (!hState.pDrvPrivate) {
+    return;
+  }
+  auto *s = FromHandle<D3D10DDI_HBLENDSTATE, AeroGpuBlendState>(hState);
+  s->~AeroGpuBlendState();
+}
+
+SIZE_T AEROGPU_APIENTRY CalcPrivateRasterizerStateSize(D3D10DDI_HDEVICE,
+                                                       const AEROGPU_DDIARG_CREATERASTERIZERSTATE *) {
+  return sizeof(AeroGpuRasterizerState);
+}
+
+HRESULT AEROGPU_APIENTRY CreateRasterizerState(D3D10DDI_HDEVICE hDevice,
+                                               const AEROGPU_DDIARG_CREATERASTERIZERSTATE *,
+                                               D3D10DDI_HRASTERIZERSTATE hState) {
+  if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  new (hState.pDrvPrivate) AeroGpuRasterizerState();
+  return S_OK;
+}
+
+void AEROGPU_APIENTRY DestroyRasterizerState(D3D10DDI_HDEVICE, D3D10DDI_HRASTERIZERSTATE hState) {
+  if (!hState.pDrvPrivate) {
+    return;
+  }
+  auto *s = FromHandle<D3D10DDI_HRASTERIZERSTATE, AeroGpuRasterizerState>(hState);
+  s->~AeroGpuRasterizerState();
+}
+
+SIZE_T AEROGPU_APIENTRY CalcPrivateDepthStencilStateSize(D3D10DDI_HDEVICE,
+                                                         const AEROGPU_DDIARG_CREATEDEPTHSTENCILSTATE *) {
+  return sizeof(AeroGpuDepthStencilState);
+}
+
+HRESULT AEROGPU_APIENTRY CreateDepthStencilState(D3D10DDI_HDEVICE hDevice,
+                                                 const AEROGPU_DDIARG_CREATEDEPTHSTENCILSTATE *,
+                                                 D3D10DDI_HDEPTHSTENCILSTATE hState) {
+  if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  new (hState.pDrvPrivate) AeroGpuDepthStencilState();
+  return S_OK;
+}
+
+void AEROGPU_APIENTRY DestroyDepthStencilState(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILSTATE hState) {
+  if (!hState.pDrvPrivate) {
+    return;
+  }
+  auto *s = FromHandle<D3D10DDI_HDEPTHSTENCILSTATE, AeroGpuDepthStencilState>(hState);
+  s->~AeroGpuDepthStencilState();
+}
+
+void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
+                                       D3D10DDI_HRENDERTARGETVIEW hRtv,
+                                       D3D10DDI_HDEPTHSTENCILVIEW hDsv) {
+  if (!hDevice.pDrvPrivate) {
     return;
   }
   auto *dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-  auto *rtv = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(hRtv);
-  dev->current_rtv_alloc = rtv->alloc_index;
 
-  AEROGPU_CMD_SET_RENDER_TARGET_PAYLOAD p = {};
-  p.rtv_alloc_index = rtv->alloc_index;
-  dev->cs.EmitSimple(AEROGPU_CMD_SET_RENDER_TARGET, p);
+  uint32_t rtv_alloc = kInvalidAllocIndex;
+  uint32_t dsv_alloc = kInvalidAllocIndex;
+  if (hRtv.pDrvPrivate) {
+    rtv_alloc = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(hRtv)->alloc_index;
+  }
+  if (hDsv.pDrvPrivate) {
+    dsv_alloc = FromHandle<D3D10DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv)->alloc_index;
+  }
+
+  dev->current_rtv_alloc = rtv_alloc;
+  dev->current_dsv_alloc = dsv_alloc;
+
+  AEROGPU_CMD_SET_RENDER_TARGET_PAYLOAD rt = {};
+  rt.rtv_alloc_index = rtv_alloc;
+  dev->cs.EmitSimple(AEROGPU_CMD_SET_RENDER_TARGET, rt);
+
+  AEROGPU_CMD_SET_DEPTH_STENCIL_PAYLOAD ds = {};
+  ds.dsv_alloc_index = dsv_alloc;
+  dev->cs.EmitSimple(AEROGPU_CMD_SET_DEPTH_STENCIL, ds);
 }
 
 void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETVIEW, const float rgba[4]) {
@@ -372,6 +503,22 @@ void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETV
   p.rgba[2] = rgba[2];
   p.rgba[3] = rgba[3];
   dev->cs.EmitSimple(AEROGPU_CMD_CLEAR_RTV, p);
+}
+
+void AEROGPU_APIENTRY ClearDSV(D3D10DDI_HDEVICE hDevice,
+                               D3D10DDI_HDEPTHSTENCILVIEW,
+                               uint32_t clear_flags,
+                               float depth,
+                               uint8_t stencil) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  auto *dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  AEROGPU_CMD_CLEAR_DSV_PAYLOAD p = {};
+  p.depth = depth;
+  p.stencil = stencil;
+  p.flags = clear_flags;
+  dev->cs.EmitSimple(AEROGPU_CMD_CLEAR_DSV, p);
 }
 
 void AEROGPU_APIENTRY SetInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELEMENTLAYOUT hLayout) {
@@ -472,6 +619,38 @@ void AEROGPU_APIENTRY SetDrawState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hV
   dev->cs.EmitSimple(AEROGPU_CMD_BIND_SHADERS, p);
 }
 
+void AEROGPU_APIENTRY SetBlendState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HBLENDSTATE) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  // Stub: accepted but not yet encoded into the command stream.
+}
+
+void AEROGPU_APIENTRY SetRasterizerState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRASTERIZERSTATE) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  // Stub: accepted but not yet encoded into the command stream.
+}
+
+void AEROGPU_APIENTRY SetDepthStencilState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HDEPTHSTENCILSTATE) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  // Stub: accepted but not yet encoded into the command stream.
+}
+
+void AEROGPU_APIENTRY SetPrimitiveTopology(D3D10DDI_HDEVICE hDevice, uint32_t topology) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  auto *dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  dev->current_topology = topology;
+  AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_PAYLOAD p = {};
+  p.topology = topology;
+  dev->cs.EmitSimple(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY, p);
+}
+
 void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, uint32_t vertex_count, uint32_t start_vertex) {
   if (!hDevice.pDrvPrivate) {
     return;
@@ -509,6 +688,45 @@ HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDIARG_
   p.sync_interval = sync;
   dev->cs.EmitSimple(AEROGPU_CMD_PRESENT, p);
   return dev->FlushAndSubmitIfNeeded();
+}
+
+HRESULT AEROGPU_APIENTRY Flush(D3D10DDI_HDEVICE hDevice) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto *dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  return dev->FlushAndSubmitIfNeeded();
+}
+
+void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
+                                               D3D10DDI_HRESOURCE *pResources,
+                                               uint32_t numResources) {
+  if (!hDevice.pDrvPrivate || !pResources || numResources < 2) {
+    return;
+  }
+
+  // Rotate allocation indices in-place. This is primarily used by DXGI
+  // swapchains (backbuffer flipping) where all resources share the same
+  // descriptor, so rotating just the allocation index is sufficient.
+  auto *first = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[0]);
+  if (!first) {
+    return;
+  }
+  const uint32_t saved = first->alloc_index;
+
+  for (uint32_t i = 0; i + 1 < numResources; ++i) {
+    auto *dst = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[i]);
+    auto *src = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[i + 1]);
+    if (!dst || !src) {
+      return;
+    }
+    dst->alloc_index = src->alloc_index;
+  }
+
+  auto *last = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[numResources - 1]);
+  if (last) {
+    last->alloc_index = saved;
+  }
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -553,18 +771,41 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDI
   funcs.pfnCreateRTV = &CreateRTV;
   funcs.pfnDestroyRTV = &DestroyRTV;
 
+  funcs.pfnCalcPrivateDSVSize = &CalcPrivateDSVSize;
+  funcs.pfnCreateDSV = &CreateDSV;
+  funcs.pfnDestroyDSV = &DestroyDSV;
+
+  funcs.pfnCalcPrivateBlendStateSize = &CalcPrivateBlendStateSize;
+  funcs.pfnCreateBlendState = &CreateBlendState;
+  funcs.pfnDestroyBlendState = &DestroyBlendState;
+
+  funcs.pfnCalcPrivateRasterizerStateSize = &CalcPrivateRasterizerStateSize;
+  funcs.pfnCreateRasterizerState = &CreateRasterizerState;
+  funcs.pfnDestroyRasterizerState = &DestroyRasterizerState;
+
+  funcs.pfnCalcPrivateDepthStencilStateSize = &CalcPrivateDepthStencilStateSize;
+  funcs.pfnCreateDepthStencilState = &CreateDepthStencilState;
+  funcs.pfnDestroyDepthStencilState = &DestroyDepthStencilState;
+
   funcs.pfnSetRenderTargets = &SetRenderTargets;
   funcs.pfnClearRTV = &ClearRTV;
+  funcs.pfnClearDSV = &ClearDSV;
 
   funcs.pfnSetInputLayout = &SetInputLayout;
   funcs.pfnSetVertexBuffer = &SetVertexBuffer;
   funcs.pfnSetIndexBuffer = &SetIndexBuffer;
   funcs.pfnSetViewport = &SetViewport;
   funcs.pfnSetDrawState = &SetDrawState;
+  funcs.pfnSetBlendState = &SetBlendState;
+  funcs.pfnSetRasterizerState = &SetRasterizerState;
+  funcs.pfnSetDepthStencilState = &SetDepthStencilState;
+  funcs.pfnSetPrimitiveTopology = &SetPrimitiveTopology;
 
   funcs.pfnDraw = &Draw;
   funcs.pfnDrawIndexed = &DrawIndexed;
   funcs.pfnPresent = &Present;
+  funcs.pfnFlush = &Flush;
+  funcs.pfnRotateResourceIdentities = &RotateResourceIdentities;
 
   *pCreateDevice->pDeviceFuncs = funcs;
   return S_OK;
