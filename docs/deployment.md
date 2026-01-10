@@ -15,6 +15,13 @@ and all subresources (JS, WASM, worker scripts, etc.):
 - `Cross-Origin-Resource-Policy: same-origin` (CORP, recommended hardening)
 
 This repository includes production-ready header templates for common hosts.
+For the full recommended hardening set (including CSP with `wasm-unsafe-eval` for Aero’s WASM-based JIT),
+see [`docs/security-headers.md`](./security-headers.md).
+
+Recommended additional hardening headers (included in the templates):
+
+- `Cross-Origin-Resource-Policy: same-origin`
+- `Origin-Agent-Cluster: ?1`
 
 ---
 
@@ -72,9 +79,16 @@ single-threaded/non-shared WASM variant.
 This repo provides:
 
 - `netlify.toml` (build/publish settings for the `web/` subproject)
-- `web/public/_headers` (COOP/COEP + caching defaults)
+- `web/public/_headers` (COOP/COEP + CSP + baseline security headers + caching defaults)
 
 Netlify will apply `dist/_headers` automatically (Vite copies `public/` → `dist/`).
+
+### Vercel
+
+This repo provides `vercel.json` (repo root), which:
+
+- builds the `web/` frontend and deploys `web/dist`
+- applies COOP/COEP + CSP + baseline security headers to all paths
 
 ### Cloudflare Pages
 
@@ -86,7 +100,7 @@ Configure the project with:
 - Build output directory: `web/dist`
 
 The generated `web/dist/_headers` file is deployed automatically and enables
-cross-origin isolation.
+cross-origin isolation and baseline security headers.
 
 > Note: Some platforms apply only the *most specific* matching `_headers` rule.
 > The provided `_headers` file repeats COOP/COEP/CORP in the `/assets/*` and

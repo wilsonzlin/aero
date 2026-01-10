@@ -10,12 +10,23 @@ const stat = promisify(fs.stat);
 function setCrossOriginIsolationHeaders(res) {
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
   res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
   res.setHeader("Origin-Agent-Cluster", "?1");
 }
 
 function setCommonSecurityHeaders(res) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+}
+
+function setContentSecurityPolicy(res) {
+  // Aero relies on dynamic WebAssembly compilation for its WASM-based JIT tier.
+  // CSP controls this via `script-src 'wasm-unsafe-eval'` (preferred over 'unsafe-eval').
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'; img-src 'self' data: blob:; style-src 'self'; font-src 'self'",
+  );
 }
 
 function guessContentType(filePath) {
@@ -125,6 +136,7 @@ export function createHttpHandler({ config, logger, metrics }) {
     void (async () => {
       setCrossOriginIsolationHeaders(res);
       setCommonSecurityHeaders(res);
+      setContentSecurityPolicy(res);
 
       const url = new URL(req.url ?? "/", "http://localhost");
 
@@ -155,4 +167,3 @@ export function createHttpHandler({ config, logger, metrics }) {
     });
   };
 }
-

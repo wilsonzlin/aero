@@ -13,6 +13,20 @@ const crossOriginIsolationHeaders = {
   "Cross-Origin-Embedder-Policy": "require-corp",
   // Avoid COEP failures for same-origin assets (useful in dev/preview with workers).
   "Cross-Origin-Resource-Policy": "same-origin",
+  "Origin-Agent-Cluster": "?1",
+} as const;
+
+const commonSecurityHeaders = {
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+} as const;
+
+const previewOnlyHeaders = {
+  // Match the default CSP used by the static hosting templates. Keep `connect-src`
+  // narrow; deployments that use a separate proxy origin should add it explicitly.
+  "Content-Security-Policy":
+    "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-proxy.invalid wss://aero-proxy.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'",
 } as const;
 
 function wasmMimeTypePlugin(): Plugin {
@@ -40,10 +54,18 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    headers: coopCoepDisabled ? undefined : crossOriginIsolationHeaders,
+    // Do not set a strict CSP on the dev server; it can interfere with HMR.
+    headers: {
+      ...(coopCoepDisabled ? {} : crossOriginIsolationHeaders),
+      ...commonSecurityHeaders,
+    },
   },
   preview: {
-    headers: coopCoepDisabled ? undefined : crossOriginIsolationHeaders,
+    headers: {
+      ...(coopCoepDisabled ? {} : crossOriginIsolationHeaders),
+      ...commonSecurityHeaders,
+      ...previewOnlyHeaders,
+    },
   },
   worker: {
     format: "es",

@@ -117,19 +117,27 @@ Notes:
 
 These templates apply headers to **all paths** so they cover HTML, JS, WASM, and worker scripts.
 
-### Netlify (`netlify.toml`)
+### Netlify / Cloudflare Pages (Vite `_headers`)
 
-See: `deploy/netlify.toml`
+The canonical header set for the Vite frontend lives in:
+
+- `web/public/_headers`
+
+Vite copies `public/` into `dist/`, so production builds automatically contain:
+
+- `web/dist/_headers`
+
+Netlify and Cloudflare Pages will apply this file automatically when it exists at the root of the deployed output directory.
+
+Netlify build settings are in `netlify.toml` (repo root).
 
 ### Vercel (`vercel.json`)
 
-See: `deploy/vercel.json`
+See: `vercel.json` (repo root).
 
 ### Cloudflare Pages (`_headers`)
 
-See: `deploy/cloudflare-pages/_headers`
-
-Cloudflare Pages requires `_headers` to be present at the **root of the build output directory**. Depending on your build tool, you may need to copy it into `dist/` (or equivalent) as part of the build.
+Cloudflare Pages requires `_headers` to be present at the **root of the build output directory**. For the Vite frontend in this repo, this is handled by `web/public/_headers` → `web/dist/_headers` during build.
 
 ### Caddy / Docker (local dev + self-host)
 

@@ -51,15 +51,20 @@ For cross-origin isolation, all HTTP responses include:
 
 - `Cross-Origin-Opener-Policy: same-origin`
 - `Cross-Origin-Embedder-Policy: require-corp`
+- `Cross-Origin-Resource-Policy: same-origin`
 - `Origin-Agent-Cluster: ?1`
 
 If you serve the frontend behind a reverse proxy (nginx, Caddy, etc), ensure those headers are preserved.
+
+This legacy server also sets a strict Content Security Policy (CSP) compatible with Aero’s requirements (including dynamic WASM compilation for JIT via `script-src 'wasm-unsafe-eval'`).
+See [`docs/security-headers.md`](../docs/security-headers.md) for rationale and tradeoffs.
 
 ### nginx snippet
 
 ```nginx
 add_header Cross-Origin-Opener-Policy "same-origin" always;
 add_header Cross-Origin-Embedder-Policy "require-corp" always;
+add_header Cross-Origin-Resource-Policy "same-origin" always;
 add_header Origin-Agent-Cluster "?1" always;
 ```
 
@@ -166,4 +171,3 @@ It serves files with:
 - Optional COOP/COEP headers (`--coop-coep`)
 
 This is intended for development only; it is not hardened.
-
