@@ -538,7 +538,7 @@ $report = @{
     schema_version = 1
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "2.1.0"
+        version = "2.2.0"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -1449,6 +1449,11 @@ try {
         $records = @()
         $missing = 0
         $mismatch = 0
+        $mismatchClass = 0
+        $mismatchGuid = 0
+
+        $expectedClass = "SCSIAdapter"
+        $expectedClassGuid = "{4D36E97B-E325-11CE-BFC1-08002BE10318}"
 
         foreach ($hwid in $cfgVirtioBlkHwids) {
             $baseKey = $hwid.Replace("\", "#")
@@ -1458,13 +1463,22 @@ try {
 
                 $exists = Test-Path $path
                 $svc = $null
+                $cls = $null
+                $clsGuid = $null
                 if ($exists) {
                     try {
-                        $svc = (Get-ItemProperty -Path $path -ErrorAction Stop).Service
+                        $props = Get-ItemProperty -Path $path -ErrorAction Stop
+                        $svc = $props.Service
+                        $cls = $props.Class
+                        $clsGuid = $props.ClassGUID
                     } catch {
                         $svc = $null
+                        $cls = $null
+                        $clsGuid = $null
                     }
                     if ($svc -and ($svc.ToLower() -ne $expectedService.ToLower())) { $mismatch++ }
+                    if ($cls -and ("" + $cls).ToLower() -ne $expectedClass.ToLower()) { $mismatchClass++ }
+                    if ($clsGuid -and ("" + $clsGuid).ToLower() -ne $expectedClassGuid.ToLower()) { $mismatchGuid++ }
                 } else {
                     $missing++
                 }
@@ -1474,23 +1488,30 @@ try {
                     exists = $exists
                     service = $svc
                     expected_service = $expectedService
+                    class = $cls
+                    expected_class = $expectedClass
+                    class_guid = $clsGuid
+                    expected_class_guid = $expectedClassGuid
                 }
             }
         }
 
         $status = "PASS"
-        if ($missing -gt 0 -or $mismatch -gt 0) { $status = "WARN" }
+        if ($missing -gt 0 -or $mismatch -gt 0 -or $mismatchClass -gt 0 -or $mismatchGuid -gt 0) { $status = "WARN" }
 
-        $summary = "Checked " + $records.Count + " CriticalDeviceDatabase key(s) for service '" + $expectedService + "' (missing: " + $missing + ", mismatched service: " + $mismatch + ")"
+        $summary = "Checked " + $records.Count + " CriticalDeviceDatabase key(s) for service '" + $expectedService + "' (missing: " + $missing + ", mismatched service: " + $mismatch + ", mismatched class: " + $mismatchClass + ", mismatched ClassGUID: " + $mismatchGuid + ")"
         $details = @()
         if ($missing -gt 0) { $details += "Missing CriticalDeviceDatabase keys can cause 0x7B (INACCESSIBLE_BOOT_DEVICE) when switching the boot disk to virtio-blk." }
         if ($mismatch -gt 0) { $details += "Some keys do not map to the expected storage service; re-run setup.cmd and verify config\\devices.cmd matches your storage driver's INF AddService name." }
+        if ($mismatchClass -gt 0 -or $mismatchGuid -gt 0) { $details += "Some keys have unexpected Class/ClassGUID. Re-run setup.cmd to regenerate CriticalDeviceDatabase entries." }
 
         $data = @{
             config_file = $gtConfig.file_path
             config_service = $expectedService
             configured_hwids = $cfgVirtioBlkHwids
             checked_keys = $records
+            expected_class = $expectedClass
+            expected_class_guid = $expectedClassGuid
         }
         Add-Check "virtio_blk_boot_critical" "virtio-blk Boot Critical Registry" $status $summary $data $details
     }
