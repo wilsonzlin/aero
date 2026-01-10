@@ -37,6 +37,8 @@ If you have not installed Guest Tools yet, start here:
 - Guest Tools installation problems:
   - [`setup.cmd` fails (won't run)](#issue-setupcmd-fails-wont-run)
   - [Safe Mode recovery tips](#safe-mode-recovery-tips)
+- Expected behavior:
+  - [Test Mode watermark on the desktop (x64)](#issue-test-mode-watermark-on-the-desktop-x64)
 
 ## Collecting useful logs (for troubleshooting or bug reports)
 
