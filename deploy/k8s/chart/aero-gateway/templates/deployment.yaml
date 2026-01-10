@@ -28,6 +28,10 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ default (include "aero-gateway.fullname" .) .Values.serviceAccount.name }}
+      {{- end }}
+      automountServiceAccountToken: {{ default false .Values.serviceAccount.automountServiceAccountToken }}
       {{- with .Values.gateway.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}

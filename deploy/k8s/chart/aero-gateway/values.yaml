@@ -9,6 +9,14 @@ fullnameOverride: ""
 
 imagePullSecrets: []
 
+serviceAccount:
+  create: false
+  name: ""
+  annotations: {}
+  # Security hardening: this service does not need to talk to the Kubernetes API.
+  # Set to true only if your deployment requires in-cluster auth (e.g. cloud workload identity).
+  automountServiceAccountToken: false
+
 gateway:
   replicaCount: 1
 

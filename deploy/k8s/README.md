@@ -180,6 +180,18 @@ imagePullSecrets:
   - name: regcred
 ```
 
+## Service account token (security hardening)
+
+By default, the chart disables automounting the Kubernetes service account token into the gateway pod
+(`serviceAccount.automountServiceAccountToken=false`). This reduces blast radius if the container is compromised.
+
+If you need in-cluster identity (rare for this service), set:
+
+```yaml
+serviceAccount:
+  automountServiceAccountToken: true
+```
+
 ## Verify the rollout
 
 ```bash
