@@ -48,6 +48,7 @@ function renderCapabilityTable(report: PlatformFeatureReport): HTMLTableElement 
     'sharedArrayBuffer',
     'wasmSimd',
     'wasmThreads',
+    'jit_dynamic_wasm',
     'webgpu',
     'opfs',
     'opfsSyncAccessHandle',

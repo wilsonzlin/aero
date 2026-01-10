@@ -4,6 +4,7 @@ const DEV_PORT = 5173;
 const PREVIEW_PORT = 4173;
 const EXPOSE_GC = process.env.AERO_PLAYWRIGHT_EXPOSE_GC === '1';
 const CHROMIUM_ARGS = ['--enable-unsafe-webgpu', ...(EXPOSE_GC ? ['--js-flags=--expose-gc'] : [])];
+const CSP_POC_PORT = 4180;
 
 export default defineConfig({
   // Keep Playwright tests under `tests/`, but only run the dedicated browser suites.
@@ -48,6 +49,12 @@ export default defineConfig({
     {
       command: "npm run serve:coi",
       port: PREVIEW_PORT,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      // Dedicated server for CSP (wasm-unsafe-eval) matrix tests.
+      command: `node server/poc-server.mjs --port ${CSP_POC_PORT}`,
+      port: CSP_POC_PORT,
       reuseExistingServer: !process.env.CI,
     },
   ],

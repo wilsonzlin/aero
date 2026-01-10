@@ -261,6 +261,81 @@ function compileJitBlock(wasmBytes) {
 }
 ```
 
+### CSP / COOP / COEP Constraints (Production Reality)
+
+**Why this matters:** Aero’s Tier-1/2 JIT strategy relies on compiling WASM at runtime (e.g. `WebAssembly.compile(...)`, `new WebAssembly.Module(...)`). In real deployments, these operations can be blocked by **Content Security Policy** unless the CSP explicitly allows WebAssembly compilation.
+
+#### Minimum headers we require (threads + WASM + dynamic JIT)
+
+To enable:
+- `SharedArrayBuffer` / WASM threads (**COOP/COEP**)
+- WebAssembly compilation (**CSP**)
+- dynamic Tier-1/2 JIT block compilation (**CSP**)
+
+Serve your app with:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+And a CSP similar to:
+
+```
+Content-Security-Policy:
+  default-src 'self';
+  script-src 'self' 'wasm-unsafe-eval';
+  object-src 'none';
+  base-uri 'none';
+  frame-ancestors 'none'
+```
+
+Notes:
+- Prefer **`'wasm-unsafe-eval'`** over **`'unsafe-eval'`** to avoid enabling arbitrary JS `eval`/`new Function`.
+- If `SharedArrayBuffer` is needed, COOP/COEP must be set on the **top-level document** response (and all cross-origin subresources must be CORP/CORS compatible).
+
+#### Observed browser behavior (Playwright 1.57.0 PoC)
+
+A small PoC app + Playwright tests live in this repo (`web/`, `server/`, `tests/`) and validate the above in real engines.
+The PoC also reports **average per-module compile+instantiate latency** (for repeated “block compilation”) and best-effort memory deltas (JS heap + `measureUserAgentSpecificMemory` when available).
+
+| Browser engine | CSP: `script-src 'self'` (no wasm-unsafe-eval) | CSP: `script-src 'self' 'wasm-unsafe-eval'` |
+| --- | --- | --- |
+| Chromium (Chrome/Edge) | `WebAssembly.compile` / `new WebAssembly.Module` **blocked** | **allowed** |
+| Firefox | **blocked** | **allowed** |
+| WebKit (Safari) | **blocked** | **allowed** |
+
+This implies: **if a deployment forbids `wasm-unsafe-eval`, Aero cannot rely on WebAssembly at all** (unless a JS-only interpreter fallback exists).
+
+#### Runtime capability negotiation + fallback
+
+The host should feature-detect and expose a capability:
+
+```ts
+const jit_dynamic_wasm: boolean = await detectDynamicWasmCompilation();
+```
+
+Then select a tier at runtime:
+- If `jit_dynamic_wasm === true`: enable Tier-1/2 JIT (compile blocks to WASM).
+- Else: fall back to a non-compiling execution path (e.g. interpreter-only mode), rather than crashing on startup.
+
+See also:
+- `server/poc-server.mjs` for header templates
+- Host-side capability detection: `src/platform/features.ts` (`jit_dynamic_wasm`)
+- PoC app: `web/public/wasm-jit-csp/`
+- Tests: `tests/e2e/csp-fallback.spec.ts`
+
+To run the PoC locally:
+
+```bash
+npm install
+node server/poc-server.mjs --port 4180
+```
+
+Then open one of:
+- `http://127.0.0.1:4180/csp/strict/`
+- `http://127.0.0.1:4180/csp/wasm-unsafe-eval/`
+
 ---
 
 ## WebGPU

@@ -39,6 +39,16 @@ export type PlatformFeatureReport = {
   audioWorklet: boolean;
   /** Whether `OffscreenCanvas` is available. */
   offscreenCanvas: boolean;
+  /**
+   * Whether dynamic WebAssembly compilation is allowed in this context.
+   *
+   * In practice, this is primarily gated by Content Security Policy (CSP).
+   * If `script-src` does not include `'wasm-unsafe-eval'`, browsers may refuse
+   * to compile or instantiate any WebAssembly modules (including JIT blocks).
+   *
+   * Aero's Tier-1/2 JIT must be disabled when this is false.
+   */
+  jit_dynamic_wasm: boolean;
 };
 
 const WASM_SIMD_VALIDATION_BYTES = new Uint8Array([
@@ -47,6 +57,9 @@ const WASM_SIMD_VALIDATION_BYTES = new Uint8Array([
   0x7b, 0x03, 0x02, 0x01, 0x00, 0x0a, 0x0a, 0x01, 0x08, 0x00, 0x41, 0x00, 0xfd, 0x0c,
   0x00, 0x00, 0x0b,
 ]);
+
+// Empty (but valid) WASM module: just the header.
+const WASM_EMPTY_MODULE_BYTES = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
 
 function detectWasmSimd(): boolean {
   if (typeof WebAssembly === 'undefined' || typeof WebAssembly.validate !== 'function') {
@@ -72,6 +85,20 @@ function detectWasmThreads(crossOriginIsolated: boolean, sharedArrayBuffer: bool
   }
 }
 
+function detectDynamicWasmCompilation(): boolean {
+  if (typeof WebAssembly === 'undefined' || typeof WebAssembly.Module !== 'function') {
+    return false;
+  }
+  try {
+    // `new WebAssembly.Module(...)` is synchronous and tends to fail fast with a CSP error
+    // when `'wasm-unsafe-eval'` is not present in `script-src`.
+    new WebAssembly.Module(WASM_EMPTY_MODULE_BYTES);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function getAudioContextCtor(): typeof AudioContext | undefined {
   // Safari uses webkitAudioContext.
   return (
@@ -86,6 +113,7 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
   const sharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
   const wasmSimd = detectWasmSimd();
   const wasmThreads = detectWasmThreads(crossOriginIsolated, sharedArrayBuffer);
+  const jit_dynamic_wasm = detectDynamicWasmCompilation();
 
   const webgpu = typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
   const opfs =
@@ -110,6 +138,7 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
     sharedArrayBuffer,
     wasmSimd,
     wasmThreads,
+    jit_dynamic_wasm,
     webgpu,
     opfs,
     opfsSyncAccessHandle,
@@ -150,6 +179,12 @@ export function explainMissingRequirements(report: PlatformFeatureReport = platf
   if (!report.wasmThreads) {
     messages.push(
       "WebAssembly threads are unavailable. Aero's design relies on multithreading; this typically requires cross-origin isolation, SharedArrayBuffer, and Atomics.",
+    );
+  }
+
+  if (!report.jit_dynamic_wasm) {
+    messages.push(
+      "Dynamic WebAssembly compilation is blocked (likely by CSP). Aero's JIT tiers require `script-src 'wasm-unsafe-eval'`; otherwise the host must fall back to an interpreter-only mode.",
     );
   }
 

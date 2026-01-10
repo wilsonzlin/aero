@@ -876,6 +876,20 @@ Use a simple **test card** (grayscale ramp + alpha gradient + corner markers) an
 presented pixels per backend. See `web/src/gpu/validation-scene.ts` and the Playwright spec
 `web/tests/gpu_color.spec.ts`.
 
+### CSP/COOP/COEP regression tests (implemented)
+
+This repo includes a small WASM/JIT CSP PoC app plus Playwright coverage that asserts:
+
+- COOP/COEP is enabled (`crossOriginIsolated === true`)
+- a strict CSP without `wasm-unsafe-eval` blocks dynamic wasm compilation and triggers a fallback
+- adding `script-src 'wasm-unsafe-eval'` enables dynamic compilation again
+
+Entry points:
+
+- PoC app: `web/public/wasm-jit-csp/` (served by `server/poc-server.mjs`)
+- Tests: `tests/e2e/csp-fallback.spec.ts`
+- Run: `npm run test:e2e`
+
 ---
 
 ## GPU Golden-Image Correctness Tests (Playwright)
