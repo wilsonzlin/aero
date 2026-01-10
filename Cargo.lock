@@ -923,6 +923,7 @@ dependencies = [
  "hyper 0.14.32",
  "image",
  "memory",
+ "proptest",
  "reqwest",
  "serde",
  "serde_json",

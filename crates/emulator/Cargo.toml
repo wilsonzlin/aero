@@ -25,6 +25,7 @@ image = { version = "0.25.5", default-features = false, features = ["png"] }
 aero-bios = { path = "../aero-bios" }
 hyper = { version = "0.14", features = ["server", "http1", "tcp"] }
 criterion = { version = "0.5.1", default-features = false, features = ["cargo_bench_support"] }
+proptest = "1.4"
 
 [[test]]
 name = "boot_basic"
@@ -32,4 +33,8 @@ path = "../../tests/boot/basic_boot.rs"
 
 [[bench]]
 name = "dsp"
+harness = false
+
+[[bench]]
+name = "storage_sequential"
 harness = false
