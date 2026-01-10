@@ -6,6 +6,14 @@ import { createAudioOutput } from './platform/audio';
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from './platform/features';
 import { importFileToOpfs } from './platform/opfs';
 import { requestWebGpuDevice } from './platform/webgpu';
+import { VmCoordinator } from './emulator/vmCoordinator.js';
+
+declare global {
+  interface Window {
+    __aeroUiTicks?: number;
+    __aeroVm?: VmCoordinator;
+  }
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -269,6 +277,204 @@ function startPerfTelemetry(report: PlatformFeatureReport): void {
   requestAnimationFrame(tick);
 }
 
+function renderEmulatorSafetyPanel(): HTMLElement {
+  window.__aeroUiTicks ??= 0;
+  globalThis.setInterval(() => {
+    window.__aeroUiTicks = (window.__aeroUiTicks ?? 0) + 1;
+  }, 25);
+
+  const stateLine = el('div', { class: 'mono', id: 'vm-state', text: 'state=stopped' });
+  const heartbeatLine = el('div', { class: 'mono', id: 'vm-heartbeat', text: 'heartbeat=0' });
+  const tickLine = el('div', { class: 'mono', id: 'vm-ticks', text: 'uiTicks=0' });
+
+  const errorOut = el('pre', { id: 'vm-error', text: '' });
+  const snapshotOut = el('pre', { id: 'vm-snapshot', text: '' });
+
+  const guestRamMiB = el('input', { type: 'number', value: '64', min: '1', step: '1' }) as HTMLInputElement;
+  const maxGuestRamMiB = el('input', { type: 'number', value: '512', min: '1', step: '1' }) as HTMLInputElement;
+  const autoSaveSnapshot = el('input', { type: 'checkbox' }) as HTMLInputElement;
+
+  let vm: VmCoordinator | null = null;
+  let visibilityListenerInstalled = false;
+
+  function update(): void {
+    const state = vm?.state ?? 'stopped';
+    stateLine.textContent = `state=${state}`;
+    const lastHeartbeat = vm?.lastHeartbeat as { totalInstructions?: number } | null | undefined;
+    const totalInstructions = lastHeartbeat?.totalInstructions ?? 0;
+    heartbeatLine.textContent = `lastHeartbeatAt=${vm?.lastHeartbeatAt ?? 0} totalInstructions=${totalInstructions}`;
+    tickLine.textContent = `uiTicks=${window.__aeroUiTicks ?? 0}`;
+
+    if (vm?.lastSnapshot) {
+      snapshotOut.textContent = JSON.stringify(vm.lastSnapshot, null, 2);
+    }
+  }
+
+  async function ensureVm(): Promise<VmCoordinator> {
+    if (vm) return vm;
+
+    const guestBytes = Math.max(1, Number(guestRamMiB.value || 0)) * 1024 * 1024;
+    const maxGuestBytes = Math.max(1, Number(maxGuestRamMiB.value || 0)) * 1024 * 1024;
+
+    vm = new VmCoordinator({
+      config: {
+        guestRamBytes: guestBytes,
+        limits: { maxGuestRamBytes: maxGuestBytes },
+        cpu: {
+          watchdogTimeoutMs: 250,
+          maxSliceMs: 8,
+          maxInstructionsPerSlice: 250_000,
+          backgroundThrottleMs: 50,
+        },
+        autoSaveSnapshotOnCrash: autoSaveSnapshot.checked,
+      },
+    });
+    window.__aeroVm = vm;
+
+    vm.addEventListener('statechange', update);
+    vm.addEventListener('heartbeat', update);
+    vm.addEventListener('error', (event) => {
+      const detail = (event as CustomEvent).detail as unknown;
+      errorOut.textContent = JSON.stringify(detail, null, 2);
+      update();
+    });
+
+    if (!visibilityListenerInstalled) {
+      visibilityListenerInstalled = true;
+      document.addEventListener('visibilitychange', () => {
+        vm?.setBackgrounded(document.visibilityState !== 'visible');
+      });
+    }
+
+    update();
+    return vm;
+  }
+
+  const startCoopButton = el('button', {
+    id: 'vm-start-coop',
+    text: 'Start (cooperative loop)',
+    onclick: async () => {
+      errorOut.textContent = '';
+      snapshotOut.textContent = '';
+      try {
+        const inst = await ensureVm();
+        await inst.start({ mode: 'cooperativeInfiniteLoop' });
+      } catch (err) {
+        errorOut.textContent = err instanceof Error ? err.message : String(err);
+      }
+      update();
+    },
+  }) as HTMLButtonElement;
+
+  const startHangButton = el('button', {
+    id: 'vm-start-hang',
+    text: 'Start (non-yielding loop)',
+    onclick: async () => {
+      errorOut.textContent = '';
+      snapshotOut.textContent = '';
+      try {
+        const inst = await ensureVm();
+        await inst.start({ mode: 'nonYieldingLoop' });
+      } catch (err) {
+        errorOut.textContent = err instanceof Error ? err.message : String(err);
+      }
+      update();
+    },
+  }) as HTMLButtonElement;
+
+  const startCrashButton = el('button', {
+    id: 'vm-start-crash',
+    text: 'Start (crash)',
+    onclick: async () => {
+      errorOut.textContent = '';
+      snapshotOut.textContent = '';
+      try {
+        const inst = await ensureVm();
+        await inst.start({ mode: 'crash' });
+      } catch (err) {
+        errorOut.textContent = err instanceof Error ? err.message : String(err);
+      }
+      update();
+    },
+  }) as HTMLButtonElement;
+
+  const pauseButton = el('button', {
+    id: 'vm-pause',
+    text: 'Pause',
+    onclick: async () => {
+      try {
+        await vm?.pause();
+      } catch (err) {
+        errorOut.textContent = err instanceof Error ? err.message : String(err);
+      }
+      update();
+    },
+  }) as HTMLButtonElement;
+
+  const resumeButton = el('button', {
+    id: 'vm-resume',
+    text: 'Resume',
+    onclick: async () => {
+      try {
+        await vm?.resume();
+      } catch (err) {
+        errorOut.textContent = err instanceof Error ? err.message : String(err);
+      }
+      update();
+    },
+  }) as HTMLButtonElement;
+
+  const stepButton = el('button', {
+    id: 'vm-step',
+    text: 'Step',
+    onclick: async () => {
+      try {
+        await vm?.step();
+      } catch (err) {
+        errorOut.textContent = err instanceof Error ? err.message : String(err);
+      }
+      update();
+    },
+  }) as HTMLButtonElement;
+
+  const resetButton = el('button', {
+    id: 'vm-reset',
+    text: 'Reset',
+    onclick: () => {
+      vm?.reset();
+      vm = null;
+      window.__aeroVm = undefined;
+      update();
+    },
+  }) as HTMLButtonElement;
+
+  globalThis.setInterval(update, 250);
+
+  return el(
+    'div',
+    { class: 'panel', id: 'vm-safety-panel' },
+    el('h2', { text: 'Emulator safety controls (watchdog + pause/step)' }),
+    el(
+      'div',
+      { class: 'row' },
+      el('label', { text: 'guestMiB:' }),
+      guestRamMiB,
+      el('label', { text: 'maxMiB:' }),
+      maxGuestRamMiB,
+      el('label', { text: 'auto-save snapshot on crash:' }),
+      autoSaveSnapshot,
+    ),
+    el('div', { class: 'row' }, startCoopButton, startHangButton, startCrashButton, pauseButton, resumeButton, stepButton, resetButton),
+    stateLine,
+    heartbeatLine,
+    tickLine,
+    el('h3', { text: 'Last error' }),
+    errorOut,
+    el('h3', { text: 'Last snapshot' }),
+    snapshotOut,
+  );
+}
+
 function render(): void {
   const app = document.querySelector<HTMLDivElement>('#app');
   if (!app) throw new Error('Missing #app element');
@@ -289,6 +495,7 @@ function render(): void {
     renderOpfsPanel(),
     renderAudioPanel(),
     renderPerfPanel(report),
+    renderEmulatorSafetyPanel(),
   );
 
   startPerfTelemetry(report);
