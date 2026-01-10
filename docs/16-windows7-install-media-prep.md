@@ -365,6 +365,8 @@ This strategy avoids DISM for driver injection, but still requires you to addres
 
 On Linux/macOS you can generally do the file/WIM manipulations with open-source tools, and (if needed) run the BCD-editing parts inside a Windows VM.
 
+Tip: You can keep Aero content on a separate “config media” ISO (drivers/certs/scripts + `autounattend.xml`) and attach it alongside the Windows ISO. Windows Setup scans attached media for `autounattend.xml`, and the repo’s templates use `%configsetroot%` for stable paths. This keeps the Windows ISO’s file tree cleaner, while still requiring offline patching of BCD/certs inside the Windows WIMs for boot-critical drivers.
+
 ### 0) Prerequisites
 
 - `xorriso` (ISO rebuild)
@@ -437,6 +439,8 @@ Prerequisites:
 
 - `wimlib-imagex` (FUSE-based mounting; on macOS you may need macFUSE)
 - `hivexregedit`
+
+Note: `cert-to-reg.py` writes the certificate’s raw DER bytes into the `Blob` registry value. This often works, but the CryptoAPI registry-backed cert store format is **not guaranteed** to be raw DER across all environments. For the most portable patch, generate the `.reg` on Windows using `tools/win-certstore-regblob-export` (or inject directly using `tools/win-offline-cert-injector`), then apply it cross-platform with `hivexregedit`. See `tools/win7-slipstream/patches/README.md`.
 
 ```sh
 CERT_PATH="iso-root/aero/certs/aero-test-root.cer"
