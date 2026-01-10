@@ -121,7 +121,7 @@ NTSTATUS VirtioDmaAllocCommonBufferWithParent(
 
 VOID VirtioDmaFreeCommonBuffer(_Inout_ VIRTIO_COMMON_BUFFER* Buffer);
 
-__forceinline WDFDMAENABLER VirtioDmaGetEnabler(_In_ VIRTIO_DMA_CONTEXT* Ctx)
+__forceinline WDFDMAENABLER VirtioDmaGetEnabler(_In_ const VIRTIO_DMA_CONTEXT* Ctx)
 {
     NT_ASSERT(Ctx != NULL);
     return Ctx->DmaEnabler;
