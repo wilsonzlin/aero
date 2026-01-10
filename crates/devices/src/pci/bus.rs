@@ -86,8 +86,9 @@ impl PciBus {
 
     pub fn read_config(&mut self, bdf: PciBdf, offset: u16, size: u8) -> u32 {
         let Some(dev) = self.devices.get_mut(&bdf) else {
-            // 0xFFFF_FFFF for non-existent device (common convention).
-            return 0xFFFF_FFFF;
+            // Non-existent device functions return all 1s, sized to the access width.
+            // (e.g. 0xFF for byte reads, 0xFFFF for word reads, 0xFFFF_FFFF for dword reads)
+            return all_ones(size);
         };
         dev.config_mut().read(offset, usize::from(size))
     }
@@ -219,7 +220,7 @@ impl PciConfigMechanism1 {
             }
             0xCFC..=0xCFF => {
                 if (self.addr & 0x8000_0000) == 0 {
-                    return 0xFFFF_FFFF;
+                    return all_ones(size);
                 }
                 let bus = ((self.addr >> 16) & 0xFF) as u8;
                 let device = ((self.addr >> 11) & 0x1F) as u8;
@@ -228,7 +229,7 @@ impl PciConfigMechanism1 {
                 let offset = reg + u16::from(port - 0xCFC);
                 pci.read_config(PciBdf::new(bus, device, function), offset, size)
             }
-            _ => 0xFFFF_FFFF,
+            _ => all_ones(size),
         }
     }
 
@@ -268,5 +269,120 @@ fn write_u32_part(old: u32, size: u8, value: u32) -> u32 {
         2 => (old & !0xFFFF) | (value & 0xFFFF),
         4 => value,
         _ => panic!("invalid write size {size}"),
+    }
+}
+
+fn all_ones(size: u8) -> u32 {
+    match size {
+        1 => 0xFF,
+        2 => 0xFFFF,
+        4 => 0xFFFF_FFFF,
+        _ => 0xFFFF_FFFF,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PciBus, PciConfigMechanism1};
+    use crate::pci::config::{PciBarDefinition, PciConfigSpace, PciDevice};
+    use crate::pci::PciBdf;
+
+    fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
+        0x8000_0000
+            | ((bus as u32) << 16)
+            | ((device as u32) << 11)
+            | ((function as u32) << 8)
+            | ((offset as u32) & 0xFC)
+    }
+
+    struct Stub {
+        cfg: PciConfigSpace,
+    }
+
+    impl Stub {
+        fn new(vendor_id: u16, device_id: u16) -> Self {
+            Self {
+                cfg: PciConfigSpace::new(vendor_id, device_id),
+            }
+        }
+    }
+
+    impl PciDevice for Stub {
+        fn config(&self) -> &PciConfigSpace {
+            &self.cfg
+        }
+
+        fn config_mut(&mut self) -> &mut PciConfigSpace {
+            &mut self.cfg
+        }
+    }
+
+    #[test]
+    fn config_address_decode_and_subword_access() {
+        let mut bus = PciBus::new();
+        let mut cfg = PciConfigMechanism1::new();
+
+        let mut dev = Stub::new(0x1234, 0xABCD);
+        dev.cfg.set_class_code(0x01, 0x06, 0x01, 0x02);
+        bus.add_device(PciBdf::new(0x12, 3, 5), Box::new(dev));
+
+        cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0x12, 3, 5, 0x00));
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0xABCD_1234);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC + 2, 2), 0xABCD);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC + 1, 1), 0x12);
+
+        cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0x12, 3, 5, 0x08));
+        // revision=0x02 prog_if=0x01 subclass=0x06 class=0x01
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0x0106_0102);
+    }
+
+    #[test]
+    fn reads_from_absent_devices_return_all_ones_by_width() {
+        let mut bus = PciBus::new();
+        let mut cfg = PciConfigMechanism1::new();
+
+        cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0, 10, 0, 0));
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0xFFFF_FFFF);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC + 3, 1), 0xFF);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC + 2, 2), 0xFFFF);
+
+        // Disabled enable bit should also float high.
+        cfg.io_write(&mut bus, 0xCF8, 4, 0);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 1), 0xFF);
+    }
+
+    #[test]
+    fn bar_size_probe_via_config_mech1() {
+        let mut bus = PciBus::new();
+        let mut cfg = PciConfigMechanism1::new();
+
+        let mut dev = Stub::new(0x1234, 0x0001);
+        dev.cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        dev.cfg
+            .set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+        bus.add_device(PciBdf::new(0, 1, 0), Box::new(dev));
+
+        // Probe BAR0 (MMIO).
+        cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0, 1, 0, 0x10));
+        cfg.io_write(&mut bus, 0xCFC, 4, 0xFFFF_FFFF);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0xFFFF_F000);
+
+        // Program BAR0 and read back.
+        cfg.io_write(&mut bus, 0xCFC, 4, 0x1234_5000);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0x1234_5000);
+
+        // Probe BAR1 (I/O).
+        cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0, 1, 0, 0x14));
+        cfg.io_write(&mut bus, 0xCFC, 4, 0xFFFF_FFFF);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0xFFFF_FFE1);
+
+        cfg.io_write(&mut bus, 0xCFC, 4, 0x0000_0C20);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0x0000_0C21);
     }
 }
