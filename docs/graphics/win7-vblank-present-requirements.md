@@ -249,6 +249,42 @@ See: `drivers/aerogpu/protocol/vblank.md`.
 
 ---
 
+## Suggested validation experiments (Win7 VM)
+
+Even if the initial implementation is “spec-driven”, it is worth validating the pacing path early because vblank issues often present as non-obvious hangs or theme fallback.
+
+### DWM pacing sanity check (cheap, guest-side)
+
+The repository includes a guest-side test that measures whether DWM is actually pacing on a refresh-like cadence:
+
+* `drivers/aerogpu/tests/win7/dwm_flush_pacing`
+
+It times successive `DwmFlush()` calls and fails if:
+
+* `DwmFlush()` returns “almost immediately” (suggesting composition is disabled or not vsync paced), or
+* there are multi-hundred-millisecond gaps (often a missing/broken vblank/interrupt path).
+
+Run it in a Win7 VM:
+
+```cmd
+cd drivers\aerogpu\tests\win7
+build_all_vs2010.cmd
+run_all.cmd
+```
+
+### ETW/GPUView (deeper, for root-cause)
+
+If you need to distinguish “vblank not firing” vs “presents not completing” vs “scheduler stalls”, collect a GPUView-compatible ETW trace with at least:
+
+* `Microsoft-Windows-DxgKrnl`
+* `Microsoft-Windows-Dwm-Core`
+
+Then inspect for:
+
+* regular vsync/vblank cadence,
+* `Present`/flip completions aligned to vblank boundaries,
+* long gaps where `dwm.exe` is blocked waiting on vblank or GPU progress.
+
 ## Final recommendation (implement this)
 
 Implement a **free-running 60 Hz vblank clock** (per active VidPn source), with:

@@ -13,6 +13,7 @@ set "RUNNER=%BIN%\\aerogpu_timeout_runner.exe"
 set /a FAILURES=0
 
 call :run_test d3d9ex_dwm_probe %*
+call :run_test dwm_flush_pacing %*
 call :run_test d3d9ex_triangle %*
 call :run_test d3d11_triangle %*
 call :run_test readback_sanity %*
