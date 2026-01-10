@@ -100,6 +100,12 @@ export type WorkerInitMessage = {
   controlSab: SharedArrayBuffer;
   guestMemory: WebAssembly.Memory;
   vgaFramebuffer: SharedArrayBuffer;
+  /**
+   * Optional SharedArrayBuffer used for main-thread ↔ GPU-worker frame pacing state.
+   *
+   * Layout is defined in `src/shared/frameProtocol.ts`.
+   */
+  frameStateSab?: SharedArrayBuffer;
 };
 
 const textEncoder = new TextEncoder();

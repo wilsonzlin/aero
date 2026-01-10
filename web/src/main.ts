@@ -2,6 +2,7 @@ import "./style.css";
 
 import { installAeroGlobals } from "./aero";
 import { createGpuWorker } from "./main/createGpuWorker";
+import { startFrameScheduler, type FrameSchedulerHandle } from "./main/frameScheduler";
 import { fnv1a32Hex } from "./utils/fnv1a";
 import { perf } from "./perf/perf";
 import { createAudioOutput } from "./platform/audio";
@@ -24,6 +25,7 @@ import { createDefaultDiskImageStore } from "./storage/default_disk_image_store"
 import type { DiskImageInfo, WorkerOpenToken } from "./storage/disk_image_store";
 import { formatByteSize } from "./storage/disk_image_store";
 import { IoWorkerClient } from "./workers/io_worker_client";
+import { FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "./shared/frameProtocol";
 
 initAeroStatusApi("booting");
 installPerfHud({ guestRamBytes: DEFAULT_GUEST_RAM_MIB * 1024 * 1024 });
@@ -37,6 +39,7 @@ installAeroGlobals();
 
 const workerCoordinator = new WorkerCoordinator();
 const wasmInitPromise = initWasm();
+let frameScheduler: FrameSchedulerHandle | null = null;
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -1448,6 +1451,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
 
   const statusList = el("ul");
   const heartbeatLine = el("div", { class: "mono", text: "" });
+  const frameLine = el("div", { class: "mono", text: "" });
   const error = el("pre", { text: "" });
 
   const guestRamSelect = el("select") as HTMLSelectElement;
@@ -1463,6 +1467,16 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       error.textContent = "";
       try {
         workerCoordinator.start({ guestRamMiB: Number(guestRamSelect.value) as GuestRamMiB });
+        const gpuWorker = workerCoordinator.getWorker("gpu");
+        const frameStateSab = workerCoordinator.getFrameStateSab();
+        if (gpuWorker && frameStateSab) {
+          frameScheduler?.stop();
+          frameScheduler = startFrameScheduler({
+            gpuWorker,
+            sharedFrameState: frameStateSab,
+            showDebugOverlay: true,
+          });
+        }
       } catch (err) {
         error.textContent = err instanceof Error ? err.message : String(err);
       }
@@ -1473,6 +1487,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const stopButton = el("button", {
     text: "Stop workers",
     onclick: () => {
+      frameScheduler?.stop();
+      frameScheduler = null;
       workerCoordinator.stop();
       update();
     },
@@ -1554,6 +1570,14 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       `ring[Heartbeat]=${workerCoordinator.getLastHeartbeatFromRing()}  ` +
       `guestI32[0]=${workerCoordinator.getGuestCounter0()}`;
 
+    const frameStateSab = workerCoordinator.getFrameStateSab();
+    if (!frameStateSab) {
+      frameLine.textContent = "frame: (uninitialized)";
+    } else {
+      const frameState = new Int32Array(frameStateSab);
+      frameLine.textContent = `frame: status=${Atomics.load(frameState, FRAME_STATUS_INDEX)} seq=${Atomics.load(frameState, FRAME_SEQ_INDEX)}`;
+    }
+
     if (anyActive) {
       ensureVgaPresenter();
       if (vgaShared) {
@@ -1579,6 +1603,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     el("div", { class: "row" }, vgaCanvas),
     vgaInfoLine,
     heartbeatLine,
+    frameLine,
     statusList,
     error,
   );

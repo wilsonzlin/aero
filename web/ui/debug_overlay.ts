@@ -173,6 +173,14 @@ export class DebugOverlay {
 
     const lines = [];
     lines.push(`GPU Telemetry (toggle: ${this._toggleKey})`);
+    const framesReceived = typeof s.framesReceived === "number" ? s.framesReceived : null;
+    const framesPresented = typeof s.framesPresented === "number" ? s.framesPresented : null;
+    const framesDropped = typeof s.framesDropped === "number" ? s.framesDropped : null;
+    if (framesReceived != null || framesPresented != null || framesDropped != null) {
+      lines.push(
+        `Frame pacing: received ${framesReceived ?? "n/a"}  presented ${framesPresented ?? "n/a"}  dropped ${framesDropped ?? "n/a"}`,
+      );
+    }
     lines.push(
       `Frames: ${frame?.count ?? 0}  Dropped: ${s.droppedFrames ?? 0}  FPS(avg): ${
         fps ? fmtFixed(fps, 1) : "n/a"

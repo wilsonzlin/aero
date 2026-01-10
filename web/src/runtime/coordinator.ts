@@ -47,6 +47,7 @@ export class WorkerCoordinator {
   private shared?: SharedMemoryViews;
   private workers: Partial<Record<WorkerRole, WorkerInfo>> = {};
   private runId = 0;
+  private frameStateSab?: SharedArrayBuffer;
 
   private lastHeartbeatFromRing = 0;
   private wasmStatus: Partial<Record<WorkerRole, WorkerWasmStatus>> = {};
@@ -69,6 +70,9 @@ export class WorkerCoordinator {
     this.shared = shared;
     this.runId += 1;
     const runId = this.runId;
+    // Dedicated, tiny SharedArrayBuffer for GPU frame scheduling state/metrics.
+    // Keeping it separate from the main control region avoids growing the core IPC layout.
+    this.frameStateSab = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
 
     for (const role of WORKER_ROLES) {
       const regions = ringRegionsForWorker(role);
@@ -126,6 +130,7 @@ export class WorkerCoordinator {
         controlSab: segments.control,
         guestMemory: segments.guestMemory,
         vgaFramebuffer: segments.vgaFramebuffer,
+        frameStateSab: this.frameStateSab,
       };
       worker.postMessage(initMessage);
     }
@@ -156,6 +161,15 @@ export class WorkerCoordinator {
     this.workers = {};
     this.shared = undefined;
     this.wasmStatus = {};
+    this.frameStateSab = undefined;
+  }
+
+  getWorker(role: WorkerRole): Worker | undefined {
+    return this.workers[role]?.worker;
+  }
+
+  getFrameStateSab(): SharedArrayBuffer | undefined {
+    return this.frameStateSab;
   }
 
   getWorkerStatuses(): Record<WorkerRole, WorkerStatus> {

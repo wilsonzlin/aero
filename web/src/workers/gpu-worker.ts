@@ -16,7 +16,7 @@ import {
   type FrameTimingsReport,
   type GpuWorkerMessageFromMain,
   type GpuWorkerMessageToMain,
-} from '../shared/frameProtocol';
+} from "../shared/frameProtocol";
 
 import {
   layoutFromHeader,
@@ -25,21 +25,37 @@ import {
   SHARED_FRAMEBUFFER_VERSION,
   SharedFramebufferHeaderIndex,
   type SharedFramebufferLayout,
-} from '../ipc/shared-layout';
+} from "../ipc/shared-layout";
 
-import { GpuTelemetry } from '../../gpu/telemetry.ts';
+import { GpuTelemetry } from "../../gpu/telemetry.ts";
+import type { WorkerRole } from "../runtime/shared_layout";
+import { createSharedMemoryViews, setReadyFlag } from "../runtime/shared_layout";
+import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
+
 type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<void | boolean>;
 type GetTimingsFn = () => FrameTimingsReport | null | Promise<FrameTimingsReport | null>;
 
+const ctx = self as unknown as DedicatedWorkerGlobalScope;
 void installWorkerPerfHandlers();
 
 const postToMain = (msg: GpuWorkerMessageToMain) => {
-  self.postMessage(msg);
+  ctx.postMessage(msg);
 };
+
+const postRuntimeError = (message: string) => {
+  if (!status) return;
+  ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
+};
+
+let role: WorkerRole = "gpu";
+let status: Int32Array | null = null;
 
 let frameState: Int32Array | null = null;
 
-let presentFn: PresentFn | null = null;
+// NOTE: `present()` is expected to be provided by the GPU wasm module once the rendering stack
+// is fully wired up. Until then, we keep a tiny no-op implementation so the frame pacing demo
+// can run end-to-end without keeping the main thread stuck in DIRTY→tick spam.
+let presentFn: PresentFn | null = () => true;
 let getTimingsFn: GetTimingsFn | null = null;
 let presenting = false;
 
@@ -57,6 +73,7 @@ let lastMetricsPostAtMs = 0;
 const METRICS_POST_INTERVAL_MS = 250;
 
 let latestTimings: FrameTimingsReport | null = null;
+
 type SharedFramebufferViews = {
   header: Int32Array;
   layout: SharedFramebufferLayout;
@@ -67,6 +84,10 @@ type SharedFramebufferViews = {
 };
 
 let framebufferViews: SharedFramebufferViews | null = null;
+let lastInitMessage: Extract<GpuWorkerMessageFromMain, { type: "init" }> | null = null;
+
+const telemetry = new GpuTelemetry({ frameBudgetMs: Number.POSITIVE_INFINITY });
+let lastFrameStartMs: number | null = null;
 
 const tryInitSharedFramebufferViews = () => {
   if (framebufferViews) return;
@@ -107,20 +128,14 @@ const tryInitSharedFramebufferViews = () => {
 
     framebufferViews = { header, layout, slot0, slot1, dirty0, dirty1 };
 
-    // Expose on the worker global so the dynamically-imported presenter module
-    // can read the framebuffer without plumbing arguments through `present()`.
-    // This keeps the hot path (per-frame) allocation-free and avoids `postMessage`
-    // copies.
-    (globalThis as unknown as { __aeroSharedFramebuffer?: SharedFramebufferViews }).__aeroSharedFramebuffer = framebufferViews;
+    // Expose on the worker global so the dynamically-imported presenter module can read the
+    // framebuffer without plumbing arguments through `present()`.
+    (globalThis as unknown as { __aeroSharedFramebuffer?: SharedFramebufferViews }).__aeroSharedFramebuffer =
+      framebufferViews;
   } catch {
     // Header likely not initialized yet; caller should retry later.
   }
 };
-
-let lastInitMessage: Extract<GpuWorkerMessageFromMain, { type: 'init' }> | null = null;
-
-const telemetry = new GpuTelemetry({ frameBudgetMs: Number.POSITIVE_INFINITY });
-let lastFrameStartMs: number | null = null;
 
 const syncSharedMetrics = () => {
   if (!frameState) return;
@@ -139,7 +154,7 @@ const maybePostMetrics = () => {
   syncSharedMetrics();
   telemetry.droppedFrames = framesDropped;
   postToMain({
-    type: 'metrics',
+    type: "metrics",
     framesReceived,
     framesPresented,
     framesDropped,
@@ -147,11 +162,17 @@ const maybePostMetrics = () => {
   });
 };
 
+const sendError = (err: unknown) => {
+  const message = err instanceof Error ? err.message : String(err);
+  postToMain({ type: "error", message });
+  postRuntimeError(message);
+};
+
 const loadPresentFnFromModuleUrl = async (wasmModuleUrl: string) => {
   const mod: unknown = await import(/* @vite-ignore */ wasmModuleUrl);
 
   const maybePresent = (mod as { present?: unknown }).present;
-  if (typeof maybePresent !== 'function') {
+  if (typeof maybePresent !== "function") {
     throw new Error(`Module ${wasmModuleUrl} did not export a present() function`);
   }
   presentFn = maybePresent as PresentFn;
@@ -159,7 +180,7 @@ const loadPresentFnFromModuleUrl = async (wasmModuleUrl: string) => {
   const maybeGetTimings =
     (mod as { get_frame_timings?: unknown }).get_frame_timings ??
     (mod as { getFrameTimings?: unknown }).getFrameTimings;
-  getTimingsFn = typeof maybeGetTimings === 'function' ? (maybeGetTimings as GetTimingsFn) : null;
+  getTimingsFn = typeof maybeGetTimings === "function" ? (maybeGetTimings as GetTimingsFn) : null;
 };
 
 const maybeUpdateFramesReceivedFromSeq = () => {
@@ -176,8 +197,8 @@ const maybeUpdateFramesReceivedFromSeq = () => {
 
 const shouldPresentWithSharedState = () => {
   if (!frameState) return false;
-  const status = Atomics.load(frameState, FRAME_STATUS_INDEX);
-  return status === FRAME_DIRTY;
+  const st = Atomics.load(frameState, FRAME_STATUS_INDEX);
+  return st === FRAME_DIRTY;
 };
 
 const claimPresentWithSharedState = () => {
@@ -209,7 +230,7 @@ const presentOnce = async () => {
   const t0 = performance.now();
   const result = await presentFn(dirtyRects);
   telemetry.recordPresentLatencyMs(performance.now() - t0);
-  return typeof result === 'boolean' ? result : true;
+  return typeof result === "boolean" ? result : true;
 };
 
 const handleTick = async () => {
@@ -244,10 +265,7 @@ const handleTick = async () => {
       return;
     }
 
-    if (pendingFrames > 1) {
-      framesDropped += pendingFrames - 1;
-    }
-
+    if (pendingFrames > 1) framesDropped += pendingFrames - 1;
     pendingFrames = 0;
   }
 
@@ -265,8 +283,7 @@ const handleTick = async () => {
       lastFrameStartMs = now;
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    postToMain({ type: 'error', message });
+    sendError(err);
   } finally {
     presenting = false;
     finishPresentWithSharedState();
@@ -274,15 +291,37 @@ const handleTick = async () => {
   }
 };
 
-self.onmessage = (event: MessageEvent<GpuWorkerMessageFromMain>) => {
-  const msg = event.data;
-  if (!msg || typeof msg !== 'object' || !('type' in msg)) return;
+const handleRuntimeInit = (init: WorkerInitMessage) => {
+  role = init.role ?? "gpu";
+  const segments = { control: init.controlSab, guestMemory: init.guestMemory, vgaFramebuffer: init.vgaFramebuffer };
+  status = createSharedMemoryViews(segments).status;
+  setReadyFlag(status, role, true);
+
+  if (init.frameStateSab) {
+    frameState = new Int32Array(init.frameStateSab);
+  }
+
+  ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
+};
+
+ctx.onmessage = (event: MessageEvent<unknown>) => {
+  const data = event.data;
+
+  // Runtime/harness init (SharedArrayBuffers + worker role).
+  if (data && typeof data === "object" && "kind" in data && (data as { kind?: unknown }).kind === "init") {
+    handleRuntimeInit(data as WorkerInitMessage);
+    return;
+  }
+
+  // Frame protocol messages (tick/dirty + optional presenter wiring).
+  const msg = data as Partial<GpuWorkerMessageFromMain>;
+  if (!msg || typeof msg !== "object" || typeof msg.type !== "string") return;
 
   switch (msg.type) {
-    case 'init': {
-      perf.spanBegin('worker:init');
+    case "init": {
+      perf.spanBegin("worker:init");
       try {
-        lastInitMessage = msg;
+        lastInitMessage = msg as Extract<GpuWorkerMessageFromMain, { type: "init" }>;
         if (msg.sharedFrameState) {
           frameState = new Int32Array(msg.sharedFrameState);
         }
@@ -290,23 +329,18 @@ self.onmessage = (event: MessageEvent<GpuWorkerMessageFromMain>) => {
         tryInitSharedFramebufferViews();
 
         if (msg.wasmModuleUrl) {
-          void perf
-            .spanAsync('wasm:init', () => loadPresentFnFromModuleUrl(msg.wasmModuleUrl))
-            .catch((err) => {
-              const message = err instanceof Error ? err.message : String(err);
-              postToMain({ type: 'error', message });
-            });
+          void perf.spanAsync("wasm:init", () => loadPresentFnFromModuleUrl(msg.wasmModuleUrl)).catch(sendError);
         }
-      } finally {
-        perf.spanEnd('worker:init');
-      }
 
-      telemetry.reset();
-      lastFrameStartMs = null;
+        telemetry.reset();
+        lastFrameStartMs = null;
+      } finally {
+        perf.spanEnd("worker:init");
+      }
       break;
     }
 
-    case 'frame_dirty': {
+    case "frame_dirty": {
       pendingDirtyRects = msg.dirtyRects ?? null;
       if (!frameState) {
         pendingFrames += 1;
@@ -315,21 +349,20 @@ self.onmessage = (event: MessageEvent<GpuWorkerMessageFromMain>) => {
       break;
     }
 
-    case 'request_timings': {
+    case "request_timings": {
       void (async () => {
         try {
           const timings = getTimingsFn ? await getTimingsFn() : latestTimings;
           latestTimings = timings;
-          postToMain({ type: 'timings', timings });
+          postToMain({ type: "timings", timings });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          postToMain({ type: 'error', message });
+          sendError(err);
         }
       })();
       break;
     }
 
-    case 'tick': {
+    case "tick": {
       void msg.frameTimeMs;
       void handleTick();
       break;

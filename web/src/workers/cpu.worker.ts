@@ -5,6 +5,7 @@ import { installWorkerPerfHandlers } from "../perf/worker";
 import { initWasmForContext } from "../runtime/wasm_context";
 import { RingBuffer } from "../runtime/ring_buffer";
 import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
+import { FRAME_DIRTY, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "../shared/frameProtocol";
 import {
   FRAMEBUFFER_FORMAT_RGBA8888,
   HEADER_INDEX_CONFIG_COUNTER,
@@ -35,6 +36,7 @@ let commandRing!: RingBuffer;
 let eventRing!: RingBuffer;
 let guestI32!: Int32Array;
 let vgaFramebuffer: ReturnType<typeof wrapSharedFramebuffer> | null = null;
+let frameState: Int32Array | null = null;
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   const init = ev.data as Partial<WorkerInitMessage>;
@@ -53,6 +55,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       status = views.status;
       guestI32 = views.guestI32;
       vgaFramebuffer = wrapSharedFramebuffer(segments.vgaFramebuffer, 0);
+      frameState = init.frameStateSab ? new Int32Array(init.frameStateSab) : null;
 
       initFramebufferHeader(vgaFramebuffer.header, {
         width: 320,
@@ -156,6 +159,10 @@ async function runLoop(): Promise<void> {
 
         renderTestPattern(vgaFramebuffer, mode.width, mode.height, now);
         addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_FRAME_COUNTER, 1);
+        if (frameState) {
+          Atomics.add(frameState, FRAME_SEQ_INDEX, 1);
+          Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+        }
         nextFrameMs = now + frameIntervalMs;
       }
     }

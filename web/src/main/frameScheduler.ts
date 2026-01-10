@@ -62,13 +62,22 @@ export const startFrameScheduler = ({
     overlay.show();
   }
 
+  const updateTelemetry = (msg: { framesReceived: number; framesPresented: number; framesDropped: number; telemetry?: unknown }) => {
+    const baseTelemetry = msg.telemetry;
+    if (baseTelemetry && typeof baseTelemetry === 'object') {
+      lastTelemetry = { ...(baseTelemetry as Record<string, unknown>), ...msg };
+    } else {
+      lastTelemetry = { ...msg };
+    }
+  };
+
   const onWorkerMessage = (event: MessageEvent<GpuWorkerMessageToMain>) => {
     const msg = event.data;
     if (msg.type === 'metrics') {
       metrics.framesReceived = msg.framesReceived;
       metrics.framesPresented = msg.framesPresented;
       metrics.framesDropped = msg.framesDropped;
-      lastTelemetry = msg.telemetry ?? lastTelemetry;
+      updateTelemetry(msg);
       return;
     }
 
