@@ -1,0 +1,9 @@
+[package]
+name = "aero-virtio"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[dev-dependencies]
+
