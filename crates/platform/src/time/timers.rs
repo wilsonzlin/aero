@@ -27,6 +27,23 @@ impl TimerId {
     pub const fn as_u64(self) -> u64 {
         self.0
     }
+
+    #[inline]
+    pub const fn from_u64(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+impl From<u64> for TimerId {
+    fn from(value: u64) -> Self {
+        Self::from_u64(value)
+    }
+}
+
+impl From<TimerId> for u64 {
+    fn from(value: TimerId) -> Self {
+        value.0
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
