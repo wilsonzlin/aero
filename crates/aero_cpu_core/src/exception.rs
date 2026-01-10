@@ -24,8 +24,13 @@ pub enum Exception {
     InvalidTss(u16),
     /// #UD
     InvalidOpcode,
+    /// #NM (Device Not Available) - raised when floating point is unavailable
+    /// due to `CR0.TS` (lazy context switching).
+    DeviceNotAvailable,
     /// #MF (x87 floating-point error).
     X87Fpu,
+    /// #XM/#XF (SIMD Floating-Point Exception).
+    SimdFloatingPointException,
     /// Instruction was decoded but is not yet implemented.
     Unimplemented(&'static str),
 }
@@ -67,7 +72,9 @@ impl fmt::Display for Exception {
             Exception::StackSegment(code) => write!(f, "#SS({code})"),
             Exception::InvalidTss(code) => write!(f, "#TS({code})"),
             Exception::InvalidOpcode => write!(f, "#UD"),
+            Exception::DeviceNotAvailable => write!(f, "#NM"),
             Exception::X87Fpu => write!(f, "#MF"),
+            Exception::SimdFloatingPointException => write!(f, "#XM"),
             Exception::Unimplemented(name) => write!(f, "unimplemented: {name}"),
         }
     }

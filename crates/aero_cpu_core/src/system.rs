@@ -5,10 +5,22 @@
 
 use crate::cpuid::{cpuid, CpuFeatures, CpuidResult};
 use crate::exceptions::{Exception as ArchException, PendingEvent};
+use crate::fpu::FpKind;
 use crate::msr::EFER_SCE;
 use crate::time::TimeSource;
-use crate::{msr::MsrState, Exception};
+use crate::{msr::MsrState, CpuState, Exception, FxStateError, FXSAVE_AREA_SIZE};
 use std::collections::VecDeque;
+
+// --- Control register bit definitions (subset) ---
+pub const CR0_MP: u64 = 1 << 1;
+pub const CR0_EM: u64 = 1 << 2;
+pub const CR0_TS: u64 = 1 << 3;
+pub const CR0_NE: u64 = 1 << 5;
+
+pub const CR4_OSFXSR: u64 = 1 << 9;
+pub const CR4_OSXMMEXCPT: u64 = 1 << 10;
+
+const MXCSR_EXCEPTION_MASK: u32 = 0x1F80;
 
 /// A device/bus surface for port I/O instructions.
 pub trait PortIo {
@@ -141,6 +153,9 @@ pub struct Cpu {
     pub halted: bool,
     /// Interrupt shadow after STI (inhibits interrupts for one instruction).
     pub interrupt_inhibit: u8,
+    /// Used when `CR0.NE = 0` (x87 errors via external IRQ13) to allow the host
+    /// to observe that a floating-point interrupt should be injected.
+    pub irq13_pending: bool,
 
     /// Deferred exception/interrupt delivery (raised by interpreter/JIT slow paths).
     pub pending_event: Option<PendingEvent>,
@@ -210,6 +225,7 @@ impl Cpu {
             time: TimeSource::default(),
             halted: false,
             interrupt_inhibit: 0,
+            irq13_pending: false,
             pending_event: None,
             external_interrupts: VecDeque::new(),
             tss32: None,
@@ -344,8 +360,133 @@ impl Cpu {
     pub fn clts(&mut self) -> Result<(), Exception> {
         self.require_cpl0()?;
         // CR0.TS is bit 3.
-        self.cr0 &= !(1 << 3);
+        self.cr0 &= !CR0_TS;
         Ok(())
+    }
+
+    /// Architectural gating for x87/MMX/SSE operations.
+    ///
+    /// This models the subset of CR0/CR4 semantics that Windows relies on for
+    /// lazy FP context switching:
+    /// * `CR0.EM = 1` disables the x87 (and, by policy, MMX/SSE) and raises `#UD`.
+    /// * `CR4.OSFXSR = 0` disables SSE/FXSAVE/FXRSTOR/MXCSR access and raises `#UD`.
+    /// * `CR0.TS = 1` causes x87/MMX/SSE to raise `#NM`.
+    pub fn check_fp_available(&mut self, kind: FpKind) -> Result<(), Exception> {
+        // Give #UD priority over #NM: if the ISA is disabled entirely, we do not
+        // report it as a lazy-FPU trap.
+        if (self.cr0 & CR0_EM) != 0 {
+            return Err(Exception::InvalidOpcode);
+        }
+
+        if matches!(kind, FpKind::Sse) && (self.cr4 & CR4_OSFXSR) == 0 {
+            return Err(Exception::InvalidOpcode);
+        }
+
+        if (self.cr0 & CR0_TS) != 0 {
+            return Err(Exception::DeviceNotAvailable);
+        }
+
+        Ok(())
+    }
+
+    /// WAIT/FWAIT (0x9B).
+    ///
+    /// SDM: If `CR0.MP = 1` and `CR0.TS = 1`, `WAIT/FWAIT` raises `#NM`.
+    pub fn instr_wait(&mut self, fp: &crate::fpu::FpuState) -> Result<(), Exception> {
+        if (self.cr0 & CR0_EM) != 0 {
+            return Err(Exception::InvalidOpcode);
+        }
+
+        if (self.cr0 & CR0_MP) != 0 && (self.cr0 & CR0_TS) != 0 {
+            return Err(Exception::DeviceNotAvailable);
+        }
+
+        // Simplified x87 exception delivery.
+        if fp.has_unmasked_exception() {
+            if (self.cr0 & CR0_NE) != 0 {
+                return Err(Exception::X87Fpu);
+            }
+
+            self.irq13_pending = true;
+        }
+
+        Ok(())
+    }
+
+    /// Representative x87 instruction wrapper (`FNINIT`/`FINIT`).
+    pub fn instr_fninit(&mut self, state: &mut CpuState) -> Result<(), Exception> {
+        self.check_fp_available(FpKind::X87)?;
+        state.fninit();
+        Ok(())
+    }
+
+    /// Representative SSE instruction wrapper (`XORPS xmm, xmm`).
+    pub fn instr_xorps(
+        &mut self,
+        state: &mut CpuState,
+        dst: usize,
+        src: usize,
+    ) -> Result<(), Exception> {
+        self.check_fp_available(FpKind::Sse)?;
+        let src_val = *state.sse.xmm.get(src).ok_or(Exception::InvalidOpcode)?;
+        let dst_reg = state
+            .sse
+            .xmm
+            .get_mut(dst)
+            .ok_or(Exception::InvalidOpcode)?;
+        *dst_reg ^= src_val;
+        Ok(())
+    }
+
+    /// Instruction-level `STMXCSR` wrapper with CR0/CR4 gating.
+    pub fn instr_stmxcsr(&mut self, state: &CpuState, dst: &mut [u8; 4]) -> Result<(), Exception> {
+        self.check_fp_available(FpKind::Sse)?;
+        state.stmxcsr(dst);
+        Ok(())
+    }
+
+    /// Instruction-level `LDMXCSR` wrapper with CR0/CR4 gating.
+    pub fn instr_ldmxcsr(&mut self, state: &mut CpuState, src: &[u8; 4]) -> Result<(), Exception> {
+        self.check_fp_available(FpKind::Sse)?;
+        let mut value = u32::from_le_bytes(*src);
+        if (self.cr4 & CR4_OSXMMEXCPT) == 0 {
+            // If the OS hasn't opted into SIMD FP exception delivery, ensure all
+            // exception masks remain set so we never need to inject #XM/#XF.
+            value |= MXCSR_EXCEPTION_MASK;
+        }
+        let bytes = value.to_le_bytes();
+        state.ldmxcsr(&bytes).map_err(map_fx_state_error)
+    }
+
+    /// Instruction-level `FXSAVE` wrapper with CR0/CR4 gating.
+    pub fn instr_fxsave(
+        &mut self,
+        state: &CpuState,
+        dst: &mut [u8; FXSAVE_AREA_SIZE],
+    ) -> Result<(), Exception> {
+        self.check_fp_available(FpKind::Sse)?;
+        state.fxsave(dst);
+        Ok(())
+    }
+
+    /// Instruction-level `FXRSTOR` wrapper with CR0/CR4 gating.
+    pub fn instr_fxrstor(
+        &mut self,
+        state: &mut CpuState,
+        src: &[u8; FXSAVE_AREA_SIZE],
+    ) -> Result<(), Exception> {
+        self.check_fp_available(FpKind::Sse)?;
+
+        if (self.cr4 & CR4_OSXMMEXCPT) == 0 {
+            let mut patched = *src;
+            let mut mxcsr_bytes = [0u8; 4];
+            mxcsr_bytes.copy_from_slice(&patched[24..28]);
+            let mxcsr = u32::from_le_bytes(mxcsr_bytes) | MXCSR_EXCEPTION_MASK;
+            patched[24..28].copy_from_slice(&mxcsr.to_le_bytes());
+            state.fxrstor(&patched).map_err(map_fx_state_error)
+        } else {
+            state.fxrstor(src).map_err(map_fx_state_error)
+        }
     }
 
     /// Store the machine status word (lower 16 bits of CR0).
@@ -741,5 +882,12 @@ impl Cpu {
 impl Default for Cpu {
     fn default() -> Self {
         Self::new(CpuFeatures::default())
+    }
+}
+
+fn map_fx_state_error(err: FxStateError) -> Exception {
+    match err {
+        // SDM: Loading an MXCSR value with reserved bits set raises #GP(0).
+        FxStateError::MxcsrReservedBits { .. } => Exception::gp0(),
     }
 }

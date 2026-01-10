@@ -1,3 +1,13 @@
+/// Which floating-point facility an instruction uses.
+///
+/// This exists so we can enforce architectural gating differences (e.g.
+/// `CR4.OSFXSR` only applies to SSE/FXSAVE/FXRSTOR).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FpKind {
+    X87,
+    Sse,
+}
+
 /// x87 / MMX architectural state sufficient for `FXSAVE`/`FXRSTOR`.
 ///
 /// Note: in the `FXSAVE` area each x87 register occupies a 16-byte slot, but
@@ -82,4 +92,15 @@ impl FpuState {
         fsw |= ((self.top as u16) & 0b111) << 11;
         fsw
     }
+
+    /// Returns true when an x87 exception is pending and unmasked.
+    ///
+    /// This is used to emulate `WAIT/FWAIT` behaviour that signals `#MF` when
+    /// `CR0.NE = 1`.
+    pub fn has_unmasked_exception(&self) -> bool {
+        let exception_flags = self.fsw & 0b11_1111;
+        let masks = self.fcw & 0b11_1111;
+        (exception_flags & !masks) != 0
+    }
 }
+
