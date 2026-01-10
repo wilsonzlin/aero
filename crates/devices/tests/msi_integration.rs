@@ -1,18 +1,25 @@
-use aero_devices::pci::{MsiCapability, PciConfigSpace};
-use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
+use aero_devices::pci::{
+    MsiCapability, PciBdf, PciConfigSpace, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+};
+use aero_platform::interrupts::{
+    InterruptController, IoApicRedirectionEntry, PlatformInterruptMode, PlatformInterrupts,
+    TriggerMode,
+};
 
 struct TestPciDevice {
+    bdf: PciBdf,
+    intx_pin: PciInterruptPin,
     config: PciConfigSpace,
-    legacy_intx_asserts: u64,
 }
 
 impl TestPciDevice {
-    fn new() -> Self {
+    fn new(bdf: PciBdf, intx_pin: PciInterruptPin) -> Self {
         let mut config = PciConfigSpace::new(0x1234, 0x5678);
         config.add_capability(Box::new(MsiCapability::new()));
         Self {
+            bdf,
+            intx_pin,
             config,
-            legacy_intx_asserts: 0,
         }
     }
 
@@ -20,15 +27,23 @@ impl TestPciDevice {
         &mut self.config
     }
 
-    fn raise_interrupt(&mut self, interrupts: &mut PlatformInterrupts) -> bool {
+    fn raise_interrupt(
+        &mut self,
+        interrupts: &mut PlatformInterrupts,
+        intx_router: &mut PciIntxRouter,
+    ) -> bool {
         if let Some(msi) = self.config.capability_mut::<MsiCapability>() {
             if msi.enabled() {
                 return msi.trigger(interrupts);
             }
         }
 
-        self.legacy_intx_asserts += 1;
+        intx_router.assert_intx(self.bdf, self.intx_pin, interrupts);
         false
+    }
+
+    fn clear_intx(&mut self, interrupts: &mut PlatformInterrupts, intx_router: &mut PciIntxRouter) {
+        intx_router.deassert_intx(self.bdf, self.intx_pin, interrupts);
     }
 }
 
@@ -63,9 +78,10 @@ impl GuestCpu {
 
 #[test]
 fn msi_interrupt_reaches_guest_idt_vector() {
-    let mut device = TestPciDevice::new();
+    let mut device = TestPciDevice::new(PciBdf::new(0, 0, 0), PciInterruptPin::IntA);
     let mut interrupts = PlatformInterrupts::new();
     interrupts.set_mode(PlatformInterruptMode::Apic);
+    let mut intx_router = PciIntxRouter::new(PciIntxRouterConfig::default());
 
     let mut cpu = GuestCpu::new();
     cpu.install_isr(0x45);
@@ -83,9 +99,32 @@ fn msi_interrupt_reaches_guest_idt_vector() {
         .config_mut()
         .write(cap_offset + 0x02, 2, (ctrl | 0x0001) as u32);
 
-    assert!(device.raise_interrupt(&mut interrupts));
-    assert_eq!(device.legacy_intx_asserts, 0);
+    assert!(device.raise_interrupt(&mut interrupts, &mut intx_router));
 
     cpu.service_next_interrupt(&mut interrupts);
     assert_eq!(cpu.handled_vectors, vec![0x45]);
+}
+
+#[test]
+fn intx_fallback_routes_through_pci_intx_router() {
+    let mut device = TestPciDevice::new(PciBdf::new(0, 0, 0), PciInterruptPin::IntA);
+    let mut interrupts = PlatformInterrupts::new();
+    interrupts.set_mode(PlatformInterruptMode::Apic);
+
+    let mut intx_router = PciIntxRouter::new(PciIntxRouterConfig::default());
+    let gsi = intx_router.gsi_for_intx(device.bdf, device.intx_pin);
+
+    let vector = 0x45u8;
+    let mut entry = IoApicRedirectionEntry::fixed(vector, 0);
+    entry.masked = false;
+    entry.trigger = TriggerMode::Level;
+    interrupts.ioapic_mut().set_entry(gsi, entry);
+
+    assert!(!device.raise_interrupt(&mut interrupts, &mut intx_router));
+    assert_eq!(interrupts.get_pending(), Some(vector));
+
+    interrupts.acknowledge(vector);
+    device.clear_intx(&mut interrupts, &mut intx_router);
+    interrupts.eoi(vector);
+    assert_eq!(interrupts.get_pending(), None);
 }
