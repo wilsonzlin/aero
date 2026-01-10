@@ -32,5 +32,10 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Keep Vitest scoped to unit tests under src/. The repo also contains:
+    //  - `web/test/*` which are Node's built-in `node:test` suites
+    //  - `web/tests/*` which are Playwright e2e specs
+    include: ["src/**/*.test.ts"],
+    exclude: ["test/**", "tests/**"],
   },
 });

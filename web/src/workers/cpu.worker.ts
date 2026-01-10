@@ -40,6 +40,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
 function runLoop(): void {
   let running = false;
+  const heartbeatIntervalMs = 250;
+  let nextHeartbeatAt = 0;
 
   while (true) {
     // Drain commands.
@@ -51,6 +53,7 @@ function runLoop(): void {
 
       if (cmd.type === MessageType.START) {
         running = true;
+        nextHeartbeatAt = Date.now();
       } else if (cmd.type === MessageType.STOP) {
         Atomics.store(status, StatusIndex.StopRequested, 1);
       }
@@ -58,15 +61,18 @@ function runLoop(): void {
 
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
 
-    if (running) {
+    const now = Date.now();
+    if (running && now >= nextHeartbeatAt) {
       const counter = Atomics.add(status, StatusIndex.HeartbeatCounter, 1) + 1;
       Atomics.add(guestI32, 0, 1);
       // Best-effort: heartbeat events are allowed to drop if the ring is full.
       eventRing.push(encodeProtocolMessage({ type: MessageType.HEARTBEAT, role, counter }));
+      nextHeartbeatAt = now + heartbeatIntervalMs;
     }
 
     // Sleep until either new commands arrive or the next heartbeat tick.
-    commandRing.waitForData(running ? 250 : undefined);
+    const timeoutMs = running ? Math.max(0, nextHeartbeatAt - Date.now()) : undefined;
+    commandRing.waitForData(timeoutMs);
   }
 
   setReadyFlag(status, role, false);
