@@ -263,18 +263,13 @@ impl CpuFeatureSet {
         Self {
             leaf1_ecx: bits::LEAF1_ECX_CX16,
             leaf1_edx: bits::LEAF1_EDX_FPU
-                | bits::LEAF1_EDX_PSE
                 | bits::LEAF1_EDX_TSC
                 | bits::LEAF1_EDX_MSR
                 | bits::LEAF1_EDX_PAE
                 | bits::LEAF1_EDX_CX8
                 | bits::LEAF1_EDX_APIC
                 | bits::LEAF1_EDX_SEP
-                | bits::LEAF1_EDX_MTRR
-                | bits::LEAF1_EDX_PGE
                 | bits::LEAF1_EDX_CMOV
-                | bits::LEAF1_EDX_PAT
-                | bits::LEAF1_EDX_CLFSH
                 | bits::LEAF1_EDX_MMX
                 | bits::LEAF1_EDX_FXSR
                 | bits::LEAF1_EDX_SSE
@@ -291,7 +286,6 @@ impl CpuFeatureSet {
     pub fn optimized_mask() -> Self {
         Self::win7_minimum().union(Self {
             leaf1_ecx: bits::LEAF1_ECX_SSE3
-                | bits::LEAF1_ECX_PCLMULQDQ
                 | bits::LEAF1_ECX_SSSE3
                 | bits::LEAF1_ECX_SSE41
                 | bits::LEAF1_ECX_SSE42

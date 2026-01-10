@@ -55,7 +55,7 @@ This keeps it explicit *where* a feature bit is reported, which helps avoid acci
    - `LAHF/SAHF` in long mode
    - `CMPXCHG16B`
 
-2. **Optimized** – allows additional feature bits (SSE3/SSSE3/SSE4.2/POPCNT/CLMUL, etc.) **only when the emulator implements them**.
+2. **Optimized** – allows additional feature bits (SSE3/SSSE3/SSE4.2/POPCNT, etc.) **only when the emulator implements them**.
 
 ### Overrides
 
