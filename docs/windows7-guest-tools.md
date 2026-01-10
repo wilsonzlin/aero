@@ -153,6 +153,14 @@ During installation you may see driver install prompts:
 
 When `setup.cmd` finishes, reboot Windows if prompted.
 
+### x64: `setup.cmd` may prompt to enable Test Signing
+
+On Windows 7 x64, `setup.cmd` may ask:
+
+- `Enable Test Signing now (recommended for test-signed drivers)? [Y/N]`
+
+If you are using test-signed/custom-signed drivers, choose **Y**. A reboot is required before the setting takes effect.
+
 If `setup.cmd` fails or prints warnings, **do not** switch the boot disk to virtio-blk yet. Review:
 
 - `C:\AeroGuestTools\install.log`
@@ -237,8 +245,8 @@ Look on the Guest Tools media for certificate file(s) (commonly under `X:\certs\
 
 From an elevated Command Prompt:
 
-- `certutil -addstore -f Root X:\path\to\aero.cer`
-- `certutil -addstore -f TrustedPublisher X:\path\to\aero.cer`
+- `certutil -addstore -f Root X:\certs\your-cert.cer`
+- `certutil -addstore -f TrustedPublisher X:\certs\your-cert.cer`
 
 (`X:` is usually the Guest Tools CD drive letter.)
 
@@ -289,6 +297,8 @@ If you cannot run `setup.cmd`, do **not** switch the boot disk to virtio-blk unt
 ## Step 4: Reboot (still on baseline devices)
 
 After running Guest Tools, reboot once while still using baseline devices. This confirms the OS still boots normally before changing storage/network/display hardware.
+
+Tip: `setup.cmd` may offer an interactive choice at the end (Reboot/Shutdown/No action). Choosing **Reboot** matches this step. If you choose **Shutdown**, consider booting once on baseline devices before you switch the boot disk to virtio-blk.
 
 ## Step 5: Switch to virtio + Aero GPU (recommended order)
 
