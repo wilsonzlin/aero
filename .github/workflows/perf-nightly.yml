@@ -97,6 +97,26 @@ jobs:
             --out-dir perf-results/nightly \
             --iterations ${{ env.PERF_ITERATIONS }}
 
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### Perf (nightly)"
+            echo ""
+            echo "- Iterations: ${{ env.PERF_ITERATIONS }}"
+            if [[ -f perf-results/nightly/summary.json ]]; then
+              echo ""
+              echo "Raw summary:"
+              echo ""
+              echo '```json'
+              cat perf-results/nightly/summary.json
+              echo '```'
+            else
+              echo ""
+              echo "_No summary.json produced._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload browser perf artifacts
         if: always()
         uses: actions/upload-artifact@v4
