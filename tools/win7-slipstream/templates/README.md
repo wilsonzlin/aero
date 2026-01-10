@@ -6,6 +6,10 @@ These files contain **no Microsoft binaries** and are **not tied to any specific
 
 See also: `docs/16-windows7-install-media-prep.md`.
 
+For ready-to-edit, end-to-end unattended templates and Win7-compatible post-install scripts (test signing + driver install), also see:
+
+- `windows/win7-sp1/unattend/`
+
 ---
 
 ## Files
@@ -76,9 +80,9 @@ Common placeholders used across templates:
 - `{{AERO_SIGNING_MODE}}`
   - `testsigning` (preferred) or `nointegritychecks` (fallback / emulator-only)
 - `{{AERO_WINPE_DRIVER_PATH}}`
-  - e.g., `%configsetroot%\aero\drivers\winpe`
+  - e.g., `%configsetroot%\Drivers\WinPE\{{ARCH}}` (matches `windows/win7-sp1/unattend/` layout)
 - `{{AERO_SYSTEM_DRIVER_PATH}}`
-  - e.g., `%configsetroot%\aero\drivers\system`
+  - e.g., `%configsetroot%\Drivers\Offline\{{ARCH}}` (matches `windows/win7-sp1/unattend/` layout)
 - `{{INSTALL_WIM_INDEX}}`
   - Install edition index inside `sources/install.wim` (only used in `autounattend.full.xml`).
 
@@ -87,4 +91,3 @@ Common placeholders used across templates:
 ## Clean-room note
 
 These templates were authored from scratch using publicly documented unattended setup schemas. They intentionally avoid copying any vendor sample files verbatim.
-

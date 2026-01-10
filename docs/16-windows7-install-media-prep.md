@@ -17,7 +17,9 @@ Related references in this repo:
 
 - `docs/16-win7-image-servicing.md` (more detailed, Windows-first DISM/reg/bcd workflows)
 - `docs/16-win7-unattended-install.md` (unattended install details and hooks)
+- `windows/win7-sp1/unattend/` (ready-to-edit `autounattend.xml` templates and Win7-compatible post-install scripts)
 - `tools/win7-slipstream/patches/README.md` (auditable `.reg` patches for offline BCD + SOFTWARE hives)
+- `tools/windows/patch-win7-media.ps1` (Windows-only helper that applies the same kinds of patches programmatically)
 
 ---
 
@@ -110,7 +112,7 @@ Cons:
 - You still need to handle signature policy + certificate trust.
 - For boot-critical drivers, you still must ensure the installed OS trusts the signing cert from first boot.
 
-Templates exist at `tools/win7-slipstream/templates/`.
+Ready-to-edit unattend examples live at `windows/win7-sp1/unattend/`. Golden-reference templates (placeholders intended for future tooling) live at `tools/win7-slipstream/templates/`.
 
 ---
 
@@ -148,6 +150,10 @@ Requirements:
 
 ## Recommended media-side file layout (for auditing)
 
+There are two common layouts, depending on whether you are directly modifying the Windows ISO or supplying a separate “config media” ISO/USB for unattend.
+
+### Option A: single `aero/` directory on the Windows ISO
+
 Keep Aero additions under a single directory in the ISO root (example):
 
 ```
@@ -163,6 +169,29 @@ aero/
 ```
 
 Even when using DISM to inject drivers, keeping a copy of the exact inputs on the ISO is useful for auditing and later debugging.
+
+### Option B: `%configsetroot%` “configuration set” layout (recommended for unattend workflows)
+
+If you use the repo’s architecture-specific templates in `windows/win7-sp1/unattend/`, they assume a config-media layout like:
+
+```
+<config-media-root>/
+  autounattend.xml
+  Drivers/
+    WinPE/
+      amd64/
+      x86/
+    Offline/
+      amd64/
+      x86/
+  Scripts/
+    SetupComplete.cmd
+    InstallDriversOnce.cmd
+  Cert/
+    aero_test.cer
+```
+
+See `windows/win7-sp1/unattend/README.md` for the full expected structure and payload-location fallbacks.
 
 ---
 
@@ -397,16 +426,30 @@ cp -R /path/to/system-driver-inf-dirs/* iso-root/aero/drivers/system/
 
 ### 3) Add an `autounattend.xml`
 
-Copy one of the templates to the ISO root and substitute placeholders:
+Copy an `autounattend.xml` template to the ISO root and edit as needed. Options in this repo:
 
-- `tools/win7-slipstream/templates/autounattend.drivers-only.xml`
-- `tools/win7-slipstream/templates/autounattend.full.xml`
+- Ready-to-edit, architecture-specific templates:
+  - `windows/win7-sp1/unattend/autounattend_amd64.xml`
+  - `windows/win7-sp1/unattend/autounattend_x86.xml`
+- Golden-reference templates (placeholders intended for future tooling):
+  - `tools/win7-slipstream/templates/autounattend.drivers-only.xml`
+  - `tools/win7-slipstream/templates/autounattend.full.xml`
 
 Windows Setup scans the root of removable media / install media for `autounattend.xml`.
 
+If your unattend references `%configsetroot%` (recommended for stable paths), ensure the `Microsoft-Windows-Setup` component sets:
+
+```xml
+<UseConfigurationSet>true</UseConfigurationSet>
+```
+
 ### 4) Add setup scripts (optional but recommended)
 
-Copy scripts from `tools/win7-slipstream/templates/` into the ISO tree per the template README.
+For post-install automation (install certs, enable test mode, install drivers), the repo includes Win7-compatible scripts at:
+
+- `windows/win7-sp1/unattend/scripts/`
+
+You can also start from the simpler golden-reference templates in `tools/win7-slipstream/templates/` (see its README for `$OEM$` placement).
 
 ### 5) Handle signature mode + certificate trust
 

@@ -83,6 +83,9 @@
           <WillShowUI>OnError</WillShowUI>
         </OSImage>
       </ImageInstall>
+
+      <!-- Enables “configuration set” behavior so %configsetroot% is populated. -->
+      <UseConfigurationSet>true</UseConfigurationSet>
     </component>
 
     <component name="Microsoft-Windows-PnpCustomizationsWinPE"
@@ -170,4 +173,3 @@
     </component>
   </settings>
 </unattend>
-
