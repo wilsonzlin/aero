@@ -750,6 +750,18 @@ static void cycle_keyboard_leds(const SELECTED_DEVICE *dev)
     static const BYTE seq[] = {0x00, 0x01, 0x00, 0x02, 0x00, 0x04, 0x00, 0x07, 0x00};
     int i;
 
+    if (dev->handle == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    if (!(dev->desired_access & GENERIC_WRITE)) {
+        wprintf(L"LED cycle requested, but device was opened read-only.\n");
+        return;
+    }
+    if (!dev->caps_valid || !(dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06)) {
+        wprintf(L"LED cycle requested, but selected interface is not a keyboard collection.\n");
+        return;
+    }
+
     for (i = 0; i < (int)(sizeof(seq) / sizeof(seq[0])); i++) {
         (VOID)send_keyboard_led_report(dev, seq[i]);
         Sleep(250);

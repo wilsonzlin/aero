@@ -43,6 +43,12 @@ Open the virtio keyboard collection by default and read reports:
 hidtest.exe
 ```
 
+Force selecting the keyboard collection:
+
+```bat
+hidtest.exe --keyboard
+```
+
 Force selecting the mouse collection:
 
 ```bat
