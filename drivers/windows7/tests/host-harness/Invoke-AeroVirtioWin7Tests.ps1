@@ -20,6 +20,10 @@ param(
   [Parameter(Mandatory = $false)]
   [int]$Smp = 2,
 
+  # If set, run QEMU in snapshot mode for the main disk (writes are discarded on exit).
+  [Parameter(Mandatory = $false)]
+  [switch]$Snapshot,
+
   [Parameter(Mandatory = $false)]
   [int]$TimeoutSeconds = 600,
 
@@ -186,6 +190,9 @@ try {
   $netdev = "user,id=net0"
   $nic = "virtio-net-pci,netdev=net0"
   $drive = "file=$DiskImagePath,if=virtio,cache=writeback"
+  if ($Snapshot) {
+    $drive += ",snapshot=on"
+  }
 
   $qemuArgs = @(
     "-m", "$MemoryMB",
