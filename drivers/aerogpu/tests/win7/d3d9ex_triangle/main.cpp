@@ -16,6 +16,7 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
   const char* kTestName = "d3d9ex_triangle";
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
+  const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
   bool has_require_vid = false;
@@ -38,8 +39,10 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
   }
 
   if (aerogpu_test::HasHelpArg(argc, argv)) {
-    aerogpu_test::PrintfStdout("Usage: %s.exe [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft]",
-                               kTestName);
+    aerogpu_test::PrintfStdout(
+        "Usage: %s.exe [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
+        "[--allow-non-aerogpu]",
+        kTestName);
     return 0;
   }
 
@@ -121,6 +124,14 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
                                 "adapter DID mismatch: got 0x%04X expected 0x%04X",
                                 (unsigned)ident.DeviceId,
                                 (unsigned)require_did);
+    }
+    if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
+        !(ident.VendorId == 0x1414 && allow_microsoft) &&
+        !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
+      return aerogpu_test::Fail(kTestName,
+                                "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
+                                "or use --require-vid/--require-did)",
+                                ident.Description);
     }
   } else if (has_require_vid || has_require_did) {
     return aerogpu_test::FailHresult(kTestName, "GetAdapterIdentifier (required for --require-vid/--require-did)", hr);

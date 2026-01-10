@@ -14,6 +14,9 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <errno.h>
+#include <string.h>
+#include <wchar.h>
+#include <wctype.h>
 
 #include <string>
 #include <vector>
@@ -35,6 +38,64 @@ static inline bool HasArg(int argc, char** argv, const char* needle) {
 
 static inline bool HasHelpArg(int argc, char** argv) {
   return HasArg(argc, argv, "--help") || HasArg(argc, argv, "-h") || HasArg(argc, argv, "/?");
+}
+
+static inline bool StrIContainsA(const char* haystack, const char* needle) {
+  if (!haystack || !needle) {
+    return false;
+  }
+  const size_t hlen = strlen(haystack);
+  const size_t nlen = strlen(needle);
+  if (nlen == 0) {
+    return true;
+  }
+  if (nlen > hlen) {
+    return false;
+  }
+  for (size_t i = 0; i + nlen <= hlen; ++i) {
+    bool ok = true;
+    for (size_t j = 0; j < nlen; ++j) {
+      char a = (char)tolower((unsigned char)haystack[i + j]);
+      char b = (char)tolower((unsigned char)needle[j]);
+      if (a != b) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static inline bool StrIContainsW(const wchar_t* haystack, const wchar_t* needle) {
+  if (!haystack || !needle) {
+    return false;
+  }
+  const size_t hlen = wcslen(haystack);
+  const size_t nlen = wcslen(needle);
+  if (nlen == 0) {
+    return true;
+  }
+  if (nlen > hlen) {
+    return false;
+  }
+  for (size_t i = 0; i + nlen <= hlen; ++i) {
+    bool ok = true;
+    for (size_t j = 0; j < nlen; ++j) {
+      wchar_t a = towlower(haystack[i + j]);
+      wchar_t b = towlower(needle[j]);
+      if (a != b) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) {
+      return true;
+    }
+  }
+  return false;
 }
 
 static inline bool StrIStartsWith(const char* s, const char* prefix) {

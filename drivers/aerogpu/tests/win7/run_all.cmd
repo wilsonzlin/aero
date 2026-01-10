@@ -44,10 +44,11 @@ if errorlevel 1 (
 exit /b 0
 
 :help
-echo Usage: run_all.cmd [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-remote]
+echo Usage: run_all.cmd [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--allow-remote]
 echo.
 echo Notes:
 echo   --require-vid/--require-did helps avoid false PASS when AeroGPU isn't active.
+echo   Rendering tests expect adapter description to contain "AeroGPU" unless --allow-non-aerogpu is provided.
 echo   --allow-remote only affects d3d9ex_dwm_probe; other tests ignore it.
 exit /b 0
 
