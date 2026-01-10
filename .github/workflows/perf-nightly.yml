@@ -1,0 +1,75 @@
+name: perf-nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Checkout gh-pages (optional; used to load prior history)
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          ref: gh-pages
+          path: .gh-pages
+          fetch-depth: 1
+
+      - name: Restore previous history
+        run: |
+          if [ -f .gh-pages/history.json ]; then
+            cp .gh-pages/history.json bench/history.json
+          fi
+
+      - name: Run benchmarks
+        run: node bench/run.js --out bench/results.json
+
+      - name: Append to history
+        run: |
+          node bench/history.js append \
+            --history bench/history.json \
+            --input bench/results.json \
+            --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --commit "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY"
+
+      - name: Generate markdown report
+        run: node bench/history.js render-md --history bench/history.json --out bench/history.md
+
+      - name: Build dashboard bundle
+        run: |
+          rm -rf dist/perf-dashboard
+          mkdir -p dist/perf-dashboard
+          cp -r bench/dashboard/* dist/perf-dashboard/
+          cp bench/history.json dist/perf-dashboard/history.json
+          cp bench/history.md dist/perf-dashboard/history.md
+          cp bench/history.schema.json dist/perf-dashboard/history.schema.json
+
+      - name: Upload history + dashboard artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-history-dashboard
+          path: dist/perf-dashboard
+
+      - name: Publish dashboard to gh-pages
+        if: github.repository == 'wilsonzlin/aero' && github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: dist/perf-dashboard
+          publish_branch: gh-pages
+

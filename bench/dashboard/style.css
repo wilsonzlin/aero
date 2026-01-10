@@ -1,0 +1,167 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  line-height: 1.35;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: #0b0e14;
+  color: #e6edf3;
+}
+
+a {
+  color: #8cc2ff;
+}
+
+.page-header {
+  padding: 24px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.subtitle {
+  margin: 6px 0 0;
+  opacity: 0.8;
+}
+
+main {
+  padding: 20px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.status {
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  margin-bottom: 20px;
+}
+
+.status.error {
+  background: rgba(255, 0, 0, 0.12);
+}
+
+.summary {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  margin-bottom: 22px;
+}
+
+.scenario {
+  margin-bottom: 34px;
+}
+
+.scenario h2 {
+  margin: 0 0 12px;
+  font-size: 20px;
+}
+
+.metric {
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 16px;
+}
+
+.metric-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.metric-title {
+  font-weight: 600;
+}
+
+.metric-unit {
+  font-weight: 400;
+  opacity: 0.8;
+  font-size: 13px;
+}
+
+.metric-latest {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.metric-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-delta {
+  font-variant-numeric: tabular-nums;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.metric-delta.improvement {
+  background: rgba(0, 200, 80, 0.18);
+  color: #b9ffd3;
+}
+
+.metric-delta.regression {
+  background: rgba(220, 50, 50, 0.22);
+  color: #ffd1d1;
+}
+
+.chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.chart-axes {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 1.2;
+}
+
+.chart-line {
+  fill: none;
+  stroke: #8cc2ff;
+  stroke-width: 2;
+}
+
+.chart-point {
+  fill: #f2cc60;
+  stroke: rgba(0, 0, 0, 0.35);
+  stroke-width: 1;
+}
+
+.chart-label {
+  font-size: 12px;
+  fill: rgba(255, 255, 255, 0.6);
+}
+
+.runs h2 {
+  margin: 0 0 10px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+th,
+td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+}
+
+th {
+  opacity: 0.8;
+  font-weight: 600;
+}
+

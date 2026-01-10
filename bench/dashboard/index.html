@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aero Nightly Performance</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <h1>Aero Nightly Performance</h1>
+      <p class="subtitle">Trend graphs from scheduled benchmark runs.</p>
+    </header>
+
+    <main>
+      <div id="status" class="status">Loading history…</div>
+      <section id="summary" class="summary" hidden></section>
+      <section id="metrics" class="metrics" hidden></section>
+
+      <section id="runs-section" class="runs" hidden>
+        <h2>Runs</h2>
+        <table id="runs-table">
+          <thead>
+            <tr>
+              <th>Timestamp (UTC)</th>
+              <th>Commit</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </main>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>
+

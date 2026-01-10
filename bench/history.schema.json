@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bench/history.schema.json",
+  "title": "Aero nightly benchmark history",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "entries"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "entries": {
+      "type": "object",
+      "description": "Entries keyed by <timestamp>-<commitSha>.",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^.+$": {
+          "$ref": "#/$defs/entry"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "timestamp", "commit", "scenarios"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "commit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sha", "url"],
+          "properties": {
+            "sha": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{7,40}$"
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "node": { "type": "string" },
+            "platform": { "type": "string" },
+            "arch": { "type": "string" }
+          }
+        },
+        "scenarios": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^.+$": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["metrics"],
+              "properties": {
+                "metrics": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "patternProperties": {
+                    "^.+$": { "$ref": "#/$defs/metric" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit", "better", "samples"],
+      "properties": {
+        "value": { "type": "number" },
+        "unit": { "type": "string" },
+        "better": { "type": "string", "enum": ["higher", "lower"] },
+        "samples": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["n", "min", "max", "stdev", "cv"],
+          "properties": {
+            "n": { "type": "integer", "minimum": 1 },
+            "min": { "type": "number" },
+            "max": { "type": "number" },
+            "stdev": { "type": "number", "minimum": 0 },
+            "cv": { "type": "number", "minimum": 0 }
+          }
+        }
+      }
+    }
+  }
+}
