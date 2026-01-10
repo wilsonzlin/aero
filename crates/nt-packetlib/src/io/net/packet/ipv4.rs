@@ -93,6 +93,10 @@ impl<'a> Ipv4Packet<'a> {
         &self.data[..self.header_len]
     }
 
+    pub fn as_bytes(&self) -> &'a [u8] {
+        &self.data[..self.total_len]
+    }
+
     pub fn checksum_valid(&self) -> bool {
         checksum::internet_checksum(self.header_bytes()) == 0
     }
