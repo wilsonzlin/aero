@@ -215,7 +215,7 @@ Clears and draws
 
 Presentation / swapchain integration
 * `pfnPresent` (DXGI ultimately drives this from `IDXGISwapChain::Present`)
-  * structs: `D3D10DDIARG_PRESENT` (and the corresponding D3D11 variant, if exposed by your D3D11 DDI version)
+  * struct: `D3D10DDIARG_PRESENT` (used by DXGI for both D3D10 and D3D11 devices on Win7)
 * `pfnRotateResourceIdentities`
   * used by DXGI swapchains to rotate backbuffer “resource identities” after present without requiring a full copy
 
@@ -391,7 +391,7 @@ On Win7 **windowed** swapchains, Present is effectively “make the backbuffer v
 
 Implementation note: in practice DXGI will often call into the UMD’s D3D10/11 DDI device functions for present and (for multi-buffer scenarios) buffer rotation:
 
-* `pfnPresent` (with `D3D10DDIARG_PRESENT` or equivalent)
+* `pfnPresent` (with `D3D10DDIARG_PRESENT`)
 * `pfnRotateResourceIdentities` (rotate swapchain backbuffer resources)
 
 ### 3.3 ResizeBuffers / ResizeTarget expectations
@@ -480,6 +480,7 @@ Rules:
 
 * Treat incoming pointers as read-only and short-lived; copy the DXBC blob into driver-owned memory (or immediately hash it and forward to host).
 * Cache translation results by **(shader model, DXBC hash)**; shaders are frequently recreated across device loss/reset paths.
+* Be prepared for “SM4 level 9” DXBC variants like `vs_4_0_level_9_1` / `ps_4_0_level_9_1` (commonly produced by `fxc` for feature level 9.x compatibility). These still use the DXBC container format; the shader version token simply indicates a more restricted instruction/resource subset.
 
 ### 5.2 Forwarding strategy to the AeroGPU emulator translator
 
