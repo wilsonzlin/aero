@@ -93,6 +93,22 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  acpi-iasl:
+    name: ACPI (iasl)
+    needs: policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ACPICA tools (iasl)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y acpica-tools
+
+      - name: Validate ACPI tables (decompile + compile)
+        run: bash scripts/validate-acpi.sh
+
   win7-virtio-portable-tests:
     name: Win7 virtio (portable tests)
     needs: policy
@@ -144,6 +160,7 @@ jobs:
       - name: Verify boot sector binary is up-to-date
         run: |
           bash scripts/build-bootsector.sh
+          bash scripts/build-int-sanity-bootsector.sh
           git diff --exit-code
 
       - name: Run QEMU boot tests
