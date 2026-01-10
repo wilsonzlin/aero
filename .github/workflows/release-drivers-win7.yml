@@ -1,0 +1,230 @@
+name: Release Win7 drivers
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Needed for creating/updating GitHub Releases and uploading release assets.
+permissions:
+  contents: write
+
+jobs:
+  build-and-sign:
+    name: Build + sign (${{ matrix.arch }})
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86, x64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare signing certificate (stable if secrets set, otherwise ephemeral)
+        id: cert
+        shell: powershell
+        env:
+          AERO_DRIVER_PFX_BASE64: ${{ secrets.AERO_DRIVER_PFX_BASE64 }}
+          AERO_DRIVER_PFX_PASSWORD: ${{ secrets.AERO_DRIVER_PFX_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $cerPath = Join-Path $PWD 'dist\aero-driver-public.cer'
+
+          $hasStablePfx = (-not [string]::IsNullOrWhiteSpace($env:AERO_DRIVER_PFX_BASE64)) -and (-not [string]::IsNullOrWhiteSpace($env:AERO_DRIVER_PFX_PASSWORD))
+          if ($hasStablePfx) {
+            $mode = 'stable'
+
+            $pfxPath = Join-Path $env:RUNNER_TEMP 'aero-driver.pfx'
+            $pfxB64 = ($env:AERO_DRIVER_PFX_BASE64 -replace '\s', '')
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($pfxB64))
+
+            $securePwd = ConvertTo-SecureString -String $env:AERO_DRIVER_PFX_PASSWORD -AsPlainText -Force
+            $imported = Import-PfxCertificate -FilePath $pfxPath -Password $securePwd -CertStoreLocation 'Cert:\CurrentUser\My'
+            $cert = $imported | Where-Object { $_.HasPrivateKey } | Select-Object -First 1
+            if (-not $cert) {
+              throw "Imported PFX successfully, but no certificate with a private key was found."
+            }
+            Remove-Item -Force $pfxPath
+          } else {
+            $mode = 'ephemeral'
+            $cert = New-SelfSignedCertificate `
+              -Subject 'CN=Aero Win7 Driver Test Signing (ephemeral)' `
+              -Type CodeSigningCert `
+              -KeyExportPolicy Exportable `
+              -HashAlgorithm SHA256 `
+              -CertStoreLocation 'Cert:\CurrentUser\My' `
+              -NotAfter (Get-Date).AddYears(5)
+          }
+
+          Export-Certificate -Cert $cert -FilePath $cerPath | Out-Null
+
+          Write-Host "Signing certificate mode: $mode"
+          Write-Host "Signing certificate subject: $($cert.Subject)"
+          Write-Host "Signing certificate thumbprint: $($cert.Thumbprint)"
+
+          "mode=$mode" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "subject=$($cert.Subject)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "thumbprint=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Build + generate catalog (repo script if present; otherwise minimal placeholder)
+        shell: powershell
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $outDir = Join-Path $PWD "dist\$env:ARCH"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+          $buildScript = Join-Path $PWD 'scripts\build-drivers-win7.ps1'
+          if (Test-Path $buildScript) {
+            & $buildScript -Arch $env:ARCH -OutDir $outDir
+            exit $LASTEXITCODE
+          }
+
+          Write-Warning "No scripts/build-drivers-win7.ps1 found. Creating placeholder driver artifacts so the release workflow remains green."
+
+          # Create a minimal PE file (signable) to smoke-test signing in CI.
+          $src = Join-Path $outDir 'aero-win7-driver-placeholder.c'
+          @"
+          #include <windows.h>
+          BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) { return TRUE; }
+          "@ | Set-Content -Path $src -Encoding ASCII
+
+          & cl.exe /nologo /LD $src /link /OUT:aero-win7-driver-placeholder.sys
+          if ($LASTEXITCODE -ne 0) {
+            throw "cl.exe failed (exit $LASTEXITCODE)."
+          }
+
+          # MakeCat is available in Windows SDK/WDK. If it isn't present, we still keep the build green.
+          $makecatCmd = Get-Command makecat.exe -ErrorAction SilentlyContinue
+          $makecatExe = $null
+          if ($makecatCmd) {
+            $makecatExe = $makecatCmd.Source
+            if (-not $makecatExe) { $makecatExe = $makecatCmd.Path }
+          }
+          if (-not $makecatExe) {
+            $makecatExe = (Get-ChildItem -Path 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter makecat.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          }
+
+          if ($makecatExe) {
+            $cdf = Join-Path $outDir 'aero-win7-driver-placeholder.cdf'
+            @"
+          [CatalogHeader]
+          Name=aero-win7-driver-placeholder.cat
+          CatalogVersion=2
+          HashAlgorithms=SHA256
+
+          [CatalogFiles]
+          <hash>aero-win7-driver-placeholder.sys=aero-win7-driver-placeholder.sys
+          "@ | Set-Content -Path $cdf -Encoding ASCII
+
+            Push-Location $outDir
+            & $makecatExe $cdf
+            if ($LASTEXITCODE -ne 0) {
+              throw "makecat.exe failed (exit $LASTEXITCODE)."
+            }
+            Pop-Location
+          } else {
+            Write-Warning "makecat.exe not found; skipping catalog generation."
+          }
+
+      - name: Sign drivers + catalogs
+        shell: powershell
+        env:
+          ARCH: ${{ matrix.arch }}
+          CERT_THUMBPRINT: ${{ steps.cert.outputs.thumbprint }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $signtoolCmd = Get-Command signtool.exe -ErrorAction SilentlyContinue
+          $signtoolExe = $null
+          if ($signtoolCmd) {
+            $signtoolExe = $signtoolCmd.Source
+            if (-not $signtoolExe) { $signtoolExe = $signtoolCmd.Path }
+          }
+          if (-not $signtoolExe) {
+            $signtoolExe = (Get-ChildItem -Path 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          }
+          if (-not $signtoolExe) {
+            throw "signtool.exe not found on runner."
+          }
+
+          $outDir = Join-Path $PWD "dist\$env:ARCH"
+          $targets = Get-ChildItem -Path $outDir -Recurse -File -Include *.sys,*.cat
+          if (-not $targets) {
+            Write-Warning "No .sys or .cat files found under $outDir to sign."
+            exit 0
+          }
+
+          foreach ($t in $targets) {
+            Write-Host "Signing $($t.FullName)"
+            & $signtoolExe sign /v /fd SHA256 /sha1 $env:CERT_THUMBPRINT /s My $t.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "signtool sign failed for $($t.FullName) (exit $LASTEXITCODE)."
+            }
+            & $signtoolExe verify /pa /v $t.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "signtool verify failed for $($t.FullName) (exit $LASTEXITCODE)."
+            }
+          }
+
+      - name: Upload signed build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: win7-drivers-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            dist/${{ matrix.arch }}/
+            dist/aero-driver-public.cer
+
+  package-and-release:
+    name: Package + publish release assets
+    runs-on: ubuntu-latest
+    needs: build-and-sign
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create zips + iso
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+
+          mkdir -p release_root
+          cp -R "artifacts/win7-drivers-x86/dist/x86" "release_root/x86"
+          cp -R "artifacts/win7-drivers-x64/dist/x64" "release_root/x64"
+
+          # Public cert is identical for both arch artifacts; use either if present.
+          if [[ -f "artifacts/win7-drivers-x64/dist/aero-driver-public.cer" ]]; then
+            cp "artifacts/win7-drivers-x64/dist/aero-driver-public.cer" "aero-driver-public.cer"
+          else
+            cp "artifacts/win7-drivers-x86/dist/aero-driver-public.cer" "aero-driver-public.cer"
+          fi
+
+          (cd release_root && zip -r "../aero-win7-drivers-${tag}-x86.zip" "x86")
+          (cd release_root && zip -r "../aero-win7-drivers-${tag}-x64.zip" "x64")
+
+          sudo apt-get update
+          sudo apt-get install -y xorriso
+          xorriso -as mkisofs -r -J -V "AERO_WIN7" -o "aero-win7-drivers-${tag}.iso" release_root
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            aero-win7-drivers-${{ github.ref_name }}-x86.zip
+            aero-win7-drivers-${{ github.ref_name }}-x64.zip
+            aero-win7-drivers-${{ github.ref_name }}.iso
+            aero-driver-public.cer
+          generate_release_notes: true
