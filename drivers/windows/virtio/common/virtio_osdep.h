@@ -13,6 +13,27 @@
 #include <stddef.h>
 
 /* -------------------------------------------------------------------------- */
+/* Build environment detection                                                */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Detect kernel-mode builds.
+ *
+ * WDK headers typically define one of these macros. We also allow _KERNEL_MODE,
+ * which is commonly passed on the compiler command line in driver builds.
+ */
+#if defined(_WIN32) &&                                                                                                  \
+	(defined(_KERNEL_MODE) || defined(_NTDDK_) || defined(_NTIFS_) || defined(_WDMDDK_))
+#define VIRTIO_OSDEP_KERNEL_MODE 1
+#else
+#define VIRTIO_OSDEP_KERNEL_MODE 0
+#endif
+
+#if VIRTIO_OSDEP_KERNEL_MODE
+#include <ntddk.h>
+#endif
+
+/* -------------------------------------------------------------------------- */
 /* Basic WDK-like types for user-mode tests                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -21,7 +42,7 @@
  * user-mode test harness (or a non-Windows build) and provide compatible
  * typedefs.
  */
-#ifndef _NTDEF_
+#if !VIRTIO_OSDEP_KERNEL_MODE && !defined(_NTDEF_)
 #include <stdint.h>
 
 typedef uint8_t UINT8;
@@ -57,7 +78,7 @@ typedef void VOID;
 #define STATUS_NOT_FOUND ((NTSTATUS)0xC0000225L)
 #endif
 
-#endif /* !_NTDEF_ */
+#endif /* !VIRTIO_OSDEP_KERNEL_MODE && !_NTDEF_ */
 
 /* -------------------------------------------------------------------------- */
 /* Static assertions                                                          */
@@ -91,10 +112,8 @@ typedef void VOID;
  * In kernel-mode builds, prefer KeMemoryBarrier() (available since Win7).
  * In user-mode tests, use C11 atomics.
  */
-#if defined(_WIN32) && defined(_KERNEL_MODE)
+#if VIRTIO_OSDEP_KERNEL_MODE
 /* WDK build */
-#include <ntddk.h>
-
 #define VIRTIO_MB() KeMemoryBarrier()
 #define VIRTIO_RMB() KeMemoryBarrier()
 #define VIRTIO_WMB() KeMemoryBarrier()
@@ -114,7 +133,7 @@ typedef void VOID;
 /*
  * Prefer WDK primitives in kernel-mode builds to avoid CRT dependencies.
  */
-#if defined(_WIN32) && defined(_KERNEL_MODE)
+#if VIRTIO_OSDEP_KERNEL_MODE
 static __inline VOID VirtioZeroMemory(void *dst, size_t len)
 {
 	RtlZeroMemory(dst, len);

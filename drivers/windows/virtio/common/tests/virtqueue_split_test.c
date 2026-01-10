@@ -260,6 +260,79 @@ static void TestWraparound(void)
 	free(vq);
 }
 
+static void TestOutOfOrderCompletion(void)
+{
+	const UINT16 qsz = 8;
+	const UINT32 align = 16;
+
+	size_t vq_bytes = VirtqSplitStateSize(qsz);
+	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
+
+	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
+	void *ring = calloc(1, ring_bytes);
+
+	UINT8 buf_a[8], buf_b[8];
+	VIRTQ_SG sg_a[1], sg_b[1];
+	UINT16 head_a, head_b;
+	void *cookie_out = NULL;
+	UINT32 len_out = 0;
+	UINT16 dev_avail_idx = 0;
+	UINT16 dev_used_idx = 0;
+
+	ASSERT_TRUE(vq != NULL);
+	ASSERT_TRUE(ring != NULL);
+
+	sg_a[0].addr = (UINT64)(uintptr_t)buf_a;
+	sg_a[0].len = sizeof(buf_a);
+	sg_a[0].write = TRUE;
+
+	sg_b[0].addr = (UINT64)(uintptr_t)buf_b;
+	sg_b[0].len = sizeof(buf_b);
+	sg_b[0].write = TRUE;
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitInit(vq, qsz, FALSE, FALSE, ring, (UINT64)(uintptr_t)ring, align, NULL, 0, 0, 0)));
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitAddBuffer(vq, sg_a, 1, (void *)0xAAAA, &head_a)));
+	VirtqSplitPublish(vq, head_a);
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitAddBuffer(vq, sg_b, 1, (void *)0xBBBB, &head_b)));
+	VirtqSplitPublish(vq, head_b);
+
+	/* Device consumes both avail entries. */
+	ASSERT_EQ_U16(VirtioReadU16((volatile UINT16 *)&vq->avail->idx), 2);
+	ASSERT_EQ_U16(dev_avail_idx, 0);
+	head_a = VirtioReadU16((volatile UINT16 *)&VirtqAvailRing(vq->avail)[(UINT16)(dev_avail_idx++ % qsz)]);
+	head_b = VirtioReadU16((volatile UINT16 *)&VirtqAvailRing(vq->avail)[(UINT16)(dev_avail_idx++ % qsz)]);
+
+	/* Device completes out-of-order: B then A. */
+	{
+		VIRTQ_USED_ELEM *used_ring = VirtqUsedRing(vq->used);
+		VirtioWriteU32((volatile UINT32 *)&used_ring[(UINT16)(dev_used_idx % qsz)].id, head_b);
+		VirtioWriteU32((volatile UINT32 *)&used_ring[(UINT16)(dev_used_idx % qsz)].len, 2);
+		dev_used_idx++;
+
+		VirtioWriteU32((volatile UINT32 *)&used_ring[(UINT16)(dev_used_idx % qsz)].id, head_a);
+		VirtioWriteU32((volatile UINT32 *)&used_ring[(UINT16)(dev_used_idx % qsz)].len, 1);
+		dev_used_idx++;
+	}
+
+	VIRTIO_WMB();
+	VirtioWriteU16((volatile UINT16 *)&vq->used->idx, dev_used_idx);
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitGetUsed(vq, &cookie_out, &len_out)));
+	ASSERT_TRUE(cookie_out == (void *)0xBBBB);
+	ASSERT_EQ_U32(len_out, 2);
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitGetUsed(vq, &cookie_out, &len_out)));
+	ASSERT_TRUE(cookie_out == (void *)0xAAAA);
+	ASSERT_EQ_U32(len_out, 1);
+
+	ASSERT_EQ_U16(vq->num_free, qsz);
+	AssertRingFreeListIntact(vq);
+
+	free(ring);
+	free(vq);
+}
+
 static void TestNeedEventBoundaryCases(void)
 {
 	ASSERT_TRUE(VirtqNeedEvent(0, 1, 0) != FALSE);
@@ -454,6 +527,7 @@ int main(void)
 {
 	TestDirectChainAddFree();
 	TestWraparound();
+	TestOutOfOrderCompletion();
 	TestNeedEventBoundaryCases();
 	TestEventIdxKickPrepare();
 	TestInterruptSuppressionNoEventIdx();
