@@ -40,6 +40,8 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ env.PLAYWRIGHT_VERSION }}-chromium
+          restore-keys: |
+            ${{ runner.os }}-playwright-${{ env.PLAYWRIGHT_VERSION }}-
 
       - name: Determine Playwright version
         id: playwright-version
@@ -72,22 +74,25 @@ jobs:
       - name: Run browser perf (nightly)
         run: |
           set -euo pipefail
-          npm run preview -- --host 127.0.0.1 --port 4173 --strictPort &
+          PORT=4173
+          setsid npm run preview -- --host 127.0.0.1 --port "$PORT" --strictPort &
           server_pid=$!
           cleanup() {
-            kill "$server_pid" || true
+            kill -- "-$server_pid" || true
+            sleep 1
+            kill -9 -- "-$server_pid" || true
             wait "$server_pid" || true
           }
           trap cleanup EXIT
 
           for i in {1..60}; do
-            curl -fsS http://127.0.0.1:4173/ >/dev/null && break
+            curl -fsS "http://127.0.0.1:$PORT/" >/dev/null && break
             sleep 1
           done
-          curl -fsS http://127.0.0.1:4173/ >/dev/null
+          curl -fsS "http://127.0.0.1:$PORT/" >/dev/null
 
           node tools/perf/run.mjs \
-            --url http://127.0.0.1:4173/ \
+            --url "http://127.0.0.1:$PORT/" \
             --out-dir perf-results/nightly \
             --iterations ${{ env.PERF_ITERATIONS }}
 

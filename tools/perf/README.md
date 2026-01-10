@@ -9,10 +9,12 @@ This directory contains small, self-contained performance tooling used by GitHub
 
 The current suite is intentionally minimal and browser-only:
 
-- `chromium_startup_ms`: time to launch Chromium, create a page, and load a `data:` URL
+- `chromium_startup_ms`: time to launch Chromium, create a page, and load the target URL (defaults to an internal `data:` URL)
 - `microbench_ms`: a deterministic JavaScript microbenchmark executed in Chromium
 
 This keeps CI signal stable and avoids GPU/WebGPU dependencies.
+
+In CI, the workflows build the app and run against a Vite `preview` server (`http://127.0.0.1:4173/`) via `--url` so "startup" includes a realistic page load.
 
 ## Usage
 
