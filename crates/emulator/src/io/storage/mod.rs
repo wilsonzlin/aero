@@ -1,5 +1,6 @@
 pub mod ahci;
 pub mod disk;
+pub mod ide;
 pub mod backends;
 pub mod error;
 pub mod metadata;

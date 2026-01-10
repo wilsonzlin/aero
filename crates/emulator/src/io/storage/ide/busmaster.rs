@@ -1,0 +1,230 @@
+use memory::MemoryBus;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DmaDirection {
+    /// Device -> guest memory.
+    ToMemory,
+    /// Guest memory -> device.
+    FromMemory,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DmaError {
+    DirectionMismatch,
+    PrdTooShort,
+    PrdOverrun,
+}
+
+pub type DmaResult<T> = Result<T, DmaError>;
+
+#[derive(Debug)]
+pub enum DmaCommit {
+    AtaWrite { lba: u64, sectors: u64 },
+}
+
+#[derive(Debug)]
+pub struct DmaRequest {
+    pub direction: DmaDirection,
+    pub buffer: Vec<u8>,
+    pub commit: Option<DmaCommit>,
+}
+
+impl DmaRequest {
+    pub fn ata_read(buffer: Vec<u8>, _lba: u64, _sectors: u64) -> Self {
+        Self {
+            direction: DmaDirection::ToMemory,
+            buffer,
+            commit: None,
+        }
+    }
+
+    pub fn ata_write(buffer: Vec<u8>, lba: u64, sectors: u64) -> Self {
+        Self {
+            direction: DmaDirection::FromMemory,
+            buffer,
+            commit: Some(DmaCommit::AtaWrite { lba, sectors }),
+        }
+    }
+
+    pub fn atapi_data_in(buffer: Vec<u8>) -> Self {
+        Self {
+            direction: DmaDirection::ToMemory,
+            buffer,
+            commit: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrdEntry {
+    pub addr: u32,
+    pub byte_count: u16,
+    pub end_of_table: bool,
+}
+
+impl PrdEntry {
+    pub fn read_from(mem: &mut dyn MemoryBus, paddr: u64) -> Self {
+        let addr = mem.read_u32(paddr);
+        let byte_count = mem.read_u16(paddr + 4);
+        let flags = mem.read_u16(paddr + 6);
+        Self {
+            addr,
+            byte_count,
+            end_of_table: (flags & 0x8000) != 0,
+        }
+    }
+
+    fn effective_len(&self) -> usize {
+        let c = self.byte_count as usize;
+        if c == 0 { 65536 } else { c }
+    }
+}
+
+/// One Bus Master IDE register block (primary or secondary).
+#[derive(Debug, Clone, Copy)]
+pub struct BusMasterChannel {
+    cmd: u8,
+    status: u8,
+    prd_addr: u32,
+    drive_dma_capable: [bool; 2],
+}
+
+impl BusMasterChannel {
+    pub fn new() -> Self {
+        Self {
+            cmd: 0,
+            status: 0,
+            prd_addr: 0,
+            drive_dma_capable: [false; 2],
+        }
+    }
+
+    pub fn set_drive_dma_capable(&mut self, drive: usize, capable: bool) {
+        if drive < 2 {
+            self.drive_dma_capable[drive] = capable;
+        }
+    }
+
+    pub fn is_started(&self) -> bool {
+        (self.cmd & 0x01) != 0
+    }
+
+    pub fn read(&self, reg_off: u16, size: u8) -> u32 {
+        match reg_off {
+            0 => self.cmd as u32,
+            2 => {
+                let mut st = self.status;
+                // DMA capability bits (read-only).
+                if self.drive_dma_capable[0] {
+                    st |= 1 << 5;
+                }
+                if self.drive_dma_capable[1] {
+                    st |= 1 << 6;
+                }
+                st as u32
+            }
+            4 => match size {
+                4 => self.prd_addr as u32,
+                2 => (self.prd_addr & 0xFFFF) as u32,
+                1 => (self.prd_addr & 0xFF) as u32,
+                _ => 0,
+            },
+            5 => ((self.prd_addr >> 8) & 0xFF) as u32,
+            6 => ((self.prd_addr >> 16) & 0xFF) as u32,
+            7 => ((self.prd_addr >> 24) & 0xFF) as u32,
+            _ => 0,
+        }
+    }
+
+    pub fn write(&mut self, reg_off: u16, size: u8, val: u32) {
+        match reg_off {
+            0 => {
+                // Only bits 0 (start) and 3 (direction) are writable.
+                let masked = (val as u8) & 0x09;
+                self.cmd = (self.cmd & !0x09) | masked;
+                if (masked & 0x01) == 0 {
+                    self.status &= !0x01; // clear active
+                }
+            }
+            2 => {
+                // Writing 1 clears bits.
+                let v = val as u8;
+                if (v & 0x04) != 0 {
+                    self.status &= !0x04; // IRQ
+                }
+                if (v & 0x02) != 0 {
+                    self.status &= !0x02; // error
+                }
+            }
+            4 => {
+                if size == 4 {
+                    self.prd_addr = val as u32 & 0xFFFF_FFFC;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn execute_dma(&mut self, mem: &mut dyn MemoryBus, req: &mut DmaRequest) -> DmaResult<()> {
+        let bm_dir = if (self.cmd & 0x08) != 0 {
+            DmaDirection::ToMemory
+        } else {
+            DmaDirection::FromMemory
+        };
+        if bm_dir != req.direction {
+            return Err(DmaError::DirectionMismatch);
+        }
+
+        self.status |= 0x01; // active
+
+        let mut remaining = req.buffer.len();
+        let mut buf_off = 0usize;
+        let mut prd_ptr = self.prd_addr as u64;
+
+        while remaining > 0 {
+            let prd = PrdEntry::read_from(mem, prd_ptr);
+            prd_ptr = prd_ptr.wrapping_add(8);
+
+            let seg_len = prd.effective_len().min(remaining);
+            let addr = prd.addr as u64;
+
+            match req.direction {
+                DmaDirection::ToMemory => {
+                    mem.write_physical(addr, &req.buffer[buf_off..buf_off + seg_len]);
+                }
+                DmaDirection::FromMemory => {
+                    mem.read_physical(addr, &mut req.buffer[buf_off..buf_off + seg_len]);
+                }
+            }
+
+            buf_off += seg_len;
+            remaining -= seg_len;
+
+            if prd.end_of_table {
+                if remaining != 0 {
+                    return Err(DmaError::PrdTooShort);
+                }
+                break;
+            }
+
+            // Guard against a buggy guest that provides too many PRDs.
+            if buf_off > req.buffer.len() {
+                return Err(DmaError::PrdOverrun);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn finish_success(&mut self) {
+        self.status &= !0x01; // active
+        self.status &= !0x02; // error
+        self.status |= 0x04; // interrupt
+    }
+
+    pub fn finish_error(&mut self) {
+        self.status &= !0x01;
+        self.status |= 0x02; // error
+        self.status |= 0x04; // interrupt
+    }
+}
