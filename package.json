@@ -19,6 +19,7 @@
     "compare:storage": "node --experimental-strip-types bench/compare.ts",
     "test:protocol": "node --test --experimental-strip-types emulator/protocol/tests/*.test.ts",
     "test:unit": "npm run typecheck && node -e \"require('node:fs').mkdirSync('test-results', { recursive: true })\" && node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/vitest-junit.xml --experimental-strip-types --loader ./scripts/ts-strip-loader.mjs backend/aero-gateway/test/originGuard.test.ts backend/aero-gateway/test/tcp*.test.ts backend/aero-gateway/src/**/*.test.ts tests/*.test.js bench/history.test.js packages/aero-stats/test/*.test.js web/test/*.test.ts emulator/protocol/tests/*.test.ts",
+    "test:unit:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:coi": "playwright test tests/e2e/coi.spec.ts",
     "test:webgpu": "playwright test --project=chromium-webgpu",
@@ -32,11 +33,13 @@
     "@webgpu/types": "^0.1.68",
     "@types/pixelmatch": "^5.2.6",
     "@types/pngjs": "^6.0.5",
+    "@vitest/coverage-v8": "^1.6.0",
     "esbuild": "^0.20.0",
     "pixelmatch": "^5.3.0",
     "pngjs": "^7.0.0",
     "typescript": "^5.3.3",
     "vite": "^5.0.12",
+    "vitest": "^1.6.0",
     "wabt": "^1.0.37",
     "ws": "^8.18.0"
   }

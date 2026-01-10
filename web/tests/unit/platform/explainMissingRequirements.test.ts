@@ -8,7 +8,9 @@ function report(overrides: Partial<PlatformFeatureReport> = {}): PlatformFeature
     sharedArrayBuffer: false,
     wasmSimd: false,
     wasmThreads: false,
+    jit_dynamic_wasm: false,
     webgpu: false,
+    webgl2: false,
     opfs: false,
     audioWorklet: false,
     offscreenCanvas: false,
@@ -25,7 +27,9 @@ describe("explainMissingRequirements", () => {
           sharedArrayBuffer: true,
           wasmSimd: true,
           wasmThreads: true,
+          jit_dynamic_wasm: true,
           webgpu: true,
+          webgl2: true,
           opfs: true,
           audioWorklet: true,
           offscreenCanvas: true,
@@ -38,10 +42,12 @@ describe("explainMissingRequirements", () => {
     const messages = explainMissingRequirements(report());
 
     // Keep this intentionally broad (copy edits shouldn't break tests).
-    expect(messages).toHaveLength(8);
+    expect(messages).toHaveLength(9);
     expect(messages.join("\n")).toContain("cross-origin isolated");
     expect(messages.join("\n")).toContain("SharedArrayBuffer");
     expect(messages.join("\n")).toContain("WebAssembly SIMD");
     expect(messages.join("\n")).toContain("WebGPU");
+    expect(messages.join("\n")).toContain("WebGL2");
+    expect(messages.join("\n")).toContain("wasm-unsafe-eval");
   });
 });
