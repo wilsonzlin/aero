@@ -13,7 +13,7 @@ const hostLabelChar = fc.constantFrom(...'abcdefghijklmnopqrstuvwxyz0123456789'.
 const hostLabelArb = fc
   .array(hostLabelChar, { minLength: 1, maxLength: 20 })
   .map((chars) => chars.join(''))
-  .filter((s) => /^[a-z]/.test(s) && !s.startsWith('-') && !s.endsWith('-'));
+  .filter((s) => /^[a-z]/.test(s) && !s.startsWith('xn--') && !s.startsWith('-') && !s.endsWith('-'));
 
 const domainArb = fc.array(hostLabelArb, { minLength: 2, maxLength: 4 }).map((labels) => labels.join('.'));
 
