@@ -102,3 +102,45 @@ fn tier0_fucomi_sets_eflags_for_setcc() {
 
     assert_eq!(state.read_reg(Register::AL), 1);
 }
+
+#[test]
+fn tier0_fxch_and_fninit_reset_state() {
+    // fld dword ptr [0x100]      ; 1.0
+    // fld dword ptr [0x104]      ; 2.0 (ST0=2.0, ST1=1.0)
+    // fxch st1                   ; ST0=1.0, ST1=2.0
+    // fstp dword ptr [0x108]     ; store 1.0, pop -> ST0=2.0
+    // fninit                     ; reset FPU
+    // fnstcw word ptr [0x10C]
+    // fnstsw word ptr [0x10E]
+    // hlt
+    let code = [
+        0xD9, 0x05, 0x00, 0x01, 0x00, 0x00, // fld dword ptr [0x100]
+        0xD9, 0x05, 0x04, 0x01, 0x00, 0x00, // fld dword ptr [0x104]
+        0xD9, 0xC9, // fxch st1
+        0xD9, 0x1D, 0x08, 0x01, 0x00, 0x00, // fstp dword ptr [0x108]
+        0xDB, 0xE3, // fninit
+        0xD9, 0x3D, 0x0C, 0x01, 0x00, 0x00, // fnstcw word ptr [0x10C]
+        0xDD, 0x3D, 0x0E, 0x01, 0x00, 0x00, // fnstsw word ptr [0x10E]
+        0xF4, // hlt
+    ];
+
+    let mut bus = FlatTestBus::new(0x2000);
+    bus.load(0, &code);
+    bus.load(0x100, &1.0f32.to_bits().to_le_bytes());
+    bus.load(0x104, &2.0f32.to_bits().to_le_bytes());
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    run_to_halt(&mut state, &mut bus, 200);
+
+    let out = f32::from_bits(bus.read_u32(0x108).unwrap());
+    assert_eq!(out, 1.0);
+
+    let cw = bus.read_u16(0x10C).unwrap();
+    let sw = bus.read_u16(0x10E).unwrap();
+    assert_eq!(cw, 0x037F);
+    assert_eq!(sw, 0);
+
+    assert_eq!(state.x87().top(), 0);
+    assert_eq!(state.x87().tag_word(), 0xFFFF);
+}

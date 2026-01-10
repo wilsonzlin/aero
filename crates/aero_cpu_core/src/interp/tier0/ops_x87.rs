@@ -10,7 +10,16 @@ use super::ExecOutcome;
 pub fn handles_mnemonic(m: Mnemonic) -> bool {
     matches!(
         m,
-        Mnemonic::Fld
+        Mnemonic::Finit
+            | Mnemonic::Fninit
+            | Mnemonic::Fclex
+            | Mnemonic::Fnclex
+            | Mnemonic::Ffree
+            | Mnemonic::Ffreep
+            | Mnemonic::Fxch
+            | Mnemonic::Fld1
+            | Mnemonic::Fldz
+            | Mnemonic::Fld
             | Mnemonic::Fst
             | Mnemonic::Fstp
             | Mnemonic::Fild
@@ -35,8 +44,10 @@ pub fn handles_mnemonic(m: Mnemonic) -> bool {
             | Mnemonic::Fucomi
             | Mnemonic::Fucomip
             | Mnemonic::Fldcw
+            | Mnemonic::Fstcw
             | Mnemonic::Fnstcw
             | Mnemonic::Fnstsw
+            | Mnemonic::Fstsw
     )
 }
 
@@ -48,6 +59,30 @@ pub fn exec<B: CpuBus>(
 ) -> Result<ExecOutcome, Exception> {
     let instr = &decoded.instr;
     match instr.mnemonic() {
+        Mnemonic::Finit | Mnemonic::Fninit => {
+            state.x87_mut().fninit();
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fclex | Mnemonic::Fnclex => {
+            state.x87_mut().fnclex();
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fld1 => {
+            state.x87_mut().fld1().map_err(map_x87_fault)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fldz => {
+            state.x87_mut().fldz().map_err(map_x87_fault)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fxch => {
+            exec_fxch(state, instr)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Ffree | Mnemonic::Ffreep => {
+            exec_ffree(state, instr)?;
+            Ok(ExecOutcome::Continue)
+        }
         Mnemonic::Fld => {
             exec_fld(state, bus, instr, next_ip)?;
             Ok(ExecOutcome::Continue)
@@ -87,17 +122,11 @@ pub fn exec<B: CpuBus>(
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Fchs => {
-            state
-                .x87_mut()
-                .fchs()
-                .map_err(map_x87_fault)?;
+            state.x87_mut().fchs().map_err(map_x87_fault)?;
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Fabs => {
-            state
-                .x87_mut()
-                .fabs()
-                .map_err(map_x87_fault)?;
+            state.x87_mut().fabs().map_err(map_x87_fault)?;
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Fcom | Mnemonic::Fcomp => {
@@ -105,10 +134,7 @@ pub fn exec<B: CpuBus>(
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Fcompp => {
-            state
-                .x87_mut()
-                .fcompp()
-                .map_err(map_x87_fault)?;
+            state.x87_mut().fcompp().map_err(map_x87_fault)?;
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Fucomi | Mnemonic::Fucomip => {
@@ -121,13 +147,13 @@ pub fn exec<B: CpuBus>(
             state.x87_mut().fldcw(cw);
             Ok(ExecOutcome::Continue)
         }
-        Mnemonic::Fnstcw => {
+        Mnemonic::Fnstcw | Mnemonic::Fstcw => {
             let addr = memory_addr(state, instr, next_ip)?;
             let cw = state.x87().fnstcw();
             bus.write_u16(addr, cw)?;
             Ok(ExecOutcome::Continue)
         }
-        Mnemonic::Fnstsw => {
+        Mnemonic::Fnstsw | Mnemonic::Fstsw => {
             exec_fnstsw(state, bus, instr, next_ip)?;
             Ok(ExecOutcome::Continue)
         }
@@ -341,12 +367,48 @@ fn exec_binop_mem<B: CpuBus>(
 fn exec_binop_reg(state: &mut CpuState, instr: &Instruction) -> Result<(), Exception> {
     let (dest, src) = x87_reg_pair(instr)?;
     match instr.mnemonic() {
-        Mnemonic::Fadd => exec_binop_reg_variants(state, dest, src, |x87, i| x87.fadd_st0_sti(i), |x87, i| x87.fadd_sti_st0(i)),
-        Mnemonic::Fsub => exec_binop_reg_variants(state, dest, src, |x87, i| x87.fsub_st0_sti(i), |x87, i| x87.fsub_sti_st0(i)),
-        Mnemonic::Fsubr => exec_binop_reg_variants(state, dest, src, |x87, i| x87.fsubr_st0_sti(i), |x87, i| x87.fsubr_sti_st0(i)),
-        Mnemonic::Fmul => exec_binop_reg_variants(state, dest, src, |x87, i| x87.fmul_st0_sti(i), |x87, i| x87.fmul_sti_st0(i)),
-        Mnemonic::Fdiv => exec_binop_reg_variants(state, dest, src, |x87, i| x87.fdiv_st0_sti(i), |x87, i| x87.fdiv_sti_st0(i)),
-        Mnemonic::Fdivr => exec_binop_reg_variants(state, dest, src, |x87, i| x87.fdivr_st0_sti(i), |x87, i| x87.fdivr_sti_st0(i)),
+        Mnemonic::Fadd => exec_binop_reg_variants(
+            state,
+            dest,
+            src,
+            |x87, i| x87.fadd_st0_sti(i),
+            |x87, i| x87.fadd_sti_st0(i),
+        ),
+        Mnemonic::Fsub => exec_binop_reg_variants(
+            state,
+            dest,
+            src,
+            |x87, i| x87.fsub_st0_sti(i),
+            |x87, i| x87.fsub_sti_st0(i),
+        ),
+        Mnemonic::Fsubr => exec_binop_reg_variants(
+            state,
+            dest,
+            src,
+            |x87, i| x87.fsubr_st0_sti(i),
+            |x87, i| x87.fsubr_sti_st0(i),
+        ),
+        Mnemonic::Fmul => exec_binop_reg_variants(
+            state,
+            dest,
+            src,
+            |x87, i| x87.fmul_st0_sti(i),
+            |x87, i| x87.fmul_sti_st0(i),
+        ),
+        Mnemonic::Fdiv => exec_binop_reg_variants(
+            state,
+            dest,
+            src,
+            |x87, i| x87.fdiv_st0_sti(i),
+            |x87, i| x87.fdiv_sti_st0(i),
+        ),
+        Mnemonic::Fdivr => exec_binop_reg_variants(
+            state,
+            dest,
+            src,
+            |x87, i| x87.fdivr_st0_sti(i),
+            |x87, i| x87.fdivr_sti_st0(i),
+        ),
         _ => Err(Exception::InvalidOpcode),
     }
 }
@@ -492,6 +554,41 @@ fn exec_fnstsw<B: CpuBus>(
         }
         _ => Err(Exception::InvalidOpcode),
     }
+}
+
+fn exec_fxch(state: &mut CpuState, instr: &Instruction) -> Result<(), Exception> {
+    let i = match instr.op_count() {
+        0 => 1usize,
+        1 => st_index(instr.op0_register()).ok_or(Exception::InvalidOpcode)?,
+        2 => {
+            let a = st_index(instr.op0_register()).ok_or(Exception::InvalidOpcode)?;
+            let b = st_index(instr.op1_register()).ok_or(Exception::InvalidOpcode)?;
+            if a == 0 {
+                b
+            } else if b == 0 {
+                a
+            } else {
+                return Err(Exception::InvalidOpcode);
+            }
+        }
+        _ => return Err(Exception::InvalidOpcode),
+    };
+    state.x87_mut().fxch_sti(i).map_err(map_x87_fault)?;
+    Ok(())
+}
+
+fn exec_ffree(state: &mut CpuState, instr: &Instruction) -> Result<(), Exception> {
+    let i = if instr.op_count() == 0 {
+        0usize
+    } else {
+        st_index(instr.op0_register()).ok_or(Exception::InvalidOpcode)?
+    };
+    if instr.mnemonic() == Mnemonic::Ffreep {
+        state.x87_mut().ffreep_sti(i).map_err(map_x87_fault)?;
+    } else {
+        state.x87_mut().ffree_sti(i).map_err(map_x87_fault)?;
+    }
+    Ok(())
 }
 
 fn x87_reg_pair(instr: &Instruction) -> Result<(usize, usize), Exception> {

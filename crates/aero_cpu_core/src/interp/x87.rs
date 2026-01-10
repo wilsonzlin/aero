@@ -183,6 +183,14 @@ impl X87 {
         *self = Self::default();
     }
 
+    /// Implements `FNCLEX` / `FCLEX`.
+    ///
+    /// Clears the exception status flags and the exception summary bit.
+    pub fn fnclex(&mut self) {
+        self.fsw &= !(FSW_IE | FSW_DE | FSW_ZE | FSW_OE | FSW_UE | FSW_PE | FSW_SF | FSW_ES);
+        self.sync_es();
+    }
+
     pub fn control_word(&self) -> u16 {
         self.fcw
     }
@@ -242,6 +250,14 @@ impl X87 {
         self.push(v)
     }
 
+    pub fn fld1(&mut self) -> Result<()> {
+        self.push(1.0)
+    }
+
+    pub fn fldz(&mut self) -> Result<()> {
+        self.push(0.0)
+    }
+
     pub fn fst_f32(&mut self) -> Result<f32> {
         Ok(self.read_st(0)? as f32)
     }
@@ -271,6 +287,42 @@ impl X87 {
         let v = self.read_st(0)?;
         self.write_st(i, v)?;
         self.pop()
+    }
+
+    pub fn fxch_sti(&mut self, i: usize) -> Result<()> {
+        if i == 0 {
+            return Ok(());
+        }
+        let st0 = self.phys_index(0).ok_or(Fault::MathFault)?;
+        let sti = self.phys_index(i).ok_or(Fault::MathFault)?;
+        if matches!(self.tags[st0], Tag::Empty) || matches!(self.tags[sti], Tag::Empty) {
+            // Swap involving an empty register is a stack underflow.
+            self.stack_underflow()?;
+        }
+        self.regs.swap(st0, sti);
+        self.tags.swap(st0, sti);
+        Ok(())
+    }
+
+    pub fn ffree_sti(&mut self, i: usize) -> Result<()> {
+        let phys = self.phys_index(i).ok_or(Fault::MathFault)?;
+        self.tags[phys] = Tag::Empty;
+        self.regs[phys] = 0.0;
+        Ok(())
+    }
+
+    pub fn ffreep_sti(&mut self, i: usize) -> Result<()> {
+        let st0 = self.phys_index(0).ok_or(Fault::MathFault)?;
+        if matches!(self.tags[st0], Tag::Empty) {
+            self.stack_underflow()?;
+        }
+        self.ffree_sti(i)?;
+        // Pop regardless of whether the freed register was ST0.
+        self.tags[st0] = Tag::Empty;
+        self.regs[st0] = 0.0;
+        self.top = (self.top + 1) & 7;
+        self.sync_top();
+        Ok(())
     }
 
     pub fn fild_i16(&mut self, v: i16) -> Result<()> {
