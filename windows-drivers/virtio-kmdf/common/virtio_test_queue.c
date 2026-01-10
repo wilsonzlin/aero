@@ -13,6 +13,7 @@ NTSTATUS VirtioTestQueueAllocAndLog(_In_ WDFDEVICE Device)
     VIRTIO_DMA_CONTEXT* dma = NULL;
     VIRTIO_COMMON_BUFFER buf;
     VIRTQUEUE_RING_DMA ring;
+    VIRTQUEUE_RING_DMA ringEvent;
 
     status = VirtioDmaCreate(Device, 64 * 1024, 32, TRUE, &dma);
     if (!NT_SUCCESS(status)) {
@@ -36,6 +37,22 @@ NTSTATUS VirtioTestQueueAllocAndLog(_In_ WDFDEVICE Device)
             (unsigned long long)ring.AvailDma,
             (unsigned long long)ring.UsedDma);
         VirtqueueRingDmaFree(&ring);
+    }
+
+    status = VirtqueueRingDmaAlloc(dma, NULL, 256, TRUE, &ringEvent);
+    if (NT_SUCCESS(status)) {
+        volatile UINT16* usedEvent = VirtqueueRingAvailUsedEvent(ringEvent.Avail, ringEvent.QueueSize);
+        volatile UINT16* availEvent = VirtqueueRingUsedAvailEvent(ringEvent.Used, ringEvent.QueueSize);
+
+        VIRTIO_DMA_TRACE(
+            "test queue ring(EVENT_IDX) desc=%p avail=%p used=%p usedEvent=%p availEvent=%p\n",
+            ringEvent.Desc,
+            ringEvent.Avail,
+            ringEvent.Used,
+            usedEvent,
+            availEvent);
+
+        VirtqueueRingDmaFree(&ringEvent);
     }
 
     VirtioDmaDestroy(&dma);
