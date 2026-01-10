@@ -1,0 +1,18 @@
+# WDK 7.1 build output
+objchk*/
+objfre*/
+buildchk*/
+buildfre*/
+
+*.log
+*.wrn
+*.err
+
+*.sys
+*.lib
+*.pdb
+*.ilk
+*.exp
+*.map
+*.cat
+

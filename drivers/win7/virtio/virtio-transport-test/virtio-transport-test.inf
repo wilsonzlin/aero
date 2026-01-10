@@ -1,0 +1,48 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class=System
+ClassGuid={4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider=%ManufacturerName%
+DriverVer=01/10/2026,0.1.0.0
+
+[Manufacturer]
+%ManufacturerName%=Standard,NTx86,NTamd64
+
+;
+; Edit the hardware ID below to bind the smoke-test driver to a different
+; virtio modern PCI device.
+;
+[Standard.NTx86]
+%VirtioTransportTest.DeviceDesc%=VirtioTransportTest_Install, PCI\VEN_1AF4&DEV_1052
+
+[Standard.NTamd64]
+%VirtioTransportTest.DeviceDesc%=VirtioTransportTest_Install, PCI\VEN_1AF4&DEV_1052
+
+[DestinationDirs]
+DefaultDestDir=12 ; %windir%\System32\drivers
+
+[VirtioTransportTest_Install.NT]
+CopyFiles=VirtioTransportTest.CopyFiles
+
+[VirtioTransportTest.CopyFiles]
+virtio-transport-test.sys
+
+[VirtioTransportTest_Install.NT.Services]
+AddService=VirtioTransportTest,0x00000002,VirtioTransportTest_Service_Inst
+
+[VirtioTransportTest_Service_Inst]
+ServiceType=1 ; SERVICE_KERNEL_DRIVER
+StartType=3 ; SERVICE_DEMAND_START
+ErrorControl=1
+ServiceBinary=%12%\virtio-transport-test.sys
+
+[VirtioTransportTest_Install.NT.Wdf]
+KmdfService=VirtioTransportTest, VirtioTransportTest_WdfSect
+
+[VirtioTransportTest_WdfSect]
+KmdfLibraryVersion=1.9
+
+[Strings]
+ManufacturerName="Aero"
+VirtioTransportTest.DeviceDesc="virtio transport smoke test (modern PCI)"
+

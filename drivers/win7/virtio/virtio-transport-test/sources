@@ -1,0 +1,21 @@
+TARGETNAME=virtio-transport-test
+TARGETTYPE=DRIVER
+
+KMDF_VERSION_MAJOR=1
+KMDF_VERSION_MINOR=9
+
+#
+# Win7 targeting (avoid accidentally pulling newer APIs when building in a Win7 env).
+#
+C_DEFINES=$(C_DEFINES) -DNTDDI_VERSION=NTDDI_WIN7 -D_WIN32_WINNT=0x0601 -DWINVER=0x0601
+
+INCLUDES=..\virtio-core\include;$(INCLUDES)
+
+#
+# Link against the local transport library built by the sibling project.
+# $(O) expands to the current build's object output path (e.g. objfre_win7_x86\i386).
+#
+TARGETLIBS=$(TARGETLIBS) ..\virtio-core\$(O)\virtio-core.lib wdmguid.lib
+
+SOURCES= \
+    src\virtio_transport_test.c

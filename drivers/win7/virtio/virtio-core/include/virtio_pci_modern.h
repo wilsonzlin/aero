@@ -90,6 +90,21 @@ VirtioPciModernMapBars(
     _In_ WDFCMRESLIST ResourcesRaw,
     _In_ WDFCMRESLIST ResourcesTranslated);
 
+/*
+ * Transport smoke-test helpers.
+ *
+ * These intentionally stop at FEATURES_OK (no DRIVER_OK / no virtqueues).
+ */
+_IRQL_requires_max_(PASSIVE_LEVEL)
+VOID
+VirtioPciModernResetDevice(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev);
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+NTSTATUS
+VirtioPciNegotiateFeatures(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
+                           _In_ UINT64 RequestedFeatures,
+                           _Out_opt_ UINT64 *NegotiatedFeatures);
+
 _IRQL_requires_max_(PASSIVE_LEVEL)
 VOID
 VirtioPciModernUninit(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev);
@@ -187,4 +202,3 @@ VOID
 VirtioPciWriteQueueEnableLocked(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
                                 _In_ USHORT QueueIndex,
                                 _In_ BOOLEAN Enable);
-

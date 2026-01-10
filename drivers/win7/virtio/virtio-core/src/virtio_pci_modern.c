@@ -841,3 +841,92 @@ VirtioPciWriteQueueEnableLocked(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
     VirtioPciSelectQueueLocked(Dev, QueueIndex);
     WRITE_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_enable, Enable ? 1 : 0);
 }
+
+static __forceinline UCHAR
+VirtioPciReadDeviceStatus(_In_ const PVIRTIO_PCI_MODERN_DEVICE Dev)
+{
+    return READ_REGISTER_UCHAR((volatile UCHAR *)&Dev->CommonCfg->device_status);
+}
+
+static __forceinline VOID
+VirtioPciWriteDeviceStatus(_In_ const PVIRTIO_PCI_MODERN_DEVICE Dev, _In_ UCHAR Status)
+{
+    WRITE_REGISTER_UCHAR((volatile UCHAR *)&Dev->CommonCfg->device_status, Status);
+}
+
+static __forceinline VOID
+VirtioPciSetDeviceStatusBits(_In_ const PVIRTIO_PCI_MODERN_DEVICE Dev, _In_ UCHAR StatusBits)
+{
+    UCHAR status;
+
+    status = VirtioPciReadDeviceStatus(Dev);
+    status |= StatusBits;
+    VirtioPciWriteDeviceStatus(Dev, status);
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+VOID
+VirtioPciModernResetDevice(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev)
+{
+    if (Dev == NULL || Dev->CommonCfg == NULL) {
+        return;
+    }
+
+    VirtioPciWriteDeviceStatus(Dev, 0);
+    KeStallExecutionProcessor(1000);
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+NTSTATUS
+VirtioPciNegotiateFeatures(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
+                           _In_ UINT64 RequestedFeatures,
+                           _Out_opt_ UINT64 *NegotiatedFeatures)
+{
+    UINT64 deviceFeatures;
+    UINT64 negotiated;
+    UCHAR status;
+
+    if (Dev == NULL || Dev->CommonCfg == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    VirtioPciModernResetDevice(Dev);
+
+    VirtioPciSetDeviceStatusBits(Dev, VIRTIO_STATUS_ACKNOWLEDGE);
+    VirtioPciSetDeviceStatusBits(Dev, VIRTIO_STATUS_DRIVER);
+
+    deviceFeatures = VirtioPciReadDeviceFeatures(Dev);
+    negotiated = deviceFeatures & RequestedFeatures;
+
+    DbgPrint(
+        "virtio-core: device features 0x%I64X requested 0x%I64X negotiated 0x%I64X\n",
+        deviceFeatures,
+        RequestedFeatures,
+        negotiated);
+
+    if ((RequestedFeatures & VIRTIO_F_VERSION_1) != 0 && (negotiated & VIRTIO_F_VERSION_1) == 0) {
+        DbgPrint("virtio-core: device does not support VERSION_1 (not a modern device)\n");
+        VirtioPciSetDeviceStatusBits(Dev, VIRTIO_STATUS_FAILED);
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    VirtioPciWriteDriverFeatures(Dev, negotiated);
+
+    VirtioPciSetDeviceStatusBits(Dev, VIRTIO_STATUS_FEATURES_OK);
+
+    status = VirtioPciReadDeviceStatus(Dev);
+    if ((status & VIRTIO_STATUS_FEATURES_OK) == 0) {
+        DbgPrint("virtio-core: device rejected FEATURES_OK (status=0x%02X)\n", status);
+        VirtioPciSetDeviceStatusBits(Dev, VIRTIO_STATUS_FAILED);
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    if (NegotiatedFeatures != NULL) {
+        *NegotiatedFeatures = negotiated;
+    }
+
+    //
+    // Leave the device at FEATURES_OK for the transport smoke test.
+    //
+    return STATUS_SUCCESS;
+}

@@ -1,0 +1,16 @@
+TARGETNAME=virtio-core
+TARGETTYPE=LIBRARY
+
+KMDF_VERSION_MAJOR=1
+KMDF_VERSION_MINOR=9
+
+#
+# Win7 targeting (avoid accidentally pulling newer APIs when building in a Win7 env).
+#
+C_DEFINES=$(C_DEFINES) -DNTDDI_VERSION=NTDDI_WIN7 -D_WIN32_WINNT=0x0601 -DWINVER=0x0601
+
+INCLUDES=.\include;$(INCLUDES)
+
+SOURCES= \
+    src\virtio_pci_caps.c \
+    src\virtio_pci_modern.c
