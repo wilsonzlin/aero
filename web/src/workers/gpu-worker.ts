@@ -200,6 +200,9 @@ const maybePostMetrics = () => {
   lastMetricsPostAtMs = nowMs;
   syncSharedMetrics();
   telemetry.droppedFrames = framesDropped;
+  perf.counter("framesReceived", framesReceived);
+  perf.counter("framesPresented", framesPresented);
+  perf.counter("framesDropped", framesDropped);
   postToMain({
     type: "metrics",
     framesReceived,
@@ -326,9 +329,9 @@ const handleTick = async () => {
       const now = performance.now();
       if (lastFrameStartMs !== null) {
         telemetry.beginFrame(lastFrameStartMs);
-        telemetry.recordTextureUploadBytes(
-          estimateTextureUploadBytes(framebufferViews?.layout ?? null, dirtyRects),
-        );
+        const textureUploadBytes = estimateTextureUploadBytes(framebufferViews?.layout ?? null, dirtyRects);
+        telemetry.recordTextureUploadBytes(textureUploadBytes);
+        perf.counter("textureUploadBytes", textureUploadBytes);
         telemetry.endFrame(now);
       }
       lastFrameStartMs = now;

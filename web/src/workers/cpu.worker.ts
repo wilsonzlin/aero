@@ -137,6 +137,7 @@ async function runLoop(): Promise<void> {
       if (now >= nextHeartbeatMs) {
         const counter = Atomics.add(status, StatusIndex.HeartbeatCounter, 1) + 1;
         Atomics.add(guestI32, 0, 1);
+        perf.counter("heartbeatCounter", counter);
         // Best-effort: heartbeat events are allowed to drop if the ring is full.
         eventRing.push(encodeProtocolMessage({ type: MessageType.HEARTBEAT, role, counter }));
         nextHeartbeatMs = now + heartbeatIntervalMs;
