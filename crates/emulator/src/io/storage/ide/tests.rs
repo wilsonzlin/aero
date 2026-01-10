@@ -258,3 +258,24 @@ fn atapi_read_10_returns_correct_bytes() {
     assert_eq!(&out[..5], b"WORLD");
 }
 
+#[test]
+fn pci_bar4_probe_returns_size_mask_and_relocation_updates_io_decode() {
+    let mut ide = IdeController::new(0xC000);
+
+    // Initial BAR4 value is base|IO.
+    assert_eq!(ide.pci_config_read(0x20, 4), 0xC000 | 0x01);
+
+    // Probe.
+    ide.pci_config_write(0x20, 4, 0xffff_ffff);
+    assert_eq!(ide.pci_config_read(0x20, 4), 0xffff_fff1);
+
+    // Relocate to 0xD000.
+    ide.pci_config_write(0x20, 4, 0xD000);
+    assert_eq!(ide.bus_master_base(), 0xD000);
+    assert_eq!(ide.pci_config_read(0x20, 4), 0xD000 | 0x01);
+
+    // The bus master decode should now only respond to the relocated base.
+    // Read the BM command register (reg 0) for primary channel.
+    assert_eq!(ide.io_read(0xC000, 1), 0xffff_ffff);
+    assert_eq!(ide.io_read(0xD000, 1), 0);
+}
