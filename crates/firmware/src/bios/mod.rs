@@ -194,7 +194,7 @@ fn seg(selector: u16) -> Segment {
 
 fn disk_err_to_int13_status(err: DiskError) -> u8 {
     match err {
-        DiskError::OutOfRange => 0x01, // invalid function/parameter
+        DiskError::OutOfRange => 0x04, // sector not found / out of range
     }
 }
 

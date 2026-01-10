@@ -91,7 +91,11 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
         }
         0x02 => {
             // Read sectors (CHS).
-            let count = (cpu.rax & 0xFF) as u8;
+            let mut count = (cpu.rax & 0xFF) as u16;
+            if count == 0 {
+                // INT 13h AH=02h uses AL=0 as 256 sectors.
+                count = 256;
+            }
             let ch = (cpu.rcx & 0xFF) as u8;
             let cl = ((cpu.rcx >> 8) & 0xFF) as u8;
             let dh = ((cpu.rdx >> 8) & 0xFF) as u8;
@@ -172,17 +176,47 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
             // Extended read via Disk Address Packet (DAP) at DS:SI.
             let dap_addr = cpu.linear_addr(cpu.ds, (cpu.rsi & 0xFFFF) as u16);
             let dap_size = bus.read_u8(dap_addr);
-            if dap_size < 0x10 {
+            if dap_size != 0x10 && dap_size != 0x18 {
+                cpu.rflags |= FLAG_CF;
+                cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
+                return;
+            }
+
+            if bus.read_u8(dap_addr + 1) != 0 {
                 cpu.rflags |= FLAG_CF;
                 cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
                 return;
             }
 
             let count = bus.read_u16(dap_addr + 2) as u64;
+            if count == 0 {
+                cpu.rflags |= FLAG_CF;
+                cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
+                return;
+            }
             let buf_off = bus.read_u16(dap_addr + 4);
             let buf_seg = bus.read_u16(dap_addr + 6);
             let lba = bus.read_u64(dap_addr + 8);
-            let dst = cpu.linear_addr(seg(buf_seg), buf_off);
+            let mut dst = cpu.linear_addr(seg(buf_seg), buf_off);
+
+            if dap_size == 0x18 {
+                // 24-byte DAP includes a 64-bit flat pointer at offset 16.
+                let buf64 = bus.read_u64(dap_addr + 16);
+                if buf64 != 0 {
+                    dst = buf64;
+                }
+            }
+
+            let Some(end) = lba.checked_add(count) else {
+                cpu.rflags |= FLAG_CF;
+                cpu.rax = (cpu.rax & 0xFF) | (0x04u64 << 8);
+                return;
+            };
+            if end > disk.size_in_sectors() {
+                cpu.rflags |= FLAG_CF;
+                cpu.rax = (cpu.rax & 0xFF) | (0x04u64 << 8);
+                return;
+            }
 
             for i in 0..count {
                 let mut buf = [0u8; 512];
@@ -195,6 +229,48 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
                         return;
                     }
                 }
+            }
+
+            cpu.rflags &= !FLAG_CF;
+            cpu.rax &= !0xFF00u64;
+        }
+        0x48 => {
+            // Extended get drive parameters (EDD).
+            //
+            // DS:SI points to a caller-supplied buffer; the first WORD is the
+            // buffer size in bytes.
+            let table_addr = cpu.linear_addr(cpu.ds, (cpu.rsi & 0xFFFF) as u16);
+            let buf_size = bus.read_u16(table_addr) as usize;
+            if buf_size < 0x1A {
+                cpu.rflags |= FLAG_CF;
+                cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
+                return;
+            }
+
+            // Fill the EDD drive parameter table (subset).
+            // We write as much as the caller says they can accept.
+            let write_len = buf_size.min(0x1E) as u16;
+            bus.write_u16(table_addr + 0, write_len);
+            if buf_size >= 4 {
+                bus.write_u16(table_addr + 2, 0); // flags
+            }
+            if buf_size >= 8 {
+                bus.write_u32(table_addr + 4, 1024); // cylinders
+            }
+            if buf_size >= 12 {
+                bus.write_u32(table_addr + 8, 16); // heads
+            }
+            if buf_size >= 16 {
+                bus.write_u32(table_addr + 12, 63); // sectors/track
+            }
+            if buf_size >= 24 {
+                bus.write_u64(table_addr + 16, disk.size_in_sectors());
+            }
+            if buf_size >= 26 {
+                bus.write_u16(table_addr + 24, 512); // bytes/sector
+            }
+            if buf_size >= 30 {
+                bus.write_u32(table_addr + 26, 0); // DPTE pointer (unused)
             }
 
             cpu.rflags &= !FLAG_CF;
@@ -343,4 +419,63 @@ fn build_e820_map(total_memory: u64) -> Vec<E820Entry> {
     }
 
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use machine::{CpuState, InMemoryDisk, MemoryAccess, PhysicalMemory, FLAG_CF};
+
+    #[test]
+    fn int13_ext_read_reads_lba_into_memory() {
+        let mut disk_bytes = vec![0u8; 512 * 4];
+        disk_bytes[512..1024].fill(0xAA);
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::default();
+        cpu.ds.selector = 0;
+        cpu.rsi = 0x0500;
+        cpu.rax = 0x4200; // AH=42h
+
+        let mut mem = PhysicalMemory::new(2 * 1024 * 1024);
+        let dap_addr = cpu.linear_addr(cpu.ds, 0x0500);
+        mem.write_u8(dap_addr + 0, 0x10);
+        mem.write_u8(dap_addr + 1, 0x00);
+        mem.write_u16(dap_addr + 2, 1); // count
+        mem.write_u16(dap_addr + 4, 0x1000); // offset
+        mem.write_u16(dap_addr + 6, 0x0000); // segment
+        mem.write_u64(dap_addr + 8, 1); // LBA
+
+        handle_int13(&mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.rax >> 8) & 0xFF, 0);
+
+        let buf = mem.read_bytes(0x1000, 512);
+        assert_eq!(buf, vec![0xAA; 512]);
+    }
+
+    #[test]
+    fn int13_ext_get_drive_params_reports_sector_count() {
+        let disk_bytes = vec![0u8; 512 * 8];
+        let sectors = (disk_bytes.len() / 512) as u64;
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::default();
+        cpu.ds.selector = 0;
+        cpu.rsi = 0x0600;
+        cpu.rax = 0x4800; // AH=48h
+
+        let mut mem = PhysicalMemory::new(2 * 1024 * 1024);
+        let table_addr = cpu.linear_addr(cpu.ds, 0x0600);
+        mem.write_u16(table_addr, 0x1E); // buffer size
+
+        handle_int13(&mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.rax >> 8) & 0xFF, 0);
+
+        assert_eq!(mem.read_u64(table_addr + 16), sectors);
+        assert_eq!(mem.read_u16(table_addr + 24), 512);
+    }
 }
