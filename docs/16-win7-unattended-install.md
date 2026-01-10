@@ -13,6 +13,10 @@ This document focuses on the *plumbing* required for:
 
 See also the reference templates in [`windows/win7-sp1/unattend/`](../windows/win7-sp1/unattend/).
 
+For the broader install-media preparation workflow (ISO layout, what must be patched in WIM/BCD/registry hives, ISO rebuild commands), see:
+
+- [`docs/16-windows7-install-media-prep.md`](./16-windows7-install-media-prep.md)
+
 For a step-by-step **validation + troubleshooting playbook** on real Win7 SP1 installs (logs, `%configsetroot%` verification, `$OEM$` copy behavior, `SetupComplete.cmd` checks), see:
  
 * [`docs/17-win7-unattend-validation.md`](./17-win7-unattend-validation.md)

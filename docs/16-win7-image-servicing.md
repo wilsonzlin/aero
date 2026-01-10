@@ -17,6 +17,10 @@ This document answers, precisely:
 
 > Note: Windows 7 **x86** does not enforce kernel-mode driver signing in the same way as x64. This doc is primarily for **Windows 7 x64**.
 
+See also:
+
+- [`docs/16-windows7-install-media-prep.md`](./16-windows7-install-media-prep.md) for the higher-level “what to patch” overview (ISO layout, ISO rebuild commands, validation checklist).
+
 ## Automated servicing (recommended)
 
 For a repeatable, automated implementation of the steps in this document, use:
