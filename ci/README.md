@@ -14,6 +14,8 @@ Outputs:
 - Writes `out/toolchain.json` (absolute paths + provenance) for use by other scripts.
 - In GitHub Actions, also exports tool paths via `$GITHUB_OUTPUT`, `$GITHUB_ENV`, and `$GITHUB_PATH`.
 - If `WDK_DOWNLOAD_CACHE` is set, `winget` downloads are directed there (so CI can cache installers across runs).
+- If `winget` is unavailable, the script will try a best-effort Chocolatey fallback (`choco install windows-driver-kit`).
+- Installing the SDK/WDK requires Administrator privileges; if the tools are missing and the shell is not elevated, the script fails with remediation.
 
 Example local usage:
 
