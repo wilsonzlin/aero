@@ -115,7 +115,7 @@ impl CpuState {
 
     pub fn write_to_mem(&self, mem: &mut [u8], base: usize) {
         assert!(
-            base + Self::BYTE_SIZE <= mem.len(),
+            base + Self::TOTAL_BYTE_SIZE <= mem.len(),
             "CpuState write out of bounds"
         );
         for (i, reg) in self.regs.iter().enumerate() {
@@ -134,7 +134,7 @@ impl CpuState {
 
     pub fn read_from_mem(mem: &[u8], base: usize) -> Self {
         assert!(
-            base + Self::BYTE_SIZE <= mem.len(),
+            base + Self::TOTAL_BYTE_SIZE <= mem.len(),
             "CpuState read out of bounds"
         );
         let mut regs = [0u64; Reg::COUNT];

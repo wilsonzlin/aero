@@ -551,6 +551,63 @@ fn wasm_codegen_load_store_helpers_match_interpreter() {
 }
 
 #[test]
+fn wasm_codegen_tlb_collision_forces_retranslate() {
+    // The baseline Tier-1 TLB is direct-mapped. Two virtual pages that share the same index must
+    // evict each other, forcing a re-translate when revisiting the older page.
+    let collide_addr = (aero_jit::JIT_TLB_ENTRIES as u64) << aero_jit::PAGE_SHIFT;
+
+    let block = IrBlock::new(vec![
+        IrOp::Load {
+            dst: Place::Reg(Reg::Rax),
+            addr: Operand::Imm(0),
+            size: MemSize::U32,
+        },
+        IrOp::Load {
+            dst: Place::Reg(Reg::Rbx),
+            addr: Operand::Imm(collide_addr as i64),
+            size: MemSize::U32,
+        },
+        IrOp::Load {
+            dst: Place::Reg(Reg::Rcx),
+            addr: Operand::Imm(4),
+            size: MemSize::U32,
+        },
+        IrOp::Exit {
+            next_rip: Operand::Imm(0x3000),
+        },
+    ]);
+
+    let mut cpu = CpuState::default();
+    cpu.ram_base = CpuState::TOTAL_BYTE_SIZE as u64;
+
+    // Ensure guest RAM covers `collide_addr` and a few bytes past it.
+    let total_len = cpu.ram_base as usize + collide_addr as usize + 0x1000;
+    let mut mem = vec![0u8; total_len];
+
+    // Seed some data at the load sites.
+    let base = cpu.ram_base as usize;
+    mem[base..base + 4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
+    mem[base + 4..base + 8].copy_from_slice(&0x5566_7788u32.to_le_bytes());
+    mem[base + collide_addr as usize..base + collide_addr as usize + 4]
+        .copy_from_slice(&0x99aa_bbccu32.to_le_bytes());
+
+    let (expected_rip, expected_cpu, _expected_mem) = run_case(&block, cpu, mem.clone());
+    let (got_rip, got_cpu, _got_mem, host_state) = run_wasm(&block, cpu, mem);
+
+    assert_eq!(got_rip, expected_rip);
+    assert_eq!(got_cpu, expected_cpu);
+
+    // We should translate:
+    // - page 0 once
+    // - collide page once (evicts page 0)
+    // - page 0 again (tag mismatch -> retranslate)
+    assert_eq!(host_state.mmu_translate_calls, 3);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
 fn wasm_codegen_mmio_access_exits_to_runtime() {
     // Any access beyond the configured guest RAM size should be classified as non-RAM by the
     // `mmu_translate` helper and cause a `jit_exit_mmio` exit.
@@ -577,6 +634,39 @@ fn wasm_codegen_mmio_access_exits_to_runtime() {
     assert_eq!(host_state.mmu_translate_calls, 1);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn wasm_codegen_cross_page_load_uses_slow_helper() {
+    // Cross-page accesses are handled by the slow `mem_read_*` helpers for correctness.
+    let addr = 0xFF9; // U64 at 0xFF9 crosses the 4KiB boundary.
+    let block = IrBlock::new(vec![
+        IrOp::Load {
+            dst: Place::Reg(Reg::Rax),
+            addr: Operand::Imm(addr),
+            size: MemSize::U64,
+        },
+        IrOp::Exit {
+            next_rip: Operand::Imm(0x3000),
+        },
+    ]);
+
+    let mut cpu = CpuState::default();
+    cpu.ram_base = CpuState::TOTAL_BYTE_SIZE as u64;
+
+    let mut mem = vec![0u8; 65536];
+    let base = cpu.ram_base as usize;
+    mem[base + addr as usize..base + addr as usize + 8]
+        .copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+
+    let (expected_rip, expected_cpu, _expected_mem) = run_case(&block, cpu, mem.clone());
+    let (got_rip, got_cpu, _got_mem, host_state) = run_wasm(&block, cpu, mem);
+
+    assert_eq!(got_rip, expected_rip);
+    assert_eq!(got_cpu, expected_cpu);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 1);
 }
 
 #[test]
@@ -610,10 +700,11 @@ fn wasm_codegen_exit_if_matches_interpreter() {
         cpu.set_reg(Reg::Rbx, rbx);
         cpu.set_reg(Reg::Rcx, 123);
         cpu.rip = 0x3333;
+        cpu.ram_base = CpuState::TOTAL_BYTE_SIZE as u64;
 
         let mem = vec![0u8; 65536];
         let (expected_rip, expected_cpu, _expected_mem) = run_case(&block, cpu, mem.clone());
-        let (got_rip, got_cpu, _got_mem) = run_wasm(&block, cpu, mem);
+        let (got_rip, got_cpu, _got_mem, _host_state) = run_wasm(&block, cpu, mem);
 
         assert_eq!(got_rip, expected_rip);
         assert_eq!(got_cpu, expected_cpu);
@@ -648,10 +739,11 @@ fn wasm_codegen_bailout_matches_interpreter() {
     cpu.set_reg(Reg::Rax, 10);
     cpu.set_reg(Reg::Rbx, 20);
     cpu.rip = 0x1234;
+    cpu.ram_base = CpuState::TOTAL_BYTE_SIZE as u64;
 
     let mem = vec![0u8; 65536];
     let (expected_rip, expected_cpu, _expected_mem) = run_case(&block, cpu, mem.clone());
-    let (got_rip, got_cpu, _got_mem) = run_wasm(&block, cpu, mem);
+    let (got_rip, got_cpu, _got_mem, _host_state) = run_wasm(&block, cpu, mem);
 
     assert_eq!(got_rip, expected_rip);
     assert_eq!(got_cpu, expected_cpu);
