@@ -311,6 +311,7 @@ pub fn parse_tcp_segment(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_tcp_segment(
     src_ip: Ipv4Addr,
     dst_ip: Ipv4Addr,
@@ -508,6 +509,7 @@ pub fn build_dhcp_request(
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_dhcp_offer(
     xid: u32,
     chaddr: MacAddr,
@@ -531,6 +533,7 @@ pub fn build_dhcp_offer(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_dhcp_ack(
     xid: u32,
     chaddr: MacAddr,
@@ -554,6 +557,7 @@ pub fn build_dhcp_ack(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_dhcp_reply(
     msg_type: DhcpMessageType,
     xid: u32,

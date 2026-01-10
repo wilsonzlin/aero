@@ -503,6 +503,7 @@ async fn handle_dns_query(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_tcp_segment_to_guest(
     cfg: &StackConfig,
     to_guest: &mpsc::Sender<Vec<u8>>,

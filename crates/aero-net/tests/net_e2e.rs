@@ -277,6 +277,7 @@ async fn dispatch_frames(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn tcp_echo_roundtrip(
     trace: Trace,
     guest_to_stack_tx: mpsc::Sender<Vec<u8>>,
@@ -630,6 +631,7 @@ async fn send_arp_request(
     tx.send(eth).await.expect("send");
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_udp(
     trace: &Trace,
     tx: &mpsc::Sender<Vec<u8>>,
@@ -655,6 +657,7 @@ async fn send_udp(
     tx.send(eth).await.expect("send");
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_tcp(
     trace: &Trace,
     tx: &mpsc::Sender<Vec<u8>>,
