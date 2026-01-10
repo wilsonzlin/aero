@@ -56,3 +56,9 @@ Write keyboard LEDs (NumLock|CapsLock|ScrollLock):
 ```bat
 hidtest.exe --led 0x07
 ```
+
+Cycle LEDs (guaranteed visible changes):
+
+```bat
+hidtest.exe --led-cycle
+```

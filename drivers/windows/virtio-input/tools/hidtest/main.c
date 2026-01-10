@@ -51,6 +51,7 @@ typedef struct OPTIONS {
     int have_pid;
     int have_index;
     int have_led_mask;
+    int led_cycle;
     int want_keyboard;
     int want_mouse;
     USHORT vid;
@@ -264,7 +265,8 @@ static void print_usage(void)
     wprintf(L"\n");
     wprintf(L"Usage:\n");
     wprintf(L"  hidtest.exe [--list]\n");
-    wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678] [--led 0x07]\n");
+    wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
+    wprintf(L"             [--led 0x07 | --led-cycle]\n");
     wprintf(L"\n");
     wprintf(L"Options:\n");
     wprintf(L"  --list          List all present HID interfaces and exit\n");
@@ -275,6 +277,7 @@ static void print_usage(void)
     wprintf(L"  --pid 0xPID     Filter by product ID (hex)\n");
     wprintf(L"  --led 0xMASK    Send keyboard LED output report (ReportID=1)\n");
     wprintf(L"                 Bits: 0x01 NumLock, 0x02 CapsLock, 0x04 ScrollLock\n");
+    wprintf(L"  --led-cycle     Cycle keyboard LEDs to visually confirm write path\n");
     wprintf(L"\n");
     wprintf(L"Notes:\n");
     wprintf(L"  - Without filters, the tool prefers a virtio keyboard interface (VID 0x1AF4).\n");
@@ -740,6 +743,19 @@ static int send_keyboard_led_report(const SELECTED_DEVICE *dev, BYTE led_mask)
     return 1;
 }
 
+static void cycle_keyboard_leds(const SELECTED_DEVICE *dev)
+{
+    // Short sequence to guarantee visible state changes even if the current LED
+    // state is unknown.
+    static const BYTE seq[] = {0x00, 0x01, 0x00, 0x02, 0x00, 0x04, 0x00, 0x07, 0x00};
+    int i;
+
+    for (i = 0; i < (int)(sizeof(seq) / sizeof(seq[0])); i++) {
+        (VOID)send_keyboard_led_report(dev, seq[i]);
+        Sleep(250);
+    }
+}
+
 static void read_reports_loop(const SELECTED_DEVICE *dev)
 {
     BYTE *buf;
@@ -876,6 +892,11 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--led-cycle") == 0) {
+            opt.led_cycle = 1;
+            continue;
+        }
+
         wprintf(L"Unknown argument: %ls\n", argv[i]);
         print_usage();
         return 2;
@@ -883,6 +904,10 @@ int wmain(int argc, wchar_t **argv)
 
     if (opt.want_keyboard && opt.want_mouse) {
         wprintf(L"--keyboard and --mouse are mutually exclusive.\n");
+        return 2;
+    }
+    if (opt.have_led_mask && opt.led_cycle) {
+        wprintf(L"--led and --led-cycle are mutually exclusive.\n");
         return 2;
     }
 
@@ -914,6 +939,9 @@ int wmain(int argc, wchar_t **argv)
 
     if (opt.have_led_mask) {
         send_keyboard_led_report(&dev, opt.led_mask);
+    }
+    if (opt.led_cycle) {
+        cycle_keyboard_leds(&dev);
     }
 
     read_reports_loop(&dev);
