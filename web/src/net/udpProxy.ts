@@ -1,4 +1,4 @@
-import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram } from "../shared/udpRelayProtocol";
+import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram, encodeUdpRelayV2Datagram } from "../shared/udpRelayProtocol";
 
 export type UdpProxyEvent = {
   srcIp: string;
@@ -28,6 +28,90 @@ function parseIpv4(ip: string): [number, number, number, number] {
     throw new Error(`invalid IPv4 address: ${ip}`);
   }
   return [parts[0], parts[1], parts[2], parts[3]];
+}
+
+function parseIpv6(ip: string): Uint8Array {
+  let raw = ip;
+  if (raw.startsWith("[") && raw.endsWith("]")) {
+    raw = raw.slice(1, -1);
+  }
+  const percent = raw.indexOf("%");
+  if (percent !== -1) {
+    raw = raw.slice(0, percent);
+  }
+
+  const expandGroups = (groups: string[]): number[] => {
+    const out: number[] = [];
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i];
+      if (g === "") throw new Error(`invalid IPv6 address: ${ip}`);
+      if (g.includes(".")) {
+        if (i !== groups.length - 1) throw new Error(`invalid IPv6 address: ${ip}`);
+        const ip4 = parseIpv4(g);
+        out.push((ip4[0] << 8) | ip4[1], (ip4[2] << 8) | ip4[3]);
+        continue;
+      }
+      const v = Number.parseInt(g, 16);
+      if (!Number.isInteger(v) || v < 0 || v > 0xffff) {
+        throw new Error(`invalid IPv6 address: ${ip}`);
+      }
+      out.push(v);
+    }
+    return out;
+  };
+
+  let groups: number[] = [];
+  const doubleColon = raw.indexOf("::");
+  if (doubleColon !== -1) {
+    if (raw.indexOf("::", doubleColon + 2) !== -1) throw new Error(`invalid IPv6 address: ${ip}`);
+    const head = raw.slice(0, doubleColon);
+    const tail = raw.slice(doubleColon + 2);
+
+    const headGroups = head === "" ? [] : head.split(":");
+    const tailGroups = tail === "" ? [] : tail.split(":");
+
+    const headVals = expandGroups(headGroups);
+    const tailVals = expandGroups(tailGroups);
+    const used = headVals.length + tailVals.length;
+    if (used > 8) throw new Error(`invalid IPv6 address: ${ip}`);
+
+    const missing = 8 - used;
+    if (missing === 0) throw new Error(`invalid IPv6 address: ${ip}`);
+
+    groups = [...headVals, ...new Array(missing).fill(0), ...tailVals];
+  } else {
+    const parts = raw.split(":");
+    groups = expandGroups(parts);
+    if (groups.length !== 8) throw new Error(`invalid IPv6 address: ${ip}`);
+  }
+
+  if (groups.length !== 8) throw new Error(`invalid IPv6 address: ${ip}`);
+
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < 8; i++) {
+    const v = groups[i];
+    bytes[i * 2] = (v >>> 8) & 0xff;
+    bytes[i * 2 + 1] = v & 0xff;
+  }
+  return bytes;
+}
+
+function encodeDatagram(srcPort: number, dstIp: string, dstPort: number, payload: Uint8Array): Uint8Array {
+  if (dstIp.includes(":") || (dstIp.startsWith("[") && dstIp.endsWith("]"))) {
+    const ip6 = parseIpv6(dstIp);
+    return encodeUdpRelayV2Datagram({
+      guestPort: srcPort,
+      remoteIp: ip6,
+      remotePort: dstPort,
+      payload,
+    });
+  }
+  return encodeUdpRelayV1Datagram({
+    guestPort: srcPort,
+    remoteIpv4: parseIpv4(dstIp),
+    remotePort: dstPort,
+    payload,
+  });
 }
 
 /**
@@ -82,14 +166,7 @@ export class WebSocketUdpProxyClient {
   send(srcPort: number, dstIp: string, dstPort: number, payload: Uint8Array): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     try {
-      this.ws.send(
-        encodeUdpRelayV1Datagram({
-          guestPort: srcPort,
-          remoteIpv4: parseIpv4(dstIp),
-          remotePort: dstPort,
-          payload,
-        }),
-      );
+      this.ws.send(encodeDatagram(srcPort, dstIp, dstPort, payload));
     } catch {
       // Drop invalid/oversized datagrams.
     }
@@ -142,14 +219,7 @@ export class WebRtcUdpProxyClient {
   send(srcPort: number, dstIp: string, dstPort: number, payload: Uint8Array): void {
     if (this.channel.readyState !== "open") return;
     try {
-      this.channel.send(
-        encodeUdpRelayV1Datagram({
-          guestPort: srcPort,
-          remoteIpv4: parseIpv4(dstIp),
-          remotePort: dstPort,
-          payload,
-        }),
-      );
+      this.channel.send(encodeDatagram(srcPort, dstIp, dstPort, payload));
     } catch {
       // Drop invalid/oversized datagrams.
     }
