@@ -1,3 +1,3 @@
 [workspace]
-members = ["crates/emulator", "crates/memory"]
 resolver = "2"
+members = ["crates/aero_cpu_core", "crates/emulator", "crates/memory"]

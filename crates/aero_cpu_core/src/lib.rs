@@ -1,0 +1,207 @@
+//! Core architectural CPU state used by Aero's x86/x86-64 emulator.
+//!
+//! This crate is intentionally small at the moment. It focuses on modelling and
+//! serialising the x87/SSE state that Windows relies on during thread context
+//! switching (`FXSAVE`/`FXRSTOR`).
+
+pub mod fpu;
+pub mod sse_state;
+
+use crate::fpu::FpuState;
+use crate::sse_state::{SseState, MXCSR_MASK};
+
+/// The architectural size of the FXSAVE/FXRSTOR memory image.
+pub const FXSAVE_AREA_SIZE: usize = 512;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CpuState {
+    pub fpu: FpuState,
+    pub sse: SseState,
+}
+
+impl Default for CpuState {
+    fn default() -> Self {
+        Self {
+            fpu: FpuState::default(),
+            sse: SseState::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FxStateError {
+    /// Attempted to load an MXCSR value with reserved bits set.
+    ///
+    /// On real hardware this would raise a #GP(0).
+    MxcsrReservedBits { value: u32, mask: u32 },
+}
+
+impl CpuState {
+    /// Implements `FNINIT` / `FINIT`.
+    pub fn fninit(&mut self) {
+        self.fpu.reset();
+    }
+
+    /// Implements `EMMS` (empty MMX state).
+    ///
+    /// We don't currently model MMX separately from x87, but the architectural
+    /// effect that matters for context switching is that the x87 tag word is
+    /// marked empty.
+    pub fn emms(&mut self) {
+        self.fpu.emms();
+    }
+
+    /// Implements `STMXCSR m32`.
+    pub fn stmxcsr(&self, dst: &mut [u8; 4]) {
+        dst.copy_from_slice(&self.sse.mxcsr.to_le_bytes());
+    }
+
+    /// Implements `LDMXCSR m32`.
+    pub fn ldmxcsr(&mut self, src: &[u8; 4]) -> Result<(), FxStateError> {
+        self.sse.set_mxcsr(u32::from_le_bytes(*src))
+    }
+
+    /// Implements the legacy (32-bit) `FXSAVE m512byte` memory image.
+    pub fn fxsave(&self, dst: &mut [u8; FXSAVE_AREA_SIZE]) {
+        let mut out = [0u8; FXSAVE_AREA_SIZE];
+
+        // 0x00..0x20: x87 environment + MXCSR.
+        out[0..2].copy_from_slice(&self.fpu.fcw.to_le_bytes());
+
+        let fsw = self.fpu.fsw_with_top();
+        out[2..4].copy_from_slice(&fsw.to_le_bytes());
+
+        out[4] = self.fpu.ftw;
+        // out[5] reserved.
+        out[6..8].copy_from_slice(&self.fpu.fop.to_le_bytes());
+
+        out[8..12].copy_from_slice(&(self.fpu.fip as u32).to_le_bytes());
+        out[12..14].copy_from_slice(&self.fpu.fcs.to_le_bytes());
+        // out[14..16] reserved.
+
+        out[16..20].copy_from_slice(&(self.fpu.fdp as u32).to_le_bytes());
+        out[20..22].copy_from_slice(&self.fpu.fds.to_le_bytes());
+        // out[22..24] reserved.
+
+        out[24..28].copy_from_slice(&self.sse.mxcsr.to_le_bytes());
+        out[28..32].copy_from_slice(&MXCSR_MASK.to_le_bytes());
+
+        // 0x20..0xA0: ST/MM register image.
+        for (i, reg) in self.fpu.st.iter().enumerate() {
+            let start = 32 + i * 16;
+            out[start..start + 16].copy_from_slice(&reg.to_le_bytes());
+        }
+
+        // 0xA0..0x120: XMM0-7 register image.
+        for i in 0..8 {
+            let start = 160 + i * 16;
+            out[start..start + 16].copy_from_slice(&self.sse.xmm[i].to_le_bytes());
+        }
+
+        *dst = out;
+    }
+
+    /// Implements the legacy (32-bit) `FXRSTOR m512byte` memory image.
+    pub fn fxrstor(&mut self, src: &[u8; FXSAVE_AREA_SIZE]) -> Result<(), FxStateError> {
+        self.fpu.fcw = read_u16(src, 0);
+        self.fpu.fsw = read_u16(src, 2);
+        self.fpu.top = ((self.fpu.fsw >> 11) & 0b111) as u8;
+        self.fpu.ftw = src[4];
+        self.fpu.fop = read_u16(src, 6);
+
+        self.fpu.fip = read_u32(src, 8) as u64;
+        self.fpu.fcs = read_u16(src, 12);
+        self.fpu.fdp = read_u32(src, 16) as u64;
+        self.fpu.fds = read_u16(src, 20);
+
+        // `MXCSR_MASK` is a CPU capability and is ignored by `FXRSTOR` on real
+        // hardware.
+        self.sse.set_mxcsr(read_u32(src, 24))?;
+
+        for i in 0..8 {
+            let start = 32 + i * 16;
+            self.fpu.st[i] = read_u128(src, start);
+        }
+
+        for i in 0..8 {
+            let start = 160 + i * 16;
+            self.sse.xmm[i] = read_u128(src, start);
+        }
+
+        Ok(())
+    }
+
+    /// Implements the 64-bit `FXSAVE64 m512byte` memory image.
+    pub fn fxsave64(&self, dst: &mut [u8; FXSAVE_AREA_SIZE]) {
+        let mut out = [0u8; FXSAVE_AREA_SIZE];
+
+        out[0..2].copy_from_slice(&self.fpu.fcw.to_le_bytes());
+
+        let fsw = self.fpu.fsw_with_top();
+        out[2..4].copy_from_slice(&fsw.to_le_bytes());
+
+        out[4] = self.fpu.ftw;
+        out[6..8].copy_from_slice(&self.fpu.fop.to_le_bytes());
+
+        out[8..16].copy_from_slice(&self.fpu.fip.to_le_bytes()); // RIP
+        out[16..24].copy_from_slice(&self.fpu.fdp.to_le_bytes()); // RDP
+
+        out[24..28].copy_from_slice(&self.sse.mxcsr.to_le_bytes());
+        out[28..32].copy_from_slice(&MXCSR_MASK.to_le_bytes());
+
+        for (i, reg) in self.fpu.st.iter().enumerate() {
+            let start = 32 + i * 16;
+            out[start..start + 16].copy_from_slice(&reg.to_le_bytes());
+        }
+
+        // 16 XMM registers in 64-bit mode.
+        for i in 0..16 {
+            let start = 160 + i * 16;
+            out[start..start + 16].copy_from_slice(&self.sse.xmm[i].to_le_bytes());
+        }
+
+        *dst = out;
+    }
+
+    /// Implements the 64-bit `FXRSTOR64 m512byte` memory image.
+    pub fn fxrstor64(&mut self, src: &[u8; FXSAVE_AREA_SIZE]) -> Result<(), FxStateError> {
+        self.fpu.fcw = read_u16(src, 0);
+        self.fpu.fsw = read_u16(src, 2);
+        self.fpu.top = ((self.fpu.fsw >> 11) & 0b111) as u8;
+        self.fpu.ftw = src[4];
+        self.fpu.fop = read_u16(src, 6);
+
+        self.fpu.fip = read_u64(src, 8);
+        self.fpu.fdp = read_u64(src, 16);
+
+        self.sse.set_mxcsr(read_u32(src, 24))?;
+
+        for i in 0..8 {
+            let start = 32 + i * 16;
+            self.fpu.st[i] = read_u128(src, start);
+        }
+
+        for i in 0..16 {
+            let start = 160 + i * 16;
+            self.sse.xmm[i] = read_u128(src, start);
+        }
+
+        Ok(())
+    }
+}
+
+fn read_u16(src: &[u8; FXSAVE_AREA_SIZE], offset: usize) -> u16 {
+    u16::from_le_bytes(src[offset..offset + 2].try_into().unwrap())
+}
+
+fn read_u32(src: &[u8; FXSAVE_AREA_SIZE], offset: usize) -> u32 {
+    u32::from_le_bytes(src[offset..offset + 4].try_into().unwrap())
+}
+
+fn read_u64(src: &[u8; FXSAVE_AREA_SIZE], offset: usize) -> u64 {
+    u64::from_le_bytes(src[offset..offset + 8].try_into().unwrap())
+}
+
+fn read_u128(src: &[u8; FXSAVE_AREA_SIZE], offset: usize) -> u128 {
+    u128::from_le_bytes(src[offset..offset + 16].try_into().unwrap())
+}

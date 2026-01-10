@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "aero_cpu_core"
+version = "0.1.0"
+
+[[package]]
 name = "emulator"
 version = "0.1.0"
 
