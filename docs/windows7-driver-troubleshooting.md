@@ -16,6 +16,29 @@ If you have not installed Guest Tools yet, start here:
 4. If you changed multiple VM devices at once (storage + GPU + network), consider rolling back and switching **one class at a time** so failures are easier to isolate.
 5. Confirm the guest **date/time** is correct. If the clock is far off, Windows may treat certificates as “not yet valid” or “expired” and driver signature validation can fail.
 
+## Collecting useful logs (for troubleshooting or bug reports)
+
+If you need to debug driver install failures, these are the most useful artifacts to gather:
+
+- `C:\AeroGuestTools\report.txt` (from `verify.cmd`)
+- Device Manager → device → **Properties**:
+  - **General** tab (error code)
+  - **Events** tab (device install/start failures)
+- Driver installation log:
+  - `C:\Windows\inf\setupapi.dev.log`
+    - Tip: open it and search for the device’s Hardware ID or the `.inf` name.
+
+## Tip: capture the BSOD stop code (instead of reboot loops)
+
+If Windows blue-screens and immediately reboots, you lose the most important clue (the stop code).
+
+To force the BSOD to stay on screen:
+
+1. Reboot.
+2. Press **F8** before the Windows logo appears.
+3. Select **Disable automatic restart on system failure**.
+4. Reboot again and reproduce the failure; note the stop code (for example `0x0000007B`).
+
 ## Safe rollback path (storage boot failure)
 
 If Windows fails to boot after switching the system disk from **AHCI → virtio-blk**:
