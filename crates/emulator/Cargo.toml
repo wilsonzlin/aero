@@ -6,6 +6,8 @@ edition = "2021"
 [features]
 default = []
 net-trace = []
+# Enable verbose debug logging from the user-space network stack.
+net_log = []
 
 [dependencies]
 memory = { path = "../memory" }
