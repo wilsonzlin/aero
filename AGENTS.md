@@ -44,6 +44,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 19. [Backend: Disk Image Streaming Service](./docs/backend/disk-image-streaming-service.md)
 20. [Windows 7 Virtio Device Contract](./docs/windows7-virtio-driver-contract.md)
 21. [Security Headers & Deployment Hardening](./docs/security-headers.md)
+22. [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./docs/16-disk-image-streaming-auth.md)
 
 ---
 
@@ -334,6 +335,7 @@ pub trait DisplayAdapter {
 | [windows7-virtio-driver-contract.md](./docs/windows7-virtio-driver-contract.md) | Virtio contract: Win7 drivers ↔ emulator | I/O               |
 | [backend/disk-image-streaming-service.md](./docs/backend/disk-image-streaming-service.md) | Disk image streaming (Range/CORS/COEP) | I/O / Infra       |
 | [security-headers.md](./docs/security-headers.md)                       | COOP/COEP, CSP, security headers       | Infrastructure    |
+| [16-disk-image-streaming-auth.md](./docs/16-disk-image-streaming-auth.md) | Disk byte streaming, auth, CORS/COEP   | I/O / Infra       |
 
 
 ---
