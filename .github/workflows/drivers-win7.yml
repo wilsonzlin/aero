@@ -1,0 +1,126 @@
+name: Win7 Drivers (build + catalog + test-sign)
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  drivers-win7:
+    runs-on: windows-latest
+    env:
+      # Cache only the installer/downloads (not the installed WDK toolchain).
+      WDK_DOWNLOAD_CACHE: C:\wdk-download-cache
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect driver projects
+        id: detect
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $driversDir = Join-Path $env:GITHUB_WORKSPACE 'drivers'
+          if (!(Test-Path -LiteralPath $driversDir)) {
+            Write-Host "No drivers/ directory found; skipping Win7 driver build."
+            "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            exit 0
+          }
+
+          $files = Get-ChildItem -LiteralPath $driversDir -Recurse -File -ErrorAction SilentlyContinue
+          if (!$files) {
+            Write-Host "drivers/ exists but is empty; skipping Win7 driver build."
+            "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            exit 0
+          }
+
+          # Heuristic marker files that indicate "this repo actually has driver projects".
+          $markerFiles = $files | Where-Object {
+            $_.Extension -in @('.sln', '.vcxproj', '.inf') -or $_.Name -in @('sources', 'dirs')
+          }
+
+          if (@($markerFiles).Count -eq 0) {
+            Write-Host "drivers/ contains files, but no driver project markers (*.sln, *.vcxproj, *.inf, sources, dirs) were found; skipping Win7 driver build."
+            "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            exit 0
+          }
+
+          Write-Host "Found $(@($markerFiles).Count) driver project marker file(s); running Win7 driver build."
+          "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Prepare WDK download cache directory
+        if: steps.detect.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path $env:WDK_DOWNLOAD_CACHE | Out-Null
+
+      - name: Cache WDK downloads
+        if: steps.detect.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.WDK_DOWNLOAD_CACHE }}
+          key: wdk-download-${{ runner.os }}-${{ hashFiles('ci/install-wdk.ps1') }}
+          restore-keys: |
+            wdk-download-${{ runner.os }}-
+
+      - name: Provision toolchain (ci/install-wdk.ps1)
+        if: steps.detect.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!(Test-Path -LiteralPath 'ci\install-wdk.ps1')) {
+            throw "Expected script ci\install-wdk.ps1 to exist."
+          }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\install-wdk.ps1'
+
+      - name: Build drivers (ci/build-drivers.ps1)
+        if: steps.detect.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!(Test-Path -LiteralPath 'ci\build-drivers.ps1')) {
+            throw "Expected script ci\build-drivers.ps1 to exist."
+          }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\build-drivers.ps1'
+
+      - name: Generate catalogs (ci/make-catalogs.ps1)
+        if: steps.detect.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!(Test-Path -LiteralPath 'ci\make-catalogs.ps1')) {
+            throw "Expected script ci\make-catalogs.ps1 to exist."
+          }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\make-catalogs.ps1'
+
+      - name: Test-sign drivers (ci/sign-drivers.ps1)
+        if: steps.detect.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!(Test-Path -LiteralPath 'ci\sign-drivers.ps1')) {
+            throw "Expected script ci\sign-drivers.ps1 to exist."
+          }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\sign-drivers.ps1'
+
+      - name: Package artifacts (ci/package-drivers.ps1)
+        if: steps.detect.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!(Test-Path -LiteralPath 'ci\package-drivers.ps1')) {
+            throw "Expected script ci\package-drivers.ps1 to exist."
+          }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\package-drivers.ps1'
+
+      - name: Upload artifacts (out/artifacts/)
+        if: steps.detect.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: win7-drivers
+          path: out/artifacts/
+          if-no-files-found: error
