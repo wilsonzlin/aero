@@ -20,7 +20,10 @@ cd tools/packaging/aero_packager
 #   guest-tools/ contains:
 #     setup.cmd
 #     uninstall.cmd
+#     verify.cmd
+#     verify.ps1
 #     README.md
+#     config/devices.cmd
 #     certs/*.cer
 #
 # spec.json declares which drivers are required + expected HWIDs.

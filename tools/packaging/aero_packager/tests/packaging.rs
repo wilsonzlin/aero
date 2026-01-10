@@ -45,8 +45,12 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     for required in [
         "setup.cmd",
         "uninstall.cmd",
+        "verify.cmd",
+        "verify.ps1",
         "README.md",
         "manifest.json",
+        "config/README.md",
+        "config/devices.cmd",
         "certs/test.cer",
         "drivers/x86/testdrv/test.inf",
         "drivers/x86/testdrv/test.sys",

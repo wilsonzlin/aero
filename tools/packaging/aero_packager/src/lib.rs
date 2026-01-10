@@ -107,7 +107,9 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
     let mut out = Vec::new();
 
     // Guest tools top-level scripts/doc.
-    for file_name in ["setup.cmd", "uninstall.cmd", "README.md"] {
+    //
+    // Keep this list in sync with the published Guest Tools ISO root.
+    for file_name in ["setup.cmd", "uninstall.cmd", "verify.cmd", "verify.ps1", "README.md"] {
         let src = config.guest_tools_dir.join(file_name);
         if !src.is_file() {
             bail!(
@@ -118,6 +120,33 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
         out.push(FileToPackage {
             rel_path: file_name.to_string(),
             bytes: fs::read(&src).with_context(|| format!("read {}", src.display()))?,
+        });
+    }
+
+    // Guest tools config (expected device IDs / service names).
+    let config_dir = config.guest_tools_dir.join("config");
+    if !config_dir.is_dir() {
+        bail!(
+            "guest tools missing required directory: {}",
+            config_dir.to_string_lossy()
+        );
+    }
+    for entry in walkdir::WalkDir::new(&config_dir)
+        .follow_links(false)
+        .sort_by_file_name()
+    {
+        let entry = entry?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let rel = entry
+            .path()
+            .strip_prefix(&config_dir)
+            .expect("walkdir under config_dir");
+        let rel_str = path_to_slash(rel);
+        out.push(FileToPackage {
+            rel_path: format!("config/{}", rel_str),
+            bytes: fs::read(entry.path()).with_context(|| format!("read {}", entry.path().display()))?,
         });
     }
 
@@ -143,7 +172,13 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
             .strip_prefix(&certs_dir)
             .expect("walkdir under certs_dir");
         let rel_str = path_to_slash(rel);
-        if !rel_str.to_ascii_lowercase().ends_with(".cer") {
+        let lower = rel_str.to_ascii_lowercase();
+        // Include only public certificate artifacts and docs (no private keys).
+        if !(lower.ends_with(".cer")
+            || lower.ends_with(".crt")
+            || lower.ends_with(".p7b")
+            || lower == "readme.md")
+        {
             continue;
         }
         certs.push(FileToPackage {
@@ -154,11 +189,22 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
     }
     if certs.is_empty() {
         bail!(
-            "guest tools certs directory contains no .cer files: {}",
+            "guest tools certs directory contains no .cer/.crt/.p7b files: {}",
             certs_dir.to_string_lossy()
         );
     }
     out.extend(certs);
+
+    // Optional: include documentation alongside the packaged driver tree.
+    // (Driver binaries themselves come from `drivers_dir`.)
+    let drivers_readme = config.guest_tools_dir.join("drivers").join("README.md");
+    if drivers_readme.is_file() {
+        out.push(FileToPackage {
+            rel_path: "drivers/README.md".to_string(),
+            bytes: fs::read(&drivers_readme)
+                .with_context(|| format!("read {}", drivers_readme.display()))?,
+        });
+    }
 
     // Drivers.
     for (arch_in, arch_out) in [("x86", "x86"), ("amd64", "amd64")] {

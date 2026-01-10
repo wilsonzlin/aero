@@ -34,9 +34,13 @@ The packager expects:
 guest-tools/
   setup.cmd
   uninstall.cmd
+  verify.cmd
+  verify.ps1
   README.md
+  config/
+    devices.cmd
   certs/
-    *.cer
+    *.cer|*.crt|*.p7b
 ```
 
 ## Outputs
@@ -53,10 +57,14 @@ The ISO/zip root layout matches what `guest-tools/setup.cmd` expects:
 /
   setup.cmd
   uninstall.cmd
+  verify.cmd
+  verify.ps1
   README.md
   manifest.json
+  config/
+    devices.cmd
   certs/
-    *.cer
+    *.cer|*.crt|*.p7b
   drivers/
     x86/
       ...
