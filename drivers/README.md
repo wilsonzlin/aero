@@ -104,6 +104,10 @@ See: `drivers/docs/wdk-build.md`.
   - Play a WAV in Windows Media Player, verify output device exists.
 - **Input**
   - Verify keyboard/mouse are responsive without PS/2 fallback.
+- **GPU (AeroGPU)**
+  - If using the optional AeroGPU WDDM stack, run the guest-side validation suite:
+    - `drivers\\aerogpu\\tests\\win7\\run_all.cmd --require-vid=0x1234 --require-did=0x1111`
+    - (Use `run_all.cmd --help` for flags like `--dump` / `--allow-remote`.)
 
 ## Host-side protocol tests (shared structs)
 
