@@ -19,12 +19,15 @@ pub struct Ps2Keyboard {
 }
 
 impl Ps2Keyboard {
+    pub fn inject_bytes_set2(&mut self, bytes: &[u8]) {
+        self.scancodes.extend(bytes.iter().copied());
+    }
+
     pub fn inject_scancode_set2(&mut self, scancode: u8, pressed: bool) {
         if pressed {
-            self.scancodes.push_back(scancode);
+            self.inject_bytes_set2(&[scancode]);
         } else {
-            self.scancodes.push_back(0xF0);
-            self.scancodes.push_back(scancode);
+            self.inject_bytes_set2(&[0xF0, scancode]);
         }
     }
 }
@@ -49,4 +52,3 @@ impl Ps2Mouse {
         self.wheel_events.push_back(delta);
     }
 }
-

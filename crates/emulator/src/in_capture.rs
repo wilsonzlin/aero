@@ -1,4 +1,5 @@
 use crate::io::ps2::{Ps2Controller, Ps2MouseButton};
+use crate::io::input::ps2_set2_bytes_for_key_event;
 use crate::io::usb::hid::hid_usage_from_js_code;
 use crate::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use crate::io::usb::hid::mouse::UsbHidMouseHandle;
@@ -164,10 +165,10 @@ impl InputPipeline {
         let Some(ps2) = self.ps2.as_mut() else {
             return;
         };
-        let Some(scancode) = js_code_to_ps2_set2_scancode(code) else {
+        let Some(bytes) = ps2_set2_bytes_for_key_event(code, pressed) else {
             return;
         };
-        ps2.keyboard.inject_scancode_set2(scancode, pressed);
+        ps2.keyboard.inject_bytes_set2(&bytes);
     }
 
     fn inject_key_virtio(
@@ -299,18 +300,6 @@ fn js_code_to_linux_key(code: &str) -> Option<u16> {
     }
 }
 
-fn js_code_to_ps2_set2_scancode(code: &str) -> Option<u8> {
-    match code {
-        "Escape" => Some(0x76),
-        "Tab" => Some(0x0D),
-        "Enter" => Some(0x5A),
-        "Space" => Some(0x29),
-        "KeyA" => Some(0x1C),
-        "KeyB" => Some(0x32),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -412,5 +401,52 @@ mod tests {
         mem.read_into(buf0, &mut bytes).unwrap();
         let ev = VirtioInputEvent::from_bytes_le(bytes);
         assert_eq!(ev.typ, EV_KEY);
+    }
+
+    #[test]
+    fn ps2_routing_emits_extended_and_sequence_scancodes() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+        let ps2 = Ps2Controller::default();
+
+        let mut pipeline = InputPipeline::new(Some(ps2), None, InputRoutingPolicy::Ps2Only);
+
+        // Extended key: ArrowUp is E0 75 / E0 F0 75.
+        pipeline.handle_key(&mut mem, "ArrowUp", true).unwrap();
+        pipeline.handle_key(&mut mem, "ArrowUp", false).unwrap();
+
+        let bytes: Vec<u8> = pipeline
+            .ps2
+            .as_mut()
+            .unwrap()
+            .keyboard
+            .scancodes
+            .drain(..)
+            .collect();
+        assert_eq!(bytes, vec![0xE0, 0x75, 0xE0, 0xF0, 0x75]);
+
+        // Sequence keys: PrintScreen and Pause have multi-byte make/break.
+        pipeline.handle_key(&mut mem, "PrintScreen", true).unwrap();
+        pipeline.handle_key(&mut mem, "PrintScreen", false).unwrap();
+        pipeline.handle_key(&mut mem, "Pause", true).unwrap();
+        pipeline.handle_key(&mut mem, "Pause", false).unwrap();
+
+        let bytes: Vec<u8> = pipeline
+            .ps2
+            .as_mut()
+            .unwrap()
+            .keyboard
+            .scancodes
+            .drain(..)
+            .collect();
+
+        assert_eq!(
+            bytes,
+            vec![
+                // PrintScreen make/break.
+                0xE0, 0x12, 0xE0, 0x7C, 0xE0, 0xF0, 0x7C, 0xE0, 0xF0, 0x12,
+                // Pause make only.
+                0xE1, 0x14, 0x77, 0xE1, 0xF0, 0x14, 0xF0, 0x77,
+            ]
+        );
     }
 }
