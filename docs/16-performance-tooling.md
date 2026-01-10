@@ -18,21 +18,17 @@ The Perf HUD is a lightweight overlay that shows a rolling snapshot of key emula
 
 ### Toggling the HUD
 
-- **In-app UI:** Use the developer menu and toggle **Performance HUD**.
-- **Keyboard shortcut:** `Ctrl+Shift+H` (dev builds).
+- **In-app UI:** Click the **Perf HUD** button in the developer menu.
+- **Keyboard shortcut:** `F2` or `Ctrl+Shift+P` (when focus is *not* in a text input).
 
-If neither is available (e.g. when embedding Aero), you can toggle it programmatically:
-
-```js
-window.aero.perf.hudToggle();
-```
+If you don’t see the toggle, make sure you’re running a build that includes the developer menu / HUD.
 
 ### Update frequency / sampling window
 
 To avoid the HUD itself becoming a source of overhead:
 
-- The HUD **renders at a fixed rate** (default: **4 Hz / every 250ms**).
-- Most values are computed over a **rolling window** (typically the last **1s** or last **N frames**).
+- The HUD **refreshes at a fixed rate** (currently **5 Hz**, i.e. every **200ms**) while visible.
+- Most values are computed over a **rolling window** (a fixed-size ring buffer of recent samples).
 
 ### Metrics (what they mean)
 
@@ -40,16 +36,25 @@ The exact fields may evolve, but contributors should expect the HUD to include:
 
 | Metric | Meaning | How to use it |
 | --- | --- | --- |
-| **FPS** | Frames per second presented to the canvas | Drops usually indicate a pacing problem (CPU, GPU, or sync) |
-| **Frame time (ms)** | Wall time per frame (lower is better) | Compare to 16.7ms (60Hz) or 33.3ms (30Hz) |
-| **Emulation speed** (e.g. MIPS / instructions/s) | Guest execution throughput | Use to spot CPU/JIT regressions independent of rendering |
-| **CPU worker time** | Time spent running the CPU emulation worker | High values usually mean the emulator is compute-bound |
-| **GPU time** | Time spent encoding/submitting GPU work | Spikes often correlate with large state changes or shader work |
-| **I/O time** | Time spent in storage/network/audio queues | Correlate with stutters during heavy disk activity |
-| **WASM memory / JS heap** | Memory footprint | Watch for growth (leaks) and sudden GC-triggering spikes |
-| **Dropped / long frames** | Count of frames above a threshold (e.g. >33ms) | Use when investigating “feels janky” reports |
+| **FPS (avg / 1% low)** | Average FPS plus “1% low” FPS (tail latency) | Tail drops are often more important than averages for “jank” |
+| **Frame time (avg / p95)** | Mean and p95 frame time | Compare to 16.7ms (60Hz) / 33.3ms (30Hz); p95 captures stutters |
+| **MIPS (avg)** | Estimated guest throughput (million instructions/s) | Useful for CPU/JIT regressions independent of rendering |
+| **CPU / GPU / IO / JIT (avg)** | Accounted time buckets (ms) | Use to attribute slow frames; buckets may not sum to frame time if work overlaps |
+| **Draw calls (avg/frame)** | Approximate rendering work submitted | Spikes often correlate with state churn or missed batching |
+| **IO throughput** | Bytes/sec of emulated I/O | Correlate stutters with disk/network activity |
+| **Host heap** | JS heap used/total | Watch for leaks and GC-triggering spikes |
+| **Guest RAM** | Guest memory size (if known) | Helps validate test configurations |
+| **Capture** | Recording state + sample counts | Use Start/Stop to capture a window and Download to export it |
 
 Interpretation tip: **one bad frame is not a regression**. Look for sustained changes in the rolling averages and for increases in long-frame counts.
+
+### Capture controls (Start / Stop / Reset / Download)
+
+The HUD includes basic capture tooling:
+
+- **Start / Stop:** begin/end a capture window (aim for ~5–15s around the issue).
+- **Reset:** clears the current capture buffer.
+- **Download:** downloads the current `window.aero.perf.export()` payload as JSON.
 
 ---
 
@@ -66,18 +71,18 @@ JSON exports are meant to be attached to issues/PRs. They should include:
 Run this in the page console:
 
 ```js
-await window.aero.perf.export();
+const data = window.aero.perf.export();
 ```
 
 Expected behavior:
 
 - `export()` returns a plain JSON-serializable object.
-- In dev builds, it may also trigger a file download automatically (depending on configuration).
+- In builds that include the Perf HUD, clicking **Download** triggers a JSON download using this same payload.
 
 ### Manual download (if your build doesn’t auto-download)
 
 ```js
-const data = await window.aero.perf.export();
+const data = window.aero.perf.export();
 const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
 const a = document.createElement("a");
 a.href = URL.createObjectURL(blob);
@@ -101,6 +106,8 @@ Aero traces should be emitted in **Chrome Trace Event** JSON format so they can 
 - **Chrome tracing:** `chrome://tracing`
 
 ### Capturing a trace
+
+Trace capture is an optional/advanced feature; not every build exposes it yet. When available, the API is expected to be:
 
 In the DevTools console:
 
@@ -152,23 +159,41 @@ Benchmarks are the **repeatable** way to validate performance changes. They shou
 - Run multiple iterations
 - Warn when results are noisy
 
+Related references:
+
+- CI browser perf runner: [`tools/perf/README.md`](../tools/perf/README.md)
+- Bench harness + GPU scenarios: [`bench/README.md`](../bench/README.md)
+
 ### Build + serve (production-like)
 
-Run benchmarks against a built bundle rather than a dev server:
+If you want to benchmark the *app* (not just synthetic microbenches), run against a built preview server.
 
 ```bash
-# Build a production bundle
-pnpm build
+npm ci
 
-# Serve it locally (any static server is fine)
-pnpm serve
+# Production bundle + preview server
+npm run build
+npm run preview
 ```
 
-If your project uses a different package manager, substitute `npm run build` / `npm run serve`.
+For perf-sensitive work (SharedArrayBuffer / threads / COOP+COEP), prefer the COI preview helper:
 
-### Run the Playwright benchmark runner
+```bash
+npm run serve:coi
+```
 
-The runner launches the app in a browser and executes a named scenario:
+### Run the Playwright benchmark runner (CI parity)
+
+The CI browser perf harness lives under `tools/perf/` and can be run locally.
+
+One-time setup:
+
+```bash
+cd tools/perf
+npm ci
+npx playwright install chromium
+cd ../..
+```
 
 ```bash
 node bench/run --scenario microbench --iterations 7
@@ -176,18 +201,46 @@ node bench/run --scenario microbench --iterations 7
 
 What to expect:
 
-- The runner prints a per-metric summary (mean/median/p95).
-- It emits a warning when run-to-run variance is high (indicating noise).
+- Results are written to `perf-results/` (raw samples + `summary.json`).
+- Summaries include **median-of-N** numbers and a **CV** (coefficient of variation) to help spot noise.
+
+To benchmark a specific URL (e.g. your local preview server), pass `--url`:
+
+```bash
+node bench/run --scenario microbench --iterations 7 --url http://127.0.0.1:4173/
+```
+
+### Run the GPU benchmark scenarios (Playwright + WebGPU/WebGL2)
+
+The GPU bench runner executes scenario scripts in a real browser and emits a JSON report:
+
+```bash
+npm run bench:gpu -- --scenarios vga_text_scroll,vbe_lfb_blit --headless false --output gpu_bench.json
+```
 
 ### Interpreting summary output and variance warnings
 
-When the runner warns about variance:
+When the summary shows a high **CV** (coefficient of variation):
 
 - **Re-run** with more iterations (e.g. 15+).
 - Ensure your machine is not thermally throttling and nothing heavy is running in the background.
 - Prefer the same browser version you use for baselines.
 
 Treat small single-digit % changes as suspicious unless variance is low and the change reproduces across runs.
+
+To reproduce the CI comparison locally (baseline vs candidate):
+
+```bash
+node tools/perf/run.mjs --out-dir perf-results/base --iterations 7
+node tools/perf/run.mjs --out-dir perf-results/head --iterations 7
+
+node tools/perf/compare.mjs \
+  --baseline perf-results/base/summary.json \
+  --candidate perf-results/head/summary.json \
+  --out-dir perf-results/compare \
+  --regression-threshold-pct 15 \
+  --extreme-cv-threshold 0.5
+```
 
 ---
 
@@ -198,6 +251,13 @@ Baselines are used to detect regressions in CI. Update them when:
 - You intentionally improve performance (so CI stops failing once the improvement lands)
 - A known, unavoidable regression is accepted (with explicit acknowledgement)
 - The baseline environment changes (e.g. major browser version change)
+
+In CI:
+
+- The PR perf workflow compares **PR vs base commit** (no committed “golden baseline” file).
+- Thresholds live in `.github/workflows/perf.yml` as environment variables (and can also be passed to `tools/perf/compare.mjs`):
+  - `PERF_REGRESSION_THRESHOLD_PCT`
+  - `PERF_EXTREME_CV_THRESHOLD`
 
 Use the baseline updater script: [`bench/update-baseline`](../bench/update-baseline).
 
@@ -213,15 +273,20 @@ Guidelines:
 
 CI performance jobs are split by intent:
 
-- **PR perf (gating):** a small set of quick scenarios to catch obvious regressions early.
-- **Nightly perf (non-gating + data collection):** longer runs to track trends and reduce variance.
+- **PR perf (gating):** `.github/workflows/perf.yml` runs a small browser-only suite and compares PR vs base commit.
+- **Nightly perf (non-gating + data collection):** `.github/workflows/perf-nightly.yml` runs more iterations and publishes history/dashboard artifacts.
 
 Where to find artifacts:
 
 - In GitHub Actions, open the workflow run and download artifacts such as:
   - JSON exports (`*.json`)
   - Trace captures (`trace*.json`)
-  - Benchmark summaries (`summary*.txt` / `summary*.md`)
+  - Benchmark summaries (`summary.json`, `compare.md`, history dashboards)
+
+What CI currently uploads (subject to change):
+
+- **PR perf:** `perf-smoke-<run_id>` (includes baseline + candidate summaries and `compare.md`)
+- **Nightly perf:** `perf-nightly-<run_id>` (browser perf run output) and `perf-history-dashboard` (microbench history + dashboard bundle)
 
 ---
 
@@ -257,6 +322,7 @@ Headless runs can differ due to:
 Best practices:
 
 - Use **headed Chromium** for local investigations unless you are specifically debugging CI.
+- Note that CI perf intentionally runs **headless Chromium with GPU/WebGPU disabled** for stability; expect different numbers locally.
 - Compare “headless vs headed” only against baselines collected the same way.
 
 ---
@@ -267,10 +333,15 @@ Capture a perf export:
 
 1. Run Aero locally and reproduce the workload.
 2. Open DevTools → Console.
-3. Run: `await window.aero.perf.export()`
+3. Run: `window.aero.perf.export()`
 4. Save/download the JSON and attach it to your issue/PR.
 
 Run the microbench benchmark locally:
 
-1. `pnpm build && pnpm serve`
+1. `cd tools/perf && npm ci && npx playwright install chromium && cd ../..` (one-time)
 2. `node bench/run --scenario microbench --iterations 7`
+
+To benchmark your locally served build instead of the built-in `data:` page:
+
+1. `npm ci && npm run serve:coi`
+2. `node bench/run --scenario microbench --iterations 7 --url http://127.0.0.1:4173/`

@@ -1,0 +1,167 @@
+#!/usr/bin/env node
+
+// Convenience wrapper around `tools/perf/run.mjs` for contributors.
+//
+// Why this exists:
+// - The CI perf workflows run `tools/perf/*` directly.
+// - The contributor docs want a short, memorable command for local microbench runs.
+//
+// Example:
+//   node bench/run --scenario microbench --iterations 7
+
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function usage(exitCode = 0) {
+  // Keep this in sync with `docs/16-performance-tooling.md`.
+  console.log(`Usage: node bench/run --scenario <name> --iterations <n> [--url <url>] [--out-dir <dir>]
+
+Scenarios:
+  - microbench         Browser JS microbenchmark (default)
+  - chromium_startup   Chromium launch + navigation timing
+  - all                Run all scenarios and print a short summary
+
+This wrapper delegates to:
+  node tools/perf/run.mjs --out-dir <dir> --iterations <n> [--url <url>]
+
+Notes:
+  - You must install tool dependencies first:
+      cd tools/perf && npm ci && npx playwright install chromium
+`);
+  process.exit(exitCode);
+}
+
+function parseArgs(argv) {
+  const opts = {
+    scenario: "microbench",
+    iterations: 7,
+    url: undefined,
+    outDir: "perf-results/local",
+  };
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    switch (arg) {
+      case "--help":
+      case "-h":
+        usage(0);
+        break;
+      case "--scenario":
+        opts.scenario = argv[++i];
+        break;
+      case "--iterations":
+        opts.iterations = Number.parseInt(argv[++i], 10);
+        break;
+      case "--url":
+        opts.url = argv[++i];
+        break;
+      case "--out-dir":
+        opts.outDir = argv[++i];
+        break;
+      default:
+        console.error(`Unknown arg: ${arg}`);
+        usage(1);
+    }
+  }
+
+  if (!opts.scenario) {
+    console.error("--scenario is required");
+    usage(1);
+  }
+  if (!Number.isFinite(opts.iterations) || opts.iterations <= 0) {
+    console.error("--iterations must be a positive integer");
+    usage(1);
+  }
+
+  return opts;
+}
+
+function fmtMs(ms) {
+  if (!Number.isFinite(ms)) return "n/a";
+  return `${ms.toFixed(2)}ms`;
+}
+
+function fmtCv(cv) {
+  if (!Number.isFinite(cv)) return "n/a";
+  return cv === 0 ? "0" : `${(cv * 100).toFixed(2)}%`;
+}
+
+function main() {
+  const opts = parseArgs(process.argv.slice(2));
+
+  const repoRoot = path.resolve(__dirname, "..");
+  const runnerPath = path.join(repoRoot, "tools", "perf", "run.mjs");
+  if (!fs.existsSync(runnerPath)) {
+    console.error(`Missing perf runner: ${path.relative(process.cwd(), runnerPath)}`);
+    process.exit(1);
+  }
+  const playwrightCoreInTools = path.join(repoRoot, "tools", "perf", "node_modules", "playwright-core");
+  const playwrightCoreInRoot = path.join(repoRoot, "node_modules", "playwright-core");
+  if (!fs.existsSync(playwrightCoreInTools) && !fs.existsSync(playwrightCoreInRoot)) {
+    console.error("[bench/run] Missing playwright-core dependency.");
+    console.error("Run: cd tools/perf && npm ci && npx playwright install chromium");
+    process.exit(1);
+  }
+
+  const outDir = path.isAbsolute(opts.outDir) ? opts.outDir : path.join(repoRoot, opts.outDir);
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const childArgs = [runnerPath, "--out-dir", outDir, "--iterations", String(opts.iterations)];
+  if (opts.url) childArgs.push("--url", opts.url);
+
+  const child = spawnSync(process.execPath, childArgs, { stdio: "inherit", cwd: repoRoot });
+  if (child.status !== 0) {
+    process.exit(child.status ?? 1);
+  }
+
+  const summaryPath = path.join(outDir, "summary.json");
+  if (!fs.existsSync(summaryPath)) {
+    console.warn(`[bench/run] Missing expected output: ${summaryPath}`);
+    return;
+  }
+
+  const summary = JSON.parse(fs.readFileSync(summaryPath, "utf8"));
+  const benches = Array.isArray(summary.benchmarks) ? summary.benchmarks : [];
+  const map = new Map(benches.map((b) => [b.name, b]));
+
+  const scenarioToBench = {
+    microbench: "microbench_ms",
+    chromium_startup: "chromium_startup_ms",
+    startup: "chromium_startup_ms",
+  };
+
+  const printBench = (benchName) => {
+    const b = map.get(benchName);
+    if (!b) {
+      console.warn(`[bench/run] Missing benchmark in summary.json: ${benchName}`);
+      return;
+    }
+    const stats = b.stats ?? {};
+    const median = stats.median;
+    const cv = stats.cv;
+    console.log(`${benchName}: median=${fmtMs(median)} cv=${fmtCv(cv)} n=${stats.n ?? "?"}`);
+    if (Number.isFinite(cv) && cv >= 0.5) {
+      console.warn(`WARNING: extremely high variance (cv=${fmtCv(cv)}). Re-run with more iterations or reduce noise.`);
+    }
+  };
+
+  if (opts.scenario === "all") {
+    for (const name of ["chromium_startup_ms", "microbench_ms"]) printBench(name);
+    return;
+  }
+
+  const benchName = scenarioToBench[opts.scenario] ?? opts.scenario;
+  printBench(benchName);
+}
+
+try {
+  main();
+} catch (err) {
+  console.error(err?.stack ?? String(err));
+  process.exitCode = 1;
+}
