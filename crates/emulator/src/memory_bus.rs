@@ -70,7 +70,7 @@ struct MmioRegion {
 
 impl MmioRegion {
     fn contains(&self, paddr: u64) -> bool {
-        paddr >= self.start && paddr < self.start + self.len
+        paddr >= self.start && paddr < region_end(self.start, self.len)
     }
 }
 
@@ -82,7 +82,7 @@ struct RomRegion {
 
 impl RomRegion {
     fn end(&self) -> u64 {
-        self.start + self.data.len() as u64
+        region_end(self.start, self.data.len() as u64)
     }
 
     fn contains(&self, paddr: u64) -> bool {
@@ -140,7 +140,12 @@ impl MemoryBus {
             .ok_or(MemoryBusError::AddressOverflow { paddr, len })?;
 
         for region in &self.mmio {
-            if ranges_overlap(paddr, end, region.start, region.start + region.len) {
+            if ranges_overlap(
+                paddr,
+                end,
+                region.start,
+                region_end(region.start, region.len),
+            ) {
                 return Err(MemoryBusError::MmioAccess { paddr, len });
             }
         }
@@ -204,7 +209,7 @@ impl MemoryBus {
         let mut out = dst;
         for (paddr, len) in segments {
             let (head, tail) = out.split_at_mut(*len);
-            self.ram.read_into(*paddr, head)?;
+            self.read_physical_into(*paddr, head)?;
             out = tail;
         }
         Ok(())
@@ -216,7 +221,7 @@ impl MemoryBus {
         let mut input = src;
         for (paddr, len) in segments {
             let (head, tail) = input.split_at(*len);
-            self.ram.write_from(*paddr, head)?;
+            self.write_physical_from(*paddr, head)?;
             input = tail;
         }
         Ok(())
@@ -265,6 +270,61 @@ impl MemoryBus {
         self.ram.write_u8_le(paddr, value)?;
         Ok(())
     }
+}
+
+impl memory::MemoryBus for MemoryBus {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        if buf.is_empty() {
+            return;
+        }
+
+        // Fast path for pure RAM accesses.
+        if self.check_dma_ram_range(paddr, buf.len()).is_ok() {
+            if let Some(src) = self.ram.get_slice(paddr, buf.len()) {
+                buf.copy_from_slice(src);
+                return;
+            }
+            if self.ram.read_into(paddr, buf).is_ok() {
+                return;
+            }
+        }
+
+        for (idx, byte) in buf.iter_mut().enumerate() {
+            let Some(addr) = paddr.checked_add(idx as u64) else {
+                *byte = 0xff;
+                continue;
+            };
+            *byte = self.read_physical_u8(addr).unwrap_or(0xff);
+        }
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        if buf.is_empty() {
+            return;
+        }
+
+        // Fast path for pure RAM accesses.
+        if self.check_dma_ram_range(paddr, buf.len()).is_ok() {
+            if let Some(dst) = self.ram.get_slice_mut(paddr, buf.len()) {
+                dst.copy_from_slice(buf);
+                return;
+            }
+            if self.ram.write_from(paddr, buf).is_ok() {
+                return;
+            }
+        }
+
+        for (idx, byte) in buf.iter().enumerate() {
+            let Some(addr) = paddr.checked_add(idx as u64) else {
+                break;
+            };
+            let _ = self.write_physical_u8(addr, *byte);
+        }
+    }
+}
+
+fn region_end(start: u64, len: u64) -> u64 {
+    start.checked_add(len).unwrap_or(u64::MAX)
 }
 
 fn ranges_overlap(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> bool {
@@ -375,6 +435,86 @@ mod tests {
         let segments = &[(0x1000, 4), (0x3000, 4)];
         let mut dst = [0xaau8; 8];
         let err = bus.read_sg(segments, &mut dst).unwrap_err();
+        assert!(matches!(err, MemoryBusError::RomAccess { .. }));
+        assert_eq!(dst, [0xaau8; 8]);
+    }
+
+    #[test]
+    fn bulk_write_rejects_mmio_without_side_effects_or_partial_write() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let writes = Arc::new(AtomicUsize::new(0));
+        let ram = DenseMemory::new(0x4000).unwrap();
+        let mut bus = MemoryBus::new(Box::new(ram));
+
+        bus.add_mmio_region(
+            0x2000,
+            0x100,
+            Box::new(CountingMmio {
+                reads: reads.clone(),
+                writes: writes.clone(),
+            }),
+        );
+
+        let src = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        let err = bus.write_physical_from(0x1ffc, &src).unwrap_err();
+        assert!(matches!(err, MemoryBusError::MmioAccess { .. }));
+
+        let mut dst = [0xffu8; 4];
+        bus.read_physical_into(0x1ffc, &mut dst).unwrap();
+        assert_eq!(dst, [0u8; 4]);
+
+        assert_eq!(reads.load(Ordering::Relaxed), 0);
+        assert_eq!(writes.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn bulk_read_rejects_mmio_without_side_effects() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let writes = Arc::new(AtomicUsize::new(0));
+        let ram = DenseMemory::new(0x4000).unwrap();
+        let mut bus = MemoryBus::new(Box::new(ram));
+
+        bus.add_mmio_region(
+            0x2000,
+            0x100,
+            Box::new(CountingMmio {
+                reads: reads.clone(),
+                writes: writes.clone(),
+            }),
+        );
+
+        let mut dst = [0xaau8; 8];
+        let err = bus.read_physical_into(0x1ffc, &mut dst).unwrap_err();
+        assert!(matches!(err, MemoryBusError::MmioAccess { .. }));
+        assert_eq!(dst, [0xaau8; 8]);
+
+        assert_eq!(reads.load(Ordering::Relaxed), 0);
+        assert_eq!(writes.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn bulk_write_rejects_rom_without_partial_write() {
+        let ram = DenseMemory::new(0x4000).unwrap();
+        let mut bus = MemoryBus::new(Box::new(ram));
+        bus.add_rom_region(0x3000, vec![0x11, 0x22, 0x33, 0x44]);
+
+        let src = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        let err = bus.write_physical_from(0x2ffc, &src).unwrap_err();
+        assert!(matches!(err, MemoryBusError::RomAccess { .. }));
+
+        let mut dst = [0xffu8; 4];
+        bus.read_physical_into(0x2ffc, &mut dst).unwrap();
+        assert_eq!(dst, [0u8; 4]);
+    }
+
+    #[test]
+    fn bulk_read_rejects_rom_without_partial_read() {
+        let ram = DenseMemory::new(0x4000).unwrap();
+        let mut bus = MemoryBus::new(Box::new(ram));
+        bus.add_rom_region(0x3000, vec![0x11, 0x22, 0x33, 0x44]);
+
+        let mut dst = [0xaau8; 8];
+        let err = bus.read_physical_into(0x2ffc, &mut dst).unwrap_err();
         assert!(matches!(err, MemoryBusError::RomAccess { .. }));
         assert_eq!(dst, [0xaau8; 8]);
     }
