@@ -74,10 +74,10 @@ Aero Guest Tools is intended for **Windows 7 SP1**:
 
 ### SHA-256 / SHA-2 updates note (important for x64)
 
-If Aero’s driver packages (or signing certificates) use **SHA-256 / SHA-2**, stock Windows 7 SP1 may require SHA-2-related updates such as **KB3033929** (and sometimes **KB4474419**) to validate driver signatures.
+If Aero’s driver packages (or signing certificates) use **SHA-256 / SHA-2**, stock Windows 7 SP1 may require SHA-2-related updates such as **KB3033929** (and sometimes also **KB4474419**) to validate driver signatures.
 
 - If the required SHA-2 updates are missing you may see **Device Manager → Code 52** (“Windows cannot verify the digital signature…”).
-- You can install KB3033929 after Windows is installed, or **slipstream** it into your ISO (see the optional section at the end).
+- You can install the required updates after Windows is installed, or **slipstream** them into your ISO (see the optional section at the end).
 
 ### x86 vs x64 notes (driver signing and memory)
 
@@ -89,7 +89,7 @@ If Aero’s driver packages (or signing certificates) use **SHA-256 / SHA-2**, s
   - Depending on how the Aero drivers are signed, you may need:
     - the Aero signing certificate installed (via Guest Tools), and/or
     - **Test Signing** enabled, and/or
-    - **KB3033929** if the catalogs are SHA-256.
+    - SHA-2 updates (commonly **KB3033929**, sometimes **KB4474419**) if the catalogs/certificates are SHA-2-signed.
 
 ## Step 1: Install Windows 7 using baseline (compatibility) devices
 
