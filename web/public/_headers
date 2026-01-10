@@ -5,7 +5,14 @@
   Cache-Control: no-cache
 
 /assets/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Resource-Policy: same-origin
   Cache-Control: public, max-age=31536000, immutable
 
 /assets/*.wasm
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Resource-Policy: same-origin
+  Cache-Control: public, max-age=31536000, immutable
   Content-Type: application/wasm

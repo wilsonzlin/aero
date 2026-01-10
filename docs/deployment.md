@@ -8,6 +8,7 @@ and all subresources (JS, WASM, worker scripts, etc.):
 
 - `Cross-Origin-Opener-Policy: same-origin` (COOP)
 - `Cross-Origin-Embedder-Policy: require-corp` (COEP)
+- `Cross-Origin-Resource-Policy: same-origin` (CORP, recommended hardening)
 
 This repository includes production-ready header templates for common hosts.
 
@@ -69,6 +70,11 @@ Configure the project with:
 
 The generated `web/dist/_headers` file is deployed automatically and enables
 cross-origin isolation.
+
+> Note: Some platforms apply only the *most specific* matching `_headers` rule.
+> The provided `_headers` file repeats COOP/COEP/CORP in the `/assets/*` and
+> `/assets/*.wasm` rules so that cached/static assets remain cross-origin isolated
+> even under “most specific wins” behavior.
 
 ---
 
