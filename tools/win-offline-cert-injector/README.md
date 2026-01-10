@@ -14,8 +14,8 @@ cargo build --release
 ## Usage
 
 ```text
-win-offline-cert-injector --hive <path-to-SOFTWARE> [--store <STORE> ...] [--verify-only] [--cert <cert-file> ...] [<cert-file>...]
-win-offline-cert-injector --windows-dir <mount-root> [--store <STORE> ...] [--verify-only] [--cert <cert-file> ...] [<cert-file>...]
+win-offline-cert-injector --hive <path-to-SOFTWARE> [--store <STORE> ...] [--verify-only] <cert-file>...
+win-offline-cert-injector --windows-dir <mount-root> [--store <STORE> ...] [--verify-only] <cert-file>...
 
 Stores (case-insensitive):
   ROOT
@@ -28,6 +28,7 @@ Notes:
 - Default stores (when `--store` is not provided): `ROOT` + `TrustedPublisher`.
 - Certificate inputs may be DER (`.cer`) or PEM. PEM files may contain multiple `BEGIN CERTIFICATE` blocks; **all** are processed.
 - The tool must be run elevated (Administrator) so it can enable `SeRestorePrivilege` + `SeBackupPrivilege` for `RegLoadKeyW`/`RegUnLoadKeyW`.
+- `--cert <file>` is also accepted (repeatable) for compatibility with existing scripts, but positional cert paths are recommended.
 
 ### Examples
 
@@ -36,7 +37,7 @@ Inject into the default stores (`ROOT` + `TrustedPublisher`) using an explicit h
 ```powershell
 win-offline-cert-injector `
   --hive X:\mount\Windows\System32\config\SOFTWARE `
-  --cert .\aero-root.cer --cert .\aero-publisher.cer
+  .\aero-root.cer .\aero-publisher.cer
 ```
 
 Inject into `TrustedPeople` only:
@@ -45,7 +46,7 @@ Inject into `TrustedPeople` only:
 win-offline-cert-injector `
   --windows-dir X:\mount `
   --store TrustedPeople `
-  --cert .\aero-signer.cer
+  .\aero-signer.cer
 ```
 
 Verify-only (does not modify the hive):
@@ -54,7 +55,7 @@ Verify-only (does not modify the hive):
 win-offline-cert-injector `
   --hive X:\mount\Windows\System32\config\SOFTWARE `
   --verify-only `
-  --cert .\aero-root.cer
+  .\aero-root.cer
 ```
 
 ## Manual verification

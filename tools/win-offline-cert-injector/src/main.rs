@@ -63,8 +63,8 @@ fn usage() -> &'static str {
     "win-offline-cert-injector\n\
 \n\
 Usage:\n\
-  win-offline-cert-injector --hive <path-to-SOFTWARE> [--store <STORE> ...] [--verify-only] [--cert <cert-file> ...] [<cert-file>...]\n\
-  win-offline-cert-injector --windows-dir <mount-root> [--store <STORE> ...] [--verify-only] [--cert <cert-file> ...] [<cert-file>...]\n\
+  win-offline-cert-injector --hive <path-to-SOFTWARE> [--store <STORE> ...] [--verify-only] <cert-file>...\n\
+  win-offline-cert-injector --windows-dir <mount-root> [--store <STORE> ...] [--verify-only] <cert-file>...\n\
 \n\
 Stores (case-insensitive): ROOT, CA, TrustedPublisher, TrustedPeople\n\
 Default stores: ROOT + TrustedPublisher\n"
