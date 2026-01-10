@@ -23,12 +23,41 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+cleanup() {
+  if [[ -n "${tmpfile:-}" ]]; then
+    rm -f "$tmpfile"
+  fi
+  if [[ "$want_cleanup" == "1" ]]; then
+    echo "==> Stopping containers (docker compose down)..."
+    docker compose --profile proxy down
+  fi
+}
+
+trap cleanup EXIT
+
+wait_for_http() {
+  local url="$1"
+  local tries="${2:-50}"
+  local delay="${3:-0.2}"
+  local i=0
+  while [[ $i -lt $tries ]]; do
+    if curl -fsS -o /dev/null "$url"; then
+      return 0
+    fi
+    sleep "$delay"
+    i=$((i + 1))
+  done
+  echo "error: timed out waiting for $url" >&2
+  return 1
+}
+
 echo "==> Starting MinIO (origin)..."
 docker compose up -d
 
-tmpfile="$(mktemp -t aero-minio-range-test.XXXXXX.bin)"
-trap 'rm -f "$tmpfile"' EXIT
-dd if=/dev/urandom of="$tmpfile" bs=1M count=2 status=none
+# The `mc` helper container only has access to this directory (mounted at /work),
+# so the temporary file must be created *here* (not in /tmp).
+tmpfile="_smoke-upload.$$.$RANDOM.bin"
+dd if=/dev/urandom of="$tmpfile" bs=1M count=2 >/dev/null 2>&1
 
 obj="${SMOKE_OBJECT_KEY:-_smoke/range-test.bin}"
 echo "==> Uploading test object: s3://${bucket}/${obj}"
@@ -50,6 +79,8 @@ curl -fsS -D - -o /dev/null -X OPTIONS \
 echo "==> Starting proxy (optional CDN/edge emulation)..."
 docker compose --profile proxy up -d minio-proxy
 
+wait_for_http "${proxy}/minio/health/ready"
+
 echo "==> Verifying Range GET against proxy..."
 curl -fsS -D - -o /dev/null -H 'Range: bytes=0-15' "${proxy}/${bucket}/${obj}" | grep -iE '^(HTTP/|content-range:|access-control-allow-origin:)'
 
@@ -61,8 +92,3 @@ curl -fsS -D - -o /dev/null -X OPTIONS \
   "${proxy}/${bucket}/${obj}" | grep -iE '^(HTTP/|access-control-allow-origin:)'
 
 echo "==> Success."
-
-if [[ "$want_cleanup" == "1" ]]; then
-  echo "==> Stopping containers (docker compose down)..."
-  docker compose --profile proxy down
-fi
