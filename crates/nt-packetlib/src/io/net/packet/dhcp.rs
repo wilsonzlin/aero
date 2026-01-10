@@ -147,6 +147,11 @@ impl DhcpMessage {
 pub struct DhcpOfferAckBuilder<'a> {
     pub message_type: u8,
     pub transaction_id: u32,
+    /// BOOTP flags field from the client request (most notably the broadcast bit).
+    ///
+    /// For DHCP servers, echoing this value is common practice and helps clients that
+    /// require broadcast replies during early configuration.
+    pub flags: u16,
     pub client_mac: MacAddr,
     pub your_ip: Ipv4Addr,
     pub server_ip: Ipv4Addr,
@@ -207,7 +212,7 @@ impl<'a> DhcpOfferAckBuilder<'a> {
         out[3] = 0; // hops
         out[4..8].copy_from_slice(&self.transaction_id.to_be_bytes());
         out[8..10].copy_from_slice(&0u16.to_be_bytes()); // secs
-        out[10..12].copy_from_slice(&0x8000u16.to_be_bytes()); // flags: broadcast
+        out[10..12].copy_from_slice(&self.flags.to_be_bytes());
         out[12..16].copy_from_slice(&Ipv4Addr::UNSPECIFIED.octets()); // ciaddr
         out[16..20].copy_from_slice(&self.your_ip.octets()); // yiaddr
         out[20..24].copy_from_slice(&self.server_ip.octets()); // siaddr
@@ -295,6 +300,7 @@ mod tests {
         let builder = DhcpOfferAckBuilder {
             message_type: DHCP_MSG_OFFER,
             transaction_id: 0x12345678,
+            flags: 0x8000,
             client_mac: MacAddr([0, 1, 2, 3, 4, 5]),
             your_ip: Ipv4Addr::new(10, 0, 0, 100),
             server_ip: Ipv4Addr::new(10, 0, 0, 1),
@@ -377,6 +383,7 @@ mod tests {
         let offer = DhcpOfferAckBuilder {
             message_type: DHCP_MSG_OFFER,
             transaction_id: 0x12345678,
+            flags: 0x8000,
             client_mac: MacAddr([0, 1, 2, 3, 4, 5]),
             your_ip: Ipv4Addr::new(10, 0, 0, 100),
             server_ip: Ipv4Addr::new(10, 0, 0, 1),

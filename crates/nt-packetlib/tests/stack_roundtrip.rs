@@ -118,6 +118,7 @@ fn ipv4_udp_dhcp_offer_roundtrip() {
     let dhcp = DhcpOfferAckBuilder {
         message_type: DHCP_MSG_OFFER,
         transaction_id: 0x12345678,
+        flags: 0x8000,
         client_mac,
         your_ip: offered_ip,
         server_ip,
