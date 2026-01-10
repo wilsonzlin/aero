@@ -14,6 +14,7 @@ pub mod system;
 
 pub mod fpu;
 pub mod sse_state;
+pub mod interp;
 
 pub use exception::Exception;
 
