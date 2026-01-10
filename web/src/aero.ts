@@ -28,19 +28,29 @@ function ensureBenchmarksAttachedToPerfExport(perf: PerfApi): void {
   const baseExport = perf.export.bind(perf);
   perf.export = () => {
     const exported = baseExport();
-    const benchmarks = getBenchmarksSnapshot();
-    const hasBenchmarks = Object.keys(benchmarks).length > 0;
+    const fromStore = getBenchmarksSnapshot();
+    const existingBenchmarks =
+      exported && typeof exported === "object" && !Array.isArray(exported)
+        ? (exported as Record<string, unknown>).benchmarks
+        : undefined;
+    const mergedBenchmarks =
+      existingBenchmarks && typeof existingBenchmarks === "object" && !Array.isArray(existingBenchmarks)
+        ? {
+            ...(existingBenchmarks as Record<string, unknown>),
+            ...fromStore,
+          }
+        : { ...fromStore };
 
     if (exported && typeof exported === "object" && !Array.isArray(exported)) {
       return {
         ...(exported as Record<string, unknown>),
-        benchmarks: hasBenchmarks ? benchmarks : undefined,
+        benchmarks: mergedBenchmarks,
       };
     }
 
     return {
       exported,
-      benchmarks: hasBenchmarks ? benchmarks : undefined,
+      benchmarks: mergedBenchmarks,
     };
   };
 }
