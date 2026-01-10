@@ -4,6 +4,7 @@ use crate::queue::{DescriptorChain, VirtQueue};
 pub mod blk;
 pub mod input;
 pub mod net;
+pub mod net_offload;
 pub mod snd;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,4 +56,3 @@ pub trait VirtioDevice {
     /// Reset to power-on state.
     fn reset(&mut self);
 }
-

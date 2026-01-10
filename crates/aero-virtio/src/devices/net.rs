@@ -1,13 +1,23 @@
+use crate::devices::net_offload::{self, VirtioNetHdr};
 use crate::devices::{VirtioDevice, VirtioDeviceError};
+use crate::memory::GuestMemory;
 use crate::pci::{VIRTIO_F_RING_EVENT_IDX, VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
 use crate::queue::{DescriptorChain, VirtQueue};
-use crate::memory::GuestMemory;
 
 pub const VIRTIO_DEVICE_TYPE_NET: u16 = 1;
 
+pub const VIRTIO_NET_F_CSUM: u64 = 1 << 0;
 pub const VIRTIO_NET_F_MAC: u64 = 1 << 5;
+pub const VIRTIO_NET_F_HOST_TSO4: u64 = 1 << 11;
+pub const VIRTIO_NET_F_HOST_TSO6: u64 = 1 << 12;
+pub const VIRTIO_NET_F_HOST_ECN: u64 = 1 << 13;
 
-const VIRTIO_NET_HDR_LEN: usize = 10;
+const VIRTIO_NET_HDR_LEN: usize = VirtioNetHdr::LEN;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VirtioNetOffloadConfig {
+    pub disable_offloads: bool,
+}
 
 pub trait NetBackend {
     fn transmit(&mut self, packet: &[u8]);
@@ -37,11 +47,26 @@ impl NetBackend for LoopbackNet {
 pub struct VirtioNet<B: NetBackend> {
     backend: B,
     mac: [u8; 6],
+    offload_config: VirtioNetOffloadConfig,
+    negotiated_features: u64,
 }
 
 impl<B: NetBackend> VirtioNet<B> {
     pub fn new(backend: B, mac: [u8; 6]) -> Self {
-        Self { backend, mac }
+        Self::new_with_offload_config(backend, mac, VirtioNetOffloadConfig::default())
+    }
+
+    pub fn new_with_offload_config(
+        backend: B,
+        mac: [u8; 6],
+        offload_config: VirtioNetOffloadConfig,
+    ) -> Self {
+        Self {
+            backend,
+            mac,
+            offload_config,
+            negotiated_features: 0,
+        }
     }
 
     pub fn backend_mut(&mut self) -> &mut B {
@@ -55,10 +80,24 @@ impl<B: NetBackend + 'static> VirtioDevice for VirtioNet<B> {
     }
 
     fn device_features(&self) -> u64 {
-        VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC | VIRTIO_F_RING_EVENT_IDX | VIRTIO_NET_F_MAC
+        let mut features = VIRTIO_F_VERSION_1
+            | VIRTIO_F_RING_INDIRECT_DESC
+            | VIRTIO_F_RING_EVENT_IDX
+            | VIRTIO_NET_F_MAC;
+
+        if !self.offload_config.disable_offloads {
+            features |= VIRTIO_NET_F_CSUM
+                | VIRTIO_NET_F_HOST_TSO4
+                | VIRTIO_NET_F_HOST_TSO6
+                | VIRTIO_NET_F_HOST_ECN;
+        }
+
+        features
     }
 
-    fn set_features(&mut self, _features: u64) {}
+    fn set_features(&mut self, features: u64) {
+        self.negotiated_features = features;
+    }
 
     fn num_queues(&self) -> u16 {
         2
@@ -93,7 +132,9 @@ impl<B: NetBackend + 'static> VirtioDevice for VirtioNet<B> {
 
     fn write_config(&mut self, _offset: u64, _data: &[u8]) {}
 
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        self.negotiated_features = 0;
+    }
 }
 
 impl<B: NetBackend> VirtioNet<B> {
@@ -108,9 +149,10 @@ impl<B: NetBackend> VirtioNet<B> {
             return Err(VirtioDeviceError::BadDescriptorChain);
         }
 
-        // Build packet (skip the virtio_net_hdr).
-        let mut skip = VIRTIO_NET_HDR_LEN;
+        let mut hdr_bytes = [0u8; VIRTIO_NET_HDR_LEN];
+        let mut hdr_written = 0usize;
         let mut packet = Vec::new();
+
         for d in descs {
             if d.is_write_only() {
                 return Err(VirtioDeviceError::BadDescriptorChain);
@@ -118,17 +160,57 @@ impl<B: NetBackend> VirtioNet<B> {
             let mut slice = mem
                 .get_slice(d.addr, d.len as usize)
                 .map_err(|_| VirtioDeviceError::IoError)?;
-            if skip != 0 {
-                if slice.len() <= skip {
-                    skip -= slice.len();
-                    continue;
-                }
-                slice = &slice[skip..];
-                skip = 0;
+
+            if hdr_written < VIRTIO_NET_HDR_LEN {
+                let take = (VIRTIO_NET_HDR_LEN - hdr_written).min(slice.len());
+                hdr_bytes[hdr_written..hdr_written + take].copy_from_slice(&slice[..take]);
+                hdr_written += take;
+                slice = &slice[take..];
             }
+
             packet.extend_from_slice(slice);
         }
-        self.backend.transmit(&packet);
+
+        if hdr_written != VIRTIO_NET_HDR_LEN {
+            return Err(VirtioDeviceError::BadDescriptorChain);
+        }
+
+        let hdr = VirtioNetHdr::from_bytes_le(hdr_bytes);
+        if self.offload_config.disable_offloads
+            && (hdr.needs_csum() || hdr.gso_type_base() != net_offload::VIRTIO_NET_HDR_GSO_NONE)
+        {
+            return Err(VirtioDeviceError::Unsupported);
+        }
+
+        if hdr.needs_csum() && (self.negotiated_features & VIRTIO_NET_F_CSUM) == 0 {
+            return Err(VirtioDeviceError::Unsupported);
+        }
+
+        match hdr.gso_type_base() {
+            net_offload::VIRTIO_NET_HDR_GSO_NONE => {}
+            net_offload::VIRTIO_NET_HDR_GSO_TCPV4 => {
+                if (self.negotiated_features & VIRTIO_NET_F_HOST_TSO4) == 0 {
+                    return Err(VirtioDeviceError::Unsupported);
+                }
+            }
+            net_offload::VIRTIO_NET_HDR_GSO_TCPV6 => {
+                if (self.negotiated_features & VIRTIO_NET_F_HOST_TSO6) == 0 {
+                    return Err(VirtioDeviceError::Unsupported);
+                }
+            }
+            _ => return Err(VirtioDeviceError::Unsupported),
+        }
+
+        if hdr.has_ecn() && (self.negotiated_features & VIRTIO_NET_F_HOST_ECN) == 0 {
+            return Err(VirtioDeviceError::Unsupported);
+        }
+
+        let tx_packets = net_offload::process_tx_packet(hdr, &packet)
+            .map_err(|_| VirtioDeviceError::Unsupported)?;
+
+        for pkt in tx_packets {
+            self.backend.transmit(&pkt);
+        }
 
         queue
             .add_used(mem, chain.head_index(), 0)
@@ -189,5 +271,40 @@ impl<B: NetBackend> VirtioNet<B> {
         queue
             .add_used(mem, chain.head_index(), written as u32)
             .map_err(|_| VirtioDeviceError::IoError)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn feature_negotiation_hides_offloads_when_disabled() {
+        let dev = VirtioNet::new_with_offload_config(
+            LoopbackNet::default(),
+            [0; 6],
+            VirtioNetOffloadConfig {
+                disable_offloads: true,
+            },
+        );
+        let features = <VirtioNet<LoopbackNet> as VirtioDevice>::device_features(&dev);
+        assert_eq!(features & VIRTIO_NET_F_CSUM, 0);
+        assert_eq!(features & VIRTIO_NET_F_HOST_TSO4, 0);
+        assert_eq!(features & VIRTIO_NET_F_HOST_TSO6, 0);
+    }
+
+    #[test]
+    fn feature_negotiation_advertises_offloads_when_enabled() {
+        let dev = VirtioNet::new_with_offload_config(
+            LoopbackNet::default(),
+            [0; 6],
+            VirtioNetOffloadConfig {
+                disable_offloads: false,
+            },
+        );
+        let features = <VirtioNet<LoopbackNet> as VirtioDevice>::device_features(&dev);
+        assert_ne!(features & VIRTIO_NET_F_CSUM, 0);
+        assert_ne!(features & VIRTIO_NET_F_HOST_TSO4, 0);
+        assert_ne!(features & VIRTIO_NET_F_HOST_TSO6, 0);
     }
 }
