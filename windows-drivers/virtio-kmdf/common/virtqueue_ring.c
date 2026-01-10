@@ -62,6 +62,14 @@ VirtqueueRingLayoutCompute(
     Layout->UsedOffset = usedOffset;
     Layout->TotalSize = totalSize;
 
+    NT_ASSERT((Layout->DescOffset & (16 - 1)) == 0);
+    NT_ASSERT((Layout->AvailOffset & (2 - 1)) == 0);
+    NT_ASSERT((Layout->UsedOffset & (4 - 1)) == 0);
+
+    NT_ASSERT(Layout->DescOffset + Layout->DescSize <= Layout->AvailOffset);
+    NT_ASSERT(Layout->AvailOffset + Layout->AvailSize <= Layout->UsedOffset);
+    NT_ASSERT(Layout->UsedOffset + Layout->UsedSize == Layout->TotalSize);
+
     return STATUS_SUCCESS;
 }
 
