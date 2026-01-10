@@ -31,3 +31,10 @@ If the driver is later built against a newer KMDF version, you will need to:
 1. Update `KmdfLibraryVersion` in `virtio-input.inf`
 2. Add the appropriate `WdfCoInstallerXXXX.dll` to the package and reference it in the INF
 3. Regenerate the catalog and re-sign
+
+### Release packaging
+
+Once the driver binaries exist, `..\scripts\package-release.ps1` can be used to produce a redistributable zip that:
+
+- Includes the INF (and CAT if present) from this directory
+- Pulls the built SYS (and optional KMDF coinstaller DLL) from the `-InputDir` you provide
