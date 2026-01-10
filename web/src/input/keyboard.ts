@@ -1,4 +1,4 @@
-import { codeToSet2, set2Break, set2Make } from "./scancode";
+import { ps2Set2BytesForKeyEvent } from "./scancodes";
 
 export type KeyboardScancodeSink = (bytes: number[]) => void;
 
@@ -22,8 +22,8 @@ export class KeyboardCapture {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
-    const sc = codeToSet2(e.code);
-    if (!sc) {
+    const bytes = ps2Set2BytesForKeyEvent(e.code, true);
+    if (!bytes) {
       return;
     }
     e.preventDefault();
@@ -33,28 +33,31 @@ export class KeyboardCapture {
     if (!e.repeat) {
       this.pressed.add(e.code);
     }
-    this.sink(set2Make(sc));
+    this.sink(bytes);
   }
 
   private onKeyUp(e: KeyboardEvent): void {
-    const sc = codeToSet2(e.code);
-    if (!sc) {
+    const bytes = ps2Set2BytesForKeyEvent(e.code, false);
+    if (!bytes) {
       return;
     }
     e.preventDefault();
     this.pressed.delete(e.code);
-    this.sink(set2Break(sc));
+    if (bytes.length > 0) {
+      this.sink(bytes);
+    }
   }
 
   private releaseAll(): void {
     for (const code of this.pressed) {
-      const sc = codeToSet2(code);
-      if (!sc) {
+      const bytes = ps2Set2BytesForKeyEvent(code, false);
+      if (!bytes) {
         continue;
       }
-      this.sink(set2Break(sc));
+      if (bytes.length > 0) {
+        this.sink(bytes);
+      }
     }
     this.pressed.clear();
   }
 }
-
