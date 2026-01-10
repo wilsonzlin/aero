@@ -7,10 +7,31 @@ This document collects practical notes for building and test-signing Windows dri
 `ci/sign-drivers.ps1` is intended for CI runners. It:
 
 1. Creates a self-signed **code signing** certificate.
-2. Uses `signtool` to sign common driver artifacts (`.sys`, `.cat`, etc.).
-3. Verifies signatures using `signtool verify`.
-   - The script imports the public cert into the current user **Trusted Root** and
-     **Trusted Publishers** stores so `signtool verify` can succeed.
+2. Uses `signtool` to sign every `*.sys` and `*.cat` under `out/packages/**` (configurable via `-InputRoot`).
+3. Verifies signatures using `signtool verify`:
+   - `.sys`: `signtool verify /kp /v`
+   - `.cat`: `signtool verify /v`
+
+The script imports the public cert into the current user **Trusted Root** and
+**Trusted Publishers** stores (and will also try LocalMachine stores when allowed)
+so `signtool verify` can succeed.
+
+Outputs:
+
+- Public cert (artifact-safe): `out/certs/aero-test.cer`
+- Signing PFX (private key): `out/aero-test.pfx` (kept under `out/`, not `out/certs/`)
+
+Typical usage:
+
+```powershell
+.\ci\sign-drivers.ps1
+```
+
+Dual signing (SHA-1 first, then append SHA-256):
+
+```powershell
+.\ci\sign-drivers.ps1 -DualSign
+```
 
 ## SHA-1 vs SHA-2
 

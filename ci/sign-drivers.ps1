@@ -3,6 +3,7 @@
 [CmdletBinding()]
 param(
   [Parameter()]
+  [Alias("Path")]
   [string]$InputRoot = "out/packages",
 
   [Parameter()]
@@ -343,7 +344,7 @@ function Ensure-TestSigningCertificate {
       Write-Warning "Error: $($_.Exception.Message)"
 
       if (-not $AllowSha2CertFallback) {
-        throw "Refusing to proceed without a SHA-1-signed certificate. Re-run with -AllowSha2CertFallback to continue anyway (may break stock Win7 without KB3033929/KB4474419)."
+        throw "Refusing to proceed without a SHA-1-signed certificate. Re-run with -AllowSha2CertFallback to continue anyway (may break stock Win7 without KB3033929/KB4474419).`nOriginal error: $($_.Exception.Message)"
       }
 
       Write-Warning "Proceeding due to -AllowSha2CertFallback: creating a SHA-256-signed certificate instead."
