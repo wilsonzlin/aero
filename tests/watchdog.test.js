@@ -118,3 +118,22 @@ test('worker crashes surface structured errors and keep an auto-saved snapshot',
   await vm.reset();
   assert.equal(vm.state, 'stopped');
 });
+
+test('cache limit violations surface as structured errors without crashing the VM', { timeout: 5000 }, async () => {
+  const vm = new VmCoordinator({
+    config: {
+      limits: { maxDiskCacheBytes: 1024 * 1024 },
+      cpu: { watchdogTimeoutMs: 1000, backgroundThrottleMs: 0, maxSliceMs: 5, maxInstructionsPerSlice: 10_000 },
+    },
+  });
+
+  await vm.start({ mode: 'cooperativeInfiniteLoop' });
+  await onceEvent(vm, 'heartbeat');
+
+  const result = await vm.writeCacheEntry({ cache: 'disk', sizeBytes: 2 * 1024 * 1024 });
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.code, 'ResourceLimitExceeded');
+  assert.equal(vm.state, 'running');
+
+  await vm.shutdown();
+});

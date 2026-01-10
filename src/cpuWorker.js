@@ -164,6 +164,11 @@ async function runLoop() {
         executed,
         totalInstructions: cpu.totalInstructions,
         pc: cpu.pc,
+        resources: {
+          guestRamBytes: guestRam?.byteLength ?? 0,
+          diskCacheBytes: diskCache?.bytes ?? 0,
+          shaderCacheBytes: shaderCache?.bytes ?? 0,
+        },
       });
 
       if (stepsRemaining > 0) {
@@ -246,6 +251,64 @@ parentPort.on('message', (msg) => {
         stopping = true;
         paused = false;
         wakeLoop();
+        break;
+      }
+      case 'cacheWrite': {
+        const requestId = typeof msg.requestId === 'number' ? msg.requestId : 0;
+        const cache = msg.cache === 'disk' ? diskCache : msg.cache === 'shader' ? shaderCache : null;
+        if (!cache) {
+          post({
+            type: 'cacheWriteResult',
+            requestId,
+            ok: false,
+            cache: msg.cache ?? null,
+            error: serializeError(new EmulatorError(ErrorCode.InvalidConfig, 'Unknown cache selector.')),
+          });
+          break;
+        }
+
+        const sizeBytes = Number(msg.sizeBytes);
+        if (!Number.isFinite(sizeBytes) || sizeBytes < 0) {
+          post({
+            type: 'cacheWriteResult',
+            requestId,
+            ok: false,
+            cache: msg.cache,
+            error: serializeError(new EmulatorError(ErrorCode.InvalidConfig, 'Invalid cache entry size.')),
+          });
+          break;
+        }
+
+        const key =
+          typeof msg.key === 'string' && msg.key.length > 0
+            ? msg.key
+            : `${msg.cache}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+
+        try {
+          cache.set(key, { cachedAt: Date.now() }, sizeBytes);
+          post({
+            type: 'cacheWriteResult',
+            requestId,
+            ok: true,
+            cache: msg.cache,
+            stats: {
+              diskCacheBytes: diskCache?.bytes ?? 0,
+              shaderCacheBytes: shaderCache?.bytes ?? 0,
+            },
+          });
+        } catch (err) {
+          post({
+            type: 'cacheWriteResult',
+            requestId,
+            ok: false,
+            cache: msg.cache,
+            stats: {
+              diskCacheBytes: diskCache?.bytes ?? 0,
+              shaderCacheBytes: shaderCache?.bytes ?? 0,
+            },
+            error: serializeError(err),
+          });
+        }
         break;
       }
       default:

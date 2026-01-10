@@ -50,6 +50,7 @@ export class VmCoordinator extends EventTarget {
     this._ackQueues = new Map();
     this._watchdogTimer = null;
     this._terminated = false;
+    this._nextRequestId = 1;
   }
 
   async start({ mode = 'cooperativeInfiniteLoop' } = {}) {
@@ -137,6 +138,20 @@ export class VmCoordinator extends EventTarget {
     return msg.snapshot;
   }
 
+  async writeCacheEntry({ cache, sizeBytes, key } = {}) {
+    if (!this.worker) throw new Error('VM is not running');
+    const requestId = this._nextRequestId++;
+    this._send({ type: 'cacheWrite', requestId, cache, sizeBytes, key });
+    const msg = await withTimeout(this._waitForAck('cacheWriteResult'), {
+      timeoutMs: 2000,
+      message: 'Timed out waiting for cache write result.',
+    });
+    if (msg?.requestId !== requestId) {
+      throw new Error('Received mismatched cache write response.');
+    }
+    return msg;
+  }
+
   async shutdown() {
     if (!this.worker) return;
     const worker = this.worker;
@@ -171,6 +186,7 @@ export class VmCoordinator extends EventTarget {
         reason: 'heartbeat',
         capturedAt: msg.at,
         cpu: { pc: msg.pc, totalInstructions: msg.totalInstructions },
+        resources: msg.resources,
       };
       this.dispatchEvent(new CustomEvent('heartbeat', { detail: msg }));
       return;
