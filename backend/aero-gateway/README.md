@@ -182,7 +182,7 @@ npm start
 Then:
 
 - `https://localhost:8080/healthz`
-- `wss://localhost:8080/tcp?target=example.com:80`
+- `wss://localhost:8080/tcp?v=1&host=example.com&port=80`
 
 ### Trusting the certificate in your browser/OS
 
