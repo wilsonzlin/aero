@@ -202,8 +202,8 @@ fn event_idx_controls_when_interrupts_are_raised() {
     write_u16_le(&mut mem, avail + 2, 0).unwrap();
     write_u16_le(&mut mem, used, 0).unwrap();
     write_u16_le(&mut mem, used + 2, 0).unwrap();
-    // avail_event lives after the used ring.
-    write_u16_le(&mut mem, used + 4 + 4 * 8, 1).unwrap();
+    // used_event lives after the avail ring.
+    write_u16_le(&mut mem, avail + 4 + 4 * 2, 1).unwrap();
 
     let mut q = VirtQueue::new(
         VirtQueueConfig {
@@ -253,4 +253,45 @@ fn event_idx_used_event_is_updated_for_driver_notifications() {
     let used_event_addr = avail + 4 + 4 * 2;
     let used_event = read_u16_le(&mem, used_event_addr).unwrap();
     assert_eq!(used_event, 1);
+}
+
+#[test]
+fn descriptor_parsing_never_panics_on_garbage_guest_memory() {
+    struct XorShift64(u64);
+
+    impl XorShift64 {
+        fn next_u64(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+    }
+
+    let mut rng = XorShift64(0x1234_5678_9abc_def0);
+    for _ in 0..1_000 {
+        let mut mem = GuestRam::new(0x20000);
+        for chunk in mem.as_mut_slice().chunks_exact_mut(8) {
+            chunk.copy_from_slice(&rng.next_u64().to_le_bytes());
+        }
+
+        let mut q = VirtQueue::new(
+            VirtQueueConfig {
+                size: 8,
+                desc_addr: 0x1000,
+                avail_addr: 0x2000,
+                used_addr: 0x3000,
+            },
+            true,
+        )
+        .unwrap();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = q.pop_descriptor_chain(&mem);
+        }));
+
+        assert!(result.is_ok());
+    }
 }

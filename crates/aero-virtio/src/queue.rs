@@ -267,8 +267,9 @@ impl VirtQueue {
     ) -> Result<bool, VirtQueueError> {
         if self.event_idx {
             // Virtio spec: vring_need_event(event_idx, new_idx, old_idx)
-            let avail_event_addr = self.config.used_addr + 4 + u64::from(self.config.size) * 8;
-            let event_idx = read_u16_le(mem, avail_event_addr)?;
+            // "used_event" lives after the avail ring and is written by the driver.
+            let used_event_addr = self.config.avail_addr + 4 + u64::from(self.config.size) * 2;
+            let event_idx = read_u16_le(mem, used_event_addr)?;
             Ok(vring_need_event(event_idx, new_used, old_used))
         } else {
             let flags = read_u16_le(mem, self.config.avail_addr)?;
