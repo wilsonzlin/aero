@@ -23,6 +23,9 @@ export type VmCoordinatorStartOptions = {
 export class VmCoordinator extends EventTarget {
   constructor(options?: { config?: VmCoordinatorConfig; workerUrl?: URL });
 
+  static loadSavedCrashSnapshot(): Promise<{ savedTo: string; snapshot: unknown } | null>;
+  static clearSavedCrashSnapshot(): Promise<void>;
+
   readonly config: VmCoordinatorConfig;
   state: VmState;
   lastHeartbeatAt: number;

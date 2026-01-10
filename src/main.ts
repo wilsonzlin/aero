@@ -307,7 +307,15 @@ function renderEmulatorSafetyPanel(): HTMLElement {
     const totalInstructions = lastHeartbeat?.totalInstructions ?? 0;
     heartbeatLine.textContent = `lastHeartbeatAt=${vm?.lastHeartbeatAt ?? 0} totalInstructions=${totalInstructions}`;
     tickLine.textContent = `uiTicks=${window.__aeroUiTicks ?? 0}`;
-    snapshotSavedLine.textContent = `snapshotSavedTo=${vm?.lastSnapshotSavedTo ?? 'none'}`;
+    let persistedSavedTo = 'none';
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage.getItem('aero:lastCrashSnapshot')) {
+        persistedSavedTo = 'localStorage:aero:lastCrashSnapshot';
+      }
+    } catch {
+      // ignore
+    }
+    snapshotSavedLine.textContent = `snapshotSavedTo=${vm?.lastSnapshotSavedTo ?? persistedSavedTo}`;
 
     if (vm?.lastSnapshot) {
       snapshotOut.textContent = JSON.stringify(vm.lastSnapshot, null, 2);
@@ -457,6 +465,39 @@ function renderEmulatorSafetyPanel(): HTMLElement {
     },
   }) as HTMLButtonElement;
 
+  const loadSavedSnapshotButton = el('button', {
+    id: 'vm-load-saved-snapshot',
+    text: 'Load saved crash snapshot',
+    onclick: async () => {
+      try {
+        const saved = await VmCoordinator.loadSavedCrashSnapshot();
+        if (!saved) {
+          errorOut.textContent = 'No saved crash snapshot found.';
+          return;
+        }
+        errorOut.textContent = `Loaded snapshot from ${saved.savedTo}`;
+        snapshotOut.textContent = JSON.stringify(saved.snapshot, null, 2);
+        update();
+      } catch (err) {
+        errorOut.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  }) as HTMLButtonElement;
+
+  const clearSavedSnapshotButton = el('button', {
+    id: 'vm-clear-saved-snapshot',
+    text: 'Clear saved snapshot',
+    onclick: async () => {
+      try {
+        await VmCoordinator.clearSavedCrashSnapshot();
+        if (vm) vm.lastSnapshotSavedTo = null;
+        update();
+      } catch (err) {
+        errorOut.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  }) as HTMLButtonElement;
+
   globalThis.setInterval(update, 250);
 
   return el(
@@ -477,7 +518,19 @@ function renderEmulatorSafetyPanel(): HTMLElement {
       el('label', { text: 'auto-save snapshot on crash:' }),
       autoSaveSnapshot,
     ),
-    el('div', { class: 'row' }, startCoopButton, startHangButton, startCrashButton, pauseButton, resumeButton, stepButton, resetButton),
+    el(
+      'div',
+      { class: 'row' },
+      startCoopButton,
+      startHangButton,
+      startCrashButton,
+      pauseButton,
+      resumeButton,
+      stepButton,
+      resetButton,
+      loadSavedSnapshotButton,
+      clearSavedSnapshotButton,
+    ),
     stateLine,
     heartbeatLine,
     tickLine,

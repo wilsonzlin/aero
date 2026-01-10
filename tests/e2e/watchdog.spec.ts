@@ -64,4 +64,14 @@ test('VM auto-saves a crash snapshot when enabled', async ({ page }) => {
 
   const parsed = JSON.parse(raw!);
   expect(parsed.reason).toBe('crash');
+
+  await page.click('#vm-load-saved-snapshot');
+  await page.waitForFunction(() => {
+    const text = document.querySelector('#vm-snapshot')?.textContent ?? '';
+    return text.includes('"reason": "crash"');
+  });
+
+  await page.click('#vm-clear-saved-snapshot');
+  const cleared = await page.evaluate(() => localStorage.getItem('aero:lastCrashSnapshot'));
+  expect(cleared).toBeNull();
 });

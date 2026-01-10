@@ -8,6 +8,7 @@ const DEFAULT_CONFIG = Object.freeze({
 });
 
 const LOCAL_STORAGE_CRASH_SNAPSHOT_KEY = "aero:lastCrashSnapshot";
+const OPFS_CRASH_SNAPSHOT_FILE = "last-crash-snapshot.json";
 
 function mergeConfig(base, overrides) {
   return {
@@ -25,13 +26,40 @@ async function trySaveSnapshotToOpfs(snapshot) {
   try {
     const { getOpfsStateDir } = await import("../platform/opfs");
     const dir = await getOpfsStateDir();
-    const handle = await dir.getFileHandle("last-crash-snapshot.json", { create: true });
+    const handle = await dir.getFileHandle(OPFS_CRASH_SNAPSHOT_FILE, { create: true });
     const writable = await handle.createWritable();
     await writable.write(safeJsonStringify(snapshot, 2));
     await writable.close();
-    return "opfs:state/last-crash-snapshot.json";
+    return `opfs:state/${OPFS_CRASH_SNAPSHOT_FILE}`;
   } catch {
     return null;
+  }
+}
+
+async function tryLoadSnapshotFromOpfs() {
+  try {
+    const { getOpfsStateDir } = await import("../platform/opfs");
+    const dir = await getOpfsStateDir();
+    const handle = await dir.getFileHandle(OPFS_CRASH_SNAPSHOT_FILE);
+    const file = await handle.getFile();
+    const text = await file.text();
+    return {
+      savedTo: `opfs:state/${OPFS_CRASH_SNAPSHOT_FILE}`,
+      snapshot: JSON.parse(text),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function tryDeleteSnapshotFromOpfs() {
+  try {
+    const { getOpfsStateDir } = await import("../platform/opfs");
+    const dir = await getOpfsStateDir();
+    await dir.removeEntry(OPFS_CRASH_SNAPSHOT_FILE);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -50,6 +78,32 @@ export class VmCoordinator extends EventTarget {
     this._ackQueues = new Map();
     this._watchdogTimer = null;
     this._terminated = false;
+  }
+
+  static async loadSavedCrashSnapshot() {
+    const opfs = await tryLoadSnapshotFromOpfs();
+    if (opfs) return opfs;
+
+    try {
+      if (typeof localStorage === "undefined") return null;
+      const raw = localStorage.getItem(LOCAL_STORAGE_CRASH_SNAPSHOT_KEY);
+      if (!raw) return null;
+      return {
+        savedTo: `localStorage:${LOCAL_STORAGE_CRASH_SNAPSHOT_KEY}`,
+        snapshot: JSON.parse(raw),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  static async clearSavedCrashSnapshot() {
+    try {
+      if (typeof localStorage !== "undefined") localStorage.removeItem(LOCAL_STORAGE_CRASH_SNAPSHOT_KEY);
+    } catch {
+      // ignore
+    }
+    await tryDeleteSnapshotFromOpfs();
   }
 
   async _awaitAck(type, options) {
