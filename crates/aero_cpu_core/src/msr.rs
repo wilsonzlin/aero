@@ -3,6 +3,7 @@
 //! Windows heavily relies on MSRs for fast system calls, GS base swapping, and
 //! APIC programming. We model the subset required for Windows 7 boot/runtime.
 
+use crate::cpuid::{bits as cpuid_bits, CpuFeatures};
 use crate::Exception;
 
 // Common MSR indices used by Windows 7.
@@ -98,10 +99,26 @@ impl MsrState {
     /// Write an MSR value.
     ///
     /// Unknown MSRs raise `#GP(0)`.
-    pub fn write(&mut self, msr: u32, value: u64) -> Result<(), Exception> {
+    pub fn write(&mut self, features: &CpuFeatures, msr: u32, value: u64) -> Result<(), Exception> {
         match msr {
             IA32_EFER => {
-                self.efer = value;
+                // Keep CPUID/MSR coherent: if a feature is not advertised, mask its controlling
+                // EFER bit rather than letting the guest enable it.
+                let mut next = value;
+                // LMA is read-only (controlled by paging mode); preserve the stored bit.
+                next = (next & !EFER_LMA) | (self.efer & EFER_LMA);
+
+                if (features.ext1_edx & cpuid_bits::EXT1_EDX_SYSCALL) == 0 {
+                    next &= !EFER_SCE;
+                }
+                if (features.ext1_edx & cpuid_bits::EXT1_EDX_LM) == 0 {
+                    next &= !EFER_LME;
+                }
+                if (features.ext1_edx & cpuid_bits::EXT1_EDX_NX) == 0 {
+                    next &= !EFER_NXE;
+                }
+
+                self.efer = next;
                 Ok(())
             }
             IA32_STAR => {

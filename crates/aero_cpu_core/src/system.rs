@@ -547,7 +547,7 @@ impl Cpu {
             self.time.set_tsc(value);
             return Ok(());
         }
-        self.msr.write(msr_index, value)
+        self.msr.write(&self.features, msr_index, value)
     }
 
     /// RDMSR instruction semantics (ECX selects MSR, value returned in EDX:EAX).

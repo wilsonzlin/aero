@@ -96,6 +96,14 @@ Windows 7 uses all processor modes during boot and operation:
 
 ---
 
+## CPUID / Feature Model
+
+Windows 7 boot and many drivers gate behavior based on CPUID leaves and feature bits (SSE2/PAE/NX/APIC/TSC, etc.). Aero must expose a *coherent* CPUID + MSR surface (e.g. advertising NX implies `EFER.NXE` exists and behaves).
+
+See [`docs/cpu/README.md`](./cpu/README.md) for the current CPUID leaf coverage and feature profiles.
+
+---
+
 ## Tiered Execution Architecture
 
 ### Tier 0: Interpreter

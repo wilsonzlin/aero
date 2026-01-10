@@ -8,7 +8,7 @@ fn cpuid_leafs_are_deterministic() {
     let features = CpuFeatures::default();
 
     let leaf0 = cpuid(&features, 0, 0);
-    assert_eq!(leaf0.eax, 7);
+    assert_eq!(leaf0.eax, 0x1F);
     assert_eq!(leaf0.ebx, u32::from_le_bytes(*b"Genu"));
     assert_eq!(leaf0.edx, u32::from_le_bytes(*b"ineI"));
     assert_eq!(leaf0.ecx, u32::from_le_bytes(*b"ntel"));
@@ -23,6 +23,10 @@ fn cpuid_leafs_are_deterministic() {
     assert_eq!(leaf7.ebx, features.leaf7_ebx);
     assert_eq!(leaf7.ecx, features.leaf7_ecx);
     assert_eq!(leaf7.edx, features.leaf7_edx);
+
+    // Leaf 2 is a fixed QEMU-like cache/TLB descriptor set (not performance critical).
+    let leaf2 = cpuid(&features, 2, 0);
+    assert_eq!(leaf2.eax, 0x7603_6301);
 
     let ext_max = cpuid(&features, 0x8000_0000, 0);
     assert_eq!(ext_max.eax, 0x8000_0008);
