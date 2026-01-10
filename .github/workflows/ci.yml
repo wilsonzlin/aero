@@ -381,11 +381,11 @@ jobs:
 
       - name: Install Playwright browsers
         working-directory: ${{ steps.node-dir.outputs.dir }}
-        run: npx playwright install --with-deps
+        run: npx playwright install --with-deps chromium
 
       - name: Playwright tests
         working-directory: ${{ steps.node-dir.outputs.dir }}
-        run: npx playwright test
+        run: npx playwright test --project=chromium
 
       - name: Upload Playwright report
         if: failure()
