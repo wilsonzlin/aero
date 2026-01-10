@@ -125,7 +125,7 @@ Each check produces a `PASS` / `WARN` / `FAIL` result:
 - **Certificate store**: verifies that Guest Tools certificate(s) (from `certs\`, e.g. `*.cer`, `*.crt`, `*.p7b`) are installed into **Local Machine**:
   - Trusted Root Certification Authorities (**Root**)
   - Trusted Publishers (**TrustedPublisher**)
-- **Driver packages**: `pnputil -e` output with a heuristic filter for Aero/virtio-related packages.
+- **Driver packages**: `pnputil -e` output with a heuristic filter for Aero/virtio-related packages (and, if available, cross-checks packages recorded by `setup.cmd`).
 - **Bound devices**: WMI `Win32_PnPEntity` enumeration (and optional `devcon.exe` if present alongside the script), including best-effort signed driver details via `Win32_PnPSignedDriver` (INF name, version, signer, etc).
 - **Device binding by class**: best-effort checks that look for virtio/Aero devices and whether they are error-free in Device Manager:
   - Storage (virtio-blk)

@@ -538,7 +538,7 @@ $report = @{
     schema_version = 1
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "2.0.1"
+        version = "2.1.0"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -820,6 +820,23 @@ try {
         $certFiles += (Get-ChildItem -Path $dir -Filter *.p7b -ErrorAction SilentlyContinue)
     }
 
+    # If Guest Tools setup was run, it records installed cert thumbprints under
+    # C:\AeroGuestTools\installed-certs.txt. Use this as an additional/alternate
+    # signal when the verify script isn't running next to the original cert files.
+    $setupCertChecks = @()
+    if ($installedCertThumbprints -and $installedCertThumbprints.Count -gt 0) {
+        foreach ($tp in $installedCertThumbprints) {
+            if (-not $tp) { continue }
+            $rootLM = Find-CertInStore $tp "Root" "LocalMachine"
+            $pubLM = Find-CertInStore $tp "TrustedPublisher" "LocalMachine"
+            $setupCertChecks += @{
+                thumbprint = $tp
+                local_machine_root = $rootLM
+                local_machine_trusted_publisher = $pubLM
+            }
+        }
+    }
+
     $certResults = @()
     foreach ($cf in $certFiles) {
         $certsInFile = Load-CertsFromFile $cf.FullName
@@ -858,8 +875,18 @@ try {
     $certSummary = ""
     $certDetails = @()
 
-    if (-not $certFiles -or $certFiles.Count -eq 0) {
-        $certSummary = "No certificate files found under Guest Tools root/certs; skipping certificate store verification."
+    $missingSetupThumbprints = @($setupCertChecks | Where-Object { (-not $_.local_machine_root) -or (-not $_.local_machine_trusted_publisher) })
+
+    if ((-not $certFiles -or $certFiles.Count -eq 0) -and $setupCertChecks.Count -eq 0) {
+        $certStatus = "WARN"
+        $certSummary = "No certificate files found under Guest Tools root/certs and no installed cert list found; unable to verify certificate store."
+        $certDetails += "Run verify.cmd from the Guest Tools media (or copy the full ISO contents) so certs\\ is present."
+    } elseif (-not $certFiles -or $certFiles.Count -eq 0) {
+        $certSummary = "No certificate files found under Guest Tools root/certs; verifying only certificates recorded by setup.cmd."
+        if ($missingSetupThumbprints.Count -gt 0) {
+            $certStatus = "WARN"
+            $certDetails += ($missingSetupThumbprints.Count.ToString() + " certificate(s) recorded by setup.cmd are not installed in both LocalMachine Root + TrustedPublisher stores.")
+        }
     } else {
         $badCount = 0
         $missingCount = 0
@@ -873,11 +900,12 @@ try {
             }
         }
 
-        $certSummary = "Certificate file(s) found: " + $certFiles.Count + "; certificates parsed: " + (@($certResults | Where-Object { $_.thumbprint }).Count)
-        if ($badCount -gt 0 -or $missingCount -gt 0) {
+        $certSummary = "Certificate file(s) found: " + $certFiles.Count + "; certificates parsed: " + (@($certResults | Where-Object { $_.thumbprint }).Count) + "; setup-installed certs: " + $setupCertChecks.Count
+        if ($badCount -gt 0 -or $missingCount -gt 0 -or $missingSetupThumbprints.Count -gt 0) {
             $certStatus = "WARN"
             if ($badCount -gt 0) { $certDetails += ($badCount.ToString() + " certificate file(s) could not be parsed.") }
             if ($missingCount -gt 0) { $certDetails += ($missingCount.ToString() + " certificate(s) are not installed in both LocalMachine Root + TrustedPublisher stores.") }
+            if ($missingSetupThumbprints.Count -gt 0) { $certDetails += ($missingSetupThumbprints.Count.ToString() + " certificate(s) recorded by setup.cmd are not installed in both LocalMachine Root + TrustedPublisher stores.") }
             $certDetails += "Re-run Guest Tools setup as Administrator to install the driver certificate(s)."
         }
     }
@@ -887,6 +915,7 @@ try {
         search_dirs = $certSearchDirs
         cert_files = @($certFiles | ForEach-Object { $_.FullName })
         certificates = $certResults
+        installed_certs_from_setup = $setupCertChecks
     }
     Add-Check "certificate_store" "Certificate Store (driver signing trust)" $certStatus $certSummary $certData $certDetails
 } catch {
@@ -1027,6 +1056,19 @@ try {
 
     $aeroInstalledByGt = @($aeroPackages | Where-Object { $_.is_installed_by_guest_tools })
 
+    $missingGtPackages = @()
+    if ($gtInstalledDriverPackages -and $gtInstalledDriverPackages.Count -gt 0) {
+        $present = @{}
+        foreach ($pkg in $packages) {
+            if ($pkg.published_name) { $present[$pkg.published_name.ToLower()] = $true }
+        }
+        foreach ($p in $gtInstalledDriverPackages) {
+            if (-not $p) { continue }
+            $k = $p.ToLower()
+            if (-not $present.ContainsKey($k)) { $missingGtPackages += $p }
+        }
+    }
+
     $drvData = @{
         pnputil_exit_code = $pnp.exit_code
         pnputil_raw = $raw
@@ -1034,6 +1076,7 @@ try {
         aero_packages = $aeroPackages
         aero_packages_installed_by_guest_tools = $aeroInstalledByGt
         guest_tools_installed_driver_packages = $gtInstalledDriverPackages
+        guest_tools_driver_packages_missing = $missingGtPackages
         match_keywords = $keywords
     }
 
@@ -1045,10 +1088,14 @@ try {
         $drvSummary = "pnputil failed or produced no output."
         $drvDetails += "Exit code: " + $pnp.exit_code
     } else {
-        $drvSummary = "Detected " + $aeroPackages.Count + " Aero-related driver package(s) (installed-by-GuestTools: " + $aeroInstalledByGt.Count + "; parsed " + $packages.Count + " total)."
+        $drvSummary = "Detected " + $aeroPackages.Count + " Aero-related driver package(s) (installed-by-GuestTools: " + $aeroInstalledByGt.Count + "; missing-from-pnputil: " + $missingGtPackages.Count + "; parsed " + $packages.Count + " total)."
         if ($aeroPackages.Count -eq 0) {
             $drvStatus = "WARN"
             $drvDetails += "No Aero-related packages matched heuristic keywords. See pnputil_raw in report.json."
+        }
+        if ($missingGtPackages.Count -gt 0) {
+            $drvStatus = "WARN"
+            $drvDetails += ($missingGtPackages.Count.ToString() + " driver package(s) recorded by setup.cmd are not present in pnputil -e output: " + ($missingGtPackages -join ", "))
         }
     }
     Add-Check "driver_packages" "Driver Packages (pnputil -e)" $drvStatus $drvSummary $drvData $drvDetails
