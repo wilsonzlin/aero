@@ -246,6 +246,24 @@ Windows is booting from a disk controller whose driver is not installed or not c
 
 Do storage first, then network, then GPU. If you change storage + GPU simultaneously and the guest can’t boot or can’t display, recovery becomes much harder.
 
+### Advanced: confirm boot-critical virtio-blk pre-seeding
+
+If you can boot on AHCI but consistently get `0x7B` on virtio-blk, check that Guest Tools actually completed the boot-critical storage setup:
+
+1. Review `C:\AeroGuestTools\install.log` and look for a section like “Preparing boot-critical virtio-blk storage plumbing…”.
+2. Confirm the virtio-blk storage driver service is configured as boot-start:
+   - Registry:
+     - `HKLM\SYSTEM\CurrentControlSet\Services\<storage-service>`
+   - Expected values:
+     - `Start = 0` (BOOT_START)
+     - `ImagePath = system32\drivers\<driver>.sys`
+   - The exact service name and expected PCI IDs are defined by the Guest Tools media in `config\devices.cmd`.
+3. Confirm CriticalDeviceDatabase entries exist for the expected virtio-blk PCI IDs:
+   - `HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\PCI#VEN_....`
+   - These keys map the PCI ID to the storage service so Windows can load the driver early enough to mount the boot volume.
+
+If these entries are missing, re-run `setup.cmd` as Administrator and reboot once on AHCI before switching back to virtio-blk.
+
 ## Issue: No bootable device or BOOTMGR is missing after switching storage
 
 **Symptom**
