@@ -15,10 +15,14 @@ import {
   AEROGPU_CMD_DESTROY_SHADER_SIZE,
   AEROGPU_CMD_DRAW_INDEXED_SIZE,
   AEROGPU_CMD_DRAW_SIZE,
+  AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE,
+  AEROGPU_CMD_FLUSH_SIZE,
   AEROGPU_CMD_HDR_OFF_OPCODE,
   AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
   AEROGPU_CMD_HDR_SIZE,
   AEROGPU_CMD_PRESENT_SIZE,
+  AEROGPU_CMD_PRESENT_EX_SIZE,
+  AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE,
   AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE,
   AEROGPU_CMD_SET_BLEND_STATE_SIZE,
   AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE,
@@ -169,6 +173,10 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_cmd_draw"), AEROGPU_CMD_DRAW_SIZE);
   assert.equal(size("aerogpu_cmd_draw_indexed"), AEROGPU_CMD_DRAW_INDEXED_SIZE);
   assert.equal(size("aerogpu_cmd_present"), AEROGPU_CMD_PRESENT_SIZE);
+  assert.equal(size("aerogpu_cmd_present_ex"), AEROGPU_CMD_PRESENT_EX_SIZE);
+  assert.equal(size("aerogpu_cmd_export_shared_surface"), AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE);
+  assert.equal(size("aerogpu_cmd_import_shared_surface"), AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE);
+  assert.equal(size("aerogpu_cmd_flush"), AEROGPU_CMD_FLUSH_SIZE);
 
   assert.equal(size("aerogpu_submit_desc"), AEROGPU_SUBMIT_DESC_SIZE);
   assert.equal(size("aerogpu_ring_header"), AEROGPU_RING_HEADER_SIZE);
@@ -219,6 +227,16 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_CMD_STREAM_MAGIC"), BigInt(AEROGPU_CMD_STREAM_MAGIC));
   assert.equal(konst("AEROGPU_CMD_NOP"), BigInt(AerogpuCmdOpcode.Nop));
   assert.equal(konst("AEROGPU_CMD_PRESENT"), BigInt(AerogpuCmdOpcode.Present));
+  assert.equal(konst("AEROGPU_CMD_PRESENT_EX"), BigInt(AerogpuCmdOpcode.PresentEx));
+  assert.equal(
+    konst("AEROGPU_CMD_EXPORT_SHARED_SURFACE"),
+    BigInt(AerogpuCmdOpcode.ExportSharedSurface),
+  );
+  assert.equal(
+    konst("AEROGPU_CMD_IMPORT_SHARED_SURFACE"),
+    BigInt(AerogpuCmdOpcode.ImportSharedSurface),
+  );
+  assert.equal(konst("AEROGPU_CMD_FLUSH"), BigInt(AerogpuCmdOpcode.Flush));
 
   assert.equal(konst("AEROGPU_SUBMIT_FLAG_PRESENT"), BigInt(AEROGPU_SUBMIT_FLAG_PRESENT));
   assert.equal(konst("AEROGPU_SUBMIT_FLAG_NO_IRQ"), BigInt(AEROGPU_SUBMIT_FLAG_NO_IRQ));

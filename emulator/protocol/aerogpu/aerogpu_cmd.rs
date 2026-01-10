@@ -71,6 +71,12 @@ pub enum AerogpuCmdOpcode {
     DrawIndexed = 0x602,
 
     Present = 0x700,
+    PresentEx = 0x701,
+
+    ExportSharedSurface = 0x710,
+    ImportSharedSurface = 0x711,
+
+    Flush = 0x720,
 }
 
 impl AerogpuCmdOpcode {
@@ -97,6 +103,10 @@ impl AerogpuCmdOpcode {
             0x601 => Some(Self::Draw),
             0x602 => Some(Self::DrawIndexed),
             0x700 => Some(Self::Present),
+            0x701 => Some(Self::PresentEx),
+            0x710 => Some(Self::ExportSharedSurface),
+            0x711 => Some(Self::ImportSharedSurface),
+            0x720 => Some(Self::Flush),
             _ => None,
         }
     }
@@ -425,6 +435,42 @@ pub struct AerogpuCmdPresent {
     pub flags: u32,
 }
 
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdPresentEx {
+    pub hdr: AerogpuCmdHdr,
+    pub scanout_id: u32,
+    pub flags: u32,
+    pub d3d9_present_flags: u32,
+    pub reserved0: u32,
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdExportSharedSurface {
+    pub hdr: AerogpuCmdHdr,
+    pub resource_handle: AerogpuHandle,
+    pub reserved0: u32,
+    pub share_token: u64,
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdImportSharedSurface {
+    pub hdr: AerogpuCmdHdr,
+    pub out_resource_handle: AerogpuHandle,
+    pub reserved0: u32,
+    pub share_token: u64,
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdFlush {
+    pub hdr: AerogpuCmdHdr,
+    pub reserved0: u32,
+    pub reserved1: u32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerogpuCmdDecodeError {
     BufferTooSmall,
@@ -498,4 +544,3 @@ pub fn decode_cmd_hdr_le(buf: &[u8]) -> Result<AerogpuCmdHdr, AerogpuCmdDecodeEr
 
     Ok(AerogpuCmdHdr { opcode, size_bytes })
 }
-

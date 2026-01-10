@@ -78,6 +78,12 @@ export const AerogpuCmdOpcode = {
   DrawIndexed: 0x602,
 
   Present: 0x700,
+  PresentEx: 0x701,
+
+  ExportSharedSurface: 0x710,
+  ImportSharedSurface: 0x711,
+
+  Flush: 0x720,
 } as const;
 
 export type AerogpuCmdOpcode = (typeof AerogpuCmdOpcode)[keyof typeof AerogpuCmdOpcode];
@@ -102,4 +108,7 @@ export const AEROGPU_CMD_CLEAR_SIZE = 36;
 export const AEROGPU_CMD_DRAW_SIZE = 24;
 export const AEROGPU_CMD_DRAW_INDEXED_SIZE = 28;
 export const AEROGPU_CMD_PRESENT_SIZE = 16;
-
+export const AEROGPU_CMD_PRESENT_EX_SIZE = 24;
+export const AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE = 24;
+export const AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE = 24;
+export const AEROGPU_CMD_FLUSH_SIZE = 16;

@@ -6,11 +6,11 @@ use std::sync::OnceLock;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuBlendState, AerogpuCmdBindShaders, AerogpuCmdClear, AerogpuCmdCreateBuffer, AerogpuCmdCreateShaderDxbc,
     AerogpuCmdCreateTexture2d, AerogpuCmdDestroyResource, AerogpuCmdDestroyShader, AerogpuCmdDraw,
-    AerogpuCmdDrawIndexed, AerogpuCmdHdr, AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdResourceDirtyRange,
-    AerogpuCmdSetBlendState, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer, AerogpuCmdSetRasterizerState,
-    AerogpuCmdSetRenderTargets, AerogpuCmdSetScissor, AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport,
-    AerogpuCmdStreamHeader, AerogpuDepthStencilState, AerogpuRasterizerState, AerogpuVertexBufferBinding,
-    AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface, AerogpuCmdFlush, AerogpuCmdHdr, AerogpuCmdImportSharedSurface,
+    AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx, AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState,
+    AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer, AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderTargets,
+    AerogpuCmdSetScissor, AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamHeader,
+    AerogpuDepthStencilState, AerogpuRasterizerState, AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
     parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuFormat, AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR,
@@ -177,6 +177,10 @@ fn rust_layout_matches_c_headers() {
     assert_size!(AerogpuCmdDraw, "aerogpu_cmd_draw");
     assert_size!(AerogpuCmdDrawIndexed, "aerogpu_cmd_draw_indexed");
     assert_size!(AerogpuCmdPresent, "aerogpu_cmd_present");
+    assert_size!(AerogpuCmdPresentEx, "aerogpu_cmd_present_ex");
+    assert_size!(AerogpuCmdExportSharedSurface, "aerogpu_cmd_export_shared_surface");
+    assert_size!(AerogpuCmdImportSharedSurface, "aerogpu_cmd_import_shared_surface");
+    assert_size!(AerogpuCmdFlush, "aerogpu_cmd_flush");
 
     // Ring structs.
     assert_size!(AerogpuAllocTableHeader, "aerogpu_alloc_table_header");
@@ -249,6 +253,16 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.konst("AEROGPU_CMD_DRAW"), AerogpuCmdOpcode::Draw as u64);
     assert_eq!(abi.konst("AEROGPU_CMD_DRAW_INDEXED"), AerogpuCmdOpcode::DrawIndexed as u64);
     assert_eq!(abi.konst("AEROGPU_CMD_PRESENT"), AerogpuCmdOpcode::Present as u64);
+    assert_eq!(abi.konst("AEROGPU_CMD_PRESENT_EX"), AerogpuCmdOpcode::PresentEx as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_CMD_EXPORT_SHARED_SURFACE"),
+        AerogpuCmdOpcode::ExportSharedSurface as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_CMD_IMPORT_SHARED_SURFACE"),
+        AerogpuCmdOpcode::ImportSharedSurface as u64
+    );
+    assert_eq!(abi.konst("AEROGPU_CMD_FLUSH"), AerogpuCmdOpcode::Flush as u64);
 
     assert_eq!(
         abi.konst("AEROGPU_FORMAT_B8G8R8A8_UNORM"),
@@ -281,4 +295,3 @@ fn fence_page_write_updates_expected_bytes() {
     write_fence_page_completed_fence_le(&mut page, 0x0102_0304_0506_0708).unwrap();
     assert_eq!(&page[8..16], &0x0102_0304_0506_0708u64.to_le_bytes());
 }
-
