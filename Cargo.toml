@@ -9,4 +9,5 @@ members = [
     "crates/firmware",
     "crates/memory",
     "crates/platform",
+    "crates/aero-devices-input",
 ]

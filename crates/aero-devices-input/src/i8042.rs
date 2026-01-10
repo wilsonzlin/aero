@@ -1,0 +1,481 @@
+use std::collections::VecDeque;
+
+use crate::ps2_keyboard::Ps2Keyboard;
+use crate::ps2_mouse::{Ps2Mouse, Ps2MouseButton};
+use crate::scancode::{browser_code_to_set2, Set2Scancode};
+
+/// Sink for wiring device IRQs into the rest of the system (PIC/APIC).
+pub trait IrqSink {
+    fn raise_irq(&mut self, irq: u8);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputSource {
+    Keyboard,
+    Mouse,
+    Controller,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OutputByte {
+    value: u8,
+    source: OutputSource,
+}
+
+// i8042 status register bits.
+const STATUS_OBF: u8 = 0x01; // Output buffer full.
+const STATUS_IBF: u8 = 0x02; // Input buffer full.
+const STATUS_SYS: u8 = 0x04; // System flag.
+const STATUS_A2: u8 = 0x08; // Last write to command port.
+const STATUS_AUX_OBF: u8 = 0x20; // Mouse output buffer full.
+
+#[derive(Debug, Clone, Copy)]
+enum PendingWrite {
+    CommandByte,
+    WriteToMouse,
+}
+
+/// Set-2 -> Set-1 translation state, used when the command-byte translation bit
+/// is enabled (bit 6).
+#[derive(Debug, Default)]
+struct Set2ToSet1 {
+    saw_e0: bool,
+    saw_f0: bool,
+}
+
+impl Set2ToSet1 {
+    fn feed(&mut self, byte: u8) -> Vec<u8> {
+        match byte {
+            0xE0 => {
+                self.saw_e0 = true;
+                vec![0xE0]
+            }
+            0xF0 => {
+                self.saw_f0 = true;
+                Vec::new()
+            }
+            _ => {
+                let extended = self.saw_e0;
+                let break_code = self.saw_f0;
+                self.saw_e0 = false;
+                self.saw_f0 = false;
+
+                let mut out = set2_to_set1(byte, extended);
+                if break_code {
+                    out |= 0x80;
+                }
+                vec![out]
+            }
+        }
+    }
+}
+
+fn set2_to_set1(code: u8, extended: bool) -> u8 {
+    match (code, extended) {
+        // Non-extended
+        (0x76, false) => 0x01, // Esc
+        (0x16, false) => 0x02, // 1
+        (0x1E, false) => 0x03, // 2
+        (0x26, false) => 0x04, // 3
+        (0x25, false) => 0x05, // 4
+        (0x2E, false) => 0x06, // 5
+        (0x36, false) => 0x07, // 6
+        (0x3D, false) => 0x08, // 7
+        (0x3E, false) => 0x09, // 8
+        (0x46, false) => 0x0A, // 9
+        (0x45, false) => 0x0B, // 0
+        (0x4E, false) => 0x0C, // -
+        (0x55, false) => 0x0D, // =
+        (0x66, false) => 0x0E, // Backspace
+        (0x0D, false) => 0x0F, // Tab
+        (0x15, false) => 0x10, // Q
+        (0x1D, false) => 0x11, // W
+        (0x24, false) => 0x12, // E
+        (0x2D, false) => 0x13, // R
+        (0x2C, false) => 0x14, // T
+        (0x35, false) => 0x15, // Y
+        (0x3C, false) => 0x16, // U
+        (0x43, false) => 0x17, // I
+        (0x44, false) => 0x18, // O
+        (0x4D, false) => 0x19, // P
+        (0x54, false) => 0x1A, // [
+        (0x5B, false) => 0x1B, // ]
+        (0x5A, false) => 0x1C, // Enter
+        (0x14, false) => 0x1D, // Left Ctrl
+        (0x1C, false) => 0x1E, // A
+        (0x1B, false) => 0x1F, // S
+        (0x23, false) => 0x20, // D
+        (0x2B, false) => 0x21, // F
+        (0x34, false) => 0x22, // G
+        (0x33, false) => 0x23, // H
+        (0x3B, false) => 0x24, // J
+        (0x42, false) => 0x25, // K
+        (0x4B, false) => 0x26, // L
+        (0x4C, false) => 0x27, // ;
+        (0x52, false) => 0x28, // '
+        (0x0E, false) => 0x29, // `
+        (0x12, false) => 0x2A, // Left Shift
+        (0x5D, false) => 0x2B, // \
+        (0x1A, false) => 0x2C, // Z
+        (0x22, false) => 0x2D, // X
+        (0x21, false) => 0x2E, // C
+        (0x2A, false) => 0x2F, // V
+        (0x32, false) => 0x30, // B
+        (0x31, false) => 0x31, // N
+        (0x3A, false) => 0x32, // M
+        (0x41, false) => 0x33, // ,
+        (0x49, false) => 0x34, // .
+        (0x4A, false) => 0x35, // /
+        (0x59, false) => 0x36, // Right Shift
+        (0x11, false) => 0x38, // Left Alt
+        (0x29, false) => 0x39, // Space
+        (0x58, false) => 0x3A, // CapsLock
+        (0x05, false) => 0x3B, // F1
+        (0x06, false) => 0x3C, // F2
+        (0x04, false) => 0x3D, // F3
+        (0x0C, false) => 0x3E, // F4
+        (0x03, false) => 0x3F, // F5
+        (0x0B, false) => 0x40, // F6
+        (0x83, false) => 0x41, // F7
+        (0x0A, false) => 0x42, // F8
+        (0x01, false) => 0x43, // F9
+        (0x09, false) => 0x44, // F10
+        (0x78, false) => 0x57, // F11
+        (0x07, false) => 0x58, // F12
+        // Extended
+        (0x14, true) => 0x1D, // Right Ctrl
+        (0x11, true) => 0x38, // Right Alt
+        (0x75, true) => 0x48, // Up
+        (0x72, true) => 0x50, // Down
+        (0x6B, true) => 0x4B, // Left
+        (0x74, true) => 0x4D, // Right
+        (0x6C, true) => 0x47, // Home
+        (0x69, true) => 0x4F, // End
+        (0x7D, true) => 0x49, // PageUp
+        (0x7A, true) => 0x51, // PageDown
+        (0x70, true) => 0x52, // Insert
+        (0x71, true) => 0x53, // Delete
+        (0x5A, true) => 0x1C, // Numpad Enter
+        (0x4A, true) => 0x35, // Numpad Divide
+        _ => code,
+    }
+}
+
+/// i8042 (PS/2 controller) model exposing ports 0x60/0x64.
+pub struct I8042Controller {
+    status: u8,
+    command_byte: u8,
+    output_buffer: Option<OutputByte>,
+    pending_output: VecDeque<OutputByte>,
+    pending_write: Option<PendingWrite>,
+    last_write_was_command: bool,
+
+    keyboard: Ps2Keyboard,
+    mouse: Ps2Mouse,
+    translator: Set2ToSet1,
+
+    irq_sink: Option<Box<dyn IrqSink>>,
+    prefer_mouse: bool,
+}
+
+impl I8042Controller {
+    pub fn new() -> Self {
+        // Default command byte matches typical PC firmware expectations:
+        //  - IRQ1 enabled
+        //  - system flag set
+        //  - translation enabled (Set-2 -> Set-1)
+        let command_byte = 0x45;
+        Self {
+            status: STATUS_SYS,
+            command_byte,
+            output_buffer: None,
+            pending_output: VecDeque::new(),
+            pending_write: None,
+            last_write_was_command: false,
+            keyboard: Ps2Keyboard::new(),
+            mouse: Ps2Mouse::new(),
+            translator: Set2ToSet1::default(),
+            irq_sink: None,
+            prefer_mouse: false,
+        }
+    }
+
+    pub fn set_irq_sink(&mut self, sink: Box<dyn IrqSink>) {
+        self.irq_sink = Some(sink);
+    }
+
+    pub fn keyboard_mut(&mut self) -> &mut Ps2Keyboard {
+        &mut self.keyboard
+    }
+
+    pub fn mouse_mut(&mut self) -> &mut Ps2Mouse {
+        &mut self.mouse
+    }
+
+    pub fn read_port(&mut self, port: u16) -> u8 {
+        match port {
+            0x60 => self.read_data(),
+            0x64 => self.read_status(),
+            _ => 0xFF,
+        }
+    }
+
+    pub fn write_port(&mut self, port: u16, value: u8) {
+        match port {
+            0x60 => self.write_data(value),
+            0x64 => self.write_command(value),
+            _ => {}
+        }
+    }
+
+    /// Host-side injection helper: translate a browser code to Set-2 and feed it
+    /// into the keyboard device.
+    pub fn inject_browser_key(&mut self, code: &str, pressed: bool) {
+        let Some(sc) = browser_code_to_set2(code) else {
+            return;
+        };
+        self.inject_set2_key(sc, pressed);
+    }
+
+    pub fn inject_set2_key(&mut self, scancode: Set2Scancode, pressed: bool) {
+        self.keyboard.inject_key(scancode, pressed);
+        self.service_output();
+    }
+
+    pub fn inject_mouse_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
+        self.mouse.inject_motion(dx, dy, wheel);
+        self.service_output();
+    }
+
+    pub fn inject_mouse_button(&mut self, button: Ps2MouseButton, pressed: bool) {
+        self.mouse.inject_button(button, pressed);
+        self.service_output();
+    }
+
+    fn read_status(&mut self) -> u8 {
+        let mut status = self.status;
+        if self.last_write_was_command {
+            status |= STATUS_A2;
+        } else {
+            status &= !STATUS_A2;
+        }
+        status
+    }
+
+    fn read_data(&mut self) -> u8 {
+        let Some(out) = self.output_buffer.take() else {
+            return 0x00;
+        };
+
+        self.status &= !STATUS_OBF;
+        self.status &= !STATUS_AUX_OBF;
+
+        // Immediately load any queued bytes and potentially raise the next IRQ.
+        self.service_output();
+        out.value
+    }
+
+    fn write_command(&mut self, cmd: u8) {
+        self.last_write_was_command = true;
+        self.status |= STATUS_IBF;
+
+        match cmd {
+            0x20 => {
+                // Read command byte.
+                self.push_controller_output(self.command_byte);
+            }
+            0x60 => {
+                // Write command byte (next data write).
+                self.pending_write = Some(PendingWrite::CommandByte);
+            }
+            0xA7 => {
+                // Disable mouse port.
+                self.command_byte |= 0x20;
+            }
+            0xA8 => {
+                // Enable mouse port.
+                self.command_byte &= !0x20;
+            }
+            0xA9 => {
+                // Test mouse port (0x00 = pass).
+                self.push_controller_output(0x00);
+            }
+            0xAA => {
+                // Controller self-test (0x55 = pass).
+                self.push_controller_output(0x55);
+            }
+            0xAB => {
+                // Test keyboard port (0x00 = pass).
+                self.push_controller_output(0x00);
+            }
+            0xAD => {
+                // Disable keyboard port.
+                self.command_byte |= 0x10;
+            }
+            0xAE => {
+                // Enable keyboard port.
+                self.command_byte &= !0x10;
+            }
+            0xD4 => {
+                // Next data write goes to the mouse.
+                self.pending_write = Some(PendingWrite::WriteToMouse);
+            }
+            _ => {}
+        }
+
+        self.status &= !STATUS_IBF;
+        self.service_output();
+    }
+
+    fn write_data(&mut self, value: u8) {
+        self.last_write_was_command = false;
+        self.status |= STATUS_IBF;
+
+        if let Some(pending) = self.pending_write.take() {
+            match pending {
+                PendingWrite::CommandByte => {
+                    self.command_byte = value;
+                }
+                PendingWrite::WriteToMouse => {
+                    self.mouse.receive_byte(value);
+                }
+            }
+            self.status &= !STATUS_IBF;
+            self.service_output();
+            return;
+        }
+
+        // Default: send to keyboard.
+        self.keyboard.receive_byte(value);
+        self.status &= !STATUS_IBF;
+        self.service_output();
+    }
+
+    fn translation_enabled(&self) -> bool {
+        self.command_byte & 0x40 != 0
+    }
+
+    fn keyboard_port_enabled(&self) -> bool {
+        self.command_byte & 0x10 == 0
+    }
+
+    fn mouse_port_enabled(&self) -> bool {
+        self.command_byte & 0x20 == 0
+    }
+
+    fn push_controller_output(&mut self, value: u8) {
+        self.pending_output.push_back(OutputByte {
+            value,
+            source: OutputSource::Controller,
+        });
+        self.service_output();
+    }
+
+    fn service_output(&mut self) {
+        if self.output_buffer.is_some() {
+            return;
+        }
+
+        // If we already have queued bytes (from translation or controller
+        // responses), output them first.
+        if let Some(out) = self.pending_output.pop_front() {
+            self.load_output(out);
+            return;
+        }
+
+        // Otherwise, pull from devices.
+        loop {
+            let take_mouse_first = self.prefer_mouse;
+            let mut progressed = false;
+
+            if take_mouse_first {
+                progressed |= self.pull_from_mouse();
+                progressed |= self.pull_from_keyboard();
+            } else {
+                progressed |= self.pull_from_keyboard();
+                progressed |= self.pull_from_mouse();
+            }
+
+            if let Some(out) = self.pending_output.pop_front() {
+                self.load_output(out);
+                self.prefer_mouse = matches!(out.source, OutputSource::Keyboard);
+                return;
+            }
+
+            if !progressed {
+                return;
+            }
+        }
+    }
+
+    fn pull_from_keyboard(&mut self) -> bool {
+        if !self.keyboard_port_enabled() {
+            return false;
+        }
+        let Some(byte) = self.keyboard.pop_output() else {
+            return false;
+        };
+
+        if self.translation_enabled() {
+            for out in self.translator.feed(byte) {
+                self.pending_output.push_back(OutputByte {
+                    value: out,
+                    source: OutputSource::Keyboard,
+                });
+            }
+        } else {
+            self.pending_output.push_back(OutputByte {
+                value: byte,
+                source: OutputSource::Keyboard,
+            });
+        }
+        true
+    }
+
+    fn pull_from_mouse(&mut self) -> bool {
+        if !self.mouse_port_enabled() {
+            return false;
+        }
+        let Some(byte) = self.mouse.pop_output() else {
+            return false;
+        };
+        self.pending_output.push_back(OutputByte {
+            value: byte,
+            source: OutputSource::Mouse,
+        });
+        true
+    }
+
+    fn load_output(&mut self, out: OutputByte) {
+        self.output_buffer = Some(out);
+        self.status |= STATUS_OBF;
+
+        match out.source {
+            OutputSource::Mouse => {
+                self.status |= STATUS_AUX_OBF;
+                if self.command_byte & 0x02 != 0 {
+                    if let Some(sink) = self.irq_sink.as_deref_mut() {
+                        sink.raise_irq(12);
+                    }
+                }
+            }
+            OutputSource::Keyboard => {
+                self.status &= !STATUS_AUX_OBF;
+                if self.command_byte & 0x01 != 0 {
+                    if let Some(sink) = self.irq_sink.as_deref_mut() {
+                        sink.raise_irq(1);
+                    }
+                }
+            }
+            OutputSource::Controller => {
+                self.status &= !STATUS_AUX_OBF;
+            }
+        }
+    }
+}
+
+impl Default for I8042Controller {
+    fn default() -> Self {
+        Self::new()
+    }
+}
