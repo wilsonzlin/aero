@@ -26,6 +26,7 @@ fn guest_enable_write_sets_sci_en() {
         acpi_enable_cmd,
         acpi_disable_cmd,
         start_enabled: false,
+        ..AcpiPmConfig::default()
     };
     let mut pm = AcpiPmIo::new(cfg);
 

@@ -825,6 +825,59 @@ import { waitUntilNotEqual } from './runtime/atomics_wait.js';
  }
  ```
 
+### Power / Reset Orchestration (ACPI)
+
+ACPI fixed-feature power management is implemented via the PM1/GPE I/O ports
+advertised in the FADT. When the guest requests S5 (soft-off) or a reset, the
+device model must surface that to the main-thread coordinator so the browser UI
+and worker lifecycle stay consistent.
+
+#### Guest → Coordinator events
+
+```typescript
+// Worker → Coordinator
+type PowerRequest =
+  | { type: 'acpi_power_off_request' }
+  | { type: 'acpi_reset_request' };
+```
+
+#### Coordinator handling
+
+```typescript
+class Coordinator {
+  powerState: 'running' | 'shutting_down' | 'powered_off' | 'resetting' = 'running';
+
+  onWorkerMessage(msg: any) {
+    switch (msg.type) {
+      case 'acpi_power_off_request':
+        this.powerState = 'shutting_down';
+        this.ui.setStatus('Guest requested power off (S5)…');
+        this.stopAllWorkersGracefully();   // stop CPU loop, stop GPU, etc
+        this.ioWorker.postMessage({ type: 'flush' }); // ensure disk flush
+        this.powerState = 'powered_off';
+        break;
+
+      case 'acpi_reset_request':
+        this.powerState = 'resetting';
+        this.ui.setStatus('Guest requested reset…');
+        this.resetInPlace(); // reset CPU+device state without page reload
+        this.powerState = 'running';
+        break;
+    }
+  }
+}
+```
+
+#### UI override controls
+
+Expose explicit host controls (useful if the guest hangs during shutdown):
+
+- **Force Power Off**: immediately stops workers and marks VM powered off.
+- **Force Reset**: resets VM state and restarts workers without a full page reload.
+
+These should call the same coordinator entry points as the ACPI-triggered
+requests to ensure consistent cleanup and state transitions.
+
 ### CPU Worker
 
 ```javascript

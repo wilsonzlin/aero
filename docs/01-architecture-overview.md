@@ -222,6 +222,8 @@ Note: Aero’s baseline browser build uses wasm32 and is therefore constrained t
 │ 0x03F0-0x03F7  │ Floppy Controller                              │
 │ 0x03F8-0x03FF  │ COM1 Serial                                    │
 │ 0x0CF8-0x0CFF  │ PCI Configuration                              │
+│ 0x0CF9         │ Reset Control (ACPI FADT reset register)        │
+│ 0x0400-0x0427  │ ACPI PM I/O (PM1a_EVT/CNT, PM_TMR, GPE0, SCI)   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -293,11 +295,11 @@ In code:
 
 - Rust: `crates/aero-ipc/`
 - TypeScript: `web/src/ipc/`
-
+ 
 ### Snapshot Protocol (Save/Restore)
-
+ 
 Snapshots enable fast resume, crash recovery, and deterministic testing.
-
+ 
 **Coordinator-level flow:**
 
 1. Coordinator broadcasts `STATE_SAVE` to workers.
@@ -312,7 +314,11 @@ Snapshots enable fast resume, crash recovery, and deterministic testing.
 - Use an explicit, versioned format (e.g. TLV).
 - Avoid nondeterministic iteration order (no `HashMap` without sorting).
 - Treat active host-side resources as *reconnectable* rather than bit-restorable (see networking limitations).
-
+ 
+Power-management requests (guest S5 shutdown and reset) should be surfaced as
+explicit protocol events so the coordinator can stop/reset workers, flush
+storage, and update UI state.
+ 
 ### Shared Memory Protocol
 
 Browsers cannot reliably allocate a single 5+GiB `SharedArrayBuffer`, and wasm32 linear memory is fundamentally **≤ 4GiB** addressable. To keep the architecture implementable today, Aero uses **Option B: split buffers** (see [ADR 0003](./adr/0003-shared-memory-layout.md)).

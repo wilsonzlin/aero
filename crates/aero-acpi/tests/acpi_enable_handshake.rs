@@ -26,6 +26,7 @@ fn smi_cmd_enable_write_sets_sci_en() {
         acpi_enable_cmd,
         acpi_disable_cmd,
         start_enabled: false,
+        ..AcpiPmConfig::default()
     });
 
     assert_eq!(pm.read(pm1a_cnt_blk, 2) as u16 & PM1_CNT_SCI_EN, 0);
@@ -38,4 +39,3 @@ fn smi_cmd_enable_write_sets_sci_en() {
     pm.write(smi_cmd_port, 1, acpi_disable_cmd as u32);
     assert_eq!(pm.read(pm1a_cnt_blk, 2) as u16 & PM1_CNT_SCI_EN, 0);
 }
-

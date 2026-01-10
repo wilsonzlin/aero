@@ -582,6 +582,62 @@ impl AcpiTables {
 }
 ```
 
+### ACPI Power Management (PM1/GPE/SCI/Reset)
+
+Windows 7 uses **fixed-feature ACPI power management** for clean shutdown/reboot:
+
+- **ACPI enable handshake:** OS writes `ACPI_ENABLE` to the `FADT.SMI_CMD` port and expects firmware to set `PM1a_CNT.SCI_EN`.
+- **Shutdown (S5):** OS reads `\_S5` from DSDT, then writes `SLP_TYP` + `SLP_EN` to `PM1a_CNT`.
+- **Reboot:** OS writes the `FADT.ResetValue` to the `FADT.ResetReg` (if `RESET_REG_SUP` is set).
+- **SCI (System Control Interrupt):** Level-triggered interrupt (usually **IRQ9**) asserted when a PM/GPE event is pending and enabled.
+
+#### Recommended minimal register layout (PC-compatible)
+
+Use a simple fixed I/O layout and make FADT/DSDT/device-model agree (the defaults below match `aero-acpi::AcpiConfig`):
+
+| Block | I/O Port | Length | Notes |
+|------|----------|--------|------|
+| SMI_CMD | `0x00B2` | 1 | Write `ACPI_ENABLE=0xA0` to set `SCI_EN`; `ACPI_DISABLE=0xA1` to clear |
+| PM1a_EVT | `0x0400` | 4 | 16-bit `PM1_STS` + 16-bit `PM1_EN` |
+| PM1a_CNT | `0x0404` | 2 | `SCI_EN`, `SLP_TYP` (bits 12:10), `SLP_EN` (bit 13) |
+| PM_TMR | `0x0408` | 4 | 3.579545MHz free-running counter (low 24 bits used if `TMR_VAL_EXT=0`) |
+| GPE0 | `0x0420` | 8 | Status (4 bytes) + Enable (4 bytes) |
+| ResetReg | `0x0CF9` | 1 | `ResetValue = 0x06` triggers in-place VM reset |
+| SCI IRQ | `IRQ9` | - | Route through PIC or I/O APIC consistently |
+
+#### FADT fields that must be consistent
+
+- `SCI_INT = 9` (or chosen SCI IRQ)
+- `SMI_CMD`, `ACPI_ENABLE`, `ACPI_DISABLE`
+- `PM1a_EVT_BLK / PM1_EVT_LEN`
+- `PM1a_CNT_BLK / PM1_CNT_LEN`
+- `PM_TMR_BLK / PM_TMR_LEN` (set to 0 if unimplemented)
+- `GPE0_BLK / GPE0_BLK_LEN`
+- `RESET_REG_SUP` flag and `ResetReg/ResetValue` if reboot is supported
+
+#### DSDT objects required for shutdown
+
+At minimum, include the sleep-type package that matches the `SLP_TYP` value the PM device expects:
+
+```asl
+Method (_PIC, 1) { } // no-op is fine; OS uses this to select APIC vs PIC model
+
+Name (_S5, Package () { 0x05, 0x05 }) // required for soft-off
+```
+
+#### SCI delivery rule (minimal)
+
+SCI should be asserted when:
+
+```
+PM1_CNT.SCI_EN == 1 && (
+    (PM1_STS & PM1_EN) != 0 ||
+    (GPE0_STS & GPE0_EN) != 0
+)
+```
+
+Clearing the last pending enabled bit (write-1-to-clear in `PM1_STS` / `GPE_STS`) must deassert SCI.
+
 ---
 
 ## E820 Memory Map

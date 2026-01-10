@@ -289,11 +289,11 @@ mod device_tests {
     }
 }
 ```
-
+ 
 ### GPU Persistent Cache Tests
-
+ 
 The persistent GPU cache should have unit tests that lock down **keying and versioning**, since subtle mistakes can lead to hard-to-debug correctness or performance issues.
-
+ 
 ```rust
 #[cfg(test)]
 mod gpu_cache_tests {
@@ -317,8 +317,50 @@ mod gpu_cache_tests {
 }
 ```
 
----
+### ACPI Power Management Tests
 
+Power-management correctness is mostly about **register semantics** and **host
+orchestration**, not just table generation. Encode the expected behavior with
+unit and integration tests:
+
+```rust
+#[test]
+fn test_pm1_status_write_one_to_clear() {
+    let cfg = AcpiPmConfig::default();
+    let pm = Rc::new(RefCell::new(AcpiPmIo::new(cfg)));
+    let mut bus = IoPortBus::new();
+    register_acpi_pm(&mut bus, pm.clone());
+
+    pm.borrow_mut().trigger_power_button();
+    assert_ne!(pm.borrow().pm1_status() & PM1_STS_PWRBTN, 0);
+
+    // Writing a 1 clears the bit.
+    bus.write(cfg.pm1a_evt_blk, 2, PM1_STS_PWRBTN as u32);
+    assert_eq!(pm.borrow().pm1_status() & PM1_STS_PWRBTN, 0);
+}
+
+#[test]
+fn test_s5_shutdown_requests_poweroff() {
+    let cfg = AcpiPmConfig::default();
+    let powered_off = Rc::new(Cell::new(false));
+    let powered_off_cb = powered_off.clone();
+
+    let callbacks = AcpiPmCallbacks {
+        request_power_off: Some(Box::new(move || powered_off_cb.set(true))),
+        ..Default::default()
+    };
+    let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks(cfg, callbacks)));
+    let mut bus = IoPortBus::new();
+    register_acpi_pm(&mut bus, pm);
+
+    // SLP_TYP(S5) + SLP_EN
+    bus.write(cfg.pm1a_cnt_blk, 2, ((SLP_TYP_S5 as u32) << 10) | (1 << 13));
+    assert!(powered_off.get());
+}
+```
+ 
+---
+ 
 ### Snapshot Round-Trip Tests
 
 Every device that supports save/restore should have a unit test that validates:

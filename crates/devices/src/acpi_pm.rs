@@ -1,48 +1,83 @@
-//! ACPI Power Management I/O device (PM1 event/control blocks + SMI_CMD).
+//! ACPI fixed-feature power management I/O (PM1/GPE/SMI_CMD).
 //!
-//! Windows (and many other OSes) expects the platform to start with ACPI
-//! disabled and to enable it by writing `ACPI_ENABLE` to the FADT `SMI_CMD`
-//! port. Firmware then sets the `SCI_EN` bit in `PM1a_CNT`.
+//! Windows 7 (and most ACPI-aware OSes) expects a small set of fixed-function
+//! registers described by the FADT:
+//! - `SMI_CMD` + `ACPI_ENABLE`/`ACPI_DISABLE` handshake to toggle `PM1a_CNT.SCI_EN`.
+//! - `PM1a_EVT` (status + enable) and `PM1a_CNT` (control).
+//! - `PM_TMR` (24-bit free-running timer at 3.579545MHz) and a minimal `GPE0` block.
 //!
-//! We model that handshake here because Windows 7 can hang during ACPI init if
-//! `SCI_EN` never becomes 1 after the enable write.
-
-use aero_platform::io::PortIoDevice;
-
+//! This device also watches `PM1a_CNT.SLP_TYP/SLP_EN` and surfaces S5 shutdown
+//! requests via a host callback.
+//!
+//! Note: Reset via the FADT `ResetReg` (commonly port `0xCF9`) is implemented by
+//! [`crate::reset_ctrl`], not this module.
+ 
+use crate::irq::{IrqLine, NoIrq};
+use aero_platform::io::{IoPortBus, PortIoDevice};
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::Instant;
+ 
 /// `PM1a_CNT.SCI_EN` (ACPI spec).
 pub const PM1_CNT_SCI_EN: u16 = 1 << 0;
-
-pub const DEFAULT_PM1A_EVT_BLK: u16 = 0x400;
-pub const DEFAULT_PM1A_CNT_BLK: u16 = 0x404;
-pub const DEFAULT_SMI_CMD_PORT: u16 = 0xB2;
-
+ 
+/// `PM1_STS.PWRBTN_STS` (ACPI spec).
+pub const PM1_STS_PWRBTN: u16 = 1 << 8;
+ 
+/// DSDT `_S5` typically encodes `{ 0x05, 0x05 }` for `SLP_TYP`.
+pub const SLP_TYP_S5: u8 = 0x05;
+ 
+pub const DEFAULT_PM1A_EVT_BLK: u16 = 0x0400;
+pub const DEFAULT_PM1A_CNT_BLK: u16 = 0x0404;
+pub const DEFAULT_PM_TMR_BLK: u16 = 0x0408;
+pub const DEFAULT_GPE0_BLK: u16 = 0x0420;
+pub const DEFAULT_GPE0_BLK_LEN: u8 = 0x08;
+ 
+pub const DEFAULT_SMI_CMD_PORT: u16 = 0x00B2;
 pub const DEFAULT_ACPI_ENABLE: u8 = 0xA0;
 pub const DEFAULT_ACPI_DISABLE: u8 = 0xA1;
-
+ 
+const PM1_EVT_LEN: u16 = 4;
+const PM1_CNT_LEN: u16 = 2;
+const PM_TMR_LEN: u16 = 4;
+ 
+const PM1_CNT_SLP_TYP_SHIFT: u16 = 10;
+const PM1_CNT_SLP_TYP_MASK: u16 = 0b111 << PM1_CNT_SLP_TYP_SHIFT;
+const PM1_CNT_SLP_EN: u16 = 1 << 13;
+ 
+const PM_TIMER_FREQUENCY_HZ: u128 = 3_579_545;
+const PM_TIMER_MASK_24BIT: u32 = 0x00FF_FFFF;
+ 
 #[derive(Debug, Clone, Copy)]
 pub struct AcpiPmConfig {
     /// PM1a event block base address (PM1_STS at +0, PM1_EN at +2).
     pub pm1a_evt_blk: u16,
     /// PM1a control block base address (PM1_CNT).
     pub pm1a_cnt_blk: u16,
+    /// PM timer block base address (PM_TMR).
+    pub pm_tmr_blk: u16,
+    /// GPE0 block base address.
+    pub gpe0_blk: u16,
+    /// Total GPE0 block length. The first half is status; the second half is enable.
+    pub gpe0_blk_len: u8,
     /// FADT `SMI_CMD` I/O port.
     pub smi_cmd_port: u16,
-    /// Value written to `SMI_CMD` to request ACPI enable.
+    /// Value written to `SMI_CMD` to request ACPI enable (set `SCI_EN`).
     pub acpi_enable_cmd: u8,
-    /// Value written to `SMI_CMD` to request ACPI disable.
+    /// Value written to `SMI_CMD` to request ACPI disable (clear `SCI_EN`).
     pub acpi_disable_cmd: u8,
     /// Whether ACPI starts enabled at reset.
-    ///
-    /// Real PCs commonly start with ACPI disabled and require the OS enable
-    /// handshake. We default to that behavior.
     pub start_enabled: bool,
 }
-
+ 
 impl Default for AcpiPmConfig {
     fn default() -> Self {
         Self {
             pm1a_evt_blk: DEFAULT_PM1A_EVT_BLK,
             pm1a_cnt_blk: DEFAULT_PM1A_CNT_BLK,
+            pm_tmr_blk: DEFAULT_PM_TMR_BLK,
+            gpe0_blk: DEFAULT_GPE0_BLK,
+            gpe0_blk_len: DEFAULT_GPE0_BLK_LEN,
             smi_cmd_port: DEFAULT_SMI_CMD_PORT,
             acpi_enable_cmd: DEFAULT_ACPI_ENABLE,
             acpi_disable_cmd: DEFAULT_ACPI_DISABLE,
@@ -50,54 +85,130 @@ impl Default for AcpiPmConfig {
         }
     }
 }
-
-/// Minimal ACPI PM I/O model sufficient for SCI_EN and SCI interrupt semantics.
-#[derive(Debug, Clone)]
+ 
+pub struct AcpiPmCallbacks {
+    /// Driven whenever SCI should be asserted/deasserted.
+    pub sci_irq: Box<dyn IrqLine>,
+    /// Called when the guest requests S5 (soft-off).
+    pub request_power_off: Option<Box<dyn FnMut()>>,
+}
+ 
+impl AcpiPmCallbacks {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+ 
+impl Default for AcpiPmCallbacks {
+    fn default() -> Self {
+        Self {
+            sci_irq: Box::new(NoIrq),
+            request_power_off: None,
+        }
+    }
+}
+ 
+/// ACPI PM I/O device model.
 pub struct AcpiPmIo {
     cfg: AcpiPmConfig,
-
+    callbacks: AcpiPmCallbacks,
+ 
     pm1_sts: u16,
     pm1_en: u16,
     pm1_cnt: u16,
-
+ 
+    gpe0_sts: Vec<u8>,
+    gpe0_en: Vec<u8>,
+ 
     sci_level: bool,
+    timer_start: Instant,
 }
-
+ 
 impl AcpiPmIo {
     pub fn new(cfg: AcpiPmConfig) -> Self {
+        Self::new_with_callbacks(cfg, AcpiPmCallbacks::default())
+    }
+ 
+    pub fn new_with_callbacks(cfg: AcpiPmConfig, callbacks: AcpiPmCallbacks) -> Self {
+        let half = (cfg.gpe0_blk_len as usize) / 2;
         let mut dev = Self {
             cfg,
+            callbacks,
             pm1_sts: 0,
             pm1_en: 0,
             pm1_cnt: 0,
+            gpe0_sts: vec![0; half],
+            gpe0_en: vec![0; half],
             sci_level: false,
+            timer_start: Instant::now(),
         };
-
+ 
         if dev.cfg.start_enabled {
             dev.pm1_cnt |= PM1_CNT_SCI_EN;
         }
         dev.update_sci();
         dev
     }
-
+ 
+    pub fn cfg(&self) -> AcpiPmConfig {
+        self.cfg
+    }
+ 
     pub fn sci_level(&self) -> bool {
         self.sci_level
     }
-
+ 
     pub fn pm1_cnt(&self) -> u16 {
         self.pm1_cnt
     }
-
+ 
+    pub fn pm1_status(&self) -> u16 {
+        self.pm1_sts
+    }
+ 
     pub fn is_acpi_enabled(&self) -> bool {
         (self.pm1_cnt & PM1_CNT_SCI_EN) != 0
     }
-
-    /// Inject an event into PM1_STS (used by tests and future device wiring).
+ 
+    /// Inject bits into `PM1_STS` and refresh SCI.
     pub fn trigger_pm1_event(&mut self, sts_bits: u16) {
         self.pm1_sts |= sts_bits;
         self.update_sci();
     }
-
+ 
+    pub fn trigger_power_button(&mut self) {
+        self.trigger_pm1_event(PM1_STS_PWRBTN);
+    }
+ 
+    fn drive_sci_level(&mut self, level: bool) {
+        if level == self.sci_level {
+            return;
+        }
+        self.sci_level = level;
+        self.callbacks.sci_irq.set_level(level);
+    }
+ 
+    fn update_sci(&mut self) {
+        let sci_en = (self.pm1_cnt & PM1_CNT_SCI_EN) != 0;
+        let pm_pending = (self.pm1_sts & self.pm1_en) != 0;
+ 
+        let mut gpe_pending = false;
+        for (sts, en) in self.gpe0_sts.iter().zip(self.gpe0_en.iter()) {
+            if (sts & en) != 0 {
+                gpe_pending = true;
+                break;
+            }
+        }
+ 
+        self.drive_sci_level(sci_en && (pm_pending || gpe_pending));
+    }
+ 
+    fn pm_timer_value(&self) -> u32 {
+        let nanos = self.timer_start.elapsed().as_nanos();
+        let ticks = nanos.saturating_mul(PM_TIMER_FREQUENCY_HZ) / 1_000_000_000u128;
+        (ticks as u32) & PM_TIMER_MASK_24BIT
+    }
+ 
     fn set_acpi_enabled(&mut self, enabled: bool) {
         if enabled {
             self.pm1_cnt |= PM1_CNT_SCI_EN;
@@ -106,158 +217,223 @@ impl AcpiPmIo {
         }
         self.update_sci();
     }
-
-    fn update_sci(&mut self) {
-        let should_assert =
-            (self.pm1_cnt & PM1_CNT_SCI_EN) != 0 && (self.pm1_sts & self.pm1_en) != 0;
-        self.sci_level = should_assert;
-    }
-
-    fn read_pm1_event(&self, offset: u16, size: usize) -> u32 {
-        match (offset, size) {
-            (0, 1) => (self.pm1_sts as u8) as u32,
-            (1, 1) => ((self.pm1_sts >> 8) as u8) as u32,
-            (0, 2) => self.pm1_sts as u32,
-            (2, 1) => (self.pm1_en as u8) as u32,
-            (3, 1) => ((self.pm1_en >> 8) as u8) as u32,
-            (2, 2) => self.pm1_en as u32,
-            (0, 4) => ((self.pm1_en as u32) << 16) | (self.pm1_sts as u32),
-            _ => 0,
+ 
+    fn maybe_trigger_sleep(&mut self) {
+        if (self.pm1_cnt & PM1_CNT_SLP_EN) == 0 {
+            return;
+        }
+        let slp_typ = ((self.pm1_cnt & PM1_CNT_SLP_TYP_MASK) >> PM1_CNT_SLP_TYP_SHIFT) as u8;
+        if slp_typ != SLP_TYP_S5 {
+            return;
+        }
+        if let Some(cb) = self.callbacks.request_power_off.as_mut() {
+            cb();
         }
     }
-
-    fn write_pm1_event(&mut self, offset: u16, size: usize, val: u32) {
-        match (offset, size) {
-            // PM1_STS: write-1-to-clear.
-            (0, 1) => {
-                let bits = (val as u8) as u16;
-                self.pm1_sts &= !bits;
-            }
-            (1, 1) => {
-                let bits = ((val as u8) as u16) << 8;
-                self.pm1_sts &= !bits;
-            }
-            (0, 2) => {
-                let bits = val as u16;
-                self.pm1_sts &= !bits;
-            }
-            // PM1_EN: read/write.
-            (2, 1) => {
-                let lo = val as u8;
-                self.pm1_en = (self.pm1_en & 0xFF00) | (lo as u16);
-            }
-            (3, 1) => {
-                let hi = val as u8;
-                self.pm1_en = (self.pm1_en & 0x00FF) | ((hi as u16) << 8);
-            }
-            (2, 2) => {
-                self.pm1_en = val as u16;
-            }
-            (0, 4) => {
-                let sts_bits = (val & 0xFFFF) as u16;
-                let en_bits = (val >> 16) as u16;
-                self.pm1_sts &= !sts_bits;
-                self.pm1_en = en_bits;
-            }
-            _ => return,
+ 
+    fn port_read_u8(&mut self, port: u16) -> u8 {
+        // PM1a_EVT: status @ +0..1, enable @ +2..3.
+        if port >= self.cfg.pm1a_evt_blk && port < self.cfg.pm1a_evt_blk + PM1_EVT_LEN {
+            let off = port - self.cfg.pm1a_evt_blk;
+            return match off {
+                0 => (self.pm1_sts & 0x00FF) as u8,
+                1 => ((self.pm1_sts >> 8) & 0x00FF) as u8,
+                2 => (self.pm1_en & 0x00FF) as u8,
+                _ => ((self.pm1_en >> 8) & 0x00FF) as u8,
+            };
         }
-        self.update_sci();
-    }
-
-    fn read_pm1_cnt(&self, offset: u16, size: usize) -> u32 {
-        match (offset, size) {
-            (0, 1) => (self.pm1_cnt as u8) as u32,
-            (1, 1) => ((self.pm1_cnt >> 8) as u8) as u32,
-            (0, 2) => self.pm1_cnt as u32,
-            _ => 0,
+ 
+        // PM1a_CNT: control @ +0..1.
+        if port >= self.cfg.pm1a_cnt_blk && port < self.cfg.pm1a_cnt_blk + PM1_CNT_LEN {
+            let off = port - self.cfg.pm1a_cnt_blk;
+            return if off == 0 {
+                (self.pm1_cnt & 0x00FF) as u8
+            } else {
+                ((self.pm1_cnt >> 8) & 0x00FF) as u8
+            };
         }
-    }
-
-    fn write_pm1_cnt(&mut self, offset: u16, size: usize, val: u32) {
-        match (offset, size) {
-            (0, 1) => {
-                let lo = val as u8;
-                self.pm1_cnt = (self.pm1_cnt & 0xFF00) | lo as u16;
+ 
+        // PM_TMR: 32-bit free-running counter, low 24 bits valid.
+        if port >= self.cfg.pm_tmr_blk && port < self.cfg.pm_tmr_blk + PM_TMR_LEN {
+            let off = port - self.cfg.pm_tmr_blk;
+            let v = self.pm_timer_value();
+            return ((v >> (off * 8)) & 0xFF) as u8;
+        }
+ 
+        // GPE0: status (first half) then enable (second half).
+        if port >= self.cfg.gpe0_blk && port < self.cfg.gpe0_blk + self.cfg.gpe0_blk_len as u16 {
+            let off = (port - self.cfg.gpe0_blk) as usize;
+            let half = self.gpe0_sts.len();
+            if half == 0 {
+                return 0;
             }
-            (1, 1) => {
-                let hi = val as u8;
-                self.pm1_cnt = (self.pm1_cnt & 0x00FF) | ((hi as u16) << 8);
+            if off < half {
+                return self.gpe0_sts[off];
             }
-            (0, 2) => {
-                self.pm1_cnt = val as u16;
-            }
-            _ => return,
+            return self.gpe0_en.get(off - half).copied().unwrap_or(0);
         }
-        self.update_sci();
-    }
-}
-
-impl PortIoDevice for AcpiPmIo {
-    fn read(&mut self, port: u16, size: u8) -> u32 {
-        let size = size as usize;
-        if port >= self.cfg.pm1a_evt_blk && port < self.cfg.pm1a_evt_blk + 4 {
-            return self.read_pm1_event(port - self.cfg.pm1a_evt_blk, size);
-        }
-        if port >= self.cfg.pm1a_cnt_blk && port < self.cfg.pm1a_cnt_blk + 2 {
-            return self.read_pm1_cnt(port - self.cfg.pm1a_cnt_blk, size);
-        }
-        if port == self.cfg.smi_cmd_port {
-            return 0;
-        }
+ 
+        // SMI_CMD is write-only for our purposes.
         0
     }
-
-    fn write(&mut self, port: u16, size: u8, value: u32) {
-        let size = size as usize;
-        if port >= self.cfg.pm1a_evt_blk && port < self.cfg.pm1a_evt_blk + 4 {
-            self.write_pm1_event(port - self.cfg.pm1a_evt_blk, size, value);
+ 
+    fn port_write_u8(&mut self, port: u16, value: u8) {
+        // PM1a_EVT.
+        if port >= self.cfg.pm1a_evt_blk && port < self.cfg.pm1a_evt_blk + PM1_EVT_LEN {
+            let off = port - self.cfg.pm1a_evt_blk;
+            match off {
+                0 => self.pm1_sts &= !(value as u16),
+                1 => self.pm1_sts &= !((value as u16) << 8),
+                2 => self.pm1_en = (self.pm1_en & 0xFF00) | value as u16,
+                _ => self.pm1_en = (self.pm1_en & 0x00FF) | ((value as u16) << 8),
+            }
+            self.update_sci();
             return;
         }
-        if port >= self.cfg.pm1a_cnt_blk && port < self.cfg.pm1a_cnt_blk + 2 {
-            self.write_pm1_cnt(port - self.cfg.pm1a_cnt_blk, size, value);
+ 
+        // PM1a_CNT.
+        if port >= self.cfg.pm1a_cnt_blk && port < self.cfg.pm1a_cnt_blk + PM1_CNT_LEN {
+            let off = port - self.cfg.pm1a_cnt_blk;
+            if off == 0 {
+                self.pm1_cnt = (self.pm1_cnt & 0xFF00) | value as u16;
+            } else {
+                self.pm1_cnt = (self.pm1_cnt & 0x00FF) | ((value as u16) << 8);
+            }
+            self.update_sci();
+            self.maybe_trigger_sleep();
             return;
         }
+ 
+        // PM_TMR: read-only.
+        if port >= self.cfg.pm_tmr_blk && port < self.cfg.pm_tmr_blk + PM_TMR_LEN {
+            return;
+        }
+ 
+        // GPE0.
+        if port >= self.cfg.gpe0_blk && port < self.cfg.gpe0_blk + self.cfg.gpe0_blk_len as u16 {
+            let off = (port - self.cfg.gpe0_blk) as usize;
+            let half = self.gpe0_sts.len();
+            if half == 0 {
+                return;
+            }
+            if off < half {
+                self.gpe0_sts[off] &= !value; // write-1-to-clear
+            } else if let Some(slot) = self.gpe0_en.get_mut(off - half) {
+                *slot = value;
+            }
+            self.update_sci();
+            return;
+        }
+ 
+        // SMI_CMD.
         if port == self.cfg.smi_cmd_port {
-            let cmd = value as u8;
-            if cmd == self.cfg.acpi_enable_cmd {
+            if value == self.cfg.acpi_enable_cmd {
                 self.set_acpi_enabled(true);
-            } else if cmd == self.cfg.acpi_disable_cmd {
+            } else if value == self.cfg.acpi_disable_cmd {
                 self.set_acpi_enabled(false);
             }
         }
     }
+ 
+    fn port_read(&mut self, port: u16, size: u8) -> u32 {
+        let size = size.clamp(1, 4);
+        let mut out = 0u32;
+        for i in 0..(size as u32) {
+            let b = self.port_read_u8(port.wrapping_add(i as u16)) as u32;
+            out |= b << (i * 8);
+        }
+        out
+    }
+ 
+    fn port_write(&mut self, port: u16, size: u8, value: u32) {
+        let size = size.clamp(1, 4);
+        for i in 0..(size as u32) {
+            let b = ((value >> (i * 8)) & 0xFF) as u8;
+            self.port_write_u8(port.wrapping_add(i as u16), b);
+        }
+    }
+ 
+    fn reset_state(&mut self) {
+        self.pm1_sts = 0;
+        self.pm1_en = 0;
+        self.pm1_cnt = 0;
+        if self.cfg.start_enabled {
+            self.pm1_cnt |= PM1_CNT_SCI_EN;
+        }
+        for b in &mut self.gpe0_sts {
+            *b = 0;
+        }
+        for b in &mut self.gpe0_en {
+            *b = 0;
+        }
+        self.timer_start = Instant::now();
+        self.drive_sci_level(false);
+    }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn smi_cmd_acpi_enable_sets_sci_en() {
-        let mut pm = AcpiPmIo::new(AcpiPmConfig::default());
-        assert_eq!(pm.pm1_cnt() & PM1_CNT_SCI_EN, 0);
-
-        pm.write(DEFAULT_SMI_CMD_PORT, 1, DEFAULT_ACPI_ENABLE as u32);
-        assert_ne!(pm.pm1_cnt() & PM1_CNT_SCI_EN, 0);
+ 
+impl PortIoDevice for AcpiPmIo {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        self.port_read(port, size)
     }
-
-    #[test]
-    fn sci_only_asserts_when_sci_en_set() {
-        const TEST_EVENT: u16 = 1 << 8;
-
-        let mut pm = AcpiPmIo::new(AcpiPmConfig::default());
-
-        // Enable the event, but ACPI (SCI_EN) is still off.
-        pm.write(DEFAULT_PM1A_EVT_BLK + 2, 2, TEST_EVENT as u32);
-        pm.trigger_pm1_event(TEST_EVENT);
-        assert!(!pm.sci_level());
-
-        // Enable ACPI; pending enabled event should now assert SCI.
-        pm.write(DEFAULT_SMI_CMD_PORT, 1, DEFAULT_ACPI_ENABLE as u32);
-        assert!(pm.sci_level());
-
-        // Disable ACPI; SCI must deassert even though event is still pending.
-        pm.write(DEFAULT_SMI_CMD_PORT, 1, DEFAULT_ACPI_DISABLE as u32);
-        assert!(!pm.sci_level());
+ 
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        self.port_write(port, size, value);
     }
+ 
+    fn reset(&mut self) {
+        self.reset_state();
+    }
+}
+ 
+pub type SharedAcpiPmIo = Rc<RefCell<AcpiPmIo>>;
+ 
+#[derive(Clone)]
+pub struct AcpiPmPort {
+    pm: SharedAcpiPmIo,
+    port: u16,
+}
+ 
+impl AcpiPmPort {
+    fn new(pm: SharedAcpiPmIo, port: u16) -> Self {
+        Self { pm, port }
+    }
+}
+ 
+impl PortIoDevice for AcpiPmPort {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        debug_assert_eq!(port, self.port);
+        self.pm.borrow_mut().read(port, size)
+    }
+ 
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        debug_assert_eq!(port, self.port);
+        self.pm.borrow_mut().write(port, size, value);
+    }
+ 
+    fn reset(&mut self) {
+        self.pm.borrow_mut().reset();
+    }
+}
+ 
+/// Register the ACPI PM fixed-feature I/O ports on an [`IoPortBus`].
+pub fn register_acpi_pm(bus: &mut IoPortBus, pm: SharedAcpiPmIo) {
+    let cfg = pm.borrow().cfg();
+ 
+    for port in cfg.pm1a_evt_blk..cfg.pm1a_evt_blk + PM1_EVT_LEN {
+        bus.register(port, Box::new(AcpiPmPort::new(pm.clone(), port)));
+    }
+    for port in cfg.pm1a_cnt_blk..cfg.pm1a_cnt_blk + PM1_CNT_LEN {
+        bus.register(port, Box::new(AcpiPmPort::new(pm.clone(), port)));
+    }
+    for port in cfg.pm_tmr_blk..cfg.pm_tmr_blk + PM_TMR_LEN {
+        bus.register(port, Box::new(AcpiPmPort::new(pm.clone(), port)));
+    }
+    for port in cfg.gpe0_blk..cfg.gpe0_blk + cfg.gpe0_blk_len as u16 {
+        bus.register(port, Box::new(AcpiPmPort::new(pm.clone(), port)));
+    }
+ 
+    bus.register(
+        cfg.smi_cmd_port,
+        Box::new(AcpiPmPort::new(pm, cfg.smi_cmd_port)),
+    );
 }
