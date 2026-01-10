@@ -112,7 +112,7 @@ C_ASSERT(FIELD_OFFSET(struct virtq_used, idx) == 2);
 C_ASSERT(FIELD_OFFSET(struct virtq_used, ring) == 4);
 
 /* EVENT_IDX helper accessors (only valid if the feature is negotiated). */
-__forceinline volatile UINT16*
+static __forceinline volatile UINT16*
 VirtqueueRingAvailUsedEvent(
     _In_ volatile struct virtq_avail* Avail,
     _In_ USHORT QueueSize)
@@ -120,7 +120,7 @@ VirtqueueRingAvailUsedEvent(
     return (volatile UINT16*)&Avail->ring[QueueSize];
 }
 
-__forceinline volatile UINT16*
+static __forceinline volatile UINT16*
 VirtqueueRingUsedAvailEvent(
     _In_ volatile struct virtq_used* Used,
     _In_ USHORT QueueSize)
