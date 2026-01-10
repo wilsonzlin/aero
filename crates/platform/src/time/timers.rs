@@ -159,7 +159,11 @@ impl TimerScheduler {
                 kind: None,
             },
         );
-        debug_assert!(old.is_none(), "timer id space wrapped and collided");
+        assert!(
+            old.is_none(),
+            "timer id collision for id {} (state restore mismatch?)",
+            id.as_u64()
+        );
         id
     }
 
@@ -479,6 +483,7 @@ impl TimerScheduler {
         };
 
         for timer in state.timers {
+            scheduler.next_timer_id = scheduler.next_timer_id.max(timer.timer_id.as_u64());
             let kind_state = match timer.kind {
                 None => None,
                 Some(TimerKindStateRepr::OneShot { deadline_ns }) => {
@@ -734,6 +739,21 @@ mod tests {
             sched.arm_periodic_rational_ns(t, 10, 5, 0),
             Err(TimerError::InvalidRationalPeriod)
         );
+    }
+
+    #[test]
+    fn restore_state_bumps_next_timer_id_to_avoid_collision() {
+        let state = TimerSchedulerState {
+            next_timer_id: 0,
+            timers: vec![TimerState {
+                timer_id: TimerId::from_u64(5),
+                kind: None,
+            }],
+        };
+
+        let mut sched = TimerScheduler::restore_state(state);
+        let id = sched.alloc_timer();
+        assert_eq!(id.as_u64(), 6);
     }
 
     #[test]
