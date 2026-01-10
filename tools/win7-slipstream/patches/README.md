@@ -145,6 +145,7 @@ hivexregedit --export /path/to/SOFTWARE | rg -i "<THUMBPRINT>"
 On Windows:
 
 ```bat
+bcdedit /store X:\path\to\BCD /enum {default} /v
 bcdedit /store X:\path\to\BCD /enum {globalsettings} /v
 bcdedit /store X:\path\to\BCD /enum {bootloadersettings} /v
 ```
@@ -155,6 +156,12 @@ You should see:
 - `nointegritychecks           Yes`
 
 (Depending on how the store is structured, you may also see these show up when enumerating `{default}` because of inheritance.)
+
+If `{default}` is missing or you’re not sure which entry Windows will boot, enumerate everything and look for the relevant `Windows Boot Loader` entry:
+
+```bat
+bcdedit /store X:\path\to\BCD /enum all /v
+```
 
 You can also query the loaded hive directly (after `reg load HKLM\\BCD ...`):
 
