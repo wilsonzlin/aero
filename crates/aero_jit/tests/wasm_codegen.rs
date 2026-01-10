@@ -672,6 +672,74 @@ fn wasm_codegen_cross_page_load_uses_slow_helper() {
 }
 
 #[test]
+fn wasm_codegen_mmio_store_exits_to_runtime() {
+    let block = IrBlock::new(vec![
+        IrOp::Store {
+            addr: Operand::Imm(0xF000),
+            value: Operand::Imm(0x1234_5678),
+            size: MemSize::U32,
+        },
+        IrOp::Exit {
+            next_rip: Operand::Imm(0x3000),
+        },
+    ]);
+
+    let mut cpu = CpuState::default();
+    cpu.ram_base = CpuState::TOTAL_BYTE_SIZE as u64;
+    let mem = vec![0u8; 65536];
+
+    let (got_rip, got_cpu, _got_mem, host_state) = run_wasm(&block, cpu, mem);
+
+    assert_eq!(got_rip, u64::MAX);
+    assert_eq!(got_cpu.rip, u64::MAX);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn wasm_codegen_cross_page_store_uses_slow_helper() {
+    let addr = 0xFFD; // U32 store at 0xFFD crosses the 4KiB boundary.
+    let value = 0xDEAD_BEEFu32;
+    let block = IrBlock::new(vec![
+        IrOp::Store {
+            addr: Operand::Imm(addr),
+            value: Operand::Imm(value as i64),
+            size: MemSize::U32,
+        },
+        IrOp::Exit {
+            next_rip: Operand::Imm(0x3000),
+        },
+    ]);
+
+    let mut cpu = CpuState::default();
+    cpu.ram_base = CpuState::TOTAL_BYTE_SIZE as u64;
+    let mem = vec![0u8; 65536];
+
+    let base = cpu.ram_base as usize;
+    let (expected_rip, expected_cpu, expected_mem) = run_case(&block, cpu, mem.clone());
+    let (got_rip, got_cpu, got_mem, host_state) = run_wasm(&block, cpu, mem);
+
+    assert_eq!(got_rip, expected_rip);
+    assert_eq!(got_cpu, expected_cpu);
+    assert_eq!(
+        &got_mem[base + addr as usize..base + addr as usize + 4],
+        &expected_mem[base + addr as usize..base + addr as usize + 4]
+    );
+    let got_val = u32::from_le_bytes(
+        got_mem[base + addr as usize..base + addr as usize + 4]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(got_val, value);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 1);
+}
+
+#[test]
 fn wasm_codegen_exit_if_matches_interpreter() {
     let t_cond = Temp(0);
     let block = IrBlock::new(vec![
