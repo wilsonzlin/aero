@@ -4,7 +4,13 @@ TARGETTYPE=DRIVER
 SOURCES= \
     src\driver.c \
     src\device.c \
-    src\queue.c
+    src\queue.c \
+    src\file.c \
+    src\hid_read.c \
+    src\hid_translate.c \
+    src\hid_write.c \
+    src\virtio_input.c \
+    src\virtio_statusq.c
 
 INCLUDES=$(INCLUDES);src
 
@@ -14,4 +20,3 @@ KMDF_VERSION_MINOR=9
 TARGETLIBS=$(TARGETLIBS) \
     $(KMDF_LIB_PATH)\WdfDriverEntry.lib \
     $(DDK_LIB_PATH)\hidclass.lib
-

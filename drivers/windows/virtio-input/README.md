@@ -1,12 +1,17 @@
 # virtio-input (Windows 7 SP1) KMDF HID minidriver skeleton
 
-This directory contains a minimal **KMDF** driver that registers itself as a **HID minidriver** using `HidRegisterMinidriver`, intended to bind to the PCI virtio-input device (`PCI\VEN_1AF4&DEV_1052`).
+This directory contains a minimal **KMDF** driver that registers itself as a **HID minidriver** using `HidRegisterMinidriver`, intended to bind to the PCI virtio-input device:
+
+- Modern-only virtio-input: `PCI\VEN_1AF4&DEV_1052`
+- Transitional virtio-input: `PCI\VEN_1AF4&DEV_1011`
 
 The current implementation is a **skeleton**:
 
 - Implements WDF boilerplate (`EvtDriverDeviceAdd`, power/PnP callbacks, default queue).
-- Implements `EvtIoInternalDeviceControl` but returns `STATUS_NOT_SUPPORTED` for all internal HID IOCTLs.
-- Does **not** yet parse the virtio transport, negotiate features, or expose a HID report descriptor.
+- Implements `EvtIoInternalDeviceControl` with a minimal HID descriptor/report descriptor that exposes
+  keyboard + mouse collections (Report IDs 1 and 2).
+- Does **not** yet parse the virtio transport, negotiate features, or deliver real input reports (read
+  requests are left pending).
 
 ## Building (WDK 7.1 recommended)
 
@@ -39,4 +44,3 @@ After installation, Device Manager should show the device using `virtioinput.sys
 ## Notes on KMDF versioning
 
 The INF pins `KmdfLibraryVersion=1.9`, which is the in-box KMDF version for Windows 7. If you build with a newer WDK and target a newer KMDF version, you must ship the matching **KMDF coinstaller** in the driver package and update the INF accordingly.
-

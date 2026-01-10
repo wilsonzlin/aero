@@ -11,9 +11,11 @@ CatalogFile=virtio-input.cat
 
 [Aero.NTx86]
 %VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1052
+%VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1011
 
 [Aero.NTamd64]
 %VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1052
+%VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1011
 
 [DestinationDirs]
 VirtioInput.CopyFiles=12
@@ -55,4 +57,3 @@ Aero="Aero"
 DiskName="Aero virtio-input Installation Disk"
 VirtioInput.DeviceDesc="Aero Virtio Input (virtio-input-pci)"
 VirtioInput.ServiceDesc="Aero Virtio Input KMDF HID minidriver"
-

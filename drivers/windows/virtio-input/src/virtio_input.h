@@ -67,6 +67,13 @@ bool virtio_input_try_pop_report(struct virtio_input_device *dev, struct virtio_
 #include <wdf.h>
 
 #include "virtio_statusq.h"
+#ifndef HID_HID_DESCRIPTOR_TYPE
+#define HID_HID_DESCRIPTOR_TYPE 0x21
+#endif
+
+#ifndef HID_REPORT_DESCRIPTOR_TYPE
+#define HID_REPORT_DESCRIPTOR_TYPE 0x22
+#endif
 
 #define VIRTIOINPUT_POOL_TAG 'pInV'
 
