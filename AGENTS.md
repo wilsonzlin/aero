@@ -58,6 +58,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 33. [Virtio Windows Drivers](./docs/virtio-windows-drivers.md)
 34. [VM Snapshots (Save-State / Restore-State)](./docs/16-snapshots.md)
 35. [AeroGPU Legacy VGA/VBE Compatibility](./docs/16-aerogpu-vga-vesa-compat.md)
+36. [Virtio PCI (Modern) Interrupts on Windows 7 (KMDF)](./docs/windows/virtio-pci-modern-interrupts.md)
 
 ---
 
@@ -357,6 +358,7 @@ pub trait DisplayAdapter {
 | [windows7-virtio-driver-contract.md](./docs/windows7-virtio-driver-contract.md) | Virtio contract: Win7 drivers ↔ emulator | I/O               |
 | [virtio-windows-drivers.md](./docs/virtio-windows-drivers.md)           | Windows 7 virtio driver packaging      | I/O               |
 | [virtqueue-split-ring-win7.md](./docs/virtio/virtqueue-split-ring-win7.md) | Virtio 1.0 split virtqueue implementation guide (Win7 KMDF) | I/O (virtio drivers) |
+| [windows/virtio-pci-modern-interrupts.md](./docs/windows/virtio-pci-modern-interrupts.md) | Windows 7 KMDF guide for virtio-pci modern MSI-X/INTx interrupts | I/O (virtio drivers) |
 | [backend/disk-image-streaming-service.md](./docs/backend/disk-image-streaming-service.md) | Disk image streaming (Range/CORS/COEP) | I/O / Infra       |
 | [security-headers.md](./docs/security-headers.md)                       | COOP/COEP, CSP, security headers       | Infrastructure    |
 | [16-disk-image-streaming-auth.md](./docs/16-disk-image-streaming-auth.md) | Disk byte streaming, auth, CORS/COEP   | I/O / Infra       |

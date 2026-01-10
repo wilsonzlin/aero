@@ -4,6 +4,10 @@
 
 This document breaks down Aero development into parallelizable work items. Tasks are organized by functional area, priority, and dependencies. This breakdown can inform how work might be distributed and parallelized.
 
+## Windows Driver Implementation Notes
+
+- [Virtio PCI (Modern) Interrupts on Windows 7 (KMDF)](./windows/virtio-pci-modern-interrupts.md)
+
 ---
 
 ## Suggested Work Organization
