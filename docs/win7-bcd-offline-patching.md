@@ -129,6 +129,11 @@ So the full `Element` blob is typically 12 bytes, for example:
 
 This matches the audited offline `.reg` patches under `tools/win7-slipstream/patches/`.
 
+Note: the BCD element record encoding is not documented as a public stability guarantee, so an
+offline patcher should validate its assumptions against at least one real Win7 BCD store (e.g. by
+loading it with `reg.exe load` and inspecting an existing `Elements\\16xxxxxx\\Element` value), then
+write values in the same format.
+
 ---
 
 ## Well-known object GUIDs (Win7)
