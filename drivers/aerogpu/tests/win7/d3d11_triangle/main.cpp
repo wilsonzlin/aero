@@ -212,8 +212,10 @@ static int RunD3D11Triangle(int argc, char** argv) {
 
   const int cx = (int)bb_desc.Width / 2;
   const int cy = (int)bb_desc.Height / 2;
-  const uint32_t pixel = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
+  const uint32_t center = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
+  const uint32_t corner = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 5, 5);
   const uint32_t expected = 0xFF00FF00u;
+  const uint32_t expected_corner = 0xFFFF0000u;
 
   if (dump) {
     std::string err;
@@ -234,11 +236,12 @@ static int RunD3D11Triangle(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "IDXGISwapChain::Present", hr);
   }
 
-  if ((pixel & 0x00FFFFFFu) != (expected & 0x00FFFFFFu)) {
+  if ((center & 0x00FFFFFFu) != (expected & 0x00FFFFFFu) ||
+      (corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
     return aerogpu_test::Fail(kTestName,
-                              "center pixel mismatch: got 0x%08lX expected ~0x%08lX",
-                              (unsigned long)pixel,
-                              (unsigned long)expected);
+                              "pixel mismatch: center=0x%08lX corner(5,5)=0x%08lX",
+                              (unsigned long)center,
+                              (unsigned long)corner);
   }
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
