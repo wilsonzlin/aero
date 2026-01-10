@@ -130,7 +130,9 @@ test.describe("disk-image Range fetch (cross origin CORS + preflight)", () => {
       headers: {
         Origin: pageServer.origin,
         "Access-Control-Request-Method": "GET",
-        "Access-Control-Request-Headers": "range",
+        // Include a non-safelisted custom header so this probe matches the browser
+        // request we use in the actual cross-origin Range fetch test.
+        "Access-Control-Request-Headers": "range, x-force-preflight",
       },
     });
 
@@ -145,6 +147,9 @@ test.describe("disk-image Range fetch (cross origin CORS + preflight)", () => {
 
     const allowHeaders = splitHeaderList(resp.headers.get("access-control-allow-headers"));
     expect(allowHeaders, "Access-Control-Allow-Headers must include Range").toContain("range");
+    expect(allowHeaders, "Access-Control-Allow-Headers must include X-Force-Preflight").toContain(
+      "x-force-preflight",
+    );
 
     const allowMethods = splitHeaderList(resp.headers.get("access-control-allow-methods"));
     expect(allowMethods, "Access-Control-Allow-Methods must include GET").toContain("get");
