@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+  merge_group:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
