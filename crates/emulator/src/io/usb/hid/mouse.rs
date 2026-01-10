@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 
-use crate::io::usb::{ControlResponse, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel};
+use crate::io::usb::{
+    ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
+};
 
 use super::{
     build_string_descriptor_utf16le, clamp_response, HidProtocol, HID_REQUEST_GET_IDLE,
@@ -14,6 +16,7 @@ use super::{
 };
 
 const INTERRUPT_IN_EP: u8 = 0x81;
+const MAX_PENDING_REPORTS: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MouseReport {
@@ -71,6 +74,13 @@ impl UsbHidMouse {
         }
     }
 
+    fn push_report(&mut self, report: MouseReport) {
+        if self.pending_reports.len() >= MAX_PENDING_REPORTS {
+            self.pending_reports.pop_front();
+        }
+        self.pending_reports.push_back(report);
+    }
+
     /// Sets or clears a mouse button bit.
     ///
     /// Bit 0 = left, bit 1 = right, bit 2 = middle.
@@ -83,7 +93,7 @@ impl UsbHidMouse {
             self.buttons &= !button_bit;
         }
         if self.buttons != before {
-            self.pending_reports.push_back(MouseReport {
+            self.push_report(MouseReport {
                 buttons: self.buttons,
                 x: 0,
                 y: 0,
@@ -113,7 +123,7 @@ impl UsbHidMouse {
             self.dy -= step_y as i32;
             self.wheel -= step_wheel as i32;
 
-            self.pending_reports.push_back(MouseReport {
+            self.push_report(MouseReport {
                 buttons: self.buttons,
                 x: step_x,
                 y: step_y,
@@ -164,14 +174,20 @@ impl UsbDeviceModel for UsbHidMouse {
         match (setup.request_type(), setup.recipient()) {
             (RequestType::Standard, RequestRecipient::Device) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                        return ControlResponse::Stall;
+                    }
                     let mut status: u16 = 0;
                     if self.remote_wakeup_enabled {
                         status |= 1 << 1;
                     }
-                    ControlResponse::Data(status.to_le_bytes().to_vec())
+                    ControlResponse::Data(clamp_response(status.to_le_bytes().to_vec(), setup.w_length))
                 }
                 USB_REQUEST_CLEAR_FEATURE => match setup.w_value {
                     USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
+                        if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                            return ControlResponse::Stall;
+                        }
                         self.remote_wakeup_enabled = false;
                         ControlResponse::Ack
                     }
@@ -179,16 +195,28 @@ impl UsbDeviceModel for UsbHidMouse {
                 },
                 USB_REQUEST_SET_FEATURE => match setup.w_value {
                     USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
+                        if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                            return ControlResponse::Stall;
+                        }
                         self.remote_wakeup_enabled = true;
                         ControlResponse::Ack
                     }
                     _ => ControlResponse::Stall,
                 },
                 USB_REQUEST_SET_ADDRESS => {
+                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                        return ControlResponse::Stall;
+                    }
+                    if setup.w_value > 127 {
+                        return ControlResponse::Stall;
+                    }
                     self.address = (setup.w_value & 0x00ff) as u8;
                     ControlResponse::Ack
                 }
                 USB_REQUEST_GET_DESCRIPTOR => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost {
+                        return ControlResponse::Stall;
+                    }
                     let desc_type = setup.descriptor_type();
                     let desc_index = setup.descriptor_index();
                     let data = match desc_type {
@@ -201,25 +229,48 @@ impl UsbDeviceModel for UsbHidMouse {
                         .unwrap_or(ControlResponse::Stall)
                 }
                 USB_REQUEST_SET_CONFIGURATION => {
-                    self.configuration = (setup.w_value & 0x00ff) as u8;
+                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                        return ControlResponse::Stall;
+                    }
+                    let config = (setup.w_value & 0x00ff) as u8;
+                    if config > 1 {
+                        return ControlResponse::Stall;
+                    }
+                    self.configuration = config;
                     if self.configuration == 0 {
                         self.pending_reports.clear();
                     }
                     ControlResponse::Ack
                 }
-                USB_REQUEST_GET_CONFIGURATION => ControlResponse::Data(vec![self.configuration]),
+                USB_REQUEST_GET_CONFIGURATION => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                        return ControlResponse::Stall;
+                    }
+                    ControlResponse::Data(clamp_response(vec![self.configuration], setup.w_length))
+                }
                 _ => ControlResponse::Stall,
             },
             (RequestType::Standard, RequestRecipient::Interface) => match setup.b_request {
-                USB_REQUEST_GET_STATUS => ControlResponse::Data(vec![0, 0]),
+                USB_REQUEST_GET_STATUS => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                        return ControlResponse::Stall;
+                    }
+                    ControlResponse::Data(clamp_response(vec![0, 0], setup.w_length))
+                }
                 USB_REQUEST_GET_INTERFACE => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost {
+                        return ControlResponse::Stall;
+                    }
                     if setup.w_index == 0 {
-                        ControlResponse::Data(vec![0])
+                        ControlResponse::Data(clamp_response(vec![0], setup.w_length))
                     } else {
                         ControlResponse::Stall
                     }
                 }
                 USB_REQUEST_SET_INTERFACE => {
+                    if setup.request_direction() != RequestDirection::HostToDevice {
+                        return ControlResponse::Stall;
+                    }
                     if setup.w_index == 0 && setup.w_value == 0 {
                         ControlResponse::Ack
                     } else {
@@ -227,6 +278,9 @@ impl UsbDeviceModel for UsbHidMouse {
                     }
                 }
                 USB_REQUEST_GET_DESCRIPTOR => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                        return ControlResponse::Stall;
+                    }
                     let desc_type = setup.descriptor_type();
                     let data = match desc_type {
                         USB_DESCRIPTOR_TYPE_HID_REPORT => Some(self.get_hid_report_descriptor().to_vec()),
@@ -240,13 +294,19 @@ impl UsbDeviceModel for UsbHidMouse {
             },
             (RequestType::Standard, RequestRecipient::Endpoint) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_value != 0 {
+                        return ControlResponse::Stall;
+                    }
                     if setup.w_index != INTERRUPT_IN_EP as u16 {
                         return ControlResponse::Stall;
                     }
                     let status: u16 = if self.interrupt_in_halted { 1 } else { 0 };
-                    ControlResponse::Data(status.to_le_bytes().to_vec())
+                    ControlResponse::Data(clamp_response(status.to_le_bytes().to_vec(), setup.w_length))
                 }
                 USB_REQUEST_CLEAR_FEATURE => {
+                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0 {
+                        return ControlResponse::Stall;
+                    }
                     if setup.w_value == USB_FEATURE_ENDPOINT_HALT && setup.w_index == INTERRUPT_IN_EP as u16 {
                         self.interrupt_in_halted = false;
                         ControlResponse::Ack
@@ -255,6 +315,9 @@ impl UsbDeviceModel for UsbHidMouse {
                     }
                 }
                 USB_REQUEST_SET_FEATURE => {
+                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0 {
+                        return ControlResponse::Stall;
+                    }
                     if setup.w_value == USB_FEATURE_ENDPOINT_HALT && setup.w_index == INTERRUPT_IN_EP as u16 {
                         self.interrupt_in_halted = true;
                         ControlResponse::Ack
@@ -266,6 +329,9 @@ impl UsbDeviceModel for UsbHidMouse {
             },
             (RequestType::Class, RequestRecipient::Interface) => match setup.b_request {
                 HID_REQUEST_GET_REPORT => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                        return ControlResponse::Stall;
+                    }
                     let report = MouseReport {
                         buttons: self.buttons,
                         x: 0,
@@ -275,13 +341,29 @@ impl UsbDeviceModel for UsbHidMouse {
                     .to_bytes(self.protocol);
                     ControlResponse::Data(clamp_response(report, setup.w_length))
                 }
-                HID_REQUEST_GET_IDLE => ControlResponse::Data(vec![self.idle_rate]),
+                HID_REQUEST_GET_IDLE => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                        return ControlResponse::Stall;
+                    }
+                    ControlResponse::Data(clamp_response(vec![self.idle_rate], setup.w_length))
+                }
                 HID_REQUEST_SET_IDLE => {
+                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                        return ControlResponse::Stall;
+                    }
                     self.idle_rate = (setup.w_value >> 8) as u8;
                     ControlResponse::Ack
                 }
-                HID_REQUEST_GET_PROTOCOL => ControlResponse::Data(vec![self.protocol as u8]),
+                HID_REQUEST_GET_PROTOCOL => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                        return ControlResponse::Stall;
+                    }
+                    ControlResponse::Data(clamp_response(vec![self.protocol as u8], setup.w_length))
+                }
                 HID_REQUEST_SET_PROTOCOL => {
+                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                        return ControlResponse::Stall;
+                    }
                     if let Some(proto) = HidProtocol::from_u16(setup.w_value) {
                         self.protocol = proto;
                         ControlResponse::Ack
@@ -502,5 +584,21 @@ mod tests {
             None,
         );
         assert_eq!(resp, ControlResponse::Data(vec![0x02, 0x00]));
+    }
+
+    #[test]
+    fn stalls_on_wrong_direction() {
+        let mut mouse = UsbHidMouse::new();
+        let resp = mouse.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: USB_REQUEST_GET_DESCRIPTOR,
+                w_value: (USB_DESCRIPTOR_TYPE_DEVICE as u16) << 8,
+                w_index: 0,
+                w_length: 18,
+            },
+            None,
+        );
+        assert_eq!(resp, ControlResponse::Stall);
     }
 }
