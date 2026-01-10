@@ -8,7 +8,7 @@
 ---
  
 ## 0. Executive summary
- 
+  
 We will implement a **WDDM 1.1 display miniport driver (KMD)** plus a **D3D9Ex user-mode display driver (UMD)** that together provide:
  
 1. **Display bring-up + modesetting** (single monitor, fixed EDID).
@@ -23,7 +23,9 @@ We will implement a **WDDM 1.1 display miniport driver (KMD)** plus a **D3D9Ex u
 The key architectural choice is to **avoid implementing a traditional, hardware-specific DMA instruction stream**. Instead, the UMD emits an **AeroGPU-specific command stream** (an IR) that the emulator consumes and translates to the host graphics API (WebGPU).
  
 This doc is the implementation spec for the Win7 driver stack. It intentionally focuses on the minimal surface area needed to achieve DWM + D3D9 stability before expanding into D3D10/11.
- 
+
+Implementation + build tooling lives under `drivers/aerogpu/` (start at `drivers/aerogpu/README.md`).
+  
 ---
  
 ## 1. Why WDDM 1.1 (Win7) + what minimal success looks like
@@ -74,11 +76,11 @@ We define success in three tiers (each tier must remain stable over time):
  
 We ship UMDs as separate DLLs because Windows loads them per-API/runtime.
  
-**Phase 1 (MVP):**
- 
-- **D3D9Ex UMD**
-  - 64-bit: `aerogpuumd9.dll` (loaded by 64-bit apps on x64)
-  - 32-bit: `aerogpuumd9_32.dll` (loaded by 32-bit apps under WOW64 on x64, and as primary on x86)
+ **Phase 1 (MVP):**
+  
+ - **D3D9Ex UMD**
+  - 64-bit: `aerogpu_d3d9_x64.dll` (loaded by 64-bit apps on x64)
+  - 32-bit: `aerogpu_d3d9.dll` (loaded by 32-bit apps under WOW64 on x64, and as primary on x86)
  
 **Later phases:**
 
@@ -91,14 +93,14 @@ For a minimal D3D10/D3D11 UMD bring-up checklist (DDI entrypoints, FL10_0 target
  
 ### 2.3 INF + packaging
  
-We ship a standard display driver package:
+ We ship a standard display driver package:
  
-- `aerogpu.inf` — device installation + registry configuration
-- `aerogpu.cat` — signed catalog
-- `aerogpu.sys` — KMD
-- `aerogpuumd9.dll` / `aerogpuumd9_32.dll` — UMDs
- 
-**INF essentials (Win7 WDDM):**
+ - `aerogpu.inf` — device installation + registry configuration
+ - `aerogpu.cat` — signed catalog
+ - `aerogpu.sys` — KMD
+ - `aerogpu_d3d9_x64.dll` / `aerogpu_d3d9.dll` — D3D9 UMDs (x64 + WOW64/x86)
+  
+ **INF essentials (Win7 WDDM):**
  
 - Device is class `Display` (`{4d36e968-e325-11ce-bfc1-08002be10318}`)
 - Bind by PCI vendor/device ID (AeroGPU’s virtual PCI IDs)
@@ -119,7 +121,7 @@ App/DWM
 Microsoft D3D9 runtime (user-mode)
   │  D3DDDI calls
   ▼
-AeroGPU D3D9 UMD (aerogpuumd9*.dll)
+AeroGPU D3D9 UMD (aerogpu_d3d9*.dll)
   │  builds AeroGPU command stream + allocation list
   │  uses D3DKMT thunk (user→kernel)
   ▼
@@ -722,25 +724,25 @@ We will **not** implement these in the first functional driver (they must return
 ### 9.1 Supported build environment
  
 **KMD (aerogpu.sys):**
- 
+  
 - **WDK:** Windows Driver Kit 7.1 (targets Windows 7 / WDDM 1.1)
 - **Compiler:** VS2008 SP1 or VS2010 toolchain as used by WDK 7.1 build environments
 - **Build system:** WDK `build` (recommended for reproducibility)
- 
-**UMD (aerogpuumd9*.dll):**
- 
-- **Visual Studio:** VS2010 recommended (works with the era’s SDKs)
-- **SDKs:** Use headers/libs corresponding to the D3D9 DDI and D3DKMT (from WDK/DirectX SDK as appropriate).
+  
+**UMDs (aerogpu_d3d9*.dll, optional aerogpu_d3d10*.dll):**
+  
+- **MSBuild:** Visual Studio Build Tools / Visual Studio (see `drivers/aerogpu/build/README.md` for the exact supported versions)
+- **Build entrypoint:** `drivers\aerogpu\build\build_all.cmd`
  
 ### 9.2 Test signing + installation workflow
  
-For development we rely on **test signing**.
+ For development we rely on **test signing**.
  
 1. Create a test certificate (self-signed is fine for local testing).
-2. Sign:
-   - `aerogpu.sys`
-   - `aerogpuumd9.dll` and `aerogpuumd9_32.dll`
-   - generate/sign `aerogpu.cat`
+ 2. Sign:
+    - `aerogpu.sys`
+    - `aerogpu_d3d9_x64.dll` and `aerogpu_d3d9.dll`
+    - generate/sign `aerogpu.cat`
 3. Enable test signing:
  
 ```bat
@@ -752,11 +754,11 @@ shutdown /r /t 0
    - Trusted Root Certification Authorities
    - Trusted Publishers
  
-5. Install the driver package:
+ 5. Install the driver package:
  
 ```bat
-pnputil -i -a aerogpu.inf
-```
+ pnputil -i -a aerogpu.inf
+ ```
  
 **Note:** x64 requires proper signing/test mode; do not rely on “F8 disable enforcement” as a workflow.
  
