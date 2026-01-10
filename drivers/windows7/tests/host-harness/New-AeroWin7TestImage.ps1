@@ -78,7 +78,8 @@ Copy-Item -LiteralPath $DriversDir -Destination $driversOutDir -Recurse -Force
 
 $blkArg = ""
 if (-not [string]::IsNullOrEmpty($BlkRoot)) {
-  $blkArg = " --blk-root $BlkRoot"
+  # schtasks /TR quoting: use backslash-escaped quotes (\"...\") so paths with spaces are safe.
+  $blkArg = " --blk-root " + '\"' + $BlkRoot + '\"'
 }
 
 $enableTestSigningCmd = ""
@@ -133,7 +134,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url $HttpUrl --dns-host $DnsHost$blkArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
