@@ -2,7 +2,7 @@ use core::net::Ipv4Addr;
 
 use nt_packetlib::io::net::packet::{
     arp::{ArpPacket, ArpReplyFrameBuilder, ARP_OP_REPLY},
-    dhcp::{DhcpOfferAckBuilder, DHCP_MSG_OFFER, DHCP_MAGIC_COOKIE},
+    dhcp::{DhcpMessage, DhcpMessageType, DhcpOfferAckBuilder, DHCP_MSG_OFFER},
     dns::{parse_single_query, DnsResponseBuilder, DnsResponseCode},
     ethernet::{EthernetFrame, EthernetFrameBuilder, ETHERTYPE_ARP, ETHERTYPE_IPV4},
     icmp::{IcmpEchoBuilder, Icmpv4Packet},
@@ -129,11 +129,10 @@ fn ipv4_udp_dhcp_offer_roundtrip() {
     .build_vec()
     .unwrap();
 
-    // Quick structural checks (we don't have a full DHCP parser in nt-packetlib yet).
-    assert_eq!(
-        &dhcp[DhcpOfferAckBuilder::BOOTP_FIXED_LEN..DhcpOfferAckBuilder::BOOTP_FIXED_LEN + 4],
-        DHCP_MAGIC_COOKIE
-    );
+    let dhcp_msg = DhcpMessage::parse(&dhcp).unwrap();
+    assert_eq!(dhcp_msg.transaction_id, 0x12345678);
+    assert_eq!(dhcp_msg.client_mac, client_mac);
+    assert_eq!(dhcp_msg.message_type, DhcpMessageType::Offer);
 
     let src_ip = server_ip;
     let dst_ip = Ipv4Addr::BROADCAST;
@@ -257,4 +256,3 @@ fn ipv4_icmp_echo_request_roundtrip() {
     assert_eq!(echo.sequence, 0x0001);
     assert_eq!(echo.payload, b"ping");
 }
-

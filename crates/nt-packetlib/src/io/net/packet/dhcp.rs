@@ -10,7 +10,11 @@ use super::{ensure_out_buf_len, MacAddr, PacketError};
 
 pub const DHCP_MAGIC_COOKIE: [u8; 4] = [99, 130, 83, 99];
 
+pub const DHCP_OP_BOOTREQUEST: u8 = 1;
+pub const DHCP_OP_BOOTREPLY: u8 = 2;
+
 pub const DHCP_OPT_MESSAGE_TYPE: u8 = 53;
+pub const DHCP_OPT_REQUESTED_IP: u8 = 50;
 pub const DHCP_OPT_SERVER_IDENTIFIER: u8 = 54;
 pub const DHCP_OPT_SUBNET_MASK: u8 = 1;
 pub const DHCP_OPT_ROUTER: u8 = 3;
@@ -20,8 +24,125 @@ pub const DHCP_OPT_RENEWAL_TIME: u8 = 58;
 pub const DHCP_OPT_REBINDING_TIME: u8 = 59;
 pub const DHCP_OPT_END: u8 = 255;
 
+pub const DHCP_MSG_DISCOVER: u8 = 1;
 pub const DHCP_MSG_OFFER: u8 = 2;
+pub const DHCP_MSG_REQUEST: u8 = 3;
 pub const DHCP_MSG_ACK: u8 = 5;
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DhcpMessageType {
+    Discover = 1,
+    Offer = 2,
+    Request = 3,
+    Decline = 4,
+    Ack = 5,
+    Nak = 6,
+    Release = 7,
+    Inform = 8,
+}
+
+impl DhcpMessageType {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        Some(match v {
+            1 => DhcpMessageType::Discover,
+            2 => DhcpMessageType::Offer,
+            3 => DhcpMessageType::Request,
+            4 => DhcpMessageType::Decline,
+            5 => DhcpMessageType::Ack,
+            6 => DhcpMessageType::Nak,
+            7 => DhcpMessageType::Release,
+            8 => DhcpMessageType::Inform,
+            _ => return None,
+        })
+    }
+}
+
+/// Parsed subset of a DHCP message (sufficient for a minimal DHCP server).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DhcpMessage {
+    pub op: u8,
+    pub transaction_id: u32,
+    pub flags: u16,
+    pub client_mac: MacAddr,
+    pub message_type: DhcpMessageType,
+    pub requested_ip: Option<Ipv4Addr>,
+    pub server_identifier: Option<Ipv4Addr>,
+}
+
+impl DhcpMessage {
+    pub fn parse(buf: &[u8]) -> Result<Self, PacketError> {
+        // BOOTP fixed header is 236 bytes, followed by the DHCP magic cookie.
+        super::ensure_len(buf, DhcpOfferAckBuilder::BOOTP_FIXED_LEN + 4)?;
+
+        let op = buf[0];
+        if op != DHCP_OP_BOOTREQUEST && op != DHCP_OP_BOOTREPLY {
+            return Err(PacketError::Malformed("DHCP op is not BOOTREQUEST/BOOTREPLY"));
+        }
+        let htype = buf[1];
+        let hlen = buf[2];
+        if htype != 1 || hlen != 6 {
+            return Err(PacketError::Unsupported("non-Ethernet DHCP message"));
+        }
+
+        let transaction_id = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        let flags = u16::from_be_bytes([buf[10], buf[11]]);
+
+        let mut mac = [0u8; 6];
+        mac.copy_from_slice(&buf[28..34]);
+        let client_mac = MacAddr(mac);
+
+        if buf[DhcpOfferAckBuilder::BOOTP_FIXED_LEN..DhcpOfferAckBuilder::BOOTP_FIXED_LEN + 4] != DHCP_MAGIC_COOKIE
+        {
+            return Err(PacketError::Malformed("missing DHCP magic cookie"));
+        }
+
+        let mut message_type = None;
+        let mut requested_ip = None;
+        let mut server_identifier = None;
+
+        let mut idx = DhcpOfferAckBuilder::BOOTP_FIXED_LEN + 4;
+        while idx < buf.len() {
+            let code = buf[idx];
+            idx += 1;
+            match code {
+                0 => continue, // pad
+                DHCP_OPT_END => break,
+                _ => {
+                    super::ensure_len(buf, idx + 1)?;
+                    let len = buf[idx] as usize;
+                    idx += 1;
+                    super::ensure_len(buf, idx + len)?;
+                    let data = &buf[idx..idx + len];
+                    idx += len;
+
+                    match code {
+                        DHCP_OPT_MESSAGE_TYPE if len == 1 => {
+                            message_type = DhcpMessageType::from_u8(data[0]);
+                        }
+                        DHCP_OPT_REQUESTED_IP if len == 4 => {
+                            requested_ip = Some(Ipv4Addr::new(data[0], data[1], data[2], data[3]));
+                        }
+                        DHCP_OPT_SERVER_IDENTIFIER if len == 4 => {
+                            server_identifier = Some(Ipv4Addr::new(data[0], data[1], data[2], data[3]));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        Ok(Self {
+            op,
+            transaction_id,
+            flags,
+            client_mac,
+            message_type: message_type.ok_or(PacketError::Malformed("missing DHCP message type option"))?,
+            requested_ip,
+            server_identifier,
+        })
+    }
+}
 
 pub struct DhcpOfferAckBuilder<'a> {
     pub message_type: u8,
@@ -224,5 +345,53 @@ mod tests {
         let t2 = u32::from_be_bytes(find_opt(opts, DHCP_OPT_REBINDING_TIME).unwrap().try_into().unwrap());
         assert_eq!(t1, 1800);
         assert_eq!(t2, 3150);
+    }
+
+    #[test]
+    fn parse_dhcp_discover() {
+        let mac = MacAddr([0xde, 0xad, 0xbe, 0xef, 0x00, 0x01]);
+        let xid: u32 = 0x12345678;
+
+        let mut buf = vec![0u8; DhcpOfferAckBuilder::BOOTP_FIXED_LEN + 4];
+        buf[0] = DHCP_OP_BOOTREQUEST;
+        buf[1] = 1;
+        buf[2] = 6;
+        buf[4..8].copy_from_slice(&xid.to_be_bytes());
+        buf[10..12].copy_from_slice(&0x8000u16.to_be_bytes());
+        buf[28..34].copy_from_slice(&mac.0);
+        buf[DhcpOfferAckBuilder::BOOTP_FIXED_LEN..DhcpOfferAckBuilder::BOOTP_FIXED_LEN + 4]
+            .copy_from_slice(&DHCP_MAGIC_COOKIE);
+        buf.extend_from_slice(&[DHCP_OPT_MESSAGE_TYPE, 1, DHCP_MSG_DISCOVER]);
+        buf.extend_from_slice(&[DHCP_OPT_END]);
+
+        let msg = DhcpMessage::parse(&buf).unwrap();
+        assert_eq!(msg.op, DHCP_OP_BOOTREQUEST);
+        assert_eq!(msg.transaction_id, xid);
+        assert_eq!(msg.flags, 0x8000);
+        assert_eq!(msg.client_mac, mac);
+        assert_eq!(msg.message_type, DhcpMessageType::Discover);
+    }
+
+    #[test]
+    fn parse_dhcp_offer_from_builder() {
+        let offer = DhcpOfferAckBuilder {
+            message_type: DHCP_MSG_OFFER,
+            transaction_id: 0x12345678,
+            client_mac: MacAddr([0, 1, 2, 3, 4, 5]),
+            your_ip: Ipv4Addr::new(10, 0, 0, 100),
+            server_ip: Ipv4Addr::new(10, 0, 0, 1),
+            subnet_mask: Ipv4Addr::new(255, 255, 255, 0),
+            router: Ipv4Addr::new(10, 0, 0, 1),
+            dns_servers: &[Ipv4Addr::new(1, 1, 1, 1)],
+            lease_time_secs: 3600,
+        }
+        .build_vec()
+        .unwrap();
+
+        let msg = DhcpMessage::parse(&offer).unwrap();
+        assert_eq!(msg.op, DHCP_OP_BOOTREPLY);
+        assert_eq!(msg.transaction_id, 0x12345678);
+        assert_eq!(msg.message_type, DhcpMessageType::Offer);
+        assert_eq!(msg.client_mac, MacAddr([0, 1, 2, 3, 4, 5]));
     }
 }
