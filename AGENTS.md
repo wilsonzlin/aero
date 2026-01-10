@@ -71,6 +71,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 3. **Modern storage APIs**: OPFS (Origin Private File System) enables fast, large file access
 4. **Improved JIT**: Browser engines have mature JIT compilers we can leverage
 5. **Memory**: Modern browsers can allocate multi-GB WASM memories
+   - Practically constrained by wasm32 (≤4GiB addressable) and browser/OS allocation caps (often lower).
 
 ---
 
@@ -354,6 +355,7 @@ pub trait DisplayAdapter {
 | Storage Backend         | OPFS primary, IndexedDB fallback             | Large file support                      |
 | Network Transport       | WebSocket (TCP), WebRTC (UDP)                | Browser networking constraints          |
 | Audio Processing        | AudioWorklet                                 | Low latency audio                       |
+| Browser memory model    | Split buffers (shared `WebAssembly.Memory` + small SABs) | Avoid >4GiB offsets and single huge SAB allocations |
 
 
 ---
