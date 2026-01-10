@@ -48,10 +48,20 @@ pub enum MemoryBusError {
         existing_start: u64,
         existing_end: u64,
     },
+    /// `addr + len` overflowed `u64`.
+    AddressOverflow { addr: u64, len: usize },
     /// The access is not backed by RAM, MMIO, or ROM.
     Unmapped { addr: u64, len: usize },
     /// The access fell within RAM but exceeded the guest RAM size.
     RamOutOfBounds(PhysicalMemoryError),
+    /// A DMA-style RAM-only operation overlaps an MMIO region.
+    MmioAccess { addr: u64, len: usize },
+    /// A DMA-style RAM-only operation overlaps a ROM region.
+    RomAccess { addr: u64, len: usize },
+    /// Scatter/gather total length overflowed `usize`.
+    LengthOverflow,
+    /// Scatter/gather buffer length mismatch.
+    LengthMismatch { expected: usize, actual: usize },
 }
 
 impl std::fmt::Display for MemoryBusError {
@@ -69,10 +79,24 @@ impl std::fmt::Display for MemoryBusError {
                 f,
                 "memory region {start:#x}..{end:#x} overlaps with existing {existing_start:#x}..{existing_end:#x}"
             ),
+            MemoryBusError::AddressOverflow { addr, len } => {
+                write!(f, "address overflow: addr={addr:#x} len={len}")
+            }
             MemoryBusError::Unmapped { addr, len } => {
                 write!(f, "unmapped memory access: addr={addr:#x} len={len}")
             }
             MemoryBusError::RamOutOfBounds(err) => write!(f, "{err}"),
+            MemoryBusError::MmioAccess { addr, len } => {
+                write!(f, "DMA access overlaps MMIO: addr={addr:#x} len={len}")
+            }
+            MemoryBusError::RomAccess { addr, len } => {
+                write!(f, "DMA access overlaps ROM: addr={addr:#x} len={len}")
+            }
+            MemoryBusError::LengthOverflow => write!(f, "scatter/gather length overflow"),
+            MemoryBusError::LengthMismatch { expected, actual } => write!(
+                f,
+                "scatter/gather length mismatch: expected={expected} actual={actual}"
+            ),
         }
     }
 }
@@ -146,6 +170,56 @@ impl MemoryBus {
         &self.ram
     }
 
+    #[inline]
+    fn checked_end(addr: u64, len: usize) -> Result<u64, MemoryBusError> {
+        addr.checked_add(len as u64)
+            .ok_or(MemoryBusError::AddressOverflow { addr, len })
+    }
+
+    fn overlapping_overlay(&self, start: u64, end: u64) -> Option<&OverlayRegion> {
+        debug_assert!(start < end);
+
+        // Find the first region whose start is >= end; any overlap must be in idx-1 because
+        // regions are disjoint and sorted by `start`.
+        let idx = self.overlays.partition_point(|r| r.start < end);
+        if idx == 0 {
+            return None;
+        }
+
+        let candidate = &self.overlays[idx - 1];
+        if candidate.end > start {
+            Some(candidate)
+        } else {
+            None
+        }
+    }
+
+    fn check_dma_ram_range(&self, addr: u64, len: usize) -> Result<(), MemoryBusError> {
+        if len == 0 {
+            return Ok(());
+        }
+
+        let end = Self::checked_end(addr, len)?;
+        if end > self.ram.len() {
+            return Err(MemoryBusError::RamOutOfBounds(
+                PhysicalMemoryError::OutOfBounds {
+                    addr,
+                    len,
+                    size: self.ram.len(),
+                },
+            ));
+        }
+
+        if let Some(region) = self.overlapping_overlay(addr, end) {
+            return Err(match &region.kind {
+                OverlayKind::Mmio(_) => MemoryBusError::MmioAccess { addr, len },
+                OverlayKind::Rom(_) => MemoryBusError::RomAccess { addr, len },
+            });
+        }
+
+        Ok(())
+    }
+
     fn insert_overlay(&mut self, region: OverlayRegion) -> Result<(), MemoryBusError> {
         if region.start >= region.end {
             return Err(MemoryBusError::InvalidRange {
@@ -210,6 +284,8 @@ impl MemoryBus {
             return Ok(());
         }
 
+        let _ = Self::checked_end(addr, dst.len())?;
+
         let mut cur_addr = addr;
         let mut dst_offset = 0usize;
 
@@ -228,21 +304,9 @@ impl MemoryBus {
                             .copy_from_slice(&data[base..base + seg_len]);
                     }
                     OverlayKind::Mmio(handler) => {
-                        // Most MMIO accesses are small; for larger ranges fall back to per-byte.
-                        if seg_len <= 16 {
-                            compiler_fence(Ordering::SeqCst);
-                            handler.read(offset, &mut dst[dst_offset..dst_offset + seg_len]);
-                            compiler_fence(Ordering::SeqCst);
-                        } else {
-                            for i in 0..seg_len {
-                                compiler_fence(Ordering::SeqCst);
-                                handler.read(
-                                    offset + i as u64,
-                                    &mut dst[dst_offset + i..dst_offset + i + 1],
-                                );
-                                compiler_fence(Ordering::SeqCst);
-                            }
-                        }
+                        compiler_fence(Ordering::SeqCst);
+                        handler.read(offset, &mut dst[dst_offset..dst_offset + seg_len]);
+                        compiler_fence(Ordering::SeqCst);
                     }
                 }
 
@@ -282,6 +346,8 @@ impl MemoryBus {
             return Ok(());
         }
 
+        let _ = Self::checked_end(addr, src.len())?;
+
         let mut cur_addr = addr;
         let mut src_offset = 0usize;
 
@@ -298,20 +364,9 @@ impl MemoryBus {
                         // Writes to ROM are ignored.
                     }
                     OverlayKind::Mmio(handler) => {
-                        if seg_len <= 16 {
-                            compiler_fence(Ordering::SeqCst);
-                            handler.write(offset, &src[src_offset..src_offset + seg_len]);
-                            compiler_fence(Ordering::SeqCst);
-                        } else {
-                            for i in 0..seg_len {
-                                compiler_fence(Ordering::SeqCst);
-                                handler.write(
-                                    offset + i as u64,
-                                    &src[src_offset + i..src_offset + i + 1],
-                                );
-                                compiler_fence(Ordering::SeqCst);
-                            }
-                        }
+                        compiler_fence(Ordering::SeqCst);
+                        handler.write(offset, &src[src_offset..src_offset + seg_len]);
+                        compiler_fence(Ordering::SeqCst);
                     }
                 }
 
@@ -342,6 +397,79 @@ impl MemoryBus {
             src_offset += seg_len;
         }
 
+        Ok(())
+    }
+
+    /// Bulk read restricted to guest RAM.
+    ///
+    /// This is intended for DMA-style paths (disk/network) that must not trigger
+    /// MMIO side effects and must not read from ROM.
+    pub fn try_read_ram_bytes(&self, addr: u64, dst: &mut [u8]) -> Result<(), MemoryBusError> {
+        self.check_dma_ram_range(addr, dst.len())?;
+        self.ram.try_read_bytes(addr, dst)?;
+        Ok(())
+    }
+
+    /// Bulk write restricted to guest RAM.
+    ///
+    /// This is intended for DMA-style paths (disk/network) that must not trigger
+    /// MMIO side effects and must not write into ROM/MMIO.
+    pub fn try_write_ram_bytes(&self, addr: u64, src: &[u8]) -> Result<(), MemoryBusError> {
+        self.check_dma_ram_range(addr, src.len())?;
+        self.ram.try_write_bytes(addr, src)?;
+        Ok(())
+    }
+
+    fn validate_sg(&self, segments: &[(u64, usize)], buf_len: usize) -> Result<(), MemoryBusError> {
+        let mut total = 0usize;
+        for (_, len) in segments {
+            total = total
+                .checked_add(*len)
+                .ok_or(MemoryBusError::LengthOverflow)?;
+        }
+        if total != buf_len {
+            return Err(MemoryBusError::LengthMismatch {
+                expected: total,
+                actual: buf_len,
+            });
+        }
+        for (addr, len) in segments {
+            self.check_dma_ram_range(*addr, *len)?;
+        }
+        Ok(())
+    }
+
+    /// Scatter/gather read restricted to guest RAM.
+    pub fn try_read_sg(
+        &self,
+        segments: &[(u64, usize)],
+        dst: &mut [u8],
+    ) -> Result<(), MemoryBusError> {
+        self.validate_sg(segments, dst.len())?;
+
+        let mut out = dst;
+        for (addr, len) in segments {
+            let (head, tail) = out.split_at_mut(*len);
+            self.ram.try_read_bytes(*addr, head)?;
+            out = tail;
+        }
+        Ok(())
+    }
+
+    /// Scatter/gather write restricted to guest RAM.
+    pub fn try_write_sg(
+        &self,
+        segments: &[(u64, usize)],
+        src: &[u8],
+    ) -> Result<(), MemoryBusError> {
+        self.validate_sg(segments, src.len())?;
+
+        let mut input = src;
+        for (addr, len) in segments {
+            let (head, tail) = input.split_at(*len);
+            self.ram.try_write_bytes(*addr, head)?;
+            input = tail;
+        }
         Ok(())
     }
 

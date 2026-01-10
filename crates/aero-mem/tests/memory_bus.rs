@@ -1,4 +1,5 @@
 use aero_mem::{MemoryBus, MmioHandler, PhysicalMemory, PhysicalMemoryOptions};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -92,4 +93,70 @@ fn little_endian_typed_accesses() {
         bus.read_u128(0x20),
         0x0011_2233_4455_6677_8899_AABB_CCDD_EEFFu128
     );
+}
+
+#[derive(Default)]
+struct CountingMmio {
+    reads: AtomicUsize,
+    writes: AtomicUsize,
+}
+
+impl CountingMmio {
+    fn reads(&self) -> usize {
+        self.reads.load(Ordering::Relaxed)
+    }
+
+    fn writes(&self) -> usize {
+        self.writes.load(Ordering::Relaxed)
+    }
+}
+
+impl MmioHandler for CountingMmio {
+    fn read(&self, _offset: u64, data: &mut [u8]) {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        data.fill(0xCC);
+    }
+
+    fn write(&self, _offset: u64, _data: &[u8]) {
+        self.writes.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[test]
+fn dma_rejects_mmio_without_side_effects_or_partial_write() {
+    let ram = make_ram(0x4000);
+    let mut bus = MemoryBus::new(ram.clone());
+
+    let mmio = Arc::new(CountingMmio::default());
+    bus.register_mmio(0x2000..0x2100, mmio.clone()).unwrap();
+
+    // Pre-fill RAM so we can detect partial writes.
+    ram.write_bytes(0x1FF0, &[0xAA; 16]);
+
+    let err = bus
+        .try_write_sg(&[(0x1FF0, 16), (0x2000, 4)], &[0x55; 20])
+        .unwrap_err();
+    assert!(matches!(err, aero_mem::MemoryBusError::MmioAccess { .. }));
+
+    // The MMIO handler must not have been called.
+    assert_eq!(mmio.reads(), 0);
+    assert_eq!(mmio.writes(), 0);
+
+    // No partial write into RAM.
+    let mut buf = [0u8; 16];
+    ram.read_bytes(0x1FF0, &mut buf);
+    assert_eq!(buf, [0xAA; 16]);
+}
+
+#[test]
+fn dma_rejects_rom_without_partial_read() {
+    let ram = make_ram(0x4000);
+    let mut bus = MemoryBus::new(ram.clone());
+
+    bus.register_rom(0x3000, Arc::from([1u8, 2, 3, 4])).unwrap();
+
+    let mut dst = [0xAAu8; 8];
+    let err = bus.try_read_ram_bytes(0x2FFC, &mut dst).unwrap_err();
+    assert!(matches!(err, aero_mem::MemoryBusError::RomAccess { .. }));
+    assert_eq!(dst, [0xAAu8; 8]);
 }
