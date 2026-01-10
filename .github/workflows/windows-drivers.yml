@@ -1,0 +1,47 @@
+name: build-windows-drivers
+
+on:
+  push:
+    paths:
+      - "guest/windows/**"
+      - ".github/workflows/windows-drivers.yml"
+  pull_request:
+    paths:
+      - "guest/windows/**"
+      - ".github/workflows/windows-drivers.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install Windows Driver Kit (WDK)
+        shell: powershell
+        run: |
+          # GitHub-hosted runners do not ship with the WDK by default.
+          # The Chocolatey package name is stable across WDK releases.
+          choco install windows-driver-kit -y --no-progress
+
+      - name: Build (Release x64)
+        run: msbuild .\guest\windows\aerogpu_driver.sln /m /p:Configuration=Release /p:Platform=x64
+
+      - name: Collect artifacts
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Copy-Item .\guest\windows\inf\aerogpu.inf out\
+          Copy-Item .\guest\windows\wddm_kmd\x64\Release\aerogpu_kmd.sys out\
+          Copy-Item .\guest\windows\d3d9_umd\x64\Release\aerogpu_d3d9umd.dll out\
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aerogpu-windows-drivers
+          path: out/
+

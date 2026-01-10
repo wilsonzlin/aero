@@ -160,3 +160,15 @@ web/src/wasm/pkg-single/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Visual Studio / MSBuild
+**/bin/
+**/obj/
+**/.vs/
+**/*.user
+**/*.suo
+**/*.tlog
+**/*.ipch
+**/*.ilk
+**/*.exp
+**/*.lib
