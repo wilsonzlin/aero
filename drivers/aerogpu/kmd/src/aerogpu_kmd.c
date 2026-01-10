@@ -1095,13 +1095,16 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             return STATUS_BUFFER_TOO_SMALL;
         }
 
+        const ULONG completedFence = adapter->Bar0 ? AeroGpuReadRegU32(adapter, AEROGPU_REG_FENCE_COMPLETED)
+                                                   : adapter->LastCompletedFence;
+
         aerogpu_escape_query_fence_out* out = (aerogpu_escape_query_fence_out*)pEscape->pPrivateDriverData;
         out->hdr.version = AEROGPU_ESCAPE_VERSION;
         out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
         out->hdr.size = sizeof(*out);
         out->hdr.reserved0 = 0;
         out->last_submitted_fence = (aerogpu_u64)adapter->LastSubmittedFence;
-        out->last_completed_fence = (aerogpu_u64)adapter->LastCompletedFence;
+        out->last_completed_fence = (aerogpu_u64)completedFence;
         return STATUS_SUCCESS;
     }
 
@@ -1206,7 +1209,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
          * Completion is detected by observing ring head advancement, not fence
          * advancement.
          */
-        const ULONG fenceNoop = adapter->LastCompletedFence;
+        const ULONG completedFence = AeroGpuReadRegU32(adapter, AEROGPU_REG_FENCE_COMPLETED);
+        const ULONG fenceNoop = completedFence;
 
         AEROGPU_CMD_HEADER cmdHdr;
         RtlZeroMemory(&cmdHdr, sizeof(cmdHdr));
@@ -1257,7 +1261,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 KIRQL pendingIrql;
                 KeAcquireSpinLock(&adapter->PendingLock, &pendingIrql);
                 BOOLEAN busy = !IsListEmpty(&adapter->PendingSubmissions) ||
-                               (adapter->LastSubmittedFence != adapter->LastCompletedFence);
+                               (adapter->LastSubmittedFence != completedFence);
                 KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
                 if (busy) {
                     pushStatus = STATUS_DEVICE_BUSY;
