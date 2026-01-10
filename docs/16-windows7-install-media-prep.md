@@ -207,6 +207,15 @@ See `windows/win7-sp1/unattend/README.md` for the full expected structure and pa
 - Fast path: if you just want a repeatable one-command workflow (drivers + offline cert trust + BCD patching), use:
   - `tools/windows/patch-win7-media.ps1` (see `tools/windows/README.md`)
 
+- Example:
+  ```powershell
+  pwsh .\tools\windows\patch-win7-media.ps1 `
+    -MediaRoot C:\win7-slipstream\iso `
+    -CertPath  C:\certs\aero-test-root.cer `
+    -DriversPath C:\aero\drivers\win7 `
+    -InstallWimIndices all
+  ```
+
 - Windows 10/11 host (or Windows VM) with:
   - DISM (`dism.exe`) available (built-in).
   - Optional: Windows ADK `oscdimg.exe` for ISO rebuild.
@@ -222,6 +231,15 @@ $IsoDrive = "E:"                       # mounted ISO
 $WorkDir  = "C:\\win7-slipstream\\iso"
 New-Item -ItemType Directory -Force $WorkDir | Out-Null
 robocopy "$IsoDrive\\" "$WorkDir\\" /E
+```
+
+Note: Some ISO extraction/copy methods mark files as read-only. If you are doing the manual workflow below (not using `patch-win7-media.ps1`), ensure files are writable before patching:
+
+```powershell
+attrib -r "$WorkDir\\sources\\boot.wim"
+attrib -r "$WorkDir\\sources\\install.wim"
+attrib -r "$WorkDir\\boot\\BCD"
+if (Test-Path "$WorkDir\\efi\\microsoft\\boot\\BCD") { attrib -r "$WorkDir\\efi\\microsoft\\boot\\BCD" }
 ```
 
 ### 2) Inject drivers into `sources/boot.wim`
