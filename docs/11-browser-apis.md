@@ -36,16 +36,14 @@ Modern browsers gate **WebAssembly threads** and **SharedArrayBuffer** behind **
 - `SharedArrayBuffer` must be defined
 - `Atomics` must be available
 
-Cross-origin isolation is enabled by two HTTP response headers on the **top-level document**:
+Serve the **top-level HTML document** and all app-owned **JS / worker scripts / `.wasm` responses** with:
 
 ```
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
-Many deployments apply these headers to **all app-owned responses** (HTML + JS + worker scripts + `.wasm`) because it simplifies CDN/proxy configuration and avoids accidentally serving a document without the required headers.
-
-> `Cross-Origin-Opener-Policy` only affects documents, but it is harmless to set it on static assets. `Cross-Origin-Embedder-Policy` is what enforces the “no non-opted-in cross-origin subresources” rule that can break `crossOriginIsolated`.
+> `Cross-Origin-Opener-Policy` only affects documents, but it is harmless to set it on static assets; applying both headers broadly simplifies CDN/proxy configuration. `Cross-Origin-Embedder-Policy` is what enforces the “no non-opted-in cross-origin subresources” rule that can break `crossOriginIsolated`.
 
 These must be delivered as **HTTP response headers** (not `<meta http-equiv>`).
 
