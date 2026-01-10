@@ -84,6 +84,10 @@ try {
     io.portWrite(0x0cf8, 4, 0x8000_0010);
     const bar0 = io.portRead(0x0cfc, 4);
 
+    // Enable memory space decoding (PCI command bit1) so the BAR-backed MMIO region is active.
+    io.portWrite(0x0cf8, 4, 0x8000_0004);
+    io.portWrite(0x0cfc, 2, 0x0002);
+
     const base = BigInt(bar0 >>> 0);
     io.mmioWrite(base + 0n, 4, 0x1234_5678);
     const mmioReadback = io.mmioRead(base + 0n, 4);

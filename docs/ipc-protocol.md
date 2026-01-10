@@ -167,6 +167,8 @@ Each message begins with a 16-bit `tag` identifying the variant; the rest is var
 | `0x1200` | `FrameReady` | `u64 frame_id` |
 | `0x1300` | `IrqRaise` | `u8 irq` |
 | `0x1301` | `IrqLower` | `u8 irq` |
+| `0x1302` | `A20Set` | `u8 enabled` |
+| `0x1303` | `ResetRequest` | none |
 | `0x1400` | `Log` | `u8 level`, `u32 len`, `len bytes UTF-8 message` |
 | `0x1500` | `SerialOutput` | `u16 port`, `u32 len`, `len bytes data` |
 | `0x1FFE` | `Panic` | `u32 len`, `len bytes UTF-8 message` |

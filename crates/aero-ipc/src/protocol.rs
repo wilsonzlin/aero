@@ -68,6 +68,12 @@ pub enum Event {
     IrqRaise { irq: u8 },
     IrqLower { irq: u8 },
 
+    /// System A20 gate line changed (typically via i8042 output port).
+    A20Set { enabled: bool },
+
+    /// System reset requested (typically via i8042 output port / reset pulse).
+    ResetRequest,
+
     /// Structured log record (UTF-8).
     Log { level: LogLevel, message: String },
 
@@ -152,6 +158,8 @@ const EVT_TAG_PORT_WRITE_RESP: u16 = 0x1103;
 const EVT_TAG_FRAME_READY: u16 = 0x1200;
 const EVT_TAG_IRQ_RAISE: u16 = 0x1300;
 const EVT_TAG_IRQ_LOWER: u16 = 0x1301;
+const EVT_TAG_A20_SET: u16 = 0x1302;
+const EVT_TAG_RESET_REQUEST: u16 = 0x1303;
 const EVT_TAG_LOG: u16 = 0x1400;
 const EVT_TAG_SERIAL_OUTPUT: u16 = 0x1500;
 const EVT_TAG_PANIC: u16 = 0x1FFE;
@@ -249,6 +257,13 @@ pub fn encode_event_into(evt: &Event, out: &mut Vec<u8>) {
             push_u16(out, EVT_TAG_IRQ_LOWER);
             out.push(*irq);
         }
+        Event::A20Set { enabled } => {
+            push_u16(out, EVT_TAG_A20_SET);
+            out.push(if *enabled { 1 } else { 0 });
+        }
+        Event::ResetRequest => {
+            push_u16(out, EVT_TAG_RESET_REQUEST);
+        }
         Event::Log { level, message } => {
             push_u16(out, EVT_TAG_LOG);
             out.push(level.to_u8());
@@ -340,6 +355,10 @@ pub fn decode_event(bytes: &[u8]) -> Result<Event, DecodeError> {
         },
         EVT_TAG_IRQ_RAISE => Event::IrqRaise { irq: r.read_u8()? },
         EVT_TAG_IRQ_LOWER => Event::IrqLower { irq: r.read_u8()? },
+        EVT_TAG_A20_SET => Event::A20Set {
+            enabled: r.read_u8()? != 0,
+        },
+        EVT_TAG_RESET_REQUEST => Event::ResetRequest,
         EVT_TAG_LOG => {
             let level = LogLevel::from_u8(r.read_u8()?)?;
             let len = r.read_u32()? as usize;

@@ -34,7 +34,10 @@ describe("ipc/protocol", () => {
       { kind: "frameReady" as const, frameId: 999n },
       { kind: "irqRaise" as const, irq: 5 },
       { kind: "irqLower" as const, irq: 5 },
+      { kind: "a20Set" as const, enabled: true },
+      { kind: "resetRequest" as const },
       { kind: "log" as const, level: "info" as const, message: "hello" },
+      { kind: "serialOutput" as const, port: 0x3f8, data: Uint8Array.of(0x48, 0x69) },
       { kind: "panic" as const, message: "oh no" },
       { kind: "tripleFault" as const },
     ];

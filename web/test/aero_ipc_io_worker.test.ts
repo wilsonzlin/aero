@@ -57,6 +57,41 @@ test("AIPC I/O worker: i8042 port I/O + IRQ signalling", async () => {
   await ioWorker.terminate();
 });
 
+test("AIPC I/O worker: i8042 output port toggles A20 + requests reset", async () => {
+  const { sab, cmdOffset, evtOffset } = createCmdEvtSharedBuffer(1 << 16, 1 << 16);
+
+  const ioWorker = new Worker(new URL("./workers/aero_ipc_io_server_worker.ts", import.meta.url), {
+    type: "module",
+    workerData: { sab, cmdOffset, evtOffset, devices: ["i8042"], tickIntervalMs: 1 },
+    execArgv: ["--experimental-strip-types"],
+  });
+
+  const cpuWorker = new Worker(new URL("./workers/aero_ipc_cpu_sequence_worker.ts", import.meta.url), {
+    type: "module",
+    workerData: { sab, cmdOffset, evtOffset, scenario: "i8042_output_port" },
+    execArgv: ["--experimental-strip-types"],
+  });
+
+  const [result] = (await once(cpuWorker, "message")) as [
+    {
+      ok: boolean;
+      outPort: number;
+      a20Events: boolean[];
+      resetRequests: number;
+      irqEvents: Array<{ irq: number; level: boolean }>;
+    },
+  ];
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.a20Events, [true, false]);
+  assert.equal(result.resetRequests, 1);
+  assert.equal(result.outPort, 0xa9);
+  assert.deepEqual(result.irqEvents, []);
+
+  await cpuWorker.terminate();
+  await ioWorker.terminate();
+});
+
 test("AIPC I/O worker: PCI config + BAR-backed MMIO dispatch", async () => {
   const { sab, cmdOffset, evtOffset } = createCmdEvtSharedBuffer(1 << 17, 1 << 17);
 
@@ -85,3 +120,30 @@ test("AIPC I/O worker: PCI config + BAR-backed MMIO dispatch", async () => {
   await ioWorker.terminate();
 });
 
+test("AIPC I/O worker: 16550 UART emits serial output bytes", async () => {
+  const { sab, cmdOffset, evtOffset } = createCmdEvtSharedBuffer(1 << 16, 1 << 16);
+
+  const ioWorker = new Worker(new URL("./workers/aero_ipc_io_server_worker.ts", import.meta.url), {
+    type: "module",
+    workerData: { sab, cmdOffset, evtOffset, devices: ["uart16550"], tickIntervalMs: 1 },
+    execArgv: ["--experimental-strip-types"],
+  });
+
+  const cpuWorker = new Worker(new URL("./workers/aero_ipc_cpu_sequence_worker.ts", import.meta.url), {
+    type: "module",
+    workerData: { sab, cmdOffset, evtOffset, scenario: "uart16550" },
+    execArgv: ["--experimental-strip-types"],
+  });
+
+  const [result] = (await once(cpuWorker, "message")) as [
+    { ok: boolean; lsrBefore: number; lsrAfter: number; serialBytes: number[] },
+  ];
+
+  assert.equal(result.ok, true);
+  assert.equal(result.lsrBefore & 0x60, 0x60);
+  assert.equal(result.lsrAfter & 0x60, 0x60);
+  assert.deepEqual(result.serialBytes, [0x48, 0x69]);
+
+  await cpuWorker.terminate();
+  await ioWorker.terminate();
+});

@@ -156,7 +156,6 @@ export class PciBus implements PortIoHandler {
       };
 
       writeU32LE(config, 0x10 + i * 4, this.#encodeBarValue(state));
-      this.#mapBar(device, i, state);
       bars.push(state);
     }
 
@@ -245,6 +244,13 @@ export class PciBus implements PortIoHandler {
   }
 
   #writeConfigDword(fn: PciFunction, alignedOff: number, value: number): void {
+    // Command register changes affect BAR decoding enablement.
+    if (alignedOff === 0x04) {
+      writeU32LE(fn.config, alignedOff, value);
+      this.#refreshDeviceDecoding(fn);
+      return;
+    }
+
     if (alignedOff >= 0x10 && alignedOff <= 0x24) {
       const barIndex = (alignedOff - 0x10) >>> 2;
       const bar = fn.bars[barIndex] ?? null;
@@ -267,11 +273,44 @@ export class PciBus implements PortIoHandler {
 
       // Remap BAR.
       this.#unmapBar(bar);
-      this.#mapBar(fn.device, barIndex, bar);
+      this.#mapBarIfEnabled(fn, barIndex, bar);
       return;
     }
 
     writeU32LE(fn.config, alignedOff, value);
+  }
+
+  #commandFlags(fn: PciFunction): { ioEnabled: boolean; memEnabled: boolean } {
+    const command = (fn.config[0x04]! | (fn.config[0x05]! << 8)) >>> 0;
+    return {
+      ioEnabled: (command & 0x1) !== 0,
+      memEnabled: (command & 0x2) !== 0,
+    };
+  }
+
+  #refreshDeviceDecoding(fn: PciFunction): void {
+    for (let barIndex = 0; barIndex < fn.bars.length; barIndex++) {
+      const bar = fn.bars[barIndex];
+      if (!bar) continue;
+      this.#unmapBar(bar);
+      this.#mapBarIfEnabled(fn, barIndex, bar);
+    }
+  }
+
+  #mapBarIfEnabled(fn: PciFunction, barIndex: number, bar: PciBarState): void {
+    // BARs decode only when PCI command bits enable them.
+    if (bar.base === 0) return;
+    const { ioEnabled, memEnabled } = this.#commandFlags(fn);
+    if (bar.desc.kind === "io") {
+      if (!ioEnabled) return;
+      this.#mapBar(fn.device, barIndex, bar);
+      return;
+    }
+    if (bar.desc.kind === "mmio32") {
+      if (!memEnabled) return;
+      this.#mapBar(fn.device, barIndex, bar);
+      return;
+    }
   }
 
   #encodeBarValue(bar: PciBarState): number {

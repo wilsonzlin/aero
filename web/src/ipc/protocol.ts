@@ -21,6 +21,8 @@ export type Event =
   | { kind: "frameReady"; frameId: bigint }
   | { kind: "irqRaise"; irq: number }
   | { kind: "irqLower"; irq: number }
+  | { kind: "a20Set"; enabled: boolean }
+  | { kind: "resetRequest" }
   | { kind: "log"; level: LogLevel; message: string }
   | { kind: "serialOutput"; port: number; data: Uint8Array }
   | { kind: "panic"; message: string }
@@ -41,6 +43,8 @@ const EVT_TAG_PORT_WRITE_RESP = 0x1103;
 const EVT_TAG_FRAME_READY = 0x1200;
 const EVT_TAG_IRQ_RAISE = 0x1300;
 const EVT_TAG_IRQ_LOWER = 0x1301;
+const EVT_TAG_A20_SET = 0x1302;
+const EVT_TAG_RESET_REQUEST = 0x1303;
 const EVT_TAG_LOG = 0x1400;
 const EVT_TAG_SERIAL_OUTPUT = 0x1500;
 const EVT_TAG_PANIC = 0x1ffe;
@@ -216,6 +220,13 @@ export function encodeEvent(evt: Event): Uint8Array {
       pushU16(EVT_TAG_IRQ_LOWER);
       pushU8(evt.irq);
       break;
+    case "a20Set":
+      pushU16(EVT_TAG_A20_SET);
+      pushU8(evt.enabled ? 1 : 0);
+      break;
+    case "resetRequest":
+      pushU16(EVT_TAG_RESET_REQUEST);
+      break;
     case "log": {
       pushU16(EVT_TAG_LOG);
       pushU8(logLevelToU8(evt.level));
@@ -297,6 +308,12 @@ export function decodeEvent(bytes: Uint8Array): Event {
       break;
     case EVT_TAG_IRQ_LOWER:
       evt = { kind: "irqLower", irq: readU8() };
+      break;
+    case EVT_TAG_A20_SET:
+      evt = { kind: "a20Set", enabled: readU8() !== 0 };
+      break;
+    case EVT_TAG_RESET_REQUEST:
+      evt = { kind: "resetRequest" };
       break;
     case EVT_TAG_LOG: {
       const level = logLevelFromU8(readU8());

@@ -3,6 +3,9 @@ import { decodeCommand, decodeEvent, encodeCommand, encodeEvent, type Command, t
 import type { IrqSink } from "../device_manager.ts";
 
 export type IrqCallback = (irq: number, level: boolean) => void;
+export type A20Callback = (enabled: boolean) => void;
+export type ResetCallback = () => void;
+export type SerialOutputCallback = (port: number, data: Uint8Array) => void;
 
 export interface AeroIpcIoDispatchTarget {
   portRead(port: number, size: number): number;
@@ -14,6 +17,9 @@ export interface AeroIpcIoDispatchTarget {
 
 export interface AeroIpcIoClientOptions {
   onIrq?: IrqCallback;
+  onA20?: A20Callback;
+  onReset?: ResetCallback;
+  onSerialOutput?: SerialOutputCallback;
 }
 
 function valueToLeBytes(value: number, size: number): Uint8Array {
@@ -45,12 +51,18 @@ export class AeroIpcIoClient {
   readonly #cmdQ: RingBuffer;
   readonly #evtQ: RingBuffer;
   readonly #onIrq?: IrqCallback;
+  readonly #onA20?: A20Callback;
+  readonly #onReset?: ResetCallback;
+  readonly #onSerialOutput?: SerialOutputCallback;
   #nextId = 1;
 
   constructor(cmdQ: RingBuffer, evtQ: RingBuffer, opts: AeroIpcIoClientOptions = {}) {
     this.#cmdQ = cmdQ;
     this.#evtQ = evtQ;
     this.#onIrq = opts.onIrq;
+    this.#onA20 = opts.onA20;
+    this.#onReset = opts.onReset;
+    this.#onSerialOutput = opts.onSerialOutput;
   }
 
   portRead(port: number, size: number): number {
@@ -102,6 +114,21 @@ export class AeroIpcIoClient {
 
       if (evt.kind === "irqRaise" || evt.kind === "irqLower") {
         this.#onIrq?.(evt.irq, evt.kind === "irqRaise");
+        continue;
+      }
+
+      if (evt.kind === "a20Set") {
+        this.#onA20?.(evt.enabled);
+        continue;
+      }
+
+      if (evt.kind === "resetRequest") {
+        this.#onReset?.();
+        continue;
+      }
+
+      if (evt.kind === "serialOutput") {
+        this.#onSerialOutput?.(evt.port, evt.data);
         continue;
       }
 

@@ -49,6 +49,8 @@ fn event_roundtrip() {
         Event::FrameReady { frame_id: 999 },
         Event::IrqRaise { irq: 5 },
         Event::IrqLower { irq: 5 },
+        Event::A20Set { enabled: true },
+        Event::ResetRequest,
         Event::Log {
             level: LogLevel::Info,
             message: "hello".to_string(),
