@@ -5,8 +5,10 @@ import { describe, it } from 'node:test';
 import fc from 'fast-check';
 
 import { TcpTargetParseError, parseTcpTarget } from '../../src/protocol/tcpTarget.js';
-import { TcpTargetPolicyError, enforceTcpTargetPolicy } from '../../src/protocol/tcpTargetPolicy.js';
-import { handleTcpProxyUpgrade } from '../../src/routes/tcpProxy.js';
+import { resolveTcpProxyTarget, TcpProxyTargetError, handleTcpProxyUpgrade } from '../../src/routes/tcpProxy.js';
+import { handleTcpMuxUpgrade } from '../../src/routes/tcpMux.js';
+import { validateTcpTargetPolicy } from '../../src/routes/tcpPolicy.js';
+import { isPublicIpAddress } from '../../src/security/ipPolicy.js';
 
 const FC_NUM_RUNS = process.env.FC_NUM_RUNS ? Number(process.env.FC_NUM_RUNS) : process.env.CI ? 200 : 500;
 const FC_TIME_LIMIT_MS = process.env.CI ? 2_000 : 5_000;
@@ -44,6 +46,12 @@ const privateIpv6Arb = fc.oneof(
     )
     .map((hextets) => hextets.map((h) => h.toString(16)).join(':')),
 );
+
+const RESOLVE_ENV = {
+  TCP_ALLOWED_HOSTS: '',
+  TCP_BLOCKED_HOSTS: '',
+  TCP_REQUIRE_DNS_NAME: '0',
+};
 
 function parseQuery(params: Record<string, string | undefined>): unknown {
   const sp = new URLSearchParams();
@@ -107,19 +115,12 @@ describe('tcp target parsing + policy (property)', () => {
   );
 
   it(
-    'private-IP blocking rejects private IPv4 targets',
+    'IP egress policy rejects private IPv4 literals',
     { timeout: 10_000 },
     () => {
       fc.assert(
         fc.property(privateIpv4Arb, (ip) => {
-          assert.throws(
-            () =>
-              enforceTcpTargetPolicy(
-                { host: ip, port: 443, version: 1 },
-                { blockPrivateIp: true, portAllowlist: new Set([443]) },
-              ),
-            (err: unknown) => err instanceof TcpTargetPolicyError && err.code === 'ERR_TCP_POLICY_PRIVATE_IP',
-          );
+          assert.equal(isPublicIpAddress(ip), false);
         }),
         { numRuns: FC_NUM_RUNS, interruptAfterTimeLimit: FC_TIME_LIMIT_MS },
       );
@@ -127,19 +128,12 @@ describe('tcp target parsing + policy (property)', () => {
   );
 
   it(
-    'private-IP blocking rejects private IPv6 targets',
+    'IP egress policy rejects private IPv6 literals',
     { timeout: 10_000 },
     () => {
       fc.assert(
         fc.property(privateIpv6Arb, (ip) => {
-          assert.throws(
-            () =>
-              enforceTcpTargetPolicy(
-                { host: ip, port: 443, version: 1 },
-                { blockPrivateIp: true, portAllowlist: new Set([443]) },
-              ),
-            (err: unknown) => err instanceof TcpTargetPolicyError && err.code === 'ERR_TCP_POLICY_PRIVATE_IP',
-          );
+          assert.equal(isPublicIpAddress(ip), false);
         }),
         { numRuns: FC_NUM_RUNS, interruptAfterTimeLimit: FC_TIME_LIMIT_MS },
       );
@@ -147,54 +141,67 @@ describe('tcp target parsing + policy (property)', () => {
   );
 
   it(
-    'private-IP blocking rejects hostnames resolving to private IPv4 addresses',
+    'resolveTcpProxyTarget rejects private IPv4 literals',
     { timeout: 10_000 },
-    () => {
-      fc.assert(
-        fc.property(privateIpv4Arb, (ip) => {
-          assert.throws(
-            () =>
-              enforceTcpTargetPolicy(
-                { host: 'example.com', port: 443, version: 1 },
-                {
-                  blockPrivateIp: true,
-                  portAllowlist: new Set([443]),
-                  resolveHostnameToIps: () => [ip],
-                },
-              ),
-            (err: unknown) => err instanceof TcpTargetPolicyError && err.code === 'ERR_TCP_POLICY_PRIVATE_IP',
+    async () => {
+      await fc.assert(
+        fc.asyncProperty(privateIpv4Arb, async (ip) => {
+          await assert.rejects(
+            resolveTcpProxyTarget(ip, 443, RESOLVE_ENV),
+            (err: unknown) =>
+              err instanceof TcpProxyTargetError && err.kind === 'ip-policy' && err.statusCode === 403,
           );
         }),
-        { numRuns: FC_NUM_RUNS, interruptAfterTimeLimit: FC_TIME_LIMIT_MS },
+        { numRuns: process.env.CI ? 100 : FC_NUM_RUNS, interruptAfterTimeLimit: FC_TIME_LIMIT_MS },
       );
     },
   );
 
   it(
-    'port allowlist is enforced for arbitrary ports',
+    'resolveTcpProxyTarget rejects private IPv6 literals',
+    { timeout: 10_000 },
+    async () => {
+      await fc.assert(
+        fc.asyncProperty(privateIpv6Arb, async (ip) => {
+          await assert.rejects(
+            resolveTcpProxyTarget(ip, 443, RESOLVE_ENV),
+            (err: unknown) =>
+              err instanceof TcpProxyTargetError && err.kind === 'ip-policy' && err.statusCode === 403,
+          );
+        }),
+        { numRuns: process.env.CI ? 100 : FC_NUM_RUNS, interruptAfterTimeLimit: FC_TIME_LIMIT_MS },
+      );
+    },
+  );
+
+  it('resolveTcpProxyTarget rejects hostnames that only resolve to private IPs', async () => {
+    await assert.rejects(
+      resolveTcpProxyTarget('localhost', 443, RESOLVE_ENV),
+      (err: unknown) =>
+        err instanceof TcpProxyTargetError && err.kind === 'ip-policy' && err.statusCode === 403,
+    );
+  });
+
+  it(
+    'TCP port allowlist is enforced for arbitrary ports',
     { timeout: 10_000 },
     () => {
       fc.assert(
-        fc.property(fc.integer({ min: 1, max: 65535 }), (port) => {
-          if (port === 80 || port === 443) {
-            assert.deepEqual(
-              enforceTcpTargetPolicy(
-                { host: '8.8.8.8', port, version: 1 },
-                { blockPrivateIp: true, portAllowlist: new Set([80, 443]) },
-              ),
-              { host: '8.8.8.8', port, version: 1 },
-            );
+        fc.property(fc.integer({ min: -1000, max: 70000 }), (port) => {
+          const decision = validateTcpTargetPolicy('example.com', port, { allowedTargetPorts: [80, 443] });
+          if (!Number.isInteger(port) || port < 1 || port > 65535) {
+            assert.equal(decision.ok, false);
+            if (!decision.ok) assert.equal(decision.status, 400);
             return;
           }
 
-          assert.throws(
-            () =>
-              enforceTcpTargetPolicy(
-                { host: '8.8.8.8', port, version: 1 },
-                { blockPrivateIp: true, portAllowlist: new Set([80, 443]) },
-              ),
-            (err: unknown) => err instanceof TcpTargetPolicyError && err.code === 'ERR_TCP_POLICY_DISALLOWED_PORT',
-          );
+          if (port === 80 || port === 443) {
+            assert.deepEqual(decision, { ok: true });
+            return;
+          }
+
+          assert.equal(decision.ok, false);
+          if (!decision.ok) assert.equal(decision.status, 403);
         }),
         { numRuns: FC_NUM_RUNS, interruptAfterTimeLimit: FC_TIME_LIMIT_MS },
       );
@@ -202,14 +209,18 @@ describe('tcp target parsing + policy (property)', () => {
   );
 
   it(
-    'route handler never throws on arbitrary target= values (and returns an HTTP error)',
+    'route handlers never throw on arbitrary inputs (they respond with safe HTTP/WS errors)',
     { timeout: 10_000 },
     () => {
       fc.assert(
-        fc.property(fc.string(), (target) => {
-          const req = { url: `/tcp?target=${encodeURIComponent(target)}`, headers: {} } as any;
-          const socket = new PassThrough();
-          assert.doesNotThrow(() => handleTcpProxyUpgrade(req, socket, Buffer.alloc(0)));
+        fc.property(fc.string(), fc.string(), (target, garbagePath) => {
+          const socketTcp = new PassThrough();
+          const reqTcp = { url: `/tcp?target=${encodeURIComponent(target)}`, headers: {} } as any;
+          assert.doesNotThrow(() => handleTcpProxyUpgrade(reqTcp, socketTcp, Buffer.alloc(0)));
+
+          const socketMux = new PassThrough();
+          const reqMux = { url: `/${encodeURIComponent(garbagePath)}`, headers: {} } as any;
+          assert.doesNotThrow(() => handleTcpMuxUpgrade(reqMux, socketMux, Buffer.alloc(0)));
         }),
         { numRuns: FC_NUM_RUNS, interruptAfterTimeLimit: FC_TIME_LIMIT_MS },
       );

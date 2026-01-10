@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import fc from 'fast-check';
 
-import { matchHostnamePattern, normalizeHostname } from '../../src/hostname.js';
+import { hostnameMatchesPattern, normalizeHostname, parseHostnamePattern } from '../../src/security/egressPolicy.js';
 
 const FC_NUM_RUNS = process.env.FC_NUM_RUNS ? Number(process.env.FC_NUM_RUNS) : process.env.CI ? 200 : 500;
 const FC_TIME_LIMIT_MS = process.env.CI ? 2_000 : 5_000;
@@ -42,12 +42,13 @@ describe('hostname normalization & wildcard matching (property)', () => {
     () => {
       fc.assert(
         fc.property(domainArb, hostLabelArb, (base, sub) => {
-          const pattern = `*.${base}`;
-          const subdomain = `${sub}.${base}`;
+          const normalizedBase = normalizeHostname(base);
+          const pattern = parseHostnamePattern(`*.${normalizedBase}`);
+          const subdomain = normalizeHostname(`${sub}.${normalizedBase}`);
 
-          assert.equal(matchHostnamePattern(subdomain, pattern), true);
-          assert.equal(matchHostnamePattern(base, pattern), false);
-          assert.equal(matchHostnamePattern(`${subdomain}.evil.com`, pattern), false);
+          assert.equal(hostnameMatchesPattern(subdomain, pattern), true);
+          assert.equal(hostnameMatchesPattern(normalizedBase, pattern), false);
+          assert.equal(hostnameMatchesPattern(normalizeHostname(`${subdomain}.evil.com`), pattern), false);
         }),
         { numRuns: FC_NUM_RUNS, interruptAfterTimeLimit: FC_TIME_LIMIT_MS },
       );
