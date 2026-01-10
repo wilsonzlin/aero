@@ -25,6 +25,8 @@ static void virtio_input_report_ring_push(struct virtio_input_device *dev, const
 #ifdef _WIN32
   PDEVICE_CONTEXT ctx = virtio_input_get_device_context(dev);
 #endif
+  bool locked;
+
   if (len > VIRTIO_INPUT_REPORT_MAX_SIZE) {
 #ifdef _WIN32
     if (ctx != NULL) {
@@ -38,6 +40,11 @@ static void virtio_input_report_ring_push(struct virtio_input_device *dev, const
     }
 #endif
     return;
+  }
+
+  locked = (dev->lock != NULL) && (dev->unlock != NULL);
+  if (locked) {
+    dev->lock(dev->lock_context);
   }
 
   /*
@@ -56,12 +63,14 @@ static void virtio_input_report_ring_push(struct virtio_input_device *dev, const
     ring->count--;
   }
 
-  struct virtio_input_report *slot = &ring->reports[ring->head];
-  slot->len = (uint8_t)len;
-  memcpy(slot->data, data, len);
+  {
+    struct virtio_input_report *slot = &ring->reports[ring->head];
+    slot->len = (uint8_t)len;
+    memcpy(slot->data, data, len);
 
-  ring->head = (ring->head + 1u) % VIRTIO_INPUT_REPORT_RING_CAPACITY;
-  ring->count++;
+    ring->head = (ring->head + 1u) % VIRTIO_INPUT_REPORT_RING_CAPACITY;
+    ring->count++;
+  }
 
 #ifdef _WIN32
   if (ctx != NULL) {
@@ -69,6 +78,14 @@ static void virtio_input_report_ring_push(struct virtio_input_device *dev, const
   }
 #endif
 
+  if (locked) {
+    dev->unlock(dev->lock_context);
+  }
+
+  /*
+   * Notify outside of the lock so the callback can safely pop reports using the
+   * same lock (and so Windows WDF calls won't happen under a spinlock).
+   */
   if (dev->report_ready) {
     dev->report_ready(dev->report_ready_context);
   }
@@ -93,9 +110,13 @@ static void virtio_input_emit_report(void *context, const uint8_t *report, size_
 }
 
 void virtio_input_device_init(struct virtio_input_device *dev, virtio_input_report_ready_fn report_ready,
-                              void *report_ready_context) {
+                              void *report_ready_context, virtio_input_lock_fn lock, virtio_input_lock_fn unlock,
+                              void *lock_context) {
   memset(dev, 0, sizeof(*dev));
   virtio_input_report_ring_init(&dev->report_ring);
+  dev->lock = lock;
+  dev->unlock = unlock;
+  dev->lock_context = lock_context;
   dev->report_ready = report_ready;
   dev->report_ready_context = report_ready_context;
   hid_translate_init(&dev->translate, virtio_input_emit_report, dev);
@@ -125,7 +146,18 @@ void virtio_input_process_event_le(struct virtio_input_device *dev, const struct
 }
 
 bool virtio_input_try_pop_report(struct virtio_input_device *dev, struct virtio_input_report *out_report) {
-  bool ok = virtio_input_report_ring_pop(&dev->report_ring, out_report);
+  bool ok;
+  bool locked;
+
+  locked = (dev->lock != NULL) && (dev->unlock != NULL);
+  if (locked) {
+    dev->lock(dev->lock_context);
+  }
+  ok = virtio_input_report_ring_pop(&dev->report_ring, out_report);
+  if (locked) {
+    dev->unlock(dev->lock_context);
+  }
+
 #ifdef _WIN32
   if (ok) {
     PDEVICE_CONTEXT ctx = virtio_input_get_device_context(dev);
@@ -134,5 +166,6 @@ bool virtio_input_try_pop_report(struct virtio_input_device *dev, struct virtio_
     }
   }
 #endif
+
   return ok;
 }

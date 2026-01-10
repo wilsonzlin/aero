@@ -21,9 +21,38 @@
  *       Byte 4: Wheel (int8)
  */
 
-#include <stdbool.h>
 #include <stddef.h>
+
+/*
+ * WDK 7.1 / older MSVC toolchains don't provide C99 <stdbool.h> (or even
+ * <stdint.h> in some configurations). Keep this header buildable in both the
+ * Windows kernel driver and host-side unit tests.
+ */
+
+#if defined(_MSC_VER) && (_MSC_VER < 1600)
+typedef signed __int8 int8_t;
+typedef unsigned __int8 uint8_t;
+typedef signed __int16 int16_t;
+typedef unsigned __int16 uint16_t;
+typedef signed __int32 int32_t;
+typedef unsigned __int32 uint32_t;
+#else
 #include <stdint.h>
+#endif
+
+#if !defined(__cplusplus)
+#if defined(_MSC_VER)
+typedef unsigned char bool;
+#ifndef true
+#define true 1
+#endif
+#ifndef false
+#define false 0
+#endif
+#else
+#include <stdbool.h>
+#endif
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -223,4 +252,3 @@ uint8_t hid_translate_linux_key_to_hid_usage(uint16_t linux_key_code);
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
-

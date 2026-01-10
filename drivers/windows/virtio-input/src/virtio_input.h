@@ -15,7 +15,6 @@
 #include "hid_translate.h"
 
 #include <stddef.h>
-#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,17 +38,23 @@ struct virtio_input_report_ring {
 };
 
 typedef void (*virtio_input_report_ready_fn)(void *context);
+typedef void (*virtio_input_lock_fn)(void *context);
 
 struct virtio_input_device {
   struct hid_translate translate;
   struct virtio_input_report_ring report_ring;
+
+  virtio_input_lock_fn lock;
+  virtio_input_lock_fn unlock;
+  void *lock_context;
 
   virtio_input_report_ready_fn report_ready;
   void *report_ready_context;
 };
 
 void virtio_input_device_init(struct virtio_input_device *dev, virtio_input_report_ready_fn report_ready,
-                              void *report_ready_context);
+                              void *report_ready_context, virtio_input_lock_fn lock, virtio_input_lock_fn unlock,
+                              void *lock_context);
 
 void virtio_input_device_reset_state(struct virtio_input_device *dev, bool emit_reports);
 
@@ -114,6 +119,9 @@ enum { VIRTIO_PCI_BAR_COUNT = 6 };
 
 typedef struct _DEVICE_CONTEXT {
     WDFQUEUE DefaultQueue;
+    WDFQUEUE PendingReadQueue;
+    WDFSPINLOCK InputLock;
+    WDFWORKITEM ReadWorkItem;
     struct virtio_input_device InputDevice;
     // Manual read queues indexed by ReportID. Index 0 is a special "any report"
     // queue used for non-collection (parent interface) opens.

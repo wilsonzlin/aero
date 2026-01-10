@@ -284,9 +284,8 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
             return status;
         }
 
-        virtio_input_device_init(&deviceContext->InputDevice, VirtioInputReportReady, (void *)device);
+        virtio_input_device_init(&deviceContext->InputDevice, VirtioInputReportReady, (void *)device, NULL, NULL, NULL);
     }
-
     return VirtioInputQueueInitialize(device);
 }
 
