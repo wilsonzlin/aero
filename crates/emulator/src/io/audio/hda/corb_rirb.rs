@@ -74,7 +74,7 @@ impl Corb {
         }
     }
 
-    pub fn pop_command(&mut self, mem: &mut impl MemoryBus) -> Option<CodecCmd> {
+    pub fn pop_command(&mut self, mem: &mut dyn MemoryBus) -> Option<CodecCmd> {
         let entries = corb_entries(self.size);
         if self.rp == self.wp {
             return None;
@@ -160,7 +160,7 @@ impl Rirb {
 
     pub fn push_response(
         &mut self,
-        mem: &mut impl MemoryBus,
+        mem: &mut dyn MemoryBus,
         resp: HdaVerbResponse,
         intsts: &mut u32,
     ) {
@@ -181,7 +181,7 @@ impl Rirb {
     }
 }
 
-fn write_u64(mem: &mut impl MemoryBus, addr: u64, value: u64) {
+fn write_u64(mem: &mut dyn MemoryBus, addr: u64, value: u64) {
     mem.write_physical(addr, &value.to_le_bytes());
 }
 

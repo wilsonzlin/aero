@@ -2,16 +2,18 @@
 
 mod codec;
 mod corb_rirb;
+mod pci;
 mod regs;
 mod stream;
 
 pub use codec::{HdaCodec, HdaVerbResponse};
+pub use pci::HdaPciDevice;
 pub use regs::{HdaMmioReg, StreamId};
 pub use stream::{AudioRingBuffer, StreamFormat};
 
-use memory::MemoryBus;
 use codec::CodecAddr;
 use corb_rirb::{Corb, Rirb};
+use memory::MemoryBus;
 use regs::*;
 use stream::HdaStream;
 
@@ -83,7 +85,7 @@ impl HdaController {
         &mut self.audio
     }
 
-    pub fn poll(&mut self, mem: &mut impl MemoryBus) {
+    pub fn poll(&mut self, mem: &mut dyn MemoryBus) {
         if self.gctl & GCTL_CRST == 0 {
             return;
         }
@@ -193,7 +195,7 @@ impl HdaController {
         self.irq_line = false;
     }
 
-    fn process_corb(&mut self, mem: &mut impl MemoryBus) {
+    fn process_corb(&mut self, mem: &mut dyn MemoryBus) {
         if !self.corb.is_running() || !self.rirb.is_running() {
             return;
         }

@@ -229,7 +229,7 @@ impl HdaStream {
 
     pub fn process(
         &mut self,
-        mem: &mut impl MemoryBus,
+        mem: &mut dyn MemoryBus,
         audio: &mut AudioRingBuffer,
         intsts: &mut u32,
     ) {
@@ -282,7 +282,7 @@ impl HdaStream {
         }
     }
 
-    fn read_bdl_entry(&self, mem: &mut impl MemoryBus, index: u16) -> BdlEntry {
+    fn read_bdl_entry(&self, mem: &mut dyn MemoryBus, index: u16) -> BdlEntry {
         let addr = self.bdl_base() + (index as u64) * 16;
         let buf_addr = read_u64(mem, addr);
         let len = mem.read_u32(addr + 8);
@@ -295,7 +295,7 @@ impl HdaStream {
     }
 }
 
-fn read_u64(mem: &mut impl MemoryBus, addr: u64) -> u64 {
+fn read_u64(mem: &mut dyn MemoryBus, addr: u64) -> u64 {
     let mut buf = [0u8; 8];
     mem.read_physical(addr, &mut buf);
     u64::from_le_bytes(buf)
