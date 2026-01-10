@@ -170,6 +170,14 @@ Run headless E2E tests:
 npm run test:e2e
 ```
 
+Run a specific browser project:
+
+```bash
+npx playwright test --project=chromium
+npx playwright test --project=firefox
+npx playwright test --project=webkit
+```
+
 Open Playwright UI mode (interactive runner):
 
 ```bash
