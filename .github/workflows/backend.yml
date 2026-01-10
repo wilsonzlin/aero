@@ -12,9 +12,17 @@ on:
       - backend/aero-gateway/**
       - .github/workflows/backend.yml
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   aero-gateway-ci:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend/aero-gateway
@@ -53,6 +61,7 @@ jobs:
   aero-gateway-smoke:
     runs-on: ubuntu-latest
     needs: aero-gateway-ci
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: backend/aero-gateway
@@ -83,10 +92,8 @@ jobs:
           server_pid=$!
 
           cleanup() {
-            if kill -0 "$server_pid" 2>/dev/null; then
-              kill "$server_pid" || true
-              wait "$server_pid" || true
-            fi
+            if kill -0 "$server_pid" 2>/dev/null; then kill "$server_pid" || true; fi
+            wait "$server_pid" || true
           }
 
           trap cleanup EXIT
@@ -105,8 +112,33 @@ jobs:
   aero-gateway-docker:
     runs-on: ubuntu-latest
     needs: aero-gateway-ci
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t aero-gateway:ci backend/aero-gateway
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: docker build --build-arg "GIT_SHA=${{ github.sha }}" -t aero-gateway:ci backend/aero-gateway
+
+      - name: Smoke test Docker image (/healthz)
+        run: |
+          set -euo pipefail
+
+          docker run --rm -d --name aero-gateway-ci -p 18080:8080 aero-gateway:ci
+
+          cleanup() {
+            docker rm -f aero-gateway-ci >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for i in {1..30}; do
+            if curl -fsS "http://localhost:18080/healthz" >/dev/null; then
+              echo "docker health check ok"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "docker health check failed"
+          exit 1
