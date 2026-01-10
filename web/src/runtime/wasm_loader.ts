@@ -4,6 +4,28 @@ export interface WasmApi {
     greet(name: string): string;
     add(a: number, b: number): number;
     AeroApi: new () => { version(): string; free(): void };
+    // Optional audio exports (present when the WASM build includes the audio worklet bridge).
+    WorkletBridge?: new (capacityFrames: number, channelCount: number) => {
+        readonly shared_buffer: SharedArrayBuffer;
+        readonly capacity_frames: number;
+        readonly channel_count: number;
+        write_f32_interleaved(samples: Float32Array): number;
+        buffer_level_frames(): number;
+        underrun_count(): number;
+        free(): void;
+    };
+    create_worklet_bridge?: (capacityFrames: number, channelCount: number) => unknown;
+    attach_worklet_bridge?: (sab: SharedArrayBuffer, capacityFrames: number, channelCount: number) => unknown;
+    SineTone?: new () => {
+        write(
+            bridge: unknown,
+            frames: number,
+            freqHz: number,
+            sampleRate: number,
+            gain: number,
+        ): number;
+        free(): void;
+    };
 }
 
 export interface WasmInitResult {
@@ -71,6 +93,10 @@ function toApi(mod: RawWasmModule): WasmApi {
         greet: mod.greet,
         add: mod.add,
         AeroApi: mod.AeroApi,
+        WorkletBridge: mod.WorkletBridge,
+        create_worklet_bridge: mod.create_worklet_bridge,
+        attach_worklet_bridge: mod.attach_worklet_bridge,
+        SineTone: mod.SineTone,
     };
 }
 

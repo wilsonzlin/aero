@@ -242,9 +242,58 @@ mod wasm {
             })
         }
 
+        /// Create a bridge over an existing SharedArrayBuffer ring buffer.
+        ///
+        /// This is useful when the JS side allocates the SharedArrayBuffer (e.g.
+        /// as part of UI initialization) and the WASM side needs to treat it as
+        /// the producer ring buffer.
+        #[wasm_bindgen(js_name = fromSharedBuffer)]
+        pub fn from_shared_buffer(
+            sab: SharedArrayBuffer,
+            capacity_frames: u32,
+            channel_count: u32,
+        ) -> Result<WorkletBridge, JsValue> {
+            if capacity_frames == 0 {
+                return Err(JsValue::from_str("capacity_frames must be non-zero"));
+            }
+            if channel_count == 0 {
+                return Err(JsValue::from_str("channel_count must be non-zero"));
+            }
+
+            let required = buffer_byte_len(capacity_frames, channel_count) as u32;
+            if sab.byte_length() < required {
+                return Err(JsValue::from_str("SharedArrayBuffer is too small for the requested layout"));
+            }
+
+            let header = Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
+            let samples = Float32Array::new_with_byte_offset_and_length(
+                &sab,
+                HEADER_BYTES as u32,
+                capacity_frames * channel_count,
+            );
+
+            Ok(Self {
+                sab,
+                capacity_frames,
+                channel_count,
+                header,
+                samples,
+            })
+        }
+
         #[wasm_bindgen(getter)]
         pub fn shared_buffer(&self) -> SharedArrayBuffer {
             self.sab.clone()
+        }
+
+        #[wasm_bindgen(getter)]
+        pub fn capacity_frames(&self) -> u32 {
+            self.capacity_frames
+        }
+
+        #[wasm_bindgen(getter)]
+        pub fn channel_count(&self) -> u32 {
+            self.channel_count
         }
 
         /// Write interleaved `f32` frames into the ring buffer.
@@ -310,4 +359,3 @@ mod wasm {
 
 #[cfg(target_arch = "wasm32")]
 pub use wasm::WorkletBridge;
-

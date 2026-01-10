@@ -27,6 +27,7 @@ installAeroGlobal();
 installAeroGlobals();
 
 const workerCoordinator = new WorkerCoordinator();
+const wasmInitPromise = initWasm();
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -176,10 +177,13 @@ function renderWasmPanel(): HTMLElement {
   const output = el("pre", { text: "" });
   const error = el("pre", { text: "" });
 
-  initWasm()
+  wasmInitPromise
     .then(({ api, variant, reason }) => {
       status.textContent = `Loaded variant: ${variant}\nReason: ${reason}`;
       output.textContent = `greet(\"Aero\") → ${api.greet("Aero")}\nadd(2, 3) → ${api.add(2, 3)}`;
+      // Expose for quick interactive debugging / Playwright assertions.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroWasmApi = api;
     })
     .catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
@@ -504,15 +508,25 @@ function renderAudioPanel(): HTMLElement {
   const status = el("pre", { text: "" });
   let toneTimer: number | null = null;
   let tonePhase = 0;
+  let wasmBridge: unknown | null = null;
+  let wasmTone: { free(): void } | null = null;
 
   function stopTone() {
     if (toneTimer !== null) {
       window.clearInterval(toneTimer);
       toneTimer = null;
     }
+    if (wasmTone) {
+      wasmTone.free();
+      wasmTone = null;
+    }
+    if (wasmBridge && typeof (wasmBridge as { free?: () => void }).free === "function") {
+      (wasmBridge as { free(): void }).free();
+      wasmBridge = null;
+    }
   }
 
-  function startTone(output: Exclude<Awaited<ReturnType<typeof createAudioOutput>>, { enabled: false }>) {
+  async function startTone(output: Exclude<Awaited<ReturnType<typeof createAudioOutput>>, { enabled: false }>) {
     stopTone();
 
     const freqHz = 440;
@@ -520,15 +534,44 @@ function renderAudioPanel(): HTMLElement {
     const channelCount = output.ringBuffer.channelCount;
     const sr = output.context.sampleRate;
 
-    function writeTone(frames: number) {
-      const buf = new Float32Array(frames * channelCount);
-      for (let i = 0; i < frames; i++) {
-        const s = Math.sin(tonePhase * 2 * Math.PI) * gain;
-        for (let c = 0; c < channelCount; c++) buf[i * channelCount + c] = s;
-        tonePhase += freqHz / sr;
-        if (tonePhase >= 1) tonePhase -= 1;
+    // Try to use the WASM-side bridge + sine generator if available; fall back to JS.
+    let writeTone: (frames: number) => void;
+    try {
+      const { api } = await wasmInitPromise;
+      if (
+        typeof api.attach_worklet_bridge === "function" &&
+        typeof api.SineTone === "function" &&
+        output.ringBuffer.buffer instanceof SharedArrayBuffer
+      ) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        wasmBridge = (api.attach_worklet_bridge as any)(output.ringBuffer.buffer, output.ringBuffer.capacityFrames, channelCount);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        wasmTone = new (api.SineTone as any)() as { free(): void; write: (...args: unknown[]) => number };
+
+        writeTone = (frames: number) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (wasmTone as any).write(wasmBridge, frames, freqHz, sr, gain);
+        };
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (globalThis as any).__aeroAudioToneBackend = "wasm";
+      } else {
+        throw new Error("WASM audio bridge not available");
       }
-      output.writeInterleaved(buf, sr);
+    } catch {
+      writeTone = (frames: number) => {
+        const buf = new Float32Array(frames * channelCount);
+        for (let i = 0; i < frames; i++) {
+          const s = Math.sin(tonePhase * 2 * Math.PI) * gain;
+          for (let c = 0; c < channelCount; c++) buf[i * channelCount + c] = s;
+          tonePhase += freqHz / sr;
+          if (tonePhase >= 1) tonePhase -= 1;
+        }
+        output.writeInterleaved(buf, sr);
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroAudioToneBackend = "js";
     }
 
     // Prefill ~100ms to avoid startup underruns.
@@ -562,7 +605,7 @@ function renderAudioPanel(): HTMLElement {
         return;
       }
       try {
-        startTone(output);
+        await startTone(output);
         await output.resume();
       } catch (err) {
         status.textContent = err instanceof Error ? err.message : String(err);

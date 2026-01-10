@@ -99,7 +99,7 @@ dependencies = [
  "half",
  "hashbrown 0.14.5",
  "insta",
- "lru",
+ "lru 0.12.5",
  "naga 24.0.0",
  "pollster",
  "pretty_assertions",
@@ -190,7 +190,7 @@ dependencies = [
  "bitflags 2.10.0",
  "bytemuck",
  "futures-intrusive",
- "lru",
+ "lru 0.16.3",
  "pollster",
  "pretty_assertions",
  "serde",
@@ -362,7 +362,7 @@ dependencies = [
  "bytes",
  "hyper 0.14.32",
  "hyper-rustls 0.24.2",
- "lru",
+ "lru 0.16.3",
  "serde",
  "serde_json",
  "tempfile",
@@ -432,6 +432,8 @@ dependencies = [
 name = "aero-wasm"
 version = "0.1.0"
 dependencies = [
+ "aero-platform",
+ "js-sys",
  "wasm-bindgen",
 ]
 
@@ -2173,6 +2175,8 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.1.5",
  "serde",
 ]
@@ -2869,6 +2873,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fae87c125b03c1d2c0150c90365d7d6bcc53fb73a9acaef207d2d065860f062"
 dependencies = [
  "imgref",
+]
+
+[[package]]
+name = "lru"
+version = "0.12.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
+dependencies = [
+ "hashbrown 0.15.5",
 ]
 
 [[package]]
@@ -4328,7 +4341,7 @@ version = "0.1.0"
 dependencies = [
  "futures-channel",
  "js-sys",
- "lru",
+ "lru 0.16.3",
  "thiserror 1.0.69",
  "wasm-bindgen",
  "wasm-bindgen-futures",

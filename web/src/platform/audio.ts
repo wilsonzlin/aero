@@ -8,6 +8,13 @@ export type CreateAudioOutputOptions = {
    * The actual sample capacity is `ringBufferFrames * channelCount`.
    */
   ringBufferFrames?: number;
+  /**
+   * Optional pre-allocated SharedArrayBuffer to use as the ring buffer.
+   *
+   * This is useful when the emulator/WASM side owns the SharedArrayBuffer and
+   * wants to hand it to the AudioWorklet output pipeline.
+   */
+  ringBuffer?: SharedArrayBuffer;
 };
 
 export type AudioRingBufferLayout = {
@@ -101,6 +108,45 @@ function createRingBuffer(channelCount: number, ringBufferFrames: number): Audio
     channelCount,
     capacityFrames: ringBufferFrames,
   };
+}
+
+function wrapRingBuffer(buffer: SharedArrayBuffer, channelCount: number, ringBufferFrames: number): AudioRingBufferLayout {
+  const headerU32Len = 4;
+  const headerBytes = headerU32Len * Uint32Array.BYTES_PER_ELEMENT;
+  const sampleCapacity = ringBufferFrames * channelCount;
+  const requiredBytes = headerBytes + sampleCapacity * Float32Array.BYTES_PER_ELEMENT;
+  if (buffer.byteLength < requiredBytes) {
+    throw new Error(
+      `Provided ring buffer is too small: need ${requiredBytes} bytes, got ${buffer.byteLength} bytes`,
+    );
+  }
+
+  const header = new Uint32Array(buffer, 0, headerU32Len);
+  const samples = new Float32Array(buffer, headerBytes, sampleCapacity);
+
+  return {
+    buffer,
+    header,
+    readIndex: header.subarray(0, 1),
+    writeIndex: header.subarray(1, 2),
+    underrunCount: header.subarray(2, 3),
+    samples,
+    channelCount,
+    capacityFrames: ringBufferFrames,
+  };
+}
+
+function inferRingBufferFrames(buffer: SharedArrayBuffer, channelCount: number): number {
+  const headerBytes = 4 * Uint32Array.BYTES_PER_ELEMENT;
+  const payloadBytes = buffer.byteLength - headerBytes;
+  if (payloadBytes < 0 || payloadBytes % Float32Array.BYTES_PER_ELEMENT !== 0) {
+    throw new Error("Provided ring buffer has an invalid byte length.");
+  }
+  const sampleCapacity = payloadBytes / Float32Array.BYTES_PER_ELEMENT;
+  if (sampleCapacity % channelCount !== 0) {
+    throw new Error("Provided ring buffer payload is not aligned to the requested channelCount.");
+  }
+  return sampleCapacity / channelCount;
 }
 
 const READ_FRAME_INDEX = 0;
@@ -205,6 +251,27 @@ export function writeRingBufferInterleaved(
   return framesToWrite;
 }
 
+function prefillSilenceIfEmpty(ringBuffer: AudioRingBufferLayout, frames: number): void {
+  if (frames <= 0) return;
+
+  const read = Atomics.load(ringBuffer.header, READ_FRAME_INDEX) >>> 0;
+  const write = Atomics.load(ringBuffer.header, WRITE_FRAME_INDEX) >>> 0;
+  if (read !== write) return;
+
+  const framesToWrite = Math.min(frames, ringBuffer.capacityFrames);
+  const writePos = write % ringBuffer.capacityFrames;
+  const cc = ringBuffer.channelCount;
+  const firstFrames = Math.min(framesToWrite, ringBuffer.capacityFrames - writePos);
+  const secondFrames = framesToWrite - firstFrames;
+
+  ringBuffer.samples.fill(0, writePos * cc, (writePos + firstFrames) * cc);
+  if (secondFrames > 0) {
+    ringBuffer.samples.fill(0, 0, secondFrames * cc);
+  }
+
+  Atomics.store(ringBuffer.header, WRITE_FRAME_INDEX, write + framesToWrite);
+}
+
 /**
  * Initializes audio output. This is expected to be called from the main thread
  * in response to a user gesture (most browsers require user interaction to
@@ -236,17 +303,30 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
   const sampleRate = options.sampleRate ?? 48_000;
   const latencyHint = options.latencyHint ?? "interactive";
   const channelCount = options.channelCount ?? 2;
-  const ringBufferFrames = options.ringBufferFrames ?? sampleRate; // ~1 second by default
+  const ringBufferFrames =
+    options.ringBufferFrames ??
+    (options.ringBuffer ? inferRingBufferFrames(options.ringBuffer, channelCount) : sampleRate); // ~1 second by default
 
   let ringBuffer: AudioRingBufferLayout;
   try {
-    ringBuffer = createRingBuffer(channelCount, ringBufferFrames);
+    ringBuffer = options.ringBuffer
+      ? wrapRingBuffer(options.ringBuffer, channelCount, ringBufferFrames)
+      : createRingBuffer(channelCount, ringBufferFrames);
   } catch (err) {
     return {
       enabled: false,
       message: err instanceof Error ? err.message : "Failed to allocate SharedArrayBuffer for audio.",
       async resume() {},
       async close() {},
+      writeInterleaved() {
+        return 0;
+      },
+      getBufferLevelFrames() {
+        return 0;
+      },
+      getUnderrunCount() {
+        return 0;
+      },
     };
   }
 
@@ -338,7 +418,7 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
 
   // Prefill a small amount of silence to avoid counting an initial underrun
   // between node start and the producer beginning to write samples.
-  Atomics.store(ringBuffer.header, WRITE_FRAME_INDEX, Math.min(512, ringBufferFrames));
+  prefillSilenceIfEmpty(ringBuffer, 512);
 
   node.connect(context.destination);
 
