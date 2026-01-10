@@ -70,7 +70,7 @@ See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitiona
 │       │                     │                                    │
 │       ▼                     ▼                                    │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │           Network Proxy Server (Required)                │    │
+│  │           Aero Gateway (Required)                        │    │
 │  │    - TCP connection relay                                │    │
 │  │    - UDP packet relay                                    │    │
 │  │    - DNS resolution                                      │    │
