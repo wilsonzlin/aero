@@ -483,6 +483,35 @@ For D3D10/11 specifically, add a “many draws” microbench once the translatio
 - pipeline churn test (measures pipeline-cache behavior and compilation costs)
 - constant-buffer update bandwidth (measures ring allocator / renaming strategy)
 
+#### Benchmark output should include JIT telemetry (PF-006)
+
+Raw throughput numbers (e.g. MIPS) are not enough to debug regressions in a tiered JIT: a 10% slowdown can come from "execution got slower" *or* "we started compiling more / compiling slower".
+
+For any benchmark that executes guest code, the runner should also emit a compact `jit` summary derived from PF-006 telemetry, for example:
+
+```
+bench_instruction_throughput  ...  510.2 MIPS
+jit: hit_rate=98.7% blocks(t1=1234,t2=56) compile_ms(t1=87.4,t2=45.1) compile_ms/s=3.4 deopt=0 guard_fail=0 cache=100MiB/256MiB
+```
+
+This makes it possible to attribute changes quickly:
+
+- **MIPS ↓ + compile_ms/s ↑** → compilation overhead increased (thresholds, cache misses, slower passes)
+- **MIPS ↓ + hit_rate ↓** → cache thrash / poor block keys / frequent invalidation
+- **MIPS ↓ + deopt ↑** → unstable Tier 2 assumptions (guard policy, profiling, invalidation)
+
+#### Synthetic workload to validate PF-006
+
+Maintain at least one synthetic benchmark that intentionally forces compilation:
+
+- Execute a large number of distinct basic blocks (e.g. by generating a code buffer with many unique addresses) to trigger Tier 1 compilation.
+- Run long enough to promote a subset to Tier 2 (if Tier 2 exists).
+
+Verification criteria:
+
+- With JIT enabled: `blocks_compiled_total > 0` and `compile_ms_total > 0` in exported/printed metrics.
+- With compilation disabled (interpreter-only): all `jit.*` totals remain `0`, and benchmark overhead stays minimal.
+
 ---
 
 ## Conformance Testing

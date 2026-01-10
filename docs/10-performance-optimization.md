@@ -695,6 +695,144 @@ impl Profiler {
 }
 ```
 
+### PF-006: JIT Optimization Analysis Metrics
+
+To optimize a tiered JIT you need visibility into **(a)** compile cost (per tier and per pass), **(b)** cache behavior (is the JIT saving work or thrashing), and **(c)** stability (deopts/guard failures).
+
+PF-006 defines a small, cheap-to-update telemetry surface that the rest of the performance tooling (PF-001 HUD + JSON export, PF-008 benchmarks) can consume.
+
+#### Metrics to collect (exported totals + rolling)
+
+The minimum required set is:
+
+| Metric | Kind | Unit | Notes |
+| --- | --- | --- | --- |
+| `jit.tier1.compile_time_total` | duration | ms | Total time spent compiling Tier 1 (baseline) blocks this run |
+| `jit.tier2.compile_time_total` | duration | ms | Total time spent compiling Tier 2 (optimizing) blocks this run |
+| `jit.tier2.pass.<name>.time_total` | duration | ms | Total time spent in major Tier 2 passes (`const_fold`, `dce`, `regalloc`, …) |
+| `jit.tier1.blocks_compiled_total` | counter | blocks | Count of compiled Tier 1 blocks/regions |
+| `jit.tier2.blocks_compiled_total` | counter | blocks | Count of compiled Tier 2 blocks/regions |
+| `jit.cache.capacity_bytes` | gauge | bytes | Configured code cache capacity |
+| `jit.cache.used_bytes` | gauge | bytes | Current code cache usage (after inserts/evictions) |
+| `jit.cache.lookup_hit_total` | counter | lookups | Cache lookup found an existing compiled block |
+| `jit.cache.lookup_miss_total` | counter | lookups | Cache lookup did not find compiled code and triggered compilation |
+| `jit.deopt_total` | counter | events | Number of deoptimizations (Tier 2 → Tier 1/0) |
+| `jit.guard_fail_total` | counter | events | Number of guard failures (if guards are implemented) |
+
+**Rolling metrics** (derived from the totals above) are required for HUD and for "what changed right now?" debugging:
+
+| Rolling view | Derived from | Use |
+| --- | --- | --- |
+| `jit.cache_hit_rate_1s` | hits/misses deltas over 1s | Detect cache thrash or poor block formation |
+| `jit.compile_ms_per_s_1s` | compile-time delta over 1s | Detect compile spikes and tune thresholds |
+| `jit.blocks_compiled_per_s_1s` | block count delta over 1s | Detect pathological compilation churn |
+
+The "1s" window is an example; PF-001 can choose another HUD window (e.g. last 60 frames) as long as it is consistent and documented in exports.
+
+#### Data model + hot-path considerations
+
+The JIT cache lookup is on the execution hot path, so updates must be **amortized and lock-free**:
+
+- Use simple **counters** for events (`lookup_hit_total`, `lookup_miss_total`, `blocks_compiled_total`, `deopt_total`).
+- Use **durations accumulated as integer nanoseconds** (or milliseconds) for compilation work; compilation runs off-thread, but we still want cheap aggregation.
+- Prefer **per-thread counters** (or per-worker counters) that are merged periodically into a global view, to avoid high-frequency atomics on every lookup.
+
+One workable shape (illustrative):
+
+```rust
+/// Collected by the JIT worker and periodically merged into the global telemetry sink.
+pub struct JitMetricsTotals {
+    // Cache behavior.
+    pub cache_lookup_hit_total: u64,
+    pub cache_lookup_miss_total: u64,
+
+    // Tier distribution.
+    pub tier1_blocks_compiled_total: u64,
+    pub tier2_blocks_compiled_total: u64,
+
+    // Compile time (accumulated).
+    pub tier1_compile_ns_total: u64,
+    pub tier2_compile_ns_total: u64,
+
+    // Tier 2 pass breakdown (accumulated).
+    pub tier2_pass_const_fold_ns_total: u64,
+    pub tier2_pass_dce_ns_total: u64,
+    pub tier2_pass_regalloc_ns_total: u64,
+
+    // Deopts/guards.
+    pub deopt_total: u64,
+    pub guard_fail_total: u64,
+
+    // Code cache footprint.
+    pub code_cache_capacity_bytes: u64,
+    pub code_cache_used_bytes: u64,
+}
+```
+
+Compilation-phase timings should be captured at **pass boundaries** (not per instruction/IR node), so instrumentation stays negligible relative to actual compile work.
+
+#### Reporting integration (PF-001 HUD + JSON export)
+
+PF-001 should expose these metrics in two surfaces:
+
+1) **HUD (small panel)**
+
+Required fields:
+
+- `JIT cache hit`: `hits / (hits + misses)` over rolling window
+- `JIT blocks`: total blocks compiled (optionally `(+X/s)` from rolling window)
+- `JIT compile`: compile ms/s over rolling window (sum Tier1+Tier2), with optional breakdown (`t1=… t2=…`)
+
+2) **JSON export**
+
+Include a `jit` section that contains both totals (since run start) and a rolling snapshot used by the HUD.
+
+Example shape:
+
+```json
+{
+  "jit": {
+    "enabled": true,
+    "totals": {
+      "tier1": { "blocks_compiled": 1234, "compile_ms": 87.4 },
+      "tier2": {
+        "blocks_compiled": 56,
+        "compile_ms": 45.1,
+        "passes_ms": { "const_fold": 4.2, "dce": 6.7, "regalloc": 18.9 }
+      },
+      "cache": {
+        "lookup_hit": 98765,
+        "lookup_miss": 1234,
+        "capacity_bytes": 268435456,
+        "used_bytes": 104857600
+      },
+      "deopt": { "count": 0, "guard_fail": 0 }
+    },
+    "rolling": {
+      "window_ms": 1000,
+      "cache_hit_rate": 0.9875,
+      "compile_ms_per_s": 3.4,
+      "blocks_compiled_per_s": 12.0
+    }
+  }
+}
+```
+
+The exact JSON schema is less important than: (a) stability, (b) explicit units, (c) totals + rolling included together.
+
+#### Benchmark/regression linkage
+
+PF-008 benchmarks should print a one-line summary of key `jit` metrics alongside throughput numbers so regressions can be attributed quickly (e.g. "MIPS dropped because Tier2 compile ms doubled").
+
+See "Performance Benchmarks" in [Testing Strategy](./12-testing-strategy.md) for suggested output format.
+
+#### Verification expectations
+
+PF-006 should be validated with at least:
+
+- A synthetic benchmark that executes enough distinct blocks to force compilation → **non-zero compile ms and block counts**.
+- A run with JIT compilation disabled (interpreted-only mode) → **all `jit.*` counters and durations remain 0**, and the code path avoids doing cache lookups/instrumentation work.
+
 ---
 
 ## Next Steps
