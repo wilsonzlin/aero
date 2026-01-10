@@ -44,3 +44,22 @@ impl GsiSink for IoApic {
     }
 }
 
+impl GsiSink for crate::apic::IoApic {
+    fn raise_gsi(&mut self, gsi: u32) {
+        self.set_irq_level(gsi, true);
+    }
+
+    fn lower_gsi(&mut self, gsi: u32) {
+        self.set_irq_level(gsi, false);
+    }
+}
+
+impl GsiSink for aero_platform::interrupts::PlatformInterrupts {
+    fn raise_gsi(&mut self, gsi: u32) {
+        self.raise_irq(aero_platform::interrupts::InterruptInput::Gsi(gsi));
+    }
+
+    fn lower_gsi(&mut self, gsi: u32) {
+        self.lower_irq(aero_platform::interrupts::InterruptInput::Gsi(gsi));
+    }
+}
