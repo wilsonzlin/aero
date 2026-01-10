@@ -42,6 +42,32 @@ fn checksums_sum_to_zero() {
 }
 
 #[test]
+fn fadt_exposes_acpi_reset_register() {
+    let tables = build_golden_tables();
+    let fadt = tables.fadt.as_slice();
+
+    // Offsets per ACPI 2.0+ FADT layout (see `acpi::structures::Fadt`).
+    const FLAGS_OFFSET: usize = 112;
+    const RESET_REG_OFFSET: usize = 116;
+
+    let flags = u32::from_le_bytes(fadt[FLAGS_OFFSET..FLAGS_OFFSET + 4].try_into().unwrap());
+    assert_ne!(flags & (1 << 10), 0, "RESET_REG_SUP flag must be set");
+
+    // ResetReg is a Generic Address Structure (GAS).
+    assert_eq!(fadt[RESET_REG_OFFSET + 0], 0x01, "ResetReg must be System I/O");
+    assert_eq!(fadt[RESET_REG_OFFSET + 1], 8, "ResetReg width must be 8 bits");
+    assert_eq!(fadt[RESET_REG_OFFSET + 3], 1, "ResetReg access size must be byte");
+
+    let addr = u64::from_le_bytes(
+        fadt[RESET_REG_OFFSET + 4..RESET_REG_OFFSET + 12]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(addr, 0x0CF9, "ResetReg address must be port 0xCF9");
+    assert_eq!(fadt[RESET_REG_OFFSET + 12], 0x06, "ResetValue must be 0x06");
+}
+
+#[test]
 fn placement_is_aligned_and_non_overlapping() {
     let tables = build_golden_tables();
 

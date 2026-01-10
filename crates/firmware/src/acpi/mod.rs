@@ -13,4 +13,3 @@ pub use constants::*;
 pub use parser::*;
 pub use structures::*;
 pub use tables::{build_acpi_table_set, BuiltAcpiTables};
-

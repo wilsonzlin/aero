@@ -337,8 +337,21 @@ fn build_fadt(dsdt_addr: PhysAddr, facs_addr: PhysAddr) -> Result<Vec<u8>, AcpiB
     // Legacy devices present (PIC/PIT/RTC), 8042 present, VGA present.
     fadt.IapcBootArch = 0x0007u16.to_le();
 
-    // No reset register provided (would require implementing I/O port 0xCF9 or
-    // similar). Leave Flags and ResetReg zeroed.
+    // ACPI reset register support (FADT.ResetReg/ResetValue).
+    //
+    // Windows (and other OSes) commonly use the ACPI-defined reset register for
+    // reboot, which on PC platforms conventionally points at the chipset reset
+    // control port 0xCF9.
+    const FADT_FLAG_RESET_REG_SUP: u32 = 1 << 10;
+    fadt.Flags = FADT_FLAG_RESET_REG_SUP.to_le();
+    fadt.ResetReg = GenericAddress {
+        address_space_id: 1, // System I/O
+        register_bit_width: 8,
+        register_bit_offset: 0,
+        access_size: 1, // byte access
+        address: 0x0CF9u64.to_le(),
+    };
+    fadt.ResetValue = 0x06;
 
     let mut bytes = as_bytes(&fadt).to_vec();
     set_checksum(&mut bytes, ACPI_HEADER_CHECKSUM_OFFSET);

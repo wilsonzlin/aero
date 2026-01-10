@@ -3,6 +3,9 @@ use std::collections::HashMap;
 pub trait PortIoDevice {
     fn read(&mut self, port: u16, size: u8) -> u32;
     fn write(&mut self, port: u16, size: u8, value: u32);
+
+    /// Reset the device back to its power-on state.
+    fn reset(&mut self) {}
 }
 
 pub struct IoPortBus {
@@ -44,6 +47,12 @@ impl IoPortBus {
 
     pub fn write_u8(&mut self, port: u16, value: u8) {
         self.write(port, 1, value as u32);
+    }
+
+    pub fn reset(&mut self) {
+        for dev in self.devices.values_mut() {
+            dev.reset();
+        }
     }
 }
 

@@ -35,3 +35,4 @@ impl<D: BlockDevice> Vm<D> {
         exit
     }
 }
+
