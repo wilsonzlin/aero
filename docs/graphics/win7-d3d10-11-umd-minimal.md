@@ -514,13 +514,16 @@ No other reflection is required for “triangle/texture/depth” bring-up.
 * Viewports/scissors, rasterizer state, blend state, depth/stencil state
 * Texture2D sampling + samplers
 * Constant buffers (as resources) and updates (Map/Unmap or UpdateSubresource)
+* Geometry shader plumbing (required by the FL10_0 pipeline even if your initial apps never bind a GS):
+  * `pfnCreateGeometryShader` and the corresponding `*SetShader`/resource-binding entrypoints
+  * it is valid for apps to keep the GS stage unbound; but the entrypoints should exist and work when used
 
 **What can be NOT_SUPPORTED at FL10_0 bring-up (but will limit apps):**
 
-* Geometry shaders (many engines avoid them, but some require them)
 * Queries/predication
 * MSAA
 * UAVs and compute
+* Deferred contexts / command lists (if the runtime exposes them through your chosen D3D11 DDI interface version)
 
 If you claim `D3D_FEATURE_LEVEL_10_0` but do not implement compute shaders, ensure the corresponding capability is reported as unsupported (for API-facing caps this is typically via `D3D11_FEATURE_DATA_D3D10_X_HARDWARE_OPTIONS::ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x = FALSE`).
 
