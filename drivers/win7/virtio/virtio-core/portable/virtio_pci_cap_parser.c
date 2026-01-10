@@ -19,9 +19,17 @@ static uint32_t virtio_pci_cap_parser_read_le32(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-static virtio_pci_cap_parse_result_t virtio_pci_cap_parser_check_ptr(
-    uint8_t ptr,
-    size_t cfg_space_len) {
+static virtio_pci_cap_parse_result_t virtio_pci_cap_parser_sanitize_cap_ptr(
+    uint8_t raw_ptr,
+    size_t cfg_space_len,
+    uint8_t *out_ptr) {
+    uint8_t ptr;
+
+    if (out_ptr == NULL) {
+        return VIRTIO_PCI_CAP_PARSE_ERR_BAD_ARGUMENT;
+    }
+
+    ptr = (uint8_t)(raw_ptr & 0xFCu);
     if (ptr == 0) {
         return VIRTIO_PCI_CAP_PARSE_ERR_NO_CAP_LIST;
     }
@@ -34,10 +42,35 @@ static virtio_pci_cap_parse_result_t virtio_pci_cap_parser_check_ptr(
         return VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_OUT_OF_RANGE;
     }
 
-    if ((ptr & 0x3u) != 0) {
-        return VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_UNALIGNED;
+    *out_ptr = ptr;
+    return VIRTIO_PCI_CAP_PARSE_OK;
+}
+
+static virtio_pci_cap_parse_result_t virtio_pci_cap_parser_sanitize_cap_next(
+    uint8_t raw_next,
+    size_t cfg_space_len,
+    uint8_t *out_next) {
+    uint8_t next;
+
+    if (out_next == NULL) {
+        return VIRTIO_PCI_CAP_PARSE_ERR_BAD_ARGUMENT;
     }
 
+    next = (uint8_t)(raw_next & 0xFCu);
+    if (next == 0) {
+        *out_next = 0;
+        return VIRTIO_PCI_CAP_PARSE_OK;
+    }
+
+    if (next < VIRTIO_PCI_CAP_PARSER_CFG_MIN_LEN) {
+        return VIRTIO_PCI_CAP_PARSE_ERR_CAP_NEXT_OUT_OF_RANGE;
+    }
+
+    if ((size_t)next >= cfg_space_len) {
+        return VIRTIO_PCI_CAP_PARSE_ERR_CAP_NEXT_OUT_OF_RANGE;
+    }
+
+    *out_next = next;
     return VIRTIO_PCI_CAP_PARSE_OK;
 }
 
@@ -45,6 +78,9 @@ static virtio_pci_cap_parse_result_t virtio_pci_cap_parser_store_region(
     virtio_pci_cap_region_t *out,
     const uint64_t bar_addrs[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT],
     uint8_t bar,
+    uint8_t id,
+    uint8_t cap_len,
+    uint8_t cap_offset,
     uint32_t offset,
     uint32_t length) {
     uint64_t base;
@@ -59,6 +95,9 @@ static virtio_pci_cap_parse_result_t virtio_pci_cap_parser_store_region(
     }
 
     out->bar = bar;
+    out->id = id;
+    out->cap_len = cap_len;
+    out->cap_offset = cap_offset;
     out->offset = offset;
     out->length = length;
     out->addr = base + (uint64_t)offset;
@@ -90,9 +129,9 @@ virtio_pci_cap_parse_result_t virtio_pci_cap_parse(
         return VIRTIO_PCI_CAP_PARSE_ERR_CFG_SPACE_TOO_SMALL;
     }
 
-    cap_ptr = cfg_space[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET];
     {
-        virtio_pci_cap_parse_result_t res = virtio_pci_cap_parser_check_ptr(cap_ptr, cfg_space_len);
+        virtio_pci_cap_parse_result_t res = virtio_pci_cap_parser_sanitize_cap_ptr(
+            cfg_space[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET], cfg_space_len, &cap_ptr);
         if (res != VIRTIO_PCI_CAP_PARSE_OK) {
             return res;
         }
@@ -123,19 +162,11 @@ virtio_pci_cap_parse_result_t virtio_pci_cap_parse(
         }
 
         cap_id = cfg_space[current + 0];
-        cap_next = cfg_space[current + 1];
-
-        if (cap_next != 0) {
-            if (cap_next < VIRTIO_PCI_CAP_PARSER_CFG_MIN_LEN) {
-                return VIRTIO_PCI_CAP_PARSE_ERR_CAP_NEXT_OUT_OF_RANGE;
-            }
-
-            if ((size_t)cap_next >= cfg_space_len) {
-                return VIRTIO_PCI_CAP_PARSE_ERR_CAP_NEXT_OUT_OF_RANGE;
-            }
-
-            if ((cap_next & 0x3u) != 0) {
-                return VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_UNALIGNED;
+        {
+            virtio_pci_cap_parse_result_t res =
+                virtio_pci_cap_parser_sanitize_cap_next(cfg_space[current + 1], cfg_space_len, &cap_next);
+            if (res != VIRTIO_PCI_CAP_PARSE_OK) {
+                return res;
             }
         }
 
@@ -162,6 +193,8 @@ virtio_pci_cap_parse_result_t virtio_pci_cap_parse(
                 cfg_type == VIRTIO_PCI_CAP_PARSER_CFG_TYPE_NOTIFY ||
                 cfg_type == VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR ||
                 cfg_type == VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE) {
+                uint8_t id;
+
                 if (cap_len < VIRTIO_PCI_CAP_PARSER_VIRTIO_CAP_LEN) {
                     return VIRTIO_PCI_CAP_PARSE_ERR_CAP_LEN_TOO_SMALL;
                 }
@@ -176,13 +209,14 @@ virtio_pci_cap_parse_result_t virtio_pci_cap_parse(
                 }
 
                 bar = cfg_space[current + 4];
+                id = cfg_space[current + 5];
                 offset = virtio_pci_cap_parser_read_le32(cfg_space + current + 8);
                 length = virtio_pci_cap_parser_read_le32(cfg_space + current + 12);
 
                 if (cfg_type == VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON) {
                     if (found_common == 0 || length > out_caps->common_cfg.length) {
                         virtio_pci_cap_parse_result_t res = virtio_pci_cap_parser_store_region(
-                            &out_caps->common_cfg, bar_addrs, bar, offset, length);
+                            &out_caps->common_cfg, bar_addrs, bar, id, cap_len, current, offset, length);
                         if (res != VIRTIO_PCI_CAP_PARSE_OK) {
                             return res;
                         }
@@ -191,7 +225,7 @@ virtio_pci_cap_parse_result_t virtio_pci_cap_parse(
                 } else if (cfg_type == VIRTIO_PCI_CAP_PARSER_CFG_TYPE_NOTIFY) {
                     if (found_notify == 0 || length > out_caps->notify_cfg.length) {
                         virtio_pci_cap_parse_result_t res = virtio_pci_cap_parser_store_region(
-                            &out_caps->notify_cfg, bar_addrs, bar, offset, length);
+                            &out_caps->notify_cfg, bar_addrs, bar, id, cap_len, current, offset, length);
                         if (res != VIRTIO_PCI_CAP_PARSE_OK) {
                             return res;
                         }
@@ -202,7 +236,7 @@ virtio_pci_cap_parse_result_t virtio_pci_cap_parse(
                 } else if (cfg_type == VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR) {
                     if (found_isr == 0 || length > out_caps->isr_cfg.length) {
                         virtio_pci_cap_parse_result_t res = virtio_pci_cap_parser_store_region(
-                            &out_caps->isr_cfg, bar_addrs, bar, offset, length);
+                            &out_caps->isr_cfg, bar_addrs, bar, id, cap_len, current, offset, length);
                         if (res != VIRTIO_PCI_CAP_PARSE_OK) {
                             return res;
                         }
@@ -211,7 +245,7 @@ virtio_pci_cap_parse_result_t virtio_pci_cap_parse(
                 } else if (cfg_type == VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE) {
                     if (found_device == 0 || length > out_caps->device_cfg.length) {
                         virtio_pci_cap_parse_result_t res = virtio_pci_cap_parser_store_region(
-                            &out_caps->device_cfg, bar_addrs, bar, offset, length);
+                            &out_caps->device_cfg, bar_addrs, bar, id, cap_len, current, offset, length);
                         if (res != VIRTIO_PCI_CAP_PARSE_OK) {
                             return res;
                         }

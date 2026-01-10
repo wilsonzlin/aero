@@ -295,8 +295,18 @@ static void test_cap_ptr_unaligned(void) {
     write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
     cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x41;
 
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x70, 2, 0x2000, 0x200, 4);
+    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 1, 0x3000, 0x10, 16);
+    add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 4, 0x4000, 0x400, 16);
+
+    bars[0] = 0xA0000000ULL;
+    bars[1] = 0xB0000000ULL;
+    bars[2] = 0xC0000000ULL;
+    bars[4] = 0xD0000000ULL;
+
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
-    expect_result("cap_ptr_unaligned.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_UNALIGNED);
+    expect_result("cap_ptr_unaligned.res", res, VIRTIO_PCI_CAP_PARSE_OK);
 }
 
 static void test_cap_next_out_of_range(void) {
@@ -470,11 +480,18 @@ static void test_cap_next_unaligned(void) {
     write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
     cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
 
-    add_virtio_cap(cfg, 0x40, 0x51, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
+    add_virtio_cap(cfg, 0x40, 0x55, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x73, 2, 0x2000, 0x200, 4);
+    add_virtio_cap(cfg, 0x70, 0x82, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 1, 0x3000, 0x10, 16);
+    add_virtio_cap(cfg, 0x80, 0x03, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 4, 0x4000, 0x400, 16);
+
     bars[0] = 0xA0000000ULL;
+    bars[1] = 0xB0000000ULL;
+    bars[2] = 0xC0000000ULL;
+    bars[4] = 0xD0000000ULL;
 
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
-    expect_result("cap_next_unaligned.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_UNALIGNED);
+    expect_result("cap_next_unaligned.res", res, VIRTIO_PCI_CAP_PARSE_OK);
 }
 
 static void test_bad_argument_null_cfg_space(void) {

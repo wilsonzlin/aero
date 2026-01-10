@@ -61,24 +61,36 @@ VirtioPciCapsDiscover(_In_ PPCI_BUS_INTERFACE_STANDARD PciInterface,
     Caps->CommonCfg.Present = TRUE;
     Caps->CommonCfg.CfgType = VIRTIO_PCI_CAP_COMMON_CFG;
     Caps->CommonCfg.Bar = (UCHAR)parsed.common_cfg.bar;
+    Caps->CommonCfg.Id = (UCHAR)parsed.common_cfg.id;
+    Caps->CommonCfg.CapLen = (UCHAR)parsed.common_cfg.cap_len;
+    Caps->CommonCfg.CapOffset = (ULONG)parsed.common_cfg.cap_offset;
     Caps->CommonCfg.Offset = (ULONG)parsed.common_cfg.offset;
     Caps->CommonCfg.Length = (ULONG)parsed.common_cfg.length;
 
     Caps->NotifyCfg.Present = TRUE;
     Caps->NotifyCfg.CfgType = VIRTIO_PCI_CAP_NOTIFY_CFG;
     Caps->NotifyCfg.Bar = (UCHAR)parsed.notify_cfg.bar;
+    Caps->NotifyCfg.Id = (UCHAR)parsed.notify_cfg.id;
+    Caps->NotifyCfg.CapLen = (UCHAR)parsed.notify_cfg.cap_len;
+    Caps->NotifyCfg.CapOffset = (ULONG)parsed.notify_cfg.cap_offset;
     Caps->NotifyCfg.Offset = (ULONG)parsed.notify_cfg.offset;
     Caps->NotifyCfg.Length = (ULONG)parsed.notify_cfg.length;
 
     Caps->IsrCfg.Present = TRUE;
     Caps->IsrCfg.CfgType = VIRTIO_PCI_CAP_ISR_CFG;
     Caps->IsrCfg.Bar = (UCHAR)parsed.isr_cfg.bar;
+    Caps->IsrCfg.Id = (UCHAR)parsed.isr_cfg.id;
+    Caps->IsrCfg.CapLen = (UCHAR)parsed.isr_cfg.cap_len;
+    Caps->IsrCfg.CapOffset = (ULONG)parsed.isr_cfg.cap_offset;
     Caps->IsrCfg.Offset = (ULONG)parsed.isr_cfg.offset;
     Caps->IsrCfg.Length = (ULONG)parsed.isr_cfg.length;
 
     Caps->DeviceCfg.Present = TRUE;
     Caps->DeviceCfg.CfgType = VIRTIO_PCI_CAP_DEVICE_CFG;
     Caps->DeviceCfg.Bar = (UCHAR)parsed.device_cfg.bar;
+    Caps->DeviceCfg.Id = (UCHAR)parsed.device_cfg.id;
+    Caps->DeviceCfg.CapLen = (UCHAR)parsed.device_cfg.cap_len;
+    Caps->DeviceCfg.CapOffset = (ULONG)parsed.device_cfg.cap_offset;
     Caps->DeviceCfg.Offset = (ULONG)parsed.device_cfg.offset;
     Caps->DeviceCfg.Length = (ULONG)parsed.device_cfg.length;
 

@@ -43,6 +43,9 @@ extern "C" {
 
 typedef struct virtio_pci_cap_region {
     uint8_t bar;
+    uint8_t id;
+    uint8_t cap_len;
+    uint8_t cap_offset;
     uint32_t offset;
     uint32_t length;
     uint64_t addr;
