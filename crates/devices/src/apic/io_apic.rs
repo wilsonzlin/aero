@@ -136,8 +136,8 @@ impl IoApic {
         for (gsi, active_low) in pin_active_low.iter_mut().enumerate() {
             // Default PC wiring:
             // - ISA IRQs are typically active-high (except SCI via ACPI ISO)
-            // - PCI INTx lines are active-low (GSIs 16+ on typical chipsets)
-            *active_low = gsi == 9 || gsi >= 16;
+            // - PCI INTx lines are active-low (our default ACPI _PRT routes them to GSIs 10-13)
+            *active_low = gsi == 9 || (10..=13).contains(&gsi) || gsi >= 16;
         }
         // Initialise pins to the deasserted electrical level for the assumed wiring.
         let pin_level = pin_active_low.clone();
@@ -334,6 +334,10 @@ impl IoApic {
 
         // Fixed + physical destination routing only for now.
         if entry.delivery_mode != 0 || entry.destination_mode {
+            return;
+        }
+
+        if entry.destination != self.lapic.apic_id() {
             return;
         }
 

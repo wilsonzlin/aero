@@ -26,14 +26,16 @@ fn pci_intx_can_drive_ioapic_and_be_mirrored_to_pic() {
     let lapic = Arc::new(LocalApic::new(0));
     let mut ioapic = IoApic::new(IoApicId(0), lapic.clone());
 
-    // Configure GSI 10 -> vector 0x45, unmasked, edge-triggered.
+    // Configure GSI 10 -> vector 0x45, unmasked, active-low, level-triggered.
     let gsi = 10u32;
     let vector = 0x45u8;
     let redtbl_low = 0x10u32 + (gsi * 2);
     let redtbl_high = redtbl_low + 1;
 
     ioapic.mmio_write(0x00, 4, u64::from(redtbl_low));
-    ioapic.mmio_write(0x10, 4, u64::from(vector));
+    // PCI INTx is active-low, level-triggered.
+    let low = u32::from(vector) | (1 << 13) | (1 << 15);
+    ioapic.mmio_write(0x10, 4, u64::from(low));
 
     ioapic.mmio_write(0x00, 4, u64::from(redtbl_high));
     ioapic.mmio_write(0x10, 4, 0u64);
@@ -50,4 +52,3 @@ fn pci_intx_can_drive_ioapic_and_be_mirrored_to_pic() {
     assert_eq!(lapic.pop_pending(), Some(vector));
     assert_eq!(pic.get_pending_vector(), Some(0x2A)); // IRQ10 -> slave IRQ2 -> vector 0x28+2
 }
-
