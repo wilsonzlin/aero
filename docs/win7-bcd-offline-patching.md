@@ -146,4 +146,11 @@ In the output, confirm the relevant entries contain:
 - `testsigning              Yes`
 - `nointegritychecks        Yes`
 
+If you specifically patched the settings objects (recommended), you can also check them directly:
+
+```bat
+bcdedit /store <path-to-BCD> /enum {globalsettings} /v
+bcdedit /store <path-to-BCD> /enum {bootloadersettings} /v
+```
+
 If those settings show up as `No` or are missing entirely, the offline patch did not apply to the object(s) Windows is actually booting through (most commonly: only patching one of the ISO BCD stores, or patching settings objects but not the OS loader objects themselves).
