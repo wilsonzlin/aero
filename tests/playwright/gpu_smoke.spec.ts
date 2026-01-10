@@ -11,6 +11,10 @@ async function waitForGpuSmokeResult(page) {
   return page.evaluate(() => (window as any).__gpuSmokeResult);
 }
 
+function isWebGPURequired() {
+  return process.env.AERO_REQUIRE_WEBGPU === '1';
+}
+
 test('forced WebGL2 fallback renders expected test pattern', async ({ page }) => {
   await page.goto(`${GPU_SMOKE_URL}?backend=webgl2`, { waitUntil: 'load' });
   const result = await waitForGpuSmokeResult(page);
@@ -21,30 +25,29 @@ test('forced WebGL2 fallback renders expected test pattern', async ({ page }) =>
   expect(result.ok).toBe(true);
 });
 
-test('default init uses WebGPU when available', async ({ page }) => {
+test('default init uses WebGPU when available @webgpu', async ({ page }) => {
   await page.goto(GPU_SMOKE_URL, { waitUntil: 'load' });
   const result = await waitForGpuSmokeResult(page);
 
   if (!result.navigatorGpuAvailable) {
+    if (isWebGPURequired()) {
+      throw new Error('WebGPU is unavailable: `navigator.gpu` is missing');
+    }
     test.skip(true, 'WebGPU not available in this environment (navigator.gpu missing)');
   }
 
   if (result.error) {
     const message = String(result.error);
-    // Headless WebGPU support is spotty; treat known readback/adapter failures as "not available"
-    // rather than a hard failure of the fallback smoke tests.
-    if (
-      message.includes('external Instance reference') ||
-      message.includes('Failed to execute') ||
-      message.includes('Readback of the source image has failed')
-    ) {
-      test.skip(true, `WebGPU present but not usable in this environment: ${message}`);
+    if (isWebGPURequired()) {
+      throw new Error(message);
     }
-
-    throw new Error(message);
+    test.skip(true, `WebGPU present but not usable in this environment: ${message}`);
   }
 
   if (result.backend !== 'webgpu') {
+    if (isWebGPURequired()) {
+      throw new Error(`WebGPU not used by default init (backend=${result.backend})`);
+    }
     test.skip(true, `WebGPU not used by default init (backend=${result.backend})`);
   }
 
