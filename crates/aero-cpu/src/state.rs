@@ -857,6 +857,7 @@ impl CpuState {
     }
 
     fn recompute_long_mode_active(&mut self) {
+        let was_lma = (self.msrs.efer & EFER_LMA) != 0;
         let lma = (self.control.cr0 & CR0_PG != 0)
             && (self.control.cr4 & CR4_PAE != 0)
             && (self.msrs.efer & EFER_LME != 0);
@@ -864,6 +865,27 @@ impl CpuState {
             self.msrs.efer |= EFER_LMA;
         } else {
             self.msrs.efer &= !EFER_LMA;
+        }
+
+        if lma && !was_lma {
+            // Entering long mode (IA-32e): segmentation is mostly disabled and bases are treated as
+            // 0 for CS/DS/ES/SS, while FS/GS bases come from MSRs.
+            //
+            // We normalize cached bases/limits here so any later address calculations that use the
+            // caches don't accidentally keep legacy protected-mode bases alive.
+            self.cs.cache.base = 0;
+            self.ds.cache.base = 0;
+            self.es.cache.base = 0;
+            self.ss.cache.base = 0;
+            self.cs.cache.limit = 0xFFFF_FFFF;
+            self.ds.cache.limit = 0xFFFF_FFFF;
+            self.es.cache.limit = 0xFFFF_FFFF;
+            self.ss.cache.limit = 0xFFFF_FFFF;
+
+            self.fs.cache.base = self.msrs.fs_base;
+            self.gs.cache.base = self.msrs.gs_base;
+            self.fs.cache.limit = 0xFFFF_FFFF;
+            self.gs.cache.limit = 0xFFFF_FFFF;
         }
     }
 
@@ -1553,5 +1575,42 @@ mod tests {
         assert_eq!(cpu.msrs.gs_base, 0x2222);
         assert_eq!(cpu.msrs.kernel_gs_base, 0x1111);
         assert_eq!(cpu.gs.cache.base, 0x2222);
+    }
+
+    #[test]
+    fn entering_long_mode_updates_fs_gs_cache_bases_from_msrs() {
+        let mut mem = VecMemory::new(0x8000);
+        let mut cpu = CpuState::default();
+
+        // GDT: null, 32-bit code/data, and FS/GS descriptors.
+        let gdt_base = 0x1000;
+        write_desc(&mut mem, gdt_base, 0);
+        write_desc(&mut mem, gdt_base + 8, 0x00CF9A000000FFFF);
+        write_desc(&mut mem, gdt_base + 16, 0x00CF92000000FFFF);
+        write_desc(&mut mem, gdt_base + 24, 0x00CF92000000FFFF);
+        write_desc(&mut mem, gdt_base + 32, 0x00CF92000000FFFF);
+        cpu.lgdt(gdt_base, 0x27);
+
+        // Protected mode first, with FS/GS loaded from descriptors (base=0).
+        cpu.write_cr0(cpu.control.cr0 | CR0_PE);
+        cpu.load_segment(SegReg::Cs, 0x08, &mem).unwrap();
+        cpu.load_segment(SegReg::Ss, 0x10, &mem).unwrap();
+        cpu.load_segment(SegReg::Fs, 0x18, &mem).unwrap();
+        cpu.load_segment(SegReg::Gs, 0x20, &mem).unwrap();
+        assert_eq!(cpu.fs.cache.base, 0);
+        assert_eq!(cpu.gs.cache.base, 0);
+
+        // Program MSRs before long mode becomes active.
+        cpu.write_msr(IA32_FS_BASE, 0x1111_2222_3333_4444).unwrap();
+        cpu.write_msr(IA32_GS_BASE, 0x5555_6666_7777_8888).unwrap();
+
+        // Enter long mode (LMA): caches should pick up MSR bases.
+        cpu.write_cr4(cpu.control.cr4 | CR4_PAE);
+        cpu.write_msr(IA32_EFER, cpu.msrs.efer | EFER_LME).unwrap();
+        cpu.write_cr0(cpu.control.cr0 | CR0_PG);
+        assert!(cpu.long_mode_active());
+
+        assert_eq!(cpu.fs.cache.base, 0x1111_2222_3333_4444);
+        assert_eq!(cpu.gs.cache.base, 0x5555_6666_7777_8888);
     }
 }
