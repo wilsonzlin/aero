@@ -264,6 +264,41 @@ pub trait GpuCommandProcessor {
 | WG-008 | Framebuffer presentation     | P0       | WG-002       | Medium     |
 | WG-009 | WebGL2 fallback              | P2       | None         | Very High  |
 
+#### Implementation notes (WG-001..WG-009)
+
+These are clarifying notes only (no ID/priority changes). See
+[16 - Browser GPU Backends (WebGPU-first + WebGL2 Fallback)](./16-browser-gpu-backends.md)
+for the full browser backend design.
+
+- **WG-001 (device initialization):**
+  - Implement backend selection as `auto|webgpu|webgl2` with a user override.
+  - Run GPU initialization inside the GPU worker using `OffscreenCanvas`.
+  - Treat most WebGPU features as optional; negotiate from `adapter.features()`/limits.
+- **WG-002 (render pipeline creation):**
+  - Prefer pipeline caching keyed by translated state + shader IDs.
+  - Keep a small “blit/present” pipeline always available (used by both backends).
+- **WG-003 (compute pipeline creation):**
+  - Only available in WebGPU mode; define CPU fallbacks for WebGL2 mode.
+  - Gate all compute usage behind capability flags.
+- **WG-004 (buffer management):**
+  - Design for streaming updates (ring buffers/staging) rather than frequent map/unmap.
+  - Avoid patterns that rely on storage buffers when targeting WebGL2 fallback.
+- **WG-005 (texture management):**
+  - Standardize on a small “portable” set of formats (RGBA8 + depth where possible).
+  - Treat BCn/DXT as an optional fast-path; fall back to CPU decompression.
+- **WG-006 (WGSL shader library):**
+  - Keep a WebGL2-compatible shader subset for shared shaders (present/blit/debug).
+  - Avoid WGSL features that cannot be lowered to GLSL ES 3.0.
+- **WG-007 (draw call batching):**
+  - Batch by pipeline/material state to reduce pipeline switches and bind updates.
+  - Prefer command-buffer-friendly batching that maps cleanly to WebGPU.
+- **WG-008 (framebuffer presentation):**
+  - Implement “swapchain + blit”: render into an internal texture, then blit to canvas.
+  - Handle resize by reconfiguring the surface and regenerating dependent resources.
+- **WG-009 (WebGL2 fallback):**
+  - Scope the fallback to framebuffer presentation + minimal render paths.
+  - Document and enforce feature gaps (no compute, limited formats, restricted bindings).
+
 
 ---
 

@@ -14,7 +14,8 @@ Aero leverages cutting-edge browser APIs to achieve performance and functionalit
 | WASM SIMD | 91+ | 89+ | 16.4+ | 91+ | **Yes** |
 | WASM Threads | 74+ | 79+ | 14.1+ | 79+ | **Yes** |
 | SharedArrayBuffer | 68+ | 79+ | 15.2+ | 79+ | **Yes** |
-| WebGPU | 113+ | 🚧 | 🚧 | 113+ | **Yes** |
+| WebGPU | 113+ | 🚧 | 🚧 | 113+ | **Preferred** |
+| WebGL2 | ✓ | ✓ | ✓ | ✓ | Fallback |
 | OPFS | 102+ | 111+ | 15.2+ | 102+ | **Yes** |
 | Web Workers | ✓ | ✓ | ✓ | ✓ | **Yes** |
 | AudioWorklet | 66+ | 76+ | 14.1+ | 79+ | **Yes** |
@@ -160,6 +161,25 @@ function compileJitBlock(wasmBytes) {
 
 ## WebGPU
 
+WebGPU is the preferred graphics API for Aero. The current implementation approach is to use **Rust `wgpu` (WASM)** targeting the browser’s WebGPU backend when available, with a **WebGL2 fallback** when WebGPU is unavailable or insufficient.
+
+For the concrete backend design (selection algorithm, OffscreenCanvas worker model, capability matrix, fallback limitations), see:
+
+- [16 - Browser GPU Backends (WebGPU-first + WebGL2 Fallback)](./16-browser-gpu-backends.md)
+
+### Required vs Optional WebGPU Features
+
+**Required (to run in WebGPU mode):**
+
+- Baseline WebGPU support (`navigator.gpu`, render pipelines, texture upload, canvas presentation)
+- Sufficient limits for the configured guest display size (e.g. `maxTextureDimension2D`)
+
+**Optional (enabled opportunistically with fallbacks):**
+
+- `texture-compression-bc` for BCn/DXT textures (otherwise decompress on CPU)
+- `float32-filterable` for higher-quality/precision sampling paths
+- `timestamp-query` for profiling builds and benchmark instrumentation
+
 ### Device Initialization
 
 ```javascript
@@ -176,17 +196,30 @@ async function initializeWebGPU() {
         throw new Error('No GPU adapter found');
     }
     
-    // Request device with required features
+    // Aero should keep true requirements minimal and negotiate optional features.
+    // Requiring rarely-supported features causes unnecessary init failures.
+    const REQUIRED_LIMITS = {
+        // Example baseline requirement: enough for 1080p+ framebuffers.
+        // The actual requirement should be derived from the current guest display mode.
+        maxTextureDimension2D: 2048,
+    };
+    
+    if (adapter.limits.maxTextureDimension2D < REQUIRED_LIMITS.maxTextureDimension2D) {
+        throw new Error('GPU limits too low for Aero framebuffer requirements');
+    }
+    
+    // Optional features: use if available, otherwise fall back to CPU paths / simpler shaders.
+    const OPTIONAL_FEATURES = [
+        'texture-compression-bc', // Use BCn/DXT directly when available; otherwise decompress on CPU.
+        'float32-filterable',     // Quality/perf improvement for some HDR/linear paths.
+        'timestamp-query',        // Profiling only.
+    ];
+    
+    const enabledFeatures = OPTIONAL_FEATURES.filter(f => adapter.features.has(f));
+    
     const device = await adapter.requestDevice({
-        requiredFeatures: [
-            'texture-compression-bc',  // For DXT textures
-            'float32-filterable',      // For HDR rendering
-        ],
-        requiredLimits: {
-            maxStorageBufferBindingSize: 512 * 1024 * 1024,  // 512MB
-            maxBufferSize: 512 * 1024 * 1024,
-            maxComputeWorkgroupStorageSize: 32768,
-        }
+        requiredFeatures: enabledFeatures,
+        requiredLimits: REQUIRED_LIMITS,
     });
     
     return { adapter, device };
@@ -252,6 +285,8 @@ function createRenderPipeline(device, shaderCode) {
 ```
 
 ### Compute Shaders for GPU Acceleration
+
+Compute is only available in WebGPU mode; the WebGL2 fallback must use CPU implementations for compute-based accelerations.
 
 ```wgsl
 // Compute shader for parallel texture decompression
