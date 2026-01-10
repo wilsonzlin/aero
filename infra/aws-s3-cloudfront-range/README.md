@@ -19,6 +19,7 @@ This is AWS-specific (uses CloudFront **Origin Access Control (OAC)**, not legac
   - `http_version = http2and3` (HTTP/2 + HTTP/3).
   - Cache behavior for `/images/*`:
     - `GET`, `HEAD`, `OPTIONS`
+    - Only `GET`/`HEAD` responses are cached by default (OPTIONS preflight is forwarded to origin; browsers cache via `Access-Control-Max-Age`).
     - Compression disabled (disk images are already compressed or not worth compressing).
     - Origin request policy forwards headers needed for **CORS preflight**.
     - Cache policy includes `Range`/`If-Range` in the cache key for HTTP Range streaming + caching.

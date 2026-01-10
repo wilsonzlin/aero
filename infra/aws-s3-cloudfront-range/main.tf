@@ -247,13 +247,15 @@ resource "aws_cloudfront_distribution" "images" {
     }
   }
 
-  # Default behavior is configured so the distribution works even if callers forget the /images prefix.
+  # A CloudFront distribution always requires a default cache behavior. We keep it aligned with
+  # the /<image_prefix>/* behavior; requests outside that prefix will typically be denied by the
+  # bucket policy anyway.
   default_cache_behavior {
     target_origin_id       = local.origin_id
     viewer_protocol_policy = "redirect-to-https"
 
     allowed_methods = ["GET", "HEAD", "OPTIONS"]
-    cached_methods  = ["GET", "HEAD", "OPTIONS"]
+    cached_methods  = ["GET", "HEAD"]
 
     compress = false
 
@@ -268,7 +270,7 @@ resource "aws_cloudfront_distribution" "images" {
     viewer_protocol_policy = "redirect-to-https"
 
     allowed_methods = ["GET", "HEAD", "OPTIONS"]
-    cached_methods  = ["GET", "HEAD", "OPTIONS"]
+    cached_methods  = ["GET", "HEAD"]
 
     compress = false
 

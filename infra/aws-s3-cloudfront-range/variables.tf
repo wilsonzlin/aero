@@ -14,8 +14,8 @@ variable "image_prefix" {
   default     = "images"
 
   validation {
-    condition     = length(var.image_prefix) > 0 && !startswith(var.image_prefix, "/")
-    error_message = "image_prefix must be non-empty and must not start with '/'."
+    condition     = length(var.image_prefix) > 0 && substr(var.image_prefix, 0, 1) != "/"
+    error_message = "The image_prefix value must be non-empty and must not start with '/'."
   }
 }
 
@@ -120,7 +120,7 @@ variable "cache_policy_mode" {
 
   validation {
     condition     = contains(["immutable", "mutable"], var.cache_policy_mode)
-    error_message = "cache_policy_mode must be either \"immutable\" or \"mutable\"."
+    error_message = "The cache_policy_mode value must be either \"immutable\" or \"mutable\"."
   }
 }
 
