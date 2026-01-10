@@ -264,3 +264,102 @@ fn upload_blit_readback_roundtrip() {
         assert_eq!(&rgba[bottom_left..bottom_left + 4], &[0, 0, 0, 255]);
     });
 }
+
+#[test]
+fn upload_large_rgba8_uses_staging_copy_and_roundtrips() {
+    pollster::block_on(async {
+        #[cfg(target_os = "linux")]
+        {
+            if std::env::var_os("XDG_RUNTIME_DIR").is_none() {
+                use std::os::unix::fs::PermissionsExt;
+
+                let dir = std::env::temp_dir().join(format!(
+                    "aero_gpu_xdg_runtime_{}_{}_staging",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos()
+                ));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                std::env::set_var("XDG_RUNTIME_DIR", &dir);
+            }
+        }
+
+        let instance = wgpu::Instance::default();
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            })
+            .await
+        {
+            Some(adapter) => adapter,
+            None => return,
+        };
+
+        let (device, queue) = match adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: None,
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                },
+                None,
+            )
+            .await
+        {
+            Ok(pair) => pair,
+            Err(_) => return,
+        };
+
+        let caps = GpuCapabilities::from_device(&device);
+        let mut textures = TextureManager::new(&device, &queue, caps);
+
+        let width = 257u32;
+        let height = 257u32;
+        let tex_key = 0x5678_u64;
+        let extent = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+
+        textures.create_texture(
+            tex_key,
+            TextureDesc::new_2d(
+                width,
+                height,
+                TextureFormat::Rgba8Unorm,
+                wgpu::TextureUsages::COPY_SRC,
+            ),
+        );
+
+        let mut data = vec![0u8; (width * height * 4) as usize];
+        // Pixel (0,0) = red.
+        data[0..4].copy_from_slice(&[255, 0, 0, 255]);
+        // Pixel (width-1, height-1) = green.
+        let last = (((height - 1) * width + (width - 1)) * 4) as usize;
+        data[last..last + 4].copy_from_slice(&[0, 255, 0, 255]);
+
+        textures.write_texture(tex_key, &data).unwrap();
+
+        // Ensure the "large texture" path is exercised.
+        assert_eq!(textures.stats().uploads_staging_copy, 1);
+        assert_eq!(textures.stats().uploads_write_texture, 0);
+
+        let texture = textures.texture(tex_key).unwrap();
+        let rgba = readback_rgba8(
+            &device,
+            &queue,
+            texture.as_ref(),
+            TextureRegion::full(extent),
+        )
+        .await;
+
+        assert_eq!(&rgba[0..4], &[255, 0, 0, 255]);
+        assert_eq!(&rgba[last..last + 4], &[0, 255, 0, 255]);
+    });
+}

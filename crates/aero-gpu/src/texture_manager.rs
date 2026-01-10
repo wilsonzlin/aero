@@ -4,11 +4,13 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
-use crate::bc_decompress::{decompress_bc1_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8};
-use crate::GpuCapabilities;
+use crate::bc_decompress::{
+    decompress_bc1_rgba8, decompress_bc2_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8,
+};
 use crate::texture_format::{
     select_texture_format, TextureFormat, TextureFormatSelection, TextureUploadTransform,
 };
+use crate::GpuCapabilities;
 
 /// Key used to identify cached textures (typically the guest VRAM address).
 pub type TextureKey = u64;
@@ -461,6 +463,32 @@ impl<'a> TextureManager<'a> {
                     &decompressed,
                 )
             }
+            TextureUploadTransform::Bc2ToRgba8 => {
+                let expected = ((region.size.width + 3) / 4) as usize
+                    * ((region.size.height + 3) / 4) as usize
+                    * 16;
+                if data.len() != expected {
+                    return Err(TextureManagerError::DataLengthMismatch {
+                        expected,
+                        actual: data.len(),
+                    });
+                }
+
+                let decompressed =
+                    decompress_bc2_rgba8(region.size.width, region.size.height, data);
+                self.stats.bc_cpu_fallback_uploads += 1;
+                self.stats.bc_cpu_fallback_input_bytes += data.len() as u64;
+                self.stats.bc_cpu_fallback_output_bytes += decompressed.len() as u64;
+
+                upload_rgba8(
+                    self.device,
+                    self.queue,
+                    &mut self.stats,
+                    &texture,
+                    region,
+                    &decompressed,
+                )
+            }
             TextureUploadTransform::Bc3ToRgba8 => {
                 let expected = ((region.size.width + 3) / 4) as usize
                     * ((region.size.height + 3) / 4) as usize
@@ -603,6 +631,11 @@ fn estimate_mip_level_size_bytes(format: wgpu::TextureFormat, width: u32, height
             let blocks_h = (height + 3) / 4;
             blocks_w as u64 * blocks_h as u64 * 8
         }
+        wgpu::TextureFormat::Bc2RgbaUnorm | wgpu::TextureFormat::Bc2RgbaUnormSrgb => {
+            let blocks_w = (width + 3) / 4;
+            let blocks_h = (height + 3) / 4;
+            blocks_w as u64 * blocks_h as u64 * 16
+        }
         wgpu::TextureFormat::Bc3RgbaUnorm
         | wgpu::TextureFormat::Bc3RgbaUnormSrgb
         | wgpu::TextureFormat::Bc7RgbaUnorm
@@ -632,6 +665,9 @@ fn upload_direct(
 
         TextureFormat::Bc1RgbaUnorm | TextureFormat::Bc1RgbaUnormSrgb => {
             upload_bc(device, queue, stats, texture, region, mip_size, data, 8)
+        }
+        TextureFormat::Bc2RgbaUnorm | TextureFormat::Bc2RgbaUnormSrgb => {
+            upload_bc(device, queue, stats, texture, region, mip_size, data, 16)
         }
         TextureFormat::Bc3RgbaUnorm | TextureFormat::Bc3RgbaUnormSrgb => {
             upload_bc(device, queue, stats, texture, region, mip_size, data, 16)

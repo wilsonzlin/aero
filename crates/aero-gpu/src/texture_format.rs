@@ -12,6 +12,9 @@ pub enum TextureFormat {
     Bc1RgbaUnorm,
     Bc1RgbaUnormSrgb,
 
+    Bc2RgbaUnorm,
+    Bc2RgbaUnormSrgb,
+
     Bc3RgbaUnorm,
     Bc3RgbaUnormSrgb,
 
@@ -25,6 +28,7 @@ impl TextureFormat {
             self,
             Self::Rgba8UnormSrgb
                 | Self::Bc1RgbaUnormSrgb
+                | Self::Bc2RgbaUnormSrgb
                 | Self::Bc3RgbaUnormSrgb
                 | Self::Bc7RgbaUnormSrgb
         )
@@ -35,6 +39,8 @@ impl TextureFormat {
             self,
             Self::Bc1RgbaUnorm
                 | Self::Bc1RgbaUnormSrgb
+                | Self::Bc2RgbaUnorm
+                | Self::Bc2RgbaUnormSrgb
                 | Self::Bc3RgbaUnorm
                 | Self::Bc3RgbaUnormSrgb
                 | Self::Bc7RgbaUnorm
@@ -56,6 +62,8 @@ impl TextureFormat {
             Self::Rgba8UnormSrgb => wgpu::TextureFormat::Rgba8UnormSrgb,
             Self::Bc1RgbaUnorm => wgpu::TextureFormat::Bc1RgbaUnorm,
             Self::Bc1RgbaUnormSrgb => wgpu::TextureFormat::Bc1RgbaUnormSrgb,
+            Self::Bc2RgbaUnorm => wgpu::TextureFormat::Bc2RgbaUnorm,
+            Self::Bc2RgbaUnormSrgb => wgpu::TextureFormat::Bc2RgbaUnormSrgb,
             Self::Bc3RgbaUnorm => wgpu::TextureFormat::Bc3RgbaUnorm,
             Self::Bc3RgbaUnormSrgb => wgpu::TextureFormat::Bc3RgbaUnormSrgb,
             Self::Bc7RgbaUnorm => wgpu::TextureFormat::Bc7RgbaUnorm,
@@ -73,6 +81,7 @@ impl TextureFormat {
     pub fn bc_block_bytes(self) -> Option<u32> {
         match self {
             Self::Bc1RgbaUnorm | Self::Bc1RgbaUnormSrgb => Some(8),
+            Self::Bc2RgbaUnorm | Self::Bc2RgbaUnormSrgb => Some(16),
             Self::Bc3RgbaUnorm | Self::Bc3RgbaUnormSrgb => Some(16),
             Self::Bc7RgbaUnorm | Self::Bc7RgbaUnormSrgb => Some(16),
             _ => None,
@@ -93,13 +102,17 @@ impl TextureFormat {
 pub enum TextureUploadTransform {
     Direct,
     Bc1ToRgba8,
+    Bc2ToRgba8,
     Bc3ToRgba8,
     Bc7ToRgba8,
 }
 
 impl TextureUploadTransform {
     pub fn uses_cpu_decompression(self) -> bool {
-        matches!(self, Self::Bc1ToRgba8 | Self::Bc3ToRgba8 | Self::Bc7ToRgba8)
+        matches!(
+            self,
+            Self::Bc1ToRgba8 | Self::Bc2ToRgba8 | Self::Bc3ToRgba8 | Self::Bc7ToRgba8
+        )
     }
 }
 
@@ -117,6 +130,8 @@ impl TextureFormatSelection {
             TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb => width.checked_mul(4)?,
             TextureFormat::Bc1RgbaUnorm
             | TextureFormat::Bc1RgbaUnormSrgb
+            | TextureFormat::Bc2RgbaUnorm
+            | TextureFormat::Bc2RgbaUnormSrgb
             | TextureFormat::Bc3RgbaUnorm
             | TextureFormat::Bc3RgbaUnormSrgb
             | TextureFormat::Bc7RgbaUnorm
@@ -154,6 +169,9 @@ pub fn select_texture_format(
     let upload_transform = match requested {
         TextureFormat::Bc1RgbaUnorm | TextureFormat::Bc1RgbaUnormSrgb => {
             TextureUploadTransform::Bc1ToRgba8
+        }
+        TextureFormat::Bc2RgbaUnorm | TextureFormat::Bc2RgbaUnormSrgb => {
+            TextureUploadTransform::Bc2ToRgba8
         }
         TextureFormat::Bc3RgbaUnorm | TextureFormat::Bc3RgbaUnormSrgb => {
             TextureUploadTransform::Bc3ToRgba8

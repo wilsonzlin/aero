@@ -40,11 +40,13 @@ pub mod cmd;
 pub mod hal;
 pub mod pipeline_cache;
 pub mod pipeline_key;
-pub mod protocol_d3d11;
 pub mod profiler;
+pub mod protocol_d3d11;
 pub mod stats;
 
-pub use bc_decompress::{decompress_bc1_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8};
+pub use bc_decompress::{
+    decompress_bc1_rgba8, decompress_bc2_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8,
+};
 pub use buffer_arena::BufferArena;
 pub use context::WgpuContext;
 pub use dirty_rect::{merge_and_cap_rects, Rect, RectMergeOutcome};
@@ -67,8 +69,8 @@ pub use surface::{
 };
 pub use time::now_ms;
 pub use upload::{
-    BufferSliceHandle, DynamicOffset, GpuCapabilities, UploadRingBuffer, UploadRingBufferDescriptor,
-    UploadStats,
+    BufferSliceHandle, DynamicOffset, GpuCapabilities, UploadRingBuffer,
+    UploadRingBufferDescriptor, UploadStats,
 };
 pub use wgpu_integration::{register_wgpu_uncaptured_error_handler, wgpu_error_to_event};
 

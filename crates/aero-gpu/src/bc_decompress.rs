@@ -76,6 +76,36 @@ fn decode_bc3_color_palette(color0: u16, color1: u16) -> [[u8; 3]; 4] {
     [c0, c1, c2, c3]
 }
 
+fn decompress_bc2_block(
+    block: &[u8; 16],
+    block_x: u32,
+    block_y: u32,
+    width: u32,
+    height: u32,
+    out: &mut [u8],
+) {
+    let alpha_bits = u64::from_le_bytes(block[0..8].try_into().unwrap());
+
+    let color0 = u16::from_le_bytes([block[8], block[9]]);
+    let color1 = u16::from_le_bytes([block[10], block[11]]);
+    let indices = u32::from_le_bytes([block[12], block[13], block[14], block[15]]);
+    let palette = decode_bc3_color_palette(color0, color1);
+
+    for i in 0..16u32 {
+        let a4 = ((alpha_bits >> (4 * i)) & 0xF) as u8;
+        let alpha = a4 * 17;
+
+        let c_idx = ((indices >> (2 * i)) & 0b11) as usize;
+        let rgb = palette[c_idx];
+
+        let px = block_x + (i % 4);
+        let py = block_y + (i / 4);
+        if px < width && py < height {
+            write_pixel_rgb_a(out, width, px, py, rgb, alpha);
+        }
+    }
+}
+
 fn decode_bc3_alpha_palette(alpha0: u8, alpha1: u8) -> [u8; 8] {
     let mut a = [0u8; 8];
     a[0] = alpha0;
@@ -221,6 +251,29 @@ pub fn decompress_bc3_rgba8(width: u32, height: u32, bc3_data: &[u8]) -> Vec<u8>
     out
 }
 
+pub fn decompress_bc2_rgba8(width: u32, height: u32, bc2_data: &[u8]) -> Vec<u8> {
+    let blocks_w = (width + 3) / 4;
+    let blocks_h = (height + 3) / 4;
+    let expected = blocks_w as usize * blocks_h as usize * 16;
+    assert_eq!(
+        bc2_data.len(),
+        expected,
+        "BC2 data length mismatch: expected {expected} bytes for {width}x{height}, got {}",
+        bc2_data.len()
+    );
+
+    let mut out = vec![0u8; (width * height * 4) as usize];
+    for by in 0..blocks_h {
+        for bx in 0..blocks_w {
+            let block_index = (by * blocks_w + bx) as usize;
+            let start = block_index * 16;
+            let block: &[u8; 16] = bc2_data[start..start + 16].try_into().unwrap();
+            decompress_bc2_block(block, bx * 4, by * 4, width, height, &mut out);
+        }
+    }
+    out
+}
+
 pub fn decompress_bc7_rgba8(width: u32, height: u32, bc7_data: &[u8]) -> Vec<u8> {
     let blocks_w = (width + 3) / 4;
     let blocks_h = (height + 3) / 4;
@@ -346,5 +399,34 @@ mod tests {
         // Row 3 alpha 36 (floor(1*255/7)).
         let row3 = 3 * 4 * 4;
         assert_eq!(&rgba[row3..row3 + 4], &[255, 255, 255, 36]);
+    }
+
+    #[test]
+    fn bc2_known_vector_explicit_alpha() {
+        // Alpha uses explicit 4-bit values. Construct row-wise pattern:
+        // row0 -> 0xF (255)
+        // row1 -> 0x0 (0)
+        // row2 -> 0x8 (136)
+        // row3 -> 0x1 (17)
+        let bc2 = [
+            0xff, 0xff, 0x00, 0x00, 0x88, 0x88, 0x11, 0x11, // alpha bits (LE u64)
+            0xff, 0xff, // color0 (white)
+            0xff, 0xff, // color1 (white)
+            0x00, 0x00, 0x00, 0x00, // indices (all 0 -> white)
+        ];
+
+        let rgba = decompress_bc2_rgba8(4, 4, &bc2);
+
+        // Row 0 alpha 255.
+        assert_eq!(&rgba[0..4], &[255, 255, 255, 255]);
+        // Row 1 alpha 0.
+        let row1 = 1 * 4 * 4;
+        assert_eq!(&rgba[row1..row1 + 4], &[255, 255, 255, 0]);
+        // Row 2 alpha 136.
+        let row2 = 2 * 4 * 4;
+        assert_eq!(&rgba[row2..row2 + 4], &[255, 255, 255, 136]);
+        // Row 3 alpha 17.
+        let row3 = 3 * 4 * 4;
+        assert_eq!(&rgba[row3..row3 + 4], &[255, 255, 255, 17]);
     }
 }
