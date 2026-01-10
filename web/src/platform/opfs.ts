@@ -24,7 +24,7 @@ function getStorageGetDirectory():
     | undefined;
 }
 
-function assertOpfsSupported(): asserts true {
+function assertOpfsSupported(): void {
   if (!getStorageGetDirectory()) {
     throw new OpfsUnavailableError(
       "OPFS is not available in this browser/context (navigator.storage.getDirectory is missing).",
@@ -176,4 +176,3 @@ export async function openSyncAccessHandleInDedicatedWorker(
   const handle = await openFileHandle(path, options);
   return await createSyncAccessHandleInDedicatedWorker(handle);
 }
-
