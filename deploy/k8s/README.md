@@ -7,7 +7,7 @@ The chart includes:
 - `Deployment` + `Service` for `aero-gateway`
 - `Ingress` example (defaults to `ingress-nginx`) that:
   - terminates TLS (optional in dev; recommended in prod)
-  - supports WebSocket upgrades (Aero uses `wss://<host>/tcp?...`)
+  - supports WebSocket upgrades (Aero uses `wss://<host>/tcp?v=1&host=<dst>&port=<dstPort>`)
   - can inject COOP/COEP headers required for `SharedArrayBuffer` / `crossOriginIsolated`
 - Optional in-cluster Redis (useful when running multiple gateway replicas)
 - Optional `NetworkPolicy` template to help restrict ingress/egress
