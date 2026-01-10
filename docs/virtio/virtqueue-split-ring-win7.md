@@ -878,9 +878,10 @@ VOID VirtQueueDpc(VQ *vq)
 * **Out-of-order completion without cookies**:
   * Symptom: completing the wrong WDFREQUEST / returning the wrong RX buffer.
   * Fix: store per-head `cookie[head]` and treat `used_elem.id` as the only reliable completion key.
-* **Assuming queue size is power-of-two when it isn’t**:
-  * Symptom: ring indexing goes out of bounds or reuses wrong slots.
-  * Fix: only use `idx & (qsz - 1)` when `qsz` is a power-of-two; otherwise use `% qsz`.
+* **Incorrect ring indexing (masking without verifying power-of-two)**:
+  * Virtio split-ring queues are typically sized to a power-of-two, which enables fast masking (`idx & (qsz - 1)`).
+  * Symptom: ring indexing goes out of bounds or reuses wrong slots if `qsz` is not a power-of-two (device/driver bug or unexpected configuration).
+  * Fix: either validate `qsz` is a power-of-two at init, or fall back to `% qsz` indexing.
 * **EVENT_IDX lost interrupt due to missing re-check**:
   * Symptom: occasional “hang until next I/O”, especially under light load (race window).
   * Fix: use the “enable then recheck `used->idx`” pattern in §7.4.
