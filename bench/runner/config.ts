@@ -16,7 +16,8 @@ export function parseDiskImageSource(raw: string): DiskImageSource {
 
 function defaultOutDir(now: Date, scenarioId: string): string {
   const ts = now.toISOString().replaceAll(/[:.]/g, '-');
-  return join('bench-results', `${ts}-${scenarioId}`);
+  // `bench/results/` is ignored by default, so local runs don't create noisy git status.
+  return join('bench', 'results', `${ts}-${scenarioId}`);
 }
 
 export function formatBenchUsage(): string {
@@ -27,7 +28,7 @@ export function formatBenchUsage(): string {
     '',
     'Options:',
     '  --disk-image <pathOrUrl>  Disk image path/URL (or env AERO_DISK_IMAGE_PATH)',
-    '  --out-dir <dir>           Output directory (default: bench-results/<timestamp>-<scenarioId>)',
+    '  --out-dir <dir>           Output directory (default: bench/results/<timestamp>-<scenarioId>)',
     '  --trace                   Save optional trace (if supported by emulator)',
     '  --list                    List available scenarios',
     '  --help                    Show this help',
@@ -107,4 +108,3 @@ export function parseBenchCli(
     },
   };
 }
-

@@ -50,10 +50,18 @@ export function initAeroStatusApi(initialPhase: AeroPhase = 'booting'): AeroStat
   }
 
   function setPhase(phase: AeroPhase) {
+    const prevPhase = status.phase;
+    if (prevPhase === phase) return;
+
     status.phase = phase;
     status.phaseSinceMs = performance.now();
-    emitEvent('phase_changed', { phase });
-    emitEvent(`phase:${phase}`, { phase });
+
+    emitEvent('phase_changed', { phase, prevPhase });
+    emitEvent(`phase:${phase}`, { phase, prevPhase });
+
+    // Convenience milestone events for automation harnesses.
+    if (phase === 'desktop') emitEvent('desktop_ready', { phase });
+    if (phase === 'idle') emitEvent('idle_ready', { phase });
   }
 
   function waitForEvent<T = unknown>(name: string, options?: { timeoutMs?: number }): Promise<T> {

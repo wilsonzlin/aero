@@ -106,6 +106,8 @@ Each run writes a `report.json` to the selected output directory and, when suppo
 - `screenshots/*.png`
 - `trace.bin`
 
+By default, `bench/runner.ts` writes results under `bench/results/` (ignored by git).
+
 ### Macrobench metrics (standard IDs)
 
 Macrobench scenarios should report consistent metric IDs/units:
