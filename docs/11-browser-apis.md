@@ -116,6 +116,7 @@ Disk image streaming is implemented via `fetch()` (often with HTTP `Range` reque
 - **Strong recommendation:** serve disk bytes from the **same origin** as the app (for example, reverse-proxy the streaming service under `/disk/...`). This avoids CORS/CORP edge cases and keeps cross-origin isolation stable.
 - If disk bytes are fetched from a **different origin**, the streaming endpoint must satisfy COEP via **CORS and/or CORP**:
   - **CORS:** set `Access-Control-Allow-Origin` (and `Access-Control-Allow-Credentials: true` if you use cookies/HTTP auth), matching how the client fetches the resource.
+    - For `fetch()`-based streaming where JS needs to read the response body, **CORS is effectively required**; `Cross-Origin-Resource-Policy` alone is not sufficient because `no-cors` fetches are opaque.
   - **CORP:** set `Cross-Origin-Resource-Policy: same-site` (same eTLD+1) or `Cross-Origin-Resource-Policy: cross-origin` (intended to be embeddable by arbitrary sites).
 - **Range requests may trigger preflight:** `Range` is not a CORS-safelisted request header, so browsers will send an `OPTIONS` preflight. Ensure the service allows the headers you use (commonly `Range, Authorization`) and exposes `Content-Range` so JS can read it.
 - **Do not transform/compress disk bytes:** byte offsets must match the on-disk stream. If you use a CDN/reverse proxy, disable gzip/auto-compression for the disk route.
