@@ -875,4 +875,5 @@ To avoid drift between in-app HUD, exported perf summaries, and benchmark toolin
 
 - See [Browser APIs](./11-browser-apis.md) for platform-specific optimizations
 - See [Testing Strategy](./12-testing-strategy.md) for performance testing
+- See [Performance Tooling](./16-performance-tooling.md) for profiling HUD, trace capture, and benchmarks
 - See [Task Breakdown](./15-agent-task-breakdown.md) for optimization tasks

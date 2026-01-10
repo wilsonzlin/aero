@@ -1,0 +1,39 @@
+# bench/update-baseline
+
+This path is reserved for the **baseline updater** used by Aero's benchmark runner.
+
+It exists to make it easy to:
+
+- Re-record benchmark baselines after an intentional performance change
+- Update thresholds when a metric becomes too noisy (or newly stable)
+- Keep CI perf checks meaningful while avoiding “baseline churn”
+
+For the contributor-facing workflow and expectations, see:
+
+- [Performance Tooling](../docs/16-performance-tooling.md#updating-baselines-and-thresholds)
+
+## Expected usage
+
+```bash
+# Update the baseline for a single scenario (recommended for PRs)
+node bench/update-baseline --scenario microbench --iterations 15
+
+# Update all scenarios (typically used for periodic refreshes)
+node bench/update-baseline --all --iterations 15
+```
+
+## What it should do
+
+1. Run the Playwright benchmark runner for the selected scenarios
+2. Write updated baseline JSON files under `bench/baselines/`
+3. Optionally update thresholds (if invoked with an explicit flag)
+4. Print a short before/after summary to help reviewers spot unintended changes
+
+## Review guidelines
+
+When submitting baseline updates:
+
+- Include the **command** you ran and the **browser version**.
+- Prefer a quiet, stable machine and a “production-like” build.
+- Avoid updating baselines as a drive-by change unrelated to the PR.
+
