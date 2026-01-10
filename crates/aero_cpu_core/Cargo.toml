@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 aero_x86 = { path = "../aero_x86" }
+aero-perf = { path = "../aero-perf" }
 
 [dev-dependencies]
 criterion = "0.5"

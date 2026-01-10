@@ -184,7 +184,7 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
 
   const fpsRow = makeRow('FPS (avg / 1% low)');
   const frameTimeRow = makeRow('Frame time (avg / p95)');
-  const mipsRow = makeRow('MIPS (avg)');
+  const mipsRow = makeRow('MIPS (avg / p95)');
   const cpuRow = makeRow('CPU (avg)');
   const gpuRow = makeRow('GPU (avg)');
   const ioRow = makeRow('IO (avg)');
@@ -264,10 +264,11 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
 
     const fps = `${formatFps(snapshot.fpsAvg)} / ${formatFps(snapshot.fps1Low)}`;
     const frameTime = `${formatMs(snapshot.frameTimeAvgMs)} / ${formatMs(snapshot.frameTimeP95Ms)}`;
+    const mips = `${formatMips(snapshot.mipsAvg)} / ${formatMips(snapshot.mipsP95)}`;
 
     setText(fpsRow, fps);
     setText(frameTimeRow, frameTime);
-    setText(mipsRow, formatMips(snapshot.mipsAvg));
+    setText(mipsRow, mips);
 
     const breakdown = snapshot.breakdownAvgMs;
     setText(cpuRow, formatMs(breakdown?.cpu));

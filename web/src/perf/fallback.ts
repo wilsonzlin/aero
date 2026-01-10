@@ -17,6 +17,7 @@ export type InstallFallbackPerfOptions = {
 
 const STATS_CAPACITY = 600;
 const CAPTURE_CAPACITY = 12_000;
+const P95 = 0.95;
 
 const clampMs = (ms: number): number => {
   if (!Number.isFinite(ms)) return 0;
@@ -57,6 +58,9 @@ export class FallbackPerf implements PerfApi {
   private instructionsFrameTimeSumMs = 0;
   private instructionsCount = 0;
 
+  private mips = new Float32Array(STATS_CAPACITY);
+  private mipsCount = 0;
+
   private cpuMs = new Float32Array(STATS_CAPACITY);
   private cpuSumMs = 0;
   private cpuCount = 0;
@@ -84,6 +88,7 @@ export class FallbackPerf implements PerfApi {
 
   private frameTimeSumMs = 0;
 
+  private tmpMips = new Float32Array(STATS_CAPACITY);
   private hudActive = false;
   private raf: number | null = null;
   private lastRafNowMs = 0;
@@ -134,6 +139,7 @@ export class FallbackPerf implements PerfApi {
     this.memoryTelemetry.sampleNow('boot');
 
     this.instructions.fill(Number.NaN);
+    this.mips.fill(Number.NaN);
     this.cpuMs.fill(Number.NaN);
     this.gpuMs.fill(Number.NaN);
     this.ioMs.fill(Number.NaN);
@@ -169,6 +175,11 @@ export class FallbackPerf implements PerfApi {
         this.instructionsSum -= oldInstructions;
         this.instructionsFrameTimeSumMs -= this.frameTimesMs[idx] ?? 0;
         this.instructionsCount -= 1;
+      }
+
+      const oldMips = this.mips[idx];
+      if (isValidNumber(oldMips)) {
+        this.mipsCount -= 1;
       }
 
       const oldCpuMs = this.cpuMs[idx];
@@ -219,6 +230,7 @@ export class FallbackPerf implements PerfApi {
 
     if (instructions === undefined) {
       this.instructions[idx] = Number.NaN;
+      this.mips[idx] = Number.NaN;
     } else {
       this.instructions[idx] = instructions;
       this.instructionsSum += instructions;
@@ -226,8 +238,12 @@ export class FallbackPerf implements PerfApi {
       this.instructionsCount += 1;
 
       if (ft > 0) {
-        this.lastMips = (instructions / (ft / 1000)) / 1_000_000;
+        const mips = (instructions / (ft / 1000)) / 1_000_000;
+        this.mips[idx] = mips;
+        this.mipsCount += 1;
+        this.lastMips = mips;
       } else {
+        this.mips[idx] = Number.NaN;
         this.lastMips = undefined;
       }
     }
@@ -322,6 +338,7 @@ export class FallbackPerf implements PerfApi {
       out.frameTimeAvgMs = undefined;
       out.frameTimeP95Ms = undefined;
       out.mipsAvg = undefined;
+      out.mipsP95 = undefined;
       out.lastFrameTimeMs = this.lastFrameTimeMs;
       out.lastMips = this.lastMips;
       out.breakdownAvgMs = undefined;
@@ -348,6 +365,24 @@ export class FallbackPerf implements PerfApi {
         out.mipsAvg = (this.instructionsSum / (this.instructionsFrameTimeSumMs / 1000)) / 1_000_000;
       } else {
         out.mipsAvg = undefined;
+      }
+
+      if (this.mipsCount > 0) {
+        let count = 0;
+        for (let i = 0; i < this.statsCount; i += 1) {
+          const srcIdx = (this.statsCursor + STATS_CAPACITY - this.statsCount + i) % STATS_CAPACITY;
+          const v = this.mips[srcIdx];
+          if (isValidNumber(v)) {
+            this.tmpMips[count] = v;
+            count += 1;
+          }
+        }
+        this.tmpMips.subarray(0, count).sort();
+        const p95Idx = Math.floor((count - 1) * P95);
+        const p95 = this.tmpMips[p95Idx];
+        out.mipsP95 = isValidNumber(p95) ? p95 : undefined;
+      } else {
+        out.mipsP95 = undefined;
       }
 
       out.lastFrameTimeMs = this.lastFrameTimeMs;

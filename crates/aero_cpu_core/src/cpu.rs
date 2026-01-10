@@ -2,6 +2,7 @@ use crate::bus::Bus;
 use crate::cpuid::CpuFeatures;
 use crate::interp::{decode, win7_ext, ExecError};
 use crate::sse_state::SseState;
+use aero_perf::PerfWorker;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpuMode {
@@ -312,6 +313,55 @@ impl Cpu {
                 Ok(inst.len)
             }
             Err(ExecError::InvalidOpcode(_)) => win7_ext::exec(self, bus, bytes),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Execute a single decoded guest instruction while updating performance counters.
+    ///
+    /// This counts one retired *architectural* instruction on success, and (for
+    /// `REP*` string instructions) records the number of element-iterations
+    /// executed as `rep_iterations`.
+    pub fn execute_bytes_counted<B: Bus>(
+        &mut self,
+        bus: &mut B,
+        bytes: &[u8],
+        perf: &mut PerfWorker,
+    ) -> Result<usize, ExecError> {
+        match decode::decode(self.mode, bytes) {
+            Ok(inst) => {
+                // For string instructions, derive REP iteration count by observing the
+                // architectural count register before/after execution. This keeps the
+                // hot instruction bodies free of perf/telemetry dependencies.
+                let rep_count_before = match &inst.kind {
+                    crate::interp::InstKind::String(s)
+                        if s.prefixes.rep != crate::interp::string::RepPrefix::None =>
+                    {
+                        let addr_size = crate::interp::string::effective_addr_size(self.mode, &s.prefixes);
+                        Some((addr_size, crate::interp::string::read_count(self, addr_size)))
+                    }
+                    _ => None,
+                };
+
+                crate::interp::exec(self, bus, &inst)?;
+
+                perf.retire_instructions(1);
+
+                if let Some((addr_size, before)) = rep_count_before {
+                    let after = crate::interp::string::read_count(self, addr_size);
+                    let delta = before.saturating_sub(after);
+                    if delta != 0 {
+                        perf.add_rep_iterations(delta);
+                    }
+                }
+
+                Ok(inst.len)
+            }
+            Err(ExecError::InvalidOpcode(_)) => {
+                let len = win7_ext::exec(self, bus, bytes)?;
+                perf.retire_instructions(1);
+                Ok(len)
+            }
             Err(e) => Err(e),
         }
     }

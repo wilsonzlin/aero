@@ -355,6 +355,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-perf"
+version = "0.1.0"
+
+[[package]]
 name = "aero-platform"
 version = "0.1.0"
 dependencies = [
@@ -517,6 +521,7 @@ dependencies = [
 name = "aero_cpu_core"
 version = "0.1.0"
 dependencies = [
+ "aero-perf",
  "aero_x86",
  "criterion",
 ]

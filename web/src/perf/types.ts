@@ -70,6 +70,7 @@ export type PerfHudSnapshot = {
   frameTimeP95Ms?: number;
 
   mipsAvg?: number;
+  mipsP95?: number;
 
   lastFrameTimeMs?: number;
   lastMips?: number;

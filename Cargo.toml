@@ -27,6 +27,7 @@ members = [
     "crates/aero-net-stack",
     "crates/aero-storage",
     "crates/aero-mem",
+    "crates/aero-perf",
     "crates/aero-mmu",
     "crates/aero-snapshot",
     "crates/aero-io-snapshot",

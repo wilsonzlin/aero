@@ -707,6 +707,21 @@ This repo includes a small, dependency-free benchmark harness in `bench/` and a 
 
 ### Built-in Profiler
 
+#### Instruction counting semantics
+
+- `instructions_executed` counts **retired guest architectural instructions**.
+  - This is intentionally **not** micro-ops.
+  - x86 string/`REP*` instructions retire as **1** architectural instruction; use
+    `rep_iterations` (or a similar auxiliary counter) to track iteration counts
+    if needed.
+- For performance, CPU workers should maintain **non-atomic local counters** in
+  the interpreter/JIT hot loops and **batch flush** to shared/atomic totals at a
+  coarse granularity (e.g. every 1k–10k retired instructions).
+- For JIT execution, attribute counts at **block granularity** using a
+  precomputed `block_instruction_count` per compiled block.
+- Compute MIPS as `instructions_delta / wall_time_delta / 1e6` and report both
+  the rolling-window average and p95 to smooth jitter and catch tail latency.
+
 ```rust
 pub struct Profiler {
     samples: Vec<ProfileSample>,
@@ -749,6 +764,7 @@ pub struct FrameProfile {
     io_time: Duration,
     jit_time: Duration,
     instructions_executed: u64,
+    rep_iterations: u64,
     graphics: GraphicsFrameMetrics,
     memory_allocated: usize,
 }
@@ -787,7 +803,7 @@ impl Profiler {
         ProfileStats {
             avg_frame_time: recent.iter().map(|s| s.frame_time).sum::<Duration>() / recent.len() as u32,
             avg_fps: 1.0 / recent.iter().map(|s| s.frame_time.as_secs_f64()).sum::<f64>() * recent.len() as f64,
-            avg_mips: recent.iter().map(|s| s.profile.instructions_executed).sum::<u64>() as f64 / 
+            avg_mips: recent.iter().map(|s| s.profile.instructions_executed).sum::<u64>() as f64 /
                       recent.iter().map(|s| s.frame_time.as_secs_f64()).sum::<f64>() / 1_000_000.0,
         }
     }

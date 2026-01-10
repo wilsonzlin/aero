@@ -65,7 +65,7 @@ pub fn exec_string<B: Bus>(cpu: &mut Cpu, bus: &mut B, inst: &DecodedStringInst)
     }
 }
 
-fn effective_addr_size(mode: CpuMode, p: &PrefixState) -> AddrSize {
+pub(crate) fn effective_addr_size(mode: CpuMode, p: &PrefixState) -> AddrSize {
     match mode {
         CpuMode::Real16 => {
             if p.address_size_override {
@@ -105,7 +105,7 @@ fn effective_rep_mode(op: StringOp, rep: RepPrefix) -> RepMode {
     }
 }
 
-fn read_count(cpu: &Cpu, addr_size: AddrSize) -> u64 {
+pub(crate) fn read_count(cpu: &Cpu, addr_size: AddrSize) -> u64 {
     match addr_size {
         AddrSize::A16 => cpu.regs.cx() as u64,
         AddrSize::A32 => cpu.regs.ecx() as u64,
