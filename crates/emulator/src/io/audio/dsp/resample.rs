@@ -260,6 +260,49 @@ mod tests {
         let rmse = (mse / frames_out as f32).sqrt();
         assert!(rmse < 0.02, "rmse too high for linear resampler: {rmse}");
     }
+
+    #[cfg(feature = "sinc-resampler")]
+    #[test]
+    fn sinc_resampler_preserves_dc() {
+        let mut r = SincResampler::new(44_100, 48_000, 1).unwrap();
+
+        let frames = 2048;
+        let input = vec![0.25f32; frames];
+
+        let mut out_a = Vec::new();
+        let mut out_b = Vec::new();
+        r.process_interleaved(&input, &mut out_a).unwrap();
+        r.flush_interleaved(&mut out_b);
+        out_a.extend_from_slice(&out_b);
+
+        assert!(!out_a.is_empty());
+        // The filter starts with zero history, so the first few outputs contain an
+        // expected warm-up transient. Validate DC preservation in the steady state.
+        let skip = 128usize.min(out_a.len());
+        let tail = 128usize.min(out_a.len().saturating_sub(skip));
+        let mid = &out_a[skip..out_a.len() - tail];
+        assert!(!mid.is_empty());
+        for &s in mid {
+            assert!((s - 0.25).abs() < 1e-3);
+        }
+    }
+
+    #[cfg(feature = "sinc-resampler")]
+    #[test]
+    fn sinc_resampler_handles_tiny_inputs_without_panicking() {
+        let mut r = SincResampler::new(48_000, 44_100, 2).unwrap();
+
+        // One stereo frame.
+        let input = vec![0.1f32, -0.2f32];
+        let mut out = Vec::new();
+        let mut tail = Vec::new();
+        r.process_interleaved(&input, &mut out).unwrap();
+        r.flush_interleaved(&mut tail);
+        out.extend_from_slice(&tail);
+
+        // Output length depends on filter latency and ratio; just ensure the pipeline works.
+        assert!(out.len() % 2 == 0);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -457,7 +500,9 @@ impl SincResampler {
                 let mut acc = 0.0f32;
                 for (t, &k) in coeffs.iter().enumerate() {
                     let idx = start + t as isize;
-                    let sample = if idx < self.history_frames as isize {
+                    let sample = if idx < 0 {
+                        0.0
+                    } else if idx < self.history_frames as isize {
                         let base = idx as usize * self.channels;
                         self.history[base + c]
                     } else {
@@ -491,7 +536,45 @@ impl SincResampler {
 
     pub fn flush_interleaved(&mut self, out: &mut Vec<f32>) {
         out.clear();
-        // For simplicity, do nothing; callers can rely on the linear resampler flush.
-        // A full sinc flush would require padding and running the filter to completion.
+        if self.channels == 0 {
+            return;
+        }
+        if self.history_frames == 0 {
+            return;
+        }
+        let last_frame = &self.history[(self.history_frames - 1) * self.channels..self.history_frames * self.channels];
+
+        // At end-of-stream we can extend the signal by repeating the last sample to
+        // generate the final filter tail. Stop once the resample position moves
+        // past the last real frame in `history`.
+        let history_frames_f = self.history_frames as f64;
+        while self.pos < history_frames_f {
+            let center = self.pos.floor() as isize;
+            let frac = self.pos - center as f64;
+            let phase = ((frac * self.phases as f64).round() as usize).min(self.phases - 1);
+            let coeffs = &self.table[phase * self.taps..(phase + 1) * self.taps];
+
+            // Need samples from center-(half-1) .. center+half.
+            let start = center - (self.half - 1);
+
+            for c in 0..self.channels {
+                let mut acc = 0.0f32;
+                for (t, &k) in coeffs.iter().enumerate() {
+                    let idx = start + t as isize;
+                    let sample = if idx < 0 {
+                        0.0
+                    } else if idx < self.history_frames as isize {
+                        let base = idx as usize * self.channels;
+                        self.history[base + c]
+                    } else {
+                        last_frame[c]
+                    };
+                    acc += sample * k;
+                }
+                out.push(acc);
+            }
+
+            self.pos += self.step;
+        }
     }
 }
