@@ -67,8 +67,8 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
         return STATUS_SUCCESS;
     }
 
-    UNREFERENCED_PARAMETER(InputBufferLength);
     UNREFERENCED_PARAMETER(packetBytes);
+    UNREFERENCED_PARAMETER(InputBufferLength);
 
     if (WdfDeviceGetDevicePowerState(device) != WdfDevicePowerD0) {
         WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
@@ -102,4 +102,3 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
     WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS, packet->reportBufferLen);
     return STATUS_SUCCESS;
 }
-

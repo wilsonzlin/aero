@@ -10,8 +10,10 @@ The current implementation is a **skeleton**:
 - Implements WDF boilerplate (`EvtDriverDeviceAdd`, power/PnP callbacks, default queue).
 - Implements `EvtIoInternalDeviceControl` with a minimal HID descriptor/report descriptor that exposes
   keyboard + mouse collections (Report IDs 1 and 2).
-- Does **not** yet parse the virtio transport, negotiate features, or deliver real input reports (read
-  requests are left pending).
+- Implements `EvtIoInternalDeviceControl` for the core report IOCTLs:
+  - `IOCTL_HID_READ_REPORT` is routed by Report ID / collection handle context so keyboard and mouse reports do not get mixed.
+  - `IOCTL_HID_WRITE_REPORT` validates keyboard LED output reports (ReportID=1) and ignores unknown IDs.
+- Does **not** yet parse the virtio transport, negotiate features, or deliver real input reports.
 
 ## Building (WDK 7.1 recommended)
 

@@ -63,6 +63,20 @@ static UCHAR VirtioInputGetReadReportIdFromXferPacket(_In_ WDFREQUEST Request, _
 static UCHAR VirtioInputDetermineReadQueueReportId(_In_ WDFREQUEST Request, _In_ size_t OutputBufferLength)
 {
     UCHAR reportId = VirtioInputGetReadReportIdFromXferPacket(Request, OutputBufferLength);
+    size_t reportLenHint = OutputBufferLength;
+
+    {
+        PHID_XFER_PACKET xfer = NULL;
+        size_t len = 0;
+        if (NT_SUCCESS(WdfRequestRetrieveInputBuffer(Request, sizeof(HID_XFER_PACKET), (PVOID *)&xfer, &len)) &&
+            len >= sizeof(HID_XFER_PACKET) && xfer->reportBufferLen != 0) {
+            reportLenHint = xfer->reportBufferLen;
+        } else if (OutputBufferLength == sizeof(HID_XFER_PACKET) &&
+                   NT_SUCCESS(WdfRequestRetrieveOutputBuffer(Request, sizeof(HID_XFER_PACKET), (PVOID *)&xfer, &len)) &&
+                   len >= sizeof(HID_XFER_PACKET) && xfer->reportBufferLen != 0) {
+            reportLenHint = xfer->reportBufferLen;
+        }
+    }
 
     WDFFILEOBJECT fileObject = WdfRequestGetFileObject(Request);
     if (fileObject == NULL) {
@@ -84,10 +98,10 @@ static UCHAR VirtioInputDetermineReadQueueReportId(_In_ WDFREQUEST Request, _In_
     }
 
     if (fileCtx->HasCollectionEa) {
-        if (OutputBufferLength == VIRTIO_INPUT_KBD_INPUT_REPORT_SIZE) {
+        if (reportLenHint == VIRTIO_INPUT_KBD_INPUT_REPORT_SIZE) {
             return VIRTIO_INPUT_REPORT_ID_KEYBOARD;
         }
-        if (OutputBufferLength == VIRTIO_INPUT_MOUSE_INPUT_REPORT_SIZE) {
+        if (reportLenHint == VIRTIO_INPUT_MOUSE_INPUT_REPORT_SIZE) {
             return VIRTIO_INPUT_REPORT_ID_MOUSE;
         }
     }
