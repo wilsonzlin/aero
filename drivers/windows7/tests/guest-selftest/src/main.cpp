@@ -743,7 +743,9 @@ static bool HttpGet(Logger& log, const std::wstring& url) {
   }
 
   HINTERNET session =
-      WinHttpOpen(L"AeroVirtioSelftest/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+      // Use NO_PROXY for determinism. In some environments WinHTTP proxy settings can be
+      // configured system-wide and interfere with connectivity checks.
+      WinHttpOpen(L"AeroVirtioSelftest/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY,
                   WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
   if (!session) {
     log.Logf("virtio-net: WinHttpOpen failed err=%lu", GetLastError());
