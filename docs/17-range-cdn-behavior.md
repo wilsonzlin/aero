@@ -10,7 +10,7 @@ Aero streams large disk images to the browser using HTTP `Range` requests (`206 
 This document turns the “will the CDN do the right thing?” uncertainty into concrete guidance:
 
 - Clear yes/no answers for Amazon CloudFront (based on AWS documentation + common field observations).
-- A safe **chunked-object strategy** to avoid CloudFront’s object-size ceiling.
+- A safe **chunked-object strategy** to avoid running into CloudFront/CDN cacheable-size ceilings and to keep cache behavior predictable.
 - A summary of one alternative cache (Nginx reverse proxy cache).
 - A checklist that operators can run with `curl` to validate their own deployment.
 
@@ -26,13 +26,18 @@ This document turns the “will the CDN do the right thing?” uncertainty into 
 
 - **Answer:** **Yes, CloudFront supports byte-range requests and caches content for them**, but **you should *not* include `Range` in the cache key**.
 - **Why:** CloudFront treats Range requests as a first-class feature; caching is still keyed on the object URL (and whatever else you include in your cache key), and CloudFront can satisfy subsequent Range requests from the edge cache.
+  - AWS docs: on a `Range GET`, CloudFront checks the edge cache; if the requested range is missing, it forwards the request to the origin and **“caches it for future requests.”**
 
 **Recommendation for Aero:** Keep the cache key minimal (path + version). Do *not* vary/cache-key on `Range`; doing so will fragment the cache and destroy hit ratio.
 
-### Q2: Can CloudFront serve Range requests for objects larger than the CloudFront max object size (historically 20 GB)?
+### Q2: Can CloudFront serve/caches Range requests for objects larger than CloudFront’s maximum cacheable file size?
 
-- **Answer:** **No. Range requests do not let you bypass CloudFront’s maximum object size.**
-- **Mitigation:** Store disk images as **multiple smaller objects** (“chunked objects”) and map byte offsets to chunk IDs + intra-chunk ranges (details below).
+- **Answer:** **Yes, as long as you only retrieve the object in parts using Range requests.**
+- **CloudFront limit:** CloudFront’s **maximum cacheable file size per HTTP GET response is 50&nbsp;GB** (historically 20&nbsp;GB; see current CloudFront limits). With caching enabled, a **non-Range `GET`** for an object larger than this can fail.
+- **Why Range helps:** A `Range` response’s `Content-Length` is only the requested slice. AWS documents that CloudFront will **cache the requested range** and can serve subsequent requests for the same range from the edge cache.
+- **Mitigation for very large images:** If your disk image might exceed 50&nbsp;GB, either:
+  - (A) enforce **range-only** access (no full `GET`; avoid `HEAD`—use `Range: bytes=0-0` to learn total size via `Content-Range`), or
+  - (B) publish the image as **chunk objects** (details below) for simpler operational behavior and portability across CDNs.
 
 ### Q3: What about `Cache-Control: immutable` and long TTLs for `206`?
 
@@ -46,6 +51,16 @@ CloudFront typically returns the same debugging headers for `206` as for `200`:
 - `X-Cache`: `Miss from cloudfront`, `Hit from cloudfront`, `RefreshHit from cloudfront`, `Error from cloudfront`
 - `Age`: present/increasing on cache hits (per edge location)
 - `Via`, `X-Amz-Cf-Pop`, `X-Amz-Cf-Id`: useful for correlating POP behavior
+
+**Spot-check (public CloudFront distribution, Jan 2026):**
+
+```bash
+curl -fsS -D - -o /dev/null -H 'Range: bytes=0-1023' \
+  'https://d3njjcbhbojbot.cloudfront.net/favicon.ico?cachebust=aero-range-test' \
+  | grep -iE '^(http/|x-cache|age|content-range):'
+```
+
+On first request: `x-cache: Miss from cloudfront` (often `age` absent). Repeating the same request typically returns `x-cache: Hit from cloudfront` with a small `age: <n>`.
 
 ---
 
@@ -90,13 +105,16 @@ If using S3 as origin, configure the bucket CORS rules accordingly. If using a c
 
 ---
 
-## CloudFront hard limits: why chunked objects are required
+## CloudFront limits: max cacheable size (50&nbsp;GB) and what to do about it
 
-CloudFront has a documented maximum object size (commonly cited as **20 GB**). This is a *hard ceiling* for “one object behind one URL.”
+CloudFront has a documented **maximum cacheable file size per HTTP GET response of 50&nbsp;GB**.
 
-**Key point:** Even if the viewer only requests a tiny Range, a `206` response still includes the **total object length** (in `Content-Range`), and CloudFront’s object-size enforcement applies to the *whole object*, not just the requested slice.
+- If the object is **≤ 50&nbsp;GB**, CloudFront can cache a normal `200 OK` response and then satisfy subsequent `Range` requests from the cached object (best-case behavior).
+- If the object is **> 50&nbsp;GB** and caching is enabled, a non-Range `GET` can fail. However, AWS documents that you can still use CloudFront by retrieving the object with **multiple Range GETs**, each returning a response `< 50&nbsp;GB`; CloudFront caches each requested part for future requests.
 
-### Recommended mitigation: store disk images as chunk objects
+For Aero disk streaming (many small random-access reads), depending on Range-caching behavior at your POP, relying on per-Range caching can create many cache entries. A more predictable approach is to publish the image as fixed-size **chunk objects** (or adopt the no-Range format in [`18-chunked-disk-image-format.md`](./18-chunked-disk-image-format.md)).
+
+### Recommended mitigation (portable): store disk images as chunk objects
 
 Instead of one URL for the entire disk image:
 
@@ -122,7 +140,7 @@ And a small manifest:
 
 Choose a chunk size that:
 
-- Is **well under** CloudFront’s max object size.
+- Is **well under** CloudFront’s max cacheable response size (50&nbsp;GB) and any object-store limits.
 - Is not so large that a single cache miss is painful.
 
 Practical ranges:
@@ -224,7 +242,7 @@ Confirm:
 
 - `HTTP/* 206`
 - `Content-Range: bytes 0-1023/<total>`
-- `Accept-Ranges: bytes`
+- `Accept-Ranges: bytes` (often present on `HEAD`/`200`; may not appear on `206` for some origins)
 
 ### 2) Cache hit behavior for `206`
 
@@ -257,19 +275,27 @@ Enable origin access logs (or per-request logging) and inspect what the CDN requ
 
 ### 5) Object size ceiling check (CloudFront-specific)
 
-Publish (or identify) an object whose total size is **> 20 GB** and attempt:
+Publish (or identify) an object whose total size is **> 50 GB** and attempt a tiny range:
 
 ```bash
-curl -v -o /dev/null -H 'Range: bytes=0-1023' "https://YOUR_CLOUDFRONT_DOMAIN/path/to/oversize-object"
+curl -v -o /dev/null -H 'Range: bytes=0-0' "https://YOUR_CLOUDFRONT_DOMAIN/path/to/oversize-object"
 ```
 
-If CloudFront fails or returns an error, chunked objects are mandatory.
+If the `Range` request fails, you likely need chunk objects (or a different delivery mechanism).
+
+Also test how a non-Range request behaves (avoid downloading the full body; use `HEAD`):
+
+```bash
+curl -v -I "https://YOUR_CLOUDFRONT_DOMAIN/path/to/oversize-object"
+```
+
+If `HEAD` fails for oversized objects in your configuration, avoid `HEAD` in clients and use `Range: bytes=0-0` to discover total size via `Content-Range`.
 
 ---
 
 ## References (vendor docs)
 
 - AWS CloudFront Developer Guide (Range GETs): https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RangeGETs.html
-- AWS CloudFront quotas/limits (max object size): https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html
+- AWS CloudFront quotas/limits (max cacheable file size per GET response): https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html
 - RFC 9110 (HTTP Semantics, Range): https://www.rfc-editor.org/rfc/rfc9110.html
 - RFC 9111 (HTTP Caching, partial responses): https://www.rfc-editor.org/rfc/rfc9111.html
