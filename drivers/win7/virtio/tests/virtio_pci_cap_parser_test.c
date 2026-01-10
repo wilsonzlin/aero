@@ -293,6 +293,91 @@ static void test_cap_ptr_unaligned(void) {
     expect_result("cap_ptr_unaligned.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_UNALIGNED);
 }
 
+static void test_cap_next_out_of_range(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    /* cap_next points beyond cfg_space_len (we pass a shorter length below). */
+    add_virtio_cap(cfg, 0x40, 0xF0, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
+    bars[0] = 0xA0000000ULL;
+
+    res = virtio_pci_cap_parse(cfg, 0x80, bars, &caps);
+    expect_result("cap_next_out_of_range.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_NEXT_OUT_OF_RANGE);
+}
+
+static void test_cap_truncated(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x70;
+
+    /* cap_len extends beyond cfg_space_len (we pass a shorter length below). */
+    add_virtio_cap(cfg, 0x70, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 80);
+    bars[0] = 0xA0000000ULL;
+
+    res = virtio_pci_cap_parse(cfg, 0x80, bars, &caps);
+    expect_result("cap_truncated.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_TRUNCATED);
+}
+
+static void test_bar_index_out_of_range(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    add_virtio_cap(cfg, 0x40, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 6, 0x1000, 0x100, 16);
+
+    res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("bar_index_out_of_range.res", res, VIRTIO_PCI_CAP_PARSE_ERR_BAR_INDEX_OUT_OF_RANGE);
+}
+
+static void test_unknown_vendor_cap_ignored(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    add_virtio_cap(cfg, 0x40, 0x54, 0x99, 0, 0x5000, 0x100, 16);
+    add_virtio_cap(cfg, 0x54, 0x70, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
+    add_virtio_notify_cap(cfg, 0x70, 0x84, 2, 0x2000, 0x200, 4);
+    add_virtio_cap(cfg, 0x84, 0x94, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 1, 0x3000, 0x10, 16);
+    add_virtio_cap(cfg, 0x94, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 4, 0x4000, 0x400, 16);
+
+    bars[0] = 0xA0000000ULL;
+    bars[1] = 0xB0000000ULL;
+    bars[2] = 0xC0000000ULL;
+    bars[4] = 0xD0000000ULL;
+
+    res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("unknown_vendor_cap_ignored.res", res, VIRTIO_PCI_CAP_PARSE_OK);
+}
+
 int main(void) {
     test_valid_all_caps();
     test_duplicated_cap_type();
@@ -302,6 +387,10 @@ int main(void) {
     test_notify_cap_len_too_short();
     test_bar_address_missing();
     test_cap_ptr_unaligned();
+    test_cap_next_out_of_range();
+    test_cap_truncated();
+    test_bar_index_out_of_range();
+    test_unknown_vendor_cap_ignored();
 
     if (tests_failed == 0) {
         printf("virtio_pci_cap_parser_test: %d checks passed\n", tests_run);
