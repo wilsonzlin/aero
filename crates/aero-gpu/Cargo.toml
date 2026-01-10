@@ -3,6 +3,11 @@ name = "aero-gpu"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Optional tile-based diffing when the caller doesn't supply dirty rectangles.
+# Kept off by default until validated for correctness/perf across browsers.
+diff-engine = []
+
 [dependencies]
 bytemuck = { version = "1.14", features = ["derive"] }
 thiserror = "1.0"
@@ -12,3 +17,4 @@ lru = "0.12"
 
 [dev-dependencies]
 pollster = "0.3"
+pretty_assertions = "1"

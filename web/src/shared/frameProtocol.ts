@@ -8,6 +8,8 @@ export const FRAME_PRESENTED = 0;
 export const FRAME_DIRTY = 1;
 export const FRAME_PRESENTING = 2;
 
+export type DirtyRect = { x: number; y: number; w: number; h: number };
+
 export type GpuWorkerInitMessage = {
   type: 'init';
   sharedFrameState?: SharedArrayBuffer;
@@ -21,6 +23,7 @@ export type GpuWorkerTickMessage = {
 
 export type GpuWorkerFrameDirtyMessage = {
   type: 'frame_dirty';
+  dirtyRects?: DirtyRect[];
 };
 
 export type GpuWorkerMessageFromMain =
@@ -41,4 +44,3 @@ export type GpuWorkerErrorMessage = {
 };
 
 export type GpuWorkerMessageToMain = GpuWorkerMetricsMessage | GpuWorkerErrorMessage;
-

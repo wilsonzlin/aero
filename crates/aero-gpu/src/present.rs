@@ -1,29 +1,20 @@
-//! Presentation policy (color space + alpha mode) shared by all presenter backends.
+//! Presentation policy (color space + alpha mode) and framebuffer upload helpers.
 //!
-//! ## Goals
-//! - **Match Windows swapchain expectations**: the final scanout surface is effectively opaque
-//!   and gamma-correct for an sRGB display.
-//! - **Keep rendering math correct**: the emulator's GPU pipeline should operate in **linear**
-//!   space; presentation is responsible for encoding to sRGB when required.
-//! - **Make WebGPU and WebGL2 match**: avoid backend-specific "looks right" hacks.
+//! This module contains two related pieces:
+//! - **Presentation policy** shared by presenter backends (WebGPU/WebGL2).
+//! - A **dirty-rectangle based framebuffer uploader** (`Presenter`) that can reduce
+//!   per-frame upload bandwidth by updating only changed regions.
 //!
-//! ## Policy (default)
-//! - **Input framebuffer encoding:** `RGBA8` *linear* (`rgba8unorm`).
-//! - **Presented output encoding:** **sRGB** when possible, with a deterministic shader fallback.
-//! - **Presented alpha mode:** **opaque** (Windows desktop swapchains are effectively opaque).
-//!
-//! These defaults are chosen to match Windows 7-era D3D behavior for the *final* output.
-//! The guest may use alpha internally, but the final scanout should not accidentally blend
-//! with the web page background.
-//!
-//! ## Debug toggles
-//! For validation/debugging we support forcing:
-//! - linear output (`OutputColorSpace::Linear`)
-//! - sRGB output (`OutputColorSpace::Srgb`)
-//! - premultiplied alpha (`PresentAlphaMode::Premultiplied`)
-//!
-//! See `blit.wgsl` for how these flags affect the final composite.
+//! Keeping these in one module avoids cross-crate duplication while staying close to the
+//! "presentation" boundary of the graphics stack.
 
+use crate::dirty_rect::{merge_and_cap_rects, Rect};
+
+// -----------------------------------------------------------------------------
+// Presentation policy
+// -----------------------------------------------------------------------------
+
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FramebufferColorSpace {
     /// Texture contains linear values (typical for render targets).
@@ -32,6 +23,7 @@ pub enum FramebufferColorSpace {
     Srgb,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputColorSpace {
     /// Present without any gamma encoding.
@@ -40,6 +32,7 @@ pub enum OutputColorSpace {
     Srgb,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresentAlphaMode {
     /// Final output is treated as opaque; alpha is forced to 1.0.
@@ -54,6 +47,7 @@ pub enum PresentAlphaMode {
     Premultiplied,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PresentOptions {
     pub framebuffer_color_space: FramebufferColorSpace,
@@ -77,6 +71,7 @@ impl Default for PresentOptions {
 /// the WebGPU string formats, but the policy is the same:
 /// **prefer an sRGB-capable surface for sRGB output**, otherwise fall back to linear + shader
 /// encoding.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfaceFormat {
     Bgra8Unorm,
@@ -86,8 +81,8 @@ pub enum SurfaceFormat {
 }
 
 impl SurfaceFormat {
-    pub fn is_srgb(self) -> bool {
-        matches!(self, SurfaceFormat::Bgra8UnormSrgb | SurfaceFormat::Rgba8UnormSrgb)
+    pub fn is_srgb(&self) -> bool {
+        matches!(*self, SurfaceFormat::Bgra8UnormSrgb | SurfaceFormat::Rgba8UnormSrgb)
     }
 
     pub fn to_srgb(self) -> Option<Self> {
@@ -103,6 +98,7 @@ impl SurfaceFormat {
 ///
 /// - If `output_color_space == Srgb`, pick an `*Srgb` format when available.
 /// - Otherwise prefer the first provided format.
+#[allow(dead_code)]
 pub fn choose_surface_format(
     available: &[SurfaceFormat],
     output_color_space: OutputColorSpace,
@@ -132,6 +128,7 @@ pub fn choose_surface_format(
 ///
 /// If the surface is already an sRGB surface, the GPU will encode automatically and the
 /// shader must **not** apply gamma (to avoid double-encoding).
+#[allow(dead_code)]
 pub fn needs_srgb_encode_in_shader(
     output_color_space: OutputColorSpace,
     surface_format: SurfaceFormat,
@@ -139,11 +136,360 @@ pub fn needs_srgb_encode_in_shader(
     output_color_space == OutputColorSpace::Srgb && !surface_format.is_srgb()
 }
 
+#[allow(dead_code)]
 pub fn should_premultiply_in_shader(alpha_mode: PresentAlphaMode) -> bool {
     alpha_mode == PresentAlphaMode::Premultiplied
 }
 
+#[allow(dead_code)]
 pub fn should_force_opaque_alpha(alpha_mode: PresentAlphaMode) -> bool {
     alpha_mode == PresentAlphaMode::Opaque
 }
 
+// -----------------------------------------------------------------------------
+// Dirty-rectangle based framebuffer uploads
+// -----------------------------------------------------------------------------
+
+const DEFAULT_MAX_RECTS_PER_FRAME: usize = 128;
+
+// Matches `wgpu::COPY_BYTES_PER_ROW_ALIGNMENT`.
+const COPY_BYTES_PER_ROW_ALIGNMENT: usize = 256;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PresentTelemetry {
+    /// Number of rects requested by the caller (or generated by the diff engine / full-frame).
+    pub rects_requested: usize,
+    /// Rect count after merging overlaps/adjacency, before applying the cap.
+    pub rects_after_merge: usize,
+    /// Rect count that was actually uploaded (after applying the cap).
+    pub rects_uploaded: usize,
+    /// Total number of bytes submitted for upload this frame.
+    pub bytes_uploaded: usize,
+}
+
+impl PresentTelemetry {
+    #[must_use]
+    pub fn merge_rate(self) -> f32 {
+        if self.rects_requested == 0 {
+            return 0.0;
+        }
+        let in_count = self.rects_requested as f32;
+        let out_count = self.rects_uploaded as f32;
+        (1.0 - (out_count / in_count)).clamp(0.0, 1.0)
+    }
+}
+
+#[derive(Debug)]
+pub enum PresentError {
+    StrideTooSmall { stride: usize, min_stride: usize },
+    FrameDataTooSmall { len: usize, min_len: usize },
+    BytesPerRowTooLarge { bytes_per_row: usize },
+}
+
+impl std::fmt::Display for PresentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StrideTooSmall { stride, min_stride } => write!(
+                f,
+                "stride too small (stride={stride}, min_stride={min_stride})"
+            ),
+            Self::FrameDataTooSmall { len, min_len } => {
+                write!(f, "frame data too small (len={len}, min_len={min_len})")
+            }
+            Self::BytesPerRowTooLarge { bytes_per_row } => {
+                write!(f, "bytes_per_row too large ({bytes_per_row})")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PresentError {}
+
+/// Abstracts over the upload mechanism (e.g. `wgpu::Queue::write_texture`).
+pub trait TextureWriter {
+    /// Write `rect` into the destination texture.
+    ///
+    /// `data` is laid out as rows with stride `bytes_per_row`. For the last row, `data` only
+    /// needs to contain the exact number of bytes for the copied region (the wgpu "required
+    /// size" rule).
+    fn write_texture(&mut self, rect: Rect, bytes_per_row: usize, data: &[u8]);
+}
+
+/// Presents a CPU framebuffer into a GPU texture, using dirty rectangles to minimize uploads.
+pub struct Presenter<W> {
+    width: u32,
+    height: u32,
+    bytes_per_pixel: usize,
+    max_rects_per_frame: usize,
+    writer: W,
+    scratch: Vec<u8>,
+    last_telemetry: PresentTelemetry,
+
+    #[cfg(feature = "diff-engine")]
+    diff: Option<crate::tile_diff::TileDiff>,
+}
+
+impl<W: TextureWriter> Presenter<W> {
+    #[must_use]
+    pub fn new(width: u32, height: u32, bytes_per_pixel: usize, writer: W) -> Self {
+        Self {
+            width,
+            height,
+            bytes_per_pixel,
+            max_rects_per_frame: DEFAULT_MAX_RECTS_PER_FRAME,
+            writer,
+            scratch: Vec::new(),
+            last_telemetry: PresentTelemetry {
+                rects_requested: 0,
+                rects_after_merge: 0,
+                rects_uploaded: 0,
+                bytes_uploaded: 0,
+            },
+            #[cfg(feature = "diff-engine")]
+            diff: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_max_rects_per_frame(mut self, cap: usize) -> Self {
+        self.max_rects_per_frame = cap;
+        self
+    }
+
+    #[cfg(feature = "diff-engine")]
+    pub fn enable_diff_engine(&mut self) {
+        self.diff = Some(crate::tile_diff::TileDiff::new(
+            self.width,
+            self.height,
+            self.bytes_per_pixel,
+        ));
+    }
+
+    #[must_use]
+    pub fn writer(&self) -> &W {
+        &self.writer
+    }
+
+    #[allow(dead_code)]
+    pub fn writer_mut(&mut self) -> &mut W {
+        &mut self.writer
+    }
+
+    #[allow(dead_code)]
+    pub fn into_writer(self) -> W {
+        self.writer
+    }
+
+    #[must_use]
+    pub fn last_telemetry(&self) -> PresentTelemetry {
+        self.last_telemetry
+    }
+
+    /// Upload a frame into the destination texture.
+    ///
+    /// `stride` is the number of bytes between successive rows in `frame_data`.
+    ///
+    /// If `dirty` is `None`, the entire frame is uploaded (unless the optional diff engine is
+    /// enabled, in which case a tile diff is used to generate dirty rectangles).
+    pub fn present(
+        &mut self,
+        frame_data: &[u8],
+        stride: usize,
+        dirty: Option<&[Rect]>,
+    ) -> Result<PresentTelemetry, PresentError> {
+        let full_row_bytes = self
+            .width
+            .checked_mul(self.bytes_per_pixel as u32)
+            .map(|v| v as usize)
+            .unwrap_or(usize::MAX);
+
+        if stride < full_row_bytes {
+            return Err(PresentError::StrideTooSmall {
+                stride,
+                min_stride: full_row_bytes,
+            });
+        }
+
+        let min_len = min_frame_len(stride, self.height as usize, full_row_bytes);
+        if frame_data.len() < min_len {
+            return Err(PresentError::FrameDataTooSmall {
+                len: frame_data.len(),
+                min_len,
+            });
+        }
+
+        let (rects_requested, rects_input): (usize, Vec<Rect>) = match dirty {
+            Some(rects) => (rects.len(), rects.to_vec()),
+            None => {
+                #[cfg(feature = "diff-engine")]
+                if let Some(diff) = &mut self.diff {
+                    let rects = diff.diff(frame_data, stride);
+                    let requested = rects.len();
+                    (requested, rects)
+                } else {
+                    (1, vec![Rect::new(0, 0, self.width, self.height)])
+                }
+
+                #[cfg(not(feature = "diff-engine"))]
+                {
+                    (1, vec![Rect::new(0, 0, self.width, self.height)])
+                }
+            }
+        };
+
+        let merged = merge_and_cap_rects(
+            &rects_input,
+            (self.width, self.height),
+            self.max_rects_per_frame,
+        );
+
+        let mut bytes_uploaded = 0usize;
+        for rect in &merged.rects {
+            bytes_uploaded =
+                bytes_uploaded.saturating_add(self.upload_rect(frame_data, stride, *rect)?);
+        }
+
+        let telemetry = PresentTelemetry {
+            rects_requested,
+            rects_after_merge: merged.rects_after_merge,
+            rects_uploaded: merged.rects_after_cap,
+            bytes_uploaded,
+        };
+
+        self.last_telemetry = telemetry;
+        Ok(telemetry)
+    }
+
+    fn upload_rect(
+        &mut self,
+        frame_data: &[u8],
+        stride: usize,
+        rect: Rect,
+    ) -> Result<usize, PresentError> {
+        let row_bytes = rect
+            .w
+            .checked_mul(self.bytes_per_pixel as u32)
+            .map(|v| v as usize)
+            .unwrap_or(usize::MAX);
+
+        let rect_h = rect.h as usize;
+        if rect_h == 0 || row_bytes == 0 {
+            return Ok(0);
+        }
+
+        let bytes_per_row = bytes_per_row_for_upload(row_bytes, rect_h);
+        if bytes_per_row > u32::MAX as usize {
+            return Err(PresentError::BytesPerRowTooLarge { bytes_per_row });
+        }
+
+        // Direct upload is only possible when we are uploading whole rows, otherwise we'd upload
+        // the untouched bytes too (defeating the purpose of dirty rects).
+        let can_direct = rect.x == 0
+            && rect.w == self.width
+            && stride == row_bytes
+            && (rect_h == 1 || (stride % COPY_BYTES_PER_ROW_ALIGNMENT == 0));
+
+        let required_len = required_data_len(bytes_per_row, row_bytes, rect_h);
+
+        if can_direct {
+            let offset = rect
+                .y
+                .checked_mul(stride as u32)
+                .map(|v| v as usize)
+                .unwrap_or(usize::MAX);
+            let end = offset.saturating_add(required_len);
+            let data = &frame_data[offset..end];
+            self.writer.write_texture(rect, bytes_per_row, data);
+            return Ok(required_len);
+        }
+
+        self.scratch.resize(required_len, 0);
+        for row in 0..rect_h {
+            let src_offset = (rect.y as usize + row)
+                .saturating_mul(stride)
+                .saturating_add(rect.x as usize * self.bytes_per_pixel);
+            let dst_offset = row.saturating_mul(bytes_per_row);
+
+            let src_end = src_offset.saturating_add(row_bytes);
+            let dst_end = dst_offset.saturating_add(row_bytes);
+            self.scratch[dst_offset..dst_end]
+                .copy_from_slice(&frame_data[src_offset..src_end]);
+        }
+
+        self.writer.write_texture(rect, bytes_per_row, &self.scratch);
+        Ok(required_len)
+    }
+}
+
+fn bytes_per_row_for_upload(row_bytes: usize, copy_height: usize) -> usize {
+    if copy_height <= 1 {
+        return row_bytes;
+    }
+    align_up(row_bytes, COPY_BYTES_PER_ROW_ALIGNMENT)
+}
+
+fn required_data_len(bytes_per_row: usize, row_bytes: usize, copy_height: usize) -> usize {
+    if copy_height == 0 {
+        return 0;
+    }
+    bytes_per_row
+        .saturating_mul(copy_height.saturating_sub(1))
+        .saturating_add(row_bytes)
+}
+
+fn min_frame_len(stride: usize, height: usize, row_bytes: usize) -> usize {
+    if height == 0 {
+        return 0;
+    }
+    stride
+        .saturating_mul(height.saturating_sub(1))
+        .saturating_add(row_bytes)
+}
+
+fn align_up(val: usize, align: usize) -> usize {
+    debug_assert!(align.is_power_of_two());
+    (val + (align - 1)) & !(align - 1)
+}
+
+pub mod wgpu_writer {
+    use super::{Rect, TextureWriter};
+
+    /// `TextureWriter` implementation backed by `wgpu::Queue::write_texture`.
+    ///
+    /// The destination texture must be created with `COPY_DST` usage.
+    #[allow(dead_code)]
+    pub struct WgpuTextureWriter<'a> {
+        pub queue: &'a wgpu::Queue,
+        pub texture: &'a wgpu::Texture,
+    }
+
+    impl TextureWriter for WgpuTextureWriter<'_> {
+        fn write_texture(&mut self, rect: Rect, bytes_per_row: usize, data: &[u8]) {
+            let bytes_per_row_u32 = u32::try_from(bytes_per_row).expect("bytes_per_row overflow");
+
+            self.queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: self.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: rect.x,
+                        y: rect.y,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                data,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row_u32),
+                    rows_per_image: None,
+                },
+                wgpu::Extent3d {
+                    width: rect.w,
+                    height: rect.h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+    }
+}

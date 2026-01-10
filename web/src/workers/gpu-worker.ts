@@ -13,7 +13,8 @@ import {
   type GpuWorkerMessageToMain,
 } from '../shared/frameProtocol';
 
-type PresentFn = () => void | boolean | Promise<void | boolean>;
+type DirtyRect = { x: number; y: number; w: number; h: number };
+type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<void | boolean>;
 
 const postToMain = (msg: GpuWorkerMessageToMain) => {
   self.postMessage(msg);
@@ -24,6 +25,7 @@ let frameState: Int32Array | null = null;
 let presentFn: PresentFn | null = null;
 let presenting = false;
 
+let pendingDirtyRects: DirtyRect[] | null = null;
 let pendingFrames = 0;
 
 let framesReceived = 0;
@@ -111,7 +113,9 @@ const computeDroppedFromSeqForPresent = () => {
 
 const presentOnce = async () => {
   if (!presentFn) return false;
-  const result = await presentFn();
+  const dirtyRects = pendingDirtyRects;
+  pendingDirtyRects = null;
+  const result = await presentFn(dirtyRects);
   return typeof result === 'boolean' ? result : true;
 };
 
@@ -188,6 +192,7 @@ self.onmessage = (event: MessageEvent<GpuWorkerMessageFromMain>) => {
     }
 
     case 'frame_dirty': {
+      pendingDirtyRects = msg.dirtyRects ?? null;
       if (!frameState) {
         pendingFrames += 1;
         framesReceived += 1;

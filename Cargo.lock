@@ -80,6 +80,7 @@ dependencies = [
  "bytemuck",
  "lru",
  "pollster",
+ "pretty_assertions",
  "thiserror 1.0.69",
  "wgpu",
  "xxhash-rust",

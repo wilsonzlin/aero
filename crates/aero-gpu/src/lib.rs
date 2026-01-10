@@ -8,6 +8,10 @@
 //!   encoding (see [`cmd`]).
 
 mod buffer_arena;
+mod dirty_rect;
+mod present;
+#[cfg(feature = "diff-engine")]
+mod tile_diff;
 mod upload;
 
 mod context;
@@ -21,6 +25,8 @@ pub mod stats;
 pub use buffer_arena::BufferArena;
 pub use context::GpuContext;
 pub use error::GpuError;
+pub use dirty_rect::{merge_and_cap_rects, Rect, RectMergeOutcome};
+pub use present::{PresentError, PresentTelemetry, Presenter, TextureWriter};
 pub use upload::{
     BufferSliceHandle, DynamicOffset, GpuCapabilities, UploadRingBuffer,
     UploadRingBufferDescriptor, UploadStats,
