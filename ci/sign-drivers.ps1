@@ -104,11 +104,112 @@ function Get-JsonPropertyValueRecursive {
   return $null
 }
 
+function Get-JsonStringValuesRecursive {
+  param(
+    [Parameter(Mandatory = $true)]
+    $Object
+  )
+
+  $results = New-Object System.Collections.Generic.List[string]
+
+  function Visit {
+    param($Node)
+
+    if ($null -eq $Node) {
+      return
+    }
+
+    if ($Node -is [string]) {
+      if (-not [string]::IsNullOrWhiteSpace($Node)) {
+        [void]$results.Add($Node)
+      }
+      return
+    }
+
+    if ($Node -is [ValueType]) {
+      return
+    }
+
+    if ($Node -is [System.Collections.IDictionary]) {
+      foreach ($key in $Node.Keys) {
+        Visit -Node $Node[$key]
+      }
+      return
+    }
+
+    if ($Node -is [System.Collections.IEnumerable]) {
+      foreach ($item in $Node) {
+        Visit -Node $item
+      }
+      return
+    }
+
+    foreach ($property in $Node.PSObject.Properties) {
+      Visit -Node $property.Value
+    }
+  }
+
+  Visit -Node $Object
+  return ,$results.ToArray()
+}
+
 function Resolve-SignToolPath {
   param(
     [string]$ToolchainJsonPath,
     [string]$RepoRoot
   )
+
+  function Resolve-SigntoolCandidate {
+    param(
+      [Parameter(Mandatory = $true)]
+      [string]$Candidate,
+
+      [Parameter(Mandatory = $true)]
+      [string]$BaseDir
+    )
+
+    $expanded = [Environment]::ExpandEnvironmentVariables($Candidate).Trim()
+    if ([string]::IsNullOrWhiteSpace($expanded)) {
+      return $null
+    }
+
+    $path = $expanded
+    if (-not [System.IO.Path]::IsPathRooted($path)) {
+      $path = Join-Path -Path $BaseDir -ChildPath $path
+    }
+    $path = [System.IO.Path]::GetFullPath($path)
+
+    if (-not (Test-Path -LiteralPath $path)) {
+      return $null
+    }
+
+    $item = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+    if ($null -eq $item) {
+      return $null
+    }
+
+    if ($item.PSIsContainer) {
+      $exe = Join-Path -Path $item.FullName -ChildPath "signtool.exe"
+      if (Test-Path -LiteralPath $exe) {
+        return $exe
+      }
+
+      foreach ($arch in @("x64", "x86", "arm64")) {
+        $exe = Join-Path -Path $item.FullName -ChildPath (Join-Path -Path $arch -ChildPath "signtool.exe")
+        if (Test-Path -LiteralPath $exe) {
+          return $exe
+        }
+      }
+
+      return $null
+    }
+
+    if ($item.FullName -match '(?i)signtool\.exe$') {
+      return $item.FullName
+    }
+
+    return $null
+  }
 
   if ($ToolchainJsonPath) {
     $toolchainAbs = Resolve-AbsolutePath -Path $ToolchainJsonPath -BaseDir $RepoRoot
@@ -116,6 +217,7 @@ function Resolve-SignToolPath {
       throw "Toolchain JSON '$ToolchainJsonPath' not found at '$toolchainAbs'."
     }
 
+    $toolchainBaseDir = Split-Path -Parent $toolchainAbs
     $toolchain = Get-Content -LiteralPath $toolchainAbs -Raw | ConvertFrom-Json
     $signtoolFromJson = Get-JsonPropertyValueRecursive -Object $toolchain -PropertyNames @(
       "signtool",
@@ -123,21 +225,34 @@ function Resolve-SignToolPath {
       "SignTool",
       "signtoolPath",
       "signToolPath",
-      "SignToolPath"
+      "SignToolPath",
+      "signtoolExe",
+      "signToolExe",
+      "SignToolExe",
+      "SigntoolExe",
+      "signtoolExecutable",
+      "signToolExecutable",
+      "SignToolExecutable"
     )
 
     if ($signtoolFromJson) {
-      $candidate = [string]$signtoolFromJson
-      if (-not [System.IO.Path]::IsPathRooted($candidate)) {
-        $candidate = Join-Path (Split-Path -Parent $toolchainAbs) $candidate
+      $resolved = Resolve-SigntoolCandidate -Candidate ([string]$signtoolFromJson) -BaseDir $toolchainBaseDir
+      if ($resolved) {
+        return $resolved
       }
 
-      $candidate = [System.IO.Path]::GetFullPath($candidate)
-      if (Test-Path -LiteralPath $candidate) {
-        return $candidate
+      throw "signtool.exe path from Toolchain JSON does not exist: '$signtoolFromJson'."
+    }
+
+    foreach ($candidateString in (Get-JsonStringValuesRecursive -Object $toolchain)) {
+      if ($candidateString -notmatch '(?i)signtool') {
+        continue
       }
 
-      throw "signtool.exe path from Toolchain JSON does not exist: '$candidate'."
+      $resolved = Resolve-SigntoolCandidate -Candidate $candidateString -BaseDir $toolchainBaseDir
+      if ($resolved) {
+        return $resolved
+      }
     }
   }
 
