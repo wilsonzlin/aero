@@ -451,7 +451,6 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
             }
 
             Mnemonic::Nop => Ok(false),
-            Mnemonic::Pause => Ok(false),
 
             _ => Err(EmuException::Unimplemented(instr.code())),
         }

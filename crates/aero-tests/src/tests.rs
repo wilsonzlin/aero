@@ -725,11 +725,11 @@ fn system_in_out_cli_sti_cpuid_rdtsc_rdmsr_wrmsr_lgdt_lidt_ltr() {
         0x1234_5678
     );
 
-    // wrmsr/rdmsr
+    // wrmsr/rdmsr (use a non-special MSR so the value roundtrips exactly).
     let msr = [0x0F, 0x30, 0x0F, 0x32, 0xF4];
     let machine = run_test(CpuMode::Protected, &msr, |cpu, _mem, _ports| {
         cpu.write_reg(iced_x86::Register::ESP, 0x2000).unwrap();
-        cpu.write_reg(iced_x86::Register::ECX, 0x10).unwrap();
+        cpu.write_reg(iced_x86::Register::ECX, 0x11).unwrap();
         cpu.write_reg(iced_x86::Register::EAX, 0x1234_5678).unwrap();
         cpu.write_reg(iced_x86::Register::EDX, 0x9ABC_DEF0).unwrap();
     });
