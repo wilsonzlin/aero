@@ -1,5 +1,6 @@
 use core::fmt;
 
+use crate::dirty_rect::Rect;
 use aero_shared::shared_framebuffer::{
     dirty_tiles_to_rects, DirtyRect, FramebufferFormat, LayoutError, SharedFramebuffer,
     SharedFramebufferError, SharedFramebufferHeader, SharedFramebufferHeaderSnapshot,
@@ -191,6 +192,42 @@ pub struct FrameView<'a> {
     pub dirty: DirtyHint<'a>,
 }
 
+impl FrameView<'_> {
+    /// Convert dirty tracking information into `aero-gpu`'s [`Rect`] type for use with
+    /// [`crate::Presenter`].
+    ///
+    /// Returns `None` to indicate "treat as full frame" (i.e. pass `dirty=None` to
+    /// `Presenter::present`), which is both the fallback when dirty tracking is disabled
+    /// and the most efficient path when the entire frame is dirty.
+    pub fn dirty_rects_for_presenter(&self) -> Option<Vec<Rect>> {
+        match &self.dirty {
+            DirtyHint::FullFrame => None,
+            DirtyHint::Tiles(tiles) => {
+                let rects: Vec<DirtyRect> = tiles.rects();
+                if rects.len() == 1
+                    && rects[0].x == 0
+                    && rects[0].y == 0
+                    && rects[0].width == self.width
+                    && rects[0].height == self.height
+                {
+                    // We can't see the layout here, so we treat a single rect at origin as a
+                    // likely full-frame update and fall back to the full-frame path.
+                    //
+                    // Callers can still override this if they want to always upload via rects.
+                    return None;
+                }
+
+                Some(
+                    rects
+                        .into_iter()
+                        .map(|r| Rect::new(r.x, r.y, r.width, r.height))
+                        .collect(),
+                )
+            }
+        }
+    }
+}
+
 pub enum DirtyHint<'a> {
     FullFrame,
     Tiles(DirtyTilesView<'a>),
@@ -368,6 +405,10 @@ mod tests {
         assert_eq!(frame.pixels[0], 0x11);
         assert_eq!(frame.active_buf_seq, 1);
 
+        // For a full-frame dirty bitset, the presenter path should take the full-frame
+        // upload shortcut (`dirty=None`) rather than emitting an explicit rect list.
+        assert_eq!(frame.dirty_rects_for_presenter(), None);
+
         match frame.dirty {
             DirtyHint::FullFrame => panic!("expected tile dirty hint"),
             DirtyHint::Tiles(ref tiles) => {
@@ -383,6 +424,42 @@ mod tests {
         assert_eq!(snapshot.header.magic, SHARED_FRAMEBUFFER_MAGIC);
         assert!(snapshot.publish_order_ok);
         assert!(snapshot.problems.is_empty());
+    }
+
+    #[test]
+    fn dirty_rects_for_presenter_returns_rects_for_partial_updates() {
+        let layout = SharedFramebufferLayout::new_rgba8(64, 32, 32).unwrap();
+        let word_len = (layout.total_byte_len() + 3) / 4;
+        let mut words = vec![0u32; word_len];
+
+        let shared = unsafe {
+            SharedFramebuffer::from_raw_parts(words.as_mut_ptr() as *mut u8, layout).unwrap()
+        };
+        shared.header().init(layout);
+
+        let mut source =
+            unsafe { FrameSource::from_shared_memory(words.as_mut_ptr() as *mut u8, 0) }.unwrap();
+
+        let writer = SharedFramebufferWriter::new(shared);
+        writer.write_frame(|buf, dirty, layout| {
+            buf.fill(0x22);
+            if let Some(words) = dirty {
+                // Mark only the first tile dirty (top-left).
+                let tile_count = layout.tile_count();
+                assert!(tile_count >= 1);
+                words[0] = 1;
+            }
+        });
+
+        let frame = source.poll_frame().expect("new frame");
+        let rects = frame
+            .dirty_rects_for_presenter()
+            .expect("expected partial rects");
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].x, 0);
+        assert_eq!(rects[0].y, 0);
+        assert_eq!(rects[0].w, 32);
+        assert_eq!(rects[0].h, 32);
     }
 
     #[test]

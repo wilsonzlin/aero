@@ -143,10 +143,10 @@ export class RawWebGL2Presenter {
   srcHeight = 0;
 
   /**
-   * @param {HTMLCanvasElement} canvas
+   * @param {HTMLCanvasElement | OffscreenCanvas} canvas
    * @param {RawWebGL2PresenterOptions=} opts
    */
-  constructor(canvas: HTMLCanvasElement, opts: any = {}) {
+  constructor(canvas: HTMLCanvasElement | OffscreenCanvas, opts: any = {}) {
     this.opts = {
       framebufferColorSpace: opts.framebufferColorSpace ?? "linear",
       outputColorSpace: opts.outputColorSpace ?? "srgb",
@@ -226,7 +226,21 @@ export class RawWebGL2Presenter {
    * @param {number} height
    */
   setSourceRgba8(rgba: Uint8Array, width: number, height: number) {
+    this.setSourceRgba8Strided(rgba, width, height, width * 4);
+  }
+
+  /**
+   * Upload a full RGBA8 framebuffer with a caller-provided row stride.
+   *
+   * When `strideBytes !== width * 4`, WebGL2's `UNPACK_ROW_LENGTH` is used so we can
+   * upload directly from a strided buffer without repacking on the CPU.
+   */
+  setSourceRgba8Strided(rgba: Uint8Array, width: number, height: number, strideBytes: number) {
     const gl = this.gl;
+    if (strideBytes % 4 !== 0) {
+      throw new Error(`strideBytes must be a multiple of 4 for RGBA8 uploads (got ${strideBytes})`);
+    }
+    const rowLengthPixels = strideBytes / 4;
 
     if (width !== this.srcWidth || height !== this.srcHeight) {
       this.srcWidth = width;
@@ -251,6 +265,12 @@ export class RawWebGL2Presenter {
       gl.bindTexture(gl.TEXTURE_2D, null);
     }
 
+    // Keep unpack alignment explicit so odd widths/strides do not break uploads.
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    if (rowLengthPixels !== width) {
+      gl.pixelStorei(gl.UNPACK_ROW_LENGTH, rowLengthPixels);
+    }
+
     gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
     gl.texSubImage2D(
       gl.TEXTURE_2D,
@@ -264,6 +284,63 @@ export class RawWebGL2Presenter {
       rgba,
     );
     gl.bindTexture(gl.TEXTURE_2D, null);
+
+    if (rowLengthPixels !== width) {
+      gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+    }
+  }
+
+  /**
+   * Upload only dirty rects from a strided RGBA8 source buffer.
+   *
+   * This avoids allocating/copying per-rect by using WebGL2 unpack parameters
+   * (`UNPACK_ROW_LENGTH`, `UNPACK_SKIP_PIXELS`, `UNPACK_SKIP_ROWS`).
+   */
+  setSourceRgba8StridedDirtyRects(
+    rgba: Uint8Array,
+    width: number,
+    height: number,
+    strideBytes: number,
+    dirtyRects: Array<{ x: number; y: number; w: number; h: number }>,
+  ) {
+    const gl = this.gl;
+    if (dirtyRects.length === 0) return;
+
+    if (strideBytes % 4 !== 0) {
+      throw new Error(`strideBytes must be a multiple of 4 for RGBA8 uploads (got ${strideBytes})`);
+    }
+    const rowLengthPixels = strideBytes / 4;
+
+    // Ensure the destination texture is allocated to the correct size.
+    if (width !== this.srcWidth || height !== this.srcHeight) {
+      this.setSourceRgba8Strided(rgba, width, height, strideBytes);
+      return;
+    }
+
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, rowLengthPixels);
+
+    gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
+
+    for (const rect of dirtyRects) {
+      const x = Math.max(0, rect.x | 0);
+      const y = Math.max(0, rect.y | 0);
+      const w = Math.max(0, rect.w | 0);
+      const h = Math.max(0, rect.h | 0);
+      if (w === 0 || h === 0) continue;
+
+      gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, x);
+      gl.pixelStorei(gl.UNPACK_SKIP_ROWS, y);
+
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, null);
+
+    // Reset unpack state so callers don't get surprising behavior.
+    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
+    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
   }
 
   present() {
@@ -295,4 +372,3 @@ export class RawWebGL2Presenter {
     gl.useProgram(null);
   }
 }
-

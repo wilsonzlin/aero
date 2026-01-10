@@ -118,6 +118,62 @@ export function layoutFromHeader(header: Int32Array): SharedFramebufferLayout {
   return computeSharedFramebufferLayout(width, height, strideBytes, format, tileSize);
 }
 
+export type DirtyRect = { x: number; y: number; w: number; h: number };
+
+/**
+ * Convert a per-tile dirty bitset into pixel-space rects, merging runs on the X axis.
+ *
+ * Mirrors `aero_shared::shared_framebuffer::dirty_tiles_to_rects`.
+ */
+export function dirtyTilesToRects(layout: SharedFramebufferLayout, dirtyWords: Uint32Array): DirtyRect[] {
+  if (layout.tileSize === 0 || layout.dirtyWordsPerBuffer === 0) {
+    return [{ x: 0, y: 0, w: layout.width, h: layout.height }];
+  }
+
+  const tileCount = layout.tilesX * layout.tilesY;
+  if (tileCount === 0) return [];
+
+  if (dirtyWordsCoverAllTiles(tileCount, dirtyWords)) {
+    return [{ x: 0, y: 0, w: layout.width, h: layout.height }];
+  }
+
+  const rects: DirtyRect[] = [];
+  const tileSize = layout.tileSize;
+
+  for (let ty = 0; ty < layout.tilesY; ty += 1) {
+    const y = ty * tileSize;
+    if (y >= layout.height) break;
+
+    let tx = 0;
+    while (tx < layout.tilesX) {
+      const tileIndex = ty * layout.tilesX + tx;
+      if (!dirtyBitIsSet(dirtyWords, tileIndex)) {
+        tx += 1;
+        continue;
+      }
+
+      const startTx = tx;
+      tx += 1;
+      while (tx < layout.tilesX) {
+        const nextIndex = ty * layout.tilesX + tx;
+        if (!dirtyBitIsSet(dirtyWords, nextIndex)) break;
+        tx += 1;
+      }
+
+      const x = startTx * tileSize;
+      let w = (tx - startTx) * tileSize;
+      if (x + w > layout.width) w = Math.max(0, layout.width - x);
+
+      let h = tileSize;
+      if (y + h > layout.height) h = Math.max(0, layout.height - y);
+
+      rects.push({ x, y, w, h });
+    }
+  }
+
+  return rects;
+}
+
 function alignUp(value: number, align: number): number {
   return (value + align - 1) & ~(align - 1);
 }
@@ -126,3 +182,27 @@ function divCeil(value: number, divisor: number): number {
   return Math.floor((value + divisor - 1) / divisor);
 }
 
+function dirtyWordsCoverAllTiles(tileCount: number, dirtyWords: Uint32Array): boolean {
+  if (tileCount <= 0) return true;
+
+  const fullWords = Math.floor(tileCount / 32);
+  const remaining = tileCount % 32;
+
+  const requiredWords = fullWords + (remaining === 0 ? 0 : 1);
+  if (dirtyWords.length < requiredWords) return false;
+
+  for (let i = 0; i < fullWords; i += 1) {
+    if (dirtyWords[i] !== 0xffffffff) return false;
+  }
+
+  if (remaining === 0) return true;
+
+  const mask = (1 << remaining) - 1;
+  return (dirtyWords[fullWords] & mask) === mask;
+}
+
+function dirtyBitIsSet(words: Uint32Array, tileIndex: number): boolean {
+  const word = Math.floor(tileIndex / 32);
+  const bit = tileIndex % 32;
+  return (words[word] & (1 << bit)) !== 0;
+}
