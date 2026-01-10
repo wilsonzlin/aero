@@ -14,8 +14,9 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
     parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuFormat, AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR,
-    AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_FENCE_PAGE, AEROGPU_IRQ_FENCE, AEROGPU_MMIO_MAGIC, AEROGPU_MMIO_REG_DOORBELL,
-    AEROGPU_PCI_DEVICE_ID, AEROGPU_PCI_VENDOR_ID, AEROGPU_RING_CONTROL_ENABLE,
+    AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_FENCE_PAGE, AEROGPU_FEATURE_VBLANK, AEROGPU_IRQ_FENCE, AEROGPU_MMIO_MAGIC,
+    AEROGPU_MMIO_REG_DOORBELL, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
+    AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO, AEROGPU_PCI_DEVICE_ID, AEROGPU_PCI_VENDOR_ID, AEROGPU_RING_CONTROL_ENABLE,
 };
 use aero_protocol::aerogpu::aerogpu_ring::{
     write_fence_page_completed_fence_le, AerogpuAllocEntry, AerogpuAllocTableHeader, AerogpuFencePage, AerogpuRingHeader,
@@ -206,8 +207,21 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.konst("AEROGPU_MMIO_MAGIC"), AEROGPU_MMIO_MAGIC as u64);
     assert_eq!(abi.konst("AEROGPU_MMIO_REG_DOORBELL"), AEROGPU_MMIO_REG_DOORBELL as u64);
     assert_eq!(abi.konst("AEROGPU_FEATURE_FENCE_PAGE"), AEROGPU_FEATURE_FENCE_PAGE as u64);
+    assert_eq!(abi.konst("AEROGPU_FEATURE_VBLANK"), AEROGPU_FEATURE_VBLANK as u64);
     assert_eq!(abi.konst("AEROGPU_RING_CONTROL_ENABLE"), AEROGPU_RING_CONTROL_ENABLE as u64);
     assert_eq!(abi.konst("AEROGPU_IRQ_FENCE"), AEROGPU_IRQ_FENCE as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO"),
+        AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO"),
+        AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS"),
+        AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS as u64
+    );
 
     assert_eq!(abi.konst("AEROGPU_CMD_STREAM_MAGIC"), AEROGPU_CMD_STREAM_MAGIC as u64);
     assert_eq!(abi.konst("AEROGPU_ALLOC_TABLE_MAGIC"), AEROGPU_ALLOC_TABLE_MAGIC as u64);
