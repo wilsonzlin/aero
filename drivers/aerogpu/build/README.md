@@ -78,7 +78,7 @@ drivers\aerogpu\build\build_all.cmd
 > `build_all.cmd ... x64` still builds the x86 UMD for this reason.
 
 ### Build only one variant / arch
-`build_all.cmd` accepts optional arguments:
+`build_all.cmd` accepts optional arguments (order-insensitive):
 
 ```cmd
 :: Only free builds (fre) for both arches

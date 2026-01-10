@@ -9,6 +9,9 @@ rem   build_all.cmd                 -> build fre+chk, x86+x64
 rem   build_all.cmd fre             -> build fre only, x86+x64
 rem   build_all.cmd chk x86         -> build chk only, x86 only
 rem   build_all.cmd all x64         -> build fre+chk, x64 KMD + x86/x64 UMDs (needed for Win7 x64)
+rem
+rem Args are order-insensitive:
+rem   build_all.cmd x64 fre         -> same as: build_all.cmd fre x64
 rem -----------------------------------------------------------------------------
 
 set "SCRIPT_DIR=%~dp0"
@@ -27,12 +30,14 @@ set "OUT_ROOT=%SCRIPT_DIR%\out"
 set "VARIANTS=fre chk"
 set "ARCHES=x86 x64"
 
-if /i "%~1"=="fre" set "VARIANTS=fre"
-if /i "%~1"=="chk" set "VARIANTS=chk"
-if /i "%~1"=="all" set "VARIANTS=fre chk"
+if /i "%~1"=="--help" call :usage & exit /b 0
+if /i "%~1"=="-h" call :usage & exit /b 0
+if /i "%~1"=="/?" call :usage & exit /b 0
 
-if /i "%~2"=="x86" set "ARCHES=x86"
-if /i "%~2"=="x64" set "ARCHES=x64"
+set "HAVE_VARIANT_ARG=0"
+set "HAVE_ARCH_ARG=0"
+call :apply_arg "%~1" || exit /b 1
+call :apply_arg "%~2" || exit /b 1
 
 set "HAVE_X64=0"
 echo %ARCHES% | findstr /i "x64" >nul 2>nul && set "HAVE_X64=1"
@@ -104,6 +109,62 @@ for %%V in (%VARIANTS%) do (
 
 echo Done.
 exit /b 0
+
+:usage
+echo Usage:
+echo   build_all.cmd                 ^(build fre+chk, x86+x64^)
+echo   build_all.cmd fre             ^(fre only, x86+x64^)
+echo   build_all.cmd chk x86         ^(chk only, x86 only^)
+echo   build_all.cmd all x64         ^(fre+chk, x64 KMD + x86/x64 UMDs^)
+echo.
+echo Args are order-insensitive:
+echo   build_all.cmd x64 fre         ^(same as: build_all.cmd fre x64^)
+exit /b 0
+
+:apply_arg
+set "ARG=%~1"
+if "%ARG%"=="" exit /b 0
+
+if /i "%ARG%"=="fre" (
+  if "%HAVE_VARIANT_ARG%"=="1" goto :dup_arg
+  set "VARIANTS=fre"
+  set "HAVE_VARIANT_ARG=1"
+  exit /b 0
+)
+if /i "%ARG%"=="chk" (
+  if "%HAVE_VARIANT_ARG%"=="1" goto :dup_arg
+  set "VARIANTS=chk"
+  set "HAVE_VARIANT_ARG=1"
+  exit /b 0
+)
+if /i "%ARG%"=="all" (
+  if "%HAVE_VARIANT_ARG%"=="1" goto :dup_arg
+  set "VARIANTS=fre chk"
+  set "HAVE_VARIANT_ARG=1"
+  exit /b 0
+)
+
+if /i "%ARG%"=="x86" (
+  if "%HAVE_ARCH_ARG%"=="1" goto :dup_arg
+  set "ARCHES=x86"
+  set "HAVE_ARCH_ARG=1"
+  exit /b 0
+)
+if /i "%ARG%"=="x64" (
+  if "%HAVE_ARCH_ARG%"=="1" goto :dup_arg
+  set "ARCHES=x64"
+  set "HAVE_ARCH_ARG=1"
+  exit /b 0
+)
+
+echo ERROR: Unknown argument "%ARG%"
+call :usage
+exit /b 1
+
+:dup_arg
+echo ERROR: Conflicting arguments; only one build variant (fre/chk/all) and one arch (x86/x64) may be specified.
+call :usage
+exit /b 1
 
 :build_umd
 setlocal EnableExtensions EnableDelayedExpansion
