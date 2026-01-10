@@ -69,6 +69,7 @@ function render(): void {
     renderOpfsPanel(),
     renderAudioPanel(),
     renderWorkersPanel(report),
+    renderIpcDemoPanel(),
   );
 }
 
@@ -274,6 +275,21 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     heartbeatLine,
     statusList,
     error,
+  );
+}
+
+function renderIpcDemoPanel(): HTMLElement {
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "IPC demo (SharedArrayBuffer ring buffers)" }),
+    el(
+      "p",
+      {},
+      "Open the high-rate command/event ring-buffer demo: ",
+      el("a", { href: "/demo/ipc_demo.html" }, "/demo/ipc_demo.html"),
+      ".",
+    ),
   );
 }
 
