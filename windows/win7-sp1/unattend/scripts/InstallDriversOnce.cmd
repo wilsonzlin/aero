@@ -48,7 +48,7 @@ set "AERO_ROOT="
 call :FIND_AERO_ROOT
 if not defined AERO_ROOT (
   echo ERROR: Could not locate Aero payload directory.
-  echo Expected "C:\Aero\" or a payload root containing "Drivers\", "Cert\", and "Scripts\".
+  echo Expected "C:\Aero\" or a payload root containing "Drivers\" and "Scripts\" (and optionally "Cert\"/"Certs\").
   call :DELETE_TASK
   exit /b 10
 )

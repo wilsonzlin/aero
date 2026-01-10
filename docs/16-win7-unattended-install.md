@@ -171,6 +171,8 @@ bcdedit /set testsigning on>>"%LOG%" 2>&1
 
 REM Trust the driver signing certificate (optional; adjust file name/store as needed)
 set CERT=%SRC%\Cert\aero_test.cer
+if not exist "%CERT%" set CERT=%SRC%\Cert\aero-test.cer
+if not exist "%CERT%" set CERT=%SRC%\Cert\aero-test-root.cer
 if not exist "%CERT%" set CERT=%SRC%\Certs\AeroTestRoot.cer
 if exist "%CERT%" (
   certutil -addstore -f Root "%CERT%">>"%LOG%" 2>&1
@@ -220,7 +222,12 @@ certutil -addstore -f Root "%configsetroot%\\Cert\\aero_test.cer"
 certutil -addstore -f TrustedPublisher "%configsetroot%\\Cert\\aero_test.cer"
 ```
 
-If you use the older `Certs\\AeroTestRoot.cer` naming, the same commands apply with the path adjusted.
+The unattended scripts in this repo accept several common certificate file names:
+
+- `Cert\\aero_test.cer` (preferred)
+- `Cert\\aero-test.cer`
+- `Cert\\aero-test-root.cer`
+- `Certs\\AeroTestRoot.cer` (legacy)
 
 > Verify on real Win7 setup: the best store(s) depend on how the drivers are signed (cross-signed vs. test-signed). The above is a common baseline for test-signed driver packages.
 
@@ -268,6 +275,8 @@ The reference templates assume a layout like:
     FirstLogon.cmd        (optional)
   Cert/
     aero_test.cer         (optional; preferred)
+    aero-test.cer         (optional; accepted)
+    aero-test-root.cer    (optional; accepted)
   Certs/
     AeroTestRoot.cer      (optional; accepted for compatibility)
 ```

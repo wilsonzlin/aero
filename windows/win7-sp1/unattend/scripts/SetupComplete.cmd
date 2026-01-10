@@ -42,7 +42,7 @@ call :FIND_AERO_ROOT
 
 if not defined AERO_ROOT (
   echo ERROR: Could not locate Aero payload directory.
-  echo Expected "C:\Aero\" or a payload root containing "Drivers\", "Cert\", and "Scripts\".
+  echo Expected "C:\Aero\" or a payload root containing "Drivers\" and "Scripts\" (and optionally "Cert\"/"Certs\").
   echo See README.md for AERO.TAG scanning behaviour.
   exit /b 10
 )
@@ -68,8 +68,13 @@ if /i "%AERO_COPY_PAYLOAD_TO_C%"=="1" (
   echo Payload copy disabled (AERO_COPY_PAYLOAD_TO_C=%AERO_COPY_PAYLOAD_TO_C%).
 )
 
+REM Certificate file is optional. Accept multiple common names so the unattended
+REM workflow doesn't depend on a single artifact naming convention.
 set "AERO_CERT_FILE=%AERO_ROOT%\Cert\aero_test.cer"
+if not exist "%AERO_CERT_FILE%" set "AERO_CERT_FILE=%AERO_ROOT%\Cert\aero-test.cer"
+if not exist "%AERO_CERT_FILE%" set "AERO_CERT_FILE=%AERO_ROOT%\Cert\aero-test-root.cer"
 if not exist "%AERO_CERT_FILE%" set "AERO_CERT_FILE=%AERO_ROOT%\Certs\AeroTestRoot.cer"
+
 if exist "%AERO_CERT_FILE%" (
   echo Importing test certificate: "%AERO_CERT_FILE%"
   certutil -addstore -f Root "%AERO_CERT_FILE%"
@@ -77,7 +82,7 @@ if exist "%AERO_CERT_FILE%" (
   certutil -addstore -f TrustedPublisher "%AERO_CERT_FILE%"
   echo certutil TrustedPublisher exit code: !errorlevel!
 ) else (
-  echo No certificate found at "%AERO_ROOT%\Cert\aero_test.cer" (or "%AERO_ROOT%\Certs\AeroTestRoot.cer"). Skipping certificate import.
+  echo No certificate found under "%AERO_ROOT%\Cert\" or "%AERO_ROOT%\Certs\". Skipping certificate import.
 )
 
 echo Enabling test signing...

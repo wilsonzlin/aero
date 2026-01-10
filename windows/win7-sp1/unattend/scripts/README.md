@@ -17,7 +17,11 @@ C:\Aero\
   Drivers\
     ...\*.inf
   Cert\
-    aero_test.cer          (optional)
+    aero_test.cer          (optional; preferred)
+    aero-test.cer          (optional; accepted)
+    aero-test-root.cer     (optional; accepted)
+  Certs\
+    AeroTestRoot.cer       (optional; legacy compatibility)
   Scripts\
     SetupComplete.cmd
     InstallDriversOnce.cmd
@@ -63,7 +67,7 @@ Logs are appended to:
 ### What it does
 
 1. Locates the Aero payload root (`Drivers\`, `Cert\`, `Scripts\`).
-2. If `Cert\aero_test.cer` exists, imports it into:
+2. If a supported certificate file exists under `Cert\` or `Certs\`, imports it into:
    - `Root`
    - `TrustedPublisher`
 

@@ -49,6 +49,8 @@ The templates reference driver and script paths relative to `%configsetroot%`:
     FirstLogon.cmd        (optional)
   Cert/
     aero_test.cer         (optional; preferred name for the unattended scripts)
+    aero-test.cer         (optional; accepted)
+    aero-test-root.cer    (optional; accepted)
   Certs/
     AeroTestRoot.cer      (optional; accepted for compatibility)
 ```
