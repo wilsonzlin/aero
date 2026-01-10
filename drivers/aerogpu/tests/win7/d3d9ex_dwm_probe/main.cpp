@@ -2,12 +2,20 @@
 
 #include <dwmapi.h>
 
-static int RunDwmProbe() {
+static int RunDwmProbe(int argc, char** argv) {
   const char* kTestName = "d3d9ex_dwm_probe";
+  const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
 
   // DWM is per-session; composition is typically disabled in RDP sessions.
   if (GetSystemMetrics(SM_REMOTESESSION)) {
-    return aerogpu_test::Fail(kTestName, "running in a remote session (SM_REMOTESESSION=1)");
+    if (allow_remote) {
+      aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping composition check", kTestName);
+      aerogpu_test::PrintfStdout("PASS: %s", kTestName);
+      return 0;
+    }
+    return aerogpu_test::Fail(
+        kTestName,
+        "running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
   }
 
   BOOL enabled = FALSE;
@@ -27,13 +35,21 @@ static int RunDwmProbe() {
       return aerogpu_test::FailHresult(kTestName, "DwmEnableComposition(ENABLE)", hr);
     }
 
-    // Give DWM a moment to apply changes.
-    Sleep(250);
-
-    enabled = FALSE;
-    hr = DwmIsCompositionEnabled(&enabled);
-    if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "DwmIsCompositionEnabled(after enable)", hr);
+    // Give DWM a moment to apply changes (poll up to ~5s).
+    const DWORD start = GetTickCount();
+    while (TRUE) {
+      Sleep(100);
+      enabled = FALSE;
+      hr = DwmIsCompositionEnabled(&enabled);
+      if (FAILED(hr)) {
+        return aerogpu_test::FailHresult(kTestName, "DwmIsCompositionEnabled(after enable)", hr);
+      }
+      if (enabled) {
+        break;
+      }
+      if ((GetTickCount() - start) > 5000) {
+        break;
+      }
     }
   }
 
@@ -59,7 +75,6 @@ static int RunDwmProbe() {
   return 0;
 }
 
-int main() {
-  return RunDwmProbe();
+int main(int argc, char** argv) {
+  return RunDwmProbe(argc, argv);
 }
-

@@ -9,6 +9,7 @@ Common flags:
 * `--dump` – write a `*.bmp` next to the executable.
 * `--require-vid=0x####` / `--require-did=0x####` – fail the test if the active adapter VID/DID does not match.
 * `--allow-microsoft` – allow running on the Microsoft Basic Render Driver (normally treated as a failure to avoid false PASS when AeroGPU isn’t active).
+* `--allow-remote` – for `d3d9ex_dwm_probe` only: skip the composition check when running under RDP (`SM_REMOTESESSION=1`).
 
 ## Layout
 
