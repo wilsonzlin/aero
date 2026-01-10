@@ -157,6 +157,13 @@ NTSTATUS VirtioInputQueueInitialize(_In_ WDFDEVICE Device);
 NTSTATUS VirtioInputFileConfigure(_Inout_ WDFDEVICE_INIT *DeviceInit);
 NTSTATUS VirtioInputReadReportQueuesInitialize(_In_ WDFDEVICE Device);
 
+NTSTATUS VirtioInputHandleHidIoctl(
+    _In_ WDFQUEUE Queue,
+    _In_ WDFREQUEST Request,
+    _In_ size_t OutputBufferLength,
+    _In_ size_t InputBufferLength,
+    _In_ ULONG IoControlCode);
+
 NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request, _In_ size_t OutputBufferLength);
 NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request, _In_ size_t InputBufferLength);
 NTSTATUS VirtioInputReportArrived(

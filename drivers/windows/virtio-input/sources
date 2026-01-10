@@ -7,13 +7,15 @@ SOURCES= \
     src\queue.c \
     src\file.c \
     src\hid_read.c \
-    src\hid_translate.c \
     src\hid_write.c \
+    src\hid_translate.c \
     src\virtio_input.c \
     src\virtio_statusq.c \
     src\virtio_pci_interrupts.c \
     ..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c \
-    src\log.c
+    src\log.c \
+    src\hid.c \
+    src\descriptor.c
 
 INCLUDES=$(INCLUDES);src;..\..\win7\virtio\virtio-core\portable
 

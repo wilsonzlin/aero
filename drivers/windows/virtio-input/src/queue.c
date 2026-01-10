@@ -240,6 +240,7 @@ VOID VirtioInputEvtIoInternalDeviceControl(
         (VOID)VirtioInputHandleHidReadReport(Queue, Request, OutputBufferLength);
         return;
     case IOCTL_HID_WRITE_REPORT:
+    case IOCTL_HID_SET_OUTPUT_REPORT:
         VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> (write report handler)\n", name);
         (VOID)VirtioInputHandleHidWriteReport(Queue, Request, InputBufferLength);
         return;
@@ -249,8 +250,8 @@ VOID VirtioInputEvtIoInternalDeviceControl(
         WdfRequestComplete(Request, STATUS_SUCCESS);
         return;
     default:
-        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=0\n", name, STATUS_NOT_SUPPORTED);
-        WdfRequestComplete(Request, STATUS_NOT_SUPPORTED);
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> (generic handler)\n", name);
+        (VOID)VirtioInputHandleHidIoctl(Queue, Request, OutputBufferLength, InputBufferLength, IoControlCode);
         return;
     }
 }

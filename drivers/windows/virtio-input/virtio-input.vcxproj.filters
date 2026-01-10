@@ -24,10 +24,10 @@
     <ClCompile Include="src\hid_read.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\hid_translate.c">
+    <ClCompile Include="src\hid_write.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\hid_write.c">
+    <ClCompile Include="src\hid_translate.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\queue.c">
@@ -40,6 +40,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\virtio_statusq.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\hid.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\descriptor.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -59,6 +65,9 @@
     <ClInclude Include="src\virtio_statusq.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\descriptor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="virtio-input.inf">
@@ -75,3 +84,4 @@
     </None>
   </ItemGroup>
 </Project>
+

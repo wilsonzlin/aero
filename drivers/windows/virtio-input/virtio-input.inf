@@ -37,8 +37,9 @@ VirtioInput.CopyFiles=12
 virtioinput.sys=1
 
 [VirtioInput_Install.NT]
+Include=hidclass.inf
+Needs=HID_Inst.NT
 CopyFiles=VirtioInput.CopyFiles
-AddReg=VirtioInput.AddReg
 
 [VirtioInput_Install.NT.HW]
 AddReg=VirtioInput.InterruptManagement.AddReg
@@ -46,15 +47,13 @@ AddReg=VirtioInput.InterruptManagement.AddReg
 [VirtioInput.CopyFiles]
 virtioinput.sys
 
-[VirtioInput.AddReg]
-HKR,,UpperFilters,0x00010008,"HidClass"
-
 [VirtioInput.InterruptManagement.AddReg]
 HKR, "Interrupt Management",,0x00000010
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,       0x00010001, 1
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
-
 [VirtioInput_Install.NT.Services]
+Include=hidclass.inf
+Needs=HID_Inst.NT.Services
 AddService=virtioinput,0x00000002,VirtioInput_ServiceInstall
 
 [VirtioInput_ServiceInstall]

@@ -8,8 +8,7 @@ This directory contains a minimal **KMDF** driver that registers itself as a **H
 The current implementation is a **skeleton**:
 
 - Implements WDF boilerplate (`EvtDriverDeviceAdd`, power/PnP callbacks, default queue).
-- Implements `EvtIoInternalDeviceControl` with a minimal HID descriptor/report descriptor that exposes
-  keyboard + mouse collections (Report IDs 1 and 2).
+- Implements the HIDCLASS-facing IOCTL surface (`IOCTL_HID_GET_*`) and exposes keyboard + mouse collections (Report IDs 1 and 2).
 - Implements `EvtIoInternalDeviceControl` for the core report IOCTLs:
   - `IOCTL_HID_READ_REPORT` is routed by Report ID / collection handle context so keyboard and mouse reports do not get mixed.
   - `IOCTL_HID_WRITE_REPORT` validates keyboard LED output reports (ReportID=1) and ignores unknown IDs.
