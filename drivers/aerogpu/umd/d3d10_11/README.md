@@ -54,4 +54,11 @@ The project is configured to output binaries that match the Win7 packaging INF:
 - Win32: `aerogpu_d3d10.dll`
 - x64: `aerogpu_d3d10_x64.dll`
 
-The project expects the Windows SDK/WDK to provide D3D10/11 DDI headers (e.g. `d3d10umddi.h`, `d3d11umddi.h`) when building the real UMD.
+Recommended build entrypoint (builds KMD + required D3D9 UMD + optional D3D10/11 UMD and stages outputs under `drivers/aerogpu/build/out/`):
+
+```cmd
+cd \path\to\repo
+drivers\aerogpu\build\build_all.cmd fre
+```
+
+The project expects the Windows SDK/WDK to provide D3D10/11 DDI headers (e.g. `d3d10umddi.h`, `d3d11umddi.h`) when building the real UMD.  

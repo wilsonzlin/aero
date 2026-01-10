@@ -15,6 +15,15 @@ The device ABI is defined in `drivers/aerogpu/protocol/aerogpu_protocol.h`.
 
 ## Building (WDK 7.1)
 
+Recommended (build everything via scripts):
+
+```bat
+cd \path\to\repo
+drivers\aerogpu\build\build_all.cmd fre
+```
+
+Manual (single config from a WDK build environment shell):
+
 1. Install **WDK 7.1** (Windows 7 SP1 WDK).
 2. Open the appropriate WDK build environment:
    - `x86 Checked Build Environment` for 32-bit

@@ -23,6 +23,13 @@ Build files:
   - `aerogpu_d3d9_x86.def` (exports `OpenAdapter`, `OpenAdapter2` from stdcall-decorated x86 symbols)
   - `aerogpu_d3d9_x64.def` (exports `OpenAdapter`, `OpenAdapter2`)
 
+Recommended build entrypoint (builds KMD + UMDs and stages outputs under `drivers/aerogpu/build/out/`):
+
+```cmd
+cd \path\to\repo
+drivers\aerogpu\build\build_all.cmd fre
+```
+
 ### Notes
 
 - The code in `include/aerogpu_d3d9_umd.h` includes a tiny “compat” subset of the D3D9 DDI types so the core translation code is self-contained in this repository. When integrating into a real Win7 WDK build, wire the entrypoints to the real WDK D3D9 DDI headers and structures (the exported names are the key ABI contract).
