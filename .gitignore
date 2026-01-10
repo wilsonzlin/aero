@@ -1,0 +1,77 @@
+# Local-only agent notes
+scratchpad.md
+handoff.md
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.tmp
+
+# Build outputs (common)
+node_modules/
+dist/
+build/
+out/
+target/
+*.tsbuildinfo
+
+# Disk images / VM artifacts (do not commit)
+*.iso
+*.img
+*.ima
+*.vhd
+*.vhdx
+*.vmdk
+*.vdi
+*.qcow2
+*.raw
+*.dd
+*.dsk
+*.hdd
+*.ova
+*.ovf
+
+# Windows installation / update packages (do not commit)
+*.wim
+*.esd
+*.swm
+*.cab
+*.msu
+*.msi
+
+# Windows binaries/drivers (do not commit)
+*.exe
+*.dll
+*.sys
+*.drv
+*.ocx
+*.cpl
+*.pdb
+
+# Firmware / ROM dumps (do not commit)
+*.rom
+*.fd
+*.efi
+
+# OPFS / IndexedDB exports / local dumps
+opfs/
+opfs-dump/
+opfs-dumps/
+opfs-export/
+opfs-exported/
+indexeddb/
+storage-dump/
+
+# Captures / traces / dumps
+captures/
+traces/
+dumps/
+*.pcap
+*.pcapng
+*.etl
+*.dmp
+*.core
+*.trace
+*.log

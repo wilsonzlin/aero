@@ -292,11 +292,12 @@ pub trait DisplayAdapter {
 
 ## Getting Started
 
-1. Read [Architecture Overview](./docs/01-architecture-overview.md) for system design
-2. Review the documentation for your area of focus
-3. Understand the [Interface Contracts](./docs/15-agent-task-breakdown.md#interface-contracts)
-4. Check [Project Milestones](./docs/14-project-milestones.md) for timeline
-5. Begin implementation following test-driven development
+1. Read [`LEGAL.md`](./LEGAL.md) and [`CONTRIBUTING.md`](./CONTRIBUTING.md) (clean-room rules, licensing, and distribution constraints)
+2. Read [Architecture Overview](./docs/01-architecture-overview.md) for system design
+3. Review the documentation for your area of focus
+4. Understand the [Interface Contracts](./docs/15-agent-task-breakdown.md#interface-contracts)
+5. Check [Project Milestones](./docs/14-project-milestones.md) for timeline
+6. Begin implementation following test-driven development
 
 ---
 

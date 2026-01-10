@@ -4,6 +4,16 @@
 
 Building a Windows 7 emulator involves significant legal considerations around intellectual property, software licensing, and distribution.
 
+This document provides background and rationale. For the **repository’s
+authoritative policies and templates**, see:
+
+- [`../LEGAL.md`](../LEGAL.md)
+- [`../CONTRIBUTING.md`](../CONTRIBUTING.md)
+- [`../TRADEMARKS.md`](../TRADEMARKS.md)
+- [`../DMCA_POLICY.md`](../DMCA_POLICY.md)
+- [`../SECURITY.md`](../SECURITY.md)
+- [`./LICENSE.md`](./LICENSE.md) (documentation licensing)
+
 ---
 
 ## Key Legal Areas
@@ -168,11 +178,14 @@ If implementing video playback:
 ```
 SPDX-License-Identifier: MIT OR Apache-2.0
 
-Copyright (c) 2024 Aero Contributors
+Copyright (c) 2026 Aero Contributors
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software...
 ```
+
+See [`../LICENSE-MIT`](../LICENSE-MIT), [`../LICENSE-APACHE`](../LICENSE-APACHE),
+and [`../NOTICE`](../NOTICE).
 
 **Rationale:**
 - Permissive for commercial use
@@ -213,6 +226,9 @@ a copy of this software...
 - ❌ "Windows Emulator" - Implies Microsoft affiliation
 - ❌ "Win7Emu" - Uses "Win" which could cause confusion
 
+See [`../TRADEMARKS.md`](../TRADEMARKS.md) for repo-wide naming/branding
+guidelines and suggested disclaimers.
+
 ---
 
 ### 8. Distribution Considerations
@@ -252,6 +268,9 @@ As a platform provider, maintain DMCA safe harbor:
 - Register DMCA agent
 - Implement takedown procedures
 - Don't have actual knowledge of infringement
+
+See [`../DMCA_POLICY.md`](../DMCA_POLICY.md) for a takedown/counter-notice
+template and repeat-infringer posture.
 
 #### Circumvention Concerns
 

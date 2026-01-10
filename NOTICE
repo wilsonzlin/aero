@@ -1,0 +1,17 @@
+Aero
+
+Copyright (c) 2026 Aero Contributors
+
+This repository is dual-licensed under the MIT License or the Apache License
+2.0, at your option. See:
+
+- LICENSE-MIT
+- LICENSE-APACHE
+
+Documentation under ./docs is licensed separately under CC BY 4.0. See:
+
+- docs/LICENSE.md
+
+If you redistribute Aero, you are responsible for complying with all license
+and notice requirements of this project and any third-party dependencies you
+ship.
