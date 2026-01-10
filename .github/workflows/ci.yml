@@ -92,7 +92,23 @@ jobs:
               exit 1
             fi
 
-            manifest_path="$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[] | select(any(.targets[]; any(.kind[]; . == "cdylib"))) | .manifest_path' | head -n 1)"
+            manifest_path="$(
+              python3 - <<'PY'
+          import json
+          import subprocess
+          import sys
+          
+          meta = json.loads(
+              subprocess.check_output(["cargo", "metadata", "--no-deps", "--format-version=1"])
+          )
+          for pkg in meta.get("packages", []):
+              for tgt in pkg.get("targets", []):
+                  if "cdylib" in tgt.get("kind", []):
+                      print(pkg.get("manifest_path", ""))
+                      sys.exit(0)
+          print("")
+          PY
+            )"
             if [[ -z "$manifest_path" || "$manifest_path" == "null" ]]; then
               echo "Unable to auto-detect a wasm-pack crate (cdylib). Set AERO_WASM_CRATE_DIR to the wasm crate directory." >&2
               exit 1
