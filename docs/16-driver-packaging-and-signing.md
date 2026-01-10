@@ -18,9 +18,10 @@ Schema: `ci/driver-package.schema.json`
 
 Supported fields:
 
-- `additionalFiles` (optional): extra *non-binary* files to include (README/license text, install scripts, etc). Paths are relative to the driver directory (`drivers/<name>/`).
+- `additionalFiles` (optional): extra *non-binary* files to include (README/license text, install scripts, etc). Paths are relative to the driver directory (`drivers/<name>/`) and must not escape it (no absolute paths / `..` traversal).
 - `wdfCoInstaller` (optional): declare that this driver needs the WDF coinstaller and which KMDF version/DLL name.
   - If `dllName` is omitted, CI derives it from `kmdfVersion` (e.g. `1.11` → `WdfCoInstaller01011.dll`).
+  - If provided, `dllName` must be a simple filename like `WdfCoInstaller01011.dll` (not a path).
 
 Example (requires WDF coinstaller):
 

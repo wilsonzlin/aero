@@ -48,6 +48,14 @@ Environment variables:
 - `AERO_STAMP_INFS`: `0|false|no|off` disables stamping (default is enabled).
 - `AERO_INF2CAT_OS`: overrides the `/os:` list passed to `Inf2Cat.exe` (default: `7_X64,7_X86`).
 
+WDK redistributables (WDF coinstaller):
+
+- **Default:** CI does not copy any WDK redistributable binaries.
+- To include `WdfCoInstaller*.dll`, a driver must declare `wdfCoInstaller` in `drivers/<driver>/ci-package.json` and `ci/make-catalogs.ps1` must be run with `-IncludeWdfCoInstaller` (or `-IncludeWdkRedist WdfCoInstaller`).
+- The script will fail if it detects `WdfCoInstaller*.dll` checked into the repo under `drivers/` (to prevent accidental redistribution).
+
+See: `docs/16-driver-packaging-and-signing.md`.
+
 ## `ci/package-drivers.ps1`
 
 Packages signed driver staging folders from `out/packages/` into release artifacts under `out/artifacts/`.

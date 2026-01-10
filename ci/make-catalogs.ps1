@@ -99,6 +99,31 @@ function Get-RelativePathFromRoot {
   return $pathResolved.Substring($prefix.Length)
 }
 
+function Resolve-ChildPathUnderRoot {
+  param(
+    [Parameter(Mandatory)]
+    [string] $Root,
+    [Parameter(Mandatory)]
+    [string] $ChildPath
+  )
+
+  if ([System.IO.Path]::IsPathRooted($ChildPath)) {
+    throw "Path '$ChildPath' must be relative to '$Root'."
+  }
+
+  $sep = [System.IO.Path]::DirectorySeparatorChar
+  $alt = [System.IO.Path]::AltDirectorySeparatorChar
+  $rootResolved = [System.IO.Path]::GetFullPath($Root).TrimEnd($sep, $alt)
+  $full = [System.IO.Path]::GetFullPath((Join-Path -Path $rootResolved -ChildPath $ChildPath))
+
+  $prefix = $rootResolved + $sep
+  if (-not $full.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Path '$ChildPath' resolves outside root '$rootResolved'."
+  }
+
+  return $full
+}
+
 function Find-DriverBuildDirs {
   param(
     [Parameter(Mandatory)]
@@ -211,6 +236,15 @@ function Read-DriverPackageManifest {
     $dllName = [string]$data.wdfCoInstaller.dllName
     if ([string]::IsNullOrWhiteSpace($dllName)) {
       $dllName = $null
+    } else {
+      $dllName = $dllName.Trim()
+      [char[]]$sepChars = @([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+      if ($dllName.IndexOfAny($sepChars) -ge 0) {
+        throw "Invalid manifest '$manifestPath': wdfCoInstaller.dllName must be a file name, not a path."
+      }
+      if ($dllName -notmatch '^WdfCoInstaller\d{5}\.dll$') {
+        throw "Invalid manifest '$manifestPath': wdfCoInstaller.dllName must match 'WdfCoInstallerNNNNN.dll' (example: WdfCoInstaller01011.dll)."
+      }
     }
     $wdf = @{
       KmdfVersion = $kmdfVersion.Trim()
@@ -441,12 +475,12 @@ foreach ($driverBuildDir in $driverBuildDirs) {
         throw "Driver '$driverName' additionalFiles must be non-binary; refusing to include '$relPath'."
       }
 
-      $src = Join-Path -Path $driverSourceDir -ChildPath $relPath
+      $src = Resolve-ChildPathUnderRoot -Root $driverSourceDir -ChildPath $relPath
       if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
         throw "Driver '$driverName' additional file not found: $src"
       }
 
-      $dest = Join-Path -Path $packageDir -ChildPath $relPath
+      $dest = Resolve-ChildPathUnderRoot -Root $packageDir -ChildPath $relPath
       $destDir = Split-Path -Parent $dest
       if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
         New-Item -ItemType Directory -Path $destDir -Force | Out-Null
