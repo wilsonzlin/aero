@@ -115,6 +115,20 @@ test("udp relay v2: decode rejects invalid reserved byte", () => {
   );
 });
 
+test("udp relay v2: encode supports IPv4 and rejects invalid address lengths", () => {
+  const payload = new Uint8Array([1, 2, 3]);
+  const ipv4 = new Uint8Array([127, 0, 0, 1]);
+
+  const frame = encodeUdpRelayV2Datagram({ guestPort: 1, remoteIp: ipv4, remotePort: 2, payload });
+  // v2 header = 4 + 2 + 4 + 2 = 12 bytes
+  assert.equal(frame.length, 12 + payload.length);
+
+  assert.throws(
+    () => encodeUdpRelayV2Datagram({ guestPort: 1, remoteIp: new Uint8Array([1, 2, 3]), remotePort: 2, payload }),
+    /remoteIp.*length/i,
+  );
+});
+
 test("udp relay v1: max payload enforcement", () => {
   const maxPayload = 3;
 

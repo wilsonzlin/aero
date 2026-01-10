@@ -98,7 +98,7 @@ All integers are **big-endian**.
 ```
 0      1      2      3      5              (var)        (var+1)
 ┌──────┬──────┬──────┬──────┬──────────────┬────────────┬───────────────┐
-│magic │ ver  │ af   │ rsvd │ guest_port   │ remote_ip  │ remote_port    │
+│magic │ ver  │ af   │ type │ guest_port   │ remote_ip  │ remote_port    │
 │0xA2  │0x02  │0x04/ │0x00  │ (u16 BE)     │ 4/16 bytes │ (u16 BE)       │
 │      │      │0x06  │      │              │            │               │
 └──────┴──────┴──────┴──────┴──────────────┴────────────┴───────────────┘
@@ -113,13 +113,28 @@ All integers are **big-endian**.
 | 0      | 1        | `magic`          | u8    | Always `0xA2`. |
 | 1      | 1        | `version`        | u8    | Always `0x02`. |
 | 2      | 1        | `address_family` | u8    | `0x04` for IPv4, `0x06` for IPv6. |
-| 3      | 1        | `reserved`       | u8    | Reserved, MUST be `0x00`. |
+| 3      | 1        | `type`           | u8    | Message type. **v2 defines only `0x00` (datagram)**; all other values are reserved and MUST be rejected. |
 | 4      | 2        | `guest_port`     | u16   | Guest-side UDP port (same semantics as v1). |
 | 6      | 4 or 16  | `remote_ip`      | bytes | Remote IP address (length depends on `address_family`). |
 | var    | 2        | `remote_port`    | u16   | Remote UDP port. |
 | var+2  | N        | `payload`        | bytes | UDP payload bytes. |
 
 Minimum frame length is **12 bytes** for IPv4 and **24 bytes** for IPv6.
+
+### Example (v2, IPv6 golden vector)
+
+Datagram:
+
+- `guest_port = 48879` (`0xBEEF`)
+- `remote_ip = 2001:db8::1`
+- `remote_port = 51966` (`0xCAFE`)
+- `payload = 0x01 0x02 0x03`
+
+Frame bytes (hex):
+
+```
+a2 02 06 00 be ef 20 01 0d b8 00 00 00 00 00 00 00 00 00 00 00 01 ca fe 01 02 03
+```
 
 ---
 
