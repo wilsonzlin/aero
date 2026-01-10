@@ -110,6 +110,62 @@ fn mov_cr0_requests_assist() {
 }
 
 #[test]
+fn string_io_requests_io_assist() {
+    // insb (6C)
+    let code = [0x6C];
+    let mut bus = FlatTestBus::new(0x1000);
+    bus.load(0, &code);
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+
+    let res = run_batch(&mut state, &mut bus, 1);
+    assert!(matches!(res.exit, BatchExit::Assist(AssistReason::Io)));
+    assert_eq!(state.rip(), 0);
+
+    // outsb (6E)
+    let code = [0x6E];
+    let mut bus = FlatTestBus::new(0x1000);
+    bus.load(0, &code);
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+
+    let res = run_batch(&mut state, &mut bus, 1);
+    assert!(matches!(res.exit, BatchExit::Assist(AssistReason::Io)));
+    assert_eq!(state.rip(), 0);
+}
+
+#[test]
+fn fast_syscall_instructions_request_privileged_assist() {
+    // sysenter (0F 34)
+    let code = [0x0F, 0x34];
+    let mut bus = FlatTestBus::new(0x1000);
+    bus.load(0, &code);
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+
+    let res = run_batch(&mut state, &mut bus, 1);
+    assert!(matches!(
+        res.exit,
+        BatchExit::Assist(AssistReason::Privileged)
+    ));
+    assert_eq!(state.rip(), 0);
+
+    // syscall (0F 05) - only valid in long mode but should still be decoded and surfaced as an assist.
+    let code = [0x0F, 0x05];
+    let mut bus = FlatTestBus::new(0x1000);
+    bus.load(0, &code);
+    let mut state = CpuState::new(CpuMode::Bit64);
+    state.set_rip(0);
+
+    let res = run_batch(&mut state, &mut bus, 1);
+    assert!(matches!(
+        res.exit,
+        BatchExit::Assist(AssistReason::Privileged)
+    ));
+    assert_eq!(state.rip(), 0);
+}
+
+#[test]
 fn bsf_bsr_bt() {
     // mov eax,0x10; bsf ecx,eax; bsr edx,eax; bt eax,4; hlt
     let code = [

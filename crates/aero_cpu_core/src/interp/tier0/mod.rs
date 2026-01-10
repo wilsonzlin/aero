@@ -40,7 +40,14 @@ fn exec_decoded<B: CpuBus>(
 
     match mnem {
         Mnemonic::Hlt => Ok(ExecOutcome::Halt),
-        Mnemonic::In | Mnemonic::Out => Ok(ExecOutcome::Assist(AssistReason::Io)),
+        Mnemonic::In
+        | Mnemonic::Out
+        | Mnemonic::Insb
+        | Mnemonic::Insw
+        | Mnemonic::Insd
+        | Mnemonic::Outsb
+        | Mnemonic::Outsw
+        | Mnemonic::Outsd => Ok(ExecOutcome::Assist(AssistReason::Io)),
         Mnemonic::Cpuid => Ok(ExecOutcome::Assist(AssistReason::Cpuid)),
         Mnemonic::Rdmsr | Mnemonic::Wrmsr => Ok(ExecOutcome::Assist(AssistReason::Msr)),
         Mnemonic::Int | Mnemonic::Int1 | Mnemonic::Int3 | Mnemonic::Into => {
@@ -61,6 +68,10 @@ fn exec_decoded<B: CpuBus>(
         | Mnemonic::Smsw
         | Mnemonic::Invlpg
         | Mnemonic::Swapgs
+        | Mnemonic::Syscall
+        | Mnemonic::Sysret
+        | Mnemonic::Sysenter
+        | Mnemonic::Sysexit
         | Mnemonic::Rsm => Ok(ExecOutcome::Assist(AssistReason::Privileged)),
         Mnemonic::Rdtsc | Mnemonic::Rdtscp => Ok(ExecOutcome::Assist(AssistReason::Unsupported)),
         _ => Err(Exception::InvalidOpcode),
