@@ -31,7 +31,8 @@ describe("ipc/ring_buffer", () => {
     first.fill(7);
     expect(ring.tryPush(first)).toBe(true);
 
-    // Advance the head so there is free space at the start of the ring, while leaving the tail near the end.
+    // Drain the first record so the ring is empty, but the producer tail stays near the end.
+    // The next push should require a wrap marker.
     expect(Array.from(ring.tryPop() ?? [])).toEqual(Array.from(first));
 
     // This push forces a wrap marker because only 4 bytes remain at the end,

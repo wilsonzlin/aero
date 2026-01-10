@@ -7,6 +7,7 @@ function stubNavigator(value: unknown): void {
   Object.defineProperty(globalThis, "navigator", {
     value,
     configurable: true,
+    enumerable: true,
     writable: true,
   });
 }
