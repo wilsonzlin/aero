@@ -341,39 +341,50 @@ function Add-OfflineTrustedCertificate {
     throw "Offline SOFTWARE hive not found at '$softwareHive'. Is this a Windows image?"
   }
 
-  $repoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..\\..")).Path
-  $candidates = @(
-    (Join-Path -Path $repoRoot -ChildPath "tools\\win-offline-cert-injector\\target\\release\\win-offline-cert-injector.exe"),
-    (Join-Path -Path $repoRoot -ChildPath "tools\\win-offline-cert-injector\\target\\debug\\win-offline-cert-injector.exe")
-  )
-  $injector = $null
-  foreach ($p in $candidates) {
-    if (Test-Path -LiteralPath $p -PathType Leaf) {
-      $injector = (Resolve-Path -LiteralPath $p).Path
-      break
-    }
-  }
-  if (-not $injector) {
-    $cmd = Get-Command "win-offline-cert-injector.exe" -ErrorAction SilentlyContinue
-    if ($cmd) {
-      $injector = $cmd.Source
-    }
-  }
-  if (-not $injector) {
-    throw ("win-offline-cert-injector.exe not found. Build it with:`n`n" +
-      "  cd tools\\win-offline-cert-injector`n" +
-      "  cargo build --release`n`n" +
-      "Then re-run this script.")
+  if (Test-Path "HKLM:\OFFLINE_SOFTWARE") {
+    throw "HKLM:\OFFLINE_SOFTWARE already exists. Another offline hive may already be loaded. Unload it (reg unload HKLM\OFFLINE_SOFTWARE) or reboot, then retry."
   }
 
-  $args = @("--hive", $softwareHive)
-  foreach ($storeName in $Stores) {
-    $args += "--store"
-    $args += $storeName
-  }
-  $args += $CertPath
+  $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($CertPath)
+  $thumb = $cert.Thumbprint.ToUpperInvariant()
+  $rawBytes = [byte[]]$cert.RawData
 
-  Invoke-NativeCommand -FilePath $injector -ArgumentList $args
+  $loaded = $false
+  $hadError = $false
+  try {
+    Invoke-NativeCommand -FilePath "reg.exe" -SuppressOutput -ArgumentList @("load", "HKLM\OFFLINE_SOFTWARE", $softwareHive)
+    $loaded = $true
+
+    foreach ($storeName in $Stores) {
+      $certificatesPath = "HKLM:\OFFLINE_SOFTWARE\Microsoft\SystemCertificates\$storeName\Certificates"
+      New-Item -Path $certificatesPath -Force | Out-Null
+      $keyPath = Join-Path -Path $certificatesPath -ChildPath $thumb
+      New-Item -Path $keyPath -Force | Out-Null
+      New-ItemProperty -Path $keyPath -Name "Blob" -PropertyType Binary -Value $rawBytes -Force | Out-Null
+
+      $blob = (Get-ItemProperty -Path $keyPath -Name "Blob" -ErrorAction Stop).Blob
+      if ($null -eq $blob -or $blob.Length -eq 0) {
+        throw "Offline certificate injection failed validation for store '$storeName' (thumbprint $thumb): missing/empty Blob value."
+      }
+    }
+  }
+  catch {
+    $hadError = $true
+    throw
+  }
+  finally {
+    if ($loaded) {
+      try {
+        Invoke-NativeCommand -FilePath "reg.exe" -SuppressOutput -ArgumentList @("unload", "HKLM\OFFLINE_SOFTWARE")
+      }
+      catch {
+        Write-Warning "Failed to unload HKLM\OFFLINE_SOFTWARE. You may need to run: reg unload HKLM\OFFLINE_SOFTWARE"
+        if (-not $hadError) {
+          throw
+        }
+      }
+    }
+  }
 }
 
 function Add-DriversToOfflineImage {
@@ -411,7 +422,7 @@ function Service-NestedWinreWim {
     [Parameter(Mandatory)][string]$MountedInstallImageRoot,
     [Parameter(Mandatory)][string]$TempRoot,
     [Parameter(Mandatory)][string]$ParentLabel,
-    [Parameter(Mandatory)][System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate,
+    [Parameter(Mandatory)][string]$CertPath,
     [Parameter(Mandatory)][string[]]$CertStores,
     [string]$DriversRoot
   )
@@ -441,7 +452,7 @@ function Service-NestedWinreWim {
         -Index $idx `
         -MountDir $mountDir `
         -Label ("{0} nested winre.wim index {1}" -f $ParentLabel, $idx) `
-        -Certificate $Certificate `
+        -CertPath $CertPath `
         -CertStores $CertStores `
         -DriversRoot $DriversRoot `
         -IsInstallImage:$false `
@@ -519,7 +530,7 @@ function Service-WimIndex {
           -MountedInstallImageRoot $MountDir `
           -TempRoot $TempRoot `
           -ParentLabel $Label `
-          -Certificate $Certificate `
+          -CertPath $CertPath `
           -CertStores $CertStores `
           -DriversRoot $DriversRoot
       }
@@ -579,6 +590,7 @@ function Service-WimIndex {
 Assert-IsAdministrator
 Assert-CommandAvailable -Name "dism.exe"
 Assert-CommandAvailable -Name "bcdedit.exe"
+Assert-CommandAvailable -Name "reg.exe"
 Assert-CommandAvailable -Name "attrib.exe"
 
 if (-not (Test-Path -LiteralPath $MediaRoot -PathType Container)) {
