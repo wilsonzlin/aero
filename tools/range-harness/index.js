@@ -29,6 +29,7 @@ function printUsage(exitCode = 0) {
     '  --count <N>            Number of range requests to perform (default: 32)',
     '  --concurrency <N>      Number of in-flight requests (default: 4)',
     '  --header <k:v>         Extra request header (repeatable), e.g. --header \"Authorization: Bearer ...\"',
+    '  --json                 Emit machine-readable JSON (suppresses human-readable logs)',
     '  --random               Pick random aligned chunks',
     '  --sequential           Walk aligned chunks from the start (wraps around)',
     '  --help                 Show this help',
@@ -61,6 +62,7 @@ function parseArgs(argv) {
     concurrency: 4,
     mode: 'sequential',
     headers: {},
+    json: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -90,6 +92,8 @@ function parseArgs(argv) {
         throw new Error(`Invalid --header ${JSON.stringify(raw)} (empty header name)`);
       }
       opts.headers[name] = value;
+    } else if (arg === '--json') {
+      opts.json = true;
     } else if (arg === '--random') {
       opts.mode = 'random';
     } else if (arg === '--sequential') {
@@ -330,20 +334,19 @@ function padLeft(str, width) {
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
 
-  // eslint-disable-next-line no-console
-  console.log(`URL: ${opts.url}`);
-  // eslint-disable-next-line no-console
-  console.log(
-    `Config: chunkSize=${formatBytes(opts.chunkSize)} count=${opts.count} concurrency=${opts.concurrency} mode=${opts.mode}`,
-  );
+  const log = (...args) => {
+    if (!opts.json) {
+      // eslint-disable-next-line no-console
+      console.log(...args);
+    }
+  };
+
+  log(`URL: ${opts.url}`);
+  log(`Config: chunkSize=${formatBytes(opts.chunkSize)} count=${opts.count} concurrency=${opts.concurrency} mode=${opts.mode}`);
 
   const info = await getResourceInfo(opts.url, opts.headers);
-  // eslint-disable-next-line no-console
-  console.log(
-    `HEAD: status=${info.headStatus ?? 'n/a'} ok=${info.headOk} usedFallback=${info.usedFallback}`,
-  );
-  // eslint-disable-next-line no-console
-  console.log(
+  log(`HEAD: status=${info.headStatus ?? 'n/a'} ok=${info.headOk} usedFallback=${info.usedFallback}`);
+  log(
     `Resource: size=${formatBytes(info.size)} (${info.size} bytes) etag=${info.etag ?? '(missing)'} accept-ranges=${
       info.acceptRanges ?? '(missing)'
     }`,
@@ -385,10 +388,7 @@ async function main() {
       fetchError = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err);
       const endNs = nowNs();
       const latencyMs = nsToMs(endNs - startNs);
-      // eslint-disable-next-line no-console
-      console.log(
-        `[${padLeft(task.index + 1, 2)}] ${rangeValue} status=ERR bytes=0 time=${formatMs(latencyMs)} error=${fetchError}`,
-      );
+      log(`[${padLeft(task.index + 1, 2)}] ${rangeValue} status=ERR bytes=0 time=${formatMs(latencyMs)} error=${fetchError}`);
       return {
         ...task,
         expectedLen,
@@ -472,8 +472,7 @@ async function main() {
 
     const perReqRate = latencyMs > 0 ? (bytes / (latencyMs / 1000)) : NaN;
 
-    // eslint-disable-next-line no-console
-    console.log(
+    log(
       `[${padLeft(task.index + 1, 2)}] ${rangeValue} status=${status} bytes=${bytes} time=${formatMs(latencyMs)} rate=${formatRate(
         perReqRate,
       )} content-range=${contentRangeHeader ?? '(missing)'} x-cache=${xCache ?? '(missing)'}${
@@ -524,39 +523,82 @@ async function main() {
     if (r.warnings && r.warnings.length) warnCount++;
   }
 
-  // eslint-disable-next-line no-console
-  console.log('\nSummary');
-  // eslint-disable-next-line no-console
-  console.log('-------');
-  // eslint-disable-next-line no-console
-  console.log(`Requests: ${results.length} ok=${okCount} withWarnings=${warnCount}`);
-  // eslint-disable-next-line no-console
-  console.log(`Latency: avg=${formatMs(avgLatency)} median=${formatMs(medLatency)}`);
-  // eslint-disable-next-line no-console
-  console.log(
-    `Throughput: bytes=${formatBytes(totalBytes)} wall=${wallTimeSec.toFixed(2)}s aggregate=${formatRate(aggRate)}`,
-  );
-
   const statusParts = [...statusCounts.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([k, v]) => `${k}:${v}`);
-  // eslint-disable-next-line no-console
-  console.log(`Status codes: ${statusParts.join(' ')}`);
 
   const hit = xCacheClassCounts.get('hit') ?? 0;
   const miss = xCacheClassCounts.get('miss') ?? 0;
   const other = xCacheClassCounts.get('other') ?? 0;
   const missing = xCacheClassCounts.get('missing') ?? 0;
-  // eslint-disable-next-line no-console
-  console.log(`X-Cache: hit=${hit} miss=${miss} other=${other} missing=${missing}`);
+  log(`\nSummary`);
+  log('-------');
+  log(`Requests: ${results.length} ok=${okCount} withWarnings=${warnCount}`);
+  log(`Latency: avg=${formatMs(avgLatency)} median=${formatMs(medLatency)}`);
+  log(
+    `Throughput: bytes=${formatBytes(totalBytes)} wall=${wallTimeSec.toFixed(2)}s aggregate=${formatRate(aggRate)}`,
+  );
+  log(`Status codes: ${statusParts.join(' ')}`);
+  log(`X-Cache: hit=${hit} miss=${miss} other=${other} missing=${missing}`);
 
-  if (exactXCacheCounts.size > 0) {
-    // eslint-disable-next-line no-console
-    console.log('X-Cache breakdown:');
+  if (!opts.json && exactXCacheCounts.size > 0) {
+    log('X-Cache breakdown:');
     for (const [k, v] of [...exactXCacheCounts.entries()].sort((a, b) => b[1] - a[1])) {
-      // eslint-disable-next-line no-console
-      console.log(`  ${padLeft(v, 3)}  ${k}`);
+      log(`  ${padLeft(v, 3)}  ${k}`);
     }
+  }
+
+  if (opts.json) {
+    // eslint-disable-next-line no-console
+    console.log(
+      JSON.stringify(
+        {
+          url: opts.url,
+          config: {
+            chunkSize: opts.chunkSize,
+            count: opts.count,
+            concurrency: opts.concurrency,
+            mode: opts.mode,
+            headers: opts.headers,
+          },
+          head: {
+            status: info.headStatus,
+            ok: info.headOk,
+            usedFallback: info.usedFallback,
+          },
+          resource: {
+            size: info.size,
+            etag: info.etag,
+            acceptRanges: info.acceptRanges,
+          },
+          summary: {
+            requests: results.length,
+            ok: okCount,
+            withWarnings: warnCount,
+            latencyMs: {
+              avg: avgLatency,
+              median: medLatency,
+            },
+            throughput: {
+              bytes: totalBytes,
+              wallTimeSec,
+              aggregateBytesPerSec: aggRate,
+            },
+            statusCounts: Object.fromEntries(statusCounts.entries()),
+            xCache: {
+              hit,
+              miss,
+              other,
+              missing,
+              exact: Object.fromEntries(exactXCacheCounts.entries()),
+            },
+          },
+          results,
+        },
+        null,
+        2,
+      ),
+    );
   }
 }
 

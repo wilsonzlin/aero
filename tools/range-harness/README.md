@@ -24,6 +24,12 @@ node tools/range-harness/index.js --url <URL> \
   --random
 ```
 
+### Machine-readable output (JSON)
+
+```bash
+node tools/range-harness/index.js --url <URL> --random --json > range-results.json
+```
+
 ### Options
 
 - `--url <URL>` (required): HTTP/HTTPS URL to probe
@@ -31,6 +37,7 @@ node tools/range-harness/index.js --url <URL> \
 - `--count <N>`: number of requests to perform (default: `32`)
 - `--concurrency <N>`: number of in-flight requests (default: `4`)
 - `--header "Name: value"`: extra request header (repeatable). Useful for authenticated endpoints.
+- `--json`: emit machine-readable JSON (suppresses the per-request text output)
 - `--random`: pick random aligned chunks
 - `--sequential`: walk aligned chunks from the start (wraps around)
 
