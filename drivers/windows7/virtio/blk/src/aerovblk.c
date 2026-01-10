@@ -210,17 +210,20 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
   VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_DRIVER);
 
   hostFeatures = VirtioPciReadHostFeatures(&devExt->Vdev);
+  AEROVBLK_LOG("found io_base=%p io_len=%lu queue_size=%hu host_features=0x%08lx", base, range->RangeLength, hwQueueSize, hostFeatures);
   wanted = VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_BLK_F_FLUSH | VIRTIO_BLK_F_BLK_SIZE | VIRTIO_BLK_F_SEG_MAX | VIRTIO_BLK_F_SIZE_MAX;
 
   devExt->NegotiatedFeatures = hostFeatures & wanted;
   devExt->SupportsIndirect = (devExt->NegotiatedFeatures & VIRTIO_RING_F_INDIRECT_DESC) ? TRUE : FALSE;
   devExt->SupportsFlush = (devExt->NegotiatedFeatures & VIRTIO_BLK_F_FLUSH) ? TRUE : FALSE;
+  AEROVBLK_LOG("host_features=0x%08lx negotiated=0x%08lx", hostFeatures, devExt->NegotiatedFeatures);
 
   VirtioPciWriteGuestFeatures(&devExt->Vdev, devExt->NegotiatedFeatures);
 
   VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_FEATURES_OK);
   status = VirtioPciGetStatus(&devExt->Vdev);
   if ((status & VIRTIO_STATUS_FEATURES_OK) == 0) {
+    AEROVBLK_LOG("device rejected FEATURES_OK (status=0x%02x)", status);
     VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_FAILED);
     return FALSE;
   }
@@ -228,11 +231,13 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
   if (allocateResources) {
     st = VirtioQueueCreate(&devExt->Vdev, &devExt->Vq, 0);
     if (!NT_SUCCESS(st)) {
+      AEROVBLK_LOG("VirtioQueueCreate failed: 0x%08lx", st);
       VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_FAILED);
       return FALSE;
     }
 
     if (!AerovblkAllocateRequestContexts(devExt)) {
+      AEROVBLK_LOG("failed to allocate request contexts");
       VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_FAILED);
       return FALSE;
     }
@@ -244,6 +249,7 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
   RtlZeroMemory(&cfg, sizeof(cfg));
   st = VirtioPciReadDeviceConfig(&devExt->Vdev, 0, &cfg, sizeof(cfg));
   if (!NT_SUCCESS(st)) {
+    AEROVBLK_LOG("VirtioPciReadDeviceConfig failed: 0x%08lx", st);
     cfg.Capacity = 0;
     cfg.BlkSize = 0;
     cfg.SegMax = 0;
@@ -270,6 +276,9 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
   if (devExt->NegotiatedFeatures & VIRTIO_BLK_F_SIZE_MAX) {
     devExt->SizeMax = cfg.SizeMax;
   }
+
+  AEROVBLK_LOG("capacity_sectors=%I64u blk_size=%lu seg_max=%lu size_max=%lu", devExt->CapacitySectors, devExt->LogicalSectorSize, devExt->SegMax,
+               devExt->SizeMax);
 
   VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_DRIVER_OK);
   StorPortNotification(NextRequest, devExt, NULL);
@@ -311,6 +320,17 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x55, 0x00);
     AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST | SRB_STATUS_AUTOSENSE_VALID);
     return TRUE;
+  }
+
+  if (devExt->SizeMax != 0 && sg != NULL) {
+    for (i = 0; i < sgCount; ++i) {
+      if (sg->Elements[i].Length > devExt->SizeMax) {
+        StorPortReleaseSpinLock(devExt, &lock);
+        AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x55, 0x00);
+        AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST | SRB_STATUS_AUTOSENSE_VALID);
+        return TRUE;
+      }
+    }
   }
 
   if (!devExt->SupportsIndirect && (sgCount + 2) > (ULONG)devExt->Vq.QueueSize) {
@@ -738,6 +758,8 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   ULONG maxPhysBreaks;
   VIRTIO_BLK_CONFIG blkCfg;
   NTSTATUS st;
+  ULONG alignment;
+  ULONG maxTransfer;
 
   UNREFERENCED_PARAMETER(hwContext);
   UNREFERENCED_PARAMETER(busInformation);
@@ -800,8 +822,24 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   configInfo->ScatterGather = TRUE;
   configInfo->Master = TRUE;
   configInfo->CachesData = FALSE;
-  configInfo->AlignmentMask = AEROVBLK_LOGICAL_SECTOR_SIZE - 1;
-  configInfo->MaximumTransferLength = 1024 * 1024;
+  alignment = AEROVBLK_LOGICAL_SECTOR_SIZE;
+  if (NT_SUCCESS(st) && (hostFeatures & VIRTIO_BLK_F_BLK_SIZE) && blkCfg.BlkSize >= AEROVBLK_LOGICAL_SECTOR_SIZE &&
+      (blkCfg.BlkSize % AEROVBLK_LOGICAL_SECTOR_SIZE) == 0 && ((blkCfg.BlkSize & (blkCfg.BlkSize - 1)) == 0)) {
+    alignment = blkCfg.BlkSize;
+  }
+
+  maxTransfer = 1024 * 1024;
+  if (NT_SUCCESS(st) && (hostFeatures & VIRTIO_BLK_F_SIZE_MAX) && blkCfg.SizeMax != 0 && blkCfg.SizeMax < maxTransfer &&
+      blkCfg.SizeMax >= AEROVBLK_LOGICAL_SECTOR_SIZE) {
+    maxTransfer = blkCfg.SizeMax;
+  }
+  maxTransfer -= maxTransfer % AEROVBLK_LOGICAL_SECTOR_SIZE;
+  if (maxTransfer == 0) {
+    maxTransfer = AEROVBLK_LOGICAL_SECTOR_SIZE;
+  }
+
+  configInfo->AlignmentMask = alignment - 1;
+  configInfo->MaximumTransferLength = maxTransfer;
   configInfo->NumberOfPhysicalBreaks = maxPhysBreaks;
 
   return SP_RETURN_FOUND;
