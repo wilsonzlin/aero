@@ -23,6 +23,7 @@ const ATA_CMD_IDENTIFY_DEVICE: u8 = 0xec;
 const ATA_CMD_SET_FEATURES: u8 = 0xef;
 const ATA_CMD_READ_DMA_EXT: u8 = 0x25;
 const ATA_CMD_WRITE_DMA_EXT: u8 = 0x35;
+const ATA_CMD_FLUSH_CACHE: u8 = 0xe7;
 const ATA_CMD_FLUSH_CACHE_EXT: u8 = 0xea;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -256,6 +257,7 @@ impl AhciController {
             ATA_CMD_IDENTIFY_DEVICE => self.cmd_identify(mem, header_addr, &header),
             ATA_CMD_READ_DMA_EXT => self.cmd_read_dma_ext(mem, header_addr, &header, fis),
             ATA_CMD_WRITE_DMA_EXT => self.cmd_write_dma_ext(mem, header_addr, &header, fis),
+            ATA_CMD_FLUSH_CACHE => self.cmd_flush(mem, header_addr, &header),
             ATA_CMD_FLUSH_CACHE_EXT => self.cmd_flush(mem, header_addr, &header),
             ATA_CMD_SET_FEATURES => self.cmd_set_features(mem, header_addr, &header),
             other => Err(AhciError::UnsupportedCommand(other)),
@@ -761,18 +763,35 @@ fn build_identify_data(total_sectors: u64, sector_size: u32) -> [u8; 512] {
     // Word 0: general configuration (non-removable, hard disk).
     words[0] = 0x0040;
 
+    // Provide plausible legacy CHS geometry (mostly ignored when LBA is supported).
+    words[1] = 16383; // cylinders
+    words[3] = 16; // heads
+    words[6] = 63; // sectors/track
+
     // Word 49: capabilities (LBA + DMA).
-    words[49] = 1 << 9 | 1 << 8;
+    words[49] = (1 << 9) | (1 << 8);
 
     // Word 60-61: total number of user addressable sectors (LBA28).
     let lba28 = total_sectors.min(0x0fff_ffff) as u32;
     words[60] = (lba28 & 0xffff) as u16;
     words[61] = (lba28 >> 16) as u16;
 
+    // Word 63: multiword DMA modes supported (we only claim mode 0).
+    words[63] = 1;
+
+    // Word 80: major version number.
+    // Claiming ATA/ATAPI-8 is common in emulators and is well supported by OS drivers.
+    words[80] = 0x007e;
+
+    // Words 82-84: command sets supported.
+    // Word 82 bit5: write cache supported.
+    words[82] = 1 << 5;
+
     // Word 83: command sets supported (LBA48).
     words[83] = 1 << 10;
-    // Word 86: command sets enabled (LBA48).
-    words[86] = 1 << 10;
+    // Words 85-87: command sets enabled.
+    words[85] = words[82];
+    words[86] = words[83];
 
     // Word 100-103: total number of user addressable sectors (LBA48).
     let lba48 = total_sectors;
