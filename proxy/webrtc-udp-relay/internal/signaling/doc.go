@@ -1,6 +1,6 @@
-// Package signaling will contain HTTP signaling endpoints for creating and
-// managing WebRTC sessions.
+// Package signaling contains the HTTP signaling surface for creating and
+// managing WebRTC relay sessions.
 //
-// This package is intentionally a placeholder; concrete signaling logic will be
-// implemented in later tasks.
+// The full SDP/ICE exchange is intentionally minimal/incomplete while the relay
+// service structure is still being built out.
 package signaling
