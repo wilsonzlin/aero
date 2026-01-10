@@ -1,0 +1,14 @@
+TARGETNAME=aerogpu_kmd
+TARGETTYPE=DRIVER
+
+INCLUDES=\
+    $(INCLUDES); \
+    include; \
+    ..\\protocol
+
+SOURCES=\
+    src\\aerogpu_kmd.c
+
+TARGETLIBS=\
+    $(DDK_LIB_PATH)\\dxgkrnl.lib
+
