@@ -15,16 +15,25 @@ export type AudioRingBufferLayout = {
    * Shared ring buffer used for inter-thread audio sample transport.
    *
    * Layout (little-endian):
-   * - u32 readIndex (bytes 0..4)
-   * - u32 writeIndex (bytes 4..8)
-   * - f32 samples[] (bytes 8..)
+   * - u32 readFrameIndex (bytes 0..4)
+   * - u32 writeFrameIndex (bytes 4..8)
+   * - u32 underrunCount (bytes 8..12)
+   * - u32 reserved (bytes 12..16)
+   * - f32 samples[] (bytes 16..)
    *
-   * Indices are in units of samples (not frames) and wrap modulo samples.length.
+   * Indices are monotonically-increasing frame counters (wrapping naturally at
+   * 2^32). The producer writes samples first, then atomically advances
+   * `writeFrameIndex`. The consumer reads available frames (clamped to the
+   * configured capacity) and then atomically advances `readFrameIndex`.
    */
   buffer: SharedArrayBuffer;
+  header: Uint32Array;
   readIndex: Uint32Array;
   writeIndex: Uint32Array;
+  underrunCount: Uint32Array;
   samples: Float32Array;
+  channelCount: number;
+  capacityFrames: number;
 };
 
 export type EnabledAudioOutput = {
@@ -35,6 +44,15 @@ export type EnabledAudioOutput = {
   ringBuffer: AudioRingBufferLayout;
   resume(): Promise<void>;
   close(): Promise<void>;
+  /**
+   * Write interleaved `f32` samples into the ring buffer.
+   *
+   * `srcSampleRate` is used for naive linear resampling if it differs from the
+   * AudioContext's sample rate.
+   */
+  writeInterleaved(samples: Float32Array, srcSampleRate: number): number;
+  getBufferLevelFrames(): number;
+  getUnderrunCount(): number;
 };
 
 export type DisabledAudioOutput = {
@@ -43,6 +61,9 @@ export type DisabledAudioOutput = {
   ringBuffer?: AudioRingBufferLayout;
   resume(): Promise<void>;
   close(): Promise<void>;
+  writeInterleaved(_samples: Float32Array, _srcSampleRate: number): number;
+  getBufferLevelFrames(): number;
+  getUnderrunCount(): number;
 };
 
 export type AudioOutput = EnabledAudioOutput | DisabledAudioOutput;
@@ -60,17 +81,128 @@ function createRingBuffer(channelCount: number, ringBufferFrames: number): Audio
   }
 
   const sampleCapacity = ringBufferFrames * channelCount;
-  const headerBytes = 8;
+  const headerU32Len = 4;
+  const headerBytes = headerU32Len * Uint32Array.BYTES_PER_ELEMENT;
   const buffer = new SharedArrayBuffer(headerBytes + sampleCapacity * Float32Array.BYTES_PER_ELEMENT);
-  const indices = new Uint32Array(buffer, 0, 2);
+  const header = new Uint32Array(buffer, 0, headerU32Len);
   const samples = new Float32Array(buffer, headerBytes, sampleCapacity);
+
+  Atomics.store(header, 0, 0);
+  Atomics.store(header, 1, 0);
+  Atomics.store(header, 2, 0);
 
   return {
     buffer,
-    readIndex: indices.subarray(0, 1),
-    writeIndex: indices.subarray(1, 2),
+    header,
+    readIndex: header.subarray(0, 1),
+    writeIndex: header.subarray(1, 2),
+    underrunCount: header.subarray(2, 3),
     samples,
+    channelCount,
+    capacityFrames: ringBufferFrames,
   };
+}
+
+const READ_FRAME_INDEX = 0;
+const WRITE_FRAME_INDEX = 1;
+const UNDERRUN_COUNT = 2;
+
+function framesAvailable(readFrameIndex: number, writeFrameIndex: number): number {
+  return (writeFrameIndex - readFrameIndex) >>> 0;
+}
+
+function framesAvailableClamped(
+  readFrameIndex: number,
+  writeFrameIndex: number,
+  capacityFrames: number,
+): number {
+  return Math.min(framesAvailable(readFrameIndex, writeFrameIndex), capacityFrames);
+}
+
+function framesFree(readFrameIndex: number, writeFrameIndex: number, capacityFrames: number): number {
+  return capacityFrames - framesAvailableClamped(readFrameIndex, writeFrameIndex, capacityFrames);
+}
+
+export function getRingBufferLevelFrames(ringBuffer: AudioRingBufferLayout): number {
+  const read = Atomics.load(ringBuffer.header, READ_FRAME_INDEX) >>> 0;
+  const write = Atomics.load(ringBuffer.header, WRITE_FRAME_INDEX) >>> 0;
+  return framesAvailableClamped(read, write, ringBuffer.capacityFrames);
+}
+
+export function getRingBufferUnderrunCount(ringBuffer: AudioRingBufferLayout): number {
+  return Atomics.load(ringBuffer.header, UNDERRUN_COUNT) >>> 0;
+}
+
+export function resampleLinearInterleaved(
+  input: Float32Array,
+  channelCount: number,
+  srcRate: number,
+  dstRate: number,
+): Float32Array {
+  if (!Number.isFinite(srcRate) || !Number.isFinite(dstRate) || srcRate <= 0 || dstRate <= 0) {
+    return new Float32Array();
+  }
+  if (srcRate === dstRate) return input;
+
+  const srcFrames = Math.floor(input.length / channelCount);
+  if (srcFrames === 0) return new Float32Array();
+
+  const ratio = dstRate / srcRate;
+  const dstFrames = Math.floor(srcFrames * ratio);
+  const out = new Float32Array(dstFrames * channelCount);
+
+  for (let dstI = 0; dstI < dstFrames; dstI++) {
+    const srcPos = dstI / ratio;
+    const srcI0 = Math.floor(srcPos);
+    const frac = srcPos - srcI0;
+    const srcI1 = Math.min(srcI0 + 1, srcFrames - 1);
+
+    for (let c = 0; c < channelCount; c++) {
+      const v0 = input[srcI0 * channelCount + c];
+      const v1 = input[srcI1 * channelCount + c];
+      out[dstI * channelCount + c] = v0 + (v1 - v0) * frac;
+    }
+  }
+
+  return out;
+}
+
+export function writeRingBufferInterleaved(
+  ringBuffer: AudioRingBufferLayout,
+  input: Float32Array,
+  srcSampleRate: number,
+  dstSampleRate: number,
+): number {
+  const samples =
+    srcSampleRate === dstSampleRate
+      ? input
+      : resampleLinearInterleaved(input, ringBuffer.channelCount, srcSampleRate, dstSampleRate);
+
+  const requestedFrames = Math.floor(samples.length / ringBuffer.channelCount);
+  if (requestedFrames === 0) return 0;
+
+  const read = Atomics.load(ringBuffer.header, READ_FRAME_INDEX) >>> 0;
+  const write = Atomics.load(ringBuffer.header, WRITE_FRAME_INDEX) >>> 0;
+
+  const free = framesFree(read, write, ringBuffer.capacityFrames);
+  const framesToWrite = Math.min(requestedFrames, free);
+  if (framesToWrite === 0) return 0;
+
+  const writePos = write % ringBuffer.capacityFrames;
+  const firstFrames = Math.min(framesToWrite, ringBuffer.capacityFrames - writePos);
+  const secondFrames = framesToWrite - firstFrames;
+
+  const cc = ringBuffer.channelCount;
+  const firstSamples = firstFrames * cc;
+  const secondSamples = secondFrames * cc;
+
+  ringBuffer.samples.set(samples.subarray(0, firstSamples), writePos * cc);
+  if (secondFrames > 0) {
+    ringBuffer.samples.set(samples.subarray(firstSamples, firstSamples + secondSamples), 0);
+  }
+
+  Atomics.store(ringBuffer.header, WRITE_FRAME_INDEX, write + framesToWrite);
+  return framesToWrite;
 }
 
 /**
@@ -89,6 +221,15 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       message: "Web Audio API is unavailable (AudioContext missing).",
       async resume() {},
       async close() {},
+      writeInterleaved() {
+        return 0;
+      },
+      getBufferLevelFrames() {
+        return 0;
+      },
+      getUnderrunCount() {
+        return 0;
+      },
     };
   }
 
@@ -114,6 +255,9 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     latencyHint,
   });
 
+  // Call resume() immediately (before any await) to satisfy autoplay policies.
+  const resumePromise = context.resume();
+
   if (!context.audioWorklet || typeof context.audioWorklet.addModule !== "function") {
     await context.close();
     return {
@@ -122,6 +266,15 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       ringBuffer,
       async resume() {},
       async close() {},
+      writeInterleaved() {
+        return 0;
+      },
+      getBufferLevelFrames() {
+        return 0;
+      },
+      getUnderrunCount() {
+        return 0;
+      },
     };
   }
 
@@ -138,13 +291,26 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       ringBuffer,
       async resume() {},
       async close() {},
+      writeInterleaved() {
+        return 0;
+      },
+      getBufferLevelFrames() {
+        return 0;
+      },
+      getUnderrunCount() {
+        return 0;
+      },
     };
   }
 
   let node: AudioWorkletNode;
   try {
     node = new AudioWorkletNode(context, "aero-audio-processor", {
-      processorOptions: { ringBuffer: ringBuffer.buffer },
+      processorOptions: {
+        ringBuffer: ringBuffer.buffer,
+        channelCount,
+        capacityFrames: ringBufferFrames,
+      },
       outputChannelCount: [channelCount],
     });
   } catch (err) {
@@ -158,8 +324,21 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       ringBuffer,
       async resume() {},
       async close() {},
+      writeInterleaved() {
+        return 0;
+      },
+      getBufferLevelFrames() {
+        return 0;
+      },
+      getUnderrunCount() {
+        return 0;
+      },
     };
   }
+
+  // Prefill a small amount of silence to avoid counting an initial underrun
+  // between node start and the producer beginning to write samples.
+  Atomics.store(ringBuffer.header, WRITE_FRAME_INDEX, Math.min(512, ringBufferFrames));
 
   node.connect(context.destination);
 
@@ -169,7 +348,7 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     node,
     ringBuffer,
     async resume() {
-      await context.resume();
+      await resumePromise;
     },
     async close() {
       try {
@@ -178,6 +357,14 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
         await context.close();
       }
     },
+    writeInterleaved(samples: Float32Array, srcSampleRate: number) {
+      return writeRingBufferInterleaved(ringBuffer, samples, srcSampleRate, context.sampleRate);
+    },
+    getBufferLevelFrames() {
+      return getRingBufferLevelFrames(ringBuffer);
+    },
+    getUnderrunCount() {
+      return getRingBufferUnderrunCount(ringBuffer);
+    },
   };
 }
-

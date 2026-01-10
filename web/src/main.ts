@@ -191,23 +191,73 @@ function renderOpfsPanel(): HTMLElement {
 
 function renderAudioPanel(): HTMLElement {
   const status = el("pre", { text: "" });
+  let toneTimer: number | null = null;
+  let tonePhase = 0;
+
+  function stopTone() {
+    if (toneTimer !== null) {
+      window.clearInterval(toneTimer);
+      toneTimer = null;
+    }
+  }
+
+  function startTone(output: Exclude<Awaited<ReturnType<typeof createAudioOutput>>, { enabled: false }>) {
+    stopTone();
+
+    const freqHz = 440;
+    const gain = 0.1;
+    const channelCount = output.ringBuffer.channelCount;
+    const sr = output.context.sampleRate;
+
+    function writeTone(frames: number) {
+      const buf = new Float32Array(frames * channelCount);
+      for (let i = 0; i < frames; i++) {
+        const s = Math.sin(tonePhase * 2 * Math.PI) * gain;
+        for (let c = 0; c < channelCount; c++) buf[i * channelCount + c] = s;
+        tonePhase += freqHz / sr;
+        if (tonePhase >= 1) tonePhase -= 1;
+      }
+      output.writeInterleaved(buf, sr);
+    }
+
+    // Prefill ~100ms to avoid startup underruns.
+    writeTone(Math.floor(sr / 10));
+
+    toneTimer = window.setInterval(() => {
+      const target = Math.floor(sr / 5); // ~200ms buffered
+      const level = output.getBufferLevelFrames();
+      const need = Math.max(0, target - level);
+      if (need > 0) writeTone(need);
+
+      status.textContent =
+        `AudioContext: ${output.context.state}\n` +
+        `sampleRate: ${sr}\n` +
+        `bufferLevelFrames: ${output.getBufferLevelFrames()}\n` +
+        `underruns: ${output.getUnderrunCount()}`;
+    }, 50);
+  }
+
   const button = el("button", {
-    text: "Init audio output",
+    id: "init-audio-output",
+    text: "Init audio output (test tone)",
     onclick: async () => {
       status.textContent = "";
       const output = await createAudioOutput({ sampleRate: 48_000, latencyHint: "interactive" });
+      // Expose for Playwright smoke tests.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroAudioOutput = output;
       if (!output.enabled) {
         status.textContent = output.message;
         return;
       }
       try {
+        startTone(output);
         await output.resume();
       } catch (err) {
         status.textContent = err instanceof Error ? err.message : String(err);
         return;
       }
-      status.textContent =
-        "Audio initialized. Ring buffer allocated; processor is a stub (will output silence until samples are written).";
+      status.textContent = "Audio initialized and test tone started.";
     },
   });
 

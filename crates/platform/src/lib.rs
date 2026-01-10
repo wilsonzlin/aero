@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod address_filter;
+pub mod audio;
 pub mod chipset;
 pub mod interrupts;
 pub mod io;

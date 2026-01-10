@@ -136,6 +136,8 @@ version = "0.1.0"
 dependencies = [
  "aero-devices",
  "aero-devices-input",
+ "js-sys",
+ "wasm-bindgen",
 ]
 
 [[package]]
