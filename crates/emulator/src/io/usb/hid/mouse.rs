@@ -725,4 +725,26 @@ mod tests {
         );
         assert_eq!(resp, ControlResponse::Stall);
     }
+
+    #[test]
+    fn does_not_send_interrupt_reports_until_configured() {
+        let mut mouse = UsbHidMouse::new();
+        mouse.movement(10, 0);
+        assert_eq!(mouse.poll_interrupt_in(INTERRUPT_IN_EP), None);
+
+        configure_mouse(&mut mouse);
+        assert!(mouse.poll_interrupt_in(INTERRUPT_IN_EP).is_some());
+    }
+
+    #[test]
+    fn report_queue_is_bounded() {
+        let mut mouse = UsbHidMouse::new();
+        configure_mouse(&mut mouse);
+
+        for _ in 0..(MAX_PENDING_REPORTS + 64) {
+            mouse.movement(1, 0);
+        }
+
+        assert!(mouse.pending_reports.len() <= MAX_PENDING_REPORTS);
+    }
 }
