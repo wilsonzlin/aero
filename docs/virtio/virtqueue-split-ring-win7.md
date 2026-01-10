@@ -7,6 +7,10 @@ This document is a **design/reference guide** for implementing **Virtio 1.0 spli
 
 It is written as “single source of truth” material you can use to implement queues for `virtio-input` first, and then reuse for `virtio-blk`, `virtio-net`, etc.
 
+Project context (Aero): this guide is **transport-agnostic** and focuses only on virtqueue mechanics. If you are implementing drivers for Aero specifically, also consult the definitive device/feature contract:
+
+* [`docs/windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md)
+
 ## Scope / non-scope
 
 **In scope**

@@ -303,6 +303,11 @@ Contract v1 devices SHOULD NOT change config at runtime unless explicitly descri
 
 ## 2. Virtqueue contract (split ring only)
 
+> Implementation note (non-normative): for a Windows 7 KMDF-oriented split-ring virtqueue
+> implementation guide (descriptor/free list management, ordering/barriers, optional EVENT_IDX,
+> and indirect descriptor usage), see:
+> - [`docs/virtio/virtqueue-split-ring-win7.md`](./virtio/virtqueue-split-ring-win7.md)
+
 ### 2.1 Split ring layout
 
 Contract v1 uses the classic “split ring” (`vring`) layout:
