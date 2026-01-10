@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { TcpTargetParseError, parseTcpTarget } from "./tcpTarget.js";
+import { TcpTargetParseError, parseTcpTarget } from "../src/protocol/tcpTarget.js";
 
 function parse(query: string) {
   return parseTcpTarget(new URLSearchParams(query));
