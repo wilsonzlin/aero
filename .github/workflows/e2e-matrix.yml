@@ -1,0 +1,123 @@
+# Cross-browser Playwright E2E runs are intentionally kept out of PR CI to keep
+# pull request feedback fast. This workflow is run on a schedule, manually, and
+# on pushes to `main`.
+#
+# NOTE: The Playwright `webServer` configuration is expected to start the app in
+# a COOP/COEP (crossOriginIsolated) environment so SharedArrayBuffer-dependent
+# tests can run in CI the same way they do locally.
+
+name: E2E (cross-browser)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: e2e-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Keep parity with `ci.yml` so cross-browser runs behave the same way as PR CI.
+  AERO_REQUIRE_WEBGPU: "0"
+  AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
+
+jobs:
+  e2e:
+    name: Playwright (${{ matrix.project }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium, firefox, webkit]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine Node workspace directory
+        id: node-dir
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${AERO_NODE_DIR:-}" ]]; then
+            dir="$AERO_NODE_DIR"
+          elif [[ -f package.json ]]; then
+            dir="."
+          elif [[ -f frontend/package.json ]]; then
+            dir="frontend"
+          elif [[ -f web/package.json ]]; then
+            dir="web"
+          else
+            echo "package.json not found. Set AERO_NODE_DIR to the directory containing package.json." >&2
+            exit 1
+          fi
+
+          lockfile="$dir/package-lock.json"
+          if [[ "$dir" == "." ]]; then
+            lockfile="package-lock.json"
+          fi
+          if [[ ! -f "$lockfile" ]]; then
+            echo "package-lock.json not found at '$lockfile'. This workflow expects npm; ensure a lockfile exists." >&2
+            exit 1
+          fi
+
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ${{ steps.node-dir.outputs.lockfile }}
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ matrix.project }}-${{ hashFiles(steps.node-dir.outputs.lockfile) }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-${{ matrix.project }}-
+
+      - name: Install dependencies
+        working-directory: ${{ steps.node-dir.outputs.dir }}
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Install Playwright browser (with OS deps)
+        working-directory: ${{ steps.node-dir.outputs.dir }}
+        run: npx playwright install --with-deps ${{ matrix.project }}
+
+      - name: Run Playwright tests
+        working-directory: ${{ steps.node-dir.outputs.dir }}
+        run: npx playwright test --project=${{ matrix.project }}
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts-${{ matrix.project }}
+          path: |
+            ${{ steps.node-dir.outputs.dir }}/playwright-report/
+            ${{ steps.node-dir.outputs.dir }}/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### Playwright E2E (${{ matrix.project }})"
+            echo ""
+            echo "- Project: \`${{ matrix.project }}\`"
+            echo "- Artifacts: \`playwright-artifacts-${{ matrix.project }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
