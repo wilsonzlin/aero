@@ -20,8 +20,7 @@
  *     too high, drivers should prefer INDIRECT descriptors or fail the request.
  */
 
-#include <ntddk.h>
-#include <wdf.h>
+#include "virtio_dma.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -109,10 +108,10 @@ VirtioSgBuildFromMdl(
  * receives Context == VIRTIO_WDFDMA_MAPPING* (the same context passed to
  * WdfDmaTransactionExecute).
  */
-
-typedef struct _VIRTIO_DMA_CONTEXT {
-    WDFDMAENABLER DmaEnabler;
-} VIRTIO_DMA_CONTEXT;
+/*
+ * Dma parameter:
+ *   Pass the VIRTIO_DMA_CONTEXT created by VirtioDmaCreate() (virtio_dma.h).
+ */
 
 typedef struct _VIRTIO_WDFDMA_MAPPING {
     /* WDF object that owns this mapping context. */
