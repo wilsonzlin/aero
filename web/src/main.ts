@@ -7,6 +7,7 @@ import { createAudioOutput } from "./platform/audio";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { importFileToOpfs } from "./platform/opfs";
 import { RemoteStreamingDisk } from "./platform/remote_disk";
+import { ensurePersistentStorage, getPersistentStorageInfo, getStorageEstimate } from "./platform/storage_quota";
 import { requestWebGpuDevice } from "./platform/webgpu";
 import { initAeroStatusApi } from "./api/status";
 import { KeyboardCapture } from "./input/keyboard";
@@ -93,6 +94,20 @@ function createExpectedTestPattern(width: number, height: number): Uint8Array {
   }
 
   return out;
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes)) return "unknown";
+  const abs = Math.abs(bytes);
+  if (abs < 1024) return `${bytes.toFixed(0)} B`;
+  if (abs < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (abs < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (abs < 1024 * 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  return `${(bytes / (1024 * 1024 * 1024 * 1024)).toFixed(1)} TB`;
+}
+
+function formatMaybeBytes(bytes: number | null): string {
+  return bytes === null ? "unknown" : formatBytes(bytes);
 }
 
 function render(): void {
@@ -328,10 +343,74 @@ function renderGpuWorkerPanel(): HTMLElement {
 }
 
 function renderOpfsPanel(): HTMLElement {
+  const quotaLine = el("div", { class: "mono", text: "Storage quota: loading…" });
+  const persistenceLine = el("div", { class: "mono", text: "Persistent storage: loading…" });
+  const persistenceResult = el("div", { class: "mono", text: "" });
+
+  const refreshButton = el("button", {
+    text: "Refresh storage info",
+    onclick: async () => {
+      persistenceResult.textContent = "";
+      await refreshStorageInfo();
+    },
+  });
+
+  const requestPersistenceButton = el("button", {
+    text: "Request persistent storage",
+    onclick: async () => {
+      persistenceResult.textContent = "";
+      const result = await ensurePersistentStorage();
+      if (!result.supported) {
+        persistenceResult.textContent = "Persistent storage request is not supported in this browser.";
+      } else if (result.granted) {
+        persistenceResult.textContent = "Persistent storage granted.";
+      } else {
+        persistenceResult.textContent = "Persistent storage not granted (denied or unavailable).";
+      }
+      await refreshStorageInfo();
+    },
+  });
+
   const status = el("pre", { text: "" });
   const progress = el("progress", { value: "0", max: "1", style: "width: 320px" }) as HTMLProgressElement;
   const destPathInput = el("input", { type: "text", value: "images/disk.img" }) as HTMLInputElement;
   const fileInput = el("input", { type: "file" }) as HTMLInputElement;
+
+  async function refreshStorageInfo(): Promise<void> {
+    const estimate = await getStorageEstimate();
+    if (!estimate.supported) {
+      quotaLine.className = "mono";
+      quotaLine.textContent = "Storage quota: unsupported in this browser.";
+    } else if (
+      estimate.usageBytes === null ||
+      estimate.quotaBytes === null ||
+      estimate.usagePercent === null ||
+      estimate.remainingBytes === null
+    ) {
+      quotaLine.className = "mono";
+      quotaLine.textContent = "Storage quota: unavailable.";
+    } else {
+      quotaLine.className = estimate.warning ? "mono bad" : "mono";
+      const percent = estimate.usagePercent.toFixed(1);
+      quotaLine.textContent = `Storage quota: ${formatBytes(estimate.usageBytes)} used / ${formatBytes(
+        estimate.quotaBytes,
+      )} quota (${percent}% used, ${formatBytes(estimate.remainingBytes)} free)${estimate.warning ? " (warning: >80%)" : ""}`;
+    }
+
+    const persistence = await getPersistentStorageInfo();
+    if (!persistence.supported) {
+      persistenceLine.className = "mono";
+      persistenceLine.textContent = "Persistent storage: unsupported in this browser.";
+      return;
+    }
+    if (persistence.persisted === null) {
+      persistenceLine.className = "mono";
+      persistenceLine.textContent = "Persistent storage: unknown.";
+      return;
+    }
+    persistenceLine.className = persistence.persisted ? "mono ok" : "mono bad";
+    persistenceLine.textContent = persistence.persisted ? "Persistent storage: granted." : "Persistent storage: not granted.";
+  }
 
   const importButton = el("button", {
     text: "Import to OPFS",
@@ -350,11 +429,28 @@ function renderOpfsPanel(): HTMLElement {
       }
 
       try {
+        const estimate = await getStorageEstimate();
+        if (estimate.supported && estimate.remainingBytes !== null) {
+          // OPFS metadata + internal fragmentation can require extra headroom.
+          const safetyMarginBytes = Math.max(50 * 1024 * 1024, Math.floor(file.size * 0.05));
+          const requiredBytes = file.size + safetyMarginBytes;
+
+          if (estimate.remainingBytes < requiredBytes) {
+            const ok = window.confirm(
+              `Estimated remaining browser storage (${formatMaybeBytes(estimate.remainingBytes)}) is less than the recommended free space (${formatBytes(
+                requiredBytes,
+              )}) for this import.\n\nThe import may fail or the browser may evict data.\n\nContinue anyway?`,
+            );
+            if (!ok) return;
+          }
+        }
+
         await importFileToOpfs(file, destPath, ({ writtenBytes, totalBytes }) => {
           progress.value = totalBytes ? writtenBytes / totalBytes : 0;
           status.textContent = `Writing ${writtenBytes.toLocaleString()} / ${totalBytes.toLocaleString()} bytes…`;
         });
         status.textContent = `Imported to OPFS: ${destPath}`;
+        await refreshStorageInfo();
       } catch (err) {
         status.textContent = err instanceof Error ? err.message : String(err);
       }
@@ -366,10 +462,16 @@ function renderOpfsPanel(): HTMLElement {
     if (file) destPathInput.value = `images/${file.name}`;
   });
 
-  return el(
+  const panel = el(
     "div",
     { class: "panel" },
     el("h2", { text: "OPFS (disk image import)" }),
+    el("h3", { text: "Quota & durability" }),
+    el("div", { class: "row" }, refreshButton, requestPersistenceButton),
+    quotaLine,
+    persistenceLine,
+    persistenceResult,
+    el("h3", { text: "Import" }),
     el(
       "div",
       { class: "row" },
@@ -382,6 +484,15 @@ function renderOpfsPanel(): HTMLElement {
     ),
     status,
   );
+
+  refreshStorageInfo().catch((err) => {
+    quotaLine.className = "mono bad";
+    quotaLine.textContent = `Storage quota: error (${err instanceof Error ? err.message : String(err)})`;
+    persistenceLine.className = "mono bad";
+    persistenceLine.textContent = "Persistent storage: error.";
+  });
+
+  return panel;
 }
 
 function renderRemoteDiskPanel(): HTMLElement {

@@ -129,3 +129,42 @@ in front (e.g. Cloudflare) — but using a host with native header support
    - Some static hosts serve `.wasm` with an incorrect `Content-Type`, which can
      break `WebAssembly.compileStreaming(...)`. The templates include
      `Content-Type: application/wasm` for `*.wasm` assets.
+
+---
+
+## Browser storage quota & persistence (OPFS durability)
+
+This project stores large disk images in the browser (OPFS / `navigator.storage.getDirectory()`).
+Browsers are allowed to evict site storage under pressure unless the origin has been granted
+**persistent storage** (`navigator.storage.persist()`).
+
+### Storage quota reporting
+
+The Disk Images panel shows:
+
+- total estimated usage
+- total estimated quota
+- percent used
+
+When usage exceeds ~80%, the UI warns that imports may fail.
+
+### Requesting persistent storage
+
+The Disk Images panel includes a **Request persistent storage** button.
+
+- If supported and granted, the UI shows `Persistent storage: granted`.
+- If denied, the UI shows `Persistent storage: not granted`.
+- If unsupported, the UI shows `Persistent storage: unsupported`.
+
+### Manual test instructions
+
+1. Start the web UI (from `web/`):
+   - `npm install`
+   - `npm run dev`
+2. Open the Disk Images panel and verify quota numbers render (Chrome/Edge/Firefox support `navigator.storage.estimate()`).
+3. Click **Request persistent storage**:
+   - Chrome/Edge: often grants automatically for installed PWAs or high-engagement sites.
+   - Firefox: may grant or deny depending on settings.
+   - Safari: typically does not support the persistence APIs (expect `unsupported`).
+4. Attempt importing a large file when storage is nearly full:
+   - The import flow checks estimated remaining space and prompts for confirmation if it appears low.
