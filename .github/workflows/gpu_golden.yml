@@ -37,6 +37,11 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium firefox
 
+      - name: Verify golden generator is up-to-date
+        run: |
+          npm run generate:goldens
+          git diff --exit-code tests/golden
+
       - name: Run GPU golden tests
         run: npm run test:gpu
 

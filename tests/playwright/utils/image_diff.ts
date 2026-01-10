@@ -52,9 +52,13 @@ export async function expectRgbaToMatchGolden(
 ): Promise<void> {
   const goldenPath = resolveGoldenPath(goldenName);
   if (!fs.existsSync(goldenPath)) {
+    const actualPath = testInfo.outputPath(`${goldenName}.actual.png`);
+    writePng(actualPath, actual);
+    await testInfo.attach('actual', { path: actualPath, contentType: 'image/png' });
     throw new Error(
       `Missing golden image: ${goldenPath}\n` +
-        `Run \`npm run generate:goldens\` to (re)generate goldens.`
+        `Wrote actual output to: ${actualPath}\n` +
+        `Run \`npm run generate:goldens\` to (re)generate goldens (when deterministic).`
     );
   }
 

@@ -13,6 +13,7 @@ const DEV_PORT = 5173;
  */
 export default defineConfig({
   testDir: './tests/playwright',
+  testMatch: ['**/gpu_golden.spec.ts'],
   fullyParallel: true,
   retries: process.env.CI ? 1 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],
