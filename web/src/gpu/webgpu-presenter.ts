@@ -1,0 +1,425 @@
+// WebGPU presenter responsible for the *final* step: showing the emulator framebuffer
+// on an HTML canvas with correct sRGB/linear handling and correct alpha mode.
+//
+// This mirrors `crates/aero-gpu/src/present.rs` and uses the same bitflags as
+// `crates/aero-gpu/shaders/blit.wgsl`.
+
+const BLIT_WGSL = `
+struct VsOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+}
+
+struct BlitParams {
+  flags: u32,
+}
+
+const FLAG_APPLY_SRGB_ENCODE: u32 = 1u;
+const FLAG_PREMULTIPLY_ALPHA: u32 = 2u;
+const FLAG_FORCE_OPAQUE_ALPHA: u32 = 4u;
+const FLAG_FLIP_Y: u32 = 8u;
+
+@group(0) @binding(0) var input_tex: texture_2d<f32>;
+@group(0) @binding(1) var input_sampler: sampler;
+@group(0) @binding(2) var<uniform> params: BlitParams;
+
+fn srgb_encode_channel(x: f32) -> f32 {
+  let v = clamp(x, 0.0, 1.0);
+  if (v <= 0.0031308) { return v * 12.92; }
+  return 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+}
+
+fn srgb_encode(rgb: vec3<f32>) -> vec3<f32> {
+  return vec3<f32>(
+    srgb_encode_channel(rgb.r),
+    srgb_encode_channel(rgb.g),
+    srgb_encode_channel(rgb.b),
+  );
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
+  var positions = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -1.0),
+    vec2<f32>(3.0, -1.0),
+    vec2<f32>(-1.0, 3.0),
+  );
+  let xy = positions[vid];
+
+  var out: VsOut;
+  out.position = vec4<f32>(xy, 0.0, 1.0);
+  out.uv = vec2<f32>((xy.x + 1.0) * 0.5, (1.0 - xy.y) * 0.5);
+  return out;
+}
+
+@fragment
+fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
+  var uv = input.uv;
+  if ((params.flags & FLAG_FLIP_Y) != 0u) { uv.y = 1.0 - uv.y; }
+
+  var color = textureSample(input_tex, input_sampler, uv);
+
+  if ((params.flags & FLAG_PREMULTIPLY_ALPHA) != 0u) {
+    color = vec4<f32>(color.rgb * color.a, color.a);
+  }
+  if ((params.flags & FLAG_FORCE_OPAQUE_ALPHA) != 0u) {
+    color.a = 1.0;
+  }
+  if ((params.flags & FLAG_APPLY_SRGB_ENCODE) != 0u) {
+    color = vec4<f32>(srgb_encode(color.rgb), color.a);
+  }
+  return color;
+}
+`;
+
+/**
+ * @typedef {"linear" | "srgb"} ColorSpace
+ * @typedef {"opaque" | "premultiplied"} AlphaMode
+ */
+
+/**
+ * @typedef {object} WebGpuPresenterOptions
+ * @property {ColorSpace=} framebufferColorSpace
+ * @property {ColorSpace=} outputColorSpace
+ * @property {AlphaMode=} alphaMode
+ * @property {boolean=} flipY
+ */
+
+function toSrgbFormat(format: GPUTextureFormat): GPUTextureFormat | null {
+  if (format === "bgra8unorm") return "bgra8unorm-srgb";
+  if (format === "rgba8unorm") return "rgba8unorm-srgb";
+  return null;
+}
+
+function isBgraFormat(format: GPUTextureFormat): boolean {
+  return format === "bgra8unorm" || format === "bgra8unorm-srgb";
+}
+
+function bgraToRgbaInPlace(bytes: Uint8Array) {
+  for (let i = 0; i < bytes.length; i += 4) {
+    const b = bytes[i + 0];
+    const r = bytes[i + 2];
+    bytes[i + 0] = r;
+    bytes[i + 2] = b;
+  }
+}
+
+export class WebGpuPresenter {
+  /** @type {GPUDevice} */
+  device;
+  /** @type {GPUQueue} */
+  queue;
+  /** @type {GPUCanvasContext} */
+  context;
+  /** @type {GPUTextureFormat} */
+  canvasFormat;
+  /** @type {GPUTextureFormat} */
+  viewFormat;
+  /** @type {boolean} */
+  srgbEncodeInShader;
+
+  /** @type {GPURenderPipeline} */
+  pipeline;
+  /** @type {GPUSampler} */
+  sampler;
+  /** @type {GPUBuffer} */
+  paramsBuffer;
+  /** @type {GPUBindGroup} */
+  bindGroup;
+
+  /** @type {GPUTexture | null} */
+  srcTex = null;
+  /** @type {GPUTextureView | null} */
+  srcView = null;
+  /** @type {number} */
+  srcWidth = 0;
+  /** @type {number} */
+  srcHeight = 0;
+
+  /** @type {WebGpuPresenterOptions} */
+  opts;
+
+  /**
+   * @param {GPUDevice} device
+   * @param {GPUCanvasContext} context
+   * @param {GPUTextureFormat} canvasFormat
+   * @param {GPUTextureFormat} viewFormat
+   * @param {boolean} srgbEncodeInShader
+   * @param {WebGpuPresenterOptions} opts
+   */
+  constructor(
+    device: GPUDevice,
+    context: GPUCanvasContext,
+    canvasFormat: GPUTextureFormat,
+    viewFormat: GPUTextureFormat,
+    srgbEncodeInShader: boolean,
+    opts: any,
+  ) {
+    this.device = device;
+    this.queue = device.queue;
+    this.context = context;
+    this.canvasFormat = canvasFormat;
+    this.viewFormat = viewFormat;
+    this.srgbEncodeInShader = srgbEncodeInShader;
+    this.opts = opts;
+
+    const module = device.createShaderModule({ code: BLIT_WGSL });
+    this.pipeline = device.createRenderPipeline({
+      layout: "auto",
+      vertex: { module, entryPoint: "vs_main" },
+      fragment: {
+        module,
+        entryPoint: "fs_main",
+        targets: [{ format: viewFormat }],
+      },
+      primitive: { topology: "triangle-list" },
+    });
+
+    this.sampler = device.createSampler({
+      magFilter: "nearest",
+      minFilter: "nearest",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge",
+    });
+
+    // Uniform buffers require 16-byte minimum alignment for bindings in practice.
+    this.paramsBuffer = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    // bindGroup created once the source texture exists.
+    // (the swapchain texture view changes each frame and is passed as render attachment).
+    this.bindGroup = device.createBindGroup({
+      layout: this.pipeline.getBindGroupLayout(0),
+      entries: [
+        // Placeholder view, replaced in `setSourceRgba8`.
+        { binding: 0, resource: device.createTexture({ size: [1, 1], format: "rgba8unorm", usage: GPUTextureUsage.TEXTURE_BINDING }).createView() },
+        { binding: 1, resource: this.sampler },
+        { binding: 2, resource: { buffer: this.paramsBuffer } },
+      ],
+    });
+  }
+
+  /**
+   * Create and configure a WebGPU presenter.
+   *
+   * @param {HTMLCanvasElement} canvas
+   * @param {WebGpuPresenterOptions=} opts
+   */
+  static async create(canvas: HTMLCanvasElement, opts: any = {}) {
+    if (!navigator.gpu) throw new Error("WebGPU not supported");
+
+    const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+    if (!adapter) throw new Error("No WebGPU adapter");
+
+    const device = await adapter.requestDevice();
+    const context = canvas.getContext("webgpu");
+    if (!context) throw new Error("Canvas WebGPU context not available");
+
+    const resolvedOpts = {
+      framebufferColorSpace: opts.framebufferColorSpace ?? "linear",
+      outputColorSpace: opts.outputColorSpace ?? "srgb",
+      alphaMode: opts.alphaMode ?? "opaque",
+      flipY: opts.flipY ?? false,
+    };
+
+    const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+    const srgbFormat = toSrgbFormat(canvasFormat);
+
+    const alphaMode = resolvedOpts.alphaMode === "premultiplied" ? "premultiplied" : "opaque";
+
+    let viewFormat = canvasFormat;
+    let srgbEncodeInShader = resolvedOpts.outputColorSpace === "srgb";
+
+    // Prefer an sRGB view format when requesting sRGB output.
+    // Chrome currently reports `bgra8unorm` as preferred and requires using `viewFormats`
+    // to render with an sRGB view.
+    if (resolvedOpts.outputColorSpace === "srgb" && srgbFormat) {
+      try {
+        // TS libdefs lag behind WebGPU; `viewFormats` is standard but may not be in types.
+        (context as any).configure({
+          device,
+          format: canvasFormat,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+          alphaMode,
+          viewFormats: [srgbFormat],
+        });
+        viewFormat = srgbFormat;
+        srgbEncodeInShader = false; // GPU will encode when writing to the sRGB view.
+      } catch {
+        // Fall back to a linear view and do encoding in shader.
+        (context as any).configure({
+          device,
+          format: canvasFormat,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+          alphaMode,
+        });
+        viewFormat = canvasFormat;
+        srgbEncodeInShader = true;
+      }
+    } else {
+      (context as any).configure({
+        device,
+        format: canvasFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+        alphaMode,
+      });
+      viewFormat = canvasFormat;
+      srgbEncodeInShader = resolvedOpts.outputColorSpace === "srgb";
+    }
+
+    return new WebGpuPresenter(device, context, canvasFormat, viewFormat, srgbEncodeInShader, resolvedOpts);
+  }
+
+  /**
+   * @param {Uint8Array} rgba
+   * @param {number} width
+   * @param {number} height
+   */
+  setSourceRgba8(rgba: Uint8Array, width: number, height: number) {
+    if (!this.srcTex || width !== this.srcWidth || height !== this.srcHeight) {
+      this.srcWidth = width;
+      this.srcHeight = height;
+
+      const format =
+        this.opts.framebufferColorSpace === "srgb" ? ("rgba8unorm-srgb" as const) : ("rgba8unorm" as const);
+
+      this.srcTex = this.device.createTexture({
+        size: { width, height },
+        format,
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+      this.srcView = this.srcTex.createView();
+
+      this.bindGroup = this.device.createBindGroup({
+        layout: this.pipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: this.srcView },
+          { binding: 1, resource: this.sampler },
+          { binding: 2, resource: { buffer: this.paramsBuffer } },
+        ],
+      });
+    }
+
+    this.queue.writeTexture(
+      { texture: this.srcTex! },
+      rgba,
+      { bytesPerRow: width * 4 },
+      { width, height },
+    );
+  }
+
+  private computeFlags(): number {
+    let flags = 0;
+    if (this.srgbEncodeInShader) flags |= 1;
+    if (this.opts.alphaMode === "premultiplied") flags |= 2;
+    if (this.opts.alphaMode === "opaque") flags |= 4;
+    if (this.opts.flipY) flags |= 8;
+    return flags;
+  }
+
+  present() {
+    if (!this.srcTex) throw new Error("present() called before setSourceRgba8()");
+
+    const flags = this.computeFlags();
+    this.queue.writeBuffer(this.paramsBuffer, 0, new Uint32Array([flags]));
+
+    const currentTexture = this.context.getCurrentTexture();
+    const view =
+      this.viewFormat === this.canvasFormat
+        ? currentTexture.createView()
+        : currentTexture.createView({ format: this.viewFormat as any });
+
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view,
+          loadOp: "clear",
+          storeOp: "store",
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        },
+      ],
+    });
+    pass.setPipeline(this.pipeline);
+    pass.setBindGroup(0, this.bindGroup);
+    pass.draw(3, 1, 0, 0);
+    pass.end();
+
+    this.queue.submit([encoder.finish()]);
+  }
+
+  /**
+   * Present and read back the final canvas pixels as RGBA8 (top-left origin).
+   *
+   * This is intended for validation tests; it is not a fast path.
+   */
+  async presentAndReadbackRgba8(): Promise<Uint8Array> {
+    if (!this.srcTex) throw new Error("presentAndReadbackRgba8() called before setSourceRgba8()");
+
+    const canvas = (this.context as any).canvas as HTMLCanvasElement;
+    const width = canvas.width;
+    const height = canvas.height;
+
+    // WebGPU requires bytesPerRow to be a multiple of 256.
+    const unpaddedBytesPerRow = width * 4;
+    const bytesPerRow = Math.ceil(unpaddedBytesPerRow / 256) * 256;
+    const bufferSize = bytesPerRow * height;
+
+    const readback = this.device.createBuffer({
+      size: bufferSize,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+
+    const flags = this.computeFlags();
+    this.queue.writeBuffer(this.paramsBuffer, 0, new Uint32Array([flags]));
+
+    const currentTexture = this.context.getCurrentTexture();
+    const view =
+      this.viewFormat === this.canvasFormat
+        ? currentTexture.createView()
+        : currentTexture.createView({ format: this.viewFormat as any });
+
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view,
+          loadOp: "clear",
+          storeOp: "store",
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        },
+      ],
+    });
+    pass.setPipeline(this.pipeline);
+    pass.setBindGroup(0, this.bindGroup);
+    pass.draw(3, 1, 0, 0);
+    pass.end();
+
+    encoder.copyTextureToBuffer(
+      { texture: currentTexture },
+      { buffer: readback, bytesPerRow, rowsPerImage: height },
+      { width, height, depthOrArrayLayers: 1 },
+    );
+
+    this.queue.submit([encoder.finish()]);
+
+    await readback.mapAsync(GPUMapMode.READ);
+    const mapped = new Uint8Array(readback.getMappedRange());
+
+    const out = new Uint8Array(width * height * 4);
+    for (let y = 0; y < height; y++) {
+      out.set(mapped.subarray(y * bytesPerRow, y * bytesPerRow + unpaddedBytesPerRow), y * unpaddedBytesPerRow);
+    }
+
+    readback.unmap();
+
+    // Convert from swapchain storage order to RGBA for consistent hashing across backends.
+    if (isBgraFormat(this.canvasFormat)) {
+      bgraToRgbaInPlace(out);
+    }
+
+    return out;
+  }
+}

@@ -807,6 +807,55 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
 ## Framebuffer Presentation
 
+### Presentation Color Policy (sRGB + Alpha Mode)
+
+To match Windows swapchain expectations and avoid backend-dependent output differences, the presenter must have an explicit and consistent policy:
+
+- **Input framebuffer encoding (default):** `RGBA8` **linear** (`rgba8unorm`).
+  - All GPU shading/blending math should happen in linear space.
+- **Presented output encoding (default):** **sRGB**.
+  - Prefer an `*Srgb` canvas/surface format (or sRGB view format) when available.
+  - Fall back to **manual sRGB encoding in the blit shader** only when presenting to a linear surface.
+  - Do **not** apply gamma in both places (avoid “double gamma”).
+- **Presented alpha mode (default):** **opaque**.
+  - Web output should not accidentally blend with the page background; Windows desktop scanout is effectively opaque.
+  - WebGPU: configure the canvas with `alphaMode: "opaque"`.
+  - WebGL2: create the context with `{ alpha: false }` and force `alpha=1.0` in the blit shader.
+- **UV / Y convention:** use **top-left UV origin** for presentation across backends, and ensure any required flips are explicit.
+
+### WebGPU Canvas Configuration Notes
+
+`navigator.gpu.getPreferredCanvasFormat()` is typically a **linear** format (often `bgra8unorm`). To present in sRGB without shader gamma:
+
+- Configure the canvas with `format: preferred` and include the `-srgb` variant in `viewFormats` when supported.
+- Create the render attachment view using the `-srgb` view format and render linear output into it.
+- Only enable shader sRGB encoding when an sRGB view/format is unavailable.
+
+Chrome currently requires this `viewFormats` mechanism for sRGB presentation (the preferred format may remain `bgra8unorm`).
+
+### WebGL2 Raw Presenter Notes
+
+WebGL2’s default framebuffer sRGB behavior is historically inconsistent across browsers and context attributes. For deterministic output, the raw presenter should:
+
+- Treat the input framebuffer as **linear** by default.
+- Apply **manual sRGB encoding in the fragment shader** when sRGB output is requested.
+- Use a top-left UV convention and keep `UNPACK_FLIP_Y_WEBGL = 0` (so CPU buffers written top-to-bottom match the UV convention).
+
+### Known Browser Differences (as of early WebGPU rollouts)
+
+- **WebGPU sRGB swapchain formats:** some browsers expose only a *linear* preferred canvas format and require `viewFormats` for `*-srgb` views; others may reject `viewFormats` entirely (use the shader fallback).
+- **Canvas alpha behavior:** WebGPU `alphaMode` defaults and WebGL2 `premultipliedAlpha` defaults differ; set them explicitly to avoid subtle halos/darkening.
+
+### Validation Scene (Test Card)
+
+Add a GPU validation scene that renders:
+
+- A **grayscale ramp** (gamma correctness).
+- An **alpha gradient** test region (premultiplied vs opaque correctness).
+- **Corner markers** (Y-flip / UV convention correctness).
+
+Automate this using Playwright by hashing the presented pixel output per backend and ensuring WebGPU and WebGL2 match.
+
 ### Double Buffering
 
 ```rust

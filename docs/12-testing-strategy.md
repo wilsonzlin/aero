@@ -634,6 +634,18 @@ test.describe('Browser Compatibility', () => {
 });
 ```
 
+### GPU Presenter Color/Alpha Validation
+
+In addition to full-system screenshots, we need a deterministic GPU-only validation that catches:
+
+- double-applied gamma (too dark / too bright output)
+- incorrect canvas alpha mode (premultiplied vs opaque haloing)
+- backend-dependent Y-flips / UV convention mismatches
+
+Use a simple **test card** (grayscale ramp + alpha gradient + corner markers) and hash the
+presented pixels per backend. See `web/src/gpu/validation-scene.ts` and the Playwright spec
+`web/tests/gpu_color.spec.ts`.
+
 ---
 
 ## Continuous Integration
