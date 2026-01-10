@@ -8,6 +8,7 @@ import {
   HEADER_INDEX_WIDTH,
   loadHeaderI32,
 } from "./framebuffer_protocol";
+import { perf } from "../perf/perf";
 
 /**
  * @typedef {"auto" | "pixelated" | "smooth"} VgaScaleMode
@@ -194,11 +195,18 @@ export class VgaPresenter {
   tick() {
     if (!this.running) return;
 
-    this.lastPresentTime = performance.now ? performance.now() : Date.now();
-
+    perf.spanBegin("frame");
     try {
-      this.presentLatestFrame();
+      this.lastPresentTime = performance.now ? performance.now() : Date.now();
+
+      perf.spanBegin("present");
+      try {
+        this.presentLatestFrame();
+      } finally {
+        perf.spanEnd("present");
+      }
     } finally {
+      perf.spanEnd("frame");
       this.scheduleNextTick();
     }
   }

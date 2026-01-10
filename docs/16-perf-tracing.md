@@ -59,5 +59,5 @@ the number of overwritten records is reported via `trace.otherData.aero.droppedR
 
 Current placeholder instrumentation points:
 
- - Main thread: requestAnimationFrame frame loop + `render`/`present` spans (`web/src/main/frameScheduler.ts`)
-- Workers: `wasm:init` + `worker:init` spans (`web/src/workers/*.worker.ts`, `web/src/workers/gpu-worker.ts`)
+- Main thread: requestAnimationFrame present loops (`web/src/display/vga_presenter.ts`, plus any callers of `startFrameScheduler`)
+- Workers: `wasm:init` + `worker:init` spans (`web/src/workers/*.worker.ts`, `web/src/workers/gpu-worker.ts`, `web/src/workers/aero-gpu-worker.ts`)

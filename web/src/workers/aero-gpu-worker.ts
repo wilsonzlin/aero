@@ -1,5 +1,8 @@
 /// <reference lib="webworker" />
 
+import { perf } from "../perf/perf";
+import { installWorkerPerfHandlers } from "../perf/worker";
+
 import wasmInit, {
   adapter_info,
   backend_kind,
@@ -30,6 +33,8 @@ import type {
 type WorkerScope = DedicatedWorkerGlobalScope;
 
 const scope = self as unknown as WorkerScope;
+
+void installWorkerPerfHandlers();
 
 let initPromise: Promise<void> | null = null;
 let isReady = false;
@@ -290,28 +295,36 @@ async function handleInit(message: GpuWorkerInitMessage): Promise<void> {
     return;
   }
 
+  perf.spanBegin("worker:boot");
+  perf.spanBegin("worker:init");
   attachWebGlContextLossListeners(message.canvas);
 
   initPromise = (async () => {
     try {
-      await wasmInit();
-    } catch (err) {
-      forwardFatal("wasm_init_failed", err, [
-        "Failed to initialize the aero-gpu wasm module.",
-        "Ensure the wasm bundle is correctly built and served with the correct MIME type.",
-      ]);
-      return;
-    }
+      try {
+        await perf.spanAsync("wasm:init", () => wasmInit());
+      } catch (err) {
+        forwardFatal("wasm_init_failed", err, [
+          "Failed to initialize the aero-gpu wasm module.",
+          "Ensure the wasm bundle is correctly built and served with the correct MIME type.",
+        ]);
+        return;
+      }
 
-    try {
-      const ready = await initWithFallback(message);
-      isReady = true;
-      postMessage(ready);
-    } catch (err) {
-      // `initWithFallback` throws `GpuWorkerErrorPayload` on purpose so the main
-      // thread can show actionable hints.
-      const payload = isGpuWorkerErrorPayload(err) ? err : toErrorPayload("unexpected", err);
-      sendGpuError({ type: "gpu_error", fatal: true, error: payload });
+      try {
+        const ready = await perf.spanAsync("gpu:init", () => initWithFallback(message));
+        isReady = true;
+        postMessage(ready);
+        perf.instant("boot:worker:ready", "p", { role: "aero-gpu" });
+      } catch (err) {
+        // `initWithFallback` throws `GpuWorkerErrorPayload` on purpose so the main
+        // thread can show actionable hints.
+        const payload = isGpuWorkerErrorPayload(err) ? err : toErrorPayload("unexpected", err);
+        sendGpuError({ type: "gpu_error", fatal: true, error: payload });
+      }
+    } finally {
+      perf.spanEnd("worker:init");
+      perf.spanEnd("worker:boot");
     }
   })();
 
@@ -376,6 +389,8 @@ scope.addEventListener("message", (event: MessageEvent) => {
   if (!message || typeof message !== "object" || typeof (message as { type?: unknown }).type !== "string") {
     return;
   }
+
+  if (message.type.startsWith("aero:perf:")) return;
 
   const run = async () => {
     switch (message.type) {
