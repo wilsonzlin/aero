@@ -15,6 +15,7 @@
 #include <ws2tcpip.h>
 
 #include <algorithm>
+#include <climits>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -73,6 +74,16 @@ static std::string WideToUtf8(const std::wstring& w) {
   return out;
 }
 
+static std::wstring AnsiNToWide(const char* s, size_t len) {
+  if (!s || len == 0) return L"";
+  if (len > static_cast<size_t>(INT_MAX)) return L"";
+  const int needed = MultiByteToWideChar(CP_ACP, 0, s, static_cast<int>(len), nullptr, 0);
+  if (needed <= 0) return L"";
+  std::wstring out(static_cast<size_t>(needed), L'\0');
+  MultiByteToWideChar(CP_ACP, 0, s, static_cast<int>(len), out.data(), needed);
+  return out;
+}
+
 static std::wstring AnsiToWide(const char* s) {
   if (!s) return L"";
   const int len = static_cast<int>(strlen(s));
@@ -82,6 +93,15 @@ static std::wstring AnsiToWide(const char* s) {
   std::wstring out(static_cast<size_t>(needed), L'\0');
   MultiByteToWideChar(CP_ACP, 0, s, len, out.data(), needed);
   return out;
+}
+
+static size_t BoundedStrLen(const char* s, size_t max_len) {
+  if (!s) return 0;
+  size_t i = 0;
+  for (; i < max_len; i++) {
+    if (s[i] == '\0') break;
+  }
+  return i;
 }
 
 class Logger {
@@ -175,6 +195,58 @@ class Logger {
   HANDLE com1_{INVALID_HANDLE_VALUE};
 };
 
+struct StorageIdStrings {
+  STORAGE_BUS_TYPE bus_type = BusTypeUnknown;
+  std::wstring vendor;
+  std::wstring product;
+  std::wstring revision;
+};
+
+static std::optional<StorageIdStrings> QueryStorageIdStrings(HANDLE h) {
+  if (h == INVALID_HANDLE_VALUE) return std::nullopt;
+
+  STORAGE_PROPERTY_QUERY query{};
+  query.PropertyId = StorageDeviceProperty;
+  query.QueryType = PropertyStandardQuery;
+
+  std::vector<BYTE> buf(4096);
+  DWORD bytes = 0;
+  if (!DeviceIoControl(h, IOCTL_STORAGE_QUERY_PROPERTY, &query, sizeof(query), buf.data(),
+                       static_cast<DWORD>(buf.size()), &bytes, nullptr)) {
+    return std::nullopt;
+  }
+
+  if (bytes < sizeof(STORAGE_DEVICE_DESCRIPTOR)) return std::nullopt;
+  const auto* desc = reinterpret_cast<const STORAGE_DEVICE_DESCRIPTOR*>(buf.data());
+
+  auto extract = [&](DWORD offset) -> std::wstring {
+    if (offset == 0) return L"";
+    if (offset >= buf.size()) return L"";
+    const char* s = reinterpret_cast<const char*>(buf.data() + offset);
+    const size_t max_len = buf.size() - offset;
+    const size_t len = BoundedStrLen(s, max_len);
+    return AnsiNToWide(s, len);
+  };
+
+  StorageIdStrings out{};
+  out.bus_type = desc->BusType;
+  out.vendor = extract(desc->VendorIdOffset);
+  out.product = extract(desc->ProductIdOffset);
+  out.revision = extract(desc->ProductRevisionOffset);
+  return out;
+}
+
+static bool LooksLikeVirtioStorageId(const StorageIdStrings& id) {
+  if (ContainsInsensitive(id.vendor, L"virtio") || ContainsInsensitive(id.product, L"virtio")) {
+    return true;
+  }
+  // Common virtio-win identification.
+  if (ContainsInsensitive(id.vendor, L"red hat") || ContainsInsensitive(id.product, L"red hat")) {
+    return true;
+  }
+  return false;
+}
+
 static std::vector<std::wstring> GetDevicePropertyMultiSz(HDEVINFO devinfo, SP_DEVINFO_DATA* dev,
                                                           DWORD property) {
   DWORD reg_type = 0;
@@ -258,9 +330,6 @@ static std::set<DWORD> DetectVirtioDiskNumbers(Logger& log) {
       continue;
     }
 
-    const auto hwids = GetDevicePropertyMultiSz(devinfo, &dev, SPDRP_HARDWAREID);
-    if (!IsVirtioHardwareId(hwids)) continue;
-
     HANDLE h = CreateFileW(detail->DevicePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                            OPEN_EXISTING, 0, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
@@ -269,13 +338,31 @@ static std::set<DWORD> DetectVirtioDiskNumbers(Logger& log) {
       continue;
     }
 
+    bool is_virtio = false;
+    const auto hwids = GetDevicePropertyMultiSz(devinfo, &dev, SPDRP_HARDWAREID);
+    if (IsVirtioHardwareId(hwids)) is_virtio = true;
+    if (const auto sid = QueryStorageIdStrings(h); sid.has_value() && LooksLikeVirtioStorageId(*sid)) {
+      is_virtio = true;
+    }
+
+    if (!is_virtio) {
+      CloseHandle(h);
+      continue;
+    }
+
     STORAGE_DEVICE_NUMBER devnum{};
     DWORD bytes = 0;
     if (DeviceIoControl(h, IOCTL_STORAGE_GET_DEVICE_NUMBER, nullptr, 0, &devnum, sizeof(devnum),
                         &bytes, nullptr)) {
       disks.insert(devnum.DeviceNumber);
-      log.Logf("virtio-blk: detected disk device_number=%lu path=%s", devnum.DeviceNumber,
-               WideToUtf8(detail->DevicePath).c_str());
+      if (const auto sid = QueryStorageIdStrings(h); sid.has_value()) {
+        log.Logf("virtio-blk: detected disk device_number=%lu path=%s vendor=%s product=%s",
+                 devnum.DeviceNumber, WideToUtf8(detail->DevicePath).c_str(),
+                 WideToUtf8(sid->vendor).c_str(), WideToUtf8(sid->product).c_str());
+      } else {
+        log.Logf("virtio-blk: detected disk device_number=%lu path=%s", devnum.DeviceNumber,
+                 WideToUtf8(detail->DevicePath).c_str());
+      }
     } else {
       log.Logf("virtio-blk: IOCTL_STORAGE_GET_DEVICE_NUMBER failed: %lu", GetLastError());
     }
@@ -321,6 +408,15 @@ static std::optional<wchar_t> FindMountedDriveLetterOnDisks(Logger& log,
         CloseHandle(h);
         return letter;
       }
+
+      // As a fallback, check the storage descriptor strings. This helps if the disk does not expose
+      // a virtio-looking hardware ID via SetupAPI but does identify itself as VirtIO/Red Hat.
+      if (const auto sid = QueryStorageIdStrings(h); sid.has_value() && LooksLikeVirtioStorageId(*sid)) {
+        log.Logf("virtio-blk: drive %lc: looks virtio via storage id vendor=%s product=%s", letter,
+                 WideToUtf8(sid->vendor).c_str(), WideToUtf8(sid->product).c_str());
+        CloseHandle(h);
+        return letter;
+      }
     }
 
     CloseHandle(h);
@@ -345,6 +441,26 @@ static std::optional<DWORD> DiskNumberForDriveLetter(wchar_t letter) {
   CloseHandle(h);
   if (!ok) return std::nullopt;
   return devnum.DeviceNumber;
+}
+
+static bool DriveLetterLooksLikeVirtio(Logger& log, wchar_t letter) {
+  wchar_t vol_path[] = L"\\\\.\\X:";
+  vol_path[4] = letter;
+
+  HANDLE h =
+      CreateFileW(vol_path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+  if (h == INVALID_HANDLE_VALUE) return false;
+
+  const auto sid = QueryStorageIdStrings(h);
+  CloseHandle(h);
+  if (!sid.has_value()) return false;
+
+  if (LooksLikeVirtioStorageId(*sid)) {
+    log.Logf("virtio-blk: drive %lc: looks virtio via storage id vendor=%s product=%s", letter,
+             WideToUtf8(sid->vendor).c_str(), WideToUtf8(sid->product).c_str());
+    return true;
+  }
+  return false;
 }
 
 static std::optional<wchar_t> DriveLetterFromPath(const std::wstring& path) {
@@ -428,8 +544,8 @@ static bool VirtioBlkTest(Logger& log, const Options& opt) {
     return false;
   }
 
-  if (disks.count(*base_disk) == 0) {
-    log.Logf("virtio-blk: test dir is on disk %lu (not a detected virtio disk)", *base_disk);
+  if (disks.count(*base_disk) == 0 && !DriveLetterLooksLikeVirtio(log, *base_drive)) {
+    log.Logf("virtio-blk: test dir is on disk %lu (not detected as virtio)", *base_disk);
     log.LogLine("virtio-blk: ensure a virtio disk is formatted/mounted with a drive letter, or pass --blk-root");
     return false;
   }
