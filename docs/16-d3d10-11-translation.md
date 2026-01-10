@@ -398,6 +398,6 @@ Translation performance regressions are easy to introduce. Maintain a small perf
 This doc complements:
 
 - `docs/04-graphics-subsystem.md` (overall graphics architecture and DXBC→WGSL flow)
+- `docs/graphics/win7-d3d10-11-umd-minimal.md` (Win7 UMD DDI surface: entrypoints, feature levels, swapchain/present expectations)
 - `docs/12-testing-strategy.md` (how pixel-compare tests fit into CI)
 - `docs/15-agent-task-breakdown.md` (task-level execution plan)
-

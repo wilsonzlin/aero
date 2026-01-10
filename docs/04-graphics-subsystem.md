@@ -951,10 +951,11 @@ impl ShaderCache {
  
  ---
  
- ## Next Steps
+## Next Steps
 
 - See [`docs/graphics/win7-wddm11-aerogpu-driver.md`](./graphics/win7-wddm11-aerogpu-driver.md) for the Windows 7 WDDM 1.1 (KMD+UMD) architecture and command transport boundary.
 - For Windows 7 Aero bring-up, see [Win7 D3D9Ex UMD minimal surface](./graphics/win7-d3d9ex-umd-minimal.md)
+- For Windows 7 D3D10/D3D11 UMD bring-up (DDI entrypoints, DXGI swapchain expectations), see [Win7 D3D10/11 UMD minimal surface](./graphics/win7-d3d10-11-umd-minimal.md)
 - See [Direct3D 10/11 Translation](./16-d3d10-11-translation.md) for SM4/SM5 pipeline/resource details
 - See [Audio Subsystem](./06-audio-subsystem.md) for sound emulation
 - See [Performance Optimization](./10-performance-optimization.md) for GPU perf tips
