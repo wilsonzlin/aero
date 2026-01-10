@@ -56,21 +56,24 @@ If `AERO_PROXY_ALLOW` contains **domain** rules, they still only apply to target
 WebSocket URL:
 
 ```
-ws://<proxy-host>:<proxy-port>/tcp?host=<target-host>&port=<target-port>
+ws://<proxy-host>:<proxy-port>/tcp?v=1&host=<target-host>&port=<target-port>
 ```
 
 Compatibility alias:
 
 ```
-ws://<proxy-host>:<proxy-port>/tcp?target=<target-host>:<target-port>
+ws://<proxy-host>:<proxy-port>/tcp?v=1&target=<target-host>:<target-port>
 ```
+
+`v=1` is optional; `net-proxy` currently ignores it but accepts it for
+compatibility with the production `aero-gateway` `/tcp` URL format.
 
 For IPv6 targets, `target` must use brackets, e.g. `target=[2606:4700:4700::1111]:443`.
 
 Example:
 
 ```js
-const ws = new WebSocket("ws://127.0.0.1:8081/tcp?host=example.com&port=80");
+const ws = new WebSocket("ws://127.0.0.1:8081/tcp?v=1&host=example.com&port=80");
 ws.binaryType = "arraybuffer";
 
 ws.onmessage = (ev) => {
@@ -86,13 +89,16 @@ ws.send(new Uint8Array([1, 2, 3])); // writes to the TCP socket
 WebSocket URL:
 
 ```
-ws://<proxy-host>:<proxy-port>/udp?host=<target-host>&port=<target-port>
+ws://<proxy-host>:<proxy-port>/udp?v=1&host=<target-host>&port=<target-port>
 ```
 
 Compatibility alias:
 
 ```
-ws://<proxy-host>:<proxy-port>/udp?target=<target-host>:<target-port>
+ws://<proxy-host>:<proxy-port>/udp?v=1&target=<target-host>:<target-port>
 ```
+
+`v=1` is optional; `net-proxy` currently ignores it but accepts it for
+compatibility with the production `aero-gateway` URL format.
 
 Each WebSocket binary message is sent as a single UDP datagram; each received datagram is forwarded as a single WebSocket binary message.

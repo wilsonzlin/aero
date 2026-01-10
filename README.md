@@ -177,8 +177,8 @@ npm run dev
 The proxy exposes:
 
 - `GET /healthz`
-- `WS /tcp?host=<host>&port=<port>` (or `?target=<host>:<port>`)
-- `WS /udp?host=<host>&port=<port>` (or `?target=<host>:<port>`)
+- `WS /tcp?v=1&host=<host>&port=<port>` (or `?v=1&target=<host>:<port>`)
+- `WS /udp?v=1&host=<host>&port=<port>` (or `?v=1&target=<host>:<port>`)
 
 See `net-proxy/README.md` for allowlisting and client URL examples.
 
