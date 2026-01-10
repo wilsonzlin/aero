@@ -140,13 +140,6 @@ function Wait-AeroSelftestResult {
   while ((Get-Date) -lt $deadline) {
     $null = Try-HandleAeroHttpRequest -Listener $HttpListener -Path $HttpPath
 
-    if ($QemuProcess.HasExited) {
-      return @{
-        Result = "QEMU_EXITED"
-        Tail = $tail
-      }
-    }
-
     $chunk = Read-NewText -Path $SerialLogPath -Position ([ref]$pos)
     if ($chunk.Length -gt 0) {
       $tail += $chunk
@@ -157,6 +150,13 @@ function Wait-AeroSelftestResult {
       }
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|FAIL") {
         return @{ Result = "FAIL"; Tail = $tail }
+      }
+    }
+
+    if ($QemuProcess.HasExited) {
+      return @{
+        Result = "QEMU_EXITED"
+        Tail = $tail
       }
     }
 
