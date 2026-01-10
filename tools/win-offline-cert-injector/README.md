@@ -71,6 +71,10 @@ reg query `
   HKLM\AERO_OFFLINE_SOFTWARE\Microsoft\SystemCertificates\ROOT\Certificates\<THUMBPRINT> `
   /v Blob
 
+reg query `
+  HKLM\AERO_OFFLINE_SOFTWARE\Microsoft\SystemCertificates\TrustedPublisher\Certificates\<THUMBPRINT> `
+  /v Blob
+
 reg unload HKLM\AERO_OFFLINE_SOFTWARE
 ```
 
