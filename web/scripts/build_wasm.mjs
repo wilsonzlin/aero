@@ -8,12 +8,45 @@ function usageAndExit() {
     process.exit(2);
 }
 
+function die(message) {
+    console.error(message);
+    process.exit(1);
+}
+
+function checkCommand(command, args, help) {
+    const result = spawnSync(command, args, { stdio: "pipe", encoding: "utf8" });
+    if (result.status !== 0) {
+        const details = (result.stderr || result.stdout || "").trim();
+        die([help, details ? `\n\nDetails:\n${details}` : ""].join(""));
+    }
+    return result.stdout.trim();
+}
+
 const variant = process.argv[2];
 if (variant !== "threaded" && variant !== "single") {
     usageAndExit();
 }
 
 const isThreaded = variant === "threaded";
+if (isThreaded) {
+    // The shared-memory build requires nightly + rust-src (for build-std).
+    checkCommand(
+        "rustc",
+        ["+nightly", "--version"],
+        "Threaded WASM build requires the nightly Rust toolchain.\n\nRun:\n  rustup toolchain install nightly",
+    );
+
+    const installed = checkCommand(
+        "rustup",
+        ["component", "list", "--installed", "--toolchain", "nightly"],
+        "Threaded WASM build requires rust-src on the nightly toolchain.\n\nRun:\n  rustup component add rust-src --toolchain nightly",
+    );
+    if (!installed.split("\n").some((line) => line.trim() === "rust-src")) {
+        die(
+            "Threaded WASM build requires rust-src on the nightly toolchain.\n\nRun:\n  rustup component add rust-src --toolchain nightly",
+        );
+    }
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,7 +58,7 @@ const outDir = path.join(repoRoot, "web/src/wasm", variant === "threaded" ? "pkg
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
-const targetFeatures = isThreaded ? ["+atomics", "+bulk-memory", "+mutable-globals"] : [];
+const targetFeatures = isThreaded ? ["+atomics", "+bulk-memory", "+mutable-globals"] : ["-atomics"];
 
 if (process.env.AERO_WASM_SIMD === "1" || process.env.AERO_WASM_SIMD === "true") {
     targetFeatures.push("+simd128");

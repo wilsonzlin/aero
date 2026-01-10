@@ -1,7 +1,11 @@
 # Deployment & Hosting (COOP/COEP / cross-origin isolation)
 
-Aero requires **WebAssembly threads** (SharedArrayBuffer + Atomics) for performance.
+Aero performs best with **WebAssembly threads / shared memory** (SharedArrayBuffer + Atomics).
 Browsers only enable these capabilities in a **cross-origin isolated** context.
+
+This repo also ships a **non-shared-memory fallback** WASM build. When COOP/COEP headers
+are missing, the web runtime will automatically load the single-threaded/non-shared
+variant so the app can still start (degraded functionality/performance is expected).
 
 That means your deployment **must** send these headers on the top-level document
 and all subresources (JS, WASM, worker scripts, etc.):
@@ -20,10 +24,11 @@ When COOP/COEP are missing, browsers will report:
 
 - `crossOriginIsolated === false`
 - `SharedArrayBuffer` may be unavailable
-- WASM `shared: true` memories / thread pools will fail to initialize
+- WASM `shared: true` memories / thread pools will fail to initialize (the threaded build cannot load)
 
-In practice, the emulator will either fail at startup or silently fall back to
-single-threaded execution (unacceptably slow for Windows 7 workloads).
+In practice, the runtime loader will fall back to the non-shared-memory build.
+This is primarily intended as a compatibility path; Windows 7 workloads will be
+unacceptably slow without threads.
 
 ---
 
@@ -45,6 +50,18 @@ Then open the printed URL (usually `http://localhost:4173`) and verify:
 
 If `crossOriginIsolated` is `false`, inspect the **Network** tab and confirm the
 main document response includes the required headers.
+
+### Testing the fallback path (no COOP/COEP)
+
+The `web/` Vite dev server can be started with COOP/COEP disabled:
+
+```bash
+cd web
+VITE_DISABLE_COOP_COEP=1 npm run dev
+```
+
+In this mode `crossOriginIsolated` should be `false` and the runtime will load the
+single-threaded/non-shared WASM variant.
 
 ---
 
