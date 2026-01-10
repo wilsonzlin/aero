@@ -141,6 +141,22 @@ fn handle_int13(
             let lba = ((cylinder * heads + head) * spt + (sector as u32 - 1)) as u64;
             let dst = cpu.linear_addr(cpu.es, (cpu.rbx & 0xFFFF) as u16);
 
+            // Many real BIOS implementations use DMA for this path and require the transfer
+            // buffer not cross a 64KiB physical boundary.
+            let total_bytes = (count as u64) * 512;
+            let Some(end_addr) = dst.checked_add(total_bytes.saturating_sub(1)) else {
+                bios.last_int13_status = 0x09;
+                cpu.rflags |= FLAG_CF;
+                cpu.rax = (cpu.rax & !0xFFFF) | (0x09u64 << 8);
+                return;
+            };
+            if (dst & 0xFFFF_0000) != (end_addr & 0xFFFF_0000) {
+                bios.last_int13_status = 0x09; // data boundary error
+                cpu.rflags |= FLAG_CF;
+                cpu.rax = (cpu.rax & !0xFFFF) | (0x09u64 << 8);
+                return;
+            }
+
             for i in 0..count as u64 {
                 let mut buf = [0u8; 512];
                 match disk.read_sector(lba + i, &mut buf) {

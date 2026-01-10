@@ -4,9 +4,124 @@ use std::io::{Read, Write};
 use crate::bda::BiosDataArea;
 use crate::memory::MemoryBus;
 use crate::rtc::CmosRtcSnapshot;
+use crate::video::vbe::VbeDevice;
 
 use super::bda_time::BdaTimeSnapshot;
 use super::{Bios, BiosConfig, E820Entry};
+
+#[derive(Debug, Clone)]
+pub struct VbeSnapshot {
+    pub current_mode: Option<u16>,
+    pub lfb_base: u32,
+    pub bank: u16,
+    pub logical_width_pixels: u16,
+    pub bytes_per_scan_line: u16,
+    pub display_start_x: u16,
+    pub display_start_y: u16,
+    pub dac_width_bits: u8,
+    pub palette: [u8; 256 * 4],
+}
+
+impl Default for VbeSnapshot {
+    fn default() -> Self {
+        Self::from_device(&VbeDevice::new())
+    }
+}
+
+impl VbeSnapshot {
+    fn from_device(dev: &VbeDevice) -> Self {
+        Self {
+            current_mode: dev.current_mode,
+            lfb_base: dev.lfb_base,
+            bank: dev.bank,
+            logical_width_pixels: dev.logical_width_pixels,
+            bytes_per_scan_line: dev.bytes_per_scan_line,
+            display_start_x: dev.display_start_x,
+            display_start_y: dev.display_start_y,
+            dac_width_bits: dev.dac_width_bits,
+            palette: dev.palette,
+        }
+    }
+
+    fn restore(&self, dev: &mut VbeDevice) {
+        dev.current_mode = self.current_mode;
+        dev.lfb_base = self.lfb_base;
+        dev.bank = self.bank;
+        dev.logical_width_pixels = self.logical_width_pixels;
+        dev.bytes_per_scan_line = self.bytes_per_scan_line;
+        dev.display_start_x = self.display_start_x;
+        dev.display_start_y = self.display_start_y;
+        dev.dac_width_bits = self.dac_width_bits;
+        dev.palette = self.palette;
+    }
+
+    fn encode<W: Write>(&self, w: &mut W) -> std::io::Result<()> {
+        match self.current_mode {
+            Some(mode) => {
+                w.write_all(&[1])?;
+                w.write_all(&mode.to_le_bytes())?;
+            }
+            None => w.write_all(&[0])?,
+        }
+        w.write_all(&self.lfb_base.to_le_bytes())?;
+        w.write_all(&self.bank.to_le_bytes())?;
+        w.write_all(&self.logical_width_pixels.to_le_bytes())?;
+        w.write_all(&self.bytes_per_scan_line.to_le_bytes())?;
+        w.write_all(&self.display_start_x.to_le_bytes())?;
+        w.write_all(&self.display_start_y.to_le_bytes())?;
+        w.write_all(&[self.dac_width_bits])?;
+        w.write_all(&self.palette)?;
+        Ok(())
+    }
+
+    fn decode<R: Read>(r: &mut R) -> std::io::Result<Self> {
+        let mut tag = [0u8; 1];
+        r.read_exact(&mut tag)?;
+        let current_mode = match tag[0] {
+            0 => None,
+            1 => {
+                let mut buf2 = [0u8; 2];
+                r.read_exact(&mut buf2)?;
+                Some(u16::from_le_bytes(buf2))
+            }
+            _ => None,
+        };
+
+        let mut buf4 = [0u8; 4];
+        r.read_exact(&mut buf4)?;
+        let lfb_base = u32::from_le_bytes(buf4);
+
+        let mut buf2 = [0u8; 2];
+        r.read_exact(&mut buf2)?;
+        let bank = u16::from_le_bytes(buf2);
+        r.read_exact(&mut buf2)?;
+        let logical_width_pixels = u16::from_le_bytes(buf2);
+        r.read_exact(&mut buf2)?;
+        let bytes_per_scan_line = u16::from_le_bytes(buf2);
+        r.read_exact(&mut buf2)?;
+        let display_start_x = u16::from_le_bytes(buf2);
+        r.read_exact(&mut buf2)?;
+        let display_start_y = u16::from_le_bytes(buf2);
+
+        r.read_exact(&mut tag)?;
+        let dac_width_bits = tag[0];
+
+        let mut palette = [0u8; 256 * 4];
+        r.read_exact(&mut palette)?;
+
+        Ok(Self {
+            current_mode,
+            lfb_base,
+            bank,
+            logical_width_pixels,
+            bytes_per_scan_line,
+            display_start_x,
+            display_start_y,
+            dac_width_bits,
+            palette,
+        })
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct BiosSnapshot {
@@ -23,6 +138,8 @@ pub struct BiosSnapshot {
     pub video_mode: u8,
     pub tty_output: Vec<u8>,
     pub rsdp_addr: Option<u64>,
+    pub last_int13_status: u8,
+    pub vbe: VbeSnapshot,
 }
 
 impl BiosSnapshot {
@@ -60,6 +177,11 @@ impl BiosSnapshot {
             }
             None => w.write_all(&[0])?,
         }
+
+        // v2 extension block (appended; older decoders will ignore trailing bytes).
+        w.write_all(&[1])?;
+        w.write_all(&[self.last_int13_status])?;
+        self.vbe.encode(w)?;
 
         Ok(())
     }
@@ -128,6 +250,22 @@ impl BiosSnapshot {
             _ => None,
         };
 
+        // Optional extension block.
+        let mut ext_tag = [0u8; 1];
+        let (last_int13_status, vbe) = match r.read_exact(&mut ext_tag) {
+            Ok(()) => match ext_tag[0] {
+                1 => {
+                    r.read_exact(&mut ext_tag)?;
+                    let last_int13_status = ext_tag[0];
+                    let vbe = VbeSnapshot::decode(r)?;
+                    (last_int13_status, vbe)
+                }
+                _ => (0, VbeSnapshot::default()),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => (0, VbeSnapshot::default()),
+            Err(e) => return Err(e),
+        };
+
         Ok(Self {
             config: BiosConfig {
                 memory_size_bytes,
@@ -140,6 +278,8 @@ impl BiosSnapshot {
             video_mode,
             tty_output,
             rsdp_addr,
+            last_int13_status,
+            vbe,
         })
     }
 }
@@ -158,6 +298,8 @@ impl Bios {
             video_mode: BiosDataArea::read_video_mode(memory),
             tty_output: self.tty_output.clone(),
             rsdp_addr: self.rsdp_addr,
+            last_int13_status: self.last_int13_status,
+            vbe: VbeSnapshot::from_device(&self.video.vbe),
         }
     }
 
@@ -170,5 +312,7 @@ impl Bios {
         BiosDataArea::write_video_mode(memory, snapshot.video_mode);
         self.tty_output = snapshot.tty_output;
         self.rsdp_addr = snapshot.rsdp_addr;
+        self.last_int13_status = snapshot.last_int13_status;
+        snapshot.vbe.restore(&mut self.video.vbe);
     }
 }
