@@ -6,12 +6,16 @@ on:
       - "docs/**"
       - "AGENTS.md"
       - "README*"
+      - ".markdownlint-cli2.jsonc"
+      - ".github/workflows/docs.yml"
   push:
     branches: ["main"]
     paths:
       - "docs/**"
       - "AGENTS.md"
       - "README*"
+      - ".markdownlint-cli2.jsonc"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
     inputs:
       check_external:
@@ -52,6 +56,8 @@ jobs:
           args: >-
             --no-progress
             --offline
+            --exclude ^https?://
+            --exclude ^wss?://
             AGENTS.md
             README*.md
             docs
@@ -67,9 +73,21 @@ jobs:
           args: >-
             --no-progress
             --timeout 10
-            --exclude ^http://localhost
-            --exclude ^http://example\.com
-            --exclude ^https://cloudflare-dns\.com/dns-query
+            --exclude ^wss?://
+            --exclude ^https?://localhost
+            --exclude ^https?://127\.0\.0\.1
+            --exclude ^https?://10\.0\.2\.2
+            --exclude ^https?://(?:[a-z0-9-]+\.)*example\.com
+            --exclude ^https?://(?:[a-z0-9-]+\.)*example\.net
+            --exclude ^https?://[^/]*\.example(?:/|$)
+            --exclude ^https?://(?:[a-z0-9-]+\.)*examplecdn\.com
+            --exclude ^https?://.*\.invalid
+            --exclude ^https?://.*\.cloudfront\.net
+            --exclude ^https?://s3\.amazonaws\.com
+            --exclude ^https?://cloudflare-dns\.com/dns-query
+            --exclude ^https?://YOUR_
+            --exclude ^https?://disk-image-service
+            --exclude ^https?://storage
             AGENTS.md
             README*.md
             docs
