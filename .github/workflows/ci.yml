@@ -28,20 +28,72 @@ jobs:
     name: Repo policy (fixtures & binaries)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      code_changed: ${{ steps.changes.outputs.code_changed }}
+      docs_only: ${{ steps.changes.outputs.docs_only }}
+    env:
+      BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+      HEAD_REF: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Detect docs-only changes
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          base="$BASE_REF"
+          head="$HEAD_REF"
+
+          # `github.event.before` can be all zeros in some edge cases (e.g. branch creation).
+          # Fall back to full CI rather than skipping checks.
+          if [[ -z "${base:-}" || "$base" == "0000000000000000000000000000000000000000" ]]; then
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          files="$(git diff --name-only "$base" "$head")"
+          echo "Changed files:";
+          echo "$files"
+
+          code_changed=false
+          while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
+            if [[ "$file" != docs/* && "$file" != *.md ]]; then
+              code_changed=true
+              break
+            fi
+          done <<< "$files"
+
+          echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
+          if [[ "$code_changed" == "true" ]]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Change filter summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### CI change filter"
+            echo ""
+            echo "- Docs-only: \`${{ steps.changes.outputs.docs_only }}\`"
+            echo "- Code changed: \`${{ steps.changes.outputs.code_changed }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Check repository policy
         run: scripts/ci/check-repo-policy.sh
-        env:
-          BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          HEAD_REF: ${{ github.sha }}
 
   rust:
     name: Rust (fmt, clippy, test)
     needs: policy
+    if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -102,6 +154,7 @@ jobs:
   acpi-iasl:
     name: ACPI (iasl)
     needs: policy
+    if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -118,6 +171,7 @@ jobs:
   win7-virtio-portable-tests:
     name: Win7 virtio (portable tests)
     needs: policy
+    if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -132,6 +186,7 @@ jobs:
   qemu-boot:
     name: QEMU boot tests (boot sector + FreeDOS)
     needs: policy
+    if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -175,6 +230,7 @@ jobs:
   wasm:
     name: WASM (wasm-pack build + test)
     needs: policy
+    if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -214,7 +270,7 @@ jobs:
           import json
           import subprocess
           import sys
-          
+
           meta = json.loads(
               subprocess.check_output(["cargo", "metadata", "--no-deps", "--format-version=1"])
           )
@@ -270,6 +326,7 @@ jobs:
   node-unit:
     name: Node (lint, unit, build)
     needs: policy
+    if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -337,6 +394,7 @@ jobs:
   smoke-matrix:
     name: Smoke matrix (${{ matrix.os }})
     needs: policy
+    if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -427,6 +485,7 @@ jobs:
   playwright:
     name: Playwright (browser automation)
     needs: policy
+    if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -501,3 +560,81 @@ jobs:
             ${{ steps.node-dir.outputs.dir }}/test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+  ci-gate:
+    name: CI gate
+    needs:
+      - policy
+      - rust
+      - acpi-iasl
+      - win7-virtio-portable-tests
+      - qemu-boot
+      - wasm
+      - node-unit
+      - smoke-matrix
+      - playwright
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate CI results
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "policy: ${{ needs.policy.result }}"
+          echo "code_changed: ${{ needs.policy.outputs.code_changed }}"
+          echo "docs_only: ${{ needs.policy.outputs.docs_only }}"
+
+          if [[ "${{ needs.policy.result }}" != "success" ]]; then
+            echo "::error::policy job failed"
+            exit 1
+          fi
+
+          if [[ "${{ needs.policy.outputs.code_changed }}" != "true" ]]; then
+            echo "Docs-only change; skipping expensive build/test jobs."
+            exit 0
+          fi
+
+          failures=0
+
+          if [[ "${{ needs.rust.result }}" != "success" ]]; then
+            echo "::error::rust job result: ${{ needs.rust.result }}"
+            failures=1
+          fi
+
+          if [[ "${{ needs['acpi-iasl'].result }}" != "success" ]]; then
+            echo "::error::acpi-iasl job result: ${{ needs['acpi-iasl'].result }}"
+            failures=1
+          fi
+
+          if [[ "${{ needs['win7-virtio-portable-tests'].result }}" != "success" ]]; then
+            echo "::error::win7-virtio-portable-tests job result: ${{ needs['win7-virtio-portable-tests'].result }}"
+            failures=1
+          fi
+
+          if [[ "${{ needs['qemu-boot'].result }}" != "success" ]]; then
+            echo "::error::qemu-boot job result: ${{ needs['qemu-boot'].result }}"
+            failures=1
+          fi
+
+          if [[ "${{ needs.wasm.result }}" != "success" ]]; then
+            echo "::error::wasm job result: ${{ needs.wasm.result }}"
+            failures=1
+          fi
+
+          if [[ "${{ needs['node-unit'].result }}" != "success" ]]; then
+            echo "::error::node-unit job result: ${{ needs['node-unit'].result }}"
+            failures=1
+          fi
+
+          if [[ "${{ needs['smoke-matrix'].result }}" != "success" ]]; then
+            echo "::error::smoke-matrix job result: ${{ needs['smoke-matrix'].result }}"
+            failures=1
+          fi
+
+          if [[ "${{ needs.playwright.result }}" != "success" ]]; then
+            echo "::error::playwright job result: ${{ needs.playwright.result }}"
+            failures=1
+          fi
+
+          exit "$failures"

@@ -15,6 +15,9 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
 
 concurrency:
   group: e2e-matrix-${{ github.ref }}
