@@ -186,3 +186,9 @@ For a **Win7 x86** VM, stage with:
 ```cmd
 drivers\aerogpu\build\stage_packaging_win7.cmd fre x86
 ```
+
+## Validation (recommended)
+
+After installing the driver in a Win7 VM, run the guest-side validation suite:
+
+* `drivers/aerogpu/tests/win7/README.md`
