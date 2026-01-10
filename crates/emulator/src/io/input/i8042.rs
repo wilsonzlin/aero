@@ -3,6 +3,9 @@ use std::collections::VecDeque;
 
 use crate::io::PortIO;
 
+use super::ps2_keyboard::Ps2Keyboard;
+use super::ps2_mouse::Ps2Mouse;
+
 const STATUS_OBF: u8 = 0x01; // Output buffer full
 const STATUS_IBF: u8 = 0x02; // Input buffer full
 const STATUS_SYS: u8 = 0x04; // System flag
@@ -47,10 +50,12 @@ impl I8042Callbacks for () {
 
 /// i8042 PS/2 controller (ports 0x60/0x64).
 ///
-/// This models enough behaviour for BIOS/bootloader interactions:
-/// - controller command byte
-/// - basic keyboard/mouse ACK replies
-/// - output port reads/writes (A20 gate + reset semantics)
+/// This implements the legacy PS/2 controller used by BIOS and Windows
+/// (`i8042prt`) drivers, including:
+/// - command byte read/write and port enable/disable
+/// - controller self-test and port tests
+/// - output buffer source tracking (keyboard vs mouse)
+/// - output port read/write (A20 + reset)
 #[derive(Debug)]
 pub struct I8042Controller<Cb: I8042Callbacks> {
     status: Cell<u8>,
@@ -71,6 +76,9 @@ pub struct I8042Controller<Cb: I8042Callbacks> {
 
     callbacks: Cb,
 
+    keyboard: RefCell<Ps2Keyboard>,
+    mouse: RefCell<Ps2Mouse>,
+
     keyboard_irq_pending: Cell<bool>,
     mouse_irq_pending: Cell<bool>,
 }
@@ -87,6 +95,8 @@ impl<Cb: I8042Callbacks> I8042Controller<Cb> {
             // Platform dependent; bit 0 typically deasserted, A20 typically off.
             output_port: Cell::new(OUTPUT_PORT_RESET),
             callbacks,
+            keyboard: RefCell::new(Ps2Keyboard::new()),
+            mouse: RefCell::new(Ps2Mouse::new()),
             keyboard_irq_pending: Cell::new(false),
             mouse_irq_pending: Cell::new(false),
         }
@@ -98,6 +108,50 @@ impl<Cb: I8042Callbacks> I8042Controller<Cb> {
 
     pub fn callbacks_mut(&mut self) -> &mut Cb {
         &mut self.callbacks
+    }
+
+    pub fn keyboard_irq_pending(&self) -> bool {
+        self.keyboard_irq_pending.get()
+    }
+
+    pub fn mouse_irq_pending(&self) -> bool {
+        self.mouse_irq_pending.get()
+    }
+
+    pub fn key_event(&self, scancode: u8, pressed: bool, extended: bool) {
+        if (self.command_byte.get() & CMD_BYTE_KBD_DISABLE) != 0 {
+            return;
+        }
+
+        let mut kbd = self.keyboard.borrow_mut();
+        kbd.key_event(scancode, pressed, extended);
+        while let Some(byte) = kbd.pop_output_byte() {
+            self.enqueue_output(byte, OutputSource::Keyboard);
+        }
+    }
+
+    pub fn mouse_movement(&self, dx: i32, dy: i32, dz: i32) {
+        if (self.command_byte.get() & CMD_BYTE_MOUSE_DISABLE) != 0 {
+            return;
+        }
+
+        let mut mouse = self.mouse.borrow_mut();
+        mouse.movement(dx, dy, dz);
+        while let Some(byte) = mouse.pop_output_byte() {
+            self.enqueue_output(byte, OutputSource::Mouse);
+        }
+    }
+
+    pub fn mouse_button_event(&self, button_mask: u8, pressed: bool) {
+        if (self.command_byte.get() & CMD_BYTE_MOUSE_DISABLE) != 0 {
+            return;
+        }
+
+        let mut mouse = self.mouse.borrow_mut();
+        mouse.button_event(button_mask, pressed);
+        while let Some(byte) = mouse.pop_output_byte() {
+            self.enqueue_output(byte, OutputSource::Mouse);
+        }
     }
 
     fn read_u8(&self, port: u16) -> u8 {
@@ -268,13 +322,13 @@ impl<Cb: I8042Callbacks> I8042Controller<Cb> {
         match source {
             OutputSource::Mouse => {
                 status |= STATUS_MOBF;
-                if self.command_byte.get() & CMD_BYTE_MOUSE_INT != 0 {
+                if (self.command_byte.get() & (CMD_BYTE_MOUSE_INT | CMD_BYTE_MOUSE_DISABLE)) == CMD_BYTE_MOUSE_INT {
                     self.mouse_irq_pending.set(true);
                 }
             }
             OutputSource::Keyboard => {
                 status &= !STATUS_MOBF;
-                if self.command_byte.get() & CMD_BYTE_KBD_INT != 0 {
+                if (self.command_byte.get() & (CMD_BYTE_KBD_INT | CMD_BYTE_KBD_DISABLE)) == CMD_BYTE_KBD_INT {
                     self.keyboard_irq_pending.set(true);
                 }
             }
@@ -297,25 +351,18 @@ impl<Cb: I8042Callbacks> I8042Controller<Cb> {
     }
 
     fn send_to_keyboard(&self, value: u8) {
-        // Minimal keyboard modelling: ACK all commands; on reset return self-test pass.
-        match value {
-            0xFF => {
-                self.enqueue_output(0xFA, OutputSource::Keyboard);
-                self.enqueue_output(0xAA, OutputSource::Keyboard);
-            }
-            _ => self.enqueue_output(0xFA, OutputSource::Keyboard),
+        let mut kbd = self.keyboard.borrow_mut();
+        kbd.receive_byte(value);
+        while let Some(byte) = kbd.pop_output_byte() {
+            self.enqueue_output(byte, OutputSource::Keyboard);
         }
     }
 
     fn send_to_mouse(&self, value: u8) {
-        // Minimal mouse modelling: ACK all commands; on reset return self-test pass + ID.
-        match value {
-            0xFF => {
-                self.enqueue_output(0xFA, OutputSource::Mouse);
-                self.enqueue_output(0xAA, OutputSource::Mouse);
-                self.enqueue_output(0x00, OutputSource::Mouse);
-            }
-            _ => self.enqueue_output(0xFA, OutputSource::Mouse),
+        let mut mouse = self.mouse.borrow_mut();
+        mouse.receive_byte(value);
+        while let Some(byte) = mouse.pop_output_byte() {
+            self.enqueue_output(byte, OutputSource::Mouse);
         }
     }
 }
@@ -418,4 +465,73 @@ mod tests {
         ctrl.port_write(0x64, 1, 0xD0);
         assert_eq!(ctrl.port_read(0x60, 1) as u8, 0xAB);
     }
+
+    #[test]
+    fn controller_self_test_and_command_byte_rw() {
+        let mut ctrl = I8042Controller::new(());
+
+        ctrl.port_write(0x64, 1, 0xAA);
+        assert_ne!(ctrl.port_read(0x64, 1) as u8 & STATUS_OBF, 0);
+        assert_eq!(ctrl.port_read(0x60, 1) as u8, 0x55);
+        assert_ne!(ctrl.port_read(0x64, 1) as u8 & STATUS_SYS, 0);
+
+        ctrl.port_write(0x64, 1, 0x20);
+        assert_eq!(ctrl.port_read(0x60, 1) as u8, 0x00);
+
+        ctrl.port_write(0x64, 1, 0x60);
+        ctrl.port_write(0x60, 1, 0x03);
+
+        ctrl.port_write(0x64, 1, 0x20);
+        assert_eq!(ctrl.port_read(0x60, 1) as u8, 0x03);
+    }
+
+    #[test]
+    fn keyboard_reset_returns_ack_and_self_test_ok() {
+        let mut ctrl = I8042Controller::new(());
+
+        ctrl.port_write(0x60, 1, 0xFF);
+        assert_eq!(ctrl.port_read(0x60, 1) as u8, 0xFA);
+        assert_eq!(ctrl.port_read(0x60, 1) as u8, 0xAA);
+    }
+
+    #[test]
+    fn irq_gating_by_command_byte() {
+        let mut ctrl = I8042Controller::new(());
+
+        // Enable keyboard IRQ1 and inject a key.
+        ctrl.port_write(0x64, 1, 0x60);
+        ctrl.port_write(0x60, 1, u32::from(CMD_BYTE_KBD_INT));
+
+        ctrl.key_event(0x1C, true, false);
+        assert!(ctrl.keyboard_irq_pending());
+        assert_eq!(ctrl.port_read(0x60, 1) as u8, 0x1C);
+        assert!(!ctrl.keyboard_irq_pending());
+
+        // Enable mouse reporting via 0xD4 prefix; IRQ12 is not yet enabled.
+        ctrl.port_write(0x64, 1, 0xD4);
+        ctrl.port_write(0x60, 1, 0xF4);
+        assert_eq!(ctrl.port_read(0x60, 1) as u8, 0xFA);
+        assert!(!ctrl.mouse_irq_pending());
+
+        ctrl.mouse_movement(1, 0, 0);
+        assert!(!ctrl.mouse_irq_pending());
+        assert_ne!(ctrl.port_read(0x64, 1) as u8 & STATUS_MOBF, 0);
+        // Drain packet.
+        ctrl.port_read(0x60, 1);
+        ctrl.port_read(0x60, 1);
+        ctrl.port_read(0x60, 1);
+
+        // Enable mouse IRQ12 and inject again.
+        ctrl.port_write(0x64, 1, 0x60);
+        ctrl.port_write(0x60, 1, u32::from(CMD_BYTE_KBD_INT | CMD_BYTE_MOUSE_INT));
+
+        ctrl.mouse_movement(1, 0, 0);
+        assert!(ctrl.mouse_irq_pending());
+        // Drain packet; IRQ should be cleared after the final byte.
+        ctrl.port_read(0x60, 1);
+        ctrl.port_read(0x60, 1);
+        ctrl.port_read(0x60, 1);
+        assert!(!ctrl.mouse_irq_pending());
+    }
 }
+
