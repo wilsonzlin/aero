@@ -690,7 +690,7 @@ mod tests {
         let desc = TxDesc {
             buffer_addr: buf_addr,
             length: frame.len() as u16,
-            cmd: TXD_CMD_EOP,
+            cmd: TXD_CMD_EOP | TXD_CMD_RS,
             status: 0,
             ..TxDesc::default()
         };

@@ -63,6 +63,7 @@ pub const RCTL_BSEX: u32 = 1 << 25;
 pub const TCTL_EN: u32 = 1 << 1;
 
 pub const TXD_CMD_EOP: u8 = 1 << 0;
+pub const TXD_CMD_RS: u8 = 1 << 3;
 pub const TXD_STAT_DD: u8 = 1 << 0;
 
 pub const RXD_STAT_DD: u8 = 1 << 0;

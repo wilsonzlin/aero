@@ -1,5 +1,6 @@
 use super::{
-    E1000Device, GuestMemory, NetworkBackend, TxDesc, ICR_TXDW, TCTL_EN, TXD_CMD_EOP, TXD_STAT_DD,
+    E1000Device, GuestMemory, NetworkBackend, TxDesc, ICR_TXDW, TCTL_EN, TXD_CMD_EOP, TXD_CMD_RS,
+    TXD_STAT_DD,
 };
 
 impl E1000Device {
@@ -18,6 +19,7 @@ impl E1000Device {
         }
 
         let base = self.tx_ring_base();
+        let mut should_raise_txdw = false;
 
         while self.tdh != self.tdt {
             let idx = self.tdh % count;
@@ -33,6 +35,10 @@ impl E1000Device {
             desc.status |= TXD_STAT_DD;
             desc.write(mem, desc_addr);
 
+            if (desc.cmd & TXD_CMD_RS) != 0 {
+                should_raise_txdw = true;
+            }
+
             let eop = (desc.cmd & TXD_CMD_EOP) != 0;
             self.tdh = (self.tdh + 1) % count;
 
@@ -40,9 +46,11 @@ impl E1000Device {
                 if !self.tx_partial.is_empty() {
                     backend.transmit(std::mem::take(&mut self.tx_partial));
                 }
-                self.raise_interrupt(ICR_TXDW);
             }
+        }
+
+        if should_raise_txdw {
+            self.raise_interrupt(ICR_TXDW);
         }
     }
 }
-
