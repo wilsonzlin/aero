@@ -123,6 +123,67 @@ impl MmioHandler for CountingMmio {
 }
 
 #[test]
+fn dma_bulk_read_write_within_ram() {
+    let ram = make_ram(0x4000);
+    let bus = MemoryBus::new(ram.clone());
+
+    let src: Vec<u8> = (0..128).map(|i| i as u8).collect();
+    bus.write_physical_from(0x1000, &src).unwrap();
+
+    let mut dst = vec![0u8; src.len()];
+    bus.read_physical_into(0x1000, &mut dst).unwrap();
+    assert_eq!(dst, src);
+}
+
+#[test]
+fn dma_bulk_crosses_chunk_boundary() {
+    let ram = make_ram(0x9000);
+    let bus = MemoryBus::new(ram.clone());
+
+    // Chunk size is 4096; cross from 0x0FF0..0x1010.
+    let start = 0x0ff0u64;
+    let src: Vec<u8> = (0..64).map(|i| (0xa0 + i) as u8).collect();
+    bus.write_physical_from(start, &src).unwrap();
+
+    let mut dst = vec![0u8; src.len()];
+    bus.read_physical_into(start, &mut dst).unwrap();
+    assert_eq!(dst, src);
+}
+
+#[test]
+fn dma_scatter_gather_roundtrip() {
+    let ram = make_ram(0x8000);
+    let bus = MemoryBus::new(ram.clone());
+
+    let segments = &[
+        (0x1000u64, 16usize),
+        (0x2000u64, 8usize),
+        (0x3000u64, 32usize),
+    ];
+    let total: usize = segments.iter().map(|(_, len)| *len).sum();
+    let src: Vec<u8> = (0..total).map(|i| (i ^ 0x5a) as u8).collect();
+
+    bus.write_sg(segments, &src).unwrap();
+    let mut dst = vec![0u8; total];
+    bus.read_sg(segments, &mut dst).unwrap();
+    assert_eq!(dst, src);
+}
+
+#[test]
+fn dma_scatter_gather_length_mismatch_errors() {
+    let ram = make_ram(0x1000);
+    let bus = MemoryBus::new(ram.clone());
+
+    let segments = &[(0x0u64, 4usize), (0x10u64, 4usize)];
+    let mut dst = [0u8; 7];
+    let err = bus.read_sg(segments, &mut dst).unwrap_err();
+    assert!(matches!(
+        err,
+        aero_mem::MemoryBusError::LengthMismatch { .. }
+    ));
+}
+
+#[test]
 fn dma_rejects_mmio_without_side_effects_or_partial_write() {
     let ram = make_ram(0x4000);
     let mut bus = MemoryBus::new(ram.clone());
@@ -209,4 +270,37 @@ fn bulk_address_overflow_is_reported() {
         err,
         aero_mem::MemoryBusError::AddressOverflow { .. }
     ));
+}
+
+#[test]
+fn dma_bulk_read_rejects_mmio_without_side_effects() {
+    let ram = make_ram(0x4000);
+    let mut bus = MemoryBus::new(ram.clone());
+
+    let mmio = Arc::new(CountingMmio::default());
+    bus.register_mmio(0x2000..0x2100, mmio.clone()).unwrap();
+
+    let mut dst = [0xAAu8; 8];
+    let err = bus.read_physical_into(0x1FFC, &mut dst).unwrap_err();
+    assert!(matches!(err, aero_mem::MemoryBusError::MmioAccess { .. }));
+
+    assert_eq!(mmio.reads(), 0);
+    assert_eq!(mmio.writes(), 0);
+    assert_eq!(dst, [0xAAu8; 8]);
+}
+
+#[test]
+fn dma_bulk_write_rejects_rom_without_partial_write() {
+    let ram = make_ram(0x4000);
+    let mut bus = MemoryBus::new(ram.clone());
+
+    bus.register_rom(0x3000, Arc::from([1u8, 2, 3, 4])).unwrap();
+
+    ram.write_bytes(0x2FFC, &[0xAA; 4]);
+    let err = bus.write_physical_from(0x2FFC, &[0x55; 8]).unwrap_err();
+    assert!(matches!(err, aero_mem::MemoryBusError::RomAccess { .. }));
+
+    let mut buf = [0u8; 4];
+    ram.read_bytes(0x2FFC, &mut buf);
+    assert_eq!(buf, [0xAA; 4]);
 }

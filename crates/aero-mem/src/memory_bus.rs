@@ -1,4 +1,5 @@
 use crate::{PhysicalMemory, PhysicalMemoryError};
+use std::borrow::Cow;
 use std::sync::atomic::{compiler_fence, Ordering};
 use std::sync::Arc;
 
@@ -491,6 +492,56 @@ impl MemoryBus {
     pub fn write_bytes(&self, addr: u64, src: &[u8]) {
         self.try_write_bytes(addr, src)
             .expect("memory bus write failed");
+    }
+
+    /// DMA-friendly bulk RAM read.
+    ///
+    /// This is provided for callers that expect the "read_physical_into" naming
+    /// convention from other emulators.
+    #[inline]
+    pub fn read_physical_into(&self, addr: u64, dst: &mut [u8]) -> Result<(), MemoryBusError> {
+        self.try_read_ram_bytes(addr, dst)
+    }
+
+    /// DMA-friendly bulk RAM write.
+    ///
+    /// This is provided for callers that expect the "write_physical_from" naming
+    /// convention from other emulators.
+    #[inline]
+    pub fn write_physical_from(&self, addr: u64, src: &[u8]) -> Result<(), MemoryBusError> {
+        self.try_write_ram_bytes(addr, src)
+    }
+
+    /// Copy guest bytes into an owned/borrowed buffer.
+    ///
+    /// Currently this always returns an owned buffer because the underlying
+    /// [`PhysicalMemory`] is chunked behind locks, so handing out direct borrows
+    /// would require lifetime-carrying guards.
+    pub fn memcpy_from_guest<'a>(
+        &'a self,
+        addr: u64,
+        len: usize,
+    ) -> Result<Cow<'a, [u8]>, MemoryBusError> {
+        if len == 0 {
+            return Ok(Cow::Borrowed(&[]));
+        }
+        let mut buf = vec![0u8; len];
+        self.try_read_ram_bytes(addr, &mut buf)?;
+        Ok(Cow::Owned(buf))
+    }
+
+    /// Scatter/gather read helper.
+    ///
+    /// `dst.len()` must equal the sum of all segment lengths.
+    pub fn read_sg(&self, segments: &[(u64, usize)], dst: &mut [u8]) -> Result<(), MemoryBusError> {
+        self.try_read_sg(segments, dst)
+    }
+
+    /// Scatter/gather write helper.
+    ///
+    /// `src.len()` must equal the sum of all segment lengths.
+    pub fn write_sg(&self, segments: &[(u64, usize)], src: &[u8]) -> Result<(), MemoryBusError> {
+        self.try_write_sg(segments, src)
     }
 
     pub fn try_read_u8(&self, addr: u64) -> Result<u8, MemoryBusError> {
