@@ -1,0 +1,24 @@
+# Required
+aws_region  = "us-west-2"
+bucket_name = "my-unique-disk-images-bucket"
+
+# Recommended: allow only the web origins that should be able to fetch with Range headers.
+# Leave empty for same-origin usage (no CORS).
+cors_allowed_origins = [
+  "https://example.com",
+]
+
+# Cache mode:
+# - immutable: long TTL (best for versioned object keys)
+# - mutable: short TTL (for overwrite-in-place workflows)
+cache_policy_mode = "immutable"
+
+# Optional: add/override CORS headers at CloudFront edge. S3 still needs a CORS rule to answer
+# preflight (OPTIONS), but this can standardize headers across objects.
+enable_edge_cors = true
+
+# Optional: custom domain(s) for the CloudFront distribution.
+# If set, you MUST provide an ACM certificate ARN in us-east-1.
+# custom_domain_names = ["images.example.com"]
+# acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
