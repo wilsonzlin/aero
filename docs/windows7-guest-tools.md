@@ -214,17 +214,19 @@ Installs Aero’s driver signing certificate into the **Local Machine** certific
 
 ### 2) Boot configuration (BCD)
 
-May update the boot configuration database via `bcdedit`, for example:
+Updates the boot configuration database via `bcdedit` when needed, for example:
 
 - Enabling **Test Signing** (`testsigning on`) so test-signed kernel drivers load on Windows 7 x64.
-- Optionally increasing Boot Manager timeouts so recovery options are easier to reach in an emulator (for example, setting a non-zero `timeout`).
+- Optionally enabling `nointegritychecks` (disables signature enforcement entirely; **not recommended**).
+
+Reboot is required after changing BCD settings.
 
 ### 3) Driver store / PnP staging
 
-Stages the Aero drivers into the Windows driver store (so that when you later switch devices, Windows can bind the correct drivers automatically). Common mechanisms include:
+Stages the Aero drivers into the Windows driver store (so that when you later switch devices, Windows can bind the correct drivers automatically). Guest Tools typically:
 
-- `pnputil -i -a <driver.inf>`
-- `dism /online /add-driver /driver:<path> /recurse`
+- adds every `.inf` under `drivers\x86\` (on Win7 x86) or `drivers\amd64\` (on Win7 x64) using `pnputil`,
+- and may attempt an immediate install for any matching devices present (unless `/stageonly` is used).
 
 ### 4) Registry / service configuration
 
@@ -232,6 +234,7 @@ Configures driver services and boot-critical settings (especially important for 
 
 - Ensuring the **virtio storage** driver is set to start at boot when needed.
 - Setting device/service parameters under `HKLM\SYSTEM\CurrentControlSet\Services\...`
+- Pre-seeding `HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\...` entries for virtio-blk PCI IDs so the system can boot after switching **AHCI → virtio-blk**.
 
 ## If `setup.cmd` fails: manual install (advanced)
 
