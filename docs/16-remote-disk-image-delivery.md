@@ -18,6 +18,11 @@ This document defines the **production contract** for the `remote_url` used by `
 - AWS production reference (S3 + CloudFront tuned for Range + CORS):
   - [`infra/aws-s3-cloudfront-range/README.md`](../infra/aws-s3-cloudfront-range/README.md)
 
+Companion tools:
+
+- Correctness + CORS conformance checks: [`tools/disk-streaming-conformance/`](../tools/disk-streaming-conformance/README.md)
+- Range throughput + CDN cache probing (`X-Cache`): [`tools/range-harness/`](../tools/range-harness/README.md)
+
 ---
 
 ## End-to-end architecture

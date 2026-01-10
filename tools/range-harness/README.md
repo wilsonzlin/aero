@@ -127,6 +127,10 @@ The summary includes:
 - Status code breakdown
 - `X-Cache` hit/miss breakdown (plus exact values)
 
+## Related tools
+
+- For strict correctness + CORS/COEP validation (CI-friendly), see [`tools/disk-streaming-conformance/`](../disk-streaming-conformance/README.md).
+
 ## Recommended chunk-size starting points (Aero)
 
 For large disk images, a good starting range for benchmarking is:

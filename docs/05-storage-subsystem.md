@@ -652,6 +652,11 @@ Operational details for the backend **disk image streaming service** (deployment
 The example below uses HTTP `Range` requests for random-access reads. For a CDN-friendly alternative that avoids `Range` (and therefore avoids CORS preflight on cross-origin fetches), see [18 - Chunked Disk Image Format](./18-chunked-disk-image-format.md).
 For how disk/ISO images are uploaded/imported into a hosted service and kept private over time (including lease scopes and writeback options), see [Disk Image Lifecycle and Access Control](./17-disk-image-lifecycle-and-access-control.md).
 
+Useful tooling in this repo:
+
+- Correctness + CORS conformance checks: [`tools/disk-streaming-conformance/`](../tools/disk-streaming-conformance/README.md)
+- Range throughput + CDN cache probing (`X-Cache`): [`tools/range-harness/`](../tools/range-harness/README.md)
+
 ```rust
 pub struct DiskAccessLease {
     // Prefer a same-origin URL such as `/disk/<lease_id>` to avoid CORS preflight.
