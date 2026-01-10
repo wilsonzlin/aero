@@ -109,6 +109,11 @@ fn no_paging_is_identity() {
 
     assert_eq!(mmu.translate(&mut mem, 0x1234, AccessType::Read, 0), Ok(0x1234));
     assert_eq!(mmu.translate(&mut mem, 0xdead_beef, AccessType::Write, 3), Ok(0xdead_beef));
+    // Linear addresses are 32-bit when paging is disabled.
+    assert_eq!(
+        mmu.translate(&mut mem, 0x1_0000_0000u64 + 0x5678, AccessType::Read, 0),
+        Ok(0x5678)
+    );
 }
 
 #[test]
@@ -630,4 +635,58 @@ fn fuzz_long4_4kb_walk_matches_reference_model() {
             assert_eq!(got, expected, "mismatch at vaddr=0x{:x} access={access:?} user={is_user}", vaddr);
         }
     }
+}
+
+#[test]
+fn pcid_tags_tlb_entries_and_invpcid_flushes_single_context() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x40000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page_base = 0x8000u64;
+
+    mem.write_u64_raw(pml4_base, pdpt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pd_base, pt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pt_base, page_base | PTE_P64 | PTE_RW64 | PTE_US64);
+
+    mmu.set_cr4(CR4_PAE | CR4_PCIDE);
+    mmu.set_efer(EFER_LME);
+    mmu.set_cr0(CR0_PG);
+
+    let base_cr3 = pml4_base;
+    let vaddr = 0x234u64;
+
+    // PCID=1: populate TLB.
+    mmu.set_cr3(base_cr3 | 1);
+    mem.reset_counters();
+    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert!(mem.reads() > 0);
+
+    mem.reset_counters();
+    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(mem.reads(), 0);
+    assert_eq!(mem.writes(), 0);
+
+    // Switching to a different PCID should not match existing entries.
+    mmu.set_cr3(base_cr3 | 2);
+    mem.reset_counters();
+    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert!(mem.reads() > 0);
+
+    // Switching back with CR3[63]=1 (no-flush) preserves PCID=1 entries.
+    mmu.set_cr3(base_cr3 | 1 | (1u64 << 63));
+    mem.reset_counters();
+    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(mem.reads(), 0);
+    assert_eq!(mem.writes(), 0);
+
+    // INVPCID single-context should drop only the requested PCID.
+    mmu.invpcid(1, InvpcidType::SingleContext);
+    mem.reset_counters();
+    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert!(mem.reads() > 0);
 }

@@ -204,7 +204,9 @@ impl Mmu {
         let mode = self.paging_mode();
 
         if mode == PagingMode::Disabled {
-            return Ok(vaddr);
+            // With paging disabled, x86 uses a 32-bit linear address space (long
+            // mode cannot be active without paging).
+            return Ok(vaddr & 0xffff_ffff);
         }
 
         // In non-long paging modes, the linear address is 32-bit.
