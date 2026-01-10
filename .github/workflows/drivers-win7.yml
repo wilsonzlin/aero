@@ -56,20 +56,37 @@ jobs:
             exit 0
           }
 
-          # Heuristic marker files that indicate "this repo actually has buildable driver projects".
-          # Keep this aligned with ci/build-drivers.ps1 discovery conventions (solution/project files),
-          # so we don't run expensive toolchain setup if there is nothing we can build.
-          $markerFiles = $files | Where-Object {
-            $_.Extension -in @('.sln', '.vcxproj')
+          # Only run CI when we have *CI-buildable* driver projects.
+          #
+          # We intentionally ignore classic WDK 7.1 NMake wrapper projects that invoke build.exe
+          # (Keyword=MakeFileProj / ConfigurationType=Makefile), because this workflow provisions
+          # a modern Windows Kits toolchain and does not guarantee a WDK 7.1 build environment.
+          #
+          # Additionally, require an INF in the same directory tree so we only run when we can
+          # generate catalogs + signed driver packages.
+          $buildable = New-Object System.Collections.Generic.List[object]
+
+          $vcxprojs = $files | Where-Object { $_.Extension -eq '.vcxproj' }
+          foreach ($proj in $vcxprojs) {
+            $content = Get-Content -LiteralPath $proj.FullName -Raw -ErrorAction SilentlyContinue
+            if (-not $content) { continue }
+            if ($content -match '<Keyword>\\s*MakeFileProj\\s*</Keyword>' -or $content -match '<ConfigurationType>\\s*Makefile\\s*</ConfigurationType>') {
+              continue
+            }
+
+            $inf = Get-ChildItem -LiteralPath $proj.DirectoryName -Recurse -File -Filter '*.inf' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $inf) { continue }
+
+            [void]$buildable.Add($proj.FullName)
           }
 
-          if (@($markerFiles).Count -eq 0) {
-            Write-Host "drivers/ contains files, but no driver project markers (*.sln, *.vcxproj) were found; skipping Win7 driver build."
+          if ($buildable.Count -eq 0) {
+            Write-Host "No CI-buildable Win7 driver projects were found (expected MSBuild-based *.vcxproj with an .inf; ignoring WDK 7.1 NMake/build.exe wrappers). Skipping."
             "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
 
-          Write-Host "Found $(@($markerFiles).Count) driver project marker file(s); running Win7 driver build."
+          Write-Host "Found $($buildable.Count) CI-buildable driver project(s); running Win7 driver build."
           "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Prepare WDK download cache directory
