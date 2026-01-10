@@ -20,7 +20,7 @@ export interface AeroGlobalApi {
   events?: EventTarget;
 
   setPhase?: (phase: AeroPhase) => void;
+  waitForPhase?: (phase: AeroPhase, options?: { timeoutMs?: number }) => Promise<void>;
   emitEvent?: (name: string, detail?: unknown) => void;
   waitForEvent?: <T = unknown>(name: string, options?: { timeoutMs?: number }) => Promise<T>;
 }
-

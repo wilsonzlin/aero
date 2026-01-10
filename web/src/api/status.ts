@@ -5,6 +5,7 @@ export interface AeroStatusApi {
   status: AeroStatusSnapshot;
   events: EventTarget;
   setPhase(phase: AeroPhase): void;
+  waitForPhase(phase: AeroPhase, options?: { timeoutMs?: number }): Promise<void>;
   emitEvent(name: string, detail?: unknown): void;
   waitForEvent<T = unknown>(name: string, options?: { timeoutMs?: number }): Promise<T>;
 }
@@ -84,9 +85,15 @@ export function initAeroStatusApi(initialPhase: AeroPhase = 'booting'): AeroStat
     });
   }
 
+  async function waitForPhase(phase: AeroPhase, options?: { timeoutMs?: number }): Promise<void> {
+    if (status.phase === phase) return;
+    await waitForEvent(`phase:${phase}`, options);
+  }
+
   aero.setPhase = setPhase;
+  aero.waitForPhase = waitForPhase;
   aero.emitEvent = emitEvent;
   aero.waitForEvent = waitForEvent;
 
-  return { status, events, setPhase, emitEvent, waitForEvent };
+  return { status, events, setPhase, waitForPhase, emitEvent, waitForEvent };
 }

@@ -23,8 +23,21 @@ export class DefaultMilestoneClient implements MilestoneClient {
 
   async waitForPhase(phase: AeroPhase, options?: { timeoutMs?: number }): Promise<void> {
     const timeoutMs = options?.timeoutMs ?? 60_000;
-    const deadlineMs = performance.now() + timeoutMs;
 
+    if (this.#emulator.capabilities.statusApi) {
+      const current = await this.#emulator.eval<AeroPhase | undefined>('globalThis.aero?.status?.phase');
+      if (current === phase) return;
+
+      // Prefer the host event stream when available for more accurate waits.
+      try {
+        await this.waitForEvent(`phase:${phase}`, { timeoutMs });
+        return;
+      } catch {
+        // If the status API is partially implemented, fall back to polling.
+      }
+    }
+
+    const deadlineMs = performance.now() + timeoutMs;
     while (performance.now() < deadlineMs) {
       const current = await this.#emulator.eval<AeroPhase | undefined>('globalThis.aero?.status?.phase');
       if (current === phase) return;
@@ -82,4 +95,3 @@ export class DefaultMilestoneClient implements MilestoneClient {
     await this.#artifacts.writeBinary(`screenshots/${filename}`, payload, 'screenshot');
   }
 }
-

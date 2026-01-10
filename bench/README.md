@@ -68,6 +68,17 @@ The compare script exits non-zero if any primary metric regresses by more than t
 
 The scenario runner provides an extensible plugin interface so we can evolve from microbenchmarks to full-system macrobenchmarks (boot time, desktop FPS, app launch time) once the emulator can boot OS images.
 
+### Milestones and readiness signals
+
+Macrobench scenarios should wait on host-visible signals instead of guessing:
+
+- `window.aero.status.phase` ∈ `booting` | `installing` | `desktop` | `idle`
+- `window.aero.waitForEvent(name)` / `window.aero.events`
+  - phase transitions: `phase:<phase>` (e.g. `phase:desktop`)
+  - convenience milestones: `desktop_ready`, `idle_ready`
+
+As a last resort, scenarios can fall back to screenshot stability detection (hash-equal frames over N intervals) via `milestones.waitForStableScreen()`.
+
 ### Running locally
 
 List scenarios:
