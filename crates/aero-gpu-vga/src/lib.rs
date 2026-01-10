@@ -127,6 +127,7 @@ pub struct VgaDevice {
     attribute_index: u8,
     attribute_flip_flop_data: bool,
     attribute: [u8; 21],
+    input_status1_vretrace: bool,
 
     // DAC / palette.
     pel_mask: u8,
@@ -143,6 +144,7 @@ pub struct VgaDevice {
     // VRAM: the first 256KiB are treated as planar VGA memory (4 planes).
     // SVGA linear modes use the same underlying VRAM starting at offset 0.
     vram: Vec<u8>,
+    latches: [u8; 4],
 
     // Output buffers.
     front: Vec<u32>,
@@ -165,6 +167,7 @@ impl VgaDevice {
             attribute_index: 0,
             attribute_flip_flop_data: false,
             attribute: [0; 21],
+            input_status1_vretrace: false,
             pel_mask: 0xFF,
             dac_write_index: 0,
             dac_write_subindex: 0,
@@ -174,6 +177,7 @@ impl VgaDevice {
             vbe_index: 0,
             vbe: VbeRegs::default(),
             vram: vec![0; DEFAULT_VRAM_SIZE],
+            latches: [0; 4],
             front: Vec::new(),
             back: Vec::new(),
             width: 0,
@@ -282,8 +286,15 @@ impl VgaDevice {
             }
         }
 
-        if let Some((plane, off)) = self.map_legacy_vga(paddr) {
-            return self.vram[plane * VGA_PLANE_SIZE + off];
+        if let Some(access) = self.map_legacy_vga(paddr) {
+            match access {
+                LegacyReadTarget::Single { plane, off } => {
+                    return self.vram[plane * VGA_PLANE_SIZE + off];
+                }
+                LegacyReadTarget::Planar { off } => {
+                    return self.read_u8_planar(off);
+                }
+            }
         }
 
         0
@@ -314,12 +325,8 @@ impl VgaDevice {
                 LegacyWriteTargets::Single { plane, off } => {
                     self.vram[plane * VGA_PLANE_SIZE + off] = value;
                 }
-                LegacyWriteTargets::Masked { off, mask } => {
-                    for plane in 0..4 {
-                        if (mask & (1 << plane)) != 0 {
-                            self.vram[plane * VGA_PLANE_SIZE + off] = value;
-                        }
-                    }
+                LegacyWriteTargets::Planar { off } => {
+                    self.write_u8_planar(off, value);
                 }
             }
             self.dirty = true;
@@ -355,7 +362,7 @@ impl VgaDevice {
         (self.graphics[6] >> 2) & 0x03
     }
 
-    fn map_legacy_vga(&self, paddr: u32) -> Option<(usize, usize)> {
+    fn map_legacy_vga(&self, paddr: u32) -> Option<LegacyReadTarget> {
         let map = self.legacy_memory_map();
         let (base, size) = match map {
             0 => (0xA0000, 0x20000), // A0000-BFFFF
@@ -372,15 +379,19 @@ impl VgaDevice {
         if self.chain4_enabled() {
             let plane = off & 0x03;
             let plane_off = off >> 2;
-            Some((plane, plane_off))
+            Some(LegacyReadTarget::Single {
+                plane,
+                off: plane_off,
+            })
         } else if self.odd_even_enabled() {
             let plane = off & 0x01;
             let plane_off = off >> 1;
-            Some((plane, plane_off))
+            Some(LegacyReadTarget::Single {
+                plane,
+                off: plane_off,
+            })
         } else {
-            // Planar read uses read map select.
-            let plane = (self.graphics[4] & 0x03) as usize;
-            Some((plane, off))
+            Some(LegacyReadTarget::Planar { off })
         }
     }
 
@@ -413,8 +424,114 @@ impl VgaDevice {
                 off: plane_off,
             })
         } else {
-            let mask = self.sequencer[2] & 0x0F;
-            Some(LegacyWriteTargets::Masked { off, mask })
+            Some(LegacyWriteTargets::Planar { off })
+        }
+    }
+
+    fn plane_offset(&self, off: usize) -> usize {
+        // VGA planes are 64KiB. Some memory map configurations expose a 128KiB window; on real
+        // hardware the address decode effectively wraps, so we do the same.
+        off & (VGA_PLANE_SIZE - 1)
+    }
+
+    fn load_latches(&mut self, off: usize) {
+        let off = self.plane_offset(off);
+        for plane in 0..4 {
+            self.latches[plane] = self.vram[plane * VGA_PLANE_SIZE + off];
+        }
+    }
+
+    fn read_u8_planar(&mut self, off: usize) -> u8 {
+        let off = self.plane_offset(off);
+        self.load_latches(off);
+        let plane = (self.graphics[4] & 0x03) as usize;
+        self.latches[plane]
+    }
+
+    fn write_u8_planar(&mut self, off: usize, value: u8) {
+        let off = self.plane_offset(off);
+
+        let write_mode = self.graphics[5] & 0x03;
+        if write_mode != 1 {
+            // VGA implements read-modify-write via latches for most write modes.
+            self.load_latches(off);
+        }
+
+        let data_rotate = self.graphics[3];
+        let rotate_count = data_rotate & 0x07;
+        let func_select = (data_rotate >> 3) & 0x03;
+        let bit_mask = self.graphics[8];
+
+        let rotated = value.rotate_right(rotate_count as u32);
+
+        let map_mask = self.sequencer[2] & 0x0F;
+        let set_reset = self.graphics[0];
+        let enable_set_reset = self.graphics[1];
+
+        for plane in 0..4 {
+            let plane_mask_bit = 1u8 << plane;
+            if (map_mask & plane_mask_bit) == 0 {
+                continue;
+            }
+
+            let latch = self.latches[plane];
+            let result = match write_mode {
+                0 => {
+                    let mut data = rotated;
+                    if (enable_set_reset & plane_mask_bit) != 0 {
+                        data = if (set_reset & plane_mask_bit) != 0 {
+                            0xFF
+                        } else {
+                            0x00
+                        };
+                    }
+
+                    let alu = match func_select {
+                        0 => data,
+                        1 => data & latch,
+                        2 => data | latch,
+                        3 => data ^ latch,
+                        _ => unreachable!(),
+                    };
+
+                    (alu & bit_mask) | (latch & !bit_mask)
+                }
+                1 => latch,
+                2 => {
+                    let data = if (value & plane_mask_bit) != 0 {
+                        0xFF
+                    } else {
+                        0x00
+                    };
+                    let alu = match func_select {
+                        0 => data,
+                        1 => data & latch,
+                        2 => data | latch,
+                        3 => data ^ latch,
+                        _ => unreachable!(),
+                    };
+                    (alu & bit_mask) | (latch & !bit_mask)
+                }
+                3 => {
+                    let data = if (set_reset & plane_mask_bit) != 0 {
+                        0xFF
+                    } else {
+                        0x00
+                    };
+                    let alu = match func_select {
+                        0 => data,
+                        1 => data & latch,
+                        2 => data | latch,
+                        3 => data ^ latch,
+                        _ => unreachable!(),
+                    };
+                    let mask = bit_mask & rotated;
+                    (alu & mask) | (latch & !mask)
+                }
+                _ => unreachable!("VGA write mode {write_mode} is invalid"),
+            };
+
+            self.vram[plane * VGA_PLANE_SIZE + off] = result;
         }
     }
 
@@ -780,7 +897,13 @@ impl VgaDevice {
 #[derive(Debug, Clone, Copy)]
 enum LegacyWriteTargets {
     Single { plane: usize, off: usize },
-    Masked { off: usize, mask: u8 },
+    Planar { off: usize },
+}
+
+#[derive(Debug, Clone, Copy)]
+enum LegacyReadTarget {
+    Single { plane: usize, off: usize },
+    Planar { off: usize },
 }
 
 impl DisplayOutput for VgaDevice {
@@ -838,7 +961,14 @@ impl PortIO for VgaDevice {
             // Input status 1. Reading resets the attribute flip-flop.
             (0x3DA, 1) => {
                 self.attribute_flip_flop_data = false;
-                0
+                self.input_status1_vretrace = !self.input_status1_vretrace;
+                let v = if self.input_status1_vretrace {
+                    0x08
+                } else {
+                    0x00
+                };
+                // Bit 3: vertical retrace. Bit 0: display enable (rough approximation).
+                (v | (v >> 3)) as u32
             }
 
             // DAC.
@@ -883,6 +1013,9 @@ impl PortIO for VgaDevice {
             (0x3D4, 1) => self.crtc_index = val as u8,
             (0x3D5, 1) => {
                 let idx = (self.crtc_index as usize) % self.crtc.len();
+                if idx <= 0x07 && (self.crtc.get(0x11).copied().unwrap_or(0) & 0x80) != 0 {
+                    return;
+                }
                 self.crtc[idx] = val as u8;
                 self.dirty = true;
             }
@@ -1043,5 +1176,50 @@ mod tests {
         dev.present();
         assert_eq!(dev.get_resolution(), (64, 64));
         assert_eq!(dev.get_framebuffer()[0], 0xFF00_00FF);
+    }
+
+    #[test]
+    fn planar_write_mode0_set_reset_writes_selected_planes() {
+        let mut dev = VgaDevice::new();
+
+        // Configure a basic planar graphics window at A0000.
+        dev.sequencer[4] = 0x00; // chain4 disabled, odd/even disabled
+        dev.sequencer[2] = 0x0F; // enable all planes (map mask)
+
+        dev.graphics[6] = 0x04; // memory map 0b01 => A0000 64KiB
+        dev.graphics[5] = 0x00; // write mode 0, odd/even off
+        dev.graphics[3] = 0x00; // rotate=0, func=replace
+        dev.graphics[8] = 0xFF; // bit mask
+        dev.graphics[0] = 0b0101; // set/reset: planes 0 and 2 set
+        dev.graphics[1] = 0x0F; // enable set/reset for all planes
+
+        dev.mem_write_u8(0xA0000, 0xAA);
+
+        assert_eq!(dev.vram[0 * VGA_PLANE_SIZE + 0], 0xFF);
+        assert_eq!(dev.vram[1 * VGA_PLANE_SIZE + 0], 0x00);
+        assert_eq!(dev.vram[2 * VGA_PLANE_SIZE + 0], 0xFF);
+        assert_eq!(dev.vram[3 * VGA_PLANE_SIZE + 0], 0x00);
+    }
+
+    #[test]
+    fn planar_write_mode0_applies_bit_mask_and_latches() {
+        let mut dev = VgaDevice::new();
+
+        dev.sequencer[4] = 0x00;
+        dev.sequencer[2] = 0x01; // plane 0 only
+
+        dev.graphics[6] = 0x04; // A0000 64KiB
+        dev.graphics[5] = 0x00; // write mode 0
+        dev.graphics[3] = 0x00; // replace
+        dev.graphics[8] = 0x0F; // only lower nibble affected
+        dev.graphics[0] = 0x00; // set/reset disabled
+        dev.graphics[1] = 0x00;
+
+        // Seed destination byte so we can observe latch+mask behavior.
+        dev.vram[0] = 0xA0;
+
+        dev.mem_write_u8(0xA0000, 0x05);
+
+        assert_eq!(dev.vram[0], 0xA5);
     }
 }
