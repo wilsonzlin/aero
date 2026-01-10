@@ -45,3 +45,16 @@ Environment variables:
 
 - `AERO_STAMP_INFS`: `0|false|no|off` disables stamping (default is enabled).
 - `AERO_INF2CAT_OS`: overrides the `/os:` list passed to `Inf2Cat.exe` (default: `7_X64,7_X86`).
+
+## `ci/package-drivers.ps1`
+
+Packages signed driver staging folders from `out/packages/` into release artifacts under `out/artifacts/`.
+
+If `-Version` is not provided, the script derives a deterministic version string from git:
+
+- date: HEAD commit date (formatted `yyyyMMdd`)
+- semver-ish: nearest `vMAJOR.MINOR.PATCH` tag + commit distance + short SHA
+
+Resulting artifact names look like:
+
+`AeroVirtIO-Win7-20260110-0.1.0+12.gabcdef123456-x64.zip`

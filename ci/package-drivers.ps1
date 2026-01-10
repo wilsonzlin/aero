@@ -22,21 +22,86 @@ function Resolve-RepoPath {
 }
 
 function Get-VersionString {
-    $date = Get-Date -Format "yyyyMMdd"
+    function Parse-SemverTag {
+        param([Parameter(Mandatory = $true)][string] $Tag)
 
-    $sha = $null
-    try {
-        $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-        $sha = (& git -C $repoRoot rev-parse --short=12 HEAD 2>$null).Trim()
-    } catch {
-        $sha = $null
+        $clean = $Tag.Trim()
+        if ($clean.StartsWith("v")) {
+            $clean = $clean.Substring(1)
+        }
+
+        if ($clean -match "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$") {
+            return [pscustomobject]@{
+                Major = [int] $Matches[1]
+                Minor = [int] $Matches[2]
+                Patch = [int] $Matches[3]
+                Text = $clean
+            }
+        }
+
+        return $null
     }
 
-    if ([string]::IsNullOrWhiteSpace($sha)) {
+    $repoRoot = $null
+    $sha = $null
+    $commitDate = $null
+    $tag = $null
+
+    try {
+        $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+        $sha = (& git -C $repoRoot rev-parse --short=12 HEAD 2>$null).Trim()
+        $commitDateIso = (& git -C $repoRoot show -s --format=%cI HEAD 2>$null).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($commitDateIso)) {
+            $commitDate = [DateTimeOffset]::Parse($commitDateIso, [System.Globalization.CultureInfo]::InvariantCulture)
+        }
+        $tag = (& git -C $repoRoot describe --tags --abbrev=0 --match "v[0-9]*" 2>$null).Trim()
+        if ([string]::IsNullOrWhiteSpace($tag)) {
+            $tag = $null
+        }
+    } catch {
+        $sha = $null
+        $commitDate = $null
+        $tag = $null
+    }
+
+    $date = $null
+    if ($null -ne $commitDate) {
+        $date = $commitDate.ToString("yyyyMMdd", [System.Globalization.CultureInfo]::InvariantCulture)
+    } else {
+        $date = Get-Date -Format "yyyyMMdd"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($sha) -or [string]::IsNullOrWhiteSpace($repoRoot)) {
         return $date
     }
 
-    return "$date-$sha"
+    $base = $null
+    if ($tag) {
+        $base = Parse-SemverTag $tag
+    }
+    if (-not $base) {
+        $base = [pscustomobject]@{ Major = 0; Minor = 0; Patch = 0; Text = "0.0.0" }
+    }
+
+    $distance = 0
+    if ($tag) {
+        try {
+            $distance = [int] ((& git -C $repoRoot rev-list --count "$tag..HEAD" 2>$null) | Out-String).Trim()
+        } catch {
+            $distance = [int] ((& git -C $repoRoot rev-list --count HEAD 2>$null) | Out-String).Trim()
+        }
+    } else {
+        $distance = [int] ((& git -C $repoRoot rev-list --count HEAD 2>$null) | Out-String).Trim()
+    }
+
+    $semver = $null
+    if ($distance -eq 0) {
+        $semver = "{0}+g{1}" -f $base.Text, $sha
+    } else {
+        $semver = "{0}+{1}.g{2}" -f $base.Text, $distance, $sha
+    }
+
+    return "$date-$semver"
 }
 
 function Get-ArchFromPath {
