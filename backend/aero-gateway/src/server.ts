@@ -269,6 +269,7 @@ function e2ePageHtml(): string {
           sharedArrayBuffer: { ok: false, error: null },
           websocket: { ok: false, echo: null, error: null },
           dnsQuery: { ok: false, meta: null, error: null },
+          dnsJson: { ok: false, answer: null, error: null },
         };
 
         try {
@@ -331,6 +332,15 @@ function e2ePageHtml(): string {
           results.dnsQuery.ok = id === query.id && qr && rcode === 0 && qdcount === 1 && ancount >= 1;
         } catch (err) {
           results.dnsQuery.error = String(err && err.message ? err.message : err);
+        }
+
+        try {
+          const res = await withTimeout(fetch('/dns-json?name=example.com&type=A'), 5000, 'dns-json fetch');
+          const json = await res.json();
+          results.dnsJson.answer = json?.Answer?.[0]?.data ?? null;
+          results.dnsJson.ok = Boolean(res.ok && json && json.Status === 0 && typeof results.dnsJson.answer === 'string');
+        } catch (err) {
+          results.dnsJson.error = String(err && err.message ? err.message : err);
         }
 
         window.__aeroGatewayE2E = results;

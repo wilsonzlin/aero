@@ -64,6 +64,7 @@ declare global {
       sharedArrayBuffer: { ok: boolean; error: string | null };
       websocket: { ok: boolean; echo: unknown; error: string | null };
       dnsQuery: { ok: boolean; meta: unknown; error: string | null };
+      dnsJson: { ok: boolean; answer: unknown; error: string | null };
     };
   }
 }
@@ -330,6 +331,9 @@ test.describe('aero-gateway browser e2e', () => {
 
       expect(results.dnsQuery.ok).toBe(true);
       expect(results.dnsQuery.error).toBeNull();
+
+      expect(results.dnsJson.ok).toBe(true);
+      expect(results.dnsJson.error).toBeNull();
     } finally {
       await proxy.close();
       await gateway.stop();
@@ -357,6 +361,9 @@ test.describe('aero-gateway browser e2e', () => {
 
       expect(results.dnsQuery.ok).toBe(true);
       expect(results.dnsQuery.error).toBeNull();
+
+      expect(results.dnsJson.ok).toBe(true);
+      expect(results.dnsJson.error).toBeNull();
     } finally {
       await proxy.close();
       await gateway.stop();

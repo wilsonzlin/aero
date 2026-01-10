@@ -686,6 +686,16 @@ In browser environments, DNS lookups should go through the gateway’s **first-p
 - `/dns-query` (RFC 8484 DoH, `application/dns-message`)
 - `/dns-json` (optional JSON convenience endpoint)
 
+For simple browser/WASM clients that do not want to parse DNS wire format, `/dns-json` is the easiest integration:
+
+```ts
+const res = await fetch(`/dns-json?name=${hostname}&type=A`, {
+  headers: { accept: 'application/dns-json' },
+});
+const json = await res.json();
+const ip = json.Answer?.[0]?.data; // e.g. "93.184.216.34"
+```
+
 ```rust
 pub struct DnsResolver {
     gateway_url: String,
