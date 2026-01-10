@@ -5,6 +5,15 @@ use memory::{AccessType, Bus, Mmu};
 
 const RAM_SIZE: usize = 256 * 1024;
 
+fn canonicalize_4level(vaddr: u64) -> u64 {
+    let low = vaddr & ((1u64 << 48) - 1);
+    if (low >> 47) & 1 == 0 {
+        low
+    } else {
+        low | (!0u64 << 48)
+    }
+}
+
 fn parse_u64_le(bytes: &[u8]) -> u64 {
     let mut buf = [0u8; 8];
     let n = bytes.len().min(8);
@@ -35,7 +44,13 @@ fuzz_target!(|data: &[u8]| {
         1 => AccessType::Write,
         _ => AccessType::Execute,
     };
-    let vaddr = parse_u64_le(&data[0x22..0x2a]);
+    let mut vaddr = parse_u64_le(&data[0x22..0x2a]);
+    let long_mode = (cr0 & (1 << 31)) != 0 && (cr4 & (1 << 5)) != 0 && (efer & (1 << 8)) != 0;
+    // Long-mode translations require canonical addresses; bias inputs towards that so we spend more
+    // time in the page-walk code rather than immediately returning #GP for non-canonical vaddrs.
+    if long_mode && (data[0x21] & 0x80) == 0 {
+        vaddr = canonicalize_4level(vaddr);
+    }
 
     let mut bus = Bus::new(RAM_SIZE);
     let ram_init = &data[0x2a..];
