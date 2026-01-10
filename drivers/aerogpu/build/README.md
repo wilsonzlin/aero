@@ -177,6 +177,9 @@ drivers\aerogpu\build\stage_packaging_win7.cmd fre x64
 cd drivers\aerogpu\packaging\win7
 sign_test.cmd
 install.cmd
+
+:: If you staged the optional D3D10/11 UMDs and want to install them too:
+:: install.cmd aerogpu_dx11.inf
 ```
 
 See `drivers/aerogpu/packaging/win7/README.md` for details (including Hardware ID edits).

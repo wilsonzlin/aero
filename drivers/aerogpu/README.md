@@ -30,6 +30,12 @@ sign_test.cmd
 install.cmd
 ```
 
+If you built and staged the optional D3D10/11 UMDs, install via:
+
+```cmd
+install.cmd aerogpu_dx11.inf
+```
+
 ## Key docs / entrypoints
 
 * Build + toolchain setup: `drivers/aerogpu/build/README.md`
