@@ -57,7 +57,7 @@ impl OverlayRegion {
 }
 
 /// Errors returned by [`MemoryBus`] operations.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MemoryBusError {
     /// The given MMIO/ROM range is invalid.
     InvalidRange { start: u64, end: u64 },
