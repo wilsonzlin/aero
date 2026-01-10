@@ -16,14 +16,18 @@ spec:
     - ports:
         - protocol: TCP
           port: {{ .Values.gateway.containerPort }}
-      {{- if .Values.networkPolicy.ingress.allowedNamespaces }}
       from:
+        # Allow pods in the same namespace by default. In practice deployments
+        # should use a dedicated namespace per app; this keeps debugging/helm test
+        # pods working while still restricting cross-namespace access.
+        - podSelector: {}
+        {{- if .Values.networkPolicy.ingress.allowedNamespaces }}
         {{- range $ns := .Values.networkPolicy.ingress.allowedNamespaces }}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ $ns | quote }}
         {{- end }}
-      {{- end }}
+        {{- end }}
   egress:
     # DNS (kube-system) so the gateway can resolve names.
     - to:

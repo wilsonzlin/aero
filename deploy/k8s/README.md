@@ -336,6 +336,11 @@ Egress is highly environment-specific:
 - If `aero-gateway` needs to open arbitrary outbound TCP connections (typical for a TCP proxy), you may need to allow broad egress.
 - If you can constrain destination IP ranges/ports, populate `networkPolicy.egress.allowedCIDRs` accordingly.
 
+Ingress behavior:
+
+- The NetworkPolicy always allows traffic from **pods in the same namespace** (use a dedicated namespace per app).
+- To allow traffic from an Ingress controller running in a different namespace, add that namespace to `networkPolicy.ingress.allowedNamespaces` (defaults to `ingress-nginx`).
+
 ### Example: allow public internet, block private ranges
 
 If your CNI supports `NetworkPolicy` and you want to reduce SSRF blast radius, you can allow `0.0.0.0/0` but exclude private and special-use ranges.
