@@ -26,7 +26,10 @@ impl<'a> GpuBufferAllocator<'a> {
         }
     }
 
-    pub fn create(&self, mut desc: wgpu::BufferDescriptor<'_>) -> Result<wgpu::Buffer, AllocationError> {
+    pub fn create(
+        &self,
+        mut desc: wgpu::BufferDescriptor<'_>,
+    ) -> Result<wgpu::Buffer, AllocationError> {
         if desc.size > self.max_buffer_size {
             return Err(AllocationError::BufferTooLarge {
                 requested: desc.size,
@@ -42,7 +45,12 @@ impl<'a> GpuBufferAllocator<'a> {
         Ok(self.device.create_buffer(&desc))
     }
 
-    pub fn create_init(&self, label: Option<&str>, contents: &[u8], usage: wgpu::BufferUsages) -> Result<wgpu::Buffer, AllocationError> {
+    pub fn create_init(
+        &self,
+        label: Option<&str>,
+        contents: &[u8],
+        usage: wgpu::BufferUsages,
+    ) -> Result<wgpu::Buffer, AllocationError> {
         use wgpu::util::DeviceExt as _;
 
         let size = contents.len() as u64;
@@ -53,7 +61,13 @@ impl<'a> GpuBufferAllocator<'a> {
             });
         }
 
-        Ok(self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label, contents, usage }))
+        Ok(self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label,
+                contents,
+                usage,
+            }))
     }
 }
 
@@ -71,9 +85,13 @@ impl<'a> GpuTextureAllocator<'a> {
         }
     }
 
-    pub fn create_texture(&self, desc: &wgpu::TextureDescriptor<'_>) -> Result<wgpu::Texture, AllocationError> {
+    pub fn create_texture(
+        &self,
+        desc: &wgpu::TextureDescriptor<'_>,
+    ) -> Result<wgpu::Texture, AllocationError> {
         let size = desc.size;
-        if size.width > self.max_texture_dimension_2d || size.height > self.max_texture_dimension_2d {
+        if size.width > self.max_texture_dimension_2d || size.height > self.max_texture_dimension_2d
+        {
             return Err(AllocationError::TextureTooLarge {
                 requested: size.width.max(size.height),
                 limit: self.max_texture_dimension_2d,

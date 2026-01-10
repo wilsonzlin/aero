@@ -1,11 +1,32 @@
-use crate::{BackendCaps, BackendError, TextureCompressionCaps, WebGpuContext, WebGpuInitOptions, WebGl2Stub};
+use crate::{
+    BackendCaps, BackendError, TextureCompressionCaps, WebGl2Stub, WebGpuContext, WebGpuInitOptions,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestedBackend {
+    /// Prefer WebGPU when available, otherwise fall back to WebGL2 (if enabled).
+    Auto,
+    WebGpu,
+    WebGl2,
+}
+
+impl Default for RequestedBackend {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
 
 /// High-level backend selection options.
 #[derive(Debug, Clone)]
 pub struct BackendOptions {
-    /// If `true`, WebGPU init failures will fall back to a WebGL2 stub backend.
+    pub requested_backend: RequestedBackend,
+
+    /// If `true`, [`RequestedBackend::Auto`] will fall back to WebGL2 when WebGPU
+    /// is unavailable.
     ///
-    /// This keeps higher layers from needing to branch on API availability.
+    /// On `wasm32`, the WebGL2 path is intended to use `wgpu`'s `BROWSER_WEBGL`
+    /// backend (surface/presentation required). In headless mode we currently
+    /// return a stub backend with conservative caps.
     pub allow_webgl2_fallback: bool,
 
     pub webgpu: WebGpuInitOptions,
@@ -14,6 +35,7 @@ pub struct BackendOptions {
 impl Default for BackendOptions {
     fn default() -> Self {
         Self {
+            requested_backend: RequestedBackend::Auto,
             allow_webgl2_fallback: true,
             webgpu: WebGpuInitOptions::default(),
         }
@@ -30,30 +52,38 @@ pub enum BackendKind {
 ///
 /// For now, the WebGL2 variant is a stub that only exposes negotiated capabilities.
 pub enum Backend {
-    WebGpu(WebGpuContext),
-    WebGl2(WebGl2Stub),
+    Wgpu(WebGpuContext),
+    WebGl2Stub(WebGl2Stub),
 }
 
 impl Backend {
     pub fn kind(&self) -> BackendKind {
         match self {
-            Backend::WebGpu(_) => BackendKind::WebGpu,
-            Backend::WebGl2(_) => BackendKind::WebGl2,
+            Backend::Wgpu(ctx) => ctx.kind(),
+            Backend::WebGl2Stub(_) => BackendKind::WebGl2,
         }
     }
 
     pub fn caps(&self) -> &BackendCaps {
         match self {
-            Backend::WebGpu(ctx) => ctx.caps(),
-            Backend::WebGl2(stub) => stub.caps(),
+            Backend::Wgpu(ctx) => ctx.caps(),
+            Backend::WebGl2Stub(stub) => stub.caps(),
         }
     }
 
     /// Acquire a backend without creating a presentation surface (headless).
     pub async fn request_headless(options: BackendOptions) -> Result<Self, BackendError> {
+        let allow_fallback = options.allow_webgl2_fallback
+            && matches!(options.requested_backend, RequestedBackend::Auto);
+        if matches!(options.requested_backend, RequestedBackend::WebGl2) {
+            return Ok(Backend::WebGl2Stub(WebGl2Stub::new(
+                "requested WebGL2 backend is not available in headless mode".to_string(),
+            )));
+        }
+
         match WebGpuContext::request_headless(options.webgpu.clone()).await {
-            Ok(ctx) => Ok(Backend::WebGpu(ctx)),
-            Err(err) if options.allow_webgl2_fallback => Ok(Backend::WebGl2(WebGl2Stub::new(err.to_string()))),
+            Ok(ctx) => Ok(Backend::Wgpu(ctx)),
+            Err(err) if allow_fallback => Ok(Backend::WebGl2Stub(WebGl2Stub::new(err.to_string()))),
             Err(err) => Err(err.into()),
         }
     }

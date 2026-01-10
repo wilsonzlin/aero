@@ -1,4 +1,4 @@
-use crate::{BackendCaps, WebGpuInitError};
+use crate::{BackendCaps, BackendKind, WebGpuInitError};
 
 /// WebGPU init options shared across headless and presentation paths.
 #[derive(Debug, Clone)]
@@ -22,8 +22,13 @@ impl Default for WebGpuInitOptions {
     }
 }
 
-/// A WebGPU adapter/device/queue bundle with negotiated capabilities.
+/// A `wgpu` adapter/device/queue bundle with negotiated capabilities.
+///
+/// On `wasm32`, this can represent either a WebGPU backend (`Backends::BROWSER_WEBGPU`)
+/// or a WebGL2 backend (`Backends::BROWSER_WEBGL`). Use [`WebGpuContext::kind`] to
+/// distinguish between them.
 pub struct WebGpuContext {
+    kind: BackendKind,
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
     device: wgpu::Device,
@@ -32,6 +37,10 @@ pub struct WebGpuContext {
 }
 
 impl WebGpuContext {
+    pub fn kind(&self) -> BackendKind {
+        self.kind
+    }
+
     pub fn instance(&self) -> &wgpu::Instance {
         &self.instance
     }
@@ -62,26 +71,32 @@ impl WebGpuContext {
             // is available.
             wgpu::Backends::PRIMARY
         };
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends, ..Default::default() });
-        Self::request_internal(instance, options, None).await
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends,
+            ..Default::default()
+        });
+        Self::request_internal(instance, BackendKind::WebGpu, options, None).await
     }
 
     pub(crate) async fn request_with_surface<'a>(
         instance: wgpu::Instance,
+        kind: BackendKind,
         options: WebGpuInitOptions,
         surface: &'a wgpu::Surface<'a>,
     ) -> Result<Self, WebGpuInitError> {
-        Self::request_internal(instance, options, Some(surface)).await
+        Self::request_internal(instance, kind, options, Some(surface)).await
     }
 
     async fn request_internal<'a>(
         instance: wgpu::Instance,
+        kind: BackendKind,
         options: WebGpuInitOptions,
         compatible_surface: Option<&'a wgpu::Surface<'a>>,
     ) -> Result<Self, WebGpuInitError> {
-        let adapter = request_adapter_robust(&instance, compatible_surface, options.power_preference)
-            .await
-            .ok_or(WebGpuInitError::NoAdapter)?;
+        let adapter =
+            request_adapter_robust(&instance, compatible_surface, options.power_preference)
+                .await
+                .ok_or(WebGpuInitError::NoAdapter)?;
 
         let requested_features = negotiated_features(&adapter);
         let requested_limits = negotiated_limits(&adapter, options.desired_max_buffer_size);
@@ -97,9 +112,10 @@ impl WebGpuContext {
             )
             .await?;
 
-        let caps = BackendCaps::from_webgpu(&device);
+        let caps = BackendCaps::from_wgpu(&device, kind);
 
         Ok(Self {
+            kind,
             instance,
             adapter,
             device,

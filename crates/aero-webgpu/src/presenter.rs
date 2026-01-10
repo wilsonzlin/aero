@@ -1,4 +1,10 @@
-use crate::{BackendCaps, BackendError, BackendKind, PresentError, WebGpuContext, WebGpuInitError, WebGpuInitOptions, WebGl2Stub};
+use crate::{
+    BackendCaps, BackendError, BackendKind, PresentError, WebGl2Stub, WebGpuContext,
+    WebGpuInitError, WebGpuInitOptions,
+};
+
+#[cfg(target_arch = "wasm32")]
+use crate::RequestedBackend;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FramebufferSize {
@@ -36,45 +42,49 @@ impl AspectMode {
     }
 }
 
-/// Presentation abstraction: a real WebGPU presenter, or a stub for WebGL2.
+/// Presentation abstraction: a `wgpu` presenter (WebGPU/WebGL2 backends) or a stub backend.
 pub enum FramebufferPresenter<'a> {
-    WebGpu(WebGpuFramebufferPresenter<'a>),
-    WebGl2(WebGl2Stub),
+    Wgpu(WebGpuFramebufferPresenter<'a>),
+    WebGl2Stub(WebGl2Stub),
 }
 
 impl<'a> FramebufferPresenter<'a> {
     pub fn kind(&self) -> BackendKind {
         match self {
-            FramebufferPresenter::WebGpu(_) => BackendKind::WebGpu,
-            FramebufferPresenter::WebGl2(_) => BackendKind::WebGl2,
+            FramebufferPresenter::Wgpu(p) => p.context.kind(),
+            FramebufferPresenter::WebGl2Stub(_) => BackendKind::WebGl2,
         }
     }
 
     pub fn caps(&self) -> &BackendCaps {
         match self {
-            FramebufferPresenter::WebGpu(p) => p.context.caps(),
-            FramebufferPresenter::WebGl2(stub) => stub.caps(),
+            FramebufferPresenter::Wgpu(p) => p.context.caps(),
+            FramebufferPresenter::WebGl2Stub(stub) => stub.caps(),
         }
     }
 
     pub fn resize(&mut self, new_size: FramebufferSize) -> Result<(), PresentError> {
         match self {
-            FramebufferPresenter::WebGpu(p) => p.resize(new_size),
-            FramebufferPresenter::WebGl2(_) => Ok(()),
+            FramebufferPresenter::Wgpu(p) => p.resize(new_size),
+            FramebufferPresenter::WebGl2Stub(_) => Ok(()),
         }
     }
 
     pub fn set_aspect_mode(&mut self, mode: AspectMode) {
         match self {
-            FramebufferPresenter::WebGpu(p) => p.set_aspect_mode(mode),
-            FramebufferPresenter::WebGl2(_) => {}
+            FramebufferPresenter::Wgpu(p) => p.set_aspect_mode(mode),
+            FramebufferPresenter::WebGl2Stub(_) => {}
         }
     }
 
-    pub fn present_rgba8(&mut self, pixels: &[u8], size: FramebufferSize) -> Result<(), PresentError> {
+    pub fn present_rgba8(
+        &mut self,
+        pixels: &[u8],
+        size: FramebufferSize,
+    ) -> Result<(), PresentError> {
         match self {
-            FramebufferPresenter::WebGpu(p) => p.present_rgba8(pixels, size),
-            FramebufferPresenter::WebGl2(_) => Err(PresentError::WebGl2NotImplemented),
+            FramebufferPresenter::Wgpu(p) => p.present_rgba8(pixels, size),
+            FramebufferPresenter::WebGl2Stub(_) => Err(PresentError::WebGl2NotImplemented),
         }
     }
 
@@ -85,14 +95,35 @@ impl<'a> FramebufferPresenter<'a> {
         surface_size: FramebufferSize,
         options: crate::BackendOptions,
     ) -> Result<Self, BackendError> {
-        match WebGpuFramebufferPresenter::new(instance, surface, surface_size, options.webgpu.clone()).await {
-            Ok(p) => Ok(FramebufferPresenter::WebGpu(p)),
-            Err(err) if options.allow_webgl2_fallback => Ok(FramebufferPresenter::WebGl2(WebGl2Stub::new(err.to_string()))),
-            Err(err) => Err(err.into()),
-        }
+        Self::new_with_surface_backend(
+            instance,
+            surface,
+            surface_size,
+            BackendKind::WebGpu,
+            options,
+        )
+        .await
     }
 
-    /// Create a presenter for a browser `<canvas>` using WebGPU, with a WebGL2 stub fallback.
+    async fn new_with_surface_backend(
+        instance: wgpu::Instance,
+        surface: wgpu::Surface<'a>,
+        surface_size: FramebufferSize,
+        backend_kind: BackendKind,
+        options: crate::BackendOptions,
+    ) -> Result<Self, BackendError> {
+        let presenter = WebGpuFramebufferPresenter::new(
+            instance,
+            surface,
+            surface_size,
+            backend_kind,
+            options.webgpu.clone(),
+        )
+        .await?;
+        Ok(FramebufferPresenter::Wgpu(presenter))
+    }
+
+    /// Create a presenter for a browser `<canvas>` using WebGPU, with a WebGL2 fallback.
     ///
     /// This is only available on `wasm32`, since it depends on `web-sys`.
     #[cfg(target_arch = "wasm32")]
@@ -100,17 +131,180 @@ impl<'a> FramebufferPresenter<'a> {
         canvas: web_sys::HtmlCanvasElement,
         options: crate::BackendOptions,
     ) -> Result<FramebufferPresenter<'static>, BackendError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::BROWSER_WEBGPU,
-            ..Default::default()
-        });
-        let surface = instance
-            .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
-            .map_err(|e| BackendError::WebGpu(WebGpuInitError::CreateSurface(format!("{e:?}"))))?;
-
         let size = FramebufferSize::new(canvas.width(), canvas.height()).clamped_for_surface();
-        FramebufferPresenter::new_with_surface(instance, surface, size, options).await
+        let requested = options.requested_backend;
+        let allow_fallback =
+            options.allow_webgl2_fallback && matches!(requested, RequestedBackend::Auto);
+
+        match requested {
+            RequestedBackend::WebGpu => {
+                try_presenter_for_html_canvas(
+                    canvas,
+                    size,
+                    BackendKind::WebGpu,
+                    wgpu::Backends::BROWSER_WEBGPU,
+                    options,
+                )
+                .await
+            }
+            RequestedBackend::WebGl2 => {
+                try_presenter_for_html_canvas(
+                    canvas,
+                    size,
+                    BackendKind::WebGl2,
+                    wgpu::Backends::BROWSER_WEBGL,
+                    options,
+                )
+                .await
+            }
+            RequestedBackend::Auto => {
+                match try_presenter_for_html_canvas(
+                    canvas.clone(),
+                    size,
+                    BackendKind::WebGpu,
+                    wgpu::Backends::BROWSER_WEBGPU,
+                    options.clone(),
+                )
+                .await
+                {
+                    Ok(p) => Ok(p),
+                    Err(webgpu_err) if allow_fallback => match try_presenter_for_html_canvas(
+                        canvas,
+                        size,
+                        BackendKind::WebGl2,
+                        wgpu::Backends::BROWSER_WEBGL,
+                        options,
+                    )
+                    .await
+                    {
+                        Ok(p) => Ok(p),
+                        Err(webgl_err) => Err(BackendError::NoUsableBackend {
+                            webgpu: webgpu_err.to_string(),
+                            webgl2: webgl_err.to_string(),
+                        }),
+                    },
+                    Err(err) => Err(err),
+                }
+            }
+        }
     }
+
+    /// Create a presenter for a browser `OffscreenCanvas`, with optional WebGL2 fallback.
+    ///
+    /// This is intended for GPU worker usage where the main thread transfers an
+    /// `HTMLCanvasElement` to a worker via `transferControlToOffscreen()`.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn new_for_offscreen_canvas(
+        canvas: web_sys::OffscreenCanvas,
+        options: crate::BackendOptions,
+    ) -> Result<FramebufferPresenter<'static>, BackendError> {
+        let size = FramebufferSize::new(canvas.width(), canvas.height()).clamped_for_surface();
+        let requested = options.requested_backend;
+        let allow_fallback =
+            options.allow_webgl2_fallback && matches!(requested, RequestedBackend::Auto);
+
+        match requested {
+            RequestedBackend::WebGpu => {
+                try_presenter_for_offscreen_canvas(
+                    canvas,
+                    size,
+                    BackendKind::WebGpu,
+                    wgpu::Backends::BROWSER_WEBGPU,
+                    options,
+                )
+                .await
+            }
+            RequestedBackend::WebGl2 => {
+                try_presenter_for_offscreen_canvas(
+                    canvas,
+                    size,
+                    BackendKind::WebGl2,
+                    wgpu::Backends::BROWSER_WEBGL,
+                    options,
+                )
+                .await
+            }
+            RequestedBackend::Auto => {
+                match try_presenter_for_offscreen_canvas(
+                    canvas.clone(),
+                    size,
+                    BackendKind::WebGpu,
+                    wgpu::Backends::BROWSER_WEBGPU,
+                    options.clone(),
+                )
+                .await
+                {
+                    Ok(p) => Ok(p),
+                    Err(webgpu_err) if allow_fallback => match try_presenter_for_offscreen_canvas(
+                        canvas,
+                        size,
+                        BackendKind::WebGl2,
+                        wgpu::Backends::BROWSER_WEBGL,
+                        options,
+                    )
+                    .await
+                    {
+                        Ok(p) => Ok(p),
+                        Err(webgl_err) => Err(BackendError::NoUsableBackend {
+                            webgpu: webgpu_err.to_string(),
+                            webgl2: webgl_err.to_string(),
+                        }),
+                    },
+                    Err(err) => Err(err),
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn try_presenter_for_html_canvas(
+    canvas: web_sys::HtmlCanvasElement,
+    surface_size: FramebufferSize,
+    backend_kind: BackendKind,
+    backends: wgpu::Backends,
+    options: crate::BackendOptions,
+) -> Result<FramebufferPresenter<'static>, BackendError> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends,
+        ..Default::default()
+    });
+    let surface = instance
+        .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
+        .map_err(|e| BackendError::WebGpu(WebGpuInitError::CreateSurface(format!("{e:?}"))))?;
+    FramebufferPresenter::new_with_surface_backend(
+        instance,
+        surface,
+        surface_size,
+        backend_kind,
+        options,
+    )
+    .await
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn try_presenter_for_offscreen_canvas(
+    canvas: web_sys::OffscreenCanvas,
+    surface_size: FramebufferSize,
+    backend_kind: BackendKind,
+    backends: wgpu::Backends,
+    options: crate::BackendOptions,
+) -> Result<FramebufferPresenter<'static>, BackendError> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends,
+        ..Default::default()
+    });
+    let surface = instance
+        .create_surface(wgpu::SurfaceTarget::OffscreenCanvas(canvas))
+        .map_err(|e| BackendError::WebGpu(WebGpuInitError::CreateSurface(format!("{e:?}"))))?;
+    FramebufferPresenter::new_with_surface_backend(
+        instance,
+        surface,
+        surface_size,
+        backend_kind,
+        options,
+    )
+    .await
 }
 
 struct SourceTexture {
@@ -145,11 +339,13 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
         instance: wgpu::Instance,
         surface: wgpu::Surface<'a>,
         surface_size: FramebufferSize,
+        backend_kind: BackendKind,
         options: WebGpuInitOptions,
     ) -> Result<Self, WebGpuInitError> {
         let surface_size = surface_size.clamped_for_surface();
 
-        let context = WebGpuContext::request_with_surface(instance, options, &surface).await?;
+        let context =
+            WebGpuContext::request_with_surface(instance, backend_kind, options, &surface).await?;
         let device = context.device();
         let adapter = context.adapter();
 
@@ -285,7 +481,11 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
         self.aspect_mode = mode;
     }
 
-    pub fn present_rgba8(&mut self, pixels: &[u8], size: FramebufferSize) -> Result<(), PresentError> {
+    pub fn present_rgba8(
+        &mut self,
+        pixels: &[u8],
+        size: FramebufferSize,
+    ) -> Result<(), PresentError> {
         if size.width == 0 || size.height == 0 {
             return Err(PresentError::InvalidFramebufferSize);
         }
@@ -363,16 +563,24 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
         let src = self.source.as_ref().expect("source texture must exist");
 
         let unpadded_bpr = size.width * 4;
-        let padded_bpr = padded_bytes_per_row(unpadded_bpr);
+        let needs_padding = (unpadded_bpr % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) != 0;
 
-        let padded_len = padded_bpr as usize * size.height as usize;
-        self.staging_rgba.resize(padded_len, 0);
+        let (src_bytes, bytes_per_row) = if !needs_padding {
+            (pixels, unpadded_bpr)
+        } else {
+            let padded_bpr = padded_bytes_per_row(unpadded_bpr);
+            let padded_len = padded_bpr as usize * size.height as usize;
+            self.staging_rgba.resize(padded_len, 0);
 
-        for y in 0..size.height as usize {
-            let src_row = &pixels[y * unpadded_bpr as usize..(y + 1) * unpadded_bpr as usize];
-            let dst_row = &mut self.staging_rgba[y * padded_bpr as usize..y * padded_bpr as usize + unpadded_bpr as usize];
-            dst_row.copy_from_slice(src_row);
-        }
+            for y in 0..size.height as usize {
+                let src_row = &pixels[y * unpadded_bpr as usize..(y + 1) * unpadded_bpr as usize];
+                let dst_row = &mut self.staging_rgba
+                    [y * padded_bpr as usize..y * padded_bpr as usize + unpadded_bpr as usize];
+                dst_row.copy_from_slice(src_row);
+            }
+
+            (&self.staging_rgba[..], padded_bpr)
+        };
 
         queue.write_texture(
             wgpu::ImageCopyTexture {
@@ -381,10 +589,10 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &self.staging_rgba,
+            src_bytes,
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(padded_bpr),
+                bytes_per_row: Some(bytes_per_row),
                 rows_per_image: Some(size.height),
             },
             wgpu::Extent3d {
@@ -395,7 +603,10 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
         );
 
         let uniforms = PresentUniforms {
-            output_size: [self.surface_size.width as f32, self.surface_size.height as f32],
+            output_size: [
+                self.surface_size.width as f32,
+                self.surface_size.height as f32,
+            ],
             input_size: [size.width as f32, size.height as f32],
             mode: self.aspect_mode.as_u32(),
             _pad: 0,
@@ -416,7 +627,9 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             }
             Err(e) => return Err(e.into()),
         };
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("aero framebuffer presenter encoder"),
@@ -439,7 +652,11 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             });
 
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.source.as_ref().expect("source must exist").bind_group, &[]);
+            pass.set_bind_group(
+                0,
+                &self.source.as_ref().expect("source must exist").bind_group,
+                &[],
+            );
             pass.draw(0..3, 0..1);
         }
 
@@ -451,7 +668,10 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
 
 fn preferred_surface_format(formats: &[wgpu::TextureFormat]) -> wgpu::TextureFormat {
     for &format in formats {
-        if matches!(format, wgpu::TextureFormat::Bgra8UnormSrgb | wgpu::TextureFormat::Rgba8UnormSrgb) {
+        if matches!(
+            format,
+            wgpu::TextureFormat::Bgra8UnormSrgb | wgpu::TextureFormat::Rgba8UnormSrgb
+        ) {
             return format;
         }
     }

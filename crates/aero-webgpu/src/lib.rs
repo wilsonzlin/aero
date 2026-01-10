@@ -12,15 +12,14 @@ mod error;
 mod presenter;
 mod resources;
 mod shader;
-mod webgpu;
 mod webgl2;
+mod webgpu;
 
-pub use backend::{Backend, BackendKind, BackendOptions};
+pub use backend::{Backend, BackendKind, BackendOptions, RequestedBackend};
 pub use caps::{BackendCaps, TextureCompressionCaps};
 pub use error::{BackendError, PresentError, WebGpuInitError};
 pub use presenter::{AspectMode, FramebufferPresenter, FramebufferSize};
 pub use resources::{GpuBufferAllocator, GpuTextureAllocator};
 pub use shader::ShaderLibrary;
-pub use webgpu::{WebGpuContext, WebGpuInitOptions};
 pub use webgl2::WebGl2Stub;
-
+pub use webgpu::{WebGpuContext, WebGpuInitOptions};

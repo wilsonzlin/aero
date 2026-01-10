@@ -28,11 +28,11 @@ pub struct BackendCaps {
 }
 
 impl BackendCaps {
-    pub(crate) fn from_webgpu(device: &wgpu::Device) -> Self {
+    pub(crate) fn from_wgpu(device: &wgpu::Device, kind: BackendKind) -> Self {
         let limits = device.limits();
         let features = device.features();
         Self {
-            kind: BackendKind::WebGpu,
+            kind,
             texture_compression: TextureCompressionCaps::from_features(features),
             max_buffer_size: limits.max_buffer_size,
             max_texture_dimension_2d: limits.max_texture_dimension_2d,

@@ -25,7 +25,12 @@ impl ShaderLibrary {
         self.sources.get(name).map(String::as_str)
     }
 
-    pub fn get_or_create(&mut self, device: &wgpu::Device, wgsl: &str, label: Option<&str>) -> &wgpu::ShaderModule {
+    pub fn get_or_create(
+        &mut self,
+        device: &wgpu::Device,
+        wgsl: &str,
+        label: Option<&str>,
+    ) -> &wgpu::ShaderModule {
         use std::hash::{Hash, Hasher};
 
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -40,4 +45,3 @@ impl ShaderLibrary {
         })
     }
 }
-

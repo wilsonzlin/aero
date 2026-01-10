@@ -2,13 +2,13 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum WebGpuInitError {
-    #[error("no compatible WebGPU adapter was found (adapter request returned None)")]
+    #[error("no compatible GPU adapter was found (adapter request returned None)")]
     NoAdapter,
 
-    #[error("requesting a WebGPU device failed: {0}")]
+    #[error("requesting a GPU device failed: {0}")]
     RequestDevice(#[from] wgpu::RequestDeviceError),
 
-    #[error("creating a WebGPU surface failed: {0}")]
+    #[error("creating a GPU surface failed: {0}")]
     CreateSurface(String),
 }
 
@@ -16,6 +16,9 @@ pub enum WebGpuInitError {
 pub enum BackendError {
     #[error(transparent)]
     WebGpu(#[from] WebGpuInitError),
+
+    #[error("failed to initialize a usable GPU backend (WebGPU error: {webgpu}; WebGL2 error: {webgl2})")]
+    NoUsableBackend { webgpu: String, webgl2: String },
 
     #[error("WebGL2 fallback was selected but is not implemented yet ({reason})")]
     WebGl2Stub { reason: String },
@@ -35,4 +38,3 @@ pub enum PresentError {
     #[error("WebGL2 presentation is not implemented yet")]
     WebGl2NotImplemented,
 }
-
