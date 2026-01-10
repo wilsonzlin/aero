@@ -35,6 +35,22 @@ This produces:
 
 Import the certificate into the target VM (Trusted Root + Trusted Publishers) before installing drivers.
 
+### Offline injection (WinPE / setup / first boot)
+
+If you need the signing chain trusted **before** driver load (e.g. WinPE / Windows Setup / first boot),
+inject the certificate into an **offline** Windows image by editing the offline `SOFTWARE` hive:
+
+```powershell
+cd tools\win-offline-cert-injector
+cargo build --release
+
+.\target\release\win-offline-cert-injector.exe `
+  --windows-dir X:\mount `
+  .\dist\certs\aero-virtio-test.cer
+```
+
+By default this injects into `ROOT` + `TrustedPublisher`. Use `--store` to override.
+
 ## Sign driver packages (catalogs)
 
 Signing typically targets the `.cat` file produced by `Inf2Cat`. The Windows Driver Kit (WDK) provides `signtool.exe`.
@@ -46,4 +62,3 @@ signtool sign /fd sha256 /a /f .\dist\certs\aero-virtio-test.pfx .\path\to\drive
 ```
 
 Automation for signing is intentionally not fully baked here because it depends on your WDK install path and build pipeline.
-

@@ -43,6 +43,26 @@ To patch those, mount the WIM (DISM on Windows, or `wimlib-imagex` cross-platfor
 
 ### Generate a concrete `.reg` for an offline SOFTWARE hive
 
+### Windows-native direct injection (recommended)
+
+On Windows you can inject certificates into an offline `SOFTWARE` hive **directly** using CryptoAPI
+(no `.reg` generation required):
+
+```powershell
+cd tools\win-offline-cert-injector
+cargo build --release
+
+.\target\release\win-offline-cert-injector.exe `
+  --hive X:\mount\Windows\System32\config\SOFTWARE `
+  .\path\to\aero.cer
+```
+
+Notes:
+- Default stores are `ROOT` + `TrustedPublisher`. Use `--store <STORE>` to override.
+- Use `--verify-only` to check whether a certificate is already present in the requested stores.
+
+### Generate a `.reg` patch (for reg.exe / hivexregedit workflows)
+
 To avoid guessing the registry representation, generate the `.reg` using CryptoAPI on Windows:
 
 ```powershell

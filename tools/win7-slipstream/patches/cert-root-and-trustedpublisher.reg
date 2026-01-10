@@ -12,9 +12,10 @@ Windows Registry Editor Version 5.00
 ;   __AERO_CERT_BLOB_HEX__ = the exact REG_BINARY `Blob` bytes as comma-separated hex.
 ;                           (Produced by CryptoAPI for the SystemCertificates registry store; not guaranteed to be raw DER.)
 ;
-; Recommended workflow:
-;   Use tools/win-certstore-regblob-export on Windows to generate an importable .reg
-;   with the exact `Blob` (and any other values) that CryptoAPI creates.
+; Recommended workflows:
+;   1) Windows-native: use tools/win-offline-cert-injector to inject into the offline hive directly.
+;   2) reg.exe / hivexregedit: use tools/win-certstore-regblob-export on Windows to generate an
+;      importable .reg with the exact `Blob` (and any other values) that CryptoAPI creates.
 ;
 ; Windows (offline hive via reg.exe):
 ;   reg load HKLM\OFFSOFT X:\path\to\Windows\System32\config\SOFTWARE
