@@ -11,6 +11,13 @@ export type PerfHudHandle = {
 const HUD_UPDATE_HZ = 5;
 const SPARKLINE_SAMPLES = 120;
 
+type PerfTraceApi = {
+  traceStart?: () => void;
+  traceStop?: () => void;
+  exportTrace?: () => unknown;
+  traceEnabled?: boolean;
+};
+
 const formatMs = (ms: number | undefined): string => {
   if (ms === undefined || !Number.isFinite(ms)) return '-';
   return `${ms.toFixed(2)} ms`;
@@ -124,6 +131,8 @@ const drawSparkline = (
 };
 
 export const installHud = (perf: PerfApi): PerfHudHandle => {
+  const traceApi: PerfTraceApi = perf as unknown as PerfTraceApi;
+
   const devMenu = (() => {
     let existing = document.querySelector<HTMLDivElement>('#aero-dev-menu');
     if (existing) return existing;
@@ -164,6 +173,23 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
   const downloadBtn = document.createElement('button');
   downloadBtn.type = 'button';
   downloadBtn.textContent = 'Download';
+
+  const traceToggleBtn = document.createElement('button');
+  traceToggleBtn.type = 'button';
+  traceToggleBtn.textContent = 'Trace';
+
+  const traceDownloadBtn = document.createElement('button');
+  traceDownloadBtn.type = 'button';
+  traceDownloadBtn.textContent = 'Trace JSON';
+
+  const hasTraceApi =
+    typeof traceApi.traceStart === 'function' &&
+    typeof traceApi.traceStop === 'function' &&
+    typeof traceApi.exportTrace === 'function';
+
+  if (hasTraceApi) {
+    controls.append(traceToggleBtn, traceDownloadBtn);
+  }
 
   controls.append(captureBtn, resetBtn, downloadBtn);
   header.append(title, controls);
@@ -257,6 +283,7 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
   };
 
   let captureActive = false;
+  let traceActive = false;
   let updateTimer: number | null = null;
 
   const update = () => {
@@ -377,6 +404,11 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
     captureActive = snapshot.capture.active;
     setText(captureBtn, captureActive ? 'Stop' : 'Start');
 
+    if (hasTraceApi) {
+      traceActive = traceApi.traceEnabled === true;
+      setText(traceToggleBtn, traceActive ? 'Trace Stop' : 'Trace Start');
+    }
+
     const ftSample = snapshot.lastFrameTimeMs ?? snapshot.frameTimeAvgMs ?? Number.NaN;
     const mipsSample = snapshot.lastMips ?? snapshot.mipsAvg ?? Number.NaN;
     const memSample =
@@ -469,6 +501,28 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
     a.remove();
     URL.revokeObjectURL(url);
   });
+
+  if (hasTraceApi) {
+    traceToggleBtn.addEventListener('click', () => {
+      if (traceActive) traceApi.traceStop?.();
+      else traceApi.traceStart?.();
+      update();
+    });
+
+    traceDownloadBtn.addEventListener('click', () => {
+      const data = traceApi.exportTrace?.();
+      const json = JSON.stringify(data);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `aero-trace-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    });
+  }
 
   return { show, hide, toggle };
 };
