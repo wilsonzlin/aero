@@ -17,6 +17,12 @@ cd services/image-gateway
 npm install
 ```
 
+Copy `.env.example` to `.env` and fill in values:
+
+```bash
+cp .env.example .env
+```
+
 ### Environment variables
 
 Required:
@@ -46,6 +52,21 @@ Useful optional knobs:
 - `CLOUDFRONT_AUTH_MODE=cookie|url` (default `cookie`)
 - `CLOUDFRONT_COOKIE_DOMAIN` (optional; e.g. `.example.com` when API runs on `api.example.com` and CloudFront on `images.example.com`)
 - `CORS_ALLOW_ORIGIN` (default `*`, used by the range-proxy fallback endpoint)
+- `MULTIPART_PART_SIZE_BYTES` (default `67108864` / 64MiB; must be 5MiB–5GiB)
+
+### Local MinIO (optional)
+
+For local development without AWS, you can run MinIO:
+
+```bash
+docker compose -f docker-compose.minio.yml up
+```
+
+Then set:
+
+- `S3_ENDPOINT=http://127.0.0.1:9000`
+- `S3_FORCE_PATH_STYLE=true`
+- `S3_BUCKET=aero-images` (or change the bucket name in `.env` and in `docker-compose.minio.yml`)
 
 ### Run
 
@@ -148,4 +169,3 @@ CloudFront must be configured to:
 
 - allow `Range` requests (forward the `Range` header to S3)
 - return `206 Partial Content` responses for ranged reads
-

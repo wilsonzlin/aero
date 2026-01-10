@@ -6,7 +6,6 @@ export interface RangeProxyResponse {
 }
 
 export function buildRangeProxyResponse(params: {
-  requestedRange?: string;
   s3: Pick<
     GetObjectCommandOutput,
     "ContentLength" | "ContentRange" | "ETag" | "LastModified" | "ContentType"
@@ -26,19 +25,13 @@ export function buildRangeProxyResponse(params: {
     headers["last-modified"] = params.s3.LastModified.toUTCString();
   }
 
-  if (params.requestedRange) {
-    if (params.s3.ContentRange) {
-      headers["content-range"] = params.s3.ContentRange;
-    }
-    if (typeof params.s3.ContentLength === "number") {
-      headers["content-length"] = String(params.s3.ContentLength);
-    }
-    return { statusCode: 206, headers };
+  const isPartial = Boolean(params.s3.ContentRange);
+  if (params.s3.ContentRange) {
+    headers["content-range"] = params.s3.ContentRange;
   }
 
   if (typeof params.s3.ContentLength === "number") {
     headers["content-length"] = String(params.s3.ContentLength);
   }
-  return { statusCode: 200, headers };
+  return { statusCode: isPartial ? 206 : 200, headers };
 }
-

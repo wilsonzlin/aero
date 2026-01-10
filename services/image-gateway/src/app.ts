@@ -2,6 +2,7 @@ import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
   GetObjectCommand,
+  type GetObjectCommandOutput,
   HeadObjectCommand,
   UploadPartCommand,
   type S3Client,
@@ -330,16 +331,22 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
   });
 
   app.options("/v1/images/:imageId/range", async (_req, reply) => {
-    reply
-      .header("access-control-allow-origin", deps.config.corsAllowOrigin)
+    const allowOrigin = deps.config.corsAllowOrigin;
+
+    const res = reply
+      .header("access-control-allow-origin", allowOrigin)
       .header("access-control-allow-methods", "GET,OPTIONS")
       .header(
         "access-control-allow-headers",
-        "range,content-type,x-user-id"
+        "range,if-range,content-type,x-user-id"
       )
-      .header("access-control-max-age", "86400")
-      .status(204)
-      .send();
+      .header("access-control-max-age", "86400");
+
+    if (allowOrigin !== "*") {
+      res.header("access-control-allow-credentials", "true").header("vary", "origin");
+    }
+
+    res.status(204).send();
   });
 
   app.get("/v1/images/:imageId/range", async (req, reply) => {
@@ -348,34 +355,59 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
     const record = requireImage(deps.store, imageId);
     assertOwner(record, callerUserId);
 
+    if (record.status !== "complete") {
+      throw new ApiError(409, "Image is not complete", "INVALID_STATE");
+    }
+
     const requestedRange = typeof req.headers.range === "string" ? req.headers.range : undefined;
 
-    const s3Res = await deps.s3.send(
-      new GetObjectCommand({
-        Bucket: deps.config.s3Bucket,
-        Key: record.s3Key,
-        Range: requestedRange,
-      })
-    );
+    let s3Res: GetObjectCommandOutput;
+    try {
+      s3Res = await deps.s3.send(
+        new GetObjectCommand({
+          Bucket: deps.config.s3Bucket,
+          Key: record.s3Key,
+          Range: requestedRange,
+        })
+      );
+    } catch (err) {
+      const maybeStatus = (
+        err as Partial<{ $metadata?: { httpStatusCode?: unknown } }>
+      ).$metadata?.httpStatusCode;
+      if (typeof maybeStatus === "number") {
+        if (maybeStatus === 416) {
+          throw new ApiError(416, "Requested Range Not Satisfiable", "INVALID_RANGE");
+        }
+        if (maybeStatus === 404) {
+          throw new ApiError(404, "Image object not found", "NOT_FOUND");
+        }
+        if (maybeStatus >= 400 && maybeStatus < 500) {
+          throw new ApiError(maybeStatus, "S3 request rejected", "S3_ERROR");
+        }
+      }
+      throw err;
+    }
 
     if (!s3Res.Body) {
       throw new ApiError(502, "S3 did not return a response body", "S3_ERROR");
     }
 
-    const proxy = buildRangeProxyResponse({
-      requestedRange,
-      s3: s3Res,
-    });
+    const proxy = buildRangeProxyResponse({ s3: s3Res });
+
+    const allowOrigin = deps.config.corsAllowOrigin;
 
     reply
       .status(proxy.statusCode)
       .headers(proxy.headers)
-      .header("access-control-allow-origin", deps.config.corsAllowOrigin)
-      .header("access-control-allow-credentials", "true")
+      .header("access-control-allow-origin", allowOrigin)
       .header(
         "access-control-expose-headers",
         "accept-ranges,content-range,content-length,etag,last-modified"
       );
+
+    if (allowOrigin !== "*") {
+      reply.header("access-control-allow-credentials", "true").header("vary", "origin");
+    }
 
     return reply.send(s3Res.Body);
   });

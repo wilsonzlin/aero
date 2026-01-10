@@ -6,7 +6,6 @@ describe("range proxy", () => {
   it("returns 206 headers for a ranged response", () => {
     const lastModified = new Date("2020-01-01T00:00:00.000Z");
     const res = buildRangeProxyResponse({
-      requestedRange: "bytes=0-9",
       s3: {
         ContentRange: "bytes 0-9/100",
         ContentLength: 10,
@@ -38,5 +37,16 @@ describe("range proxy", () => {
     expect(res.headers["content-length"]).toBe("100");
     expect(res.headers).not.toHaveProperty("content-range");
   });
-});
 
+  it("emits 206 when Content-Range exists even if Content-Length is missing", () => {
+    const res = buildRangeProxyResponse({
+      s3: {
+        ContentRange: "bytes 0-99/100",
+      },
+    });
+
+    expect(res.statusCode).toBe(206);
+    expect(res.headers["content-range"]).toBe("bytes 0-99/100");
+    expect(res.headers).not.toHaveProperty("content-length");
+  });
+});

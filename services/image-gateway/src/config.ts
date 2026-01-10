@@ -89,6 +89,17 @@ export function loadConfig(): Config {
     ? loadPem(cloudfrontPrivateKeyRaw)
     : undefined;
 
+  const partSizeBytes = parseIntEnv(
+    "MULTIPART_PART_SIZE_BYTES",
+    64 * 1024 * 1024
+  );
+  // S3 constraints: parts must be at least 5MiB (except the last part), and at most 5GiB.
+  if (partSizeBytes < 5 * 1024 * 1024 || partSizeBytes > 5 * 1024 * 1024 * 1024) {
+    throw new Error(
+      "MULTIPART_PART_SIZE_BYTES must be between 5MiB and 5GiB (inclusive)"
+    );
+  }
+
   return {
     s3Bucket: requireEnv("S3_BUCKET"),
     awsRegion: requireEnv("AWS_REGION"),
@@ -107,7 +118,7 @@ export function loadConfig(): Config {
 
     imageBasePath: normalizeBasePath(process.env.IMAGE_BASE_PATH ?? "/images"),
     // 64MiB: a reasonable default for large disk images (and well above S3's 5MiB minimum).
-    partSizeBytes: parseIntEnv("MULTIPART_PART_SIZE_BYTES", 64 * 1024 * 1024),
+    partSizeBytes,
 
     authMode,
     port: parseIntEnv("PORT", 3000),
@@ -119,4 +130,3 @@ export function imageBasePathToPrefix(imageBasePath: string): string {
   // "/images" -> "images"
   return imageBasePath.replace(/^\//, "");
 }
-
