@@ -3,7 +3,7 @@ import { buildServer } from './server.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const { app, markShuttingDown } = buildServer(config);
+  const { app, markShuttingDown, closeUpgradeSockets } = buildServer(config);
 
   let forceExitTimer: NodeJS.Timeout | null = null;
 
@@ -18,7 +18,13 @@ async function main(): Promise<void> {
     forceExitTimer.unref();
 
     try {
-      await app.close();
+      // `fastify.close()` waits for the underlying HTTP server to close, which in turn
+      // can be blocked by long-lived upgrade sockets. We explicitly destroy those to
+      // ensure shutdown completes within the grace window.
+      const closePromise = app.close();
+      app.server.closeIdleConnections?.();
+      closeUpgradeSockets();
+      await closePromise;
       process.exit(0);
     } catch (err) {
       app.log.error({ err }, 'Error during shutdown');

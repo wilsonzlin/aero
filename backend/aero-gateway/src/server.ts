@@ -21,6 +21,7 @@ import { getVersionInfo } from './version.js';
 type ServerBundle = {
   app: FastifyInstance;
   markShuttingDown: () => void;
+  closeUpgradeSockets: () => void;
 };
 
 function findFrontendDistDir(): string | null {
@@ -76,6 +77,7 @@ function httpStatusText(status: number): string {
 
 export function buildServer(config: Config): ServerBundle {
   let shuttingDown = false;
+  const upgradeSockets = new Set<Duplex>();
 
   const app = fastify({
     trustProxy: config.TRUST_PROXY,
@@ -136,6 +138,9 @@ export function buildServer(config: Config): ServerBundle {
   // WebSocket upgrade endpoints (/tcp and /tcp-mux) are handled at the Node HTTP
   // server layer (Fastify does not natively handle arbitrary upgrade routing).
   app.server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
+    upgradeSockets.add(socket);
+    socket.once('close', () => upgradeSockets.delete(socket));
+
     if (shuttingDown) {
       respondUpgradeHttp(socket, 503, 'Shutting down');
       return;
@@ -174,7 +179,6 @@ export function buildServer(config: Config): ServerBundle {
 
     respondUpgradeHttp(socket, 404, 'Not Found');
   });
-
   setupDohRoutes(app, config, metrics.dns);
 
   if (process.env.AERO_GATEWAY_E2E === '1') {
@@ -200,6 +204,9 @@ export function buildServer(config: Config): ServerBundle {
     app,
     markShuttingDown: () => {
       shuttingDown = true;
+    },
+    closeUpgradeSockets: () => {
+      for (const socket of upgradeSockets) socket.destroy();
     },
   };
 }
