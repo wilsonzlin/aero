@@ -199,7 +199,7 @@ async function initializeMemory() {
         guestU32: new Uint32Array(guestMemory.buffer),
         stateI32: new Int32Array(stateSab),
         cmdI32: new Int32Array(cmdSab),
-        eventU8: new Uint8Array(eventSab),
+        eventI32: new Int32Array(eventSab), // ring head/tail + data slots
     };
     
     return { guestMemory, stateSab, cmdSab, eventSab, views };

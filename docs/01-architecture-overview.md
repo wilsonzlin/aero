@@ -317,6 +317,21 @@ Browsers cannot reliably allocate a single 5+GiB `SharedArrayBuffer`, and wasm32
 
 This avoids >4GiB offsets entirely: each buffer is independently addressable and can be sized/failed independently.
 
+#### Ring buffer layout (`cmdSab` / `eventSab`)
+
+Command/event buffers use an SPSC ring per producer/consumer pair. The minimal, implementation-ready layout is:
+
+| Offset | Type | Name | Notes |
+|--------|------|------|------|
+| `0x0000` | `Int32` | `head` | Write cursor (atomic). Producer updates after writing data. |
+| `0x0004` | `Int32` | `tail` | Read cursor (atomic). Consumer updates after reading data. |
+| `0x0008` | `Int32[]` | `data` | Ring storage. Length is a power of two. |
+
+Consumers sleep on `head` changes:
+
+- **Worker consumers** use `Atomics.wait(head)` (blocking, efficient).
+- **Main-thread consumers** use `Atomics.waitAsync(head)` (or polling fallback).
+
 ### Synchronization Primitives
 
 ```typescript

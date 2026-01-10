@@ -1,11 +1,11 @@
 import {
-  CMD,
   DEFAULT_GUEST_RAM_MIB,
   GUEST_RAM_PRESETS,
+  PROTOCOL,
+  RingBufferI32,
   createAeroMemoryModel,
   describeBytes,
   stringifyError,
-  waitForStateChangeAsync,
 } from "./memory-model.js";
 
 const ramSelect = /** @type {HTMLSelectElement} */ (document.getElementById("ram"));
@@ -38,6 +38,10 @@ log(`Atomics.waitAsync: ${typeof Atomics?.waitAsync === "function" ? "available"
 let model = null;
 /** @type {Worker | null} */
 let worker = null;
+/** @type {RingBufferI32 | null} */
+let cmdRing = null;
+/** @type {RingBufferI32 | null} */
+let eventRing = null;
 
 startBtn.addEventListener("click", async () => {
   clearLog();
@@ -47,6 +51,8 @@ startBtn.addEventListener("click", async () => {
 
   try {
     model = createAeroMemoryModel({ guestRamMiB });
+    cmdRing = new RingBufferI32(model.views.cmdI32);
+    eventRing = new RingBufferI32(model.views.eventI32);
   } catch (err) {
     log(`ERROR: ${stringifyError(err)}`);
     log("");
@@ -58,10 +64,13 @@ startBtn.addEventListener("click", async () => {
 
   log("Allocation OK.");
   log(`- guestMemory: ${describeBytes(model.config.guestRamBytes)} (${model.config.guestPages} wasm pages)`);
+  log(`- guestMemory.buffer is SharedArrayBuffer: ${model.guestMemory.buffer instanceof SharedArrayBuffer}`);
   log(`- stateSab: ${describeBytes(model.config.stateSabBytes)}`);
   log(`- cmdSab: ${describeBytes(model.config.cmdSabBytes)}`);
   log(`- eventSab: ${describeBytes(model.config.eventSabBytes)}`);
+  log(`- ringCapacityI32: ${model.config.ringCapacityI32} (MSG_I32=${PROTOCOL.MSG_I32})`);
 
+  if (worker) worker.terminate();
   worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
   worker.onmessage = (ev) => {
     const msg = ev.data;
@@ -87,35 +96,39 @@ startBtn.addEventListener("click", async () => {
 });
 
 runBtn.addEventListener("click", async () => {
-  if (!model) return;
+  if (!model || !cmdRing || !eventRing) return;
 
-  const { guestU32, cmdI32 } = model.views;
+  const { guestU32 } = model.views;
 
   // Put a value in guest RAM that the worker will mutate.
   guestU32[0] = 41;
   log(`main: wrote guestU32[0] = ${guestU32[0]}`);
 
-  Atomics.store(cmdI32, CMD.I_OPCODE, CMD.OP_INC32_AT_OFFSET);
-  Atomics.store(cmdI32, CMD.I_ARG0, 0); // byte offset
-  Atomics.store(cmdI32, CMD.I_STATE, CMD.STATE_REQUEST);
-  Atomics.notify(cmdI32, CMD.I_STATE, 1);
-
-  const status = await waitForStateChangeAsync(cmdI32, CMD.I_STATE, CMD.STATE_REQUEST, 2000);
-  const stateAfter = Atomics.load(cmdI32, CMD.I_STATE);
-  log(`main: wait status = ${status}, cmd state = ${stateAfter}`);
-
-  if (stateAfter !== CMD.STATE_RESPONSE) {
-    log("main: ERROR: expected worker response (STATE_RESPONSE).");
+  // Command message: [opcode, a0(byteOffset), a1, a2]
+  if (!cmdRing.pushMessage([PROTOCOL.OP_INC32_AT_OFFSET, 0, 0, 0])) {
+    log("main: ERROR: cmd ring is full");
     return;
   }
+  cmdRing.notifyData();
 
-  const result = Atomics.load(cmdI32, CMD.I_RESULT0);
-  const errCode = Atomics.load(cmdI32, CMD.I_ERROR);
-  log(`main: worker result = ${result}, error = ${errCode}`);
+  // Wait for a response event.
+  /** @type {number[] | null} */
+  let evt = null;
+  const timeoutMs = 2000;
+  const start = performance.now();
+  while (evt === null) {
+    evt = eventRing.popMessage();
+    if (evt) break;
+
+    const remaining = Math.max(0, timeoutMs - (performance.now() - start));
+    const status = await eventRing.waitForDataAsync(remaining);
+    if (status === "timed-out") {
+      log("main: ERROR: timed out waiting for worker event");
+      return;
+    }
+  }
+
+  const [opcode, result0, error] = evt;
+  log(`main: got event opcode=${opcode}, result0=${result0}, error=${error}`);
   log(`main: after worker ran, guestU32[0] = ${guestU32[0]}`);
-
-  // Reset to idle so the worker can wait for the next command.
-  Atomics.store(cmdI32, CMD.I_STATE, CMD.STATE_IDLE);
-  Atomics.notify(cmdI32, CMD.I_STATE, 1);
 });
-

@@ -9,22 +9,124 @@ export const GUEST_RAM_PRESETS = Object.freeze([
 
 export const DEFAULT_GUEST_RAM_MIB = 1024;
 
-export const CMD = Object.freeze({
-  // Int32 indices inside `cmdI32`.
-  I_STATE: 0,
-  I_OPCODE: 1,
-  I_ARG0: 2,
-  I_RESULT0: 3,
-  I_ERROR: 4,
+export const PROTOCOL = Object.freeze({
+  // Fixed-size messages so the ring buffer can be SPSC and trivial.
+  // Layout: [opcode, a0, a1, a2]
+  MSG_I32: 4,
 
-  // States for `I_STATE`.
-  STATE_IDLE: 0,
-  STATE_REQUEST: 1,
-  STATE_RESPONSE: 2,
-
-  // Opcodes for `I_OPCODE`.
+  // Opcodes.
   OP_INC32_AT_OFFSET: 1,
 });
+
+export const RING_I32 = Object.freeze({
+  I_HEAD: 0,
+  I_TAIL: 1,
+  I_DATA: 2,
+});
+
+function isPowerOfTwo(n) {
+  return n > 0 && (n & (n - 1)) === 0;
+}
+
+export class RingBufferI32 {
+  /** @param {Int32Array} backing */
+  constructor(backing) {
+    this.backing = backing;
+    this.capacityI32 = backing.length - RING_I32.I_DATA;
+    if (this.capacityI32 <= 0) {
+      throw new Error("RingBufferI32 backing array is too small.");
+    }
+    if (!isPowerOfTwo(this.capacityI32)) {
+      throw new Error(`RingBufferI32 capacity must be a power of two, got ${this.capacityI32}.`);
+    }
+    if (this.capacityI32 % PROTOCOL.MSG_I32 !== 0) {
+      throw new Error(
+        `RingBufferI32 capacity (${this.capacityI32}) must be a multiple of MSG_I32 (${PROTOCOL.MSG_I32}).`,
+      );
+    }
+    this.mask = this.capacityI32 - 1;
+  }
+
+  /** @returns {number} */
+  head() {
+    return Atomics.load(this.backing, RING_I32.I_HEAD) >>> 0;
+  }
+
+  /** @returns {number} */
+  tail() {
+    return Atomics.load(this.backing, RING_I32.I_TAIL) >>> 0;
+  }
+
+  /** @returns {number} */
+  availableI32() {
+    return (this.head() - this.tail()) >>> 0;
+  }
+
+  /** @returns {number} */
+  freeI32() {
+    return this.capacityI32 - this.availableI32();
+  }
+
+  /** @param {number[]} msg */
+  pushMessage(msg) {
+    if (msg.length !== PROTOCOL.MSG_I32) {
+      throw new Error(`pushMessage expected MSG_I32=${PROTOCOL.MSG_I32}, got ${msg.length}`);
+    }
+
+    const head = this.head();
+    const tail = this.tail();
+    const used = (head - tail) >>> 0;
+    const free = this.capacityI32 - used;
+    if (free < PROTOCOL.MSG_I32) return false;
+
+    for (let i = 0; i < PROTOCOL.MSG_I32; i++) {
+      const pos = (head + i) & this.mask;
+      this.backing[RING_I32.I_DATA + pos] = msg[i] | 0;
+    }
+
+    Atomics.store(this.backing, RING_I32.I_HEAD, (head + PROTOCOL.MSG_I32) >>> 0);
+    return true;
+  }
+
+  popMessage() {
+    const head = this.head();
+    const tail = this.tail();
+    const available = (head - tail) >>> 0;
+    if (available < PROTOCOL.MSG_I32) return null;
+
+    /** @type {number[]} */
+    const msg = new Array(PROTOCOL.MSG_I32);
+    for (let i = 0; i < PROTOCOL.MSG_I32; i++) {
+      const pos = (tail + i) & this.mask;
+      msg[i] = this.backing[RING_I32.I_DATA + pos] | 0;
+    }
+
+    Atomics.store(this.backing, RING_I32.I_TAIL, (tail + PROTOCOL.MSG_I32) >>> 0);
+    return msg;
+  }
+
+  /**
+   * Wait until new data is available. Only valid in workers (main thread cannot
+   * use Atomics.wait).
+   */
+  waitForDataBlocking(timeoutMs) {
+    const head = this.head();
+    return Atomics.wait(this.backing, RING_I32.I_HEAD, head, timeoutMs);
+  }
+
+  /**
+   * Wait until new data is available. Uses Atomics.waitAsync where available,
+   * otherwise falls back to polling.
+   */
+  async waitForDataAsync(timeoutMs) {
+    const head = this.head();
+    return await waitForStateChangeAsync(this.backing, RING_I32.I_HEAD, head, timeoutMs);
+  }
+
+  notifyData() {
+    Atomics.notify(this.backing, RING_I32.I_HEAD, 1);
+  }
+}
 
 export function mibToBytes(mib) {
   return mib * 1024 * 1024;
@@ -37,8 +139,10 @@ export function bytesToWasmPages(bytes) {
 export function describeBytes(bytes) {
   const gib = 1024 * 1024 * 1024;
   const mib = 1024 * 1024;
+  const kib = 1024;
   if (bytes % gib === 0) return `${bytes / gib} GiB`;
   if (bytes % mib === 0) return `${bytes / mib} MiB`;
+  if (bytes % kib === 0) return `${bytes / kib} KiB`;
   return `${bytes} B`;
 }
 
@@ -109,12 +213,21 @@ export function createAeroMemoryModel(config) {
 
   // Small, separate SABs so we never rely on >4GiB offsets.
   const stateSabBytes = 64 * 1024;
-  const cmdSabBytes = 64 * 1024;
-  const eventSabBytes = 64 * 1024;
+  const ringCapacityI32 = config.ringCapacityI32 ?? 16384; // Must be a power of two.
+  if (!isPowerOfTwo(ringCapacityI32)) {
+    throw new Error(`ringCapacityI32 must be a power of two, got ${ringCapacityI32}`);
+  }
+  const cmdSabBytes = (RING_I32.I_DATA + ringCapacityI32) * 4;
+  const eventSabBytes = (RING_I32.I_DATA + ringCapacityI32) * 4;
 
   /** @type {WebAssembly.Memory} */
   let guestMemory;
   try {
+    if (guestPages > 65536) {
+      throw new Error(
+        `Requested guest RAM exceeds wasm32 address space: ${describeBytes(guestRamBytes)} (${guestPages} pages)`,
+      );
+    }
     guestMemory = new WebAssembly.Memory({
       initial: guestPages,
       maximum: guestPages,
@@ -136,14 +249,13 @@ export function createAeroMemoryModel(config) {
 
   const stateI32 = new Int32Array(stateSab);
   const cmdI32 = new Int32Array(cmdSab);
-  const eventU8 = new Uint8Array(eventSab);
+  const eventI32 = new Int32Array(eventSab);
 
-  // Defensive init: ensure cmd starts idle.
-  Atomics.store(cmdI32, CMD.I_STATE, CMD.STATE_IDLE);
-  Atomics.store(cmdI32, CMD.I_OPCODE, 0);
-  Atomics.store(cmdI32, CMD.I_ARG0, 0);
-  Atomics.store(cmdI32, CMD.I_RESULT0, 0);
-  Atomics.store(cmdI32, CMD.I_ERROR, 0);
+  // Defensive init: clear ring heads/tails (SAB is zeroed, but be explicit).
+  Atomics.store(cmdI32, RING_I32.I_HEAD, 0);
+  Atomics.store(cmdI32, RING_I32.I_TAIL, 0);
+  Atomics.store(eventI32, RING_I32.I_HEAD, 0);
+  Atomics.store(eventI32, RING_I32.I_TAIL, 0);
 
   return {
     config: {
@@ -153,6 +265,7 @@ export function createAeroMemoryModel(config) {
       stateSabBytes,
       cmdSabBytes,
       eventSabBytes,
+      ringCapacityI32,
     },
     guestMemory,
     stateSab,
@@ -163,7 +276,7 @@ export function createAeroMemoryModel(config) {
       guestU32,
       stateI32,
       cmdI32,
-      eventU8,
+      eventI32,
     },
   };
 }
@@ -192,4 +305,3 @@ export function stringifyError(err) {
     return "<unprintable>";
   }
 }
-
