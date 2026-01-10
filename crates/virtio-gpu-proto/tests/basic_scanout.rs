@@ -55,15 +55,18 @@ fn push_rect(out: &mut Vec<u8>, r: Rect) {
 #[test]
 fn basic_2d_scanout_roundtrip() {
     let mut dev = VirtioGpuDevice::new(4, 4);
-    let mut mem = VecGuestMem::new(0x1000, 0x1000);
+    let mut mem = VecGuestMem::new(0x1000, 0x2000);
 
-    // Fill a 4x4 BGRA test pattern in guest memory at 0x1000.
+    // Fill a 4x4 BGRA test pattern in guest memory split across two backing entries:
+    // - entry0: 0x1000..0x101f (first 8 pixels)
+    // - entry1: 0x2000..0x201f (last 8 pixels)
     // Pixel i = (b=i, g=0x80, r=0x40, a=0xff).
     let mut pixels = Vec::new();
     for i in 0u8..16 {
         pixels.extend_from_slice(&[i, 0x80, 0x40, 0xff]);
     }
-    mem.write(0x1000, &pixels);
+    mem.write(0x1000, &pixels[..32]);
+    mem.write(0x2000, &pixels[32..]);
 
     // GET_DISPLAY_INFO (sanity).
     let req = hdr(VIRTIO_GPU_CMD_GET_DISPLAY_INFO);
@@ -78,12 +81,17 @@ fn basic_2d_scanout_roundtrip() {
     write_u32_le(&mut req, 4);
     dev.process_control_command(&req, &mem).unwrap();
 
-    // RESOURCE_ATTACH_BACKING (single entry)
+    // RESOURCE_ATTACH_BACKING (two entries)
     let mut req = hdr(VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING);
     write_u32_le(&mut req, 1); // resource_id
-    write_u32_le(&mut req, 1); // nr_entries
+    write_u32_le(&mut req, 2); // nr_entries
+    // entry 0
     write_u64_le(&mut req, 0x1000); // addr
-    write_u32_le(&mut req, 64); // len
+    write_u32_le(&mut req, 32); // len
+    write_u32_le(&mut req, 0); // padding
+    // entry 1
+    write_u64_le(&mut req, 0x2000); // addr
+    write_u32_le(&mut req, 32); // len
     write_u32_le(&mut req, 0); // padding
     dev.process_control_command(&req, &mem).unwrap();
 
@@ -110,5 +118,48 @@ fn basic_2d_scanout_roundtrip() {
     dev.process_control_command(&req, &mem).unwrap();
 
     assert_eq!(dev.scanout_bgra(), pixels.as_slice());
-}
 
+    // Now update a 2x2 rect at (1,1) in guest memory and do a partial transfer+flush.
+    // This exercises:
+    // - backing offset handling (offset != 0)
+    // - reading across backing entries (second row crosses entry boundary)
+    let rect = Rect::new(1, 1, 2, 2);
+    let stride = 4usize * 4usize;
+    let bpp = 4usize;
+    let offset = (rect.y as usize * stride + rect.x as usize * bpp) as u64;
+
+    // Overwrite those 4 pixels with a distinctive pattern (BGRA = 0xaa,0xbb,0xcc,0xff).
+    let new_px = [0xaa, 0xbb, 0xcc, 0xff];
+    let mut expected = pixels.clone();
+    for dy in 0..rect.height as usize {
+        for dx in 0..rect.width as usize {
+            let x = rect.x as usize + dx;
+            let y = rect.y as usize + dy;
+            let pixel_index = y * 4 + x;
+            expected[pixel_index * 4..pixel_index * 4 + 4].copy_from_slice(&new_px);
+
+            let backing_off = y * stride + x * bpp;
+            let (addr_base, entry_off) = if backing_off < 32 {
+                (0x1000u64, backing_off)
+            } else {
+                (0x2000u64, backing_off - 32)
+            };
+            mem.write(addr_base + entry_off as u64, &new_px);
+        }
+    }
+
+    let mut req = hdr(VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D);
+    push_rect(&mut req, rect);
+    write_u64_le(&mut req, offset); // offset within backing for top-left of rect
+    write_u32_le(&mut req, 1); // resource_id
+    write_u32_le(&mut req, 0); // padding
+    dev.process_control_command(&req, &mem).unwrap();
+
+    let mut req = hdr(VIRTIO_GPU_CMD_RESOURCE_FLUSH);
+    push_rect(&mut req, rect);
+    write_u32_le(&mut req, 1); // resource_id
+    write_u32_le(&mut req, 0); // padding
+    dev.process_control_command(&req, &mem).unwrap();
+
+    assert_eq!(dev.scanout_bgra(), expected.as_slice());
+}

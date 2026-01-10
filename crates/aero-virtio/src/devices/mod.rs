@@ -3,6 +3,7 @@ use crate::queue::{DescriptorChain, VirtQueue};
 use core::any::Any;
 
 pub mod blk;
+pub mod gpu;
 pub mod input;
 pub mod net;
 pub mod net_offload;

@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+virtio-gpu-proto = { path = "../virtio-gpu-proto" }
 
 [dev-dependencies]
-

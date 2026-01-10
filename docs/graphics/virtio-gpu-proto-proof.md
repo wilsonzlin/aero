@@ -25,3 +25,10 @@ What the test covers:
 - virtio-gpu commands create a 2D resource, attach the backing, transfer pixels, bind scanout, and flush
 - the device’s scanout buffer is byte-for-byte equal to the original guest pixels
 
+## Virtio transport integration proof
+
+The same scanout sequence is also tested *through* a real virtio-pci + split-virtqueue transport:
+
+```bash
+cargo test -p aero-virtio virtio_gpu_2d_scanout_via_virtqueue
+```

@@ -299,6 +299,9 @@ version = "0.1.0"
 [[package]]
 name = "aero-virtio"
 version = "0.1.0"
+dependencies = [
+ "virtio-gpu-proto",
+]
 
 [[package]]
 name = "aero-wasm"

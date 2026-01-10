@@ -26,6 +26,10 @@ pub const VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D: u32 = 0x0105;
 pub const VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING: u32 = 0x0106;
 pub const VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING: u32 = 0x0107;
 
+// Cursor commands (sent on the cursor queue, but same header/response format).
+pub const VIRTIO_GPU_CMD_UPDATE_CURSOR: u32 = 0x0300;
+pub const VIRTIO_GPU_CMD_MOVE_CURSOR: u32 = 0x0301;
+
 // Responses (0x11xx)
 pub const VIRTIO_GPU_RESP_OK_NODATA: u32 = 0x1100;
 pub const VIRTIO_GPU_RESP_OK_DISPLAY_INFO: u32 = 0x1101;
@@ -155,4 +159,3 @@ pub fn encode_resp_hdr_from_req(req: &CtrlHdr, resp_type: u32) -> Vec<u8> {
     write_u32_le(&mut out, 0); // padding
     out
 }
-
