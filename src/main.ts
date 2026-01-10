@@ -1,6 +1,7 @@
 import './style.css';
 
 import { PerfAggregator, PerfWriter, WorkerKind, createPerfChannel } from '../web/src/perf/index.js';
+import { installNetTraceUI, type NetTraceBackend } from '../web/src/net/trace_ui';
 
 import { createAudioOutput } from './platform/audio';
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from './platform/features';
@@ -484,6 +485,39 @@ function renderEmulatorSafetyPanel(): HTMLElement {
   );
 }
 
+function isNetTraceBackend(value: unknown): value is NetTraceBackend {
+  if (!value || typeof value !== 'object') return false;
+  const maybe = value as Record<string, unknown>;
+  return (
+    typeof maybe.isEnabled === 'function' &&
+    typeof maybe.enable === 'function' &&
+    typeof maybe.disable === 'function' &&
+    typeof maybe.downloadPcapng === 'function'
+  );
+}
+
+function resolveNetTraceBackend(): NetTraceBackend {
+  const aero = ((window as unknown as { aero?: Record<string, unknown> }).aero ??= {});
+  const candidate = aero.netTrace;
+  if (isNetTraceBackend(candidate)) return candidate;
+  return {
+    isEnabled: () => false,
+    enable: () => {
+      throw new Error('Network tracing backend not installed (window.aero.netTrace missing).');
+    },
+    disable: () => {},
+    downloadPcapng: async () => {
+      throw new Error('Network tracing backend not installed (window.aero.netTrace missing).');
+    },
+  };
+}
+
+function renderNetTracePanel(): HTMLElement {
+  const panel = el('div', { class: 'panel' }, el('h2', { text: 'Network trace (PCAPNG)' }));
+  installNetTraceUI(panel, resolveNetTraceBackend());
+  return panel;
+}
+
 function render(): void {
   const app = document.querySelector<HTMLDivElement>('#app');
   if (!app) throw new Error('Missing #app element');
@@ -505,6 +539,7 @@ function render(): void {
     renderAudioPanel(),
     renderPerfPanel(report),
     renderEmulatorSafetyPanel(),
+    renderNetTracePanel(),
   );
 
   startPerfTelemetry(report);

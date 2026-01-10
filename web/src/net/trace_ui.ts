@@ -1,3 +1,5 @@
+import { openFileHandle } from "../platform/opfs";
+
 export interface NetTraceBackend {
   isEnabled(): boolean;
   enable(): void;
@@ -15,15 +17,25 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
     "Enable only when debugging, and handle exported files carefully.";
   wrapper.appendChild(warning);
 
+  const status = document.createElement("pre");
+  status.className = "mono";
+  status.textContent = "";
+
   const enableLabel = document.createElement("label");
   const enableCheckbox = document.createElement("input");
   enableCheckbox.type = "checkbox";
   enableCheckbox.checked = backend.isEnabled();
   enableCheckbox.addEventListener("change", () => {
-    if (enableCheckbox.checked) {
-      backend.enable();
-    } else {
-      backend.disable();
+    status.textContent = "";
+    try {
+      if (enableCheckbox.checked) {
+        backend.enable();
+      } else {
+        backend.disable();
+      }
+    } catch (err) {
+      enableCheckbox.checked = backend.isEnabled();
+      status.textContent = err instanceof Error ? err.message : String(err);
     }
   });
   enableLabel.appendChild(enableCheckbox);
@@ -33,20 +45,62 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
   const downloadButton = document.createElement("button");
   downloadButton.textContent = "Download capture (PCAPNG)";
   downloadButton.addEventListener("click", async () => {
-    const bytes = await backend.downloadPcapng();
-    const blob = new Blob([bytes], { type: "application/vnd.tcpdump.pcap" });
-    const url = URL.createObjectURL(blob);
+    status.textContent = "";
     try {
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `aero-net-${new Date().toISOString().replace(/[:.]/g, "-")}.pcapng`;
-      a.click();
-    } finally {
-      URL.revokeObjectURL(url);
+      const bytes = await backend.downloadPcapng();
+      const blob = new Blob([bytes], { type: "application/vnd.tcpdump.pcap" });
+      const url = URL.createObjectURL(blob);
+      try {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `aero-net-${new Date().toISOString().replace(/[:.]/g, "-")}.pcapng`;
+        a.click();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      status.textContent = err instanceof Error ? err.message : String(err);
     }
   });
-  wrapper.appendChild(downloadButton);
+
+  const opfsPath = document.createElement("input");
+  opfsPath.type = "text";
+  opfsPath.value = "captures/aero-net-trace.pcapng";
+
+  const saveButton = document.createElement("button");
+  saveButton.textContent = "Save capture to OPFS";
+  saveButton.addEventListener("click", async () => {
+    status.textContent = "";
+    try {
+      const path = opfsPath.value.trim();
+      if (!path) {
+        throw new Error("OPFS path must not be empty.");
+      }
+
+      const bytes = await backend.downloadPcapng();
+      const handle = await openFileHandle(path, { create: true });
+      const writable = await handle.createWritable();
+      await writable.write(bytes);
+      await writable.close();
+      status.textContent = `Saved capture to OPFS: ${path} (${bytes.byteLength.toLocaleString()} bytes)`;
+    } catch (err) {
+      status.textContent = err instanceof Error ? err.message : String(err);
+    }
+  });
+
+  const buttonRow = document.createElement("div");
+  buttonRow.className = "row";
+  buttonRow.appendChild(downloadButton);
+  buttonRow.appendChild(saveButton);
+  wrapper.appendChild(buttonRow);
+
+  const opfsRow = document.createElement("div");
+  opfsRow.className = "row";
+  opfsRow.appendChild(document.createTextNode("OPFS path: "));
+  opfsRow.appendChild(opfsPath);
+  wrapper.appendChild(opfsRow);
+
+  wrapper.appendChild(status);
 
   container.appendChild(wrapper);
 }
-
