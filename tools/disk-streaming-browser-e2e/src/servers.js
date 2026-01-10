@@ -203,7 +203,6 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
   const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'disk-gateway-browser-e2e-'));
   const publicDir = path.join(tmpRoot, 'public');
   const privateDir = path.join(tmpRoot, 'private');
-  const diskGatewayWorkDir = path.join(tmpRoot, 'disk-gateway');
 
   await fs.mkdir(publicDir, { recursive: true });
   await fs.mkdir(path.join(privateDir, PRIVATE_USER_ID), { recursive: true });
@@ -219,13 +218,6 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
   const origin = `http://127.0.0.1:${port}`;
 
   const diskGatewaySourceDir = path.join(getRepoRoot(), 'server', 'disk-gateway');
-  await fs.cp(diskGatewaySourceDir, diskGatewayWorkDir, {
-    recursive: true,
-    filter: (src) => {
-      const base = path.basename(src);
-      return base !== 'target' && base !== '.git';
-    },
-  });
 
   const outputLimit = 50_000;
   let output = '';
@@ -235,7 +227,7 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
   };
 
   const child = spawn('cargo', ['run'], {
-    cwd: diskGatewayWorkDir,
+    cwd: diskGatewaySourceDir,
     env: {
       ...process.env,
       DISK_GATEWAY_BIND: bind,
