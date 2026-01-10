@@ -79,11 +79,16 @@ exclude = [
 ]
 
 [dev-dependencies]
+anyhow = "1.0"
 aero-bios = { path = "crates/aero-bios" }
 aero-d3d11 = { path = "crates/aero-d3d11" }
 aero-gpu = { path = "crates/aero-gpu" }
 bytemuck = { version = "1.14", features = ["derive"] }
+image = "0.25"
 pollster = "0.3"
+serde_json = "1.0"
+tempfile = "3"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 
 [workspace.package]
 edition = "2021"

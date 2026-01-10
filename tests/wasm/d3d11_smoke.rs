@@ -24,21 +24,24 @@ fn d3d11_render_textured_quad() {
         };
 
         const VB: u32 = 1;
-        const TEX: u32 = 2;
-        const TEX_VIEW: u32 = 3;
+        const TEX_RED: u32 = 2;
+        const TEX_RED_VIEW: u32 = 3;
         const SAMP: u32 = 4;
         const RT: u32 = 5;
         const RT_VIEW: u32 = 6;
         const SHADER: u32 = 7;
         const PIPE: u32 = 8;
+        const TEX_GREEN: u32 = 9;
+        const TEX_GREEN_VIEW: u32 = 10;
 
-        let vertices: [Vertex; 6] = [
+        // Two quads side-by-side so we can change bindings between draws.
+        let vertices: [Vertex; 12] = [
             Vertex {
                 pos: [-1.0, -1.0],
                 uv: [0.0, 1.0],
             },
             Vertex {
-                pos: [1.0, -1.0],
+                pos: [0.0, -1.0],
                 uv: [1.0, 1.0],
             },
             Vertex {
@@ -47,6 +50,30 @@ fn d3d11_render_textured_quad() {
             },
             Vertex {
                 pos: [-1.0, 1.0],
+                uv: [0.0, 0.0],
+            },
+            Vertex {
+                pos: [0.0, -1.0],
+                uv: [1.0, 1.0],
+            },
+            Vertex {
+                pos: [0.0, 1.0],
+                uv: [1.0, 0.0],
+            },
+            Vertex {
+                pos: [0.0, -1.0],
+                uv: [0.0, 1.0],
+            },
+            Vertex {
+                pos: [1.0, -1.0],
+                uv: [1.0, 1.0],
+            },
+            Vertex {
+                pos: [0.0, 1.0],
+                uv: [0.0, 0.0],
+            },
+            Vertex {
+                pos: [0.0, 1.0],
                 uv: [0.0, 0.0],
             },
             Vertex {
@@ -126,7 +153,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         w.update_buffer(VB, 0, bytemuck::bytes_of(&vertices));
         w.create_shader_module_wgsl(SHADER, wgsl);
         w.create_texture2d(
-            TEX,
+            TEX_RED,
             1,
             1,
             1,
@@ -134,13 +161,26 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             DxgiFormat::R8G8B8A8Unorm,
             TextureUsage::TEXTURE_BINDING | TextureUsage::COPY_DST,
         );
-        w.create_texture_view(TEX_VIEW, TEX, 0, 1, 0, 1);
-        w.update_texture2d(TEX, 0, 0, 1, 1, 4, &[255, 0, 0, 255]);
+        w.create_texture_view(TEX_RED_VIEW, TEX_RED, 0, 1, 0, 1);
+        w.update_texture2d(TEX_RED, 0, 0, 1, 1, 4, &[255, 0, 0, 255]);
+
+        w.create_texture2d(
+            TEX_GREEN,
+            1,
+            1,
+            1,
+            1,
+            DxgiFormat::R8G8B8A8Unorm,
+            TextureUsage::TEXTURE_BINDING | TextureUsage::COPY_DST,
+        );
+        w.create_texture_view(TEX_GREEN_VIEW, TEX_GREEN, 0, 1, 0, 1);
+        w.update_texture2d(TEX_GREEN, 0, 0, 1, 1, 4, &[0, 255, 0, 255]);
+
         w.create_sampler(SAMP, 0);
         w.create_texture2d(
             RT,
-            4,
-            4,
+            2,
+            1,
             1,
             1,
             DxgiFormat::R8G8B8A8Unorm,
@@ -160,18 +200,20 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         w.begin_render_pass(RT_VIEW, [0.0, 0.0, 0.0, 1.0], None, 1.0, 0);
         w.set_pipeline(PipelineKind::Render, PIPE);
         w.set_vertex_buffer(0, VB, 0);
-        w.set_bind_texture_view(0, TEX_VIEW);
         w.set_bind_sampler(1, SAMP);
+        w.set_bind_texture_view(0, TEX_RED_VIEW);
         w.draw(6, 1, 0, 0);
+        w.set_bind_texture_view(0, TEX_GREEN_VIEW);
+        w.draw(6, 1, 6, 0);
         w.end_render_pass();
 
         rt.execute(&w.finish()).unwrap();
         rt.poll_wait();
 
         let pixels = rt.read_texture_rgba8(RT).await.unwrap();
-        assert_eq!(pixels.len(), 4 * 4 * 4);
+        assert_eq!(pixels.len(), 2 * 1 * 4);
         assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
-        assert_eq!(&pixels[4 * 3..4 * 4], &[255, 0, 0, 255]);
+        assert_eq!(&pixels[4..8], &[0, 255, 0, 255]);
     });
 }
 
@@ -214,7 +256,8 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             storage_texture_format: None,
         }];
 
-        let size = 16u64 * 4;
+        let second_dispatch_offset = 256u64;
+        let size = second_dispatch_offset + 16u64 * 4;
         let mut w = CmdWriter::new();
         w.create_buffer(
             OUT,
@@ -232,6 +275,8 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         w.set_pipeline(PipelineKind::Compute, PIPE);
         w.set_bind_buffer(0, OUT, 0, 0);
         w.dispatch(1, 1, 1);
+        w.set_bind_buffer(0, OUT, second_dispatch_offset, 0);
+        w.dispatch(1, 1, 1);
         w.end_compute_pass();
         w.copy_buffer_to_buffer(OUT, 0, READBACK, 0, size);
 
@@ -243,9 +288,13 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             .chunks_exact(4)
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect();
-        assert_eq!(words.len(), 16);
-        for (i, v) in words.iter().enumerate() {
-            assert_eq!(*v, i as u32 * 2 + 1);
+        assert_eq!(words.len(), (size / 4) as usize);
+        for i in 0..16 {
+            assert_eq!(words[i], i as u32 * 2 + 1);
+            assert_eq!(
+                words[(second_dispatch_offset as usize / 4) + i],
+                i as u32 * 2 + 1
+            );
         }
     });
 }

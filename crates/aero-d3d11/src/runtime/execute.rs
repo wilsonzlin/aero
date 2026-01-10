@@ -856,11 +856,12 @@ impl D3D11Runtime {
             })
         };
 
-        // NOTE: `wgpu::RenderPass::set_bind_group` requires the bind group reference to live for
-        // the entire pass lifetime. To keep the executor simple, we currently build the bind group
-        // once (right before the first draw) and then disallow further binding changes until
-        // `EndRenderPass`.
-        let bind_group: wgpu::BindGroup;
+        // wgpu requires any `&BindGroup` passed to `set_bind_group` to remain alive for the entire
+        // render pass lifetime. Since we may change bindings between draws, we keep every bind
+        // group we create in an arena for the duration of the pass.
+        let mut bind_group_arena: Vec<Box<wgpu::BindGroup>> = Vec::new();
+        let mut current_bind_group: Option<*const wgpu::BindGroup> = None;
+        let mut bind_group_dirty = true;
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("aero-d3d11 render pass"),
@@ -877,30 +878,14 @@ impl D3D11Runtime {
             occlusion_query_set: None,
         });
 
-        enum FirstDraw {
-            Draw {
-                vertex_count: u32,
-                instance_count: u32,
-                first_vertex: u32,
-                first_instance: u32,
-            },
-            DrawIndexed {
-                index_count: u32,
-                instance_count: u32,
-                first_index: u32,
-                base_vertex: i32,
-                first_instance: u32,
-            },
-        }
-
-        let first_draw = loop {
+        loop {
             let packet = stream
                 .next()
                 .ok_or_else(|| anyhow!("unexpected end of command stream inside render pass"))?
                 .map_err(|e| anyhow!("{e}"))?;
 
             match packet.header.opcode {
-                D3D11Opcode::EndRenderPass => return Ok(()),
+                D3D11Opcode::EndRenderPass => break,
                 D3D11Opcode::SetPipeline => {
                     state_set_pipeline(state, packet.payload)?;
                     let Some(PipelineBinding::Render(pipeline_id)) = state.current_pipeline else {
@@ -911,13 +896,22 @@ impl D3D11Runtime {
                         .get(&pipeline_id)
                         .ok_or_else(|| anyhow!("unknown render pipeline {pipeline_id}"))?;
                     render_pass.set_pipeline(&pipeline.pipeline);
+                    bind_group_dirty = true;
+                    current_bind_group = None;
                 }
                 D3D11Opcode::SetVertexBuffer => state_set_vertex_buffer(state, packet.payload)?,
                 D3D11Opcode::SetIndexBuffer => state_set_index_buffer(state, packet.payload)?,
-                D3D11Opcode::SetBindBuffer => state_set_bind_buffer(state, packet.payload)?,
-                D3D11Opcode::SetBindSampler => state_set_bind_sampler(state, packet.payload)?,
+                D3D11Opcode::SetBindBuffer => {
+                    state_set_bind_buffer(state, packet.payload)?;
+                    bind_group_dirty = true;
+                }
+                D3D11Opcode::SetBindSampler => {
+                    state_set_bind_sampler(state, packet.payload)?;
+                    bind_group_dirty = true;
+                }
                 D3D11Opcode::SetBindTextureView => {
-                    state_set_bind_texture_view(state, packet.payload)?
+                    state_set_bind_texture_view(state, packet.payload)?;
+                    bind_group_dirty = true;
                 }
                 D3D11Opcode::Draw => {
                     if packet.payload.len() != 4 {
@@ -926,111 +920,40 @@ impl D3D11Runtime {
                             packet.payload.len()
                         );
                     }
-                    break FirstDraw::Draw {
-                        vertex_count: packet.payload[0],
-                        instance_count: packet.payload[1],
-                        first_vertex: packet.payload[2],
-                        first_instance: packet.payload[3],
+
+                    let vertex_count = packet.payload[0];
+                    let instance_count = packet.payload[1];
+                    let first_vertex = packet.payload[2];
+                    let first_instance = packet.payload[3];
+
+                    let Some(PipelineBinding::Render(pipeline_id)) = state.current_pipeline else {
+                        bail!("Draw without a bound render pipeline");
                     };
-                }
-                D3D11Opcode::DrawIndexed => {
-                    if packet.payload.len() != 5 {
-                        bail!(
-                            "DrawIndexed payload words expected 5, got {}",
-                            packet.payload.len()
-                        );
+                    let pipeline = resources
+                        .render_pipelines
+                        .get(&pipeline_id)
+                        .ok_or_else(|| anyhow!("unknown render pipeline {pipeline_id}"))?;
+
+                    if bind_group_dirty || current_bind_group.is_none() {
+                        let bg = build_bind_group(
+                            device,
+                            resources,
+                            state,
+                            &pipeline.bind_group_layout,
+                            &pipeline.bindings,
+                        )?;
+                        current_bind_group = Some(stash_bind_group(&mut bind_group_arena, bg));
+                        bind_group_dirty = false;
                     }
-                    break FirstDraw::DrawIndexed {
-                        index_count: packet.payload[0],
-                        instance_count: packet.payload[1],
-                        first_index: packet.payload[2],
-                        base_vertex: packet.payload[3] as i32,
-                        first_instance: packet.payload[4],
-                    };
-                }
-                _ => bail!(
-                    "opcode {:?} not allowed inside render pass",
-                    packet.header.opcode
-                ),
-            }
-        };
 
-        let Some(PipelineBinding::Render(pipeline_id)) = state.current_pipeline else {
-            bail!("render pass draw without a bound render pipeline");
-        };
-        let pipeline = resources
-            .render_pipelines
-            .get(&pipeline_id)
-            .ok_or_else(|| anyhow!("unknown render pipeline {pipeline_id}"))?;
-        bind_group = build_bind_group(
-            device,
-            resources,
-            state,
-            &pipeline.bind_group_layout,
-            &pipeline.bindings,
-        )?;
+                    let bg_ptr = current_bind_group.expect("bind group must be built above");
+                    let bg_ref = unsafe { &*bg_ptr };
+                    render_pass.set_bind_group(0, bg_ref, &[]);
 
-        match first_draw {
-            FirstDraw::Draw {
-                vertex_count,
-                instance_count,
-                first_vertex,
-                first_instance,
-            } => {
-                set_vertex_buffers(&mut render_pass, resources, state)?;
-                render_pass.set_bind_group(0, &bind_group, &[]);
-                render_pass.draw(
-                    first_vertex..first_vertex + vertex_count,
-                    first_instance..first_instance + instance_count,
-                );
-            }
-            FirstDraw::DrawIndexed {
-                index_count,
-                instance_count,
-                first_index,
-                base_vertex,
-                first_instance,
-            } => {
-                set_vertex_buffers(&mut render_pass, resources, state)?;
-                let Some(index) = state.index_buffer else {
-                    bail!("DrawIndexed without an index buffer bound");
-                };
-                let index_buf = resources
-                    .buffers
-                    .get(&index.buffer)
-                    .ok_or_else(|| anyhow!("unknown index buffer {}", index.buffer))?;
-                render_pass.set_index_buffer(index_buf.buffer.slice(index.offset..), index.format);
-                render_pass.set_bind_group(0, &bind_group, &[]);
-                render_pass.draw_indexed(
-                    first_index..first_index + index_count,
-                    base_vertex,
-                    first_instance..first_instance + instance_count,
-                );
-            }
-        }
-
-        loop {
-            let packet = stream
-                .next()
-                .ok_or_else(|| anyhow!("unexpected end of command stream inside render pass"))?
-                .map_err(|e| anyhow!("{e}"))?;
-
-            match packet.header.opcode {
-                D3D11Opcode::EndRenderPass => break,
-                D3D11Opcode::SetVertexBuffer => state_set_vertex_buffer(state, packet.payload)?,
-                D3D11Opcode::SetIndexBuffer => state_set_index_buffer(state, packet.payload)?,
-                D3D11Opcode::Draw => {
-                    if packet.payload.len() != 4 {
-                        bail!(
-                            "Draw payload words expected 4, got {}",
-                            packet.payload.len()
-                        );
-                    }
                     set_vertex_buffers(&mut render_pass, resources, state)?;
-                    render_pass.set_bind_group(0, &bind_group, &[]);
                     render_pass.draw(
-                        packet.payload[2]..packet.payload[2] + packet.payload[0],
-                        packet.payload[3]..packet.payload[3] + packet.payload[1],
+                        first_vertex..first_vertex + vertex_count,
+                        first_instance..first_instance + instance_count,
                     );
                 }
                 D3D11Opcode::DrawIndexed => {
@@ -1040,6 +963,37 @@ impl D3D11Runtime {
                             packet.payload.len()
                         );
                     }
+
+                    let index_count = packet.payload[0];
+                    let instance_count = packet.payload[1];
+                    let first_index = packet.payload[2];
+                    let base_vertex = packet.payload[3] as i32;
+                    let first_instance = packet.payload[4];
+
+                    let Some(PipelineBinding::Render(pipeline_id)) = state.current_pipeline else {
+                        bail!("DrawIndexed without a bound render pipeline");
+                    };
+                    let pipeline = resources
+                        .render_pipelines
+                        .get(&pipeline_id)
+                        .ok_or_else(|| anyhow!("unknown render pipeline {pipeline_id}"))?;
+
+                    if bind_group_dirty || current_bind_group.is_none() {
+                        let bg = build_bind_group(
+                            device,
+                            resources,
+                            state,
+                            &pipeline.bind_group_layout,
+                            &pipeline.bindings,
+                        )?;
+                        current_bind_group = Some(stash_bind_group(&mut bind_group_arena, bg));
+                        bind_group_dirty = false;
+                    }
+
+                    let bg_ptr = current_bind_group.expect("bind group must be built above");
+                    let bg_ref = unsafe { &*bg_ptr };
+                    render_pass.set_bind_group(0, bg_ref, &[]);
+
                     set_vertex_buffers(&mut render_pass, resources, state)?;
                     let Some(index) = state.index_buffer else {
                         bail!("DrawIndexed without an index buffer bound");
@@ -1050,20 +1004,10 @@ impl D3D11Runtime {
                         .ok_or_else(|| anyhow!("unknown index buffer {}", index.buffer))?;
                     render_pass
                         .set_index_buffer(index_buf.buffer.slice(index.offset..), index.format);
-                    render_pass.set_bind_group(0, &bind_group, &[]);
                     render_pass.draw_indexed(
-                        packet.payload[2]..packet.payload[2] + packet.payload[0],
-                        packet.payload[3] as i32,
-                        packet.payload[4]..packet.payload[4] + packet.payload[1],
-                    );
-                }
-                D3D11Opcode::SetPipeline
-                | D3D11Opcode::SetBindBuffer
-                | D3D11Opcode::SetBindSampler
-                | D3D11Opcode::SetBindTextureView => {
-                    bail!(
-                        "{:?} after the first draw is not supported yet; end the render pass first",
-                        packet.header.opcode
+                        first_index..first_index + index_count,
+                        base_vertex,
+                        first_instance..first_instance + instance_count,
                     );
                 }
                 _ => bail!(
@@ -1083,23 +1027,26 @@ impl D3D11Runtime {
     ) -> Result<()> {
         let (device, resources, state) = (&self.device, &self.resources, &mut self.state);
 
-        // Same lifetime constraints as `exec_render_pass` (see note above): build the bind group
-        // exactly once right before the first dispatch.
-        let bind_group: wgpu::BindGroup;
+        // wgpu requires any `&BindGroup` passed to `set_bind_group` to remain alive for the entire
+        // compute pass lifetime. Since we may change bindings between dispatches, we keep every
+        // bind group we create in an arena for the duration of the pass.
+        let mut bind_group_arena: Vec<Box<wgpu::BindGroup>> = Vec::new();
+        let mut current_bind_group: Option<*const wgpu::BindGroup> = None;
+        let mut bind_group_dirty = true;
 
         let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("aero-d3d11 compute pass"),
             timestamp_writes: None,
         });
 
-        let first_dispatch = loop {
+        loop {
             let packet = stream
                 .next()
                 .ok_or_else(|| anyhow!("unexpected end of command stream inside compute pass"))?
                 .map_err(|e| anyhow!("{e}"))?;
 
             match packet.header.opcode {
-                D3D11Opcode::EndComputePass => return Ok(()),
+                D3D11Opcode::EndComputePass => break,
                 D3D11Opcode::SetPipeline => {
                     state_set_pipeline(state, packet.payload)?;
                     let Some(PipelineBinding::Compute(pipeline_id)) = state.current_pipeline else {
@@ -1110,11 +1057,20 @@ impl D3D11Runtime {
                         .get(&pipeline_id)
                         .ok_or_else(|| anyhow!("unknown compute pipeline {pipeline_id}"))?;
                     compute_pass.set_pipeline(&pipeline.pipeline);
+                    bind_group_dirty = true;
+                    current_bind_group = None;
                 }
-                D3D11Opcode::SetBindBuffer => state_set_bind_buffer(state, packet.payload)?,
-                D3D11Opcode::SetBindSampler => state_set_bind_sampler(state, packet.payload)?,
+                D3D11Opcode::SetBindBuffer => {
+                    state_set_bind_buffer(state, packet.payload)?;
+                    bind_group_dirty = true;
+                }
+                D3D11Opcode::SetBindSampler => {
+                    state_set_bind_sampler(state, packet.payload)?;
+                    bind_group_dirty = true;
+                }
                 D3D11Opcode::SetBindTextureView => {
-                    state_set_bind_texture_view(state, packet.payload)?
+                    state_set_bind_texture_view(state, packet.payload)?;
+                    bind_group_dirty = true;
                 }
                 D3D11Opcode::Dispatch => {
                     if packet.payload.len() != 3 {
@@ -1123,63 +1079,35 @@ impl D3D11Runtime {
                             packet.payload.len()
                         );
                     }
-                    break (packet.payload[0], packet.payload[1], packet.payload[2]);
-                }
-                _ => bail!(
-                    "opcode {:?} not allowed inside compute pass",
-                    packet.header.opcode
-                ),
-            }
-        };
 
-        let Some(PipelineBinding::Compute(pipeline_id)) = state.current_pipeline else {
-            bail!("compute pass dispatch without a bound compute pipeline");
-        };
-        let pipeline = resources
-            .compute_pipelines
-            .get(&pipeline_id)
-            .ok_or_else(|| anyhow!("unknown compute pipeline {pipeline_id}"))?;
-        bind_group = build_bind_group(
-            device,
-            resources,
-            state,
-            &pipeline.bind_group_layout,
-            &pipeline.bindings,
-        )?;
+                    let x = packet.payload[0];
+                    let y = packet.payload[1];
+                    let z = packet.payload[2];
 
-        compute_pass.set_bind_group(0, &bind_group, &[]);
-        compute_pass.dispatch_workgroups(first_dispatch.0, first_dispatch.1, first_dispatch.2);
+                    let Some(PipelineBinding::Compute(pipeline_id)) = state.current_pipeline else {
+                        bail!("Dispatch without a bound compute pipeline");
+                    };
+                    let pipeline = resources
+                        .compute_pipelines
+                        .get(&pipeline_id)
+                        .ok_or_else(|| anyhow!("unknown compute pipeline {pipeline_id}"))?;
 
-        loop {
-            let packet = stream
-                .next()
-                .ok_or_else(|| anyhow!("unexpected end of command stream inside compute pass"))?
-                .map_err(|e| anyhow!("{e}"))?;
-
-            match packet.header.opcode {
-                D3D11Opcode::EndComputePass => break,
-                D3D11Opcode::Dispatch => {
-                    if packet.payload.len() != 3 {
-                        bail!(
-                            "Dispatch payload words expected 3, got {}",
-                            packet.payload.len()
-                        );
+                    if bind_group_dirty || current_bind_group.is_none() {
+                        let bg = build_bind_group(
+                            device,
+                            resources,
+                            state,
+                            &pipeline.bind_group_layout,
+                            &pipeline.bindings,
+                        )?;
+                        current_bind_group = Some(stash_bind_group(&mut bind_group_arena, bg));
+                        bind_group_dirty = false;
                     }
-                    compute_pass.set_bind_group(0, &bind_group, &[]);
-                    compute_pass.dispatch_workgroups(
-                        packet.payload[0],
-                        packet.payload[1],
-                        packet.payload[2],
-                    );
-                }
-                D3D11Opcode::SetPipeline
-                | D3D11Opcode::SetBindBuffer
-                | D3D11Opcode::SetBindSampler
-                | D3D11Opcode::SetBindTextureView => {
-                    bail!(
-                        "{:?} after the first dispatch is not supported yet; end the compute pass first",
-                        packet.header.opcode
-                    );
+
+                    let bg_ptr = current_bind_group.expect("bind group must be built above");
+                    let bg_ref = unsafe { &*bg_ptr };
+                    compute_pass.set_bind_group(0, bg_ref, &[]);
+                    compute_pass.dispatch_workgroups(x, y, z);
                 }
                 _ => bail!(
                     "opcode {:?} not allowed inside compute pass",
@@ -1389,6 +1317,19 @@ fn build_bind_group(
         layout,
         entries: &entries,
     }))
+}
+
+fn stash_bind_group(
+    arena: &mut Vec<Box<wgpu::BindGroup>>,
+    bind_group: wgpu::BindGroup,
+) -> *const wgpu::BindGroup {
+    // `wgpu::RenderPass::set_bind_group` requires that the referenced bind group value lives for
+    // the entire pass lifetime. We store bind groups in `Box`es to keep their addresses stable
+    // even if `arena` reallocates.
+    let boxed = Box::new(bind_group);
+    let ptr: *const wgpu::BindGroup = &*boxed;
+    arena.push(boxed);
+    ptr
 }
 
 fn set_vertex_buffers<'a>(
