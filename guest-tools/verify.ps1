@@ -452,7 +452,7 @@ $txtPath = Join-Path $outDir "report.txt"
 $report = @{
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "1.3.0"
+        version = "1.4.0"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -660,7 +660,11 @@ try {
 
 # --- Signature mode (bcdedit) ---
 try {
-    $bcd = Invoke-Capture "bcdedit.exe" @("/enum")
+    $bcd = Invoke-Capture "bcdedit.exe" @("/enum","{current}")
+    if ($bcd.exit_code -ne 0 -or -not $bcd.output) {
+        # Fallback to full enumeration if {current} is unavailable (or bcdedit behaves differently).
+        $bcd = Invoke-Capture "bcdedit.exe" @("/enum")
+    }
     $raw = $bcd.output
     $testsigning = $null
     $nointegritychecks = $null
@@ -820,7 +824,7 @@ try {
         if (-not $exists) { $svcDedup += $s }
     }
     $svcCandidates = $svcDedup
-    $kw = @("aero","virtio","1af4")
+    $kw = @("aero","virtio","1af4","1ae0")
 
     $signedDriverMap = @{}
     $signedDrivers = Try-GetWmi "Win32_PnPSignedDriver" ""
@@ -853,7 +857,12 @@ try {
             $svc = "" + $d.Service
 
             $relevant = $false
-            if ($pnpid -match '(?i)(VEN_1AF4|VID_1AF4|VIRTIO|AERO)') { $relevant = $true }
+            if ($pnpid -match '(?i)(VEN_1AF4|VID_1AF4|VEN_1AE0|VID_1AE0|VIRTIO|AERO)') { $relevant = $true }
+            if (-not $relevant -and $pnpid) {
+                foreach ($rx in @($cfgVirtioBlkRegex,$cfgVirtioNetRegex,$cfgVirtioSndRegex,$cfgVirtioInputRegex,$cfgGpuRegex)) {
+                    if ($rx -and $pnpid -match $rx) { $relevant = $true; break }
+                }
+            }
             if (-not $relevant) {
                 foreach ($k in $kw) {
                     if (($name.ToLower().Contains($k)) -or ($mfr.ToLower().Contains($k))) { $relevant = $true; break }
