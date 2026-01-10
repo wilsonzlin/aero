@@ -68,6 +68,8 @@ Notes:
 > See `scripts/README.md` for the payload layout expected by the reference scripts (including the optional `AERO.TAG` marker file strategy).
 >
 > The templates also include an optional `specialize` copy step that stages `Scripts/` and `Cert*/`, plus **only the matching architecture** driver folders (`Drivers\WinPE\<arch>` + `Drivers\Offline\<arch>`) into `C:\Aero\` so later phases do not depend on removable/config media drive letters.
+>
+> Note: the `SetupComplete.cmd` shipped in `scripts/` also copies the located payload to `C:\Aero\` by default, but the `specialize` staging step can still help if config media may not remain attached until `SetupComplete.cmd` runs.
 
 ---
 

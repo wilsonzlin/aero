@@ -160,7 +160,8 @@ set LOG=%WINDIR%\Temp\Aero-SetupComplete.log
 echo [%DATE% %TIME%] SetupComplete starting>>"%LOG%"
 
 REM If you used UseConfigurationSet=true, Setup may provide %configsetroot%.
-REM Verify on real Win7 setup (and consider copying payloads to C:\Aero\ during specialize).
+REM For robustness, copy payloads to C:\Aero\ during specialize (or use the
+REM production scripts in windows/win7-sp1/unattend/scripts/, which do this by default).
 set SRC=%configsetroot%
 if not defined configsetroot (
   echo [%DATE% %TIME%] WARNING: configsetroot is not set>>"%LOG%"
@@ -192,7 +193,7 @@ REM Reboot if you enabled test signing (otherwise you can remove this)
 shutdown /r /t 0
 ```
 
-> Note: For x86 installs, change the driver folder to `...\Offline\x86`. For robustness, you can also copy the needed drivers/certs from `%configsetroot%` to a stable location (for example `C:\Aero\`) during the `specialize` pass, then have `SetupComplete.cmd` use that stable path.
+> Note: For x86 installs, change the driver folder to `...\Offline\x86`. For robustness, copy needed drivers/certs from `%configsetroot%` to a stable location (for example `C:\Aero\`) during the `specialize` pass. The production `SetupComplete.cmd` in `windows/win7-sp1/unattend/scripts/` performs this copy by default.
 
 ---
 
