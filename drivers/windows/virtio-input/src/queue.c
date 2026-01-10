@@ -119,10 +119,43 @@ VOID VirtioInputEvtIoInternalDeviceControl(
         (VOID)VirtioInputHandleHidWriteReport(Queue, Request, InputBufferLength);
         return;
     case IOCTL_HID_ACTIVATE_DEVICE:
+        status = VirtioInputHidActivateDevice(device);
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=0\n", name, status);
+        WdfRequestComplete(Request, status);
+        return;
     case IOCTL_HID_DEACTIVATE_DEVICE:
+        status = VirtioInputHidDeactivateDevice(device);
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=0\n", name, status);
+        WdfRequestComplete(Request, status);
+        return;
+#ifdef IOCTL_HID_SEND_IDLE_NOTIFICATION_REQUEST
+    case IOCTL_HID_SEND_IDLE_NOTIFICATION_REQUEST:
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=0\n", name, STATUS_NOT_SUPPORTED);
+        WdfRequestComplete(Request, STATUS_NOT_SUPPORTED);
+        return;
+#endif
+#ifdef IOCTL_HID_FLUSH_QUEUE
+    case IOCTL_HID_FLUSH_QUEUE:
+        VirtioInputHidFlushQueue(device);
         VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=0\n", name, STATUS_SUCCESS);
         WdfRequestComplete(Request, STATUS_SUCCESS);
         return;
+#endif
+#ifdef IOCTL_HID_SET_NUM_DEVICE_INPUT_BUFFERS
+    case IOCTL_HID_SET_NUM_DEVICE_INPUT_BUFFERS: {
+        PULONG numBuffers;
+        size_t len;
+
+        if (InputBufferLength >= sizeof(ULONG) &&
+            NT_SUCCESS(WdfRequestRetrieveInputBuffer(Request, sizeof(ULONG), (PVOID *)&numBuffers, &len))) {
+            devCtx->NumDeviceInputBuffers = *numBuffers;
+        }
+
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=0\n", name, STATUS_SUCCESS);
+        WdfRequestComplete(Request, STATUS_SUCCESS);
+        return;
+    }
+#endif
     default:
         VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> (generic handler)\n", name);
         (VOID)VirtioInputHandleHidIoctl(Queue, Request, OutputBufferLength, InputBufferLength, IoControlCode);

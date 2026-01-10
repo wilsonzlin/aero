@@ -149,6 +149,7 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
     }
 
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, DEVICE_CONTEXT);
+    attributes.ExecutionLevel = WdfExecutionLevelPassive;
 
     status = WdfDeviceCreate(&DeviceInit, &attributes, &device);
     if (!NT_SUCCESS(status)) {
@@ -158,6 +159,11 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
     {
         PDEVICE_CONTEXT deviceContext = VirtioInputGetDeviceContext(device);
         VioInputCountersInit(&deviceContext->Counters);
+
+        deviceContext->HardwareReady = FALSE;
+        deviceContext->InD0 = FALSE;
+        deviceContext->HidActivated = FALSE;
+        deviceContext->NumDeviceInputBuffers = 0;
 
         status = VirtioInputReadReportQueuesInitialize(device);
         if (!NT_SUCCESS(status)) {
@@ -192,6 +198,11 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
     return VirtioInputQueueInitialize(device);
 }
 
+static VOID VirtioInputApplyTransportState(_In_ PDEVICE_CONTEXT DeviceContext)
+{
+    VirtioStatusQSetActive(DeviceContext->StatusQ, VirtioInputIsHidActive(DeviceContext));
+}
+
 NTSTATUS VirtioInputEvtDevicePrepareHardware(
     _In_ WDFDEVICE Device,
     _In_ WDFCMRESLIST ResourcesRaw,
@@ -207,6 +218,7 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
     RtlZeroMemory(&deviceContext->Interrupts, sizeof(deviceContext->Interrupts));
     deviceContext->ConfigInterruptCount = 0;
     RtlZeroMemory(deviceContext->QueueInterruptCount, sizeof(deviceContext->QueueInterruptCount));
+    deviceContext->HardwareReady = FALSE;
 
     status = VirtioPciModernInit(Device, &deviceContext->PciDevice);
     if (!NT_SUCCESS(status)) {
@@ -251,6 +263,8 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
     deviceContext->Interrupts.InterruptCounter = &deviceContext->Counters.VirtioInterrupts;
     deviceContext->Interrupts.DpcCounter = &deviceContext->Counters.VirtioDpcs;
 
+    deviceContext->HardwareReady = TRUE;
+    VirtioInputApplyTransportState(deviceContext);
     return STATUS_SUCCESS;
 }
 
@@ -264,6 +278,13 @@ NTSTATUS VirtioInputEvtDeviceReleaseHardware(_In_ WDFDEVICE Device, _In_ WDFCMRE
 
     {
         PDEVICE_CONTEXT deviceContext = VirtioInputGetDeviceContext(Device);
+        deviceContext->HardwareReady = FALSE;
+        deviceContext->InD0 = FALSE;
+        deviceContext->HidActivated = FALSE;
+        VirtioInputApplyTransportState(deviceContext);
+
+        virtio_input_device_reset_state(&deviceContext->InputDevice, false);
+
         VirtioPciInterruptsReleaseHardware(&deviceContext->Interrupts);
         VirtioPciModernUninit(&deviceContext->PciDevice);
     }
@@ -280,17 +301,29 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         NTSTATUS status;
 
         deviceContext = VirtioInputGetDeviceContext(Device);
+        deviceContext->InD0 = TRUE;
+
         status = VirtioPciInterruptsProgramMsixVectors(&deviceContext->Interrupts, deviceContext->PciDevice.CommonCfg);
         if (!NT_SUCCESS(status)) {
             VIOINPUT_LOG(
                 VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
                 "VirtioPciInterruptsProgramMsixVectors failed: %!STATUS!\n",
                 status);
+            deviceContext->InD0 = FALSE;
+            VirtioInputApplyTransportState(deviceContext);
             return status;
         }
-    }
 
-    VirtioInputReadReportQueuesStart(Device);
+        if (deviceContext->HidActivated) {
+            VirtioInputReadReportQueuesStart(Device);
+            virtio_input_device_reset_state(&deviceContext->InputDevice, true);
+        } else {
+            VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_DEVICE_NOT_READY);
+            virtio_input_device_reset_state(&deviceContext->InputDevice, false);
+        }
+
+        VirtioInputApplyTransportState(deviceContext);
+    }
 
     return STATUS_SUCCESS;
 }
@@ -300,12 +333,12 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
     UNREFERENCED_PARAMETER(TargetState);
 
     VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_DEVICE_NOT_READY);
-
     {
         PDEVICE_CONTEXT deviceContext = VirtioInputGetDeviceContext(Device);
-        virtio_input_device_reset_state(&deviceContext->InputDevice, true);
+        virtio_input_device_reset_state(&deviceContext->InputDevice, false);
+        deviceContext->InD0 = FALSE;
+        VirtioInputApplyTransportState(deviceContext);
     }
 
     return STATUS_SUCCESS;
 }
-

@@ -72,7 +72,7 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
     UNREFERENCED_PARAMETER(packetBytes);
     UNREFERENCED_PARAMETER(InputBufferLength);
 
-    if (WdfDeviceGetDevicePowerState(device) != WdfDevicePowerD0) {
+    if (!VirtioInputIsHidActive(ctx) || WdfDeviceGetDevicePowerState(device) != WdfDevicePowerD0) {
         VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "%s -> %!STATUS!\n", name, STATUS_DEVICE_NOT_READY);
         WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
         return STATUS_SUCCESS;

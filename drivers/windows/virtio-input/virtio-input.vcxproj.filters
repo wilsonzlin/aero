@@ -30,6 +30,9 @@
     <ClCompile Include="src\hid_translate.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\power.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\queue.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -42,6 +45,9 @@
     <ClCompile Include="src\virtio_statusq.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\log.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\hid.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -50,6 +56,9 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\log.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\hid_translate.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -84,4 +93,3 @@
     </None>
   </ItemGroup>
 </Project>
-

@@ -16,7 +16,8 @@ SOURCES= \
     ..\..\win7\virtio\virtio-core\src\virtio_pci_modern.c \
     src\log.c \
     src\hid.c \
-    src\descriptor.c
+    src\descriptor.c \
+    src\power.c
 
 INCLUDES=$(INCLUDES);src;..\..\win7\virtio\virtio-core\include
 

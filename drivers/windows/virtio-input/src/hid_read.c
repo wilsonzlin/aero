@@ -499,7 +499,7 @@ NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Req
 
     WdfWaitLockAcquire(devCtx->ReadReportWaitLock, NULL);
 
-    if (!devCtx->ReadReportsEnabled) {
+    if (!devCtx->ReadReportsEnabled || !VirtioInputIsHidActive(devCtx)) {
         WdfWaitLockRelease(devCtx->ReadReportWaitLock);
         WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
         return STATUS_SUCCESS;

@@ -55,6 +55,7 @@
     <ClCompile Include="src\hid_read.c" />
     <ClCompile Include="src\hid_write.c" />
     <ClCompile Include="src\hid_translate.c" />
+    <ClCompile Include="src\power.c" />
     <ClCompile Include="src\queue.c" />
     <ClCompile Include="src\virtio_input.c" />
     <ClCompile Include="src\virtio_pci_interrupts.c" />

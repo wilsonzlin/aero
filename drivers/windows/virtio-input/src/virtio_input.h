@@ -122,6 +122,11 @@ typedef struct _DEVICE_CONTEXT {
     VIOINPUT_COUNTERS Counters;
     VIRTIO_PCI_MODERN_DEVICE PciDevice;
 
+    BOOLEAN HardwareReady;
+    BOOLEAN InD0;
+    BOOLEAN HidActivated;
+    ULONG NumDeviceInputBuffers;
+
     VIRTIO_PCI_INTERRUPTS Interrupts;
 
     volatile LONG ConfigInterruptCount;
@@ -129,6 +134,11 @@ typedef struct _DEVICE_CONTEXT {
 } DEVICE_CONTEXT, *PDEVICE_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, VirtioInputGetDeviceContext);
+
+__forceinline BOOLEAN VirtioInputIsHidActive(_In_ const DEVICE_CONTEXT* Ctx)
+{
+    return Ctx->HardwareReady && Ctx->InD0 && Ctx->HidActivated;
+}
 
 EVT_WDF_DRIVER_DEVICE_ADD VirtioInputEvtDriverDeviceAdd;
 EVT_WDF_DEVICE_PREPARE_HARDWARE VirtioInputEvtDevicePrepareHardware;
@@ -159,6 +169,10 @@ NTSTATUS VirtioInputReportArrived(
     _In_ UCHAR ReportId,
     _In_reads_bytes_(ReportSize) const VOID *Report,
     _In_ size_t ReportSize);
+
+NTSTATUS VirtioInputHidActivateDevice(_In_ WDFDEVICE Device);
+NTSTATUS VirtioInputHidDeactivateDevice(_In_ WDFDEVICE Device);
+VOID VirtioInputHidFlushQueue(_In_ WDFDEVICE Device);
 #endif /* _WIN32 */
 
 #ifdef __cplusplus
