@@ -105,7 +105,10 @@ function createSvgLineChart(points, { width = 840, height = 220, padding = 36 } 
     dot.setAttribute("class", "chart-point");
 
     const title = document.createElementNS(svgNS, "title");
-    title.textContent = `${point.timestamp} • ${point.commit} • ${formatValue(point.y)} ${point.unit}`;
+    const extras = [];
+    if (Number.isFinite(point.n)) extras.push(`n=${point.n}`);
+    if (Number.isFinite(point.cv)) extras.push(`CV ${(point.cv * 100).toFixed(2)}%`);
+    title.textContent = `${point.timestamp} • ${point.commit} • ${formatValue(point.y)} ${point.unit}${extras.length ? ` • ${extras.join(" • ")}` : ""}`;
     dot.appendChild(title);
 
     if (point.url) {
@@ -141,9 +144,29 @@ function renderDashboard(history) {
   }
 
   const latest = entries[entries.length - 1];
+  const env = latest.environment ?? {};
+  const envParts = [];
+  if (env.chromiumVersion) envParts.push(`Chromium ${env.chromiumVersion}`);
+  if (env.node) envParts.push(`Node ${env.node}`);
+  if (env.platform) {
+    envParts.push(env.osRelease ? `${env.platform} ${env.osRelease}` : env.platform);
+  }
+  if (env.arch) envParts.push(env.arch);
+  if (env.cpuModel) envParts.push(env.cpuCount ? `${env.cpuModel} (${env.cpuCount} cores)` : env.cpuModel);
+  if (Number.isFinite(env.iterations)) envParts.push(`${env.iterations} iterations`);
+
+  const envHtml = envParts.length ? `<div><strong>Env:</strong> ${envParts.join(" • ")}</div>` : "";
+
   summary.innerHTML = `
     <div><strong>Runs:</strong> ${entries.length}</div>
+    <div><strong>Schema:</strong> v${history.schemaVersion ?? "?"} • <strong>Updated:</strong> ${history.generatedAt ?? "—"}</div>
     <div><strong>Latest:</strong> ${latest.timestamp} • <a href="${latest.commit.url}" target="_blank" rel="noreferrer">${latest.commit.sha.slice(0, 7)}</a></div>
+    ${envHtml}
+    <div class="links">
+      <a href="./history.json">history.json</a>
+      <a href="./history.md">history.md</a>
+      <a href="./history.schema.json">history.schema.json</a>
+    </div>
   `;
 
   const metricIndex = new Map();
@@ -167,6 +190,8 @@ function renderDashboard(history) {
           url: entry.commit.url,
           y: metric.value,
           unit: metric.unit,
+          n: metric.samples?.n,
+          cv: metric.samples?.cv,
         });
       }
     }
@@ -180,7 +205,8 @@ function renderDashboard(history) {
     grouped.get(metric.scenarioName).push(metric);
   }
 
-  for (const [scenarioName, metrics] of grouped.entries()) {
+  const groupedSorted = [...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  for (const [scenarioName, metrics] of groupedSorted) {
     const section = document.createElement("section");
     section.className = "scenario";
     section.innerHTML = `<h2>${prettyName(scenarioName)}</h2>`;
@@ -195,6 +221,9 @@ function renderDashboard(history) {
       const last = pts[pts.length - 1];
       const prev = pts.length > 1 ? pts[pts.length - 2] : undefined;
       const delta = prev ? classifyDelta(prev.y, last.y, metric.better) : { className: "neutral", text: "—" };
+      const samplesText = [];
+      if (Number.isFinite(last.n)) samplesText.push(`n=${last.n}`);
+      if (Number.isFinite(last.cv)) samplesText.push(`CV ${(last.cv * 100).toFixed(2)}%`);
 
       card.innerHTML = `
         <div class="metric-header">
@@ -202,12 +231,21 @@ function renderDashboard(history) {
           <div class="metric-latest">
             <span class="metric-value">${formatValue(last.y)} ${metric.unit}</span>
             <span class="metric-delta ${delta.className}">${delta.text}</span>
+            ${samplesText.length ? `<span class="metric-samples">${samplesText.join(" • ")}</span>` : ""}
           </div>
         </div>
       `;
 
       const chart = createSvgLineChart(
-        pts.map((p) => ({ timestamp: p.timestamp, commit: p.commit, url: p.url, y: p.y, unit: p.unit })),
+        pts.map((p) => ({
+          timestamp: p.timestamp,
+          commit: p.commit,
+          url: p.url,
+          y: p.y,
+          unit: p.unit,
+          n: p.n,
+          cv: p.cv,
+        })),
         {},
       );
       card.appendChild(chart);
@@ -246,4 +284,3 @@ async function main() {
 }
 
 main();
-

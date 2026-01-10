@@ -51,6 +51,14 @@ main {
   margin-bottom: 22px;
 }
 
+.summary .links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  font-size: 13px;
+  opacity: 0.9;
+}
+
 .scenario {
   margin-bottom: 34px;
 }
@@ -114,6 +122,12 @@ main {
   color: #ffd1d1;
 }
 
+.metric-samples {
+  font-size: 12px;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
 .chart {
   width: 100%;
   height: auto;
@@ -164,4 +178,3 @@ th {
   opacity: 0.8;
   font-weight: 600;
 }
-

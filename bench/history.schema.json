@@ -59,7 +59,14 @@
           "properties": {
             "node": { "type": "string" },
             "platform": { "type": "string" },
-            "arch": { "type": "string" }
+            "arch": { "type": "string" },
+            "osRelease": { "type": "string" },
+            "cpuModel": { "type": "string" },
+            "cpuCount": { "type": "integer", "minimum": 1 },
+            "chromiumVersion": { "type": "string" },
+            "playwrightCoreVersion": { "type": "string" },
+            "iterations": { "type": "integer", "minimum": 1 },
+            "targetUrl": { "type": "string" }
           }
         },
         "scenarios": {

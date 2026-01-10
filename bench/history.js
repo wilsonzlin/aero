@@ -244,9 +244,19 @@ function normalisePerfToolResult(result) {
     if (result.meta.os && typeof result.meta.os === "object") {
       if (typeof result.meta.os.platform === "string") environment.platform = result.meta.os.platform;
       if (typeof result.meta.os.arch === "string") environment.arch = result.meta.os.arch;
+      if (typeof result.meta.os.release === "string") environment.osRelease = result.meta.os.release;
+      if (typeof result.meta.os.cpuModel === "string") environment.cpuModel = result.meta.os.cpuModel;
+      if (Number.isFinite(result.meta.os.cpuCount)) environment.cpuCount = result.meta.os.cpuCount;
     }
     if (typeof result.meta.platform === "string") environment.platform = result.meta.platform;
     if (typeof result.meta.arch === "string") environment.arch = result.meta.arch;
+
+    if (typeof result.meta.chromiumVersion === "string") environment.chromiumVersion = result.meta.chromiumVersion;
+    if (typeof result.meta.playwrightCoreVersion === "string") {
+      environment.playwrightCoreVersion = result.meta.playwrightCoreVersion;
+    }
+    if (Number.isFinite(result.meta.iterations)) environment.iterations = result.meta.iterations;
+    if (typeof result.meta.targetUrl === "string") environment.targetUrl = result.meta.targetUrl;
   }
 
   return {
