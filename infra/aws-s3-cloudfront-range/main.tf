@@ -8,6 +8,7 @@ locals {
   # CloudFront path patterns are specified without a leading "/" (for example: "images/*"),
   # but they apply to request paths like "/images/...".
   image_path_pattern = "${var.image_prefix}/*"
+  image_uri_prefix   = "/${var.image_prefix}/"
 
   cache_policy_id = var.cache_policy_mode == "immutable" ? aws_cloudfront_cache_policy.immutable.id : aws_cloudfront_cache_policy.mutable.id
   primary_domain  = length(var.custom_domain_names) > 0 ? var.custom_domain_names[0] : aws_cloudfront_distribution.images.domain_name
@@ -20,7 +21,8 @@ locals {
   ]
 
   # Origin request headers:
-  # - CORS preflight (OPTIONS) needs these forwarded to S3.
+  # - CORS preflight (OPTIONS) needs these forwarded to S3 unless you enable the optional
+  #   edge-handled preflight function (enable_edge_cors_preflight).
   # - Range headers are forwarded via the cache policy above.
   origin_request_headers = [
     "Origin",
@@ -206,7 +208,7 @@ resource "aws_cloudfront_response_headers_policy" "cors" {
   comment = "Optional: add/override CORS headers at CloudFront edge"
 
   cors_config {
-    access_control_allow_credentials = false
+    access_control_allow_credentials = var.cors_allow_credentials
     access_control_max_age_sec       = var.cors_max_age_seconds
     origin_override                  = true
 
@@ -226,6 +228,22 @@ resource "aws_cloudfront_response_headers_policy" "cors" {
       items = var.cors_expose_headers
     }
   }
+}
+
+resource "aws_cloudfront_function" "cors_preflight" {
+  count   = var.enable_edge_cors_preflight ? 1 : 0
+  name    = "${local.name_prefix}-cors-preflight"
+  runtime = "cloudfront-js-1.0"
+  comment = "Edge-handled CORS preflight for OPTIONS ${local.image_uri_prefix}*"
+  publish = true
+
+  code = templatefile("${path.module}/cors-preflight.js.tftpl", {
+    allowed_origins_json = jsonencode(var.cors_allowed_origins)
+    allowed_headers_json = jsonencode(var.cors_allowed_headers)
+    allow_credentials    = var.cors_allow_credentials
+    max_age_seconds      = var.cors_max_age_seconds
+    image_uri_prefix_json = jsonencode(local.image_uri_prefix)
+  })
 }
 
 resource "aws_cloudfront_distribution" "images" {
@@ -262,6 +280,14 @@ resource "aws_cloudfront_distribution" "images" {
     cache_policy_id            = local.cache_policy_id
     origin_request_policy_id   = aws_cloudfront_origin_request_policy.images.id
     response_headers_policy_id = var.enable_edge_cors ? aws_cloudfront_response_headers_policy.cors[0].id : null
+
+    dynamic "function_association" {
+      for_each = var.enable_edge_cors_preflight ? [1] : []
+      content {
+        event_type   = "viewer-request"
+        function_arn = aws_cloudfront_function.cors_preflight[0].arn
+      }
+    }
   }
 
   ordered_cache_behavior {
@@ -277,6 +303,14 @@ resource "aws_cloudfront_distribution" "images" {
     cache_policy_id            = local.cache_policy_id
     origin_request_policy_id   = aws_cloudfront_origin_request_policy.images.id
     response_headers_policy_id = var.enable_edge_cors ? aws_cloudfront_response_headers_policy.cors[0].id : null
+
+    dynamic "function_association" {
+      for_each = var.enable_edge_cors_preflight ? [1] : []
+      content {
+        event_type   = "viewer-request"
+        function_arn = aws_cloudfront_function.cors_preflight[0].arn
+      }
+    }
   }
 
   restrictions {

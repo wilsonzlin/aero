@@ -24,10 +24,11 @@ For a fully local Range + CORS validation setup (no AWS required), see
     - `GET`, `HEAD`, `OPTIONS`
     - Only `GET`/`HEAD` responses are cached by default (OPTIONS preflight is forwarded to origin; browsers cache via `Access-Control-Max-Age`).
     - Compression disabled (disk images are already compressed or not worth compressing).
-    - Origin request policy forwards headers needed for **CORS preflight**.
+    - Origin request policy forwards headers needed for **CORS preflight** (unless edge-handled preflight is enabled).
     - Cache policy includes `Range`/`If-Range` in the cache key for HTTP Range streaming + caching.
     - Two cache policies: `immutable` (long TTL) vs `mutable` (short TTL), selectable via variable.
     - Optional CloudFront **response headers policy** for injecting CORS headers at the edge.
+    - Optional CloudFront **Function** to answer CORS preflight (`OPTIONS`) at the edge for `/images/*`, avoiding OPTIONS to S3.
 
 ## Prerequisites
 
@@ -140,3 +141,42 @@ If you set `custom_domain_names`, you must also set `acm_certificate_arn` (an AC
 - Configure `cors_allowed_origins` accordingly.
 
 If you truly need *same-origin* (same scheme/host/port as your app), you usually need to serve both your app and `/images/*` through the **same CloudFront distribution**. You can still use this module as a reference for the S3 + OAC + caching pieces.
+
+#### Edge-handled preflight (`OPTIONS`) for `/images/*` (optional)
+
+When `enable_edge_cors_preflight = true`, a CloudFront Function responds to CORS preflight requests for `/images/*` at the edge (viewer request), reducing origin load and latency for the first `Range` fetch.
+
+Behavior summary:
+
+- Only handles CORS preflight requests (requests with `Origin` and `Access-Control-Request-Method`).
+- Validates `Origin` against `cors_allowed_origins` (exact match, or domain suffix match like `.example.com`).
+- Returns `204` and includes:
+  - `Access-Control-Allow-Origin: <origin>`
+  - `Access-Control-Allow-Methods: GET,HEAD,OPTIONS`
+  - `Access-Control-Allow-Headers: ...` (from `cors_allowed_headers`, must include `Range`)
+  - `Access-Control-Allow-Credentials: true|false` (from `cors_allow_credentials`)
+  - `Access-Control-Max-Age: <seconds>` (from `cors_max_age_seconds`)
+  - `Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers`
+- Non-CORS `OPTIONS` requests to `/images/*` return `404` (to avoid forwarding `OPTIONS` to S3).
+
+Example:
+
+```bash
+curl -i -X OPTIONS "https://$CLOUDFRONT_DOMAIN/images/example.bin" \
+  -H "Origin: https://app.example.com" \
+  -H "Access-Control-Request-Method: GET" \
+  -H "Access-Control-Request-Headers: Range"
+```
+
+Expected response headers (abridged):
+
+```
+HTTP/2 204
+access-control-allow-origin: https://app.example.com
+access-control-allow-methods: GET,HEAD,OPTIONS
+access-control-allow-headers: Range,Content-Type,If-None-Match,If-Modified-Since
+access-control-allow-credentials: false
+access-control-max-age: 86400
+vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
+```
+

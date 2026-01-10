@@ -13,12 +13,14 @@ cors_allowed_origins = [
 # - mutable: short TTL (for overwrite-in-place workflows)
 cache_policy_mode = "immutable"
 
-# Optional: add/override CORS headers at CloudFront edge. S3 still needs a CORS rule to answer
-# preflight (OPTIONS), but this can standardize headers across objects.
+# Optional: answer CORS preflight (OPTIONS) at the CloudFront edge for /images/*.
+enable_edge_cors_preflight = true
+
+# Optional: add/override CORS headers at CloudFront edge (viewer response). This can standardize
+# headers across objects without relying on per-object metadata.
 enable_edge_cors = true
 
 # Optional: custom domain(s) for the CloudFront distribution.
 # If set, you MUST provide an ACM certificate ARN in us-east-1.
 # custom_domain_names = ["images.example.com"]
 # acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-

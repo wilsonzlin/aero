@@ -67,10 +67,21 @@ variable "noncurrent_version_expiration_days" {
   default     = null
 }
 
+variable "enable_edge_cors_preflight" {
+  description = "If true, attach a CloudFront Function that answers CORS preflight (OPTIONS) requests at the edge for /<image_prefix>/*."
+  type        = bool
+  default     = false
+}
+
 variable "cors_allowed_origins" {
-  description = "Allowed origins for CORS. If empty, no S3 CORS configuration is applied (same-origin only)."
+  description = "Allowed origins for CORS. If empty, no S3 CORS configuration is applied (same-origin only). Required if enable_edge_cors_preflight or enable_edge_cors is true."
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = (!var.enable_edge_cors_preflight && !var.enable_edge_cors) || length(var.cors_allowed_origins) > 0
+    error_message = "cors_allowed_origins must be non-empty when enable_edge_cors_preflight or enable_edge_cors is true."
+  }
 }
 
 variable "cors_allowed_methods" {
@@ -84,10 +95,15 @@ variable "cors_allowed_headers" {
   type        = list(string)
   default = [
     "Range",
-    "Origin",
-    "Access-Control-Request-Method",
-    "Access-Control-Request-Headers",
+    "Content-Type",
+    "If-None-Match",
+    "If-Modified-Since",
   ]
+
+  validation {
+    condition     = contains([for h in var.cors_allowed_headers : lower(h)], "range")
+    error_message = "cors_allowed_headers must include Range."
+  }
 }
 
 variable "cors_expose_headers" {
@@ -101,10 +117,21 @@ variable "cors_expose_headers" {
   ]
 }
 
+variable "cors_allow_credentials" {
+  description = "Whether to return Access-Control-Allow-Credentials: true for CORS requests."
+  type        = bool
+  default     = false
+}
+
 variable "cors_max_age_seconds" {
   description = "How long browsers can cache the CORS preflight response."
   type        = number
-  default     = 600
+  default     = 86400
+
+  validation {
+    condition     = var.cors_max_age_seconds >= 0
+    error_message = "cors_max_age_seconds must be >= 0."
+  }
 }
 
 variable "enable_edge_cors" {
@@ -183,3 +210,4 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+

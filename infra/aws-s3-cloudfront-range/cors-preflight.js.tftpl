@@ -1,0 +1,140 @@
+/* CloudFront Function: Edge-handled CORS preflight for OPTIONS under a configured prefix
+ *
+ * Notes:
+ * - CloudFront Functions run at the viewer request event.
+ * - We only handle CORS preflights (OPTIONS + Origin + Access-Control-Request-Method).
+ * - Non-CORS OPTIONS to the prefix return 404 to avoid forwarding OPTIONS to S3.
+ */
+
+var ALLOWED_ORIGINS = ${allowed_origins_json};
+var ALLOWED_HEADERS = ${allowed_headers_json};
+var ALLOW_CREDENTIALS = ${allow_credentials};
+var MAX_AGE_SECONDS = ${max_age_seconds};
+var IMAGE_URI_PREFIX = ${image_uri_prefix_json};
+
+function headerValue(headers, name) {
+  var key = String(name).toLowerCase();
+  var h = headers[key];
+  return h ? h.value : null;
+}
+
+function endsWith(str, suffix) {
+  if (suffix.length > str.length) {
+    return false;
+  }
+  return str.indexOf(suffix, str.length - suffix.length) !== -1;
+}
+
+function extractHostname(originLower) {
+  // `Origin` is typically `scheme://host[:port]`.
+  var o = originLower;
+  var schemeIndex = o.indexOf("://");
+  if (schemeIndex !== -1) {
+    o = o.substring(schemeIndex + 3);
+  }
+
+  var slashIndex = o.indexOf("/");
+  if (slashIndex !== -1) {
+    o = o.substring(0, slashIndex);
+  }
+
+  var colonIndex = o.indexOf(":");
+  if (colonIndex !== -1) {
+    o = o.substring(0, colonIndex);
+  }
+
+  return o;
+}
+
+function isOriginAllowed(origin) {
+  if (!origin) {
+    return false;
+  }
+
+  var originLower = String(origin).toLowerCase();
+  var hostLower = extractHostname(originLower);
+
+  for (var i = 0; i < ALLOWED_ORIGINS.length; i++) {
+    var pattern = ALLOWED_ORIGINS[i];
+    if (!pattern) {
+      continue;
+    }
+
+    var patternLower = String(pattern).toLowerCase();
+
+    if (patternLower === "*") {
+      return true;
+    }
+
+    // Exact origin match, including scheme and (optional) port.
+    if (originLower === patternLower) {
+      return true;
+    }
+
+    // Domain match (pattern without scheme).
+    if (patternLower.indexOf("://") === -1) {
+      if (patternLower.charAt(0) === ".") {
+        var d = patternLower.substring(1);
+        if (hostLower === d || endsWith(hostLower, patternLower)) {
+          return true;
+        }
+      } else {
+        if (hostLower === patternLower || endsWith(hostLower, "." + patternLower)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+function handler(event) {
+  var request = event.request;
+
+  if (request.method !== "OPTIONS") {
+    return request;
+  }
+
+  if (request.uri.indexOf(IMAGE_URI_PREFIX) !== 0) {
+    return request;
+  }
+
+  var origin = headerValue(request.headers, "origin");
+  var acrm = headerValue(request.headers, "access-control-request-method");
+
+  if (!origin || !acrm) {
+    return {
+      statusCode: 404,
+      statusDescription: "Not Found"
+    };
+  }
+
+  if (!isOriginAllowed(origin)) {
+    return {
+      statusCode: 403,
+      statusDescription: "Forbidden"
+    };
+  }
+
+  var reqMethod = String(acrm).toUpperCase();
+  if (reqMethod !== "GET" && reqMethod !== "HEAD") {
+    return {
+      statusCode: 403,
+      statusDescription: "Forbidden"
+    };
+  }
+
+  return {
+    statusCode: 204,
+    statusDescription: "No Content",
+    headers: {
+      "access-control-allow-origin": { "value": origin },
+      "access-control-allow-methods": { "value": "GET,HEAD,OPTIONS" },
+      "access-control-allow-headers": { "value": ALLOWED_HEADERS.join(",") },
+      "access-control-allow-credentials": { "value": ALLOW_CREDENTIALS ? "true" : "false" },
+      "access-control-max-age": { "value": String(MAX_AGE_SECONDS) },
+      "vary": { "value": "Origin, Access-Control-Request-Method, Access-Control-Request-Headers" }
+    }
+  };
+}
