@@ -43,7 +43,7 @@ call :FIND_AERO_ROOT
 if not defined AERO_ROOT (
   echo ERROR: Could not locate Aero payload directory.
   echo Expected "C:\Aero\" or a payload root containing "Drivers\" and "Scripts\" (and optionally "Cert\"/"Certs\").
-  echo See README.md for AERO.TAG scanning behaviour.
+  echo See scripts/README.md for payload discovery behaviour (drive scanning, marker files, and supported layouts).
   exit /b 10
 )
 

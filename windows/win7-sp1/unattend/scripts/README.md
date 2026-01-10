@@ -70,7 +70,7 @@ Logs are appended to:
 
 ### What it does
 
-1. Locates the Aero payload root (`Drivers\`, `Cert\`, `Scripts\`).
+1. Locates the Aero payload root (`Drivers\` and `Scripts\`; `Cert\`/`Certs\` optional).
 2. If a supported certificate file exists under `Cert\` or `Certs\`, imports it into:
    - `Root`
    - `TrustedPublisher`
