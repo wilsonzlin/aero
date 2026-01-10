@@ -507,7 +507,8 @@ fn exec_cmps<B: Bus>(
 
         let src_val = read_mem(bus, src_addr, elem_size);
         let dst_val = read_mem(bus, dst_addr, elem_size);
-        update_sub_flags(cpu, dst_val, src_val, elem_size);
+        // CMPS performs SRC - DEST (i.e. subtract destination operand from source operand).
+        update_sub_flags(cpu, src_val, dst_val, elem_size);
 
         let si_new = add_wrapping(si, delta, addr_size);
         let di_new = add_wrapping(di, delta, addr_size);

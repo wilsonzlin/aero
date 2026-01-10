@@ -192,6 +192,25 @@ fn scasb_df1_decrements_di_and_sets_flags() {
 }
 
 #[test]
+fn cmpsb_flag_order_is_src_minus_dest() {
+    // Intel: CMPS sets flags as if computing SRC - DEST.
+    let mut cpu = Cpu::new(CpuMode::Protected32);
+    cpu.segs.ds.base = 0x1000;
+    cpu.segs.es.base = 0x2000;
+    cpu.regs.set_esi(0x10, CpuMode::Protected32);
+    cpu.regs.set_edi(0x20, CpuMode::Protected32);
+
+    let mut bus = setup_bus();
+    bus.write_u8(0x1000 + 0x10, 0x01); // SRC
+    bus.write_u8(0x2000 + 0x20, 0x02); // DEST
+
+    cpu.execute_bytes(&mut bus, &[0xA6]).unwrap(); // CMPSB
+    assert!(!cpu.rflags.zf());
+    assert!(cpu.rflags.get(aero_cpu_core::cpu::RFlags::CF));
+    assert!(cpu.rflags.get(aero_cpu_core::cpu::RFlags::SF));
+}
+
+#[test]
 fn addr_size_override_uses_esi_edi_ecx_in_long_mode() {
     let mut cpu = Cpu::new(CpuMode::Long64);
     cpu.segs.ds.base = 0x1111_0000; // ignored (DS base forced to 0 in long mode)
