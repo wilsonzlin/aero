@@ -25,6 +25,7 @@ drivers/aerogpu/tests/win7/
   d3d9ex_dwm_probe/
   d3d11_triangle/
   readback_sanity/
+  timeout_runner/
   common/
 ```
 
