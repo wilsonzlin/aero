@@ -67,6 +67,7 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     // Verify ISO contains expected tree (via Joliet directory records).
     let iso_bytes = fs::read(&outputs1.iso_path)?;
     let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
+    let iso_entries = aero_packager::read_joliet_file_entries(&iso_bytes)?;
     for required in [
         "setup.cmd",
         "uninstall.cmd",
@@ -103,6 +104,24 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
         zip_paths.insert(entry.name().to_string());
     }
     assert_eq!(zip_paths, tree.paths);
+
+    // Verify the ISO file extents match the zip file bytes (guards against wrong sector offsets).
+    for entry in &iso_entries {
+        let start = entry.extent_sector as usize * 2048;
+        let end = start + entry.size as usize;
+        let iso_payload = &iso_bytes[start..end];
+
+        let mut zf = zip.by_name(&entry.path)?;
+        let mut zip_payload = Vec::new();
+        zf.read_to_end(&mut zip_payload)?;
+
+        assert_eq!(
+            iso_payload,
+            zip_payload.as_slice(),
+            "ISO/zip payload mismatch for {}",
+            entry.path
+        );
+    }
 
     // Verify manifest hashes match the packaged bytes (via the zip).
     let manifest_bytes = fs::read(&outputs1.manifest_path)?;

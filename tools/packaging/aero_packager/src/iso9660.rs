@@ -241,6 +241,12 @@ pub fn write_iso9660_joliet(
 }
 
 pub fn read_joliet_tree(iso_bytes: &[u8]) -> Result<IsoFileTree> {
+    let entries = read_joliet_file_entries(iso_bytes)?;
+    let paths = entries.into_iter().map(|e| e.path).collect();
+    Ok(IsoFileTree { paths })
+}
+
+pub fn read_joliet_file_entries(iso_bytes: &[u8]) -> Result<Vec<IsoFileEntry>> {
     let svd_offset = find_joliet_svd(iso_bytes)?;
     let svd = &iso_bytes[svd_offset..svd_offset + SECTOR_SIZE];
 
@@ -250,9 +256,10 @@ pub fn read_joliet_tree(iso_bytes: &[u8]) -> Result<IsoFileTree> {
         bail!("joliet root directory record is not a directory");
     }
 
-    let mut paths = BTreeSet::new();
-    walk_dir_joliet(iso_bytes, "", root.extent_sector, root.size, &mut paths)?;
-    Ok(IsoFileTree { paths })
+    let mut entries = Vec::new();
+    walk_dir_joliet_entries(iso_bytes, "", root.extent_sector, root.size, &mut entries)?;
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(entries)
 }
 
 fn find_joliet_svd(iso_bytes: &[u8]) -> Result<usize> {
@@ -282,12 +289,12 @@ fn find_joliet_svd(iso_bytes: &[u8]) -> Result<usize> {
     bail!("joliet supplementary volume descriptor not found")
 }
 
-fn walk_dir_joliet(
+fn walk_dir_joliet_entries(
     iso_bytes: &[u8],
     dir_path: &str,
     extent_sector: u32,
     size: u32,
-    out: &mut BTreeSet<String>,
+    out: &mut Vec<IsoFileEntry>,
 ) -> Result<()> {
     let start = extent_sector as usize * SECTOR_SIZE;
     let end = start + size as usize;
@@ -327,7 +334,7 @@ fn walk_dir_joliet(
         };
 
         if parsed.is_dir {
-            walk_dir_joliet(
+            walk_dir_joliet_entries(
                 iso_bytes,
                 &child_path,
                 parsed.extent_sector,
@@ -335,7 +342,11 @@ fn walk_dir_joliet(
                 out,
             )?;
         } else {
-            out.insert(child_path);
+            out.push(IsoFileEntry {
+                path: child_path,
+                extent_sector: parsed.extent_sector,
+                size: parsed.size,
+            });
         }
     }
 

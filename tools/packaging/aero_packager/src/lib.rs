@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub use iso9660::read_joliet_tree;
+pub use iso9660::read_joliet_file_entries;
 pub use iso9660::{IsoFileEntry, IsoFileTree};
 pub use manifest::{Manifest, ManifestFileEntry};
 pub use spec::{PackagingSpec, RequiredDriver};
