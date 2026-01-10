@@ -87,7 +87,8 @@ export class WebGPUBackend implements PresentationBackend {
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
     if (!adapter) throw new Error('No WebGPU adapter available');
 
-    const device = await adapter.requestDevice();
+    const requiredFeatures = options?.requiredFeatures ?? [];
+    const device = await adapter.requestDevice({ requiredFeatures });
 
     const context = (canvas as any).getContext('webgpu') as GPUCanvasContext | null;
     if (!context) throw new Error('Failed to acquire WebGPU canvas context');

@@ -1,9 +1,11 @@
 import type {
   GpuWorkerGpuErrorMessage,
+  GpuWorkerErrorEventMessage,
   GpuWorkerInitOptions,
   GpuWorkerOutgoingMessage,
   GpuWorkerReadyMessage,
   GpuWorkerScreenshotMessage,
+  GpuWorkerStatsMessage,
 } from '../ipc/gpu-messages';
 
 export interface CreateGpuWorkerParams {
@@ -13,6 +15,8 @@ export interface CreateGpuWorkerParams {
   devicePixelRatio: number;
   gpuOptions?: GpuWorkerInitOptions;
   onGpuError?: (msg: GpuWorkerGpuErrorMessage) => void;
+  onGpuErrorEvent?: (msg: GpuWorkerErrorEventMessage) => void;
+  onGpuStats?: (msg: GpuWorkerStatsMessage) => void;
 }
 
 export interface GpuWorkerHandle {
@@ -83,6 +87,12 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
         }
         break;
       }
+      case 'gpu_error_event':
+        params.onGpuErrorEvent?.(msg);
+        break;
+      case 'gpu_stats':
+        params.onGpuStats?.(msg);
+        break;
       default:
         break;
     }

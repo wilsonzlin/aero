@@ -63,7 +63,7 @@ export async function init_gpu(
 
   const wantWebGpu = options.preferWebGpu === true && options.disableWebGpu !== true;
   const impl: PresentationBackend = wantWebGpu ? new WebGPUBackend() : new WebGL2Backend();
-  await impl.init(offscreenCanvas);
+  await impl.init(offscreenCanvas, wantWebGpu ? { requiredFeatures: options.requiredFeatures as GPUFeatureName[] } : undefined);
 
   backendImpl = impl;
   backend = impl.getCapabilities().kind;

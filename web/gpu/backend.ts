@@ -4,6 +4,12 @@ export type FilterMode = 'nearest' | 'linear';
 export interface BackendInitOptions {
   readonly filter?: FilterMode;
   readonly preserveAspectRatio?: boolean;
+  /**
+   * WebGPU-only: list of required WebGPU device features to request during init.
+   *
+   * WebGL2 ignores this.
+   */
+  readonly requiredFeatures?: readonly GPUFeatureName[];
 }
 
 export interface DirtyRect {
