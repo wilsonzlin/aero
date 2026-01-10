@@ -1,5 +1,5 @@
 use aero_bios::firmware::{BlockDevice, DiskError, Keyboard, Memory};
-use aero_bios::types::{E820_TYPE_ACPI, E820_TYPE_RAM, E820_TYPE_RESERVED};
+use aero_bios::types::{E820_TYPE_ACPI, E820_TYPE_NVS, E820_TYPE_RAM, E820_TYPE_RESERVED};
 use aero_bios::{Bios, BiosConfig, RealModeCpu};
 use aero_acpi::AcpiTables;
 use std::collections::VecDeque;
@@ -131,10 +131,9 @@ impl Keyboard for TestKeyboard {
     }
 }
 
-fn acpi_region_from_tables(tables: &AcpiTables) -> (u64, u64) {
+fn acpi_reclaimable_region_from_tables(tables: &AcpiTables) -> (u64, u64) {
     let addrs = &tables.addresses;
     let mut start = addrs.dsdt;
-    start = start.min(addrs.facs);
     start = start.min(addrs.fadt);
     start = start.min(addrs.madt);
     start = start.min(addrs.hpet);
@@ -143,7 +142,6 @@ fn acpi_region_from_tables(tables: &AcpiTables) -> (u64, u64) {
 
     let mut end = start;
     end = end.max(addrs.dsdt + tables.dsdt.len() as u64);
-    end = end.max(addrs.facs + tables.facs.len() as u64);
     end = end.max(addrs.fadt + tables.fadt.len() as u64);
     end = end.max(addrs.madt + tables.madt.len() as u64);
     end = end.max(addrs.hpet + tables.hpet.len() as u64);
@@ -332,12 +330,23 @@ fn int15_e820_enumeration_is_non_overlapping_and_includes_acpi_region() {
     let Some(acpi) = bios.acpi_tables() else {
         panic!("default BIOS config should enable ACPI tables");
     };
-    let (acpi_base, acpi_len) = acpi_region_from_tables(acpi);
+    let (acpi_base, acpi_len) = acpi_reclaimable_region_from_tables(acpi);
     assert!(
         entries
             .iter()
             .any(|e| e.0 == acpi_base && e.1 == acpi_len && e.2 == E820_TYPE_ACPI),
         "expected ACPI E820 region [{acpi_base:#x}-{:#x})",
         acpi_base + acpi_len
+    );
+
+    // The FACS must live in ACPI NVS memory, not in the reclaimable SDT blob.
+    let facs_addr = acpi.addresses.facs;
+    assert!(
+        entries.iter().any(|e| {
+            e.2 == E820_TYPE_NVS
+                && facs_addr >= e.0
+                && facs_addr + (acpi.facs.len() as u64) <= e.0 + e.1
+        }),
+        "expected ACPI NVS E820 region covering FACS at {facs_addr:#x}"
     );
 }

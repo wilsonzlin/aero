@@ -1,6 +1,7 @@
 use core::fmt;
 
 pub const DEFAULT_ACPI_ALIGNMENT: u64 = 16;
+pub const DEFAULT_ACPI_NVS_SIZE: u64 = 0x1000;
 
 /// Physical memory writing abstraction used by firmware to place tables in
 /// guest RAM.
@@ -10,8 +11,14 @@ pub trait PhysicalMemory {
 
 #[derive(Clone, Copy, Debug)]
 pub struct AcpiPlacement {
-    /// Base address for the SDT blobs (DSDT/FADT/MADT/HPET/RSDT/XSDT/FACS).
+    /// Base address for the SDT blobs (DSDT/FADT/MADT/HPET/RSDT/XSDT).
     pub tables_base: u64,
+    /// Base address for ACPI NVS blobs (E820 type 4). Currently this is used to
+    /// place the FACS, which is referenced by the FADT but must *not* appear in
+    /// the RSDT/XSDT.
+    pub nvs_base: u64,
+    /// Size of the ACPI NVS window reserved for firmware structures (bytes).
+    pub nvs_size: u64,
     /// Physical address where the RSDP will be written (must be < 1MiB for PC
     /// firmware discovery; 16-byte aligned is recommended).
     pub rsdp_addr: u64,
@@ -23,6 +30,8 @@ impl Default for AcpiPlacement {
     fn default() -> Self {
         Self {
             tables_base: 0x0010_0000, // 1MiB (common for firmware table blobs)
+            nvs_base: 0x0011_0000,    // adjacent, but marked ACPI NVS (type 4)
+            nvs_size: DEFAULT_ACPI_NVS_SIZE,
             rsdp_addr: 0x000F_0000,   // within the BIOS search range
             alignment: DEFAULT_ACPI_ALIGNMENT,
         }
@@ -163,9 +172,13 @@ impl AcpiTables {
         let dsdt = build_dsdt(cfg);
         next = align_up(dsdt_addr + dsdt.len() as u64, align);
 
-        let facs_addr = align_up(next, align);
+        let facs_addr = align_up(placement.nvs_base, align);
         let facs = build_facs();
-        next = align_up(facs_addr + facs.len() as u64, align);
+        assert!(
+            facs_addr >= placement.nvs_base
+                && facs_addr + facs.len() as u64 <= placement.nvs_base + placement.nvs_size,
+            "FACS does not fit in the ACPI NVS window"
+        );
 
         let fadt_addr = align_up(next, align);
         let fadt = build_fadt(cfg, dsdt_addr, facs_addr);
@@ -210,7 +223,17 @@ impl AcpiTables {
             facs: facs_addr,
         };
 
-        let _ = next; // reserved for future tables
+        // Ensure the NVS region does not overlap the reclaimable table blobs.
+        let tables_end = next;
+        let nvs_start = placement.nvs_base;
+        let nvs_end = placement
+            .nvs_base
+            .checked_add(placement.nvs_size)
+            .expect("ACPI NVS range overflow");
+        assert!(
+            nvs_end <= placement.tables_base || nvs_start >= tables_end,
+            "ACPI NVS window overlaps ACPI table blob region"
+        );
 
         Self {
             addresses,
@@ -328,8 +351,8 @@ fn build_facs() -> Vec<u8> {
     out[0..4].copy_from_slice(b"FACS");
     out[4..8].copy_from_slice(&(64u32).to_le_bytes());
     // HW signature, waking vectors, global lock, flags remain zero.
-    // Version: set to 1 (ACPI 2.0+).
-    out[40] = 1;
+    // Version (offset 32): set to 2 (ACPI 2.0+).
+    out[32] = 2;
     out
 }
 

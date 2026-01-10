@@ -1,4 +1,7 @@
-use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables, PhysicalMemory, DEFAULT_ACPI_ALIGNMENT};
+use aero_acpi::{
+    AcpiConfig, AcpiPlacement, AcpiTables, PhysicalMemory, DEFAULT_ACPI_ALIGNMENT,
+    DEFAULT_ACPI_NVS_SIZE,
+};
 
 struct TestMemory {
     mem: Vec<u8>,
@@ -179,6 +182,8 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
 
     let placement = AcpiPlacement {
         tables_base: 0x0010_0000,
+        nvs_base: 0x0011_0000,
+        nvs_size: DEFAULT_ACPI_NVS_SIZE,
         rsdp_addr: 0x000F_0000,
         alignment: DEFAULT_ACPI_ALIGNMENT,
     };
@@ -186,7 +191,15 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     let tables = AcpiTables::build(&cfg, placement);
 
     // Allocate enough physical memory to cover all the written tables.
-    let mem_size = (tables.addresses.xsdt + tables.xsdt.len() as u64 + 0x1000) as usize;
+    let max_end = [
+        tables.addresses.rsdp + tables.rsdp.len() as u64,
+        tables.addresses.xsdt + tables.xsdt.len() as u64,
+        tables.addresses.facs + tables.facs.len() as u64,
+    ]
+    .into_iter()
+    .max()
+    .unwrap();
+    let mem_size = (max_end + 0x1000) as usize;
     let mut mem = TestMemory::new(mem_size);
     tables.write_to(&mut mem);
 
@@ -250,6 +263,10 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     assert_eq!(x_dsdt, tables.addresses.dsdt);
     assert_eq!(facs32, tables.addresses.facs);
     assert_eq!(x_facs, tables.addresses.facs);
+    assert!(
+        tables.addresses.facs >= placement.nvs_base
+            && tables.addresses.facs + tables.facs.len() as u64 <= placement.nvs_base + placement.nvs_size
+    );
 
     // PM blocks should match config and be internally consistent.
     assert_eq!(read_u32_le(fadt, 56) as u16, cfg.pm1a_evt_blk);
@@ -295,11 +312,27 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
         }
     }
     assert_eq!(prt, expected);
+    for cpu_id in 0..cfg.cpu_count {
+        let name = if cpu_id < 16 {
+            let b = b"0123456789ABCDEF"[cpu_id as usize];
+            [b'C', b'P', b'U', b]
+        } else {
+            let hi = b"0123456789ABCDEF"[(cpu_id >> 4) as usize];
+            let lo = b"0123456789ABCDEF"[(cpu_id & 0x0F) as usize];
+            [b'C', b'P', hi, lo]
+        };
+        assert!(
+            aml.windows(4).any(|w| w == name),
+            "missing CPU object for {:?}",
+            core::str::from_utf8(&name).unwrap()
+        );
+    }
 
     // FACS signature/length.
     let facs = mem.read(tables.addresses.facs, 64);
     assert_eq!(&facs[0..4], b"FACS");
     assert_eq!(read_u32_le(facs, 4), 64);
+    assert_eq!(facs[32], 2);
 
     // --- MADT ---
     let madt_hdr_raw = mem.read(tables.addresses.madt, 36);
@@ -314,7 +347,7 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
 
     // Count processor LAPIC entries and check for ISOs.
     let mut off = 44;
-    let mut lapic_count = 0;
+    let mut lapic_ids = Vec::new();
     let mut found_irq0_iso = false;
     let mut found_sci_iso = false;
     while off < madt.len() {
@@ -323,7 +356,11 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
         assert!(entry_len >= 2);
         match entry_type {
             0 => {
-                lapic_count += 1;
+                let acpi_id = madt[off + 2];
+                let apic_id = madt[off + 3];
+                assert_eq!(acpi_id, apic_id);
+                assert!(acpi_id < cfg.cpu_count);
+                lapic_ids.push(acpi_id);
             }
             2 => {
                 let src = madt[off + 3];
@@ -341,7 +378,13 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
         }
         off += entry_len;
     }
-    assert_eq!(lapic_count, cfg.cpu_count as usize);
+    lapic_ids.sort_unstable();
+    assert_eq!(lapic_ids.len(), cfg.cpu_count as usize);
+    assert_eq!(
+        lapic_ids,
+        (0..cfg.cpu_count).collect::<Vec<u8>>(),
+        "MADT LAPIC IDs do not match cpu_count"
+    );
     assert!(found_irq0_iso);
     assert!(found_sci_iso);
 

@@ -6,8 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables, PhysicalMemory as AcpiPhysicalMemory};
 
 use crate::types::{
-    E820Entry, RealModeCpu, E820_TYPE_ACPI, E820_TYPE_RAM, E820_TYPE_RESERVED, FLAG_CF, FLAG_IF,
-    FLAG_ZF,
+    E820Entry, RealModeCpu, E820_TYPE_ACPI, E820_TYPE_NVS, E820_TYPE_RAM, E820_TYPE_RESERVED,
+    FLAG_CF, FLAG_IF, FLAG_ZF,
 };
 use firmware_tables::smbios::{SmbiosConfig, SmbiosTables};
 
@@ -57,8 +57,13 @@ pub struct BiosConfig {
     pub cpu_count: u8,
     /// Whether to build and publish minimal ACPI tables in guest RAM.
     pub enable_acpi: bool,
-    /// Base address for ACPI SDT blobs (DSDT/FADT/MADT/HPET/RSDT/XSDT/FACS).
+    /// Base address for ACPI SDT blobs (DSDT/FADT/MADT/HPET/RSDT/XSDT).
     pub acpi_tables_base: u64,
+    /// Base address for the ACPI NVS window (E820 type 4). Used for firmware
+    /// state such as the FACS (Firmware ACPI Control Structure).
+    pub acpi_nvs_base: u64,
+    /// Size of the ACPI NVS window in bytes.
+    pub acpi_nvs_size: u64,
     /// Physical address where the ACPI RSDP will be written (< 1MiB).
     pub acpi_rsdp_addr: u64,
 }
@@ -71,6 +76,8 @@ impl Default for BiosConfig {
             cpu_count: 1,
             enable_acpi: true,
             acpi_tables_base: 0x0010_0000,
+            acpi_nvs_base: 0x0011_0000,
+            acpi_nvs_size: aero_acpi::DEFAULT_ACPI_NVS_SIZE,
             // Keep this in the standard BIOS search window but outside the system BIOS ROM.
             acpi_rsdp_addr: 0x000E_0000,
         }
@@ -203,19 +210,25 @@ impl Bios {
             acpi_cfg.cpu_count = cfg.cpu_count.max(1);
             let placement = AcpiPlacement {
                 tables_base: cfg.acpi_tables_base,
+                nvs_base: cfg.acpi_nvs_base,
+                nvs_size: cfg.acpi_nvs_size,
                 rsdp_addr: cfg.acpi_rsdp_addr,
                 alignment: aero_acpi::DEFAULT_ACPI_ALIGNMENT,
             };
 
             let tables = AcpiTables::build(&acpi_cfg, placement);
-            let (tables_base, tables_len) = acpi_region_from_tables(&tables);
+            let (tables_base, tables_len) = acpi_reclaimable_region_from_tables(&tables);
             let tables_end = tables_base.saturating_add(tables_len);
             let rsdp_end = tables
                 .addresses
                 .rsdp
                 .saturating_add(tables.rsdp.len() as u64);
+            let nvs_end = cfg.acpi_nvs_base.saturating_add(cfg.acpi_nvs_size);
 
-            if tables_end <= cfg.total_memory_bytes && rsdp_end <= cfg.total_memory_bytes {
+            if tables_end <= cfg.total_memory_bytes
+                && rsdp_end <= cfg.total_memory_bytes
+                && nvs_end <= cfg.total_memory_bytes
+            {
                 Some(tables)
             } else {
                 None
@@ -224,9 +237,14 @@ impl Bios {
             None
         };
 
+        let acpi_reclaimable = acpi.as_ref().map(acpi_reclaimable_region_from_tables);
+        let acpi_nvs = acpi
+            .as_ref()
+            .map(|_| (cfg.acpi_nvs_base, cfg.acpi_nvs_size));
         let e820 = build_e820_map(
             cfg.total_memory_bytes,
-            acpi.as_ref().map(acpi_region_from_tables),
+            acpi_reclaimable,
+            acpi_nvs,
         );
         Self {
             cfg,
@@ -1394,10 +1412,9 @@ fn assign_pci_irq(device: u8, interrupt_pin: u8) -> u8 {
     [10, 11, 12, 13][pirq as usize]
 }
 
-fn acpi_region_from_tables(tables: &AcpiTables) -> (u64, u64) {
+fn acpi_reclaimable_region_from_tables(tables: &AcpiTables) -> (u64, u64) {
     let addrs = &tables.addresses;
     let mut start = addrs.dsdt;
-    start = start.min(addrs.facs);
     start = start.min(addrs.fadt);
     start = start.min(addrs.madt);
     start = start.min(addrs.hpet);
@@ -1406,7 +1423,6 @@ fn acpi_region_from_tables(tables: &AcpiTables) -> (u64, u64) {
 
     let mut end = start;
     end = end.max(addrs.dsdt.saturating_add(tables.dsdt.len() as u64));
-    end = end.max(addrs.facs.saturating_add(tables.facs.len() as u64));
     end = end.max(addrs.fadt.saturating_add(tables.fadt.len() as u64));
     end = end.max(addrs.madt.saturating_add(tables.madt.len() as u64));
     end = end.max(addrs.hpet.saturating_add(tables.hpet.len() as u64));
@@ -1416,7 +1432,11 @@ fn acpi_region_from_tables(tables: &AcpiTables) -> (u64, u64) {
     (start, end.saturating_sub(start))
 }
 
-fn build_e820_map(total_memory_bytes: u64, acpi_region: Option<(u64, u64)>) -> Vec<E820Entry> {
+fn build_e820_map(
+    total_memory_bytes: u64,
+    acpi_region: Option<(u64, u64)>,
+    nvs_region: Option<(u64, u64)>,
+) -> Vec<E820Entry> {
     // Keep this conservative and OS-friendly:
     // - 0x00000000..0x0009F000 : usable conventional memory
     // - 0x0009F000..0x00100000 : reserved (EBDA + VGA + BIOS ROM)
@@ -1439,34 +1459,45 @@ fn build_e820_map(total_memory_bytes: u64, acpi_region: Option<(u64, u64)>) -> V
         });
     }
 
-    fn push_ram_split_by_acpi(
+    fn push_ram_split_by_reserved(
         entries: &mut Vec<E820Entry>,
         base: u64,
         end: u64,
-        acpi_region: Option<(u64, u64)>,
+        reserved: &[(u64, u64, u32)],
     ) {
         if end <= base {
             return;
         }
-        let Some((acpi_base, acpi_len)) = acpi_region else {
-            push_region(entries, base, end, E820_TYPE_RAM);
-            return;
-        };
 
-        let acpi_end = acpi_base.saturating_add(acpi_len);
-        let a_start = acpi_base.clamp(base, end);
-        let a_end = acpi_end.clamp(base, end);
+        let mut cursor = base;
+        for &(r_base, r_len, r_type) in reserved {
+            let r_end = r_base.saturating_add(r_len);
+            let a_start = r_base.clamp(base, end);
+            let a_end = r_end.clamp(base, end);
+            if a_end <= a_start {
+                continue;
+            }
 
-        if a_start > base {
-            push_region(entries, base, a_start, E820_TYPE_RAM);
+            if a_start > cursor {
+                push_region(entries, cursor, a_start, E820_TYPE_RAM);
+            }
+            push_region(entries, a_start, a_end, r_type);
+            cursor = a_end;
         }
-        if a_end > a_start {
-            push_region(entries, a_start, a_end, E820_TYPE_ACPI);
-        }
-        if end > a_end {
-            push_region(entries, a_end, end, E820_TYPE_RAM);
+
+        if end > cursor {
+            push_region(entries, cursor, end, E820_TYPE_RAM);
         }
     }
+
+    let mut reserved = Vec::new();
+    if let Some((base, len)) = acpi_region {
+        reserved.push((base, len, E820_TYPE_ACPI));
+    }
+    if let Some((base, len)) = nvs_region {
+        reserved.push((base, len, E820_TYPE_NVS));
+    }
+    reserved.sort_by_key(|(base, _, _)| *base);
 
     let mut entries = Vec::new();
 
@@ -1482,7 +1513,7 @@ fn build_e820_map(total_memory_bytes: u64, acpi_region: Option<(u64, u64)>) -> V
 
     // Model a PCI hole once we exceed 3GiB of RAM. Remaining RAM is placed above 4GiB.
     let low_ram_end = total_memory_bytes.min(PCI_HOLE_START);
-    push_ram_split_by_acpi(&mut entries, ONE_MIB, low_ram_end, acpi_region);
+    push_ram_split_by_reserved(&mut entries, ONE_MIB, low_ram_end, &reserved);
 
     if total_memory_bytes > PCI_HOLE_START {
         push_region(
@@ -1494,7 +1525,7 @@ fn build_e820_map(total_memory_bytes: u64, acpi_region: Option<(u64, u64)>) -> V
 
         let high_ram_len = total_memory_bytes - PCI_HOLE_START;
         let high_ram_end = PCI_HOLE_END.saturating_add(high_ram_len);
-        push_ram_split_by_acpi(&mut entries, PCI_HOLE_END, high_ram_end, acpi_region);
+        push_ram_split_by_reserved(&mut entries, PCI_HOLE_END, high_ram_end, &reserved);
     }
 
     entries

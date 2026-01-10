@@ -13,5 +13,5 @@ mod tables;
 
 pub use tables::{
     AcpiConfig, AcpiPlacement, AcpiTables, PhysicalMemory, DEFAULT_ACPI_ALIGNMENT,
+    DEFAULT_ACPI_NVS_SIZE,
 };
-
