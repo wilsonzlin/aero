@@ -28,6 +28,12 @@ pub trait Bus {
         lo | (hi << 32)
     }
 
+    fn read_u128(&mut self, addr: u64) -> u128 {
+        let lo = self.read_u64(addr) as u128;
+        let hi = self.read_u64(addr + 8) as u128;
+        lo | (hi << 64)
+    }
+
     fn write_u16(&mut self, addr: u64, value: u16) {
         self.write_u8(addr, (value & 0x00FF) as u8);
         self.write_u8(addr + 1, (value >> 8) as u8);
@@ -43,6 +49,11 @@ pub trait Bus {
     fn write_u64(&mut self, addr: u64, value: u64) {
         self.write_u32(addr, (value & 0xFFFF_FFFF) as u32);
         self.write_u32(addr + 4, (value >> 32) as u32);
+    }
+
+    fn write_u128(&mut self, addr: u64, value: u128) {
+        self.write_u64(addr, value as u64);
+        self.write_u64(addr + 8, (value >> 64) as u64);
     }
 
     /// Whether the bus can perform fast, contiguous copies between RAM regions.
@@ -178,4 +189,3 @@ impl Bus for RamBus {
         true
     }
 }
-
