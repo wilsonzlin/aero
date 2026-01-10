@@ -93,6 +93,79 @@ const wasmFeatures = {
 };
 ```
 
+### Cross-Origin Isolation (COOP/COEP) Deployment Requirements
+
+WASM threads and `SharedArrayBuffer` require a **cross-origin isolated** context (`self.crossOriginIsolated === true`).
+This is enforced by the browser and is primarily a deployment concern: it depends on HTTP response headers for the app
+*and* on how you load subresources like remote disk images.
+
+#### Required response headers (minimum)
+
+Serve the **top-level HTML document** with:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+In practice, the easiest way to avoid subtle failures is to apply the same headers to **all app-owned responses** that
+the HTML pulls in: JS (including ESM), worker scripts, and `.wasm` files.
+
+> Note: `Cross-Origin-Opener-Policy` only affects documents, but it is harmless to set it on static assets and simplifies
+> CDN / reverse proxy configuration. `Cross-Origin-Embedder-Policy` is the key requirement that drives subresource rules.
+
+#### Optional: `Cross-Origin-Embedder-Policy: credentialless`
+
+Some deployments can use:
+
+```
+Cross-Origin-Embedder-Policy: credentialless
+```
+
+Trade-offs:
+
+- **Pros:** can reduce friction with certain cross-origin resources by ensuring cross-origin requests are made without
+  credentials by default.
+- **Cons:** any cross-origin subresource that relies on cookies or other credentials can break; browser support is not as
+  universal as `require-corp` (especially outside Chromium-based browsers).
+
+For maximum compatibility (and to avoid surprises), prefer `require-corp` unless you have a clear reason to switch.
+
+#### What breaks `crossOriginIsolated` (and how to diagnose it)
+
+With `Cross-Origin-Embedder-Policy: require-corp`, any **cross-origin** subresource must opt-in to being embedded. If you
+try to load a cross-origin script/worker/WASM/fetch that is **not CORS-enabled** *and* does **not** send an appropriate
+`Cross-Origin-Resource-Policy` header, the browser will block it as a COEP violation.
+
+In practice, this “breaks cross-origin isolation” because you must either:
+
+- fix the cross-origin resource to satisfy COEP (recommended), or
+- remove/relax COEP (which makes `self.crossOriginIsolated` false and disables `SharedArrayBuffer` / WASM threads).
+
+To debug: check `self.crossOriginIsolated` in DevTools and look for COEP/CORP violation messages in the console/network
+panel.
+
+#### Disk image streaming implications (remote disk bytes are a subresource)
+
+Disk image streaming is typically implemented via `fetch()` (often with HTTP range requests). Under COEP it is treated
+like any other subresource:
+
+- **Strong recommendation:** serve disk bytes from the **same origin** as the app (for example, reverse-proxy the disk
+  streaming service under `/disk/...`). This avoids CORS/CORP edge cases and keeps cross-origin isolation stable.
+- If disk bytes are fetched from a **different origin**, the streaming endpoint must satisfy COEP via **CORS and/or
+  CORP**:
+  - **CORS path:** respond with `Access-Control-Allow-Origin` (and `Access-Control-Allow-Credentials: true` if you use
+    cookies/HTTP auth), matching how the client fetches the resource.
+  - **CORP path:** send `Cross-Origin-Resource-Policy` with an appropriate value:
+    - `same-site` if the app and disk service are on the same “site” (eTLD+1) but different origins, or
+    - `cross-origin` if the disk service is intended to be used from arbitrary sites.
+- **Range requests may trigger preflight:** `Range: bytes=...` is not a CORS-safelisted request header, so cross-origin
+  range fetching may require an `OPTIONS` preflight. Ensure the disk streaming service supports preflight and allows the
+  headers/methods you use (commonly `GET, HEAD, OPTIONS` + `Range, Authorization`).
+
+For the detailed disk-streaming header matrix (including auth-related CORS requirements), see
+[Disk Image Streaming Auth](./16-disk-image-streaming-auth.md).
+
 ### Memory Management
 
 ```javascript
