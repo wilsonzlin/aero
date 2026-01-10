@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use server::http::range::{parse_range_header, resolve_ranges};
+use aero_http_range::{parse_range_header, resolve_ranges};
 
 const FILE_SIZE: u64 = 5_368_709_120; // 5 GiB
 const HIGH_OFFSET: u64 = 4_294_967_296 + 123; // 2^32 + 123

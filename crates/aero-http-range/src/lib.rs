@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! HTTP `Range` header parsing and resolution (RFC 7233).
 //!
 //! This module is intentionally defensive:
@@ -301,3 +303,4 @@ fn coalesce_sorted(mut ranges: Vec<ResolvedByteRange>) -> Vec<ResolvedByteRange>
     out.push(cur);
     out
 }
+

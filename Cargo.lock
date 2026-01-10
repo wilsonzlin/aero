@@ -214,6 +214,13 @@ name = "aero-gpu-vga"
 version = "0.1.0"
 
 [[package]]
+name = "aero-http-range"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "aero-io-snapshot"
 version = "0.1.0"
 dependencies = [
@@ -3706,13 +3713,6 @@ dependencies = [
  "ryu",
  "serde",
  "unsafe-libyaml",
-]
-
-[[package]]
-name = "server"
-version = "0.1.0"
-dependencies = [
- "proptest",
 ]
 
 [[package]]

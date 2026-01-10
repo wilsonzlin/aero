@@ -1,6 +1,6 @@
 use proptest::prelude::*;
 
-use server::http::range::{
+use aero_http_range::{
     parse_range_header, resolve_ranges, ByteRangeSpec, RangeParseError, RangeResolveError,
     MAX_RANGE_SPECS,
 };
@@ -135,3 +135,4 @@ fn accepts_weird_whitespace() {
     assert_eq!(resolved[0].start, 0);
     assert_eq!(resolved[0].end, 3);
 }
+

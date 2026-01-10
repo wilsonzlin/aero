@@ -588,56 +588,15 @@ fn parse_single_range(header_value: &str, size: u64) -> Result<Option<(u64, u64)
         return Ok(None);
     }
 
-    let Some(spec) = header_value.strip_prefix("bytes=") else {
-        return Err(RangeParseError::Invalid);
-    };
-
-    if spec.contains(',') {
+    let specs = aero_http_range::parse_range_header(header_value).map_err(|_| RangeParseError::Invalid)?;
+    if specs.len() != 1 {
         return Err(RangeParseError::Invalid);
     }
 
-    let (start_s, end_s) = spec
-        .split_once('-')
-        .ok_or(RangeParseError::Invalid)?;
-
-    if size == 0 {
-        return Err(RangeParseError::Unsatisfiable);
-    }
-
-    let last = size - 1;
-
-    let (start, end) = if start_s.is_empty() {
-        // suffix-byte-range-spec: "-<length>"
-        let suffix_len: u64 = end_s.parse().map_err(|_| RangeParseError::Invalid)?;
-        if suffix_len == 0 {
-            return Err(RangeParseError::Unsatisfiable);
-        }
-        if suffix_len >= size {
-            (0, last)
-        } else {
-            (size - suffix_len, last)
-        }
-    } else {
-        let start: u64 = start_s.parse().map_err(|_| RangeParseError::Invalid)?;
-        if start >= size {
-            return Err(RangeParseError::Unsatisfiable);
-        }
-
-        if end_s.is_empty() {
-            (start, last)
-        } else {
-            let mut end: u64 = end_s.parse().map_err(|_| RangeParseError::Invalid)?;
-            if end < start {
-                return Err(RangeParseError::Invalid);
-            }
-            if end > last {
-                end = last;
-            }
-            (start, end)
-        }
-    };
-
-    Ok(Some((start, end)))
+    let resolved = aero_http_range::resolve_ranges(&specs, size, false)
+        .map_err(|_| RangeParseError::Unsatisfiable)?;
+    let r = resolved[0];
+    Ok(Some((r.start, r.end)))
 }
 
 fn range_not_satisfiable_response(size: u64) -> Response {
@@ -922,5 +881,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(&body[..], b"top");
+    }
+
+    #[test]
+    fn parse_single_range_tolerates_whitespace() {
+        assert_eq!(
+            parse_single_range("bytes =\t 1 - 3", 10).unwrap(),
+            Some((1, 3))
+        );
     }
 }
