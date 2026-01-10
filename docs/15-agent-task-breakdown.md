@@ -397,7 +397,7 @@ Implementation references:
 | IN-008 | USB HID (mouse)          | P2       | None           | Medium     |
 | IN-009 | Gamepad support          | P2       | None           | Medium     |
 | IN-010 | Input test suite         | P0       | IN-001..IN-003 | Medium     |
-| IN-011 | Virtio-input device model (device config + event/status queues) | P1 | DM-008         | High      |
+| IN-011 | Virtio-input device model (device config + event/status queues) | P1 | DM-008, VTP-002 | High     |
 | IN-012 | Windows 7 virtio-input KMDF HID minidriver                      | P1 | VIO-001..VIO-003 | Very High |
 | IN-013 | HID report descriptor + keyboard/mouse mapping                   | P1 | IN-012         | High      |
 | IN-014 | Driver packaging/signing + installation docs                     | P1 | IN-012, IN-013 | Medium    |
