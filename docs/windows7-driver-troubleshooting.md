@@ -177,6 +177,25 @@ This only applies if you are attempting to install Windows directly onto **virti
   - Install Windows using baseline **AHCI** first (recommended), then switch to virtio-blk after running Guest Tools, **or**
   - Slipstream the virtio-blk driver into `sources\\boot.wim` (indexes 1 and 2) and rebuild the ISO.
 
+## Issue: `setup.cmd` fails / won’t run
+
+**Common symptoms**
+
+- Double-clicking does nothing.
+- You see “Access is denied” / “The requested operation requires elevation”.
+- You see a console window that closes immediately.
+
+**Fix**
+
+1. Copy Guest Tools to a local folder (example `C:\AeroGuestTools\`) and run it from there.
+2. Right-click `setup.cmd` → **Run as administrator**.
+3. If it still fails, run it from an elevated Command Prompt so you can read the output:
+   - Start menu → type `cmd` → right-click **cmd.exe** → Run as administrator
+   - `cd /d C:\AeroGuestTools`
+   - `setup.cmd`
+4. If the script is incompatible with your build or you need a fallback, use the manual install steps in the Guest Tools guide:
+   - [`docs/windows7-guest-tools.md`](./windows7-guest-tools.md#if-setupcmd-fails-manual-install-advanced)
+
 ## Issue: Black screen after switching to the Aero GPU
 
 **Symptom**

@@ -78,6 +78,12 @@ Then:
 
 Recommended (but optional): take a snapshot/checkpoint here if your host environment supports it.
 
+### Optional (recommended for x64): install KB3033929 before Guest Tools
+
+If you expect to use **SHA-256-signed** driver packages, install **KB3033929** while you are still on baseline devices (AHCI/e1000/VGA). This avoids confusing “unsigned driver” failures later.
+
+See: [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md#issue-missing-kb3033929-sha-256-signature-support)
+
 ## Step 2: Mount `aero-guest-tools.iso`
 
 After you have a working Windows 7 desktop:
@@ -145,6 +151,41 @@ Configures driver services and boot-critical settings (especially important for 
 
 - Ensuring the **virtio storage** driver is set to start at boot when needed.
 - Setting device/service parameters under `HKLM\SYSTEM\CurrentControlSet\Services\...`
+
+## If `setup.cmd` fails: manual install (advanced)
+
+If `setup.cmd` fails (or you prefer to install components manually), you can typically do the same work yourself.
+
+> The exact file names and folder layout inside `aero-guest-tools.iso` may vary by version. The commands below use placeholders.
+
+### 1) Import the Aero signing certificate (Local Machine)
+
+Look on the Guest Tools media for a certificate file (commonly `.cer` / `.crt`).
+
+From an elevated Command Prompt:
+
+- `certutil -addstore -f Root X:\path\to\aero.cer`
+- `certutil -addstore -f TrustedPublisher X:\path\to\aero.cer`
+
+(`X:` is usually the Guest Tools CD drive letter.)
+
+### 2) Enable test signing (Windows 7 x64, if required)
+
+From an elevated Command Prompt:
+
+- `bcdedit /set {current} testsigning on`
+- Reboot
+
+If you are using production-signed drivers, keep test signing off.
+
+### 3) Stage/install drivers into the driver store
+
+Use either `pnputil` (Windows 7 built-in) or DISM:
+
+- `pnputil -i -a X:\path\to\drivers\*.inf`
+- or: `dism /online /add-driver /driver:X:\path\to\drivers\ /recurse`
+
+After staging, reboot once while still on baseline devices.
 
 ## Step 4: Reboot (still on baseline devices)
 
