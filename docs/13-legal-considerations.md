@@ -257,6 +257,7 @@ If hosting Aero as a service:
 - Require users to upload their own
 - Clear ToS requiring valid licenses
 - No piracy facilitation
+- Technical model (upload privacy, access control, streaming leases): see [Disk Image Lifecycle and Access Control](./17-disk-image-lifecycle-and-access-control.md)
 
 ---
 
