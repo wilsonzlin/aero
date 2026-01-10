@@ -224,12 +224,12 @@ Browser-side verification:
 
 The emulator connects to:
 
-`wss://<host>/tcp?host=<dst>&port=<dstPort>`
+`wss://<host>/tcp?v=1&host=<dst>&port=<dstPort>`
 
 You can verify the **WebSocket handshake** with `websocat`:
 
 ```bash
-websocat -v 'wss://aero.example.com/tcp?host=example.com&port=80'
+websocat -v 'wss://aero.example.com/tcp?v=1&host=example.com&port=80'
 ```
 
 You should see an HTTP 101 Switching Protocols response.
