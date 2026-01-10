@@ -36,6 +36,30 @@ test("normaliseBenchResult produces metric summaries", () => {
   assert.equal(scenarios.startup.metrics.startup_ms.value, 20);
 });
 
+test("normaliseBenchResult supports tools/perf raw.json format", () => {
+  const { scenarios, environment } = normaliseBenchResult({
+    meta: {
+      nodeVersion: "v20.0.0",
+      os: { platform: "linux", arch: "x64" },
+    },
+    benchmarks: [
+      {
+        name: "chromium_startup_ms",
+        unit: "ms",
+        samples: [10, 20, 30],
+      },
+    ],
+  });
+
+  assert.equal(environment.node, "v20.0.0");
+  assert.equal(environment.platform, "linux");
+  assert.equal(environment.arch, "x64");
+
+  assert.equal(scenarios.browser.metrics.chromium_startup_ms.better, "lower");
+  assert.equal(scenarios.browser.metrics.chromium_startup_ms.samples.n, 3);
+  assert.equal(scenarios.browser.metrics.chromium_startup_ms.value, 20);
+});
+
 test("formatDelta respects metric directionality", () => {
   assert.equal(
     formatDelta({ prev: 100, next: 110, better: "higher", unit: "ops/s" }).className,

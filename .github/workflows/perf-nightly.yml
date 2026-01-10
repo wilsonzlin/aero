@@ -172,14 +172,11 @@ jobs:
             cp .gh-pages/history.json bench/history.json
           fi
 
-      - name: Run microbenchmarks (history)
-        run: node bench/run.js --out bench/results.json
-
       - name: Append to history
         run: |
           node bench/history.js append \
             --history bench/history.json \
-            --input bench/results.json \
+            --input perf-results/nightly/raw.json \
             --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --commit "$GITHUB_SHA" \
             --repository "$GITHUB_REPOSITORY"

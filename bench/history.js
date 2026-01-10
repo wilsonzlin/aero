@@ -63,9 +63,18 @@ export function normaliseBenchResult(result) {
   if (result === null || typeof result !== "object") {
     throw new Error("Bench result must be an object");
   }
-  if (result.schemaVersion !== 1) {
-    throw new Error(`Unsupported bench result schemaVersion ${String(result.schemaVersion)}; expected 1`);
+  if (result.schemaVersion === 1) {
+    return normaliseLegacyBenchResult(result);
   }
+  if (result.meta && Array.isArray(result.benchmarks)) {
+    return normalisePerfToolResult(result);
+  }
+  throw new Error(
+    "Unsupported benchmark result format (expected schemaVersion=1 scenarios or tools/perf {meta, benchmarks})",
+  );
+}
+
+function normaliseLegacyBenchResult(result) {
   if (result.scenarios === null || typeof result.scenarios !== "object") {
     throw new Error("Bench result scenarios must be an object");
   }
@@ -120,6 +129,87 @@ export function normaliseBenchResult(result) {
   }
 
   return { scenarios, environment: Object.keys(environment).length ? environment : undefined };
+}
+
+function inferBetter(name, unit) {
+  if (unit === "ms" || unit === "s" || unit === "sec" || name.endsWith("_ms") || name.includes("time")) {
+    return "lower";
+  }
+  if (unit === "fps" || name.includes("fps")) return "higher";
+  if (unit.includes("ops") || unit.includes("op") || name.includes("ops") || name.includes("ips")) return "higher";
+  return "lower";
+}
+
+function normalisePerfToolResult(result) {
+  const metrics = {};
+
+  for (const bench of result.benchmarks) {
+    if (bench === null || typeof bench !== "object") {
+      throw new Error("tools/perf benchmark must be an object");
+    }
+    const name = bench.name;
+    const unit = bench.unit;
+    if (typeof name !== "string" || name.length === 0) {
+      throw new Error("tools/perf benchmark.name must be a non-empty string");
+    }
+    if (typeof unit !== "string" || unit.length === 0) {
+      throw new Error(`tools/perf benchmark ${name} must provide a unit`);
+    }
+
+    let stats;
+    if (Array.isArray(bench.samples) && bench.samples.length > 0) {
+      stats = computeStats(bench.samples);
+    } else if (bench.stats && typeof bench.stats === "object") {
+      const s = bench.stats;
+      if (!Number.isFinite(s.n) || !Number.isFinite(s.min) || !Number.isFinite(s.max) || !Number.isFinite(s.mean)) {
+        throw new Error(`tools/perf benchmark ${name} has invalid stats`);
+      }
+      stats = {
+        n: s.n,
+        min: s.min,
+        max: s.max,
+        mean: s.mean,
+        stdev: Number.isFinite(s.stdev) ? s.stdev : 0,
+        cv: Number.isFinite(s.cv) ? s.cv : 0,
+      };
+    } else {
+      throw new Error(`tools/perf benchmark ${name} must provide samples[] or stats`);
+    }
+
+    const better = inferBetter(name, unit);
+    metrics[name] = {
+      value: stats.mean,
+      unit,
+      better,
+      samples: {
+        n: stats.n,
+        min: stats.min,
+        max: stats.max,
+        stdev: stats.stdev,
+        cv: stats.cv,
+      },
+    };
+  }
+
+  const environment = {};
+  if (result.meta && typeof result.meta === "object") {
+    if (typeof result.meta.nodeVersion === "string") environment.node = result.meta.nodeVersion;
+    if (typeof result.meta.node === "string") environment.node = result.meta.node;
+
+    if (result.meta.os && typeof result.meta.os === "object") {
+      if (typeof result.meta.os.platform === "string") environment.platform = result.meta.os.platform;
+      if (typeof result.meta.os.arch === "string") environment.arch = result.meta.os.arch;
+    }
+    if (typeof result.meta.platform === "string") environment.platform = result.meta.platform;
+    if (typeof result.meta.arch === "string") environment.arch = result.meta.arch;
+  }
+
+  return {
+    scenarios: {
+      browser: { metrics },
+    },
+    environment: Object.keys(environment).length ? environment : undefined,
+  };
 }
 
 function appendHistoryEntry({ historyPath, inputPath, timestamp, commitSha, repository, commitUrl }) {

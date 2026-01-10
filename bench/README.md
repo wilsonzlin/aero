@@ -2,26 +2,33 @@
 
 This directory contains performance/telemetry tooling used for CI regression tracking and local profiling.
 
-## Microbench harness (nightly perf workflow)
+## Nightly perf history (dashboard)
 
 Files:
 
-- `bench/run.js` — runs a small set of microbenchmarks and writes `bench/results.json`.
 - `bench/history.js` — appends benchmark results into a versioned `bench/history.json` time series and can generate `bench/history.md`.
 - `bench/history.schema.json` — JSON schema for the history file.
 - `bench/dashboard/` — static dashboard that loads `history.json` and renders trend graphs.
+- `bench/run.js` — optional lightweight Node microbench that writes `bench/results.json` (useful for quick local smoke tests).
 
 Local usage:
 
-Run the benchmarks:
+Append `tools/perf/run.mjs` output (recommended; matches the nightly workflow):
+
+```bash
+node tools/perf/run.mjs --out-dir perf-results/local --iterations 7
+node bench/history.js append \
+  --history bench/history.json \
+  --input perf-results/local/raw.json \
+  --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --commit "$(git rev-parse HEAD)" \
+  --repository "wilsonzlin/aero"
+```
+
+Or run the lightweight Node microbench:
 
 ```bash
 node bench/run.js --out bench/results.json
-```
-
-Append into history:
-
-```bash
 node bench/history.js append \
   --history bench/history.json \
   --input bench/results.json \
