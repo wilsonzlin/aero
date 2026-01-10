@@ -217,6 +217,30 @@ impl AtapiCdrom {
                 let data = self.get_configuration();
                 PacketResult::DataIn(data[..alloc_len.min(data.len())].to_vec())
             }
+            0x4A => {
+                // GET EVENT STATUS NOTIFICATION.
+                // The MMC spec defines this as a 10-byte CDB; ATAPI pads it to 12 bytes.
+                //
+                // Windows' CD/DVD stack may use this to poll for media change and tray
+                // events; we return a minimal "no event" / "media event no change"
+                // response and advertise only the media event class.
+                if let Err(e) = self.check_ready() {
+                    return e;
+                }
+                let request = packet[4];
+                let alloc_len = u16::from_be_bytes([packet[7], packet[8]]) as usize;
+                let data = self.get_event_status_notification(request);
+                PacketResult::DataIn(data[..alloc_len.min(data.len())].to_vec())
+            }
+            0x51 => {
+                // READ DISC INFORMATION.
+                if let Err(e) = self.check_ready() {
+                    return e;
+                }
+                let alloc_len = u16::from_be_bytes([packet[7], packet[8]]) as usize;
+                let data = self.read_disc_information();
+                PacketResult::DataIn(data[..alloc_len.min(data.len())].to_vec())
+            }
             0x5A | 0x1A => {
                 // MODE SENSE (10)/(6): return a minimal CD/DVD capabilities page (0x2A).
                 if let Err(e) = self.check_ready() {
@@ -287,7 +311,24 @@ impl AtapiCdrom {
     }
 
     fn read_blocks(&mut self, lba: u32, blocks: u32, dma_requested: bool) -> PacketResult {
-        let len = blocks as usize * 2048;
+        if blocks == 0 {
+            self.set_sense(SENSE_NO_SENSE, 0, 0);
+            return PacketResult::NoDataSuccess;
+        }
+        let len = match blocks
+            .checked_mul(2048)
+            .and_then(|v| usize::try_from(v).ok())
+        {
+            Some(v) => v,
+            None => {
+                self.set_sense(SENSE_ILLEGAL_REQUEST, 0x21, 0);
+                return PacketResult::Error {
+                    sense_key: SENSE_ILLEGAL_REQUEST,
+                    asc: 0x21,
+                    ascq: 0,
+                };
+            }
+        };
         let mut buf = vec![0u8; len];
         let res = if let Some(backend) = self.backend.as_mut() {
             backend.read_sectors(lba, &mut buf)
@@ -346,6 +387,52 @@ impl AtapiCdrom {
         out[0..4].copy_from_slice(&data_len.to_be_bytes());
         // Current Profile (DVD-ROM 0x0010).
         out[6..8].copy_from_slice(&0x0010u16.to_be_bytes());
+        out
+    }
+
+    fn get_event_status_notification(&self, request: u8) -> Vec<u8> {
+        // We only advertise the "Media" event class.
+        const EVENT_CLASS_MEDIA: u8 = 0x08;
+
+        if request == 0 {
+            // Return just the event header so the guest can learn which classes are supported.
+            let mut out = vec![0u8; 4];
+            // Event Data Length is the number of bytes following the first two bytes.
+            out[0..2].copy_from_slice(&2u16.to_be_bytes());
+            out[2] = 0; // no event class
+            out[3] = EVENT_CLASS_MEDIA;
+            return out;
+        }
+
+        let mut out = vec![0u8; 8];
+        out[0..2].copy_from_slice(&6u16.to_be_bytes()); // bytes following this field
+        out[2] = EVENT_CLASS_MEDIA;
+        out[3] = EVENT_CLASS_MEDIA;
+        // Event code 0 = no change. Provide basic media/tray status bits.
+        out[4] = 0x00;
+        let mut status = 0u8;
+        if self.backend.is_some() {
+            status |= 0x01;
+        }
+        if self.tray_open {
+            status |= 0x02;
+        }
+        out[5] = status;
+        out
+    }
+
+    fn read_disc_information(&self) -> Vec<u8> {
+        // MMC "Disc Information" is variable-length. We return a fixed 34-byte payload
+        // with conservative defaults that describe a finalized, read-only disc.
+        let mut out = vec![0u8; 34];
+        let data_len = (out.len() - 2) as u16;
+        out[0..2].copy_from_slice(&data_len.to_be_bytes());
+        // Disc status / last session status: report complete/finalized.
+        out[2] = 0x0E;
+        // First track number in last session.
+        out[3] = 0x01;
+        // Number of sessions (1).
+        out[4] = 0x01;
         out
     }
 

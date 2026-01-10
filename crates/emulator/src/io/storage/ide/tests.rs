@@ -344,6 +344,175 @@ fn atapi_read_10_returns_correct_bytes() {
 }
 
 #[test]
+fn atapi_dma_read_10_transfers_via_bus_master() {
+    let mut iso = MemIso::new(2);
+    iso.data[0..8].copy_from_slice(b"DMATEST!");
+
+    let mut ide = IdeController::new(0xC000);
+    ide.attach_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(iso))));
+
+    let sec = super::SECONDARY_PORTS;
+    // Select master.
+    ide.io_write(sec.cmd_base + 6, 1, 0xA0);
+
+    let mut mem = VecMemory::new(0x10000);
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // PRD entry: one 2048-byte segment, end-of-table.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, 2048);
+    mem.write_u16(prd_addr + 6, 0x8000);
+
+    let bm_base = ide.bus_master_base();
+    // Program secondary PRD pointer (base + 8 + 4).
+    ide.io_write(bm_base + 8 + 4, 4, prd_addr as u32);
+
+    // Helper: send an ATAPI PACKET command with DMA enabled.
+    fn send_packet_dma(ide: &mut IdeController, sec: super::IdePortMap, pkt: &[u8; 12], byte_count: u16) {
+        ide.io_write(sec.cmd_base + 1, 1, 0x01); // FEATURES bit0 = DMA
+        ide.io_write(sec.cmd_base + 4, 1, (byte_count & 0xFF) as u32);
+        ide.io_write(sec.cmd_base + 5, 1, (byte_count >> 8) as u32);
+        ide.io_write(sec.cmd_base + 7, 1, 0xA0);
+        for i in 0..6 {
+            let w = u16::from_le_bytes([pkt[i * 2], pkt[i * 2 + 1]]);
+            ide.io_write(sec.cmd_base + 0, 2, w as u32);
+        }
+    }
+
+    // Clear initial UNIT ATTENTION by issuing TEST UNIT READY and REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_packet_dma(&mut ide, sec, &tur, 0);
+    let _ = ide.io_read(sec.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_packet_dma(&mut ide, sec, &req_sense, 18);
+    for _ in 0..9 {
+        let _ = ide.io_read(sec.cmd_base + 0, 2);
+    }
+
+    // READ(10) for LBA=0, blocks=1.
+    let mut pkt = [0u8; 12];
+    pkt[0] = 0x28;
+    pkt[2..6].copy_from_slice(&0u32.to_be_bytes());
+    pkt[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_packet_dma(&mut ide, sec, &pkt, 2048);
+
+    // Start the secondary bus master engine, direction=read (device -> memory).
+    ide.io_write(bm_base + 8 + 0, 1, 0x09);
+    ide.tick(&mut mem);
+
+    // DMA should have populated the guest buffer.
+    assert_eq!(&mem.slice(dma_buf, 8), b"DMATEST!");
+
+    // Bus master status should indicate interrupt.
+    let st = ide.io_read(bm_base + 8 + 2, 1) as u8;
+    assert_ne!(st & 0x04, 0);
+
+    // ATAPI interrupt reason should be in the status phase.
+    assert_eq!(ide.io_read(sec.cmd_base + 2, 1) as u8, 0x03);
+    assert!(ide.secondary_irq_pending());
+}
+
+#[test]
+fn atapi_get_event_status_notification_returns_media_event_header() {
+    let iso = MemIso::new(1);
+    let mut ide = IdeController::new(0xC000);
+    ide.attach_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(iso))));
+    let sec = super::SECONDARY_PORTS;
+
+    ide.io_write(sec.cmd_base + 6, 1, 0xA0);
+
+    fn send_packet(ide: &mut IdeController, sec: super::IdePortMap, pkt: &[u8; 12], byte_count: u16) {
+        ide.io_write(sec.cmd_base + 1, 1, 0);
+        ide.io_write(sec.cmd_base + 4, 1, (byte_count & 0xFF) as u32);
+        ide.io_write(sec.cmd_base + 5, 1, (byte_count >> 8) as u32);
+        ide.io_write(sec.cmd_base + 7, 1, 0xA0);
+        for i in 0..6 {
+            let w = u16::from_le_bytes([pkt[i * 2], pkt[i * 2 + 1]]);
+            ide.io_write(sec.cmd_base + 0, 2, w as u32);
+        }
+    }
+
+    // Clear initial UNIT ATTENTION.
+    let tur = [0u8; 12];
+    send_packet(&mut ide, sec, &tur, 0);
+    let _ = ide.io_read(sec.cmd_base + 7, 1);
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_packet(&mut ide, sec, &req_sense, 18);
+    for _ in 0..9 {
+        let _ = ide.io_read(sec.cmd_base + 0, 2);
+    }
+
+    // GET EVENT STATUS NOTIFICATION, request nonzero so we get an 8-byte response.
+    let mut gesn = [0u8; 12];
+    gesn[0] = 0x4A;
+    gesn[4] = 0x01;
+    gesn[7..9].copy_from_slice(&8u16.to_be_bytes());
+    send_packet(&mut ide, sec, &gesn, 8);
+
+    let mut out = [0u8; 8];
+    for i in 0..4 {
+        let w = ide.io_read(sec.cmd_base + 0, 2) as u16;
+        out[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
+    }
+    assert_eq!(out[0..2], [0, 6]); // payload length following the first 2 bytes
+    assert_eq!(out[2], 0x08); // media event class
+    assert_eq!(out[3], 0x08); // supported classes mask
+    assert_eq!(out[4], 0); // no change
+    assert_eq!(out[5] & 0x01, 0x01); // media present
+}
+
+#[test]
+fn atapi_read_disc_information_returns_valid_length_field() {
+    let iso = MemIso::new(1);
+    let mut ide = IdeController::new(0xC000);
+    ide.attach_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(iso))));
+    let sec = super::SECONDARY_PORTS;
+    ide.io_write(sec.cmd_base + 6, 1, 0xA0);
+
+    fn send_packet(ide: &mut IdeController, sec: super::IdePortMap, pkt: &[u8; 12], byte_count: u16) {
+        ide.io_write(sec.cmd_base + 1, 1, 0);
+        ide.io_write(sec.cmd_base + 4, 1, (byte_count & 0xFF) as u32);
+        ide.io_write(sec.cmd_base + 5, 1, (byte_count >> 8) as u32);
+        ide.io_write(sec.cmd_base + 7, 1, 0xA0);
+        for i in 0..6 {
+            let w = u16::from_le_bytes([pkt[i * 2], pkt[i * 2 + 1]]);
+            ide.io_write(sec.cmd_base + 0, 2, w as u32);
+        }
+    }
+
+    // Clear initial UNIT ATTENTION.
+    let tur = [0u8; 12];
+    send_packet(&mut ide, sec, &tur, 0);
+    let _ = ide.io_read(sec.cmd_base + 7, 1);
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_packet(&mut ide, sec, &req_sense, 18);
+    for _ in 0..9 {
+        let _ = ide.io_read(sec.cmd_base + 0, 2);
+    }
+
+    let mut disc_info = [0u8; 12];
+    disc_info[0] = 0x51;
+    disc_info[7..9].copy_from_slice(&34u16.to_be_bytes());
+    send_packet(&mut ide, sec, &disc_info, 34);
+
+    let mut out = vec![0u8; 34];
+    for i in 0..(34 / 2) {
+        let w = ide.io_read(sec.cmd_base + 0, 2) as u16;
+        out[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
+    }
+    assert_eq!(out[0..2], [0, 32]); // out.len() - 2
+    assert_eq!(out[2], 0x0E);
+}
+
+#[test]
 fn pci_bar4_probe_returns_size_mask_and_relocation_updates_io_decode() {
     let mut ide = IdeController::new(0xC000);
 
