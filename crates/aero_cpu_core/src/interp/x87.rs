@@ -7,6 +7,8 @@
 
 use core::fmt;
 
+use crate::fpu::FpuState;
+
 /// #MF (x87 floating-point error) would be raised for an unmasked exception.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fault {
@@ -130,6 +132,53 @@ impl Default for X87 {
 }
 
 impl X87 {
+    /// Populate this runtime x87 state from an `FXSAVE`/`FXRSTOR` compatible image.
+    ///
+    /// Note: the `FpuState` register image stores 80-bit values. This model decodes
+    /// them into `f64`, so it cannot preserve full x87 precision.
+    pub fn load_from_fpu_state(&mut self, state: &FpuState) {
+        self.fcw = state.fcw;
+        self.top = state.top & 7;
+
+        // Preserve all status flags, but make sure TOP matches `state.top`.
+        self.fsw = (state.fsw & !FSW_TOP_MASK) | ((self.top as u16) << 11);
+
+        for i in 0..8 {
+            if (state.ftw & (1 << i)) == 0 {
+                self.tags[i] = Tag::Empty;
+                self.regs[i] = 0.0;
+            } else {
+                let v = f64_from_ext80(state.st[i]);
+                self.regs[i] = v;
+                self.tags[i] = Tag::from_f64(v);
+            }
+        }
+
+        self.sync_top();
+        self.sync_es();
+    }
+
+    /// Store this runtime x87 state back into an `FXSAVE`/`FXRSTOR` compatible image.
+    ///
+    /// This updates the control/status/tag words and the 80-bit register image. The
+    /// instruction/data pointers are left untouched.
+    pub fn store_to_fpu_state(&self, state: &mut FpuState) {
+        state.fcw = self.fcw;
+        state.top = self.top & 7;
+        state.fsw = self.fsw & !FSW_TOP_MASK;
+
+        let mut ftw: u8 = 0;
+        for i in 0..8 {
+            if !matches!(self.tags[i], Tag::Empty) {
+                ftw |= 1 << i;
+                state.st[i] = ext80_from_f64(self.regs[i]);
+            } else {
+                state.st[i] = 0;
+            }
+        }
+        state.ftw = ftw;
+    }
+
     pub fn fninit(&mut self) {
         *self = Self::default();
     }
@@ -306,16 +355,34 @@ impl X87 {
         self.write_st(0, a + b)
     }
 
+    pub fn fadd_sti_st0(&mut self, i: usize) -> Result<()> {
+        let a = self.read_st(i)?;
+        let b = self.read_st(0)?;
+        self.write_st(i, a + b)
+    }
+
     pub fn fsub_st0_sti(&mut self, i: usize) -> Result<()> {
         let a = self.read_st(0)?;
         let b = self.read_st(i)?;
         self.write_st(0, a - b)
     }
 
+    pub fn fsub_sti_st0(&mut self, i: usize) -> Result<()> {
+        let a = self.read_st(i)?;
+        let b = self.read_st(0)?;
+        self.write_st(i, a - b)
+    }
+
     pub fn fmul_st0_sti(&mut self, i: usize) -> Result<()> {
         let a = self.read_st(0)?;
         let b = self.read_st(i)?;
         self.write_st(0, a * b)
+    }
+
+    pub fn fmul_sti_st0(&mut self, i: usize) -> Result<()> {
+        let a = self.read_st(i)?;
+        let b = self.read_st(0)?;
+        self.write_st(i, a * b)
     }
 
     pub fn fdiv_st0_sti(&mut self, i: usize) -> Result<()> {
@@ -325,6 +392,15 @@ impl X87 {
         }
         let a = self.read_st(0)?;
         self.write_st(0, a / b)
+    }
+
+    pub fn fdiv_sti_st0(&mut self, i: usize) -> Result<()> {
+        let divisor = self.read_st(0)?;
+        if divisor == 0.0 {
+            self.signal_zero_divide()?;
+        }
+        let dividend = self.read_st(i)?;
+        self.write_st(i, dividend / divisor)
     }
 
     pub fn faddp_sti_st0(&mut self, i: usize) -> Result<()> {
@@ -375,8 +451,27 @@ impl X87 {
         Ok(())
     }
 
+    pub fn fcom_m32(&mut self, v: f32) -> Result<()> {
+        self.fcom_m64(v as f64)
+    }
+
+    pub fn fcom_m64(&mut self, v: f64) -> Result<()> {
+        let a = self.read_st(0)?;
+        self.set_condition_codes_from_cmp(a, v)?;
+        Ok(())
+    }
+
     pub fn fcomp_sti(&mut self, i: usize) -> Result<()> {
         self.fcom_sti(i)?;
+        self.pop()
+    }
+
+    pub fn fcomp_m32(&mut self, v: f32) -> Result<()> {
+        self.fcomp_m64(v as f64)
+    }
+
+    pub fn fcomp_m64(&mut self, v: f64) -> Result<()> {
+        self.fcom_m64(v)?;
         self.pop()
     }
 
@@ -554,4 +649,91 @@ fn eflags_from_cmp(a: f64, b: f64) -> Eflags {
             zf: true,
         }
     }
+}
+
+fn ext80_from_f64(v: f64) -> u128 {
+    let bits = v.to_bits();
+    let sign = (bits >> 63) as u16;
+    let exp = ((bits >> 52) & 0x7FF) as u16;
+    let frac = bits & ((1u64 << 52) - 1);
+
+    let mut sign_exp: u16 = sign << 15;
+    let mant: u64 = match exp {
+        0x7FF => {
+            // Inf / NaN.
+            sign_exp |= 0x7FFF;
+            if frac == 0 {
+                1u64 << 63
+            } else {
+                // Quiet NaN payload (minimal).
+                (1u64 << 63) | (1u64 << 62)
+            }
+        }
+        0 => {
+            if frac == 0 {
+                // Zero.
+                0
+            } else {
+                // Subnormal `f64` values are representable as normal 80-bit values.
+                let k = 63 - frac.leading_zeros(); // 0..=51
+                let exp_unbiased = (k as i32) - 1074;
+                let exp_ext = (exp_unbiased + 16383) as u16;
+                sign_exp |= exp_ext;
+                frac << (63 - k)
+            }
+        }
+        _ => {
+            // Normal.
+            let exp_unbiased = (exp as i32) - 1023;
+            let exp_ext = (exp_unbiased + 16383) as u16;
+            sign_exp |= exp_ext;
+            (1u64 << 63) | (frac << 11)
+        }
+    };
+
+    let mut out = [0u8; 16];
+    out[0..8].copy_from_slice(&mant.to_le_bytes());
+    out[8..10].copy_from_slice(&sign_exp.to_le_bytes());
+    u128::from_le_bytes(out)
+}
+
+fn f64_from_ext80(v: u128) -> f64 {
+    let bytes = v.to_le_bytes();
+    let mant = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+    let sign_exp = u16::from_le_bytes(bytes[8..10].try_into().unwrap());
+    let sign = (sign_exp >> 15) & 1;
+    let exp = sign_exp & 0x7FFF;
+
+    if exp == 0 && mant == 0 {
+        return if sign == 1 { -0.0 } else { 0.0 };
+    }
+
+    if exp == 0x7FFF {
+        let int_bit = mant >> 63;
+        let frac = mant & ((1u64 << 63) - 1);
+        if int_bit == 1 && frac == 0 {
+            return if sign == 1 {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            };
+        }
+
+        let nan = f64::NAN;
+        return if sign == 1 { -nan } else { nan };
+    }
+
+    // Treat subnormal 80-bit values as a scaled fixed-point number.
+    let m = (mant as f64) / ((1u64 << 63) as f64);
+    let exp_unbiased = if exp == 0 {
+        1i32 - 16383
+    } else {
+        (exp as i32) - 16383
+    };
+
+    let mut out = m * 2f64.powi(exp_unbiased);
+    if sign == 1 {
+        out = -out;
+    }
+    out
 }
