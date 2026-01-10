@@ -123,9 +123,8 @@ impl<C: Clock, I: IrqLine> RtcCmos<C, I> {
         };
 
         rtc.init_nvram();
-        rtc.set_rtc_seconds(0, datetime_to_unix_seconds(datetime));
         let now_ns = rtc.clock.now_ns();
-        rtc.last_rtc_seconds = rtc.rtc_seconds_at(now_ns);
+        rtc.set_rtc_seconds(now_ns, datetime_to_unix_seconds(datetime));
         rtc.recompute_periodic(now_ns as u128);
         rtc
     }
@@ -701,6 +700,28 @@ mod tests {
         clock.advance_ns(600_000_000);
         let s2 = read_reg(&mut rtc, REG_SECONDS);
         assert_eq!(s2, 0x01);
+    }
+
+    #[test]
+    fn initial_datetime_is_relative_to_current_clock() {
+        let clock = ManualClock::new();
+        clock.set_ns(10_000_000_000);
+
+        let irq = TestIrq::new();
+        let mut rtc = RtcCmos::with_datetime(
+            clock,
+            irq,
+            RtcDateTime {
+                year: 2000,
+                month: 1,
+                day: 1,
+                hour: 0,
+                minute: 0,
+                second: 0,
+            },
+        );
+
+        assert_eq!(read_reg(&mut rtc, REG_SECONDS), 0x00);
     }
 
     #[test]
