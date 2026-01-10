@@ -19,7 +19,7 @@ Options:
 
   --wasm-crate-dir <path>
                         Path (relative to repo root or absolute) to the wasm-pack crate dir
-                        (defaults to $AERO_WASM_CRATE_DIR or an auto-detected cdylib crate)
+                        (defaults to $AERO_WASM_CRATE_DIR or a repo-default like crates/aero-wasm)
   --node-dir <path>     Path (relative to repo root or absolute) containing package.json
                         (defaults to $AERO_NODE_DIR or an auto-detected location)
 
@@ -167,12 +167,20 @@ ensure_wasm_crate_dir() {
     return
   fi
 
-  # Prefer the canonical wasm-pack crate when present to avoid ambiguous
+  # Prefer canonical wasm-pack crate locations when present to avoid ambiguous
   # auto-detection (the workspace contains multiple `cdylib` crates).
-  if [[ -f "$ROOT_DIR/crates/aero-wasm/Cargo.toml" ]]; then
-    WASM_CRATE_DIR="$ROOT_DIR/crates/aero-wasm"
-    return
-  fi
+  local candidate
+  for candidate in \
+    "$ROOT_DIR/crates/aero-wasm" \
+    "$ROOT_DIR/crates/wasm" \
+    "$ROOT_DIR/crates/aero-ipc" \
+    "$ROOT_DIR/wasm" \
+    "$ROOT_DIR/rust/wasm"; do
+    if [[ -f "$candidate/Cargo.toml" ]]; then
+      WASM_CRATE_DIR="$candidate"
+      return
+    fi
+  done
 
   need_cmd cargo
   need_cmd python3
