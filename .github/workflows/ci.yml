@@ -404,7 +404,16 @@ jobs:
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npm run test:unit
 
-      - name: Publish unit test report
+      - name: Publish Node unit test report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Node unit tests
+          path: ${{ steps.node-dir.outputs.dir }}/test-results/node-junit.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Publish Vitest report
         if: always()
         uses: dorny/test-reporter@v1
         with:
@@ -417,8 +426,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: vitest-test-results
-          path: ${{ steps.node-dir.outputs.dir }}/test-results/vitest-junit.xml
+          name: unit-test-results
+          path: |
+            ${{ steps.node-dir.outputs.dir }}/test-results/node-junit.xml
+            ${{ steps.node-dir.outputs.dir }}/test-results/vitest-junit.xml
           if-no-files-found: warn
           retention-days: 7
 
