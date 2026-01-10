@@ -237,7 +237,7 @@ jobs:
 
       - name: Unit tests
         working-directory: ${{ steps.node-dir.outputs.dir }}
-        run: npm run test:unit --if-present
+        run: npm run test:unit
 
       - name: Production build
         working-directory: ${{ steps.node-dir.outputs.dir }}
