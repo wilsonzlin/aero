@@ -262,7 +262,7 @@ static void print_usage(void)
     wprintf(L"                 Bits: 0x01 NumLock, 0x02 CapsLock, 0x04 ScrollLock\n");
     wprintf(L"\n");
     wprintf(L"Notes:\n");
-    wprintf(L"  - Without filters, the tool prefers VID 0x1AF4 (virtio) if present.\n");
+    wprintf(L"  - Without filters, the tool prefers a virtio keyboard interface (VID 0x1AF4).\n");
     wprintf(L"  - Press Ctrl+C to exit the report read loop.\n");
 }
 
@@ -376,12 +376,15 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
     SP_DEVICE_INTERFACE_DATA iface;
     DWORD iface_index;
     int have_filters;
-    SELECTED_DEVICE fallback;
+    SELECTED_DEVICE fallback_any;
+    SELECTED_DEVICE fallback_virtio;
 
     ZeroMemory(out, sizeof(*out));
     out->handle = INVALID_HANDLE_VALUE;
-    ZeroMemory(&fallback, sizeof(fallback));
-    fallback.handle = INVALID_HANDLE_VALUE;
+    ZeroMemory(&fallback_any, sizeof(fallback_any));
+    fallback_any.handle = INVALID_HANDLE_VALUE;
+    ZeroMemory(&fallback_virtio, sizeof(fallback_virtio));
+    fallback_virtio.handle = INVALID_HANDLE_VALUE;
 
     HidD_GetHidGuid(&hid_guid);
 
@@ -406,6 +409,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         int report_desc_valid = 0;
         int match = 0;
         int is_virtio = 0;
+        int is_keyboard = 0;
 
         ZeroMemory(&iface, sizeof(iface));
         iface.cbSize = sizeof(iface);
@@ -478,6 +482,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             wprintf(L"      HidD_GetPreparsedData/HidP_GetCaps failed\n");
         }
 
+        is_keyboard = caps_valid && caps.UsagePage == 0x01 && caps.Usage == 0x06;
+
         if (report_desc_valid) {
             wprintf(L"      Report descriptor length: %lu bytes\n", report_desc_len);
         } else {
@@ -515,8 +521,9 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
 
         // Selection rules:
         // 1) If user requested a specific device (index/vid/pid), pick the first match.
-        // 2) Otherwise, prefer the first virtio (VID 0x1AF4) device interface.
-        // 3) Otherwise, fall back to the first openable HID interface.
+        // 2) Otherwise, prefer a virtio keyboard top-level collection (VID 0x1AF4 + Usage=Keyboard).
+        // 3) Otherwise, prefer the first virtio (VID 0x1AF4) device interface.
+        // 4) Otherwise, fall back to the first openable HID interface.
         if (have_filters) {
             if (match) {
                 out->handle = handle;
@@ -532,7 +539,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
                 break;
             }
             CloseHandle(handle);
-        } else if (is_virtio) {
+        } else if (is_virtio && is_keyboard) {
             out->handle = handle;
             out->desired_access = desired_access;
             out->path = wcsdup_heap(detail->DevicePath);
@@ -542,18 +549,32 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             out->caps_valid = caps_valid;
             out->report_desc_len = report_desc_len;
             out->report_desc_valid = report_desc_valid;
+
+            free_selected_device(&fallback_any);
+            free_selected_device(&fallback_virtio);
+
             free(detail);
             break;
-        } else if (fallback.handle == INVALID_HANDLE_VALUE) {
-            fallback.handle = handle;
-            fallback.desired_access = desired_access;
-            fallback.path = wcsdup_heap(detail->DevicePath);
-            fallback.attr = attr;
-            fallback.attr_valid = attr_valid;
-            fallback.caps = caps;
-            fallback.caps_valid = caps_valid;
-            fallback.report_desc_len = report_desc_len;
-            fallback.report_desc_valid = report_desc_valid;
+        } else if (is_virtio && fallback_virtio.handle == INVALID_HANDLE_VALUE) {
+            fallback_virtio.handle = handle;
+            fallback_virtio.desired_access = desired_access;
+            fallback_virtio.path = wcsdup_heap(detail->DevicePath);
+            fallback_virtio.attr = attr;
+            fallback_virtio.attr_valid = attr_valid;
+            fallback_virtio.caps = caps;
+            fallback_virtio.caps_valid = caps_valid;
+            fallback_virtio.report_desc_len = report_desc_len;
+            fallback_virtio.report_desc_valid = report_desc_valid;
+        } else if (fallback_any.handle == INVALID_HANDLE_VALUE) {
+            fallback_any.handle = handle;
+            fallback_any.desired_access = desired_access;
+            fallback_any.path = wcsdup_heap(detail->DevicePath);
+            fallback_any.attr = attr;
+            fallback_any.attr_valid = attr_valid;
+            fallback_any.caps = caps;
+            fallback_any.caps_valid = caps_valid;
+            fallback_any.report_desc_len = report_desc_len;
+            fallback_any.report_desc_valid = report_desc_valid;
         } else {
             CloseHandle(handle);
         }
@@ -568,14 +589,21 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         return 1;
     }
 
-    if (out->handle == INVALID_HANDLE_VALUE && fallback.handle != INVALID_HANDLE_VALUE) {
-        *out = fallback;
-        ZeroMemory(&fallback, sizeof(fallback));
-        fallback.handle = INVALID_HANDLE_VALUE;
+    if (out->handle == INVALID_HANDLE_VALUE && fallback_virtio.handle != INVALID_HANDLE_VALUE) {
+        *out = fallback_virtio;
+        ZeroMemory(&fallback_virtio, sizeof(fallback_virtio));
+        fallback_virtio.handle = INVALID_HANDLE_VALUE;
+    } else if (out->handle == INVALID_HANDLE_VALUE && fallback_any.handle != INVALID_HANDLE_VALUE) {
+        *out = fallback_any;
+        ZeroMemory(&fallback_any, sizeof(fallback_any));
+        fallback_any.handle = INVALID_HANDLE_VALUE;
     }
 
-    if (fallback.handle != INVALID_HANDLE_VALUE) {
-        free_selected_device(&fallback);
+    if (fallback_any.handle != INVALID_HANDLE_VALUE) {
+        free_selected_device(&fallback_any);
+    }
+    if (fallback_virtio.handle != INVALID_HANDLE_VALUE) {
+        free_selected_device(&fallback_virtio);
     }
 
     return out->handle != INVALID_HANDLE_VALUE;
