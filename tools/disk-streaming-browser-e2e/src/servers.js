@@ -199,6 +199,25 @@ function renderIndexHtml() {
       assert(typeof headers.etag === 'string' && headers.etag.length > 0, 'Missing ETag (and/or not exposed via CORS)');
       assertBytesEqual(bytes, expectedBytes);
     },
+
+    async fetchPrivateRangeWithQueryToken({ imageId, token, start, endInclusive, expectedBytes, expectedFileSize }) {
+      const url =
+        diskOrigin + '/disk/' + encodeURIComponent(imageId) + '?token=' + encodeURIComponent(token);
+      const { status, type, headers, bytes } = await fetchRange(url, {
+        start,
+        endInclusive,
+      });
+      assert(status === 206, 'Expected 206 Partial Content, got ' + status);
+      assert(type === 'cors', 'Expected CORS fetch response type, got ' + type);
+      assert(headers.acceptRanges === 'bytes', 'Expected Accept-Ranges: bytes, got ' + headers.acceptRanges);
+      assert(
+        headers.contentRange === 'bytes ' + start + '-' + endInclusive + '/' + expectedFileSize,
+        'Unexpected Content-Range: ' + headers.contentRange,
+      );
+      assert(headers.contentLength === String(expectedBytes.length), 'Unexpected Content-Length: ' + headers.contentLength);
+      assert(typeof headers.etag === 'string' && headers.etag.length > 0, 'Missing ETag (and/or not exposed via CORS)');
+      assertBytesEqual(bytes, expectedBytes);
+    },
   };
 
   // Basic sanity check on load so failures are obvious in the browser console.

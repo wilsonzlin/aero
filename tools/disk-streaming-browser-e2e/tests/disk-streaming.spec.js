@@ -101,6 +101,21 @@ test.describe('disk streaming COOP/COEP + Range + auth', () => {
       { imageId: PRIVATE_IMAGE_ID, token, start, endInclusive, expectedBytes, expectedFileSize },
     );
 
+    // Optional disk-gateway mode: accept token via query-string (less secure, but used by some
+    // deployments). This ensures both auth paths stay compatible with COEP/CORS/Range.
+    await page.evaluate(
+      ({ imageId, token, start, endInclusive, expectedBytes, expectedFileSize }) =>
+        window.__diskStreamingE2E.fetchPrivateRangeWithQueryToken({
+          imageId,
+          token,
+          start,
+          endInclusive,
+          expectedBytes,
+          expectedFileSize,
+        }),
+      { imageId: PRIVATE_IMAGE_ID, token, start, endInclusive, expectedBytes, expectedFileSize },
+    );
+
     await page.evaluate(() => window.__diskStreamingE2E.assertCrossOriginIsolated());
   });
 });
