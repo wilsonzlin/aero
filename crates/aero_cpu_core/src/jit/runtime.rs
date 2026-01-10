@@ -132,12 +132,56 @@ where
         self.page_versions.bump_write(paddr, len);
     }
 
-    pub fn make_meta(&self, code_paddr: u64, byte_len: u32) -> CompiledBlockMeta {
+    /// Snapshot the current page-version state for a block of guest code.
+    ///
+    /// The returned metadata should be captured by the compilation pipeline at the time it reads
+    /// guest code bytes. Installing a block with a stale snapshot will cause the runtime to reject
+    /// the block and request recompilation.
+    pub fn snapshot_meta(&self, code_paddr: u64, byte_len: u32) -> CompiledBlockMeta {
         CompiledBlockMeta {
             code_paddr,
             byte_len,
             page_versions: self.page_versions.snapshot(code_paddr, byte_len),
         }
+    }
+
+    /// Backwards-compatible alias for [`Self::snapshot_meta`].
+    pub fn make_meta(&self, code_paddr: u64, byte_len: u32) -> CompiledBlockMeta {
+        self.snapshot_meta(code_paddr, byte_len)
+    }
+
+    /// Installs a fully-described compiled block into the cache.
+    ///
+    /// If the block's page-version snapshot is already stale, the block is rejected and a new
+    /// compilation request is issued for the same entry RIP.
+    pub fn install_handle(&mut self, handle: CompiledBlockHandle) -> Vec<u64> {
+        if !self.is_block_valid(&handle) {
+            // A background compilation result can arrive after the guest has modified the code.
+            // Installing such a block would be incorrect; reject it and request recompilation.
+            let entry_rip = handle.entry_rip;
+            // If we already have a valid block for this RIP, ignore the stale result. This can
+            // happen if multiple compilation jobs raced and the newest one installed first.
+            if let Some(existing) = self.cache.get_cloned(entry_rip) {
+                if self.is_block_valid(&existing) {
+                    return Vec::new();
+                }
+
+                // Existing block is also stale; drop it so we don't keep probing it on every
+                // execution attempt.
+                self.cache.remove(entry_rip);
+                self.profile.clear_requested(entry_rip);
+            }
+
+            self.profile.mark_requested(entry_rip);
+            self.compile.request_compile(entry_rip);
+            return Vec::new();
+        }
+
+        let evicted = self.cache.insert(handle);
+        for rip in &evicted {
+            self.profile.clear_requested(*rip);
+        }
+        evicted
     }
 
     pub fn install_block(
@@ -147,17 +191,11 @@ where
         code_paddr: u64,
         byte_len: u32,
     ) -> Vec<u64> {
-        let handle = CompiledBlockHandle {
+        self.install_handle(CompiledBlockHandle {
             entry_rip,
             table_index,
-            meta: self.make_meta(code_paddr, byte_len),
-        };
-
-        let evicted = self.cache.insert(handle);
-        for rip in &evicted {
-            self.profile.clear_requested(*rip);
-        }
-        evicted
+            meta: self.snapshot_meta(code_paddr, byte_len),
+        })
     }
 
     pub fn invalidate_block(&mut self, entry_rip: u64) -> bool {

@@ -200,6 +200,66 @@ fn page_version_invalidation_evicts_and_requests_recompile() {
 }
 
 #[test]
+fn stale_page_version_snapshot_rejected_on_install() {
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 1_000,
+        cache_max_blocks: 16,
+        cache_max_bytes: 0,
+    };
+
+    let compile = RecordingCompileSink::default();
+    let mut jit = JitRuntime::new(config, TestJitBackend::default(), compile.clone());
+
+    let meta = jit.snapshot_meta(0x6000, 8);
+    jit.on_guest_write(0x6000, 1);
+
+    let handle = CompiledBlockHandle {
+        entry_rip: 0,
+        table_index: 0,
+        meta,
+    };
+    jit.install_handle(handle);
+
+    assert!(!jit.is_compiled(0));
+    assert_eq!(compile.snapshot(), vec![0]);
+}
+
+#[test]
+fn stale_install_does_not_evict_newer_valid_block() {
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 1_000,
+        cache_max_blocks: 16,
+        cache_max_bytes: 0,
+    };
+
+    let compile = RecordingCompileSink::default();
+    let mut jit = JitRuntime::new(config, TestJitBackend::default(), compile.clone());
+
+    // Capture a snapshot before the code page changes (simulating a background compilation job).
+    let stale_meta = jit.snapshot_meta(0x7000, 8);
+
+    // Code page changes, invalidating the snapshot.
+    jit.on_guest_write(0x7000, 1);
+
+    // Install a newer (valid) compiled block that matches the current version.
+    jit.install_block(0, 0, 0x7000, 8);
+    assert!(jit.prepare_block(0).is_some());
+
+    // A stale compilation result arrives late; it must not replace/evict the valid block.
+    let stale_handle = CompiledBlockHandle {
+        entry_rip: 0,
+        table_index: 123,
+        meta: stale_meta,
+    };
+    jit.install_handle(stale_handle);
+
+    assert!(jit.prepare_block(0).is_some());
+    assert!(compile.snapshot().is_empty());
+}
+
+#[test]
 fn mixed_mode_exit_to_interpreter_forces_one_interpreter_block() {
     let config = JitConfig {
         enabled: true,
