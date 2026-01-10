@@ -8,6 +8,10 @@ param(
   [Parameter(Mandatory)]
   [string]$CertPath,
 
+  # Certificate stores to populate in the offline SOFTWARE hive.
+  # Default matches the minimum needed for trusting test-signed kernel-mode driver catalogs.
+  [string[]]$CertStores = @("ROOT", "TrustedPublisher"),
+
   [string]$DriversPath,
 
   [int[]]$BootWimIndices = @(1, 2),
@@ -33,6 +37,58 @@ function Assert-CommandAvailable {
   param([Parameter(Mandatory)][string]$Name)
   if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
     throw "Required command '$Name' was not found in PATH."
+  }
+}
+
+function Normalize-CertStoreName {
+  param([Parameter(Mandatory)][string]$Name)
+
+  $upper = $Name.Trim().ToUpperInvariant()
+  switch ($upper) {
+    "ROOT" { return "ROOT" }
+    "TRUSTEDPUBLISHER" { return "TrustedPublisher" }
+    "TRUSTEDPEOPLE" { return "TrustedPeople" }
+    default { throw "Unsupported certificate store '$Name'. Supported values: ROOT, TrustedPublisher, TrustedPeople." }
+  }
+}
+
+function Normalize-CertStoreList {
+  param([Parameter(Mandatory)][string[]]$Stores)
+
+  $out = New-Object System.Collections.Generic.List[string]
+  foreach ($store in $Stores) {
+    if ([string]::IsNullOrWhiteSpace($store)) {
+      continue
+    }
+    $norm = Normalize-CertStoreName -Name $store
+    if (-not ($out -contains $norm)) {
+      $out.Add($norm) | Out-Null
+    }
+  }
+
+  if ($out.Count -eq 0) {
+    throw "-CertStores must contain at least one store."
+  }
+
+  return $out.ToArray()
+}
+
+function Ensure-WritableFile {
+  param(
+    [Parameter(Mandatory)][string]$Path,
+    [Parameter(Mandatory)][string]$Label
+  )
+
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    throw "$Label not found: $Path"
+  }
+
+  # ISO extractors commonly mark files read-only; clear it so DISM can commit modifications.
+  Invoke-NativeCommand -FilePath "attrib.exe" -ArgumentList @("-r", $Path) -SuppressOutput
+
+  $item = Get-Item -LiteralPath $Path -ErrorAction Stop
+  if ($item.Attributes -band [System.IO.FileAttributes]::ReadOnly) {
+    throw "$Label is read-only and cannot be serviced in-place. Copy the extracted ISO contents to a writable NTFS directory and retry. Path: $Path"
   }
 }
 
@@ -204,7 +260,8 @@ function Set-BcdFlagsForStore {
 function Add-OfflineTrustedCertificate {
   param(
     [Parameter(Mandatory)][string]$MountedImageRoot,
-    [Parameter(Mandatory)][System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate
+    [Parameter(Mandatory)][System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate,
+    [Parameter(Mandatory)][string[]]$Stores
   )
 
   $softwareHive = [System.IO.Path]::Combine($MountedImageRoot, "Windows", "System32", "Config", "SOFTWARE")
@@ -225,7 +282,7 @@ function Add-OfflineTrustedCertificate {
     Invoke-NativeCommand -FilePath "reg.exe" -SuppressOutput -ArgumentList @("load", "HKLM\OFFLINE_SOFTWARE", $softwareHive)
     $loaded = $true
 
-    foreach ($storeName in @("ROOT", "TrustedPublisher")) {
+    foreach ($storeName in $Stores) {
       $certificatesPath = "HKLM:\OFFLINE_SOFTWARE\Microsoft\SystemCertificates\$storeName\Certificates"
       New-Item -Path $certificatesPath -Force | Out-Null
       $keyPath = Join-Path -Path $certificatesPath -ChildPath $thumb
@@ -302,6 +359,7 @@ function Service-WimIndex {
     [Parameter(Mandatory)][string]$MountDir,
     [Parameter(Mandatory)][string]$Label,
     [Parameter(Mandatory)][System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate,
+    [Parameter(Mandatory)][string[]]$CertStores,
     [string]$DriversRoot,
     [switch]$IsInstallImage,
     [switch]$EnableNoIntegrityChecks
@@ -328,8 +386,8 @@ function Service-WimIndex {
       Add-DriversToOfflineImage -MountedImageRoot $MountDir -DriversRoot $DriversRoot
     }
 
-    Write-Host "`n[$Label] Trusting certificate offline (ROOT + TrustedPublisher)..."
-    Add-OfflineTrustedCertificate -MountedImageRoot $MountDir -Certificate $Certificate
+    Write-Host "`n[$Label] Trusting certificate offline ($($CertStores -join ', '))..."
+    Add-OfflineTrustedCertificate -MountedImageRoot $MountDir -Certificate $Certificate -Stores $CertStores
 
     if ($IsInstallImage) {
       Patch-InstallBcdTemplate -MountedImageRoot $MountDir -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
@@ -425,6 +483,10 @@ if (-not (Test-Path -LiteralPath $installWimPath -PathType Leaf)) {
   throw "Expected install.wim at '$installWimPath' (MediaRoot must contain 'sources\install.wim')."
 }
 
+# Ensure the media files are writable before we attempt to service them.
+Ensure-WritableFile -Path $bootWimPath -Label "boot.wim"
+Ensure-WritableFile -Path $installWimPath -Label "install.wim"
+
 $biosBcdPath = [System.IO.Path]::Combine($resolvedMediaRoot, "boot", "BCD")
 $uefiBcdPath = [System.IO.Path]::Combine($resolvedMediaRoot, "efi", "microsoft", "boot", "bcd")
 
@@ -441,6 +503,7 @@ if (Test-Path -LiteralPath $uefiBcdPath -PathType Leaf) {
 
 $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($resolvedCertPath)
 $thumbprint = $certificate.Thumbprint.ToUpperInvariant()
+$normalizedCertStores = Normalize-CertStoreList -Stores $CertStores
 
 $availableBootIndices = Get-WimIndexList -WimFile $bootWimPath
 $availableInstallIndices = Get-WimIndexList -WimFile $installWimPath
@@ -461,6 +524,7 @@ Write-Host "========================================"
 Write-Host "MediaRoot            : $resolvedMediaRoot"
 Write-Host "CertPath             : $resolvedCertPath"
 Write-Host "Cert thumbprint      : $thumbprint"
+Write-Host "Cert stores          : $($normalizedCertStores -join ', ')"
 Write-Host "DriversPath          : $(if ($resolvedDriversPath) { $resolvedDriversPath } else { "<none>" })"
 Write-Host "EnableNoIntegrityChecks : $(if ($EnableNoIntegrityChecks) { "ON" } else { "OFF" })"
 Write-Host ""
@@ -500,6 +564,7 @@ try {
       -MountDir $mountDir `
       -Label ("boot.wim index $idx") `
       -Certificate $certificate `
+      -CertStores $normalizedCertStores `
       -DriversRoot $resolvedDriversPath `
       -IsInstallImage:$false `
       -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
@@ -514,6 +579,7 @@ try {
       -MountDir $mountDir `
       -Label ("install.wim index $idx") `
       -Certificate $certificate `
+      -CertStores $normalizedCertStores `
       -DriversRoot $resolvedDriversPath `
       -IsInstallImage `
       -EnableNoIntegrityChecks:$EnableNoIntegrityChecks

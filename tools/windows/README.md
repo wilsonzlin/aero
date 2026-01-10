@@ -20,6 +20,7 @@ Patches extracted Windows 7 install media to support **test-signed drivers** by:
   - Must contain `sources\boot.wim` and `sources\install.wim`
   - Recommended: copy ISO contents to a local NTFS directory (don’t patch directly on read-only media)
 - A certificate file (`.cer`) used to sign your test drivers
+  - `patch-win7-media.ps1` will clear the filesystem `Read-only` attribute on `boot.wim`/`install.wim` if present, but it cannot patch files on truly read-only media.
 
 ### Usage examples
 
@@ -40,6 +41,16 @@ Patch *all* `install.wim` indices (default) and both `boot.wim` indices (default
   -MediaRoot C:\iso\win7sp1 `
   -CertPath  C:\certs\driver-test.cer `
   -DriversPath C:\drivers\win7
+```
+
+Inject the certificate into an additional store (`TrustedPeople`):
+
+```powershell
+.\tools\windows\patch-win7-media.ps1 `
+  -MediaRoot C:\iso\win7sp1 `
+  -CertPath  C:\certs\driver-test.cer `
+  -DriversPath C:\drivers\win7 `
+  -CertStores ROOT,TrustedPublisher,TrustedPeople
 ```
 
 Patch with `nointegritychecks` enabled as well:
