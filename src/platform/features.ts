@@ -1,0 +1,153 @@
+export type PlatformFeatureReport = {
+  /**
+   * Whether the current JS execution context is cross-origin isolated.
+   *
+   * This is required for `SharedArrayBuffer` to be exposed in most browsers.
+   * See: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer#security_requirements
+   */
+  crossOriginIsolated: boolean;
+  /** Whether `SharedArrayBuffer` is available in the current context. */
+  sharedArrayBuffer: boolean;
+  /**
+   * Best-effort detection for WebAssembly SIMD support.
+   *
+   * Uses `WebAssembly.validate` against a tiny module containing a SIMD opcode.
+   */
+  wasmSimd: boolean;
+  /**
+   * Best-effort detection for WebAssembly threads support.
+   *
+   * For Aero, we treat "threads available" as requiring:
+   * - `SharedArrayBuffer`
+   * - `Atomics`
+   * - cross-origin isolation
+   */
+  wasmThreads: boolean;
+  /** Whether WebGPU is exposed (`navigator.gpu`). */
+  webgpu: boolean;
+  /** Whether OPFS is exposed (`navigator.storage.getDirectory`). */
+  opfs: boolean;
+  /** Whether AudioWorklet is available. */
+  audioWorklet: boolean;
+  /** Whether `OffscreenCanvas` is available. */
+  offscreenCanvas: boolean;
+};
+
+const WASM_SIMD_VALIDATION_BYTES = new Uint8Array([
+  // From docs/11-browser-apis.md (WASM SIMD feature detection snippet).
+  0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60, 0x00, 0x01,
+  0x7b, 0x03, 0x02, 0x01, 0x00, 0x0a, 0x0a, 0x01, 0x08, 0x00, 0x41, 0x00, 0xfd, 0x0c,
+  0x00, 0x00, 0x0b,
+]);
+
+function detectWasmSimd(): boolean {
+  if (typeof WebAssembly === 'undefined' || typeof WebAssembly.validate !== 'function') {
+    return false;
+  }
+  try {
+    return WebAssembly.validate(WASM_SIMD_VALIDATION_BYTES);
+  } catch {
+    return false;
+  }
+}
+
+function getAudioContextCtor(): typeof AudioContext | undefined {
+  // Safari uses webkitAudioContext.
+  return (
+    (globalThis as typeof globalThis & { webkitAudioContext?: typeof AudioContext }).AudioContext ??
+    (globalThis as typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  );
+}
+
+export function detectPlatformFeatures(): PlatformFeatureReport {
+  const crossOriginIsolated = (globalThis as typeof globalThis & { crossOriginIsolated?: boolean })
+    .crossOriginIsolated === true;
+  const sharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
+  const wasmSimd = detectWasmSimd();
+  const wasmThreads = crossOriginIsolated && sharedArrayBuffer && typeof Atomics !== 'undefined';
+
+  const webgpu = typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
+  const opfs =
+    typeof navigator !== 'undefined' &&
+    typeof navigator.storage !== 'undefined' &&
+    typeof (navigator.storage as StorageManager & { getDirectory?: unknown }).getDirectory === 'function';
+
+  const audioContextCtor = getAudioContextCtor();
+  const audioWorklet = typeof AudioWorkletNode !== 'undefined' && typeof audioContextCtor !== 'undefined';
+
+  const offscreenCanvas = typeof OffscreenCanvas !== 'undefined';
+
+  return {
+    crossOriginIsolated,
+    sharedArrayBuffer,
+    wasmSimd,
+    wasmThreads,
+    webgpu,
+    opfs,
+    audioWorklet,
+    offscreenCanvas,
+  };
+}
+
+export const platformFeatures: PlatformFeatureReport = detectPlatformFeatures();
+
+/**
+ * Returns actionable, human-friendly messages describing why Aero can't run
+ * fully on this browser/context.
+ *
+ * Note: the UI should still load when these are missing; this is informational.
+ */
+export function explainMissingRequirements(report: PlatformFeatureReport = platformFeatures): string[] {
+  const messages: string[] = [];
+
+  if (!report.crossOriginIsolated) {
+    messages.push(
+      'This page is not cross-origin isolated. Aero needs COOP/COEP headers (Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy: require-corp) to enable SharedArrayBuffer and WASM threads.',
+    );
+  }
+
+  if (!report.sharedArrayBuffer) {
+    messages.push(
+      'SharedArrayBuffer is unavailable. Aero uses shared memory between workers; ensure you\'re in a modern browser and the page is served with COOP/COEP.',
+    );
+  }
+
+  if (!report.wasmSimd) {
+    messages.push(
+      'WebAssembly SIMD is unavailable. Aero requires SIMD for acceptable performance; update to a modern browser version with WASM SIMD enabled.',
+    );
+  }
+
+  if (!report.wasmThreads) {
+    messages.push(
+      "WebAssembly threads are unavailable. Aero's design relies on multithreading; this typically requires cross-origin isolation, SharedArrayBuffer, and Atomics.",
+    );
+  }
+
+  if (!report.webgpu) {
+    messages.push(
+      'WebGPU is unavailable. Aero requires WebGPU for GPU-accelerated rendering (Chrome/Edge 113+; Firefox/Safari support may require flags).',
+    );
+  }
+
+  if (!report.opfs) {
+    messages.push(
+      'Origin Private File System (OPFS) is unavailable. Aero uses OPFS for fast, persistent disk image I/O; update your browser or enable the File System Access APIs.',
+    );
+  }
+
+  if (!report.audioWorklet) {
+    messages.push(
+      "AudioWorklet is unavailable. Aero's audio output requires AudioWorklet; update your browser or disable audio output for now.",
+    );
+  }
+
+  if (!report.offscreenCanvas) {
+    messages.push(
+      'OffscreenCanvas is unavailable. Aero uses OffscreenCanvas for worker-driven rendering; update your browser or use a configuration that renders on the main thread.',
+    );
+  }
+
+  return messages;
+}
+
