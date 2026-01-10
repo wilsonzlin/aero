@@ -624,6 +624,19 @@ mod tests {
     }
 
     #[test]
+    fn deterministic_vs_chunked_advance_for_rational_periodic() {
+        let mut sched = TimerScheduler::new();
+        let t1 = sched.alloc_timer();
+        let t2 = sched.alloc_timer();
+        sched.arm_periodic_rational_ns(t1, 10, 5, 2).unwrap();
+        sched.arm_one_shot(t2, 17).unwrap();
+
+        let events_single = collect_events(sched.clone(), Clock::new(), &[40]);
+        let events_chunked = collect_events(sched, Clock::new(), &[9, 9, 22]);
+        assert_eq!(events_single, events_chunked);
+    }
+
+    #[test]
     fn save_restore_round_trip_preserves_future_events() {
         let mut clock = Clock::new();
         let mut sched = TimerScheduler::new();
@@ -642,6 +655,20 @@ mod tests {
         assert_eq!(
             events_after.iter().map(|e| e.deadline_ns).collect::<Vec<_>>(),
             vec![30, 40, 50]
+        );
+    }
+
+    #[test]
+    fn invalid_rational_period_is_rejected() {
+        let mut sched = TimerScheduler::new();
+        let t = sched.alloc_timer();
+        assert_eq!(
+            sched.arm_periodic_rational_ns(t, 10, 0, 2),
+            Err(TimerError::InvalidRationalPeriod)
+        );
+        assert_eq!(
+            sched.arm_periodic_rational_ns(t, 10, 5, 0),
+            Err(TimerError::InvalidRationalPeriod)
         );
     }
 
