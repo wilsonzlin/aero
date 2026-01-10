@@ -21,6 +21,44 @@ impl<'a> DnsQuery<'a> {
     pub fn recursion_desired(&self) -> bool {
         (self.flags & 0x0100) != 0
     }
+
+    #[cfg(feature = "alloc")]
+    pub fn name(&self) -> Result<alloc::string::String, PacketError> {
+        qname_to_string(self.qname)
+    }
+}
+
+#[cfg(feature = "alloc")]
+pub fn qname_to_string(qname: &[u8]) -> Result<alloc::string::String, PacketError> {
+    use alloc::string::String;
+
+    let mut out = String::new();
+    let mut off = 0usize;
+    while off < qname.len() {
+        let len = qname[off] as usize;
+        off += 1;
+        if len == 0 {
+            return Ok(out);
+        }
+        if len > 63 {
+            return Err(PacketError::Malformed("DNS label length > 63"));
+        }
+        if off + len > qname.len() {
+            return Err(PacketError::Truncated {
+                needed: off + len,
+                actual: qname.len(),
+            });
+        }
+        let label = core::str::from_utf8(&qname[off..off + len])
+            .map_err(|_| PacketError::Malformed("DNS label is not UTF-8"))?;
+        if !out.is_empty() {
+            out.push('.');
+        }
+        out.push_str(label);
+        off += len;
+    }
+
+    Err(PacketError::Malformed("DNS QNAME missing terminator"))
 }
 
 /// Parse a DNS query containing exactly one question.
@@ -202,6 +240,12 @@ mod tests {
         assert_eq!(u16::from_be_bytes([buf[0], buf[1]]), 0x1234);
         assert_eq!(u16::from_be_bytes([buf[6], buf[7]]), 1); // ANCOUNT
         assert_eq!(buf[len - 4..len], [10, 0, 0, 1]);
+    }
+
+    #[test]
+    fn decode_qname_to_string() {
+        let qname = [0x07u8, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm', 0x00];
+        assert_eq!(qname_to_string(&qname).unwrap(), "example.com");
     }
 
     #[test]
