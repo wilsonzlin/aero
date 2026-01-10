@@ -173,17 +173,31 @@ impl UploadRingBuffer {
                 "per_frame_size must be > 0",
             ));
         }
+        if desc.staging_belt_chunk_size == 0 {
+            return Err(UploadRingBufferError::InvalidDescriptor(
+                "staging_belt_chunk_size must be > 0",
+            ));
+        }
+        if desc.staging_belt_chunk_size > caps.max_buffer_size {
+            return Err(UploadRingBufferError::BufferTooLarge {
+                requested: desc.staging_belt_chunk_size,
+                max: caps.max_buffer_size,
+            });
+        }
 
-        let max_required_alignment = [
+        // Segment boundaries should be aligned for any dynamic binding type we
+        // might allocate within the frame, *and* for copy/write operations.
+        //
+        // In practice these alignments are powers of two (WebGPU requirement),
+        // so the LCM is equal to the max, but using LCM is more robust.
+        let uniform_alignment = (caps.min_uniform_buffer_offset_alignment as u64).max(1);
+        let storage_alignment = (caps.min_storage_buffer_offset_alignment as u64).max(1);
+        let required_alignment = lcm_u64(
             wgpu::COPY_BUFFER_ALIGNMENT,
-            caps.min_uniform_buffer_offset_alignment as u64,
-            caps.min_storage_buffer_offset_alignment as u64,
-        ]
-        .into_iter()
-        .max()
-        .unwrap_or(wgpu::COPY_BUFFER_ALIGNMENT);
+            lcm_u64(uniform_alignment, storage_alignment),
+        );
 
-        let per_frame_capacity = align_up(desc.per_frame_size, max_required_alignment);
+        let per_frame_capacity = align_up(desc.per_frame_size, required_alignment);
         let total_size = per_frame_capacity
             .checked_mul(desc.frames_in_flight as u64)
             .ok_or(UploadRingBufferError::BufferTooLarge {
@@ -281,6 +295,9 @@ impl UploadRingBuffer {
                 remaining,
                 per_frame_capacity: self.per_frame_capacity,
             })?;
+
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(offset % alignment, 0);
 
         Ok(offset)
     }
@@ -512,16 +529,15 @@ mod tests {
             ..Default::default()
         };
 
-        let max_required_alignment = [
+        let required_alignment = lcm_u64(
             wgpu::COPY_BUFFER_ALIGNMENT,
-            caps.min_uniform_buffer_offset_alignment as u64,
-            caps.min_storage_buffer_offset_alignment as u64,
-        ]
-        .into_iter()
-        .max()
-        .unwrap();
+            lcm_u64(
+                caps.min_uniform_buffer_offset_alignment as u64,
+                caps.min_storage_buffer_offset_alignment as u64,
+            ),
+        );
 
-        let per_frame_capacity = align_up(desc.per_frame_size, max_required_alignment);
+        let per_frame_capacity = align_up(desc.per_frame_size, required_alignment);
         assert_eq!(per_frame_capacity, 256);
 
         let total = per_frame_capacity * desc.frames_in_flight as u64;
