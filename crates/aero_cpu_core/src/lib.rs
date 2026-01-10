@@ -173,6 +173,7 @@ impl CpuState {
 
     /// `STMXCSR` convenience wrapper that writes MXCSR via a [`Bus`].
     pub fn stmxcsr_to_bus<B: Bus>(&self, bus: &mut B, addr: u64) {
+        debug_assert_eq!(addr & 0b11, 0, "STMXCSR destination must be 4-byte aligned");
         bus.write_u32(addr, self.sse.mxcsr);
     }
 
@@ -191,6 +192,7 @@ impl CpuState {
 
     /// `LDMXCSR` convenience wrapper that loads MXCSR via a [`Bus`].
     pub fn ldmxcsr_from_bus<B: Bus>(&mut self, bus: &mut B, addr: u64) -> Result<(), FxStateError> {
+        debug_assert_eq!(addr & 0b11, 0, "LDMXCSR source must be 4-byte aligned");
         let value = bus.read_u32(addr);
         self.sse.set_mxcsr(value)
     }
@@ -251,6 +253,7 @@ impl CpuState {
 
     /// `FXSAVE` convenience wrapper that writes the 512-byte image into memory via a [`Bus`].
     pub fn fxsave_to_bus<B: Bus>(&self, bus: &mut B, addr: u64) {
+        debug_assert_eq!(addr & 0xF, 0, "FXSAVE destination must be 16-byte aligned");
         let mut image = [0u8; FXSAVE_AREA_SIZE];
         self.fxsave(&mut image);
         for (i, byte) in image.iter().copied().enumerate() {
@@ -313,6 +316,7 @@ impl CpuState {
 
     /// `FXRSTOR` convenience wrapper that reads the 512-byte image from memory via a [`Bus`].
     pub fn fxrstor_from_bus<B: Bus>(&mut self, bus: &mut B, addr: u64) -> Result<(), FxStateError> {
+        debug_assert_eq!(addr & 0xF, 0, "FXRSTOR source must be 16-byte aligned");
         let mut image = [0u8; FXSAVE_AREA_SIZE];
         for i in 0..FXSAVE_AREA_SIZE {
             image[i] = bus.read_u8(addr + i as u64);
@@ -371,6 +375,11 @@ impl CpuState {
 
     /// `FXSAVE64` convenience wrapper that writes the 512-byte image into memory via a [`Bus`].
     pub fn fxsave64_to_bus<B: Bus>(&self, bus: &mut B, addr: u64) {
+        debug_assert_eq!(
+            addr & 0xF,
+            0,
+            "FXSAVE64 destination must be 16-byte aligned"
+        );
         let mut image = [0u8; FXSAVE_AREA_SIZE];
         self.fxsave64(&mut image);
         for (i, byte) in image.iter().copied().enumerate() {
@@ -430,6 +439,7 @@ impl CpuState {
         bus: &mut B,
         addr: u64,
     ) -> Result<(), FxStateError> {
+        debug_assert_eq!(addr & 0xF, 0, "FXRSTOR64 source must be 16-byte aligned");
         let mut image = [0u8; FXSAVE_AREA_SIZE];
         for i in 0..FXSAVE_AREA_SIZE {
             image[i] = bus.read_u8(addr + i as u64);
