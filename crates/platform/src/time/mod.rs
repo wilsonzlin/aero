@@ -15,10 +15,15 @@
 //! their own `TimerId -> handler` mapping and re-establish it after restore.
 
 mod clock;
+mod math;
 mod timers;
 mod virtual_time;
 
 pub use clock::{Clock, ClockState};
+pub use math::{
+    gcd_u64, mul_div_u64_floor, ns_from_ticks_floor, period_from_hz_ns, reduce_fraction,
+    ticks_from_ns_floor, NANOS_PER_SEC,
+};
 pub use timers::{
     TimerError, TimerEvent, TimerId, TimerKind, TimerKindStateRepr, TimerScheduler,
     TimerSchedulerState, TimerState,
