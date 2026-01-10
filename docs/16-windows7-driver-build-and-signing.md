@@ -82,6 +82,15 @@ Dual signing (SHA-1 first, then append SHA-256):
 .\ci\sign-drivers.ps1 -DualSign
 ```
 
+### Stable certificate (optional)
+
+For releases you may want a consistent test certificate across runs. `ci/sign-drivers.ps1` supports this by accepting a PFX via environment variables:
+
+- `AERO_DRIVER_PFX_BASE64`: base64-encoded PFX bytes
+- `AERO_DRIVER_PFX_PASSWORD`: PFX password
+
+If both are set, the script uses the provided PFX instead of generating a new self-signed certificate, and still exports the public cert as `out/certs/aero-test.cer`.
+
 ## SHA-1 vs SHA-2
 
 ### File digest (`signtool /fd`) is not the whole story
