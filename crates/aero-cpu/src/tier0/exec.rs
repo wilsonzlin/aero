@@ -103,6 +103,44 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
                 self.exec_movzx(instr, true)?;
                 Ok(false)
             }
+            Mnemonic::Cmovo
+            | Mnemonic::Cmovno
+            | Mnemonic::Cmovb
+            | Mnemonic::Cmovae
+            | Mnemonic::Cmove
+            | Mnemonic::Cmovne
+            | Mnemonic::Cmovbe
+            | Mnemonic::Cmova
+            | Mnemonic::Cmovs
+            | Mnemonic::Cmovns
+            | Mnemonic::Cmovp
+            | Mnemonic::Cmovnp
+            | Mnemonic::Cmovl
+            | Mnemonic::Cmovge
+            | Mnemonic::Cmovle
+            | Mnemonic::Cmovg => {
+                self.exec_cmovcc(instr)?;
+                Ok(false)
+            }
+            Mnemonic::Seto
+            | Mnemonic::Setno
+            | Mnemonic::Setb
+            | Mnemonic::Setae
+            | Mnemonic::Sete
+            | Mnemonic::Setne
+            | Mnemonic::Setbe
+            | Mnemonic::Seta
+            | Mnemonic::Sets
+            | Mnemonic::Setns
+            | Mnemonic::Setp
+            | Mnemonic::Setnp
+            | Mnemonic::Setl
+            | Mnemonic::Setge
+            | Mnemonic::Setle
+            | Mnemonic::Setg => {
+                self.exec_setcc(instr)?;
+                Ok(false)
+            }
 
             Mnemonic::Push => {
                 self.exec_push(instr)?;
@@ -118,6 +156,14 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
             }
             Mnemonic::Popa | Mnemonic::Popad => {
                 self.exec_popa(instr)?;
+                Ok(false)
+            }
+            Mnemonic::Pushf | Mnemonic::Pushfd | Mnemonic::Pushfq => {
+                self.exec_pushf(instr)?;
+                Ok(false)
+            }
+            Mnemonic::Popf | Mnemonic::Popfd | Mnemonic::Popfq => {
+                self.exec_popf(instr)?;
                 Ok(false)
             }
 
@@ -203,12 +249,60 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
                 self.exec_shift(instr, ShiftKind::Sar)?;
                 Ok(false)
             }
+            Mnemonic::Shld => {
+                self.exec_shld_shrd(instr, true)?;
+                Ok(false)
+            }
+            Mnemonic::Shrd => {
+                self.exec_shld_shrd(instr, false)?;
+                Ok(false)
+            }
             Mnemonic::Rol => {
                 self.exec_rotate(instr, RotateKind::Rol)?;
                 Ok(false)
             }
             Mnemonic::Ror => {
                 self.exec_rotate(instr, RotateKind::Ror)?;
+                Ok(false)
+            }
+            Mnemonic::Rcl => {
+                self.exec_rotate(instr, RotateKind::Rcl)?;
+                Ok(false)
+            }
+            Mnemonic::Rcr => {
+                self.exec_rotate(instr, RotateKind::Rcr)?;
+                Ok(false)
+            }
+            Mnemonic::Bswap => {
+                self.exec_bswap(instr)?;
+                Ok(false)
+            }
+            Mnemonic::Xadd => {
+                self.exec_xadd(instr)?;
+                Ok(false)
+            }
+            Mnemonic::Bt => {
+                self.exec_bit_op(instr, BitOpKind::Bt)?;
+                Ok(false)
+            }
+            Mnemonic::Bts => {
+                self.exec_bit_op(instr, BitOpKind::Bts)?;
+                Ok(false)
+            }
+            Mnemonic::Btr => {
+                self.exec_bit_op(instr, BitOpKind::Btr)?;
+                Ok(false)
+            }
+            Mnemonic::Btc => {
+                self.exec_bit_op(instr, BitOpKind::Btc)?;
+                Ok(false)
+            }
+            Mnemonic::Bsf => {
+                self.exec_bscan(instr, false)?;
+                Ok(false)
+            }
+            Mnemonic::Bsr => {
+                self.exec_bscan(instr, true)?;
                 Ok(false)
             }
 
@@ -237,7 +331,7 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
             Mnemonic::Loop => self.exec_loop(instr, LoopKind::Loop),
             Mnemonic::Loope => self.exec_loop(instr, LoopKind::Loope),
             Mnemonic::Loopne => self.exec_loop(instr, LoopKind::Loopne),
-            Mnemonic::Jcxz => self.exec_jcxz(instr),
+            Mnemonic::Jcxz | Mnemonic::Jecxz | Mnemonic::Jrcxz => self.exec_jcxz(instr),
 
             Mnemonic::Movsb | Mnemonic::Movsw | Mnemonic::Movsd | Mnemonic::Movsq => {
                 self.exec_movs(instr)?;
@@ -283,6 +377,22 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
             }
             Mnemonic::Std => {
                 self.cpu.set_flag(Flag::Df, true);
+                Ok(false)
+            }
+            Mnemonic::Clc => {
+                self.cpu.materialize_lazy_flags();
+                self.cpu.set_flag(Flag::Cf, false);
+                Ok(false)
+            }
+            Mnemonic::Stc => {
+                self.cpu.materialize_lazy_flags();
+                self.cpu.set_flag(Flag::Cf, true);
+                Ok(false)
+            }
+            Mnemonic::Cmc => {
+                let cf = self.cpu.get_flag(Flag::Cf);
+                self.cpu.materialize_lazy_flags();
+                self.cpu.set_flag(Flag::Cf, !cf);
                 Ok(false)
             }
 
@@ -331,8 +441,17 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
                 self.exec_ltr(instr)?;
                 Ok(false)
             }
+            Mnemonic::Cbw | Mnemonic::Cwde | Mnemonic::Cdqe => {
+                self.exec_cbw_family(instr)?;
+                Ok(false)
+            }
+            Mnemonic::Cwd | Mnemonic::Cdq | Mnemonic::Cqo => {
+                self.exec_cwd_family(instr)?;
+                Ok(false)
+            }
 
             Mnemonic::Nop => Ok(false),
+            Mnemonic::Pause => Ok(false),
 
             _ => Err(EmuException::Unimplemented(instr.code())),
         }
@@ -396,6 +515,77 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
         };
         let masked = val & mask_for_bits(dst_bits);
         self.cpu.write_reg(dst_reg, masked)?;
+        Ok(())
+    }
+
+    fn exec_cmovcc(&mut self, instr: &Instruction) -> Result<(), EmuException> {
+        if instr.op_count() != 2 {
+            return Err(EmuException::Unimplemented(instr.code()));
+        }
+
+        let cond = match instr.mnemonic() {
+            Mnemonic::Cmovo => self.cpu.get_flag(Flag::Of),
+            Mnemonic::Cmovno => !self.cpu.get_flag(Flag::Of),
+            Mnemonic::Cmovb => self.cpu.get_flag(Flag::Cf),
+            Mnemonic::Cmovae => !self.cpu.get_flag(Flag::Cf),
+            Mnemonic::Cmove => self.cpu.get_flag(Flag::Zf),
+            Mnemonic::Cmovne => !self.cpu.get_flag(Flag::Zf),
+            Mnemonic::Cmovbe => self.cpu.get_flag(Flag::Cf) || self.cpu.get_flag(Flag::Zf),
+            Mnemonic::Cmova => !self.cpu.get_flag(Flag::Cf) && !self.cpu.get_flag(Flag::Zf),
+            Mnemonic::Cmovs => self.cpu.get_flag(Flag::Sf),
+            Mnemonic::Cmovns => !self.cpu.get_flag(Flag::Sf),
+            Mnemonic::Cmovp => self.cpu.get_flag(Flag::Pf),
+            Mnemonic::Cmovnp => !self.cpu.get_flag(Flag::Pf),
+            Mnemonic::Cmovl => self.cpu.get_flag(Flag::Sf) != self.cpu.get_flag(Flag::Of),
+            Mnemonic::Cmovge => self.cpu.get_flag(Flag::Sf) == self.cpu.get_flag(Flag::Of),
+            Mnemonic::Cmovle => {
+                self.cpu.get_flag(Flag::Zf)
+                    || (self.cpu.get_flag(Flag::Sf) != self.cpu.get_flag(Flag::Of))
+            }
+            Mnemonic::Cmovg => {
+                !self.cpu.get_flag(Flag::Zf)
+                    && (self.cpu.get_flag(Flag::Sf) == self.cpu.get_flag(Flag::Of))
+            }
+            _ => return Err(EmuException::Unimplemented(instr.code())),
+        };
+
+        if cond {
+            let src = self.read_operand(instr, 1)?;
+            self.write_operand(instr, 0, src)?;
+        }
+        Ok(())
+    }
+
+    fn exec_setcc(&mut self, instr: &Instruction) -> Result<(), EmuException> {
+        if instr.op_count() != 1 {
+            return Err(EmuException::Unimplemented(instr.code()));
+        }
+        let cond = match instr.mnemonic() {
+            Mnemonic::Seto => self.cpu.get_flag(Flag::Of),
+            Mnemonic::Setno => !self.cpu.get_flag(Flag::Of),
+            Mnemonic::Setb => self.cpu.get_flag(Flag::Cf),
+            Mnemonic::Setae => !self.cpu.get_flag(Flag::Cf),
+            Mnemonic::Sete => self.cpu.get_flag(Flag::Zf),
+            Mnemonic::Setne => !self.cpu.get_flag(Flag::Zf),
+            Mnemonic::Setbe => self.cpu.get_flag(Flag::Cf) || self.cpu.get_flag(Flag::Zf),
+            Mnemonic::Seta => !self.cpu.get_flag(Flag::Cf) && !self.cpu.get_flag(Flag::Zf),
+            Mnemonic::Sets => self.cpu.get_flag(Flag::Sf),
+            Mnemonic::Setns => !self.cpu.get_flag(Flag::Sf),
+            Mnemonic::Setp => self.cpu.get_flag(Flag::Pf),
+            Mnemonic::Setnp => !self.cpu.get_flag(Flag::Pf),
+            Mnemonic::Setl => self.cpu.get_flag(Flag::Sf) != self.cpu.get_flag(Flag::Of),
+            Mnemonic::Setge => self.cpu.get_flag(Flag::Sf) == self.cpu.get_flag(Flag::Of),
+            Mnemonic::Setle => {
+                self.cpu.get_flag(Flag::Zf)
+                    || (self.cpu.get_flag(Flag::Sf) != self.cpu.get_flag(Flag::Of))
+            }
+            Mnemonic::Setg => {
+                !self.cpu.get_flag(Flag::Zf)
+                    && (self.cpu.get_flag(Flag::Sf) == self.cpu.get_flag(Flag::Of))
+            }
+            _ => return Err(EmuException::Unimplemented(instr.code())),
+        };
+        self.write_operand(instr, 0, if cond { 1 } else { 0 })?;
         Ok(())
     }
 
@@ -500,6 +690,42 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
                 self.cpu.write_reg(Register::EAX, eax)?;
             }
             CpuMode::Long => return Err(EmuException::InvalidOpcode),
+        }
+        Ok(())
+    }
+
+    fn exec_pushf(&mut self, instr: &Instruction) -> Result<(), EmuException> {
+        if instr.op_count() != 0 {
+            return Err(EmuException::Unimplemented(instr.code()));
+        }
+        let bits = match instr.mnemonic() {
+            Mnemonic::Pushf => 16,
+            Mnemonic::Pushfd => 32,
+            Mnemonic::Pushfq => 64,
+            _ => return Err(EmuException::Unimplemented(instr.code())),
+        };
+        let rf = self.cpu.rflags() & mask_for_bits(bits);
+        self.push(rf, bits)?;
+        Ok(())
+    }
+
+    fn exec_popf(&mut self, instr: &Instruction) -> Result<(), EmuException> {
+        if instr.op_count() != 0 {
+            return Err(EmuException::Unimplemented(instr.code()));
+        }
+        let bits = match instr.mnemonic() {
+            Mnemonic::Popf => 16,
+            Mnemonic::Popfd => 32,
+            Mnemonic::Popfq => 64,
+            _ => return Err(EmuException::Unimplemented(instr.code())),
+        };
+        let val = self.pop(bits)?;
+        if bits == 64 {
+            self.cpu.set_rflags(val);
+        } else {
+            let mask = mask_for_bits(bits);
+            let rf = (self.cpu.rflags() & !mask) | (val & mask);
+            self.cpu.set_rflags(rf);
         }
         Ok(())
     }
@@ -925,6 +1151,53 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
         Ok(())
     }
 
+    fn exec_cbw_family(&mut self, instr: &Instruction) -> Result<(), EmuException> {
+        if instr.op_count() != 0 {
+            return Err(EmuException::Unimplemented(instr.code()));
+        }
+        match instr.mnemonic() {
+            Mnemonic::Cbw => {
+                let al = self.cpu.read_reg(Register::AL)? as i8 as i16;
+                self.cpu.write_reg(Register::AX, al as u16 as u64)?;
+            }
+            Mnemonic::Cwde => {
+                let ax = self.cpu.read_reg(Register::AX)? as i16 as i32;
+                self.cpu.write_reg(Register::EAX, ax as u32 as u64)?;
+            }
+            Mnemonic::Cdqe => {
+                let eax = self.cpu.read_reg(Register::EAX)? as i32 as i64;
+                self.cpu.write_reg(Register::RAX, eax as u64)?;
+            }
+            _ => return Err(EmuException::Unimplemented(instr.code())),
+        }
+        Ok(())
+    }
+
+    fn exec_cwd_family(&mut self, instr: &Instruction) -> Result<(), EmuException> {
+        if instr.op_count() != 0 {
+            return Err(EmuException::Unimplemented(instr.code()));
+        }
+        match instr.mnemonic() {
+            Mnemonic::Cwd => {
+                let ax = self.cpu.read_reg(Register::AX)? as i16;
+                let dx = if ax < 0 { 0xffff } else { 0 };
+                self.cpu.write_reg(Register::DX, dx)?;
+            }
+            Mnemonic::Cdq => {
+                let eax = self.cpu.read_reg(Register::EAX)? as i32;
+                let edx = if eax < 0 { 0xffff_ffff } else { 0 };
+                self.cpu.write_reg(Register::EDX, edx)?;
+            }
+            Mnemonic::Cqo => {
+                let rax = self.cpu.read_reg(Register::RAX)? as i64;
+                let rdx = if rax < 0 { u64::MAX } else { 0 };
+                self.cpu.write_reg(Register::RDX, rdx)?;
+            }
+            _ => return Err(EmuException::Unimplemented(instr.code())),
+        }
+        Ok(())
+    }
+
     fn exec_shift(&mut self, instr: &Instruction, kind: ShiftKind) -> Result<(), EmuException> {
         if instr.op_count() != 2 {
             return Err(EmuException::Unimplemented(instr.code()));
@@ -982,6 +1255,68 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
         Ok(())
     }
 
+    fn exec_shld_shrd(&mut self, instr: &Instruction, left: bool) -> Result<(), EmuException> {
+        if instr.op_count() != 3 {
+            return Err(EmuException::Unimplemented(instr.code()));
+        }
+
+        let (dst_val, bits) = self.read_operand_with_size(instr, 0)?;
+        let (src_val, _) = self.read_operand_with_size(instr, 1)?;
+        let count_raw = self.read_operand(instr, 2)? as u32;
+
+        let mask = mask_for_bits(bits);
+        let dst = dst_val & mask;
+        let src = src_val & mask;
+        let count = count_raw & if bits == 64 { 0x3f } else { 0x1f };
+        if count == 0 {
+            return Ok(());
+        }
+
+        let width = bits * 2;
+        let width_mask = if width == 128 {
+            u128::MAX
+        } else {
+            (1u128 << width) - 1
+        };
+
+        let (result, cf) = if left {
+            let concat = (((dst as u128) << bits) | src as u128) & width_mask;
+            let cf = ((concat >> (width - count)) & 1) != 0;
+            let shifted = (concat << count) & width_mask;
+            let result = ((shifted >> bits) & mask as u128) as u64;
+            (result, cf)
+        } else {
+            let concat = (((src as u128) << bits) | dst as u128) & width_mask;
+            let cf = ((concat >> (count - 1)) & 1) != 0;
+            let shifted = concat >> count;
+            let result = (shifted & mask as u128) as u64;
+            (result, cf)
+        };
+
+        self.cpu.materialize_lazy_flags();
+        self.write_operand(instr, 0, result)?;
+
+        self.cpu.set_flag(Flag::Cf, cf);
+        self.cpu.set_flag(Flag::Zf, (result & mask) == 0);
+        self.cpu.set_flag(Flag::Sf, (result & sign_bit(bits)) != 0);
+        self.cpu.set_flag(Flag::Pf, parity_even(result as u8));
+        self.cpu.set_flag(Flag::Af, false);
+        if count == 1 {
+            let of = if left {
+                ((result & sign_bit(bits)) != 0) ^ cf
+            } else {
+                let old_msb = (dst & sign_bit(bits)) != 0;
+                let new_msb = (result & sign_bit(bits)) != 0;
+                old_msb ^ new_msb
+            };
+            self.cpu.set_flag(Flag::Of, of);
+        } else {
+            self.cpu.set_flag(Flag::Of, false);
+        }
+
+        Ok(())
+    }
+
     fn exec_rotate(&mut self, instr: &Instruction, kind: RotateKind) -> Result<(), EmuException> {
         if instr.op_count() != 2 {
             return Err(EmuException::Unimplemented(instr.code()));
@@ -989,7 +1324,10 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
         let (val, bits) = self.read_operand_with_size(instr, 0)?;
         let count_raw = self.read_operand(instr, 1)? as u32;
         let mask = mask_for_bits(bits);
-        let width = bits;
+        let width = match kind {
+            RotateKind::Rol | RotateKind::Ror => bits,
+            RotateKind::Rcl | RotateKind::Rcr => bits + 1,
+        };
         let mut count = count_raw & if bits == 64 { 0x3f } else { 0x1f };
         if width != 0 {
             count %= width;
@@ -998,23 +1336,47 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
             return Ok(());
         }
 
-        let mut result = val & mask;
-        for _ in 0..count {
-            match kind {
-                RotateKind::Rol => {
-                    let msb = (result & sign_bit(bits)) != 0;
-                    result = ((result << 1) & mask) | (msb as u64);
+        let (result, cf) = match kind {
+            RotateKind::Rol | RotateKind::Ror => {
+                let mut result = val & mask;
+                for _ in 0..count {
+                    match kind {
+                        RotateKind::Rol => {
+                            let msb = (result & sign_bit(bits)) != 0;
+                            result = ((result << 1) & mask) | (msb as u64);
+                        }
+                        RotateKind::Ror => {
+                            let lsb = (result & 1) != 0;
+                            result = (result >> 1) | ((lsb as u64) << (bits - 1));
+                        }
+                        _ => unreachable!(),
+                    }
                 }
-                RotateKind::Ror => {
-                    let lsb = (result & 1) != 0;
-                    result = (result >> 1) | ((lsb as u64) << (bits - 1));
-                }
+                let cf = match kind {
+                    RotateKind::Rol => (result & 1) != 0,
+                    RotateKind::Ror => (result & sign_bit(bits)) != 0,
+                    _ => unreachable!(),
+                };
+                (result, cf)
             }
-        }
-
-        let cf = match kind {
-            RotateKind::Rol => (result & 1) != 0,
-            RotateKind::Ror => (result & sign_bit(bits)) != 0,
+            RotateKind::Rcl | RotateKind::Rcr => {
+                let cf_in = self.cpu.get_flag(Flag::Cf);
+                let ext_bits = bits + 1;
+                let ext_mask = (1u128 << ext_bits) - 1;
+                let ext = (val as u128 & mask as u128) | ((cf_in as u128) << bits);
+                let rotated = match kind {
+                    RotateKind::Rcl => {
+                        ((ext << count) | (ext >> (ext_bits - count))) & ext_mask
+                    }
+                    RotateKind::Rcr => {
+                        ((ext >> count) | (ext << (ext_bits - count))) & ext_mask
+                    }
+                    _ => unreachable!(),
+                };
+                let cf = ((rotated >> bits) & 1) != 0;
+                let result = (rotated & mask as u128) as u64;
+                (result, cf)
+            }
         };
 
         self.cpu.materialize_lazy_flags();
@@ -1022,8 +1384,8 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
         self.cpu.set_flag(Flag::Cf, cf);
         if count == 1 {
             let of = match kind {
-                RotateKind::Rol => ((result & sign_bit(bits)) != 0) ^ cf,
-                RotateKind::Ror => {
+                RotateKind::Rol | RotateKind::Rcl => ((result & sign_bit(bits)) != 0) ^ cf,
+                RotateKind::Ror | RotateKind::Rcr => {
                     let msb = (result & sign_bit(bits)) != 0;
                     let second = (result & (sign_bit(bits) >> 1)) != 0;
                     msb ^ second
@@ -1031,6 +1393,162 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
             };
             self.cpu.set_flag(Flag::Of, of);
         }
+        Ok(())
+    }
+
+    fn exec_bswap(&mut self, instr: &Instruction) -> Result<(), EmuException> {
+        if instr.op_count() != 1 || op_kind(instr, 0) != OpKind::Register {
+            return Err(EmuException::Unimplemented(instr.code()));
+        }
+        let reg = op_register(instr, 0);
+        let bits = reg_bits(reg)?;
+        let val = self.cpu.read_reg(reg)?;
+        let swapped = match bits {
+            32 => (val as u32).swap_bytes() as u64,
+            64 => (val as u64).swap_bytes(),
+            _ => return Err(EmuException::InvalidOpcode),
+        };
+        self.cpu.write_reg(reg, swapped)?;
+        Ok(())
+    }
+
+    fn exec_xadd(&mut self, instr: &Instruction) -> Result<(), EmuException> {
+        if instr.op_count() != 2 {
+            return Err(EmuException::Unimplemented(instr.code()));
+        }
+
+        let (dst_val, bits) = self.read_operand_with_size(instr, 0)?;
+        let (src_val, _) = self.read_operand_with_size(instr, 1)?;
+        let mask = mask_for_bits(bits);
+
+        let dst = dst_val & mask;
+        let src = src_val & mask;
+        let result = dst.wrapping_add(src) & mask;
+
+        self.cpu.set_lazy_flags(LazyFlags {
+            op: LazyOp::Add { carry_in: 0 },
+            size_bits: bits,
+            lhs: dst,
+            rhs: src,
+            result,
+        });
+
+        self.write_operand(instr, 0, result)?;
+
+        let aliasing_regs = op_kind(instr, 0) == OpKind::Register
+            && op_kind(instr, 1) == OpKind::Register
+            && op_register(instr, 0) == op_register(instr, 1);
+        if !aliasing_regs {
+            self.write_operand(instr, 1, dst)?;
+        }
+        Ok(())
+    }
+
+    fn exec_bit_op(&mut self, instr: &Instruction, op: BitOpKind) -> Result<(), EmuException> {
+        if instr.op_count() != 2 {
+            return Err(EmuException::Unimplemented(instr.code()));
+        }
+        let bits = operand_bits(instr, 0)?;
+        let mask = mask_for_bits(bits);
+
+        let (index_raw, index_bits) = self.read_operand_with_size(instr, 1)?;
+        let index = sign_extend_value(index_raw & mask_for_bits(index_bits), index_bits)? as i64;
+
+        let bit_index = (index as u64) & ((bits as u64) - 1);
+        let bit_mask = 1u64 << bit_index;
+
+        let kind = op_kind(instr, 0);
+        let (old_bit, new_val) = match kind {
+            OpKind::Register => {
+                let reg = op_register(instr, 0);
+                let val = self.cpu.read_reg(reg)? & mask;
+                let old_bit = (val & bit_mask) != 0;
+                let new_val = match op {
+                    BitOpKind::Bt => val,
+                    BitOpKind::Bts => val | bit_mask,
+                    BitOpKind::Btr => val & !bit_mask,
+                    BitOpKind::Btc => val ^ bit_mask,
+                };
+                (old_bit, Some(new_val))
+            }
+            OpKind::Memory => {
+                let base_addr = self.calc_linear_addr(instr, 0, 0)?;
+                let unit_shift = match bits {
+                    16 => 4,
+                    32 => 5,
+                    64 => 6,
+                    _ => return Err(EmuException::InvalidOpcode),
+                };
+                let bytes_per_unit = (bits / 8) as i64;
+                let unit_index = index >> unit_shift;
+                let byte_off = unit_index.saturating_mul(bytes_per_unit);
+                let addr = self.cpu.apply_a20(if byte_off >= 0 {
+                    base_addr.wrapping_add(byte_off as u64)
+                } else {
+                    base_addr.wrapping_sub((-byte_off) as u64)
+                });
+
+                let val = match bits {
+                    16 => self.mem.read_u16(addr)? as u64,
+                    32 => self.mem.read_u32(addr)? as u64,
+                    64 => self.mem.read_u64(addr)?,
+                    _ => return Err(EmuException::InvalidOpcode),
+                } & mask;
+
+                let old_bit = (val & bit_mask) != 0;
+                let new_val = match op {
+                    BitOpKind::Bt => None,
+                    BitOpKind::Bts => Some(val | bit_mask),
+                    BitOpKind::Btr => Some(val & !bit_mask),
+                    BitOpKind::Btc => Some(val ^ bit_mask),
+                };
+                if let Some(write_val) = new_val {
+                    match bits {
+                        16 => self.mem.write_u16(addr, write_val as u16)?,
+                        32 => self.mem.write_u32(addr, write_val as u32)?,
+                        64 => self.mem.write_u64(addr, write_val)?,
+                        _ => return Err(EmuException::InvalidOpcode),
+                    }
+                }
+                (old_bit, None)
+            }
+            _ => return Err(EmuException::Unimplemented(instr.code())),
+        };
+
+        if matches!(kind, OpKind::Register) {
+            if let Some(v) = new_val {
+                if op != BitOpKind::Bt {
+                    self.write_operand(instr, 0, v)?;
+                }
+            }
+        }
+
+        self.cpu.materialize_lazy_flags();
+        self.cpu.set_flag(Flag::Cf, old_bit);
+        Ok(())
+    }
+
+    fn exec_bscan(&mut self, instr: &Instruction, reverse: bool) -> Result<(), EmuException> {
+        if instr.op_count() != 2 || op_kind(instr, 0) != OpKind::Register {
+            return Err(EmuException::Unimplemented(instr.code()));
+        }
+        let dst_reg = op_register(instr, 0);
+        let (src_val, bits) = self.read_operand_with_size(instr, 1)?;
+        let src = src_val & mask_for_bits(bits);
+
+        self.cpu.materialize_lazy_flags();
+        if src == 0 {
+            self.cpu.set_flag(Flag::Zf, true);
+            return Ok(());
+        }
+
+        let idx = if reverse {
+            63 - (src as u64).leading_zeros()
+        } else {
+            (src as u64).trailing_zeros()
+        } as u64;
+        self.cpu.write_reg(dst_reg, idx)?;
+        self.cpu.set_flag(Flag::Zf, false);
         Ok(())
     }
 
@@ -2019,6 +2537,16 @@ enum ShiftKind {
 enum RotateKind {
     Rol,
     Ror,
+    Rcl,
+    Rcr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BitOpKind {
+    Bt,
+    Bts,
+    Btr,
+    Btc,
 }
 
 #[derive(Debug, Clone, Copy)]

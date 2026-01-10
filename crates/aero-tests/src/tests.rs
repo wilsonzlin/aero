@@ -409,6 +409,177 @@ fn logic_and_shift_rotate() {
 }
 
 #[test]
+fn cmovcc_and_setcc() {
+    // cmp eax,ebx sets CF=1; cmovb and setb should observe it.
+    let code = [
+        0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax,1
+        0xBB, 0x02, 0x00, 0x00, 0x00, // mov ebx,2
+        0xB9, 0x11, 0x11, 0x11, 0x11, // mov ecx,0x11111111
+        0xBA, 0x22, 0x22, 0x22, 0x22, // mov edx,0x22222222
+        0x39, 0xD8, // cmp eax,ebx
+        0x0F, 0x42, 0xCA, // cmovb ecx,edx
+        0x0F, 0x92, 0xC0, // setb al
+        0xF4, // hlt
+    ];
+    let machine = run_test(CpuMode::Protected, &code, |cpu, _mem, _ports| {
+        cpu.write_reg(iced_x86::Register::ESP, 0x2000).unwrap();
+    });
+    assert_eq!(
+        machine.cpu.read_reg(iced_x86::Register::ECX).unwrap(),
+        0x2222_2222
+    );
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 1);
+    assert!(machine.cpu.get_flag(Flag::Cf));
+}
+
+#[test]
+fn pushf_popf_and_clc_stc_cmc() {
+    // stc; pushf; clc; popf (restores CF=1); cmc (toggles to 0)
+    let code = [0xF9, 0x9C, 0xF8, 0x9D, 0xF5, 0xF4];
+    let machine = run_test(CpuMode::Real, &code, |cpu, _mem, _ports| {
+        cpu.write_reg(iced_x86::Register::SP, 0x0200).unwrap();
+    });
+    assert!(!machine.cpu.get_flag(Flag::Cf));
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::SP).unwrap(), 0x0200);
+}
+
+#[test]
+fn xadd_and_bswap() {
+    // xadd al,bl; bswap ecx
+    let code = [
+        0xB0, 0x01, // mov al,1
+        0xB3, 0x02, // mov bl,2
+        0x0F, 0xC0, 0xD8, // xadd al,bl
+        0xB9, 0x78, 0x56, 0x34, 0x12, // mov ecx,0x12345678
+        0x0F, 0xC9, // bswap ecx
+        0xF4,
+    ];
+    let machine = run_test(CpuMode::Protected, &code, |cpu, _mem, _ports| {
+        cpu.write_reg(iced_x86::Register::ESP, 0x2000).unwrap();
+    });
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 3);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::BL).unwrap(), 1);
+    assert_eq!(
+        machine.cpu.read_reg(iced_x86::Register::ECX).unwrap(),
+        0x7856_3412
+    );
+}
+
+#[test]
+fn bit_ops_bt_bts_btr_btc() {
+    let code = [
+        0xB8, 0x00, 0x00, // mov ax,0
+        0x0F, 0xBA, 0xE8, 0x02, // bts ax,2
+        0x0F, 0xBA, 0xE8, 0x02, // bts ax,2
+        0x0F, 0xBA, 0xF0, 0x02, // btr ax,2
+        0x0F, 0xBA, 0xF8, 0x01, // btc ax,1
+        0x0F, 0xBA, 0xF8, 0x01, // btc ax,1
+        0xF4, // hlt
+    ];
+    let machine = run_test(CpuMode::Real, &code, |cpu, _mem, _ports| {
+        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+    });
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AX).unwrap(), 0);
+    assert!(machine.cpu.get_flag(Flag::Cf));
+}
+
+#[test]
+fn bsf_and_bsr() {
+    let code = [
+        0xB8, 0x10, 0x00, 0x00, 0x00, // mov eax,0x10
+        0x0F, 0xBC, 0xC8, // bsf ecx,eax
+        0x89, 0xCB, // mov ebx,ecx
+        0x0F, 0xBD, 0xD0, // bsr edx,eax
+        0x31, 0xC0, // xor eax,eax
+        0xB9, 0x78, 0x56, 0x34, 0x12, // mov ecx,0x12345678
+        0x0F, 0xBC, 0xC8, // bsf ecx,eax (src==0)
+        0xF4,
+    ];
+    let machine = run_test(CpuMode::Protected, &code, |cpu, _mem, _ports| {
+        cpu.write_reg(iced_x86::Register::ESP, 0x2000).unwrap();
+    });
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::EBX).unwrap(), 4);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::EDX).unwrap(), 4);
+    assert_eq!(
+        machine.cpu.read_reg(iced_x86::Register::ECX).unwrap(),
+        0x1234_5678
+    );
+    assert!(machine.cpu.get_flag(Flag::Zf));
+}
+
+#[test]
+fn rcl_rcr_shld_shrd() {
+    let code = [
+        0xF9, // stc
+        0xB0, 0x80, // mov al,0x80
+        0xD0, 0xD0, // rcl al,1
+        0xD0, 0xD8, // rcr al,1
+        0x89, 0xC6, // mov si,ax
+        0xB8, 0x34, 0x12, // mov ax,0x1234
+        0xBB, 0xCD, 0xAB, // mov bx,0xABCD
+        0x0F, 0xA4, 0xD8, 0x04, // shld ax,bx,4
+        0x89, 0xC1, // mov cx,ax
+        0xBA, 0x34, 0x12, // mov dx,0x1234
+        0x0F, 0xAC, 0xDA, 0x04, // shrd dx,bx,4
+        0xF4,
+    ];
+    let machine = run_test(CpuMode::Real, &code, |cpu, _mem, _ports| {
+        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+    });
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::SI).unwrap(), 0x80);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::CX).unwrap(), 0x234A);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::DX).unwrap(), 0xD123);
+}
+
+#[test]
+fn jecxz() {
+    let code = [
+        0xB9, 0x00, 0x00, 0x00, 0x00, // mov ecx,0
+        0xE3, 0x05, // jecxz +5
+        0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax,1
+        0xF4,
+    ];
+    let machine = run_test(CpuMode::Protected, &code, |cpu, _mem, _ports| {
+        cpu.write_reg(iced_x86::Register::ESP, 0x2000).unwrap();
+    });
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::EAX).unwrap(), 0);
+}
+
+#[test]
+fn cbw_cwd_cwde_cdq_cdqe_cqo() {
+    let real = [0xB0, 0x80, 0x98, 0x99, 0xF4]; // mov al,0x80; cbw; cwd; hlt
+    let machine = run_test(CpuMode::Real, &real, |cpu, _mem, _ports| {
+        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+    });
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AX).unwrap(), 0xFF80);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::DX).unwrap(), 0xFFFF);
+
+    let prot = [0x66, 0xB8, 0x00, 0x80, 0x98, 0x99, 0xF4]; // mov ax,0x8000; cwde; cdq; hlt
+    let machine = run_test(CpuMode::Protected, &prot, |cpu, _mem, _ports| {
+        cpu.write_reg(iced_x86::Register::ESP, 0x2000).unwrap();
+    });
+    assert_eq!(
+        machine.cpu.read_reg(iced_x86::Register::EAX).unwrap(),
+        0xFFFF_8000
+    );
+    assert_eq!(
+        machine.cpu.read_reg(iced_x86::Register::EDX).unwrap(),
+        0xFFFF_FFFF
+    );
+
+    let long = [0xB8, 0x00, 0x00, 0x00, 0x80, 0x48, 0x98, 0x48, 0x99, 0xF4]; // mov eax,0x80000000; cdqe; cqo; hlt
+    let machine = run_test(CpuMode::Long, &long, |_cpu, _mem, _ports| {});
+    assert_eq!(
+        machine.cpu.read_reg(iced_x86::Register::RAX).unwrap(),
+        0xFFFF_FFFF_8000_0000
+    );
+    assert_eq!(
+        machine.cpu.read_reg(iced_x86::Register::RDX).unwrap(),
+        0xFFFF_FFFF_FFFF_FFFF
+    );
+}
+
+#[test]
 fn control_flow() {
     // jmp short skips mov ax,1.
     let jmp = [0xEB, 0x03, 0xB8, 0x01, 0x00, 0x31, 0xC0, 0xF4];
