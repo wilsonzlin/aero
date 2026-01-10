@@ -39,7 +39,7 @@ perf.instant("boot:main:start", "p");
 installAeroGlobals();
 
 const workerCoordinator = new WorkerCoordinator();
-const wasmInitPromise = initWasm();
+const wasmInitPromise = perf.spanAsync("wasm:init", () => initWasm());
 let frameScheduler: FrameSchedulerHandle | null = null;
 
 // Updated by the microphone UI and read by the worker coordinator so that

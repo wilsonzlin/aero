@@ -51,6 +51,7 @@ export const startFrameScheduler = ({
   let lastTelemetry: unknown = null;
 
   const frameState = sharedFrameState ? new Int32Array(sharedFrameState) : null;
+  perf.registerWorker(gpuWorker, { threadName: 'gpu-presenter' });
   gpuWorker.postMessage({ type: 'init', sharedFrameState, sharedFramebuffer, sharedFramebufferOffsetBytes });
 
   let overlay: DebugOverlay | null = null;
