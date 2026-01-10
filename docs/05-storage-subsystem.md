@@ -423,66 +423,41 @@ impl SparseDisk {
 
 ## NVMe Emulation (Optional Performance Path)
 
-For better performance, we can also emulate NVMe:
+NVMe provides a simpler, higher-throughput datapath than AHCI (doorbells + DMA queues).
+The reference implementation lives in `crates/aero-devices-nvme/` and is designed to plug
+into Aero’s `DiskBackend` abstraction and `MemoryBus` DMA interface.
 
-```rust
-pub struct NvmeController {
-    // Controller registers (BAR0)
-    cap: u64,        // Controller Capabilities
-    vs: u32,         // Version
-    intms: u32,      // Interrupt Mask Set
-    intmc: u32,      // Interrupt Mask Clear
-    cc: u32,         // Controller Configuration
-    csts: u32,       // Controller Status
-    aqa: u32,        // Admin Queue Attributes
-    asq: u64,        // Admin Submission Queue Base
-    acq: u64,        // Admin Completion Queue Base
-    
-    // Queues
-    admin_sq: NvmeQueue,
-    admin_cq: NvmeQueue,
-    io_queues: Vec<(NvmeQueue, NvmeQueue)>,
-    
-    // Namespaces (drives)
-    namespaces: Vec<NvmeNamespace>,
-}
+### Implemented (MVP)
 
-impl NvmeController {
-    pub fn process_submission_queue(&mut self, sq_id: u16, memory: &mut MemoryBus) {
-        let (sq, cq) = if sq_id == 0 {
-            (&mut self.admin_sq, &mut self.admin_cq)
-        } else {
-            let idx = (sq_id - 1) as usize;
-            let (ref mut sq, ref mut cq) = self.io_queues[idx];
-            (sq, cq)
-        };
-        
-        while sq.head != sq.tail {
-            let cmd_addr = sq.base + (sq.head as u64) * 64;
-            let cmd = self.read_nvme_command(memory, cmd_addr);
-            
-            let status = self.execute_command(&cmd, memory);
-            
-            // Post completion
-            self.post_completion(cq, cmd.cid, status, memory);
-            
-            sq.head = (sq.head + 1) % sq.size;
-        }
-    }
-    
-    fn execute_command(&mut self, cmd: &NvmeCommand, memory: &mut MemoryBus) -> u16 {
-        match cmd.opc {
-            NVME_OPC_READ => self.do_read(cmd, memory),
-            NVME_OPC_WRITE => self.do_write(cmd, memory),
-            NVME_OPC_FLUSH => self.do_flush(cmd),
-            NVME_OPC_IDENTIFY => self.do_identify(cmd, memory),
-            NVME_OPC_CREATE_IO_SQ => self.do_create_io_sq(cmd, memory),
-            NVME_OPC_CREATE_IO_CQ => self.do_create_io_cq(cmd, memory),
-            _ => NVME_SC_INVALID_OPCODE,
-        }
-    }
-}
-```
+- **PCI device model**
+  - BAR0 register set: `CAP/VS/CC/CSTS/AQA/ASQ/ACQ` + doorbells.
+  - Admin submission/completion queues.
+  - I/O submission/completion queues created via admin commands.
+- **Commands**
+  - Admin: `IDENTIFY`, `CREATE IO CQ`, `CREATE IO SQ`.
+  - I/O: `READ`, `WRITE`, `FLUSH`.
+- **DMA**
+  - PRP1/PRP2 + PRP list support for multi-page transfers.
+  - SGL is not supported in the MVP (commands using SGL return an error).
+- **Interrupts**
+  - Legacy INTx signalling (sufficient to boot most guests).
+  - **Limitation:** MSI/MSI-X is not implemented yet, so interrupt delivery is less efficient
+    and may limit peak IOPS.
+
+### Windows 7 Compatibility (Driver Requirements)
+
+Windows 7 does **not** ship with an in-box NVMe driver. For Windows 7 guests, NVMe must be
+treated as **experimental** unless the guest is provisioned with an NVMe driver.
+
+Options (do not redistribute third-party binaries in-repo):
+
+1. **Microsoft hotfixes (commonly referenced):**
+   - KB2990941 (adds NVMe support)
+   - KB3087873 (NVMe-related fixes)
+2. **Vendor/third-party NVMe drivers** (e.g. SSD vendor drivers) installed inside the guest.
+
+For maximum out-of-the-box compatibility, keep AHCI as the default controller and enable NVMe
+only for performance experimentation.
 
 ---
 

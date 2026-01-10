@@ -118,6 +118,13 @@ name = "aero-devices-input"
 version = "0.1.0"
 
 [[package]]
+name = "aero-devices-nvme"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+]
+
+[[package]]
 name = "aero-dxbc"
 version = "0.1.0"
 dependencies = [
