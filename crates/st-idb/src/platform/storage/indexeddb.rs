@@ -271,9 +271,13 @@ pub async fn get_value(
     key: &JsValue,
 ) -> Result<Option<JsValue>> {
     let (tx, store) = transaction_ro(db, store)?;
+    // Important: don't await the request separately and then await the
+    // transaction; the transaction may commit in between, causing a race where
+    // we miss the `complete` event. Instead, queue the request and await the
+    // transaction completion, then read `request.result()`.
     let request = store.get(key).map_err(StorageError::from)?;
-    let value = await_request(request).await?;
     await_transaction(tx).await?;
+    let value = request.result().map_err(StorageError::from)?;
     if value.is_undefined() {
         Ok(None)
     } else {
