@@ -401,7 +401,7 @@ Implementation references:
 | IN-012 | Windows 7 virtio-input KMDF HID minidriver (see VIO-010)         | P1 | VIO-001..VIO-003 | Very High |
 | IN-013 | HID report descriptor + keyboard/mouse mapping (see VIO-013)      | P1 | IN-012         | High      |
 | IN-014 | Driver packaging/signing + installation docs (see VIO-014)        | P1 | IN-012, IN-013 | Medium    |
-| IN-015 | Browser events → virtio-input events (EV_KEY/EV_REL + SYN)        | P1 | IN-005..IN-006 | Medium    |
+| IN-015 | Browser events → virtio-input events (EV_KEY/EV_REL + SYN)        | P1 | IN-005..IN-006, IN-011 | Medium |
 | IN-016 | Virtio-input functional test plan/tooling (see VIO-015)           | P1 | IN-011..IN-015 | Medium    |
 
 ### Virtio Drivers (Windows 7 guest)
