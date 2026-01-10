@@ -850,9 +850,9 @@ impl VirtioPciDevice {
                 .poll_queue(queue_index, queue, mem)
                 .unwrap_or(false);
 
-            // When EVENT_IDX is enabled, keep `used_event` up-to-date so the guest
+            // When EVENT_IDX is enabled, keep `avail_event` up-to-date so the guest
             // driver can correctly suppress/publish notifications.
-            let _ = queue.update_used_event(mem);
+            let _ = queue.update_avail_event(mem);
         }
         if need_irq {
             self.signal_queue_interrupt(queue_index);

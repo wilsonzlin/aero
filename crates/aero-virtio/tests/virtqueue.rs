@@ -4,7 +4,15 @@ use aero_virtio::queue::{
     VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
 };
 
-fn write_desc(mem: &mut GuestRam, table: u64, index: u16, addr: u64, len: u32, flags: u16, next: u16) {
+fn write_desc(
+    mem: &mut GuestRam,
+    table: u64,
+    index: u16,
+    addr: u64,
+    len: u32,
+    flags: u16,
+    next: u16,
+) {
     let base = table + u64::from(index) * 16;
     write_u64_le(mem, base, addr).unwrap();
     write_u32_le(mem, base + 8, len).unwrap();
@@ -221,7 +229,7 @@ fn event_idx_controls_when_interrupts_are_raised() {
 }
 
 #[test]
-fn event_idx_used_event_is_updated_for_driver_notifications() {
+fn event_idx_avail_event_is_updated_for_driver_notifications() {
     let mut mem = GuestRam::new(0x10000);
     let desc = 0x1000;
     let avail = 0x2000;
@@ -248,11 +256,11 @@ fn event_idx_used_event_is_updated_for_driver_notifications() {
     .unwrap();
 
     q.pop_descriptor_chain(&mem).unwrap().unwrap();
-    q.update_used_event(&mut mem).unwrap();
+    q.update_avail_event(&mut mem).unwrap();
 
-    let used_event_addr = avail + 4 + 4 * 2;
-    let used_event = read_u16_le(&mem, used_event_addr).unwrap();
-    assert_eq!(used_event, 1);
+    let avail_event_addr = used + 4 + 4 * 8;
+    let avail_event = read_u16_le(&mem, avail_event_addr).unwrap();
+    assert_eq!(avail_event, 1);
 }
 
 #[test]
