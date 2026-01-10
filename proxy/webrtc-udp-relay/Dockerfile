@@ -10,6 +10,10 @@ FROM golang:1.22-bookworm AS builder
 
 WORKDIR /src
 
+# Optional build metadata for /version.
+ARG BUILD_COMMIT=""
+ARG BUILD_TIME=""
+
 # Cache deps first.
 COPY go.mod ./
 RUN go mod download
@@ -23,7 +27,7 @@ RUN set -eux; \
     target="./cmd/aero-webrtc-udp-relay"; \
     if [ ! -d "${target}" ]; then target="./cmd/webrtc-udp-relay"; fi; \
     if [ ! -d "${target}" ]; then target="."; fi; \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/aero-webrtc-udp-relay "${target}"
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.buildCommit=${BUILD_COMMIT} -X main.buildTime=${BUILD_TIME}" -o /out/aero-webrtc-udp-relay "${target}"
 
 FROM gcr.io/distroless/static-debian12:nonroot
 

@@ -7,6 +7,9 @@
 x-relay-base: &relay-base
   build:
     context: .
+    args:
+      BUILD_COMMIT: ${BUILD_COMMIT:-}
+      BUILD_TIME: ${BUILD_TIME:-}
   restart: unless-stopped
   ports:
     - "8080:8080/tcp"
