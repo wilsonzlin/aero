@@ -285,6 +285,17 @@ CI should be reproducible locally with the same top-level commands:
 - TypeScript unit tests: `npm run test:unit` (often with coverage enabled)
 - Browser E2E: `npm run test:e2e`
 
+### Cross-browser Playwright policy (PR vs scheduled)
+
+Playwright E2E coverage is split into two workflows:
+
+- **PR CI (fast):** `.github/workflows/ci.yml` runs Playwright in **Chromium only**
+  (`--project=chromium`) to keep pull request feedback fast.
+- **Cross-browser E2E (high confidence):** `.github/workflows/e2e-matrix.yml` runs a
+  matrix over **Chromium + Firefox + WebKit** on a nightly schedule and via
+  `workflow_dispatch`. This workflow is intended to catch browser-specific
+  regressions without blocking PR merges.
+
 Environment variables commonly affect CI behavior:
 
 - `AERO_REQUIRE_WEBGPU=1`: require WebGPU (see above)
