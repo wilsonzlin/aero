@@ -10,6 +10,9 @@ Aero leverages cutting-edge browser APIs to achieve performance and functionalit
 
 The high-performance (threaded) build requires **cross-origin isolation** to enable `SharedArrayBuffer` and WASM threads (see [ADR 0002](./adr/0002-cross-origin-isolation.md) and [ADR 0004](./adr/0004-wasm-build-variants.md)).
 
+When COOP/COEP is not available, the web runtime can fall back to a non-shared-memory WASM build so the UI still boots
+(degraded performance/functionality is expected).
+
 Required headers (serve on the HTML document *and* all JS/WASM/worker responses):
 
 | Header | Value |

@@ -23,6 +23,23 @@ Ship **two WebAssembly build variants**:
    - Uses `WebAssembly.Memory({ shared: false })`.
    - Works without cross-origin isolation.
 
+### Implementation details (repo-specific)
+
+This repo implements the two variants as **two wasm-pack packages** built from `crates/aero-wasm`:
+
+- `web/src/wasm/pkg-threaded/` – shared-memory build (requires `crossOriginIsolated`).
+- `web/src/wasm/pkg-single/` – non-shared-memory fallback build.
+
+Build commands:
+
+```bash
+cd web
+npm run wasm:build        # builds both variants
+```
+
+For the threaded build, `web/scripts/build_wasm.mjs` uses nightly `build-std` so the standard library is rebuilt with
+atomics/bulk-memory enabled (required by `--shared-memory`).
+
 At runtime, select the variant via feature detection:
 
 - `crossOriginIsolated === true`
@@ -30,6 +47,20 @@ At runtime, select the variant via feature detection:
 - (optionally) validate that shared `WebAssembly.Memory` is constructible
 
 The JS/TS host should present a consistent API to the rest of the app regardless of the selected variant.
+
+In this repo, runtime selection is implemented by:
+
+- `web/src/runtime/wasm_loader.ts` (`initWasm()` returns `{ api, variant, reason }`)
+- `web/src/runtime/wasm_context.ts` (worker-safe wrapper; prefers `wasm_loader` and falls back to the embedded demo wasm)
+
+### Testing the fallback path
+
+To simulate a non-cross-origin-isolated deployment locally, start Vite with COOP/COEP disabled:
+
+```bash
+cd web
+VITE_DISABLE_COOP_COEP=1 npm run dev
+```
 
 ## Alternatives considered
 
@@ -50,4 +81,3 @@ The JS/TS host should present a consistent API to the rest of the app regardless
 - Build and CI must produce and test two artifacts.
 - Host code must handle runtime selection and expose a stable interface.
 - Documentation must clearly state that “threads/SAB are required for the high-performance path” and explain deployment headers.
-
