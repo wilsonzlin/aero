@@ -43,6 +43,8 @@ type WorkerTraceExportResponseMessage = {
   droppedStrings: number;
 };
 
+type WorkerExportResult = WorkerTraceExportResponseMessage & { timedOut: boolean };
+
 function isWindowGlobal(): boolean {
   return typeof (globalThis as any).document !== "undefined";
 }
@@ -174,7 +176,7 @@ export class AeroPerf {
     port.addEventListener("message", (event) => {
       const data = event.data as WorkerTraceExportResponseMessage | undefined;
       if (!data || data.type !== "aero:perf:trace-export-result") return;
-      this.pendingExportResponses.get(data.requestId)?.(data);
+      this.pendingExportResponses.get(data.requestId)?.({ ...data, timedOut: false });
     });
 
     worker.postMessage(
@@ -199,13 +201,33 @@ export class AeroPerf {
 
   private readonly pendingExportResponses = new Map<
     number,
-    (value: WorkerTraceExportResponseMessage) => void
+    (value: WorkerExportResult) => void
   >();
 
-  private requestWorkerExport(client: WorkerClient): Promise<WorkerTraceExportResponseMessage> {
+  private requestWorkerExport(client: WorkerClient, timeoutMs = 2000): Promise<WorkerExportResult> {
     const requestId = this.exportRequestId++;
     return new Promise((resolve) => {
+      let settled = false;
+      const timeoutId = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        this.pendingExportResponses.delete(requestId);
+        resolve({
+          type: "aero:perf:trace-export-result",
+          requestId,
+          tid: client.tid,
+          threadName: client.threadName,
+          events: [],
+          droppedRecords: 0,
+          droppedStrings: 0,
+          timedOut: true,
+        });
+      }, timeoutMs);
+
       this.pendingExportResponses.set(requestId, (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
         this.pendingExportResponses.delete(requestId);
         resolve(value);
       });
@@ -263,7 +285,9 @@ export class AeroPerf {
   }
 
   async exportTrace(opts?: { asString?: boolean }): Promise<ChromeTraceExport | string> {
-    const workerExports = await Promise.all(Array.from(this.workers.values(), (client) => this.requestWorkerExport(client)));
+    const workerExports = await Promise.all(
+      Array.from(this.workers.values(), (client) => this.requestWorkerExport(client)),
+    );
 
     const metadata = this.buildMetadataEvents();
 
@@ -275,6 +299,8 @@ export class AeroPerf {
     }
 
     events.sort((a, b) => a.ts - b.ts || a.tid - b.tid);
+
+    const workerExportTimeouts = workerExports.filter((exp) => exp.timedOut).map((exp) => exp.threadName);
 
     const droppedRecordsByThread: Record<string, number> = {
       [this.local.threadName]: this.local.getDroppedRecords(),
@@ -298,6 +324,7 @@ export class AeroPerf {
           startTimeEpochUs: this.traceStartEpochUs,
           droppedRecordsByThread,
           droppedStringsByThread,
+          workerExportTimeouts,
         },
       },
     };
