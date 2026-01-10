@@ -18,7 +18,14 @@ target_compile_definitions(aero-virtio-selftest PRIVATE
 )
 
 if (MSVC)
+  # Build a standalone binary that can run on a clean Windows 7 SP1 image
+  # without requiring a VC++ redistributable / UCRT install step.
+  set_property(TARGET aero-virtio-selftest PROPERTY
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+  )
+
   target_compile_options(aero-virtio-selftest PRIVATE /W4)
+  target_link_options(aero-virtio-selftest PRIVATE "/SUBSYSTEM:CONSOLE,6.01")
 else()
   target_compile_options(aero-virtio-selftest PRIVATE -Wall -Wextra -Wpedantic)
 endif()

@@ -32,9 +32,13 @@ AERO_VIRTIO_SELFTEST|RESULT|PASS
 
 ### Prereqs
 
-- Visual Studio (any MSVC that can target Win7; VS2019/VS2022 with the right SDK can work)
+- Visual Studio (MSVC) capable of producing Windows 7 compatible binaries
 - Windows 7 compatible SDK / toolset (or a newer SDK while still targeting `_WIN32_WINNT=0x0601`)
 - CMake (optional, but recommended)
+
+Notes on Win7 compatibility:
+- The provided CMake config builds with the **static MSVC runtime** (`/MT`) and sets the subsystem version to **6.01**,
+  so the resulting `aero-virtio-selftest.exe` can run on a clean Windows 7 SP1 install without an additional VC++ runtime step.
 
 ### Build with CMake (recommended)
 

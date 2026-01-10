@@ -37,7 +37,7 @@ On failure/timeout, it returns non-zero and prints the matching failure reason.
 - Starts a tiny HTTP server on `127.0.0.1:<HttpPort>`
   - QEMU slirp/user networking exposes host as `10.0.2.2` inside the guest, so the guest can HTTP GET `http://10.0.2.2:<HttpPort>/aero-virtio-selftest`.
 - Launches QEMU with:
-  - `-serial file:<SerialLogPath>` (guest COM1 → host log)
+  - `-chardev file,...` + `-serial chardev:...` (guest COM1 → host log)
   - `virtio-net-pci` with `-netdev user`
   - `-drive if=virtio` for virtio-blk testing
 - Watches the serial log for:
