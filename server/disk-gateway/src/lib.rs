@@ -906,6 +906,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_without_range_returns_200_with_full_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+
+        let app = app(cfg);
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/win7")
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(ACCEPT_RANGES).unwrap().to_str().unwrap(),
+            "bytes"
+        );
+        assert_eq!(
+            resp.headers()
+                .get(CONTENT_LENGTH)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "6"
+        );
+        assert_eq!(
+            resp.headers().get(CONTENT_TYPE).unwrap().to_str().unwrap(),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            resp.headers().get(CACHE_CONTROL).unwrap().to_str().unwrap(),
+            "no-transform"
+        );
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"abcdef");
+    }
+
+    #[tokio::test]
+    async fn head_without_range_returns_headers_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+
+        let app = app(cfg);
+        let req = Request::builder()
+            .method(Method::HEAD)
+            .uri("/disk/win7")
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(ACCEPT_RANGES).unwrap().to_str().unwrap(),
+            "bytes"
+        );
+        assert_eq!(
+            resp.headers()
+                .get(CONTENT_LENGTH)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "6"
+        );
+        assert_eq!(
+            resp.headers().get(CONTENT_TYPE).unwrap().to_str().unwrap(),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            resp.headers().get(CACHE_CONTROL).unwrap().to_str().unwrap(),
+            "no-transform"
+        );
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test]
     async fn head_range_206_has_headers_only() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
