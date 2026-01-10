@@ -16,6 +16,11 @@ This document is an implementation-oriented checklist/spec for bringing up **Dir
 * Tessellation (HS/DS), UAV-heavy compute, tiled resources, video decode, DXGI 1.2+
 * Performance tuning beyond “correct enough” to run common apps
 
+**Related AeroGPU docs (read alongside this one):**
+
+* `docs/graphics/win7-wddm11-aerogpu-driver.md` — KMD+UMD architecture, memory model, fence/vblank requirements, and the guest↔emulator command transport.
+* `docs/graphics/win7-aerogpu-validation.md` — bring-up/stability checklist (TDR avoidance, vblank pacing, debug playbook).
+
 > Header references: the names in this doc match the WDK user-mode DDI headers:
 > `d3d10umddi.h`, `d3d10_1umddi.h` (optional), `d3d11umddi.h`, and for swapchain/present: `dxgiddi.h`.
 
@@ -83,6 +88,21 @@ For DDI functions that *do* return `HRESULT`, return:
 
 * `S_OK` on success
 * `E_OUTOFMEMORY`, `E_INVALIDARG`, or `E_NOTIMPL` as appropriate for unsupported features
+
+### 1.5 AeroGPU-specific implementation layering (UMD → KMD → emulator)
+
+This doc focuses on the *API contract* (D3D10/11 DDI) that the Microsoft runtimes will call. The implementation behind those entrypoints in AeroGPU should follow the existing project architecture:
+
+* The UMD is primarily a **state tracker + command encoder**:
+  * consume DDI calls
+  * validate/normalize state
+  * emit an **AeroGPU-specific command stream** (IR) suitable for execution by the emulator
+* The KMD is primarily **submission + memory bookkeeping plumbing** (WDDM 1.1):
+  * accept DMA buffers / submission packets from the runtime
+  * provide a stable fence + interrupt completion path (avoid TDRs)
+  * maintain the “allocation index → guest physical pages” mapping described in `win7-wddm11-aerogpu-driver.md`
+
+Practical implication for D3D10/11 bring-up: whenever this doc says “flush/submit”, the concrete implementation should enqueue a bounded unit of work to the emulator and ensure the WDDM-visible fence monotonically advances.
 
 ---
 
@@ -497,6 +517,8 @@ Keep `pfnGetCaps` truthful: only advertise a feature level once the correspondin
 ## 7) Testing plan (minimal apps and expected coverage)
 
 The goal is to validate the UMD is functional *without* needing a full game engine.
+
+For system-level smoke testing (separate from these app-level tests), use the validation checklist in `docs/graphics/win7-aerogpu-validation.md` (TDR/vblank stability, `dxdiag` checks, etc).
 
 ### 7.1 D3D10 triangle (windowed)
 
