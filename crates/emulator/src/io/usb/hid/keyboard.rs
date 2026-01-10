@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::rc::Rc;
 
 use crate::io::usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
@@ -6,13 +8,13 @@ use crate::io::usb::{
 
 use super::{
     build_string_descriptor_utf16le, clamp_response, HidProtocol, HID_REQUEST_GET_IDLE,
-    HID_REQUEST_GET_PROTOCOL, HID_REQUEST_GET_REPORT, HID_REQUEST_SET_IDLE, HID_REQUEST_SET_PROTOCOL,
-    HID_REQUEST_SET_REPORT, USB_DESCRIPTOR_TYPE_CONFIGURATION, USB_DESCRIPTOR_TYPE_DEVICE,
-    USB_DESCRIPTOR_TYPE_HID, USB_DESCRIPTOR_TYPE_HID_REPORT, USB_DESCRIPTOR_TYPE_STRING,
-    USB_FEATURE_DEVICE_REMOTE_WAKEUP, USB_FEATURE_ENDPOINT_HALT, USB_REQUEST_CLEAR_FEATURE,
-    USB_REQUEST_GET_CONFIGURATION, USB_REQUEST_GET_DESCRIPTOR, USB_REQUEST_GET_INTERFACE,
-    USB_REQUEST_GET_STATUS, USB_REQUEST_SET_ADDRESS, USB_REQUEST_SET_CONFIGURATION,
-    USB_REQUEST_SET_FEATURE, USB_REQUEST_SET_INTERFACE,
+    HID_REQUEST_GET_PROTOCOL, HID_REQUEST_GET_REPORT, HID_REQUEST_SET_IDLE,
+    HID_REQUEST_SET_PROTOCOL, HID_REQUEST_SET_REPORT, USB_DESCRIPTOR_TYPE_CONFIGURATION,
+    USB_DESCRIPTOR_TYPE_DEVICE, USB_DESCRIPTOR_TYPE_HID, USB_DESCRIPTOR_TYPE_HID_REPORT,
+    USB_DESCRIPTOR_TYPE_STRING, USB_FEATURE_DEVICE_REMOTE_WAKEUP, USB_FEATURE_ENDPOINT_HALT,
+    USB_REQUEST_CLEAR_FEATURE, USB_REQUEST_GET_CONFIGURATION, USB_REQUEST_GET_DESCRIPTOR,
+    USB_REQUEST_GET_INTERFACE, USB_REQUEST_GET_STATUS, USB_REQUEST_SET_ADDRESS,
+    USB_REQUEST_SET_CONFIGURATION, USB_REQUEST_SET_FEATURE, USB_REQUEST_SET_INTERFACE,
 };
 
 const INTERRUPT_IN_EP: u8 = 0x81;
@@ -54,6 +56,61 @@ pub struct UsbHidKeyboard {
 
     last_report: [u8; 8],
     pending_reports: VecDeque<[u8; 8]>,
+}
+
+/// Shareable handle for a USB HID keyboard model.
+///
+/// The UHCI root hub stores devices behind `Box<dyn UsbDeviceModel>`; by cloning this handle
+/// before attaching, the platform/input layer can continue to inject key events.
+#[derive(Clone)]
+pub struct UsbHidKeyboardHandle(Rc<RefCell<UsbHidKeyboard>>);
+
+impl UsbHidKeyboardHandle {
+    pub fn new() -> Self {
+        Self(Rc::new(RefCell::new(UsbHidKeyboard::new())))
+    }
+
+    pub fn key_event(&self, usage: u8, pressed: bool) {
+        self.0.borrow_mut().key_event(usage, pressed);
+    }
+}
+
+impl Default for UsbHidKeyboardHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl UsbDeviceModel for UsbHidKeyboardHandle {
+    fn get_device_descriptor(&self) -> &'static [u8] {
+        self.0.borrow().get_device_descriptor()
+    }
+
+    fn get_config_descriptor(&self) -> &'static [u8] {
+        self.0.borrow().get_config_descriptor()
+    }
+
+    fn get_hid_report_descriptor(&self) -> &'static [u8] {
+        self.0.borrow().get_hid_report_descriptor()
+    }
+
+    fn reset(&mut self) {
+        self.0.borrow_mut().reset();
+    }
+
+    fn handle_control_request(
+        &mut self,
+        setup: SetupPacket,
+        data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        self.0
+            .borrow_mut()
+            .handle_control_request(setup, data_stage)
+    }
+
+    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
+        self.0.borrow_mut().poll_interrupt_in(ep)
+    }
 }
 
 impl Default for UsbHidKeyboard {
@@ -148,12 +205,12 @@ impl UsbHidKeyboard {
     fn hid_descriptor_bytes(&self) -> [u8; 9] {
         let report_len = HID_REPORT_DESCRIPTOR.len() as u16;
         [
-            0x09,                  // bLength
+            0x09,                    // bLength
             USB_DESCRIPTOR_TYPE_HID, // bDescriptorType
             0x11,
-            0x01, // bcdHID (1.11)
-            0x00, // bCountryCode
-            0x01, // bNumDescriptors
+            0x01,                           // bcdHID (1.11)
+            0x00,                           // bCountryCode
+            0x01,                           // bNumDescriptors
             USB_DESCRIPTOR_TYPE_HID_REPORT, // bDescriptorType (Report)
             (report_len & 0x00ff) as u8,
             (report_len >> 8) as u8,
@@ -174,22 +231,37 @@ impl UsbDeviceModel for UsbHidKeyboard {
         &HID_REPORT_DESCRIPTOR
     }
 
-    fn handle_control_request(&mut self, setup: SetupPacket, data_stage: Option<&[u8]>) -> ControlResponse {
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    fn handle_control_request(
+        &mut self,
+        setup: SetupPacket,
+        data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
         match (setup.request_type(), setup.recipient()) {
             (RequestType::Standard, RequestRecipient::Device) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     let mut status: u16 = 0;
                     if self.remote_wakeup_enabled {
                         status |= 1 << 1;
                     }
-                    ControlResponse::Data(clamp_response(status.to_le_bytes().to_vec(), setup.w_length))
+                    ControlResponse::Data(clamp_response(
+                        status.to_le_bytes().to_vec(),
+                        setup.w_length,
+                    ))
                 }
                 USB_REQUEST_CLEAR_FEATURE => match setup.w_value {
                     USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
-                        if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                        if setup.request_direction() != RequestDirection::HostToDevice
+                            || setup.w_index != 0
+                        {
                             return ControlResponse::Stall;
                         }
                         self.remote_wakeup_enabled = false;
@@ -199,7 +271,9 @@ impl UsbDeviceModel for UsbHidKeyboard {
                 },
                 USB_REQUEST_SET_FEATURE => match setup.w_value {
                     USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
-                        if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                        if setup.request_direction() != RequestDirection::HostToDevice
+                            || setup.w_index != 0
+                        {
                             return ControlResponse::Stall;
                         }
                         self.remote_wakeup_enabled = true;
@@ -208,7 +282,9 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     _ => ControlResponse::Stall,
                 },
                 USB_REQUEST_SET_ADDRESS => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     if setup.w_value > 127 {
@@ -225,7 +301,9 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     let desc_index = setup.descriptor_index();
                     let data = match desc_type {
                         USB_DESCRIPTOR_TYPE_DEVICE => Some(self.get_device_descriptor().to_vec()),
-                        USB_DESCRIPTOR_TYPE_CONFIGURATION => Some(self.get_config_descriptor().to_vec()),
+                        USB_DESCRIPTOR_TYPE_CONFIGURATION => {
+                            Some(self.get_config_descriptor().to_vec())
+                        }
                         USB_DESCRIPTOR_TYPE_STRING => self.string_descriptor(desc_index),
                         _ => None,
                     };
@@ -233,7 +311,9 @@ impl UsbDeviceModel for UsbHidKeyboard {
                         .unwrap_or(ControlResponse::Stall)
                 }
                 USB_REQUEST_SET_CONFIGURATION => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     let config = (setup.w_value & 0x00ff) as u8;
@@ -247,7 +327,9 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     ControlResponse::Ack
                 }
                 USB_REQUEST_GET_CONFIGURATION => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     ControlResponse::Data(clamp_response(vec![self.configuration], setup.w_length))
@@ -256,7 +338,9 @@ impl UsbDeviceModel for UsbHidKeyboard {
             },
             (RequestType::Standard, RequestRecipient::Interface) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     ControlResponse::Data(clamp_response(vec![0, 0], setup.w_length))
@@ -282,12 +366,16 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     }
                 }
                 USB_REQUEST_GET_DESCRIPTOR => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     let desc_type = setup.descriptor_type();
                     let data = match desc_type {
-                        USB_DESCRIPTOR_TYPE_HID_REPORT => Some(self.get_hid_report_descriptor().to_vec()),
+                        USB_DESCRIPTOR_TYPE_HID_REPORT => {
+                            Some(self.get_hid_report_descriptor().to_vec())
+                        }
                         USB_DESCRIPTOR_TYPE_HID => Some(self.hid_descriptor_bytes().to_vec()),
                         _ => None,
                     };
@@ -298,20 +386,29 @@ impl UsbDeviceModel for UsbHidKeyboard {
             },
             (RequestType::Standard, RequestRecipient::Endpoint) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_value != 0 {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     if setup.w_index != INTERRUPT_IN_EP as u16 {
                         return ControlResponse::Stall;
                     }
                     let status: u16 = if self.interrupt_in_halted { 1 } else { 0 };
-                    ControlResponse::Data(clamp_response(status.to_le_bytes().to_vec(), setup.w_length))
+                    ControlResponse::Data(clamp_response(
+                        status.to_le_bytes().to_vec(),
+                        setup.w_length,
+                    ))
                 }
                 USB_REQUEST_CLEAR_FEATURE => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_length != 0
+                    {
                         return ControlResponse::Stall;
                     }
-                    if setup.w_value == USB_FEATURE_ENDPOINT_HALT && setup.w_index == INTERRUPT_IN_EP as u16 {
+                    if setup.w_value == USB_FEATURE_ENDPOINT_HALT
+                        && setup.w_index == INTERRUPT_IN_EP as u16
+                    {
                         self.interrupt_in_halted = false;
                         ControlResponse::Ack
                     } else {
@@ -319,10 +416,14 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     }
                 }
                 USB_REQUEST_SET_FEATURE => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_length != 0
+                    {
                         return ControlResponse::Stall;
                     }
-                    if setup.w_value == USB_FEATURE_ENDPOINT_HALT && setup.w_index == INTERRUPT_IN_EP as u16 {
+                    if setup.w_value == USB_FEATURE_ENDPOINT_HALT
+                        && setup.w_index == INTERRUPT_IN_EP as u16
+                    {
                         self.interrupt_in_halted = true;
                         ControlResponse::Ack
                     } else {
@@ -333,7 +434,9 @@ impl UsbDeviceModel for UsbHidKeyboard {
             },
             (RequestType::Class, RequestRecipient::Interface) => match setup.b_request {
                 HID_REQUEST_GET_REPORT => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     // wValue high byte: Report Type (1=input, 2=output, 3=feature)
@@ -348,7 +451,9 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     }
                 }
                 HID_REQUEST_SET_REPORT => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     let report_type = (setup.w_value >> 8) as u8;
@@ -361,26 +466,34 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     }
                 }
                 HID_REQUEST_GET_IDLE => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     ControlResponse::Data(clamp_response(vec![self.idle_rate], setup.w_length))
                 }
                 HID_REQUEST_SET_IDLE => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     self.idle_rate = (setup.w_value >> 8) as u8;
                     ControlResponse::Ack
                 }
                 HID_REQUEST_GET_PROTOCOL => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     ControlResponse::Data(clamp_response(vec![self.protocol as u8], setup.w_length))
                 }
                 HID_REQUEST_SET_PROTOCOL => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     if let Some(proto) = HidProtocol::from_u16(setup.w_value) {
@@ -441,12 +554,13 @@ static CONFIG_DESCRIPTOR: [u8; 34] = [
     // Configuration descriptor
     0x09, // bLength
     USB_DESCRIPTOR_TYPE_CONFIGURATION,
-    34, 0x00, // wTotalLength
+    34,
+    0x00, // wTotalLength
     0x01, // bNumInterfaces
     0x01, // bConfigurationValue
     0x00, // iConfiguration
     0xa0, // bmAttributes (bus powered + remote wake)
-    50,  // bMaxPower (100mA)
+    50,   // bMaxPower (100mA)
     // Interface descriptor
     0x09, // bLength
     super::USB_DESCRIPTOR_TYPE_INTERFACE,
@@ -471,7 +585,7 @@ static CONFIG_DESCRIPTOR: [u8; 34] = [
     0x07, // bLength
     super::USB_DESCRIPTOR_TYPE_ENDPOINT,
     INTERRUPT_IN_EP, // bEndpointAddress
-    0x03, // bmAttributes (Interrupt)
+    0x03,            // bmAttributes (Interrupt)
     0x08,
     0x00, // wMaxPacketSize (8)
     0x0a, // bInterval (10ms)

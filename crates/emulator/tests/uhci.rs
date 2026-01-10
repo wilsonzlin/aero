@@ -1,0 +1,247 @@
+use std::ops::Range;
+
+use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
+use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
+use emulator::io::PortIO;
+use memory::MemoryBus;
+
+const FRAME_LIST_BASE: u32 = 0x1000;
+const QH_ADDR: u32 = 0x2000;
+const TD0: u32 = 0x3000;
+const TD1: u32 = 0x3020;
+const TD2: u32 = 0x3040;
+
+const BUF_SETUP: u32 = 0x4000;
+const BUF_DATA: u32 = 0x5000;
+const BUF_INT: u32 = 0x6000;
+
+const PID_IN: u8 = 0x69;
+const PID_OUT: u8 = 0xe1;
+const PID_SETUP: u8 = 0x2d;
+
+const TD_STATUS_ACTIVE: u32 = 1 << 23;
+const TD_CTRL_IOC: u32 = 1 << 24;
+
+struct TestMemBus {
+    mem: Vec<u8>,
+}
+
+impl TestMemBus {
+    fn new(size: usize) -> Self {
+        Self { mem: vec![0; size] }
+    }
+
+    fn slice(&self, range: Range<usize>) -> &[u8] {
+        &self.mem[range]
+    }
+}
+
+impl MemoryBus for TestMemBus {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        let start = paddr as usize;
+        buf.copy_from_slice(&self.mem[start..start + buf.len()]);
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        let start = paddr as usize;
+        self.mem[start..start + buf.len()].copy_from_slice(buf);
+    }
+}
+
+fn td_token(pid: u8, addr: u8, ep: u8, toggle: u8, max_len: usize) -> u32 {
+    let max_field = if max_len == 0 {
+        0x7ffu32
+    } else {
+        (max_len as u32) - 1
+    };
+    (pid as u32)
+        | ((addr as u32) << 8)
+        | ((ep as u32) << 15)
+        | ((toggle as u32) << 19)
+        | (max_field << 21)
+}
+
+fn td_status(active: bool, ioc: bool) -> u32 {
+    let mut v = 0x7ffu32;
+    if active {
+        v |= TD_STATUS_ACTIVE;
+    }
+    if ioc {
+        v |= TD_CTRL_IOC;
+    }
+    v
+}
+
+fn write_td(mem: &mut TestMemBus, addr: u32, link: u32, status: u32, token: u32, buffer: u32) {
+    mem.write_u32(addr as u64, link);
+    mem.write_u32(addr.wrapping_add(4) as u64, status);
+    mem.write_u32(addr.wrapping_add(8) as u64, token);
+    mem.write_u32(addr.wrapping_add(12) as u64, buffer);
+}
+
+fn write_qh(mem: &mut TestMemBus, addr: u32, elem: u32) {
+    mem.write_u32(addr as u64, 1); // horiz terminate
+    mem.write_u32(addr.wrapping_add(4) as u64, elem);
+}
+
+fn init_frame_list(mem: &mut TestMemBus, qh_addr: u32) {
+    for i in 0..1024u32 {
+        mem.write_u32((FRAME_LIST_BASE + i * 4) as u64, qh_addr | 0x2);
+    }
+}
+
+fn run_one_frame(uhci: &mut UhciPciDevice, mem: &mut TestMemBus, first_td: u32) {
+    write_qh(mem, QH_ADDR, first_td);
+    uhci.tick_1ms(mem);
+}
+
+#[test]
+fn uhci_control_get_descriptor_device() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let keyboard = UsbHidKeyboardHandle::new();
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(keyboard.clone()));
+    uhci.controller.hub_mut().force_enable_for_tests(0);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 18, 0x00],
+    );
+
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        TD2,
+        td_status(true, false),
+        td_token(PID_IN, 0, 0, 1, 18),
+        BUF_DATA,
+    );
+    write_td(
+        &mut mem,
+        TD2,
+        1,
+        td_status(true, true),
+        td_token(PID_OUT, 0, 0, 1, 0),
+        0,
+    );
+
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    let expected = [
+        0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x01, 0x00, 0x00, 0x01, 0x01,
+        0x02, 0x00, 0x01,
+    ];
+    assert_eq!(
+        mem.slice(BUF_DATA as usize..BUF_DATA as usize + 18),
+        expected
+    );
+
+    let st0 = mem.read_u32(TD0 as u64 + 4);
+    let st1 = mem.read_u32(TD1 as u64 + 4);
+    let st2 = mem.read_u32(TD2 as u64 + 4);
+    assert_eq!(st0 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(st1 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(st2 & TD_STATUS_ACTIVE, 0);
+}
+
+#[test]
+fn uhci_interrupt_in_polling_reads_hid_reports() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let keyboard = UsbHidKeyboardHandle::new();
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(keyboard.clone()));
+    uhci.controller.hub_mut().force_enable_for_tests(0);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    // SET_ADDRESS(5).
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x05, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 0, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    // SET_CONFIGURATION(1).
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 5, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 5, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    keyboard.key_event(0x04, true); // 'a'
+
+    // Poll interrupt endpoint 1 at address 5.
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 5, 1, 0, 8),
+        BUF_INT,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    assert_eq!(
+        mem.slice(BUF_INT as usize..BUF_INT as usize + 8),
+        [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]
+    );
+
+    // Poll again without new input: should NAK and remain active.
+    mem.write_u32(TD0 as u64 + 4, td_status(true, false));
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    let st = mem.read_u32(TD0 as u64 + 4);
+    assert!(st & TD_STATUS_ACTIVE != 0);
+    assert!(st & (1 << 19) != 0); // NAK
+}

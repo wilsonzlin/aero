@@ -1,4 +1,7 @@
+pub mod core;
 pub mod hid;
+pub mod hub;
+pub mod uhci;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SetupPacket {
@@ -91,15 +94,23 @@ pub trait UsbDeviceModel {
     fn get_config_descriptor(&self) -> &'static [u8];
     fn get_hid_report_descriptor(&self) -> &'static [u8];
 
+    /// Resets device state due to a USB bus reset (e.g. PORTSC reset).
+    ///
+    /// Implementations should return to an unconfigured, default-address state.
+    fn reset(&mut self) {}
+
     /// Handles a USB control transfer SETUP packet.
     ///
     /// For OUT requests, `data_stage` contains the payload provided by the host.
     /// For IN requests, `data_stage` is typically `None`.
-    fn handle_control_request(&mut self, setup: SetupPacket, data_stage: Option<&[u8]>) -> ControlResponse;
+    fn handle_control_request(
+        &mut self,
+        setup: SetupPacket,
+        data_stage: Option<&[u8]>,
+    ) -> ControlResponse;
 
     /// Polls an interrupt IN endpoint and returns the next queued report (if any).
     ///
     /// Returning `None` indicates the endpoint would NAK (no data available).
     fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>>;
 }
-
