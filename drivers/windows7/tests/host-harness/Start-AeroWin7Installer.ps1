@@ -1,0 +1,102 @@
+[CmdletBinding()]
+param(
+  # QEMU system binary (e.g. qemu-system-x86_64 or qemu-system-i386)
+  [Parameter(Mandatory = $true)]
+  [string]$QemuSystem,
+
+  # Path to the Windows 7 ISO (user-supplied; not redistributed).
+  [Parameter(Mandatory = $true)]
+  [string]$Win7IsoPath,
+
+  # Output disk image for the Windows 7 installation.
+  [Parameter(Mandatory = $true)]
+  [string]$DiskImagePath,
+
+  # If DiskImagePath does not exist, create a new qcow2 using qemu-img.
+  [Parameter(Mandatory = $false)]
+  [switch]$CreateDisk,
+
+  # qemu-img binary (only needed when -CreateDisk is used).
+  [Parameter(Mandatory = $false)]
+  [string]$QemuImg = "qemu-img",
+
+  [Parameter(Mandatory = $false)]
+  [int]$DiskSizeGB = 32,
+
+  # Optional provisioning ISO created by New-AeroWin7TestImage.ps1.
+  # This is strongly recommended so Windows Setup can load virtio storage drivers (Load driver) and
+  # you can run AERO\provision\provision.cmd after install.
+  [Parameter(Mandatory = $false)]
+  [string]$ProvisioningIsoPath = "",
+
+  [Parameter(Mandatory = $false)]
+  [int]$MemoryMB = 2048,
+
+  [Parameter(Mandatory = $false)]
+  [int]$Smp = 2,
+
+  # Extra args passed verbatim to QEMU (advanced use: accel, machine type, display, etc.)
+  [Parameter(Mandatory = $false)]
+  [string[]]$QemuExtraArgs = @()
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$Win7IsoPath = (Resolve-Path -LiteralPath $Win7IsoPath).Path
+
+if (-not (Test-Path -LiteralPath $DiskImagePath)) {
+  if (-not $CreateDisk) {
+    throw "DiskImagePath does not exist. Re-run with -CreateDisk (or provide an existing image): $DiskImagePath"
+  }
+
+  $diskParent = Split-Path -Parent $DiskImagePath
+  if ([string]::IsNullOrEmpty($diskParent)) { $diskParent = "." }
+  if (-not (Test-Path -LiteralPath $diskParent)) {
+    New-Item -ItemType Directory -Path $diskParent -Force | Out-Null
+  }
+
+  Write-Host "Creating qcow2 disk: $DiskImagePath ($DiskSizeGB GB)"
+  & $QemuImg create -f qcow2 $DiskImagePath "$($DiskSizeGB)G" | Out-Null
+}
+
+if (-not [string]::IsNullOrEmpty($ProvisioningIsoPath)) {
+  $ProvisioningIsoPath = (Resolve-Path -LiteralPath $ProvisioningIsoPath).Path
+}
+
+Write-Host ""
+Write-Host "Windows 7 install/provision flow"
+Write-Host "--------------------------------"
+Write-Host "1) Start Windows Setup; when asked where to install, click 'Load driver' if the virtio disk is not visible."
+Write-Host "2) Browse the provisioning ISO and select the virtio storage driver INF under AERO\\drivers\\... (x86 vs x64)."
+Write-Host "3) Complete Windows installation."
+Write-Host "4) After first boot, run: <CD>:\\AERO\\provision\\provision.cmd (as Administrator) to install drivers + selftest + scheduled task."
+Write-Host "5) Reboot. Then run Invoke-AeroVirtioWin7Tests.ps1 on the host to get deterministic PASS/FAIL via COM1 serial."
+Write-Host ""
+
+$diskDrive = "file=$DiskImagePath,if=virtio,cache=writeback"
+$osIsoDrive = "file=$Win7IsoPath,media=cdrom,readonly=on"
+
+$qemuArgs = @(
+  "-m", "$MemoryMB",
+  "-smp", "$Smp",
+  "-boot", "d",
+  "-drive", $diskDrive,
+  "-drive", $osIsoDrive,
+  "-netdev", "user,id=net0",
+  "-device", "virtio-net-pci,netdev=net0"
+)
+
+if (-not [string]::IsNullOrEmpty($ProvisioningIsoPath)) {
+  $provIsoDrive = "file=$ProvisioningIsoPath,media=cdrom,readonly=on"
+  $qemuArgs += @("-drive", $provIsoDrive)
+} else {
+  Write-Warning "No -ProvisioningIsoPath provided. You can still install Win7, but provisioning the drivers/selftest will be harder."
+}
+
+$qemuArgs += $QemuExtraArgs
+
+Write-Host "Launching QEMU:"
+Write-Host "  $QemuSystem $($qemuArgs -join ' ')"
+
+& $QemuSystem @qemuArgs

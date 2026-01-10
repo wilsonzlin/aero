@@ -82,6 +82,9 @@ The repository includes scripts + documentation to:
 
 See `host-harness/README.md` for a recommended provisioning approach.
 
+For a standardized QEMU command line to perform an interactive Windows 7 installation from your own ISO (with an attached provisioning ISO), see:
+- `host-harness/Start-AeroWin7Installer.ps1`
+
 ---
 
 ## Extensibility hooks (future tests)

@@ -68,3 +68,21 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -DriversDir ./drivers-out `
   -BlkRoot "D:\aero-virtio-selftest\"
 ```
+
+### Installing Windows 7 from a user-supplied ISO (interactive)
+
+If you don't already have a prepared VM, `Start-AeroWin7Installer.ps1` can launch an interactive Windows 7 install
+under QEMU with a virtio disk + virtio NIC and (optionally) an attached provisioning ISO:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Start-AeroWin7Installer.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -QemuImg qemu-img `
+  -Win7IsoPath ./Win7SP1.iso `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -CreateDisk `
+  -ProvisioningIsoPath ./aero-win7-provisioning.iso
+```
+
+This is still **interactive** (Windows Setup UI), but it standardizes the QEMU device layout and makes it easy
+to load virtio storage drivers from the provisioning ISO during installation.
