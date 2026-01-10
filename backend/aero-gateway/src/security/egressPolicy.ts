@@ -3,7 +3,8 @@ import { domainToASCII } from "node:url";
 
 export type HostnamePattern =
   | { kind: "exact"; hostname: string }
-  | { kind: "wildcard"; suffix: string };
+  | { kind: "wildcard"; suffix: string }
+  | { kind: "ip"; ip: string; version: 4 | 6 };
 
 export type TargetHost =
   | { kind: "hostname"; hostname: string }
@@ -12,10 +13,6 @@ export type TargetHost =
 export interface TcpHostnameEgressPolicy {
   /**
    * If non-empty, the target hostname must match at least one pattern.
-   *
-   * Note that IP-literal targets have no hostname to match against; if you
-   * configure an allowlist and still want to permit IP literals, leave the
-   * allowlist empty and rely on `TCP_REQUIRE_DNS_NAME=0`.
    */
   allowed: HostnamePattern[];
   /**
@@ -77,18 +74,27 @@ export function parseHostnamePattern(rawPattern: string): HostnamePattern {
     throw new Error(`Invalid host pattern "${rawPattern}": "*" is only supported as a "*." prefix`);
   }
 
-  return {
-    kind: "exact",
-    hostname: normalizeHostname(pattern),
-  };
+  const classified = classifyTargetHost(pattern);
+  if (classified.kind === "ip") {
+    return { kind: "ip", ip: classified.ip, version: classified.version };
+  }
+  return { kind: "exact", hostname: classified.hostname };
 }
 
 export function hostnameMatchesPattern(hostname: string, pattern: HostnamePattern): boolean {
+  if (pattern.kind === "ip") return false;
   if (pattern.kind === "exact") return hostname === pattern.hostname;
   // "*.example.com" matches "a.example.com" and "a.b.example.com" but not
   // "example.com" itself.
   if (hostname === pattern.suffix) return false;
   return hostname.endsWith(`.${pattern.suffix}`);
+}
+
+export function targetMatchesPattern(target: TargetHost, pattern: HostnamePattern): boolean {
+  if (target.kind === "ip") {
+    return pattern.kind === "ip" && pattern.ip === target.ip;
+  }
+  return hostnameMatchesPattern(target.hostname, pattern);
 }
 
 export function normalizeHostname(rawHost: string): string {
@@ -161,17 +167,27 @@ export function evaluateTcpHostPolicy(rawHost: string, policy: TcpHostnameEgress
         message: "IP-literal targets are disallowed by TCP_REQUIRE_DNS_NAME",
       };
     }
-    if (policy.allowed.length > 0) {
+
+    if (policy.blocked.some((pattern) => targetMatchesPattern(target, pattern))) {
+      return {
+        allowed: false,
+        reason: "blocked-by-host-policy",
+        message: "Target is blocked by TCP_BLOCKED_HOSTS",
+      };
+    }
+
+    if (policy.allowed.length > 0 && !policy.allowed.some((pattern) => targetMatchesPattern(target, pattern))) {
       return {
         allowed: false,
         reason: "not-allowed-by-host-policy",
         message: "Target does not match TCP_ALLOWED_HOSTS",
       };
     }
+
     return { allowed: true, target };
   }
 
-  if (policy.blocked.some((pattern) => hostnameMatchesPattern(target.hostname, pattern))) {
+  if (policy.blocked.some((pattern) => targetMatchesPattern(target, pattern))) {
     return {
       allowed: false,
       reason: "blocked-by-host-policy",
@@ -179,7 +195,7 @@ export function evaluateTcpHostPolicy(rawHost: string, policy: TcpHostnameEgress
     };
   }
 
-  if (policy.allowed.length > 0 && !policy.allowed.some((pattern) => hostnameMatchesPattern(target.hostname, pattern))) {
+  if (policy.allowed.length > 0 && !policy.allowed.some((pattern) => targetMatchesPattern(target, pattern))) {
     return {
       allowed: false,
       reason: "not-allowed-by-host-policy",
@@ -189,4 +205,3 @@ export function evaluateTcpHostPolicy(rawHost: string, policy: TcpHostnameEgress
 
   return { allowed: true, target };
 }
-

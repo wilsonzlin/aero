@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  evaluateTcpHostPolicy,
   hostnameMatchesPattern,
   normalizeHostname,
   parseHostnamePattern,
@@ -57,4 +58,26 @@ test('IP policy: blocks private/reserved IPs and allows public IPs', () => {
   assert.equal(isPublicIpAddress('fe80::1'), false);
   assert.equal(isPublicIpAddress('2001:4860:4860::8888'), true);
   assert.equal(isPublicIpAddress('::ffff:127.0.0.1'), false);
+});
+
+test("host policy: allow/deny lists apply to IP-literal targets", () => {
+  const allow = parseHostnamePatterns("8.8.8.8");
+  const block = parseHostnamePatterns("8.8.8.8");
+
+  assert.deepEqual(evaluateTcpHostPolicy("8.8.8.8", { allowed: allow, blocked: [], requireDnsName: false }), {
+    allowed: true,
+    target: { kind: "ip", ip: "8.8.8.8", version: 4 },
+  });
+
+  const denied = evaluateTcpHostPolicy("8.8.8.8", { allowed: [], blocked: block, requireDnsName: false });
+  assert.equal(denied.allowed, false);
+  if (!denied.allowed) assert.equal(denied.reason, "blocked-by-host-policy");
+
+  const deniedOverride = evaluateTcpHostPolicy("8.8.8.8", { allowed: allow, blocked: block, requireDnsName: false });
+  assert.equal(deniedOverride.allowed, false);
+  if (!deniedOverride.allowed) assert.equal(deniedOverride.reason, "blocked-by-host-policy");
+
+  const deniedDnsName = evaluateTcpHostPolicy("8.8.8.8", { allowed: allow, blocked: [], requireDnsName: true });
+  assert.equal(deniedDnsName.allowed, false);
+  if (!deniedDnsName.allowed) assert.equal(deniedDnsName.reason, "ip-literal-disallowed");
 });

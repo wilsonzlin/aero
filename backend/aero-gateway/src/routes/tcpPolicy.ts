@@ -1,6 +1,7 @@
 import type http from "node:http";
 
 import { isOriginAllowed } from "../middleware/originGuard.js";
+import { classifyTargetHost, parseHostnamePattern, targetMatchesPattern } from "../security/egressPolicy.js";
 
 export type TcpProxyUpgradePolicy = Readonly<{
   /**
@@ -18,8 +19,9 @@ export type TcpProxyUpgradePolicy = Readonly<{
    */
   blockedClientIps?: readonly string[];
   /**
-   * If provided, outbound TCP dials must match this exact host allowlist.
-   * Case-insensitive.
+   * If provided, outbound TCP dials must match this host allowlist.
+   *
+   * Supports exact matches and wildcard subdomain matches (`*.example.com`).
    */
   allowedTargetHosts?: readonly string[];
   /**
@@ -72,10 +74,24 @@ export function validateTcpTargetPolicy(
   }
 
   if (policy.allowedTargetHosts && policy.allowedTargetHosts.length > 0) {
-    const normalizedHost = normalizeHost(host);
-    const allowed = policy.allowedTargetHosts.some(
-      (allowedHost) => normalizeHost(allowedHost).toLowerCase() === normalizedHost.toLowerCase(),
-    );
+    let target;
+    try {
+      target = classifyTargetHost(host);
+    } catch {
+      return { ok: false, status: 400, message: "Invalid target host" };
+    }
+
+    const patterns = policy.allowedTargetHosts
+      .map((allowedHost) => {
+        try {
+          return parseHostnamePattern(allowedHost);
+        } catch {
+          return null;
+        }
+      })
+      .filter((pattern): pattern is NonNullable<typeof pattern> => pattern !== null);
+
+    const allowed = patterns.some((pattern) => targetMatchesPattern(target, pattern));
     if (!allowed) {
       return { ok: false, status: 403, message: "Target host not allowed" };
     }
@@ -83,11 +99,3 @@ export function validateTcpTargetPolicy(
 
   return { ok: true };
 }
-
-function normalizeHost(host: string): string {
-  if (host.startsWith("[") && host.endsWith("]") && host.length >= 2) {
-    return host.slice(1, -1);
-  }
-  return host;
-}
-
