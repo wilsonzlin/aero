@@ -28,6 +28,9 @@ To stream a remote image, the server **must** support byte-range requests:
 
 Browsers will block cross-origin range reads unless the server is configured for CORS.
 
+For a self-contained local setup (MinIO + optional reverse proxy) to validate Range + CORS behavior, see:
+[`infra/local-object-store/README.md`](../infra/local-object-store/README.md).
+
 At minimum, the response should include headers similar to:
 
 ```
@@ -57,4 +60,3 @@ Remote image support should be gated behind explicit user action:
 - A URL input field.
 - A clear warning that remote images can be untrusted and may leak request metadata to the host.
 - A cache/progress indicator (downloaded blocks, cache size, etc.).
-

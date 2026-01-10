@@ -4,6 +4,9 @@ Reference infrastructure-as-code for hosting **large, immutable disk images** in
 
 This is AWS-specific (uses CloudFront **Origin Access Control (OAC)**, not legacy OAI).
 
+For a fully local Range + CORS validation setup (no AWS required), see
+[`infra/local-object-store/README.md`](../local-object-store/README.md).
+
 ## Architecture
 
 - **S3 bucket (private)**
