@@ -236,3 +236,26 @@ fn decode_vs2_output_registers() {
     assert_eq!(dst2.reg.file, RegisterFile::AttrOut);
     assert_eq!(dst2.reg.index, 0);
 }
+
+#[test]
+fn decode_ps2_dcl_texcoord_t0() {
+    // ps_2_0 dcl t0.xy
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 2, 0),
+        31u32 | (1u32 << 24) | (5u32 << 16) | (0u32 << 20),
+        dst_token(3, 0, 0x3),
+        0x0000_FFFF,
+    ];
+
+    let shader = decode_u32_tokens(&tokens).unwrap();
+    let dcl = &shader.instructions[0];
+    assert_eq!(dcl.opcode, Opcode::Dcl);
+
+    let dst = match &dcl.operands[0] {
+        Operand::Dst(dst) => dst,
+        _ => panic!("expected dst operand"),
+    };
+    assert_eq!(dst.reg.file, RegisterFile::Texture);
+    assert_eq!(dst.reg.index, 0);
+    assert_eq!(dst.mask.0, 0x3);
+}

@@ -301,11 +301,12 @@ impl RegisterFile {
             0 => Self::Temp,
             1 => Self::Input,
             2 => Self::Const,
-            3 => match (stage, ctx) {
-                (_, RegDecodeContext::Dst) => Self::Addr,
-                (_, RegDecodeContext::Relative) => Self::Addr,
-                (ShaderStage::Pixel, RegDecodeContext::Src) => Self::Texture,
-                (ShaderStage::Vertex, RegDecodeContext::Src) => Self::Addr,
+            3 => match ctx {
+                RegDecodeContext::Relative => Self::Addr,
+                RegDecodeContext::Src | RegDecodeContext::Dst => match stage {
+                    ShaderStage::Vertex => Self::Addr,
+                    ShaderStage::Pixel => Self::Texture,
+                },
             },
             4 => Self::RastOut,
             5 => Self::AttrOut,
