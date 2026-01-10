@@ -205,9 +205,29 @@ impl CpuState {
         if self.interrupt_inhibit != 0 {
             return Ok(());
         }
-        let Some(vector) = self.external_interrupts.pop_front() else {
+        let tpr = (self.control.cr8 & 0xF) as u8;
+        let mut best: Option<(usize, u8)> = None;
+        for (idx, &vector) in self.external_interrupts.iter().enumerate() {
+            let prio = vector >> 4;
+            if prio <= tpr {
+                continue;
+            }
+
+            match best {
+                None => best = Some((idx, vector)),
+                Some((_, best_vec)) => {
+                    if prio > (best_vec >> 4) {
+                        best = Some((idx, vector));
+                    }
+                }
+            }
+        }
+
+        let Some((best_idx, vector)) = best else {
             return Ok(());
         };
+
+        let _ = self.external_interrupts.remove(best_idx);
         self.deliver_interrupt(mem, vector, InterruptSource::External, None)
     }
 
@@ -434,9 +454,11 @@ impl CpuState {
             self.push_value(mem, sp_width, push_width, code as u64)?;
         }
 
+        let mut new_flags = old_flags & !RFLAGS_TF;
         if gate.gate_type == GateType::Interrupt {
-            self.rflags.set_raw(old_flags & !RFLAGS_IF);
+            new_flags &= !RFLAGS_IF;
         }
+        self.rflags.set_raw(new_flags);
 
         match gate.size {
             GateSize::Bits16 => self.set_ip(gate.offset as u16),
@@ -523,6 +545,18 @@ impl CpuState {
         if used_ist || new_cpl < old_cpl {
             self.push_value(mem, sp_width, push_width, old_ss as u64)?;
             self.push_value(mem, sp_width, push_width, old_rsp)?;
+            if new_cpl < old_cpl {
+                // In IA-32e mode the CPU loads a NULL selector into SS on privilege transition.
+                self.ss = crate::state::SegmentRegister {
+                    selector: 0,
+                    cache: crate::state::SegmentCache {
+                        base: 0,
+                        limit: 0xFFFF_FFFF,
+                        access: 0x93,
+                        flags: 0,
+                    },
+                };
+            }
         }
 
         self.push_value(mem, sp_width, push_width, old_flags)?;
@@ -532,9 +566,11 @@ impl CpuState {
             self.push_value(mem, sp_width, push_width, code as u64)?;
         }
 
+        let mut new_flags = old_flags & !RFLAGS_TF;
         if gate.gate_type == GateType::Interrupt {
-            self.rflags.set_raw(old_flags & !RFLAGS_IF);
+            new_flags &= !RFLAGS_IF;
         }
+        self.rflags.set_raw(new_flags);
 
         self.rip = gate.offset;
         self.interrupt_frames.push(InterruptStackFrame::Long64 {
@@ -943,7 +979,7 @@ mod tests {
 
         cpu.set_eip(0x11112222);
         cpu.set_gpr32(Gpr::Rsp, 0x3000);
-        cpu.rflags.set_raw((1 << 1) | RFLAGS_IF);
+        cpu.rflags.set_raw((1 << 1) | RFLAGS_IF | RFLAGS_TF);
 
         let idt_base = 0x2000;
         let handler_offset = 0x33334444u32;
@@ -957,6 +993,7 @@ mod tests {
 
         cpu.software_interrupt(&mut mem, 0x81).unwrap();
         assert!(cpu.rflags.if_flag());
+        assert_eq!(cpu.rflags.read() & RFLAGS_TF, 0);
     }
 
     #[test]
@@ -1186,6 +1223,61 @@ mod tests {
         cpu.retire_instruction();
         cpu.deliver_external_interrupt(&mut mem).unwrap();
         assert_eq!(cpu.eip(), handler_offset);
+    }
+
+    #[test]
+    fn cr8_tpr_masks_low_priority_but_allows_higher_priority() {
+        let mut mem = VecMemory::new(0x10000);
+        let mut cpu = CpuState::default();
+
+        // Setup protected mode.
+        let gdt_base = 0x1000;
+        write_desc(&mut mem, gdt_base, 0);
+        write_desc(&mut mem, gdt_base + 8, 0x00CF9A000000FFFF);
+        write_desc(&mut mem, gdt_base + 16, 0x00CF92000000FFFF);
+        cpu.lgdt(gdt_base, 0x17);
+        cpu.write_cr0(cpu.control.cr0 | CR0_PE);
+        cpu.load_segment(SegReg::Cs, 0x08, &mem).unwrap();
+        cpu.load_segment(SegReg::Ss, 0x10, &mem).unwrap();
+        cpu.set_gpr32(Gpr::Rsp, 0x3000);
+        cpu.set_eip(0x1111);
+        cpu.rflags.set_raw((1 << 1) | RFLAGS_IF);
+
+        // IDT entries for vectors 0x20 (prio 2) and 0x30 (prio 3).
+        let idt_base = 0x2000;
+        let handler_20 = 0x2222u32;
+        let gate_20: u64 = (handler_20 as u64 & 0xFFFF)
+            | ((0x08u64) << 16)
+            | (0u64 << 32)
+            | (0x8Eu64 << 40)
+            | (((handler_20 as u64) & 0xFFFF_0000) << 32);
+        write_desc(&mut mem, idt_base + (0x20 * 8) as u64, gate_20);
+        let handler_30 = 0x3333u32;
+        let gate_30: u64 = (handler_30 as u64 & 0xFFFF)
+            | ((0x08u64) << 16)
+            | (0u64 << 32)
+            | (0x8Eu64 << 40)
+            | (((handler_30 as u64) & 0xFFFF_0000) << 32);
+        write_desc(&mut mem, idt_base + (0x30 * 8) as u64, gate_30);
+        cpu.lidt(idt_base, 0x0FFF);
+
+        // Mask vectors with priority <= 2 (0x20 should be blocked, 0x30 should be allowed).
+        cpu.control.cr8 = 2;
+        cpu.inject_external_interrupt(0x20);
+        cpu.inject_external_interrupt(0x30);
+
+        cpu.deliver_external_interrupt(&mut mem).unwrap();
+        assert_eq!(cpu.eip(), handler_30);
+        assert_eq!(cpu.external_interrupts.len(), 1);
+
+        // Return from the higher-priority interrupt and lower the threshold.
+        cpu.iret(&mut mem).unwrap();
+        assert_eq!(cpu.eip(), 0x1111);
+        assert!(cpu.rflags.if_flag());
+
+        cpu.control.cr8 = 0;
+        cpu.deliver_external_interrupt(&mut mem).unwrap();
+        assert_eq!(cpu.eip(), handler_20);
     }
 
     #[test]
