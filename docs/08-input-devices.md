@@ -4,7 +4,7 @@
 
 Windows 7 requires keyboard and mouse input. The baseline approach is to capture browser events and translate them into **legacy PS/2** (works out-of-the-box), or **USB HID** (also inbox, but requires a much larger emulation surface).
 
-For best performance and lowest complexity on the host side, we also plan a **paravirtualized virtio-input** path. This avoids USB controller emulation entirely, but requires a custom Windows 7 driver to surface the virtio device as standard HID keyboard/mouse devices.
+For best performance and lowest complexity on the host side, we also plan a **paravirtualized virtio-input** path. This avoids USB controller emulation entirely, but requires a custom Windows 7 driver to surface the virtio device as standard HID keyboard/mouse devices. The definitive virtio-input device contract for Aero (transport + queues + event codes) is specified in [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md).
 
 ---
 

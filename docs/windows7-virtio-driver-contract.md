@@ -102,6 +102,17 @@ All offsets below are from the BAR0 I/O base.
 
 \* Device config is **mostly read-only** in contract v1. Any writeable fields are explicitly called out per device.
 
+#### 1.3.1 Undefined offsets and access widths
+
+- Only the registers and fields described in this contract are defined behavior.
+- **Undefined reads** from BAR0 MUST return all-zeros for the requested width.
+- **Undefined writes** to BAR0 MUST be ignored.
+
+Access widths:
+
+- Drivers SHOULD access each register using the `Size` shown in §1.3.
+- Devices MUST correctly handle byte/word/dword accesses to the defined registers as if BAR0 were a little-endian byte array.
+
 ### 1.4 Interrupt mechanism: INTx + ISR semantics
 
 Contract v1 uses **PCI INTx** interrupts only.
@@ -177,6 +188,13 @@ Contract v1 never offers features requiring >32-bit feature negotiation (e.g., `
 - The driver writes the ring base PFN (`physical_address >> 12`) to `QUEUE_PFN`.
 
 The queue is considered **active** when `QUEUE_PFN != 0` for that queue.
+
+Queue index range handling:
+
+- If `QUEUE_SEL` selects a queue index that does not exist for the device:
+  - `QUEUE_NUM` MUST read as `0`.
+  - `QUEUE_PFN` MUST read as `0` and writes MUST be ignored.
+  - Writing that index to `QUEUE_NOTIFY` MUST be ignored.
 
 ### 2.2 Split ring layout, sizes, and alignment
 
@@ -273,7 +291,7 @@ The device MUST raise an interrupt when it adds at least one entry to any used r
 
 Even when suppressed, the device MUST still update the used ring correctly; the driver will poll.
 
-> Note: Contract v1 does not require the device to implement `VRING_USED_F_NO_NOTIFY` (driver suppression of doorbells), because the contract uses always-notify semantics. Drivers MAY set it, but devices MAY ignore it.
+> Note: Contract v1 does not require the device to implement `VRING_USED_F_NO_NOTIFY` (device suppression of driver doorbells), because the contract uses always-notify semantics. Devices MAY leave `used.flags = 0`; drivers MUST always notify via `QUEUE_NOTIFY` regardless of `used.flags`.
 
 ### 2.5 Guest physical memory access (DMA model)
 
@@ -498,7 +516,7 @@ The driver supplies receive buffers via available descriptor chains.
 Buffer requirements (driver):
 
 - Each chain MUST start with a writable buffer of at least 10 bytes for `virtio_net_hdr`.
-- The chain MUST provide at least **1524 bytes** of writable payload space total (to hold up to 1514-byte frames plus the 10-byte header), or packets may be dropped.
+- The chain MUST provide at least **1514 bytes** of writable payload space after the header buffer (or at least **1524 bytes** total across all writable buffers), or packets may be dropped.
 
 Receive behavior (device):
 

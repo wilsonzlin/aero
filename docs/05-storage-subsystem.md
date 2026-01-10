@@ -490,6 +490,9 @@ impl NvmeController {
 
 For maximum performance, we provide virtio-blk drivers:
 
+> For the exact Windows 7 driver ↔ Aero device-model interoperability contract (PCI transport, virtqueue rules, and virtio-blk requirements), see:  
+> [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md)
+
 ```rust
 pub struct VirtioBlkDevice {
     // Virtio common config
