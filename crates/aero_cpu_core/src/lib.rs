@@ -21,8 +21,8 @@ pub mod exceptions;
 pub mod exec;
 pub mod fpu;
 pub mod interp;
-pub mod jit;
 pub mod interrupts;
+pub mod jit;
 pub mod mem;
 pub mod mode;
 pub mod msr;
@@ -177,11 +177,10 @@ impl CpuState {
     }
 
     /// `STMXCSR` convenience wrapper that writes MXCSR via [`mem::CpuBus`].
-    pub fn stmxcsr_to_mem<B: mem::CpuBus>(
-        &self,
-        bus: &mut B,
-        addr: u64,
-    ) -> Result<(), Exception> {
+    pub fn stmxcsr_to_mem<B: mem::CpuBus>(&self, bus: &mut B, addr: u64) -> Result<(), Exception> {
+        if addr & 0b11 != 0 {
+            return Err(Exception::gp0());
+        }
         bus.write_u32(addr, self.sse.mxcsr)
     }
 
@@ -202,6 +201,9 @@ impl CpuState {
         bus: &mut B,
         addr: u64,
     ) -> Result<(), Exception> {
+        if addr & 0b11 != 0 {
+            return Err(Exception::gp0());
+        }
         let value = bus.read_u32(addr)?;
         self.sse.set_mxcsr(value)?;
         Ok(())
@@ -257,11 +259,10 @@ impl CpuState {
     }
 
     /// `FXSAVE` convenience wrapper that writes the 512-byte image into guest memory via [`mem::CpuBus`].
-    pub fn fxsave_to_mem<B: mem::CpuBus>(
-        &self,
-        bus: &mut B,
-        addr: u64,
-    ) -> Result<(), Exception> {
+    pub fn fxsave_to_mem<B: mem::CpuBus>(&self, bus: &mut B, addr: u64) -> Result<(), Exception> {
+        if addr & 0xF != 0 {
+            return Err(Exception::gp0());
+        }
         let mut image = [0u8; FXSAVE_AREA_SIZE];
         self.fxsave(&mut image);
         for (i, byte) in image.iter().copied().enumerate() {
@@ -325,6 +326,9 @@ impl CpuState {
         bus: &mut B,
         addr: u64,
     ) -> Result<(), Exception> {
+        if addr & 0xF != 0 {
+            return Err(Exception::gp0());
+        }
         let mut image = [0u8; FXSAVE_AREA_SIZE];
         for i in 0..FXSAVE_AREA_SIZE {
             image[i] = bus.read_u8(addr + i as u64)?;
@@ -375,11 +379,10 @@ impl CpuState {
     }
 
     /// `FXSAVE64` convenience wrapper that writes the 512-byte image into guest memory via [`mem::CpuBus`].
-    pub fn fxsave64_to_mem<B: mem::CpuBus>(
-        &self,
-        bus: &mut B,
-        addr: u64,
-    ) -> Result<(), Exception> {
+    pub fn fxsave64_to_mem<B: mem::CpuBus>(&self, bus: &mut B, addr: u64) -> Result<(), Exception> {
+        if addr & 0xF != 0 {
+            return Err(Exception::gp0());
+        }
         let mut image = [0u8; FXSAVE_AREA_SIZE];
         self.fxsave64(&mut image);
         for (i, byte) in image.iter().copied().enumerate() {
@@ -440,6 +443,9 @@ impl CpuState {
         bus: &mut B,
         addr: u64,
     ) -> Result<(), Exception> {
+        if addr & 0xF != 0 {
+            return Err(Exception::gp0());
+        }
         let mut image = [0u8; FXSAVE_AREA_SIZE];
         for i in 0..FXSAVE_AREA_SIZE {
             image[i] = bus.read_u8(addr + i as u64)?;

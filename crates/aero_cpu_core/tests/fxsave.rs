@@ -374,3 +374,41 @@ fn ldmxcsr_from_mem_returns_gp0_on_reserved_bits() {
         Exception::gp0()
     );
 }
+
+#[test]
+fn fpu_state_instructions_require_aligned_memory_operands() {
+    let mut cpu = CpuState::default();
+    cpu.sse.mxcsr = 0x1F80;
+
+    // MXCSR load/store require 4-byte alignment.
+    let mut bus = FlatTestBus::new(128);
+    bus.write_u32(4, cpu.sse.mxcsr).unwrap();
+    assert_eq!(
+        cpu.ldmxcsr_from_mem(&mut bus, 1).unwrap_err(),
+        Exception::gp0()
+    );
+    assert_eq!(
+        cpu.stmxcsr_to_mem(&mut bus, 1).unwrap_err(),
+        Exception::gp0()
+    );
+
+    // FXSAVE/FXRSTOR require 16-byte alignment.
+    let mut img = [0u8; FXSAVE_AREA_SIZE];
+    cpu.fxsave(&mut img);
+
+    let mut bus = FlatTestBus::new(4096);
+    bus.load(0x101, &img);
+
+    let snapshot = cpu.clone();
+    assert_eq!(
+        cpu.fxrstor_from_mem(&mut bus, 0x101).unwrap_err(),
+        Exception::gp0()
+    );
+    assert_eq!(cpu, snapshot);
+
+    let mut bus = FlatTestBus::new(4096);
+    assert_eq!(
+        cpu.fxsave_to_mem(&mut bus, 0x101).unwrap_err(),
+        Exception::gp0()
+    );
+}
