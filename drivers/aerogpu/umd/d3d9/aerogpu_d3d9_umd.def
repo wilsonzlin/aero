@@ -1,5 +1,3 @@
-LIBRARY "aerogpu_d3d9_umd"
 EXPORTS
   OpenAdapter
   OpenAdapter2
-

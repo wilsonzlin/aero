@@ -17,6 +17,8 @@ for %%I in ("%SCRIPT_DIR%.") do set "SCRIPT_DIR=%%~fI"
 for %%I in ("%SCRIPT_DIR%\..") do set "AEROGPU_ROOT=%%~fI"
 set "KMD_DIR=%AEROGPU_ROOT%\kmd"
 set "UMD_DIR=%AEROGPU_ROOT%\umd"
+set "UMD_D3D9_DIR=%AEROGPU_ROOT%\umd\d3d9"
+set "UMD_D3D9_PROJ=%UMD_D3D9_DIR%\aerogpu_d3d9_umd.vcxproj"
 set "UMD_D3D10_11_DIR=%AEROGPU_ROOT%\umd\d3d10_11"
 set "UMD_D3D10_11_SLN=%UMD_D3D10_11_DIR%\aerogpu_d3d10_11.sln"
 
@@ -52,10 +54,19 @@ if not exist "%UMD_DIR%" (
   exit /b 1
 )
 
-if not exist "%UMD_D3D10_11_SLN%" (
-  echo ERROR: Expected D3D10/11 UMD solution not found:
-  echo        "%UMD_D3D10_11_SLN%"
+if not exist "%UMD_D3D9_PROJ%" (
+  echo ERROR: Expected D3D9 UMD project not found:
+  echo        "%UMD_D3D9_PROJ%"
   exit /b 1
+)
+
+set "HAVE_D3D10_11=0"
+if exist "%UMD_D3D10_11_SLN%" (
+  set "HAVE_D3D10_11=1"
+)
+if "%HAVE_D3D10_11%"=="0" (
+  echo NOTE: Optional D3D10/11 UMD not found; skipping:
+  echo       "%UMD_D3D10_11_SLN%"
 )
 
 echo Using WDK: "%WDKROOT%"
@@ -71,8 +82,25 @@ for %%V in (%VARIANTS%) do (
     call "%SCRIPT_DIR%\build_one.cmd" "%WDKROOT%" WIN7 %%V %%A "%KMD_DIR%" "%OUT_ROOT%\win7\%%A\%%V\kmd" sys
     if errorlevel 1 exit /b 1
 
-    call "%SCRIPT_DIR%\build_umd.cmd" %%V %%A "%UMD_D3D10_11_SLN%" "%OUT_ROOT%\win7\%%A\%%V\umd"
+    set "UMD_OUT_DIR=%OUT_ROOT%\win7\%%A\%%V\umd"
+    if exist "!UMD_OUT_DIR!" rmdir /s /q "!UMD_OUT_DIR!"
+    mkdir "!UMD_OUT_DIR!" >nul 2>nul
+
+    set "D3D9_DLL="
+    if /i "%%A"=="x86" set "D3D9_DLL=aerogpu_d3d9.dll"
+    if /i "%%A"=="x64" set "D3D9_DLL=aerogpu_d3d9_x64.dll"
+
+    call "%SCRIPT_DIR%\build_umd.cmd" %%V %%A "%UMD_D3D9_PROJ%" "!UMD_OUT_DIR!" "!UMD_OUT_DIR!\obj\d3d9" "!D3D9_DLL!"
     if errorlevel 1 exit /b 1
+
+    if "%HAVE_D3D10_11%"=="1" (
+      set "D3D10_DLL="
+      if /i "%%A"=="x86" set "D3D10_DLL=aerogpu_d3d10.dll"
+      if /i "%%A"=="x64" set "D3D10_DLL=aerogpu_d3d10_x64.dll"
+
+      call "%SCRIPT_DIR%\build_umd.cmd" %%V %%A "%UMD_D3D10_11_SLN%" "!UMD_OUT_DIR!" "!UMD_OUT_DIR!\obj\d3d10_11" "!D3D10_DLL!"
+      if errorlevel 1 exit /b 1
+    )
 
     echo.
   )

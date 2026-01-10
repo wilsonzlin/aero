@@ -13,8 +13,8 @@ The kernel-mode driver (KMD) is responsible for accepting submissions and provid
 
 This project is intended to be built in a Windows/WDK environment as a DLL for both x86 and x64:
 
-- `aerogpu_d3d9_umd.dll` (x86)
-- `aerogpu_d3d9_umd.dll` (x64)
+- `aerogpu_d3d9.dll` (x86 / Win32)
+- `aerogpu_d3d9_x64.dll` (x64)
 
 Build files:
 
@@ -30,23 +30,23 @@ Build files:
 
 The D3D9 runtime loads the display driver’s UMD(s) based on registry values written by the display driver INF. The exact INF layout depends on the KMD packaging, but the critical part is that the service installs a WDDM display driver and registers the **user-mode driver DLL name**.
 
-In your display driver INF, under the adapter’s registry section (often `...SoftwareDeviceSettings` / `AddReg` for the display miniport), add entries similar to:
+In the Win7 packaging INFs in this repo (`drivers/aerogpu/packaging/win7/aerogpu.inf` and `aerogpu_dx11.inf`), the D3D9 UMD is registered via `InstalledDisplayDrivers` (base name, no extension):
 
 ```inf
-[AeroGPU_SoftwareDeviceSettings]
-; Native-bitness UMD
-HKR,,UserModeDriverName,0x00020000,"aerogpu_d3d9_umd.dll"
+[AeroGPU_Device_AddReg_x86]
+HKR,,InstalledDisplayDrivers,0x00010000,"aerogpu_d3d9"
 
-; 32-bit UMD on x64 systems (SysWOW64)
-HKR,,UserModeDriverNameWow,0x00020000,"aerogpu_d3d9_umd.dll"
+[AeroGPU_Device_AddReg_amd64]
+HKR,,InstalledDisplayDrivers,0x00010000,"aerogpu_d3d9_x64"
+HKR,,InstalledDisplayDriversWow,0x00010000,"aerogpu_d3d9"
 ```
 
 Then ensure the DLLs are copied into the correct system directories during installation:
 
-- x86 Windows: `System32\aerogpu_d3d9_umd.dll`
+- x86 Windows: `System32\aerogpu_d3d9.dll`
 - x64 Windows:
-  - `System32\aerogpu_d3d9_umd.dll` (64-bit)
-  - `SysWOW64\aerogpu_d3d9_umd.dll` (32-bit)
+  - `System32\aerogpu_d3d9_x64.dll` (64-bit)
+  - `SysWOW64\aerogpu_d3d9.dll` (32-bit)
 
 After installation, reboot (or restart the display driver) and confirm:
 
@@ -61,4 +61,3 @@ The initial implementation focuses on the minimum D3D9Ex feature set needed for:
 - a basic triangle app (VB/IB, shaders, textures, alpha blend, present)
 
 Unsupported states are handled defensively; unknown state enums are accepted and forwarded as generic “set render/sampler state” commands so the emulator can decide how to interpret them.
-

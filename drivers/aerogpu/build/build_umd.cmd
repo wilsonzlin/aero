@@ -9,14 +9,18 @@ rem
 rem Args:
 rem   %1 VAR    (fre|chk)              -> fre maps to Release, chk maps to Debug
 rem   %2 ARCH   (x86|x64)              -> x86 maps to Win32, x64 maps to x64
-rem   %3 SLN    (path to .sln)
+rem   %3 SLN    (path to .sln or .vcxproj)
 rem   %4 OUTDIR (where *.dll/*.pdb are written)
+rem   %5 OBJDIR (optional; per-project intermediates)
+rem   %6 EXPECTED_DLL (optional; asserts the expected output exists after build)
 rem -----------------------------------------------------------------------------
 
 set "VARIANT=%~1"
 set "ARCH=%~2"
 set "SLN=%~3"
 set "OUTDIR=%~4"
+set "OBJDIR=%~5"
+set "EXPECTED_DLL=%~6"
 
 if "%VARIANT%"=="" exit /b 2
 if "%ARCH%"=="" exit /b 2
@@ -24,7 +28,7 @@ if "%SLN%"=="" exit /b 2
 if "%OUTDIR%"=="" exit /b 2
 
 if not exist "%SLN%" (
-  echo ERROR: UMD solution not found: "%SLN%"
+  echo ERROR: UMD build input not found: "%SLN%"
   exit /b 1
 )
 
@@ -47,12 +51,19 @@ if not defined PLATFORM (
 call :find_msbuild
 if errorlevel 1 exit /b 1
 
-if exist "%OUTDIR%" rmdir /s /q "%OUTDIR%"
 mkdir "%OUTDIR%" >nul 2>nul
-mkdir "%OUTDIR%\obj" >nul 2>nul
+
+if not defined OBJDIR set "OBJDIR=%OUTDIR%\obj"
+
+if exist "%OBJDIR%" rmdir /s /q "%OBJDIR%"
+mkdir "%OBJDIR%" >nul 2>nul
 
 set "OUTDIR_MSBUILD=%OUTDIR%\"
-set "INTDIR_MSBUILD=%OUTDIR%\obj\"
+set "INTDIR_MSBUILD=%OBJDIR%\"
+
+if not "%EXPECTED_DLL%"=="" (
+  if exist "%OUTDIR%\%EXPECTED_DLL%" del /f /q "%OUTDIR%\%EXPECTED_DLL%" >nul 2>nul
+)
 
 echo [UMD] MSBuild: "%MSBUILD%"
 echo [UMD] Config:  %CONFIG%  Platform: %PLATFORM%
@@ -66,6 +77,15 @@ echo [UMD] Config:  %CONFIG%  Platform: %PLATFORM%
 if errorlevel 1 (
   echo ERROR: MSBuild failed for UMD (%CONFIG% %PLATFORM%).
   exit /b 1
+)
+
+if not "%EXPECTED_DLL%"=="" (
+  if not exist "%OUTDIR%\%EXPECTED_DLL%" (
+    echo ERROR: UMD build completed but expected output was not produced:
+    echo        "%OUTDIR%\%EXPECTED_DLL%"
+    exit /b 1
+  )
+  exit /b 0
 )
 
 dir /b "%OUTDIR%\*.dll" >nul 2>nul

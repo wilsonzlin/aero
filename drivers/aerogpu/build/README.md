@@ -5,7 +5,7 @@ This directory contains the build tooling for the **AeroGPU Windows 7 driver sta
 
 The build scripts use:
 * **WDK 7.1 “BUILD” system** for the **KMD** (`setenv` + `build`)
-* **MSBuild** for the **UMD** (Visual Studio solution)
+* **MSBuild** for the **UMDs** (Visual Studio projects)
 
 ---
 
@@ -29,6 +29,7 @@ The build scripts use:
 
 These scripts assume the driver sources live at:
 * `drivers/aerogpu/kmd/` (WDK BUILD project; contains `sources`)
+* `drivers/aerogpu/umd/d3d9/` (MSBuild/VS project: `aerogpu_d3d9_umd.vcxproj`)
 * `drivers/aerogpu/umd/d3d10_11/` (MSBuild/VS solution: `aerogpu_d3d10_11.sln`)
 
 ---
@@ -66,7 +67,9 @@ drivers\aerogpu\build\build_all.cmd
 
 `build_all.cmd` builds:
 * KMD via WDK `build.exe`
-* UMD via `msbuild.exe` (it will try `where msbuild`, then VS `vswhere` fallback)
+* UMDs via `msbuild.exe` (it will try `where msbuild`, then VS `vswhere` fallback)
+  * D3D9 UMD is required
+  * D3D10/11 UMD is optional (only built if its `.sln` exists)
 
 ### Build only one variant / arch
 `build_all.cmd` accepts optional arguments:
@@ -111,17 +114,7 @@ If the build succeeds, you should see:
 
 ---
 
-## Notes on the WDK BUILD system (for contributors)
-
-### Minimal `dirs` example
-If you want a single top-level build entrypoint under `drivers/aerogpu/`:
-
-`drivers/aerogpu/dirs`
-```make
-DIRS= \
-    kmd \
-    umd
-```
+## Notes on the WDK BUILD system (KMD)
 
 ### Minimal `sources` example (KMD)
 `drivers/aerogpu/kmd/sources`
@@ -134,16 +127,17 @@ SOURCES= \
     driver.c
 ```
 
-### Minimal `sources` example (UMD DLL)
-`drivers/aerogpu/umd/sources`
-```make
-TARGETNAME=aerogpu_umd
-TARGETTYPE=DYNLINK
-UMTYPE=windows
+## Notes on the MSBuild UMD projects
 
-SOURCES= \
-    umd.c
-```
+Current UMDs in-tree:
+* D3D9: `drivers/aerogpu/umd/d3d9/aerogpu_d3d9_umd.vcxproj`
+  * Outputs: `aerogpu_d3d9.dll` (x86) + `aerogpu_d3d9_x64.dll` (x64)
+* D3D10/11 (optional): `drivers/aerogpu/umd/d3d10_11/aerogpu_d3d10_11.sln`
+  * Outputs: `aerogpu_d3d10.dll` (x86) + `aerogpu_d3d10_x64.dll` (x64)
+
+`build_all.cmd` maps:
+* `fre` → `Release`
+* `chk` → `Debug`
 
 ---
 
@@ -174,7 +168,4 @@ install.cmd
 
 See `drivers/aerogpu/packaging/win7/README.md` for details (including Hardware ID edits).
 
-> Note: the Win7 INFs currently assume the D3D9 UMD (`aerogpu_d3d9*.dll`) exists.
-> If you don’t have those binaries yet, `sign_test.cmd` may fail during `inf2cat`
-> generation and `pnputil` install may fail if the `.cat` is missing. See the
-> packaging README for the full expected file list.
+> Note: `aerogpu_dx11.inf` is optional; if you don’t build the D3D10/11 UMD, install with `aerogpu.inf`.
