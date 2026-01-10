@@ -34,6 +34,7 @@ members = [
     "crates/virtio-gpu-proto",
     "backend/aero-gateway",
     "crates/aero-jit",
+    "crates/aero-usb",
 ]
 
 exclude = ["fuzz"]
