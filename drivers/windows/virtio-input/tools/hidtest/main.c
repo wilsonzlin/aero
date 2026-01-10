@@ -53,6 +53,16 @@
 #define HID_REPORT_DESCRIPTOR_TYPE 0x22
 #endif
 
+#define VIRTIO_INPUT_VID 0x1AF4
+#define VIRTIO_INPUT_PID_MODERN 0x1052
+#define VIRTIO_INPUT_PID_TRANSITIONAL 0x1011
+
+// Current virtio-input report descriptor used by this repo's Win7 driver.
+#define VIRTIO_INPUT_EXPECTED_REPORT_DESC_LEN 119
+#define VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN 9
+#define VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN 2
+#define VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN 5
+
 #pragma pack(push, 1)
 typedef struct HID_DESCRIPTOR_MIN {
     BYTE bLength;
@@ -95,6 +105,20 @@ typedef struct SELECTED_DEVICE {
     DWORD hid_report_desc_len;
     int hid_report_desc_valid;
 } SELECTED_DEVICE;
+
+static int is_virtio_input_device(const HIDD_ATTRIBUTES *attr)
+{
+    if (attr == NULL) {
+        return 0;
+    }
+
+    if (attr->VendorID != VIRTIO_INPUT_VID) {
+        return 0;
+    }
+
+    return (attr->ProductID == VIRTIO_INPUT_PID_MODERN) ||
+           (attr->ProductID == VIRTIO_INPUT_PID_TRANSITIONAL);
+}
 
 static void print_win32_error_w(const wchar_t *prefix, DWORD err)
 {
@@ -555,9 +579,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         attr.Size = sizeof(attr);
         if (HidD_GetAttributes(handle, &attr)) {
             attr_valid = 1;
-            if (attr.VendorID == 0x1AF4 && (attr.ProductID == 0x1052 || attr.ProductID == 0x1011)) {
-                is_virtio = 1;
-            }
+            is_virtio = is_virtio_input_device(&attr);
         }
 
         ZeroMemory(&caps, sizeof(caps));
@@ -597,6 +619,33 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         if (report_desc_valid && hid_report_desc_valid && report_desc_len != hid_report_desc_len) {
             wprintf(L"      [WARN] report descriptor length mismatch (IOCTL=%lu, HID=%lu)\n",
                     report_desc_len, hid_report_desc_len);
+        }
+
+        if (is_virtio) {
+            if (report_desc_valid && report_desc_len != VIRTIO_INPUT_EXPECTED_REPORT_DESC_LEN) {
+                wprintf(L"      [WARN] unexpected virtio-input report descriptor length (expected %u)\n",
+                        (unsigned)VIRTIO_INPUT_EXPECTED_REPORT_DESC_LEN);
+            }
+            if (hid_report_desc_valid && hid_report_desc_len != VIRTIO_INPUT_EXPECTED_REPORT_DESC_LEN) {
+                wprintf(L"      [WARN] unexpected virtio-input HID descriptor report length (expected %u)\n",
+                        (unsigned)VIRTIO_INPUT_EXPECTED_REPORT_DESC_LEN);
+            }
+
+            if (caps_valid && is_keyboard) {
+                if (caps.InputReportByteLength != VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN) {
+                    wprintf(L"      [WARN] unexpected virtio-input keyboard input report length (expected %u)\n",
+                            (unsigned)VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN);
+                }
+                if (caps.OutputReportByteLength != VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN) {
+                    wprintf(L"      [WARN] unexpected virtio-input keyboard output report length (expected %u)\n",
+                            (unsigned)VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN);
+                }
+            } else if (caps_valid && is_mouse) {
+                if (caps.InputReportByteLength != VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN) {
+                    wprintf(L"      [WARN] unexpected virtio-input mouse input report length (expected %u)\n",
+                            (unsigned)VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN);
+                }
+            }
         }
 
         if (desired_access & GENERIC_WRITE) {
@@ -867,8 +916,7 @@ static void read_reports_loop(const SELECTED_DEVICE *dev)
     DWORD n;
     BOOL ok;
     DWORD seq = 0;
-    int is_virtio = dev->attr_valid && dev->attr.VendorID == 0x1AF4 &&
-                    (dev->attr.ProductID == 0x1052 || dev->attr.ProductID == 0x1011);
+    int is_virtio = dev->attr_valid && is_virtio_input_device(&dev->attr);
 
     if (!dev->caps_valid) {
         wprintf(L"Cannot read reports: HID caps not available.\n");
