@@ -1,15 +1,15 @@
 import { createHash } from "node:crypto";
 import net from "node:net";
 import type http from "node:http";
-import type { Socket } from "node:net";
+import type { Duplex } from "node:stream";
 
-import { TcpTargetParseError, parseTcpTargetFromUrl } from "../protocol/tcpTarget.ts";
+import { TcpTargetParseError, parseTcpTargetFromUrl } from "../protocol/tcpTarget.js";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 export function handleTcpProxyUpgrade(
   req: http.IncomingMessage,
-  socket: Socket,
+  socket: Duplex,
   head: Buffer,
 ): void {
   let target: { host: string; port: number; version: number };
@@ -42,7 +42,9 @@ export function handleTcpProxyUpgrade(
     ].join("\r\n"),
   );
 
-  socket.setNoDelay(true);
+  if ("setNoDelay" in socket && typeof socket.setNoDelay === "function") {
+    socket.setNoDelay(true);
+  }
 
   const tcpSocket = net.createConnection({ host: target.host, port: target.port });
   tcpSocket.setNoDelay(true);
@@ -51,7 +53,7 @@ export function handleTcpProxyUpgrade(
   bridge.start(head);
 }
 
-function respondHttp(socket: Socket, status: number, message: string): void {
+function respondHttp(socket: Duplex, status: number, message: string): void {
   const body = `${message}\n`;
   socket.end(
     [
@@ -93,17 +95,17 @@ type ParsedFrame = {
 };
 
 class WebSocketTcpBridge {
-  private readonly wsSocket: Socket;
+  private readonly wsSocket: Duplex;
   private readonly tcpSocket: net.Socket;
 
-  private wsBuffer = Buffer.alloc(0);
+  private wsBuffer: Buffer = Buffer.alloc(0);
 
   private fragmentedOpcode: number | null = null;
   private fragmentedChunks: Buffer[] = [];
 
   private closed = false;
 
-  constructor(wsSocket: Socket, tcpSocket: net.Socket) {
+  constructor(wsSocket: Duplex, tcpSocket: net.Socket) {
     this.wsSocket = wsSocket;
     this.tcpSocket = tcpSocket;
   }
@@ -314,4 +316,3 @@ function encodeFrame(opcode: number, payload: Buffer): Buffer {
   header.writeUInt32BE(length, 6);
   return Buffer.concat([header, payload]);
 }
-

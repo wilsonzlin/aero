@@ -4,7 +4,7 @@ import net from "node:net";
 import { once } from "node:events";
 import { describe, it } from "node:test";
 
-import { handleTcpProxyUpgrade } from "./tcpProxy.ts";
+import { handleTcpProxyUpgrade } from "./tcpProxy.js";
 
 async function listen(server: http.Server | net.Server, host?: string): Promise<number> {
   server.listen(0, host);
@@ -132,4 +132,3 @@ describe("tcpProxy route", () => {
     }
   });
 });
-
