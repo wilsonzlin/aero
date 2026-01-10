@@ -35,6 +35,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Markdown lint
+        uses: DavidAnson/markdownlint-cli2-action@v17
+        with:
+          globs: |
+            AGENTS.md
+            README*.md
+            docs/**/*.md
+
       # Fast, deterministic check for broken relative links in markdown.
       # We intentionally run lychee in `--offline` mode so docs-only PRs get
       # meaningful CI without depending on external network reliability.
@@ -42,10 +50,11 @@ jobs:
         uses: lycheeverse/lychee-action@v1
         with:
           args: >-
-            --verbose
             --no-progress
             --offline
-            ./**/*.md
+            AGENTS.md
+            README*.md
+            docs
           fail: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -56,13 +65,14 @@ jobs:
         uses: lycheeverse/lychee-action@v1
         with:
           args: >-
-            --verbose
             --no-progress
             --timeout 10
             --exclude ^http://localhost
             --exclude ^http://example\.com
             --exclude ^https://cloudflare-dns\.com/dns-query
-            ./**/*.md
+            AGENTS.md
+            README*.md
+            docs
           fail: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

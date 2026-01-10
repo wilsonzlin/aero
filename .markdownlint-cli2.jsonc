@@ -1,0 +1,28 @@
+{
+  // Docs in this repo are intentionally long-form and include large ASCII
+  // diagrams, tables, and code samples. The goal of this lint pass is "sanity"
+  // (catch obvious markdown mistakes) without enforcing strict formatting.
+  "config": {
+    "default": true,
+
+    // Commonly violated in technical docs / code samples; keep disabled to avoid
+    // churn and noisy diffs.
+    "MD004": false, // unordered list style
+    "MD005": false, // inconsistent indentation for list items
+    "MD007": false, // unordered list indentation
+    "MD009": false, // trailing spaces
+    "MD012": false, // multiple consecutive blank lines
+    "MD013": false, // line length
+    "MD022": false, // headings should be surrounded by blank lines
+    "MD023": false, // headings must start at the beginning of the line
+    "MD024": false, // multiple headings with the same content
+    "MD029": false, // ordered list item prefix
+    "MD031": false, // fenced code blocks should be surrounded by blank lines
+    "MD032": false, // lists should be surrounded by blank lines
+    "MD034": false, // bare URL used
+    "MD036": false, // emphasis used instead of a heading
+    "MD040": false, // fenced code blocks should have a language specified
+    "MD056": false, // table column count
+    "MD060": false // table column style / alignment
+  }
+}
