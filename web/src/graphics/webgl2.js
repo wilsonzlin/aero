@@ -177,7 +177,10 @@ export class WebGl2Backend {
       depth: false,
       stencil: false,
       premultipliedAlpha: false,
-      preserveDrawingBuffer: false,
+      // Keep the default framebuffer contents intact after presenting so
+      // automation (Playwright) can sample pixels via `drawImage()` on a 2D
+      // canvas. This is a small demo backend, so the perf cost is acceptable.
+      preserveDrawingBuffer: true,
     });
     if (!gl) throw new Error('WebGL2 not available');
     return new WebGl2Backend(canvas, gl);

@@ -2,6 +2,10 @@ const { defineConfig, devices } = require('@playwright/test');
 
 module.exports = defineConfig({
   testDir: './web/tests',
+  // `web/tests/` contains a mix of Playwright specs and Vitest unit tests. Keep
+  // this config focused on the lightweight fallback demo spec so repo-root
+  // `npm ci` is sufficient for this workflow.
+  testMatch: ['webgl2-fallback.spec.cjs'],
   timeout: 30_000,
   retries: process.env.CI ? 2 : 0,
   use: {
@@ -17,4 +21,3 @@ module.exports = defineConfig({
     stderr: 'pipe',
   },
 });
-
