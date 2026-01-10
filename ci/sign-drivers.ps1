@@ -551,6 +551,8 @@ try {
   if ($useStablePfx) {
     Write-Host "Using stable signing certificate from AERO_DRIVER_PFX_*."
 
+    $needsSha1 = $DualSign -or ($Digest.ToLowerInvariant() -eq "sha1")
+
     $pfxPasswordPlain = $StablePfxPassword
     $pfxPassword = ConvertTo-SecureString -String $pfxPasswordPlain -AsPlainText -Force
 
@@ -571,6 +573,18 @@ try {
     }
     if (-not $cert) {
       throw "Imported stable PFX successfully, but no certificate with a private key was found."
+    }
+
+    if ($needsSha1 -and -not (Test-CertificateSignatureHash -Cert $cert -ExpectedHash "sha1")) {
+      $actual = "{0} ({1})" -f $cert.SignatureAlgorithm.FriendlyName, $cert.SignatureAlgorithm.Value
+
+      if (-not $AllowSha2CertFallback) {
+        throw "Stable signing certificate is not SHA-1-signed, but SHA-1 driver signing was requested. Re-run with -AllowSha2CertFallback to continue anyway (may break stock Win7 without KB3033929/KB4474419).`nCertificate signature algorithm: $actual"
+      }
+
+      Write-Warning "Stable signing certificate is not SHA-1-signed, but SHA-1 driver signing was requested; continuing due to -AllowSha2CertFallback."
+      Write-Warning "Certificate signature algorithm: $actual"
+      Write-Warning "WARNING: Stock Windows 7 SP1 without KB3033929/KB4474419 may fail to validate the signature chain, even if /fd sha1 is used."
     }
 
     Export-Certificate -Cert $cert -FilePath $cerPath -Force | Out-Null
