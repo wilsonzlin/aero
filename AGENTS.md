@@ -55,6 +55,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 30. [Performance Tooling (Profiling, HUD, Traces, Benchmarks)](./docs/16-performance-tooling.md)
 31. [Guest Tools Packaging](./docs/16-guest-tools-packaging.md)
 32. [Virtio Windows Drivers](./docs/virtio-windows-drivers.md)
+33. [VM Snapshots (Save-State / Restore-State)](./docs/16-snapshots.md)
 
 ---
 
@@ -340,6 +341,7 @@ pub trait DisplayAdapter {
 | [14-project-milestones.md](./docs/14-project-milestones.md)             | Timeline, deliverables                 | All               |
 | [15-agent-task-breakdown.md](./docs/15-agent-task-breakdown.md)         | Parallelizable work items              | All               |
 | [16-debugging-and-introspection.md](./docs/16-debugging-and-introspection.md) | Developer debugging surfaces (serial, state, trace) | All |
+| [16-snapshots.md](./docs/16-snapshots.md)                               | VM snapshot format + restore flow      | All               |
 | [16-performance-tooling.md](./docs/16-performance-tooling.md)           | Profiling HUD, traces, benchmarks      | Performance       |
 | [16-d3d9ex-dwm-compatibility.md](./docs/16-d3d9ex-dwm-compatibility.md) | D3D9Ex surface + DWM requirements      | Graphics          |
 | [16-d3d10-11-translation.md](./docs/16-d3d10-11-translation.md)          | Direct3D 10/11 translation details     | Graphics          |

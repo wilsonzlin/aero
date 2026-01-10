@@ -264,6 +264,16 @@ name = "aero-protocol"
 version = "0.1.0"
 
 [[package]]
+name = "aero-snapshot"
+version = "0.1.0"
+dependencies = [
+ "lz4_flex",
+ "proptest",
+ "rand 0.8.5",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "aero-storage"
 version = "0.1.0"
 dependencies = [
@@ -306,6 +316,14 @@ name = "aero-virtio"
 version = "0.1.0"
 dependencies = [
  "virtio-gpu-proto",
+]
+
+[[package]]
+name = "aero-vm"
+version = "0.1.0"
+dependencies = [
+ "aero-snapshot",
+ "blake3",
 ]
 
 [[package]]
@@ -2366,6 +2384,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lz4_flex"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08ab2867e3eeeca90e844d1940eab391c9dc5228783db2ed999acbc0a9ed375a"
+dependencies = [
+ "twox-hash",
+]
+
+[[package]]
 name = "mach2"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3942,6 +3969,12 @@ dependencies = [
  "thiserror 2.0.17",
  "utf-8",
 ]
+
+[[package]]
+name = "twox-hash"
+version = "2.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ea3136b675547379c4bd395ca6b938e5ad3c3d20fad76e7fe85f9e0d011419c"
 
 [[package]]
 name = "typenum"

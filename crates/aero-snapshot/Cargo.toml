@@ -1,0 +1,13 @@
+[package]
+name = "aero-snapshot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lz4_flex = "0.11"
+thiserror = "1"
+
+[dev-dependencies]
+proptest = "1.5"
+rand = "0.8"
+

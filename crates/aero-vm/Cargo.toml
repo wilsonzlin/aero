@@ -1,0 +1,11 @@
+[package]
+name = "aero-vm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aero-snapshot = { path = "../aero-snapshot" }
+
+[dev-dependencies]
+blake3 = "1"
+
