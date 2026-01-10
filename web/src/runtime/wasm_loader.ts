@@ -74,14 +74,34 @@ function toApi(mod: RawWasmModule): WasmApi {
     };
 }
 
+// `wasm-pack` outputs into `web/src/wasm/pkg-single` and `web/src/wasm/pkg-threaded`.
+//
+// These directories are generated (see `web/scripts/build_wasm.mjs`) and are not
+// necessarily present in a fresh checkout. Use `import.meta.glob` so:
+//  - Vite builds don't fail when the generated output is missing.
+//  - When the output *is* present, it is bundled as usual.
+const wasmImporters = import.meta.glob("../wasm/pkg-*/aero_wasm.js");
+
 async function loadSingle(): Promise<WasmApi> {
-    const mod = (await import("../wasm/pkg-single/aero_wasm.js")) as RawWasmModule;
+    const importer = wasmImporters["../wasm/pkg-single/aero_wasm.js"];
+    if (!importer) {
+        throw new Error(
+            "Missing single-thread WASM package. Build it with: node ./scripts/build_wasm.mjs single",
+        );
+    }
+    const mod = (await importer()) as RawWasmModule;
     await mod.default();
     return toApi(mod);
 }
 
 async function loadThreaded(): Promise<WasmApi> {
-    const mod = (await import("../wasm/pkg-threaded/aero_wasm.js")) as RawWasmModule;
+    const importer = wasmImporters["../wasm/pkg-threaded/aero_wasm.js"];
+    if (!importer) {
+        throw new Error(
+            "Missing threaded WASM package. Build it with: node ./scripts/build_wasm.mjs threaded",
+        );
+    }
+    const mod = (await importer()) as RawWasmModule;
     await mod.default();
     return toApi(mod);
 }

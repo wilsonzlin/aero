@@ -36,6 +36,19 @@ export const EVENT_RING_CAPACITY_BYTES = 32 * 1024;
  * In the real emulator this is a shared WebAssembly.Memory (wasm32) so it can be
  * accessed directly from WASM code across worker threads.
  *
+ * Note on sizing:
+ * - The architecture docs sometimes describe allocating a single 5+ GiB shared
+ *   region (guest RAM + queues + metadata).
+ * - Without `memory64`, wasm32 linear memory is limited to 2^32 bytes (~4 GiB),
+ *   i.e. 65,536 64KiB pages.
+ *
+ * Therefore we deliberately use *two* shared memory segments:
+ * - `control`: a small SharedArrayBuffer for IPC (status + ring buffers).
+ * - `guestMemory`: a shared WebAssembly.Memory for guest RAM.
+ *
+ * This keeps IPC cache-friendly and avoids tying worker bring-up to a massive
+ * monolithic allocation.
+ *
  * We intentionally keep control IPC memory separate from guest RAM so that:
  *  - The coordinator can still run even if a large guest allocation fails.
  *  - IPC buffers remain small and cache-friendly.
@@ -46,6 +59,7 @@ export type GuestRamMiB = (typeof GUEST_RAM_PRESETS_MIB)[number];
 export const DEFAULT_GUEST_RAM_MIB: GuestRamMiB = 512;
 
 const WASM_PAGE_BYTES = 64 * 1024;
+const MAX_WASM32_PAGES = 65536;
 
 // Early VGA/VBE framebuffer sizing. The buffer is reused across mode changes;
 // the active dimensions live in the framebuffer header.
@@ -126,7 +140,7 @@ export function allocateSharedMemorySegments(options?: {
   const guestRamMiB = options?.guestRamMiB ?? DEFAULT_GUEST_RAM_MIB;
   const guestBytes = mibToBytes(guestRamMiB);
   const pages = bytesToPages(guestBytes);
-  if (pages > 65536) {
+  if (pages > MAX_WASM32_PAGES) {
     throw new Error(`guestRamMiB too large for wasm32: ${guestRamMiB} MiB (${pages} pages)`);
   }
 
