@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { RingBuffer } from "./ring_buffer";
+import { Worker } from "node:worker_threads";
 
 function makeRing(capacityBytes: number): RingBuffer {
   const sab = new SharedArrayBuffer(RingBuffer.byteLengthForCapacity(capacityBytes));
@@ -140,5 +141,41 @@ describe("RingBuffer", () => {
     expect(ring.push(bytes(4, 5))).toBe(true);
     expect(await ring.waitForDataAsync(0)).toBe("not-equal");
     expect(Array.from(ring.pop() ?? [])).toEqual([4, 5]);
+  });
+
+  it("transfers messages between threads (SPSC)", async () => {
+    const capacityBytes = 64;
+    const sab = new SharedArrayBuffer(RingBuffer.byteLengthForCapacity(capacityBytes));
+    const ring = new RingBuffer(sab, 0, sab.byteLength);
+    ring.reset();
+
+    const count = 100;
+    const worker = new Worker(new URL("./ring_buffer_consumer_worker.ts", import.meta.url), {
+      type: "module",
+      workerData: { sab, byteOffset: 0, byteLength: sab.byteLength, count },
+      execArgv: ["--experimental-strip-types"],
+    });
+
+    try {
+      for (let i = 0; i < count; i++) {
+        const payload = new Uint8Array(4);
+        new DataView(payload.buffer).setUint32(0, i, true);
+        while (!ring.push(payload)) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+      }
+
+      const received = await new Promise<number[]>((resolve, reject) => {
+        worker.once("message", (msg) => resolve(msg as number[]));
+        worker.once("error", reject);
+        worker.once("exit", (code) => {
+          if (code !== 0) reject(new Error(`ring buffer worker exited with code ${code}`));
+        });
+      });
+
+      expect(received).toEqual(Array.from({ length: count }, (_, i) => i));
+    } finally {
+      await worker.terminate();
+    }
   });
 });
