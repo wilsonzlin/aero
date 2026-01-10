@@ -7,8 +7,13 @@
 # Copy locally and replace placeholders before deploying.
 
 gateway:
+  replicaCount: 2
   image:
     tag: "<REPLACE_WITH_IMAGE_TAG>"
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
 
 ingress:
   className: traefik
@@ -18,6 +23,9 @@ ingress:
     secretName: "aero-tls"
   coopCoep:
     mode: traefik
+
+redis:
+  enabled: true
 
 secrets:
   data:
