@@ -19,6 +19,10 @@ param(
   # Accepts "all" or a comma-separated list (e.g. "1,4,5").
   [string]$InstallWimIndices = "all",
 
+  # Optionally patch the nested Windows Recovery Environment image inside each install.wim index:
+  #   Windows\System32\Recovery\winre.wim
+  [switch]$PatchNestedWinRE,
+
   [switch]$EnableNoIntegrityChecks
 )
 
@@ -401,6 +405,72 @@ function Patch-InstallBcdTemplate {
   Set-BcdFlagsForStore -StorePath $templatePath -StoreLabel "install.wim BCD-Template" -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
 }
 
+function Service-NestedWinreWim {
+  param(
+    [Parameter(Mandatory)][string]$MountedInstallImageRoot,
+    [Parameter(Mandatory)][string]$TempRoot,
+    [Parameter(Mandatory)][string]$ParentLabel,
+    [Parameter(Mandatory)][System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate,
+    [Parameter(Mandatory)][string[]]$CertStores,
+    [string]$DriversRoot
+  )
+
+  $winrePath = [System.IO.Path]::Combine($MountedInstallImageRoot, "Windows", "System32", "Recovery", "winre.wim")
+  if (-not (Test-Path -LiteralPath $winrePath -PathType Leaf)) {
+    Write-Host "`n[$ParentLabel] Nested winre.wim not found (skipping): $winrePath"
+    return
+  }
+
+  $workDir = Join-Path -Path $TempRoot -ChildPath ("nested-winre-" + [Guid]::NewGuid().ToString("N"))
+  $winreCopy = Join-Path -Path $workDir -ChildPath "winre.wim"
+
+  $succeeded = $false
+  try {
+    New-Item -ItemType Directory -Path $workDir | Out-Null
+
+    Write-Host "`n[$ParentLabel] Servicing nested winre.wim: $winrePath"
+    Copy-Item -LiteralPath $winrePath -Destination $winreCopy -Force
+    Ensure-WritableFile -Path $winreCopy -Label "Nested winre.wim working copy"
+
+    $winreIndices = Get-WimIndexList -WimFile $winreCopy
+    foreach ($idx in $winreIndices) {
+      $mountDir = Join-Path -Path $workDir -ChildPath ("mount-index-{0}" -f $idx)
+      Service-WimIndex `
+        -WimFile $winreCopy `
+        -Index $idx `
+        -MountDir $mountDir `
+        -Label ("{0} nested winre.wim index {1}" -f $ParentLabel, $idx) `
+        -Certificate $Certificate `
+        -CertStores $CertStores `
+        -DriversRoot $DriversRoot `
+        -IsInstallImage:$false `
+        -EnableNoIntegrityChecks:$false `
+        -PatchNestedWinRE:$false `
+        -TempRoot $TempRoot
+    }
+
+    Invoke-NativeCommand -FilePath "attrib.exe" -ArgumentList @("-h", "-s", "-r", $winrePath) -SuppressOutput
+    Copy-Item -LiteralPath $winreCopy -Destination $winrePath -Force
+
+    $succeeded = $true
+  }
+  finally {
+    if ($succeeded) {
+      try {
+        if (Test-Path -LiteralPath $workDir) {
+          Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction Stop
+        }
+      }
+      catch {
+        Write-Warning "[$ParentLabel] Failed to delete nested winre.wim work directory '$workDir'. You can remove it manually."
+      }
+    }
+    else {
+      Write-Warning "[$ParentLabel] Nested winre.wim servicing did not complete. Work directory kept for inspection: $workDir"
+    }
+  }
+}
+
 function Service-WimIndex {
   param(
     [Parameter(Mandatory)][string]$WimFile,
@@ -411,6 +481,8 @@ function Service-WimIndex {
     [Parameter(Mandatory)][string[]]$CertStores,
     [string]$DriversRoot,
     [switch]$IsInstallImage,
+    [switch]$PatchNestedWinRE,
+    [Parameter(Mandatory)][string]$TempRoot,
     [switch]$EnableNoIntegrityChecks
   )
 
@@ -440,6 +512,16 @@ function Service-WimIndex {
 
     if ($IsInstallImage) {
       Patch-InstallBcdTemplate -MountedImageRoot $MountDir -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
+
+      if ($PatchNestedWinRE) {
+        Service-NestedWinreWim `
+          -MountedInstallImageRoot $MountDir `
+          -TempRoot $TempRoot `
+          -ParentLabel $Label `
+          -Certificate $Certificate `
+          -CertStores $CertStores `
+          -DriversRoot $DriversRoot
+      }
     }
 
     $shouldCommit = $true
@@ -574,6 +656,7 @@ Write-Host "CertPath             : $resolvedCertPath"
 Write-Host "Cert thumbprint      : $thumbprint"
 Write-Host "Cert stores          : $($normalizedCertStores -join ', ')"
 Write-Host "DriversPath          : $(if ($resolvedDriversPath) { $resolvedDriversPath } else { "<none>" })"
+Write-Host "Patch nested WinRE    : $(if ($PatchNestedWinRE) { "ON" } else { "OFF" })"
 Write-Host "EnableNoIntegrityChecks : $(if ($EnableNoIntegrityChecks) { "ON" } else { "OFF" })"
 Write-Host ""
 Write-Host "boot.wim             : $bootWimPath"
@@ -615,6 +698,8 @@ try {
       -CertStores $normalizedCertStores `
       -DriversRoot $resolvedDriversPath `
       -IsInstallImage:$false `
+      -PatchNestedWinRE:$false `
+      -TempRoot $tempRoot `
       -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
   }
 
@@ -630,6 +715,8 @@ try {
       -CertStores $normalizedCertStores `
       -DriversRoot $resolvedDriversPath `
       -IsInstallImage `
+      -PatchNestedWinRE:$PatchNestedWinRE `
+      -TempRoot $tempRoot `
       -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
   }
 

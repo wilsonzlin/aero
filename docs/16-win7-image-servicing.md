@@ -29,6 +29,7 @@ It patches:
 - Selected `boot.wim` + `install.wim` indices (driver injection optional)
 - Offline certificate trust injection into each image’s SOFTWARE hive
 - Offline `install.wim` `BCD-Template` so the installed OS inherits `testsigning`
+- (Optional) Nested `winre.wim` inside each `install.wim` index (via `-PatchNestedWinRE`)
 
 See [`tools/windows/README.md`](../tools/windows/README.md) for prerequisites and usage examples.
 

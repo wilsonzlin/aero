@@ -10,6 +10,7 @@ Patches extracted Windows 7 install media to support **test-signed drivers** by:
 - Validating the offline `SOFTWARE` hive contains `Microsoft\SystemCertificates\{ROOT,TrustedPublisher}\Certificates\<thumbprint>\Blob`
 - (Optional) Injecting driver packages from a directory containing `.inf` files
 - Updating the offline `BCD-Template` inside each selected `install.wim` image
+- (Optional) Patching the nested WinRE image (`Windows\System32\Recovery\winre.wim`) inside each `install.wim` index
 
 ### Prerequisites
 
@@ -69,6 +70,16 @@ Patch with `nointegritychecks` enabled as well:
   -CertPath  C:\certs\driver-test.cer `
   -DriversPath C:\drivers\win7 `
   -EnableNoIntegrityChecks
+```
+
+Also patch the nested WinRE image (`winre.wim`) inside each selected `install.wim` index:
+
+```powershell
+.\tools\windows\patch-win7-media.ps1 `
+  -MediaRoot C:\iso\win7sp1 `
+  -CertPath  C:\certs\driver-test.cer `
+  -DriversPath C:\drivers\win7 `
+  -PatchNestedWinRE
 ```
 
 ### Verification hints
