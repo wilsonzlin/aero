@@ -215,7 +215,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       const progressCb = (p: ImportProgress) => postProgress(requestId, p);
 
       let sizeBytes;
-      let checksumCrc32;
+      let checksumCrc32: string | undefined;
 
       if (backend === "opfs") {
         const res = await opfsImportFile(fileName, file, progressCb);
@@ -237,7 +237,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         sizeBytes,
         createdAtMs: Date.now(),
         lastUsedAtMs: undefined,
-        checksum: { algorithm: "crc32", value: checksumCrc32 },
+        checksum: checksumCrc32 ? { algorithm: "crc32", value: checksumCrc32 } : undefined,
         sourceFileName: file.name,
       };
 
@@ -268,6 +268,8 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
       if (backend === "opfs") {
         await opfsResizeDisk(meta.fileName, newSizeBytes, progressCb);
+        // Resizing invalidates COW overlays (table size depends on disk size).
+        await opfsDeleteDisk(`${meta.id}.overlay.aerospar`);
       } else {
         await idbResizeDisk(meta.id, meta.sizeBytes, newSizeBytes, progressCb);
       }
@@ -284,6 +286,8 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       const meta = await requireDisk(backend, msg.payload.id);
       if (backend === "opfs") {
         await opfsDeleteDisk(meta.fileName);
+        // Best-effort cleanup of runtime COW overlay files.
+        await opfsDeleteDisk(`${meta.id}.overlay.aerospar`);
       } else {
         const db = await openDiskManagerDb();
         try {
