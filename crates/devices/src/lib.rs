@@ -2,3 +2,4 @@
 
 pub mod a20_gate;
 pub mod apic;
+pub mod pci;
