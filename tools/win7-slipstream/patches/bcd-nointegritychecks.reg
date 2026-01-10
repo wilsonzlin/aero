@@ -1,0 +1,20 @@
+Windows Registry Editor Version 5.00
+
+; Enables "nointegritychecks" for Windows 7 by setting the BCD OS loader boolean:
+;   BcdOSLoaderBoolean_DisableIntegrityChecks (0x16000048) = 1
+;
+; This patch targets the well-known BCD object {bootloadersettings}:
+;   GUID: {6efb52bf-1766-41db-a6b3-0ee5eff72bd7}
+;
+; Rationale:
+;   Typical Win7 OS loader entries (including WinPE) inherit from {bootloadersettings},
+;   so setting the element here enables it broadly without needing per-entry GUIDs.
+;
+; Apply to an offline BCD store loaded under HKLM\BCD, e.g.:
+;   reg load HKLM\BCD X:\path\to\boot\BCD
+;   reg import bcd-nointegritychecks.reg
+;   reg unload HKLM\BCD
+
+[HKEY_LOCAL_MACHINE\BCD\Objects\{6efb52bf-1766-41db-a6b3-0ee5eff72bd7}\Elements\16000048]
+"Element"=hex:01,00,00,00
+

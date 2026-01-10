@@ -1,0 +1,31 @@
+Windows Registry Editor Version 5.00
+
+; Template: install the Aero public signing certificate into an OFFLINE Win7 SOFTWARE hive.
+;
+; What it does:
+;   Adds the same certificate to BOTH stores:
+;     - Microsoft\SystemCertificates\ROOT\Certificates\<THUMBPRINT_SHA1>
+;     - Microsoft\SystemCertificates\TrustedPublisher\Certificates\<THUMBPRINT_SHA1>
+;
+; Tokens you must replace:
+;   __AERO_CERT_SHA1__     = SHA-1 thumbprint of the certificate DER bytes (40 hex chars).
+;   __AERO_CERT_DER_HEX__  = certificate DER bytes as comma-separated hex (REG_BINARY).
+;
+; Recommended workflow:
+;   Use tools/win7-slipstream/scripts/cert-to-reg.py to generate an importable .reg
+;   directly from a .cer (DER or PEM).
+;
+; Windows (offline hive via reg.exe):
+;   reg load HKLM\OFFSOFT X:\path\to\Windows\System32\config\SOFTWARE
+;   reg import <generated-cert.reg>
+;   reg unload HKLM\OFFSOFT
+;
+; Linux/macOS (offline hive via hivexregedit):
+;   hivexregedit --merge /path/to/SOFTWARE <generated-cert.reg>
+
+[HKEY_LOCAL_MACHINE\OFFSOFT\Microsoft\SystemCertificates\ROOT\Certificates\__AERO_CERT_SHA1__]
+"Blob"=hex:__AERO_CERT_DER_HEX__
+
+[HKEY_LOCAL_MACHINE\OFFSOFT\Microsoft\SystemCertificates\TrustedPublisher\Certificates\__AERO_CERT_SHA1__]
+"Blob"=hex:__AERO_CERT_DER_HEX__
+
