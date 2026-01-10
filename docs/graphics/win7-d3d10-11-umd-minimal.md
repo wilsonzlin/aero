@@ -221,7 +221,8 @@ Presentation / swapchain integration
 
 Resource update/copy (minimum)
 * `pfnMap` + `pfnUnmap` (dynamic VB/IB/CB uploads) — `D3D10DDIARG_MAP`
-* `pfnUpdateSubresource` (some apps prefer this over map/unmap)
+* `pfnUpdateSubresourceUP` (user-memory upload path; some apps prefer this over map/unmap)
+  * struct: `D3D10DDIARG_UPDATESUBRESOURCEUP`
 * `pfnCopyResource` / `pfnCopySubresourceRegion` (optional but commonly used internally by runtimes)
 
 Command submission
@@ -348,7 +349,8 @@ Resource updates
   * must cover both:
     * dynamic update patterns (`D3D11_MAP_WRITE_DISCARD` / `D3D11_MAP_WRITE_NO_OVERWRITE`) for buffers/constant buffers, and
     * staging readback (`D3D11_MAP_READ` on `D3D11_USAGE_STAGING` resources) for tests and debugging
-* `pfnUpdateSubresource`
+* `pfnUpdateSubresourceUP` (user-memory upload path for `UpdateSubresource`)
+  * struct: `D3D11DDIARG_UPDATESUBRESOURCEUP`
 * `pfnCopyResource` / `pfnCopySubresourceRegion`
 * `pfnFlush` (submits pending work; corresponds to `ID3D11DeviceContext::Flush`)
 
