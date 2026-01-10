@@ -163,4 +163,14 @@ bcdedit /store <path-to-BCD> /enum {globalsettings} /v
 bcdedit /store <path-to-BCD> /enum {bootloadersettings} /v
 ```
 
+For a low-level check of the exact bytes written, you can load the store as a hive
+(requires an elevated prompt) and query the element value directly:
+
+```bat
+reg load HKLM\BCD <path-to-BCD>
+reg query HKLM\BCD\\Objects\\{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}\\Elements\\16000049 /v Element
+reg query HKLM\BCD\\Objects\\{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}\\Elements\\16000048 /v Element
+reg unload HKLM\BCD
+```
+
 If those settings show up as `No` or are missing entirely, the offline patch did not apply to the object(s) Windows is actually booting through (most commonly: only patching one of the ISO BCD stores, or patching settings objects but not the OS loader objects themselves).
