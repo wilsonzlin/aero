@@ -48,9 +48,13 @@ pub fn compile_wasm_simd(
             Inst::Addps { .. }
                 | Inst::Subps { .. }
                 | Inst::Mulps { .. }
+                | Inst::Divps { .. }
                 | Inst::Addpd { .. }
                 | Inst::Subpd { .. }
                 | Inst::Mulpd { .. }
+                | Inst::Divpd { .. }
+                | Inst::Sqrtps { .. }
+                | Inst::Sqrtpd { .. }
         )
     });
 
@@ -76,16 +80,21 @@ pub fn compile_wasm_simd(
             Inst::Addps { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F32x4Add)?,
             Inst::Subps { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F32x4Sub)?,
             Inst::Mulps { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F32x4Mul)?,
+            Inst::Divps { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F32x4Div)?,
 
             Inst::Addpd { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F64x2Add)?,
             Inst::Subpd { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F64x2Sub)?,
             Inst::Mulpd { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F64x2Mul)?,
+            Inst::Divpd { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F64x2Div)?,
 
             Inst::Pand { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::V128And)?,
             Inst::Por { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::V128Or)?,
             Inst::Pxor { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::V128Xor)?,
 
             Inst::Pshufb { dst, src } => emit_pshufb(&mut func, dst, src, layout)?,
+
+            Inst::Sqrtps { dst, src } => emit_unop(&mut func, dst, src, layout, Instruction::F32x4Sqrt)?,
+            Inst::Sqrtpd { dst, src } => emit_unop(&mut func, dst, src, layout, Instruction::F64x2Sqrt)?,
 
             Inst::PslldImm { dst, imm } => emit_shift_imm(&mut func, dst, imm, ShiftOp::I32x4Shl, layout)?,
             Inst::PsrldImm { dst, imm } => {
@@ -189,6 +198,20 @@ fn emit_binop(
     op: Instruction<'static>,
 ) -> Result<(), JitError> {
     emit_load_reg(dst, func, layout)?;
+    emit_load_operand(src, func, layout)?;
+    func.instruction(&op);
+    func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
+    emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
+    Ok(())
+}
+
+fn emit_unop(
+    func: &mut Function,
+    dst: XmmReg,
+    src: Operand,
+    layout: WasmLayout,
+    op: Instruction<'static>,
+) -> Result<(), JitError> {
     emit_load_operand(src, func, layout)?;
     func.instruction(&op);
     func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));

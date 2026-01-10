@@ -43,6 +43,8 @@ pub enum Inst {
     Subps { dst: XmmReg, src: Operand },
     /// `MULPS xmm, xmm/m128`
     Mulps { dst: XmmReg, src: Operand },
+    /// `DIVPS xmm, xmm/m128`
+    Divps { dst: XmmReg, src: Operand },
 
     /// `ADDPD xmm, xmm/m128`
     Addpd { dst: XmmReg, src: Operand },
@@ -50,6 +52,8 @@ pub enum Inst {
     Subpd { dst: XmmReg, src: Operand },
     /// `MULPD xmm, xmm/m128`
     Mulpd { dst: XmmReg, src: Operand },
+    /// `DIVPD xmm, xmm/m128`
+    Divpd { dst: XmmReg, src: Operand },
 
     /// `PAND xmm, xmm/m128`
     Pand { dst: XmmReg, src: Operand },
@@ -60,6 +64,11 @@ pub enum Inst {
 
     /// `PSHUFB xmm, xmm/m128` (SSSE3)
     Pshufb { dst: XmmReg, src: Operand },
+
+    /// `SQRTPS xmm, xmm/m128`
+    Sqrtps { dst: XmmReg, src: Operand },
+    /// `SQRTPD xmm, xmm/m128`
+    Sqrtpd { dst: XmmReg, src: Operand },
 
     /// `PSLLD xmm, imm8` (SSE2)
     PslldImm { dst: XmmReg, imm: u8 },

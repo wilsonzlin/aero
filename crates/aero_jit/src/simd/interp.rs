@@ -29,6 +29,11 @@ pub fn interpret(program: &Program, state: &mut SseState, mem: &mut [u8]) -> Res
                 let b = load_operand(state, mem, src)?;
                 state.xmm[dst.index()] = f32x4_binop(a, b, |x, y| x * y);
             }
+            Inst::Divps { dst, src } => {
+                let a = state.xmm[dst.index()];
+                let b = load_operand(state, mem, src)?;
+                state.xmm[dst.index()] = f32x4_binop(a, b, |x, y| x / y);
+            }
 
             Inst::Addpd { dst, src } => {
                 let a = state.xmm[dst.index()];
@@ -44,6 +49,11 @@ pub fn interpret(program: &Program, state: &mut SseState, mem: &mut [u8]) -> Res
                 let a = state.xmm[dst.index()];
                 let b = load_operand(state, mem, src)?;
                 state.xmm[dst.index()] = f64x2_binop(a, b, |x, y| x * y);
+            }
+            Inst::Divpd { dst, src } => {
+                let a = state.xmm[dst.index()];
+                let b = load_operand(state, mem, src)?;
+                state.xmm[dst.index()] = f64x2_binop(a, b, |x, y| x / y);
             }
 
             Inst::Pand { dst, src } => {
@@ -75,6 +85,15 @@ pub fn interpret(program: &Program, state: &mut SseState, mem: &mut [u8]) -> Res
                     }
                 }
                 state.xmm[dst.index()] = u128::from_le_bytes(out);
+            }
+
+            Inst::Sqrtps { dst, src } => {
+                let v = load_operand(state, mem, src)?;
+                state.xmm[dst.index()] = f32x4_unop(v, |x| x.sqrt());
+            }
+            Inst::Sqrtpd { dst, src } => {
+                let v = load_operand(state, mem, src)?;
+                state.xmm[dst.index()] = f64x2_unop(v, |x| x.sqrt());
             }
 
             Inst::PslldImm { dst, imm } => {
@@ -195,6 +214,32 @@ fn f64x2_binop(a: u128, b: u128, f: impl Fn(f64, f64) -> f64) -> u128 {
         ));
         let rv = f(av, bv).to_bits().to_le_bytes();
         out[off..off + 8].copy_from_slice(&rv);
+    }
+    u128::from_le_bytes(out)
+}
+
+fn f32x4_unop(v: u128, f: impl Fn(f32) -> f32) -> u128 {
+    let bytes = v.to_le_bytes();
+    let mut out = [0u8; 16];
+    for lane in 0..4 {
+        let off = lane * 4;
+        let x = f32::from_bits(u32::from_le_bytes(
+            bytes[off..off + 4].try_into().expect("slice len matches"),
+        ));
+        out[off..off + 4].copy_from_slice(&f(x).to_bits().to_le_bytes());
+    }
+    u128::from_le_bytes(out)
+}
+
+fn f64x2_unop(v: u128, f: impl Fn(f64) -> f64) -> u128 {
+    let bytes = v.to_le_bytes();
+    let mut out = [0u8; 16];
+    for lane in 0..2 {
+        let off = lane * 8;
+        let x = f64::from_bits(u64::from_le_bytes(
+            bytes[off..off + 8].try_into().expect("slice len matches"),
+        ));
+        out[off..off + 8].copy_from_slice(&f(x).to_bits().to_le_bytes());
     }
     u128::from_le_bytes(out)
 }

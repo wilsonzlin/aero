@@ -94,6 +94,14 @@ fn random_f64(rng: &mut impl Rng) -> f64 {
     rng.gen_range(-1000.0f64..1000.0f64)
 }
 
+fn random_pos_f32(rng: &mut impl Rng) -> f32 {
+    rng.gen_range(0.01f32..1000.0f32)
+}
+
+fn random_pos_f64(rng: &mut impl Rng) -> f64 {
+    rng.gen_range(0.01f64..1000.0f64)
+}
+
 fn pack_f32x4(lanes: [f32; 4]) -> u128 {
     let mut bytes = [0u8; 16];
     for i in 0..4 {
@@ -228,6 +236,80 @@ fn wasm_simd_f64x2_add_mul_sub() {
     assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::F64x2Add));
     assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::F64x2Mul));
     assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::F64x2Sub));
+}
+
+#[test]
+fn wasm_simd_f32x4_div_sqrt() {
+    let mut rng = StdRng::seed_from_u64(7);
+    let xmm0 = XmmReg::new(0).unwrap();
+    let xmm1 = XmmReg::new(1).unwrap();
+    let xmm2 = XmmReg::new(2).unwrap();
+
+    let mut state = SseState::default();
+    state.xmm[xmm0.index()] = pack_f32x4([
+        random_pos_f32(&mut rng),
+        random_pos_f32(&mut rng),
+        random_pos_f32(&mut rng),
+        random_pos_f32(&mut rng),
+    ]);
+    state.xmm[xmm1.index()] = pack_f32x4([
+        random_pos_f32(&mut rng),
+        random_pos_f32(&mut rng),
+        random_pos_f32(&mut rng),
+        random_pos_f32(&mut rng),
+    ]);
+
+    let program = Program {
+        insts: vec![
+            Inst::Divps {
+                dst: xmm0,
+                src: Operand::Reg(xmm1),
+            },
+            Inst::Sqrtps {
+                dst: xmm2,
+                src: Operand::Reg(xmm0),
+            },
+        ],
+    };
+
+    let mem = vec![0u8; 64];
+    assert_jit_matches_interp(program.clone(), state.clone(), mem.clone());
+
+    let (_, _, wasm) = run_jit(&program, &state, &mem);
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::F32x4Div));
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::F32x4Sqrt));
+}
+
+#[test]
+fn wasm_simd_f64x2_div_sqrt() {
+    let mut rng = StdRng::seed_from_u64(8);
+    let xmm0 = XmmReg::new(0).unwrap();
+    let xmm1 = XmmReg::new(1).unwrap();
+    let xmm2 = XmmReg::new(2).unwrap();
+
+    let mut state = SseState::default();
+    state.xmm[xmm0.index()] = pack_f64x2([random_pos_f64(&mut rng), random_pos_f64(&mut rng)]);
+    state.xmm[xmm1.index()] = pack_f64x2([random_pos_f64(&mut rng), random_pos_f64(&mut rng)]);
+
+    let program = Program {
+        insts: vec![
+            Inst::Divpd {
+                dst: xmm0,
+                src: Operand::Reg(xmm1),
+            },
+            Inst::Sqrtpd {
+                dst: xmm2,
+                src: Operand::Reg(xmm0),
+            },
+        ],
+    };
+
+    let mem = vec![0u8; 64];
+    assert_jit_matches_interp(program.clone(), state.clone(), mem.clone());
+
+    let (_, _, wasm) = run_jit(&program, &state, &mem);
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::F64x2Div));
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::F64x2Sqrt));
 }
 
 #[test]
