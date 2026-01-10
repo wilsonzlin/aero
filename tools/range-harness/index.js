@@ -241,9 +241,51 @@ async function readBodyAndCount(body, { byteLimit, abortController }) {
   if (!body) return { bytes: 0, abortedEarly: false };
   let bytes = 0;
   let abortedEarly = false;
+
+  // Node's fetch() (Undici) returns a WHATWG ReadableStream. Prefer the reader
+  // API (available in Node 18+) over `for await` in case async-iterability
+  // differs across Node versions.
+  if (typeof body.getReader === 'function') {
+    const reader = body.getReader();
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) bytes += value.byteLength ?? value.length ?? 0;
+        if (byteLimit != null && bytes >= byteLimit) {
+          abortedEarly = true;
+          abortController?.abort();
+          try {
+            await reader.cancel();
+          } catch {
+            // ignore
+          }
+          break;
+        }
+      }
+    } catch (err) {
+      // If we abort a response to avoid downloading the full object (e.g. server
+      // ignored Range and returned 200), the stream will typically error. That is
+      // expected; we still want to report what we read.
+      if (abortController?.signal?.aborted) {
+        abortedEarly = true;
+      } else {
+        throw err;
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        // ignore
+      }
+    }
+    return { bytes, abortedEarly };
+  }
+
   try {
     for await (const chunk of body) {
-      bytes += chunk.length;
+      bytes += chunk?.byteLength ?? chunk?.length ?? 0;
       if (byteLimit != null && bytes >= byteLimit) {
         abortedEarly = true;
         abortController?.abort();
