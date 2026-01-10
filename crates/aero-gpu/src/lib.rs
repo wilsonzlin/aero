@@ -20,6 +20,7 @@ mod present;
 #[cfg(feature = "diff-engine")]
 mod tile_diff;
 pub mod frame_source;
+pub mod shader_lib;
 mod recovery;
 mod surface;
 mod time;
@@ -66,3 +67,6 @@ pub use upload::{
     UploadStats,
 };
 pub use wgpu_integration::{register_wgpu_uncaptured_error_handler, wgpu_error_to_event};
+
+#[cfg(test)]
+mod tests;

@@ -27,3 +27,4 @@ aero-shared = { path = "../aero-shared" }
 pollster = "0.3"
 pretty_assertions = "1"
 serde_json = "1"
+naga = { version = "0.20.0", features = ["wgsl-in", "glsl-out"] }

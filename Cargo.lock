@@ -194,6 +194,7 @@ dependencies = [
  "bytemuck",
  "futures-intrusive",
  "lru 0.16.3",
+ "naga 0.20.0",
  "pollster",
  "pretty_assertions",
  "serde",

@@ -8,6 +8,13 @@
 // This prevents the classic "double gamma" and "wrong alpha mode" bugs that cause
 // dark output or haloing around translucent UI when composited by the browser.
 
+struct ViewportTransform {
+    // Clip-space transform (scale, offset). The host can use this to implement
+    // letterboxing/pillarboxing when presenting.
+    scale: vec2<f32>,
+    offset: vec2<f32>,
+}
+
 struct VsOut {
     @builtin(position) position: vec4<f32>,
     // UV origin is TOP-LEFT (0,0) to match D3D/Windows conventions.
@@ -24,9 +31,10 @@ const FLAG_PREMULTIPLY_ALPHA: u32 = 2u;
 const FLAG_FORCE_OPAQUE_ALPHA: u32 = 4u;
 const FLAG_FLIP_Y: u32 = 8u;
 
-@group(0) @binding(0) var input_tex: texture_2d<f32>;
-@group(0) @binding(1) var input_sampler: sampler;
-@group(0) @binding(2) var<uniform> params: BlitParams;
+@group(0) @binding(0) var<uniform> viewport: ViewportTransform;
+@group(0) @binding(1) var input_tex: texture_2d<f32>;
+@group(0) @binding(2) var input_sampler: sampler;
+@group(0) @binding(3) var<uniform> params: BlitParams;
 
 fn srgb_encode_channel(x: f32) -> f32 {
     let v = clamp(x, 0.0, 1.0);
@@ -46,22 +54,35 @@ fn srgb_encode(rgb: vec3<f32>) -> vec3<f32> {
 
 @vertex
 fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
-    // Fullscreen triangle.
-    var positions = array<vec2<f32>, 3>(
+    // Fullscreen quad (two triangles). This is used instead of the classic fullscreen
+    // triangle so that viewport scale/offset can letterbox/pillarbox correctly.
+    var positions = array<vec2<f32>, 6>(
         vec2<f32>(-1.0, -1.0),
-        vec2<f32>(3.0, -1.0),
-        vec2<f32>(-1.0, 3.0),
+        vec2<f32>(1.0, -1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, 1.0),
     );
 
-    let xy = positions[vid];
+    // TOP-LEFT UV origin:
+    // (-1,+1) => (0,0)
+    // (+1,-1) => (1,1)
+    var uvs = array<vec2<f32>, 6>(
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(1.0, 0.0),
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(1.0, 0.0),
+        vec2<f32>(0.0, 0.0),
+    );
+
+    let base_pos = positions[vid];
+    let xy = base_pos * viewport.scale + viewport.offset;
 
     var out: VsOut;
     out.position = vec4<f32>(xy, 0.0, 1.0);
-
-    // Map NDC -> UV with a TOP-LEFT origin.
-    // (-1,+1) => (0,0)
-    // (+1,-1) => (1,1)
-    out.uv = vec2<f32>((xy.x + 1.0) * 0.5, (1.0 - xy.y) * 0.5);
+    out.uv = uvs[vid];
     return out;
 }
 
