@@ -47,6 +47,25 @@ test('VM reports resource limit errors and can reset without reload', async ({ p
   await page.waitForFunction(() => window.__aeroVm?.lastHeartbeatAt && window.__aeroVm.lastHeartbeatAt > 0);
 });
 
+test('VM enforces cache limits without killing the VM', async ({ page }) => {
+  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+  await page.waitForSelector('#vm-safety-panel');
+
+  await page.fill('#vm-max-disk-cache-mib', '1');
+  await page.click('#vm-start-coop');
+  await page.waitForFunction(() => window.__aeroVm?.lastHeartbeatAt && window.__aeroVm.lastHeartbeatAt > 0);
+
+  await page.fill('#vm-cache-write-mib', '2');
+  await page.click('#vm-write-disk-cache');
+
+  await page.waitForFunction(() => {
+    const text = document.querySelector('#vm-error')?.textContent ?? '';
+    return text.includes('ResourceLimitExceeded') || text.includes('disk cache request');
+  });
+
+  await page.waitForFunction(() => window.__aeroVm?.state === 'running');
+});
+
 test('VM auto-saves a crash snapshot when enabled', async ({ page }) => {
   await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
   await page.waitForSelector('#vm-safety-panel');

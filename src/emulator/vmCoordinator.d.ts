@@ -20,6 +20,17 @@ export type VmCoordinatorStartOptions = {
   mode?: "cooperativeInfiniteLoop" | "nonYieldingLoop" | "crash";
 };
 
+export type VmCacheKind = "disk" | "shader";
+
+export type VmCacheWriteResult = {
+  type: "cacheWriteResult";
+  requestId: number;
+  cache: VmCacheKind;
+  ok: boolean;
+  stats?: { diskCacheBytes: number; shaderCacheBytes: number };
+  error?: unknown;
+};
+
 export class VmCoordinator extends EventTarget {
   constructor(options?: { config?: VmCoordinatorConfig; workerUrl?: URL });
 
@@ -39,6 +50,7 @@ export class VmCoordinator extends EventTarget {
   step(): Promise<void>;
   setBackgrounded(backgrounded: boolean): void;
   requestSnapshot(options?: { reason?: string }): Promise<unknown>;
+  writeCacheEntry(options: { cache: VmCacheKind; sizeBytes: number; key?: string }): Promise<VmCacheWriteResult>;
   shutdown(): void;
   reset(): void;
 }

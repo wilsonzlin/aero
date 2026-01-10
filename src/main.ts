@@ -308,6 +308,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
   const heartbeatLine = el('div', { class: 'mono', id: 'vm-heartbeat', text: 'heartbeat=0' });
   const tickLine = el('div', { class: 'mono', id: 'vm-ticks', text: 'uiTicks=0' });
   const snapshotSavedLine = el('div', { class: 'mono', id: 'vm-snapshot-saved', text: 'snapshotSavedTo=none' });
+  const resourcesLine = el('div', { class: 'mono', id: 'vm-resources', text: 'resources=unknown' });
 
   const errorOut = el('pre', { id: 'vm-error', text: '' });
   const snapshotOut = el('pre', { id: 'vm-snapshot', text: '' });
@@ -317,6 +318,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
   const maxDiskCacheMiB = el('input', { id: 'vm-max-disk-cache-mib', type: 'number', value: '128', min: '1', step: '1' }) as HTMLInputElement;
   const maxShaderCacheMiB = el('input', { id: 'vm-max-shader-cache-mib', type: 'number', value: '64', min: '1', step: '1' }) as HTMLInputElement;
   const autoSaveSnapshot = el('input', { id: 'vm-auto-snapshot', type: 'checkbox' }) as HTMLInputElement;
+  const cacheWriteMiB = el('input', { id: 'vm-cache-write-mib', type: 'number', value: '1', min: '0', step: '1' }) as HTMLInputElement;
 
   let vm: VmCoordinator | null = null;
   let visibilityListenerInstalled = false;
@@ -337,6 +339,16 @@ function renderEmulatorSafetyPanel(): HTMLElement {
       // ignore
     }
     snapshotSavedLine.textContent = `snapshotSavedTo=${vm?.lastSnapshotSavedTo ?? persistedSavedTo}`;
+
+    const resources = (vm?.lastHeartbeat as { resources?: { guestRamBytes?: number; diskCacheBytes?: number; shaderCacheBytes?: number } } | null)
+      ?.resources;
+    const guestRamBytes = resources?.guestRamBytes ?? 0;
+    const diskCacheBytes = resources?.diskCacheBytes ?? 0;
+    const shaderCacheBytes = resources?.shaderCacheBytes ?? 0;
+    resourcesLine.textContent =
+      `guestRamMiB=${(guestRamBytes / (1024 * 1024)).toFixed(1)} ` +
+      `diskCacheMiB=${(diskCacheBytes / (1024 * 1024)).toFixed(1)} ` +
+      `shaderCacheMiB=${(shaderCacheBytes / (1024 * 1024)).toFixed(1)}`;
 
     if (vm?.lastSnapshot) {
       snapshotOut.textContent = JSON.stringify(vm.lastSnapshot, null, 2);
@@ -486,6 +498,48 @@ function renderEmulatorSafetyPanel(): HTMLElement {
     },
   }) as HTMLButtonElement;
 
+  const writeDiskCacheButton = el('button', {
+    id: 'vm-write-disk-cache',
+    text: 'Write disk cache entry',
+    onclick: async () => {
+      if (!vm || (vm.state !== 'running' && vm.state !== 'paused')) {
+        errorOut.textContent = 'Start the VM first.';
+        return;
+      }
+      try {
+        const sizeBytes = Math.max(0, Number(cacheWriteMiB.value || 0)) * 1024 * 1024;
+        const result = await vm.writeCacheEntry({ cache: 'disk', sizeBytes });
+        if (!result.ok) {
+          errorOut.textContent = JSON.stringify(result.error, null, 2);
+        }
+        update();
+      } catch (err) {
+        errorOut.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  }) as HTMLButtonElement;
+
+  const writeShaderCacheButton = el('button', {
+    id: 'vm-write-shader-cache',
+    text: 'Write shader cache entry',
+    onclick: async () => {
+      if (!vm || (vm.state !== 'running' && vm.state !== 'paused')) {
+        errorOut.textContent = 'Start the VM first.';
+        return;
+      }
+      try {
+        const sizeBytes = Math.max(0, Number(cacheWriteMiB.value || 0)) * 1024 * 1024;
+        const result = await vm.writeCacheEntry({ cache: 'shader', sizeBytes });
+        if (!result.ok) {
+          errorOut.textContent = JSON.stringify(result.error, null, 2);
+        }
+        update();
+      } catch (err) {
+        errorOut.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  }) as HTMLButtonElement;
+
   const loadSavedSnapshotButton = el('button', {
     id: 'vm-load-saved-snapshot',
     text: 'Load saved crash snapshot',
@@ -539,6 +593,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
       el('label', { text: 'auto-save snapshot on crash:' }),
       autoSaveSnapshot,
     ),
+    el('div', { class: 'row' }, el('label', { text: 'cacheWriteMiB:' }), cacheWriteMiB, writeDiskCacheButton, writeShaderCacheButton),
     el(
       'div',
       { class: 'row' },
@@ -556,6 +611,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
     heartbeatLine,
     tickLine,
     snapshotSavedLine,
+    resourcesLine,
     el('h3', { text: 'Last error' }),
     errorOut,
     el('h3', { text: 'Last snapshot' }),
