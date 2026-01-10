@@ -24,6 +24,76 @@ declare global {
 // microbenchmarks without requiring the emulator/guest OS.
 installAeroGlobal();
 
+type CpuWorkerToMainMessage =
+  | { type: 'CpuWorkerReady' }
+  | {
+      type: 'CpuWorkerResult';
+      jit_executions: number;
+      helper_executions: number;
+      interp_executions: number;
+      installed_table_index: number | null;
+    }
+  | { type: 'CpuWorkerError'; reason: string };
+
+type CpuWorkerStartMessage = {
+  type: 'CpuWorkerStart';
+  iterations?: number;
+  threshold?: number;
+};
+
+declare global {
+  interface Window {
+    __jit_smoke_result?: CpuWorkerToMainMessage & { type: 'CpuWorkerResult' };
+  }
+}
+
+async function runJitSmokeTest(output: HTMLPreElement): Promise<void> {
+  output.textContent = '';
+
+  let cpuWorker: Worker;
+  try {
+    cpuWorker = new Worker(new URL('./workers/cpu-worker.ts', import.meta.url), {
+      type: 'module',
+    });
+  } catch (err) {
+    output.textContent = err instanceof Error ? err.message : String(err);
+    return;
+  }
+
+  const result = await new Promise<CpuWorkerToMainMessage>((resolve) => {
+    const settle = (msg: CpuWorkerToMainMessage) => {
+      resolve(msg);
+      cpuWorker.terminate();
+    };
+
+    cpuWorker.addEventListener('message', (ev: MessageEvent<CpuWorkerToMainMessage>) => {
+      const msg = ev.data;
+      if (msg.type === 'CpuWorkerReady') {
+        const start: CpuWorkerStartMessage = { type: 'CpuWorkerStart' };
+        cpuWorker.postMessage(start);
+        return;
+      }
+      if (msg.type === 'CpuWorkerResult' || msg.type === 'CpuWorkerError') {
+        settle(msg);
+      }
+    });
+
+    cpuWorker.addEventListener('error', (ev) => {
+      settle({ type: 'CpuWorkerError', reason: ev instanceof ErrorEvent ? ev.message : String(ev) });
+    });
+
+    cpuWorker.addEventListener('messageerror', () => {
+      settle({ type: 'CpuWorkerError', reason: 'worker message deserialization failed' });
+    });
+  });
+
+  if (result.type === 'CpuWorkerResult') {
+    window.__jit_smoke_result = result;
+  }
+
+  output.textContent = JSON.stringify(result, null, 2);
+}
+
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   props: Record<string, unknown> = {},
@@ -323,6 +393,41 @@ function renderRemoteDiskPanel(): HTMLElement {
   );
 }
 
+function renderJitSmokePanel(report: PlatformFeatureReport): HTMLElement {
+  const output = el('pre', { text: '' });
+  const button = el('button', { text: 'Run JIT smoke test' }) as HTMLButtonElement;
+
+  const hint = el('div', {
+    class: 'mono',
+    text: report.wasmThreads
+      ? 'Spawns CPU+JIT workers; CPU requests compilation, JIT emits a WASM block, CPU installs it into a table and executes it.'
+      : 'Requires cross-origin isolation + SharedArrayBuffer + Atomics (wasmThreads=true).',
+  });
+
+  const run = () => {
+    void runJitSmokeTest(output).catch((err) => {
+      output.textContent = err instanceof Error ? err.message : String(err);
+    });
+  };
+  button.onclick = run;
+
+  if (!report.wasmThreads) {
+    button.disabled = true;
+    output.textContent = 'Skipped (wasmThreads=false).';
+  } else {
+    run();
+  }
+
+  return el(
+    'div',
+    { class: 'panel' },
+    el('h2', { text: 'JIT (Tier-1) smoke test' }),
+    hint,
+    el('div', { class: 'row' }, button),
+    output,
+  );
+}
+
 let perfHud: HTMLElement | null = null;
 let perfStarted = false;
 
@@ -330,7 +435,7 @@ function renderPerfPanel(report: PlatformFeatureReport): HTMLElement {
   const supported = report.sharedArrayBuffer && typeof Atomics !== 'undefined';
   const hud = el('pre', { text: supported ? 'Initializing…' : 'Perf telemetry unavailable (SharedArrayBuffer/Atomics missing).' });
   perfHud = hud;
-
+ 
   return el(
     'div',
     { class: 'panel' },
@@ -801,6 +906,7 @@ function render(): void {
     renderOpfsPanel(),
     renderRemoteDiskPanel(),
     renderAudioPanel(),
+    renderJitSmokePanel(report),
     renderPerfPanel(report),
     renderHotspotsPanel(report),
     renderEmulatorSafetyPanel(),
