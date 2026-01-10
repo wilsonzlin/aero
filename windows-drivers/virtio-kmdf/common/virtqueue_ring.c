@@ -57,6 +57,8 @@ VirtqueueRingLayoutCompute(
         return STATUS_INVALID_PARAMETER;
     }
 
+    RtlZeroMemory(Layout, sizeof(*Layout));
+
     /*
      * Split ring sizes (virtio spec):
      *   desc  = 16 * queueSize
