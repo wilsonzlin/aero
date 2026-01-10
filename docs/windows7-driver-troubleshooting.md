@@ -50,6 +50,21 @@ If you need to debug driver install failures, these are the most useful artifact
   - `C:\Windows\inf\setupapi.dev.log`
     - Tip: open it and search for the device’s Hardware ID or the `.inf` name.
 
+## Finding a device's Hardware IDs (to pick the right driver)
+
+If you are manually binding a driver (or filing a bug), the **Hardware IDs** are the most useful identifier.
+
+1. Open **Device Manager**.
+2. Right-click the device → **Properties**.
+3. Open the **Details** tab.
+4. Select **Hardware Ids**.
+
+You can use these IDs to:
+
+- confirm the VM is presenting the device you think it is,
+- verify you are installing the correct driver package (especially x86 vs x64 and device class),
+- search `setupapi.dev.log` to see why a driver did (or didn’t) bind.
+
 ## Tip: capture the BSOD stop code (instead of reboot loops)
 
 If Windows blue-screens and immediately reboots, you lose the most important clue (the stop code).

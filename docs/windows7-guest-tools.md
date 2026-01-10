@@ -28,6 +28,18 @@ This guide walks you through installing Windows 7 in Aero using the **baseline (
   - Disk: **30–40 GB** recommended for a comfortable Win7 install.
   - Memory: **2 GB** minimum (x86), **3–4 GB** recommended (x64).
 
+### Device profiles used in this guide
+
+This guide intentionally starts with **baseline (fully emulated)** devices for maximum installer compatibility, then switches to **paravirtual** devices for performance after Guest Tools is installed.
+
+The exact names vary by Aero version/UI, but the mapping is typically:
+
+| Subsystem | Baseline (install/recovery) | Performance (after Guest Tools) | Notes |
+| --- | --- | --- | --- |
+| Storage | AHCI (SATA) | virtio-blk | Switch this first; easiest to brick boot if done too early. |
+| Network | Intel e1000 | virtio-net | If networking breaks, switch back to e1000 and boot. |
+| Graphics | VGA | Aero GPU | If you get a black screen, switch back to VGA and recover. |
+
 ### Why Windows 7 SP1 matters
 
 Windows 7 RTM is missing years of fixes. SP1 significantly reduces installer and driver friction.
@@ -279,6 +291,23 @@ If Windows fails to boot after switching to **virtio-blk** (common symptoms: boo
 3. Boot Windows.
 4. Re-run `setup.cmd` as Administrator and reboot once more.
 5. Try switching to virtio-blk again (and avoid changing multiple device classes at once).
+
+### Rollback if virtio-net fails
+
+If you lose networking after switching **e1000 → virtio-net**:
+
+1. Power off the VM.
+2. Switch the NIC back to **e1000**.
+3. Boot Windows and troubleshoot virtio-net driver binding from a working desktop.
+
+### Rollback if Aero GPU fails
+
+If you get a black/blank screen after switching **VGA → Aero GPU**:
+
+1. Power off the VM.
+2. Switch graphics back to **VGA**.
+3. Boot Windows and follow the recovery steps in:
+   - [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md#issue-black-screen-after-switching-to-the-aero-gpu)
 
 ## Optional: Slipstream KB3033929 and/or drivers into your Windows 7 ISO
 
