@@ -31,6 +31,7 @@ export class FrameTimeStats {
 
   pushFrameTimeMs(frameTimeMs: number): void;
   merge(other: FrameTimeStats): void;
+  clear(): void;
   getRecentFrameTimesMs(): number[];
   summary(): FrameTimeStatsSummary;
   toJSON(): unknown;
@@ -53,6 +54,7 @@ export class LogHistogram {
   record(value: number, count?: number): void;
   merge(other: LogHistogram): void;
   quantile(q: number): number;
+  clear(): void;
   toJSON(): unknown;
   static fromJSON(data: unknown): LogHistogram;
 }
@@ -71,6 +73,7 @@ export class RunningStats {
 
   push(value: number): void;
   merge(other: RunningStats): void;
+  clear(): void;
   toJSON(): unknown;
   static fromJSON(data: unknown): RunningStats;
 }
@@ -82,6 +85,7 @@ export class FixedRingBuffer<T = unknown> {
   get size(): number;
 
   push(value: T): void;
+  clear(): void;
   toArray(): T[];
 }
 
@@ -91,4 +95,3 @@ export function msToUs(ms: number): number;
 export function usToMs(us: number): number;
 
 export function computeMips(args: { instructions: number; elapsedMs: number }): number;
-
