@@ -55,8 +55,12 @@ FORBIDDEN_EXTENSIONS=(
 # smaller size cap for allowlisted items.
 ALLOWLIST_FORBIDDEN_EXTENSION_GLOBS=(
   assets/bios.bin
+  test_images/boot_sectors/int_sanity.bin
+  tests/fixtures/bootsector.bin
+  tests/fixtures/realmode_vbe_test.bin
   tests/fixtures/boot/*.bin
   tests/fixtures/boot/*.img
+  tools/qemu_diff/boot/boot.bin
 )
 
 # Forbidden path patterns (case-insensitive, bash patterns).

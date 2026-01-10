@@ -114,8 +114,12 @@ bench-results/
 
 # Allow checked-in BIOS and tiny deterministic in-repo fixtures.
 !assets/bios.bin
+!test_images/boot_sectors/int_sanity.bin
+!tests/fixtures/bootsector.bin
+!tests/fixtures/realmode_vbe_test.bin
 !tests/fixtures/boot/*.img
 !tests/fixtures/boot/*.bin
+!tools/qemu_diff/boot/boot.bin
 
 # qemu_diff boot sector build byproducts (boot.bin is committed)
 tools/qemu_diff/boot/boot.o
