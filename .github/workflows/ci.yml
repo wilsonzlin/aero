@@ -1,0 +1,265 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  AERO_REQUIRE_WEBGPU: "0"
+  AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
+  AERO_WASM_CRATE_DIR: ${{ vars.AERO_WASM_CRATE_DIR }}
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Use --locked when Cargo.lock exists
+        id: cargo-locked
+        run: |
+          set -euo pipefail
+          if [[ -f Cargo.lock ]]; then
+            echo "locked=--locked" >> "$GITHUB_OUTPUT"
+          else
+            echo "locked=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy ${{ steps.cargo-locked.outputs.locked }} --workspace --all-targets --all-features -- -D warnings
+
+      - name: cargo test
+        run: cargo test ${{ steps.cargo-locked.outputs.locked }} --workspace --all-features
+
+  wasm:
+    name: WASM (wasm-pack build + test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+
+      - name: Determine wasm crate directory
+        id: wasm-crate
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${AERO_WASM_CRATE_DIR:-}" ]]; then
+            dir="$AERO_WASM_CRATE_DIR"
+          else
+            if [[ ! -f Cargo.toml ]]; then
+              echo "Cargo.toml not found at repo root; set AERO_WASM_CRATE_DIR to the crate directory containing Cargo.toml." >&2
+              exit 1
+            fi
+
+            manifest_path="$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[] | select(any(.targets[]; any(.kind[]; . == "cdylib"))) | .manifest_path' | head -n 1)"
+            if [[ -z "$manifest_path" || "$manifest_path" == "null" ]]; then
+              echo "Unable to auto-detect a wasm-pack crate (cdylib). Set AERO_WASM_CRATE_DIR to the wasm crate directory." >&2
+              exit 1
+            fi
+            dir="$(dirname "$manifest_path")"
+          fi
+
+          if [[ ! -f "$dir/Cargo.toml" ]]; then
+            echo "WASM crate directory '$dir' does not contain Cargo.toml." >&2
+            exit 1
+          fi
+
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+
+      - name: Use --locked when Cargo.lock exists
+        id: cargo-locked
+        run: |
+          set -euo pipefail
+          if [[ -f Cargo.lock ]]; then
+            echo "locked=--locked" >> "$GITHUB_OUTPUT"
+          else
+            echo "locked=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: wasm-pack build
+        working-directory: ${{ steps.wasm-crate.outputs.dir }}
+        run: wasm-pack build --release --target web -- ${{ steps.cargo-locked.outputs.locked }}
+
+      - name: wasm-pack test (node)
+        working-directory: ${{ steps.wasm-crate.outputs.dir }}
+        run: wasm-pack test --node -- ${{ steps.cargo-locked.outputs.locked }}
+
+  node-unit:
+    name: Node (lint, unit, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine Node workspace directory
+        id: node-dir
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${AERO_NODE_DIR:-}" ]]; then
+            dir="$AERO_NODE_DIR"
+          elif [[ -f package.json ]]; then
+            dir="."
+          elif [[ -f frontend/package.json ]]; then
+            dir="frontend"
+          elif [[ -f web/package.json ]]; then
+            dir="web"
+          else
+            echo "package.json not found. Set AERO_NODE_DIR to the directory containing package.json." >&2
+            exit 1
+          fi
+
+          lockfile="$dir/package-lock.json"
+          if [[ "$dir" == "." ]]; then
+            lockfile="package-lock.json"
+          fi
+          if [[ ! -f "$lockfile" ]]; then
+            echo "package-lock.json not found at '$lockfile'. This workflow expects npm; ensure a lockfile exists." >&2
+            exit 1
+          fi
+
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ${{ steps.node-dir.outputs.lockfile }}
+
+      - name: Install dependencies
+        working-directory: ${{ steps.node-dir.outputs.dir }}
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Lint (if present)
+        working-directory: ${{ steps.node-dir.outputs.dir }}
+        run: npm run lint --if-present
+
+      - name: Unit tests
+        working-directory: ${{ steps.node-dir.outputs.dir }}
+        run: npm run test:unit
+
+      - name: Production build
+        working-directory: ${{ steps.node-dir.outputs.dir }}
+        run: npm run build
+
+  playwright:
+    name: Playwright (browser automation)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine Node workspace directory
+        id: node-dir
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${AERO_NODE_DIR:-}" ]]; then
+            dir="$AERO_NODE_DIR"
+          elif [[ -f package.json ]]; then
+            dir="."
+          elif [[ -f frontend/package.json ]]; then
+            dir="frontend"
+          elif [[ -f web/package.json ]]; then
+            dir="web"
+          else
+            echo "package.json not found. Set AERO_NODE_DIR to the directory containing package.json." >&2
+            exit 1
+          fi
+
+          lockfile="$dir/package-lock.json"
+          if [[ "$dir" == "." ]]; then
+            lockfile="package-lock.json"
+          fi
+          if [[ ! -f "$lockfile" ]]; then
+            echo "package-lock.json not found at '$lockfile'. This workflow expects npm; ensure a lockfile exists." >&2
+            exit 1
+          fi
+
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ${{ steps.node-dir.outputs.lockfile }}
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles(steps.node-dir.outputs.lockfile) }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install dependencies
+        working-directory: ${{ steps.node-dir.outputs.dir }}
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Install Playwright browsers
+        working-directory: ${{ steps.node-dir.outputs.dir }}
+        run: npx playwright install --with-deps
+
+      - name: Playwright tests
+        working-directory: ${{ steps.node-dir.outputs.dir }}
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            ${{ steps.node-dir.outputs.dir }}/playwright-report/
+            ${{ steps.node-dir.outputs.dir }}/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
