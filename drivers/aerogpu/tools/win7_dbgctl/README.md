@@ -8,6 +8,9 @@ It talks to the installed AeroGPU driver via **`DxgkDdiEscape`** using `D3DKMTEs
 
 Minimum supported commands:
 
+- `aerogpu_dbgctl --list-displays`  
+  Prints the available `\\.\DISPLAY*` names to use with `--display`.
+
 - `aerogpu_dbgctl --query-version`  
   Prints the AeroGPU MMIO/device version as reported by the KMD via `DxgkDdiEscape`.
 
@@ -29,6 +32,7 @@ aerogpu_dbgctl [--display \\.\DISPLAY1] [--ring-id N] [--timeout-ms N] <command>
 Examples:
 
 ```
+aerogpu_dbgctl --list-displays
 aerogpu_dbgctl --query-version
 aerogpu_dbgctl --query-fence
 aerogpu_dbgctl --dump-ring --ring-id 0

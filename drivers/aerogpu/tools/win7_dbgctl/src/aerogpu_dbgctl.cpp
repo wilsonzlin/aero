@@ -78,6 +78,7 @@ static void PrintUsage() {
            L"  aerogpu_dbgctl [--display \\\\.\\DISPLAY1] [--ring-id N] [--timeout-ms N] <command>\n"
            L"\n"
            L"Commands:\n"
+           L"  --list-displays\n"
            L"  --query-version\n"
            L"  --query-fence\n"
            L"  --dump-ring\n"
@@ -161,6 +162,29 @@ static bool GetPrimaryDisplayName(wchar_t out[CCHDEVICENAME]) {
   wcsncpy(out, L"\\\\.\\DISPLAY1", CCHDEVICENAME - 1);
   out[CCHDEVICENAME - 1] = 0;
   return true;
+}
+
+static int ListDisplays() {
+  DISPLAY_DEVICEW dd;
+  ZeroMemory(&dd, sizeof(dd));
+  dd.cb = sizeof(dd);
+
+  wprintf(L"Display devices:\n");
+  for (DWORD i = 0; EnumDisplayDevicesW(NULL, i, &dd, 0); ++i) {
+    const bool primary = (dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0;
+    const bool active = (dd.StateFlags & DISPLAY_DEVICE_ACTIVE) != 0;
+    wprintf(L"  [%lu] %s%s%s\n",
+            (unsigned long)i,
+            dd.DeviceName,
+            primary ? L" (primary)" : L"",
+            active ? L" (active)" : L"");
+    wprintf(L"       %s\n", dd.DeviceString);
+
+    ZeroMemory(&dd, sizeof(dd));
+    dd.cb = sizeof(dd);
+  }
+
+  return 0;
 }
 
 static NTSTATUS SendAerogpuEscape(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, void *buf, UINT bufSize) {
@@ -304,6 +328,7 @@ int wmain(int argc, wchar_t **argv) {
   uint32_t timeoutMs = 2000;
   enum {
     CMD_NONE = 0,
+    CMD_LIST_DISPLAYS,
     CMD_QUERY_VERSION,
     CMD_QUERY_FENCE,
     CMD_DUMP_RING,
@@ -363,6 +388,10 @@ int wmain(int argc, wchar_t **argv) {
       cmd = (cmd == CMD_NONE) ? CMD_SELFTEST : CMD_NONE;
       continue;
     }
+    if (wcscmp(a, L"--list-displays") == 0) {
+      cmd = (cmd == CMD_NONE) ? CMD_LIST_DISPLAYS : CMD_NONE;
+      continue;
+    }
 
     fwprintf(stderr, L"Unknown argument: %s\n", a);
     PrintUsage();
@@ -372,6 +401,10 @@ int wmain(int argc, wchar_t **argv) {
   if (cmd == CMD_NONE) {
     PrintUsage();
     return 1;
+  }
+
+  if (cmd == CMD_LIST_DISPLAYS) {
+    return ListDisplays();
   }
 
   D3DKMT_FUNCS f;
@@ -405,6 +438,9 @@ int wmain(int argc, wchar_t **argv) {
 
   int rc = 0;
   switch (cmd) {
+  case CMD_LIST_DISPLAYS:
+    rc = ListDisplays();
+    break;
   case CMD_QUERY_VERSION:
     rc = DoQueryVersion(&f, open.hAdapter);
     break;
