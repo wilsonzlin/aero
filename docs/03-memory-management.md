@@ -352,6 +352,136 @@ impl Tlb {
 
 ---
 
+## JIT-visible TLB (Baseline JIT Memory Fast Path)
+
+The interpreter can call `Mmu::translate()` (and then `MemoryBus::{read,write}_physical()`) for every memory access. In JIT-compiled code this would mean an imported call per load/store, which is typically the dominant overhead in memory-heavy guest code.
+
+To make RAM accesses cheap in JITed WASM, we expose a **small, fixed-layout TLB** in linear memory that the JIT can read directly, and we define two slow-path exits:
+
+1. `mmu_translate_slow(vaddr, access)` — page table walk + permission checks, fills the TLB, returns a translation result or raises `#PF`.
+2. `jit_exit_mmio(vaddr, size, is_write, value?)` — return to the runtime when the physical address resolves to MMIO/ROM/unmapped, so the normal device/memory routing code runs.
+
+### Design requirements
+
+- **JIT-friendly layout:** `#[repr(C)]`, no pointers/Vecs inside the hot structure, stable offsets.
+- **Fast lookup:** direct-mapped, power-of-two entries; 2×64-bit loads on hit (`tag` + `data`).
+- **Cheap invalidation:** a changing `salt` (derived from address-space identity + epochs) makes a full flush O(1) without walking entries.
+- **Permission bits in the cache:** allow the JIT to reject disallowed accesses without re-walking page tables.
+
+### Minimal layout
+
+```rust
+pub const JIT_TLB_ENTRIES: usize = 256; // power-of-two for masking
+
+/// Hot entry format: two u64s to keep JIT codegen simple.
+#[repr(C)]
+pub struct JitTlbEntry {
+    /// Tag match: (vpn ^ salt). `0` means invalid.
+    pub tag: u64,
+    /// Packed: phys_page_base | flags (low 12 bits).
+    pub data: u64,
+}
+
+/// JIT-visible TLB stored in WASM linear memory (typically embedded in `CpuState`).
+#[repr(C)]
+pub struct JitTlb {
+    /// Incremented on events that invalidate translations (CR3 write, INVPCID, MMIO map changes).
+    pub epoch: u32,
+    pub _pad: u32,
+
+    /// "Salt" used when computing tags; changes whenever `epoch`/address space changes.
+    /// Split by privilege to avoid flushing on ring transitions (optional but recommended).
+    pub salt_user: u64,
+    pub salt_kernel: u64,
+
+    pub user: [JitTlbEntry; JIT_TLB_ENTRIES],
+    pub kernel: [JitTlbEntry; JIT_TLB_ENTRIES],
+}
+```
+
+This is intentionally not a full architectural iTLB/dTLB model; it is a **JIT acceleration structure**. The interpreter/MMU can continue using a richer, higher-level TLB internally if desired, while mirroring translations into this compact representation for JIT consumption.
+
+### `data` bit packing
+
+`data` is a single word so the JIT can load it once and then:
+
+- test permissions / routing flags
+- mask out the physical page base
+- compute `paddr = phys_page_base | (vaddr & 0xFFF)`
+
+For simplicity, `phys_page_base` is always **4KB-aligned**, even when the guest mapping uses 2MB/1GB large pages. The slow path computes the final `paddr` for the requested `vaddr` and then inserts `phys_page_base = paddr & !0xFFF` into the JIT TLB. This keeps the JIT fast path uniform and makes the “crosses a 4KB boundary” guard sufficient.
+
+Suggested layout:
+
+```
+data: u64
+  [63:12] phys_page_base (4KB-aligned physical address base)
+  [11:0]  flags
+
+flags:
+  bit 0: READ permitted
+  bit 1: WRITE permitted
+  bit 2: EXEC permitted
+  bit 3: IS_RAM (1 = direct linear-memory access is valid; 0 = exit to runtime)
+  bit 4: CODE_WATCH (optional: writes must notify code invalidation/versioning)
+  bits 5..11: reserved (page size, PAT/MTRR classification, etc.)
+```
+
+`IS_RAM` should only be set when the resolved physical range is backed by the emulator’s guest RAM buffer (not MMIO/ROM holes), i.e. when a direct `load/store` from WASM memory is semantically correct.
+
+### Self-modifying code and store-side invalidation
+
+Compiled blocks typically guard correctness by checking a **code version** for the physical pages that back the translated instruction bytes (e.g. “page generation” checks at block entry).
+
+Direct JIT RAM stores must not bypass that mechanism. A practical approach is:
+
+- Maintain a `code_page_version[pfn]` counter for each guest physical 4KB page that currently contains translated code.
+- When compiling a block, snapshot the `code_page_version` values for the code pages it depends on and validate them at block entry.
+- When a store targets a physical page that is in the code cache, bump the corresponding `code_page_version[pfn]`.
+
+To keep the store fast path cheap, `mmu_translate_slow` can set the `CODE_WATCH` flag in `JitTlbEntry::data` when the resolved physical page has a non-zero watcher/version counter. JIT code can then either:
+
+- call a lightweight helper `jit_notify_code_write(paddr)` only on `CODE_WATCH` stores, or
+- conservatively exit to the runtime on `CODE_WATCH` stores (slower, but rare in well-behaved code).
+
+### Lookup flow (inline in JIT)
+
+At block entry (or first memory op), the JIT should load `salt_{user,kernel}` into a WASM local to avoid reloading it on every access.
+
+For each inlined memory access:
+
+1. Compute `vaddr`
+2. (Optional but recommended) check `cross_page(vaddr, size)`; if it crosses a 4KB boundary, go slow-path
+3. Compute:
+   - `vpn = vaddr >> 12`
+   - `idx = (vpn as usize) & (JIT_TLB_ENTRIES - 1)`
+   - `expect_tag = vpn ^ salt`
+4. Load `entry.tag`; if mismatch → `mmu_translate_slow`
+5. Load `entry.data` and verify permission bits; if missing → `mmu_translate_slow` (which raises `#PF` with a correct error code)
+6. If `IS_RAM` is set:
+   - `phys_base = data & !0xFFF`
+   - `paddr = phys_base | (vaddr & 0xFFF)`
+   - perform the WASM `load/store` at `ram_base + paddr`
+7. Else: call `jit_exit_mmio(...)` and return to the runtime dispatcher
+
+### Slow-path translation contract
+
+`mmu_translate_slow(vaddr, access)` must:
+
+- perform a page table walk
+- enforce privilege + R/W/X checks (including distinguishing instruction fetch vs data access)
+- on success:
+  - compute `phys_page_base` and flags
+  - fill the corresponding `JitTlbEntry` (`tag` then `data`)
+  - return `data` (or `phys_page_base`) to the caller so it can continue without retrying
+- on failure: raise `#PF` and exit the JIT block (the exact mechanism is an implementation detail: trap, longjmp-like exit, or writing an exit reason into `CpuState`)
+
+### Invalidation / versioning
+
+- **CR3 write / INVPCID / global flush:** bump `epoch` and recompute the salts. Existing entries become unreachable because tags no longer match.
+- **INVLPG:** clear the matching entry’s `tag` (or set it to 0) in the appropriate set(s).
+- **MMIO map changes:** bump a separate “phys-map epoch” that is mixed into `salt_*`, or force a flush; otherwise stale `IS_RAM` classifications could cause incorrect direct RAM accesses.
+
 ## Memory Bus Implementation
 
 ### Physical Memory Regions

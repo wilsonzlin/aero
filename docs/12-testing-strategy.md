@@ -174,6 +174,83 @@ mod memory_tests {
 }
 ```
 
+### JIT vs Interpreter Memory Differential Tests
+
+Memory is where subtle correctness bugs hide (TLB invalidation, permission checks, MMIO routing, cross-page accesses). For the baseline JIT memory fast path we need **differential tests** that run the same guest program in:
+
+1. interpreter (reference)
+2. baseline JIT (candidate)
+
+…and compare architectural state after execution.
+
+```rust
+#[test]
+fn jit_memory_loop_matches_interpreter() {
+    // Program: tight RAM loop stressing loads/stores.
+    // - sequential accesses (TLB miss once per page)
+    // - random accesses (TLB pressure)
+    // - mixed sizes (1/2/4/8/16)
+    let program = assemble("
+        mov rsi, 0x100000      ; base
+        mov rcx, 1000000
+    loop:
+        mov rax, [rsi]
+        add rax, 1
+        mov [rsi], rax
+        add rsi, 8
+        dec rcx
+        jnz loop
+        hlt
+    ");
+
+    let interp = run_interpreter(&program);
+    let jit = run_baseline_jit(&program);
+
+    assert_eq!(jit.regs, interp.regs);
+    assert_eq!(jit.flags, interp.flags);
+    assert_eq!(jit.memory_digest(), interp.memory_digest());
+
+    // Performance sanity check: the JIT should not be calling translation helpers per access.
+    assert!(jit.stats.mmu_translate_slow_calls < 10_000);
+}
+```
+
+### Property tests for randomized memory ops
+
+```rust
+proptest! {
+    #[test]
+    fn jit_random_memory_ops_match_interpreter(ops in arbitrary_mem_ops()) {
+        let interp = run_ops_interpreter(&ops);
+        let jit = run_ops_baseline_jit(&ops);
+
+        prop_assert_eq!(jit.regs, interp.regs);
+        prop_assert_eq!(jit.flags, interp.flags);
+        prop_assert_eq!(jit.memory_digest(), interp.memory_digest());
+    }
+}
+```
+
+### MMIO exit validation
+
+```rust
+#[test]
+fn jit_mmio_access_causes_exit() {
+    // Map an MMIO region and execute a program that touches it.
+    let mmio_base = 0xFEC0_0000; // Local APIC (example)
+    let program = assemble("
+        mov eax, [0xFEC00030]   ; read APIC register
+        hlt
+    ");
+
+    let jit = run_baseline_jit(&program);
+
+    // The JIT must not directly load from RAM for MMIO ranges.
+    assert_eq!(jit.exit_reason, ExitReason::Mmio);
+    assert!(jit.stats.jit_exit_mmio_calls >= 1);
+}
+```
+
 ### Device Tests
 
 ```rust

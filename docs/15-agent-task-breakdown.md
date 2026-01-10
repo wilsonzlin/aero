@@ -170,6 +170,8 @@ pub trait GpuCommandProcessor {
 | CJ-013 | Optimizing JIT (Tier 2)                 | P1       | CJ-008..CJ-012 | Very High  |
 | CJ-014 | SIMD code generation                    | P1       | CJ-004         | High       |
 | CJ-015 | JIT test suite                          | P0       | CJ-007         | High       |
+| CJ-016 | Inline RAM loads/stores via JIT TLB fast-path | P0  | CJ-004, MM-012 | High       |
+| CJ-017 | MMIO/IO exits for JIT memory ops             | P0  | CJ-016, MM-003 | Medium     |
 
 
 ### Memory Tasks
@@ -188,6 +190,9 @@ pub trait GpuCommandProcessor {
 | MM-009 | Page fault handling                  | P0       | MM-006       | Medium     |
 | MM-010 | Sparse memory allocation             | P1       | MM-001       | Medium     |
 | MM-011 | Memory test suite                    | P0       | MM-006       | Medium     |
+| MM-012 | JIT-visible TLB layout (stable offsets, packed entries) | P0 | MM-007 | Medium |
+| MM-013 | `mmu_translate_slow` helper for JIT (page walk + fill TLB) | P0 | MM-006..MM-012 | High |
+| MM-014 | MMIO classification/epoch for JIT fast-path safety          | P0 | MM-003, MM-012 | Medium |
 
 
 ---

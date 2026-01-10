@@ -776,6 +776,61 @@ impl WasmCompiler {
 }
 ```
 
+### Inlined Guest Memory Loads/Stores (TLB + RAM Fast Path)
+
+Baseline JIT blocks must avoid an imported helper call per guest load/store. Instead, the code generator should inline address translation against a **JIT-visible TLB** (see [Memory Management](./03-memory-management.md#jit-visible-tlb-baseline-jit-memory-fast-path)) and directly `load/store` the guest RAM region in WASM linear memory.
+
+The high-level strategy for each IR memory op is:
+
+1. Compute effective `vaddr`
+2. Attempt a direct-mapped TLB lookup (inline loads from the `JitTlb` struct)
+3. On hit + `IS_RAM`: perform a direct WASM `load/store` at `ram_base + paddr`
+4. On hit but non-RAM (MMIO/ROM/unmapped): exit the block via `jit_exit_mmio(...)`
+5. On miss or permission mismatch: call `mmu_translate_slow(vaddr, access)` and continue (or raise `#PF`)
+
+#### Codegen sketch
+
+```rust
+impl WasmCompiler {
+    fn emit_load_u64(&mut self, b: &mut WasmBuilder, cpu: Local, vaddr: Local) -> Local {
+        // (1) Optional cross-page guard. If the load crosses a 4KB boundary, go slow-path.
+        // if ((vaddr & 0xFFF) > 0xFFF - 7) => slow
+        self.emit_cross_page_guard(b, vaddr, 8);
+
+        // (2) Fast-path translate: returns (phys_base_and_flags, hit?)
+        let tlb_res = self.emit_tlb_lookup(b, cpu, vaddr, AccessType::Read);
+
+        // (3) On RAM, do the direct memory load
+        // paddr = (phys_base & !0xFFF) | (vaddr & 0xFFF)
+        // wasm_addr = RAM_BASE + paddr
+        let val = self.emit_direct_ram_load(b, tlb_res, vaddr, 8);
+
+        // (4) Otherwise, `emit_direct_ram_load` will have emitted a `jit_exit_mmio`
+        // or fallen back to `mmu_translate_slow`.
+        val
+    }
+
+    fn emit_store_u64(&mut self, b: &mut WasmBuilder, cpu: Local, vaddr: Local, value: Local) {
+        self.emit_cross_page_guard(b, vaddr, 8);
+
+        let tlb_res = self.emit_tlb_lookup(b, cpu, vaddr, AccessType::Write);
+        self.emit_direct_ram_store(b, tlb_res, vaddr, value, 8);
+
+        // If the translation is non-RAM, the store exits to the runtime for MMIO.
+        // If the store targets a CODE_WATCH page, the runtime invalidation hook runs
+        // (either via an exit or a lightweight notification helper).
+    }
+}
+```
+
+The important point is that the **common case** (TLB hit + RAM) should compile down to:
+
+- a handful of integer ops (`shr`, `and`, `xor`, `add/or`)
+- two linear memory loads for the TLB entry
+- the final linear memory `load/store` for guest RAM
+
+…with no imported calls.
+
 ### SIMD Optimization
 
 For SSE/AVX instructions, we use WASM SIMD:
