@@ -86,7 +86,15 @@ if "%NEED_CERT%"=="1" (
   )
 
   rem Export the private key to a .pfx for signtool /f signing.
-  "%CERTUTIL%" -f -p "%CERT_PASSWORD%" -exportPFX My "%CERT_NAME%" "%PFX_FILE%" >nul
+  rem Use the certificate thumbprint from the generated .cer to reliably locate
+  rem the matching cert in LocalMachine\My (certutil accepts thumbprints as CertId).
+  call :GetCertThumbprint "%CER_FILE%"
+  if not defined CERT_THUMB (
+    echo [ERROR] Failed to extract certificate thumbprint from "%CER_FILE%".
+    goto :Fail
+  )
+
+  "%CERTUTIL%" -f -p "%CERT_PASSWORD%" -exportPFX My "%CERT_THUMB%" "%PFX_FILE%" >nul
   if not "%ERRORLEVEL%"=="0" (
     echo [ERROR] certutil -exportPFX failed.
     goto :Fail
@@ -240,4 +248,30 @@ if not exist "%INF2CAT_WORK%\%INF2CAT_CAT%" (
 )
 
 copy /y "%INF2CAT_WORK%\%INF2CAT_CAT%" "%SCRIPT_DIR%" >nul
+exit /b 0
+
+rem -----------------------------------------------------------------
+:GetCertThumbprint
+set "CERT_THUMB="
+set "DUMP_FILE=%TEMP%\aerogpu_certdump_%RANDOM%.txt"
+
+"%CERTUTIL%" -dump "%~1" >"%DUMP_FILE%" 2>&1
+if errorlevel 1 (
+  del /q "%DUMP_FILE%" >nul 2>&1
+  exit /b 0
+)
+
+for /f "tokens=2 delims=:" %%H in ('findstr /i "Cert Hash(sha1)" "%DUMP_FILE%"') do (
+  set "CERT_THUMB=%%H"
+  goto :GetCertThumbprint_Done
+)
+
+:GetCertThumbprint_Done
+del /q "%DUMP_FILE%" >nul 2>&1
+
+if not defined CERT_THUMB exit /b 0
+
+rem Trim leading spaces and remove embedded spaces.
+for /f "tokens=* delims= " %%T in ("%CERT_THUMB%") do set "CERT_THUMB=%%T"
+set "CERT_THUMB=%CERT_THUMB: =%"
 exit /b 0
