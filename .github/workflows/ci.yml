@@ -643,6 +643,61 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  disk-streaming-browser-e2e:
+    name: Disk streaming browser E2E (COOP/COEP + Range)
+    needs: policy
+    if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tools/disk-streaming-browser-e2e/package-lock.json
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-disk-streaming-${{ hashFiles('tools/disk-streaming-browser-e2e/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-disk-streaming-
+
+      - name: Install dependencies
+        working-directory: tools/disk-streaming-browser-e2e
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Install Playwright browser (with OS deps)
+        working-directory: tools/disk-streaming-browser-e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run disk streaming browser E2E tests
+        working-directory: tools/disk-streaming-browser-e2e
+        run: npm test
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: disk-streaming-browser-e2e-report
+          path: |
+            tools/disk-streaming-browser-e2e/playwright-report/
+            tools/disk-streaming-browser-e2e/test-results/
+          if-no-files-found: warn
+          retention-days: 7
+
   ci-gate:
     name: CI gate
     needs:
@@ -655,6 +710,7 @@ jobs:
       - node-unit
       - smoke-matrix
       - playwright
+      - disk-streaming-browser-e2e
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -716,6 +772,11 @@ jobs:
 
           if [[ "${{ needs.playwright.result }}" != "success" ]]; then
             echo "::error::playwright job result: ${{ needs.playwright.result }}"
+            failures=1
+          fi
+
+          if [[ "${{ needs['disk-streaming-browser-e2e'].result }}" != "success" ]]; then
+            echo "::error::disk-streaming-browser-e2e job result: ${{ needs['disk-streaming-browser-e2e'].result }}"
             failures=1
           fi
 
