@@ -48,7 +48,9 @@ pub const PXCMD_CR: u32 = 1 << 15;
 
 // PxIS / PxIE bits.
 pub const PXIS_DHRS: u32 = 1 << 0;
+pub const PXIS_TFES: u32 = 1 << 30;
 pub const PXIE_DHRE: u32 = 1 << 0;
+pub const PXIE_TFEE: u32 = 1 << 30;
 
 // PxTFD bits (Status is low byte, Error is high byte).
 pub const ATA_SR_BSY: u8 = 1 << 7;

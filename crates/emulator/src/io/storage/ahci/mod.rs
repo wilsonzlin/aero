@@ -215,10 +215,11 @@ impl AhciController {
             // Clear command bit regardless of success; Windows expects progress.
             self.port0.ci &= !slot_mask;
 
-            match result {
+            let is_bits = match result {
                 Ok(()) => {
                     self.port0.set_tfd(ATA_SR_DRDY | ATA_SR_DSC, 0);
                     self.write_d2h_fis(mem, ATA_SR_DRDY | ATA_SR_DSC, 0);
+                    PXIS_DHRS
                 }
                 Err(err) => {
                     // Abort the command: set ERR status + ABRT error.
@@ -230,10 +231,11 @@ impl AhciController {
                     // For now we only log via debug formatting in the error
                     // path (no external logger dependency).
                     let _ = err;
+                    PXIS_DHRS | PXIS_TFES
                 }
-            }
+            };
 
-            self.set_port_interrupt(PXIS_DHRS);
+            self.set_port_interrupt(is_bits);
         }
     }
 
@@ -939,17 +941,9 @@ mod tests {
         // Program controller registers.
         controller.mmio_write_u32(&mut mem, HBA_GHC, GHC_AE | GHC_IE);
         controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_CLB, clb as u32);
-        controller.mmio_write_u32(
-            &mut mem,
-            HBA_PORTS_BASE + PX_CLBU,
-            (clb >> 32) as u32,
-        );
+        controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_CLBU, (clb >> 32) as u32);
         controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_FB, fb as u32);
-        controller.mmio_write_u32(
-            &mut mem,
-            HBA_PORTS_BASE + PX_FBU,
-            (fb >> 32) as u32,
-        );
+        controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_FBU, (fb >> 32) as u32);
         controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_IE, PXIE_DHRE);
         controller.mmio_write_u32(
             &mut mem,
@@ -1148,5 +1142,47 @@ mod tests {
         // Clearing the interrupt after restore should deassert the IRQ line.
         restored.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_IS, PXIS_DHRS);
         assert!(!restored.irq_level());
+    }
+
+    #[test]
+    fn read_dma_ext_out_of_bounds_sets_tfes_and_error_status() {
+        let disk = Arc::new(Mutex::new(MemDisk::new(4)));
+        let shared_disk = SharedDisk(disk);
+
+        let mut mem = VecMemory::new(0x10_000);
+        let mut controller = AhciController::new(Box::new(shared_disk));
+
+        let clb = 0x1000u64;
+        let fb = 0x2000u64;
+        let ctba = 0x3000u64;
+        let dst = 0x4000u64;
+
+        controller.mmio_write_u32(&mut mem, HBA_GHC, GHC_AE | GHC_IE);
+        controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_CLB, clb as u32);
+        controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_FB, fb as u32);
+        controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_IE, PXIE_TFEE);
+        controller.mmio_write_u32(
+            &mut mem,
+            HBA_PORTS_BASE + PX_CMD,
+            PXCMD_FRE | PXCMD_ST | PXCMD_SUD,
+        );
+
+        let header = build_cmd_header(5, false, 1, ctba);
+        mem.write_physical(clb, &header);
+
+        write_reg_h2d_fis(&mut mem, ctba, ATA_CMD_READ_DMA_EXT, 10, 1);
+        write_prd(&mut mem, ctba + 0x80, dst, 512);
+
+        controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_CI, 1);
+
+        // Command should complete with error.
+        assert_eq!(controller.port0.ci, 0);
+        assert_ne!(controller.port0.is & PXIS_TFES, 0);
+        assert_ne!(controller.port0.tfd & (ATA_SR_ERR as u32), 0);
+        assert!(controller.irq_level());
+
+        controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_IS, PXIS_TFES | PXIS_DHRS);
+        assert_eq!(controller.port0.is, 0);
+        assert!(!controller.irq_level());
     }
 }
