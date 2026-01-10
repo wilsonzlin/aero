@@ -190,6 +190,44 @@ pub fn decode_interleaved_to_f32(
     Ok(())
 }
 
+/// Convert a single `f32` sample in the range `[-1.0, 1.0]` into 16-bit PCM.
+///
+/// Values outside the range are saturated. The mapping matches typical Web
+/// Audio conventions:
+/// - `-1.0` → `-32768`
+/// - `1.0` → `32767`
+#[inline]
+pub fn f32_to_i16(sample: f32) -> i16 {
+    // Clamp first to avoid `NaN` turning into an unspecified integer.
+    let clamped = if sample.is_finite() {
+        sample.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+
+    // Use 32768 so -1.0 maps to -32768. Saturate +1.0 to 32767.
+    let scaled = (clamped * 32768.0).round();
+    if scaled >= 32767.0 {
+        32767
+    } else if scaled <= -32768.0 {
+        -32768
+    } else {
+        scaled as i16
+    }
+}
+
+/// Convert a buffer of `f32` samples into `i16` PCM.
+///
+/// Returns the number of converted samples (the smaller of the two slice
+/// lengths).
+pub fn convert_f32_to_i16(input: &[f32], output: &mut [i16]) -> usize {
+    let n = input.len().min(output.len());
+    for i in 0..n {
+        output[i] = f32_to_i16(input[i]);
+    }
+    n
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,5 +297,30 @@ mod tests {
         let mut out = Vec::new();
         decode_interleaved_to_f32(&input, PcmSampleFormat::F32, 1, &mut out).unwrap();
         assert_eq!(out, vec![-0.5, 0.0, 0.5]);
+    }
+
+    #[test]
+    fn f32_to_i16_saturates_and_maps_endpoints() {
+        assert_eq!(f32_to_i16(-1.0), -32768);
+        assert_eq!(f32_to_i16(0.0), 0);
+        assert_eq!(f32_to_i16(1.0), 32767);
+
+        // Saturation.
+        assert_eq!(f32_to_i16(2.0), 32767);
+        assert_eq!(f32_to_i16(-2.0), -32768);
+
+        // NaN should not poison output.
+        assert_eq!(f32_to_i16(f32::NAN), 0);
+    }
+
+    #[test]
+    fn converts_buffers() {
+        let input = [-1.0, -0.5, 0.0, 0.5, 1.0];
+        let mut output = [0i16; 5];
+        let n = convert_f32_to_i16(&input, &mut output);
+        assert_eq!(n, 5);
+        assert_eq!(output[0], -32768);
+        assert_eq!(output[2], 0);
+        assert_eq!(output[4], 32767);
     }
 }

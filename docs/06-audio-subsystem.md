@@ -618,69 +618,41 @@ impl AudioManager {
 
 ## Audio Input (Microphone)
 
-```rust
-pub struct AudioInput {
-    media_stream: Option<MediaStream>,
-    source_node: Option<MediaStreamAudioSourceNode>,
-    analyzer: Option<AnalyserNode>,
-    
-    // Capture buffer
-    capture_buffer: Vec<f32>,
-    capture_ready: bool,
-}
+Microphone capture is bridged from the browser to the guest via a SharedArrayBuffer ring buffer:
 
-impl AudioInput {
-    pub async fn start_capture(&mut self, audio_context: &AudioContext) -> Result<()> {
-        // Request microphone access
-        let constraints = MediaStreamConstraints {
-            audio: MediaTrackConstraints {
-                echo_cancellation: false,
-                noise_suppression: false,
-                auto_gain_control: false,
-                sample_rate: 48000,
-            },
-        };
-        
-        let stream = navigator()
-            .media_devices()?
-            .get_user_media(&constraints)
-            .await?;
-        
-        // Create source node
-        let source = audio_context.create_media_stream_source(&stream)?;
-        
-        // Create script processor for capture
-        let processor = audio_context.create_script_processor(
-            4096,  // Buffer size
-            1,     // Input channels
-            1,     // Output channels
-        )?;
-        
-        processor.set_onaudioprocess(move |event| {
-            let input_buffer = event.input_buffer();
-            let channel_data = input_buffer.get_channel_data(0);
-            
-            // Send to emulator
-            self.on_audio_captured(&channel_data);
-        });
-        
-        source.connect(&processor)?;
-        processor.connect(&audio_context.destination())?;
-        
-        self.media_stream = Some(stream);
-        self.source_node = Some(source);
-        
-        Ok(())
-    }
-    
-    fn on_audio_captured(&mut self, samples: &[f32]) {
-        // Convert to format expected by guest
-        // Typically 16-bit PCM at 48kHz
-        self.capture_buffer.extend(samples);
-        self.capture_ready = true;
-    }
-}
-```
+- **Main thread**: requests permission on explicit user action and manages lifecycle/UI state
+- **AudioWorklet** (preferred): pulls mic PCM frames with low latency and writes them into the ring
+- **Emulator worker**: reads from the ring and feeds the emulated capture device (HDA input pin or
+  virtio-snd capture stream)
+
+Reference implementation files:
+
+- `web/src/audio/mic_capture.ts` (permission + lifecycle + ring buffer allocation)
+- `web/src/audio/mic-worklet-processor.js` (AudioWorklet capture writer)
+- `crates/emulator/src/io/audio/input.rs` + `crates/emulator/src/io/audio/dsp/pcm.rs` (ring buffer + float32→PCM16 conversion)
+
+### Ring buffer layout
+
+The microphone ring buffer is a mono `Float32Array` backed by a `SharedArrayBuffer`:
+
+| Offset | Type | Meaning |
+|--------|------|---------|
+| 0      | u32  | `write_pos` (monotonic sample counter) |
+| 4      | u32  | `read_pos` (monotonic sample counter) |
+| 8      | u32  | `dropped` (samples dropped due to buffer full) |
+| 12     | u32  | `capacity` (samples in the data section) |
+| 16..   | f32[]| PCM samples, index = `(write_pos % capacity)` |
+
+### Capture constraints (echo/noise)
+
+Capture uses `getUserMedia` audio constraints to expose user-facing toggles:
+
+- `echoCancellation`
+- `noiseSuppression`
+- `autoGainControl`
+
+These are applied when the stream is created (and may be updated later via
+`MediaStreamTrack.applyConstraints` when supported).
 
 ---
 

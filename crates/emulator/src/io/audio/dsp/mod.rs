@@ -3,6 +3,8 @@ pub mod pcm;
 pub mod remix;
 pub mod resample;
 
+pub use pcm::{convert_f32_to_i16, f32_to_i16};
+
 use pcm::{decode_interleaved_to_f32, PcmSpec};
 use remix::remix_interleaved;
 use resample::{Resampler, ResamplerKind};

@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aero mic capture manual test</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        max-width: 820px;
+        margin: 24px auto;
+        padding: 0 12px;
+      }
+
+      button {
+        margin-right: 8px;
+        margin-bottom: 8px;
+      }
+
+      pre {
+        background: #111;
+        color: #eee;
+        padding: 12px;
+        border-radius: 6px;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Microphone capture loopback (manual)</h1>
+    <p>
+      This page exercises the capture pipeline used by Aero: <code>getUserMedia</code> → Web Audio
+      (<code>AudioWorklet</code>) → SharedArrayBuffer ring buffer. It records 5 seconds of audio and
+      plays it back in the browser.
+    </p>
+    <p>
+      Note: AudioWorklet modules require a secure context. Serve this directory via HTTP(S)
+      (e.g. <code>python3 -m http.server</code> from the <code>web/</code> directory) rather than
+      opening the file via <code>file://</code>.
+    </p>
+
+    <div>
+      <label>
+        <input type="checkbox" id="echoCancellation" checked />
+        echoCancellation
+      </label>
+      <label>
+        <input type="checkbox" id="noiseSuppression" checked />
+        noiseSuppression
+      </label>
+      <label>
+        <input type="checkbox" id="autoGainControl" checked />
+        autoGainControl
+      </label>
+    </div>
+
+    <div style="margin-top: 12px">
+      <button id="start">Start mic</button>
+      <button id="stop" disabled>Stop mic</button>
+      <button id="record5" disabled>Record 5s + play back</button>
+    </div>
+
+    <h2>Status</h2>
+    <pre id="status">idle</pre>
+
+    <script type="module">
+      const HEADER_U32 = 4;
+      const HEADER_BYTES = HEADER_U32 * 4;
+
+      function createRingBuffer(capacitySamples) {
+        const sab = new SharedArrayBuffer(HEADER_BYTES + capacitySamples * 4);
+        const header = new Uint32Array(sab, 0, HEADER_U32);
+        const data = new Float32Array(sab, HEADER_BYTES);
+        Atomics.store(header, 0, 0);
+        Atomics.store(header, 1, 0);
+        Atomics.store(header, 2, 0);
+        header[3] = capacitySamples >>> 0;
+        return { sab, header, data, capacity: capacitySamples };
+      }
+
+      function readInto(rb, out) {
+        const readPos = Atomics.load(rb.header, 1) >>> 0;
+        const writePos = Atomics.load(rb.header, 0) >>> 0;
+        const available = (writePos - readPos) >>> 0;
+        const toRead = Math.min(out.length, available);
+        if (toRead === 0) return 0;
+        const start = readPos % rb.capacity;
+        const firstPart = Math.min(toRead, rb.capacity - start);
+        out.set(rb.data.subarray(start, start + firstPart), 0);
+        const remaining = toRead - firstPart;
+        if (remaining) out.set(rb.data.subarray(0, remaining), firstPart);
+        Atomics.store(rb.header, 1, (readPos + toRead) >>> 0);
+        return toRead;
+      }
+
+      const statusEl = document.getElementById("status");
+      const startBtn = document.getElementById("start");
+      const stopBtn = document.getElementById("stop");
+      const record5Btn = document.getElementById("record5");
+
+      let audioContext = null;
+      let stream = null;
+      let source = null;
+      let node = null;
+      let rb = null;
+      let stats = { buffered: 0, dropped: 0 };
+      let pollTimer = null;
+
+      function updateStatus(extra = "") {
+        const base = {
+          hasContext: !!audioContext,
+          hasStream: !!stream,
+          bufferedSamples: stats.buffered,
+          droppedSamples: stats.dropped,
+        };
+        statusEl.textContent = JSON.stringify(base, null, 2) + (extra ? "\n\n" + extra : "");
+      }
+
+      function getConstraints() {
+        return {
+          audio: {
+            channelCount: 1,
+            echoCancellation: document.getElementById("echoCancellation").checked,
+            noiseSuppression: document.getElementById("noiseSuppression").checked,
+            autoGainControl: document.getElementById("autoGainControl").checked,
+          },
+          video: false,
+        };
+      }
+
+      async function startMic() {
+        stats = { buffered: 0, dropped: 0 };
+        rb = createRingBuffer(48000 * 2); // 2 seconds @ 48kHz mono.
+
+        stream = await navigator.mediaDevices.getUserMedia(getConstraints());
+        audioContext = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
+
+        await audioContext.audioWorklet.addModule("../src/audio/mic-worklet-processor.js");
+        const sinkGain = audioContext.createGain();
+        sinkGain.gain.value = 0;
+        sinkGain.connect(audioContext.destination);
+
+        source = audioContext.createMediaStreamSource(stream);
+        node = new AudioWorkletNode(audioContext, "aero-mic-capture", {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          outputChannelCount: [1],
+          processorOptions: { ringBuffer: rb.sab },
+        });
+        node.port.onmessage = (ev) => {
+          if (ev.data?.type === "stats") {
+            stats = { buffered: ev.data.buffered, dropped: ev.data.dropped };
+            updateStatus();
+          }
+        };
+
+        source.connect(node);
+        node.connect(sinkGain);
+
+        await audioContext.resume();
+
+        stopBtn.disabled = false;
+        record5Btn.disabled = false;
+        startBtn.disabled = true;
+
+        updateStatus("mic started");
+      }
+
+      async function stopMic() {
+        if (pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+
+        node?.disconnect();
+        source?.disconnect();
+        stream?.getTracks().forEach((t) => t.stop());
+
+        if (audioContext) await audioContext.close();
+
+        audioContext = null;
+        stream = null;
+        source = null;
+        node = null;
+        rb = null;
+
+        stopBtn.disabled = true;
+        record5Btn.disabled = true;
+        startBtn.disabled = false;
+
+        updateStatus("mic stopped");
+      }
+
+      async function record5AndPlay() {
+        if (!audioContext || !rb) return;
+        Atomics.store(rb.header, 1, Atomics.load(rb.header, 0)); // drop any buffered audio.
+
+        const recorded = [];
+        const temp = new Float32Array(4096);
+        const t0 = performance.now();
+
+        pollTimer = setInterval(() => {
+          while (true) {
+            const n = readInto(rb, temp);
+            if (n === 0) break;
+            recorded.push(temp.slice(0, n));
+          }
+        }, 10);
+
+        updateStatus("recording...");
+        await new Promise((r) => setTimeout(r, 5000));
+
+        clearInterval(pollTimer);
+        pollTimer = null;
+
+        // Flatten.
+        const total = recorded.reduce((acc, chunk) => acc + chunk.length, 0);
+        const all = new Float32Array(total);
+        let off = 0;
+        for (const chunk of recorded) {
+          all.set(chunk, off);
+          off += chunk.length;
+        }
+
+        const buffer = audioContext.createBuffer(1, all.length, audioContext.sampleRate);
+        buffer.copyToChannel(all, 0);
+
+        const src = audioContext.createBufferSource();
+        src.buffer = buffer;
+        src.connect(audioContext.destination);
+        src.start();
+
+        const ms = Math.round(performance.now() - t0);
+        updateStatus(`recorded ${Math.round((all.length / audioContext.sampleRate) * 1000)}ms in ${ms}ms, now playing back`);
+      }
+
+      startBtn.addEventListener("click", () => startMic().catch((e) => updateStatus(String(e))));
+      stopBtn.addEventListener("click", () => stopMic().catch((e) => updateStatus(String(e))));
+      record5Btn.addEventListener("click", () => record5AndPlay().catch((e) => updateStatus(String(e))));
+
+      updateStatus();
+    </script>
+  </body>
+</html>
+
