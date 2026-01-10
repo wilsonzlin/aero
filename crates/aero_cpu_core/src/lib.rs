@@ -116,6 +116,15 @@ impl CpuState {
         *dst = out;
     }
 
+    /// `FXSAVE` convenience wrapper that writes the 512-byte image into memory via a [`Bus`].
+    pub fn fxsave_to_bus<B: Bus>(&self, bus: &mut B, addr: u64) {
+        let mut image = [0u8; FXSAVE_AREA_SIZE];
+        self.fxsave(&mut image);
+        for (i, byte) in image.iter().copied().enumerate() {
+            bus.write_u8(addr + i as u64, byte);
+        }
+    }
+
     /// Implements the legacy (32-bit) `FXRSTOR m512byte` memory image.
     pub fn fxrstor(&mut self, src: &[u8; FXSAVE_AREA_SIZE]) -> Result<(), FxStateError> {
         self.fpu.fcw = read_u16(src, 0);
@@ -144,6 +153,15 @@ impl CpuState {
         }
 
         Ok(())
+    }
+
+    /// `FXRSTOR` convenience wrapper that reads the 512-byte image from memory via a [`Bus`].
+    pub fn fxrstor_from_bus<B: Bus>(&mut self, bus: &mut B, addr: u64) -> Result<(), FxStateError> {
+        let mut image = [0u8; FXSAVE_AREA_SIZE];
+        for i in 0..FXSAVE_AREA_SIZE {
+            image[i] = bus.read_u8(addr + i as u64);
+        }
+        self.fxrstor(&image)
     }
 
     /// Implements the 64-bit `FXSAVE64 m512byte` memory image.
@@ -178,6 +196,15 @@ impl CpuState {
         *dst = out;
     }
 
+    /// `FXSAVE64` convenience wrapper that writes the 512-byte image into memory via a [`Bus`].
+    pub fn fxsave64_to_bus<B: Bus>(&self, bus: &mut B, addr: u64) {
+        let mut image = [0u8; FXSAVE_AREA_SIZE];
+        self.fxsave64(&mut image);
+        for (i, byte) in image.iter().copied().enumerate() {
+            bus.write_u8(addr + i as u64, byte);
+        }
+    }
+
     /// Implements the 64-bit `FXRSTOR64 m512byte` memory image.
     pub fn fxrstor64(&mut self, src: &[u8; FXSAVE_AREA_SIZE]) -> Result<(), FxStateError> {
         self.fpu.fcw = read_u16(src, 0);
@@ -202,6 +229,19 @@ impl CpuState {
         }
 
         Ok(())
+    }
+
+    /// `FXRSTOR64` convenience wrapper that reads the 512-byte image from memory via a [`Bus`].
+    pub fn fxrstor64_from_bus<B: Bus>(
+        &mut self,
+        bus: &mut B,
+        addr: u64,
+    ) -> Result<(), FxStateError> {
+        let mut image = [0u8; FXSAVE_AREA_SIZE];
+        for i in 0..FXSAVE_AREA_SIZE {
+            image[i] = bus.read_u8(addr + i as u64);
+        }
+        self.fxrstor64(&image)
     }
 }
 

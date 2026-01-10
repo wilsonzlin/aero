@@ -1,4 +1,4 @@
-use aero_cpu_core::{sse_state::MXCSR_MASK, CpuState, FXSAVE_AREA_SIZE};
+use aero_cpu_core::{sse_state::MXCSR_MASK, CpuState, RamBus, FXSAVE_AREA_SIZE};
 
 const ST80_MASK: u128 = (1u128 << 80) - 1;
 
@@ -46,8 +46,11 @@ fn fxsave_legacy_layout_matches_intel_sdm() {
         cpu.sse.xmm[i] = patterned_u128(0x80 + i as u8);
     }
 
+    let mut bus = RamBus::new(4096);
+    let base = 0x100u64;
+    cpu.fxsave_to_bus(&mut bus, base);
     let mut image = [0u8; FXSAVE_AREA_SIZE];
-    cpu.fxsave(&mut image);
+    image.copy_from_slice(&bus.as_slice()[base as usize..base as usize + FXSAVE_AREA_SIZE]);
 
     let mut expected = [0u8; FXSAVE_AREA_SIZE];
     expected[0..2].copy_from_slice(&0x1234u16.to_le_bytes());
@@ -100,8 +103,12 @@ fn fxrstor_legacy_restores_state() {
         image[start..start + 16].copy_from_slice(&patterned_u128(0xA0 + i as u8).to_le_bytes());
     }
 
+    let mut bus = RamBus::new(4096);
+    let base = 0x200u64;
+    bus.as_mut_slice()[base as usize..base as usize + FXSAVE_AREA_SIZE].copy_from_slice(&image);
+
     let mut cpu = CpuState::default();
-    cpu.fxrstor(&image).unwrap();
+    cpu.fxrstor_from_bus(&mut bus, base).unwrap();
 
     assert_eq!(cpu.fpu.fcw, 0x1111);
     assert_eq!(cpu.fpu.fsw, 0x2222);
@@ -140,8 +147,9 @@ fn fxsave64_roundtrip_restores_state() {
         original.sse.xmm[i] = patterned_u128(0xC0 + i as u8);
     }
 
-    let mut image = [0u8; FXSAVE_AREA_SIZE];
-    original.fxsave64(&mut image);
+    let mut bus = RamBus::new(4096);
+    let base = 0x300u64;
+    original.fxsave64_to_bus(&mut bus, base);
 
     let mut restored = CpuState::default();
     // Ensure we're not accidentally passing due to defaults.
@@ -155,7 +163,7 @@ fn fxsave64_roundtrip_restores_state() {
     restored.fpu.st = [0u128; 8];
     restored.sse.xmm = [0u128; 16];
 
-    restored.fxrstor64(&image).unwrap();
+    restored.fxrstor64_from_bus(&mut bus, base).unwrap();
 
     assert_eq!(restored.fpu.fcw, original.fpu.fcw);
     assert_eq!(restored.fpu.fsw, original.fpu.fsw_with_top());
