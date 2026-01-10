@@ -142,6 +142,65 @@ fn apply_partial_checksum_offload(
         return Err(NetOffloadError::ChecksumOffsetOutOfBounds);
     }
 
+    // Prefer computing the full transport checksum (TCP/UDP over IPv4/IPv6) when possible.
+    // While virtio-net specifies a "partial checksum" scheme, computing the full checksum is
+    // still correct and improves interoperability with guest drivers that might not seed the
+    // checksum field with a pseudo-header sum.
+    if let Ok(eth) = parse_ethernet(packet) {
+        let l3_offset = eth.l2_len;
+        match eth.ethertype {
+            ETHERTYPE_IPV4 => {
+                if let Ok(ipv4) = parse_ipv4(&packet[l3_offset..]) {
+                    let l4_offset = l3_offset + ipv4.header_len;
+                    let ip_end = l3_offset + ipv4.total_len as usize;
+                    if l4_offset == start && field + 2 <= ip_end {
+                        let proto = ipv4.protocol;
+                        if proto == 6 || proto == 17 {
+                            let seg_len = (ip_end - l4_offset) as u16;
+                            let segment = &mut packet[l4_offset..ip_end];
+                            segment[(field - l4_offset)..(field - l4_offset + 2)]
+                                .copy_from_slice(&0u16.to_be_bytes());
+                            let mut checksum = transport_checksum_ipv4(
+                                &ipv4.src, &ipv4.dst, proto, segment, seg_len,
+                            );
+                            if proto == 17 && checksum == 0 {
+                                checksum = 0xffff;
+                            }
+                            packet[field..field + 2].copy_from_slice(&checksum.to_be_bytes());
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            ETHERTYPE_IPV6 => {
+                if let Ok(ipv6) = parse_ipv6(&packet[l3_offset..]) {
+                    let l4_offset = l3_offset + ipv6.header_len;
+                    let ip_end = l3_offset + ipv6.header_len + ipv6.payload_len as usize;
+                    if l4_offset == start && field + 2 <= ip_end {
+                        let proto = ipv6.next_header;
+                        if proto == 6 || proto == 17 {
+                            let seg_len = (ip_end - l4_offset) as u32;
+                            let segment = &mut packet[l4_offset..ip_end];
+                            segment[(field - l4_offset)..(field - l4_offset + 2)]
+                                .copy_from_slice(&0u16.to_be_bytes());
+                            let mut checksum = transport_checksum_ipv6(
+                                &ipv6.src, &ipv6.dst, proto, segment, seg_len,
+                            );
+                            if proto == 17 && checksum == 0 {
+                                checksum = 0xffff;
+                            }
+                            packet[field..field + 2].copy_from_slice(&checksum.to_be_bytes());
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Fallback: virtio-net style partial checksum completion. This expects the guest to have
+    // seeded the checksum field with the pseudo-header sum.
     let checksum = ones_complement_checksum(&packet[start..]);
     packet[field..field + 2].copy_from_slice(&checksum.to_be_bytes());
     Ok(())
@@ -212,7 +271,14 @@ fn segment_tcpv4(hdr: VirtioNetHdr, packet: &[u8]) -> Result<Vec<Vec<u8>>, NetOf
         });
     }
 
-    let payload = &packet[headers_len..];
+    let ip_end = l3_offset
+        .checked_add(ipv4.total_len as usize)
+        .ok_or(NetOffloadError::PacketTooShort)?;
+    if packet.len() < ip_end || headers_len > ip_end {
+        return Err(NetOffloadError::PacketTooShort);
+    }
+
+    let payload = &packet[headers_len..ip_end];
     let gso_size = hdr.gso_size as usize;
     let total_segments = payload.chunks(gso_size).len();
 
@@ -286,7 +352,14 @@ fn segment_tcpv6(hdr: VirtioNetHdr, packet: &[u8]) -> Result<Vec<Vec<u8>>, NetOf
         });
     }
 
-    let payload = &packet[headers_len..];
+    let ip_end = l3_offset
+        .checked_add(ipv6.header_len + ipv6.payload_len as usize)
+        .ok_or(NetOffloadError::PacketTooShort)?;
+    if packet.len() < ip_end || headers_len > ip_end {
+        return Err(NetOffloadError::PacketTooShort);
+    }
+
+    let payload = &packet[headers_len..ip_end];
     let gso_size = hdr.gso_size as usize;
 
     let total_segments = payload.chunks(gso_size).len();
@@ -331,6 +404,7 @@ fn segment_tcpv6(hdr: VirtioNetHdr, packet: &[u8]) -> Result<Vec<Vec<u8>>, NetOf
 #[derive(Debug, Clone, Copy)]
 struct Ipv4Header {
     header_len: usize,
+    total_len: u16,
     protocol: u8,
     src: [u8; 4],
     dst: [u8; 4],
@@ -349,8 +423,13 @@ fn parse_ipv4(buf: &[u8]) -> Result<Ipv4Header, NetOffloadError> {
     if ihl < 20 || buf.len() < ihl {
         return Err(NetOffloadError::PacketTooShort);
     }
+    let total_len = u16::from_be_bytes([buf[2], buf[3]]);
+    if total_len < ihl as u16 || buf.len() < total_len as usize {
+        return Err(NetOffloadError::PacketTooShort);
+    }
     Ok(Ipv4Header {
         header_len: ihl,
+        total_len,
         protocol: buf[9],
         src: [buf[12], buf[13], buf[14], buf[15]],
         dst: [buf[16], buf[17], buf[18], buf[19]],
@@ -361,6 +440,7 @@ fn parse_ipv4(buf: &[u8]) -> Result<Ipv4Header, NetOffloadError> {
 #[derive(Debug, Clone, Copy)]
 struct Ipv6Header {
     header_len: usize,
+    payload_len: u16,
     next_header: u8,
     src: [u8; 16],
     dst: [u8; 16],
@@ -374,12 +454,17 @@ fn parse_ipv6(buf: &[u8]) -> Result<Ipv6Header, NetOffloadError> {
     if version != 6 {
         return Err(NetOffloadError::UnsupportedIpVersion(version));
     }
+    let payload_len = u16::from_be_bytes([buf[4], buf[5]]);
+    if buf.len() < 40 + payload_len as usize {
+        return Err(NetOffloadError::PacketTooShort);
+    }
     let mut src = [0u8; 16];
     let mut dst = [0u8; 16];
     src.copy_from_slice(&buf[8..24]);
     dst.copy_from_slice(&buf[24..40]);
     Ok(Ipv6Header {
         header_len: 40,
+        payload_len,
         next_header: buf[6],
         src,
         dst,
@@ -436,25 +521,45 @@ fn checksum_sum_u16_words(data: &[u8], mut sum: u32) -> u32 {
     sum
 }
 
-fn tcp_checksum_ipv4(src: &[u8; 4], dst: &[u8; 4], tcp_segment: &[u8], tcp_len: u16) -> u16 {
+fn transport_checksum_ipv4(
+    src: &[u8; 4],
+    dst: &[u8; 4],
+    protocol: u8,
+    segment: &[u8],
+    segment_len: u16,
+) -> u16 {
     let mut sum: u32 = 0;
     sum = checksum_sum_u16_words(src, sum);
     sum = checksum_sum_u16_words(dst, sum);
-    sum += 6u32;
-    sum += tcp_len as u32;
-    sum = checksum_sum_u16_words(tcp_segment, sum);
+    sum += protocol as u32;
+    sum += segment_len as u32;
+    sum = checksum_sum_u16_words(segment, sum);
     fold_checksum_sum(sum)
 }
 
-fn tcp_checksum_ipv6(src: &[u8; 16], dst: &[u8; 16], tcp_segment: &[u8], tcp_len: u32) -> u16 {
+fn transport_checksum_ipv6(
+    src: &[u8; 16],
+    dst: &[u8; 16],
+    next_header: u8,
+    segment: &[u8],
+    segment_len: u32,
+) -> u16 {
     let mut sum: u32 = 0;
     sum = checksum_sum_u16_words(src, sum);
     sum = checksum_sum_u16_words(dst, sum);
-    sum += (tcp_len >> 16) as u32;
-    sum += (tcp_len & 0xFFFF) as u32;
-    sum += 6u32;
-    sum = checksum_sum_u16_words(tcp_segment, sum);
+    sum += (segment_len >> 16) as u32;
+    sum += (segment_len & 0xFFFF) as u32;
+    sum += next_header as u32;
+    sum = checksum_sum_u16_words(segment, sum);
     fold_checksum_sum(sum)
+}
+
+fn tcp_checksum_ipv4(src: &[u8; 4], dst: &[u8; 4], tcp_segment: &[u8], tcp_len: u16) -> u16 {
+    transport_checksum_ipv4(src, dst, 6, tcp_segment, tcp_len)
+}
+
+fn tcp_checksum_ipv6(src: &[u8; 16], dst: &[u8; 16], tcp_segment: &[u8], tcp_len: u32) -> u16 {
+    transport_checksum_ipv6(src, dst, 6, tcp_segment, tcp_len)
 }
 
 #[cfg(test)]
@@ -544,6 +649,45 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
+    #[test]
+    fn tx_checksum_offload_fills_udp_checksum_without_pseudo_seed() {
+        let payload = b"hello world";
+        let packet = build_ipv4_udp_frame(payload);
+
+        let eth_off = ETH_HEADER_LEN;
+        let udp_off = eth_off + 20;
+        let udp_len = (8 + payload.len()) as u16;
+
+        // UDP checksum field is left as 0x0000 (no pseudo-header seed).
+        let hdr = VirtioNetHdr {
+            flags: VIRTIO_NET_HDR_F_NEEDS_CSUM,
+            gso_type: VIRTIO_NET_HDR_GSO_NONE,
+            hdr_len: 0,
+            gso_size: 0,
+            csum_start: udp_off as u16,
+            csum_offset: 6,
+            num_buffers: 0,
+        };
+
+        let processed = process_tx_packet(hdr, &packet).unwrap();
+        assert_eq!(processed.len(), 1);
+        let out = &processed[0];
+
+        let mut udp_segment = out[udp_off..udp_off + udp_len as usize].to_vec();
+        udp_segment[6..8].copy_from_slice(&0u16.to_be_bytes());
+
+        let mut sum: u32 = 0;
+        sum = checksum_sum_u16_words(&[192, 0, 2, 1], sum);
+        sum = checksum_sum_u16_words(&[198, 51, 100, 2], sum);
+        sum += 17u32;
+        sum += udp_len as u32;
+        sum = checksum_sum_u16_words(&udp_segment, sum);
+        let expected = fold_checksum_sum(sum);
+
+        let actual = u16::from_be_bytes([out[udp_off + 6], out[udp_off + 7]]);
+        assert_eq!(actual, expected);
+    }
+
     fn build_ipv4_tcp_frame(payload_len: usize, flags: u8) -> Vec<u8> {
         let mut packet = Vec::new();
         packet.extend_from_slice(&[0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
@@ -579,6 +723,35 @@ mod tests {
 
         packet.extend(std::iter::repeat(0x42u8).take(payload_len));
         packet
+    }
+
+    #[test]
+    fn tx_checksum_offload_fills_tcp_checksum() {
+        let payload_len = 128;
+        let flags = 0x18; // PSH|ACK
+        let packet = build_ipv4_tcp_frame(payload_len, flags);
+
+        let eth_off = ETH_HEADER_LEN;
+        let tcp_off = eth_off + 20;
+        let tcp_len = (20 + payload_len) as u16;
+
+        let hdr = VirtioNetHdr {
+            flags: VIRTIO_NET_HDR_F_NEEDS_CSUM,
+            gso_type: VIRTIO_NET_HDR_GSO_NONE,
+            hdr_len: 0,
+            gso_size: 0,
+            csum_start: tcp_off as u16,
+            csum_offset: 16,
+            num_buffers: 0,
+        };
+
+        let processed = process_tx_packet(hdr, &packet).unwrap();
+        assert_eq!(processed.len(), 1);
+        let out = &processed[0];
+
+        let tcp_segment = &out[tcp_off..tcp_off + tcp_len as usize];
+        let tcp_csum = tcp_checksum_ipv4(&[10, 0, 0, 1], &[10, 0, 0, 2], tcp_segment, tcp_len);
+        assert_eq!(tcp_csum, 0);
     }
 
     #[test]
