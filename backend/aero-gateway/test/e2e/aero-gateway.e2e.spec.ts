@@ -77,6 +77,7 @@ type StartedProcess = {
 
 type StartedHttpsProxy = {
   baseUrl: string;
+  port: number;
   close: () => Promise<void>;
 };
 
@@ -119,7 +120,7 @@ async function startTcpEchoServer(): Promise<{ port: number; close: () => Promis
   };
 }
 
-async function startHttpsProxy(targetPort: number): Promise<StartedHttpsProxy> {
+async function startHttpsProxy(targetPort: number, listenPort: number): Promise<StartedHttpsProxy> {
   const server = https.createServer({ key: TLS_KEY, cert: TLS_CERT }, (req, res) => {
     const upstreamReq = http.request(
       {
@@ -166,7 +167,7 @@ async function startHttpsProxy(targetPort: number): Promise<StartedHttpsProxy> {
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve());
+    server.listen(listenPort, '127.0.0.1', () => resolve());
   });
 
   const address = server.address() as AddressInfo | null;
@@ -174,6 +175,7 @@ async function startHttpsProxy(targetPort: number): Promise<StartedHttpsProxy> {
 
   return {
     baseUrl: `https://localhost:${address.port}`,
+    port: address.port,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((err) => {
@@ -266,7 +268,11 @@ async function waitForHealthy(baseUrl: string, proc: ChildProcess): Promise<void
   throw new Error(`Gateway did not become healthy in time: ${url}`);
 }
 
-async function startGatewayProcess(opts: { crossOriginIsolation: boolean; dnsUpstreams: string }): Promise<StartedProcess> {
+async function startGatewayProcess(opts: {
+  crossOriginIsolation: boolean;
+  dnsUpstreams: string;
+  allowedOrigins: string;
+}): Promise<StartedProcess> {
   const port = await getFreePort();
   const baseUrl = `http://localhost:${port}`;
 
@@ -278,7 +284,8 @@ async function startGatewayProcess(opts: { crossOriginIsolation: boolean; dnsUps
       PORT: String(port),
       LOG_LEVEL: 'silent',
       RATE_LIMIT_REQUESTS_PER_MINUTE: '0',
-      ALLOWED_ORIGINS: '*',
+      ALLOWED_ORIGINS: opts.allowedOrigins,
+      TCP_ALLOW_PRIVATE_IPS: '1',
       CROSS_ORIGIN_ISOLATION: opts.crossOriginIsolation ? '1' : '0',
       DNS_UPSTREAMS: opts.dnsUpstreams,
       AERO_GATEWAY_E2E: '1',
@@ -315,10 +322,21 @@ test.describe('aero-gateway browser e2e', () => {
   test('CROSS_ORIGIN_ISOLATION=1 enables crossOriginIsolated + SharedArrayBuffer', async ({ page }) => {
     const dns = await startUdpDnsServer();
     const echo = await startTcpEchoServer();
-    const gateway = await startGatewayProcess({ crossOriginIsolation: true, dnsUpstreams: `127.0.0.1:${dns.port}` });
-    const proxy = await startHttpsProxy(gateway.port);
+    const proxyPort = await getFreePort();
+    const proxyOrigin = `https://localhost:${proxyPort}`;
+    const gateway = await startGatewayProcess({
+      crossOriginIsolation: true,
+      dnsUpstreams: `127.0.0.1:${dns.port}`,
+      allowedOrigins: proxyOrigin,
+    });
+    const proxy = await startHttpsProxy(gateway.port, proxyPort);
     try {
-      await page.goto(`${proxy.baseUrl}/e2e?echoPort=${echo.port}`);
+      const response = await page.goto(`${proxy.baseUrl}/e2e?echoPort=${echo.port}`);
+      expect(response).not.toBeNull();
+      const headers = response!.headers();
+      expect(headers['cross-origin-opener-policy']).toBe('same-origin');
+      expect(headers['cross-origin-embedder-policy']).toBe('require-corp');
+
       await page.waitForFunction(() => Boolean(window.__aeroGatewayE2E), null, { timeout: 10_000 });
       const results = await page.evaluate(() => window.__aeroGatewayE2E!);
 
@@ -345,10 +363,21 @@ test.describe('aero-gateway browser e2e', () => {
   test('CROSS_ORIGIN_ISOLATION unset disables crossOriginIsolated (and reports why)', async ({ page }) => {
     const dns = await startUdpDnsServer();
     const echo = await startTcpEchoServer();
-    const gateway = await startGatewayProcess({ crossOriginIsolation: false, dnsUpstreams: `127.0.0.1:${dns.port}` });
-    const proxy = await startHttpsProxy(gateway.port);
+    const proxyPort = await getFreePort();
+    const proxyOrigin = `https://localhost:${proxyPort}`;
+    const gateway = await startGatewayProcess({
+      crossOriginIsolation: false,
+      dnsUpstreams: `127.0.0.1:${dns.port}`,
+      allowedOrigins: proxyOrigin,
+    });
+    const proxy = await startHttpsProxy(gateway.port, proxyPort);
     try {
-      await page.goto(`${proxy.baseUrl}/e2e?echoPort=${echo.port}`);
+      const response = await page.goto(`${proxy.baseUrl}/e2e?echoPort=${echo.port}`);
+      expect(response).not.toBeNull();
+      const headers = response!.headers();
+      expect(headers['cross-origin-opener-policy']).toBeUndefined();
+      expect(headers['cross-origin-embedder-policy']).toBeUndefined();
+
       await page.waitForFunction(() => Boolean(window.__aeroGatewayE2E), null, { timeout: 10_000 });
       const results = await page.evaluate(() => window.__aeroGatewayE2E!);
 

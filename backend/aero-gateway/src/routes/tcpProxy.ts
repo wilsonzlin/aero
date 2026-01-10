@@ -380,6 +380,13 @@ export async function resolveTcpProxyTarget(
   port: number,
   env: Record<string, string | undefined> = process.env,
 ): Promise<{ ip: string; port: number; hostname?: string }> {
+  // By default we block private/reserved IPs to prevent SSRF / local-network
+  // probing via the browser-facing TCP proxy.
+  //
+  // For local development + E2E testing we allow opting out so the proxy can
+  // reach loopback test servers (e.g. Playwright).
+  const allowPrivateIps = env.TCP_ALLOW_PRIVATE_IPS === "1";
+
   const hostPolicy = parseTcpHostnameEgressPolicyFromEnv(env);
   const decision = evaluateTcpHostPolicy(rawHost, hostPolicy);
   if (!decision.allowed) {
@@ -389,7 +396,7 @@ export async function resolveTcpProxyTarget(
   }
 
   if (decision.target.kind === "ip") {
-    if (!isPublicIpAddress(decision.target.ip)) {
+    if (!allowPrivateIps && !isPublicIpAddress(decision.target.ip)) {
       tcpProxyMetrics.blockedByIpPolicy++;
       throw new TcpProxyTargetError("ip-policy", "Target IP is not allowed by IP egress policy", 403);
     }
@@ -406,7 +413,7 @@ export async function resolveTcpProxyTarget(
   }
 
   for (const { address } of addresses) {
-    if (isPublicIpAddress(address)) {
+    if (allowPrivateIps || isPublicIpAddress(address)) {
       return { ip: address, port, hostname: decision.target.hostname };
     }
   }

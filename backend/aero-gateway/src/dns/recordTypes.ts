@@ -4,11 +4,11 @@ export const DNS_RECORD_TYPES = {
   AAAA: 28,
 } as const;
 
-const SUPPORTED_RECORD_TYPES: readonly number[] = [
+const SUPPORTED_RECORD_TYPES = new Set<number>([
   DNS_RECORD_TYPES.A,
   DNS_RECORD_TYPES.AAAA,
   DNS_RECORD_TYPES.CNAME,
-];
+]);
 
 const RECORD_TYPE_BY_NAME = new Map<string, number>([
   ['A', DNS_RECORD_TYPES.A],
@@ -27,7 +27,7 @@ export function parseDnsRecordType(value: string): number {
     if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 0xffff) {
       throw new Error(`Invalid DNS record type number: ${value}`);
     }
-    if (!SUPPORTED_RECORD_TYPES.includes(parsed)) {
+    if (!SUPPORTED_RECORD_TYPES.has(parsed)) {
       throw new Error(`Unsupported DNS record type: ${value}`);
     }
     return parsed;
