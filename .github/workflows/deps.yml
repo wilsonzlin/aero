@@ -2,8 +2,14 @@ name: Dependency policy
 
 on:
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   schedule:
     # Nightly run catches newly published advisories even if the lockfile hasn't changed.
     - cron: "0 3 * * *"

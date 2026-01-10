@@ -2,7 +2,13 @@ name: virtio-driver-iso
 
 on:
   push:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
 
 jobs:
   build:
@@ -32,4 +38,3 @@ jobs:
         with:
           name: aero-virtio-win7-drivers-sample-iso
           path: dist/aero-virtio-win7-drivers-sample.iso
-

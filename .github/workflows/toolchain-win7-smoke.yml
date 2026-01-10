@@ -6,7 +6,6 @@ on:
     paths:
       - "ci/**"
       - ".github/workflows/toolchain-win7-smoke.yml"
-      - "docs/16-windows7-driver-build-and-signing.md"
 
 jobs:
   validate:

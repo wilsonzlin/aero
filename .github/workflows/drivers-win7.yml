@@ -6,6 +6,9 @@ on:
       - "drivers/**"
       - "ci/**"
       - ".github/workflows/drivers-win7.yml"
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   push:
     branches:
       - main
@@ -13,6 +16,9 @@ on:
       - "drivers/**"
       - "ci/**"
       - ".github/workflows/drivers-win7.yml"
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   workflow_dispatch:
 
 jobs:

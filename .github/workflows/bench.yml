@@ -15,7 +15,6 @@ on:
       - "crates/aero-cpu-decoder/**"
       - "scripts/bench_compare.py"
       - ".github/workflows/bench.yml"
-      - "docs/TESTING.md"
 
 concurrency:
   group: bench-${{ github.ref }}

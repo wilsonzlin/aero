@@ -2,7 +2,13 @@ name: Fuzz (smoke)
 
 on:
   push:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
 
 jobs:
   fuzz:
@@ -22,4 +28,3 @@ jobs:
 
       - name: fuzz_bus_rw (10s)
         run: cargo +nightly fuzz run fuzz_bus_rw -- -max_total_time=10
-

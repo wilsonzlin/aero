@@ -3,6 +3,9 @@ name: Perf (smoke)
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
 
 permissions:
   contents: read
