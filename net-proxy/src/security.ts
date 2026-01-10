@@ -233,7 +233,10 @@ export async function resolveAndAuthorizeTarget(
     for (const addr of resolvedAddrs) {
       const matched = allowRules.some((rule) => {
         if (!rule.ports(port)) return false;
-        if (rule.kind === "domain") return rule.match(requestedHost);
+        // Domain allowlist entries are intentionally limited to *public* targets to prevent
+        // DNS rebinding from turning a "public hostname" allowlist into private network access.
+        // To allow private/loopback ranges, use an explicit IP/CIDR allowlist entry.
+        if (rule.kind === "domain") return rule.match(requestedHost) && isPublicUnicast(addr.parsed);
         if (rule.kind === "ip") return rule.addr.toString() === addr.parsed.toString();
         return addr.parsed.match(rule.cidr);
       });
@@ -249,6 +252,16 @@ export async function resolveAndAuthorizeTarget(
           }
         };
       }
+    }
+
+    const domainRuleMatchedHostAndPort = allowRules.some(
+      (rule) => rule.kind === "domain" && rule.ports(port) && rule.match(requestedHost)
+    );
+    if (domainRuleMatchedHostAndPort && resolvedAddrs.every((addr) => !isPublicUnicast(addr.parsed))) {
+      return {
+        allowed: false,
+        reason: "Target resolves to non-public IPs; domain allowlist rules only allow public targets (use IP/CIDR allowlist or AERO_PROXY_OPEN=1)"
+      };
     }
 
     return {

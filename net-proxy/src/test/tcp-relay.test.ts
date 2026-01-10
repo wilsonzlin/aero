@@ -92,11 +92,8 @@ async function waitForClose(ws: WebSocket, timeoutMs = 2_000): Promise<{ code: n
 }
 
 test("tcp relay echoes bytes roundtrip", async () => {
-  const originalOpen = process.env.AERO_PROXY_OPEN;
-  process.env.AERO_PROXY_OPEN = "1";
-
   const echoServer = await startTcpEchoServer();
-  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0 });
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
   const proxyAddr = proxy.server.address();
   assert.ok(proxyAddr && typeof proxyAddr !== "string");
 
@@ -115,12 +112,6 @@ test("tcp relay echoes bytes roundtrip", async () => {
   } finally {
     await proxy.close();
     await echoServer.close();
-
-    if (originalOpen === undefined) {
-      delete process.env.AERO_PROXY_OPEN;
-    } else {
-      process.env.AERO_PROXY_OPEN = originalOpen;
-    }
   }
 });
 
@@ -187,6 +178,27 @@ test("tcp relay allowlist permits private targets", async () => {
     const closePromise = waitForClose(ws);
     ws.close(1000, "done");
     await closePromise;
+  } finally {
+    await proxy.close();
+    await echoServer.close();
+  }
+});
+
+test("domain wildcard allowlist still blocks private targets (DNS rebinding mitigation)", async () => {
+  const echoServer = await startTcpEchoServer();
+  const proxy = await startProxyServer({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    open: false,
+    allow: "*:*"
+  });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  try {
+    const ws = new WebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp?host=127.0.0.1&port=${echoServer.port}`);
+    const closed = await waitForClose(ws);
+    assert.equal(closed.code, 1008);
   } finally {
     await proxy.close();
     await echoServer.close();

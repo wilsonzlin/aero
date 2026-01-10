@@ -47,6 +47,8 @@ Allowlist rules are `hostOrCidr:port` (port can be `*` or a range like `8000-900
 
 If `AERO_PROXY_ALLOW` is empty and `AERO_PROXY_OPEN` is not set, the proxy only permits targets that resolve to **public unicast** IPs.
 
+If `AERO_PROXY_ALLOW` contains **domain** rules, they still only apply to targets that resolve to public unicast IPs (to mitigate DNS rebinding). To allow private/localhost targets, use an explicit IP/CIDR allowlist entry (e.g. `127.0.0.1:*`) or run with `AERO_PROXY_OPEN=1`.
+
 ## Client URL formation
 
 ### TCP
