@@ -14,10 +14,12 @@ pub const EXPORT_TRACE_FN: &str = "trace";
 /// Import that returns the current code page version for self-modifying code guards.
 pub const IMPORT_CODE_PAGE_VERSION: &str = "code_page_version";
 
-/// `CpuState` does not currently contain architectural flags. Tier-2 traces store a compact
-/// `u32` bitmask immediately after the serialized `CpuState` in linear memory so that guards can
-/// deopt with a consistent architectural state.
-pub const FLAGS_MASK_OFFSET: u32 = CpuState::BYTE_SIZE as u32;
+/// `CpuState` does not currently contain architectural flags. Tier-2 traces store a compact `u32`
+/// bitmask in linear memory so that guards can deopt with a consistent architectural state.
+///
+/// We place it after the Tier-1 JIT TLB region (`CpuState::TOTAL_BYTE_SIZE`) so Tier-2 execution
+/// does not clobber the baseline fast-path metadata.
+pub const FLAGS_MASK_OFFSET: u32 = CpuState::TOTAL_BYTE_SIZE as u32;
 
 const FLAG_ZF_BIT: u32 = 1 << 0;
 const FLAG_SF_BIT: u32 = 1 << 1;
