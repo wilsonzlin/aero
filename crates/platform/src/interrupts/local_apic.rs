@@ -38,6 +38,10 @@ impl LocalApic {
         None
     }
 
+    pub fn acknowledge_vector(&mut self, vector: u8) {
+        self.clear_vector(vector);
+    }
+
     pub fn pending_vectors(&self) -> Vec<u8> {
         let mut vectors = Vec::new();
         for vector in 0u16..=255u16 {
