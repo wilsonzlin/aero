@@ -17,8 +17,11 @@ Related references in this repo:
 
 - `docs/16-win7-image-servicing.md` (more detailed, Windows-first DISM/reg/bcd workflows)
 - `docs/16-win7-unattended-install.md` (unattended install details and hooks)
+- `docs/win7-bcd-offline-patching.md` (BCD internals and robust offline patching strategy)
 - `windows/win7-sp1/unattend/` (ready-to-edit `autounattend.xml` templates and Win7-compatible post-install scripts)
 - `tools/win7-slipstream/patches/README.md` (auditable `.reg` patches for offline BCD + SOFTWARE hives)
+- `tools/bcd_patch/` (cross-platform CLI to patch BCD stores without `bcdedit.exe`)
+- `tools/win-offline-cert-injector/` (Windows-native CLI for injecting certs into offline SOFTWARE hives)
 - `tools/windows/patch-win7-media.ps1` (Windows-only helper that applies the same kinds of patches programmatically)
 
 ---
@@ -296,7 +299,9 @@ function Add-CertToOfflineHive {
     [Parameter(Mandatory=$true)][string]$CertPath
   )
 
-  # Use X509Certificate2 so PEM/Base64-encoded .cer files work too.
+  # Use X509Certificate2 so standard Windows-exported DER/Base64 .cer files work.
+  # If you have a PEM certificate, use `tools/win7-slipstream/scripts/cert-to-reg.py` + `reg import`,
+  # or `tools/win-offline-cert-injector/` (Windows-native), or convert to DER first.
   $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CertPath)
   $thumb = $cert.Thumbprint.ToUpperInvariant()
   $der = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
@@ -496,7 +501,20 @@ Repeat this for:
 - `boot.wim` index 1 and 2
 - each `install.wim` index you will install (or all indexes if unsure)
 
-You can also patch BCD stores cross-platform using the auditable `.reg` patches in `tools/win7-slipstream/patches/`:
+You can also patch BCD stores cross-platform.
+
+Preferred (more robust): use the repo’s cross-platform BCD patcher (`tools/bcd_patch/`), which patches multiple objects (global settings, loader settings, OS loader entries) rather than relying on inheritance quirks:
+
+```sh
+# Patch extracted ISO BCD stores (boot/BCD + efi/microsoft/boot/BCD if present).
+cargo run -p bcd_patch -- win7-tree --root iso-root --nointegritychecks off
+
+# Patch BCD-Template inside a mounted install.wim index (run once per index you care about).
+# Example mount root: mnt-install
+cargo run -p bcd_patch -- win7-tree --root mnt-install --nointegritychecks off
+```
+
+Alternative: patch via auditable `.reg` files + `hivexregedit` (see `tools/win7-slipstream/patches/README.md` for details):
 
 ```sh
 hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\BCD' iso-root/boot/BCD tools/win7-slipstream/patches/bcd-testsigning.reg
