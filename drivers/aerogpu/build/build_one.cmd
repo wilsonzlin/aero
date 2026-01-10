@@ -58,14 +58,6 @@ if not exist "%SRCDIR%\sources" if not exist "%SRCDIR%\dirs" (
   exit /b 1
 )
 
-set "OBJARCH="
-if /i "%ARCH%"=="x86" set "OBJARCH=x86"
-if /i "%ARCH%"=="x64" set "OBJARCH=amd64"
-if not defined OBJARCH (
-  echo ERROR: Unknown arch "%ARCH%" (expected x86 or x64)
-  exit /b 1
-)
-
 pushd "%SRCDIR%" >nul
 
 rem setenv.cmd varies slightly across kits; the Win7 argument may be WIN7 or W7.
