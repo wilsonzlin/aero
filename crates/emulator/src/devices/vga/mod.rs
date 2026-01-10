@@ -5,6 +5,7 @@ mod regs;
 pub mod dac;
 pub mod edid;
 pub mod memory;
+pub mod pci;
 pub mod render;
 pub mod vbe;
 
