@@ -134,6 +134,48 @@ impl PhysicalMemory {
         self.data.len()
     }
 
+    /// Read bytes directly from the backing store (no A20 translation).
+    pub fn read_raw(&self, addr: u64, buf: &mut [u8]) {
+        let start: usize = addr
+            .try_into()
+            .unwrap_or_else(|_| panic!("address out of range: 0x{addr:016x}"));
+        let end = start
+            .checked_add(buf.len())
+            .unwrap_or_else(|| panic!("address overflow: 0x{addr:016x}+0x{:x}", buf.len()));
+        assert!(
+            end <= self.data.len(),
+            "raw read out of bounds: 0x{addr:016x}+0x{:x} (mem=0x{:x})",
+            buf.len(),
+            self.data.len()
+        );
+        buf.copy_from_slice(&self.data[start..end]);
+    }
+
+    /// Write bytes directly into the backing store (no A20 translation, ignores read-only ranges).
+    pub fn write_raw(&mut self, addr: u64, buf: &[u8]) {
+        let start: usize = addr
+            .try_into()
+            .unwrap_or_else(|_| panic!("address out of range: 0x{addr:016x}"));
+        let end = start
+            .checked_add(buf.len())
+            .unwrap_or_else(|| panic!("address overflow: 0x{addr:016x}+0x{:x}", buf.len()));
+        assert!(
+            end <= self.data.len(),
+            "raw write out of bounds: 0x{addr:016x}+0x{:x} (mem=0x{:x})",
+            buf.len(),
+            self.data.len()
+        );
+        self.data[start..end].copy_from_slice(buf);
+    }
+
+    pub fn read_only_ranges(&self) -> &[Range<u64>] {
+        &self.read_only_ranges
+    }
+
+    pub fn set_read_only_ranges(&mut self, ranges: Vec<Range<u64>>) {
+        self.read_only_ranges = ranges;
+    }
+
     fn translate_addr(&self, addr: u64) -> u64 {
         if self.a20_enabled {
             addr

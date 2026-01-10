@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+aero-snapshot = { path = "../aero-snapshot" }
 firmware = { path = "../firmware" }
 machine = { path = "../machine" }
-

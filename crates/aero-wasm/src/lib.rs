@@ -249,3 +249,44 @@ impl AeroApi {
         self.version.clone()
     }
 }
+
+#[wasm_bindgen]
+pub struct DemoVm {
+    inner: aero_vm::Vm,
+}
+
+#[wasm_bindgen]
+impl DemoVm {
+    #[wasm_bindgen(constructor)]
+    pub fn new(ram_size_bytes: u32) -> Self {
+        Self {
+            inner: aero_vm::Vm::new(ram_size_bytes as usize),
+        }
+    }
+
+    pub fn run_steps(&mut self, steps: u32) {
+        self.inner.run_steps(steps as u64);
+    }
+
+    pub fn serial_output(&self) -> Vec<u8> {
+        self.inner.serial_output().to_vec()
+    }
+
+    pub fn snapshot_full(&mut self) -> Result<Vec<u8>, JsValue> {
+        self.inner
+            .take_snapshot_full()
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    pub fn snapshot_dirty(&mut self) -> Result<Vec<u8>, JsValue> {
+        self.inner
+            .take_snapshot_dirty()
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    pub fn restore_snapshot(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        self.inner
+            .restore_snapshot_bytes(bytes)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+}

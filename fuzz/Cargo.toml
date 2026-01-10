@@ -15,6 +15,9 @@ libfuzzer-sys = "0.4"
 [dependencies.memory]
 path = "../crates/memory"
 
+[dependencies.aero-snapshot]
+path = "../crates/aero-snapshot"
+
 [[bin]]
 name = "fuzz_mmu_translate"
 path = "fuzz_targets/fuzz_mmu_translate.rs"
@@ -24,5 +27,11 @@ doc = false
 [[bin]]
 name = "fuzz_bus_rw"
 path = "fuzz_targets/fuzz_bus_rw.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_snapshot_decode"
+path = "fuzz_targets/fuzz_snapshot_decode.rs"
 test = false
 doc = false

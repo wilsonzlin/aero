@@ -13,6 +13,7 @@ wasm-threaded = []
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+aero-vm = { path = "../aero-vm" }
 wasm-bindgen = "0.2"
 
 [dev-dependencies]

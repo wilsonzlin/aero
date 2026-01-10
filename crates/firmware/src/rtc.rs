@@ -1,3 +1,4 @@
+use std::io::{Read, Write};
 use std::time::Duration;
 
 fn to_bcd(value: u8) -> u8 {
@@ -154,6 +155,70 @@ pub struct CmosRtc {
     daylight_savings: bool,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct CmosRtcSnapshot {
+    pub datetime: DateTime,
+    pub bcd_mode: bool,
+    pub hour_24: bool,
+    pub daylight_savings: bool,
+}
+
+impl CmosRtcSnapshot {
+    pub fn encode<W: Write>(&self, w: &mut W) -> std::io::Result<()> {
+        w.write_all(&self.datetime.year.to_le_bytes())?;
+        w.write_all(&[self.datetime.month])?;
+        w.write_all(&[self.datetime.day])?;
+        w.write_all(&[self.datetime.hour])?;
+        w.write_all(&[self.datetime.minute])?;
+        w.write_all(&[self.datetime.second])?;
+        w.write_all(&self.datetime.nanosecond.to_le_bytes())?;
+        w.write_all(&[self.bcd_mode as u8])?;
+        w.write_all(&[self.hour_24 as u8])?;
+        w.write_all(&[self.daylight_savings as u8])?;
+        Ok(())
+    }
+
+    pub fn decode<R: Read>(r: &mut R) -> std::io::Result<Self> {
+        let mut buf2 = [0u8; 2];
+        r.read_exact(&mut buf2)?;
+        let year = u16::from_le_bytes(buf2);
+        let mut b = [0u8; 1];
+        r.read_exact(&mut b)?;
+        let month = b[0];
+        r.read_exact(&mut b)?;
+        let day = b[0];
+        r.read_exact(&mut b)?;
+        let hour = b[0];
+        r.read_exact(&mut b)?;
+        let minute = b[0];
+        r.read_exact(&mut b)?;
+        let second = b[0];
+        let mut buf4 = [0u8; 4];
+        r.read_exact(&mut buf4)?;
+        let nanosecond = u32::from_le_bytes(buf4);
+        r.read_exact(&mut b)?;
+        let bcd_mode = b[0] != 0;
+        r.read_exact(&mut b)?;
+        let hour_24 = b[0] != 0;
+        r.read_exact(&mut b)?;
+        let daylight_savings = b[0] != 0;
+        Ok(Self {
+            datetime: DateTime {
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                second,
+                nanosecond,
+            },
+            bcd_mode,
+            hour_24,
+            daylight_savings,
+        })
+    }
+}
+
 impl CmosRtc {
     pub fn new(datetime: DateTime) -> Self {
         Self {
@@ -166,6 +231,22 @@ impl CmosRtc {
 
     pub fn datetime(&self) -> DateTime {
         self.datetime
+    }
+
+    pub fn snapshot(&self) -> CmosRtcSnapshot {
+        CmosRtcSnapshot {
+            datetime: self.datetime,
+            bcd_mode: self.bcd_mode,
+            hour_24: self.hour_24,
+            daylight_savings: self.daylight_savings,
+        }
+    }
+
+    pub fn restore_snapshot(&mut self, snapshot: CmosRtcSnapshot) {
+        self.datetime = snapshot.datetime;
+        self.bcd_mode = snapshot.bcd_mode;
+        self.hour_24 = snapshot.hour_24;
+        self.daylight_savings = snapshot.daylight_savings;
     }
 
     pub fn advance(&mut self, delta: Duration) {

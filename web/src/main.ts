@@ -6,7 +6,7 @@ import { fnv1a32Hex } from "./utils/fnv1a";
 import { perf } from "./perf/perf";
 import { createAudioOutput } from "./platform/audio";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
-import { importFileToOpfs } from "./platform/opfs";
+import { importFileToOpfs, openFileHandle, removeOpfsEntry } from "./platform/opfs";
 import { RemoteStreamingDisk } from "./platform/remote_disk";
 import { ensurePersistentStorage, getPersistentStorageInfo, getStorageEstimate } from "./platform/storage_quota";
 import { initAeroStatusApi } from "./api/status";
@@ -18,7 +18,7 @@ import { VgaPresenter } from "./display/vga_presenter";
 import { installAeroGlobal } from "./runtime/aero_global";
 import { createWebGpuCanvasContext, requestWebGpuDevice } from "./platform/webgpu";
 import { WorkerCoordinator } from "./runtime/coordinator";
-import { initWasm } from "./runtime/wasm_loader";
+import { initWasm, type WasmApi } from "./runtime/wasm_loader";
 import { DEFAULT_GUEST_RAM_MIB, GUEST_RAM_PRESETS_MIB, type GuestRamMiB, type WorkerRole } from "./runtime/shared_layout";
 import { createDefaultDiskImageStore } from "./storage/default_disk_image_store";
 import type { DiskImageInfo, WorkerOpenToken } from "./storage/disk_image_store";
@@ -162,6 +162,7 @@ function render(): void {
     ),
     renderWasmPanel(),
     renderGraphicsPanel(report),
+    renderSnapshotPanel(),
     renderWebGpuPanel(),
     renderGpuWorkerPanel(),
     renderSm5TrianglePanel(),
@@ -258,6 +259,199 @@ function renderGraphicsPanel(report: PlatformFeatureReport): HTMLElement {
       el("a", { href: "/webgl2_fallback_demo.html" }, "/webgl2_fallback_demo.html"),
       ".",
     ),
+  );
+}
+
+async function writeSnapshotToOpfs(path: string, bytes: Uint8Array): Promise<void> {
+  const handle = await openFileHandle(path, { create: true });
+  const writable = await handle.createWritable({ keepExistingData: false });
+  await writable.write(bytes);
+  await writable.close();
+}
+
+async function readSnapshotFromOpfs(path: string): Promise<Uint8Array | null> {
+  try {
+    const handle = await openFileHandle(path, { create: false });
+    const file = await handle.getFile();
+    return new Uint8Array(await file.arrayBuffer());
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "NotFoundError") return null;
+    throw err;
+  }
+}
+
+function downloadBytes(bytes: Uint8Array, filename: string): void {
+  const blob = new Blob([bytes], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function renderSnapshotPanel(): HTMLElement {
+  const status = el("pre", { text: "Initializing demo VM…" });
+  const output = el("pre", { text: "" });
+  const error = el("pre", { text: "" });
+
+  const autosaveInput = el("input", { type: "number", min: "0", step: "1", value: "0" }) as HTMLInputElement;
+  const importInput = el("input", { type: "file", accept: ".snap,application/octet-stream" }) as HTMLInputElement;
+
+  const saveButton = el("button", { text: "Save", disabled: "true" }) as HTMLButtonElement;
+  const loadButton = el("button", { text: "Load", disabled: "true" }) as HTMLButtonElement;
+  const exportButton = el("button", { text: "Export", disabled: "true" }) as HTMLButtonElement;
+  const deleteButton = el("button", { text: "Delete", disabled: "true" }) as HTMLButtonElement;
+
+  const SNAPSHOT_PATH = "state/demo-vm-autosave.snap";
+
+  let autosaveTimer: number | null = null;
+  let vm: InstanceType<WasmApi["DemoVm"]> | null = null;
+
+  let steps = 0;
+
+  function setError(msg: string): void {
+    error.textContent = msg;
+    console.error(msg);
+  }
+
+  async function saveSnapshot(): Promise<Uint8Array> {
+    if (!vm) throw new Error("Demo VM not initialized");
+    const bytes = vm.snapshot_full();
+    await writeSnapshotToOpfs(SNAPSHOT_PATH, bytes);
+    status.textContent = `Saved snapshot (${bytes.byteLength.toLocaleString()} bytes)`;
+    return bytes;
+  }
+
+  async function loadSnapshot(bytesOverride?: Uint8Array): Promise<void> {
+    if (!vm) throw new Error("Demo VM not initialized");
+    const bytes = bytesOverride ?? (await readSnapshotFromOpfs(SNAPSHOT_PATH));
+    if (!bytes) {
+      status.textContent = "No snapshot found in OPFS.";
+      return;
+    }
+    vm.restore_snapshot(bytes);
+    status.textContent = `Loaded snapshot (${bytes.byteLength.toLocaleString()} bytes)`;
+  }
+
+  function setAutosave(seconds: number): void {
+    if (autosaveTimer !== null) {
+      window.clearInterval(autosaveTimer);
+      autosaveTimer = null;
+    }
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+      status.textContent = "Auto-save disabled.";
+      return;
+    }
+    autosaveTimer = window.setInterval(() => {
+      saveSnapshot().catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    }, seconds * 1000);
+    status.textContent = `Auto-save every ${seconds}s.`;
+  }
+
+  autosaveInput.addEventListener("change", () => {
+    const seconds = Number.parseInt(autosaveInput.value, 10);
+    setAutosave(seconds);
+  });
+
+  saveButton.onclick = () => {
+    error.textContent = "";
+    saveSnapshot().catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  };
+
+  loadButton.onclick = () => {
+    error.textContent = "";
+    loadSnapshot().catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  };
+
+  exportButton.onclick = () => {
+    error.textContent = "";
+    readSnapshotFromOpfs(SNAPSHOT_PATH)
+      .then((bytes) => {
+        if (!bytes) {
+          status.textContent = "No snapshot found to export.";
+          return;
+        }
+        downloadBytes(bytes, "aero-demo-vm.snap");
+        status.textContent = `Exported snapshot (${bytes.byteLength.toLocaleString()} bytes)`;
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  };
+
+  deleteButton.onclick = () => {
+    error.textContent = "";
+    removeOpfsEntry(SNAPSHOT_PATH)
+      .then(() => {
+        status.textContent = "Deleted snapshot from OPFS.";
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  };
+
+  importInput.addEventListener("change", () => {
+    void (async () => {
+      error.textContent = "";
+      const file = importInput.files?.[0];
+      if (!file) return;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      await loadSnapshot(bytes);
+      await writeSnapshotToOpfs(SNAPSHOT_PATH, bytes);
+      status.textContent = `Imported snapshot (${bytes.byteLength.toLocaleString()} bytes)`;
+    })().catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  });
+
+  wasmInitPromise
+    .then(async ({ api, variant }) => {
+      vm = new api.DemoVm(256 * 1024);
+      status.textContent = `Demo VM ready (WASM ${variant}). Running…`;
+
+      saveButton.disabled = false;
+      loadButton.disabled = false;
+      exportButton.disabled = false;
+      deleteButton.disabled = false;
+
+      // Best-effort crash recovery: try to restore the last autosave snapshot.
+      try {
+        await loadSnapshot();
+      } catch (err) {
+        // If restore fails, keep running from a clean state.
+        setError(err instanceof Error ? err.message : String(err));
+      }
+
+      // Drive the demo VM forward so the snapshot has something interesting to capture.
+      window.setInterval(() => {
+        if (!vm) return;
+        vm.run_steps(5_000);
+        steps += 5_000;
+        const outBytes = vm.serial_output();
+        output.textContent = `steps=${steps.toLocaleString()} serial_bytes=${outBytes.byteLength.toLocaleString()}`;
+      }, 250);
+    })
+    .catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      status.textContent = "Demo VM unavailable (WASM init failed)";
+      setError(message);
+      console.error(err);
+    });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Snapshots (demo VM + OPFS autosave)" }),
+    el(
+      "div",
+      { class: "row" },
+      saveButton,
+      loadButton,
+      exportButton,
+      deleteButton,
+      el("label", { text: "Auto-save (seconds):" }),
+      autosaveInput,
+      el("label", { text: "Import:" }),
+      importInput,
+    ),
+    status,
+    output,
+    error,
   );
 }
 

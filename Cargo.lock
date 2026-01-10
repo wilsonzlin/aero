@@ -493,6 +493,7 @@ version = "0.1.0"
 dependencies = [
  "aero-audio",
  "aero-platform",
+ "aero-vm",
  "js-sys",
  "wasm-bindgen",
  "wasm-bindgen-test",
@@ -4843,6 +4844,7 @@ version = "0.1.0"
 name = "vm"
 version = "0.1.0"
 dependencies = [
+ "aero-snapshot",
  "firmware",
  "machine",
 ]

@@ -6,6 +6,15 @@ export interface WasmApi {
     version: () => number;
     sum: (a: number, b: number) => number;
     AeroApi: new () => { version(): string; free(): void };
+    DemoVm: new (ramSizeBytes: number) => {
+        run_steps(steps: number): void;
+        serial_output(): Uint8Array;
+        snapshot_full(): Uint8Array;
+        snapshot_dirty(): Uint8Array;
+        restore_snapshot(bytes: Uint8Array): void;
+        free(): void;
+    };
+
     // Optional audio exports (present when the WASM build includes the audio worklet bridge).
     WorkletBridge?: new (capacityFrames: number, channelCount: number) => {
         readonly shared_buffer: SharedArrayBuffer;
@@ -26,7 +35,6 @@ export interface WasmApi {
             sampleRate: number,
             gain: number,
         ): number;
-        free(): void;
     };
     HdaPcmWriter?: new (dstSampleRateHz: number) => {
         readonly dst_sample_rate_hz: number;
@@ -104,6 +112,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         version: mod.version,
         sum: mod.sum,
         AeroApi: mod.AeroApi,
+        DemoVm: mod.DemoVm,
         WorkletBridge: mod.WorkletBridge,
         create_worklet_bridge: mod.create_worklet_bridge,
         attach_worklet_bridge: mod.attach_worklet_bridge,

@@ -23,6 +23,7 @@ mod interrupts;
 mod ivt;
 mod post;
 mod rom;
+mod snapshot;
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -35,6 +36,7 @@ use machine::{BlockDevice, CpuState, DiskError, FirmwareMemory, MemoryAccess, Se
 pub use acpi::{AcpiBuilder, AcpiPlacement};
 pub use bda_time::{BdaTime, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR, TICKS_PER_DAY};
 pub use interrupts::E820Entry;
+pub use snapshot::BiosSnapshot;
 
 pub const BIOS_BASE: u64 = 0x000F_0000;
 pub const BIOS_SIZE: usize = 0x10000; // 64KiB

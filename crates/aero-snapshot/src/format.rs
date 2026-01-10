@@ -26,4 +26,10 @@ impl DeviceId {
     pub const DISK_CONTROLLER: DeviceId = DeviceId(6);
     pub const VGA: DeviceId = DeviceId(7);
     pub const SERIAL: DeviceId = DeviceId(8);
+    /// Non-architectural CPU state (e.g. pending interrupts) that isn't part of the `CPU` section.
+    pub const CPU_INTERNAL: DeviceId = DeviceId(9);
+    /// Firmware/BIOS state for minimal VM configurations.
+    pub const BIOS: DeviceId = DeviceId(10);
+    /// Memory bus/host glue state (A20 gate, ROM ranges, etc.).
+    pub const MEMORY: DeviceId = DeviceId(11);
 }

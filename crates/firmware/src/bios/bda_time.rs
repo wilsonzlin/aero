@@ -1,4 +1,5 @@
 use crate::{memory::MemoryBus, rtc::CmosRtc};
+use std::io::{Read, Write};
 use std::time::Duration;
 
 pub const TICKS_PER_DAY: u32 = 0x1800B0;
@@ -13,6 +14,39 @@ pub struct BdaTime {
     tick_count: u32,
     tick_remainder: u128,
     midnight_flag: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BdaTimeSnapshot {
+    pub tick_count: u32,
+    pub tick_remainder: u128,
+    pub midnight_flag: u8,
+}
+
+impl BdaTimeSnapshot {
+    pub fn encode<W: Write>(&self, w: &mut W) -> std::io::Result<()> {
+        w.write_all(&self.tick_count.to_le_bytes())?;
+        w.write_all(&self.tick_remainder.to_le_bytes())?;
+        w.write_all(&[self.midnight_flag])?;
+        Ok(())
+    }
+
+    pub fn decode<R: Read>(r: &mut R) -> std::io::Result<Self> {
+        let mut buf4 = [0u8; 4];
+        r.read_exact(&mut buf4)?;
+        let tick_count = u32::from_le_bytes(buf4);
+        let mut buf16 = [0u8; 16];
+        r.read_exact(&mut buf16)?;
+        let tick_remainder = u128::from_le_bytes(buf16);
+        let mut b = [0u8; 1];
+        r.read_exact(&mut b)?;
+        let midnight_flag = b[0];
+        Ok(Self {
+            tick_count,
+            tick_remainder,
+            midnight_flag,
+        })
+    }
 }
 
 impl BdaTime {
@@ -57,6 +91,20 @@ impl BdaTime {
             (nanos / 1_000_000_000) as u64,
             (nanos % 1_000_000_000) as u32,
         )
+    }
+
+    pub fn snapshot(&self) -> BdaTimeSnapshot {
+        BdaTimeSnapshot {
+            tick_count: self.tick_count,
+            tick_remainder: self.tick_remainder,
+            midnight_flag: self.midnight_flag,
+        }
+    }
+
+    pub fn restore_snapshot(&mut self, snapshot: BdaTimeSnapshot) {
+        self.tick_count = snapshot.tick_count;
+        self.tick_remainder = snapshot.tick_remainder;
+        self.midnight_flag = snapshot.midnight_flag;
     }
 
     pub fn advance<M: MemoryBus + ?Sized>(&mut self, memory: &mut M, delta: Duration) {

@@ -1,4 +1,5 @@
 use std::io::Cursor;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aero_snapshot::{
@@ -80,15 +81,19 @@ impl SnapshotSource for Vm {
     fn snapshot_meta(&mut self) -> SnapshotMeta {
         let snapshot_id = self.next_snapshot_id;
         self.next_snapshot_id += 1;
+        #[cfg(target_arch = "wasm32")]
+        let created_unix_ms = 0u64;
+        #[cfg(not(target_arch = "wasm32"))]
+        let created_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
         let meta = SnapshotMeta {
             snapshot_id,
             parent_snapshot_id: self.last_snapshot_id,
-            created_unix_ms: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis()
-                .try_into()
-                .unwrap_or(u64::MAX),
+            created_unix_ms,
             label: None,
         };
         self.last_snapshot_id = Some(snapshot_id);
