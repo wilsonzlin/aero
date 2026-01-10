@@ -308,7 +308,7 @@ Baselines are used to detect regressions in CI. Update them when:
 In CI:
 
 - The PR perf workflow compares **PR vs base commit** (no committed “golden baseline” file).
-- Thresholds live in `.github/workflows/perf.yml` as environment variables (and can also be passed to `tools/perf/compare.mjs`):
+- Thresholds live in [`/.github/workflows/perf.yml`](../.github/workflows/perf.yml) as environment variables (and can also be passed to `tools/perf/compare.mjs`):
   - `PERF_REGRESSION_THRESHOLD_PCT`
   - `PERF_EXTREME_CV_THRESHOLD`
 
@@ -326,8 +326,8 @@ Guidelines:
 
 CI performance jobs are split by intent:
 
-- **PR perf (gating):** `.github/workflows/perf.yml` runs a small browser-only suite and compares PR vs base commit.
-- **Nightly perf (non-gating + data collection):** `.github/workflows/perf-nightly.yml` runs more iterations and publishes history/dashboard artifacts.
+- **PR perf (gating):** [`/.github/workflows/perf.yml`](../.github/workflows/perf.yml) runs a small browser-only suite and compares PR vs base commit.
+- **Nightly perf (non-gating + data collection):** [`/.github/workflows/perf-nightly.yml`](../.github/workflows/perf-nightly.yml) runs more iterations and publishes history/dashboard artifacts.
 
 Where to find artifacts:
 
