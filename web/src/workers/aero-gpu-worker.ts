@@ -145,23 +145,42 @@ function detectWebGpuSupport(): boolean {
 }
 
 function attachWebGlContextLossListeners(canvas: OffscreenCanvas): void {
-  canvas.addEventListener(
-    "webglcontextlost",
-    (ev) => {
-      // Keep control of restore semantics; coordinate with Rust/main-thread state.
-      ev.preventDefault();
-      isReady = false;
-      emitErrorEvent("Error", "DeviceLost", "WebGL2 context lost");
-    },
-    { passive: false },
-  );
+  // Some environments may not dispatch context loss events on OffscreenCanvas.
+  // Treat listener registration as best-effort to avoid crashing the worker.
+  const target = canvas as unknown as {
+    addEventListener?: (
+      type: string,
+      listener: (ev: Event) => void,
+      options?: boolean | AddEventListenerOptions,
+    ) => void;
+  };
+  if (typeof target.addEventListener !== "function") return;
 
-  canvas.addEventListener("webglcontextrestored", () => {
-    // The underlying GL context object is no longer valid; require a wasm-side
-    // re-init (or full worker restart) before resuming rendering.
-    isReady = false;
-    emitErrorEvent("Info", "DeviceLost", "WebGL2 context restored; re-init required");
-  });
+  try {
+    target.addEventListener(
+      "webglcontextlost",
+      (ev) => {
+        // Keep control of restore semantics; coordinate with Rust/main-thread state.
+        ev.preventDefault();
+        isReady = false;
+        emitErrorEvent("Error", "DeviceLost", "WebGL2 context lost");
+        forwardNonFatal("unexpected", new Error("WebGL2 context lost"));
+      },
+      { passive: false },
+    );
+
+    target.addEventListener("webglcontextrestored", () => {
+      // The underlying GL context object is no longer valid; require a wasm-side
+      // re-init (or full worker restart) before resuming rendering.
+      isReady = false;
+      emitErrorEvent("Info", "DeviceLost", "WebGL2 context restored; re-init required");
+    });
+  } catch (err) {
+    // Ignore; context loss events are non-essential.
+    emitErrorEvent("Warning", "Unknown", "Failed to register WebGL context loss listeners", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 async function initWithFallback(message: GpuWorkerInitMessage): Promise<GpuWorkerReadyMessage> {
