@@ -840,6 +840,15 @@ PF-006 should be validated with at least:
 
 - A synthetic benchmark that executes enough distinct blocks to force compilation → **non-zero compile ms and block counts**.
 - A run with JIT compilation disabled (interpreted-only mode) → **all `jit.*` counters and durations remain 0**, and the code path avoids doing cache lookups/instrumentation work.
+### Standard performance metric definitions
+
+To avoid drift between in-app HUD, exported perf summaries, and benchmark tooling, compute metrics using a single shared implementation (`packages/aero-stats`) and the following definitions:
+
+- `avg_fps = frames / total_time_s` (equivalently `1000 / mean_frame_time_ms`)
+- `median_fps = 1000 / p50_frame_time_ms`
+- `1% low FPS = 1000 / p99_frame_time_ms`
+- `0.1% low FPS = 1000 / p99.9_frame_time_ms`
+- Variance/stdev/CoV are computed over frame times (ms) using Welford’s algorithm (population variance).
 
 ---
 
