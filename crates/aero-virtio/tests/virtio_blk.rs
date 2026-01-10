@@ -1,4 +1,5 @@
 use aero_virtio::devices::blk::{BlockBackend, VirtioBlk, VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT};
+use aero_virtio::devices::blk::{VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_GET_ID};
 use aero_virtio::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
 use aero_virtio::pci::{
     InterruptLog, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_PCI_CAP_COMMON_CFG,
@@ -27,6 +28,10 @@ impl BlockBackend for SharedDisk {
         let offset = offset as usize;
         self.0.borrow_mut()[offset..offset + src.len()].copy_from_slice(src);
         Ok(())
+    }
+
+    fn device_id(&self) -> [u8; 20] {
+        *b"aero-virtio-testdisk"
     }
 }
 
@@ -242,4 +247,33 @@ fn virtio_blk_enumerates_and_processes_requests() {
     let got = mem.get_slice(data2, payload.len()).unwrap();
     assert_eq!(got, payload.as_slice());
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+
+    // FLUSH request.
+    mem.write(status, &[0xff]).unwrap();
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_FLUSH).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    write_desc(&mut mem, desc, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, desc, 1, status, 1, 0x0002, 0);
+    write_u16_le(&mut mem, avail + 4 + 4, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 3).unwrap();
+    dev.bar0_write(caps.notify + 0 * u64::from(caps.notify_mult), &0u16.to_le_bytes(), &mut mem);
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+
+    // GET_ID request (writes 20 bytes).
+    let id_buf = 0xB000;
+    mem.write(id_buf, &[0u8; 20]).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_GET_ID).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    write_desc(&mut mem, desc, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, desc, 1, id_buf, 20, 0x0001 | 0x0002, 2);
+    write_desc(&mut mem, desc, 2, status, 1, 0x0002, 0);
+    write_u16_le(&mut mem, avail + 4 + 6, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 4).unwrap();
+    dev.bar0_write(caps.notify + 0 * u64::from(caps.notify_mult), &0u16.to_le_bytes(), &mut mem);
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(
+        mem.get_slice(id_buf, 20).unwrap(),
+        b"aero-virtio-testdisk"
+    );
 }
