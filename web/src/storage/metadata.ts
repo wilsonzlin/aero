@@ -51,8 +51,18 @@ export function hasOpfs(): boolean {
   return typeof navigator !== "undefined" && !!navigator.storage?.getDirectory;
 }
 
+export function hasOpfsSyncAccessHandle(): boolean {
+  if (!hasOpfs()) return false;
+  const ctor = (globalThis as typeof globalThis & { FileSystemFileHandle?: unknown }).FileSystemFileHandle;
+  if (!ctor) return false;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return typeof (ctor as any).prototype?.createSyncAccessHandle === "function";
+}
+
 export function pickDefaultBackend(): DiskBackend {
-  return hasOpfs() ? "opfs" : "idb";
+  // The current OPFS disk backends require `createSyncAccessHandle()` for random I/O.
+  // If sync handles are unavailable, fall back to IndexedDB.
+  return hasOpfsSyncAccessHandle() ? "opfs" : "idb";
 }
 
 export function inferFormatFromFileName(fileName: string): DiskFormat {
