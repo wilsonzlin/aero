@@ -1,3 +1,16 @@
+#Requires -Version 5.1
+
+<#
+.SYNOPSIS
+  Provision the Windows driver toolchain for Win7 driver CI.
+
+.DESCRIPTION
+  Uses `ci/lib/Toolchain.psm1` to locate (and if needed install via winget) MSBuild and
+  Windows Kits tools used by downstream steps (Inf2Cat.exe, signtool.exe, stampinf.exe).
+
+  Also emits `out/toolchain.json` and exports useful paths to later GitHub Actions steps.
+#>
+
 [CmdletBinding()]
 param()
 
@@ -6,6 +19,18 @@ $ErrorActionPreference = 'Stop'
 
 $scriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $scriptDir '..')).Path
+
+# Create the download cache dir if configured (the workflow may cache it between runs).
+# Note: winget has its own internal cache, but keeping this directory stable lets us
+# evolve the provisioning strategy without changing the workflow.
+if (-not [string]::IsNullOrWhiteSpace($env:WDK_DOWNLOAD_CACHE)) {
+  try {
+    New-Item -Path $env:WDK_DOWNLOAD_CACHE -ItemType Directory -Force | Out-Null
+  } catch {
+    Write-Warning "Failed to create WDK_DOWNLOAD_CACHE directory '$($env:WDK_DOWNLOAD_CACHE)': $($_.Exception.Message)"
+  }
+}
+
 $outDir = Join-Path $repoRoot 'out'
 $outFile = Join-Path $outDir 'toolchain.json'
 

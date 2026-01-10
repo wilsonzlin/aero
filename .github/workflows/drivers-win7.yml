@@ -2,9 +2,17 @@ name: Win7 Drivers (build + catalog + test-sign)
 
 on:
   pull_request:
+    paths:
+      - "drivers/**"
+      - "ci/**"
+      - ".github/workflows/drivers-win7.yml"
   push:
     branches:
       - main
+    paths:
+      - "drivers/**"
+      - "ci/**"
+      - ".github/workflows/drivers-win7.yml"
   workflow_dispatch:
 
 jobs:
@@ -42,13 +50,15 @@ jobs:
             exit 0
           }
 
-          # Heuristic marker files that indicate "this repo actually has driver projects".
+          # Heuristic marker files that indicate "this repo actually has buildable driver projects".
+          # Keep this aligned with ci/build-drivers.ps1 discovery conventions (solution/project files),
+          # so we don't run expensive toolchain setup if there is nothing we can build.
           $markerFiles = $files | Where-Object {
-            $_.Extension -in @('.sln', '.vcxproj', '.inf') -or $_.Name -in @('sources', 'dirs')
+            $_.Extension -in @('.sln', '.vcxproj')
           }
 
           if (@($markerFiles).Count -eq 0) {
-            Write-Host "drivers/ contains files, but no driver project markers (*.sln, *.vcxproj, *.inf, sources, dirs) were found; skipping Win7 driver build."
+            Write-Host "drivers/ contains files, but no driver project markers (*.sln, *.vcxproj) were found; skipping Win7 driver build."
             "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
@@ -92,8 +102,32 @@ jobs:
           }
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\build-drivers.ps1' -ToolchainJson 'out\toolchain.json'
 
-      - name: Generate catalogs (ci/make-catalogs.ps1)
+      - name: Detect built driver binaries
+        id: built
         if: steps.detect.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $outDrivers = Join-Path $env:GITHUB_WORKSPACE 'out\drivers'
+          if (!(Test-Path -LiteralPath $outDrivers)) {
+            Write-Host "No out/drivers/ directory produced by build step; skipping catalog/sign/package."
+            "has_sys=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            exit 0
+          }
+
+          $sys = Get-ChildItem -LiteralPath $outDrivers -Recurse -File -Filter '*.sys' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $sys) {
+            Write-Host "No .sys files found under out/drivers/; skipping catalog/sign/package."
+            "has_sys=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            exit 0
+          }
+
+          Write-Host "Found driver binary: $($sys.FullName)"
+          "has_sys=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Generate catalogs (ci/make-catalogs.ps1)
+        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -103,7 +137,7 @@ jobs:
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\make-catalogs.ps1' -ToolchainJson 'out\toolchain.json'
 
       - name: Test-sign drivers (ci/sign-drivers.ps1)
-        if: steps.detect.outputs.skip != 'true'
+        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -113,7 +147,7 @@ jobs:
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\sign-drivers.ps1' -ToolchainJson 'out\toolchain.json'
 
       - name: Package artifacts (ci/package-drivers.ps1)
-        if: steps.detect.outputs.skip != 'true'
+        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -123,7 +157,7 @@ jobs:
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\package-drivers.ps1' -MakeFatImage
 
       - name: Upload artifacts (out/artifacts/)
-        if: steps.detect.outputs.skip != 'true'
+        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: win7-drivers

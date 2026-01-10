@@ -147,7 +147,11 @@ function Get-DriverNameFromRelativeSegments {
         "sp1"
     )
 
-    foreach ($segment in $Segments) {
+    # Prefer the *deepest* meaningful segment so that nested layouts like:
+    #   out/packages/<group>/<driver>/<arch>/...
+    # map to the expected driver name (<driver>), not the top-level group.
+    for ($i = $Segments.Count - 1; $i -ge 0; $i--) {
+        $segment = $Segments[$i]
         $s = $segment.ToLowerInvariant()
         if ($s -in @("x86", "i386", "win32", "x64", "amd64", "x86_64")) {
             continue

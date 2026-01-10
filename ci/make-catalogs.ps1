@@ -352,12 +352,14 @@ if (-not $driverBuildDirs) {
 $stampScript = Join-Path -Path $PSScriptRoot -ChildPath 'stamp-infs.ps1'
 
 foreach ($driverBuildDir in $driverBuildDirs) {
-  $driverName = $driverBuildDir.DisplayName
-  Write-Host "==> Driver: $driverName"
+  $driverRel = [string]$driverBuildDir.RelativePath
+  $driverNameForLog = [string]$driverBuildDir.DisplayName
 
-  $driverSourceDir = Join-Path -Path $driversRoot -ChildPath $driverBuildDir.RelativePath
+  Write-Host "==> Driver: $driverNameForLog"
+
+  $driverSourceDir = Join-Path -Path $driversRoot -ChildPath $driverRel
   if (-not (Test-Path -LiteralPath $driverSourceDir)) {
-    throw "Driver source directory not found for '$driverName'. Expected: $driverSourceDir"
+    throw "Driver source directory not found for '$driverNameForLog'. Expected: $driverSourceDir"
   }
 
   $manifest = Read-DriverPackageManifest -DriverSourceDir $driverSourceDir
@@ -390,7 +392,7 @@ foreach ($driverBuildDir in $driverBuildDirs) {
     $osListForArch = $osByArch[$arch]
     if (-not $osListForArch -or $osListForArch.Count -eq 0) { continue }
 
-    $packageDir = Join-Path -Path $outputRootAbs -ChildPath (Join-Path -Path $driverBuildDir.RelativePath -ChildPath $arch)
+    $packageDir = Join-Path -Path $outputRootAbs -ChildPath (Join-Path -Path $driverRel -ChildPath $arch)
     Write-Host "  -> Staging package: $packageDir"
 
     if (Test-Path -LiteralPath $packageDir) {
@@ -410,7 +412,7 @@ foreach ($driverBuildDir in $driverBuildDirs) {
       if ($support -ne 'both' -and $support -ne $arch) { continue }
 
       if ($infNameMap.ContainsKey($inf.Name)) {
-        throw "Duplicate INF file name '$($inf.Name)' for driver '$driverName'. Ensure INF names are unique within the driver directory."
+        throw "Duplicate INF file name '$($inf.Name)' for driver '$driverNameForLog'. Ensure INF names are unique within the driver directory."
       }
       $infNameMap[$inf.Name] = $true
 
@@ -420,7 +422,7 @@ foreach ($driverBuildDir in $driverBuildDirs) {
     }
 
     if ($infNameMap.Count -eq 0) {
-      throw "No INF files applicable to $arch were found for driver '$driverName'."
+      throw "No INF files applicable to $arch were found for driver '$driverNameForLog'."
     }
 
     foreach ($coName in @('coinstallers', 'coinstaller')) {
@@ -497,7 +499,7 @@ foreach ($driverBuildDir in $driverBuildDirs) {
 
     $cats = Get-ChildItem -LiteralPath $packageDir -Filter '*.cat' -File -Recurse -ErrorAction SilentlyContinue
     if (-not $cats) {
-      throw "Inf2Cat did not produce a .cat file for $driverName ($arch)."
+      throw "Inf2Cat did not produce a .cat file for $driverNameForLog ($arch)."
     }
     Write-Host "     Generated catalog(s):"
     foreach ($cat in $cats) {
