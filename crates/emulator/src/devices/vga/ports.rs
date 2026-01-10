@@ -49,16 +49,16 @@ pub struct VgaDevice {
     feature_control: u8,
 
     seq_index: u8,
-    seq_regs: Vec<u8>,
+    pub(crate) seq_regs: Vec<u8>,
 
     gc_index: u8,
-    gc_regs: Vec<u8>,
+    pub(crate) gc_regs: Vec<u8>,
 
     crtc_index: u8,
-    crtc_regs: Vec<u8>,
+    pub(crate) crtc_regs: Vec<u8>,
 
     ac_index: u8,
-    ac_regs: Vec<u8>,
+    pub(crate) ac_regs: Vec<u8>,
     /// Attribute controller address/data flip-flop (false = expecting index).
     ac_flip_flop_data: Cell<bool>,
     ac_display_enabled: bool,

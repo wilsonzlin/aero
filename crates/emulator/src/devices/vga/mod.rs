@@ -12,26 +12,59 @@ pub use dac::VgaDac;
 pub use memory::VgaMemory;
 pub use ports::VgaDevice;
 pub use regs::{VgaDerivedState, VgaPlanarShift};
+
 pub use render::mode13h::{Mode13hRenderer, MODE13H_HEIGHT, MODE13H_VRAM_SIZE, MODE13H_WIDTH};
+pub use render::planar16::{Mode12hRenderer, MODE12H_HEIGHT, MODE12H_WIDTH};
+
+/// VGA graphics memory base address (A000:0000).
+pub const VRAM_BASE: u32 = 0xA0000;
+pub const PLANE_SIZE: usize = 0x10000;
+pub const VRAM_SIZE: usize = PLANE_SIZE * 4;
 
 /// VGA render modes that this crate can currently rasterize.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VgaDetectedMode {
     Mode13h,
+    Mode12h,
 }
 
 impl VgaDetectedMode {
-    /// Best-effort heuristic based on [`VgaDerivedState`].
+    /// Best-effort heuristic based on [`VgaDevice`] register state.
     ///
     /// This intentionally errs on the side of "unknown" until we have a fuller model
-    /// of the CRTC timing registers. For now, we only claim Mode 13h when the register
-    /// set looks like a packed 256-colour chain-4 graphics mode.
-    pub fn detect(derived: VgaDerivedState) -> Option<Self> {
+    /// of the CRTC timing registers.
+    pub fn detect(regs: &VgaDevice) -> Option<Self> {
+        let derived = regs.derived_state();
+
         if derived.is_graphics && derived.chain4 && !derived.odd_even && derived.bpp_guess == 8 {
-            Some(Self::Mode13h)
-        } else {
-            None
+            return Some(Self::Mode13h);
         }
+
+        // 640x480x16 planar (Mode 12h) heuristics:
+        // - 4bpp planar mode (no chain4, odd/even disabled)
+        // - bytes/scanline = 80 (CRTC offset = 40 words)
+        // - vertical display end = 479 (height 480)
+        if derived.is_graphics
+            && !derived.chain4
+            && !derived.odd_even
+            && derived.bpp_guess == 4
+            && matches!(derived.planar_shift, VgaPlanarShift::None)
+        {
+            let offset_words = regs.crtc_regs.get(0x13).copied().unwrap_or(0) as usize;
+            let bytes_per_scanline = offset_words * 2;
+            let width = bytes_per_scanline * 8;
+
+            let vde_low = regs.crtc_regs.get(0x12).copied().unwrap_or(0) as u16;
+            let overflow = regs.crtc_regs.get(0x07).copied().unwrap_or(0) as u16;
+            let vde = vde_low | ((overflow & 0x02) << 7) | ((overflow & 0x40) << 3);
+            let height = usize::from(vde.saturating_add(1));
+
+            if width == MODE12H_WIDTH && height == MODE12H_HEIGHT {
+                return Some(Self::Mode12h);
+            }
+        }
+
+        None
     }
 }
 
@@ -39,6 +72,7 @@ impl VgaDetectedMode {
 #[derive(Debug)]
 pub struct VgaRenderer {
     mode13h: Mode13hRenderer,
+    mode12h: Mode12hRenderer,
 }
 
 impl Default for VgaRenderer {
@@ -51,6 +85,7 @@ impl VgaRenderer {
     pub fn new() -> Self {
         Self {
             mode13h: Mode13hRenderer::new(),
+            mode12h: Mode12hRenderer::new(),
         }
     }
 
@@ -64,10 +99,9 @@ impl VgaRenderer {
         vram: &mut VgaMemory,
         dac: &mut VgaDac,
     ) -> Option<(usize, usize, &'a [u32])> {
-        match VgaDetectedMode::detect(regs.derived_state())? {
-            VgaDetectedMode::Mode13h => {
-                Some((MODE13H_WIDTH, MODE13H_HEIGHT, self.mode13h.render(vram, dac)))
-            }
+        match VgaDetectedMode::detect(regs)? {
+            VgaDetectedMode::Mode13h => Some((MODE13H_WIDTH, MODE13H_HEIGHT, self.mode13h.render(vram, dac))),
+            VgaDetectedMode::Mode12h => Some((MODE12H_WIDTH, MODE12H_HEIGHT, self.mode12h.render(regs, vram, dac))),
         }
     }
 }

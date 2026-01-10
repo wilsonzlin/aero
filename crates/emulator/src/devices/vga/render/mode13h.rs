@@ -31,7 +31,8 @@ impl Mode13hRenderer {
 
     pub fn render<'a>(&'a mut self, vram: &mut VgaMemory, dac: &mut VgaDac) -> &'a [u32] {
         let palette_dirty = dac.take_dirty();
-        let dirty_pages_mask = vram.take_dirty_pages();
+        let dirty_pages_mask =
+            vram.take_dirty_pages() & ((1u64 << MODE13H_VRAM_TOTAL_PAGES) - 1u64);
 
         if palette_dirty {
             self.full_repaint_requested = true;
@@ -72,7 +73,7 @@ impl Mode13hRenderer {
         }
     }
 
-    fn render_partial(&mut self, vram: &VgaMemory, dac: &VgaDac, dirty_pages_mask: u16) {
+    fn render_partial(&mut self, vram: &VgaMemory, dac: &VgaDac, dirty_pages_mask: u64) {
         let src = vram.data();
         let pel_mask = dac.pel_mask();
         let palette = dac.palette_rgba();
@@ -80,7 +81,7 @@ impl Mode13hRenderer {
         let mut dirty_scanlines = [false; MODE13H_HEIGHT];
 
         for page in 0..MODE13H_VRAM_TOTAL_PAGES {
-            if (dirty_pages_mask & (1u16 << page)) == 0 {
+            if (dirty_pages_mask & (1u64 << page)) == 0 {
                 continue;
             }
 
@@ -113,4 +114,3 @@ impl Mode13hRenderer {
         }
     }
 }
-
