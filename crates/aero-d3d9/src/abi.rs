@@ -48,7 +48,12 @@ pub enum Command<'a> {
     SetPixelShader {
         dxbc: &'a [u8],
     },
-    /// Raw bytes for now; the vertex decl format is defined in [`crate::state`].
+    /// Raw bytes containing a serialized `D3DVERTEXELEMENT9[]`.
+    ///
+    /// This is expected to be a stream of 8-byte structs (little-endian), terminated by the
+    /// standard D3D9 end marker (`stream=0xFF, type=UNUSED`).
+    ///
+    /// See [`crate::vertex::VertexDeclaration::from_d3d_bytes`].
     SetVertexDecl {
         bytes: &'a [u8],
     },

@@ -384,3 +384,80 @@ fn expand_instance_data_emulates_divisor() {
         .collect::<Vec<_>>();
     assert_eq!(words, vec![1, 1, 2, 2, 3]);
 }
+
+#[test]
+fn parses_serialized_d3d_vertex_elements() {
+    fn push_elem(
+        out: &mut Vec<u8>,
+        stream: u16,
+        offset: u16,
+        ty: u8,
+        method: u8,
+        usage: u8,
+        usage_index: u8,
+    ) {
+        out.extend_from_slice(&stream.to_le_bytes());
+        out.extend_from_slice(&offset.to_le_bytes());
+        out.push(ty);
+        out.push(method);
+        out.push(usage);
+        out.push(usage_index);
+    }
+
+    let mut bytes = Vec::new();
+    push_elem(
+        &mut bytes,
+        0,
+        0,
+        DeclType::Float3 as u8,
+        DeclMethod::Default as u8,
+        DeclUsage::Position as u8,
+        0,
+    );
+    push_elem(
+        &mut bytes,
+        0,
+        12,
+        DeclType::D3dColor as u8,
+        DeclMethod::Default as u8,
+        DeclUsage::Color as u8,
+        0,
+    );
+    let end = D3dVertexElement9::end();
+    push_elem(
+        &mut bytes,
+        end.stream,
+        end.offset,
+        end.ty,
+        end.method,
+        end.usage,
+        end.usage_index,
+    );
+
+    let decl = VertexDeclaration::from_d3d_bytes(&bytes).unwrap();
+    assert_eq!(decl.elements.len(), 2);
+    assert_eq!(decl.elements[0].stream, 0);
+    assert_eq!(decl.elements[0].offset, 0);
+    assert_eq!(decl.elements[0].ty, DeclType::Float3);
+    assert_eq!(decl.elements[0].usage, DeclUsage::Position);
+    assert_eq!(decl.elements[1].offset, 12);
+    assert_eq!(decl.elements[1].ty, DeclType::D3dColor);
+    assert_eq!(decl.elements[1].usage, DeclUsage::Color);
+}
+
+#[test]
+fn vertex_decl_bytes_require_end_marker() {
+    let bytes = [0u8; 8];
+    let err = VertexDeclaration::from_d3d_bytes(&bytes).unwrap_err();
+    assert!(matches!(err, VertexInputError::VertexDeclMissingEndMarker));
+}
+
+#[test]
+fn vertex_decl_bytes_len_must_be_multiple_of_8() {
+    let bytes = [0u8; 7];
+    let err = VertexDeclaration::from_d3d_bytes(&bytes).unwrap_err();
+    assert!(matches!(
+        err,
+        VertexInputError::VertexDeclBytesNotMultipleOf8 { .. }
+    ));
+}

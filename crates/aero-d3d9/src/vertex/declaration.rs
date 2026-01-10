@@ -55,6 +55,8 @@ pub struct D3dVertexElement9 {
 }
 
 impl D3dVertexElement9 {
+    pub const BYTE_SIZE: usize = 8;
+
     pub const fn end() -> Self {
         Self {
             stream: 0xff,
@@ -69,9 +71,50 @@ impl D3dVertexElement9 {
     pub fn is_end(self) -> bool {
         self.stream == 0xff
     }
+
+    pub fn from_le_bytes(bytes: [u8; Self::BYTE_SIZE]) -> Self {
+        // D3DVERTEXELEMENT9 is little-endian in D3D9 command buffers.
+        let stream = u16::from_le_bytes([bytes[0], bytes[1]]);
+        let offset = u16::from_le_bytes([bytes[2], bytes[3]]);
+        Self {
+            stream,
+            offset,
+            ty: bytes[4],
+            method: bytes[5],
+            usage: bytes[6],
+            usage_index: bytes[7],
+        }
+    }
 }
 
 impl VertexDeclaration {
+    /// Decode a serialized D3D9 `D3DVERTEXELEMENT9[]`.
+    ///
+    /// This expects a stream of 8-byte `D3DVERTEXELEMENT9` structs in little-endian order,
+    /// terminated by the standard end marker (`stream=0xFF, type=UNUSED`).
+    pub fn from_d3d_bytes(bytes: &[u8]) -> Result<Self, VertexInputError> {
+        if bytes.len() % D3dVertexElement9::BYTE_SIZE != 0 {
+            return Err(VertexInputError::VertexDeclBytesNotMultipleOf8 { len: bytes.len() });
+        }
+
+        let mut raw = Vec::new();
+        let mut found_end = false;
+        for chunk in bytes.chunks_exact(D3dVertexElement9::BYTE_SIZE) {
+            let elem = D3dVertexElement9::from_le_bytes(chunk.try_into().unwrap());
+            raw.push(elem);
+            if elem.is_end() {
+                found_end = true;
+                break;
+            }
+        }
+
+        if !found_end {
+            return Err(VertexInputError::VertexDeclMissingEndMarker);
+        }
+
+        Self::from_d3d_elements(&raw)
+    }
+
     pub fn from_d3d_elements(elements: &[D3dVertexElement9]) -> Result<Self, VertexInputError> {
         let mut out = Vec::new();
         for &e in elements {
@@ -277,6 +320,12 @@ pub enum VertexInputError {
 
     #[error("vertex element stream index {stream} is out of range (expected 0..=15)")]
     InvalidStreamIndex { stream: u16 },
+
+    #[error("vertex declaration byte length ({len}) is not a multiple of 8")]
+    VertexDeclBytesNotMultipleOf8 { len: usize },
+
+    #[error("vertex declaration is missing the required end marker (stream=0xFF)")]
+    VertexDeclMissingEndMarker,
 
     #[error(transparent)]
     Location(#[from] LocationMapError),
