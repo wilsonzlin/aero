@@ -1120,9 +1120,13 @@ async function setupUdpProxy(signalingUrl) {
 }
 ```
 
-Once the DataChannel is open, each message is one UDP datagram frame. The v1
-header starts with `guest_port` (u16 big-endian), which corresponds to the
-guest's UDP **source port on outbound** and **destination port on inbound**.
+Once the DataChannel is open, each message is one UDP relay frame (v1 or v2).
+
+- **v1** is the legacy IPv4-only format; its header starts with `guest_port`
+  (u16 big-endian), which corresponds to the guest's UDP **source port on
+  outbound** and **destination port on inbound**.
+- **v2** begins with the magic/version prefix `0xA2 0x02` and supports both
+  IPv4 and IPv6. See [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md).
 
 ---
 

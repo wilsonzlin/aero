@@ -657,8 +657,8 @@ impl UdpProxy {
     }
     
     pub fn send(&self, guest_port: u16, remote_ip: Ipv4Addr, remote_port: u16, data: &[u8]) -> Result<()> {
-        // Create v1 UDP relay frame:
-        // guest_port (u16) + remote_ipv4 (4B) + remote_port (u16) + payload
+        // Create a UDP relay frame. v1 is IPv4-only; v2 is required for IPv6.
+        // See `proxy/webrtc-udp-relay/PROTOCOL.md` for details.
         let mut packet = Vec::with_capacity(8 + data.len());
         packet.extend_from_slice(&guest_port.to_be_bytes());
         packet.extend_from_slice(&remote_ip.octets());
