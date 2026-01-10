@@ -31,7 +31,18 @@
 #endif
 
 #ifndef IOCTL_HID_GET_REPORT_DESCRIPTOR
-#define IOCTL_HID_GET_REPORT_DESCRIPTOR HID_CTL_CODE(103)
+// WDK `hidclass.h` defines IOCTL_HID_GET_REPORT_DESCRIPTOR as a HID_CTL_CODE.
+// Some SDK-only environments don't ship `hidclass.h`, so provide a fallback.
+//
+// On Windows 7, the function code is 1 (pairs with IOCTL_HID_GET_DEVICE_DESCRIPTOR=0,
+// IOCTL_HID_READ_REPORT=2, IOCTL_HID_WRITE_REPORT=3, etc).
+#define IOCTL_HID_GET_REPORT_DESCRIPTOR HID_CTL_CODE(1)
+#endif
+
+// Historical/alternate function code seen in some header sets. If our primary
+// definition fails at runtime, we try this as a fallback.
+#ifndef IOCTL_HID_GET_REPORT_DESCRIPTOR_ALT
+#define IOCTL_HID_GET_REPORT_DESCRIPTOR_ALT HID_CTL_CODE(103)
 #endif
 
 typedef struct OPTIONS {
@@ -343,8 +354,13 @@ static int query_report_descriptor_length(HANDLE handle, DWORD *len_out)
 
     ok = DeviceIoControl(handle, IOCTL_HID_GET_REPORT_DESCRIPTOR, NULL, 0, buf, (DWORD)sizeof(buf),
                          &bytes, NULL);
-    if (!ok) {
-        return 0;
+    if (!ok || bytes == 0) {
+        bytes = 0;
+        ok = DeviceIoControl(handle, IOCTL_HID_GET_REPORT_DESCRIPTOR_ALT, NULL, 0, buf,
+                             (DWORD)sizeof(buf), &bytes, NULL);
+        if (!ok || bytes == 0) {
+            return 0;
+        }
     }
 
     *len_out = bytes;
