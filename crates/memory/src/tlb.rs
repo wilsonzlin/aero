@@ -64,6 +64,10 @@ impl Tlb {
         self.entries.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub fn lookup(&self, vaddr: u64) -> Option<TlbEntry> {
         self.entries.iter().copied().find(|entry| entry.contains(vaddr))
     }
@@ -86,4 +90,3 @@ impl Tlb {
         }
     }
 }
-
