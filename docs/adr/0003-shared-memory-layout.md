@@ -29,6 +29,11 @@ Use **multiple shared buffers** with a clear separation between guest RAM and ho
 
 The guiding rule: **preserve WASM address space for guest RAM**, and keep large or host-only buffers outside the WASM linear memory unless there is a measured performance need to place them inside.
 
+Reference implementation:
+
+- Shared-memory segment allocation (control SAB + guest `WebAssembly.Memory`): [`web/src/runtime/shared_layout.ts`](../../web/src/runtime/shared_layout.ts)
+- IPC protocol (binary rings + atomics contracts): [`docs/ipc-protocol.md`](../ipc-protocol.md)
+
 ## Alternatives considered
 
 1. **Monolithic 5 GiB+ `SharedArrayBuffer`**
@@ -48,4 +53,3 @@ The guiding rule: **preserve WASM address space for guest RAM**, and keep large 
 - The host must manage multiple buffers and pass them to the relevant workers.
 - Some subsystems may need explicit copy/staging steps between WASM memory and out-of-WASM SABs.
 - Guest RAM capacity becomes a tuning knob: practical configurations may target **2–3 GiB guest RAM** to leave headroom for emulator state, depending on browser limits and device memory.
-
