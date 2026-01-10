@@ -45,6 +45,7 @@ typedef struct _VIRTIO_SG_LIST {
  *
  * Returns 0 if the range is invalid.
  */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 ULONG
 VirtioSgMaxElemsForMdl(
     _In_ PMDL Mdl,
@@ -71,6 +72,7 @@ VirtioSgMaxElemsForMdl(
  *   - *OutCount is set to the number of elements required
  *   - OutElems contains the first OutCapacity elements (if OutElems!=NULL)
  */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 _Must_inspect_result_
 NTSTATUS
 VirtioSgBuildFromMdl(
@@ -134,6 +136,7 @@ typedef struct _VIRTIO_WDFDMA_MAPPING {
     EVT_WDF_PROGRAM_DMA* UserEvtProgramDma;
 } VIRTIO_WDFDMA_MAPPING;
 
+_IRQL_requires_max_(APC_LEVEL)
 _Must_inspect_result_
 NTSTATUS
 VirtioWdfDmaStartMapping(
@@ -148,12 +151,14 @@ VirtioWdfDmaStartMapping(
     _Out_ VIRTIO_WDFDMA_MAPPING** OutMapping
     );
 
+_IRQL_requires_max_(DISPATCH_LEVEL)
 VOID
 VirtioWdfDmaCompleteAndRelease(
     _In_ VIRTIO_WDFDMA_MAPPING* Mapping
     );
 
 #if DBG
+_IRQL_requires_max_(DISPATCH_LEVEL)
 VOID
 VirtioSgDebugDumpList(
     _In_reads_(Count) const VIRTIO_SG_ELEM* Elems,
@@ -161,6 +166,7 @@ VirtioSgDebugDumpList(
     _In_opt_ PCSTR Prefix
     );
 
+_IRQL_requires_max_(DISPATCH_LEVEL)
 VOID
 VirtioSgDebugDumpMdl(
     _In_ PMDL Mdl,
