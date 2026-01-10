@@ -105,6 +105,7 @@ impl VgaRenderer {
         }
     }
 }
+
 /// Information needed to update the BIOS Data Area (BDA) after a legacy VGA
 /// mode set (INT 10h/AH=00h style).
 ///
@@ -120,4 +121,61 @@ pub struct LegacyBdaInfo {
     /// Cursor position for pages 0..=7, encoded as (row << 8) | col.
     pub cursor_pos: [u16; 8],
     pub active_page: u8,
+}
+
+use crate::display::framebuffer::{FramebufferError, OwnedSharedFramebuffer};
+
+pub struct VgaSharedFramebufferOutput {
+    shared_framebuffer: OwnedSharedFramebuffer,
+}
+
+impl VgaSharedFramebufferOutput {
+    pub fn new(max_width: u32, max_height: u32) -> Result<Self, FramebufferError> {
+        let stride_bytes = max_width
+            .checked_mul(4)
+            .ok_or(FramebufferError::InvalidDimensions)?;
+        let shared_framebuffer = OwnedSharedFramebuffer::new(max_width, max_height, stride_bytes)?;
+        Ok(Self { shared_framebuffer })
+    }
+
+    pub fn ptr(&self) -> *const u8 {
+        self.shared_framebuffer.ptr()
+    }
+
+    pub fn len_bytes(&self) -> usize {
+        self.shared_framebuffer.len_bytes()
+    }
+
+    pub fn present_rgba8888(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<(), FramebufferError> {
+        let stride_bytes = width
+            .checked_mul(4)
+            .ok_or(FramebufferError::InvalidDimensions)?;
+        self.present_rgba8888_strided(width, height, stride_bytes, rgba)
+    }
+
+    pub fn present_rgba8888_strided(
+        &mut self,
+        width: u32,
+        height: u32,
+        stride_bytes: u32,
+        rgba: &[u8],
+    ) -> Result<(), FramebufferError> {
+        let mut view = self.shared_framebuffer.view_mut();
+        view.present_rgba8888(width, height, stride_bytes, rgba)
+    }
+
+    pub fn present_rgba8888_u32(&mut self, width: usize, height: usize, pixels: &[u32]) -> Result<(), FramebufferError> {
+        let expected = width
+            .checked_mul(height)
+            .ok_or(FramebufferError::InvalidDimensions)?;
+        if pixels.len() < expected {
+            return Err(FramebufferError::BufferTooSmall);
+        }
+
+        let bytes_len = expected
+            .checked_mul(4)
+            .ok_or(FramebufferError::InvalidDimensions)?;
+        let bytes = unsafe { core::slice::from_raw_parts(pixels.as_ptr() as *const u8, bytes_len) };
+        self.present_rgba8888(width as u32, height as u32, bytes)
+    }
 }
