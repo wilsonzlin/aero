@@ -1,4 +1,5 @@
 #include "virtqueue_ring.h"
+#include "virtio_sg.h"
 
 //
 // Minimal usage example for the virtio_dma module.
@@ -54,6 +55,36 @@ NTSTATUS VirtioTestQueueAllocAndLog(_In_ WDFDEVICE Device)
 
         VirtqueueRingDmaFree(&ringEvent);
     }
+
+#if DBG
+    {
+        /*
+         * Example: build an SG list from a nonpaged buffer via the direct PFN mapping path.
+         * This is primarily useful for validating the mapping logic in a controlled setting.
+         */
+        const ULONG testBytes = 8192;
+        PUCHAR testBuf = (PUCHAR)ExAllocatePoolWithTag(NonPagedPool, testBytes, 'tSIV');
+        if (testBuf != NULL) {
+            PMDL mdl = IoAllocateMdl(testBuf, testBytes, FALSE, FALSE, NULL);
+            if (mdl != NULL) {
+                MmBuildMdlForNonPagedPool(mdl);
+                RtlFillMemory(testBuf, testBytes, 0xA5);
+
+                VIRTIO_SG_ELEM elems[8];
+                ULONG sgCount = 0;
+                NTSTATUS sgStatus = VirtioSgBuildFromMdl(mdl, 0, testBytes, FALSE, elems, ARRAYSIZE(elems), &sgCount);
+                VIRTIO_DMA_TRACE("test sg direct status=0x%08x count=%lu\n", (unsigned)sgStatus, sgCount);
+
+                if (NT_SUCCESS(sgStatus)) {
+                    VirtioSgDebugDumpList(elems, sgCount, "virtio-sg-test");
+                }
+
+                IoFreeMdl(mdl);
+            }
+            ExFreePoolWithTag(testBuf, 'tSIV');
+        }
+    }
+#endif
 
     VirtioDmaDestroy(&dma);
     return status;

@@ -654,6 +654,7 @@ the **ring layout math + common-buffer allocation** pieces described in §2:
 
 * `windows-drivers/virtio-kmdf/common/virtqueue_ring.h`
 * `windows-drivers/virtio-kmdf/common/virtqueue_ring.c`
+* `windows-drivers/virtio-kmdf/common/virtio_sg.h` / `virtio_sg.c` / `virtio_sg_wdfdma.c` (MDL → SG mapping helpers for descriptor population)
 
 They:
 

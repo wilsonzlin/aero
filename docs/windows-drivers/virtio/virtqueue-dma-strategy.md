@@ -275,6 +275,26 @@ IRQL/locking note:
 
 * `EvtProgramDma` can run at **DISPATCH_LEVEL**. Treat it like a DPC: no pageable code, no blocking waits, and avoid lock inversion with your completion path.
 
+#### (Aero repo) reusable mapping helpers
+
+The Aero repo includes a small, reusable helper layer that wraps the KMDF DMA transaction flow and converts the mapped
+`SCATTER_GATHER_LIST` into a virtio-friendly `(addr,len)` list:
+
+* `windows-drivers/virtio-kmdf/common/virtio_sg.h`
+* `windows-drivers/virtio-kmdf/common/virtio_sg_wdfdma.c`
+
+Key API:
+
+* `VirtioWdfDmaStartMapping(...)` — starts the DMA transaction, builds `VIRTIO_SG_ELEM[]` from the `SCATTER_GATHER_LIST`,
+  and keeps the transaction alive until completion.
+* `VirtioWdfDmaCompleteAndRelease(...)` — call on virtqueue completion to finalize the DMA transaction and free resources.
+
+On success, the returned `VIRTIO_WDFDMA_MAPPING` contains `mapping->Sg.Elems[0..mapping->Sg.Count-1]` (device/bus
+addresses + lengths) ready to be copied into virtio descriptors/indirect tables.
+
+Note: the helper is intentionally **single-shot** (one DMA programming callback must cover the entire buffer). Ensure your
+DMA enabler’s `MaximumLength` and `MaxScatterGatherElements` are sized to match the largest request you will submit.
+
 Pseudo-code outline:
 
 ```c
@@ -367,8 +387,21 @@ Cache flushing:
 Pitfalls of the direct path (why it’s “emulated-only”):
 
 * PFN-derived “physical” addresses are not valid device addresses with IOMMU/bounce.
-* On systems with 32-bit DMA limitations, the device may not be able to reach high PFNs.
-* You must do your own SG element limiting/coalescing; WDF normally handles this.
+ * On systems with 32-bit DMA limitations, the device may not be able to reach high PFNs.
+ * You must do your own SG element limiting/coalescing; WDF normally handles this.
+
+#### (Aero repo) direct MDL → PFN mapping helper
+
+For drivers that intentionally use PFN-derived physical addresses (e.g., in fully emulated environments), Aero includes a
+direct mapping helper that walks an MDL chain and emits per-page segments, coalescing physically-contiguous PFNs:
+
+* `windows-drivers/virtio-kmdf/common/virtio_sg.h`
+* `windows-drivers/virtio-kmdf/common/virtio_sg.c`
+
+Key API:
+
+* `VirtioSgMaxElemsForMdl(...)` — worst-case upper bound on element count (pages spanned).
+* `VirtioSgBuildFromMdl(...)` — builds `VIRTIO_SG_ELEM[]` in caller-provided storage (no allocations; DISPATCH_LEVEL safe).
 
 ### 4.3 Mixed-direction chains: recommended pattern (virtio-blk, virtio-net)
 

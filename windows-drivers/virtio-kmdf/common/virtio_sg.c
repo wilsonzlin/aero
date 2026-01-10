@@ -291,12 +291,14 @@ VirtioSgDebugDumpMdl(
     )
 {
     ULONG maxElems;
+    ULONG required;
     VIRTIO_SG_ELEM stackElems[32];
     VIRTIO_SG_ELEM* elems;
     ULONG capacity;
     WDFMEMORY mem;
     ULONG count;
     NTSTATUS status;
+    KIRQL irql;
 
     maxElems = VirtioSgMaxElemsForMdl(Mdl, ByteOffset, ByteLength);
     if (maxElems == 0) {
@@ -309,45 +311,67 @@ VirtioSgDebugDumpMdl(
         return;
     }
 
+    required = maxElems;
+    irql = KeGetCurrentIrql();
+
     elems = stackElems;
     capacity = ARRAYSIZE(stackElems);
     mem = NULL;
 
     if (maxElems > capacity) {
-        size_t elemBytes = 0;
-        status = RtlSizeTMult((size_t)maxElems, sizeof(VIRTIO_SG_ELEM), &elemBytes);
-        if (!NT_SUCCESS(status)) {
-            DbgPrintEx(
-                DPFLTR_IHVDRIVER_ID,
-                DPFLTR_INFO_LEVEL,
-                "virtio-sg: size overflow for %lu elems: 0x%08X\n",
-                maxElems,
-                status);
-            return;
-        }
+        if (irql <= APC_LEVEL) {
+            size_t elemBytes = 0;
+            status = RtlSizeTMult((size_t)maxElems, sizeof(VIRTIO_SG_ELEM), &elemBytes);
+            if (!NT_SUCCESS(status)) {
+                DbgPrintEx(
+                    DPFLTR_IHVDRIVER_ID,
+                    DPFLTR_INFO_LEVEL,
+                    "virtio-sg: size overflow for %lu elems: 0x%08X\n",
+                    maxElems,
+                    status);
+                return;
+            }
 
-        status = WdfMemoryCreate(
-            WDF_NO_OBJECT_ATTRIBUTES,
-            NonPagedPool,
-            'gSIV',
-            elemBytes,
-            &mem,
-            (PVOID*)&elems);
-        if (!NT_SUCCESS(status)) {
+            status = WdfMemoryCreate(
+                WDF_NO_OBJECT_ATTRIBUTES,
+                NonPagedPool,
+                'gSIV',
+                elemBytes,
+                &mem,
+                (PVOID*)&elems);
+            if (!NT_SUCCESS(status)) {
+                DbgPrintEx(
+                    DPFLTR_IHVDRIVER_ID,
+                    DPFLTR_INFO_LEVEL,
+                    "virtio-sg: WdfMemoryCreate failed: 0x%08X\n",
+                    status);
+                return;
+            }
+            capacity = maxElems;
+        } else {
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
                 DPFLTR_INFO_LEVEL,
-                "virtio-sg: WdfMemoryCreate failed: 0x%08X\n",
-                status);
-            return;
+                "virtio-sg: IRQL=%u too high to allocate %lu elems; dumping first %lu of %lu\n",
+                (UINT)irql,
+                maxElems,
+                capacity,
+                required);
         }
-        capacity = maxElems;
     }
 
     count = 0;
     status = VirtioSgBuildFromMdl(Mdl, ByteOffset, ByteLength, DeviceWrite, elems, capacity, &count);
     if (NT_SUCCESS(status)) {
         VirtioSgDebugDumpList(elems, count, "virtio-sg");
+    } else if (status == STATUS_BUFFER_TOO_SMALL) {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            DPFLTR_INFO_LEVEL,
+            "virtio-sg: truncated dump: need=%lu cap=%lu\n",
+            count,
+            capacity);
+        VirtioSgDebugDumpList(elems, capacity, "virtio-sg");
     } else {
         DbgPrintEx(
             DPFLTR_IHVDRIVER_ID,
