@@ -1,0 +1,98 @@
+; virtio_input.inf - Aero virtio-input KMDF driver (Windows 7)
+;
+; This INF explicitly enables MSI/MSI-X interrupt resources for virtio-input.
+;
+; Why: virtio-input uses at least three interrupt vectors in practice:
+;  - 1x configuration-change interrupt
+;  - 2x virtqueues (e.g. event/status) with independent notification paths
+;
+; When the device is forced onto legacy INTx, all causes are multiplexed through
+; a single shared line interrupt. That increases interrupt latency, increases
+; lock contention, and adds extra MMIO reads (ISR polling) on the hot path.
+;
+; If the platform cannot allocate message-signaled interrupts, Windows will
+; still fall back to a legacy line interrupt and the driver remains functional.
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = System
+ClassGuid   = {4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider    = %ProviderName%
+DriverVer   = 01/10/2026,1.0.0.0
+
+[DestinationDirs]
+DefaultDestDir = 12 ; DIRID_DRIVERS
+
+[SourceDisksNames]
+1 = %DiskName%,,,
+
+[SourceDisksFiles]
+virtio_input.sys = 1
+
+[Manufacturer]
+%ProviderName% = VirtioInput,NTx86,NTamd64
+
+[VirtioInput.NTx86]
+%VirtioInput.DeviceDesc% = VirtioInput_Install, PCI\VEN_1AF4&DEV_1052
+
+[VirtioInput.NTamd64]
+%VirtioInput.DeviceDesc% = VirtioInput_Install, PCI\VEN_1AF4&DEV_1052
+
+;------------------------------------------------------------------------------
+; Device install
+;------------------------------------------------------------------------------
+
+[VirtioInput_Install.NT]
+CopyFiles = VirtioInput_CopyFiles
+
+[VirtioInput_Install.NT.HW]
+AddReg = VirtioInput_InterruptManagement_AddReg
+
+[VirtioInput_Install.NT.Services]
+AddService = virtio_input, 0x00000002, VirtioInput_Service_Inst, VirtioInput_EventLog_Inst
+
+[VirtioInput_Install.NT.Wdf]
+KmdfService = virtio_input, VirtioInput_Wdf
+
+[VirtioInput_Wdf]
+; Windows 7 ships with KMDF 1.9.
+KmdfLibraryVersion = 1.9
+
+[VirtioInput_CopyFiles]
+virtio_input.sys
+
+;------------------------------------------------------------------------------
+; Service install
+;------------------------------------------------------------------------------
+
+[VirtioInput_Service_Inst]
+DisplayName   = %VirtioInput.SvcDesc%
+ServiceType   = 1  ; SERVICE_KERNEL_DRIVER
+StartType     = 3  ; SERVICE_DEMAND_START
+ErrorControl  = 1  ; SERVICE_ERROR_NORMAL
+ServiceBinary = %12%\virtio_input.sys
+
+[VirtioInput_EventLog_Inst]
+AddReg = VirtioInput_EventLog_AddReg
+
+[VirtioInput_EventLog_AddReg]
+HKR, "EventLog\System\virtio_input", "EventMessageFile", 0x00020000, "%SystemRoot%\System32\IoLogMsg.dll;%SystemRoot%\System32\drivers\virtio_input.sys"
+HKR, "EventLog\System\virtio_input", "TypesSupported",   0x00010001, 7
+
+;------------------------------------------------------------------------------
+; Interrupt Management (MSI/MSI-X)
+;------------------------------------------------------------------------------
+
+[VirtioInput_InterruptManagement_AddReg]
+HKR, "Interrupt Management", 0x00000010
+HKR, "Interrupt Management\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
+; virtio-input needs >=3 vectors (config + 2 queues). Request a small, future-
+; proof value so additional virtqueues can be added without changing the INF.
+HKR, "Interrupt Management\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
+
+[Strings]
+ProviderName             = "Aero Project"
+DiskName                 = "Aero virtio-input Driver Disk"
+VirtioInput.DeviceDesc   = "Virtio Input Device"
+VirtioInput.SvcDesc      = "Aero virtio-input KMDF Driver"
