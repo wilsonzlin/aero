@@ -290,9 +290,11 @@ function renderEmulatorSafetyPanel(): HTMLElement {
   const errorOut = el('pre', { id: 'vm-error', text: '' });
   const snapshotOut = el('pre', { id: 'vm-snapshot', text: '' });
 
-  const guestRamMiB = el('input', { type: 'number', value: '64', min: '1', step: '1' }) as HTMLInputElement;
-  const maxGuestRamMiB = el('input', { type: 'number', value: '512', min: '1', step: '1' }) as HTMLInputElement;
-  const autoSaveSnapshot = el('input', { type: 'checkbox' }) as HTMLInputElement;
+  const guestRamMiB = el('input', { id: 'vm-guest-mib', type: 'number', value: '64', min: '1', step: '1' }) as HTMLInputElement;
+  const maxGuestRamMiB = el('input', { id: 'vm-max-guest-mib', type: 'number', value: '512', min: '1', step: '1' }) as HTMLInputElement;
+  const maxDiskCacheMiB = el('input', { id: 'vm-max-disk-cache-mib', type: 'number', value: '128', min: '1', step: '1' }) as HTMLInputElement;
+  const maxShaderCacheMiB = el('input', { id: 'vm-max-shader-cache-mib', type: 'number', value: '64', min: '1', step: '1' }) as HTMLInputElement;
+  const autoSaveSnapshot = el('input', { id: 'vm-auto-snapshot', type: 'checkbox' }) as HTMLInputElement;
 
   let vm: VmCoordinator | null = null;
   let visibilityListenerInstalled = false;
@@ -315,11 +317,13 @@ function renderEmulatorSafetyPanel(): HTMLElement {
 
     const guestBytes = Math.max(1, Number(guestRamMiB.value || 0)) * 1024 * 1024;
     const maxGuestBytes = Math.max(1, Number(maxGuestRamMiB.value || 0)) * 1024 * 1024;
+    const maxDiskCacheBytes = Math.max(1, Number(maxDiskCacheMiB.value || 0)) * 1024 * 1024;
+    const maxShaderCacheBytes = Math.max(1, Number(maxShaderCacheMiB.value || 0)) * 1024 * 1024;
 
     vm = new VmCoordinator({
       config: {
         guestRamBytes: guestBytes,
-        limits: { maxGuestRamBytes: maxGuestBytes },
+        limits: { maxGuestRamBytes: maxGuestBytes, maxDiskCacheBytes, maxShaderCacheBytes },
         cpu: {
           watchdogTimeoutMs: 250,
           maxSliceMs: 8,
@@ -444,6 +448,8 @@ function renderEmulatorSafetyPanel(): HTMLElement {
       vm?.reset();
       vm = null;
       window.__aeroVm = undefined;
+      errorOut.textContent = '';
+      snapshotOut.textContent = '';
       update();
     },
   }) as HTMLButtonElement;
@@ -461,6 +467,10 @@ function renderEmulatorSafetyPanel(): HTMLElement {
       guestRamMiB,
       el('label', { text: 'maxMiB:' }),
       maxGuestRamMiB,
+      el('label', { text: 'diskCacheMiB:' }),
+      maxDiskCacheMiB,
+      el('label', { text: 'shaderCacheMiB:' }),
+      maxShaderCacheMiB,
       el('label', { text: 'auto-save snapshot on crash:' }),
       autoSaveSnapshot,
     ),

@@ -27,3 +27,22 @@ test('VM watchdog trips on a non-yielding CPU worker without freezing the page',
   await page.waitForFunction(() => window.__aeroVm?.state === 'paused');
 });
 
+test('VM reports resource limit errors and can reset without reload', async ({ page }) => {
+  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+  await page.waitForSelector('#vm-safety-panel');
+
+  await page.fill('#vm-guest-mib', '64');
+  await page.fill('#vm-max-guest-mib', '32');
+
+  await page.click('#vm-start-coop');
+
+  await page.waitForFunction(() => {
+    const text = document.querySelector('#vm-error')?.textContent ?? '';
+    return text.includes('ResourceLimitExceeded') || text.includes('guest RAM request');
+  });
+
+  await page.click('#vm-reset');
+  await page.fill('#vm-max-guest-mib', '512');
+  await page.click('#vm-start-coop');
+  await page.waitForFunction(() => window.__aeroVm?.lastHeartbeatAt && window.__aeroVm.lastHeartbeatAt > 0);
+});
