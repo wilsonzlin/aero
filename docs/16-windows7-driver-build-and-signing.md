@@ -91,6 +91,8 @@ For releases you may want a consistent test certificate across runs. `ci/sign-dr
 
 If both are set, the script uses the provided PFX instead of generating a new self-signed certificate, and still exports the public cert as `out/certs/aero-test.cer`.
 
+For maximum compatibility with unpatched Windows 7 when using `-Digest sha1` (or `-DualSign`), the *certificate itself* should also be SHA-1-signed (i.e. its signature algorithm should be `sha1RSA`/`sha1WithRSAEncryption`). The script will refuse to use a SHA-256-signed stable certificate for SHA-1 driver signing unless you pass `-AllowSha2CertFallback`.
+
 ## SHA-1 vs SHA-2
 
 ### File digest (`signtool /fd`) is not the whole story
