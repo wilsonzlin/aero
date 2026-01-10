@@ -68,7 +68,8 @@ run_all.cmd --dump
 In a Win7 VM with AeroGPU installed and working correctly:
 
 * `d3d9ex_dwm_probe` reports composition enabled (or successfully enables it)
-* `d3d9ex_triangle` renders a green triangle over a red clear and confirms the center pixel is green
-* `d3d11_triangle` renders a green triangle over a red clear and confirms the center pixel is green
+* `d3d9ex_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
+* `d3d11_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
 
+All rendering tests also print the active adapter description + VendorId/DeviceId to help confirm the expected GPU/driver is being exercised.
