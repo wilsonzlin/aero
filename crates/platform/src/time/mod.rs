@@ -10,6 +10,10 @@
 //! - Handling timer events returned from [`TimerScheduler::advance_to`] to drive interrupt sources
 //!   (e.g. PIT/HPET/LAPIC timer).
 //!
+//! For timers derived from non-integer-nanosecond clock periods (e.g. PIT's
+//! 1.193182MHz input clock, ACPI PM timer, RTC periodic rates), prefer the
+//! scheduler's rational-period APIs and [`period_from_hz_ns`] to avoid drift.
+//!
 //! The scheduler in this crate uses **event delivery** rather than storing callbacks.
 //! This keeps the timer queue fully serializable for save/restore; callers can keep
 //! their own `TimerId -> handler` mapping and re-establish it after restore.
