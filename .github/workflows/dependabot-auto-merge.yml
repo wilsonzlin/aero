@@ -42,6 +42,9 @@ jobs:
           if gh pr merge --auto --squash "$PR_URL"; then exit 0; fi
           if gh pr merge --auto --merge "$PR_URL"; then exit 0; fi
           if gh pr merge --auto --rebase "$PR_URL"; then exit 0; fi
+
+          echo "Unable to enable auto-merge (auto-merge may be disabled or merge method restricted); leaving PR open."
+          exit 0
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
