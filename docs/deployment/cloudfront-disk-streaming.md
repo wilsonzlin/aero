@@ -37,6 +37,27 @@ This path split enables two CloudFront cache behaviors:
 - `/public/*` → public behavior, long cache TTLs
 - `/users/*` → private behavior, viewer access restricted
 
+### CloudFront maximum object size (Range does not bypass it)
+
+CloudFront enforces a maximum object size for “one URL → one object”. For large VM disks, this matters because `Range` requests still reference the **total object size** in `Content-Range`, and CloudFront’s size limit applies to the whole object.
+
+If your per-user disk images can exceed CloudFront’s object size limit, publish them as **multiple fixed-size chunk objects** instead of one giant object:
+
+```
+users/<uid>/images/<image-id>/manifest.json
+users/<uid>/images/<image-id>/chunks/000000.bin
+users/<uid>/images/<image-id>/chunks/000001.bin
+...
+```
+
+Then the client maps `byteOffset → chunkIndex + offsetWithinChunk`.
+
+Notes:
+
+- This still works with signed cookies/URLs (scope the policy to `users/<uid>/*`).
+- If you fetch whole chunk objects (no `Range` header), you can avoid `Range`-triggered CORS preflights for cross-origin deployments.
+- See [`docs/17-range-cdn-behavior.md`](../17-range-cdn-behavior.md) for more detailed CloudFront Range behavior and chunking guidance.
+
 ### Keep S3 private (OAC/OAI)
 
 S3 must **not** be public. Configure CloudFront to be the only reader:
@@ -245,7 +266,7 @@ Otherwise user A can populate a cached object and user B can receive it without 
   - Signed cookies are validated at edge; including them destroys cache efficiency.
 - **Headers in cache key:**
   - Prefer `None`, *except* when required for correctness (see CORS note below).
-  - If you want CloudFront to cache distinct `Range` responses separately (per chunk), include the `Range` header in the cache key. This increases cache entries, so only do this if your client aligns to a fixed `CHUNK_SIZE`.
+  - **Do not** include `Range` in the cache key for CloudFront. CloudFront can satisfy later byte-range requests from cache without varying the cache key by `Range`, and varying by `Range` will usually explode cache cardinality for random access.
 
 **Origin request policy**
 
@@ -265,7 +286,11 @@ For disk streaming, prefer a fixed allowlist to avoid `Origin` cache fragmentati
 
 ### Range caching behavior and `CHUNK_SIZE`
 
-Browsers will request many distinct `Range` values. To reduce cache fragmentation:
+Browsers will request many distinct `Range` values.
+
+For CloudFront specifically, keep the cache key minimal (path + version), and rely on CloudFront’s built-in byte-range caching behavior (see also [`docs/17-range-cdn-behavior.md`](../17-range-cdn-behavior.md)).
+
+On the client side, it is still worth using a fixed `CHUNK_SIZE` to reduce redundant downloads and improve your local caching hit rate (OPFS/sparse cache):
 
 - Choose a fixed `CHUNK_SIZE` in the client (example: `1 MiB` or `4 MiB`).
 - Align all requested ranges to `CHUNK_SIZE` boundaries.
@@ -278,7 +303,7 @@ chunk_end   = ceil(byte_end / CHUNK_SIZE)   * CHUNK_SIZE
 Range: bytes={chunk_start}-{chunk_end-1}
 ```
 
-This makes the CDN cacheable unit “one chunk”, rather than many tiny, overlapping ranges.
+This makes the client-side “fetch unit” stable, which reduces overlap when different reads land near each other.
 
 ---
 
@@ -460,4 +485,5 @@ Example cookie attributes to use when setting them from your backend:
    - origin request policy forwards `Range` (and optionally `If-Range`)
    - response headers policy sets CORS + `Cross-Origin-Resource-Policy`
 4. Backend mints **signed cookies** scoped to `https://cdn.example.com/users/<uid>/*`.
-5. Client aligns `Range` reads to a fixed `CHUNK_SIZE` to improve CDN caching.
+5. Client aligns reads to a fixed `CHUNK_SIZE` to reduce redundant downloads and improve local caching behavior (independent of CloudFront’s cache key).
+6. If disks can exceed CloudFront’s max object size, publish them as multiple chunk objects (see [CloudFront maximum object size](#cloudfront-maximum-object-size-range-does-not-bypass-it)).
