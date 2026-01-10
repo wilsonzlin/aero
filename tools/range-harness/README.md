@@ -127,6 +127,21 @@ The summary includes:
 - Status code breakdown
 - `X-Cache` hit/miss breakdown (plus exact values)
 
+Example (trimmed):
+
+```text
+URL: https://d111111abcdef8.cloudfront.net/windows7.img
+Config: chunkSize=8.00MiB count=32 concurrency=4 mode=random
+...
+Summary
+-------
+Requests: 32 ok=32 withWarnings=0
+Latency: avg=120ms median=98ms
+Throughput: bytes=256MiB wall=6.50s aggregate=39.4MiB/s
+Status codes: 206:32
+X-Cache: hit=28 miss=4 other=0 missing=0
+```
+
 ## Related tools
 
 - For strict correctness + CORS/COEP validation (CI-friendly), see [`tools/disk-streaming-conformance/`](../disk-streaming-conformance/README.md).
@@ -135,12 +150,13 @@ The summary includes:
 
 For large disk images, a good starting range for benchmarking is:
 
-- **4MiB** (`4194304`) if you expect high RTT / want finer-grained I/O
-- **8MiB** (`8388608`) as a balanced default
+- **1MiB** (`1048576`) to match common `StreamingDisk` chunk sizes (good cacheability / less over-fetch)
+- **4MiB** (`4194304`) if you expect high RTT / want to reduce request rate
+- **8MiB** (`8388608`) as a balanced default for pure throughput benchmarking
 - **16MiB** (`16777216`) when optimizing for peak throughput on low-latency links
 
 Typical workflow:
 
-1. Start with **8MiB** chunks and `--concurrency 4`
+1. Start with **1MiB** (realistic client behavior) or **8MiB** (throughput-focused) and `--concurrency 4`
 2. Increase concurrency until throughput stops improving (or latencies become too spiky)
-3. Try 4MiB vs 16MiB to see if the bottleneck is per-request overhead vs bandwidth
+3. Try 1MiB vs 8MiB vs 16MiB to see if the bottleneck is per-request overhead vs bandwidth
