@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import type { AeroPhase } from '../../shared/aero_status.ts';
+import { isAeroPhase, type AeroPhase } from '../../shared/aero_status.ts';
 import type { ArtifactWriter, EmulatorDriver, MilestoneClient } from '../scenarios/types.ts';
 
 function sanitizePathFragment(fragment: string): string {
@@ -49,6 +49,23 @@ export class DefaultMilestoneClient implements MilestoneClient {
 
   async waitForEvent(name: string, options?: { timeoutMs?: number }): Promise<void> {
     if (!this.#emulator.capabilities.statusApi) {
+      // Best-effort fallback for phase-like events when the status API isn't present.
+      if (name === 'desktop_ready') {
+        await this.waitForPhase('desktop', options);
+        return;
+      }
+      if (name === 'idle_ready') {
+        await this.waitForPhase('idle', options);
+        return;
+      }
+      if (name.startsWith('phase:')) {
+        const rawPhase = name.slice('phase:'.length);
+        if (isAeroPhase(rawPhase)) {
+          await this.waitForPhase(rawPhase, options);
+          return;
+        }
+      }
+
       throw new Error(`Emulator does not expose window.aero status/events; cannot wait for ${name}`);
     }
 
