@@ -149,6 +149,7 @@ If you use cookies/other credentials, add `Access-Control-Allow-Credentials: tru
 
 For the detailed header matrix and troubleshooting guidance, see:
 
+- [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md)
 - [Disk Image Streaming Service (Runbook)](./backend/disk-image-streaming-service.md)
 - [05 - Storage Subsystem: Remote HTTP server requirements](./05-storage-subsystem.md#remote-http-server-requirements-rangecorsno-transform)
 
