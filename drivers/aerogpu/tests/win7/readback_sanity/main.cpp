@@ -201,6 +201,7 @@ static int RunReadbackSanity(int argc, char** argv) {
   }
 
   context->CopyResource(staging.get(), rt_tex.get());
+  context->Flush();
 
   D3D11_MAPPED_SUBRESOURCE map;
   ZeroMemory(&map, sizeof(map));

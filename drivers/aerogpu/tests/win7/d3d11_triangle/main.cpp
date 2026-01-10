@@ -219,6 +219,7 @@ static int RunD3D11Triangle(int argc, char** argv) {
   }
 
   context->CopyResource(staging.get(), backbuffer.get());
+  context->Flush();
 
   D3D11_MAPPED_SUBRESOURCE map;
   ZeroMemory(&map, sizeof(map));
