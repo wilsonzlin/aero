@@ -540,7 +540,7 @@ async fn run_remote_ws(
     remote_event_tx: mpsc::Sender<RemoteEvent>,
 ) {
     let url = format!(
-        "ws://{}/tcp?target={}:{}",
+        "ws://{}/tcp?v=1&host={}&port={}",
         proxy_ws_addr, key.remote_ip, key.remote_port
     );
     let connect_res = timeout(
@@ -620,7 +620,7 @@ async fn doh_request_over_proxy(
 ) -> anyhow::Result<Vec<u8>> {
     let dns_param = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(dns_query);
     let url = format!(
-        "ws://{}/tcp?target={}:{}",
+        "ws://{}/tcp?v=1&host={}&port={}",
         proxy_ws_addr,
         doh_http_addr.ip(),
         doh_http_addr.port()
