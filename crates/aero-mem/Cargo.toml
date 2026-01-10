@@ -1,0 +1,15 @@
+[package]
+name = "aero-mem"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[dev-dependencies]
+criterion = "0.5"
+proptest = "1.5"
+
+[[bench]]
+name = "bulk"
+harness = false
+

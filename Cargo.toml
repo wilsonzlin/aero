@@ -8,6 +8,7 @@ members = [
     "crates/aero-bios",
     "crates/aero-net-e1000",
     "crates/aero-storage",
+    "crates/aero-mem",
     "crates/aero-storage-server",
     "crates/aero-virtio",
     "crates/aero-webgpu",
