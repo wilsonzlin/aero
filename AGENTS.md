@@ -39,14 +39,15 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 14. [Project Milestones & Roadmap](./docs/14-project-milestones.md)
 15. [Task Breakdown & Work Organization](./docs/15-agent-task-breakdown.md)
 16. [Direct3D 10/11 Translation (SM4/SM5 → WebGPU)](./docs/16-d3d10-11-translation.md)
-17. [Windows 7 Guest Tools Install Guide](./docs/windows7-guest-tools.md)
-18. [Windows 7 Driver Troubleshooting](./docs/windows7-driver-troubleshooting.md)
-19. [Backend: Disk Image Streaming Service](./docs/backend/disk-image-streaming-service.md)
-20. [Windows 7 Virtio Device Contract](./docs/windows7-virtio-driver-contract.md)
-21. [Security Headers & Deployment Hardening](./docs/security-headers.md)
-22. [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./docs/16-disk-image-streaming-auth.md)
-23. [HTTP Range + CDN Behavior](./docs/17-range-cdn-behavior.md)
-24. [Windows 7 SP1 Unattended Install (Drivers + Scripting)](./docs/16-win7-unattended-install.md)
+17. [D3D9Ex / DWM Compatibility](./docs/16-d3d9ex-dwm-compatibility.md)
+18. [Windows 7 Guest Tools Install Guide](./docs/windows7-guest-tools.md)
+19. [Windows 7 Driver Troubleshooting](./docs/windows7-driver-troubleshooting.md)
+20. [Backend: Disk Image Streaming Service](./docs/backend/disk-image-streaming-service.md)
+21. [Windows 7 Virtio Device Contract](./docs/windows7-virtio-driver-contract.md)
+22. [Security Headers & Deployment Hardening](./docs/security-headers.md)
+23. [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./docs/16-disk-image-streaming-auth.md)
+24. [HTTP Range + CDN Behavior](./docs/17-range-cdn-behavior.md)
+25. [Windows 7 SP1 Unattended Install (Drivers + Scripting)](./docs/16-win7-unattended-install.md)
 
 ---
 
@@ -331,6 +332,7 @@ pub trait DisplayAdapter {
 | [13-legal-considerations.md](./docs/13-legal-considerations.md)         | Licensing, IP concerns                 | All               |
 | [14-project-milestones.md](./docs/14-project-milestones.md)             | Timeline, deliverables                 | All               |
 | [15-agent-task-breakdown.md](./docs/15-agent-task-breakdown.md)         | Parallelizable work items              | All               |
+| [16-d3d9ex-dwm-compatibility.md](./docs/16-d3d9ex-dwm-compatibility.md) | D3D9Ex surface + DWM requirements      | Graphics          |
 | [16-d3d10-11-translation.md](./docs/16-d3d10-11-translation.md)          | Direct3D 10/11 translation details     | Graphics          |
 | [17-range-cdn-behavior.md](./docs/17-range-cdn-behavior.md)             | HTTP Range + CDN caching/limits        | Infrastructure    |
 | [18-chunked-disk-image-format.md](./docs/18-chunked-disk-image-format.md) | Chunked disk image delivery (no HTTP Range) | I/O               |

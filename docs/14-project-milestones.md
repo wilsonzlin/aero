@@ -159,6 +159,7 @@ Week 11-12: Network adapter, TCP/IP
 | Deliverable | Description | Success Criteria |
 |-------------|-------------|------------------|
 | Aero glass | DWM compositor | Transparency effects |
+| D3D9Ex compatibility | `Direct3DCreate9Ex`/`CreateDeviceEx`/`PresentEx` + present stats | DWM starts and keeps composition enabled |
 | DirectX 10 | SM4 shaders | Modern apps render |
 | DirectX 11 | Full translation | Games work |
 | USB UHCI/EHCI | Basic USB | Keyboard/mouse |

@@ -700,6 +700,12 @@ impl TextureCache {
 
 ## Windows Aero Glass Effect
 
+### D3D9Ex requirement (DWM composition path)
+
+Windows 7’s Desktop Window Manager (DWM) typically uses **Direct3D 9Ex** (`Direct3DCreate9Ex`, `CreateDeviceEx`, `PresentEx`) rather than legacy D3D9. Supporting the D3D9Ex API surface and its frame pacing/statistics semantics is therefore a prerequisite for stable Aero composition.
+
+See: [D3D9Ex / DWM Compatibility](./16-d3d9ex-dwm-compatibility.md) for the concrete guest UMD + host protocol requirements (PresentEx flags, present stats, shared surfaces, and fences).
+
 ### Aero Implementation Strategy
 
 Windows 7's Aero glass effect requires:

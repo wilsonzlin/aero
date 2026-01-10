@@ -297,6 +297,19 @@ async fn test_directx_triangle() {
 }
 ```
 
+#### D3D9Ex (DWM-facing) smoke test
+
+Windows 7 composition uses **D3D9Ex**, so we need at least one guest-side test that exercises:
+
+- `Direct3DCreate9Ex`
+- `CreateDeviceEx`
+- `PresentEx`
+- `GetPresentStats` / `GetLastPresentCount`
+
+The test should validate that the calls succeed and that present counts are monotonic (full-fidelity timing is not required for initial bring-up).
+
+See: [D3D9Ex / DWM Compatibility](./16-d3d9ex-dwm-compatibility.md#tests).
+
 #### D3D10/11 Conformance Scenes (SM4/SM5)
 
 As D3D10/11 support comes online, grow a small suite of shader-based scenes that render to an offscreen texture and use pixel-compare against known-good outputs.

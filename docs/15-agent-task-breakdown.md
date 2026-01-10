@@ -226,6 +226,9 @@ pub trait GpuCommandProcessor {
 | D9-010 | Depth/stencil buffer         | P0       | None           | Medium     |
 | D9-011 | Blend state                  | P0       | None           | Medium     |
 | D9-012 | D3D9 test suite              | P0       | D9-001..D9-011 | High       |
+| D9-013 | D3D9Ex API surface (DWM path) | P0       | D9-009, D9-012 | High       |
+| D9-014 | Ex present stats + fences + shared surfaces | P0       | D9-013         | High       |
+| D9-015 | D3D9Ex test app + integration test | P0       | D9-014         | Medium     |
 
 
 ### DirectX-10/11 Tasks
