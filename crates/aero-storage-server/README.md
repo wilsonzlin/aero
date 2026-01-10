@@ -1,37 +1,55 @@
 # aero-storage-server
 
-HTTP server for streaming large disk images from a local filesystem directory.
+HTTP server for streaming large (20GB+) disk images to the browser.
+
+This crate currently serves images from a **local filesystem directory** and exposes Prometheus
+metrics and basic health endpoints.
 
 ## Endpoints
 
-- `GET /healthz` – health probe, returns `200 OK`
-- `GET /v1/images/<image_id>` – streams files rooted at `AERO_STORAGE_IMAGE_ROOT` (supports `Range` requests)
+- `GET /healthz` – liveness probe, returns `200 OK` JSON `{ "status": "ok" }`
+- `GET /readyz` – readiness probe, returns `200 OK` JSON `{ "status": "ok" }`
+- `GET /metrics` – Prometheus text exposition format (`text/plain; version=0.0.4`)
+- `GET /v1/images` – list available images
+- `GET /v1/images/:id/meta` – image metadata (size, etag, last_modified, etc)
+- `GET|HEAD /v1/images/:image_id` (or `/v1/images/:image_id/data`) – stream image bytes
+  (supports `Range` requests)
 
-## Configuration
+## Configuration (canonical)
 
-Environment variables:
+Configuration is via **CLI flags with env var fallbacks** (powered by `clap`).
 
-- `AERO_STORAGE_LISTEN_ADDR` (default: `0.0.0.0:8080`)
-- `AERO_STORAGE_IMAGE_ROOT` (default: `./images`)
+| Flag | Env var | Default |
+| --- | --- | --- |
+| `--listen-addr` | `AERO_STORAGE_LISTEN_ADDR` | `0.0.0.0:8080` |
+| `--cors-origin` | `AERO_STORAGE_CORS_ORIGIN` | _(unset)_ |
+| `--images-root` | `AERO_STORAGE_IMAGE_ROOT` | `./images` |
+| `--log-level` | `AERO_STORAGE_LOG_LEVEL` | `info` |
 
-## Local development (Docker Compose)
+## Run
 
 From the repo root:
 
 ```bash
-docker compose up --build
+cargo run -p aero-storage-server
 ```
 
-Put disk images under `./images` on the host, then:
+Then in another terminal:
 
 ```bash
-curl -fsS http://localhost:8080/healthz
-curl -I http://localhost:8080/v1/images/my-disk.img
+curl -sSf http://localhost:8080/healthz
+curl -sSf http://localhost:8080/readyz
+curl -sSf http://localhost:8080/metrics
 ```
+
+Put disk images under `./images` (or the configured `--images-root`). If a `manifest.json` exists
+under the images root, it is used as the image catalog; otherwise the server falls back to a
+directory listing (development only).
 
 ## Reverse proxy (TLS + HTTP/2)
 
-See `deploy/nginx/nginx.conf` for an example nginx configuration. It highlights the important bits for disk image streaming:
+See `deploy/nginx/nginx.conf` for an example nginx configuration. It highlights the important bits
+for disk image streaming:
 
 - keep compression disabled on `/v1/images/…` (compression breaks byte ranges)
 - increase timeouts and avoid buffering whole responses

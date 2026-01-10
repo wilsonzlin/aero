@@ -3,9 +3,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
-use axum::http::StatusCode;
-use axum::routing::get;
-use axum::Router;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -60,25 +57,7 @@ pub async fn start(config: StorageServerConfig) -> anyhow::Result<RunningStorage
         .with_context(|| format!("create images dir {}", config.images_dir.display()))?;
 
     let store: Arc<dyn ImageStore> = Arc::new(LocalFsImageStore::new(&config.images_dir));
-    let images_dir = Arc::new(config.images_dir.clone());
     let app = crate::app(AppState::new(store));
-
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/healthz", get(health))
-        .route("/ready", get({
-            let images_dir = Arc::clone(&images_dir);
-            move || {
-                let images_dir = Arc::clone(&images_dir);
-                async move {
-                    match std::fs::metadata(&*images_dir) {
-                        Ok(metadata) if metadata.is_dir() => StatusCode::OK,
-                        _ => StatusCode::SERVICE_UNAVAILABLE,
-                    }
-                }
-            }
-        }))
-        .merge(app);
 
     let listener = TcpListener::bind(config.bind_addr)
         .await
@@ -101,8 +80,4 @@ pub async fn start(config: StorageServerConfig) -> anyhow::Result<RunningStorage
         shutdown_tx: Some(shutdown_tx),
         join: Some(join),
     })
-}
-
-async fn health() -> &'static str {
-    "ok\n"
 }

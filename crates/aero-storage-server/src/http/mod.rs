@@ -67,3 +67,4 @@ mod tests {
         assert!(text.contains("range_requests_total"));
     }
 }
+

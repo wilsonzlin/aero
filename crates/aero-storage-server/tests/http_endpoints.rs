@@ -23,7 +23,7 @@ impl TestServer {
         let client = reqwest::Client::new();
 
         // Ensure the server is accepting connections before returning.
-        let ready_url = format!("{}/ready", base_url);
+        let ready_url = format!("{}/readyz", base_url);
         let mut ready = false;
         for _ in 0..50 {
             if let Ok(resp) = client.get(&ready_url).send().await {
@@ -60,14 +60,17 @@ async fn health_ready_metrics_endpoints_work() -> anyhow::Result<()> {
         .send()
         .await?;
     assert_eq!(health.status(), reqwest::StatusCode::OK);
-    assert_eq!(health.text().await?, "ok\n");
+    let health_body: serde_json::Value = health.json().await?;
+    assert_eq!(health_body["status"], "ok");
 
     let ready = server
         .client
-        .get(format!("{}/ready", server.base_url))
+        .get(format!("{}/readyz", server.base_url))
         .send()
         .await?;
     assert_eq!(ready.status(), reqwest::StatusCode::OK);
+    let ready_body: serde_json::Value = ready.json().await?;
+    assert_eq!(ready_body["status"], "ok");
 
     let metrics = server
         .client

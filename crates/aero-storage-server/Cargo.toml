@@ -10,6 +10,7 @@ async-trait = "0.1"
 async-stream = "0.3"
 axum = "0.7"
 bytes = "1"
+clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"
 hex = "0.4"
 httpdate = "1"
@@ -20,7 +21,7 @@ serde_json = "1"
 sha2 = "0.10"
 thiserror = "1"
 time = { version = "0.3", features = ["formatting", "std"] }
-tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

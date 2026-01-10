@@ -292,6 +292,14 @@ mod tests {
         let store = LocalFsImageStore::new(root);
         let size = data.len() as u64;
 
+        let meta = store.get_meta(image_id).await.unwrap();
+        assert_eq!(meta.size, size);
+        assert_eq!(meta.content_type, CONTENT_TYPE_DISK_IMAGE);
+        assert!(meta.etag.is_some());
+
+        assert!(store.exists(image_id).await.unwrap());
+        assert!(!store.exists("missing.img").await.unwrap());
+
         let mut rng = StdRng::seed_from_u64(0x5EED);
         for _ in 0..64 {
             let start = rng.gen_range(0..=size);
