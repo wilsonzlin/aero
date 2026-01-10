@@ -62,6 +62,45 @@ fn pshufb_shuffle() {
 }
 
 #[test]
+fn pshufb_memory_operand_protected32() {
+    let mut cpu = Cpu::new(CpuMode::Protected32);
+    let mut bus = RamBus::new(0x10_000);
+
+    cpu.sse.xmm[0] = xmm_from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+
+    let mask_addr = 0x200u64;
+    cpu.regs.rax = mask_addr; // EAX base
+    let mask = [0x80, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
+    bus.as_mut_slice()[mask_addr as usize..mask_addr as usize + 16].copy_from_slice(&mask);
+
+    // pshufb xmm0, [eax]
+    cpu.execute_bytes(&mut bus, &[0x66, 0x0F, 0x38, 0x00, 0x00])
+        .unwrap();
+
+    assert_eq!(
+        xmm_to_bytes(cpu.sse.xmm[0]),
+        [0, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+    );
+}
+
+#[test]
+fn lddqu_memory_operand_protected32() {
+    let mut cpu = Cpu::new(CpuMode::Protected32);
+    let mut bus = RamBus::new(0x10_000);
+
+    let addr = 0x400u64;
+    cpu.regs.rax = addr; // EAX base
+    let expected = [0xA5u8; 16];
+    bus.as_mut_slice()[addr as usize..addr as usize + 16].copy_from_slice(&expected);
+
+    // lddqu xmm0, [eax]
+    cpu.execute_bytes(&mut bus, &[0xF2, 0x0F, 0xF0, 0x00])
+        .unwrap();
+
+    assert_eq!(xmm_to_bytes(cpu.sse.xmm[0]), expected);
+}
+
+#[test]
 fn ud_when_disabled() {
     let (mut cpu, mut bus) = setup();
     cpu.features.win7_x86_extensions = false;
