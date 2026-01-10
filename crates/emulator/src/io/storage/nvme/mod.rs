@@ -9,11 +9,14 @@ use crate::io::storage::disk::{DiskBackend, DiskError};
 use commands::{
     build_identify_controller, build_identify_namespace, NvmeCommand, NvmeStatus, FID_NUMBER_OF_QUEUES,
     OPC_ADMIN_CREATE_IO_CQ, OPC_ADMIN_CREATE_IO_SQ, OPC_ADMIN_DELETE_IO_CQ, OPC_ADMIN_DELETE_IO_SQ,
-    OPC_ADMIN_GET_FEATURES, OPC_ADMIN_IDENTIFY, OPC_ADMIN_SET_FEATURES, OPC_NVM_FLUSH, OPC_NVM_READ,
-    OPC_NVM_WRITE,
+    OPC_ADMIN_GET_FEATURES, OPC_ADMIN_GET_LOG_PAGE, OPC_ADMIN_IDENTIFY, OPC_ADMIN_SET_FEATURES,
+    OPC_NVM_FLUSH, OPC_NVM_READ, OPC_NVM_WRITE,
 };
 use memory::MemoryBus;
-use queue::{dma_read, dma_write, read_command_dwords, CompletionQueue, PrpError, QueuePair, SubmissionQueue};
+use queue::{
+    dma_read, dma_write, dma_write_zeros, read_command_dwords, CompletionQueue, PrpError, QueuePair,
+    SubmissionQueue,
+};
 use registers::*;
 use std::collections::HashMap;
 
@@ -312,6 +315,7 @@ impl NvmeController {
     fn execute_admin(&mut self, mem: &mut dyn MemoryBus, cmd: NvmeCommand) -> (u32, NvmeStatus) {
         match cmd.opc {
             OPC_ADMIN_IDENTIFY => self.cmd_identify(mem, cmd),
+            OPC_ADMIN_GET_LOG_PAGE => self.cmd_get_log_page(mem, cmd),
             OPC_ADMIN_GET_FEATURES => self.cmd_get_features(cmd),
             OPC_ADMIN_SET_FEATURES => self.cmd_set_features(cmd),
             OPC_ADMIN_CREATE_IO_CQ => self.cmd_create_io_cq(cmd),
@@ -354,8 +358,38 @@ impl NvmeController {
                 }
                 (0, NvmeStatus::success())
             }
+            2 => {
+                // Active Namespace ID list (Identify CNS=2).
+                //
+                // Linux/Windows may use this to enumerate namespaces instead of iterating
+                // 1..=NN. We only expose a single namespace (NSID 1) for now.
+                let start = if cmd.nsid == 0 { 1 } else { cmd.nsid };
+                let mut data = [0u8; 4096];
+                if start <= 1 {
+                    data[0..4].copy_from_slice(&1u32.to_le_bytes());
+                }
+                if dma_write(mem, cmd.prp1, cmd.prp2, &data, self.page_size).is_err() {
+                    return (0, NvmeStatus::invalid_field());
+                }
+                (0, NvmeStatus::success())
+            }
             _ => (0, NvmeStatus::invalid_field()),
         }
+    }
+
+    fn cmd_get_log_page(&mut self, mem: &mut dyn MemoryBus, cmd: NvmeCommand) -> (u32, NvmeStatus) {
+        let Some(len) = cmd.log_page_len_bytes() else {
+            return (0, NvmeStatus::invalid_field());
+        };
+        // We currently return zeroed data for all log pages. This is enough for OS drivers
+        // to make forward progress during initialization.
+        let _ = cmd.log_page_lid();
+        let _ = cmd.log_page_offset_bytes();
+
+        if dma_write_zeros(mem, cmd.prp1, cmd.prp2, len, self.page_size).is_err() {
+            return (0, NvmeStatus::invalid_field());
+        }
+        (0, NvmeStatus::success())
     }
 
     fn cmd_get_features(&mut self, cmd: NvmeCommand) -> (u32, NvmeStatus) {
@@ -919,5 +953,68 @@ mod tests {
         let (dw0, _, _, dw3) = read_cqe(&mut mem, 0x20_000, 1);
         assert_eq!(dw0, 0x1234_5678);
         assert_eq!((dw3 & 0xffff) as u16, cid_get);
+    }
+
+    #[test]
+    fn admin_identify_active_namespace_list() {
+        let mut mem = VecMemory::new(4 * 1024 * 1024);
+        let mut ctrl = setup_controller(&mut mem);
+
+        let buf = 0x30_000u64;
+        // Pre-fill so the test catches a missing DMA write.
+        for i in 0..4096u64 {
+            mem.write_u8(buf + i, 0xaa);
+        }
+
+        let cid = 0x4000u16;
+        let mut cmd = [0u32; 16];
+        cmd[0] = OPC_ADMIN_IDENTIFY as u32 | ((cid as u32) << 16);
+        cmd[1] = 0; // start NSID=0 means start from 1
+        cmd[6] = buf as u32;
+        cmd[7] = (buf >> 32) as u32;
+        cmd[10] = 2; // CNS=2 (active namespace list)
+        write_cmd(&mut mem, 0x10_000, cmd);
+
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE, 1);
+
+        let (_, _, _, dw3) = read_cqe(&mut mem, 0x20_000, 0);
+        let status = (dw3 >> 16) as u16;
+        assert_eq!((status >> 1) & 0xff, 0);
+
+        assert_eq!(mem.read_u32(buf), 1);
+        assert_eq!(mem.read_u32(buf + 4), 0);
+    }
+
+    #[test]
+    fn admin_get_log_page_writes_zeros() {
+        let mut mem = VecMemory::new(4 * 1024 * 1024);
+        let mut ctrl = setup_controller(&mut mem);
+
+        let buf = 0x30_000u64;
+        let len = 512usize;
+        for i in 0..len {
+            mem.write_u8(buf + i as u64, 0xcc);
+        }
+
+        let cid = 0x4001u16;
+        let numd = (len / 4).saturating_sub(1) as u32;
+        let mut cmd = [0u32; 16];
+        cmd[0] = OPC_ADMIN_GET_LOG_PAGE as u32 | ((cid as u32) << 16);
+        cmd[6] = buf as u32;
+        cmd[7] = (buf >> 32) as u32;
+        // LID in bits 7:0, NUMD in bits 31:16.
+        cmd[10] = 2u32 | (numd << 16);
+        cmd[11] = 0;
+        write_cmd(&mut mem, 0x10_000, cmd);
+
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE, 1);
+
+        let (_, _, _, dw3) = read_cqe(&mut mem, 0x20_000, 0);
+        let status = (dw3 >> 16) as u16;
+        assert_eq!((status >> 1) & 0xff, 0);
+
+        for i in 0..len {
+            assert_eq!(mem.read_u8(buf + i as u64), 0);
+        }
     }
 }

@@ -189,3 +189,21 @@ pub fn dma_write(
     }
     Ok(())
 }
+
+pub fn dma_write_zeros(
+    mem: &mut dyn MemoryBus,
+    prp1: u64,
+    prp2: u64,
+    total_len: usize,
+    page_size: usize,
+) -> Result<(), PrpError> {
+    if total_len == 0 {
+        return Ok(());
+    }
+    let segments = prp_segments(mem, prp1, prp2, total_len, page_size)?;
+    let zero_page = vec![0u8; page_size.max(1)];
+    for (addr, len) in segments {
+        mem.write_physical(addr, &zero_page[..len]);
+    }
+    Ok(())
+}

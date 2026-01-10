@@ -2,6 +2,7 @@ use crate::io::storage::disk::DiskBackend;
 
 pub const OPC_ADMIN_DELETE_IO_SQ: u8 = 0x00;
 pub const OPC_ADMIN_CREATE_IO_SQ: u8 = 0x01;
+pub const OPC_ADMIN_GET_LOG_PAGE: u8 = 0x02;
 pub const OPC_ADMIN_DELETE_IO_CQ: u8 = 0x04;
 pub const OPC_ADMIN_CREATE_IO_CQ: u8 = 0x05;
 pub const OPC_ADMIN_IDENTIFY: u8 = 0x06;
@@ -123,6 +124,20 @@ impl NvmeCommand {
 
     pub fn feature_id(self) -> u8 {
         (self.cdw10 & 0xff) as u8
+    }
+
+    pub fn log_page_lid(self) -> u8 {
+        (self.cdw10 & 0xff) as u8
+    }
+
+    pub fn log_page_len_bytes(self) -> Option<usize> {
+        let numd = (self.cdw10 >> 16) as u16;
+        (usize::from(numd) + 1).checked_mul(4)
+    }
+
+    pub fn log_page_offset_bytes(self) -> Option<u64> {
+        let offset_dwords = self.cdw11 as u64;
+        offset_dwords.checked_mul(4)
     }
 
     pub fn qid(self) -> u16 {
