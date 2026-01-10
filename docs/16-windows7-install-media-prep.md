@@ -40,6 +40,7 @@ Notes:
 - Some OEM media may have a different layout or additional boot entries; always validate the structure first.
 - x86 media may not include `efi/…` at all (BIOS-only).
 - Aero driver injection must match the ISO architecture (x86 drivers for x86 media; amd64 drivers for x64 media).
+- On case-sensitive host filesystems (Linux/macOS), extracted ISO file paths may differ in case (for example `efi/microsoft/boot/bcd`). Treat these paths as **case-insensitive identifiers**, and verify the actual extracted filenames before running commands that reference them.
 
 ### Quick structure checks
 
@@ -485,6 +486,8 @@ hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\BCD' iso-root/boot/BCD tools/w
 # If your ISO has a UEFI BCD store too:
 hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\BCD' iso-root/efi/microsoft/boot/BCD tools/win7-slipstream/patches/bcd-testsigning.reg
 ```
+
+On Linux/macOS, ensure the `iso-root/...` paths match the actual case of the extracted files (some ISOs use `bcd` instead of `BCD`).
 
 ### 6) Rebuild the ISO (Linux/macOS: xorriso)
 
