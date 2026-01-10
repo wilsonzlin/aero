@@ -16,6 +16,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Version stamping derives from git tags/commits; fetch full history + tags so
+          # `git describe` and commit-distance calculations are accurate.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Detect driver projects
         id: detect
