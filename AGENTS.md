@@ -64,6 +64,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 39. [Windows 7 Driver Build and Signing](./docs/16-windows7-driver-build-and-signing.md)
 40. [Guest CPU Instruction Throughput Benchmarks (PF-008)](./docs/16-guest-cpu-benchmark-suite.md)
 41. [Driver Packaging, Catalogs, and WDK Redistributables](./docs/16-driver-packaging-and-signing.md)
+42. [Architecture Decision Records (ADRs)](./docs/adr/README.md)
 
 ---
 
