@@ -8,3 +8,8 @@ memory = { path = "../memory" }
 
 [dev-dependencies]
 image = { version = "0.25.5", default-features = false, features = ["png"] }
+aero-bios = { path = "../aero-bios" }
+
+[[test]]
+name = "boot_basic"
+path = "../../tests/boot/basic_boot.rs"
