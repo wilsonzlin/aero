@@ -4,6 +4,8 @@
 //! making it possible to patch Windows 7 installation media/templates on non-Windows hosts
 //! (Linux/macOS CI) without `bcdedit.exe`.
 
+pub mod constants;
+
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,21 +15,15 @@ use regf::hive::RegistryKey;
 use regf::{DataType, HiveBuilder, KeyTreeNode, KeyTreeValue, RegistryHive};
 use uuid::Uuid;
 
-const BCD_KEY_OBJECTS: &str = "Objects";
-const BCD_KEY_ELEMENTS: &str = "Elements";
-const BCD_VALUE_ELEMENT: &str = "Element";
+use crate::constants::{
+    ELEM_ALLOW_PRERELEASE_SIGNATURES, ELEM_APPLICATION_PATH, ELEM_BOOTMGR_DEFAULT_OBJECT,
+    ELEM_BOOTMGR_DISPLAY_ORDER, ELEM_DISABLE_INTEGRITY_CHECKS, OBJ_BOOTMGR,
+    OBJ_BOOTLOADERSETTINGS, OBJ_GLOBALSETTINGS, OBJ_RESUMELOADERSETTINGS,
+};
 
-// Well-known BCD object identifiers.
-const OBJ_GLOBALSETTINGS: &str = "{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}";
-const OBJ_BOOTLOADERSETTINGS: &str = "{6efb52bf-1766-41db-a6b3-0ee5eff72bd7}";
-const OBJ_BOOTMGR: &str = "{9dea862c-5cdd-4e70-acc1-f32b344d4795}";
-
-// BCD element types (Win7).
-const ELEM_APPLICATION_PATH: u32 = 0x1200_0002;
-const ELEM_DISABLE_INTEGRITY_CHECKS: u32 = 0x1600_0048;
-const ELEM_ALLOW_PRERELEASE_SIGNATURES: u32 = 0x1600_0049;
-const ELEM_BOOTMGR_DISPLAY_ORDER: u32 = 0x2400_0001;
-const ELEM_BOOTMGR_DEFAULT_OBJECT: u32 = 0x2300_0003;
+pub(crate) const BCD_KEY_OBJECTS: &str = "Objects";
+pub(crate) const BCD_KEY_ELEMENTS: &str = "Elements";
+pub(crate) const BCD_VALUE_ELEMENT: &str = "Element";
 
 /// Options controlling which BCD flags are enabled/disabled.
 #[derive(Debug, Clone, Copy)]
@@ -295,7 +291,11 @@ fn select_target_objects(hive: &RegistryHive) -> Result<HashSet<String>> {
 
     let mut targets: HashSet<String> = HashSet::new();
 
-    for known in [OBJ_GLOBALSETTINGS, OBJ_BOOTLOADERSETTINGS] {
+    for known in [
+        OBJ_GLOBALSETTINGS,
+        OBJ_BOOTLOADERSETTINGS,
+        OBJ_RESUMELOADERSETTINGS,
+    ] {
         if let Some(actual) = by_upper.get(&known.to_uppercase()) {
             targets.insert(actual.clone());
         }

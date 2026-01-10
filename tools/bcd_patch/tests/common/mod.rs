@@ -1,15 +1,26 @@
 use regf::{DataType, HiveBuilder, RegistryHive};
 use uuid::Uuid;
 
-pub const OBJ_GLOBALSETTINGS: &str = "{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}";
-pub const OBJ_BOOTLOADERSETTINGS: &str = "{6efb52bf-1766-41db-a6b3-0ee5eff72bd7}";
-pub const OBJ_BOOTMGR: &str = "{9dea862c-5cdd-4e70-acc1-f32b344d4795}";
+pub use bcd_patch::constants::{
+    ELEM_ALLOW_PRERELEASE_SIGNATURES, ELEM_APPLICATION_PATH, ELEM_BOOTMGR_DEFAULT_OBJECT,
+    ELEM_BOOTMGR_DISPLAY_ORDER, ELEM_DISABLE_INTEGRITY_CHECKS, OBJ_BOOTMGR,
+    OBJ_BOOTLOADERSETTINGS, OBJ_GLOBALSETTINGS, OBJ_RESUMELOADERSETTINGS,
+};
 
-pub const ELEM_APPLICATION_PATH: u32 = 0x1200_0002;
-pub const ELEM_DISABLE_INTEGRITY_CHECKS: u32 = 0x1600_0048;
-pub const ELEM_ALLOW_PRERELEASE_SIGNATURES: u32 = 0x1600_0049;
-pub const ELEM_BOOTMGR_DISPLAY_ORDER: u32 = 0x2400_0001;
-pub const ELEM_BOOTMGR_DEFAULT_OBJECT: u32 = 0x2300_0003;
+#[derive(Debug, Clone, Copy)]
+pub enum ObjectKeyCase {
+    AsIs,
+    Uppercase,
+}
+
+impl ObjectKeyCase {
+    fn apply(&self, value: &str) -> String {
+        match self {
+            ObjectKeyCase::AsIs => value.to_string(),
+            ObjectKeyCase::Uppercase => value.to_ascii_uppercase(),
+        }
+    }
+}
 
 pub fn element_key_name(element_type: u32) -> String {
     format!("{element_type:08X}")
@@ -56,8 +67,26 @@ pub fn encode_bcd_guid_list(element_type: u32, guids: &[Uuid]) -> Vec<u8> {
 }
 
 /// Build a synthetic, BCD-shaped REGF hive suitable for tests.
+///
+/// By default this includes `{bootmgr}`, `{globalsettings}`, `{bootloadersettings}`, and
+/// `{resumeloadersettings}`, plus a single loader entry referenced by `displayorder`/`default`.
 pub fn build_minimal_bcd_hive(already_patched: bool) -> Vec<u8> {
+    build_minimal_bcd_hive_with(
+        already_patched,
+        ObjectKeyCase::AsIs,
+        /* include_settings_objects */ true,
+        /* include_application_path */ true,
+    )
+}
+
+pub fn build_minimal_bcd_hive_with(
+    already_patched: bool,
+    object_key_case: ObjectKeyCase,
+    include_settings_objects: bool,
+    include_application_path: bool,
+) -> Vec<u8> {
     let loader_obj = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
+    let loader_obj_key = object_key_case.apply(&format!("{{{}}}", loader_obj));
 
     let mut builder = HiveBuilder::new_with_name("BCD00000000");
     let root = builder.root_offset();
@@ -65,7 +94,9 @@ pub fn build_minimal_bcd_hive(already_patched: bool) -> Vec<u8> {
     let objects = builder.add_key(root, "Objects").unwrap();
 
     // Boot manager object referencing loader object via DisplayOrder + Default.
-    let bootmgr = builder.add_key(objects, OBJ_BOOTMGR).unwrap();
+    let bootmgr = builder
+        .add_key(objects, &object_key_case.apply(OBJ_BOOTMGR))
+        .unwrap();
     let bootmgr_elements = builder.add_key(bootmgr, "Elements").unwrap();
 
     let display_order = builder
@@ -99,42 +130,50 @@ pub fn build_minimal_bcd_hive(already_patched: bool) -> Vec<u8> {
         .unwrap();
 
     // OS loader object (ApplicationPath points to winload.exe)
-    let loader = builder
-        .add_key(objects, &format!("{{{}}}", loader_obj))
-        .unwrap();
+    let loader = builder.add_key(objects, &loader_obj_key).unwrap();
     let loader_elements = builder.add_key(loader, "Elements").unwrap();
 
-    let app_path_key = builder
-        .add_key(loader_elements, &element_key_name(ELEM_APPLICATION_PATH))
-        .unwrap();
-    builder
-        .add_value(
-            app_path_key,
-            "Element",
-            DataType::Binary,
-            &encode_bcd_string(ELEM_APPLICATION_PATH, "\\Windows\\System32\\winload.exe"),
-        )
-        .unwrap();
+    if include_application_path {
+        let app_path_key = builder
+            .add_key(loader_elements, &element_key_name(ELEM_APPLICATION_PATH))
+            .unwrap();
+        builder
+            .add_value(
+                app_path_key,
+                "Element",
+                DataType::Binary,
+                &encode_bcd_string(ELEM_APPLICATION_PATH, "\\Windows\\System32\\winload.exe"),
+            )
+            .unwrap();
+    }
 
     // Global settings / bootloader settings objects.
-    for obj in [OBJ_GLOBALSETTINGS, OBJ_BOOTLOADERSETTINGS] {
-        let k = builder.add_key(objects, obj).unwrap();
-        let elements = builder.add_key(k, "Elements").unwrap();
+    if include_settings_objects {
+        for obj in [
+            OBJ_GLOBALSETTINGS,
+            OBJ_BOOTLOADERSETTINGS,
+            OBJ_RESUMELOADERSETTINGS,
+        ] {
+            let k = builder
+                .add_key(objects, &object_key_case.apply(obj))
+                .unwrap();
+            let elements = builder.add_key(k, "Elements").unwrap();
 
-        if already_patched {
-            for (elem, val) in [
-                (ELEM_DISABLE_INTEGRITY_CHECKS, true),
-                (ELEM_ALLOW_PRERELEASE_SIGNATURES, true),
-            ] {
-                let ek = builder.add_key(elements, &element_key_name(elem)).unwrap();
-                builder
-                    .add_value(
-                        ek,
-                        "Element",
-                        DataType::Binary,
-                        &encode_bcd_boolean(elem, val),
-                    )
-                    .unwrap();
+            if already_patched {
+                for (elem, val) in [
+                    (ELEM_DISABLE_INTEGRITY_CHECKS, true),
+                    (ELEM_ALLOW_PRERELEASE_SIGNATURES, true),
+                ] {
+                    let ek = builder.add_key(elements, &element_key_name(elem)).unwrap();
+                    builder
+                        .add_value(
+                            ek,
+                            "Element",
+                            DataType::Binary,
+                            &encode_bcd_boolean(elem, val),
+                        )
+                        .unwrap();
+                }
             }
         }
     }

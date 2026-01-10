@@ -7,11 +7,20 @@ use predicates::prelude::*;
 use regf::RegistryHive;
 use tempfile::tempdir;
 
-fn write_synth_bcd(path: &std::path::Path) {
+fn write_synth_bcd(path: &std::path::Path, object_key_case: ObjectKeyCase) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).unwrap();
     }
-    fs::write(path, build_minimal_bcd_hive(false)).unwrap();
+    let bytes = match object_key_case {
+        ObjectKeyCase::AsIs => build_minimal_bcd_hive(false),
+        ObjectKeyCase::Uppercase => build_minimal_bcd_hive_with(
+            false,
+            ObjectKeyCase::Uppercase,
+            /* include_settings_objects */ true,
+            /* include_application_path */ true,
+        ),
+    };
+    fs::write(path, bytes).unwrap();
 }
 
 fn assert_store_patched(path: &std::path::Path) {
@@ -48,9 +57,9 @@ fn patches_all_present_stores_case_insensitively() {
         .join("config")
         .join("BCD-Template");
 
-    write_synth_bcd(&bios);
-    write_synth_bcd(&uefi);
-    write_synth_bcd(&template);
+    write_synth_bcd(&bios, ObjectKeyCase::Uppercase);
+    write_synth_bcd(&uefi, ObjectKeyCase::Uppercase);
+    write_synth_bcd(&template, ObjectKeyCase::Uppercase);
 
     assert_cmd::cargo::cargo_bin_cmd!("bcd_patch")
         .args(["win7-tree", "--root"])
@@ -72,7 +81,7 @@ fn missing_stores_warn_in_non_strict_mode() {
     let dir = tempdir().unwrap();
 
     let bios = dir.path().join("boot").join("BCD");
-    write_synth_bcd(&bios);
+    write_synth_bcd(&bios, ObjectKeyCase::AsIs);
 
     assert_cmd::cargo::cargo_bin_cmd!("bcd_patch")
         .args(["win7-tree", "--root"])
@@ -92,7 +101,7 @@ fn missing_stores_fail_in_strict_mode_without_patching() {
     let dir = tempdir().unwrap();
 
     let bios = dir.path().join("boot").join("BCD");
-    write_synth_bcd(&bios);
+    write_synth_bcd(&bios, ObjectKeyCase::AsIs);
     let before = fs::read(&bios).unwrap();
 
     assert_cmd::cargo::cargo_bin_cmd!("bcd_patch")

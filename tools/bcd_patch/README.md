@@ -43,10 +43,11 @@ The tool enables/disables the target boolean elements on:
 
 1. `{globalsettings}` if present (`{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}`)
 2. `{bootloadersettings}` if present (`{6efb52bf-1766-41db-a6b3-0ee5eff72bd7}`)
-3. Any object whose `BcdLibraryString_ApplicationPath` (`0x12000002`) contains `winload` or
+3. `{resumeloadersettings}` if present (`{1afa9c49-16ab-4a5c-901b-212802da9460}`)
+4. Any object whose `BcdLibraryString_ApplicationPath` (`0x12000002`) contains `winload` or
    `winresume` (e.g. `\\Windows\\System32\\winload.exe`, `winload.efi`)
-4. Additionally, objects referenced by the `{bootmgr}` display order (`0x24000001`) and default
-   entry (`0x23000003`) are included when those elements exist.
+5. Additionally, objects referenced by the `{bootmgr}` display order (`0x24000001`) and default
+    entry (`0x23000003`) are included when those elements exist.
 
 ## Windows verification (manual)
 
