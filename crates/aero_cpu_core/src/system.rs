@@ -5,6 +5,7 @@
 
 use crate::cpuid::{cpuid, CpuFeatures, CpuidResult};
 use crate::msr::EFER_SCE;
+use crate::time::TimeSource;
 use crate::{msr::MsrState, Exception};
 
 /// A device/bus surface for port I/O instructions.
@@ -86,6 +87,7 @@ pub struct Cpu {
 
     pub msr: MsrState,
     pub features: CpuFeatures,
+    pub time: TimeSource,
 
     pub halted: bool,
     /// Interrupt shadow after STI (inhibits interrupts for one instruction).
@@ -143,6 +145,7 @@ impl Cpu {
             tr: 0,
             msr: MsrState::default(),
             features,
+            time: TimeSource::default(),
             halted: false,
             interrupt_inhibit: 0,
             invlpg_log: Vec::new(),
@@ -346,11 +349,18 @@ impl Cpu {
         Ok(())
     }
 
-    /// Call after each successfully executed instruction to update the interrupt shadow.
+    /// Call after each successfully executed instruction to update the interrupt shadow and
+    /// advance the virtual time source.
     pub fn retire_instruction(&mut self) {
+        self.retire_cycles(1);
+    }
+
+    /// Retire an instruction that took `cycles` virtual cycles.
+    pub fn retire_cycles(&mut self, cycles: u64) {
         if self.interrupt_inhibit > 0 {
             self.interrupt_inhibit -= 1;
         }
+        self.time.advance_cycles(cycles);
     }
 
     // --- CPUID ---
@@ -370,15 +380,57 @@ impl Cpu {
         self.rdx = res.edx as u64;
     }
 
+    // --- Time / serialization primitives ---
+
+    /// `RDTSC` instruction semantics (writes EDX:EAX).
+    pub fn instr_rdtsc(&mut self) {
+        let tsc = self.time.read_tsc();
+        self.rax = (tsc as u32) as u64;
+        self.rdx = ((tsc >> 32) as u32) as u64;
+    }
+
+    /// `RDTSCP` instruction semantics (writes EDX:EAX and ECX = IA32_TSC_AUX).
+    pub fn instr_rdtscp(&mut self) {
+        let tsc = self.time.read_tsc();
+        self.rax = (tsc as u32) as u64;
+        self.rdx = ((tsc >> 32) as u32) as u64;
+        self.rcx = self.msr.tsc_aux as u64;
+    }
+
+    /// `LFENCE` acts as a serializing point for the virtual pipeline.
+    #[inline]
+    pub fn instr_lfence(&mut self) {}
+
+    /// `SFENCE` acts as a serializing point for the virtual pipeline.
+    #[inline]
+    pub fn instr_sfence(&mut self) {}
+
+    /// `MFENCE` acts as a serializing point for the virtual pipeline.
+    #[inline]
+    pub fn instr_mfence(&mut self) {}
+
+    /// `PAUSE` is a no-op in the interpreter with a spin-loop hint.
+    #[inline]
+    pub fn instr_pause(&mut self) {
+        core::hint::spin_loop();
+    }
+
     // --- MSR ---
 
     pub fn rdmsr_value(&mut self, msr_index: u32) -> Result<u64, Exception> {
         self.require_cpl0()?;
+        if msr_index == crate::msr::IA32_TSC {
+            return Ok(self.time.read_tsc());
+        }
         self.msr.read(msr_index)
     }
 
     pub fn wrmsr_value(&mut self, msr_index: u32, value: u64) -> Result<(), Exception> {
         self.require_cpl0()?;
+        if msr_index == crate::msr::IA32_TSC {
+            self.time.set_tsc(value);
+            return Ok(());
+        }
         self.msr.write(msr_index, value)
     }
 

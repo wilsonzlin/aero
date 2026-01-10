@@ -136,8 +136,9 @@ impl Default for CpuFeatures {
         const EXT_EDX_SYSCALL: u32 = 1 << 11;
         const EXT_EDX_NX: u32 = 1 << 20;
         const EXT_EDX_1GB_PAGES: u32 = 1 << 26;
+        const EXT_EDX_RDTSCP: u32 = 1 << 27;
         const EXT_EDX_LM: u32 = 1 << 29;
-        let ext1_edx = EXT_EDX_SYSCALL | EXT_EDX_NX | EXT_EDX_1GB_PAGES | EXT_EDX_LM;
+        let ext1_edx = EXT_EDX_SYSCALL | EXT_EDX_NX | EXT_EDX_1GB_PAGES | EXT_EDX_RDTSCP | EXT_EDX_LM;
 
         // Extended leaf 0x8000_0001 ECX bits.
         const EXT_ECX_LAHF_LM: u32 = 1 << 0;

@@ -18,6 +18,8 @@ pub mod jit;
 pub mod msr;
 pub mod sse_state;
 pub mod system;
+pub mod time;
+pub mod time_insn;
 
 pub use exception::Exception;
 

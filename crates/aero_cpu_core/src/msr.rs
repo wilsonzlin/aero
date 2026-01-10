@@ -22,6 +22,7 @@ pub const IA32_FMASK: u32 = 0xC000_0084;
 pub const IA32_FS_BASE: u32 = 0xC000_0100;
 pub const IA32_GS_BASE: u32 = 0xC000_0101;
 pub const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
+pub const IA32_TSC_AUX: u32 = 0xC000_0103;
 
 // IA32_EFER bits (subset).
 pub const EFER_SCE: u64 = 1 << 0;
@@ -47,7 +48,7 @@ pub struct MsrState {
     pub kernel_gs_base: u64,
 
     pub apic_base: u64,
-    pub tsc: u64,
+    pub tsc_aux: u32,
 }
 
 impl Default for MsrState {
@@ -66,7 +67,7 @@ impl Default for MsrState {
             kernel_gs_base: 0,
             // Typical reset value: APIC enabled at 0xFEE00000, BSP bit set.
             apic_base: 0xFEE0_0000 | (1 << 11),
-            tsc: 0,
+            tsc_aux: 0,
         }
     }
 }
@@ -89,7 +90,7 @@ impl MsrState {
             IA32_GS_BASE => Ok(self.gs_base),
             IA32_KERNEL_GS_BASE => Ok(self.kernel_gs_base),
             IA32_APIC_BASE => Ok(self.apic_base),
-            IA32_TSC => Ok(self.tsc),
+            IA32_TSC_AUX => Ok(self.tsc_aux as u64),
             _ => Err(Exception::gp0()),
         }
     }
@@ -147,8 +148,8 @@ impl MsrState {
                 self.apic_base = value;
                 Ok(())
             }
-            IA32_TSC => {
-                self.tsc = value;
+            IA32_TSC_AUX => {
+                self.tsc_aux = value as u32;
                 Ok(())
             }
             _ => Err(Exception::gp0()),
