@@ -389,11 +389,12 @@ function renderRemoteDiskPanel(): HTMLElement {
     "div",
     { class: "mono" },
     "Remote disk images are experimental. Only use images you own/have rights to. ",
-    "The server must support HTTP Range requests and CORS (see docs/disk-images.md).",
+    "The server must support HTTP Range requests and CORS (see docs/disk-images.md). ",
+    "For local testing, run `docker compose up` in `infra/local-object-store/` and upload an object to `disk-images/`.",
   );
 
   const enabledInput = el("input", { type: "checkbox" }) as HTMLInputElement;
-  const urlInput = el("input", { type: "url", placeholder: "https://example.com/disk.raw" }) as HTMLInputElement;
+  const urlInput = el("input", { type: "url", placeholder: "http://localhost:9002/disk-images/large.bin" }) as HTMLInputElement;
   const blockSizeInput = el("input", { type: "number", value: String(1024), min: "4" }) as HTMLInputElement;
   const cacheLimitInput = el("input", { type: "number", value: String(512), min: "0" }) as HTMLInputElement;
   const output = el("pre", { text: "" });
