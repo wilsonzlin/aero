@@ -79,9 +79,20 @@ impl CpuState {
         dst.copy_from_slice(&self.sse.mxcsr.to_le_bytes());
     }
 
+    /// `STMXCSR` convenience wrapper that writes MXCSR via a [`Bus`].
+    pub fn stmxcsr_to_bus<B: Bus>(&self, bus: &mut B, addr: u64) {
+        bus.write_u32(addr, self.sse.mxcsr);
+    }
+
     /// Implements `LDMXCSR m32`.
     pub fn ldmxcsr(&mut self, src: &[u8; 4]) -> Result<(), FxStateError> {
         self.sse.set_mxcsr(u32::from_le_bytes(*src))
+    }
+
+    /// `LDMXCSR` convenience wrapper that loads MXCSR via a [`Bus`].
+    pub fn ldmxcsr_from_bus<B: Bus>(&mut self, bus: &mut B, addr: u64) -> Result<(), FxStateError> {
+        let value = bus.read_u32(addr);
+        self.sse.set_mxcsr(value)
     }
 
     /// Implements the legacy (32-bit) `FXSAVE m512byte` memory image.

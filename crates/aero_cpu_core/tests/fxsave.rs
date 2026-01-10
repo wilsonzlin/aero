@@ -1,4 +1,4 @@
-use aero_cpu_core::{sse_state::MXCSR_MASK, CpuState, RamBus, FXSAVE_AREA_SIZE};
+use aero_cpu_core::{sse_state::MXCSR_MASK, Bus, CpuState, RamBus, FXSAVE_AREA_SIZE};
 
 const ST80_MASK: u128 = (1u128 << 80) - 1;
 
@@ -219,5 +219,57 @@ fn fxrstor64_rejects_reserved_mxcsr_without_modifying_state() {
         err,
         aero_cpu_core::FxStateError::MxcsrReservedBits { .. }
     ));
+    assert_eq!(cpu, snapshot);
+}
+
+#[test]
+fn fninit_resets_x87_state_but_preserves_sse() {
+    let mut cpu = CpuState::default();
+    cpu.fpu.fcw = 0x1234;
+    cpu.fpu.fsw = 0xFFFF;
+    cpu.fpu.top = 5;
+    cpu.fpu.ftw = 0xAA;
+    cpu.sse.mxcsr = 0x0;
+
+    cpu.fninit();
+
+    assert_eq!(cpu.fpu.fcw, 0x037F);
+    assert_eq!(cpu.fpu.fsw, 0);
+    assert_eq!(cpu.fpu.top, 0);
+    assert_eq!(cpu.fpu.ftw, 0);
+    assert_eq!(cpu.sse.mxcsr, 0);
+}
+
+#[test]
+fn emms_marks_all_x87_tags_empty() {
+    let mut cpu = CpuState::default();
+    cpu.fpu.ftw = 0xFF;
+    cpu.emms();
+    assert_eq!(cpu.fpu.ftw, 0);
+}
+
+#[test]
+fn stmxcsr_ldmxcsr_bus_roundtrip() {
+    let mut cpu = CpuState::default();
+    cpu.sse.mxcsr = 0xA5A5_5A5A & MXCSR_MASK;
+
+    let mut bus = RamBus::new(16);
+    cpu.stmxcsr_to_bus(&mut bus, 4);
+
+    cpu.sse.mxcsr = 0;
+    cpu.ldmxcsr_from_bus(&mut bus, 4).unwrap();
+
+    assert_eq!(cpu.sse.mxcsr, 0xA5A5_5A5A & MXCSR_MASK);
+}
+
+#[test]
+fn ldmxcsr_bus_rejects_reserved_bits() {
+    let mut cpu = CpuState::default();
+    cpu.sse.mxcsr = 0x1F80;
+    let snapshot = cpu.clone();
+
+    let mut bus = RamBus::new(16);
+    bus.write_u32(0, MXCSR_MASK | (1 << 31));
+    assert!(cpu.ldmxcsr_from_bus(&mut bus, 0).is_err());
     assert_eq!(cpu, snapshot);
 }
