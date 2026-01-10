@@ -1,4 +1,4 @@
-use aero_audio::pcm::LinearResampler;
+use aero_audio::sink::AudioSink;
 
 use crate::devices::{VirtioDevice, VirtioDeviceError};
 use crate::memory::GuestMemory;
@@ -12,158 +12,86 @@ pub const VIRTIO_SND_QUEUE_EVENT: u16 = 1;
 pub const VIRTIO_SND_QUEUE_TX: u16 = 2;
 pub const VIRTIO_SND_QUEUE_RX: u16 = 3;
 
-/// Control opcode: set the PCM input format used for subsequent TX buffers.
-pub const VIRTIO_SND_CTRL_SET_FORMAT: u32 = 1;
-/// Control opcode: reset the PCM input format back to defaults.
-pub const VIRTIO_SND_CTRL_RESET: u32 = 2;
+pub const VIRTIO_SND_R_JACK_INFO: u32 = 0x0001;
+pub const VIRTIO_SND_R_JACK_REMAP: u32 = 0x0002;
+pub const VIRTIO_SND_R_PCM_INFO: u32 = 0x0100;
+pub const VIRTIO_SND_R_PCM_SET_PARAMS: u32 = 0x0101;
+pub const VIRTIO_SND_R_PCM_PREPARE: u32 = 0x0102;
+pub const VIRTIO_SND_R_PCM_RELEASE: u32 = 0x0103;
+pub const VIRTIO_SND_R_PCM_START: u32 = 0x0104;
+pub const VIRTIO_SND_R_PCM_STOP: u32 = 0x0105;
+pub const VIRTIO_SND_R_CHMAP_INFO: u32 = 0x0200;
 
-/// A minimal audio sink interface for virtio-snd output.
-///
-/// The browser host side is expected to push interleaved stereo `f32` samples
-/// into a ring buffer that is consumed by an `AudioWorkletProcessor`.
-pub trait SndOutput {
-    fn push_interleaved_stereo_f32(&mut self, samples: &[f32]);
-}
+pub const VIRTIO_SND_S_OK: u32 = 0x0000;
+pub const VIRTIO_SND_S_BAD_MSG: u32 = 0x0001;
+pub const VIRTIO_SND_S_NOT_SUPP: u32 = 0x0002;
+pub const VIRTIO_SND_S_IO_ERR: u32 = 0x0003;
 
-impl SndOutput for aero_audio::ring::AudioRingBuffer {
-    fn push_interleaved_stereo_f32(&mut self, samples: &[f32]) {
-        aero_audio::ring::AudioRingBuffer::push_interleaved_stereo(self, samples);
-    }
-}
+pub const VIRTIO_SND_D_OUTPUT: u8 = 0x00;
 
-#[derive(Debug, Clone, Copy)]
-struct PcmFormat {
-    sample_rate_hz: u32,
+pub const VIRTIO_SND_PCM_FMT_S16: u8 = 0x05;
+pub const VIRTIO_SND_PCM_RATE_48000: u8 = 0x07;
+
+pub const VIRTIO_SND_PCM_FMT_MASK_S16: u64 = 1u64 << VIRTIO_SND_PCM_FMT_S16;
+pub const VIRTIO_SND_PCM_RATE_MASK_48000: u64 = 1u64 << VIRTIO_SND_PCM_RATE_48000;
+
+pub const PLAYBACK_STREAM_ID: u32 = 0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PcmParams {
+    buffer_bytes: u32,
+    period_bytes: u32,
     channels: u8,
-    bits_per_sample: u8,
+    format: u8,
+    rate: u8,
 }
 
-impl Default for PcmFormat {
-    fn default() -> Self {
-        Self {
-            sample_rate_hz: 48_000,
-            channels: 2,
-            bits_per_sample: 16,
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamState {
+    Idle,
+    ParamsSet,
+    Prepared,
+    Running,
 }
 
-impl PcmFormat {
-    fn bytes_per_sample(self) -> Option<usize> {
-        match self.bits_per_sample {
-            8 => Some(1),
-            16 => Some(2),
-            20 | 24 | 32 => Some(4),
-            _ => None,
-        }
-    }
-
-    fn bytes_per_frame(self) -> Option<usize> {
-        let bps = self.bytes_per_sample()?;
-        Some(bps * self.channels as usize)
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PcmStream {
+    params: Option<PcmParams>,
+    state: StreamState,
 }
 
 /// Minimal virtio-snd device model.
 ///
-/// The full virtio-snd specification is extensive; this device implements a
-/// small subset aimed at custom guest drivers:
+/// The full virtio-snd specification is extensive. This device implements a
+/// tiny subset intended for a custom guest driver:
 ///
-/// - Queue 0 (control): `VIRTIO_SND_CTRL_SET_FORMAT` and `VIRTIO_SND_CTRL_RESET`
-/// - Queue 2 (tx): raw interleaved PCM frames with the configured format
-///
-/// The device converts input PCM into interleaved stereo `f32` at
-/// `output_sample_rate_hz` and forwards it to the provided [`SndOutput`].
-pub struct VirtioSnd<O: SndOutput> {
+/// - One playback PCM stream (stereo, 48kHz, signed 16-bit LE).
+/// - Control queue supports `PCM_INFO`, `PCM_SET_PARAMS`, `PCM_PREPARE`,
+///   `PCM_START`, `PCM_STOP`, `PCM_RELEASE`.
+/// - TX queue accepts `stream_id` + PCM payload and writes interleaved stereo
+///   `f32` samples into an [`AudioSink`] (typically an AudioWorklet ring buffer).
+pub struct VirtioSnd<O: AudioSink> {
     output: O,
-    output_sample_rate_hz: u32,
-
     negotiated_features: u64,
-    input_format: PcmFormat,
-    resampler: LinearResampler,
-
-    pcm_scratch: Vec<u8>,
-    decode_frames: Vec<[f32; 2]>,
-    interleaved_scratch: Vec<f32>,
+    playback: PcmStream,
+    samples_scratch: Vec<f32>,
 }
 
-impl<O: SndOutput> VirtioSnd<O> {
-    pub fn new(output: O, output_sample_rate_hz: u32) -> Self {
-        let input_format = PcmFormat::default();
+impl<O: AudioSink> VirtioSnd<O> {
+    pub fn new(output: O) -> Self {
         Self {
             output,
-            output_sample_rate_hz,
             negotiated_features: 0,
-            input_format,
-            resampler: LinearResampler::new(input_format.sample_rate_hz, output_sample_rate_hz),
-            pcm_scratch: Vec::new(),
-            decode_frames: Vec::new(),
-            interleaved_scratch: Vec::new(),
+            playback: PcmStream {
+                params: None,
+                state: StreamState::Idle,
+            },
+            samples_scratch: Vec::new(),
         }
     }
 
     pub fn output_mut(&mut self) -> &mut O {
         &mut self.output
-    }
-
-    fn write_status_u32(
-        mem: &mut dyn GuestMemory,
-        chain: &DescriptorChain,
-        status: u32,
-    ) -> Result<u32, VirtioDeviceError> {
-        let bytes = status.to_le_bytes();
-        for d in chain.descriptors() {
-            if !d.is_write_only() || d.len < 4 {
-                continue;
-            }
-            let dst = mem
-                .get_slice_mut(d.addr, 4)
-                .map_err(|_| VirtioDeviceError::IoError)?;
-            dst.copy_from_slice(&bytes);
-            return Ok(4);
-        }
-        Ok(0)
-    }
-
-    fn write_status_u8(
-        mem: &mut dyn GuestMemory,
-        chain: &DescriptorChain,
-        status: u8,
-    ) -> Result<u32, VirtioDeviceError> {
-        for d in chain.descriptors() {
-            if !d.is_write_only() || d.len == 0 {
-                continue;
-            }
-            let dst = mem
-                .get_slice_mut(d.addr, 1)
-                .map_err(|_| VirtioDeviceError::IoError)?;
-            dst[0] = status;
-            return Ok(1);
-        }
-        Ok(0)
-    }
-
-    fn read_ctrl_request(
-        mem: &dyn GuestMemory,
-        chain: &DescriptorChain,
-    ) -> Result<[u8; 16], VirtioDeviceError> {
-        let mut out = [0u8; 16];
-        let mut written = 0usize;
-        for d in chain.descriptors() {
-            if d.is_write_only() {
-                continue;
-            }
-            let slice = mem
-                .get_slice(d.addr, d.len as usize)
-                .map_err(|_| VirtioDeviceError::IoError)?;
-            let take = (out.len() - written).min(slice.len());
-            out[written..written + take].copy_from_slice(&slice[..take]);
-            written += take;
-            if written == out.len() {
-                return Ok(out);
-            }
-        }
-        Err(VirtioDeviceError::BadDescriptorChain)
     }
 
     fn process_control(
@@ -172,40 +100,126 @@ impl<O: SndOutput> VirtioSnd<O> {
         queue: &mut VirtQueue,
         mem: &mut dyn GuestMemory,
     ) -> Result<bool, VirtioDeviceError> {
-        let req = Self::read_ctrl_request(mem, &chain)?;
-        let opcode = u32::from_le_bytes(req[0..4].try_into().unwrap());
-        let a = u32::from_le_bytes(req[4..8].try_into().unwrap());
-        let b = u32::from_le_bytes(req[8..12].try_into().unwrap());
-        let c = u32::from_le_bytes(req[12..16].try_into().unwrap());
-
-        let mut status = 0u32;
-        match opcode {
-            VIRTIO_SND_CTRL_SET_FORMAT => {
-                let fmt = PcmFormat {
-                    sample_rate_hz: a,
-                    channels: b as u8,
-                    bits_per_sample: c as u8,
-                };
-                if fmt.sample_rate_hz == 0 || fmt.channels == 0 || fmt.bytes_per_frame().is_none() {
-                    status = 1;
-                } else {
-                    self.input_format = fmt;
-                    self.resampler
-                        .reset_rates(fmt.sample_rate_hz, self.output_sample_rate_hz);
-                }
-            }
-            VIRTIO_SND_CTRL_RESET => {
-                self.input_format = PcmFormat::default();
-                self.resampler
-                    .reset_rates(self.input_format.sample_rate_hz, self.output_sample_rate_hz);
-            }
-            _ => status = 1,
-        }
-
-        let written = Self::write_status_u32(mem, &chain, status)?;
+        let request = read_all_out(mem, &chain)?;
+        let response = self.handle_control_request(&request);
+        let written = write_all_in(mem, &chain, &response)?;
         queue
             .add_used(mem, chain.head_index(), written)
             .map_err(|_| VirtioDeviceError::IoError)
+    }
+
+    fn handle_control_request(&mut self, request: &[u8]) -> Vec<u8> {
+        if request.len() < 4 {
+            return virtio_snd_hdr(VIRTIO_SND_S_BAD_MSG);
+        }
+        let code = u32::from_le_bytes(request[0..4].try_into().unwrap());
+        match code {
+            VIRTIO_SND_R_PCM_INFO => self.cmd_pcm_info(request),
+            VIRTIO_SND_R_PCM_SET_PARAMS => self.cmd_pcm_set_params(request),
+            VIRTIO_SND_R_PCM_PREPARE => self.cmd_pcm_simple(request, StreamSimpleCmd::Prepare),
+            VIRTIO_SND_R_PCM_RELEASE => self.cmd_pcm_simple(request, StreamSimpleCmd::Release),
+            VIRTIO_SND_R_PCM_START => self.cmd_pcm_simple(request, StreamSimpleCmd::Start),
+            VIRTIO_SND_R_PCM_STOP => self.cmd_pcm_simple(request, StreamSimpleCmd::Stop),
+            VIRTIO_SND_R_JACK_INFO | VIRTIO_SND_R_JACK_REMAP | VIRTIO_SND_R_CHMAP_INFO => {
+                virtio_snd_hdr(VIRTIO_SND_S_NOT_SUPP)
+            }
+            _ => virtio_snd_hdr(VIRTIO_SND_S_NOT_SUPP),
+        }
+    }
+
+    fn cmd_pcm_info(&self, request: &[u8]) -> Vec<u8> {
+        if request.len() < 12 {
+            return virtio_snd_hdr(VIRTIO_SND_S_BAD_MSG);
+        }
+
+        let start_id = u32::from_le_bytes(request[4..8].try_into().unwrap());
+        let count = u32::from_le_bytes(request[8..12].try_into().unwrap());
+
+        let mut resp = virtio_snd_hdr(VIRTIO_SND_S_OK);
+        if count == 0 {
+            return resp;
+        }
+
+        if start_id <= PLAYBACK_STREAM_ID && PLAYBACK_STREAM_ID < start_id.saturating_add(count) {
+            resp.extend_from_slice(&virtio_snd_pcm_info());
+        }
+
+        resp
+    }
+
+    fn cmd_pcm_set_params(&mut self, request: &[u8]) -> Vec<u8> {
+        if request.len() < 24 {
+            return virtio_snd_hdr(VIRTIO_SND_S_BAD_MSG);
+        }
+
+        let stream_id = u32::from_le_bytes(request[4..8].try_into().unwrap());
+        if stream_id != PLAYBACK_STREAM_ID {
+            return virtio_snd_hdr(VIRTIO_SND_S_BAD_MSG);
+        }
+
+        let buffer_bytes = u32::from_le_bytes(request[8..12].try_into().unwrap());
+        let period_bytes = u32::from_le_bytes(request[12..16].try_into().unwrap());
+        let channels = request[20];
+        let format = request[21];
+        let rate = request[22];
+
+        if channels != 2 || format != VIRTIO_SND_PCM_FMT_S16 || rate != VIRTIO_SND_PCM_RATE_48000 {
+            return virtio_snd_hdr(VIRTIO_SND_S_NOT_SUPP);
+        }
+
+        self.playback.params = Some(PcmParams {
+            buffer_bytes,
+            period_bytes,
+            channels,
+            format,
+            rate,
+        });
+        self.playback.state = StreamState::ParamsSet;
+
+        virtio_snd_hdr(VIRTIO_SND_S_OK)
+    }
+
+    fn cmd_pcm_simple(&mut self, request: &[u8], cmd: StreamSimpleCmd) -> Vec<u8> {
+        if request.len() < 8 {
+            return virtio_snd_hdr(VIRTIO_SND_S_BAD_MSG);
+        }
+
+        let stream_id = u32::from_le_bytes(request[4..8].try_into().unwrap());
+        if stream_id != PLAYBACK_STREAM_ID {
+            return virtio_snd_hdr(VIRTIO_SND_S_BAD_MSG);
+        }
+
+        let status = match cmd {
+            StreamSimpleCmd::Prepare => match self.playback.state {
+                StreamState::ParamsSet | StreamState::Prepared => {
+                    self.playback.state = StreamState::Prepared;
+                    VIRTIO_SND_S_OK
+                }
+                StreamState::Running | StreamState::Idle => VIRTIO_SND_S_IO_ERR,
+            },
+            StreamSimpleCmd::Release => {
+                self.playback.params = None;
+                self.playback.state = StreamState::Idle;
+                VIRTIO_SND_S_OK
+            }
+            StreamSimpleCmd::Start => match self.playback.state {
+                StreamState::Prepared => {
+                    self.playback.state = StreamState::Running;
+                    VIRTIO_SND_S_OK
+                }
+                StreamState::Running => VIRTIO_SND_S_OK,
+                StreamState::Idle | StreamState::ParamsSet => VIRTIO_SND_S_IO_ERR,
+            },
+            StreamSimpleCmd::Stop => match self.playback.state {
+                StreamState::Running => {
+                    self.playback.state = StreamState::Prepared;
+                    VIRTIO_SND_S_OK
+                }
+                _ => VIRTIO_SND_S_IO_ERR,
+            },
+        };
+
+        virtio_snd_hdr(status)
     }
 
     fn process_tx(
@@ -214,74 +228,164 @@ impl<O: SndOutput> VirtioSnd<O> {
         queue: &mut VirtQueue,
         mem: &mut dyn GuestMemory,
     ) -> Result<bool, VirtioDeviceError> {
-        let Some(bytes_per_frame) = self.input_format.bytes_per_frame() else {
-            let written = Self::write_status_u8(mem, &chain, 1)?;
-            return queue
-                .add_used(mem, chain.head_index(), written)
-                .map_err(|_| VirtioDeviceError::IoError);
-        };
-
-        self.pcm_scratch.clear();
-        let mut total_len = 0usize;
-        for d in chain.descriptors() {
-            if d.is_write_only() {
-                continue;
-            }
-            total_len = total_len.saturating_add(d.len as usize);
-        }
-        self.pcm_scratch.reserve(total_len);
-
-        for d in chain.descriptors() {
-            if d.is_write_only() {
-                continue;
-            }
-            let slice = mem
-                .get_slice(d.addr, d.len as usize)
-                .map_err(|_| VirtioDeviceError::IoError)?;
-            self.pcm_scratch.extend_from_slice(slice);
-        }
-
-        let frames = self.pcm_scratch.len() / bytes_per_frame;
-        if frames != 0 {
-            self.decode_frames.clear();
-            self.decode_frames.reserve(frames);
-            decode_pcm_to_stereo_frames(&self.pcm_scratch, self.input_format, &mut self.decode_frames);
-
-            if self.input_format.sample_rate_hz == self.output_sample_rate_hz {
-                self.interleaved_scratch.clear();
-                self.interleaved_scratch.reserve(self.decode_frames.len() * 2);
-                for f in &self.decode_frames {
-                    self.interleaved_scratch.push(f[0]);
-                    self.interleaved_scratch.push(f[1]);
-                }
-                self.output
-                    .push_interleaved_stereo_f32(&self.interleaved_scratch);
-            } else {
-                // Resample using the stateful linear resampler.
-                if self.resampler.src_rate_hz() != self.input_format.sample_rate_hz
-                    || self.resampler.dst_rate_hz() != self.output_sample_rate_hz
-                {
-                    self.resampler
-                        .reset_rates(self.input_format.sample_rate_hz, self.output_sample_rate_hz);
-                }
-                self.resampler.push_source_frames(&self.decode_frames);
-                let target = ((self.decode_frames.len() as u64)
-                    .saturating_mul(self.output_sample_rate_hz as u64)
-                    / self.input_format.sample_rate_hz as u64)
-                    .saturating_add(2) as usize;
-                let out = self.resampler.produce_interleaved_stereo(target);
-                self.output.push_interleaved_stereo_f32(&out);
-            }
-        }
-
-        let written = Self::write_status_u8(mem, &chain, 0)?;
+        let status = self.handle_tx_chain(mem, &chain)?;
+        let resp = virtio_snd_pcm_status(status, 0);
+        let written = write_all_in(mem, &chain, &resp)?;
         queue
             .add_used(mem, chain.head_index(), written)
             .map_err(|_| VirtioDeviceError::IoError)
     }
+
+    fn handle_tx_chain(
+        &mut self,
+        mem: &mut dyn GuestMemory,
+        chain: &DescriptorChain,
+    ) -> Result<u32, VirtioDeviceError> {
+        let mut hdr = [0u8; 8];
+        let mut hdr_len = 0usize;
+        let mut parsed_stream = false;
+
+        let mut pending_lo: Option<u8> = None;
+        self.samples_scratch.clear();
+
+        for desc in chain.descriptors().iter().filter(|d| !d.is_write_only()) {
+            let mut slice = mem
+                .get_slice(desc.addr, desc.len as usize)
+                .map_err(|_| VirtioDeviceError::IoError)?;
+
+            if hdr_len < hdr.len() {
+                let take = (hdr.len() - hdr_len).min(slice.len());
+                hdr[hdr_len..hdr_len + take].copy_from_slice(&slice[..take]);
+                hdr_len += take;
+                slice = &slice[take..];
+
+                if hdr_len < hdr.len() {
+                    continue;
+                }
+
+                let stream_id = u32::from_le_bytes(hdr[0..4].try_into().unwrap());
+                if stream_id != PLAYBACK_STREAM_ID {
+                    return Ok(VIRTIO_SND_S_BAD_MSG);
+                }
+
+                if self.playback.state != StreamState::Running {
+                    return Ok(VIRTIO_SND_S_IO_ERR);
+                }
+
+                parsed_stream = true;
+            }
+
+            for &b in slice {
+                if let Some(lo) = pending_lo.take() {
+                    let sample = i16::from_le_bytes([lo, b]);
+                    self.samples_scratch.push(sample as f32 / 32768.0);
+                } else {
+                    pending_lo = Some(b);
+                }
+            }
+        }
+
+        if !parsed_stream || hdr_len != hdr.len() {
+            return Ok(VIRTIO_SND_S_BAD_MSG);
+        }
+
+        if pending_lo.is_some() {
+            return Ok(VIRTIO_SND_S_BAD_MSG);
+        }
+
+        // Stereo frames must be complete.
+        if self.samples_scratch.len() % 2 != 0 {
+            return Ok(VIRTIO_SND_S_BAD_MSG);
+        }
+
+        if !self.samples_scratch.is_empty() {
+            self.output.push_interleaved_f32(&self.samples_scratch);
+        }
+
+        Ok(VIRTIO_SND_S_OK)
+    }
 }
 
-impl<O: SndOutput + 'static> VirtioDevice for VirtioSnd<O> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamSimpleCmd {
+    Prepare,
+    Release,
+    Start,
+    Stop,
+}
+
+fn virtio_snd_hdr(status: u32) -> Vec<u8> {
+    status.to_le_bytes().to_vec()
+}
+
+fn virtio_snd_pcm_info() -> [u8; 32] {
+    let mut buf = [0u8; 32];
+    // stream_id
+    buf[0..4].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+    // features
+    buf[4..8].copy_from_slice(&0u32.to_le_bytes());
+    // formats/rates bitmasks
+    buf[8..16].copy_from_slice(&VIRTIO_SND_PCM_FMT_MASK_S16.to_le_bytes());
+    buf[16..24].copy_from_slice(&VIRTIO_SND_PCM_RATE_MASK_48000.to_le_bytes());
+    // direction + channel bounds
+    buf[24] = VIRTIO_SND_D_OUTPUT;
+    buf[25] = 2;
+    buf[26] = 2;
+    buf
+}
+
+fn virtio_snd_pcm_status(status: u32, latency_bytes: u32) -> [u8; 8] {
+    let mut buf = [0u8; 8];
+    buf[0..4].copy_from_slice(&status.to_le_bytes());
+    buf[4..8].copy_from_slice(&latency_bytes.to_le_bytes());
+    buf
+}
+
+fn read_all_out(mem: &dyn GuestMemory, chain: &DescriptorChain) -> Result<Vec<u8>, VirtioDeviceError> {
+    let total: usize = chain
+        .descriptors()
+        .iter()
+        .filter(|d| !d.is_write_only())
+        .map(|d| d.len as usize)
+        .sum();
+    let mut out = Vec::with_capacity(total);
+    for d in chain.descriptors().iter().filter(|d| !d.is_write_only()) {
+        let slice = mem
+            .get_slice(d.addr, d.len as usize)
+            .map_err(|_| VirtioDeviceError::IoError)?;
+        out.extend_from_slice(slice);
+    }
+    Ok(out)
+}
+
+fn write_all_in(
+    mem: &mut dyn GuestMemory,
+    chain: &DescriptorChain,
+    data: &[u8],
+) -> Result<u32, VirtioDeviceError> {
+    let mut remaining = data;
+    let mut written = 0usize;
+    for d in chain.descriptors().iter().filter(|d| d.is_write_only()) {
+        if remaining.is_empty() {
+            break;
+        }
+        let take = (d.len as usize).min(remaining.len());
+        let dst = mem
+            .get_slice_mut(d.addr, take)
+            .map_err(|_| VirtioDeviceError::IoError)?;
+        dst.copy_from_slice(&remaining[..take]);
+        written += take;
+        remaining = &remaining[take..];
+    }
+
+    if !remaining.is_empty() {
+        return Err(VirtioDeviceError::BadDescriptorChain);
+    }
+
+    Ok(written as u32)
+}
+
+impl<O: AudioSink + 'static> VirtioDevice for VirtioSnd<O> {
     fn device_type(&self) -> u16 {
         VIRTIO_DEVICE_TYPE_SND
     }
@@ -295,7 +399,6 @@ impl<O: SndOutput + 'static> VirtioDevice for VirtioSnd<O> {
     }
 
     fn num_queues(&self) -> u16 {
-        // controlq + eventq + txq + rxq
         4
     }
 
@@ -317,29 +420,21 @@ impl<O: SndOutput + 'static> VirtioDevice for VirtioSnd<O> {
         match queue_index {
             VIRTIO_SND_QUEUE_CONTROL => self.process_control(chain, queue, mem),
             VIRTIO_SND_QUEUE_TX => self.process_tx(chain, queue, mem),
-            _ => {
-                // Best-effort: complete but do nothing.
-                queue
-                    .add_used(mem, chain.head_index(), 0)
-                    .map_err(|_| VirtioDeviceError::IoError)
-            }
+            _ => queue
+                .add_used(mem, chain.head_index(), 0)
+                .map_err(|_| VirtioDeviceError::IoError),
         }
     }
 
     fn read_config(&self, offset: u64, data: &mut [u8]) {
-        // Custom minimal config:
-        // 0x00 u32 output_sample_rate_hz
-        // 0x04 u8  output_channels (always 2)
-        // 0x05 u8  reserved
-        // 0x06 u16 reserved
-        // 0x08 u32 current_input_sample_rate_hz
-        // 0x0c u32 current_input_channels/bits (low8=channels, high8=bits)
-        let mut cfg = [0u8; 16];
-        cfg[0..4].copy_from_slice(&self.output_sample_rate_hz.to_le_bytes());
-        cfg[4] = 2;
-        cfg[8..12].copy_from_slice(&self.input_format.sample_rate_hz.to_le_bytes());
-        let packed: u32 = (self.input_format.channels as u32) | ((self.input_format.bits_per_sample as u32) << 8);
-        cfg[12..16].copy_from_slice(&packed.to_le_bytes());
+        // virtio-snd config:
+        // 0x00 le32 jacks
+        // 0x04 le32 streams
+        // 0x08 le32 chmaps
+        let mut cfg = [0u8; 12];
+        cfg[0..4].copy_from_slice(&0u32.to_le_bytes());
+        cfg[4..8].copy_from_slice(&1u32.to_le_bytes());
+        cfg[8..12].copy_from_slice(&0u32.to_le_bytes());
 
         let start = offset as usize;
         if start >= cfg.len() {
@@ -357,12 +452,11 @@ impl<O: SndOutput + 'static> VirtioDevice for VirtioSnd<O> {
 
     fn reset(&mut self) {
         self.negotiated_features = 0;
-        self.input_format = PcmFormat::default();
-        self.resampler
-            .reset_rates(self.input_format.sample_rate_hz, self.output_sample_rate_hz);
-        self.pcm_scratch.clear();
-        self.decode_frames.clear();
-        self.interleaved_scratch.clear();
+        self.playback = PcmStream {
+            params: None,
+            state: StreamState::Idle,
+        };
+        self.samples_scratch.clear();
     }
 
     fn as_any(&self) -> &dyn core::any::Any {
@@ -374,62 +468,52 @@ impl<O: SndOutput + 'static> VirtioDevice for VirtioSnd<O> {
     }
 }
 
-fn decode_pcm_to_stereo_frames(input: &[u8], fmt: PcmFormat, out: &mut Vec<[f32; 2]>) {
-    let Some(bytes_per_frame) = fmt.bytes_per_frame() else {
-        return;
-    };
-    let frames = input.len() / bytes_per_frame;
-    out.clear();
-    out.reserve(frames);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::devices::VirtioDevice;
 
-    for frame in 0..frames {
-        let frame_off = frame * bytes_per_frame;
-        let l = decode_sample_at(input, frame_off, fmt, 0);
-        let r = if fmt.channels == 1 {
-            l
-        } else if fmt.channels >= 2 {
-            decode_sample_at(input, frame_off, fmt, 1)
-        } else {
-            0.0
-        };
-        out.push([l, r]);
+    fn status(resp: &[u8]) -> u32 {
+        u32::from_le_bytes(resp[0..4].try_into().unwrap())
+    }
+
+    #[test]
+    fn virtio_snd_config_reports_single_stream() {
+        let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        let mut cfg = [0u8; 12];
+        snd.read_config(0, &mut cfg);
+
+        assert_eq!(u32::from_le_bytes(cfg[0..4].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(cfg[4..8].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(cfg[8..12].try_into().unwrap()), 0);
+    }
+
+    #[test]
+    fn control_pcm_prepare_requires_params() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+
+        let mut prepare = Vec::new();
+        prepare.extend_from_slice(&VIRTIO_SND_R_PCM_PREPARE.to_le_bytes());
+        prepare.extend_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        let resp = snd.handle_control_request(&prepare);
+        assert_eq!(status(&resp), VIRTIO_SND_S_IO_ERR);
+    }
+
+    #[test]
+    fn control_pcm_set_params_rejects_unsupported_format() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+
+        let mut req = [0u8; 24];
+        req[0..4].copy_from_slice(&VIRTIO_SND_R_PCM_SET_PARAMS.to_le_bytes());
+        req[4..8].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        req[8..12].copy_from_slice(&4096u32.to_le_bytes());
+        req[12..16].copy_from_slice(&1024u32.to_le_bytes());
+        // features [16..20] = 0
+        req[20] = 1; // channels (unsupported; device is fixed stereo)
+        req[21] = VIRTIO_SND_PCM_FMT_S16;
+        req[22] = VIRTIO_SND_PCM_RATE_48000;
+
+        let resp = snd.handle_control_request(&req);
+        assert_eq!(status(&resp), VIRTIO_SND_S_NOT_SUPP);
     }
 }
-
-fn decode_sample_at(input: &[u8], frame_off: usize, fmt: PcmFormat, channel: u8) -> f32 {
-    let Some(bps) = fmt.bytes_per_sample() else {
-        return 0.0;
-    };
-    let chan = channel as usize;
-    let off = frame_off + chan * bps;
-    if off + bps > input.len() {
-        return 0.0;
-    }
-    decode_one_sample(&input[off..off + bps], fmt.bits_per_sample)
-}
-
-fn decode_one_sample(bytes: &[u8], bits_per_sample: u8) -> f32 {
-    match bits_per_sample {
-        8 => (bytes[0] as f32 - 128.0) / 128.0,
-        16 => {
-            let v = i16::from_le_bytes([bytes[0], bytes[1]]) as f32;
-            v / 32768.0
-        }
-        20 => {
-            let raw = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-            let v = (raw << 12) >> 12;
-            v as f32 / 524_288.0
-        }
-        24 => {
-            let raw = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-            let v = (raw << 8) >> 8;
-            v as f32 / 8_388_608.0
-        }
-        32 => {
-            let v = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32;
-            v / 2_147_483_648.0
-        }
-        _ => 0.0,
-    }
-}
-

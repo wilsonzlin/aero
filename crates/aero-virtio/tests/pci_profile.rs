@@ -8,15 +8,8 @@ use aero_devices::pci::profile::{
 use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
 use aero_virtio::devices::input::VirtioInput;
 use aero_virtio::devices::net::{LoopbackNet, VirtioNet};
-use aero_virtio::devices::snd::{SndOutput, VirtioSnd};
+use aero_virtio::devices::snd::VirtioSnd;
 use aero_virtio::pci::{InterruptLog, VirtioPciDevice};
-
-#[derive(Default)]
-struct NullSndOutput;
-
-impl SndOutput for NullSndOutput {
-    fn push_interleaved_stereo_f32(&mut self, _samples: &[f32]) {}
-}
 
 fn read_config(dev: &VirtioPciDevice, offset: u16, len: usize) -> Vec<u8> {
     let mut buf = vec![0u8; len];
@@ -74,7 +67,7 @@ fn virtio_pci_device_ids_match_canonical_profile() {
     assert_virtio_header(&input, PCI_DEVICE_ID_VIRTIO_INPUT_MODERN);
 
     let snd = VirtioPciDevice::new(
-        Box::new(VirtioSnd::new(NullSndOutput, 48_000)),
+        Box::new(VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8))),
         Box::new(InterruptLog::default()),
     );
     assert_virtio_header(&snd, PCI_DEVICE_ID_VIRTIO_SND_MODERN);

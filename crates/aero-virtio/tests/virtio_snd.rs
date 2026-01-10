@@ -1,4 +1,9 @@
-use aero_virtio::devices::snd::{SndOutput, VirtioSnd, VIRTIO_SND_QUEUE_TX};
+use aero_audio::sink::AudioSink;
+use aero_virtio::devices::snd::{
+    VirtioSnd, VIRTIO_SND_PCM_FMT_S16, VIRTIO_SND_PCM_RATE_48000, VIRTIO_SND_QUEUE_CONTROL,
+    VIRTIO_SND_QUEUE_TX, VIRTIO_SND_R_PCM_PREPARE, VIRTIO_SND_R_PCM_SET_PARAMS,
+    VIRTIO_SND_R_PCM_START, VIRTIO_SND_S_OK,
+};
 use aero_virtio::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
 use aero_virtio::pci::{
     InterruptLog, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_PCI_CAP_COMMON_CFG,
@@ -12,10 +17,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 #[derive(Clone)]
-struct CaptureOutput(Rc<RefCell<Vec<f32>>>);
+struct CaptureSink(Rc<RefCell<Vec<f32>>>);
 
-impl SndOutput for CaptureOutput {
-    fn push_interleaved_stereo_f32(&mut self, samples: &[f32]) {
+impl AudioSink for CaptureSink {
+    fn push_interleaved_f32(&mut self, samples: &[f32]) {
         self.0.borrow_mut().extend_from_slice(samples);
     }
 }
@@ -101,11 +106,72 @@ fn write_desc(
     write_u16_le(mem, base + 14, next).unwrap();
 }
 
+fn configure_queue(
+    dev: &mut VirtioPciDevice,
+    mem: &mut GuestRam,
+    caps: &Caps,
+    queue_index: u16,
+    desc: u64,
+    avail: u64,
+    used: u64,
+) {
+    bar_write_u16(dev, mem, caps.common + 0x16, queue_index);
+    let qsz = bar_read_u16(dev, caps.common + 0x18);
+    assert!(qsz >= 8);
+
+    bar_write_u64(dev, mem, caps.common + 0x20, desc);
+    bar_write_u64(dev, mem, caps.common + 0x28, avail);
+    bar_write_u64(dev, mem, caps.common + 0x30, used);
+    bar_write_u16(dev, mem, caps.common + 0x1c, 1);
+
+    // Initialise rings (flags/idx).
+    write_u16_le(mem, avail, 0).unwrap();
+    write_u16_le(mem, avail + 2, 0).unwrap();
+    write_u16_le(mem, used, 0).unwrap();
+    write_u16_le(mem, used + 2, 0).unwrap();
+}
+
+fn submit_chain(
+    dev: &mut VirtioPciDevice,
+    mem: &mut GuestRam,
+    caps: &Caps,
+    queue_index: u16,
+    desc_table: u64,
+    avail_addr: u64,
+    avail_idx: u16,
+    out_addr: u64,
+    out_len: u32,
+    in_addr: u64,
+    in_len: u32,
+) {
+    write_desc(
+        mem,
+        desc_table,
+        0,
+        out_addr,
+        out_len,
+        VIRTQ_DESC_F_NEXT,
+        1,
+    );
+    write_desc(mem, desc_table, 1, in_addr, in_len, VIRTQ_DESC_F_WRITE, 0);
+
+    // Add to avail ring.
+    let elem_addr = avail_addr + 4 + u64::from(avail_idx) * 2;
+    write_u16_le(mem, elem_addr, 0).unwrap();
+    write_u16_le(mem, avail_addr + 2, avail_idx.wrapping_add(1)).unwrap();
+
+    dev.bar0_write(
+        caps.notify + u64::from(queue_index) * u64::from(caps.notify_mult),
+        &queue_index.to_le_bytes(),
+        mem,
+    );
+}
+
 #[test]
 fn virtio_snd_tx_pushes_samples_to_backend() {
     let samples = Rc::new(RefCell::new(Vec::<f32>::new()));
-    let output = CaptureOutput(samples.clone());
-    let snd = VirtioSnd::new(output, 48_000);
+    let output = CaptureSink(samples.clone());
+    let snd = VirtioSnd::new(output);
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
 
     // Basic PCI identification.
@@ -157,54 +223,141 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
             | VIRTIO_STATUS_DRIVER_OK,
     );
 
-    // Configure TX queue.
-    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, VIRTIO_SND_QUEUE_TX);
-    let qsz = bar_read_u16(&mut dev, caps.common + 0x18);
-    assert!(qsz >= 8);
+    // Configure control and TX queues.
+    let ctrl_desc = 0x1000;
+    let ctrl_avail = 0x2000;
+    let ctrl_used = 0x3000;
+    configure_queue(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_CONTROL,
+        ctrl_desc,
+        ctrl_avail,
+        ctrl_used,
+    );
 
-    let desc = 0x1000;
-    let avail = 0x2000;
-    let used = 0x3000;
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, desc);
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, avail);
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, used);
-    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+    let tx_desc = 0x4000;
+    let tx_avail = 0x5000;
+    let tx_used = 0x6000;
+    configure_queue(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_TX,
+        tx_desc,
+        tx_avail,
+        tx_used,
+    );
 
-    // PCM payload: 2 frames of 16-bit stereo.
-    let pcm_addr = 0x4000;
-    let status_addr = 0x5000;
+    // Drive the minimal control state machine: SET_PARAMS -> PREPARE -> START.
+    let ctrl_req = 0x7000;
+    let ctrl_resp = 0x7100;
+    let mut ctrl_avail_idx = 0u16;
+
+    let mut set_params = [0u8; 24];
+    set_params[0..4].copy_from_slice(&VIRTIO_SND_R_PCM_SET_PARAMS.to_le_bytes());
+    set_params[4..8].copy_from_slice(&0u32.to_le_bytes()); // stream_id
+    set_params[8..12].copy_from_slice(&4096u32.to_le_bytes()); // buffer_bytes
+    set_params[12..16].copy_from_slice(&1024u32.to_le_bytes()); // period_bytes
+    set_params[16..20].copy_from_slice(&0u32.to_le_bytes()); // features
+    set_params[20] = 2; // channels
+    set_params[21] = VIRTIO_SND_PCM_FMT_S16;
+    set_params[22] = VIRTIO_SND_PCM_RATE_48000;
+    mem.write(ctrl_req, &set_params).unwrap();
+    mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
+    submit_chain(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_CONTROL,
+        ctrl_desc,
+        ctrl_avail,
+        ctrl_avail_idx,
+        ctrl_req,
+        set_params.len() as u32,
+        ctrl_resp,
+        64,
+    );
+    ctrl_avail_idx += 1;
+    assert_eq!(
+        u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
+        VIRTIO_SND_S_OK
+    );
+
+    let prepare = [VIRTIO_SND_R_PCM_PREPARE.to_le_bytes(), 0u32.to_le_bytes()].concat();
+    mem.write(ctrl_req, &prepare).unwrap();
+    mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
+    submit_chain(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_CONTROL,
+        ctrl_desc,
+        ctrl_avail,
+        ctrl_avail_idx,
+        ctrl_req,
+        prepare.len() as u32,
+        ctrl_resp,
+        64,
+    );
+    ctrl_avail_idx += 1;
+    assert_eq!(
+        u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
+        VIRTIO_SND_S_OK
+    );
+
+    let start = [VIRTIO_SND_R_PCM_START.to_le_bytes(), 0u32.to_le_bytes()].concat();
+    mem.write(ctrl_req, &start).unwrap();
+    mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
+    submit_chain(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_CONTROL,
+        ctrl_desc,
+        ctrl_avail,
+        ctrl_avail_idx,
+        ctrl_req,
+        start.len() as u32,
+        ctrl_resp,
+        64,
+    );
+    assert_eq!(
+        u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
+        VIRTIO_SND_S_OK
+    );
+
+    // PCM payload: 2 frames of 16-bit stereo, preceded by the virtio-snd TX header.
+    let tx_payload = 0x8000;
+    let tx_status = 0x9000;
     let pcm: [i16; 4] = [0, 16_384, -16_384, 0];
-    let mut pcm_bytes = Vec::new();
+    let mut tx_bytes = Vec::new();
+    tx_bytes.extend_from_slice(&0u32.to_le_bytes()); // stream_id
+    tx_bytes.extend_from_slice(&0u32.to_le_bytes()); // reserved
     for v in pcm {
-        pcm_bytes.extend_from_slice(&v.to_le_bytes());
+        tx_bytes.extend_from_slice(&v.to_le_bytes());
     }
-    mem.write(pcm_addr, &pcm_bytes).unwrap();
-    mem.write(status_addr, &[0xff]).unwrap();
+    mem.write(tx_payload, &tx_bytes).unwrap();
+    mem.write(tx_status, &[0xffu8; 8]).unwrap();
 
-    write_desc(
+    submit_chain(
+        &mut dev,
         &mut mem,
-        desc,
+        &caps,
+        VIRTIO_SND_QUEUE_TX,
+        tx_desc,
+        tx_avail,
         0,
-        pcm_addr,
-        pcm_bytes.len() as u32,
-        VIRTQ_DESC_F_NEXT,
-        1,
-    );
-    write_desc(&mut mem, desc, 1, status_addr, 1, VIRTQ_DESC_F_WRITE, 0);
-
-    write_u16_le(&mut mem, avail, 0).unwrap();
-    write_u16_le(&mut mem, avail + 2, 1).unwrap();
-    write_u16_le(&mut mem, avail + 4, 0).unwrap();
-    write_u16_le(&mut mem, used, 0).unwrap();
-    write_u16_le(&mut mem, used + 2, 0).unwrap();
-
-    dev.bar0_write(
-        caps.notify + u64::from(VIRTIO_SND_QUEUE_TX) * u64::from(caps.notify_mult),
-        &VIRTIO_SND_QUEUE_TX.to_le_bytes(),
-        &mut mem,
+        tx_payload,
+        tx_bytes.len() as u32,
+        tx_status,
+        8,
     );
 
-    assert_eq!(mem.get_slice(status_addr, 1).unwrap()[0], 0);
+    let status_bytes = mem.get_slice(tx_status, 8).unwrap();
+    assert_eq!(u32::from_le_bytes(status_bytes[0..4].try_into().unwrap()), VIRTIO_SND_S_OK);
+    assert_eq!(u32::from_le_bytes(status_bytes[4..8].try_into().unwrap()), 0);
 
     let got = samples.borrow().clone();
     assert_eq!(got.len(), 4);
@@ -218,4 +371,3 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
         assert!((g - e).abs() < 1e-6, "got {g} expected {e}");
     }
 }
-
