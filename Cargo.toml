@@ -5,6 +5,7 @@ members = [
     "crates/aero_cpu_core",
     "crates/devices",
     "crates/emulator",
+    "crates/firmware",
     "crates/memory",
     "crates/platform",
 ]

@@ -1,0 +1,195 @@
+use std::time::Duration;
+
+fn to_bcd(value: u8) -> u8 {
+    debug_assert!(value < 100);
+    (value / 10) << 4 | (value % 10)
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct DateTime {
+    pub year: u16,
+    pub month: u8,
+    pub day: u8,
+    pub hour: u8,
+    pub minute: u8,
+    pub second: u8,
+    pub nanosecond: u32,
+}
+
+impl DateTime {
+    pub fn new(year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> Self {
+        Self {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            nanosecond: 0,
+        }
+    }
+
+    pub fn time_of_day(&self) -> Duration {
+        Duration::new(
+            (self.hour as u64) * 3600 + (self.minute as u64) * 60 + (self.second as u64),
+            self.nanosecond,
+        )
+    }
+
+    pub fn advance(&mut self, delta: Duration) {
+        let extra_nanos = self.nanosecond as u64 + delta.subsec_nanos() as u64;
+        let carry_secs = extra_nanos / 1_000_000_000;
+        self.nanosecond = (extra_nanos % 1_000_000_000) as u32;
+
+        let total_secs = self.time_of_day().as_secs() + delta.as_secs() + carry_secs;
+        let days = total_secs / 86_400;
+        let secs = total_secs % 86_400;
+
+        self.hour = (secs / 3600) as u8;
+        self.minute = ((secs % 3600) / 60) as u8;
+        self.second = (secs % 60) as u8;
+
+        self.add_days(days);
+    }
+
+    fn add_days(&mut self, mut days: u64) {
+        while days > 0 {
+            let dim = days_in_month(self.year, self.month) as u64;
+            let day = self.day as u64;
+            let remaining = dim.saturating_sub(day);
+
+            if days <= remaining {
+                self.day = (day + days) as u8;
+                return;
+            }
+
+            days -= remaining + 1;
+            self.day = 1;
+            if self.month == 12 {
+                self.month = 1;
+                self.year += 1;
+            } else {
+                self.month += 1;
+            }
+        }
+    }
+}
+
+fn is_leap_year(year: u16) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
+fn days_in_month(year: u16, month: u8) -> u8 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if is_leap_year(year) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 30,
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct RtcTime {
+    pub hour: u8,
+    pub minute: u8,
+    pub second: u8,
+    pub daylight_savings: u8,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct RtcDate {
+    pub century: u8,
+    pub year: u8,
+    pub month: u8,
+    pub day: u8,
+}
+
+#[derive(Debug, Clone)]
+pub struct CmosRtc {
+    datetime: DateTime,
+    bcd_mode: bool,
+    hour_24: bool,
+    daylight_savings: bool,
+}
+
+impl CmosRtc {
+    pub fn new(datetime: DateTime) -> Self {
+        Self {
+            datetime,
+            bcd_mode: true,
+            hour_24: true,
+            daylight_savings: false,
+        }
+    }
+
+    pub fn datetime(&self) -> DateTime {
+        self.datetime
+    }
+
+    pub fn advance(&mut self, delta: Duration) {
+        self.datetime.advance(delta);
+    }
+
+    pub fn set_bcd_mode(&mut self, enabled: bool) {
+        self.bcd_mode = enabled;
+    }
+
+    pub fn read_time(&self) -> RtcTime {
+        let mut hour = self.datetime.hour;
+        if !self.hour_24 {
+            let pm = hour >= 12;
+            hour %= 12;
+            if hour == 0 {
+                hour = 12;
+            }
+            if pm {
+                hour |= 0x80;
+            }
+        }
+
+        let (hour, minute, second) = if self.bcd_mode {
+            (
+                to_bcd(hour),
+                to_bcd(self.datetime.minute),
+                to_bcd(self.datetime.second),
+            )
+        } else {
+            (hour, self.datetime.minute, self.datetime.second)
+        };
+
+        RtcTime {
+            hour,
+            minute,
+            second,
+            daylight_savings: self.daylight_savings as u8,
+        }
+    }
+
+    pub fn read_date(&self) -> RtcDate {
+        let century = (self.datetime.year / 100) as u8;
+        let year = (self.datetime.year % 100) as u8;
+        let (century, year, month, day) = if self.bcd_mode {
+            (
+                to_bcd(century),
+                to_bcd(year),
+                to_bcd(self.datetime.month),
+                to_bcd(self.datetime.day),
+            )
+        } else {
+            (century, year, self.datetime.month, self.datetime.day)
+        };
+
+        RtcDate {
+            century,
+            year,
+            month,
+            day,
+        }
+    }
+}
