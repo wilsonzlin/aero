@@ -4,18 +4,19 @@ Class=System
 ClassGuid={4D36E97D-E325-11CE-BFC1-08002BE10318}
 Provider=%ManufacturerName%
 DriverVer=01/10/2026,0.1.0.0
+CatalogFile=virtio-transport-test.cat
 
 [Manufacturer]
-%ManufacturerName%=Standard,NTx86,NTamd64
+%ManufacturerName%=Standard,NTx86.6.1,NTamd64.6.1
 
 ;
 ; Edit the hardware ID below to bind the smoke-test driver to a different
 ; virtio modern PCI device.
 ;
-[Standard.NTx86]
+[Standard.NTx86.6.1]
 %VirtioTransportTest.DeviceDesc%=VirtioTransportTest_Install, PCI\VEN_1AF4&DEV_1052
 
-[Standard.NTamd64]
+[Standard.NTamd64.6.1]
 %VirtioTransportTest.DeviceDesc%=VirtioTransportTest_Install, PCI\VEN_1AF4&DEV_1052
 
 [DestinationDirs]
@@ -45,4 +46,3 @@ KmdfLibraryVersion=1.9
 [Strings]
 ManufacturerName="Aero"
 VirtioTransportTest.DeviceDesc="virtio transport smoke test (modern PCI)"
-
