@@ -6,6 +6,27 @@ use crate::types::{
     E820Entry, RealModeCpu, E820_TYPE_RAM, E820_TYPE_RESERVED, FLAG_CF, FLAG_IF, FLAG_ZF,
 };
 
+const BDA_BASE: u32 = 0x0400;
+const BDA_VIDEO_MODE_ADDR: u32 = BDA_BASE + 0x49;
+const BDA_TEXT_COLUMNS_ADDR: u32 = BDA_BASE + 0x4A;
+const BDA_VIDEO_PAGE_SIZE_ADDR: u32 = BDA_BASE + 0x4C;
+const BDA_VIDEO_PAGE_OFFSET_ADDR: u32 = BDA_BASE + 0x4E;
+const BDA_CURSOR_POS_ADDR: u32 = BDA_BASE + 0x50;
+const BDA_CURSOR_SHAPE_ADDR: u32 = BDA_BASE + 0x60;
+const BDA_ACTIVE_PAGE_ADDR: u32 = BDA_BASE + 0x62;
+const BDA_ROWS_MINUS_ONE_ADDR: u32 = BDA_BASE + 0x84;
+
+const VGA_TEXT_BASE: u32 = 0x000B_8000;
+const VGA_MODE13_BASE: u32 = 0x000A_0000;
+
+const MODE13_WIDTH: u32 = 320;
+const MODE13_HEIGHT: u32 = 200;
+const MODE13_BYTES_PER_PAGE: u32 = MODE13_WIDTH * MODE13_HEIGHT;
+
+const DEFAULT_TEXT_ATTR: u8 = 0x07;
+const DEFAULT_CURSOR_START: u8 = 0x06;
+const DEFAULT_CURSOR_END: u8 = 0x07;
+
 /// A device the BIOS can boot from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BootDevice {
@@ -114,10 +135,14 @@ pub struct Bios {
     e820: Vec<E820Entry>,
     pci_devices: Vec<PciDevice>,
 
-    // VGA text-mode state.
+    // Legacy VGA BIOS-visible state.
     video_mode: u8,
-    cursor_row: u8,
-    cursor_col: u8,
+    active_page: u8,
+    text_cols: u16,
+    text_rows: u8,
+    cursor_pos: [(u8, u8); 8],
+    cursor_start: u8,
+    cursor_end: u8,
     text_attr: u8,
 
     // Keyboard buffer (BIOS-side, independent of i8042 model for now).
@@ -132,9 +157,13 @@ impl Bios {
             e820,
             pci_devices: Vec::new(),
             video_mode: 0x03,
-            cursor_row: 0,
-            cursor_col: 0,
-            text_attr: 0x07,
+            active_page: 0,
+            text_cols: 80,
+            text_rows: 25,
+            cursor_pos: [(0, 0); 8],
+            cursor_start: DEFAULT_CURSOR_START,
+            cursor_end: DEFAULT_CURSOR_END,
+            text_attr: DEFAULT_TEXT_ATTR,
             kb_buf: VecDeque::new(),
         }
     }
@@ -289,135 +318,428 @@ impl Bios {
     }
 
     fn init_video<M: Memory>(&mut self, mem: &mut M) {
-        self.video_mode = 0x03;
-        self.cursor_row = 0;
-        self.cursor_col = 0;
-        self.text_attr = 0x07;
-        self.clear_screen(mem);
-        self.sync_bda_cursor(mem);
+        self.set_video_mode(mem, 0x03, true);
     }
 
-    fn clear_screen<M: Memory>(&self, mem: &mut M) {
-        // VGA text buffer at 0xB8000, 80x25, 2 bytes per cell.
-        let base = 0x000B_8000u32;
-        for i in 0..(80 * 25) {
-            let cell = base + (i * 2) as u32;
-            mem.write_u8(cell, b' ');
-            mem.write_u8(cell + 1, self.text_attr);
+    fn text_page_size_bytes(&self) -> u16 {
+        self.text_cols
+            .saturating_mul(self.text_rows as u16)
+            .saturating_mul(2)
+    }
+
+    fn video_page_size_bytes(&self) -> u16 {
+        match self.video_mode {
+            0x13 => MODE13_BYTES_PER_PAGE as u16,
+            _ => self.text_page_size_bytes(),
         }
     }
 
-    fn sync_bda_cursor<M: Memory>(&self, mem: &mut M) {
-        let bda = 0x0400u32;
-        // Cursor position for page 0 at 0x0450 (row) and 0x0451 (col) via word 0x0450.
+    fn sync_bda_video_state<M: Memory>(&self, mem: &mut M) {
+        mem.write_u8(BDA_VIDEO_MODE_ADDR, self.video_mode);
+        mem.write_u16(BDA_TEXT_COLUMNS_ADDR, self.text_cols);
+        mem.write_u16(BDA_VIDEO_PAGE_SIZE_ADDR, self.video_page_size_bytes());
         mem.write_u16(
-            bda + 0x50,
-            ((self.cursor_row as u16) << 8) | self.cursor_col as u16,
+            BDA_VIDEO_PAGE_OFFSET_ADDR,
+            self.video_page_size_bytes()
+                .wrapping_mul(self.active_page as u16),
+        );
+        mem.write_u8(BDA_ACTIVE_PAGE_ADDR, self.active_page);
+        mem.write_u16(
+            BDA_CURSOR_SHAPE_ADDR,
+            ((self.cursor_start as u16) << 8) | self.cursor_end as u16,
+        );
+        mem.write_u8(BDA_ROWS_MINUS_ONE_ADDR, self.text_rows.saturating_sub(1));
+
+        for page in 0u32..8 {
+            let (row, col) = self.cursor_pos[page as usize];
+            let word = ((row as u16) << 8) | col as u16;
+            mem.write_u16(BDA_CURSOR_POS_ADDR + page * 2, word);
+        }
+    }
+
+    fn sync_bda_cursor<M: Memory>(&self, mem: &mut M, page: u8) {
+        let page = (page & 0x07) as u32;
+        let (row, col) = self.cursor_pos[page as usize];
+        mem.write_u16(
+            BDA_CURSOR_POS_ADDR + page * 2,
+            ((row as u16) << 8) | col as u16,
         );
     }
 
-    fn put_char<M: Memory>(&mut self, mem: &mut M, ch: u8) {
+    fn set_video_mode<M: Memory>(&mut self, mem: &mut M, mode: u8, clear: bool) -> bool {
+        match mode {
+            0x03 => {
+                self.video_mode = 0x03;
+                self.active_page = 0;
+                self.text_cols = 80;
+                self.text_rows = 25;
+                self.cursor_pos = [(0, 0); 8];
+                self.cursor_start = DEFAULT_CURSOR_START;
+                self.cursor_end = DEFAULT_CURSOR_END;
+                self.text_attr = DEFAULT_TEXT_ATTR;
+
+                self.sync_bda_video_state(mem);
+                if clear {
+                    self.clear_text_page(mem, 0, self.text_attr);
+                }
+                true
+            }
+            0x13 => {
+                self.video_mode = 0x13;
+                self.active_page = 0;
+                // Conventional BIOS values for mode 13h: 40 columns, 25 rows.
+                self.text_cols = 40;
+                self.text_rows = 25;
+                self.cursor_pos = [(0, 0); 8];
+                self.cursor_start = DEFAULT_CURSOR_START;
+                self.cursor_end = DEFAULT_CURSOR_END;
+                self.text_attr = DEFAULT_TEXT_ATTR;
+
+                self.sync_bda_video_state(mem);
+                if clear {
+                    self.clear_mode13h(mem);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn clear_text_page<M: Memory>(&self, mem: &mut M, page: u8, attr: u8) {
+        let cols = self.text_cols as u32;
+        let rows = self.text_rows as u32;
+        if cols == 0 || rows == 0 {
+            return;
+        }
+
+        let base = self.text_page_base(page);
+        let mut cell = base;
+        for _ in 0..(cols * rows) {
+            mem.write_u8(cell, b' ');
+            mem.write_u8(cell + 1, attr);
+            cell += 2;
+        }
+    }
+
+    fn clear_mode13h<M: Memory>(&self, mem: &mut M) {
+        for off in 0..MODE13_BYTES_PER_PAGE {
+            mem.write_u8(VGA_MODE13_BASE + off, 0);
+        }
+    }
+
+    fn text_page_base(&self, page: u8) -> u32 {
+        VGA_TEXT_BASE + (page as u32 & 0x07) * (self.text_page_size_bytes() as u32)
+    }
+
+    fn write_text_cell<M: Memory>(
+        &self,
+        mem: &mut M,
+        page: u8,
+        row: u8,
+        col: u8,
+        ch: u8,
+        attr: u8,
+    ) {
+        if row >= self.text_rows {
+            return;
+        }
+        let cols = self.text_cols as u8;
+        if cols == 0 || col >= cols {
+            return;
+        }
+        let idx = row as u32 * self.text_cols as u32 + col as u32;
+        let addr = self.text_page_base(page) + idx * 2;
+        mem.write_u8(addr, ch);
+        mem.write_u8(addr + 1, attr);
+    }
+
+    fn read_text_cell_attr<M: Memory>(&self, mem: &M, page: u8, row: u8, col: u8) -> u8 {
+        if row >= self.text_rows {
+            return 0;
+        }
+        let cols = self.text_cols as u8;
+        if cols == 0 || col >= cols {
+            return 0;
+        }
+        let idx = row as u32 * self.text_cols as u32 + col as u32;
+        let addr = self.text_page_base(page) + idx * 2;
+        mem.read_u8(addr + 1)
+    }
+
+    fn scroll_text_window_up<M: Memory>(
+        &self,
+        mem: &mut M,
+        page: u8,
+        top: u8,
+        left: u8,
+        bottom: u8,
+        right: u8,
+        lines: u8,
+        blank_attr: u8,
+    ) {
+        let cols = self.text_cols as u8;
+        let rows = self.text_rows;
+        if cols == 0 || rows == 0 {
+            return;
+        }
+
+        let top = top.min(rows - 1);
+        let bottom = bottom.min(rows - 1);
+        let left = left.min(cols - 1);
+        let right = right.min(cols - 1);
+        if bottom < top || right < left {
+            return;
+        }
+
+        let height = bottom - top + 1;
+        let lines = if lines == 0 {
+            height
+        } else {
+            lines.min(height)
+        };
+
+        for row in top..=bottom {
+            for col in left..=right {
+                let src_row = row.saturating_add(lines);
+                if src_row <= bottom {
+                    let idx_src = src_row as u32 * self.text_cols as u32 + col as u32;
+                    let addr_src = self.text_page_base(page) + idx_src * 2;
+                    let ch = mem.read_u8(addr_src);
+                    let attr = mem.read_u8(addr_src + 1);
+                    self.write_text_cell(mem, page, row, col, ch, attr);
+                } else {
+                    self.write_text_cell(mem, page, row, col, b' ', blank_attr);
+                }
+            }
+        }
+    }
+
+    fn tty_put_char<M: Memory>(&mut self, mem: &mut M, page: u8, ch: u8, attr: u8) {
+        let page = page & 0x07;
+        let cols = self.text_cols as u8;
+        let rows = self.text_rows;
+        if cols == 0 || rows == 0 {
+            return;
+        }
+
+        let (mut row, mut col) = self.cursor_pos[page as usize];
+
         match ch {
-            b'\r' => {
-                self.cursor_col = 0;
-            }
-            b'\n' => {
-                self.cursor_col = 0;
-                self.cursor_row = self.cursor_row.saturating_add(1);
-            }
+            0x07 => {}
             0x08 => {
-                // Backspace.
-                if self.cursor_col > 0 {
-                    self.cursor_col -= 1;
+                if col > 0 {
+                    col -= 1;
+                } else if row > 0 {
+                    row -= 1;
+                    col = cols.saturating_sub(1);
                 }
-                self.write_cell(mem, self.cursor_row, self.cursor_col, b' ', self.text_attr);
             }
+            b'\r' => col = 0,
+            b'\n' => row = row.saturating_add(1),
             ch => {
-                self.write_cell(mem, self.cursor_row, self.cursor_col, ch, self.text_attr);
-                self.cursor_col = self.cursor_col.saturating_add(1);
-                if self.cursor_col >= 80 {
-                    self.cursor_col = 0;
-                    self.cursor_row = self.cursor_row.saturating_add(1);
+                self.write_text_cell(mem, page, row, col, ch, attr);
+                col = col.saturating_add(1);
+                if col >= cols {
+                    col = 0;
+                    row = row.saturating_add(1);
                 }
             }
         }
 
-        if self.cursor_row >= 25 {
-            self.scroll_up(mem);
-            self.cursor_row = 24;
+        if row >= rows {
+            self.scroll_text_window_up(mem, page, 0, 0, rows - 1, cols - 1, 1, attr);
+            row = rows - 1;
         }
-        self.sync_bda_cursor(mem);
-    }
 
-    fn write_cell<M: Memory>(&self, mem: &mut M, row: u8, col: u8, ch: u8, attr: u8) {
-        let idx = row as u32 * 80 + col as u32;
-        let base = 0x000B_8000u32 + idx * 2;
-        mem.write_u8(base, ch);
-        mem.write_u8(base + 1, attr);
-    }
-
-    fn scroll_up<M: Memory>(&self, mem: &mut M) {
-        let base = 0x000B_8000u32;
-        // Move rows 1..24 to 0..23.
-        for row in 1..25u32 {
-            for col in 0..80u32 {
-                let src = base + (row * 80 + col) * 2;
-                let dst = base + ((row - 1) * 80 + col) * 2;
-                let ch = mem.read_u8(src);
-                let attr = mem.read_u8(src + 1);
-                mem.write_u8(dst, ch);
-                mem.write_u8(dst + 1, attr);
-            }
-        }
-        // Clear last row.
-        for col in 0..80u32 {
-            let dst = base + (24 * 80 + col) * 2;
-            mem.write_u8(dst, b' ');
-            mem.write_u8(dst + 1, self.text_attr);
-        }
+        self.cursor_pos[page as usize] = (row, col);
+        self.sync_bda_cursor(mem, page);
     }
 
     fn print_str<M: Memory>(&mut self, mem: &mut M, s: &str) {
         for b in s.as_bytes().iter().copied() {
-            self.put_char(mem, b);
+            self.tty_put_char(mem, self.active_page, b, self.text_attr);
         }
     }
 
     fn int10<M: Memory>(&mut self, cpu: &mut RealModeCpu, mem: &mut M) {
+        if cpu.ah() == 0x4F {
+            // VBE (AX=4Fxx) dispatch point.
+            cpu.set_ax(0x024F);
+            cpu.set_cf(true);
+            return;
+        }
+
         match cpu.ah() {
             0x00 => {
-                // Set video mode (AL).
-                let mode = cpu.al();
-                // We only support 80x25 text.
-                self.video_mode = mode;
-                self.init_video(mem);
+                // Set video mode (AL). Bit 7: don't clear screen.
+                let al = cpu.al();
+                let mode = al & 0x7F;
+                let clear = (al & 0x80) == 0;
+                if self.set_video_mode(mem, mode, clear) {
+                    cpu.set_cf(false);
+                } else {
+                    cpu.set_cf(true);
+                    cpu.set_ah(0x01);
+                }
+            }
+            0x01 => {
+                // Set cursor shape.
+                self.cursor_start = cpu.ch();
+                self.cursor_end = cpu.cl();
+                mem.write_u16(
+                    BDA_CURSOR_SHAPE_ADDR,
+                    ((self.cursor_start as u16) << 8) | self.cursor_end as u16,
+                );
                 cpu.set_cf(false);
             }
             0x02 => {
-                // Set cursor position: DH=row, DL=col.
-                self.cursor_row = cpu.dh();
-                self.cursor_col = cpu.dl();
-                self.sync_bda_cursor(mem);
+                // Set cursor position: BH=page, DH=row, DL=col.
+                let page = cpu.bh() & 0x07;
+                let row = cpu.dh().min(self.text_rows.saturating_sub(1));
+                let col = cpu.dl().min((self.text_cols.saturating_sub(1)) as u8);
+                self.cursor_pos[page as usize] = (row, col);
+                self.sync_bda_cursor(mem, page);
                 cpu.set_cf(false);
             }
             0x03 => {
-                // Get cursor position: DH=row, DL=col.
-                cpu.set_dh(self.cursor_row);
-                cpu.set_dl(self.cursor_col);
+                // Get cursor position and shape: BH=page, DH/DL=row/col, CH/CL=shape.
+                let page = cpu.bh() & 0x07;
+                let (row, col) = self.cursor_pos[page as usize];
+                cpu.set_dh(row);
+                cpu.set_dl(col);
+                cpu.set_ch(self.cursor_start);
+                cpu.set_cl(self.cursor_end);
+                cpu.set_cf(false);
+            }
+            0x06 => {
+                // Scroll up window.
+                let lines = cpu.al();
+                let blank_attr = cpu.bh();
+                let top = cpu.ch();
+                let left = cpu.cl();
+                let bottom = cpu.dh();
+                let right = cpu.dl();
+
+                let page = self.active_page;
+                self.scroll_text_window_up(mem, page, top, left, bottom, right, lines, blank_attr);
+                cpu.set_cf(false);
+            }
+            0x09 => {
+                // Write character and attribute at cursor (repeat).
+                let page = cpu.bh() & 0x07;
+                let ch = cpu.al();
+                let attr = cpu.bl();
+                let count = cpu.cx();
+                if count == 0 {
+                    cpu.set_cf(false);
+                    return;
+                }
+
+                let cols = self.text_cols as u32;
+                let rows = self.text_rows as u32;
+                let (row0, col0) = self.cursor_pos[page as usize];
+                let mut linear = row0 as u32 * cols + col0 as u32;
+                let max = rows * cols;
+
+                for _ in 0..count {
+                    if linear >= max {
+                        break;
+                    }
+                    let row = (linear / cols) as u8;
+                    let col = (linear % cols) as u8;
+                    self.write_text_cell(mem, page, row, col, ch, attr);
+                    linear += 1;
+                }
+                cpu.set_cf(false);
+            }
+            0x0A => {
+                // Write character only at cursor (repeat), preserving attribute.
+                let page = cpu.bh() & 0x07;
+                let ch = cpu.al();
+                let count = cpu.cx();
+                if count == 0 {
+                    cpu.set_cf(false);
+                    return;
+                }
+
+                let cols = self.text_cols as u32;
+                let rows = self.text_rows as u32;
+                let (row0, col0) = self.cursor_pos[page as usize];
+                let mut linear = row0 as u32 * cols + col0 as u32;
+                let max = rows * cols;
+
+                for _ in 0..count {
+                    if linear >= max {
+                        break;
+                    }
+                    let row = (linear / cols) as u8;
+                    let col = (linear % cols) as u8;
+                    let attr = self.read_text_cell_attr(mem, page, row, col);
+                    self.write_text_cell(mem, page, row, col, ch, attr);
+                    linear += 1;
+                }
                 cpu.set_cf(false);
             }
             0x0E => {
-                // Teletype output.
+                // Teletype output: AL=char, BH=page, BL=attribute (non-zero).
+                let page = cpu.bh() & 0x07;
                 let ch = cpu.al();
-                self.put_char(mem, ch);
+                let attr = match cpu.bl() {
+                    0 => self.text_attr,
+                    v => v,
+                };
+                self.tty_put_char(mem, page, ch, attr);
                 cpu.set_cf(false);
             }
             0x0F => {
-                // Get current video mode.
-                // Return: AH=columns, AL=mode, BH=active page.
+                // Get current video mode. Return: AH=columns, AL=mode, BH=active page.
                 cpu.set_al(self.video_mode);
-                cpu.set_ah(80);
-                cpu.ebx = (cpu.ebx & 0xFFFF_FFFF) & !0xFF00; // BH=0
+                cpu.set_ah(self.text_cols as u8);
+                cpu.set_bh(self.active_page);
+                cpu.set_cf(false);
+            }
+            0x13 => {
+                // Write string.
+                // AL=write mode, BH=page, BL=attr, CX=len, DH=row, DL=col, ES:BP=ptr
+                let write_mode = cpu.al();
+                let page = cpu.bh() & 0x07;
+                let attr = cpu.bl();
+                let len = cpu.cx() as usize;
+                let mut row = cpu.dh();
+                let mut col = cpu.dl();
+
+                let cols = self.text_cols as u8;
+                let rows = self.text_rows;
+                let mut addr = cpu.es_base() + cpu.bp() as u32;
+
+                for _ in 0..len {
+                    if row >= rows {
+                        break;
+                    }
+                    let ch = mem.read_u8(addr);
+                    addr = addr.wrapping_add(1);
+
+                    let cell_attr = if (write_mode & 0x02) != 0 {
+                        let a = mem.read_u8(addr);
+                        addr = addr.wrapping_add(1);
+                        a
+                    } else {
+                        attr
+                    };
+
+                    self.write_text_cell(mem, page, row, col, ch, cell_attr);
+                    col = col.saturating_add(1);
+                    if col >= cols {
+                        col = 0;
+                        row = row.saturating_add(1);
+                    }
+                }
+
+                if (write_mode & 0x01) != 0 {
+                    self.cursor_pos[page as usize] = (row, col);
+                    self.sync_bda_cursor(mem, page);
+                }
+
                 cpu.set_cf(false);
             }
             _ => {

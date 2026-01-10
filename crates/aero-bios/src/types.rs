@@ -108,6 +108,22 @@ impl RealModeCpu {
         self.ebx = (self.ebx & 0xFFFF_0000) | v as u32;
     }
 
+    pub fn bh(&self) -> u8 {
+        (self.ebx >> 8) as u8
+    }
+
+    pub fn set_bh(&mut self, v: u8) {
+        self.ebx = (self.ebx & 0xFFFF_00FF) | ((v as u32) << 8);
+    }
+
+    pub fn bl(&self) -> u8 {
+        self.ebx as u8
+    }
+
+    pub fn set_bl(&mut self, v: u8) {
+        self.ebx = (self.ebx & 0xFFFF_FF00) | v as u32;
+    }
+
     pub fn cx(&self) -> u16 {
         self.ecx as u16
     }
@@ -116,12 +132,36 @@ impl RealModeCpu {
         self.ecx = (self.ecx & 0xFFFF_0000) | v as u32;
     }
 
+    pub fn ch(&self) -> u8 {
+        (self.ecx >> 8) as u8
+    }
+
+    pub fn set_ch(&mut self, v: u8) {
+        self.ecx = (self.ecx & 0xFFFF_00FF) | ((v as u32) << 8);
+    }
+
+    pub fn cl(&self) -> u8 {
+        self.ecx as u8
+    }
+
+    pub fn set_cl(&mut self, v: u8) {
+        self.ecx = (self.ecx & 0xFFFF_FF00) | v as u32;
+    }
+
     pub fn dx(&self) -> u16 {
         self.edx as u16
     }
 
     pub fn set_dx(&mut self, v: u16) {
         self.edx = (self.edx & 0xFFFF_0000) | v as u32;
+    }
+
+    pub fn bp(&self) -> u16 {
+        self.ebp as u16
+    }
+
+    pub fn set_bp(&mut self, v: u16) {
+        self.ebp = (self.ebp & 0xFFFF_0000) | v as u32;
     }
 
     pub fn dl(&self) -> u8 {
