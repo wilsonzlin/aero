@@ -87,7 +87,7 @@ dependencies = [
  "bytemuck",
  "futures-intrusive",
  "pollster",
- "wgpu 0.20.1",
+ "wgpu",
 ]
 
 [[package]]
@@ -416,6 +416,7 @@ version = "0.1.0"
 name = "aero-virtio"
 version = "0.1.0"
 dependencies = [
+ "aero-audio",
  "virtio-gpu-proto",
 ]
 
