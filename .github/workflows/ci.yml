@@ -409,6 +409,24 @@ jobs:
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npm run test:unit
 
+      - name: Publish unit test report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Vitest
+          path: ${{ steps.node-dir.outputs.dir }}/test-results/vitest-junit.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Upload unit test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-test-results
+          path: ${{ steps.node-dir.outputs.dir }}/test-results/vitest-junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Production build
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npm run build
@@ -526,24 +544,6 @@ jobs:
       - name: Unit tests
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npm run test:unit --if-present
-
-      - name: Publish unit test report
-        if: always()
-        uses: dorny/test-reporter@v1
-        with:
-          name: Vitest
-          path: ${{ steps.node-dir.outputs.dir }}/test-results/vitest-junit.xml
-          reporter: java-junit
-          fail-on-error: false
-
-      - name: Upload unit test artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: vitest-test-results
-          path: ${{ steps.node-dir.outputs.dir }}/test-results/vitest-junit.xml
-          if-no-files-found: warn
-          retention-days: 7
 
       - name: Production build
         working-directory: ${{ steps.node-dir.outputs.dir }}
