@@ -9,6 +9,16 @@ pub trait IrqSink {
     fn raise_irq(&mut self, irq: u8);
 }
 
+/// Sink for wiring i8042 "system control" side effects into the rest of the system.
+///
+/// Real i8042 controllers expose an output port that commonly controls:
+/// - the A20 gate (bit 1)
+/// - CPU reset (bit 0, active-low)
+pub trait SystemControlSink {
+    fn set_a20(&mut self, enabled: bool);
+    fn request_reset(&mut self);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OutputSource {
     Keyboard,
@@ -29,9 +39,14 @@ const STATUS_SYS: u8 = 0x04; // System flag.
 const STATUS_A2: u8 = 0x08; // Last write to command port.
 const STATUS_AUX_OBF: u8 = 0x20; // Mouse output buffer full.
 
+// i8042 output port bits.
+const OUTPUT_PORT_RESET: u8 = 0x01; // CPU reset line (active-low).
+const OUTPUT_PORT_A20: u8 = 0x02; // A20 gate.
+
 #[derive(Debug, Clone, Copy)]
 enum PendingWrite {
     CommandByte,
+    OutputPort,
     WriteToMouse,
 }
 
@@ -165,6 +180,7 @@ fn set2_to_set1(code: u8, extended: bool) -> u8 {
 pub struct I8042Controller {
     status: u8,
     command_byte: u8,
+    output_port: u8,
     output_buffer: Option<OutputByte>,
     pending_output: VecDeque<OutputByte>,
     pending_write: Option<PendingWrite>,
@@ -175,6 +191,7 @@ pub struct I8042Controller {
     translator: Set2ToSet1,
 
     irq_sink: Option<Box<dyn IrqSink>>,
+    sys_ctrl: Option<Box<dyn SystemControlSink>>,
     prefer_mouse: bool,
 }
 
@@ -188,6 +205,8 @@ impl I8042Controller {
         Self {
             status: STATUS_SYS,
             command_byte,
+            // Platform dependent; bit0 is typically deasserted (1), A20 typically disabled.
+            output_port: OUTPUT_PORT_RESET,
             output_buffer: None,
             pending_output: VecDeque::new(),
             pending_write: None,
@@ -196,12 +215,17 @@ impl I8042Controller {
             mouse: Ps2Mouse::new(),
             translator: Set2ToSet1::default(),
             irq_sink: None,
+            sys_ctrl: None,
             prefer_mouse: false,
         }
     }
 
     pub fn set_irq_sink(&mut self, sink: Box<dyn IrqSink>) {
         self.irq_sink = Some(sink);
+    }
+
+    pub fn set_system_control_sink(&mut self, sink: Box<dyn SystemControlSink>) {
+        self.sys_ctrl = Some(sink);
     }
 
     pub fn keyboard_mut(&mut self) -> &mut Ps2Keyboard {
@@ -316,9 +340,31 @@ impl I8042Controller {
                 // Enable keyboard port.
                 self.command_byte &= !0x10;
             }
+            0xD0 => {
+                // Read output port.
+                self.push_controller_output(self.output_port);
+            }
+            0xD1 => {
+                // Write output port (next data write).
+                self.pending_write = Some(PendingWrite::OutputPort);
+            }
             0xD4 => {
                 // Next data write goes to the mouse.
                 self.pending_write = Some(PendingWrite::WriteToMouse);
+            }
+            0xDD => {
+                // Non-standard (seen in some firmware): disable A20.
+                self.set_output_port(self.output_port & !OUTPUT_PORT_A20);
+            }
+            0xDF => {
+                // Non-standard (seen in some firmware): enable A20.
+                self.set_output_port(self.output_port | OUTPUT_PORT_A20);
+            }
+            0xFE => {
+                // Pulse output port bit 0 low (system reset).
+                if let Some(sink) = self.sys_ctrl.as_deref_mut() {
+                    sink.request_reset();
+                }
             }
             _ => {}
         }
@@ -336,6 +382,9 @@ impl I8042Controller {
                 PendingWrite::CommandByte => {
                     self.command_byte = value;
                 }
+                PendingWrite::OutputPort => {
+                    self.set_output_port(value);
+                }
                 PendingWrite::WriteToMouse => {
                     self.mouse.receive_byte(value);
                 }
@@ -349,6 +398,26 @@ impl I8042Controller {
         self.keyboard.receive_byte(value);
         self.status &= !STATUS_IBF;
         self.service_output();
+    }
+
+    fn set_output_port(&mut self, value: u8) {
+        let prev = self.output_port;
+        self.output_port = value;
+
+        if let Some(sink) = self.sys_ctrl.as_deref_mut() {
+            let prev_a20 = (prev & OUTPUT_PORT_A20) != 0;
+            let new_a20 = (value & OUTPUT_PORT_A20) != 0;
+            if prev_a20 != new_a20 {
+                sink.set_a20(new_a20);
+            }
+
+            // Reset line is active-low: transitioning from 1 -> 0 asserts reset.
+            let prev_reset_deasserted = (prev & OUTPUT_PORT_RESET) != 0;
+            let new_reset_deasserted = (value & OUTPUT_PORT_RESET) != 0;
+            if prev_reset_deasserted && !new_reset_deasserted {
+                sink.request_reset();
+            }
+        }
     }
 
     fn translation_enabled(&self) -> bool {

@@ -8,7 +8,7 @@ pub mod ps2_keyboard;
 pub mod ps2_mouse;
 pub mod scancode;
 
-pub use crate::i8042::{I8042Controller, IrqSink};
+pub use crate::i8042::{I8042Controller, IrqSink, SystemControlSink};
 pub use crate::ps2_keyboard::Ps2Keyboard;
 pub use crate::ps2_mouse::{Ps2Mouse, Ps2MouseButton};
 pub use crate::scancode::{browser_code_to_set2, Set2Scancode};

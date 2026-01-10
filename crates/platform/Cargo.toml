@@ -7,3 +7,4 @@ edition = "2021"
 
 [dev-dependencies]
 aero-devices = { path = "../devices" }
+aero-devices-input = { path = "../aero-devices-input" }
