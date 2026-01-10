@@ -1,5 +1,8 @@
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
+
+const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
 const crossOriginIsolationHeaders = {
   // Aero relies on SharedArrayBuffer + WASM threads, which require cross-origin isolation.
@@ -12,6 +15,12 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: resolve(rootDir, "index.html"),
+        ipc_demo: resolve(rootDir, "demo/ipc_demo.html"),
+      },
+    },
   },
   server: {
     headers: crossOriginIsolationHeaders,
@@ -21,19 +30,5 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-  },
-  preview: {
-    headers: {
-      "Cross-Origin-Opener-Policy": "same-origin",
-      "Cross-Origin-Embedder-Policy": "require-corp",
-    },
-  },
-  build: {
-    rollupOptions: {
-      input: {
-        main: resolve(__dirname, "index.html"),
-        ipc_demo: resolve(__dirname, "demo/ipc_demo.html"),
-      },
-    },
   },
 });
