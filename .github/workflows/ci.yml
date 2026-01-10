@@ -21,8 +21,24 @@ env:
   AERO_WASM_CRATE_DIR: ${{ vars.AERO_WASM_CRATE_DIR }}
 
 jobs:
+  policy:
+    name: Repo policy (fixtures & binaries)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check repository policy
+        run: scripts/ci/check-repo-policy.sh
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_REF: ${{ github.sha }}
+
   rust:
     name: Rust (fmt, clippy, test)
+    needs: policy
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -58,6 +74,7 @@ jobs:
 
   wasm:
     name: WASM (wasm-pack build + test)
+    needs: policy
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -143,6 +160,7 @@ jobs:
 
   node-unit:
     name: Node (lint, unit, build)
+    needs: policy
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -205,6 +223,7 @@ jobs:
 
   playwright:
     name: Playwright (browser automation)
+    needs: policy
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

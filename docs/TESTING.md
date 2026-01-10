@@ -2,7 +2,7 @@
 
 This document is the practical companion to [`12-testing-strategy.md`](./12-testing-strategy.md). It focuses on **how to run Aero’s test stack locally**, how that maps to CI, and common browser-specific failure modes.
 
-> **Policy note (fixtures):** The repository must not include proprietary Windows images/ISOs, BIOS ROMs, or other copyrighted firmware blobs. Tests and CI should run using **open fixtures** (synthetic images, open-source OS images, generated data). See [`13-legal-considerations.md`](./13-legal-considerations.md).
+> **Policy note (fixtures):** The repository must not include proprietary Windows images/ISOs, BIOS ROMs, or other copyrighted firmware blobs. Tests and CI should run using **open fixtures** (synthetic images, open-source OS images, generated data). See [`FIXTURES.md`](./FIXTURES.md) and [`13-legal-considerations.md`](./13-legal-considerations.md). CI also enforces this via `scripts/ci/check-repo-policy.sh`.
 
 ---
 

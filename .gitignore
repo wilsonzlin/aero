@@ -45,6 +45,7 @@ test-results/
 *.vhdx
 *.vmdk
 *.vdi
+*.qcow
 *.qcow2
 *.raw
 *.dd
