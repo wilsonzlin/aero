@@ -2,6 +2,11 @@
 scratchpad.md
 handoff.md
 
+# Environment (secrets)
+.env
+.env.*
+!.env.example
+
 # OS / editor files
 .DS_Store
 Thumbs.db
@@ -18,6 +23,9 @@ target/
 **/target/
 .vite/
 *.tsbuildinfo
+
+# Coverage
+coverage/
 
 # Playwright
 playwright-report/

@@ -1,0 +1,15 @@
+{
+  "name": "aero-backend-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ipaddr.js": "^2.2.0",
+    "ws": "^8.18.3"
+  }
+}
+
