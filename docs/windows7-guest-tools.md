@@ -227,6 +227,10 @@ Expected behavior:
 - To enable the Aero Glass theme, you may need to select a Windows 7 theme in **Personalization** and/or run **Performance Information and Tools** once.
   - If “Aero” themes are unavailable, running `winsat formal` (from an elevated Command Prompt) often enables them after reboot.
 
+If you get a black screen after switching to the Aero GPU, switch back to **VGA** and follow the recovery steps in:
+
+- [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md#issue-black-screen-after-switching-to-the-aero-gpu)
+
 ## Step 6: Run `verify.cmd` and interpret `report.txt`
 
 After you can boot with virtio + Aero GPU:
