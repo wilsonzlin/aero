@@ -1,3 +1,5 @@
+pub(crate) mod alu;
+pub mod atomics;
 pub mod bitext;
 pub mod decode;
 pub mod sse;
@@ -24,17 +26,20 @@ pub struct DecodedInst {
 #[derive(Clone, Debug)]
 pub enum InstKind {
     String(string::DecodedStringInst),
+    Atomics(atomics::DecodedAtomicInst),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecError {
     InvalidOpcode(u8),
     TruncatedInstruction,
+    Exception(Exception),
 }
 
 pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, inst: &DecodedInst) -> Result<(), ExecError> {
     match &inst.kind {
         InstKind::String(s) => string::exec_string(cpu, bus, s),
+        InstKind::Atomics(a) => atomics::exec_atomics(cpu, bus, a),
     }
 }
 
@@ -176,3 +181,4 @@ pub(crate) fn u128_set_low_u32_preserve(high: u128, low: u32) -> u128 {
 pub(crate) fn u128_set_low_u64_preserve(high: u128, low: u64) -> u128 {
     (high & !0xFFFF_FFFF_FFFF_FFFFu128) | (low as u128)
 }
+

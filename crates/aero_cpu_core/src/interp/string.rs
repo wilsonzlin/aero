@@ -1,5 +1,6 @@
 use crate::bus::Bus;
-use crate::cpu::{Cpu, CpuMode, RFlags, Segment};
+use crate::cpu::{Cpu, CpuMode, Segment};
+use crate::interp::alu;
 use crate::interp::decode::PrefixState;
 use crate::interp::ExecError;
 
@@ -52,7 +53,11 @@ impl DecodedStringInst {
     }
 }
 
-pub fn exec_string<B: Bus>(cpu: &mut Cpu, bus: &mut B, inst: &DecodedStringInst) -> Result<(), ExecError> {
+pub fn exec_string<B: Bus>(
+    cpu: &mut Cpu,
+    bus: &mut B,
+    inst: &DecodedStringInst,
+) -> Result<(), ExecError> {
     let addr_size = effective_addr_size(cpu.mode, &inst.prefixes);
     let rep_mode = effective_rep_mode(inst.op, inst.prefixes.rep);
 
@@ -457,27 +462,6 @@ fn exec_lods<B: Bus>(
     Ok(())
 }
 
-fn update_sub_flags(cpu: &mut Cpu, dest: u64, src: u64, size: usize) {
-    let bits = (size * 8) as u32;
-    let mask = if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 };
-    let dest = dest & mask;
-    let src = src & mask;
-    let result = dest.wrapping_sub(src) & mask;
-
-    let sign_bit = 1u64 << (bits - 1);
-    cpu.rflags.set(RFlags::CF, dest < src);
-    cpu.rflags.set(RFlags::ZF, result == 0);
-    cpu.rflags.set(RFlags::SF, (result & sign_bit) != 0);
-    cpu.rflags
-        .set(RFlags::OF, ((dest ^ src) & (dest ^ result) & sign_bit) != 0);
-    cpu.rflags
-        .set(RFlags::AF, ((dest ^ src ^ result) & 0x10) != 0);
-
-    let low = (result & 0xFF) as u8;
-    cpu.rflags
-        .set(RFlags::PF, low.count_ones() % 2 == 0);
-}
-
 fn exec_cmps<B: Bus>(
     cpu: &mut Cpu,
     bus: &mut B,
@@ -508,7 +492,7 @@ fn exec_cmps<B: Bus>(
         let src_val = read_mem(bus, src_addr, elem_size);
         let dst_val = read_mem(bus, dst_addr, elem_size);
         // CMPS performs SRC - DEST (i.e. subtract destination operand from source operand).
-        update_sub_flags(cpu, src_val, dst_val, elem_size);
+        alu::update_sub_flags(&mut cpu.rflags, src_val, dst_val, elem_size);
 
         let si_new = add_wrapping(si, delta, addr_size);
         let di_new = add_wrapping(di, delta, addr_size);
@@ -571,7 +555,7 @@ fn exec_scas<B: Bus>(
             8 => cpu.regs.rax,
             _ => unreachable!(),
         };
-        update_sub_flags(cpu, acc_val, mem_val, elem_size);
+        alu::update_sub_flags(&mut cpu.rflags, acc_val, mem_val, elem_size);
 
         let di_new = add_wrapping(di, delta, addr_size);
         write_di(cpu, addr_size, di_new);

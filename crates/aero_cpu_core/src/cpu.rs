@@ -3,6 +3,8 @@ use crate::cpuid::CpuFeatures;
 use crate::interp::{decode, win7_ext, ExecError};
 use crate::sse_state::SseState;
 use aero_perf::PerfWorker;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpuMode {
@@ -83,6 +85,7 @@ impl RFlags {
     pub const AF: u64 = 1 << 4;
     pub const ZF: u64 = 1 << 6;
     pub const SF: u64 = 1 << 7;
+    pub const IF: u64 = 1 << 9;
     pub const DF: u64 = 1 << 10;
     pub const OF: u64 = 1 << 11;
 
@@ -206,13 +209,59 @@ impl Regs {
 
     pub fn set_eax(&mut self, value: u32, mode: CpuMode) {
         match mode {
-            CpuMode::Long64 => self.rax = value as u64, // zero-extend
+            CpuMode::Long64 => self.rax = value as u64,
             _ => self.rax = (self.rax & !0xFFFF_FFFF) | value as u64,
         }
     }
 
     pub fn set_rax(&mut self, value: u64) {
         self.rax = value;
+    }
+
+    pub fn dx(&self) -> u16 {
+        self.rdx as u16
+    }
+
+    pub fn edx(&self) -> u32 {
+        self.rdx as u32
+    }
+
+    pub fn set_dx(&mut self, value: u16) {
+        self.rdx = (self.rdx & !0xFFFF) | value as u64;
+    }
+
+    pub fn set_edx(&mut self, value: u32, mode: CpuMode) {
+        match mode {
+            CpuMode::Long64 => self.rdx = value as u64,
+            _ => self.rdx = (self.rdx & !0xFFFF_FFFF) | value as u64,
+        }
+    }
+
+    pub fn set_rdx(&mut self, value: u64) {
+        self.rdx = value;
+    }
+
+    pub fn bx(&self) -> u16 {
+        self.rbx as u16
+    }
+
+    pub fn ebx(&self) -> u32 {
+        self.rbx as u32
+    }
+
+    pub fn set_bx(&mut self, value: u16) {
+        self.rbx = (self.rbx & !0xFFFF) | value as u64;
+    }
+
+    pub fn set_ebx(&mut self, value: u32, mode: CpuMode) {
+        match mode {
+            CpuMode::Long64 => self.rbx = value as u64,
+            _ => self.rbx = (self.rbx & !0xFFFF_FFFF) | value as u64,
+        }
+    }
+
+    pub fn set_rbx(&mut self, value: u64) {
+        self.rbx = value;
     }
 
     pub fn cx(&self) -> u16 {
@@ -283,6 +332,101 @@ impl Regs {
     pub fn set_rdi(&mut self, value: u64) {
         self.rdi = value;
     }
+
+    fn reg64(&self, reg: u8) -> u64 {
+        self.gpr(reg)
+    }
+
+    fn reg64_mut(&mut self, reg: u8) -> &mut u64 {
+        match reg & 0xF {
+            0 => &mut self.rax,
+            1 => &mut self.rcx,
+            2 => &mut self.rdx,
+            3 => &mut self.rbx,
+            4 => &mut self.rsp,
+            5 => &mut self.rbp,
+            6 => &mut self.rsi,
+            7 => &mut self.rdi,
+            8 => &mut self.r8,
+            9 => &mut self.r9,
+            10 => &mut self.r10,
+            11 => &mut self.r11,
+            12 => &mut self.r12,
+            13 => &mut self.r13,
+            14 => &mut self.r14,
+            _ => &mut self.r15,
+        }
+    }
+
+    pub fn get(&self, reg: u8, size: usize, rex_present: bool) -> u64 {
+        match size {
+            1 => self.get8(reg, rex_present) as u64,
+            2 => self.reg64(reg) as u16 as u64,
+            4 => self.reg64(reg) as u32 as u64,
+            8 => self.reg64(reg),
+            _ => self.reg64(reg),
+        }
+    }
+
+    pub fn set(&mut self, reg: u8, size: usize, rex_present: bool, value: u64, mode: CpuMode) {
+        match size {
+            1 => self.set8(reg, rex_present, value as u8),
+            2 => {
+                let r = self.reg64_mut(reg);
+                *r = (*r & !0xFFFF) | (value as u16 as u64);
+            }
+            4 => {
+                let r = self.reg64_mut(reg);
+                let v = value as u32 as u64;
+                match mode {
+                    CpuMode::Long64 => *r = v,
+                    _ => *r = (*r & !0xFFFF_FFFF) | v,
+                }
+            }
+            8 => *self.reg64_mut(reg) = value,
+            _ => *self.reg64_mut(reg) = value,
+        }
+    }
+
+    fn get8(&self, reg: u8, rex_present: bool) -> u8 {
+        if rex_present || (reg & 0xF) < 4 || (reg & 0xF) >= 8 {
+            self.reg64(reg) as u8
+        } else {
+            // AH/CH/DH/BH encoding.
+            (self.reg64(reg - 4) >> 8) as u8
+        }
+    }
+
+    fn set8(&mut self, reg: u8, rex_present: bool, value: u8) {
+        if rex_present || (reg & 0xF) < 4 || (reg & 0xF) >= 8 {
+            let r = self.reg64_mut(reg);
+            *r = (*r & !0xFF) | value as u64;
+        } else {
+            let r = self.reg64_mut(reg - 4);
+            *r = (*r & !0xFF00) | ((value as u64) << 8);
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct InterruptLine(Rc<Cell<bool>>);
+
+impl Default for InterruptLine {
+    fn default() -> Self {
+        Self(Rc::new(Cell::new(false)))
+    }
+}
+
+impl InterruptLine {
+    pub fn raise(&self) {
+        self.0.set(true);
+    }
+
+    fn take(&self) -> bool {
+        let was = self.0.get();
+        self.0.set(false);
+        was
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -293,6 +437,11 @@ pub struct Cpu {
     pub segs: Segments,
     pub sse: SseState,
     pub features: CpuFeatures,
+    pub rip: u64,
+    interrupt_line: InterruptLine,
+    interrupt_inhibit_depth: u32,
+    interrupts_delivered: u64,
+    event_log: Option<Rc<RefCell<Vec<&'static str>>>>,
 }
 
 impl Cpu {
@@ -307,13 +456,33 @@ impl Cpu {
     ///
     /// This helper is sufficient for unit tests (no instruction fetch pipeline).
     pub fn execute_bytes<B: Bus>(&mut self, bus: &mut B, bytes: &[u8]) -> Result<usize, ExecError> {
-        match decode::decode(self.mode, bytes) {
+        let len = match decode::decode(self.mode, bytes) {
             Ok(inst) => {
                 crate::interp::exec(self, bus, &inst)?;
-                Ok(inst.len)
+                inst.len
             }
-            Err(ExecError::InvalidOpcode(_)) => win7_ext::exec(self, bus, bytes),
-            Err(e) => Err(e),
+            Err(ExecError::InvalidOpcode(_)) => win7_ext::exec(self, bus, bytes)?,
+            Err(e) => return Err(e),
+        };
+        self.maybe_deliver_interrupts();
+        Ok(len)
+    }
+
+    pub fn interrupt_line(&self) -> InterruptLine {
+        self.interrupt_line.clone()
+    }
+
+    pub fn interrupts_delivered(&self) -> u64 {
+        self.interrupts_delivered
+    }
+
+    pub fn set_event_log(&mut self, log: Rc<RefCell<Vec<&'static str>>>) {
+        self.event_log = Some(log);
+    }
+
+    pub(crate) fn log_event(&mut self, evt: &'static str) {
+        if let Some(log) = &self.event_log {
+            log.borrow_mut().push(evt);
         }
     }
 
@@ -328,7 +497,7 @@ impl Cpu {
         bytes: &[u8],
         perf: &mut PerfWorker,
     ) -> Result<usize, ExecError> {
-        match decode::decode(self.mode, bytes) {
+        let len = match decode::decode(self.mode, bytes) {
             Ok(inst) => {
                 // For string instructions, derive REP iteration count by observing the
                 // architectural count register before/after execution. This keeps the
@@ -337,7 +506,8 @@ impl Cpu {
                     crate::interp::InstKind::String(s)
                         if s.prefixes.rep != crate::interp::string::RepPrefix::None =>
                     {
-                        let addr_size = crate::interp::string::effective_addr_size(self.mode, &s.prefixes);
+                        let addr_size =
+                            crate::interp::string::effective_addr_size(self.mode, &s.prefixes);
                         Some((addr_size, crate::interp::string::read_count(self, addr_size)))
                     }
                     _ => None,
@@ -355,17 +525,39 @@ impl Cpu {
                     }
                 }
 
-                Ok(inst.len)
+                inst.len
             }
             Err(ExecError::InvalidOpcode(_)) => {
                 let len = win7_ext::exec(self, bus, bytes)?;
                 perf.retire_instructions(1);
-                Ok(len)
+                len
             }
-            Err(e) => Err(e),
+            Err(e) => return Err(e),
+        };
+        self.maybe_deliver_interrupts();
+        Ok(len)
+    }
+
+    pub(crate) fn maybe_deliver_interrupts(&mut self) {
+        if self.interrupt_inhibit_depth != 0 {
+            return;
+        }
+        if !self.rflags.get(RFlags::IF) {
+            return;
+        }
+        if self.interrupt_line.take() {
+            self.interrupts_delivered = self.interrupts_delivered.wrapping_add(1);
+            self.log_event("interrupt_delivered");
         }
     }
 
+    pub(crate) fn begin_atomic(&mut self) {
+        self.interrupt_inhibit_depth = self.interrupt_inhibit_depth.wrapping_add(1);
+    }
+
+    pub(crate) fn end_atomic(&mut self) {
+        self.interrupt_inhibit_depth = self.interrupt_inhibit_depth.wrapping_sub(1);
+    }
     pub fn seg_base(&self, seg: Segment) -> u64 {
         match self.mode {
             CpuMode::Long64 => match seg {

@@ -5,12 +5,22 @@ use super::string::{DecodedStringInst, RepPrefix, StringOp};
 use crate::cpu::Segment;
 
 #[derive(Clone, Copy, Debug, Default)]
+pub struct RexPrefix {
+    pub present: bool,
+    pub w: bool,
+    pub r: bool,
+    pub x: bool,
+    pub b: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
 pub struct PrefixState {
     pub rep: RepPrefix,
+    pub lock: bool,
     pub operand_size_override: bool,
     pub address_size_override: bool,
     pub segment_override: Option<Segment>,
-    pub rex_w: bool,
+    pub rex: RexPrefix,
 }
 
 fn is_segment_override(byte: u8) -> Option<Segment> {
@@ -36,6 +46,7 @@ pub fn decode(mode: CpuMode, bytes: &[u8]) -> Result<DecodedInst, ExecError> {
         match b {
             0xF3 => p.rep = RepPrefix::F3,
             0xF2 => p.rep = RepPrefix::F2,
+            0xF0 => p.lock = true,
             0x66 => p.operand_size_override = true,
             0x67 => p.address_size_override = true,
             _ => {
@@ -60,7 +71,13 @@ pub fn decode(mode: CpuMode, bytes: &[u8]) -> Result<DecodedInst, ExecError> {
     if mode == CpuMode::Long64 {
         if let Some(&b) = bytes.get(idx) {
             if (0x40..=0x4F).contains(&b) {
-                p.rex_w = (b & 0x08) != 0;
+                p.rex = RexPrefix {
+                    present: true,
+                    w: (b & 0x08) != 0,
+                    r: (b & 0x04) != 0,
+                    x: (b & 0x02) != 0,
+                    b: (b & 0x01) != 0,
+                };
                 idx += 1;
             }
         }
@@ -69,24 +86,43 @@ pub fn decode(mode: CpuMode, bytes: &[u8]) -> Result<DecodedInst, ExecError> {
     let opcode = *bytes.get(idx).ok_or(ExecError::TruncatedInstruction)?;
     idx += 1;
 
-    let string = match opcode {
-        0xA4 => DecodedStringInst::new(StringOp::Movs, 1, p),
-        0xA5 => DecodedStringInst::new(StringOp::Movs, element_size_non_byte(mode, &p)?, p),
-        0xAA => DecodedStringInst::new(StringOp::Stos, 1, p),
-        0xAB => DecodedStringInst::new(StringOp::Stos, element_size_non_byte(mode, &p)?, p),
-        0xAC => DecodedStringInst::new(StringOp::Lods, 1, p),
-        0xAD => DecodedStringInst::new(StringOp::Lods, element_size_non_byte(mode, &p)?, p),
-        0xA6 => DecodedStringInst::new(StringOp::Cmps, 1, p),
-        0xA7 => DecodedStringInst::new(StringOp::Cmps, element_size_non_byte(mode, &p)?, p),
-        0xAE => DecodedStringInst::new(StringOp::Scas, 1, p),
-        0xAF => DecodedStringInst::new(StringOp::Scas, element_size_non_byte(mode, &p)?, p),
-        other => return Err(ExecError::InvalidOpcode(other)),
+    let kind = match opcode {
+        0xA4 => InstKind::String(DecodedStringInst::new(StringOp::Movs, 1, p)),
+        0xA5 => InstKind::String(DecodedStringInst::new(
+            StringOp::Movs,
+            element_size_non_byte(mode, &p)?,
+            p,
+        )),
+        0xAA => InstKind::String(DecodedStringInst::new(StringOp::Stos, 1, p)),
+        0xAB => InstKind::String(DecodedStringInst::new(
+            StringOp::Stos,
+            element_size_non_byte(mode, &p)?,
+            p,
+        )),
+        0xAC => InstKind::String(DecodedStringInst::new(StringOp::Lods, 1, p)),
+        0xAD => InstKind::String(DecodedStringInst::new(
+            StringOp::Lods,
+            element_size_non_byte(mode, &p)?,
+            p,
+        )),
+        0xA6 => InstKind::String(DecodedStringInst::new(StringOp::Cmps, 1, p)),
+        0xA7 => InstKind::String(DecodedStringInst::new(
+            StringOp::Cmps,
+            element_size_non_byte(mode, &p)?,
+            p,
+        )),
+        0xAE => InstKind::String(DecodedStringInst::new(StringOp::Scas, 1, p)),
+        0xAF => InstKind::String(DecodedStringInst::new(
+            StringOp::Scas,
+            element_size_non_byte(mode, &p)?,
+            p,
+        )),
+        other => {
+            return super::atomics::decode_atomics(mode, bytes, idx, other, p);
+        }
     };
 
-    Ok(DecodedInst {
-        len: idx,
-        kind: InstKind::String(string),
-    })
+    Ok(DecodedInst { len: idx, kind })
 }
 
 fn element_size_non_byte(mode: CpuMode, p: &PrefixState) -> Result<usize, ExecError> {
@@ -107,7 +143,7 @@ fn element_size_non_byte(mode: CpuMode, p: &PrefixState) -> Result<usize, ExecEr
             }
         }
         CpuMode::Long64 => {
-            if p.rex_w {
+            if p.rex.w {
                 64
             } else if p.operand_size_override {
                 16
@@ -119,4 +155,3 @@ fn element_size_non_byte(mode: CpuMode, p: &PrefixState) -> Result<usize, ExecEr
 
     Ok((bits / 8) as usize)
 }
-

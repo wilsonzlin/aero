@@ -219,7 +219,8 @@ fn repe_cmpsb_stops_on_mismatch() {
         bus.write_u8(0x2000 + 0x20 + i, i as u8);
     }
 
-    cpu.execute_bytes(&mut bus, &[0xF3, 0xA6]).unwrap(); // REPE CMPSB
+    // REPE CMPSB
+    cpu.execute_bytes(&mut bus, &[0xF3, 0xA6]).unwrap();
     // Per-iteration: compare then inc/dec then decrement ECX.
     // Mismatch at i=3 means 4 iterations executed.
     assert_eq!(cpu.regs.esi(), 0x14);
@@ -260,7 +261,8 @@ fn repne_scasb_stops_on_match() {
         bus.write_u8(0x3000 + 0x10 + i as u64, b);
     }
 
-    cpu.execute_bytes(&mut bus, &[0xF2, 0xAE]).unwrap(); // REPNE SCASB
+    // REPNE SCASB
+    cpu.execute_bytes(&mut bus, &[0xF2, 0xAE]).unwrap();
     // Stops when ZF=1 at index 3, after 4 iterations executed.
     assert_eq!(cpu.regs.edi(), 0x14);
     assert_eq!(cpu.regs.ecx(), 2);

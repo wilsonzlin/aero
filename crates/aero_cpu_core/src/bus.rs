@@ -1,5 +1,7 @@
 use core::ops::Range;
 
+use crate::Exception;
+
 /// Abstract memory bus used by the interpreter.
 ///
 /// The real project will have paging/MMIO. For now we model linear memory and
@@ -56,6 +58,26 @@ pub trait Bus {
         self.write_u64(addr + 8, (value >> 64) as u64);
     }
 
+    /// Perform a read-modify-write cycle as a single operation when possible.
+    ///
+    /// This is used by the interpreter for `LOCK`ed instructions and other
+    /// atomic RMW instructions (for example, `XCHG` with a memory operand).
+    ///
+    /// Bus implementations may override this to provide true atomicity against
+    /// concurrent devices/threads. The default implementation falls back to a
+    /// plain read + conditional write.
+    fn atomic_rmw<T, R>(&mut self, addr: u64, f: impl FnOnce(T) -> (T, R)) -> Result<R, Exception>
+    where
+        T: BusValue,
+        Self: Sized,
+    {
+        let old = T::read_from(self, addr);
+        let (new, ret) = f(old);
+        if new != old {
+            T::write_to(self, addr, new);
+        }
+        Ok(ret)
+    }
     /// Whether the bus can perform fast, contiguous copies between RAM regions.
     ///
     /// The interpreter uses this as a hint for REP MOVS* fast paths.
@@ -84,6 +106,61 @@ pub trait Bus {
     /// For example, STOSD would call this with `pattern.len() == 4`.
     fn bulk_set(&mut self, _dst: u64, _pattern: &[u8], _repeat: usize) -> bool {
         false
+    }
+}
+
+pub trait BusValue: Copy + PartialEq {
+    fn read_from(bus: &mut impl Bus, addr: u64) -> Self;
+    fn write_to(bus: &mut impl Bus, addr: u64, val: Self);
+}
+
+impl BusValue for u8 {
+    fn read_from(bus: &mut impl Bus, addr: u64) -> Self {
+        bus.read_u8(addr)
+    }
+
+    fn write_to(bus: &mut impl Bus, addr: u64, val: Self) {
+        bus.write_u8(addr, val);
+    }
+}
+
+impl BusValue for u16 {
+    fn read_from(bus: &mut impl Bus, addr: u64) -> Self {
+        bus.read_u16(addr)
+    }
+
+    fn write_to(bus: &mut impl Bus, addr: u64, val: Self) {
+        bus.write_u16(addr, val);
+    }
+}
+
+impl BusValue for u32 {
+    fn read_from(bus: &mut impl Bus, addr: u64) -> Self {
+        bus.read_u32(addr)
+    }
+
+    fn write_to(bus: &mut impl Bus, addr: u64, val: Self) {
+        bus.write_u32(addr, val);
+    }
+}
+
+impl BusValue for u64 {
+    fn read_from(bus: &mut impl Bus, addr: u64) -> Self {
+        bus.read_u64(addr)
+    }
+
+    fn write_to(bus: &mut impl Bus, addr: u64, val: Self) {
+        bus.write_u64(addr, val);
+    }
+}
+
+impl BusValue for u128 {
+    fn read_from(bus: &mut impl Bus, addr: u64) -> Self {
+        bus.read_u128(addr)
+    }
+
+    fn write_to(bus: &mut impl Bus, addr: u64, val: Self) {
+        bus.write_u128(addr, val);
     }
 }
 
