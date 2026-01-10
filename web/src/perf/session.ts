@@ -9,6 +9,7 @@ import { PerfWriter as PerfWriterImpl } from "./writer.js";
 import type { ByteSizedCacheTracker, GpuAllocationTracker } from "./memory";
 import { WASM_PAGE_SIZE_BYTES } from "./memory";
 import type { PerfApi, PerfHudSnapshot, PerfTimeBreakdownMs } from "./types";
+import { ResponsivenessTracker, type ResponsivenessHudSnapshot } from "./responsiveness";
 
 export type InstallPerfSessionOptions = {
   guestRamBytes?: number;
@@ -61,6 +62,9 @@ export class PerfSession implements PerfApi {
 
   private drainTimer: number | null = null;
 
+  private responsiveness = new ResponsivenessTracker();
+  private responsivenessSnapshot: ResponsivenessHudSnapshot = {};
+
   private peakHostJsHeapUsedBytes: number | undefined;
   private peakWasmMemoryBytes: number | undefined;
   private peakGpuEstimatedBytes: number | undefined;
@@ -98,6 +102,32 @@ export class PerfSession implements PerfApi {
     if (this.hudActive === active) return;
     this.hudActive = active;
     this.syncLoops();
+  }
+
+  noteInputCaptured(id: number, tCaptureMs: number = performance.now()): void {
+    this.responsiveness.noteInputCaptured(id, tCaptureMs);
+  }
+
+  noteInputInjected(
+    id: number,
+    tInjectedMs: number = performance.now(),
+    queueDepth?: number,
+    queueOldestCaptureMs?: number | null,
+  ): void {
+    this.responsiveness.noteInputInjected(id, tInjectedMs, queueDepth, queueOldestCaptureMs);
+  }
+
+  noteInputConsumed(
+    id: number,
+    tConsumedMs: number = performance.now(),
+    queueDepth?: number,
+    queueOldestCaptureMs?: number | null,
+  ): void {
+    this.responsiveness.noteInputConsumed(id, tConsumedMs, queueDepth, queueOldestCaptureMs);
+  }
+
+  notePresent(tPresentMs: number = performance.now()): void {
+    this.responsiveness.notePresent(tPresentMs);
   }
 
   captureStart(): void {
@@ -139,6 +169,7 @@ export class PerfSession implements PerfApi {
     this.peakHostJsHeapUsedBytes = undefined;
     this.peakWasmMemoryBytes = undefined;
     this.peakGpuEstimatedBytes = undefined;
+    this.responsiveness.reset();
 
     if (shouldRunAfter) {
       this.writer.setEnabled(true);
@@ -148,7 +179,9 @@ export class PerfSession implements PerfApi {
 
   export(): unknown {
     this.aggregator.drain();
-    return this.aggregator.export();
+    const out = this.aggregator.export() as Record<string, unknown>;
+    out.responsiveness = this.responsiveness.export();
+    return out;
   }
 
   getHudSnapshot(out: PerfHudSnapshot): PerfHudSnapshot {
@@ -206,6 +239,7 @@ export class PerfSession implements PerfApi {
     out.peakHostJsHeapUsedBytes = this.peakHostJsHeapUsedBytes;
     out.peakWasmMemoryBytes = this.peakWasmMemoryBytes;
     out.peakGpuEstimatedBytes = this.peakGpuEstimatedBytes;
+    out.responsiveness = this.responsiveness.getHudSnapshot(this.responsivenessSnapshot);
 
     const captureDurationMs = this.captureActive ? performance.now() - this.captureStartNowMs : this.captureDurationMs;
 
@@ -225,6 +259,7 @@ export class PerfSession implements PerfApi {
   private syncLoops(): void {
     const shouldRun = this.shouldRun();
 
+    this.responsiveness.setActive(shouldRun);
     this.writer.setEnabled(shouldRun);
     if (shouldRun) {
       this.startRaf();
@@ -266,6 +301,7 @@ export class PerfSession implements PerfApi {
       this.lastRafNowMs = nowMs;
 
       this.frameId = (this.frameId + 1) >>> 0;
+      this.responsiveness.notePresent(nowMs);
       this.writer.frameSample(this.frameId, { durations: { frame_ms: frameTimeMs } });
     };
     this.raf = requestAnimationFrame(tick);
