@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [features]
 default = ["std"]
-std = []
+std = ["alloc"]
+alloc = []
 
 [dependencies]

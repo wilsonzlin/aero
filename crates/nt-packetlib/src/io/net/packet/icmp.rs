@@ -95,6 +95,14 @@ impl<'a> IcmpEchoBuilder<'a> {
         8 + self.payload.len()
     }
 
+    #[cfg(feature = "alloc")]
+    pub fn build_vec(&self) -> Result<alloc::vec::Vec<u8>, PacketError> {
+        let mut buf = alloc::vec![0u8; self.len()];
+        let written = self.write(&mut buf)?;
+        debug_assert_eq!(written, buf.len());
+        Ok(buf)
+    }
+
     pub fn write(&self, out: &mut [u8]) -> Result<usize, PacketError> {
         let len = self.len();
         ensure_out_buf_len(out, len)?;

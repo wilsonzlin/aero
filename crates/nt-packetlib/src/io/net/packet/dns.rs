@@ -40,10 +40,22 @@ pub fn parse_single_query(packet: &[u8]) -> Result<DnsQuery<'_>, PacketError> {
     let mut off = 12;
     // QNAME is a series of length-prefixed labels terminated by 0.
     while off < packet.len() {
-        let len = packet[off] as usize;
+        let len_byte = packet[off];
         off += 1;
+        // Name compression isn't expected for the simple queries we handle. Treat it as unsupported
+        // so we don't accidentally interpret pointers as huge label lengths.
+        if (len_byte & 0xc0) == 0xc0 {
+            return Err(PacketError::Unsupported("compressed DNS QNAME"));
+        }
+        if (len_byte & 0xc0) != 0 {
+            return Err(PacketError::Malformed("DNS label length has reserved bits set"));
+        }
+        let len = len_byte as usize;
         if len == 0 {
             break;
+        }
+        if len > 63 {
+            return Err(PacketError::Malformed("DNS label length > 63"));
         }
         super::ensure_len(packet, off + len)?;
         off += len;
@@ -146,6 +158,15 @@ impl<'a> DnsResponseBuilder<'a> {
         debug_assert_eq!(off, len);
         Ok(len)
     }
+
+    #[cfg(feature = "alloc")]
+    pub fn build_vec(&self) -> Result<alloc::vec::Vec<u8>, PacketError> {
+        let len = self.len();
+        let mut buf = alloc::vec![0u8; len];
+        let written = self.write(&mut buf)?;
+        debug_assert_eq!(written, buf.len());
+        Ok(buf)
+    }
 }
 
 #[cfg(test)]
@@ -205,5 +226,20 @@ mod tests {
         assert_eq!(flags & 0x0080, 0x0080); // RA
         assert_eq!(flags & 0x000f, 3); // NXDOMAIN
         assert_eq!(u16::from_be_bytes([buf[6], buf[7]]), 0); // ANCOUNT
+    }
+
+    #[test]
+    fn dns_qname_compression_is_rejected() {
+        let query = [
+            0x12, 0x34, 0x01, 0x00, // id + flags
+            0x00, 0x01, 0x00, 0x00, // qdcount=1
+            0x00, 0x00, 0x00, 0x00, // an/ns/ar = 0
+            0xc0, 0x0c, // QNAME: compression pointer (invalid in our minimal parser)
+            0x00, 0x01, 0x00, 0x01, // QTYPE=A, QCLASS=IN
+        ];
+        assert_eq!(
+            parse_single_query(&query).unwrap_err(),
+            PacketError::Unsupported("compressed DNS QNAME")
+        );
     }
 }

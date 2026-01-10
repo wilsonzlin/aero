@@ -128,6 +128,13 @@ pub struct ArpPacketBuilder {
 impl ArpPacketBuilder {
     pub const LEN: usize = 28;
 
+    #[cfg(feature = "alloc")]
+    pub fn build_vec(&self) -> Result<alloc::vec::Vec<u8>, PacketError> {
+        let mut buf = alloc::vec![0u8; Self::LEN];
+        self.write(&mut buf)?;
+        Ok(buf)
+    }
+
     pub fn write(&self, out: &mut [u8]) -> Result<usize, PacketError> {
         ensure_out_buf_len(out, Self::LEN)?;
         out[0..2].copy_from_slice(&HTYPE_ETHERNET.to_be_bytes());
@@ -153,6 +160,14 @@ pub struct ArpReplyFrameBuilder {
 impl ArpReplyFrameBuilder {
     pub fn len(&self) -> usize {
         super::ethernet::EthernetFrame::HEADER_LEN + ArpPacketBuilder::LEN
+    }
+
+    #[cfg(feature = "alloc")]
+    pub fn build_vec(&self) -> Result<alloc::vec::Vec<u8>, PacketError> {
+        let mut buf = alloc::vec![0u8; self.len()];
+        let len = self.write(&mut buf)?;
+        debug_assert_eq!(len, buf.len());
+        Ok(buf)
     }
 
     pub fn write(&self, out: &mut [u8]) -> Result<usize, PacketError> {
@@ -201,4 +216,3 @@ mod tests {
         assert_eq!(pkt.target_ip().unwrap(), builder.target_ip);
     }
 }
-

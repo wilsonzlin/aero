@@ -55,6 +55,14 @@ impl<'a> EthernetFrameBuilder<'a> {
         EthernetFrame::HEADER_LEN + self.payload.len()
     }
 
+    #[cfg(feature = "alloc")]
+    pub fn build_vec(&self) -> Result<alloc::vec::Vec<u8>, PacketError> {
+        let mut buf = alloc::vec![0u8; self.len()];
+        let len = self.write(&mut buf)?;
+        debug_assert_eq!(len, buf.len());
+        Ok(buf)
+    }
+
     pub fn write(&self, out: &mut [u8]) -> Result<usize, PacketError> {
         let needed = self.len();
         ensure_out_buf_len(out, needed)?;
@@ -88,4 +96,3 @@ mod tests {
         assert_eq!(frame.payload(), &payload);
     }
 }
-

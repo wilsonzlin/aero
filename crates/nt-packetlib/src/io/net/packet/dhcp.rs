@@ -39,23 +39,44 @@ impl<'a> DhcpOfferAckBuilder<'a> {
     /// Base BOOTP header length without options.
     pub const BOOTP_FIXED_LEN: usize = 236;
 
-    pub fn write(&self, out: &mut [u8]) -> Result<usize, PacketError> {
-        // Worst-case options: we only write a small set.
-        // Compute exact length so callers can use the returned size.
-        let mut options_len = 4; // magic cookie
-        options_len += 3; // msg type
-        options_len += 6; // server identifier
-        options_len += 6; // subnet mask
-        options_len += 6; // router
+    pub fn len(&self) -> Result<usize, PacketError> {
+        // Options length:
+        // - Magic cookie (4)
+        // - Message type (3)
+        // - Server identifier (6)
+        // - Subnet mask (6)
+        // - Router (6)
+        // - DNS servers (2 + 4*N)
+        // - Lease time (6)
+        // - Renewal time (T1, 6)
+        // - Rebinding time (T2, 6)
+        // - End (1)
+        let mut options_len: usize = 4 + 3 + 6 + 6 + 6 + 6 + 6 + 6 + 1;
         if !self.dns_servers.is_empty() {
-            options_len += 2 + 4 * self.dns_servers.len();
+            let dns_len = 4 * self.dns_servers.len();
+            if dns_len > u8::MAX as usize {
+                return Err(PacketError::Malformed("too many DNS servers for DHCP option"));
+            }
+            options_len = options_len
+                .checked_add(2 + dns_len)
+                .ok_or(PacketError::Malformed("DHCP options length overflow"))?;
         }
-        options_len += 6; // lease time
-        options_len += 6; // renewal (T1)
-        options_len += 6; // rebinding (T2)
-        options_len += 1; // end
+        Self::BOOTP_FIXED_LEN
+            .checked_add(options_len)
+            .ok_or(PacketError::Malformed("DHCP length overflow"))
+    }
 
-        let total_len = Self::BOOTP_FIXED_LEN + options_len;
+    #[cfg(feature = "alloc")]
+    pub fn build_vec(&self) -> Result<alloc::vec::Vec<u8>, PacketError> {
+        let len = self.len()?;
+        let mut buf = alloc::vec![0u8; len];
+        let written = self.write(&mut buf)?;
+        debug_assert_eq!(written, buf.len());
+        Ok(buf)
+    }
+
+    pub fn write(&self, out: &mut [u8]) -> Result<usize, PacketError> {
+        let total_len = self.len()?;
         ensure_out_buf_len(out, total_len)?;
 
         // BOOTP header.

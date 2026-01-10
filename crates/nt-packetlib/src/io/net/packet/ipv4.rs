@@ -126,6 +126,15 @@ impl<'a> Ipv4PacketBuilder<'a> {
         Ok(self.header_len()? + self.payload.len())
     }
 
+    #[cfg(feature = "alloc")]
+    pub fn build_vec(&self) -> Result<alloc::vec::Vec<u8>, PacketError> {
+        let len = self.total_len()?;
+        let mut buf = alloc::vec![0u8; len];
+        let written = self.write(&mut buf)?;
+        debug_assert_eq!(written, buf.len());
+        Ok(buf)
+    }
+
     pub fn write(&self, out: &mut [u8]) -> Result<usize, PacketError> {
         let header_len = self.header_len()?;
         let total_len = self.total_len()?;
@@ -181,4 +190,3 @@ mod tests {
         assert!(pkt.checksum_valid());
     }
 }
-

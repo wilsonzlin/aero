@@ -200,6 +200,15 @@ impl<'a> TcpSegmentBuilder<'a> {
         Ok(self.header_len()? + self.payload.len())
     }
 
+    #[cfg(feature = "alloc")]
+    pub fn build_vec(&self, src_ip: Ipv4Addr, dst_ip: Ipv4Addr) -> Result<alloc::vec::Vec<u8>, PacketError> {
+        let len = self.len()?;
+        let mut buf = alloc::vec![0u8; len];
+        let written = self.write(src_ip, dst_ip, &mut buf)?;
+        debug_assert_eq!(written, buf.len());
+        Ok(buf)
+    }
+
     pub fn write(&self, src_ip: Ipv4Addr, dst_ip: Ipv4Addr, out: &mut [u8]) -> Result<usize, PacketError> {
         let header_len = self.header_len()?;
         let len = self.len()?;
