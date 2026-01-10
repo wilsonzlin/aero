@@ -40,7 +40,13 @@ export default defineConfig({
   testMatch: ['e2e/**/*.spec.ts', 'playwright/**/*.spec.ts'],
   fullyParallel: true,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [['dot'], ['html', { open: 'never' }]] : 'list',
+  reporter: process.env.CI
+    ? [
+        ['dot'],
+        ['junit', { outputFile: 'test-results/junit.xml' }],
+        ['html', { open: 'never', outputFolder: 'playwright-report' }],
+      ]
+    : 'list',
   use: {
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
@@ -99,4 +105,3 @@ export default defineConfig({
     },
   ],
 });
-

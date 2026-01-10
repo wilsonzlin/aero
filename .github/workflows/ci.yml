@@ -14,6 +14,7 @@ concurrency:
 
 permissions:
   contents: read
+  checks: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -350,28 +351,43 @@ jobs:
             exit 1
           fi
 
-          lockfile="$dir/package-lock.json"
+          lockfile=""
           if [[ "$dir" == "." ]]; then
-            lockfile="package-lock.json"
-          fi
-          if [[ ! -f "$lockfile" ]]; then
-            echo "package-lock.json not found at '$lockfile'. This workflow expects npm; ensure a lockfile exists." >&2
-            exit 1
+            if [[ -f package-lock.json ]]; then
+              lockfile="package-lock.json"
+            fi
+          elif [[ -f "$dir/package-lock.json" ]]; then
+            lockfile="$dir/package-lock.json"
           fi
 
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
           echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
+        if: steps.node-dir.outputs.lockfile == ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Node (npm cache)
+        if: steps.node-dir.outputs.lockfile != ''
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: ${{ steps.node-dir.outputs.lockfile }}
 
-      - name: Install dependencies
+      - name: Install dependencies (npm ci)
+        if: steps.node-dir.outputs.lockfile != ''
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Install dependencies (npm install)
+        if: steps.node-dir.outputs.lockfile == ''
+        working-directory: ${{ steps.node-dir.outputs.dir }}
+        run: npm install --no-audit --no-fund
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
@@ -478,6 +494,24 @@ jobs:
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npm run test:unit --if-present
 
+      - name: Publish unit test report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Vitest
+          path: ${{ steps.node-dir.outputs.dir }}/test-results/vitest-junit.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Upload unit test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-test-results
+          path: ${{ steps.node-dir.outputs.dir }}/test-results/vitest-junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Production build
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npm run build
@@ -509,19 +543,26 @@ jobs:
             exit 1
           fi
 
-          lockfile="$dir/package-lock.json"
+          lockfile=""
           if [[ "$dir" == "." ]]; then
-            lockfile="package-lock.json"
-          fi
-          if [[ ! -f "$lockfile" ]]; then
-            echo "package-lock.json not found at '$lockfile'. This workflow expects npm; ensure a lockfile exists." >&2
-            exit 1
+            if [[ -f package-lock.json ]]; then
+              lockfile="package-lock.json"
+            fi
+          elif [[ -f "$dir/package-lock.json" ]]; then
+            lockfile="$dir/package-lock.json"
           fi
 
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
           echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
+        if: steps.node-dir.outputs.lockfile == ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Node (npm cache)
+        if: steps.node-dir.outputs.lockfile != ''
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -532,13 +573,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles(steps.node-dir.outputs.lockfile) }}
+          key: ${{ runner.os }}-playwright-${{ hashFiles(steps.node-dir.outputs.lockfile || format('{0}/package.json', steps.node-dir.outputs.dir)) }}
           restore-keys: |
             ${{ runner.os }}-playwright-
 
-      - name: Install dependencies
+      - name: Install dependencies (npm ci)
+        if: steps.node-dir.outputs.lockfile != ''
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Install dependencies (npm install)
+        if: steps.node-dir.outputs.lockfile == ''
+        working-directory: ${{ steps.node-dir.outputs.dir }}
+        run: npm install --no-audit --no-fund
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
@@ -550,15 +599,24 @@ jobs:
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npx playwright test --project=chromium
 
+      - name: Publish E2E test report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Playwright
+          path: ${{ steps.node-dir.outputs.dir }}/test-results/junit.xml
+          reporter: java-junit
+          fail-on-error: false
+
       - name: Upload Playwright report
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
           path: |
             ${{ steps.node-dir.outputs.dir }}/playwright-report/
             ${{ steps.node-dir.outputs.dir }}/test-results/
-          if-no-files-found: ignore
+          if-no-files-found: warn
           retention-days: 7
 
   ci-gate:
