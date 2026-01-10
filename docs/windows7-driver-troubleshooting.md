@@ -31,7 +31,7 @@ If you have not installed Guest Tools yet, start here:
   - [Storage controller switch gotchas (boot loops, 0x7B)](#issue-storage-controller-switch-gotchas-boot-loops-0x7b)
   - [No bootable device or BOOTMGR is missing after switching storage](#issue-no-bootable-device-or-bootmgr-is-missing-after-switching-storage)
 - Windows Setup disk detection issues:
-  - [Windows Setup can’t see a virtio-blk disk](#issue-windows-setup-cant-see-a-virtio-blk-disk-slipstream-installs)
+  - [Windows Setup can't see a virtio-blk disk](#issue-windows-setup-cant-see-a-virtio-blk-disk-slipstream-installs)
 - Display issues after switching to the Aero GPU:
   - [Black screen after switching to the Aero GPU](#issue-black-screen-after-switching-to-the-aero-gpu)
   - [Aero theme not available (stuck in basic graphics mode)](#issue-aero-theme-not-available-stuck-in-basic-graphics-mode)
