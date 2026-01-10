@@ -1,3 +1,5 @@
+pub mod mmio;
+
 pub trait MemoryBus {
     fn read_u8(&self, addr: u64) -> u8;
     fn write_u8(&mut self, addr: u64, value: u8);

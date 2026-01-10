@@ -11,7 +11,7 @@ fn mode_03_teletype_scrolling() {
     let mut cpu = CpuState::default();
     let mut mem = LinearMemory::new(1024 * 1024);
     let mut vga = VgaDevice::default();
-    let mut vbe = NoVbe::default();
+    let mut vbe = NoVbe;
 
     cpu.set_ah(0x00);
     cpu.set_al(0x03);
@@ -45,7 +45,7 @@ fn cursor_position_and_shape() {
     let mut cpu = CpuState::default();
     let mut mem = LinearMemory::new(1024 * 1024);
     let mut vga = VgaDevice::default();
-    let mut vbe = NoVbe::default();
+    let mut vbe = NoVbe;
 
     cpu.set_ah(0x00);
     cpu.set_al(0x03);
@@ -75,7 +75,7 @@ fn write_char_attr_repeat_does_not_move_cursor() {
     let mut cpu = CpuState::default();
     let mut mem = LinearMemory::new(1024 * 1024);
     let mut vga = VgaDevice::default();
-    let mut vbe = NoVbe::default();
+    let mut vbe = NoVbe;
 
     cpu.set_ah(0x00);
     cpu.set_al(0x03);
@@ -107,7 +107,7 @@ fn write_char_only_repeat_preserves_attribute() {
     let mut cpu = CpuState::default();
     let mut mem = LinearMemory::new(1024 * 1024);
     let mut vga = VgaDevice::default();
-    let mut vbe = NoVbe::default();
+    let mut vbe = NoVbe;
 
     cpu.set_ah(0x00);
     cpu.set_al(0x03);
@@ -137,7 +137,7 @@ fn mode_13_sets_text_geometry_and_allows_pixel_writes() {
     let mut cpu = CpuState::default();
     let mut mem = LinearMemory::new(1024 * 1024);
     let mut vga = VgaDevice::default();
-    let mut vbe = NoVbe::default();
+    let mut vbe = NoVbe;
 
     cpu.set_ah(0x00);
     cpu.set_al(0x13);

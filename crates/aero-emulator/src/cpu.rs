@@ -11,7 +11,7 @@ impl Segment {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct CpuState {
     pub rax: u64,
     pub rbx: u64,
@@ -27,27 +27,6 @@ pub struct CpuState {
     pub ds: Segment,
     pub es: Segment,
     pub ss: Segment,
-}
-
-impl Default for CpuState {
-    fn default() -> Self {
-        Self {
-            rax: 0,
-            rbx: 0,
-            rcx: 0,
-            rdx: 0,
-            rsi: 0,
-            rdi: 0,
-            rbp: 0,
-            rsp: 0,
-            rip: 0,
-            rflags: 0,
-            cs: Segment::default(),
-            ds: Segment::default(),
-            es: Segment::default(),
-            ss: Segment::default(),
-        }
-    }
 }
 
 impl CpuState {

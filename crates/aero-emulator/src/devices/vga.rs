@@ -9,6 +9,11 @@ pub struct VgaDevice {
     gfx_buffer: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VgaError {
+    UnsupportedMode,
+}
+
 impl Default for VgaDevice {
     fn default() -> Self {
         let mut vga = Self {
@@ -39,7 +44,7 @@ impl VgaDevice {
         (self.gfx_width, self.gfx_height)
     }
 
-    pub fn set_mode(&mut self, mode: u8, clear: bool) -> Result<(), ()> {
+    pub fn set_mode(&mut self, mode: u8, clear: bool) -> Result<(), VgaError> {
         match mode {
             0x03 => {
                 self.mode = mode;
@@ -68,7 +73,7 @@ impl VgaDevice {
                 }
                 Ok(())
             }
-            _ => Err(()),
+            _ => Err(VgaError::UnsupportedMode),
         }
     }
 
