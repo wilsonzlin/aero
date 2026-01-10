@@ -9,6 +9,8 @@ pub struct FpuState {
     /// FPU Control Word.
     pub fcw: u16,
     /// FPU Status Word.
+    ///
+    /// Note: the TOP-of-stack bits (11..=13) are stored separately in [`Self::top`].
     pub fsw: u16,
     /// FPU Tag Word in abridged (8-bit) form as stored by `FXSAVE`.
     pub ftw: u8,

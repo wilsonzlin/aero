@@ -240,11 +240,13 @@ impl CpuState {
         // hardware, but the *value* must still be validated.
         sse.set_mxcsr(mxcsr)?;
 
-        let fsw = read_u16(src, 2);
+        let fsw_raw = read_u16(src, 2);
+        let top = ((fsw_raw >> 11) & 0b111) as u8;
+        let fsw = fsw_raw & !(0b111 << 11);
         let mut fpu = self.fpu.clone();
         fpu.fcw = read_u16(src, 0);
         fpu.fsw = fsw;
-        fpu.top = ((fsw >> 11) & 0b111) as u8;
+        fpu.top = top;
         fpu.ftw = src[4];
         fpu.fop = read_u16(src, 6);
         fpu.fip = read_u32(src, 8) as u64;
@@ -323,11 +325,13 @@ impl CpuState {
         let mut sse = self.sse.clone();
         sse.set_mxcsr(mxcsr)?;
 
-        let fsw = read_u16(src, 2);
+        let fsw_raw = read_u16(src, 2);
+        let top = ((fsw_raw >> 11) & 0b111) as u8;
+        let fsw = fsw_raw & !(0b111 << 11);
         let mut fpu = self.fpu.clone();
         fpu.fcw = read_u16(src, 0);
         fpu.fsw = fsw;
-        fpu.top = ((fsw >> 11) & 0b111) as u8;
+        fpu.top = top;
         fpu.ftw = src[4];
         fpu.fop = read_u16(src, 6);
         fpu.fip = read_u64(src, 8);

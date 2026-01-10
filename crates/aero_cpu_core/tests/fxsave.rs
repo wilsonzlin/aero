@@ -1,6 +1,7 @@
 use aero_cpu_core::{sse_state::MXCSR_MASK, Bus, CpuState, RamBus, FXSAVE_AREA_SIZE};
 
 const ST80_MASK: u128 = (1u128 << 80) - 1;
+const FSW_TOP_MASK: u16 = 0b111 << 11;
 
 fn patterned_u128(seed: u8) -> u128 {
     let mut bytes = [0u8; 16];
@@ -111,7 +112,7 @@ fn fxrstor_legacy_restores_state() {
     cpu.fxrstor_from_bus(&mut bus, base).unwrap();
 
     assert_eq!(cpu.fpu.fcw, 0x1111);
-    assert_eq!(cpu.fpu.fsw, 0x2222);
+    assert_eq!(cpu.fpu.fsw, 0x2222 & !FSW_TOP_MASK);
     assert_eq!(cpu.fpu.top, ((0x2222u16 >> 11) & 0b111) as u8);
     assert_eq!(cpu.fpu.ftw, 0xFE);
     assert_eq!(cpu.fpu.fop, 0x3333);
@@ -131,7 +132,7 @@ fn fxrstor_legacy_restores_state() {
 fn fxsave64_roundtrip_restores_state() {
     let mut original = CpuState::default();
     original.fpu.fcw = 0xABCD;
-    original.fpu.fsw = 0x7777;
+    original.fpu.fsw = 0x7777 & !FSW_TOP_MASK;
     original.fpu.top = 7;
     original.fpu.ftw = 0x55;
     original.fpu.fop = 0x0BAD;
@@ -166,7 +167,7 @@ fn fxsave64_roundtrip_restores_state() {
     restored.fxrstor64_from_bus(&mut bus, base).unwrap();
 
     assert_eq!(restored.fpu.fcw, original.fpu.fcw);
-    assert_eq!(restored.fpu.fsw, original.fpu.fsw_with_top());
+    assert_eq!(restored.fpu.fsw, original.fpu.fsw);
     assert_eq!(restored.fpu.top, original.fpu.top);
     assert_eq!(restored.fpu.ftw, original.fpu.ftw);
     assert_eq!(restored.fpu.fop, original.fpu.fop);
