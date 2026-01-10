@@ -1,0 +1,50 @@
+{
+	# Global options.
+	#
+	# We intentionally do not set a global ACME email here because it would make
+	# the file invalid when an env var is unset. If you want an email contact
+	# for certificate expiry notices, configure it explicitly in your own fork.
+	auto_https on
+}
+
+(aero_headers) {
+	# Required for:
+	# - SharedArrayBuffer + WASM threads (cross-origin isolated pages)
+	# - Origin-keyed agent clusters (consistent browsing context separation)
+	header {
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Embedder-Policy "require-corp"
+		Cross-Origin-Resource-Policy "same-origin"
+		Origin-Agent-Cluster "?1"
+
+		# Basic hardening.
+		X-Content-Type-Options "nosniff"
+
+		# HSTS is enabled by setting a non-zero max-age.
+		# - Local dev default: max-age=0 (disabled)
+		# - Production recommended: 31536000 (1 year) or higher
+		Strict-Transport-Security "max-age={$AERO_HSTS_MAX_AGE:0}"
+	}
+}
+
+{$AERO_DOMAIN:localhost} {
+	encode zstd gzip
+
+	# WebSocket TCP proxy endpoint and HTTP APIs.
+	@aero_gateway path /tcp* /dns-query* /api* /health* /metrics*
+	handle @aero_gateway {
+		import aero_headers
+		reverse_proxy {$AERO_GATEWAY_UPSTREAM:aero-gateway:8080}
+	}
+
+	# Static frontend assets (optional).
+	#
+	# Mount your built frontend to /srv (see docker-compose.yml) to serve the
+	# UI and the gateway from the same origin.
+	handle {
+		import aero_headers
+		root * /srv
+		try_files {path} {path}/ /index.html
+		file_server
+	}
+}

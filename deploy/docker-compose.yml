@@ -1,0 +1,72 @@
+name: aero
+
+services:
+  # Reverse proxy / TLS terminator.
+  #
+  # Responsibilities:
+  # - Terminates TLS on :443 (HTTP/2 enabled by default)
+  # - Forces COOP/COEP/CORP headers at the edge for SharedArrayBuffer + WASM threads
+  # - Proxies WebSocket upgrades (e.g. /tcp) and HTTP APIs (e.g. /dns-query) to the gateway
+  aero-proxy:
+    image: caddy:2.8.4
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Hostname / domain name to serve.
+      # - Local dev: "localhost"
+      # - Production: "aero.example.com"
+      AERO_DOMAIN: ${AERO_DOMAIN:-localhost}
+
+      # Gateway upstream within the docker network.
+      AERO_GATEWAY_UPSTREAM: ${AERO_GATEWAY_UPSTREAM:-aero-gateway:8080}
+
+      # HSTS toggle (0 disables, recommended 31536000+ for production).
+      AERO_HSTS_MAX_AGE: ${AERO_HSTS_MAX_AGE:-0}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+
+      # Caddy data stores ACME certs (production) and its local CA (localhost).
+      - caddy_data:/data
+      - caddy_config:/config
+
+      # Optional: serve a built frontend from the same origin as the gateway.
+      #
+      # Recommended production setup:
+      #   - Build your frontend to ../frontend/dist
+      #   - Replace "./static" with "../frontend/dist"
+      #
+      # Example:
+      #   - ../frontend/dist:/srv:ro
+      - ./static:/srv:ro
+    depends_on:
+      - aero-gateway
+
+  # Backend "gateway" (HTTP + WS) that the browser talks to.
+  #
+  # This compose file assumes the gateway listens on plain HTTP inside the
+  # docker network (TLS is terminated at the proxy).
+  aero-gateway:
+    # Local-dev default: a small stub gateway (build context in ./gateway) that:
+    # - serves /healthz and /api/echo over HTTP
+    # - accepts WebSocket upgrades on /tcp and echoes frames back
+    #
+    # Production: replace this with your real Aero gateway image/build.
+    image: ${AERO_GATEWAY_IMAGE:-aero-gateway:dev}
+    build:
+      context: ./gateway
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      # NOTE: The actual env vars depend on the gateway implementation.
+      # This file only documents recommended deployment toggles.
+      #
+      # Ensure the gateway only trusts X-Forwarded-* headers when explicitly
+      # configured to do so (to avoid spoofing when not behind a proxy).
+      AERO_TRUST_PROXY: ${AERO_TRUST_PROXY:-0}
+
+volumes:
+  caddy_data:
+  caddy_config:

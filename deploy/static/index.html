@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aero deploy smoke test</title>
+    <style>
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        margin: 2rem;
+        line-height: 1.45;
+      }
+      code {
+        background: #f4f4f5;
+        padding: 0.15rem 0.3rem;
+        border-radius: 0.25rem;
+      }
+      .ok {
+        color: #0a7a2f;
+        font-weight: 600;
+      }
+      .bad {
+        color: #b42318;
+        font-weight: 600;
+      }
+      pre {
+        background: #0b1020;
+        color: #e6edf3;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Aero deploy smoke test</h1>
+    <p>
+      This page exists to validate that the reverse proxy is serving over <code>https://</code> and that the
+      response is <em>cross-origin isolated</em> (required for <code>SharedArrayBuffer</code> + WASM threads).
+    </p>
+
+    <h2>Status</h2>
+    <ul>
+      <li>
+        <code>window.crossOriginIsolated</code>:
+        <span id="coi">…</span>
+      </li>
+      <li>
+        <code>typeof SharedArrayBuffer</code>:
+        <span id="sab">…</span>
+      </li>
+      <li>
+        <code>location.origin</code>:
+        <code id="origin">…</code>
+      </li>
+      <li>
+        <code>GET /healthz</code>:
+        <span id="health">…</span>
+      </li>
+      <li>
+        <code>WSS /tcp</code> echo:
+        <span id="ws">…</span>
+      </li>
+    </ul>
+
+    <h2>Quick checks</h2>
+    <pre><code id="checks">…</code></pre>
+
+    <script type="module">
+      const coi = window.crossOriginIsolated === true;
+      document.querySelector("#coi").textContent = String(window.crossOriginIsolated);
+      document.querySelector("#coi").className = coi ? "ok" : "bad";
+
+      const sab = typeof SharedArrayBuffer !== "undefined";
+      document.querySelector("#sab").textContent = typeof SharedArrayBuffer;
+      document.querySelector("#sab").className = sab ? "ok" : "bad";
+
+      document.querySelector("#origin").textContent = location.origin;
+
+      const checks = [
+        `Secure context: ${window.isSecureContext}`,
+        `COI: ${window.crossOriginIsolated}`,
+        `SAB: ${typeof SharedArrayBuffer}`,
+        "",
+        "If COI is false:",
+        "- Confirm COOP/COEP/CORP headers are present on the *main document* response.",
+        "- Confirm your browser trusts the TLS certificate (esp. when using localhost/self-signed).",
+        "- Ensure all subresources are same-origin OR explicitly CORS/CORP-enabled.",
+      ];
+      document.querySelector("#checks").textContent = checks.join("\n");
+
+      // Basic "is the reverse proxy wiring correct?" checks.
+      try {
+        const res = await fetch("/healthz", { cache: "no-store" });
+        const text = await res.text();
+        const ok = res.ok && text.trim() === "ok";
+        const el = document.querySelector("#health");
+        el.textContent = ok ? "ok" : `unexpected (${res.status})`;
+        el.className = ok ? "ok" : "bad";
+      } catch (err) {
+        const el = document.querySelector("#health");
+        el.textContent = "failed";
+        el.className = "bad";
+      }
+
+      try {
+        const wsUrl = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/tcp`;
+        const wsEl = document.querySelector("#ws");
+        const ws = new WebSocket(wsUrl);
+        ws.binaryType = "arraybuffer";
+
+        ws.onopen = () => {
+          ws.send("echo-test");
+        };
+
+        ws.onmessage = (event) => {
+          const msg = typeof event.data === "string" ? event.data : "<binary>";
+          const ok = msg === "echo-test";
+          wsEl.textContent = ok ? "ok" : `unexpected (${msg})`;
+          wsEl.className = ok ? "ok" : "bad";
+          ws.close();
+        };
+
+        ws.onerror = () => {
+          wsEl.textContent = "failed";
+          wsEl.className = "bad";
+        };
+      } catch (err) {
+        const el = document.querySelector("#ws");
+        el.textContent = "failed";
+        el.className = "bad";
+      }
+    </script>
+  </body>
+</html>
