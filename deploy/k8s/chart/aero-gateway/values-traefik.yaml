@@ -1,0 +1,25 @@
+# Example values for Traefik users.
+#
+# This enables:
+# - IngressClass "traefik"
+# - COOP/COEP headers via a Traefik Middleware (no nginx snippet annotations)
+#
+# Copy locally and replace placeholders before deploying.
+
+gateway:
+  image:
+    tag: "<REPLACE_WITH_IMAGE_TAG>"
+
+ingress:
+  className: traefik
+  host: "aero.example.com"
+  tls:
+    enabled: true
+    secretName: "aero-tls"
+  coopCoep:
+    mode: traefik
+
+secrets:
+  data:
+    SESSION_SECRET: "<REPLACE_WITH_RANDOM_SECRET>"
+    ADMIN_API_KEY: "<REPLACE_WITH_RANDOM_KEY>"

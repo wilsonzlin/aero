@@ -96,6 +96,15 @@ helm upgrade --install aero-gateway ./deploy/k8s/chart/aero-gateway \
 
 Note: `SharedArrayBuffer` / `crossOriginIsolated` requires HTTPS + COOP/COEP, so a non-TLS dev setup is useful for iteration but not browser-threaded production mode.
 
+## Example values files
+
+The chart ships example values you can copy locally:
+
+- `deploy/k8s/chart/aero-gateway/values-dev.yaml` – basic dev defaults
+- `deploy/k8s/chart/aero-gateway/values-prod.yaml` – production-ish defaults (TLS + 2 replicas)
+- `deploy/k8s/chart/aero-gateway/values-traefik.yaml` – Traefik Ingress + Middleware headers
+- `deploy/k8s/chart/aero-gateway/values-prod-appheaders.yaml` – production with app-level COOP/COEP (no ingress snippets)
+
 ## Gateway config notes (PUBLIC_BASE_URL / origin allowlist)
 
 `aero-gateway` enforces an `Origin` allowlist for browser-initiated requests.

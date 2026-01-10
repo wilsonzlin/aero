@@ -1,0 +1,30 @@
+# Example production values when your ingress controller disallows header snippet annotations.
+#
+# Strategy:
+# - Disable ingress COOP/COEP injection
+# - Enable application-level COOP/COEP via CROSS_ORIGIN_ISOLATION=1
+#
+# Copy locally and replace placeholders before deploying.
+
+gateway:
+  replicaCount: 2
+  image:
+    tag: "<REPLACE_WITH_IMAGE_TAG>"
+  crossOriginIsolation:
+    enabled: true
+
+ingress:
+  host: "aero.example.com"
+  tls:
+    enabled: true
+    secretName: "aero-tls"
+  coopCoep:
+    enabled: false
+
+redis:
+  enabled: true
+
+secrets:
+  data:
+    SESSION_SECRET: "<REPLACE_WITH_RANDOM_SECRET>"
+    ADMIN_API_KEY: "<REPLACE_WITH_RANDOM_KEY>"
