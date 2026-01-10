@@ -454,6 +454,84 @@ VOID VirtioMsixDpc(WDFINTERRUPT Interrupt, WDFOBJECT AssociatedObject)
 }
 ```
 
+## 4.1) MSI-X multi-vector concurrency model (and how to make it safe)
+
+With MSI-X, Windows can deliver interrupts for different MSI-X messages to different CPUs. In KMDF, when you create **one `WDFINTERRUPT` per message**, each interrupt object has its own DPC — and **KMDF can run those DPCs concurrently**.
+
+### IRQL summary
+
+* **ISR (`EvtInterruptIsr`)** runs at **DIRQL**:
+  * keep it minimal: no heavy locks, no virtqueue draining, no reset work
+  * typically just queues the DPC (`WdfInterruptQueueDpcForIsr`)
+* **DPC (`EvtInterruptDpc`)** runs at **DISPATCH_LEVEL**:
+  * this is where virtqueue used-ring draining/completions run
+  * multiple DPCs (different MSI-X messages) may run in parallel
+* **PnP/power/reset** paths run at **PASSIVE_LEVEL**:
+  * `EvtDevicePrepareHardware`, `EvtDeviceD0Entry/D0Exit`, IOCTL threads, etc.
+  * these can race with DPC code unless explicitly synchronized
+
+### What must be serialized (virtio-pci modern hazards)
+
+1. **Per-virtqueue state + used-ring draining**
+   * `last_used_idx`, in-flight descriptor tables, completion paths, etc.
+   * must be protected against:
+     * concurrent DPCs on other CPUs (other queues), and
+     * submission/reset paths running outside the DPC
+2. **Any sequence using `common_cfg.queue_select`**
+   * `queue_select` is a single global register.
+   * the sequence “write `queue_select`, then read/write queue-specific fields” must not interleave across threads.
+3. **Device reset / MSI-X reprogramming vs active interrupts**
+   * reset can clear vector registers back to `0xFFFF`
+   * interrupts must not run against partially initialized (or torn-down) queue state
+
+### Locking scheme (recommended)
+
+If you want MSI-X parallelism, do **not** rely on implicit framework serialization.
+
+Use explicit locks instead:
+
+* **Per-queue spinlock** (one per virtqueue)
+  * guards queue state + used-ring draining
+  * queue DPC must acquire this lock before touching the queue
+* **Global `common_cfg` spinlock**
+  * guards any access that writes `common_cfg.queue_select` and then accesses queue-specific common_cfg fields (`queue_msix_vector`, `queue_enable`, `queue_notify_off`, …)
+
+Lock ordering (to avoid deadlocks if a path needs both):
+
+1. acquire `common_cfg` lock
+2. acquire per-queue lock
+
+### KMDF: `WDF_INTERRUPT_CONFIG.AutomaticSerialization`
+
+**Decision:** For MSI-X we intentionally set:
+
+* `WDF_INTERRUPT_CONFIG.AutomaticSerialization = FALSE`
+
+Rationale:
+
+* With `AutomaticSerialization = TRUE`, KMDF often serializes ISR/DPC callbacks using the device synchronization scope, which can negate the performance benefit of per-queue MSI-X vectors.
+* With it disabled, safety comes from the explicit spinlocks above.
+
+### Reset / reprogramming safety sequence (MSI-X)
+
+At PASSIVE_LEVEL (e.g. device reset / D0Exit):
+
+1. Set an atomic `ResetInProgress = TRUE` flag (DPCs bail out early).
+2. Disable OS interrupt delivery (`WdfInterruptDisable` on each interrupt object).
+3. Disable device-side routing:
+   * program `msix_config = 0xFFFF`
+   * for each queue: `queue_select = q; queue_msix_vector = 0xFFFF`
+4. Synchronize with in-flight DPC work:
+   * acquire+release each queue lock once (waits for any running DPC to leave its critical section)
+5. Reset / reinitialize device and queues.
+6. Reprogram vectors (after reset) and verify read-back != `0xFFFF`.
+7. Re-enable OS interrupt delivery (`WdfInterruptEnable`).
+8. Clear `ResetInProgress` only when queues are fully ready.
+
+Concrete code implementing this model lives in:
+
+* `drivers/windows/virtio_pci_modern/virtio_pci_modern_interrupts.c`
+
 ## 5) Windows 7 INF: enabling MSI/MSI-X
 
 On Windows 7, message-signaled interrupts are typically enabled through INF registry settings under the device’s hardware key.
