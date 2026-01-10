@@ -40,7 +40,7 @@ This reference server uses a simple naming convention:
 - **Public** image id `win7` → `${DISK_GATEWAY_PUBLIC_DIR}/win7.img`
 - **Private** image id `secret` for user `alice` → `${DISK_GATEWAY_PRIVATE_DIR}/alice/secret.img`
 
-Both `{id}` and `{user}` are validated as “path segments” (letters/digits/`._-`) to avoid path traversal.
+Both `{id}` and `{user}` are validated as “path segments” (letters/digits/`._-`, excluding `.` and `..`) to avoid path traversal.
 
 ## API
 

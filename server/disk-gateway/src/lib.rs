@@ -292,6 +292,8 @@ fn apply_cors_headers(
 fn is_safe_path_segment(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 128
+        && s != "."
+        && s != ".."
         && s.bytes()
             .all(|b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'_' | b'-'))
 }
@@ -1259,6 +1261,51 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(&body[..], b"top");
+    }
+
+    #[tokio::test]
+    async fn rejects_dotdot_image_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir, private_dir);
+        let app = app(cfg);
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/..")
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            resp.headers()
+                .get("cross-origin-resource-policy")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "same-site"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_dotdot_user_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir, private_dir);
+        let app = app(cfg);
+
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/api/images/secret/lease")
+            .header(ORIGIN, "https://app.example")
+            .header(AUTHORIZATION, "Bearer ..")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
