@@ -1,0 +1,132 @@
+/// Stereo audio ring buffer used to bridge the emulator output to a Web Audio
+/// `AudioWorkletProcessor`.
+///
+/// In the browser build this will be backed by a `SharedArrayBuffer`; for unit
+/// tests we keep the implementation pure Rust while matching the same semantics:
+///
+/// - Producer writes interleaved stereo `f32` frames.
+/// - Consumer reads a fixed number of frames per render quantum.
+/// - On underrun, the consumer receives silence and an underrun counter
+///   increments.
+/// - On overrun, the oldest audio is dropped to keep latency bounded.
+#[derive(Debug, Clone)]
+pub struct AudioRingBuffer {
+    channels: usize,
+    capacity_frames: usize,
+    data: Vec<f32>,
+    read_frame: usize,
+    write_frame: usize,
+    len_frames: usize,
+    underrun_frames: u64,
+    overrun_frames: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingBufferTelemetry {
+    pub capacity_frames: usize,
+    pub available_frames: usize,
+    pub underrun_frames: u64,
+    pub overrun_frames: u64,
+}
+
+impl AudioRingBuffer {
+    pub fn new_stereo(capacity_frames: usize) -> Self {
+        assert!(capacity_frames > 0);
+        let channels = 2;
+        Self {
+            channels,
+            capacity_frames,
+            data: vec![0.0; capacity_frames * channels],
+            read_frame: 0,
+            write_frame: 0,
+            len_frames: 0,
+            underrun_frames: 0,
+            overrun_frames: 0,
+        }
+    }
+
+    pub fn capacity_frames(&self) -> usize {
+        self.capacity_frames
+    }
+
+    pub fn available_frames(&self) -> usize {
+        self.len_frames
+    }
+
+    pub fn telemetry(&self) -> RingBufferTelemetry {
+        RingBufferTelemetry {
+            capacity_frames: self.capacity_frames,
+            available_frames: self.len_frames,
+            underrun_frames: self.underrun_frames,
+            overrun_frames: self.overrun_frames,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.read_frame = 0;
+        self.write_frame = 0;
+        self.len_frames = 0;
+        self.underrun_frames = 0;
+        self.overrun_frames = 0;
+        self.data.fill(0.0);
+    }
+
+    /// Push interleaved stereo samples.
+    pub fn push_interleaved_stereo(&mut self, samples: &[f32]) {
+        assert!(samples.len() % self.channels == 0);
+        let frames = samples.len() / self.channels;
+        if frames == 0 {
+            return;
+        }
+
+        let free_frames = self.capacity_frames - self.len_frames;
+        if frames > free_frames {
+            let drop = frames - free_frames;
+            self.drop_oldest_frames(drop);
+        }
+
+        for frame_idx in 0..frames {
+            let src = frame_idx * self.channels;
+            let dst_frame = self.write_frame;
+            let dst = dst_frame * self.channels;
+            self.data[dst..dst + self.channels]
+                .copy_from_slice(&samples[src..src + self.channels]);
+            self.write_frame = (self.write_frame + 1) % self.capacity_frames;
+        }
+        self.len_frames = (self.len_frames + frames).min(self.capacity_frames);
+    }
+
+    fn drop_oldest_frames(&mut self, frames: usize) {
+        if frames == 0 {
+            return;
+        }
+        let drop = frames.min(self.len_frames);
+        self.read_frame = (self.read_frame + drop) % self.capacity_frames;
+        self.len_frames -= drop;
+        self.overrun_frames += drop as u64;
+    }
+
+    /// Pop `frames` frames as interleaved stereo.
+    ///
+    /// If the buffer does not contain enough audio, the remaining frames will be
+    /// filled with silence.
+    pub fn pop_interleaved_stereo(&mut self, frames: usize) -> Vec<f32> {
+        let mut out = vec![0.0f32; frames * self.channels];
+
+        let available = self.len_frames.min(frames);
+        for frame_idx in 0..available {
+            let src_frame = self.read_frame;
+            let src = src_frame * self.channels;
+            let dst = frame_idx * self.channels;
+            out[dst..dst + self.channels].copy_from_slice(&self.data[src..src + self.channels]);
+            self.read_frame = (self.read_frame + 1) % self.capacity_frames;
+        }
+
+        self.len_frames -= available;
+        if available < frames {
+            self.underrun_frames += (frames - available) as u64;
+        }
+
+        out
+    }
+}

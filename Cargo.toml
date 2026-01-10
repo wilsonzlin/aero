@@ -7,6 +7,7 @@ edition = "2021"
 resolver = "2"
 members = [
     "crates/aero-acpi",
+    "crates/aero-audio",
     "crates/aero-gpu",
     "crates/aero-gpu-device",
     "crates/aero-gpu-trace",
