@@ -72,9 +72,11 @@ class FileSource implements RandomAccessSource {
 class UrlSource implements RandomAccessSource {
   public readonly url: string;
   public readonly size: number;
-  constructor(url: string, size: number) {
+  private readonly signal: AbortSignal | undefined;
+  constructor(url: string, size: number, signal: AbortSignal | undefined) {
     this.url = url;
     this.size = size;
+    this.signal = signal;
   }
   async readAt(offset: number, length: number): Promise<Uint8Array> {
     const end = offset + length;
@@ -85,6 +87,7 @@ class UrlSource implements RandomAccessSource {
       headers: {
         Range: `bytes=${offset}-${end - 1}`,
       },
+      signal: this.signal,
     });
     if (!res.ok) throw new Error(`range fetch failed (${res.status})`);
     const ab = await res.arrayBuffer();
@@ -101,7 +104,7 @@ export async function importConvertToOpfs(
   baseName: string,
   options: ImportConvertOptions = {},
 ): Promise<ImportManifest> {
-  const { src, filename } = await openSource(source);
+  const { src, filename } = await openSource(source, options.signal);
   const format = await detectFormat(src, filename);
 
   if (format === "iso") {
@@ -175,16 +178,19 @@ export async function detectFormat(src: RandomAccessSource, filename?: string): 
   return "raw";
 }
 
-async function openSource(source: ImportSource): Promise<{ src: RandomAccessSource; filename?: string }> {
+async function openSource(
+  source: ImportSource,
+  signal: AbortSignal | undefined,
+): Promise<{ src: RandomAccessSource; filename?: string }> {
   if (source.kind === "file") return { src: new FileSource(source.file), filename: source.file.name };
   const filename = source.filename ?? new URL(source.url).pathname.split("/").pop() ?? "image";
-  const size = source.size ?? (await fetchSize(source.url));
-  return { src: new UrlSource(source.url, size), filename };
+  const size = source.size ?? (await fetchSize(source.url, signal));
+  return { src: new UrlSource(source.url, size, signal), filename };
 }
 
-async function fetchSize(url: string): Promise<number> {
+async function fetchSize(url: string, signal: AbortSignal | undefined): Promise<number> {
   // HEAD is preferred but not always supported.
-  const head = await fetch(url, { method: "HEAD" });
+  const head = await fetch(url, { method: "HEAD", signal });
   const len = head.headers.get("content-length");
   if (head.ok && len) {
     const parsed = Number(len);
@@ -192,7 +198,7 @@ async function fetchSize(url: string): Promise<number> {
   }
 
   // Fallback: Range GET and parse Content-Range.
-  const res = await fetch(url, { headers: { Range: "bytes=0-0" } });
+  const res = await fetch(url, { headers: { Range: "bytes=0-0" }, signal });
   const cr = res.headers.get("content-range");
   if (!res.ok || !cr) throw new Error("unable to determine remote size (missing Content-Range)");
   const match = cr.match(/\/(\d+)$/);
