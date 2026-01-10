@@ -4,7 +4,10 @@ param(
     [string] $CertPath = "out/certs/aero-test.cer",
     [string] $OutDir = "out/artifacts",
     [string] $Version,
-    [switch] $NoIso
+    [switch] $NoIso,
+    [switch] $MakeFatImage,
+    [switch] $FatImageStrict,
+    [int] $FatImageSizeMB = 64
 )
 
 Set-StrictMode -Version Latest
@@ -219,14 +222,21 @@ function Write-InstallTxt {
         "Open an elevated Command Prompt in the folder containing the driver files and run:",
         "  pnputil -i -a <path-to-driver.inf>",
         "",
-        "Example:",
+        "Example (bundle ZIP/ISO layout):",
         "  pnputil -i -a drivers\\<driver>\\x64\\<something>.inf",
+        "",
+        "Example (FAT disk image layout):",
+        "  pnputil -i -a x64\\<driver>\\<something>.inf",
         "",
         "4) Windows Setup: \"Load driver\"",
         "--------------------------------",
-        "If you built an ISO artifact, mount it in the VM and choose:",
+        "Mount the ISO (if produced) or attach the FAT driver disk image (if produced).",
+        "Then choose:",
         "  Install Windows -> Load driver -> Browse",
-        "Then select the correct x86/x64 INF under the drivers\\ folder.",
+        "",
+        "Driver locations:",
+        "  - Bundle ZIP/ISO: drivers\\<driver>\\x86\\*.inf or drivers\\<driver>\\x64\\*.inf",
+        "  - FAT disk image: x86\\<driver>\\*.inf or x64\\<driver>\\*.inf",
         ""
     )
 
@@ -310,6 +320,48 @@ function Copy-DriversForArch {
     Assert-ContainsFileExtension -Root $DestRoot -Extension "sys"
 }
 
+function New-FatImageInputFromBundle {
+    param(
+        [Parameter(Mandatory = $true)][string] $BundleRoot,
+        [Parameter(Mandatory = $true)][string] $CertSourcePath,
+        [Parameter(Mandatory = $true)][string] $DestRoot
+    )
+
+    New-DriverArtifactRoot -DestRoot $DestRoot -CertSourcePath $CertSourcePath
+
+    $x86Root = Join-Path $DestRoot "x86"
+    $x64Root = Join-Path $DestRoot "x64"
+    New-Item -ItemType Directory -Force -Path $x86Root | Out-Null
+    New-Item -ItemType Directory -Force -Path $x64Root | Out-Null
+
+    $bundleDrivers = Join-Path $BundleRoot "drivers"
+    if (-not (Test-Path $bundleDrivers)) {
+        throw "Expected a 'drivers' folder in the bundle root: '$bundleDrivers'."
+    }
+
+    $driverDirs = Get-ChildItem -Path $bundleDrivers -Directory -ErrorAction SilentlyContinue
+    if (-not $driverDirs) {
+        throw "No driver directories found under '$bundleDrivers'."
+    }
+
+    foreach ($driverDir in $driverDirs) {
+        foreach ($arch in @("x86", "x64")) {
+            $src = Join-Path $driverDir.FullName $arch
+            if (-not (Test-Path $src)) {
+                continue
+            }
+
+            $dest = Join-Path (Join-Path $DestRoot $arch) $driverDir.Name
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            Copy-Item -Path (Join-Path $src "*") -Destination $dest -Recurse -Force
+        }
+    }
+
+    Assert-ContainsFileExtension -Root $DestRoot -Extension "inf"
+    Assert-ContainsFileExtension -Root $DestRoot -Extension "cat"
+    Assert-ContainsFileExtension -Root $DestRoot -Extension "sys"
+}
+
 function New-ZipFromFolder {
     param(
         [Parameter(Mandatory = $true)][string] $Folder,
@@ -386,6 +438,12 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = Get-VersionString
 }
 
+$envVal = $env:AERO_MAKE_FAT_IMAGE
+if ($null -eq $envVal) {
+    $envVal = ""
+}
+$shouldMakeFatImage = $MakeFatImage -or (@("1", "true", "yes", "on") -contains $envVal.ToLowerInvariant())
+
 New-Item -ItemType Directory -Force -Path $outDirResolved | Out-Null
 
 $artifactBase = "AeroVirtIO-Win7-$Version"
@@ -393,6 +451,7 @@ $zipX86 = Join-Path $outDirResolved "$artifactBase-x86.zip"
 $zipX64 = Join-Path $outDirResolved "$artifactBase-x64.zip"
 $zipBundle = Join-Path $outDirResolved "$artifactBase-bundle.zip"
 $isoBundle = Join-Path $outDirResolved "$artifactBase.iso"
+$fatVhd = Join-Path $outDirResolved "$artifactBase-fat.vhd"
 
 $stagingBase = Join-Path $outDirResolved "_staging"
 if (Test-Path $stagingBase) {
@@ -403,6 +462,7 @@ New-Item -ItemType Directory -Force -Path $stagingBase | Out-Null
 $stageX86 = Join-Path $stagingBase "x86"
 $stageX64 = Join-Path $stagingBase "x64"
 $stageBundle = Join-Path $stagingBase "bundle"
+$stageFat = Join-Path $stagingBase "fat"
 
 New-DriverArtifactRoot -DestRoot $stageX86 -CertSourcePath $certPathResolved
 New-DriverArtifactRoot -DestRoot $stageX64 -CertSourcePath $certPathResolved
@@ -425,6 +485,17 @@ try {
         }
         New-IsoFromFolder -Folder $stageBundle -IsoPath $isoBundle -VolumeLabel $label
     }
+
+    if ($shouldMakeFatImage) {
+        New-FatImageInputFromBundle -BundleRoot $stageBundle -CertSourcePath $certPathResolved -DestRoot $stageFat
+
+        $helper = Join-Path $PSScriptRoot "make-fat-image.ps1"
+        if (-not (Test-Path $helper)) {
+            throw "Missing helper script: '$helper'."
+        }
+
+        & $helper -SourceDir $stageFat -OutFile $fatVhd -SizeMB $FatImageSizeMB -Strict:$FatImageStrict
+    }
     $success = $true
 } finally {
     if ($success -and (Test-Path $stagingBase)) {
@@ -438,4 +509,12 @@ Write-Host "  $zipX64"
 Write-Host "  $zipBundle"
 if (-not $NoIso) {
     Write-Host "  $isoBundle"
+}
+
+if ($shouldMakeFatImage) {
+    if (Test-Path $fatVhd) {
+        Write-Host "  $fatVhd"
+    } else {
+        Write-Host "  (FAT image skipped)"
+    }
 }

@@ -60,6 +60,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 35. [AeroGPU Legacy VGA/VBE Compatibility](./docs/16-aerogpu-vga-vesa-compat.md)
 36. [Virtio PCI (Modern) Interrupts on Windows 7 (KMDF)](./docs/windows/virtio-pci-modern-interrupts.md)
 37. [Virtio PCI: Legacy + Transitional Devices](./docs/16-virtio-pci-legacy-transitional.md)
+38. [Driver Install Media (FAT Image)](./docs/16-driver-install-media.md)
 
 ---
 
@@ -353,6 +354,7 @@ pub trait DisplayAdapter {
 | [18-chunked-disk-image-format.md](./docs/18-chunked-disk-image-format.md) | Chunked disk image delivery (no HTTP Range) | I/O               |
 | [windows7-guest-tools.md](./docs/windows7-guest-tools.md)               | End-user guide: install Guest Tools and switch to virtio + Aero GPU | All |
 | [windows7-driver-troubleshooting.md](./docs/windows7-driver-troubleshooting.md) | End-user guide: Windows 7 driver/signing troubleshooting | All |
+| [16-driver-install-media.md](./docs/16-driver-install-media.md)         | Driver install media artifacts         | Infrastructure    |
 | [16-win7-image-servicing.md](./docs/16-win7-image-servicing.md)         | Win7 install media servicing for test-signed drivers | I/O               |
 | [win7-bcd-offline-patching.md](./docs/win7-bcd-offline-patching.md)     | Win7 offline patching of BCD stores for testsigning/nointegritychecks (element IDs + object selection) | I/O |
 | [windows/README.md](./docs/windows/README.md)                           | Windows driver development notes       | I/O               |

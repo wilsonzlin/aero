@@ -574,6 +574,10 @@ impl VirtioBlkDevice {
 
 For Windows 7 installation:
 
+> Note: If Aero uses custom/paravirtual storage devices, Windows Setup may require a
+> "Load Driver" step. CI can optionally produce a small FAT32 driver disk image for
+> this scenario; see [Driver Install Media (FAT Image)](./16-driver-install-media.md).
+
 ```rust
 pub struct CdromDrive {
     // ATAPI interface
