@@ -1,5 +1,7 @@
-use aero_bios::firmware::{BlockDevice, DiskError, Memory, NullKeyboard};
+use aero_bios::firmware::{BlockDevice, DiskError, Memory, NullKeyboard, VbeServices};
 use aero_bios::{Bios, BiosConfig, RealModeCpu};
+use std::cell::Cell;
+use std::rc::Rc;
 
 const VGA_TEXT_BASE: u32 = 0x000B_8000;
 const VGA_MODE13_BASE: u32 = 0x000A_0000;
@@ -273,4 +275,35 @@ fn int10_vbe_calls_return_not_supported() {
 
     assert!(cpu.cf());
     assert_eq!(cpu.ax(), 0x024F);
+}
+
+#[test]
+fn int10_vbe_calls_dispatch_to_handler() {
+    struct Probe {
+        called: Rc<Cell<bool>>,
+    }
+
+    impl VbeServices for Probe {
+        fn handle_int10(&mut self, cpu: &mut RealModeCpu, _mem: &mut dyn Memory) {
+            self.called.set(true);
+            cpu.set_ax(0x004F);
+            cpu.set_cf(false);
+        }
+    }
+
+    let called = Rc::new(Cell::new(false));
+    let mut bios = Bios::new(BiosConfig::default());
+    bios.set_vbe_handler(Box::new(Probe {
+        called: called.clone(),
+    }));
+
+    let mut cpu = RealModeCpu::default();
+    let mut mem = TestMemory::new(2 * 1024 * 1024);
+
+    cpu.set_ax(0x4F00);
+    call_int10(&mut bios, &mut cpu, &mut mem);
+
+    assert!(called.get());
+    assert!(!cpu.cf());
+    assert_eq!(cpu.ax(), 0x004F);
 }

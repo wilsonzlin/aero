@@ -123,6 +123,23 @@ impl Keyboard for NullKeyboard {
     }
 }
 
+/// VESA BIOS Extensions (VBE) services hooked via INT 10h AX=4Fxx.
+///
+/// The BIOS core only provides dispatch glue; implementations are expected to follow the
+/// VBE convention of returning `AL=0x4F` and `AH=status` with CF clear on success.
+pub trait VbeServices {
+    fn handle_int10(&mut self, cpu: &mut RealModeCpu, mem: &mut dyn Memory);
+}
+
+pub struct NoVbe;
+
+impl VbeServices for NoVbe {
+    fn handle_int10(&mut self, cpu: &mut RealModeCpu, _mem: &mut dyn Memory) {
+        cpu.set_ax(0x024F);
+        cpu.set_cf(true);
+    }
+}
+
 pub trait PciConfigSpace {
     /// Read a 32-bit PCI config register.
     ///
@@ -162,6 +179,7 @@ pub struct Bios {
     cursor_start: u8,
     cursor_end: u8,
     text_attr: u8,
+    vbe: Box<dyn VbeServices>,
 
     // Keyboard buffer (BIOS-side, independent of i8042 model for now).
     kb_buf: VecDeque<u16>,
@@ -212,8 +230,13 @@ impl Bios {
             cursor_start: DEFAULT_CURSOR_START,
             cursor_end: DEFAULT_CURSOR_END,
             text_attr: DEFAULT_TEXT_ATTR,
+            vbe: Box::new(NoVbe),
             kb_buf: VecDeque::new(),
         }
+    }
+
+    pub fn set_vbe_handler(&mut self, handler: Box<dyn VbeServices>) {
+        self.vbe = handler;
     }
 
     /// Perform a simplified POST and transfer control to the boot sector.
@@ -649,9 +672,7 @@ impl Bios {
 
     fn int10<M: Memory>(&mut self, cpu: &mut RealModeCpu, mem: &mut M) {
         if cpu.ah() == 0x4F {
-            // VBE (AX=4Fxx) dispatch point.
-            cpu.set_ax(0x024F);
-            cpu.set_cf(true);
+            self.vbe.handle_int10(cpu, mem);
             return;
         }
 
