@@ -23,7 +23,7 @@ impl Corb {
             rp: 0,
             ctl: 0,
             sts: 0,
-            size: 2,
+            size: RING_SIZE_CAP_2 | RING_SIZE_CAP_16 | RING_SIZE_CAP_256,
         }
     }
 
@@ -70,7 +70,10 @@ impl Corb {
                 // W1C.
                 self.sts &= !(value as u8);
             }
-            CorbReg::Size => self.size = value as u8,
+            CorbReg::Size => {
+                // Only the size selection bits (1:0) are writable; capability bits are RO.
+                self.size = (self.size & !0x3) | (value as u8 & 0x3);
+            }
         }
     }
 
@@ -108,7 +111,7 @@ impl Rirb {
             rintcnt: 0,
             ctl: 0,
             sts: 0,
-            size: 2,
+            size: RING_SIZE_CAP_2 | RING_SIZE_CAP_16 | RING_SIZE_CAP_256,
             responses_since_irq: 0,
         }
     }
@@ -154,7 +157,9 @@ impl Rirb {
                 // W1C.
                 self.sts &= !(value as u8);
             }
-            RirbReg::Size => self.size = value as u8,
+            RirbReg::Size => {
+                self.size = (self.size & !0x3) | (value as u8 & 0x3);
+            }
         }
     }
 

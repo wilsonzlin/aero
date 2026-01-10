@@ -57,7 +57,7 @@ impl Default for HdaController {
 impl HdaController {
     pub fn new() -> Self {
         let mut controller = Self {
-            gcap: gcap_with_streams(1, 0, 0),
+            gcap: gcap_with_streams(1, 0, 0, 1),
             vmin: 0x00,
             vmaj: 0x01,
             gctl: 0x0,

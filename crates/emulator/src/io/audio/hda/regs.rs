@@ -26,6 +26,11 @@ pub const HDA_RIRBCTL: u32 = 0x5C;
 pub const HDA_RIRBSTS: u32 = 0x5D;
 pub const HDA_RIRBSIZE: u32 = 0x5E;
 
+// CORBSIZE/RIRBSIZE capability bits (RO) as defined by the Intel HDA spec.
+pub const RING_SIZE_CAP_2: u8 = 1 << 4;
+pub const RING_SIZE_CAP_16: u8 = 1 << 5;
+pub const RING_SIZE_CAP_256: u8 = 1 << 6;
+
 pub const HDA_SD0CTL: u32 = 0x80;
 pub const HDA_SD0LPIB: u32 = 0x84;
 pub const HDA_SD0CBL: u32 = 0x88;
@@ -146,9 +151,12 @@ pub enum StreamReg {
     Bdpu,
 }
 
-pub fn gcap_with_streams(out: u8, input: u8, bidir: u8) -> u16 {
-    // Bits layout (Intel HDA spec): OSS[3:0], ISS[7:4], BSS[11:8].
-    ((out as u16) & 0xF) | (((input as u16) & 0xF) << 4) | (((bidir as u16) & 0xF) << 8)
+pub fn gcap_with_streams(out: u8, input: u8, bidir: u8, nsdo: u8) -> u16 {
+    // Bits layout (Intel HDA spec): OSS[3:0], ISS[7:4], BSS[11:8], NSDO[15:12].
+    ((out as u16) & 0xF)
+        | (((input as u16) & 0xF) << 4)
+        | (((bidir as u16) & 0xF) << 8)
+        | (((nsdo as u16) & 0xF) << 12)
 }
 
 pub fn corb_entries(size_reg: u8) -> u16 {
