@@ -36,6 +36,8 @@ powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-input/scripts/p
   -OutDir drivers/windows7/virtio-input/release/out
 ```
 
+`release/out/` and generated `*.zip` files are ignored by git (see `release/.gitignore`).
+
 ### `-InputDir` expectations
 
 `-InputDir` should point at a directory containing your built artifacts. The script searches **recursively** under `-InputDir` for:

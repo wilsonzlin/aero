@@ -194,6 +194,13 @@ All of these use the virtio-input transport and should enumerate with `VEN_1AF4`
 - Manual QEMU test plan: `tests/qemu/README.md`
 - Offline/slipstream install notes (DISM): `tests/offline-install/README.md`
 
+## Release packaging (optional)
+
+Once the driver binary exists, you can produce a deterministic, redistributable ZIP bundle using:
+
+- `release/README.md`
+- `scripts/package-release.ps1`
+
 ## Known limitations
 
 - This is packaging only; the driver binary is not implemented yet.
