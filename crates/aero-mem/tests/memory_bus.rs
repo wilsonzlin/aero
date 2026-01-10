@@ -286,6 +286,37 @@ fn typed_read_crossing_ram_to_rom_boundary() {
 }
 
 #[test]
+fn register_mmio_fn_works() {
+    let ram = make_ram(0x100);
+    let mut bus = MemoryBus::new(ram);
+
+    let writes = Arc::new(Mutex::new(Vec::<(u64, Vec<u8>)>::new()));
+    let writes_clone = writes.clone();
+
+    bus.register_mmio_fn(
+        0x20..0x30,
+        |offset, data| {
+            for (i, b) in data.iter_mut().enumerate() {
+                *b = 0xF0u8.wrapping_add(offset as u8).wrapping_add(i as u8);
+            }
+        },
+        move |offset, data| {
+            writes_clone.lock().unwrap().push((offset, data.to_vec()));
+        },
+    )
+    .unwrap();
+
+    assert_eq!(bus.read_u8(0x20), 0xF0);
+    assert_eq!(bus.read_u8(0x2F), 0xF0 + 0x0F);
+
+    bus.write_u16(0x22, 0xBEEF);
+    let writes = writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].0, 0x02);
+    assert_eq!(writes[0].1, vec![0xEF, 0xBE]);
+}
+
+#[test]
 fn dma_bulk_read_rejects_mmio_without_side_effects() {
     let ram = make_ram(0x4000);
     let mut bus = MemoryBus::new(ram.clone());

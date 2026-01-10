@@ -17,6 +17,25 @@ pub trait MmioHandler: Send + Sync {
     fn write(&self, offset: u64, data: &[u8]);
 }
 
+struct FnMmioHandler<R, W> {
+    read: R,
+    write: W,
+}
+
+impl<R, W> MmioHandler for FnMmioHandler<R, W>
+where
+    R: Fn(u64, &mut [u8]) + Send + Sync,
+    W: Fn(u64, &[u8]) + Send + Sync,
+{
+    fn read(&self, offset: u64, data: &mut [u8]) {
+        (self.read)(offset, data);
+    }
+
+    fn write(&self, offset: u64, data: &[u8]) {
+        (self.write)(offset, data);
+    }
+}
+
 #[derive(Clone)]
 enum OverlayKind {
     Mmio(Arc<dyn MmioHandler>),
@@ -113,6 +132,7 @@ impl From<PhysicalMemoryError> for MemoryBusError {
 /// Physical address routing layer.
 ///
 /// The bus always checks MMIO regions first, then ROM, then RAM.
+#[derive(Clone)]
 pub struct MemoryBus {
     ram: Arc<PhysicalMemory>,
     overlays: Vec<OverlayRegion>, // sorted by start, disjoint
@@ -147,6 +167,21 @@ impl MemoryBus {
             end: range.end,
             kind: OverlayKind::Mmio(handler),
         })
+    }
+
+    /// Register a MMIO region backed by closures.
+    pub fn register_mmio_fn<R, W>(
+        &mut self,
+        range: std::ops::Range<u64>,
+        read: R,
+        write: W,
+    ) -> Result<(), MemoryBusError>
+    where
+        R: Fn(u64, &mut [u8]) + Send + Sync + 'static,
+        W: Fn(u64, &[u8]) + Send + Sync + 'static,
+    {
+        let handler: Arc<dyn MmioHandler> = Arc::new(FnMmioHandler { read, write });
+        self.register_mmio(range, handler)
     }
 
     /// Register a read-only ROM region.
