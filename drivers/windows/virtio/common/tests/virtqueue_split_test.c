@@ -16,6 +16,36 @@
 #define ASSERT_EQ_U32(a, b) ASSERT_TRUE((UINT32)(a) == (UINT32)(b))
 #define ASSERT_EQ_U64(a, b) ASSERT_TRUE((UINT64)(a) == (UINT64)(b))
 
+static void *AllocAlignedZero(size_t align, size_t size)
+{
+	void *raw;
+	uintptr_t aligned_addr;
+	size_t total;
+
+	if (align == 0 || (align & (align - 1)) != 0) {
+		return NULL;
+	}
+
+	total = size + align - 1 + sizeof(void *);
+	raw = malloc(total);
+	if (raw == NULL) {
+		return NULL;
+	}
+
+	aligned_addr = ((uintptr_t)raw + sizeof(void *) + align - 1) & ~(uintptr_t)(align - 1);
+	((void **)aligned_addr)[-1] = raw;
+	memset((void *)aligned_addr, 0, size);
+	return (void *)aligned_addr;
+}
+
+static void FreeAligned(void *p)
+{
+	if (p == NULL) {
+		return;
+	}
+	free(((void **)p)[-1]);
+}
+
 static void AssertRingFreeListIntact(const VIRTQ_SPLIT *vq)
 {
 	UINT8 *seen;
@@ -144,12 +174,13 @@ static void TestDirectChainAddFree(void)
 {
 	const UINT16 qsz = 8;
 	const UINT32 align = 16;
+	const size_t dma_align = 16;
 
 	size_t vq_bytes = VirtqSplitStateSize(qsz);
 	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
 
 	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
-	void *ring = calloc(1, ring_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
 
 	UINT8 buf1[16], buf2[32], buf3[64];
 	VIRTQ_SG sg[3];
@@ -188,7 +219,7 @@ static void TestDirectChainAddFree(void)
 	ASSERT_EQ_U16(vq->num_free, qsz);
 	AssertRingFreeListIntact(vq);
 
-	free(ring);
+	FreeAligned(ring);
 	free(vq);
 }
 
@@ -196,12 +227,13 @@ static void TestWraparound(void)
 {
 	const UINT16 qsz = 8;
 	const UINT32 align = 16;
+	const size_t dma_align = 16;
 
 	size_t vq_bytes = VirtqSplitStateSize(qsz);
 	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
 
 	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
-	void *ring = calloc(1, ring_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
 
 	UINT8 buf_a[8], buf_b[8];
 	VIRTQ_SG sg_a[1], sg_b[1];
@@ -256,7 +288,7 @@ static void TestWraparound(void)
 	ASSERT_EQ_U16(vq->num_free, qsz);
 	AssertRingFreeListIntact(vq);
 
-	free(ring);
+	FreeAligned(ring);
 	free(vq);
 }
 
@@ -264,12 +296,13 @@ static void TestOutOfOrderCompletion(void)
 {
 	const UINT16 qsz = 8;
 	const UINT32 align = 16;
+	const size_t dma_align = 16;
 
 	size_t vq_bytes = VirtqSplitStateSize(qsz);
 	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
 
 	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
-	void *ring = calloc(1, ring_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
 
 	UINT8 buf_a[8], buf_b[8];
 	VIRTQ_SG sg_a[1], sg_b[1];
@@ -329,7 +362,7 @@ static void TestOutOfOrderCompletion(void)
 	ASSERT_EQ_U16(vq->num_free, qsz);
 	AssertRingFreeListIntact(vq);
 
-	free(ring);
+	FreeAligned(ring);
 	free(vq);
 }
 
@@ -349,6 +382,7 @@ static void TestRingLayoutEventIdx(void)
 {
 	const UINT16 qsz = 8;
 	const UINT32 align = 16;
+	const size_t dma_align = 16;
 
 	size_t desc_sz = sizeof(VIRTQ_DESC) * (size_t)qsz;
 	size_t avail_sz = 4 + (2 * (size_t)qsz) + 2; /* flags+idx + ring + used_event */
@@ -357,7 +391,7 @@ static void TestRingLayoutEventIdx(void)
 	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, TRUE);
 
 	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, VirtqSplitStateSize(qsz));
-	void *ring = calloc(1, ring_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
 
 	ASSERT_TRUE(vq != NULL);
 	ASSERT_TRUE(ring != NULL);
@@ -374,7 +408,7 @@ static void TestRingLayoutEventIdx(void)
 	ASSERT_TRUE((void *)VirtqUsedAvailEvent(vq->used, qsz) ==
 		    (void *)((UINT8 *)vq->used + 4 + (sizeof(VIRTQ_USED_ELEM) * (size_t)qsz)));
 
-	free(ring);
+	FreeAligned(ring);
 	free(vq);
 }
 
@@ -404,12 +438,13 @@ static void TestEventIdxKickPrepare(void)
 {
 	const UINT16 qsz = 8;
 	const UINT32 align = 16;
+	const size_t dma_align = 16;
 
 	size_t vq_bytes = VirtqSplitStateSize(qsz);
 	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, TRUE);
 
 	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
-	void *ring = calloc(1, ring_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
 
 	UINT8 buf[16];
 	VIRTQ_SG sg[1];
@@ -439,7 +474,7 @@ static void TestEventIdxKickPrepare(void)
 	ASSERT_TRUE(VirtqSplitKickPrepare(vq) == FALSE);
 	VirtqSplitKickCommit(vq);
 
-	free(ring);
+	FreeAligned(ring);
 	free(vq);
 }
 
@@ -447,12 +482,13 @@ static void TestNoNotifyKickPrepare(void)
 {
 	const UINT16 qsz = 8;
 	const UINT32 align = 16;
+	const size_t dma_align = 16;
 
 	size_t vq_bytes = VirtqSplitStateSize(qsz);
 	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
 
 	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
-	void *ring = calloc(1, ring_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
 
 	UINT8 buf[16];
 	VIRTQ_SG sg[1];
@@ -481,7 +517,7 @@ static void TestNoNotifyKickPrepare(void)
 	ASSERT_TRUE(VirtqSplitKickPrepare(vq) != FALSE);
 	VirtqSplitKickCommit(vq);
 
-	free(ring);
+	FreeAligned(ring);
 	free(vq);
 }
 
@@ -489,6 +525,7 @@ static void TestIndirectPoolExhaustionFallsBackToDirect(void)
 {
 	const UINT16 qsz = 8;
 	const UINT32 align = 16;
+	const size_t dma_align = 16;
 
 	const UINT16 table_count = 1;
 	const UINT16 max_desc = 4;
@@ -498,8 +535,8 @@ static void TestIndirectPoolExhaustionFallsBackToDirect(void)
 	size_t pool_bytes = (size_t)table_count * max_desc * sizeof(VIRTQ_DESC);
 
 	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
-	void *ring = calloc(1, ring_bytes);
-	void *pool = calloc(1, pool_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
+	void *pool = AllocAlignedZero(dma_align, pool_bytes);
 
 	UINT8 buf1[8], buf2[8];
 	VIRTQ_SG sg[2];
@@ -555,8 +592,8 @@ static void TestIndirectPoolExhaustionFallsBackToDirect(void)
 	AssertRingFreeListIntact(vq);
 	AssertIndirectFreeListIntact(vq);
 
-	free(pool);
-	free(ring);
+	FreeAligned(pool);
+	FreeAligned(ring);
 	free(vq);
 }
 
@@ -564,12 +601,13 @@ static void TestInterruptSuppressionNoEventIdx(void)
 {
 	const UINT16 qsz = 8;
 	const UINT32 align = 16;
+	const size_t dma_align = 16;
 
 	size_t vq_bytes = VirtqSplitStateSize(qsz);
 	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
 
 	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
-	void *ring = calloc(1, ring_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
 
 	ASSERT_TRUE(vq != NULL);
 	ASSERT_TRUE(ring != NULL);
@@ -587,7 +625,7 @@ static void TestInterruptSuppressionNoEventIdx(void)
 	VirtioWriteU16((volatile UINT16 *)&vq->used->idx, 1);
 	ASSERT_TRUE(VirtqSplitEnableInterrupts(vq) == FALSE);
 
-	free(ring);
+	FreeAligned(ring);
 	free(vq);
 }
 
@@ -595,12 +633,13 @@ static void TestInterruptSuppressionEventIdx(void)
 {
 	const UINT16 qsz = 8;
 	const UINT32 align = 16;
+	const size_t dma_align = 16;
 
 	size_t vq_bytes = VirtqSplitStateSize(qsz);
 	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, TRUE);
 
 	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
-	void *ring = calloc(1, ring_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
 
 	ASSERT_TRUE(vq != NULL);
 	ASSERT_TRUE(ring != NULL);
@@ -618,7 +657,7 @@ static void TestInterruptSuppressionEventIdx(void)
 	VirtioWriteU16((volatile UINT16 *)&vq->used->idx, 1);
 	ASSERT_TRUE(VirtqSplitEnableInterrupts(vq) == FALSE);
 
-	free(ring);
+	FreeAligned(ring);
 	free(vq);
 }
 
@@ -626,6 +665,7 @@ static void TestIndirectDescriptors(void)
 {
 	const UINT16 qsz = 2;
 	const UINT32 align = 16;
+	const size_t dma_align = 16;
 
 	const UINT16 table_count = 1;
 	const UINT16 max_desc = 8;
@@ -635,8 +675,8 @@ static void TestIndirectDescriptors(void)
 	size_t pool_bytes = (size_t)table_count * max_desc * sizeof(VIRTQ_DESC);
 
 	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
-	void *ring = calloc(1, ring_bytes);
-	void *pool = calloc(1, pool_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
+	void *pool = AllocAlignedZero(dma_align, pool_bytes);
 
 	UINT8 buf1[4], buf2[4], buf3[4];
 	VIRTQ_SG sg[3];
@@ -690,8 +730,8 @@ static void TestIndirectDescriptors(void)
 	AssertRingFreeListIntact(vq);
 	AssertIndirectFreeListIntact(vq);
 
-	free(pool);
-	free(ring);
+	FreeAligned(pool);
+	FreeAligned(ring);
 	free(vq);
 }
 

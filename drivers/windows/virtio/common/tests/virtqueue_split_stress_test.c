@@ -4,6 +4,36 @@
 
 #include "../virtqueue_split.h"
 
+static void *AllocAlignedZero(size_t align, size_t size)
+{
+	void *raw;
+	uintptr_t aligned_addr;
+	size_t total;
+
+	if (align == 0 || (align & (align - 1)) != 0) {
+		return NULL;
+	}
+
+	total = size + align - 1 + sizeof(void *);
+	raw = malloc(total);
+	if (raw == NULL) {
+		return NULL;
+	}
+
+	aligned_addr = ((uintptr_t)raw + sizeof(void *) + align - 1) & ~(uintptr_t)(align - 1);
+	((void **)aligned_addr)[-1] = raw;
+	memset((void *)aligned_addr, 0, size);
+	return (void *)aligned_addr;
+}
+
+static void FreeAligned(void *p)
+{
+	if (p == NULL) {
+		return;
+	}
+	free(((void **)p)[-1]);
+}
+
 typedef struct _PRNG {
 	UINT64 state;
 } PRNG;
@@ -188,6 +218,7 @@ static void AssertInvariants(VQ_CTX *ctx)
 static void CtxInitEx(VQ_CTX *ctx, UINT16 qsz, BOOLEAN event_idx, BOOLEAN indirect, UINT16 indirect_table_count)
 {
 	const UINT32 align = 16;
+	const size_t dma_align = 16;
 
 	size_t vq_bytes;
 	size_t ring_bytes;
@@ -206,13 +237,13 @@ static void CtxInitEx(VQ_CTX *ctx, UINT16 qsz, BOOLEAN event_idx, BOOLEAN indire
 	ring_bytes = VirtqSplitRingMemSize(qsz, align, ctx->event_idx);
 
 	ctx->vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
-	ctx->ring = calloc(1, ring_bytes);
+	ctx->ring = AllocAlignedZero(dma_align, ring_bytes);
 	ASSERT_TRUE(ctx->vq != NULL);
 	ASSERT_TRUE(ctx->ring != NULL);
 
 	if (ctx->indirect && ctx->indirect_table_count != 0) {
 		pool_bytes = (size_t)ctx->indirect_table_count * (size_t)ctx->indirect_max_desc * sizeof(VIRTQ_DESC);
-		ctx->pool = calloc(1, pool_bytes);
+		ctx->pool = AllocAlignedZero(dma_align, pool_bytes);
 		ASSERT_TRUE(ctx->pool != NULL);
 	}
 
@@ -256,8 +287,8 @@ static void CtxDestroy(VQ_CTX *ctx)
 	free(ctx->head_uses_indirect);
 	free(ctx->head_outstanding);
 
-	free(ctx->pool);
-	free(ctx->ring);
+	FreeAligned(ctx->pool);
+	FreeAligned(ctx->ring);
 	free(ctx->vq);
 	memset(ctx, 0, sizeof(*ctx));
 }
