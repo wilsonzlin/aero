@@ -318,6 +318,8 @@ After one or more additions (often batched), decide whether to notify the device
 * Without `VIRTIO_F_RING_EVENT_IDX`: honor `used->flags & VRING_USED_F_NO_NOTIFY`.
 * With `VIRTIO_F_RING_EVENT_IDX`: use `used->avail_event` and `vring_need_event()` (§7.2).
 
+Contract note: some device models/driver contracts intentionally simplify things by requiring the driver to **always** notify after adding entries. For example, Aero contract v1 mandates always-notify semantics and does not use `VRING_USED_F_NO_NOTIFY` as a suppression mechanism. When targeting such a contract, skip the “should I kick?” decision and always notify.
+
 **Where notify happens**: transport-specific. Examples:
 
 * PCI legacy: write queue number to I/O port `VIRTIO_PCI_QUEUE_NOTIFY`
