@@ -1,3 +1,5 @@
+use crate::acpi::build_acpi_table_set;
+
 use super::{BiosBus, ACPI_TABLE_BASE, ACPI_TABLE_SIZE, EBDA_BASE};
 
 #[derive(Debug, Clone, Copy)]
@@ -17,37 +19,53 @@ pub trait AcpiBuilder {
     fn build(&mut self, bus: &mut dyn BiosBus, placement: AcpiPlacement) -> Option<u64>;
 }
 
-/// Placeholder ACPI builder.
+/// Default ACPI builder backed by the firmware crate's clean-room ACPI table set.
 ///
-/// A full implementation is expected to be added in a dedicated ACPI task. The
-/// BIOS integration (placement + call-out) is provided here so the builder can
-/// be swapped in without changing POST logic.
+/// This places the core tables (DSDT/FADT/MADT/HPET/RSDT/XSDT) in the reserved
+/// table region and writes a copy of the RSDP at `placement.rsdp_addr` so the
+/// guest can find it by scanning the EBDA.
 #[derive(Debug, Default)]
-pub struct StubAcpiBuilder;
+pub struct FirmwareAcpiBuilder;
 
-impl AcpiBuilder for StubAcpiBuilder {
+impl AcpiBuilder for FirmwareAcpiBuilder {
     fn build(&mut self, bus: &mut dyn BiosBus, placement: AcpiPlacement) -> Option<u64> {
-        // Clear the ACPI table area (it's RAM, but reserved for ACPI).
-        for i in 0..placement.tables_size as u64 {
-            bus.write_u8(placement.tables_base + i, 0);
+        if placement.rsdp_addr % 16 != 0 {
+            eprintln!(
+                "BIOS: refusing to write unaligned RSDP at 0x{:x}",
+                placement.rsdp_addr
+            );
+            return None;
         }
 
-        // Minimal ACPI 1.0 RSDP (20 bytes). Enough for guests that just scan for the signature.
-        let rsdp_addr = placement.rsdp_addr;
-        let mut rsdp = [0u8; 20];
-        rsdp[0..8].copy_from_slice(b"RSD PTR ");
-        rsdp[9..15].copy_from_slice(b"Aero  "); // OEMID
-        rsdp[15] = 0; // revision 0 (ACPI 1.0)
+        let tables = build_acpi_table_set(placement.tables_base);
 
-        // RSDT address (unused in this placeholder).
-        rsdp[16..20].copy_from_slice(&(placement.tables_base as u32).to_le_bytes());
+        let table_region_end = placement.tables_base + placement.tables_size as u64;
+        for (name, addr, len) in [
+            ("DSDT", tables.dsdt_address, tables.dsdt.len()),
+            ("FADT", tables.fadt_address, tables.fadt.len()),
+            ("MADT", tables.madt_address, tables.madt.len()),
+            ("HPET", tables.hpet_address, tables.hpet.len()),
+            ("RSDT", tables.rsdt_address, tables.rsdt.len()),
+            ("XSDT", tables.xsdt_address, tables.xsdt.len()),
+        ] {
+            let end = addr + len as u64;
+            if end > table_region_end {
+                eprintln!(
+                    "BIOS: ACPI {name} does not fit in reserved region: end=0x{end:x} region_end=0x{table_region_end:x}"
+                );
+                return None;
+            }
+        }
 
-        // Checksum: sum of all bytes should be 0 mod 256.
-        let checksum = (0u8).wrapping_sub(rsdp.iter().copied().fold(0u8, u8::wrapping_add));
-        rsdp[8] = checksum;
+        bus.write_physical(tables.dsdt_address, &tables.dsdt);
+        bus.write_physical(tables.fadt_address, &tables.fadt);
+        bus.write_physical(tables.madt_address, &tables.madt);
+        bus.write_physical(tables.hpet_address, &tables.hpet);
+        bus.write_physical(tables.rsdt_address, &tables.rsdt);
+        bus.write_physical(tables.xsdt_address, &tables.xsdt);
+        bus.write_physical(placement.rsdp_addr, &tables.rsdp);
 
-        bus.write_physical(rsdp_addr, &rsdp);
-        Some(rsdp_addr)
+        Some(placement.rsdp_addr)
     }
 }
 

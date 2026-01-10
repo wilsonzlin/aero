@@ -134,7 +134,7 @@ impl Bios {
             video_mode: 3, // default VGA text mode
             tty_output: Vec::new(),
             rsdp_addr: None,
-            acpi_builder: Box::new(acpi::StubAcpiBuilder::default()),
+            acpi_builder: Box::new(acpi::FirmwareAcpiBuilder::default()),
         }
     }
 
@@ -271,5 +271,34 @@ mod tests {
         assert_eq!(cpu.rsp, 0x7C00);
         assert_eq!(cpu.rdx as u8, 0x80);
         assert_ne!(cpu.rflags & FLAG_IF, 0);
+    }
+
+    #[test]
+    fn post_builds_acpi_rsdp_in_ebda() {
+        let mut bios = Bios::new(BiosConfig::default());
+        let mut cpu = CpuState::default();
+        let mut mem = PhysicalMemory::new(16 * 1024 * 1024);
+        let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0));
+
+        bios.post(&mut cpu, &mut mem, &mut disk);
+
+        let rsdp_addr = bios.rsdp_addr().expect("RSDP should be built");
+        assert_eq!(rsdp_addr, EBDA_BASE + 0x100);
+
+        let rsdp = mem.read_bytes(rsdp_addr, 36);
+        assert_eq!(&rsdp[0..8], b"RSD PTR ");
+
+        let checksum20 = rsdp[0..20]
+            .iter()
+            .copied()
+            .fold(0u8, u8::wrapping_add);
+        assert_eq!(checksum20, 0);
+        let checksum36 = rsdp.iter().copied().fold(0u8, u8::wrapping_add);
+        assert_eq!(checksum36, 0);
+
+        let rsdt_addr = u32::from_le_bytes(rsdp[16..20].try_into().unwrap()) as u64;
+        assert!(
+            rsdt_addr >= ACPI_TABLE_BASE && rsdt_addr < ACPI_TABLE_BASE + ACPI_TABLE_SIZE as u64
+        );
     }
 }
