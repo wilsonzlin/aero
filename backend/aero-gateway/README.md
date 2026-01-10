@@ -42,6 +42,21 @@ cd backend/aero-gateway
 npm test
 ```
 
+## Docker
+
+Build:
+
+```bash
+docker build -t aero-gateway backend/aero-gateway \
+  --build-arg GIT_SHA="$(git rev-parse HEAD)"
+```
+
+Run:
+
+```bash
+docker run --rm -p 8080:8080 aero-gateway
+```
+
 ## Environment variables
 
 Required / commonly used:
