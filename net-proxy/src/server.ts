@@ -14,6 +14,22 @@ export interface RunningProxyServer {
   close: () => Promise<void>;
 }
 
+function truncateCloseReason(reason: string, maxBytes = 123): string {
+  const buf = Buffer.from(reason, "utf8");
+  if (buf.length <= maxBytes) return reason;
+
+  let truncated = buf.subarray(0, maxBytes).toString("utf8");
+  while (Buffer.byteLength(truncated, "utf8") > maxBytes) {
+    truncated = truncated.slice(0, -1);
+  }
+  return truncated;
+}
+
+function wsCloseSafe(ws: WebSocket, code: number, reason: string): void {
+  const safeReason = truncateCloseReason(reason);
+  ws.close(code, safeReason);
+}
+
 function stripOptionalIpv6Brackets(host: string): string {
   const trimmed = host.trim();
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
@@ -112,7 +128,7 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
         clientAddress,
         reason: parsedTarget.error
       });
-      ws.close(1008, parsedTarget.error);
+      wsCloseSafe(ws, 1008, parsedTarget.error);
       return;
     }
 
@@ -130,7 +146,7 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
 
         if (!decision.allowed) {
           log("warn", "connect_denied", { connId, proto, host, port, clientAddress, reason: decision.reason });
-          ws.close(1008, decision.reason);
+          wsCloseSafe(ws, 1008, decision.reason);
           return;
         }
 
@@ -152,7 +168,7 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
         }
       } catch (err) {
         log("error", "connect_error", { connId, proto, host, port, clientAddress, err: formatError(err) });
-        ws.close(1011, "Proxy error");
+        wsCloseSafe(ws, 1011, "Proxy error");
       }
     })();
   });
@@ -209,7 +225,7 @@ async function handleTcpRelay(
     clearTimeout(connectTimer);
 
     if (ws.readyState === ws.OPEN) {
-      ws.close(wsCode, wsReason);
+      wsCloseSafe(ws, wsCode, wsReason);
     }
 
     tcpSocket.destroy();
@@ -303,7 +319,7 @@ async function handleUdpRelay(
     }
 
     if (ws.readyState === ws.OPEN) {
-      ws.close(wsCode, wsReason);
+      wsCloseSafe(ws, wsCode, wsReason);
     }
 
     log("info", "conn_close", {
