@@ -6,6 +6,9 @@ export default defineConfig({
   use: {
     ...devices['Desktop Chrome'],
     headless: true,
+    // The backend E2E suite runs a local HTTPS reverse proxy with a
+    // self-signed certificate in order to exercise WSS connectivity.
+    ignoreHTTPSErrors: true,
   },
   projects: [
     {
@@ -13,4 +16,3 @@ export default defineConfig({
     },
   ],
 });
-

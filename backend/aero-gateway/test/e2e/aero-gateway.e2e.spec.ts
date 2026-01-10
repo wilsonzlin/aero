@@ -2,10 +2,60 @@ import { test, expect } from '@playwright/test';
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
-import type { AddressInfo as DgramAddressInfo } from 'node:dgram';
+import http from 'node:http';
+import https from 'node:https';
 import * as dgram from 'node:dgram';
 import net, { type AddressInfo } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
+
+const TLS_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDdSPoccw61QJnc
+bwkEWea0JYDyJH2LaI+oAloHaRKa3DBTf0qBz/p074eh2+JY1nz0+4MU2meDrW6f
+kDHpZ+L60fWrNW0c26Ct+++qj1Eb7ZM5d2EZHXk/7x+bMsZWoKf048VgQIC3I0Xv
+wdGyXBTeMYJBRtZAoh+wUiPBCYl3/DFvIb/g6v4tdq9m13AQ+Oc5rugnDgqF8r5A
+Pa4gsJeOVs0D/2SZWF1ePjA2bv0CH2M+2cc5FMiMbdsOU1tuekRkH7bVW11tdKHH
+3N4q65zERoly4UII1y36jkop227mP8qdZDfc4n1HVnZ/NBgj66wM6WECTLxh13u0
+ZFLJJGLbAgMBAAECggEAElKRFxr1zE9Bji2JdxlEj4UNdL9Nv+XUA0rSjouGNVln
+DPrcvfvtFpKgzeepicaUySosM+VTreUF5GNpppRqCG+rIlaFpt6OoulZ8mr0gdX9
+m0QFv7EfkYoouU6OeqzJy26ysKIWplNe3pfTV6vlNHKwANyvL+HcstpSSJEUF2Gc
+d/kWTCtQ3+KK+Gr2zTyvu6MMMVsLLUz+/EaeowugbZ/JprhyWKMUmO6QaKiRbaef
+Hnk19Bhuow6EkDwjKiCiA7t8b6gb7TgkLFvulTrdJC8ciD320YwNUawPL/OoseHa
+/k4nHMbzZa2KxgSRR7EIbZZ6kZ2EPMsQZ2J4CUoHWQKBgQD40C5QF29krwdF74uc
+ydnWDWR4MdmUE1xdUOnrn4UnxHuRW2su+8xDHuB2JApQ91U5FhHk3Qc0x339QGNu
+T/EVXC8aqBwAMSNBdnhjCrbtqMyNyy8nrFvZWImZzepbR6OPiFa1fd94L9HznIY/
+8tUSUFq+3+BKmovf/AYnea4NOQKBgQDjrT4adRRsgI/gNaduN7IFe1IciCWNtnEY
+n/73GRBJxseeU5ZCKQa5p3/RpjhSlgzz7RZ1iK/T58rsCiXUVuWkSwYjTiyVkl0O
+rhaSnJx0FojhYo9CvkiTXcKySvcz3MMcDnb/mlUfDl5NFBpz9E+bYcuNufje1aVs
+ARJojl5EswKBgQDRjaQz2Ej9J1yczi9rkaVh3k2r3XA+gj/cZ/VbeTKQV68qsTAI
+lhFmxm6NkbUOlAC235uagX08Ongl/0C++500PDt/2+4ZS0lCLSEfaTq/1tbQ5TuF
+0mhZGXRqkT68Og3LKSy+FpFLjBrrbfyzhzVlA0AqWitxKdB8iKo2PQkWIQKBgQCU
+NWRmCK0g7Je8FnFFmE/0rZCILkBz/b2lkBGDfPdTb2jmsfbwXpCYLmdQbGnhqPgJ
+md6y6CW9RficqwZxMZgP2R7HwM3ZGAwn0D+1dOmL0FeOkIA9rGzGMZTaR16gjicc
+jnX8cdTTgKD2gA2wSevAdGrzeYp+VIl4w0Heej73bQKBgG8ZNCn+4ueVwzbZDF9x
+1Q3Q/vnM5uK5h4cHUl2sV35TzG9dfQFA8J4o5iYAA0wSFvRtd8GIMCoHL0eMIKMJ
+p79rneark8FrU1K079VY4g+jezj3wmVJlOq1ANqPmSsDWvnn9ClePY3RvuCOrW6R
+VTpOtsdYdd3Mqr7nELBtUC/s
+-----END PRIVATE KEY-----`;
+
+const TLS_CERT = `-----BEGIN CERTIFICATE-----
+MIIDCTCCAfGgAwIBAgIUVyaUNGALt2pLMZ64fhtoHdgyalIwDQYJKoZIhvcNAQEL
+BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDExMDEyMDYyMFoXDTM2MDEw
+ODEyMDYyMFowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEF
+AAOCAQ8AMIIBCgKCAQEA3Uj6HHMOtUCZ3G8JBFnmtCWA8iR9i2iPqAJaB2kSmtww
+U39Kgc/6dO+HodviWNZ89PuDFNpng61un5Ax6Wfi+tH1qzVtHNugrfvvqo9RG+2T
+OXdhGR15P+8fmzLGVqCn9OPFYECAtyNF78HRslwU3jGCQUbWQKIfsFIjwQmJd/wx
+byG/4Or+LXavZtdwEPjnOa7oJw4KhfK+QD2uILCXjlbNA/9kmVhdXj4wNm79Ah9j
+PtnHORTIjG3bDlNbbnpEZB+21VtdbXShx9zeKuucxEaJcuFCCNct+o5KKdtu5j/K
+nWQ33OJ9R1Z2fzQYI+usDOlhAky8Ydd7tGRSySRi2wIDAQABo1MwUTAdBgNVHQ4E
+FgQUCiVve1DqaQ69DcEDjzFP+tWnDG0wHwYDVR0jBBgwFoAUCiVve1DqaQ69DcED
+jzFP+tWnDG0wDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAfkLM
+UuJoQmdgI0o+k6ejXwTVvwdYTFXJT80rxR3sNM5swD6QV+obDjE9O87jFBlWDpv7
+57BFQ51u1iX5o5OKgs45E6CaZxCft0Hwujw7dhh8BgWxsUPO5b0WSE1Y+LNt9sFp
+jaYa8uRpAj8v5oHTRr7BX3P2vLSzasaH329H7qrpu5Ve9lfEFJ8ktlDnu/jc/Dqt
+Nnv4vQc88IU6fEnQLt/PIbawmlRRD4iwQXxPgHfoVwuJV04PFbTu5LEVpJZZxdcN
+XnZWPt6+otkxENLnTxI3O1dsK4GksDQTjUq7/f6CJ7rV2IJYmBzjLqut8h2QPU3E
+zWV2L5WdusMOjUkE7g==
+-----END CERTIFICATE-----`;
 
 declare global {
   interface Window {
@@ -20,7 +70,13 @@ declare global {
 
 type StartedProcess = {
   baseUrl: string;
+  port: number;
   stop: () => Promise<void>;
+};
+
+type StartedHttpsProxy = {
+  baseUrl: string;
+  close: () => Promise<void>;
 };
 
 async function getFreePort(): Promise<number> {
@@ -52,6 +108,71 @@ async function startTcpEchoServer(): Promise<{ port: number; close: () => Promis
   const address = server.address() as AddressInfo;
   return {
     port: address.port,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      }),
+  };
+}
+
+async function startHttpsProxy(targetPort: number): Promise<StartedHttpsProxy> {
+  const server = https.createServer({ key: TLS_KEY, cert: TLS_CERT }, (req, res) => {
+    const upstreamReq = http.request(
+      {
+        host: '127.0.0.1',
+        port: targetPort,
+        method: req.method,
+        path: req.url,
+        headers: { ...req.headers, host: `localhost:${targetPort}` },
+      },
+      (upstreamRes) => {
+        res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+        upstreamRes.pipe(res);
+      },
+    );
+
+    upstreamReq.on('error', () => {
+      if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('Bad gateway\n');
+    });
+
+    req.pipe(upstreamReq);
+  });
+
+  server.on('upgrade', (req, socket, head) => {
+    const upstream = net.connect({ host: '127.0.0.1', port: targetPort }, () => {
+      let requestHeader = `${req.method} ${req.url ?? '/'} HTTP/1.1\r\n`;
+      for (let i = 0; i < req.rawHeaders.length; i += 2) {
+        const key = req.rawHeaders[i];
+        const value = req.rawHeaders[i + 1] ?? '';
+        if (key.toLowerCase() === 'host') continue;
+        requestHeader += `${key}: ${value}\r\n`;
+      }
+      requestHeader += `Host: localhost:${targetPort}\r\n\r\n`;
+      upstream.write(requestHeader);
+      if (head.length > 0) upstream.write(head);
+
+      socket.pipe(upstream);
+      upstream.pipe(socket);
+    });
+
+    upstream.on('error', () => socket.destroy());
+    socket.on('error', () => upstream.destroy());
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => resolve());
+  });
+
+  const address = server.address() as AddressInfo | null;
+  if (!address) throw new Error('HTTPS proxy did not bind');
+
+  return {
+    baseUrl: `https://localhost:${address.port}`,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((err) => {
@@ -114,7 +235,7 @@ async function startUdpDnsServer(): Promise<{ port: number; close: () => Promise
     socket.bind(0, '127.0.0.1', () => resolve());
   });
 
-  const address = socket.address() as DgramAddressInfo;
+  const address = socket.address() as AddressInfo;
   return {
     port: address.port,
     close: () =>
@@ -156,11 +277,12 @@ async function startGatewayProcess(opts: { crossOriginIsolation: boolean; dnsUps
       PORT: String(port),
       LOG_LEVEL: 'silent',
       RATE_LIMIT_REQUESTS_PER_MINUTE: '0',
+      ALLOWED_ORIGINS: '*',
       CROSS_ORIGIN_ISOLATION: opts.crossOriginIsolation ? '1' : '0',
       DNS_UPSTREAMS: opts.dnsUpstreams,
       AERO_GATEWAY_E2E: '1',
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
 
   const output: string[] = [];
@@ -176,6 +298,7 @@ async function startGatewayProcess(opts: { crossOriginIsolation: boolean; dnsUps
 
   return {
     baseUrl,
+    port,
     stop: async () => {
       if (proc.exitCode !== null) return;
       proc.kill('SIGTERM');
@@ -192,8 +315,9 @@ test.describe('aero-gateway browser e2e', () => {
     const dns = await startUdpDnsServer();
     const echo = await startTcpEchoServer();
     const gateway = await startGatewayProcess({ crossOriginIsolation: true, dnsUpstreams: `127.0.0.1:${dns.port}` });
+    const proxy = await startHttpsProxy(gateway.port);
     try {
-      await page.goto(`${gateway.baseUrl}/e2e?echoPort=${echo.port}`);
+      await page.goto(`${proxy.baseUrl}/e2e?echoPort=${echo.port}`);
       await page.waitForFunction(() => Boolean(window.__aeroGatewayE2E), null, { timeout: 10_000 });
       const results = await page.evaluate(() => window.__aeroGatewayE2E!);
 
@@ -207,6 +331,7 @@ test.describe('aero-gateway browser e2e', () => {
       expect(results.dnsQuery.ok).toBe(true);
       expect(results.dnsQuery.error).toBeNull();
     } finally {
+      await proxy.close();
       await gateway.stop();
       await echo.close();
       await dns.close();
@@ -217,8 +342,9 @@ test.describe('aero-gateway browser e2e', () => {
     const dns = await startUdpDnsServer();
     const echo = await startTcpEchoServer();
     const gateway = await startGatewayProcess({ crossOriginIsolation: false, dnsUpstreams: `127.0.0.1:${dns.port}` });
+    const proxy = await startHttpsProxy(gateway.port);
     try {
-      await page.goto(`${gateway.baseUrl}/e2e?echoPort=${echo.port}`);
+      await page.goto(`${proxy.baseUrl}/e2e?echoPort=${echo.port}`);
       await page.waitForFunction(() => Boolean(window.__aeroGatewayE2E), null, { timeout: 10_000 });
       const results = await page.evaluate(() => window.__aeroGatewayE2E!);
 
@@ -232,6 +358,7 @@ test.describe('aero-gateway browser e2e', () => {
       expect(results.dnsQuery.ok).toBe(true);
       expect(results.dnsQuery.error).toBeNull();
     } finally {
+      await proxy.close();
       await gateway.stop();
       await echo.close();
       await dns.close();
