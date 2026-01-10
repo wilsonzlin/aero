@@ -712,14 +712,15 @@ IndexedDB is used for **small key/value** data that benefits from persistence ac
 
 ### Database Design (GPU Cache)
 
-Recommended layout for a persistent GPU cache:
+Concrete layout used by `web/gpu/persistent_cache.ts`:
 
 - Database name: `aero-gpu-cache`
-- Object store: `entries`
-  - key: `CacheKey` (string; includes schema version + backend kind + content hash)
-  - value: `{ value_bytes, size_bytes, created_at_ms, last_access_ms }`
-- Optional object store: `meta`
-  - singleton record holding `total_size_bytes` to make eviction cheap
+- Object store: `shaders` (keyPath: `key`, indexed by `lastUsed`)
+  - record: `{ key, storage, opfsFile?, wgsl?, reflection?, size, createdAt, lastUsed }`
+- Object store: `pipelines` (keyPath: `key`, indexed by `lastUsed`)
+  - record: `{ key, storage, opfsFile?, desc?, size, createdAt, lastUsed }`
+
+The payload may be stored inline in IndexedDB (`storage: "idb"`) or spilled to OPFS (`storage: "opfs"`, `opfsFile: "<key>.json"`) for larger blobs.
 
 The object store value should be treated as untrusted; shader cache hits must validate WGSL (e.g., with Naga) before use.
 
@@ -732,11 +733,13 @@ export async function openGpuCacheDb(): Promise<IDBDatabase> {
 
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains("entries")) {
-        db.createObjectStore("entries");
+      if (!db.objectStoreNames.contains("shaders")) {
+        const store = db.createObjectStore("shaders", { keyPath: "key" });
+        store.createIndex("lastUsed", "lastUsed");
       }
-      if (!db.objectStoreNames.contains("meta")) {
-        db.createObjectStore("meta");
+      if (!db.objectStoreNames.contains("pipelines")) {
+        const store = db.createObjectStore("pipelines", { keyPath: "key" });
+        store.createIndex("lastUsed", "lastUsed");
       }
     };
 
@@ -752,6 +755,11 @@ The application should expose an explicit `clear_cache()` API (for UI + debuggin
 
 - clears the `aero-gpu-cache` IndexedDB database
 - deletes any OPFS files used by the cache (if OPFS indirection is enabled)
+
+In `web/gpu/persistent_cache.ts`, this is exposed as:
+
+- `await PersistentGpuCache.clearAll()` (drop everything)
+- `await cache.clearCache()` (clear stores for an existing open handle)
 
 Users can also clear the cache via browser site data controls (e.g., DevTools → Application → Storage → Clear site data).
 

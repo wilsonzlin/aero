@@ -42,6 +42,10 @@ export const CACHE_SCHEMA_VERSION = 1;
 export const BACKEND_KIND_DXBC_TO_WGSL = "dxbc-to-wgsl";
 export const BACKEND_KIND_PIPELINE_DESC = "pipeline-desc";
 
+// Store small payloads directly in IndexedDB (fast/simple), and only spill to
+// OPFS for larger blobs to avoid excessive file handle churn.
+const OPFS_MIN_BYTES = 256 * 1024;
+
 const DEFAULT_LIMITS = Object.freeze({
   shaders: { maxEntries: 2048, maxBytes: 64 * 1024 * 1024 },
   pipelines: { maxEntries: 4096, maxBytes: 32 * 1024 * 1024 },
@@ -688,7 +692,7 @@ export class PersistentGpuCache {
 
     let storage = "idb";
     let opfsFile = null;
-    if (this._opfsCacheDir) {
+    if (this._opfsCacheDir && size > OPFS_MIN_BYTES) {
       const shadersDir = await this._opfsCacheDir.getDirectoryHandle("shaders");
       const name = `${key}.json`;
       const ok = await writeOpfsTextFile(shadersDir, name, JSON.stringify(payload));
@@ -786,7 +790,7 @@ export class PersistentGpuCache {
 
     let storage = "idb";
     let opfsFile = null;
-    if (this._opfsCacheDir) {
+    if (this._opfsCacheDir && size > OPFS_MIN_BYTES) {
       const dir = await this._opfsCacheDir.getDirectoryHandle("pipelines");
       const name = `${key}.json`;
       const ok = await writeOpfsTextFile(dir, name, JSON.stringify(payload));
