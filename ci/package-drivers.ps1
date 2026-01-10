@@ -140,6 +140,8 @@ function Get-DriverNameFromRelativeSegments {
         "build",
         "bin",
         "dist",
+        "windows",
+        "wdk",
         "win7",
         "w7",
         "windows7",
