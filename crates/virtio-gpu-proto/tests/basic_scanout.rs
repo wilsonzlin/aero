@@ -162,4 +162,50 @@ fn basic_2d_scanout_roundtrip() {
     dev.process_control_command(&req, &mem).unwrap();
 
     assert_eq!(dev.scanout_bgra(), expected.as_slice());
+
+    // Resolution change: create a new 2x2 resource and bind it as the new scanout.
+    let new_pixels: [u8; 16] = [
+        0x10, 0x20, 0x30, 0xff, // (0,0)
+        0x11, 0x21, 0x31, 0xff, // (1,0)
+        0x12, 0x22, 0x32, 0xff, // (0,1)
+        0x13, 0x23, 0x33, 0xff, // (1,1)
+    ];
+    mem.write(0x1800, &new_pixels);
+
+    let mut req = hdr(VIRTIO_GPU_CMD_RESOURCE_CREATE_2D);
+    write_u32_le(&mut req, 2); // resource_id
+    write_u32_le(&mut req, VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM);
+    write_u32_le(&mut req, 2);
+    write_u32_le(&mut req, 2);
+    dev.process_control_command(&req, &mem).unwrap();
+
+    let mut req = hdr(VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING);
+    write_u32_le(&mut req, 2); // resource_id
+    write_u32_le(&mut req, 1); // nr_entries
+    write_u64_le(&mut req, 0x1800); // addr
+    write_u32_le(&mut req, 16); // len
+    write_u32_le(&mut req, 0); // padding
+    dev.process_control_command(&req, &mem).unwrap();
+
+    let mut req = hdr(VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D);
+    push_rect(&mut req, Rect::new(0, 0, 2, 2));
+    write_u64_le(&mut req, 0); // offset
+    write_u32_le(&mut req, 2); // resource_id
+    write_u32_le(&mut req, 0); // padding
+    dev.process_control_command(&req, &mem).unwrap();
+
+    let mut req = hdr(VIRTIO_GPU_CMD_SET_SCANOUT);
+    push_rect(&mut req, Rect::new(0, 0, 2, 2));
+    write_u32_le(&mut req, 0); // scanout_id
+    write_u32_le(&mut req, 2); // resource_id
+    dev.process_control_command(&req, &mem).unwrap();
+
+    let mut req = hdr(VIRTIO_GPU_CMD_RESOURCE_FLUSH);
+    push_rect(&mut req, Rect::new(0, 0, 2, 2));
+    write_u32_le(&mut req, 2); // resource_id
+    write_u32_le(&mut req, 0); // padding
+    dev.process_control_command(&req, &mem).unwrap();
+
+    assert_eq!(dev.display_size(), (2, 2));
+    assert_eq!(dev.scanout_bgra(), new_pixels.as_slice());
 }

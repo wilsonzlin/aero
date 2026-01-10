@@ -147,6 +147,14 @@ impl VirtioGpuDevice {
         }
     }
 
+    /// Current scanout dimensions (scanout 0).
+    ///
+    /// Note: this is treated as the "current output mode" for the prototype, and may change when
+    /// the guest calls `SET_SCANOUT` with a different `rect`.
+    pub fn display_size(&self) -> (u32, u32) {
+        (self.display_width, self.display_height)
+    }
+
     pub fn scanout_bgra(&self) -> &[u8] {
         &self.scanout_bgra
     }
@@ -415,15 +423,31 @@ impl VirtioGpuDevice {
             // This prototype only exposes one scanout buffer.
             return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
         }
-        if !self.resources.contains_key(&resource_id) {
+        let Some(res) = self.resources.get(&resource_id) else {
+            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+        };
+        if rect.x != 0 || rect.y != 0 || rect.width == 0 || rect.height == 0 {
+            // Keep the prototype simple: we only support scanout 0 being mapped 1:1 to the
+            // output buffer (no panning / multi-rect scanouts).
             return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
         }
-        if rect.x.checked_add(rect.width).unwrap_or(u32::MAX) > self.display_width
-            || rect.y.checked_add(rect.height).unwrap_or(u32::MAX) > self.display_height
-            || rect.width == 0
-            || rect.height == 0
-        {
+
+        if res.width != rect.width || res.height != rect.height {
+            // The resource must match the scanout rect for a 1:1 scanout mapping.
             return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+        }
+
+        // Treat the requested rect as the "current mode" and resize the scanout buffer.
+        if rect.width != self.display_width || rect.height != self.display_height {
+            let new_len = u64::from(rect.width)
+                .checked_mul(u64::from(rect.height))
+                .and_then(|v| v.checked_mul(4))
+                .ok_or(ProtocolError::InvalidParameter("scanout size overflow"))?;
+            let new_len = usize::try_from(new_len)
+                .map_err(|_| ProtocolError::InvalidParameter("scanout size overflow"))?;
+            self.scanout_bgra.resize(new_len, 0);
+            self.display_width = rect.width;
+            self.display_height = rect.height;
         }
 
         self.scanouts[scanout_id].enabled = true;

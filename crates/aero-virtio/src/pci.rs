@@ -300,6 +300,8 @@ impl VirtioPciDevice {
             1 => (0x02, 0x00),
             // Mass storage / SCSI (commonly used for virtio-blk).
             2 => (0x01, 0x00),
+            // Display controller / other (virtio-gpu).
+            16 => (0x03, 0x80),
             // Input device controller.
             18 => (0x09, 0x00),
             // Multimedia / audio device.

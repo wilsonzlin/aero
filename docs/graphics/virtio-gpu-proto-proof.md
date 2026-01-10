@@ -24,6 +24,7 @@ What the test covers:
 - a simulated “guest memory” buffer contains BGRA pixels
 - virtio-gpu commands create a 2D resource, attach the backing, transfer pixels, bind scanout, and flush
 - the device’s scanout buffer is byte-for-byte equal to the original guest pixels
+- exercises multi-entry (scatter/gather) backing, partial rect updates, and a simple mode switch via `SET_SCANOUT`
 
 ## Virtio transport integration proof
 

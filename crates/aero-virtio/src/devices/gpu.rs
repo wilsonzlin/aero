@@ -43,8 +43,8 @@ impl<'a> proto_dev::GuestMemory for MemAdapter<'a> {
 /// - pulls request/response buffers out of virtqueues
 /// - exposes a callback on `RESOURCE_FLUSH` to publish scanout pixels
 pub struct VirtioGpu2d<S: ScanoutSink> {
-    width: u32,
-    height: u32,
+    initial_width: u32,
+    initial_height: u32,
     features: u64,
     sink: S,
     gpu: proto_dev::VirtioGpuDevice,
@@ -53,8 +53,8 @@ pub struct VirtioGpu2d<S: ScanoutSink> {
 impl<S: ScanoutSink> VirtioGpu2d<S> {
     pub fn new(width: u32, height: u32, sink: S) -> Self {
         Self {
-            width,
-            height,
+            initial_width: width,
+            initial_height: height,
             features: 0,
             sink,
             gpu: proto_dev::VirtioGpuDevice::new(width, height),
@@ -131,7 +131,8 @@ impl<S: ScanoutSink> VirtioGpu2d<S> {
 
         // Present on flush.
         if ctrl.type_ == proto::VIRTIO_GPU_CMD_RESOURCE_FLUSH {
-            self.sink.present(self.width, self.height, self.gpu.scanout_bgra());
+            let (w, h) = self.gpu.display_size();
+            self.sink.present(w, h, self.gpu.scanout_bgra());
         }
 
         let need_irq = queue
@@ -204,7 +205,7 @@ impl<S: ScanoutSink + 'static> VirtioDevice for VirtioGpu2d<S> {
 
     fn reset(&mut self) {
         self.features = 0;
-        self.gpu = proto_dev::VirtioGpuDevice::new(self.width, self.height);
+        self.gpu = proto_dev::VirtioGpuDevice::new(self.initial_width, self.initial_height);
     }
 
     fn as_any(&self) -> &dyn Any {

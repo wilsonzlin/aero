@@ -164,6 +164,12 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
     let vendor = u16::from_le_bytes(id[0..2].try_into().unwrap());
     assert_eq!(vendor, PCI_VENDOR_ID_VIRTIO);
 
+    // Class code: display controller / other.
+    let mut cfg = [0u8; 256];
+    dev.config_read(0, &mut cfg);
+    assert_eq!(cfg[0x0b], 0x03);
+    assert_eq!(cfg[0x0a], 0x80);
+
     let caps = parse_caps(&dev);
     assert_ne!(caps.notify, 0);
     assert_ne!(caps.isr, 0);
