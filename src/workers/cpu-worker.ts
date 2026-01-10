@@ -3,7 +3,7 @@
 import type { CompileBlockResponse, CpuToJitMessage, JitToCpuMessage } from './jit-protocol';
 import {
   copyWasmBytes,
-  CPU_HELPER_WASM_BYTES,
+  CPU_RUNTIME_WASM_BYTES,
   SHARED_MEMORY_INITIAL_PAGES,
   SHARED_MEMORY_MAX_PAGES,
 } from './wasm-bytes';
@@ -30,6 +30,12 @@ type CpuWorkerStartMessage = {
 const MAX_JIT_TABLE_ENTRIES = 64;
 const ENTRY_RIP = 0x1000;
 
+type CpuRuntimeExports = {
+  jit_helper: () => void;
+  call_jit: (tableIndex: number) => void;
+  install_jit_block: (entryRip: number, tableIndex: number) => void;
+};
+
 function postToMain(msg: CpuWorkerToMainMessage) {
   ctx.postMessage(msg);
 }
@@ -46,7 +52,7 @@ async function installJitBlock(
   resp: CompileBlockResponse,
   memory: WebAssembly.Memory,
   table: WebAssembly.Table,
-  cpuHelper: { jit_helper: () => void },
+  cpuRuntime: CpuRuntimeExports,
   indexToEntryRip: Map<number, number>,
   entryRipToIndex: Map<number, number>,
   evictionCursor: { value: number },
@@ -61,7 +67,7 @@ async function installJitBlock(
 
   const instance = await WebAssembly.instantiate(module, {
     env: { memory },
-    cpu: { jit_helper: cpuHelper.jit_helper },
+    cpu: { jit_helper: cpuRuntime.jit_helper },
   });
 
   const block = (instance.exports as { block?: unknown }).block;
@@ -83,6 +89,7 @@ async function installJitBlock(
   indexToEntryRip.set(idx, resp.entry_rip);
   entryRipToIndex.set(resp.entry_rip, idx);
   table.set(idx, block);
+  cpuRuntime.install_jit_block(resp.entry_rip, idx);
 }
 
 async function runSyntheticProgram(iterations: number, threshold: number) {
@@ -105,13 +112,10 @@ async function runSyntheticProgram(iterations: number, threshold: number) {
 
   const counters = new Int32Array(memory.buffer);
   counters[0] = 0; // JIT block executions (written by JIT block WASM).
-  counters[1] = 0; // CPU helper executions (written by CPU helper WASM).
+  counters[1] = 0; // CPU helper executions (written by CPU runtime WASM).
   counters[2] = 0; // Interpreter executions (written by JS interpreter loop).
-
-  const helperModule = await WebAssembly.compile(copyWasmBytes(CPU_HELPER_WASM_BYTES));
-  const helperInstance = await WebAssembly.instantiate(helperModule, { env: { memory } });
-  const jit_helper = (helperInstance.exports as { jit_helper?: unknown }).jit_helper;
-  if (typeof jit_helper !== 'function') throw new Error('cpu helper missing jit_helper export');
+  counters[3] = -1; // Installed table index (written by CPU runtime WASM).
+  counters[4] = 0; // Installed entry RIP (written by CPU runtime WASM).
 
   const table = new WebAssembly.Table({
     // TS libdom types still use "anyfunc"; modern browsers also accept it.
@@ -119,6 +123,13 @@ async function runSyntheticProgram(iterations: number, threshold: number) {
     initial: 0,
     maximum: MAX_JIT_TABLE_ENTRIES,
   });
+
+  const cpuRuntimeModule = await WebAssembly.compile(copyWasmBytes(CPU_RUNTIME_WASM_BYTES));
+  const cpuRuntimeInstance = await WebAssembly.instantiate(cpuRuntimeModule, { env: { memory, table } });
+  const cpuRuntime = cpuRuntimeInstance.exports as Partial<CpuRuntimeExports>;
+  if (typeof cpuRuntime.jit_helper !== 'function') throw new Error('cpu runtime missing jit_helper export');
+  if (typeof cpuRuntime.call_jit !== 'function') throw new Error('cpu runtime missing call_jit export');
+  if (typeof cpuRuntime.install_jit_block !== 'function') throw new Error('cpu runtime missing install_jit_block export');
 
   const indexToEntryRip = new Map<number, number>();
   const entryRipToIndex = new Map<number, number>();
@@ -175,10 +186,7 @@ async function runSyntheticProgram(iterations: number, threshold: number) {
   for (let i = 0; i < iterations; i++) {
     const idx = entryRipToIndex.get(ENTRY_RIP);
     if (idx !== undefined) {
-      const fn = table.get(idx) as unknown;
-      if (typeof fn === 'function') {
-        (fn as () => void)();
-      }
+      cpuRuntime.call_jit(idx);
     } else {
       Atomics.add(counters, 2, 1);
       if (!compilePromise && counters[2] >= threshold) {
@@ -187,7 +195,7 @@ async function runSyntheticProgram(iterations: number, threshold: number) {
             resp,
             memory,
             table,
-            { jit_helper: jit_helper as () => void },
+            cpuRuntime as CpuRuntimeExports,
             indexToEntryRip,
             entryRipToIndex,
             evictionCursor,
@@ -214,8 +222,7 @@ async function runSyntheticProgram(iterations: number, threshold: number) {
     // Ensure we exercise the installed block at least once.
     const idx = entryRipToIndex.get(ENTRY_RIP);
     if (idx !== undefined) {
-      const fn = table.get(idx) as unknown;
-      if (typeof fn === 'function') (fn as () => void)();
+      cpuRuntime.call_jit(idx);
     }
   }
 
@@ -236,4 +243,3 @@ ctx.addEventListener('message', (ev: MessageEvent<CpuWorkerStartMessage>) => {
 });
 
 postToMain({ type: 'CpuWorkerReady' });
-
