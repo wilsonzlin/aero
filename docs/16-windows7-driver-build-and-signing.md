@@ -70,6 +70,12 @@ Typical usage:
 .\ci\sign-drivers.ps1
 ```
 
+If you are using the repo’s WDK provisioning helper (`ci/install-wdk.ps1`), you can also pass the generated toolchain manifest so the script uses the exact `signtool.exe` instance that was installed:
+
+```powershell
+.\ci\sign-drivers.ps1 -ToolchainJson .\out\toolchain.json
+```
+
 Dual signing (SHA-1 first, then append SHA-256):
 
 ```powershell
