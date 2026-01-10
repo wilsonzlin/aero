@@ -85,6 +85,12 @@ Install it with:
 EOF
       exit 1
     fi
+
+    # `wasm-bindgen-cli` is typically handled automatically by wasm-pack, but
+    # some workflows may still want it installed globally.
+    if ! command -v wasm-bindgen >/dev/null 2>&1; then
+      echo "==> Tooling: wasm-bindgen-cli not found (usually OK; wasm-pack downloads its own binary)"
+    fi
   else
     echo "==> Tooling: wasm crate not found yet; skipping wasm-pack checks"
   fi
@@ -203,6 +209,11 @@ dev:
   set -euo pipefail
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
+    if [[ ! -d "{{WEB_DIR}}/node_modules" ]]; then
+      echo "error: '{{WEB_DIR}}/node_modules' not found; run 'just setup' first" >&2
+      exit 1
+    fi
+
     echo "==> Building wasm (single + threaded)"
     just wasm
 
@@ -262,6 +273,11 @@ build:
   just wasm
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
+    if [[ ! -d "{{WEB_DIR}}/node_modules" ]]; then
+      echo "error: '{{WEB_DIR}}/node_modules' not found; run 'just setup' first" >&2
+      exit 1
+    fi
+
     echo "==> Building web bundle (production)"
     (cd "{{WEB_DIR}}" && npm run build)
   else
@@ -279,7 +295,19 @@ test:
     echo "==> Rust: Cargo.toml not found; skipping cargo test"
   fi
 
-  just _maybe_run_web_script test
+  if [[ -f "{{WEB_DIR}}/package.json" ]]; then
+    if [[ ! -d "{{WEB_DIR}}/node_modules" ]]; then
+      echo "error: '{{WEB_DIR}}/node_modules' not found; run 'just setup' first" >&2
+      exit 1
+    fi
+  fi
+
+  # Prefer a dedicated unit-test script if available.
+  if [[ -f "{{WEB_DIR}}/package.json" ]] && (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['test:unit']) ? 0 : 1)" >/dev/null 2>&1); then
+    (cd "{{WEB_DIR}}" && npm run test:unit)
+  else
+    just _maybe_run_web_script test
+  fi
 
 test-all:
   ./scripts/test-all.sh
@@ -308,6 +336,8 @@ lint:
     echo "==> Rust: Cargo.toml not found; skipping cargo clippy"
   fi
 
+  # TypeScript typechecking is the closest thing we have to "lint" in web/.
+  just _maybe_run_web_script typecheck
   just _maybe_run_web_script lint
 
 object-store-up:
