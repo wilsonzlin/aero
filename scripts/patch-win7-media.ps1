@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 #Requires -RunAsAdministrator
 
 [CmdletBinding()]
@@ -92,6 +93,22 @@ function Invoke-Exe {
     throw "Command failed (exit $exitCode): $FilePath $($ArgumentList -join ' ')`n$outText"
   }
   return $output
+}
+
+function Invoke-ExeResult {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$FilePath,
+    [Parameter(Mandatory = $true)]
+    [string[]]$ArgumentList
+  )
+
+  Write-Log "Running: $FilePath $($ArgumentList -join ' ')"
+  $output = & $FilePath @ArgumentList 2>&1
+  return [pscustomobject]@{
+    ExitCode = $LASTEXITCODE
+    Output = ,$output
+  }
 }
 
 function Get-WimIndices {
@@ -204,20 +221,89 @@ function Patch-BcdStore {
 
   Ensure-FileWritable -Path $StorePath
 
-  Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', '{default}', 'testsigning', 'on') | Out-Null
-  if ($EnableNoIntegrityChecks) {
-    Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', '{default}', 'nointegritychecks', 'on') | Out-Null
+  $defaultPatched = $false
+  $attempt = Invoke-ExeResult -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', '{default}', 'testsigning', 'on')
+  if ($attempt.ExitCode -eq 0) {
+    $defaultPatched = $true
+    if ($EnableNoIntegrityChecks) {
+      Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', '{default}', 'nointegritychecks', 'on') | Out-Null
+    }
+  } else {
+    $outText = ($attempt.Output | Out-String).Trim()
+    Write-Log "Failed to patch {default} in BCD store; falling back to patching Windows Boot Loader entries.`n$outText" 'WARN'
+
+    $guids = Get-BcdWindowsBootLoaderGuids -StorePath $StorePath
+    if ($guids.Count -eq 0) {
+      throw "Unable to locate Windows Boot Loader entries in BCD store: $StorePath"
+    }
+    foreach ($guid in $guids) {
+      Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', $guid, 'testsigning', 'on') | Out-Null
+      if ($EnableNoIntegrityChecks) {
+        Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', $guid, 'nointegritychecks', 'on') | Out-Null
+      }
+    }
   }
 
-  $out = Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/enum', '{default}')
-  $outText = ($out | Out-String)
+  if ($defaultPatched) {
+    $out = Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/enum', '{default}')
+    $outText = ($out | Out-String)
 
-  if ($outText -notmatch '(?im)^\s*testsigning\s+') {
-    throw "Failed to verify testsigning in BCD store: $StorePath`n$outText"
+    if ($outText -notmatch '(?im)^\s*testsigning\s+') {
+      throw "Failed to verify testsigning in BCD store: $StorePath`n$outText"
+    }
+    if ($EnableNoIntegrityChecks -and ($outText -notmatch '(?im)^\s*nointegritychecks\s+')) {
+      throw "Failed to verify nointegritychecks in BCD store: $StorePath`n$outText"
+    }
+  } else {
+    $out = Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/enum', 'all')
+    $outText = ($out | Out-String)
+
+    if ($outText -notmatch '(?im)^\s*testsigning\s+') {
+      throw "Failed to verify testsigning in BCD store (fallback mode): $StorePath`n$outText"
+    }
+    if ($EnableNoIntegrityChecks -and ($outText -notmatch '(?im)^\s*nointegritychecks\s+')) {
+      throw "Failed to verify nointegritychecks in BCD store (fallback mode): $StorePath`n$outText"
+    }
   }
-  if ($EnableNoIntegrityChecks -and ($outText -notmatch '(?im)^\s*nointegritychecks\s+')) {
-    throw "Failed to verify nointegritychecks in BCD store: $StorePath`n$outText"
+}
+
+function Get-BcdWindowsBootLoaderGuids {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$StorePath
+  )
+
+  $out = Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/enum', 'all')
+
+  $sectionTitle = $null
+  $guids = @()
+  for ($i = 0; $i -lt $out.Count; $i++) {
+    $line = $out[$i]
+    $trimmed = $line.Trim()
+    if (-not $trimmed) {
+      continue
+    }
+
+    $nextLine = $null
+    if ($i + 1 -lt $out.Count) {
+      $nextLine = $out[$i + 1].Trim()
+    }
+
+    # bcdedit section headers are immediately followed by a dashed separator line.
+    if ($nextLine -and ($nextLine -match '^-+$')) {
+      $sectionTitle = $trimmed
+      continue
+    }
+
+    if ($sectionTitle -eq 'Windows Boot Loader') {
+      $m = [Regex]::Match($trimmed, '^identifier\s+(\{[0-9A-Fa-f\-]{36}\})\s*$')
+      if ($m.Success) {
+        $guids += $m.Groups[1].Value
+      }
+    }
   }
+
+  return @($guids | Sort-Object -Unique)
 }
 
 function Get-CertificateDerBytes {
@@ -276,8 +362,8 @@ public static class OfflineCertInjector
     private const uint PKCS_7_ASN_ENCODING = 0x00010000;
     private const uint CERT_STORE_ADD_REPLACE_EXISTING = 3;
 
-    // From wincrypt.h: #define CERT_STORE_PROV_REG ((LPCSTR) 4)
-    private static readonly IntPtr CERT_STORE_PROV_REG = new IntPtr(4);
+    // From wincrypt.h: #define CERT_STORE_PROV_SYSTEM_REGISTRY_W ((LPCSTR)13)
+    private static readonly IntPtr CERT_STORE_PROV_SYSTEM_REGISTRY = new IntPtr(13);
 
     // Allow opening the store with whatever rights the key grants.
     private const uint CERT_STORE_MAXIMUM_ALLOWED_FLAG = 0x00001000;
@@ -326,9 +412,13 @@ public static class OfflineCertInjector
                 if (storeRoot == null)
                     throw new InvalidOperationException("Failed to open or create HKLM\\\\" + hiveKeyName + "\\\\Microsoft\\\\SystemCertificates\\\\" + storeName);
 
+                // CryptoAPI expects this layout under the store key, e.g.:
+                //   ...\\SystemCertificates\\ROOT\\Certificates\\<thumbprint>\\Blob
+                using (storeRoot.CreateSubKey("Certificates")) { }
+
                 IntPtr hCertStore = CertOpenStore(
-                    CERT_STORE_PROV_REG,
-                    0,
+                    CERT_STORE_PROV_SYSTEM_REGISTRY,
+                    X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
                     IntPtr.Zero,
                     CERT_STORE_MAXIMUM_ALLOWED_FLAG,
                     storeRoot.Handle.DangerousGetHandle()
@@ -342,7 +432,7 @@ public static class OfflineCertInjector
                     IntPtr pCertContext;
                     bool ok = CertAddEncodedCertificateToStore(
                         hCertStore,
-                        X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                        X509_ASN_ENCODING,
                         certificateDer,
                         certificateDer.Length,
                         CERT_STORE_ADD_REPLACE_EXISTING,
