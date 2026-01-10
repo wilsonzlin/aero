@@ -68,9 +68,10 @@ fn attribute_flip_flop_resets_on_input_status_read() {
 
 #[test]
 fn input_status1_vertical_retrace_bit_changes() {
-    let vga = VgaDevice::new();
+    let mut vga = VgaDevice::new();
 
     let a = vga.port_read(0x3DA, 1) as u8;
+    vga.tick(vga.timing().frame_ns().saturating_sub(vga.timing().vblank_ns()));
     let b = vga.port_read(0x3DA, 1) as u8;
 
     assert_ne!(a & 0x08, b & 0x08);

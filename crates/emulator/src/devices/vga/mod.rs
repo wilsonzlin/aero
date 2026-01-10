@@ -2,6 +2,7 @@ mod modeset;
 mod mmio;
 mod ports;
 mod regs;
+mod timing;
 pub mod dac;
 pub mod edid;
 pub mod memory;
@@ -130,6 +131,7 @@ impl VgaRenderer {
     }
 }
 
+pub use timing::VgaTiming;
 /// Information needed to update the BIOS Data Area (BDA) after a legacy VGA
 /// mode set (INT 10h/AH=00h style).
 ///

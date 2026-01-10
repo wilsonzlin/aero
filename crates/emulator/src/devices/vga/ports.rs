@@ -7,6 +7,7 @@ use super::regs::{
     AC_REGS_INITIAL_LEN, CRTC_REGS_INITIAL_LEN, GC_REGS_INITIAL_LEN, POWER_ON_MISC_OUTPUT,
     SEQ_REGS_INITIAL_LEN, VgaDerivedState, VgaPlanarShift,
 };
+use super::timing::VgaTiming;
 use super::vbe::{VbeControllerInfo, VbeModeInfo, VbeState, VBE_LFB_SIZE};
 use super::VgaMemory;
 
@@ -63,14 +64,7 @@ pub struct VgaDevice {
     ac_flip_flop_data: Cell<bool>,
     ac_display_enabled: bool,
 
-    /// Simple, deterministic Input Status 1 vertical retrace bit generator.
-    ///
-    /// Real VGA hardware updates the vertical retrace bit based on scan timing.
-    /// We do not model timing yet, but many real-mode programs poll 0x3DA
-    /// waiting for the bit to change. If it never changes, they can spin
-    /// forever. To avoid hangs while keeping behaviour predictable, we toggle
-    /// the bit on each status read.
-    input_status1_vretrace: Cell<bool>,
+    timing: VgaTiming,
 
     /// 256 KiB VGA RAM, stored as four 64 KiB planes.
     vram: Vec<u8>,
@@ -224,7 +218,7 @@ impl VgaDevice {
             ac_flip_flop_data: Cell::new(false),
             ac_display_enabled: false,
 
-            input_status1_vretrace: Cell::new(false),
+            timing: VgaTiming::default(),
 
             vram: vec![0; 256 * 1024],
 
@@ -275,7 +269,7 @@ impl VgaDevice {
 
         self.ac_flip_flop_data.set(false);
         self.ac_display_enabled = false;
-        self.input_status1_vretrace.set(false);
+        self.timing = VgaTiming::default();
 
         self.vram.fill(0);
         self.legacy_bda = LegacyBdaInfo {
@@ -443,6 +437,27 @@ impl VgaDevice {
         }
 
         &self.frontbuffer
+    }
+
+    pub fn tick(&mut self, delta_ns: u64) {
+        self.timing.tick(delta_ns);
+    }
+
+    pub fn timing(&self) -> &VgaTiming {
+        &self.timing
+    }
+
+    pub fn attribute_flip_flop_is_index(&self) -> bool {
+        !self.ac_flip_flop_data.get()
+    }
+
+    pub fn should_render_text_attribute(&self, attribute: u8) -> bool {
+        // Attribute controller Mode Control register: index 0x10, bit 3.
+        let blink_enabled = (self.ac_regs.get(0x10).copied().unwrap_or(0) & 0x08) != 0;
+        if blink_enabled && (attribute & 0x80) != 0 {
+            return self.timing.text_blink_state_on();
+        }
+        true
     }
 
     fn is_colour_io(&self) -> bool {
@@ -619,6 +634,22 @@ impl VgaDevice {
         };
     }
 
+    /// Input Status Register 1 (read via port 0x3DA on color adapters, 0x3BA on mono).
+    ///
+    /// Bit mapping implemented here:
+    /// - Bit 3: vertical retrace / vblank (`1` while in vblank window).
+    /// - Bit 0: display enable, inverted (`1` while display is disabled/blanked).
+    fn read_input_status_1(&self) -> u8 {
+        let mut v = 0u8;
+        if self.timing.in_vblank() {
+            v |= 1 << 3;
+        }
+        if !self.timing.display_enabled() {
+            v |= 1 << 0;
+        }
+        v
+    }
+
     fn read_u8(&self, port: u16) -> u8 {
         let (active_crtc_index, active_crtc_data) = self.active_crtc_ports();
 
@@ -642,13 +673,7 @@ impl VgaDevice {
             p if p == self.active_input_status1_port() => {
                 // Input Status 1 read resets the attribute controller flip-flop.
                 self.ac_flip_flop_data.set(false);
-                let next = !self.input_status1_vretrace.get();
-                self.input_status1_vretrace.set(next);
-
-                // Bit 3: vertical retrace (commonly polled).
-                // Bit 0: display enable (roughly correlates with retrace/blanking).
-                let v = if next { 0x08 } else { 0x00 };
-                v | (v >> 3)
+                self.read_input_status_1()
             }
 
             p if p == active_crtc_index => self.crtc_index,
