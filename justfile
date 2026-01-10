@@ -77,12 +77,10 @@ setup:
   if [[ -n "${wasm_dir}" ]]; then
     echo "==> Tooling: checking wasm build tools"
     if ! command -v wasm-pack >/dev/null; then
-      cat >&2 <<'EOF'
-error: wasm-pack is required to build the wasm package.
-
-Install it with:
-  cargo install wasm-pack
-EOF
+      echo "error: wasm-pack is required to build the wasm package." >&2
+      echo "" >&2
+      echo "Install it with:" >&2
+      echo "  cargo install wasm-pack" >&2
       exit 1
     fi
 
@@ -217,16 +215,14 @@ dev:
     echo "==> Building wasm (single + threaded)"
     just wasm
 
-    cat <<'EOF'
-==> Starting Vite dev server
-
-Vite will print the local URL (usually http://localhost:5173).
-
-Note: Aero relies on SharedArrayBuffer/WASM threads, which require cross-origin isolation
-(COOP/COEP headers => `crossOriginIsolated === true`). If you see
-`SharedArrayBuffer is not defined` or `crossOriginIsolated is false`, see the
-Troubleshooting section in README.md.
-EOF
+    echo "==> Starting Vite dev server"
+    echo ""
+    echo "Vite will print the local URL (usually http://localhost:5173)."
+    echo ""
+    echo "Note: Aero relies on SharedArrayBuffer/WASM threads, which require cross-origin isolation"
+    echo '(COOP/COEP headers => `crossOriginIsolated === true`). If you see'
+    echo '`SharedArrayBuffer is not defined` or `crossOriginIsolated is false`, see the'
+    echo "Troubleshooting section in README.md."
 
     wasm_dir="$(just _detect_wasm_crate_dir || true)"
     if [[ -n "${wasm_dir}" ]] && command -v watchexec >/dev/null 2>&1; then
@@ -242,12 +238,10 @@ EOF
 
     (cd "{{WEB_DIR}}" && npm run dev)
   else
-    cat <<'EOF'
-==> No `web/` app detected.
-
-Falling back to the browser-memory proof-of-concept server, which sets COOP/COEP
-headers so `SharedArrayBuffer` is available.
-EOF
+    echo '==> No `web/` app detected.'
+    echo ""
+    echo "Falling back to the browser-memory proof-of-concept server, which sets COOP/COEP"
+    echo "headers so `SharedArrayBuffer` is available."
     node poc/browser-memory/server.mjs
   fi
 
@@ -262,12 +256,10 @@ wasm-watch:
   fi
 
   if ! command -v watchexec >/dev/null; then
-    cat >&2 <<'EOF'
-error: watchexec is required for wasm-watch.
-
-Install it with:
-  cargo install watchexec-cli
-EOF
+    echo "error: watchexec is required for wasm-watch." >&2
+    echo "" >&2
+    echo "Install it with:" >&2
+    echo "  cargo install watchexec-cli" >&2
     exit 1
   fi
 
