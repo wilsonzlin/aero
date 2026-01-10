@@ -238,7 +238,8 @@ impl DmaPositionBufferRegs {
     }
 
     pub fn write_dplbase(&mut self, value: u32) {
-        self.dplbase = value;
+        // DPLBASE is 128-byte aligned; bits 6:1 are reserved and must read as 0.
+        self.dplbase = (value & DPLBASE_ENABLE) | (value & DPLBASE_BASE_MASK);
     }
 
     pub fn write_dpubase(&mut self, value: u32) {

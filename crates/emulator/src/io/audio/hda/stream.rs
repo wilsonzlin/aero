@@ -375,7 +375,13 @@ impl HdaStream {
                 continue;
             }
 
-            let bytes = remaining as usize;
+            let format = StreamFormat::from_hda_fmt(self.fmt);
+            let bytes_per_sample = ((format.bits_per_sample as u32 + 7) / 8).max(1);
+            let bytes_per_frame = bytes_per_sample.saturating_mul(format.channels as u32);
+            let bytes_per_tick = bytes_per_frame.saturating_mul(128).max(1);
+            let take = remaining.min(bytes_per_tick);
+
+            let bytes = take as usize;
             self.dma_scratch.resize(bytes, 0);
 
             // Fill from capture buffer; any missing bytes remain as zero (silence).
@@ -388,8 +394,8 @@ impl HdaStream {
                 &self.dma_scratch[..bytes],
             );
 
-            self.bdl_offset += remaining;
-            self.lpib = self.lpib.wrapping_add(remaining) % self.cbl;
+            self.bdl_offset += take;
+            self.lpib = self.lpib.wrapping_add(take) % self.cbl;
             self.finish_bdl_entry(entry, intsts);
             break;
         }

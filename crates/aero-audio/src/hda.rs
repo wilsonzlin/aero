@@ -667,7 +667,11 @@ impl HdaController {
             (REG_RIRBSTS, 1) => self.rirbsts &= !(value as u8),
             (REG_RIRBSIZE, 1) => self.rirbsize = value as u8,
 
-            (REG_DPLBASE, 4) => self.dplbase = value as u32,
+            (REG_DPLBASE, 4) => {
+                let v = value as u32;
+                // Bits 6:1 are reserved and must read as 0; the base is 128-byte aligned.
+                self.dplbase = (v & DPLBASE_ENABLE) | (v & DPLBASE_ADDR_MASK);
+            }
             (REG_DPUBASE, 4) => self.dpubase = value as u32,
 
             _ if offset >= REG_SD_BASE
@@ -687,7 +691,9 @@ impl HdaController {
                             self.stream_rt[stream].reset(self.output_rate_hz);
                         }
                     }
-                    (SD_REG_LPIB, 4) => sd.lpib = value as u32,
+                    (SD_REG_LPIB, 4) => {
+                        // Read-only in hardware.
+                    }
                     (SD_REG_CBL, 4) => sd.cbl = value as u32,
                     (SD_REG_LVI, 2) => sd.lvi = value as u16,
                     (SD_REG_FIFOS, 2) => sd.fifos = value as u16,
