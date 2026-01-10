@@ -163,6 +163,11 @@ On Windows 7 x64, `setup.cmd` may ask:
 
 If you are using test-signed/custom-signed drivers, choose **Y**. A reboot is required before the setting takes effect.
 
+If you want to avoid the interactive prompt, you can re-run:
+
+- `setup.cmd /testsigning` (enable test signing without prompting), or
+- `setup.cmd /notestsigning` (skip changing the test-signing state).
+
 If `setup.cmd` fails or prints warnings, **do not** switch the boot disk to virtio-blk yet. Review:
 
 - `C:\AeroGuestTools\install.log`
@@ -304,6 +309,8 @@ If you cannot run `setup.cmd`, do **not** switch the boot disk to virtio-blk unt
 After running Guest Tools, reboot once while still using baseline devices. This confirms the OS still boots normally before changing storage/network/display hardware.
 
 Tip: `setup.cmd` may offer an interactive choice at the end (Reboot/Shutdown/No action). Choosing **Reboot** matches this step. If you choose **Shutdown**, consider booting once on baseline devices before you switch the boot disk to virtio-blk.
+
+If `setup.cmd` enabled **Test Signing** or `nointegritychecks`, the reboot is required before those BCD settings take effect.
 
 ## Step 5: Switch to virtio + Aero GPU (recommended order)
 
@@ -476,6 +483,8 @@ Guest Tools also includes `uninstall.cmd` for best-effort cleanup (useful for te
 
 Uninstall is best-effort and may not remove drivers that are currently in use.
 
+Depending on the Guest Tools version, `uninstall.cmd` may also offer to disable Test Signing and/or `nointegritychecks` if they were enabled by Aero Guest Tools.
+
 ## Optional: Slipstream SHA-2 updates and drivers into your Windows 7 ISO
 
 Slipstreaming is optional, but can reduce first-boot driver/signature problems (especially for offline installs).
@@ -502,11 +511,12 @@ On a Windows 10/11 host (or a Windows VM), you can use DISM:
 3. Mount `install.wim` (example index `1`):
    - `mkdir C:\wim\mount`
    - `dism /Mount-Wim /WimFile:C:\win7-iso\sources\install.wim /Index:1 /MountDir:C:\wim\mount`
-4. Add the update packages you need (repeat `/Add-Package` per update):
+4. Add the update packages you need (repeat `/Add-Package` per update).
+   - Tip: when servicing stack updates are involved, add the SSU first (for example **KB4490628**), then add other updates.
    - Example:
+     - `dism /Image:C:\wim\mount /Add-Package /PackagePath:C:\updates\KB4490628-x64.msu`
      - `dism /Image:C:\wim\mount /Add-Package /PackagePath:C:\updates\KB3033929-x64.msu`
      - `dism /Image:C:\wim\mount /Add-Package /PackagePath:C:\updates\KB4474419-x64.msu`
-     - `dism /Image:C:\wim\mount /Add-Package /PackagePath:C:\updates\KB4490628-x64.msu`
    - If DISM refuses the `.msu`, extract it first and add the `.cab` instead:
       - `expand -F:* C:\updates\KB3033929-x64.msu C:\updates\KB3033929\`
       - `dism /Image:C:\wim\mount /Add-Package /PackagePath:C:\updates\KB3033929\Windows6.1-KB3033929-x64.cab`
