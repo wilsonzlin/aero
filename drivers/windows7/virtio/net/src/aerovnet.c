@@ -194,9 +194,11 @@ static VOID AerovNetGenerateFallbackMac(_Out_writes_(ETH_LENGTH_OF_ADDRESS) UCHA
 
 static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ PNDIS_RESOURCE_LIST Resources) {
   ULONG I;
+  NDIS_STATUS Status;
 
   Adapter->IoBase = NULL;
   Adapter->IoLength = 0;
+  Adapter->IoPortStart = 0;
 
   if (!Resources) {
     return NDIS_STATUS_RESOURCES;
@@ -205,17 +207,25 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
   for (I = 0; I < Resources->Count; I++) {
     PCM_PARTIAL_RESOURCE_DESCRIPTOR Desc = &Resources->PartialDescriptors[I];
     if (Desc->Type == CmResourceTypePort) {
-      Adapter->IoBase = (PUCHAR)(ULONG_PTR)Desc->u.Port.Start.QuadPart;
+      Adapter->IoPortStart = (ULONG)Desc->u.Port.Start.QuadPart;
       Adapter->IoLength = Desc->u.Port.Length;
       break;
     }
   }
 
-  if (!Adapter->IoBase || Adapter->IoLength == 0) {
+  if (Adapter->IoLength == 0) {
     return NDIS_STATUS_RESOURCES;
   }
 
-  return NDIS_STATUS_SUCCESS;
+  Status = NdisMRegisterIoPortRange((PVOID*)&Adapter->IoBase, Adapter->MiniportAdapterHandle, Adapter->IoPortStart, Adapter->IoLength);
+  if (Status != NDIS_STATUS_SUCCESS) {
+    Adapter->IoBase = NULL;
+    Adapter->IoLength = 0;
+    Adapter->IoPortStart = 0;
+    return Status;
+  }
+
+  return Status;
 }
 
 static VOID AerovNetFreeRxBuffer(_Inout_ AEROVNET_RX_BUFFER* Rx) {
@@ -312,6 +322,13 @@ static VOID AerovNetCleanupAdapter(_Inout_ AEROVNET_ADAPTER* Adapter) {
     VirtioQueueDelete(&Adapter->Vdev, &Adapter->TxVq);
   }
 
+  if (Adapter->IoBase) {
+    NdisMDeregisterIoPortRange(Adapter->MiniportAdapterHandle, Adapter->IoPortStart, Adapter->IoLength, Adapter->IoBase);
+    Adapter->IoBase = NULL;
+    Adapter->IoLength = 0;
+    Adapter->IoPortStart = 0;
+  }
+
   NdisFreeSpinLock(&Adapter->Lock);
 
   ExFreePoolWithTag(Adapter, AEROVNET_TAG);
@@ -323,11 +340,12 @@ static VOID AerovNetFillRxQueueLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
   while (!IsListEmpty(&Adapter->RxFreeList)) {
     PLIST_ENTRY Entry;
     AEROVNET_RX_BUFFER* Rx;
-    VIRTIO_SG_ENTRY Sg;
+    VIRTIO_SG_ENTRY Sg[2];
     USHORT Head;
     NTSTATUS Status;
 
-    if (Adapter->RxVq.NumFree == 0) {
+    // Each receive buffer is posted as a 2-descriptor chain: header + payload.
+    if (Adapter->RxVq.NumFree < 2) {
       break;
     }
 
@@ -336,11 +354,16 @@ static VOID AerovNetFillRxQueueLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
 
     Rx->Indicated = FALSE;
 
-    Sg.Address = Rx->BufferPa;
-    Sg.Length = Rx->BufferBytes;
-    Sg.Write = TRUE;
+    Sg[0].Address = Rx->BufferPa;
+    Sg[0].Length = sizeof(VIRTIO_NET_HDR);
+    Sg[0].Write = TRUE;
 
-    Status = VirtioQueueAddBuffer(&Adapter->RxVq, &Sg, 1, Rx, &Head);
+    Sg[1].Address = Rx->BufferPa;
+    Sg[1].Address.QuadPart += sizeof(VIRTIO_NET_HDR);
+    Sg[1].Length = Rx->BufferBytes - sizeof(VIRTIO_NET_HDR);
+    Sg[1].Write = TRUE;
+
+    Status = VirtioQueueAddBuffer(&Adapter->RxVq, Sg, 2, Rx, &Head);
     if (!NT_SUCCESS(Status)) {
       InsertHeadList(&Adapter->RxFreeList, &Rx->Link);
       break;
@@ -1831,12 +1854,6 @@ static NDIS_STATUS AerovNetMiniportInitializeEx(_In_ NDIS_HANDLE MiniportAdapter
   InitializeListHead(&Adapter->TxPendingList);
   InitializeListHead(&Adapter->TxSubmittedList);
 
-  Status = AerovNetParseResources(Adapter, MiniportInitParameters->AllocatedResources);
-  if (Status != NDIS_STATUS_SUCCESS) {
-    AerovNetCleanupAdapter(Adapter);
-    return Status;
-  }
-
   // Registration attributes.
   RtlZeroMemory(&Reg, sizeof(Reg));
   Reg.Header.Type = NDIS_OBJECT_TYPE_MINIPORT_ADAPTER_REGISTRATION_ATTRIBUTES;
@@ -1848,6 +1865,12 @@ static NDIS_STATUS AerovNetMiniportInitializeEx(_In_ NDIS_HANDLE MiniportAdapter
   Reg.InterfaceType = NdisInterfacePci;
 
   Status = NdisMSetMiniportAttributes(MiniportAdapterHandle, (PNDIS_MINIPORT_ADAPTER_ATTRIBUTES)&Reg);
+  if (Status != NDIS_STATUS_SUCCESS) {
+    AerovNetCleanupAdapter(Adapter);
+    return Status;
+  }
+
+  Status = AerovNetParseResources(Adapter, MiniportInitParameters->AllocatedResources);
   if (Status != NDIS_STATUS_SUCCESS) {
     AerovNetCleanupAdapter(Adapter);
     return Status;

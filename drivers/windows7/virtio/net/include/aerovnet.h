@@ -116,6 +116,7 @@ typedef struct _AEROVNET_ADAPTER {
   // PCI resources
   PUCHAR IoBase;
   ULONG IoLength;
+  ULONG IoPortStart;
 
   // Virtio
   VIRTIO_PCI_DEVICE Vdev;

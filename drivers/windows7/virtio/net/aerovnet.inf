@@ -17,11 +17,9 @@ DriverVer   = 01/10/2026,1.0.0.0
 
 [Aero.NTx86]
 %AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1000
-%AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1041
 
 [Aero.NTamd64]
 %AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1000
-%AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1041
 
 [DestinationDirs]
 AeroVNet.CopyFiles = 12  ; DIRID_DRIVERS
@@ -64,4 +62,3 @@ HKR, Ndi\Interfaces, LowerRange, 0, "ethernet"
 Aero = "Aero"
 AeroVNet.DeviceDesc = "Aero Virtio Ethernet Adapter"
 AeroVNet.ServiceDesc = "Aero Virtio Ethernet Adapter"
-

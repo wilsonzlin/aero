@@ -26,7 +26,7 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 
 ## Building
 
-Build with a Windows driver toolchain that can target Windows 7 (e.g. WDK 7.1). The build integration (MSBuild/WDK `sources`) is intentionally not committed here; the driver sources are arranged to be included in either build system.
+Build with a Windows driver toolchain that can target Windows 7 (e.g. WDK 7.1). This directory includes a `sources`/`makefile` pair for the WDK 7.1 `build` utility.
 
 ## Installing on Windows 7
 
@@ -37,5 +37,5 @@ Build with a Windows driver toolchain that can target Windows 7 (e.g. WDK 7.1). 
 Hardware IDs matched by `aerovnet.inf`:
 
 - `PCI\\VEN_1AF4&DEV_1000` (legacy virtio-net)
-- `PCI\\VEN_1AF4&DEV_1041` (virtio 1.0 transitional virtio-net)
 
+Note: modern virtio 1.0-only devices (e.g. `PCI\\VEN_1AF4&DEV_1041` with legacy interface disabled) are not supported by this legacy I/O transport driver.
