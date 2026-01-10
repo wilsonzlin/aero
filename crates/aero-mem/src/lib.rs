@@ -11,6 +11,8 @@
 #![forbid(unsafe_code)]
 
 mod memory_bus;
+#[cfg(feature = "memory-compat")]
+mod memory_compat;
 mod physical_memory;
 
 pub use memory_bus::{MemoryBus, MemoryBusError, MmioHandler};

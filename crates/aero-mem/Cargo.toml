@@ -5,6 +5,12 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+memory = { path = "../memory", optional = true }
+
+[features]
+default = []
+# Implements compatibility traits for the older `crates/memory` subsystem.
+memory-compat = ["dep:memory"]
 
 [dev-dependencies]
 criterion = "0.5"
@@ -13,4 +19,3 @@ proptest = "1.5"
 [[bench]]
 name = "bulk"
 harness = false
-
