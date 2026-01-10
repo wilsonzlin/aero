@@ -464,6 +464,7 @@ When `timestamp-query` is supported and enabled, the renderer can measure **GPU 
 3. Read the buffer back asynchronously on a later frame to avoid stalling.
 
 If `timestamp-query` is **unsupported**, all other graphics telemetry should still work; GPU timing fields should be exported as `null` and the perf HUD should display an `n/a` indicator.
+
 ### CI / Playwright Testing Notes
 
 WebGPU availability in **headless** browsers varies by OS, driver, and GPU
@@ -476,7 +477,9 @@ blocklists. To keep CI reliable, WebGPU tests are:
 - Run via a dedicated Playwright project, `chromium-webgpu`, which adds extra
   Chromium flags intended to maximize WebGPU availability in headless:
   - `--enable-unsafe-webgpu`: expose WebGPU in automation/insecure origins
+  - `--enable-features=WebGPU`: force-enable the feature even in conservative CI builds
   - `--ignore-gpu-blocklist`: CI VMs are often GPU-blocklisted
+  - `--use-angle=swiftshader` / `--use-gl=swiftshader`: prefer a software backend for determinism and to avoid requiring a host GPU
   - `--disable-gpu-sandbox`: helps in some containerized environments
 
 Local usage:
