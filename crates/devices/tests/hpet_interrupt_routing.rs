@@ -1,6 +1,7 @@
 use aero_devices::clock::ManualClock;
 use aero_devices::hpet::Hpet;
 use aero_devices::ioapic::{GsiEvent, IoApic};
+use aero_platform::interrupts::{InterruptController, PlatformInterrupts};
 
 const REG_GENERAL_CONFIG: u64 = 0x010;
 const REG_GENERAL_INT_STATUS: u64 = 0x020;
@@ -151,3 +152,54 @@ fn level_triggered_timer_does_not_storm_without_clear() {
     assert_eq!(ioapic.take_events(), vec![GsiEvent::Raise(5)]);
 }
 
+#[test]
+fn legacy_replacement_can_deliver_via_pic_in_legacy_mode() {
+    let clock = ManualClock::new();
+    let mut interrupts = PlatformInterrupts::new();
+    interrupts.pic_mut().set_offsets(0x20, 0x28);
+
+    let mut hpet = Hpet::new_default(clock.clone());
+
+    // Enable HPET + legacy replacement.
+    hpet.mmio_write(
+        REG_GENERAL_CONFIG,
+        8,
+        GEN_CONF_ENABLE | GEN_CONF_LEGACY_ROUTE,
+        &mut interrupts,
+    );
+
+    // Program routes that should be ignored due to legacy replacement.
+    let mut timer0_cfg = hpet.mmio_read(REG_TIMER0_BASE + REG_TIMER_CONFIG, 8, &mut interrupts);
+    timer0_cfg |= TIMER_CFG_INT_ENABLE;
+    timer0_cfg = (timer0_cfg & !TIMER_CFG_INT_ROUTE_MASK) | (5u64 << TIMER_CFG_INT_ROUTE_SHIFT);
+    hpet.mmio_write(
+        REG_TIMER0_BASE + REG_TIMER_CONFIG,
+        8,
+        timer0_cfg,
+        &mut interrupts,
+    );
+
+    let timer1_base = REG_TIMER0_BASE + TIMER_STRIDE;
+    let mut timer1_cfg = hpet.mmio_read(timer1_base + REG_TIMER_CONFIG, 8, &mut interrupts);
+    timer1_cfg |= TIMER_CFG_INT_ENABLE;
+    timer1_cfg = (timer1_cfg & !TIMER_CFG_INT_ROUTE_MASK) | (7u64 << TIMER_CFG_INT_ROUTE_SHIFT);
+    hpet.mmio_write(timer1_base + REG_TIMER_CONFIG, 8, timer1_cfg, &mut interrupts);
+
+    // Fire timer0 at t=1 and timer1 at t=2.
+    hpet.mmio_write(
+        REG_TIMER0_BASE + REG_TIMER_COMPARATOR,
+        8,
+        1,
+        &mut interrupts,
+    );
+    hpet.mmio_write(timer1_base + REG_TIMER_COMPARATOR, 8, 2, &mut interrupts);
+
+    clock.advance_ns(200);
+    hpet.poll(&mut interrupts);
+
+    // Timer0 legacy route should map to IRQ0 (vector 0x20), and timer1 to IRQ8 (vector 0x28).
+    assert_eq!(interrupts.get_pending(), Some(0x20));
+    interrupts.acknowledge(0x20);
+    interrupts.eoi(0x20);
+    assert_eq!(interrupts.get_pending(), Some(0x28));
+}

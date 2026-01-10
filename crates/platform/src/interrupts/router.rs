@@ -85,6 +85,12 @@ impl PlatformInterrupts {
             *slot = idx as u32;
         }
 
+        // Match the firmware MADT Interrupt Source Override (ISO) entries.
+        //
+        // We publish ISA IRQ0 -> GSI2 (the legacy PIT interrupt) in `firmware/src/acpi/builder.rs`.
+        // Windows and other ACPI/APIC OSes will program the IOAPIC expecting that mapping.
+        isa_irq_to_gsi[0] = 2;
+
         Self {
             mode: PlatformInterruptMode::LegacyPic,
             isa_irq_to_gsi,
@@ -383,6 +389,20 @@ mod tests {
 
         ints.raise_irq(InterruptInput::IsaIrq(1));
         assert_eq!(ints.get_pending(), Some(0x31));
+    }
+
+    #[test]
+    fn apic_mode_applies_default_madt_iso_for_irq0() {
+        let mut ints = PlatformInterrupts::new();
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // Firmware publishes ISA IRQ0 -> GSI2.
+        let mut entry = IoApicRedirectionEntry::fixed(0x60, 0);
+        entry.masked = false;
+        ints.ioapic_mut().set_entry(2, entry);
+
+        ints.raise_irq(InterruptInput::IsaIrq(0));
+        assert_eq!(ints.get_pending(), Some(0x60));
     }
 
     #[test]
