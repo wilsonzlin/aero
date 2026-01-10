@@ -1,6 +1,3 @@
 [workspace]
-members = [
-    "crates/memory",
-]
+members = ["crates/emulator", "crates/memory"]
 resolver = "2"
-
