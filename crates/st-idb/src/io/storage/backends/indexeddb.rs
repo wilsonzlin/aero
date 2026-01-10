@@ -1,5 +1,5 @@
 use crate::io::storage::cache::{BlockCache, CachedBlock};
-use crate::io::storage::{DiskBackend, DiskBackendStats};
+use crate::io::storage::{DiskBackend, DiskBackendStats, LocalBoxFuture};
 use crate::platform::storage::indexeddb as idb;
 use crate::{Result, StorageError};
 use std::collections::HashSet;
@@ -249,12 +249,8 @@ impl DiskBackend for IndexedDbBackend {
         self.cache.block_size()
     }
 
-    fn read_at<'a>(
-        &'a mut self,
-        offset: u64,
-        buf: &'a mut [u8],
-    ) -> impl std::future::Future<Output = Result<()>> + 'a {
-        async move {
+    fn read_at<'a>(&'a mut self, offset: u64, buf: &'a mut [u8]) -> LocalBoxFuture<'a, Result<()>> {
+        Box::pin(async move {
             self.check_bounds(offset, buf.len())?;
             if buf.is_empty() {
                 return Ok(());
@@ -285,15 +281,11 @@ impl DiskBackend for IndexedDbBackend {
                 buf_off += to_copy;
             }
             Ok(())
-        }
+        })
     }
 
-    fn write_at<'a>(
-        &'a mut self,
-        offset: u64,
-        buf: &'a [u8],
-    ) -> impl std::future::Future<Output = Result<()>> + 'a {
-        async move {
+    fn write_at<'a>(&'a mut self, offset: u64, buf: &'a [u8]) -> LocalBoxFuture<'a, Result<()>> {
+        Box::pin(async move {
             self.check_bounds(offset, buf.len())?;
             if buf.is_empty() {
                 return Ok(());
@@ -334,11 +326,11 @@ impl DiskBackend for IndexedDbBackend {
             }
 
             Ok(())
-        }
+        })
     }
 
-    fn flush<'a>(&'a mut self) -> impl std::future::Future<Output = Result<()>> + 'a {
-        async move {
+    fn flush<'a>(&'a mut self) -> LocalBoxFuture<'a, Result<()>> {
+        Box::pin(async move {
             if self.dirty.is_empty() {
                 return Ok(());
             }
@@ -387,7 +379,7 @@ impl DiskBackend for IndexedDbBackend {
             }
 
             Ok(())
-        }
+        })
     }
 }
 

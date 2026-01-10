@@ -1,7 +1,14 @@
 use crate::Result;
+use core::future::Future;
+use core::pin::Pin;
 
 pub mod backends;
 pub mod cache;
+
+/// A boxed, non-`Send` future.
+///
+/// `wasm-bindgen` futures are generally not `Send`, so we avoid requiring it.
+pub type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DiskBackendStats {
@@ -21,15 +28,7 @@ pub trait DiskBackend {
 
     fn block_size(&self) -> usize;
 
-    fn read_at<'a>(
-        &'a mut self,
-        offset: u64,
-        buf: &'a mut [u8],
-    ) -> impl std::future::Future<Output = Result<()>> + 'a;
-    fn write_at<'a>(
-        &'a mut self,
-        offset: u64,
-        buf: &'a [u8],
-    ) -> impl std::future::Future<Output = Result<()>> + 'a;
-    fn flush<'a>(&'a mut self) -> impl std::future::Future<Output = Result<()>> + 'a;
+    fn read_at<'a>(&'a mut self, offset: u64, buf: &'a mut [u8]) -> LocalBoxFuture<'a, Result<()>>;
+    fn write_at<'a>(&'a mut self, offset: u64, buf: &'a [u8]) -> LocalBoxFuture<'a, Result<()>>;
+    fn flush<'a>(&'a mut self) -> LocalBoxFuture<'a, Result<()>>;
 }
