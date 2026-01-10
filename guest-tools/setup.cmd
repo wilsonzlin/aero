@@ -57,6 +57,7 @@ call :log "Logs: %LOG%"
 call :require_admin || goto :fail
 call :detect_arch || goto :fail
 call :load_config || goto :fail
+call :check_kb3033929
 
 call :install_certs || goto :fail
 call :maybe_enable_testsigning || goto :fail
@@ -156,6 +157,30 @@ if not defined AERO_VIRTIO_BLK_HWIDS (
   call :log "ERROR: AERO_VIRTIO_BLK_HWIDS is not set in %CONFIG_FILE%"
   exit /b 1
 )
+exit /b 0
+
+:check_kb3033929
+rem KB3033929 adds SHA-256 signature validation support to Windows 7.
+rem If Aero's driver catalogs are SHA-256 signed and this update is missing,
+rem Device Manager may report Code 52 (signature verification failure).
+call :log ""
+call :log "Checking for KB3033929 (SHA-256 signature support)..."
+
+if /i "%OS_ARCH%"=="amd64" (
+  if not exist "%SYS32%\wmic.exe" (
+    call :log "WARNING: wmic.exe not found; cannot detect KB3033929."
+    exit /b 0
+  )
+
+  "%SYS32%\wmic.exe" qfe get HotFixID 2>nul | findstr /i "KB3033929" >nul 2>&1
+  if errorlevel 1 (
+    call :log "WARNING: KB3033929 not detected. If Aero driver packages are SHA-256 signed, Windows 7 x64 may refuse to load them (Code 52)."
+    call :log "         Install KB3033929 (offline) or use SHA-1 signed driver catalogs."
+  ) else (
+    call :log "KB3033929 detected."
+  )
+)
+
 exit /b 0
 
 :install_certs
