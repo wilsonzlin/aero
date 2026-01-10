@@ -1,9 +1,12 @@
 import "./style.css";
 
-import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { createAudioOutput } from "./platform/audio";
+import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { importFileToOpfs } from "./platform/opfs";
 import { requestWebGpuDevice } from "./platform/webgpu";
+import { WorkerCoordinator } from "./runtime/coordinator";
+
+const workerCoordinator = new WorkerCoordinator();
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -61,6 +64,7 @@ function render(): void {
     renderWebGpuPanel(),
     renderOpfsPanel(),
     renderAudioPanel(),
+    renderWorkersPanel(report),
   );
 }
 
@@ -89,7 +93,12 @@ function renderCapabilityTable(report: PlatformFeatureReport): HTMLTableElement 
     );
   }
 
-  return el("table", {}, el("thead", {}, el("tr", {}, el("th", { text: "feature" }), el("th", { text: "status" }))), tbody);
+  return el(
+    "table",
+    {},
+    el("thead", {}, el("tr", {}, el("th", { text: "feature" }), el("th", { text: "status" }))),
+    tbody,
+  );
 }
 
 function renderWebGpuPanel(): HTMLElement {
@@ -198,6 +207,70 @@ function renderAudioPanel(): HTMLElement {
   });
 
   return el("div", { class: "panel" }, el("h2", { text: "Audio" }), el("div", { class: "row" }, button), status);
+}
+
+function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
+  const support = workerCoordinator.checkSupport();
+
+  const statusList = el("ul");
+  const heartbeatLine = el("div", { class: "mono", text: "" });
+  const error = el("pre", { text: "" });
+
+  const startButton = el("button", {
+    text: "Start workers",
+    onclick: () => {
+      error.textContent = "";
+      try {
+        workerCoordinator.start();
+      } catch (err) {
+        error.textContent = err instanceof Error ? err.message : String(err);
+      }
+      update();
+    },
+  }) as HTMLButtonElement;
+
+  const stopButton = el("button", {
+    text: "Stop workers",
+    onclick: () => {
+      workerCoordinator.stop();
+      update();
+    },
+  }) as HTMLButtonElement;
+
+  const hint = el("div", {
+    class: "mono",
+    text: support.ok
+      ? "Runs 4 module workers (cpu/gpu/io/jit). CPU increments a SharedArrayBuffer counter + emits ring-buffer heartbeats."
+      : support.reason ?? "SharedArrayBuffer unavailable.",
+  });
+
+  function update(): void {
+    const statuses = workerCoordinator.getWorkerStatuses();
+    const anyActive = Object.values(statuses).some((s) => s.state !== "stopped");
+
+    startButton.disabled = !support.ok || !report.wasmThreads || anyActive;
+    stopButton.disabled = !anyActive;
+
+    statusList.replaceChildren(
+      ...Object.entries(statuses).map(([role, status]) => el("li", { text: `${role}: ${status.state}${status.error ? ` (${status.error})` : ""}` })),
+    );
+
+    heartbeatLine.textContent = `status[HeartbeatCounter]=${workerCoordinator.getHeartbeatCounter()}  ring[Heartbeat]=${workerCoordinator.getLastHeartbeatFromRing()}`;
+  }
+
+  update();
+  globalThis.setInterval(update, 250);
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Workers" }),
+    hint,
+    el("div", { class: "row" }, startButton, stopButton),
+    heartbeatLine,
+    statusList,
+    error,
+  );
 }
 
 render();
