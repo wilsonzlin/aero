@@ -11,7 +11,7 @@ This document turns the “will the CDN do the right thing?” uncertainty into 
 
 - Clear yes/no answers for Amazon CloudFront (based on AWS documentation + common field observations).
 - A safe **chunked-object strategy** to avoid running into CloudFront/CDN cacheable-size ceilings and to keep cache behavior predictable.
-- A summary of one alternative cache (Nginx reverse proxy cache).
+- Alternatives summary: Cloudflare (incl. R2) and a generic reverse proxy cache (Nginx).
 - A checklist that operators can run with `curl` to validate their own deployment.
 
 If you are looking for a **deployment runbook** (S3 + CloudFront + signed URLs/cookies, plus CORS/COEP/CORP headers), see:
@@ -212,6 +212,53 @@ This strategy:
 
 ---
 
+## Alternative: Cloudflare CDN (+ R2 / Workers)
+
+Cloudflare is a reasonable option for hosting Aero disk bytes, especially when paired with **Cloudflare R2**. The key gotchas are:
+
+1. **Edge cacheability has strict size limits**, and
+2. Range behavior depends on whether the origin response is suitable for ranged delivery.
+
+### Range / `206` support (what to expect)
+
+Cloudflare documents that clients can send range requests using the `Range` header, and:
+
+- If the **origin response includes `Content-Length`**, Cloudflare will return the requested range with **HTTP `206 Partial Content`**.
+- If the **origin response does not include `Content-Length`**, Cloudflare will return the full content with **HTTP `200`**.
+
+This means Cloudflare can silently “fall back” to full-object responses if your origin uses chunked transfer encoding or otherwise omits `Content-Length`.
+
+### Observable cache headers
+
+Typical Cloudflare cache-debugging headers:
+
+- `CF-Cache-Status`: `HIT`, `MISS`, `BYPASS`, etc.
+- `Age`: on cache hits (similar semantics to other CDNs)
+
+### Hard limits: cacheable file size
+
+Cloudflare documents the following **cacheable file size limits**:
+
+- **Free/Pro/Business:** 512&nbsp;MB
+- **Enterprise:** 5&nbsp;GB by default (higher on request)
+
+For Aero disk images (20–40&nbsp;GB+), this means **chunk objects are mandatory** if you want any edge caching.
+
+### Using R2 as origin
+
+Cloudflare R2 notes relevant to Aero:
+
+- R2’s “public development URL” (`r2.dev`) is intended for non-production and does **not** provide features like caching/WAF/bot management; Cloudflare recommends using a **custom domain** for production.
+- If you serve disk bytes via **Workers + R2**, the R2 Workers API supports **ranged reads** (getting `{ offset, length }` slices). You can implement HTTP `Range` by parsing the viewer `Range` header, calling R2 with a range, and returning a `206` response with `Content-Range`/`Content-Length`.
+
+**Recommendation for Aero on Cloudflare:**
+
+- Prefer the no-Range chunk format in [`18-chunked-disk-image-format.md`](./18-chunked-disk-image-format.md), or fixed-size chunk objects with optional intra-chunk `Range`.
+- Keep chunk size **≤ 512&nbsp;MB** unless you are on Enterprise and have verified a higher cacheable size limit.
+- Ensure your origin responses include `Content-Length` (avoid `Transfer-Encoding: chunked`).
+
+---
+
 ## Alternative: Nginx reverse proxy cache (`proxy_cache`) + Range
 
 If you run your own CDN-like edge or regional caching layer with Nginx:
@@ -340,5 +387,8 @@ If `HEAD` fails for oversized objects in your configuration, avoid `HEAD` in cli
 
 - AWS CloudFront Developer Guide (Range GETs): https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RangeGETs.html
 - AWS CloudFront quotas/limits (max cacheable file size per GET response): https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html
+- Cloudflare default cache behavior (range requests + cacheable size limits): https://developers.cloudflare.com/cache/concepts/default-cache-behavior/
+- Cloudflare R2 public buckets (r2.dev limitations): https://developers.cloudflare.com/r2/buckets/public-buckets/
+- Cloudflare R2 Workers API (ranged reads): https://developers.cloudflare.com/r2/api/workers/workers-api-reference/
 - RFC 9110 (HTTP Semantics, Range): https://www.rfc-editor.org/rfc/rfc9110.html
 - RFC 9111 (HTTP Caching, partial responses): https://www.rfc-editor.org/rfc/rfc9111.html
