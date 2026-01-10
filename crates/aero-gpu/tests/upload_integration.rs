@@ -60,17 +60,6 @@ fn upload_each_frame_without_validation_errors() {
     };
 
     let caps = GpuCapabilities::from_device(&device);
-    let mut uploads = UploadRingBuffer::new(
-        &device,
-        caps,
-        UploadRingBufferDescriptor {
-            per_frame_size: 64 * 1024,
-            frames_in_flight: 3,
-            small_write_threshold: 0, // Force staging path.
-            ..Default::default()
-        },
-    )
-    .unwrap();
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("triangle shader"),
@@ -151,58 +140,86 @@ fn upload_each_frame_without_validation_errors() {
     });
     let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
 
-    for frame in 0..20 {
-        uploads.begin_frame();
-
-        // Upload a changing triangle to stress the allocator.
-        let shift = frame as f32 * 0.001;
-        let verts = [
-            Vertex {
-                pos: [-0.5 + shift, -0.5],
+    // Exercise both upload strategies:
+    // - 0 bytes threshold => always stage (StagingBelt).
+    // - large threshold => always use queue.write_buffer for this tiny vertex slice.
+    for &small_write_threshold in &[0u64, 1024 * 1024] {
+        let mut uploads = UploadRingBuffer::new(
+            &device,
+            caps,
+            UploadRingBufferDescriptor {
+                per_frame_size: 64 * 1024,
+                frames_in_flight: 3,
+                small_write_threshold,
+                ..Default::default()
             },
-            Vertex {
-                pos: [0.0 + shift, 0.5],
-            },
-            Vertex {
-                pos: [0.5 + shift, -0.5],
-            },
-        ];
-        let vb = uploads.write_slice(&device, &queue, &verts).unwrap();
+        )
+        .unwrap();
 
-        let flush_cmd = uploads.flush_staged_writes();
+        for frame in 0..20 {
+            uploads.begin_frame();
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("render encoder"),
-        });
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("render pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &target_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
+            // Upload a changing triangle to stress the allocator.
+            let shift = frame as f32 * 0.001;
+            let verts = [
+                Vertex {
+                    pos: [-0.5 + shift, -0.5],
+                },
+                Vertex {
+                    pos: [0.0 + shift, 0.5],
+                },
+                Vertex {
+                    pos: [0.5 + shift, -0.5],
+                },
+            ];
+            let vb = uploads.write_slice(&device, &queue, &verts).unwrap();
+
+            let stats = uploads.stats();
+            if small_write_threshold == 0 {
+                assert!(stats.bytes_staged_writes > 0);
+                assert_eq!(stats.bytes_small_writes, 0);
+            } else {
+                assert!(stats.bytes_small_writes > 0);
+                assert_eq!(stats.bytes_staged_writes, 0);
+            }
+
+            let flush_cmd = uploads.flush_staged_writes();
+            let did_flush = flush_cmd.is_some();
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("render encoder"),
             });
-            pass.set_pipeline(&pipeline);
-            pass.set_vertex_buffer(0, vb.slice());
-            pass.draw(0..3, 0..1);
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("render pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &target_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&pipeline);
+                pass.set_vertex_buffer(0, vb.slice());
+                pass.draw(0..3, 0..1);
+            }
+
+            let render_cmd = encoder.finish();
+
+            match flush_cmd {
+                Some(flush_cmd) => queue.submit([flush_cmd, render_cmd]),
+                None => queue.submit([render_cmd]),
+            };
+
+            device.poll(wgpu::Maintain::Poll);
+            if did_flush {
+                uploads.recall();
+            }
         }
-
-        let render_cmd = encoder.finish();
-
-        if let Some(flush_cmd) = flush_cmd {
-            queue.submit([flush_cmd, render_cmd]);
-        } else {
-            queue.submit([render_cmd]);
-        }
-
-        device.poll(wgpu::Maintain::Poll);
-        uploads.recall();
     }
 }
