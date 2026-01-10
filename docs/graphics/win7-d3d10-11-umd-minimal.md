@@ -345,6 +345,9 @@ Clears and draws
 
 Resource updates
 * `pfnMap` + `pfnUnmap` — `D3D11DDIARG_MAP`
+  * must cover both:
+    * dynamic update patterns (`D3D11_MAP_WRITE_DISCARD` / `D3D11_MAP_WRITE_NO_OVERWRITE`) for buffers/constant buffers, and
+    * staging readback (`D3D11_MAP_READ` on `D3D11_USAGE_STAGING` resources) for tests and debugging
 * `pfnUpdateSubresource`
 * `pfnCopyResource` / `pfnCopySubresourceRegion`
 * `pfnFlush` (submits pending work; corresponds to `ID3D11DeviceContext::Flush`)
