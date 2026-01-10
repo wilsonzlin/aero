@@ -15,7 +15,7 @@
 │  │  └──────────────┘  └──────────────┘  └──────────────┘                  │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                              │                                               │
-│                    SharedArrayBuffer + Atomics                               │
+│        Shared WebAssembly.Memory + SharedArrayBuffer + Atomics               │
 │                              │                                               │
 │  ┌───────────────────────────┼───────────────────────────────────────────┐  │
 │  │                    WORKER THREADS                                      │  │
@@ -72,7 +72,7 @@
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
 │  │                         SHARED MEMORY REGION                            │ │
 │  │  ┌─────────────────────────────────────────────────────────────────┐   │ │
-│  │  │              Guest Physical Memory (1-4 GB)                      │   │ │
+│  │  │            Guest Physical Memory (512MiB-3GiB, configurable)     │   │ │
 │  │  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐   │   │ │
 │  │  │  │ 0-640KB │ │ Video   │ │ ROM     │ │ Extended│ │ High    │   │   │ │
 │  │  │  │ Conv.   │ │ Memory  │ │ Area    │ │ Memory  │ │ Memory  │   │   │ │
@@ -117,7 +117,7 @@
 |-----------|----------------|----------------|
 | **UI Manager** | Canvas rendering, fullscreen, resize | `CanvasRenderingContext2D`, `requestAnimationFrame` |
 | **Event Router** | Keyboard/mouse capture, event translation | `KeyboardEvent`, `MouseEvent`, `PointerLock` |
-| **Coordinator** | Worker lifecycle, IPC routing, state sync | `Worker`, `SharedArrayBuffer`, `Atomics` |
+| **Coordinator** | Worker lifecycle, IPC routing, state sync | `Worker`, `WebAssembly.Memory`, `SharedArrayBuffer`, `Atomics` |
 
 ### CPU Emulation Worker
 

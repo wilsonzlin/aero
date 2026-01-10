@@ -135,6 +135,7 @@ const wasmFeatures = {
 const GUEST_RAM_MIB = 1024; // 512 / 1024 / 2048 / 3072 (best-effort)
 const GUEST_RAM_BYTES = GUEST_RAM_MIB * 1024 * 1024;
 const WASM_PAGE_BYTES = 64 * 1024;
+const RING_CAPACITY_I32 = 16384; // power-of-two ring storage (excluding head/tail)
 
 async function initializeMemory() {
     if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
@@ -151,8 +152,8 @@ async function initializeMemory() {
 
     // Separate small SABs for state + command/event rings (no >4GiB offsets).
     const stateSab = new SharedArrayBuffer(64 * 1024);
-    const cmdSab = new SharedArrayBuffer(64 * 1024);
-    const eventSab = new SharedArrayBuffer(64 * 1024);
+    const cmdSab = new SharedArrayBuffer((2 + RING_CAPACITY_I32) * 4);   // head+tail + data
+    const eventSab = new SharedArrayBuffer((2 + RING_CAPACITY_I32) * 4); // head+tail + data
     
     // Create views
     const views = {

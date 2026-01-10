@@ -165,6 +165,10 @@ export function detectBlockingIssues() {
     return issues;
   }
 
+  if (!globalThis.isSecureContext) {
+    issues.push("This page is not a secure context (SharedArrayBuffer is only available in secure contexts).");
+  }
+
   if (typeof SharedArrayBuffer === "undefined") {
     issues.push(
       "SharedArrayBuffer is not available. This usually means the page is not cross-origin isolated (COOP/COEP).",
@@ -237,6 +241,13 @@ export function createAeroMemoryModel(config) {
     throw new Error(
       `Failed to allocate shared WebAssembly.Memory for guest RAM (${describeBytes(guestRamBytes)}). ` +
         `Try a smaller size. Underlying error: ${stringifyError(err)}`,
+    );
+  }
+
+  if (!(guestMemory.buffer instanceof SharedArrayBuffer)) {
+    throw new Error(
+      "Allocated WebAssembly.Memory is not backed by a SharedArrayBuffer. " +
+        "This usually means shared memories / wasm threads are not supported in this browser configuration.",
     );
   }
 
