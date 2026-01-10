@@ -846,3 +846,28 @@ VOID VirtQueueDpc(VQ *vq)
     WdfSpinLockRelease(vq->lock);
 }
 ```
+
+## 11) Common pitfalls (things that break real drivers)
+
+* **Missing publish barrier (wmb) before `avail->idx`**:
+  * Symptom: device fetches descriptor chains that look “half written” (bad addresses/lengths), sporadic DMA faults.
+  * Fix: enforce the exact ordering in §5.1 (desc → avail slot → `KeMemoryBarrier()` → `avail->idx`).
+* **Missing consume barrier (rmb) after observing `used->idx` advance**:
+  * Symptom: you see `used->idx` change, but `used->ring[]` entries or DMA-written buffers look stale/zero.
+  * Fix: do the `KeMemoryBarrier()` in §6.1 before reading used elements / buffer contents.
+* **Out-of-order completion without cookies**:
+  * Symptom: completing the wrong WDFREQUEST / returning the wrong RX buffer.
+  * Fix: store per-head `cookie[head]` and treat `used_elem.id` as the only reliable completion key.
+* **Assuming queue size is power-of-two when it isn’t**:
+  * Symptom: ring indexing goes out of bounds or reuses wrong slots.
+  * Fix: only use `idx & (qsz - 1)` when `qsz` is a power-of-two; otherwise use `% qsz`.
+* **EVENT_IDX lost interrupt due to missing re-check**:
+  * Symptom: occasional “hang until next I/O”, especially under light load (race window).
+  * Fix: use the “enable then recheck `used->idx`” pattern in §7.4.
+* **Indirect descriptor table errors**:
+  * Symptom: device rejects request or reads garbage from indirect chain.
+  * Fix checklist:
+    * indirect table is DMA-accessible + 16-byte aligned
+    * `desc[head].len == 16 * k`
+    * indirect entries set `NEXT` correctly (except last)
+    * no nested `INDIRECT` inside the table
