@@ -35,6 +35,7 @@ const server = http.createServer((req, res) => {
   // Required for SharedArrayBuffer/crossOriginIsolated.
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
   res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
   res.setHeader("Cache-Control", "no-store");
 
   if (!req.url) return send(res, 400, "Bad Request");
@@ -70,4 +71,3 @@ server.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log("This server sets COOP/COEP headers so SharedArrayBuffer is available.");
 });
-
