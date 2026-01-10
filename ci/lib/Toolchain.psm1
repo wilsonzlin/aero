@@ -145,11 +145,48 @@ function Get-WindowsKitsRoot {
   [CmdletBinding()]
   param()
 
-  if ([string]::IsNullOrWhiteSpace(${env:ProgramFiles(x86)})) {
-    return $null
+  $regRoots = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows Kits\Installed Roots'
+  )
+
+  foreach ($regRoot in $regRoots) {
+    try {
+      $props = Get-ItemProperty -Path $regRoot -ErrorAction Stop
+      foreach ($propName in @('KitsRoot10', 'KitsRoot81')) {
+        $value = $props.PSObject.Properties[$propName].Value
+        if ([string]::IsNullOrWhiteSpace($value)) {
+          continue
+        }
+
+        $kitRoot = [string]$value
+        $kitRoot = $kitRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+        if ([string]::IsNullOrWhiteSpace($kitRoot)) {
+          continue
+        }
+
+        $base = Split-Path -Parent $kitRoot
+        if (-not [string]::IsNullOrWhiteSpace($base) -and (Test-Path -LiteralPath $base)) {
+          return (Resolve-ExistingPath -LiteralPath $base)
+        }
+      }
+    } catch {
+      # ignore and continue
+    }
   }
 
-  return (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits')
+  foreach ($pf in @(${env:ProgramFiles(x86)}, $env:ProgramFiles)) {
+    if ([string]::IsNullOrWhiteSpace($pf)) {
+      continue
+    }
+
+    $candidate = Join-Path $pf 'Windows Kits'
+    if (Test-Path -LiteralPath $candidate) {
+      return (Resolve-ExistingPath -LiteralPath $candidate)
+    }
+  }
+
+  return $null
 }
 
 function Test-Inf2CatSupportsWin7 {
