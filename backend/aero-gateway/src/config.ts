@@ -21,6 +21,14 @@ export type Config = Readonly<{
   TLS_CERT_PATH: string;
   TLS_KEY_PATH: string;
 
+  // TCP proxy / WebSocket upgrade endpoints.
+  TCP_ALLOWED_HOSTS: string[];
+  TCP_ALLOWED_PORTS: number[];
+  TCP_BLOCKED_CLIENT_IPS: string[];
+  TCP_MUX_MAX_STREAMS: number;
+  TCP_MUX_MAX_STREAM_BUFFER_BYTES: number;
+  TCP_MUX_MAX_FRAME_PAYLOAD_BYTES: number;
+
   // Placeholders for upcoming features (not implemented in this skeleton).
   TCP_PROXY_MAX_CONNECTIONS: number;
   TCP_PROXY_MAX_CONNECTIONS_PER_IP: number;
@@ -50,6 +58,17 @@ function splitCommaList(value: string): string[] {
     .split(',')
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+}
+
+function splitCommaListNumbers(value: string): number[] {
+  if (value.trim() === '') return [];
+  return splitCommaList(value).map((raw) => {
+    const n = Number(raw);
+    if (!Number.isInteger(n)) {
+      throw new Error(`Invalid number: ${raw}`);
+    }
+    return n;
+  });
 }
 
 function normalizeOrigin(maybeOrigin: string): string {
@@ -92,6 +111,12 @@ const envSchema = z.object({
   TLS_ENABLED: z.enum(['0', '1']).optional().default('0'),
   TLS_CERT_PATH: z.string().optional().default(''),
   TLS_KEY_PATH: z.string().optional().default(''),
+  TCP_ALLOWED_HOSTS: z.string().optional().default(''),
+  TCP_ALLOWED_PORTS: z.string().optional().default(''),
+  TCP_BLOCKED_CLIENT_IPS: z.string().optional().default(''),
+  TCP_MUX_MAX_STREAMS: z.coerce.number().int().min(1).default(1024),
+  TCP_MUX_MAX_STREAM_BUFFER_BYTES: z.coerce.number().int().min(0).default(1024 * 1024),
+  TCP_MUX_MAX_FRAME_PAYLOAD_BYTES: z.coerce.number().int().min(0).default(16 * 1024 * 1024),
 
   // Placeholders (unused today).
   TCP_PROXY_MAX_CONNECTIONS: z.coerce.number().int().min(0).default(0),
@@ -121,7 +146,6 @@ export function loadConfig(env: Env = process.env): Config {
   }
 
   const raw = parsed.data;
-
   const tlsEnabled = raw.TLS_ENABLED === '1';
   const trustProxy = raw.TRUST_PROXY === '1';
   const tlsCertPath = raw.TLS_CERT_PATH.trim();
@@ -137,6 +161,13 @@ export function loadConfig(env: Env = process.env): Config {
 
     assertReadableFile(tlsCertPath, 'TLS_CERT_PATH');
     assertReadableFile(tlsKeyPath, 'TLS_KEY_PATH');
+  }
+
+  const tcpAllowedPorts = splitCommaListNumbers(raw.TCP_ALLOWED_PORTS);
+  for (const port of tcpAllowedPorts) {
+    if (port < 1 || port > 65535) {
+      throw new Error(`Invalid TCP_ALLOWED_PORTS entry: ${port}`);
+    }
   }
 
   const defaultScheme = tlsEnabled ? 'https' : 'http';
@@ -169,6 +200,12 @@ export function loadConfig(env: Env = process.env): Config {
     TLS_ENABLED: tlsEnabled,
     TLS_CERT_PATH: tlsCertPath,
     TLS_KEY_PATH: tlsKeyPath,
+    TCP_ALLOWED_HOSTS: splitCommaList(raw.TCP_ALLOWED_HOSTS),
+    TCP_ALLOWED_PORTS: tcpAllowedPorts,
+    TCP_BLOCKED_CLIENT_IPS: splitCommaList(raw.TCP_BLOCKED_CLIENT_IPS),
+    TCP_MUX_MAX_STREAMS: raw.TCP_MUX_MAX_STREAMS,
+    TCP_MUX_MAX_STREAM_BUFFER_BYTES: raw.TCP_MUX_MAX_STREAM_BUFFER_BYTES,
+    TCP_MUX_MAX_FRAME_PAYLOAD_BYTES: raw.TCP_MUX_MAX_FRAME_PAYLOAD_BYTES,
 
     TCP_PROXY_MAX_CONNECTIONS: raw.TCP_PROXY_MAX_CONNECTIONS,
     TCP_PROXY_MAX_CONNECTIONS_PER_IP: raw.TCP_PROXY_MAX_CONNECTIONS_PER_IP,

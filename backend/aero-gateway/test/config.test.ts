@@ -14,6 +14,10 @@ test('loadConfig applies defaults and derives ALLOWED_ORIGINS from PUBLIC_BASE_U
   assert.deepEqual(config.ALLOWED_ORIGINS, ['http://localhost:8080']);
   assert.equal(config.TLS_ENABLED, false);
   assert.equal(config.TRUST_PROXY, false);
+  assert.deepEqual(config.TCP_ALLOWED_HOSTS, []);
+  assert.deepEqual(config.TCP_ALLOWED_PORTS, []);
+  assert.deepEqual(config.TCP_BLOCKED_CLIENT_IPS, []);
+  assert.equal(config.TCP_MUX_MAX_STREAMS, 1024);
 });
 
 test('loadConfig validates port range', () => {
@@ -49,4 +53,9 @@ test('loadConfig: TLS enabled validates cert and key files exist', () => {
   assert.equal(config.TLS_ENABLED, true);
   assert.equal(config.TLS_CERT_PATH, certPath);
   assert.equal(config.TLS_KEY_PATH, keyPath);
+});
+
+test('loadConfig validates TCP_ALLOWED_PORTS range', () => {
+  assert.throws(() => loadConfig({ TCP_ALLOWED_PORTS: '0,443' }), /Invalid TCP_ALLOWED_PORTS entry/i);
+  assert.throws(() => loadConfig({ TCP_ALLOWED_PORTS: '65536' }), /Invalid TCP_ALLOWED_PORTS entry/i);
 });

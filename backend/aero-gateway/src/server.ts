@@ -150,12 +150,25 @@ export function buildServer(config: Config): ServerBundle {
     }
 
     if (url.pathname === '/tcp') {
-      handleTcpProxyUpgrade(req, socket, head, { allowedOrigins: config.ALLOWED_ORIGINS });
+      handleTcpProxyUpgrade(req, socket, head, {
+        allowedOrigins: config.ALLOWED_ORIGINS,
+        blockedClientIps: config.TCP_BLOCKED_CLIENT_IPS,
+        allowedTargetHosts: config.TCP_ALLOWED_HOSTS,
+        allowedTargetPorts: config.TCP_ALLOWED_PORTS,
+      });
       return;
     }
 
     if (url.pathname === '/tcp-mux') {
-      handleTcpMuxUpgrade(req, socket, head, { allowedOrigins: config.ALLOWED_ORIGINS });
+      handleTcpMuxUpgrade(req, socket, head, {
+        allowedOrigins: config.ALLOWED_ORIGINS,
+        blockedClientIps: config.TCP_BLOCKED_CLIENT_IPS,
+        allowedTargetHosts: config.TCP_ALLOWED_HOSTS,
+        allowedTargetPorts: config.TCP_ALLOWED_PORTS,
+        maxStreams: config.TCP_MUX_MAX_STREAMS,
+        maxStreamBufferedBytes: config.TCP_MUX_MAX_STREAM_BUFFER_BYTES,
+        maxFramePayloadBytes: config.TCP_MUX_MAX_FRAME_PAYLOAD_BYTES,
+      });
       return;
     }
 

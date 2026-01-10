@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import http from 'node:http';
 import https from 'node:https';
@@ -245,7 +245,7 @@ async function startUdpDnsServer(): Promise<{ port: number; close: () => Promise
   };
 }
 
-async function waitForHealthy(baseUrl: string, proc: ChildProcessWithoutNullStreams): Promise<void> {
+async function waitForHealthy(baseUrl: string, proc: ChildProcess): Promise<void> {
   const deadline = Date.now() + 10_000;
   const url = `${baseUrl}/healthz`;
 

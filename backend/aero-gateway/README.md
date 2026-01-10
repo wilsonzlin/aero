@@ -73,6 +73,7 @@ docker run --rm -p 8080:8080 aero-gateway
 - `GET /session` sets a demo cookie so Secure-cookie behavior is easy to validate in local TLS / reverse-proxy setups
 - `GET|POST /dns-query` DNS-over-HTTPS (`RFC 8484`)
 - `GET ws(s)://<host>/tcp?...` TCP proxy upgrade endpoint (WebSocket; see `docs/backend/01-aero-gateway-api.md` and `deploy/README.md`)
+- `GET ws(s)://<host>/tcp-mux` Multiplexed TCP proxy upgrade endpoint (WebSocket; subprotocol `aero-tcp-mux-v1`)
 
 ## DNS-over-HTTPS (`/dns-query`)
 
@@ -112,6 +113,15 @@ Required / commonly used:
 Security:
 
 - `RATE_LIMIT_REQUESTS_PER_MINUTE` (default: `0` = disabled; applies to all routes)
+
+TCP proxy (`/tcp`, `/tcp-mux`):
+
+- `TCP_ALLOWED_HOSTS` (comma-separated; default: allow all)
+- `TCP_ALLOWED_PORTS` (comma-separated; default: allow all)
+- `TCP_BLOCKED_CLIENT_IPS` (comma-separated; default: none)
+- `TCP_MUX_MAX_STREAMS` (default: `1024`)
+- `TCP_MUX_MAX_STREAM_BUFFER_BYTES` (default: `1048576`)
+- `TCP_MUX_MAX_FRAME_PAYLOAD_BYTES` (default: `16777216`)
 
 DNS-over-HTTPS:
 
