@@ -52,6 +52,38 @@ need_cmd() {
   fi
 }
 
+run_in_dir() {
+  local dir="$1"
+  shift
+  (cd "$dir" && "$@")
+}
+
+run_step() {
+  local desc="$1"
+  shift
+
+  echo
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "::group::$desc"
+  else
+    echo "==> $desc"
+  fi
+
+  # Temporarily disable `set -e` so we can always close the GitHub Actions log group.
+  set +e
+  "$@"
+  local status=$?
+  set -e
+
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "::endgroup::"
+  fi
+
+  if [[ $status -ne 0 ]]; then
+    exit "$status"
+  fi
+}
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 SKIP_RUST=0
@@ -211,11 +243,6 @@ PY
   [[ -f "$WASM_CRATE_DIR/Cargo.toml" ]] || die "auto-detected wasm crate dir does not contain Cargo.toml: $WASM_CRATE_DIR"
 }
 
-step() {
-  echo
-  echo "==> $*"
-}
-
 CI_CARGO_ARGS=()
 if [[ -f "$ROOT_DIR/Cargo.lock" ]]; then
   CI_CARGO_ARGS+=(--locked)
@@ -225,38 +252,31 @@ if [[ $SKIP_RUST -eq 0 ]]; then
   need_cmd cargo
   [[ -f "$ROOT_DIR/Cargo.toml" ]] || die "Cargo.toml not found at repo root: $ROOT_DIR"
 
-  step "Rust: cargo fmt --all -- --check"
-  (cd "$ROOT_DIR" && cargo fmt --all -- --check)
-
-  step "Rust: cargo clippy"
-  (cd "$ROOT_DIR" && cargo clippy "${CI_CARGO_ARGS[@]}" --workspace --all-targets --all-features -- -D warnings)
-
-  step "Rust: cargo test"
-  (cd "$ROOT_DIR" && cargo test "${CI_CARGO_ARGS[@]}" --workspace --all-features)
+  run_step "Rust: cargo fmt --all -- --check" run_in_dir "$ROOT_DIR" cargo fmt --all -- --check
+  run_step "Rust: cargo clippy" run_in_dir "$ROOT_DIR" cargo clippy "${CI_CARGO_ARGS[@]}" --workspace --all-targets --all-features -- -D warnings
+  run_step "Rust: cargo test" run_in_dir "$ROOT_DIR" cargo test "${CI_CARGO_ARGS[@]}" --workspace --all-features
 fi
 
 if [[ $SKIP_WASM -eq 0 ]]; then
   need_cmd wasm-pack
   ensure_wasm_crate_dir
 
-  step "WASM: wasm-pack test --node ($WASM_CRATE_DIR)"
-  (cd "$WASM_CRATE_DIR" && wasm-pack test --node -- "${CI_CARGO_ARGS[@]}")
+  run_step "WASM: wasm-pack test --node ($WASM_CRATE_DIR)" run_in_dir "$WASM_CRATE_DIR" wasm-pack test --node -- "${CI_CARGO_ARGS[@]}"
 fi
 
 if [[ $SKIP_TS -eq 0 ]]; then
   need_cmd npm
   ensure_node_dir
 
-  step "TS: npm run test:unit (AERO_REQUIRE_WEBGPU=$AERO_REQUIRE_WEBGPU)"
-  (cd "$NODE_DIR" && AERO_REQUIRE_WEBGPU="$AERO_REQUIRE_WEBGPU" npm run test:unit)
+  run_step "TS: npm run test:unit ($NODE_DIR; AERO_REQUIRE_WEBGPU=$AERO_REQUIRE_WEBGPU)" env AERO_REQUIRE_WEBGPU="$AERO_REQUIRE_WEBGPU" run_in_dir "$NODE_DIR" npm run test:unit
 fi
 
 if [[ $SKIP_E2E -eq 0 ]]; then
   need_cmd npm
   ensure_node_dir
 
-  step "E2E: npm run test:e2e (AERO_REQUIRE_WEBGPU=$AERO_REQUIRE_WEBGPU)"
-  (cd "$NODE_DIR" && AERO_REQUIRE_WEBGPU="$AERO_REQUIRE_WEBGPU" npm run test:e2e -- "${PW_ARGS[@]}" "${PW_EXTRA_ARGS[@]}")
+  run_step "E2E: npm run test:e2e ($NODE_DIR; AERO_REQUIRE_WEBGPU=$AERO_REQUIRE_WEBGPU)" env AERO_REQUIRE_WEBGPU="$AERO_REQUIRE_WEBGPU" run_in_dir "$NODE_DIR" npm run test:e2e -- "${PW_ARGS[@]}" "${PW_EXTRA_ARGS[@]}"
 fi
 
-step "All requested test steps passed."
+echo
+echo "==> All requested test steps passed."
