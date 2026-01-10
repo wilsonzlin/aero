@@ -119,6 +119,17 @@ function Get-RegistryDword([string]$path, [string]$name) {
     }
 }
 
+function Get-RegistryString([string]$path, [string]$name) {
+    try {
+        $item = Get-ItemProperty -Path $path -ErrorAction Stop
+        $v = $item.$name
+        if ($v -eq $null) { return $null }
+        return "" + $v
+    } catch {
+        return $null
+    }
+}
+
 function StartType-FromStartValue($startValue) {
     # https://learn.microsoft.com/en-us/windows-hardware/drivers/install/inf-addservice-directive
     switch ($startValue) {
@@ -493,6 +504,11 @@ $gtConfig = Load-GuestToolsConfig $scriptDir
 $cfgVars = $gtConfig.vars
 $cfgVirtioBlkService = $null
 if ($cfgVars -and $cfgVars.ContainsKey("AERO_VIRTIO_BLK_SERVICE")) { $cfgVirtioBlkService = $cfgVars["AERO_VIRTIO_BLK_SERVICE"] }
+$cfgVirtioBlkSys = $null
+if ($cfgVars -and $cfgVars.ContainsKey("AERO_VIRTIO_BLK_SYS")) {
+    $cfgVirtioBlkSys = ("" + $cfgVars["AERO_VIRTIO_BLK_SYS"]).Trim()
+    if ($cfgVirtioBlkSys.Length -eq 0) { $cfgVirtioBlkSys = $null }
+}
 
 $cfgVirtioBlkHwids = @()
 $cfgVirtioNetHwids = @()
@@ -522,7 +538,7 @@ $report = @{
     schema_version = 1
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "1.9.0"
+        version = "2.0.0"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -723,6 +739,7 @@ try {
             $cfgDetails += "AERO_VIRTIO_BLK_HWIDS is not set."
         }
         if ($cfgVirtioBlkService) { $cfgDetails += "AERO_VIRTIO_BLK_SERVICE=" + $cfgVirtioBlkService }
+        if ($cfgVirtioBlkSys) { $cfgDetails += "AERO_VIRTIO_BLK_SYS=" + $cfgVirtioBlkSys }
         if ($cfgVirtioBlkHwids -and $cfgVirtioBlkHwids.Count -gt 0) { $cfgDetails += "AERO_VIRTIO_BLK_HWIDS=" + ($cfgVirtioBlkHwids -join ", ") }
         if ($cfgVirtioNetHwids -and $cfgVirtioNetHwids.Count -gt 0) { $cfgDetails += "AERO_VIRTIO_NET_HWIDS=" + ($cfgVirtioNetHwids -join ", ") }
         if ($cfgVirtioSndHwids -and $cfgVirtioSndHwids.Count -gt 0) { $cfgDetails += "AERO_VIRTIO_SND_HWIDS=" + ($cfgVirtioSndHwids -join ", ") }
@@ -1267,7 +1284,11 @@ try {
     foreach ($name in $candidates) {
         $drv = Try-GetWmi "Win32_SystemDriver" ("Name='" + $name.Replace("'","''") + "'")
         if ($drv) {
-            $startValue = Get-RegistryDword ("HKLM:\SYSTEM\CurrentControlSet\Services\" + $name) "Start"
+            $svcKey = "HKLM:\SYSTEM\CurrentControlSet\Services\" + $name
+            $startValue = Get-RegistryDword $svcKey "Start"
+            $imagePath = Get-RegistryString $svcKey "ImagePath"
+            $group = Get-RegistryString $svcKey "Group"
+            $type = Get-RegistryDword $svcKey "Type"
             $found = @{
                 name = $drv.Name
                 display_name = $drv.DisplayName
@@ -1277,6 +1298,9 @@ try {
                 path_name = $drv.PathName
                 registry_start_value = $startValue
                 registry_start_type = (if ($startValue -ne $null) { StartType-FromStartValue $startValue } else { $null })
+                registry_image_path = $imagePath
+                registry_group = $group
+                registry_type = $type
             }
             break
         }
@@ -1291,9 +1315,48 @@ try {
         $svcSummary = "virtio-blk service not found (tried: " + ($candidates -join ", ") + ")."
         $svcDetails += ("If Aero storage drivers are installed, expected a driver service like '" + $expected + "'.")
     } else {
+        $expectedSys = $cfgVirtioBlkSys
+        if (-not $expectedSys) { $expectedSys = $found.name + ".sys" }
+        $driversDir = Join-Path (Join-Path $env:SystemRoot "System32") "drivers"
+        $expectedSysPath = Join-Path $driversDir $expectedSys
+        $expectedSysExists = Test-Path $expectedSysPath
+
+        $resolvedImagePath = $null
+        $resolvedImageExists = $null
+        if ($found.registry_image_path) {
+            $p = $found.registry_image_path.Trim()
+            $p = $p.Trim('"')
+            $p = [Environment]::ExpandEnvironmentVariables($p)
+            if ($p.StartsWith("\??\")) { $p = $p.Substring(4) }
+            if ($p.StartsWith("\SystemRoot", [StringComparison]::OrdinalIgnoreCase)) {
+                $p = $env:SystemRoot + $p.Substring(11)
+            } elseif ($p.StartsWith("System32\", [StringComparison]::OrdinalIgnoreCase)) {
+                $p = Join-Path $env:SystemRoot $p
+            }
+            $resolvedImagePath = $p
+            $resolvedImageExists = Test-Path $resolvedImagePath
+        }
+
+        $found.expected_sys = $expectedSys
+        $found.expected_sys_path = $expectedSysPath
+        $found.expected_sys_exists = $expectedSysExists
+        $found.resolved_image_path = $resolvedImagePath
+        $found.resolved_image_exists = $resolvedImageExists
+
         $svcSummary = "Found service '" + $found.name + "': state=" + $found.state + ", start_mode=" + $found.start_mode
         if ($found.registry_start_type) {
             $svcDetails += ("Registry Start=" + $found.registry_start_value + " (" + $found.registry_start_type + ")")
+        }
+        if ($found.registry_image_path) {
+            $svcDetails += ("Registry ImagePath=" + $found.registry_image_path)
+        }
+        if ($resolvedImagePath) {
+            $svcDetails += ("Resolved ImagePath=" + $resolvedImagePath + " (exists=" + $resolvedImageExists + ")")
+        }
+        $svcDetails += ("Expected driver file=" + $expectedSysPath + " (exists=" + $expectedSysExists + ")")
+        if (-not $expectedSysExists -and ($resolvedImageExists -ne $true)) {
+            $svcStatus = Merge-Status $svcStatus "WARN"
+            $svcDetails += "Storage driver binary not found under System32\\drivers. Switching the boot disk to virtio-blk may fail (0x7B). Re-run setup.cmd."
         }
         if ($found.registry_start_value -ne $null -and $found.registry_start_value -ne 0) {
             $svcStatus = Merge-Status $svcStatus "WARN"
