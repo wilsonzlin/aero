@@ -336,12 +336,25 @@ function Invoke-SignTool {
     [string]$ContextFile
   )
 
+  $sanitizedArgs = New-Object System.Collections.Generic.List[string]
+  for ($i = 0; $i -lt $Arguments.Count; $i++) {
+    $arg = $Arguments[$i]
+    [void]$sanitizedArgs.Add($arg)
+
+    if ($arg -ieq '/p') {
+      if ($i + 1 -lt $Arguments.Count) {
+        [void]$sanitizedArgs.Add('<redacted>')
+        $i++
+      }
+    }
+  }
+
   $output = & $SignToolPath @Arguments 2>&1
   $exitCode = $LASTEXITCODE
 
   if ($exitCode -ne 0) {
     $joined = ($output | Out-String).TrimEnd()
-    throw "signtool failed (exit $exitCode) for '$ContextFile'.`nCommand: $SignToolPath $($Arguments -join ' ')`n$joined"
+    throw "signtool failed (exit $exitCode) for '$ContextFile'.`nCommand: $SignToolPath $($sanitizedArgs -join ' ')`n$joined"
   }
 }
 
@@ -531,6 +544,9 @@ function Ensure-TestSigningCertificate {
   Ensure-TrustedCertificate -CerPath $CerPath
 }
 
+$exitCode = 0
+$stablePfxTempPath = $null
+
 try {
   $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 
@@ -558,8 +574,9 @@ try {
 
     $tempDir = $env:RUNNER_TEMP
     if ([string]::IsNullOrWhiteSpace($tempDir)) { $tempDir = $env:TEMP }
-    if ([string]::IsNullOrWhiteSpace($tempDir)) { $tempDir = $outDirAbs }
+    if ([string]::IsNullOrWhiteSpace($tempDir)) { $tempDir = [System.IO.Path]::GetTempPath() }
     $pfxPath = Join-Path $tempDir "aero-driver.pfx"
+    $stablePfxTempPath = $pfxPath
 
     $pfxB64 = ($StablePfxBase64 -replace '\s', '')
     [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($pfxB64))
@@ -707,8 +724,19 @@ try {
   }
 
   Write-Host "All driver binaries and catalogs were signed and verified successfully."
-  exit 0
+  $exitCode = 0
 } catch {
-  Write-Error $_
-  exit 1
+  $exitCode = 1
+  $errText = ($_ | Out-String).TrimEnd()
+  Write-Error $errText -ErrorAction Continue
+} finally {
+  if ($stablePfxTempPath -and (Test-Path -LiteralPath $stablePfxTempPath)) {
+    try {
+      Remove-Item -LiteralPath $stablePfxTempPath -Force -ErrorAction Stop
+    } catch {
+      Write-Warning "Failed to remove temporary stable PFX file '$stablePfxTempPath': $($_.Exception.Message)"
+    }
+  }
 }
+
+exit $exitCode
