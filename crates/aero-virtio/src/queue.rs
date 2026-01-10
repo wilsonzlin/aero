@@ -17,6 +17,7 @@ pub enum VirtQueueError {
     DescriptorIndexOutOfRange { index: u16, table_size: u16 },
     DescriptorChainLoop,
     IndirectDescriptorHasNext,
+    NestedIndirectDescriptor,
     IndirectDescriptorLenNotMultipleOf16 { len: u32 },
     IndirectDescriptorTableTooLarge { count: u32 },
 }
@@ -100,6 +101,7 @@ impl DescriptorChain {
         table_addr: u64,
         table_size: u16,
         head_index: u16,
+        allow_indirect: bool,
     ) -> Result<Vec<Descriptor>, VirtQueueError> {
         if table_size == 0 {
             return Err(VirtQueueError::QueueSizeZero);
@@ -129,6 +131,9 @@ impl DescriptorChain {
 
             let raw = RawDescriptor::read_from(mem, table_addr, index)?;
             if (raw.flags & VIRTQ_DESC_F_INDIRECT) != 0 {
+                if !allow_indirect {
+                    return Err(VirtQueueError::NestedIndirectDescriptor);
+                }
                 if (raw.flags & VIRTQ_DESC_F_NEXT) != 0 {
                     return Err(VirtQueueError::IndirectDescriptorHasNext);
                 }
@@ -163,7 +168,7 @@ impl DescriptorChain {
         let count_u32 = len / 16;
         let count = u16::try_from(count_u32)
             .map_err(|_| VirtQueueError::IndirectDescriptorTableTooLarge { count: count_u32 })?;
-        Self::read_chain(mem, table_addr, count, 0)
+        Self::read_chain(mem, table_addr, count, 0, false)
     }
 }
 
@@ -212,7 +217,7 @@ impl VirtQueue {
         self.next_avail = self.next_avail.wrapping_add(1);
 
         let descriptors =
-            DescriptorChain::read_chain(mem, self.config.desc_addr, self.config.size, head)?;
+            DescriptorChain::read_chain(mem, self.config.desc_addr, self.config.size, head, true)?;
         Ok(Some(DescriptorChain {
             head_index: head,
             descriptors,

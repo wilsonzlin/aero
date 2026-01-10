@@ -1,7 +1,7 @@
 use aero_virtio::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestRam};
 use aero_virtio::queue::{
-    VirtQueue, VirtQueueConfig, VIRTQ_AVAIL_F_NO_INTERRUPT, VIRTQ_DESC_F_INDIRECT, VIRTQ_DESC_F_NEXT,
-    VIRTQ_DESC_F_WRITE,
+    VirtQueue, VirtQueueConfig, VirtQueueError, VIRTQ_AVAIL_F_NO_INTERRUPT, VIRTQ_DESC_F_INDIRECT,
+    VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
 };
 
 fn write_desc(mem: &mut GuestRam, table: u64, index: u16, addr: u64, len: u32, flags: u16, next: u16) {
@@ -84,6 +84,40 @@ fn indirect_descriptors_are_expanded() {
     assert_eq!(chain.descriptors().len(), 2);
     assert_eq!(chain.descriptors()[0].addr, 0x4000);
     assert_eq!(chain.descriptors()[1].addr, 0x5000);
+}
+
+#[test]
+fn nested_indirect_descriptors_are_rejected() {
+    let mut mem = GuestRam::new(0x10000);
+    let desc = 0x1000;
+    let avail = 0x2000;
+    let used = 0x3000;
+    let indirect = 0x8000;
+
+    write_desc(&mut mem, desc, 0, indirect, 16, VIRTQ_DESC_F_INDIRECT, 0);
+    // Nested indirect inside the indirect table should be rejected.
+    write_desc(&mut mem, indirect, 0, 0x9000, 16, VIRTQ_DESC_F_INDIRECT, 0);
+
+    write_u16_le(&mut mem, avail, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    let mut q = VirtQueue::new(
+        VirtQueueConfig {
+            size: 4,
+            desc_addr: desc,
+            avail_addr: avail,
+            used_addr: used,
+        },
+        false,
+    )
+    .unwrap();
+
+    let err = q.pop_descriptor_chain(&mem).unwrap_err();
+    assert_eq!(err, VirtQueueError::NestedIndirectDescriptor);
 }
 
 #[test]
