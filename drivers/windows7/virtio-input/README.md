@@ -4,9 +4,47 @@ This directory contains **packaging + installation infrastructure** for the Aero
 
 - Target OS: **Windows 7 SP1** (x86 + x64)
 - Target device: **virtio-input over PCI** (QEMU/virtio standard)
-- Driver model: **KMDF HID minidriver** (`Class=HIDClass`, minimum **KMDF 1.9**)
+- Driver model: **KMDF HID minidriver** (`Class=HIDClass`, **KMDF 1.9**)
 
 > This is **infrastructure only**. The actual KMDF/virtio/HID driver code (`aero_virtio_input.sys`) is intentionally not present yet.
+
+## KMDF version / WDF runtime (Win7 SP1)
+
+The Windows 7 installation story is intentionally simple: the driver is built against **KMDF 1.9**, which is
+**in-box** on Windows 7 SP1.
+
+- **Built against:** KMDF **1.9**
+- **Runtime on a clean Win7 SP1 machine:** present (`%SystemRoot%\System32\drivers\Wdf01000.sys`)
+- **KMDF coinstaller required on Win7 SP1:** **No**
+- **INF policy:** `inf/virtio-input.inf` pins `KmdfLibraryVersion = 1.9` and intentionally does **not** include any
+  `CoInstallers32` / `WdfCoInstaller*` sections.
+
+If you intentionally rebuild the driver against **KMDF > 1.9** (for example, by using WDK 10 defaults), Windows 7 will
+require a matching WDF coinstaller/runtime in the driver package.
+
+- The coinstaller DLL comes from the WDK you built against (typically under a `Redist\wdf\...` directory).
+- WDF coinstallers/runtimes are redistributable only under the Windows Kit redistribution license. Ship unmodified files
+  and consult the kit's redist/EULA documentation for exact terms.
+- If you add a coinstaller:
+  1. Add the matching `WdfCoInstaller010xx.dll` to `inf/`
+  2. Update `virtio-input.inf` to reference it
+  3. Regenerate the catalog and re-sign
+  4. Ensure release packaging includes it (see `release/README.md`)
+
+## Toolchain selection
+
+### Default (recommended): WDK 7.1 + KMDF 1.9 (no coinstaller)
+
+- **WDK:** Windows Driver Kit **7.1** (7600.16385.1)
+- **Compiler/IDE:** Visual Studio **2010**/**2012** (or the WDK 7.1 build environment)
+
+This is the default because it naturally targets **KMDF 1.9**, which is **in-box** on Windows 7 SP1.
+That keeps the installable driver package minimal (`.inf` + `.sys` + optional `.cat`).
+
+### Alternative: WDK 10 / VS2019+ (requires shipping WDF for Win7 if KMDF > 1.9)
+
+WDK 10 is fine for running tools like `Inf2Cat.exe` / `signtool.exe`, but if the driver binary is built against a newer
+KMDF than 1.9, you must ship and install the matching WDF coinstaller/runtime on Windows 7.
 
 ## Directory layout
 
@@ -21,10 +59,7 @@ This directory contains **packaging + installation infrastructure** for the Aero
 
 ## Prerequisites (host build/sign machine)
 
-Any Windows machine that can run the WDK tools:
-
-- **Recommended:** Windows 10/11 + **WDK 10** (with Windows 7 targeting components installed)
-- **Supported:** Windows 7/8 + **WDK 7.1** (7600.16385.1)
+Any Windows machine that can run the WDK tools.
 
 You need the following tools in `PATH` (usually by opening a WDK Developer Command Prompt):
 

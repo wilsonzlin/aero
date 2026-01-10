@@ -11,6 +11,10 @@
 ; PCI HWIDs / IDs reference:
 ;   drivers/windows7/virtio-input/docs/pci-hwids.md
 ;
+; KMDF targeting policy:
+; - The driver targets KMDF 1.9, which is in-box on Windows 7 SP1.
+; - No WDF coinstaller is shipped/installed for Win7 SP1.
+;
 ; Note: virtio-input devices in QEMU enumerate as modern/non-transitional by
 ; default (DEV_1052). The virtio spec also defines a transitional (legacy+modern)
 ; ID (DEV_1011), which is included here so Windows can bind the driver if it
@@ -34,7 +38,7 @@ DriverVer   = 01/01/2026,0.1.0.0
 DefaultDestDir = 12  ; DIRID_DRIVERS
 
 [SourceDisksNames]
-1 = %DiskName%,,,
+1 = %DiskName%,, ,
 
 [SourceDisksFiles]
 ; NOTE: The file name here is a placeholder. If the .sys name changes,
@@ -102,8 +106,8 @@ Needs     = HID_Inst.NT
 AddReg = AeroVirtioInput_InterruptManagement_AddReg
 
 [AeroVirtioInput_Install.NTx86.Services]
-Include   = hidclass.inf
-Needs     = HID_Inst.NT.Services
+Include    = hidclass.inf
+Needs      = HID_Inst.NT.Services
 AddService = aero_virtio_input, 0x00000002, AeroVirtioInput_Service_Inst
 
 [AeroVirtioInput_Install.NTx86.Wdf]
@@ -121,8 +125,8 @@ Needs     = HID_Inst.NT
 AddReg = AeroVirtioInput_InterruptManagement_AddReg
 
 [AeroVirtioInput_Install.NTamd64.Services]
-Include   = hidclass.inf
-Needs     = HID_Inst.NT.Services
+Include    = hidclass.inf
+Needs      = HID_Inst.NT.Services
 AddService = aero_virtio_input, 0x00000002, AeroVirtioInput_Service_Inst
 
 [AeroVirtioInput_Install.NTamd64.Wdf]
@@ -162,8 +166,8 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLi
 
 [Strings]
 AeroProvider = "Aero Project"
-MfgName = "Aero Project"
-DiskName = "Aero virtio-input Driver Install Disk"
+MfgName      = "Aero Project"
+DiskName     = "Aero virtio-input Driver Install Disk"
 
-VirtioInput.DeviceDesc = "Aero Virtio Input Device"
+VirtioInput.DeviceDesc  = "Aero Virtio Input Device"
 AeroVirtioInput.SvcDesc = "Aero virtio-input KMDF HID Minidriver"

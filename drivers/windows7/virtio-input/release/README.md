@@ -12,6 +12,10 @@ This folder documents how to produce a redistributable driver bundle once you ha
 - A KMDF coinstaller `WdfCoInstaller*.dll` **if present** (either referenced by the INF, or discovered under `-InputDir`)
 - A `manifest.json` describing file hashes + metadata (driver id, arch, version, etc.)
 
+> Default policy: the Win7 virtio-input driver targets **KMDF 1.9** (in-box on Windows 7 SP1), so no WDF coinstaller
+> is expected or required. The packaging script only includes `WdfCoInstaller*.dll` if you intentionally add one (for
+> example, after rebuilding the driver against KMDF > 1.9).
+
 The output filename is:
 
 `aero-virtio-input-win7-<arch>-<version>.zip`
