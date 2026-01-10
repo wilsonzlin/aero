@@ -19,6 +19,7 @@ members = [
     "crates/aero-ipc",
     "crates/aero-bios",
     "crates/aero_jit",
+    "crates/aero-microbench",
     "crates/aero-net-e1000",
     "crates/aero-net-stack",
     "crates/aero-storage",

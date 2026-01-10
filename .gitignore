@@ -56,6 +56,9 @@ bench/output/
 # Build outputs produced by the AeroGPU build scripts
 drivers/aerogpu/build/out/
 
+# wasm-pack output (generated)
+web/src/wasm/
+
 # Coverage
 coverage/
 

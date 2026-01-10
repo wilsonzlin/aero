@@ -1,8 +1,8 @@
 import "./style.css";
 
+import { installAeroGlobals } from "./aero";
 import { createGpuWorker } from "./main/createGpuWorker";
 import { fnv1a32Hex } from "./utils/fnv1a";
-
 import { createAudioOutput } from "./platform/audio";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { importFileToOpfs } from "./platform/opfs";
@@ -21,6 +21,8 @@ import { DEFAULT_GUEST_RAM_MIB, GUEST_RAM_PRESETS_MIB, type GuestRamMiB, type Wo
 initAeroStatusApi("booting");
 installPerfHud({ guestRamBytes: DEFAULT_GUEST_RAM_MIB * 1024 * 1024 });
 installAeroGlobal();
+
+installAeroGlobals();
 
 const workerCoordinator = new WorkerCoordinator();
 
@@ -127,6 +129,7 @@ function render(): void {
     renderAudioPanel(),
     renderWorkersPanel(report),
     renderIpcDemoPanel(),
+    renderMicrobenchPanel(),
   );
 }
 
@@ -566,6 +569,60 @@ function renderAudioPanel(): HTMLElement {
   });
 
   return el("div", { class: "panel" }, el("h2", { text: "Audio" }), el("div", { class: "row" }, button), status);
+}
+
+function renderMicrobenchPanel(): HTMLElement {
+  const output = el("pre", { text: "" });
+
+  const runButton = el("button", {
+    text: "Run microbench suite",
+    onclick: async () => {
+      output.textContent = "";
+      runButton.disabled = true;
+      try {
+        if (!window.aero?.bench?.runMicrobenchSuite) {
+          output.textContent = "window.aero.bench.runMicrobenchSuite is not available.";
+          return;
+        }
+        const results = await window.aero.bench.runMicrobenchSuite();
+        output.textContent = JSON.stringify(results, null, 2);
+      } catch (err) {
+        output.textContent = err instanceof Error ? err.message : String(err);
+      } finally {
+        runButton.disabled = false;
+      }
+    },
+  }) as HTMLButtonElement;
+
+  const exportButton = el("button", {
+    text: "Export perf JSON",
+    onclick: () => {
+      output.textContent = "";
+      try {
+        if (!window.aero?.perf?.export) {
+          output.textContent = "window.aero.perf.export is not available.";
+          return;
+        }
+        output.textContent = JSON.stringify(window.aero.perf.export(), null, 2);
+      } catch (err) {
+        output.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  }) as HTMLButtonElement;
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Microbench" }),
+    el(
+      "div",
+      { class: "row" },
+      runButton,
+      exportButton,
+      el("span", { class: "mono", text: "Runs deterministic WASM microbench hot paths (ALU, branch, memcpy, hash)." }),
+    ),
+    output,
+  );
 }
 
 function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
