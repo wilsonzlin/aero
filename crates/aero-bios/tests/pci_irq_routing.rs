@@ -66,11 +66,22 @@ impl VecDisk {
 }
 
 impl BlockDevice for VecDisk {
-    fn read_sector(&self, lba: u64, buf512: &mut [u8; 512]) -> Result<(), DiskError> {
+    fn read_sector(&mut self, lba: u64, buf512: &mut [u8; 512]) -> Result<(), DiskError> {
         let start = usize::try_from(lba * 512).map_err(|_| DiskError::OutOfRange)?;
         let end = start.checked_add(512).ok_or(DiskError::OutOfRange)?;
         let slice = self.bytes.get(start..end).ok_or(DiskError::OutOfRange)?;
         buf512.copy_from_slice(slice);
+        Ok(())
+    }
+
+    fn write_sector(&mut self, lba: u64, buf512: &[u8; 512]) -> Result<(), DiskError> {
+        let start = usize::try_from(lba * 512).map_err(|_| DiskError::OutOfRange)?;
+        let end = start.checked_add(512).ok_or(DiskError::OutOfRange)?;
+        let slice = self
+            .bytes
+            .get_mut(start..end)
+            .ok_or(DiskError::OutOfRange)?;
+        slice.copy_from_slice(buf512);
         Ok(())
     }
 
@@ -149,7 +160,7 @@ impl PciConfigSpace for TestPciCfg {
 fn bios_programs_pci_interrupt_line_using_intx_swizzle_and_pirq_map() {
     let mut mem = SimpleMemory::new(2 * 1024 * 1024);
     let mut cpu = RealModeCpu::default();
-    let disk = VecDisk::new(vec![0; 512]);
+    let mut disk = VecDisk::new(vec![0; 512]);
 
     let mut pci = TestPciCfg::new();
     // Bus 0, device 1, function 0, INTA#.
@@ -163,7 +174,7 @@ fn bios_programs_pci_interrupt_line_using_intx_swizzle_and_pirq_map() {
     });
     let mut kbd = NullKeyboard;
 
-    bios.post_with_devices(&mut cpu, &mut mem, &disk, &mut kbd, Some(&mut pci));
+    bios.post_with_devices(&mut cpu, &mut mem, &mut disk, &mut kbd, Some(&mut pci));
 
     // With PIRQ[A-D] -> [10,11,12,13] and swizzle (pin+device)%4:
     // dev1 INTA (pin=0) -> index 1 -> 11.
@@ -185,4 +196,3 @@ fn bios_programs_pci_interrupt_line_using_intx_swizzle_and_pirq_map() {
     assert!(seen.contains(&(0, 1, 0, 11)));
     assert!(seen.contains(&(0, 2, 0, 11)));
 }
-
