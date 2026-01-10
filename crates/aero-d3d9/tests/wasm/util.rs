@@ -6,6 +6,10 @@ use aero_d3d9::resources::ResourceManagerOptions;
 use futures::channel::oneshot;
 
 pub async fn init_manager() -> ResourceManager {
+    init_manager_with_options(ResourceManagerOptions::default()).await
+}
+
+pub async fn init_manager_with_options(options: ResourceManagerOptions) -> ResourceManager {
     let instance = wgpu::Instance::default();
 
     let adapter = instance
@@ -41,7 +45,7 @@ pub async fn init_manager() -> ResourceManager {
         .await
         .expect("request_device");
 
-    ResourceManager::new(device, queue, ResourceManagerOptions::default())
+    ResourceManager::new(device, queue, options)
 }
 
 pub fn rgb_to_565(rgb: [u8; 3]) -> u16 {
