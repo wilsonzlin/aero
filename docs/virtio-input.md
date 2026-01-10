@@ -4,6 +4,11 @@
 
 PS/2 is simple but has limited throughput and higher per-event overhead. Once the guest has a virtio driver installed, **virtio-input** provides a fast paravirtual path for keyboard/mouse events with low latency and fewer emulated side effects.
 
+See also:
+
+- [`virtio/virtqueue-split-ring-win7.md`](./virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue implementation guide for Windows 7 KMDF drivers (descriptor mgmt, ordering/barriers, EVENT_IDX, indirect).
+- [`windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) — Aero’s definitive virtio device/feature/transport contract.
+
 This repo implements **two virtio-input devices**:
 
 - `Aero VirtIO Keyboard`
@@ -99,4 +104,3 @@ Windows 7 has no in-box virtio-input driver. A minimal approach is to ship a cus
 
 - If you want the absolute smallest driver surface area for Windows 7, a KMDF driver that exposes a HID interface is typically the pragmatic choice.
 - The status queue is optional for basic input, but supporting LED updates is useful for parity with PS/2 keyboard behavior.
-

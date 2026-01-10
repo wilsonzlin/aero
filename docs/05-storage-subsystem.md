@@ -502,6 +502,9 @@ For maximum performance, we provide virtio-blk drivers:
 > For the exact Windows 7 driver ↔ Aero device-model interoperability contract (PCI transport, virtqueue rules, and virtio-blk requirements), see:  
 > [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md)  
 >  
+> For the split-ring virtqueue implementation algorithms used by Windows 7 KMDF virtio drivers, see:  
+> [`docs/virtio/virtqueue-split-ring-win7.md`](./virtio/virtqueue-split-ring-win7.md)  
+>  
 > Windows 7 x64 enforces kernel-mode driver signatures. For test-signed virtio drivers (and the required `boot.wim`/`install.wim` + BCD servicing steps), see [16 - Windows 7 Install Media Servicing (WinPE/Setup) for Test-Signed Virtio Drivers](./16-win7-image-servicing.md).
 
 ```rust
