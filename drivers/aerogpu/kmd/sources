@@ -1,4 +1,4 @@
-TARGETNAME=aerogpu_kmd
+TARGETNAME=aerogpu
 TARGETTYPE=DRIVER
 
 INCLUDES=\
@@ -11,4 +11,3 @@ SOURCES=\
 
 TARGETLIBS=\
     $(DDK_LIB_PATH)\\dxgkrnl.lib
-

@@ -43,6 +43,13 @@ pkg/
 web/dist/
 bench/output/
 
+# Source-controlled build tooling (not build outputs)
+!drivers/aerogpu/build/
+!drivers/aerogpu/build/**
+
+# Build outputs produced by the AeroGPU build scripts
+drivers/aerogpu/build/out/
+
 # Coverage
 coverage/
 

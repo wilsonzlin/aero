@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 rem -----------------------------------------------------------------------------
-rem AeroGPU Win7 build orchestrator (WDK 7.1 BUILD system)
+rem AeroGPU Win7 build orchestrator (KMD via WDK 7.1 BUILD + UMD via MSBuild)
 rem
 rem Usage:
 rem   build_all.cmd                 -> build fre+chk, x86+x64
@@ -17,6 +17,8 @@ for %%I in ("%SCRIPT_DIR%.") do set "SCRIPT_DIR=%%~fI"
 for %%I in ("%SCRIPT_DIR%\..") do set "AEROGPU_ROOT=%%~fI"
 set "KMD_DIR=%AEROGPU_ROOT%\kmd"
 set "UMD_DIR=%AEROGPU_ROOT%\umd"
+set "UMD_D3D10_11_DIR=%AEROGPU_ROOT%\umd\d3d10_11"
+set "UMD_D3D10_11_SLN=%UMD_D3D10_11_DIR%\aerogpu_d3d10_11.sln"
 
 set "OUT_ROOT=%SCRIPT_DIR%\out"
 
@@ -45,8 +47,14 @@ if not exist "%KMD_DIR%" (
   exit /b 1
 )
 if not exist "%UMD_DIR%" (
-  echo ERROR: Expected UMD directory not found: "%UMD_DIR%"
+  echo ERROR: Expected UMD directory not found: "%AEROGPU_ROOT%\umd"
   echo        The UMD task should populate drivers\aerogpu\umd\
+  exit /b 1
+)
+
+if not exist "%UMD_D3D10_11_SLN%" (
+  echo ERROR: Expected D3D10/11 UMD solution not found:
+  echo        "%UMD_D3D10_11_SLN%"
   exit /b 1
 )
 
@@ -63,7 +71,7 @@ for %%V in (%VARIANTS%) do (
     call "%SCRIPT_DIR%\build_one.cmd" "%WDKROOT%" WIN7 %%V %%A "%KMD_DIR%" "%OUT_ROOT%\win7\%%A\%%V\kmd" sys
     if errorlevel 1 exit /b 1
 
-    call "%SCRIPT_DIR%\build_one.cmd" "%WDKROOT%" WIN7 %%V %%A "%UMD_DIR%" "%OUT_ROOT%\win7\%%A\%%V\umd" dll
+    call "%SCRIPT_DIR%\build_umd.cmd" %%V %%A "%UMD_D3D10_11_SLN%" "%OUT_ROOT%\win7\%%A\%%V\umd"
     if errorlevel 1 exit /b 1
 
     echo.
