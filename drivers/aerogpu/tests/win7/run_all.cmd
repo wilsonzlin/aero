@@ -6,6 +6,9 @@ if /I "%~1"=="-h" goto :help
 if "%~1"=="/?" goto :help
 
 set "BIN=%~dp0bin"
+set "RUNNER=%BIN%\\aerogpu_timeout_runner.exe"
+set "TIMEOUT_MS=%AEROGPU_TEST_TIMEOUT_MS%"
+if "%TIMEOUT_MS%"=="" set "TIMEOUT_MS=30000"
 set /a FAILURES=0
 
 call :run_test d3d9ex_dwm_probe %*
@@ -34,7 +37,11 @@ if not exist "%EXE%" (
   exit /b 0
 )
 
-"%EXE%" %*
+if exist "%RUNNER%" (
+  "%RUNNER%" %TIMEOUT_MS% "%EXE%" %*
+) else (
+  "%EXE%" %*
+)
 if errorlevel 1 (
   echo FAIL: %NAME%
   set /a FAILURES+=1
@@ -50,5 +57,6 @@ echo Notes:
 echo   --require-vid/--require-did helps avoid false PASS when AeroGPU isn't active.
 echo   Rendering tests expect adapter description to contain "AeroGPU" unless --allow-non-aerogpu is provided.
 echo   --allow-remote only affects d3d9ex_dwm_probe; other tests ignore it.
+echo   Set AEROGPU_TEST_TIMEOUT_MS to override the default per-test timeout (%TIMEOUT_MS% ms) when aerogpu_timeout_runner.exe is present.
 exit /b 0
 

@@ -4,6 +4,8 @@ This directory contains small Windows 7 **guest-side** test programs intended to
 
 Each test prints a clear `PASS:` / `FAIL:` line to stdout and returns a non-zero exit code on failure. Some tests can optionally dump a `.bmp` to disk for manual inspection (`--dump`).
 
+The suite also includes an optional `aerogpu_timeout_runner.exe` helper (built by default) used by `run_all.cmd` to enforce a per-test timeout. Override the default timeout by setting `AEROGPU_TEST_TIMEOUT_MS` in the environment.
+
 Common flags:
 
 * `--dump` – write a `*.bmp` next to the executable.
@@ -76,6 +78,13 @@ For suite usage:
 
 ```cmd
 run_all.cmd --help
+```
+
+To increase the per-test timeout (default: 30000 ms):
+
+```cmd
+set AEROGPU_TEST_TIMEOUT_MS=120000
+run_all.cmd
 ```
 
 To require a specific PCI VID/DID (recommended for automation):

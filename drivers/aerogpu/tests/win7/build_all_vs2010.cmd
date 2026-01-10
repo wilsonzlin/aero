@@ -3,6 +3,7 @@ setlocal
 
 echo === Building AeroGPU Win7 test suite (VS2010) ===
 
+call "%~dp0timeout_runner\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d9ex_dwm_probe\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d9ex_triangle\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d11_triangle\\build_vs2010.cmd" || exit /b 1
