@@ -13,17 +13,39 @@ SIZE_LIMIT_MB="${SIZE_LIMIT_MB:-20}"
 SIZE_LIMIT_BYTES=$((SIZE_LIMIT_MB * 1024 * 1024))
 
 # Forbidden extensions (case-insensitive, without the leading dot).
+# Keep this list in sync with the "do not commit" patterns in `.gitignore`.
 FORBIDDEN_EXTENSIONS=(
   iso
   img
+  ima
   vhd
   vhdx
   vmdk
+  vdi
   qcow
   qcow2
+  raw
+  dd
+  dsk
+  hdd
+  ova
+  ovf
   wim
+  esd
+  swm
+  cab
+  msu
+  msi
   exe
   dll
+  sys
+  drv
+  ocx
+  cpl
+  pdb
+  rom
+  fd
+  efi
 )
 
 # Forbidden path patterns (case-insensitive, bash patterns).
@@ -47,9 +69,12 @@ is_all_zeros_sha() {
 }
 
 resolve_base_ref() {
-  if [[ -n "$BASE_REF" ]]; then
+  # GitHub push events sometimes use an all-zeros "before" SHA when creating a
+  # branch. Treat that as unset so we can fall back to a usable base ref.
+  if [[ -n "$BASE_REF" ]] && ! is_all_zeros_sha "$BASE_REF"; then
     return 0
   fi
+  BASE_REF=""
 
   # On GitHub Actions push events, use the "before" sha if available.
   if [[ "${GITHUB_EVENT_NAME:-}" == "push" && -n "${GITHUB_EVENT_PATH:-}" && -f "${GITHUB_EVENT_PATH:-}" ]]; then

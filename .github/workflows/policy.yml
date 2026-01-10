@@ -3,6 +3,8 @@ name: Policy
 on:
   pull_request:
   push:
+    branches:
+      - main
 
 jobs:
   policy:
