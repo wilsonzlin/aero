@@ -700,8 +700,9 @@ impl StreamingDisk {
             }
         }
 
-        // NOTE: Using `Range` and `Authorization` headers will trigger a CORS preflight when
-        // fetching cross-origin (same-origin `/disk/...` avoids CORS entirely).
+        // NOTE: Cross-origin `Range` requests trigger a CORS preflight, and including an
+        // `Authorization` header requires allowing it in CORS (same-origin `/disk/...` avoids
+        // CORS entirely).
         let mut headers = vec![
             ("Range".to_string(), format!("bytes={}-{}", start, end - 1)),
         ];
@@ -795,7 +796,7 @@ curl -i -H 'Range: bytes=-512' https://example.com/windows7.img
 
 The `StreamingDisk` design supports both **public** and **private** remote disk images.
 
-- **Public images**: `remote_url` can point directly at a CDN/object store URL and `bearer_token` can be omitted or left empty (implementation-defined).
+- **Public images**: `remote_url` can point directly at a CDN/object store URL and `bearer_token` can be omitted.
 - **Private images**: access is controlled per-user/per-session and requires a short-lived credential (bearer token *or* a signed URL).
 
 For private images, treat the following as **secrets**:
@@ -803,7 +804,7 @@ For private images, treat the following as **secrets**:
 - `remote_url` (if it contains a signed query parameter)
 - `bearer_token` / session cookies / any auth material
 
-Do **not** persist these secrets to OPFS/IndexedDB “for convenience”. Persist stable identifiers instead (e.g., `image_id`, `snapshot_id`) and reacquire credentials each time a VM session starts.
+Do **not** persist these secrets to OPFS/IndexedDB (or logs) “for convenience”. Persist stable identifiers instead (e.g., `image_id`, `snapshot_id`) and reacquire credentials each time a VM session starts.
 
 #### Disk access lease acquisition
 
