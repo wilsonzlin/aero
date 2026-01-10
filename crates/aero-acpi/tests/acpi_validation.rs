@@ -172,6 +172,9 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     let aml = &dsdt[36..];
     assert!(aml.windows(4).any(|w| w == b"PCI0"));
     assert!(aml.windows(4).any(|w| w == b"HPET"));
+    assert!(aml.windows(4).any(|w| w == b"_PRT"));
+    assert!(aml.windows(4).any(|w| w == b"RTC_"));
+    assert!(aml.windows(4).any(|w| w == b"TIMR"));
 
     // FACS signature/length.
     let facs = mem.read(tables.addresses.facs, 64);

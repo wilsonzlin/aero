@@ -583,6 +583,8 @@ fn build_dsdt_aml(cfg: &AcpiConfig) -> Vec<u8> {
     let mut sb = Vec::new();
     sb.extend_from_slice(&aml_device_pci0(cfg));
     sb.extend_from_slice(&aml_device_hpet(cfg));
+    sb.extend_from_slice(&aml_device_rtc());
+    sb.extend_from_slice(&aml_device_timr());
     out.extend_from_slice(&aml_scope(*b"_SB_", &sb));
 
     // Scope (_PR_) { Processor (CPUx, ...) }
@@ -752,6 +754,7 @@ fn aml_device_pci0(cfg: &AcpiConfig) -> Vec<u8> {
     body.extend_from_slice(&aml_name_integer(*b"_BBN", 0));
     body.extend_from_slice(&aml_name_integer(*b"_SEG", 0));
     body.extend_from_slice(&aml_name_buffer(*b"_CRS", &pci0_crs(cfg)));
+    body.extend_from_slice(&aml_name_pkg(*b"_PRT", &pci0_prt()));
 
     aml_device(*b"PCI0", &body)
 }
@@ -763,6 +766,26 @@ fn aml_device_hpet(cfg: &AcpiConfig) -> Vec<u8> {
     body.extend_from_slice(&aml_name_integer(*b"_STA", 0x0F));
     body.extend_from_slice(&aml_name_buffer(*b"_CRS", &hpet_crs(cfg)));
     aml_device(*b"HPET", &body)
+}
+
+fn aml_device_rtc() -> Vec<u8> {
+    // Matches typical PC/AT RTC resources (ports 0x70-0x71, IRQ8).
+    let mut body = Vec::new();
+    body.extend_from_slice(&aml_name_eisa_id(*b"_HID", "PNP0B00"));
+    body.extend_from_slice(&aml_name_integer(*b"_UID", 0));
+    body.extend_from_slice(&aml_name_integer(*b"_STA", 0x0F));
+    body.extend_from_slice(&aml_name_buffer(*b"_CRS", &rtc_crs()));
+    aml_device(*b"RTC_", &body)
+}
+
+fn aml_device_timr() -> Vec<u8> {
+    // Matches typical PC/AT PIT resources (ports 0x40-0x43, IRQ0).
+    let mut body = Vec::new();
+    body.extend_from_slice(&aml_name_eisa_id(*b"_HID", "PNP0100"));
+    body.extend_from_slice(&aml_name_integer(*b"_UID", 0));
+    body.extend_from_slice(&aml_name_integer(*b"_STA", 0x0F));
+    body.extend_from_slice(&aml_name_buffer(*b"_CRS", &timr_crs()));
+    aml_device(*b"TIMR", &body)
 }
 
 fn aml_name_eisa_id(name: [u8; 4], id: &str) -> Vec<u8> {
@@ -789,6 +812,30 @@ fn aml_name_buffer(name: [u8; 4], bytes: &[u8]) -> Vec<u8> {
     out.push(0x08); // NameOp
     out.extend_from_slice(&name);
     out.extend_from_slice(&buf);
+    out
+}
+
+fn aml_name_pkg(name: [u8; 4], pkg_elements: &[Vec<u8>]) -> Vec<u8> {
+    let pkg = aml_package(pkg_elements);
+    let mut out = Vec::new();
+    out.push(0x08); // NameOp
+    out.extend_from_slice(&name);
+    out.extend_from_slice(&pkg);
+    out
+}
+
+fn aml_package(elements: &[Vec<u8>]) -> Vec<u8> {
+    assert!(elements.len() <= 0xFF, "AML package too large");
+    let mut payload = Vec::new();
+    payload.push(elements.len() as u8);
+    for el in elements {
+        payload.extend_from_slice(el);
+    }
+
+    let mut out = Vec::new();
+    out.push(0x12); // PackageOp
+    out.extend_from_slice(&aml_pkg_length(payload.len()));
+    out.extend_from_slice(&payload);
     out
 }
 
@@ -882,6 +929,27 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     out
 }
 
+fn pci0_prt() -> Vec<Vec<u8>> {
+    // Provide a simple static _PRT mapping for PCI INTx. We follow the common
+    // PIRQ swizzle used by many virtual platforms:
+    //   PIRQA-D -> GSIs 10,11,10,11.
+    let pirq_gsi = [10u64, 11u64, 10u64, 11u64];
+    let mut entries = Vec::new();
+    for dev in 1u32..=31 {
+        let addr = (dev << 16) | 0xFFFF;
+        for pin in 0u64..=3 {
+            let gsi = pirq_gsi[((dev as usize) + (pin as usize)) & 3];
+            entries.push(aml_package(&[
+                aml_integer(addr as u64),
+                aml_integer(pin),
+                aml_integer(0), // Source (always Zero)
+                aml_integer(gsi),
+            ]));
+        }
+    }
+    entries
+}
+
 fn hpet_crs(cfg: &AcpiConfig) -> Vec<u8> {
     let mut out = Vec::new();
     // Memory32Fixed descriptor.
@@ -956,6 +1024,26 @@ fn memory32_fixed_descriptor(address: u32, length: u32) -> [u8; 12] {
     out[3] = 0; // read/write
     out[4..8].copy_from_slice(&address.to_le_bytes());
     out[8..12].copy_from_slice(&length.to_le_bytes());
+    out
+}
+
+fn rtc_crs() -> Vec<u8> {
+    let mut out = Vec::new();
+    // IO(Decode16, 0x70, 0x70, 1, 2)
+    out.extend_from_slice(&io_port_descriptor(0x0070, 0x0070, 1, 2));
+    // IRQNoFlags {8} => bitmask 1<<8 = 0x0100
+    out.extend_from_slice(&[0x22, 0x00, 0x01]);
+    out.extend_from_slice(&[0x79, 0x00]);
+    out
+}
+
+fn timr_crs() -> Vec<u8> {
+    let mut out = Vec::new();
+    // IO(Decode16, 0x40, 0x40, 1, 4)
+    out.extend_from_slice(&io_port_descriptor(0x0040, 0x0040, 1, 4));
+    // IRQNoFlags {0} => bitmask 1<<0 = 0x0001
+    out.extend_from_slice(&[0x22, 0x01, 0x00]);
+    out.extend_from_slice(&[0x79, 0x00]);
     out
 }
 
