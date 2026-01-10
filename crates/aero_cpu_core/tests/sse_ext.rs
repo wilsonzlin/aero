@@ -41,6 +41,23 @@ fn xmm_to_i32x4(xmm: u128) -> [i32; 4] {
     out
 }
 
+fn xmm_from_f32x4(lanes: [f32; 4]) -> u128 {
+    let mut out = [0u8; 16];
+    for (i, lane) in lanes.into_iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&lane.to_bits().to_le_bytes());
+    }
+    u128::from_le_bytes(out)
+}
+
+fn xmm_to_f32x4(xmm: u128) -> [f32; 4] {
+    let bytes = xmm.to_le_bytes();
+    let mut out = [0f32; 4];
+    for (i, chunk) in bytes.chunks_exact(4).enumerate() {
+        out[i] = f32::from_bits(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+    out
+}
+
 fn setup() -> (Cpu, RamBus) {
     (Cpu::new(CpuMode::Long64), RamBus::new(0x10_000))
 }
@@ -124,6 +141,33 @@ fn pshufb_real16_segment_override() {
         xmm_to_bytes(cpu.sse.xmm[0]),
         [0, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
     );
+}
+
+#[test]
+fn haddps_basic() {
+    let (mut cpu, mut bus) = setup();
+    cpu.sse.xmm[0] = xmm_from_f32x4([1.0, 2.0, 3.0, 4.0]);
+    cpu.sse.xmm[1] = xmm_from_f32x4([10.0, 20.0, 30.0, 40.0]);
+
+    // haddps xmm0, xmm1
+    cpu.execute_bytes(&mut bus, &[0xF2, 0x0F, 0x7C, 0xC1])
+        .unwrap();
+
+    assert_eq!(xmm_to_f32x4(cpu.sse.xmm[0]), [3.0, 7.0, 30.0, 70.0]);
+}
+
+#[test]
+fn insertps_basic() {
+    let (mut cpu, mut bus) = setup();
+    cpu.sse.xmm[0] = xmm_from_f32x4([1.0, 2.0, 3.0, 4.0]);
+    cpu.sse.xmm[1] = xmm_from_f32x4([10.0, 20.0, 30.0, 40.0]);
+
+    // insertps xmm0, xmm1, imm8
+    // src=1 (bits 7:6), dst=2 (bits 5:4), zmask zero lane0 (bit0)
+    cpu.execute_bytes(&mut bus, &[0x66, 0x0F, 0x3A, 0x21, 0xC1, 0x61])
+        .unwrap();
+
+    assert_eq!(xmm_to_f32x4(cpu.sse.xmm[0]), [0.0, 2.0, 20.0, 4.0]);
 }
 
 #[test]

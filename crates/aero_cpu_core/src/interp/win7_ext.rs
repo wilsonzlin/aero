@@ -1,4 +1,5 @@
 use crate::bus::Bus;
+use crate::cpuid::bits;
 use crate::cpu::{Cpu, CpuMode, RFlags, Segment};
 use crate::interp::{bitext, sse3, sse41, sse42, ssse3, ExecError};
 
@@ -301,12 +302,14 @@ fn write_gpr(cpu: &mut Cpu, index: u8, width_bits: u32, value: u64) {
     cpu.regs.set_gpr(index, new);
 }
 
-fn require_win7_ext(cpu: &Cpu, opcode: u8) -> Result<(), ExecError> {
-    if cpu.features.win7_x86_extensions {
-        Ok(())
-    } else {
-        Err(ExecError::InvalidOpcode(opcode))
+fn require_feature(cpu: &Cpu, opcode: u8, leaf1_ecx_mask: u32) -> Result<(), ExecError> {
+    if !cpu.features.win7_x86_extensions {
+        return Err(ExecError::InvalidOpcode(opcode));
     }
+    if (cpu.features.leaf1_ecx & leaf1_ecx_mask) == 0 {
+        return Err(ExecError::InvalidOpcode(opcode));
+    }
+    Ok(())
 }
 
 pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, ExecError> {
@@ -386,7 +389,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
             match op2 {
                 // SSSE3
                 0x00 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSSE3)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -395,7 +398,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.sse.xmm[dst as usize] = ssse3::pshufb(dst_val, src);
                 }
                 0x01 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSSE3)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -403,7 +406,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.sse.xmm[dst as usize] = ssse3::phaddw(cpu.sse.xmm[dst as usize], src);
                 }
                 0x02 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSSE3)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -411,7 +414,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.sse.xmm[dst as usize] = ssse3::phaddd(cpu.sse.xmm[dst as usize], src);
                 }
                 0x03 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSSE3)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -419,7 +422,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.sse.xmm[dst as usize] = ssse3::phaddsw(cpu.sse.xmm[dst as usize], src);
                 }
                 0x04 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSSE3)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -427,7 +430,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.sse.xmm[dst as usize] = ssse3::pmaddubsw(cpu.sse.xmm[dst as usize], src);
                 }
                 0x1C if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSSE3)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -435,7 +438,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.sse.xmm[dst as usize] = ssse3::pabsb(src);
                 }
                 0x1D if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSSE3)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -443,7 +446,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.sse.xmm[dst as usize] = ssse3::pabsw(src);
                 }
                 0x1E if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSSE3)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -453,7 +456,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
 
                 // SSE4.1
                 0x17 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE41)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let a = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -465,7 +468,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.rflags.set(RFlags::SF, false);
                 }
                 0x20 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE41)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -476,7 +479,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.sse.xmm[dst as usize] = sse41::pmovsxbw(&src_bytes);
                 }
                 0x21 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE41)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -487,7 +490,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.sse.xmm[dst as usize] = sse41::pmovsxbd(&src_bytes);
                 }
                 0x22 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE41)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -498,7 +501,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.sse.xmm[dst as usize] = sse41::pmovsxbq(&src_bytes);
                 }
                 0x30 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE41)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -509,7 +512,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.sse.xmm[dst as usize] = sse41::pmovzxbw(&src_bytes);
                 }
                 0x31 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE41)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -520,7 +523,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.sse.xmm[dst as usize] = sse41::pmovzxbd(&src_bytes);
                 }
                 0x32 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE41)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -531,7 +534,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.sse.xmm[dst as usize] = sse41::pmovzxbq(&src_bytes);
                 }
                 0x40 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE41)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -541,7 +544,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
 
                 // SSE4.2 CRC32
                 0xF0 if prefix_f2 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE42)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -551,7 +554,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     write_gpr(cpu, dst, if rex.w { 64 } else { 32 }, res as u64);
                 }
                 0xF1 if prefix_f2 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE42)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -577,7 +580,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
             let op2 = need_byte(bytes, &mut idx)?;
             match op2 {
                 0x0F if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSSE3)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -586,7 +589,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.sse.xmm[dst as usize] = ssse3::palignr(cpu.sse.xmm[dst as usize], src, imm);
                 }
                 0x0E if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE41)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -594,8 +597,23 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     let imm = need_byte(bytes, &mut idx)?;
                     cpu.sse.xmm[dst as usize] = sse41::pblendw(cpu.sse.xmm[dst as usize], src, imm);
                 }
+                0x21 if prefix_66 => {
+                    // INSERTPS xmm, xmm/m32, imm8
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE41)?;
+                    let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
+                    let dst = modrm.reg | ((rex.r as u8) << 3);
+                    let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
+                    let src = match rm {
+                        RmOperand::Reg(r) => cpu.sse.xmm[r as usize],
+                        // Memory form supplies a scalar m32 which is placed in element 0; other
+                        // elements read as 0 for the purposes of the immediate's source index.
+                        RmOperand::Mem(addr) => bus.read_u32(addr) as u128,
+                    };
+                    let imm = need_byte(bytes, &mut idx)?;
+                    cpu.sse.xmm[dst as usize] = sse41::insertps(cpu.sse.xmm[dst as usize], src, imm);
+                }
                 0x60 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE42)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let a = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -615,7 +633,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.rflags.set(RFlags::OF, flags.of);
                 }
                 0x61 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE42)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let a = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -635,7 +653,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.rflags.set(RFlags::OF, flags.of);
                 }
                 0x62 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE42)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let a = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -649,7 +667,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     cpu.rflags.set(RFlags::OF, flags.of);
                 }
                 0x63 if prefix_66 => {
-                    require_win7_ext(cpu, op2)?;
+                    require_feature(cpu, op2, bits::LEAF1_ECX_SSE42)?;
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let a = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -665,8 +683,40 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                 _ => return Err(ExecError::InvalidOpcode(op2)),
             }
         }
+        0x7C => {
+            // HADDPS/HADDPD
+            require_feature(cpu, op1, bits::LEAF1_ECX_SSE3)?;
+            let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
+            let dst = modrm.reg | ((rex.r as u8) << 3);
+            let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
+            let src = read_rm_u128(cpu, bus, rm);
+            let dst_val = cpu.sse.xmm[dst as usize];
+            cpu.sse.xmm[dst as usize] = if prefix_f2 && !prefix_66 {
+                sse3::haddps(dst_val, src)
+            } else if prefix_66 && !prefix_f2 {
+                sse3::haddpd(dst_val, src)
+            } else {
+                return Err(ExecError::InvalidOpcode(op1));
+            };
+        }
+        0x7D => {
+            // HSUBPS/HSUBPD
+            require_feature(cpu, op1, bits::LEAF1_ECX_SSE3)?;
+            let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
+            let dst = modrm.reg | ((rex.r as u8) << 3);
+            let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
+            let src = read_rm_u128(cpu, bus, rm);
+            let dst_val = cpu.sse.xmm[dst as usize];
+            cpu.sse.xmm[dst as usize] = if prefix_f2 && !prefix_66 {
+                sse3::hsubps(dst_val, src)
+            } else if prefix_66 && !prefix_f2 {
+                sse3::hsubpd(dst_val, src)
+            } else {
+                return Err(ExecError::InvalidOpcode(op1));
+            };
+        }
         0x12 if prefix_f2 => {
-            require_win7_ext(cpu, op1)?;
+            require_feature(cpu, op1, bits::LEAF1_ECX_SSE3)?;
             let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
             let dst = modrm.reg | ((rex.r as u8) << 3);
             let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -677,7 +727,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
             cpu.sse.xmm[dst as usize] = sse3::movddup(src);
         }
         0x12 if prefix_f3 => {
-            require_win7_ext(cpu, op1)?;
+            require_feature(cpu, op1, bits::LEAF1_ECX_SSE3)?;
             let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
             let dst = modrm.reg | ((rex.r as u8) << 3);
             let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -685,7 +735,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
             cpu.sse.xmm[dst as usize] = sse3::movsldup(src);
         }
         0x16 if prefix_f3 => {
-            require_win7_ext(cpu, op1)?;
+            require_feature(cpu, op1, bits::LEAF1_ECX_SSE3)?;
             let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
             let dst = modrm.reg | ((rex.r as u8) << 3);
             let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
@@ -694,7 +744,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
         }
         0xF0 if prefix_f2 => {
             // LDDQU m128 -> xmm.
-            require_win7_ext(cpu, op1)?;
+            require_feature(cpu, op1, bits::LEAF1_ECX_SSE3)?;
             let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
             if modrm.mod_bits == 0b11 {
                 return Err(ExecError::InvalidOpcode(op1));
@@ -709,7 +759,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
         }
         0xB8 if prefix_f3 => {
             // POPCNT
-            require_win7_ext(cpu, op1)?;
+            require_feature(cpu, op1, bits::LEAF1_ECX_POPCNT)?;
             let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
             let dst = modrm.reg | ((rex.r as u8) << 3);
             let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
