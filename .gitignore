@@ -172,3 +172,5 @@ yarn-error.log*
 **/*.ilk
 **/*.exp
 **/*.lib
+# Benchmark output (local runs)
+backend/aero-gateway/bench/results*.json

@@ -12,7 +12,9 @@
     "test": "node ./scripts/run-tests.js",
     "test:e2e": "playwright test",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "bench": "node bench/run.mjs --mode local --json bench/results.json",
+    "bench:smoke": "node bench/run.mjs --mode smoke --json bench/results.json --assert"
   },
   "dependencies": {
     "@fastify/static": "^7.0.4",
@@ -23,7 +25,10 @@
   "devDependencies": {
     "@playwright/test": "^1.41.2",
     "@types/node": "^20.11.30",
+    "autocannon": "^7.15.0",
+    "dns-packet": "^5.6.1",
     "tsx": "^4.19.2",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "ws": "^8.18.0"
   }
 }

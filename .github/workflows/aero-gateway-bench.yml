@@ -1,0 +1,35 @@
+name: Aero gateway perf smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/aero-gateway/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend/aero-gateway
+        run: npm ci
+
+      - name: Run benchmark (smoke)
+        working-directory: backend/aero-gateway
+        run: npm run bench:smoke
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aero-gateway-bench
+          path: backend/aero-gateway/bench/results.json
+          if-no-files-found: warn
