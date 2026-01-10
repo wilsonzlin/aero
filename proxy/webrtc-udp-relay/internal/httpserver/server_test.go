@@ -2,11 +2,15 @@ package httpserver
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -142,6 +146,93 @@ func TestICEEndpointSchema(t *testing.T) {
 	}
 	if _, ok := payload.ICEServers[0]["urls"]; !ok {
 		t.Fatalf("expected urls field on first server: %#v", payload.ICEServers[0])
+	}
+}
+
+func TestICEEndpoint_TURNRESTInjectsCredentials(t *testing.T) {
+	t.Setenv("TURN_REST_SHARED_SECRET", "shared-secret")
+	t.Setenv("TURN_REST_TTL_SECONDS", "10")
+	t.Setenv("TURN_REST_USERNAME_PREFIX", "aero")
+	t.Setenv("AERO_ICE_SERVERS_JSON", `[
+	  {"urls":["turn:turn.example.com:3478?transport=udp"]}
+	]`)
+
+	cfg, err := config.Load([]string{"--listen-addr", "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	baseURL := startTestServer(t, cfg, nil)
+
+	startUnix := time.Now().Unix()
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Origin", baseURL)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		ICEServers []webrtc.ICEServer `json:"iceServers"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if len(payload.ICEServers) != 1 {
+		t.Fatalf("expected 1 iceServer, got %d", len(payload.ICEServers))
+	}
+
+	server := payload.ICEServers[0]
+	if len(server.URLs) != 1 || server.URLs[0] != "turn:turn.example.com:3478?transport=udp" {
+		t.Fatalf("unexpected urls: %#v", server.URLs)
+	}
+
+	if server.Username == "" {
+		t.Fatalf("expected username to be set")
+	}
+	cred, ok := server.Credential.(string)
+	if !ok || cred == "" {
+		t.Fatalf("expected credential string to be set, got %#v", server.Credential)
+	}
+
+	parts := strings.Split(server.Username, ":")
+	if len(parts) != 3 {
+		t.Fatalf("username=%q, want 3 colon-separated parts", server.Username)
+	}
+	if parts[1] != "aero" {
+		t.Fatalf("username prefix=%q, want %q", parts[1], "aero")
+	}
+
+	expiry, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		t.Fatalf("invalid expiry timestamp %q: %v", parts[0], err)
+	}
+	if expiry < startUnix+9 || expiry > startUnix+11 {
+		t.Fatalf("expiry=%d, expected approx %d (+/-1s)", expiry, startUnix+10)
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(cred)
+	if err != nil {
+		t.Fatalf("credential not base64: %v", err)
+	}
+	if len(raw) != sha1.Size {
+		t.Fatalf("decoded credential length=%d, want %d", len(raw), sha1.Size)
+	}
+
+	mac := hmac.New(sha1.New, []byte("shared-secret"))
+	_, _ = mac.Write([]byte(server.Username))
+	want := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	if cred != want {
+		t.Fatalf("credential mismatch: got %q, want %q", cred, want)
 	}
 }
 
