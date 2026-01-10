@@ -108,7 +108,7 @@ docker compose --profile tools run --rm mc ls local/disk-images
 ### Direct to MinIO origin
 
 ```bash
-curl -i \
+curl -s -D - -o /dev/null \
   -H 'Range: bytes=0-15' \
   http://localhost:9000/disk-images/large.bin
 ```
@@ -116,7 +116,7 @@ curl -i \
 To validate the **CORS + ExposeHeaders** behavior, include an `Origin` header and look for `Access-Control-Expose-Headers: ... Content-Range ...`:
 
 ```bash
-curl -i \
+curl -s -D - -o /dev/null \
   -H 'Origin: http://localhost:5173' \
   -H 'Range: bytes=0-15' \
   http://localhost:9000/disk-images/large.bin
@@ -138,7 +138,7 @@ docker compose --profile proxy up
 Then:
 
 ```bash
-curl -i \
+curl -s -D - -o /dev/null \
   -H 'Range: bytes=0-15' \
   http://localhost:9002/disk-images/large.bin
 ```
@@ -175,7 +175,7 @@ For actual `GET` responses, ensure you can see (and access from JS) these header
 ## Notes: MinIO vs AWS S3
 
 - **Addressing style:** MinIO commonly uses *path-style* URLs (`/bucket/key`). AWS S3 increasingly prefers *virtual-hosted-style* (`bucket.s3.amazonaws.com/key`).
-- **CORS config format:** MinIO’s `mc cors set` accepts the AWS-style JSON CORS rules, but some edge cases differ from AWS behavior.
+- **CORS configuration:** AWS S3 CORS is configured per-bucket. MinIO’s CORS behavior is configured at the API layer (this compose setup wires `CORS_ALLOWED_ORIGIN` into `MINIO_API_CORS_ALLOW_ORIGIN`).
 - **Auth:** This compose setup makes the bucket **public-read** (`mc anonymous set download`) so that browser/curl tests don’t require request signing. Production buckets should generally require auth and/or be fronted by a CDN.
 - **Proxy/CDN behavior:** Real CDNs (e.g. CloudFront) can:
   - Handle/terminate `OPTIONS` at the edge

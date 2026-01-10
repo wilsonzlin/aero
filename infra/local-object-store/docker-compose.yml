@@ -5,6 +5,8 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # MinIO implements CORS at the API layer (not per-bucket). Configure the allowed Origin here.
+      MINIO_API_CORS_ALLOW_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:5173}
       # Helps MinIO generate correct URLs in the console when running on localhost.
       MINIO_SERVER_URL: ${MINIO_SERVER_URL:-http://localhost:9000}
       MINIO_BROWSER_REDIRECT_URL: ${MINIO_BROWSER_REDIRECT_URL:-http://localhost:9001}
@@ -14,7 +16,7 @@ services:
     volumes:
       - minio-data:/data
 
-  # One-shot bucket + CORS bootstrapper.
+  # One-shot bucket bootstrapper.
   minio-init:
     image: minio/mc:latest
     depends_on:
@@ -23,41 +25,28 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
       BUCKET_NAME: ${BUCKET_NAME:-disk-images}
-      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:5173}
     volumes:
       - mc-config:/root/.mc
     entrypoint: ["/bin/sh", "-c"]
-    command: |
-      set -eu
+    # Compose treats `command: <string>` as an argv array (splitting on whitespace),
+    # which breaks `sh -c` scripts. Use a single-item list so the whole script is
+    # passed as one argument to `sh -c`.
+    command:
+      - |
+        set -eu
 
-      echo "Waiting for MinIO..."
-      until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" >/dev/null 2>&1; do
-        sleep 1
-      done
+        echo "Waiting for MinIO..."
+        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" >/dev/null 2>&1; do
+          sleep 1
+        done
 
-      echo "Creating bucket local/$${BUCKET_NAME} (if missing)..."
-      mc mb --ignore-existing "local/$${BUCKET_NAME}"
+        echo "Creating bucket local/$${BUCKET_NAME} (if missing)..."
+        mc mb --ignore-existing "local/$${BUCKET_NAME}"
 
-      # Make object reads anonymous so curl/browser tests don't need signing.
-      mc anonymous set download "local/$${BUCKET_NAME}" >/dev/null 2>&1 || true
+        # Make object reads anonymous so curl/browser tests don't need signing.
+        mc anonymous set download "local/$${BUCKET_NAME}" >/dev/null 2>&1 || true
 
-      cat > /tmp/cors.json <<EOF
-      [
-        {
-          "AllowedOrigins": ["$${CORS_ALLOWED_ORIGIN}"],
-          "AllowedMethods": ["GET", "HEAD"],
-          "AllowedHeaders": ["*"],
-          "ExposeHeaders": ["ETag", "Content-Length", "Content-Range", "Accept-Ranges", "Content-Type"],
-          "MaxAgeSeconds": 86400
-        }
-      ]
-      EOF
-
-      echo "Setting CORS on local/$${BUCKET_NAME}..."
-      mc cors set "local/$${BUCKET_NAME}" /tmp/cors.json
-      mc cors info "local/$${BUCKET_NAME}"
-
-      echo "MinIO bootstrap complete."
+        echo "MinIO bootstrap complete."
 
   # Optional "edge/CDN" proxy layer for testing behavior (CORS header overrides, OPTIONS handling, etc).
   #
@@ -78,7 +67,7 @@ services:
   # Convenience: run MinIO Client commands without installing `mc` locally.
   #
   # Example:
-  #   docker compose run --rm mc ls local
+  #   docker compose --profile tools run --rm mc ls local
   mc:
     image: minio/mc:latest
     profiles: ["tools"]
@@ -89,9 +78,10 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
       - mc-config:/root/.mc
+      - ./:/work
+    working_dir: /work
     entrypoint: ["mc"]
 
 volumes:
   minio-data:
   mc-config:
-

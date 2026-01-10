@@ -10,17 +10,20 @@ server {
     # Docker DNS resolver for dynamic upstream resolution.
     resolver 127.0.0.11 valid=10s;
 
-    # Allow CORS preflights to be handled at the proxy, emulating a CDN edge response.
-    if ($request_method = OPTIONS) {
+    location / {
+        # Apply CORS headers at the proxy to emulate CDN/edge behavior.
         add_header 'Access-Control-Allow-Origin' '${CORS_ALLOWED_ORIGIN}' always;
         add_header 'Access-Control-Allow-Methods' 'GET,HEAD,PUT,POST,DELETE,OPTIONS' always;
         add_header 'Access-Control-Allow-Headers' 'Authorization,Content-Type,Range,Origin,Accept,X-Amz-Date,X-Amz-Content-Sha256,X-Amz-Security-Token' always;
+        add_header 'Access-Control-Expose-Headers' 'ETag,Content-Length,Content-Range,Accept-Ranges,Content-Type' always;
         add_header 'Access-Control-Max-Age' 86400 always;
-        add_header 'Content-Length' 0;
-        return 204;
-    }
+        add_header 'Vary' 'Origin' always;
 
-    location / {
+        # Handle preflight directly at the proxy.
+        if ($request_method = OPTIONS) {
+            return 204;
+        }
+
         set $s3_upstream '${S3_UPSTREAM}';
         proxy_pass http://$s3_upstream;
 
@@ -41,12 +44,5 @@ server {
         proxy_hide_header Access-Control-Allow-Methods;
         proxy_hide_header Access-Control-Expose-Headers;
         proxy_hide_header Access-Control-Max-Age;
-
-        add_header 'Access-Control-Allow-Origin' '${CORS_ALLOWED_ORIGIN}' always;
-        add_header 'Access-Control-Allow-Methods' 'GET,HEAD,PUT,POST,DELETE,OPTIONS' always;
-        add_header 'Access-Control-Allow-Headers' 'Authorization,Content-Type,Range,Origin,Accept,X-Amz-Date,X-Amz-Content-Sha256,X-Amz-Security-Token' always;
-        add_header 'Access-Control-Expose-Headers' 'ETag,Content-Length,Content-Range,Accept-Ranges,Content-Type' always;
-        add_header 'Vary' 'Origin' always;
     }
 }
-
