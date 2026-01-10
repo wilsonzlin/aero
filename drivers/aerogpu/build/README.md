@@ -75,6 +75,7 @@ drivers\aerogpu\build\build_all.cmd
 
 > Note: on **Win7 x64**, the display driver package installs both 64-bit and 32-bit (SysWOW64) UMDs.
 > That means you still need the **x86 UMD build** even if you only care about an x64 VM.
+> `build_all.cmd ... x64` still builds the x86 UMD for this reason.
 
 ### Build only one variant / arch
 `build_all.cmd` accepts optional arguments:
@@ -83,7 +84,7 @@ drivers\aerogpu\build\build_all.cmd
 :: Only free builds (fre) for both arches
 drivers\aerogpu\build\build_all.cmd fre
 
-:: Only x64 builds (both fre + chk)
+:: Only x64 KMD builds (both fre + chk) + both UMD arches (needed for Win7 x64)
 drivers\aerogpu\build\build_all.cmd all x64
 
 :: Only checked x86

@@ -8,7 +8,7 @@ rem Usage:
 rem   build_all.cmd                 -> build fre+chk, x86+x64
 rem   build_all.cmd fre             -> build fre only, x86+x64
 rem   build_all.cmd chk x86         -> build chk only, x86 only
-rem   build_all.cmd all x64         -> build fre+chk, x64 only
+rem   build_all.cmd all x64         -> build fre+chk, x64 KMD + x86/x64 UMDs (needed for Win7 x64)
 rem -----------------------------------------------------------------------------
 
 set "SCRIPT_DIR=%~dp0"
@@ -33,6 +33,9 @@ if /i "%~1"=="all" set "VARIANTS=fre chk"
 
 if /i "%~2"=="x86" set "ARCHES=x86"
 if /i "%~2"=="x64" set "ARCHES=x64"
+
+set "HAVE_X64=0"
+echo %ARCHES% | findstr /i "x64" >nul 2>nul && set "HAVE_X64=1"
 
 call "%SCRIPT_DIR%\build_one.cmd" --selftest >nul 2>nul
 if errorlevel 1 (
@@ -74,40 +77,65 @@ echo Output dir: "%OUT_ROOT%"
 echo.
 
 for %%V in (%VARIANTS%) do (
-  for %%A in (%ARCHES%) do (
-    echo ===========================================================================
-    echo Building WIN7 %%V %%A
-    echo ===========================================================================
+  echo ===========================================================================
+  echo Building WIN7 %%V
+  echo ===========================================================================
 
+  rem KMD: build only the requested arches.
+  for %%A in (%ARCHES%) do (
+    echo [KMD] %%A
     call "%SCRIPT_DIR%\build_one.cmd" "%WDKROOT%" WIN7 %%V %%A "%KMD_DIR%" "%OUT_ROOT%\win7\%%A\%%V\kmd" sys
     if errorlevel 1 exit /b 1
-
-    set "UMD_OUT_DIR=%OUT_ROOT%\win7\%%A\%%V\umd"
-    if exist "!UMD_OUT_DIR!" rmdir /s /q "!UMD_OUT_DIR!"
-    mkdir "!UMD_OUT_DIR!" >nul 2>nul
-
-    set "D3D9_DLL="
-    if /i "%%A"=="x86" set "D3D9_DLL=aerogpu_d3d9.dll"
-    if /i "%%A"=="x64" set "D3D9_DLL=aerogpu_d3d9_x64.dll"
-
-    call "%SCRIPT_DIR%\build_umd.cmd" %%V %%A "%UMD_D3D9_PROJ%" "!UMD_OUT_DIR!" "!UMD_OUT_DIR!\obj\d3d9" "!D3D9_DLL!"
-    if errorlevel 1 exit /b 1
-
-    if "%HAVE_D3D10_11%"=="1" (
-      set "D3D10_DLL="
-      if /i "%%A"=="x86" set "D3D10_DLL=aerogpu_d3d10.dll"
-      if /i "%%A"=="x64" set "D3D10_DLL=aerogpu_d3d10_x64.dll"
-
-      call "%SCRIPT_DIR%\build_umd.cmd" %%V %%A "%UMD_D3D10_11_SLN%" "!UMD_OUT_DIR!" "!UMD_OUT_DIR!\obj\d3d10_11" "!D3D10_DLL!"
-      if errorlevel 1 exit /b 1
-    )
-
-    echo.
   )
+
+  rem UMDs: for Win7 x64 installs, we need both x64 + WOW64 (x86) UMDs.
+  echo [UMD] x86
+  call :build_umd %%V x86
+  if errorlevel 1 exit /b 1
+
+  if "%HAVE_X64%"=="1" (
+    echo [UMD] x64
+    call :build_umd %%V x64
+    if errorlevel 1 exit /b 1
+  )
+
+  echo.
 )
 
 echo Done.
 exit /b 0
+
+:build_umd
+setlocal EnableExtensions EnableDelayedExpansion
+
+set "VARIANT=%~1"
+set "ARCH=%~2"
+
+set "UMD_OUT_DIR=%OUT_ROOT%\win7\%ARCH%\%VARIANT%\umd"
+if exist "!UMD_OUT_DIR!" rmdir /s /q "!UMD_OUT_DIR!"
+mkdir "!UMD_OUT_DIR!" >nul 2>nul
+
+set "D3D9_DLL="
+if /i "%ARCH%"=="x86" set "D3D9_DLL=aerogpu_d3d9.dll"
+if /i "%ARCH%"=="x64" set "D3D9_DLL=aerogpu_d3d9_x64.dll"
+
+call "%SCRIPT_DIR%\build_umd.cmd" "%VARIANT%" "%ARCH%" "%UMD_D3D9_PROJ%" "!UMD_OUT_DIR!" "!UMD_OUT_DIR!\obj\d3d9" "!D3D9_DLL!"
+if errorlevel 1 (
+  endlocal & exit /b 1
+)
+
+if "%HAVE_D3D10_11%"=="1" (
+  set "D3D10_DLL="
+  if /i "%ARCH%"=="x86" set "D3D10_DLL=aerogpu_d3d10.dll"
+  if /i "%ARCH%"=="x64" set "D3D10_DLL=aerogpu_d3d10_x64.dll"
+
+  call "%SCRIPT_DIR%\build_umd.cmd" "%VARIANT%" "%ARCH%" "%UMD_D3D10_11_SLN%" "!UMD_OUT_DIR!" "!UMD_OUT_DIR!\obj\d3d10_11" "!D3D10_DLL!"
+  if errorlevel 1 (
+    endlocal & exit /b 1
+  )
+)
+
+endlocal & exit /b 0
 
 :find_wdk_root
 set "WDKROOT="
