@@ -38,12 +38,18 @@ export async function resolveAOverDoh(
 
 // Legacy helper retained for compatibility with older integrations.
 // Prefer `resolveAOverDoh` which targets the gateway's RFC8484 endpoint.
+// This helper is Cloudflare-DNS-JSON compatible and defaults to the gateway's
+// first-party `/dns-json` endpoint.
 export async function resolveAOverDohJson(
   name: string,
-  endpoint = "https://cloudflare-dns.com/dns-query",
+  endpoint = "/dns-json",
 ): Promise<DohAResult | null> {
-  const url = new URL(endpoint);
-  url.searchParams.set("name", name);
+  const trimmed = name.trim().replace(/\.$/, "");
+  if (!trimmed) return null;
+
+  const base = typeof location !== "undefined" ? location.origin : "http://localhost";
+  const url = new URL(endpoint, base);
+  url.searchParams.set("name", trimmed);
   url.searchParams.set("type", "A");
 
   const resp = await fetch(url.toString(), {
