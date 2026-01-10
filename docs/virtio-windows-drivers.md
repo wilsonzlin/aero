@@ -128,6 +128,24 @@ Aero should expose a UX action like:
 
 The ISO is a simple ISO-9660/Joliet filesystem containing the `win7/` driver directories.
 
+### Which ISO?
+
+There are two related but distinct “driver ISO” concepts in Aero:
+
+1) **Minimal virtio drivers ISO** (`aero-virtio-win7-drivers.iso`)
+   - Contains only the extracted virtio driver packages under `win7/x86/...` and `win7/amd64/...`.
+   - Intended for Windows Setup’s **Load Driver** flow (so Setup can see a virtio-blk boot disk).
+
+2) **Aero Guest Tools ISO** (`aero-guest-tools.iso`)
+   - Contains install scripts (`setup.cmd`), certificates, and the driver payload under `drivers/x86/...` and `drivers/amd64/...`.
+   - Intended for the recommended post-install flow:
+     - install Win7 using AHCI/e1000
+     - mount Guest Tools ISO
+     - run `setup.cmd`
+     - switch VM devices to virtio and reboot
+
+This document covers both; see the sections below.
+
 ### Tooling provided
 
 - `tools/driver-iso/build.py` builds an ISO from a driver root directory and `drivers/virtio/manifest.json`.
@@ -188,6 +206,32 @@ Notes:
 - `tools/driver-iso/build.py` needs an ISO authoring tool available on PATH:
   - Linux/WSL: `xorriso` is easiest
   - Windows: `oscdimg.exe` (Windows ADK) is commonly used
+
+### Build `aero-guest-tools.iso` from a virtio-win ISO (recommended for end users)
+
+This produces a Guest Tools ISO that includes virtio drivers plus install scripts/certs.
+
+On a Windows machine with Rust (`cargo`) installed:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
+  -VirtioWinIso C:\path\to\virtio-win.iso `
+  -OutDir .\dist\guest-tools `
+  -Version 0.0.0 `
+  -BuildId local
+```
+
+This wrapper:
+
+1. Extracts a Win7 driver pack from `virtio-win.iso` (using `drivers/scripts/make-driver-pack.ps1`).
+2. Converts it into the input layout expected by the Rust Guest Tools packager.
+3. Runs `tools/packaging/aero_packager/` with spec `tools/packaging/specs/win7-virtio-win.json`.
+
+Outputs:
+
+- `dist/guest-tools/aero-guest-tools.iso`
+- `dist/guest-tools/aero-guest-tools.zip`
+- `dist/guest-tools/manifest.json`
 
 ---
 

@@ -86,6 +86,22 @@ SOURCE_DATE_EPOCH=0 cargo run --release -- \
   --build-id local
 ```
 
+### Building Guest Tools from an upstream virtio-win ISO (Win7 virtio drivers)
+
+If you want the packaged Guest Tools ISO/zip to include the **virtio-win** drivers (viostor + NetKVM at minimum), use the wrapper script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
+  -VirtioWinIso C:\path\to\virtio-win.iso `
+  -OutDir .\dist\guest-tools `
+  -Version 0.0.0 `
+  -BuildId local
+```
+
+This uses the in-repo spec:
+
+- `tools/packaging/specs/win7-virtio-win.json`
+
 ## Validation: required drivers + hardware IDs
 
 Before producing any output, the packager verifies that:

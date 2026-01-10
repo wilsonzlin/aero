@@ -1,0 +1,19 @@
+{
+  "required_drivers": [
+    {
+      "name": "viostor",
+      "expected_hardware_ids": [
+        "PCI\\\\VEN_1AF4&DEV_1001",
+        "PCI\\\\VEN_1AF4&DEV_1042"
+      ]
+    },
+    {
+      "name": "netkvm",
+      "expected_hardware_ids": [
+        "PCI\\\\VEN_1AF4&DEV_1000",
+        "PCI\\\\VEN_1AF4&DEV_1041"
+      ]
+    }
+  ]
+}
+

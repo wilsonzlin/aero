@@ -46,6 +46,18 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-virtio-driver-is
 
 See also: `docs/virtio-windows-drivers.md`.
 
+### Optional: build `aero-guest-tools.iso` from virtio-win (post-install enablement)
+
+If you want the full Guest Tools ISO (scripts + certs + drivers), use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
+  -VirtioWinIso C:\path\to\virtio-win.iso `
+  -OutDir .\dist\guest-tools
+```
+
+This emits `aero-guest-tools.iso` and `aero-guest-tools.zip` under `dist/guest-tools/`.
+
 ## In-guest install workflow (post-install)
 
 1. Copy `aero-win7-driver-pack.zip` into the Win7 guest.
