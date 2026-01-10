@@ -35,7 +35,7 @@ node tools/perf/run.mjs --out-dir perf-results/local --iterations 7 --url http:/
 CI pins:
 
 - Node via `actions/setup-node` (`NODE_VERSION` in workflow)
-- Playwright via `PLAYWRIGHT_VERSION` in workflow + `playwright-core` dependency
+- Playwright via the `playwright-core` dependency (the workflows derive the matching CLI version from `tools/perf/package.json`)
 - Chromium only (`npx playwright@<version> install chromium`)
 
 Chromium is launched with a fixed set of flags to reduce variance:
