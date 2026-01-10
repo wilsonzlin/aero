@@ -15,7 +15,12 @@ dist/
 build/
 out/
 target/
+.vite/
 *.tsbuildinfo
+
+# Playwright
+playwright-report/
+test-results/
 
 # Disk images / VM artifacts (do not commit)
 *.iso

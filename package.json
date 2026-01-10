@@ -1,0 +1,19 @@
+{
+  "name": "aero",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "serve:coi": "vite build --emptyOutDir && vite preview --host 127.0.0.1 --port 4173 --strictPort",
+    "test:e2e": "playwright test",
+    "test:coi": "playwright test tests/e2e/coi.spec.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.41.2",
+    "@types/node": "^20.10.6",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.12"
+  }
+}

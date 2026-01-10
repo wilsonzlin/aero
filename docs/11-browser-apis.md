@@ -27,6 +27,40 @@ Aero leverages cutting-edge browser APIs to achieve performance and functionalit
 
 ---
 
+## Cross-Origin Isolation (COOP/COEP) for WASM Threads / SharedArrayBuffer
+
+Modern browsers gate **WebAssembly threads** and **SharedArrayBuffer** behind **cross-origin isolation** (a Spectre mitigation). In practice:
+
+- `globalThis.crossOriginIsolated` must be `true`
+- `SharedArrayBuffer` must be defined
+- `Atomics` must be available
+
+Cross-origin isolation is enabled by two HTTP response headers on the **top-level document** (and typically applied to all assets for simplicity):
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+### Vite setup (dev + preview)
+
+Vite requires configuring both the dev server and the preview server:
+
+- `server.headers` → `npm run dev`
+- `preview.headers` → `npm run preview` / `vite preview` (serving `dist/`)
+
+See `vite.config.ts` in the repo for the canonical header values.
+
+### Debugging when `SharedArrayBuffer` is undefined
+
+If `typeof SharedArrayBuffer === 'undefined'` (or `crossOriginIsolated === false`):
+
+1. **Verify the response headers** on the main HTML document in DevTools → Network → (document) → Response Headers.
+2. **Check you are in a secure context** (`https://` or `http://localhost`). Non-localhost `http://` will not expose `SharedArrayBuffer`.
+3. **Look for COEP/CORS errors** in the console. With `Cross-Origin-Embedder-Policy: require-corp`, any cross-origin subresource (WASM, scripts, images, fonts) must be served with CORS headers or a compatible `Cross-Origin-Resource-Policy` header. Prefer serving assets from the same origin.
+
+---
+
 ## WebAssembly
 
 ### Core WASM Features
