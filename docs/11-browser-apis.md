@@ -1049,7 +1049,10 @@ class NetworkProxy {
         // so token auth must be passed via a WebSocket-compatible mechanism
         // (commonly `Sec-WebSocket-Protocol`). See the gateway API for the exact
         // subprotocol format.
-        const protocols = this.token ? [`aero-auth.${this.token}`] : undefined;
+        //
+        // Many deployments pass a token directly as the selected subprotocol
+        // (e.g. a base64url/JWT token), but the exact format is gateway-defined.
+        const protocols = this.token ? [this.token] : undefined;
         const ws = new WebSocket(url.toString(), protocols);
         ws.binaryType = 'arraybuffer';
          
