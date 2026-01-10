@@ -347,6 +347,7 @@ pub trait DisplayAdapter {
 | [13-legal-considerations.md](./docs/13-legal-considerations.md)         | Licensing, IP concerns                 | All               |
 | [14-project-milestones.md](./docs/14-project-milestones.md)             | Timeline, deliverables                 | All               |
 | [15-agent-task-breakdown.md](./docs/15-agent-task-breakdown.md)         | Parallelizable work items              | All               |
+| [adr/README.md](./docs/adr/README.md)                                   | Architecture Decision Records (ADRs)   | Infrastructure    |
 | [16-debugging-and-introspection.md](./docs/16-debugging-and-introspection.md) | Developer debugging surfaces (serial, state, trace) | All |
 | [16-snapshots.md](./docs/16-snapshots.md)                               | VM snapshot format + restore flow      | All               |
 | [16-performance-tooling.md](./docs/16-performance-tooling.md)           | Profiling HUD, traces, benchmarks      | Performance       |
