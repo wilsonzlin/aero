@@ -1,11 +1,21 @@
-//! Core architectural CPU state used by Aero's x86/x86-64 emulator.
+//! Core architectural CPU state and privileged instruction helpers used by Aero.
 //!
-//! This crate is intentionally small at the moment. It focuses on modelling and
-//! serialising the x87/SSE state that Windows relies on during thread context
-//! switching (`FXSAVE`/`FXRSTOR`).
+//! This crate serves two purposes:
+//! - x87/SSE context save/restore (`FXSAVE`/`FXRSTOR`) used by Windows for thread
+//!   switching.
+//! - Privileged/system instruction surface (CPUID/MSR/SYSCALL/SYSENTER/IN/OUT)
+//!   required by Windows 7 boot and kernel runtime.
+
+mod exception;
+
+pub mod cpuid;
+pub mod msr;
+pub mod system;
 
 pub mod fpu;
 pub mod sse_state;
+
+pub use exception::Exception;
 
 use crate::fpu::FpuState;
 use crate::sse_state::{SseState, MXCSR_MASK};
