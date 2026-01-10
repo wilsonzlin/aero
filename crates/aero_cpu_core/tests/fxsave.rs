@@ -1,11 +1,7 @@
 use aero_cpu_core::{
     mem::{CpuBus as MemCpuBus, FlatTestBus},
     sse_state::MXCSR_MASK,
-    Bus,
-    CpuState,
-    Exception,
-    RamBus,
-    FXSAVE_AREA_SIZE,
+    Bus, CpuState, Exception, RamBus, FXSAVE_AREA_SIZE,
 };
 
 const ST80_MASK: u128 = (1u128 << 80) - 1;
@@ -188,6 +184,53 @@ fn fxsave64_roundtrip_restores_state() {
 }
 
 #[test]
+fn fxsave64_layout_matches_intel_sdm() {
+    let mut cpu = CpuState::default();
+    cpu.fpu.fcw = 0x1234;
+    cpu.fpu.fsw = 0x4567 & !FSW_TOP_MASK;
+    cpu.fpu.top = 3;
+    cpu.fpu.ftw = 0x9A;
+    cpu.fpu.fop = 0xBEEF;
+    cpu.fpu.fip = 0x1122_3344_5566_7788;
+    cpu.fpu.fdp = 0x99AA_BBCC_DDEE_FF00;
+
+    cpu.sse.mxcsr = 0xCCDD;
+
+    for i in 0..8 {
+        // Fill reserved bytes to ensure they are cleared in the image.
+        cpu.fpu.st[i] = patterned_u128(0x10 + i as u8);
+    }
+    for i in 0..16 {
+        cpu.sse.xmm[i] = patterned_u128(0x80 + i as u8);
+    }
+
+    let mut image = [0u8; FXSAVE_AREA_SIZE];
+    cpu.fxsave64(&mut image);
+
+    let mut expected = [0u8; FXSAVE_AREA_SIZE];
+    expected[0..2].copy_from_slice(&0x1234u16.to_le_bytes());
+    expected[2..4].copy_from_slice(&cpu.fpu.fsw_with_top().to_le_bytes());
+    expected[4] = 0x9A;
+    expected[6..8].copy_from_slice(&0xBEEFu16.to_le_bytes());
+    expected[8..16].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    expected[16..24].copy_from_slice(&0x99AA_BBCC_DDEE_FF00u64.to_le_bytes());
+    expected[24..28].copy_from_slice(&0xCCDDu32.to_le_bytes());
+    expected[28..32].copy_from_slice(&MXCSR_MASK.to_le_bytes());
+
+    for i in 0..8 {
+        let start = 32 + i * 16;
+        expected[start..start + 16].copy_from_slice(&patterned_st80(0x10 + i as u8).to_le_bytes());
+    }
+
+    for i in 0..16 {
+        let start = 160 + i * 16;
+        expected[start..start + 16].copy_from_slice(&cpu.sse.xmm[i].to_le_bytes());
+    }
+
+    assert_eq!(image, expected);
+}
+
+#[test]
 fn fxrstor_rejects_reserved_mxcsr_without_modifying_state() {
     let mut cpu = CpuState::default();
     cpu.fpu.fcw = 0x1234;
@@ -326,5 +369,8 @@ fn ldmxcsr_from_mem_returns_gp0_on_reserved_bits() {
     let mut bus = FlatTestBus::new(16);
     bus.write_u32(0, MXCSR_MASK | (1 << 31)).unwrap();
 
-    assert_eq!(cpu.ldmxcsr_from_mem(&mut bus, 0).unwrap_err(), Exception::gp0());
+    assert_eq!(
+        cpu.ldmxcsr_from_mem(&mut bus, 0).unwrap_err(),
+        Exception::gp0()
+    );
 }
