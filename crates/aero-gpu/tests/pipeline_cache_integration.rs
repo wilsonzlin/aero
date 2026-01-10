@@ -3,6 +3,24 @@ use aero_gpu::pipeline_key::{ColorTargetKey, ComputePipelineKey, PipelineLayoutK
 use aero_gpu::{GpuCapabilities, GpuError};
 
 fn create_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .map(|v| v.is_empty())
+            .unwrap_or(true);
+
+        if needs_runtime_dir {
+            let dir = std::env::temp_dir()
+                .join(format!("aero-gpu-xdg-runtime-{}-pipeline-cache", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            std::env::set_var("XDG_RUNTIME_DIR", &dir);
+        }
+    }
+
     let instance = wgpu::Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::LowPower,

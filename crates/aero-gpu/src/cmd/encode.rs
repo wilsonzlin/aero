@@ -1,0 +1,316 @@
+use super::{
+    BindGroupId, BufferId, Color, GpuCmd, IndexFormat, LoadOp, Operations, PipelineId,
+    RenderPassColorAttachmentDesc, RenderPassDepthStencilAttachmentDesc, RenderPassDesc, StoreOp,
+    TextureViewId,
+};
+
+use std::borrow::Cow;
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EncodeMetrics {
+    pub commands_in: usize,
+    pub encode_time: Duration,
+}
+
+#[derive(Debug)]
+pub struct EncodeResult {
+    pub command_buffer: wgpu::CommandBuffer,
+    pub metrics: EncodeMetrics,
+}
+
+#[derive(Debug)]
+pub enum EncodeError {
+    MissingPipeline(PipelineId),
+    MissingBindGroup(BindGroupId),
+    MissingBuffer(BufferId),
+    MissingTextureView(TextureViewId),
+    UnexpectedEndRenderPass,
+    UnexpectedCommandOutsideRenderPass,
+    UnterminatedRenderPass,
+}
+
+impl std::fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EncodeError::MissingPipeline(id) => write!(f, "missing render pipeline {id:?}"),
+            EncodeError::MissingBindGroup(id) => write!(f, "missing bind group {id:?}"),
+            EncodeError::MissingBuffer(id) => write!(f, "missing buffer {id:?}"),
+            EncodeError::MissingTextureView(id) => write!(f, "missing texture view {id:?}"),
+            EncodeError::UnexpectedEndRenderPass => write!(f, "unexpected EndRenderPass"),
+            EncodeError::UnexpectedCommandOutsideRenderPass => {
+                write!(f, "unexpected command outside render pass")
+            }
+            EncodeError::UnterminatedRenderPass => write!(f, "unterminated render pass"),
+        }
+    }
+}
+
+impl std::error::Error for EncodeError {}
+
+/// Lookup interface that maps lightweight IDs in [`GpuCmd`] to wgpu resources.
+pub trait ResourceProvider {
+    fn pipeline(&self, id: PipelineId) -> Option<&wgpu::RenderPipeline>;
+    fn bind_group(&self, id: BindGroupId) -> Option<&wgpu::BindGroup>;
+    fn buffer(&self, id: BufferId) -> Option<&wgpu::Buffer>;
+    fn texture_view(&self, id: TextureViewId) -> Option<&wgpu::TextureView>;
+}
+
+/// Encoder that turns an optimized [`GpuCmd`] stream into a wgpu command buffer.
+pub struct Encoder<'a, R: ResourceProvider> {
+    device: &'a wgpu::Device,
+    resources: &'a R,
+}
+
+impl<'a, R: ResourceProvider> Encoder<'a, R> {
+    pub fn new(device: &'a wgpu::Device, resources: &'a R) -> Self {
+        Self { device, resources }
+    }
+
+    pub fn encode(&self, cmds: &[GpuCmd]) -> Result<EncodeResult, EncodeError> {
+        let start = Instant::now();
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+        let mut i = 0;
+        while i < cmds.len() {
+            match &cmds[i] {
+                GpuCmd::BeginRenderPass(desc) => {
+                    i = self.encode_render_pass(&mut encoder, desc, cmds, i + 1)?;
+                }
+                GpuCmd::EndRenderPass => return Err(EncodeError::UnexpectedEndRenderPass),
+                _ => return Err(EncodeError::UnexpectedCommandOutsideRenderPass),
+            }
+        }
+
+        let command_buffer = encoder.finish();
+        Ok(EncodeResult {
+            command_buffer,
+            metrics: EncodeMetrics {
+                commands_in: cmds.len(),
+                encode_time: start.elapsed(),
+            },
+        })
+    }
+
+    fn encode_render_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        desc: &RenderPassDesc,
+        cmds: &[GpuCmd],
+        mut i: usize,
+    ) -> Result<usize, EncodeError> {
+        let mut color_attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> =
+            Vec::with_capacity(desc.color_attachments.len());
+        for ca in &desc.color_attachments {
+            color_attachments.push(Some(self.encode_color_attachment(ca)?));
+        }
+
+        let depth_stencil_attachment: Option<wgpu::RenderPassDepthStencilAttachment<'_>> =
+            match &desc.depth_stencil_attachment {
+                Some(ds) => Some(self.encode_depth_stencil_attachment(ds)?),
+                None => None,
+            };
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: desc.label.as_deref(),
+            color_attachments: &color_attachments,
+            depth_stencil_attachment,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        while i < cmds.len() {
+            match &cmds[i] {
+                GpuCmd::EndRenderPass => return Ok(i + 1),
+                GpuCmd::SetPipeline(id) => {
+                    let pipeline = self
+                        .resources
+                        .pipeline(*id)
+                        .ok_or(EncodeError::MissingPipeline(*id))?;
+                    pass.set_pipeline(pipeline);
+                }
+                GpuCmd::SetBindGroup {
+                    slot,
+                    bind_group,
+                    dynamic_offsets,
+                } => {
+                    let bg = self
+                        .resources
+                        .bind_group(*bind_group)
+                        .ok_or(EncodeError::MissingBindGroup(*bind_group))?;
+                    pass.set_bind_group(*slot, bg, dynamic_offsets);
+                }
+                GpuCmd::SetVertexBuffer {
+                    slot,
+                    buffer,
+                    offset,
+                    size,
+                } => {
+                    let buf = self
+                        .resources
+                        .buffer(*buffer)
+                        .ok_or(EncodeError::MissingBuffer(*buffer))?;
+                    let slice = match size {
+                        Some(size) => buf.slice(*offset..(*offset + *size)),
+                        None => buf.slice(*offset..),
+                    };
+                    pass.set_vertex_buffer(*slot, slice);
+                }
+                GpuCmd::SetIndexBuffer {
+                    buffer,
+                    format,
+                    offset,
+                    size,
+                } => {
+                    let buf = self
+                        .resources
+                        .buffer(*buffer)
+                        .ok_or(EncodeError::MissingBuffer(*buffer))?;
+                    let slice = match size {
+                        Some(size) => buf.slice(*offset..(*offset + *size)),
+                        None => buf.slice(*offset..),
+                    };
+                    pass.set_index_buffer(slice, (*format).into());
+                }
+                GpuCmd::Draw {
+                    vertex_count,
+                    instance_count,
+                    first_vertex,
+                    first_instance,
+                } => pass.draw(
+                    *first_vertex..(*first_vertex + *vertex_count),
+                    *first_instance..(*first_instance + *instance_count),
+                ),
+                GpuCmd::DrawIndexed {
+                    index_count,
+                    instance_count,
+                    first_index,
+                    base_vertex,
+                    first_instance,
+                } => pass.draw_indexed(
+                    *first_index..(*first_index + *index_count),
+                    *base_vertex,
+                    *first_instance..(*first_instance + *instance_count),
+                ),
+                GpuCmd::BeginRenderPass(_) => return Err(EncodeError::UnterminatedRenderPass),
+            }
+
+            i += 1;
+        }
+
+        Err(EncodeError::UnterminatedRenderPass)
+    }
+
+    fn encode_color_attachment(
+        &self,
+        desc: &RenderPassColorAttachmentDesc,
+    ) -> Result<wgpu::RenderPassColorAttachment<'_>, EncodeError> {
+        let view = self
+            .resources
+            .texture_view(desc.view)
+            .ok_or(EncodeError::MissingTextureView(desc.view))?;
+        let resolve_target = match desc.resolve_target {
+            Some(id) => Some(
+                self.resources
+                    .texture_view(id)
+                    .ok_or(EncodeError::MissingTextureView(id))?,
+            ),
+            None => None,
+        };
+
+        Ok(wgpu::RenderPassColorAttachment {
+            view,
+            resolve_target,
+            ops: desc.ops.into(),
+        })
+    }
+
+    fn encode_depth_stencil_attachment(
+        &self,
+        desc: &RenderPassDepthStencilAttachmentDesc,
+    ) -> Result<wgpu::RenderPassDepthStencilAttachment<'_>, EncodeError> {
+        let view = self
+            .resources
+            .texture_view(desc.view)
+            .ok_or(EncodeError::MissingTextureView(desc.view))?;
+        Ok(wgpu::RenderPassDepthStencilAttachment {
+            view,
+            depth_ops: desc.depth_ops.map(|ops| ops.into()),
+            stencil_ops: desc.stencil_ops.map(|ops| ops.into()),
+        })
+    }
+}
+
+impl From<IndexFormat> for wgpu::IndexFormat {
+    fn from(value: IndexFormat) -> Self {
+        match value {
+            IndexFormat::Uint16 => wgpu::IndexFormat::Uint16,
+            IndexFormat::Uint32 => wgpu::IndexFormat::Uint32,
+        }
+    }
+}
+
+impl From<Color> for wgpu::Color {
+    fn from(value: Color) -> Self {
+        Self {
+            r: value.r,
+            g: value.g,
+            b: value.b,
+            a: value.a,
+        }
+    }
+}
+
+impl From<Operations<Color>> for wgpu::Operations<wgpu::Color> {
+    fn from(value: Operations<Color>) -> Self {
+        Self {
+            load: match value.load {
+                LoadOp::Load => wgpu::LoadOp::Load,
+                LoadOp::Clear(color) => wgpu::LoadOp::Clear(color.into()),
+            },
+            store: value.store.into(),
+        }
+    }
+}
+
+impl<T> From<Operations<T>> for wgpu::Operations<T>
+where
+    T: Copy,
+{
+    fn from(value: Operations<T>) -> Self {
+        Self {
+            load: value.load.into(),
+            store: value.store.into(),
+        }
+    }
+}
+
+impl<T> From<LoadOp<T>> for wgpu::LoadOp<T>
+where
+    T: Copy,
+{
+    fn from(value: LoadOp<T>) -> Self {
+        match value {
+            LoadOp::Load => wgpu::LoadOp::Load,
+            LoadOp::Clear(v) => wgpu::LoadOp::Clear(v),
+        }
+    }
+}
+
+impl From<StoreOp> for wgpu::StoreOp {
+    fn from(value: StoreOp) -> Self {
+        match value {
+            StoreOp::Store => wgpu::StoreOp::Store,
+            StoreOp::Discard => wgpu::StoreOp::Discard,
+        }
+    }
+}
+
+// Make sure the WGSL shader source can be used in integration tests without
+// pulling `std::borrow::Cow` into those modules.
+#[allow(dead_code)]
+pub(crate) fn wgsl(src: &'static str) -> wgpu::ShaderSource<'static> {
+    wgpu::ShaderSource::Wgsl(Cow::Borrowed(src))
+}
