@@ -810,52 +810,18 @@ Captures may include sensitive data such as credentials, cookies, private browsi
 
 ---
 
-## Gateway diagnostics & traffic capture (development / incident response)
+## Gateway observability (health, readiness, metrics)
 
-The Aero TCP proxy (`backend/aero-gateway`) includes **opt-in** diagnostics tooling intended for local development and controlled incident response.
+The gateway (`backend/aero-gateway`) exposes operational endpoints intended for monitoring and automation:
 
-### Admin stats endpoint
+- `GET /healthz` – liveness
+- `GET /readyz` – readiness (returns `503` while shutting down)
+- `GET /version` – build/version info (for deploy/debug)
+- `GET /metrics` – Prometheus metrics (HTTP request totals/latency; DNS metrics once DoH is enabled)
 
-- `GET /admin/stats`
-  - Returns current counters:
-    - active TCP connections
-    - bytes transferred totals (client → target and target → client)
-    - DNS cache size
-    - uptime + version
+**Operational guidance:** expose these endpoints only on trusted networks (or behind auth). They are not intended as a public API surface.
 
-#### Security / access control
+For traffic-level debugging, prefer:
 
-All `/admin/*` endpoints are locked behind an API key:
-
-- Set `ADMIN_API_KEY` in the gateway process environment.
-- Clients must provide the exact value in the `ADMIN_API_KEY` HTTP header.
-- If `ADMIN_API_KEY` is not set, `/admin/*` endpoints return `404`.
-
-**Operational guidance:** never expose the admin API to the public Internet. Bind the gateway to localhost where possible or restrict access via firewall / private network.
-
-### Optional per-connection traffic capture (disabled by default)
-
-Traffic capture is **off unless explicitly enabled**.
-
-To enable:
-
-- Set `CAPTURE_DIR=/path/to/captures`
-- Optionally set:
-  - `CAPTURE_MAX_BYTES` (default: 1 GiB)
-  - `CAPTURE_MAX_FILES` (default: 512)
-
-When enabled, the gateway writes one capture file per TCP connection in a simple JSONL format:
-
-- A metadata line (connection timestamp, client IP, session *hash*, target)
-- Followed by direction-tagged byte chunks with timestamps
-
-#### Privacy & security risks
-
-Capture files may contain sensitive application data (credentials, cookies, personal data, etc.). Treat captures like packet captures:
-
-- Only enable capture for short periods and in controlled environments.
-- Store `CAPTURE_DIR` on encrypted storage when possible.
-- Ensure the directory is not world-readable.
-- Delete captures after use.
-
-To avoid leaking gateway session secrets in the capture itself, the metadata stores **only a session hash** (SHA-256), never the raw secret.
+- client-side PCAP/trace exports (see **Packet Tracing & Debugging** above), and/or
+- infrastructure-level capture (reverse proxy logs, host packet capture in controlled environments).
