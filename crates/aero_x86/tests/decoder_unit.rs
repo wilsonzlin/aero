@@ -239,6 +239,20 @@ fn regression_cases_are_stable() {
         .operands
         .iter()
         .any(|op| matches!(op, Operand::Relative { target: 4, .. })));
+
+    // In 64-bit mode, CS/DS/ES/SS segment overrides are accepted but ignored (effective segment = none).
+    let inst = decode(&[0x2E, 0x8B, 0x00], DecodeMode::Bits64, 0).unwrap();
+    assert_eq!(inst.length, 3);
+    assert_eq!(inst.prefixes.segment, None);
+    let mem = inst
+        .operands
+        .iter()
+        .find_map(|op| match op {
+            Operand::Memory(m) => Some(m),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(mem.segment, None);
 }
 
 #[test]
