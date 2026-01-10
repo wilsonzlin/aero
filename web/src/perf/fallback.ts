@@ -135,7 +135,6 @@ export class FallbackPerf implements PerfApi {
       sampleHz: 1,
       maxSamples: 600,
     });
-    this.memoryTelemetry.start();
     this.memoryTelemetry.sampleNow('boot');
 
     this.instructions.fill(Number.NaN);
@@ -574,6 +573,11 @@ export class FallbackPerf implements PerfApi {
   private syncRaf(): void {
     const shouldRun = this.hudActive || this.captureActive;
     this.responsiveness.setActive(shouldRun);
+    if (shouldRun) {
+      this.memoryTelemetry.start();
+    } else {
+      this.memoryTelemetry.stop();
+    }
     if (shouldRun) {
       if (this.raf !== null) return;
       this.lastRafNowMs = performance.now();
