@@ -28,6 +28,7 @@ function printUsage(exitCode = 0) {
     '  --chunk-size <bytes>   Size of each Range request (default: 8388608 = 8MiB)',
     '  --count <N>            Number of range requests to perform (default: 32)',
     '  --concurrency <N>      Number of in-flight requests (default: 4)',
+    '  --header <k:v>         Extra request header (repeatable), e.g. --header \"Authorization: Bearer ...\"',
     '  --random               Pick random aligned chunks',
     '  --sequential           Walk aligned chunks from the start (wraps around)',
     '  --help                 Show this help',
@@ -59,6 +60,7 @@ function parseArgs(argv) {
     count: 32,
     concurrency: 4,
     mode: 'sequential',
+    headers: {},
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -73,6 +75,21 @@ function parseArgs(argv) {
       opts.count = parsePositiveInt('--count', argv[++i]);
     } else if (arg === '--concurrency') {
       opts.concurrency = parsePositiveInt('--concurrency', argv[++i]);
+    } else if (arg === '--header') {
+      const raw = argv[++i];
+      if (raw == null) {
+        throw new Error('Missing value for --header');
+      }
+      const idx = raw.indexOf(':');
+      if (idx === -1) {
+        throw new Error(`Invalid --header ${JSON.stringify(raw)} (expected \"Name: value\")`);
+      }
+      const name = raw.slice(0, idx).trim();
+      const value = raw.slice(idx + 1).trim();
+      if (!name) {
+        throw new Error(`Invalid --header ${JSON.stringify(raw)} (empty header name)`);
+      }
+      opts.headers[name] = value;
     } else if (arg === '--random') {
       opts.mode = 'random';
     } else if (arg === '--sequential') {
@@ -169,6 +186,15 @@ function parseContentRange(value) {
   return null;
 }
 
+function buildBaseHeaders(extraHeaders) {
+  return {
+    ...(extraHeaders ?? {}),
+    // Force identity so we can compare bytes/throughput accurately and avoid
+    // any intermediary trying to apply compression to large binary blobs.
+    'Accept-Encoding': 'identity',
+  };
+}
+
 async function readBodyAndCount(body, { byteLimit, abortController }) {
   if (!body) return { bytes: 0, abortedEarly: false };
   let bytes = 0;
@@ -195,8 +221,8 @@ async function readBodyAndCount(body, { byteLimit, abortController }) {
   return { bytes, abortedEarly };
 }
 
-async function getResourceInfo(url) {
-  const headers = { 'Accept-Encoding': 'identity' };
+async function getResourceInfo(url, extraHeaders) {
+  const headers = buildBaseHeaders(extraHeaders);
 
   let headRes;
   try {
@@ -311,7 +337,7 @@ async function main() {
     `Config: chunkSize=${formatBytes(opts.chunkSize)} count=${opts.count} concurrency=${opts.concurrency} mode=${opts.mode}`,
   );
 
-  const info = await getResourceInfo(opts.url);
+  const info = await getResourceInfo(opts.url, opts.headers);
   // eslint-disable-next-line no-console
   console.log(
     `HEAD: status=${info.headStatus ?? 'n/a'} ok=${info.headOk} usedFallback=${info.usedFallback}`,
@@ -350,8 +376,8 @@ async function main() {
       response = await fetch(opts.url, {
         method: 'GET',
         headers: {
+          ...buildBaseHeaders(opts.headers),
           Range: rangeValue,
-          'Accept-Encoding': 'identity',
         },
         signal: controller.signal,
       });

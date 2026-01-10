@@ -30,6 +30,7 @@ node tools/range-harness/index.js --url <URL> \
 - `--chunk-size <bytes>`: size of each `Range` request (default: `8388608` = 8MiB)
 - `--count <N>`: number of requests to perform (default: `32`)
 - `--concurrency <N>`: number of in-flight requests (default: `4`)
+- `--header "Name: value"`: extra request header (repeatable). Useful for authenticated endpoints.
 - `--random`: pick random aligned chunks
 - `--sequential`: walk aligned chunks from the start (wraps around)
 
@@ -44,6 +45,17 @@ node tools/range-harness/index.js \
 ```
 
 For private objects, use a **pre-signed URL** and paste it into `--url`.
+
+## Example: Authenticated endpoint (Authorization header)
+
+If your disk image URL requires an `Authorization` header (or any other custom header), pass it via `--header`:
+
+```bash
+node tools/range-harness/index.js \
+  --url "https://example.com/private/windows7.img" \
+  --header "Authorization: Bearer eyJ..." \
+  --chunk-size 8388608 --count 32 --concurrency 4 --random
+```
 
 ## Example: CloudFront distribution URL
 
