@@ -90,6 +90,7 @@ jobs:
 
           # Criterion writes benchmark results to `target/criterion`. Move the results
           # out so the next run doesn't overwrite them.
+          mkdir -p target/bench-base
           rm -rf target/bench-base/criterion
           mv target/criterion target/bench-base/criterion
 
@@ -121,6 +122,7 @@ jobs:
           fi
 
           rm -rf target/bench-new/criterion
+          mkdir -p target/bench-new
           mv target/criterion target/bench-new/criterion
 
       - name: "Compare (PR: base vs head)"
@@ -154,6 +156,7 @@ jobs:
           fi
 
           rm -rf target/bench-new/criterion
+          mkdir -p target/bench-new
           mv target/criterion target/bench-new/criterion
 
       - name: "Compare (main: previous artifact vs current)"
