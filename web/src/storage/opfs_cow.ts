@@ -1,4 +1,4 @@
-import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
+import { assertSectorAligned, checkedOffset, type AsyncSectorDisk } from "./disk";
 import { OpfsAeroSparseDisk } from "./opfs_sparse";
 
 /**
@@ -9,7 +9,7 @@ import { OpfsAeroSparseDisk } from "./opfs_sparse";
  * The overlay must have the same virtual capacity as the base disk.
  */
 export class OpfsCowDisk implements AsyncSectorDisk {
-  readonly sectorSize = SECTOR_SIZE;
+  readonly sectorSize: number;
   readonly capacityBytes: number;
 
   constructor(
@@ -19,12 +19,16 @@ export class OpfsCowDisk implements AsyncSectorDisk {
     if (base.capacityBytes !== overlay.capacityBytes) {
       throw new Error("base/overlay capacity mismatch");
     }
+    if (base.sectorSize !== overlay.sectorSize) {
+      throw new Error("base/overlay sector size mismatch");
+    }
+    this.sectorSize = base.sectorSize;
     this.capacityBytes = base.capacityBytes;
   }
 
   async readSectors(lba: number, buffer: Uint8Array): Promise<void> {
-    assertSectorAligned(buffer.byteLength);
-    const offset = checkedOffset(lba, buffer.byteLength);
+    assertSectorAligned(buffer.byteLength, this.sectorSize);
+    const offset = checkedOffset(lba, buffer.byteLength, this.sectorSize);
     if (offset + buffer.byteLength > this.capacityBytes) {
       throw new Error("read past end of disk");
     }
@@ -38,7 +42,7 @@ export class OpfsCowDisk implements AsyncSectorDisk {
       const chunkLen = Math.min(blockSize - within, buffer.byteLength - pos);
 
       const slice = buffer.subarray(pos, pos + chunkLen);
-      const chunkLba = Math.floor(abs / SECTOR_SIZE);
+      const chunkLba = Math.floor(abs / this.sectorSize);
       if (this.overlay.isBlockAllocated(blockIndex)) {
         await this.overlay.readSectors(chunkLba, slice);
       } else {
@@ -50,8 +54,8 @@ export class OpfsCowDisk implements AsyncSectorDisk {
   }
 
   async writeSectors(lba: number, data: Uint8Array): Promise<void> {
-    assertSectorAligned(data.byteLength);
-    const offset = checkedOffset(lba, data.byteLength);
+    assertSectorAligned(data.byteLength, this.sectorSize);
+    const offset = checkedOffset(lba, data.byteLength, this.sectorSize);
     if (offset + data.byteLength > this.capacityBytes) {
       throw new Error("write past end of disk");
     }
@@ -66,7 +70,7 @@ export class OpfsCowDisk implements AsyncSectorDisk {
       const chunk = data.subarray(pos, pos + chunkLen);
 
       if (this.overlay.isBlockAllocated(blockIndex)) {
-        const chunkLba = Math.floor(abs / SECTOR_SIZE);
+        const chunkLba = Math.floor(abs / this.sectorSize);
         await this.overlay.writeSectors(chunkLba, chunk);
         pos += chunkLen;
         continue;
@@ -83,7 +87,7 @@ export class OpfsCowDisk implements AsyncSectorDisk {
       // Partial write: seed block from base, patch, then write entire block to overlay.
       const tmp = new Uint8Array(blockSize);
       const blockStartByte = blockIndex * blockSize;
-      const blockStartLba = Math.floor(blockStartByte / SECTOR_SIZE);
+      const blockStartLba = Math.floor(blockStartByte / this.sectorSize);
       const validLen = Math.min(blockSize, this.capacityBytes - blockStartByte);
       await this.base.readSectors(blockStartLba, tmp.subarray(0, validLen));
       tmp.set(chunk, within);

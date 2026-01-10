@@ -1,4 +1,5 @@
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
+import { opfsGetDisksDir } from "./metadata.ts";
 
 type SyncAccessHandle = {
   read(buffer: ArrayBufferView, options?: { at: number }): number;
@@ -43,12 +44,8 @@ function toSafeNumber(v: bigint, field: string): number {
   return n;
 }
 
-async function getOpfsImagesDir(): Promise<DirectoryHandle> {
-  if (!navigator.storage?.getDirectory) {
-    throw new Error("OPFS is not available (navigator.storage.getDirectory missing)");
-  }
-  const root = (await navigator.storage.getDirectory()) as unknown as DirectoryHandle;
-  return await root.getDirectoryHandle("images", { create: true });
+async function getOpfsDisksDir(): Promise<DirectoryHandle> {
+  return (await opfsGetDisksDir()) as unknown as DirectoryHandle;
 }
 
 type SparseHeader = {
@@ -164,8 +161,8 @@ export class OpfsAeroSparseDisk implements AsyncSectorDisk {
     const tableBytes = tableEntries * 8;
     const dataOffset = alignUp(HEADER_SIZE + tableBytes, opts.blockSizeBytes);
 
-    const images = await getOpfsImagesDir();
-    const file = await images.getFileHandle(name, { create: true });
+    const dir = await getOpfsDisksDir();
+    const file = await dir.getFileHandle(name, { create: true });
     const sync = await file.createSyncAccessHandle();
 
     const header: SparseHeader = {
@@ -194,8 +191,8 @@ export class OpfsAeroSparseDisk implements AsyncSectorDisk {
     name: string,
     opts: { maxCachedBlocks?: number } = {},
   ): Promise<OpfsAeroSparseDisk> {
-    const images = await getOpfsImagesDir();
-    const file = await images.getFileHandle(name, { create: false });
+    const dir = await getOpfsDisksDir();
+    const file = await dir.getFileHandle(name, { create: false });
     const sync = await file.createSyncAccessHandle();
 
     const headerBytes = new Uint8Array(HEADER_SIZE);
@@ -322,8 +319,8 @@ export class OpfsAeroSparseDisk implements AsyncSectorDisk {
   }
 
   async readSectors(lba: number, buffer: Uint8Array): Promise<void> {
-    assertSectorAligned(buffer.byteLength);
-    const offset = checkedOffset(lba, buffer.byteLength);
+    assertSectorAligned(buffer.byteLength, this.sectorSize);
+    const offset = checkedOffset(lba, buffer.byteLength, this.sectorSize);
     if (offset + buffer.byteLength > this.capacityBytes) {
       throw new Error("read past end of disk");
     }
@@ -342,8 +339,8 @@ export class OpfsAeroSparseDisk implements AsyncSectorDisk {
   }
 
   async writeSectors(lba: number, data: Uint8Array): Promise<void> {
-    assertSectorAligned(data.byteLength);
-    const offset = checkedOffset(lba, data.byteLength);
+    assertSectorAligned(data.byteLength, this.sectorSize);
+    const offset = checkedOffset(lba, data.byteLength, this.sectorSize);
     if (offset + data.byteLength > this.capacityBytes) {
       throw new Error("write past end of disk");
     }

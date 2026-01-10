@@ -10,18 +10,18 @@ export interface AsyncSectorDisk {
   close?(): Promise<void>;
 }
 
-export function assertSectorAligned(byteLength: number): void {
-  if (byteLength % SECTOR_SIZE !== 0) {
-    throw new Error(`unaligned length ${byteLength} (expected multiple of ${SECTOR_SIZE})`);
+export function assertSectorAligned(byteLength: number, sectorSize = SECTOR_SIZE): void {
+  if (byteLength % sectorSize !== 0) {
+    throw new Error(`unaligned length ${byteLength} (expected multiple of ${sectorSize})`);
   }
 }
 
-export function checkedOffset(lba: number, byteLength: number): number {
+export function checkedOffset(lba: number, byteLength: number, sectorSize = SECTOR_SIZE): number {
   // Windows 7 images are ~20–40GB; numbers are safe up to 2^53-1.
   if (!Number.isInteger(lba) || lba < 0) {
     throw new Error(`invalid lba=${lba}`);
   }
-  const offset = lba * SECTOR_SIZE;
+  const offset = lba * sectorSize;
   if (!Number.isSafeInteger(offset)) {
     throw new Error(`offset overflow (lba=${lba})`);
   }

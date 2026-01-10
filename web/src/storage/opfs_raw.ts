@@ -1,4 +1,5 @@
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
+import { opfsGetDisksDir } from "./metadata.ts";
 
 type SyncAccessHandle = {
   read(buffer: ArrayBufferView, options?: { at: number }): number;
@@ -10,8 +11,9 @@ type SyncAccessHandle = {
 };
 
 type FileHandle = {
-  createSyncAccessHandle(): Promise<SyncAccessHandle>;
+  createSyncAccessHandle?: () => Promise<SyncAccessHandle>;
   createWritable(): Promise<FileSystemWritableFileStream>;
+  getFile(): Promise<File>;
 };
 
 type DirectoryHandle = {
@@ -19,41 +21,8 @@ type DirectoryHandle = {
   getFileHandle(name: string, options?: { create?: boolean }): Promise<FileHandle>;
 };
 
-async function getOpfsRoot(): Promise<DirectoryHandle> {
-  if (!navigator.storage?.getDirectory) {
-    throw new Error("OPFS is not available (navigator.storage.getDirectory missing)");
-  }
-  return (await navigator.storage.getDirectory()) as unknown as DirectoryHandle;
-}
-
-async function getOpfsImagesDir(): Promise<DirectoryHandle> {
-  const root = await getOpfsRoot();
-  return await root.getDirectoryHandle("images", { create: true });
-}
-
-export async function importFileToOpfs(
-  file: File,
-  opts: {
-    destName?: string;
-    onProgress?: (writtenBytes: number, totalBytes: number) => void;
-  } = {},
-): Promise<string> {
-  const images = await getOpfsImagesDir();
-  const destName = opts.destName ?? file.name;
-  const handle = await images.getFileHandle(destName, { create: true });
-  const writable = await handle.createWritable();
-
-  const reader = file.stream().getReader();
-  let written = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    await writable.write(value);
-    written += value.byteLength;
-    opts.onProgress?.(written, file.size);
-  }
-  await writable.close();
-  return destName;
+async function getOpfsDisksDir(): Promise<DirectoryHandle> {
+  return (await opfsGetDisksDir()) as unknown as DirectoryHandle;
 }
 
 export class OpfsRawDisk implements AsyncSectorDisk {
@@ -61,67 +30,108 @@ export class OpfsRawDisk implements AsyncSectorDisk {
   readonly capacityBytes: number;
 
   private constructor(
-    private readonly sync: SyncAccessHandle,
+    private readonly access:
+      | { kind: "sync"; sync: SyncAccessHandle }
+      | { kind: "async"; file: FileHandle },
     capacityBytes: number,
   ) {
     this.capacityBytes = capacityBytes;
   }
 
   static async open(
-    name: string,
+    fileName: string,
     opts: { create?: boolean; sizeBytes?: number } = {},
   ): Promise<OpfsRawDisk> {
-    const images = await getOpfsImagesDir();
-    const file = await images.getFileHandle(name, { create: opts.create ?? false });
-    const sync = await file.createSyncAccessHandle();
+    const dir = await getOpfsDisksDir();
+    const file = await dir.getFileHandle(fileName, { create: opts.create ?? false });
+    const syncFactory = file.createSyncAccessHandle;
+    const sync = syncFactory ? await syncFactory.call(file) : undefined;
 
     if (typeof opts.sizeBytes === "number") {
       if (!Number.isSafeInteger(opts.sizeBytes) || opts.sizeBytes <= 0) {
-        sync.close();
+        sync?.close();
         throw new Error(`invalid sizeBytes=${opts.sizeBytes}`);
       }
-      const current = sync.getSize();
-      if (current === 0 && opts.sizeBytes > 0) {
-        sync.truncate(opts.sizeBytes);
-      } else if (current !== opts.sizeBytes) {
-        sync.close();
-        throw new Error(`disk size mismatch: expected=${opts.sizeBytes} actual=${current}`);
+      if (sync) {
+        const current = sync.getSize();
+        if (current === 0 && opts.sizeBytes > 0) {
+          sync.truncate(opts.sizeBytes);
+        } else if (current !== opts.sizeBytes) {
+          sync.close();
+          throw new Error(`disk size mismatch: expected=${opts.sizeBytes} actual=${current}`);
+        }
+      } else {
+        const current = (await file.getFile()).size;
+        if (current === 0 && opts.sizeBytes > 0) {
+          const writable = await file.createWritable({ keepExistingData: false });
+          await writable.truncate(opts.sizeBytes);
+          await writable.close();
+        } else if (current !== opts.sizeBytes) {
+          throw new Error(`disk size mismatch: expected=${opts.sizeBytes} actual=${current}`);
+        }
       }
     }
 
-    return new OpfsRawDisk(sync, sync.getSize());
+    if (sync) {
+      return new OpfsRawDisk({ kind: "sync", sync }, sync.getSize());
+    }
+
+    // Fallback: async file access (slower; no SyncAccessHandle support).
+    const size = (await file.getFile()).size;
+    return new OpfsRawDisk({ kind: "async", file }, size);
   }
 
   async readSectors(lba: number, buffer: Uint8Array): Promise<void> {
-    assertSectorAligned(buffer.byteLength);
-    const offset = checkedOffset(lba, buffer.byteLength);
+    assertSectorAligned(buffer.byteLength, this.sectorSize);
+    const offset = checkedOffset(lba, buffer.byteLength, this.sectorSize);
     if (offset + buffer.byteLength > this.capacityBytes) {
       throw new Error("read past end of disk");
     }
-    const read = this.sync.read(buffer, { at: offset });
-    if (read !== buffer.byteLength) {
-      throw new Error(`short read: expected=${buffer.byteLength} actual=${read}`);
+    if (this.access.kind === "sync") {
+      const read = this.access.sync.read(buffer, { at: offset });
+      if (read !== buffer.byteLength) {
+        throw new Error(`short read: expected=${buffer.byteLength} actual=${read}`);
+      }
+      return;
     }
+
+    const file = await this.access.file.getFile();
+    const ab = await file.slice(offset, offset + buffer.byteLength).arrayBuffer();
+    const view = new Uint8Array(ab);
+    if (view.byteLength !== buffer.byteLength) {
+      throw new Error(`short read: expected=${buffer.byteLength} actual=${view.byteLength}`);
+    }
+    buffer.set(view);
   }
 
   async writeSectors(lba: number, data: Uint8Array): Promise<void> {
-    assertSectorAligned(data.byteLength);
-    const offset = checkedOffset(lba, data.byteLength);
+    assertSectorAligned(data.byteLength, this.sectorSize);
+    const offset = checkedOffset(lba, data.byteLength, this.sectorSize);
     if (offset + data.byteLength > this.capacityBytes) {
       throw new Error("write past end of disk");
     }
-    const written = this.sync.write(data, { at: offset });
-    if (written !== data.byteLength) {
-      throw new Error(`short write: expected=${data.byteLength} actual=${written}`);
+    if (this.access.kind === "sync") {
+      const written = this.access.sync.write(data, { at: offset });
+      if (written !== data.byteLength) {
+        throw new Error(`short write: expected=${data.byteLength} actual=${written}`);
+      }
+      return;
     }
+
+    const writable = await this.access.file.createWritable({ keepExistingData: true });
+    await writable.write({ type: "write", position: offset, data });
+    await writable.close();
   }
 
   async flush(): Promise<void> {
-    this.sync.flush();
+    if (this.access.kind === "sync") {
+      this.access.sync.flush();
+    }
   }
 
   async close(): Promise<void> {
-    this.sync.close();
+    if (this.access.kind === "sync") {
+      this.access.sync.close();
+    }
   }
 }
-
