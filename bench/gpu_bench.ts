@@ -1,0 +1,347 @@
+/**
+ * GPU benchmark runner.
+ *
+ * This file provides:
+ * - `runGpuBenchmarksInPage(page, opts)` for Playwright tests/CI
+ * - a small CLI (`node --experimental-strip-types bench/gpu_bench.ts`) for
+ *   local execution which writes a JSON report to stdout or a file.
+ */
+
+import fs from "node:fs/promises";
+import http from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+export const GPU_BENCH_SCHEMA_VERSION = 1;
+
+/** @typedef {any} GpuTelemetrySnapshot */
+
+/**
+ * @typedef {{
+ *   id: string,
+ *   name: string,
+ *   status: "ok" | "skipped" | "error",
+ *   api?: string,
+ *   reason?: string,
+ *   error?: string,
+ *   durationMs: number,
+ *   params: any,
+ *   telemetry: GpuTelemetrySnapshot,
+ *   derived: {
+ *     fpsAvg: number|null,
+ *     frameTimeMsP50: number|null,
+ *     frameTimeMsP95: number|null,
+ *     presentLatencyMsP95: number|null,
+ *     shaderTranslationMsMean: number|null,
+ *     shaderCompilationMsMean: number|null,
+ *     pipelineCacheHitRate: number|null,
+ *     textureUploadMBpsAvg: number|null,
+ *   }
+ * }} GpuBenchScenarioResult
+ */
+
+/**
+ * @typedef {{
+ *   schemaVersion: number,
+ *   tool: string,
+ *   startedAt: string,
+ *   finishedAt: string,
+ *   environment: { userAgent: string, webgpu: boolean, webgl2: boolean },
+ *   scenarios: Record<string, GpuBenchScenarioResult>
+ * }} GpuBenchReport
+ */
+
+/**
+ * @param {GpuTelemetrySnapshot} telemetry
+ */
+function deriveMetrics(telemetry) {
+  const ft = telemetry.frameTimeMs?.stats ?? null;
+  const present = telemetry.presentLatencyMs?.stats ?? null;
+  const dxbc = telemetry.shaderTranslationMs?.stats ?? null;
+  const wgsl = telemetry.shaderCompilationMs?.stats ?? null;
+
+  const wallTimeMs = telemetry.wallTimeTotalMs ?? null;
+  const fpsAvg =
+    wallTimeMs != null && wallTimeMs > 0 && (ft?.count ?? 0) > 0
+      ? ft.count / (wallTimeMs / 1000)
+      : ft?.mean
+        ? 1000 / ft.mean
+        : null;
+
+  const textureBw = telemetry.textureUpload?.bandwidthBytesPerSecAvg ?? null;
+  const textureUploadMBpsAvg =
+    textureBw != null && Number.isFinite(textureBw) ? textureBw / (1024 * 1024) : null;
+
+  return {
+    fpsAvg,
+    frameTimeMsP50: ft?.p50 ?? null,
+    frameTimeMsP95: ft?.p95 ?? null,
+    presentLatencyMsP95: present?.p95 ?? null,
+    shaderTranslationMsMean: dxbc?.mean ?? null,
+    shaderCompilationMsMean: wgsl?.mean ?? null,
+    pipelineCacheHitRate: telemetry.pipelineCache?.hitRate ?? null,
+    textureUploadMBpsAvg,
+  };
+}
+
+function resolveRepoRoot() {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(here, "..");
+}
+
+/**
+ * @param {any} page Playwright Page
+ * @param {{
+ *   scenarios?: string[],
+ *   scenarioParams?: Record<string, any>,
+ * }=} opts
+ * @returns {Promise<GpuBenchReport>}
+ */
+export async function runGpuBenchmarksInPage(page, opts = {}) {
+  const repoRoot = resolveRepoRoot();
+  const startedAt = new Date().toISOString();
+
+  const scenarioIds = opts.scenarios ?? [
+    "vga_text_scroll",
+    "vbe_lfb_blit",
+    "webgpu_triangle_batch",
+    "d3d9_state_churn",
+  ];
+
+  const scriptPaths = [
+    path.join(repoRoot, "web/gpu/telemetry.ts"),
+    path.join(repoRoot, "bench/scenarios/vga_text_scroll.ts"),
+    path.join(repoRoot, "bench/scenarios/vbe_lfb_blit.ts"),
+    path.join(repoRoot, "bench/scenarios/webgpu_triangle_batch.ts"),
+    path.join(repoRoot, "bench/scenarios/d3d9_state_churn.ts"),
+  ];
+
+  for (const p of scriptPaths) {
+    const content = await fs.readFile(p, "utf8");
+    await page.addScriptTag({ type: "module", content });
+  }
+
+  const { environment, scenarios } = await page.evaluate(
+    async ({ scenarioIds, scenarioParams }) => {
+      const initialCanvas = /** @type {HTMLCanvasElement | null} */ (document.getElementById("bench-canvas"));
+      if (!initialCanvas) {
+        throw new Error("Benchmark page missing #bench-canvas");
+      }
+
+      const g = /** @type {any} */ (globalThis);
+      const ScenarioRegistry = g.__aeroGpuBenchScenarios;
+      const Telemetry = g.AeroGpuTelemetry?.GpuTelemetry;
+      if (!ScenarioRegistry) {
+        throw new Error("Scenario registry missing: expected globalThis.__aeroGpuBenchScenarios");
+      }
+      if (!Telemetry) {
+        throw new Error("Telemetry missing: expected globalThis.AeroGpuTelemetry.GpuTelemetry");
+      }
+
+      const host = initialCanvas.parentElement ?? document.body;
+
+      // Creating a context (2d/webgl2/webgpu) permanently "claims" a canvas.
+      // Each scenario needs a fresh canvas to avoid context-type conflicts.
+      function createFreshCanvas() {
+        const old = /** @type {HTMLCanvasElement | null} */ (document.getElementById("bench-canvas"));
+        const next = document.createElement("canvas");
+        next.id = "bench-canvas";
+        next.width = old?.width ?? 800;
+        next.height = old?.height ?? 600;
+        if (old) old.replaceWith(next);
+        else host.appendChild(next);
+        return next;
+      }
+
+      const probe = document.createElement("canvas");
+      const env = {
+        userAgent: navigator.userAgent,
+        webgpu: !!navigator.gpu,
+        webgl2: !!probe.getContext("webgl2"),
+      };
+
+      /** @type {Record<string, any>} */
+      const results = {};
+
+      for (const id of scenarioIds) {
+        const scenario = ScenarioRegistry[id];
+        const telemetry = new Telemetry();
+        telemetry.reset();
+
+        const params = scenarioParams?.[id] ?? {};
+        const t0 = performance.now();
+        const canvas = createFreshCanvas();
+
+        try {
+          if (!scenario) {
+            results[id] = {
+              id,
+              name: id,
+              status: "error",
+              error: `Unknown scenario: ${id}`,
+              durationMs: 0,
+              params,
+              telemetry: telemetry.snapshot(),
+            };
+            continue;
+          }
+
+          const out = await scenario.run({ canvas, telemetry, params });
+          const t1 = performance.now();
+
+          results[id] = {
+            id,
+            name: scenario.name ?? id,
+            status: out?.status ?? "ok",
+            api: out?.api ?? null,
+            reason: out?.reason ?? null,
+            durationMs: t1 - t0,
+            params: out?.params ?? params,
+            telemetry: telemetry.snapshot(),
+          };
+        } catch (e) {
+          const t1 = performance.now();
+          results[id] = {
+            id,
+            name: scenario?.name ?? id,
+            status: "error",
+            error: e instanceof Error ? e.message : String(e),
+            durationMs: t1 - t0,
+            params,
+            telemetry: telemetry.snapshot(),
+          };
+        }
+      }
+
+      return { environment: env, scenarios: results };
+    },
+    { scenarioIds, scenarioParams: opts.scenarioParams ?? {} },
+  );
+
+  /** @type {Record<string, GpuBenchScenarioResult>} */
+  const finalScenarios = {};
+  for (const [id, raw] of Object.entries(scenarios)) {
+    finalScenarios[id] = {
+      ...raw,
+      derived: deriveMetrics(raw.telemetry),
+    };
+  }
+
+  return {
+    schemaVersion: GPU_BENCH_SCHEMA_VERSION,
+    tool: "aero-gpu-bench",
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    environment,
+    scenarios: finalScenarios,
+  };
+}
+
+/**
+ * Start a minimal local server to ensure a secure context (localhost is
+ * considered "potentially trustworthy"), which is required by WebGPU.
+ *
+ * @param {{width:number, height:number}} viewport
+ */
+async function startBenchServer(viewport) {
+  const html = `<!doctype html>
+<meta charset="utf-8" />
+<title>Aero GPU Bench</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; }
+  canvas { display: block; width: ${viewport.width}px; height: ${viewport.height}px; }
+</style>
+<canvas id="bench-canvas" width="${viewport.width}" height="${viewport.height}"></canvas>
+`;
+
+  const server = http.createServer((req, res) => {
+    res.statusCode = 200;
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    res.end(html);
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+  const addr = server.address();
+  if (!addr || typeof addr === "string") {
+    server.close();
+    throw new Error("Failed to bind benchmark server");
+  }
+  const url = `http://127.0.0.1:${addr.port}/`;
+  return { url, close: () => new Promise((resolve) => server.close(resolve)) };
+}
+
+function parseArgs(argv) {
+  /** @type {Record<string, string>} */
+  const out = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (!a.startsWith("--")) continue;
+    const k = a.slice(2);
+    const v = argv[i + 1];
+    if (v && !v.startsWith("--")) {
+      out[k] = v;
+      i += 1;
+    } else {
+      out[k] = "true";
+    }
+  }
+  return out;
+}
+
+async function runCli() {
+  const args = parseArgs(process.argv.slice(2));
+  const scenarios = args.scenarios ? args.scenarios.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+  const outPath = args.output ?? null;
+  const headless = args.headless !== "false";
+  const swiftshader = args.swiftshader === "true";
+
+  // Lazy import so this file can be imported without Playwright installed.
+  /** @type {any} */
+  let playwright;
+  try {
+    playwright = await import("playwright");
+  } catch (e) {
+    throw new Error(
+      "Playwright is required to run GPU benchmarks. Install it (e.g. `npm i -D playwright`) and retry.",
+    );
+  }
+
+  const browser = await playwright.chromium.launch({
+    headless,
+    args: [
+      "--enable-unsafe-webgpu",
+      "--disable-gpu-sandbox",
+      "--disable-dev-shm-usage",
+      ...(swiftshader ? ["--use-gl=swiftshader"] : []),
+    ],
+  });
+
+  const context = await browser.newContext({ viewport: { width: 800, height: 600 } });
+  const page = await context.newPage();
+  const server = await startBenchServer({ width: 800, height: 600 });
+
+  try {
+    await page.goto(server.url, { waitUntil: "load" });
+    const report = await runGpuBenchmarksInPage(page, { scenarios });
+    const json = JSON.stringify(report, null, 2);
+    if (outPath) {
+      await fs.mkdir(path.dirname(outPath), { recursive: true });
+      await fs.writeFile(outPath, json, "utf8");
+    } else {
+      process.stdout.write(json);
+      process.stdout.write("\n");
+    }
+  } finally {
+    await server.close();
+    await context.close();
+    await browser.close();
+  }
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runCli().catch((err) => {
+    console.error(err?.stack ?? String(err));
+    process.exitCode = 1;
+  });
+}
