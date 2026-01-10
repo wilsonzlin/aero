@@ -677,6 +677,55 @@ impl StreamingDisk {
 }
 ```
 
+#### Remote HTTP server requirements (Range/CORS/no-transform)
+
+`StreamingDisk` reads remote disk images by issuing HTTP `Range` requests and writing the returned bytes directly into a local sparse cache. The remote image server **MUST** behave like a compliant byte-range server; returning a full `200 OK` body (ignoring `Range`) will corrupt the virtual disk because offsets no longer match.
+
+Minimum compliant behavior:
+
+- The server **MUST** support HTTP `Range` requests for the `bytes` unit (`Accept-Ranges: bytes` is recommended).
+- For a satisfiable range request, respond with:
+  - `206 Partial Content`
+  - `Content-Range: bytes <start>-<end>/<total>` (where `<end>` is inclusive)
+- For an unsatisfiable range request (past EOF), respond with:
+  - `416 Range Not Satisfiable`
+  - `Content-Range: bytes */<total>`
+- The server **MUST** support:
+  - Open-ended ranges: `Range: bytes=<start>-`
+  - Suffix ranges: `Range: bytes=-<suffix-length>`
+- Multi-range requests (e.g. `Range: bytes=0-0,100-199`):
+  - Recommended: implement full `multipart/byteranges` responses per RFC 9110.
+  - If not implemented, reject multi-range requests explicitly (e.g. `400`/`416`) rather than silently ignoring the header.
+
+Critical implementation constraints:
+
+- Do **not** apply compression or transformations to the disk image response. The client interprets offsets in the raw on-disk byte stream.
+  - Recommended: include `Cache-Control: no-transform`
+  - Ensure `Content-Encoding` is absent or `identity`
+- Cross-origin access (CORS):
+  - `Range` is not a CORS-safelisted request header, so browsers will send an `OPTIONS` preflight.
+  - The server must allow the request header (`Access-Control-Allow-Headers: Range`) and expose the response header (`Access-Control-Expose-Headers: Content-Range`).
+- If Aero is deployed with COOP/COEP to enable `SharedArrayBuffer` (`crossOriginIsolated`), disk image resources must be CORS-enabled (`Access-Control-Allow-Origin`) or served with a compatible `Cross-Origin-Resource-Policy` header; otherwise the browser will block the fetch.
+
+Concrete examples:
+
+```bash
+# Request the first byte (expect 206)
+curl -i -H 'Range: bytes=0-0' https://example.com/windows7.img
+# HTTP/1.1 206 Partial Content
+# Content-Range: bytes 0-0/<total>
+
+# Unsatisfiable range (expect 416)
+curl -i -H 'Range: bytes=999999999999-999999999999' https://example.com/windows7.img
+# HTTP/1.1 416 Range Not Satisfiable
+# Content-Range: bytes */<total>
+
+# Suffix range: last 512 bytes (expect 206)
+curl -i -H 'Range: bytes=-512' https://example.com/windows7.img
+# HTTP/1.1 206 Partial Content
+# Content-Range: bytes <total-512>-<total-1>/<total>
+```
+
 ---
 
 ## Performance Metrics
