@@ -725,6 +725,26 @@ mod tests {
     }
 
     #[test]
+    fn bcd_and_binary_mode_affect_time_encoding() {
+        let clock = ManualClock::new();
+        let irq = TestIrq::new();
+        let mut rtc = RtcCmos::new(clock.clone(), irq);
+
+        clock.advance_ns(12_000_000_000);
+        assert_eq!(read_reg(&mut rtc, REG_SECONDS), 0x12);
+
+        write_reg(&mut rtc, REG_STATUS_B, REG_B_24H | REG_B_DM_BINARY);
+        assert_eq!(read_reg(&mut rtc, REG_SECONDS), 12);
+
+        // Writing time fields should be interpreted using the currently selected encoding.
+        write_reg(&mut rtc, REG_SECONDS, 42);
+        assert_eq!(read_reg(&mut rtc, REG_SECONDS), 42);
+
+        write_reg(&mut rtc, REG_STATUS_B, REG_B_24H);
+        assert_eq!(read_reg(&mut rtc, REG_SECONDS), 0x42);
+    }
+
+    #[test]
     fn status_c_read_clears_interrupt_flags() {
         let clock = ManualClock::new();
         let irq = TestIrq::new();
