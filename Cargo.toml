@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "crates/memory",
+]
+resolver = "2"
+
