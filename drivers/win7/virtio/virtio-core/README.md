@@ -9,13 +9,14 @@ It discovers Virtio vendor-specific PCI capabilities (COMMON/NOTIFY/ISR/DEVICE c
 - `include/virtio_spec.h` — minimal Virtio 1.0 structures/constants (common config layout)
 - `include/virtio_pci_caps.h` — Virtio PCI capability structs and discovery output
 - `include/virtio_pci_modern.h` — public API + `VIRTIO_PCI_MODERN_DEVICE`
-- `src/virtio_pci_caps.c` — PCI capability list walking + virtio cap parsing
+- `portable/virtio_pci_cap_parser.{h,c}` — portable C99 PCI cap-list walker + virtio cap parser (unit-tested on Linux)
+- `src/virtio_pci_caps.c` — Win7 wrapper around the portable capability parser (fills `VIRTIO_PCI_CAPS`)
 - `src/virtio_pci_modern.c` — KMDF-facing init + BAR matching/mapping + diagnostics
 
 ## Integration (KMDF driver)
 
 1. Add these files to your driver project:
-   - Add `drivers/win7/virtio/virtio-core/src/*.c` to the build
+   - Add `drivers/win7/virtio/virtio-core/src/*.c` and `drivers/win7/virtio/virtio-core/portable/*.c` to the build
    - Add `drivers/win7/virtio/virtio-core/include` to the include path
 
 2. Add a `VIRTIO_PCI_MODERN_DEVICE` to your device context:
@@ -106,5 +107,5 @@ VIRTIO_CORE_ENABLE_DIAGNOSTICS=1
 
 When enabled, `VirtioPciModernDumpBars()` and `VirtioPciModernDumpCaps()` emit:
 
-- all virtio vendor capabilities discovered in PCI config space
+- the required virtio vendor capabilities discovered in PCI config space (common/notify/isr/device)
 - BAR base addresses, resource lengths, and mapped virtual addresses

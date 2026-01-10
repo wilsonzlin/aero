@@ -86,3 +86,15 @@ On successful start you should see debug output showing:
 * virtio-pci vendor capabilities discovered (common/notify/isr/device cfg)
 * device features read + negotiated feature set (requesting `VERSION_1`)
 
+## Hardware-free virtio-pci capability parser tests (Linux/CI)
+
+Virtio 1.0 PCI “modern” devices expose their transport registers through PCI
+vendor-specific capabilities. This repo includes a small portable C99 parser +
+unit tests with synthetic PCI config spaces so capability discovery can be
+regression-tested without requiring real hardware.
+
+From the repo root:
+
+```bash
+./drivers/win7/virtio/tests/build_and_run.sh
+```
