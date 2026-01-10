@@ -14,12 +14,17 @@ import type {
   GpuWorkerErrorKind,
   GpuWorkerErrorPayload,
   GpuWorkerGpuErrorMessage,
+  GpuWorkerErrorEventMessage,
   GpuWorkerIncomingMessage,
   GpuWorkerInitMessage,
   GpuWorkerOutgoingMessage,
   GpuWorkerReadyMessage,
   GpuWorkerResizeMessage,
   GpuWorkerScreenshotMessage,
+  GpuErrorEvent,
+  GpuErrorSeverity,
+  GpuErrorCategory,
+  BackendKind,
 } from "../ipc/gpu-messages";
 
 type WorkerScope = DedicatedWorkerGlobalScope;
@@ -28,6 +33,7 @@ const scope = self as unknown as WorkerScope;
 
 let initPromise: Promise<void> | null = null;
 let isReady = false;
+let lastBackendKind: BackendKind | null = null;
 let pendingResize: GpuWorkerResizeMessage | null = null;
 
 let messageQueue: Promise<void> = Promise.resolve();
@@ -51,6 +57,27 @@ function pixelSizeFromCss(width: number, height: number, dpr: number): { width: 
 
 function postMessage(msg: GpuWorkerOutgoingMessage, transfer: Transferable[] = []): void {
   scope.postMessage(msg, transfer);
+}
+
+function postErrorEvent(event: GpuErrorEvent): void {
+  const message: GpuWorkerErrorEventMessage = { type: "gpu_error_event", event };
+  postMessage(message);
+}
+
+function emitErrorEvent(
+  severity: GpuErrorSeverity,
+  category: GpuErrorCategory,
+  message: string,
+  details?: Record<string, unknown>,
+): void {
+  postErrorEvent({
+    time_ms: Date.now(),
+    backend_kind: lastBackendKind ?? "webgl2",
+    severity,
+    category,
+    message,
+    ...(details ? { details } : {}),
+  });
 }
 
 function toErrorPayload(kind: GpuWorkerErrorKind, err: unknown, hints: string[] = []): GpuWorkerErrorPayload {
@@ -112,6 +139,26 @@ function detectWebGpuSupport(): boolean {
   );
 }
 
+function attachWebGlContextLossListeners(canvas: OffscreenCanvas): void {
+  canvas.addEventListener(
+    "webglcontextlost",
+    (ev) => {
+      // Keep control of restore semantics; coordinate with Rust/main-thread state.
+      ev.preventDefault();
+      isReady = false;
+      emitErrorEvent("Error", "DeviceLost", "WebGL2 context lost");
+    },
+    { passive: false },
+  );
+
+  canvas.addEventListener("webglcontextrestored", () => {
+    // The underlying GL context object is no longer valid; require a wasm-side
+    // re-init (or full worker restart) before resuming rendering.
+    isReady = false;
+    emitErrorEvent("Info", "DeviceLost", "WebGL2 context restored; re-init required");
+  });
+}
+
 async function initWithFallback(message: GpuWorkerInitMessage): Promise<GpuWorkerReadyMessage> {
   const normalized = normalizeInitSize(message);
   cssWidth = normalized.width;
@@ -120,6 +167,7 @@ async function initWithFallback(message: GpuWorkerInitMessage): Promise<GpuWorke
 
   const userOptions = message.gpuOptions ?? {};
   const preferWebGpu = userOptions.preferWebGpu !== false;
+  const disableWebGpu = userOptions.disableWebGpu === true;
 
   // Always clamp to a non-zero physical size for init.
   const initCssWidth = cssWidth || 1;
@@ -128,7 +176,7 @@ async function initWithFallback(message: GpuWorkerInitMessage): Promise<GpuWorke
   let fallback: GpuWorkerReadyMessage["fallback"];
 
   if (preferWebGpu) {
-    if (!detectWebGpuSupport()) {
+    if (disableWebGpu || !detectWebGpuSupport()) {
       try {
         await init_gpu(message.canvas, initCssWidth, initCssHeight, devicePixelRatio, {
           ...userOptions,
@@ -137,7 +185,7 @@ async function initWithFallback(message: GpuWorkerInitMessage): Promise<GpuWorke
         fallback = {
           from: "webgpu",
           to: "webgl2",
-          reason: "WebGPU not supported in this environment.",
+          reason: disableWebGpu ? "WebGPU disabled by configuration." : "WebGPU not supported in this environment.",
         };
       } catch (err) {
         throw toErrorPayload("webgl2_not_supported", err, [
@@ -187,6 +235,7 @@ async function initWithFallback(message: GpuWorkerInitMessage): Promise<GpuWorke
   }
 
   const backendKind = backend_kind();
+  lastBackendKind = backendKind;
   const caps = capabilities();
   let adapterInfo;
   try {
@@ -240,6 +289,8 @@ async function handleInit(message: GpuWorkerInitMessage): Promise<void> {
     forwardNonFatal("unexpected", new Error("aero-gpu-worker received duplicate init message."));
     return;
   }
+
+  attachWebGlContextLossListeners(message.canvas);
 
   initPromise = (async () => {
     try {

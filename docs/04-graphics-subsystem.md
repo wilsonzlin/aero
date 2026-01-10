@@ -908,6 +908,46 @@ impl Framebuffer {
 
 ---
 
+## GPU Reliability & Diagnostics
+
+Browser GPU subsystems fail in ways that desktop apps rarely encounter: GPU process resets, device loss, surface reconfiguration requirements, and WebGL context loss. Aero treats these as *expected* events and routes them through a structured diagnostics + recovery pipeline.
+
+### Structured error events
+
+Both Rust and TypeScript use a shared event shape:
+
+```
+GpuErrorEvent { time_ms, backend_kind, severity, category, message, details? }
+```
+
+Categories are intentionally coarse so they can be aggregated and alerted on: `Init`, `DeviceLost`, `Surface`, `ShaderCompile`, `PipelineCreate`, `Validation`, `OutOfMemory`, `Unknown`.
+
+### Surface recovery during present
+
+When presenting a frame, handle surface errors deterministically:
+
+- `Lost` / `Outdated`: reconfigure the surface and retry once.
+- `Timeout`: drop the frame (warn) and continue.
+- `OutOfMemory`: emit a fatal event and stop rendering.
+
+### Device-lost recovery
+
+Device loss triggers a recovery state machine:
+
+`Running → Recovering → Running | Failed`
+
+Recovery attempts re-init on the current backend first, and falls back to the other backend when available (WebGPU ↔ WebGL2). Every attempt and outcome should emit a `GpuErrorEvent` so the main thread can surface actionable diagnostics.
+
+### Telemetry counters
+
+Track cheap counters for visibility and regression testing:
+
+- presents attempted/succeeded
+- recoveries attempted/succeeded
+- surface reconfigures
+
+Expose these via a `get_gpu_stats()` JSON method so they can be polled over IPC.
+
 ## Performance Considerations
 
 ### Batching Draw Calls

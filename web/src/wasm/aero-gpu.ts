@@ -57,7 +57,7 @@ export async function init_gpu(
   options: GpuWorkerInitOptions = {},
 ): Promise<void> {
   // Simulate a WebGPU attempt (the real implementation lives in wasm).
-  if (options.preferWebGpu) {
+  if (options.preferWebGpu && !options.disableWebGpu) {
     throw new Error('WebGPU init not implemented in JS stub (expected from wasm).');
   }
 

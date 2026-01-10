@@ -1,4 +1,4 @@
-export type BackendKind = 'webgpu' | 'webgl2';
+export type BackendKind = "webgpu" | "webgl2";
 
 export interface GpuWorkerInitOptions {
   /**
@@ -8,6 +8,14 @@ export interface GpuWorkerInitOptions {
   preferWebGpu?: boolean;
 
   /**
+   * Test/debug hook: treat WebGPU as unavailable even if `navigator.gpu` exists.
+   *
+   * This forces the WebGL2 fallback path and ensures the rest of the worker
+   * (message loop, screenshot requests, etc) remains operational.
+   */
+  disableWebGpu?: boolean;
+
+  /**
    * WebGPU required features (if any). When supplied, the backend may fail to
    * initialize if the adapter cannot satisfy these.
    */
@@ -15,7 +23,7 @@ export interface GpuWorkerInitOptions {
 }
 
 export interface GpuWorkerInitMessage {
-  type: 'init';
+  type: "init";
   canvas: OffscreenCanvas;
   /** CSS pixel width. */
   width: number;
@@ -26,7 +34,7 @@ export interface GpuWorkerInitMessage {
 }
 
 export interface GpuWorkerResizeMessage {
-  type: 'resize';
+  type: "resize";
   /** CSS pixel width. */
   width: number;
   /** CSS pixel height. */
@@ -35,16 +43,16 @@ export interface GpuWorkerResizeMessage {
 }
 
 export interface GpuWorkerPresentTestPatternMessage {
-  type: 'present_test_pattern';
+  type: "present_test_pattern";
 }
 
 export interface GpuWorkerRequestScreenshotMessage {
-  type: 'request_screenshot';
+  type: "request_screenshot";
   requestId: number;
 }
 
 export interface GpuWorkerShutdownMessage {
-  type: 'shutdown';
+  type: "shutdown";
 }
 
 export type GpuWorkerIncomingMessage =
@@ -61,7 +69,7 @@ export interface GpuAdapterInfo {
 }
 
 export interface GpuWorkerReadyMessage {
-  type: 'ready';
+  type: "ready";
   backendKind: BackendKind;
   capabilities: unknown;
   adapterInfo?: GpuAdapterInfo;
@@ -78,7 +86,7 @@ export interface GpuWorkerReadyMessage {
 }
 
 export interface GpuWorkerScreenshotMessage {
-  type: 'screenshot';
+  type: "screenshot";
   requestId: number;
   /** Physical pixel width. */
   width: number;
@@ -89,16 +97,16 @@ export interface GpuWorkerScreenshotMessage {
    * Pixel origin for `rgba8`. Always top-left (row-major, left-to-right, then
    * top-to-bottom).
    */
-  origin: 'top-left';
+  origin: "top-left";
 }
 
 export type GpuWorkerErrorKind =
-  | 'wasm_init_failed'
-  | 'webgpu_not_supported'
-  | 'webgpu_init_failed'
-  | 'webgl2_not_supported'
-  | 'webgl2_init_failed'
-  | 'unexpected';
+  | "wasm_init_failed"
+  | "webgpu_not_supported"
+  | "webgpu_init_failed"
+  | "webgl2_not_supported"
+  | "webgl2_init_failed"
+  | "unexpected";
 
 export interface GpuWorkerErrorPayload {
   kind: GpuWorkerErrorKind;
@@ -108,13 +116,58 @@ export interface GpuWorkerErrorPayload {
 }
 
 export interface GpuWorkerGpuErrorMessage {
-  type: 'gpu_error';
+  type: "gpu_error";
   fatal: boolean;
   error: GpuWorkerErrorPayload;
+}
+
+// -----------------------------------------------------------------------------
+// Structured GPU reliability events (shared with Rust).
+// -----------------------------------------------------------------------------
+
+export type GpuErrorSeverity = "Info" | "Warning" | "Error" | "Fatal";
+
+export type GpuErrorCategory =
+  | "Init"
+  | "DeviceLost"
+  | "Surface"
+  | "ShaderCompile"
+  | "PipelineCreate"
+  | "Validation"
+  | "OutOfMemory"
+  | "Unknown";
+
+export interface GpuErrorEvent {
+  time_ms: number;
+  backend_kind: BackendKind;
+  severity: GpuErrorSeverity;
+  category: GpuErrorCategory;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+export type GpuStats = {
+  presents_attempted: number;
+  presents_succeeded: number;
+  recoveries_attempted: number;
+  recoveries_succeeded: number;
+  surface_reconfigures: number;
+};
+
+export interface GpuWorkerErrorEventMessage {
+  type: "gpu_error_event";
+  event: GpuErrorEvent;
+}
+
+export interface GpuWorkerStatsMessage {
+  type: "gpu_stats";
+  stats: GpuStats;
 }
 
 export type GpuWorkerOutgoingMessage =
   | GpuWorkerReadyMessage
   | GpuWorkerScreenshotMessage
-  | GpuWorkerGpuErrorMessage;
+  | GpuWorkerGpuErrorMessage
+  | GpuWorkerErrorEventMessage
+  | GpuWorkerStatsMessage;
 
