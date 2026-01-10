@@ -31,6 +31,7 @@ mod readback;
 mod texture_format;
 mod texture_manager;
 
+pub mod bindings;
 pub mod cmd;
 pub mod pipeline_cache;
 pub mod pipeline_key;
