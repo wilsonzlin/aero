@@ -1,0 +1,44 @@
+name: WebGPU (scheduled)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Daily at 06:00 UTC.
+    - cron: "0 6 * * *"
+
+jobs:
+  webgpu:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      # WebGPU is REQUIRED in this workflow; regressions should fail loudly.
+      AERO_REQUIRE_WEBGPU: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
+      - name: Run Playwright WebGPU tests
+        run: npx playwright test --project=chromium-webgpu
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-webgpu-${{ matrix.os }}
+          path: |
+            playwright-report/
+            test-results/
+

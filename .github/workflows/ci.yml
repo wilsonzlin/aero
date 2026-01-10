@@ -16,6 +16,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
+  # PR CI should never require WebGPU.
   AERO_REQUIRE_WEBGPU: "0"
   AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
   AERO_WASM_CRATE_DIR: ${{ vars.AERO_WASM_CRATE_DIR }}
@@ -476,7 +477,7 @@ jobs:
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npx playwright install --with-deps chromium
 
-      - name: Playwright tests
+      - name: Playwright tests (non-WebGPU)
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npx playwright test --project=chromium
 

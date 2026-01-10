@@ -464,6 +464,30 @@ When `timestamp-query` is supported and enabled, the renderer can measure **GPU 
 3. Read the buffer back asynchronously on a later frame to avoid stalling.
 
 If `timestamp-query` is **unsupported**, all other graphics telemetry should still work; GPU timing fields should be exported as `null` and the perf HUD should display an `n/a` indicator.
+### CI / Playwright Testing Notes
+
+WebGPU availability in **headless** browsers varies by OS, driver, and GPU
+blocklists. To keep CI reliable, WebGPU tests are:
+
+- **Tagged** with `@webgpu` (Playwright grep tag)
+- **Gated** via `AERO_REQUIRE_WEBGPU`:
+  - If `navigator.gpu` is missing and `AERO_REQUIRE_WEBGPU != 1`, tests **skip**
+  - If `AERO_REQUIRE_WEBGPU=1` and WebGPU is still unavailable, tests **fail**
+- Run via a dedicated Playwright project, `chromium-webgpu`, which adds extra
+  Chromium flags intended to maximize WebGPU availability in headless:
+  - `--enable-unsafe-webgpu`: expose WebGPU in automation/insecure origins
+  - `--ignore-gpu-blocklist`: CI VMs are often GPU-blocklisted
+  - `--disable-gpu-sandbox`: helps in some containerized environments
+
+Local usage:
+
+```bash
+# Run non-WebGPU tests only (default project excludes @webgpu)
+npx playwright test --project=chromium
+
+# Require WebGPU and run the WebGPU-only project
+AERO_REQUIRE_WEBGPU=1 npx playwright test --project=chromium-webgpu
+```
 
 ### Render Pipeline
 
