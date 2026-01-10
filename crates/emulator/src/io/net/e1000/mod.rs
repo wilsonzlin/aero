@@ -3,11 +3,20 @@ use std::collections::{HashMap, VecDeque};
 mod regs;
 mod rx;
 mod tx;
+mod offload;
 
 pub use regs::*;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+
+use offload::TxOffloadContext;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TxPacketState {
+    Legacy { cmd: u8, css: usize, cso: usize },
+    Advanced { cmd: u8, popts: u8 },
+}
 
 /// Guest physical memory access for DMA operations.
 ///
@@ -204,6 +213,8 @@ pub struct E1000Device {
     tdh: u32,
     tdt: u32,
     tx_partial: Vec<u8>,
+    tx_ctx: TxOffloadContext,
+    tx_state: Option<TxPacketState>,
 
     // MAC / filter
     mac: [u8; 6],
@@ -253,6 +264,8 @@ impl E1000Device {
             tdh: 0,
             tdt: 0,
             tx_partial: Vec::new(),
+            tx_ctx: TxOffloadContext::default(),
+            tx_state: None,
             mac,
             ra_valid: true,
             mta: [0; 128],
@@ -295,6 +308,8 @@ impl E1000Device {
         self.tdh = 0;
         self.tdt = 0;
         self.tx_partial.clear();
+        self.tx_ctx = TxOffloadContext::default();
+        self.tx_state = None;
 
         self.rx_queue.clear();
         self.other_regs.clear();
@@ -643,7 +658,7 @@ impl E1000Device {
 
 impl IoSnapshot for E1000Device {
     const DEVICE_ID: [u8; 4] = *b"E1K0";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_REGS: u16 = 1;
@@ -655,6 +670,8 @@ impl IoSnapshot for E1000Device {
         const TAG_RX_QUEUE: u16 = 7;
         const TAG_OTHER_REGS: u16 = 8;
         const TAG_PCI: u16 = 9;
+        const TAG_TX_CTX: u16 = 10;
+        const TAG_TX_STATE: u16 = 11;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -681,6 +698,31 @@ impl IoSnapshot for E1000Device {
         w.field_bytes(TAG_REGS, regs);
 
         w.field_bytes(TAG_TX_PARTIAL, Encoder::new().vec_u8(&self.tx_partial).finish());
+        w.field_bytes(
+            TAG_TX_CTX,
+            Encoder::new()
+                .u32(self.tx_ctx.ipcss as u32)
+                .u32(self.tx_ctx.ipcso as u32)
+                .u32(self.tx_ctx.ipcse as u32)
+                .u32(self.tx_ctx.tucss as u32)
+                .u32(self.tx_ctx.tucso as u32)
+                .u32(self.tx_ctx.tucse as u32)
+                .u32(self.tx_ctx.mss as u32)
+                .u32(self.tx_ctx.hdr_len as u32)
+                .finish(),
+        );
+
+        let tx_state = match self.tx_state {
+            None => Encoder::new().u8(0).finish(),
+            Some(TxPacketState::Legacy { cmd, css, cso }) => Encoder::new()
+                .u8(1)
+                .u8(cmd)
+                .u32(css as u32)
+                .u32(cso as u32)
+                .finish(),
+            Some(TxPacketState::Advanced { cmd, popts }) => Encoder::new().u8(2).u8(cmd).u8(popts).finish(),
+        };
+        w.field_bytes(TAG_TX_STATE, tx_state);
         w.field_bytes(TAG_MAC, self.mac.to_vec());
         w.field_bool(TAG_RA_VALID, self.ra_valid);
 
@@ -728,6 +770,8 @@ impl IoSnapshot for E1000Device {
         const TAG_RX_QUEUE: u16 = 7;
         const TAG_OTHER_REGS: u16 = 8;
         const TAG_PCI: u16 = 9;
+        const TAG_TX_CTX: u16 = 10;
+        const TAG_TX_STATE: u16 = 11;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -762,6 +806,55 @@ impl IoSnapshot for E1000Device {
         } else {
             self.tx_partial.clear();
         }
+
+        self.tx_ctx = if let Some(buf) = r.bytes(TAG_TX_CTX) {
+            let mut d = Decoder::new(buf);
+            let ipcss = d.u32()? as usize;
+            let ipcso = d.u32()? as usize;
+            let ipcse = d.u32()? as usize;
+            let tucss = d.u32()? as usize;
+            let tucso = d.u32()? as usize;
+            let tucse = d.u32()? as usize;
+            let mss = d.u32()? as usize;
+            let hdr_len = d.u32()? as usize;
+            d.finish()?;
+            TxOffloadContext {
+                ipcss,
+                ipcso,
+                ipcse,
+                tucss,
+                tucso,
+                tucse,
+                mss,
+                hdr_len,
+            }
+        } else {
+            TxOffloadContext::default()
+        };
+
+        self.tx_state = if let Some(buf) = r.bytes(TAG_TX_STATE) {
+            let mut d = Decoder::new(buf);
+            let kind = d.u8()?;
+            let state = match kind {
+                0 => None,
+                1 => {
+                    let cmd = d.u8()?;
+                    let css = d.u32()? as usize;
+                    let cso = d.u32()? as usize;
+                    Some(TxPacketState::Legacy { cmd, css, cso })
+                }
+                2 => {
+                    let cmd = d.u8()?;
+                    let popts = d.u8()?;
+                    Some(TxPacketState::Advanced { cmd, popts })
+                }
+                _ => return Err(SnapshotError::InvalidFieldEncoding("tx state")),
+            };
+            d.finish()?;
+            state
+        } else {
+            None
+        };
 
         if let Some(mac) = r.bytes(TAG_MAC) {
             if mac.len() != 6 {
@@ -825,6 +918,9 @@ impl IoSnapshot for E1000Device {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::net::Ipv4Addr;
+
+    use nt_packetlib::io::net::packet::checksum::{internet_checksum, transport_checksum_ipv4};
 
     #[derive(Default)]
     struct TestMemory {
@@ -858,6 +954,101 @@ mod tests {
         fn transmit(&mut self, frame: Vec<u8>) {
             self.frames.push(frame);
         }
+    }
+
+    fn build_ipv4_tcp_frame(payload_len: usize) -> Vec<u8> {
+        let mut frame = Vec::with_capacity(14 + 20 + 20 + payload_len);
+
+        // Ethernet header.
+        frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]); // dst
+        frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]); // src
+        frame.extend_from_slice(&0x0800u16.to_be_bytes()); // IPv4 ethertype
+
+        let total_len = (20 + 20 + payload_len) as u16;
+        // IPv4 header (checksum filled by offload).
+        frame.extend_from_slice(&[
+            0x45, 0x00, (total_len >> 8) as u8, total_len as u8, 0x12, 0x34, 0x00, 0x00, 64, 6, 0x00, 0x00, 192,
+            168, 0, 2, 192, 168, 0, 1,
+        ]);
+
+        // TCP header (checksum filled by offload).
+        frame.extend_from_slice(&1234u16.to_be_bytes()); // src port
+        frame.extend_from_slice(&80u16.to_be_bytes()); // dst port
+        frame.extend_from_slice(&0x01020304u32.to_be_bytes()); // seq
+        frame.extend_from_slice(&0u32.to_be_bytes()); // ack
+        frame.push(0x50); // data offset 5
+        frame.push(0x18); // PSH+ACK
+        frame.extend_from_slice(&4096u16.to_be_bytes()); // window
+        frame.extend_from_slice(&0u16.to_be_bytes()); // checksum
+        frame.extend_from_slice(&0u16.to_be_bytes()); // urg ptr
+
+        for i in 0..payload_len {
+            frame.push((i & 0xFF) as u8);
+        }
+
+        frame
+    }
+
+    fn build_ipv4_udp_frame(payload: &[u8]) -> Vec<u8> {
+        let mut frame = Vec::with_capacity(14 + 20 + 8 + payload.len());
+
+        frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+        frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
+        frame.extend_from_slice(&0x0800u16.to_be_bytes());
+
+        let total_len = (20 + 8 + payload.len()) as u16;
+        frame.extend_from_slice(&[
+            0x45, 0x00, (total_len >> 8) as u8, total_len as u8, 0x00, 0x10, 0x00, 0x00, 64, 17, 0x00, 0x00, 10, 0,
+            0, 1, 10, 0, 0, 2,
+        ]);
+
+        let udp_len = (8 + payload.len()) as u16;
+        frame.extend_from_slice(&4000u16.to_be_bytes());
+        frame.extend_from_slice(&4001u16.to_be_bytes());
+        frame.extend_from_slice(&udp_len.to_be_bytes());
+        frame.extend_from_slice(&0u16.to_be_bytes()); // checksum
+
+        frame.extend_from_slice(payload);
+        frame
+    }
+
+    fn write_tx_ctx_desc(
+        mem: &mut TestMemory,
+        addr: u64,
+        frame_len: usize,
+        mss: u16,
+        hdr_len: u8,
+        tcp: bool,
+    ) {
+        let ipcss = 14u8;
+        let ipcso = ipcss + 10;
+        let ipcse = ipcss as u16 + 20 - 1;
+        let tucss = (14 + 20) as u8;
+        let tucso = tucss + if tcp { 16 } else { 6 };
+        let tucse = (frame_len - 1) as u16;
+
+        mem.write(addr + 0, &[ipcss, ipcso]);
+        mem.write(addr + 2, &ipcse.to_le_bytes());
+        mem.write(addr + 4, &[tucss, tucso]);
+        mem.write(addr + 6, &tucse.to_le_bytes());
+
+        // cmd_len (length=0, typ=CTXT, cmd=DEXT)
+        mem.write(addr + 8, &0u16.to_le_bytes());
+        mem.write(addr + 10, &[0x20]); // DTYP=2 (context)
+        mem.write(addr + 11, &[TXD_CMD_DEXT]);
+
+        mem.write(addr + 12, &mss.to_le_bytes());
+        mem.write(addr + 14, &[hdr_len, 0]);
+    }
+
+    fn write_tx_data_desc(mem: &mut TestMemory, addr: u64, buf_addr: u64, len: u16, cmd: u8, popts: u8) {
+        mem.write(addr + 0, &buf_addr.to_le_bytes());
+        mem.write(addr + 8, &len.to_le_bytes());
+        mem.write(addr + 10, &[0x30]); // DTYP=3 (data)
+        mem.write(addr + 11, &[cmd]);
+        mem.write(addr + 12, &[0]); // status
+        mem.write(addr + 13, &[popts]);
+        mem.write(addr + 14, &0u16.to_le_bytes()); // special
     }
 
     #[test]
@@ -901,6 +1092,123 @@ mod tests {
         let icr = dev.mmio_read(REG_ICR, 4);
         assert_eq!(icr & ICR_TXDW, ICR_TXDW);
         assert!(!dev.irq_level());
+    }
+
+    #[test]
+    fn tx_offload_tso_context_descriptor_segments_and_inserts_checksums() {
+        let mut mem = TestMemory::new(0x80_000);
+        let mut backend = TestBackend::default();
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        dev.mmio_write(REG_IMS, 4, ICR_TXDW);
+
+        dev.mmio_write(REG_TDBAL, 4, 0x1000);
+        dev.mmio_write(REG_TDBAH, 4, 0);
+        dev.mmio_write(REG_TDLEN, 4, 16 * 8);
+        dev.mmio_write(REG_TDH, 4, 0);
+        dev.mmio_write(REG_TDT, 4, 2);
+        dev.mmio_write(REG_TCTL, 4, TCTL_EN);
+
+        let frame = build_ipv4_tcp_frame(4000);
+        mem.write(0x4000, &frame);
+
+        let hdr_len = (14 + 20 + 20) as u8;
+        write_tx_ctx_desc(&mut mem, 0x1000, frame.len(), 1460, hdr_len, true);
+        write_tx_data_desc(
+            &mut mem,
+            0x1010,
+            0x4000,
+            frame.len() as u16,
+            TXD_CMD_DEXT | TXD_CMD_TSE | TXD_CMD_EOP | TXD_CMD_RS,
+            offload::TxChecksumFlags::IXSM | offload::TxChecksumFlags::TXSM,
+        );
+
+        dev.poll(&mut mem, &mut backend);
+
+        assert_ne!(mem.read_u8(0x1000 + 12) & 0x01, 0, "context descriptor should be marked DD");
+        assert_ne!(mem.read_u8(0x1010 + 12) & 0x01, 0, "data descriptor should be marked DD");
+        assert_eq!(dev.mmio_read(REG_TDH, 4), 2);
+
+        assert_eq!(backend.frames.len(), 3);
+
+        let src = Ipv4Addr::new(192, 168, 0, 2);
+        let dst = Ipv4Addr::new(192, 168, 0, 1);
+        let base_seq = 0x01020304u32;
+
+        for (idx, seg) in backend.frames.iter().enumerate() {
+            let ip_off = 14usize;
+            let tcp_off = 14 + 20;
+
+            let total_len = u16::from_be_bytes([seg[ip_off + 2], seg[ip_off + 3]]) as usize;
+            assert_eq!(seg.len(), ip_off + total_len);
+
+            let expected_payload = if idx < 2 { 1460 } else { 4000 - 2 * 1460 };
+            assert_eq!(total_len, 20 + 20 + expected_payload);
+
+            let seq = u32::from_be_bytes([seg[tcp_off + 4], seg[tcp_off + 5], seg[tcp_off + 6], seg[tcp_off + 7]]);
+            assert_eq!(seq, base_seq + (idx as u32) * 1460);
+
+            let psh_set = (seg[tcp_off + 13] & 0x08) != 0;
+            assert_eq!(psh_set, idx == backend.frames.len() - 1);
+
+            assert_eq!(internet_checksum(&seg[ip_off..ip_off + 20]), 0);
+            assert_eq!(transport_checksum_ipv4(src, dst, 6, &seg[tcp_off..]), 0);
+        }
+
+        assert!(dev.irq_level());
+        let icr = dev.mmio_read(REG_ICR, 4);
+        assert_eq!(icr & ICR_TXDW, ICR_TXDW);
+        assert!(!dev.irq_level());
+    }
+
+    #[test]
+    fn tx_offload_checksum_udp_inserts_checksums() {
+        let mut mem = TestMemory::new(0x40_000);
+        let mut backend = TestBackend::default();
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        dev.mmio_write(REG_IMS, 4, ICR_TXDW);
+
+        dev.mmio_write(REG_TDBAL, 4, 0x2000);
+        dev.mmio_write(REG_TDBAH, 4, 0);
+        dev.mmio_write(REG_TDLEN, 4, 16 * 8);
+        dev.mmio_write(REG_TDH, 4, 0);
+        dev.mmio_write(REG_TDT, 4, 2);
+        dev.mmio_write(REG_TCTL, 4, TCTL_EN);
+
+        let payload = b"hello world";
+        let frame = build_ipv4_udp_frame(payload);
+        mem.write(0x3000, &frame);
+
+        let hdr_len = (14 + 20 + 8) as u8;
+        write_tx_ctx_desc(&mut mem, 0x2000, frame.len(), 0, hdr_len, false);
+        write_tx_data_desc(
+            &mut mem,
+            0x2010,
+            0x3000,
+            frame.len() as u16,
+            TXD_CMD_DEXT | TXD_CMD_EOP | TXD_CMD_RS,
+            offload::TxChecksumFlags::IXSM | offload::TxChecksumFlags::TXSM,
+        );
+
+        dev.poll(&mut mem, &mut backend);
+
+        assert_ne!(mem.read_u8(0x2000 + 12) & 0x01, 0, "context descriptor should be marked DD");
+        assert_ne!(mem.read_u8(0x2010 + 12) & 0x01, 0, "data descriptor should be marked DD");
+
+        assert_eq!(backend.frames.len(), 1);
+        let out = &backend.frames[0];
+
+        let ip_off = 14usize;
+        let udp_off = 14 + 20;
+
+        let src = Ipv4Addr::new(10, 0, 0, 1);
+        let dst = Ipv4Addr::new(10, 0, 0, 2);
+
+        assert_eq!(internet_checksum(&out[ip_off..ip_off + 20]), 0);
+        assert_eq!(transport_checksum_ipv4(src, dst, 17, &out[udp_off..]), 0);
+
+        assert_eq!(&out[hdr_len as usize..], payload);
     }
 
     #[test]

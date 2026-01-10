@@ -63,7 +63,10 @@ pub const RCTL_BSEX: u32 = 1 << 25;
 pub const TCTL_EN: u32 = 1 << 1;
 
 pub const TXD_CMD_EOP: u8 = 1 << 0;
+pub const TXD_CMD_IC: u8 = 1 << 2;
 pub const TXD_CMD_RS: u8 = 1 << 3;
+pub const TXD_CMD_DEXT: u8 = 1 << 5;
+pub const TXD_CMD_TSE: u8 = 1 << 7;
 pub const TXD_STAT_DD: u8 = 1 << 0;
 
 pub const RXD_STAT_DD: u8 = 1 << 0;
@@ -81,6 +84,32 @@ pub struct TxDesc {
 }
 
 impl TxDesc {
+    pub const LEN: usize = 16;
+
+    pub fn from_bytes(bytes: [u8; Self::LEN]) -> Self {
+        Self {
+            buffer_addr: u64::from_le_bytes(bytes[0..8].try_into().unwrap()),
+            length: u16::from_le_bytes(bytes[8..10].try_into().unwrap()),
+            cso: bytes[10],
+            cmd: bytes[11],
+            status: bytes[12],
+            css: bytes[13],
+            special: u16::from_le_bytes(bytes[14..16].try_into().unwrap()),
+        }
+    }
+
+    pub fn to_bytes(self) -> [u8; Self::LEN] {
+        let mut bytes = [0u8; Self::LEN];
+        bytes[0..8].copy_from_slice(&self.buffer_addr.to_le_bytes());
+        bytes[8..10].copy_from_slice(&self.length.to_le_bytes());
+        bytes[10] = self.cso;
+        bytes[11] = self.cmd;
+        bytes[12] = self.status;
+        bytes[13] = self.css;
+        bytes[14..16].copy_from_slice(&self.special.to_le_bytes());
+        bytes
+    }
+
     pub fn read<M: GuestMemory>(mem: &M, addr: u64) -> Self {
         let buffer_addr = mem.read_u64(addr);
         let length = mem.read_u16(addr + 8);

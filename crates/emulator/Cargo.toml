@@ -17,6 +17,7 @@ aero-platform = { path = "../platform" }
 font8x8 = "0.3"
 memory = { path = "../memory" }
 aero-net-e1000 = { path = "../aero-net-e1000" }
+nt-packetlib = { path = "../nt-packetlib" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
