@@ -40,12 +40,17 @@ impl Fvf {
         let mut offset = 0u32;
 
         // Position.
+        let position_usage = if pretransformed {
+            DeclUsage::PositionT
+        } else {
+            DeclUsage::Position
+        };
         elements.push(VertexElement::new(
             0,
             offset as u16,
             position_ty,
             DeclMethod::Default,
-            DeclUsage::Position,
+            position_usage,
             0,
         ));
         offset += position_ty.byte_size();

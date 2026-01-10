@@ -342,6 +342,19 @@ fn fvf_decode_produces_declaration_compatible_with_fixed_function_locations() {
 }
 
 #[test]
+fn fvf_xyzrhw_maps_to_positiont() {
+    // XYZRHW | DIFFUSE
+    let fvf = Fvf(0x004 | 0x040);
+    let layout = fvf.decode().unwrap();
+    assert_eq!(layout.pretransformed, true);
+    assert_eq!(layout.stride, 20);
+
+    assert_eq!(layout.declaration.elements[0].usage, DeclUsage::PositionT);
+    assert_eq!(layout.declaration.elements[0].ty, DeclType::Float4);
+    assert_eq!(layout.declaration.elements[1].usage, DeclUsage::Color);
+}
+
+#[test]
 fn fvf_texcoord_size_bits_follow_d3d9_encoding() {
     // XYZ | TEX1, default size for TEX0 is 2 components when the size bits are 0.
     let base = 0x002 | 0x0100;

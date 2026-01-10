@@ -37,6 +37,10 @@ impl VertexLocationMap for StandardLocationMap {
                 0 => Ok(0),
                 _ => Err(LocationMapError::UnsupportedSemantic { usage, usage_index }),
             },
+            DeclUsage::PositionT => match usage_index {
+                0 => Ok(0),
+                _ => Err(LocationMapError::UnsupportedSemantic { usage, usage_index }),
+            },
             DeclUsage::Normal => match usage_index {
                 0 => Ok(1),
                 _ => Err(LocationMapError::UnsupportedSemantic { usage, usage_index }),
@@ -100,6 +104,10 @@ impl VertexLocationMap for FixedFunctionLocationMap {
     fn location_for(&self, usage: DeclUsage, usage_index: u8) -> Result<u32, LocationMapError> {
         match usage {
             DeclUsage::Position => match usage_index {
+                0 => Ok(0),
+                _ => Err(LocationMapError::UnsupportedSemantic { usage, usage_index }),
+            },
+            DeclUsage::PositionT => match usage_index {
                 0 => Ok(0),
                 _ => Err(LocationMapError::UnsupportedSemantic { usage, usage_index }),
             },
