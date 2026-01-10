@@ -33,7 +33,7 @@ New/changed blobs should generally stay **under 20MB**. If you need larger asset
 - Generating fixtures at runtime (e.g., create minimal disk images during tests).
 - Downloading fixtures as part of local-only setup or CI setup from an approved external source (public OSS mirror or private bucket).
 
-If a fixture truly needs to live in-repo despite policy checks (for size or filetype), it must be explicitly allowlisted in `scripts/ci/check-repo-policy.sh` with a clear justification.
+If a fixture truly needs to live in-repo despite policy checks (for size or filetype), it must be explicitly allowlisted in `scripts/ci/check-repo-policy.sh` with a clear justification. Filetype exceptions should be pinned (e.g., by blob hash) so they cannot silently drift into proprietary binaries.
 
 In addition, allowlisted disk/firmware-like blobs (the `.bin`/`.img` fixtures above) are held to a **much stricter** size limit in CI (1 MiB each).
 

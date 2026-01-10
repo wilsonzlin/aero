@@ -67,15 +67,18 @@ FORBIDDEN_PATH_GLOBS=(
 )
 
 # Allowlist for known-safe, intentionally committed fixtures that would
-# otherwise be rejected by extension/path rules. Keep this list tiny and
-# specific (prefer exact paths).
-ALLOWLIST_FORBIDDEN_FILE_GLOBS=(
+# otherwise be rejected by extension/path rules.
+#
+# IMPORTANT: Entries are pinned to a specific blob hash so that these files
+# cannot silently drift into proprietary binaries. If you intentionally update a
+# pinned fixture, update the expected blob hash here (and explain why).
+declare -A ALLOWLIST_FORBIDDEN_BLOB_OIDS=(
   # Synthetic, deterministic pattern images used for disk streaming E2E tests.
-  tools/disk-streaming-browser-e2e/fixtures/secret.img
-  tools/disk-streaming-browser-e2e/fixtures/win7.img
+  [tools/disk-streaming-browser-e2e/fixtures/secret.img]=ebae3de9a572e69924863ebc50a4baaf8b3c14ac
+  [tools/disk-streaming-browser-e2e/fixtures/win7.img]=ea8e482b990b87c0f69d29fd1dd6a41d0f1a514b
   # Tiny text placeholders used by packaging tests (not real Windows drivers).
-  tools/packaging/aero_packager/testdata/drivers/amd64/testdrv/test.sys
-  tools/packaging/aero_packager/testdata/drivers/x86/testdrv/test.sys
+  [tools/packaging/aero_packager/testdata/drivers/amd64/testdrv/test.sys]=699c2af51fe608c5bd954289ad4234763b5730c4
+  [tools/packaging/aero_packager/testdata/drivers/x86/testdrv/test.sys]=7d44972c5540378feef4752f2c47d658f1ad3236
 )
 
 # Allowlist for large blobs (bash patterns). Keep this small and justified.
@@ -207,8 +210,13 @@ while IFS= read -r -d '' status; do
   path_lc="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')"
 
   allowlisted_forbidden=0
-  if matches_any_glob_ci "$path_lc" "${ALLOWLIST_FORBIDDEN_FILE_GLOBS[@]}"; then
+  expected_oid="${ALLOWLIST_FORBIDDEN_BLOB_OIDS[$path_lc]:-}"
+  if [[ -n "$expected_oid" ]]; then
     allowlisted_forbidden=1
+    actual_oid="$(git rev-parse "$HEAD_REF:$path")"
+    if [[ "$actual_oid" != "$expected_oid" ]]; then
+      forbidden_hits+=("$path|allowlisted fixture changed (expected blob $expected_oid, got $actual_oid)")
+    fi
   fi
 
   filename="${path##*/}"
