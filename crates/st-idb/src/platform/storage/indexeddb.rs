@@ -115,6 +115,10 @@ where
     request.set_onupgradeneeded(Some(upgrade_closure.as_ref().unchecked_ref()));
 
     let db_value = await_open_request(request).await?;
+    // Keep the upgrade callback alive until the open request resolves; otherwise
+    // the compiler may drop it before the `.await`, and the browser will call
+    // into freed Wasm memory when `onupgradeneeded` fires.
+    drop(upgrade_closure);
     if let Some(err) = upgrade_error.borrow_mut().take() {
         return Err(StorageError::Js(err));
     }
