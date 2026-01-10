@@ -168,13 +168,16 @@ function Invoke-NativeCommandWithOutput {
   return ,$result.Output
 }
 
-function Get-BcdBootLoaderGuids {
+function Get-BcdBootLoaderEntries {
   param([Parameter(Mandatory)][string]$StorePath)
 
-  $output = Invoke-NativeCommandWithOutput -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/enum", "all")
+  # Use /v so we can see `device` / `osdevice` for filtering (e.g. to only patch the boot.wim WinPE loader).
+  $output = Invoke-NativeCommandWithOutput -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/enum", "all", "/v")
 
   $sectionTitle = $null
-  $guids = @()
+  $current = $null
+  $entries = New-Object System.Collections.Generic.List[object]
+
   for ($i = 0; $i -lt $output.Count; $i++) {
     $line = $output[$i]
     $trimmed = $line.Trim()
@@ -189,16 +192,66 @@ function Get-BcdBootLoaderGuids {
 
     # bcdedit section headers are immediately followed by a dashed separator line.
     if ($nextLine -and ($nextLine -match '^-+$')) {
+      if ($current) {
+        $entries.Add([pscustomobject]$current)
+        $current = $null
+      }
       $sectionTitle = $trimmed
       continue
     }
 
-    if ($sectionTitle -eq "Windows Boot Loader" -and ($trimmed -match '^identifier\s+(\{[0-9A-Fa-f\-]{36}\})\s*$')) {
-      $guids += $Matches[1]
+    if ($sectionTitle -ne "Windows Boot Loader") {
+      continue
+    }
+
+    if ($trimmed -match '^identifier\s+(\{[^}]+\})\s*$') {
+      $current = @{
+        Identifier = $Matches[1]
+        Device = $null
+        OsDevice = $null
+      }
+      continue
+    }
+
+    if (-not $current) {
+      continue
+    }
+
+    if ($trimmed -match '^device\s+(.+)$') {
+      $current.Device = $Matches[1].Trim()
+      continue
+    }
+    if ($trimmed -match '^osdevice\s+(.+)$') {
+      $current.OsDevice = $Matches[1].Trim()
+      continue
     }
   }
 
-  return @($guids | Sort-Object -Unique)
+  if ($current) {
+    $entries.Add([pscustomobject]$current)
+  }
+
+  return $entries
+}
+
+function Get-BcdBootLoaderIdentifiers {
+  param([Parameter(Mandatory)][string]$StorePath)
+
+  return @(
+    (Get-BcdBootLoaderEntries -StorePath $StorePath | Select-Object -ExpandProperty Identifier -Unique)
+  )
+}
+
+function Get-BcdBootLoaderIdentifiersForBootWim {
+  param([Parameter(Mandatory)][string]$StorePath)
+
+  $entries = Get-BcdBootLoaderEntries -StorePath $StorePath
+  $bootWimEntries = $entries | Where-Object {
+    ($_.Device -and $_.Device -match '(?i)\\sources\\boot\.wim') -or
+    ($_.OsDevice -and $_.OsDevice -match '(?i)\\sources\\boot\.wim')
+  }
+
+  return @($bootWimEntries | Select-Object -ExpandProperty Identifier -Unique)
 }
 
 function Get-WimIndexList {
@@ -286,7 +339,11 @@ function Set-BcdFlagsForStore {
   param(
     [Parameter(Mandatory)][string]$StorePath,
     [Parameter(Mandatory)][string]$StoreLabel,
-    [switch]$EnableNoIntegrityChecks
+    [switch]$EnableNoIntegrityChecks,
+
+    # If set, only patches Windows Boot Loader objects whose `device`/`osdevice` references \sources\boot.wim.
+    # This prevents unintentionally modifying unrelated loader objects on customized/OEM media.
+    [switch]$OnlyBootWimLoaders
   )
 
   if (-not (Test-Path -LiteralPath $StorePath -PathType Leaf)) {
@@ -296,37 +353,103 @@ function Set-BcdFlagsForStore {
   Write-Host "`n[$StoreLabel] Patching BCD store: $StorePath"
   Invoke-NativeCommand -FilePath "attrib.exe" -ArgumentList @("-h", "-s", "-r", $StorePath) -SuppressOutput
 
-  $defaultResult = Invoke-NativeCommandResult -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", "{default}", "testsigning", "on")
-  if ($defaultResult.ExitCode -eq 0) {
-    if ($EnableNoIntegrityChecks) {
-      Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", "{default}", "nointegritychecks", "on")
+  $targets = @()
+  if ($OnlyBootWimLoaders) {
+    $targets = Get-BcdBootLoaderIdentifiersForBootWim -StorePath $StorePath
+  }
+  else {
+    $targets = Get-BcdBootLoaderIdentifiers -StorePath $StorePath
+  }
+
+  if ($targets.Count -gt 0) {
+    foreach ($id in $targets) {
+      Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", $id, "testsigning", "on")
+      if ($EnableNoIntegrityChecks) {
+        Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", $id, "nointegritychecks", "on")
+      }
     }
 
     Write-Host "Verification hint:"
-    Write-Host ("  bcdedit /store {0} /enum {{default}}" -f (Format-Arg $StorePath))
+    Write-Host ("  bcdedit /store {0} /enum all /v" -f (Format-Arg $StorePath))
     return
   }
 
-  Write-Warning "[$StoreLabel] Failed to patch {default} in this store. Attempting to patch Windows Boot Loader entries instead."
-  $outputText = ($defaultResult.Output | Out-String).Trim()
-  if ($outputText) {
-    Write-Warning $outputText
-  }
+  # Fallback: for uncommon layouts where `bcdedit /enum all /v` doesn't expose the expected loader entries.
+  Write-Warning "[$StoreLabel] Unable to locate Windows Boot Loader entries to patch. Falling back to {default}."
 
-  $bootLoaderGuids = Get-BcdBootLoaderGuids -StorePath $StorePath
-  if ($bootLoaderGuids.Count -eq 0) {
-    throw "Unable to locate any Windows Boot Loader GUIDs in '$StorePath'. Run: bcdedit /store $StorePath /enum all"
-  }
-
-  foreach ($guid in $bootLoaderGuids) {
-    Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", $guid, "testsigning", "on")
-    if ($EnableNoIntegrityChecks) {
-      Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", $guid, "nointegritychecks", "on")
+  $defaultResult = Invoke-NativeCommandResult -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", "{default}", "testsigning", "on")
+  if ($defaultResult.ExitCode -ne 0) {
+    $outputText = ($defaultResult.Output | Out-String).Trim()
+    if ($outputText) {
+      throw "Failed to patch {default} in '$StorePath':`n$outputText"
     }
+    throw "Failed to patch {default} in '$StorePath' (exit code $($defaultResult.ExitCode))."
+  }
+
+  if ($EnableNoIntegrityChecks) {
+    Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", "{default}", "nointegritychecks", "on")
   }
 
   Write-Host "Verification hint:"
-  Write-Host ("  bcdedit /store {0} /enum all" -f (Format-Arg $StorePath))
+  Write-Host ("  bcdedit /store {0} /enum {{default}}" -f (Format-Arg $StorePath))
+}
+
+function Find-MediaBcdStores {
+  param([Parameter(Mandatory)][string]$MediaRoot)
+
+  $stores = New-Object System.Collections.Generic.List[object]
+
+  $biosCandidates = @(
+    [System.IO.Path]::Combine($MediaRoot, "boot", "BCD"),
+    [System.IO.Path]::Combine($MediaRoot, "Boot", "BCD")
+  )
+
+  $biosPath = $null
+  foreach ($p in $biosCandidates) {
+    if (Test-Path -LiteralPath $p -PathType Leaf) {
+      $biosPath = $p
+      break
+    }
+  }
+  if (-not $biosPath) {
+    throw "Expected BIOS BCD store at 'boot\\BCD' under '$MediaRoot'."
+  }
+  $stores.Add([pscustomobject]@{ Label = "Media BIOS"; Path = $biosPath })
+
+  $uefiCandidates = @(
+    [System.IO.Path]::Combine($MediaRoot, "efi", "microsoft", "boot", "bcd"),
+    [System.IO.Path]::Combine($MediaRoot, "EFI", "Microsoft", "Boot", "BCD"),
+    [System.IO.Path]::Combine($MediaRoot, "EFI", "Boot", "BCD"),
+    [System.IO.Path]::Combine($MediaRoot, "EFI", "BOOT", "BCD")
+  )
+
+  foreach ($p in ($uefiCandidates | Sort-Object -Unique)) {
+    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {
+      continue
+    }
+    if ($stores | Where-Object { $_.Path -ieq $p }) {
+      continue
+    }
+    $rel = $p.Substring($MediaRoot.Length).TrimStart('\', '/')
+    $stores.Add([pscustomobject]@{ Label = "Media UEFI ($rel)"; Path = $p })
+  }
+
+  # Some OEM/custom layouts may place the UEFI BCD elsewhere under EFI/. Scan for additional stores.
+  $efiRoot = [System.IO.Path]::Combine($MediaRoot, "EFI")
+  if (Test-Path -LiteralPath $efiRoot -PathType Container) {
+    $found = Get-ChildItem -LiteralPath $efiRoot -Recurse -Force -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -ieq "BCD" }
+    foreach ($f in $found) {
+      $full = $f.FullName
+      if ($stores | Where-Object { $_.Path -ieq $full }) {
+        continue
+      }
+      $rel = $full.Substring($MediaRoot.Length).TrimStart('\', '/')
+      $stores.Add([pscustomobject]@{ Label = "Media UEFI ($rel)"; Path = $full })
+    }
+  }
+
+  return @($stores)
 }
 
 function Add-OfflineTrustedCertificate {
@@ -630,19 +753,7 @@ if (-not (Test-Path -LiteralPath $installWimPath -PathType Leaf)) {
 Ensure-WritableFile -Path $bootWimPath -Label "boot.wim"
 Ensure-WritableFile -Path $installWimPath -Label "install.wim"
 
-$biosBcdPath = [System.IO.Path]::Combine($resolvedMediaRoot, "boot", "BCD")
-$uefiBcdPath = [System.IO.Path]::Combine($resolvedMediaRoot, "efi", "microsoft", "boot", "bcd")
-
-$mediaBcdStores = @()
-if (Test-Path -LiteralPath $biosBcdPath -PathType Leaf) {
-  $mediaBcdStores += @{ Label = "Media BIOS"; Path = $biosBcdPath }
-}
-else {
-  throw "Expected BIOS BCD store at '$biosBcdPath'."
-}
-if (Test-Path -LiteralPath $uefiBcdPath -PathType Leaf) {
-  $mediaBcdStores += @{ Label = "Media UEFI"; Path = $uefiBcdPath }
-}
+$mediaBcdStores = Find-MediaBcdStores -MediaRoot $resolvedMediaRoot
 
 $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($resolvedCertPath)
 $thumbprint = $certificate.Thumbprint.ToUpperInvariant()
@@ -680,10 +791,14 @@ Write-Host "  Available indices  : $($availableInstallIndices -join ', ')"
 Write-Host "  Selected indices   : $($selectedInstallIndices -join ', ')"
 Write-Host ""
 Write-Host "Media BCD stores to patch:"
+$hasUefiStore = $false
 foreach ($store in $mediaBcdStores) {
   Write-Host ("  - {0}: {1}" -f $store.Label, $store.Path)
+  if ($store.Label -like "Media UEFI*") {
+    $hasUefiStore = $true
+  }
 }
-if (-not (Test-Path -LiteralPath $uefiBcdPath -PathType Leaf)) {
+if (-not $hasUefiStore) {
   Write-Host "  - Media UEFI: <not found> (skipping)"
 }
 Write-Host ""
@@ -696,7 +811,7 @@ try {
 
   Write-Host "Step 1/3: Patching media BCD stores (outside WIMs)..."
   foreach ($store in $mediaBcdStores) {
-    Set-BcdFlagsForStore -StorePath $store.Path -StoreLabel $store.Label -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
+    Set-BcdFlagsForStore -StorePath $store.Path -StoreLabel $store.Label -EnableNoIntegrityChecks:$EnableNoIntegrityChecks -OnlyBootWimLoaders
   }
 
   Write-Host "`nStep 2/3: Servicing boot.wim..."

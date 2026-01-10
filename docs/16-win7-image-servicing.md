@@ -37,6 +37,45 @@ It patches:
 
 See [`tools/windows/README.md`](../tools/windows/README.md) for prerequisites and usage examples.
 
+## Media variations (validated observations)
+
+This repo cannot ship any Microsoft binaries (ISOs/WIMs/BCDs). The notes below only record *metadata and observed paths* relevant to tooling.
+
+### Validated vs assumed
+
+Validated (empirically checked on real Windows 7 SP1 retail install media):
+
+- `sources\boot.wim` contains 2 images (WinPE + Setup) and the install media boots the **Setup** image (BootIndex `2`).
+- BIOS-mode install media BCD store is at `boot\BCD` and its WinPE loader(s) use `sources\boot.wim` as the ramdisk `device`/`osdevice`.
+- x64 media contains a UEFI BCD store at `EFI\Microsoft\Boot\BCD` (casing varies by extraction tool; Windows is case-insensitive).
+- `sources\install.wim` contains multiple edition images on multi-edition retail media.
+- Each install image contains `Windows\System32\Config\BCD-Template`.
+- Patching `BCD-Template` to set `testsigning on` results in an installed system whose `{current}` loader has `testsigning Yes` on first boot.
+
+Assumed (not fully characterized across all OEM/custom media):
+
+- OEM/custom install media may add extra `boot.wim` indices (e.g., recovery tools), additional BCD entries, or change which loader object is set as the boot default.
+- Some single-edition retail ISOs ship an `install.wim` with only one image (instead of the multi-edition layout below).
+
+Tooling should therefore:
+
+- Never hardcode a single UEFI BCD location.
+- Never assume `{default}` is the only loader object to patch.
+- Prefer “patch all Windows Boot Loader objects that boot `boot.wim`” on install media, and “patch all Windows Boot Loader objects” in `BCD-Template`.
+
+### Compatibility matrix (observed)
+
+| Media | `sources\boot.wim` images (`dism /Get-WimInfo`) | Booted WinPE image | BIOS BCD store | UEFI BCD store(s) | `sources\install.wim` images (`dism /Get-WimInfo`) | `BCD-Template` present | `BCD-Template` patch propagates to installed BCD |
+|------|--------------------------------------------------|--------------------|----------------|-------------------|----------------------------------------------------|------------------------|--------------------------------------------------|
+| Win7 SP1 x86 retail | 2: (1) Microsoft Windows PE (x86) (2) Microsoft Windows Setup (x86) | 2 | `boot\BCD` | (not present on the validated x86 retail media) | 5: Starter, Home Basic, Home Premium, Professional, Ultimate | Yes (all images) | Yes |
+| Win7 SP1 x64 retail | 2: (1) Microsoft Windows PE (amd64) (2) Microsoft Windows Setup (amd64) | 2 | `boot\BCD` | `EFI\Microsoft\Boot\BCD` | 4: Home Basic, Home Premium, Professional, Ultimate | Yes (all images) | Yes |
+
+Notes:
+
+- The install-media BCD does **not** carry an obvious “WIM index” field; boot selection is controlled by the `boot.wim` **BootIndex** metadata. If you rebuild/export `boot.wim`, ensure the BootIndex remains correct or the media may boot the wrong image.
+- When servicing `boot.wim` for installation-time drivers, **modify index 2** (Setup). Patch index 1 as well if you need recovery to load the same drivers/certs.
+- When servicing `install.wim`, patch **all indices** so whichever edition the user installs will inherit the change.
+
 ---
 
 ## Mental model: what needs patching
