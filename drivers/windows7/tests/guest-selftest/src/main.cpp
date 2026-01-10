@@ -713,6 +713,8 @@ static bool DnsResolveWithFallback(Logger& log, const std::wstring& primary_host
 
   add_unique(primary_host);
   add_unique(L"host.lan");
+  add_unique(L"gateway.lan");
+  add_unique(L"dns.lan");
   add_unique(L"example.com");
 
   for (const auto& host : candidates) {

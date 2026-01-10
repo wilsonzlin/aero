@@ -17,6 +17,9 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
   - DNS resolution (`getaddrinfo`)
   - HTTP GET to a configurable URL (WinHTTP)
 
+Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` is `host.lan`
+(with fallbacks like `gateway.lan` / `dns.lan`).
+
 ## Output markers
 
 The host harness parses these markers from COM1 serial:
