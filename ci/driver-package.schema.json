@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Aero driver packaging manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "additionalFiles": {
+      "type": "array",
+      "description": "Additional files (relative to the driver directory) to include in the staged driver package. Intended for non-binary files such as README/license text or install scripts.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "wdfCoInstaller": {
+      "type": "object",
+      "description": "If present, this driver package requires a WDF coinstaller (WdfCoInstaller*.dll) for older systems. This file is a Microsoft WDK redistributable and is NOT included by default (see docs).",
+      "additionalProperties": false,
+      "required": ["kmdfVersion"],
+      "properties": {
+        "kmdfVersion": {
+          "type": "string",
+          "description": "KMDF version required by this driver (e.g. 1.9, 1.11, 1.15). Used to derive the default DLL name if dllName is omitted."
+        },
+        "dllName": {
+          "type": "string",
+          "description": "Optional explicit DLL filename (e.g. WdfCoInstaller01011.dll). If omitted, CI derives it from kmdfVersion."
+        }
+      }
+    }
+  }
+}

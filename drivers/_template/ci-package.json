@@ -1,0 +1,4 @@
+{
+  "$schema": "../../ci/driver-package.schema.json",
+  "additionalFiles": []
+}

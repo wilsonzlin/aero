@@ -33,6 +33,15 @@
 .PARAMETER NoStampInfs
   Disables stamping DriverVer in staged INFs before catalog generation. You can also set
   AERO_STAMP_INFS=0/false/no/off to disable stamping in CI without changing arguments.
+
+.PARAMETER IncludeWdfCoInstaller
+  Explicit opt-in to copy Microsoft WDK redistributables (specifically WdfCoInstaller*.dll)
+  from the installed WDK into staged driver packages, but only for drivers that declare
+  a `wdfCoInstaller` requirement in `drivers/<driver>/ci-package.json`.
+
+.PARAMETER IncludeWdkRedist
+  Alternative opt-in mechanism to allow specific WDK redistributables by name
+  (example: -IncludeWdkRedist WdfCoInstaller). Default is empty.
 #>
 
 #Requires -Version 5.1
@@ -43,7 +52,9 @@ param(
   [string] $InputRoot = 'out/drivers',
   [string] $OutputRoot = 'out/packages',
   [string] $ToolchainJson,
-  [switch] $NoStampInfs
+  [switch] $NoStampInfs,
+  [switch] $IncludeWdfCoInstaller,
+  [string[]] $IncludeWdkRedist = @()
 )
 
 Set-StrictMode -Version Latest
@@ -156,6 +167,146 @@ function Get-TruthyEnvFlag {
   }
 }
 
+$allowWdfCoInstaller = $IncludeWdfCoInstaller -or ($IncludeWdkRedist -contains 'WdfCoInstaller')
+if ($allowWdfCoInstaller) {
+  Write-Host "WDK redistributables enabled: WdfCoInstaller"
+} else {
+  Write-Host "WDK redistributables disabled (default)."
+}
+
+function Read-DriverPackageManifest {
+  param(
+    [Parameter(Mandatory)]
+    [string] $DriverSourceDir
+  )
+
+  $manifestPath = Join-Path -Path $DriverSourceDir -ChildPath 'ci-package.json'
+  if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    return @{
+      ManifestPath = $manifestPath
+      AdditionalFiles = @()
+      WdfCoInstaller = $null
+    }
+  }
+
+  $data = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+
+  $additional = @()
+  if ($null -ne $data.additionalFiles) {
+    foreach ($entry in @($data.additionalFiles)) {
+      if ($null -eq $entry) { continue }
+      $s = ([string]$entry).Trim()
+      if ($s.Length -gt 0) {
+        $additional += $s
+      }
+    }
+  }
+
+  $wdf = $null
+  if ($null -ne $data.wdfCoInstaller) {
+    $kmdfVersion = [string]$data.wdfCoInstaller.kmdfVersion
+    if ([string]::IsNullOrWhiteSpace($kmdfVersion)) {
+      throw "Invalid manifest '$manifestPath': wdfCoInstaller.kmdfVersion is required."
+    }
+    $dllName = [string]$data.wdfCoInstaller.dllName
+    if ([string]::IsNullOrWhiteSpace($dllName)) {
+      $dllName = $null
+    }
+    $wdf = @{
+      KmdfVersion = $kmdfVersion.Trim()
+      DllName = $dllName
+    }
+  }
+
+  return @{
+    ManifestPath = $manifestPath
+    AdditionalFiles = $additional
+    WdfCoInstaller = $wdf
+  }
+}
+
+function Get-WdfCoInstallerDllNameFromKmdfVersion {
+  param(
+    [Parameter(Mandatory)]
+    [string] $KmdfVersion
+  )
+
+  $parts = $KmdfVersion.Split('.')
+  if ($parts.Count -ne 2) {
+    throw "Invalid KMDF version '$KmdfVersion' (expected format 'major.minor', e.g. '1.11')."
+  }
+  $major = [int]$parts[0]
+  $minor = [int]$parts[1]
+  $digits = "{0:D2}{1:D3}" -f $major, $minor
+  return "WdfCoInstaller$digits.dll"
+}
+
+function Get-WdkKitRoots {
+  $roots = New-Object System.Collections.Generic.List[string]
+
+  foreach ($envVar in @('WindowsSdkDir', 'WindowsSdkDir_10', 'WindowsSdkDir_81')) {
+    $value = [Environment]::GetEnvironmentVariable($envVar)
+    if ($null -ne $value -and $value.Trim() -ne '') {
+      $roots.Add($value.TrimEnd('\'))
+    }
+  }
+
+  $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+  if ([string]::IsNullOrWhiteSpace($programFilesX86)) {
+    $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles')
+  }
+
+  foreach ($kitVersion in @('10', '8.1', '8.0')) {
+    $kitRoot = Join-Path -Path $programFilesX86 -ChildPath ("Windows Kits\{0}" -f $kitVersion)
+    if (Test-Path -LiteralPath $kitRoot) {
+      $roots.Add($kitRoot)
+    }
+  }
+
+  $winDdkRoot = 'C:\WinDDK'
+  if (Test-Path -LiteralPath $winDdkRoot) {
+    foreach ($ddk in (Get-ChildItem -LiteralPath $winDdkRoot -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending)) {
+      $roots.Add($ddk.FullName)
+    }
+  }
+
+  return $roots | Select-Object -Unique
+}
+
+function Resolve-WdfCoInstallerPath {
+  param(
+    [Parameter(Mandatory)]
+    [string] $DllName,
+    [Parameter(Mandatory)]
+    [ValidateSet('x86', 'x64')]
+    [string] $Arch
+  )
+
+  $archDirs = if ($Arch -eq 'x86') { @('x86') } else { @('amd64', 'x64') }
+  $archRegex = "\\(" + (($archDirs | ForEach-Object { [Regex]::Escape($_) }) -join '|') + ")\\"
+
+  foreach ($kitRoot in (Get-WdkKitRoots)) {
+    foreach ($wdfRoot in @(
+      (Join-Path -Path $kitRoot -ChildPath 'Redist\wdf'),
+      (Join-Path -Path $kitRoot -ChildPath 'redist\wdf'),
+      (Join-Path -Path $kitRoot -ChildPath 'Redist\WDF'),
+      (Join-Path -Path $kitRoot -ChildPath 'redist\WDF')
+    )) {
+      if (-not (Test-Path -LiteralPath $wdfRoot -PathType Container)) {
+        continue
+      }
+
+      $candidates = Get-ChildItem -LiteralPath $wdfRoot -Recurse -File -Filter $DllName -ErrorAction SilentlyContinue
+      $match = $candidates | Where-Object { $_.FullName -match $archRegex } | Select-Object -First 1
+      if ($match) {
+        return $match.FullName
+      }
+    }
+  }
+
+  return $null
+}
+
 $stampInfs = $true
 if ($NoStampInfs) {
   $stampInfs = $false
@@ -207,6 +358,24 @@ foreach ($driverBuildDir in $driverBuildDirs) {
   $driverSourceDir = Join-Path -Path $driversRoot -ChildPath $driverBuildDir.RelativePath
   if (-not (Test-Path -LiteralPath $driverSourceDir)) {
     throw "Driver source directory not found for '$driverName'. Expected: $driverSourceDir"
+  }
+
+  $manifest = Read-DriverPackageManifest -DriverSourceDir $driverSourceDir
+  $needsWdfCoInstaller = ($null -ne $manifest.WdfCoInstaller)
+  $wdfCoInstallerDllName = $null
+  if ($needsWdfCoInstaller) {
+    if (-not $allowWdfCoInstaller) {
+      throw "Driver '$driverName' declares a WDF coinstaller requirement in '$($manifest.ManifestPath)', but WDK redistributables are disabled. Re-run with -IncludeWdfCoInstaller."
+    }
+    $wdfCoInstallerDllName = $manifest.WdfCoInstaller.DllName
+    if ([string]::IsNullOrWhiteSpace($wdfCoInstallerDllName)) {
+      $wdfCoInstallerDllName = Get-WdfCoInstallerDllNameFromKmdfVersion -KmdfVersion $manifest.WdfCoInstaller.KmdfVersion
+    }
+  }
+
+  $wdfInSource = Get-ChildItem -LiteralPath $driverSourceDir -Recurse -File -Filter 'WdfCoInstaller*.dll' -ErrorAction SilentlyContinue
+  if ($wdfInSource) {
+    throw "Driver '$driverName' contains WdfCoInstaller*.dll under '$driverSourceDir'. Do not commit Microsoft WDK redistributables into the repo; use -IncludeWdfCoInstaller and '$($manifest.ManifestPath)' instead."
   }
 
   $infFiles = Get-ChildItem -LiteralPath $driverSourceDir -Recurse -File -Filter '*.inf' |
@@ -261,6 +430,51 @@ foreach ($driverBuildDir in $driverBuildDirs) {
       Copy-Item -LiteralPath $coDir -Destination (Join-Path -Path $packageDir -ChildPath $coName) -Recurse -Force
       Get-ChildItem -LiteralPath $coDir -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination (Join-Path -Path $packageDir -ChildPath $_.Name) -Force
+      }
+    }
+
+    foreach ($relPath in $manifest.AdditionalFiles) {
+      $ext = [IO.Path]::GetExtension($relPath)
+      if ($ext -in @('.sys', '.dll', '.exe', '.cat', '.msi', '.cab')) {
+        throw "Driver '$driverName' additionalFiles must be non-binary; refusing to include '$relPath'."
+      }
+
+      $src = Join-Path -Path $driverSourceDir -ChildPath $relPath
+      if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+        throw "Driver '$driverName' additional file not found: $src"
+      }
+
+      $dest = Join-Path -Path $packageDir -ChildPath $relPath
+      $destDir = Split-Path -Parent $dest
+      if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+      }
+      Copy-Item -LiteralPath $src -Destination $dest -Force
+    }
+
+    $existingWdf = @(Get-ChildItem -LiteralPath $packageDir -Recurse -File -Filter 'WdfCoInstaller*.dll' -ErrorAction SilentlyContinue)
+    if ($existingWdf.Count -gt 0) {
+      if (-not $allowWdfCoInstaller) {
+        throw "WDK redistributables are disabled, but staged package '$packageDir' already contains: $($existingWdf.Name -join ', ')"
+      }
+      if (-not $needsWdfCoInstaller) {
+        throw "Staged package '$packageDir' contains WdfCoInstaller*.dll, but driver '$driverName' does not declare wdfCoInstaller in '$($manifest.ManifestPath)'."
+      }
+      $existingWdf | Remove-Item -Force -ErrorAction Stop
+    }
+
+    if ($needsWdfCoInstaller) {
+      $wdfSource = Resolve-WdfCoInstallerPath -DllName $wdfCoInstallerDllName -Arch $arch
+      if (-not $wdfSource) {
+        throw "Unable to locate '$wdfCoInstallerDllName' in installed WDK redistributables for $arch. Ensure the Windows Driver Kit is installed (Windows Kits\\<ver>\\Redist\\wdf)."
+      }
+
+      Write-Host "     Including $wdfCoInstallerDllName ($arch) from: $wdfSource"
+      Copy-Item -LiteralPath $wdfSource -Destination (Join-Path -Path $packageDir -ChildPath $wdfCoInstallerDllName) -Force
+      foreach ($coName in @('coinstallers', 'coinstaller')) {
+        $destCoDir = Join-Path -Path $packageDir -ChildPath $coName
+        if (-not (Test-Path -LiteralPath $destCoDir -PathType Container)) { continue }
+        Copy-Item -LiteralPath $wdfSource -Destination (Join-Path -Path $destCoDir -ChildPath $wdfCoInstallerDllName) -Force
       }
     }
 

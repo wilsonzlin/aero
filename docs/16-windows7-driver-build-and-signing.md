@@ -117,3 +117,18 @@ Some CI runners may refuse SHA-1 certificate creation. If SHA-1 certificate crea
 
 - **fails by default**, or
 - continues only if `-AllowSha2CertFallback` is provided, in which case it creates a SHA-256-signed certificate and prints a loud warning that **stock Win7 without KB3033929/KB4474419 may fail**.
+
+## WDK redistributables (WDF coinstaller)
+
+Some Windows 7-era driver packages (especially KMDF-based ones) may require shipping a WDF coinstaller (`WdfCoInstaller*.dll`). This DLL is a **Microsoft WDK redistributable** with its own license terms.
+
+Policy in this repo:
+
+- CI does **not** include any WDK redistributables by default.
+- Drivers that require a WDF coinstaller must declare it in `drivers/<name>/ci-package.json`, and CI must be run with explicit opt-in:
+
+```powershell
+.\ci\make-catalogs.ps1 -IncludeWdfCoInstaller
+```
+
+See: `docs/16-driver-packaging-and-signing.md` and `docs/13-legal-considerations.md`.

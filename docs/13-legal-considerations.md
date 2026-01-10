@@ -245,10 +245,11 @@ Aero Repository Structure:
 ```
 
 #### Binary Distribution
-
-- Pre-built WASM binaries: ✅ OK
-- Including Windows files: ❌ NOT OK
-- Including BIOS ROMs (not ours): ❌ NOT OK
+ 
+ - Pre-built WASM binaries: ✅ OK
+ - Including Windows files: ❌ NOT OK
+ - Including BIOS ROMs (not ours): ❌ NOT OK
+ - Including Microsoft WDK redistributables (e.g. `WdfCoInstaller*.dll`): ⚠️ Only if explicitly opted-in and compliant with the applicable Microsoft redistribution license
 
 #### Website/Service
 

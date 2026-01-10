@@ -63,6 +63,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 38. [Driver Install Media (FAT Image)](./docs/16-driver-install-media.md)
 39. [Windows 7 Driver Build and Signing](./docs/16-windows7-driver-build-and-signing.md)
 40. [Guest CPU Instruction Throughput Benchmarks (PF-008)](./docs/16-guest-cpu-benchmark-suite.md)
+41. [Driver Packaging, Catalogs, and WDK Redistributables](./docs/16-driver-packaging-and-signing.md)
 
 ---
 
@@ -351,10 +352,11 @@ pub trait DisplayAdapter {
 | [16-debugging-and-introspection.md](./docs/16-debugging-and-introspection.md) | Developer debugging surfaces (serial, state, trace) | All |
 | [16-snapshots.md](./docs/16-snapshots.md)                               | VM snapshot format + restore flow      | All               |
 | [16-performance-tooling.md](./docs/16-performance-tooling.md)           | Profiling HUD, traces, benchmarks      | Performance       |
+| [16-windows7-driver-build-and-signing.md](./docs/16-windows7-driver-build-and-signing.md) | Driver build & signing toolchain notes | Infrastructure    |
+| [16-driver-packaging-and-signing.md](./docs/16-driver-packaging-and-signing.md) | Driver packaging, catalogs, WDK redist | Infrastructure    |
 | [16-d3d9ex-dwm-compatibility.md](./docs/16-d3d9ex-dwm-compatibility.md) | D3D9Ex surface + DWM requirements      | Graphics          |
 | [16-d3d10-11-translation.md](./docs/16-d3d10-11-translation.md)          | Direct3D 10/11 translation details     | Graphics          |
 | [16-perf-tracing.md](./docs/16-perf-tracing.md)                         | Chrome Trace/Perfetto export           | Performance       |
-| [16-windows7-driver-build-and-signing.md](./docs/16-windows7-driver-build-and-signing.md) | Driver build & signing toolchain notes | Infrastructure    |
 | [16-remote-disk-image-delivery.md](./docs/16-remote-disk-image-delivery.md) | Production delivery of disk bytes via object store + CDN + HTTP Range | I/O / Infra       |
 | [17-range-cdn-behavior.md](./docs/17-range-cdn-behavior.md)             | HTTP Range + CDN caching/limits        | Infrastructure    |
 | [17-disk-image-lifecycle-and-access-control.md](./docs/17-disk-image-lifecycle-and-access-control.md) | Hosted disk image uploads, ownership/sharing, leases, and writeback strategies | I/O / Infra       |
