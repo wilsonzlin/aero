@@ -26,6 +26,11 @@ extern "C" {
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 
+#define AEROGPU_DBGCTL_CONCAT2_(a, b) a##b
+#define AEROGPU_DBGCTL_CONCAT_(a, b) AEROGPU_DBGCTL_CONCAT2_(a, b)
+#define AEROGPU_DBGCTL_STATIC_ASSERT(expr) \
+  typedef char AEROGPU_DBGCTL_CONCAT_(aerogpu_dbgctl_static_assert_, __LINE__)[(expr) ? 1 : -1]
+
 enum aerogpu_dbgctl_selftest_error {
   AEROGPU_DBGCTL_SELFTEST_OK = 0,
   AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE = 1,
@@ -43,12 +48,17 @@ typedef struct aerogpu_escape_query_fence_out {
   aerogpu_u64 last_completed_fence;
 } aerogpu_escape_query_fence_out;
 
+/* Must remain stable across x86/x64. */
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_fence_out) == 32);
+
 typedef struct aerogpu_dbgctl_ring_desc {
   aerogpu_u64 fence;
   aerogpu_u64 desc_gpa;
   aerogpu_u32 desc_size_bytes;
   aerogpu_u32 flags;
 } aerogpu_dbgctl_ring_desc;
+
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_dbgctl_ring_desc) == 24);
 
 typedef struct aerogpu_escape_dump_ring_inout {
   aerogpu_escape_header hdr;
@@ -61,6 +71,8 @@ typedef struct aerogpu_escape_dump_ring_inout {
   aerogpu_dbgctl_ring_desc desc[AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS];
 } aerogpu_escape_dump_ring_inout;
 
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_dump_ring_inout) == (40 + (AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS * 24)));
+
 typedef struct aerogpu_escape_selftest_inout {
   aerogpu_escape_header hdr;
   aerogpu_u32 timeout_ms;
@@ -68,6 +80,8 @@ typedef struct aerogpu_escape_selftest_inout {
   aerogpu_u32 error_code;
   aerogpu_u32 reserved0;
 } aerogpu_escape_selftest_inout;
+
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_selftest_inout) == 32);
 
 #pragma pack(pop)
 
