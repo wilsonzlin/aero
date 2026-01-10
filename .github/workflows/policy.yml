@@ -1,0 +1,21 @@
+name: Policy
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  policy:
+    name: Repo policy (fixtures & binaries)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check repository policy
+        run: scripts/ci/check-repo-policy.sh
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_REF: ${{ github.sha }}

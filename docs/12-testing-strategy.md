@@ -683,6 +683,8 @@ jobs:
 
 ## Test Data Management
 
+**Important:** This repository must not include proprietary OS media (e.g., Windows ISOs/images) or other disallowed binary fixtures. Keep fixtures small and open-source, and prefer generating or downloading test assets during local/CI setup. See [Fixtures & Test Assets Policy](./FIXTURES.md).
+
 ### Disk Image Fixtures
 
 ```rust
