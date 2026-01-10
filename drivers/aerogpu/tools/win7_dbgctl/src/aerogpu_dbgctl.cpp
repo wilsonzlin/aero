@@ -335,6 +335,16 @@ int wmain(int argc, wchar_t **argv) {
     CMD_SELFTEST
   } cmd = CMD_NONE;
 
+  const auto SetCommand = [&](int newCmd) -> bool {
+    if (cmd != CMD_NONE) {
+      fwprintf(stderr, L"Multiple commands specified.\n");
+      PrintUsage();
+      return false;
+    }
+    cmd = (decltype(cmd))newCmd;
+    return true;
+  };
+
   for (int i = 1; i < argc; ++i) {
     const wchar_t *a = argv[i];
     if (wcscmp(a, L"--help") == 0 || wcscmp(a, L"-h") == 0 || wcscmp(a, L"/?") == 0) {
@@ -373,23 +383,33 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--query-version") == 0) {
-      cmd = (cmd == CMD_NONE) ? CMD_QUERY_VERSION : CMD_NONE;
+      if (!SetCommand(CMD_QUERY_VERSION)) {
+        return 1;
+      }
       continue;
     }
     if (wcscmp(a, L"--query-fence") == 0) {
-      cmd = (cmd == CMD_NONE) ? CMD_QUERY_FENCE : CMD_NONE;
+      if (!SetCommand(CMD_QUERY_FENCE)) {
+        return 1;
+      }
       continue;
     }
     if (wcscmp(a, L"--dump-ring") == 0) {
-      cmd = (cmd == CMD_NONE) ? CMD_DUMP_RING : CMD_NONE;
+      if (!SetCommand(CMD_DUMP_RING)) {
+        return 1;
+      }
       continue;
     }
     if (wcscmp(a, L"--selftest") == 0) {
-      cmd = (cmd == CMD_NONE) ? CMD_SELFTEST : CMD_NONE;
+      if (!SetCommand(CMD_SELFTEST)) {
+        return 1;
+      }
       continue;
     }
     if (wcscmp(a, L"--list-displays") == 0) {
-      cmd = (cmd == CMD_NONE) ? CMD_LIST_DISPLAYS : CMD_NONE;
+      if (!SetCommand(CMD_LIST_DISPLAYS)) {
+        return 1;
+      }
       continue;
     }
 
@@ -438,9 +458,6 @@ int wmain(int argc, wchar_t **argv) {
 
   int rc = 0;
   switch (cmd) {
-  case CMD_LIST_DISPLAYS:
-    rc = ListDisplays();
-    break;
   case CMD_QUERY_VERSION:
     rc = DoQueryVersion(&f, open.hAdapter);
     break;
