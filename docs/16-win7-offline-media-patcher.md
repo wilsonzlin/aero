@@ -16,6 +16,7 @@ The patcher **does not ship any Microsoft binaries/images**; it only edits the f
 
 - Windows host (recommended: Windows 10/11)
 - Administrator shell
+- Windows PowerShell 5.1+
 - Built-in tools available in `PATH`:
   - `dism.exe` (WIM mount/unmount)
   - `bcdedit.exe` (BCD store editing)
@@ -59,6 +60,11 @@ Set-ExecutionPolicy -Scope Process Bypass
   -PfxPassword 'password-here'
 ```
 
+Notes:
+
+- `.pem` files may contain multiple `BEGIN CERTIFICATE` blocks; the script injects **all** of them.
+- `.pfx` files may contain multiple certificates; the script injects **all unique thumbprints** found.
+
 ---
 
 ## What gets patched
@@ -74,6 +80,8 @@ On `{default}`:
 
 - `testsigning on`
 - `nointegritychecks on` (optional; defaults to on)
+
+If a given BCD store does not contain `{default}`, the script falls back to patching all `Windows Boot Loader` entries it finds via `bcdedit /enum all`.
 
 ### Offline registry hives inside WIM images
 
@@ -125,4 +133,3 @@ In the installed OS, the certificate should appear in both stores as well.
 
 - The script **modifies files in place**. Work on a copy of your extracted ISO directory if you want to preserve the original.
 - If a run is interrupted, you may need to clean up stuck WIM mounts manually (e.g. `dism /Cleanup-Wim`).
-

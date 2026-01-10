@@ -306,7 +306,7 @@ function Get-BcdWindowsBootLoaderGuids {
   return @($guids | Sort-Object -Unique)
 }
 
-function Get-CertificateDerBytes {
+function Get-CertificateDerBlobs {
   param(
     [Parameter(Mandatory = $true)]
     [string]$Path,
@@ -325,25 +325,33 @@ function Get-CertificateDerBytes {
     if ($matches.Count -eq 0) {
       throw "No PEM certificate blocks found in: $Path"
     }
-    if ($matches.Count -gt 1) {
-      Write-Log "Multiple PEM cert blocks found; using the first one: $Path" 'WARN'
+    foreach ($m in $matches) {
+      $b64 = $m.Groups['b64'].Value
+      $b64 = ($b64 -replace '\s', '')
+      Write-Output -NoEnumerate ([Convert]::FromBase64String($b64))
     }
-    $b64 = $matches[0].Groups['b64'].Value
-    $b64 = ($b64 -replace '\s', '')
-    return [Convert]::FromBase64String($b64)
+    return
   }
 
   if ($ext -eq '.pfx') {
     if ([string]::IsNullOrEmpty($PfxPassword)) {
       throw "CertPath is a .pfx but -PfxPassword was not provided: $Path"
     }
-    $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Path, $PfxPassword)
-    return $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
+    $coll = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
+    $flags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::DefaultKeySet
+    $coll.Import($Path, $PfxPassword, $flags)
+    if ($coll.Count -eq 0) {
+      throw "No certificates found in PFX: $Path"
+    }
+    foreach ($c in ($coll | Sort-Object Thumbprint -Unique)) {
+      Write-Output -NoEnumerate ($c.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+    }
+    return
   }
 
   # .cer / .crt / anything else X509Certificate2 can parse.
   $cert2 = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Path)
-  return $cert2.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
+  Write-Output -NoEnumerate ($cert2.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
 }
 
 function Get-CertificateThumbprintHex {
@@ -435,7 +443,7 @@ public static class OfflineCertInjector
                 );
 
                 if (hCertStore == IntPtr.Zero)
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "CertOpenStore(CERT_STORE_PROV_REG) failed");
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W) failed");
 
                 try
                 {
@@ -509,7 +517,7 @@ function Patch-MountedImage {
     [Parameter(Mandatory = $true)]
     [string]$MountDir,
     [Parameter(Mandatory = $true)]
-    [byte[]]$CertificateDer,
+    [byte[][]]$CertificateDers,
     [Parameter(Mandatory = $true)]
     [bool]$PatchBcdTemplate,
     [Parameter(Mandatory = $true)]
@@ -528,11 +536,13 @@ function Patch-MountedImage {
     Load-OfflineHive -HivePath $softwareHivePath -HiveName $hiveName
     $hiveLoaded = $true
 
-    Write-Log 'Injecting certificate into offline ROOT + TrustedPublisher stores'
-    $thumbprint = Get-CertificateThumbprintHex -CertificateDer $CertificateDer
-    Inject-CertIntoOfflineSoftwareHive -HiveName $hiveName -CertificateDer $CertificateDer
-    Assert-CertPresentInOfflineSoftwareHive -HiveName $hiveName -StoreName 'ROOT' -ThumbprintHex $thumbprint
-    Assert-CertPresentInOfflineSoftwareHive -HiveName $hiveName -StoreName 'TrustedPublisher' -ThumbprintHex $thumbprint
+    foreach ($certDer in $CertificateDers) {
+      $thumbprint = Get-CertificateThumbprintHex -CertificateDer $certDer
+      Write-Log "Injecting certificate into offline ROOT + TrustedPublisher stores (thumbprint=$thumbprint)"
+      Inject-CertIntoOfflineSoftwareHive -HiveName $hiveName -CertificateDer $certDer
+      Assert-CertPresentInOfflineSoftwareHive -HiveName $hiveName -StoreName 'ROOT' -ThumbprintHex $thumbprint
+      Assert-CertPresentInOfflineSoftwareHive -HiveName $hiveName -StoreName 'TrustedPublisher' -ThumbprintHex $thumbprint
+    }
   } finally {
     if ($hiveLoaded) {
       Write-Log "Unloading offline SOFTWARE hive: HKLM\\$hiveName"
@@ -576,7 +586,10 @@ foreach ($p in @($bootWimPath, $installWimPath, $biosBcdPath, $uefiBcdPath)) {
 Ensure-FileWritable -Path $bootWimPath
 Ensure-FileWritable -Path $installWimPath
 
-$certificateDer = Get-CertificateDerBytes -Path $certFull -PfxPassword $PfxPassword
+$certificateDers = @(Get-CertificateDerBlobs -Path $certFull -PfxPassword $PfxPassword)
+if ($certificateDers.Count -eq 0) {
+  throw "No certificates loaded from: $certFull"
+}
 
 $availableBootIndices = Get-WimIndices -WimFile $bootWimPath
 foreach ($idx in $PatchBootWimIndices) {
@@ -601,7 +614,7 @@ try {
         Mount-Wim -WimFile $bootWimPath -Index $idx -MountDir $mountDir
         $mounted = $true
 
-        Patch-MountedImage -MountDir $mountDir -CertificateDer $certificateDer -PatchBcdTemplate:$false -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
+        Patch-MountedImage -MountDir $mountDir -CertificateDers $certificateDers -PatchBcdTemplate:$false -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
         $commit = $true
       } finally {
         if ($mounted) {
@@ -639,7 +652,7 @@ try {
       Mount-Wim -WimFile $installWimPath -Index $idx -MountDir $mountDir
       $mounted = $true
 
-      Patch-MountedImage -MountDir $mountDir -CertificateDer $certificateDer -PatchBcdTemplate:$true -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
+      Patch-MountedImage -MountDir $mountDir -CertificateDers $certificateDers -PatchBcdTemplate:$true -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
       $commit = $true
     } finally {
       if ($mounted) {
