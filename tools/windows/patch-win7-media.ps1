@@ -254,6 +254,25 @@ function Get-BcdBootLoaderIdentifiersForBootWim {
   return @($bootWimEntries | Select-Object -ExpandProperty Identifier -Unique)
 }
 
+function Get-BcdGuidsFromStore {
+  param([Parameter(Mandatory)][string]$StorePath)
+
+  $output = Invoke-NativeCommandWithOutput -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/enum", "all", "/v")
+
+  # Avoid locale-specific parsing of bcdedit output by extracting GUID-shaped identifiers directly.
+  $guids = New-Object System.Collections.Generic.List[string]
+  foreach ($line in $output) {
+    foreach ($match in [regex]::Matches($line, '\{[0-9A-Fa-f\-]{36}\}')) {
+      $g = $match.Value
+      if (-not ($guids -contains $g)) {
+        $guids.Add($g) | Out-Null
+      }
+    }
+  }
+
+  return $guids.ToArray()
+}
+
 function Get-WimIndexList {
   param([Parameter(Mandatory)][string]$WimFile)
 
@@ -354,11 +373,18 @@ function Set-BcdFlagsForStore {
   Invoke-NativeCommand -FilePath "attrib.exe" -ArgumentList @("-h", "-s", "-r", $StorePath) -SuppressOutput
 
   $targets = @()
-  if ($OnlyBootWimLoaders) {
-    $targets = Get-BcdBootLoaderIdentifiersForBootWim -StorePath $StorePath
+  try {
+    if ($OnlyBootWimLoaders) {
+      $targets = Get-BcdBootLoaderIdentifiersForBootWim -StorePath $StorePath
+    }
+    else {
+      $targets = Get-BcdBootLoaderIdentifiers -StorePath $StorePath
+    }
   }
-  else {
-    $targets = Get-BcdBootLoaderIdentifiers -StorePath $StorePath
+  catch {
+    # If bcdedit output parsing fails (for example due to localization), fall back to other strategies below.
+    Write-Warning "[$StoreLabel] Failed to enumerate Windows Boot Loader entries via bcdedit output parsing. Falling back."
+    $targets = @()
   }
 
   if ($targets.Count -gt 0) {
@@ -374,24 +400,105 @@ function Set-BcdFlagsForStore {
     return
   }
 
-  # Fallback: for uncommon layouts where `bcdedit /enum all /v` doesn't expose the expected loader entries.
   Write-Warning "[$StoreLabel] Unable to locate Windows Boot Loader entries to patch. Falling back to {default}."
 
-  $defaultResult = Invoke-NativeCommandResult -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", "{default}", "testsigning", "on")
-  if ($defaultResult.ExitCode -ne 0) {
-    $outputText = ($defaultResult.Output | Out-String).Trim()
-    if ($outputText) {
-      throw "Failed to patch {default} in '$StorePath':`n$outputText"
+  $defaultResult = Invoke-NativeCommandResult -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", "{default}", "testsigning", "on") -SuppressOutput
+  if ($defaultResult.ExitCode -eq 0) {
+    if ($EnableNoIntegrityChecks) {
+      Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", "{default}", "nointegritychecks", "on")
     }
-    throw "Failed to patch {default} in '$StorePath' (exit code $($defaultResult.ExitCode))."
+
+    Write-Host "Verification hint:"
+    Write-Host ("  bcdedit /store {0} /enum all /v" -f (Format-Arg $StorePath))
+    return
   }
 
-  if ($EnableNoIntegrityChecks) {
-    Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", "{default}", "nointegritychecks", "on")
+  Write-Warning "[$StoreLabel] Failed to patch {default} in this store. Attempting GUID-based patching instead."
+  $outputText = ($defaultResult.Output | Out-String).Trim()
+  if ($outputText) {
+    Write-Warning $outputText
+  }
+
+  $guids = @()
+  if ($OnlyBootWimLoaders) {
+    try {
+      $output = Invoke-NativeCommandWithOutput -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/enum", "all", "/v")
+      $currentGuid = $null
+      $sectionHasBootWim = $false
+      for ($i = 0; $i -lt $output.Count; $i++) {
+        $line = $output[$i]
+        $trimmed = $line.Trim()
+        if (-not $trimmed) {
+          continue
+        }
+
+        $nextLine = $null
+        if ($i + 1 -lt $output.Count) {
+          $nextLine = $output[$i + 1].Trim()
+        }
+
+        if ($nextLine -and ($nextLine -match '^-+$')) {
+          if ($currentGuid -and $sectionHasBootWim -and (-not ($guids -contains $currentGuid))) {
+            $guids += $currentGuid
+          }
+          $currentGuid = $null
+          $sectionHasBootWim = $false
+          continue
+        }
+
+        if (-not $currentGuid) {
+          $m = [regex]::Match($line, '\{[0-9A-Fa-f\-]{36}\}')
+          if ($m.Success) {
+            $currentGuid = $m.Value
+          }
+        }
+
+        if ($line -match '(?i)\\sources\\boot\.wim') {
+          $sectionHasBootWim = $true
+        }
+      }
+      if ($currentGuid -and $sectionHasBootWim -and (-not ($guids -contains $currentGuid))) {
+        $guids += $currentGuid
+      }
+    }
+    catch {
+      $guids = @()
+    }
+  }
+
+  if ($guids.Count -eq 0) {
+    $guids = Get-BcdGuidsFromStore -StorePath $StorePath
+  }
+  if ($guids.Count -eq 0) {
+    throw "Unable to locate any GUIDs in '$StorePath'. Run: bcdedit /store $StorePath /enum all"
+  }
+
+  $patched = 0
+  $noIntegrityPatched = 0
+  foreach ($guid in $guids) {
+    $setResult = Invoke-NativeCommandResult -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", $guid, "testsigning", "on") -SuppressOutput
+    if ($setResult.ExitCode -ne 0) {
+      continue
+    }
+
+    $patched++
+    if ($EnableNoIntegrityChecks) {
+      $nicResult = Invoke-NativeCommandResult -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", $guid, "nointegritychecks", "on") -SuppressOutput
+      if ($nicResult.ExitCode -eq 0) {
+        $noIntegrityPatched++
+      }
+    }
+  }
+
+  if ($patched -eq 0) {
+    throw "Unable to patch testsigning in '$StorePath'. bcdedit failed for {default} and for all GUID entries found in /enum all output."
+  }
+  if ($EnableNoIntegrityChecks -and $noIntegrityPatched -eq 0) {
+    throw "Unable to patch nointegritychecks in '$StorePath'. testsigning was applied to $patched entry(ies), but nointegritychecks failed for all GUID entries."
   }
 
   Write-Host "Verification hint:"
-  Write-Host ("  bcdedit /store {0} /enum {{default}}" -f (Format-Arg $StorePath))
+  Write-Host ("  bcdedit /store {0} /enum all /v" -f (Format-Arg $StorePath))
 }
 
 function Find-MediaBcdStores {
