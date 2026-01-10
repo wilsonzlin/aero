@@ -15,6 +15,7 @@ pub mod hpet;
 pub mod ioapic;
 pub mod irq;
 pub mod rtc_cmos;
+pub mod i8042;
 
 pub use pic8259::DualPic8259;
 pub use pit8254::Pit8254;

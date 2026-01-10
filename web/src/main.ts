@@ -9,6 +9,8 @@ import { importFileToOpfs } from "./platform/opfs";
 import { RemoteStreamingDisk } from "./platform/remote_disk";
 import { requestWebGpuDevice } from "./platform/webgpu";
 import { initAeroStatusApi } from "./api/status";
+import { KeyboardCapture } from "./input/keyboard";
+import { MouseCapture } from "./input/mouse";
 import { installPerfHud } from "./perf/hud_entry";
 import { HEADER_INDEX_FRAME_COUNTER, HEADER_INDEX_HEIGHT, HEADER_INDEX_WIDTH, wrapSharedFramebuffer } from "./display/framebuffer_protocol";
 import { VgaPresenter } from "./display/vga_presenter";
@@ -127,6 +129,7 @@ function render(): void {
     renderOpfsPanel(),
     renderRemoteDiskPanel(),
     renderAudioPanel(),
+    renderInputPanel(),
     renderWorkersPanel(report),
     renderIpcDemoPanel(),
     renderMicrobenchPanel(),
@@ -623,6 +626,65 @@ function renderMicrobenchPanel(): HTMLElement {
       el("span", { class: "mono", text: "Runs deterministic WASM microbench hot paths (ALU, branch, memcpy, hash)." }),
     ),
     output,
+  );
+}
+
+function renderInputPanel(): HTMLElement {
+  const log = el("pre", { text: "" });
+  const canvas = el("canvas", {
+    width: "640",
+    height: "360",
+    tabindex: "0",
+    style: "border: 1px solid #444; background: #111; width: 640px; height: 360px;",
+  }) as HTMLCanvasElement;
+
+  const append = (line: string): void => {
+    log.textContent = `${log.textContent ?? ""}${line}\n`;
+    log.scrollTop = log.scrollHeight;
+  };
+
+  const keyboard = new KeyboardCapture(canvas, (bytes) => {
+    append(`kbd: ${bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ")}`);
+  });
+  keyboard.attach();
+
+  const mouse = new MouseCapture(
+    canvas,
+    (dx, dy, wheel) => {
+      if (wheel !== 0) {
+        append(`mouse: wheel=${wheel}`);
+        return;
+      }
+      if (dx !== 0 || dy !== 0) {
+        append(`mouse: dx=${dx} dy=${dy}`);
+      }
+    },
+    (button, pressed) => {
+      append(`mouse: button=${button} ${pressed ? "down" : "up"}`);
+    },
+  );
+  mouse.attach();
+
+  const hint = el("div", {
+    class: "mono",
+    text: "Click the canvas to focus + request pointer lock. Keyboard events are captured via KeyboardEvent.code.",
+  });
+
+  const clear = el("button", {
+    text: "Clear log",
+    onclick: () => {
+      log.textContent = "";
+    },
+  });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Input capture (PS/2 Set-2 scancodes)" }),
+    hint,
+    el("div", { class: "row" }, clear),
+    canvas,
+    log,
   );
 }
 
