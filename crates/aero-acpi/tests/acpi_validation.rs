@@ -49,6 +49,106 @@ fn read_u64_le(buf: &[u8], off: usize) -> u64 {
     ])
 }
 
+fn parse_pkg_length(bytes: &[u8], offset: usize) -> Option<(usize, usize)> {
+    let b0 = *bytes.get(offset)?;
+    let follow_bytes = (b0 >> 6) as usize;
+    let mut len: usize = (b0 & 0x3F) as usize;
+    for i in 0..follow_bytes {
+        let b = *bytes.get(offset + 1 + i)?;
+        len |= (b as usize) << (4 + i * 8);
+    }
+    Some((len, 1 + follow_bytes))
+}
+
+fn parse_integer(bytes: &[u8], offset: usize) -> Option<(u64, usize)> {
+    match *bytes.get(offset)? {
+        0x00 => Some((0, 1)), // ZeroOp
+        0x01 => Some((1, 1)), // OneOp
+        0x0A => Some((*bytes.get(offset + 1)? as u64, 2)), // BytePrefix
+        0x0B => Some((
+            u16::from_le_bytes(bytes.get(offset + 1..offset + 3)?.try_into().ok()?) as u64,
+            3,
+        )),
+        0x0C => Some((
+            u32::from_le_bytes(bytes.get(offset + 1..offset + 5)?.try_into().ok()?) as u64,
+            5,
+        )),
+        0x0E => Some((
+            u64::from_le_bytes(bytes.get(offset + 1..offset + 9)?.try_into().ok()?),
+            9,
+        )),
+        _ => None,
+    }
+}
+
+/// Parse the static `_PRT` package emitted by the DSDT AML.
+///
+/// Returns entries of the form: (PCI address, pin, GSI).
+fn parse_prt_entries(aml: &[u8]) -> Option<Vec<(u32, u8, u32)>> {
+    // Look for: NameOp (0x08) + NameSeg("_PRT")
+    let mut prt_off = None;
+    for i in 0..aml.len().saturating_sub(5) {
+        if aml[i] == 0x08 && &aml[i + 1..i + 5] == b"_PRT" {
+            prt_off = Some(i);
+            break;
+        }
+    }
+    let prt_off = prt_off?;
+
+    let mut offset = prt_off + 1 + 4;
+    if *aml.get(offset)? != 0x12 {
+        return None; // PackageOp
+    }
+    offset += 1;
+
+    let (pkg_len, pkg_len_bytes) = parse_pkg_length(aml, offset)?;
+    offset += pkg_len_bytes;
+    let pkg_end = offset + pkg_len;
+
+    let count = *aml.get(offset)? as usize;
+    offset += 1;
+
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        if *aml.get(offset)? != 0x12 {
+            return None;
+        }
+        offset += 1;
+        let (entry_len, entry_len_bytes) = parse_pkg_length(aml, offset)?;
+        offset += entry_len_bytes;
+        let entry_end = offset + entry_len;
+
+        let entry_count = *aml.get(offset)? as usize;
+        if entry_count != 4 {
+            return None;
+        }
+        offset += 1;
+
+        let (addr, addr_bytes) = parse_integer(aml, offset)?;
+        offset += addr_bytes;
+        let (pin, pin_bytes) = parse_integer(aml, offset)?;
+        offset += pin_bytes;
+        let (source, source_bytes) = parse_integer(aml, offset)?;
+        offset += source_bytes;
+        if source != 0 {
+            return None;
+        }
+        let (gsi, gsi_bytes) = parse_integer(aml, offset)?;
+        offset += gsi_bytes;
+
+        if offset != entry_end {
+            return None;
+        }
+        out.push((addr as u32, pin as u8, gsi as u32));
+    }
+
+    if offset != pkg_end {
+        return None;
+    }
+
+    Some(out)
+}
+
 #[derive(Debug)]
 struct SdtHeader {
     signature: [u8; 4],
@@ -75,6 +175,7 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     cfg.io_apic_addr = 0xFEC0_0000;
     cfg.hpet_addr = 0xFED0_0000;
     cfg.sci_irq = 9;
+    cfg.pirq_to_gsi = [20, 21, 22, 23];
 
     let placement = AcpiPlacement {
         tables_base: 0x0010_0000,
@@ -181,6 +282,19 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     assert!(aml.windows(4).any(|w| w == b"_PRT"));
     assert!(aml.windows(4).any(|w| w == b"RTC_"));
     assert!(aml.windows(4).any(|w| w == b"TIMR"));
+
+    let prt = parse_prt_entries(aml).expect("_PRT package should parse");
+    assert_eq!(prt.len(), 31 * 4);
+    let mut expected = Vec::new();
+    for dev in 1u32..=31 {
+        let addr = (dev << 16) | 0xFFFF;
+        for pin in 0u8..=3 {
+            let pirq = ((dev as usize) + (pin as usize)) & 3;
+            let gsi = cfg.pirq_to_gsi[pirq];
+            expected.push((addr, pin, gsi));
+        }
+    }
+    assert_eq!(prt, expected);
 
     // FACS signature/length.
     let facs = mem.read(tables.addresses.facs, 64);
