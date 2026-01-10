@@ -60,8 +60,19 @@ typedef struct _VIRTIO_PCI_MODERN_DEVICE {
     volatile virtio_pci_common_cfg *CommonCfg;
     volatile UCHAR *NotifyBase;
     ULONG NotifyOffMultiplier;
+    SIZE_T NotifyLength;
     volatile UCHAR *IsrStatus;
     volatile UCHAR *DeviceCfg;
+
+    /*
+     * Optional per-queue cached notify addresses.
+     *
+     * If provided by the caller, QueueNotifyAddrCache must point to an array
+     * of QueueNotifyAddrCacheCount entries, typically equal to CommonCfg->num_queues.
+     * Entries are populated on-demand by VirtioPciNotifyQueue().
+     */
+    volatile UINT16 **QueueNotifyAddrCache;
+    USHORT QueueNotifyAddrCacheCount;
 
     /*
      * The virtio_pci_common_cfg register block contains selector registers
@@ -289,5 +300,48 @@ VirtioPciWriteQueueEnable(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
 _IRQL_requires_max_(DISPATCH_LEVEL)
 VOID
 VirtioPciWriteQueueEnableLocked(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
-                                _In_ USHORT QueueIndex,
-                                _In_ BOOLEAN Enable);
+                                 _In_ USHORT QueueIndex,
+                                 _In_ BOOLEAN Enable);
+
+/*
+ * Virtqueue configuration + notification helpers (modern PCI transport).
+ *
+ * IRQL:
+ *  - VirtioPciNotifyQueue() may be called at DISPATCH_LEVEL (e.g. from a DPC).
+ *  - All helpers use the CommonCfg spin lock for selector serialization and are
+ *    safe at <= DISPATCH_LEVEL.
+ */
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+USHORT
+VirtioPciGetNumQueues(_In_ VIRTIO_PCI_DEVICE *Dev);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+VirtioPciGetQueueSize(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex, _Out_ USHORT *SizeOut);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+VirtioPciSetupQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev,
+                    _In_ USHORT QueueIndex,
+                    _In_ ULONGLONG DescPa,
+                    _In_ ULONGLONG AvailPa,
+                    _In_ ULONGLONG UsedPa);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtioPciDisableQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+VirtioPciGetQueueNotifyAddress(_Inout_ VIRTIO_PCI_DEVICE *Dev,
+                               _In_ USHORT QueueIndex,
+                               _Out_ volatile UINT16 **NotifyAddrOut);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtioPciNotifyQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtioPciDumpQueueState(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex);

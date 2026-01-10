@@ -31,8 +31,18 @@ VirtioPciModernUnmapBars(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev)
     Dev->CommonCfg = NULL;
     Dev->NotifyBase = NULL;
     Dev->NotifyOffMultiplier = 0;
+    Dev->NotifyLength = 0;
     Dev->IsrStatus = NULL;
     Dev->DeviceCfg = NULL;
+
+    /*
+     * Any cached notify addresses point into the NOTIFY capability mapping.
+     * Invalidate the cache when BARs are unmapped (PnP stop/start).
+     */
+    if (Dev->QueueNotifyAddrCache != NULL && Dev->QueueNotifyAddrCacheCount != 0) {
+        RtlZeroMemory((PVOID)Dev->QueueNotifyAddrCache,
+                      (SIZE_T)Dev->QueueNotifyAddrCacheCount * sizeof(Dev->QueueNotifyAddrCache[0]));
+    }
 
     for (i = 0; i < VIRTIO_PCI_MAX_BARS; i++) {
         if (Dev->Bars[i].Va != NULL) {
@@ -401,7 +411,8 @@ VirtioPciModernMapBars(
         return status;
     }
 
-    status = VirtioPciModernValidateCapInBar(Dev, &Dev->Caps.NotifyCfg, 1, "NOTIFY_CFG");
+    /* Notify register writes are 16-bit MMIO. */
+    status = VirtioPciModernValidateCapInBar(Dev, &Dev->Caps.NotifyCfg, sizeof(USHORT), "NOTIFY_CFG");
     if (!NT_SUCCESS(status)) {
         VirtioPciModernUnmapBars(Dev);
         return status;
@@ -476,6 +487,7 @@ VirtioPciModernMapBars(
     Dev->NotifyBase = (volatile UCHAR *)((PUCHAR)Dev->Bars[Dev->Caps.NotifyCfg.Bar].Va +
                                          Dev->Caps.NotifyCfg.Offset);
     Dev->NotifyOffMultiplier = Dev->Caps.NotifyOffMultiplier;
+    Dev->NotifyLength = (SIZE_T)Dev->Caps.NotifyCfg.Length;
     Dev->IsrStatus = (volatile UCHAR *)((PUCHAR)Dev->Bars[Dev->Caps.IsrCfg.Bar].Va + Dev->Caps.IsrCfg.Offset);
     Dev->DeviceCfg =
         (volatile UCHAR *)((PUCHAR)Dev->Bars[Dev->Caps.DeviceCfg.Bar].Va + Dev->Caps.DeviceCfg.Offset);
@@ -1251,4 +1263,234 @@ VirtioPciWriteDeviceConfig(_Inout_ PVIRTIO_PCI_DEVICE Dev,
 
     KeMemoryBarrier();
     return STATUS_SUCCESS;
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+USHORT
+VirtioPciGetNumQueues(_In_ VIRTIO_PCI_DEVICE *Dev)
+{
+    if (Dev == NULL || Dev->CommonCfg == NULL) {
+        return 0;
+    }
+
+    return READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->num_queues);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+VirtioPciGetQueueSize(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex, _Out_ USHORT *SizeOut)
+{
+    USHORT size;
+
+    if (SizeOut == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *SizeOut = 0;
+
+    if (Dev == NULL || Dev->CommonCfg == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    VirtioPciCommonCfgLock(Dev);
+    size = VirtioPciReadQueueSizeLocked(Dev, QueueIndex);
+    VirtioPciCommonCfgUnlock(Dev);
+
+    if (size == 0) {
+        return STATUS_NOT_FOUND;
+    }
+
+    *SizeOut = size;
+    return STATUS_SUCCESS;
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+VirtioPciSetupQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev,
+                    _In_ USHORT QueueIndex,
+                    _In_ ULONGLONG DescPa,
+                    _In_ ULONGLONG AvailPa,
+                    _In_ ULONGLONG UsedPa)
+{
+    NTSTATUS status;
+    USHORT size;
+    USHORT enabled;
+
+    if (Dev == NULL || Dev->CommonCfg == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    status = STATUS_SUCCESS;
+    enabled = 0;
+
+    VirtioPciCommonCfgLock(Dev);
+
+    VirtioPciSelectQueueLocked(Dev, QueueIndex);
+
+    size = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_size);
+    if (size == 0) {
+        status = STATUS_NOT_FOUND;
+        goto Exit;
+    }
+
+    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_desc_lo, (ULONG)(DescPa & 0xFFFFFFFFui64));
+    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_desc_hi, (ULONG)(DescPa >> 32));
+
+    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_avail_lo, (ULONG)(AvailPa & 0xFFFFFFFFui64));
+    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_avail_hi, (ULONG)(AvailPa >> 32));
+
+    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_used_lo, (ULONG)(UsedPa & 0xFFFFFFFFui64));
+    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_used_hi, (ULONG)(UsedPa >> 32));
+
+    /*
+     * The device must observe the ring addresses before queue_enable is set.
+     */
+    KeMemoryBarrier();
+
+    WRITE_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_enable, 1);
+
+    /* Optional readback confirmation. */
+    enabled = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_enable);
+    if (enabled != 1) {
+        status = STATUS_IO_DEVICE_ERROR;
+        goto Exit;
+    }
+
+Exit:
+    VirtioPciCommonCfgUnlock(Dev);
+    return status;
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtioPciDisableQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex)
+{
+    if (Dev == NULL || Dev->CommonCfg == NULL) {
+        return;
+    }
+
+    VirtioPciCommonCfgLock(Dev);
+    VirtioPciSelectQueueLocked(Dev, QueueIndex);
+    WRITE_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_enable, 0);
+    KeMemoryBarrier();
+    VirtioPciCommonCfgUnlock(Dev);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+VirtioPciGetQueueNotifyAddress(_Inout_ VIRTIO_PCI_DEVICE *Dev,
+                               _In_ USHORT QueueIndex,
+                               _Out_ volatile UINT16 **NotifyAddrOut)
+{
+    USHORT notifyOff;
+    ULONGLONG offset;
+
+    if (NotifyAddrOut == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *NotifyAddrOut = NULL;
+
+    if (Dev == NULL || Dev->CommonCfg == NULL || Dev->NotifyBase == NULL || Dev->NotifyOffMultiplier == 0 ||
+        Dev->NotifyLength < sizeof(UINT16)) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    VirtioPciCommonCfgLock(Dev);
+    notifyOff = VirtioPciReadQueueNotifyOffsetLocked(Dev, QueueIndex);
+    VirtioPciCommonCfgUnlock(Dev);
+
+    offset = (ULONGLONG)notifyOff * (ULONGLONG)Dev->NotifyOffMultiplier;
+    if (offset + sizeof(UINT16) > Dev->NotifyLength) {
+        return STATUS_IO_DEVICE_ERROR;
+    }
+
+    *NotifyAddrOut = (volatile UINT16 *)((volatile UCHAR *)Dev->NotifyBase + offset);
+    return STATUS_SUCCESS;
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtioPciNotifyQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex)
+{
+    volatile UINT16 *notifyAddr;
+
+    if (Dev == NULL) {
+        return;
+    }
+
+    notifyAddr = NULL;
+    if (Dev->QueueNotifyAddrCache != NULL && QueueIndex < Dev->QueueNotifyAddrCacheCount) {
+        notifyAddr = Dev->QueueNotifyAddrCache[QueueIndex];
+    }
+
+    if (notifyAddr == NULL) {
+        if (!NT_SUCCESS(VirtioPciGetQueueNotifyAddress(Dev, QueueIndex, &notifyAddr))) {
+            return;
+        }
+
+        if (Dev->QueueNotifyAddrCache != NULL && QueueIndex < Dev->QueueNotifyAddrCacheCount) {
+            Dev->QueueNotifyAddrCache[QueueIndex] = notifyAddr;
+        }
+    }
+
+    WRITE_REGISTER_USHORT((volatile USHORT *)notifyAddr, QueueIndex);
+
+    /* Compiler/CPU barrier after notify write (hot path, safe at DISPATCH_LEVEL). */
+    KeMemoryBarrier();
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtioPciDumpQueueState(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex)
+{
+    USHORT size;
+    USHORT notifyOff;
+    USHORT enable;
+    UINT64 desc;
+    UINT64 avail;
+    UINT64 used;
+    ULONGLONG notifyOffsetBytes;
+
+    if (Dev == NULL || Dev->CommonCfg == NULL) {
+        return;
+    }
+
+    size = 0;
+    notifyOff = 0;
+    enable = 0;
+    desc = 0;
+    avail = 0;
+    used = 0;
+    notifyOffsetBytes = 0;
+
+    VirtioPciCommonCfgLock(Dev);
+
+    VirtioPciSelectQueueLocked(Dev, QueueIndex);
+
+    size = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_size);
+    notifyOff = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_notify_off);
+    enable = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_enable);
+
+    desc = (UINT64)READ_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_desc_lo) |
+           ((UINT64)READ_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_desc_hi) << 32);
+
+    avail = (UINT64)READ_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_avail_lo) |
+            ((UINT64)READ_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_avail_hi) << 32);
+
+    used = (UINT64)READ_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_used_lo) |
+           ((UINT64)READ_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_used_hi) << 32);
+
+    VirtioPciCommonCfgUnlock(Dev);
+
+    notifyOffsetBytes = (ULONGLONG)notifyOff * (ULONGLONG)Dev->NotifyOffMultiplier;
+
+    VIRTIO_CORE_PRINT(
+        "queue[%u]: size=%u enable=%u notify_off=%u (byte_off=0x%I64x) desc=0x%I64x avail=0x%I64x used=0x%I64x\n",
+        QueueIndex,
+        size,
+        enable,
+        notifyOff,
+        notifyOffsetBytes,
+        desc,
+        avail,
+        used);
 }

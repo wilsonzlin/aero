@@ -60,30 +60,49 @@
  * Virtio PCI "common configuration" structure (virtio spec:
  * "Virtio Over PCI Bus -> Common configuration structure").
  *
- * Note: The spec defines 64-bit queue addresses, but using 32-bit lo/hi fields
- * avoids unaligned 64-bit MMIO accesses on Windows.
+ * Note: The spec defines 64-bit queue addresses. This struct exposes both the
+ * 64-bit fields and 32-bit lo/hi views so code can safely use 32-bit MMIO
+ * accessors on WDK7.
  */
 typedef struct virtio_pci_common_cfg {
-    ULONG device_feature_select; /* read-write */
-    ULONG device_feature;        /* read-only  */
-    ULONG driver_feature_select; /* read-write */
-    ULONG driver_feature;        /* read-write */
-    USHORT msix_config;          /* read-write */
-    USHORT num_queues;           /* read-only  */
-    UCHAR device_status;         /* read-write */
-    UCHAR config_generation;     /* read-only  */
+    UINT32 device_feature_select; /* read-write */
+    UINT32 device_feature;        /* read-only  */
+    UINT32 driver_feature_select; /* read-write */
+    UINT32 driver_feature;        /* read-write */
+    UINT16 msix_config;           /* read-write */
+    UINT16 num_queues;            /* read-only  */
+    UINT8 device_status;          /* read-write */
+    UINT8 config_generation;      /* read-only  */
 
-    USHORT queue_select;      /* read-write */
-    USHORT queue_size;        /* read-only  */
-    USHORT queue_msix_vector; /* read-write */
-    USHORT queue_enable;      /* read-write */
-    USHORT queue_notify_off;  /* read-only  */
-    ULONG queue_desc_lo;      /* read-write */
-    ULONG queue_desc_hi;      /* read-write */
-    ULONG queue_avail_lo;     /* read-write */
-    ULONG queue_avail_hi;     /* read-write */
-    ULONG queue_used_lo;      /* read-write */
-    ULONG queue_used_hi;      /* read-write */
+    UINT16 queue_select;      /* read-write */
+    UINT16 queue_size;        /* read-only  */
+    UINT16 queue_msix_vector; /* read-write */
+    UINT16 queue_enable;      /* read-write */
+    UINT16 queue_notify_off;  /* read-only  */
+
+    union {
+        UINT64 queue_desc; /* read-write (virtio spec: __le64 queue_desc) */
+        struct {
+            UINT32 queue_desc_lo; /* read-write */
+            UINT32 queue_desc_hi; /* read-write */
+        };
+    };
+
+    union {
+        UINT64 queue_avail; /* read-write (virtio spec: __le64 queue_avail) */
+        struct {
+            UINT32 queue_avail_lo; /* read-write */
+            UINT32 queue_avail_hi; /* read-write */
+        };
+    };
+
+    union {
+        UINT64 queue_used; /* read-write (virtio spec: __le64 queue_used) */
+        struct {
+            UINT32 queue_used_lo; /* read-write */
+            UINT32 queue_used_hi; /* read-write */
+        };
+    };
 } virtio_pci_common_cfg, *Pvirtio_pci_common_cfg;
 
 #pragma pack(pop)
@@ -105,10 +124,13 @@ C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_size) == 0x18);
 C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_msix_vector) == 0x1A);
 C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_enable) == 0x1C);
 C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_notify_off) == 0x1E);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_desc) == 0x20);
 C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_desc_lo) == 0x20);
 C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_desc_hi) == 0x24);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_avail) == 0x28);
 C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_avail_lo) == 0x28);
 C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_avail_hi) == 0x2C);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_used) == 0x30);
 C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_used_lo) == 0x30);
 C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_used_hi) == 0x34);
 C_ASSERT(sizeof(virtio_pci_common_cfg) == 0x38);
