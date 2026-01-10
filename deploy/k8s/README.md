@@ -205,3 +205,25 @@ Egress is highly environment-specific:
 
 - If `aero-gateway` needs to open arbitrary outbound TCP connections (typical for a TCP proxy), you may need to allow broad egress.
 - If you can constrain destination IP ranges/ports, populate `networkPolicy.egress.allowedCIDRs` accordingly.
+
+### Example: allow public internet, block private ranges
+
+If your CNI supports `NetworkPolicy` and you want to reduce SSRF blast radius, you can allow `0.0.0.0/0` but exclude private and special-use ranges.
+
+Create a local values file snippet like:
+
+```yaml
+networkPolicy:
+  enabled: true
+  egress:
+    allowedCIDRs:
+      - 0.0.0.0/0
+    exceptCIDRs:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - 127.0.0.0/8
+      - 169.254.0.0/16
+```
+
+Note: You may need to also exclude your cluster Pod/Service CIDRs if they are routable from the gateway nodes.

@@ -49,5 +49,11 @@ spec:
     - to:
         - ipBlock:
             cidr: {{ $cidr | quote }}
+            {{- if $.Values.networkPolicy.egress.exceptCIDRs }}
+            except:
+              {{- range $except := $.Values.networkPolicy.egress.exceptCIDRs }}
+              - {{ $except | quote }}
+              {{- end }}
+            {{- end }}
     {{- end }}
 {{- end }}
