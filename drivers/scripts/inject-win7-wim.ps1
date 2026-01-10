@@ -142,10 +142,13 @@ function Try-Invoke-WinOfflineCertInjector {
     return $false
   }
 
-  $args = @("--windows-dir", $WindowsDir, "--cert", $CertPath)
+  # Our native injector uses CryptoAPI to write the registry-backed certificate store entries
+  # (including the correct `Blob` REG_BINARY values), and edits the offline SOFTWARE hive in-place.
+  $args = @("--windows-dir", $WindowsDir)
   foreach ($store in $Stores) {
     $args += @("--store", $store)
   }
+  $args += @($CertPath)
 
   & win-offline-cert-injector @args | Out-Host
   if ($LASTEXITCODE -ne 0) {
