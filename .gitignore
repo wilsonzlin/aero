@@ -46,6 +46,7 @@ node_modules/
 coverage/
 dist/
 build/
+build-*/
 out/
 pkg/
 target/

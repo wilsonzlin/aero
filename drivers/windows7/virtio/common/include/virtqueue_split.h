@@ -13,17 +13,31 @@
 #include "virtio_os.h"
 
 /* virtio ring feature bits (in the device/driver feature bitmap). */
+#ifndef VIRTIO_RING_F_INDIRECT_DESC
 #define VIRTIO_RING_F_INDIRECT_DESC (1u << 28)
+#endif
+#ifndef VIRTIO_RING_F_EVENT_IDX
 #define VIRTIO_RING_F_EVENT_IDX (1u << 29)
+#endif
 
 /* Split ring descriptor flags. */
+#ifndef VRING_DESC_F_NEXT
 #define VRING_DESC_F_NEXT 1u
+#endif
+#ifndef VRING_DESC_F_WRITE
 #define VRING_DESC_F_WRITE 2u
+#endif
+#ifndef VRING_DESC_F_INDIRECT
 #define VRING_DESC_F_INDIRECT 4u
+#endif
 
 /* Split ring avail/used flags. */
+#ifndef VRING_AVAIL_F_NO_INTERRUPT
 #define VRING_AVAIL_F_NO_INTERRUPT 1u
+#endif
+#ifndef VRING_USED_F_NO_NOTIFY
 #define VRING_USED_F_NO_NOTIFY 1u
+#endif
 
 typedef struct vring_desc {
     uint64_t addr;

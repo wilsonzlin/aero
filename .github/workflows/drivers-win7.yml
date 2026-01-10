@@ -36,6 +36,24 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Run virtio common host tests (CMake)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!(Test-Path -LiteralPath 'drivers/windows7/virtio/common/tests/CMakeLists.txt')) {
+            Write-Host "No drivers/windows7/virtio/common/tests found; skipping virtio common tests."
+            exit 0
+          }
+
+          # Validate both architectures (x86 + x64) without requiring any VM.
+          cmake -S . -B build-virtio-common-x64 -A x64 -DAERO_VIRTIO_BUILD_TESTS=ON
+          cmake --build build-virtio-common-x64 --config Release
+          ctest --test-dir build-virtio-common-x64 --output-on-failure -C Release
+
+          cmake -S . -B build-virtio-common-x86 -A Win32 -DAERO_VIRTIO_BUILD_TESTS=ON
+          cmake --build build-virtio-common-x86 --config Release
+          ctest --test-dir build-virtio-common-x86 --output-on-failure -C Release
+
       - name: Detect driver projects
         id: detect
         shell: pwsh

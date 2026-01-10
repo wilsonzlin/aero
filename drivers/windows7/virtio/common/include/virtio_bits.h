@@ -14,6 +14,7 @@
 #define VIRTIO_STATUS_DRIVER      0x02
 #define VIRTIO_STATUS_DRIVER_OK   0x04
 #define VIRTIO_STATUS_FEATURES_OK 0x08
+#define VIRTIO_STATUS_DEVICE_NEEDS_RESET 0x40
 #define VIRTIO_STATUS_FAILED      0x80
 
 // Virtqueue/ring feature bits (legacy/split virtqueues).
@@ -23,4 +24,3 @@
 // Common "legacy" feature bits (lower 32 bits).
 #define VIRTIO_F_NOTIFY_ON_EMPTY (1u << 24)
 #define VIRTIO_F_ANY_LAYOUT      (1u << 27)
-
