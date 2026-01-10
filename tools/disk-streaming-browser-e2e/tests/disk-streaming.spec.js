@@ -28,11 +28,19 @@ test.describe('disk streaming COOP/COEP + Range + auth', () => {
     privateFixtureBytes = await readFile(fixturePath('secret.img'));
 
     app = await startAppServer();
-    disk = await startDiskGatewayServer({
-      appOrigin: app.origin,
-      publicFixturePath: fixturePath('win7.img'),
-      privateFixturePath: fixturePath('secret.img'),
-    });
+    try {
+      disk = await startDiskGatewayServer({
+        appOrigin: app.origin,
+        publicFixturePath: fixturePath('win7.img'),
+        privateFixturePath: fixturePath('secret.img'),
+      });
+    } catch (err) {
+      // If disk-gateway fails to start, ensure the app server isn't left running
+      // (Playwright may abort before `afterAll` runs).
+      await app.close().catch(() => {});
+      app = null;
+      throw err;
+    }
   });
 
   test.afterAll(async () => {
