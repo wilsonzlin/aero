@@ -684,11 +684,21 @@ Users can also clear the cache via browser site data controls (e.g., DevTools â†
 
 ### Worker Architecture
 
+#### Atomics wait/notify on the web (important)
+
+- `Atomics.wait()` is **not permitted on the Window (main/UI) thread** because it blocks the event loop and would freeze rendering/input. Browsers either throw or disallow it.
+- On the main thread we use **non-blocking** waits:
+  - Prefer `Atomics.waitAsync()` when available (woken by `Atomics.notify()` with low latency).
+  - Fall back to a **polling loop** (e.g. `requestAnimationFrame`/timer) when `waitAsync` is unavailable.
+- Workers should still use `Atomics.notify()` after mutating shared flags/queues; additionally, workers can `postMessage({type:'queue-notify'})` as a coarse hint so the coordinator polls shared queues sooner (especially important in the polling fallback).
+
 ```javascript
 // Main thread coordinator
-class WorkerCoordinator {
-    constructor() {
-        this.cpuWorker = new Worker('cpu-worker.js', { type: 'module' });
+import { waitUntilNotEqual } from './runtime/atomics_wait.js';
+
+ class WorkerCoordinator {
+     constructor() {
+         this.cpuWorker = new Worker('cpu-worker.js', { type: 'module' });
         this.gpuWorker = new Worker('gpu-worker.js', { type: 'module' });
         this.ioWorker = new Worker('io-worker.js', { type: 'module' });
         this.jitWorker = new Worker('jit-worker.js', { type: 'module' });
@@ -710,27 +720,33 @@ class WorkerCoordinator {
         this.statusFlags = new Int32Array(this.stateSab, 0, 256);
 
         // Initialize workers with shared memory
-        [this.cpuWorker, this.gpuWorker, this.ioWorker, this.jitWorker].forEach(worker => {
-            worker.postMessage({
-                type: 'init',
-                guestMemory: this.guestMemory,
-                stateSab: this.stateSab,
-                cmdSab: this.cmdSab,
-                eventSab: this.eventSab,
-            });
-        });
-    }
-    
-    // Note: Atomics.wait() is only allowed in workers. The main thread can use
-    // Atomics.waitAsync() (where available) or poll/await messages.
-    
-    // Signal CPU to resume
-    signalCpu() {
-        Atomics.store(this.statusFlags, STATUS_CPU_RUNNING, 1);
+         [this.cpuWorker, this.gpuWorker, this.ioWorker, this.jitWorker].forEach(worker => {
+             worker.postMessage({
+                 type: 'init',
+                 guestMemory: this.guestMemory,
+                 stateSab: this.stateSab,
+                 cmdSab: this.cmdSab,
+                 eventSab: this.eventSab,
+             });
+         });
+     }
+     }
+     
+     // Wait for CPU worker without blocking the UI thread.
+     //
+     // Note: Atomics.wait() is only allowed in workers. The main thread must use
+     // Atomics.waitAsync() (where available) or poll/await messages.
+     async waitForCpu({ timeoutMs } = {}) {
+         return waitUntilNotEqual(this.statusFlags, STATUS_CPU_RUNNING, 1, { timeoutMs });
+     }
+     
+     // Signal CPU to resume
+     signalCpu() {
+         Atomics.store(this.statusFlags, STATUS_CPU_RUNNING, 1);
         Atomics.notify(this.statusFlags, STATUS_CPU_RUNNING, 1);
     }
-}
-```
+ }
+ ```
 
 ### CPU Worker
 
@@ -779,14 +795,15 @@ function runEmulationLoop() {
             self.postMessage({ type: 'interrupt', vector: result.vector });
         }
         
-        // Check if we need to wait
-        if (result.halted) {
-            Atomics.store(statusFlags, STATUS_CPU_RUNNING, 0);
-            Atomics.wait(statusFlags, STATUS_CPU_RUNNING, 0);
-        }
-    }
-}
-```
+         // Check if we need to wait
+         if (result.halted) {
+             Atomics.store(statusFlags, STATUS_CPU_RUNNING, 0);
+             Atomics.notify(statusFlags, STATUS_CPU_RUNNING, 1);
+             Atomics.wait(statusFlags, STATUS_CPU_RUNNING, 0);
+         }
+     }
+ }
+ ```
 
 ---
 

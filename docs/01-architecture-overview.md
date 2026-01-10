@@ -340,7 +340,6 @@ write a **wrap marker** (`payload_len = 0xFFFF_FFFF`) and advance to the next
 segment start.
 
 ### Synchronization Primitives
-
 Queues are implemented as a **bounded variable-length MPSC/SPSC ring buffer**
 with:
 

@@ -23,10 +23,10 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
   setReadyFlag(status, role, true);
   ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
 
-  runLoop();
+  void runLoop();
 };
 
-function runLoop(): void {
+async function runLoop(): Promise<void> {
   while (true) {
     while (true) {
       const bytes = commandRing.pop();
@@ -39,7 +39,7 @@ function runLoop(): void {
     }
 
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
-    commandRing.waitForData();
+    await commandRing.waitForData();
   }
 
   setReadyFlag(status, role, false);

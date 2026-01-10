@@ -1,3 +1,5 @@
+import { notify, waitUntilNotEqual } from "./atomics_wait";
+
 /**
  * Lock-free single-producer/single-consumer (SPSC) ring buffer implemented over a
  * SharedArrayBuffer using Atomics for cross-thread visibility.
@@ -33,6 +35,10 @@ const META_BYTES = META_INTS * 4;
 
 const HEAD_INDEX = 0;
 const TAIL_INDEX = 1;
+
+function nowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+}
 
 export class RingBuffer {
   static readonly META_BYTES = META_BYTES;
@@ -107,7 +113,7 @@ export class RingBuffer {
     this.writeBytes(this.advance(head, 4), payload);
 
     Atomics.store(this.meta, HEAD_INDEX, this.advance(head, totalBytes));
-    Atomics.notify(this.meta, HEAD_INDEX, 1);
+    notify(this.meta, HEAD_INDEX, 1);
     return true;
   }
 
@@ -144,23 +150,26 @@ export class RingBuffer {
   }
 
   /**
-   * Block until new data is available.
+   * Wait until new data is available.
    *
-   * This is only valid in a Worker context; calling it on the main thread will
-   * block the UI (or throw in browsers that disallow it).
+   * - In Workers: uses blocking `Atomics.wait()` for efficiency.
+   * - On the browser main thread: uses `Atomics.waitAsync()` when available, or
+   *   a polling fallback, so the UI thread never blocks.
    */
-  waitForData(timeoutMs?: number): AtomicsWaitResult {
-    // Important: never call `Atomics.wait` if the ring is already non-empty.
-    // Otherwise we can miss messages that arrive between "drain" and "wait",
-    // leading to deadlocks (e.g. waiting for head to change when head already
-    // includes unread data).
+  async waitForData(timeoutMs?: number): Promise<AtomicsWaitResult> {
+    const start = timeoutMs === undefined ? 0 : nowMs();
+
+    // Important: never wait if the ring is already non-empty. Otherwise we can
+    // miss messages that arrive between "drain" and "wait", leading to deadlocks
+    // (e.g. waiting for head to change when head already includes unread data).
     while (true) {
       const head = Atomics.load(this.meta, HEAD_INDEX);
       const tail = Atomics.load(this.meta, TAIL_INDEX);
       if (head !== tail) return "not-equal";
 
-      const result = Atomics.wait(this.meta, HEAD_INDEX, head, timeoutMs) as AtomicsWaitResult;
-      if (result !== "not-equal") return result;
+      const remaining = timeoutMs === undefined ? undefined : Math.max(0, timeoutMs - (nowMs() - start));
+      const result = await waitUntilNotEqual(this.meta, HEAD_INDEX, head, { timeoutMs: remaining });
+      if (result === "timed-out") return "timed-out";
       // Head changed between load and wait; loop and re-check emptiness.
     }
   }
@@ -194,7 +203,7 @@ export class RingBuffer {
   }
 
   notifyData(count = 1): number {
-    return Atomics.notify(this.meta, HEAD_INDEX, count);
+    return notify(this.meta, HEAD_INDEX, count);
   }
 
   private advance(pos: number, delta: number): number {
@@ -248,3 +257,4 @@ export class RingBuffer {
     }
   }
 }
+

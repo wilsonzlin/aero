@@ -71,11 +71,7 @@ export class WorkerCoordinator {
 
     for (const role of WORKER_ROLES) {
       const regions = ringRegionsForWorker(role);
-      const commandRing = new RingBuffer(
-        segments.control,
-        regions.command.byteOffset,
-        regions.command.byteLength,
-      );
+      const commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
       const eventRing = new RingBuffer(segments.control, regions.event.byteOffset, regions.event.byteLength);
       commandRing.reset();
       eventRing.reset();

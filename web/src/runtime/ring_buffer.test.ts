@@ -122,14 +122,14 @@ describe("RingBuffer", () => {
     expect(Atomics.load(ring.meta, 1)).toBe(8);
   });
 
-  it("waitForData returns immediately when data is already available", () => {
+  it("waitForData returns immediately when data is already available", async () => {
     const ring = makeRing(64);
     expect(ring.push(bytes(1, 2, 3))).toBe(true);
 
     // If this were to call Atomics.wait while the ring is non-empty, it could
     // block indefinitely on the main thread. The implementation should return
     // immediately.
-    expect(ring.waitForData(0)).toBe("not-equal");
+    expect(await ring.waitForData(0)).toBe("not-equal");
     expect(Array.from(ring.pop() ?? [])).toEqual([1, 2, 3]);
   });
 
