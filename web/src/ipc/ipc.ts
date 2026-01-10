@@ -1,5 +1,5 @@
-import { IPC_MAGIC, IPC_VERSION, RECORD_ALIGN, alignUp, ipcHeader, queueDesc, ringCtrl } from "./layout";
-import { RingBuffer } from "./ring_buffer";
+import { IPC_MAGIC, IPC_VERSION, RECORD_ALIGN, alignUp, ipcHeader, queueDesc, ringCtrl } from "./layout.ts";
+import { RingBuffer } from "./ring_buffer.ts";
 
 export type IpcQueueSpec = Readonly<{
   kind: number;
@@ -161,4 +161,3 @@ export function openRingByKind(
   }
   throw new IpcLayoutError(`queue kind ${kind} not found`);
 }
-

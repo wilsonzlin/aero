@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { queueKind } from "./layout";
-import { IpcLayoutError, createIpcBuffer, openRingByKind, parseIpcBuffer } from "./ipc";
+import { queueKind } from "./layout.ts";
+import { IpcLayoutError, createIpcBuffer, openRingByKind, parseIpcBuffer } from "./ipc.ts";
 
 describe("ipc/ipc layout", () => {
   it("creates and parses a buffer with queue descriptors", () => {
@@ -31,4 +31,3 @@ describe("ipc/ipc layout", () => {
     expect(() => parseIpcBuffer(buffer)).toThrow(IpcLayoutError);
   });
 });
-

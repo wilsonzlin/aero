@@ -8,53 +8,23 @@ test("CPU↔IO AIPC: i8042 port I/O roundtrip in browser workers", async ({ page
       throw new Error("test requires crossOriginIsolated + SharedArrayBuffer");
     }
 
-    const { alignUp, ringCtrl } = await import("/web/src/ipc/layout.ts");
+    const { createIpcBuffer } = await import("/web/src/ipc/ipc.ts");
+    const { queueKind } = await import("/web/src/ipc/layout.ts");
 
-    const CMD_CAP = 1 << 16;
-    const EVT_CAP = 1 << 16;
-
-    const cmdOffset = 0;
-    const evtOffset = alignUp(cmdOffset + ringCtrl.BYTES + CMD_CAP, 4);
-    const totalBytes = evtOffset + ringCtrl.BYTES + EVT_CAP;
-
-    const sab = new SharedArrayBuffer(totalBytes);
-    new Int32Array(sab, cmdOffset, ringCtrl.WORDS).set([0, 0, 0, CMD_CAP]);
-    new Int32Array(sab, evtOffset, ringCtrl.WORDS).set([0, 0, 0, EVT_CAP]);
-
-    const ioWorkerCode = `
-      import { RingBuffer } from "/web/src/ipc/ring_buffer.ts";
-      import { encodeEvent } from "/web/src/ipc/protocol.ts";
-      import { DeviceManager } from "/web/src/io/device_manager.ts";
-      import { I8042Controller } from "/web/src/io/devices/i8042.ts";
-      import { AeroIpcIoServer } from "/web/src/io/ipc/aero_ipc_io.ts";
-
-      self.onmessage = (ev) => {
-        const { sab, cmdOffset, evtOffset, tickIntervalMs } = ev.data;
-        const cmdQ = new RingBuffer(sab, cmdOffset);
-        const evtQ = new RingBuffer(sab, evtOffset);
-
-        const irqSink = {
-          raiseIrq: (irq) => evtQ.pushBlocking(encodeEvent({ kind: "irqRaise", irq: irq & 0xff })),
-          lowerIrq: (irq) => evtQ.pushBlocking(encodeEvent({ kind: "irqLower", irq: irq & 0xff })),
-        };
-
-        const mgr = new DeviceManager(irqSink);
-        const i8042 = new I8042Controller(mgr.irqSink);
-        mgr.registerPortIo(0x0060, 0x0060, i8042);
-        mgr.registerPortIo(0x0064, 0x0064, i8042);
-
-        new AeroIpcIoServer(cmdQ, evtQ, mgr, { tickIntervalMs }).run();
-      };
-    `;
+    const { buffer } = createIpcBuffer([
+      { kind: queueKind.CMD, capacityBytes: 1 << 16 },
+      { kind: queueKind.EVT, capacityBytes: 1 << 16 },
+    ]);
 
     const cpuWorkerCode = `
-      import { RingBuffer } from "/web/src/ipc/ring_buffer.ts";
+      import { openRingByKind } from "/web/src/ipc/ipc.ts";
+      import { queueKind } from "/web/src/ipc/layout.ts";
       import { AeroIpcIoClient } from "/web/src/io/ipc/aero_ipc_io.ts";
 
       self.onmessage = (ev) => {
-        const { sab, cmdOffset, evtOffset } = ev.data;
-        const cmdQ = new RingBuffer(sab, cmdOffset);
-        const evtQ = new RingBuffer(sab, evtOffset);
+        const { ipcBuffer } = ev.data;
+        const cmdQ = openRingByKind(ipcBuffer, queueKind.CMD);
+        const evtQ = openRingByKind(ipcBuffer, queueKind.EVT);
 
         const irqEvents = [];
         const io = new AeroIpcIoClient(cmdQ, evtQ, {
@@ -75,17 +45,16 @@ test("CPU↔IO AIPC: i8042 port I/O roundtrip in browser workers", async ({ page
       };
     `;
 
-    const ioUrl = URL.createObjectURL(new Blob([ioWorkerCode], { type: "text/javascript" }));
     const cpuUrl = URL.createObjectURL(new Blob([cpuWorkerCode], { type: "text/javascript" }));
 
-    const ioWorker = new Worker(ioUrl, { type: "module" });
+    const ioWorker = new Worker(new URL("/web/src/workers/io_aipc.worker.ts", location.href), { type: "module" });
     const cpuWorker = new Worker(cpuUrl, { type: "module" });
 
     // Note: revoking immediately is safe once the Worker has fetched the script,
     // but keep it simple and revoke after completion.
 
-    ioWorker.postMessage({ sab, cmdOffset, evtOffset, tickIntervalMs: 1 });
-    cpuWorker.postMessage({ sab, cmdOffset, evtOffset });
+    ioWorker.postMessage({ type: "init", ipcBuffer: buffer, devices: ["i8042"], tickIntervalMs: 1 });
+    cpuWorker.postMessage({ ipcBuffer: buffer });
 
     const cpuResult = await Promise.race([
       new Promise((resolve, reject) => {
@@ -97,7 +66,6 @@ test("CPU↔IO AIPC: i8042 port I/O roundtrip in browser workers", async ({ page
 
     cpuWorker.terminate();
     ioWorker.terminate();
-    URL.revokeObjectURL(ioUrl);
     URL.revokeObjectURL(cpuUrl);
 
     return cpuResult as {
@@ -127,51 +95,23 @@ test("CPU↔IO AIPC: PCI config + BAR-backed MMIO dispatch in browser workers", 
       throw new Error("test requires crossOriginIsolated + SharedArrayBuffer");
     }
 
-    const { alignUp, ringCtrl } = await import("/web/src/ipc/layout.ts");
+    const { createIpcBuffer } = await import("/web/src/ipc/ipc.ts");
+    const { queueKind } = await import("/web/src/ipc/layout.ts");
 
-    const CMD_CAP = 1 << 17;
-    const EVT_CAP = 1 << 17;
-
-    const cmdOffset = 0;
-    const evtOffset = alignUp(cmdOffset + ringCtrl.BYTES + CMD_CAP, 4);
-    const totalBytes = evtOffset + ringCtrl.BYTES + EVT_CAP;
-
-    const sab = new SharedArrayBuffer(totalBytes);
-    new Int32Array(sab, cmdOffset, ringCtrl.WORDS).set([0, 0, 0, CMD_CAP]);
-    new Int32Array(sab, evtOffset, ringCtrl.WORDS).set([0, 0, 0, EVT_CAP]);
-
-    const ioWorkerCode = `
-      import { RingBuffer } from "/web/src/ipc/ring_buffer.ts";
-      import { encodeEvent } from "/web/src/ipc/protocol.ts";
-      import { DeviceManager } from "/web/src/io/device_manager.ts";
-      import { PciTestDevice } from "/web/src/io/devices/pci_test_device.ts";
-      import { AeroIpcIoServer } from "/web/src/io/ipc/aero_ipc_io.ts";
-
-      self.onmessage = (ev) => {
-        const { sab, cmdOffset, evtOffset, tickIntervalMs } = ev.data;
-        const cmdQ = new RingBuffer(sab, cmdOffset);
-        const evtQ = new RingBuffer(sab, evtOffset);
-
-        const irqSink = {
-          raiseIrq: (irq) => evtQ.pushBlocking(encodeEvent({ kind: "irqRaise", irq: irq & 0xff })),
-          lowerIrq: (irq) => evtQ.pushBlocking(encodeEvent({ kind: "irqLower", irq: irq & 0xff })),
-        };
-
-        const mgr = new DeviceManager(irqSink);
-        mgr.registerPciDevice(new PciTestDevice());
-
-        new AeroIpcIoServer(cmdQ, evtQ, mgr, { tickIntervalMs }).run();
-      };
-    `;
+    const { buffer } = createIpcBuffer([
+      { kind: queueKind.CMD, capacityBytes: 1 << 17 },
+      { kind: queueKind.EVT, capacityBytes: 1 << 17 },
+    ]);
 
     const cpuWorkerCode = `
-      import { RingBuffer } from "/web/src/ipc/ring_buffer.ts";
+      import { openRingByKind } from "/web/src/ipc/ipc.ts";
+      import { queueKind } from "/web/src/ipc/layout.ts";
       import { AeroIpcIoClient } from "/web/src/io/ipc/aero_ipc_io.ts";
 
       self.onmessage = (ev) => {
-        const { sab, cmdOffset, evtOffset } = ev.data;
-        const cmdQ = new RingBuffer(sab, cmdOffset);
-        const evtQ = new RingBuffer(sab, evtOffset);
+        const { ipcBuffer } = ev.data;
+        const cmdQ = openRingByKind(ipcBuffer, queueKind.CMD);
+        const evtQ = openRingByKind(ipcBuffer, queueKind.EVT);
 
         const io = new AeroIpcIoClient(cmdQ, evtQ);
 
@@ -189,14 +129,13 @@ test("CPU↔IO AIPC: PCI config + BAR-backed MMIO dispatch in browser workers", 
       };
     `;
 
-    const ioUrl = URL.createObjectURL(new Blob([ioWorkerCode], { type: "text/javascript" }));
     const cpuUrl = URL.createObjectURL(new Blob([cpuWorkerCode], { type: "text/javascript" }));
 
-    const ioWorker = new Worker(ioUrl, { type: "module" });
+    const ioWorker = new Worker(new URL("/web/src/workers/io_aipc.worker.ts", location.href), { type: "module" });
     const cpuWorker = new Worker(cpuUrl, { type: "module" });
 
-    ioWorker.postMessage({ sab, cmdOffset, evtOffset, tickIntervalMs: 1 });
-    cpuWorker.postMessage({ sab, cmdOffset, evtOffset });
+    ioWorker.postMessage({ type: "init", ipcBuffer: buffer, devices: ["pci_test"], tickIntervalMs: 1 });
+    cpuWorker.postMessage({ ipcBuffer: buffer });
 
     const cpuResult = await Promise.race([
       new Promise((resolve, reject) => {
@@ -208,7 +147,6 @@ test("CPU↔IO AIPC: PCI config + BAR-backed MMIO dispatch in browser workers", 
 
     cpuWorker.terminate();
     ioWorker.terminate();
-    URL.revokeObjectURL(ioUrl);
     URL.revokeObjectURL(cpuUrl);
 
     return cpuResult as { idDword: number; bar0: number; mmioReadback: number };
