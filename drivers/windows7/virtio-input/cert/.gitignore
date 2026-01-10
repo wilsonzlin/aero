@@ -1,0 +1,10 @@
+#
+# Local-only certificate outputs. Do not commit private keys.
+#
+*.cer
+*.crt
+*.pfx
+*.p12
+*.pvk
+*.spc
+

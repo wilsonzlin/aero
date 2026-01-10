@@ -1,0 +1,189 @@
+# Windows 7 virtio-input driver package (scaffold)
+
+This directory contains **packaging + installation infrastructure** for the Aero virtio-input Windows 7 SP1 driver.
+
+- Target OS: **Windows 7 SP1** (x86 + x64)
+- Target device: **virtio-input over PCI** (QEMU/virtio standard)
+- Driver model: **KMDF HID minidriver** (`Class=HIDClass`, minimum **KMDF 1.9**)
+
+> This is **infrastructure only**. The actual KMDF/virtio/HID driver code (`aero_virtio_input.sys`) is intentionally not present yet.
+
+## Directory layout
+
+| Path | Purpose |
+| --- | --- |
+| `inf/` | Driver package staging directory (INF/CAT/SYS live together for “Have Disk…” installs). |
+| `scripts/` | Utilities for generating a test cert, generating the catalog, and signing. |
+| `cert/` | **Local-only** output directory for `.cer/.pfx` (ignored by git). |
+| `docs/` | Driver-specific notes and references. |
+| `tools/` | Placeholder for future user-mode test/diagnostic tools. |
+
+## Prerequisites (host build/sign machine)
+
+Any Windows machine that can run the WDK tools:
+
+- **Recommended:** Windows 10/11 + **WDK 10** (with Windows 7 targeting components installed)
+- **Supported:** Windows 7/8 + **WDK 7.1** (7600.16385.1)
+
+You need the following tools in `PATH` (usually by opening a WDK Developer Command Prompt):
+
+- `Inf2Cat.exe`
+- `signtool.exe`
+- `certutil.exe` (built into Windows)
+
+## Prerequisites (Windows 7 test VM / machine)
+
+1. Enable test-signing mode (elevated cmd):
+
+   ```cmd
+   bcdedit /set testsigning on
+   shutdown /r /t 0
+   ```
+
+2. Install the generated test certificate into the machine trust stores (see below).
+
+## Hardware IDs (PnP IDs)
+
+The INF currently matches the **modern virtio PCI ID** for virtio-input:
+
+- `PCI\VEN_1AF4&DEV_1052` (virtio device type 18 → `0x1040 + 18 = 0x1052`)
+
+If your emulator/QEMU build uses a different PCI device ID (e.g. transitional vs non-transitional variants), update:
+
+- `drivers/windows7/virtio-input/inf/virtio-input.inf` → `[Aero.NTx86]` / `[Aero.NTamd64]`
+
+To confirm the IDs on Windows 7:
+
+1. Device Manager → the device → **Properties**
+2. **Details** tab → **Hardware Ids**
+
+## Build (placeholder)
+
+This repo does not contain the driver sources yet. Once the driver project exists, the build output must produce:
+
+- `aero_virtio_input.sys`
+
+Copy it into the driver package staging folder before generating the catalog:
+
+```text
+drivers/windows7/virtio-input/inf/aero_virtio_input.sys
+```
+
+## Test certificate workflow (generate + install)
+
+### 1) Generate a test certificate (on the signing machine)
+
+From `drivers/windows7/virtio-input/`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\make-cert.ps1
+```
+
+Expected outputs:
+
+```text
+cert\aero-virtio-input-test.cer
+cert\aero-virtio-input-test.pfx
+```
+
+> Do **not** commit `.pfx` files. Treat them like private keys.
+
+### 2) Install the test certificate (on the Windows 7 test machine)
+
+Copy `cert\aero-virtio-input-test.cer` to the test machine, then run (elevated PowerShell):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-test-cert.ps1 -CertPath .\cert\aero-virtio-input-test.cer
+```
+
+This installs the cert into:
+
+- LocalMachine **Trusted Root Certification Authorities**
+- LocalMachine **Trusted Publishers**
+
+## Catalog generation (CAT)
+
+From `drivers/windows7/virtio-input/`:
+
+```cmd
+.\scripts\make-cat.cmd
+```
+
+This runs `Inf2Cat` for both architectures:
+
+- `7_X86`
+- `7_X64`
+
+Expected output (once `aero_virtio_input.sys` exists in `inf/`):
+
+```text
+inf\virtio-input.cat
+```
+
+## Signing (SYS + CAT)
+
+From `drivers/windows7/virtio-input/`:
+
+```cmd
+.\scripts\sign-driver.cmd
+```
+
+This signs:
+
+- `inf\aero_virtio_input.sys`
+- `inf\virtio-input.cat`
+
+## Installation
+
+### Device Manager (“Have Disk…”)
+
+1. Device Manager → right-click the virtio-input PCI device → **Update Driver Software**
+2. **Browse my computer**
+3. **Let me pick** → **Have Disk…**
+4. Browse to `drivers/windows7/virtio-input/inf/`
+5. Select `virtio-input.inf`
+
+### pnputil (Windows 7)
+
+Windows 7 includes `pnputil.exe` but with an older CLI.
+
+From an elevated command prompt:
+
+```cmd
+pnputil -i -a C:\path\to\virtio-input.inf
+```
+
+## Verifying the driver loaded
+
+### Device Manager
+
+- The device should move under **Human Interface Devices** (HIDClass).
+- Driver details should show `aero_virtio_input.sys`.
+
+### Service state
+
+```cmd
+sc query aero_virtio_input
+```
+
+### Driver file present
+
+```cmd
+dir %SystemRoot%\System32\drivers\aero_virtio_input.sys
+```
+
+## QEMU / emulator notes (expected device)
+
+virtio-input appears as a **PCI virtio** function. In QEMU this is typically created with devices like:
+
+- `virtio-keyboard-pci`
+- `virtio-mouse-pci`
+- `virtio-tablet-pci`
+
+All of these use the virtio-input transport and should enumerate with `VEN_1AF4` and the virtio-input device ID (commonly `DEV_1052`).
+
+## Known limitations
+
+- This is packaging only; the driver binary is not implemented yet.
+- The INF assumes the driver will be a **KMDF HID minidriver** and installs under `HIDClass`.
+- The hardware ID list may need adjustment if the emulator uses a different virtio PCI ID variant.
