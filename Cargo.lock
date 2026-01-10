@@ -20,6 +20,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-core"
+version = "0.1.0"
+
+[[package]]
+name = "aero-cpu"
+version = "0.1.0"
+dependencies = [
+ "aero-core",
+]
+
+[[package]]
 name = "aero-d3d9"
 version = "0.1.0"
 dependencies = [

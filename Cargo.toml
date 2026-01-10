@@ -5,6 +5,8 @@ members = [
     "crates/aero-gpu",
     "crates/aero-gpu-trace",
     "crates/aero-emulator",
+    "crates/aero-core",
+    "crates/aero-cpu",
     "crates/aero-ipc",
     "crates/aero-bios",
     "crates/aero_jit",

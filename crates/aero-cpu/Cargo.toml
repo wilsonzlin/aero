@@ -1,0 +1,10 @@
+[package]
+name = "aero-cpu"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aero-core = { path = "../aero-core" }
+
+[dev-dependencies]
+
