@@ -187,7 +187,7 @@ Use either `pnputil` (Windows 7 built-in) or DISM:
 - Alternative (if you prefer `pnputil`):
   - `pnputil -i -a X:\path\to\driver.inf`
   - To bulk-install multiple INFs from an elevated Command Prompt:
-    - `for /r X:\path\to\drivers %i in (*.inf) do pnputil -i -a %i`
+    - `for /r "X:\path\to\drivers" %i in (*.inf) do pnputil -i -a "%i"`
     - If you put this into a `.cmd` file, use `%%i` instead of `%i`.
 
 After staging, reboot once while still on baseline devices.

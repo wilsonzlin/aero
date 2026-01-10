@@ -314,6 +314,17 @@ This only applies if you are attempting to install Windows directly onto **virti
 
 If you must keep the Aero GPU selected while recovering, use Safe Mode (below) since it typically avoids loading third-party display drivers.
 
+### Alternative recovery options (if the OS boots but the screen is unusable)
+
+- Try the boot menu option:
+  - **F8** → **Enable low-resolution video (640x480)**
+- Or force VGA/base video mode via BCD (from a working boot, typically while still on VGA):
+  - Enable:
+    - `bcdedit /set {current} basevideo yes`
+    - Reboot and retry with the Aero GPU selected
+  - Disable (after recovery):
+    - `bcdedit /deletevalue {current} basevideo`
+
 ## Issue: Aero theme not available / stuck in basic graphics mode
 
 **Symptoms**
@@ -364,6 +375,11 @@ Fix (from an elevated Command Prompt):
 
 - `bcdedit /deletevalue {current} safeboot`
 - Reboot
+
+### Other useful F8 boot options (Windows 7)
+
+- **Last Known Good Configuration (advanced)**: rolls back to the last driver/service configuration that successfully reached the logon desktop.
+- **Enable Boot Logging**: writes `C:\Windows\ntbtlog.txt`, which can help identify which driver loads last before a hang/boot failure.
 
 ## Issue: “Test Mode” watermark on the desktop (x64)
 
