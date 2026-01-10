@@ -32,8 +32,15 @@ function Resolve-ToolchainJsonPath {
   $p = $Path
   if (-not [System.IO.Path]::IsPathRooted($p)) {
     # Prefer resolving relative paths against the repository root so callers can run this
-    # script from any working directory (CI steps, sub-shells, etc).
-    $p = Join-Path -Path $RepoRoot -ChildPath $p
+    # script from any working directory (CI steps, sub-shells, etc). For backwards
+    # compatibility, fall back to resolving relative to the current working directory.
+    $fromRepoRoot = Join-Path -Path $RepoRoot -ChildPath $p
+    if (Test-Path -LiteralPath $fromRepoRoot -PathType Leaf) {
+      $p = $fromRepoRoot
+    } else {
+      $fromCwd = Join-Path -Path (Get-Location) -ChildPath $p
+      $p = $fromCwd
+    }
   }
   if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {
     throw "ToolchainJson not found: $Path (resolved to $p)"
