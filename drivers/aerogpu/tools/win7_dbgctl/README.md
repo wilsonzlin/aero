@@ -49,6 +49,13 @@ From the repo root:
 
 ```
 cd drivers\aerogpu\tools\win7_dbgctl
+build_vs2010.cmd
+```
+
+Or build directly with `cl.exe`:
+
+```
+cd drivers\aerogpu\tools\win7_dbgctl
 cl /nologo /W4 /EHsc /DUNICODE /D_UNICODE ^
   /I ..\..\protocol ^
   src\aerogpu_dbgctl.cpp ^
@@ -56,11 +63,10 @@ cl /nologo /W4 /EHsc /DUNICODE /D_UNICODE ^
   user32.lib gdi32.lib
 ```
 
-The output binary will be:
+Outputs:
 
-```
-drivers\aerogpu\tools\win7_dbgctl\aerogpu_dbgctl.exe
-```
+- `build_vs2010.cmd` → `drivers\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
+- direct `cl` invocation → `drivers\\aerogpu\\tools\\win7_dbgctl\\aerogpu_dbgctl.exe`
 
 ## Protocol
 
