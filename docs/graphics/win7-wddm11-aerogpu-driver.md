@@ -81,9 +81,13 @@ We ship UMDs as separate DLLs because Windows loads them per-API/runtime.
   - 32-bit: `aerogpuumd9_32.dll` (loaded by 32-bit apps under WOW64 on x64, and as primary on x86)
  
 **Later phases:**
- 
+
 - D3D10/10.1 UMD (DXGI + D3D10 runtime integration)
 - D3D11 UMD (if/when we implement DXGI 1.1 path and D3D11 DDI)
+
+For a minimal D3D10/D3D11 UMD bring-up checklist (DDI entrypoints, FL10_0 target, DXGI swapchain/present expectations), see:
+
+- `docs/graphics/win7-d3d10-11-umd-minimal.md`
  
 ### 2.3 INF + packaging
  

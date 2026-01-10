@@ -6,6 +6,10 @@ It is intentionally not a full D3D9 driver guide. It enumerates the **DDI entryp
 
 > Header references: symbol names match Windows 7-era WDK headers (`d3d9types.h`, `d3d9caps.h`, `d3dumddi.h` / `d3d9umddi.h` / `d3dhal.h` depending on kit). Some structures have multiple “v1/v2” variants across WDDM revisions; when in doubt, implement the newest version your chosen `D3D_UMD_INTERFACE_VERSION` requires and provide compatible fallbacks.
 
+For the next API tier up (D3D10/D3D11 on Win7: SM4/SM5 + DXGI swapchains), see:
+
+* `docs/graphics/win7-d3d10-11-umd-minimal.md`
+
 ---
 
 ## Scope / assumptions (read this first)
