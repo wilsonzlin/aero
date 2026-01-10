@@ -144,6 +144,8 @@ Cloudflare Pages requires `_headers` to be present at the **root of the build ou
 
 See: `deploy/caddy/Caddyfile`
 
+The Caddy template supports `AERO_CSP_CONNECT_SRC_EXTRA` to append additional allowed `connect-src` origins without editing the CSP string directly.
+
 ---
 
 ## Verification checklist
