@@ -346,6 +346,16 @@ function Get-CertificateDerBytes {
   return $cert2.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
 }
 
+function Get-CertificateThumbprintHex {
+  param(
+    [Parameter(Mandatory = $true)]
+    [byte[]]$CertificateDer
+  )
+
+  $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(,$CertificateDer)
+  return $cert.Thumbprint.ToUpperInvariant()
+}
+
 # Uses CryptoAPI (crypt32) to write certificate material into the *offline* registry hive
 # in a format understood by Windows. This avoids crafting registry blobs by hand.
 if (-not ('OfflineCertInjector' -as [type])) {
@@ -467,6 +477,28 @@ function Inject-CertIntoOfflineSoftwareHive {
   [OfflineCertInjector]::AddCertificateToLoadedOfflineSoftwareHive($HiveName, 'TrustedPublisher', $CertificateDer)
 }
 
+function Assert-CertPresentInOfflineSoftwareHive {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$HiveName,
+    [Parameter(Mandatory = $true)]
+    [string]$StoreName,
+    [Parameter(Mandatory = $true)]
+    [string]$ThumbprintHex
+  )
+
+  $certKeyPath = "HKLM:\$HiveName\Microsoft\SystemCertificates\$StoreName\Certificates\$ThumbprintHex"
+  if (-not (Test-Path -LiteralPath $certKeyPath)) {
+    throw "Certificate not found after injection: $certKeyPath"
+  }
+
+  try {
+    $null = (Get-ItemProperty -LiteralPath $certKeyPath -Name Blob -ErrorAction Stop).Blob
+  } catch {
+    throw "Certificate registry entry missing expected 'Blob' value: $certKeyPath"
+  }
+}
+
 function Patch-MountedImage {
   param(
     [Parameter(Mandatory = $true)]
@@ -492,7 +524,10 @@ function Patch-MountedImage {
     $hiveLoaded = $true
 
     Write-Log 'Injecting certificate into offline ROOT + TrustedPublisher stores'
+    $thumbprint = Get-CertificateThumbprintHex -CertificateDer $CertificateDer
     Inject-CertIntoOfflineSoftwareHive -HiveName $hiveName -CertificateDer $CertificateDer
+    Assert-CertPresentInOfflineSoftwareHive -HiveName $hiveName -StoreName 'ROOT' -ThumbprintHex $thumbprint
+    Assert-CertPresentInOfflineSoftwareHive -HiveName $hiveName -StoreName 'TrustedPublisher' -ThumbprintHex $thumbprint
   } finally {
     if ($hiveLoaded) {
       Write-Log "Unloading offline SOFTWARE hive: HKLM\\$hiveName"
@@ -537,6 +572,13 @@ Ensure-FileWritable -Path $bootWimPath
 Ensure-FileWritable -Path $installWimPath
 
 $certificateDer = Get-CertificateDerBytes -Path $certFull -PfxPassword $PfxPassword
+
+$availableBootIndices = Get-WimIndices -WimFile $bootWimPath
+foreach ($idx in $PatchBootWimIndices) {
+  if ($availableBootIndices -notcontains $idx) {
+    throw "boot.wim index $idx does not exist. Available indices: $($availableBootIndices -join ', ')"
+  }
+}
 
 $mountRoot = Join-Path $env:TEMP ("aero-win7-media-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $mountRoot -Force | Out-Null
