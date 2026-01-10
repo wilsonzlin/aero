@@ -619,6 +619,7 @@ impl InputCapture {
 //   tools/gen_scancodes/scancodes.json
 //
 // Outputs:
+//   - src/input/scancodes.ts
 //   - web/src/input/scancodes.ts
 //   - crates/emulator/src/io/input/scancodes.rs
 //   - crates/aero-devices-input/src/scancodes_generated.rs

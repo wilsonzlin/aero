@@ -33,7 +33,7 @@ export const DEFAULT_WEBGPU_BENCH_OPTIONS: Required<WebGpuBenchOptions> = {
 
 export async function runWebGpuScenario(page: Page, opts: WebGpuScenarioRunOptions = {}): Promise<WebGpuScenarioOutput> {
   const baseUrl = opts.baseUrl ?? 'http://127.0.0.1:5173';
-  const url = `${baseUrl.replace(/\\/$/, '')}/web/`;
+  const url = `${baseUrl.replace(/\/$/, '')}/web/`;
   await page.goto(url, { waitUntil: 'load' });
 
   await page.waitForFunction(() => (window as any).aero?.bench?.runWebGpuBench);
@@ -55,4 +55,3 @@ export async function runWebGpuScenario(page: Page, opts: WebGpuScenarioRunOptio
     perfExport,
   };
 }
-
