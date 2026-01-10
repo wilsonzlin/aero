@@ -9,6 +9,8 @@ This document collects practical notes for building and test-signing Windows dri
 1. Creates a self-signed **code signing** certificate.
 2. Uses `signtool` to sign common driver artifacts (`.sys`, `.cat`, etc.).
 3. Verifies signatures using `signtool verify`.
+   - The script imports the public cert into the current user **Trusted Root** and
+     **Trusted Publishers** stores so `signtool verify` can succeed.
 
 ## SHA-1 vs SHA-2
 
@@ -51,4 +53,3 @@ Some CI runners may refuse SHA-1 certificate creation. If SHA-1 certificate crea
 
 - **fails by default**, or
 - continues only if `-AllowSha2CertFallback` is provided, in which case it creates a SHA-256-signed certificate and prints a loud warning that **stock Win7 without KB3033929/KB4474419 may fail**.
-

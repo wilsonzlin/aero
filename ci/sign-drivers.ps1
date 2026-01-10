@@ -15,6 +15,12 @@ param(
   [Parameter()]
   [switch]$DualSign,
 
+  # If set, and SHA-1 certificate creation fails, the script will fall back to a
+  # SHA-256-signed certificate. This can break stock Windows 7 SP1 without SHA-2
+  # updates (KB3033929 / KB4474419) even if /fd sha1 is used.
+  [Parameter()]
+  [switch]$AllowSha2CertFallback,
+
   [Parameter()]
   [string]$ToolchainJson
 )
@@ -218,6 +224,54 @@ function Ensure-TrustedCertificate {
   }
 }
 
+function Test-CertificateSignatureHash {
+  param(
+    [Parameter(Mandatory = $true)]
+    $Cert,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("sha1", "sha256")]
+    [string]$ExpectedHash
+  )
+
+  # Some environments may ignore New-SelfSignedCertificate -HashAlgorithm; validate
+  # the produced certificate to avoid silently breaking stock Win7 compatibility.
+  $expectedOids = @{
+    sha1   = @('1.2.840.113549.1.1.5', '1.3.14.3.2.29', '1.2.840.10045.4.1')
+    sha256 = @('1.2.840.113549.1.1.11', '1.2.840.10045.4.3.2')
+  }
+
+  $oid = [string]$Cert.SignatureAlgorithm.Value
+  if ($expectedOids[$ExpectedHash] -contains $oid) {
+    return $true
+  }
+
+  $friendly = [string]$Cert.SignatureAlgorithm.FriendlyName
+  if (-not [string]::IsNullOrWhiteSpace($friendly)) {
+    if ($friendly.ToLowerInvariant().Contains($ExpectedHash.ToLowerInvariant())) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
+function Write-CertificateInfo {
+  param(
+    [Parameter(Mandatory = $true)]
+    $Cert
+  )
+
+  $sigFriendly = $Cert.SignatureAlgorithm.FriendlyName
+  $sigOid = $Cert.SignatureAlgorithm.Value
+
+  Write-Host "Signing certificate:"
+  Write-Host "  Subject:            $($Cert.Subject)"
+  Write-Host "  Thumbprint:         $($Cert.Thumbprint)"
+  Write-Host "  SignatureAlgorithm: $sigFriendly ($sigOid)"
+  Write-Host "  NotAfter:           $($Cert.NotAfter.ToString('u'))"
+}
+
 function Ensure-TestSigningCertificate {
   param(
     [Parameter(Mandatory = $true)]
@@ -231,7 +285,10 @@ function Ensure-TestSigningCertificate {
 
     [Parameter(Mandatory = $true)]
     [ValidateSet("sha1", "sha256")]
-    [string]$HashAlgorithm
+    [string]$HashAlgorithm,
+
+    [Parameter()]
+    [switch]$AllowSha2CertFallback
   )
 
   if (-not (Get-Command New-SelfSignedCertificate -ErrorAction SilentlyContinue)) {
@@ -242,8 +299,7 @@ function Ensure-TestSigningCertificate {
   if (-not $shouldGenerate) {
     try {
       $existingCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CerPath)
-      $existingSigAlg = $existingCert.SignatureAlgorithm.FriendlyName.ToLowerInvariant()
-      $existingIsDesiredHash = $existingSigAlg.Contains($HashAlgorithm.ToLowerInvariant())
+      $existingIsDesiredHash = Test-CertificateSignatureHash -Cert $existingCert -ExpectedHash $HashAlgorithm
       $validLongEnough = $existingCert.NotAfter -gt (Get-Date).AddYears(5)
       if (-not $existingIsDesiredHash -or -not $validLongEnough) {
         $shouldGenerate = $true
@@ -273,12 +329,26 @@ function Ensure-TestSigningCertificate {
         -TextExtension @(
           "2.5.29.37={text}1.3.6.1.5.5.7.3.3,1.3.6.1.4.1.311.10.3.6"
         )
+
+      if (-not (Test-CertificateSignatureHash -Cert $cert -ExpectedHash $certHashAlgorithm)) {
+        $actual = "{0} ({1})" -f $cert.SignatureAlgorithm.FriendlyName, $cert.SignatureAlgorithm.Value
+        throw "Certificate signature algorithm does not match requested hash '$certHashAlgorithm' (got: $actual)."
+      }
     } catch {
       if ($requestedHashAlgorithm -ne "sha1") {
         throw
       }
 
-      Write-Warning "Failed to create a SHA-1-signed self-signed certificate. Falling back to SHA-256: $($_.Exception.Message)"
+      Write-Warning "Requested a SHA-1-signed certificate (-HashAlgorithm sha1) but certificate creation failed on this runner."
+      Write-Warning "Error: $($_.Exception.Message)"
+
+      if (-not $AllowSha2CertFallback) {
+        throw "Refusing to proceed without a SHA-1-signed certificate. Re-run with -AllowSha2CertFallback to continue anyway (may break stock Win7 without KB3033929/KB4474419)."
+      }
+
+      Write-Warning "Proceeding due to -AllowSha2CertFallback: creating a SHA-256-signed certificate instead."
+      Write-Warning "WARNING: Stock Windows 7 SP1 without KB3033929 (kernel-mode SHA-2 support) / KB4474419 (general SHA-2 support) may fail to validate the signature chain, even if /fd sha1 is used."
+
       $certHashAlgorithm = "sha256"
       $cert = New-SelfSignedCertificate `
         -Type CodeSigningCert `
@@ -293,6 +363,11 @@ function Ensure-TestSigningCertificate {
         -TextExtension @(
           "2.5.29.37={text}1.3.6.1.5.5.7.3.3,1.3.6.1.4.1.311.10.3.6"
         )
+
+      if (-not (Test-CertificateSignatureHash -Cert $cert -ExpectedHash $certHashAlgorithm)) {
+        $actual = "{0} ({1})" -f $cert.SignatureAlgorithm.FriendlyName, $cert.SignatureAlgorithm.Value
+        throw "Unexpected certificate signature algorithm after SHA-256 fallback (got: $actual)."
+      }
     }
 
     if (-not $cert) {
@@ -335,7 +410,18 @@ try {
   $needsSha1 = $DualSign -or ($Digest.ToLowerInvariant() -eq "sha1")
   $certHashAlgorithm = if ($needsSha1) { "sha1" } else { "sha256" }
 
-  Ensure-TestSigningCertificate -CerPath $cerPath -PfxPath $pfxPath -PfxPassword $pfxPassword -HashAlgorithm $certHashAlgorithm
+  Ensure-TestSigningCertificate `
+    -CerPath $cerPath `
+    -PfxPath $pfxPath `
+    -PfxPassword $pfxPassword `
+    -HashAlgorithm $certHashAlgorithm `
+    -AllowSha2CertFallback:$AllowSha2CertFallback
+
+  $certForLog = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($cerPath)
+  Write-CertificateInfo -Cert $certForLog
+
+  Write-Host "File digest: $($Digest.ToLowerInvariant())"
+  Write-Host "DualSign:    $DualSign"
 
   $signtoolPath = Resolve-SignToolPath -ToolchainJsonPath $ToolchainJson -RepoRoot $repoRoot
   Write-Host "Using signtool: $signtoolPath"
@@ -436,4 +522,3 @@ try {
   Write-Error $_
   exit 1
 }
-
