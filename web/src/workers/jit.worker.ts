@@ -1,10 +1,18 @@
 /// <reference lib="webworker" />
 
+import type { AeroConfig } from "../config/aero_config";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { RingBuffer } from "../runtime/ring_buffer";
 import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
-import { MessageType, type ProtocolMessage, type WorkerInitMessage, decodeProtocolMessage } from "../runtime/protocol";
+import {
+  type ConfigAckMessage,
+  type ConfigUpdateMessage,
+  MessageType,
+  type ProtocolMessage,
+  type WorkerInitMessage,
+  decodeProtocolMessage,
+} from "../runtime/protocol";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -14,8 +22,19 @@ let role: "cpu" | "gpu" | "io" | "jit" = "jit";
 let status!: Int32Array;
 let commandRing!: RingBuffer;
 
+let currentConfig: AeroConfig | null = null;
+let currentConfigVersion = 0;
+
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
-  const init = ev.data as Partial<WorkerInitMessage>;
+  const msg = ev.data as Partial<WorkerInitMessage | ConfigUpdateMessage>;
+  if (msg?.kind === "config.update") {
+    currentConfig = (msg as ConfigUpdateMessage).config;
+    currentConfigVersion = (msg as ConfigUpdateMessage).version;
+    ctx.postMessage({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
+    return;
+  }
+
+  const init = msg as Partial<WorkerInitMessage>;
   if (init?.kind !== "init") return;
 
   perf.spanBegin("worker:boot");
@@ -63,3 +82,5 @@ async function runLoop(): Promise<void> {
   setReadyFlag(status, role, false);
   ctx.close();
 }
+
+void currentConfig;

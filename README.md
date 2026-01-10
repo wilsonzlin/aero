@@ -73,6 +73,39 @@ npm ci
 npm run dev
 ```
 
+## Configuration
+
+Aero uses a typed configuration object (`AeroConfig`) that can be sourced from multiple places. The final, effective config is derived by applying these layers in order (lowest → highest precedence):
+
+1. **Defaults** (built-in, with capability-aware defaults where applicable)
+2. **Static JSON config** (optional, for deployments): `GET /aero.config.json`
+3. **Persisted user settings** (`localStorage`): key `aero:config:v1`
+4. **URL query parameters** (highest precedence)
+
+### Query parameters
+
+| Param     | Type | Maps to | Example |
+|----------:|------|---------|---------|
+| `mem`     | number (MiB) | `guestMemoryMiB` | `?mem=2048` |
+| `workers` | bool | `enableWorkers` | `?workers=0` |
+| `webgpu`  | bool | `enableWebGPU` | `?webgpu=1` |
+| `proxy`   | string \| `null` | `proxyUrl` | `?proxy=wss%3A%2F%2Fproxy.example%2Fws` |
+| `disk`    | string \| `null` | `activeDiskImage` | `?disk=win7-sp1.img` |
+| `log`     | `trace|debug|info|warn|error` | `logLevel` | `?log=debug` |
+| `scale`   | number | `uiScale` | `?scale=1.25` |
+
+### Examples
+
+```text
+/?mem=2048&log=debug
+/?proxy=wss%3A%2F%2Flocalhost%3A1234%2Fws&workers=0
+```
+
+### Notes
+
+- URL overrides are intentionally *highest precedence* and are shown as read-only in the Settings panel.
+- Some settings may be forced off at runtime if the browser lacks required capabilities (e.g. workers require `SharedArrayBuffer` + cross-origin isolation).
+
 ## WASM in workers
 
 The `web/` package uses module workers for CPU/GPU/I/O/JIT stubs and needs to initialize the same WASM module from both the **main thread** and **workers**.

@@ -1,3 +1,4 @@
+import type { AeroConfig } from "../config/aero_config";
 import { RingBuffer } from "./ring_buffer";
 import { perf } from "../perf/perf";
 import {
@@ -7,12 +8,13 @@ import {
   allocateSharedMemorySegments,
   checkSharedMemorySupport,
   createSharedMemoryViews,
-  type GuestRamMiB,
   ringRegionsForWorker,
   setReadyFlag,
   type SharedMemoryViews,
 } from "./shared_layout";
 import {
+  type ConfigAckMessage,
+  type ConfigUpdateMessage,
   MessageType,
   type ProtocolMessage,
   type WorkerInitMessage,
@@ -55,25 +57,34 @@ export class WorkerCoordinator {
   // is set by the UI and forwarded to the I/O worker when available.
   private micRingBuffer: SharedArrayBuffer | null = null;
   private micSampleRate = 0;
+  private activeConfig: AeroConfig | null = null;
+  private configVersion = 0;
+  private workerConfigAckVersions: Partial<Record<WorkerRole, number>> = {};
 
   checkSupport(): { ok: boolean; reason?: string } {
     return checkSharedMemorySupport();
   }
 
-  start(options?: { guestRamMiB?: GuestRamMiB }): void {
+  start(config: AeroConfig): void {
     if (this.shared) return;
+
+    this.activeConfig = config;
+    if (!config.enableWorkers) {
+      throw new Error("Workers are disabled by configuration.");
+    }
 
     const support = this.checkSupport();
     if (!support.ok) {
       throw new Error(support.reason ?? "Shared memory unsupported");
     }
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: options?.guestRamMiB });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: config.guestMemoryMiB });
     const shared = createSharedMemoryViews(segments);
     shared.status.fill(0);
     this.shared = shared;
     this.runId += 1;
     const runId = this.runId;
+    this.workerConfigAckVersions = {};
     // Dedicated, tiny SharedArrayBuffer for GPU frame scheduling state/metrics.
     // Keeping it separate from the main control region avoids growing the core IPC layout.
     this.frameStateSab = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -138,9 +149,40 @@ export class WorkerCoordinator {
       };
       worker.postMessage(initMessage);
     }
+
+    this.broadcastConfig(config);
     for (const role of WORKER_ROLES) {
       void this.eventLoop(role, runId);
     }
+  }
+
+  updateConfig(config: AeroConfig): void {
+    if (this.activeConfig && aeroConfigsEqual(this.activeConfig, config)) {
+      return;
+    }
+    this.activeConfig = config;
+
+    if (!this.shared) {
+      return;
+    }
+
+    if (!config.enableWorkers) {
+      this.stop();
+      return;
+    }
+
+    const currentMiB = Math.round(this.shared.segments.guestMemory.buffer.byteLength / (1024 * 1024));
+    if (currentMiB !== config.guestMemoryMiB) {
+      this.stop();
+      try {
+        this.start(config);
+      } catch (err) {
+        console.error(err);
+      }
+      return;
+    }
+
+    this.broadcastConfig(config);
   }
 
   stop(): void {
@@ -166,6 +208,7 @@ export class WorkerCoordinator {
     this.shared = undefined;
     this.wasmStatus = {};
     this.frameStateSab = undefined;
+    this.workerConfigAckVersions = {};
   }
 
   getWorker(role: WorkerRole): Worker | undefined {
@@ -174,6 +217,19 @@ export class WorkerCoordinator {
 
   getFrameStateSab(): SharedArrayBuffer | undefined {
     return this.frameStateSab;
+  }
+
+  getConfigVersion(): number {
+    return this.configVersion;
+  }
+
+  getWorkerConfigAckVersions(): Record<WorkerRole, number> {
+    return {
+      cpu: this.workerConfigAckVersions.cpu ?? 0,
+      gpu: this.workerConfigAckVersions.gpu ?? 0,
+      io: this.workerConfigAckVersions.io ?? 0,
+      jit: this.workerConfigAckVersions.jit ?? 0,
+    };
   }
 
   getWorkerStatuses(): Record<WorkerRole, WorkerStatus> {
@@ -245,10 +301,27 @@ export class WorkerCoordinator {
     }
   }
 
+  private broadcastConfig(config: AeroConfig): void {
+    this.configVersion += 1;
+    const version = this.configVersion;
+    for (const role of WORKER_ROLES) {
+      const info = this.workers[role];
+      if (!info) continue;
+      const msg: ConfigUpdateMessage = { kind: "config.update", version, config };
+      info.worker.postMessage(msg);
+    }
+  }
+
   private onWorkerMessage(role: WorkerRole, data: unknown): void {
     const info = this.workers[role];
     const shared = this.shared;
     if (!info || !shared) return;
+
+    const maybeAck = data as Partial<ConfigAckMessage>;
+    if (maybeAck?.kind === "config.ack" && typeof maybeAck.version === "number") {
+      this.workerConfigAckVersions[role] = maybeAck.version;
+      return;
+    }
 
     // Workers currently use structured `postMessage` for READY/ERROR only.
     const msg = data as Partial<ProtocolMessage>;
@@ -312,4 +385,16 @@ export class WorkerCoordinator {
       await info.eventRing.waitForDataAsync(1000);
     }
   }
+}
+
+function aeroConfigsEqual(a: AeroConfig, b: AeroConfig): boolean {
+  return (
+    a.guestMemoryMiB === b.guestMemoryMiB &&
+    a.enableWorkers === b.enableWorkers &&
+    a.enableWebGPU === b.enableWebGPU &&
+    a.proxyUrl === b.proxyUrl &&
+    a.activeDiskImage === b.activeDiskImage &&
+    a.logLevel === b.logLevel &&
+    a.uiScale === b.uiScale
+  );
 }

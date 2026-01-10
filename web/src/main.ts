@@ -12,6 +12,7 @@ import { importFileToOpfs, openFileHandle, removeOpfsEntry } from "./platform/op
 import { RemoteStreamingDisk } from "./platform/remote_disk";
 import { ensurePersistentStorage, getPersistentStorageInfo, getStorageEstimate } from "./platform/storage_quota";
 import { initAeroStatusApi } from "./api/status";
+import { AeroConfigManager } from "./config/manager";
 import { InputCapture } from "./input/input_capture";
 import { InputEventType, type InputBatchTarget } from "./input/event_queue";
 import { installPerfHud } from "./perf/hud_entry";
@@ -21,15 +22,20 @@ import { installAeroGlobal } from "./runtime/aero_global";
 import { createWebGpuCanvasContext, requestWebGpuDevice } from "./platform/webgpu";
 import { WorkerCoordinator } from "./runtime/coordinator";
 import { initWasm, type WasmApi } from "./runtime/wasm_loader";
-import { DEFAULT_GUEST_RAM_MIB, GUEST_RAM_PRESETS_MIB, type GuestRamMiB, type WorkerRole } from "./runtime/shared_layout";
+import type { WorkerRole } from "./runtime/shared_layout";
 import { createDefaultDiskImageStore } from "./storage/default_disk_image_store";
 import type { DiskImageInfo, WorkerOpenToken } from "./storage/disk_image_store";
 import { formatByteSize } from "./storage/disk_image_store";
 import { IoWorkerClient } from "./workers/io_worker_client";
 import { FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "./shared/frameProtocol";
+import { mountSettingsPanel } from "./ui/settings_panel";
+import { mountStatusPanel } from "./ui/status_panel";
+
+const configManager = new AeroConfigManager({ staticConfigUrl: "/aero.config.json" });
+void configManager.init();
 
 initAeroStatusApi("booting");
-installPerfHud({ guestRamBytes: DEFAULT_GUEST_RAM_MIB * 1024 * 1024 });
+installPerfHud({ guestRamBytes: configManager.getState().effective.guestMemoryMiB * 1024 * 1024 });
 installAeroGlobal();
 perf.installGlobalApi();
 
@@ -39,6 +45,9 @@ perf.instant("boot:main:start", "p");
 installAeroGlobals();
 
 const workerCoordinator = new WorkerCoordinator();
+configManager.subscribe((state) => {
+  workerCoordinator.updateConfig(state.effective);
+});
 const wasmInitPromise = perf.spanAsync("wasm:init", () => initWasm());
 let frameScheduler: FrameSchedulerHandle | null = null;
 
@@ -148,8 +157,16 @@ function render(): void {
   const report = detectPlatformFeatures();
   const missing = explainMissingRequirements(report);
 
+  const settingsHost = el("div", { class: "panel" });
+  mountSettingsPanel(settingsHost, configManager);
+
+  const statusHost = el("div", { class: "panel" });
+  mountStatusPanel(statusHost, configManager, workerCoordinator);
+
   app.replaceChildren(
     el("h1", { text: "Aero Platform Capabilities" }),
+    settingsHost,
+    statusHost,
     el(
       "div",
       { class: `panel ${missing.length ? "missing" : ""}` },
@@ -1625,20 +1642,15 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const heartbeatLine = el("div", { class: "mono", text: "" });
   const frameLine = el("div", { class: "mono", text: "" });
   const error = el("pre", { text: "" });
-
-  const guestRamSelect = el("select") as HTMLSelectElement;
-  for (const mib of GUEST_RAM_PRESETS_MIB) {
-    const label = mib % 1024 === 0 ? `${mib / 1024} GiB` : `${mib} MiB`;
-    guestRamSelect.append(el("option", { value: String(mib), text: label }));
-  }
-  guestRamSelect.value = String(DEFAULT_GUEST_RAM_MIB);
+  const guestRamValue = el("span", { class: "mono", text: "" });
 
   const startButton = el("button", {
     text: "Start workers",
     onclick: () => {
       error.textContent = "";
+      const config = configManager.getState().effective;
       try {
-        workerCoordinator.start({ guestRamMiB: Number(guestRamSelect.value) as GuestRamMiB });
+        workerCoordinator.start(config);
         const gpuWorker = workerCoordinator.getWorker("gpu");
         const frameStateSab = workerCoordinator.getFrameStateSab();
         if (gpuWorker && frameStateSab) {
@@ -1717,8 +1729,9 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   function update(): void {
     const statuses = workerCoordinator.getWorkerStatuses();
     const anyActive = Object.values(statuses).some((s) => s.state !== "stopped");
+    const config = configManager.getState().effective;
 
-    startButton.disabled = !support.ok || !report.wasmThreads || anyActive;
+    startButton.disabled = !support.ok || !report.wasmThreads || !config.enableWorkers || anyActive;
     stopButton.disabled = !anyActive;
 
     statusList.replaceChildren(
@@ -1738,6 +1751,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     );
 
     heartbeatLine.textContent =
+      `config[v${workerCoordinator.getConfigVersion()}]  ` +
       `status[HeartbeatCounter]=${workerCoordinator.getHeartbeatCounter()}  ` +
       `ring[Heartbeat]=${workerCoordinator.getLastHeartbeatFromRing()}  ` +
       `guestI32[0]=${workerCoordinator.getGuestCounter0()}`;
@@ -1749,6 +1763,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       const frameState = new Int32Array(frameStateSab);
       frameLine.textContent = `frame: status=${Atomics.load(frameState, FRAME_STATUS_INDEX)} seq=${Atomics.load(frameState, FRAME_SEQ_INDEX)}`;
     }
+    guestRamValue.textContent =
+      config.guestMemoryMiB % 1024 === 0 ? `${config.guestMemoryMiB / 1024} GiB` : `${config.guestMemoryMiB} MiB`;
 
     if (anyActive) {
       ensureVgaPresenter();
@@ -1771,7 +1787,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     { class: "panel" },
     el("h2", { text: "Workers" }),
     hint,
-    el("div", { class: "row" }, el("label", { text: "Guest RAM:" }), guestRamSelect, startButton, stopButton),
+    el("div", { class: "row" }, el("label", { text: "Guest RAM:" }), guestRamValue, startButton, stopButton),
     el("div", { class: "row" }, vgaCanvas),
     vgaInfoLine,
     heartbeatLine,

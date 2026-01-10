@@ -1,10 +1,8 @@
 /// <reference lib="webworker" />
 
+import type { AeroConfig } from "../config/aero_config";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
-import { initWasmForContext } from "../runtime/wasm_context";
-import { RingBuffer } from "../runtime/ring_buffer";
-import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
 import { FRAME_DIRTY, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "../shared/frameProtocol";
 import {
   FRAMEBUFFER_FORMAT_RGBA8888,
@@ -18,13 +16,18 @@ import {
   storeHeaderI32,
   wrapSharedFramebuffer,
 } from "../display/framebuffer_protocol";
+import { RingBuffer } from "../runtime/ring_buffer";
+import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
 import {
+  type ConfigAckMessage,
+  type ConfigUpdateMessage,
   MessageType,
   type ProtocolMessage,
   type WorkerInitMessage,
   decodeProtocolMessage,
   encodeProtocolMessage,
 } from "../runtime/protocol";
+import { initWasmForContext } from "../runtime/wasm_context";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -38,8 +41,19 @@ let guestI32!: Int32Array;
 let vgaFramebuffer: ReturnType<typeof wrapSharedFramebuffer> | null = null;
 let frameState: Int32Array | null = null;
 
+let currentConfig: AeroConfig | null = null;
+let currentConfigVersion = 0;
+
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
-  const init = ev.data as Partial<WorkerInitMessage>;
+  const msg = ev.data as Partial<WorkerInitMessage | ConfigUpdateMessage>;
+  if (msg?.kind === "config.update") {
+    currentConfig = (msg as ConfigUpdateMessage).config;
+    currentConfigVersion = (msg as ConfigUpdateMessage).version;
+    ctx.postMessage({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
+    return;
+  }
+
+  const init = msg as Partial<WorkerInitMessage>;
   if (init?.kind !== "init") return;
   void initAndRun(init as WorkerInitMessage);
 };
@@ -203,3 +217,6 @@ function renderTestPattern(
     }
   }
 }
+
+// Keep config in scope for devtools inspection.
+void currentConfig;

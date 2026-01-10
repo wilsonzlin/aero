@@ -1,3 +1,4 @@
+import type { AeroConfig } from "../config/aero_config";
 import type { WasmVariant } from "./wasm_context";
 import type { WorkerRole } from "./shared_layout";
 
@@ -106,6 +107,26 @@ export type WorkerInitMessage = {
    */
   frameStateSab?: SharedArrayBuffer;
 };
+
+/**
+ * Structured config update pushed from the coordinator to workers.
+ *
+ * This is intentionally a `postMessage` payload (not ring-buffer encoded) since
+ * it is low-frequency / human-facing configuration.
+ */
+export type ConfigUpdateMessage = {
+  kind: "config.update";
+  version: number;
+  config: AeroConfig;
+};
+
+export type ConfigAckMessage = {
+  kind: "config.ack";
+  version: number;
+};
+
+export type CoordinatorToWorkerPostMessage = WorkerInitMessage | ConfigUpdateMessage;
+export type WorkerToCoordinatorPostMessage = ReadyMessage | ErrorMessage | WasmReadyMessage | ConfigAckMessage;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();

@@ -73,6 +73,39 @@ input[type="text"] {
   min-width: 320px;
 }
 
+label {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+input[type="url"],
+select {
+  width: 100%;
+}
+
+fieldset {
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+legend {
+  padding: 0 6px;
+}
+
+.hint {
+  font-size: 0.9em;
+  opacity: 0.85;
+  margin: 2px 0 0;
+}
+
+.error {
+  color: #cf222e;
+}
+
 pre {
   margin: 8px 0 0;
   padding: 8px;

@@ -1,11 +1,19 @@
 /// <reference lib="webworker" />
 
+import type { AeroConfig } from "../config/aero_config";
+import { InputEventType } from "../input/event_queue";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { RingBuffer } from "../runtime/ring_buffer";
 import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
-import { MessageType, type ProtocolMessage, type WorkerInitMessage, decodeProtocolMessage } from "../runtime/protocol";
-import { InputEventType } from "../input/event_queue";
+import {
+  type ConfigAckMessage,
+  type ConfigUpdateMessage,
+  MessageType,
+  type ProtocolMessage,
+  type WorkerInitMessage,
+  decodeProtocolMessage,
+} from "../runtime/protocol";
 import { openSyncAccessHandleInDedicatedWorker } from "../platform/opfs";
 import { DEFAULT_OPFS_DISK_IMAGES_DIRECTORY } from "../storage/disk_image_store";
 import type { WorkerOpenToken } from "../storage/disk_image_store";
@@ -14,15 +22,18 @@ const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 void installWorkerPerfHandlers();
 
+type InputBatchMessage = { type: "in:input-batch"; buffer: ArrayBuffer };
+type InputBatchRecycleMessage = { type: "in:input-batch-recycle"; buffer: ArrayBuffer };
+
 let role: "cpu" | "gpu" | "io" | "jit" = "io";
 let status!: Int32Array;
 let commandRing!: RingBuffer;
 
+let currentConfig: AeroConfig | null = null;
+let currentConfigVersion = 0;
+
 let started = false;
 let pollTimer: number | undefined;
-
-type InputBatchMessage = { type: "in:input-batch"; buffer: ArrayBuffer };
-type InputBatchRecycleMessage = { type: "in:input-batch-recycle"; buffer: ArrayBuffer };
 
 type OpenActiveDiskRequest = { id: number; type: "openActiveDisk"; token: WorkerOpenToken };
 type SetMicrophoneRingBufferMessage = {
@@ -111,11 +122,20 @@ async function handleOpenActiveDisk(msg: OpenActiveDiskRequest): Promise<void> {
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   const data = ev.data as
     | Partial<WorkerInitMessage>
+    | Partial<ConfigUpdateMessage>
     | Partial<InputBatchMessage>
     | Partial<OpenActiveDiskRequest>
     | Partial<SetMicrophoneRingBufferMessage>
     | undefined;
   if (!data) return;
+
+  if ((data as Partial<ConfigUpdateMessage>).kind === "config.update") {
+    const update = data as ConfigUpdateMessage;
+    currentConfig = update.config;
+    currentConfigVersion = update.version;
+    ctx.postMessage({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
+    return;
+  }
 
   if ((data as Partial<OpenActiveDiskRequest>).type === "openActiveDisk") {
     void handleOpenActiveDisk(data as OpenActiveDiskRequest);
@@ -130,7 +150,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
   // First message is the shared-memory init handshake.
   if ((data as Partial<WorkerInitMessage>).kind === "init") {
-    const init = data as Partial<WorkerInitMessage>;
+    const init = data as WorkerInitMessage;
     perf.spanBegin("worker:boot");
     try {
       perf.spanBegin("wasm:init");
@@ -232,3 +252,5 @@ function shutdown(): void {
   setReadyFlag(status, role, false);
   ctx.close();
 }
+
+void currentConfig;

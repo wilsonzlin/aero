@@ -37,9 +37,16 @@ import {
 } from '../ipc/shared-layout';
 
 import { GpuTelemetry } from '../../gpu/telemetry.ts';
+import type { AeroConfig } from '../config/aero_config';
 import type { WorkerRole } from '../runtime/shared_layout';
 import { createSharedMemoryViews, setReadyFlag } from '../runtime/shared_layout';
-import { MessageType, type ProtocolMessage, type WorkerInitMessage } from '../runtime/protocol';
+import {
+  type ConfigAckMessage,
+  type ConfigUpdateMessage,
+  MessageType,
+  type ProtocolMessage,
+  type WorkerInitMessage,
+} from '../runtime/protocol';
 
 import type { Presenter, PresenterBackendKind, PresenterInitOptions } from '../gpu/presenter';
 import { PresenterError } from '../gpu/presenter';
@@ -107,6 +114,9 @@ let lastInitMessage: Extract<GpuWorkerMessageFromMain, { type: 'init' }> | null 
 
 const telemetry = new GpuTelemetry({ frameBudgetMs: Number.POSITIVE_INFINITY });
 let lastFrameStartMs: number | null = null;
+
+let currentConfig: AeroConfig | null = null;
+let currentConfigVersion = 0;
 
 const tryInitSharedFramebufferViews = () => {
   if (framebufferViews) return;
@@ -468,6 +478,14 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
 ctx.onmessage = (event: MessageEvent<unknown>) => {
   const data = event.data;
 
+  if (data && typeof data === "object" && "kind" in data && (data as { kind?: unknown }).kind === "config.update") {
+    const update = data as ConfigUpdateMessage;
+    currentConfig = update.config;
+    currentConfigVersion = update.version;
+    ctx.postMessage({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
+    return;
+  }
+
   // Runtime/harness init (SharedArrayBuffers + worker role).
   if (data && typeof data === 'object' && 'kind' in data && (data as { kind?: unknown }).kind === 'init') {
     handleRuntimeInit(data as WorkerInitMessage);
@@ -592,3 +610,5 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
     }
   }
 };
+
+void currentConfig;

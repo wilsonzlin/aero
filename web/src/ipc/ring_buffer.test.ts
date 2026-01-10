@@ -30,7 +30,6 @@ describe("ipc/ring_buffer", () => {
     const first = new Uint8Array(23);
     first.fill(7);
     expect(ring.tryPush(first)).toBe(true);
-
     // Drain the first record so the ring is empty, but the producer tail stays near the end.
     // The next push should require a wrap marker.
     expect(Array.from(ring.tryPop() ?? [])).toEqual(Array.from(first));

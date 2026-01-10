@@ -55,8 +55,8 @@ export const EVENT_RING_CAPACITY_BYTES = 32 * 1024;
  *  - IPC buffers remain small and cache-friendly.
  *  - Guest RAM can be resized/failed independently of IPC buffers.
  */
-export const GUEST_RAM_PRESETS_MIB = [512, 1024, 2048, 3072] as const;
-export type GuestRamMiB = (typeof GUEST_RAM_PRESETS_MIB)[number];
+export const GUEST_RAM_PRESETS_MIB = [256, 512, 1024, 2048, 3072, 4096] as const;
+export type GuestRamMiB = number;
 export const DEFAULT_GUEST_RAM_MIB: GuestRamMiB = 512;
 
 const WASM_PAGE_BYTES = 64 * 1024;
