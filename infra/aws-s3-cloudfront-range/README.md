@@ -30,6 +30,14 @@ For a fully local Range + CORS validation setup (no AWS required), see
     - Optional CloudFront **response headers policy** for injecting CORS headers at the edge.
     - Optional CloudFront **Function** to answer CORS preflight (`OPTIONS`) at the edge for `/images/*`, avoiding OPTIONS to S3.
 
+## CloudFront object size limits (important for very large disks)
+
+CloudFront enforces a maximum object size per URL. If you plan to serve **very large** disk images, ensure your objects stay within CloudFront’s limits, or publish images as **chunk objects** instead of a single monolithic file.
+
+For background and practical guidance (including a chunked-object strategy), see:
+
+- [`docs/17-range-cdn-behavior.md`](../../docs/17-range-cdn-behavior.md)
+
 ## Prerequisites
 
 - Terraform **0.13+**
