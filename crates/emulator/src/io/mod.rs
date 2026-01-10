@@ -10,3 +10,4 @@ pub trait PortIO {
     fn port_read(&self, port: u16, size: usize) -> u32;
     fn port_write(&mut self, port: u16, size: usize, val: u32);
 }
+pub mod virtio;
