@@ -137,6 +137,53 @@ const tryInitSharedFramebufferViews = () => {
   }
 };
 
+const BYTES_PER_PIXEL_RGBA8 = 4;
+const COPY_BYTES_PER_ROW_ALIGNMENT = 256;
+
+const alignUp = (value: number, align: number): number => {
+  if (align <= 0) return value;
+  return Math.ceil(value / align) * align;
+};
+
+const bytesPerRowForUpload = (rowBytes: number, copyHeight: number): number => {
+  if (copyHeight <= 1) return rowBytes;
+  return alignUp(rowBytes, COPY_BYTES_PER_ROW_ALIGNMENT);
+};
+
+const requiredDataLen = (bytesPerRow: number, rowBytes: number, copyHeight: number): number => {
+  if (copyHeight <= 0) return 0;
+  return bytesPerRow * (copyHeight - 1) + rowBytes;
+};
+
+const clampInt = (value: number, min: number, max: number): number =>
+  Math.max(min, Math.min(max, Math.trunc(value)));
+
+const estimateTextureUploadBytes = (
+  layout: SharedFramebufferLayout | null,
+  dirtyRects: DirtyRect[] | null,
+): number => {
+  if (!layout) return 0;
+
+  const fullRect: DirtyRect = { x: 0, y: 0, w: layout.width, h: layout.height };
+  const rects =
+    dirtyRects == null ? [fullRect] : dirtyRects.length === 0 ? ([] as DirtyRect[]) : dirtyRects;
+
+  let total = 0;
+  for (const rect of rects) {
+    const x = clampInt(rect.x, 0, layout.width);
+    const y = clampInt(rect.y, 0, layout.height);
+    const w = clampInt(rect.w, 0, layout.width - x);
+    const h = clampInt(rect.h, 0, layout.height - y);
+    if (w === 0 || h === 0) continue;
+
+    const rowBytes = w * BYTES_PER_PIXEL_RGBA8;
+    const bytesPerRow = bytesPerRowForUpload(rowBytes, h);
+    total += requiredDataLen(bytesPerRow, rowBytes, h);
+  }
+
+  return total;
+};
+
 const syncSharedMetrics = () => {
   if (!frameState) return;
   if (frameState.length <= FRAME_METRICS_DROPPED_INDEX) return;
@@ -223,10 +270,8 @@ const computeDroppedFromSeqForPresent = () => {
   lastPresentedSeq = seq;
 };
 
-const presentOnce = async () => {
+const presentOnce = async (dirtyRects: DirtyRect[] | null) => {
   if (!presentFn) return false;
-  const dirtyRects = pendingDirtyRects;
-  pendingDirtyRects = null;
   const t0 = performance.now();
   const result = await presentFn(dirtyRects);
   telemetry.recordPresentLatencyMs(performance.now() - t0);
@@ -269,15 +314,21 @@ const handleTick = async () => {
     pendingFrames = 0;
   }
 
+  const dirtyRects = pendingDirtyRects;
+  pendingDirtyRects = null;
+
   presenting = true;
   try {
-    const didPresent = await presentOnce();
+    const didPresent = await presentOnce(dirtyRects);
     if (didPresent) {
       framesPresented += 1;
 
       const now = performance.now();
       if (lastFrameStartMs !== null) {
         telemetry.beginFrame(lastFrameStartMs);
+        telemetry.recordTextureUploadBytes(
+          estimateTextureUploadBytes(framebufferViews?.layout ?? null, dirtyRects),
+        );
         telemetry.endFrame(now);
       }
       lastFrameStartMs = now;
