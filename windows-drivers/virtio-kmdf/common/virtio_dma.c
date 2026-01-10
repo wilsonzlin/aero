@@ -158,7 +158,9 @@ NTSTATUS VirtioDmaAllocCommonBufferWithParent(
     }
 
     WDF_COMMON_BUFFER_CONFIG cbConfig;
-    WDF_COMMON_BUFFER_CONFIG_INIT(&cbConfig, alignmentRequirement);
+    RtlZeroMemory(&cbConfig, sizeof(cbConfig));
+    cbConfig.Size = sizeof(cbConfig);
+    cbConfig.AlignmentRequirement = alignmentRequirement;
     cbConfig.CacheEnabled = CacheEnabled;
 
     WDF_OBJECT_ATTRIBUTES cbAttributes;
@@ -168,8 +170,8 @@ NTSTATUS VirtioDmaAllocCommonBufferWithParent(
     status = WdfCommonBufferCreateWithConfig(
         Ctx->DmaEnabler,
         Length,
-        &cbAttributes,
         &cbConfig,
+        &cbAttributes,
         &Out->Handle);
     if (!NT_SUCCESS(status)) {
         return status;
