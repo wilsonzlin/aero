@@ -28,6 +28,8 @@
 
 #define VIRTIO_BLK_F_BLK_SIZE (1u << 6)
 #define VIRTIO_BLK_F_FLUSH (1u << 9)
+#define VIRTIO_BLK_F_SIZE_MAX (1u << 1)
+#define VIRTIO_BLK_F_SEG_MAX (1u << 2)
 
 #define VIRTIO_BLK_T_IN 0u
 #define VIRTIO_BLK_T_OUT 1u
@@ -80,6 +82,8 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
 
     ULONGLONG CapacitySectors;
     ULONG LogicalSectorSize;
+    ULONG SegMax;
+    ULONG SizeMax;
 
     PAEROVBLK_REQUEST_CONTEXT RequestContexts;
     ULONG RequestContextCount;
@@ -89,6 +93,10 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
     BOOLEAN Removed;
     SENSE_DATA LastSense;
 } AEROVBLK_DEVICE_EXTENSION, *PAEROVBLK_DEVICE_EXTENSION;
+
+C_ASSERT(sizeof(VRING_DESC) == 16);
+C_ASSERT(sizeof(VIRTIO_SG_ENTRY) <= sizeof(VRING_DESC));
+C_ASSERT((AEROVBLK_CTX_TABLE_OFFSET % sizeof(ULONGLONG)) == 0);
 
 #define AEROVBLK_SRBIO_SIG "AEROVBLK"
 #define AEROVBLK_IOCTL_QUERY 0x8000A001u
