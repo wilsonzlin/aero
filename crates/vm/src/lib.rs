@@ -31,6 +31,7 @@ impl<D: BlockDevice> Vm<D> {
     pub fn reset(&mut self) {
         let bus: &mut dyn BiosBus = &mut self.mem;
         self.bios.post(&mut self.cpu, bus, &mut self.disk);
+        self.mem.clear_dirty();
     }
 
     pub fn step(&mut self) -> CpuExit {
@@ -51,4 +52,3 @@ impl<D: BlockDevice> Vm<D> {
         snapshot::restore_vm_snapshot(self, bytes)
     }
 }
-

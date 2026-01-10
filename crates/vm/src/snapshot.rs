@@ -225,13 +225,16 @@ impl<D: BlockDevice> SnapshotSource for Vm<D> {
     }
 
     fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
-        None
+        Some(self.mem.take_dirty_pages())
     }
 }
 
 impl<D: BlockDevice> SnapshotTarget for Vm<D> {
     fn restore_meta(&mut self, meta: SnapshotMeta) {
         self.last_snapshot_id = Some(meta.snapshot_id);
+        self.snapshot_seq = self
+            .snapshot_seq
+            .max(meta.snapshot_id.saturating_add(1));
     }
 
     fn restore_cpu_state(&mut self, state: CpuState) {
@@ -273,6 +276,11 @@ impl<D: BlockDevice> SnapshotTarget for Vm<D> {
 
     fn write_ram(&mut self, offset: u64, data: &[u8]) -> Result<(), SnapshotError> {
         self.mem.write_raw(offset, data);
+        Ok(())
+    }
+
+    fn post_restore(&mut self) -> Result<(), SnapshotError> {
+        self.mem.clear_dirty();
         Ok(())
     }
 }

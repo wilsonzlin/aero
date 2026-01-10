@@ -1,5 +1,59 @@
 use core::ops::Range;
 
+const DIRTY_PAGE_SIZE: usize = 4096;
+
+#[derive(Debug, Clone)]
+struct DirtyBitmap {
+    bits: Vec<u64>,
+    pages: usize,
+    page_size: usize,
+}
+
+impl DirtyBitmap {
+    fn new(mem_len: usize, page_size: usize) -> Self {
+        let pages = mem_len.div_ceil(page_size);
+        let words = pages.div_ceil(64);
+        Self {
+            bits: vec![0; words],
+            pages,
+            page_size,
+        }
+    }
+
+    fn mark_addr(&mut self, addr: usize) {
+        let page = addr / self.page_size;
+        if page < self.pages {
+            let word = page / 64;
+            let bit = page % 64;
+            self.bits[word] |= 1u64 << bit;
+        }
+    }
+
+    fn take(&mut self) -> Vec<u64> {
+        let mut pages = Vec::new();
+        for (word_idx, word) in self.bits.iter_mut().enumerate() {
+            let mut w = *word;
+            if w == 0 {
+                continue;
+            }
+            *word = 0;
+            while w != 0 {
+                let bit = w.trailing_zeros() as usize;
+                let page = word_idx * 64 + bit;
+                if page < self.pages {
+                    pages.push(page as u64);
+                }
+                w &= !(1u64 << bit);
+            }
+        }
+        pages
+    }
+
+    fn clear(&mut self) {
+        self.bits.fill(0);
+    }
+}
+
 /// CPU-visible memory access trait (physical addressing).
 ///
 /// This mirrors the interface contract in `docs/15-agent-task-breakdown.md`.
@@ -119,6 +173,7 @@ pub struct PhysicalMemory {
     data: Vec<u8>,
     a20_enabled: bool,
     read_only_ranges: Vec<Range<u64>>,
+    dirty: DirtyBitmap,
 }
 
 impl PhysicalMemory {
@@ -127,6 +182,7 @@ impl PhysicalMemory {
             data: vec![0; size],
             a20_enabled: false,
             read_only_ranges: Vec::new(),
+            dirty: DirtyBitmap::new(size, DIRTY_PAGE_SIZE),
         }
     }
 
@@ -174,6 +230,14 @@ impl PhysicalMemory {
 
     pub fn set_read_only_ranges(&mut self, ranges: Vec<Range<u64>>) {
         self.read_only_ranges = ranges;
+    }
+
+    pub fn take_dirty_pages(&mut self) -> Vec<u64> {
+        self.dirty.take()
+    }
+
+    pub fn clear_dirty(&mut self) {
+        self.dirty.clear();
     }
 
     fn translate_addr(&self, addr: u64) -> u64 {
@@ -243,6 +307,7 @@ impl MemoryAccess for PhysicalMemory {
         }
         let idx = self.to_index(addr);
         self.data[idx] = val;
+        self.dirty.mark_addr(idx);
     }
 
     fn fetch_code(&self, addr: u64, len: usize) -> &[u8] {

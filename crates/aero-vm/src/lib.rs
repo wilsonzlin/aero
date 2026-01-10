@@ -141,6 +141,9 @@ impl SnapshotSource for Vm {
 impl SnapshotTarget for Vm {
     fn restore_meta(&mut self, meta: SnapshotMeta) {
         self.last_snapshot_id = Some(meta.snapshot_id);
+        self.next_snapshot_id = self
+            .next_snapshot_id
+            .max(meta.snapshot_id.saturating_add(1));
     }
 
     fn restore_cpu_state(&mut self, state: CpuState) {
