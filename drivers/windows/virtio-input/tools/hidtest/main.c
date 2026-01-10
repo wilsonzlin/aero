@@ -1,0 +1,736 @@
+#define _CRT_SECURE_NO_WARNINGS
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+// Build (MSVC):
+//   cl /nologo /W4 /D_CRT_SECURE_NO_WARNINGS main.c /link setupapi.lib hid.lib
+//
+// Build (MinGW-w64):
+//   gcc -municode -Wall -Wextra -O2 -o hidtest.exe main.c -lsetupapi -lhid
+
+#include <setupapi.h>
+#include <hidsdi.h>
+#include <hidpi.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <wchar.h>
+
+#pragma comment(lib, "setupapi.lib")
+#pragma comment(lib, "hid.lib")
+
+typedef struct OPTIONS {
+    int list_only;
+    int have_vid;
+    int have_pid;
+    int have_index;
+    int have_led_mask;
+    USHORT vid;
+    USHORT pid;
+    DWORD index;
+    BYTE led_mask;
+} OPTIONS;
+
+typedef struct SELECTED_DEVICE {
+    HANDLE handle;
+    DWORD desired_access;
+    WCHAR *path;
+    HIDD_ATTRIBUTES attr;
+    int attr_valid;
+    HIDP_CAPS caps;
+    int caps_valid;
+} SELECTED_DEVICE;
+
+static void print_win32_error_w(const wchar_t *prefix, DWORD err)
+{
+    wchar_t *msg = NULL;
+    DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                  FORMAT_MESSAGE_IGNORE_INSERTS;
+    DWORD len = FormatMessageW(flags, NULL, err, 0, (LPWSTR)&msg, 0, NULL);
+    if (len == 0 || msg == NULL) {
+        wprintf(L"%ls: error %lu\n", prefix, err);
+        return;
+    }
+
+    while (len > 0 && (msg[len - 1] == L'\r' || msg[len - 1] == L'\n')) {
+        msg[len - 1] = L'\0';
+        len--;
+    }
+    wprintf(L"%ls: %ls (error %lu)\n", prefix, msg, err);
+    LocalFree(msg);
+}
+
+static void print_last_error_w(const wchar_t *prefix)
+{
+    print_win32_error_w(prefix, GetLastError());
+}
+
+static int parse_u16_hex(const wchar_t *s, USHORT *out)
+{
+    wchar_t *end = NULL;
+    unsigned long v;
+
+    if (s == NULL || out == NULL) {
+        return 0;
+    }
+
+    v = wcstoul(s, &end, 0);
+    if (end == s || *end != L'\0' || v > 0xFFFFUL) {
+        return 0;
+    }
+    *out = (USHORT)v;
+    return 1;
+}
+
+static int parse_u32_dec(const wchar_t *s, DWORD *out)
+{
+    wchar_t *end = NULL;
+    unsigned long v;
+
+    if (s == NULL || out == NULL) {
+        return 0;
+    }
+
+    v = wcstoul(s, &end, 10);
+    if (end == s || *end != L'\0') {
+        return 0;
+    }
+    *out = (DWORD)v;
+    return 1;
+}
+
+static WCHAR *wcsdup_heap(const WCHAR *s)
+{
+    size_t n;
+    WCHAR *out;
+
+    if (s == NULL) {
+        return NULL;
+    }
+
+    n = wcslen(s) + 1;
+    out = (WCHAR *)malloc(n * sizeof(WCHAR));
+    if (out == NULL) {
+        return NULL;
+    }
+    memcpy(out, s, n * sizeof(WCHAR));
+    return out;
+}
+
+static void dump_hex(const BYTE *buf, DWORD len)
+{
+    DWORD i;
+    for (i = 0; i < len; i++) {
+        wprintf(L"%02X", buf[i]);
+        if (i + 1 != len) {
+            wprintf(L" ");
+        }
+    }
+}
+
+static void dump_keyboard_report(const BYTE *buf, DWORD len)
+{
+    DWORD off = 0;
+    BYTE report_id = 0;
+    BYTE modifiers;
+    const BYTE *keys;
+    DWORD key_count;
+    DWORD i;
+
+    if (len == 0) {
+        wprintf(L"keyboard: <empty>\n");
+        return;
+    }
+
+    // Common layouts:
+    // - Boot keyboard: 8 bytes (no ReportID) => [mod][res][k1..k6]
+    // - With ReportID: 9 bytes             => [id][mod][res][k1..k6]
+    if (len == 9 && buf[0] != 0) {
+        report_id = buf[0];
+        off = 1;
+    }
+
+    if (len < off + 2) {
+        wprintf(L"keyboard: <short> ");
+        dump_hex(buf, len);
+        wprintf(L"\n");
+        return;
+    }
+
+    modifiers = buf[off];
+    keys = buf + off + 2;
+    key_count = len - (off + 2);
+
+    if (report_id != 0) {
+        wprintf(L"keyboard: id=%u ", report_id);
+    } else {
+        wprintf(L"keyboard: ");
+    }
+
+    wprintf(L"mods=0x%02X keys=[", modifiers);
+    for (i = 0; i < key_count; i++) {
+        wprintf(L"%02X", keys[i]);
+        if (i + 1 != key_count) {
+            wprintf(L" ");
+        }
+    }
+    wprintf(L"]\n");
+}
+
+static void dump_mouse_report(const BYTE *buf, DWORD len, int assume_report_id)
+{
+    DWORD off = 0;
+    BYTE report_id = 0;
+    BYTE buttons;
+    char dx;
+    char dy;
+    char wheel;
+
+    if (len == 0) {
+        wprintf(L"mouse: <empty>\n");
+        return;
+    }
+
+    // Common layouts:
+    // - Boot mouse: 3 bytes (no ReportID) => [btn][x][y]
+    // - Wheel mouse: 4 bytes              => [btn][x][y][wheel]
+    // - With ReportID: one extra byte at front.
+    if (assume_report_id && len >= 4 && buf[0] != 0) {
+        report_id = buf[0];
+        off = 1;
+    }
+
+    if (len < off + 3) {
+        wprintf(L"mouse: <short> ");
+        dump_hex(buf, len);
+        wprintf(L"\n");
+        return;
+    }
+
+    buttons = buf[off + 0];
+    dx = (char)buf[off + 1];
+    dy = (char)buf[off + 2];
+    wheel = 0;
+    if (len >= off + 4) {
+        wheel = (char)buf[off + 3];
+    }
+
+    if (report_id != 0) {
+        wprintf(L"mouse: id=%u ", report_id);
+    } else {
+        wprintf(L"mouse: ");
+    }
+
+    wprintf(L"buttons=0x%02X dx=%d dy=%d", buttons, (int)dx, (int)dy);
+    if (len >= off + 4) {
+        wprintf(L" wheel=%d", (int)wheel);
+    }
+    wprintf(L"\n");
+}
+
+static void print_usage(void)
+{
+    wprintf(L"hidtest: minimal HID report/IOCTL probe tool (Win7)\n");
+    wprintf(L"\n");
+    wprintf(L"Usage:\n");
+    wprintf(L"  hidtest.exe [--list]\n");
+    wprintf(L"  hidtest.exe [--index N] [--vid 0x1234] [--pid 0x5678] [--led 0x07]\n");
+    wprintf(L"\n");
+    wprintf(L"Options:\n");
+    wprintf(L"  --list          List all present HID interfaces and exit\n");
+    wprintf(L"  --index N       Open HID interface at enumeration index N\n");
+    wprintf(L"  --vid 0xVID     Filter by vendor ID (hex)\n");
+    wprintf(L"  --pid 0xPID     Filter by product ID (hex)\n");
+    wprintf(L"  --led 0xMASK    Send keyboard LED output report (ReportID=1)\n");
+    wprintf(L"                 Bits: 0x01 NumLock, 0x02 CapsLock, 0x04 ScrollLock\n");
+    wprintf(L"\n");
+    wprintf(L"Notes:\n");
+    wprintf(L"  - Without filters, the tool prefers VID 0x1AF4 (virtio) if present.\n");
+    wprintf(L"  - Press Ctrl+C to exit the report read loop.\n");
+}
+
+static void free_selected_device(SELECTED_DEVICE *dev)
+{
+    if (dev == NULL) {
+        return;
+    }
+    if (dev->handle != INVALID_HANDLE_VALUE && dev->handle != NULL) {
+        CloseHandle(dev->handle);
+    }
+    free(dev->path);
+    ZeroMemory(dev, sizeof(*dev));
+}
+
+static int device_matches_opts(const OPTIONS *opt, DWORD iface_index, const HIDD_ATTRIBUTES *attr)
+{
+    if (opt->have_index && opt->index != iface_index) {
+        return 0;
+    }
+    if (opt->have_vid && attr->VendorID != opt->vid) {
+        return 0;
+    }
+    if (opt->have_pid && attr->ProductID != opt->pid) {
+        return 0;
+    }
+    return 1;
+}
+
+static void print_device_strings(HANDLE handle)
+{
+    WCHAR s[256];
+
+    if (HidD_GetManufacturerString(handle, s, sizeof(s))) {
+        s[(sizeof(s) / sizeof(s[0])) - 1] = L'\0';
+        wprintf(L"      Manufacturer: %ls\n", s);
+    }
+    if (HidD_GetProductString(handle, s, sizeof(s))) {
+        s[(sizeof(s) / sizeof(s[0])) - 1] = L'\0';
+        wprintf(L"      Product:      %ls\n", s);
+    }
+    if (HidD_GetSerialNumberString(handle, s, sizeof(s))) {
+        s[(sizeof(s) / sizeof(s[0])) - 1] = L'\0';
+        wprintf(L"      Serial:       %ls\n", s);
+    }
+}
+
+static int query_hid_caps(HANDLE handle, HIDP_CAPS *caps_out)
+{
+    PHIDP_PREPARSED_DATA ppd = NULL;
+    NTSTATUS st;
+
+    if (!HidD_GetPreparsedData(handle, &ppd)) {
+        return 0;
+    }
+
+    st = HidP_GetCaps(ppd, caps_out);
+    HidD_FreePreparsedData(ppd);
+
+    return st == HIDP_STATUS_SUCCESS;
+}
+
+static HANDLE open_hid_path(const WCHAR *path, DWORD *desired_access_out)
+{
+    HANDLE h;
+    DWORD access;
+
+    access = GENERIC_READ | GENERIC_WRITE;
+    h = CreateFileW(path, access, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+        if (desired_access_out != NULL) {
+            *desired_access_out = access;
+        }
+        return h;
+    }
+
+    access = GENERIC_READ;
+    h = CreateFileW(path, access, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    if (desired_access_out != NULL) {
+        *desired_access_out = (h == INVALID_HANDLE_VALUE) ? 0 : access;
+    }
+    return h;
+}
+
+static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
+{
+    GUID hid_guid;
+    HDEVINFO devinfo;
+    SP_DEVICE_INTERFACE_DATA iface;
+    DWORD iface_index;
+    int have_filters;
+    SELECTED_DEVICE fallback;
+
+    ZeroMemory(out, sizeof(*out));
+    out->handle = INVALID_HANDLE_VALUE;
+    ZeroMemory(&fallback, sizeof(fallback));
+    fallback.handle = INVALID_HANDLE_VALUE;
+
+    HidD_GetHidGuid(&hid_guid);
+
+    devinfo = SetupDiGetClassDevsW(&hid_guid, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (devinfo == INVALID_HANDLE_VALUE) {
+        print_last_error_w(L"SetupDiGetClassDevs");
+        return 0;
+    }
+
+    iface_index = 0;
+    have_filters = opt->have_index || opt->have_vid || opt->have_pid;
+    for (;;) {
+        DWORD required = 0;
+        PSP_DEVICE_INTERFACE_DETAIL_DATA_W detail = NULL;
+        HANDLE handle = INVALID_HANDLE_VALUE;
+        DWORD desired_access = 0;
+        HIDD_ATTRIBUTES attr;
+        HIDP_CAPS caps;
+        int caps_valid = 0;
+        int attr_valid = 0;
+        int match = 0;
+        int is_virtio = 0;
+
+        ZeroMemory(&iface, sizeof(iface));
+        iface.cbSize = sizeof(iface);
+        if (!SetupDiEnumDeviceInterfaces(devinfo, NULL, &hid_guid, iface_index, &iface)) {
+            DWORD err = GetLastError();
+            if (err != ERROR_NO_MORE_ITEMS) {
+                print_win32_error_w(L"SetupDiEnumDeviceInterfaces", err);
+            }
+            break;
+        }
+
+        SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, NULL, 0, &required, NULL);
+        if (required == 0) {
+            wprintf(L"[%lu] SetupDiGetDeviceInterfaceDetail: required size=0\n", iface_index);
+            iface_index++;
+            continue;
+        }
+
+        detail = (PSP_DEVICE_INTERFACE_DETAIL_DATA_W)malloc(required);
+        if (detail == NULL) {
+            wprintf(L"Out of memory\n");
+            SetupDiDestroyDeviceInfoList(devinfo);
+            return 0;
+        }
+
+        detail->cbSize = sizeof(*detail);
+        if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, required, NULL, NULL)) {
+            wprintf(L"[%lu] SetupDiGetDeviceInterfaceDetail failed\n", iface_index);
+            print_last_error_w(L"SetupDiGetDeviceInterfaceDetail");
+            free(detail);
+            iface_index++;
+            continue;
+        }
+
+        handle = open_hid_path(detail->DevicePath, &desired_access);
+        if (handle == INVALID_HANDLE_VALUE) {
+            wprintf(L"[%lu] %ls\n", iface_index, detail->DevicePath);
+            print_last_error_w(L"      CreateFile");
+            free(detail);
+            iface_index++;
+            continue;
+        }
+
+        ZeroMemory(&attr, sizeof(attr));
+        attr.Size = sizeof(attr);
+        if (HidD_GetAttributes(handle, &attr)) {
+            attr_valid = 1;
+            if (attr.VendorID == 0x1AF4) {
+                is_virtio = 1;
+            }
+        }
+
+        ZeroMemory(&caps, sizeof(caps));
+        caps_valid = query_hid_caps(handle, &caps);
+
+        wprintf(L"[%lu] %ls\n", iface_index, detail->DevicePath);
+        if (attr_valid) {
+            wprintf(L"      VID:PID %04X:%04X (ver %04X)\n", attr.VendorID, attr.ProductID,
+                    attr.VersionNumber);
+        } else {
+            wprintf(L"      HidD_GetAttributes failed\n");
+        }
+
+        if (caps_valid) {
+            wprintf(L"      UsagePage:Usage %04X:%04X\n", caps.UsagePage, caps.Usage);
+            wprintf(L"      Report bytes (in/out/feat): %u / %u / %u\n", caps.InputReportByteLength,
+                    caps.OutputReportByteLength, caps.FeatureReportByteLength);
+        } else {
+            wprintf(L"      HidD_GetPreparsedData/HidP_GetCaps failed\n");
+        }
+
+        if (desired_access & GENERIC_WRITE) {
+            wprintf(L"      Access: read/write\n");
+        } else {
+            wprintf(L"      Access: read-only\n");
+        }
+
+        print_device_strings(handle);
+
+        // Match selection filters. If the user is selecting by index only, we can match even if
+        // HidD_GetAttributes failed.
+        match = 1;
+        if (opt->have_index && opt->index != iface_index) {
+            match = 0;
+        }
+        if (match && (opt->have_vid || opt->have_pid)) {
+            if (!attr_valid) {
+                match = 0;
+            } else if (!device_matches_opts(opt, iface_index, &attr)) {
+                match = 0;
+            }
+        }
+
+        if (opt->list_only) {
+            CloseHandle(handle);
+            free(detail);
+            iface_index++;
+            continue;
+        }
+
+        // Selection rules:
+        // 1) If user requested a specific device (index/vid/pid), pick the first match.
+        // 2) Otherwise, prefer the first virtio (VID 0x1AF4) device interface.
+        // 3) Otherwise, fall back to the first openable HID interface.
+        if (have_filters) {
+            if (match) {
+                out->handle = handle;
+                out->desired_access = desired_access;
+                out->path = wcsdup_heap(detail->DevicePath);
+                out->attr = attr;
+                out->attr_valid = attr_valid;
+                out->caps = caps;
+                out->caps_valid = caps_valid;
+                free(detail);
+                break;
+            }
+            CloseHandle(handle);
+        } else if (is_virtio) {
+            out->handle = handle;
+            out->desired_access = desired_access;
+            out->path = wcsdup_heap(detail->DevicePath);
+            out->attr = attr;
+            out->attr_valid = attr_valid;
+            out->caps = caps;
+            out->caps_valid = caps_valid;
+            free(detail);
+            break;
+        } else if (fallback.handle == INVALID_HANDLE_VALUE) {
+            fallback.handle = handle;
+            fallback.desired_access = desired_access;
+            fallback.path = wcsdup_heap(detail->DevicePath);
+            fallback.attr = attr;
+            fallback.attr_valid = attr_valid;
+            fallback.caps = caps;
+            fallback.caps_valid = caps_valid;
+        } else {
+            CloseHandle(handle);
+        }
+
+        free(detail);
+        iface_index++;
+    }
+
+    SetupDiDestroyDeviceInfoList(devinfo);
+
+    if (opt->list_only) {
+        return 1;
+    }
+
+    if (out->handle == INVALID_HANDLE_VALUE && fallback.handle != INVALID_HANDLE_VALUE) {
+        *out = fallback;
+        ZeroMemory(&fallback, sizeof(fallback));
+        fallback.handle = INVALID_HANDLE_VALUE;
+    }
+
+    if (fallback.handle != INVALID_HANDLE_VALUE) {
+        free_selected_device(&fallback);
+    }
+
+    return out->handle != INVALID_HANDLE_VALUE;
+}
+
+static int send_keyboard_led_report(const SELECTED_DEVICE *dev, BYTE led_mask)
+{
+    BYTE *out_report;
+    DWORD out_len;
+    DWORD written = 0;
+    BOOL ok;
+
+    if (dev->handle == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+    if (!(dev->desired_access & GENERIC_WRITE)) {
+        wprintf(L"LED write requested, but device was opened read-only.\n");
+        return 0;
+    }
+    if (!dev->caps_valid) {
+        wprintf(L"LED write requested, but HID caps are not available.\n");
+        return 0;
+    }
+
+    out_len = dev->caps.OutputReportByteLength;
+    if (out_len == 0) {
+        // Some miniports don't report an output report length (or report 0). For virtio-input we
+        // still want to try the common [ReportID][LEDs] layout.
+        out_len = 2;
+    }
+
+    out_report = (BYTE *)calloc(out_len, 1);
+    if (out_report == NULL) {
+        wprintf(L"Out of memory\n");
+        return 0;
+    }
+
+    if (out_len == 1) {
+        // No report ID byte.
+        out_report[0] = led_mask;
+    } else {
+        out_report[0] = 1; // ReportID=1 (keyboard LED output report for virtio-input).
+        out_report[1] = led_mask;
+    }
+
+    wprintf(L"Writing keyboard LED output report: ");
+    dump_hex(out_report, out_len);
+    wprintf(L"\n");
+
+    ok = WriteFile(dev->handle, out_report, out_len, &written, NULL);
+    if (!ok) {
+        print_last_error_w(L"WriteFile(IOCTL_HID_WRITE_REPORT)");
+        free(out_report);
+        return 0;
+    }
+    wprintf(L"Wrote %lu bytes\n", written);
+    free(out_report);
+    return 1;
+}
+
+static void read_reports_loop(const SELECTED_DEVICE *dev)
+{
+    BYTE *buf;
+    DWORD buf_len;
+    DWORD n;
+    BOOL ok;
+    DWORD seq = 0;
+
+    if (!dev->caps_valid) {
+        wprintf(L"Cannot read reports: HID caps not available.\n");
+        return;
+    }
+
+    buf_len = dev->caps.InputReportByteLength;
+    if (buf_len == 0) {
+        buf_len = 64;
+    }
+
+    buf = (BYTE *)malloc(buf_len);
+    if (buf == NULL) {
+        wprintf(L"Out of memory\n");
+        return;
+    }
+
+    wprintf(L"\nReading input reports (%lu bytes)...\n", buf_len);
+    for (;;) {
+        ZeroMemory(buf, buf_len);
+        n = 0;
+        ok = ReadFile(dev->handle, buf, buf_len, &n, NULL);
+        if (!ok) {
+            print_last_error_w(L"ReadFile(IOCTL_HID_READ_REPORT)");
+            break;
+        }
+
+        wprintf(L"[%lu] %lu bytes: ", seq, n);
+        dump_hex(buf, n);
+        wprintf(L"\n");
+
+        // Best-effort decode based on top-level usage.
+        if (dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06) {
+            dump_keyboard_report(buf, n);
+        } else if (dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x02) {
+            int assume_report_id = dev->attr_valid && dev->attr.VendorID == 0x1AF4;
+            dump_mouse_report(buf, n, assume_report_id);
+        }
+
+        seq++;
+    }
+
+    free(buf);
+}
+
+int wmain(int argc, wchar_t **argv)
+{
+    OPTIONS opt;
+    SELECTED_DEVICE dev;
+    int i;
+
+    ZeroMemory(&opt, sizeof(opt));
+    ZeroMemory(&dev, sizeof(dev));
+    dev.handle = INVALID_HANDLE_VALUE;
+
+    for (i = 1; i < argc; i++) {
+        if (wcscmp(argv[i], L"--help") == 0 || wcscmp(argv[i], L"-h") == 0 ||
+            wcscmp(argv[i], L"/?") == 0) {
+            print_usage();
+            return 0;
+        }
+
+        if (wcscmp(argv[i], L"--list") == 0) {
+            opt.list_only = 1;
+            continue;
+        }
+
+        if ((wcscmp(argv[i], L"--vid") == 0) && i + 1 < argc) {
+            if (!parse_u16_hex(argv[i + 1], &opt.vid)) {
+                wprintf(L"Invalid VID: %ls\n", argv[i + 1]);
+                return 2;
+            }
+            opt.have_vid = 1;
+            i++;
+            continue;
+        }
+
+        if ((wcscmp(argv[i], L"--pid") == 0) && i + 1 < argc) {
+            if (!parse_u16_hex(argv[i + 1], &opt.pid)) {
+                wprintf(L"Invalid PID: %ls\n", argv[i + 1]);
+                return 2;
+            }
+            opt.have_pid = 1;
+            i++;
+            continue;
+        }
+
+        if ((wcscmp(argv[i], L"--index") == 0) && i + 1 < argc) {
+            if (!parse_u32_dec(argv[i + 1], &opt.index)) {
+                wprintf(L"Invalid index: %ls\n", argv[i + 1]);
+                return 2;
+            }
+            opt.have_index = 1;
+            i++;
+            continue;
+        }
+
+        if ((wcscmp(argv[i], L"--led") == 0) && i + 1 < argc) {
+            USHORT tmp;
+            if (!parse_u16_hex(argv[i + 1], &tmp) || tmp > 0xFF) {
+                wprintf(L"Invalid LED mask: %ls\n", argv[i + 1]);
+                return 2;
+            }
+            opt.have_led_mask = 1;
+            opt.led_mask = (BYTE)tmp;
+            i++;
+            continue;
+        }
+
+        wprintf(L"Unknown argument: %ls\n", argv[i]);
+        print_usage();
+        return 2;
+    }
+
+    if (!enumerate_hid_devices(&opt, &dev)) {
+        wprintf(L"No matching HID devices found.\n");
+        return 1;
+    }
+
+    if (opt.list_only) {
+        return 0;
+    }
+
+    wprintf(L"\nSelected device:\n");
+    wprintf(L"  Path: %ls\n", dev.path ? dev.path : L"<null>");
+    if (dev.attr_valid) {
+        wprintf(L"  VID:PID %04X:%04X (ver %04X)\n", dev.attr.VendorID, dev.attr.ProductID,
+                dev.attr.VersionNumber);
+    } else {
+        wprintf(L"  VID:PID <unavailable>\n");
+    }
+    if (dev.caps_valid) {
+        wprintf(L"  UsagePage:Usage %04X:%04X\n", dev.caps.UsagePage, dev.caps.Usage);
+        wprintf(L"  Report bytes (in/out/feat): %u / %u / %u\n", dev.caps.InputReportByteLength,
+                dev.caps.OutputReportByteLength, dev.caps.FeatureReportByteLength);
+    }
+
+    if (opt.have_led_mask) {
+        send_keyboard_led_report(&dev, opt.led_mask);
+    }
+
+    read_reports_loop(&dev);
+    free_selected_device(&dev);
+    return 0;
+}
