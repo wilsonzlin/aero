@@ -731,7 +731,7 @@ impl StreamingDisk {
 
 #### Production backend requirements (Range/CORS/no-transform)
 
-`StreamingDisk.remote_url` is expected to point at a production-grade object delivery path (typically **CDN → S3/object store**) that supports efficient random access via `HTTP Range`.
+`StreamingDisk.lease.remote_url` is expected to point at a production-grade object delivery path (typically **CDN → S3/object store**) that supports efficient random access via `HTTP Range`.
 
 For full deployment guidance (S3 CORS, CloudFront caching policies, signed cookies/URLs, versioned keys), see: [16 - Remote Disk Image Delivery (Object Store + CDN + HTTP Range)](./16-remote-disk-image-delivery.md)
 
