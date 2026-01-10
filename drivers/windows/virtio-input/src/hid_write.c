@@ -98,17 +98,26 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
         return STATUS_SUCCESS;
     }
 
-    if (ctx->StatusQ == NULL) {
-        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "%s -> %!STATUS! (no StatusQ)\n", name, STATUS_DEVICE_NOT_READY);
-        WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
-        return STATUS_SUCCESS;
-    }
-
-    status = VirtioStatusQWriteKeyboardLedReport(ctx->StatusQ, ledBitfield);
-    if (!NT_SUCCESS(status)) {
-        VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_IOCTL, "%s StatusQ write failed: %!STATUS!\n", name, status);
-        WdfRequestComplete(Request, status);
-        return STATUS_SUCCESS;
+    if (ctx->StatusQ != NULL) {
+        status = VirtioStatusQWriteKeyboardLedReport(ctx->StatusQ, ledBitfield);
+        if (!NT_SUCCESS(status)) {
+            /*
+             * LED reports are not required for keyboard/mouse input to function.
+             * Do not fail the write path if the status queue is not wired up yet
+             * or if the device rejects the update.
+             */
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_IOCTL,
+                "%s StatusQ write failed (ignored): %!STATUS!\n",
+                name,
+                status);
+        }
+    } else {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_IOCTL,
+            "%s dropping LED report (no StatusQ): leds=0x%02X\n",
+            name,
+            (ULONG)ledBitfield);
     }
 
     VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "%s -> %!STATUS! bytes=%lu\n", name, STATUS_SUCCESS, packet->reportBufferLen);
