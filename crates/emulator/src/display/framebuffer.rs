@@ -162,6 +162,54 @@ impl<'a> SharedFramebuffer<'a> {
         self.header.frame_counter.fetch_add(1, Ordering::Release);
         Ok(())
     }
+
+    /// Presents a tightly-packed BGRA8888 pixel buffer as RGBA8888 into the shared framebuffer.
+    ///
+    /// This is useful for VBE 32bpp modes which conventionally expose pixels as little-endian
+    /// `0xAARRGGBB` (byte order BGRA). The browser-facing shared framebuffer is always RGBA.
+    ///
+    /// Note: the top byte in VBE 32bpp modes is typically documented as "reserved" and is often
+    /// left as 0 by guest software. Since the shared framebuffer feeds `ImageData`, which treats
+    /// alpha=0 as fully transparent, we force the output alpha to 0xFF (opaque).
+    pub fn present_bgra8888_u32(&mut self, width: u32, height: u32, pixels: &[u32]) -> Result<(), FramebufferError> {
+        if self.header.format.load(Ordering::Relaxed) != FRAMEBUFFER_FORMAT_RGBA8888 {
+            return Err(FramebufferError::UnsupportedFormat);
+        }
+
+        let stride_bytes = width
+            .checked_mul(4)
+            .ok_or(FramebufferError::InvalidDimensions)?;
+        self.set_mode(width, height, stride_bytes)?;
+
+        let expected = usize::try_from(width)
+            .map_err(|_| FramebufferError::InvalidDimensions)?
+            .checked_mul(usize::try_from(height).map_err(|_| FramebufferError::InvalidDimensions)?)
+            .ok_or(FramebufferError::InvalidDimensions)?;
+
+        if pixels.len() < expected {
+            return Err(FramebufferError::BufferTooSmall);
+        }
+
+        let required_bytes = expected
+            .checked_mul(4)
+            .ok_or(FramebufferError::InvalidDimensions)?;
+        if required_bytes > self.pixels.len() {
+            return Err(FramebufferError::BufferTooSmall);
+        }
+
+        let dst =
+            unsafe { core::slice::from_raw_parts_mut(self.pixels.as_mut_ptr() as *mut u32, expected) };
+        for (d, &src) in dst.iter_mut().zip(&pixels[..expected]) {
+            // Convert BGRA -> RGBA (swap R/B bytes).
+            *d = (src & 0x0000FF00)
+                | ((src & 0x00FF0000) >> 16)
+                | ((src & 0x000000FF) << 16)
+                | 0xFF00_0000;
+        }
+
+        self.header.frame_counter.fetch_add(1, Ordering::Release);
+        Ok(())
+    }
 }
 
 pub struct OwnedSharedFramebuffer {

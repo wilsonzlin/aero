@@ -229,6 +229,16 @@ impl VgaSharedFramebufferOutput {
         let bytes = unsafe { core::slice::from_raw_parts(pixels.as_ptr() as *const u8, bytes_len) };
         self.present_rgba8888(width as u32, height as u32, bytes)
     }
+
+    pub fn present_bgra8888_u32(
+        &mut self,
+        width: usize,
+        height: usize,
+        pixels: &[u32],
+    ) -> Result<(), FramebufferError> {
+        let mut view = self.shared_framebuffer.view_mut();
+        view.present_bgra8888_u32(width as u32, height as u32, pixels)
+    }
 }
 
 /// A minimal VGA device bundle (registers + VRAM + DAC) with a Mode 13h renderer.
@@ -302,6 +312,20 @@ impl Vga {
         &mut self,
         output: &mut VgaSharedFramebufferOutput,
     ) -> Result<bool, FramebufferError> {
+        if let Some(mode) = self.regs.vbe().current_mode() {
+            let Some((w, h)) = self.regs.resolution() else {
+                return Ok(false);
+            };
+
+            let framebuffer = self.regs.render();
+            if mode.bits_per_pixel == 32 {
+                output.present_bgra8888_u32(w as usize, h as usize, framebuffer)?;
+            } else {
+                output.present_rgba8888_u32(w as usize, h as usize, framebuffer)?;
+            }
+            return Ok(true);
+        };
+
         let Some((width, height, framebuffer)) = self.render() else {
             return Ok(false);
         };
