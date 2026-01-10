@@ -262,6 +262,11 @@ impl X87 {
         Ok(v)
     }
 
+    pub fn fst_st(&mut self, i: usize) -> Result<()> {
+        let v = self.read_st(0)?;
+        self.write_st(i, v)
+    }
+
     pub fn fstp_st(&mut self, i: usize) -> Result<()> {
         let v = self.read_st(0)?;
         self.write_st(i, v)?;

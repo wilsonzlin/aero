@@ -1,5 +1,7 @@
 use aero_x86::Register;
 
+use crate::interp::x87::X87;
+
 pub const FLAG_CF: u64 = 1 << 0;
 pub const FLAG_PF: u64 = 1 << 2;
 pub const FLAG_AF: u64 = 1 << 4;
@@ -72,6 +74,7 @@ pub struct CpuState {
     rflags: u64,
     seg_sel: [u16; 6],
     seg_base: [u64; 6],
+    x87: X87,
     pub mode: CpuMode,
     pub halted: bool,
 }
@@ -90,6 +93,7 @@ impl CpuState {
             rflags: 0x2, // bit 1 is always set
             seg_sel: [0; 6],
             seg_base: [0; 6],
+            x87: X87::default(),
             mode,
             halted: false,
         }
@@ -239,6 +243,14 @@ impl CpuState {
         let bits = self.stack_ptr_bits();
         let v = val & mask_bits(bits);
         self.write_reg(reg, v);
+    }
+
+    pub fn x87(&self) -> &X87 {
+        &self.x87
+    }
+
+    pub fn x87_mut(&mut self) -> &mut X87 {
+        &mut self.x87
     }
 }
 

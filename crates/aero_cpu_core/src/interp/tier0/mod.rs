@@ -3,6 +3,7 @@ pub mod exec;
 mod ops_alu;
 mod ops_cf;
 mod ops_data;
+mod ops_x87;
 
 use crate::exception::{AssistReason, Exception};
 use crate::mem::CpuBus;
@@ -32,6 +33,9 @@ fn exec_decoded<B: CpuBus>(
     }
     if ops_alu::handles_mnemonic(mnem) {
         return ops_alu::exec(state, bus, decoded, next_ip);
+    }
+    if ops_x87::handles_mnemonic(mnem) {
+        return ops_x87::exec(state, bus, decoded, next_ip);
     }
 
     match mnem {

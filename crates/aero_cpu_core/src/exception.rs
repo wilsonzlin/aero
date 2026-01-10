@@ -24,6 +24,8 @@ pub enum Exception {
     InvalidTss(u16),
     /// #UD
     InvalidOpcode,
+    /// #MF (x87 floating-point error).
+    X87Fpu,
     /// Instruction was decoded but is not yet implemented.
     Unimplemented(&'static str),
 }
@@ -65,6 +67,7 @@ impl fmt::Display for Exception {
             Exception::StackSegment(code) => write!(f, "#SS({code})"),
             Exception::InvalidTss(code) => write!(f, "#TS({code})"),
             Exception::InvalidOpcode => write!(f, "#UD"),
+            Exception::X87Fpu => write!(f, "#MF"),
             Exception::Unimplemented(name) => write!(f, "unimplemented: {name}"),
         }
     }
