@@ -20,6 +20,7 @@ Related documents (deployment/ops details):
 - CDN-friendly alternative to `Range`: [Chunked Disk Image Format](./18-chunked-disk-image-format.md)
 - Concrete AWS setup (S3 + CloudFront signed URL/cookie + COOP/COEP): [deployment/cloudfront-disk-streaming.md](./deployment/cloudfront-disk-streaming.md)
 - Ops runbook for the bytes endpoint: [backend/disk-image-streaming-service.md](./backend/disk-image-streaming-service.md)
+- Reference backend service (multipart upload + CloudFront signed cookies/URLs): [`services/image-gateway`](../services/image-gateway/README.md) (see also its [`openapi.yaml`](../services/image-gateway/openapi.yaml))
 
 ---
 
