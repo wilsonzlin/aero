@@ -1,8 +1,10 @@
+import { RunningStats } from "../../../packages/aero-stats/src/running-stats.js";
+
 export function mean(values) {
   if (values.length === 0) return NaN;
-  let total = 0;
-  for (const v of values) total += v;
-  return total / values.length;
+  const stats = new RunningStats();
+  for (const v of values) stats.push(v);
+  return stats.mean;
 }
 
 export function median(values) {
@@ -31,23 +33,22 @@ export function quantile(values, q) {
 
 export function stddev(values) {
   if (values.length === 0) return NaN;
-  const m = mean(values);
-  let sumSq = 0;
-  for (const v of values) {
-    const d = v - m;
-    sumSq += d * d;
-  }
-  return Math.sqrt(sumSq / values.length);
+  const stats = new RunningStats();
+  for (const v of values) stats.push(v);
+  return stats.stdevPopulation;
 }
 
 export function summarize(values) {
-  const m = mean(values);
+  const stats = new RunningStats();
+  for (const v of values) stats.push(v);
+
+  const m = stats.mean;
   const med = median(values);
-  const sd = stddev(values);
+  const sd = stats.stdevPopulation;
   return {
-    n: values.length,
-    min: Math.min(...values),
-    max: Math.max(...values),
+    n: stats.count,
+    min: stats.min,
+    max: stats.max,
     mean: m,
     median: med,
     stdev: sd,
@@ -56,4 +57,3 @@ export function summarize(values) {
     cv: Number.isFinite(m) && m !== 0 ? sd / m : NaN,
   };
 }
-
