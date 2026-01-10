@@ -1,4 +1,4 @@
-; virtio_input.inf - Aero virtio-input KMDF driver (Windows 7)
+; virtio_input.inf - Aero virtio-input KMDF HID minidriver (Windows 7 SP1)
 ;
 ; This INF explicitly enables MSI/MSI-X interrupt resources for virtio-input.
 ;
@@ -16,10 +16,11 @@
 
 [Version]
 Signature   = "$WINDOWS NT$"
-Class       = System
-ClassGuid   = {4D36E97D-E325-11CE-BFC1-08002BE10318}
+Class       = HIDClass
+ClassGuid   = {745A17A0-74D3-11D0-B6FE-00A0C90F57DA}
 Provider    = %ProviderName%
 DriverVer   = 01/10/2026,1.0.0.0
+CatalogFile = virtio-input.cat
 
 [DestinationDirs]
 DefaultDestDir = 12 ; DIRID_DRIVERS
@@ -28,16 +29,18 @@ DefaultDestDir = 12 ; DIRID_DRIVERS
 1 = %DiskName%,,,
 
 [SourceDisksFiles]
-virtio_input.sys = 1
+virtioinput.sys = 1
 
 [Manufacturer]
 %ProviderName% = VirtioInput,NTx86,NTamd64
 
 [VirtioInput.NTx86]
 %VirtioInput.DeviceDesc% = VirtioInput_Install, PCI\VEN_1AF4&DEV_1052
+%VirtioInput.DeviceDesc% = VirtioInput_Install, PCI\VEN_1AF4&DEV_1011
 
 [VirtioInput.NTamd64]
 %VirtioInput.DeviceDesc% = VirtioInput_Install, PCI\VEN_1AF4&DEV_1052
+%VirtioInput.DeviceDesc% = VirtioInput_Install, PCI\VEN_1AF4&DEV_1011
 
 ;------------------------------------------------------------------------------
 ; Device install
@@ -45,22 +48,26 @@ virtio_input.sys = 1
 
 [VirtioInput_Install.NT]
 CopyFiles = VirtioInput_CopyFiles
+AddReg = VirtioInput_AddReg
 
 [VirtioInput_Install.NT.HW]
 AddReg = VirtioInput_InterruptManagement_AddReg
 
 [VirtioInput_Install.NT.Services]
-AddService = virtio_input, 0x00000002, VirtioInput_Service_Inst, VirtioInput_EventLog_Inst
+AddService = virtioinput, 0x00000002, VirtioInput_Service_Inst, VirtioInput_EventLog_Inst
 
 [VirtioInput_Install.NT.Wdf]
-KmdfService = virtio_input, VirtioInput_Wdf
+KmdfService = virtioinput, VirtioInput_Wdf
 
 [VirtioInput_Wdf]
 ; Windows 7 ships with KMDF 1.9.
 KmdfLibraryVersion = 1.9
 
 [VirtioInput_CopyFiles]
-virtio_input.sys
+virtioinput.sys
+
+[VirtioInput_AddReg]
+HKR,,UpperFilters,0x00010008,"HidClass"
 
 ;------------------------------------------------------------------------------
 ; Service install
@@ -71,7 +78,7 @@ DisplayName   = %VirtioInput.SvcDesc%
 ServiceType   = 1  ; SERVICE_KERNEL_DRIVER
 StartType     = 3  ; SERVICE_DEMAND_START
 ErrorControl  = 1  ; SERVICE_ERROR_NORMAL
-ServiceBinary = %12%\virtio_input.sys
+ServiceBinary = %12%\virtioinput.sys
 
 [VirtioInput_EventLog_Inst]
 AddReg = VirtioInput_EventLog_AddReg
@@ -79,7 +86,7 @@ AddReg = VirtioInput_EventLog_AddReg
 [VirtioInput_EventLog_AddReg]
 ; The EventLog install section root (HKR) is already:
 ;   HKLM\SYSTEM\CurrentControlSet\Services\EventLog\System\<ServiceName>
-HKR, , "EventMessageFile", 0x00020000, "%SystemRoot%\\System32\\IoLogMsg.dll;%SystemRoot%\\System32\\drivers\\virtio_input.sys"
+HKR, , "EventMessageFile", 0x00020000, "%SystemRoot%\\System32\\IoLogMsg.dll;%SystemRoot%\\System32\\drivers\\virtioinput.sys"
 HKR, , "TypesSupported",   0x00010001, 7
 
 ;------------------------------------------------------------------------------

@@ -15,6 +15,12 @@
 ; default (DEV_1052). The virtio spec also defines a transitional (legacy+modern)
 ; ID (DEV_1011), which is included here so Windows can bind the driver if it
 ; appears in the field.
+;
+; Interrupts (MSI/MSI-X):
+; virtio-input benefits from multiple interrupt vectors (config change + per-queue
+; notifications). Enabling MSI/MSI-X here lets Windows allocate message interrupts
+; for better performance. If MSI cannot be allocated, Windows falls back to legacy
+; INTx and the driver remains functional.
 
 [Version]
 Signature   = "$WINDOWS NT$"
@@ -92,6 +98,9 @@ CopyFiles = AeroVirtioInput_CopyFiles
 Include   = hidclass.inf
 Needs     = HID_Inst.NT
 
+[AeroVirtioInput_Install.NTx86.HW]
+AddReg = AeroVirtioInput_InterruptManagement_AddReg
+
 [AeroVirtioInput_Install.NTx86.Services]
 Include   = hidclass.inf
 Needs     = HID_Inst.NT.Services
@@ -107,6 +116,9 @@ KmdfService = aero_virtio_input, AeroVirtioInput_WdfSect
 CopyFiles = AeroVirtioInput_CopyFiles
 Include   = hidclass.inf
 Needs     = HID_Inst.NT
+
+[AeroVirtioInput_Install.NTamd64.HW]
+AddReg = AeroVirtioInput_InterruptManagement_AddReg
 
 [AeroVirtioInput_Install.NTamd64.Services]
 Include   = hidclass.inf
@@ -136,6 +148,17 @@ ServiceBinary = %12%\aero_virtio_input.sys
 ; KMDF version, update this value and ship the matching WdfCoInstaller*.dll.
 [AeroVirtioInput_WdfSect]
 KmdfLibraryVersion = 1.9
+
+;------------------------------------------------------------------------------
+; Interrupt Management (MSI/MSI-X)
+;------------------------------------------------------------------------------
+;
+; virtio-input needs at least 3 vectors (config + 2 queues). Request a small,
+; future-proof value so additional virtqueues can be added without changing the INF.
+[AeroVirtioInput_InterruptManagement_AddReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
 
 [Strings]
 AeroProvider = "Aero Project"

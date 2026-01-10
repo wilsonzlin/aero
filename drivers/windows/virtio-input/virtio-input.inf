@@ -1,3 +1,13 @@
+; virtio-input.inf - Aero virtio-input KMDF HID minidriver (Windows 7 SP1)
+;
+; Interrupts (MSI/MSI-X):
+; virtio-input benefits from multiple interrupt vectors (config change + per-queue
+; notifications). Opting into message-signaled interrupts reduces ISR polling and
+; lock contention versus a single shared legacy INTx line.
+;
+; If MSI cannot be allocated, Windows falls back to legacy INTx and the driver
+; remains functional.
+
 [Version]
 Signature="$Windows NT$"
 Class=HIDClass
