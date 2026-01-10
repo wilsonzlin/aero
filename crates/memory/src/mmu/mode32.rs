@@ -3,7 +3,9 @@
 //! Supports 4KiB pages and 4MiB pages (when `CR4.PSE=1` and `PDE.PS=1`).
 
 use crate::bus::MemoryBus;
-use crate::mmu::{AccessType, TranslateError, CR0_WP, CR4_PSE, PFEC_ID, PFEC_P, PFEC_RSVD, PFEC_US, PFEC_WR};
+use crate::mmu::{
+    AccessType, TranslateError, CR0_WP, CR4_PSE, PFEC_ID, PFEC_P, PFEC_RSVD, PFEC_US, PFEC_WR,
+};
 
 const PTE_P: u32 = 1 << 0;
 const PTE_RW: u32 = 1 << 1;
@@ -40,13 +42,15 @@ pub fn translate(
     let is_user = cpl == 3;
     let is_instr = access == AccessType::Execute;
 
-    let pf = |present: bool, write: bool, user: bool, rsvd: bool, instr: bool| TranslateError::PageFault {
-        vaddr: vaddr as u64,
-        code: (if present { PFEC_P } else { 0 })
-            | (if write { PFEC_WR } else { 0 })
-            | (if user { PFEC_US } else { 0 })
-            | (if rsvd { PFEC_RSVD } else { 0 })
-            | (if instr { PFEC_ID } else { 0 }),
+    let pf = |present: bool, write: bool, user: bool, rsvd: bool, instr: bool| {
+        TranslateError::PageFault {
+            vaddr: vaddr as u64,
+            code: (if present { PFEC_P } else { 0 })
+                | (if write { PFEC_WR } else { 0 })
+                | (if user { PFEC_US } else { 0 })
+                | (if rsvd { PFEC_RSVD } else { 0 })
+                | (if instr { PFEC_ID } else { 0 }),
+        }
     };
 
     let pd_base = cr3 & CR3_PD_MASK;
@@ -116,8 +120,7 @@ pub fn translate(
         return Err(pf(true, true, is_user, false, is_instr));
     }
 
-    let paddr =
-        ((pte & PTE_ADDR_MASK_4K) as u64) | ((vaddr & PAGE_OFFSET_MASK_4K) as u64);
+    let paddr = ((pte & PTE_ADDR_MASK_4K) as u64) | ((vaddr & PAGE_OFFSET_MASK_4K) as u64);
 
     // Accessed/dirty updates are performed on successful translations.
     let new_pde = pde | PTE_A;
@@ -224,16 +227,7 @@ mod tests {
         bus.write_u32_phys(pde_addr, pde);
         bus.write_u32_phys(pte_addr, pte);
 
-        let paddr = translate(
-            &mut bus,
-            vaddr,
-            AccessType::Read,
-            3,
-            CR0_PG,
-            cr3,
-            0,
-        )
-        .unwrap();
+        let paddr = translate(&mut bus, vaddr, AccessType::Read, 3, CR0_PG, cr3, 0).unwrap();
         assert_eq!(paddr, 0x3000);
 
         let pde_after = bus.read_u32_phys(pde_addr);
@@ -242,16 +236,7 @@ mod tests {
         assert_ne!(pte_after & PTE_A, 0);
         assert_eq!(pte_after & PTE_D, 0);
 
-        let _ = translate(
-            &mut bus,
-            vaddr,
-            AccessType::Write,
-            3,
-            CR0_PG,
-            cr3,
-            0,
-        )
-        .unwrap();
+        let _ = translate(&mut bus, vaddr, AccessType::Write, 3, CR0_PG, cr3, 0).unwrap();
         let pte_after_write = bus.read_u32_phys(pte_addr);
         assert_ne!(pte_after_write & PTE_D, 0);
     }
@@ -270,16 +255,7 @@ mod tests {
         let pde = (phys_base & PDE_ADDR_MASK_4M) | PTE_P | PTE_RW | PTE_US | PDE_PS;
         bus.write_u32_phys(pde_addr, pde);
 
-        let paddr = translate(
-            &mut bus,
-            vaddr,
-            AccessType::Read,
-            3,
-            CR0_PG,
-            cr3,
-            CR4_PSE,
-        )
-        .unwrap();
+        let paddr = translate(&mut bus, vaddr, AccessType::Read, 3, CR0_PG, cr3, CR4_PSE).unwrap();
         assert_eq!(paddr, 0x0200_0000u64 + (vaddr & PAGE_OFFSET_MASK_4M as u64));
 
         let pde_after = bus.read_u32_phys(pde_addr);
@@ -305,21 +281,8 @@ mod tests {
         bus.write_u32_phys(pde_addr, pde);
         bus.write_u32_phys(pte_addr, pte);
 
-        let err = translate(
-            &mut bus,
-            vaddr,
-            AccessType::Read,
-            3,
-            CR0_PG,
-            cr3,
-            0,
-        )
-        .unwrap_err();
-        assert_pf(
-            err,
-            vaddr as u32,
-            PFEC_P | PFEC_US,
-        );
+        let err = translate(&mut bus, vaddr, AccessType::Read, 3, CR0_PG, cr3, 0).unwrap_err();
+        assert_pf(err, vaddr as u32, PFEC_P | PFEC_US);
     }
 
     #[test]
@@ -431,16 +394,7 @@ mod tests {
         bus.write_u32_phys(pte_addr, pte);
 
         // WP=0: supervisor writes succeed.
-        let paddr = translate(
-            &mut bus,
-            vaddr,
-            AccessType::Write,
-            0,
-            CR0_PG,
-            cr3,
-            0,
-        )
-        .unwrap();
+        let paddr = translate(&mut bus, vaddr, AccessType::Write, 0, CR0_PG, cr3, 0).unwrap();
         assert_eq!(paddr, 0x3000);
 
         // WP=1: supervisor writes fault.
@@ -454,11 +408,7 @@ mod tests {
             0,
         )
         .unwrap_err();
-        assert_pf(
-            err,
-            vaddr as u32,
-            PFEC_P | PFEC_WR,
-        );
+        assert_pf(err, vaddr as u32, PFEC_P | PFEC_WR);
     }
 
     #[test]
@@ -474,16 +424,7 @@ mod tests {
         let pde = PTE_P | PDE_PS;
         bus.write_u32_phys(pde_addr, pde);
 
-        let err = translate(
-            &mut bus,
-            vaddr,
-            AccessType::Read,
-            0,
-            CR0_PG,
-            cr3,
-            0,
-        )
-        .unwrap_err();
+        let err = translate(&mut bus, vaddr, AccessType::Read, 0, CR0_PG, cr3, 0).unwrap_err();
         assert_pf(err, vaddr as u32, PFEC_P | PFEC_RSVD);
     }
 

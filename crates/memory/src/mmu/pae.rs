@@ -273,17 +273,22 @@ mod tests {
         let pde_addr = pd_base + (pd_index as u64) * 8;
         let pte_addr = pt_base + (pt_index as u64) * 8;
 
-        bus.write_u64_phys(
-            pde_addr,
-            PTE_P | PTE_RW | PTE_US | (pt_base & ADDR_MASK_4K),
-        );
+        bus.write_u64_phys(pde_addr, PTE_P | PTE_RW | PTE_US | (pt_base & ADDR_MASK_4K));
         bus.write_u64_phys(
             pte_addr,
             PTE_P | PTE_RW | PTE_US | (phys_page & ADDR_MASK_4K),
         );
 
-        let out = translate(&mut bus, 0x1_0000_0000 + vaddr, AccessType::Write, 0, 0, cr3, 0)
-            .unwrap();
+        let out = translate(
+            &mut bus,
+            0x1_0000_0000 + vaddr,
+            AccessType::Write,
+            0,
+            0,
+            cr3,
+            0,
+        )
+        .unwrap();
         assert_eq!(out, phys_page + (vaddr & PAGE_OFFSET_4K as u64));
 
         let pde_after = bus.read_u64_phys(pde_addr);
@@ -340,25 +345,13 @@ mod tests {
         let pde_addr = pd_base + (pd_index as u64) * 8;
         let pte_addr = pt_base + (pt_index as u64) * 8;
 
-        bus.write_u64_phys(
-            pde_addr,
-            PTE_P | PTE_RW | PTE_US | (pt_base & ADDR_MASK_4K),
-        );
+        bus.write_u64_phys(pde_addr, PTE_P | PTE_RW | PTE_US | (pt_base & ADDR_MASK_4K));
         bus.write_u64_phys(
             pte_addr,
             PTE_P | PTE_RW | PTE_US | PTE_NX | (0x0040_0000u64 & ADDR_MASK_4K),
         );
 
-        let err = translate(
-            &mut bus,
-            vaddr,
-            AccessType::Execute,
-            0,
-            0,
-            cr3,
-            EFER_NXE,
-        )
-        .unwrap_err();
+        let err = translate(&mut bus, vaddr, AccessType::Execute, 0, 0, cr3, EFER_NXE).unwrap_err();
 
         assert_pf(err, vaddr as u32, PFEC_P | PFEC_ID);
     }

@@ -62,25 +62,13 @@ pub const EFER_LMA: u64 = 1 << 10;
 pub const EFER_NXE: u64 = 1 << 11;
 
 /// Minimal MMU register bundle used for address translation.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Mmu {
     pub cr0: u64,
     pub cr3: u64,
     pub cr4: u64,
     pub efer: u64,
     pub cpl: u8,
-}
-
-impl Default for Mmu {
-    fn default() -> Self {
-        Self {
-            cr0: 0,
-            cr3: 0,
-            cr4: 0,
-            efer: 0,
-            cpl: 0,
-        }
-    }
 }
 
 impl Mmu {
