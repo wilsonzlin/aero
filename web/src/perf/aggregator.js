@@ -33,6 +33,10 @@ export class PerfAggregator {
     this.recordCountsByWorkerKind = new Map();
     this.totalRecordsDrained = 0;
     this.totalFrameSampleRecords = 0;
+
+    // PF-005 (hot path identification): populated by the CPU worker and
+    // forwarded to the main thread via postMessage. Exported as a snapshot.
+    this.hotspots = [];
     for (const [kind, sab] of Object.entries(channel.buffers)) {
       // Object.entries yields string keys.
       const workerKind = Number(kind) >>> 0;
@@ -179,6 +183,10 @@ export class PerfAggregator {
     };
   }
 
+  setHotspots(hotspots) {
+    this.hotspots = Array.isArray(hotspots) ? hotspots : [];
+  }
+
   export() {
     const windowSummary = this.getStats();
     const frameIds = this.completedFrameIds.slice(-this.captureSize);
@@ -244,6 +252,7 @@ export class PerfAggregator {
         stats: captureFrameTimeStats.toJSON(),
       },
       hud_window_summary: windowSummary,
+      hotspots: this.hotspots,
       samples: {
         frame_count: frames.length,
         frames: frames.map((f) => ({

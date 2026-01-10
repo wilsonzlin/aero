@@ -3,6 +3,8 @@ import './style.css';
 import { PerfAggregator, PerfWriter, WorkerKind, createPerfChannel } from '../web/src/perf/index.js';
 import { installNetTraceUI, type NetTraceBackend } from '../web/src/net/trace_ui';
 
+import { createHotspotsPanel } from './ui/hud_hotspots.js';
+
 import { createAudioOutput } from './platform/audio';
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from './platform/features';
 import { importFileToOpfs } from './platform/opfs';
@@ -24,11 +26,11 @@ function el<K extends keyof HTMLElementTagNameMap>(
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props)) {
     if (value === undefined) continue;
-    if (key === 'class') {
+    if (key === "class") {
       node.className = String(value);
-    } else if (key === 'text') {
+    } else if (key === "text") {
       node.textContent = String(value);
-    } else if (key.startsWith('on') && typeof value === 'function') {
+    } else if (key.startsWith("on") && typeof value === "function") {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (node as any)[key.toLowerCase()] = value;
     } else {
@@ -56,38 +58,28 @@ function renderCapabilityTable(report: PlatformFeatureReport): HTMLTableElement 
     'offscreenCanvas',
   ];
 
-  const tbody = el('tbody');
+  const tbody = el("tbody");
   for (const key of orderedKeys) {
     const val = report[key];
     tbody.append(
-      el(
-        'tr',
-        {},
-        el('th', { text: key }),
-        el('td', { class: val ? 'ok' : 'bad', text: val ? 'supported' : 'missing' }),
-      ),
+      el("tr", {}, el("th", { text: key }), el("td", { class: val ? "ok" : "bad", text: val ? "supported" : "missing" })),
     );
   }
 
-  return el(
-    'table',
-    {},
-    el('thead', {}, el('tr', {}, el('th', { text: 'feature' }), el('th', { text: 'status' }))),
-    tbody,
-  );
+  return el("table", {}, el("thead", {}, el("tr", {}, el("th", { text: "feature" }), el("th", { text: "status" }))), tbody);
 }
 
 function renderWebGpuPanel(): HTMLElement {
-  const output = el('pre', { text: '' });
-  const button = el('button', {
-    text: 'Request WebGPU device',
+  const output = el("pre", { text: "" });
+  const button = el("button", {
+    text: "Request WebGPU device",
     onclick: async () => {
-      output.textContent = '';
+      output.textContent = "";
       try {
-        const { adapter, preferredFormat } = await requestWebGpuDevice({ powerPreference: 'high-performance' });
+        const { adapter, preferredFormat } = await requestWebGpuDevice({ powerPreference: "high-performance" });
         output.textContent = JSON.stringify(
           {
-            adapterInfo: 'requestAdapter succeeded',
+            adapterInfo: "requestAdapter succeeded",
             features: Array.from(adapter.features.values()),
             preferredFormat,
           },
@@ -100,28 +92,28 @@ function renderWebGpuPanel(): HTMLElement {
     },
   });
 
-  return el('div', { class: 'panel' }, el('h2', { text: 'WebGPU' }), el('div', { class: 'row' }, button), output);
+  return el("div", { class: "panel" }, el("h2", { text: "WebGPU" }), el("div", { class: "row" }, button), output);
 }
 
 function renderOpfsPanel(): HTMLElement {
-  const status = el('pre', { text: '' });
-  const progress = el('progress', { value: '0', max: '1', style: 'width: 320px' }) as HTMLProgressElement;
-  const destPathInput = el('input', { type: 'text', value: 'images/disk.img' }) as HTMLInputElement;
-  const fileInput = el('input', { type: 'file' }) as HTMLInputElement;
+  const status = el("pre", { text: "" });
+  const progress = el("progress", { value: "0", max: "1", style: "width: 320px" }) as HTMLProgressElement;
+  const destPathInput = el("input", { type: "text", value: "images/disk.img" }) as HTMLInputElement;
+  const fileInput = el("input", { type: "file" }) as HTMLInputElement;
 
-  const importButton = el('button', {
-    text: 'Import to OPFS',
+  const importButton = el("button", {
+    text: "Import to OPFS",
     onclick: async () => {
-      status.textContent = '';
+      status.textContent = "";
       progress.value = 0;
       const file = fileInput.files?.[0];
       if (!file) {
-        status.textContent = 'Pick a file first.';
+        status.textContent = "Pick a file first.";
         return;
       }
       const destPath = destPathInput.value.trim();
       if (!destPath) {
-        status.textContent = 'Destination path must not be empty.';
+        status.textContent = "Destination path must not be empty.";
         return;
       }
 
@@ -137,21 +129,21 @@ function renderOpfsPanel(): HTMLElement {
     },
   });
 
-  fileInput.addEventListener('change', () => {
+  fileInput.addEventListener("change", () => {
     const file = fileInput.files?.[0];
     if (file) destPathInput.value = `images/${file.name}`;
   });
 
   return el(
-    'div',
-    { class: 'panel' },
-    el('h2', { text: 'OPFS (disk image import)' }),
+    "div",
+    { class: "panel" },
+    el("h2", { text: "OPFS (disk image import)" }),
     el(
-      'div',
-      { class: 'row' },
-      el('label', { text: 'File:' }),
+      "div",
+      { class: "row" },
+      el("label", { text: "File:" }),
       fileInput,
-      el('label', { text: 'Dest path:' }),
+      el("label", { text: "Dest path:" }),
       destPathInput,
       importButton,
       progress,
@@ -161,12 +153,12 @@ function renderOpfsPanel(): HTMLElement {
 }
 
 function renderAudioPanel(): HTMLElement {
-  const status = el('pre', { text: '' });
-  const button = el('button', {
-    text: 'Init audio output',
+  const status = el("pre", { text: "" });
+  const button = el("button", {
+    text: "Init audio output",
     onclick: async () => {
-      status.textContent = '';
-      const output = await createAudioOutput({ sampleRate: 48_000, latencyHint: 'interactive' });
+      status.textContent = "";
+      const output = await createAudioOutput({ sampleRate: 48_000, latencyHint: "interactive" });
       if (!output.enabled) {
         status.textContent = output.message;
         return;
@@ -178,11 +170,32 @@ function renderAudioPanel(): HTMLElement {
         return;
       }
       status.textContent =
-        'Audio initialized. Ring buffer allocated; processor is a stub (will output silence until samples are written).';
+        "Audio initialized. Ring buffer allocated; processor is a stub (will output silence until samples are written).";
     },
   });
 
-  return el('div', { class: 'panel' }, el('h2', { text: 'Audio' }), el('div', { class: 'row' }, button), status);
+  return el("div", { class: "panel" }, el("h2", { text: "Audio" }), el("div", { class: "row" }, button), status);
+}
+
+function renderHotspotsPanel(report: PlatformFeatureReport): HTMLElement {
+  // `window.aero.perf.export()` is installed by `startPerfTelemetry`.
+  // Until then (or when disabled), render an empty panel.
+  if (!report.wasmThreads) {
+    return el(
+      'div',
+      { class: 'panel' },
+      el('h2', { text: 'Hotspots' }),
+      el('pre', { text: 'Hotspots unavailable: requires cross-origin isolation + SharedArrayBuffer + Atomics.' }),
+    );
+  }
+
+  const perfFacade = {
+    export: () => globalThis.aero?.perf?.export?.() ?? { hotspots: [] },
+  };
+
+  const panel = createHotspotsPanel({ perf: perfFacade, topN: 10, refreshMs: 500 });
+  panel.classList.add('panel');
+  return panel;
 }
 
 let perfHud: HTMLElement | null = null;
@@ -233,6 +246,12 @@ function startPerfTelemetry(report: PlatformFeatureReport): void {
 
   const worker = new Worker(new URL('./perf_worker.ts', import.meta.url), { type: 'module' });
   worker.postMessage({ type: 'init', channel, workerKind: WorkerKind.CPU });
+  worker.addEventListener('message', (ev: MessageEvent) => {
+    const msg = ev.data as { type?: string; hotspots?: unknown } | null;
+    if (msg?.type === 'hotspots' && Array.isArray(msg.hotspots)) {
+      aggregator.setHotspots(msg.hotspots);
+    }
+  });
 
   let enabled = true;
   function setEnabled(next: boolean): void {
@@ -597,6 +616,7 @@ function render(): void {
     renderOpfsPanel(),
     renderAudioPanel(),
     renderPerfPanel(report),
+    renderHotspotsPanel(report),
     renderEmulatorSafetyPanel(),
     renderNetTracePanel(),
   );

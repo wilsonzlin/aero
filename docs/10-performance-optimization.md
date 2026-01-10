@@ -1123,6 +1123,26 @@ Graphics telemetry should be exported under a dedicated `graphics` section so pe
 
 - Keep GPU timing **opt-in** (e.g. config flag or environment variable) so headless CI and smoke perf runs remain stable.
 - Treat `gpu_time_ms` as **informational** unless a benchmark explicitly enables GPU timing and asserts it.
+### Hot Path Identification (PF-005)
+
+To guide interpreter and JIT optimization, Aero records **hot basic blocks** (by guest PC) with **bounded memory**:
+
+- **Collection granularity:** update counters once per *basic-block entry* (not per instruction) to keep overhead low.
+- **Attribution:** `hits += 1` and `instructions += decoded_block_len` for the block starting at `pc`.
+- **Bounded Top-K:** use a streaming heavy-hitter algorithm (e.g. **Space-Saving**) to keep only the most relevant PCs.
+
+The CPU worker periodically (or on-demand during perf capture/export) sends a snapshot to the main thread. The public export surface includes this under `window.aero.perf.export().hotspots`:
+
+```js
+{
+  hotspots: [
+    { pc: "0x1000", hits: 10000, instructions: 30000, percent_of_total: 96.77 },
+    // ...
+  ],
+}
+```
+
+The HUD can render a simple “Hotspots” panel showing the top N PCs and their percentage of total executed instructions.
 
 ### Standard performance metric definitions
 
