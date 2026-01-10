@@ -35,6 +35,17 @@ This produces:
 
 Import the certificate into the target VM (Trusted Root + Trusted Publishers) before installing drivers.
 
+### SHA-1 vs SHA-2 (Windows 7 compatibility)
+
+Windows 7 SP1 without SHA-2 updates (notably **KB3033929** / **KB4474419**) can fail to validate driver signatures even if you sign files with `/fd SHA1` *if the certificate itself is SHA-256-signed*.
+
+For maximum out-of-box Windows 7 compatibility:
+
+- Create the cert with a **SHA-1 signature algorithm** (this script defaults to `-CertHashAlgorithm sha1`).
+- Sign files with `/fd SHA1`, or dual-sign (SHA-1 first, then append SHA-256).
+
+If your signing machine refuses SHA-1 certificate creation, `new-test-cert.ps1` will fail unless you explicitly opt into the compatibility risk via `-AllowSha2CertFallback` (generates a SHA-256-signed certificate and prints warnings).
+
 ### Offline injection (WinPE / setup / first boot)
 
 If you need the signing chain trusted **before** driver load (e.g. WinPE / Windows Setup / first boot),
@@ -58,7 +69,7 @@ Signing typically targets the `.cat` file produced by `Inf2Cat`. The Windows Dri
 Example:
 
 ```powershell
-signtool sign /fd sha256 /a /f .\dist\certs\aero-virtio-test.pfx .\path\to\driver.cat
+signtool sign /fd sha1 /a /f .\dist\certs\aero-virtio-test.pfx .\path\to\driver.cat
 ```
 
 Automation for signing is intentionally not fully baked here because it depends on your WDK install path and build pipeline.

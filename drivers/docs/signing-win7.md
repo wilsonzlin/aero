@@ -34,6 +34,8 @@ High-level steps (performed on a Windows build machine with the Windows SDK/WDK 
 
 1. Create a test certificate (example using PowerShell):
    - `New-SelfSignedCertificate` (LocalMachine\My)
+   - For maximum Windows 7 out-of-box compatibility (no SHA-2 updates), prefer:
+     - `New-SelfSignedCertificate -HashAlgorithm sha1`
 2. Export the certificate and import it into the guest’s Trusted Root + Trusted Publishers stores.
 3. Generate a catalog (`.cat`) for the driver package.
 4. Sign the catalog with `signtool sign`.
