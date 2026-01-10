@@ -1,7 +1,7 @@
 Windows Registry Editor Version 5.00
 
-; Enables "testsigning" for Windows 7 by setting the BCD OS loader boolean:
-;   BcdOSLoaderBoolean_AllowPrereleaseSignatures (0x16000049) = 1
+; Enables "testsigning" for Windows 7 by setting the BCD library boolean:
+;   BcdLibraryBoolean_AllowPrereleaseSignatures (0x16000049) = 1
 ;
 ; This patch targets the two well-known BCD "library settings" objects that are
 ; commonly inherited by Win7 OS loader / WinPE entries:

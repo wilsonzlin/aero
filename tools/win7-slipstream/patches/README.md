@@ -118,8 +118,8 @@ Windows Boot Configuration Data (BCD) stores are registry-hive-like files:
 
 These patches set OS-loader booleans using their element IDs:
 
-- `testsigning` → `BcdOSLoaderBoolean_AllowPrereleaseSignatures` (`0x16000049`)
-- `nointegritychecks` → `BcdOSLoaderBoolean_DisableIntegrityChecks` (`0x16000048`)
+- `testsigning` → `BcdLibraryBoolean_AllowPrereleaseSignatures` (`0x16000049`)
+- `nointegritychecks` → `BcdLibraryBoolean_DisableIntegrityChecks` (`0x16000048`)
 
 Both patches target the well-known BCD “library settings” objects which Win7 loader entries commonly inherit:
 
