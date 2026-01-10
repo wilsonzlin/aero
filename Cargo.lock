@@ -79,6 +79,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-mmu"
+version = "0.1.0"
+
+[[package]]
 name = "aero-net-e1000"
 version = "0.1.0"
 
