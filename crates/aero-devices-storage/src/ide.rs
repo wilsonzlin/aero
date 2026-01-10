@@ -1,0 +1,713 @@
+//! Legacy IDE (ATA) controller emulation.
+//!
+//! This is the classic I/O-port based interface used by BIOS bootloaders and older OSes.
+//! For Phase 1 bring-up we focus on PIO transfers (sufficient to read the boot sector),
+//! with enough register semantics for real-mode / early protected-mode code.
+
+use std::io;
+
+use aero_storage::SECTOR_SIZE;
+
+use crate::ata::{
+    AtaDrive, ATA_CMD_FLUSH_CACHE, ATA_CMD_FLUSH_CACHE_EXT, ATA_CMD_IDENTIFY, ATA_CMD_READ_SECTORS,
+    ATA_CMD_READ_SECTORS_EXT, ATA_CMD_SET_FEATURES, ATA_CMD_WRITE_SECTORS, ATA_CMD_WRITE_SECTORS_EXT,
+    ATA_ERROR_ABRT, ATA_STATUS_BSY, ATA_STATUS_DRDY, ATA_STATUS_DRQ, ATA_STATUS_ERR,
+};
+use crate::IrqLine;
+
+const PRIMARY_BASE: u16 = 0x1F0;
+const PRIMARY_CTRL: u16 = 0x3F6;
+const SECONDARY_BASE: u16 = 0x170;
+const SECONDARY_CTRL: u16 = 0x376;
+
+#[derive(Clone, Copy, Debug)]
+pub enum IdeChannelId {
+    Primary,
+    Secondary,
+}
+
+#[derive(Default, Clone, Copy, Debug)]
+struct Reg48 {
+    low: u8,
+    high: u8,
+}
+
+impl Reg48 {
+    fn write(&mut self, val: u8) {
+        // ATA 48-bit addressing uses "double writes" to the LBA and sector count registers.
+        // The host writes the high byte first, then the low byte. Shifting the previous low into
+        // high lets us capture this pattern without explicitly tracking phases.
+        self.high = self.low;
+        self.low = val;
+    }
+
+    fn read(&self, hob: bool) -> u8 {
+        if hob {
+            self.high
+        } else {
+            self.low
+        }
+    }
+
+    fn full_u16(&self) -> u16 {
+        (self.high as u16) << 8 | self.low as u16
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PioDirection {
+    Read,
+    Write,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PioKind {
+    Identify,
+    Data,
+}
+
+#[derive(Debug)]
+struct PioState {
+    dir: PioDirection,
+    kind: PioKind,
+    lba: u64,
+    remaining_sectors: u32,
+    buf: [u8; SECTOR_SIZE],
+    index: usize,
+}
+
+impl PioState {
+    fn new(dir: PioDirection, kind: PioKind, lba: u64, remaining_sectors: u32) -> Self {
+        Self {
+            dir,
+            kind,
+            lba,
+            remaining_sectors,
+            buf: [0u8; SECTOR_SIZE],
+            index: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct IdeChannel {
+    // Task file registers.
+    features: Reg48,
+    sector_count: Reg48,
+    lba_low: Reg48,
+    lba_mid: Reg48,
+    lba_high: Reg48,
+    drive_head: u8,
+    status: u8,
+    error: u8,
+
+    // Device control (alternate status port write).
+    dev_ctl: u8,
+
+    // Attached drives (0=master, 1=slave).
+    drives: [Option<AtaDrive>; 2],
+    selected: usize,
+
+    // Active PIO transfer, if any.
+    pio: Option<PioState>,
+
+    irq_asserted: bool,
+}
+
+impl IdeChannel {
+    fn new() -> Self {
+        Self {
+            features: Reg48::default(),
+            sector_count: Reg48::default(),
+            lba_low: Reg48::default(),
+            lba_mid: Reg48::default(),
+            lba_high: Reg48::default(),
+            drive_head: 0xA0, // 0b1010_0000: master selected, CHS mode default.
+            status: ATA_STATUS_DRDY,
+            error: 0,
+            dev_ctl: 0,
+            drives: [None, None],
+            selected: 0,
+            pio: None,
+            irq_asserted: false,
+        }
+    }
+
+    fn interrupts_enabled(&self) -> bool {
+        // Device control bit 1: nIEN (0 = enabled).
+        self.dev_ctl & 0x02 == 0
+    }
+
+    fn hob(&self) -> bool {
+        // Device control bit 7: HOB.
+        self.dev_ctl & 0x80 != 0
+    }
+
+    fn set_irq(&mut self, irq: &dyn IrqLine, high: bool) {
+        if self.irq_asserted == high {
+            return;
+        }
+        self.irq_asserted = high;
+        if self.interrupts_enabled() {
+            irq.set_level(high);
+        } else {
+            // Keep it deasserted when interrupts are disabled.
+            irq.set_level(false);
+        }
+    }
+
+    fn clear_irq_on_status_read(&mut self, irq: &dyn IrqLine) {
+        self.set_irq(irq, false);
+    }
+
+    fn attach_drive(&mut self, slot: usize, drive: AtaDrive) {
+        self.drives[slot] = Some(drive);
+    }
+
+    fn drive_mut(&mut self) -> Option<&mut AtaDrive> {
+        self.drives[self.selected].as_mut()
+    }
+
+    fn set_error(&mut self, error: u8) {
+        self.error = error;
+        self.status &= !ATA_STATUS_DRQ;
+        self.status |= ATA_STATUS_ERR | ATA_STATUS_DRDY;
+    }
+
+    fn reset(&mut self, irq: &dyn IrqLine) {
+        self.features = Reg48::default();
+        self.sector_count = Reg48::default();
+        self.lba_low = Reg48::default();
+        self.lba_mid = Reg48::default();
+        self.lba_high = Reg48::default();
+        self.error = 0;
+        self.status = ATA_STATUS_DRDY;
+        self.pio = None;
+        self.set_irq(irq, false);
+    }
+
+    fn write_reg(&mut self, offset: u16, val: u8, irq: &dyn IrqLine) {
+        match offset {
+            1 => self.features.write(val),
+            2 => self.sector_count.write(val),
+            3 => self.lba_low.write(val),
+            4 => self.lba_mid.write(val),
+            5 => self.lba_high.write(val),
+            6 => {
+                self.drive_head = val;
+                self.selected = ((val >> 4) & 1) as usize;
+            }
+            7 => self.handle_command(val, irq),
+            _ => {}
+        }
+    }
+
+    fn read_reg(&mut self, offset: u16, irq: &dyn IrqLine) -> u8 {
+        match offset {
+            1 => self.error,
+            2 => self.sector_count.read(self.hob()),
+            3 => self.lba_low.read(self.hob()),
+            4 => self.lba_mid.read(self.hob()),
+            5 => self.lba_high.read(self.hob()),
+            6 => self.drive_head,
+            7 => {
+                // Reading status clears the IRQ per ATA spec.
+                self.clear_irq_on_status_read(irq);
+                self.status
+            }
+            _ => 0,
+        }
+    }
+
+    fn read_alt_status(&self) -> u8 {
+        self.status
+    }
+
+    fn write_device_control(&mut self, val: u8, irq: &dyn IrqLine) {
+        let prev = self.dev_ctl;
+        self.dev_ctl = val;
+
+        // SRST is bit 2. A 1->0 transition triggers a reset.
+        let prev_srst = prev & 0x04 != 0;
+        let srst = val & 0x04 != 0;
+        if prev_srst && !srst {
+            self.reset(irq);
+        }
+
+        // If interrupts were disabled, ensure the line is low.
+        if !self.interrupts_enabled() {
+            irq.set_level(false);
+        } else if self.irq_asserted {
+            irq.set_level(true);
+        }
+    }
+
+    fn pio_read(&mut self, width: usize, irq: &dyn IrqLine) -> u32 {
+        if self.status & ATA_STATUS_DRQ == 0 {
+            return 0;
+        }
+
+        let Some(pio) = self.pio.as_mut() else {
+            return 0;
+        };
+        if pio.dir != PioDirection::Read {
+            return 0;
+        }
+
+        let mut out = 0u32;
+        for i in 0..width {
+            if pio.index >= pio.buf.len() {
+                break;
+            }
+            out |= (pio.buf[pio.index] as u32) << (i * 8);
+            pio.index += 1;
+        }
+
+        if pio.index >= pio.buf.len() {
+            self.advance_after_sector_transfer(irq);
+        }
+
+        out
+    }
+
+    fn pio_write(&mut self, width: usize, val: u32, irq: &dyn IrqLine) {
+        if self.status & ATA_STATUS_DRQ == 0 {
+            return;
+        }
+
+        let Some(pio) = self.pio.as_mut() else {
+            return;
+        };
+        if pio.dir != PioDirection::Write {
+            return;
+        }
+
+        for i in 0..width {
+            if pio.index >= pio.buf.len() {
+                break;
+            }
+            pio.buf[pio.index] = ((val >> (i * 8)) & 0xFF) as u8;
+            pio.index += 1;
+        }
+
+        if pio.index >= pio.buf.len() {
+            self.advance_after_sector_transfer(irq);
+        }
+    }
+
+    fn advance_after_sector_transfer(&mut self, irq: &dyn IrqLine) {
+        let Some(mut pio) = self.pio.take() else {
+            return;
+        };
+
+        match pio.dir {
+            PioDirection::Read => {
+                if pio.remaining_sectors > 1 && pio.kind == PioKind::Data {
+                    pio.remaining_sectors -= 1;
+                    pio.lba += 1;
+                    pio.index = 0;
+                    if self.load_sector_for_read(&mut pio).is_err() {
+                        self.set_error(ATA_ERROR_ABRT);
+                        self.set_irq(irq, true);
+                        return;
+                    }
+                    self.pio = Some(pio);
+                    // Next sector ready.
+                    self.set_irq(irq, true);
+                } else {
+                    // Completed.
+                    self.status &= !ATA_STATUS_DRQ;
+                    self.status |= ATA_STATUS_DRDY;
+                    self.set_irq(irq, true);
+                }
+            }
+            PioDirection::Write => {
+                if pio.kind != PioKind::Data {
+                    self.set_error(ATA_ERROR_ABRT);
+                    self.set_irq(irq, true);
+                    return;
+                }
+
+                if self.store_sector_from_write(&pio).is_err() {
+                    self.set_error(ATA_ERROR_ABRT);
+                    self.set_irq(irq, true);
+                    return;
+                }
+
+                if pio.remaining_sectors > 1 {
+                    pio.remaining_sectors -= 1;
+                    pio.lba += 1;
+                    pio.index = 0;
+                    pio.buf.fill(0);
+                    self.pio = Some(pio);
+                    // Ready for next sector.
+                    self.set_irq(irq, true);
+                } else {
+                    self.status &= !ATA_STATUS_DRQ;
+                    self.status |= ATA_STATUS_DRDY;
+                    self.set_irq(irq, true);
+                }
+            }
+        }
+    }
+
+    fn load_sector_for_read(&mut self, pio: &mut PioState) -> io::Result<()> {
+        if pio.kind == PioKind::Identify {
+            let Some(drive) = self.drive_mut() else {
+                return Err(io::Error::new(io::ErrorKind::NotFound, "no drive attached"));
+            };
+            pio.buf.copy_from_slice(drive.identify_sector());
+            return Ok(());
+        }
+
+        let Some(drive) = self.drive_mut() else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "no drive attached"));
+        };
+        drive.read_sectors(pio.lba, &mut pio.buf)?;
+        Ok(())
+    }
+
+    fn store_sector_from_write(&mut self, pio: &PioState) -> io::Result<()> {
+        let Some(drive) = self.drive_mut() else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "no drive attached"));
+        };
+        drive.write_sectors(pio.lba, &pio.buf)?;
+        Ok(())
+    }
+
+    fn handle_command(&mut self, cmd: u8, irq: &dyn IrqLine) {
+        self.status |= ATA_STATUS_BSY;
+        self.status &= !ATA_STATUS_ERR;
+        self.error = 0;
+        self.pio = None;
+
+        let lba_mode = self.drive_head & 0x40 != 0;
+
+        match cmd {
+            ATA_CMD_IDENTIFY => {
+                if self.drive_mut().is_none() {
+                    self.set_error(ATA_ERROR_ABRT);
+                    self.set_irq(irq, true);
+                    return;
+                }
+
+                let mut pio = PioState::new(PioDirection::Read, PioKind::Identify, 0, 1);
+                if self.load_sector_for_read(&mut pio).is_err() {
+                    self.set_error(ATA_ERROR_ABRT);
+                    self.set_irq(irq, true);
+                    return;
+                }
+                self.pio = Some(pio);
+                self.status = ATA_STATUS_DRDY | ATA_STATUS_DRQ;
+                self.set_irq(irq, true);
+            }
+            ATA_CMD_READ_SECTORS | ATA_CMD_WRITE_SECTORS => {
+                if !lba_mode {
+                    self.set_error(ATA_ERROR_ABRT);
+                    self.set_irq(irq, true);
+                    return;
+                }
+
+                let count = match self.sector_count.low {
+                    0 => 256,
+                    v => v as u32,
+                };
+                let lba = (self.lba_low.low as u32) as u64
+                    | ((self.lba_mid.low as u32 as u64) << 8)
+                    | ((self.lba_high.low as u32 as u64) << 16)
+                    | (((self.drive_head & 0x0F) as u64) << 24);
+
+                self.start_pio_data(cmd, lba, count, irq);
+            }
+            ATA_CMD_READ_SECTORS_EXT | ATA_CMD_WRITE_SECTORS_EXT => {
+                if !lba_mode {
+                    self.set_error(ATA_ERROR_ABRT);
+                    self.set_irq(irq, true);
+                    return;
+                }
+
+                let count = match self.sector_count.full_u16() {
+                    0 => 65536,
+                    v => v as u32,
+                };
+                let lba = (self.lba_low.low as u64)
+                    | ((self.lba_mid.low as u64) << 8)
+                    | ((self.lba_high.low as u64) << 16)
+                    | ((self.lba_low.high as u64) << 24)
+                    | ((self.lba_mid.high as u64) << 32)
+                    | ((self.lba_high.high as u64) << 40);
+
+                self.start_pio_data(cmd, lba, count, irq);
+            }
+            ATA_CMD_FLUSH_CACHE | ATA_CMD_FLUSH_CACHE_EXT => {
+                let Some(drive) = self.drive_mut() else {
+                    self.set_error(ATA_ERROR_ABRT);
+                    self.set_irq(irq, true);
+                    return;
+                };
+
+                if drive.flush().is_err() {
+                    self.set_error(ATA_ERROR_ABRT);
+                } else {
+                    self.status = ATA_STATUS_DRDY;
+                }
+                self.set_irq(irq, true);
+            }
+            ATA_CMD_SET_FEATURES => {
+                let feature = self.features.low;
+                let Some(drive) = self.drive_mut() else {
+                    self.set_error(ATA_ERROR_ABRT);
+                    self.set_irq(irq, true);
+                    return;
+                };
+
+                match feature {
+                    0x02 => drive.set_write_cache_enabled(true),
+                    0x82 => drive.set_write_cache_enabled(false),
+                    _ => {}
+                }
+
+                self.status = ATA_STATUS_DRDY;
+                self.set_irq(irq, true);
+            }
+            _ => {
+                self.set_error(ATA_ERROR_ABRT);
+                self.set_irq(irq, true);
+            }
+        }
+    }
+
+    fn start_pio_data(&mut self, cmd: u8, lba: u64, count: u32, irq: &dyn IrqLine) {
+        if self.drive_mut().is_none() {
+            self.set_error(ATA_ERROR_ABRT);
+            self.set_irq(irq, true);
+            return;
+        }
+
+        let dir = match cmd {
+            ATA_CMD_READ_SECTORS | ATA_CMD_READ_SECTORS_EXT => PioDirection::Read,
+            ATA_CMD_WRITE_SECTORS | ATA_CMD_WRITE_SECTORS_EXT => PioDirection::Write,
+            _ => {
+                self.set_error(ATA_ERROR_ABRT);
+                self.set_irq(irq, true);
+                return;
+            }
+        };
+
+        let mut pio = PioState::new(dir, PioKind::Data, lba, count);
+        if dir == PioDirection::Read {
+            if self.load_sector_for_read(&mut pio).is_err() {
+                self.set_error(ATA_ERROR_ABRT);
+                self.set_irq(irq, true);
+                return;
+            }
+        } else {
+            pio.buf.fill(0);
+        }
+        self.pio = Some(pio);
+        self.status = ATA_STATUS_DRDY | ATA_STATUS_DRQ;
+        self.set_irq(irq, true);
+    }
+}
+
+#[derive(Debug)]
+pub struct IdeController {
+    primary: IdeChannel,
+    secondary: IdeChannel,
+}
+
+impl IdeController {
+    pub fn new() -> Self {
+        Self {
+            primary: IdeChannel::new(),
+            secondary: IdeChannel::new(),
+        }
+    }
+
+    pub fn attach_drive(&mut self, channel: IdeChannelId, slot: usize, drive: AtaDrive) {
+        match channel {
+            IdeChannelId::Primary => self.primary.attach_drive(slot, drive),
+            IdeChannelId::Secondary => self.secondary.attach_drive(slot, drive),
+        }
+    }
+
+    fn channel_for_port_mut(&mut self, port: u16) -> Option<(&mut IdeChannel, u16, bool)> {
+        // Returns (channel, offset, is_alt_status/dev_ctl).
+        if (PRIMARY_BASE..=PRIMARY_BASE + 7).contains(&port) {
+            return Some((&mut self.primary, port - PRIMARY_BASE, false));
+        }
+        if (SECONDARY_BASE..=SECONDARY_BASE + 7).contains(&port) {
+            return Some((&mut self.secondary, port - SECONDARY_BASE, false));
+        }
+        if port == PRIMARY_CTRL || port == PRIMARY_CTRL + 1 {
+            return Some((&mut self.primary, port - PRIMARY_CTRL, true));
+        }
+        if port == SECONDARY_CTRL || port == SECONDARY_CTRL + 1 {
+            return Some((&mut self.secondary, port - SECONDARY_CTRL, true));
+        }
+        None
+    }
+
+    fn is_primary_port(port: u16) -> bool {
+        (PRIMARY_BASE..=PRIMARY_BASE + 7).contains(&port) || port == PRIMARY_CTRL || port == PRIMARY_CTRL + 1
+    }
+
+    pub fn read_u8(&mut self, port: u16, irq14: &dyn IrqLine, irq15: &dyn IrqLine) -> u8 {
+        let Some((channel, offset, ctrl)) = self.channel_for_port_mut(port) else {
+            return 0;
+        };
+        let irq = if Self::is_primary_port(port) {
+            irq14
+        } else {
+            irq15
+        };
+
+        if !ctrl {
+            if offset == 0 {
+                return channel.pio_read(1, irq) as u8;
+            }
+            return channel.read_reg(offset, irq);
+        }
+
+        match offset {
+            0 => channel.read_alt_status(),
+            1 => 0, // drive address, not implemented
+            _ => 0,
+        }
+    }
+
+    pub fn read_u16(&mut self, port: u16, irq14: &dyn IrqLine, irq15: &dyn IrqLine) -> u16 {
+        let Some((channel, offset, ctrl)) = self.channel_for_port_mut(port) else {
+            return 0;
+        };
+        let irq = if Self::is_primary_port(port) {
+            irq14
+        } else {
+            irq15
+        };
+
+        if ctrl || offset != 0 {
+            return (self.read_u8(port, irq14, irq15) as u16)
+                | ((self.read_u8(port, irq14, irq15) as u16) << 8);
+        }
+
+        channel.pio_read(2, irq) as u16
+    }
+
+    pub fn write_u8(&mut self, port: u16, val: u8, irq14: &dyn IrqLine, irq15: &dyn IrqLine) {
+        let Some((channel, offset, ctrl)) = self.channel_for_port_mut(port) else {
+            return;
+        };
+        let irq = if Self::is_primary_port(port) {
+            irq14
+        } else {
+            irq15
+        };
+
+        if !ctrl {
+            if offset == 0 {
+                channel.pio_write(1, val as u32, irq);
+            } else {
+                channel.write_reg(offset, val, irq);
+            }
+            return;
+        }
+
+        if offset == 0 {
+            channel.write_device_control(val, irq);
+        }
+    }
+
+    pub fn write_u16(&mut self, port: u16, val: u16, irq14: &dyn IrqLine, irq15: &dyn IrqLine) {
+        let Some((channel, offset, ctrl)) = self.channel_for_port_mut(port) else {
+            return;
+        };
+        let irq = if Self::is_primary_port(port) {
+            irq14
+        } else {
+            irq15
+        };
+
+        if ctrl || offset != 0 {
+            self.write_u8(port, (val & 0xFF) as u8, irq14, irq15);
+            self.write_u8(port, (val >> 8) as u8, irq14, irq15);
+            return;
+        }
+
+        channel.pio_write(2, val as u32, irq);
+    }
+}
+
+impl Default for IdeController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bus::TestIrqLine;
+
+    fn setup_controller() -> (IdeController, TestIrqLine, TestIrqLine) {
+        let mut ctl = IdeController::new();
+
+        use aero_storage::{MemBackend, RawDisk, VirtualDisk};
+
+        let capacity = 16 * SECTOR_SIZE as u64;
+        let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+        let mut sector = vec![0u8; SECTOR_SIZE];
+        sector[0..4].copy_from_slice(&[1, 2, 3, 4]);
+        disk.write_sectors(1, &sector).unwrap();
+
+        let drive = AtaDrive::new(Box::new(disk)).unwrap();
+        ctl.attach_drive(IdeChannelId::Primary, 0, drive);
+
+        (ctl, TestIrqLine::default(), TestIrqLine::default())
+    }
+
+    #[test]
+    fn identify_works() {
+        let (mut ctl, irq14, irq15) = setup_controller();
+
+        // Select LBA mode + master.
+        ctl.write_u8(PRIMARY_BASE + 6, 0xE0, &irq14, &irq15);
+        ctl.write_u8(PRIMARY_BASE + 7, ATA_CMD_IDENTIFY, &irq14, &irq15);
+
+        assert_eq!(irq14.level(), true);
+
+        let mut buf = [0u8; SECTOR_SIZE];
+        for i in 0..(SECTOR_SIZE / 2) {
+            let w = ctl.read_u16(PRIMARY_BASE + 0, &irq14, &irq15);
+            buf[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
+        }
+
+        // Signature: word 0 low byte should be 0x40.
+        assert_eq!(buf[0], 0x40);
+        // Reading status clears IRQ.
+        let _ = ctl.read_u8(PRIMARY_BASE + 7, &irq14, &irq15);
+        assert_eq!(irq14.level(), false);
+    }
+
+    #[test]
+    fn read_sector_pio() {
+        let (mut ctl, irq14, irq15) = setup_controller();
+
+        // Read sector 1 via READ SECTORS.
+        ctl.write_u8(PRIMARY_BASE + 6, 0xE0, &irq14, &irq15); // LBA
+        ctl.write_u8(PRIMARY_BASE + 2, 1, &irq14, &irq15); // count
+        ctl.write_u8(PRIMARY_BASE + 3, 1, &irq14, &irq15); // lba low
+        ctl.write_u8(PRIMARY_BASE + 4, 0, &irq14, &irq15);
+        ctl.write_u8(PRIMARY_BASE + 5, 0, &irq14, &irq15);
+        ctl.write_u8(PRIMARY_BASE + 7, ATA_CMD_READ_SECTORS, &irq14, &irq15);
+
+        assert_eq!(irq14.level(), true);
+
+        // First 4 bytes of sector 1 are [1,2,3,4].
+        let b0 = ctl.read_u8(PRIMARY_BASE + 0, &irq14, &irq15);
+        let b1 = ctl.read_u8(PRIMARY_BASE + 0, &irq14, &irq15);
+        let b2 = ctl.read_u8(PRIMARY_BASE + 0, &irq14, &irq15);
+        let b3 = ctl.read_u8(PRIMARY_BASE + 0, &irq14, &irq15);
+        assert_eq!([b0, b1, b2, b3], [1, 2, 3, 4]);
+    }
+}

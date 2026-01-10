@@ -48,6 +48,7 @@ members = [
     "crates/perf",
     "crates/aero-devices-input",
     "crates/aero-devices-nvme",
+    "crates/aero-devices-storage",
     "crates/aero-wasm",
     "server",
     "crates/nt-packetlib",

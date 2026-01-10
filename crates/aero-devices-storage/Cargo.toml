@@ -1,0 +1,8 @@
+[package]
+name = "aero-devices-storage"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aero-storage = { path = "../aero-storage" }
+

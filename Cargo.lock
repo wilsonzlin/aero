@@ -138,6 +138,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-devices-storage"
+version = "0.1.0"
+dependencies = [
+ "aero-storage",
+]
+
+[[package]]
 name = "aero-dxbc"
 version = "0.1.0"
 dependencies = [
