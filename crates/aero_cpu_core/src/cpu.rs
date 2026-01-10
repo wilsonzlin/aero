@@ -1,5 +1,7 @@
 use crate::bus::Bus;
-use crate::interp::{decode, ExecError};
+use crate::cpuid::CpuFeatures;
+use crate::interp::{decode, win7_ext, ExecError};
+use crate::sse_state::SseState;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpuMode {
@@ -120,11 +122,67 @@ impl RFlags {
 pub struct Regs {
     pub rax: u64,
     pub rcx: u64,
+    pub rdx: u64,
+    pub rbx: u64,
+    pub rsp: u64,
+    pub rbp: u64,
     pub rsi: u64,
     pub rdi: u64,
+    pub r8: u64,
+    pub r9: u64,
+    pub r10: u64,
+    pub r11: u64,
+    pub r12: u64,
+    pub r13: u64,
+    pub r14: u64,
+    pub r15: u64,
 }
 
 impl Regs {
+    pub fn gpr(&self, index: u8) -> u64 {
+        match index & 0xF {
+            0 => self.rax,
+            1 => self.rcx,
+            2 => self.rdx,
+            3 => self.rbx,
+            4 => self.rsp,
+            5 => self.rbp,
+            6 => self.rsi,
+            7 => self.rdi,
+            8 => self.r8,
+            9 => self.r9,
+            10 => self.r10,
+            11 => self.r11,
+            12 => self.r12,
+            13 => self.r13,
+            14 => self.r14,
+            15 => self.r15,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn set_gpr(&mut self, index: u8, value: u64) {
+        match index & 0xF {
+            0 => self.rax = value,
+            1 => self.rcx = value,
+            2 => self.rdx = value,
+            3 => self.rbx = value,
+            4 => self.rsp = value,
+            5 => self.rbp = value,
+            6 => self.rsi = value,
+            7 => self.rdi = value,
+            8 => self.r8 = value,
+            9 => self.r9 = value,
+            10 => self.r10 = value,
+            11 => self.r11 = value,
+            12 => self.r12 = value,
+            13 => self.r13 = value,
+            14 => self.r14 = value,
+            15 => self.r15 = value,
+            _ => unreachable!(),
+        }
+    }
+
     pub fn al(&self) -> u8 {
         self.rax as u8
     }
@@ -232,6 +290,8 @@ pub struct Cpu {
     pub regs: Regs,
     pub rflags: RFlags,
     pub segs: Segments,
+    pub sse: SseState,
+    pub features: CpuFeatures,
 }
 
 impl Cpu {
@@ -246,9 +306,14 @@ impl Cpu {
     ///
     /// This helper is sufficient for unit tests (no instruction fetch pipeline).
     pub fn execute_bytes<B: Bus>(&mut self, bus: &mut B, bytes: &[u8]) -> Result<usize, ExecError> {
-        let inst = decode::decode(self.mode, bytes)?;
-        crate::interp::exec(self, bus, &inst)?;
-        Ok(inst.len)
+        match decode::decode(self.mode, bytes) {
+            Ok(inst) => {
+                crate::interp::exec(self, bus, &inst)?;
+                Ok(inst.len)
+            }
+            Err(ExecError::InvalidOpcode(_)) => win7_ext::exec(self, bus, bytes),
+            Err(e) => Err(e),
+        }
     }
 
     pub fn seg_base(&self, seg: Segment) -> u64 {

@@ -1,6 +1,12 @@
+pub mod bitext;
 pub mod decode;
+pub mod sse3;
+pub mod sse41;
+pub mod sse42;
+pub mod ssse3;
 pub mod string;
 pub mod tier0;
+pub mod win7_ext;
 pub mod x87;
 
 use crate::bus::Bus;
@@ -28,4 +34,3 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, inst: &DecodedInst) -> Result<()
         InstKind::String(s) => string::exec_string(cpu, bus, s),
     }
 }
-

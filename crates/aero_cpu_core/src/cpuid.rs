@@ -22,12 +22,26 @@ impl CpuidResult {
     };
 }
 
+// Leaf 1 ECX feature bits we optionally gate behind `CpuFeatures::win7_x86_extensions`.
+const FEAT_ECX_SSE3: u32 = 1 << 0;
+const FEAT_ECX_SSSE3: u32 = 1 << 9;
+const FEAT_ECX_SSE41: u32 = 1 << 19;
+const FEAT_ECX_SSE42: u32 = 1 << 20;
+const FEAT_ECX_POPCNT: u32 = 1 << 23;
+
+const WIN7_X86_EXT_MASK: u32 =
+    FEAT_ECX_SSE3 | FEAT_ECX_SSSE3 | FEAT_ECX_SSE41 | FEAT_ECX_SSE42 | FEAT_ECX_POPCNT;
+
 /// Configurable CPUID surface.
 ///
 /// The fields map 1:1 to architecturally visible CPUID leaves so tests can
 /// assert exact values without having to re-derive leaf packing logic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuFeatures {
+    /// When false we hide the Win7-relevant modern x86 extensions (SSE3/SSSE3/SSE4.1/SSE4.2 +
+    /// POPCNT) from CPUID leaf 1 and treat those instructions as unavailable in the
+    /// interpreter.
+    pub win7_x86_extensions: bool,
     /// Maximum supported basic leaf (returned in CPUID(0).EAX).
     pub max_basic_leaf: u32,
     /// Maximum supported extended leaf (returned in CPUID(0x8000_0000).EAX).
@@ -118,19 +132,9 @@ impl Default for CpuFeatures {
             | FEAT_EDX_SSE2;
 
         // Leaf 1 ECX bits.
-        const FEAT_ECX_SSE3: u32 = 1 << 0;
-        const FEAT_ECX_SSSE3: u32 = 1 << 9;
         const FEAT_ECX_CX16: u32 = 1 << 13; // CMPXCHG16B
-        const FEAT_ECX_SSE41: u32 = 1 << 19;
-        const FEAT_ECX_SSE42: u32 = 1 << 20;
-        const FEAT_ECX_POPCNT: u32 = 1 << 23;
 
-        let leaf1_ecx = FEAT_ECX_SSE3
-            | FEAT_ECX_SSSE3
-            | FEAT_ECX_CX16
-            | FEAT_ECX_SSE41
-            | FEAT_ECX_SSE42
-            | FEAT_ECX_POPCNT;
+        let leaf1_ecx = WIN7_X86_EXT_MASK | FEAT_ECX_CX16;
 
         // Extended leaf 0x8000_0001 EDX bits.
         const EXT_EDX_SYSCALL: u32 = 1 << 11;
@@ -145,6 +149,7 @@ impl Default for CpuFeatures {
         let ext1_ecx = EXT_ECX_LAHF_LM;
 
         Self {
+            win7_x86_extensions: true,
             max_basic_leaf: 7,
             max_extended_leaf: 0x8000_0008,
             vendor_id,
@@ -188,12 +193,18 @@ pub fn cpuid(features: &CpuFeatures, leaf: u32, subleaf: u32) -> CpuidResult {
                 edx,
             }
         }
-        0x0000_0001 => CpuidResult {
-            eax: features.leaf1_eax,
-            ebx: features.leaf1_ebx,
-            ecx: features.leaf1_ecx,
-            edx: features.leaf1_edx,
-        },
+        0x0000_0001 => {
+            let mut ecx = features.leaf1_ecx;
+            if !features.win7_x86_extensions {
+                ecx &= !WIN7_X86_EXT_MASK;
+            }
+            CpuidResult {
+                eax: features.leaf1_eax,
+                ebx: features.leaf1_ebx,
+                ecx,
+                edx: features.leaf1_edx,
+            }
+        }
         0x0000_0007 if subleaf == 0 => CpuidResult {
             eax: 0,
             ebx: features.leaf7_ebx,
