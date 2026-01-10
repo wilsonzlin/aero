@@ -2,6 +2,11 @@
 
 This directory contains a small, reusable **Virtio 1.0 split virtqueue** implementation intended for **Windows 7 KMDF** guest drivers.
 
+See also:
+
+- [`docs/virtio/virtqueue-split-ring-win7.md`](../../../../docs/virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue implementation guide (algorithms, ordering/barriers, EVENT_IDX, indirect).
+- [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virtio-driver-contract.md) — Aero’s definitive virtio device/feature/transport contract.
+
 Highlights:
 
 - Split ring only (descriptor table + avail ring + used ring)
