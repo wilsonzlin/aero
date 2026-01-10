@@ -456,6 +456,10 @@ NTSTATUS VirtioPciProgramMsixVectors(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (QueueCount != 0 && QueueVectors == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
     WRITE_REGISTER_USHORT(&CommonCfg->msix_config, ConfigVector);
     readVector = READ_REGISTER_USHORT(&CommonCfg->msix_config);
 
