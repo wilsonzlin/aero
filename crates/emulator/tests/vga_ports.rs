@@ -1,4 +1,4 @@
-use emulator::devices::vga::VgaDevice;
+use emulator::devices::vga::{VgaDevice, VgaPlanarShift};
 use emulator::io::PortIO;
 
 #[test]
@@ -91,4 +91,38 @@ fn out_of_range_indices_do_not_panic() {
     vga.port_write(0x3D4, 1, 0xFC);
     vga.port_write(0x3D5, 1, 0xCC);
     assert_eq!(vga.port_read(0x3D5, 1) as u8, 0xCC);
+}
+
+#[test]
+fn derived_state_tracks_memory_mode_chain4_and_odd_even() {
+    let mut vga = VgaDevice::new();
+
+    // SEQ Memory Mode register: index 0x04.
+    vga.port_write(0x3C4, 1, 0x04);
+    vga.port_write(0x3C5, 1, 0x08); // chain4=1, odd/even=1? (bit2=0)
+
+    let state = vga.derived_state();
+    assert!(state.chain4);
+    assert!(state.odd_even);
+
+    vga.port_write(0x3C5, 1, 0x0C); // chain4=1, odd/even disabled (bit2=1)
+    let state = vga.derived_state();
+    assert!(state.chain4);
+    assert!(!state.odd_even);
+}
+
+#[test]
+fn derived_state_detects_graphics_and_shift_controls() {
+    let mut vga = VgaDevice::new();
+
+    // GC Misc register: index 0x06; bit0 indicates graphics mode.
+    vga.port_write(0x3CE, 1, 0x06);
+    vga.port_write(0x3CF, 1, 0x01);
+    assert!(vga.derived_state().is_graphics);
+
+    // GC Mode register: index 0x05; bits 6:5 control shift.
+    vga.port_write(0x3CE, 1, 0x05);
+    vga.port_write(0x3CF, 1, 0x20); // shift_control=1
+    assert_eq!(vga.derived_state().planar_shift, VgaPlanarShift::Shift256);
+    assert_eq!(vga.derived_state().bpp_guess, 8);
 }
