@@ -4,6 +4,7 @@ import type http from "node:http";
 import type { Duplex } from "node:stream";
 
 import { TcpTargetParseError, parseTcpTargetFromUrl } from "../protocol/tcpTarget.js";
+import { isOriginAllowed } from "../middleware/originGuard.js";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -11,7 +12,22 @@ export function handleTcpProxyUpgrade(
   req: http.IncomingMessage,
   socket: Duplex,
   head: Buffer,
+  opts: { allowedOrigins?: readonly string[] } = {},
 ): void {
+  const originHeader = req.headers.origin;
+  const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+  if (origin) {
+    const allowedOrigins = opts.allowedOrigins;
+    if (!allowedOrigins || allowedOrigins.length === 0) {
+      respondHttp(socket, 403, "Origin not allowed");
+      return;
+    }
+    if (!isOriginAllowed(origin, allowedOrigins)) {
+      respondHttp(socket, 403, "Origin not allowed");
+      return;
+    }
+  }
+
   let target: { host: string; port: number; version: number };
   try {
     const url = new URL(req.url ?? "", "http://localhost");
@@ -71,6 +87,8 @@ function httpStatusText(status: number): string {
   switch (status) {
     case 400:
       return "Bad Request";
+    case 403:
+      return "Forbidden";
     case 404:
       return "Not Found";
     default:
