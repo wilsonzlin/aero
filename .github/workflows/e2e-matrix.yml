@@ -10,6 +10,17 @@ name: E2E (cross-browser)
 
 on:
   workflow_dispatch:
+    inputs:
+      project:
+        description: Playwright project to run
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - chromium
+          - firefox
+          - webkit
   schedule:
     - cron: "0 3 * * *"
   push:
@@ -44,7 +55,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [chromium, firefox, webkit]
+        project: ${{ fromJSON(github.event_name == 'workflow_dispatch' && github.event.inputs.project != 'all' && format('["{0}"]', github.event.inputs.project) || '["chromium","firefox","webkit"]') }}
 
     steps:
       - uses: actions/checkout@v4
