@@ -31,7 +31,15 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: tools/perf/package-lock.json
+          cache-dependency-path: |
+            tools/perf/package-lock.json
+            package-lock.json
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ env.PLAYWRIGHT_VERSION }}-chromium
 
       - name: Determine Playwright version
         id: playwright-version
@@ -53,8 +61,35 @@ jobs:
       - name: Install Chromium (Playwright)
         run: npx --yes playwright@${{ steps.playwright-version.outputs.version }} install --with-deps chromium
 
+      - name: Install app dependencies (nightly)
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Build app (nightly)
+        run: npm run build
+
       - name: Run browser perf (nightly)
-        run: node tools/perf/run.mjs --out-dir perf-results/nightly --iterations ${{ env.PERF_ITERATIONS }}
+        run: |
+          set -euo pipefail
+          npm run preview -- --host 127.0.0.1 --port 4173 --strictPort &
+          server_pid=$!
+          cleanup() {
+            kill "$server_pid" || true
+            wait "$server_pid" || true
+          }
+          trap cleanup EXIT
+
+          for i in {1..60}; do
+            curl -fsS http://127.0.0.1:4173/ >/dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
+
+          node tools/perf/run.mjs \
+            --url http://127.0.0.1:4173/ \
+            --out-dir perf-results/nightly \
+            --iterations ${{ env.PERF_ITERATIONS }}
 
       - name: Upload browser perf artifacts
         if: always()

@@ -40,7 +40,16 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: head/tools/perf/package-lock.json
+          cache-dependency-path: |
+            head/tools/perf/package-lock.json
+            head/package-lock.json
+            base/package-lock.json
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ env.PLAYWRIGHT_VERSION }}-chromium
 
       - name: Determine Playwright version
         id: playwright-version
@@ -62,13 +71,71 @@ jobs:
       - name: Install Chromium (Playwright)
         run: npx --yes playwright@${{ steps.playwright-version.outputs.version }} install --with-deps chromium
 
-      - name: Run perf smoke (baseline)
-        run: node ../head/tools/perf/run.mjs --out-dir ../head/perf-results/base --iterations ${{ env.PERF_ITERATIONS }}
+      - name: Install app dependencies (baseline)
+        run: npm ci
+        working-directory: base
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Build app (baseline)
+        run: npm run build
         working-directory: base
 
-      - name: Run perf smoke (candidate)
-        run: node tools/perf/run.mjs --out-dir perf-results/head --iterations ${{ env.PERF_ITERATIONS }}
+      - name: Run perf smoke (baseline)
+        working-directory: base
+        run: |
+          set -euo pipefail
+          npm run preview -- --host 127.0.0.1 --port 4173 --strictPort &
+          server_pid=$!
+          cleanup() {
+            kill "$server_pid" || true
+            wait "$server_pid" || true
+          }
+          trap cleanup EXIT
+
+          for i in {1..60}; do
+            curl -fsS http://127.0.0.1:4173/ >/dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
+
+          node ../head/tools/perf/run.mjs \
+            --url http://127.0.0.1:4173/ \
+            --out-dir ../head/perf-results/base \
+            --iterations ${{ env.PERF_ITERATIONS }}
+
+      - name: Install app dependencies (candidate)
+        run: npm ci
         working-directory: head
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Build app (candidate)
+        run: npm run build
+        working-directory: head
+
+      - name: Run perf smoke (candidate)
+        working-directory: head
+        run: |
+          set -euo pipefail
+          npm run preview -- --host 127.0.0.1 --port 4173 --strictPort &
+          server_pid=$!
+          cleanup() {
+            kill "$server_pid" || true
+            wait "$server_pid" || true
+          }
+          trap cleanup EXIT
+
+          for i in {1..60}; do
+            curl -fsS http://127.0.0.1:4173/ >/dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
+
+          node tools/perf/run.mjs \
+            --url http://127.0.0.1:4173/ \
+            --out-dir perf-results/head \
+            --iterations ${{ env.PERF_ITERATIONS }}
 
       - name: Compare (fail on regression)
         run: |
