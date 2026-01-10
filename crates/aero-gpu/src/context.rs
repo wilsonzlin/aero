@@ -4,9 +4,12 @@ use crate::GpuCapabilities;
 /// Lightweight wrapper around a `wgpu::Device` that owns a [`PipelineCache`].
 ///
 /// When a `wgpu::Device` is lost and recreated, pipelines and shader modules from
-/// the previous device become invalid. `GpuContext::replace_device` clears caches
+/// the previous device become invalid. `WgpuContext::replace_device` clears caches
 /// to ensure we never reuse old objects.
-pub struct GpuContext {
+///
+/// Note: This is separate from the backend-agnostic [`crate::GpuContext`] (HAL),
+/// which owns a `dyn hal::GpuBackend`.
+pub struct WgpuContext {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub capabilities: GpuCapabilities,
@@ -15,7 +18,7 @@ pub struct GpuContext {
     pipeline_cache_config: PipelineCacheConfig,
 }
 
-impl GpuContext {
+impl WgpuContext {
     pub fn new(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -49,4 +52,3 @@ impl GpuContext {
         self.pipelines = PipelineCache::new(self.pipeline_cache_config.clone(), capabilities);
     }
 }
-

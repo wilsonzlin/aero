@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 
 /// Subset of GPU limits relevant for dynamic uploads.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct GpuCapabilities {
     pub min_uniform_buffer_offset_alignment: u32,
     pub min_storage_buffer_offset_alignment: u32,
