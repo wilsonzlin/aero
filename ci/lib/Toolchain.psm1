@@ -394,7 +394,8 @@ function Install-WingetPackage {
     [string]$WingetId,
     [string]$WingetVersion,
     [Parameter(Mandatory = $true)]
-    [string]$DisplayName
+    [string]$DisplayName,
+    [string]$DownloadDirectory
   )
 
   $winget = Get-WingetExe
@@ -416,6 +417,20 @@ Remediation:
     '--accept-package-agreements',
     '--silent'
   )
+
+  $downloadDirFull = $null
+  if (-not [string]::IsNullOrWhiteSpace($DownloadDirectory)) {
+    $downloadDirFull = $DownloadDirectory
+    if (-not [System.IO.Path]::IsPathRooted($downloadDirFull)) {
+      $downloadDirFull = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $downloadDirFull))
+    }
+
+    if (-not (Test-Path -LiteralPath $downloadDirFull)) {
+      New-Item -ItemType Directory -Force -Path $downloadDirFull | Out-Null
+    }
+
+    $baseArgs += @('--download-directory', $downloadDirFull)
+  }
 
   $flagSets = @(
     @('--disable-interactivity', '--force'),
@@ -440,12 +455,18 @@ You can inspect available versions with:
     } catch {
       $message = $_.Exception.Message
 
-      $unknownForce = $message -match '(?i)(unknown|unrecognized).*(--force)'
-      $unknownDisable = $message -match '(?i)(unknown|unrecognized).*(--disable-interactivity)'
+      $unknownForce = ($flags -contains '--force') -and ($message -match '(?i)(unknown|unrecognized).*(--force)')
+      $unknownDisable = ($flags -contains '--disable-interactivity') -and ($message -match '(?i)(unknown|unrecognized).*(--disable-interactivity)')
+      $unknownDownloadDir = ($baseArgs -contains '--download-directory') -and ($message -match '(?i)(unknown|unrecognized).*(--download-directory)')
 
       # If the failure is clearly due to an unsupported flag, try the next reduced flag set.
-      if ($unknownForce -or $unknownDisable) {
+      if ($unknownForce -or $unknownDisable -or $unknownDownloadDir) {
         Write-ToolchainLog -Level WARN -Message "winget does not support one or more flags ($($flags -join ' ')); retrying with fewer flags."
+        if ($unknownDownloadDir) {
+          Write-ToolchainLog -Level WARN -Message 'winget does not support --download-directory; continuing without download caching.'
+          $baseArgs = $baseArgs | Where-Object { $_ -ne '--download-directory' -and $_ -ne $downloadDirFull }
+          $downloadDirFull = $null
+        }
         continue
       }
 
@@ -517,7 +538,7 @@ Remediation:
         $installAttempted = $true
         try {
           Write-ToolchainLog -Message "Installing Windows SDK via winget (id=$sdkId, version=$versionLabel)..."
-          Install-WingetPackage -WingetId $sdkId -WingetVersion $versionCandidate -DisplayName 'Windows SDK'
+          Install-WingetPackage -WingetId $sdkId -WingetVersion $versionCandidate -DisplayName 'Windows SDK' -DownloadDirectory $env:WDK_DOWNLOAD_CACHE
           break
         } catch {
           Write-ToolchainLog -Level WARN -Message "Windows SDK install attempt failed (id=$sdkId, version=$versionLabel): $($_.Exception.Message)"
@@ -530,7 +551,7 @@ Remediation:
         $installAttempted = $true
         try {
           Write-ToolchainLog -Message "Installing Windows Driver Kit via winget (id=$wdkId, version=$versionLabel)..."
-          Install-WingetPackage -WingetId $wdkId -WingetVersion $versionCandidate -DisplayName 'Windows Driver Kit (WDK)'
+          Install-WingetPackage -WingetId $wdkId -WingetVersion $versionCandidate -DisplayName 'Windows Driver Kit (WDK)' -DownloadDirectory $env:WDK_DOWNLOAD_CACHE
           break
         } catch {
           Write-ToolchainLog -Level WARN -Message "WDK install attempt failed (id=$wdkId, version=$versionLabel): $($_.Exception.Message)"
