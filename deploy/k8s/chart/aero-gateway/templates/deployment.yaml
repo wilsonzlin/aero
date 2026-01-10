@@ -61,6 +61,10 @@ spec:
               containerPort: {{ .Values.gateway.containerPort }}
               protocol: TCP
           env:
+            {{- $trustProxy := .Values.ingress.enabled -}}
+            {{- if not (kindIs "invalid" .Values.gateway.trustProxy) -}}
+            {{- $trustProxy = .Values.gateway.trustProxy -}}
+            {{- end }}
             - name: PORT
               value: {{ .Values.gateway.containerPort | quote }}
             - name: LOG_LEVEL
@@ -69,6 +73,8 @@ spec:
               value: {{ .Values.gateway.shutdownGraceMs | quote }}
             - name: RATE_LIMIT_REQUESTS_PER_MINUTE
               value: {{ .Values.gateway.rateLimit.requestsPerMinute | quote }}
+            - name: TRUST_PROXY
+              value: {{ ternary "1" "0" $trustProxy | quote }}
             {{- if or .Values.gateway.publicBaseUrl .Values.ingress.enabled }}
             - name: PUBLIC_BASE_URL
               value: {{ include "aero-gateway.publicBaseUrl" . | quote }}

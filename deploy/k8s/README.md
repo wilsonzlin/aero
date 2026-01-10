@@ -180,6 +180,18 @@ If you are deploying **without** an Ingress, or the externally reachable URL is 
 
 If you see `403 Origin not allowed` responses, `PUBLIC_BASE_URL`/`ALLOWED_ORIGINS` is the first thing to check.
 
+### TRUST_PROXY (behind an Ingress)
+
+When running behind an Ingress (TLS terminated at the edge), `aero-gateway` should generally run with `TRUST_PROXY=1`
+so it can trust `X-Forwarded-*` headers for scheme/client IP.
+
+This chart defaults `TRUST_PROXY` to:
+
+- `1` when `ingress.enabled=true`
+- `0` when `ingress.enabled=false`
+
+If you expose the `Service` directly to untrusted clients, keep `TRUST_PROXY=0` to avoid header spoofing.
+
 ## Private registry / imagePullSecrets (optional)
 
 If your gateway image is in a private registry, set `imagePullSecrets` in your values file:

@@ -27,6 +27,11 @@ gateway:
 
   containerPort: 8080
 
+  # Whether to trust X-Forwarded-* headers for scheme/client IP.
+  # - Default: true when ingress.enabled=true, else false
+  # - Set explicitly to true only when the Service is NOT directly exposed to untrusted clients.
+  trustProxy: null
+
   # The URL that browser clients use to reach the gateway.
   # If unset and ingress.enabled=true, this chart derives it from ingress.host + TLS.
   publicBaseUrl: ""
