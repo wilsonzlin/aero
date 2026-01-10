@@ -1,8 +1,10 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::{fs, path::PathBuf};
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -48,10 +50,12 @@ impl MetadataStore for InMemoryMetadataStore {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct JsonFileMetadataStore {
     path: PathBuf,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl JsonFileMetadataStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self { path: path.into() }
@@ -64,6 +68,7 @@ impl JsonFileMetadataStore {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl MetadataStore for JsonFileMetadataStore {
     fn load(&self) -> Result<Option<StreamingMetadata>, StorageError> {
         if !self.path.exists() {
@@ -88,4 +93,3 @@ impl MetadataStore for JsonFileMetadataStore {
         fs::rename(&tmp, &self.path).map_err(|e| StorageError::Io(e.to_string()))
     }
 }
-

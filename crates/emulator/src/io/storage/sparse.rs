@@ -1,8 +1,10 @@
+use std::sync::{Arc, Mutex};
+
+#[cfg(not(target_arch = "wasm32"))]
 use std::{
     fs::OpenOptions,
     io::{Read, Seek, SeekFrom, Write},
     path::Path,
-    sync::{Arc, Mutex},
 };
 
 use crate::io::storage::error::StorageError;
@@ -88,11 +90,13 @@ impl SparseStore for InMemoryStore {
 
 /// A file-backed store. When used on a filesystem that supports sparse files,
 /// unwritten regions remain holes.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct FileStore {
     size: u64,
     file: Mutex<std::fs::File>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl FileStore {
     pub fn create(path: impl AsRef<Path>, size: u64) -> Result<Self, StorageError> {
         let file = OpenOptions::new()
@@ -112,6 +116,7 @@ impl FileStore {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl SparseStore for FileStore {
     fn size(&self) -> u64 {
         self.size
