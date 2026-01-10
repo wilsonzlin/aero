@@ -393,6 +393,31 @@ impl UploadRingBuffer {
         Ok(DynamicOffset(dyn_off))
     }
 
+    /// Upload a single storage POD value and return a dynamic storage offset.
+    ///
+    /// This is identical to [`Self::write_uniform`], but uses
+    /// `min_storage_buffer_offset_alignment`.
+    pub fn write_storage<T: Pod>(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &T,
+    ) -> Result<DynamicOffset, UploadRingBufferError> {
+        let bytes = bytemuck::bytes_of(data);
+        let alignment = self.caps.min_storage_buffer_offset_alignment as u64;
+        let offset = self.alloc_offset(bytes.len() as u64, alignment)?;
+
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(offset % alignment, 0);
+
+        self.write_bytes_inner(device, queue, offset, bytes)?;
+
+        let dyn_off: u32 = offset
+            .try_into()
+            .map_err(|_| UploadRingBufferError::OffsetDoesNotFitInDynamicOffset(offset))?;
+        Ok(DynamicOffset(dyn_off))
+    }
+
     /// Upload a POD slice and return a handle describing the resulting buffer slice.
     pub fn write_slice<T: Pod>(
         &mut self,
