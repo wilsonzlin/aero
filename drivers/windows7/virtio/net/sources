@@ -1,0 +1,14 @@
+# WDK build configuration (WDK 7.1 / "build" utility).
+#
+# This driver is an NDIS 6.20 miniport for Windows 7 SP1 (x86/x64).
+
+TARGETNAME=aerovnet
+TARGETTYPE=MINIPORT
+TARGETEXT=.sys
+
+INCLUDES=$(INCLUDES);.\include;..\common\include
+
+SOURCES=src\aerovnet.c \
+        ..\common\src\virtio_pci_legacy.c \
+        ..\common\src\virtio_queue.c
+
