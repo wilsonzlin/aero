@@ -14,5 +14,8 @@ wgpu = "0.20"
 
 [dev-dependencies]
 bytemuck = { version = "1.14", features = ["derive"] }
-
 naga = { version = "24.0.0", default-features = false, features = ["wgsl-in"] }
+
+[[test]]
+name = "d3d11_smoke"
+path = "../../tests/d3d11_smoke.rs"

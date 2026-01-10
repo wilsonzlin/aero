@@ -1,5 +1,8 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
+use aero_gpu::bindings::layout_cache::CachedBindGroupLayout;
+use aero_gpu::bindings::samplers::SamplerId;
 use aero_gpu::protocol_d3d11::ResourceId;
 
 #[derive(Debug)]
@@ -30,7 +33,8 @@ pub struct TextureViewResource {
 
 #[derive(Debug)]
 pub struct SamplerResource {
-    pub sampler: wgpu::Sampler,
+    pub id: SamplerId,
+    pub sampler: Arc<wgpu::Sampler>,
 }
 
 #[derive(Debug)]
@@ -57,14 +61,14 @@ pub struct BindingDef {
 #[derive(Debug)]
 pub struct RenderPipelineResource {
     pub pipeline: wgpu::RenderPipeline,
-    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub bind_group_layout: CachedBindGroupLayout,
     pub bindings: Vec<BindingDef>,
 }
 
 #[derive(Debug)]
 pub struct ComputePipelineResource {
     pub pipeline: wgpu::ComputePipeline,
-    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub bind_group_layout: CachedBindGroupLayout,
     pub bindings: Vec<BindingDef>,
 }
 

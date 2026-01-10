@@ -1,5 +1,11 @@
-use std::num::NonZeroU64;
+use std::sync::Arc;
 
+use aero_gpu::bindings::bind_group_cache::{
+    BindGroupCache, BindGroupCacheEntry, BindGroupCacheResource, BufferId, TextureViewId,
+};
+use aero_gpu::bindings::layout_cache::BindGroupLayoutCache;
+use aero_gpu::bindings::samplers::SamplerCache;
+use aero_gpu::bindings::CacheStats;
 use aero_gpu::protocol_d3d11::{
     BindingType, BufferUsage, CmdPacket, CmdStream, D3D11Opcode, DxgiFormat, IndexFormat,
     PipelineKind, PrimitiveTopology, ShaderStageFlags, TextureUsage, VertexFormat, VertexStepMode,
@@ -15,15 +21,45 @@ use super::state::{
     BoundIndexBuffer, BoundResource, BoundVertexBuffer, D3D11State, PipelineBinding,
 };
 
+const DEFAULT_BIND_GROUP_CACHE_CAPACITY: usize = 4096;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct D3D11CacheStats {
+    pub samplers: CacheStats,
+    pub bind_group_layouts: CacheStats,
+    pub bind_groups: CacheStats,
+}
+
 pub struct D3D11Runtime {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pub resources: D3D11Resources,
     pub state: D3D11State,
+    sampler_cache: SamplerCache,
+    bind_group_layout_cache: BindGroupLayoutCache,
+    bind_group_cache: BindGroupCache<Arc<wgpu::BindGroup>>,
 }
 
 impl D3D11Runtime {
     pub async fn new_for_tests() -> Result<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                .ok()
+                .map(|v| v.is_empty())
+                .unwrap_or(true);
+
+            if needs_runtime_dir {
+                let dir = std::env::temp_dir()
+                    .join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                std::env::set_var("XDG_RUNTIME_DIR", &dir);
+            }
+        }
+
         let instance = wgpu::Instance::default();
 
         let adapter = match instance
@@ -64,11 +100,22 @@ impl D3D11Runtime {
             queue,
             resources: D3D11Resources::default(),
             state: D3D11State::new(),
+            sampler_cache: SamplerCache::new(),
+            bind_group_layout_cache: BindGroupLayoutCache::new(),
+            bind_group_cache: BindGroupCache::new(DEFAULT_BIND_GROUP_CACHE_CAPACITY),
         })
     }
 
     pub fn device(&self) -> &wgpu::Device {
         &self.device
+    }
+
+    pub fn cache_stats(&self) -> D3D11CacheStats {
+        D3D11CacheStats {
+            samplers: self.sampler_cache.stats(),
+            bind_group_layouts: self.bind_group_layout_cache.stats(),
+            bind_groups: self.bind_group_cache.stats(),
+        }
     }
 
     pub fn execute(&mut self, words: &[u32]) -> Result<()> {
@@ -531,27 +578,34 @@ impl D3D11Runtime {
         let sampler_id = payload[0];
         let filter_mode = payload[1];
 
-        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("aero-d3d11 sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: if filter_mode == 0 {
-                wgpu::FilterMode::Nearest
-            } else {
-                wgpu::FilterMode::Linear
+        let cached = self.sampler_cache.get_or_create(
+            &self.device,
+            &wgpu::SamplerDescriptor {
+                label: None,
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: if filter_mode == 0 {
+                    wgpu::FilterMode::Nearest
+                } else {
+                    wgpu::FilterMode::Linear
+                },
+                min_filter: if filter_mode == 0 {
+                    wgpu::FilterMode::Nearest
+                } else {
+                    wgpu::FilterMode::Linear
+                },
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
             },
-            min_filter: if filter_mode == 0 {
-                wgpu::FilterMode::Nearest
-            } else {
-                wgpu::FilterMode::Linear
+        );
+        self.resources.samplers.insert(
+            sampler_id,
+            SamplerResource {
+                id: cached.id,
+                sampler: cached.sampler,
             },
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-        self.resources
-            .samplers
-            .insert(sampler_id, SamplerResource { sampler });
+        );
         Ok(())
     }
 
@@ -674,21 +728,17 @@ impl D3D11Runtime {
 
         let binding_count = take(payload, &mut cursor)? as usize;
         let bindings = self.decode_binding_defs(payload, &mut cursor, binding_count)?;
-        let bind_group_layout =
-            self.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("aero-d3d11 bind group layout"),
-                    entries: &bindings
-                        .iter()
-                        .map(binding_def_to_layout_entry)
-                        .collect::<Vec<_>>(),
-                });
+        let bind_group_layout_entries: Vec<wgpu::BindGroupLayoutEntry> =
+            bindings.iter().map(binding_def_to_layout_entry).collect();
+        let bind_group_layout = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &bind_group_layout_entries);
 
         let pipeline_layout = self
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("aero-d3d11 pipeline layout"),
-                bind_group_layouts: &[&bind_group_layout],
+                bind_group_layouts: &[bind_group_layout.layout.as_ref()],
                 push_constant_ranges: &[],
             });
 
@@ -759,21 +809,17 @@ impl D3D11Runtime {
 
         let binding_count = take(payload, &mut cursor)? as usize;
         let bindings = self.decode_binding_defs(payload, &mut cursor, binding_count)?;
-        let bind_group_layout =
-            self.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("aero-d3d11 compute bind group layout"),
-                    entries: &bindings
-                        .iter()
-                        .map(binding_def_to_layout_entry)
-                        .collect::<Vec<_>>(),
-                });
+        let bind_group_layout_entries: Vec<wgpu::BindGroupLayoutEntry> =
+            bindings.iter().map(binding_def_to_layout_entry).collect();
+        let bind_group_layout = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &bind_group_layout_entries);
 
         let pipeline_layout = self
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("aero-d3d11 compute pipeline layout"),
-                bind_group_layouts: &[&bind_group_layout],
+                bind_group_layouts: &[bind_group_layout.layout.as_ref()],
                 push_constant_ranges: &[],
             });
 
@@ -894,7 +940,9 @@ impl D3D11Runtime {
             );
         }
 
-        let (device, resources, state) = (&self.device, &self.resources, &mut self.state);
+        let device = &self.device;
+        let resources = &self.resources;
+        let (state, bind_group_cache) = (&mut self.state, &mut self.bind_group_cache);
 
         let color_view_id = payload[0];
         let clear_color = wgpu::Color {
@@ -937,7 +985,7 @@ impl D3D11Runtime {
         // wgpu requires any `&BindGroup` passed to `set_bind_group` to remain alive for the entire
         // render pass lifetime. Since we may change bindings between draws, we keep every bind
         // group we create in an arena for the duration of the pass.
-        let mut bind_group_arena: Vec<Box<wgpu::BindGroup>> = Vec::new();
+        let mut bind_group_arena: Vec<Arc<wgpu::BindGroup>> = Vec::new();
         let mut current_bind_group: Option<*const wgpu::BindGroup> = None;
         let mut bind_group_dirty = true;
 
@@ -1054,12 +1102,15 @@ impl D3D11Runtime {
                     if bind_group_dirty || current_bind_group.is_none() {
                         let bg = build_bind_group(
                             device,
+                            bind_group_cache,
                             resources,
                             state,
                             &pipeline.bind_group_layout,
                             &pipeline.bindings,
                         )?;
-                        current_bind_group = Some(stash_bind_group(&mut bind_group_arena, bg));
+                        let bg_ptr = Arc::as_ptr(&bg);
+                        bind_group_arena.push(bg);
+                        current_bind_group = Some(bg_ptr);
                         bind_group_dirty = false;
                     }
 
@@ -1115,12 +1166,15 @@ impl D3D11Runtime {
                     if bind_group_dirty || current_bind_group.is_none() {
                         let bg = build_bind_group(
                             device,
+                            bind_group_cache,
                             resources,
                             state,
                             &pipeline.bind_group_layout,
                             &pipeline.bindings,
                         )?;
-                        current_bind_group = Some(stash_bind_group(&mut bind_group_arena, bg));
+                        let bg_ptr = Arc::as_ptr(&bg);
+                        bind_group_arena.push(bg);
+                        current_bind_group = Some(bg_ptr);
                         bind_group_dirty = false;
                     }
 
@@ -1165,12 +1219,14 @@ impl D3D11Runtime {
         encoder: &mut wgpu::CommandEncoder,
         stream: &mut CmdStream<'_>,
     ) -> Result<()> {
-        let (device, resources, state) = (&self.device, &self.resources, &mut self.state);
+        let device = &self.device;
+        let resources = &self.resources;
+        let (state, bind_group_cache) = (&mut self.state, &mut self.bind_group_cache);
 
         // wgpu requires any `&BindGroup` passed to `set_bind_group` to remain alive for the entire
         // compute pass lifetime. Since we may change bindings between dispatches, we keep every
         // bind group we create in an arena for the duration of the pass.
-        let mut bind_group_arena: Vec<Box<wgpu::BindGroup>> = Vec::new();
+        let mut bind_group_arena: Vec<Arc<wgpu::BindGroup>> = Vec::new();
         let mut current_bind_group: Option<*const wgpu::BindGroup> = None;
         let mut bind_group_dirty = true;
 
@@ -1249,12 +1305,15 @@ impl D3D11Runtime {
                     if bind_group_dirty || current_bind_group.is_none() {
                         let bg = build_bind_group(
                             device,
+                            bind_group_cache,
                             resources,
                             state,
                             &pipeline.bind_group_layout,
                             &pipeline.bindings,
                         )?;
-                        current_bind_group = Some(stash_bind_group(&mut bind_group_arena, bg));
+                        let bg_ptr = Arc::as_ptr(&bg);
+                        bind_group_arena.push(bg);
+                        current_bind_group = Some(bg_ptr);
                         bind_group_dirty = false;
                     }
 
@@ -1394,12 +1453,13 @@ fn state_set_bind_texture_view(state: &mut D3D11State, payload: &[u32]) -> Resul
 
 fn build_bind_group(
     device: &wgpu::Device,
+    cache: &mut BindGroupCache<Arc<wgpu::BindGroup>>,
     resources: &D3D11Resources,
     state: &D3D11State,
-    layout: &wgpu::BindGroupLayout,
+    layout: &aero_gpu::bindings::layout_cache::CachedBindGroupLayout,
     bindings: &[BindingDef],
-) -> Result<wgpu::BindGroup> {
-    let mut entries: Vec<wgpu::BindGroupEntry<'_>> = Vec::with_capacity(bindings.len());
+) -> Result<Arc<wgpu::BindGroup>> {
+    let mut entries: Vec<BindGroupCacheEntry<'_>> = Vec::with_capacity(bindings.len());
     for def in bindings {
         let bound = state
             .bindings
@@ -1427,13 +1487,14 @@ fn build_bind_group(
                     .buffers
                     .get(buffer)
                     .ok_or_else(|| anyhow!("unknown buffer {buffer}"))?;
-                entries.push(wgpu::BindGroupEntry {
+                entries.push(BindGroupCacheEntry {
                     binding: def.binding,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    resource: BindGroupCacheResource::Buffer {
+                        id: BufferId((*buffer).into()),
                         buffer: &buf.buffer,
                         offset: *offset,
-                        size: size.and_then(NonZeroU64::new),
-                    }),
+                        size: size.and_then(wgpu::BufferSize::new),
+                    },
                 });
             }
             (BindingKind::Sampler, BoundResource::Sampler { sampler }) => {
@@ -1441,23 +1502,29 @@ fn build_bind_group(
                     .samplers
                     .get(sampler)
                     .ok_or_else(|| anyhow!("unknown sampler {sampler}"))?;
-                entries.push(wgpu::BindGroupEntry {
+                entries.push(BindGroupCacheEntry {
                     binding: def.binding,
-                    resource: wgpu::BindingResource::Sampler(&sampler.sampler),
+                    resource: BindGroupCacheResource::Sampler {
+                        id: sampler.id,
+                        sampler: sampler.sampler.as_ref(),
+                    },
                 });
             }
-            (BindingKind::Texture2D, BoundResource::TextureView { view })
+            (BindingKind::Texture2D, BoundResource::TextureView { view: view_id })
             | (
                 BindingKind::StorageTexture2DWriteOnly { .. },
-                BoundResource::TextureView { view },
+                BoundResource::TextureView { view: view_id },
             ) => {
-                let view = resources
+                let view_res = resources
                     .texture_views
-                    .get(view)
-                    .ok_or_else(|| anyhow!("unknown texture view {view}"))?;
-                entries.push(wgpu::BindGroupEntry {
+                    .get(view_id)
+                    .ok_or_else(|| anyhow!("unknown texture view {view_id}"))?;
+                entries.push(BindGroupCacheEntry {
                     binding: def.binding,
-                    resource: wgpu::BindingResource::TextureView(&view.view),
+                    resource: BindGroupCacheResource::TextureView {
+                        id: TextureViewId((*view_id).into()),
+                        view: &view_res.view,
+                    },
                 });
             }
             _ => bail!(
@@ -1469,24 +1536,7 @@ fn build_bind_group(
         }
     }
 
-    Ok(device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("aero-d3d11 bind group"),
-        layout,
-        entries: &entries,
-    }))
-}
-
-fn stash_bind_group(
-    arena: &mut Vec<Box<wgpu::BindGroup>>,
-    bind_group: wgpu::BindGroup,
-) -> *const wgpu::BindGroup {
-    // `wgpu::RenderPass::set_bind_group` requires that the referenced bind group value lives for
-    // the entire pass lifetime. We store bind groups in `Box`es to keep their addresses stable
-    // even if `arena` reallocates.
-    let boxed = Box::new(bind_group);
-    let ptr: *const wgpu::BindGroup = &*boxed;
-    arena.push(boxed);
-    ptr
+    Ok(cache.get_or_create(device, layout, &entries))
 }
 
 fn sync_render_pipeline<'a>(

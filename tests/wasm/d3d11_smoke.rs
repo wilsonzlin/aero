@@ -27,6 +27,7 @@ fn d3d11_render_textured_quad() {
         const TEX_RED: u32 = 2;
         const TEX_RED_VIEW: u32 = 3;
         const SAMP: u32 = 4;
+        const SAMP_DUP: u32 = 11;
         const RT: u32 = 5;
         const RT_VIEW: u32 = 6;
         const SHADER: u32 = 7;
@@ -176,7 +177,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         w.create_texture_view(TEX_GREEN_VIEW, TEX_GREEN, 0, 1, 0, 1);
         w.update_texture2d(TEX_GREEN, 0, 0, 1, 1, 4, &[0, 255, 0, 255]);
 
+        // Create two identical sampler objects. The runtime should deduplicate the underlying
+        // `wgpu::Sampler` and treat both IDs as equivalent for bind-group caching.
         w.create_sampler(SAMP, 0);
+        w.create_sampler(SAMP_DUP, 0);
         w.create_texture2d(
             RT,
             2,
@@ -205,10 +209,25 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         w.draw(6, 1, 0, 0);
         w.set_bind_texture_view(0, TEX_GREEN_VIEW);
         w.draw(6, 1, 6, 0);
+        // Repeat the same bind groups to verify caching/hit behavior.
+        w.set_bind_sampler(1, SAMP_DUP);
+        w.set_bind_texture_view(0, TEX_RED_VIEW);
+        w.draw(6, 1, 0, 0);
+        w.set_bind_texture_view(0, TEX_GREEN_VIEW);
+        w.draw(6, 1, 6, 0);
         w.end_render_pass();
 
         rt.execute(&w.finish()).unwrap();
         rt.poll_wait();
+
+        let stats = rt.cache_stats();
+        assert_eq!(stats.samplers.misses, 1);
+        assert_eq!(stats.samplers.hits, 1);
+        assert_eq!(stats.samplers.entries, 1);
+        assert_eq!(stats.bind_group_layouts.misses, 1);
+        assert_eq!(stats.bind_groups.misses, 2);
+        assert_eq!(stats.bind_groups.hits, 2);
+        assert_eq!(stats.bind_groups.entries, 2);
 
         let pixels = rt.read_texture_rgba8(RT).await.unwrap();
         assert_eq!(pixels.len(), 2 * 1 * 4);
