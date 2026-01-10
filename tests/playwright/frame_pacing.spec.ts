@@ -31,6 +31,10 @@ async function getJsHeapUsedSizeBytes(cdp: any) {
   return typeof used === "number" ? used : 0;
 }
 
+function isWebGPURequired() {
+  return process.env.AERO_REQUIRE_WEBGPU === "1";
+}
+
 test.beforeAll(async () => {
   bundledApp = await buildBrowserBundle();
 });
@@ -88,8 +92,8 @@ test("frame pacing bounds frames-in-flight and avoids unbounded growth", async (
   expect(heapDelta).toBeLessThan(30 * 1024 * 1024);
 });
 
-test("webgpu backend smoke test (if available)", async ({ page }) => {
-  test.skip(test.info().project.name !== "chromium", "WebGPU smoke test only runs on Chromium");
+test("webgpu backend smoke test (if available) @webgpu", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "WebGPU smoke test only runs on Chromium");
 
   await page.setContent(`<!doctype html>
     <html>
@@ -105,6 +109,9 @@ test("webgpu backend smoke test (if available)", async ({ page }) => {
   });
 
   if (!result || typeof result !== "object" || !(result as any).supported) {
+    if (isWebGPURequired()) {
+      throw new Error("WebGPU not available in this environment");
+    }
     test.skip(true, "WebGPU not available in this environment");
   }
 

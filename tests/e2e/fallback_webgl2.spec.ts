@@ -34,7 +34,11 @@ function expectPattern(samples: SampleResult) {
   expect(samples.bottomRight).toEqual([255, 255, 255, 255]);
 }
 
-test('Chromium: WebGPU path renders expected pattern when available', async ({ page, browserName }) => {
+function isWebGPURequired() {
+  return process.env.AERO_REQUIRE_WEBGPU === '1';
+}
+
+test('Chromium: WebGPU path renders expected pattern when available @webgpu', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium');
 
   await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
@@ -48,7 +52,12 @@ test('Chromium: WebGPU path renders expected pattern when available', async ({ p
       return false;
     }
   });
-  test.skip(!hasWebGpuAdapter, 'WebGPU adapter unavailable in this Chromium environment');
+  if (!hasWebGpuAdapter) {
+    if (isWebGPURequired()) {
+      throw new Error('WebGPU adapter unavailable in this Chromium environment');
+    }
+    test.skip(true, 'WebGPU adapter unavailable in this Chromium environment');
+  }
 
   await page.goto('http://127.0.0.1:5173/web/gpu-smoke.html?backend=webgpu', { waitUntil: 'load' });
 

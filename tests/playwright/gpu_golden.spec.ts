@@ -19,6 +19,10 @@ function base64ToBuffer(base64: string): Buffer {
   return Buffer.from(base64, 'base64');
 }
 
+function isWebGPURequired() {
+  return process.env.AERO_REQUIRE_WEBGPU === '1';
+}
+
 function browserUint8ToBase64Source(): string {
   // Chunked btoa to avoid call stack limits.
   return `
@@ -181,156 +185,174 @@ test('WebGL2 microtest (scissored clears) matches golden', async ({ page }, test
   await expectRgbaToMatchGolden(testInfo, GOLDEN_WEBGL2_QUADRANTS, actual, { maxDiffPixels: 0, threshold: 0 });
 });
 
-test('WebGPU microtest (scissored quad) matches golden', async ({ page }, testInfo) => {
+test('WebGPU microtest (scissored quad) matches golden @webgpu', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium-webgpu', 'WebGPU is only enabled in the Chromium project.');
 
   await page.setContent(`<canvas id="c" width="64" height="64"></canvas>`);
 
-  const result = await page.evaluate(async () => {
-    const canvas = document.getElementById('c');
-    if (!(canvas instanceof HTMLCanvasElement)) throw new Error('Missing canvas');
-    const gpu = (navigator as any).gpu as GPU | undefined;
-    if (!gpu) throw new Error('navigator.gpu unavailable');
+  const hasNavigatorGpu = await page.evaluate(() => !!(navigator as any).gpu);
+  if (!hasNavigatorGpu) {
+    if (isWebGPURequired()) {
+      throw new Error('WebGPU is unavailable: `navigator.gpu` is missing');
+    }
+    test.skip(true, 'WebGPU is unavailable: `navigator.gpu` is missing');
+  }
 
-    const adapter = await gpu.requestAdapter();
-    if (!adapter) throw new Error('WebGPU adapter unavailable');
-    const device = await adapter.requestDevice();
-    const format = gpu.getPreferredCanvasFormat();
-    const isBGRA = String(format).startsWith('bgra');
+  let result: { width: number; height: number; rgbaBase64: string };
+  try {
+    result = await page.evaluate(async () => {
+      const canvas = document.getElementById('c');
+      if (!(canvas instanceof HTMLCanvasElement)) throw new Error('Missing canvas');
+      const gpu = (navigator as any).gpu as GPU | undefined;
+      if (!gpu) throw new Error('navigator.gpu unavailable');
 
-    const context = canvas.getContext('webgpu') as unknown as GPUCanvasContext | null;
-    if (!context) throw new Error('webgpu context unavailable');
+      const adapter = await gpu.requestAdapter();
+      if (!adapter) throw new Error('WebGPU adapter unavailable');
+      const device = await adapter.requestDevice();
+      const format = gpu.getPreferredCanvasFormat();
+      const isBGRA = String(format).startsWith('bgra');
 
-    context.configure({
-      device,
-      format,
-      alphaMode: 'opaque',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
-    });
+      const context = canvas.getContext('webgpu') as unknown as GPUCanvasContext | null;
+      if (!context) throw new Error('webgpu context unavailable');
 
-    const shader = device.createShaderModule({
-      code: `
-        struct Uniforms { color: vec4<f32> };
-        @group(0) @binding(0) var<uniform> u: Uniforms;
+      context.configure({
+        device,
+        format,
+        alphaMode: 'opaque',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+      });
 
-        @vertex fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
-          var pos = array<vec2<f32>, 3>(
-            vec2<f32>(-1.0, -1.0),
-            vec2<f32>( 3.0, -1.0),
-            vec2<f32>(-1.0,  3.0)
-          );
-          return vec4<f32>(pos[vi], 0.0, 1.0);
-        }
+      const shader = device.createShaderModule({
+        code: `
+          struct Uniforms { color: vec4<f32> };
+          @group(0) @binding(0) var<uniform> u: Uniforms;
 
-        @fragment fn fs() -> @location(0) vec4<f32> {
-          return u.color;
-        }
-      `
-    });
+          @vertex fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
+            var pos = array<vec2<f32>, 3>(
+              vec2<f32>(-1.0, -1.0),
+              vec2<f32>( 3.0, -1.0),
+              vec2<f32>(-1.0,  3.0)
+            );
+            return vec4<f32>(pos[vi], 0.0, 1.0);
+          }
 
-    const pipeline = device.createRenderPipeline({
-      layout: 'auto',
-      vertex: { module: shader, entryPoint: 'vs' },
-      fragment: { module: shader, entryPoint: 'fs', targets: [{ format }] },
-      primitive: { topology: 'triangle-list' }
-    });
+          @fragment fn fs() -> @location(0) vec4<f32> {
+            return u.color;
+          }
+        `,
+      });
 
-    const uniformBuffer = device.createBuffer({
-      size: 16,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    });
+      const pipeline = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: { module: shader, entryPoint: 'vs' },
+        fragment: { module: shader, entryPoint: 'fs', targets: [{ format }] },
+        primitive: { topology: 'triangle-list' },
+      });
 
-    const bindGroup = device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [{ binding: 0, resource: { buffer: uniformBuffer } }]
-    });
+      const uniformBuffer = device.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
 
-    const w = canvas.width;
-    const h = canvas.height;
-    const midX = Math.floor(w / 2);
-    const midY = Math.floor(h / 2);
+      const bindGroup = device.createBindGroup({
+        layout: pipeline.getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: { buffer: uniformBuffer } }],
+      });
 
-    const texture = context.getCurrentTexture();
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view: texture.createView(),
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
-          loadOp: 'clear',
-          storeOp: 'store'
-        }
-      ]
-    });
+      const w = canvas.width;
+      const h = canvas.height;
+      const midX = Math.floor(w / 2);
+      const midY = Math.floor(h / 2);
 
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup);
+      const texture = context.getCurrentTexture();
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: texture.createView(),
+            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          },
+        ],
+      });
 
-    const drawScissored = (x: number, y: number, sw: number, sh: number, rgba: [number, number, number, number]) => {
-      device.queue.writeBuffer(uniformBuffer, 0, new Float32Array(rgba));
-      pass.setScissorRect(x, y, sw, sh);
-      pass.draw(3, 1, 0, 0);
-    };
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
 
-    // y=0 is top in WebGPU scissor coords.
-    drawScissored(0, 0, midX, midY, [1, 0, 0, 1]); // top-left
-    drawScissored(midX, 0, w - midX, midY, [0, 1, 0, 1]); // top-right
-    drawScissored(0, midY, midX, h - midY, [0, 0, 1, 1]); // bottom-left
-    drawScissored(midX, midY, w - midX, h - midY, [1, 1, 0, 1]); // bottom-right
+      const drawScissored = (
+        x: number,
+        y: number,
+        sw: number,
+        sh: number,
+        rgba: [number, number, number, number]
+      ) => {
+        device.queue.writeBuffer(uniformBuffer, 0, new Float32Array(rgba));
+        pass.setScissorRect(x, y, sw, sh);
+        pass.draw(3, 1, 0, 0);
+      };
 
-    pass.end();
+      // y=0 is top in WebGPU scissor coords.
+      drawScissored(0, 0, midX, midY, [1, 0, 0, 1]); // top-left
+      drawScissored(midX, 0, w - midX, midY, [0, 1, 0, 1]); // top-right
+      drawScissored(0, midY, midX, h - midY, [0, 0, 1, 1]); // bottom-left
+      drawScissored(midX, midY, w - midX, h - midY, [1, 1, 0, 1]); // bottom-right
 
-    const bytesPerPixel = 4;
-    const unpaddedBytesPerRow = w * bytesPerPixel;
-    const align = (n: number, a: number) => Math.ceil(n / a) * a;
-    const bytesPerRow = align(unpaddedBytesPerRow, 256);
+      pass.end();
 
-    const readback = device.createBuffer({
-      size: bytesPerRow * h,
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-    });
+      const bytesPerPixel = 4;
+      const unpaddedBytesPerRow = w * bytesPerPixel;
+      const align = (n: number, a: number) => Math.ceil(n / a) * a;
+      const bytesPerRow = align(unpaddedBytesPerRow, 256);
 
-    encoder.copyTextureToBuffer(
-      { texture },
-      { buffer: readback, bytesPerRow },
-      { width: w, height: h, depthOrArrayLayers: 1 }
-    );
+      const readback = device.createBuffer({
+        size: bytesPerRow * h,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
 
-    device.queue.submit([encoder.finish()]);
+      encoder.copyTextureToBuffer({ texture }, { buffer: readback, bytesPerRow }, { width: w, height: h, depthOrArrayLayers: 1 });
 
-    await readback.mapAsync(GPUMapMode.READ);
-    const mapped = new Uint8Array(readback.getMappedRange());
+      device.queue.submit([encoder.finish()]);
 
-    // Convert padded BGRA rows -> tightly packed RGBA.
-    const rgba = new Uint8Array(w * h * 4);
-    for (let y = 0; y < h; y++) {
-      const srcRow = y * bytesPerRow;
-      const dstRow = y * unpaddedBytesPerRow;
-      for (let x = 0; x < w; x++) {
-        const si = srcRow + x * 4;
-        const di = dstRow + x * 4;
-        const c0 = mapped[si + 0];
-        const c1 = mapped[si + 1];
-        const c2 = mapped[si + 2];
-        const c3 = mapped[si + 3];
-        if (isBGRA) {
-          rgba[di + 0] = c2;
-          rgba[di + 1] = c1;
-          rgba[di + 2] = c0;
-          rgba[di + 3] = c3;
-        } else {
-          rgba[di + 0] = c0;
-          rgba[di + 1] = c1;
-          rgba[di + 2] = c2;
-          rgba[di + 3] = c3;
+      await readback.mapAsync(GPUMapMode.READ);
+      const mapped = new Uint8Array(readback.getMappedRange());
+
+      // Convert padded BGRA rows -> tightly packed RGBA.
+      const rgba = new Uint8Array(w * h * 4);
+      for (let y = 0; y < h; y++) {
+        const srcRow = y * bytesPerRow;
+        const dstRow = y * unpaddedBytesPerRow;
+        for (let x = 0; x < w; x++) {
+          const si = srcRow + x * 4;
+          const di = dstRow + x * 4;
+          const c0 = mapped[si + 0];
+          const c1 = mapped[si + 1];
+          const c2 = mapped[si + 2];
+          const c3 = mapped[si + 3];
+          if (isBGRA) {
+            rgba[di + 0] = c2;
+            rgba[di + 1] = c1;
+            rgba[di + 2] = c0;
+            rgba[di + 3] = c3;
+          } else {
+            rgba[di + 0] = c0;
+            rgba[di + 1] = c1;
+            rgba[di + 2] = c2;
+            rgba[di + 3] = c3;
+          }
         }
       }
-    }
 
-    readback.unmap();
-    const rgbaBase64 = (window as any).__aeroUint8ToBase64(rgba);
-    return { width: w, height: h, rgbaBase64 };
-  });
+      readback.unmap();
+      const rgbaBase64 = (window as any).__aeroUint8ToBase64(rgba);
+      return { width: w, height: h, rgbaBase64 };
+    });
+  } catch (error) {
+    if (isWebGPURequired()) {
+      throw error;
+    }
+    test.skip(true, `WebGPU not usable in this environment: ${String(error)}`);
+  }
 
   const actual: RgbaImage = {
     width: result.width,
@@ -349,14 +371,28 @@ test('GPU backend smoke: WebGL2 presents expected frame (golden)', async ({ page
   await expectRgbaToMatchGolden(testInfo, GOLDEN_GPU_SMOKE_QUADRANTS, actual, { maxDiffPixels: 0, threshold: 0 });
 });
 
-test('GPU backend smoke: WebGPU presents expected frame (golden)', async ({ page }, testInfo) => {
+test('GPU backend smoke: WebGPU presents expected frame (golden) @webgpu', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium-webgpu', 'WebGPU smoke only runs on Chromium WebGPU project.');
 
-  await page.goto('http://127.0.0.1:5173/web/gpu-smoke.html?backend=webgpu&filter=nearest&aspect=stretch', {
-    waitUntil: 'load',
-  });
-  const actual = await captureGpuSmokeFrameRGBA(page);
-  await expectRgbaToMatchGolden(testInfo, GOLDEN_GPU_SMOKE_QUADRANTS, actual, { maxDiffPixels: 0, threshold: 0 });
+  try {
+    await page.goto('http://127.0.0.1:5173/web/gpu-smoke.html?backend=webgpu&filter=nearest&aspect=stretch', {
+      waitUntil: 'load',
+    });
+    const hasNavigatorGpu = await page.evaluate(() => !!(navigator as any).gpu);
+    if (!hasNavigatorGpu) {
+      if (isWebGPURequired()) {
+        throw new Error('WebGPU is unavailable: `navigator.gpu` is missing');
+      }
+      test.skip(true, 'WebGPU is unavailable: `navigator.gpu` is missing');
+    }
+    const actual = await captureGpuSmokeFrameRGBA(page);
+    await expectRgbaToMatchGolden(testInfo, GOLDEN_GPU_SMOKE_QUADRANTS, actual, { maxDiffPixels: 0, threshold: 0 });
+  } catch (error) {
+    if (isWebGPURequired()) {
+      throw error;
+    }
+    test.skip(true, `WebGPU not usable in this environment: ${String(error)}`);
+  }
 });
 
 test('GPU trace replay: triangle trace renders deterministically (golden)', async ({ page }, testInfo) => {
