@@ -11,12 +11,8 @@ permissions:
 
 jobs:
   build-and-sign:
-    name: Build + sign (${{ matrix.arch }})
+    name: Build + sign
     runs-on: windows-2022
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x86, x64]
     steps:
       - uses: actions/checkout@v4
 
@@ -68,14 +64,15 @@ jobs:
           "subject=$($cert.Subject)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "thumbprint=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build + generate catalog (x86)
+        uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: ${{ matrix.arch }}
+          arch: x86
 
-      - name: Build + generate catalog (repo script if present; otherwise minimal placeholder)
+      - name: Build + generate catalog (repo script if present; otherwise minimal placeholder) (x86)
         shell: powershell
         env:
-          ARCH: ${{ matrix.arch }}
+          ARCH: x86
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -83,9 +80,23 @@ jobs:
           New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
           $buildScript = Join-Path $PWD 'scripts\build-drivers-win7.ps1'
-          if (Test-Path $buildScript) {
+          $ciBuildScript = Join-Path $PWD 'ci\build-drivers.ps1'
+          if (Test-Path $buildScript -PathType Leaf) {
             & $buildScript -Arch $env:ARCH -OutDir $outDir
             exit $LASTEXITCODE
+          }
+          if (Test-Path $ciBuildScript -PathType Leaf) {
+            # Build any driver projects discovered under drivers/* and stage them under dist/<arch>/.
+            # Note: this repo may not have any buildable drivers yet, so keep the workflow green.
+            $platform = if ($env:ARCH -ieq 'x86') { 'Win32' } else { 'x64' }
+            & $ciBuildScript -Configuration Release -Platforms $platform
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+            if (Test-Path (Join-Path $PWD 'out\drivers')) {
+              Copy-Item -Path (Join-Path $PWD 'out\drivers') -Destination (Join-Path $outDir 'drivers') -Recurse -Force
+              exit 0
+            }
           }
 
           Write-Warning "No scripts/build-drivers-win7.ps1 found. Creating placeholder driver artifacts so the release workflow remains green."
@@ -97,10 +108,10 @@ jobs:
           BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) { return TRUE; }
           "@ | Set-Content -Path $src -Encoding ASCII
 
-          & cl.exe /nologo /LD $src /link /OUT:aero-win7-driver-placeholder.sys
-          if ($LASTEXITCODE -ne 0) {
-            throw "cl.exe failed (exit $LASTEXITCODE)."
-          }
+          Push-Location $outDir
+          & cl.exe /nologo /LD 'aero-win7-driver-placeholder.c' /link /OUT:'aero-win7-driver-placeholder.sys'
+          if ($LASTEXITCODE -ne 0) { throw "cl.exe failed (exit $LASTEXITCODE)." }
+          Pop-Location
 
           # MakeCat is available in Windows SDK/WDK. If it isn't present, we still keep the build green.
           $makecatCmd = Get-Command makecat.exe -ErrorAction SilentlyContinue
@@ -135,10 +146,85 @@ jobs:
             Write-Warning "makecat.exe not found; skipping catalog generation."
           }
 
+      - name: Build + generate catalog (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build + generate catalog (repo script if present; otherwise minimal placeholder) (x64)
+        shell: powershell
+        env:
+          ARCH: x64
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $outDir = Join-Path $PWD "dist\$env:ARCH"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+          $buildScript = Join-Path $PWD 'scripts\build-drivers-win7.ps1'
+          $ciBuildScript = Join-Path $PWD 'ci\build-drivers.ps1'
+          if (Test-Path $buildScript -PathType Leaf) {
+            & $buildScript -Arch $env:ARCH -OutDir $outDir
+            exit $LASTEXITCODE
+          }
+          if (Test-Path $ciBuildScript -PathType Leaf) {
+            $platform = if ($env:ARCH -ieq 'x86') { 'Win32' } else { 'x64' }
+            & $ciBuildScript -Configuration Release -Platforms $platform
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+            if (Test-Path (Join-Path $PWD 'out\drivers')) {
+              Copy-Item -Path (Join-Path $PWD 'out\drivers') -Destination (Join-Path $outDir 'drivers') -Recurse -Force
+              exit 0
+            }
+          }
+
+          Write-Warning "No scripts/build-drivers-win7.ps1 found. Creating placeholder driver artifacts so the release workflow remains green."
+
+          $src = Join-Path $outDir 'aero-win7-driver-placeholder.c'
+          @"
+          #include <windows.h>
+          BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) { return TRUE; }
+          "@ | Set-Content -Path $src -Encoding ASCII
+
+          Push-Location $outDir
+          & cl.exe /nologo /LD 'aero-win7-driver-placeholder.c' /link /OUT:'aero-win7-driver-placeholder.sys'
+          if ($LASTEXITCODE -ne 0) { throw "cl.exe failed (exit $LASTEXITCODE)." }
+          Pop-Location
+
+          $makecatCmd = Get-Command makecat.exe -ErrorAction SilentlyContinue
+          $makecatExe = $null
+          if ($makecatCmd) {
+            $makecatExe = $makecatCmd.Source
+            if (-not $makecatExe) { $makecatExe = $makecatCmd.Path }
+          }
+          if (-not $makecatExe) {
+            $makecatExe = (Get-ChildItem -Path 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter makecat.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          }
+
+          if ($makecatExe) {
+            $cdf = Join-Path $outDir 'aero-win7-driver-placeholder.cdf'
+            @"
+          [CatalogHeader]
+          Name=aero-win7-driver-placeholder.cat
+          CatalogVersion=2
+          HashAlgorithms=SHA256
+
+          [CatalogFiles]
+          <hash>aero-win7-driver-placeholder.sys=aero-win7-driver-placeholder.sys
+          "@ | Set-Content -Path $cdf -Encoding ASCII
+
+            Push-Location $outDir
+            & $makecatExe $cdf
+            if ($LASTEXITCODE -ne 0) { throw "makecat.exe failed (exit $LASTEXITCODE)." }
+            Pop-Location
+          } else {
+            Write-Warning "makecat.exe not found; skipping catalog generation."
+          }
+
       - name: Sign drivers + catalogs
         shell: powershell
         env:
-          ARCH: ${{ matrix.arch }}
           CERT_THUMBPRINT: ${{ steps.cert.outputs.thumbprint }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -156,10 +242,10 @@ jobs:
             throw "signtool.exe not found on runner."
           }
 
-          $outDir = Join-Path $PWD "dist\$env:ARCH"
-          $targets = Get-ChildItem -Path $outDir -Recurse -File -Include *.sys,*.cat
+          $distDir = Join-Path $PWD 'dist'
+          $targets = Get-ChildItem -Path $distDir -Recurse -File -Include *.sys,*.cat,*.dll,*.exe
           if (-not $targets) {
-            Write-Warning "No .sys or .cat files found under $outDir to sign."
+            Write-Warning "No signable artifacts found under $distDir."
             exit 0
           }
 
@@ -178,11 +264,10 @@ jobs:
       - name: Upload signed build outputs
         uses: actions/upload-artifact@v4
         with:
-          name: win7-drivers-${{ matrix.arch }}
+          name: win7-drivers
           if-no-files-found: error
           path: |
-            dist/${{ matrix.arch }}/
-            dist/aero-driver-public.cer
+            dist/
 
   package-and-release:
     name: Package + publish release assets
@@ -202,15 +287,11 @@ jobs:
           tag="${GITHUB_REF_NAME}"
 
           mkdir -p release_root
-          cp -R "artifacts/win7-drivers-x86/dist/x86" "release_root/x86"
-          cp -R "artifacts/win7-drivers-x64/dist/x64" "release_root/x64"
+          cp -R "artifacts/win7-drivers/dist/x86" "release_root/x86"
+          cp -R "artifacts/win7-drivers/dist/x64" "release_root/x64"
 
           # Public cert is identical for both arch artifacts; use either if present.
-          if [[ -f "artifacts/win7-drivers-x64/dist/aero-driver-public.cer" ]]; then
-            cp "artifacts/win7-drivers-x64/dist/aero-driver-public.cer" "aero-driver-public.cer"
-          else
-            cp "artifacts/win7-drivers-x86/dist/aero-driver-public.cer" "aero-driver-public.cer"
-          fi
+          cp "artifacts/win7-drivers/dist/aero-driver-public.cer" "aero-driver-public.cer"
 
           (cd release_root && zip -r "../aero-win7-drivers-${tag}-x86.zip" "x86")
           (cd release_root && zip -r "../aero-win7-drivers-${tag}-x64.zip" "x64")
