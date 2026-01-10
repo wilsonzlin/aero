@@ -49,6 +49,7 @@ export class VmCoordinator extends EventTarget {
   resume(): Promise<void>;
   step(): Promise<void>;
   setBackgrounded(backgrounded: boolean): void;
+  setMicrophoneRingBuffer(ringBuffer: SharedArrayBuffer | null, options?: { sampleRate?: number }): void;
   requestSnapshot(options?: { reason?: string }): Promise<unknown>;
   writeCacheEntry(options: { cache: VmCacheKind; sizeBytes: number; key?: string }): Promise<VmCacheWriteResult>;
   shutdown(): void;

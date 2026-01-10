@@ -12,6 +12,7 @@ import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatur
 import { importFileToOpfs } from './platform/opfs';
 import { requestWebGpuDevice } from './platform/webgpu';
 import { VmCoordinator } from './emulator/vmCoordinator.js';
+import { MicCapture } from '../web/src/audio/mic_capture';
 
 declare global {
   interface Window {
@@ -23,6 +24,10 @@ declare global {
 // Install optional `window.aero.bench` helpers early so automation can invoke
 // microbenchmarks without requiring the emulator/guest OS.
 installAeroGlobal();
+
+// Updated by the microphone UI and read by the VM UI so that new VM instances
+// automatically inherit the current mic attachment (if any).
+let micAttachment: { ringBuffer: SharedArrayBuffer; sampleRate: number } | null = null;
 
 type CpuWorkerToMainMessage =
   | { type: 'CpuWorkerReady' }
@@ -428,6 +433,165 @@ function renderJitSmokePanel(report: PlatformFeatureReport): HTMLElement {
   );
 }
 
+function renderMicrophonePanel(): HTMLElement {
+  const status = el('pre', { text: '' });
+  const stateLine = el('div', { class: 'mono', text: 'state=inactive' });
+  const statsLine = el('div', { class: 'mono', text: '' });
+
+  const deviceSelect = el('select') as HTMLSelectElement;
+  const echoCancellation = el('input', { type: 'checkbox', checked: '' }) as HTMLInputElement;
+  const noiseSuppression = el('input', { type: 'checkbox', checked: '' }) as HTMLInputElement;
+  const autoGainControl = el('input', { type: 'checkbox', checked: '' }) as HTMLInputElement;
+  const bufferMsInput = el('input', { type: 'number', value: '80', min: '10', max: '500', step: '10' }) as HTMLInputElement;
+  const mutedInput = el('input', { type: 'checkbox' }) as HTMLInputElement;
+
+  let mic: MicCapture | null = null;
+  let lastWorkletStats: { buffered?: number; dropped?: number } = {};
+
+  async function refreshDevices(): Promise<void> {
+    deviceSelect.replaceChildren(el('option', { value: '', text: 'default' }));
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    for (const dev of devices) {
+      if (dev.kind !== 'audioinput') continue;
+      const label = dev.label || `mic (${dev.deviceId.slice(0, 8)}…)`;
+      deviceSelect.append(el('option', { value: dev.deviceId, text: label }));
+    }
+  }
+
+  function attachToVm(): void {
+    const vm = window.__aeroVm;
+    if (!vm) return;
+    if (micAttachment) {
+      vm.setMicrophoneRingBuffer(micAttachment.ringBuffer, { sampleRate: micAttachment.sampleRate });
+    } else {
+      vm.setMicrophoneRingBuffer(null);
+    }
+  }
+
+  function update(): void {
+    const state = mic?.state ?? 'inactive';
+    stateLine.textContent = `state=${state}`;
+
+    const buffered = lastWorkletStats.buffered ?? 0;
+    const dropped = lastWorkletStats.dropped ?? 0;
+
+    statsLine.textContent =
+      `bufferedSamples=${buffered} droppedSamples=${dropped} ` +
+      `device=${deviceSelect.value ? deviceSelect.value.slice(0, 8) + '…' : 'default'}`;
+  }
+
+  const startButton = el('button', {
+    text: 'Start microphone',
+    onclick: async () => {
+      status.textContent = '';
+      lastWorkletStats = {};
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error('getUserMedia is unavailable in this browser.');
+        }
+        if (typeof SharedArrayBuffer === 'undefined') {
+          throw new Error('SharedArrayBuffer is unavailable; microphone capture requires crossOriginIsolated.');
+        }
+
+        if (mic) {
+          await mic.stop();
+          mic = null;
+        }
+
+        mic = new MicCapture({
+          sampleRate: 48_000,
+          bufferMs: Math.max(10, Number(bufferMsInput.value || 0) | 0),
+          preferWorklet: true,
+          deviceId: deviceSelect.value || undefined,
+          echoCancellation: echoCancellation.checked,
+          noiseSuppression: noiseSuppression.checked,
+          autoGainControl: autoGainControl.checked,
+        });
+
+        mic.addEventListener('statechange', update);
+        mic.addEventListener('devicechange', () => {
+          void refreshDevices();
+        });
+        mic.addEventListener('message', (event) => {
+          const data = (event as MessageEvent).data as unknown;
+          if (!data || typeof data !== 'object') return;
+          const msg = data as { type?: unknown; buffered?: unknown; dropped?: unknown };
+          if (msg.type === 'stats') {
+            lastWorkletStats = {
+              buffered: typeof msg.buffered === 'number' ? msg.buffered : undefined,
+              dropped: typeof msg.dropped === 'number' ? msg.dropped : undefined,
+            };
+            update();
+          }
+        });
+
+        await mic.start();
+        mic.setMuted(mutedInput.checked);
+
+        micAttachment = { ringBuffer: mic.ringBuffer.sab, sampleRate: mic.options.sampleRate };
+        attachToVm();
+
+        update();
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+        micAttachment = null;
+        attachToVm();
+        update();
+      }
+    },
+  }) as HTMLButtonElement;
+
+  const stopButton = el('button', {
+    text: 'Stop microphone',
+    onclick: async () => {
+      status.textContent = '';
+      try {
+        await mic?.stop();
+        mic = null;
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+      } finally {
+        micAttachment = null;
+        attachToVm();
+        update();
+      }
+    },
+  }) as HTMLButtonElement;
+
+  mutedInput.addEventListener('change', () => {
+    mic?.setMuted(mutedInput.checked);
+    update();
+  });
+
+  void refreshDevices().then(update);
+  navigator.mediaDevices?.addEventListener?.('devicechange', () => void refreshDevices());
+
+  return el(
+    'div',
+    { class: 'panel' },
+    el('h2', { text: 'Microphone (capture)' }),
+    el('div', { class: 'row' }, startButton, stopButton, el('label', { text: 'device:' }), deviceSelect),
+    el(
+      'div',
+      { class: 'row' },
+      el('label', { text: 'echoCancellation:' }),
+      echoCancellation,
+      el('label', { text: 'noiseSuppression:' }),
+      noiseSuppression,
+      el('label', { text: 'autoGainControl:' }),
+      autoGainControl,
+      el('label', { text: 'bufferMs:' }),
+      bufferMsInput,
+      el('label', { text: 'mute:' }),
+      mutedInput,
+    ),
+    stateLine,
+    statsLine,
+    status,
+  );
+}
+
 let perfHud: HTMLElement | null = null;
 let perfStarted = false;
 
@@ -560,9 +724,14 @@ function renderEmulatorSafetyPanel(): HTMLElement {
   function update(): void {
     const state = vm?.state ?? 'stopped';
     stateLine.textContent = `state=${state}`;
-    const lastHeartbeat = vm?.lastHeartbeat as { totalInstructions?: number } | null | undefined;
+    const lastHeartbeat = vm?.lastHeartbeat as { totalInstructions?: number; mic?: unknown } | null | undefined;
     const totalInstructions = lastHeartbeat?.totalInstructions ?? 0;
-    heartbeatLine.textContent = `lastHeartbeatAt=${vm?.lastHeartbeatAt ?? 0} totalInstructions=${totalInstructions}`;
+    const mic =
+      lastHeartbeat && typeof lastHeartbeat.mic === 'object'
+        ? (lastHeartbeat.mic as { rms?: number; dropped?: number })
+        : null;
+    const micText = mic ? ` micRms=${(mic.rms ?? 0).toFixed(3)} micDropped=${mic.dropped ?? 0}` : '';
+    heartbeatLine.textContent = `lastHeartbeatAt=${vm?.lastHeartbeatAt ?? 0} totalInstructions=${totalInstructions}${micText}`;
     tickLine.textContent = `uiTicks=${window.__aeroUiTicks ?? 0}`;
     let persistedSavedTo = 'none';
     try {
@@ -611,6 +780,10 @@ function renderEmulatorSafetyPanel(): HTMLElement {
       },
     });
     window.__aeroVm = vm;
+
+    if (micAttachment) {
+      vm.setMicrophoneRingBuffer(micAttachment.ringBuffer, { sampleRate: micAttachment.sampleRate });
+    }
 
     vm.addEventListener('statechange', update);
     vm.addEventListener('heartbeat', update);
@@ -907,6 +1080,7 @@ function render(): void {
     renderRemoteDiskPanel(),
     renderAudioPanel(),
     renderJitSmokePanel(report),
+    renderMicrophonePanel(),
     renderPerfPanel(report),
     renderHotspotsPanel(report),
     renderEmulatorSafetyPanel(),

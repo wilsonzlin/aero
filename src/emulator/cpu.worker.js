@@ -57,6 +57,15 @@ let guestRam = null;
 let diskCache = null;
 let shaderCache = null;
 
+// Optional SharedArrayBuffer microphone ring buffer (producer: AudioWorklet, consumer: this worker).
+let micHeader = null;
+let micSamples = null;
+let micCapacity = 0;
+let micTmp = null;
+let micSampleRate = 0;
+let micLastRms = 0;
+let micLastDropped = 0;
+
 let mode = "cooperativeInfiniteLoop";
 let running = false;
 let paused = true;
@@ -85,6 +94,70 @@ function snapshot(reason) {
 
 function post(msg) {
   ctx.postMessage(msg);
+}
+
+function attachMicRingBuffer(ringBuffer, sampleRate) {
+  if (ringBuffer === null || ringBuffer === undefined) {
+    micHeader = null;
+    micSamples = null;
+    micCapacity = 0;
+    micTmp = null;
+    micSampleRate = 0;
+    micLastRms = 0;
+    micLastDropped = 0;
+    return;
+  }
+  const Sab = globalThis.SharedArrayBuffer;
+  if (typeof Sab === "undefined" || !(ringBuffer instanceof Sab)) {
+    throw new EmulatorError(ErrorCode.InvalidConfig, "mic ringBuffer must be a SharedArrayBuffer or null.");
+  }
+
+  micHeader = new Uint32Array(ringBuffer, 0, 4);
+  micSamples = new Float32Array(ringBuffer, 16);
+  micCapacity = micHeader[3] >>> 0;
+  if (!micCapacity) micCapacity = micSamples.length;
+  if (micCapacity !== micSamples.length) {
+    // Be permissive: clamp to whichever is smaller to avoid OOB reads.
+    micCapacity = Math.min(micCapacity, micSamples.length);
+  }
+
+  micTmp = new Float32Array(1024);
+  micSampleRate = (sampleRate ?? 0) | 0;
+  micLastRms = 0;
+  micLastDropped = 0;
+}
+
+function consumeMicSamples() {
+  if (!micHeader || !micSamples || !micTmp || micCapacity === 0) return;
+
+  const writePos = Atomics.load(micHeader, 0) >>> 0;
+  const readPos = Atomics.load(micHeader, 1) >>> 0;
+  const available = (writePos - readPos) >>> 0;
+  if (available === 0) {
+    micLastRms = 0;
+    micLastDropped = Atomics.load(micHeader, 2) >>> 0;
+    return;
+  }
+
+  const toRead = Math.min(available, micTmp.length);
+  const start = readPos % micCapacity;
+  const firstPart = Math.min(toRead, micCapacity - start);
+
+  micTmp.set(micSamples.subarray(start, start + firstPart), 0);
+  const remaining = toRead - firstPart;
+  if (remaining) {
+    micTmp.set(micSamples.subarray(0, remaining), firstPart);
+  }
+
+  Atomics.store(micHeader, 1, (readPos + toRead) >>> 0);
+
+  let sumSq = 0;
+  for (let i = 0; i < toRead; i++) {
+    const s = micTmp[i];
+    sumSq += s * s;
+  }
+  micLastRms = Math.sqrt(sumSq / toRead);
+  micLastDropped = Atomics.load(micHeader, 2) >>> 0;
 }
 
 function fatal(err) {
@@ -161,6 +234,8 @@ async function runLoop() {
       const maxInstructions = stepsRemaining > 0 ? 1 : config.cpu.maxInstructionsPerSlice;
       const { executed } = cpu.executeSlice({ maxInstructions, deadlineMs: deadline });
 
+      consumeMicSamples();
+
       post({
         type: "heartbeat",
         at: Date.now(),
@@ -172,6 +247,13 @@ async function runLoop() {
           diskCacheBytes: diskCache?.bytes ?? 0,
           shaderCacheBytes: shaderCache?.bytes ?? 0,
         },
+        mic: micHeader
+          ? {
+              rms: micLastRms,
+              dropped: micLastDropped,
+              sampleRate: micSampleRate,
+            }
+          : null,
       });
 
       if (stepsRemaining > 0) {
@@ -314,6 +396,10 @@ ctx.onmessage = (ev) => {
       }
       case "setBackgrounded": {
         backgrounded = Boolean(msg.backgrounded);
+        break;
+      }
+      case "setMicrophoneRingBuffer": {
+        attachMicRingBuffer(msg.ringBuffer ?? null, msg.sampleRate);
         break;
       }
       case "requestSnapshot": {

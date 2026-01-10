@@ -79,6 +79,12 @@ export class VmCoordinator extends EventTarget {
     this._watchdogTimer = null;
     this._terminated = false;
     this._nextRequestId = 1;
+
+    // Optional SharedArrayBuffer-backed microphone ring buffer, set by the UI.
+    // This is forwarded to the worker so it can consume mic samples (or in the
+    // real emulator, feed them into the guest's capture device model).
+    this._micRingBuffer = null;
+    this._micSampleRate = 0;
   }
 
   static async loadSavedCrashSnapshot() {
@@ -154,6 +160,14 @@ export class VmCoordinator extends EventTarget {
       message: "Timed out waiting for CPU worker to initialize.",
     });
 
+    if (this._micRingBuffer) {
+      this._send({
+        type: "setMicrophoneRingBuffer",
+        ringBuffer: this._micRingBuffer,
+        sampleRate: this._micSampleRate,
+      });
+    }
+
     this._startWatchdog();
     this._send({ type: "start", mode });
 
@@ -206,6 +220,21 @@ export class VmCoordinator extends EventTarget {
   setBackgrounded(backgrounded) {
     if (!this.worker) return;
     this._send({ type: "setBackgrounded", backgrounded: Boolean(backgrounded) });
+  }
+
+  setMicrophoneRingBuffer(ringBuffer, { sampleRate = 0 } = {}) {
+    if (ringBuffer !== null) {
+      const Sab = globalThis.SharedArrayBuffer;
+      if (typeof Sab === "undefined") {
+        throw new Error("SharedArrayBuffer is unavailable; microphone capture requires crossOriginIsolated.");
+      }
+      if (!(ringBuffer instanceof Sab)) {
+        throw new Error("setMicrophoneRingBuffer expects a SharedArrayBuffer or null.");
+      }
+    }
+    this._micRingBuffer = ringBuffer;
+    this._micSampleRate = (sampleRate ?? 0) | 0;
+    this._send({ type: "setMicrophoneRingBuffer", ringBuffer, sampleRate: this._micSampleRate });
   }
 
   async requestSnapshot({ reason = "manual" } = {}) {
