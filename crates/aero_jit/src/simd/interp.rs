@@ -128,6 +128,16 @@ pub fn interpret(program: &Program, state: &mut SseState, mem: &mut [u8]) -> Res
                 let count = shift_count(load_operand(state, mem, src)?);
                 state.xmm[dst.index()] = shift_i64x2_count(v, count, ShiftDir::RightLogical);
             }
+            Inst::Psrad { dst, src } => {
+                let v = state.xmm[dst.index()];
+                let count = shift_count(load_operand(state, mem, src)?);
+                state.xmm[dst.index()] = shift_i32x4_count(v, count, ShiftDir::RightArithmetic);
+            }
+            Inst::Psraw { dst, src } => {
+                let v = state.xmm[dst.index()];
+                let count = shift_count(load_operand(state, mem, src)?);
+                state.xmm[dst.index()] = shift_i16x8_count(v, count, ShiftDir::RightArithmetic);
+            }
 
             Inst::PslldImm { dst, imm } => {
                 let v = state.xmm[dst.index()];
@@ -137,6 +147,10 @@ pub fn interpret(program: &Program, state: &mut SseState, mem: &mut [u8]) -> Res
                 let v = state.xmm[dst.index()];
                 state.xmm[dst.index()] = shift_i32x4(v, imm, ShiftDir::RightLogical);
             }
+            Inst::PsradImm { dst, imm } => {
+                let v = state.xmm[dst.index()];
+                state.xmm[dst.index()] = shift_i32x4(v, imm, ShiftDir::RightArithmetic);
+            }
 
             Inst::PsllwImm { dst, imm } => {
                 let v = state.xmm[dst.index()];
@@ -145,6 +159,10 @@ pub fn interpret(program: &Program, state: &mut SseState, mem: &mut [u8]) -> Res
             Inst::PsrlwImm { dst, imm } => {
                 let v = state.xmm[dst.index()];
                 state.xmm[dst.index()] = shift_i16x8(v, imm, ShiftDir::RightLogical);
+            }
+            Inst::PsrawImm { dst, imm } => {
+                let v = state.xmm[dst.index()];
+                state.xmm[dst.index()] = shift_i16x8(v, imm, ShiftDir::RightArithmetic);
             }
 
             Inst::PsllqImm { dst, imm } => {
@@ -281,14 +299,21 @@ fn f64x2_unop(v: u128, f: impl Fn(f64) -> f64) -> u128 {
 enum ShiftDir {
     Left,
     RightLogical,
+    RightArithmetic,
 }
 
 fn shift_i32x4(v: u128, imm: u8, dir: ShiftDir) -> u128 {
     // x86 packed shifts treat counts >= lane_bits as producing all-zero elements.
     // (Unlike WebAssembly SIMD shifts, which mask the count.)
-    if imm > 31 {
-        return 0;
-    }
+    let shift = match dir {
+        ShiftDir::Left | ShiftDir::RightLogical => {
+            if imm > 31 {
+                return 0;
+            }
+            imm
+        }
+        ShiftDir::RightArithmetic => imm.min(31),
+    } as u32;
 
     let bytes = v.to_le_bytes();
     let mut out = [0u8; 16];
@@ -296,8 +321,9 @@ fn shift_i32x4(v: u128, imm: u8, dir: ShiftDir) -> u128 {
         let off = lane * 4;
         let x = u32::from_le_bytes(bytes[off..off + 4].try_into().expect("slice len matches"));
         let y = match dir {
-            ShiftDir::Left => x.wrapping_shl(imm as u32),
-            ShiftDir::RightLogical => x.wrapping_shr(imm as u32),
+            ShiftDir::Left => x.wrapping_shl(shift),
+            ShiftDir::RightLogical => x.wrapping_shr(shift),
+            ShiftDir::RightArithmetic => ((x as i32) >> shift) as u32,
         };
         out[off..off + 4].copy_from_slice(&y.to_le_bytes());
     }
@@ -305,16 +331,27 @@ fn shift_i32x4(v: u128, imm: u8, dir: ShiftDir) -> u128 {
 }
 
 fn shift_i32x4_count(v: u128, count: u64, dir: ShiftDir) -> u128 {
-    if count > 31 {
-        return 0;
+    match dir {
+        ShiftDir::Left | ShiftDir::RightLogical => {
+            if count > 31 {
+                return 0;
+            }
+            shift_i32x4(v, count as u8, dir)
+        }
+        ShiftDir::RightArithmetic => shift_i32x4(v, (count.min(31)) as u8, dir),
     }
-    shift_i32x4(v, count as u8, dir)
 }
 
 fn shift_i16x8(v: u128, imm: u8, dir: ShiftDir) -> u128 {
-    if imm > 15 {
-        return 0;
-    }
+    let shift = match dir {
+        ShiftDir::Left | ShiftDir::RightLogical => {
+            if imm > 15 {
+                return 0;
+            }
+            imm
+        }
+        ShiftDir::RightArithmetic => imm.min(15),
+    } as u32;
 
     let bytes = v.to_le_bytes();
     let mut out = [0u8; 16];
@@ -322,8 +359,9 @@ fn shift_i16x8(v: u128, imm: u8, dir: ShiftDir) -> u128 {
         let off = lane * 2;
         let x = u16::from_le_bytes(bytes[off..off + 2].try_into().expect("slice len matches"));
         let y = match dir {
-            ShiftDir::Left => x.wrapping_shl(imm as u32),
-            ShiftDir::RightLogical => x.wrapping_shr(imm as u32),
+            ShiftDir::Left => x.wrapping_shl(shift),
+            ShiftDir::RightLogical => x.wrapping_shr(shift),
+            ShiftDir::RightArithmetic => ((x as i16) >> shift) as u16,
         };
         out[off..off + 2].copy_from_slice(&y.to_le_bytes());
     }
@@ -331,10 +369,15 @@ fn shift_i16x8(v: u128, imm: u8, dir: ShiftDir) -> u128 {
 }
 
 fn shift_i16x8_count(v: u128, count: u64, dir: ShiftDir) -> u128 {
-    if count > 15 {
-        return 0;
+    match dir {
+        ShiftDir::Left | ShiftDir::RightLogical => {
+            if count > 15 {
+                return 0;
+            }
+            shift_i16x8(v, count as u8, dir)
+        }
+        ShiftDir::RightArithmetic => shift_i16x8(v, (count.min(15)) as u8, dir),
     }
-    shift_i16x8(v, count as u8, dir)
 }
 
 fn shift_i64x2(v: u128, imm: u8, dir: ShiftDir) -> u128 {
@@ -350,6 +393,7 @@ fn shift_i64x2(v: u128, imm: u8, dir: ShiftDir) -> u128 {
         let y = match dir {
             ShiftDir::Left => x.wrapping_shl(imm as u32),
             ShiftDir::RightLogical => x.wrapping_shr(imm as u32),
+            ShiftDir::RightArithmetic => ((x as i64) >> (imm as u32)) as u64,
         };
         out[off..off + 8].copy_from_slice(&y.to_le_bytes());
     }
@@ -376,7 +420,7 @@ fn shift_bytes(v: u128, imm: u8, dir: ShiftDir) -> u128 {
                 out[i] = bytes[i - shift];
             }
         }
-        ShiftDir::RightLogical => {
+        ShiftDir::RightLogical | ShiftDir::RightArithmetic => {
             for i in 0..(16 - shift) {
                 out[i] = bytes[i + shift];
             }

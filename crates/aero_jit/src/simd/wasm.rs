@@ -77,46 +77,107 @@ pub fn compile_wasm_simd(
                 emit_store_local_to_mem(&mut func, addr, layout, Local::Tmp0)?;
             }
 
-            Inst::Addps { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F32x4Add)?,
-            Inst::Subps { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F32x4Sub)?,
-            Inst::Mulps { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F32x4Mul)?,
-            Inst::Divps { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F32x4Div)?,
+            Inst::Addps { dst, src } => {
+                emit_binop(&mut func, dst, src, layout, Instruction::F32x4Add)?
+            }
+            Inst::Subps { dst, src } => {
+                emit_binop(&mut func, dst, src, layout, Instruction::F32x4Sub)?
+            }
+            Inst::Mulps { dst, src } => {
+                emit_binop(&mut func, dst, src, layout, Instruction::F32x4Mul)?
+            }
+            Inst::Divps { dst, src } => {
+                emit_binop(&mut func, dst, src, layout, Instruction::F32x4Div)?
+            }
 
-            Inst::Addpd { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F64x2Add)?,
-            Inst::Subpd { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F64x2Sub)?,
-            Inst::Mulpd { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F64x2Mul)?,
-            Inst::Divpd { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::F64x2Div)?,
+            Inst::Addpd { dst, src } => {
+                emit_binop(&mut func, dst, src, layout, Instruction::F64x2Add)?
+            }
+            Inst::Subpd { dst, src } => {
+                emit_binop(&mut func, dst, src, layout, Instruction::F64x2Sub)?
+            }
+            Inst::Mulpd { dst, src } => {
+                emit_binop(&mut func, dst, src, layout, Instruction::F64x2Mul)?
+            }
+            Inst::Divpd { dst, src } => {
+                emit_binop(&mut func, dst, src, layout, Instruction::F64x2Div)?
+            }
 
-            Inst::Pand { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::V128And)?,
+            Inst::Pand { dst, src } => {
+                emit_binop(&mut func, dst, src, layout, Instruction::V128And)?
+            }
             Inst::Por { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::V128Or)?,
-            Inst::Pxor { dst, src } => emit_binop(&mut func, dst, src, layout, Instruction::V128Xor)?,
+            Inst::Pxor { dst, src } => {
+                emit_binop(&mut func, dst, src, layout, Instruction::V128Xor)?
+            }
 
             Inst::Pshufb { dst, src } => emit_pshufb(&mut func, dst, src, layout)?,
 
-            Inst::Sqrtps { dst, src } => emit_unop(&mut func, dst, src, layout, Instruction::F32x4Sqrt)?,
-            Inst::Sqrtpd { dst, src } => emit_unop(&mut func, dst, src, layout, Instruction::F64x2Sqrt)?,
+            Inst::Sqrtps { dst, src } => {
+                emit_unop(&mut func, dst, src, layout, Instruction::F32x4Sqrt)?
+            }
+            Inst::Sqrtpd { dst, src } => {
+                emit_unop(&mut func, dst, src, layout, Instruction::F64x2Sqrt)?
+            }
 
-            Inst::Pslld { dst, src } => emit_shift_var(&mut func, dst, src, ShiftOp::I32x4Shl, layout)?,
-            Inst::Psrld { dst, src } => emit_shift_var(&mut func, dst, src, ShiftOp::I32x4ShrU, layout)?,
+            Inst::Pslld { dst, src } => {
+                emit_shift_var(&mut func, dst, src, ShiftOp::I32x4Shl, layout)?
+            }
+            Inst::Psrld { dst, src } => {
+                emit_shift_var(&mut func, dst, src, ShiftOp::I32x4ShrU, layout)?
+            }
 
-            Inst::Psllw { dst, src } => emit_shift_var(&mut func, dst, src, ShiftOp::I16x8Shl, layout)?,
-            Inst::Psrlw { dst, src } => emit_shift_var(&mut func, dst, src, ShiftOp::I16x8ShrU, layout)?,
+            Inst::Psllw { dst, src } => {
+                emit_shift_var(&mut func, dst, src, ShiftOp::I16x8Shl, layout)?
+            }
+            Inst::Psrlw { dst, src } => {
+                emit_shift_var(&mut func, dst, src, ShiftOp::I16x8ShrU, layout)?
+            }
 
-            Inst::Psllq { dst, src } => emit_shift_var(&mut func, dst, src, ShiftOp::I64x2Shl, layout)?,
-            Inst::Psrlq { dst, src } => emit_shift_var(&mut func, dst, src, ShiftOp::I64x2ShrU, layout)?,
+            Inst::Psllq { dst, src } => {
+                emit_shift_var(&mut func, dst, src, ShiftOp::I64x2Shl, layout)?
+            }
+            Inst::Psrlq { dst, src } => {
+                emit_shift_var(&mut func, dst, src, ShiftOp::I64x2ShrU, layout)?
+            }
 
-            Inst::PslldImm { dst, imm } => emit_shift_imm(&mut func, dst, imm, ShiftOp::I32x4Shl, layout)?,
+            Inst::Psrad { dst, src } => {
+                emit_shift_var(&mut func, dst, src, ShiftOp::I32x4ShrS, layout)?
+            }
+            Inst::Psraw { dst, src } => {
+                emit_shift_var(&mut func, dst, src, ShiftOp::I16x8ShrS, layout)?
+            }
+
+            Inst::PslldImm { dst, imm } => {
+                emit_shift_imm(&mut func, dst, imm, ShiftOp::I32x4Shl, layout)?
+            }
             Inst::PsrldImm { dst, imm } => {
                 emit_shift_imm(&mut func, dst, imm, ShiftOp::I32x4ShrU, layout)?
             }
+            Inst::PsradImm { dst, imm } => {
+                emit_shift_imm(&mut func, dst, imm, ShiftOp::I32x4ShrS, layout)?
+            }
 
-            Inst::PsllwImm { dst, imm } => emit_shift_imm(&mut func, dst, imm, ShiftOp::I16x8Shl, layout)?,
-            Inst::PsrlwImm { dst, imm } => emit_shift_imm(&mut func, dst, imm, ShiftOp::I16x8ShrU, layout)?,
+            Inst::PsllwImm { dst, imm } => {
+                emit_shift_imm(&mut func, dst, imm, ShiftOp::I16x8Shl, layout)?
+            }
+            Inst::PsrlwImm { dst, imm } => {
+                emit_shift_imm(&mut func, dst, imm, ShiftOp::I16x8ShrU, layout)?
+            }
+            Inst::PsrawImm { dst, imm } => {
+                emit_shift_imm(&mut func, dst, imm, ShiftOp::I16x8ShrS, layout)?
+            }
 
-            Inst::PsllqImm { dst, imm } => emit_shift_imm(&mut func, dst, imm, ShiftOp::I64x2Shl, layout)?,
-            Inst::PsrlqImm { dst, imm } => emit_shift_imm(&mut func, dst, imm, ShiftOp::I64x2ShrU, layout)?,
+            Inst::PsllqImm { dst, imm } => {
+                emit_shift_imm(&mut func, dst, imm, ShiftOp::I64x2Shl, layout)?
+            }
+            Inst::PsrlqImm { dst, imm } => {
+                emit_shift_imm(&mut func, dst, imm, ShiftOp::I64x2ShrU, layout)?
+            }
 
-            Inst::PslldqImm { dst, imm } => emit_shift_bytes_imm(&mut func, dst, imm, ShiftDir::Left, layout)?,
+            Inst::PslldqImm { dst, imm } => {
+                emit_shift_bytes_imm(&mut func, dst, imm, ShiftDir::Left, layout)?
+            }
             Inst::PsrldqImm { dst, imm } => {
                 emit_shift_bytes_imm(&mut func, dst, imm, ShiftDir::RightLogical, layout)?
             }
@@ -188,8 +249,10 @@ enum Local {
 enum ShiftOp {
     I32x4Shl,
     I32x4ShrU,
+    I32x4ShrS,
     I16x8Shl,
     I16x8ShrU,
+    I16x8ShrS,
     I64x2Shl,
     I64x2ShrU,
 }
@@ -236,25 +299,35 @@ fn emit_shift_imm(
     op: ShiftOp,
     layout: WasmLayout,
 ) -> Result<(), JitError> {
-    let max_imm = match op {
-        ShiftOp::I16x8Shl | ShiftOp::I16x8ShrU => 15,
-        ShiftOp::I32x4Shl | ShiftOp::I32x4ShrU => 31,
-        ShiftOp::I64x2Shl | ShiftOp::I64x2ShrU => 63,
+    let (max_imm, clamp_on_overflow) = match op {
+        ShiftOp::I16x8Shl | ShiftOp::I16x8ShrU => (15u8, false),
+        ShiftOp::I32x4Shl | ShiftOp::I32x4ShrU => (31u8, false),
+        ShiftOp::I64x2Shl | ShiftOp::I64x2ShrU => (63u8, false),
+        ShiftOp::I16x8ShrS => (15u8, true),
+        ShiftOp::I32x4ShrS => (31u8, true),
     };
-    if imm > max_imm {
-        func.instruction(&Instruction::V128Const(0));
-        func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
-        emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
-        return Ok(());
-    }
+    let imm = if imm > max_imm {
+        if clamp_on_overflow {
+            max_imm
+        } else {
+            func.instruction(&Instruction::V128Const(0));
+            func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
+            emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
+            return Ok(());
+        }
+    } else {
+        imm
+    };
 
     emit_load_reg(dst, func, layout)?;
     func.instruction(&Instruction::I32Const(imm as i32));
     match op {
         ShiftOp::I32x4Shl => func.instruction(&Instruction::I32x4Shl),
         ShiftOp::I32x4ShrU => func.instruction(&Instruction::I32x4ShrU),
+        ShiftOp::I32x4ShrS => func.instruction(&Instruction::I32x4ShrS),
         ShiftOp::I16x8Shl => func.instruction(&Instruction::I16x8Shl),
         ShiftOp::I16x8ShrU => func.instruction(&Instruction::I16x8ShrU),
+        ShiftOp::I16x8ShrS => func.instruction(&Instruction::I16x8ShrS),
         ShiftOp::I64x2Shl => func.instruction(&Instruction::I64x2Shl),
         ShiftOp::I64x2ShrU => func.instruction(&Instruction::I64x2ShrU),
     };
@@ -270,10 +343,12 @@ fn emit_shift_var(
     op: ShiftOp,
     layout: WasmLayout,
 ) -> Result<(), JitError> {
-    let max = match op {
-        ShiftOp::I16x8Shl | ShiftOp::I16x8ShrU => 15i64,
-        ShiftOp::I32x4Shl | ShiftOp::I32x4ShrU => 31i64,
-        ShiftOp::I64x2Shl | ShiftOp::I64x2ShrU => 63i64,
+    let (max, clamp_on_overflow) = match op {
+        ShiftOp::I16x8Shl | ShiftOp::I16x8ShrU => (15i64, false),
+        ShiftOp::I32x4Shl | ShiftOp::I32x4ShrU => (31i64, false),
+        ShiftOp::I64x2Shl | ShiftOp::I64x2ShrU => (63i64, false),
+        ShiftOp::I16x8ShrS => (15i64, true),
+        ShiftOp::I32x4ShrS => (31i64, true),
     };
 
     emit_load_reg(dst, func, layout)?;
@@ -281,29 +356,51 @@ fn emit_shift_var(
     func.instruction(&Instruction::I64x2ExtractLane(0));
     func.instruction(&Instruction::LocalSet(Local::Cnt as u32));
 
-    // tmp0 = shift(dst, (cnt as i32)). Note that wasm masks counts, so we need a select below to
-    // produce x86's "count > lane_bits => 0" semantics.
-    func.instruction(&Instruction::LocalGet(Local::Cnt as u32));
-    func.instruction(&Instruction::I32WrapI64);
-    match op {
-        ShiftOp::I32x4Shl => func.instruction(&Instruction::I32x4Shl),
-        ShiftOp::I32x4ShrU => func.instruction(&Instruction::I32x4ShrU),
-        ShiftOp::I16x8Shl => func.instruction(&Instruction::I16x8Shl),
-        ShiftOp::I16x8ShrU => func.instruction(&Instruction::I16x8ShrU),
-        ShiftOp::I64x2Shl => func.instruction(&Instruction::I64x2Shl),
-        ShiftOp::I64x2ShrU => func.instruction(&Instruction::I64x2ShrU),
-    };
-    func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
+    if clamp_on_overflow {
+        // For arithmetic right shifts, x86 saturates the count to the lane width (so counts >=
+        // lane_bits behave like shifting by lane_bits-1). WebAssembly masks the count instead,
+        // so we clamp before shifting.
+        func.instruction(&Instruction::I64Const(max));
+        func.instruction(&Instruction::LocalGet(Local::Cnt as u32));
+        func.instruction(&Instruction::LocalGet(Local::Cnt as u32));
+        func.instruction(&Instruction::I64Const(max));
+        func.instruction(&Instruction::I64GtU);
+        func.instruction(&Instruction::Select);
+        func.instruction(&Instruction::I32WrapI64);
 
-    // result = (cnt > max) ? 0 : tmp0
-    func.instruction(&Instruction::V128Const(0));
-    func.instruction(&Instruction::LocalGet(Local::Tmp0 as u32));
-    func.instruction(&Instruction::LocalGet(Local::Cnt as u32));
-    func.instruction(&Instruction::I64Const(max));
-    func.instruction(&Instruction::I64GtU);
-    func.instruction(&Instruction::Select);
-    func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
-    emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
+        match op {
+            ShiftOp::I32x4ShrS => func.instruction(&Instruction::I32x4ShrS),
+            ShiftOp::I16x8ShrS => func.instruction(&Instruction::I16x8ShrS),
+            _ => unreachable!("clamp_on_overflow only set for signed shifts"),
+        };
+        func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
+        emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
+    } else {
+        // tmp0 = shift(dst, (cnt as i32)). Note that wasm masks counts, so we need a select below
+        // to produce x86's "count > lane_bits => 0" semantics.
+        func.instruction(&Instruction::LocalGet(Local::Cnt as u32));
+        func.instruction(&Instruction::I32WrapI64);
+        match op {
+            ShiftOp::I32x4Shl => func.instruction(&Instruction::I32x4Shl),
+            ShiftOp::I32x4ShrU => func.instruction(&Instruction::I32x4ShrU),
+            ShiftOp::I16x8Shl => func.instruction(&Instruction::I16x8Shl),
+            ShiftOp::I16x8ShrU => func.instruction(&Instruction::I16x8ShrU),
+            ShiftOp::I64x2Shl => func.instruction(&Instruction::I64x2Shl),
+            ShiftOp::I64x2ShrU => func.instruction(&Instruction::I64x2ShrU),
+            ShiftOp::I32x4ShrS | ShiftOp::I16x8ShrS => unreachable!("signed shifts handled above"),
+        };
+        func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
+
+        // result = (cnt > max) ? 0 : tmp0
+        func.instruction(&Instruction::V128Const(0));
+        func.instruction(&Instruction::LocalGet(Local::Tmp0 as u32));
+        func.instruction(&Instruction::LocalGet(Local::Cnt as u32));
+        func.instruction(&Instruction::I64Const(max));
+        func.instruction(&Instruction::I64GtU);
+        func.instruction(&Instruction::Select);
+        func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
+        emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
+    }
     Ok(())
 }
 
@@ -351,7 +448,12 @@ fn emit_shift_bytes_imm(
     Ok(())
 }
 
-fn emit_pshufb(func: &mut Function, dst: XmmReg, src: Operand, layout: WasmLayout) -> Result<(), JitError> {
+fn emit_pshufb(
+    func: &mut Function,
+    dst: XmmReg,
+    src: Operand,
+    layout: WasmLayout,
+) -> Result<(), JitError> {
     // tmp0 = data (dst)
     emit_load_reg(dst, func, layout)?;
     func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));

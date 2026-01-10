@@ -3,7 +3,11 @@ pub struct XmmReg(u8);
 
 impl XmmReg {
     pub const fn new(idx: u8) -> Option<Self> {
-        if idx < 16 { Some(Self(idx)) } else { None }
+        if idx < 16 {
+            Some(Self(idx))
+        } else {
+            None
+        }
     }
 
     pub const fn index(self) -> usize {
@@ -85,15 +89,24 @@ pub enum Inst {
     /// `PSRLQ xmm, xmm/m128` (SSE2)
     Psrlq { dst: XmmReg, src: Operand },
 
+    /// `PSRAD xmm, xmm/m128` (SSE2)
+    Psrad { dst: XmmReg, src: Operand },
+    /// `PSRAW xmm, xmm/m128` (SSE2)
+    Psraw { dst: XmmReg, src: Operand },
+
     /// `PSLLD xmm, imm8` (SSE2)
     PslldImm { dst: XmmReg, imm: u8 },
     /// `PSRLD xmm, imm8` (SSE2)
     PsrldImm { dst: XmmReg, imm: u8 },
+    /// `PSRAD xmm, imm8` (SSE2)
+    PsradImm { dst: XmmReg, imm: u8 },
 
     /// `PSLLW xmm, imm8` (SSE2)
     PsllwImm { dst: XmmReg, imm: u8 },
     /// `PSRLW xmm, imm8` (SSE2)
     PsrlwImm { dst: XmmReg, imm: u8 },
+    /// `PSRAW xmm, imm8` (SSE2)
+    PsrawImm { dst: XmmReg, imm: u8 },
 
     /// `PSLLQ xmm, imm8` (SSE2)
     PsllqImm { dst: XmmReg, imm: u8 },

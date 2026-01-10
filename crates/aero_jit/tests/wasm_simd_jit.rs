@@ -18,20 +18,22 @@ fn run_jit(program: &Program, state: &SseState, mem: &[u8]) -> (SseState, Vec<u8
     let instance = Instance::new(&mut store, &module, &[]).unwrap();
 
     let memory = instance.get_memory(&mut store, "mem").unwrap();
-    let run = instance.get_typed_func::<(), ()>(&mut store, "run").unwrap();
+    let run = instance
+        .get_typed_func::<(), ()>(&mut store, "run")
+        .unwrap();
 
     let mut state_bytes = vec![0u8; STATE_SIZE_BYTES];
     state.write_to_bytes(&mut state_bytes).unwrap();
     memory
-        .write(&mut store, DEFAULT_WASM_LAYOUT.state_base as usize, &state_bytes)
+        .write(
+            &mut store,
+            DEFAULT_WASM_LAYOUT.state_base as usize,
+            &state_bytes,
+        )
         .unwrap();
 
     memory
-        .write(
-            &mut store,
-            DEFAULT_WASM_LAYOUT.guest_mem_base as usize,
-            mem,
-        )
+        .write(&mut store, DEFAULT_WASM_LAYOUT.guest_mem_base as usize, mem)
         .unwrap();
 
     run.call(&mut store, ()).unwrap();
@@ -118,6 +120,22 @@ fn pack_f64x2(lanes: [f64; 2]) -> u128 {
     u128::from_le_bytes(bytes)
 }
 
+fn pack_u32x4(lanes: [u32; 4]) -> u128 {
+    let mut bytes = [0u8; 16];
+    for i in 0..4 {
+        bytes[i * 4..i * 4 + 4].copy_from_slice(&lanes[i].to_le_bytes());
+    }
+    u128::from_le_bytes(bytes)
+}
+
+fn pack_u16x8(lanes: [u16; 8]) -> u128 {
+    let mut bytes = [0u8; 16];
+    for i in 0..8 {
+        bytes[i * 2..i * 2 + 2].copy_from_slice(&lanes[i].to_le_bytes());
+    }
+    u128::from_le_bytes(bytes)
+}
+
 #[test]
 fn wasm_simd_movdqu_load_store() {
     let xmm0 = XmmReg::new(0).unwrap();
@@ -126,8 +144,14 @@ fn wasm_simd_movdqu_load_store() {
     let program = Program {
         insts: vec![
             Inst::MovdquLoad { dst: xmm0, addr: 0 },
-            Inst::MovdquStore { addr: 16, src: xmm0 },
-            Inst::MovdquLoad { dst: xmm1, addr: 16 },
+            Inst::MovdquStore {
+                addr: 16,
+                src: xmm0,
+            },
+            Inst::MovdquLoad {
+                dst: xmm1,
+                addr: 16,
+            },
         ],
     };
 
@@ -457,6 +481,86 @@ fn wasm_simd_variable_shift_counts() {
 }
 
 #[test]
+fn wasm_simd_psrad_psraw_imm_saturates_count() {
+    let xmm0 = XmmReg::new(0).unwrap();
+    let xmm1 = XmmReg::new(1).unwrap();
+
+    let mut state = SseState::default();
+    state.xmm[xmm0.index()] = pack_u32x4([0x8000_0000, 0x7FFF_FFFF, 0xFFFF_FFFF, 0x0000_0001]);
+    state.xmm[xmm1.index()] = pack_u16x8([
+        0x8000, 0x7FFF, 0xFFFF, 0x0001, 0x0000, 0x1234, 0x8001, 0xFFFF,
+    ]);
+
+    let program = Program {
+        insts: vec![
+            Inst::PsradImm { dst: xmm0, imm: 40 },
+            Inst::PsrawImm { dst: xmm1, imm: 20 },
+        ],
+    };
+
+    let mem = vec![0u8; 64];
+    assert_jit_matches_interp(program.clone(), state.clone(), mem.clone());
+
+    let (jit_state, _jit_mem, wasm) = run_jit(&program, &state, &mem);
+
+    let expected_psrad = pack_u32x4([0xFFFF_FFFF, 0x0000_0000, 0xFFFF_FFFF, 0x0000_0000]);
+    let expected_psraw = pack_u16x8([
+        0xFFFF, 0x0000, 0xFFFF, 0x0000, 0x0000, 0x0000, 0xFFFF, 0xFFFF,
+    ]);
+
+    assert_eq!(jit_state.xmm[xmm0.index()], expected_psrad);
+    assert_eq!(jit_state.xmm[xmm1.index()], expected_psraw);
+
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::I32x4ShrS));
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::I16x8ShrS));
+}
+
+#[test]
+fn wasm_simd_psrad_psraw_variable_counts_saturate_count() {
+    let xmm0 = XmmReg::new(0).unwrap();
+    let xmm1 = XmmReg::new(1).unwrap();
+    let xmm2 = XmmReg::new(2).unwrap();
+
+    let mut state = SseState::default();
+    state.xmm[xmm0.index()] = pack_u32x4([0x8000_0000, 0x7FFF_FFFF, 0xFFFF_FFFF, 0x0000_0001]);
+    state.xmm[xmm1.index()] = pack_u16x8([
+        0x8000, 0x7FFF, 0xFFFF, 0x0001, 0x0000, 0x1234, 0x8001, 0xFFFF,
+    ]);
+    // Shift count lives in the low 64 bits of the src operand for PSRA*.
+    state.xmm[xmm2.index()] = 40u64 as u128;
+
+    let program = Program {
+        insts: vec![
+            Inst::Psrad {
+                dst: xmm0,
+                src: Operand::Reg(xmm2),
+            },
+            Inst::Psraw {
+                dst: xmm1,
+                src: Operand::Reg(xmm2),
+            },
+        ],
+    };
+
+    let mem = vec![0u8; 64];
+    assert_jit_matches_interp(program.clone(), state.clone(), mem.clone());
+
+    let (jit_state, _jit_mem, wasm) = run_jit(&program, &state, &mem);
+
+    let expected_psrad = pack_u32x4([0xFFFF_FFFF, 0x0000_0000, 0xFFFF_FFFF, 0x0000_0000]);
+    let expected_psraw = pack_u16x8([
+        0xFFFF, 0x0000, 0xFFFF, 0x0000, 0x0000, 0x0000, 0xFFFF, 0xFFFF,
+    ]);
+
+    assert_eq!(jit_state.xmm[xmm0.index()], expected_psrad);
+    assert_eq!(jit_state.xmm[xmm1.index()], expected_psraw);
+
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::I64x2ExtractLane { .. }));
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::I32x4ShrS));
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::I16x8ShrS));
+}
+
+#[test]
 fn mxcsr_gate_traps_for_float_ops() {
     let xmm0 = XmmReg::new(0).unwrap();
     let xmm1 = XmmReg::new(1).unwrap();
@@ -477,7 +581,9 @@ fn mxcsr_gate_traps_for_float_ops() {
     let mut store = Store::new(&engine, ());
     let instance = Instance::new(&mut store, &module, &[]).unwrap();
     let memory = instance.get_memory(&mut store, "mem").unwrap();
-    let run = instance.get_typed_func::<(), ()>(&mut store, "run").unwrap();
+    let run = instance
+        .get_typed_func::<(), ()>(&mut store, "run")
+        .unwrap();
 
     let mut state = SseState::default();
     state.mxcsr = MXCSR_DEFAULT ^ 0x2000; // change rounding mode bits
@@ -485,7 +591,11 @@ fn mxcsr_gate_traps_for_float_ops() {
     let mut state_bytes = vec![0u8; STATE_SIZE_BYTES];
     state.write_to_bytes(&mut state_bytes).unwrap();
     memory
-        .write(&mut store, DEFAULT_WASM_LAYOUT.state_base as usize, &state_bytes)
+        .write(
+            &mut store,
+            DEFAULT_WASM_LAYOUT.state_base as usize,
+            &state_bytes,
+        )
         .unwrap();
 
     let mem = vec![0u8; 64];
