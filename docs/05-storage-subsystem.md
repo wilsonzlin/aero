@@ -829,7 +829,7 @@ For private images, treat the following as **secrets**:
 - `remote_url` (for private images it may embed auth via a signed query parameter, or it may be an unguessable lease URL)
 - `bearer_token` / session cookies / any auth material (if used)
 
-Do **not** persist these secrets to OPFS/IndexedDB (or logs) “for convenience”. Persist stable identifiers instead (e.g., `image_id`, `snapshot_id`) and reacquire credentials each time a VM session starts.
+Do **not** persist these secrets to OPFS/IndexedDB/localStorage (or logs) “for convenience”. Persist stable identifiers instead (e.g., `image_id`, `snapshot_id`) and reacquire credentials each time a VM session starts.
 
 #### Disk access lease acquisition
 
