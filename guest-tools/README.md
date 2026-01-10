@@ -119,6 +119,7 @@ Each check produces a `PASS` / `WARN` / `FAIL` result:
 
 - **OS + arch**: version, build, service pack.
 - **Guest Tools manifest**: reads `manifest.json` (if present) to record which Guest Tools build/version produced the media.
+- **Guest Tools setup state**: reads `C:\AeroGuestTools\install.log` and related state files from `setup.cmd` (if present) to show what Guest Tools staged/changed.
 - **KB3033929 (SHA-256 signatures)**: detects whether the hotfix is installed (relevant for SHA-256-signed driver packages on Win7).
 - **Certificate store**: verifies that Guest Tools certificate(s) (from `certs\`, e.g. `*.cer`, `*.crt`, `*.p7b`) are installed into **Local Machine**:
   - Trusted Root Certification Authorities (**Root**)

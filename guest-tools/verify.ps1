@@ -413,7 +413,7 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         [void]$sb.Append($report.overall.summary + $nl)
     }
 
-    foreach ($key in @("os","guest_tools_manifest","kb3033929","certificate_store","signature_mode","driver_packages","bound_devices","device_binding_storage","device_binding_network","device_binding_graphics","device_binding_audio","device_binding_input","virtio_blk_service","virtio_blk_boot_critical","smoke_disk","smoke_network","smoke_graphics","smoke_audio","smoke_input")) {
+    foreach ($key in @("os","guest_tools_manifest","guest_tools_setup_state","kb3033929","certificate_store","signature_mode","driver_packages","bound_devices","device_binding_storage","device_binding_network","device_binding_graphics","device_binding_audio","device_binding_input","virtio_blk_service","virtio_blk_boot_critical","smoke_disk","smoke_network","smoke_graphics","smoke_audio","smoke_input")) {
         if (-not $report.checks.ContainsKey($key)) { continue }
         $chk = $report.checks[$key]
         [void]$sb.Append($nl)
@@ -483,7 +483,7 @@ $report = @{
     schema_version = 1
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "1.7.0"
+        version = "1.8.0"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -600,6 +600,65 @@ try {
     Add-Check "guest_tools_manifest" "Guest Tools Manifest" $mStatus $mSummary $manifestData $mDetails
 } catch {
     Add-Check "guest_tools_manifest" "Guest Tools Manifest" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
+# --- Guest Tools setup state (C:\AeroGuestTools\*) ---
+$gtInstalledDriverPackages = @()
+try {
+    $installLog = Join-Path $outDir "install.log"
+    $pkgList = Join-Path $outDir "installed-driver-packages.txt"
+    $certList = Join-Path $outDir "installed-certs.txt"
+    $stateTestSign = Join-Path $outDir "testsigning.enabled-by-aero.txt"
+    $stateNoIntegrity = Join-Path $outDir "nointegritychecks.enabled-by-aero.txt"
+
+    if (Test-Path $pkgList) {
+        foreach ($line in (Get-Content -Path $pkgList -ErrorAction SilentlyContinue)) {
+            $t = ("" + $line).Trim()
+            if ($t.Length -eq 0) { continue }
+            $gtInstalledDriverPackages += $t
+        }
+    }
+
+    $installedCertThumbprints = @()
+    if (Test-Path $certList) {
+        foreach ($line in (Get-Content -Path $certList -ErrorAction SilentlyContinue)) {
+            $t = ("" + $line).Trim()
+            if ($t.Length -eq 0) { continue }
+            $installedCertThumbprints += $t
+        }
+    }
+
+    $st = "PASS"
+    $sum = ""
+    $det = @()
+
+    $hasAny = (Test-Path $installLog) -or (Test-Path $pkgList) -or (Test-Path $certList)
+    if (-not $hasAny) {
+        $st = "WARN"
+        $sum = "No Guest Tools setup state files found under " + $outDir + " (setup.cmd may not have been run yet)."
+    } else {
+        $sum = "install.log=" + (Test-Path $installLog) + ", installed-driver-packages=" + $gtInstalledDriverPackages.Count + ", installed-certs=" + $installedCertThumbprints.Count
+        if (Test-Path $stateTestSign) { $det += "TestSigning was enabled by setup.cmd (marker file present)." }
+        if (Test-Path $stateNoIntegrity) { $det += "nointegritychecks was enabled by setup.cmd (marker file present)." }
+    }
+
+    $data = @{
+        install_root = $outDir
+        install_log_path = $installLog
+        install_log_exists = (Test-Path $installLog)
+        installed_driver_packages_path = $pkgList
+        installed_driver_packages = $gtInstalledDriverPackages
+        installed_certs_path = $certList
+        installed_certs = $installedCertThumbprints
+        testsigning_marker_path = $stateTestSign
+        testsigning_marker_exists = (Test-Path $stateTestSign)
+        nointegritychecks_marker_path = $stateNoIntegrity
+        nointegritychecks_marker_exists = (Test-Path $stateNoIntegrity)
+    }
+
+    Add-Check "guest_tools_setup_state" "Guest Tools Setup State" $st $sum $data $det
+} catch {
+    Add-Check "guest_tools_setup_state" "Guest Tools Setup State" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
 # --- Hotfix: KB3033929 (SHA-256 signature support) ---
@@ -841,15 +900,24 @@ try {
             if ($t -match '(?i)^signer name\s*:\s*(.+)$') { $signerName = $matches[1].Trim(); continue }
         }
 
+        $isInstalledByGuestTools = $false
+        if ($published -and $gtInstalledDriverPackages -and $gtInstalledDriverPackages.Count -gt 0) {
+            foreach ($p in $gtInstalledDriverPackages) {
+                if ($p -and ($p.ToLower() -eq $published.ToLower())) { $isInstalledByGuestTools = $true; break }
+            }
+        }
+
         $isAero = $false
         $lower = $b.ToLower()
         foreach ($kw in $keywords) {
             if ($lower.Contains($kw)) { $isAero = $true; break }
         }
+        if ($isInstalledByGuestTools) { $isAero = $true }
 
         $packages += @{
             published_name = $published
             is_aero_related = $isAero
+            is_installed_by_guest_tools = $isInstalledByGuestTools
             class = $class
             provider = $provider
             driver_date_and_version = $driverDateAndVersion
@@ -860,11 +928,15 @@ try {
 
     $aeroPackages = @($packages | Where-Object { $_.is_aero_related })
 
+    $aeroInstalledByGt = @($aeroPackages | Where-Object { $_.is_installed_by_guest_tools })
+
     $drvData = @{
         pnputil_exit_code = $pnp.exit_code
         pnputil_raw = $raw
         total_packages_parsed = $packages.Count
         aero_packages = $aeroPackages
+        aero_packages_installed_by_guest_tools = $aeroInstalledByGt
+        guest_tools_installed_driver_packages = $gtInstalledDriverPackages
         match_keywords = $keywords
     }
 
@@ -876,7 +948,7 @@ try {
         $drvSummary = "pnputil failed or produced no output."
         $drvDetails += "Exit code: " + $pnp.exit_code
     } else {
-        $drvSummary = "Detected " + $aeroPackages.Count + " Aero-related driver package(s) (parsed " + $packages.Count + " total)."
+        $drvSummary = "Detected " + $aeroPackages.Count + " Aero-related driver package(s) (installed-by-GuestTools: " + $aeroInstalledByGt.Count + "; parsed " + $packages.Count + " total)."
         if ($aeroPackages.Count -eq 0) {
             $drvStatus = "WARN"
             $drvDetails += "No Aero-related packages matched heuristic keywords. See pnputil_raw in report.json."
