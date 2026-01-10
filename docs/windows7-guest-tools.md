@@ -71,11 +71,11 @@ Aero Guest Tools is intended for **Windows 7 SP1**:
 - ✅ Most editions should work (Home Premium / Professional / Ultimate / Enterprise), as long as your license matches the media.
 - ❌ Windows 7 **RTM (no SP1)** is not recommended (higher chance of installer/driver/update failures).
 
-### SHA-256 / KB3033929 note (important for x64)
+### SHA-256 / SHA-2 updates note (important for x64)
 
-If Aero’s driver packages are signed with **SHA-256**, Windows 7 requires **KB3033929** to validate those signatures.
+If Aero’s driver packages (or signing certificates) use **SHA-256 / SHA-2**, stock Windows 7 SP1 may require SHA-2-related updates such as **KB3033929** (and sometimes **KB4474419**) to validate driver signatures.
 
-- If KB3033929 is missing you may see **Device Manager → Code 52** (“Windows cannot verify the digital signature…”).
+- If the required SHA-2 updates are missing you may see **Device Manager → Code 52** (“Windows cannot verify the digital signature…”).
 - You can install KB3033929 after Windows is installed, or **slipstream** it into your ISO (see the optional section at the end).
 
 ### x86 vs x64 notes (driver signing and memory)
@@ -110,9 +110,9 @@ Then:
 
 Recommended (but optional): take a snapshot/checkpoint here if your host environment supports it.
 
-### Optional (recommended for x64): install KB3033929 before Guest Tools
+### Optional (recommended for x64): install SHA-2 updates before Guest Tools
 
-If you expect to use **SHA-256-signed** driver packages, install **KB3033929** while you are still on baseline devices (AHCI/e1000/VGA). This avoids confusing “unsigned driver” failures later.
+If you expect to use **SHA-256 / SHA-2-signed** driver packages, install the required SHA-2 updates (commonly **KB3033929**, and sometimes also **KB4474419**) while you are still on baseline devices (AHCI/e1000/VGA). This avoids confusing “unsigned driver” failures later.
 
 See: [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md#issue-missing-kb3033929-sha-256-signature-support)
 
@@ -124,16 +124,24 @@ After you have a working Windows 7 desktop:
 2. Mount/insert `aero-guest-tools.iso` as the virtual CD/DVD.
 3. In Windows 7, open **Computer** and verify you see the CD drive.
 
-### Recommended: copy Guest Tools to a writable folder
+### Where Guest Tools writes logs/reports
 
-Some scripts generate logs/reports. To avoid write-permission issues when running from read-only media, copy the ISO contents to a local folder:
+Regardless of whether you run Guest Tools from the mounted CD/DVD or from a copied folder, the scripts write their output to:
 
-1. Create a folder like `C:\AeroGuestTools\`
-2. Copy all files from the Guest Tools CD into `C:\AeroGuestTools\`
+- `C:\AeroGuestTools\`
+
+### Optional: copy Guest Tools to the local disk
+
+Running directly from the mounted CD/DVD is fine. Copying the files locally is optional, but can make it easier to re-run Guest Tools without re-mounting the ISO.
+
+1. Create a folder such as `C:\AeroGuestTools\media\`
+2. Copy all files from the Guest Tools CD into `C:\AeroGuestTools\media\`
 
 ## Step 3: Run `setup.cmd` as Administrator
 
-1. Navigate to `C:\AeroGuestTools\` (or the mounted CD if you didn’t copy it).
+1. Navigate to the Guest Tools folder:
+   - Mounted CD/DVD (for example `X:\`), **or**
+   - `C:\AeroGuestTools\media\` (if you copied the files locally)
 2. Right-click `setup.cmd` → **Run as administrator**.
 3. Accept any UAC prompts.
 
@@ -143,6 +151,28 @@ During installation you may see driver install prompts:
 - **Windows 7 x64:** Windows enforces kernel driver signatures. Guest Tools will typically enable **test signing** (see below) and install Aero’s signing certificate so the drivers can load.
 
 When `setup.cmd` finishes, reboot Windows if prompted.
+
+### `setup.cmd` output files
+
+If you need to troubleshoot an installation, start by reviewing:
+
+- `C:\AeroGuestTools\install.log`
+
+Depending on the Guest Tools version, you may also see:
+
+- `C:\AeroGuestTools\installed-driver-packages.txt`
+- `C:\AeroGuestTools\installed-certs.txt`
+
+### Optional `setup.cmd` flags (advanced)
+
+Guest Tools may support additional command-line flags. Common examples include:
+
+- `setup.cmd /stageonly` (only stages drivers into the driver store)
+- `setup.cmd /testsigning` / `setup.cmd /notestsigning` (x64: control test-signing changes)
+- `setup.cmd /nointegritychecks` (x64: disables signature enforcement entirely; **not recommended**)
+- `setup.cmd /noreboot` (do not prompt for reboot/shutdown at the end)
+
+If the Guest Tools media includes a `README.md`, consult it for the definitive list of supported flags for your build.
 
 ### x64: “Test Mode” is expected if test signing is enabled
 
@@ -297,11 +327,19 @@ Virtio audio does not affect boot, so treat it as an optional final step:
 
 After you can boot with virtio + Aero GPU:
 
-1. Open `C:\AeroGuestTools\`
+1. Run `verify.cmd` from the Guest Tools media:
+   - Mounted CD/DVD (for example `X:\verify.cmd`), or
+   - `C:\AeroGuestTools\media\verify.cmd` (if you copied the files locally)
 2. Right-click `verify.cmd` → **Run as administrator**
-3. Open the generated `report.txt`
+3. Open:
+   - `C:\AeroGuestTools\report.txt`
 
-Depending on your Guest Tools version, `verify.cmd` / `report.txt` may include:
+Running `verify.cmd` typically writes:
+
+- `C:\AeroGuestTools\report.txt` (human-readable)
+- `C:\AeroGuestTools\report.json` (machine-readable)
+
+Depending on your Guest Tools version, the report may include:
 
 - OS version and architecture (x86 vs x64)
 - Whether **KB3033929** is installed (required for validating many SHA-256-signed driver catalogs on Windows 7)
@@ -373,6 +411,7 @@ Slipstreaming is optional, but can reduce first-boot driver/signature problems (
 ### What you can slipstream
 
 - **KB3033929** (SHA-256 signature support)
+- **KB4474419** (additional SHA-2 code signing support; may require servicing stack updates depending on your base image)
 - Aero driver `.inf` packages (virtio-blk/net and optionally Aero GPU)
 
 ### High-level DISM approach (Windows host)

@@ -46,6 +46,9 @@ If you have not installed Guest Tools yet, start here:
 If you need to debug driver install failures, these are the most useful artifacts to gather:
 
 - `C:\AeroGuestTools\report.txt` (from `verify.cmd`)
+- `C:\AeroGuestTools\report.json` (from `verify.cmd`, machine-readable)
+- `C:\AeroGuestTools\install.log` (from `setup.cmd`)
+- `C:\AeroGuestTools\uninstall.log` (from `uninstall.cmd`, if used)
 - Device Manager → device → **Properties**:
   - **General** tab (error code)
   - **Events** tab (device install/start failures)
@@ -189,7 +192,16 @@ Windows 7 needs KB3033929 to validate many SHA-256 signatures. Without it, drive
 2. Copy the `.msu` into the VM (ISO, network, or shared folder).
 3. Run the `.msu` inside the VM and reboot.
 
-If the update fails to install, ensure you are on Windows 7 SP1 and consider installing the latest Windows 7 servicing stack update first.
+### Related SHA-2 updates (sometimes required)
+
+Depending on how your driver packages and certificates are signed, stock Windows 7 SP1 may also require additional SHA-2 updates (for example **KB4474419**).
+
+You can check for these updates with:
+
+- `wmic qfe | find "4474419"`
+- `wmic qfe | find "4490628"` (common servicing stack prerequisite for installing newer updates)
+
+If KB3033929/KB4474419 fails to install, ensure you are on Windows 7 SP1 and install the required servicing stack updates first.
 
 ### Recommended signing algorithm policy (for compatibility)
 
@@ -341,12 +353,15 @@ This only applies if you are attempting to install Windows directly onto **virti
 
 **Fix**
 
-1. Copy Guest Tools to a local folder (example `C:\AeroGuestTools\`) and run it from there.
+1. Run Guest Tools from:
+   - the mounted CD/DVD (for example `X:\setup.cmd`), **or**
+   - a local copy (recommended: `C:\AeroGuestTools\media\setup.cmd`)
 2. Right-click `setup.cmd` → **Run as administrator**.
 3. If it still fails, run it from an elevated Command Prompt so you can read the output:
    - Start menu → type `cmd` → right-click **cmd.exe** → Run as administrator
-   - `cd /d C:\AeroGuestTools`
+   - `cd /d X:\` (or `cd /d C:\AeroGuestTools\media`)
    - `setup.cmd`
+   - Review `C:\AeroGuestTools\install.log` afterwards.
 4. If the script is incompatible with your build or you need a fallback, use the manual install steps in the Guest Tools guide:
    - [`docs/windows7-guest-tools.md`](./windows7-guest-tools.md#if-setupcmd-fails-manual-install-advanced)
 
