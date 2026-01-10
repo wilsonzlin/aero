@@ -14,12 +14,21 @@ export type CpuWorkerMockInitMessage = {
   width: number;
   height: number;
   tileSize: number;
+  /**
+   * Controls how the mock generates frames.
+   *
+   * - "solid": alternate solid red/green frames (default; exercises double-buffer publish).
+   * - "tile_toggle": keep the frame mostly green but toggle the top-left tile; dirty tiles
+   *   after the first frame will only mark that tile (exercises partial uploads).
+   */
+  pattern?: "solid" | "tile_toggle";
 };
 
 self.onmessage = (ev: MessageEvent<CpuWorkerMockInitMessage>) => {
   if (ev.data.type !== "init") return;
 
   const { shared, framebufferOffsetBytes, width, height, tileSize } = ev.data;
+  const pattern = ev.data.pattern ?? "solid";
   const strideBytes = width * 4;
 
   const layout = computeSharedFramebufferLayout(width, height, strideBytes, FramebufferFormat.RGBA8, tileSize);
@@ -63,15 +72,42 @@ self.onmessage = (ev: MessageEvent<CpuWorkerMockInitMessage>) => {
     const active = Atomics.load(header, SharedFramebufferHeaderIndex.ACTIVE_INDEX) & 1;
     const back = active ^ 1;
 
-    const color = frameToggle ? 0xff0000ff /* RGBA red */ : 0xff00ff00 /* RGBA green */;
-    frameToggle = !frameToggle;
-
     const backPixels = back === 0 ? slot0 : slot1;
-    backPixels.fill(color);
-
     const backDirty = back === 0 ? dirty0 : dirty1;
-    if (backDirty) {
-      backDirty.fill(0xffffffff);
+
+    if (pattern === "tile_toggle") {
+      const base = 0xff00ff00; // green
+      const tile = frameToggle ? 0xff0000ff /* red */ : base;
+      frameToggle = !frameToggle;
+
+      // Full frame render with a small changing region (top-left tile).
+      backPixels.fill(base);
+      const tileW = Math.min(tileSize || width, width);
+      const tileH = Math.min(tileSize || height, height);
+      for (let y = 0; y < tileH; y += 1) {
+        const row = y * width;
+        backPixels.fill(tile, row, row + tileW);
+      }
+
+      if (backDirty) {
+        // Frame 1 initializes the texture, so treat as full-frame dirty.
+        const seq = Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_SEQ);
+        if (seq === 0) {
+          backDirty.fill(0xffffffff);
+        } else {
+          backDirty.fill(0);
+          // Mark only tile 0 dirty (top-left).
+          backDirty[0] = 1;
+        }
+      }
+    } else {
+      const color = frameToggle ? 0xff0000ff /* RGBA red */ : 0xff00ff00 /* RGBA green */;
+      frameToggle = !frameToggle;
+
+      backPixels.fill(color);
+      if (backDirty) {
+        backDirty.fill(0xffffffff);
+      }
     }
 
     const newSeq = (Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_SEQ) + 1) | 0;
@@ -89,4 +125,3 @@ self.onmessage = (ev: MessageEvent<CpuWorkerMockInitMessage>) => {
     Atomics.notify(header, SharedFramebufferHeaderIndex.FRAME_SEQ, 1);
   }, intervalMs);
 };
-
