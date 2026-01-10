@@ -17,6 +17,10 @@
 
 namespace aerogpu_test {
 
+#ifndef ARRAYSIZE
+#define ARRAYSIZE(a) (sizeof(a) / sizeof((a)[0]))
+#endif
+
 static inline bool HasArg(int argc, char** argv, const char* needle) {
   for (int i = 1; i < argc; ++i) {
     if (argv[i] && lstrcmpiA(argv[i], needle) == 0) {
