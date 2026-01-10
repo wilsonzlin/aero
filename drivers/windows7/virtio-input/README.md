@@ -186,6 +186,12 @@ virtio-input appears as a **PCI virtio** function. In QEMU this is typically cre
 
 All of these use the virtio-input transport and should enumerate with `VEN_1AF4` and a virtio-input device ID (commonly `DEV_1011` for legacy/transitional or `DEV_1052` for modern).
 
+## Testing
+
+- User-mode HID verification tool: `tools/hidtest/README.md`
+- Manual QEMU test plan: `tests/qemu/README.md`
+- Offline/slipstream install notes (DISM): `tests/offline-install/README.md`
+
 ## Known limitations
 
 - This is packaging only; the driver binary is not implemented yet.
