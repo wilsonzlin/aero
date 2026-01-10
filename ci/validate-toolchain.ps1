@@ -321,6 +321,43 @@ DiskName="Aero Dummy Install Disk"
 
   Set-Content -LiteralPath $infPath -Value $infContents -Encoding ASCII
 
+  Write-Host ""
+  Write-Host "== INF stamping smoke test (stampinf.exe) =="
+
+  # Catalog generation hashes INF contents; ensure our stamping workflow (DriverVer update)
+  # runs cleanly before Inf2Cat.
+  $stampScript = Join-Path $repoRoot "ci" "stamp-infs.ps1"
+  if (Test-Path -LiteralPath $stampScript) {
+    $toolchainJsonForStamp = $null
+    if (Test-Path -LiteralPath $ToolchainJson) {
+      $toolchainJsonForStamp = $ToolchainJson
+    }
+
+    $stampArgs = @{
+      StagingDir = $pkgDir
+      InfPaths = @($infPath)
+      RepoRoot = $repoRoot
+      # Avoid requiring git history/tags for this toolchain smoke test.
+      DriverVerVersion = "1.0.0.0"
+      DriverVerDate = (Get-Date)
+      PackageVersion = "toolchain-smoke"
+    }
+    if ($toolchainJsonForStamp) {
+      $stampArgs.ToolchainJson = $toolchainJsonForStamp
+    } else {
+      # Fall back to the resolved stampinf.exe path for local runs that don't have a manifest.
+      $stampArgs.StampInfPath = $stampinf
+    }
+
+    & $stampScript @stampArgs | Out-Null
+  } else {
+    Write-Warning "stamp-infs.ps1 not found at '$stampScript'; stamping INF via stampinf.exe directly."
+    & $stampinf -f $infPath -d (Get-Date -Format "MM/dd/yyyy") -v "1.0.0.0" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw "stampinf.exe failed (exit $LASTEXITCODE)."
+    }
+  }
+
   $inf2catLogPath = Join-Path $LogDir "inf2cat.stdout-stderr.txt"
 
   $inf2catBinDir = Split-Path -Parent $inf2cat
