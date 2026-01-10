@@ -38,17 +38,20 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
 
   try {
     const module = await WebAssembly.compile(wasmBytes);
-    postMessageToCpu(
-      {
-        type: 'CompileBlockResponse',
-        id: req.id,
-        entry_rip: req.entry_rip,
-        wasm_bytes: wasmBytes,
-        wasm_module: module,
-        meta: { wasm_byte_len: wasmBytes.byteLength },
-      },
-      [wasmBytes.buffer],
-    );
+    const base = {
+      type: 'CompileBlockResponse' as const,
+      id: req.id,
+      entry_rip: req.entry_rip,
+      meta: { wasm_byte_len: wasmBytes.byteLength },
+    };
+
+    // Prefer returning a compiled `WebAssembly.Module` (avoids compiling again in the CPU worker),
+    // but fall back to raw bytes when structured cloning the module isn't supported.
+    try {
+      postMessageToCpu({ ...base, wasm_module: module });
+    } catch (err) {
+      postMessageToCpu({ ...base, wasm_bytes: wasmBytes }, [wasmBytes.buffer]);
+    }
   } catch (err) {
     postMessageToCpu({
       type: 'CompileError',
@@ -73,4 +76,3 @@ ctx.addEventListener('message', (ev: MessageEvent<CpuToJitMessage>) => {
       break;
   }
 });
-

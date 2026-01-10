@@ -48,12 +48,13 @@ type CpuWorkerStartMessage = {
 
 declare global {
   interface Window {
-    __jit_smoke_result?: CpuWorkerToMainMessage & { type: 'CpuWorkerResult' };
+    __jit_smoke_result?: CpuWorkerToMainMessage;
   }
 }
 
 async function runJitSmokeTest(output: HTMLPreElement): Promise<void> {
   output.textContent = '';
+  window.__jit_smoke_result = undefined;
 
   let cpuWorker: Worker;
   try {
@@ -61,7 +62,9 @@ async function runJitSmokeTest(output: HTMLPreElement): Promise<void> {
       type: 'module',
     });
   } catch (err) {
-    output.textContent = err instanceof Error ? err.message : String(err);
+    const reason = err instanceof Error ? err.message : String(err);
+    window.__jit_smoke_result = { type: 'CpuWorkerError', reason };
+    output.textContent = reason;
     return;
   }
 
@@ -92,9 +95,7 @@ async function runJitSmokeTest(output: HTMLPreElement): Promise<void> {
     });
   });
 
-  if (result.type === 'CpuWorkerResult') {
-    window.__jit_smoke_result = result;
-  }
+  window.__jit_smoke_result = result;
 
   output.textContent = JSON.stringify(result, null, 2);
 }
@@ -454,11 +455,15 @@ function renderJitSmokePanel(report: PlatformFeatureReport): HTMLElement {
   const output = el('pre', { text: '' });
   const button = el('button', { text: 'Run JIT smoke test' }) as HTMLButtonElement;
 
+  const enabled = report.wasmThreads && report.jit_dynamic_wasm;
+
   const hint = el('div', {
     class: 'mono',
-    text: report.wasmThreads
+    text: enabled
       ? 'Spawns CPU+JIT workers; CPU requests compilation, JIT emits a WASM block, CPU installs it into a table and executes it.'
-      : 'Requires cross-origin isolation + SharedArrayBuffer + Atomics (wasmThreads=true).',
+      : !report.wasmThreads
+        ? 'Requires cross-origin isolation + SharedArrayBuffer + Atomics (wasmThreads=true).'
+        : "Dynamic WASM compilation is blocked (jit_dynamic_wasm=false). Check CSP for `script-src 'wasm-unsafe-eval'`.",
   });
 
   const run = () => {
@@ -468,9 +473,9 @@ function renderJitSmokePanel(report: PlatformFeatureReport): HTMLElement {
   };
   button.onclick = run;
 
-  if (!report.wasmThreads) {
+  if (!enabled) {
     button.disabled = true;
-    output.textContent = 'Skipped (wasmThreads=false).';
+    output.textContent = `Skipped (${!report.wasmThreads ? 'wasmThreads=false' : 'jit_dynamic_wasm=false'}).`;
   } else {
     run();
   }

@@ -14,7 +14,7 @@ export interface CompileBlockResponseMeta {
 export interface CompileBlockResponse {
   id: number;
   entry_rip: number;
-  wasm_bytes?: Uint8Array;
+  wasm_bytes?: Uint8Array<ArrayBuffer>;
   wasm_module?: WebAssembly.Module;
   meta: CompileBlockResponseMeta;
 }
@@ -32,4 +32,3 @@ export type CpuToJitMessage =
 export type JitToCpuMessage =
   | ({ type: 'CompileBlockResponse' } & CompileBlockResponse)
   | ({ type: 'CompileError' } & CompileError);
-
