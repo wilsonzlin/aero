@@ -18,6 +18,7 @@ Related documents (deployment/ops details):
 - CDN/object-store delivery: [Remote Disk Image Delivery (Object Store + CDN + HTTP Range)](./16-remote-disk-image-delivery.md)
 - Range behavior + CDN limits (CloudFront): [HTTP Range + CDN Behavior](./17-range-cdn-behavior.md)
 - CDN-friendly alternative to `Range`: [Chunked Disk Image Format](./18-chunked-disk-image-format.md)
+- Concrete AWS setup (S3 + CloudFront signed URL/cookie + COOP/COEP): [deployment/cloudfront-disk-streaming.md](./deployment/cloudfront-disk-streaming.md)
 - Ops runbook for the bytes endpoint: [backend/disk-image-streaming-service.md](./backend/disk-image-streaming-service.md)
 
 ---
