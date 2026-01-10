@@ -118,6 +118,8 @@ The two boolean element types we care about are:
 | `0x16000048` | `16000048` | `nointegritychecks` | `BcdLibraryBoolean_DisableIntegrityChecks` (`DisableIntegrityChecks`) |
 | `0x16000049` | `16000049` | `testsigning` | `BcdLibraryBoolean_AllowPrereleaseSignatures` (`AllowPrereleaseSignatures`) |
 
+These are **Library Boolean** elements (the `0x16xxxxxx` element type range).
+
 So the full `Element` blob is typically 12 bytes, for example:
 
 - `testsigning` (`0x16000049`, enabled):
