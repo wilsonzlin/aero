@@ -28,8 +28,13 @@ Copy the built driver binaries into this directory (same folder as the `.inf` fi
 | File | Arch | Destination after install |
 |------|------|---------------------------|
 | `aerogpu.sys` | x86/x64 | `C:\Windows\System32\drivers\` |
-| `aerogpu_d3d9.dll` | x86 | `C:\Windows\System32\` (x86 OS) / `C:\Windows\SysWOW64\` (x64 OS) |
-| `aerogpu_d3d9_x64.dll` | x64 | `C:\Windows\System32\` (x64 OS) |
+| `aerogpu_d3d9_umd.dll` | x86 | `C:\Windows\System32\` (x86 OS) / `C:\Windows\SysWOW64\` (x64 OS) |
+| `aerogpu_d3d9_umd_x64.dll` | x64 | `C:\Windows\System32\` (x64 OS) |
+
+Notes:
+
+- `aerogpu.sys` must match the target OS architecture (x86 build for Win7 x86, x64 build for Win7 x64).
+- If your build system produces the same D3D9 UMD filename for both architectures, rename the 64-bit DLL to `*_x64.dll` when copying it into this package.
 
 ### Optional (D3D10/11)
 
@@ -37,22 +42,26 @@ Only needed if you install using `aerogpu_dx11.inf`:
 
 | File | Arch | Destination after install |
 |------|------|---------------------------|
-| `aerogpu_d3d10.dll` | x86 | `C:\Windows\SysWOW64\` (x64 OS) |
-| `aerogpu_d3d10_x64.dll` | x64 | `C:\Windows\System32\` (x64 OS) |
+| `aerogpu_d3d10_11_umd.dll` | x86 | `C:\Windows\SysWOW64\` (x64 OS) |
+| `aerogpu_d3d10_11_umd_x64.dll` | x64 | `C:\Windows\System32\` (x64 OS) |
+
+Notes:
+
+- The `drivers/aerogpu/umd/d3d10_11/` project currently outputs `aerogpu_d3d10_11_umd.dll` for both Win32 and x64 builds. To ship both, copy the x64 build output and rename it to `aerogpu_d3d10_11_umd_x64.dll`.
 
 ## 2) Set the correct PCI Hardware ID (required)
 
-Both `aerogpu.inf` and `aerogpu_dx11.inf` currently contain a **placeholder** Hardware ID:
+By default, both `aerogpu.inf` and `aerogpu_dx11.inf` bind to the AeroGPU PCI IDs defined in `drivers/aerogpu/protocol/aerogpu_pci.h`:
 
 ```
-PCI\VEN_1234&DEV_1111
+PCI\VEN_A3A0&DEV_0001
 ```
 
-Before installing, replace it with the **actual AeroGPU PCI HW ID** exposed by the virtual device model, for example:
+Before installing, confirm your VM's device model reports the same Hardware ID:
 
 1. In the Win7 VM: Device Manager → Display adapters (or unknown device) → Properties → Details → *Hardware Ids*
 2. Copy the `PCI\VEN_....&DEV_....` value.
-3. Paste it into the INF(s) in the `[AeroGPU_Models.*]` sections.
+3. If it differs, update the INF(s) in the `[AeroGPU_Models.*]` sections.
 
 ## 3) Prerequisites (test signing tools)
 
@@ -120,11 +129,11 @@ On a clean Win7 SP1 VM:
 1. Device Manager → Display adapters shows **AeroGPU Display Adapter** (no yellow bang).
 2. No **Code 52** (signature), **Code 39**, or **Code 43**.
 3. Confirm UMD DLL placement:
-   - x64 VM:
-     - `C:\Windows\System32\aerogpu_d3d9_x64.dll` exists
-     - `C:\Windows\SysWOW64\aerogpu_d3d9.dll` exists
-   - x86 VM:
-     - `C:\Windows\System32\aerogpu_d3d9.dll` exists
+    - x64 VM:
+      - `C:\Windows\System32\aerogpu_d3d9_umd_x64.dll` exists
+      - `C:\Windows\SysWOW64\aerogpu_d3d9_umd.dll` exists
+    - x86 VM:
+      - `C:\Windows\System32\aerogpu_d3d9_umd.dll` exists
 
 ## 7) Run the guest-side Direct3D validation suite (recommended)
 
@@ -139,7 +148,7 @@ Example:
 ```bat
 cd \path\to\repo\drivers\aerogpu\tests\win7
 build_all_vs2010.cmd
-run_all.cmd --require-vid=0x1234 --require-did=0x1111
+run_all.cmd --require-vid=0xA3A0 --require-did=0x0001
 ```
 
 Replace the VID/DID with the value shown in Device Manager → Display adapters → Properties → Details → **Hardware Ids**, or the HW ID used in the `[AeroGPU_Models.*]` sections of the INF.

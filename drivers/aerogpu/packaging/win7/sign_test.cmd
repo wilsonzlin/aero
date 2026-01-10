@@ -146,19 +146,42 @@ if not "%ERRORLEVEL%"=="0" (
   exit /b 1
 )
 
+rem Detect OS architecture (affects which files are required and which /os target to use).
+set "INF2CAT_ARCH=x86"
+if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" set "INF2CAT_ARCH=amd64"
+if /i "%PROCESSOR_ARCHITEW6432%"=="AMD64" set "INF2CAT_ARCH=amd64"
+
+set "INF2CAT_OS=7_X86"
+if /i "%INF2CAT_ARCH%"=="amd64" set "INF2CAT_OS=7_X64"
+
+echo [INFO] Inf2Cat target: %INF2CAT_OS% (arch=%INF2CAT_ARCH%)
+
 rem Always generate the base catalog if the base INF is present.
 if exist "aerogpu.inf" (
-  call :Inf2CatOne "aerogpu.inf" "aerogpu.cat" aerogpu.sys aerogpu_d3d9.dll aerogpu_d3d9_x64.dll
+  if /i "%INF2CAT_ARCH%"=="amd64" (
+    call :Inf2CatOne "aerogpu.inf" "aerogpu.cat" aerogpu.sys aerogpu_d3d9_umd.dll aerogpu_d3d9_umd_x64.dll
+  ) else (
+    call :Inf2CatOne "aerogpu.inf" "aerogpu.cat" aerogpu.sys aerogpu_d3d9_umd.dll
+  )
   if not "%ERRORLEVEL%"=="0" goto :Inf2CatFail
 )
 
 rem Only generate the optional DX11 catalog if its files are present.
 if exist "aerogpu_dx11.inf" (
-  if exist "aerogpu_d3d10.dll" if exist "aerogpu_d3d10_x64.dll" (
-    call :Inf2CatOne "aerogpu_dx11.inf" "aerogpu_dx11.cat" aerogpu.sys aerogpu_d3d9.dll aerogpu_d3d9_x64.dll aerogpu_d3d10.dll aerogpu_d3d10_x64.dll
-    if not "%ERRORLEVEL%"=="0" goto :Inf2CatFail
+  if /i "%INF2CAT_ARCH%"=="amd64" (
+    if exist "aerogpu_d3d10_11_umd.dll" if exist "aerogpu_d3d10_11_umd_x64.dll" (
+      call :Inf2CatOne "aerogpu_dx11.inf" "aerogpu_dx11.cat" aerogpu.sys aerogpu_d3d9_umd.dll aerogpu_d3d9_umd_x64.dll aerogpu_d3d10_11_umd.dll aerogpu_d3d10_11_umd_x64.dll
+      if not "%ERRORLEVEL%"=="0" goto :Inf2CatFail
+    ) else (
+      echo [INFO] Skipping aerogpu_dx11.inf catalog generation (optional D3D10/11 UMDs not found).
+    )
   ) else (
-    echo [INFO] Skipping aerogpu_dx11.inf catalog generation (optional D3D10/11 UMDs not found).
+    if exist "aerogpu_d3d10_11_umd.dll" (
+      call :Inf2CatOne "aerogpu_dx11.inf" "aerogpu_dx11.cat" aerogpu.sys aerogpu_d3d9_umd.dll aerogpu_d3d10_11_umd.dll
+      if not "%ERRORLEVEL%"=="0" goto :Inf2CatFail
+    ) else (
+      echo [INFO] Skipping aerogpu_dx11.inf catalog generation (optional D3D10/11 UMDs not found).
+    )
   )
 )
 
@@ -196,7 +219,11 @@ for %%F in (%*) do (
 )
 
 echo [INFO] Generating %INF2CAT_CAT% (from %INF2CAT_INF%)...
-inf2cat.exe /driver:"%INF2CAT_WORK%" /os:7_X86,7_X64 >nul
+if not defined INF2CAT_OS (
+  echo [ERROR] Internal error: INF2CAT_OS is not set.
+  exit /b 1
+)
+inf2cat.exe /driver:"%INF2CAT_WORK%" /os:%INF2CAT_OS% >nul
 if not "%ERRORLEVEL%"=="0" (
   echo [ERROR] inf2cat.exe failed for %INF2CAT_INF%.
   exit /b 1
