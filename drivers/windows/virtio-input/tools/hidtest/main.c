@@ -40,6 +40,8 @@ typedef struct OPTIONS {
     int have_pid;
     int have_index;
     int have_led_mask;
+    int want_keyboard;
+    int want_mouse;
     USHORT vid;
     USHORT pid;
     DWORD index;
@@ -251,10 +253,12 @@ static void print_usage(void)
     wprintf(L"\n");
     wprintf(L"Usage:\n");
     wprintf(L"  hidtest.exe [--list]\n");
-    wprintf(L"  hidtest.exe [--index N] [--vid 0x1234] [--pid 0x5678] [--led 0x07]\n");
+    wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678] [--led 0x07]\n");
     wprintf(L"\n");
     wprintf(L"Options:\n");
     wprintf(L"  --list          List all present HID interfaces and exit\n");
+    wprintf(L"  --keyboard      Prefer/select the keyboard top-level collection (Usage=Keyboard)\n");
+    wprintf(L"  --mouse         Prefer/select the mouse top-level collection (Usage=Mouse)\n");
     wprintf(L"  --index N       Open HID interface at enumeration index N\n");
     wprintf(L"  --vid 0xVID     Filter by vendor ID (hex)\n");
     wprintf(L"  --pid 0xPID     Filter by product ID (hex)\n");
@@ -395,7 +399,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
     }
 
     iface_index = 0;
-    have_filters = opt->have_index || opt->have_vid || opt->have_pid;
+    have_filters = opt->have_index || opt->have_vid || opt->have_pid || opt->want_keyboard || opt->want_mouse;
     for (;;) {
         DWORD required = 0;
         PSP_DEVICE_INTERFACE_DETAIL_DATA_W detail = NULL;
@@ -410,6 +414,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         int match = 0;
         int is_virtio = 0;
         int is_keyboard = 0;
+        int is_mouse = 0;
 
         ZeroMemory(&iface, sizeof(iface));
         iface.cbSize = sizeof(iface);
@@ -483,6 +488,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         }
 
         is_keyboard = caps_valid && caps.UsagePage == 0x01 && caps.Usage == 0x06;
+        is_mouse = caps_valid && caps.UsagePage == 0x01 && caps.Usage == 0x02;
 
         if (report_desc_valid) {
             wprintf(L"      Report descriptor length: %lu bytes\n", report_desc_len);
@@ -511,6 +517,12 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
                 match = 0;
             }
         }
+        if (match && opt->want_keyboard) {
+            match = is_keyboard;
+        }
+        if (match && opt->want_mouse) {
+            match = is_mouse;
+        }
 
         if (opt->list_only) {
             CloseHandle(handle);
@@ -520,7 +532,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         }
 
         // Selection rules:
-        // 1) If user requested a specific device (index/vid/pid), pick the first match.
+        // 1) If user requested a specific device (keyboard/mouse/index/vid/pid), pick the first match.
         // 2) Otherwise, prefer a virtio keyboard top-level collection (VID 0x1AF4 + Usage=Keyboard).
         // 3) Otherwise, prefer the first virtio (VID 0x1AF4) device interface.
         // 4) Otherwise, fall back to the first openable HID interface.
@@ -671,6 +683,7 @@ static void read_reports_loop(const SELECTED_DEVICE *dev)
     DWORD n;
     BOOL ok;
     DWORD seq = 0;
+    int is_virtio = dev->attr_valid && dev->attr.VendorID == 0x1AF4;
 
     if (!dev->caps_valid) {
         wprintf(L"Cannot read reports: HID caps not available.\n");
@@ -702,12 +715,21 @@ static void read_reports_loop(const SELECTED_DEVICE *dev)
         dump_hex(buf, n);
         wprintf(L"\n");
 
-        // Best-effort decode based on top-level usage.
-        if (dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06) {
-            dump_keyboard_report(buf, n);
-        } else if (dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x02) {
-            int assume_report_id = dev->attr_valid && dev->attr.VendorID == 0x1AF4;
-            dump_mouse_report(buf, n, assume_report_id);
+        // Best-effort decode:
+        // - For virtio-input, use ReportID (byte 0) since report IDs are stable.
+        // - Otherwise fall back to top-level usage heuristics.
+        if (is_virtio && n > 0) {
+            if (buf[0] == 1) {
+                dump_keyboard_report(buf, n);
+            } else if (buf[0] == 2) {
+                dump_mouse_report(buf, n, 1);
+            }
+        } else {
+            if (dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06) {
+                dump_keyboard_report(buf, n);
+            } else if (dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x02) {
+                dump_mouse_report(buf, n, 0);
+            }
         }
 
         seq++;
@@ -735,6 +757,16 @@ int wmain(int argc, wchar_t **argv)
 
         if (wcscmp(argv[i], L"--list") == 0) {
             opt.list_only = 1;
+            continue;
+        }
+
+        if (wcscmp(argv[i], L"--keyboard") == 0) {
+            opt.want_keyboard = 1;
+            continue;
+        }
+
+        if (wcscmp(argv[i], L"--mouse") == 0) {
+            opt.want_mouse = 1;
             continue;
         }
 
@@ -782,6 +814,11 @@ int wmain(int argc, wchar_t **argv)
 
         wprintf(L"Unknown argument: %ls\n", argv[i]);
         print_usage();
+        return 2;
+    }
+
+    if (opt.want_keyboard && opt.want_mouse) {
+        wprintf(L"--keyboard and --mouse are mutually exclusive.\n");
         return 2;
     }
 
