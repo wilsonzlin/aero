@@ -43,6 +43,8 @@ Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
+These must be delivered as **HTTP response headers** (not `<meta http-equiv>`).
+
 ### Optional: `Cross-Origin-Embedder-Policy: credentialless`
 
 Some deployments can use:
@@ -61,6 +63,31 @@ For maximum compatibility, prefer `require-corp` unless you have a specific reas
 ### What breaks `crossOriginIsolated`
 
 With `Cross-Origin-Embedder-Policy: require-corp`, any **cross-origin** subresource must opt-in to being embedded. If you load a cross-origin script/worker/WASM/fetch that is **not CORS-enabled** *and* does **not** send an appropriate `Cross-Origin-Resource-Policy` header, the browser will block it as a COEP violation.
+
+### Production deployment examples (set headers on all assets)
+
+**Nginx** (apply to HTML + JS/worker/WASM responses):
+
+```nginx
+server {
+  # ... your listen/server_name/etc ...
+
+  add_header Cross-Origin-Opener-Policy "same-origin" always;
+  add_header Cross-Origin-Embedder-Policy "require-corp" always;
+
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+}
+```
+
+**Static hosting** (Cloudflare Pages / Netlify-style `_headers` file):
+
+```text
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+```
 
 ### Vite setup (dev + preview)
 
@@ -91,6 +118,7 @@ Disk image streaming is implemented via `fetch()` (often with HTTP `Range` reque
   - **CORS:** set `Access-Control-Allow-Origin` (and `Access-Control-Allow-Credentials: true` if you use cookies/HTTP auth), matching how the client fetches the resource.
   - **CORP:** set `Cross-Origin-Resource-Policy: same-site` (same eTLD+1) or `Cross-Origin-Resource-Policy: cross-origin` (intended to be embeddable by arbitrary sites).
 - **Range requests may trigger preflight:** `Range` is not a CORS-safelisted request header, so browsers will send an `OPTIONS` preflight. Ensure the service allows the headers you use (commonly `Range, Authorization`) and exposes `Content-Range` so JS can read it.
+- **Do not transform/compress disk bytes:** byte offsets must match the on-disk stream. If you use a CDN/reverse proxy, disable gzip/auto-compression for the disk route.
 
 For the detailed header matrix and troubleshooting guidance, see:
 
