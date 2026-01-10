@@ -9,10 +9,10 @@ If you have not installed Guest Tools yet, start here:
 ## Before you start: quick triage checklist
 
 1. **Don’t keep rebooting** if you hit a boot loop or `0x7B` BSOD after switching storage. Power off and use the rollback path.
-2. Collect `report.txt` by running `verify.cmd` as Administrator (from your `C:\AeroGuestTools\` copy). Pay special attention to any `Code 52` (signing/trust) or `Code 28` (driver not installed) device errors.
+2. Collect `report.txt` by running `verify.cmd` as Administrator and opening `C:\AeroGuestTools\report.txt`. Pay special attention to any `Code 52` (signing/trust) or `Code 28` (driver not installed) device errors.
 3. Confirm you’re using drivers that match your OS:
-    - Windows 7 **x86** requires x86 drivers.
-    - Windows 7 **x64** requires x64 drivers. (32-bit drivers cannot load.)
+   - Windows 7 **x86** requires x86 drivers.
+   - Windows 7 **x64** requires x64 drivers. (32-bit drivers cannot load.)
 4. If you changed multiple VM devices at once (storage + GPU + network), consider rolling back and switching **one class at a time** so failures are easier to isolate.
 5. Confirm the guest **date/time** is correct. If the clock is far off, Windows may treat certificates as “not yet valid” or “expired” and driver signature validation can fail.
 
