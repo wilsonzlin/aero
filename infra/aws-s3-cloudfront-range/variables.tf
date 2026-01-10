@@ -84,7 +84,7 @@ variable "enable_edge_cors_preflight" {
 }
 
 variable "cors_allowed_origins" {
-  description = "Allowed origins for CORS. If empty, no S3 CORS configuration is applied (same-origin only). Required if enable_edge_cors_preflight or enable_edge_cors is true."
+  description = "Allowed origins for CORS. If empty, no S3 CORS configuration is applied (same-origin only). For edge-handled preflight, use full origins (recommended) or a domain suffix pattern like .example.com."
   type        = list(string)
   default     = []
 }

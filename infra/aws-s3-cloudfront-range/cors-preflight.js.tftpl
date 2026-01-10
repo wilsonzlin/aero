@@ -71,19 +71,20 @@ function isOriginAllowed(origin) {
       return true;
     }
 
-    // Domain match (pattern without scheme).
-    if (patternLower.indexOf("://") === -1) {
-      if (patternLower.charAt(0) === ".") {
-        var d = patternLower.substring(1);
-        if (hostLower === d || endsWith(hostLower, patternLower)) {
-          return true;
-        }
-      } else {
-        if (hostLower === patternLower || endsWith(hostLower, "." + patternLower)) {
-          return true;
-        }
-      }
-    }
+     // Hostname match (pattern without scheme). For suffix/subdomain matching, use a leading dot
+     // (e.g. ".example.com").
+     if (patternLower.indexOf("://") === -1) {
+       if (patternLower.charAt(0) === ".") {
+         var d = patternLower.substring(1);
+         if (hostLower === d || endsWith(hostLower, patternLower)) {
+           return true;
+         }
+       } else {
+         if (hostLower === patternLower) {
+           return true;
+         }
+       }
+     }
   }
 
   return false;
