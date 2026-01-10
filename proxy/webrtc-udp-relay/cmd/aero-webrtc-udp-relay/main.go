@@ -10,10 +10,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/pion/webrtc/v4"
-
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/httpserver"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/webrtcpeer"
 )
 
 var (
@@ -38,10 +37,13 @@ func main() {
 		os.Exit(2)
 	}
 
-	// This service will use pion/webrtc for server-side WebRTC once the relay
-	// logic is implemented. We keep a small compile-time reference so the
-	// dependency is present from day one.
-	_ = webrtc.NewAPI
+	// Construct the WebRTC API early so misconfigurations are caught on startup.
+	// This does not start any networking; ICE sockets are only created once we
+	// start creating PeerConnections.
+	if _, err := webrtcpeer.NewAPI(cfg); err != nil {
+		logger.Error("failed to configure webrtc", "err", err)
+		os.Exit(2)
+	}
 
 	logger.Info("starting aero-webrtc-udp-relay",
 		"listen_addr", cfg.ListenAddr,

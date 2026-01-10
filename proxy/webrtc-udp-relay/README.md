@@ -81,6 +81,7 @@ Change these before exposing TURN to the internet.
 
 - Minimal production-oriented HTTP server skeleton + middleware
 - Config system (env + flags): listen address, public base URL, log format/level, shutdown timeout, dev/prod mode
+- WebRTC network config (env + flags): ICE UDP port range, UDP listen IP, NAT 1:1 public IP advertisement
 - Relay/policy primitives (not yet wired to WebRTC signaling)
 - Protocol documentation (`PROTOCOL.md`)
 
@@ -96,8 +97,8 @@ Change these before exposing TURN to the internet.
 - **HTTP**: configurable via `--listen-addr` / `AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR`
   - Default: `127.0.0.1:8080` (local dev)
   - In containers: set `AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR=0.0.0.0:8080` (done in `docker-compose.yml`)
-- **UDP (future)**: ICE + relay UDP ports will be introduced once the WebRTC and relay logic lands.
-  - Expect additional inbound UDP requirements once implemented.
+- **UDP (ICE / relay, upcoming)**: ICE + relay UDP ports will be used once signaling and relay endpoints land.
+  - Configure the ICE port range with `WEBRTC_UDP_PORT_MIN/MAX` (and publish/open those ports).
 - **TURN (optional, docker-compose `with-turn` profile)**:
   - TURN listening port: `3478/udp`
   - TURN relayed traffic port range: `49152-49200/udp` (must match `turn/turnserver.conf`)
@@ -125,11 +126,30 @@ signaling and relay endpoints land:
   - Example: `http://localhost:5173,http://localhost:3000`
 - `WEBRTC_UDP_PORT_MIN` / `WEBRTC_UDP_PORT_MAX`: UDP port range used for ICE candidates.
   - Must match your firewall rules and any container port publishing (see below).
+  - The relay requires a minimum of 100 ports when a range is configured (rule of thumb: ~100 UDP ports per ~50 concurrent sessions).
   - The provided `docker-compose.yml` defaults the relay to `50000-50100/udp` to avoid colliding
     with the coturn relay range (`49152-49200/udp`).
+- `WEBRTC_UDP_LISTEN_IP`: local IP address to bind ICE UDP sockets to (default `0.0.0.0`, meaning "use library defaults / all interfaces").
+- `WEBRTC_NAT_1TO1_IPS`: comma-separated public IPs to advertise for ICE when the relay is behind NAT.
+- `WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE`: `host` or `srflx` (default: `host`).
 - `AERO_ICE_SERVERS_JSON`: JSON string describing ICE servers that the relay advertises to clients.
   - For the `with-turn` profile, `docker-compose.yml` sets this automatically to point at the
     local coturn instance (and uses `TURN_PUBLIC_HOST` for the hostname/IP).
+
+Equivalent flags:
+
+- `--webrtc-udp-port-min` / `--webrtc-udp-port-max`
+- `--webrtc-udp-listen-ip`
+- `--webrtc-nat-1to1-ips`
+- `--webrtc-nat-1to1-ip-candidate-type`
+
+#### Example: behind NAT (private IP + known public IP)
+
+```bash
+export WEBRTC_UDP_LISTEN_IP=10.0.0.5
+export WEBRTC_NAT_1TO1_IPS=203.0.113.10
+export WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE=host
+```
 
 Example `AERO_ICE_SERVERS_JSON`:
 
@@ -223,6 +243,18 @@ you must:
    same numeric range.
 3. Keep the range aligned everywhere (relay config, TURN config, container ports).
 
+Example (Docker):
+
+```bash
+docker run -p 50000-50100:50000-50100/udp ...
+```
+
+Example (UFW):
+
+```bash
+sudo ufw allow 50000:50100/udp
+```
+
 If you change one side (e.g. `turnserver.conf` uses `min-port=52000`) without updating the
 published ports, ICE will fail in non-obvious ways.
 
@@ -273,3 +305,4 @@ See "Destination policy (UDP egress)" above.
 cd proxy/webrtc-udp-relay
 docker build .
 ```
+

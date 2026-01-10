@@ -4,22 +4,52 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	EnvListenAddr           = "AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR"
-	EnvPublicBaseURL        = "AERO_WEBRTC_UDP_RELAY_PUBLIC_BASE_URL"
-	EnvLogFormat            = "AERO_WEBRTC_UDP_RELAY_LOG_FORMAT"
-	EnvLogLevel             = "AERO_WEBRTC_UDP_RELAY_LOG_LEVEL"
-	EnvShutdownTimeout      = "AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT"
-	EnvMode                 = "AERO_WEBRTC_UDP_RELAY_MODE"
-	DefaultListenAddr       = "127.0.0.1:8080"
-	DefaultShutdown         = 15 * time.Second
-	DefaultMode        Mode = ModeDev
+	EnvListenAddr      = "AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR"
+	EnvPublicBaseURL   = "AERO_WEBRTC_UDP_RELAY_PUBLIC_BASE_URL"
+	EnvLogFormat       = "AERO_WEBRTC_UDP_RELAY_LOG_FORMAT"
+	EnvLogLevel        = "AERO_WEBRTC_UDP_RELAY_LOG_LEVEL"
+	EnvShutdownTimeout = "AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT"
+	EnvMode            = "AERO_WEBRTC_UDP_RELAY_MODE"
+
+	DefaultListenAddr      = "127.0.0.1:8080"
+	DefaultShutdown        = 15 * time.Second
+	DefaultMode       Mode = ModeDev
 )
+
+const (
+	EnvWebRTCUDPPortMin = "WEBRTC_UDP_PORT_MIN"
+	EnvWebRTCUDPPortMax = "WEBRTC_UDP_PORT_MAX"
+
+	EnvWebRTCNAT1To1IPs             = "WEBRTC_NAT_1TO1_IPS"
+	EnvWebRTCNAT1To1IPCandidateType = "WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE"
+
+	EnvWebRTCUDPListenIP     = "WEBRTC_UDP_LISTEN_IP"
+	DefaultWebRTCUDPListenIP = "0.0.0.0"
+)
+
+const (
+	FlagWebRTCUDPPortMin = "webrtc-udp-port-min"
+	FlagWebRTCUDPPortMax = "webrtc-udp-port-max"
+
+	FlagWebRTCNAT1To1IPs             = "webrtc-nat-1to1-ips"
+	FlagWebRTCNAT1To1IPCandidateType = "webrtc-nat-1to1-ip-candidate-type"
+
+	FlagWebRTCUDPListenIP = "webrtc-udp-listen-ip"
+)
+
+// RecommendedWebRTCUDPPortRangeSize is an intentionally conservative minimum.
+// Each WebRTC session may consume multiple UDP ports (depending on ICE
+// settings), and running out of ports manifests as hard-to-debug connectivity
+// failures.
+const RecommendedWebRTCUDPPortRangeSize = 100
 
 type Mode string
 
@@ -35,6 +65,18 @@ const (
 	LogFormatJSON LogFormat = "json"
 )
 
+type NAT1To1IPCandidateType string
+
+const (
+	NAT1To1CandidateTypeHost  NAT1To1IPCandidateType = "host"
+	NAT1To1CandidateTypeSrflx NAT1To1IPCandidateType = "srflx"
+)
+
+type UDPPortRange struct {
+	Min uint16
+	Max uint16
+}
+
 type Config struct {
 	ListenAddr      string
 	PublicBaseURL   string
@@ -42,6 +84,22 @@ type Config struct {
 	LogLevel        slog.Level
 	ShutdownTimeout time.Duration
 	Mode            Mode
+
+	// WebRTCUDPPortRange restricts the UDP ports used for ICE. When nil, pion uses
+	// its defaults (OS ephemeral port selection).
+	WebRTCUDPPortRange *UDPPortRange
+
+	// WebRTCNAT1To1IPs configures pion to advertise these public IPs for ICE when
+	// the relay is behind NAT. Values must be literal IPs (no hostnames).
+	WebRTCNAT1To1IPs []string
+
+	// WebRTCNAT1To1IPCandidateType configures whether the NAT 1:1 IPs are
+	// advertised as host or srflx ICE candidates.
+	WebRTCNAT1To1IPCandidateType NAT1To1IPCandidateType
+
+	// WebRTCUDPListenIP restricts which local interface address ICE will bind UDP
+	// sockets to. 0.0.0.0 means "use library default" (typically all interfaces).
+	WebRTCUDPListenIP net.IP
 }
 
 func Load(args []string) (Config, error) {
@@ -81,6 +139,33 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		shutdownTimeout = d
 	}
 
+	// WebRTC network defaults (env values become flag defaults).
+	var webrtcUDPPortMin uint
+	if raw, ok := lookup(EnvWebRTCUDPPortMin); ok && strings.TrimSpace(raw) != "" {
+		p, err := parsePortString(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvWebRTCUDPPortMin, raw, err)
+		}
+		webrtcUDPPortMin = uint(p)
+	}
+
+	var webrtcUDPPortMax uint
+	if raw, ok := lookup(EnvWebRTCUDPPortMax); ok && strings.TrimSpace(raw) != "" {
+		p, err := parsePortString(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvWebRTCUDPPortMax, raw, err)
+		}
+		webrtcUDPPortMax = uint(p)
+	}
+
+	if (webrtcUDPPortMin == 0) != (webrtcUDPPortMax == 0) {
+		return Config{}, fmt.Errorf("%s and %s must be set together (or both unset)", EnvWebRTCUDPPortMin, EnvWebRTCUDPPortMax)
+	}
+
+	webrtcUDPListenIPStr := envOrDefault(lookup, EnvWebRTCUDPListenIP, DefaultWebRTCUDPListenIP)
+	webrtcNAT1To1IPsStr := envOrDefault(lookup, EnvWebRTCNAT1To1IPs, "")
+	webrtcNAT1To1CandidateTypeStr := envOrDefault(lookup, EnvWebRTCNAT1To1IPCandidateType, string(NAT1To1CandidateTypeHost))
+
 	fs := flag.NewFlagSet("aero-webrtc-udp-relay", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -96,6 +181,12 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.StringVar(&logFormatStr, "log-format", logFormatDefault, "Log format: text or json")
 	fs.StringVar(&logLevelStr, "log-level", logLevelDefault, "Log level: debug, info, warn, error")
 	fs.DurationVar(&shutdownTimeout, "shutdown-timeout", shutdownTimeout, "Graceful shutdown timeout (e.g. 15s)")
+
+	fs.UintVar(&webrtcUDPPortMin, FlagWebRTCUDPPortMin, webrtcUDPPortMin, "Min UDP port for WebRTC ICE (0 = unset; env "+EnvWebRTCUDPPortMin+")")
+	fs.UintVar(&webrtcUDPPortMax, FlagWebRTCUDPPortMax, webrtcUDPPortMax, "Max UDP port for WebRTC ICE (0 = unset; env "+EnvWebRTCUDPPortMax+")")
+	fs.StringVar(&webrtcUDPListenIPStr, FlagWebRTCUDPListenIP, webrtcUDPListenIPStr, "Local listen IP for WebRTC ICE UDP sockets (env "+EnvWebRTCUDPListenIP+")")
+	fs.StringVar(&webrtcNAT1To1IPsStr, FlagWebRTCNAT1To1IPs, webrtcNAT1To1IPsStr, "Comma-separated public IPs to advertise for WebRTC ICE (env "+EnvWebRTCNAT1To1IPs+")")
+	fs.StringVar(&webrtcNAT1To1CandidateTypeStr, FlagWebRTCNAT1To1IPCandidateType, webrtcNAT1To1CandidateTypeStr, "Candidate type for NAT 1:1 IPs: host or srflx (env "+EnvWebRTCNAT1To1IPCandidateType+")")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -135,6 +226,54 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, fmt.Errorf("shutdown timeout must be > 0")
 	}
 
+	var webrtcUDPPortRange *UDPPortRange
+	if webrtcUDPPortMin != 0 || webrtcUDPPortMax != 0 {
+		if webrtcUDPPortMin == 0 || webrtcUDPPortMax == 0 {
+			return Config{}, fmt.Errorf("%s/%s and %s/%s must be set together (or both unset)",
+				EnvWebRTCUDPPortMin, "--"+FlagWebRTCUDPPortMin,
+				EnvWebRTCUDPPortMax, "--"+FlagWebRTCUDPPortMax,
+			)
+		}
+		min, err := parsePortUint(webrtcUDPPortMin)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s/%s: %w", EnvWebRTCUDPPortMin, "--"+FlagWebRTCUDPPortMin, err)
+		}
+		max, err := parsePortUint(webrtcUDPPortMax)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s/%s: %w", EnvWebRTCUDPPortMax, "--"+FlagWebRTCUDPPortMax, err)
+		}
+		if min > max {
+			return Config{}, fmt.Errorf("WebRTC UDP port range min (%d) must be <= max (%d)", min, max)
+		}
+		size := int(max) - int(min) + 1
+		if size < RecommendedWebRTCUDPPortRangeSize {
+			return Config{}, fmt.Errorf("WebRTC UDP port range is too small: %d ports (min %d recommended)", size, RecommendedWebRTCUDPPortRangeSize)
+		}
+		webrtcUDPPortRange = &UDPPortRange{Min: min, Max: max}
+	}
+
+	webrtcUDPListenIP := net.ParseIP(strings.TrimSpace(webrtcUDPListenIPStr))
+	if webrtcUDPListenIP == nil {
+		return Config{}, fmt.Errorf("invalid %s/%s %q", EnvWebRTCUDPListenIP, "--"+FlagWebRTCUDPListenIP, webrtcUDPListenIPStr)
+	}
+
+	var webrtcNAT1To1IPs []string
+	if strings.TrimSpace(webrtcNAT1To1IPsStr) != "" {
+		ips, err := parseIPList(webrtcNAT1To1IPsStr)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s/%s %q: %w", EnvWebRTCNAT1To1IPs, "--"+FlagWebRTCNAT1To1IPs, webrtcNAT1To1IPsStr, err)
+		}
+		webrtcNAT1To1IPs = ips
+	}
+
+	if strings.TrimSpace(webrtcNAT1To1CandidateTypeStr) == "" {
+		webrtcNAT1To1CandidateTypeStr = string(NAT1To1CandidateTypeHost)
+	}
+	webrtcNAT1To1CandidateType, err := parseCandidateType(webrtcNAT1To1CandidateTypeStr)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid %s/%s %q: %w", EnvWebRTCNAT1To1IPCandidateType, "--"+FlagWebRTCNAT1To1IPCandidateType, webrtcNAT1To1CandidateTypeStr, err)
+	}
+
 	return Config{
 		ListenAddr:      listenAddr,
 		PublicBaseURL:   publicBaseURL,
@@ -142,6 +281,11 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		LogLevel:        level,
 		ShutdownTimeout: shutdownTimeout,
 		Mode:            mode,
+
+		WebRTCUDPPortRange:           webrtcUDPPortRange,
+		WebRTCUDPListenIP:            webrtcUDPListenIP,
+		WebRTCNAT1To1IPs:             webrtcNAT1To1IPs,
+		WebRTCNAT1To1IPCandidateType: webrtcNAT1To1CandidateType,
 	}, nil
 }
 
@@ -223,4 +367,53 @@ func parseLogLevel(raw string) (slog.Level, error) {
 	default:
 		return slog.LevelInfo, fmt.Errorf("invalid log level %q (expected debug, info, warn, error)", raw)
 	}
+}
+
+func IsUnspecifiedIP(ip net.IP) bool {
+	return ip == nil || ip.Equal(net.IPv4zero) || ip.Equal(net.IPv6zero)
+}
+
+func parsePortString(s string) (uint16, error) {
+	v, err := strconv.ParseUint(strings.TrimSpace(s), 10, 16)
+	if err != nil {
+		return 0, fmt.Errorf("invalid port %q", s)
+	}
+	return parsePortUint(uint(v))
+}
+
+func parsePortUint(v uint) (uint16, error) {
+	if v == 0 || v > 65535 {
+		return 0, fmt.Errorf("port %d out of range (1-65535)", v)
+	}
+	return uint16(v), nil
+}
+
+func parseCandidateType(s string) (NAT1To1IPCandidateType, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case string(NAT1To1CandidateTypeHost):
+		return NAT1To1CandidateTypeHost, nil
+	case string(NAT1To1CandidateTypeSrflx):
+		return NAT1To1CandidateTypeSrflx, nil
+	default:
+		return "", fmt.Errorf("unknown candidate type %q", s)
+	}
+}
+
+func parseIPList(s string) ([]string, error) {
+	var out []string
+	for _, raw := range strings.Split(s, ",") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		ip := net.ParseIP(raw)
+		if ip == nil {
+			return nil, fmt.Errorf("invalid IP %q", raw)
+		}
+		out = append(out, ip.String())
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("must include at least one IP")
+	}
+	return out, nil
 }
