@@ -186,6 +186,13 @@ name = "aero-gpu-trace"
 version = "0.1.0"
 
 [[package]]
+name = "aero-gpu-utils"
+version = "0.1.0"
+dependencies = [
+ "wasm-bindgen-test",
+]
+
+[[package]]
 name = "aero-gpu-vga"
 version = "0.1.0"
 

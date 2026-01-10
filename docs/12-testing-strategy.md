@@ -362,7 +362,14 @@ async fn test_windows_7_boot() {
 ```
 
 ### Graphics Tests
- 
+  
+Graphics correctness needs **two layers**:
+
+1. **Non-GPU tests (fast, deterministic):** shader/pipeline validation, pipeline key hashing, render-state caching, command encoding, etc. These can run as normal Rust unit tests or `wasm-bindgen-test` in a non-GPU JS environment.
+2. **Real-GPU smoke tests (browser E2E):** ensure WebGPU and the WebGL2 fallback can initialize, render, and read back pixels. These should run in real browsers via Playwright.
+
+For `wasm-bindgen-test` suites, prefer running via `wasm-pack` (e.g. `wasm-pack test --node`) so tests execute in a JS environment without requiring GPU access.
+
 ```rust
 #[wasm_bindgen_test]
 async fn test_vga_text_mode() {
@@ -415,6 +422,23 @@ async fn test_directx_triangle() {
     }
 }
 ```
+
+#### Browser GPU smoke tests (Playwright)
+
+The repository includes a minimal harness page (`web/src/pages/gpu_smoke.html`) and a dedicated smoke-test GPU worker (`web/src/workers/gpu_smoke.worker.js`) used by Playwright (`tests/playwright/gpu_smoke.spec.ts`).
+
+The smoke test does:
+
+- create a canvas and transfer it to the worker (`OffscreenCanvas`)
+- `present_test_pattern` (renders a deterministic quadrant pattern)
+- `request_screenshot` (GPU readback into an RGBA buffer)
+- SHA-256 hash compare against an expected value
+
+WebGPU is treated as **optional** (gated on capability detection); the forced WebGL2 fallback smoke test is **required** so CI continues to validate the fallback path even if headless WebGPU is unavailable.
+
+#### WebGPU notes for headless CI
+
+Chromium's WebGPU availability varies by environment and version. When running headless, it may require browser flags (e.g. `--enable-unsafe-webgpu`) to expose `navigator.gpu`. If WebGPU is still unavailable (or readback fails), the WebGPU smoke test should be skipped rather than failing the suite, while the WebGL2 forced test remains mandatory.
 
 #### D3D9Ex (DWM-facing) smoke test
 

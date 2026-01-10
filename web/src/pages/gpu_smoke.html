@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>GPU Smoke</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      }
+
+      canvas {
+        width: 256px;
+        height: 256px;
+        image-rendering: pixelated;
+        border: 1px solid currentColor;
+      }
+
+      .row {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        padding: 12px;
+        border: 1px solid currentColor;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>GPU Smoke</h1>
+
+    <p>
+      This page initializes the GPU worker, renders a deterministic test pattern, requests a GPU-side
+      pixel readback, and hash-checks the RGBA buffer.
+    </p>
+
+    <div class="row">
+      <div>
+        <h2>Presented</h2>
+        <canvas id="gpu-canvas"></canvas>
+      </div>
+      <div>
+        <h2>Readback</h2>
+        <canvas id="screenshot-canvas"></canvas>
+      </div>
+    </div>
+
+    <h2>Status</h2>
+    <pre id="status">Loading…</pre>
+
+    <button id="bench" type="button">Run bench (120 frames)</button>
+    <pre id="bench-output"></pre>
+
+    <script type="module" src="./gpu_smoke.js"></script>
+  </body>
+</html>
+
