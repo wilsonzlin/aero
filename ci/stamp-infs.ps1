@@ -7,6 +7,8 @@ param(
 
   [string] $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path,
 
+  [string] $ToolchainJson,
+
   [string] $StampInfPath,
 
   [string] $DriverVerVersion,
@@ -22,6 +24,35 @@ $ErrorActionPreference = "Stop"
 function Resolve-FullPath {
   param([Parameter(Mandatory = $true)][string] $Path)
   return (Resolve-Path -LiteralPath $Path).Path
+}
+
+function Resolve-ToolchainJsonPath {
+  param([Parameter(Mandatory = $true)][string] $Path)
+
+  $p = $Path
+  if (-not [System.IO.Path]::IsPathRooted($p)) {
+    $p = Join-Path -Path (Get-Location) -ChildPath $p
+  }
+  if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {
+    throw "ToolchainJson not found: $Path (resolved to $p)"
+  }
+  return (Resolve-Path -LiteralPath $p).Path
+}
+
+function Read-StampInfPathFromToolchainJson {
+  param([Parameter(Mandatory = $true)][string] $ToolchainJsonPath)
+
+  $jsonPath = Resolve-ToolchainJsonPath -Path $ToolchainJsonPath
+  $data = Get-Content -LiteralPath $jsonPath -Raw | ConvertFrom-Json
+
+  foreach ($propName in @('StampInfExe', 'StampinfExe', 'stampinfExe', 'stampInfExe')) {
+    $prop = $data.PSObject.Properties[$propName]
+    if ($null -ne $prop -and -not [string]::IsNullOrWhiteSpace([string]$prop.Value)) {
+      return [string]$prop.Value
+    }
+  }
+
+  return $null
 }
 
 function Get-WdkToolPath {
@@ -251,6 +282,13 @@ if ($effectiveDate -gt $buildTime) {
 }
 
 $dateString = $effectiveDate.ToString("MM/dd/yyyy", [System.Globalization.CultureInfo]::InvariantCulture)
+
+if (-not $StampInfPath -and $ToolchainJson) {
+  $maybeStampInf = Read-StampInfPathFromToolchainJson -ToolchainJsonPath $ToolchainJson
+  if ($maybeStampInf) {
+    $StampInfPath = $maybeStampInf
+  }
+}
 
 $stampInfExe = Get-WdkToolPath -ToolName "stampinf.exe" -ExplicitPath $StampInfPath
 

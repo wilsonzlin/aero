@@ -37,6 +37,7 @@ Defaults (when overrides are not provided):
   - Package version (for logs/artifact naming): `MAJOR.MINOR.PATCH+<distance>.g<shortsha>`
 
 This script only stamps INFs inside the provided staging directory.
+If `-ToolchainJson` is provided, it will use `StampInfExe` from that manifest (when present) for deterministic WDK tool resolution.
 
 ## `ci/make-catalogs.ps1`
 

@@ -256,7 +256,15 @@ foreach ($driverBuildDir in $driverBuildDirs) {
 
     if ($stampInfs) {
       Write-Host "     Stamping staged INF(s) prior to catalog generation..."
-      & $stampScript -StagingDir $packageDir -InfPaths $stagedInfPaths -RepoRoot $repoRoot | Out-Null
+      $stampArgs = @{
+        StagingDir = $packageDir
+        InfPaths   = $stagedInfPaths
+        RepoRoot   = $repoRoot
+      }
+      if ($ToolchainJson) {
+        $stampArgs.ToolchainJson = $ToolchainJson
+      }
+      & $stampScript @stampArgs | Out-Null
     } else {
       Write-Host "     INF stamping disabled; using existing DriverVer values."
     }
