@@ -281,7 +281,7 @@ Do storage first, then network, then GPU. If you change storage + GPU simultaneo
 2. Re-run `setup.cmd` as Administrator.
 3. If you recently changed multiple VM devices, roll back and switch one device class at a time to isolate the failure.
 
-## Issue: Windows Setup can’t see a virtio-blk disk (slipstream installs)
+## Issue: Windows Setup can't see a virtio-blk disk (slipstream installs)
 
 This only applies if you are attempting to install Windows directly onto **virtio-blk** during Windows Setup.
 
@@ -403,7 +403,7 @@ Fix (from an elevated Command Prompt):
 - **Last Known Good Configuration (advanced)**: rolls back to the last driver/service configuration that successfully reached the logon desktop.
 - **Enable Boot Logging**: writes `C:\Windows\ntbtlog.txt`, which can help identify which driver loads last before a hang/boot failure.
 
-## Issue: “Test Mode” watermark on the desktop (x64)
+## Issue: Test Mode watermark on the desktop (x64)
 
 If test signing is enabled, Windows 7 x64 shows a “Test Mode” watermark. This is expected if you are using test-signed drivers.
 
