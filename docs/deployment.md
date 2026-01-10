@@ -91,6 +91,7 @@ This repo provides `vercel.json` (repo root), which:
 
 - builds the `web/` frontend and deploys `web/dist`
 - applies COOP/COEP + CSP + baseline security headers to all paths
+- applies safe caching defaults (`no-cache` for HTML; immutable caching for `/assets/*`)
 
 ### Cloudflare Pages
 
@@ -98,7 +99,15 @@ Cloudflare Pages supports the same `_headers` file format.
 
 Configure the project with:
 
+Recommended (simplest):
+
+- Root directory: `web`
 - Build command: `npm run build`
+- Build output directory: `dist`
+
+Alternative (build from repo root):
+
+- Build command: `npm run build --prefix web`
 - Build output directory: `web/dist`
 
 The generated `web/dist/_headers` file is deployed automatically and enables
