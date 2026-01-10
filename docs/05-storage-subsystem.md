@@ -622,6 +622,8 @@ impl CdromDrive {
 
 ### Image Download and Streaming
 
+Operational details for the backend **disk image streaming service** (HTTP `Range`, CORS preflight for `Range`, and cross-origin isolation considerations) are documented in [backend/disk-image-streaming-service.md](./backend/disk-image-streaming-service.md).
+
 ```rust
 pub struct StreamingDisk {
     // Remote image
