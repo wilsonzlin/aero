@@ -76,6 +76,7 @@ bool virtio_input_try_pop_report(struct virtio_input_device *dev, struct virtio_
 #ifndef HID_REPORT_DESCRIPTOR_TYPE
 #define HID_REPORT_DESCRIPTOR_TYPE 0x22
 #endif
+#include "log.h"
 
 #define VIRTIOINPUT_POOL_TAG 'pInV'
 
@@ -114,7 +115,6 @@ enum { VIRTIO_PCI_BAR_COUNT = 6 };
 typedef struct _DEVICE_CONTEXT {
     WDFQUEUE DefaultQueue;
     struct virtio_input_device InputDevice;
-
     // Manual read queues indexed by ReportID. Index 0 is a special "any report"
     // queue used for non-collection (parent interface) opens.
     WDFQUEUE ReadReportQueue[VIRTIO_INPUT_MAX_REPORT_ID + 1];
@@ -122,6 +122,7 @@ typedef struct _DEVICE_CONTEXT {
     VIRTIO_INPUT_PENDING_REPORT PendingReport[VIRTIO_INPUT_MAX_REPORT_ID + 1];
 
     PVIRTIO_STATUSQ StatusQ;
+    VIOINPUT_COUNTERS Counters;
 
     VIRTIO_PCI_BAR Bars[VIRTIO_PCI_BAR_COUNT];
     volatile VIRTIO_PCI_COMMON_CFG* CommonCfg;
@@ -139,6 +140,7 @@ EVT_WDF_DEVICE_D0_ENTRY VirtioInputEvtDeviceD0Entry;
 EVT_WDF_DEVICE_D0_EXIT VirtioInputEvtDeviceD0Exit;
 
 EVT_WDF_IO_QUEUE_IO_INTERNAL_DEVICE_CONTROL VirtioInputEvtIoInternalDeviceControl;
+EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL VirtioInputEvtIoDeviceControl;
 
 NTSTATUS VirtioInputQueueInitialize(_In_ WDFDEVICE Device);
 NTSTATUS VirtioInputFileConfigure(_Inout_ WDFDEVICE_INIT *DeviceInit);

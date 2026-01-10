@@ -2,7 +2,19 @@
 
 static VOID VirtioInputEvtIoCanceledOnReadQueue(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request)
 {
-    UNREFERENCED_PARAMETER(Queue);
+    WDFDEVICE device = WdfIoQueueGetDevice(Queue);
+    PDEVICE_CONTEXT devCtx = VirtioInputGetDeviceContext(device);
+
+    VioInputCounterInc(&devCtx->Counters.ReadReportCancelled);
+    VioInputCounterDec(&devCtx->Counters.ReadReportQueueDepth);
+
+    VIOINPUT_LOG(
+        VIOINPUT_LOG_QUEUE,
+        "READ_REPORT cancelled: status=%!STATUS! bytes=0 ring=%ld pending=%ld\n",
+        STATUS_CANCELLED,
+        devCtx->Counters.ReportRingDepth,
+        devCtx->Counters.ReadReportQueueDepth);
+
     WdfRequestComplete(Request, STATUS_CANCELLED);
 }
 
@@ -176,9 +188,20 @@ NTSTATUS VirtioInputReportArrived(
     NTSTATUS status = WdfIoQueueRetrieveNextRequest(devCtx->ReadReportQueue[ReportId], &request);
     if (!NT_SUCCESS(status)) {
         while (NT_SUCCESS(WdfIoQueueRetrieveNextRequest(devCtx->ReadReportQueue[VIRTIO_INPUT_REPORT_ID_ANY], &request))) {
+            VioInputCounterDec(&devCtx->Counters.ReadReportQueueDepth);
+
             size_t bytesWritten = 0;
             status = VirtioInputCopyReportToReadRequest(request, ReportId, Report, ReportSize, &bytesWritten);
             WdfRequestCompleteWithInformation(request, status, bytesWritten);
+
+            VioInputCounterInc(&devCtx->Counters.ReadReportCompleted);
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_QUEUE,
+                "READ_REPORT complete(any): reportId=%u status=%!STATUS! bytes=%Iu pending=%ld\n",
+                (ULONG)ReportId,
+                status,
+                bytesWritten,
+                devCtx->Counters.ReadReportQueueDepth);
 
             if (NT_SUCCESS(status)) {
                 return STATUS_SUCCESS;
@@ -191,12 +214,28 @@ NTSTATUS VirtioInputReportArrived(
         RtlCopyMemory(devCtx->PendingReport[ReportId].Data, Report, ReportSize);
         WdfSpinLockRelease(devCtx->ReadReportLock);
 
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_QUEUE,
+            "Buffered report (no pending reads): reportId=%u size=%Iu\n",
+            (ULONG)ReportId,
+            ReportSize);
+
         return STATUS_SUCCESS;
     }
 
+    VioInputCounterDec(&devCtx->Counters.ReadReportQueueDepth);
     size_t bytesWritten = 0;
     status = VirtioInputCopyReportToReadRequest(request, ReportId, Report, ReportSize, &bytesWritten);
     WdfRequestCompleteWithInformation(request, status, bytesWritten);
+
+    VioInputCounterInc(&devCtx->Counters.ReadReportCompleted);
+    VIOINPUT_LOG(
+        VIOINPUT_LOG_QUEUE,
+        "READ_REPORT complete: reportId=%u status=%!STATUS! bytes=%Iu pending=%ld\n",
+        (ULONG)ReportId,
+        status,
+        bytesWritten,
+        devCtx->Counters.ReadReportQueueDepth);
 
     return STATUS_SUCCESS;
 }
@@ -234,12 +273,30 @@ NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Req
             size_t bytesWritten = 0;
             NTSTATUS status = VirtioInputCopyReportToReadRequest(Request, localReportId, localReport, localSize, &bytesWritten);
             WdfRequestCompleteWithInformation(Request, status, bytesWritten);
+            VioInputCounterInc(&devCtx->Counters.ReadReportCompleted);
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_QUEUE,
+                "READ_REPORT complete(pending): reportId=%u status=%!STATUS! bytes=%Iu pending=%ld\n",
+                (ULONG)localReportId,
+                status,
+                bytesWritten,
+                devCtx->Counters.ReadReportQueueDepth);
             return STATUS_SUCCESS;
         }
 
         NTSTATUS status = WdfRequestForwardToIoQueue(Request, devCtx->ReadReportQueue[VIRTIO_INPUT_REPORT_ID_ANY]);
         if (!NT_SUCCESS(status)) {
+            VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_QUEUE, "READ_REPORT queue(any) failed: %!STATUS!\n", status);
             WdfRequestComplete(Request, status);
+        } else {
+            VioInputCounterInc(&devCtx->Counters.ReadReportPended);
+            VioInputCounterInc(&devCtx->Counters.ReadReportQueueDepth);
+            VioInputCounterMaxUpdate(&devCtx->Counters.ReadReportQueueMaxDepth, devCtx->Counters.ReadReportQueueDepth);
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_QUEUE,
+                "READ_REPORT pended(any): pending=%ld ring=%ld\n",
+                devCtx->Counters.ReadReportQueueDepth,
+                devCtx->Counters.ReportRingDepth);
         }
         return STATUS_SUCCESS;
     }
@@ -261,14 +318,33 @@ NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Req
         size_t bytesWritten = 0;
         NTSTATUS status = VirtioInputCopyReportToReadRequest(Request, reportId, localReport, localSize, &bytesWritten);
         WdfRequestCompleteWithInformation(Request, status, bytesWritten);
+        VioInputCounterInc(&devCtx->Counters.ReadReportCompleted);
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_QUEUE,
+            "READ_REPORT complete(pending): reportId=%u status=%!STATUS! bytes=%Iu pending=%ld\n",
+            (ULONG)reportId,
+            status,
+            bytesWritten,
+            devCtx->Counters.ReadReportQueueDepth);
         return STATUS_SUCCESS;
     }
 
     NTSTATUS status = WdfRequestForwardToIoQueue(Request, devCtx->ReadReportQueue[reportId]);
     if (!NT_SUCCESS(status)) {
+        VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_QUEUE, "READ_REPORT queue(%u) failed: %!STATUS!\n", (ULONG)reportId, status);
         WdfRequestComplete(Request, status);
         return STATUS_SUCCESS;
     }
+
+    VioInputCounterInc(&devCtx->Counters.ReadReportPended);
+    VioInputCounterInc(&devCtx->Counters.ReadReportQueueDepth);
+    VioInputCounterMaxUpdate(&devCtx->Counters.ReadReportQueueMaxDepth, devCtx->Counters.ReadReportQueueDepth);
+    VIOINPUT_LOG(
+        VIOINPUT_LOG_QUEUE,
+        "READ_REPORT pended: reportId=%u pending=%ld ring=%ld\n",
+        (ULONG)reportId,
+        devCtx->Counters.ReadReportQueueDepth,
+        devCtx->Counters.ReportRingDepth);
 
     WdfSpinLockAcquire(devCtx->ReadReportLock);
     if (devCtx->PendingReport[reportId].Valid) {

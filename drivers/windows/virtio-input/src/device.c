@@ -204,13 +204,41 @@ static void VirtioInputReportReady(_In_ void *context)
     WDFDEVICE device = (WDFDEVICE)context;
     PDEVICE_CONTEXT deviceContext = VirtioInputGetDeviceContext(device);
     struct virtio_input_report report;
+    ULONG drained = 0;
+
+    VIOINPUT_LOG(
+        VIOINPUT_LOG_VIRTQ,
+        "report ready: virtioEvents=%ld ring=%ld pending=%ld drops=%ld overruns=%ld\n",
+        deviceContext->Counters.VirtioEvents,
+        deviceContext->Counters.ReportRingDepth,
+        deviceContext->Counters.ReadReportQueueDepth,
+        deviceContext->Counters.VirtioEventDrops,
+        deviceContext->Counters.VirtioEventOverruns);
 
     while (virtio_input_try_pop_report(&deviceContext->InputDevice, &report)) {
         if (report.len == 0) {
             continue;
         }
 
-        (VOID)VirtioInputReportArrived(device, report.data[0], report.data, report.len);
+        drained++;
+        NTSTATUS status = VirtioInputReportArrived(device, report.data[0], report.data, report.len);
+        if (!NT_SUCCESS(status)) {
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "ReportArrived failed: reportId=%u size=%u status=%!STATUS!\n",
+                (ULONG)report.data[0],
+                (ULONG)report.len,
+                status);
+        }
+    }
+
+    if (drained != 0) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_VIRTQ,
+            "report ready drained=%lu ring=%ld pending=%ld\n",
+            drained,
+            deviceContext->Counters.ReportRingDepth,
+            deviceContext->Counters.ReadReportQueueDepth);
     }
 }
 
@@ -232,6 +260,7 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
     pnpPowerCallbacks.EvtDeviceD0Exit = VirtioInputEvtDeviceD0Exit;
     WdfDeviceInitSetPnpPowerEventCallbacks(DeviceInit, &pnpPowerCallbacks);
 
+    // Internal HID IOCTLs use the request's buffers directly; keep it simple for now.
     WdfDeviceInitSetIoType(DeviceInit, WdfDeviceIoBuffered);
 
     status = VirtioInputFileConfigure(DeviceInit);
@@ -248,6 +277,8 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
 
     {
         PDEVICE_CONTEXT deviceContext = VirtioInputGetDeviceContext(device);
+        VioInputCountersInit(&deviceContext->Counters);
+
         status = VirtioInputReadReportQueuesInitialize(device);
         if (!NT_SUCCESS(status)) {
             return status;
@@ -346,9 +377,7 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
     return STATUS_SUCCESS;
 }
 
-NTSTATUS VirtioInputEvtDeviceReleaseHardware(
-    _In_ WDFDEVICE Device,
-    _In_ WDFCMRESLIST ResourcesTranslated)
+NTSTATUS VirtioInputEvtDeviceReleaseHardware(_In_ WDFDEVICE Device, _In_ WDFCMRESLIST ResourcesTranslated)
 {
     UNREFERENCED_PARAMETER(ResourcesTranslated);
 
@@ -365,9 +394,7 @@ NTSTATUS VirtioInputEvtDeviceReleaseHardware(
     return STATUS_SUCCESS;
 }
 
-NTSTATUS VirtioInputEvtDeviceD0Entry(
-    _In_ WDFDEVICE Device,
-    _In_ WDF_POWER_DEVICE_STATE PreviousState)
+NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE PreviousState)
 {
     UNREFERENCED_PARAMETER(PreviousState);
 
@@ -388,7 +415,6 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(
 
 NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE TargetState)
 {
-    UNREFERENCED_PARAMETER(Device);
     UNREFERENCED_PARAMETER(TargetState);
 
     /*

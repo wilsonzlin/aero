@@ -3,6 +3,7 @@
 #include <ntddk.h>
 #include <wdf.h>
 
+#include "virtio_input.h"
 #include "virtio_input_proto.h"
 
 typedef struct _VIRTIO_STATUSQ {
@@ -95,6 +96,11 @@ VirtioStatusQTrySubmitLocked(_In_ PVIRTIO_STATUSQ StatusQ)
 
     rc = virtqueue_add_buf(StatusQ->Vq, &sg, 1, 0, StatusQ, VIOINPUT_GFP_ATOMIC);
     if (rc < 0) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "statusq virtqueue_add_buf failed rc=%d dropOnFull=%u\n",
+            rc,
+            StatusQ->DropOnFull);
         if (StatusQ->DropOnFull) {
             StatusQ->PendingValid = FALSE;
         }
@@ -104,6 +110,12 @@ VirtioStatusQTrySubmitLocked(_In_ PVIRTIO_STATUSQ StatusQ)
     StatusQ->PendingValid = FALSE;
     StatusQ->InFlight = TRUE;
     virtqueue_kick(StatusQ->Vq);
+
+    {
+        PDEVICE_CONTEXT devCtx = VirtioInputGetDeviceContext(StatusQ->Device);
+        VioInputCounterSet(&devCtx->Counters.VirtioQueueDepth, 1);
+        VioInputCounterMaxUpdate(&devCtx->Counters.VirtioQueueMaxDepth, 1);
+    }
 
     return STATUS_SUCCESS;
 }
@@ -224,6 +236,10 @@ VirtioStatusQProcessUsedBuffers(_In_ PVIRTIO_STATUSQ StatusQ)
 
         WdfSpinLockAcquire(StatusQ->Lock);
         StatusQ->InFlight = FALSE;
+        {
+            PDEVICE_CONTEXT devCtx = VirtioInputGetDeviceContext(StatusQ->Device);
+            VioInputCounterSet(&devCtx->Counters.VirtioQueueDepth, 0);
+        }
         VirtioStatusQTrySubmitLocked(StatusQ);
         WdfSpinLockRelease(StatusQ->Lock);
     }

@@ -58,11 +58,13 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
 {
     WDFDEVICE device = WdfIoQueueGetDevice(Queue);
     PDEVICE_CONTEXT ctx = VirtioInputGetDeviceContext(device);
+    PCSTR name = VioInputHidIoctlToString(IOCTL_HID_WRITE_REPORT);
 
     HID_XFER_PACKET *packet = NULL;
     size_t packetBytes = 0;
     NTSTATUS status = WdfRequestRetrieveInputBuffer(Request, sizeof(*packet), (PVOID *)&packet, &packetBytes);
     if (!NT_SUCCESS(status)) {
+        VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_IOCTL, "%s input buffer retrieve failed: %!STATUS!\n", name, status);
         WdfRequestComplete(Request, status);
         return STATUS_SUCCESS;
     }
@@ -71,12 +73,19 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
     UNREFERENCED_PARAMETER(InputBufferLength);
 
     if (WdfDeviceGetDevicePowerState(device) != WdfDevicePowerD0) {
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "%s -> %!STATUS!\n", name, STATUS_DEVICE_NOT_READY);
         WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
         return STATUS_SUCCESS;
     }
 
     UCHAR reportId = VirtioInputDetermineWriteReportId(Request, packet);
     if (reportId != VIRTIO_INPUT_REPORT_ID_KEYBOARD) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_IOCTL,
+            "%s ignored: reportId=%u bytes=%lu\n",
+            name,
+            (ULONG)reportId,
+            packet->reportBufferLen);
         WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS, packet->reportBufferLen);
         return STATUS_SUCCESS;
     }
@@ -84,21 +93,25 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
     UCHAR ledBitfield = 0;
     status = VirtioInputParseKeyboardLedReport(packet, reportId, &ledBitfield);
     if (!NT_SUCCESS(status)) {
+        VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_IOCTL, "%s parse failed: %!STATUS!\n", name, status);
         WdfRequestComplete(Request, status);
         return STATUS_SUCCESS;
     }
 
     if (ctx->StatusQ == NULL) {
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "%s -> %!STATUS! (no StatusQ)\n", name, STATUS_DEVICE_NOT_READY);
         WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
         return STATUS_SUCCESS;
     }
 
     status = VirtioStatusQWriteKeyboardLedReport(ctx->StatusQ, ledBitfield);
     if (!NT_SUCCESS(status)) {
+        VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_IOCTL, "%s StatusQ write failed: %!STATUS!\n", name, status);
         WdfRequestComplete(Request, status);
         return STATUS_SUCCESS;
     }
 
+    VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "%s -> %!STATUS! bytes=%lu\n", name, STATUS_SUCCESS, packet->reportBufferLen);
     WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS, packet->reportBufferLen);
     return STATUS_SUCCESS;
 }

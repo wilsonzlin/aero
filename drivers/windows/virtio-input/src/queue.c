@@ -86,6 +86,69 @@ static const HID_DEVICE_ATTRIBUTES g_VirtioInputAttributes = {
     (USHORT)0x0001, // VersionNumber
 };
 
+static VOID VioInputCountHidIoctl(_Inout_ PVIOINPUT_COUNTERS Counters, _In_ ULONG IoControlCode)
+{
+    VioInputCounterInc(&Counters->IoctlTotal);
+
+    switch (IoControlCode) {
+        case IOCTL_HID_GET_DEVICE_DESCRIPTOR:
+            VioInputCounterInc(&Counters->IoctlHidGetDeviceDescriptor);
+            break;
+        case IOCTL_HID_GET_REPORT_DESCRIPTOR:
+            VioInputCounterInc(&Counters->IoctlHidGetReportDescriptor);
+            break;
+        case IOCTL_HID_GET_DEVICE_ATTRIBUTES:
+            VioInputCounterInc(&Counters->IoctlHidGetDeviceAttributes);
+            break;
+#ifdef IOCTL_HID_GET_COLLECTION_INFORMATION
+        case IOCTL_HID_GET_COLLECTION_INFORMATION:
+            VioInputCounterInc(&Counters->IoctlHidGetCollectionInformation);
+            break;
+#endif
+#ifdef IOCTL_HID_GET_COLLECTION_DESCRIPTOR
+        case IOCTL_HID_GET_COLLECTION_DESCRIPTOR:
+            VioInputCounterInc(&Counters->IoctlHidGetCollectionDescriptor);
+            break;
+#endif
+#ifdef IOCTL_HID_FLUSH_QUEUE
+        case IOCTL_HID_FLUSH_QUEUE:
+            VioInputCounterInc(&Counters->IoctlHidFlushQueue);
+            break;
+#endif
+        case IOCTL_HID_GET_STRING:
+            VioInputCounterInc(&Counters->IoctlHidGetString);
+            break;
+        case IOCTL_HID_GET_INDEXED_STRING:
+            VioInputCounterInc(&Counters->IoctlHidGetIndexedString);
+            break;
+        case IOCTL_HID_GET_FEATURE:
+            VioInputCounterInc(&Counters->IoctlHidGetFeature);
+            break;
+        case IOCTL_HID_SET_FEATURE:
+            VioInputCounterInc(&Counters->IoctlHidSetFeature);
+            break;
+#ifdef IOCTL_HID_GET_INPUT_REPORT
+        case IOCTL_HID_GET_INPUT_REPORT:
+            VioInputCounterInc(&Counters->IoctlHidGetInputReport);
+            break;
+#endif
+#ifdef IOCTL_HID_SET_OUTPUT_REPORT
+        case IOCTL_HID_SET_OUTPUT_REPORT:
+            VioInputCounterInc(&Counters->IoctlHidSetOutputReport);
+            break;
+#endif
+        case IOCTL_HID_READ_REPORT:
+            VioInputCounterInc(&Counters->IoctlHidReadReport);
+            break;
+        case IOCTL_HID_WRITE_REPORT:
+            VioInputCounterInc(&Counters->IoctlHidWriteReport);
+            break;
+        default:
+            VioInputCounterInc(&Counters->IoctlUnknown);
+            break;
+    }
+}
+
 NTSTATUS VirtioInputQueueInitialize(_In_ WDFDEVICE Device)
 {
     WDF_IO_QUEUE_CONFIG queueConfig;
@@ -95,6 +158,7 @@ NTSTATUS VirtioInputQueueInitialize(_In_ WDFDEVICE Device)
 
     WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchParallel);
     queueConfig.EvtIoInternalDeviceControl = VirtioInputEvtIoInternalDeviceControl;
+    queueConfig.EvtIoDeviceControl = VirtioInputEvtIoDeviceControl;
 
     status = WdfIoQueueCreate(Device, &queueConfig, WDF_NO_OBJECT_ATTRIBUTES, &queue);
     if (!NT_SUCCESS(status)) {
@@ -114,11 +178,26 @@ VOID VirtioInputEvtIoInternalDeviceControl(
     _In_ size_t InputBufferLength,
     _In_ ULONG IoControlCode)
 {
+    WDFDEVICE device = WdfIoQueueGetDevice(Queue);
+    PDEVICE_CONTEXT devCtx = VirtioInputGetDeviceContext(device);
+    PCSTR name = VioInputHidIoctlToString(IoControlCode);
     NTSTATUS status;
     size_t bytesReturned;
 
     bytesReturned = 0;
     status = STATUS_NOT_SUPPORTED;
+
+    VioInputCountHidIoctl(&devCtx->Counters, IoControlCode);
+
+    VIOINPUT_LOG(
+        VIOINPUT_LOG_IOCTL,
+        "IOCTL %s (0x%08X) in=%Iu out=%Iu ring=%ld pending=%ld\n",
+        name,
+        IoControlCode,
+        InputBufferLength,
+        OutputBufferLength,
+        devCtx->Counters.ReportRingDepth,
+        devCtx->Counters.ReadReportQueueDepth);
 
     switch (IoControlCode) {
     case IOCTL_HID_GET_DEVICE_DESCRIPTOR: {
@@ -128,6 +207,7 @@ VOID VirtioInputEvtIoInternalDeviceControl(
             RtlCopyMemory(desc, &g_VirtioInputHidDescriptor, sizeof(HID_DESCRIPTOR));
             bytesReturned = sizeof(HID_DESCRIPTOR);
         }
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=%Iu\n", name, status, bytesReturned);
         WdfRequestCompleteWithInformation(Request, status, bytesReturned);
         return;
     }
@@ -139,6 +219,7 @@ VOID VirtioInputEvtIoInternalDeviceControl(
             RtlCopyMemory(desc, g_VirtioInputReportDescriptor, sizeof(g_VirtioInputReportDescriptor));
             bytesReturned = sizeof(g_VirtioInputReportDescriptor);
         }
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=%Iu\n", name, status, bytesReturned);
         WdfRequestCompleteWithInformation(Request, status, bytesReturned);
         return;
     }
@@ -150,21 +231,77 @@ VOID VirtioInputEvtIoInternalDeviceControl(
             RtlCopyMemory(attrs, &g_VirtioInputAttributes, sizeof(HID_DEVICE_ATTRIBUTES));
             bytesReturned = sizeof(HID_DEVICE_ATTRIBUTES);
         }
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=%Iu\n", name, status, bytesReturned);
         WdfRequestCompleteWithInformation(Request, status, bytesReturned);
         return;
     }
     case IOCTL_HID_READ_REPORT:
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> (read report handler)\n", name);
         (VOID)VirtioInputHandleHidReadReport(Queue, Request, OutputBufferLength);
         return;
     case IOCTL_HID_WRITE_REPORT:
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> (write report handler)\n", name);
         (VOID)VirtioInputHandleHidWriteReport(Queue, Request, InputBufferLength);
         return;
     case IOCTL_HID_ACTIVATE_DEVICE:
     case IOCTL_HID_DEACTIVATE_DEVICE:
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=0\n", name, STATUS_SUCCESS);
         WdfRequestComplete(Request, STATUS_SUCCESS);
         return;
     default:
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=0\n", name, STATUS_NOT_SUPPORTED);
         WdfRequestComplete(Request, STATUS_NOT_SUPPORTED);
         return;
     }
+}
+
+VOID VirtioInputEvtIoDeviceControl(
+    _In_ WDFQUEUE Queue,
+    _In_ WDFREQUEST Request,
+    _In_ size_t OutputBufferLength,
+    _In_ size_t InputBufferLength,
+    _In_ ULONG IoControlCode)
+{
+    WDFDEVICE device = WdfIoQueueGetDevice(Queue);
+    PDEVICE_CONTEXT devCtx = VirtioInputGetDeviceContext(device);
+    NTSTATUS status = STATUS_INVALID_DEVICE_REQUEST;
+    size_t info = 0;
+
+    UNREFERENCED_PARAMETER(InputBufferLength);
+
+    switch (IoControlCode) {
+    case IOCTL_VIOINPUT_QUERY_COUNTERS: {
+        PVIOINPUT_COUNTERS outCounters;
+        size_t outBytes;
+        VIOINPUT_COUNTERS snapshot;
+
+        status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*outCounters), (PVOID *)&outCounters, &outBytes);
+        if (!NT_SUCCESS(status)) {
+            break;
+        }
+
+        if (OutputBufferLength < sizeof(*outCounters) || outBytes < sizeof(*outCounters)) {
+            status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+
+        VioInputCountersSnapshot(&devCtx->Counters, &snapshot);
+        RtlCopyMemory(outCounters, &snapshot, sizeof(snapshot));
+        status = STATUS_SUCCESS;
+        info = sizeof(snapshot);
+        break;
+    }
+    default:
+        status = STATUS_INVALID_DEVICE_REQUEST;
+        info = 0;
+        break;
+    }
+
+    VIOINPUT_LOG(
+        VIOINPUT_LOG_IOCTL,
+        "DEVICE_IOCTL 0x%08X -> %!STATUS! bytes=%Iu\n",
+        IoControlCode,
+        status,
+        info);
+    WdfRequestCompleteWithInformation(Request, status, info);
 }

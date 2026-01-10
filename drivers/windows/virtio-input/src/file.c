@@ -149,6 +149,13 @@ static VOID VirtioInputEvtFileCleanup(_In_ WDFFILEOBJECT FileObject)
                 break;
             }
 
+            VioInputCounterInc(&devCtx->Counters.ReadReportCancelled);
+            VioInputCounterDec(&devCtx->Counters.ReadReportQueueDepth);
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_QUEUE,
+                "READ_REPORT cancelled (file cleanup): pending=%ld\n",
+                devCtx->Counters.ReadReportQueueDepth);
+
             WdfRequestComplete(request, STATUS_CANCELLED);
         }
     }

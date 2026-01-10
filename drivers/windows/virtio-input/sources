@@ -12,7 +12,8 @@ SOURCES= \
     src\virtio_input.c \
     src\virtio_statusq.c \
     src\virtio_pci_interrupts.c \
-    ..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c
+    ..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c \
+    src\log.c
 
 INCLUDES=$(INCLUDES);src;..\..\win7\virtio\virtio-core\portable
 
