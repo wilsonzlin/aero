@@ -14,8 +14,11 @@ Clean-room legacy BIOS implementation for the Aero emulator.
     - **INT 16h**: simple keyboard polling.
     - **INT 19h**: bootstrap loader (loads LBA0 to `0x7C00` and jumps).
 - Optional PCI enumeration via the `PciConfigSpace` trait with deterministic IRQ routing.
+- Optional ACPI table publication (RSDP/RSDT/XSDT/FADT/MADT/HPET/DSDT/FACS) via the `aero-acpi`
+  crate, with the E820 map marking the blob as ACPI reclaimable memory (type 3).
 
-This is intentionally *small and conservative*; it is a foundation for later ACPI/APIC/UEFI work.
+This is intentionally *small and conservative*; it is a foundation for later UEFI work and deeper
+hardware initialization.
 
 ## Clean-room sources
 
@@ -26,4 +29,3 @@ Implementation is based on publicly available documentation:
 - Ralf Brown's Interrupt List (reference for legacy INT APIs)
 - OSDev Wiki pages for BIOS, E820 ("SMAP"), and EDD (INT 13h extensions)
 - Intel Software Developer's Manual (x86 interrupt/real-mode behaviour)
-

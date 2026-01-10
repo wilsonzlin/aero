@@ -15,6 +15,9 @@ version = "0.1.0"
 [[package]]
 name = "aero-bios"
 version = "0.1.0"
+dependencies = [
+ "aero-acpi",
+]
 
 [[package]]
 name = "aero-d3d9"

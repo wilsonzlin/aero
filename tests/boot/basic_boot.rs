@@ -299,6 +299,11 @@ fn boots_a_tiny_boot_sector_and_prints_text() {
     // BIOS must have loaded the boot sector.
     assert_eq!(&mem.bytes[0x7C00..0x7C00 + 512], &boot);
 
+    // ACPI RSDP should be written during POST when enabled.
+    let acpi = bios.acpi_tables().expect("ACPI tables must be present");
+    let rsdp = acpi.addresses.rsdp as usize;
+    assert_eq!(&mem.bytes[rsdp..rsdp + 8], b"RSD PTR ");
+
     let mut kbd = NullKeyboard;
     run_real_mode_program(&mut bios, &mut cpu, &mut mem, &disk, &mut kbd);
 
@@ -329,51 +334,55 @@ fn int15_e820_returns_a_simple_memory_map() {
         ..BiosConfig::default()
     });
 
+    let mut kbd = NullKeyboard;
+
     cpu.es = 0;
     cpu.edi = 0x0500;
-    cpu.eax = 0xE820;
-    cpu.edx = 0x534D_4150; // 'SMAP'
-    cpu.ecx = 24;
-    cpu.ebx = 0;
 
-    let mut kbd = NullKeyboard;
-    bios.handle_interrupt(0x15, &mut cpu, &mut mem, &disk, &mut kbd);
+    let mut cont = 0u32;
+    let mut entries = Vec::new();
+    loop {
+        cpu.eax = 0xE820;
+        cpu.edx = 0x534D_4150; // 'SMAP'
+        cpu.ecx = 24;
+        cpu.ebx = cont;
+        bios.handle_interrupt(0x15, &mut cpu, &mut mem, &disk, &mut kbd);
 
-    assert!(!cpu.cf());
-    assert_eq!(cpu.eax, 0x534D_4150);
-    assert_eq!(cpu.ecx, 24);
-    assert_eq!(cpu.ebx, 1);
+        assert!(!cpu.cf());
+        assert_eq!(cpu.eax, 0x534D_4150);
+        assert_eq!(cpu.ecx, 24);
 
-    let base0 = mem.read_u32(0x0500) as u64 | ((mem.read_u32(0x0504) as u64) << 32);
-    let len0 = mem.read_u32(0x0508) as u64 | ((mem.read_u32(0x050C) as u64) << 32);
-    let typ0 = mem.read_u32(0x0510);
-    assert_eq!(base0, 0);
-    assert_eq!(len0, 0x0009_F000);
-    assert_eq!(typ0, 1);
+        let base = mem.read_u32(0x0500) as u64 | ((mem.read_u32(0x0504) as u64) << 32);
+        let len = mem.read_u32(0x0508) as u64 | ((mem.read_u32(0x050C) as u64) << 32);
+        let typ = mem.read_u32(0x0510);
+        entries.push((base, len, typ));
 
-    // Next entry.
-    cpu.eax = 0xE820;
-    cpu.edx = 0x534D_4150;
-    cpu.ecx = 24;
-    // cpu.ebx already contains the continuation.
-    bios.handle_interrupt(0x15, &mut cpu, &mut mem, &disk, &mut kbd);
+        cont = cpu.ebx;
+        if cont == 0 {
+            break;
+        }
+        assert!(entries.len() < 32, "E820 map unexpectedly large");
+    }
 
-    assert!(!cpu.cf());
-    assert_eq!(cpu.ebx, 2);
-    let base1 = mem.read_u32(0x0500) as u64 | ((mem.read_u32(0x0504) as u64) << 32);
-    let len1 = mem.read_u32(0x0508) as u64 | ((mem.read_u32(0x050C) as u64) << 32);
-    let typ1 = mem.read_u32(0x0510);
-    assert_eq!(base1, 0x0009_F000);
-    assert_eq!(len1, 0x0006_1000);
-    assert_eq!(typ1, 2);
+    // First two entries should match the conventional layout.
+    assert_eq!(entries[0], (0, 0x0009_F000, 1));
+    assert_eq!(entries[1], (0x0009_F000, 0x0006_1000, 2));
 
-    // Final entry should set EBX=0.
-    cpu.eax = 0xE820;
-    cpu.edx = 0x534D_4150;
-    cpu.ecx = 24;
-    bios.handle_interrupt(0x15, &mut cpu, &mut mem, &disk, &mut kbd);
-    assert!(!cpu.cf());
-    assert_eq!(cpu.ebx, 0);
+    // We should expose an ACPI reclaimable region (type 3) for the firmware tables.
+    assert!(
+        entries
+            .iter()
+            .any(|&(base, len, typ)| typ == 3 && base >= 0x0010_0000 && len > 0),
+        "expected an ACPI E820 entry (type=3) above 1MiB, got: {entries:?}"
+    );
+
+    // There should still be usable RAM above 1MiB for the guest.
+    assert!(
+        entries
+            .iter()
+            .any(|&(base, len, typ)| typ == 1 && base >= 0x0010_0000 && len > 0),
+        "expected a RAM E820 entry (type=1) above 1MiB, got: {entries:?}"
+    );
 }
 
 #[test]
@@ -419,4 +428,73 @@ fn int13_extended_and_chs_reads_copy_sectors_into_memory() {
     bios.handle_interrupt(0x13, &mut cpu, &mut mem, &disk, &mut kbd);
     assert!(!cpu.cf());
     assert_eq!(&mem.bytes[0x0900..0x0900 + 512], vec![0xA5; 512]);
+}
+
+#[test]
+fn int11_and_int12_reflect_bda_equipment_and_conventional_memory() {
+    let mut boot = [0u8; 512];
+    boot[510] = 0x55;
+    boot[511] = 0xAA;
+    let disk = VecDisk::new(boot.to_vec());
+
+    let mut mem = SimpleMemory::new(2 * 1024 * 1024);
+    let mut cpu = RealModeCpu::default();
+    let mut bios = Bios::new(BiosConfig::default());
+    let mut kbd = NullKeyboard;
+
+    bios.post(&mut cpu, &mut mem, &disk);
+
+    bios.handle_interrupt(0x11, &mut cpu, &mut mem, &disk, &mut kbd);
+    assert_eq!(cpu.ax(), mem.read_u16(0x0410));
+
+    bios.handle_interrupt(0x12, &mut cpu, &mut mem, &disk, &mut kbd);
+    assert_eq!(cpu.ax(), mem.read_u16(0x0413));
+}
+
+#[test]
+fn int1a_time_services_return_bcd_values() {
+    let disk = VecDisk::new(vec![0u8; 512]);
+    let mut mem = SimpleMemory::new(2 * 1024 * 1024);
+    let mut cpu = RealModeCpu::default();
+    let mut bios = Bios::new(BiosConfig::default());
+    let mut kbd = NullKeyboard;
+
+    // AH=00h: ticks since midnight.
+    cpu.set_ah(0x00);
+    bios.handle_interrupt(0x1A, &mut cpu, &mut mem, &disk, &mut kbd);
+    assert!(!cpu.cf());
+    let ticks = ((cpu.cx() as u32) << 16) | cpu.dx() as u32;
+    assert!(ticks < 1_573_040);
+
+    // AH=02h: RTC time (BCD).
+    cpu.set_ah(0x02);
+    bios.handle_interrupt(0x1A, &mut cpu, &mut mem, &disk, &mut kbd);
+    assert!(!cpu.cf());
+    let hour = (cpu.cx() >> 8) as u8;
+    let min = cpu.cx() as u8;
+    let sec = (cpu.dx() >> 8) as u8;
+
+    fn bcd_to_u8(b: u8) -> u8 {
+        ((b >> 4) & 0x0F) * 10 + (b & 0x0F)
+    }
+
+    let h = bcd_to_u8(hour);
+    let m = bcd_to_u8(min);
+    let s = bcd_to_u8(sec);
+    assert!(h < 24);
+    assert!(m < 60);
+    assert!(s < 60);
+
+    // AH=04h: RTC date (BCD). Ensure digits decode to a plausible range.
+    cpu.set_ah(0x04);
+    bios.handle_interrupt(0x1A, &mut cpu, &mut mem, &disk, &mut kbd);
+    assert!(!cpu.cf());
+    let century = bcd_to_u8((cpu.cx() >> 8) as u8);
+    let year = bcd_to_u8(cpu.cx() as u8);
+    let month = bcd_to_u8((cpu.dx() >> 8) as u8);
+    let day = bcd_to_u8(cpu.dx() as u8);
+    assert!(century >= 19);
+    assert!(year <= 99);
+    assert!((1..=12).contains(&month));
+    assert!((1..=31).contains(&day));
 }

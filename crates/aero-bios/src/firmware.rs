@@ -1,9 +1,13 @@
 use core::cmp::min;
 use core::mem::size_of;
 use std::collections::VecDeque;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables, PhysicalMemory as AcpiPhysicalMemory};
 
 use crate::types::{
-    E820Entry, RealModeCpu, E820_TYPE_RAM, E820_TYPE_RESERVED, FLAG_CF, FLAG_IF, FLAG_ZF,
+    E820Entry, RealModeCpu, E820_TYPE_ACPI, E820_TYPE_RAM, E820_TYPE_RESERVED, FLAG_CF, FLAG_IF,
+    FLAG_ZF,
 };
 
 const BDA_BASE: u32 = 0x0400;
@@ -48,6 +52,14 @@ pub struct BiosConfig {
     pub total_memory_bytes: u64,
     /// Default boot device.
     pub boot_device: BootDevice,
+    /// Number of CPUs exposed via ACPI tables.
+    pub cpu_count: u8,
+    /// Whether to build and publish minimal ACPI tables in guest RAM.
+    pub enable_acpi: bool,
+    /// Base address for ACPI SDT blobs (DSDT/FADT/MADT/HPET/RSDT/XSDT/FACS).
+    pub acpi_tables_base: u64,
+    /// Physical address where the ACPI RSDP will be written (< 1MiB).
+    pub acpi_rsdp_addr: u64,
 }
 
 impl Default for BiosConfig {
@@ -55,6 +67,11 @@ impl Default for BiosConfig {
         Self {
             total_memory_bytes: 64 * 1024 * 1024,
             boot_device: BootDevice::Hdd0,
+            cpu_count: 1,
+            enable_acpi: true,
+            acpi_tables_base: 0x0010_0000,
+            // Keep this in the standard BIOS search window but outside the system BIOS ROM.
+            acpi_rsdp_addr: 0x000E_0000,
         }
     }
 }
@@ -134,6 +151,7 @@ pub struct Bios {
     cfg: BiosConfig,
     e820: Vec<E820Entry>,
     pci_devices: Vec<PciDevice>,
+    acpi: Option<AcpiTables>,
 
     // Legacy VGA BIOS-visible state.
     video_mode: u8,
@@ -151,11 +169,41 @@ pub struct Bios {
 
 impl Bios {
     pub fn new(cfg: BiosConfig) -> Self {
-        let e820 = build_e820_map(cfg.total_memory_bytes);
+        let acpi = if cfg.enable_acpi {
+            let mut acpi_cfg = AcpiConfig::default();
+            acpi_cfg.cpu_count = cfg.cpu_count.max(1);
+            let placement = AcpiPlacement {
+                tables_base: cfg.acpi_tables_base,
+                rsdp_addr: cfg.acpi_rsdp_addr,
+                alignment: aero_acpi::DEFAULT_ACPI_ALIGNMENT,
+            };
+
+            let tables = AcpiTables::build(&acpi_cfg, placement);
+            let (tables_base, tables_len) = acpi_region_from_tables(&tables);
+            let tables_end = tables_base.saturating_add(tables_len);
+            let rsdp_end = tables
+                .addresses
+                .rsdp
+                .saturating_add(tables.rsdp.len() as u64);
+
+            if tables_end <= cfg.total_memory_bytes && rsdp_end <= cfg.total_memory_bytes {
+                Some(tables)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let e820 = build_e820_map(
+            cfg.total_memory_bytes,
+            acpi.as_ref().map(acpi_region_from_tables),
+        );
         Self {
             cfg,
             e820,
             pci_devices: Vec::new(),
+            acpi,
             video_mode: 0x03,
             active_page: 0,
             text_cols: 80,
@@ -198,6 +246,8 @@ impl Bios {
             self.enumerate_pci(pci);
         }
 
+        self.write_acpi_tables(mem);
+
         self.init_video(mem);
 
         // Basic banner for debugging / integration tests.
@@ -214,6 +264,10 @@ impl Bios {
         &self.pci_devices
     }
 
+    pub fn acpi_tables(&self) -> Option<&AcpiTables> {
+        self.acpi.as_ref()
+    }
+
     /// Handle an x86 `INT n` instruction (emulator "VM exit").
     pub fn handle_interrupt<M: Memory, D: BlockDevice, K: Keyboard>(
         &mut self,
@@ -225,10 +279,13 @@ impl Bios {
     ) {
         match int_no {
             0x10 => self.int10(cpu, mem),
+            0x11 => self.int11(cpu, mem),
+            0x12 => self.int12(cpu, mem),
             0x13 => self.int13(cpu, mem, disk),
             0x15 => self.int15(cpu, mem),
             0x16 => self.int16(cpu, kbd),
             0x19 => self.int19(cpu, mem, disk),
+            0x1A => self.int1a(cpu, mem),
             _ => {
                 // Unhandled: set CF and AH=0x01 (invalid function) when plausible.
                 cpu.eflags |= FLAG_CF;
@@ -246,6 +303,25 @@ impl Bios {
             mem.write_u16(vec, 0x0000);
             mem.write_u16(vec + 2, 0xF000);
         }
+    }
+
+    fn write_acpi_tables<M: Memory>(&self, mem: &mut M) {
+        let Some(tables) = &self.acpi else {
+            return;
+        };
+
+        struct Writer<'a, M>(&'a mut M);
+
+        impl<M: Memory> AcpiPhysicalMemory for Writer<'_, M> {
+            fn write(&mut self, paddr: u64, bytes: &[u8]) {
+                let paddr_u32: u32 = paddr
+                    .try_into()
+                    .expect("ACPI table placement must be below 4GiB");
+                self.0.write_bytes(paddr_u32, bytes);
+            }
+        }
+
+        tables.write_to(&mut Writer(mem));
     }
 
     fn enumerate_pci<P: PciConfigSpace + ?Sized>(&mut self, pci: &mut P) {
@@ -315,6 +391,15 @@ impl Bios {
         // Keyboard buffer head/tail pointers at 0x041A/0x041C.
         mem.write_u16(bda + 0x1A, 0x001E);
         mem.write_u16(bda + 0x1C, 0x001E);
+
+        // Video mode (0x0449) and columns (0x044A).
+        mem.write_u8(bda + 0x49, 0x03);
+        mem.write_u16(bda + 0x4A, 80);
+
+        // BIOS tick counter (0x046C) and midnight flag (0x0470).
+        let ticks = ticks_since_midnight();
+        mem.write_u32(bda + 0x6C, ticks);
+        mem.write_u8(bda + 0x70, 0);
     }
 
     fn init_video<M: Memory>(&mut self, mem: &mut M) {
@@ -749,6 +834,18 @@ impl Bios {
         }
     }
 
+    fn int11<M: Memory>(&mut self, cpu: &mut RealModeCpu, mem: &mut M) {
+        // Get equipment list (returns AX).
+        cpu.set_ax(mem.read_u16(0x0410));
+        cpu.set_cf(false);
+    }
+
+    fn int12<M: Memory>(&mut self, cpu: &mut RealModeCpu, mem: &mut M) {
+        // Get conventional memory size in KiB (returns AX).
+        cpu.set_ax(mem.read_u16(0x0413));
+        cpu.set_cf(false);
+    }
+
     fn int13<M: Memory, D: BlockDevice>(&mut self, cpu: &mut RealModeCpu, mem: &mut M, disk: &D) {
         let ah = cpu.ah();
         match ah {
@@ -967,6 +1064,103 @@ impl Bios {
         cpu.ss = 0x0000;
         cpu.set_ip(0x7C00);
     }
+
+    fn int1a<M: Memory>(&mut self, cpu: &mut RealModeCpu, mem: &mut M) {
+        match cpu.ah() {
+            0x00 => {
+                // Get system time: CX:DX = ticks since midnight, AL = midnight flag.
+                let ticks = ticks_since_midnight();
+                cpu.set_cx((ticks >> 16) as u16);
+                cpu.set_dx((ticks & 0xFFFF) as u16);
+                cpu.set_al(0);
+
+                // Mirror into BDA locations used by some software.
+                let bda = 0x0400u32;
+                mem.write_u32(bda + 0x6C, ticks);
+                mem.write_u8(bda + 0x70, 0);
+
+                cpu.set_cf(false);
+            }
+            0x02 => {
+                // Read real-time clock time (we use host UTC time; returned values are BCD).
+                let (h, m, s) = utc_hms();
+                let ch = to_bcd(h);
+                let cl = to_bcd(m);
+                let dh = to_bcd(s);
+                cpu.set_cx(((ch as u16) << 8) | cl as u16);
+                cpu.set_dx(((dh as u16) << 8) | 0u16);
+                cpu.set_cf(false);
+            }
+            0x04 => {
+                // Read real-time clock date (host UTC date; returned values are BCD).
+                let (year, month, day) = utc_ymd();
+                let century = (year / 100) as u8;
+                let year2 = (year % 100) as u8;
+                let ch = to_bcd(century);
+                let cl = to_bcd(year2);
+                let dh = to_bcd(month);
+                let dl = to_bcd(day);
+                cpu.set_cx(((ch as u16) << 8) | cl as u16);
+                cpu.set_dx(((dh as u16) << 8) | dl as u16);
+                cpu.set_cf(false);
+            }
+            _ => {
+                cpu.set_cf(true);
+                cpu.set_ah(0x86);
+            }
+        }
+    }
+}
+
+const TICKS_PER_DAY: u64 = 1_573_040;
+
+fn ticks_since_midnight() -> u32 {
+    let secs = unix_seconds();
+    let secs_of_day = secs % 86_400;
+    // Scale to BIOS ticks (18.2065Hz) using integer math.
+    let ticks = (secs_of_day * TICKS_PER_DAY) / 86_400;
+    ticks as u32
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn utc_hms() -> (u8, u8, u8) {
+    let secs = unix_seconds();
+    let secs_of_day = secs % 86_400;
+    let h = (secs_of_day / 3600) as u8;
+    let m = ((secs_of_day / 60) % 60) as u8;
+    let s = (secs_of_day % 60) as u8;
+    (h, m, s)
+}
+
+fn utc_ymd() -> (i32, u8, u8) {
+    let days = (unix_seconds() / 86_400) as i64;
+    civil_from_days(days)
+}
+
+fn to_bcd(v: u8) -> u8 {
+    ((v / 10) << 4) | (v % 10)
+}
+
+// Gregorian date conversion based on Howard Hinnant's "civil_from_days" algorithm.
+// `days` is the number of days since 1970-01-01 (Unix epoch), in UTC.
+fn civil_from_days(days: i64) -> (i32, u8, u8) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = mp + if mp < 10 { 3 } else { -9 }; // [1, 12]
+    let year = y + if m <= 2 { 1 } else { 0 };
+    (year as i32, m as u8, d as u8)
 }
 
 fn assign_pci_irq(_bus: u8, device: u8, function: u8) -> u8 {
@@ -979,11 +1173,33 @@ fn assign_pci_irq(_bus: u8, device: u8, function: u8) -> u8 {
     }
 }
 
-fn build_e820_map(total_memory_bytes: u64) -> Vec<E820Entry> {
+fn acpi_region_from_tables(tables: &AcpiTables) -> (u64, u64) {
+    let addrs = &tables.addresses;
+    let mut start = addrs.dsdt;
+    start = start.min(addrs.facs);
+    start = start.min(addrs.fadt);
+    start = start.min(addrs.madt);
+    start = start.min(addrs.hpet);
+    start = start.min(addrs.rsdt);
+    start = start.min(addrs.xsdt);
+
+    let mut end = start;
+    end = end.max(addrs.dsdt.saturating_add(tables.dsdt.len() as u64));
+    end = end.max(addrs.facs.saturating_add(tables.facs.len() as u64));
+    end = end.max(addrs.fadt.saturating_add(tables.fadt.len() as u64));
+    end = end.max(addrs.madt.saturating_add(tables.madt.len() as u64));
+    end = end.max(addrs.hpet.saturating_add(tables.hpet.len() as u64));
+    end = end.max(addrs.rsdt.saturating_add(tables.rsdt.len() as u64));
+    end = end.max(addrs.xsdt.saturating_add(tables.xsdt.len() as u64));
+
+    (start, end.saturating_sub(start))
+}
+
+fn build_e820_map(total_memory_bytes: u64, acpi_region: Option<(u64, u64)>) -> Vec<E820Entry> {
     // Keep this conservative and OS-friendly:
     // - 0x00000000..0x0009F000 : usable
     // - 0x0009F000..0x00100000 : reserved (EBDA + video + BIOS ROM shadow)
-    // - 0x00100000..total      : usable
+    // - 0x00100000..total      : usable (except optional ACPI table blob region)
     let mut entries = Vec::new();
 
     entries.push(E820Entry {
@@ -1001,12 +1217,47 @@ fn build_e820_map(total_memory_bytes: u64) -> Vec<E820Entry> {
 
     let usable_base = 0x0010_0000u64;
     if total_memory_bytes > usable_base {
-        entries.push(E820Entry {
-            base: usable_base,
-            length: total_memory_bytes - usable_base,
-            region_type: E820_TYPE_RAM,
-            extended_attributes: 1,
-        });
+        if let Some((acpi_base, acpi_len)) = acpi_region {
+            let acpi_base = acpi_base.max(usable_base);
+            let acpi_end = acpi_base.saturating_add(acpi_len).min(total_memory_bytes);
+
+            // RAM below ACPI blob.
+            if acpi_base > usable_base {
+                entries.push(E820Entry {
+                    base: usable_base,
+                    length: acpi_base - usable_base,
+                    region_type: E820_TYPE_RAM,
+                    extended_attributes: 1,
+                });
+            }
+
+            // ACPI reclaimable memory.
+            if acpi_end > acpi_base {
+                entries.push(E820Entry {
+                    base: acpi_base,
+                    length: acpi_end - acpi_base,
+                    region_type: E820_TYPE_ACPI,
+                    extended_attributes: 1,
+                });
+            }
+
+            // Remaining RAM after ACPI blob.
+            if total_memory_bytes > acpi_end {
+                entries.push(E820Entry {
+                    base: acpi_end,
+                    length: total_memory_bytes - acpi_end,
+                    region_type: E820_TYPE_RAM,
+                    extended_attributes: 1,
+                });
+            }
+        } else {
+            entries.push(E820Entry {
+                base: usable_base,
+                length: total_memory_bytes - usable_base,
+                region_type: E820_TYPE_RAM,
+                extended_attributes: 1,
+            });
+        }
     }
 
     entries
