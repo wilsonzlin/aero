@@ -62,7 +62,16 @@ jobs:
 
           "mode=$mode" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "subject=$($cert.Subject)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "thumbprint=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+           "thumbprint=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Provision WDK toolchain (ci/install-wdk.ps1)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!(Test-Path -LiteralPath 'ci\install-wdk.ps1')) {
+            throw "Expected script ci\\install-wdk.ps1 to exist."
+          }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\install-wdk.ps1'
 
       - name: Build + generate catalog (x86)
         uses: ilammy/msvc-dev-cmd@v1
