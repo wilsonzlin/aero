@@ -956,6 +956,12 @@ impl D3D11Runtime {
             occlusion_query_set: None,
         });
 
+        let mut bound_pipeline: Option<u32> = None;
+        let mut bound_bind_group: Option<*const wgpu::BindGroup> = None;
+        let mut bound_vertex_buffers = vec![None; state.vertex_buffers.len()];
+        let mut bound_index_buffer: Option<BoundIndexBuffer> = None;
+        let mut vertex_buffers_synced = false;
+
         loop {
             let packet = stream
                 .next()
@@ -969,16 +975,43 @@ impl D3D11Runtime {
                     let Some(PipelineBinding::Render(pipeline_id)) = state.current_pipeline else {
                         bail!("SetPipeline inside render pass did not select a render pipeline");
                     };
-                    let pipeline = resources
-                        .render_pipelines
-                        .get(&pipeline_id)
-                        .ok_or_else(|| anyhow!("unknown render pipeline {pipeline_id}"))?;
-                    render_pass.set_pipeline(&pipeline.pipeline);
-                    bind_group_dirty = true;
-                    current_bind_group = None;
+                    let pipeline_changed = bound_pipeline != Some(pipeline_id);
+                    sync_render_pipeline(
+                        &mut render_pass,
+                        resources,
+                        pipeline_id,
+                        &mut bound_pipeline,
+                    )?;
+                    if pipeline_changed {
+                        bind_group_dirty = true;
+                        current_bind_group = None;
+                        bound_bind_group = None;
+                    }
                 }
-                D3D11Opcode::SetVertexBuffer => state_set_vertex_buffer(state, packet.payload)?,
-                D3D11Opcode::SetIndexBuffer => state_set_index_buffer(state, packet.payload)?,
+                D3D11Opcode::SetVertexBuffer => {
+                    state_set_vertex_buffer(state, packet.payload)?;
+                    let slot = packet.payload[0] as usize;
+                    if let Some(vb) = state.vertex_buffers[slot] {
+                        sync_vertex_buffer_slot(
+                            &mut render_pass,
+                            resources,
+                            slot as u32,
+                            vb,
+                            &mut bound_vertex_buffers[slot],
+                        )?;
+                    }
+                }
+                D3D11Opcode::SetIndexBuffer => {
+                    state_set_index_buffer(state, packet.payload)?;
+                    if let Some(index) = state.index_buffer {
+                        sync_index_buffer(
+                            &mut render_pass,
+                            resources,
+                            index,
+                            &mut bound_index_buffer,
+                        )?;
+                    }
+                }
                 D3D11Opcode::SetBindBuffer => {
                     state_set_bind_buffer(state, packet.payload)?;
                     bind_group_dirty = true;
@@ -1007,6 +1040,12 @@ impl D3D11Runtime {
                     let Some(PipelineBinding::Render(pipeline_id)) = state.current_pipeline else {
                         bail!("Draw without a bound render pipeline");
                     };
+                    sync_render_pipeline(
+                        &mut render_pass,
+                        resources,
+                        pipeline_id,
+                        &mut bound_pipeline,
+                    )?;
                     let pipeline = resources
                         .render_pipelines
                         .get(&pipeline_id)
@@ -1025,10 +1064,21 @@ impl D3D11Runtime {
                     }
 
                     let bg_ptr = current_bind_group.expect("bind group must be built above");
-                    let bg_ref = unsafe { &*bg_ptr };
-                    render_pass.set_bind_group(0, bg_ref, &[]);
+                    if bound_bind_group != Some(bg_ptr) {
+                        let bg_ref = unsafe { &*bg_ptr };
+                        render_pass.set_bind_group(0, bg_ref, &[]);
+                        bound_bind_group = Some(bg_ptr);
+                    }
 
-                    set_vertex_buffers(&mut render_pass, resources, state)?;
+                    if !vertex_buffers_synced {
+                        sync_vertex_buffers(
+                            &mut render_pass,
+                            resources,
+                            state,
+                            &mut bound_vertex_buffers,
+                        )?;
+                        vertex_buffers_synced = true;
+                    }
                     render_pass.draw(
                         first_vertex..first_vertex + vertex_count,
                         first_instance..first_instance + instance_count,
@@ -1051,6 +1101,12 @@ impl D3D11Runtime {
                     let Some(PipelineBinding::Render(pipeline_id)) = state.current_pipeline else {
                         bail!("DrawIndexed without a bound render pipeline");
                     };
+                    sync_render_pipeline(
+                        &mut render_pass,
+                        resources,
+                        pipeline_id,
+                        &mut bound_pipeline,
+                    )?;
                     let pipeline = resources
                         .render_pipelines
                         .get(&pipeline_id)
@@ -1069,19 +1125,25 @@ impl D3D11Runtime {
                     }
 
                     let bg_ptr = current_bind_group.expect("bind group must be built above");
-                    let bg_ref = unsafe { &*bg_ptr };
-                    render_pass.set_bind_group(0, bg_ref, &[]);
+                    if bound_bind_group != Some(bg_ptr) {
+                        let bg_ref = unsafe { &*bg_ptr };
+                        render_pass.set_bind_group(0, bg_ref, &[]);
+                        bound_bind_group = Some(bg_ptr);
+                    }
 
-                    set_vertex_buffers(&mut render_pass, resources, state)?;
+                    if !vertex_buffers_synced {
+                        sync_vertex_buffers(
+                            &mut render_pass,
+                            resources,
+                            state,
+                            &mut bound_vertex_buffers,
+                        )?;
+                        vertex_buffers_synced = true;
+                    }
                     let Some(index) = state.index_buffer else {
                         bail!("DrawIndexed without an index buffer bound");
                     };
-                    let index_buf = resources
-                        .buffers
-                        .get(&index.buffer)
-                        .ok_or_else(|| anyhow!("unknown index buffer {}", index.buffer))?;
-                    render_pass
-                        .set_index_buffer(index_buf.buffer.slice(index.offset..), index.format);
+                    sync_index_buffer(&mut render_pass, resources, index, &mut bound_index_buffer)?;
                     render_pass.draw_indexed(
                         first_index..first_index + index_count,
                         base_vertex,
@@ -1117,6 +1179,9 @@ impl D3D11Runtime {
             timestamp_writes: None,
         });
 
+        let mut bound_pipeline: Option<u32> = None;
+        let mut bound_bind_group: Option<*const wgpu::BindGroup> = None;
+
         loop {
             let packet = stream
                 .next()
@@ -1130,13 +1195,18 @@ impl D3D11Runtime {
                     let Some(PipelineBinding::Compute(pipeline_id)) = state.current_pipeline else {
                         bail!("SetPipeline inside compute pass did not select a compute pipeline");
                     };
-                    let pipeline = resources
-                        .compute_pipelines
-                        .get(&pipeline_id)
-                        .ok_or_else(|| anyhow!("unknown compute pipeline {pipeline_id}"))?;
-                    compute_pass.set_pipeline(&pipeline.pipeline);
-                    bind_group_dirty = true;
-                    current_bind_group = None;
+                    let pipeline_changed = bound_pipeline != Some(pipeline_id);
+                    sync_compute_pipeline(
+                        &mut compute_pass,
+                        resources,
+                        pipeline_id,
+                        &mut bound_pipeline,
+                    )?;
+                    if pipeline_changed {
+                        bind_group_dirty = true;
+                        current_bind_group = None;
+                        bound_bind_group = None;
+                    }
                 }
                 D3D11Opcode::SetBindBuffer => {
                     state_set_bind_buffer(state, packet.payload)?;
@@ -1165,6 +1235,12 @@ impl D3D11Runtime {
                     let Some(PipelineBinding::Compute(pipeline_id)) = state.current_pipeline else {
                         bail!("Dispatch without a bound compute pipeline");
                     };
+                    sync_compute_pipeline(
+                        &mut compute_pass,
+                        resources,
+                        pipeline_id,
+                        &mut bound_pipeline,
+                    )?;
                     let pipeline = resources
                         .compute_pipelines
                         .get(&pipeline_id)
@@ -1183,8 +1259,11 @@ impl D3D11Runtime {
                     }
 
                     let bg_ptr = current_bind_group.expect("bind group must be built above");
-                    let bg_ref = unsafe { &*bg_ptr };
-                    compute_pass.set_bind_group(0, bg_ref, &[]);
+                    if bound_bind_group != Some(bg_ptr) {
+                        let bg_ref = unsafe { &*bg_ptr };
+                        compute_pass.set_bind_group(0, bg_ref, &[]);
+                        bound_bind_group = Some(bg_ptr);
+                    }
                     compute_pass.dispatch_workgroups(x, y, z);
                 }
                 _ => bail!(
@@ -1410,20 +1489,89 @@ fn stash_bind_group(
     ptr
 }
 
-fn set_vertex_buffers<'a>(
+fn sync_render_pipeline<'a>(
+    pass: &mut wgpu::RenderPass<'a>,
+    resources: &'a D3D11Resources,
+    pipeline_id: u32,
+    bound: &mut Option<u32>,
+) -> Result<()> {
+    if bound == &Some(pipeline_id) {
+        return Ok(());
+    }
+    let pipeline = resources
+        .render_pipelines
+        .get(&pipeline_id)
+        .ok_or_else(|| anyhow!("unknown render pipeline {pipeline_id}"))?;
+    pass.set_pipeline(&pipeline.pipeline);
+    *bound = Some(pipeline_id);
+    Ok(())
+}
+
+fn sync_compute_pipeline<'a>(
+    pass: &mut wgpu::ComputePass<'a>,
+    resources: &'a D3D11Resources,
+    pipeline_id: u32,
+    bound: &mut Option<u32>,
+) -> Result<()> {
+    if bound == &Some(pipeline_id) {
+        return Ok(());
+    }
+    let pipeline = resources
+        .compute_pipelines
+        .get(&pipeline_id)
+        .ok_or_else(|| anyhow!("unknown compute pipeline {pipeline_id}"))?;
+    pass.set_pipeline(&pipeline.pipeline);
+    *bound = Some(pipeline_id);
+    Ok(())
+}
+
+fn sync_vertex_buffers<'a>(
     pass: &mut wgpu::RenderPass<'a>,
     resources: &'a D3D11Resources,
     state: &D3D11State,
+    bound: &mut [Option<BoundVertexBuffer>],
 ) -> Result<()> {
     for (slot, vb) in state.vertex_buffers.iter().enumerate() {
-        if let Some(vb) = vb {
-            let buf = resources
-                .buffers
-                .get(&vb.buffer)
-                .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
-            pass.set_vertex_buffer(slot as u32, buf.buffer.slice(vb.offset..));
-        }
+        let Some(vb) = vb else { continue };
+        sync_vertex_buffer_slot(pass, resources, slot as u32, *vb, &mut bound[slot])?;
     }
+    Ok(())
+}
+
+fn sync_vertex_buffer_slot<'a>(
+    pass: &mut wgpu::RenderPass<'a>,
+    resources: &'a D3D11Resources,
+    slot: u32,
+    vb: BoundVertexBuffer,
+    bound: &mut Option<BoundVertexBuffer>,
+) -> Result<()> {
+    if bound.as_ref().is_some_and(|cur| cur == &vb) {
+        return Ok(());
+    }
+    let buf = resources
+        .buffers
+        .get(&vb.buffer)
+        .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
+    pass.set_vertex_buffer(slot, buf.buffer.slice(vb.offset..));
+    *bound = Some(vb);
+    Ok(())
+}
+
+fn sync_index_buffer<'a>(
+    pass: &mut wgpu::RenderPass<'a>,
+    resources: &'a D3D11Resources,
+    index: BoundIndexBuffer,
+    bound: &mut Option<BoundIndexBuffer>,
+) -> Result<()> {
+    if bound.as_ref().is_some_and(|cur| cur == &index) {
+        return Ok(());
+    }
+    let buf = resources
+        .buffers
+        .get(&index.buffer)
+        .ok_or_else(|| anyhow!("unknown index buffer {}", index.buffer))?;
+    pass.set_index_buffer(buf.buffer.slice(index.offset..), index.format);
+    *bound = Some(index);
     Ok(())
 }
 

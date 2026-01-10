@@ -8,13 +8,13 @@ pub enum PipelineBinding {
     Compute(ResourceId),
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct BoundVertexBuffer {
     pub buffer: ResourceId,
     pub offset: u64,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct BoundIndexBuffer {
     pub buffer: ResourceId,
     pub format: wgpu::IndexFormat,
