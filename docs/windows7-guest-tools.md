@@ -213,7 +213,7 @@ Expected behavior:
 
 If you see firmware-level errors like “No bootable device” or “BOOTMGR is missing”, see:
 
-- [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md#issue-no-bootable-device--bootmgr-is-missing-after-switching-storage)
+- [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md#issue-no-bootable-device-or-bootmgr-is-missing-after-switching-storage)
 
 ### Stage B: switch networking (e1000 → virtio-net)
 

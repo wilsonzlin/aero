@@ -16,6 +16,27 @@ If you have not installed Guest Tools yet, start here:
 4. If you changed multiple VM devices at once (storage + GPU + network), consider rolling back and switching **one class at a time** so failures are easier to isolate.
 5. Confirm the guest **date/time** is correct. If the clock is far off, Windows may treat certificates as “not yet valid” or “expired” and driver signature validation can fail.
 
+## Quick links by symptom
+
+- Driver signature / trust failures:
+  - [Device Manager Code 52 (signature and trust failures)](#issue-device-manager-code-52-signature-and-trust-failures)
+  - [Catalog hash mismatch (hash not present in specified catalog file)](#issue-catalog-hash-mismatch-hash-not-present-in-specified-catalog-file)
+  - [Missing KB3033929 (SHA-256 signature support)](#issue-missing-kb3033929-sha-256-signature-support)
+- Driver installed but not working:
+  - [Device Manager Code 28 (drivers not installed)](#issue-device-manager-code-28-drivers-not-installed)
+  - [Device Manager Code 10 (device cannot start)](#issue-device-manager-code-10-device-cannot-start)
+- Boot failures after switching storage:
+  - [Storage controller switch gotchas (boot loops, 0x7B)](#issue-storage-controller-switch-gotchas-boot-loops-0x7b)
+  - [No bootable device or BOOTMGR is missing after switching storage](#issue-no-bootable-device-or-bootmgr-is-missing-after-switching-storage)
+- Windows Setup disk detection issues:
+  - [Windows Setup can’t see a virtio-blk disk](#issue-windows-setup-cant-see-a-virtio-blk-disk-slipstream-installs)
+- Display issues after switching to the Aero GPU:
+  - [Black screen after switching to the Aero GPU](#issue-black-screen-after-switching-to-the-aero-gpu)
+  - [Aero theme not available (stuck in basic graphics mode)](#issue-aero-theme-not-available-stuck-in-basic-graphics-mode)
+- Guest Tools installation problems:
+  - [`setup.cmd` fails (won't run)](#issue-setupcmd-fails-wont-run)
+  - [Safe Mode recovery tips](#safe-mode-recovery-tips)
+
 ## Collecting useful logs (for troubleshooting or bug reports)
 
 If you need to debug driver install failures, these are the most useful artifacts to gather:
@@ -51,7 +72,7 @@ If Windows fails to boot after switching the system disk from **AHCI → virtio-
 
 Why this works: Windows can only boot from a storage controller if its driver is installed and configured as boot-critical. Going back to AHCI restores the known-good boot path so you can fix the driver configuration from inside Windows.
 
-## Issue: Device Manager “Code 52” (signature / trust failures)
+## Issue: Device Manager Code 52 (signature and trust failures)
 
 **Symptom**
 
@@ -110,7 +131,7 @@ On Windows 7 x64 you can sometimes boot once with driver signature enforcement d
 
 This only affects that one boot. For a repeatable setup, prefer installing properly signed/test-signed drivers and configuring test signing as required.
 
-## Issue: “The hash for the file is not present in the specified catalog file”
+## Issue: Catalog hash mismatch (hash not present in specified catalog file)
 
 **Symptom**
 
@@ -161,7 +182,7 @@ If you are producing or selecting driver packages for Windows 7:
   - Ensure Guest Tools clearly tells users when KB3033929 is required, and/or
   - Provide a SHA-1-signed fallback driver set for offline installs.
 
-## Issue: Storage controller switch gotchas (boot loops / 0x7B)
+## Issue: Storage controller switch gotchas (boot loops, 0x7B)
 
 **Symptom**
 
@@ -185,7 +206,7 @@ Windows is booting from a disk controller whose driver is not installed or not c
 
 Do storage first, then network, then GPU. If you change storage + GPU simultaneously and the guest can’t boot or can’t display, recovery becomes much harder.
 
-## Issue: “No bootable device” / “BOOTMGR is missing” after switching storage
+## Issue: No bootable device or BOOTMGR is missing after switching storage
 
 **Symptom**
 
@@ -225,7 +246,7 @@ Do storage first, then network, then GPU. If you change storage + GPU simultaneo
    - Browse to the Guest Tools driver folder and ensure you’re selecting the correct architecture.
 4. If installation is blocked by signatures, resolve Code 52 first.
 
-## Issue: Device Manager “Code 28” (drivers not installed)
+## Issue: Device Manager Code 28 (drivers not installed)
 
 **Symptom**
 
@@ -240,7 +261,7 @@ Do storage first, then network, then GPU. If you change storage + GPU simultaneo
    - **Browse my computer for driver software**
    - Point it at your Guest Tools driver folder.
 
-## Issue: Device Manager “Code 10” (device cannot start)
+## Issue: Device Manager Code 10 (device cannot start)
 
 **Symptom**
 
@@ -277,7 +298,7 @@ This only applies if you are attempting to install Windows directly onto **virti
   - Install Windows using baseline **AHCI** first (recommended), then switch to virtio-blk after running Guest Tools, **or**
   - Slipstream the virtio-blk driver into `sources\\boot.wim` (indexes 1 and 2) and rebuild the ISO.
 
-## Issue: `setup.cmd` fails / won’t run
+## Issue: `setup.cmd` fails (won't run)
 
 **Common symptoms**
 
@@ -325,7 +346,7 @@ If you must keep the Aero GPU selected while recovering, use Safe Mode (below) s
   - Disable (after recovery):
     - `bcdedit /deletevalue {current} basevideo`
 
-## Issue: Aero theme not available / stuck in basic graphics mode
+## Issue: Aero theme not available (stuck in basic graphics mode)
 
 **Symptoms**
 
