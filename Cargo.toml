@@ -26,6 +26,7 @@ members = [
     "server",
     "crates/nt-packetlib",
     "tools/bcd_patch",
+    "crates/virtio-gpu-proto",
 ]
 
 exclude = ["fuzz"]
