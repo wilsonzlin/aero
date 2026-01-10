@@ -108,6 +108,7 @@ impl Mmu {
 /// - 32-bit non-PAE paging (`CR0.PG=1`, `CR4.PAE=0`)
 /// - IA-32 PAE paging (3-level) (`CR0.PG=1`, `CR4.PAE=1`, `EFER.LME=0`)
 /// - 4-level IA-32e paging (long mode) (`CR0.PG=1`, `CR4.PAE=1`, `EFER.LME=1`)
+#[allow(clippy::too_many_arguments)]
 pub fn translate(
     bus: &mut impl MemoryBus,
     linear: u64,

@@ -265,7 +265,7 @@ mod tests {
         let phys_page = 0x1_0000_0000u64;
 
         // PDPT[0] -> PD.
-        bus.write_u64_phys(cr3 as u64, PTE_P | (pd_base & ADDR_MASK_4K));
+        bus.write_u64_phys(cr3, PTE_P | (pd_base & ADDR_MASK_4K));
 
         let pd_index = ((vaddr as u32) >> 21) & 0x1FF;
         let pt_index = ((vaddr as u32) >> 12) & 0x1FF;
@@ -306,7 +306,7 @@ mod tests {
         let vaddr = 0x2345_6789u64;
         let phys_base = 0x0080_0000u64; // 8MiB, 2MiB-aligned
 
-        bus.write_u64_phys(cr3 as u64, PTE_P | (pd_base & ADDR_MASK_4K));
+        bus.write_u64_phys(cr3, PTE_P | (pd_base & ADDR_MASK_4K));
 
         let pd_index = ((vaddr as u32) >> 21) & 0x1FF;
         let pde_addr = pd_base + (pd_index as u64) * 8;
@@ -333,7 +333,7 @@ mod tests {
 
         let vaddr = 0x0010_2000u64;
 
-        bus.write_u64_phys(cr3 as u64, PTE_P | (pd_base & ADDR_MASK_4K));
+        bus.write_u64_phys(cr3, PTE_P | (pd_base & ADDR_MASK_4K));
 
         let pd_index = ((vaddr as u32) >> 21) & 0x1FF;
         let pt_index = ((vaddr as u32) >> 12) & 0x1FF;
@@ -371,7 +371,7 @@ mod tests {
         let pd_base = 0x2000u64;
         let vaddr = 0x0020_1000u64;
 
-        bus.write_u64_phys(cr3 as u64, PTE_P | (pd_base & ADDR_MASK_4K));
+        bus.write_u64_phys(cr3, PTE_P | (pd_base & ADDR_MASK_4K));
 
         let pd_index = ((vaddr as u32) >> 21) & 0x1FF;
         let pde_addr = pd_base + (pd_index as u64) * 8;
@@ -396,11 +396,11 @@ mod tests {
 
         let vaddr = 0x0000_1000u64;
 
-        bus.write_u64_phys(cr3 as u64, PTE_P | (pd_base & ADDR_MASK_4K));
+        bus.write_u64_phys(cr3, PTE_P | (pd_base & ADDR_MASK_4K));
 
         // Use index 0/1 for simplicity.
         bus.write_u64_phys(pd_base, PTE_P | (pt_base & ADDR_MASK_4K)); // RW=0
-        bus.write_u64_phys(pt_base + 1 * 8, PTE_P | (0x2000u64 & ADDR_MASK_4K)); // RW=0
+        bus.write_u64_phys(pt_base + 8, PTE_P | (0x2000u64 & ADDR_MASK_4K)); // RW=0
 
         // WP=0: supervisor writes succeed.
         translate(&mut bus, vaddr, AccessType::Write, 0, 0, cr3, 0).unwrap();

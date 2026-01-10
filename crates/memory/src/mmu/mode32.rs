@@ -25,6 +25,7 @@ const RESERVED_PDE_4M_MASK: u32 = 0x003F_E000; // bits 21:13
 /// Translate a linear address (treated as 32-bit) using 32-bit paging.
 ///
 /// `linear` is masked to 32 bits internally.
+#[allow(clippy::too_many_arguments)]
 pub fn translate(
     bus: &mut impl MemoryBus,
     linear: u64,
@@ -138,7 +139,10 @@ pub fn translate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mmu::{AccessType, TranslateError, CR0_PG, CR0_WP, PFEC_P, PFEC_RSVD, PFEC_US, PFEC_WR, CR4_PSE};
+    use crate::mmu::{
+        AccessType, TranslateError, CR0_PG, CR0_WP, CR4_PSE, PFEC_ID, PFEC_P, PFEC_RSVD, PFEC_US,
+        PFEC_WR,
+    };
 
     struct TestBus {
         mem: Vec<u8>,
@@ -205,7 +209,7 @@ mod tests {
         let mut bus = TestBus::new(0x10_000);
 
         let cr3 = 0x1000u64;
-        let pd = cr3 as u64;
+        let pd = cr3;
         let pt = 0x2000u64;
 
         let vaddr = 0x0040_1000u64;
@@ -256,7 +260,7 @@ mod tests {
     fn maps_4m_page_when_pse_and_ps_set() {
         let mut bus = TestBus::new(0x10_000);
         let cr3 = 0x1000u64;
-        let pd = cr3 as u64;
+        let pd = cr3;
 
         let vaddr = 0x0400_1234u64;
         let pde_index = ((vaddr as u32) >> 22) & 0x3FF;
@@ -286,7 +290,7 @@ mod tests {
     fn user_access_to_supervisor_page_faults() {
         let mut bus = TestBus::new(0x10_000);
         let cr3 = 0x1000u64;
-        let pd = cr3 as u64;
+        let pd = cr3;
         let pt = 0x2000u64;
 
         let vaddr = 0x0040_0000u64;
@@ -319,10 +323,99 @@ mod tests {
     }
 
     #[test]
+    fn instruction_fetch_fault_sets_id_bit() {
+        let mut bus = TestBus::new(0x10_000);
+        let cr3 = 0x1000u64;
+        let pd = cr3;
+        let pt = 0x2000u64;
+
+        let vaddr = 0x0040_0000u64;
+        let pde_index = ((vaddr as u32) >> 22) & 0x3FF;
+        let pte_index = ((vaddr as u32) >> 12) & 0x3FF;
+        let pde_addr = pd + (pde_index as u64) * 4;
+        let pte_addr = pt + (pte_index as u64) * 4;
+
+        // Supervisor-only mapping.
+        let pde = (pt as u32) | PTE_P | PTE_RW;
+        let pte = 0x3000u32 | PTE_P | PTE_RW;
+        bus.write_u32_phys(pde_addr, pde);
+        bus.write_u32_phys(pte_addr, pte);
+
+        let err = translate(
+            &mut bus,
+            vaddr,
+            AccessType::Execute,
+            3,
+            CR0_PG,
+            cr3,
+            0,
+        )
+        .unwrap_err();
+        assert_pf(
+            err,
+            vaddr as u32,
+            PFEC_P | PFEC_US | PFEC_ID,
+        );
+    }
+
+    #[test]
+    fn not_present_fault_has_p0_and_sets_us_wr_id() {
+        let mut bus = TestBus::new(0x10_000);
+        let cr3 = 0x1000u64;
+
+        // PDE is not present (zeroed memory).
+        let vaddr = 0x1234_5678u64;
+
+        let err = translate(
+            &mut bus,
+            vaddr,
+            AccessType::Execute,
+            3,
+            CR0_PG,
+            cr3,
+            0,
+        )
+        .unwrap_err();
+
+        // P=0, U/S=1, I/D=1.
+        assert_pf(err, vaddr as u32, PFEC_US | PFEC_ID);
+    }
+
+    #[test]
+    fn not_present_pte_fault_sets_wr_and_us() {
+        let mut bus = TestBus::new(0x10_000);
+        let cr3 = 0x1000u64;
+        let pd = cr3;
+        let pt = 0x2000u64;
+
+        let vaddr = 0x0040_0000u64;
+        let pde_index = ((vaddr as u32) >> 22) & 0x3FF;
+        let pde_addr = pd + (pde_index as u64) * 4;
+
+        // PDE present and user accessible, but leave the PTE not present (zero).
+        let pde = (pt as u32) | PTE_P | PTE_RW | PTE_US;
+        bus.write_u32_phys(pde_addr, pde);
+
+        let err = translate(
+            &mut bus,
+            vaddr,
+            AccessType::Write,
+            3,
+            CR0_PG,
+            cr3,
+            0,
+        )
+        .unwrap_err();
+
+        // P=0, W/R=1, U/S=1.
+        assert_pf(err, vaddr as u32, PFEC_WR | PFEC_US);
+    }
+
+    #[test]
     fn supervisor_write_to_ro_page_respects_wp() {
         let mut bus = TestBus::new(0x10_000);
         let cr3 = 0x1000u64;
-        let pd = cr3 as u64;
+        let pd = cr3;
         let pt = 0x2000u64;
 
         let vaddr = 0x0080_0000u64;
@@ -372,7 +465,7 @@ mod tests {
     fn pde_ps_with_pse_disabled_is_reserved_bit_violation() {
         let mut bus = TestBus::new(0x10_000);
         let cr3 = 0x1000u64;
-        let pd = cr3 as u64;
+        let pd = cr3;
 
         let vaddr = 0x0000_2000u64;
         let pde_index = ((vaddr as u32) >> 22) & 0x3FF;
@@ -391,6 +484,34 @@ mod tests {
             0,
         )
         .unwrap_err();
+        assert_pf(err, vaddr as u32, PFEC_P | PFEC_RSVD);
+    }
+
+    #[test]
+    fn large_page_reserved_bits_fault_sets_rsvd() {
+        let mut bus = TestBus::new(0x10_000);
+        let cr3 = 0x1000u64;
+        let pd = cr3;
+
+        let vaddr = 0x0400_0000u64;
+        let pde_index = ((vaddr as u32) >> 22) & 0x3FF;
+        let pde_addr = pd + (pde_index as u64) * 4;
+
+        // Set a reserved bit in bits 21:13 (e.g. bit 13).
+        let pde = (0x0200_0000u32 & PDE_ADDR_MASK_4M) | PTE_P | PDE_PS | (1 << 13);
+        bus.write_u32_phys(pde_addr, pde);
+
+        let err = translate(
+            &mut bus,
+            vaddr,
+            AccessType::Read,
+            0,
+            CR0_PG,
+            cr3,
+            CR4_PSE,
+        )
+        .unwrap_err();
+
         assert_pf(err, vaddr as u32, PFEC_P | PFEC_RSVD);
     }
 }
