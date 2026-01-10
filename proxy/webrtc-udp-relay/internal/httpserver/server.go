@@ -47,6 +47,7 @@ func New(cfg config.Config, logger *slog.Logger, build BuildInfo) *Server {
 		recoverMiddleware(s.log),
 		requestIDMiddleware(),
 		requestLoggerMiddleware(s.log),
+		s.originMiddleware(),
 	)
 
 	s.srv = &http.Server{
@@ -98,17 +99,13 @@ func (s *Server) registerRoutes() {
 		WriteJSON(w, http.StatusOK, s.build)
 	})
 
-	s.mux.HandleFunc("GET /webrtc/ice", s.withOriginPolicy(func(w http.ResponseWriter, r *http.Request) {
+	s.mux.HandleFunc("GET /webrtc/ice", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.cfg.ICEConfigError(); err != nil {
 			WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
 			return
 		}
 		WriteJSON(w, http.StatusOK, map[string]any{"iceServers": s.cfg.ICEServers})
-	}))
-	s.mux.HandleFunc("OPTIONS /webrtc/ice", s.withOriginPolicy(func(w http.ResponseWriter, r *http.Request) {
-		// withOriginPolicy handles preflight and writes the response.
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	})
 }
 
 type Middleware func(http.Handler) http.Handler

@@ -56,6 +56,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip(t *testing.T) {
 	signalingSrv := signaling.NewServer(signaling.Config{
 		Sessions:    sessionMgr,
 		WebRTC:      webrtc.NewAPI(),
+		ICEServers:  cfg.ICEServers,
 		RelayConfig: relayCfg,
 		Policy:      destPolicy,
 	})

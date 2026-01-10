@@ -22,6 +22,10 @@ type Config struct {
 	// (port ranges, NAT 1:1 IPs, listen IP filters) apply.
 	WebRTC *webrtc.API
 
+	// ICEServers is the list of ICE servers (STUN/TURN) to use when constructing
+	// server-side PeerConnections.
+	ICEServers []webrtc.ICEServer
+
 	RelayConfig relay.Config
 	Policy      *policy.DestinationPolicy
 }
@@ -44,6 +48,8 @@ type Server struct {
 
 	// WebRTC is the server-side pion API used to construct PeerConnections.
 	WebRTC *webrtc.API
+	// ICEServers is the ICE server list for server-side PeerConnections.
+	ICEServers []webrtc.ICEServer
 
 	RelayConfig relay.Config
 	Policy      *policy.DestinationPolicy
@@ -53,6 +59,7 @@ func NewServer(cfg Config) *Server {
 	return &Server{
 		Sessions:    cfg.Sessions,
 		WebRTC:      cfg.WebRTC,
+		ICEServers:  cfg.ICEServers,
 		RelayConfig: cfg.RelayConfig,
 		Policy:      cfg.Policy,
 	}
@@ -171,7 +178,7 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err := webrtcpeer.NewSession(s.WebRTC, s.RelayConfig, s.Policy, cleanupRelaySession)
+	sess, err := webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, cleanupRelaySession)
 	if err != nil {
 		cleanupRelaySession()
 		http.Error(w, "failed to create session", http.StatusInternalServerError)

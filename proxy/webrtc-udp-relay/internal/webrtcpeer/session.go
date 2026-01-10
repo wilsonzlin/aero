@@ -22,12 +22,12 @@ type Session struct {
 	close sync.Once
 }
 
-func NewSession(api *webrtc.API, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, onClose func()) (*Session, error) {
+func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, onClose func()) (*Session, error) {
 	if api == nil {
 		api = webrtc.NewAPI()
 	}
 
-	pc, err := api.NewPeerConnection(webrtc.Configuration{})
+	pc, err := api.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers})
 	if err != nil {
 		return nil, err
 	}

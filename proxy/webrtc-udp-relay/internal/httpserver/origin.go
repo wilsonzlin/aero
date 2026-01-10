@@ -6,6 +6,16 @@ import (
 	"strings"
 )
 
+func (s *Server) originMiddleware() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s.withOriginPolicy(func(w http.ResponseWriter, r *http.Request) {
+				next.ServeHTTP(w, r)
+			})(w, r)
+		})
+	}
+}
+
 func (s *Server) withOriginPolicy(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		originHeader := strings.TrimSpace(r.Header.Get("Origin"))

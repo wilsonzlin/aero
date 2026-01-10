@@ -81,6 +81,7 @@ func main() {
 	sig := signaling.NewServer(signaling.Config{
 		Sessions:    sessionMgr,
 		WebRTC:      api,
+		ICEServers:  cfg.ICEServers,
 		RelayConfig: relayCfg,
 		Policy:      destPolicy,
 	})
