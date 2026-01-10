@@ -192,6 +192,21 @@ serviceAccount:
   automountServiceAccountToken: true
 ```
 
+## Autoscaling (HPA) (optional)
+
+If you have `metrics-server` installed, you can enable a HorizontalPodAutoscaler:
+
+```yaml
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+```
+
+When autoscaling is enabled, the chart sets the Deployment replica count to `autoscaling.minReplicas`
+and the HPA will manage scaling from there.
+
 ## Verify the rollout
 
 ```bash
