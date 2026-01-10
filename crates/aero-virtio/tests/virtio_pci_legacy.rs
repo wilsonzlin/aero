@@ -77,7 +77,8 @@ fn virtio_pci_legacy_pfn_queue_and_isr_read_clears() {
     let irq_state = Rc::new(RefCell::new(IrqState::default()));
     let irq = SharedIrq(irq_state.clone());
 
-    let mut dev = VirtioPciDevice::new_legacy_only(Box::new(blk), Box::new(irq));
+    // Use a *transitional* device (legacy + modern) but exercise the legacy path.
+    let mut dev = VirtioPciDevice::new_transitional(Box::new(blk), Box::new(irq));
     let mut mem = GuestRam::new(0x20000);
 
     // 1) Read device features and accept them (legacy path exposes only low 32 bits).

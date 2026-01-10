@@ -1,7 +1,8 @@
 use aero_devices::pci::profile::{
     PCI_DEVICE_ID_VIRTIO_BLK_MODERN, PCI_DEVICE_ID_VIRTIO_INPUT_MODERN,
-    PCI_DEVICE_ID_VIRTIO_NET_MODERN, PCI_DEVICE_ID_VIRTIO_SND_MODERN, PCI_VENDOR_ID_VIRTIO,
-    VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY,
+    PCI_DEVICE_ID_VIRTIO_NET_MODERN, PCI_DEVICE_ID_VIRTIO_NET_TRANSITIONAL,
+    PCI_DEVICE_ID_VIRTIO_SND_MODERN, PCI_VENDOR_ID_VIRTIO, VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVICE,
+    VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY,
 };
 
 use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
@@ -30,6 +31,11 @@ fn read_u8(dev: &VirtioPciDevice, offset: u16) -> u8 {
 fn read_u16(dev: &VirtioPciDevice, offset: u16) -> u16 {
     let bytes = read_config(dev, offset, 2);
     u16::from_le_bytes([bytes[0], bytes[1]])
+}
+
+fn read_u32(dev: &VirtioPciDevice, offset: u16) -> u32 {
+    let bytes = read_config(dev, offset, 4);
+    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
 fn assert_virtio_header(dev: &VirtioPciDevice, expected_device_id: u16) {
@@ -110,4 +116,22 @@ fn virtio_vendor_specific_capabilities_match_expected_layout() {
     assert_eq!(cap3[0], 0x09);
     assert_eq!(cap3[1], 0x00);
     assert_eq!(&cap3[2..], &VIRTIO_CAP_DEVICE);
+}
+
+#[test]
+fn virtio_pci_transitional_exposes_legacy_io_bar_and_device_id() {
+    let mut dev = VirtioPciDevice::new_transitional(
+        Box::new(VirtioNet::new(
+            LoopbackNet::default(),
+            [0x52, 0x54, 0x00, 0, 0, 3],
+        )),
+        Box::new(InterruptLog::default()),
+    );
+
+    // Transitional virtio-net device ID should match QEMU convention.
+    assert_virtio_header(&dev, PCI_DEVICE_ID_VIRTIO_NET_TRANSITIONAL);
+
+    // BAR1 should be present as an I/O BAR for the legacy register block.
+    dev.config_write(0x14, &0xffff_ffffu32.to_le_bytes());
+    assert_eq!(read_u32(&dev, 0x14), 0xffff_ff01);
 }

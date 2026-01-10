@@ -378,10 +378,21 @@ impl VirtioPciDevice {
                 write_u32_to(data, (self.device_features() & 0xffff_ffff) as u32);
             }
             VIRTIO_PCI_LEGACY_QUEUE_PFN => {
-                let pfn = self.selected_queue().legacy_pfn;
+                let pfn = self
+                    .queues
+                    .get(self.queue_select as usize)
+                    .map(|q| q.legacy_pfn)
+                    .unwrap_or(0);
                 write_u32_to(data, pfn);
             }
-            VIRTIO_PCI_LEGACY_QUEUE_NUM => write_u16_to(data, self.selected_queue().max_size),
+            VIRTIO_PCI_LEGACY_QUEUE_NUM => {
+                let max_size = self
+                    .queues
+                    .get(self.queue_select as usize)
+                    .map(|q| q.max_size)
+                    .unwrap_or(0);
+                write_u16_to(data, max_size);
+            }
             VIRTIO_PCI_LEGACY_STATUS => write_u8_to(data, self.device_status),
             VIRTIO_PCI_LEGACY_ISR => {
                 let isr = self.read_isr_and_clear();
@@ -407,7 +418,8 @@ impl VirtioPciDevice {
         match offset {
             VIRTIO_PCI_LEGACY_GUEST_FEATURES => {
                 let features = read_le_bytes_u32(data) as u64;
-                self.driver_features = (self.driver_features & 0xffff_ffff_0000_0000) | features;
+                // Legacy transport can only negotiate the low 32 bits.
+                self.driver_features = features;
                 // Legacy drivers generally don't set FEATURES_OK; negotiate immediately.
                 self.negotiate_features();
             }
@@ -416,7 +428,9 @@ impl VirtioPciDevice {
             }
             VIRTIO_PCI_LEGACY_QUEUE_PFN => {
                 let pfn = read_le_bytes_u32(data);
-                let q = self.selected_queue_mut();
+                let Some(q) = self.queues.get_mut(self.queue_select as usize) else {
+                    return;
+                };
                 q.legacy_pfn = pfn;
                 if pfn == 0 {
                     q.enable = false;
@@ -432,6 +446,9 @@ impl VirtioPciDevice {
             }
             VIRTIO_PCI_LEGACY_QUEUE_NOTIFY => {
                 let queue_index = read_le_bytes_u16(data);
+                if queue_index as usize >= self.queues.len() {
+                    return;
+                }
                 self.process_queue_activity(queue_index, mem);
             }
             VIRTIO_PCI_LEGACY_STATUS => {
