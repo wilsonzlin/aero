@@ -1,5 +1,6 @@
 pub mod keyboard;
 pub mod mouse;
+pub mod usage;
 
 const USB_DESCRIPTOR_TYPE_DEVICE: u8 = 0x01;
 const USB_DESCRIPTOR_TYPE_CONFIGURATION: u8 = 0x02;

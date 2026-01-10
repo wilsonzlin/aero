@@ -4,6 +4,8 @@ This project models input devices as **USB HID** (Human Interface Device) periph
 
 This document is **separate** from PS/2 scancodes (see `docs/08-input-devices.md`), because USB HID uses **usages** (IDs from standardized tables), not scancodes.
 
+The Rust-side mapping helpers live in `emulator::io::usb::hid::usage` (`crates/emulator/src/io/usb/hid/usage.rs`).
+
 ---
 
 ## Keyboard: `KeyboardEvent.code` → HID Usage (Keyboard/Keypad page 0x07)
@@ -151,4 +153,3 @@ Byte 0: buttons
 Byte 1: X delta
 Byte 2: Y delta
 ```
-
