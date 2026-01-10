@@ -1,3 +1,5 @@
+import { LogHistogram, RunningStats, msToUs, usToMs } from '../perf/stats';
+
 export type WebGpuBenchOptions = {
   frames?: number;
   warmupFrames?: number;
@@ -99,20 +101,6 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 function getNavigatorGpu(): GPU | undefined {
   return (navigator as Navigator & { gpu?: GPU }).gpu;
-}
-
-function avg(values: ReadonlyArray<number>): number {
-  if (values.length === 0) return 0;
-  let sum = 0;
-  for (const v of values) sum += v;
-  return sum / values.length;
-}
-
-function percentile(values: ReadonlyArray<number>, p: number): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1));
-  return sorted[idx] ?? 0;
 }
 
 function round3(value: number): number {
@@ -309,7 +297,8 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
     const drawsPerSegmentBase = Math.floor(drawCallsPerFrame / segmentCount);
     const drawsPerSegmentRemainder = drawCallsPerFrame % segmentCount;
 
-    const encodeTimesMs: number[] = [];
+    const encodeStats = new RunningStats();
+    const encodeHistogram = new LogHistogram();
 
     async function submitFrame(frameIndex: number | null, recordMetrics: boolean): Promise<void> {
       const t0 = performance.now();
@@ -371,7 +360,11 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
 
       device.queue.submit([encoder.finish()]);
       const t1 = performance.now();
-      if (recordMetrics) encodeTimesMs.push(t1 - t0);
+      if (recordMetrics) {
+        const dt = t1 - t0;
+        encodeStats.push(dt);
+        encodeHistogram.record(msToUs(dt));
+      }
 
       // Keep swapchain texture allocation deterministic to avoid OOM in tight loops.
       await device.queue.onSubmittedWorkDone();
@@ -389,7 +382,7 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
 
     let gpuTimeMs: number | null = null;
     if (querySet && queryResolveBuffer && queryReadBuffer) {
-      const gpuTimesMs: number[] = [];
+      const gpuStats = new RunningStats();
       try {
         const copyEncoder = device.createCommandEncoder();
         copyEncoder.copyBufferToBuffer(queryResolveBuffer, 0, queryReadBuffer, 0, queryCount * 8);
@@ -403,12 +396,12 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
           if (end > start) {
             const deltaTicks = end - start;
             const deltaNs = Number(deltaTicks) * timestampPeriodNs;
-            gpuTimesMs.push(deltaNs / 1e6);
+            gpuStats.push(deltaNs / 1e6);
           }
         }
         queryReadBuffer.unmap();
 
-        if (gpuTimesMs.length > 0) gpuTimeMs = round3(avg(gpuTimesMs));
+        if (gpuStats.count > 0) gpuTimeMs = round3(gpuStats.mean);
       } catch {
         gpuTimeMs = null;
       }
@@ -418,8 +411,8 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
     const fps = totalMs > 0 ? (frames / totalMs) * 1000 : 0;
 
     const adapterInfo = await getAdapterInfo(adapter);
-    const encodeAvg = avg(encodeTimesMs);
-    const encodeP95 = percentile(encodeTimesMs, 0.95);
+    const encodeAvg = encodeStats.count > 0 ? encodeStats.mean : 0;
+    const encodeP95 = encodeStats.count > 0 ? usToMs(encodeHistogram.quantile(0.95)) : 0;
 
     return {
       supported: true,
@@ -452,4 +445,3 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
     (querySet as unknown as { destroy?: () => void } | null)?.destroy?.();
   }
 }
-

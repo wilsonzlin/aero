@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { RunningStats } from "../packages/aero-stats/src/running-stats.js";
+
 export const HISTORY_SCHEMA_VERSION = 1;
 
 export function computeStats(samples) {
@@ -10,32 +12,20 @@ export function computeStats(samples) {
     throw new Error("Expected non-empty samples array");
   }
 
-  let min = Infinity;
-  let max = -Infinity;
-  let sum = 0;
-
+  const stats = new RunningStats();
   for (const v of samples) {
     if (typeof v !== "number" || !Number.isFinite(v)) {
       throw new Error(`Invalid sample value: ${String(v)}`);
     }
-    if (v < min) min = v;
-    if (v > max) max = v;
-    sum += v;
+    stats.push(v);
   }
 
-  const n = samples.length;
-  const mean = sum / n;
-
-  let variance = 0;
-  if (n > 1) {
-    for (const v of samples) variance += (v - mean) ** 2;
-    variance /= n - 1;
-  }
-
-  const stdev = Math.sqrt(variance);
+  const n = stats.count;
+  const mean = stats.mean;
+  const stdev = n > 1 ? stats.stdevSample : 0;
   const cv = mean === 0 ? 0 : stdev / Math.abs(mean);
 
-  return { n, min, max, mean, stdev, cv };
+  return { n, min: stats.min, max: stats.max, mean, stdev, cv };
 }
 
 function readJson(filePath) {

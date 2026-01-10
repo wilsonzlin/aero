@@ -58,9 +58,9 @@ export class LogHistogram {
       );
     }
 
-    const v = value < 1 ? 1 : value;
-    const exp = intLog2(v);
-    this.#ensureExponent(exp);
+    const maxValue = 2 ** (this.#maxExp + 1);
+    const v = Math.min(maxValue, value < 1 ? 1 : value);
+    const exp = Math.min(intLog2(v), this.#maxExp);
 
     const base = 2 ** exp;
     const offset = v - base;
@@ -89,8 +89,11 @@ export class LogHistogram {
         `LogHistogram.merge: incompatible subBucketCount (${this.#subBucketCount} vs ${other.#subBucketCount})`,
       );
     }
-
-    this.#ensureExponent(other.#maxExpUsed);
+    if (this.#maxExp !== other.#maxExp) {
+      throw new TypeError(
+        `LogHistogram.merge: incompatible maxExponent (${this.#maxExp} vs ${other.#maxExp})`,
+      );
+    }
 
     const startExp = Math.max(0, other.#minExpUsed);
     const endExp = Math.max(startExp, other.#maxExpUsed);
@@ -213,15 +216,5 @@ export class LogHistogram {
     }
 
     return hist;
-  }
-
-  #ensureExponent(exp) {
-    if (exp <= this.#maxExp) return;
-
-    const newMax = exp;
-    const next = new Uint32Array((newMax + 1) * this.#subBucketCount);
-    next.set(this.#counts);
-    this.#counts = next;
-    this.#maxExp = newMax;
   }
 }
