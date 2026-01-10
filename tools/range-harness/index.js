@@ -31,6 +31,7 @@ function printUsage(exitCode = 0) {
     '  --passes <N>           Repeat the same range plan N times (default: 1; useful for cache hit verification)',
     '  --header <k:v>         Extra request header (repeatable), e.g. --header \"Authorization: Bearer ...\"',
     '  --json                 Emit machine-readable JSON (suppresses human-readable logs)',
+    '  --strict               Exit non-zero if any request fails correctness checks',
     '  --random               Pick random aligned chunks',
     '  --sequential           Walk aligned chunks from the start (wraps around)',
     '  --help                 Show this help',
@@ -65,6 +66,7 @@ function parseArgs(argv) {
     headers: {},
     passes: 1,
     json: false,
+    strict: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -98,6 +100,8 @@ function parseArgs(argv) {
       opts.headers[name] = value;
     } else if (arg === '--json') {
       opts.json = true;
+    } else if (arg === '--strict') {
+      opts.strict = true;
     } else if (arg === '--random') {
       opts.mode = 'random';
     } else if (arg === '--sequential') {
@@ -705,6 +709,10 @@ async function main() {
         2,
       ),
     );
+  }
+
+  if (opts.strict && overallStats.okCount !== allResults.length) {
+    process.exitCode = 1;
   }
 }
 

@@ -39,6 +39,7 @@ node tools/range-harness/index.js --url <URL> --random --json > range-results.js
 - `--passes <N>`: repeat the same range plan `N` times (default: `1`). Useful for verifying that a CDN caches byte ranges (pass 1 is typically `Miss`, pass 2 should become `Hit` if caching is configured).
 - `--header "Name: value"`: extra request header (repeatable). Useful for authenticated endpoints.
 - `--json`: emit machine-readable JSON (suppresses the per-request text output)
+- `--strict`: exit non-zero if any request fails correctness checks (bad `Content-Range`, `416`, etc)
 - `--random`: pick random aligned chunks
 - `--sequential`: walk aligned chunks from the start (wraps around)
 
