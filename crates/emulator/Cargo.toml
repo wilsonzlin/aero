@@ -8,6 +8,7 @@ default = []
 net-trace = []
 # Enable verbose debug logging from the user-space network stack.
 net_log = []
+sinc-resampler = []
 
 [dependencies]
 memory = { path = "../memory" }
@@ -23,7 +24,12 @@ tokio-util = "0.7"
 image = { version = "0.25.5", default-features = false, features = ["png"] }
 aero-bios = { path = "../aero-bios" }
 hyper = { version = "0.14", features = ["server", "http1", "tcp"] }
+criterion = { version = "0.5.1", default-features = false, features = ["cargo_bench_support"] }
 
 [[test]]
 name = "boot_basic"
 path = "../../tests/boot/basic_boot.rs"
+
+[[bench]]
+name = "dsp"
+harness = false

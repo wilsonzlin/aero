@@ -757,6 +757,7 @@ name = "emulator"
 version = "0.1.0"
 dependencies = [
  "aero-bios",
+ "criterion",
  "hyper",
  "image",
  "memory",
