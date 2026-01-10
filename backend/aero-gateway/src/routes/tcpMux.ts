@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import net from "node:net";
 import type http from "node:http";
 import type { Duplex } from "node:stream";
@@ -18,14 +19,27 @@ import {
   type TcpMuxFrame,
 } from "../protocol/tcpMux.js";
 import { validateTcpTargetPolicy, validateWsUpgradePolicy, type TcpProxyUpgradePolicy } from "./tcpPolicy.js";
+import { evaluateTcpHostPolicy, parseTcpHostnameEgressPolicyFromEnv } from "../security/egressPolicy.js";
+import { isPublicIpAddress } from "../security/ipPolicy.js";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+type TcpProxyEgressMetricSink = Readonly<{
+  blockedByHostPolicyTotal?: { inc: () => void };
+  blockedByIpPolicyTotal?: { inc: () => void };
+}>;
+
+class TcpMuxIpPolicyDeniedError extends Error {
+  override name = "TcpMuxIpPolicyDeniedError";
+}
 
 export type TcpMuxUpgradeOptions = TcpProxyUpgradePolicy &
   Readonly<{
     maxStreams?: number;
     maxStreamBufferedBytes?: number;
     maxFramePayloadBytes?: number;
+    createConnection?: typeof net.createConnection;
+    metrics?: TcpProxyEgressMetricSink;
   }>;
 
 export function handleTcpMuxUpgrade(
@@ -330,7 +344,65 @@ class WebSocketTcpMuxBridge {
       return;
     }
 
-    const socket = net.createConnection({ host: target.host, port: target.port, allowHalfOpen: true });
+    let hostDecision: ReturnType<typeof evaluateTcpHostPolicy>;
+    try {
+      const hostPolicy = parseTcpHostnameEgressPolicyFromEnv(process.env);
+      hostDecision = evaluateTcpHostPolicy(target.host, hostPolicy);
+    } catch {
+      this.sendStreamError(frame.streamId, TcpMuxErrorCode.DIAL_FAILED, "TCP hostname policy misconfigured");
+      return;
+    }
+    if (!hostDecision.allowed) {
+      this.opts.metrics?.blockedByHostPolicyTotal?.inc();
+      const code =
+        hostDecision.reason === "invalid-hostname" ? TcpMuxErrorCode.PROTOCOL_ERROR : TcpMuxErrorCode.POLICY_DENIED;
+      this.sendStreamError(frame.streamId, code, `${hostDecision.reason}: ${hostDecision.message}`);
+      return;
+    }
+
+    let dialHost = "";
+    let dialLookup:
+      | ((hostname: string, options: unknown, cb: (err: Error | null, address: string, family: number) => void) => void)
+      | undefined;
+
+    if (hostDecision.target.kind === "ip") {
+      if (!isPublicIpAddress(hostDecision.target.ip)) {
+        this.opts.metrics?.blockedByIpPolicyTotal?.inc();
+        this.sendStreamError(frame.streamId, TcpMuxErrorCode.POLICY_DENIED, "Target IP is not allowed by IP egress policy");
+        return;
+      }
+      dialHost = hostDecision.target.ip;
+    } else {
+      dialHost = hostDecision.target.hostname;
+      dialLookup = (_hostname, _options, cb) => {
+        void (async () => {
+          let addresses: { address: string; family: number }[];
+          try {
+            addresses = await lookup(dialHost, { all: true, verbatim: true });
+          } catch (err) {
+            cb(err as Error, "", 4);
+            return;
+          }
+
+          for (const { address, family } of addresses) {
+            if (isPublicIpAddress(address)) {
+              cb(null, address, family);
+              return;
+            }
+          }
+
+          cb(new TcpMuxIpPolicyDeniedError("All resolved IPs are blocked by IP egress policy"), "", 4);
+        })();
+      };
+    }
+
+    const createConnection = this.opts.createConnection ?? net.createConnection;
+    const socket = createConnection({
+      host: dialHost,
+      port: target.port,
+      allowHalfOpen: true,
+      lookup: dialLookup,
+    });
     socket.setNoDelay(true);
 
     const stream: StreamState = {
@@ -369,7 +441,12 @@ class WebSocketTcpMuxBridge {
     });
 
     socket.on("error", (err) => {
-      this.sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, err.message);
+      if (err instanceof TcpMuxIpPolicyDeniedError) {
+        this.opts.metrics?.blockedByIpPolicyTotal?.inc();
+        this.sendStreamError(stream.id, TcpMuxErrorCode.POLICY_DENIED, err.message);
+      } else {
+        this.sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, err.message);
+      }
       this.destroyStream(stream.id);
     });
 

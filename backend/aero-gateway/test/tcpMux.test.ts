@@ -65,9 +65,10 @@ describe("tcpMux route", () => {
     const proxyServer = http.createServer();
     proxyServer.on("upgrade", (req, socket, head) => {
       handleTcpMuxUpgrade(req, socket, head, {
-        allowedTargetHosts: ["127.0.0.1"],
+        allowedTargetHosts: ["8.8.8.8"],
         allowedTargetPorts: [echoPort],
         maxStreams: 16,
+        createConnection: (() => net.createConnection({ host: "127.0.0.1", port: echoPort, allowHalfOpen: true })) as typeof net.createConnection,
       });
     });
     const proxyPort = await listen(proxyServer, "127.0.0.1");
@@ -110,8 +111,8 @@ describe("tcpMux route", () => {
       // Send OPEN frames for both streams (bundled into one WebSocket message).
       ws.send(
         Buffer.concat([
-          encodeTcpMuxFrame(TcpMuxMsgType.OPEN, s1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort })),
-          encodeTcpMuxFrame(TcpMuxMsgType.OPEN, s2, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort })),
+          encodeTcpMuxFrame(TcpMuxMsgType.OPEN, s1, encodeTcpMuxOpenPayload({ host: "8.8.8.8", port: echoPort })),
+          encodeTcpMuxFrame(TcpMuxMsgType.OPEN, s2, encodeTcpMuxOpenPayload({ host: "8.8.8.8", port: echoPort })),
         ]),
       );
 
@@ -154,9 +155,10 @@ describe("tcpMux route", () => {
     const proxyServer = http.createServer();
     proxyServer.on("upgrade", (req, socket, head) => {
       handleTcpMuxUpgrade(req, socket, head, {
-        allowedTargetHosts: ["127.0.0.1"],
+        allowedTargetHosts: ["8.8.8.8"],
         allowedTargetPorts: [echoPort],
         maxStreams: 16,
+        createConnection: (() => net.createConnection({ host: "127.0.0.1", port: echoPort, allowHalfOpen: true })) as typeof net.createConnection,
       });
     });
     const proxyPort = await listen(proxyServer, "127.0.0.1");
@@ -189,13 +191,13 @@ describe("tcpMux route", () => {
         encodeTcpMuxFrame(
           TcpMuxMsgType.OPEN,
           blockedStream,
-          encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort + 1 }),
+          encodeTcpMuxOpenPayload({ host: "8.8.8.8", port: echoPort + 1 }),
         ),
       );
 
       const okStream = 11;
       ws.send(
-        encodeTcpMuxFrame(TcpMuxMsgType.OPEN, okStream, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort })),
+        encodeTcpMuxFrame(TcpMuxMsgType.OPEN, okStream, encodeTcpMuxOpenPayload({ host: "8.8.8.8", port: echoPort })),
       );
       ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, okStream, Buffer.from("ok\n", "utf8")));
 

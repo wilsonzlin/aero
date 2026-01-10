@@ -578,7 +578,7 @@ For workloads that need many concurrent TCP connections, the gateway can optiona
 
 #### TCP Egress Policy (Recommended for Public Deployments)
 
-When exposing the TCP proxy publicly, it's recommended to restrict outbound
+When exposing the TCP proxy endpoints (`/tcp` and `/tcp-mux`) publicly, it's recommended to restrict outbound
 connections to a safe subset of domains to reduce abuse risk.
 
 Environment variables:

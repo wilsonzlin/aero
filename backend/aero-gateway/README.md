@@ -116,7 +116,13 @@ Security:
 
 TCP proxy (`/tcp`, `/tcp-mux`):
 
-- `TCP_ALLOWED_HOSTS` (comma-separated; default: allow all)
+- `TCP_ALLOWED_HOSTS` (comma-separated patterns; default: allow all)
+  - Supports exact matches (`example.com`) and wildcard subdomain matches (`*.example.com`).
+  - If non-empty, the target must match at least one pattern.
+- `TCP_BLOCKED_HOSTS` (comma-separated patterns; default: none)
+  - Always enforced; deny overrides allow.
+- `TCP_REQUIRE_DNS_NAME=1|0` (default: `0`)
+  - When enabled, disallow IP-literal targets entirely (force DNS names).
 - `TCP_ALLOWED_PORTS` (comma-separated; default: allow all)
 - `TCP_BLOCKED_CLIENT_IPS` (comma-separated; default: none)
 - `TCP_MUX_MAX_STREAMS` (default: `1024`)

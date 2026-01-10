@@ -159,6 +159,7 @@ Some deployments may additionally support a non-cookie authentication mode (toke
    - Origin allowlist
    - Target parsing
    - Port allowlist
+   - Destination hostname policy (allow/deny list, optional “DNS-name-only” mode)
    - Destination IP policy (blocked ranges)
 3. Gateway completes the WebSocket upgrade.
 4. Gateway attempts to connect to the target TCP endpoint and begins relaying bytes.
@@ -420,6 +421,16 @@ The gateway must treat all requests as untrusted and enforce the following contr
 The gateway should enforce an allowlist of outbound TCP ports (deployment-specific).
 
 Clients must be prepared for connections to be rejected even if they are valid TCP ports, e.g. blocking `25` to prevent SMTP abuse.
+
+### 5.2.1 Hostname allow/deny lists (optional, recommended for public deployments)
+
+To further reduce open-proxy abuse risk, deployments may additionally enforce an outbound **hostname policy**:
+
+- allowlist: only permit specific domains (including wildcard subdomains like `*.example.com`)
+- denylist: always block specific domains (deny overrides allow)
+- optional “DNS-name-only” mode: disallow IP-literal targets entirely
+
+This policy must be applied **before** DNS resolution, and IP-range blocking must still be enforced on the resolved destination addresses.
 
 ### 5.3 Blocked destination IP ranges
 

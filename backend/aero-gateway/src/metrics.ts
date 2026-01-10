@@ -11,9 +11,15 @@ export type DnsMetrics = Readonly<{
   dnsUpstreamLatencySeconds: Histogram<'upstream' | 'kind'>;
 }>;
 
+export type TcpProxyMetrics = Readonly<{
+  blockedByHostPolicyTotal: Counter<string>;
+  blockedByIpPolicyTotal: Counter<string>;
+}>;
+
 export type MetricsBundle = Readonly<{
   registry: Registry;
   dns: DnsMetrics;
+  tcpProxy: TcpProxyMetrics;
 }>;
 
 export function setupMetrics(app: FastifyInstance): MetricsBundle {
@@ -73,6 +79,18 @@ export function setupMetrics(app: FastifyInstance): MetricsBundle {
     registers: [registry],
   });
 
+  const tcpProxyBlockedByHostPolicyTotal = new Counter({
+    name: 'tcp_proxy_blocked_by_host_policy_total',
+    help: 'Total number of TCP proxy dials blocked by hostname egress policy',
+    registers: [registry],
+  });
+
+  const tcpProxyBlockedByIpPolicyTotal = new Counter({
+    name: 'tcp_proxy_blocked_by_ip_policy_total',
+    help: 'Total number of TCP proxy dials blocked by IP egress policy',
+    registers: [registry],
+  });
+
   app.addHook('onRequest', async (request) => {
     (request as any)[kStartTime] = process.hrtime.bigint();
   });
@@ -101,6 +119,6 @@ export function setupMetrics(app: FastifyInstance): MetricsBundle {
   return {
     registry,
     dns: { dnsQueriesTotal, dnsCacheHitsTotal, dnsCacheMissesTotal, dnsUpstreamErrorsTotal, dnsUpstreamLatencySeconds },
+    tcpProxy: { blockedByHostPolicyTotal: tcpProxyBlockedByHostPolicyTotal, blockedByIpPolicyTotal: tcpProxyBlockedByIpPolicyTotal },
   };
 }
-

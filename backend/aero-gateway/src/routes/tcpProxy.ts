@@ -21,6 +21,11 @@ export const tcpProxyMetrics = {
   blockedByIpPolicy: 0,
 };
 
+type TcpProxyEgressMetricSink = Readonly<{
+  blockedByHostPolicyTotal?: { inc: () => void };
+  blockedByIpPolicyTotal?: { inc: () => void };
+}>;
+
 export class TcpProxyTargetError extends Error {
   readonly kind: "host-policy" | "ip-policy" | "dns";
   readonly statusCode: number;
@@ -36,7 +41,7 @@ export function handleTcpProxyUpgrade(
   req: http.IncomingMessage,
   socket: Duplex,
   head: Buffer,
-  opts: TcpProxyUpgradePolicy & { createConnection?: typeof net.createConnection } = {},
+  opts: TcpProxyUpgradePolicy & { createConnection?: typeof net.createConnection; metrics?: TcpProxyEgressMetricSink } = {},
 ): void {
   const upgradeDecision = validateWsUpgradePolicy(req, opts);
   if (!upgradeDecision.ok) {
@@ -73,7 +78,7 @@ export function handleTcpProxyUpgrade(
   void (async () => {
     let resolved: { ip: string; port: number; hostname?: string };
     try {
-      resolved = await resolveTcpProxyTarget(target.host, target.port);
+      resolved = await resolveTcpProxyTarget(target.host, target.port, process.env, opts.metrics);
     } catch (err) {
       if (err instanceof TcpProxyTargetError) {
         respondHttp(socket, err.statusCode, err.message);
@@ -379,6 +384,7 @@ export async function resolveTcpProxyTarget(
   rawHost: string,
   port: number,
   env: Record<string, string | undefined> = process.env,
+  metrics?: TcpProxyEgressMetricSink,
 ): Promise<{ ip: string; port: number; hostname?: string }> {
   // By default we block private/reserved IPs to prevent SSRF / local-network
   // probing via the browser-facing TCP proxy.
@@ -391,6 +397,7 @@ export async function resolveTcpProxyTarget(
   const decision = evaluateTcpHostPolicy(rawHost, hostPolicy);
   if (!decision.allowed) {
     tcpProxyMetrics.blockedByHostPolicy++;
+    metrics?.blockedByHostPolicyTotal?.inc();
     const statusCode = decision.reason === "invalid-hostname" ? 400 : 403;
     throw new TcpProxyTargetError("host-policy", formatHostPolicyRejection(decision), statusCode);
   }
@@ -398,6 +405,7 @@ export async function resolveTcpProxyTarget(
   if (decision.target.kind === "ip") {
     if (!allowPrivateIps && !isPublicIpAddress(decision.target.ip)) {
       tcpProxyMetrics.blockedByIpPolicy++;
+      metrics?.blockedByIpPolicyTotal?.inc();
       throw new TcpProxyTargetError("ip-policy", "Target IP is not allowed by IP egress policy", 403);
     }
     return { ip: decision.target.ip, port };
@@ -419,6 +427,7 @@ export async function resolveTcpProxyTarget(
   }
 
   tcpProxyMetrics.blockedByIpPolicy++;
+  metrics?.blockedByIpPolicyTotal?.inc();
   throw new TcpProxyTargetError("ip-policy", "All resolved IPs are blocked by IP egress policy", 403);
 }
 
