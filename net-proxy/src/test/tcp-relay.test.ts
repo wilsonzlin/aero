@@ -98,7 +98,7 @@ test("tcp relay echoes bytes roundtrip", async () => {
   assert.ok(proxyAddr && typeof proxyAddr !== "string");
 
   try {
-    const ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp?host=127.0.0.1&port=${echoServer.port}`);
+    const ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp?v=1&host=127.0.0.1&port=${echoServer.port}`);
     const payload = Buffer.from([0, 1, 2, 3, 4, 5, 255]);
     const receivedPromise = waitForBinaryMessage(ws);
     ws.send(payload);
@@ -122,7 +122,7 @@ test("tcp relay supports target=host:port alias", async () => {
   assert.ok(proxyAddr && typeof proxyAddr !== "string");
 
   try {
-    const ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp?target=127.0.0.1:${echoServer.port}`);
+    const ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp?v=1&target=127.0.0.1:${echoServer.port}`);
     const payload = Buffer.from("hello");
     const receivedPromise = waitForBinaryMessage(ws);
     ws.send(payload);
@@ -146,7 +146,7 @@ test("tcp relay denies private targets by default", async () => {
   assert.ok(proxyAddr && typeof proxyAddr !== "string");
 
   try {
-    const ws = new WebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp?host=127.0.0.1&port=${echoServer.port}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp?v=1&host=127.0.0.1&port=${echoServer.port}`);
     const closed = await waitForClose(ws);
     assert.equal(closed.code, 1008);
   } finally {
@@ -167,7 +167,7 @@ test("tcp relay allowlist permits private targets", async () => {
   assert.ok(proxyAddr && typeof proxyAddr !== "string");
 
   try {
-    const ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp?host=127.0.0.1&port=${echoServer.port}`);
+    const ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp?v=1&host=127.0.0.1&port=${echoServer.port}`);
     const payload = Buffer.from("allowlisted");
     const receivedPromise = waitForBinaryMessage(ws);
     ws.send(payload);
@@ -196,7 +196,7 @@ test("domain wildcard allowlist still blocks private targets (DNS rebinding miti
   assert.ok(proxyAddr && typeof proxyAddr !== "string");
 
   try {
-    const ws = new WebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp?host=127.0.0.1&port=${echoServer.port}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp?v=1&host=127.0.0.1&port=${echoServer.port}`);
     const closed = await waitForClose(ws);
     assert.equal(closed.code, 1008);
   } finally {
