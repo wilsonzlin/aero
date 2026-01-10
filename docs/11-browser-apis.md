@@ -1,0 +1,695 @@
+# 11 - Browser APIs & Web Platform Integration
+
+## Overview
+
+Aero leverages cutting-edge browser APIs to achieve performance and functionality. This document details all web platform features used and their browser compatibility.
+
+---
+
+## API Dependency Matrix
+
+| API | Chrome | Firefox | Safari | Edge | Required? |
+|-----|--------|---------|--------|------|-----------|
+| WebAssembly | 57+ | 52+ | 11+ | 16+ | **Yes** |
+| WASM SIMD | 91+ | 89+ | 16.4+ | 91+ | **Yes** |
+| WASM Threads | 74+ | 79+ | 14.1+ | 79+ | **Yes** |
+| SharedArrayBuffer | 68+ | 79+ | 15.2+ | 79+ | **Yes** |
+| WebGPU | 113+ | 🚧 | 🚧 | 113+ | **Yes** |
+| OPFS | 102+ | 111+ | 15.2+ | 102+ | **Yes** |
+| Web Workers | ✓ | ✓ | ✓ | ✓ | **Yes** |
+| AudioWorklet | 66+ | 76+ | 14.1+ | 79+ | **Yes** |
+| WebSocket | ✓ | ✓ | ✓ | ✓ | **Yes** |
+| WebRTC | ✓ | ✓ | 11+ | ✓ | Optional |
+| Pointer Lock | ✓ | ✓ | 10.1+ | ✓ | **Yes** |
+| Fullscreen | ✓ | ✓ | ✓ | ✓ | Recommended |
+| Gamepad | ✓ | ✓ | 10.1+ | ✓ | Optional |
+| WebCodecs | 94+ | 🚧 | 🚧 | 94+ | Optional |
+
+---
+
+## WebAssembly
+
+### Core WASM Features
+
+```javascript
+// Feature detection
+const wasmFeatures = {
+    simd: WebAssembly.validate(new Uint8Array([
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7b,
+        0x03, 0x02, 0x01, 0x00, 0x0a, 0x0a, 0x01,
+        0x08, 0x00, 0x41, 0x00, 0xfd, 0x0c, 0x00, 0x00, 0x0b
+    ])),
+    
+    threads: typeof SharedArrayBuffer !== 'undefined',
+    
+    bulkMemory: WebAssembly.validate(new Uint8Array([
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+        0x03, 0x02, 0x01, 0x00, 0x05, 0x03, 0x01, 0x00, 0x01,
+        0x0a, 0x0a, 0x01, 0x08, 0x00, 0x41, 0x00, 0x41, 0x00, 0x41, 0x00, 0xfc, 0x0a, 0x00, 0x00, 0x0b
+    ])),
+    
+    tailCall: WebAssembly.validate(new Uint8Array([
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+        0x03, 0x02, 0x01, 0x00, 0x0a, 0x06, 0x01, 0x04, 0x00, 0x12, 0x00, 0x0b
+    ])),
+};
+```
+
+### Memory Management
+
+```javascript
+// Allocate 4GB memory for guest
+const GUEST_MEMORY_SIZE = 4 * 1024 * 1024 * 1024;
+
+async function initializeMemory() {
+    // SharedArrayBuffer for multi-threaded access
+    const memory = new WebAssembly.Memory({
+        initial: Math.ceil(GUEST_MEMORY_SIZE / 65536),
+        maximum: Math.ceil(GUEST_MEMORY_SIZE / 65536),
+        shared: true
+    });
+    
+    // Create views
+    const views = {
+        u8: new Uint8Array(memory.buffer),
+        u16: new Uint16Array(memory.buffer),
+        u32: new Uint32Array(memory.buffer),
+        u64: new BigUint64Array(memory.buffer),
+        i8: new Int8Array(memory.buffer),
+        i32: new Int32Array(memory.buffer),
+        f32: new Float32Array(memory.buffer),
+        f64: new Float64Array(memory.buffer),
+    };
+    
+    return { memory, views };
+}
+```
+
+### WASM Module Compilation
+
+```javascript
+// Streaming compilation for large modules
+async function loadEmulatorModule(url) {
+    const response = await fetch(url);
+    
+    // Use streaming compilation for better performance
+    const module = await WebAssembly.compileStreaming(response);
+    
+    // Cache compiled module
+    await caches.open('aero-wasm-cache').then(cache => {
+        cache.put(url, response.clone());
+    });
+    
+    return module;
+}
+
+// Dynamic module generation for JIT
+function compileJitBlock(wasmBytes) {
+    return WebAssembly.compile(wasmBytes);
+}
+```
+
+---
+
+## WebGPU
+
+### Device Initialization
+
+```javascript
+async function initializeWebGPU() {
+    if (!navigator.gpu) {
+        throw new Error('WebGPU not supported');
+    }
+    
+    const adapter = await navigator.gpu.requestAdapter({
+        powerPreference: 'high-performance'
+    });
+    
+    if (!adapter) {
+        throw new Error('No GPU adapter found');
+    }
+    
+    // Request device with required features
+    const device = await adapter.requestDevice({
+        requiredFeatures: [
+            'texture-compression-bc',  // For DXT textures
+            'float32-filterable',      // For HDR rendering
+        ],
+        requiredLimits: {
+            maxStorageBufferBindingSize: 512 * 1024 * 1024,  // 512MB
+            maxBufferSize: 512 * 1024 * 1024,
+            maxComputeWorkgroupStorageSize: 32768,
+        }
+    });
+    
+    return { adapter, device };
+}
+```
+
+### Render Pipeline
+
+```javascript
+function createRenderPipeline(device, shaderCode) {
+    const shaderModule = device.createShaderModule({
+        code: shaderCode
+    });
+    
+    return device.createRenderPipeline({
+        layout: 'auto',
+        vertex: {
+            module: shaderModule,
+            entryPoint: 'vs_main',
+            buffers: [{
+                arrayStride: 32,
+                attributes: [
+                    { shaderLocation: 0, offset: 0, format: 'float32x3' },   // position
+                    { shaderLocation: 1, offset: 12, format: 'float32x2' },  // texcoord
+                    { shaderLocation: 2, offset: 20, format: 'float32x3' },  // normal
+                ]
+            }]
+        },
+        fragment: {
+            module: shaderModule,
+            entryPoint: 'fs_main',
+            targets: [{
+                format: navigator.gpu.getPreferredCanvasFormat(),
+                blend: {
+                    color: {
+                        srcFactor: 'src-alpha',
+                        dstFactor: 'one-minus-src-alpha',
+                        operation: 'add',
+                    },
+                    alpha: {
+                        srcFactor: 'one',
+                        dstFactor: 'one-minus-src-alpha',
+                        operation: 'add',
+                    }
+                }
+            }]
+        },
+        primitive: {
+            topology: 'triangle-list',
+            cullMode: 'back',
+            frontFace: 'ccw',
+        },
+        depthStencil: {
+            format: 'depth24plus-stencil8',
+            depthWriteEnabled: true,
+            depthCompare: 'less',
+        },
+        multisample: {
+            count: 4,
+        }
+    });
+}
+```
+
+### Compute Shaders for GPU Acceleration
+
+```wgsl
+// Compute shader for parallel texture decompression
+@group(0) @binding(0) var<storage, read> compressed_data: array<u32>;
+@group(0) @binding(1) var<storage, read_write> decompressed_data: array<u32>;
+@group(0) @binding(2) var<uniform> params: DecompressParams;
+
+struct DecompressParams {
+    width: u32,
+    height: u32,
+    format: u32,
+}
+
+@compute @workgroup_size(8, 8)
+fn decompress_bc1(@builtin(global_invocation_id) id: vec3<u32>) {
+    let block_x = id.x;
+    let block_y = id.y;
+    
+    if (block_x >= params.width / 4 || block_y >= params.height / 4) {
+        return;
+    }
+    
+    // Read compressed block (64 bits)
+    let block_idx = block_y * (params.width / 4) + block_x;
+    let color0_raw = compressed_data[block_idx * 2];
+    let color1_raw = compressed_data[block_idx * 2 + 1];
+    
+    // Decompress BC1 block...
+    // (Implementation details omitted for brevity)
+}
+```
+
+---
+
+## Origin Private File System (OPFS)
+
+### File Access
+
+```javascript
+async function initializeStorage() {
+    const root = await navigator.storage.getDirectory();
+    
+    // Create directory structure
+    const imagesDir = await root.getDirectoryHandle('images', { create: true });
+    const stateDir = await root.getDirectoryHandle('state', { create: true });
+    
+    return { root, imagesDir, stateDir };
+}
+
+// Synchronous access for worker threads
+async function openDiskImage(filename) {
+    const root = await navigator.storage.getDirectory();
+    const imagesDir = await root.getDirectoryHandle('images');
+    const fileHandle = await imagesDir.getFileHandle(filename, { create: true });
+    
+    // Get synchronous access handle for fast I/O in workers
+    const syncHandle = await fileHandle.createSyncAccessHandle();
+    
+    return {
+        read(buffer, offset) {
+            return syncHandle.read(buffer, { at: offset });
+        },
+        write(buffer, offset) {
+            return syncHandle.write(buffer, { at: offset });
+        },
+        flush() {
+            syncHandle.flush();
+        },
+        close() {
+            syncHandle.close();
+        },
+        getSize() {
+            return syncHandle.getSize();
+        },
+        truncate(size) {
+            syncHandle.truncate(size);
+        }
+    };
+}
+```
+
+### Large File Handling
+
+```javascript
+// Stream-based disk image import
+async function importDiskImage(file, progressCallback) {
+    const root = await navigator.storage.getDirectory();
+    const imagesDir = await root.getDirectoryHandle('images', { create: true });
+    const destHandle = await imagesDir.getFileHandle(file.name, { create: true });
+    
+    const writable = await destHandle.createWritable();
+    const reader = file.stream().getReader();
+    
+    let bytesWritten = 0;
+    const totalBytes = file.size;
+    
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        await writable.write(value);
+        bytesWritten += value.length;
+        progressCallback(bytesWritten / totalBytes);
+    }
+    
+    await writable.close();
+}
+```
+
+---
+
+## Web Workers
+
+### Worker Architecture
+
+```javascript
+// Main thread coordinator
+class WorkerCoordinator {
+    constructor() {
+        this.cpuWorker = new Worker('cpu-worker.js', { type: 'module' });
+        this.gpuWorker = new Worker('gpu-worker.js', { type: 'module' });
+        this.ioWorker = new Worker('io-worker.js', { type: 'module' });
+        this.jitWorker = new Worker('jit-worker.js', { type: 'module' });
+        
+        // Shared memory
+        this.sharedMemory = new SharedArrayBuffer(5 * 1024 * 1024 * 1024);
+        this.statusFlags = new Int32Array(this.sharedMemory, 0, 256);
+        
+        // Initialize workers with shared memory
+        [this.cpuWorker, this.gpuWorker, this.ioWorker, this.jitWorker].forEach(worker => {
+            worker.postMessage({
+                type: 'init',
+                sharedMemory: this.sharedMemory
+            });
+        });
+    }
+    
+    // Wait for CPU worker using Atomics
+    waitForCpu() {
+        Atomics.wait(this.statusFlags, STATUS_CPU_RUNNING, 1);
+    }
+    
+    // Signal CPU to resume
+    signalCpu() {
+        Atomics.store(this.statusFlags, STATUS_CPU_RUNNING, 1);
+        Atomics.notify(this.statusFlags, STATUS_CPU_RUNNING, 1);
+    }
+}
+```
+
+### CPU Worker
+
+```javascript
+// cpu-worker.js
+import init, { CpuEmulator } from './aero_cpu.js';
+
+let emulator = null;
+let sharedMemory = null;
+let statusFlags = null;
+
+self.onmessage = async (event) => {
+    const { type, data } = event.data;
+    
+    switch (type) {
+        case 'init':
+            await init();
+            sharedMemory = event.data.sharedMemory;
+            statusFlags = new Int32Array(sharedMemory, 0, 256);
+            emulator = new CpuEmulator(sharedMemory);
+            break;
+            
+        case 'run':
+            runEmulationLoop();
+            break;
+            
+        case 'stop':
+            Atomics.store(statusFlags, STATUS_STOP_REQUESTED, 1);
+            break;
+    }
+};
+
+function runEmulationLoop() {
+    while (true) {
+        // Check for stop request
+        if (Atomics.load(statusFlags, STATUS_STOP_REQUESTED) === 1) {
+            Atomics.store(statusFlags, STATUS_STOP_REQUESTED, 0);
+            break;
+        }
+        
+        // Execute instructions
+        const result = emulator.execute_batch(10000);
+        
+        // Handle events
+        if (result.interrupt_pending) {
+            self.postMessage({ type: 'interrupt', vector: result.vector });
+        }
+        
+        // Check if we need to wait
+        if (result.halted) {
+            Atomics.store(statusFlags, STATUS_CPU_RUNNING, 0);
+            Atomics.wait(statusFlags, STATUS_CPU_RUNNING, 0);
+        }
+    }
+}
+```
+
+---
+
+## Audio Worklet
+
+### Processor Registration
+
+```javascript
+// audio-worklet-processor.js
+class AeroAudioProcessor extends AudioWorkletProcessor {
+    static get parameterDescriptors() {
+        return [{
+            name: 'volume',
+            defaultValue: 1.0,
+            minValue: 0.0,
+            maxValue: 1.0,
+        }];
+    }
+    
+    constructor(options) {
+        super();
+        
+        // Shared ring buffer for audio data
+        this.ringBuffer = options.processorOptions.ringBuffer;
+        this.readIndex = new Uint32Array(this.ringBuffer, 0, 1);
+        this.writeIndex = new Uint32Array(this.ringBuffer, 4, 1);
+        this.audioData = new Float32Array(this.ringBuffer, 8);
+        
+        this.port.onmessage = this.handleMessage.bind(this);
+    }
+    
+    process(inputs, outputs, parameters) {
+        const output = outputs[0];
+        const volume = parameters.volume[0];
+        
+        const readIdx = Atomics.load(this.readIndex, 0);
+        const writeIdx = Atomics.load(this.writeIndex, 0);
+        
+        const available = (writeIdx - readIdx + this.audioData.length) % this.audioData.length;
+        const samplesNeeded = output[0].length * output.length;
+        
+        if (available >= samplesNeeded) {
+            let idx = readIdx;
+            for (let channel = 0; channel < output.length; channel++) {
+                const channelData = output[channel];
+                for (let i = 0; i < channelData.length; i++) {
+                    channelData[i] = this.audioData[idx] * volume;
+                    idx = (idx + 1) % this.audioData.length;
+                }
+            }
+            Atomics.store(this.readIndex, 0, idx);
+        } else {
+            // Underrun - output silence
+            for (let channel = 0; channel < output.length; channel++) {
+                output[channel].fill(0);
+            }
+            this.port.postMessage({ type: 'underrun' });
+        }
+        
+        return true;
+    }
+}
+
+registerProcessor('aero-audio-processor', AeroAudioProcessor);
+```
+
+### Audio Context Setup
+
+```javascript
+async function setupAudio() {
+    const audioContext = new AudioContext({
+        sampleRate: 48000,
+        latencyHint: 'interactive'
+    });
+    
+    await audioContext.audioWorklet.addModule('audio-worklet-processor.js');
+    
+    // Shared buffer for audio data (1 second @ 48kHz stereo)
+    const ringBufferSize = 8 + (48000 * 2 * 4);
+    const ringBuffer = new SharedArrayBuffer(ringBufferSize);
+    
+    const audioNode = new AudioWorkletNode(audioContext, 'aero-audio-processor', {
+        processorOptions: { ringBuffer },
+        outputChannelCount: [2]
+    });
+    
+    audioNode.connect(audioContext.destination);
+    
+    return { audioContext, audioNode, ringBuffer };
+}
+```
+
+---
+
+## Input APIs
+
+### Pointer Lock
+
+```javascript
+function setupPointerLock(canvas) {
+    canvas.addEventListener('click', () => {
+        if (document.pointerLockElement !== canvas) {
+            canvas.requestPointerLock();
+        }
+    });
+    
+    document.addEventListener('pointerlockchange', () => {
+        if (document.pointerLockElement === canvas) {
+            // Pointer is locked - capture movement
+            document.addEventListener('mousemove', handleMouseMove);
+        } else {
+            document.removeEventListener('mousemove', handleMouseMove);
+        }
+    });
+    
+    function handleMouseMove(event) {
+        // movementX/Y give delta since last event
+        emulator.mouseMove(event.movementX, event.movementY);
+    }
+}
+```
+
+### Keyboard Handling
+
+```javascript
+function setupKeyboard(canvas) {
+    // Make canvas focusable
+    canvas.tabIndex = 0;
+    
+    canvas.addEventListener('keydown', (event) => {
+        event.preventDefault();
+        
+        const scancode = keyCodeToScancode(event.code);
+        if (scancode !== 0) {
+            emulator.keyDown(scancode);
+        }
+    });
+    
+    canvas.addEventListener('keyup', (event) => {
+        event.preventDefault();
+        
+        const scancode = keyCodeToScancode(event.code);
+        if (scancode !== 0) {
+            emulator.keyUp(scancode);
+        }
+    });
+}
+```
+
+---
+
+## Network APIs
+
+### WebSocket
+
+```javascript
+class NetworkProxy {
+    constructor(proxyUrl) {
+        this.proxyUrl = proxyUrl;
+        this.connections = new Map();
+    }
+    
+    async connect(host, port) {
+        const ws = new WebSocket(`${this.proxyUrl}/tcp?host=${host}&port=${port}`);
+        ws.binaryType = 'arraybuffer';
+        
+        return new Promise((resolve, reject) => {
+            ws.onopen = () => {
+                const id = this.nextId++;
+                this.connections.set(id, ws);
+                resolve(id);
+            };
+            ws.onerror = reject;
+        });
+    }
+    
+    send(connectionId, data) {
+        const ws = this.connections.get(connectionId);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(data);
+        }
+    }
+}
+```
+
+### WebRTC for UDP
+
+```javascript
+async function setupUdpProxy(signalingUrl) {
+    const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    });
+    
+    const dc = pc.createDataChannel('udp', {
+        ordered: false,
+        maxRetransmits: 0
+    });
+    
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    
+    // Exchange SDP with signaling server
+    const response = await fetch(signalingUrl, {
+        method: 'POST',
+        body: JSON.stringify({ sdp: pc.localDescription })
+    });
+    const { sdp } = await response.json();
+    
+    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    
+    return new Promise(resolve => {
+        dc.onopen = () => resolve(dc);
+    });
+}
+```
+
+---
+
+## Fullscreen API
+
+```javascript
+function setupFullscreen(canvas) {
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'F11' || (event.key === 'Enter' && event.altKey)) {
+            toggleFullscreen(canvas);
+        }
+    });
+}
+
+async function toggleFullscreen(element) {
+    if (document.fullscreenElement) {
+        await document.exitFullscreen();
+    } else {
+        await element.requestFullscreen({
+            navigationUI: 'hide'
+        });
+    }
+}
+```
+
+---
+
+## Browser Compatibility Shims
+
+```javascript
+// Polyfills and fallbacks
+const compat = {
+    async checkSupport() {
+        const issues = [];
+        
+        if (!navigator.gpu) {
+            issues.push('WebGPU not supported - falling back to WebGL2');
+        }
+        
+        if (typeof SharedArrayBuffer === 'undefined') {
+            issues.push('SharedArrayBuffer not available - check COOP/COEP headers');
+        }
+        
+        if (!navigator.storage?.getDirectory) {
+            issues.push('OPFS not supported - using IndexedDB fallback');
+        }
+        
+        return issues;
+    },
+    
+    async getStorageBackend() {
+        if (navigator.storage?.getDirectory) {
+            return new OpfsStorage();
+        }
+        return new IndexedDbStorage();
+    }
+};
+```
+
+---
+
+## Next Steps
+
+- See [Testing Strategy](./12-testing-strategy.md) for browser testing
+- See [Performance Optimization](./10-performance-optimization.md) for API-specific optimizations

@@ -1,0 +1,698 @@
+# 05 - Storage Subsystem
+
+## Overview
+
+Windows 7 requires significant storage (15-40GB installed). The storage subsystem must efficiently emulate disk controllers while using browser storage APIs that have their own constraints.
+
+---
+
+## Storage Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Storage Stack                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Windows 7                                                       │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  File System (NTFS)                                      │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│       │                                                          │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  Volume Manager (volmgr.sys)                             │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│       │                                                          │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  Disk Class Driver (disk.sys)                            │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│       │                                                          │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  Storage Port Driver (AHCI: storahci.sys)                │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│       │                                                          │
+└───────┼─────────────────────────────────────────────────────────┘
+        │  ◄── Emulation Boundary
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Aero Storage Emulation                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  AHCI Controller Emulation                               │    │
+│  │    - HBA Memory Registers                                │    │
+│  │    - Port Registers                                      │    │
+│  │    - Command List Processing                             │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│       │                                                          │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  Virtual Disk Layer                                      │    │
+│  │    - Sector Read/Write                                   │    │
+│  │    - DMA Transfers                                       │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│       │                                                          │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐    │
+│  │  OPFS Backend  │  │IndexedDB Cache │  │  Remote API    │    │
+│  │  (large files) │  │ (hot sectors)  │  │  (streaming)   │    │
+│  └────────────────┘  └────────────────┘  └────────────────┘    │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## AHCI Controller Emulation
+
+### AHCI Overview
+
+AHCI (Advanced Host Controller Interface) is the standard SATA controller interface used by Windows 7.
+
+```rust
+pub struct AhciController {
+    // HBA Memory Registers
+    hba: HbaMemory,
+    
+    // Ports (up to 32)
+    ports: [AhciPort; 32],
+    
+    // Connected drives
+    drives: Vec<VirtualDrive>,
+    
+    // IRQ state
+    irq_pending: bool,
+}
+
+#[repr(C)]
+pub struct HbaMemory {
+    cap: u32,        // Host Capabilities
+    ghc: u32,        // Global Host Control
+    is: u32,         // Interrupt Status
+    pi: u32,         // Ports Implemented
+    vs: u32,         // Version
+    ccc_ctl: u32,    // Command Completion Coalescing Control
+    ccc_ports: u32,  // Command Completion Coalescing Ports
+    em_loc: u32,     // Enclosure Management Location
+    em_ctl: u32,     // Enclosure Management Control
+    cap2: u32,       // Extended Capabilities
+    bohc: u32,       // BIOS/OS Handoff Control
+}
+
+#[repr(C)]
+pub struct PortRegisters {
+    clb: u64,        // Command List Base Address
+    fb: u64,         // FIS Base Address
+    is: u32,         // Interrupt Status
+    ie: u32,         // Interrupt Enable
+    cmd: u32,        // Command and Status
+    reserved: u32,
+    tfd: u32,        // Task File Data
+    sig: u32,        // Signature
+    ssts: u32,       // SATA Status
+    sctl: u32,       // SATA Control
+    serr: u32,       // SATA Error
+    sact: u32,       // SATA Active
+    ci: u32,         // Command Issue
+    sntf: u32,       // SATA Notification
+    fbs: u32,        // FIS-based Switching Control
+}
+```
+
+### Command Processing
+
+```rust
+impl AhciController {
+    pub fn process_port(&mut self, port_num: usize, memory: &mut MemoryBus) {
+        let port = &mut self.ports[port_num];
+        
+        // Check if commands are issued
+        while port.ci != 0 {
+            // Find the lowest set bit (next command slot)
+            let slot = port.ci.trailing_zeros() as usize;
+            
+            // Read command header from guest memory
+            let cmd_header_addr = port.clb + (slot * 32) as u64;
+            let cmd_header = self.read_command_header(memory, cmd_header_addr);
+            
+            // Read command table
+            let cmd_table_addr = cmd_header.ctba;
+            let cmd_table = self.read_command_table(memory, cmd_table_addr);
+            
+            // Process the command FIS
+            self.process_command_fis(port_num, &cmd_header, &cmd_table, memory);
+            
+            // Clear command slot
+            port.ci &= !(1 << slot);
+            
+            // Signal completion
+            port.is |= AHCI_PORT_IS_DHRS;  // Device to Host Register FIS
+            
+            if port.ie & AHCI_PORT_IE_DHRE != 0 {
+                self.raise_irq();
+            }
+        }
+    }
+    
+    fn process_command_fis(
+        &mut self,
+        port: usize,
+        header: &CommandHeader,
+        table: &CommandTable,
+        memory: &mut MemoryBus,
+    ) {
+        let fis = &table.cfis;
+        
+        match fis.command {
+            ATA_CMD_READ_DMA_EXT => {
+                let lba = self.extract_lba48(fis);
+                let count = self.extract_sector_count(fis);
+                self.do_read_dma(port, lba, count, header, table, memory);
+            }
+            ATA_CMD_WRITE_DMA_EXT => {
+                let lba = self.extract_lba48(fis);
+                let count = self.extract_sector_count(fis);
+                self.do_write_dma(port, lba, count, header, table, memory);
+            }
+            ATA_CMD_IDENTIFY => {
+                self.do_identify(port, header, table, memory);
+            }
+            ATA_CMD_SET_FEATURES => {
+                self.do_set_features(port, fis);
+            }
+            ATA_CMD_FLUSH_CACHE_EXT => {
+                self.do_flush(port);
+            }
+            _ => {
+                log::warn!("Unknown ATA command: 0x{:02x}", fis.command);
+            }
+        }
+    }
+    
+    fn do_read_dma(
+        &mut self,
+        port: usize,
+        lba: u64,
+        sector_count: u32,
+        header: &CommandHeader,
+        table: &CommandTable,
+        memory: &mut MemoryBus,
+    ) {
+        let drive = &self.drives[port];
+        let sector_size = drive.sector_size;
+        
+        // Read from virtual disk
+        let mut data = vec![0u8; (sector_count as usize) * sector_size];
+        drive.read_sectors(lba, &mut data);
+        
+        // DMA transfer to guest memory using PRD table
+        let mut offset = 0;
+        for prd in &table.prdt {
+            let bytes_to_copy = ((prd.dbc & 0x3FFFFF) + 1) as usize;
+            let dest_addr = prd.dba;
+            
+            memory.write_physical_bulk(dest_addr, &data[offset..offset + bytes_to_copy]);
+            offset += bytes_to_copy;
+            
+            if offset >= data.len() {
+                break;
+            }
+        }
+    }
+}
+```
+
+---
+
+## Virtual Disk Implementation
+
+### Disk Image Formats
+
+```rust
+pub enum DiskFormat {
+    Raw,              // Direct sector mapping
+    Qcow2,            // QEMU Copy-on-Write v2
+    Vhd,              // Microsoft Virtual Hard Disk
+    Sparse,           // Custom sparse format for OPFS
+}
+
+pub struct VirtualDrive {
+    format: DiskFormat,
+    sector_size: usize,
+    total_sectors: u64,
+    backend: Box<dyn DiskBackend>,
+    write_cache: WriteCache,
+}
+
+pub trait DiskBackend: Send + Sync {
+    fn read_sectors(&self, lba: u64, buffer: &mut [u8]) -> Result<()>;
+    fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> Result<()>;
+    fn flush(&mut self) -> Result<()>;
+    fn capacity(&self) -> u64;
+}
+```
+
+### OPFS Backend
+
+```rust
+pub struct OpfsBackend {
+    file_handle: FileSystemFileHandle,
+    sync_handle: FileSystemSyncAccessHandle,
+    sector_size: usize,
+}
+
+impl OpfsBackend {
+    pub async fn open(path: &str) -> Result<Self> {
+        let root = navigator_storage_get_directory().await?;
+        
+        let file_handle = root
+            .get_file_handle(path, GetFileHandleOptions { create: true })
+            .await?;
+        
+        // Get synchronous access handle for performance
+        let sync_handle = file_handle.create_sync_access_handle().await?;
+        
+        Ok(Self {
+            file_handle,
+            sync_handle,
+            sector_size: 512,
+        })
+    }
+}
+
+impl DiskBackend for OpfsBackend {
+    fn read_sectors(&self, lba: u64, buffer: &mut [u8]) -> Result<()> {
+        let offset = lba * self.sector_size as u64;
+        self.sync_handle.read(buffer, offset)?;
+        Ok(())
+    }
+    
+    fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> Result<()> {
+        let offset = lba * self.sector_size as u64;
+        self.sync_handle.write(buffer, offset)?;
+        Ok(())
+    }
+    
+    fn flush(&mut self) -> Result<()> {
+        self.sync_handle.flush()?;
+        Ok(())
+    }
+}
+```
+
+### Sector Cache (IndexedDB)
+
+```rust
+pub struct SectorCache {
+    db: IdbDatabase,
+    cache: LruCache<u64, Vec<u8>>,
+    dirty_sectors: HashSet<u64>,
+    max_cached: usize,
+}
+
+impl SectorCache {
+    pub async fn new(db_name: &str, max_sectors: usize) -> Result<Self> {
+        let db = IdbDatabase::open(db_name, 1, |db| {
+            db.create_object_store("sectors", ObjectStoreOptions {
+                key_path: Some("lba"),
+            });
+        }).await?;
+        
+        Ok(Self {
+            db,
+            cache: LruCache::new(max_sectors),
+            dirty_sectors: HashSet::new(),
+            max_cached: max_sectors,
+        })
+    }
+    
+    pub fn get(&mut self, lba: u64) -> Option<&[u8]> {
+        self.cache.get(&lba).map(|v| v.as_slice())
+    }
+    
+    pub fn put(&mut self, lba: u64, data: Vec<u8>, dirty: bool) {
+        if dirty {
+            self.dirty_sectors.insert(lba);
+        }
+        self.cache.put(lba, data);
+    }
+    
+    pub async fn flush_dirty(&mut self, backend: &mut dyn DiskBackend) -> Result<()> {
+        let tx = self.db.transaction(&["sectors"], TransactionMode::Readwrite);
+        let store = tx.object_store("sectors")?;
+        
+        for lba in self.dirty_sectors.drain() {
+            if let Some(data) = self.cache.get(&lba) {
+                // Write to backend
+                backend.write_sectors(lba, data)?;
+                
+                // Optionally persist in IndexedDB for faster loads
+                store.put(&SectorRecord { lba, data: data.clone() })?;
+            }
+        }
+        
+        tx.done().await?;
+        backend.flush()?;
+        Ok(())
+    }
+}
+```
+
+---
+
+## Sparse Disk Format
+
+For efficient storage of mostly-empty disk images:
+
+```rust
+pub struct SparseDisk {
+    header: SparseHeader,
+    allocation_table: Vec<u64>,  // Logical block -> Physical offset (0 = not allocated)
+    data_file: OpfsBackend,
+    block_size: usize,           // e.g., 1MB
+}
+
+#[repr(C)]
+pub struct SparseHeader {
+    magic: u32,                  // "Aero"
+    version: u32,
+    block_size: u32,
+    total_blocks: u64,
+    allocated_blocks: u64,
+    table_offset: u64,
+    data_offset: u64,
+}
+
+impl SparseDisk {
+    pub fn read_block(&self, block_num: u64, buffer: &mut [u8]) -> Result<()> {
+        let physical = self.allocation_table[block_num as usize];
+        
+        if physical == 0 {
+            // Block not allocated - return zeros
+            buffer.fill(0);
+        } else {
+            // Read from physical location
+            self.data_file.read_at(physical, buffer)?;
+        }
+        
+        Ok(())
+    }
+    
+    pub fn write_block(&mut self, block_num: u64, buffer: &[u8]) -> Result<()> {
+        let mut physical = self.allocation_table[block_num as usize];
+        
+        if physical == 0 {
+            // Allocate new block
+            physical = self.allocate_block()?;
+            self.allocation_table[block_num as usize] = physical;
+        }
+        
+        // Write to physical location
+        self.data_file.write_at(physical, buffer)?;
+        
+        Ok(())
+    }
+    
+    fn allocate_block(&mut self) -> Result<u64> {
+        let offset = self.header.data_offset + 
+                     self.header.allocated_blocks * self.block_size as u64;
+        self.header.allocated_blocks += 1;
+        Ok(offset)
+    }
+}
+```
+
+---
+
+## NVMe Emulation (Optional Performance Path)
+
+For better performance, we can also emulate NVMe:
+
+```rust
+pub struct NvmeController {
+    // Controller registers (BAR0)
+    cap: u64,        // Controller Capabilities
+    vs: u32,         // Version
+    intms: u32,      // Interrupt Mask Set
+    intmc: u32,      // Interrupt Mask Clear
+    cc: u32,         // Controller Configuration
+    csts: u32,       // Controller Status
+    aqa: u32,        // Admin Queue Attributes
+    asq: u64,        // Admin Submission Queue Base
+    acq: u64,        // Admin Completion Queue Base
+    
+    // Queues
+    admin_sq: NvmeQueue,
+    admin_cq: NvmeQueue,
+    io_queues: Vec<(NvmeQueue, NvmeQueue)>,
+    
+    // Namespaces (drives)
+    namespaces: Vec<NvmeNamespace>,
+}
+
+impl NvmeController {
+    pub fn process_submission_queue(&mut self, sq_id: u16, memory: &mut MemoryBus) {
+        let (sq, cq) = if sq_id == 0 {
+            (&mut self.admin_sq, &mut self.admin_cq)
+        } else {
+            let idx = (sq_id - 1) as usize;
+            let (ref mut sq, ref mut cq) = self.io_queues[idx];
+            (sq, cq)
+        };
+        
+        while sq.head != sq.tail {
+            let cmd_addr = sq.base + (sq.head as u64) * 64;
+            let cmd = self.read_nvme_command(memory, cmd_addr);
+            
+            let status = self.execute_command(&cmd, memory);
+            
+            // Post completion
+            self.post_completion(cq, cmd.cid, status, memory);
+            
+            sq.head = (sq.head + 1) % sq.size;
+        }
+    }
+    
+    fn execute_command(&mut self, cmd: &NvmeCommand, memory: &mut MemoryBus) -> u16 {
+        match cmd.opc {
+            NVME_OPC_READ => self.do_read(cmd, memory),
+            NVME_OPC_WRITE => self.do_write(cmd, memory),
+            NVME_OPC_FLUSH => self.do_flush(cmd),
+            NVME_OPC_IDENTIFY => self.do_identify(cmd, memory),
+            NVME_OPC_CREATE_IO_SQ => self.do_create_io_sq(cmd, memory),
+            NVME_OPC_CREATE_IO_CQ => self.do_create_io_cq(cmd, memory),
+            _ => NVME_SC_INVALID_OPCODE,
+        }
+    }
+}
+```
+
+---
+
+## Virtio-blk (Paravirtualized)
+
+For maximum performance, we provide virtio-blk drivers:
+
+```rust
+pub struct VirtioBlkDevice {
+    // Virtio common config
+    device_features: u64,
+    driver_features: u64,
+    
+    // Device-specific config
+    capacity: u64,
+    size_max: u32,
+    seg_max: u32,
+    blk_size: u32,
+    
+    // Virtqueues
+    request_vq: Virtqueue,
+    
+    // Backend
+    disk: Box<dyn DiskBackend>,
+}
+
+#[repr(C)]
+pub struct VirtioBlkRequest {
+    req_type: u32,   // VIRTIO_BLK_T_IN, OUT, FLUSH, etc.
+    reserved: u32,
+    sector: u64,
+}
+
+impl VirtioBlkDevice {
+    pub fn process_queue(&mut self, memory: &mut MemoryBus) {
+        while let Some(desc_chain) = self.request_vq.pop_available(memory) {
+            // First descriptor: request header
+            let header_addr = desc_chain[0].addr;
+            let request: VirtioBlkRequest = memory.read_struct(header_addr);
+            
+            // Middle descriptors: data buffers
+            let mut data_bufs: Vec<(u64, u32)> = desc_chain[1..desc_chain.len()-1]
+                .iter()
+                .map(|d| (d.addr, d.len))
+                .collect();
+            
+            // Last descriptor: status byte
+            let status_addr = desc_chain.last().unwrap().addr;
+            
+            let status = match request.req_type {
+                VIRTIO_BLK_T_IN => self.do_read(request.sector, &data_bufs, memory),
+                VIRTIO_BLK_T_OUT => self.do_write(request.sector, &data_bufs, memory),
+                VIRTIO_BLK_T_FLUSH => self.do_flush(),
+                _ => VIRTIO_BLK_S_UNSUPP,
+            };
+            
+            // Write status
+            memory.write_u8(status_addr, status);
+            
+            // Push completion
+            self.request_vq.push_used(desc_chain.head_id, 1, memory);
+        }
+        
+        // Signal guest
+        if self.request_vq.should_notify() {
+            self.raise_irq();
+        }
+    }
+}
+```
+
+---
+
+## CD-ROM/DVD Emulation
+
+For Windows 7 installation:
+
+```rust
+pub struct CdromDrive {
+    // ATAPI interface
+    atapi_state: AtapiState,
+    
+    // Disc image
+    image: Option<IsoImage>,
+    
+    // State
+    tray_open: bool,
+    media_changed: bool,
+}
+
+impl CdromDrive {
+    pub fn execute_packet_command(&mut self, packet: &[u8; 12], memory: &mut MemoryBus) -> AtapiResult {
+        let opcode = packet[0];
+        
+        match opcode {
+            ATAPI_READ_10 => {
+                let lba = u32::from_be_bytes([packet[2], packet[3], packet[4], packet[5]]);
+                let length = u16::from_be_bytes([packet[7], packet[8]]) as u32;
+                self.read_sectors(lba, length, memory)
+            }
+            ATAPI_READ_12 => {
+                let lba = u32::from_be_bytes([packet[2], packet[3], packet[4], packet[5]]);
+                let length = u32::from_be_bytes([packet[6], packet[7], packet[8], packet[9]]);
+                self.read_sectors(lba, length, memory)
+            }
+            ATAPI_READ_CAPACITY => {
+                self.get_capacity(memory)
+            }
+            ATAPI_READ_TOC => {
+                self.read_toc(packet, memory)
+            }
+            ATAPI_START_STOP_UNIT => {
+                let loej = (packet[4] >> 1) & 1;
+                let start = packet[4] & 1;
+                self.start_stop(loej != 0, start != 0)
+            }
+            ATAPI_TEST_UNIT_READY => {
+                self.test_unit_ready()
+            }
+            ATAPI_INQUIRY => {
+                self.inquiry(memory)
+            }
+            ATAPI_MODE_SENSE => {
+                self.mode_sense(packet, memory)
+            }
+            _ => {
+                AtapiResult::Error(ATAPI_SENSE_ILLEGAL_REQUEST)
+            }
+        }
+    }
+}
+```
+
+---
+
+## Disk Image Management
+
+### Image Download and Streaming
+
+```rust
+pub struct StreamingDisk {
+    // Remote image
+    remote_url: String,
+    total_size: u64,
+    
+    // Local cache
+    local_cache: SparseDisk,
+    
+    // Download state
+    downloaded_ranges: RangeSet,
+    pending_fetches: HashMap<u64, oneshot::Sender<Vec<u8>>>,
+}
+
+impl StreamingDisk {
+    pub async fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> Result<()> {
+        let byte_offset = lba * 512;
+        let byte_end = byte_offset + buffer.len() as u64;
+        
+        // Check if we have this range cached
+        if self.downloaded_ranges.contains_range(byte_offset, byte_end) {
+            // Read from local cache
+            return self.local_cache.read_at(byte_offset, buffer);
+        }
+        
+        // Need to fetch from remote
+        let chunk_start = (byte_offset / CHUNK_SIZE) * CHUNK_SIZE;
+        let chunk_end = ((byte_end + CHUNK_SIZE - 1) / CHUNK_SIZE) * CHUNK_SIZE;
+        
+        // Fetch chunk
+        let data = self.fetch_range(chunk_start, chunk_end).await?;
+        
+        // Store in local cache
+        self.local_cache.write_at(chunk_start, &data)?;
+        self.downloaded_ranges.insert(chunk_start, chunk_end);
+        
+        // Return requested portion
+        let offset_in_chunk = (byte_offset - chunk_start) as usize;
+        buffer.copy_from_slice(&data[offset_in_chunk..offset_in_chunk + buffer.len()]);
+        
+        Ok(())
+    }
+    
+    async fn fetch_range(&self, start: u64, end: u64) -> Result<Vec<u8>> {
+        let response = fetch(&self.remote_url, FetchOptions {
+            headers: vec![
+                ("Range".to_string(), format!("bytes={}-{}", start, end - 1)),
+            ],
+        }).await?;
+        
+        Ok(response.bytes().await?)
+    }
+}
+```
+
+---
+
+## Performance Metrics
+
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| Sequential Read | ≥ 100 MB/s | Large file read |
+| Sequential Write | ≥ 50 MB/s | Large file write |
+| Random Read IOPS | ≥ 10,000 | 4KB random reads |
+| Random Write IOPS | ≥ 5,000 | 4KB random writes |
+| Boot Time Impact | < 10s | Additional boot delay |
+
+---
+
+## Next Steps
+
+- See [Audio Subsystem](./06-audio-subsystem.md) for sound emulation
+- See [Browser APIs](./11-browser-apis.md) for OPFS details
+- See [Task Breakdown](./15-agent-task-breakdown.md) for storage tasks
