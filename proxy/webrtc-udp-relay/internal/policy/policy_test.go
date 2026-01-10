@@ -75,4 +75,3 @@ func TestPortAllowDeny(t *testing.T) {
 		t.Fatalf("expected non-allowlisted port to be denied")
 	}
 }
-

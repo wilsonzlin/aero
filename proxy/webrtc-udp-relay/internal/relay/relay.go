@@ -44,4 +44,3 @@ func (r *UDPRelay) Send(remote *net.UDPAddr, payload []byte) error {
 	}
 	return nil
 }
-

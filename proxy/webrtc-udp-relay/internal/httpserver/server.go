@@ -79,19 +79,19 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 
 	s.mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if s.ready.Load() {
-			writeJSON(w, http.StatusOK, map[string]any{"ready": true})
+			WriteJSON(w, http.StatusOK, map[string]any{"ready": true})
 			return
 		}
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ready": false})
+		WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"ready": false})
 	})
 
 	s.mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, s.build)
+		WriteJSON(w, http.StatusOK, s.build)
 	})
 }
 
@@ -156,18 +156,21 @@ func requestLoggerMiddleware(logger *slog.Logger) Middleware {
 
 			next.ServeHTTP(sw, r)
 
+			reqID := r.Header.Get("X-Request-ID")
 			logger.Info("http_request",
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", sw.status,
 				"duration_ms", time.Since(start).Milliseconds(),
 				"remote_addr", r.RemoteAddr,
+				"request_id", reqID,
 			)
 		})
 	}
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
+// WriteJSON writes a JSON response body and sets the Content-Type header.
+func WriteJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 

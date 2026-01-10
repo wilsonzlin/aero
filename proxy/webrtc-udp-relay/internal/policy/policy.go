@@ -319,4 +319,3 @@ var defaultDeniedIPv6CIDRs = []*net.IPNet{
 	// unspecified
 	mustCIDR("::/128"),
 }
-
