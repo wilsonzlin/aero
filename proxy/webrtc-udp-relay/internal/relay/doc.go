@@ -1,6 +1,5 @@
-// Package relay will contain the UDP relay implementation that moves datagrams
-// between WebRTC data channels and UDP sockets.
+// Package relay contains UDP relay primitives.
 //
-// This package is intentionally a placeholder; concrete relay logic will be
-// implemented in later tasks.
+// The relay MUST enforce the destination policy from internal/policy to avoid
+// becoming an open UDP proxy.
 package relay
