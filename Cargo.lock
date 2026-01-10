@@ -169,8 +169,10 @@ dependencies = [
 name = "aero-gpu"
 version = "0.1.0"
 dependencies = [
+ "bcdec_rs",
  "bitflags 2.10.0",
  "bytemuck",
+ "futures-intrusive",
  "lru",
  "pollster",
  "pretty_assertions",
@@ -668,6 +670,12 @@ dependencies = [
  "predicates",
  "tempfile",
 ]
+
+[[package]]
+name = "bcdec_rs"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f09c37bc0e9f0924b7dae9988265ef3c76c88538f41a3b06caf4bed07cee5226"
 
 [[package]]
 name = "bit-set"

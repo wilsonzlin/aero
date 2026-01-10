@@ -13,6 +13,11 @@ pub struct GpuCapabilities {
     ///
     /// WebGL2 backends (wgpu's `Backend::Gl` on wasm) do not support compute.
     pub supports_compute: bool,
+    /// Whether the active backend/device can sample BC-compressed textures (BC1/BC3/BC7).
+    ///
+    /// This is expected to be false on WebGL2 fallback paths and on WebGPU devices
+    /// where BC compression features were not enabled.
+    pub supports_bc_texture_compression: bool,
     /// Whether the currently-enabled device features allow GPU timestamp queries.
     ///
     /// Note: this reflects *enabled* features (what the device was created with),
@@ -29,6 +34,7 @@ impl GpuCapabilities {
             min_storage_buffer_offset_alignment: limits.min_storage_buffer_offset_alignment,
             max_buffer_size: limits.max_buffer_size,
             supports_compute: true,
+            supports_bc_texture_compression: features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
             timestamp_queries_supported: features.contains(wgpu::Features::TIMESTAMP_QUERY)
                 && features.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS),
         }
@@ -512,6 +518,7 @@ mod tests {
             min_storage_buffer_offset_alignment: 256,
             max_buffer_size: 1024 * 1024,
             supports_compute: true,
+            supports_bc_texture_compression: false,
             timestamp_queries_supported: false,
         };
 
@@ -534,6 +541,7 @@ mod tests {
             min_storage_buffer_offset_alignment: 128,
             max_buffer_size: 4096,
             supports_compute: true,
+            supports_bc_texture_compression: false,
             timestamp_queries_supported: false,
         };
 

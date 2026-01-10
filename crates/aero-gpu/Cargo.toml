@@ -9,8 +9,10 @@ edition = "2021"
 diff-engine = []
 
 [dependencies]
+bcdec_rs = "0.2"
 bytemuck = { version = "1.14", features = ["derive"] }
 bitflags = "2.4"
+futures-intrusive = "0.5"
 thiserror = "1.0"
 serde = { version = "1", features = ["derive"] }
 wgpu = "0.20"
