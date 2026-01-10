@@ -199,6 +199,26 @@ async function runMicrobenchSamples(url, iterations) {
     await gotoWithRetries(page, url);
 
     const aeroPerfExportJson = await tryCaptureAeroPerfExport(page);
+    let jit = null;
+    if (typeof aeroPerfExportJson === "string") {
+      try {
+        const parsed = JSON.parse(aeroPerfExportJson);
+        if (parsed && typeof parsed === "object") {
+          // Most perf exports: `{ jit: ... }`
+          if ("jit" in parsed) {
+            jit = parsed.jit ?? null;
+          } else if ("capture" in parsed) {
+            // Wrapped exports (see `web/src/runtime/aero_global.ts`): `{ capture: ..., benchmarks: ... }`
+            const cap = parsed.capture;
+            if (cap && typeof cap === "object" && "jit" in cap) {
+              jit = cap.jit ?? null;
+            }
+          }
+        }
+      } catch {
+        // Ignore parse errors; keep jit=null.
+      }
+    }
 
     const microbench = () => {
       const t0 = performance.now();
@@ -220,7 +240,14 @@ async function runMicrobenchSamples(url, iterations) {
       samples.push(result.ms);
     }
 
-    return { samples, chromiumVersion: browser.version(), aeroPerfExportJson };
+    return {
+      samples,
+      chromiumVersion: browser.version(),
+      aeroPerfExportJson,
+      // PF-006: surface key JIT metrics in the benchmark output so regressions
+      // can be attributed without digging through raw exports.
+      jit,
+    };
   } finally {
     await browser.close();
   }
@@ -277,6 +304,9 @@ async function main() {
     chromiumArgs: CHROMIUM_ARGS,
     targetUrl: url,
     iterations,
+    aeroPerf: {
+      jit: micro.jit ?? null,
+    },
   };
 
   const raw = { meta, benchmarks };

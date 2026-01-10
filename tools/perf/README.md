@@ -18,6 +18,12 @@ In CI, the workflows build the app and run against a Vite `preview` server (`htt
 
 If the page exposes `window.aero.perf` with the capture/export API, the runner will also write a best-effort `perf_export.json` capture alongside `raw.json`/`summary.json`.
 
+## Perf export metadata (PF-006)
+
+When the perf export includes a `jit` section, `run.mjs` also embeds it under `meta.aeroPerf.jit` in `raw.json` and `summary.json`.
+
+This is meant to make perf regressions easier to attribute (e.g. throughput drop because JIT compile time spiked), without affecting timed samples (perf export capture happens outside of the timed microbench loop).
+
 ## Usage
 
 Run locally (requires a Playwright Chromium install):
