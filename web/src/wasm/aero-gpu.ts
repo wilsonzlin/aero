@@ -129,10 +129,8 @@ export function capabilities(): unknown {
   };
 }
 
-export function present_test_pattern(): void {
-  if (!backendImpl) {
-    throw new Error('GPU backend not initialized.');
-  }
+export function present_test_pattern(): void | Promise<void> {
+  if (!backendImpl) throw new Error('GPU backend not initialized.');
 
   const width = pixelWidth;
   const height = pixelHeight;
@@ -175,7 +173,7 @@ export function present_test_pattern(): void {
   }
 
   backendImpl.uploadFrameRGBA(rgba, width, height);
-  backendImpl.present();
+  return backendImpl.present();
 }
 
 export async function request_screenshot(): Promise<Uint8Array> {
