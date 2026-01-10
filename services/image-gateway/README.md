@@ -10,6 +10,8 @@ The intended production path is:
 
 This service implements a minimal, swappable auth + owner model (dev stub) and stores image records **in memory** (reference only).
 
+API documentation: see [`openapi.yaml`](./openapi.yaml).
+
 ## Setup
 
 ```bash

@@ -33,6 +33,8 @@ export interface BuildAppDeps {
   store: ImageStore;
 }
 
+const S3_MULTIPART_MAX_PARTS = 10_000;
+
 function assertBodyObject(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   body: any
@@ -149,6 +151,13 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
     if (typeof partNumber !== "number" || !Number.isInteger(partNumber) || partNumber <= 0) {
       throw new ApiError(400, "partNumber must be a positive integer", "BAD_REQUEST");
     }
+    if (partNumber > S3_MULTIPART_MAX_PARTS) {
+      throw new ApiError(
+        400,
+        `partNumber must be between 1 and ${S3_MULTIPART_MAX_PARTS}`,
+        "BAD_REQUEST"
+      );
+    }
     if (record.status !== "uploading") {
       throw new ApiError(409, "Image is not in uploading state", "INVALID_STATE");
     }
@@ -186,6 +195,13 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
     if (!Array.isArray(parts) || parts.length === 0) {
       throw new ApiError(400, "parts must be a non-empty array", "BAD_REQUEST");
     }
+    if (parts.length > S3_MULTIPART_MAX_PARTS) {
+      throw new ApiError(
+        400,
+        `parts must have at most ${S3_MULTIPART_MAX_PARTS} entries`,
+        "BAD_REQUEST"
+      );
+    }
     if (record.status !== "uploading") {
       throw new ApiError(409, "Image is not in uploading state", "INVALID_STATE");
     }
@@ -207,12 +223,27 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
         ) {
           throw new ApiError(400, "Invalid partNumber", "BAD_REQUEST");
         }
+        if (partNumber > S3_MULTIPART_MAX_PARTS) {
+          throw new ApiError(
+            400,
+            `partNumber must be between 1 and ${S3_MULTIPART_MAX_PARTS}`,
+            "BAD_REQUEST"
+          );
+        }
         if (typeof etag !== "string" || !etag) {
           throw new ApiError(400, "Invalid etag", "BAD_REQUEST");
         }
         return { PartNumber: partNumber, ETag: normalizeEtag(etag) };
       })
       .sort((a, b) => a.PartNumber - b.PartNumber);
+
+    const seenPartNumbers = new Set<number>();
+    for (const part of normalizedParts) {
+      if (seenPartNumbers.has(part.PartNumber)) {
+        throw new ApiError(400, "Duplicate partNumber in parts array", "BAD_REQUEST");
+      }
+      seenPartNumbers.add(part.PartNumber);
+    }
 
     await deps.s3.send(
       new CompleteMultipartUploadCommand({
