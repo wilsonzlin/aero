@@ -272,6 +272,111 @@ static void TestNeedEventBoundaryCases(void)
 	ASSERT_TRUE(VirtqNeedEvent(0x0001, 0x0001, 0xFFFE) == FALSE);
 }
 
+static void TestEventIdxKickPrepare(void)
+{
+	const UINT16 qsz = 8;
+	const UINT32 align = 16;
+
+	size_t vq_bytes = VirtqSplitStateSize(qsz);
+	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, TRUE);
+
+	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
+	void *ring = calloc(1, ring_bytes);
+
+	UINT8 buf[16];
+	VIRTQ_SG sg[1];
+	UINT16 head;
+
+	ASSERT_TRUE(vq != NULL);
+	ASSERT_TRUE(ring != NULL);
+
+	sg[0].addr = (UINT64)(uintptr_t)buf;
+	sg[0].len = sizeof(buf);
+	sg[0].write = TRUE;
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitInit(vq, qsz, TRUE, FALSE, ring, (UINT64)(uintptr_t)ring, align, NULL, 0, 0, 0)));
+
+	/* Device asks for notification at avail index 0 -> first publish should notify. */
+	VirtioWriteU16(VirtqUsedAvailEvent(vq->used, vq->qsz), 0);
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitAddBuffer(vq, sg, 1, (void *)0x1, &head)));
+	VirtqSplitPublish(vq, head);
+	ASSERT_TRUE(VirtqSplitKickPrepare(vq) != FALSE);
+	VirtqSplitKickCommit(vq);
+
+	/* Device asks for notification at index 2 -> single publish to 1 should not notify. */
+	VirtioWriteU16(VirtqUsedAvailEvent(vq->used, vq->qsz), 2);
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitAddBuffer(vq, sg, 1, (void *)0x2, &head)));
+	VirtqSplitPublish(vq, head);
+	ASSERT_TRUE(VirtqSplitKickPrepare(vq) == FALSE);
+	VirtqSplitKickCommit(vq);
+
+	free(ring);
+	free(vq);
+}
+
+static void TestInterruptSuppressionNoEventIdx(void)
+{
+	const UINT16 qsz = 8;
+	const UINT32 align = 16;
+
+	size_t vq_bytes = VirtqSplitStateSize(qsz);
+	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
+
+	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
+	void *ring = calloc(1, ring_bytes);
+
+	ASSERT_TRUE(vq != NULL);
+	ASSERT_TRUE(ring != NULL);
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitInit(vq, qsz, FALSE, FALSE, ring, (UINT64)(uintptr_t)ring, align, NULL, 0, 0, 0)));
+
+	VirtqSplitDisableInterrupts(vq);
+	ASSERT_TRUE((VirtioReadU16((volatile UINT16 *)&vq->avail->flags) & VIRTQ_AVAIL_F_NO_INTERRUPT) != 0);
+
+	/* No pending used entries -> safe to sleep. */
+	ASSERT_TRUE(VirtqSplitEnableInterrupts(vq) != FALSE);
+	ASSERT_TRUE((VirtioReadU16((volatile UINT16 *)&vq->avail->flags) & VIRTQ_AVAIL_F_NO_INTERRUPT) == 0);
+
+	/* Pending used entries -> caller should poll. */
+	VirtioWriteU16((volatile UINT16 *)&vq->used->idx, 1);
+	ASSERT_TRUE(VirtqSplitEnableInterrupts(vq) == FALSE);
+
+	free(ring);
+	free(vq);
+}
+
+static void TestInterruptSuppressionEventIdx(void)
+{
+	const UINT16 qsz = 8;
+	const UINT32 align = 16;
+
+	size_t vq_bytes = VirtqSplitStateSize(qsz);
+	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, TRUE);
+
+	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
+	void *ring = calloc(1, ring_bytes);
+
+	ASSERT_TRUE(vq != NULL);
+	ASSERT_TRUE(ring != NULL);
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitInit(vq, qsz, TRUE, FALSE, ring, (UINT64)(uintptr_t)ring, align, NULL, 0, 0, 0)));
+
+	VirtqSplitDisableInterrupts(vq);
+	ASSERT_EQ_U16(VirtioReadU16(VirtqAvailUsedEvent(vq->avail, vq->qsz)), (UINT16)(vq->last_used_idx - 1));
+
+	/* No pending used entries -> safe to sleep. */
+	ASSERT_TRUE(VirtqSplitEnableInterrupts(vq) != FALSE);
+	ASSERT_EQ_U16(VirtioReadU16(VirtqAvailUsedEvent(vq->avail, vq->qsz)), vq->last_used_idx);
+
+	/* Pending used entries -> caller should poll. */
+	VirtioWriteU16((volatile UINT16 *)&vq->used->idx, 1);
+	ASSERT_TRUE(VirtqSplitEnableInterrupts(vq) == FALSE);
+
+	free(ring);
+	free(vq);
+}
+
 static void TestIndirectDescriptors(void)
 {
 	const UINT16 qsz = 2;
@@ -350,6 +455,9 @@ int main(void)
 	TestDirectChainAddFree();
 	TestWraparound();
 	TestNeedEventBoundaryCases();
+	TestEventIdxKickPrepare();
+	TestInterruptSuppressionNoEventIdx();
+	TestInterruptSuppressionEventIdx();
 	TestIndirectDescriptors();
 
 	printf("virtqueue_split_test: all tests passed\n");

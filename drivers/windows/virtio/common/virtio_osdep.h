@@ -30,7 +30,7 @@ typedef uint32_t UINT32;
 typedef uint64_t UINT64;
 
 typedef int32_t NTSTATUS;
-typedef int BOOLEAN;
+typedef UINT8 BOOLEAN;
 typedef void VOID;
 
 #ifndef TRUE
