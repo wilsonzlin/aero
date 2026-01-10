@@ -8,8 +8,32 @@ async function loadSummary(path) {
   const raw = JSON.parse(await readFile(path, 'utf8'));
   if (raw?.type === 'PerfReport') return raw.summary;
   if (raw?.type === 'FrameTimeStats') return FrameTimeStats.fromJSON(raw).summary();
+  if (raw?.schema_version === 1) {
+    if (raw.frame_time?.summary) return raw.frame_time.summary;
+    if (raw.summary?.frameTime) return raw.summary.frameTime;
+
+    const stats = new FrameTimeStats();
+    for (const frame of raw.samples?.frames ?? []) {
+      const us = frame?.durations_us?.frame;
+      if (typeof us === 'number' && Number.isFinite(us) && us > 0) {
+        stats.pushFrameTimeMs(us / 1000);
+      }
+    }
+    if (stats.frames > 0) return stats.summary();
+  }
+  if (raw?.kind === 'aero-perf-capture') {
+    if (raw.frameTime?.summary) return raw.frameTime.summary;
+    if (raw.summary?.frameTime) return raw.summary.frameTime;
+
+    const stats = new FrameTimeStats();
+    for (const rec of raw.records ?? []) {
+      const ms = rec?.frameTimeMs;
+      if (typeof ms === 'number' && Number.isFinite(ms) && ms > 0) stats.pushFrameTimeMs(ms);
+    }
+    if (stats.frames > 0) return stats.summary();
+  }
   throw new Error(
-    `Unsupported perf payload in ${path} (expected {type:'FrameTimeStats'} or {type:'PerfReport'})`,
+    `Unsupported perf payload in ${path}`,
   );
 }
 
@@ -82,4 +106,3 @@ async function main() {
 }
 
 await main();
-

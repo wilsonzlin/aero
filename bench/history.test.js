@@ -1,7 +1,7 @@
-const assert = require("node:assert/strict");
-const test = require("node:test");
+import assert from "node:assert/strict";
+import test from "node:test";
 
-const { computeStats, formatDelta, normaliseBenchResult } = require("./history.js");
+import { computeStats, formatDelta, normaliseBenchResult } from "./history.js";
 
 test("computeStats calculates mean + stdev + cv", () => {
   const stats = computeStats([1, 2, 3, 4]);
@@ -46,4 +46,3 @@ test("formatDelta respects metric directionality", () => {
     "regression",
   );
 });
-

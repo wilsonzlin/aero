@@ -25,6 +25,12 @@ export class FrameTimeStats {
     return this.#frameTimes.count;
   }
 
+  clear() {
+    this.#frameTimes.clear();
+    this.#histogram.clear();
+    this.#recent.clear();
+  }
+
   pushFrameTimeMs(frameTimeMs) {
     this.#frameTimes.push(frameTimeMs);
     this.#histogram.record(msToUs(frameTimeMs));
@@ -128,4 +134,3 @@ export class FrameTimeStats {
     return stats;
   }
 }
-

@@ -1,14 +1,13 @@
 import type { PerfApi, PerfCaptureState, PerfHudSnapshot, PerfTimeBreakdownMs } from './types';
 
+import { FrameTimeStats } from '../../../packages/aero-stats/src/index.js';
+
 export type InstallFallbackPerfOptions = {
   guestRamBytes?: number;
 };
 
 const STATS_CAPACITY = 600;
 const CAPTURE_CAPACITY = 12_000;
-
-const P95 = 0.95;
-const P99 = 0.99;
 
 type PerformanceMemoryLike = {
   usedJSHeapSize: number;
@@ -30,6 +29,8 @@ const isValidNumber = (value: number): boolean => Number.isFinite(value) && !Num
 
 export class FallbackPerf implements PerfApi {
   readonly guestRamBytes?: number;
+
+  private frameTimeScratch = new FrameTimeStats();
 
   private statsCursor = 0;
   private statsCount = 0;
@@ -67,8 +68,6 @@ export class FallbackPerf implements PerfApi {
   private ioBytesCount = 0;
 
   private frameTimeSumMs = 0;
-
-  private tmpFrameTimes = new Float32Array(STATS_CAPACITY);
 
   private hudActive = false;
   private raf: number | null = null;
@@ -292,27 +291,17 @@ export class FallbackPerf implements PerfApi {
       out.drawCallsPerFrame = undefined;
       out.ioBytesPerSec = undefined;
     } else {
-      const avgFrameTimeMs = this.frameTimeSumMs / this.statsCount;
-      out.frameTimeAvgMs = avgFrameTimeMs;
-      out.fpsAvg = avgFrameTimeMs > 0 ? 1000 / avgFrameTimeMs : undefined;
-
+      this.frameTimeScratch.clear();
       for (let i = 0; i < this.statsCount; i += 1) {
         const srcIdx = (this.statsCursor + STATS_CAPACITY - this.statsCount + i) % STATS_CAPACITY;
-        this.tmpFrameTimes[i] = this.frameTimesMs[srcIdx] ?? 0;
+        this.frameTimeScratch.pushFrameTimeMs(this.frameTimesMs[srcIdx] ?? 0);
       }
-      for (let i = this.statsCount; i < STATS_CAPACITY; i += 1) {
-        this.tmpFrameTimes[i] = Number.POSITIVE_INFINITY;
-      }
-      this.tmpFrameTimes.sort();
 
-      const p95Idx = Math.floor((this.statsCount - 1) * P95);
-      const p99Idx = Math.floor((this.statsCount - 1) * P99);
-
-      const p95 = this.tmpFrameTimes[p95Idx];
-      const p99 = this.tmpFrameTimes[p99Idx];
-
-      out.frameTimeP95Ms = isValidNumber(p95) ? p95 : undefined;
-      out.fps1Low = isValidNumber(p99) && p99 > 0 ? 1000 / p99 : undefined;
+      const ft = this.frameTimeScratch.summary();
+      out.frameTimeAvgMs = ft.meanFrameTimeMs;
+      out.fpsAvg = ft.fpsAvg;
+      out.frameTimeP95Ms = ft.frameTimeP95Ms;
+      out.fps1Low = ft.fps1Low;
 
       if (this.instructionsCount > 0 && this.instructionsFrameTimeSumMs > 0) {
         out.mipsAvg = (this.instructionsSum / (this.instructionsFrameTimeSumMs / 1000)) / 1_000_000;
@@ -416,6 +405,23 @@ export class FallbackPerf implements PerfApi {
       };
     }
 
+    const frameTimeStats = new FrameTimeStats();
+    let instructionsSum = 0;
+    let instructionsFrameTimeSumMs = 0;
+    for (let i = 0; i < this.captureRecords; i += 1) {
+      const ft = this.captureFrameTimesMs[i];
+      frameTimeStats.pushFrameTimeMs(ft);
+
+      const inst = this.captureInstructions[i];
+      if (isValidNumber(inst)) {
+        instructionsSum += inst;
+        instructionsFrameTimeSumMs += ft;
+      }
+    }
+
+    const mipsAvg =
+      instructionsFrameTimeSumMs > 0 ? (instructionsSum / (instructionsFrameTimeSumMs / 1000)) / 1_000_000 : null;
+
     return {
       kind: 'aero-perf-capture',
       version: 1,
@@ -423,6 +429,14 @@ export class FallbackPerf implements PerfApi {
       durationMs: this.captureActive ? performance.now() - this.captureStartNowMs : this.captureDurationMs,
       droppedRecords: this.captureDroppedRecords,
       guestRamBytes: this.guestRamBytes ?? null,
+      summary: {
+        frameTime: frameTimeStats.summary(),
+        mipsAvg,
+      },
+      frameTime: {
+        summary: frameTimeStats.summary(),
+        stats: frameTimeStats.toJSON(),
+      },
       records,
     };
   }

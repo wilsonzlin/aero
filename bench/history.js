@@ -1,12 +1,11 @@
 #!/usr/bin/env node
-"use strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const fs = require("node:fs");
-const path = require("node:path");
+export const HISTORY_SCHEMA_VERSION = 1;
 
-const HISTORY_SCHEMA_VERSION = 1;
-
-function computeStats(samples) {
+export function computeStats(samples) {
   if (!Array.isArray(samples) || samples.length === 0) {
     throw new Error("Expected non-empty samples array");
   }
@@ -50,7 +49,7 @@ function writeJsonAtomic(filePath, data) {
   fs.renameSync(tmpPath, filePath);
 }
 
-function loadHistory(historyPath) {
+export function loadHistory(historyPath) {
   if (!fs.existsSync(historyPath)) {
     return { schemaVersion: HISTORY_SCHEMA_VERSION, entries: {} };
   }
@@ -70,7 +69,7 @@ function loadHistory(historyPath) {
   return history;
 }
 
-function normaliseBenchResult(result) {
+export function normaliseBenchResult(result) {
   if (result === null || typeof result !== "object") {
     throw new Error("Bench result must be an object");
   }
@@ -155,7 +154,7 @@ function appendHistoryEntry({ historyPath, inputPath, timestamp, commitSha, repo
   writeJsonAtomic(historyPath, history);
 }
 
-function formatDelta({ prev, next, better, unit }) {
+export function formatDelta({ prev, next, better, unit }) {
   if (prev === undefined || next === undefined) return { text: "—", className: "neutral" };
   const absolute = next - prev;
   const percent = prev === 0 ? null : absolute / prev;
@@ -300,17 +299,9 @@ async function main() {
   throw new Error(`Unknown command: ${String(command)}`);
 }
 
-if (require.main === module) {
+if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? "")) {
   main().catch((err) => {
     console.error(err instanceof Error ? err.message : err);
     process.exitCode = 1;
   });
 }
-
-module.exports = {
-  HISTORY_SCHEMA_VERSION,
-  computeStats,
-  formatDelta,
-  loadHistory,
-  normaliseBenchResult,
-};

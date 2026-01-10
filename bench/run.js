@@ -1,9 +1,8 @@
 #!/usr/bin/env node
-"use strict";
-
-const fs = require("node:fs");
-const path = require("node:path");
-const { performance } = require("node:perf_hooks");
+import fs from "node:fs";
+import path from "node:path";
+import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
 
 function parseArgs(argv) {
   const options = {};
@@ -120,7 +119,7 @@ function main() {
   fs.writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
-if (require.main === module) {
+if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? "")) {
   try {
     main();
   } catch (err) {
@@ -128,4 +127,3 @@ if (require.main === module) {
     process.exitCode = 1;
   }
 }
-

@@ -13,6 +13,7 @@ export class LogHistogram {
   #max = -Infinity;
   #minExpUsed = Infinity;
   #maxExpUsed = -Infinity;
+  #touched = [];
 
   constructor({ subBucketCount = 1024, maxExponent = 30 } = {}) {
     if (!Number.isInteger(subBucketCount) || subBucketCount <= 0) {
@@ -69,6 +70,7 @@ export class LogHistogram {
     );
 
     const idx = exp * this.#subBucketCount + bucket;
+    if (this.#counts[idx] === 0) this.#touched.push(idx);
     this.#counts[idx] += count;
     this.#totalCount += count;
     this.#min = Math.min(this.#min, v);
@@ -96,7 +98,10 @@ export class LogHistogram {
     const end = (endExp + 1) * this.#subBucketCount;
     for (let i = start; i < end; i += 1) {
       const c = other.#counts[i];
-      if (c !== 0) this.#counts[i] += c;
+      if (c !== 0) {
+        if (this.#counts[i] === 0) this.#touched.push(i);
+        this.#counts[i] += c;
+      }
     }
 
     this.#totalCount += other.#totalCount;
@@ -145,6 +150,18 @@ export class LogHistogram {
     return this.#max;
   }
 
+  clear() {
+    for (const idx of this.#touched) {
+      this.#counts[idx] = 0;
+    }
+    this.#touched.length = 0;
+    this.#totalCount = 0;
+    this.#min = Infinity;
+    this.#max = -Infinity;
+    this.#minExpUsed = Infinity;
+    this.#maxExpUsed = -Infinity;
+  }
+
   toJSON() {
     const sparseCounts = [];
     const startExp = Number.isFinite(this.#minExpUsed) ? this.#minExpUsed : 0;
@@ -184,6 +201,7 @@ export class LogHistogram {
 
     for (const [idx, c] of data.sparseCounts) {
       hist.#counts[idx] = c;
+      if (c !== 0) hist.#touched.push(idx);
       const exp = Math.floor(idx / hist.#subBucketCount);
       hist.#minExpUsed = Math.min(hist.#minExpUsed, exp);
       hist.#maxExpUsed = Math.max(hist.#maxExpUsed, exp);

@@ -22,6 +22,11 @@ export class FixedRingBuffer {
     return this.#size;
   }
 
+  clear() {
+    this.#next = 0;
+    this.#size = 0;
+  }
+
   push(value) {
     if (this.#capacity === 0) return;
     this.#buf[this.#next] = value;
@@ -40,4 +45,3 @@ export class FixedRingBuffer {
     return result;
   }
 }
-

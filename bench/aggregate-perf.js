@@ -12,15 +12,43 @@ async function loadFrameTimeStats(path) {
   if (raw?.type === 'FrameTimeStats') {
     return FrameTimeStats.fromJSON(raw);
   }
+  if (raw?.schema_version === 1) {
+    const embedded = raw.frame_time?.stats;
+    if (embedded?.type === 'FrameTimeStats') return FrameTimeStats.fromJSON(embedded);
+
+    const stats = new FrameTimeStats();
+    for (const frame of raw.samples?.frames ?? []) {
+      const us = frame?.durations_us?.frame;
+      if (typeof us === 'number' && Number.isFinite(us) && us > 0) {
+        stats.pushFrameTimeMs(us / 1000);
+      }
+    }
+    if (stats.frames > 0) return stats;
+  }
+  if (raw?.kind === 'aero-perf-capture') {
+    const embedded = raw.frameTime?.stats;
+    if (embedded?.type === 'FrameTimeStats') return FrameTimeStats.fromJSON(embedded);
+
+    const stats = new FrameTimeStats();
+    for (const rec of raw.records ?? []) {
+      const ms = rec?.frameTimeMs;
+      if (typeof ms === 'number' && Number.isFinite(ms) && ms > 0) stats.pushFrameTimeMs(ms);
+    }
+    if (stats.frames > 0) return stats;
+  }
   throw new Error(
-    `Unsupported perf payload in ${path} (expected {type:'FrameTimeStats'} or {type:'PerfReport'})`,
+    `Unsupported perf payload in ${path}`,
   );
 }
 
 function usage() {
   return `Usage: node bench/aggregate-perf.js <out.json> <in1.json> <in2.json> ...
 
-Inputs must be JSON produced by FrameTimeStats.toJSON() or by this tool.
+Inputs may be:
+- FrameTimeStats.toJSON()
+- PerfReport produced by this tool
+- PerfAggregator export (schema_version=1)
+- Fallback perf export (kind=aero-perf-capture)
 `;
 }
 
@@ -44,4 +72,3 @@ async function main() {
 }
 
 await main();
-

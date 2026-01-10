@@ -86,3 +86,19 @@ test('FrameTimeStats: toJSON/fromJSON roundtrips', () => {
   assert.ok(Math.abs(a.totalTimeMs - b.totalTimeMs) < 1e-9);
   assert.ok(Math.abs(a.frameTimeP99Ms - b.frameTimeP99Ms) < 1e-9);
 });
+
+test('FrameTimeStats: clear resets accumulated stats', () => {
+  const stats = new FrameTimeStats({ keepLastNSamples: 2 });
+  stats.pushFrameTimeMs(10);
+  stats.pushFrameTimeMs(20);
+  assert.equal(stats.summary().frames, 2);
+  assert.deepEqual(stats.getRecentFrameTimesMs(), [10, 20]);
+
+  stats.clear();
+  assert.equal(stats.summary().frames, 0);
+  assert.deepEqual(stats.getRecentFrameTimesMs(), []);
+
+  stats.pushFrameTimeMs(30);
+  assert.equal(stats.summary().frames, 1);
+  assert.deepEqual(stats.getRecentFrameTimesMs(), [30]);
+});

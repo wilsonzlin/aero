@@ -1,11 +1,6 @@
 import { SpscRingBuffer } from "./ring_buffer.js";
 import { decodePerfRecord, workerKindToString, PerfRecordType, PERF_RECORD_SIZE_BYTES } from "./record.js";
-
-function percentile(sorted, p) {
-  if (sorted.length === 0) return 0;
-  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))));
-  return sorted[idx];
-}
+import { FrameTimeStats } from "../../../packages/aero-stats/src/index.js";
 
 function addU32Saturating(a, b) {
   const sum = (a >>> 0) + (b >>> 0);
@@ -31,6 +26,8 @@ export class PerfAggregator {
 
     this.frames = new Map(); // frameId -> aggregated frame
     this.completedFrameIds = [];
+
+    this.frameTimeScratch = new FrameTimeStats();
 
     this.readers = new Map();
     this.recordCountsByWorkerKind = new Map();
@@ -134,45 +131,70 @@ export class PerfAggregator {
         p50FrameMs: 0,
         p95FrameMs: 0,
         p99FrameMs: 0,
+        p999FrameMs: 0,
         avgFps: 0,
+        fpsMedian: 0,
+        fpsP95: 0,
         fps1pLow: 0,
+        fps0_1pLow: 0,
+        varianceFrameMs2: 0,
+        stdevFrameMs: 0,
+        covFrameTime: 0,
         avgMips: 0,
       };
     }
 
-    const frameTimesUs = frames.map((f) => f.frameUs).filter((v) => v > 0);
-    const sortedUs = frameTimesUs.slice().sort((a, b) => a - b);
+    this.frameTimeScratch.clear();
+    const frameTimesUs = [];
+    for (const f of frames) {
+      if (!f || f.frameUs <= 0) continue;
+      frameTimesUs.push(f.frameUs);
+      this.frameTimeScratch.pushFrameTimeMs(f.frameUs / 1000);
+    }
+
+    const ft = this.frameTimeScratch.summary();
 
     const totalTimeUs = frameTimesUs.reduce((acc, v) => acc + BigInt(v >>> 0), 0n);
     const totalInstructions = frames.reduce((acc, f) => acc + f.instructions, 0n);
 
-    const avgFrameUs = frameTimesUs.reduce((a, b) => a + b, 0) / frameTimesUs.length;
-    const p50Us = percentile(sortedUs, 0.5);
-    const p95Us = percentile(sortedUs, 0.95);
-    const p99Us = percentile(sortedUs, 0.99);
-
-    const avgFps = bigintDivToNumberScaled(BigInt(frameTimesUs.length) * 1_000_000n, totalTimeUs, 1000);
     const avgMips = bigintDivToNumberScaled(totalInstructions, totalTimeUs, 1000);
-
-    const fps1pLow = p99Us > 0 ? 1_000_000 / p99Us : 0;
 
     return {
       windowSize: this.windowSize,
-      frames: frames.length,
-      avgFrameMs: avgFrameUs / 1000,
-      p50FrameMs: p50Us / 1000,
-      p95FrameMs: p95Us / 1000,
-      p99FrameMs: p99Us / 1000,
-      avgFps,
-      fps1pLow,
+      frames: ft.frames,
+      avgFrameMs: ft.meanFrameTimeMs,
+      p50FrameMs: ft.frameTimeP50Ms,
+      p95FrameMs: ft.frameTimeP95Ms,
+      p99FrameMs: ft.frameTimeP99Ms,
+      p999FrameMs: ft.frameTimeP999Ms,
+      avgFps: ft.fpsAvg,
+      fpsMedian: ft.fpsMedian,
+      fpsP95: ft.fpsP95,
+      fps1pLow: ft.fps1Low,
+      fps0_1pLow: ft.fps0_1Low,
+      varianceFrameMs2: ft.varianceFrameTimeMs2,
+      stdevFrameMs: ft.stdevFrameTimeMs,
+      covFrameTime: ft.covFrameTime,
       avgMips,
     };
   }
 
   export() {
-    const stats = this.getStats();
+    const windowSummary = this.getStats();
     const frameIds = this.completedFrameIds.slice(-this.captureSize);
     const frames = frameIds.map((id) => this.frames.get(id)).filter(Boolean);
+
+    const captureFrameTimeStats = new FrameTimeStats();
+    let captureTimeUs = 0n;
+    let captureInstructions = 0n;
+    for (const f of frames) {
+      if (!f || f.frameUs <= 0) continue;
+      captureFrameTimeStats.pushFrameTimeMs(f.frameUs / 1000);
+      captureTimeUs += BigInt(f.frameUs >>> 0);
+      captureInstructions += f.instructions;
+    }
+    const captureFrameTimeSummary = captureFrameTimeStats.summary();
+    const captureMipsAvg = bigintDivToNumberScaled(captureInstructions, captureTimeUs, 1000);
 
     const buffers = [];
     let droppedTotal = 0;
@@ -217,6 +239,11 @@ export class PerfAggregator {
         end_t_us: captureEndUs,
         duration_ms: captureEndUs >= captureStartUs ? (captureEndUs - captureStartUs) / 1000 : 0,
       },
+      frame_time: {
+        summary: captureFrameTimeSummary,
+        stats: captureFrameTimeStats.toJSON(),
+      },
+      hud_window_summary: windowSummary,
       samples: {
         frame_count: frames.length,
         frames: frames.map((f) => ({
@@ -238,7 +265,10 @@ export class PerfAggregator {
           },
         })),
       },
-      summary: stats,
+      summary: {
+        frameTime: captureFrameTimeSummary,
+        mipsAvg: captureMipsAvg,
+      },
     };
   }
 }

@@ -7,6 +7,16 @@ export class RunningStats {
   #sum = 0;
   #sumCompensation = 0;
 
+  clear() {
+    this.#count = 0;
+    this.#mean = 0;
+    this.#m2 = 0;
+    this.#min = Infinity;
+    this.#max = -Infinity;
+    this.#sum = 0;
+    this.#sumCompensation = 0;
+  }
+
   get count() {
     return this.#count;
   }
