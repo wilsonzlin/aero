@@ -18,6 +18,12 @@ npm install
 npm run dev
 ```
 
+## Graphics backend fallback (WebGPU → WebGL2)
+
+Aero prefers **WebGPU** when available, but can fall back to **WebGL2** (reduced capability) in environments where WebGPU is unavailable or disabled.
+
+The fallback backend is implemented under `web/src/graphics/` and includes a standalone demo page at `web/webgl2_fallback_demo.html`. CI covers this path via a Playwright smoke test that forces `navigator.gpu` to be unavailable and verifies WebGL2 rendering still works.
+
 ## Optional guest networking support (TCP/UDP via WebSocket relay)
 
 Browsers cannot open arbitrary TCP/UDP sockets directly. For guest networking, Aero can use a small local proxy that exposes WebSocket endpoints and relays to real TCP/UDP sockets from the server side.

@@ -412,6 +412,21 @@ fn decompress_bc1(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 ```
 
+### WebGPU → WebGL2 Fallback
+
+For **maximum performance and feature coverage**, Aero prefers WebGPU. However, Aero must still be able to run (with reduced capability) in environments where WebGPU is unavailable or disabled.
+
+At runtime we select:
+
+1. WebGPU if `navigator.gpu` is present and device creation succeeds.
+2. Otherwise **WebGL2** as a fallback backend.
+
+The WebGL2 backend is intentionally a subset:
+
+- No compute shaders (GPU decompression/translation paths are unavailable).
+- Fewer texture formats and pipeline state features.
+- Designed to handle early milestones: BIOS/VGA framebuffer presentation and simple GPU sanity checks (e.g. triangle test).
+
 ---
 
 ## WebGL2 fallback (no WebGPU)

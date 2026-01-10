@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aero WebGPU → WebGL2 fallback demo</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+
+      body {
+        margin: 16px;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      }
+
+      #frame {
+        width: min(100%, 960px);
+        height: auto;
+        border: 1px solid color-mix(in srgb, CanvasText 30%, transparent);
+        image-rendering: pixelated;
+        display: block;
+        margin-top: 12px;
+        background: #000;
+      }
+
+      #controls {
+        margin-top: 12px;
+        display: flex;
+        gap: 8px;
+      }
+
+      #log {
+        margin-top: 12px;
+        white-space: pre-wrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Aero WebGPU → WebGL2 fallback demo</h1>
+    <div>
+      Selected backend:
+      <strong id="backend">…</strong>
+    </div>
+
+    <canvas id="frame" width="640" height="480"></canvas>
+
+    <div id="controls">
+      <button id="btn-framebuffer" type="button">Framebuffer demo</button>
+      <button id="btn-triangle" type="button">Triangle test</button>
+    </div>
+
+    <div id="log"></div>
+
+    <script type="module" src="./src/webgl2_fallback_demo.js"></script>
+  </body>
+</html>
+
