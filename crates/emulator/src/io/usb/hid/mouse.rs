@@ -6,8 +6,11 @@ use super::{
     build_string_descriptor_utf16le, clamp_response, HidProtocol, HID_REQUEST_GET_IDLE,
     HID_REQUEST_GET_PROTOCOL, HID_REQUEST_GET_REPORT, HID_REQUEST_SET_IDLE, HID_REQUEST_SET_PROTOCOL,
     USB_DESCRIPTOR_TYPE_CONFIGURATION, USB_DESCRIPTOR_TYPE_DEVICE, USB_DESCRIPTOR_TYPE_HID,
-    USB_DESCRIPTOR_TYPE_HID_REPORT, USB_DESCRIPTOR_TYPE_STRING, USB_REQUEST_GET_CONFIGURATION,
-    USB_REQUEST_GET_DESCRIPTOR, USB_REQUEST_SET_CONFIGURATION,
+    USB_DESCRIPTOR_TYPE_HID_REPORT, USB_DESCRIPTOR_TYPE_STRING, USB_FEATURE_DEVICE_REMOTE_WAKEUP,
+    USB_FEATURE_ENDPOINT_HALT, USB_REQUEST_CLEAR_FEATURE, USB_REQUEST_GET_CONFIGURATION,
+    USB_REQUEST_GET_DESCRIPTOR, USB_REQUEST_GET_INTERFACE, USB_REQUEST_GET_STATUS,
+    USB_REQUEST_SET_ADDRESS, USB_REQUEST_SET_CONFIGURATION, USB_REQUEST_SET_FEATURE,
+    USB_REQUEST_SET_INTERFACE,
 };
 
 const INTERRUPT_IN_EP: u8 = 0x81;
@@ -30,7 +33,10 @@ impl MouseReport {
 }
 
 pub struct UsbHidMouse {
+    address: u8,
     configuration: u8,
+    remote_wakeup_enabled: bool,
+    interrupt_in_halted: bool,
     idle_rate: u8,
     protocol: HidProtocol,
 
@@ -51,7 +57,10 @@ impl Default for UsbHidMouse {
 impl UsbHidMouse {
     pub fn new() -> Self {
         Self {
+            address: 0,
             configuration: 0,
+            remote_wakeup_enabled: false,
+            interrupt_in_halted: false,
             idle_rate: 0,
             protocol: HidProtocol::Report,
             buttons: 0,
@@ -154,6 +163,31 @@ impl UsbDeviceModel for UsbHidMouse {
     fn handle_control_request(&mut self, setup: SetupPacket, _data_stage: Option<&[u8]>) -> ControlResponse {
         match (setup.request_type(), setup.recipient()) {
             (RequestType::Standard, RequestRecipient::Device) => match setup.b_request {
+                USB_REQUEST_GET_STATUS => {
+                    let mut status: u16 = 0;
+                    if self.remote_wakeup_enabled {
+                        status |= 1 << 1;
+                    }
+                    ControlResponse::Data(status.to_le_bytes().to_vec())
+                }
+                USB_REQUEST_CLEAR_FEATURE => match setup.w_value {
+                    USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
+                        self.remote_wakeup_enabled = false;
+                        ControlResponse::Ack
+                    }
+                    _ => ControlResponse::Stall,
+                },
+                USB_REQUEST_SET_FEATURE => match setup.w_value {
+                    USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
+                        self.remote_wakeup_enabled = true;
+                        ControlResponse::Ack
+                    }
+                    _ => ControlResponse::Stall,
+                },
+                USB_REQUEST_SET_ADDRESS => {
+                    self.address = (setup.w_value & 0x00ff) as u8;
+                    ControlResponse::Ack
+                }
                 USB_REQUEST_GET_DESCRIPTOR => {
                     let desc_type = setup.descriptor_type();
                     let desc_index = setup.descriptor_index();
@@ -168,12 +202,30 @@ impl UsbDeviceModel for UsbHidMouse {
                 }
                 USB_REQUEST_SET_CONFIGURATION => {
                     self.configuration = (setup.w_value & 0x00ff) as u8;
+                    if self.configuration == 0 {
+                        self.pending_reports.clear();
+                    }
                     ControlResponse::Ack
                 }
                 USB_REQUEST_GET_CONFIGURATION => ControlResponse::Data(vec![self.configuration]),
                 _ => ControlResponse::Stall,
             },
             (RequestType::Standard, RequestRecipient::Interface) => match setup.b_request {
+                USB_REQUEST_GET_STATUS => ControlResponse::Data(vec![0, 0]),
+                USB_REQUEST_GET_INTERFACE => {
+                    if setup.w_index == 0 {
+                        ControlResponse::Data(vec![0])
+                    } else {
+                        ControlResponse::Stall
+                    }
+                }
+                USB_REQUEST_SET_INTERFACE => {
+                    if setup.w_index == 0 && setup.w_value == 0 {
+                        ControlResponse::Ack
+                    } else {
+                        ControlResponse::Stall
+                    }
+                }
                 USB_REQUEST_GET_DESCRIPTOR => {
                     let desc_type = setup.descriptor_type();
                     let data = match desc_type {
@@ -183,6 +235,32 @@ impl UsbDeviceModel for UsbHidMouse {
                     };
                     data.map(|v| ControlResponse::Data(clamp_response(v, setup.w_length)))
                         .unwrap_or(ControlResponse::Stall)
+                }
+                _ => ControlResponse::Stall,
+            },
+            (RequestType::Standard, RequestRecipient::Endpoint) => match setup.b_request {
+                USB_REQUEST_GET_STATUS => {
+                    if setup.w_index != INTERRUPT_IN_EP as u16 {
+                        return ControlResponse::Stall;
+                    }
+                    let status: u16 = if self.interrupt_in_halted { 1 } else { 0 };
+                    ControlResponse::Data(status.to_le_bytes().to_vec())
+                }
+                USB_REQUEST_CLEAR_FEATURE => {
+                    if setup.w_value == USB_FEATURE_ENDPOINT_HALT && setup.w_index == INTERRUPT_IN_EP as u16 {
+                        self.interrupt_in_halted = false;
+                        ControlResponse::Ack
+                    } else {
+                        ControlResponse::Stall
+                    }
+                }
+                USB_REQUEST_SET_FEATURE => {
+                    if setup.w_value == USB_FEATURE_ENDPOINT_HALT && setup.w_index == INTERRUPT_IN_EP as u16 {
+                        self.interrupt_in_halted = true;
+                        ControlResponse::Ack
+                    } else {
+                        ControlResponse::Stall
+                    }
                 }
                 _ => ControlResponse::Stall,
             },
@@ -219,6 +297,9 @@ impl UsbDeviceModel for UsbHidMouse {
 
     fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
         if ep != INTERRUPT_IN_EP {
+            return None;
+        }
+        if self.configuration == 0 || self.interrupt_in_halted {
             return None;
         }
         self.pending_reports.pop_front().map(|r| r.to_bytes(self.protocol))
@@ -327,6 +408,22 @@ mod tests {
         u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
     }
 
+    fn configure_mouse(mouse: &mut UsbHidMouse) {
+        assert_eq!(
+            mouse.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: USB_REQUEST_SET_CONFIGURATION,
+                    w_value: 1,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+    }
+
     #[test]
     fn mouse_descriptors_reference_report_length() {
         let mouse = UsbHidMouse::new();
@@ -342,6 +439,7 @@ mod tests {
     #[test]
     fn mouse_motion_splits_large_deltas() {
         let mut mouse = UsbHidMouse::new();
+        configure_mouse(&mut mouse);
         mouse.movement(200, 0);
 
         let r1 = mouse.poll_interrupt_in(INTERRUPT_IN_EP).unwrap();
@@ -354,9 +452,55 @@ mod tests {
     #[test]
     fn mouse_button_event_generates_report() {
         let mut mouse = UsbHidMouse::new();
+        configure_mouse(&mut mouse);
         mouse.button_event(0x01, true);
         let r = mouse.poll_interrupt_in(INTERRUPT_IN_EP).unwrap();
         assert_eq!(r, vec![0x01, 0, 0, 0]);
     }
-}
 
+    #[test]
+    fn mouse_standard_requests_accept_set_address_and_remote_wakeup() {
+        let mut mouse = UsbHidMouse::new();
+
+        assert_eq!(
+            mouse.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: USB_REQUEST_SET_ADDRESS,
+                    w_value: 9,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+        assert_eq!(mouse.address, 9);
+
+        assert_eq!(
+            mouse.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: USB_REQUEST_SET_FEATURE,
+                    w_value: USB_FEATURE_DEVICE_REMOTE_WAKEUP,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+
+        let resp = mouse.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_STATUS,
+                w_value: 0,
+                w_index: 0,
+                w_length: 2,
+            },
+            None,
+        );
+        assert_eq!(resp, ControlResponse::Data(vec![0x02, 0x00]));
+    }
+}

@@ -7,7 +7,10 @@ use super::{
     HID_REQUEST_GET_PROTOCOL, HID_REQUEST_GET_REPORT, HID_REQUEST_SET_IDLE, HID_REQUEST_SET_PROTOCOL,
     HID_REQUEST_SET_REPORT, USB_DESCRIPTOR_TYPE_CONFIGURATION, USB_DESCRIPTOR_TYPE_DEVICE,
     USB_DESCRIPTOR_TYPE_HID, USB_DESCRIPTOR_TYPE_HID_REPORT, USB_DESCRIPTOR_TYPE_STRING,
-    USB_REQUEST_GET_CONFIGURATION, USB_REQUEST_GET_DESCRIPTOR, USB_REQUEST_SET_CONFIGURATION,
+    USB_FEATURE_DEVICE_REMOTE_WAKEUP, USB_FEATURE_ENDPOINT_HALT, USB_REQUEST_CLEAR_FEATURE,
+    USB_REQUEST_GET_CONFIGURATION, USB_REQUEST_GET_DESCRIPTOR, USB_REQUEST_GET_INTERFACE,
+    USB_REQUEST_GET_STATUS, USB_REQUEST_SET_ADDRESS, USB_REQUEST_SET_CONFIGURATION,
+    USB_REQUEST_SET_FEATURE, USB_REQUEST_SET_INTERFACE,
 };
 
 const INTERRUPT_IN_EP: u8 = 0x81;
@@ -35,7 +38,10 @@ impl KeyboardReport {
 }
 
 pub struct UsbHidKeyboard {
+    address: u8,
     configuration: u8,
+    remote_wakeup_enabled: bool,
+    interrupt_in_halted: bool,
     idle_rate: u8,
     protocol: HidProtocol,
     leds: u8,
@@ -56,7 +62,10 @@ impl Default for UsbHidKeyboard {
 impl UsbHidKeyboard {
     pub fn new() -> Self {
         Self {
+            address: 0,
             configuration: 0,
+            remote_wakeup_enabled: false,
+            interrupt_in_halted: false,
             idle_rate: 0,
             protocol: HidProtocol::Report,
             leds: 0,
@@ -162,6 +171,31 @@ impl UsbDeviceModel for UsbHidKeyboard {
     fn handle_control_request(&mut self, setup: SetupPacket, data_stage: Option<&[u8]>) -> ControlResponse {
         match (setup.request_type(), setup.recipient()) {
             (RequestType::Standard, RequestRecipient::Device) => match setup.b_request {
+                USB_REQUEST_GET_STATUS => {
+                    let mut status: u16 = 0;
+                    if self.remote_wakeup_enabled {
+                        status |= 1 << 1;
+                    }
+                    ControlResponse::Data(status.to_le_bytes().to_vec())
+                }
+                USB_REQUEST_CLEAR_FEATURE => match setup.w_value {
+                    USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
+                        self.remote_wakeup_enabled = false;
+                        ControlResponse::Ack
+                    }
+                    _ => ControlResponse::Stall,
+                },
+                USB_REQUEST_SET_FEATURE => match setup.w_value {
+                    USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
+                        self.remote_wakeup_enabled = true;
+                        ControlResponse::Ack
+                    }
+                    _ => ControlResponse::Stall,
+                },
+                USB_REQUEST_SET_ADDRESS => {
+                    self.address = (setup.w_value & 0x00ff) as u8;
+                    ControlResponse::Ack
+                }
                 USB_REQUEST_GET_DESCRIPTOR => {
                     let desc_type = setup.descriptor_type();
                     let desc_index = setup.descriptor_index();
@@ -176,12 +210,30 @@ impl UsbDeviceModel for UsbHidKeyboard {
                 }
                 USB_REQUEST_SET_CONFIGURATION => {
                     self.configuration = (setup.w_value & 0x00ff) as u8;
+                    if self.configuration == 0 {
+                        self.pending_reports.clear();
+                    }
                     ControlResponse::Ack
                 }
                 USB_REQUEST_GET_CONFIGURATION => ControlResponse::Data(vec![self.configuration]),
                 _ => ControlResponse::Stall,
             },
             (RequestType::Standard, RequestRecipient::Interface) => match setup.b_request {
+                USB_REQUEST_GET_STATUS => ControlResponse::Data(vec![0, 0]),
+                USB_REQUEST_GET_INTERFACE => {
+                    if setup.w_index == 0 {
+                        ControlResponse::Data(vec![0])
+                    } else {
+                        ControlResponse::Stall
+                    }
+                }
+                USB_REQUEST_SET_INTERFACE => {
+                    if setup.w_index == 0 && setup.w_value == 0 {
+                        ControlResponse::Ack
+                    } else {
+                        ControlResponse::Stall
+                    }
+                }
                 USB_REQUEST_GET_DESCRIPTOR => {
                     let desc_type = setup.descriptor_type();
                     let data = match desc_type {
@@ -191,6 +243,32 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     };
                     data.map(|v| ControlResponse::Data(clamp_response(v, setup.w_length)))
                         .unwrap_or(ControlResponse::Stall)
+                }
+                _ => ControlResponse::Stall,
+            },
+            (RequestType::Standard, RequestRecipient::Endpoint) => match setup.b_request {
+                USB_REQUEST_GET_STATUS => {
+                    if setup.w_index != INTERRUPT_IN_EP as u16 {
+                        return ControlResponse::Stall;
+                    }
+                    let status: u16 = if self.interrupt_in_halted { 1 } else { 0 };
+                    ControlResponse::Data(status.to_le_bytes().to_vec())
+                }
+                USB_REQUEST_CLEAR_FEATURE => {
+                    if setup.w_value == USB_FEATURE_ENDPOINT_HALT && setup.w_index == INTERRUPT_IN_EP as u16 {
+                        self.interrupt_in_halted = false;
+                        ControlResponse::Ack
+                    } else {
+                        ControlResponse::Stall
+                    }
+                }
+                USB_REQUEST_SET_FEATURE => {
+                    if setup.w_value == USB_FEATURE_ENDPOINT_HALT && setup.w_index == INTERRUPT_IN_EP as u16 {
+                        self.interrupt_in_halted = true;
+                        ControlResponse::Ack
+                    } else {
+                        ControlResponse::Stall
+                    }
                 }
                 _ => ControlResponse::Stall,
             },
@@ -239,6 +317,9 @@ impl UsbDeviceModel for UsbHidKeyboard {
 
     fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
         if ep != INTERRUPT_IN_EP {
+            return None;
+        }
+        if self.configuration == 0 || self.interrupt_in_halted {
             return None;
         }
         self.pending_reports.pop_front().map(|r| r.to_vec())
@@ -358,6 +439,22 @@ mod tests {
         u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
     }
 
+    fn configure_keyboard(kb: &mut UsbHidKeyboard) {
+        assert_eq!(
+            kb.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: USB_REQUEST_SET_CONFIGURATION,
+                    w_value: 1,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+    }
+
     #[test]
     fn device_descriptor_is_well_formed() {
         let kb = UsbHidKeyboard::new();
@@ -391,6 +488,7 @@ mod tests {
     #[test]
     fn keyboard_report_generation_and_rollover() {
         let mut kb = UsbHidKeyboard::new();
+        configure_keyboard(&mut kb);
 
         kb.key_event(0x04, true); // 'a'
         let report = kb.poll_interrupt_in(INTERRUPT_IN_EP).unwrap();
@@ -458,5 +556,93 @@ mod tests {
             let non_zero_len = first_zero;
             assert_eq!(&report_keys[..non_zero_len], &expected[..non_zero_len]);
         }
+    }
+
+    #[test]
+    fn keyboard_standard_requests_track_status_bits() {
+        let mut kb = UsbHidKeyboard::new();
+
+        // Default: remote wakeup disabled.
+        let resp = kb.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_STATUS,
+                w_value: 0,
+                w_index: 0,
+                w_length: 2,
+            },
+            None,
+        );
+        assert_eq!(resp, ControlResponse::Data(vec![0x00, 0x00]));
+
+        // Enable remote wakeup.
+        assert_eq!(
+            kb.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: USB_REQUEST_SET_FEATURE,
+                    w_value: USB_FEATURE_DEVICE_REMOTE_WAKEUP,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+
+        let resp = kb.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_STATUS,
+                w_value: 0,
+                w_index: 0,
+                w_length: 2,
+            },
+            None,
+        );
+        assert_eq!(resp, ControlResponse::Data(vec![0x02, 0x00]));
+
+        // Halt endpoint and verify status.
+        assert_eq!(
+            kb.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x02,
+                    b_request: USB_REQUEST_SET_FEATURE,
+                    w_value: USB_FEATURE_ENDPOINT_HALT,
+                    w_index: INTERRUPT_IN_EP as u16,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+
+        let resp = kb.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x82,
+                b_request: USB_REQUEST_GET_STATUS,
+                w_value: 0,
+                w_index: INTERRUPT_IN_EP as u16,
+                w_length: 2,
+            },
+            None,
+        );
+        assert_eq!(resp, ControlResponse::Data(vec![0x01, 0x00]));
+
+        // SET_ADDRESS should be accepted and stored.
+        assert_eq!(
+            kb.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: USB_REQUEST_SET_ADDRESS,
+                    w_value: 7,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+        assert_eq!(kb.address, 7);
     }
 }
