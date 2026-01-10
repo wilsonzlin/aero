@@ -1,16 +1,19 @@
 import type { FastifyInstance } from 'fastify';
-import { Counter, Histogram, collectDefaultMetrics, register } from 'prom-client';
+import { Counter, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
 
 const kStartTime = Symbol('metricsStartTime');
 
 export function setupMetrics(app: FastifyInstance): void {
-  collectDefaultMetrics({ register });
+  // Use a per-server registry so tests (and other embedders) can spin up multiple
+  // Fastify instances in the same process without metric name collisions.
+  const registry = new Registry();
+  collectDefaultMetrics({ register: registry });
 
   const requestsTotal = new Counter({
     name: 'http_requests_total',
     help: 'Total number of HTTP requests',
     labelNames: ['method', 'route', 'status_code'],
-    registers: [register],
+    registers: [registry],
   });
 
   const requestDurationSeconds = new Histogram({
@@ -18,7 +21,7 @@ export function setupMetrics(app: FastifyInstance): void {
     help: 'HTTP request latency in seconds',
     labelNames: ['method', 'route', 'status_code'],
     buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
-    registers: [register],
+    registers: [registry],
   });
 
   app.addHook('onRequest', async (request) => {
@@ -42,8 +45,7 @@ export function setupMetrics(app: FastifyInstance): void {
   });
 
   app.get('/metrics', async (_request, reply) => {
-    reply.header('content-type', register.contentType);
-    return register.metrics();
+    reply.header('content-type', registry.contentType);
+    return registry.metrics();
   });
 }
-

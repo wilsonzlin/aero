@@ -54,6 +54,19 @@ Set these in your shell or a `.env` file next to `deploy/docker-compose.yml`:
   - `0` disables HSTS (good for local dev)
   - Recommended production value: `31536000` (1 year)
 
+Gateway environment variables (used by `backend/aero-gateway` and passed through in
+`deploy/docker-compose.yml`):
+
+- `PUBLIC_BASE_URL` (default in compose: `https://${AERO_DOMAIN}`)
+  - Used to derive the default `ALLOWED_ORIGINS` allowlist.
+- `ALLOWED_ORIGINS` (optional, comma-separated)
+  - Set explicitly if you need to allow additional origins (e.g. a dev server).
+- `TRUST_PROXY` (default in compose: `1`)
+  - Set to `1` only when the gateway is reachable **only** via the reverse proxy.
+  - Required if you want `request.ip` / rate limiting to use `X-Forwarded-For`.
+- `CROSS_ORIGIN_ISOLATION` (default in compose: `1`)
+  - Optional defense-in-depth; the proxy already sets these headers at the edge.
+
 ### Using the real gateway in production
 
 `deploy/docker-compose.yml` includes a `build: ./gateway` section to make
@@ -64,10 +77,6 @@ For production deployments, you will typically:
 1) Remove the `build:` stanza from the `aero-gateway` service
 2) Set `image:` to your real published gateway image
 3) Keep the proxy as-is (it is production-ready)
-
-> `AERO_TRUST_PROXY` is passed to the gateway container as a documented convention.
-> Your gateway implementation should only trust `X-Forwarded-*` headers when this
-> is explicitly enabled (to prevent client spoofing when not behind a proxy).
 
 The edge proxy (Caddy) automatically sets standard forwarding headers like:
 `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host`.
@@ -218,7 +227,7 @@ To serve your real frontend:
 1) Build it (example):
 
 ```bash
-cd frontend
+cd web
 npm ci
 npm run build
 ```
@@ -228,7 +237,7 @@ npm run build
 ```yaml
     volumes:
       # - ./static:/srv:ro
-      - ../frontend/dist:/srv:ro
+      - ../web/dist:/srv:ro
 ```
 
 3) Restart:

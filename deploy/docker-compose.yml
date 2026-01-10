@@ -34,11 +34,11 @@ services:
       # Optional: serve a built frontend from the same origin as the gateway.
       #
       # Recommended production setup:
-      #   - Build your frontend to ../frontend/dist
-      #   - Replace "./static" with "../frontend/dist"
+      #   - Build the web app to ../web/dist
+      #   - Replace "./static" with "../web/dist"
       #
       # Example:
-      #   - ../frontend/dist:/srv:ro
+      #   - ../web/dist:/srv:ro
       - ./static:/srv:ro
     depends_on:
       - aero-gateway
@@ -49,7 +49,7 @@ services:
   # docker network (TLS is terminated at the proxy).
   aero-gateway:
     # Local-dev default: a small stub gateway (build context in ./gateway) that:
-    # - serves /healthz and /api/echo over HTTP
+    # - serves /healthz and /api/echo over HTTP (example)
     # - accepts WebSocket upgrades on /tcp and echoes frames back
     #
     # Production: replace this with your real Aero gateway image/build.
@@ -60,12 +60,19 @@ services:
     expose:
       - "8080"
     environment:
-      # NOTE: The actual env vars depend on the gateway implementation.
-      # This file only documents recommended deployment toggles.
+      # Common gateway deployment knobs (supported by backend/aero-gateway).
       #
-      # Ensure the gateway only trusts X-Forwarded-* headers when explicitly
-      # configured to do so (to avoid spoofing when not behind a proxy).
-      AERO_TRUST_PROXY: ${AERO_TRUST_PROXY:-0}
+      # When running behind the reverse proxy, use the public HTTPS origin for
+      # origin allowlisting / absolute URL generation.
+      PUBLIC_BASE_URL: https://${AERO_DOMAIN:-localhost}
+
+      # Enable trust for X-Forwarded-* only when the gateway is not directly
+      # exposed to the public internet.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+
+      # Optional defense-in-depth: also set COOP/COEP headers at the gateway.
+      # (The proxy already sets these at the edge.)
+      CROSS_ORIGIN_ISOLATION: ${CROSS_ORIGIN_ISOLATION:-1}
 
 volumes:
   caddy_data:

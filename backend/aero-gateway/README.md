@@ -67,6 +67,7 @@ Required / commonly used:
 - `PUBLIC_BASE_URL` (default: `http://localhost:${PORT}`)
 - `ALLOWED_ORIGINS` (comma-separated origins; default: `PUBLIC_BASE_URL` origin)
 - `CROSS_ORIGIN_ISOLATION=1` to enable COOP/COEP headers
+- `TRUST_PROXY=1` to trust `X-Forwarded-*` headers from a reverse proxy (only enable when not directly exposed)
 - `SHUTDOWN_GRACE_MS` (default: `10000`)
 
 Security:
@@ -109,3 +110,7 @@ Make sure to set:
 
 - `PUBLIC_BASE_URL=https://<your-domain>`
 - `ALLOWED_ORIGINS=https://<your-domain>` (or leave unset to default to `PUBLIC_BASE_URL`)
+- `TRUST_PROXY=1` (so rate limiting and logs use the real client IP via `X-Forwarded-For`)
+
+See [`deploy/README.md`](../../deploy/README.md) for a ready-to-run Caddy + docker-compose setup
+that terminates TLS, enforces COOP/COEP, and proxies `/tcp` + HTTP APIs to the gateway.

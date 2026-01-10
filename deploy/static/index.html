@@ -58,7 +58,7 @@
         <span id="health">…</span>
       </li>
       <li>
-        <code>WSS /tcp</code> echo:
+        <code>WSS /tcp</code> upgrade:
         <span id="ws">…</span>
       </li>
     </ul>
@@ -92,8 +92,17 @@
       // Basic "is the reverse proxy wiring correct?" checks.
       try {
         const res = await fetch("/healthz", { cache: "no-store" });
-        const text = await res.text();
-        const ok = res.ok && text.trim() === "ok";
+        const contentType = res.headers.get("content-type") ?? "";
+        let ok = false;
+        if (res.ok) {
+          if (contentType.includes("application/json")) {
+            const json = await res.json();
+            ok = json?.ok === true;
+          } else {
+            const text = await res.text();
+            ok = text.trim() === "ok";
+          }
+        }
         const el = document.querySelector("#health");
         el.textContent = ok ? "ok" : `unexpected (${res.status})`;
         el.className = ok ? "ok" : "bad";
@@ -107,21 +116,21 @@
         const wsUrl = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/tcp`;
         const wsEl = document.querySelector("#ws");
         const ws = new WebSocket(wsUrl);
-        ws.binaryType = "arraybuffer";
+        const timeout = setTimeout(() => {
+          wsEl.textContent = "timeout";
+          wsEl.className = "bad";
+          ws.close();
+        }, 5000);
 
         ws.onopen = () => {
-          ws.send("echo-test");
-        };
-
-        ws.onmessage = (event) => {
-          const msg = typeof event.data === "string" ? event.data : "<binary>";
-          const ok = msg === "echo-test";
-          wsEl.textContent = ok ? "ok" : `unexpected (${msg})`;
-          wsEl.className = ok ? "ok" : "bad";
+          clearTimeout(timeout);
+          wsEl.textContent = "ok";
+          wsEl.className = "ok";
           ws.close();
         };
 
         ws.onerror = () => {
+          clearTimeout(timeout);
           wsEl.textContent = "failed";
           wsEl.className = "bad";
         };

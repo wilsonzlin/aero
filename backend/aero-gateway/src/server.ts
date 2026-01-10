@@ -19,6 +19,9 @@ type ServerBundle = {
 
 function findFrontendDistDir(): string | null {
   const candidates = [
+    path.resolve(process.cwd(), '../../web/dist'),
+    path.resolve(process.cwd(), '../web/dist'),
+    path.resolve(process.cwd(), 'web/dist'),
     path.resolve(process.cwd(), '../../frontend/dist'),
     path.resolve(process.cwd(), '../frontend/dist'),
     path.resolve(process.cwd(), 'frontend/dist'),
@@ -40,6 +43,7 @@ export function buildServer(config: Config): ServerBundle {
   let shuttingDown = false;
 
   const app = fastify({
+    trustProxy: config.TRUST_PROXY,
     logger: { level: config.LOG_LEVEL },
     requestIdHeader: 'x-request-id',
     genReqId: (req) => {
@@ -89,4 +93,3 @@ export function buildServer(config: Config): ServerBundle {
     },
   };
 }
-

@@ -31,7 +31,7 @@
 	encode zstd gzip
 
 	# WebSocket TCP proxy endpoint and HTTP APIs.
-	@aero_gateway path /tcp* /dns-query* /api* /health* /metrics*
+	@aero_gateway path /tcp* /session* /dns-query* /api* /healthz* /readyz* /version* /metrics*
 	handle @aero_gateway {
 		import aero_headers
 		reverse_proxy {$AERO_GATEWAY_UPSTREAM:aero-gateway:8080}

@@ -36,6 +36,7 @@ async function main(): Promise<void> {
       port: config.PORT,
       allowedOrigins: config.ALLOWED_ORIGINS,
       crossOriginIsolation: config.CROSS_ORIGIN_ISOLATION,
+      trustProxy: config.TRUST_PROXY,
     },
     'aero-gateway listening',
   );
@@ -47,4 +48,3 @@ async function main(): Promise<void> {
 }
 
 void main();
-
