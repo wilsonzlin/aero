@@ -6,6 +6,7 @@ members = [
     "crates/aero-emulator",
     "crates/aero-ipc",
     "crates/aero-bios",
+    "crates/aero_jit",
     "crates/aero-net-e1000",
     "crates/aero-storage",
     "crates/aero-mem",

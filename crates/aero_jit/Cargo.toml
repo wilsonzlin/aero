@@ -1,0 +1,11 @@
+[package]
+name = "aero_jit"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wasm-encoder = "0.244.0"
+
+[dev-dependencies]
+wasmparser = "0.228.0"
+wasmi = "1.0.7"
