@@ -1,5 +1,7 @@
 #include "virtqueue_ring.h"
 
+#include <ntintsafe.h>
+
 static __forceinline SIZE_T
 VirtqueueRingAlignUp(
     _In_ SIZE_T Value,
@@ -24,6 +26,7 @@ VirtqueueRingLayoutCompute(
     _In_ BOOLEAN EventIdxEnabled,
     _Out_ VIRTQUEUE_RING_LAYOUT* Layout)
 {
+    NTSTATUS status;
     SIZE_T descOffset;
     SIZE_T descSize;
     SIZE_T availSize;
@@ -31,6 +34,9 @@ VirtqueueRingLayoutCompute(
     SIZE_T availOffset;
     SIZE_T usedOffset;
     SIZE_T totalSize;
+    SIZE_T tmp;
+    SIZE_T descEnd;
+    SIZE_T availEnd;
 
     if (Layout == NULL || QueueSize == 0) {
         return STATUS_INVALID_PARAMETER;
@@ -43,15 +49,49 @@ VirtqueueRingLayoutCompute(
      *   used  = 4 + (8 * queueSize) + (eventIdx ? 2 : 0)
      */
     descOffset = VirtqueueRingAlignUp(0, 16);
-    descSize = sizeof(struct virtq_desc) * (SIZE_T)QueueSize;
-    availSize = sizeof(UINT16) * (SIZE_T)(2 + QueueSize + (EventIdxEnabled ? 1 : 0));
-    usedSize =
-        (sizeof(UINT16) * 2) + (sizeof(struct virtq_used_elem) * (SIZE_T)QueueSize) +
-        (EventIdxEnabled ? sizeof(UINT16) : 0);
 
-    availOffset = VirtqueueRingAlignUp(descOffset + descSize, 2);
-    usedOffset = VirtqueueRingAlignUp(availOffset + availSize, 4);
-    totalSize = usedOffset + usedSize;
+    status = RtlSizeTMult(sizeof(struct virtq_desc), (SIZE_T)QueueSize, &descSize);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    status = RtlSizeTMult(sizeof(UINT16), (SIZE_T)(2 + QueueSize + (EventIdxEnabled ? 1 : 0)), &availSize);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    usedSize = sizeof(UINT16) * 2;
+    status = RtlSizeTMult(sizeof(struct virtq_used_elem), (SIZE_T)QueueSize, &tmp);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+    status = RtlSizeTAdd(usedSize, tmp, &usedSize);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+    if (EventIdxEnabled) {
+        status = RtlSizeTAdd(usedSize, sizeof(UINT16), &usedSize);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+    }
+
+    status = RtlSizeTAdd(descOffset, descSize, &descEnd);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+    availOffset = VirtqueueRingAlignUp(descEnd, 2);
+
+    status = RtlSizeTAdd(availOffset, availSize, &availEnd);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+    usedOffset = VirtqueueRingAlignUp(availEnd, 4);
+
+    status = RtlSizeTAdd(usedOffset, usedSize, &totalSize);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
 
     Layout->DescSize = descSize;
     Layout->AvailSize = availSize;
