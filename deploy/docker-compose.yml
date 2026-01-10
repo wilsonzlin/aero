@@ -24,6 +24,10 @@ services:
 
       # HSTS toggle (0 disables, recommended 31536000+ for production).
       AERO_HSTS_MAX_AGE: ${AERO_HSTS_MAX_AGE:-0}
+
+      # Optional: additional `connect-src` origins to allow in the CSP.
+      # Example: "https://proxy.example.com wss://proxy.example.com"
+      AERO_CSP_CONNECT_SRC_EXTRA: ${AERO_CSP_CONNECT_SRC_EXTRA:-}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
 
