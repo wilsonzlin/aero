@@ -111,7 +111,7 @@ pub fn print_deps(ctx: &DepContext) {
         "hivexregedit (offline hive edits cross-platform)",
         &ctx.hivexregedit,
         &[
-            "Linux: sudo apt-get install libhivex-bin",
+            "Linux: sudo apt-get install libwin-hivex-perl",
             "macOS: brew install hivex (or libguestfs)",
         ],
     );

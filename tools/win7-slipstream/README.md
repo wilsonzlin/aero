@@ -72,7 +72,7 @@ Required:
 Example install (Debian/Ubuntu):
 
 ```bash
-sudo apt-get install p7zip-full xorriso wimtools libhivex-bin
+sudo apt-get install p7zip-full xorriso wimtools libwin-hivex-perl
 ```
 
 Notes:
