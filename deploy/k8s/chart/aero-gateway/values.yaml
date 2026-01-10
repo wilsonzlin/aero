@@ -48,6 +48,9 @@ gateway:
 
   logLevel: info
   shutdownGraceMs: 10000
+  # If unset (null), terminationGracePeriodSeconds is derived from shutdownGraceMs
+  # with a small buffer. Override explicitly if your environment needs more time.
+  terminationGracePeriodSeconds: null
   rateLimit:
     requestsPerMinute: 0
 

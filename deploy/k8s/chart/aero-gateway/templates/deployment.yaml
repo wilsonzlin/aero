@@ -1,3 +1,21 @@
+{{- $configEnabled := or .Values.config.create .Values.config.name -}}
+{{- $secretEnabled := or .Values.secrets.create .Values.secrets.existingSecret -}}
+
+{{- $trustProxy := .Values.ingress.enabled -}}
+{{- if not (kindIs "invalid" .Values.gateway.trustProxy) -}}
+{{- $trustProxy = .Values.gateway.trustProxy -}}
+{{- end -}}
+
+{{- $terminationGracePeriodSeconds := 30 -}}
+{{- if not (kindIs "invalid" .Values.gateway.terminationGracePeriodSeconds) -}}
+{{- $terminationGracePeriodSeconds = .Values.gateway.terminationGracePeriodSeconds -}}
+{{- else -}}
+{{- $derived := div (add .Values.gateway.shutdownGraceMs 5999) 1000 -}}
+{{- if gt $derived $terminationGracePeriodSeconds -}}
+{{- $terminationGracePeriodSeconds = $derived -}}
+{{- end -}}
+{{- end -}}
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -32,6 +50,7 @@ spec:
       serviceAccountName: {{ default (include "aero-gateway.fullname" .) .Values.serviceAccount.name }}
       {{- end }}
       automountServiceAccountToken: {{ default false .Values.serviceAccount.automountServiceAccountToken }}
+      terminationGracePeriodSeconds: {{ $terminationGracePeriodSeconds }}
       {{- with .Values.gateway.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -61,10 +80,6 @@ spec:
               containerPort: {{ .Values.gateway.containerPort }}
               protocol: TCP
           env:
-            {{- $trustProxy := .Values.ingress.enabled -}}
-            {{- if not (kindIs "invalid" .Values.gateway.trustProxy) -}}
-            {{- $trustProxy = .Values.gateway.trustProxy -}}
-            {{- end }}
             - name: PORT
               value: {{ .Values.gateway.containerPort | quote }}
             - name: LOG_LEVEL
@@ -97,8 +112,6 @@ spec:
             {{- with .Values.gateway.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- $configEnabled := or .Values.config.create .Values.config.name -}}
-          {{- $secretEnabled := or .Values.secrets.create .Values.secrets.existingSecret -}}
           {{- if or $configEnabled $secretEnabled }}
           envFrom:
             {{- if $configEnabled }}

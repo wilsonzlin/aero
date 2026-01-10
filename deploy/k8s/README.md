@@ -192,6 +192,18 @@ This chart defaults `TRUST_PROXY` to:
 
 If you expose the `Service` directly to untrusted clients, keep `TRUST_PROXY=0` to avoid header spoofing.
 
+### Graceful shutdown (terminationGracePeriodSeconds)
+
+The gateway supports graceful shutdown via `SIGTERM` and uses `SHUTDOWN_GRACE_MS`.
+
+This chart sets `terminationGracePeriodSeconds` automatically based on `gateway.shutdownGraceMs`
+(with a small buffer) so Kubernetes does not force-kill the pod mid-shutdown. You can override it via:
+
+```yaml
+gateway:
+  terminationGracePeriodSeconds: 90
+```
+
 ## Private registry / imagePullSecrets (optional)
 
 If your gateway image is in a private registry, set `imagePullSecrets` in your values file:
