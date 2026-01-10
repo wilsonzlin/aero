@@ -51,6 +51,15 @@ impl MsiCapability {
         }
     }
 
+    /// Triggers a single-vector MSI delivery if MSI is enabled.
+    ///
+    /// This implementation models the optional per-vector mask/pending registers in a
+    /// simplified way:
+    /// - If the single supported vector is masked, delivery is suppressed and the pending bit
+    ///   is set.
+    /// - The pending bit is cleared when the device successfully delivers a message.
+    /// - The pending bit is *not* automatically re-delivered on unmask; callers should
+    ///   re-trigger if they rely on that behavior.
     pub fn trigger(&mut self, platform: &mut impl MsiTrigger) -> bool {
         if !self.enabled {
             return false;
@@ -205,7 +214,9 @@ impl PciCapability for MsiCapability {
 mod tests {
     use super::MsiCapability;
     use crate::pci::config::PciConfigSpace;
-    use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
+    use aero_platform::interrupts::{
+        InterruptController, PlatformInterruptMode, PlatformInterrupts,
+    };
 
     #[test]
     fn trigger_msi_delivers_vector_to_lapic() {
