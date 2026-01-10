@@ -244,8 +244,10 @@ async fn multipart_range_response(
                 );
                 yield Bytes::from(part_headers);
 
-                let reader = store.open_range(&image_id, range.start, range.len()).await
-                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+                let reader = store
+                    .open_range(&image_id, range.start, range.len())
+                    .await
+                    .map_err(io::Error::other)?;
 
                 let mut reader_stream = ReaderStream::new(reader);
                 while let Some(chunk) = reader_stream.next().await {

@@ -77,9 +77,11 @@ fn validate_id(id: &str) -> Result<(), ManifestError> {
         return Err(ManifestError::InvalidId(id.to_string()));
     }
 
-    let is_allowed = id.bytes().all(|b| match b {
-        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' => true,
-        _ => false,
+    let is_allowed = id.bytes().all(|b| {
+        matches!(
+            b,
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-'
+        )
     });
 
     if !is_allowed {

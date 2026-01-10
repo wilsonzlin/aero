@@ -9,7 +9,12 @@ pub struct ByteRange {
 impl ByteRange {
     pub fn len(self) -> u64 {
         // `end` is inclusive.
+        debug_assert!(self.start <= self.end);
         self.end - self.start + 1
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.start > self.end
     }
 }
 

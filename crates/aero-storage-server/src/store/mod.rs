@@ -82,9 +82,11 @@ pub(crate) fn validate_image_id(image_id: &str) -> Result<(), StoreError> {
 
     // Treat `image_id` as an opaque identifier and restrict it to ASCII
     // `[A-Za-z0-9._-]` to prevent path traversal.
-    let is_allowed = image_id.bytes().all(|b| match b {
-        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' => true,
-        _ => false,
+    let is_allowed = image_id.bytes().all(|b| {
+        matches!(
+            b,
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-'
+        )
     });
 
     if !is_allowed {

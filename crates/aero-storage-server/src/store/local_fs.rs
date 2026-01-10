@@ -44,7 +44,7 @@ impl LocalFsImageStore {
                 }
             })
             .await
-            .map(Clone::clone)
+            .cloned()
     }
 
     async fn lookup_manifest_image(
@@ -321,6 +321,7 @@ mod tests {
 
         let mut file = tokio::fs::OpenOptions::new()
             .create(true)
+            .truncate(true)
             .read(true)
             .write(true)
             .open(&path)

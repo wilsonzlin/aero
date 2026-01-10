@@ -146,6 +146,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: cargo test (aero-storage-server)
+        run: cargo test ${{ steps.cargo-locked.outputs.locked }} -p aero-storage-server --all-features
+
       - name: Upload network captures (pcapng)
         if: failure()
         uses: actions/upload-artifact@v4

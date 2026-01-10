@@ -26,6 +26,7 @@ async fn http_range_supports_offsets_beyond_4gib_and_suffix_ranges() {
 
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
+        .truncate(true)
         .read(true)
         .write(true)
         .open(&path)
@@ -112,4 +113,3 @@ async fn http_range_supports_offsets_beyond_4gib_and_suffix_ranges() {
     let body = res.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(&body[..], SENTINEL_END);
 }
-
