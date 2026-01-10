@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
 [CmdletBinding()]
 param(
   # Path to the built guest tool (aero-virtio-selftest.exe)

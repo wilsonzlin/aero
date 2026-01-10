@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// aero-virtio-selftest: Windows 7 user-mode functional tests for Aero virtio drivers.
+// Primary targets: virtio-blk + virtio-net. Output is written to stdout, a log file, and COM1.
+
 #include <windows.h>
 
 #include <setupapi.h>

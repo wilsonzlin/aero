@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
 [CmdletBinding()]
 param(
   # QEMU system binary (e.g. qemu-system-x86_64)
