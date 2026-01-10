@@ -644,9 +644,10 @@ pub struct DiskAccessLease {
     // Prefer a same-origin URL such as `/disk/<lease_id>` to avoid CORS preflight.
     remote_url: String,
 
-    // Opaque token (or JWT) minted by the backend; short-lived.
-    bearer_token: String,
-    expires_at: SystemTime,
+    // Short-lived auth for private images. Public images may omit this, and signed-URL schemes
+    // may embed auth material directly in `remote_url` instead.
+    bearer_token: Option<String>,
+    expires_at: Option<SystemTime>,
 }
 
 pub struct StreamingDisk {
@@ -693,28 +694,35 @@ impl StreamingDisk {
     
     async fn fetch_range(&mut self, start: u64, end: u64) -> Result<Vec<u8>> {
         // Proactively refresh shortly before expiry so long-running sessions don't stall on auth.
-        if SystemTime::now() + LEASE_REFRESH_SKEW >= self.lease.expires_at {
-            self.refresh_lease().await?;
+        if let Some(expires_at) = self.lease.expires_at {
+            if SystemTime::now() + LEASE_REFRESH_SKEW >= expires_at {
+                self.refresh_lease().await?;
+            }
         }
 
         // NOTE: Using `Range` and `Authorization` headers will trigger a CORS preflight when
         // fetching cross-origin (same-origin `/disk/...` avoids CORS entirely).
-        let mut response = fetch(&self.lease.remote_url, FetchOptions {
-            headers: vec![
-                ("Range".to_string(), format!("bytes={}-{}", start, end - 1)),
-                ("Authorization".to_string(), format!("Bearer {}", self.lease.bearer_token)),
-            ],
-        }).await?;
+        let mut headers = vec![
+            ("Range".to_string(), format!("bytes={}-{}", start, end - 1)),
+        ];
+        if let Some(token) = &self.lease.bearer_token {
+            headers.push(("Authorization".to_string(), format!("Bearer {}", token)));
+        }
+
+        let mut response = fetch(&self.lease.remote_url, FetchOptions { headers }).await?;
         
         // If the token expires (or is revoked) mid-run, refresh the lease and retry once.
         if response.status() == 401 || response.status() == 403 {
             self.refresh_lease().await?;
-            response = fetch(&self.lease.remote_url, FetchOptions {
-                headers: vec![
-                    ("Range".to_string(), format!("bytes={}-{}", start, end - 1)),
-                    ("Authorization".to_string(), format!("Bearer {}", self.lease.bearer_token)),
-                ],
-            }).await?;
+
+            let mut headers = vec![
+                ("Range".to_string(), format!("bytes={}-{}", start, end - 1)),
+            ];
+            if let Some(token) = &self.lease.bearer_token {
+                headers.push(("Authorization".to_string(), format!("Bearer {}", token)));
+            }
+
+            response = fetch(&self.lease.remote_url, FetchOptions { headers }).await?;
         }
 
         Ok(response.bytes().await?)
