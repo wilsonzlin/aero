@@ -155,10 +155,8 @@ They handle:
 Typical flow after a successful build:
 
 ```cmd
-:: 1) Copy build outputs into the packaging folder (same dir as the .inf files)
-copy /y drivers\aerogpu\build\out\win7\x64\fre\kmd\*.sys drivers\aerogpu\packaging\win7\
-copy /y drivers\aerogpu\build\out\win7\x86\fre\umd\*.dll drivers\aerogpu\packaging\win7\
-copy /y drivers\aerogpu\build\out\win7\x64\fre\umd\*.dll drivers\aerogpu\packaging\win7\
+:: 1) Stage the packaging folder (copies the right-arch KMD + required UMDs)
+drivers\aerogpu\build\stage_packaging_win7.cmd fre x64
 
 :: 2) In a Win7 VM, run as Administrator:
 cd drivers\aerogpu\packaging\win7
@@ -169,3 +167,9 @@ install.cmd
 See `drivers/aerogpu/packaging/win7/README.md` for details (including Hardware ID edits).
 
 > Note: `aerogpu_dx11.inf` is optional; if you don’t build the D3D10/11 UMD, install with `aerogpu.inf`.
+
+For a **Win7 x86** VM, stage with:
+
+```cmd
+drivers\aerogpu\build\stage_packaging_win7.cmd fre x86
+```
