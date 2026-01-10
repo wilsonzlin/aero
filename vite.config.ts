@@ -20,7 +20,7 @@ const previewOnlyHeaders: Record<string, string> = {
   //
   // Note: do not set a strict CSP on the dev server; it can interfere with HMR.
   'Content-Security-Policy':
-    "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-proxy.invalid wss://aero-proxy.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'",
+    "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-gateway.invalid wss://aero-gateway.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'",
 };
 
 export default defineConfig({

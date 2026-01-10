@@ -26,7 +26,7 @@ const previewOnlyHeaders = {
   // Match the default CSP used by the static hosting templates. Keep `connect-src`
   // narrow; deployments that use a separate proxy origin should add it explicitly.
   "Content-Security-Policy":
-    "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-proxy.invalid wss://aero-proxy.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'",
+    "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-gateway.invalid wss://aero-gateway.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'",
 } as const;
 
 function wasmMimeTypePlugin(): Plugin {
