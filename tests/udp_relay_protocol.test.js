@@ -116,6 +116,36 @@ test("udp relay v2: decode rejects invalid message type", () => {
   );
 });
 
+test("udp relay v2: decode rejects unknown address family", () => {
+  const frame = new Uint8Array([
+    UDP_RELAY_V2_MAGIC,
+    UDP_RELAY_V2_VERSION,
+    0xff,
+    UDP_RELAY_V2_TYPE_DATAGRAM,
+    0x00,
+    0x01,
+    // remaining bytes are irrelevant; decoder should reject based on AF
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+  ]);
+
+  assert.throws(
+    () => decodeUdpRelayV2Datagram(frame),
+    (err) => err instanceof UdpRelayDecodeError && err.code === "invalid_v2",
+  );
+});
+
+test("udp relay v2: decode rejects too-short frames", () => {
+  assert.throws(
+    () => decodeUdpRelayV2Datagram(new Uint8Array([UDP_RELAY_V2_MAGIC, UDP_RELAY_V2_VERSION])),
+    (err) => err instanceof UdpRelayDecodeError && err.code === "too_short",
+  );
+});
+
 test("udp relay v2: encode supports IPv4 and rejects invalid address lengths", () => {
   const payload = new Uint8Array([1, 2, 3]);
   const ipv4 = new Uint8Array([127, 0, 0, 1]);
