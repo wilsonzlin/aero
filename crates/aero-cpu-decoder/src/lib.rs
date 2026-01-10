@@ -204,6 +204,12 @@ pub fn decode_instruction(mode: DecodeMode, ip: u64, bytes: &[u8]) -> Result<Ins
         return Err(DecodeError::EmptyInput);
     }
 
+    let bytes = if bytes.len() > MAX_INSTRUCTION_LEN {
+        &bytes[..MAX_INSTRUCTION_LEN]
+    } else {
+        bytes
+    };
+
     let mut decoder = IcedDecoder::with_ip(mode.bitness(), bytes, ip, DecoderOptions::NONE);
     let instruction = decoder.decode();
     match decoder.last_error() {
@@ -236,6 +242,11 @@ pub fn decode_one(mode: DecodeMode, ip: u64, bytes: &[u8]) -> Result<DecodedInst
 
     // Best-effort prefix parsing for consumers that want raw prefix info.
     // This does not affect the backend decode.
+    let bytes = if bytes.len() > MAX_INSTRUCTION_LEN {
+        &bytes[..MAX_INSTRUCTION_LEN]
+    } else {
+        bytes
+    };
     let prefixes = parse_prefixes(mode, bytes).map_err(|_| DecodeError::UnexpectedEof)?;
 
     Ok(DecodedInstruction { prefixes, instruction })
@@ -308,8 +319,14 @@ fn parse_prefixes(mode: DecodeMode, bytes: &[u8]) -> Result<Prefixes, PrefixPars
             // VEX/EVEX/XOP (these are mutually exclusive).
             0xC5 => {
                 // 2-byte VEX: C5 xx
+                // In non-64-bit modes, `C5 /r` is also `LDS`, which requires a memory
+                // operand (ModRM.mod != 0b11). VEX prefixes are only unambiguous when
+                // the next byte cannot be a valid LDS ModRM.
                 if i + 1 >= bytes.len() {
                     return Err(PrefixParseError::UnexpectedEof);
+                }
+                if mode != DecodeMode::Bits64 && (bytes[i + 1] & 0xC0) != 0xC0 {
+                    break;
                 }
                 p.vex = Some(Vex {
                     bytes: [bytes[i], bytes[i + 1], 0],
@@ -319,6 +336,14 @@ fn parse_prefixes(mode: DecodeMode, bytes: &[u8]) -> Result<Prefixes, PrefixPars
             }
             0xC4 => {
                 // 3-byte VEX: C4 xx xx
+                // In non-64-bit modes, `C4 /r` is also `LES`, which requires a memory
+                // operand (ModRM.mod != 0b11). Disambiguate the same way as `C5` above.
+                if i + 1 >= bytes.len() {
+                    return Err(PrefixParseError::UnexpectedEof);
+                }
+                if mode != DecodeMode::Bits64 && (bytes[i + 1] & 0xC0) != 0xC0 {
+                    break;
+                }
                 if i + 2 >= bytes.len() {
                     return Err(PrefixParseError::UnexpectedEof);
                 }
@@ -330,6 +355,14 @@ fn parse_prefixes(mode: DecodeMode, bytes: &[u8]) -> Result<Prefixes, PrefixPars
             }
             0x62 => {
                 // EVEX: 62 xx xx xx
+                // In non-64-bit modes, `62 /r` is also `BOUND`, which requires a memory
+                // operand (ModRM.mod != 0b11). Disambiguate using the next byte.
+                if i + 1 >= bytes.len() {
+                    return Err(PrefixParseError::UnexpectedEof);
+                }
+                if mode != DecodeMode::Bits64 && (bytes[i + 1] & 0xC0) != 0xC0 {
+                    break;
+                }
                 if i + 3 >= bytes.len() {
                     return Err(PrefixParseError::UnexpectedEof);
                 }
@@ -340,6 +373,14 @@ fn parse_prefixes(mode: DecodeMode, bytes: &[u8]) -> Result<Prefixes, PrefixPars
             }
             0x8F => {
                 // XOP: 8F xx xx
+                // `8F /0` is also `POP r/m`. We treat it as XOP only if the next byte
+                // cannot be a valid POP ModRM (reg != 0).
+                if i + 1 >= bytes.len() {
+                    return Err(PrefixParseError::UnexpectedEof);
+                }
+                if (bytes[i + 1] & 0x38) == 0 {
+                    break;
+                }
                 if i + 2 >= bytes.len() {
                     return Err(PrefixParseError::UnexpectedEof);
                 }

@@ -1624,26 +1624,34 @@ impl<M: MemoryBus, P: PortIo> Machine<M, P> {
         instr: &Instruction,
         next_ip: u64,
     ) -> Result<u64, EmuException> {
-        let mut addr = 0u64;
         let base = instr.memory_base();
         let index = instr.memory_index();
-        let scale = instr.memory_index_scale() as u64;
+        let scale = instr.memory_index_scale() as i128;
+
+        // iced-x86 returns an *absolute* address in `memory_displacement64()` for RIP-relative
+        // memory operands (i.e. it already includes `next_ip`). Normalize it back to a raw
+        // displacement so the EA calculation doesn't double-add `next_ip`.
+        let mut disp = instr.memory_displacement64() as i128;
+        if base == Register::RIP {
+            disp -= next_ip as i128;
+        }
+
+        let mut addr: i128 = disp;
         if base != Register::None {
             let base_val = match base {
                 Register::RIP => next_ip,
                 Register::EIP => next_ip & 0xffff_ffff,
                 _ => self.cpu.read_reg(base)?,
             };
-            addr = addr.wrapping_add(base_val);
+            addr += base_val as i128;
         }
         if index != Register::None {
             let idx = self.cpu.read_reg(index)?;
-            addr = addr.wrapping_add(idx.wrapping_mul(scale));
+            addr += (idx as i128) * scale;
         }
-        addr = addr.wrapping_add(instr.memory_displacement64());
 
         let addr_bits = self.effective_addr_bits();
-        Ok(addr & mask_for_bits(addr_bits))
+        Ok((addr as u64) & mask_for_bits(addr_bits))
     }
 
     fn read_operand(&mut self, instr: &Instruction, op_index: u32) -> Result<u64, EmuException> {
@@ -2191,4 +2199,47 @@ fn has_addr_size_override(bytes: &[u8], mode: CpuMode) -> bool {
         i += 1;
     }
     seen
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct DummyMem;
+    impl MemoryBus for DummyMem {
+        fn read_u8(&mut self, _paddr: u64) -> Result<u8, EmuException> {
+            panic!("unexpected memory read in unit test")
+        }
+
+        fn write_u8(&mut self, _paddr: u64, _value: u8) -> Result<(), EmuException> {
+            panic!("unexpected memory write in unit test")
+        }
+    }
+
+    struct DummyPorts;
+    impl PortIo for DummyPorts {
+        fn in_u8(&mut self, _port: u16) -> u8 {
+            0
+        }
+
+        fn out_u8(&mut self, _port: u16, _value: u8) {}
+    }
+
+    #[test]
+    fn calc_effective_offset_rip_relative_does_not_double_add_next_ip() {
+        // mov rax, qword ptr [rip+0x12345678]
+        let bytes = [0x48, 0x8B, 0x05, 0x78, 0x56, 0x34, 0x12];
+        let ip = 0x1000u64;
+
+        let mut decoder = Decoder::with_ip(64, &bytes, ip, DecoderOptions::NONE);
+        let instr = decoder.decode();
+        assert_ne!(instr.code(), Code::INVALID);
+        let next_ip = ip + instr.len() as u64;
+
+        let cpu = CpuState::new(CpuMode::Long);
+        let mut m = Machine::new(cpu, DummyMem, DummyPorts);
+        let offset = m.calc_effective_offset(&instr, next_ip).expect("calc_effective_offset");
+
+        assert_eq!(offset, next_ip.wrapping_add(0x12345678));
+    }
 }

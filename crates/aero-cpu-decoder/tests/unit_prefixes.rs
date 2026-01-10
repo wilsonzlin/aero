@@ -1,4 +1,5 @@
 use aero_cpu_decoder::{decode_one, DecodeError, DecodeMode, Segment, MAX_INSTRUCTION_LEN};
+use iced_x86::Mnemonic;
 
 #[test]
 fn parses_basic_legacy_prefixes() {
@@ -31,6 +32,33 @@ fn parses_rex_prefix_in_64bit_mode() {
     assert!(rex.r());
     assert!(!rex.x());
     assert!(!rex.b());
+}
+
+#[test]
+fn parses_vex2_prefix() {
+    // C5 F8 77 => vzeroupper
+    let bytes = [0xC5, 0xF8, 0x77];
+    let decoded = decode_one(DecodeMode::Bits64, 0, &bytes).expect("decode");
+    assert!(decoded.prefixes.vex.is_some());
+    assert_eq!(decoded.instruction.mnemonic(), Mnemonic::Vzeroupper);
+}
+
+#[test]
+fn does_not_misdetect_pop_as_xop() {
+    // 8F 00 => pop qword ptr [rax]
+    let bytes = [0x8F, 0x00];
+    let decoded = decode_one(DecodeMode::Bits64, 0, &bytes).expect("decode");
+    assert!(decoded.prefixes.xop.is_none());
+    assert_eq!(decoded.instruction.mnemonic(), Mnemonic::Pop);
+}
+
+#[test]
+fn does_not_misdetect_bound_as_evex_in_32bit_mode() {
+    // 62 00 => bound eax, [eax]  (valid in 32-bit mode; 0x62 is not EVEX here)
+    let bytes = [0x62, 0x00];
+    let decoded = decode_one(DecodeMode::Bits32, 0, &bytes).expect("decode");
+    assert!(decoded.prefixes.evex.is_none());
+    assert_eq!(decoded.instruction.mnemonic(), Mnemonic::Bound);
 }
 
 #[test]
