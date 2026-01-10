@@ -430,7 +430,7 @@ python3 tools/win7-slipstream/scripts/cert-to-reg.py \
   --out aero-cert.reg \
   "$CERT_PATH"
 
-hivexregedit --merge mnt/Windows/System32/config/SOFTWARE aero-cert.reg
+hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\SOFTWARE' mnt/Windows/System32/config/SOFTWARE aero-cert.reg
 wimlib-imagex unmount mnt --commit
 ```
 
@@ -442,10 +442,10 @@ Repeat this for:
 You can also patch BCD stores cross-platform using the auditable `.reg` patches in `tools/win7-slipstream/patches/`:
 
 ```sh
-hivexregedit --merge iso-root/boot/BCD tools/win7-slipstream/patches/bcd-testsigning.reg
+hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\BCD' iso-root/boot/BCD tools/win7-slipstream/patches/bcd-testsigning.reg
 
 # If your ISO has a UEFI BCD store too:
-hivexregedit --merge iso-root/efi/microsoft/boot/BCD tools/win7-slipstream/patches/bcd-testsigning.reg
+hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\BCD' iso-root/efi/microsoft/boot/BCD tools/win7-slipstream/patches/bcd-testsigning.reg
 ```
 
 ### 6) Rebuild the ISO (Linux/macOS: xorriso)
