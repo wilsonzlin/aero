@@ -50,10 +50,21 @@ def _request(
     method: str,
     headers: Mapping[str, str],
     timeout_s: float,
+    follow_redirects: bool = True,
 ) -> HttpResponse:
     req = urllib.request.Request(url=url, method=method, headers=dict(headers))
+    opener = urllib.request.build_opener()
+    if not follow_redirects:
+        # Browsers reject redirected CORS preflights ("Redirect is not allowed for a
+        # preflight request"). Use a no-redirect opener so 30x comes back as a
+        # response we can fail on, rather than being transparently followed.
+        class _NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, hdrs, newurl):  # type: ignore[override]
+                return None
+
+        opener = urllib.request.build_opener(_NoRedirect())
     try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        with opener.open(req, timeout=timeout_s) as resp:
             body = b"" if method == "HEAD" else resp.read()
             return HttpResponse(
                 url=resp.geturl(),
@@ -140,10 +151,11 @@ def _test_private_requires_auth(
     try:
         resp = _request(
             url=base_url,
-            method="HEAD",
+            method="GET",
             headers={
                 "Accept-Encoding": "identity",
                 "Origin": origin,
+                "Range": "bytes=0-0",
             },
             timeout_s=timeout_s,
         )
@@ -314,6 +326,7 @@ def _test_options_preflight(
                 "Access-Control-Request-Headers": "range,authorization",
             },
             timeout_s=timeout_s,
+            follow_redirects=False,
         )
         _require(200 <= resp.status < 300, f"expected 2xx, got {resp.status}")
 

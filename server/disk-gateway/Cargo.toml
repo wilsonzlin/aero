@@ -19,3 +19,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "3"
+
+# This crate lives inside the main Aero workspace, but it is intentionally a
+# standalone reference server with its own lockfile. Declaring a (nested)
+# workspace avoids Cargo treating the parent workspace as authoritative when
+# running `cargo` commands from this directory.
+[workspace]

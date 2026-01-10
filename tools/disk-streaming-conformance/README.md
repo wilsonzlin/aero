@@ -62,3 +62,55 @@ PASS OPTIONS: CORS preflight allows Range + Authorization headers - status=204
 Summary: 4 passed, 0 failed, 0 skipped
 ```
 
+## Running against the reference `server/disk-gateway`
+
+The repo includes a reference implementation at `server/disk-gateway` which is intended to pass all checks.
+
+### Public image
+
+```bash
+cd server/disk-gateway
+
+export DISK_GATEWAY_TOKEN_SECRET='dev-secret-change-me'
+export DISK_GATEWAY_CORS_ALLOWED_ORIGINS='*'
+
+mkdir -p public-images
+truncate -s 1M public-images/win7.img
+
+cargo run
+```
+
+In another terminal:
+
+```bash
+BASE_URL='http://127.0.0.1:3000/disk/win7' \
+ORIGIN='https://example.com' \
+python3 tools/disk-streaming-conformance/conformance.py
+```
+
+### Private image
+
+```bash
+cd server/disk-gateway
+
+export DISK_GATEWAY_TOKEN_SECRET='dev-secret-change-me'
+export DISK_GATEWAY_CORS_ALLOWED_ORIGINS='*'
+
+mkdir -p private-images/alice
+truncate -s 1M private-images/alice/secret.img
+
+cargo run
+```
+
+In another terminal:
+
+```bash
+TOKEN="$(curl -s -X POST -H 'X-Debug-User: alice' \
+  http://127.0.0.1:3000/api/images/secret/lease \
+  | jq -r .token)"
+
+BASE_URL='http://127.0.0.1:3000/disk/secret' \
+TOKEN="$TOKEN" \
+ORIGIN='https://example.com' \
+python3 tools/disk-streaming-conformance/conformance.py
+```
