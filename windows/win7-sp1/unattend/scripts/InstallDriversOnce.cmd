@@ -68,6 +68,7 @@ if exist "%AERO_FAIL_LIST%" del /f /q "%AERO_FAIL_LIST%" >nul 2>&1
 
 set "AERO_FOUND_INF=0"
 set "AERO_ANY_SUCCESS=0"
+set "AERO_REBOOT_REQUIRED=0"
 set "AERO_EXITCODE=0"
 
 for /r "%AERO_DRIVERS_DIR%" %%F in (*.inf) do (
@@ -76,12 +77,16 @@ for /r "%AERO_DRIVERS_DIR%" %%F in (*.inf) do (
   echo Installing driver package: "%%F"
   "%AERO_PNPUTIL%" -i -a "%%F"
   set "RC=!errorlevel!"
-  if not "!RC!"=="0" (
+  if "!RC!"=="0" (
+    set "AERO_ANY_SUCCESS=1"
+  ) else if "!RC!"=="3010" (
+    echo NOTE: pnputil requested reboot (exit code 3010) for "%%F"
+    set "AERO_ANY_SUCCESS=1"
+    set "AERO_REBOOT_REQUIRED=1"
+  ) else (
     echo ERROR: pnputil failed with exit code !RC! for "%%F"
     >> "%AERO_FAIL_LIST%" echo "%%F"
     set "AERO_EXITCODE=1"
-  ) else (
-    set "AERO_ANY_SUCCESS=1"
   )
 )
 
@@ -110,6 +115,10 @@ if /i "%AERO_REBOOT_AFTER_DRIVER_INSTALL%"=="1" (
     shutdown /r /t 0
   ) else (
     echo No successful driver installs detected; skipping reboot.
+  )
+ ) else (
+  if "%AERO_REBOOT_REQUIRED%"=="1" (
+    echo NOTE: One or more installs requested a reboot (exit code 3010) but AERO_REBOOT_AFTER_DRIVER_INSTALL=0.
   )
 )
 
