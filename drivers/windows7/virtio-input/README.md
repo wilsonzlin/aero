@@ -132,6 +132,8 @@ From `drivers/windows7/virtio-input/`:
 .\scripts\sign-driver.cmd
 ```
 
+`sign-driver.cmd` will prompt for the PFX password. You can also pass it as the first argument or set `PFX_PASSWORD` in the environment.
+
 This signs:
 
 - `inf\aero_virtio_input.sys`
