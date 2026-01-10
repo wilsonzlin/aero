@@ -291,6 +291,18 @@ name = "aero-net-stack"
 version = "0.1.0"
 
 [[package]]
+name = "aero-opfs"
+version = "0.1.0"
+dependencies = [
+ "emulator",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm-bindgen-test",
+ "web-sys",
+]
+
+[[package]]
 name = "aero-platform"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,17 @@
+[package]
+name = "aero-opfs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+emulator = { path = "../emulator" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Blob", "DomException", "File", "WorkerGlobalScope", "console"] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+

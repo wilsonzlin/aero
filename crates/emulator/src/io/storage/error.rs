@@ -44,6 +44,14 @@ pub enum DiskError {
     ///
     /// Prefer `UnalignedBuffer { .. }` where possible.
     InvalidBufferLength,
+    /// Backend is unavailable in the current build/runtime (e.g. OPFS not present).
+    NotSupported(String),
+    /// Storage quota is exhausted.
+    QuotaExceeded,
+    /// Backend is currently locked by another context (e.g. another worker holding an OPFS handle).
+    InUse,
+    /// Backend is in an invalid state (closed, suspended, etc).
+    InvalidState(String),
     /// A request referenced sectors beyond `capacity_sectors()`.
     OutOfRange {
         lba: u64,
@@ -67,6 +75,10 @@ impl fmt::Display for DiskError {
         match self {
             DiskError::OutOfBounds => write!(f, "out of bounds"),
             DiskError::InvalidBufferLength => write!(f, "invalid buffer length"),
+            DiskError::NotSupported(msg) => write!(f, "not supported: {msg}"),
+            DiskError::QuotaExceeded => write!(f, "quota exceeded"),
+            DiskError::InUse => write!(f, "backend is in use"),
+            DiskError::InvalidState(msg) => write!(f, "invalid state: {msg}"),
             DiskError::OutOfRange {
                 lba,
                 sectors,

@@ -50,6 +50,7 @@ function renderCapabilityTable(report: PlatformFeatureReport): HTMLTableElement 
     'wasmThreads',
     'webgpu',
     'opfs',
+    'opfsSyncAccessHandle',
     'audioWorklet',
     'offscreenCanvas',
   ];
