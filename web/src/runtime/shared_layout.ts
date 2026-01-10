@@ -37,8 +37,9 @@ export const EVENT_RING_CAPACITY_BYTES = 32 * 1024;
  * accessed directly from WASM code across worker threads.
  *
  * Note on sizing:
- * - The architecture docs sometimes describe allocating a single 5+ GiB shared
- *   region (guest RAM + queues + metadata).
+ * - Early architecture drafts described allocating a single 5+ GiB shared region
+ *   (guest RAM + queues + metadata). In practice, wasm32 linear memory is limited
+ *   to 2^32 bytes (~4 GiB), so that monolithic layout is not implementable today.
  * - Without `memory64`, wasm32 linear memory is limited to 2^32 bytes (~4 GiB),
  *   i.e. 65,536 64KiB pages.
  *
