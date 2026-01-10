@@ -41,7 +41,8 @@ see [`docs/security-headers.md`](../security-headers.md).
 
 ## Consequences
 
-- Deployments must be capable of setting **COOP/COEP headers on HTML, JS, WASM, worker scripts, and any other subresources**.
+- Deployments must be capable of setting COOP/COEP on the **top-level HTML document** (including on cached `304 Not Modified` responses). If the document is not served with COOP/COEP, `crossOriginIsolated` will be `false` and the threaded build cannot run.
+- In practice, deployments should set COOP/COEP on **all app-owned responses** (HTML, JS, WASM, worker scripts, etc.) to keep configuration simple and consistent across CDN/proxy layers.
 - COEP (`require-corp`) means cross-origin subresources must be:
   - same-origin, or
   - fetched with CORS, or

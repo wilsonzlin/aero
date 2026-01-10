@@ -50,8 +50,12 @@ The JS/TS host should present a consistent API to the rest of the app regardless
 
 In this repo, runtime selection is implemented by:
 
-- `web/src/runtime/wasm_loader.ts` (`initWasm()` returns `{ api, variant, reason }`)
-- `web/src/runtime/wasm_context.ts` (worker-safe wrapper; prefers `wasm_loader` and falls back to the embedded demo wasm)
+- [`web/src/runtime/wasm_loader.ts`](../../web/src/runtime/wasm_loader.ts) (`initWasm()` returns `{ api, variant, reason }`)
+- [`web/src/runtime/wasm_context.ts`](../../web/src/runtime/wasm_context.ts) (worker-safe wrapper; prefers `wasm_loader` and falls back to the embedded demo wasm)
+
+The build script that generates the two packages is:
+
+- [`web/scripts/build_wasm.mjs`](../../web/scripts/build_wasm.mjs)
 
 ### Testing the fallback path
 
