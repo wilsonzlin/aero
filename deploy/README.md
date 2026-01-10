@@ -178,8 +178,11 @@ You can validate that the TLS + upgrade path works with a CLI client like
 npx wscat -c "wss://localhost/tcp"
 
 # With a real Aero gateway, adjust query params to match its /tcp contract.
-# Example:
-#   npx wscat -c "wss://localhost/tcp?target=example.com:80"
+# Canonical (v1):
+#   npx wscat -c "wss://localhost/tcp?v=1&host=example.com&port=80"
+#
+# Compatibility form (also supported):
+#   npx wscat -c "wss://localhost/tcp?v=1&target=example.com:80"
 ```
 
 If you see a successful handshake but the connection immediately closes, the

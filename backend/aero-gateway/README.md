@@ -66,7 +66,7 @@ docker run --rm -p 8080:8080 aero-gateway
 - `GET /version` build/version info
 - `GET /metrics` Prometheus metrics
 - `GET|POST /dns-query` DNS-over-HTTPS (`RFC 8484`)
-- `GET ws://<host>/tcp?...` TCP proxy upgrade endpoint (WebSocket; see `deploy/README.md`)
+- `GET ws(s)://<host>/tcp?...` TCP proxy upgrade endpoint (WebSocket; see `docs/backend/01-aero-gateway-api.md`)
 
 ## DNS-over-HTTPS (`/dns-query`)
 
@@ -149,4 +149,3 @@ Make sure to set:
 - `TRUST_PROXY=1` (so rate limiting and logs use the real client IP via `X-Forwarded-For`)
 
 See [`deploy/README.md`](../../deploy/README.md) for a ready-to-run Caddy + docker-compose setup that terminates TLS, enforces COOP/COEP, and proxies `/tcp` + HTTP APIs to the gateway.
-
