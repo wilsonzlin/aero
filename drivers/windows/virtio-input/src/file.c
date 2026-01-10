@@ -67,7 +67,9 @@ static ULONG VirtioInputGetCollectionNumberFromCreateRequest(_In_ WDFREQUEST Req
         const UCHAR *eaValue = (const UCHAR *)(entry->EaName + entry->EaNameLength + 1);
 
         if (VirtioInputAsciiEqualsInsensitive(eaName, entry->EaNameLength, "HidCollection") ||
-            VirtioInputAsciiEqualsInsensitive(eaName, entry->EaNameLength, "HID_COLLECTION")) {
+            VirtioInputAsciiEqualsInsensitive(eaName, entry->EaNameLength, "HID_COLLECTION") ||
+            VirtioInputAsciiEqualsInsensitive(eaName, entry->EaNameLength, "HidCollectionNumber") ||
+            VirtioInputAsciiEqualsInsensitive(eaName, entry->EaNameLength, "HID_COLLECTION_NUMBER")) {
 
             if (entry->EaValueLength >= sizeof(ULONG)) {
                 return *(UNALIGNED const ULONG *)eaValue;

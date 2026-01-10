@@ -56,14 +56,15 @@ static UCHAR VirtioInputGetReadReportIdFromXferPacket(_In_ WDFREQUEST Request, _
     PHID_XFER_PACKET xfer = NULL;
     size_t len = 0;
 
+    UNREFERENCED_PARAMETER(OutputBufferLength);
+
     if (NT_SUCCESS(WdfRequestRetrieveInputBuffer(Request, sizeof(HID_XFER_PACKET), (PVOID *)&xfer, &len)) &&
         len >= sizeof(HID_XFER_PACKET) &&
         VirtioInputIsValidReportId(xfer->reportId)) {
         return xfer->reportId;
     }
 
-    if (OutputBufferLength == sizeof(HID_XFER_PACKET) &&
-        NT_SUCCESS(WdfRequestRetrieveOutputBuffer(Request, sizeof(HID_XFER_PACKET), (PVOID *)&xfer, &len)) &&
+    if (NT_SUCCESS(WdfRequestRetrieveOutputBuffer(Request, sizeof(HID_XFER_PACKET), (PVOID *)&xfer, &len)) &&
         len >= sizeof(HID_XFER_PACKET) &&
         VirtioInputIsValidReportId(xfer->reportId)) {
         return xfer->reportId;
@@ -83,8 +84,7 @@ static UCHAR VirtioInputDetermineReadQueueReportId(_In_ WDFREQUEST Request, _In_
         if (NT_SUCCESS(WdfRequestRetrieveInputBuffer(Request, sizeof(HID_XFER_PACKET), (PVOID *)&xfer, &len)) &&
             len >= sizeof(HID_XFER_PACKET) && xfer->reportBufferLen != 0) {
             reportLenHint = xfer->reportBufferLen;
-        } else if (OutputBufferLength == sizeof(HID_XFER_PACKET) &&
-                   NT_SUCCESS(WdfRequestRetrieveOutputBuffer(Request, sizeof(HID_XFER_PACKET), (PVOID *)&xfer, &len)) &&
+        } else if (NT_SUCCESS(WdfRequestRetrieveOutputBuffer(Request, sizeof(HID_XFER_PACKET), (PVOID *)&xfer, &len)) &&
                    len >= sizeof(HID_XFER_PACKET) && xfer->reportBufferLen != 0) {
             reportLenHint = xfer->reportBufferLen;
         }
