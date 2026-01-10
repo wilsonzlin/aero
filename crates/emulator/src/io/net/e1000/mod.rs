@@ -64,6 +64,8 @@ pub struct PciConfigSpace {
     regs: [u8; 256],
     bar0: u32,
     bar0_probe: bool,
+    bar1: u32,
+    bar1_probe: bool,
 }
 
 impl PciConfigSpace {
@@ -72,6 +74,7 @@ impl PciConfigSpace {
     pub const DEVICE_ID_82540EM: u16 = 0x100e;
 
     pub const MMIO_BAR_SIZE: u32 = 0x20000; // 128 KiB
+    pub const IO_BAR_SIZE: u32 = 0x40; // 64 bytes (IOADDR + IODATA + misc)
 
     pub fn new() -> Self {
         let mut regs = [0u8; 256];
@@ -95,6 +98,8 @@ impl PciConfigSpace {
             regs,
             bar0: 0,
             bar0_probe: false,
+            bar1: 0x1, // I/O BAR indicator bit set.
+            bar1_probe: false,
         }
     }
 
@@ -120,6 +125,14 @@ impl PciConfigSpace {
                         self.bar0
                     };
                 }
+                if offset == 0x14 {
+                    return if self.bar1_probe {
+                        // I/O BAR: bit0 must remain set.
+                        (!(Self::IO_BAR_SIZE - 1) & 0xffff_fffc) | 0x1
+                    } else {
+                        self.bar1
+                    };
+                }
                 self.read_u32_raw(offset)
             }
             _ => 0,
@@ -141,6 +154,17 @@ impl PciConfigSpace {
                         self.bar0 = value & 0xffff_fff0;
                     }
                     self.write_u32_raw(offset, self.bar0);
+                    return;
+                }
+                if offset == 0x14 {
+                    if value == 0xffff_ffff {
+                        self.bar1_probe = true;
+                        self.bar1 = 0x1;
+                    } else {
+                        self.bar1_probe = false;
+                        self.bar1 = (value & 0xffff_fffc) | 0x1;
+                    }
+                    self.write_u32_raw(offset, self.bar1);
                     return;
                 }
                 self.write_u32_raw(offset, value);
@@ -196,6 +220,9 @@ pub struct E1000Device {
     // Unimplemented register storage to keep driver bring-up smooth.
     other_regs: HashMap<u32, u32>,
 
+    // IOADDR/ IODATA port interface (BAR1).
+    io_reg: u32,
+
     pci: PciConfigSpace,
 }
 
@@ -228,6 +255,7 @@ impl E1000Device {
             rx_queue: VecDeque::new(),
             irq_level: false,
             other_regs: HashMap::new(),
+            io_reg: 0,
             pci: PciConfigSpace::new(),
         };
         dev.reset();
@@ -262,6 +290,7 @@ impl E1000Device {
 
         self.rx_queue.clear();
         self.other_regs.clear();
+        self.io_reg = 0;
 
         // Update EEPROM contents (MAC in words 0..=2).
         self.eeprom[0] = u16::from_le_bytes([self.mac[0], self.mac[1]]);
@@ -307,6 +336,46 @@ impl E1000Device {
         let cur = self.mmio_peek_u32(aligned);
         let new_val = (cur & !mask) | ((value << shift) & mask);
         self.mmio_write_u32(aligned, new_val);
+    }
+
+    pub fn io_read(&mut self, offset: u32, size: u8) -> u32 {
+        match offset {
+            // IOADDR (selected MMIO register offset).
+            0x0..=0x3 => {
+                let shift = ((offset & 3) * 8) as u32;
+                match size {
+                    4 => self.io_reg,
+                    2 => (self.io_reg >> shift) & 0xffff,
+                    1 => (self.io_reg >> shift) & 0xff,
+                    _ => 0,
+                }
+            }
+            // IODATA (MMIO window to the selected register).
+            0x4..=0x7 => self.mmio_read(self.io_reg + (offset - 0x4), size),
+            _ => 0,
+        }
+    }
+
+    pub fn io_write(&mut self, offset: u32, size: u8, value: u32) {
+        match offset {
+            0x0..=0x3 => {
+                let shift = ((offset & 3) * 8) as u32;
+                if size == 4 {
+                    self.io_reg = value & !3;
+                    return;
+                }
+
+                let mask = match size {
+                    2 => 0xffff << shift,
+                    1 => 0xff << shift,
+                    _ => 0,
+                };
+                let cur = self.io_reg;
+                self.io_reg = ((cur & !mask) | ((value << shift) & mask)) & !3;
+            }
+            0x4..=0x7 => self.mmio_write(self.io_reg + (offset - 0x4), size, value),
+            _ => {}
+        }
     }
 
     fn mmio_peek_u32(&self, offset: u32) -> u32 {
@@ -684,5 +753,60 @@ mod tests {
         let icr = dev.mmio_read(REG_ICR, 4);
         assert_eq!(icr & ICR_TXDW, ICR_TXDW);
     }
-}
 
+    #[test]
+    fn pci_config_bar_probing_and_eeprom_read_work() {
+        let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+        let mut dev = E1000Device::new(mac);
+
+        assert_eq!(
+            dev.pci_config_read(0x00, 2) as u16,
+            PciConfigSpace::VENDOR_ID_INTEL
+        );
+        assert_eq!(
+            dev.pci_config_read(0x02, 2) as u16,
+            PciConfigSpace::DEVICE_ID_82540EM
+        );
+
+        dev.pci_config_write(0x10, 4, 0xffff_ffff);
+        assert_eq!(
+            dev.pci_config_read(0x10, 4),
+            !(PciConfigSpace::MMIO_BAR_SIZE - 1) & 0xffff_fff0
+        );
+
+        dev.pci_config_write(0x10, 4, 0xf000_1234);
+        assert_eq!(dev.pci_config_read(0x10, 4), 0xf000_1230);
+
+        dev.pci_config_write(0x14, 4, 0xffff_ffff);
+        assert_eq!(
+            dev.pci_config_read(0x14, 4),
+            (!(PciConfigSpace::IO_BAR_SIZE - 1) & 0xffff_fffc) | 0x1
+        );
+        dev.pci_config_write(0x14, 4, 0xc000);
+        assert_eq!(dev.pci_config_read(0x14, 4), 0xc001);
+
+        dev.mmio_write(REG_EERD, 4, EERD_START | (0 << EERD_ADDR_SHIFT));
+        let eerd = dev.mmio_read(REG_EERD, 4);
+        assert_ne!(eerd & EERD_DONE, 0);
+        let word0 = ((eerd >> EERD_DATA_SHIFT) & 0xffff) as u16;
+        assert_eq!(word0, u16::from_le_bytes([mac[0], mac[1]]));
+    }
+
+    #[test]
+    fn ioaddr_iodata_interface_maps_to_mmio_registers() {
+        let mut dev = E1000Device::new([0, 1, 2, 3, 4, 5]);
+
+        dev.io_write(0x0, 4, REG_ICS);
+        dev.io_write(0x4, 4, ICR_TXDW);
+        assert_eq!(dev.mmio_read(REG_ICR, 4) & ICR_TXDW, ICR_TXDW);
+
+        dev.mmio_write(REG_ICS, 4, ICR_TXDW);
+        dev.mmio_write(REG_IMS, 4, ICR_TXDW);
+        assert!(dev.irq_level());
+
+        dev.io_write(0x0, 4, REG_ICR);
+        let icr = dev.io_read(0x4, 4);
+        assert_eq!(icr & ICR_TXDW, ICR_TXDW);
+        assert!(!dev.irq_level());
+    }
+}
