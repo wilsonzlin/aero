@@ -17,13 +17,17 @@ function mergeConfig(base, overrides) {
   };
 }
 
+function safeJsonStringify(value, space) {
+  return JSON.stringify(value, (_key, v) => (typeof v === "bigint" ? v.toString() : v), space);
+}
+
 async function trySaveSnapshotToOpfs(snapshot) {
   try {
     const { getOpfsStateDir } = await import("../platform/opfs");
     const dir = await getOpfsStateDir();
     const handle = await dir.getFileHandle("last-crash-snapshot.json", { create: true });
     const writable = await handle.createWritable();
-    await writable.write(JSON.stringify(snapshot, null, 2));
+    await writable.write(safeJsonStringify(snapshot, 2));
     await writable.close();
     return "opfs:state/last-crash-snapshot.json";
   } catch {
@@ -307,7 +311,7 @@ export class VmCoordinator extends EventTarget {
       if (snapshotToSave) {
         try {
           if (typeof localStorage !== "undefined") {
-            localStorage.setItem(LOCAL_STORAGE_CRASH_SNAPSHOT_KEY, JSON.stringify(snapshotToSave));
+            localStorage.setItem(LOCAL_STORAGE_CRASH_SNAPSHOT_KEY, safeJsonStringify(snapshotToSave));
             this.lastSnapshotSavedTo = `localStorage:${LOCAL_STORAGE_CRASH_SNAPSHOT_KEY}`;
           }
         } catch {
