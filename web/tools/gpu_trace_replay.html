@@ -20,6 +20,8 @@
 
 <div class="row">
   <input id="file" type="file" />
+  <button id="record">Record Triangle (in-memory)</button>
+  <button id="download" disabled>Download last trace</button>
   <button id="step" disabled>Step Frame</button>
   <button id="screenshot" disabled>Dump Screenshot (console)</button>
 </div>
@@ -31,9 +33,12 @@
   const file = document.getElementById("file");
   const stepBtn = document.getElementById("step");
   const screenshotBtn = document.getElementById("screenshot");
+  const recordBtn = document.getElementById("record");
+  const downloadBtn = document.getElementById("download");
   const canvas = document.getElementById("canvas");
 
   let replayer = null;
+  let lastTraceBytes = null;
 
   file.addEventListener("change", async () => {
     const f = file.files && file.files[0];
@@ -56,5 +61,18 @@
     if (!replayer) return;
     console.log(replayer.dumpScreenshotDataUrl());
   });
-</script>
 
+  recordBtn.addEventListener("click", async () => {
+    // Generates and *executes* the minimal triangle command stream, recording it into a trace.
+    const rec = await window.AeroGpuTraceReplay.recordTriangleTrace(canvas, { backend: "webgl2" });
+    lastTraceBytes = rec.bytes;
+    downloadBtn.disabled = false;
+    console.log("Recorded trace bytes:", rec.bytes);
+    console.log("Screenshot:", rec.dumpScreenshotDataUrl());
+  });
+
+  downloadBtn.addEventListener("click", () => {
+    if (!lastTraceBytes) return;
+    window.AeroGpuTraceReplay.downloadBytes("triangle.aerogputrace", lastTraceBytes);
+  });
+</script>

@@ -72,6 +72,453 @@
     throw new Error("AeroGpuTraceReplay: " + msg);
   }
 
+  function pushU32LE(out, value) {
+    const b = new Uint8Array(4);
+    new DataView(b.buffer).setUint32(0, value >>> 0, true);
+    out.push(b);
+  }
+
+  function pushU16LE(out, value) {
+    const b = new Uint8Array(2);
+    new DataView(b.buffer).setUint16(0, value & 0xffff, true);
+    out.push(b);
+  }
+
+  function pushU8(out, value) {
+    out.push(Uint8Array.of(value & 0xff));
+  }
+
+  function pushU64LEBig(out, value) {
+    const b = new Uint8Array(8);
+    const view = new DataView(b.buffer);
+    const lo = Number(value & 0xffff_ffffn);
+    const hi = Number((value >> 32n) & 0xffff_ffffn);
+    view.setUint32(0, lo >>> 0, true);
+    view.setUint32(4, hi >>> 0, true);
+    out.push(b);
+  }
+
+  function concatChunks(chunks) {
+    let len = 0;
+    for (const c of chunks) len += c.byteLength;
+    const out = new Uint8Array(len);
+    let off = 0;
+    for (const c of chunks) {
+      out.set(c, off);
+      off += c.byteLength;
+    }
+    return out;
+  }
+
+  function escapeJsonString(s) {
+    let out = "";
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c === 0x22) out += '\\"';
+      else if (c === 0x5c) out += "\\\\";
+      else if (c === 0x0a) out += "\\n";
+      else if (c === 0x0d) out += "\\r";
+      else if (c === 0x09) out += "\\t";
+      else if (c < 0x20) out += "\\u" + c.toString(16).padStart(4, "0");
+      else out += String.fromCharCode(c);
+    }
+    return out;
+  }
+
+  function encodeMetaJson(meta) {
+    // Keep field order and escaping stable to make traces byte-for-byte reproducible
+    // across implementations (this mirrors `TraceMeta::to_json_bytes` in Rust).
+    let json =
+      '{"emulator_version":"' +
+      escapeJsonString(String(meta.emulator_version || "")) +
+      '","command_abi_version":' +
+      String(meta.command_abi_version >>> 0);
+    if (meta.notes !== undefined && meta.notes !== null) {
+      json += ',"notes":"' + escapeJsonString(String(meta.notes)) + '"';
+    }
+    json += "}";
+    return new TextEncoder().encode(json);
+  }
+
+  function f32ToBits(v) {
+    const b = new ArrayBuffer(4);
+    const dv = new DataView(b);
+    dv.setFloat32(0, v, true);
+    return dv.getUint32(0, true);
+  }
+
+  function packet(opcode, payloadU32) {
+    const totalDwords = 2 + payloadU32.length;
+    const bytes = new Uint8Array(totalDwords * 4);
+    const dv = new DataView(bytes.buffer);
+    dv.setUint32(0, opcode >>> 0, true);
+    dv.setUint32(4, totalDwords >>> 0, true);
+    for (let i = 0; i < payloadU32.length; i++) {
+      dv.setUint32(8 + i * 4, payloadU32[i] >>> 0, true);
+    }
+    return bytes;
+  }
+
+  function u64BigToDwords(v) {
+    const lo = Number(v & 0xffff_ffffn) >>> 0;
+    const hi = Number((v >> 32n) & 0xffff_ffffn) >>> 0;
+    return [lo, hi];
+  }
+
+  class TraceWriter {
+    constructor(meta) {
+      this.chunks = [];
+      this.pos = 0;
+      this.toc = [];
+      this.openFrame = null;
+      this.nextBlobId = 1n;
+      this.blobs = new Map(); // bigint -> {kind, bytes}
+
+      const metaBytes = encodeMetaJson(meta);
+
+      // TraceHeader (32 bytes).
+      this._pushBytes(TRACE_MAGIC);
+      this._pushU32(32); // header_size
+      this._pushU32(1); // container_version
+      this._pushU32(meta.command_abi_version >>> 0);
+      this._pushU32(0); // flags
+      this._pushU32(metaBytes.byteLength >>> 0);
+      this._pushU32(0); // reserved
+      this._pushBytes(metaBytes);
+    }
+
+    _pushBytes(bytes) {
+      this.chunks.push(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+      this.pos += bytes.byteLength >>> 0;
+    }
+
+    _pushU8(v) {
+      const b = Uint8Array.of(v & 0xff);
+      this._pushBytes(b);
+    }
+
+    _pushU16(v) {
+      const b = new Uint8Array(2);
+      new DataView(b.buffer).setUint16(0, v & 0xffff, true);
+      this._pushBytes(b);
+    }
+
+    _pushU32(v) {
+      const b = new Uint8Array(4);
+      new DataView(b.buffer).setUint32(0, v >>> 0, true);
+      this._pushBytes(b);
+    }
+
+    _pushU64Big(v) {
+      const b = new Uint8Array(8);
+      const dv = new DataView(b.buffer);
+      dv.setUint32(0, Number(v & 0xffff_ffffn) >>> 0, true);
+      dv.setUint32(4, Number((v >> 32n) & 0xffff_ffffn) >>> 0, true);
+      this._pushBytes(b);
+    }
+
+    _writeRecord(recordType, payloadBytes) {
+      if (payloadBytes.byteLength > 0xffff_ffff) fail("record payload too large");
+      this._pushU8(recordType);
+      this._pushU8(0); // flags
+      this._pushU16(0); // reserved
+      this._pushU32(payloadBytes.byteLength >>> 0);
+      this._pushBytes(payloadBytes);
+    }
+
+    beginFrame(frameIndex) {
+      if (this.openFrame !== null) fail("beginFrame while a frame is already open");
+      const startOffset = this.pos;
+      const payload = new Uint8Array(4);
+      new DataView(payload.buffer).setUint32(0, frameIndex >>> 0, true);
+      this._writeRecord(RECORD_BEGIN_FRAME, payload);
+      this.toc.push({
+        frameIndex: frameIndex >>> 0,
+        flags: 0,
+        startOffset,
+        presentOffset: 0,
+        endOffset: 0,
+      });
+      this.openFrame = this.toc.length - 1;
+    }
+
+    writePacket(packetBytes) {
+      if (this.openFrame === null) fail("writePacket outside of a frame");
+      this._writeRecord(RECORD_PACKET, packetBytes);
+    }
+
+    writeBlob(kind, dataBytes) {
+      const blobId = this.nextBlobId;
+      this.nextBlobId += 1n;
+
+      const bytes = dataBytes instanceof Uint8Array ? dataBytes : new Uint8Array(dataBytes);
+      this.blobs.set(blobId, { kind, bytes });
+
+      const header = [];
+      pushU64LEBig(header, blobId);
+      pushU32LE(header, kind >>> 0);
+      pushU32LE(header, 0);
+      const payload = concatChunks([...header, bytes]);
+      this._writeRecord(RECORD_BLOB, payload);
+      return blobId;
+    }
+
+    present(frameIndex) {
+      if (this.openFrame === null) fail("present outside of a frame");
+      const slot = this.openFrame;
+      const entry = this.toc[slot];
+      if (entry.frameIndex !== (frameIndex >>> 0)) fail("present frame_index mismatch");
+
+      const presentOffset = this.pos;
+      const payload = new Uint8Array(4);
+      new DataView(payload.buffer).setUint32(0, frameIndex >>> 0, true);
+      this._writeRecord(RECORD_PRESENT, payload);
+
+      entry.presentOffset = presentOffset;
+      entry.endOffset = this.pos;
+      this.openFrame = null;
+    }
+
+    finish() {
+      if (this.openFrame !== null) fail("finish while a frame is still open");
+
+      const tocOffset = this.pos;
+      const tocChunks = [];
+      tocChunks.push(TOC_MAGIC);
+      pushU32LE(tocChunks, 1); // toc_version
+      pushU32LE(tocChunks, this.toc.length >>> 0);
+      for (const e of this.toc) {
+        pushU32LE(tocChunks, e.frameIndex >>> 0);
+        pushU32LE(tocChunks, e.flags >>> 0);
+        pushU64LEBig(tocChunks, BigInt(e.startOffset));
+        pushU64LEBig(tocChunks, BigInt(e.presentOffset));
+        pushU64LEBig(tocChunks, BigInt(e.endOffset));
+      }
+      const tocBytes = concatChunks(tocChunks);
+      this._pushBytes(tocBytes);
+      const tocLen = tocBytes.byteLength;
+
+      // Footer (32 bytes).
+      const footerChunks = [];
+      footerChunks.push(FOOTER_MAGIC);
+      pushU32LE(footerChunks, 32); // footer_size
+      pushU32LE(footerChunks, 1); // container_version
+      pushU64LEBig(footerChunks, BigInt(tocOffset));
+      pushU64LEBig(footerChunks, BigInt(tocLen));
+      const footerBytes = concatChunks(footerChunks);
+      this._pushBytes(footerBytes);
+
+      return concatChunks(this.chunks);
+    }
+  }
+
+  async function recordTriangleTrace(canvas, opts) {
+    const backendName = (opts && opts.backend) || "webgl2";
+    const width = (opts && opts.width) || canvas.width || 64;
+    const height = (opts && opts.height) || canvas.height || 64;
+    canvas.width = width;
+    canvas.height = height;
+
+    const backend =
+      backendName === "webgpu"
+        ? await createWebgpuBackend(canvas)
+        : createWebgl2Backend(canvas);
+
+    const meta = { emulator_version: "0.0.0-dev", command_abi_version: 1 };
+    const w = new TraceWriter(meta);
+    const trace = { blobs: w.blobs };
+
+    w.beginFrame(0);
+
+    // Vertex buffer (fullscreen triangle), interleaved [pos.xy, color.rgba] floats.
+    const vertexValues = [
+      -1.0, -1.0, 1.0, 0.0, 0.0, 1.0,
+      3.0, -1.0, 1.0, 0.0, 0.0, 1.0,
+      -1.0, 3.0, 1.0, 0.0, 0.0, 1.0,
+    ];
+    const vertexBytes = new Uint8Array(vertexValues.length * 4);
+    const vertexView = new DataView(vertexBytes.buffer);
+    for (let i = 0; i < vertexValues.length; i++) {
+      vertexView.setFloat32(i * 4, vertexValues[i], true);
+    }
+    const vertexBlobId = w.writeBlob(BLOB_BUFFER_DATA, vertexBytes);
+
+    const GLSL_VS = `#version 300 es
+precision highp float;
+layout(location=0) in vec2 a_position;
+layout(location=1) in vec4 a_color;
+out vec4 v_color;
+void main() {
+  v_color = a_color;
+  gl_Position = vec4(a_position, 0.0, 1.0);
+}
+`;
+
+    const GLSL_FS = `#version 300 es
+precision highp float;
+in vec4 v_color;
+out vec4 o_color;
+void main() {
+  o_color = v_color;
+}
+`;
+
+    const WGSL_VS = `
+struct VsIn {
+  @location(0) position: vec2<f32>,
+  @location(1) color: vec4<f32>,
+}
+struct VsOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) color: vec4<f32>,
+}
+@vertex
+fn vs_main(input: VsIn) -> VsOut {
+  var out: VsOut;
+  out.position = vec4<f32>(input.position, 0.0, 1.0);
+  out.color = input.color;
+  return out;
+}
+`;
+
+    const WGSL_FS = `
+@fragment
+fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
+  return color;
+}
+`;
+
+    const DXBC_STUB = new Uint8Array([68, 88, 66, 67, 83, 84, 85, 66]); // "DXBCSTUB"
+
+    const glslVsBlob = w.writeBlob(BLOB_SHADER_GLSL_ES300, new TextEncoder().encode(GLSL_VS));
+    const glslFsBlob = w.writeBlob(BLOB_SHADER_GLSL_ES300, new TextEncoder().encode(GLSL_FS));
+    const wgslVsBlob = w.writeBlob(BLOB_SHADER_WGSL, new TextEncoder().encode(WGSL_VS));
+    const wgslFsBlob = w.writeBlob(BLOB_SHADER_WGSL, new TextEncoder().encode(WGSL_FS));
+    const dxbcVsBlob = w.writeBlob(BLOB_SHADER_DXBC, DXBC_STUB);
+    const dxbcFsBlob = w.writeBlob(BLOB_SHADER_DXBC, DXBC_STUB);
+
+    const bufferId = 1;
+    const vsId = 1;
+    const fsId = 2;
+    const pipelineId = 1;
+
+    const vsizeBytes = vertexBytes.byteLength >>> 0;
+
+    async function submit(pkt) {
+      w.writePacket(pkt);
+      await backend.executePacket(pkt, trace);
+    }
+
+    await submit(packet(OP_CREATE_BUFFER, [bufferId, vsizeBytes, 0]));
+
+    const [vblobLo, vblobHi] = u64BigToDwords(vertexBlobId);
+    await submit(packet(OP_UPLOAD_BUFFER, [bufferId, 0, vsizeBytes, vblobLo, vblobHi]));
+
+    const [vsGlslLo, vsGlslHi] = u64BigToDwords(glslVsBlob);
+    const [vsWgslLo, vsWgslHi] = u64BigToDwords(wgslVsBlob);
+    const [vsDxbcLo, vsDxbcHi] = u64BigToDwords(dxbcVsBlob);
+    await submit(
+      packet(OP_CREATE_SHADER, [
+        vsId, 0,
+        vsGlslLo, vsGlslHi,
+        vsWgslLo, vsWgslHi,
+        vsDxbcLo, vsDxbcHi,
+      ]),
+    );
+
+    const [fsGlslLo, fsGlslHi] = u64BigToDwords(glslFsBlob);
+    const [fsWgslLo, fsWgslHi] = u64BigToDwords(wgslFsBlob);
+    const [fsDxbcLo, fsDxbcHi] = u64BigToDwords(dxbcFsBlob);
+    await submit(
+      packet(OP_CREATE_SHADER, [
+        fsId, 1,
+        fsGlslLo, fsGlslHi,
+        fsWgslLo, fsWgslHi,
+        fsDxbcLo, fsDxbcHi,
+      ]),
+    );
+
+    await submit(packet(OP_CREATE_PIPELINE, [pipelineId, vsId, fsId]));
+    await submit(packet(OP_SET_PIPELINE, [pipelineId]));
+
+    const stride = 6 * 4;
+    await submit(packet(OP_SET_VERTEX_BUFFER, [bufferId, stride, 0, 2 * 4]));
+
+    await submit(packet(OP_SET_VIEWPORT, [0, 0]));
+    await submit(packet(OP_CLEAR, [f32ToBits(0), f32ToBits(0), f32ToBits(0), f32ToBits(1)]));
+    await submit(packet(OP_DRAW, [3, 0]));
+    await submit(packet(OP_PRESENT, []));
+
+    w.present(0);
+
+    const bytes = w.finish();
+
+    return {
+      bytes,
+      dumpScreenshotDataUrl: () => canvas.toDataURL("image/png"),
+      readPixels: backend.readPixels,
+    };
+  }
+
+  async function saveToOpfs(path, bytesLike) {
+    if (!navigator.storage || typeof navigator.storage.getDirectory !== "function") {
+      fail("OPFS unavailable (navigator.storage.getDirectory missing)");
+    }
+    const bytes =
+      bytesLike instanceof Uint8Array ? bytesLike : new Uint8Array(bytesLike);
+    const parts = String(path)
+      .trim()
+      .split("/")
+      .filter((p) => p.length > 0);
+    if (parts.length === 0) fail("OPFS path must not be empty");
+    if (parts.some((p) => p === "." || p === "..")) fail('OPFS path must not contain "." or ".."');
+
+    const filename = parts.pop();
+    if (!filename) fail("OPFS path must include filename");
+    let dir = await navigator.storage.getDirectory();
+    for (const part of parts) {
+      dir = await dir.getDirectoryHandle(part, { create: true });
+    }
+    const handle = await dir.getFileHandle(filename, { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(bytes);
+    await writable.close();
+  }
+
+  async function loadFromOpfs(path) {
+    if (!navigator.storage || typeof navigator.storage.getDirectory !== "function") {
+      fail("OPFS unavailable (navigator.storage.getDirectory missing)");
+    }
+    const parts = String(path)
+      .trim()
+      .split("/")
+      .filter((p) => p.length > 0);
+    if (parts.length === 0) fail("OPFS path must not be empty");
+    if (parts.some((p) => p === "." || p === "..")) fail('OPFS path must not contain "." or ".."');
+
+    const filename = parts.pop();
+    if (!filename) fail("OPFS path must include filename");
+    let dir = await navigator.storage.getDirectory();
+    for (const part of parts) {
+      dir = await dir.getDirectoryHandle(part, { create: false });
+    }
+    const handle = await dir.getFileHandle(filename, { create: false });
+    const file = await handle.getFile();
+    return new Uint8Array(await file.arrayBuffer());
+  }
+
+  function downloadBytes(filename, bytesLike) {
+    const bytes =
+      bytesLike instanceof Uint8Array ? bytesLike : new Uint8Array(bytesLike);
+    const blob = new Blob([bytes], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = String(filename || "trace.aerogputrace");
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   function parseTrace(bytesLike) {
     const bytes =
       bytesLike instanceof Uint8Array
@@ -657,5 +1104,10 @@
   window.AeroGpuTraceReplay = {
     parseTrace,
     load: loadTrace,
+    TraceWriter,
+    recordTriangleTrace,
+    saveToOpfs,
+    loadFromOpfs,
+    downloadBytes,
   };
 })();
