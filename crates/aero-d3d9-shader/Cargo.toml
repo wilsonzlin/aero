@@ -1,0 +1,10 @@
+[package]
+name = "aero-d3d9-shader"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aero-dxbc = { path = "../aero-dxbc" }
+
+[dev-dependencies]
+
