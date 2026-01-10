@@ -155,9 +155,16 @@ fn render_bcd_boolean_patch(root_prefix: &str, object_guids: &[String], element_
 }
 
 fn render_bool_element(root_prefix: &str, object_guid: &str, element_hex: &str, value: bool) -> String {
-    // For Win7 BCD hives, OS loader booleans are stored as REG_BINARY "Element" values containing
-    // a 32-bit little-endian integer (0 or 1).
-    let data = if value { [1u8, 0, 0, 0] } else { [0u8, 0, 0, 0] };
+    // Win7 BCD "Element" values are REG_BINARY and usually encode as:
+    //   [u32 element_type (LE)][u32 data_len (LE)][data...]
+    //
+    // For boolean elements, data_len is 4 and the payload is a little-endian u32 (0 or 1).
+    let element_type = u32::from_str_radix(element_hex, 16)
+        .unwrap_or_else(|_| panic!("Invalid BCD element hex id: {element_hex}"));
+    let mut data = Vec::with_capacity(12);
+    data.extend_from_slice(&element_type.to_le_bytes());
+    data.extend_from_slice(&4u32.to_le_bytes());
+    data.extend_from_slice(&(if value { 1u32 } else { 0u32 }).to_le_bytes());
     let bytes = crate::wim::format_reg_binary(&data);
     format!(
         "[{root_prefix}\\Objects\\{{{object_guid}}}\\Elements\\{element_hex}]\n\"Element\"=hex:{bytes}\n\n",
@@ -220,16 +227,20 @@ fn export_has_enabled_boolean(exported_reg: &str, element_hex: &str) -> bool {
 }
 
 fn is_enabled_bool_bytes(bytes: &[u8]) -> bool {
-    match bytes.len() {
-        0 => false,
-        1 => bytes[0] != 0,
-        _ => {
-            if bytes.len() >= 4 {
-                u32::from_le_bytes(bytes[0..4].try_into().unwrap()) != 0
-            } else {
-                bytes.iter().any(|b| *b != 0)
-            }
+    // Preferred: BCD element record ([type][len][payload...]).
+    if bytes.len() >= 12 {
+        let data_len = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+        if data_len == 4 && bytes.len() >= 8 + data_len {
+            let payload = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+            return payload != 0;
         }
+    }
+
+    // Backward-compatible heuristic: treat any non-zero payload as enabled.
+    if bytes.len() >= 4 {
+        u32::from_le_bytes(bytes[0..4].try_into().unwrap()) != 0
+    } else {
+        bytes.iter().any(|b| *b != 0)
     }
 }
 
@@ -260,13 +271,27 @@ fn parse_guid_element_from_export(exported_reg: &str, object_guid: &str, element
 }
 
 fn guid_from_le_bytes(bytes: &[u8]) -> Option<String> {
-    if bytes.len() < 16 {
+    let guid_bytes: &[u8] = if bytes.len() >= 24 {
+        // Common BCD element record layout:
+        //   [u32 element_type][u32 data_len=16][guid bytes...]
+        let data_len = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+        if data_len >= 16 && bytes.len() >= 8 + data_len {
+            &bytes[8..(8 + data_len)]
+        } else {
+            bytes
+        }
+    } else {
+        bytes
+    };
+
+    if guid_bytes.len() < 16 {
         return None;
     }
-    let d1 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-    let d2 = u16::from_le_bytes(bytes[4..6].try_into().unwrap());
-    let d3 = u16::from_le_bytes(bytes[6..8].try_into().unwrap());
-    let d4 = &bytes[8..16];
+
+    let d1 = u32::from_le_bytes(guid_bytes[0..4].try_into().unwrap());
+    let d2 = u16::from_le_bytes(guid_bytes[4..6].try_into().unwrap());
+    let d3 = u16::from_le_bytes(guid_bytes[6..8].try_into().unwrap());
+    let d4 = &guid_bytes[8..16];
     Some(format!(
         "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
         d1, d2, d3, d4[0], d4[1], d4[2], d4[3], d4[4], d4[5], d4[6], d4[7]
@@ -377,7 +402,7 @@ mod tests {
         let export = r#"Windows Registry Editor Version 5.00
 
 [HKEY_LOCAL_MACHINE\Objects\{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}\Elements\16000049]
-"Element"=hex:01,00,00,00
+"Element"=hex:49,00,00,16,04,00,00,00,01,00,00,00
 "#;
         assert!(hive_contains_policy(export, SigningMode::TestSigning));
         assert!(!hive_contains_policy(export, SigningMode::NoIntegrityChecks));
@@ -390,7 +415,11 @@ mod tests {
             0x67, 0x45, 0x23, 0x01, 0xab, 0x89, 0xef, 0xcd, 0x01, 0x23, 0x45, 0x67, 0x89,
             0xab, 0xcd, 0xef,
         ];
-        let guid_hex = crate::wim::format_reg_binary(&guid_bytes);
+        let mut element_bytes = Vec::new();
+        element_bytes.extend_from_slice(&u32::from_str_radix(ELEMENT_BOOTMGR_DEFAULT_OBJECT, 16).unwrap().to_le_bytes());
+        element_bytes.extend_from_slice(&16u32.to_le_bytes());
+        element_bytes.extend_from_slice(&guid_bytes);
+        let guid_hex = crate::wim::format_reg_binary(&element_bytes);
         let export = format!(
             "Windows Registry Editor Version 5.00\n\n[HKEY_LOCAL_MACHINE\\Objects\\{{{}}}\\Elements\\{}]\n\"Element\"=hex:{}\n",
             BCD_BOOTMGR_GUID, ELEMENT_BOOTMGR_DEFAULT_OBJECT, guid_hex
