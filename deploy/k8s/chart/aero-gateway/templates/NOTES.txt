@@ -9,6 +9,11 @@
    (Ingress disabled; use kubectl port-forward or expose the Service)
    {{- end }}
 
+{{- if and .Values.secrets.create (or (eq (index .Values.secrets.data "SESSION_SECRET") "__REPLACE_ME__") (eq (index .Values.secrets.data "ADMIN_API_KEY") "__REPLACE_ME__")) }}
+NOTE: You are deploying with placeholder secrets. For production, set secrets.data.* to real values
+      or set secrets.create=false and provide secrets.existingSecret.
+{{- end }}
+
 2. Verify COOP/COEP headers (required for SharedArrayBuffer):
    {{- if .Values.ingress.tls.enabled }}
    curl -sI https://{{ .Values.ingress.host }}/ | egrep -i 'cross-origin-(opener|embedder|resource)-policy|origin-agent-cluster'
