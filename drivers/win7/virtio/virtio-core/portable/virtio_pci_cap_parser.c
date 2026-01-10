@@ -140,7 +140,7 @@ virtio_pci_cap_parse_result_t virtio_pci_cap_parse(
         }
 
         ++caps_seen;
-        if (caps_seen > 48) {
+        if (caps_seen > 64) {
             return VIRTIO_PCI_CAP_PARSE_ERR_CAP_LIST_LOOP;
         }
 
