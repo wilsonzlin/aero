@@ -48,6 +48,7 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
         "verify.cmd",
         "verify.ps1",
         "README.md",
+        "config/devices.cmd",
         "manifest.json",
         "config/README.md",
         "config/devices.cmd",

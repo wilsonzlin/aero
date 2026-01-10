@@ -34,13 +34,13 @@ The packager expects:
 guest-tools/
   setup.cmd
   uninstall.cmd
-  verify.cmd
-  verify.ps1
+  verify.cmd (optional)
+  verify.ps1 (optional, but required if verify.cmd is present)
   README.md
   config/
     devices.cmd
   certs/
-    *.cer|*.crt|*.p7b
+    *.{cer,crt,p7b}
 ```
 
 ## Outputs
@@ -51,7 +51,7 @@ The tool produces the following in the output directory:
 - `aero-guest-tools.zip`
 - `manifest.json`
 
-The ISO/zip root layout matches what `guest-tools/setup.cmd` expects:
+The ISO/zip root layout matches what `guest-tools/setup.cmd` expects (and may include optional verification scripts):
 
 ```
 /
@@ -64,7 +64,7 @@ The ISO/zip root layout matches what `guest-tools/setup.cmd` expects:
   config/
     devices.cmd
   certs/
-    *.cer|*.crt|*.p7b
+    *.{cer,crt,p7b}
   drivers/
     x86/
       ...

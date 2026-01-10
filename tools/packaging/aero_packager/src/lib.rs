@@ -107,9 +107,7 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
     let mut out = Vec::new();
 
     // Guest tools top-level scripts/doc.
-    //
-    // Keep this list in sync with the published Guest Tools ISO root.
-    for file_name in ["setup.cmd", "uninstall.cmd", "verify.cmd", "verify.ps1", "README.md"] {
+    for file_name in ["setup.cmd", "uninstall.cmd", "README.md"] {
         let src = config.guest_tools_dir.join(file_name);
         if !src.is_file() {
             bail!(
@@ -123,12 +121,35 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
         });
     }
 
+    // Optional verifier scripts (useful for debugging driver binding in-guest).
+    // If present, we require both files since `verify.cmd` references `verify.ps1`.
+    let verify_cmd = config.guest_tools_dir.join("verify.cmd");
+    let verify_ps1 = config.guest_tools_dir.join("verify.ps1");
+    if verify_cmd.exists() || verify_ps1.exists() {
+        for (name, path) in [("verify.cmd", &verify_cmd), ("verify.ps1", &verify_ps1)] {
+            if !path.is_file() {
+                bail!("guest tools missing required file: {}", path.to_string_lossy());
+            }
+            out.push(FileToPackage {
+                rel_path: name.to_string(),
+                bytes: fs::read(path).with_context(|| format!("read {}", path.display()))?,
+            });
+        }
+    }
+
     // Guest tools config (expected device IDs / service names).
     let config_dir = config.guest_tools_dir.join("config");
     if !config_dir.is_dir() {
         bail!(
             "guest tools missing required directory: {}",
             config_dir.to_string_lossy()
+        );
+    }
+    let devices_cmd = config_dir.join("devices.cmd");
+    if !devices_cmd.is_file() {
+        bail!(
+            "guest tools missing required config file: {}",
+            devices_cmd.to_string_lossy()
         );
     }
     for entry in walkdir::WalkDir::new(&config_dir)
@@ -139,14 +160,22 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
         if !entry.file_type().is_file() {
             continue;
         }
+
+        // Skip hidden files such as `.DS_Store` to keep outputs stable across hosts.
+        let file_name = entry.file_name().to_string_lossy();
+        if file_name.starts_with('.') {
+            continue;
+        }
+
         let rel = entry
             .path()
-            .strip_prefix(&config_dir)
-            .expect("walkdir under config_dir");
+            .strip_prefix(&config.guest_tools_dir)
+            .expect("walkdir under guest_tools_dir");
         let rel_str = path_to_slash(rel);
         out.push(FileToPackage {
-            rel_path: format!("config/{}", rel_str),
-            bytes: fs::read(entry.path()).with_context(|| format!("read {}", entry.path().display()))?,
+            rel_path: rel_str,
+            bytes: fs::read(entry.path())
+                .with_context(|| format!("read {}", entry.path().display()))?,
         });
     }
 
