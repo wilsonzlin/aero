@@ -36,6 +36,15 @@ The `justfile` is intentionally configurable so it can survive repo refactors:
 - Architecture & subsystem docs: [`AGENTS.md`](./AGENTS.md)
 - Deployment/hosting (COOP/COEP, SharedArrayBuffer/WASM threads): [`docs/deployment.md`](./docs/deployment.md)
 
+## Architecture Decision Records (ADRs)
+
+Infrastructure decisions are captured as ADRs in [`docs/adr/`](./docs/adr/):
+
+- [`docs/adr/0001-repo-layout.md`](./docs/adr/0001-repo-layout.md)
+- [`docs/adr/0002-cross-origin-isolation.md`](./docs/adr/0002-cross-origin-isolation.md)
+- [`docs/adr/0003-shared-memory-layout.md`](./docs/adr/0003-shared-memory-layout.md)
+- [`docs/adr/0004-wasm-build-variants.md`](./docs/adr/0004-wasm-build-variants.md)
+
 ## Web (Vite)
 
 The `web/` app is configured for **cross-origin isolation** in both dev and preview mode.

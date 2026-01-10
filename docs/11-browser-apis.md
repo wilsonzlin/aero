@@ -6,14 +6,47 @@ Aero leverages cutting-edge browser APIs to achieve performance and functionalit
 
 ---
 
+## Deployment headers
+
+The high-performance (threaded) build requires **cross-origin isolation** to enable `SharedArrayBuffer` and WASM threads (see [ADR 0002](./adr/0002-cross-origin-isolation.md) and [ADR 0004](./adr/0004-wasm-build-variants.md)).
+
+Required headers (serve on the HTML document *and* all JS/WASM/worker responses):
+
+| Header | Value |
+|---|---|
+| `Cross-Origin-Opener-Policy` | `same-origin` |
+| `Cross-Origin-Embedder-Policy` | `require-corp` |
+
+Minimal Vite dev server configuration:
+
+```ts
+// web/vite.config.ts
+export default {
+  server: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
+};
+```
+
+### Pitfalls
+
+- **Headers must be present on every response**, including `304 Not Modified` and worker script responses; otherwise `crossOriginIsolated` will stay `false`.
+- **COEP blocks cross-origin subresources** unless they opt-in via CORS or `Cross-Origin-Resource-Policy`. Avoid loading WASM/worker bundles from a CDN unless it is configured correctly.
+- **COOP changes popup/opener behavior**, which can break OAuth/login flows or integrations that rely on `window.opener`.
+
+---
+
 ## API Dependency Matrix
 
 | API | Chrome | Firefox | Safari | Edge | Required? |
 |-----|--------|---------|--------|------|-----------|
 | WebAssembly | 57+ | 52+ | 11+ | 16+ | **Yes** |
 | WASM SIMD | 91+ | 89+ | 16.4+ | 91+ | **Yes** |
-| WASM Threads | 74+ | 79+ | 14.1+ | 79+ | **Yes** |
-| SharedArrayBuffer | 68+ | 79+ | 15.2+ | 79+ | **Yes** |
+| WASM Threads | 74+ | 79+ | 14.1+ | 79+ | Threaded build |
+| SharedArrayBuffer | 68+ | 79+ | 15.2+ | 79+ | Threaded build |
 | WebGPU | 113+ | 🚧 | 🚧 | 113+ | **Preferred** |
 | WebGL2 | ✓ | ✓ | ✓ | ✓ | Fallback |
 | OPFS | 102+ | 111+ | 15.2+ | 102+ | **Yes** |
@@ -171,7 +204,8 @@ const wasmFeatures = {
         0x08, 0x00, 0x41, 0x00, 0xfd, 0x0c, 0x00, 0x00, 0x0b
     ])),
     
-    threads: typeof SharedArrayBuffer !== 'undefined',
+    // Threads/SAB are only available when the page is cross-origin isolated.
+    threads: crossOriginIsolated && typeof SharedArrayBuffer !== 'undefined',
     
     bulkMemory: WebAssembly.validate(new Uint8Array([
         0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
@@ -192,7 +226,8 @@ const wasmFeatures = {
 
 ```javascript
 // Guest RAM is configurable and must fit within wasm32 + browser limits.
-// In practice, shared WebAssembly.Memory often tops out below 4GiB.
+// wasm32 WebAssembly.Memory is ≤ 4GiB addressable, and shared memories often top out below that.
+// Aero splits guest RAM from control/IPC buffers to avoid relying on >4GiB offsets (ADR 0003).
 const GUEST_RAM_MIB = 1024; // 512 / 1024 / 2048 / 3072 (best-effort)
 const GUEST_RAM_BYTES = GUEST_RAM_MIB * 1024 * 1024;
 const WASM_PAGE_BYTES = 64 * 1024;
@@ -201,6 +236,7 @@ const CMD_CAP_BYTES = 1 << 20;   // 1 MiB ring data region
 const EVT_CAP_BYTES = 1 << 20;   // 1 MiB ring data region
 
 async function initializeMemory() {
+    // If this fails, fall back to the single-threaded build (ADR 0004).
     if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
         throw new Error('SharedArrayBuffer requires COOP/COEP (cross-origin isolated page)');
     }
@@ -1086,8 +1122,8 @@ const compat = {
             issues.push('WebGPU not supported - falling back to WebGL2');
         }
         
-        if (typeof SharedArrayBuffer === 'undefined') {
-            issues.push('SharedArrayBuffer not available - check COOP/COEP headers (see docs/security-headers.md)');
+        if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
+            issues.push('SharedArrayBuffer/threads not available - check COOP/COEP headers (see docs/security-headers.md)');
         }
         
         if (!navigator.storage?.getDirectory) {

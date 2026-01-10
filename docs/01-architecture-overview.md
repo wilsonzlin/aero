@@ -163,6 +163,9 @@
 
 ## Memory Layout
 
+> **Important:** WebAssembly (MVP) linear memory is limited to **4 GiB**. That limit applies to the *entire* WASM address space (guest RAM + any in-WASM control/state). Avoid designs that assume a monolithic “5 GiB+” shared buffer; instead, **split guest memory from control/IPC buffers** using multiple `SharedArrayBuffer` instances.  
+> See [ADR 0003](./adr/0003-shared-memory-layout.md).
+
 ### Guest Physical Memory Map
 
 ```
@@ -302,7 +305,7 @@ Snapshots enable fast resume, crash recovery, and deterministic testing.
 
 ### Shared Memory Protocol
 
-Browsers cannot reliably allocate a single 5+GiB `SharedArrayBuffer`, and wasm32 linear memory is fundamentally **≤ 4GiB** addressable. To keep the architecture implementable today, Aero uses **Option B: split buffers**.
+Browsers cannot reliably allocate a single 5+GiB `SharedArrayBuffer`, and wasm32 linear memory is fundamentally **≤ 4GiB** addressable. To keep the architecture implementable today, Aero uses **Option B: split buffers** (see [ADR 0003](./adr/0003-shared-memory-layout.md)).
 
 | Buffer | Type | Typical Size | Contents | Access Pattern |
 |--------|------|--------------|----------|----------------|
@@ -364,7 +367,7 @@ queue), while still being efficient for **SPSC** use (per-worker cmd/evt).
 │         └─▶ Initialize Coordinator                               │
 │                                                                  │
 │  2. Resource Allocation                                          │
-│     └─▶ Allocate shared `WebAssembly.Memory` (guest RAM, configurable) │
+│     └─▶ Allocate shared `WebAssembly.Memory` (guest RAM, ≤ 4 GiB, configurable) │
 │     └─▶ Allocate `SharedArrayBuffer` IPC region(s) (cmd/evt queues, state) │
 │         └─▶ Request storage access (OPFS)                        │
 │             └─▶ Load/create disk image                           │
