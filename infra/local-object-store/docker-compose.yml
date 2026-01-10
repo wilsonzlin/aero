@@ -70,6 +70,11 @@ services:
       - "9002:80"
     volumes:
       - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost/minio/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   # Convenience: run MinIO Client commands without installing `mc` locally.
   #
