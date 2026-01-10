@@ -352,7 +352,9 @@ Aero is provided "AS IS" without warranty of any kind.
 ## Recommendations
 
 1. **Clean-Room Implementation**
-   - Never look at Microsoft source code
+   - Never copy or redistribute Microsoft proprietary source code (Windows, BIOS, etc.)
+   - Microsoft driver *samples* may be usable if (and only if) they are under an OSI-permissive license (e.g., the MIT-licensed `Windows-driver-samples` repository) and required notices are preserved
+   - See `drivers/windows7/LEGAL.md` for the Windows 7 virtio driver sourcing policy
    - Document all specifications used
    - Keep development logs
 
