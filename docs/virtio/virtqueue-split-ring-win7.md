@@ -632,6 +632,24 @@ Guidelines:
 * Do not allocate pageable memory or call pageable routines at DISPATCH_LEVEL.
   * Preallocate RX buffers and indirect tables up front (lookaside lists or common buffers).
 
+### 9.4 (Aero repo) existing KMDF split-ring allocation helpers
+
+This document is intentionally generic, but Aero already contains small, reusable KMDF helpers that implement
+the **ring layout math + common-buffer allocation** pieces described in §2:
+
+* `windows-drivers/virtio-kmdf/common/virtqueue_ring.h`
+* `windows-drivers/virtio-kmdf/common/virtqueue_ring.c`
+
+They:
+
+* define split-ring structs (`virtq_desc`, `virtq_avail`, `virtq_used`) matching the virtio layout
+* compute `desc/avail/used` offsets and validate alignments
+* allocate and zero a single contiguous DMA common buffer for the whole ring
+* provide `VirtqWmb()` / `VirtqRmb()` wrappers around `KeMemoryBarrier()`
+
+They do **not** implement descriptor allocation/free, cookies, or notification logic; those algorithms are still
+defined by this document (§4–§7).
+
 ## 10) End-to-end pseudocode example (virtio-input style RX queue)
 
 This example shows a typical “device writes events into driver-provided buffers” virtqueue. It includes:
