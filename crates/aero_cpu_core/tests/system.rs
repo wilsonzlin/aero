@@ -59,15 +59,16 @@ fn syscall_sysret_transitions_privilege() {
     cpu.mode = CpuMode::Long64;
 
     // User mode starting state.
-    cpu.cs = 0x23; // CPL3
-    cpu.ss = 0x2B;
+    cpu.cs = 0x33; // CPL3 (64-bit user code selector)
+    cpu.ss = 0x2B; // CPL3 (user data selector)
     cpu.rip = 0x1000;
     cpu.rflags = Cpu::RFLAGS_FIXED1 | Cpu::RFLAGS_IF;
 
     // Configure syscall MSRs.
     cpu.msr.efer = msr::EFER_SCE;
-    // STAR: kernel CS in bits 47:32, user CS in bits 63:48.
-    cpu.msr.star = ((0x08u64) << 32) | ((0x1Bu64) << 48);
+    // STAR: kernel CS in bits 47:32, SYSRET base selector in bits 63:48.
+    // SYSRET loads CS = base + 16, SS = base + 8.
+    cpu.msr.star = ((0x08u64) << 32) | ((0x23u64) << 48);
     cpu.msr.lstar = 0xFFFF_8000_0000_0000;
     cpu.msr.fmask = Cpu::RFLAGS_IF; // Mask IF on entry.
 
@@ -87,8 +88,8 @@ fn syscall_sysret_transitions_privilege() {
     cpu.sysret().unwrap();
 
     assert_eq!(cpu.cpl(), 3);
-    assert_eq!(cpu.cs, 0x1B);
-    assert_eq!(cpu.ss, 0x23);
+    assert_eq!(cpu.cs, 0x33);
+    assert_eq!(cpu.ss, 0x2B);
     assert_eq!(cpu.rip, 0x2000);
     assert_eq!(cpu.rflags & Cpu::RFLAGS_IF, Cpu::RFLAGS_IF);
 }

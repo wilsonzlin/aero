@@ -564,9 +564,13 @@ impl Cpu {
         self.set_rflags(self.r11);
 
         let star = self.msr.star;
-        let sysret_cs = ((star >> 48) & 0xFFFF) as u16;
-        self.cs = (sysret_cs & !0b11) | 0b11;
-        self.ss = (sysret_cs.wrapping_add(8) & !0b11) | 0b11;
+        // Per Intel/AMD SDM: SYSRET loads CS = STAR[63:48] + 16, SS = STAR[63:48] + 8.
+        // RPL is forced to 3.
+        let sysret_base = ((star >> 48) & 0xFFFF) as u16;
+        let user_cs = sysret_base.wrapping_add(16);
+        let user_ss = sysret_base.wrapping_add(8);
+        self.cs = (user_cs & !0b11) | 0b11;
+        self.ss = (user_ss & !0b11) | 0b11;
 
         self.rip = target;
         Ok(())
