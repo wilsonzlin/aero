@@ -67,6 +67,10 @@ Do not commit or upload (including in issues/PRs):
 `.gitignore` includes common patterns, but you are responsible even if Git
 doesn’t catch something.
 
+CI enforces these rules via `scripts/ci/check-repo-policy.sh`. See
+`docs/FIXTURES.md` for fixture alternatives (generate at runtime, download from
+approved external sources, etc.).
+
 If you need test programs, prefer:
 
 - Small, self-authored test binaries whose source is included

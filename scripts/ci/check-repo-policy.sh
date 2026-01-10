@@ -249,6 +249,7 @@ Remediation guidance:
       scripts/ci/check-repo-policy.sh
 
 See also: docs/13-legal-considerations.md
+See also: docs/FIXTURES.md
 EOF
 
 exit 1

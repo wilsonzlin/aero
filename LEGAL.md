@@ -38,6 +38,8 @@ Do not commit or attach (including in issues/PRs) any of the following:
 - Captured traces or dumps that include copyrighted payloads
 
 See `.gitignore` and `CONTRIBUTING.md` for examples and enforcement guidance.
+CI also enforces these rules via `scripts/ci/check-repo-policy.sh` (see
+`docs/FIXTURES.md`).
 
 ## Clean-room expectations
 
