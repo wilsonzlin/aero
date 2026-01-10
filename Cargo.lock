@@ -75,7 +75,7 @@ dependencies = [
  "bytemuck",
  "futures-intrusive",
  "pollster",
- "wgpu",
+ "wgpu 0.20.1",
 ]
 
 [[package]]
