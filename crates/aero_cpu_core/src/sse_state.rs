@@ -8,7 +8,8 @@ use crate::FxStateError;
 pub const MXCSR_MASK: u32 = 0x0000_FFFF;
 
 /// SSE architectural state sufficient for `FXSAVE`/`FXRSTOR`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SseState {
     pub xmm: [u128; 16],
     pub mxcsr: u32,

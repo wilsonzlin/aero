@@ -1,4 +1,5 @@
 use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
+use aero_cpu_core::interp::x87::X87;
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::{CpuMode, CpuState};
 use aero_cpu_core::Exception;
@@ -47,8 +48,10 @@ fn tier0_executes_basic_x87_mem32_arithmetic() {
 
     let out = f32::from_bits(bus.read_u32(0x108).unwrap());
     assert_eq!(out, 3.75);
-    assert_eq!(state.x87().tag_word(), 0xFFFF);
-    assert_eq!(state.x87().st(0), None);
+    let mut x87 = X87::default();
+    x87.load_from_fpu_state(&state.fpu);
+    assert_eq!(x87.tag_word(), 0xFFFF);
+    assert_eq!(x87.st(0), None);
 }
 
 #[test]
@@ -169,8 +172,10 @@ fn tier0_fxch_and_fninit_reset_state() {
     assert_eq!(cw, 0x037F);
     assert_eq!(sw, 0);
 
-    assert_eq!(state.x87().top(), 0);
-    assert_eq!(state.x87().tag_word(), 0xFFFF);
+    let mut x87 = X87::default();
+    x87.load_from_fpu_state(&state.fpu);
+    assert_eq!(x87.top(), 0);
+    assert_eq!(x87.tag_word(), 0xFFFF);
 }
 
 #[test]

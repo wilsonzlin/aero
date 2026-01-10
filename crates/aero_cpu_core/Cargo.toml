@@ -15,6 +15,7 @@ qemu_diff = { path = "../../tools/qemu_diff", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
+memoffset = "0.9"
 
 [[bench]]
 name = "emulator_critical"

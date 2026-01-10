@@ -196,7 +196,7 @@ impl CpuState {
         let fsw = self.fpu.fsw_with_top();
         out[2..4].copy_from_slice(&fsw.to_le_bytes());
 
-        out[4] = self.fpu.ftw;
+        out[4] = self.fpu.ftw as u8;
         // out[5] reserved.
         out[6..8].copy_from_slice(&self.fpu.fop.to_le_bytes());
 
@@ -267,7 +267,7 @@ impl CpuState {
         fpu.fcw = read_u16(src, 0);
         fpu.fsw = fsw;
         fpu.top = top;
-        fpu.ftw = src[4];
+        fpu.ftw = src[4] as u16;
         fpu.fop = read_u16(src, 6);
         fpu.fip = read_u32(src, 8) as u64;
         fpu.fcs = read_u16(src, 12);
@@ -325,7 +325,7 @@ impl CpuState {
         let fsw = self.fpu.fsw_with_top();
         out[2..4].copy_from_slice(&fsw.to_le_bytes());
 
-        out[4] = self.fpu.ftw;
+        out[4] = self.fpu.ftw as u8;
         out[6..8].copy_from_slice(&self.fpu.fop.to_le_bytes());
 
         out[8..16].copy_from_slice(&self.fpu.fip.to_le_bytes()); // RIP
@@ -388,7 +388,7 @@ impl CpuState {
         fpu.fcw = read_u16(src, 0);
         fpu.fsw = fsw;
         fpu.top = top;
-        fpu.ftw = src[4];
+        fpu.ftw = src[4] as u16;
         fpu.fop = read_u16(src, 6);
         fpu.fip = read_u64(src, 8);
         fpu.fdp = read_u64(src, 16);

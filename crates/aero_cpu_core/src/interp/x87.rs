@@ -167,7 +167,7 @@ impl X87 {
         state.top = self.top & 7;
         state.fsw = self.fsw & !FSW_TOP_MASK;
 
-        let mut ftw: u8 = 0;
+        let mut ftw: u16 = 0;
         for i in 0..8 {
             if !matches!(self.tags[i], Tag::Empty) {
                 ftw |= 1 << i;

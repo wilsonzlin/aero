@@ -14,6 +14,7 @@ pub enum FpKind {
 /// only the low 10 bytes are architecturally meaningful (80-bit extended
 /// precision). The upper 6 bytes are reserved and are treated as zero on save
 /// and ignored on restore.
+#[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FpuState {
     /// FPU Control Word.
@@ -22,8 +23,11 @@ pub struct FpuState {
     ///
     /// Note: the TOP-of-stack bits (11..=13) are stored separately in [`Self::top`].
     pub fsw: u16,
-    /// FPU Tag Word in abridged (8-bit) form as stored by `FXSAVE`.
-    pub ftw: u8,
+    /// FPU Tag Word.
+    ///
+    /// Note: the `FXSAVE`/`FXRSTOR` memory image stores an abridged 8-bit tag
+    /// word. For now we model that abridged value in the low 8 bits.
+    pub ftw: u16,
     /// Logical top-of-stack (0-7). Mirrors bits 11..13 of `fsw`.
     pub top: u8,
     /// FPU last instruction opcode.

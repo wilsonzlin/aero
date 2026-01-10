@@ -1,40 +1,198 @@
+//! Canonical CPU state representation (x86 / x86-64).
+//!
+//! # ABI stability
+//! `CpuState` is the *in-memory ABI* between the interpreter and dynamically
+//! generated WASM JIT blocks. The layout is intentionally `#[repr(C)]` and the
+//! JIT-visible offsets are frozen by unit tests. If you need to change this
+//! layout, update the public `CPU_*_OFF` constants and the corresponding tests
+//! *together*.
+
 use aero_x86::Register;
+use core::fmt;
 
-use crate::interp::x87::X87;
+use crate::{fpu::FpuState, sse_state::SseState};
 
-pub const FLAG_CF: u64 = 1 << 0;
-pub const FLAG_PF: u64 = 1 << 2;
-pub const FLAG_AF: u64 = 1 << 4;
-pub const FLAG_ZF: u64 = 1 << 6;
-pub const FLAG_SF: u64 = 1 << 7;
-pub const FLAG_IF: u64 = 1 << 9;
-pub const FLAG_DF: u64 = 1 << 10;
-pub const FLAG_OF: u64 = 1 << 11;
+/// Number of general purpose registers in [`CpuState::gpr`].
+pub const GPR_COUNT: usize = 16;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Canonical register indices for [`CpuState::gpr`].
+pub mod gpr {
+    //! Register indices for [`super::CpuState::gpr`].
+    pub const RAX: usize = 0;
+    pub const RCX: usize = 1;
+    pub const RDX: usize = 2;
+    pub const RBX: usize = 3;
+    pub const RSP: usize = 4;
+    pub const RBP: usize = 5;
+    pub const RSI: usize = 6;
+    pub const RDI: usize = 7;
+    pub const R8: usize = 8;
+    pub const R9: usize = 9;
+    pub const R10: usize = 10;
+    pub const R11: usize = 11;
+    pub const R12: usize = 12;
+    pub const R13: usize = 13;
+    pub const R14: usize = 14;
+    pub const R15: usize = 15;
+}
+
+// ---- RFLAGS bits -----------------------------------------------------------
+
+/// Carry Flag.
+pub const RFLAGS_CF: u64 = 1 << 0;
+/// Reserved bit 1. Always reads as 1 on real hardware.
+pub const RFLAGS_RESERVED1: u64 = 1 << 1;
+/// Parity Flag.
+pub const RFLAGS_PF: u64 = 1 << 2;
+/// Auxiliary Carry Flag.
+pub const RFLAGS_AF: u64 = 1 << 4;
+/// Zero Flag.
+pub const RFLAGS_ZF: u64 = 1 << 6;
+/// Sign Flag.
+pub const RFLAGS_SF: u64 = 1 << 7;
+/// Trap Flag.
+pub const RFLAGS_TF: u64 = 1 << 8;
+/// Interrupt Enable Flag.
+pub const RFLAGS_IF: u64 = 1 << 9;
+/// Direction Flag.
+pub const RFLAGS_DF: u64 = 1 << 10;
+/// Overflow Flag.
+pub const RFLAGS_OF: u64 = 1 << 11;
+/// I/O Privilege Level (2 bits).
+pub const RFLAGS_IOPL_MASK: u64 = 0b11 << 12;
+/// Nested Task.
+pub const RFLAGS_NT: u64 = 1 << 14;
+/// Resume Flag.
+pub const RFLAGS_RF: u64 = 1 << 16;
+/// Virtual 8086 Mode.
+pub const RFLAGS_VM: u64 = 1 << 17;
+/// Alignment Check.
+pub const RFLAGS_AC: u64 = 1 << 18;
+/// Virtual Interrupt Flag.
+pub const RFLAGS_VIF: u64 = 1 << 19;
+/// Virtual Interrupt Pending.
+pub const RFLAGS_VIP: u64 = 1 << 20;
+/// ID Flag.
+pub const RFLAGS_ID: u64 = 1 << 21;
+
+// Legacy flag aliases used throughout the interpreter.
+pub const FLAG_CF: u64 = RFLAGS_CF;
+pub const FLAG_PF: u64 = RFLAGS_PF;
+pub const FLAG_AF: u64 = RFLAGS_AF;
+pub const FLAG_ZF: u64 = RFLAGS_ZF;
+pub const FLAG_SF: u64 = RFLAGS_SF;
+pub const FLAG_DF: u64 = RFLAGS_DF;
+pub const FLAG_OF: u64 = RFLAGS_OF;
+
+// ---- Control/Model-specific register bits ---------------------------------
+
+pub const CR0_PE: u64 = 1 << 0;
+pub const CR0_PG: u64 = 1 << 31;
+
+pub const CR4_PAE: u64 = 1 << 5;
+
+pub const EFER_LME: u64 = 1 << 8;
+pub const EFER_LMA: u64 = 1 << 10;
+
+// ---- Segment access rights bits --------------------------------------------
+
+/// Segment descriptor cache "access rights" encoding.
+///
+/// This intentionally matches the layout used by Intel VMX "segment access
+/// rights" fields (AR bytes):
+/// - bits 0..=3: type
+/// - bit 4: S (descriptor type: system vs code/data)
+/// - bits 5..=6: DPL
+/// - bit 7: P (present)
+/// - bit 8: AVL
+/// - bit 9: L (64-bit code segment)
+/// - bit 10: D/B (default operand size / big)
+/// - bit 11: G (granularity)
+/// - bit 16: unusable
+pub const SEG_ACCESS_L: u32 = 1 << 9;
+pub const SEG_ACCESS_DB: u32 = 1 << 10;
+pub const SEG_ACCESS_UNUSABLE: u32 = 1 << 16;
+
+// ---- JIT ABI offsets --------------------------------------------------------
+
+/// Offset (in bytes) of [`CpuState::gpr`].
+///
+/// This is intentionally 0 to make JIT loads/stores cheap.
+pub const CPU_GPR_BASE_OFF: usize = 0;
+
+/// Offsets (in bytes) of [`CpuState::gpr`] elements in architectural order.
+pub const CPU_GPR_OFF: [usize; GPR_COUNT] = [
+    0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120,
+];
+
+/// Offset (in bytes) of [`CpuState::rip`].
+pub const CPU_RIP_OFF: usize = 128;
+
+/// Offset (in bytes) of [`CpuState::rflags`].
+pub const CPU_RFLAGS_OFF: usize = 136;
+
+/// Offset (in bytes) of `CpuState.sse.xmm[i]` for each XMM register.
+pub const CPU_XMM_OFF: [usize; 16] = [
+    784, 800, 816, 832, 848, 864, 880, 896, 912, 928, 944, 960, 976, 992, 1008, 1024,
+];
+
+/// Total size (in bytes) of [`CpuState`].
+pub const CPU_STATE_SIZE: usize = 1056;
+
+/// Alignment (in bytes) of [`CpuState`].
+pub const CPU_STATE_ALIGN: usize = 16;
+
+// ---- Public types -----------------------------------------------------------
+
+/// High-level execution mode classification.
+///
+/// This enum is a coarse classification used by the interpreter and JIT tiering.
+/// For instruction decoding/execution, the effective operand/address size still
+/// depends on CS.D and prefixes.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CpuMode {
-    /// 16-bit code segment (real mode or 16-bit protected mode).
-    Bit16,
-    /// 32-bit code segment (protected mode or compatibility mode).
-    Bit32,
-    /// 64-bit code segment (long mode).
-    Bit64,
+    /// Real mode (CR0.PE = 0).
+    Real = 0,
+    /// Protected mode (CR0.PE = 1, not executing 64-bit code).
+    Protected = 1,
+    /// Long mode, 64-bit code segment (IA-32e active and CS.L = 1).
+    Long = 2,
+    /// Virtual 8086 mode (placeholder; semantics largely like real mode but
+    /// under protected-mode paging/privilege rules).
+    Vm86 = 3,
+}
+
+impl Default for CpuMode {
+    fn default() -> Self {
+        CpuMode::Real
+    }
 }
 
 impl CpuMode {
+    /// Backwards-compatible aliases for tier-0 interpreter tests.
+    #[allow(non_upper_case_globals)]
+    pub const Bit16: CpuMode = CpuMode::Real;
+    #[allow(non_upper_case_globals)]
+    pub const Bit32: CpuMode = CpuMode::Protected;
+    #[allow(non_upper_case_globals)]
+    pub const Bit64: CpuMode = CpuMode::Long;
+
+    /// Returns the effective code bitness implied by this coarse mode.
     pub fn bitness(self) -> u32 {
         match self {
-            CpuMode::Bit16 => 16,
-            CpuMode::Bit32 => 32,
-            CpuMode::Bit64 => 64,
+            CpuMode::Real | CpuMode::Vm86 => 16,
+            CpuMode::Protected => 32,
+            CpuMode::Long => 64,
         }
     }
 
+    /// Returns the mask applied to RIP/EIP/IP in this coarse mode.
     pub fn ip_mask(self) -> u64 {
         match self {
-            CpuMode::Bit16 => 0xFFFF,
-            CpuMode::Bit32 => 0xFFFF_FFFF,
-            CpuMode::Bit64 => u64::MAX,
+            CpuMode::Real | CpuMode::Vm86 => 0xFFFF,
+            CpuMode::Protected => 0xFFFF_FFFF,
+            CpuMode::Long => u64::MAX,
         }
     }
 
@@ -43,133 +201,769 @@ impl CpuMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Segment {
-    ES = 0,
-    CS = 1,
-    SS = 2,
-    DS = 3,
-    FS = 4,
-    GS = 5,
+/// Architectural operand size used by flag computation and partial register
+/// helpers.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OperandSize {
+    Byte = 1,
+    Word = 2,
+    Dword = 4,
+    Qword = 8,
 }
 
-impl Segment {
-    pub fn from_register(reg: Register) -> Option<Self> {
-        match reg {
-            Register::ES => Some(Segment::ES),
-            Register::CS => Some(Segment::CS),
-            Register::SS => Some(Segment::SS),
-            Register::DS => Some(Segment::DS),
-            Register::FS => Some(Segment::FS),
-            Register::GS => Some(Segment::GS),
-            _ => None,
+impl OperandSize {
+    #[inline]
+    pub const fn bytes(self) -> u8 {
+        self as u8
+    }
+
+    #[inline]
+    pub const fn bits(self) -> u32 {
+        (self as u32) * 8
+    }
+
+    #[inline]
+    pub const fn mask(self) -> u64 {
+        match self {
+            OperandSize::Byte => 0xFF,
+            OperandSize::Word => 0xFFFF,
+            OperandSize::Dword => 0xFFFF_FFFF,
+            OperandSize::Qword => 0xFFFF_FFFF_FFFF_FFFF,
+        }
+    }
+
+    #[inline]
+    pub const fn sign_bit(self) -> u64 {
+        1u64 << (self.bits() - 1)
+    }
+}
+
+/// The last flag-producing operation (for lazy flag evaluation).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LazyFlagOp {
+    None = 0,
+    Add = 1,
+    Adc = 2,
+    Sub = 3,
+    Sbb = 4,
+    Logic = 5,
+}
+
+/// Lazy flags state stored in [`CpuState`].
+///
+/// For most ALU instructions we do not eagerly update `rflags` – instead we
+/// record enough information to materialize specific flags on demand.
+#[repr(C, align(8))]
+#[derive(Clone, Copy)]
+pub struct LazyFlags {
+    pub op: LazyFlagOp,
+    pub size: OperandSize,
+    /// Carry-in for ADC/SBB (lower bit is used).
+    pub carry_in: u8,
+    pub _pad0: [u8; 5],
+    pub result: u64,
+    pub op1: u64,
+    pub op2: u64,
+}
+
+impl Default for LazyFlags {
+    fn default() -> Self {
+        Self {
+            op: LazyFlagOp::None,
+            size: OperandSize::Qword,
+            carry_in: 0,
+            _pad0: [0; 5],
+            result: 0,
+            op1: 0,
+            op2: 0,
         }
     }
 }
 
-#[derive(Debug, Clone)]
+impl LazyFlags {
+    #[inline]
+    pub const fn is_active(&self) -> bool {
+        !matches!(self.op, LazyFlagOp::None)
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    #[inline]
+    pub const fn for_add(size: OperandSize, op1: u64, op2: u64, result: u64) -> Self {
+        Self {
+            op: LazyFlagOp::Add,
+            size,
+            carry_in: 0,
+            _pad0: [0; 5],
+            result,
+            op1,
+            op2,
+        }
+    }
+
+    #[inline]
+    pub const fn for_adc(
+        size: OperandSize,
+        op1: u64,
+        op2: u64,
+        carry_in: bool,
+        result: u64,
+    ) -> Self {
+        Self {
+            op: LazyFlagOp::Adc,
+            size,
+            carry_in: carry_in as u8,
+            _pad0: [0; 5],
+            result,
+            op1,
+            op2,
+        }
+    }
+
+    #[inline]
+    pub const fn for_sub(size: OperandSize, op1: u64, op2: u64, result: u64) -> Self {
+        Self {
+            op: LazyFlagOp::Sub,
+            size,
+            carry_in: 0,
+            _pad0: [0; 5],
+            result,
+            op1,
+            op2,
+        }
+    }
+
+    #[inline]
+    pub const fn for_sbb(
+        size: OperandSize,
+        op1: u64,
+        op2: u64,
+        carry_in: bool,
+        result: u64,
+    ) -> Self {
+        Self {
+            op: LazyFlagOp::Sbb,
+            size,
+            carry_in: carry_in as u8,
+            _pad0: [0; 5],
+            result,
+            op1,
+            op2,
+        }
+    }
+
+    #[inline]
+    pub const fn for_logic(size: OperandSize, result: u64) -> Self {
+        Self {
+            op: LazyFlagOp::Logic,
+            size,
+            carry_in: 0,
+            _pad0: [0; 5],
+            result,
+            op1: 0,
+            op2: 0,
+        }
+    }
+
+    #[inline]
+    fn masked(&self, v: u64) -> u64 {
+        v & self.size.mask()
+    }
+
+    #[inline]
+    fn masked_result(&self) -> u64 {
+        self.masked(self.result)
+    }
+
+    #[inline]
+    fn masked_op1(&self) -> u64 {
+        self.masked(self.op1)
+    }
+
+    #[inline]
+    fn masked_op2(&self) -> u64 {
+        self.masked(self.op2)
+    }
+
+    #[inline]
+    fn carry_in_u64(&self) -> u64 {
+        (self.carry_in & 1) as u64
+    }
+
+    #[inline]
+    fn add_rhs(&self) -> u64 {
+        self.masked_op2().wrapping_add(self.carry_in_u64()) & self.size.mask()
+    }
+
+    #[inline]
+    pub fn cf(&self) -> bool {
+        if !self.is_active() {
+            return false;
+        }
+        let a = self.masked_op1() as u128;
+        let mask = self.size.mask() as u128;
+        match self.op {
+            LazyFlagOp::Add => {
+                let b = self.masked_op2() as u128;
+                (a + b) > mask
+            }
+            LazyFlagOp::Adc => {
+                let b = self.masked_op2() as u128;
+                (a + b + (self.carry_in_u64() as u128)) > mask
+            }
+            LazyFlagOp::Sub => {
+                let b = self.masked_op2() as u128;
+                a < b
+            }
+            LazyFlagOp::Sbb => {
+                let b = self.masked_op2() as u128 + (self.carry_in_u64() as u128);
+                a < b
+            }
+            LazyFlagOp::Logic => false,
+            LazyFlagOp::None => false,
+        }
+    }
+
+    #[inline]
+    pub fn zf(&self) -> bool {
+        self.masked_result() == 0
+    }
+
+    #[inline]
+    pub fn sf(&self) -> bool {
+        (self.masked_result() & self.size.sign_bit()) != 0
+    }
+
+    #[inline]
+    pub fn pf(&self) -> bool {
+        let b = self.masked_result() as u8;
+        (b.count_ones() & 1) == 0
+    }
+
+    #[inline]
+    pub fn af(&self) -> bool {
+        if !self.is_active() {
+            return false;
+        }
+        let a = self.masked_op1();
+        let b = match self.op {
+            LazyFlagOp::Adc | LazyFlagOp::Sbb => self.add_rhs(),
+            LazyFlagOp::Add | LazyFlagOp::Sub => self.masked_op2(),
+            LazyFlagOp::Logic | LazyFlagOp::None => 0,
+        };
+        let r = self.masked_result();
+        ((a ^ b ^ r) & 0x10) != 0
+    }
+
+    #[inline]
+    pub fn of(&self) -> bool {
+        if !self.is_active() {
+            return false;
+        }
+        let sign = self.size.sign_bit();
+        let a = self.masked_op1();
+        let b = match self.op {
+            LazyFlagOp::Adc | LazyFlagOp::Sbb => self.add_rhs(),
+            LazyFlagOp::Add | LazyFlagOp::Sub => self.masked_op2(),
+            LazyFlagOp::Logic | LazyFlagOp::None => 0,
+        };
+        let r = self.masked_result();
+        match self.op {
+            LazyFlagOp::Add | LazyFlagOp::Adc => ((a ^ r) & (b ^ r) & sign) != 0,
+            LazyFlagOp::Sub | LazyFlagOp::Sbb => ((a ^ b) & (a ^ r) & sign) != 0,
+            LazyFlagOp::Logic => false,
+            LazyFlagOp::None => false,
+        }
+    }
+}
+
+/// Segment register (visible selector + hidden descriptor cache).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct Segment {
+    pub selector: u16,
+    pub _pad0: u16,
+    pub _pad1: u32,
+    pub base: u64,
+    pub limit: u32,
+    pub access: u32,
+}
+
+impl Segment {
+    #[inline]
+    pub const fn is_unusable(&self) -> bool {
+        (self.access & SEG_ACCESS_UNUSABLE) != 0
+    }
+
+    #[inline]
+    pub const fn is_long(&self) -> bool {
+        (self.access & SEG_ACCESS_L) != 0
+    }
+
+    #[inline]
+    pub const fn is_default_32bit(&self) -> bool {
+        (self.access & SEG_ACCESS_DB) != 0
+    }
+
+    #[inline]
+    pub const fn rpl(&self) -> u8 {
+        (self.selector & 0b11) as u8
+    }
+}
+
+/// User-visible segment registers.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct SegmentRegs {
+    pub cs: Segment,
+    pub ds: Segment,
+    pub es: Segment,
+    pub fs: Segment,
+    pub gs: Segment,
+    pub ss: Segment,
+}
+
+/// Descriptor table register (GDTR/IDTR).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct DescriptorTable {
+    pub limit: u16,
+    pub _pad0: u16,
+    pub _pad1: u32,
+    pub base: u64,
+}
+
+/// Descriptor table and system segment state (GDTR/IDTR/LDTR/TR).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct DescriptorTables {
+    pub gdtr: DescriptorTable,
+    pub idtr: DescriptorTable,
+    pub ldtr: Segment,
+    pub tr: Segment,
+}
+
+/// Control register subset needed for Windows 7 boot and paging.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct ControlRegs {
+    pub cr0: u64,
+    pub cr2: u64,
+    pub cr3: u64,
+    pub cr4: u64,
+    pub cr8: u64,
+}
+
+/// Debug registers needed for guest probing (hardware breakpoints).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct DebugRegs {
+    /// DR0..DR3
+    pub dr: [u64; 4],
+    pub dr6: u64,
+    pub dr7: u64,
+}
+
+/// MSR subset required for Windows 7 syscall/sysenter paths.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct MsrState {
+    pub efer: u64,
+    pub star: u64,
+    pub lstar: u64,
+    pub cstar: u64,
+    pub fmask: u64,
+    pub sysenter_cs: u64,
+    pub sysenter_eip: u64,
+    pub sysenter_esp: u64,
+    pub fs_base: u64,
+    pub gs_base: u64,
+    pub kernel_gs_base: u64,
+    pub apic_base: u64,
+    pub tsc: u64,
+}
+
+/// Canonical CPU state.
+///
+/// Field order is chosen to keep the most commonly accessed state (GPRs, RIP,
+/// RFLAGS) in the first cache line and to keep JIT offsets small/simple.
+#[repr(C, align(16))]
+#[derive(Clone)]
 pub struct CpuState {
-    gpr: [u64; 16],
-    rip: u64,
-    rflags: u64,
-    seg_sel: [u16; 6],
-    seg_base: [u64; 6],
-    x87: X87,
+    /// General purpose registers in architectural order:
+    /// RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8..R15.
+    pub gpr: [u64; GPR_COUNT],
+    /// Instruction pointer (RIP/EIP/IP). Masked by [`CpuState::mode`] and CS.D
+    /// on access.
+    pub rip: u64,
+    /// Raw RFLAGS value. When [`CpuState::lazy_flags`] is active, the status
+    /// flags in `rflags` (CF/PF/AF/ZF/SF/OF) may be stale until committed.
+    pub rflags: u64,
+    /// Lazy status flag computation state.
+    pub lazy_flags: LazyFlags,
+    /// Coarse execution mode (bitness + privilege classification).
     pub mode: CpuMode,
+    /// Set by `HLT` and cleared by interrupt delivery/reset.
     pub halted: bool,
+    pub _pad0: [u8; 6],
+
+    // Segmentation / system tables.
+    pub segments: SegmentRegs,
+    pub tables: DescriptorTables,
+
+    // Control/debug/MSR state.
+    pub control: ControlRegs,
+    pub debug: DebugRegs,
+    pub msr: MsrState,
+
+    /// Explicit padding to keep the floating point state 16-byte aligned.
+    pub _pad_align16: [u8; 8],
+
+    /// x87/MMX architectural state (enough for `FXSAVE`/`FXRSTOR`).
+    pub fpu: FpuState,
+    /// SSE architectural state (XMM0-15 + MXCSR).
+    pub sse: SseState,
 }
 
 impl Default for CpuState {
     fn default() -> Self {
-        Self::new(CpuMode::Bit16)
+        Self {
+            gpr: [0; GPR_COUNT],
+            rip: 0,
+            rflags: RFLAGS_RESERVED1,
+            lazy_flags: LazyFlags::default(),
+            mode: CpuMode::Real,
+            halted: false,
+            _pad0: [0; 6],
+            segments: SegmentRegs::default(),
+            tables: DescriptorTables::default(),
+            control: ControlRegs::default(),
+            debug: DebugRegs::default(),
+            msr: MsrState::default(),
+            _pad_align16: [0; 8],
+            fpu: FpuState::default(),
+            sse: SseState::default(),
+        }
+    }
+}
+
+impl fmt::Debug for CpuState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CpuState")
+            .field("mode", &self.mode)
+            .field("rip", &self.rip())
+            .field("rflags", &self.rflags_snapshot())
+            .finish_non_exhaustive()
     }
 }
 
 impl CpuState {
+    /// Constructs a new CPU state with a coarse initial mode.
+    ///
+    /// This is primarily used by unit tests and the tier-0 interpreter. More
+    /// complete mode transitions should be performed by updating CR0/CR4/EFER
+    /// and segment caches, then calling [`CpuState::update_mode`].
     pub fn new(mode: CpuMode) -> Self {
-        Self {
-            gpr: [0; 16],
-            rip: 0,
-            rflags: 0x2, // bit 1 is always set
-            seg_sel: [0; 6],
-            seg_base: [0; 6],
-            x87: X87::default(),
-            mode,
-            halted: false,
+        let mut state = Self::default();
+        state.mode = mode;
+        state.halted = false;
+
+        // Configure CS cache bits so helpers like `bitness()` and `ip_mask()`
+        // behave consistently with the requested coarse mode.
+        match mode {
+            CpuMode::Real | CpuMode::Vm86 => {
+                state.segments.cs.access &= !(SEG_ACCESS_DB | SEG_ACCESS_L);
+            }
+            CpuMode::Protected => {
+                state.segments.cs.access |= SEG_ACCESS_DB;
+                state.segments.cs.access &= !SEG_ACCESS_L;
+            }
+            CpuMode::Long => {
+                state.segments.cs.access |= SEG_ACCESS_L;
+                // CS.D is ignored for 64-bit code but keeping it set avoids
+                // accidentally selecting 16-bit widths in helper code.
+                state.segments.cs.access |= SEG_ACCESS_DB;
+            }
+        }
+
+        state
+    }
+
+    /// Returns the current effective code bitness (16/32/64).
+    pub fn bitness(&self) -> u32 {
+        match self.mode {
+            CpuMode::Long => 64,
+            CpuMode::Protected => {
+                if self.segments.cs.is_default_32bit() {
+                    32
+                } else {
+                    16
+                }
+            }
+            CpuMode::Real | CpuMode::Vm86 => 16,
         }
     }
 
-    pub fn bitness(&self) -> u32 {
-        self.mode.bitness()
-    }
-
+    /// Legacy name for the instruction pointer accessor.
+    #[inline]
     pub fn rip(&self) -> u64 {
-        self.rip & self.mode.ip_mask()
+        self.get_ip()
     }
 
+    /// Legacy name for setting the instruction pointer.
+    #[inline]
     pub fn set_rip(&mut self, rip: u64) {
-        self.rip = rip & self.mode.ip_mask();
+        self.set_ip(rip)
     }
 
+    #[inline]
     pub fn advance_rip(&mut self, delta: u64) {
-        self.set_rip(self.rip().wrapping_add(delta));
+        self.advance_ip(delta)
     }
 
+    /// Returns the current RFLAGS value with lazy status flags materialized.
+    #[inline]
     pub fn rflags(&self) -> u64 {
-        self.rflags
+        self.rflags_snapshot()
     }
 
-    pub fn set_rflags(&mut self, flags: u64) {
-        // Preserve the always-1 bit 1.
-        self.rflags = flags | 0x2;
+    /// Returns the current privilege level (CPL).
+    #[inline]
+    pub fn cpl(&self) -> u8 {
+        match self.mode {
+            CpuMode::Real => 0,
+            _ => self.segments.cs.rpl(),
+        }
     }
 
+    /// Recomputes [`CpuState::mode`] from control registers, EFER and CS
+    /// descriptor cache.
+    ///
+    /// This should be called after writes to CR0/CR4/EFER or after loading CS.
+    #[inline]
+    pub fn update_mode(&mut self) -> CpuMode {
+        if (self.control.cr0 & CR0_PE) == 0 {
+            self.mode = CpuMode::Real;
+            return self.mode;
+        }
+
+        let ia32e_active = (self.msr.efer & EFER_LMA) != 0
+            || ((self.msr.efer & EFER_LME) != 0
+                && (self.control.cr0 & CR0_PG) != 0
+                && (self.control.cr4 & CR4_PAE) != 0);
+
+        if ia32e_active && self.segments.cs.is_long() {
+            self.mode = CpuMode::Long;
+            return self.mode;
+        }
+
+        if (self.rflags & RFLAGS_VM) != 0 {
+            self.mode = CpuMode::Vm86;
+        } else {
+            self.mode = CpuMode::Protected;
+        }
+
+        self.mode
+    }
+
+    #[inline]
+    fn ip_mask(&self) -> u64 {
+        match self.mode {
+            CpuMode::Long => u64::MAX,
+            CpuMode::Protected => {
+                if self.segments.cs.is_default_32bit() {
+                    0xFFFF_FFFF
+                } else {
+                    0xFFFF
+                }
+            }
+            CpuMode::Real | CpuMode::Vm86 => 0xFFFF,
+        }
+    }
+
+    /// Returns the instruction pointer masked to the current effective width.
+    #[inline]
+    pub fn get_ip(&self) -> u64 {
+        self.rip & self.ip_mask()
+    }
+
+    /// Sets the instruction pointer, masking to the current effective width.
+    #[inline]
+    pub fn set_ip(&mut self, ip: u64) {
+        self.rip = ip & self.ip_mask();
+    }
+
+    /// Advances IP by `delta` (wrapping within the current effective width).
+    #[inline]
+    pub fn advance_ip(&mut self, delta: u64) {
+        let next = self.get_ip().wrapping_add(delta) & self.ip_mask();
+        self.rip = next;
+    }
+
+    // ---- GPR accessors -----------------------------------------------------
+
+    #[inline]
+    pub fn read_gpr64(&self, index: usize) -> u64 {
+        self.gpr[index]
+    }
+
+    #[inline]
+    pub fn write_gpr64(&mut self, index: usize, value: u64) {
+        self.gpr[index] = value;
+    }
+
+    /// Reads the low 32 bits of a GPR.
+    #[inline]
+    pub fn read_gpr32(&self, index: usize) -> u32 {
+        self.gpr[index] as u32
+    }
+
+    /// Writes the low 32 bits of a GPR, zero-extending to 64-bit.
+    #[inline]
+    pub fn write_gpr32(&mut self, index: usize, value: u32) {
+        self.gpr[index] = value as u64;
+    }
+
+    #[inline]
+    pub fn read_gpr16(&self, index: usize) -> u16 {
+        self.gpr[index] as u16
+    }
+
+    #[inline]
+    pub fn write_gpr16(&mut self, index: usize, value: u16) {
+        let old = self.gpr[index];
+        self.gpr[index] = (old & !0xFFFF) | (value as u64);
+    }
+
+    /// Reads an 8-bit GPR subregister.
+    ///
+    /// `rex_present` controls the legacy high-byte registers mapping:
+    /// - If `rex_present == false`, indices 4..=7 map to AH/CH/DH/BH (bits 8..15
+    ///   of RAX/RCX/RDX/RBX).
+    /// - If `rex_present == true`, indices 4..=7 map to SPL/BPL/SIL/DIL (low
+    ///   byte of RSP/RBP/RSI/RDI).
+    #[inline]
+    pub fn read_gpr8(&self, index: usize, rex_present: bool) -> u8 {
+        let (base, shift) = gpr8_mapping(index, rex_present);
+        ((self.gpr[base] >> shift) & 0xFF) as u8
+    }
+
+    /// Writes an 8-bit GPR subregister.
+    ///
+    /// See [`CpuState::read_gpr8`] for the `rex_present` high-byte mapping.
+    #[inline]
+    pub fn write_gpr8(&mut self, index: usize, rex_present: bool, value: u8) {
+        let (base, shift) = gpr8_mapping(index, rex_present);
+        let mask = !(0xFFu64 << shift);
+        let old = self.gpr[base] & mask;
+        self.gpr[base] = old | ((value as u64) << shift);
+    }
+
+    // ---- Flag accessors ----------------------------------------------------
+
+    /// Returns the current value of a flag bit, consulting [`CpuState::lazy_flags`]
+    /// if present.
+    #[inline]
     pub fn get_flag(&self, mask: u64) -> bool {
+        if self.lazy_flags.is_active() {
+            match mask {
+                RFLAGS_CF => return self.lazy_flags.cf(),
+                RFLAGS_PF => return self.lazy_flags.pf(),
+                RFLAGS_AF => return self.lazy_flags.af(),
+                RFLAGS_ZF => return self.lazy_flags.zf(),
+                RFLAGS_SF => return self.lazy_flags.sf(),
+                RFLAGS_OF => return self.lazy_flags.of(),
+                _ => {}
+            }
+        }
         (self.rflags & mask) != 0
     }
 
-    pub fn set_flag(&mut self, mask: u64, val: bool) {
-        if val {
+    /// Sets/clears a flag bit.
+    ///
+    /// This commits any pending lazy flags first so the write applies on top of
+    /// the architecturally correct flag state.
+    #[inline]
+    pub fn set_flag(&mut self, mask: u64, value: bool) {
+        self.commit_lazy_flags();
+        if value {
             self.rflags |= mask;
         } else {
             self.rflags &= !mask;
         }
+        self.rflags |= RFLAGS_RESERVED1;
     }
 
-    pub fn seg_base(&self, seg: Segment) -> u64 {
-        self.seg_base[seg as usize]
+    /// Returns a snapshot of RFLAGS with lazy status flags materialized.
+    #[inline]
+    pub fn rflags_snapshot(&self) -> u64 {
+        if !self.lazy_flags.is_active() {
+            return self.rflags | RFLAGS_RESERVED1;
+        }
+        let mut r = self.rflags | RFLAGS_RESERVED1;
+        set_bit(&mut r, RFLAGS_CF, self.lazy_flags.cf());
+        set_bit(&mut r, RFLAGS_PF, self.lazy_flags.pf());
+        set_bit(&mut r, RFLAGS_AF, self.lazy_flags.af());
+        set_bit(&mut r, RFLAGS_ZF, self.lazy_flags.zf());
+        set_bit(&mut r, RFLAGS_SF, self.lazy_flags.sf());
+        set_bit(&mut r, RFLAGS_OF, self.lazy_flags.of());
+        r
     }
 
-    pub fn set_seg_base(&mut self, seg: Segment, base: u64) {
-        self.seg_base[seg as usize] = base;
+    /// Commits any pending lazy flags into [`CpuState::rflags`], clearing
+    /// [`CpuState::lazy_flags`].
+    #[inline]
+    pub fn commit_lazy_flags(&mut self) {
+        if !self.lazy_flags.is_active() {
+            self.rflags |= RFLAGS_RESERVED1;
+            return;
+        }
+        let snapshot = self.rflags_snapshot();
+        self.rflags = snapshot;
+        self.lazy_flags.clear();
     }
 
-    pub fn seg_selector(&self, seg: Segment) -> u16 {
-        self.seg_sel[seg as usize]
+    /// Sets RFLAGS directly, invalidating any pending lazy flags.
+    #[inline]
+    pub fn set_rflags(&mut self, value: u64) {
+        self.rflags = value | RFLAGS_RESERVED1;
+        self.lazy_flags.clear();
     }
 
-    pub fn set_seg_selector(&mut self, seg: Segment, sel: u16) {
-        self.seg_sel[seg as usize] = sel;
-        if self.mode == CpuMode::Bit16 {
-            // Real-mode semantics: selector * 16.
-            self.seg_base[seg as usize] = (sel as u64) << 4;
+    // ---- Compatibility helpers for tier-0 interpreter ---------------------
+
+    /// Returns the segment base for a segment register.
+    ///
+    /// In long mode, only FS/GS bases are used for linear address formation
+    /// (other segment bases are treated as 0).
+    pub fn seg_base_reg(&self, seg: Register) -> u64 {
+        use Register::*;
+        match self.mode {
+            CpuMode::Long => match seg {
+                FS => self.segments.fs.base,
+                GS => self.segments.gs.base,
+                _ => 0,
+            },
+            _ => match seg {
+                ES => self.segments.es.base,
+                CS => self.segments.cs.base,
+                SS => self.segments.ss.base,
+                DS => self.segments.ds.base,
+                FS => self.segments.fs.base,
+                GS => self.segments.gs.base,
+                _ => 0,
+            },
         }
     }
 
-    pub fn seg_base_reg(&self, seg: Register) -> u64 {
-        Segment::from_register(seg)
-            .map(|s| self.seg_base(s))
-            .unwrap_or(0)
-    }
-
-    pub fn gpr_u64(&self, index: usize) -> u64 {
-        self.gpr[index]
-    }
-
-    pub fn set_gpr_u64(&mut self, index: usize, val: u64) {
-        self.gpr[index] = val;
-    }
-
+    /// Reads a decoded register operand.
+    ///
+    /// The result is zero-extended to 64 bits.
     pub fn read_reg(&self, reg: Register) -> u64 {
         if let Some((idx, bits, high8)) = gpr_info(reg) {
             let full = self.gpr[idx];
@@ -182,15 +976,21 @@ impl CpuState {
                 _ => 0,
             };
         }
-        if let Some(seg) = Segment::from_register(reg) {
-            return self.seg_selector(seg) as u64;
-        }
+
         match reg {
-            Register::RIP | Register::EIP => self.rip(),
+            Register::ES => self.segments.es.selector as u64,
+            Register::CS => self.segments.cs.selector as u64,
+            Register::SS => self.segments.ss.selector as u64,
+            Register::DS => self.segments.ds.selector as u64,
+            Register::FS => self.segments.fs.selector as u64,
+            Register::GS => self.segments.gs.selector as u64,
+            Register::RIP => self.get_ip(),
+            Register::EIP => self.get_ip() & 0xFFFF_FFFF,
             _ => 0,
         }
     }
 
+    /// Writes a decoded register operand.
     pub fn write_reg(&mut self, reg: Register, val: u64) {
         if let Some((idx, bits, high8)) = gpr_info(reg) {
             let cur = self.gpr[idx];
@@ -206,30 +1006,53 @@ impl CpuState {
             return;
         }
 
-        if let Some(seg) = Segment::from_register(reg) {
-            self.set_seg_selector(seg, val as u16);
+        match reg {
+            Register::ES => Self::write_segment_register(self.mode, &mut self.segments.es, val as u16),
+            Register::CS => Self::write_segment_register(self.mode, &mut self.segments.cs, val as u16),
+            Register::SS => Self::write_segment_register(self.mode, &mut self.segments.ss, val as u16),
+            Register::DS => Self::write_segment_register(self.mode, &mut self.segments.ds, val as u16),
+            Register::FS => Self::write_segment_register(self.mode, &mut self.segments.fs, val as u16),
+            Register::GS => Self::write_segment_register(self.mode, &mut self.segments.gs, val as u16),
+            _ => {}
+        }
+
+        if matches!(
+            reg,
+            Register::ES | Register::CS | Register::SS | Register::DS | Register::FS | Register::GS
+        ) {
             return;
         }
 
         match reg {
-            Register::RIP | Register::EIP => self.set_rip(val),
+            Register::RIP | Register::EIP => self.set_ip(val),
             _ => {}
         }
     }
 
+    fn write_segment_register(mode: CpuMode, seg: &mut Segment, selector: u16) {
+        seg.selector = selector;
+        // Tier-0 currently only supports real-mode segment semantics. Protected/long
+        // mode segment loads require descriptor lookup and are delegated to assists.
+        if matches!(mode, CpuMode::Real | CpuMode::Vm86) {
+            seg.base = (selector as u64) << 4;
+            seg.limit = 0xFFFF;
+            seg.access = 0;
+        }
+    }
+
     pub fn stack_ptr_reg(&self) -> Register {
-        match self.mode {
-            CpuMode::Bit16 => Register::SP,
-            CpuMode::Bit32 => Register::ESP,
-            CpuMode::Bit64 => Register::RSP,
+        match self.bitness() {
+            16 => Register::SP,
+            32 => Register::ESP,
+            _ => Register::RSP,
         }
     }
 
     pub fn stack_ptr_bits(&self) -> u32 {
-        match self.mode {
-            CpuMode::Bit64 => 64,
-            CpuMode::Bit32 => 32,
-            CpuMode::Bit16 => 16,
+        match self.bitness() {
+            16 => 16,
+            32 => 32,
+            _ => 64,
         }
     }
 
@@ -244,16 +1067,35 @@ impl CpuState {
         let v = val & mask_bits(bits);
         self.write_reg(reg, v);
     }
+}
 
-    pub fn x87(&self) -> &X87 {
-        &self.x87
-    }
-
-    pub fn x87_mut(&mut self) -> &mut X87 {
-        &mut self.x87
+#[inline]
+fn set_bit(bits: &mut u64, mask: u64, value: bool) {
+    if value {
+        *bits |= mask;
+    } else {
+        *bits &= !mask;
     }
 }
 
+#[inline]
+fn gpr8_mapping(index: usize, rex_present: bool) -> (usize, u32) {
+    debug_assert!(index < GPR_COUNT);
+    match index {
+        0..=3 => (index, 0),
+        4..=7 => {
+            if rex_present {
+                (index, 0)
+            } else {
+                (index - 4, 8)
+            }
+        }
+        8..=15 => (index, 0),
+        _ => unreachable!(),
+    }
+}
+
+/// Returns a mask with the low `bits` bits set.
 pub fn mask_bits(bits: u32) -> u64 {
     match bits {
         8 => 0xFF,
@@ -345,7 +1187,125 @@ fn gpr_info(reg: Register) -> Option<(usize, u32, bool)> {
         R14 => (14, 64, false),
         R15 => (15, 64, false),
 
-        _ => return std::option::Option::None,
+        _ => return core::option::Option::None,
     };
     Some((idx, bits, high8))
+}
+
+// Compile-time ABI checks for all targets (including wasm32).
+//
+// Unit tests below additionally validate the same invariants via `memoffset`,
+// guarding against accidental refactors.
+const _: () = {
+    use core::mem::{align_of, offset_of, size_of};
+
+    assert!(offset_of!(CpuState, gpr) == CPU_GPR_BASE_OFF);
+    assert!(offset_of!(CpuState, rip) == CPU_RIP_OFF);
+    assert!(offset_of!(CpuState, rflags) == CPU_RFLAGS_OFF);
+
+    assert!(CPU_GPR_OFF[0] == CPU_GPR_BASE_OFF);
+    assert!(CPU_GPR_OFF[15] == CPU_GPR_BASE_OFF + 15 * 8);
+
+    assert!(offset_of!(CpuState, sse) + offset_of!(SseState, xmm) == CPU_XMM_OFF[0]);
+    assert!(offset_of!(CpuState, sse) + offset_of!(SseState, xmm) + 15 * 16 == CPU_XMM_OFF[15]);
+
+    assert!(size_of::<CpuState>() == CPU_STATE_SIZE);
+    assert!(align_of::<CpuState>() == CPU_STATE_ALIGN);
+};
+
+// ---- Tests -----------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use memoffset::offset_of;
+
+    #[test]
+    fn partial_register_semantics() {
+        let mut cpu = CpuState::default();
+
+        cpu.write_gpr64(gpr::RAX, 0xFFFF_FFFF_0000_0000);
+        cpu.write_gpr32(gpr::RAX, 0x1234_5678);
+        assert_eq!(cpu.read_gpr64(gpr::RAX), 0x1234_5678);
+
+        cpu.write_gpr64(gpr::RAX, 0x1122_3344_5566_7788);
+        cpu.write_gpr16(gpr::RAX, 0xABCD);
+        assert_eq!(cpu.read_gpr64(gpr::RAX), 0x1122_3344_5566_ABCD);
+
+        cpu.write_gpr64(gpr::RAX, 0x0000_0000_0000_1122);
+        cpu.write_gpr8(4, false, 0x33); // AH
+        assert_eq!(cpu.read_gpr64(gpr::RAX), 0x0000_0000_0000_3322);
+        assert_eq!(cpu.read_gpr8(4, false), 0x33);
+
+        cpu.write_gpr64(gpr::RSP, 0);
+        cpu.write_gpr8(4, true, 0x44); // SPL (REX present)
+        assert_eq!(cpu.read_gpr64(gpr::RSP), 0x44);
+        // REX should have blocked AH access.
+        assert_eq!(cpu.read_gpr64(gpr::RAX), 0x0000_0000_0000_3322);
+        assert_eq!(cpu.read_gpr8(4, true), 0x44);
+    }
+
+    #[test]
+    fn lazy_flags_materialize_and_commit() {
+        let mut cpu = CpuState::default();
+        cpu.set_flag(RFLAGS_DF, true);
+
+        // 0xFF + 1 = 0x00 (8-bit)
+        cpu.lazy_flags = LazyFlags::for_add(OperandSize::Byte, 0xFF, 1, 0x00);
+        assert!(cpu.get_flag(RFLAGS_CF));
+        assert!(cpu.get_flag(RFLAGS_ZF));
+        assert!(!cpu.get_flag(RFLAGS_SF));
+        assert!(!cpu.get_flag(RFLAGS_OF));
+        assert!(cpu.get_flag(RFLAGS_PF));
+        assert!(cpu.get_flag(RFLAGS_AF));
+        // Unaffected flags come from rflags.
+        assert!(cpu.get_flag(RFLAGS_DF));
+
+        cpu.commit_lazy_flags();
+        assert!(!cpu.lazy_flags.is_active());
+        assert!(cpu.rflags & RFLAGS_DF != 0);
+        assert!(cpu.rflags & RFLAGS_CF != 0);
+        assert!(cpu.rflags & RFLAGS_ZF != 0);
+
+        // 0x00 - 1 = 0xFF (8-bit)
+        cpu.lazy_flags = LazyFlags::for_sub(OperandSize::Byte, 0x00, 1, 0xFF);
+        assert!(cpu.get_flag(RFLAGS_CF));
+        assert!(!cpu.get_flag(RFLAGS_ZF));
+        assert!(cpu.get_flag(RFLAGS_SF));
+        assert!(!cpu.get_flag(RFLAGS_OF));
+        assert!(cpu.get_flag(RFLAGS_PF));
+        assert!(cpu.get_flag(RFLAGS_AF));
+
+        // Logic op clears CF/OF and computes ZF/SF/PF.
+        cpu.lazy_flags = LazyFlags::for_logic(OperandSize::Byte, 0);
+        assert!(!cpu.get_flag(RFLAGS_CF));
+        assert!(!cpu.get_flag(RFLAGS_OF));
+        assert!(cpu.get_flag(RFLAGS_ZF));
+        assert!(!cpu.get_flag(RFLAGS_SF));
+        assert!(cpu.get_flag(RFLAGS_PF));
+        assert!(!cpu.get_flag(RFLAGS_AF));
+
+        // ADC chain: 0 + 0 + CF(1) = 1.
+        cpu.set_rflags(RFLAGS_CF);
+        cpu.lazy_flags = LazyFlags::for_adc(OperandSize::Byte, 0, 0, cpu.get_flag(RFLAGS_CF), 1);
+        assert!(!cpu.get_flag(RFLAGS_CF));
+        assert!(!cpu.get_flag(RFLAGS_ZF));
+        assert_eq!(cpu.lazy_flags.carry_in, 1);
+    }
+
+    #[test]
+    fn jit_offsets_are_stable() {
+        assert_eq!(offset_of!(CpuState, gpr), CPU_GPR_BASE_OFF);
+        assert_eq!(offset_of!(CpuState, rip), CPU_RIP_OFF);
+        assert_eq!(offset_of!(CpuState, rflags), CPU_RFLAGS_OFF);
+
+        for i in 0..GPR_COUNT {
+            assert_eq!(CPU_GPR_OFF[i], CPU_GPR_BASE_OFF + i * 8);
+        }
+
+        let xmm_base = offset_of!(CpuState, sse) + offset_of!(SseState, xmm);
+        for i in 0..16 {
+            assert_eq!(CPU_XMM_OFF[i], xmm_base + i * core::mem::size_of::<u128>());
+        }
+    }
 }
