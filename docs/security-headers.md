@@ -161,3 +161,30 @@ await WebAssembly.compile(new Uint8Array([0x00,0x61,0x73,0x6d,0x01,0x00,0x00,0x0
 ```
 
 If you see errors like `Refused to compile or instantiate WebAssembly module because 'wasm-unsafe-eval' is not an allowed source`, your deployed CSP is missing `'wasm-unsafe-eval'` in `script-src`.
+
+### Repo-local CSP/COOP/COEP regression tests
+
+This repo includes an automated browser PoC and Playwright coverage to prevent regressions:
+
+- CSP/COOP/COEP PoC app: `web/public/wasm-jit-csp/`
+- CSP test server (sets COOP/COEP + CSP variants): `server/poc-server.mjs`
+- Playwright spec: `tests/e2e/csp-fallback.spec.ts`
+
+Run locally:
+
+```bash
+node server/poc-server.mjs --port 4180
+# then open:
+#  - http://127.0.0.1:4180/csp/strict/
+#  - http://127.0.0.1:4180/csp/wasm-unsafe-eval/
+```
+
+Or run the automated check:
+
+```bash
+npx playwright test tests/e2e/csp-fallback.spec.ts
+```
+
+The host-side capability bit that gates Tier-1/2 WASM JIT is exposed as:
+
+- `jit_dynamic_wasm` in `src/platform/features.ts` and `web/src/platform/features.ts`
