@@ -19,8 +19,10 @@ serde = { version = "1", features = ["derive"] }
 wgpu = "0.20"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 lru = "0.16"
+tracing = "0.1"
 
 # Shared-memory framebuffer protocol (CPU worker ↔ GPU worker).
+aero-d3d9 = { path = "../aero-d3d9" }
 aero-shared = { path = "../aero-shared" }
 
 [dev-dependencies]

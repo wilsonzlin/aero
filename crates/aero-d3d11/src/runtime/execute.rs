@@ -93,7 +93,7 @@ impl D3D11Runtime {
                 None,
             )
             .await
-            .context("wgpu: request_device failed")?;
+            .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
 
         Ok(Self {
             device,

@@ -33,6 +33,9 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wasm-bindgen-test",
  "wgpu",
 ]
 
@@ -113,10 +116,11 @@ dependencies = [
  "blake3",
  "bytemuck",
  "futures",
+ "futures-intrusive",
  "half",
  "hashbrown 0.14.5",
  "insta",
- "lru 0.12.5",
+ "lru",
  "naga 24.0.0",
  "pollster",
  "pretty_assertions",
@@ -205,18 +209,20 @@ dependencies = [
 name = "aero-gpu"
 version = "0.1.0"
 dependencies = [
+ "aero-d3d9",
  "aero-shared",
  "bcdec_rs",
  "bitflags 2.10.0",
  "bytemuck",
  "futures-intrusive",
- "lru 0.16.3",
+ "lru",
  "naga 0.20.0",
  "pollster",
  "pretty_assertions",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tracing",
  "wgpu",
  "xxhash-rust",
 ]
@@ -396,7 +402,7 @@ dependencies = [
  "bytes",
  "hyper 0.14.32",
  "hyper-rustls 0.24.2",
- "lru 0.16.3",
+ "lru",
  "serde",
  "serde_json",
  "tempfile",
@@ -2115,8 +2121,6 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
- "allocator-api2",
- "equivalent",
  "foldhash 0.1.5",
  "serde",
 ]
@@ -4177,7 +4181,7 @@ version = "0.1.0"
 dependencies = [
  "futures-channel",
  "js-sys",
- "lru 0.16.3",
+ "lru",
  "thiserror 1.0.69",
  "wasm-bindgen",
  "wasm-bindgen-futures",
