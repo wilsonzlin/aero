@@ -22,7 +22,12 @@ param(
   [string]$HttpUrl = "http://10.0.2.2:18080/aero-virtio-selftest",
 
   [Parameter(Mandatory = $false)]
-  [string]$DnsHost = "host.lan"
+  [string]$DnsHost = "host.lan",
+
+  # Optional: bake a fixed virtio-blk test directory into the scheduled task.
+  # Example: "D:\\aero-virtio-selftest\\"
+  [Parameter(Mandatory = $false)]
+  [string]$BlkRoot = ""
 )
 
 Set-StrictMode -Version Latest
@@ -60,6 +65,11 @@ New-Item -ItemType Directory -Path $provisionDir -Force | Out-Null
 Copy-Item -LiteralPath $SelftestExePath -Destination (Join-Path $selftestDir "aero-virtio-selftest.exe") -Force
 Copy-Item -LiteralPath $DriversDir -Destination $driversOutDir -Recurse -Force
 
+$blkArg = ""
+if (-not [string]::IsNullOrEmpty($BlkRoot)) {
+  $blkArg = " --blk-root $BlkRoot"
+}
+
 $provisionCmd = @"
 @echo off
 setlocal enableextensions enabledelayedexpansion
@@ -93,7 +103,7 @@ copy /y "%MEDIA%\AERO\selftest\aero-virtio-selftest.exe" C:\AeroTests\ >> "%LOG%
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url $HttpUrl --dns-host $DnsHost" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url $HttpUrl --dns-host $DnsHost$blkArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 exit /b 0
@@ -123,6 +133,10 @@ The script will:
 - Create a scheduled task (SYSTEM, ONSTART) that runs the selftest each boot.
 
 After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 serial.
+
+Notes:
+- The virtio-blk selftest requires a usable/mounted virtio volume. If your VM boots from a non-virtio disk,
+  consider attaching a separate virtio data disk with a drive letter and using the selftest option `--blk-root`.
 "@
 
 Write-TextFileUtf8NoBom -Path (Join-Path $OutputDir "README.txt") -Content $readme

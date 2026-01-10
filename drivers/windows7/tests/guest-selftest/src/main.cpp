@@ -29,6 +29,10 @@ struct Options {
   // If unavailable, the selftest will fall back to "example.com".
   std::wstring dns_host = L"host.lan";
   std::wstring log_file = L"C:\\aero-virtio-selftest.log";
+  // Optional: override where the virtio-blk file I/O test writes its temporary file.
+  // This must be a directory on a virtio-backed volume (e.g. "D:\\aero-test\\").
+  // If empty, the selftest will attempt to auto-detect a mounted virtio volume.
+  std::wstring blk_root;
 
   DWORD net_timeout_sec = 120;
   DWORD io_file_size_mib = 32;
@@ -291,6 +295,11 @@ static std::optional<wchar_t> FindMountedDriveLetterOnDisks(Logger& log,
   for (wchar_t letter = L'C'; letter <= L'Z'; letter++) {
     if ((mask & (1u << (letter - L'A'))) == 0) continue;
 
+    wchar_t root[] = L"X:\\";
+    root[0] = letter;
+    const UINT drive_type = GetDriveTypeW(root);
+    if (drive_type != DRIVE_FIXED) continue;
+
     wchar_t vol_path[] = L"\\\\.\\X:";
     vol_path[4] = letter;
 
@@ -313,6 +322,32 @@ static std::optional<wchar_t> FindMountedDriveLetterOnDisks(Logger& log,
   }
 
   return std::nullopt;
+}
+
+static std::optional<DWORD> DiskNumberForDriveLetter(wchar_t letter) {
+  wchar_t vol_path[] = L"\\\\.\\X:";
+  vol_path[4] = letter;
+
+  HANDLE h =
+      CreateFileW(vol_path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0,
+                  nullptr);
+  if (h == INVALID_HANDLE_VALUE) return std::nullopt;
+
+  STORAGE_DEVICE_NUMBER devnum{};
+  DWORD bytes = 0;
+  const bool ok = DeviceIoControl(h, IOCTL_STORAGE_GET_DEVICE_NUMBER, nullptr, 0, &devnum,
+                                  sizeof(devnum), &bytes, nullptr) != 0;
+  CloseHandle(h);
+  if (!ok) return std::nullopt;
+  return devnum.DeviceNumber;
+}
+
+static std::optional<wchar_t> DriveLetterFromPath(const std::wstring& path) {
+  if (path.size() < 2) return std::nullopt;
+  const wchar_t c = path[0];
+  if (path[1] != L':') return std::nullopt;
+  if (!iswalpha(c)) return std::nullopt;
+  return static_cast<wchar_t>(towupper(c));
 }
 
 static bool EnsureDirectory(Logger& log, const std::wstring& dir) {
@@ -355,7 +390,6 @@ static bool VirtioBlkTest(Logger& log, const Options& opt) {
     return false;
   }
 
-  const auto drive_letter = FindMountedDriveLetterOnDisks(log, disks);
   std::wstring base_dir;
 
   wchar_t temp_path[MAX_PATH]{};
@@ -363,13 +397,36 @@ static bool VirtioBlkTest(Logger& log, const Options& opt) {
     wcscpy_s(temp_path, L"C:\\Windows\\Temp\\");
   }
 
-  if (drive_letter.has_value()) {
+  if (!opt.blk_root.empty()) {
+    base_dir = opt.blk_root;
+    (void)EnsureDirectory(log, base_dir);
+  } else if (const auto drive_letter = FindMountedDriveLetterOnDisks(log, disks);
+             drive_letter.has_value()) {
     base_dir = std::wstring(1, *drive_letter) + L":\\aero-virtio-selftest\\";
-    if (!EnsureDirectory(log, base_dir)) {
-      base_dir = temp_path;
-    }
+    (void)EnsureDirectory(log, base_dir);
   } else {
     base_dir = temp_path;
+  }
+
+  const auto base_drive = DriveLetterFromPath(base_dir);
+  if (!base_drive.has_value()) {
+    log.Logf("virtio-blk: unable to determine drive letter for test dir: %s",
+             WideToUtf8(base_dir).c_str());
+    log.LogLine("virtio-blk: specify --blk-root (e.g. D:\\aero-test\\) on a virtio volume");
+    return false;
+  }
+
+  const auto base_disk = DiskNumberForDriveLetter(*base_drive);
+  if (!base_disk.has_value()) {
+    log.Logf("virtio-blk: unable to query disk number for %lc:", *base_drive);
+    log.LogLine("virtio-blk: specify --blk-root (e.g. D:\\aero-test\\) on a virtio volume");
+    return false;
+  }
+
+  if (disks.count(*base_disk) == 0) {
+    log.Logf("virtio-blk: test dir is on disk %lu (not a detected virtio disk)", *base_disk);
+    log.LogLine("virtio-blk: ensure a virtio disk is formatted/mounted with a drive letter, or pass --blk-root");
+    return false;
   }
 
   const std::wstring test_file = JoinPath(base_dir, L"virtio-blk-test.bin");
@@ -798,6 +855,7 @@ static void PrintUsage() {
       "aero-virtio-selftest.exe [options]\n"
       "\n"
       "Options:\n"
+      "  --blk-root <path>         Directory to use for virtio-blk file I/O test\n"
       "  --http-url <url>          HTTP URL for TCP connectivity test\n"
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
@@ -837,6 +895,13 @@ int wmain(int argc, wchar_t** argv) {
         return 2;
       }
       opt.http_url = v;
+    } else if (arg == L"--blk-root") {
+      const wchar_t* v = next();
+      if (!v) {
+        PrintUsage();
+        return 2;
+      }
+      opt.blk_root = v;
     } else if (arg == L"--dns-host") {
       const wchar_t* v = next();
       if (!v) {
@@ -885,8 +950,9 @@ int wmain(int argc, wchar_t** argv) {
   Logger log(opt.log_file);
 
   log.LogLine("AERO_VIRTIO_SELFTEST|START|version=1");
-  log.Logf("AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|dns_host=%s",
-           WideToUtf8(opt.http_url).c_str(), WideToUtf8(opt.dns_host).c_str());
+  log.Logf("AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|dns_host=%s|blk_root=%s",
+           WideToUtf8(opt.http_url).c_str(), WideToUtf8(opt.dns_host).c_str(),
+           WideToUtf8(opt.blk_root).c_str());
 
   bool all_ok = true;
 

@@ -7,7 +7,7 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
 
 - **virtio-blk**
   - Detect a virtio disk device (SetupAPI hardware IDs).
-  - Create a temporary file and perform:
+  - Create a temporary file on a **virtio-backed volume** and perform:
     - sequential write + readback verification
     - `FlushFileBuffers` success check
     - sequential read pass
@@ -74,6 +74,13 @@ copy aero-virtio-selftest.exe C:\AeroTests\
 
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
   /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url http://10.0.2.2:18080/aero-virtio-selftest --dns-host host.lan"
+```
+
+If the VM has multiple disks (e.g. IDE boot disk + separate virtio data disk), you can force the virtio-blk test location:
+
+```bat
+schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --blk-root D:\aero-virtio-selftest\ --http-url http://10.0.2.2:18080/aero-virtio-selftest --dns-host host.lan"
 ```
 
 The host harness expects the tool to run automatically and print a final `AERO_VIRTIO_SELFTEST|RESULT|...` line to COM1.

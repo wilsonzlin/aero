@@ -11,6 +11,7 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
   - has the virtio drivers installed (virtio-blk + virtio-net)
   - has `aero-virtio-selftest.exe` installed
   - runs the selftest automatically on boot and logs to `COM1`
+  - has at least one **mounted/usable virtio-blk volume** (the selftest writes a temporary file to validate disk I/O)
 
 ## Running tests
 
@@ -57,3 +58,13 @@ The recommended flow:
 The guest-side README includes an example `schtasks /Create ...` command.
 
 If you want to fully automate provisioning, see `New-AeroWin7TestImage.ps1` (template generator / scaffold).
+
+`New-AeroWin7TestImage.ps1` also supports baking `--blk-root` into the installed scheduled task (useful if the VM boots
+from a non-virtio disk but has a separate virtio data volume):
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
+  -SelftestExePath ./aero-virtio-selftest.exe `
+  -DriversDir ./drivers-out `
+  -BlkRoot "D:\aero-virtio-selftest\"
+```

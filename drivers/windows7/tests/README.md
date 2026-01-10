@@ -26,7 +26,7 @@ drivers/windows7/tests/
 
 `guest-selftest/` builds `aero-virtio-selftest.exe`, a Win7 user-mode console tool that:
 - Detects virtio devices via SetupAPI (hardware IDs like `VEN_1AF4` / `VIRTIO`).
-- Runs a virtio-blk file I/O test (write/readback, sequential read, flush).
+- Runs a virtio-blk file I/O test (write/readback, sequential read, flush) on a **virtio-backed volume**.
 - Runs a virtio-net test (wait for DHCP, DNS resolve, HTTP GET).
 - Logs to:
   - stdout
@@ -46,6 +46,9 @@ The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line.
 ### Building (Windows)
 
 See `guest-selftest/README.md`.
+
+Note: The virtio-blk test requires a **mounted** virtio-backed volume. If the guest boots from a non-virtio disk,
+attach an additional virtio disk with a drive letter (or run the selftest with `--blk-root <path>`).
 
 ---
 
