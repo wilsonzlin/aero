@@ -63,7 +63,7 @@ jobs:
           path: baseline
           if_no_artifact_found: warn
 
-      - name: Run benchmarks (PR: base commit)
+      - name: "Run benchmarks (PR: base commit)"
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -79,7 +79,7 @@ jobs:
           rm -rf target/bench-base/criterion
           mv target/criterion target/bench-base/criterion
 
-      - name: Run benchmarks (PR: head commit)
+      - name: "Run benchmarks (PR: head commit)"
         if: github.event_name == 'pull_request'
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -92,7 +92,7 @@ jobs:
           rm -rf target/bench-new/criterion
           mv target/criterion target/bench-new/criterion
 
-      - name: Compare (PR: base vs head)
+      - name: "Compare (PR: base vs head)"
         if: github.event_name == 'pull_request'
         run: |
           set -euo pipefail
@@ -112,7 +112,7 @@ jobs:
           rm -rf target/bench-new/criterion
           mv target/criterion target/bench-new/criterion
 
-      - name: Compare (main: previous artifact vs current)
+      - name: "Compare (main: previous artifact vs current)"
         if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
