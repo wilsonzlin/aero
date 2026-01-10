@@ -17,6 +17,15 @@ Required headers (serve on the HTML document *and* all JS/WASM/worker responses)
 | `Cross-Origin-Opener-Policy` | `same-origin` |
 | `Cross-Origin-Embedder-Policy` | `require-corp` |
 
+Recommended hardening (optional):
+
+- `Cross-Origin-Resource-Policy: same-origin` (CORP)
+
+For production hosting templates and CSP guidance, see:
+
+- [`docs/deployment.md`](./deployment.md)
+- [`docs/security-headers.md`](./security-headers.md)
+
 Minimal Vite dev server configuration:
 
 ```ts
@@ -26,6 +35,7 @@ export default {
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Resource-Policy': 'same-origin',
     },
   },
 };

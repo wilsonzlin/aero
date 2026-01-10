@@ -253,6 +253,12 @@ If E2E tests fail early with errors about `SharedArrayBuffer` or `crossOriginIso
 
 Aero relies on **WASM threads** and shared memory for performance (e.g. CPU emulation in Web Workers with `Atomics`). Browsers only expose `SharedArrayBuffer` in a **cross-origin isolated** context, which requires COOP/COEP headers.
 
+See also:
+
+- [Deployment & Hosting (COOP/COEP)](./deployment.md)
+- [ADR 0002: Cross-origin isolation](./adr/0002-cross-origin-isolation.md)
+- [ADR 0004: WASM build variants (threaded vs single)](./adr/0004-wasm-build-variants.md)
+
 If your page is not cross-origin isolated:
 
 - `window.crossOriginIsolated` will be `false`
