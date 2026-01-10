@@ -16,6 +16,8 @@ This keeps CI signal stable and avoids GPU/WebGPU dependencies.
 
 In CI, the workflows build the app and run against a Vite `preview` server (`http://127.0.0.1:4173/`) via `--url` so "startup" includes a realistic page load.
 
+If the page exposes `window.aero.perf` with the capture/export API, the runner will also write a best-effort `perf_export.json` capture alongside `raw.json`/`summary.json`.
+
 ## Usage
 
 Run locally (requires a Playwright Chromium install):

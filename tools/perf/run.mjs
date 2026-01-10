@@ -132,6 +132,34 @@ async function gotoWithRetries(page, url) {
   });
 }
 
+async function tryCaptureAeroPerfExport(page) {
+  try {
+    return await page.evaluate(async () => {
+      const aero = globalThis.aero;
+      const perf = aero && typeof aero === "object" ? aero.perf : undefined;
+      if (!perf || typeof perf !== "object") return null;
+      if (typeof perf.captureStart !== "function" || typeof perf.captureStop !== "function") return null;
+      if (typeof perf.export !== "function") return null;
+
+      if (typeof perf.captureReset === "function") {
+        perf.captureReset();
+      }
+
+      perf.captureStart();
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      perf.captureStop();
+
+      try {
+        return JSON.stringify(perf.export(), null, 2);
+      } catch {
+        return null;
+      }
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function launchChromium() {
   return withRetries("chromium.launch", 3, async () =>
     chromium.launch({
@@ -161,6 +189,8 @@ async function runMicrobenchSamples(url, iterations) {
     const page = await context.newPage();
     await gotoWithRetries(page, url);
 
+    const aeroPerfExportJson = await tryCaptureAeroPerfExport(page);
+
     const microbench = () => {
       const t0 = performance.now();
       const buf = new Uint32Array(1_000_000);
@@ -181,7 +211,7 @@ async function runMicrobenchSamples(url, iterations) {
       samples.push(result.ms);
     }
 
-    return { samples, chromiumVersion: browser.version() };
+    return { samples, chromiumVersion: browser.version(), aeroPerfExportJson };
   } finally {
     await browser.close();
   }
@@ -250,10 +280,16 @@ async function main() {
     })),
   };
 
-  await Promise.all([
+  const writes = [
     fs.writeFile(path.join(outDir, "raw.json"), JSON.stringify(raw, null, 2)),
     fs.writeFile(path.join(outDir, "summary.json"), JSON.stringify(summary, null, 2)),
-  ]);
+  ];
+
+  if (typeof micro.aeroPerfExportJson === "string") {
+    writes.push(fs.writeFile(path.join(outDir, "perf_export.json"), `${micro.aeroPerfExportJson}\n`));
+  }
+
+  await Promise.all(writes);
 
   console.log(`[perf] wrote ${path.relative(process.cwd(), outDir)}/raw.json and summary.json`);
 }
