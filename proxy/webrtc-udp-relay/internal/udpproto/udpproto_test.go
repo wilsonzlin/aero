@@ -109,4 +109,3 @@ func TestGoldenVector(t *testing.T) {
 		t.Fatalf("decoded datagram mismatch: got %#v, want %#v", decoded, d)
 	}
 }
-

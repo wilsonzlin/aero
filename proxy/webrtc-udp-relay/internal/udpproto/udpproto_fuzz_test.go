@@ -42,4 +42,3 @@ func FuzzDecodeDatagram(f *testing.F) {
 		}
 	})
 }
-
