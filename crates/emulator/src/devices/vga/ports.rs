@@ -52,6 +52,15 @@ pub struct VgaDevice {
     ac_flip_flop_data: Cell<bool>,
     ac_display_enabled: bool,
 
+    /// Simple, deterministic Input Status 1 vertical retrace bit generator.
+    ///
+    /// Real VGA hardware updates the vertical retrace bit based on scan timing.
+    /// We do not model timing yet, but many real-mode programs poll 0x3DA
+    /// waiting for the bit to change. If it never changes, they can spin
+    /// forever. To avoid hangs while keeping behaviour predictable, we toggle
+    /// the bit on each status read.
+    input_status1_vretrace: Cell<bool>,
+
     derived: VgaDerivedState,
 }
 
@@ -77,6 +86,8 @@ impl Default for VgaDevice {
             ac_regs: vec![0; AC_REGS_INITIAL_LEN],
             ac_flip_flop_data: Cell::new(false),
             ac_display_enabled: false,
+
+            input_status1_vretrace: Cell::new(false),
 
             derived: VgaDerivedState::default(),
         };
@@ -242,7 +253,13 @@ impl VgaDevice {
             p if p == self.active_input_status1_port() => {
                 // Input Status 1 read resets the attribute controller flip-flop.
                 self.ac_flip_flop_data.set(false);
-                0x00
+                let next = !self.input_status1_vretrace.get();
+                self.input_status1_vretrace.set(next);
+
+                // Bit 3: vertical retrace (commonly polled).
+                // Bit 0: display enable (roughly correlates with retrace/blanking).
+                let v = if next { 0x08 } else { 0x00 };
+                v | (v >> 3)
             }
 
             p if p == active_crtc_index => self.crtc_index,
