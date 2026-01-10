@@ -30,6 +30,7 @@ function printUsage(exitCode = 0) {
     '  --concurrency <N>      Number of in-flight requests (default: 4)',
     '  --passes <N>           Repeat the same range plan N times (default: 1; useful for cache hit verification)',
     '  --seed <N>             Seed for deterministic random ranges (only affects --random)',
+    '  --unique               Avoid requesting the same chunk multiple times per pass (only affects --random)',
     '  --header <k:v>         Extra request header (repeatable), e.g. --header \"Authorization: Bearer ...\"',
     '  --json                 Emit machine-readable JSON (suppresses human-readable logs)',
     '  --strict               Exit non-zero if any request fails correctness checks',
@@ -81,6 +82,7 @@ function parseArgs(argv) {
     headers: {},
     passes: 1,
     seed: null,
+    unique: false,
     json: false,
     strict: false,
   };
@@ -101,6 +103,8 @@ function parseArgs(argv) {
       opts.passes = parsePositiveInt('--passes', argv[++i]);
     } else if (arg === '--seed') {
       opts.seed = parseNonNegativeInt('--seed', argv[++i]);
+    } else if (arg === '--unique') {
+      opts.unique = true;
     } else if (arg === '--header') {
       const raw = argv[++i];
       if (raw == null) {
@@ -377,13 +381,47 @@ async function getResourceInfo(url, extraHeaders) {
   );
 }
 
-function buildPlan({ size, chunkSize, count, mode, seed }) {
+function buildPlan({ size, chunkSize, count, mode, seed, unique }) {
   const chunks = Math.max(1, Math.ceil(size / chunkSize));
   const rng = seed == null ? null : makeMulberry32(seed);
   const plan = [];
+  const pickIndex = () => (rng ? Math.floor(rng() * chunks) : randomInt(0, chunks));
+
+  const used = mode === 'random' && unique ? new Set() : null;
+
   for (let i = 0; i < count; i++) {
-    const chunkIndex =
-      mode === 'random' ? (rng ? Math.floor(rng() * chunks) : randomInt(0, chunks)) : i % chunks;
+    let chunkIndex;
+    if (mode === 'random') {
+      if (used) {
+        // Keep ranges unique within a pass. If we exhaust the chunk space (very
+        // small objects or very large counts), start a new cycle.
+        if (used.size === chunks) used.clear();
+
+        let attempts = 0;
+        do {
+          chunkIndex = pickIndex();
+          attempts++;
+        } while (used.has(chunkIndex) && attempts < 10000);
+
+        if (used.has(chunkIndex)) {
+          // Extremely unlikely unless count≈chunks and RNG keeps colliding.
+          // Fall back to a linear scan for the next unused index.
+          for (let j = 0; j < chunks; j++) {
+            if (!used.has(j)) {
+              chunkIndex = j;
+              break;
+            }
+          }
+        }
+
+        used.add(chunkIndex);
+      } else {
+        chunkIndex = pickIndex();
+      }
+    } else {
+      chunkIndex = i % chunks;
+    }
+
     const start = chunkIndex * chunkSize;
     const end = Math.min(start + chunkSize - 1, size - 1);
     plan.push({ index: i, start, end });
@@ -485,7 +523,7 @@ async function main() {
   log(
     `Config: chunkSize=${formatBytes(opts.chunkSize)} count=${opts.count} concurrency=${opts.concurrency} passes=${opts.passes} seed=${
       opts.seed ?? '(random)'
-    } mode=${opts.mode}`,
+    } unique=${opts.unique} mode=${opts.mode}`,
   );
 
   const info = await getResourceInfo(opts.url, opts.headers);
@@ -502,6 +540,7 @@ async function main() {
     count: opts.count,
     mode: opts.mode,
     seed: opts.seed,
+    unique: opts.unique,
   });
 
   let warned200 = false;
@@ -724,6 +763,7 @@ async function main() {
             concurrency: opts.concurrency,
             passes: opts.passes,
             seed: opts.seed,
+            unique: opts.unique,
             mode: opts.mode,
             headers: opts.headers,
           },

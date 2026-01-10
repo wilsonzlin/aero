@@ -38,6 +38,7 @@ node tools/range-harness/index.js --url <URL> --random --json > range-results.js
 - `--concurrency <N>`: number of in-flight requests (default: `4`)
 - `--passes <N>`: repeat the same range plan `N` times (default: `1`). Useful for verifying that a CDN caches byte ranges (pass 1 is typically `Miss`, pass 2 should become `Hit` if caching is configured).
 - `--seed <N>`: seed for deterministic random ranges (only affects `--random`). Useful when you want to reproduce the same random plan across multiple runs.
+- `--unique`: avoid requesting the same chunk more than once per pass (only affects `--random`). Useful when you want a cleaner pass-1-warm / pass-2-hit signal for cache verification.
 - `--header "Name: value"`: extra request header (repeatable). Useful for authenticated endpoints.
 - `--json`: emit machine-readable JSON (suppresses the per-request text output)
 - `--strict`: exit non-zero if any request fails correctness checks (bad `Content-Range`, `416`, etc)
@@ -102,7 +103,7 @@ If you want the same random plan across multiple separate runs, add a `--seed`:
 ```bash
 node tools/range-harness/index.js \
   --url "https://d111111abcdef8.cloudfront.net/windows7.img" \
-  --chunk-size 1048576 --count 32 --passes 2 --concurrency 4 --random \
+  --chunk-size 1048576 --count 32 --passes 2 --concurrency 4 --random --unique \
   --seed 12345
 ```
 
@@ -164,7 +165,7 @@ Example (trimmed):
 
 ```text
 URL: https://d111111abcdef8.cloudfront.net/windows7.img
-Config: chunkSize=8.00MiB count=32 concurrency=4 passes=1 seed=(random) mode=random
+Config: chunkSize=8.00MiB count=32 concurrency=4 passes=1 seed=(random) unique=false mode=random
 ...
 Summary
 -------
