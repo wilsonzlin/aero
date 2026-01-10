@@ -9,6 +9,10 @@ pub struct GpuCapabilities {
     pub min_uniform_buffer_offset_alignment: u32,
     pub min_storage_buffer_offset_alignment: u32,
     pub max_buffer_size: u64,
+    /// Whether compute pipelines are supported on the active backend/device.
+    ///
+    /// WebGL2 backends (wgpu's `Backend::Gl` on wasm) do not support compute.
+    pub supports_compute: bool,
 }
 
 impl GpuCapabilities {
@@ -18,6 +22,7 @@ impl GpuCapabilities {
             min_uniform_buffer_offset_alignment: limits.min_uniform_buffer_offset_alignment,
             min_storage_buffer_offset_alignment: limits.min_storage_buffer_offset_alignment,
             max_buffer_size: limits.max_buffer_size,
+            supports_compute: true,
         }
     }
 }
@@ -452,6 +457,7 @@ mod tests {
             min_uniform_buffer_offset_alignment: 256,
             min_storage_buffer_offset_alignment: 256,
             max_buffer_size: 1024 * 1024,
+            supports_compute: true,
         };
 
         // We can't instantiate UploadRingBuffer without a Device, but we can
@@ -472,6 +478,7 @@ mod tests {
             min_uniform_buffer_offset_alignment: 256,
             min_storage_buffer_offset_alignment: 128,
             max_buffer_size: 4096,
+            supports_compute: true,
         };
 
         let desc = UploadRingBufferDescriptor {

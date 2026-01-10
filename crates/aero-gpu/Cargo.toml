@@ -5,8 +5,10 @@ edition = "2021"
 
 [dependencies]
 bytemuck = { version = "1.14", features = ["derive"] }
+thiserror = "1.0"
 wgpu = "0.20"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+lru = "0.12"
 
 [dev-dependencies]
 pollster = "0.3"
-
