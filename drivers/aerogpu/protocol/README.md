@@ -1,0 +1,158 @@
+# AeroGPU Guest↔Emulator Protocol (PCI/MMIO + Rings + Command Stream)
+
+This directory defines the **stable ABI contract** between:
+
+- the Windows 7 AeroGPU WDDM driver stack (KMD + UMD), and
+- the Aero emulator’s virtual GPU device model.
+
+The contract is expressed as C/C++ headers suitable for **WDK 7.1** builds and for host-side parsing.
+
+## Files
+
+- `aerogpu_pci.h` – PCI IDs, BAR layout, MMIO register map, shared enums.
+- `aerogpu_ring.h` – ring header layout, submission descriptor, allocation table, fence page.
+- `aerogpu_cmd.h` – command stream packet formats and opcodes (“AeroGPU IR”).
+
+## Versioning model
+
+The protocol uses a **major.minor** version:
+
+- `ABI_MAJOR` changes are **breaking**. A driver built for major *N* must not drive a device advertising major *N+1*.
+- `ABI_MINOR` changes are **backwards compatible**. Minor bumps may add:
+  - new MMIO registers (in currently-reserved space),
+  - new command opcodes,
+  - new optional features bits,
+  - larger structs **only** when an explicit `size_bytes` is present (or via new opcodes).
+
+The device reports `AEROGPU_ABI_VERSION_U32` via MMIO `AEROGPU_MMIO_REG_ABI_VERSION`.
+
+## Endianness, alignment, packing
+
+- The guest is x86/x64 Windows: **little-endian**. All multi-byte fields are little-endian.
+- Command buffers and tables are sequences of packed structs. Headers use `#pragma pack(push, 1)` where layout must be exact.
+- Any structure that can vary in size uses an explicit `size_bytes` field, and/or a packet header with `size_bytes`.
+
+## PCI identity
+
+The device is exposed as a PCI function with project-specific IDs:
+
+- Vendor ID: `AEROGPU_PCI_VENDOR_ID`
+- Device ID: `AEROGPU_PCI_DEVICE_ID`
+- Class code: display controller (`0x03`), VGA-compatible subclass (`0x00`)
+
+These IDs are **not PCI-SIG assigned** and are intended only for use inside the Aero emulator.
+
+## BAR / MMIO overview
+
+BAR0 exposes a memory-mapped register block (`AEROGPU_PCI_BAR0_SIZE_BYTES`, currently 64 KiB).
+
+The key MMIO responsibilities are:
+
+1. **Discovery**
+   - `MAGIC`, `ABI_VERSION`, and `FEATURES`.
+2. **Command transport**
+   - Ring GPA/size programming.
+   - Doorbell.
+   - IRQ status/ack.
+3. **Completion**
+   - Completed fence value in MMIO and optionally a shared fence page.
+4. **Display output**
+   - Scanout0 configuration (width/height/format/pitch/framebuffer GPA).
+   - Cursor configuration is reserved and feature-gated.
+
+See `aerogpu_pci.h` for exact offsets and bit definitions.
+
+## Command submission transport
+
+### Ring setup (KMD)
+
+1. Allocate a contiguous guest memory region for the ring:
+   - at least `sizeof(aerogpu_ring_header) + entry_count * sizeof(aerogpu_submit_desc)`.
+2. Initialize `aerogpu_ring_header` (magic, abi_version, entry_count, etc).
+3. Program MMIO:
+   - `RING_GPA_LO/HI`
+   - `RING_SIZE_BYTES`
+   - set `RING_CONTROL_ENABLE`
+4. Optionally allocate and program a shared fence page:
+   - program `FENCE_GPA_LO/HI` (only if `AEROGPU_FEATURE_FENCE_PAGE` is set).
+5. Enable interrupts via `IRQ_ENABLE` (optional; polling is allowed).
+
+### Submitting work (KMD)
+
+For each submission:
+
+1. Write an `aerogpu_submit_desc` into the next ring slot.
+2. Update `ring->tail` (monotonic counter).
+3. Write to `AEROGPU_MMIO_REG_DOORBELL` to notify the device.
+
+The device consumes entries in order, updating `ring->head`.
+
+### Allocation table (optional)
+
+Each submission may provide an optional **sideband allocation table**:
+
+- The submit descriptor points to `alloc_table_gpa/alloc_table_size_bytes`.
+- The table contains an `aerogpu_alloc_table_header` followed by `aerogpu_alloc_entry` items.
+- Commands may refer to backing memory by `alloc_id` (e.g., for resource creation).
+
+This enables compact command streams that use small IDs instead of repeating GPAs.
+
+## Fence / completion model
+
+Fences are **monotonic 64-bit** values chosen by the guest.
+
+- Each submission provides `signal_fence`.
+- The device updates the completed fence to at least that value once the submission is finished.
+- Completion is observable via:
+  - MMIO `COMPLETED_FENCE_LO/HI` (always available), and
+  - optionally `aerogpu_fence_page.completed_fence` if a fence page is configured.
+
+If interrupts are enabled, the device raises `AEROGPU_IRQ_FENCE` when the completed fence advances (unless the submission requested `AEROGPU_SUBMIT_FLAG_NO_IRQ`).
+
+## Command stream (“AeroGPU IR”)
+
+### Structure
+
+Command buffers are byte streams in guest memory:
+
+1. `aerogpu_cmd_stream_header`
+2. A sequence of packets, each beginning with `aerogpu_cmd_hdr`.
+
+`aerogpu_cmd_hdr.size_bytes` provides the packet length for skipping unknown opcodes.
+
+### Forward-compat rules
+
+Consumers (the emulator) must:
+
+- Validate that the stream header magic matches and the major ABI is supported.
+- Skip unknown opcodes using `size_bytes`.
+- Require `size_bytes` to be at least `sizeof(aerogpu_cmd_hdr)` and 4-byte aligned.
+
+Producers (the driver) must:
+
+- Emit correct `size_bytes` for every packet.
+- Zero all reserved fields.
+- Only use features/opcodes indicated by the ABI version and feature bits.
+
+### Minimal opcode set
+
+The initial protocol defines an IR sufficient for D3D9-style rendering and can be extended for D3D10/11:
+
+- Resource management: create/destroy buffer/texture, dirty range notifications.
+- Shader upload: DXBC blob upload + bind.
+- Pipeline state: blend/depth/raster state setting.
+- Render state: render targets, viewport, scissor.
+- Input assembler: vertex/index buffers.
+- Draw, draw indexed.
+- Clear.
+- Present.
+
+See `aerogpu_cmd.h` for the full opcode list and packet layouts.
+
+## End-to-end flow (Windows → emulator)
+
+1. **UMD encodes** AeroGPU IR packets into a command buffer in guest memory.
+2. **KMD submits** the buffer by writing an `aerogpu_submit_desc` to the shared ring and ringing the MMIO doorbell.
+3. The **emulator consumes** ring entries, parses command buffers, and translates IR to WebGPU operations.
+4. On completion, the emulator **signals the fence** (MMIO + optional fence page) and optionally raises an IRQ.
+
