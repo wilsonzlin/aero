@@ -803,7 +803,7 @@ const compat = {
         }
         
         if (typeof SharedArrayBuffer === 'undefined') {
-            issues.push('SharedArrayBuffer not available - check COOP/COEP headers');
+            issues.push('SharedArrayBuffer not available - check COOP/COEP headers (see docs/security-headers.md)');
         }
         
         if (!navigator.storage?.getDirectory) {
