@@ -27,6 +27,11 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
         return status;
     }
 
+    {
+        PDEVICE_CONTEXT deviceContext = VirtioInputGetDeviceContext(device);
+        virtio_input_device_init(&deviceContext->InputDevice, NULL, NULL);
+    }
+
     return VirtioInputQueueInitialize(device);
 }
 
@@ -71,6 +76,15 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
     UNREFERENCED_PARAMETER(Device);
     UNREFERENCED_PARAMETER(TargetState);
 
+    /*
+     * Clear any latched state (prevents "stuck keys" when the device is power
+     * cycled or the VM focus changes) and emit an all-zero report to the HID
+     * stacks.
+     */
+    {
+        PDEVICE_CONTEXT deviceContext = VirtioInputGetDeviceContext(Device);
+        virtio_input_device_reset_state(&deviceContext->InputDevice, true);
+    }
+
     return STATUS_SUCCESS;
 }
-
