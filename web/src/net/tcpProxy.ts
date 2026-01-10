@@ -26,7 +26,12 @@ export class WebSocketTcpProxyClient {
 
     const url = new URL(this.proxyBaseUrl);
     url.pathname = `${url.pathname.replace(/\/$/, "")}/tcp`;
-    url.searchParams.set("target", `${remoteIp}:${remotePort}`);
+    url.searchParams.set("v", "1");
+    // `remoteIp` may be an IPv6 literal. For the canonical host+port form we do
+    // NOT require bracket syntax, but callers may already provide it.
+    const host = remoteIp.startsWith("[") && remoteIp.endsWith("]") ? remoteIp.slice(1, -1) : remoteIp;
+    url.searchParams.set("host", host);
+    url.searchParams.set("port", String(remotePort));
 
     const ws = new WebSocket(url.toString());
     ws.binaryType = "arraybuffer";
@@ -60,4 +65,3 @@ export class WebSocketTcpProxyClient {
     ws.close();
   }
 }
-
