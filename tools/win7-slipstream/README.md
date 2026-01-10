@@ -17,6 +17,10 @@ this tool produces a new **bootable** ISO that:
 
 No Windows files are shipped in this repository. The tool only transforms user-provided media.
 
+Related documentation:
+
+- `docs/win7-bcd-offline-patching.md` (BCD element IDs, object selection, and verification recipes)
+
 ## Build
 
 ```bash
