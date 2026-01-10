@@ -239,7 +239,9 @@ function Resolve-MSBuildPath {
   param($Toolchain)
 
   $fromJson = Get-ToolchainPropertyValue -Toolchain $Toolchain -Names @(
-    'MSBuild', 'MsBuild', 'msbuild', 'MSBuildPath', 'MsBuildPath', 'msbuildPath'
+    'MSBuildExe', 'MsBuildExe', 'msbuildExe',
+    'MSBuild', 'MsBuild', 'msbuild',
+    'MSBuildPath', 'MsBuildPath', 'msbuildPath'
   )
   if ($fromJson) {
     $expanded = [Environment]::ExpandEnvironmentVariables($fromJson)
