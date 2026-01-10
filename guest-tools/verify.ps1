@@ -538,7 +538,7 @@ $report = @{
     schema_version = 1
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "2.2.0"
+        version = "2.3.0"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -1336,6 +1336,7 @@ try {
             $imagePath = Get-RegistryString $svcKey "ImagePath"
             $group = Get-RegistryString $svcKey "Group"
             $type = Get-RegistryDword $svcKey "Type"
+            $errorControl = Get-RegistryDword $svcKey "ErrorControl"
             $found = @{
                 name = $drv.Name
                 display_name = $drv.DisplayName
@@ -1348,6 +1349,7 @@ try {
                 registry_image_path = $imagePath
                 registry_group = $group
                 registry_type = $type
+                registry_error_control = $errorControl
             }
             break
         }
@@ -1405,6 +1407,9 @@ try {
         if ($found.registry_image_path) {
             $svcDetails += ("Registry ImagePath=" + $found.registry_image_path)
         }
+        if ($found.registry_group) { $svcDetails += ("Registry Group=" + $found.registry_group) }
+        if ($found.registry_type -ne $null) { $svcDetails += ("Registry Type=" + $found.registry_type) }
+        if ($found.registry_error_control -ne $null) { $svcDetails += ("Registry ErrorControl=" + $found.registry_error_control) }
         if ($resolvedImagePath) {
             $svcDetails += ("Resolved ImagePath=" + $resolvedImagePath + " (exists=" + $resolvedImageExists + ")")
         }
@@ -1416,6 +1421,18 @@ try {
         if ($found.registry_start_value -ne $null -and $found.registry_start_value -ne 0) {
             $svcStatus = Merge-Status $svcStatus "WARN"
             $svcDetails += "Storage service is not configured as BOOT_START (Start=0). Switching the boot disk to virtio-blk may fail (0x7B). Re-run setup.cmd."
+        }
+        if ($found.registry_type -ne $null -and $found.registry_type -ne 1) {
+            $svcStatus = Merge-Status $svcStatus "WARN"
+            $svcDetails += "Storage service Type is not 1 (kernel driver). Boot loading may fail."
+        }
+        if ($found.registry_group -and ($found.registry_group.ToLower() -ne "scsi miniport")) {
+            $svcStatus = Merge-Status $svcStatus "WARN"
+            $svcDetails += "Storage service Group is not 'SCSI miniport'. Boot loading order may be incorrect."
+        }
+        if ($found.registry_error_control -ne $null -and $found.registry_error_control -ne 1) {
+            $svcStatus = Merge-Status $svcStatus "WARN"
+            $svcDetails += "Storage service ErrorControl is not 1. Recommended is 1 for boot-critical storage."
         }
         if ($found.state -ne "Running") {
             $svcStatus = "WARN"
