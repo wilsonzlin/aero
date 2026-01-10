@@ -1,58 +1,67 @@
-// @ts-check
+import { clearIdb, clearOpfs, extensionForFormat, pickDefaultBackend, type DiskBackend, type DiskImageMetadata, type DiskKind, type DiskFormat, type MountConfig } from "./metadata";
+import type { ImportProgress } from "./import_export";
 
-import { clearIdb, clearOpfs, pickDefaultBackend } from "./metadata.ts";
+export type ExportHandle = {
+  stream: ReadableStream<Uint8Array>;
+  done: Promise<{ checksumCrc32: string }>;
+  meta: DiskImageMetadata;
+};
+
+type DiskWorkerError = { message: string; name?: string; stack?: string };
+
+type DiskWorkerProgressMessage = { type: "progress"; requestId: number } & ImportProgress;
+type DiskWorkerResponseMessage =
+  | { type: "response"; requestId: number; ok: true; result: unknown }
+  | { type: "response"; requestId: number; ok: false; error: DiskWorkerError };
+
+type DiskWorkerMessage = DiskWorkerProgressMessage | DiskWorkerResponseMessage;
+
+type PendingRequest = {
+  resolve: (v: unknown) => void;
+  reject: (e: unknown) => void;
+  onProgress?: (p: ImportProgress) => void;
+};
+
+function defaultExportFileName(meta: DiskImageMetadata, gzip: boolean): string {
+  const ext = extensionForFormat(meta.format);
+  const base = meta.name?.trim() ? meta.name.trim() : meta.id;
+  const withExt = base.toLowerCase().endsWith(`.${ext}`) ? base : `${base}.${ext}`;
+  return gzip ? `${withExt}.gz` : withExt;
+}
+
+function isHddKind(kind: DiskKind | undefined): kind is DiskKind {
+  return kind === "hdd" || kind === "cd";
+}
+
+function isFormat(format: DiskFormat | undefined): format is DiskFormat {
+  return format === "raw" || format === "iso" || format === "qcow2" || format === "unknown";
+}
 
 /**
- * @typedef {import("./metadata.ts").DiskBackend} DiskBackend
- */
-
-/**
- * @typedef {import("./metadata.ts").DiskImageMetadata} DiskImageMetadata
- */
-
-/**
- * @typedef {import("./metadata.ts").MountConfig} MountConfig
- */
-
-/**
- * @typedef {import("./import_export.ts").ImportProgress} ImportProgress
- */
-
-/**
- * @typedef ExportHandle
- * @property {ReadableStream<Uint8Array>} stream
- * @property {Promise<{ checksumCrc32: string }>} done
- * @property {DiskImageMetadata} meta
- */
-
-/**
- * Main-thread API for disk image management. Heavy lifting is done in a
- * dedicated worker (`disk_worker.ts`) to avoid blocking the UI.
+ * Main-thread API for disk image management.
+ *
+ * Heavy lifting is done in a dedicated worker (`disk_worker.ts`) to avoid blocking the UI.
  */
 export class DiskManager {
-  /**
-   * @param {{ backend: DiskBackend; worker?: Worker } } options
-   */
-  constructor(options) {
+  readonly backend: DiskBackend;
+  private readonly worker: Worker;
+  private nextRequestId = 1;
+  private readonly pending = new Map<number, PendingRequest>();
+
+  constructor(options: { backend: DiskBackend; worker?: Worker }) {
     this.backend = options.backend;
-    /** @type {Worker} */
     this.worker =
-      options.worker ||
+      options.worker ??
       new Worker(new URL("./disk_worker.ts", import.meta.url), {
         type: "module",
       });
 
-    /** @type {number} */
-    this.nextRequestId = 1;
-    /** @type {Map<number, { resolve: (v: any) => void; reject: (e: any) => void; onProgress?: ((p: ImportProgress) => void) }>} */
-    this.pending = new Map();
-
-    this.worker.onmessage = (event) => {
+    this.worker.onmessage = (event: MessageEvent<DiskWorkerMessage>) => {
       const msg = event.data;
       if (!msg || typeof msg !== "object") return;
       if (msg.type === "progress") {
         const entry = this.pending.get(msg.requestId);
-        if (entry?.onProgress) entry.onProgress(msg);
+        entry?.onProgress?.(msg);
         return;
       }
       if (msg.type === "response") {
@@ -65,48 +74,34 @@ export class DiskManager {
     };
   }
 
-  /**
-   * @param {{ backend?: DiskBackend } | undefined} options
-   * @returns {Promise<DiskManager>}
-   */
-  static async create(options) {
-    const backend = options?.backend || pickDefaultBackend();
+  static async create(options?: { backend?: DiskBackend }): Promise<DiskManager> {
+    const backend = options?.backend ?? pickDefaultBackend();
     return new DiskManager({ backend });
   }
 
-  /**
-   * @returns {DiskBackend}
-   */
-  static pickDefaultBackend() {
+  static pickDefaultBackend(): DiskBackend {
     return pickDefaultBackend();
   }
 
-  /**
-   * @param {DiskBackend | undefined} backend
-   * @returns {Promise<void>}
-   */
-  static async clearAllStorage(backend) {
+  static async clearAllStorage(backend?: DiskBackend): Promise<void> {
     if (!backend || backend === "opfs") await clearOpfs();
     if (!backend || backend === "idb") await clearIdb();
   }
 
-  close() {
+  close(): void {
     this.worker.terminate();
     this.pending.clear();
   }
 
-  /**
-   * @template T
-   * @param {string} op
-   * @param {any} payload
-   * @param {{ onProgress?: (p: ImportProgress) => void; transfer?: Transferable[] } | undefined} options
-   * @returns {Promise<T>}
-   */
-  request(op, payload, options) {
+  private request<T>(
+    op: string,
+    payload: unknown,
+    options?: { onProgress?: (p: ImportProgress) => void; transfer?: Transferable[] },
+  ): Promise<T> {
     const requestId = this.nextRequestId++;
-    const transfer = options?.transfer || [];
-    return new Promise((resolve, reject) => {
-      this.pending.set(requestId, { resolve, reject, onProgress: options?.onProgress });
+    const transfer = options?.transfer ?? [];
+    return new Promise<T>((resolve, reject) => {
+      this.pending.set(requestId, { resolve: resolve as PendingRequest["resolve"], reject, onProgress: options?.onProgress });
       this.worker.postMessage(
         {
           type: "request",
@@ -114,7 +109,7 @@ export class DiskManager {
           backend: this.backend,
           op,
           payload,
-          port: payload?.port,
+          port: (payload as { port?: MessagePort } | undefined)?.port,
         },
         transfer,
       );
@@ -124,14 +119,14 @@ export class DiskManager {
   /**
    * @returns {Promise<DiskImageMetadata[]>}
    */
-  async listDisks() {
+  async listDisks(): Promise<DiskImageMetadata[]> {
     return this.request("list_disks", {});
   }
 
   /**
    * @returns {Promise<MountConfig>}
    */
-  async getMounts() {
+  async getMounts(): Promise<MountConfig> {
     return this.request("get_mounts", {});
   }
 
@@ -139,7 +134,7 @@ export class DiskManager {
    * @param {MountConfig} mounts
    * @returns {Promise<MountConfig>}
    */
-  async setMounts(mounts) {
+  async setMounts(mounts: MountConfig): Promise<MountConfig> {
     return this.request("set_mounts", mounts);
   }
 
@@ -149,7 +144,13 @@ export class DiskManager {
    * @param {{ name: string; sizeBytes: number; kind?: "hdd"; format?: "raw"; onProgress?: (p: ImportProgress) => void }} options
    * @returns {Promise<DiskImageMetadata>}
    */
-  async createBlankDisk(options) {
+  async createBlankDisk(options: {
+    name: string;
+    sizeBytes: number;
+    kind?: "hdd";
+    format?: "raw";
+    onProgress?: (p: ImportProgress) => void;
+  }): Promise<DiskImageMetadata> {
     return this.request(
       "create_blank",
       { name: options.name, sizeBytes: options.sizeBytes, kind: options.kind || "hdd", format: options.format || "raw" },
@@ -164,10 +165,18 @@ export class DiskManager {
    * @param {{ name?: string; kind?: "hdd" | "cd"; format?: "raw" | "iso" | "qcow2" | "unknown"; onProgress?: (p: ImportProgress) => void } | undefined} options
    * @returns {Promise<DiskImageMetadata>}
    */
-  async importDisk(file, options) {
+  async importDisk(
+    file: File,
+    options?: {
+      name?: string;
+      kind?: DiskKind;
+      format?: DiskFormat;
+      onProgress?: (p: ImportProgress) => void;
+    },
+  ): Promise<DiskImageMetadata> {
     return this.request(
       "import_file",
-      { file, name: options?.name, kind: options?.kind, format: options?.format },
+      { file, name: options?.name, kind: isHddKind(options?.kind) ? options.kind : undefined, format: isFormat(options?.format) ? options.format : undefined },
       { onProgress: options?.onProgress, transfer: [] },
     );
   }
@@ -176,7 +185,7 @@ export class DiskManager {
    * @param {string} id
    * @returns {Promise<{ meta: DiskImageMetadata; actualSizeBytes: number }>}
    */
-  async statDisk(id) {
+  async statDisk(id: string): Promise<{ meta: DiskImageMetadata; actualSizeBytes: number }> {
     return this.request("stat_disk", { id });
   }
 
@@ -186,7 +195,11 @@ export class DiskManager {
    * @param {{ onProgress?: (p: ImportProgress) => void } | undefined} options
    * @returns {Promise<DiskImageMetadata>}
    */
-  async resizeDisk(id, newSizeBytes, options) {
+  async resizeDisk(
+    id: string,
+    newSizeBytes: number,
+    options?: { onProgress?: (p: ImportProgress) => void },
+  ): Promise<DiskImageMetadata> {
     return this.request("resize_disk", { id, newSizeBytes }, { onProgress: options?.onProgress });
   }
 
@@ -194,7 +207,7 @@ export class DiskManager {
    * @param {string} id
    * @returns {Promise<void>}
    */
-  async deleteDisk(id) {
+  async deleteDisk(id: string): Promise<void> {
     await this.request("delete_disk", { id });
   }
 
@@ -208,36 +221,32 @@ export class DiskManager {
    * @param {{ gzip?: boolean; onProgress?: (p: ImportProgress) => void } | undefined} options
    * @returns {Promise<ExportHandle>}
    */
-  async exportDiskStream(id, options) {
+  async exportDiskStream(id: string, options?: { gzip?: boolean; onProgress?: (p: ImportProgress) => void }): Promise<ExportHandle> {
     const channel = new MessageChannel();
-    /** @type {MessagePort} */
     const port = channel.port1;
 
-    const start = await this.request(
+    const start = (await this.request(
       "export_disk",
       { id, options: { gzip: !!options?.gzip }, port },
       { onProgress: options?.onProgress, transfer: [port] },
-    );
+    )) as { started: true; meta: DiskImageMetadata };
 
-    /** @type {DiskImageMetadata} */
     const meta = start.meta;
 
-    /** @type {(value: { checksumCrc32: string }) => void} */
-    let doneResolve;
-    /** @type {(reason: any) => void} */
-    let doneReject;
-    const done = new Promise((resolve, reject) => {
+    let doneResolve: (value: { checksumCrc32: string }) => void;
+    let doneReject: (reason: unknown) => void;
+    const done = new Promise<{ checksumCrc32: string }>((resolve, reject) => {
       doneResolve = resolve;
       doneReject = reject;
     });
 
-    const stream = new ReadableStream({
+    const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        channel.port2.onmessage = (event) => {
-          const msg = event.data;
+        channel.port2.onmessage = (event: MessageEvent<any>) => {
+          const msg = event.data as any;
           if (!msg || typeof msg !== "object") return;
-          if (msg.type === "chunk") {
-            controller.enqueue(msg.chunk);
+          if (msg.type === "chunk" && msg.chunk instanceof Uint8Array) {
+            controller.enqueue(msg.chunk as Uint8Array);
             return;
           }
           if (msg.type === "done") {
@@ -253,9 +262,8 @@ export class DiskManager {
             channel.port2.close();
           }
         };
-        // `MessagePort` queues messages until it is started; setting `onmessage`
-        // implicitly starts it in most engines, but calling `start()` here is safe
-        // and prevents early messages being dropped.
+        // `MessagePort` queues messages until it is started; `onmessage` implicitly starts it
+        // in most engines, but calling `start()` is safe and prevents early messages being dropped.
         channel.port2.start?.();
       },
       cancel(reason) {
@@ -269,5 +277,50 @@ export class DiskManager {
     });
 
     return { stream, done, meta };
+  }
+
+  /**
+   * Convenience wrapper: export a disk image and save it to a user-selected file.
+   *
+   * Uses the File System Access API when available; otherwise falls back to an in-memory Blob
+   * download (not suitable for multi-GB images).
+   */
+  async exportDiskToFile(
+    id: string,
+    options?: { gzip?: boolean; suggestedName?: string; onProgress?: (p: ImportProgress) => void },
+  ): Promise<{ checksumCrc32: string; fileName: string; meta: DiskImageMetadata }> {
+    const handle = await this.exportDiskStream(id, options);
+    const fileName = options?.suggestedName ?? defaultExportFileName(handle.meta, !!options?.gzip);
+
+    const showSaveFilePicker = (globalThis as any).showSaveFilePicker as
+      | ((options?: any) => Promise<any>)
+      | undefined;
+
+    try {
+      if (typeof showSaveFilePicker === "function") {
+        const pickerHandle = await showSaveFilePicker({ suggestedName: fileName });
+        const writable = await pickerHandle.createWritable();
+        await handle.stream.pipeTo(writable);
+      } else {
+        const blob = await new Response(handle.stream).blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileName;
+        a.rel = "noopener";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+    } catch (err) {
+      try {
+        await handle.stream.cancel(err);
+      } catch {
+        // ignore
+      }
+      throw err;
+    }
+
+    const done = await handle.done;
+    return { checksumCrc32: done.checksumCrc32, fileName, meta: handle.meta };
   }
 }

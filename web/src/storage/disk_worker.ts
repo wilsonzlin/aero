@@ -1,5 +1,3 @@
-// @ts-check
-
 import {
   buildDiskFileName,
   createMetadataStore,
@@ -7,7 +5,12 @@ import {
   inferKindFromFileName,
   newDiskId,
   openDiskManagerDb,
-} from "./metadata.ts";
+  type DiskBackend,
+  type DiskFormat,
+  type DiskImageMetadata,
+  type DiskKind,
+  type MountConfig,
+} from "./metadata";
 import {
   idbCreateBlankDisk,
   idbDeleteDiskData,
@@ -20,32 +23,12 @@ import {
   opfsGetDiskSizeBytes,
   opfsImportFile,
   opfsResizeDisk,
-} from "./import_export.ts";
+  type ImportProgress,
+} from "./import_export";
 
-/**
- * @typedef {import("./metadata.ts").DiskBackend} DiskBackend
- */
+type DiskWorkerError = { message: string; name?: string; stack?: string };
 
-/**
- * @typedef {import("./metadata.ts").DiskKind} DiskKind
- */
-
-/**
- * @typedef {import("./metadata.ts").DiskFormat} DiskFormat
- */
-
-/**
- * @typedef {import("./metadata.ts").DiskImageMetadata} DiskImageMetadata
- */
-
-/**
- * @typedef {import("./metadata.ts").MountConfig} MountConfig
- */
-
-/**
- * @param {any} err
- */
-function serializeError(err) {
+function serializeError(err: unknown): DiskWorkerError {
   if (err instanceof Error) {
     return { message: err.message, name: err.name, stack: err.stack };
   }
@@ -56,30 +39,35 @@ function serializeError(err) {
  * @param {number} requestId
  * @param {any} payload
  */
-function postProgress(requestId, payload) {
-  self.postMessage({ type: "progress", requestId, ...payload });
+function postProgress(requestId: number, payload: ImportProgress): void {
+  (self as DedicatedWorkerGlobalScope).postMessage({ type: "progress", requestId, ...payload });
 }
 
 /**
  * @param {number} requestId
  * @param {any} result
  */
-function postOk(requestId, result) {
-  self.postMessage({ type: "response", requestId, ok: true, result });
+function postOk(requestId: number, result: unknown): void {
+  (self as DedicatedWorkerGlobalScope).postMessage({ type: "response", requestId, ok: true, result });
 }
 
 /**
  * @param {number} requestId
  * @param {any} error
  */
-function postErr(requestId, error) {
-  self.postMessage({ type: "response", requestId, ok: false, error: serializeError(error) });
+function postErr(requestId: number, error: unknown): void {
+  (self as DedicatedWorkerGlobalScope).postMessage({
+    type: "response",
+    requestId,
+    ok: false,
+    error: serializeError(error),
+  });
 }
 
 /**
  * @param {DiskBackend} backend
  */
-function getStore(backend) {
+function getStore(backend: DiskBackend) {
   return createMetadataStore(backend);
 }
 
@@ -88,7 +76,7 @@ function getStore(backend) {
  * @param {string} id
  * @returns {Promise<DiskImageMetadata>}
  */
-async function requireDisk(backend, id) {
+async function requireDisk(backend: DiskBackend, id: string): Promise<DiskImageMetadata> {
   const meta = await getStore(backend).getDisk(id);
   if (!meta) throw new Error(`Disk not found: ${id}`);
   return meta;
@@ -98,7 +86,7 @@ async function requireDisk(backend, id) {
  * @param {DiskBackend} backend
  * @param {DiskImageMetadata} meta
  */
-async function putDisk(backend, meta) {
+async function putDisk(backend: DiskBackend, meta: DiskImageMetadata): Promise<void> {
   await getStore(backend).putDisk(meta);
 }
 
@@ -106,7 +94,7 @@ async function putDisk(backend, meta) {
  * @param {DiskBackend} backend
  * @param {{ hddId?: string; cdId?: string }} mounts
  */
-async function validateMounts(backend, mounts) {
+async function validateMounts(backend: DiskBackend, mounts: MountConfig): Promise<void> {
   if (mounts.hddId) {
     const hdd = await requireDisk(backend, mounts.hddId);
     if (hdd.kind !== "hdd") throw new Error("hddId must refer to a HDD image");
@@ -117,22 +105,25 @@ async function validateMounts(backend, mounts) {
   }
 }
 
-self.onmessage = (event) => {
+type DiskWorkerRequest = {
+  type: "request";
+  requestId: number;
+  backend: DiskBackend;
+  op: string;
+  payload?: any;
+  port?: MessagePort;
+};
+
+(self as DedicatedWorkerGlobalScope).onmessage = (event: MessageEvent<DiskWorkerRequest>) => {
   const msg = event.data;
   if (!msg || msg.type !== "request") return;
   const { requestId } = msg;
   handleRequest(msg).catch((err) => postErr(requestId, err));
 };
 
-/**
- * @param {any} msg
- */
-async function handleRequest(msg) {
-  /** @type {number} */
+async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
   const requestId = msg.requestId;
-  /** @type {DiskBackend} */
   const backend = msg.backend;
-  /** @type {string} */
   const op = msg.op;
   const store = getStore(backend);
 
@@ -150,8 +141,7 @@ async function handleRequest(msg) {
     }
 
     case "set_mounts": {
-      /** @type {MountConfig} */
-      const mounts = msg.payload || {};
+      const mounts = (msg.payload || {}) as MountConfig;
       await validateMounts(backend, mounts);
 
       const now = Date.now();
@@ -173,16 +163,14 @@ async function handleRequest(msg) {
 
     case "create_blank": {
       const { name, sizeBytes } = msg.payload;
-      /** @type {DiskKind} */
-      const kind = msg.payload.kind || "hdd";
-      /** @type {DiskFormat} */
-      const format = msg.payload.format || "raw";
+      const kind = (msg.payload.kind || "hdd") as DiskKind;
+      const format = (msg.payload.format || "raw") as DiskFormat;
       if (kind !== "hdd") throw new Error("Only HDD images can be created as blank disks");
 
       const id = newDiskId();
       const fileName = buildDiskFileName(id, format);
 
-      const progressCb = /** @type {any} */ ((p) => postProgress(requestId, p));
+      const progressCb = (p: ImportProgress) => postProgress(requestId, p);
 
       let checksumCrc32;
       if (backend === "opfs") {
@@ -193,7 +181,6 @@ async function handleRequest(msg) {
         checksumCrc32 = undefined;
       }
 
-      /** @type {DiskImageMetadata} */
       const meta = {
         id,
         name,
@@ -213,22 +200,19 @@ async function handleRequest(msg) {
     }
 
     case "import_file": {
-      /** @type {File} */
-      const file = msg.payload.file;
+      const file = msg.payload.file as File | undefined;
       if (!file) throw new Error("Missing file");
 
       const fileNameOverride = msg.payload.name;
       const name = (fileNameOverride && String(fileNameOverride)) || file.name;
 
-      /** @type {DiskKind} */
-      const kind = msg.payload.kind || inferKindFromFileName(file.name);
-      /** @type {DiskFormat} */
-      const format = msg.payload.format || inferFormatFromFileName(file.name);
+      const kind = (msg.payload.kind || inferKindFromFileName(file.name)) as DiskKind;
+      const format = (msg.payload.format || inferFormatFromFileName(file.name)) as DiskFormat;
 
       const id = newDiskId();
       const fileName = buildDiskFileName(id, format);
 
-      const progressCb = /** @type {any} */ ((p) => postProgress(requestId, p));
+      const progressCb = (p: ImportProgress) => postProgress(requestId, p);
 
       let sizeBytes;
       let checksumCrc32;
@@ -243,7 +227,6 @@ async function handleRequest(msg) {
         checksumCrc32 = res.checksumCrc32;
       }
 
-      /** @type {DiskImageMetadata} */
       const meta = {
         id,
         name,
@@ -277,8 +260,11 @@ async function handleRequest(msg) {
       const meta = await requireDisk(backend, msg.payload.id);
       const newSizeBytes = msg.payload.newSizeBytes;
       if (typeof newSizeBytes !== "number" || newSizeBytes < 0) throw new Error("Invalid newSizeBytes");
+      if (meta.kind !== "hdd") {
+        throw new Error("Only HDD images can be resized");
+      }
 
-      const progressCb = /** @type {any} */ ((p) => postProgress(requestId, p));
+      const progressCb = (p: ImportProgress) => postProgress(requestId, p);
 
       if (backend === "opfs") {
         await opfsResizeDisk(meta.fileName, newSizeBytes, progressCb);
@@ -300,8 +286,11 @@ async function handleRequest(msg) {
         await opfsDeleteDisk(meta.fileName);
       } else {
         const db = await openDiskManagerDb();
-        await idbDeleteDiskData(db, meta.id);
-        db.close();
+        try {
+          await idbDeleteDiskData(db, meta.id);
+        } finally {
+          db.close();
+        }
       }
       await store.deleteDisk(meta.id);
       postOk(requestId, { ok: true });
@@ -310,12 +299,11 @@ async function handleRequest(msg) {
 
     case "export_disk": {
       const meta = await requireDisk(backend, msg.payload.id);
-      /** @type {MessagePort} */
       const port = msg.port;
       if (!port) throw new Error("Missing MessagePort for export");
 
       const options = msg.payload.options || {};
-      const progressCb = /** @type {any} */ ((p) => postProgress(requestId, p));
+      const progressCb = (p: ImportProgress) => postProgress(requestId, p);
 
       // Respond immediately so the main thread can start consuming the stream.
       postOk(requestId, { started: true, meta });
@@ -347,4 +335,3 @@ async function handleRequest(msg) {
       throw new Error(`Unknown op: ${op}`);
   }
 }
-

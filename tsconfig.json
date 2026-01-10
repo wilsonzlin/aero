@@ -8,7 +8,7 @@
     "isolatedModules": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["vite/client", "node"]
+    "types": ["vite/client", "node", "@webgpu/types"]
   },
   "include": ["src", "tests", "vite.config.ts", "playwright.config.ts"]
 }

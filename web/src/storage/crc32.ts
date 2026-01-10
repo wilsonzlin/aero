@@ -1,10 +1,9 @@
 // Minimal CRC32 (IEEE) implementation for streaming checksums.
-// This is intentionally dependency-free so it can run in both window and worker contexts.
+// Intentionally dependency-free so it can run in both window and worker contexts.
 
-/** @type {Uint32Array | null} */
-let CRC32_TABLE = null;
+let CRC32_TABLE: Uint32Array | null = null;
 
-function getTable() {
+function getTable(): Uint32Array {
   if (CRC32_TABLE) return CRC32_TABLE;
   const table = new Uint32Array(256);
   for (let i = 0; i < 256; i++) {
@@ -18,19 +17,11 @@ function getTable() {
   return table;
 }
 
-/**
- * @returns {number} initial CRC32 state
- */
-export function crc32Init() {
+export function crc32Init(): number {
   return 0xffffffff;
 }
 
-/**
- * @param {number} crc
- * @param {Uint8Array} data
- * @returns {number} updated CRC32 state
- */
-export function crc32Update(crc, data) {
+export function crc32Update(crc: number, data: Uint8Array): number {
   const table = getTable();
   let c = crc >>> 0;
   for (let i = 0; i < data.length; i++) {
@@ -39,19 +30,10 @@ export function crc32Update(crc, data) {
   return c >>> 0;
 }
 
-/**
- * @param {number} crc
- * @returns {number} final CRC32 value
- */
-export function crc32Final(crc) {
+export function crc32Final(crc: number): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-/**
- * @param {number} crc32
- * @returns {string}
- */
-export function crc32ToHex(crc32) {
+export function crc32ToHex(crc32: number): string {
   return (crc32 >>> 0).toString(16).padStart(8, "0");
 }
-

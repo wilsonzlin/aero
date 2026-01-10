@@ -1,5 +1,3 @@
-// @ts-check
-
 /**
  * Disk image import/export primitives.
  *
@@ -8,24 +6,22 @@
  * to run inside a dedicated Worker.
  */
 
-import { crc32Final, crc32Init, crc32ToHex, crc32Update } from "./crc32.ts";
-import { openDiskManagerDb, opfsGetDisksDir } from "./metadata.ts";
+import { crc32Final, crc32Init, crc32ToHex, crc32Update } from "./crc32";
+import { openDiskManagerDb, opfsGetDisksDir } from "./metadata";
 
 export const IDB_CHUNK_SIZE = 4 * 1024 * 1024;
 export const EXPORT_CHUNK_SIZE = 1024 * 1024;
 
-/**
- * @typedef ImportProgress
- * @property {"import" | "export" | "create" | "resize"} phase
- * @property {number} processedBytes
- * @property {number | undefined} totalBytes
- */
+export type ImportProgress = {
+  phase: "import" | "export" | "create" | "resize";
+  processedBytes: number;
+  totalBytes?: number;
+};
 
-/**
- * @param {(p: ImportProgress) => void | undefined} onProgress
- * @param {ImportProgress} payload
- */
-function report(onProgress, payload) {
+function report(
+  onProgress: ((p: ImportProgress) => void) | undefined,
+  payload: ImportProgress,
+): void {
   if (!onProgress) return;
   try {
     onProgress(payload);
@@ -34,12 +30,10 @@ function report(onProgress, payload) {
   }
 }
 
-/**
- * @param {string} fileName
- * @param {{ create?: boolean } | undefined} options
- * @returns {Promise<FileSystemFileHandle>}
- */
-export async function opfsGetDiskFileHandle(fileName, options) {
+export async function opfsGetDiskFileHandle(
+  fileName: string,
+  options?: { create?: boolean },
+): Promise<FileSystemFileHandle> {
   const disksDir = await opfsGetDisksDir();
   return disksDir.getFileHandle(fileName, { create: options?.create ?? false });
 }
@@ -48,7 +42,7 @@ export async function opfsGetDiskFileHandle(fileName, options) {
  * @param {string} fileName
  * @returns {Promise<number>}
  */
-export async function opfsGetDiskSizeBytes(fileName) {
+export async function opfsGetDiskSizeBytes(fileName: string): Promise<number> {
   const file = await (await opfsGetDiskFileHandle(fileName, { create: false })).getFile();
   return file.size;
 }
@@ -59,7 +53,11 @@ export async function opfsGetDiskSizeBytes(fileName) {
  * @param {(p: ImportProgress) => void | undefined} onProgress
  * @returns {Promise<{ sizeBytes: number; checksumCrc32: string | undefined }>}
  */
-export async function opfsCreateBlankDisk(fileName, sizeBytes, onProgress) {
+export async function opfsCreateBlankDisk(
+  fileName: string,
+  sizeBytes: number,
+  onProgress: ((p: ImportProgress) => void) | undefined,
+): Promise<{ sizeBytes: number; checksumCrc32: string | undefined }> {
   const handle = await opfsGetDiskFileHandle(fileName, { create: true });
   const writable = await handle.createWritable({ keepExistingData: false });
   report(onProgress, { phase: "create", processedBytes: 0, totalBytes: sizeBytes });
@@ -90,7 +88,11 @@ export async function opfsCreateBlankDisk(fileName, sizeBytes, onProgress) {
  * @param {(p: ImportProgress) => void | undefined} onProgress
  * @returns {Promise<{ sizeBytes: number; checksumCrc32: string }>}
  */
-export async function opfsImportFile(fileName, file, onProgress) {
+export async function opfsImportFile(
+  fileName: string,
+  file: File,
+  onProgress: ((p: ImportProgress) => void) | undefined,
+): Promise<{ sizeBytes: number; checksumCrc32: string }> {
   const handle = await opfsGetDiskFileHandle(fileName, { create: true });
   const writable = await handle.createWritable({ keepExistingData: false });
   const reader = file.stream().getReader();
@@ -118,7 +120,7 @@ export async function opfsImportFile(fileName, file, onProgress) {
  * @param {string} fileName
  * @returns {Promise<void>}
  */
-export async function opfsDeleteDisk(fileName) {
+export async function opfsDeleteDisk(fileName: string): Promise<void> {
   const disksDir = await opfsGetDisksDir();
   try {
     await disksDir.removeEntry(fileName);
@@ -133,7 +135,11 @@ export async function opfsDeleteDisk(fileName) {
  * @param {(p: ImportProgress) => void | undefined} onProgress
  * @returns {Promise<void>}
  */
-export async function opfsResizeDisk(fileName, newSizeBytes, onProgress) {
+export async function opfsResizeDisk(
+  fileName: string,
+  newSizeBytes: number,
+  onProgress: ((p: ImportProgress) => void) | undefined,
+): Promise<void> {
   const handle = await opfsGetDiskFileHandle(fileName, { create: false });
   const writable = await handle.createWritable({ keepExistingData: true });
   report(onProgress, { phase: "resize", processedBytes: 0, totalBytes: newSizeBytes });
@@ -150,7 +156,13 @@ export async function opfsResizeDisk(fileName, newSizeBytes, onProgress) {
  * @param {"export"} phase
  * @returns {Promise<{ checksumCrc32: string }>}
  */
-export async function streamToPortWithChecksum(stream, port, onProgress, totalBytes, phase) {
+export async function streamToPortWithChecksum(
+  stream: ReadableStream<Uint8Array>,
+  port: MessagePort,
+  onProgress: ((p: ImportProgress) => void) | undefined,
+  totalBytes: number | undefined,
+  phase: "export",
+): Promise<{ checksumCrc32: string }> {
   const reader = stream.getReader();
   let crc = crc32Init();
   let processed = 0;
@@ -177,11 +189,15 @@ export async function streamToPortWithChecksum(stream, port, onProgress, totalBy
  * @param {(p: ImportProgress) => void | undefined} onProgress
  * @returns {Promise<{ checksumCrc32: string }>}
  */
-export async function opfsExportToPort(fileName, port, options, onProgress) {
+export async function opfsExportToPort(
+  fileName: string,
+  port: MessagePort,
+  options: { gzip?: boolean } | undefined,
+  onProgress: ((p: ImportProgress) => void) | undefined,
+): Promise<{ checksumCrc32: string }> {
   const handle = await opfsGetDiskFileHandle(fileName, { create: false });
   const file = await handle.getFile();
-  /** @type {ReadableStream<Uint8Array>} */
-  let stream = /** @type {any} */ (file.stream());
+  let stream = file.stream() as ReadableStream<Uint8Array>;
 
   if (options?.gzip) {
     if (typeof CompressionStream === "undefined") {
@@ -202,10 +218,15 @@ export async function opfsExportToPort(fileName, port, options, onProgress) {
  * @param {ArrayBuffer} data
  * @returns {Promise<void>}
  */
-async function idbPutChunk(db, diskId, index, data) {
+async function idbPutChunk(
+  db: IDBDatabase,
+  diskId: string,
+  index: number,
+  data: ArrayBuffer,
+): Promise<void> {
   const tx = db.transaction(["chunks"], "readwrite");
   tx.objectStore("chunks").put({ id: diskId, index, data });
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     tx.oncomplete = () => resolve(undefined);
     tx.onerror = () => reject(tx.error || new Error("IndexedDB chunk put failed"));
     tx.onabort = () => reject(tx.error || new Error("IndexedDB chunk put aborted"));
@@ -218,16 +239,20 @@ async function idbPutChunk(db, diskId, index, data) {
  * @param {number} index
  * @returns {Promise<ArrayBuffer | undefined>}
  */
-async function idbGetChunk(db, diskId, index) {
+async function idbGetChunk(
+  db: IDBDatabase,
+  diskId: string,
+  index: number,
+): Promise<ArrayBuffer | undefined> {
   const tx = db.transaction(["chunks"], "readonly");
   const store = tx.objectStore("chunks");
-  /** @type {{id: string; index: number; data: ArrayBuffer} | undefined} */
-  const rec = await new Promise((resolve, reject) => {
+  type ChunkRecord = { id: string; index: number; data: ArrayBuffer };
+  const rec = await new Promise<ChunkRecord | undefined>((resolve, reject) => {
     const req = store.get([diskId, index]);
-    req.onsuccess = () => resolve(req.result || undefined);
+    req.onsuccess = () => resolve((req.result as ChunkRecord | undefined) || undefined);
     req.onerror = () => reject(req.error || new Error("IndexedDB chunk get failed"));
   });
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     tx.oncomplete = () => resolve(undefined);
     tx.onerror = () => reject(tx.error || new Error("IndexedDB chunk tx failed"));
     tx.onabort = () => reject(tx.error || new Error("IndexedDB chunk tx aborted"));
@@ -240,11 +265,11 @@ async function idbGetChunk(db, diskId, index) {
  * @param {string} diskId
  * @returns {Promise<void>}
  */
-export async function idbDeleteDiskData(db, diskId) {
+export async function idbDeleteDiskData(db: IDBDatabase, diskId: string): Promise<void> {
   const tx = db.transaction(["chunks"], "readwrite");
   const index = tx.objectStore("chunks").index("by_id");
   const range = IDBKeyRange.only(diskId);
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const req = index.openCursor(range);
     req.onerror = () => reject(req.error || new Error("IndexedDB cursor failed"));
     req.onsuccess = () => {
@@ -254,7 +279,7 @@ export async function idbDeleteDiskData(db, diskId) {
       cursor.continue();
     };
   });
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     tx.oncomplete = () => resolve(undefined);
     tx.onerror = () => reject(tx.error || new Error("IndexedDB delete tx failed"));
     tx.onabort = () => reject(tx.error || new Error("IndexedDB delete tx aborted"));
@@ -266,7 +291,7 @@ export async function idbDeleteDiskData(db, diskId) {
  * @param {number} sizeBytes
  * @returns {Promise<void>}
  */
-export async function idbCreateBlankDisk(diskId, sizeBytes) {
+export async function idbCreateBlankDisk(diskId: string, sizeBytes: number): Promise<void> {
   // Sparse: do nothing. Absence of chunks means zeros on read/export.
   // The size is stored in metadata by the disk worker.
   void diskId;
@@ -279,7 +304,11 @@ export async function idbCreateBlankDisk(diskId, sizeBytes) {
  * @param {(p: ImportProgress) => void | undefined} onProgress
  * @returns {Promise<{ sizeBytes: number; checksumCrc32: string }>}
  */
-export async function idbImportFile(diskId, file, onProgress) {
+export async function idbImportFile(
+  diskId: string,
+  file: File,
+  onProgress: ((p: ImportProgress) => void) | undefined,
+): Promise<{ sizeBytes: number; checksumCrc32: string }> {
   const db = await openDiskManagerDb();
   let processed = 0;
   let crc = crc32Init();
@@ -288,8 +317,7 @@ export async function idbImportFile(diskId, file, onProgress) {
   report(onProgress, { phase: "import", processedBytes: 0, totalBytes: file.size });
 
   const reader = file.stream().getReader();
-  /** @type {Uint8Array[]} */
-  let pending = [];
+  let pending: Uint8Array[] = [];
   let pendingBytes = 0;
 
   while (true) {
@@ -347,7 +375,13 @@ export async function idbImportFile(diskId, file, onProgress) {
  * @param {(p: ImportProgress) => void | undefined} onProgress
  * @returns {Promise<{ checksumCrc32: string }>}
  */
-export async function idbExportToPort(diskId, sizeBytes, port, options, onProgress) {
+export async function idbExportToPort(
+  diskId: string,
+  sizeBytes: number,
+  port: MessagePort,
+  options: { gzip?: boolean } | undefined,
+  onProgress: ((p: ImportProgress) => void) | undefined,
+): Promise<{ checksumCrc32: string }> {
   const db = await openDiskManagerDb();
   try {
     if (options?.gzip) {
@@ -360,21 +394,21 @@ export async function idbExportToPort(diskId, sizeBytes, port, options, onProgre
       let processedRaw = 0;
       report(onProgress, { phase: "export", processedBytes: 0, totalBytes: sizeBytes });
 
-      const rawStream = new ReadableStream({
-        async pull(controller) {
-          if (index >= totalChunks) {
-            controller.close();
-            return;
-          }
+       const rawStream = new ReadableStream<Uint8Array>({
+         async pull(controller) {
+           if (index >= totalChunks) {
+             controller.close();
+             return;
+           }
           const buf = await idbGetChunk(db, diskId, index);
           const remaining = sizeBytes - index * IDB_CHUNK_SIZE;
           const outLen = Math.min(IDB_CHUNK_SIZE, remaining);
 
-          let chunk;
-          if (!buf) {
-            chunk = new Uint8Array(outLen);
-          } else {
-            chunk = new Uint8Array(buf, 0, Math.min(outLen, buf.byteLength));
+           let chunk: Uint8Array;
+           if (!buf) {
+             chunk = new Uint8Array(outLen);
+           } else {
+             chunk = new Uint8Array(buf, 0, Math.min(outLen, buf.byteLength));
             if (chunk.byteLength < outLen) {
               const padded = new Uint8Array(outLen);
               padded.set(chunk);
@@ -386,8 +420,8 @@ export async function idbExportToPort(diskId, sizeBytes, port, options, onProgre
           report(onProgress, { phase: "export", processedBytes: processedRaw, totalBytes: sizeBytes });
           index++;
           controller.enqueue(chunk);
-        },
-      });
+         },
+       });
 
       const stream = rawStream.pipeThrough(new CompressionStream("gzip"));
       // Report raw (pre-compression) progress, but checksum the actual stream output.
@@ -404,7 +438,7 @@ export async function idbExportToPort(diskId, sizeBytes, port, options, onProgre
       const remaining = sizeBytes - index * IDB_CHUNK_SIZE;
       const outLen = Math.min(IDB_CHUNK_SIZE, remaining);
 
-      let chunk;
+      let chunk: Uint8Array;
       if (!buf) {
         chunk = new Uint8Array(outLen);
       } else {
@@ -437,7 +471,12 @@ export async function idbExportToPort(diskId, sizeBytes, port, options, onProgre
  * @param {(p: ImportProgress) => void | undefined} onProgress
  * @returns {Promise<void>}
  */
-export async function idbResizeDisk(diskId, oldSizeBytes, newSizeBytes, onProgress) {
+export async function idbResizeDisk(
+  diskId: string,
+  oldSizeBytes: number,
+  newSizeBytes: number,
+  onProgress: ((p: ImportProgress) => void) | undefined,
+): Promise<void> {
   report(onProgress, { phase: "resize", processedBytes: 0, totalBytes: newSizeBytes });
   if (newSizeBytes >= oldSizeBytes) {
     report(onProgress, { phase: "resize", processedBytes: newSizeBytes, totalBytes: newSizeBytes });
@@ -450,26 +489,28 @@ export async function idbResizeDisk(diskId, oldSizeBytes, newSizeBytes, onProgre
   const tx = db.transaction(["chunks"], "readwrite");
   const index = tx.objectStore("chunks").index("by_id");
   const range = IDBKeyRange.only(diskId);
-  await new Promise((resolve, reject) => {
-    const req = index.openCursor(range);
-    req.onerror = () => reject(req.error || new Error("IndexedDB cursor failed"));
-    req.onsuccess = () => {
-      const cursor = req.result;
-      if (!cursor) return resolve(undefined);
-      /** @type {{id: string; index: number; data: ArrayBuffer}} */
-      const value = cursor.value;
-      if (value.index >= keepChunks) {
-        cursor.delete();
-      }
-      cursor.continue();
-    };
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const req = index.openCursor(range);
+      req.onerror = () => reject(req.error || new Error("IndexedDB cursor failed"));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) return resolve(undefined);
+        const value = cursor.value as { id: string; index: number; data: ArrayBuffer };
+        if (value.index >= keepChunks) {
+          cursor.delete();
+        }
+        cursor.continue();
+      };
+    });
 
-  await new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve(undefined);
-    tx.onerror = () => reject(tx.error || new Error("IndexedDB resize tx failed"));
-    tx.onabort = () => reject(tx.error || new Error("IndexedDB resize tx aborted"));
-  });
-  db.close();
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve(undefined);
+      tx.onerror = () => reject(tx.error || new Error("IndexedDB resize tx failed"));
+      tx.onabort = () => reject(tx.error || new Error("IndexedDB resize tx aborted"));
+    });
+  } finally {
+    db.close();
+  }
   report(onProgress, { phase: "resize", processedBytes: newSizeBytes, totalBytes: newSizeBytes });
 }
