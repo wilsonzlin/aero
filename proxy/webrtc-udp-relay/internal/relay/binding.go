@@ -36,6 +36,7 @@ type UdpPortBinding struct {
 
 	allowedMu sync.Mutex
 	allowed   map[remoteKey]time.Time
+	lastPrune time.Time
 
 	clientSupportsV2 *atomic.Bool
 
@@ -98,7 +99,31 @@ func (b *UdpPortBinding) AllowRemote(remote *net.UDPAddr, now time.Time) {
 	}
 	b.allowedMu.Lock()
 	b.allowed[k] = now
+	b.pruneAllowedLocked(now)
 	b.allowedMu.Unlock()
+}
+
+const maxAllowedRemotesBeforePrune = 1024
+
+func (b *UdpPortBinding) pruneAllowedLocked(now time.Time) {
+	if b.cfg.RemoteAllowlistIdleTimeout <= 0 {
+		return
+	}
+	// Prune at most once per RemoteAllowlistIdleTimeout to avoid turning every
+	// outbound packet into an O(n) scan. Also trigger pruning when the allowlist
+	// grows large to avoid unbounded memory growth when the guest sprays packets
+	// at many destinations on the same guest port.
+	if len(b.allowed) <= maxAllowedRemotesBeforePrune && !b.lastPrune.IsZero() && now.Sub(b.lastPrune) <= b.cfg.RemoteAllowlistIdleTimeout {
+		return
+	}
+
+	cutoff := now.Add(-b.cfg.RemoteAllowlistIdleTimeout)
+	for k, ts := range b.allowed {
+		if ts.Before(cutoff) {
+			delete(b.allowed, k)
+		}
+	}
+	b.lastPrune = now
 }
 
 func (b *UdpPortBinding) remoteAllowed(remote *net.UDPAddr, now time.Time) bool {
