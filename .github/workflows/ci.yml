@@ -641,6 +641,10 @@ jobs:
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
+      - name: Prepare test-results directory
+        working-directory: ${{ steps.node-dir.outputs.dir }}
+        run: mkdir -p test-results
+
       - name: Install Playwright browsers
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npx playwright install --with-deps chromium
