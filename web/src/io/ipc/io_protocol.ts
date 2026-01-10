@@ -6,6 +6,8 @@ export const IO_OP_MMIO_WRITE = 4;
 export const IO_OP_RESP = 5;
 export const IO_OP_IRQ_RAISE = 6;
 export const IO_OP_IRQ_LOWER = 7;
+export const IO_OP_A20_SET = 8;
+export const IO_OP_RESET_REQUEST = 9;
 
 export const IO_MESSAGE_STRIDE_U32 = 6;
 
@@ -60,4 +62,3 @@ export function defaultReadValue(size: number): number {
   if (size === 2) return 0xffff;
   return 0xffff_ffff;
 }
-

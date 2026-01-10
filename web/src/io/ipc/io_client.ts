@@ -1,6 +1,7 @@
 import { SharedRingBuffer } from "./ring_buffer.ts";
 import {
   IO_MESSAGE_STRIDE_U32,
+  IO_OP_A20_SET,
   IO_OP_IRQ_LOWER,
   IO_OP_IRQ_RAISE,
   IO_OP_MMIO_READ,
@@ -8,15 +9,20 @@ import {
   IO_OP_PORT_READ,
   IO_OP_PORT_WRITE,
   IO_OP_RESP,
+  IO_OP_RESET_REQUEST,
   decodeU64,
   encodeU64,
   writeIoMessage,
 } from "./io_protocol.ts";
 
 export type IrqCallback = (irq: number, level: boolean) => void;
+export type A20Callback = (enabled: boolean) => void;
+export type ResetCallback = () => void;
 
 export interface IoClientOptions {
   onIrq?: IrqCallback;
+  onA20?: A20Callback;
+  onReset?: ResetCallback;
 }
 
 /**
@@ -27,6 +33,8 @@ export class IoClient {
   readonly #req: SharedRingBuffer;
   readonly #resp: SharedRingBuffer;
   readonly #onIrq?: IrqCallback;
+  readonly #onA20?: A20Callback;
+  readonly #onReset?: ResetCallback;
 
   #nextId = 1;
 
@@ -43,6 +51,8 @@ export class IoClient {
     this.#req = reqRing;
     this.#resp = respRing;
     this.#onIrq = opts.onIrq;
+    this.#onA20 = opts.onA20;
+    this.#onReset = opts.onReset;
   }
 
   portRead(port: number, size: number): number {
@@ -109,6 +119,16 @@ export class IoClient {
         continue;
       }
 
+      if (type === IO_OP_A20_SET) {
+        this.#onA20?.(this.#rx[5]! !== 0);
+        continue;
+      }
+
+      if (type === IO_OP_RESET_REQUEST) {
+        this.#onReset?.();
+        continue;
+      }
+
       // Debug fallback: allow future message types without hanging.
       if (type === IO_OP_PORT_READ || type === IO_OP_PORT_WRITE || type === IO_OP_MMIO_READ || type === IO_OP_MMIO_WRITE) {
         const addr = decodeU64(this.#rx[2]!, this.#rx[3]!);
@@ -118,4 +138,3 @@ export class IoClient {
     }
   }
 }
-

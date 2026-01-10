@@ -6,9 +6,17 @@ const req = SharedRingBuffer.from(workerData.requestRing as SharedArrayBuffer);
 const resp = SharedRingBuffer.from(workerData.responseRing as SharedArrayBuffer);
 
 const irqEvents: Array<{ irq: number; level: boolean }> = [];
+const a20Events: boolean[] = [];
+let resetRequests = 0;
 const io = new IoClient(req, resp, {
   onIrq: (irq, level) => {
     irqEvents.push({ irq, level });
+  },
+  onA20: (enabled) => {
+    a20Events.push(enabled);
+  },
+  onReset: () => {
+    resetRequests++;
   },
 });
 
@@ -34,6 +42,34 @@ try {
       statusAfter,
       bytes: [b0, b1],
       irqEvents,
+      a20Events,
+      resetRequests,
+    });
+  } else if (workerData.scenario === "i8042_output_port") {
+    // Write output port: enable A20 (bit1) while keeping reset deasserted (bit0=1).
+    io.portWrite(0x64, 1, 0xd1);
+    io.portWrite(0x60, 1, 0x03);
+
+    // Disable A20 again.
+    io.portWrite(0x64, 1, 0xd1);
+    io.portWrite(0x60, 1, 0x01);
+
+    // Assert reset line (bit0 active-low): transition 1 -> 0 triggers reset request.
+    io.portWrite(0x64, 1, 0xd1);
+    io.portWrite(0x60, 1, 0x00);
+
+    // Read output port returns the last written value.
+    io.portWrite(0x64, 1, 0xd1);
+    io.portWrite(0x60, 1, 0xa9);
+    io.portWrite(0x64, 1, 0xd0);
+    const outPort = io.portRead(0x60, 1);
+
+    parentPort!.postMessage({
+      ok: true,
+      outPort,
+      a20Events,
+      resetRequests,
+      irqEvents,
     });
   } else if (workerData.scenario === "pci_test") {
     // Read vendor/device id dword.
@@ -55,4 +91,3 @@ try {
 } catch (err) {
   parentPort!.postMessage({ ok: false, error: String(err), irqEvents });
 }
-
