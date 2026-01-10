@@ -1,0 +1,13 @@
+{
+  "name": "disk-streaming-browser-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Browser E2E tests for COOP/COEP cross-origin isolation + authenticated Range fetches (disk streaming).",
+  "scripts": {
+    "pretest": "playwright install chromium",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.0"
+  }
+}
