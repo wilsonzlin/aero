@@ -230,6 +230,7 @@ name = "aero_cpu_core"
 version = "0.1.0"
 dependencies = [
  "aero_x86",
+ "criterion",
 ]
 
 [[package]]

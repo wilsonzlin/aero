@@ -293,3 +293,51 @@ When debugging a CI failure locally, prefer matching the CI environment as close
 
 - use `npm ci` (not `npm install`) for deterministic dependency resolution
 - run Playwright in headless mode (default) unless you specifically need `--ui`
+
+---
+
+## Rust microbenchmarks (Criterion)
+
+We use [Criterion.rs](https://github.com/bheisler/criterion.rs) to measure a
+small set of emulator-critical hot paths with stable statistics.
+
+### Run the emulator-critical microbenchmarks
+
+```bash
+# Full (slower, more stable)
+cargo bench -p aero_cpu_core --bench emulator_critical -- --noplot
+```
+
+Criterion writes results to `target/criterion/` (or `${CARGO_TARGET_DIR}/criterion`
+if `CARGO_TARGET_DIR` is set).
+
+### CI / PR profile (fast)
+
+In CI we run a shorter benchmark configuration to keep PR runtime low:
+
+```bash
+AERO_BENCH_PROFILE=ci cargo bench -p aero_cpu_core --bench emulator_critical -- --noplot
+```
+
+## Benchmark regression CI
+
+The workflow `.github/workflows/bench.yml` runs these microbenchmarks and fails
+on regressions:
+
+- **pull_request**: benchmarks the PR base commit and the PR head commit (same
+  runner), then compares results. The workflow fails if any benchmark slows down
+  by more than **10%**.
+- **schedule / workflow_dispatch**: runs the suite on `main`, compares against
+  the previous successful `main` run artifact, and uploads the current results
+  as the new baseline artifact (`criterion`).
+
+### Manual comparison
+
+You can compare two Criterion output directories locally:
+
+```bash
+python3 scripts/bench_compare.py \
+  --base path/to/base/criterion \
+  --new path/to/new/criterion \
+  --threshold 0.10
+```

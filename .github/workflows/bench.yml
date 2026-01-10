@@ -1,0 +1,132 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly run for a stable signal on `main`.
+    - cron: "0 3 * * *"
+  pull_request:
+    # Only run benchmarks when performance-sensitive code changes.
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/aero_cpu_core/**"
+      - "scripts/bench_compare.py"
+      - ".github/workflows/bench.yml"
+      - "docs/TESTING.md"
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Select benchmark profile
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "AERO_BENCH_PROFILE=ci" >> "$GITHUB_ENV"
+          else
+            echo "AERO_BENCH_PROFILE=full" >> "$GITHUB_ENV"
+          fi
+
+      - name: Download baseline artifact (previous main run)
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: bench.yml
+          branch: main
+          name: criterion
+          path: baseline
+          if_no_artifact_found: warn
+
+      - name: Run benchmarks (PR: base commit)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          echo "Benchmarking baseline (base SHA): $BASE_SHA"
+          git checkout "$BASE_SHA"
+          CARGO_TARGET_DIR=target/bench-base cargo bench -p aero_cpu_core --bench emulator_critical -- --noplot
+
+      - name: Run benchmarks (PR: head commit)
+        if: github.event_name == 'pull_request'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          echo "Benchmarking PR head (head SHA): $HEAD_SHA"
+          git checkout "$HEAD_SHA"
+          CARGO_TARGET_DIR=target/bench-new cargo bench -p aero_cpu_core --bench emulator_critical -- --noplot
+
+      - name: Compare (PR: base vs head)
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          python3 scripts/bench_compare.py \
+            --base target/bench-base/criterion \
+            --new target/bench-new/criterion \
+            --threshold 0.10 \
+            --markdown-out bench_reports/compare.md \
+            --json-out bench_reports/compare.json
+
+      - name: Run benchmarks (main/scheduled)
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          CARGO_TARGET_DIR=target/bench-new cargo bench -p aero_cpu_core --bench emulator_critical -- --noplot
+
+      - name: Compare (main: previous artifact vs current)
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          if [ -d baseline/target/bench-new/criterion ]; then
+            python3 scripts/bench_compare.py \
+              --base baseline/target/bench-new/criterion \
+              --new target/bench-new/criterion \
+              --threshold 0.10 \
+              --markdown-out bench_reports/compare.md \
+              --json-out bench_reports/compare.json
+          else
+            echo "No baseline artifact found; skipping regression check." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload artifacts (PR)
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-pr
+          path: |
+            target/bench-base/criterion
+            target/bench-new/criterion
+            bench_reports/*
+
+      - name: Upload artifacts (main)
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion
+          path: |
+            target/bench-new/criterion
+            bench_reports/*

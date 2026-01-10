@@ -5,3 +5,10 @@ edition = "2021"
 
 [dependencies]
 aero_x86 = { path = "../aero_x86" }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "emulator_critical"
+harness = false
