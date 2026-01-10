@@ -106,28 +106,43 @@ struct TcpKey {
     remote_port: u16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TcpState {
-    SynReceived,
-    Established,
-    FinWaitFromGuest,
-    FinSentToGuest,
-    Closed,
-}
-
 #[derive(Debug, Clone)]
 struct TcpConn {
     id: u32,
-    state: TcpState,
     guest_port: u16,
     remote_ip: Ipv4Addr,
     remote_port: u16,
 
+    guest_isn: u32,
     guest_next_seq: u32,
+
+    our_isn: u32,
     our_next_seq: u32,
+
+    syn_acked: bool,
+    fin_sent: bool,
+    fin_seq: u32,
+    fin_acked: bool,
+    guest_fin_received: bool,
 
     proxy_connected: bool,
     buffered_to_proxy: Vec<Vec<u8>>,
+}
+
+impl TcpConn {
+    fn on_guest_ack(&mut self, ack: u32) {
+        if !self.syn_acked && ack.wrapping_sub(self.our_isn) >= 1 {
+            self.syn_acked = true;
+        }
+        if self.fin_sent && !self.fin_acked && ack.wrapping_sub(self.fin_seq) >= 1 {
+            self.fin_acked = true;
+        }
+    }
+
+    fn should_remove(&self) -> bool {
+        // Remove when both sides have exchanged FINs and the guest ACKed our FIN.
+        self.guest_fin_received && self.fin_sent && self.fin_acked
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -248,22 +263,23 @@ impl NetworkStack {
                 self.tcp.insert(key, conn);
             }
             TcpProxyEvent::Closed { .. } => {
-                if matches!(
-                    conn.state,
-                    TcpState::Established | TcpState::FinWaitFromGuest
-                ) {
+                // If the tunnel closed before the guest completed the SYN handshake, abort with
+                // an RST instead of a FIN.
+                if !conn.syn_acked {
+                    out.extend(self.emit_tcp_rst(&conn));
+                    return out;
+                }
+
+                if !conn.fin_sent {
                     out.extend(self.emit_tcp_fin(&mut conn));
-                    conn.state = TcpState::FinSentToGuest;
+                }
+
+                if !conn.should_remove() {
                     self.tcp.insert(key, conn);
                 }
             }
             TcpProxyEvent::Error { .. } => {
-                if matches!(
-                    conn.state,
-                    TcpState::Established | TcpState::FinWaitFromGuest
-                ) {
-                    out.extend(self.emit_tcp_rst(&conn));
-                }
+                out.extend(self.emit_tcp_rst(&conn));
                 // Drop the connection (guest will see RST or time out).
             }
             TcpProxyEvent::Data { .. } => unreachable!(),
@@ -598,7 +614,28 @@ impl NetworkStack {
             EtherType::IPV4,
             &ip_out,
         );
-        vec![Action::EmitFrame(eth)]
+
+        let mut out = vec![Action::EmitFrame(eth)];
+
+        // Some stacks accept only unicast replies once the client MAC is known. Send a second copy
+        // directly to the guest MAC/IP when possible.
+        if guest_mac != MacAddr::BROADCAST {
+            let udp_unicast =
+                UdpDatagram::serialize(self.cfg.gateway_ip, self.cfg.guest_ip, 67, 68, &dhcp);
+            let ip_unicast = Ipv4Packet::serialize(
+                self.cfg.gateway_ip,
+                self.cfg.guest_ip,
+                Ipv4Protocol::UDP,
+                self.next_ipv4_ident(),
+                64,
+                &udp_unicast,
+            );
+            let eth_unicast =
+                EthernetFrame::serialize(guest_mac, self.cfg.our_mac, EtherType::IPV4, &ip_unicast);
+            out.push(Action::EmitFrame(eth_unicast));
+        }
+
+        out
     }
 
     fn handle_icmp(&mut self, ip: Ipv4Packet<'_>) -> Vec<Action> {
@@ -683,12 +720,18 @@ impl NetworkStack {
 
             let conn = TcpConn {
                 id: conn_id,
-                state: TcpState::SynReceived,
                 guest_port: tcp.src_port,
                 remote_ip: ip.dst,
                 remote_port: tcp.dst_port,
+                guest_isn,
                 guest_next_seq: guest_isn.wrapping_add(1),
+                our_isn,
                 our_next_seq: our_isn.wrapping_add(1),
+                syn_acked: false,
+                fin_sent: false,
+                fin_seq: 0,
+                fin_acked: false,
+                guest_fin_received: false,
                 proxy_connected: false,
                 buffered_to_proxy: Vec::new(),
             };
@@ -699,7 +742,7 @@ impl NetworkStack {
                 remote_ip: conn.remote_ip,
                 remote_port: conn.remote_port,
             });
-            actions.extend(self.emit_tcp_syn_ack(&conn, our_isn));
+            actions.extend(self.emit_tcp_syn_ack(&conn));
             self.tcp.insert(key, conn);
             return actions;
         }
@@ -712,9 +755,16 @@ impl NetworkStack {
         };
         let mut out = Vec::new();
 
-        // Handshake completion.
-        if conn.state == TcpState::SynReceived && (tcp.flags & TcpFlags::ACK != 0) {
-            conn.state = TcpState::Established;
+        // Retransmitted SYN: resend SYN-ACK for idempotence.
+        if (tcp.flags & TcpFlags::SYN != 0) && (tcp.flags & TcpFlags::ACK == 0) && !conn.syn_acked {
+            if tcp.seq == conn.guest_isn {
+                out.extend(self.emit_tcp_syn_ack(&conn));
+            }
+        }
+
+        // ACK bookkeeping (handshake + FIN).
+        if tcp.flags & TcpFlags::ACK != 0 {
+            conn.on_guest_ack(tcp.ack);
         }
 
         // Payload.
@@ -730,23 +780,50 @@ impl NetworkStack {
                 } else {
                     conn.buffered_to_proxy.push(tcp.payload.to_vec());
                 }
+                out.extend(self.emit_tcp_ack(&conn));
+            } else if tcp.seq.wrapping_add(tcp.payload.len() as u32) <= conn.guest_next_seq {
+                // Fully duplicate segment; re-ACK for retransmit tolerance.
+                out.extend(self.emit_tcp_ack(&conn));
+            } else if tcp.seq < conn.guest_next_seq {
+                // Overlapping segment; forward only unseen tail.
+                let offset = conn.guest_next_seq.wrapping_sub(tcp.seq) as usize;
+                let tail = &tcp.payload[offset..];
+                conn.guest_next_seq = conn.guest_next_seq.wrapping_add(tail.len() as u32);
+                if conn.proxy_connected {
+                    out.push(Action::TcpProxySend {
+                        connection_id: conn.id,
+                        data: tail.to_vec(),
+                    });
+                } else {
+                    conn.buffered_to_proxy.push(tail.to_vec());
+                }
+                out.extend(self.emit_tcp_ack(&conn));
+            } else {
+                // Out-of-order: ACK what we have and drop.
+                out.extend(self.emit_tcp_ack(&conn));
             }
-            out.extend(self.emit_tcp_ack(&conn));
         }
 
         // FIN.
         if tcp.flags & TcpFlags::FIN != 0 {
-            if tcp.seq == conn.guest_next_seq {
+            let fin_seq = tcp.seq.wrapping_add(tcp.payload.len() as u32);
+            if fin_seq == conn.guest_next_seq {
                 conn.guest_next_seq = conn.guest_next_seq.wrapping_add(1);
+                conn.guest_fin_received = true;
             }
             out.extend(self.emit_tcp_ack(&conn));
             out.push(Action::TcpProxyClose {
                 connection_id: conn.id,
             });
-            conn.state = TcpState::FinWaitFromGuest;
+
+            if !conn.fin_sent {
+                out.extend(self.emit_tcp_fin(&mut conn));
+            }
         }
 
-        self.tcp.insert(key, conn);
+        if !conn.should_remove() {
+            self.tcp.insert(key, conn);
+        }
         out
     }
 
@@ -764,7 +841,7 @@ impl NetworkStack {
             return;
         };
         let conn = self.tcp.get_mut(&key).unwrap();
-        if conn.state == TcpState::Closed {
+        if conn.fin_sent || !conn.syn_acked {
             return;
         }
 
@@ -792,7 +869,7 @@ impl NetworkStack {
         out.push(Action::EmitFrame(eth));
     }
 
-    fn emit_tcp_syn_ack(&mut self, conn: &TcpConn, our_isn: u32) -> Vec<Action> {
+    fn emit_tcp_syn_ack(&mut self, conn: &TcpConn) -> Vec<Action> {
         let guest_mac = match self.guest_mac {
             Some(m) => m,
             None => return Vec::new(),
@@ -802,7 +879,7 @@ impl NetworkStack {
             self.cfg.guest_ip,
             conn.remote_port,
             conn.guest_port,
-            our_isn,
+            conn.our_isn,
             conn.guest_next_seq,
             TcpFlags::SYN | TcpFlags::ACK,
             65535,
@@ -849,6 +926,12 @@ impl NetworkStack {
     }
 
     fn emit_tcp_fin(&mut self, conn: &mut TcpConn) -> Vec<Action> {
+        if conn.fin_sent {
+            return Vec::new();
+        }
+
+        conn.fin_sent = true;
+        conn.fin_seq = conn.our_next_seq;
         let guest_mac = match self.guest_mac {
             Some(m) => m,
             None => return Vec::new(),
@@ -858,7 +941,7 @@ impl NetworkStack {
             self.cfg.guest_ip,
             conn.remote_port,
             conn.guest_port,
-            conn.our_next_seq,
+            conn.fin_seq,
             conn.guest_next_seq,
             TcpFlags::FIN | TcpFlags::ACK,
             65535,

@@ -8,44 +8,7 @@ fn dhcp_dns_tcp_flow() {
     let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
 
     // --- DHCP handshake ---
-    let xid = 0x1020_3040;
-    let discover = build_dhcp_discover(xid, guest_mac);
-    let discover_frame = wrap_udp_ipv4_eth(
-        guest_mac,
-        MacAddr::BROADCAST,
-        Ipv4Addr::UNSPECIFIED,
-        Ipv4Addr::BROADCAST,
-        68,
-        67,
-        &discover,
-    );
-
-    let actions = stack.process_outbound_ethernet(&discover_frame, 0);
-    let offer = extract_single_frame(&actions);
-    let offer_msg = parse_dhcp_from_frame(&offer);
-    assert_eq!(offer_msg.options.message_type, Some(DhcpMessageType::Offer));
-    assert_eq!(offer_msg.yiaddr, stack.config().guest_ip);
-
-    let request = build_dhcp_request(
-        xid,
-        guest_mac,
-        stack.config().guest_ip,
-        stack.config().gateway_ip,
-    );
-    let request_frame = wrap_udp_ipv4_eth(
-        guest_mac,
-        MacAddr::BROADCAST,
-        Ipv4Addr::UNSPECIFIED,
-        Ipv4Addr::BROADCAST,
-        68,
-        67,
-        &request,
-    );
-    let actions = stack.process_outbound_ethernet(&request_frame, 1);
-    let ack = extract_single_frame(&actions);
-    let ack_msg = parse_dhcp_from_frame(&ack);
-    assert_eq!(ack_msg.options.message_type, Some(DhcpMessageType::Ack));
-    assert!(stack.is_ip_assigned());
+    dhcp_handshake(&mut stack, guest_mac);
 
     // Networking is default-deny until enabled.
     let syn_denied = wrap_tcp_ipv4_eth(
@@ -184,16 +147,226 @@ fn dhcp_dns_tcp_flow() {
     );
 }
 
+#[test]
+fn tcp_fin_closes_and_drops_state() {
+    let mut stack = NetworkStack::new(StackConfig::default());
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    dhcp_handshake(&mut stack, guest_mac);
+    stack.set_network_enabled(true);
+
+    let remote_ip = Ipv4Addr::new(93, 184, 216, 34);
+    let guest_port = 40010;
+    let guest_isn = 12345;
+
+    // SYN.
+    let syn = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        guest_port,
+        80,
+        guest_isn,
+        0,
+        TcpFlags::SYN,
+        &[],
+    );
+    let actions = stack.process_outbound_ethernet(&syn, 0);
+    let (conn_id, syn_ack_frame) = extract_tcp_connect_and_frame(&actions);
+    let syn_ack = parse_tcp_from_frame(&syn_ack_frame);
+
+    // Proxy connects and guest completes handshake.
+    assert!(stack
+        .handle_tcp_proxy_event(
+            TcpProxyEvent::Connected {
+                connection_id: conn_id
+            },
+            1
+        )
+        .is_empty());
+    let ack = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        guest_port,
+        80,
+        guest_isn + 1,
+        syn_ack.seq + 1,
+        TcpFlags::ACK,
+        &[],
+    );
+    assert!(stack.process_outbound_ethernet(&ack, 2).is_empty());
+
+    // One payload chunk.
+    let payload = b"hello";
+    let psh = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        guest_port,
+        80,
+        guest_isn + 1,
+        syn_ack.seq + 1,
+        TcpFlags::ACK | TcpFlags::PSH,
+        payload,
+    );
+    let actions = stack.process_outbound_ethernet(&psh, 3);
+    assert!(actions.iter().any(
+        |a| matches!(a, Action::TcpProxySend { connection_id, data } if *connection_id == conn_id && data == payload)
+    ));
+
+    // FIN from guest.
+    let guest_next = guest_isn + 1 + payload.len() as u32;
+    let fin = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        guest_port,
+        80,
+        guest_next,
+        syn_ack.seq + 1,
+        TcpFlags::ACK | TcpFlags::FIN,
+        &[],
+    );
+    let actions = stack.process_outbound_ethernet(&fin, 4);
+    assert!(actions.iter().any(
+        |a| matches!(a, Action::TcpProxyClose { connection_id } if *connection_id == conn_id)
+    ));
+
+    let frames = extract_frames(&actions);
+    assert_eq!(frames.len(), 2, "expected ACK + FIN frames");
+    let fin_seg = frames
+        .iter()
+        .map(|f| parse_tcp_from_frame(f))
+        .find(|seg| seg.flags & TcpFlags::FIN != 0)
+        .expect("FIN from stack");
+
+    // ACK the stack FIN; stack should drop state, so no further frames/actions.
+    let final_ack = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        guest_port,
+        80,
+        guest_next + 1,
+        fin_seg.seq + 1,
+        TcpFlags::ACK,
+        &[],
+    );
+    let actions = stack.process_outbound_ethernet(&final_ack, 5);
+    assert!(actions.is_empty());
+
+    // Late proxy data should be ignored after state is dropped.
+    let late = stack.handle_tcp_proxy_event(
+        TcpProxyEvent::Data {
+            connection_id: conn_id,
+            data: b"late".to_vec(),
+        },
+        6,
+    );
+    assert!(late.is_empty());
+}
+
+#[test]
+fn tcp_proxy_error_before_handshake_sends_rst() {
+    let mut stack = NetworkStack::new(StackConfig::default());
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    dhcp_handshake(&mut stack, guest_mac);
+    stack.set_network_enabled(true);
+
+    let remote_ip = Ipv4Addr::new(93, 184, 216, 34);
+    let guest_port = 40100;
+    let guest_isn = 9000;
+
+    let syn = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        guest_port,
+        80,
+        guest_isn,
+        0,
+        TcpFlags::SYN,
+        &[],
+    );
+    let actions = stack.process_outbound_ethernet(&syn, 0);
+    let (conn_id, _syn_ack_frame) = extract_tcp_connect_and_frame(&actions);
+
+    let actions = stack.handle_tcp_proxy_event(
+        TcpProxyEvent::Error {
+            connection_id: conn_id,
+        },
+        1,
+    );
+    let frame = extract_single_frame(&actions);
+    let seg = parse_tcp_from_frame(&frame);
+    assert_eq!(
+        seg.flags & (TcpFlags::RST | TcpFlags::ACK),
+        TcpFlags::RST | TcpFlags::ACK
+    );
+}
+
+fn dhcp_handshake(stack: &mut NetworkStack, guest_mac: MacAddr) {
+    let xid = 0x1020_3040;
+    let discover = build_dhcp_discover(xid, guest_mac);
+    let discover_frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        MacAddr::BROADCAST,
+        Ipv4Addr::UNSPECIFIED,
+        Ipv4Addr::BROADCAST,
+        68,
+        67,
+        &discover,
+    );
+
+    let actions = stack.process_outbound_ethernet(&discover_frame, 0);
+    let offer_frames = extract_frames(&actions);
+    assert_eq!(offer_frames.len(), 2);
+    let offer_msg = parse_dhcp_from_frame(&offer_frames[0]);
+    assert_eq!(offer_msg.options.message_type, Some(DhcpMessageType::Offer));
+
+    let request = build_dhcp_request(
+        xid,
+        guest_mac,
+        stack.config().guest_ip,
+        stack.config().gateway_ip,
+    );
+    let request_frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        MacAddr::BROADCAST,
+        Ipv4Addr::UNSPECIFIED,
+        Ipv4Addr::BROADCAST,
+        68,
+        67,
+        &request,
+    );
+    let actions = stack.process_outbound_ethernet(&request_frame, 1);
+    let ack_frames = extract_frames(&actions);
+    assert_eq!(ack_frames.len(), 2);
+    let ack_msg = parse_dhcp_from_frame(&ack_frames[0]);
+    assert_eq!(ack_msg.options.message_type, Some(DhcpMessageType::Ack));
+    assert!(stack.is_ip_assigned());
+}
+
 fn extract_single_frame(actions: &[Action]) -> Vec<u8> {
-    let frames: Vec<Vec<u8>> = actions
+    let frames = extract_frames(actions);
+    assert_eq!(frames.len(), 1, "expected 1 EmitFrame, got {actions:?}");
+    frames.into_iter().next().unwrap()
+}
+
+fn extract_frames(actions: &[Action]) -> Vec<Vec<u8>> {
+    actions
         .iter()
         .filter_map(|a| match a {
             Action::EmitFrame(f) => Some(f.clone()),
             _ => None,
         })
-        .collect();
-    assert_eq!(frames.len(), 1, "expected 1 EmitFrame, got {actions:?}");
-    frames.into_iter().next().unwrap()
+        .collect()
 }
 
 fn extract_tcp_connect_and_frame(actions: &[Action]) -> (u32, Vec<u8>) {
