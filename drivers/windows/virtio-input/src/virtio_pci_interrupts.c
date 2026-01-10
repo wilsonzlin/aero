@@ -33,6 +33,8 @@ static NTSTATUS VirtioPciFindInterruptResources(
 {
     ULONG i;
     ULONG count;
+    PCM_PARTIAL_RESOURCE_DESCRIPTOR candidateRaw;
+    PCM_PARTIAL_RESOURCE_DESCRIPTOR candidateTranslated;
     PCM_PARTIAL_RESOURCE_DESCRIPTOR rawDesc;
     PCM_PARTIAL_RESOURCE_DESCRIPTOR translatedDesc;
 
@@ -40,13 +42,38 @@ static NTSTATUS VirtioPciFindInterruptResources(
     translatedDesc = NULL;
 
     count = WdfCmResourceListGetCount(ResourcesTranslated);
+    candidateRaw = NULL;
+    candidateTranslated = NULL;
+
+    //
+    // Prefer message-signaled interrupts when present; fall back to the first
+    // legacy line interrupt descriptor.
+    //
     for (i = 0; i < count; i++) {
         translatedDesc = WdfCmResourceListGetDescriptor(ResourcesTranslated, i);
-        if ((translatedDesc != NULL) && (translatedDesc->Type == CmResourceTypeInterrupt)) {
-            rawDesc = WdfCmResourceListGetDescriptor(ResourcesRaw, i);
-            break;
+        if ((translatedDesc == NULL) || (translatedDesc->Type != CmResourceTypeInterrupt)) {
+            continue;
+        }
+
+        rawDesc = WdfCmResourceListGetDescriptor(ResourcesRaw, i);
+        if (rawDesc == NULL) {
+            continue;
+        }
+
+        if ((translatedDesc->Flags & CM_RESOURCE_INTERRUPT_MESSAGE) != 0) {
+            *InterruptRaw = rawDesc;
+            *InterruptTranslated = translatedDesc;
+            return STATUS_SUCCESS;
+        }
+
+        if (candidateRaw == NULL) {
+            candidateRaw = rawDesc;
+            candidateTranslated = translatedDesc;
         }
     }
+
+    rawDesc = candidateRaw;
+    translatedDesc = candidateTranslated;
 
     if (rawDesc == NULL || translatedDesc == NULL) {
         return STATUS_RESOURCE_TYPE_NOT_FOUND;
@@ -461,4 +488,3 @@ NTSTATUS VirtioPciInterruptsProgramMsixVectors(
         Interrupts->u.Msix.ConfigVector,
         Interrupts->u.Msix.QueueVectors);
 }
-

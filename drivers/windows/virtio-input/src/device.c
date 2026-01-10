@@ -183,18 +183,60 @@ static VOID VioInputUnmapBars(_Inout_ VIRTIO_PCI_BAR Bars[VIRTIO_PCI_BAR_COUNT])
     }
 }
 
+static VOID VioInputInputLock(_In_opt_ PVOID Context)
+{
+    if (Context == NULL) {
+        return;
+    }
+
+    WdfSpinLockAcquire((WDFSPINLOCK)Context);
+}
+
+static VOID VioInputInputUnlock(_In_opt_ PVOID Context)
+{
+    if (Context == NULL) {
+        return;
+    }
+
+    WdfSpinLockRelease((WDFSPINLOCK)Context);
+}
+
 static VOID VioInputEvtConfigChange(_In_ WDFDEVICE Device, _In_opt_ PVOID Context)
 {
     UNREFERENCED_PARAMETER(Device);
-    UNREFERENCED_PARAMETER(Context);
 
-    VIOINPUT_TRACE_INFO("config change interrupt\n");
+    PDEVICE_CONTEXT devCtx = (PDEVICE_CONTEXT)Context;
+    if (devCtx != NULL) {
+        InterlockedIncrement(&devCtx->ConfigInterruptCount);
+    }
+
+    UCHAR gen = 0;
+    if (devCtx != NULL && devCtx->CommonCfg != NULL) {
+        gen = READ_REGISTER_UCHAR(&devCtx->CommonCfg->config_generation);
+    }
+
+    VIOINPUT_TRACE_INFO("config change interrupt (gen=%u)\n", gen);
 }
 
 static VOID VioInputEvtDrainQueue(_In_ WDFDEVICE Device, _In_ ULONG QueueIndex, _In_opt_ PVOID Context)
 {
     UNREFERENCED_PARAMETER(Device);
-    UNREFERENCED_PARAMETER(Context);
+
+    PDEVICE_CONTEXT devCtx = (PDEVICE_CONTEXT)Context;
+    if (devCtx != NULL && QueueIndex < VIRTIO_INPUT_QUEUE_COUNT) {
+        InterlockedIncrement(&devCtx->QueueInterruptCount[QueueIndex]);
+    }
+
+    //
+    // Queue 0 is the eventq (device -> driver).
+    // Queue 1 is the statusq (driver -> device, e.g. keyboard LEDs).
+    //
+    // The virtqueue implementation is wired in elsewhere; the interrupt plumbing
+    // calls into the relevant queue handlers here.
+    //
+    if (devCtx != NULL && QueueIndex == 1) {
+        VirtioStatusQProcessUsedBuffers(devCtx->StatusQ);
+    }
 
     VIOINPUT_TRACE_INFO("queue interrupt: index=%lu\n", QueueIndex);
 }
@@ -284,7 +326,31 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
             return status;
         }
 
-        virtio_input_device_init(&deviceContext->InputDevice, VirtioInputReportReady, (void *)device, NULL, NULL, NULL);
+        RtlZeroMemory(deviceContext->Bars, sizeof(deviceContext->Bars));
+        deviceContext->CommonCfg = NULL;
+        deviceContext->IsrStatus = NULL;
+        RtlZeroMemory(&deviceContext->Interrupts, sizeof(deviceContext->Interrupts));
+        deviceContext->ConfigInterruptCount = 0;
+        RtlZeroMemory(deviceContext->QueueInterruptCount, sizeof(deviceContext->QueueInterruptCount));
+
+        {
+            WDF_OBJECT_ATTRIBUTES lockAttributes;
+
+            WDF_OBJECT_ATTRIBUTES_INIT(&lockAttributes);
+            lockAttributes.ParentObject = device;
+            status = WdfSpinLockCreate(&lockAttributes, &deviceContext->InputLock);
+            if (!NT_SUCCESS(status)) {
+                return status;
+            }
+        }
+
+        virtio_input_device_init(
+            &deviceContext->InputDevice,
+            VirtioInputReportReady,
+            (void *)device,
+            VioInputInputLock,
+            VioInputInputUnlock,
+            deviceContext->InputLock);
     }
     return VirtioInputQueueInitialize(device);
 }
@@ -308,6 +374,8 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
     deviceContext->CommonCfg = NULL;
     deviceContext->IsrStatus = NULL;
     RtlZeroMemory(&deviceContext->Interrupts, sizeof(deviceContext->Interrupts));
+    deviceContext->ConfigInterruptCount = 0;
+    RtlZeroMemory(deviceContext->QueueInterruptCount, sizeof(deviceContext->QueueInterruptCount));
 
     status = VioInputReadPciConfig(Device, cfgSpace, 0, sizeof(cfgSpace));
     if (!NT_SUCCESS(status)) {
@@ -356,6 +424,19 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
     deviceContext->CommonCfg =
         (volatile VIRTIO_PCI_COMMON_CFG*)((PUCHAR)deviceContext->Bars[caps.common_cfg.bar].Va + caps.common_cfg.offset);
     deviceContext->IsrStatus = (volatile UCHAR*)((PUCHAR)deviceContext->Bars[caps.isr_cfg.bar].Va + caps.isr_cfg.offset);
+
+    {
+        USHORT numQueues = READ_REGISTER_USHORT(&deviceContext->CommonCfg->num_queues);
+        if (numQueues < VIRTIO_INPUT_QUEUE_COUNT) {
+            VIOINPUT_TRACE_ERROR("virtio-input reports only %u queues (need %u)\n",
+                                 numQueues,
+                                 (USHORT)VIRTIO_INPUT_QUEUE_COUNT);
+            VioInputUnmapBars(deviceContext->Bars);
+            deviceContext->CommonCfg = NULL;
+            deviceContext->IsrStatus = NULL;
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+    }
 
     status = VirtioPciInterruptsPrepareHardware(
         Device,

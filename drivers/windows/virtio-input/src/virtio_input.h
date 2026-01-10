@@ -137,6 +137,9 @@ typedef struct _DEVICE_CONTEXT {
     volatile UCHAR* IsrStatus;
 
     VIRTIO_PCI_INTERRUPTS Interrupts;
+
+    volatile LONG ConfigInterruptCount;
+    volatile LONG QueueInterruptCount[VIRTIO_INPUT_QUEUE_COUNT];
 } DEVICE_CONTEXT, *PDEVICE_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, VirtioInputGetDeviceContext);
