@@ -37,6 +37,22 @@ cargo run --release -- \
   --build-id ci-123
 ```
 
+## Building Guest Tools from `virtio-win.iso` (Win7 virtio drivers)
+
+If you want Guest Tools to include the upstream virtio drivers (`viostor`, `netkvm`, etc.), use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
+  -VirtioWinIso C:\path\to\virtio-win.iso `
+  -OutDir .\dist\guest-tools `
+  -Version 0.0.0 `
+  -BuildId local
+```
+
+This uses the validation spec at:
+
+- `tools/packaging/specs/win7-virtio-win.json`
+
 ## Determinism / reproducible builds
 
 The packager aims to be reproducible: **same inputs → bit-identical outputs**.
