@@ -1,8 +1,13 @@
 const http = require('node:http');
-const { readFile } = require('node:fs/promises');
+const { spawn } = require('node:child_process');
+const fs = require('node:fs/promises');
+const net = require('node:net');
+const os = require('node:os');
+const path = require('node:path');
 
-const PUBLIC_IMAGE_ID = 'public-fixture';
-const PRIVATE_IMAGE_ID = 'private-fixture';
+const PUBLIC_IMAGE_ID = 'win7';
+const PRIVATE_IMAGE_ID = 'secret';
+const PRIVATE_USER_ID = 'alice';
 
 function withCommonAppHeaders(res) {
   // Required for `window.crossOriginIsolated === true`.
@@ -10,39 +15,51 @@ function withCommonAppHeaders(res) {
   res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
 }
 
-function withCommonDiskHeaders(req, res) {
-  // The COEP page will fetch cross-origin resources. Under `COEP: require-corp`,
-  // the resource must be CORS-enabled and/or explicitly CORP-allowed.
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Range, Content-Type');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges');
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-  // Avoid caches hiding header regressions.
-  res.setHeader('Cache-Control', 'no-store');
+function getRepoRoot() {
+  return path.join(__dirname, '..', '..', '..');
+}
 
-  // Keep intermediaries honest if they vary by Origin later.
-  if (req.headers.origin) {
-    res.setHeader('Vary', 'Origin');
+async function getFreePort() {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      server.close((err) => (err ? reject(err) : resolve(port)));
+    });
+  });
+}
+
+async function waitForHttpOk(url, { timeoutMs }) {
+  const start = Date.now();
+  // Poll until the server is listening. This has to tolerate a cold `cargo run`
+  // which may compile the binary first.
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(url, { method: 'HEAD' });
+      if (res.ok) return;
+    } catch {
+      // connection refused / not up yet
+    }
+    await sleep(100);
   }
+  throw new Error(`Timed out waiting for ${url}`);
 }
 
-function parseBearerToken(authorizationHeader) {
-  if (!authorizationHeader) return null;
-  const match = /^\s*Bearer\s+(.+?)\s*$/.exec(authorizationHeader);
-  return match ? match[1] : null;
-}
+async function killChildProcess(child) {
+  if (!child || child.killed || child.exitCode !== null) return;
 
-function parseRangeHeader(rangeHeader, size) {
-  if (!rangeHeader) return null;
-  const match = /^bytes=(\d+)-(\d+)?$/.exec(rangeHeader);
-  if (!match) return null;
-  const start = Number(match[1]);
-  const endInclusive = match[2] === undefined ? size - 1 : Number(match[2]);
-  if (!Number.isFinite(start) || !Number.isFinite(endInclusive)) return null;
-  if (start < 0 || endInclusive < start || start >= size) return null;
-  return { start, endInclusive: Math.min(endInclusive, size - 1) };
+  child.kill('SIGTERM');
+  const exited = new Promise((resolve) => child.once('exit', resolve));
+  await Promise.race([exited, sleep(2000)]);
+  if (child.exitCode === null) {
+    child.kill('SIGKILL');
+    await exited;
+  }
 }
 
 function renderIndexHtml() {
@@ -104,28 +121,36 @@ function renderIndexHtml() {
     },
 
     async fetchPublicRange({ imageId, start, endInclusive, expectedBytes }) {
-      const url = diskOrigin + '/api/images/' + encodeURIComponent(imageId) + '/bytes';
+      const url = diskOrigin + '/disk/' + encodeURIComponent(imageId);
       const { status, bytes } = await fetchRange(url, { start, endInclusive });
       assert(status === 206, 'Expected 206 Partial Content, got ' + status);
       assertBytesEqual(bytes, expectedBytes);
     },
 
     async fetchPrivateRangeExpectUnauthorized({ imageId, start, endInclusive }) {
-      const url = diskOrigin + '/api/images/' + encodeURIComponent(imageId) + '/bytes';
+      const url = diskOrigin + '/disk/' + encodeURIComponent(imageId);
       const { status } = await fetchRange(url, { start, endInclusive });
       assert(status === 401, 'Expected 401 Unauthorized, got ' + status);
     },
 
-    async fetchLeaseToken({ imageId }) {
+    async fetchLeaseToken({ imageId, userId = '${PRIVATE_USER_ID}' }) {
       const url = diskOrigin + '/api/images/' + encodeURIComponent(imageId) + '/lease';
-      const { status, body } = await fetchJson(url);
+      const { status, body } = await fetchJson(url, {
+        method: 'POST',
+        headers: {
+          // disk-gateway allows placeholder caller identity for lease issuance via
+          // Authorization: Bearer <user-id>. (X-Debug-User exists too but is not
+          // allowed by the server's CORS preflight.)
+          Authorization: 'Bearer ' + userId,
+        },
+      });
       assert(status === 200, 'Expected 200 OK from lease endpoint, got ' + status);
       assert(typeof body === 'object' && body !== null && typeof body.token === 'string', 'Lease response missing { token }');
       return body.token;
     },
 
     async fetchPrivateRangeWithToken({ imageId, token, start, endInclusive, expectedBytes }) {
-      const url = diskOrigin + '/api/images/' + encodeURIComponent(imageId) + '/bytes';
+      const url = diskOrigin + '/disk/' + encodeURIComponent(imageId);
       const { status, bytes } = await fetchRange(url, {
         start,
         endInclusive,
@@ -174,99 +199,69 @@ async function startAppServer() {
   };
 }
 
-async function startDiskGatewayStubServer({ publicFixturePath, privateFixturePath }) {
-  const publicBytes = await readFile(publicFixturePath);
-  const privateBytes = await readFile(privateFixturePath);
+async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFixturePath }) {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'disk-gateway-browser-e2e-'));
+  const publicDir = path.join(tmpRoot, 'public');
+  const privateDir = path.join(tmpRoot, 'private');
 
-  const privateToken = 'test-private-lease-token';
+  await fs.mkdir(publicDir, { recursive: true });
+  await fs.mkdir(path.join(privateDir, PRIVATE_USER_ID), { recursive: true });
 
-  const server = http.createServer((req, res) => {
-    withCommonDiskHeaders(req, res);
+  await fs.copyFile(publicFixturePath, path.join(publicDir, `${PUBLIC_IMAGE_ID}.img`));
+  await fs.copyFile(
+    privateFixturePath,
+    path.join(privateDir, PRIVATE_USER_ID, `${PRIVATE_IMAGE_ID}.img`),
+  );
 
-    const url = new URL(req.url, `http://${req.headers.host}`);
+  const port = await getFreePort();
+  const bind = `127.0.0.1:${port}`;
+  const origin = `http://127.0.0.1:${port}`;
 
-    if (req.method === 'OPTIONS') {
-      // CORS preflight (Range and/or Authorization triggers this).
-      const requestedHeaders = req.headers['access-control-request-headers'];
-      if (requestedHeaders) {
-        res.setHeader('Access-Control-Allow-Headers', requestedHeaders);
-      }
-      res.statusCode = 204;
-      res.end();
-      return;
-    }
+  const diskGatewayDir = path.join(getRepoRoot(), 'server', 'disk-gateway');
+  const outputLimit = 50_000;
+  let output = '';
+  const appendOutput = (chunk) => {
+    output += chunk.toString();
+    if (output.length > outputLimit) output = output.slice(-outputLimit);
+  };
 
-    const leaseMatch = /^\/api\/images\/([^/]+)\/lease$/.exec(url.pathname);
-    if (req.method === 'GET' && leaseMatch) {
-      const imageId = decodeURIComponent(leaseMatch[1]);
-      if (imageId !== PRIVATE_IMAGE_ID) {
-        res.statusCode = 404;
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        res.end(JSON.stringify({ error: 'unknown image id' }));
-        return;
-      }
-
-      res.statusCode = 200;
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.end(JSON.stringify({ token: privateToken }));
-      return;
-    }
-
-    const bytesMatch = /^\/api\/images\/([^/]+)\/bytes$/.exec(url.pathname);
-    if (req.method === 'GET' && bytesMatch) {
-      const imageId = decodeURIComponent(bytesMatch[1]);
-
-      let fileBytes;
-      if (imageId === PUBLIC_IMAGE_ID) {
-        fileBytes = publicBytes;
-      } else if (imageId === PRIVATE_IMAGE_ID) {
-        const providedToken =
-          parseBearerToken(req.headers.authorization) ?? url.searchParams.get('token');
-        if (providedToken !== privateToken) {
-          res.statusCode = 401;
-          res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify({ error: 'missing or invalid token' }));
-          return;
-        }
-        fileBytes = privateBytes;
-      } else {
-        res.statusCode = 404;
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        res.end(JSON.stringify({ error: 'unknown image id' }));
-        return;
-      }
-
-      res.setHeader('Accept-Ranges', 'bytes');
-      res.setHeader('Content-Type', 'application/octet-stream');
-
-      const range = parseRangeHeader(req.headers.range, fileBytes.length);
-      if (!range) {
-        res.statusCode = 416;
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        res.end(JSON.stringify({ error: 'missing/invalid Range header' }));
-        return;
-      }
-
-      const { start, endInclusive } = range;
-      const chunk = fileBytes.subarray(start, endInclusive + 1);
-
-      res.statusCode = 206;
-      res.setHeader('Content-Length', String(chunk.length));
-      res.setHeader('Content-Range', `bytes ${start}-${endInclusive}/${fileBytes.length}`);
-      res.end(chunk);
-      return;
-    }
-
-    res.statusCode = 404;
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.end(JSON.stringify({ error: 'not found' }));
+  const child = spawn('cargo', ['run'], {
+    cwd: diskGatewayDir,
+    env: {
+      ...process.env,
+      DISK_GATEWAY_BIND: bind,
+      DISK_GATEWAY_PUBLIC_DIR: publicDir,
+      DISK_GATEWAY_PRIVATE_DIR: privateDir,
+      DISK_GATEWAY_TOKEN_SECRET: 'disk-gateway-browser-e2e-secret',
+      DISK_GATEWAY_CORS_ALLOWED_ORIGINS: appOrigin,
+      DISK_GATEWAY_CORP: 'cross-origin',
+      RUST_LOG: process.env.RUST_LOG ?? 'info',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address();
+  child.stdout?.on('data', appendOutput);
+  child.stderr?.on('data', appendOutput);
+
+  try {
+    await waitForHttpOk(`${origin}/disk/${PUBLIC_IMAGE_ID}`, { timeoutMs: 120_000 });
+  } catch (err) {
+    await killChildProcess(child);
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+    if (child.exitCode !== null) {
+      throw new Error(
+        `disk-gateway failed to start (exit ${child.exitCode}). Output:\n${output}`,
+      );
+    }
+    throw err;
+  }
+
   return {
-    origin: `http://127.0.0.1:${port}`,
-    close: () => new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
+    origin,
+    close: async () => {
+      await killChildProcess(child);
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    },
   };
 }
 
@@ -274,6 +269,5 @@ module.exports = {
   PRIVATE_IMAGE_ID,
   PUBLIC_IMAGE_ID,
   startAppServer,
-  startDiskGatewayStubServer,
+  startDiskGatewayServer,
 };
-

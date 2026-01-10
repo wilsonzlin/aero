@@ -7,7 +7,7 @@ const {
   PRIVATE_IMAGE_ID,
   PUBLIC_IMAGE_ID,
   startAppServer,
-  startDiskGatewayStubServer,
+  startDiskGatewayServer,
 } = require('../src/servers');
 
 function fixturePath(name) {
@@ -24,14 +24,15 @@ test.describe('disk streaming COOP/COEP + Range + auth', () => {
   let privateFixtureBytes;
 
   test.beforeAll(async () => {
-    publicFixtureBytes = await readFile(fixturePath('public.bin'));
-    privateFixtureBytes = await readFile(fixturePath('private.bin'));
+    publicFixtureBytes = await readFile(fixturePath('win7.img'));
+    privateFixtureBytes = await readFile(fixturePath('secret.img'));
 
-    disk = await startDiskGatewayStubServer({
-      publicFixturePath: fixturePath('public.bin'),
-      privateFixturePath: fixturePath('private.bin'),
-    });
     app = await startAppServer();
+    disk = await startDiskGatewayServer({
+      appOrigin: app.origin,
+      publicFixturePath: fixturePath('win7.img'),
+      privateFixturePath: fixturePath('secret.img'),
+    });
   });
 
   test.afterAll(async () => {
@@ -99,4 +100,3 @@ test.describe('disk streaming COOP/COEP + Range + auth', () => {
     await page.evaluate(() => window.__diskStreamingE2E.assertCrossOriginIsolated());
   });
 });
-
