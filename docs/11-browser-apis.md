@@ -387,6 +387,15 @@ fn decompress_bc1(@builtin(global_invocation_id) id: vec3<u32>) {
 
 ---
 
+## WebGL2 fallback (no WebGPU)
+
+When `navigator.gpu` is unavailable, Aero can fall back to WebGL2 for framebuffer presentation so the project can still boot and display output in browsers that do not yet ship WebGPU.
+
+### Color space & orientation notes
+
+- **Texture origin conventions:** WebGL’s texture coordinate origin is effectively bottom-left, while the emulator framebuffer is treated as top-left origin. The WebGL2 blit path must therefore handle a Y flip (either during upload or in the blit shader).
+- **sRGB differences:** WebGPU and WebGL2 canvases can differ in how the browser compositor applies color management. Avoid relying on exact mid-tone values unless you explicitly control linear/sRGB conversions; primary colors (0/255 channels) are typically robust for smoke tests.
+
 ## Origin Private File System (OPFS)
 
 ### File Access

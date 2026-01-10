@@ -37,6 +37,7 @@ drivers/tmp/
 drivers/vendor/
 
 # Playwright
+.playwright/
 playwright-report/
 test-results/
 

@@ -6,6 +6,12 @@ const PREVIEW_PORT = 4173;
 export default defineConfig({
   // Keep Playwright tests under `tests/`, but only run the dedicated browser suites.
   // (We also have Node/Vitest unit tests elsewhere under `tests/`.)
+  timeout: 30_000,
+  expect: {
+    timeout: 5_000,
+  },
+  fullyParallel: true,
+  reporter: process.env.CI ? 'dot' : 'list',
   testDir: './tests',
   testMatch: ['e2e/**/*.spec.ts', 'playwright/**/*.spec.ts'],
   use: {
@@ -14,7 +20,13 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'], browserName: 'chromium' },
+      use: {
+        ...devices['Desktop Chrome'],
+        browserName: 'chromium',
+        launchOptions: {
+          args: ['--enable-unsafe-webgpu'],
+        },
+      },
     },
     {
       name: 'firefox',
@@ -23,7 +35,7 @@ export default defineConfig({
     {
       name: 'webkit',
       use: { ...devices['Desktop Safari'], browserName: 'webkit' },
-    }
+    },
   ],
   webServer: [
     {
@@ -35,6 +47,6 @@ export default defineConfig({
       command: 'npm run serve:coi',
       port: PREVIEW_PORT,
       reuseExistingServer: !process.env.CI,
-    }
-  ]
+    },
+  ],
 });
