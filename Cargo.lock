@@ -1645,6 +1645,7 @@ dependencies = [
  "aero-devices",
  "aero-io-snapshot",
  "aero-net-e1000",
+ "aero-platform",
  "anyhow",
  "criterion",
  "firmware",

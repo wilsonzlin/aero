@@ -228,7 +228,8 @@ impl<S: AudioSink> VirtioSndDevice<S> {
                         sample_count += 1;
 
                         if samples_len == samples_buf.len() {
-                            if self.sink.push_interleaved_f32(&samples_buf) != samples_len {
+                            let expected_frames = (samples_len / 2) as u32;
+                            if self.sink.push_stereo_f32(&samples_buf) != expected_frames {
                                 return Ok(VIRTIO_SND_S_IO_ERR);
                             }
                             samples_len = 0;
@@ -251,9 +252,11 @@ impl<S: AudioSink> VirtioSndDevice<S> {
             return Ok(VIRTIO_SND_S_BAD_MSG);
         }
 
-        if samples_len > 0 && self.sink.push_interleaved_f32(&samples_buf[..samples_len]) != samples_len
-        {
-            return Ok(VIRTIO_SND_S_IO_ERR);
+        if samples_len > 0 {
+            let expected_frames = (samples_len / 2) as u32;
+            if self.sink.push_stereo_f32(&samples_buf[..samples_len]) != expected_frames {
+                return Ok(VIRTIO_SND_S_IO_ERR);
+            }
         }
 
         Ok(VIRTIO_SND_S_OK)
@@ -716,7 +719,7 @@ mod tests {
         assert_eq!(u32::from_le_bytes(status), VIRTIO_SND_S_OK);
 
         let mut out = [0.0f32; 4];
-        assert_eq!(dev.sink.pop_samples(&mut out), 4);
+        assert_eq!(dev.sink.read_interleaved(&mut out), 2);
         assert_f32_eq(out[0], 1000.0 / 32768.0);
         assert_f32_eq(out[1], -1000.0 / 32768.0);
         assert_f32_eq(out[2], 2000.0 / 32768.0);

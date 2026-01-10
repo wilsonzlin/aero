@@ -5,14 +5,20 @@ function log(msg) {
   logEl.textContent += `${msg}\n`;
 }
 
-function makeRingBuffer(capacitySamples) {
-  const headerBytes = 8;
-  const sab = new SharedArrayBuffer(headerBytes + capacitySamples * 4);
-  const indices = new Uint32Array(sab, 0, 2);
-  const samples = new Float32Array(sab, headerBytes, capacitySamples);
-  Atomics.store(indices, 0, 0);
-  Atomics.store(indices, 1, 0);
-  return { sab, indices, samples, capacitySamples };
+function makeRingBuffer(capacityFrames, channelCount) {
+  const headerU32Len = 4;
+  const headerBytes = headerU32Len * Uint32Array.BYTES_PER_ELEMENT; // 16
+  const sampleCapacity = capacityFrames * channelCount;
+  const sab = new SharedArrayBuffer(headerBytes + sampleCapacity * Float32Array.BYTES_PER_ELEMENT);
+  const header = new Uint32Array(sab, 0, headerU32Len);
+  const samples = new Float32Array(sab, headerBytes, sampleCapacity);
+
+  Atomics.store(header, 0, 0);
+  Atomics.store(header, 1, 0);
+  Atomics.store(header, 2, 0);
+  Atomics.store(header, 3, 0);
+
+  return { sab, header, samples, capacityFrames, channelCount };
 }
 
 function generateStereoS16Tone({ frames, sampleRate, hz }) {
@@ -43,21 +49,27 @@ playBtn.addEventListener("click", async () => {
 
     const frames = 48000;
     const channelCount = 2;
+    const capacityFrames = frames + 1024;
     const totalSamples = frames * channelCount;
-    const rb = makeRingBuffer(totalSamples + 1024);
+    const rb = makeRingBuffer(capacityFrames, channelCount);
 
     const node = new AudioWorkletNode(ctx, "aero-audio-processor", {
-      processorOptions: { ringBuffer: rb.sab },
+      processorOptions: { ringBuffer: rb.sab, channelCount, capacityFrames },
       outputChannelCount: [channelCount],
     });
     node.connect(ctx.destination);
+    node.port.onmessage = (event) => {
+      if (event.data?.type === "underrun") {
+        log(`underrunCount=${event.data.underrunCount}`);
+      }
+    };
 
     const toneS16 = generateStereoS16Tone({ frames, sampleRate: 48000, hz: 440 });
     const toneF32 = convertS16ToF32(toneS16);
     rb.samples.set(toneF32);
-    Atomics.store(rb.indices, 0, 0);
-    Atomics.store(rb.indices, 1, totalSamples);
-    log(`Wrote: ${totalSamples} samples into Float32 ring buffer`);
+    Atomics.store(rb.header, 0, 0);
+    Atomics.store(rb.header, 1, frames);
+    log(`Wrote: ${frames} frames (${totalSamples} samples) into Float32 ring buffer`);
 
     await ctx.resume();
     log("Playing...");
