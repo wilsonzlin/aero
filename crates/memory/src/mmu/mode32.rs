@@ -250,6 +250,37 @@ mod tests {
     }
 
     #[test]
+    fn large_page_write_sets_dirty_in_pde() {
+        let mut bus = TestBus::new(0x10_000);
+        let cr3 = 0x1000u64;
+        let pd = cr3;
+
+        let vaddr = 0x0400_1234u64;
+        let pde_index = ((vaddr as u32) >> 22) & 0x3FF;
+        let pde_addr = pd + (pde_index as u64) * 4;
+
+        let phys_base = 0x0200_0000u32;
+        let pde = (phys_base & PDE_ADDR_MASK_4M) | PTE_P | PTE_RW | PTE_US | PDE_PS;
+        bus.write_u32_phys(pde_addr, pde);
+
+        let paddr = translate(
+            &mut bus,
+            vaddr,
+            AccessType::Write,
+            3,
+            CR0_PG,
+            cr3,
+            CR4_PSE,
+        )
+        .unwrap();
+        assert_eq!(paddr, 0x0200_0000u64 + (vaddr & PAGE_OFFSET_MASK_4M as u64));
+
+        let pde_after = bus.read_u32_phys(pde_addr);
+        assert_ne!(pde_after & PTE_A, 0);
+        assert_ne!(pde_after & PTE_D, 0);
+    }
+
+    #[test]
     fn user_access_to_supervisor_page_faults() {
         let mut bus = TestBus::new(0x10_000);
         let cr3 = 0x1000u64;
@@ -413,6 +444,47 @@ mod tests {
 
         let err = translate(&mut bus, vaddr, AccessType::Read, 0, CR0_PG, cr3, 0).unwrap_err();
         assert_pf(err, vaddr as u32, PFEC_P | PFEC_RSVD);
+    }
+
+    #[test]
+    fn supervisor_write_to_ro_large_page_respects_wp() {
+        let mut bus = TestBus::new(0x10_000);
+        let cr3 = 0x1000u64;
+        let pd = cr3;
+
+        let vaddr = 0x0400_5678u64;
+        let pde_index = ((vaddr as u32) >> 22) & 0x3FF;
+        let pde_addr = pd + (pde_index as u64) * 4;
+
+        let phys_base = 0x0200_0000u32;
+        let pde = (phys_base & PDE_ADDR_MASK_4M) | PTE_P | PDE_PS; // RW=0
+        bus.write_u32_phys(pde_addr, pde);
+
+        // WP=0: supervisor writes succeed.
+        let out = translate(
+            &mut bus,
+            vaddr,
+            AccessType::Write,
+            0,
+            CR0_PG,
+            cr3,
+            CR4_PSE,
+        )
+        .unwrap();
+        assert_eq!(out, 0x0200_0000u64 + (vaddr & PAGE_OFFSET_MASK_4M as u64));
+
+        // WP=1: supervisor writes fault.
+        let err = translate(
+            &mut bus,
+            vaddr,
+            AccessType::Write,
+            0,
+            CR0_PG | CR0_WP,
+            cr3,
+            CR4_PSE,
+        )
+        .unwrap_err();
+        assert_pf(err, vaddr as u32, PFEC_P | PFEC_WR);
     }
 
     #[test]
