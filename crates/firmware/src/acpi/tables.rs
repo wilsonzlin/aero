@@ -1,6 +1,7 @@
 use super::{aml, checksum, dsdt};
+use crate::devices::{DEFAULT_IOAPIC_BASE, DEFAULT_LAPIC_BASE};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BuiltAcpiTables {
     pub base_address: u64,
 
@@ -10,12 +11,19 @@ pub struct BuiltAcpiTables {
     pub fadt_address: u64,
     pub fadt: Vec<u8>,
 
+    pub madt_address: u64,
+    pub madt: Vec<u8>,
+
+    pub hpet_address: u64,
+    pub hpet: Vec<u8>,
+
     pub rsdt_address: u64,
     pub rsdt: Vec<u8>,
 
     pub xsdt_address: u64,
     pub xsdt: Vec<u8>,
 
+    pub rsdp_address: u64,
     pub rsdp: Vec<u8>,
 }
 
@@ -111,24 +119,63 @@ fn build_fadt(dsdt_address: u64) -> Vec<u8> {
     table
 }
 
-fn build_rsdt(fadt_address: u64) -> Vec<u8> {
-    let body_len = 4; // one u32 entry
-    let header = build_header(b"RSDT", 1, body_len);
+fn build_madt() -> Vec<u8> {
+    let lapic_addr = DEFAULT_LAPIC_BASE as u32;
+    let ioapic_addr = DEFAULT_IOAPIC_BASE as u32;
 
+    let mut body = Vec::new();
+    body.extend_from_slice(&lapic_addr.to_le_bytes());
+    body.extend_from_slice(&1u32.to_le_bytes()); // flags: PC-AT compatible
+
+    // Processor Local APIC (type 0, length 8)
+    body.extend_from_slice(&[
+        0, // type
+        8, // length
+        0, // ACPI processor id
+        0, // APIC id
+        1, 0, 0, 0, // flags: enabled
+    ]);
+
+    // IO APIC (type 1, length 12)
+    body.extend_from_slice(&[
+        1,  // type
+        12, // length
+        1,  // IOAPIC id
+        0,  // reserved
+    ]);
+    body.extend_from_slice(&ioapic_addr.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes()); // GSI base
+
+    let header = build_header(b"APIC", 1, body.len());
     let mut table = Vec::new();
     table.extend_from_slice(&header);
-    table.extend_from_slice(&(fadt_address as u32).to_le_bytes());
+    table.extend_from_slice(&body);
     finalize_checksum(&mut table);
     table
 }
 
-fn build_xsdt(fadt_address: u64) -> Vec<u8> {
-    let body_len = 8; // one u64 entry
-    let header = build_header(b"XSDT", 1, body_len);
+fn build_hpet(hpet_base: u64) -> Vec<u8> {
+    // HPET table is a fixed 56 bytes (36 header + 20 body).
+    let body_len = 20;
+    let header = build_header(b"HPET", 1, body_len);
 
     let mut table = Vec::new();
     table.extend_from_slice(&header);
-    table.extend_from_slice(&fadt_address.to_le_bytes());
+
+    // EventTimerBlockId
+    table.extend_from_slice(&0x8086A201u32.to_le_bytes());
+
+    // Generic Address Structure (system memory, 64-bit)
+    table.push(0); // address_space_id: system memory
+    table.push(64); // register_bit_width
+    table.push(0); // register_bit_offset
+    table.push(0); // access_size (unspecified)
+    table.extend_from_slice(&hpet_base.to_le_bytes());
+
+    table.push(0); // hpet_number
+    table.extend_from_slice(&0x0080u16.to_le_bytes()); // min_tick
+    table.push(0); // page_protection
+
     finalize_checksum(&mut table);
     table
 }
@@ -156,7 +203,38 @@ fn build_rsdp(rsdt_address: u64, xsdt_address: u64) -> Vec<u8> {
     rsdp.to_vec()
 }
 
+fn build_rsdt(addrs: &[u64]) -> Vec<u8> {
+    let body_len = addrs.len() * 4;
+    let header = build_header(b"RSDT", 1, body_len);
+
+    let mut table = Vec::new();
+    table.extend_from_slice(&header);
+    for &addr in addrs {
+        debug_assert!(addr <= u32::MAX as u64);
+        table.extend_from_slice(&(addr as u32).to_le_bytes());
+    }
+    finalize_checksum(&mut table);
+    table
+}
+
+fn build_xsdt(addrs: &[u64]) -> Vec<u8> {
+    let body_len = addrs.len() * 8;
+    let header = build_header(b"XSDT", 1, body_len);
+
+    let mut table = Vec::new();
+    table.extend_from_slice(&header);
+    for &addr in addrs {
+        table.extend_from_slice(&addr.to_le_bytes());
+    }
+    finalize_checksum(&mut table);
+    table
+}
+
 pub fn build_acpi_table_set(base_address: u64) -> BuiltAcpiTables {
+    build_acpi_table_set_with_hpet(base_address, dsdt::HPET_BASE as u64)
+}
+
+pub fn build_acpi_table_set_with_hpet(base_address: u64, hpet_base: u64) -> BuiltAcpiTables {
     let dsdt_bytes = dsdt::DSDT_AML.to_vec();
 
     let dsdt_address = base_address;
@@ -168,15 +246,28 @@ pub fn build_acpi_table_set(base_address: u64) -> BuiltAcpiTables {
     cursor += fadt_bytes.len() as u64;
     cursor = align_up(cursor, 16);
 
+    let madt_address = cursor;
+    let madt_bytes = build_madt();
+    cursor += madt_bytes.len() as u64;
+    cursor = align_up(cursor, 16);
+
+    let hpet_address = cursor;
+    let hpet_bytes = build_hpet(hpet_base);
+    cursor += hpet_bytes.len() as u64;
+    cursor = align_up(cursor, 16);
+
     let rsdt_address = cursor;
-    let rsdt_bytes = build_rsdt(fadt_address);
+    let rsdt_bytes = build_rsdt(&[fadt_address, madt_address, hpet_address]);
     cursor += rsdt_bytes.len() as u64;
     cursor = align_up(cursor, 16);
 
     let xsdt_address = cursor;
-    let xsdt_bytes = build_xsdt(fadt_address);
+    let xsdt_bytes = build_xsdt(&[fadt_address, madt_address, hpet_address]);
+    cursor += xsdt_bytes.len() as u64;
+    cursor = align_up(cursor, 16);
 
     let rsdp_bytes = build_rsdp(rsdt_address, xsdt_address);
+    let rsdp_address = cursor;
 
     BuiltAcpiTables {
         base_address,
@@ -184,10 +275,15 @@ pub fn build_acpi_table_set(base_address: u64) -> BuiltAcpiTables {
         dsdt: dsdt_bytes,
         fadt_address,
         fadt: fadt_bytes,
+        madt_address,
+        madt: madt_bytes,
+        hpet_address,
+        hpet: hpet_bytes,
         rsdt_address,
         rsdt: rsdt_bytes,
         xsdt_address,
         xsdt: xsdt_bytes,
+        rsdp_address,
         rsdp: rsdp_bytes,
     }
 }
@@ -309,7 +405,7 @@ mod tests {
 
     #[test]
     fn fadt_references_dsdt_and_checksums_are_valid() {
-        let tables = build_acpi_table_set(0x1000);
+        let tables = build_acpi_table_set_with_hpet(0x1000, dsdt::HPET_BASE as u64);
 
         // Layout is derived from DSDT length.
         assert_eq!(tables.dsdt_address, 0x1000);
@@ -346,10 +442,21 @@ mod tests {
         assert_eq!(&tables.rsdt[0..4], b"RSDT");
         assert_eq!(checksum::acpi_checksum(&tables.rsdt), 0);
         assert_eq!(read_u32_le(&tables.rsdt, 36) as u64, tables.fadt_address);
+        assert_eq!(read_u32_le(&tables.rsdt, 40) as u64, tables.madt_address);
+        assert_eq!(read_u32_le(&tables.rsdt, 44) as u64, tables.hpet_address);
 
         assert_eq!(&tables.xsdt[0..4], b"XSDT");
         assert_eq!(checksum::acpi_checksum(&tables.xsdt), 0);
         assert_eq!(read_u64_le(&tables.xsdt, 36), tables.fadt_address);
+        assert_eq!(read_u64_le(&tables.xsdt, 44), tables.madt_address);
+        assert_eq!(read_u64_le(&tables.xsdt, 52), tables.hpet_address);
+
+        assert_eq!(&tables.madt[0..4], b"APIC");
+        assert_eq!(checksum::acpi_checksum(&tables.madt), 0);
+
+        assert_eq!(&tables.hpet[0..4], b"HPET");
+        assert_eq!(checksum::acpi_checksum(&tables.hpet), 0);
+        assert_eq!(read_u64_le(&tables.hpet, 44), dsdt::HPET_BASE as u64);
 
         // RSDP checksums are verified in builder via debug_asserts; still sanity check signature.
         assert_eq!(&tables.rsdp[0..8], b"RSD PTR ");
