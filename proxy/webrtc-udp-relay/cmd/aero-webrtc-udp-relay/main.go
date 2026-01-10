@@ -72,10 +72,16 @@ func main() {
 
 	srv := httpserver.New(cfg, logger, build)
 	sessionMgr := relay.NewSessionManager(cfg, nil, nil)
+	relayCfg := relay.Config{
+		MaxUDPBindingsPerSession:  cfg.MaxUDPBindingsPerSession,
+		UDPBindingIdleTimeout:     cfg.UDPBindingIdleTimeout,
+		UDPReadBufferBytes:        cfg.UDPReadBufferBytes,
+		DataChannelSendQueueBytes: cfg.DataChannelSendQueueBytes,
+	}
 	sig := signaling.NewServer(signaling.Config{
 		Sessions:    sessionMgr,
 		WebRTC:      api,
-		RelayConfig: relay.ConfigFromEnv(),
+		RelayConfig: relayCfg,
 		Policy:      destPolicy,
 	})
 	sig.RegisterRoutes(srv.Mux())

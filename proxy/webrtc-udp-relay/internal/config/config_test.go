@@ -36,6 +36,18 @@ func TestDefaultsDev(t *testing.T) {
 	if len(cfg.WebRTCNAT1To1IPs) != 0 {
 		t.Fatalf("expected WebRTCNAT1To1IPs empty, got %v", cfg.WebRTCNAT1To1IPs)
 	}
+	if cfg.UDPBindingIdleTimeout != DefaultUDPBindingIdleTimeout {
+		t.Fatalf("UDPBindingIdleTimeout=%v, want %v", cfg.UDPBindingIdleTimeout, DefaultUDPBindingIdleTimeout)
+	}
+	if cfg.UDPReadBufferBytes != DefaultUDPReadBufferBytes {
+		t.Fatalf("UDPReadBufferBytes=%d, want %d", cfg.UDPReadBufferBytes, DefaultUDPReadBufferBytes)
+	}
+	if cfg.DataChannelSendQueueBytes != DefaultDataChannelSendQueueBytes {
+		t.Fatalf("DataChannelSendQueueBytes=%d, want %d", cfg.DataChannelSendQueueBytes, DefaultDataChannelSendQueueBytes)
+	}
+	if cfg.MaxUDPBindingsPerSession != DefaultMaxUDPBindingsPerSession {
+		t.Fatalf("MaxUDPBindingsPerSession=%d, want %d", cfg.MaxUDPBindingsPerSession, DefaultMaxUDPBindingsPerSession)
+	}
 }
 
 func TestDefaultsProdWhenModeFlagSet(t *testing.T) {

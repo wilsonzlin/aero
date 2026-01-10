@@ -23,6 +23,11 @@ const (
 	EnvShutdownTimeout = "AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT"
 	EnvMode            = "AERO_WEBRTC_UDP_RELAY_MODE"
 
+	// Relay engine knobs.
+	EnvUDPBindingIdleTimeout     = "UDP_BINDING_IDLE_TIMEOUT"
+	EnvUDPReadBufferBytes        = "UDP_READ_BUFFER_BYTES"
+	EnvDataChannelSendQueueBytes = "DATACHANNEL_SEND_QUEUE_BYTES"
+
 	// Quota/rate limiting knobs (required by the task).
 	EnvMaxSessions                     = "MAX_SESSIONS"
 	EnvMaxUDPPpsPerSession             = "MAX_UDP_PPS_PER_SESSION"
@@ -38,6 +43,11 @@ const (
 	DefaultShutdown             = 15 * time.Second
 	DefaultViolationWindow      = 10 * time.Second
 	DefaultMode            Mode = ModeDev
+
+	DefaultUDPBindingIdleTimeout     = 60 * time.Second
+	DefaultUDPReadBufferBytes        = 65535
+	DefaultDataChannelSendQueueBytes = 1 << 20 // 1MiB
+	DefaultMaxUDPBindingsPerSession  = 128
 )
 
 const (
@@ -101,6 +111,11 @@ type Config struct {
 	LogLevel        slog.Level
 	ShutdownTimeout time.Duration
 	Mode            Mode
+
+	// Relay engine limits.
+	UDPBindingIdleTimeout     time.Duration
+	UDPReadBufferBytes        int
+	DataChannelSendQueueBytes int
 
 	// WebRTCUDPPortRange restricts the UDP ports used for ICE. When nil, pion uses
 	// its defaults (OS ephemeral port selection).
@@ -173,6 +188,24 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	turnUsername := envOrDefault(lookup, envTurnUsername, "")
 	turnCredential := envOrDefault(lookup, envTurnCredential, "")
 
+	udpBindingIdleTimeout := DefaultUDPBindingIdleTimeout
+	if raw, ok := lookup(EnvUDPBindingIdleTimeout); ok && strings.TrimSpace(raw) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvUDPBindingIdleTimeout, raw, err)
+		}
+		udpBindingIdleTimeout = d
+	}
+
+	udpReadBufferBytes, err := envIntOrDefault(lookup, EnvUDPReadBufferBytes, DefaultUDPReadBufferBytes)
+	if err != nil {
+		return Config{}, err
+	}
+	dataChannelSendQueueBytes, err := envIntOrDefault(lookup, EnvDataChannelSendQueueBytes, DefaultDataChannelSendQueueBytes)
+	if err != nil {
+		return Config{}, err
+	}
+
 	shutdownTimeout := DefaultShutdown
 	if raw, ok := lookup(EnvShutdownTimeout); ok && raw != "" {
 		d, err := time.ParseDuration(raw)
@@ -198,7 +231,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	maxUDPBindingsPerSession, err := envIntOrDefault(lookup, EnvMaxUDPBindingsPerSession, 0)
+	maxUDPBindingsPerSession, err := envIntOrDefault(lookup, EnvMaxUDPBindingsPerSession, DefaultMaxUDPBindingsPerSession)
 	if err != nil {
 		return Config{}, err
 	}
@@ -285,11 +318,15 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.IntVar(&maxUDPPpsPerSession, "max-udp-pps-per-session", maxUDPPpsPerSession, "Outbound UDP packets/sec per session (0 = unlimited)")
 	fs.IntVar(&maxUDPBpsPerSession, "max-udp-bps-per-session", maxUDPBpsPerSession, "Outbound UDP bytes/sec per session (0 = unlimited)")
 	fs.IntVar(&maxUDPPpsPerDest, "max-udp-pps-per-dest", maxUDPPpsPerDest, "Outbound UDP packets/sec per destination per session (0 = unlimited)")
-	fs.IntVar(&maxUDPBindingsPerSession, "max-udp-bindings-per-session", maxUDPBindingsPerSession, "Maximum UDP bindings per session (0 = unlimited)")
+	fs.IntVar(&maxUDPBindingsPerSession, "max-udp-bindings-per-session", maxUDPBindingsPerSession, "Maximum UDP bindings per session (env "+EnvMaxUDPBindingsPerSession+")")
 	fs.IntVar(&maxUniqueDestinationsPerSession, "max-unique-destinations-per-session", maxUniqueDestinationsPerSession, "Maximum unique UDP destinations per session (0 = unlimited)")
 	fs.IntVar(&maxDataChannelBpsPerSession, "max-dc-bps-per-session", maxDataChannelBpsPerSession, "DataChannel bytes/sec per session (relay -> client) (0 = unlimited)")
 	fs.IntVar(&hardCloseAfterViolations, "hard-close-after-violations", hardCloseAfterViolations, "Close session after N rate/quota violations (0 = disabled)")
 	fs.DurationVar(&violationWindow, "violation-window", violationWindow, "Violation window for hard close")
+
+	fs.DurationVar(&udpBindingIdleTimeout, "udp-binding-idle-timeout", udpBindingIdleTimeout, "Close idle UDP bindings after this duration (env "+EnvUDPBindingIdleTimeout+")")
+	fs.IntVar(&udpReadBufferBytes, "udp-read-buffer-bytes", udpReadBufferBytes, "UDP socket read buffer size in bytes (env "+EnvUDPReadBufferBytes+")")
+	fs.IntVar(&dataChannelSendQueueBytes, "datachannel-send-queue-bytes", dataChannelSendQueueBytes, "Max queued outbound DataChannel bytes before dropping (env "+EnvDataChannelSendQueueBytes+")")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -327,6 +364,18 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	if shutdownTimeout <= 0 {
 		return Config{}, fmt.Errorf("shutdown timeout must be > 0")
+	}
+	if udpBindingIdleTimeout <= 0 {
+		return Config{}, fmt.Errorf("%s/--udp-binding-idle-timeout must be > 0", EnvUDPBindingIdleTimeout)
+	}
+	if udpReadBufferBytes <= 0 {
+		return Config{}, fmt.Errorf("%s/--udp-read-buffer-bytes must be > 0", EnvUDPReadBufferBytes)
+	}
+	if dataChannelSendQueueBytes <= 0 {
+		return Config{}, fmt.Errorf("%s/--datachannel-send-queue-bytes must be > 0", EnvDataChannelSendQueueBytes)
+	}
+	if maxUDPBindingsPerSession <= 0 {
+		return Config{}, fmt.Errorf("%s/--max-udp-bindings-per-session must be > 0", EnvMaxUDPBindingsPerSession)
 	}
 
 	var webrtcUDPPortRange *UDPPortRange
@@ -390,6 +439,10 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		LogLevel:        level,
 		ShutdownTimeout: shutdownTimeout,
 		Mode:            mode,
+
+		UDPBindingIdleTimeout:     udpBindingIdleTimeout,
+		UDPReadBufferBytes:        udpReadBufferBytes,
+		DataChannelSendQueueBytes: dataChannelSendQueueBytes,
 
 		WebRTCUDPPortRange:           webrtcUDPPortRange,
 		WebRTCUDPListenIP:            webrtcUDPListenIP,
