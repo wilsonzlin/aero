@@ -103,7 +103,7 @@ jobs:
 
       - name: Run Playwright tests
         working-directory: ${{ steps.node-dir.outputs.dir }}
-        run: npx playwright test --project=${{ matrix.project }}
+        run: npx playwright test --project=${{ matrix.project }} --reporter=dot,html --trace=retain-on-failure
 
       - name: Upload Playwright artifacts
         if: always()
