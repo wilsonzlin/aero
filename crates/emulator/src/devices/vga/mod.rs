@@ -3,8 +3,10 @@ mod ports;
 mod regs;
 
 pub mod dac;
+pub mod edid;
 pub mod memory;
 pub mod render;
+pub mod vbe;
 
 pub use dac::VgaDac;
 pub use memory::VgaMemory;
@@ -69,7 +71,6 @@ impl VgaRenderer {
         }
     }
 }
-
 /// Information needed to update the BIOS Data Area (BDA) after a legacy VGA
 /// mode set (INT 10h/AH=00h style).
 ///
@@ -86,4 +87,3 @@ pub struct LegacyBdaInfo {
     pub cursor_pos: [u16; 8],
     pub active_page: u8,
 }
-

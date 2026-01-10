@@ -1,4 +1,5 @@
 mod bda_time;
+mod int10_vbe;
 mod int1a;
 
 pub use bda_time::{BdaTime, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR, TICKS_PER_DAY};
@@ -27,3 +28,4 @@ impl Bios {
         self.bda_time.advance(memory, delta);
     }
 }
+

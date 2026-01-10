@@ -31,6 +31,8 @@ pub enum TranslateError {
     PageFault { vaddr: u64, code: u32 },
 }
 
+pub type PageFault = TranslateError;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageSize {
     Size4K,
