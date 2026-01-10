@@ -1,6 +1,7 @@
 import {
   PersistentGpuCache,
   computeShaderCacheKey,
+  computeWebGpuCapsHash,
   compileWgslModule,
 } from "./gpu/persistent_cache.ts";
 
@@ -14,12 +15,13 @@ async function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function tryInitWebGpuDevice() {
+async function tryInitWebGpu() {
   if (!navigator.gpu) return null;
   try {
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
     if (!adapter) return null;
-    return await adapter.requestDevice();
+    const device = await adapter.requestDevice();
+    return { adapter, device };
   } catch {
     return null;
   }
@@ -62,7 +64,9 @@ async function translateDxbcToWgslSlow(_dxbcBytes) {
 async function main() {
   // Ensure deterministic output for tests.
   const dxbc = new Uint8Array([0x44, 0x58, 0x42, 0x43, 1, 2, 3, 4, 5, 6, 7, 8]);
-  const flags = { halfPixelCenter: false, capsHash: "demo-caps-v1" };
+  const webgpu = await tryInitWebGpu();
+  const capsHash = webgpu ? await computeWebGpuCapsHash(webgpu.adapter) : "no-webgpu";
+  const flags = { halfPixelCenter: false, capsHash };
   const key = await computeShaderCacheKey(dxbc, flags);
 
   const cache = await PersistentGpuCache.open({
@@ -88,7 +92,7 @@ async function main() {
   }
   const t1 = performance.now();
 
-  const device = await tryInitWebGpuDevice();
+  const device = webgpu?.device ?? null;
   if (device) {
     // Validate cached WGSL against current browser implementation.
     const compile = await compileWgslModule(device, payload.wgsl);
@@ -122,4 +126,3 @@ main().catch((err) => {
   console.error(err);
   window.__shaderCacheDemo = { error: String(err) };
 });
-

@@ -124,6 +124,110 @@ export async function computePipelineCacheKey(pipelineDesc) {
   return await sha256Hex(metaBytes);
 }
 
+const WEBGPU_LIMIT_KEYS = [
+  "maxTextureDimension1D",
+  "maxTextureDimension2D",
+  "maxTextureDimension3D",
+  "maxTextureArrayLayers",
+  "maxBindGroups",
+  "maxBindGroupsPlusVertexBuffers",
+  "maxBindingsPerBindGroup",
+  "maxDynamicUniformBuffersPerPipelineLayout",
+  "maxDynamicStorageBuffersPerPipelineLayout",
+  "maxSampledTexturesPerShaderStage",
+  "maxSamplersPerShaderStage",
+  "maxStorageBuffersPerShaderStage",
+  "maxStorageTexturesPerShaderStage",
+  "maxUniformBuffersPerShaderStage",
+  "maxUniformBufferBindingSize",
+  "maxStorageBufferBindingSize",
+  "minUniformBufferOffsetAlignment",
+  "minStorageBufferOffsetAlignment",
+  "maxVertexBuffers",
+  "maxBufferSize",
+  "maxVertexAttributes",
+  "maxVertexBufferArrayStride",
+  "maxInterStageShaderComponents",
+  "maxInterStageShaderVariables",
+  "maxColorAttachments",
+  "maxColorAttachmentBytesPerSample",
+  "maxComputeWorkgroupStorageSize",
+  "maxComputeInvocationsPerWorkgroup",
+  "maxComputeWorkgroupSizeX",
+  "maxComputeWorkgroupSizeY",
+  "maxComputeWorkgroupSizeZ",
+  "maxComputeWorkgroupsPerDimension",
+];
+
+/**
+ * Compute a stable hash of the WebGPU adapter/device capabilities that can
+ * influence shader translation output.
+ *
+ * Callers should include this string in the shader cache flags (`capsHash`) so
+ * entries are safely invalidated when capabilities/limits change.
+ *
+ * Note: `GPUSupportedLimits` exposes its fields as WebIDL attributes, which are
+ * not enumerable; we probe a fixed list of known limit names.
+ *
+ * @param {GPUAdapter | GPUDevice} adapterOrDevice
+ * @returns {Promise<string>}
+ */
+export async function computeWebGpuCapsHash(adapterOrDevice) {
+  const enc = new TextEncoder();
+
+  const features = adapterOrDevice?.features ? Array.from(adapterOrDevice.features.values()).sort() : [];
+
+  const limitsObj = adapterOrDevice?.limits ?? null;
+  /** @type {Record<string, number>} */
+  const limits = {};
+  if (limitsObj) {
+    for (const k of WEBGPU_LIMIT_KEYS) {
+      const v = limitsObj[k];
+      if (typeof v === "number" && Number.isFinite(v)) {
+        limits[k] = v;
+      }
+    }
+  }
+
+  // WGSL language features are a browser-level capability (not per-adapter).
+  /** @type {string[]} */
+  let wgslFeatures = [];
+  try {
+    const gpu = /** @type {any} */ (navigator)?.gpu;
+    const lf = gpu?.wgslLanguageFeatures;
+    if (lf && typeof lf.values === "function") {
+      wgslFeatures = Array.from(lf.values()).sort();
+    }
+  } catch {
+    // Ignore.
+  }
+
+  // Adapter info is optional and may be blocked by permissions/user agent.
+  /** @type {any} */
+  let adapterInfo = null;
+  const maybeAdapter = /** @type {any} */ (adapterOrDevice);
+  try {
+    if (typeof maybeAdapter.requestAdapterInfo === "function") {
+      adapterInfo = await maybeAdapter.requestAdapterInfo();
+    } else if (maybeAdapter.info) {
+      adapterInfo = maybeAdapter.info;
+    }
+  } catch {
+    adapterInfo = null;
+  }
+
+  return await sha256Hex(
+    enc.encode(
+      stableStringify({
+        features,
+        limits,
+        wgslFeatures,
+        adapterInfo,
+      }),
+    ),
+  );
+}
+
 /**
  * @param {IDBRequest<any>} req
  * @returns {Promise<any>}
@@ -259,9 +363,11 @@ export class PersistentGpuCache {
    * @returns {Promise<PersistentGpuCache>}
    */
   static async open(options = {}) {
+    let didUpgrade = false;
     const db = await new Promise((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = () => {
+        didUpgrade = true;
         const db = req.result;
 
         // Drop & recreate stores on version bump to guarantee a clean schema.
@@ -280,7 +386,17 @@ export class PersistentGpuCache {
       req.onsuccess = () => resolve(req.result);
     });
 
-    const opfs = await tryOpenOpfsCacheDir();
+    let opfs = await tryOpenOpfsCacheDir();
+    if (didUpgrade && opfs) {
+      // If we dropped IndexedDB stores due to a schema bump, also clear OPFS
+      // payload files; otherwise we can leak orphaned blobs across upgrades.
+      try {
+        await opfs.root.removeEntry("aero_gpu_cache", { recursive: true });
+      } catch {
+        // Ignore.
+      }
+      opfs = await tryOpenOpfsCacheDir();
+    }
     const cache = new PersistentGpuCache(db, opfs ? opfs.cacheDir : null, {
       shaderLimits: options.shaderLimits ?? DEFAULT_LIMITS.shaders,
       pipelineLimits: options.pipelineLimits ?? DEFAULT_LIMITS.pipelines,
@@ -294,6 +410,23 @@ export class PersistentGpuCache {
 
   async close() {
     this._db.close();
+  }
+
+  /**
+   * Lightweight introspection helper for overlays/debugging.
+   *
+   * @returns {Promise<{shaders:{entries:number, bytes:number}, pipelines:{entries:number, bytes:number}, opfs:boolean}>}
+   */
+  async stats() {
+    const [shaderEntries, pipelineEntries] = await Promise.all([
+      this._countStore(STORE_SHADERS),
+      this._countStore(STORE_PIPELINES),
+    ]);
+    return {
+      shaders: { entries: shaderEntries, bytes: this._shaderBytes },
+      pipelines: { entries: pipelineEntries, bytes: this._pipelineBytes },
+      opfs: !!this._opfsCacheDir,
+    };
   }
 
   /**
@@ -526,6 +659,18 @@ export class PersistentGpuCache {
 
   /**
    * @param {string} storeName
+   * @returns {Promise<number>}
+   */
+  async _countStore(storeName) {
+    const tx = this._db.transaction([storeName], "readonly");
+    const store = tx.objectStore(storeName);
+    const count = await reqToPromise(store.count());
+    await txDone(tx);
+    return count ?? 0;
+  }
+
+  /**
+   * @param {string} storeName
    * @returns {Promise<void>}
    */
   async _sumStoreBytes(storeName) {
@@ -716,6 +861,7 @@ if (typeof globalThis !== "undefined") {
       PersistentGpuCache,
       computeShaderCacheKey,
       computePipelineCacheKey,
+      computeWebGpuCapsHash,
       compileWgslModule,
       sha256Hex,
     };
@@ -723,6 +869,7 @@ if (typeof globalThis !== "undefined") {
     g.AeroPersistentGpuCache.PersistentGpuCache ??= PersistentGpuCache;
     g.AeroPersistentGpuCache.computeShaderCacheKey ??= computeShaderCacheKey;
     g.AeroPersistentGpuCache.computePipelineCacheKey ??= computePipelineCacheKey;
+    g.AeroPersistentGpuCache.computeWebGpuCapsHash ??= computeWebGpuCapsHash;
     g.AeroPersistentGpuCache.compileWgslModule ??= compileWgslModule;
     g.AeroPersistentGpuCache.sha256Hex ??= sha256Hex;
   }
