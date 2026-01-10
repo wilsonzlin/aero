@@ -127,4 +127,9 @@ Run:
 
 ## Optional: custom GPU path (WDDM)
 
-Design notes live in `drivers/docs/gpu-path.md`. This is the long-term “fast path” for DirectX command interception/translation, but it is not required for the initial virtio bring-up.
+Design notes live in `drivers/docs/gpu-path.md`. The in-tree implementation lives under `drivers/aerogpu/`:
+
+- Driver sources + build tooling: `drivers/aerogpu/` (start at `drivers/aerogpu/README.md`)
+- Build instructions: `drivers/aerogpu/build/README.md`
+
+This is the long-term “fast path” for DirectX command interception/translation, but it is not required for the initial virtio bring-up.
