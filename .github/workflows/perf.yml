@@ -252,6 +252,7 @@ jobs:
   perf-comment:
     name: PR comment (perf smoke)
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     needs: [perf-smoke]
     if: always() && github.event.pull_request.head.repo.full_name == github.repository
     permissions:
