@@ -21,7 +21,9 @@ test("explainMissingRequirements is empty when all capabilities are present", ()
     sharedArrayBuffer: true,
     wasmSimd: true,
     wasmThreads: true,
+    jit_dynamic_wasm: true,
     webgpu: true,
+    webgl2: true,
     opfs: true,
     audioWorklet: true,
     offscreenCanvas: true,
@@ -40,4 +42,3 @@ test("getOpfsRoot fails gracefully when OPFS is unavailable", async () => {
     (err) => err instanceof OpfsUnavailableError,
   );
 });
-

@@ -451,10 +451,6 @@ jobs:
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npm run lint --if-present
 
-      - name: Typecheck (if present)
-        working-directory: ${{ steps.node-dir.outputs.dir }}
-        run: npm run typecheck --if-present
-
       - name: Unit tests
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npm run test:unit

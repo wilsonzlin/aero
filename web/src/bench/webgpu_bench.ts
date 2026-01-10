@@ -200,9 +200,10 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
   try {
     const context = (canvas as unknown as { getContext(type: "webgpu"): GPUCanvasContext | null }).getContext("webgpu");
     if (!context) return { supported: false, reason: "canvas.getContext('webgpu') returned null" };
+    const configuredContext: GPUCanvasContext = context;
 
     const format = gpu.getPreferredCanvasFormat();
-    context.configure({
+    configuredContext.configure({
       device,
       format,
       alphaMode: "opaque",
@@ -328,7 +329,7 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
         pass.end();
       }
 
-      const view = context.getCurrentTexture().createView();
+      const view = configuredContext.getCurrentTexture().createView();
       const rpass = encoder.beginRenderPass({
         colorAttachments: [
           {

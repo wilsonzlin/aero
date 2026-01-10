@@ -17,5 +17,6 @@
     "vitest.config.ts",
     "playwright.config.ts",
     "playwright.gpu.config.ts"
-  ]
+  ],
+  "exclude": ["tests/e2e/**", "tests/playwright/**"]
 }

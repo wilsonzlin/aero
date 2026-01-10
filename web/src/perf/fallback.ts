@@ -4,7 +4,7 @@ import { ResponsivenessTracker, type ResponsivenessHudSnapshot } from './respons
 
 import { FrameTimeStats } from '../../../packages/aero-stats/src/index.js';
 
-import { ByteSizedCacheTracker, GpuAllocationTracker, MemoryTelemetry } from './memory';
+import { ByteSizedCacheTracker, GpuAllocationTracker, MemoryTelemetry } from './memory.js';
 
 export type InstallFallbackPerfOptions = {
   guestRamBytes?: number;

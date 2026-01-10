@@ -48,7 +48,12 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
     status.textContent = "";
     try {
       const bytes = await backend.downloadPcapng();
-      const blob = new Blob([bytes], { type: "application/vnd.tcpdump.pcap" });
+      // `BlobPart` types only accept ArrayBuffer-backed views; `Uint8Array` is
+      // generic over `ArrayBufferLike` and may be backed by `SharedArrayBuffer`.
+      // Copy when needed so TypeScript (and spec compliance) are happy.
+      const bytesForIo: Uint8Array<ArrayBuffer> =
+        bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
+      const blob = new Blob([bytesForIo], { type: "application/vnd.tcpdump.pcap" });
       const url = URL.createObjectURL(blob);
       try {
         const a = document.createElement("a");
@@ -78,9 +83,11 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
       }
 
       const bytes = await backend.downloadPcapng();
+      const bytesForIo: Uint8Array<ArrayBuffer> =
+        bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
       const handle = await openFileHandle(path, { create: true });
       const writable = await handle.createWritable();
-      await writable.write(bytes);
+      await writable.write(bytesForIo);
       await writable.close();
       status.textContent = `Saved capture to OPFS: ${path} (${bytes.byteLength.toLocaleString()} bytes)`;
     } catch (err) {
