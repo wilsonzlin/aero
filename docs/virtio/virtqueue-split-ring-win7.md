@@ -181,6 +181,9 @@ Use a DMA common buffer so the ring is device-accessible and nonpaged:
 * `WdfCommonBufferCreate(...)` for the ring (and optionally for an indirect table pool, §8.3).
 * Use `WdfCommonBufferGetAlignedVirtualAddress()` for the CPU VA.
 * Use `WdfCommonBufferGetAlignedLogicalAddress()` (or the DMA enabler’s logical address) for the device-visible address used in descriptors or queue config.
+* **Initialize the ring memory** before enabling the queue:
+  * easiest: zero the whole allocated ring buffer
+  * at minimum: set `avail->flags/idx` and `used->flags/idx` to 0 so the first `last_used_idx` starts from a known value.
 
 Even when the transport supports non-contiguous memory via IOMMU, a single common buffer keeps the implementation simple and Win7-friendly.
 
@@ -626,7 +629,7 @@ VOID VirtQueueInit(VQ *vq, VOID *ring_va, UINT16 qsz, UINT64 features, SIZE_T qu
     vq->avail->flags = cpu_to_le16(0);
     vq->avail->idx   = cpu_to_le16(0);
     vq->used->flags  = cpu_to_le16(0);
-    /* used->idx is device-written; do not clear unless spec/transport requires */
+    vq->used->idx    = cpu_to_le16(0);
 
     if (features & VIRTIO_F_RING_EVENT_IDX) {
         /* Start with interrupts enabled for first completion */
