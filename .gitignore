@@ -23,6 +23,7 @@ target/
 **/target/
 .vite/
 *.tsbuildinfo
+**/*.rs.bk
 
 # Coverage
 coverage/
