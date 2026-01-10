@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import dgram from 'node:dgram';
 import net from 'node:net';
 import path from 'node:path';
 import { once } from 'node:events';
@@ -7,8 +8,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 import autocannon from 'autocannon';
 import dnsPacket from 'dns-packet';
 import WebSocket from 'ws';
-
-import { startGateway } from '../src/gateway.mjs';
 
 function parseArgs(argv) {
   const out = {};
@@ -61,6 +60,117 @@ function base64UrlEncode(buf) {
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/g, '');
+}
+
+async function startUdpDnsServer({ host = '127.0.0.1', answerIp = '127.0.0.1', ttlSeconds = 60 } = {}) {
+  const socket = dgram.createSocket('udp4');
+
+  socket.on('message', (msg, rinfo) => {
+    let query;
+    try {
+      query = dnsPacket.decode(msg);
+    } catch {
+      return;
+    }
+
+    const question = query.questions?.[0];
+    if (!question) return;
+
+    const response = dnsPacket.encode({
+      type: 'response',
+      id: query.id,
+      flags: dnsPacket.RECURSION_DESIRED | dnsPacket.RECURSION_AVAILABLE,
+      questions: query.questions,
+      answers:
+        question.type === 'A'
+          ? [
+              {
+                type: 'A',
+                name: question.name,
+                ttl: ttlSeconds,
+                data: answerIp,
+              },
+            ]
+          : [],
+    });
+
+    socket.send(response, rinfo.port, rinfo.address);
+  });
+
+  await new Promise((resolve, reject) => {
+    socket.once('error', reject);
+    socket.bind(0, host, resolve);
+  });
+
+  const address = socket.address();
+  if (typeof address === 'string') throw new Error('Unexpected UDP DNS server address');
+
+  return {
+    host,
+    port: address.port,
+    close: async () => {
+      socket.close();
+      await once(socket, 'close');
+    },
+  };
+}
+
+async function startGateway({ dnsUpstreamHost, dnsUpstreamPort } = {}) {
+  let buildServer;
+  let loadConfig;
+  try {
+    ({ buildServer } = await import('../dist/server.js'));
+    ({ loadConfig } = await import('../dist/config.js'));
+  } catch (err) {
+    const message =
+      'Failed to import aero-gateway build artifacts from dist/. ' +
+      'Run `npm run build` first (or use `npm run bench`, which does this automatically).';
+    const wrapped = new Error(message);
+    wrapped.cause = err;
+    throw wrapped;
+  }
+
+  if (!dnsUpstreamHost || !dnsUpstreamPort) {
+    throw new Error('startGateway requires dnsUpstreamHost + dnsUpstreamPort');
+  }
+
+  const config = loadConfig({
+    HOST: '127.0.0.1',
+    PORT: '8080',
+    LOG_LEVEL: 'silent',
+    ALLOWED_ORIGINS: '*',
+    RATE_LIMIT_REQUESTS_PER_MINUTE: '0',
+    TRUST_PROXY: '0',
+    CROSS_ORIGIN_ISOLATION: '0',
+
+    DNS_UPSTREAMS: `${dnsUpstreamHost}:${dnsUpstreamPort}`,
+    DNS_UPSTREAM_TIMEOUT_MS: '1000',
+    DNS_QPS_PER_IP: '0',
+    DNS_BURST_PER_IP: '0',
+    DNS_CACHE_MAX_ENTRIES: '10000',
+    DNS_CACHE_MAX_TTL_SECONDS: '300',
+    DNS_CACHE_NEGATIVE_TTL_SECONDS: '60',
+    DNS_MAX_QUERY_BYTES: '4096',
+    DNS_MAX_RESPONSE_BYTES: '4096',
+  });
+
+  const { app } = buildServer(config);
+  await app.listen({ host: '127.0.0.1', port: 0 });
+
+  const addr = app.server.address();
+  if (!addr || typeof addr === 'string') {
+    await app.close();
+    throw new Error(`Unexpected gateway address: ${String(addr)}`);
+  }
+
+  return {
+    host: '127.0.0.1',
+    port: addr.port,
+    url: `http://127.0.0.1:${addr.port}`,
+    close: async () => {
+      await app.close();
+    },
+  };
 }
 
 async function startEchoServer({ host = '127.0.0.1' } = {}) {
@@ -262,6 +372,11 @@ async function benchDoh({ gatewayPort, durationSeconds, connections }) {
 
   const url = `http://127.0.0.1:${gatewayPort}/dns-query?dns=${base64UrlEncode(query)}`;
 
+  // Warm the cache first so the measured run mostly exercises the cache-hit path
+  // (avoids a high-concurrency stampede causing many upstream misses).
+  const warmupRes = await fetch(url, { headers: { accept: 'application/dns-message' } });
+  if (!warmupRes.ok) throw new Error(`DoH warmup failed: HTTP ${warmupRes.status}`);
+
   const result = await autocannon({
     url,
     method: 'GET',
@@ -274,9 +389,49 @@ async function benchDoh({ gatewayPort, durationSeconds, connections }) {
 
   const metricsRes = await fetch(`http://127.0.0.1:${gatewayPort}/metrics`);
   if (!metricsRes.ok) throw new Error(`metrics fetch failed: ${metricsRes.status}`);
-  const metrics = await metricsRes.json();
+  const metricsText = await metricsRes.text();
 
-  const hitRatio = metrics.doh.cacheHitRatio ?? null;
+  const parseCounter = (metricName, matchLabels = {}) => {
+    let found = false;
+    let sum = 0;
+    for (const line of metricsText.split('\n')) {
+      if (!line || line.startsWith('#')) continue;
+      if (!line.startsWith(metricName)) continue;
+
+      let rest = line.slice(metricName.length);
+      let labels = {};
+      if (rest.startsWith('{')) {
+        const end = rest.indexOf('}');
+        if (end === -1) continue;
+        const rawLabels = rest.slice(1, end);
+        rest = rest.slice(end + 1);
+
+        for (const entry of rawLabels.split(',')) {
+          if (!entry) continue;
+          const eq = entry.indexOf('=');
+          if (eq === -1) continue;
+          const key = entry.slice(0, eq).trim();
+          let value = entry.slice(eq + 1).trim();
+          if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
+          labels[key] = value;
+        }
+      }
+
+      const matches = Object.entries(matchLabels).every(([key, value]) => labels[key] === value);
+      if (!matches) continue;
+
+      const numeric = Number.parseFloat(rest.trim().split(' ')[0]);
+      if (!Number.isFinite(numeric)) continue;
+      sum += numeric;
+      found = true;
+    }
+
+    return found ? sum : null;
+  };
+
+  const hits = parseCounter('dns_cache_hits_total', { qtype: 'A' }) ?? 0;
+  const misses = parseCounter('dns_cache_misses_total', { qtype: 'A' }) ?? 0;
+  const hitRatio = hits + misses === 0 ? null : hits / (hits + misses);
   return {
     qps: result.requests.average,
     latencyMs: {
@@ -285,8 +440,8 @@ async function benchDoh({ gatewayPort, durationSeconds, connections }) {
       p99: result.latency.p99,
     },
     cache: {
-      hits: metrics.doh.cacheHits,
-      misses: metrics.doh.cacheMisses,
+      hits,
+      misses,
       hitRatio,
     },
     raw: {
@@ -320,9 +475,8 @@ function printResultsTable(results) {
   lines.push('');
   lines.push(`DoH QPS (connections=${results.meta.doh.connections}, duration=${results.meta.doh.durationSeconds}s)`);
   lines.push(`  ${doh.qps.toFixed(0)} req/s   p50 ${formatMs(doh.latencyMs.p50)}   p99 ${formatMs(doh.latencyMs.p99)}`);
-  lines.push(
-    `  cache hit ratio ${(doh.cache.hitRatio * 100).toFixed(1)}% (hits=${doh.cache.hits}, misses=${doh.cache.misses})`,
-  );
+  const hitRatioPct = doh.cache.hitRatio === null ? 'n/a' : `${(doh.cache.hitRatio * 100).toFixed(1)}%`;
+  lines.push(`  cache hit ratio ${hitRatioPct} (hits=${doh.cache.hits}, misses=${doh.cache.misses})`);
 
   lines.push('');
   lines.push(`Results JSON: ${results.meta.outputJson}`);
@@ -355,9 +509,9 @@ function assertThresholds(results) {
     failures.push(`doh qps ${results.doh.qps.toFixed(0)} < ${thresholds.dohQpsMin}`);
   }
 
-  if (results.doh.cache.hitRatio < thresholds.dohCacheHitRatioMin) {
+  if (results.doh.cache.hitRatio === null || results.doh.cache.hitRatio < thresholds.dohCacheHitRatioMin) {
     failures.push(
-      `doh cache hit ratio ${results.doh.cache.hitRatio.toFixed(3)} < ${thresholds.dohCacheHitRatioMin}`,
+      `doh cache hit ratio ${results.doh.cache.hitRatio === null ? 'n/a' : results.doh.cache.hitRatio.toFixed(3)} < ${thresholds.dohCacheHitRatioMin}`,
     );
   }
 
@@ -390,13 +544,15 @@ async function main() {
 
   const echoServer = await startEchoServer();
   const sinkServer = await startSinkServer();
-  const gateway = await startGateway();
+  const dnsServer = await startUdpDnsServer();
+  const gateway = await startGateway({ dnsUpstreamHost: dnsServer.host, dnsUpstreamPort: dnsServer.port });
 
   const results = {
     meta: {
       mode,
       outputJson,
       gateway: { url: gateway.url },
+      dnsUpstream: { host: dnsServer.host, port: dnsServer.port },
       tcpRtt: config.tcpRtt,
       tcpThroughput: config.tcpThroughput,
       doh: config.doh,
@@ -429,7 +585,7 @@ async function main() {
 
     if (shouldAssert) assertThresholds(results);
   } finally {
-    await Promise.all([gateway.close(), echoServer.close(), sinkServer.close()]);
+    await Promise.all([gateway.close(), echoServer.close(), sinkServer.close(), dnsServer.close()]);
   }
 }
 

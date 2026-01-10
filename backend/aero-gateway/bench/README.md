@@ -21,6 +21,8 @@ npm ci
 npm run bench
 ```
 
+`npm run bench` automatically builds the gateway (`npm run build`) so the benchmark exercises the same code paths as production.
+
 ## Benchmark modes
 
 ### Local (default)
@@ -55,10 +57,11 @@ This is intended for GitHub Actions / perf regression smoke tests.
 - **QPS**: HTTP requests per second against `/dns-query` for a fixed `A` query (loopback-resolved).
 - **Cache hit ratio**: computed from gateway metrics (cache hits / (hits + misses)).
 
+To keep the benchmark **offline**, the runner starts a local UDP DNS server and configures the gateway's `DNS_UPSTREAMS` to point to it. The upstream returns a deterministic `A` record so the DoH cache hit path is exercised without contacting real DNS resolvers.
+
 ## Interpreting results
 
 These numbers are **sensitive to local machine load**. Use the results as:
 
 - a baseline for your machine (run multiple times and compare)
 - a smoke-test for catastrophic regressions in CI (thresholds are intentionally conservative)
-

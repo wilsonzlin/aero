@@ -14,8 +14,8 @@
     "test:property": "node ./scripts/run-tests.js test/property",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "bench": "node bench/run.mjs --mode local --json bench/results.json",
-    "bench:smoke": "node bench/run.mjs --mode smoke --json bench/results.json --assert"
+    "bench": "npm run build && node bench/run.mjs --mode local --json bench/results.json",
+    "bench:smoke": "npm run build && node bench/run.mjs --mode smoke --json bench/results.json --assert"
   },
   "dependencies": {
     "@fastify/static": "^7.0.4",
