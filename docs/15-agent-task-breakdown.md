@@ -361,6 +361,11 @@ for the full browser backend design.
 | NT-008 | Virtio-net driver (Win7) (see VIO-012) | P1 | VIO-001..VIO-003 | High    |
 | NT-009 | Network test suite       | P0       | NT-001       | Medium     |
 
+Implementation references:
+
+- Aero Gateway backend contract (TCP proxy + DoH): [`docs/backend/01-aero-gateway-api.md`](./backend/01-aero-gateway-api.md) (OpenAPI: [`docs/backend/openapi.yaml`](./backend/openapi.yaml))
+- Gateway implementation: `backend/aero-gateway`
+- Local development relay: `net-proxy/`
 
 ### Audio Tasks
 
