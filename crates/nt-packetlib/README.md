@@ -40,7 +40,7 @@ Building/serialization:
 
 ```rust
 use core::net::Ipv4Addr;
-use nt_packetlib::io::net::packet::{arp::ArpReplyFrameBuilder, MacAddr};
+use nt_packetlib::packet::{arp::ArpReplyFrameBuilder, MacAddr};
 
 let reply = ArpReplyFrameBuilder {
     sender_mac: MacAddr([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]),
@@ -51,4 +51,3 @@ let reply = ArpReplyFrameBuilder {
 .build_vec()
 .unwrap();
 ```
-

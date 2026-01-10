@@ -6,3 +6,6 @@
 extern crate alloc;
 
 pub mod io;
+
+/// Convenience re-export so consumers can `use nt_packetlib::packet::...`.
+pub use io::net::packet;
