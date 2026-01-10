@@ -16,7 +16,7 @@ func TestParseICEServersJSON(t *testing.T) {
 	  }
 	]`
 
-	servers, err := ParseICEServersJSON(raw)
+	servers, err := ParseICEServersJSON(raw, false)
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
@@ -45,7 +45,7 @@ func TestParseICEServersJSON_SupportsSingleStringURLs(t *testing.T) {
 	  }
 	]`
 
-	servers, err := ParseICEServersJSON(raw)
+	servers, err := ParseICEServersJSON(raw, false)
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
@@ -66,9 +66,30 @@ func TestParseICEServersJSON_RejectsTURNWithoutCreds(t *testing.T) {
 	  }
 	]`
 
-	_, err := ParseICEServersJSON(raw)
+	_, err := ParseICEServersJSON(raw, false)
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestParseICEServersJSON_AllowsTURNWithoutCredsWhenEnabled(t *testing.T) {
+	t.Parallel()
+
+	raw := `[
+	  {
+	    "urls": ["turn:turn.example.com:3478?transport=udp"]
+	  }
+	]`
+
+	servers, err := ParseICEServersJSON(raw, true)
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if len(servers) != 1 {
+		t.Fatalf("expected 1 server, got %d", len(servers))
+	}
+	if servers[0].Username != "" || servers[0].Credential != nil {
+		t.Fatalf("expected TURN server creds to be empty: %#v", servers[0])
 	}
 }
 
@@ -80,6 +101,7 @@ func TestParseICEServersFromConvenienceEnv(t *testing.T) {
 		"turn:turn.example.com:3478?transport=udp",
 		"user",
 		"pass",
+		false,
 	)
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
@@ -95,5 +117,26 @@ func TestParseICEServersFromConvenienceEnv(t *testing.T) {
 	}
 	if servers[1].Credential.(string) != "pass" {
 		t.Fatalf("unexpected turn credential: %#v", servers[1].Credential)
+	}
+}
+
+func TestParseICEServersFromConvenienceEnv_AllowsTURNWithoutCredsWhenEnabled(t *testing.T) {
+	t.Parallel()
+
+	servers, err := ParseICEServersFromConvenienceEnv(
+		"",
+		"turn:turn.example.com:3478?transport=udp",
+		"",
+		"",
+		true,
+	)
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if len(servers) != 1 {
+		t.Fatalf("expected 1 server, got %d", len(servers))
+	}
+	if servers[0].Username != "" || servers[0].Credential != nil {
+		t.Fatalf("expected TURN server creds to be empty: %#v", servers[0])
 	}
 }

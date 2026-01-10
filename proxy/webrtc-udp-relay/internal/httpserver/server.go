@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/turnrest"
 )
 
 var ErrServerClosed = http.ErrServerClosed
@@ -104,7 +105,27 @@ func (s *Server) registerRoutes() {
 			WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
 			return
 		}
-		WriteJSON(w, http.StatusOK, map[string]any{"iceServers": s.cfg.ICEServers})
+		iceServers := s.cfg.ICEServers
+		if s.cfg.TURNREST.Enabled() {
+			gen, err := turnrest.NewGenerator(turnrest.GeneratorConfig{
+				SharedSecret:    s.cfg.TURNREST.SharedSecret,
+				TTLSeconds:      s.cfg.TURNREST.TTLSeconds,
+				UsernamePrefix:  s.cfg.TURNREST.UsernamePrefix,
+				Now:             time.Now,
+				SessionIDSource: turnrest.CryptoRandomSessionID,
+			})
+			if err != nil {
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
+			creds, err := gen.GenerateRandom()
+			if err != nil {
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
+			iceServers = withTURNRESTCredentials(iceServers, creds.Username, creds.Credential)
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"iceServers": iceServers})
 	})
 }
 

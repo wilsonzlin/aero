@@ -18,16 +18,16 @@ const (
 	envTurnCredential = "AERO_TURN_CREDENTIAL"
 )
 
-func parseICEServersFromValues(iceServersJSON, stunURLs, turnURLs, turnUsername, turnCredential string) ([]webrtc.ICEServer, error) {
+func parseICEServersFromValues(iceServersJSON, stunURLs, turnURLs, turnUsername, turnCredential string, allowTurnWithoutCreds bool) ([]webrtc.ICEServer, error) {
 	if raw := strings.TrimSpace(iceServersJSON); raw != "" {
-		iceServers, err := ParseICEServersJSON(raw)
+		iceServers, err := ParseICEServersJSON(raw, allowTurnWithoutCreds)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", envICEServersJSON, err)
 		}
 		return iceServers, nil
 	}
 
-	iceServers, err := ParseICEServersFromConvenienceEnv(stunURLs, turnURLs, turnUsername, turnCredential)
+	iceServers, err := ParseICEServersFromConvenienceEnv(stunURLs, turnURLs, turnUsername, turnCredential, allowTurnWithoutCreds)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +57,7 @@ func (s *stringOrStringSlice) UnmarshalJSON(b []byte) error {
 }
 
 // ParseICEServersJSON parses and validates AERO_ICE_SERVERS_JSON.
-func ParseICEServersJSON(raw string) ([]webrtc.ICEServer, error) {
+func ParseICEServersJSON(raw string, allowTurnWithoutCreds bool) ([]webrtc.ICEServer, error) {
 	var servers []iceServerJSON
 	if err := json.Unmarshal([]byte(raw), &servers); err != nil {
 		return nil, err
@@ -82,7 +82,7 @@ func ParseICEServersJSON(raw string) ([]webrtc.ICEServer, error) {
 			pcServer.Credential = server.Credential
 		}
 
-		if err := validateICEServer(pcServer); err != nil {
+		if err := validateICEServer(pcServer, allowTurnWithoutCreds); err != nil {
 			return nil, fmt.Errorf("iceServers[%d]: %w", i, err)
 		}
 		out = append(out, pcServer)
@@ -93,14 +93,14 @@ func ParseICEServersJSON(raw string) ([]webrtc.ICEServer, error) {
 // ParseICEServersFromConvenienceEnv builds an ICE server list from the convenience env vars.
 //
 // The URL lists are comma-separated.
-func ParseICEServersFromConvenienceEnv(stunURLs, turnURLs, turnUsername, turnCredential string) ([]webrtc.ICEServer, error) {
+func ParseICEServersFromConvenienceEnv(stunURLs, turnURLs, turnUsername, turnCredential string, allowTurnWithoutCreds bool) ([]webrtc.ICEServer, error) {
 	stunList := splitCommaSeparated(stunURLs)
 	turnList := splitCommaSeparated(turnURLs)
 
 	var servers []webrtc.ICEServer
 	if len(stunList) > 0 {
 		server := webrtc.ICEServer{URLs: stunList}
-		if err := validateICEServer(server); err != nil {
+		if err := validateICEServer(server, allowTurnWithoutCreds); err != nil {
 			return nil, fmt.Errorf("%s: %w", envStunURLs, err)
 		}
 		servers = append(servers, server)
@@ -109,19 +109,27 @@ func ParseICEServersFromConvenienceEnv(stunURLs, turnURLs, turnUsername, turnCre
 	if len(turnList) > 0 {
 		turnUsername = strings.TrimSpace(turnUsername)
 		turnCredential = strings.TrimSpace(turnCredential)
-		if turnUsername == "" || turnCredential == "" {
-			return nil, fmt.Errorf("%s/%s: both must be set when %s is set", envTurnUsername, envTurnCredential, envTurnURLs)
-		}
+		if allowTurnWithoutCreds && turnUsername == "" && turnCredential == "" {
+			server := webrtc.ICEServer{URLs: turnList}
+			if err := validateICEServer(server, allowTurnWithoutCreds); err != nil {
+				return nil, fmt.Errorf("%s: %w", envTurnURLs, err)
+			}
+			servers = append(servers, server)
+		} else {
+			if turnUsername == "" || turnCredential == "" {
+				return nil, fmt.Errorf("%s/%s: both must be set when %s is set", envTurnUsername, envTurnCredential, envTurnURLs)
+			}
 
-		server := webrtc.ICEServer{
-			URLs:     turnList,
-			Username: turnUsername,
+			server := webrtc.ICEServer{
+				URLs:     turnList,
+				Username: turnUsername,
+			}
+			server.Credential = turnCredential
+			if err := validateICEServer(server, allowTurnWithoutCreds); err != nil {
+				return nil, fmt.Errorf("%s: %w", envTurnURLs, err)
+			}
+			servers = append(servers, server)
 		}
-		server.Credential = turnCredential
-		if err := validateICEServer(server); err != nil {
-			return nil, fmt.Errorf("%s: %w", envTurnURLs, err)
-		}
-		servers = append(servers, server)
 	}
 
 	return servers, nil
@@ -144,7 +152,7 @@ func splitCommaSeparated(value string) []string {
 	return out
 }
 
-func validateICEServer(server webrtc.ICEServer) error {
+func validateICEServer(server webrtc.ICEServer, allowTurnWithoutCreds bool) error {
 	if len(server.URLs) == 0 {
 		return errors.New("missing urls")
 	}
@@ -164,11 +172,17 @@ func validateICEServer(server webrtc.ICEServer) error {
 	}
 
 	if requiresTurnCreds {
-		if strings.TrimSpace(server.Username) == "" {
+		username := strings.TrimSpace(server.Username)
+		cred, credOK := server.Credential.(string)
+		cred = strings.TrimSpace(cred)
+
+		if allowTurnWithoutCreds && username == "" && cred == "" {
+			return nil
+		}
+		if username == "" {
 			return errors.New("turn urls require username")
 		}
-		cred, ok := server.Credential.(string)
-		if !ok || strings.TrimSpace(cred) == "" {
+		if !credOK || cred == "" {
 			return errors.New("turn urls require credential")
 		}
 	}

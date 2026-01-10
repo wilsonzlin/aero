@@ -48,6 +48,12 @@ const (
 	EnvMaxSignalingMessageBytes      = "MAX_SIGNALING_MESSAGE_BYTES"
 	EnvMaxSignalingMessagesPerSecond = "MAX_SIGNALING_MESSAGES_PER_SECOND"
 
+	// coturn TURN REST (ephemeral) credentials.
+	EnvTURNRESTSharedSecret   = "TURN_REST_SHARED_SECRET"
+	EnvTURNRESTTTLSeconds     = "TURN_REST_TTL_SECONDS"
+	EnvTURNRESTUsernamePrefix = "TURN_REST_USERNAME_PREFIX"
+	EnvTURNRESTRealm          = "TURN_REST_REALM"
+
 	DefaultListenAddr           = "127.0.0.1:8080"
 	DefaultShutdown             = 15 * time.Second
 	DefaultViolationWindow      = 10 * time.Second
@@ -63,6 +69,9 @@ const (
 	DefaultSignalingAuthTimeout          = 2 * time.Second
 	DefaultMaxSignalingMessageBytes      = int64(64 * 1024)
 	DefaultMaxSignalingMessagesPerSecond = 50
+
+	DefaultTURNRESTTTLSeconds     int64  = 3600
+	DefaultTURNRESTUsernamePrefix string = "aero"
 )
 
 const (
@@ -125,6 +134,17 @@ type UDPPortRange struct {
 	Max uint16
 }
 
+type TurnRESTConfig struct {
+	SharedSecret   string
+	TTLSeconds     int64
+	UsernamePrefix string
+	Realm          string
+}
+
+func (c TurnRESTConfig) Enabled() bool {
+	return strings.TrimSpace(c.SharedSecret) != ""
+}
+
 type Config struct {
 	ListenAddr      string
 	PublicBaseURL   string
@@ -179,12 +199,42 @@ type Config struct {
 	HardCloseAfterViolations        int
 	ViolationWindow                 time.Duration
 	ICEServers                      []webrtc.ICEServer
+	TURNREST                        TurnRESTConfig
 
 	iceConfigErr error
 }
 
 func (c Config) ICEConfigError() error {
 	return c.iceConfigErr
+}
+
+// PeerConnectionICEServers returns the ICE server list to use when constructing
+// server-side PeerConnections.
+//
+// When TURN REST is enabled, the client-facing ICE list may include TURN URLs
+// without credentials (because credentials are injected per /webrtc/ice request).
+// Pion requires TURN credentials for server-side usage, so we filter out TURN
+// servers that don't have complete credentials.
+func (c Config) PeerConnectionICEServers() []webrtc.ICEServer {
+	if !c.TURNREST.Enabled() {
+		return c.ICEServers
+	}
+	out := make([]webrtc.ICEServer, 0, len(c.ICEServers))
+	for _, server := range c.ICEServers {
+		if !iceServerHasTURNURL(server) {
+			out = append(out, server)
+			continue
+		}
+		if strings.TrimSpace(server.Username) == "" {
+			continue
+		}
+		cred, ok := server.Credential.(string)
+		if !ok || strings.TrimSpace(cred) == "" {
+			continue
+		}
+		out = append(out, server)
+	}
+	return out
 }
 
 func Load(args []string) (Config, error) {
@@ -229,6 +279,17 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		}
 		preferV2 = v
 	}
+	turnRESTSharedSecret := envOrDefault(lookup, EnvTURNRESTSharedSecret, "")
+	turnRESTTTLSeconds := DefaultTURNRESTTTLSeconds
+	if raw, ok := lookup(EnvTURNRESTTTLSeconds); ok && strings.TrimSpace(raw) != "" {
+		n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvTURNRESTTTLSeconds, raw, err)
+		}
+		turnRESTTTLSeconds = n
+	}
+	turnRESTUsernamePrefix := envOrDefault(lookup, EnvTURNRESTUsernamePrefix, DefaultTURNRESTUsernamePrefix)
+	turnRESTRealm := envOrDefault(lookup, EnvTURNRESTRealm, "")
 
 	udpBindingIdleTimeout := DefaultUDPBindingIdleTimeout
 	if raw, ok := lookup(EnvUDPBindingIdleTimeout); ok && strings.TrimSpace(raw) != "" {
@@ -385,6 +446,10 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.StringVar(&turnURLs, "turn-urls", turnURLs, "comma-separated TURN URLs (AERO_TURN_URLS)")
 	fs.StringVar(&turnUsername, "turn-username", turnUsername, "TURN username (AERO_TURN_USERNAME)")
 	fs.StringVar(&turnCredential, "turn-credential", turnCredential, "TURN credential (AERO_TURN_CREDENTIAL)")
+	fs.StringVar(&turnRESTSharedSecret, "turn-rest-shared-secret", turnRESTSharedSecret, "TURN REST shared secret ("+EnvTURNRESTSharedSecret+")")
+	fs.Int64Var(&turnRESTTTLSeconds, "turn-rest-ttl-seconds", turnRESTTTLSeconds, "TURN REST credential TTL seconds ("+EnvTURNRESTTTLSeconds+")")
+	fs.StringVar(&turnRESTUsernamePrefix, "turn-rest-username-prefix", turnRESTUsernamePrefix, "TURN REST username prefix ("+EnvTURNRESTUsernamePrefix+")")
+	fs.StringVar(&turnRESTRealm, "turn-rest-realm", turnRESTRealm, "TURN realm (coturn config; "+EnvTURNRESTRealm+")")
 
 	fs.UintVar(&webrtcUDPPortMin, FlagWebRTCUDPPortMin, webrtcUDPPortMin, "Min UDP port for WebRTC ICE (0 = unset; env "+EnvWebRTCUDPPortMin+")")
 	fs.UintVar(&webrtcUDPPortMax, FlagWebRTCUDPPortMax, webrtcUDPPortMax, "Max UDP port for WebRTC ICE (0 = unset; env "+EnvWebRTCUDPPortMax+")")
@@ -479,6 +544,18 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, fmt.Errorf("%s/--max-signaling-messages-per-second must be > 0", EnvMaxSignalingMessagesPerSecond)
 	}
 
+	if strings.TrimSpace(turnRESTSharedSecret) != "" {
+		if turnRESTTTLSeconds <= 0 {
+			return Config{}, fmt.Errorf("%s must be > 0 when %s is set", EnvTURNRESTTTLSeconds, EnvTURNRESTSharedSecret)
+		}
+		if strings.TrimSpace(turnRESTUsernamePrefix) == "" {
+			return Config{}, fmt.Errorf("%s must be non-empty when %s is set", EnvTURNRESTUsernamePrefix, EnvTURNRESTSharedSecret)
+		}
+		if strings.Contains(turnRESTUsernamePrefix, ":") {
+			return Config{}, fmt.Errorf("%s must not contain ':'", EnvTURNRESTUsernamePrefix)
+		}
+	}
+
 	var webrtcUDPPortRange *UDPPortRange
 	if webrtcUDPPortMin != 0 || webrtcUDPPortMax != 0 {
 		if webrtcUDPPortMin == 0 || webrtcUDPPortMax == 0 {
@@ -567,9 +644,22 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		MaxDataChannelBpsPerSession:     maxDataChannelBpsPerSession,
 		HardCloseAfterViolations:        hardCloseAfterViolations,
 		ViolationWindow:                 violationWindow,
+		TURNREST: TurnRESTConfig{
+			SharedSecret:   turnRESTSharedSecret,
+			TTLSeconds:     turnRESTTTLSeconds,
+			UsernamePrefix: turnRESTUsernamePrefix,
+			Realm:          turnRESTRealm,
+		},
 	}
 
-	iceServers, err := parseICEServersFromValues(iceServersJSON, stunURLs, turnURLs, turnUsername, turnCredential)
+	iceServers, err := parseICEServersFromValues(
+		iceServersJSON,
+		stunURLs,
+		turnURLs,
+		turnUsername,
+		turnCredential,
+		cfg.TURNREST.Enabled(),
+	)
 	if err != nil {
 		cfg.iceConfigErr = err
 	} else {
@@ -757,4 +847,14 @@ func parseIPList(s string) ([]string, error) {
 		return nil, fmt.Errorf("must include at least one IP")
 	}
 	return out, nil
+}
+
+func iceServerHasTURNURL(server webrtc.ICEServer) bool {
+	for _, raw := range server.URLs {
+		url := strings.ToLower(strings.TrimSpace(raw))
+		if strings.HasPrefix(url, "turn:") || strings.HasPrefix(url, "turns:") {
+			return true
+		}
+	}
+	return false
 }

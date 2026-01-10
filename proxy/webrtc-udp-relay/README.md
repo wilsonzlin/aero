@@ -71,6 +71,33 @@ The bundled `coturn` config uses long-term credentials:
 
 Change these before exposing TURN to the internet.
 
+#### TURN REST (ephemeral) credentials for coturn (recommended)
+
+Avoid embedding long-lived TURN usernames/passwords in the browser. When
+`TURN_REST_SHARED_SECRET` is set, the relay will generate short-lived
+coturn-compatible TURN REST credentials and inject them into the TURN servers
+returned by `GET /webrtc/ice`.
+
+coturn config (CLI flags):
+
+```bash
+turnserver \
+  --use-auth-secret \
+  --static-auth-secret="${TURN_REST_SHARED_SECRET}" \
+  --realm="${TURN_REST_REALM:-example.com}"
+```
+
+Relay env:
+
+- `TURN_REST_SHARED_SECRET` (required to enable; must match coturn `--static-auth-secret`)
+- `TURN_REST_TTL_SECONDS` (default `3600`)
+- `TURN_REST_USERNAME_PREFIX` (default `aero`)
+- `TURN_REST_REALM` (optional; documented for coturn config parity)
+
+Security note: TURN REST credentials are still usable by any JavaScript running
+under an allowed origin. Keep `ALLOWED_ORIGINS` tight (or leave it unset to
+default to same-host only).
+
 ## E2E interoperability test (Playwright)
 
 `e2e/` contains a Playwright test that launches headless Chromium and exercises the WebRTC `udp` DataChannel framing against a local UDP echo server.
@@ -232,6 +259,11 @@ The container + client integration uses the following environment variables and 
   - `AERO_TURN_URLS` / `--turn-urls` (comma-separated)
   - `AERO_TURN_USERNAME` / `--turn-username`
   - `AERO_TURN_CREDENTIAL` / `--turn-credential`
+- TURN REST (optional; used to inject short-lived TURN credentials into `/webrtc/ice` responses):
+  - `TURN_REST_SHARED_SECRET` (required to enable)
+  - `TURN_REST_TTL_SECONDS` (default `3600`)
+  - `TURN_REST_USERNAME_PREFIX` (default `aero`)
+  - `TURN_REST_REALM` (optional; for coturn documentation/config parity)
 
 Equivalent flags:
 
@@ -261,6 +293,10 @@ Example `AERO_ICE_SERVERS_JSON`:
 ]
 ```
 
+When TURN REST is enabled, TURN servers may omit `username` and `credential` in
+the configured ICE list; the relay will inject them dynamically when responding
+to `GET /webrtc/ice`.
+
 Note: if the relay is publicly reachable and has direct UDP connectivity, host/public ICE candidates may be sufficient. STUN/TURN becomes important when clients or the relay are behind NAT/firewalls.
 
 #### Example: development (public STUN only)
@@ -280,6 +316,15 @@ export AERO_ICE_SERVERS_JSON='[
     "username": "aero",
     "credential": "REPLACE_WITH_SECRET"
   }
+]'
+```
+
+If using TURN REST credentials:
+
+```bash
+export TURN_REST_SHARED_SECRET='REPLACE_WITH_SHARED_SECRET'
+export AERO_ICE_SERVERS_JSON='[
+  { "urls": ["turn:turn.example.com:3478?transport=udp"] }
 ]'
 ```
 
