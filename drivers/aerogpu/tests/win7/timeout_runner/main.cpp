@@ -55,6 +55,7 @@ static std::string QuoteArgForCreateProcess(const char* arg) {
 }
 
 int main(int argc, char** argv) {
+  aerogpu_test::ConfigureProcessForAutomation();
   if (argc < 3 || aerogpu_test::HasHelpArg(argc, argv)) {
     PrintUsage();
     return (argc < 3) ? 1 : 0;
@@ -138,4 +139,3 @@ int main(int argc, char** argv) {
   CloseHandle(pi.hProcess);
   return (int)exit_code;
 }
-

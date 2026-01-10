@@ -308,6 +308,7 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+  aerogpu_test::ConfigureProcessForAutomation();
   int rc = RunD3D9ExTriangle(argc, argv);
   // Give the window a moment to appear for manual observation when running interactively.
   // (Harmless for automation; this is a short sleep.)

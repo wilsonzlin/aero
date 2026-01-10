@@ -137,5 +137,6 @@ static int RunDwmFlushPacing(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+  aerogpu_test::ConfigureProcessForAutomation();
   return RunDwmFlushPacing(argc, argv);
 }

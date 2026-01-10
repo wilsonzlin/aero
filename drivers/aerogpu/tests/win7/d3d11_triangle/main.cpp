@@ -355,6 +355,7 @@ static int RunD3D11Triangle(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+  aerogpu_test::ConfigureProcessForAutomation();
   int rc = RunD3D11Triangle(argc, argv);
   Sleep(30);
   return rc;

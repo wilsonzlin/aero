@@ -81,5 +81,6 @@ static int RunDwmProbe(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+  aerogpu_test::ConfigureProcessForAutomation();
   return RunDwmProbe(argc, argv);
 }

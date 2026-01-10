@@ -334,5 +334,6 @@ static int RunReadbackSanity(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+  aerogpu_test::ConfigureProcessForAutomation();
   return RunReadbackSanity(argc, argv);
 }

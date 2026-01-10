@@ -27,6 +27,12 @@ namespace aerogpu_test {
 #define ARRAYSIZE(a) (sizeof(a) / sizeof((a)[0]))
 #endif
 
+static inline void ConfigureProcessForAutomation() {
+  // Suppress common modal dialogs that would otherwise hang automation (e.g. missing media, GP fault
+  // crash dialogs). This is inherited by child processes (useful for aerogpu_timeout_runner.exe).
+  SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+}
+
 static inline bool HasArg(int argc, char** argv, const char* needle) {
   for (int i = 1; i < argc; ++i) {
     if (argv[i] && lstrcmpiA(argv[i], needle) == 0) {
