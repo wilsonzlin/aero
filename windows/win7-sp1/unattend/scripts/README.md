@@ -33,7 +33,7 @@ The scripts locate the payload using the following strategy:
 2. `%configsetroot%` (if defined), and `%configsetroot%\Aero`
 3. Scan drive letters `C:` → `Z:` for common payload layouts (no marker file required):
    - `X:\Aero\Drivers\` + `X:\Aero\Scripts\` (payload root is `X:\Aero\`)
-   - `X:\Drivers\` + `X:\Scripts\` (payload root is `X:\`)
+   - `X:\Drivers\` + `X:\Scripts\InstallDriversOnce.cmd` (payload root is `X:\`)
 4. Scan drive letters for marker files (useful if you want an explicit “this is the payload” indicator):
    - `AERO.TAG` (preferred) or `AERO_CONFIG.MEDIA` (also accepted)
    - Supported locations:

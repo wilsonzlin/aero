@@ -284,7 +284,7 @@ for %%D in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
     REM   X:\Drivers\
     REM   X:\Scripts\
     if exist "%%D:\Drivers\" (
-      if exist "%%D:\Scripts\" (
+      if exist "%%D:\Scripts\InstallDriversOnce.cmd" (
         call :TRY_AERO_ROOT "%%D:\"
         if defined AERO_ROOT exit /b 0
       )
