@@ -368,7 +368,7 @@ mod tests {
         let pde_index = ((vaddr as u32) >> 22) & 0x3FF;
         let pde_addr = pd + (pde_index as u64) * 4;
 
-        let pde = 0x0000_0000u32 | PTE_P | PDE_PS;
+        let pde = PTE_P | PDE_PS;
         bus.write_u32_phys(pde_addr, pde);
 
         let err = translate(
