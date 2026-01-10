@@ -264,13 +264,21 @@ To keep CI reliable, tests that **require** WebGPU are typically **skipped** unl
 - run with a non-WebGPU fallback (e.g. WebGL2) in default CI, or
 - be conditionally enabled only when WebGPU is available and required
 
+In Playwright, WebGPU-required tests are tagged with `@webgpu` and isolated in a
+dedicated Playwright project, `chromium-webgpu` (see `playwright.config.ts`).
+Default projects (`chromium`, `firefox`, `webkit`) exclude `@webgpu` tests to
+keep PR CI stable on runners where WebGPU is missing or unreliable.
+
 ### Forcing WebGPU-required tests
 
 Set `AERO_REQUIRE_WEBGPU=1` to make WebGPU a hard requirement:
 
 ```bash
-# E2E (Playwright)
-AERO_REQUIRE_WEBGPU=1 npm run test:e2e
+# E2E (Playwright, WebGPU-only project)
+AERO_REQUIRE_WEBGPU=1 npm run test:webgpu
+
+# Or run the project directly
+AERO_REQUIRE_WEBGPU=1 npx playwright test --project=chromium-webgpu
 
 # Unit tests that exercise WebGPU-dependent paths (if applicable)
 AERO_REQUIRE_WEBGPU=1 npm run test:unit
@@ -280,6 +288,14 @@ Expected behavior when `AERO_REQUIRE_WEBGPU=1` is set:
 
 - tests **fail** (rather than skip/fallback) if `navigator.gpu` is missing or cannot create a device
 - CI jobs that do not provide WebGPU will fail, by design
+
+### CI workflows
+
+- `.github/workflows/ci.yml` (PR CI) sets `AERO_REQUIRE_WEBGPU=0` and runs the
+  non-WebGPU Playwright projects.
+- `.github/workflows/webgpu.yml` (schedule + workflow_dispatch) sets
+  `AERO_REQUIRE_WEBGPU=1` and runs the `chromium-webgpu` project; it uploads
+  Playwright reports/artifacts so WebGPU regressions are actionable.
 
 ---
 
