@@ -194,6 +194,52 @@ fn in_out_routes_to_port_io() {
 }
 
 #[test]
+fn io_privilege_checks_raise_gp_and_do_not_touch_device() {
+    let mut cpu = Cpu::default();
+    cpu.mode = CpuMode::Protected32;
+    cpu.cs = 0x23; // CPL3
+    cpu.rflags = Cpu::RFLAGS_FIXED1 | Cpu::RFLAGS_IF; // IOPL=0
+
+    let mut io = MockPortIo {
+        reads: Vec::new(),
+        writes: Vec::new(),
+        next_read: 0xAA,
+    };
+
+    assert_eq!(
+        cpu.instr_in(0x3F8, 1, &mut io).unwrap_err(),
+        Exception::gp0()
+    );
+    assert_eq!(io.reads, Vec::new());
+
+    assert_eq!(
+        cpu.instr_out(0x3F8, 1, &mut io).unwrap_err(),
+        Exception::gp0()
+    );
+    assert_eq!(io.writes, Vec::new());
+}
+
+#[test]
+fn cli_sti_are_privileged_by_iopl() {
+    let mut cpu = Cpu::default();
+    cpu.mode = CpuMode::Protected32;
+    cpu.cs = 0x23; // CPL3
+    cpu.rflags = Cpu::RFLAGS_FIXED1 | Cpu::RFLAGS_IF; // IOPL=0
+
+    assert_eq!(cpu.cli().unwrap_err(), Exception::gp0());
+    assert_eq!(cpu.sti().unwrap_err(), Exception::gp0());
+
+    // Raise IOPL so user mode is allowed to toggle IF.
+    cpu.rflags |= 3u64 << 12;
+    cpu.cli().unwrap();
+    assert_eq!(cpu.rflags & Cpu::RFLAGS_IF, 0);
+
+    cpu.sti().unwrap();
+    assert_eq!(cpu.rflags & Cpu::RFLAGS_IF, Cpu::RFLAGS_IF);
+    assert_eq!(cpu.interrupt_inhibit, 1);
+}
+
+#[test]
 fn real_mode_treats_privileged_checks_as_cpl0() {
     let mut cpu = Cpu::default();
     cpu.mode = CpuMode::Real;
