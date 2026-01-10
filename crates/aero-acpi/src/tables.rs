@@ -69,6 +69,12 @@ pub struct AcpiConfig {
     /// MMIO window available to PCI devices.
     pub pci_mmio_base: u32,
     pub pci_mmio_size: u32,
+
+    /// Mapping of PCI PIRQ[A-D] to platform GSIs (used by the DSDT `_PRT`).
+    ///
+    /// The swizzle follows: `pirq = (device + pin) mod 4` where `pin` is
+    /// 0 for INTA#, 1 for INTB#, etc.
+    pub pirq_to_gsi: [u32; 4],
 }
 
 impl Default for AcpiConfig {
@@ -100,6 +106,9 @@ impl Default for AcpiConfig {
 
             pci_mmio_base: 0xC000_0000,
             pci_mmio_size: 0x3EC0_0000,
+
+            // Match the default routing in `devices::pci::irq_router::PciIntxRouterConfig`.
+            pirq_to_gsi: [10, 11, 12, 13],
         }
     }
 }
@@ -768,7 +777,7 @@ fn aml_device_pci0(cfg: &AcpiConfig) -> Vec<u8> {
     body.extend_from_slice(&aml_name_integer(*b"_BBN", 0));
     body.extend_from_slice(&aml_name_integer(*b"_SEG", 0));
     body.extend_from_slice(&aml_name_buffer(*b"_CRS", &pci0_crs(cfg)));
-    body.extend_from_slice(&aml_name_pkg(*b"_PRT", &pci0_prt()));
+    body.extend_from_slice(&aml_name_pkg(*b"_PRT", &pci0_prt(cfg)));
 
     aml_device(*b"PCI0", &body)
 }
@@ -943,11 +952,11 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     out
 }
 
-fn pci0_prt() -> Vec<Vec<u8>> {
+fn pci0_prt(cfg: &AcpiConfig) -> Vec<Vec<u8>> {
     // Provide a simple static _PRT mapping for PCI INTx. We follow the common
     // PIRQ swizzle used by many virtual platforms:
     //   PIRQA-D -> GSIs 10,11,12,13.
-    let pirq_gsi = [10u64, 11u64, 12u64, 13u64];
+    let pirq_gsi: [u64; 4] = cfg.pirq_to_gsi.map(u64::from);
     let mut entries = Vec::new();
     for dev in 1u32..=31 {
         let addr = (dev << 16) | 0xFFFF;
