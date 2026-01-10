@@ -11,7 +11,9 @@
 //! instruction fetch (`AccessType::Execute`).
 
 use crate::bus::MemoryBus;
-use crate::mmu::{AccessType, PageFault, CR0_WP, EFER_NXE};
+use crate::mmu::{
+    AccessType, TranslateError, CR0_WP, EFER_NXE, PFEC_ID, PFEC_P, PFEC_RSVD, PFEC_US, PFEC_WR,
+};
 
 const PTE_P: u64 = 1 << 0;
 const PTE_RW: u64 = 1 << 1;
@@ -21,7 +23,7 @@ const PTE_D: u64 = 1 << 6;
 const PDE_PS: u64 = 1 << 7;
 const PTE_NX: u64 = 1 << 63;
 
-const CR3_PDPT_MASK: u32 = 0xFFFF_FFE0;
+const CR3_PDPT_MASK: u64 = 0xFFFF_FFE0;
 
 const ADDR_MASK_4K: u64 = 0x000F_FFFF_FFFF_F000;
 const ADDR_MASK_2M: u64 = 0x000F_FFFF_FFE0_0000;
@@ -47,28 +49,39 @@ pub fn translate(
     linear: u64,
     access: AccessType,
     cpl: u8,
-    cr0: u32,
-    cr3: u32,
+    cr0: u64,
+    cr3: u64,
     efer: u64,
-) -> Result<u64, PageFault> {
+) -> Result<u64, TranslateError> {
     let vaddr = (linear & 0xFFFF_FFFF) as u32;
     let is_write = access == AccessType::Write;
     let is_user = cpl == 3;
     let is_instr = access == AccessType::Execute;
 
+    let pf = |present: bool, write: bool, user: bool, rsvd: bool, instr: bool| {
+        TranslateError::PageFault {
+            vaddr: vaddr as u64,
+            code: (if present { PFEC_P } else { 0 })
+                | (if write { PFEC_WR } else { 0 })
+                | (if user { PFEC_US } else { 0 })
+                | (if rsvd { PFEC_RSVD } else { 0 })
+                | (if instr { PFEC_ID } else { 0 }),
+        }
+    };
+
     let wp = (cr0 & CR0_WP) != 0;
     let nx_enabled = (efer & EFER_NXE) != 0;
 
-    let pdpt_base = (cr3 & CR3_PDPT_MASK) as u64;
+    let pdpt_base = cr3 & CR3_PDPT_MASK;
     let pdpt_index = ((vaddr >> 30) & 0x3) as u64;
     let pdpte_addr = pdpt_base + pdpt_index * 8;
     let pdpte = bus.read_u64(pdpte_addr);
 
     if (pdpte & PTE_P) == 0 {
-        return Err(PageFault::new(vaddr, false, is_write, is_user, false, is_instr));
+        return Err(pf(false, is_write, is_user, false, is_instr));
     }
     if (pdpte & RSVD_PDPTE_MASK) != 0 {
-        return Err(PageFault::new(vaddr, true, is_write, is_user, true, is_instr));
+        return Err(pf(true, is_write, is_user, true, is_instr));
     }
 
     let mut nx_fault = nx_enabled && is_instr && (pdpte & PTE_NX) != 0;
@@ -79,13 +92,13 @@ pub fn translate(
     let pde = bus.read_u64(pde_addr);
 
     if (pde & PTE_P) == 0 {
-        return Err(PageFault::new(vaddr, false, is_write, is_user, false, is_instr));
+        return Err(pf(false, is_write, is_user, false, is_instr));
     }
 
     let pde_ps = (pde & PDE_PS) != 0;
     let rsvd = (pde & RSVD_HIGH_MASK) != 0 || (pde_ps && (pde & RSVD_PDE_2M_MASK) != 0);
     if rsvd {
-        return Err(PageFault::new(vaddr, true, is_write, is_user, true, is_instr));
+        return Err(pf(true, is_write, is_user, true, is_instr));
     }
 
     if nx_enabled && is_instr && (pde & PTE_NX) != 0 {
@@ -98,15 +111,15 @@ pub fn translate(
     if pde_ps {
         // 2MiB page.
         if is_user && !pde_us {
-            return Err(PageFault::new(vaddr, true, is_write, true, false, is_instr));
+            return Err(pf(true, is_write, true, false, is_instr));
         }
 
         if is_write && !pde_rw && (is_user || wp) {
-            return Err(PageFault::new(vaddr, true, true, is_user, false, is_instr));
+            return Err(pf(true, true, is_user, false, is_instr));
         }
 
         if nx_fault {
-            return Err(PageFault::new(vaddr, true, is_write, is_user, false, is_instr));
+            return Err(pf(true, is_write, is_user, false, is_instr));
         }
 
         let paddr = (pde & ADDR_MASK_2M) | ((vaddr & PAGE_OFFSET_2M) as u64);
@@ -129,10 +142,10 @@ pub fn translate(
     let pte = bus.read_u64(pte_addr);
 
     if (pte & PTE_P) == 0 {
-        return Err(PageFault::new(vaddr, false, is_write, is_user, false, is_instr));
+        return Err(pf(false, is_write, is_user, false, is_instr));
     }
     if (pte & RSVD_HIGH_MASK) != 0 {
-        return Err(PageFault::new(vaddr, true, is_write, is_user, true, is_instr));
+        return Err(pf(true, is_write, is_user, true, is_instr));
     }
 
     if nx_enabled && is_instr && (pte & PTE_NX) != 0 {
@@ -146,15 +159,15 @@ pub fn translate(
     let eff_us = pde_us && pte_us;
 
     if is_user && !eff_us {
-        return Err(PageFault::new(vaddr, true, is_write, true, false, is_instr));
+        return Err(pf(true, is_write, true, false, is_instr));
     }
 
     if is_write && !eff_rw && (is_user || wp) {
-        return Err(PageFault::new(vaddr, true, true, is_user, false, is_instr));
+        return Err(pf(true, true, is_user, false, is_instr));
     }
 
     if nx_fault {
-        return Err(PageFault::new(vaddr, true, is_write, is_user, false, is_instr));
+        return Err(pf(true, is_write, is_user, false, is_instr));
     }
 
     let paddr = (pte & ADDR_MASK_4K) | ((vaddr & PAGE_OFFSET_4K) as u64);
@@ -178,7 +191,7 @@ pub fn translate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mmu::PageFault;
+    use crate::mmu::{TranslateError, PFEC_ID, PFEC_P, PFEC_RSVD, PFEC_WR};
 
     struct TestBus {
         mem: Vec<u8>,
@@ -227,16 +240,24 @@ mod tests {
         }
     }
 
-    fn assert_pf(pf: PageFault, addr: u32, error_code: u32) {
-        assert_eq!(pf.addr, addr);
-        assert_eq!(pf.error_code, error_code);
+    fn assert_pf(err: TranslateError, addr: u32, code: u32) {
+        match err {
+            TranslateError::PageFault {
+                vaddr: got_addr,
+                code: got_code,
+            } => {
+                assert_eq!(got_addr, addr as u64);
+                assert_eq!(got_code, code);
+            }
+            other => panic!("expected page fault, got {other:?}"),
+        }
     }
 
     #[test]
     fn maps_4k_page_sets_accessed_dirty_and_supports_phys_above_4g() {
         let mut bus = TestBus::new(0x20_000);
 
-        let cr3 = 0x1000u32;
+        let cr3 = 0x1000u64;
         let pd_base = 0x2000u64;
         let pt_base = 0x3000u64;
 
@@ -279,7 +300,7 @@ mod tests {
     fn maps_2m_page_and_sets_accessed_dirty() {
         let mut bus = TestBus::new(0x20_000);
 
-        let cr3 = 0x1000u32;
+        let cr3 = 0x1000u64;
         let pd_base = 0x2000u64;
 
         let vaddr = 0x2345_6789u64;
@@ -306,7 +327,7 @@ mod tests {
     fn nx_fault_when_nxe_enabled_sets_id_bit() {
         let mut bus = TestBus::new(0x20_000);
 
-        let cr3 = 0x1000u32;
+        let cr3 = 0x1000u64;
         let pd_base = 0x2000u64;
         let pt_base = 0x3000u64;
 
@@ -339,14 +360,14 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_pf(err, vaddr as u32, PageFault::EC_P | PageFault::EC_ID);
+        assert_pf(err, vaddr as u32, PFEC_P | PFEC_ID);
     }
 
     #[test]
     fn rsvd_fault_by_setting_2m_alignment_bits() {
         let mut bus = TestBus::new(0x20_000);
 
-        let cr3 = 0x1000u32;
+        let cr3 = 0x1000u64;
         let pd_base = 0x2000u64;
         let vaddr = 0x0020_1000u64;
 
@@ -362,14 +383,14 @@ mod tests {
         );
 
         let err = translate(&mut bus, vaddr, AccessType::Read, 0, 0, cr3, 0).unwrap_err();
-        assert_pf(err, vaddr as u32, PageFault::EC_P | PageFault::EC_RSVD);
+        assert_pf(err, vaddr as u32, PFEC_P | PFEC_RSVD);
     }
 
     #[test]
     fn supervisor_write_to_ro_page_respects_wp() {
         let mut bus = TestBus::new(0x20_000);
 
-        let cr3 = 0x1000u32;
+        let cr3 = 0x1000u64;
         let pd_base = 0x2000u64;
         let pt_base = 0x3000u64;
 
@@ -386,7 +407,6 @@ mod tests {
 
         // WP=1: supervisor writes fault.
         let err = translate(&mut bus, vaddr, AccessType::Write, 0, CR0_WP, cr3, 0).unwrap_err();
-        assert_pf(err, vaddr as u32, PageFault::EC_P | PageFault::EC_WR);
+        assert_pf(err, vaddr as u32, PFEC_P | PFEC_WR);
     }
 }
-

@@ -13,6 +13,8 @@ Thumbs.db
 *.swp
 *.swo
 *.tmp
+.idea/
+.vscode/
 
 # Build outputs (common)
 node_modules/
