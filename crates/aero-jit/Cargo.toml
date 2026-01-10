@@ -1,0 +1,15 @@
+[package]
+name = "aero-jit"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+
+[dependencies]
+bitflags = "2"
+
+[dev-dependencies]

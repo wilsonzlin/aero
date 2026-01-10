@@ -29,10 +29,12 @@ build/
 out/
 target/
 **/target/
+Cargo.lock
 .vite/
 .cache/
 *.tsbuildinfo
 **/*.rs.bk
+*.wasm
 
 # Coverage
 coverage/

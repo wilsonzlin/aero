@@ -33,6 +33,7 @@ members = [
     "tools/bcd_patch",
     "crates/virtio-gpu-proto",
     "backend/aero-gateway",
+    "crates/aero-jit",
 ]
 
 exclude = ["fuzz"]
