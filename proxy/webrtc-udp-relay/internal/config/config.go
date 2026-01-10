@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 const (
 	EnvListenAddr      = "AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR"
 	EnvPublicBaseURL   = "AERO_WEBRTC_UDP_RELAY_PUBLIC_BASE_URL"
+	EnvAllowedOrigins  = "ALLOWED_ORIGINS"
 	EnvLogFormat       = "AERO_WEBRTC_UDP_RELAY_LOG_FORMAT"
 	EnvLogLevel        = "AERO_WEBRTC_UDP_RELAY_LOG_LEVEL"
 	EnvShutdownTimeout = "AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT"
@@ -94,6 +96,7 @@ type UDPPortRange struct {
 type Config struct {
 	ListenAddr      string
 	PublicBaseURL   string
+	AllowedOrigins  []string
 	LogFormat       LogFormat
 	LogLevel        slog.Level
 	ShutdownTimeout time.Duration
@@ -163,6 +166,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 
 	listenAddr := envOrDefault(lookup, EnvListenAddr, DefaultListenAddr)
 	publicBaseURL := envOrDefault(lookup, EnvPublicBaseURL, "")
+	allowedOriginsStr := envOrDefault(lookup, EnvAllowedOrigins, "")
 	iceServersJSON := envOrDefault(lookup, envICEServersJSON, "")
 	stunURLs := envOrDefault(lookup, envStunURLs, "")
 	turnURLs := envOrDefault(lookup, envTurnURLs, "")
@@ -260,6 +264,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 
 	fs.StringVar(&listenAddr, "listen-addr", listenAddr, "HTTP listen address (host:port)")
 	fs.StringVar(&publicBaseURL, "public-base-url", publicBaseURL, "Public base URL (optional; used for logging)")
+	fs.StringVar(&allowedOriginsStr, "allowed-origins", allowedOriginsStr, "Comma-separated list of allowed browser origins (env "+EnvAllowedOrigins+")")
 	fs.StringVar(&modeStr, "mode", modeDefault, "Run mode: dev or prod")
 	fs.StringVar(&logFormatStr, "log-format", logFormatDefault, "Log format: text or json")
 	fs.StringVar(&logLevelStr, "log-level", logLevelDefault, "Log level: debug, info, warn, error")
@@ -372,9 +377,15 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, fmt.Errorf("invalid %s/%s %q: %w", EnvWebRTCNAT1To1IPCandidateType, "--"+FlagWebRTCNAT1To1IPCandidateType, webrtcNAT1To1CandidateTypeStr, err)
 	}
 
+	allowedOrigins, err := parseAllowedOrigins(allowedOriginsStr)
+	if err != nil {
+		return Config{}, fmt.Errorf("%s/%s: %w", EnvAllowedOrigins, "--allowed-origins", err)
+	}
+
 	cfg := Config{
 		ListenAddr:      listenAddr,
 		PublicBaseURL:   publicBaseURL,
+		AllowedOrigins:  allowedOrigins,
 		LogFormat:       logFormat,
 		LogLevel:        level,
 		ShutdownTimeout: shutdownTimeout,
@@ -500,6 +511,34 @@ func parseLogLevel(raw string) (slog.Level, error) {
 
 func IsUnspecifiedIP(ip net.IP) bool {
 	return ip == nil || ip.Equal(net.IPv4zero) || ip.Equal(net.IPv6zero)
+}
+
+func parseAllowedOrigins(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+
+	var out []string
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		if entry == "*" || entry == "null" {
+			out = append(out, entry)
+			continue
+		}
+
+		u, err := url.Parse(entry)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			return nil, fmt.Errorf("invalid origin %q (expected full origin like https://example.com)", entry)
+		}
+
+		out = append(out, strings.ToLower(u.Scheme)+"://"+strings.ToLower(u.Host))
+	}
+
+	return out, nil
 }
 
 func parsePortString(s string) (uint16, error) {

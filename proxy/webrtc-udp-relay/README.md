@@ -151,6 +151,7 @@ The container + client integration uses the following environment variables and 
 - `AUTH_MODE`: controls request authentication/authorization (implementation-defined).
 - `ALLOWED_ORIGINS`: CORS allow-list for browser clients (comma-separated).
   - Example: `http://localhost:5173,http://localhost:3000`
+  - If unset, the relay defaults to allowing only same-host origins (so TURN credentials from `/webrtc/ice` are not exposed cross-origin).
 - `WEBRTC_UDP_PORT_MIN` / `WEBRTC_UDP_PORT_MAX`: UDP port range used for ICE candidates.
   - Must match your firewall rules and any container port publishing (see below).
   - The relay requires a minimum of 100 ports when a range is configured (rule of thumb: ~100 UDP ports per ~50 concurrent sessions).
@@ -195,6 +196,28 @@ Example `AERO_ICE_SERVERS_JSON`:
     "credential": "aero"
   }
 ]
+```
+
+Note: if the relay is publicly reachable and has direct UDP connectivity, host/public ICE candidates may be sufficient. STUN/TURN becomes important when clients or the relay are behind NAT/firewalls.
+
+#### Example: development (public STUN only)
+
+```bash
+export AERO_ICE_SERVERS_JSON='[
+  { "urls": ["stun:stun.l.google.com:19302"] }
+]'
+```
+
+#### Example: production (coturn TURN)
+
+```bash
+export AERO_ICE_SERVERS_JSON='[
+  {
+    "urls": ["turn:turn.example.com:3478?transport=udp"],
+    "username": "aero",
+    "credential": "REPLACE_WITH_SECRET"
+  }
+]'
 ```
 
 ### Destination policy (UDP egress)
