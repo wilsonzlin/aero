@@ -1,0 +1,650 @@
+use wasm_encoder::{
+    BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
+    ImportSection, Instruction, MemArg, MemoryType, Module, TypeSection, ValType,
+};
+
+use crate::cpu::CpuState;
+use crate::opt::RegAllocPlan;
+use crate::t2_ir::{BinOp, Flag, FlagMask, Instr, Operand, TraceIr, TraceKind, ValueId};
+use crate::wasm::{IMPORT_MEMORY, IMPORT_MODULE};
+
+/// Export name for a compiled Tier-2 trace.
+pub const EXPORT_TRACE_FN: &str = "trace";
+
+/// Import that returns the current code page version for self-modifying code guards.
+pub const IMPORT_CODE_PAGE_VERSION: &str = "code_page_version";
+
+/// `CpuState` does not currently contain architectural flags. Tier-2 traces store a compact
+/// `u32` bitmask immediately after the serialized `CpuState` in linear memory so that guards can
+/// deopt with a consistent architectural state.
+pub const FLAGS_MASK_OFFSET: u32 = CpuState::BYTE_SIZE as u32;
+
+const FLAG_ZF_BIT: u32 = 1 << 0;
+const FLAG_SF_BIT: u32 = 1 << 1;
+const FLAG_CF_BIT: u32 = 1 << 2;
+const FLAG_OF_BIT: u32 = 1 << 3;
+
+pub struct Tier2WasmCodegen;
+
+impl Tier2WasmCodegen {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Compile a Tier-2 trace into a standalone WASM module.
+    ///
+    /// ABI:
+    /// - export `trace(cpu_ptr: i32) -> i64` (returns `next_rip`)
+    /// - import `env.memory`
+    /// - import `env.code_page_version(page: i64) -> i64`
+    ///
+    /// The trace spills cached registers + the `FLAGS_MASK_OFFSET` bitmask on every side exit.
+    pub fn compile_trace(&self, trace: &TraceIr, plan: &RegAllocPlan) -> Vec<u8> {
+        let value_count = max_value_id(trace).max(1);
+        let i64_locals = 1 + plan.local_count + value_count; // next_rip + cached regs + values
+
+        let mut module = Module::new();
+
+        let mut types = TypeSection::new();
+        let ty_code_page_version = types.len();
+        types.ty().function([ValType::I64], [ValType::I64]);
+        let ty_trace = types.len();
+        types.ty().function([ValType::I32], [ValType::I64]);
+        module.section(&types);
+
+        let mut imports = ImportSection::new();
+        imports.import(
+            IMPORT_MODULE,
+            IMPORT_MEMORY,
+            MemoryType {
+                minimum: 1,
+                maximum: None,
+                memory64: false,
+                shared: false,
+                page_size_log2: None,
+            },
+        );
+        imports.import(
+            IMPORT_MODULE,
+            IMPORT_CODE_PAGE_VERSION,
+            EntityType::Function(ty_code_page_version),
+        );
+        module.section(&imports);
+
+        let mut funcs = FunctionSection::new();
+        funcs.function(ty_trace);
+        module.section(&funcs);
+
+        let mut exports = ExportSection::new();
+        // function indices include imported functions. Memory imports do not count.
+        exports.export(EXPORT_TRACE_FN, ExportKind::Func, 1);
+        module.section(&exports);
+
+        let layout = Layout::new(plan, value_count, i64_locals);
+        let written_cached_regs = compute_written_cached_regs(trace, plan);
+
+        let mut f = Function::new(vec![
+            (i64_locals, ValType::I64),
+            (1, ValType::I32), // flags bitmask
+        ]);
+
+        // Load cached regs into locals.
+        for reg in all_regs() {
+            if let Some(local) = plan.local_for_reg[reg.index()] {
+                f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+                f.instruction(&Instruction::I64Load(memarg(CpuState::reg_offset(reg), 3)));
+                f.instruction(&Instruction::LocalSet(layout.reg_local(local)));
+            }
+        }
+
+        // next_rip defaults to current cpu.rip.
+        f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+        f.instruction(&Instruction::I64Load(memarg(CpuState::RIP_OFFSET, 3)));
+        f.instruction(&Instruction::LocalSet(layout.next_rip_local()));
+
+        // Load initial flag mask. Missing flag state defaults to 0.
+        f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+        f.instruction(&Instruction::I32Load(memarg(FLAGS_MASK_OFFSET, 2)));
+        f.instruction(&Instruction::LocalSet(layout.flags_local()));
+
+        // Single exit block.
+        f.instruction(&Instruction::Block(BlockType::Empty));
+
+        let mut emitter = Emitter {
+            f: &mut f,
+            layout,
+            depth: 0,
+            code_page_version_func: 0,
+        };
+
+        emitter.emit_instrs(&trace.prologue);
+
+        match trace.kind {
+            TraceKind::Loop => {
+                emitter.f.instruction(&Instruction::Loop(BlockType::Empty));
+                emitter.depth += 1;
+                emitter.emit_instrs(&trace.body);
+                // Continue looping.
+                emitter.f.instruction(&Instruction::Br(0));
+                emitter.f.instruction(&Instruction::End);
+                emitter.depth -= 1;
+            }
+            TraceKind::Linear => {
+                emitter.emit_instrs(&trace.body);
+            }
+        }
+
+        emitter.f.instruction(&Instruction::End); // end exit block
+
+        // Spill cached regs (only those that are written by the trace).
+        for reg in all_regs() {
+            if !written_cached_regs[reg.index()] {
+                continue;
+            }
+            if let Some(local) = plan.local_for_reg[reg.index()] {
+                emitter
+                    .f
+                    .instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+                emitter
+                    .f
+                    .instruction(&Instruction::LocalGet(layout.reg_local(local)));
+                emitter
+                    .f
+                    .instruction(&Instruction::I64Store(memarg(CpuState::reg_offset(reg), 3)));
+            }
+        }
+
+        // Spill flag bitmask.
+        emitter
+            .f
+            .instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+        emitter
+            .f
+            .instruction(&Instruction::LocalGet(layout.flags_local()));
+        emitter
+            .f
+            .instruction(&Instruction::I32Store(memarg(FLAGS_MASK_OFFSET, 2)));
+
+        // Store RIP.
+        emitter
+            .f
+            .instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+        emitter
+            .f
+            .instruction(&Instruction::LocalGet(layout.next_rip_local()));
+        emitter
+            .f
+            .instruction(&Instruction::I64Store(memarg(CpuState::RIP_OFFSET, 3)));
+
+        // Return next_rip.
+        emitter
+            .f
+            .instruction(&Instruction::LocalGet(layout.next_rip_local()));
+        emitter.f.instruction(&Instruction::Return);
+        emitter.f.instruction(&Instruction::End);
+
+        let mut code = CodeSection::new();
+        code.function(&f);
+        module.section(&code);
+
+        module.finish()
+    }
+}
+
+impl Default for Tier2WasmCodegen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Layout {
+    reg_base: u32,
+    value_base: u32,
+    flags_base: u32,
+    local_for_reg: [Option<u32>; crate::Reg::COUNT],
+}
+
+impl Layout {
+    fn new(plan: &RegAllocPlan, value_count: u32, i64_locals: u32) -> Self {
+        let next_rip_base = 1;
+        let reg_base = next_rip_base + 1;
+        let value_base = reg_base + plan.local_count;
+        let flags_base = 1 + i64_locals; // param cpu_ptr is local 0
+
+        assert_eq!(
+            value_base + value_count,
+            1 + i64_locals,
+            "local layout mismatch"
+        );
+
+        Self {
+            reg_base,
+            value_base,
+            flags_base,
+            local_for_reg: plan.local_for_reg,
+        }
+    }
+
+    fn cpu_ptr_local(self) -> u32 {
+        0
+    }
+
+    fn next_rip_local(self) -> u32 {
+        1
+    }
+
+    fn reg_local(self, local: u32) -> u32 {
+        self.reg_base + local
+    }
+
+    fn value_local(self, ValueId(v): ValueId) -> u32 {
+        self.value_base + v
+    }
+
+    fn flags_local(self) -> u32 {
+        self.flags_base
+    }
+}
+
+struct Emitter<'a> {
+    f: &'a mut Function,
+    layout: Layout,
+    /// Current nesting depth inside the exit block.
+    depth: u32,
+    code_page_version_func: u32,
+}
+
+impl Emitter<'_> {
+    fn emit_instrs(&mut self, instrs: &[Instr]) {
+        for inst in instrs {
+            self.emit_instr(inst);
+        }
+    }
+
+    fn emit_instr(&mut self, inst: &Instr) {
+        match *inst {
+            Instr::Nop => {}
+            Instr::Const { dst, value } => {
+                self.f.instruction(&Instruction::I64Const(value as i64));
+                self.f
+                    .instruction(&Instruction::LocalSet(self.layout.value_local(dst)));
+            }
+            Instr::LoadReg { dst, reg } => {
+                if let Some(local) = self.reg_local_for(reg) {
+                    self.f.instruction(&Instruction::LocalGet(local));
+                } else {
+                    self.f
+                        .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                    self.f
+                        .instruction(&Instruction::I64Load(memarg(CpuState::reg_offset(reg), 3)));
+                }
+                self.f
+                    .instruction(&Instruction::LocalSet(self.layout.value_local(dst)));
+            }
+            Instr::StoreReg { reg, src } => {
+                if let Some(local) = self.reg_local_for(reg) {
+                    self.emit_operand(src);
+                    self.f.instruction(&Instruction::LocalSet(local));
+                } else {
+                    self.f
+                        .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                    self.emit_operand(src);
+                    self.f
+                        .instruction(&Instruction::I64Store(memarg(CpuState::reg_offset(reg), 3)));
+                }
+            }
+            Instr::LoadFlag { dst, flag } => {
+                self.emit_load_flag(flag);
+                self.f.instruction(&Instruction::I64ExtendI32U);
+                self.f
+                    .instruction(&Instruction::LocalSet(self.layout.value_local(dst)));
+            }
+            Instr::SetFlags { mask, values } => {
+                self.emit_set_flags(mask, values);
+            }
+            Instr::BinOp {
+                dst,
+                op,
+                lhs,
+                rhs,
+                flags,
+            } => {
+                self.emit_binop(dst, op, lhs, rhs, flags);
+            }
+            Instr::Addr {
+                dst,
+                base,
+                index,
+                scale,
+                disp,
+            } => {
+                self.emit_operand(base);
+                self.emit_operand(index);
+                self.f.instruction(&Instruction::I64Const(scale as i64));
+                self.f.instruction(&Instruction::I64Mul);
+                self.f.instruction(&Instruction::I64Add);
+                if disp != 0 {
+                    self.f.instruction(&Instruction::I64Const(disp));
+                    self.f.instruction(&Instruction::I64Add);
+                }
+                self.f
+                    .instruction(&Instruction::LocalSet(self.layout.value_local(dst)));
+            }
+            Instr::Guard {
+                cond,
+                expected,
+                exit_rip,
+            } => {
+                self.emit_operand(cond);
+                self.f.instruction(&Instruction::I64Const(0));
+                self.f.instruction(&Instruction::I64Ne);
+
+                if expected {
+                    self.f.instruction(&Instruction::I32Eqz);
+                }
+
+                self.f.instruction(&Instruction::If(BlockType::Empty));
+                self.depth += 1;
+                self.f.instruction(&Instruction::I64Const(exit_rip as i64));
+                self.f
+                    .instruction(&Instruction::LocalSet(self.layout.next_rip_local()));
+                self.f.instruction(&Instruction::Br(self.depth));
+                self.f.instruction(&Instruction::End);
+                self.depth -= 1;
+            }
+            Instr::GuardCodeVersion {
+                page,
+                expected,
+                exit_rip,
+            } => {
+                self.f.instruction(&Instruction::I64Const(page as i64));
+                self.f
+                    .instruction(&Instruction::Call(self.code_page_version_func));
+                self.f.instruction(&Instruction::I64Const(expected as i64));
+                self.f.instruction(&Instruction::I64Ne);
+                self.f.instruction(&Instruction::If(BlockType::Empty));
+                self.depth += 1;
+                self.f.instruction(&Instruction::I64Const(exit_rip as i64));
+                self.f
+                    .instruction(&Instruction::LocalSet(self.layout.next_rip_local()));
+                self.f.instruction(&Instruction::Br(self.depth));
+                self.f.instruction(&Instruction::End);
+                self.depth -= 1;
+            }
+            Instr::SideExit { exit_rip } => {
+                self.f.instruction(&Instruction::I64Const(exit_rip as i64));
+                self.f
+                    .instruction(&Instruction::LocalSet(self.layout.next_rip_local()));
+                self.f.instruction(&Instruction::Br(self.depth));
+            }
+        }
+    }
+
+    fn reg_local_for(&self, reg: crate::Reg) -> Option<u32> {
+        self.layout
+            .local_for_reg
+            .get(reg.index())
+            .and_then(|v| *v)
+            .map(|local| self.layout.reg_local(local))
+    }
+
+    fn emit_operand(&mut self, op: Operand) {
+        match op {
+            Operand::Const(v) => {
+                self.f.instruction(&Instruction::I64Const(v as i64));
+            }
+            Operand::Value(v) => {
+                self.f
+                    .instruction(&Instruction::LocalGet(self.layout.value_local(v)));
+            }
+        }
+    }
+
+    fn emit_load_flag(&mut self, flag: Flag) {
+        let bit = match flag {
+            Flag::Zf => FLAG_ZF_BIT,
+            Flag::Sf => FLAG_SF_BIT,
+            Flag::Cf => FLAG_CF_BIT,
+            Flag::Of => FLAG_OF_BIT,
+        } as i32;
+        self.f
+            .instruction(&Instruction::LocalGet(self.layout.flags_local()));
+        self.f.instruction(&Instruction::I32Const(bit));
+        self.f.instruction(&Instruction::I32And);
+        self.f.instruction(&Instruction::I32Const(0));
+        self.f.instruction(&Instruction::I32Ne);
+    }
+
+    fn emit_set_flags(&mut self, mask: FlagMask, values: crate::t2_ir::FlagValues) {
+        // Update only requested bits: clear bit and re-insert if value true.
+        let mut update = |bit: u32, val: bool| {
+            self.f
+                .instruction(&Instruction::LocalGet(self.layout.flags_local()));
+            self.f.instruction(&Instruction::I32Const(!(bit as i32)));
+            self.f.instruction(&Instruction::I32And);
+            if val {
+                self.f.instruction(&Instruction::I32Const(bit as i32));
+                self.f.instruction(&Instruction::I32Or);
+            }
+            self.f
+                .instruction(&Instruction::LocalSet(self.layout.flags_local()));
+        };
+
+        if mask.intersects(FlagMask::ZF) {
+            update(FLAG_ZF_BIT, values.zf);
+        }
+        if mask.intersects(FlagMask::SF) {
+            update(FLAG_SF_BIT, values.sf);
+        }
+        if mask.intersects(FlagMask::CF) {
+            update(FLAG_CF_BIT, values.cf);
+        }
+        if mask.intersects(FlagMask::OF) {
+            update(FLAG_OF_BIT, values.of);
+        }
+    }
+
+    fn emit_binop(&mut self, dst: ValueId, op: BinOp, lhs: Operand, rhs: Operand, flags: FlagMask) {
+        // Compute result.
+        self.emit_operand(lhs);
+        self.emit_operand(rhs);
+        match op {
+            BinOp::Add => {
+                self.f.instruction(&Instruction::I64Add);
+            }
+            BinOp::Sub => {
+                self.f.instruction(&Instruction::I64Sub);
+            }
+            BinOp::Mul => {
+                self.f.instruction(&Instruction::I64Mul);
+            }
+            BinOp::And => {
+                self.f.instruction(&Instruction::I64And);
+            }
+            BinOp::Or => {
+                self.f.instruction(&Instruction::I64Or);
+            }
+            BinOp::Xor => {
+                self.f.instruction(&Instruction::I64Xor);
+            }
+            BinOp::Shl => {
+                self.f.instruction(&Instruction::I64Const(63));
+                self.f.instruction(&Instruction::I64And);
+                self.f.instruction(&Instruction::I64Shl);
+            }
+            BinOp::Shr => {
+                self.f.instruction(&Instruction::I64Const(63));
+                self.f.instruction(&Instruction::I64And);
+                self.f.instruction(&Instruction::I64ShrU);
+            }
+            BinOp::Eq => {
+                self.f.instruction(&Instruction::I64Eq);
+                self.f.instruction(&Instruction::I64ExtendI32U);
+            }
+            BinOp::LtU => {
+                self.f.instruction(&Instruction::I64LtU);
+                self.f.instruction(&Instruction::I64ExtendI32U);
+            }
+        }
+        self.f
+            .instruction(&Instruction::LocalSet(self.layout.value_local(dst)));
+
+        if flags.is_empty() {
+            return;
+        }
+
+        // Emit flags from the stored result.
+        if flags.intersects(FlagMask::ZF) {
+            self.f
+                .instruction(&Instruction::LocalGet(self.layout.value_local(dst)));
+            self.f.instruction(&Instruction::I64Const(0));
+            self.f.instruction(&Instruction::I64Eq);
+            self.emit_write_flag(FLAG_ZF_BIT);
+        }
+
+        if flags.intersects(FlagMask::SF) {
+            self.f
+                .instruction(&Instruction::LocalGet(self.layout.value_local(dst)));
+            self.f.instruction(&Instruction::I64Const(0));
+            self.f.instruction(&Instruction::I64LtS);
+            self.emit_write_flag(FLAG_SF_BIT);
+        }
+
+        match op {
+            BinOp::Add => {
+                if flags.intersects(FlagMask::CF) {
+                    self.f
+                        .instruction(&Instruction::LocalGet(self.layout.value_local(dst)));
+                    self.emit_operand(lhs);
+                    self.f.instruction(&Instruction::I64LtU);
+                    self.emit_write_flag(FLAG_CF_BIT);
+                }
+                if flags.intersects(FlagMask::OF) {
+                    self.emit_operand(lhs);
+                    self.f
+                        .instruction(&Instruction::LocalGet(self.layout.value_local(dst)));
+                    self.f.instruction(&Instruction::I64Xor); // lhs ^ res
+                    self.emit_operand(rhs);
+                    self.f
+                        .instruction(&Instruction::LocalGet(self.layout.value_local(dst)));
+                    self.f.instruction(&Instruction::I64Xor); // rhs ^ res
+                    self.f.instruction(&Instruction::I64And);
+                    self.f.instruction(&Instruction::I64Const(i64::MIN));
+                    self.f.instruction(&Instruction::I64And);
+                    self.f.instruction(&Instruction::I64Const(0));
+                    self.f.instruction(&Instruction::I64Ne);
+                    self.emit_write_flag(FLAG_OF_BIT);
+                }
+            }
+            BinOp::Sub => {
+                if flags.intersects(FlagMask::CF) {
+                    self.emit_operand(lhs);
+                    self.emit_operand(rhs);
+                    self.f.instruction(&Instruction::I64LtU);
+                    self.emit_write_flag(FLAG_CF_BIT);
+                }
+                if flags.intersects(FlagMask::OF) {
+                    self.emit_operand(lhs);
+                    self.emit_operand(rhs);
+                    self.f.instruction(&Instruction::I64Xor); // lhs ^ rhs
+                    self.emit_operand(lhs);
+                    self.f
+                        .instruction(&Instruction::LocalGet(self.layout.value_local(dst)));
+                    self.f.instruction(&Instruction::I64Xor); // lhs ^ res
+                    self.f.instruction(&Instruction::I64And);
+                    self.f.instruction(&Instruction::I64Const(i64::MIN));
+                    self.f.instruction(&Instruction::I64And);
+                    self.f.instruction(&Instruction::I64Const(0));
+                    self.f.instruction(&Instruction::I64Ne);
+                    self.emit_write_flag(FLAG_OF_BIT);
+                }
+            }
+            _ => {
+                if flags.intersects(FlagMask::CF) {
+                    self.f.instruction(&Instruction::I32Const(0));
+                    self.emit_write_flag(FLAG_CF_BIT);
+                }
+                if flags.intersects(FlagMask::OF) {
+                    self.f.instruction(&Instruction::I32Const(0));
+                    self.emit_write_flag(FLAG_OF_BIT);
+                }
+            }
+        }
+    }
+
+    fn emit_write_flag(&mut self, bit: u32) {
+        // Stack: i32 flag_value
+        // flags = (flags & !bit) | (flag_value ? bit : 0)
+        self.f
+            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        self.f.instruction(&Instruction::I32Const(bit as i32));
+        self.f.instruction(&Instruction::Else);
+        self.f.instruction(&Instruction::I32Const(0));
+        self.f.instruction(&Instruction::End); // produces i32
+
+        self.f
+            .instruction(&Instruction::LocalGet(self.layout.flags_local()));
+        self.f.instruction(&Instruction::I32Const(!(bit as i32)));
+        self.f.instruction(&Instruction::I32And);
+        self.f.instruction(&Instruction::I32Or);
+        self.f
+            .instruction(&Instruction::LocalSet(self.layout.flags_local()));
+    }
+}
+
+fn memarg(offset: u32, align: u32) -> MemArg {
+    MemArg {
+        offset: offset as u64,
+        align,
+        memory_index: 0,
+    }
+}
+
+fn max_value_id(trace: &TraceIr) -> u32 {
+    let mut max: Option<u32> = None;
+    for inst in trace.iter_instrs() {
+        if let Some(dst) = inst.dst() {
+            max = Some(max.map_or(dst.0, |cur| cur.max(dst.0)));
+        }
+        inst.for_each_operand(|op| {
+            if let Operand::Value(v) = op {
+                max = Some(max.map_or(v.0, |cur| cur.max(v.0)));
+            }
+        });
+    }
+    max.map_or(0, |v| v + 1)
+}
+
+fn compute_written_cached_regs(trace: &TraceIr, plan: &RegAllocPlan) -> [bool; crate::Reg::COUNT] {
+    let mut written = [false; crate::Reg::COUNT];
+    for inst in trace.iter_instrs() {
+        if let Instr::StoreReg { reg, .. } = *inst {
+            if plan.local_for_reg[reg.index()].is_some() {
+                written[reg.index()] = true;
+            }
+        }
+    }
+    written
+}
+
+fn all_regs() -> [crate::Reg; crate::Reg::COUNT] {
+    [
+        crate::Reg::Rax,
+        crate::Reg::Rcx,
+        crate::Reg::Rdx,
+        crate::Reg::Rbx,
+        crate::Reg::Rsp,
+        crate::Reg::Rbp,
+        crate::Reg::Rsi,
+        crate::Reg::Rdi,
+        crate::Reg::R8,
+        crate::Reg::R9,
+        crate::Reg::R10,
+        crate::Reg::R11,
+        crate::Reg::R12,
+        crate::Reg::R13,
+        crate::Reg::R14,
+        crate::Reg::R15,
+    ]
+}

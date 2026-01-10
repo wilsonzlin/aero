@@ -11,6 +11,7 @@ use crate::interp::JIT_EXIT_SENTINEL;
 use crate::ir::{BinOp, CmpOp, IrBlock, IrOp, MemSize, Operand, Place, Temp};
 
 pub mod tier1;
+pub mod tier2;
 
 /// Module name for all imports required by the baseline Tier-1 JIT.
 pub const IMPORT_MODULE: &str = "env";
