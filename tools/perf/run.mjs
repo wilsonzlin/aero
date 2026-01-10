@@ -198,27 +198,7 @@ async function runMicrobenchSamples(url, iterations) {
     const page = await context.newPage();
     await gotoWithRetries(page, url);
 
-    const aeroPerfExportJson = await tryCaptureAeroPerfExport(page);
     let jit = null;
-    if (typeof aeroPerfExportJson === "string") {
-      try {
-        const parsed = JSON.parse(aeroPerfExportJson);
-        if (parsed && typeof parsed === "object") {
-          // Most perf exports: `{ jit: ... }`
-          if ("jit" in parsed) {
-            jit = parsed.jit ?? null;
-          } else if ("capture" in parsed) {
-            // Wrapped exports (see `web/src/runtime/aero_global.ts`): `{ capture: ..., benchmarks: ... }`
-            const cap = parsed.capture;
-            if (cap && typeof cap === "object" && "jit" in cap) {
-              jit = cap.jit ?? null;
-            }
-          }
-        }
-      } catch {
-        // Ignore parse errors; keep jit=null.
-      }
-    }
 
     const microbench = () => {
       const t0 = performance.now();
@@ -238,6 +218,27 @@ async function runMicrobenchSamples(url, iterations) {
     for (let i = 0; i < iterations; i += 1) {
       const result = await page.evaluate(microbench);
       samples.push(result.ms);
+    }
+
+    const aeroPerfExportJson = await tryCaptureAeroPerfExport(page);
+    if (typeof aeroPerfExportJson === "string") {
+      try {
+        const parsed = JSON.parse(aeroPerfExportJson);
+        if (parsed && typeof parsed === "object") {
+          // Most perf exports: `{ jit: ... }`
+          if ("jit" in parsed) {
+            jit = parsed.jit ?? null;
+          } else if ("capture" in parsed) {
+            // Wrapped exports (see `web/src/runtime/aero_global.ts`): `{ capture: ..., benchmarks: ... }`
+            const cap = parsed.capture;
+            if (cap && typeof cap === "object" && "jit" in cap) {
+              jit = cap.jit ?? null;
+            }
+          }
+        }
+      } catch {
+        // Ignore parse errors; keep jit=null.
+      }
     }
 
     return {
@@ -324,9 +325,12 @@ async function main() {
     fs.writeFile(path.join(outDir, "summary.json"), JSON.stringify(summary, null, 2)),
   ];
 
-  if (typeof micro.aeroPerfExportJson === "string") {
-    writes.push(fs.writeFile(path.join(outDir, "perf_export.json"), `${micro.aeroPerfExportJson}\n`));
-  }
+  writes.push(
+    fs.writeFile(
+      path.join(outDir, "perf_export.json"),
+      typeof micro.aeroPerfExportJson === "string" ? `${micro.aeroPerfExportJson}\n` : "null\n",
+    ),
+  );
 
   await Promise.all(writes);
 

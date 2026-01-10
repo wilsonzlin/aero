@@ -16,13 +16,16 @@ This keeps CI signal stable and avoids GPU/WebGPU dependencies.
 
 In CI, the workflows build the app and run against a Vite `preview` server (`http://127.0.0.1:4173/`) via `--url` so "startup" includes a realistic page load.
 
-If the page exposes `window.aero.perf` with the capture/export API, the runner will also write a best-effort `perf_export.json` capture alongside `raw.json`/`summary.json`.
+The runner also writes `perf_export.json` alongside `raw.json`/`summary.json`:
+
+- If the page exposes `window.aero.perf` with the capture/export API, it contains a short capture export.
+- Otherwise it contains `null` (so CI artifacts always have a consistent file layout).
 
 ## Perf export metadata (PF-006)
 
 When the perf export includes a `jit` section, `run.mjs` also embeds it under `meta.aeroPerf.jit` in `raw.json` and `summary.json`.
 
-This is meant to make perf regressions easier to attribute (e.g. throughput drop because JIT compile time spiked), without affecting timed samples (perf export capture happens outside of the timed microbench loop).
+This is meant to make perf regressions easier to attribute (e.g. throughput drop because JIT compile time spiked), without affecting timed samples (perf export capture happens after the timed microbench loop).
 
 ## Usage
 
@@ -43,8 +46,8 @@ node tools/perf/run.mjs --out-dir perf-results/local --iterations 7 --url http:/
 CI pins:
 
 - Node via `actions/setup-node` (`NODE_VERSION` in workflow)
-- Playwright via the `playwright-core` dependency (the workflows derive the matching CLI version from `tools/perf/package.json`)
-- Chromium only (`npx playwright@<version> install chromium`)
+- Playwright via the `playwright-core` dependency, pinned by `tools/perf/package-lock.json`
+- Chromium only (installed via `node node_modules/playwright-core/cli.js install chromium`)
 
 Chromium is launched with a fixed set of flags to reduce variance:
 
