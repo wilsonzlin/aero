@@ -211,6 +211,34 @@ impl TimerScheduler {
         period_num_ns: u64,
         period_denom: u64,
     ) -> Result<(), TimerError> {
+        // Semantics: `first_deadline_ns` fires immediately (k=0), and subsequent
+        // firings are at `first_deadline_ns + floor(k * period_num_ns / period_denom)`.
+        self.arm_periodic_rational_from_base_ns(
+            timer_id,
+            first_deadline_ns,
+            0,
+            period_num_ns,
+            period_denom,
+        )
+    }
+
+    /// Arms an existing timer as periodic, with the period expressed as a
+    /// rational number of nanoseconds, anchored at `base_ns`.
+    ///
+    /// The `k`th firing time is:
+    ///
+    /// `base_ns + floor((first_index + k) * period_num_ns / period_denom)`
+    ///
+    /// This is useful for modeling devices whose clock domain does not divide
+    /// 1GHz evenly, while still maintaining deterministic phase.
+    pub fn arm_periodic_rational_from_base_ns(
+        &mut self,
+        timer_id: TimerId,
+        base_ns: u64,
+        first_index: u64,
+        period_num_ns: u64,
+        period_denom: u64,
+    ) -> Result<(), TimerError> {
         if period_num_ns == 0 || period_denom == 0 {
             return Err(TimerError::InvalidRationalPeriod);
         }
@@ -222,17 +250,36 @@ impl TimerScheduler {
 
         slot.generation = slot.generation.wrapping_add(1);
         slot.kind = Some(TimerKindState::PeriodicRational {
-            base_deadline_ns: first_deadline_ns,
-            next_index: 0,
+            base_deadline_ns: base_ns,
+            next_index: first_index,
             period_num_ns,
             period_denom,
         });
+
+        let deadline_ns = rational_deadline_ns(base_ns, period_num_ns, period_denom, first_index);
         self.queue.push(std::cmp::Reverse(QueueEntry {
-            deadline_ns: first_deadline_ns,
+            deadline_ns,
             timer_id,
             generation: slot.generation,
         }));
         Ok(())
+    }
+
+    /// Arms an existing timer as periodic, with a rational period, starting at
+    /// `now_ns`.
+    ///
+    /// The first firing occurs at `now_ns + floor(period_num_ns / period_denom)`,
+    /// and subsequent firings maintain phase relative to `now_ns`:
+    ///
+    /// `now_ns + floor(n * period_num_ns / period_denom)` for `n = 1,2,3,...`
+    pub fn arm_periodic_rational_from_now_ns(
+        &mut self,
+        timer_id: TimerId,
+        now_ns: u64,
+        period_num_ns: u64,
+        period_denom: u64,
+    ) -> Result<(), TimerError> {
+        self.arm_periodic_rational_from_base_ns(timer_id, now_ns, 1, period_num_ns, period_denom)
     }
 
     /// Disarms a timer.
@@ -628,7 +675,7 @@ mod tests {
         let mut sched = TimerScheduler::new();
         let t1 = sched.alloc_timer();
         let t2 = sched.alloc_timer();
-        sched.arm_periodic_rational_ns(t1, 10, 5, 2).unwrap();
+        sched.arm_periodic_rational_from_now_ns(t1, 0, 5, 2).unwrap();
         sched.arm_one_shot(t2, 17).unwrap();
 
         let events_single = collect_events(sched.clone(), Clock::new(), &[40]);
@@ -740,7 +787,7 @@ mod tests {
     }
 
     #[test]
-    fn periodic_rational_maintains_phase_across_chunking() {
+    fn periodic_rational_anchored_maintains_phase_across_chunking() {
         // 2.5ns period: deadlines should alternate between +2 and +3.
         let mut clock = Clock::new();
         let mut sched = TimerScheduler::new();
@@ -761,6 +808,21 @@ mod tests {
         let events = sched.advance_to(clock.now_ns());
         let deadlines: Vec<u64> = events.iter().map(|e| e.deadline_ns).collect();
         assert_eq!(deadlines, vec![22, 25]);
+    }
+
+    #[test]
+    fn periodic_rational_from_now_matches_floor_multiples() {
+        // 2.5ns period: from now=0 we expect floor(n*2.5) for n=1.. .
+        let mut clock = Clock::new();
+        let mut sched = TimerScheduler::new();
+        let t = sched.alloc_timer();
+
+        sched.arm_periodic_rational_from_now_ns(t, 0, 5, 2).unwrap();
+
+        clock.advance(12);
+        let events = sched.advance_to(clock.now_ns());
+        let deadlines: Vec<u64> = events.iter().map(|e| e.deadline_ns).collect();
+        assert_eq!(deadlines, vec![2, 5, 7, 10, 12]);
     }
 
     #[test]
