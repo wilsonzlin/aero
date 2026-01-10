@@ -889,13 +889,13 @@ impl DrawCallBatcher {
 }
 ```
 
-### Shader Caching
-
-```rust
-pub struct ShaderCache {
-    compiled_shaders: HashMap<ShaderKey, CompiledShader>,
-    wgsl_cache: HashMap<Vec<u8>, String>,  // DXBC -> WGSL
-}
+ ### Shader Caching
+ 
+ ```rust
+ pub struct ShaderCache {
+     compiled_shaders: HashMap<ShaderKey, CompiledShader>,
+     wgsl_cache: HashMap<Vec<u8>, String>,  // DXBC -> WGSL
+ }
 
 impl ShaderCache {
     pub fn get_shader(&mut self, dxbc: &[u8], device: &GPUDevice) -> &CompiledShader {
@@ -924,13 +924,28 @@ impl ShaderCache {
         }
         
         self.compiled_shaders.get(&key).unwrap()
-    }
-}
-```
-
----
-
-## Next Steps
+     }
+ }
+ ```
+ 
+ In practice, an in-memory `HashMap` is not enough: the DXBC → WGSL translation and
+ WGSL validation/compilation can dominate startup time on repeat runs. Persisting
+ translation artifacts across sessions (IndexedDB with an OPFS blob store) avoids
+ multi-second stalls while remaining safe:
+ 
+ - Cache keys are derived from a strong hash of DXBC bytecode plus translation flags
+   (e.g. half-pixel mode) and a capabilities hash.
+ - On cache hit we still compile WGSL to a `GPUShaderModule`, but we skip translation.
+ - If compilation fails (browser updates / WGSL validation changes), invalidate the
+   persistent entry and fall back to retranslation.
+ - Use LRU eviction with entry/byte limits to avoid unbounded growth.
+ 
+ See `web/gpu/persistent_cache.ts` for a concrete implementation of the persistent
+ cache layer.
+ 
+ ---
+ 
+ ## Next Steps
 
 - See [`docs/graphics/win7-wddm11-aerogpu-driver.md`](./graphics/win7-wddm11-aerogpu-driver.md) for the Windows 7 WDDM 1.1 (KMD+UMD) architecture and command transport boundary.
 - For Windows 7 Aero bring-up, see [Win7 D3D9Ex UMD minimal surface](./graphics/win7-d3d9ex-umd-minimal.md)
