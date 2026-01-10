@@ -1,11 +1,15 @@
 # AeroGPU protocol addendum: vblank / present timing primitives (Win7 WDDM 1.1)
 
-This file proposes the **minimum device-visible primitives** AeroGPU should expose so that a Windows 7 WDDM 1.1 miniport driver can:
+This file specifies the **minimum device-visible primitives** AeroGPU should expose so that a Windows 7 WDDM 1.1 miniport driver can:
 
-* notify vblank interrupts (`D3DKMTWaitForVerticalBlankEvent`)
-* provide a monotonic notion of “frame number” and “last vblank time” (useful for `GetScanLine` and diagnostics)
+* deliver vblank interrupts (`D3DKMTWaitForVerticalBlankEvent`), and
+* provide monotonic vblank counters/timestamps (useful for `GetScanLine`, diagnostics, and sanity checks).
 
 It intentionally does **not** specify the rendering command protocol.
+
+This addendum is intended to extend the existing BAR0 layout in:
+
+* `drivers/aerogpu/protocol/aerogpu_pci.h`
 
 See also: `docs/graphics/win7-vblank-present-requirements.md`.
 
@@ -13,78 +17,82 @@ See also: `docs/graphics/win7-vblank-present-requirements.md`.
 
 ## Design goals
 
-* Extremely small surface area (MVP-friendly).
-* Works with a **level-triggered interrupt** model (typical PCI INTx/MSI).
-* Supports a single scanout source initially (multi-source extension is mechanical).
+* Minimal surface area (MVP-friendly).
+* Works with the existing **level-triggered** interrupt model (IRQ status/enable/W1C-ack).
+* Single scanout source first; multi-source extension should be mechanical.
 
 ---
 
-## IRQ bits
+## Feature discovery
 
-Define an IRQ cause bit for “vblank occurred”:
+Add a feature bit indicating that the vblank timing block is present:
 
-* `IRQ_VBLANK0` (bit 0): vblank event for VidPn source 0
+* `AEROGPU_FEATURE_VBLANK` (FEATURES_LO bit 3)
+
+When `AEROGPU_FEATURE_VBLANK` is set, the device **must** implement:
+
+* `AEROGPU_IRQ_SCANOUT_VBLANK` in the IRQ registers, and
+* the `SCANOUT0_VBLANK_*` timing registers described below.
+
+---
+
+## IRQ bit (vblank event)
+
+The base protocol already defines an IRQ cause bit:
+
+* `AEROGPU_IRQ_SCANOUT_VBLANK` (IRQ bit 1): vblank tick for scanout 0
 
 Rules:
 
-* The device sets `IRQ_VBLANK0` once per vblank tick.
-* If `IRQ_VBLANK0` is masked/disabled, the bit may still be latched in `IRQ_STATUS` but **must not** assert the interrupt line.
-* If a new vblank occurs while `IRQ_VBLANK0` is already pending, the device **may coalesce** into a single pending bit; the vblank sequence counter continues to advance.
+* The device increments vblank counters/timestamps every vblank tick (independent of IRQ enable).
+* When `AEROGPU_IRQ_SCANOUT_VBLANK` is enabled in `AEROGPU_MMIO_REG_IRQ_ENABLE`, the device sets the corresponding `IRQ_STATUS` bit once per tick.
+* Coalescing is allowed: if the bit is already pending, the device may keep it set (single pending bit) while counters continue to advance.
+
+> Rationale for “only latch when enabled”: if vblank status bits accumulate while masked, re-enabling can cause an immediate stale interrupt and break `WaitForVerticalBlankEvent` pacing.
 
 ---
 
-## Required registers (MMIO)
+## MMIO registers
 
-This addendum is agnostic to the rest of AeroGPU’s register map. The offsets below are **suggested**; if a register block already exists, place these fields there.
+### Existing interrupt registers (already in `aerogpu_pci.h`)
 
-All registers are little-endian.
+| Register | Access | Description |
+| --- | --- | --- |
+| `AEROGPU_MMIO_REG_IRQ_STATUS` | RO | Pending IRQ cause bits (includes `AEROGPU_IRQ_SCANOUT_VBLANK`). |
+| `AEROGPU_MMIO_REG_IRQ_ENABLE` | RW | Enable mask. Interrupt line is asserted when `(IRQ_STATUS & IRQ_ENABLE) != 0`. |
+| `AEROGPU_MMIO_REG_IRQ_ACK` | WO | Write-1-to-clear (W1C) for `IRQ_STATUS` bits. |
 
-### Interrupt registers
+### New: scanout0 vblank timing registers (proposed)
 
-| Offset | Name          | Access | Description |
-| ------ | ------------- | ------ | ----------- |
-| 0x0000 | `IRQ_STATUS`  | RO     | Pending IRQ causes (bitset). Includes `IRQ_VBLANK0`. |
-| 0x0004 | `IRQ_ENABLE`  | RW     | IRQ enable mask (bitset). Interrupt line is asserted when `(IRQ_STATUS & IRQ_ENABLE) != 0`. |
-| 0x0008 | `IRQ_ACK`     | WO     | Write-1-to-clear (W1C) for `IRQ_STATUS` bits. Writing bit `n` clears `IRQ_STATUS[n]`. |
+All fields are little-endian.
 
-Semantics:
-* Level-triggered: interrupt line is asserted while any enabled cause bit is pending.
-* `IRQ_ACK` must be safe to write from the ISR (no long stalls).
-
-### Vblank timing registers (source 0)
-
-| Offset | Name                   | Access | Description |
-| ------ | ---------------------- | ------ | ----------- |
-| 0x0010 | `VBLANK0_SEQ_LO`       | RO     | Lower 32 bits of `vblank_seq` (increments once per vblank). |
-| 0x0014 | `VBLANK0_SEQ_HI`       | RO     | Upper 32 bits of `vblank_seq`. |
-| 0x0018 | `VBLANK0_TIME_NS_LO`   | RO     | Lower 32 bits of `last_vblank_time_ns`. |
-| 0x001C | `VBLANK0_TIME_NS_HI`   | RO     | Upper 32 bits of `last_vblank_time_ns`. |
+| Register | Access | Description |
+| --- | --- | --- |
+| `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO` | RO | Lower 32 bits of `vblank_seq` (increments once per vblank). |
+| `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI` | RO | Upper 32 bits of `vblank_seq`. |
+| `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO` | RO | Lower 32 bits of `last_vblank_time_ns`. |
+| `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI` | RO | Upper 32 bits of `last_vblank_time_ns`. |
+| `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS` | RO | Nominal vblank period in nanoseconds (default 16_666_667 for 60 Hz). |
 
 `vblank_seq` rules:
+
 * starts at 0 (or 1; either is fine as long as it is monotonic)
 * increments by 1 per vblank tick
 * must never go backwards
 
 `last_vblank_time_ns` rules:
-* monotonic, in nanoseconds since “device boot” (any stable epoch is acceptable)
+
+* monotonic, in nanoseconds since “device boot” (stable epoch chosen by device)
 * updated at each vblank tick
 * must never go backwards
-
-### Optional: vblank period configuration
-
-| Offset | Name                 | Access | Description |
-| ------ | -------------------- | ------ | ----------- |
-| 0x0020 | `VBLANK0_PERIOD_NS`  | RW     | Nominal vblank period in nanoseconds (default 16_666_667). |
-
-Notes:
-* For Win7 MVP, a fixed 60 Hz device is acceptable; this register is optional.
-* If writable, changes apply on the next tick and must not make counters/timestamps go backwards.
 
 ---
 
 ## Multi-source extension (future)
 
 To support multiple VidPn sources:
-* replicate `VBLANKn_*` register sets per source
-* allocate additional IRQ bits: `IRQ_VBLANK1`, `IRQ_VBLANK2`, ...
 
+* replicate `SCANOUTn_VBLANK_*` register sets per scanout
+* either:
+  * allocate additional IRQ cause bits (`AEROGPU_IRQ_SCANOUT1_VBLANK`, ...), or
+  * keep one vblank cause bit and require the driver to read per-scanout seq counters to disambiguate (less preferred).

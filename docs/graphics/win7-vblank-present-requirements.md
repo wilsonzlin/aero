@@ -238,11 +238,12 @@ Instead, treat vblank as the “display latch point”:
 
 ## Protocol addendum (AeroGPU)
 
-If AeroGPU’s device protocol does not already expose timing/IRQ primitives suitable for the above model, implementers should add:
+For Win7 pacing, AeroGPU needs:
 
-* a vblank IRQ status bit (+ enable mask + W1C ack)
-* a monotonic vblank sequence counter register
-* a monotonic vblank timestamp register
+* a vblank IRQ bit integrated into the existing IRQ status/enable/W1C-ack mechanism, and
+* monotonic vblank sequence + timestamp registers (per scanout source).
+
+`aerogpu_pci.h` already defines `AEROGPU_IRQ_SCANOUT_VBLANK` and the `IRQ_STATUS/IRQ_ENABLE/IRQ_ACK` registers; this addendum focuses on the missing timing registers and semantics.
 
 See: `drivers/aerogpu/protocol/vblank.md`.
 
@@ -259,4 +260,3 @@ Implement a **free-running 60 Hz vblank clock** (per active VidPn source), with:
    * `SyncInterval=1` completes on the next vblank (or very shortly after), never earlier
 
 This model matches the assumptions baked into the Windows 7 WDDM + D3D stack and is the minimal, robust contract to keep DWM composition stable.
-

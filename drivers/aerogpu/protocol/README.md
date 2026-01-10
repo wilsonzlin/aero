@@ -12,6 +12,7 @@ The contract is expressed as C/C++ headers suitable for **WDK 7.1** builds and f
 - `aerogpu_pci.h` – PCI IDs, BAR layout, MMIO register map, shared enums.
 - `aerogpu_ring.h` – ring header layout, submission descriptor, allocation table, fence page.
 - `aerogpu_cmd.h` – command stream packet formats and opcodes (“AeroGPU IR”).
+- `vblank.md` – vblank IRQ + timing registers required for Win7 DWM/D3D pacing.
 
 ## Versioning model
 
@@ -155,4 +156,3 @@ See `aerogpu_cmd.h` for the full opcode list and packet layouts.
 2. **KMD submits** the buffer by writing an `aerogpu_submit_desc` to the shared ring and ringing the MMIO doorbell.
 3. The **emulator consumes** ring entries, parses command buffers, and translates IR to WebGPU operations.
 4. On completion, the emulator **signals the fence** (MMIO + optional fence page) and optionally raises an IRQ.
-

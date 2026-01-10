@@ -88,6 +88,7 @@ extern "C" {
 #define AEROGPU_FEATURE_FENCE_PAGE (1ull << 0) /* Supports shared fence page */
 #define AEROGPU_FEATURE_CURSOR (1ull << 1) /* Implements cursor registers */
 #define AEROGPU_FEATURE_SCANOUT (1ull << 2) /* Implements scanout registers */
+#define AEROGPU_FEATURE_VBLANK (1ull << 3) /* Implements vblank IRQ + vblank timing regs */
 
 /* Ring setup */
 #define AEROGPU_MMIO_REG_RING_GPA_LO 0x0100u /* RW: GPA of aerogpu_ring_header */
@@ -117,7 +118,7 @@ extern "C" {
 
 /* IRQ_STATUS / IRQ_ENABLE bits */
 #define AEROGPU_IRQ_FENCE (1u << 0) /* Completed fence advanced */
-#define AEROGPU_IRQ_SCANOUT_VBLANK (1u << 1) /* Optional vblank */
+#define AEROGPU_IRQ_SCANOUT_VBLANK (1u << 1) /* Scanout vblank tick (if AEROGPU_FEATURE_VBLANK) */
 #define AEROGPU_IRQ_ERROR (1u << 31) /* Fatal device error */
 
 /* Scanout 0 configuration */
@@ -128,6 +129,18 @@ extern "C" {
 #define AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES 0x0410u /* RW */
 #define AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO 0x0414u /* RW */
 #define AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI 0x0418u /* RW */
+
+/*
+ * Scanout 0 vblank timing (if AEROGPU_FEATURE_VBLANK is set).
+ *
+ * These registers are intended to support Windows 7 WDDM vblank wait paths
+ * (D3DKMTWaitForVerticalBlankEvent) and scanline/raster status queries.
+ */
+#define AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO 0x0420u /* RO */
+#define AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI 0x0424u /* RO */
+#define AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO 0x0428u /* RO */
+#define AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI 0x042Cu /* RO */
+#define AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS 0x0430u /* RO: nominal period in ns */
 
 /* Cursor configuration (reserved if AEROGPU_FEATURE_CURSOR == 0) */
 #define AEROGPU_MMIO_REG_CURSOR_ENABLE 0x0500u /* RW */
