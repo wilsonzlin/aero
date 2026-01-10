@@ -221,7 +221,12 @@ impl Cpu {
     /// Current privilege level (CPL), derived from CS.RPL.
     #[inline]
     pub fn cpl(&self) -> u8 {
-        (self.cs & 0b11) as u8
+        // Real mode has no privilege rings; treat all code as CPL0.
+        if self.mode == CpuMode::Real {
+            0
+        } else {
+            (self.cs & 0b11) as u8
+        }
     }
 
     #[inline]

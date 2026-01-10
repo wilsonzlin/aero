@@ -184,3 +184,21 @@ fn in_out_routes_to_port_io() {
     cpu.instr_out(0x3F8, 1, &mut io).unwrap();
     assert_eq!(io.writes, vec![(0x3F8, 1, 0x55)]);
 }
+
+#[test]
+fn real_mode_treats_privileged_checks_as_cpl0() {
+    let mut cpu = Cpu::default();
+    cpu.mode = CpuMode::Real;
+    // Real-mode CS values are not selectors; the low bits are not an RPL and may be non-zero.
+    cpu.cs = 0x1235;
+
+    // Privileged helpers should not raise #GP due to CS low bits in real mode.
+    cpu.mov_to_cr(0, 0x1).unwrap();
+
+    // RDMSR/WRMSR still require CPL0, which real mode provides.
+    cpu.wrmsr_value(msr::IA32_EFER, msr::EFER_SCE).unwrap();
+    assert_eq!(cpu.rdmsr_value(msr::IA32_EFER).unwrap(), msr::EFER_SCE);
+
+    cpu.hlt().unwrap();
+    assert!(cpu.halted);
+}
