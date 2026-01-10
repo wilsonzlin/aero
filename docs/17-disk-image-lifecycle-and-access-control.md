@@ -570,9 +570,9 @@ Beyond the baseline `disk:read`, the hosted service should define these scopes:
   - Longer lifetime; higher privilege; never sent to the raw disk streaming endpoint from WASM workers if avoidable.
 
 - **Leases** (short-lived bearer tokens):
-  - Used for data-plane endpoints only: `/disk/{id}` reads and any writeback endpoints.
+  - Used for data-plane endpoints only: the disk bytes endpoint (`/disks/{diskId}/bytes`, sometimes routed as `/disk/{id}`) and any writeback endpoints.
   - Minted per image with explicit scopes and short TTL (minutes).
-  - Not stored in URL query params; sent via `Authorization` header.
+  - Presented as a signed URL, signed cookie, and/or `Authorization` header depending on deployment (see [Disk Image Streaming](./16-disk-image-streaming-auth.md)).
   - Renewed as needed (silent refresh) rather than being long-lived.
 
 ---
