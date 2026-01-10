@@ -1,6 +1,7 @@
 use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::{CpuMode, CpuState};
+use aero_cpu_core::Exception;
 use aero_x86::Register;
 
 const FSW_C0: u16 = 1 << 8;
@@ -170,4 +171,27 @@ fn tier0_fxch_and_fninit_reset_state() {
 
     assert_eq!(state.x87().top(), 0);
     assert_eq!(state.x87().tag_word(), 0xFFFF);
+}
+
+#[test]
+fn tier0_unmasked_invalid_raises_mf() {
+    // fninit
+    // fldcw word ptr [0x200]     ; unmask invalid operation (IM=0)
+    // fstp dword ptr [0x208]     ; pop empty stack => invalid op => #MF
+    let code = [
+        0xDB, 0xE3, // fninit
+        0xD9, 0x2D, 0x00, 0x02, 0x00, 0x00, // fldcw word ptr [0x200]
+        0xD9, 0x1D, 0x08, 0x02, 0x00, 0x00, // fstp dword ptr [0x208]
+    ];
+
+    let mut bus = FlatTestBus::new(0x3000);
+    bus.load(0, &code);
+    bus.load(0x200, &0x037Eu16.to_le_bytes());
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    let res = run_batch(&mut state, &mut bus, 10);
+
+    assert_eq!(res.executed, 2);
+    assert!(matches!(res.exit, BatchExit::Exception(Exception::X87Fpu)));
 }
