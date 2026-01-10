@@ -529,8 +529,11 @@ fn decode_relative_immediate(
         _ => return Ok(None),
     };
 
-    // LOCK/REP prefixes are not valid on near branches/calls.
-    if prefixes.lock || prefixes.rep.is_some() {
+    // LOCK is not valid on near branches/calls.
+    //
+    // Note: REP/REPNZ prefixes are accepted (and ignored) by iced-x86 for these
+    // opcodes, so we do not treat them as invalid here.
+    if prefixes.lock {
         return Err(DecodeError::Invalid);
     }
 

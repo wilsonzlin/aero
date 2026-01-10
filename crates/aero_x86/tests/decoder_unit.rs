@@ -231,6 +231,14 @@ fn regression_cases_are_stable() {
 
     // Operand-size override changes the displacement width of CALL/JMP rel16/rel32 in 16-bit mode.
     assert!(decode(&[0x66, 0xE8, 0x00, 0x00], DecodeMode::Bits16, 0).is_err());
+
+    // REP prefixes are accepted (and ignored) on near CALL/JMP encodings.
+    let inst = decode(&[0xF2, 0xE8, 0x00, 0x00, 0x00, 0x00], DecodeMode::Bits16, 0).unwrap();
+    assert_eq!(inst.length, 4);
+    assert!(inst
+        .operands
+        .iter()
+        .any(|op| matches!(op, Operand::Relative { target: 4, .. })));
 }
 
 #[test]
