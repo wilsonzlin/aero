@@ -32,6 +32,11 @@ function getPlaywrightCoreVersionHint(repoRoot) {
 }
 
 function usage(exitCode = 0) {
+  const repoRoot = path.resolve(__dirname, "..");
+  const version = getPlaywrightCoreVersionHint(repoRoot);
+  const installCmd = version
+    ? `cd tools/perf && npm ci && npx --yes playwright@${version} install chromium`
+    : "cd tools/perf && npm ci && npx --yes playwright install chromium";
   // Keep this in sync with `docs/16-performance-tooling.md`.
   console.log(`Usage: node bench/run --scenario <name> --iterations <n> [--url <url>] [--out-dir <dir>]
 
@@ -45,7 +50,7 @@ This wrapper delegates to:
 
 Notes:
   - You must install tool dependencies first:
-      cd tools/perf && npm ci && npx playwright install chromium
+      ${installCmd}
 `);
   process.exit(exitCode);
 }
@@ -115,8 +120,7 @@ function main() {
     process.exit(1);
   }
   const playwrightCoreInTools = path.join(repoRoot, "tools", "perf", "node_modules", "playwright-core");
-  const playwrightCoreInRoot = path.join(repoRoot, "node_modules", "playwright-core");
-  if (!fs.existsSync(playwrightCoreInTools) && !fs.existsSync(playwrightCoreInRoot)) {
+  if (!fs.existsSync(playwrightCoreInTools)) {
     const version = getPlaywrightCoreVersionHint(repoRoot);
     console.error("[bench/run] Missing playwright-core dependency.");
     if (version) {

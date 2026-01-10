@@ -116,6 +116,17 @@ window.aero.perf.traceStop();
 const trace = await window.aero.perf.exportTrace();
 ```
 
+To download the trace as a file:
+
+```js
+const json = await window.aero.perf.exportTrace({ asString: true });
+const blob = new Blob([typeof json === "string" ? json : JSON.stringify(json)], { type: "application/json" });
+const a = document.createElement("a");
+a.href = URL.createObjectURL(blob);
+a.download = `aero-trace-${new Date().toISOString()}.json`;
+a.click();
+```
+
 Notes:
 
 - Keep traces short (seconds, not minutes). Long traces are hard to analyze and expensive to record.
