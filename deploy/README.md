@@ -64,6 +64,10 @@ cp deploy/.env.example deploy/.env
 - `AERO_HSTS_MAX_AGE` (default: `0`)
   - `0` disables HSTS (good for local dev)
   - Recommended production value: `31536000` (1 year)
+- `AERO_CSP_CONNECT_SRC_EXTRA` (default: empty)
+  - Optional additional origins to allow in the Caddy Content Security Policy `connect-src`.
+  - Use this if the frontend needs to connect to a separate origin for networking (e.g. a TCP proxy service).
+  - Example: `AERO_CSP_CONNECT_SRC_EXTRA="https://proxy.example.com wss://proxy.example.com"`
 
 Gateway environment variables (used by `backend/aero-gateway` and passed through in
 `deploy/docker-compose.yml`):
