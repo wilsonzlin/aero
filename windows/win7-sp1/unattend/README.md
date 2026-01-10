@@ -14,7 +14,10 @@ Files:
 
 These templates are intentionally minimal; users are expected to edit image selection, locale, and account settings.
 
-See: [`docs/16-win7-unattended-install.md`](../../../docs/16-win7-unattended-install.md)
+See:
+
+- [`docs/16-win7-unattended-install.md`](../../../docs/16-win7-unattended-install.md) (how the plumbing works)
+- [`docs/17-win7-unattend-validation.md`](../../../docs/17-win7-unattend-validation.md) (how to validate/debug on a real VM install)
 
 ---
 

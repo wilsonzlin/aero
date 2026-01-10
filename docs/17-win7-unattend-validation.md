@@ -459,7 +459,10 @@ Common causes / fixes:
   * If CD1 is not scanned in your environment, the practical fixes are:
     - Put `autounattend.xml` on a **USB** device image instead (often treated as removable media), or
     - Rebuild the Windows install ISO so `autounattend.xml` is on **CD0** (customized install media), or
-    - Ensure your workflow does not depend on “CD1 answer file discovery” and instead uses a slipstream/patcher approach.
+    - Ensure your workflow does not depend on “CD1 answer file discovery” and instead uses a slipstream/patcher approach:
+      - [`docs/16-win7-offline-media-patcher.md`](./16-win7-offline-media-patcher.md) (`patch-win7-media.ps1`, Windows-first)
+      - [`docs/16-windows7-install-media-prep.md`](./16-windows7-install-media-prep.md) (manual, auditable slipstreaming)
+      - [`tools/win7-slipstream/README.md`](../tools/win7-slipstream/README.md) (automated slipstreaming tool)
 * The hypervisor attaches CD1 too late (attach before boot).
 * Multiple unattend files present on multiple devices; Setup may pick an unexpected one.
 
@@ -685,7 +688,10 @@ Practical fixes if CD1 is not scanned:
 
 * Put `autounattend.xml` on a **USB** device image (often treated as removable media and more consistently scanned), or
 * Patch/rebuild the install ISO so `autounattend.xml` is on **CD0**, or
-* Use a slipstream/media patcher flow so Setup does not depend on “secondary CD answer file discovery”.
+* Use a slipstream/media patcher flow so Setup does not depend on “secondary CD answer file discovery”:
+  * [`docs/16-win7-offline-media-patcher.md`](./16-win7-offline-media-patcher.md)
+  * [`docs/16-windows7-install-media-prep.md`](./16-windows7-install-media-prep.md)
+  * [`tools/win7-slipstream/README.md`](../tools/win7-slipstream/README.md)
 
 ### Fallback approach (if `%configsetroot%` / `$OEM$` are unreliable)
 
