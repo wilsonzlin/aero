@@ -6,6 +6,11 @@ use crate::memory::GuestMemory;
 
 pub const VIRTIO_DEVICE_TYPE_BLK: u16 = 2;
 
+pub const VIRTIO_BLK_SECTOR_SIZE: u64 = 512;
+
+pub const VIRTIO_BLK_F_SIZE_MAX: u64 = 1 << 1;
+pub const VIRTIO_BLK_F_SEG_MAX: u64 = 1 << 2;
+pub const VIRTIO_BLK_F_BLK_SIZE: u64 = 1 << 6;
 pub const VIRTIO_BLK_F_FLUSH: u64 = 1 << 9;
 
 pub const VIRTIO_BLK_T_IN: u32 = 0;
@@ -17,10 +22,47 @@ pub const VIRTIO_BLK_S_OK: u8 = 0;
 pub const VIRTIO_BLK_S_IOERR: u8 = 1;
 pub const VIRTIO_BLK_S_UNSUPP: u8 = 2;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VirtioBlkConfig {
+    /// Capacity in 512-byte sectors.
+    pub capacity: u64,
+    pub size_max: u32,
+    pub seg_max: u32,
+    pub blk_size: u32,
+}
+
+impl VirtioBlkConfig {
+    // capacity (8) + size_max (4) + seg_max (4) + geometry (4) + blk_size (4)
+    pub const SIZE: usize = 24;
+
+    pub fn read(&self, offset: u64, data: &mut [u8]) {
+        let mut cfg = [0u8; Self::SIZE];
+        cfg[0..8].copy_from_slice(&self.capacity.to_le_bytes());
+        cfg[8..12].copy_from_slice(&self.size_max.to_le_bytes());
+        cfg[12..16].copy_from_slice(&self.seg_max.to_le_bytes());
+        // geometry is zeroed.
+        cfg[20..24].copy_from_slice(&self.blk_size.to_le_bytes());
+
+        let start = offset as usize;
+        if start >= cfg.len() {
+            data.fill(0);
+            return;
+        }
+        let end = usize::min(cfg.len(), start + data.len());
+        data[..end - start].copy_from_slice(&cfg[start..end]);
+        if end - start < data.len() {
+            data[end - start..].fill(0);
+        }
+    }
+}
+
 pub trait BlockBackend {
     fn len(&self) -> u64;
     fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), ()>;
     fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), ()>;
+    fn blk_size(&self) -> u32 {
+        VIRTIO_BLK_SECTOR_SIZE as u32
+    }
     fn flush(&mut self) -> Result<(), ()> {
         Ok(())
     }
@@ -83,19 +125,27 @@ impl BlockBackend for MemDisk {
 pub struct VirtioBlk<B: BlockBackend> {
     backend: B,
     features: u64,
+    config: VirtioBlkConfig,
 }
 
 impl<B: BlockBackend> VirtioBlk<B> {
     pub fn new(backend: B) -> Self {
-        Self { backend, features: 0 }
+        let queue_max_size = 128u16;
+        let config = VirtioBlkConfig {
+            capacity: backend.len() / VIRTIO_BLK_SECTOR_SIZE,
+            size_max: u32::MAX,
+            seg_max: u32::from(queue_max_size.saturating_sub(2)),
+            blk_size: backend.blk_size(),
+        };
+        Self {
+            backend,
+            features: 0,
+            config,
+        }
     }
 
     pub fn backend_mut(&mut self) -> &mut B {
         &mut self.backend
-    }
-
-    fn capacity_sectors(&self) -> u64 {
-        self.backend.len() / 512
     }
 }
 
@@ -105,7 +155,13 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
     }
 
     fn device_features(&self) -> u64 {
-        VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC | VIRTIO_F_RING_EVENT_IDX | VIRTIO_BLK_F_FLUSH
+        VIRTIO_F_VERSION_1
+            | VIRTIO_F_RING_INDIRECT_DESC
+            | VIRTIO_F_RING_EVENT_IDX
+            | VIRTIO_BLK_F_SIZE_MAX
+            | VIRTIO_BLK_F_SEG_MAX
+            | VIRTIO_BLK_F_BLK_SIZE
+            | VIRTIO_BLK_F_FLUSH
     }
 
     fn set_features(&mut self, features: u64) {
@@ -132,33 +188,40 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
         }
 
         let descs = chain.descriptors();
-        if descs.len() < 2 {
-            return Err(VirtioDeviceError::BadDescriptorChain);
+        if descs.is_empty() {
+            return Ok(false);
         }
 
         let status_desc = descs[descs.len() - 1];
-        if !status_desc.is_write_only() || status_desc.len == 0 {
-            return Err(VirtioDeviceError::BadDescriptorChain);
-        }
+        let can_write_status = status_desc.is_write_only() && status_desc.len != 0;
 
         // Read the 16-byte request header.
         let mut hdr = [0u8; 16];
         let mut hdr_written = 0usize;
         let mut d_idx = 0usize;
         let mut d_off = 0usize;
+        let mut header_ok = true;
         while hdr_written < hdr.len() {
-            if d_idx >= descs.len() - 1 {
-                return Err(VirtioDeviceError::BadDescriptorChain);
+            if d_idx >= descs.len().saturating_sub(1) {
+                header_ok = false;
+                break;
             }
             let d = descs[d_idx];
             if d.is_write_only() {
-                return Err(VirtioDeviceError::BadDescriptorChain);
+                header_ok = false;
+                break;
             }
-            let avail = d.len as usize - d_off;
+            let avail = (d.len as usize).saturating_sub(d_off);
+            if avail == 0 {
+                d_idx += 1;
+                d_off = 0;
+                continue;
+            }
             let take = avail.min(hdr.len() - hdr_written);
-            let src = mem
-                .get_slice(d.addr + d_off as u64, take)
-                .map_err(|_| VirtioDeviceError::IoError)?;
+            let Ok(src) = mem.get_slice(d.addr + d_off as u64, take) else {
+                header_ok = false;
+                break;
+            };
             hdr[hdr_written..hdr_written + take].copy_from_slice(src);
             hdr_written += take;
             d_off += take;
@@ -168,15 +231,18 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
             }
         }
 
-        let typ = u32::from_le_bytes(hdr[0..4].try_into().unwrap());
-        let sector = u64::from_le_bytes(hdr[8..16].try_into().unwrap());
-        let mut status = VIRTIO_BLK_S_OK;
+        let mut status = if header_ok {
+            VIRTIO_BLK_S_OK
+        } else {
+            VIRTIO_BLK_S_IOERR
+        };
+        let mut written_bytes: u32 = 0;
 
         // Build data segments (everything between header cursor and status descriptor).
         let mut data_segs = Vec::new();
-        while d_idx < descs.len() - 1 {
+        while d_idx < descs.len().saturating_sub(1) {
             let d = descs[d_idx];
-            let seg_len = d.len as usize - d_off;
+            let seg_len = (d.len as usize).saturating_sub(d_off);
             if seg_len != 0 {
                 data_segs.push((d, d_off, seg_len));
             }
@@ -184,98 +250,107 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
             d_off = 0;
         }
 
-        let mut written_bytes: u32 = 0;
-        match typ {
-            VIRTIO_BLK_T_IN => {
-                let mut offset = sector
-                    .checked_mul(512)
-                    .ok_or(VirtioDeviceError::IoError)?;
-                for (d, seg_off, seg_len) in &data_segs {
-                    if !d.is_write_only() {
-                        return Err(VirtioDeviceError::BadDescriptorChain);
-                    }
-                    let dst = mem
-                        .get_slice_mut(d.addr + *seg_off as u64, *seg_len)
-                        .map_err(|_| VirtioDeviceError::IoError)?;
-                    if self.backend.read_at(offset, dst).is_err() {
+        if header_ok {
+            let typ = u32::from_le_bytes(hdr[0..4].try_into().unwrap());
+            let sector = u64::from_le_bytes(hdr[8..16].try_into().unwrap());
+
+            match typ {
+                VIRTIO_BLK_T_IN => {
+                    if data_segs.is_empty() {
                         status = VIRTIO_BLK_S_IOERR;
-                        break;
-                    }
-                    offset += *seg_len as u64;
-                    written_bytes = written_bytes.saturating_add(*seg_len as u32);
-                }
-            }
-            VIRTIO_BLK_T_OUT => {
-                let mut offset = sector
-                    .checked_mul(512)
-                    .ok_or(VirtioDeviceError::IoError)?;
-                for (d, seg_off, seg_len) in &data_segs {
-                    if d.is_write_only() {
-                        return Err(VirtioDeviceError::BadDescriptorChain);
-                    }
-                    let src = mem
-                        .get_slice(d.addr + *seg_off as u64, *seg_len)
-                        .map_err(|_| VirtioDeviceError::IoError)?;
-                    if self.backend.write_at(offset, src).is_err() {
+                    } else if let Some(mut offset) = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) {
+                        for (d, seg_off, seg_len) in &data_segs {
+                            if !d.is_write_only() {
+                                status = VIRTIO_BLK_S_IOERR;
+                                break;
+                            }
+                            let Ok(dst) = mem.get_slice_mut(d.addr + *seg_off as u64, *seg_len)
+                            else {
+                                status = VIRTIO_BLK_S_IOERR;
+                                break;
+                            };
+                            if self.backend.read_at(offset, dst).is_err() {
+                                status = VIRTIO_BLK_S_IOERR;
+                                break;
+                            }
+                            offset = offset.saturating_add(*seg_len as u64);
+                            written_bytes = written_bytes.saturating_add(*seg_len as u32);
+                        }
+                    } else {
                         status = VIRTIO_BLK_S_IOERR;
-                        break;
                     }
-                    offset += *seg_len as u64;
                 }
-                written_bytes = 0;
-            }
-            VIRTIO_BLK_T_FLUSH => {
-                if (self.features & VIRTIO_BLK_F_FLUSH) == 0 {
-                    status = VIRTIO_BLK_S_UNSUPP;
-                } else if self.backend.flush().is_err() {
-                    status = VIRTIO_BLK_S_IOERR;
-                }
-                written_bytes = 0;
-            }
-            VIRTIO_BLK_T_GET_ID => {
-                let id = self.backend.device_id();
-                let mut copied = 0usize;
-                for (d, seg_off, seg_len) in &data_segs {
-                    if !d.is_write_only() {
-                        return Err(VirtioDeviceError::BadDescriptorChain);
+                VIRTIO_BLK_T_OUT => {
+                    if data_segs.is_empty() {
+                        status = VIRTIO_BLK_S_IOERR;
+                    } else if let Some(mut offset) = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) {
+                        for (d, seg_off, seg_len) in &data_segs {
+                            if d.is_write_only() {
+                                status = VIRTIO_BLK_S_IOERR;
+                                break;
+                            }
+                            let Ok(src) = mem.get_slice(d.addr + *seg_off as u64, *seg_len) else {
+                                status = VIRTIO_BLK_S_IOERR;
+                                break;
+                            };
+                            if self.backend.write_at(offset, src).is_err() {
+                                status = VIRTIO_BLK_S_IOERR;
+                                break;
+                            }
+                            offset = offset.saturating_add(*seg_len as u64);
+                        }
+                    } else {
+                        status = VIRTIO_BLK_S_IOERR;
                     }
-                    let take = (*seg_len).min(id.len() - copied);
-                    if take == 0 {
-                        break;
-                    }
-                    let dst = mem
-                        .get_slice_mut(d.addr + *seg_off as u64, take)
-                        .map_err(|_| VirtioDeviceError::IoError)?;
-                    dst.copy_from_slice(&id[copied..copied + take]);
-                    copied += take;
-                    written_bytes = written_bytes.saturating_add(take as u32);
                 }
-            }
-            _ => {
-                status = VIRTIO_BLK_S_UNSUPP;
-                written_bytes = 0;
+                VIRTIO_BLK_T_FLUSH => {
+                    if (self.features & VIRTIO_BLK_F_FLUSH) == 0 {
+                        status = VIRTIO_BLK_S_UNSUPP;
+                    } else if self.backend.flush().is_err() {
+                        status = VIRTIO_BLK_S_IOERR;
+                    }
+                }
+                VIRTIO_BLK_T_GET_ID => {
+                    if data_segs.is_empty() {
+                        status = VIRTIO_BLK_S_IOERR;
+                    } else {
+                        let id = self.backend.device_id();
+                        let mut copied = 0usize;
+                        for (d, seg_off, seg_len) in &data_segs {
+                            if !d.is_write_only() {
+                                status = VIRTIO_BLK_S_IOERR;
+                                break;
+                            }
+                            let take = (*seg_len).min(id.len() - copied);
+                            if take == 0 {
+                                break;
+                            }
+                            let Ok(dst) = mem.get_slice_mut(d.addr + *seg_off as u64, take) else {
+                                status = VIRTIO_BLK_S_IOERR;
+                                break;
+                            };
+                            dst.copy_from_slice(&id[copied..copied + take]);
+                            copied += take;
+                            written_bytes = written_bytes.saturating_add(take as u32);
+                        }
+                    }
+                }
+                _ => status = VIRTIO_BLK_S_UNSUPP,
             }
         }
 
-        // Status byte.
-        write_u8(mem, status_desc.addr, status).map_err(|_| VirtioDeviceError::IoError)?;
-        written_bytes = written_bytes.saturating_add(1);
+        if can_write_status {
+            write_u8(mem, status_desc.addr, status).map_err(|_| VirtioDeviceError::IoError)?;
+        }
+        let used_len = written_bytes.saturating_add(if can_write_status { 1 } else { 0 });
 
-        let need_irq = queue
-            .add_used(mem, chain.head_index(), written_bytes)
-            .map_err(|_| VirtioDeviceError::IoError)?;
-        Ok(need_irq)
+        queue
+            .add_used(mem, chain.head_index(), used_len)
+            .map_err(|_| VirtioDeviceError::IoError)
     }
 
     fn read_config(&self, offset: u64, data: &mut [u8]) {
-        // virtio-blk device config: first field is `capacity` in 512-byte sectors.
-        data.fill(0);
-        let cap = self.capacity_sectors().to_le_bytes();
-        let start = offset as usize;
-        if start < cap.len() {
-            let end = (start + data.len()).min(cap.len());
-            data[..end - start].copy_from_slice(&cap[start..end]);
-        }
+        self.config.read(offset, data);
     }
 
     fn write_config(&mut self, _offset: u64, _data: &[u8]) {
