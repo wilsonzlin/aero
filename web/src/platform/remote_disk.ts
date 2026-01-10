@@ -216,6 +216,7 @@ export class RemoteStreamingDisk {
   private rangeSet: RangeSet;
   private lastReadEnd: number | null = null;
   private readonly inflight = new Map<number, Promise<Uint8Array>>();
+  private metaLoaded = false;
 
   private constructor(url: string, totalSize: number, cacheKey: string, options: Required<RemoteDiskOptions>) {
     this.url = url;
@@ -340,6 +341,7 @@ export class RemoteStreamingDisk {
     this.rangeSet = new RangeSet();
     this.lastReadEnd = null;
     this.inflight.clear();
+    this.metaLoaded = true;
   }
 
   private async maybePrefetch(offset: number, length: number, onLog?: (msg: string) => void): Promise<void> {
@@ -467,6 +469,9 @@ export class RemoteStreamingDisk {
   }
 
   private async loadMeta(): Promise<void> {
+    if (this.metaLoaded) return;
+    this.metaLoaded = true;
+
     const path = this.metaPath();
     try {
       const handle = await openFileHandle(path, { create: false });
