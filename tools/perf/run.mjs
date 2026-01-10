@@ -134,6 +134,15 @@ async function gotoWithRetries(page, url) {
 
 async function tryCaptureAeroPerfExport(page) {
   try {
+    try {
+      await page.waitForFunction(() => {
+        const perf = globalThis.aero?.perf;
+        return perf && typeof perf === "object" && typeof perf.export === "function";
+      }, null, { timeout: 2_000 });
+    } catch {
+      // Best-effort: if the app doesn't expose a perf API we still want the rest of the run to succeed.
+    }
+
     return await page.evaluate(async () => {
       const aero = globalThis.aero;
       const perf = aero && typeof aero === "object" ? aero.perf : undefined;
