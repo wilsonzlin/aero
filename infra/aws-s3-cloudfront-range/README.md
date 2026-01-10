@@ -138,6 +138,24 @@ curl -I "${BASE_URL}windows7-v1.img" | grep -i '^x-cache:'
 
 The very first request is often `Miss from cloudfront`. Subsequent requests from the same edge location should become `Hit`.
 
+### 4) Benchmark Range throughput + cache hit rate (recommended)
+
+For deeper performance and cache analysis, use the repo’s Range harness:
+
+```bash
+# From the repo root:
+node tools/range-harness/index.js \
+  --url "${BASE_URL}windows7-v1.img" \
+  --chunk-size 1048576 \
+  --count 32 \
+  --concurrency 4 \
+  --passes 2 \
+  --random \
+  --seed 12345
+```
+
+Pass 1 typically warms the CDN. Pass 2 should skew toward `X-Cache: Hit from cloudfront` if byte-range caching is configured correctly.
+
 ## Custom domain / “same-origin” notes
 
 This module can optionally attach one or more `custom_domain_names` (CNAMEs) to the CloudFront distribution.

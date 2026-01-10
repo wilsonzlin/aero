@@ -199,6 +199,24 @@ curl -s -D - -o /dev/null \
 
 ## Reproduce browser preflight behavior (CORS + Range)
 
+## Benchmark Range throughput (optional)
+
+This repo also includes a small Node-based Range harness for benchmarking chunked reads:
+
+```bash
+# Direct to MinIO origin:
+node tools/range-harness/index.js \
+  --url "http://localhost:9000/disk-images/large.bin" \
+  --chunk-size 1048576 --count 32 --concurrency 4 --random
+
+# Via the optional proxy (“edge”):
+node tools/range-harness/index.js \
+  --url "http://localhost:9002/disk-images/large.bin" \
+  --chunk-size 1048576 --count 32 --concurrency 4 --random
+```
+
+Note: MinIO/Nginx may not emit a CDN-style `X-Cache` header; in that case the harness still provides latency/throughput metrics.
+
 Browsers typically preflight a CORS request when you send a non-simple header like `Range`.
 
 ### Browser console snippet (shows actual preflight)
