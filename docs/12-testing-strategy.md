@@ -882,6 +882,13 @@ fn test_instruction_coverage() {
 
 ### Cross-Browser Test Suite
 
+To balance fast PR feedback with high-confidence compatibility coverage, CI typically splits browser automation into:
+
+- **PR CI:** run the Playwright suite on a single browser (Chromium) for speed.
+- **Cross-browser CI:** run the suite across Chromium/Firefox/WebKit on a schedule and via manual trigger.
+
+See `.github/workflows/e2e-matrix.yml` for the scheduled cross-browser matrix.
+
 ```javascript
 // playwright.config.js
 module.exports = {
