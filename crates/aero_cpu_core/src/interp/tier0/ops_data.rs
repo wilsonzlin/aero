@@ -1,5 +1,5 @@
-use crate::exception::Exception;
 use super::ExecOutcome;
+use crate::exception::{AssistReason, Exception};
 use crate::mem::CpuBus;
 use crate::state::{mask_bits, CpuState};
 use aero_x86::{DecodedInst, Instruction, MemorySize, Mnemonic, OpKind, Register};
@@ -27,6 +27,14 @@ pub fn exec<B: CpuBus>(
     let instr = &decoded.instr;
     match instr.mnemonic() {
         Mnemonic::Mov => {
+            if state.mode != crate::state::CpuMode::Bit16
+                && instr.op_kind(0) == OpKind::Register
+                && is_seg_reg(instr.op0_register())
+            {
+                // Segment loads in protected/long mode require descriptor lookups and can fault.
+                // Delegate to the runtime assist layer.
+                return Ok(ExecOutcome::Assist(AssistReason::Privileged));
+            }
             let v = read_op(state, bus, instr, 1, next_ip)?;
             write_op(state, bus, instr, 0, v, next_ip)?;
             Ok(ExecOutcome::Continue)
@@ -191,9 +199,17 @@ pub(crate) fn reg_bits(reg: Register) -> Result<u32, Exception> {
         | R14D | R15D => 32,
         RAX | RCX | RDX | RBX | RSP | RBP | RSI | RDI | R8 | R9 | R10 | R11 | R12 | R13 | R14
         | R15 => 64,
+        ES | CS | SS | DS | FS | GS => 16,
         _ => return Err(Exception::InvalidOpcode),
     };
     Ok(bits)
+}
+
+fn is_seg_reg(reg: Register) -> bool {
+    matches!(
+        reg,
+        Register::ES | Register::CS | Register::SS | Register::DS | Register::FS | Register::GS
+    )
 }
 
 pub(crate) fn op_bits(_state: &CpuState, instr: &Instruction, op: usize) -> Result<u32, Exception> {

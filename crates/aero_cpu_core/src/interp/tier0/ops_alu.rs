@@ -1,6 +1,6 @@
-use crate::exception::Exception;
 use super::ops_data::{calc_ea, op_bits, read_op_sized, write_op_sized};
 use super::ExecOutcome;
+use crate::exception::Exception;
 use crate::mem::CpuBus;
 use crate::state::{mask_bits, CpuState, FLAG_AF, FLAG_CF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
 use aero_x86::{DecodedInst, Instruction, Mnemonic, OpKind, Register};

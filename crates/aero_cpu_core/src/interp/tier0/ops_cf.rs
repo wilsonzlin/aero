@@ -1,6 +1,6 @@
-use crate::exception::Exception;
 use super::ops_data::{calc_ea, op_bits, read_op_sized};
 use super::ExecOutcome;
+use crate::exception::{AssistReason, Exception};
 use crate::mem::CpuBus;
 use crate::state::{mask_bits, CpuState, FLAG_ZF};
 use aero_x86::{DecodedInst, Instruction, Mnemonic, OpKind, Register};
@@ -11,6 +11,7 @@ pub fn handles_mnemonic(m: Mnemonic) -> bool {
         Mnemonic::Jmp
             | Mnemonic::Call
             | Mnemonic::Ret
+            | Mnemonic::Retf
             | Mnemonic::Jo
             | Mnemonic::Jno
             | Mnemonic::Jb
@@ -54,11 +55,17 @@ pub fn exec<B: CpuBus>(
     match instr.mnemonic() {
         Mnemonic::Nop | Mnemonic::Pause => Ok(ExecOutcome::Continue),
         Mnemonic::Jmp => {
+            if is_far_branch(instr) {
+                return Ok(ExecOutcome::Assist(AssistReason::Privileged));
+            }
             let target = branch_target(state, bus, instr, next_ip)?;
             state.set_rip(target);
             Ok(ExecOutcome::Branch)
         }
         Mnemonic::Call => {
+            if is_far_branch(instr) {
+                return Ok(ExecOutcome::Assist(AssistReason::Privileged));
+            }
             let ret_size = state.bitness() / 8;
             push(state, bus, next_ip, ret_size as u32)?;
             let target = branch_target(state, bus, instr, next_ip)?;
@@ -78,6 +85,7 @@ pub fn exec<B: CpuBus>(
             state.set_rip(target);
             Ok(ExecOutcome::Branch)
         }
+        Mnemonic::Retf => Ok(ExecOutcome::Assist(AssistReason::Privileged)),
         Mnemonic::Push => {
             let bits = op_bits(state, instr, 0)?;
             let v = read_op_sized(state, bus, instr, 0, bits, next_ip)?;
@@ -85,6 +93,12 @@ pub fn exec<B: CpuBus>(
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Pop => {
+            if state.mode != crate::state::CpuMode::Bit16
+                && instr.op_kind(0) == OpKind::Register
+                && is_seg_reg(instr.op0_register())
+            {
+                return Ok(ExecOutcome::Assist(AssistReason::Privileged));
+            }
             let bits = op_bits(state, instr, 0)?;
             let v = pop(state, bus, (bits / 8) as u32)?;
             super::ops_data::write_op_sized(state, bus, instr, 0, v, bits, next_ip)?;
@@ -245,6 +259,17 @@ pub fn exec<B: CpuBus>(
         }
         _ => Err(Exception::InvalidOpcode),
     }
+}
+
+fn is_far_branch(instr: &Instruction) -> bool {
+    matches!(instr.op_kind(0), OpKind::FarBranch16 | OpKind::FarBranch32)
+}
+
+fn is_seg_reg(reg: Register) -> bool {
+    matches!(
+        reg,
+        Register::ES | Register::CS | Register::SS | Register::DS | Register::FS | Register::GS
+    )
 }
 
 fn is_jcc(m: Mnemonic) -> bool {

@@ -1,5 +1,5 @@
-use crate::exception::{AssistReason, Exception};
 use super::{exec_decoded, ExecOutcome};
+use crate::exception::{AssistReason, Exception};
 use crate::mem::CpuBus;
 use crate::state::CpuState;
 use aero_x86::Register;

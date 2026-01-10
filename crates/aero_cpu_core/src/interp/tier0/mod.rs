@@ -38,7 +38,27 @@ fn exec_decoded<B: CpuBus>(
         Mnemonic::Hlt => Ok(ExecOutcome::Halt),
         Mnemonic::In | Mnemonic::Out => Ok(ExecOutcome::Assist(AssistReason::Io)),
         Mnemonic::Cpuid => Ok(ExecOutcome::Assist(AssistReason::Cpuid)),
+        Mnemonic::Rdmsr | Mnemonic::Wrmsr => Ok(ExecOutcome::Assist(AssistReason::Msr)),
+        Mnemonic::Int | Mnemonic::Int1 | Mnemonic::Int3 | Mnemonic::Into => {
+            Ok(ExecOutcome::Assist(AssistReason::Interrupt))
+        }
+        Mnemonic::Iret | Mnemonic::Iretd | Mnemonic::Iretq => {
+            Ok(ExecOutcome::Assist(AssistReason::Interrupt))
+        }
+        Mnemonic::Cli | Mnemonic::Sti => Ok(ExecOutcome::Assist(AssistReason::Interrupt)),
+        // Privileged/system instructions that require additional CPU core state.
+        Mnemonic::Lgdt
+        | Mnemonic::Lidt
+        | Mnemonic::Ltr
+        | Mnemonic::Str
+        | Mnemonic::Lldt
+        | Mnemonic::Sldt
+        | Mnemonic::Lmsw
+        | Mnemonic::Smsw
+        | Mnemonic::Invlpg
+        | Mnemonic::Swapgs
+        | Mnemonic::Rsm => Ok(ExecOutcome::Assist(AssistReason::Privileged)),
+        Mnemonic::Rdtsc | Mnemonic::Rdtscp => Ok(ExecOutcome::Assist(AssistReason::Unsupported)),
         _ => Err(Exception::InvalidOpcode),
     }
 }
-

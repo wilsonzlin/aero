@@ -1,6 +1,7 @@
 use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
-use aero_cpu_core::mem::FlatTestBus;
+use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::{CpuMode, CpuState, FLAG_CF, FLAG_ZF};
+use aero_cpu_core::AssistReason;
 
 fn run_to_halt(state: &mut CpuState, bus: &mut FlatTestBus, max: u64) {
     let mut steps = 0;
@@ -55,6 +56,40 @@ fn call_ret_stack() {
     state.write_reg(aero_x86::Register::ESP, 0x800);
     run_to_halt(&mut state, &mut bus, 100);
     assert_eq!(state.read_reg(aero_x86::Register::EAX), 6);
+}
+
+#[test]
+fn real_mode_segment_mov_updates_base() {
+    // mov ax,0x1000; mov ds,ax; mov byte ptr [0x20],0xAA; hlt
+    let code = [
+        0xB8, 0x00, 0x10, // mov ax,0x1000
+        0x8E, 0xD8, // mov ds,ax
+        0xC6, 0x06, 0x20, 0x00, 0xAA, // mov byte ptr [0x20],0xAA
+        0xF4, // hlt
+    ];
+    let mut bus = FlatTestBus::new(0x20000);
+    bus.load(0, &code);
+    let mut state = CpuState::new(CpuMode::Bit16);
+    state.set_rip(0);
+    run_to_halt(&mut state, &mut bus, 100);
+    assert_eq!(bus.read_u8(0x10000 + 0x20).unwrap(), 0xAA);
+}
+
+#[test]
+fn far_jump_requests_assist() {
+    // ljmp 0x0000:0x0005 (EA 05 00 00 00)
+    let code = [0xEA, 0x05, 0x00, 0x00, 0x00, 0xF4];
+    let mut bus = FlatTestBus::new(0x1000);
+    bus.load(0, &code);
+    let mut state = CpuState::new(CpuMode::Bit16);
+    state.set_rip(0);
+
+    let res = run_batch(&mut state, &mut bus, 1);
+    assert!(matches!(
+        res.exit,
+        BatchExit::Assist(AssistReason::Privileged)
+    ));
+    assert_eq!(state.rip(), 0);
 }
 
 #[test]

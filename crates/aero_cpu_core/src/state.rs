@@ -5,6 +5,7 @@ pub const FLAG_PF: u64 = 1 << 2;
 pub const FLAG_AF: u64 = 1 << 4;
 pub const FLAG_ZF: u64 = 1 << 6;
 pub const FLAG_SF: u64 = 1 << 7;
+pub const FLAG_IF: u64 = 1 << 9;
 pub const FLAG_DF: u64 = 1 << 10;
 pub const FLAG_OF: u64 = 1 << 11;
 
@@ -69,6 +70,7 @@ pub struct CpuState {
     gpr: [u64; 16],
     rip: u64,
     rflags: u64,
+    seg_sel: [u16; 6],
     seg_base: [u64; 6],
     pub mode: CpuMode,
     pub halted: bool,
@@ -86,6 +88,7 @@ impl CpuState {
             gpr: [0; 16],
             rip: 0,
             rflags: 0x2, // bit 1 is always set
+            seg_sel: [0; 6],
             seg_base: [0; 6],
             mode,
             halted: false,
@@ -137,6 +140,18 @@ impl CpuState {
         self.seg_base[seg as usize] = base;
     }
 
+    pub fn seg_selector(&self, seg: Segment) -> u16 {
+        self.seg_sel[seg as usize]
+    }
+
+    pub fn set_seg_selector(&mut self, seg: Segment, sel: u16) {
+        self.seg_sel[seg as usize] = sel;
+        if self.mode == CpuMode::Bit16 {
+            // Real-mode semantics: selector * 16.
+            self.seg_base[seg as usize] = (sel as u64) << 4;
+        }
+    }
+
     pub fn seg_base_reg(&self, seg: Register) -> u64 {
         Segment::from_register(seg)
             .map(|s| self.seg_base(s))
@@ -163,6 +178,9 @@ impl CpuState {
                 _ => 0,
             };
         }
+        if let Some(seg) = Segment::from_register(reg) {
+            return self.seg_selector(seg) as u64;
+        }
         match reg {
             Register::RIP | Register::EIP => self.rip(),
             _ => 0,
@@ -181,6 +199,11 @@ impl CpuState {
                 (8, true) => (cur & !0xFF00) | ((val & 0xFF) << 8),
                 _ => cur,
             };
+            return;
+        }
+
+        if let Some(seg) = Segment::from_register(reg) {
+            self.set_seg_selector(seg, val as u16);
             return;
         }
 
