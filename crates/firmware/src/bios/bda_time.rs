@@ -67,8 +67,9 @@ impl BdaTime {
         self.tick_remainder = numerator % NANOS_PER_DAY;
 
         let total = u128::from(self.tick_count) + ticks_to_add;
-        if total >= u128::from(TICKS_PER_DAY) {
-            self.midnight_flag = 1;
+        let wraps = total / u128::from(TICKS_PER_DAY);
+        if wraps != 0 {
+            self.midnight_flag = self.midnight_flag.wrapping_add(wraps as u8);
         }
 
         self.tick_count = (total % u128::from(TICKS_PER_DAY)) as u32;
@@ -119,5 +120,20 @@ mod tests {
         assert_eq!(bda_time.tick_count(), expected_after_midnight);
         assert_eq!(bda_time.midnight_flag(), 1);
         assert_eq!(memory.read_u8(BDA_MIDNIGHT_FLAG_ADDR), 1);
+    }
+
+    #[test]
+    fn midnight_flag_counts_multiple_wraps() {
+        let rtc = CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0));
+        let mut bda_time = BdaTime::from_rtc(&rtc);
+        let mut memory = VecMemory::new(0x100000);
+        bda_time.write_to_bda(&mut memory);
+
+        bda_time.advance(&mut memory, Duration::from_secs(172_800 + 3));
+
+        let expected_after = (u64::from(TICKS_PER_DAY) * 3 / 86_400) as u32;
+        assert_eq!(bda_time.tick_count(), expected_after);
+        assert_eq!(bda_time.midnight_flag(), 2);
+        assert_eq!(memory.read_u8(BDA_MIDNIGHT_FLAG_ADDR), 2);
     }
 }
