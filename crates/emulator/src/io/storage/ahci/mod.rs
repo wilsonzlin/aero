@@ -384,31 +384,24 @@ impl AhciController {
 
     fn cmd_flush(
         &mut self,
-        _mem: &mut dyn MemoryBus,
+        mem: &mut dyn MemoryBus,
         header_addr: u64,
         _header: &CommandHeader,
     ) -> Result<(), AhciError> {
         self.disk.flush()?;
-        // No data phase.
-        // prdbc remains unchanged; clear to 0 for tidiness.
-        // (Windows doesn't rely on this for flush.)
-        // Keep it deterministic for tests.
-        //
-        // Header prdbc is at header_addr+4.
-        // We only have `MemoryBus` here for identify/read/write commands.
-        let _ = header_addr;
+        CommandHeader::write_prdbc(mem, header_addr, 0);
         Ok(())
     }
 
     fn cmd_set_features(
         &mut self,
-        _mem: &mut dyn MemoryBus,
+        mem: &mut dyn MemoryBus,
         header_addr: u64,
         _header: &CommandHeader,
     ) -> Result<(), AhciError> {
         // Windows probes several feature sets (e.g. enabling write cache). We
         // accept and report success without modelling the feature state.
-        let _ = header_addr;
+        CommandHeader::write_prdbc(mem, header_addr, 0);
         Ok(())
     }
 
@@ -443,7 +436,7 @@ impl AhciController {
         }
     }
 
-    fn port0_mmio_write_dword(&mut self, mem: &mut dyn MemoryBus, offset: u64, value: u32) {
+    fn port0_mmio_write_dword(&mut self, offset: u64, value: u32) {
         match offset {
             PX_CLB => self.port0.clb = (self.port0.clb & 0xffff_ffff_0000_0000) | value as u64,
             PX_CLBU => {
@@ -472,7 +465,6 @@ impl AhciController {
             PX_SACT => self.port0.sact = value,
             PX_CI => {
                 self.port0.ci = value;
-                self.poll(mem);
             }
             PX_SNTF => self.port0.sntf = value,
             PX_FBS => self.port0.fbs = value,
@@ -573,7 +565,7 @@ impl MmioDevice for AhciController {
         if aligned >= HBA_PORTS_BASE {
             let port_off = aligned - HBA_PORTS_BASE;
             if port_off < HBA_PORT_STRIDE {
-                self.port0_mmio_write_dword(mem, port_off, merged);
+                self.port0_mmio_write_dword(port_off, merged);
             }
         } else {
             self.hba_mmio_write_dword(aligned, merged);
@@ -598,6 +590,7 @@ impl AhciController {
 pub struct AhciPciDevice {
     config: PciConfigSpace,
     pub abar: u32,
+    abar_probe: bool,
     pub controller: AhciController,
 }
 
@@ -624,6 +617,7 @@ impl AhciPciDevice {
         Self {
             config,
             abar,
+            abar_probe: false,
             controller,
         }
     }
@@ -631,13 +625,28 @@ impl AhciPciDevice {
 
 impl PciDevice for AhciPciDevice {
     fn config_read(&self, offset: u16, size: usize) -> u32 {
+        if offset == 0x24 && size == 4 {
+            if self.abar_probe {
+                return !(AhciController::ABAR_SIZE as u32 - 1) & 0xffff_fff0;
+            }
+            return self.abar;
+        }
         self.config.read(offset, size)
     }
 
     fn config_write(&mut self, offset: u16, size: usize, value: u32) {
         // Allow BAR relocation and command register toggles.
         if offset == 0x24 && size == 4 {
+            if value == 0xffff_ffff {
+                self.abar_probe = true;
+                self.abar = 0;
+                self.config.write(offset, size, 0);
+                return;
+            }
+            self.abar_probe = false;
             self.abar = value & 0xffff_fff0;
+            self.config.write(offset, size, self.abar);
+            return;
         }
         self.config.write(offset, size, value);
     }
@@ -729,7 +738,9 @@ mod tests {
 
     impl VecMemory {
         fn new(size: usize) -> Self {
-            Self { data: vec![0; size] }
+            Self {
+                data: vec![0; size],
+            }
         }
 
         fn range(&self, paddr: u64, len: usize) -> core::ops::Range<usize> {
@@ -837,9 +848,17 @@ mod tests {
         // Program controller registers.
         controller.mmio_write_u32(&mut mem, HBA_GHC, GHC_AE | GHC_IE);
         controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_CLB, clb as u32);
-        controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_CLBU, (clb >> 32) as u32);
+        controller.mmio_write_u32(
+            &mut mem,
+            HBA_PORTS_BASE + PX_CLBU,
+            (clb >> 32) as u32,
+        );
         controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_FB, fb as u32);
-        controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_FBU, (fb >> 32) as u32);
+        controller.mmio_write_u32(
+            &mut mem,
+            HBA_PORTS_BASE + PX_FBU,
+            (fb >> 32) as u32,
+        );
         controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_IE, PXIE_DHRE);
         controller.mmio_write_u32(
             &mut mem,
@@ -856,6 +875,7 @@ mod tests {
         write_prd(&mut mem, ctba + 0x80, dst, 1024);
 
         controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_CI, 1);
+        controller.poll(&mut mem);
 
         // Data should have been DMA'd into dst.
         let mut got = vec![0u8; 1024];
@@ -916,6 +936,7 @@ mod tests {
         write_prd(&mut mem, ctba + 0x90, src1, 24);
 
         controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_CI, 1);
+        controller.poll(&mut mem);
 
         let d = disk.lock().unwrap();
         let written = &d.data()[4 * 512..6 * 512];
@@ -953,6 +974,7 @@ mod tests {
         write_prd(&mut mem, ctba + 0x80, dst, 512);
 
         controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_CI, 1);
+        controller.poll(&mut mem);
 
         let mut identify = [0u8; 512];
         mem.read_physical(dst, &mut identify);
