@@ -29,6 +29,14 @@ export type PlatformFeatureReport = {
   webgl2: boolean;
   /** Whether OPFS is exposed (`navigator.storage.getDirectory`). */
   opfs: boolean;
+  /**
+   * Whether OPFS sync access handles *appear* to be available
+   * (`FileSystemFileHandle.prototype.createSyncAccessHandle`).
+   *
+   * Note: `createSyncAccessHandle()` is worker-only; even if this is true, the
+   * caller still needs to run in a dedicated worker to use it.
+   */
+  opfsSyncAccessHandle: boolean;
   /** Whether AudioWorklet is available. */
   audioWorklet: boolean;
   /** Whether `OffscreenCanvas` is available. */
@@ -137,6 +145,13 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
     typeof navigator !== "undefined" &&
     typeof navigator.storage !== "undefined" &&
     typeof (navigator.storage as StorageManager & { getDirectory?: unknown }).getDirectory === "function";
+  const opfsSyncAccessHandle =
+    opfs &&
+    typeof (globalThis as typeof globalThis & { FileSystemFileHandle?: unknown }).FileSystemFileHandle !== "undefined" &&
+    typeof (
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).FileSystemFileHandle?.prototype?.createSyncAccessHandle
+    ) === "function";
 
   const audioContextCtor = getAudioContextCtor();
   const audioWorklet = typeof AudioWorkletNode !== "undefined" && typeof audioContextCtor !== "undefined";
@@ -152,6 +167,7 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
     webgpu,
     webgl2,
     opfs,
+    opfsSyncAccessHandle,
     audioWorklet,
     offscreenCanvas,
   };

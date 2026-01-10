@@ -161,6 +161,7 @@ function renderCapabilityTable(report: PlatformFeatureReport): HTMLTableElement 
     "webgpu",
     "webgl2",
     "opfs",
+    "opfsSyncAccessHandle",
     "audioWorklet",
     "offscreenCanvas",
   ];
