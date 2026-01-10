@@ -15,7 +15,7 @@ impl AeroBackend {
         let mut state = case.init;
         let mut memory = case.memory.clone();
 
-        let outcome = match execute_one(
+        match execute_one(
             case.template.kind,
             &mut state,
             &mut memory,
@@ -32,9 +32,7 @@ impl AeroBackend {
                 memory,
                 fault: Some(fault),
             },
-        };
-
-        outcome
+        }
     }
 }
 

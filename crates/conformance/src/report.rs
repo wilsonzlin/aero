@@ -58,8 +58,7 @@ impl ConformanceReport {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let contents = serde_json::to_string_pretty(self)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let contents = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
         std::fs::write(path, contents)
     }
 }

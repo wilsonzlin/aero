@@ -35,8 +35,10 @@ impl ReferenceBackend {
 
         let mut input = case.init;
         input.rflags |= FLAG_FIXED_1;
-        let mut output = CpuState::default();
-        output.rflags = FLAG_FIXED_1;
+        let mut output = CpuState {
+            rflags: FLAG_FIXED_1,
+            ..CpuState::default()
+        };
 
         self.memory.write(&case.memory);
 
@@ -92,8 +94,10 @@ impl ReferenceBackend {
                 libc::close(pipe_fds[0]);
             }
 
-            let mut output = CpuState::default();
-            output.rflags = FLAG_FIXED_1;
+            let mut output = CpuState {
+                rflags: FLAG_FIXED_1,
+                ..CpuState::default()
+            };
             unsafe {
                 aero_conformance_host_exec(self.code.ptr, &input, &mut output);
             }
@@ -132,7 +136,7 @@ impl ReferenceBackend {
         let state_size = size_of::<CpuState>();
         let mut buffer = vec![0u8; state_size + case.memory.len()];
 
-        if let Err(_) = file.read_exact(&mut buffer) {
+        if file.read_exact(&mut buffer).is_err() {
             return ExecOutcome {
                 state: CpuState::default(),
                 memory: Vec::new(),
