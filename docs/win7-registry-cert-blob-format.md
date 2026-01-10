@@ -80,10 +80,53 @@ struct Win7SerializedProperty {
   for that context at the time it is written.
 - `dwPropId` ordering is the order produced by `CertEnumCertificateContextProperties`
   on Win7 (observed to be ascending numeric order in practice).
-- The blob uses **4-byte padding**:
+- The blob uses **4-byte padding** (0x00 bytes) to align the following DWORD:
   - after the certificate DER
   - after each property value
-  Padding bytes are `0x00`.
+
+## Padding / alignment examples
+
+### Padding after DER (`cbCertEncoded % 4 != 0`)
+
+Example certificate (unaligned length):
+
+- File: `tools/win-blob-dump/examples/example_unaligned_cert.der`
+- `cbCertEncoded = 506 (0x01fa)`
+
+The next DWORD (`cProperties`) starts at the next 4-byte boundary, so after the
+DER bytes there are 2 bytes of `0x00` padding:
+
+```text
+... (last 16 bytes of DER) ...
+000001f2: 74 55 c0 65 5b ee f2 b3 5f 72 4f 89 52 9a f5 15 |tU.e[..._rO.R...|
+00000202: 00 00 00 00 00 00                               |......|
+          ^^ ^^
+          pad0 = 2 bytes
+                ^^^^^^^^^^^
+                cProperties = 0 (DWORD)
+```
+
+### Padding after a property value (`cbValue % 4 != 0`)
+
+Example: a `CERT_FRIENDLY_NAME_PROP_ID` value of `"Aero\0"` has:
+
+- `cbValue = 10 (0x0a)` bytes (UTF-16LE)
+- followed by 2 bytes of padding to align the next property header to a DWORD boundary
+
+```text
+00000224: 01 00 00 00 0b 00 00 00 0a 00 00 00 41 00 65 00 |............A.e.|
+          ^^^^^^^^^^^
+          cProperties = 1
+                      ^^^^^^^^^^^  ^^^^^^^^^^^
+                      propId = 11  cbValue = 10
+                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                                            UTF-16LE "Aero\0"
+00000234: 72 00 6f 00 00 00 00 00                         |r.o.....|
+                    ^^^^^^
+                    terminator (00 00)
+                          ^^ ^^
+                          padding (2 bytes)
+```
 
 ## Persisted properties: what you actually see
 

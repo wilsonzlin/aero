@@ -9,10 +9,14 @@ It:
 
 1. Loads a DER-encoded X.509 certificate from disk.
 2. Optionally sets persisted cert properties (`FriendlyName`, `KeyProvInfo`).
-3. Calls `CertSerializeCertificateStoreElement()` and prints a hexdump +
+3. Serializes and dumps multiple variants:
+   - no persisted properties
+   - `FriendlyName` only
+   - `FriendlyName` + `KeyProvInfo` (best-effort)
+4. Calls `CertSerializeCertificateStoreElement()` and prints a hexdump +
    decoded offsets.
-4. Round-trips the serialized bytes via `CertAddSerializedElementToStore()`.
-5. Adds the cert to a real registry-backed system store (current user), reads
+5. Round-trips the serialized bytes via `CertAddSerializedElementToStore()`.
+6. Adds the cert to a real registry-backed system store (current user), reads
    the registry `Blob` value, and compares it byte-for-byte with the serialized
    output.
 
@@ -42,6 +46,11 @@ win_blob_dump.exe path\to\cert.der
 An example DER certificate is included at:
 
 `tools/win-blob-dump/examples/example_cert.der`
+
+Another example certificate with a DER length that is *not* 4-byte aligned is
+included at:
+
+`tools/win-blob-dump/examples/example_unaligned_cert.der`
 
 so from the repo root you can run:
 

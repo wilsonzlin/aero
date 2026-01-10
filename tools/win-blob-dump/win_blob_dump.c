@@ -385,7 +385,8 @@ static BYTE *read_file(const wchar_t *path, DWORD *out_len) {
 }
 
 static void try_set_friendly_name(PCCERT_CONTEXT cert) {
-    const wchar_t *name = L"Aero test friendly name";
+    // Use a stable value so runs are easy to diff and match documentation.
+    const wchar_t *name = L"AeroBlobDumpExample";
     if (!CertSetCertificateContextProperty(cert, CERT_FRIENDLY_NAME_PROP_ID, 0, name)) {
         fwprintf(stderr, L"warning: failed to set FriendlyName (err=%lu)\n",
                  (unsigned long)GetLastError());
@@ -584,6 +585,98 @@ static BYTE *get_context_property_alloc(PCCERT_CONTEXT cert, DWORD propId, DWORD
     return buf;
 }
 
+typedef struct {
+    DWORD propId;
+    const BYTE *value;
+    DWORD cbValue;
+} PROP_ENTRY;
+
+static BYTE *build_expected_blob(PCCERT_CONTEXT cert, const PROP_ENTRY *props, DWORD cProps,
+                                 DWORD *out_len) {
+    // Build a serialized certificate element according to this repository's spec:
+    //   [dwEncodingType][cbCert][DER][pad-to-4][cProperties][prop...]
+    //
+    // This is used as a sanity-check against the bytes produced by
+    // CertSerializeCertificateStoreElement() on Windows 7.
+    size_t total = 0;
+    total += 8;
+    total += cert->cbCertEncoded;
+    total = align4(total);
+    total += 4; // cProperties
+    for (DWORD i = 0; i < cProps; i++) {
+        total += 8;
+        total += props[i].cbValue;
+        total = align4(total);
+    }
+
+    if (total > 0x7fffffff) {
+        die(L"expected blob too large");
+    }
+
+    BYTE *buf = (BYTE *)malloc(total);
+    if (!buf) {
+        die(L"malloc failed");
+    }
+    ZeroMemory(buf, total);
+
+    size_t off = 0;
+    *(DWORD *)(buf + off) = cert->dwCertEncodingType;
+    off += 4;
+    *(DWORD *)(buf + off) = cert->cbCertEncoded;
+    off += 4;
+    memcpy(buf + off, cert->pbCertEncoded, cert->cbCertEncoded);
+    off += cert->cbCertEncoded;
+    off = align4(off);
+
+    *(DWORD *)(buf + off) = cProps;
+    off += 4;
+    for (DWORD i = 0; i < cProps; i++) {
+        *(DWORD *)(buf + off) = props[i].propId;
+        off += 4;
+        *(DWORD *)(buf + off) = props[i].cbValue;
+        off += 4;
+        memcpy(buf + off, props[i].value, props[i].cbValue);
+        off += props[i].cbValue;
+        off = align4(off);
+    }
+
+    if (off != total) {
+        free(buf);
+        die(L"internal expected-blob size mismatch");
+    }
+
+    *out_len = (DWORD)total;
+    return buf;
+}
+
+static void print_first_diff(const BYTE *a, DWORD aLen, const BYTE *b, DWORD bLen) {
+    DWORD minLen = aLen < bLen ? aLen : bLen;
+    for (DWORD i = 0; i < minLen; i++) {
+        if (a[i] != b[i]) {
+            printf("  first diff at 0x%lx: actual=%02x expected=%02x\n", (unsigned long)i,
+                   (unsigned)a[i], (unsigned)b[i]);
+            DWORD start = (i > 32) ? (i - 32) : 0;
+            DWORD end = i + 32;
+            if (end > aLen)
+                end = aLen;
+            printf("  actual bytes around diff:\n");
+            hexdump_limit(a + start, end - start, 256);
+            end = i + 32;
+            if (end > bLen)
+                end = bLen;
+            printf("  expected bytes around diff:\n");
+            hexdump_limit(b + start, end - start, 256);
+            return;
+        }
+    }
+    if (aLen != bLen) {
+        printf("  length mismatch: actual=%lu expected=%lu\n", (unsigned long)aLen,
+               (unsigned long)bLen);
+    } else {
+        printf("  no diff found (unexpected)\n");
+    }
+}
+
 static void compare_serialized_property_with_context(PCCERT_CONTEXT cert, const BYTE *ser,
                                                      DWORD cbSer, DWORD propId) {
     const BYTE *serVal = NULL;
@@ -760,6 +853,17 @@ int wmain(int argc, wchar_t **argv) {
     printf("Serialized size: %lu byte(s)\n", (unsigned long)cbSer0);
     dump_serialized_cert_blob(ser0, cbSer0);
     hexdump(ser0, cbSer0);
+    // Spec sanity-check: for a freshly-created context with no explicit persisted
+    // properties, the expected serialized form is header+DER+pad+cProperties(0).
+    DWORD cbExpected0 = 0;
+    BYTE *expected0 = build_expected_blob(certNoProps, NULL, 0, &cbExpected0);
+    if (cbSer0 == cbExpected0 && memcmp(ser0, expected0, cbSer0) == 0) {
+        printf("Spec check (no-props): PASS\n");
+    } else {
+        printf("Spec check (no-props): FAIL\n");
+        print_first_diff(ser0, cbSer0, expected0, cbExpected0);
+    }
+    free(expected0);
     compare_serialized_property_with_context(certNoProps, ser0, cbSer0, CERT_SHA1_HASH_PROP_ID);
     roundtrip_via_add_serialized(ser0, cbSer0);
     free(ser0);
@@ -774,9 +878,45 @@ int wmain(int argc, wchar_t **argv) {
 
     // Properties must be set on the context that we serialize / add to store.
     try_set_friendly_name(certProps);
+
+    printf("\n=== CertSerializeCertificateStoreElement (FriendlyName only) ===\n");
+    dump_context_properties(certProps);
+    dump_context_property_bytes(certProps, CERT_FRIENDLY_NAME_PROP_ID);
+    DWORD cbSerFriendly = 0;
+    BYTE *serFriendly = serialize_cert(certProps, &cbSerFriendly);
+    printf("Serialized size: %lu byte(s)\n", (unsigned long)cbSerFriendly);
+    dump_serialized_cert_blob(serFriendly, cbSerFriendly);
+    hexdump(serFriendly, cbSerFriendly);
+
+    DWORD cbFriendlyVal = 0;
+    BYTE *friendlyVal =
+        get_context_property_alloc(certProps, CERT_FRIENDLY_NAME_PROP_ID, &cbFriendlyVal);
+    if (friendlyVal) {
+        PROP_ENTRY prop;
+        prop.propId = CERT_FRIENDLY_NAME_PROP_ID;
+        prop.value = friendlyVal;
+        prop.cbValue = cbFriendlyVal;
+        DWORD cbExpectedFriendly = 0;
+        BYTE *expectedFriendly = build_expected_blob(certProps, &prop, 1, &cbExpectedFriendly);
+        if (cbSerFriendly == cbExpectedFriendly &&
+            memcmp(serFriendly, expectedFriendly, cbSerFriendly) == 0) {
+            printf("Spec check (FriendlyName only): PASS\n");
+        } else {
+            printf("Spec check (FriendlyName only): FAIL\n");
+            print_first_diff(serFriendly, cbSerFriendly, expectedFriendly, cbExpectedFriendly);
+        }
+        free(expectedFriendly);
+        free(friendlyVal);
+    }
+
+    compare_serialized_property_with_context(certProps, serFriendly, cbSerFriendly,
+                                             CERT_FRIENDLY_NAME_PROP_ID);
+    roundtrip_via_add_serialized(serFriendly, cbSerFriendly);
+    free(serFriendly);
+
     try_set_key_prov_info(certProps);
 
-    printf("\n=== CertSerializeCertificateStoreElement (with FriendlyName + KeyProvInfo) ===\n");
+    printf("\n=== CertSerializeCertificateStoreElement (FriendlyName + KeyProvInfo) ===\n");
     dump_context_properties(certProps);
     dump_context_property_bytes(certProps, CERT_FRIENDLY_NAME_PROP_ID);
     dump_context_property_bytes(certProps, CERT_KEY_PROV_INFO_PROP_ID);
