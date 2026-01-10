@@ -137,6 +137,8 @@ pub struct Bios {
     e820_map: Vec<E820Entry>,
     keyboard_queue: VecDeque<u16>,
     tty_output: Vec<u8>,
+    /// INT 13h status code from the most recent disk operation (AH=01h).
+    last_int13_status: u8,
 
     /// RSDP physical address (if ACPI tables were built).
     rsdp_addr: Option<u64>,
@@ -160,6 +162,7 @@ impl Bios {
             e820_map: Vec::new(),
             keyboard_queue: VecDeque::new(),
             tty_output: Vec::new(),
+            last_int13_status: 0,
             rsdp_addr: None,
             acpi_builder: Box::new(acpi::FirmwareAcpiBuilder::default()),
         }

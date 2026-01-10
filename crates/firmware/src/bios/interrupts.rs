@@ -37,7 +37,7 @@ pub fn dispatch_interrupt(
 
     match vector {
         0x10 => handle_int10(bios, cpu, bus),
-        0x13 => handle_int13(cpu, bus, disk),
+        0x13 => handle_int13(bios, cpu, bus, disk),
         0x15 => handle_int15(bios, cpu, bus),
         0x16 => handle_int16(bios, cpu),
         0x1A => handle_int1a(bios, cpu, bus),
@@ -87,15 +87,31 @@ fn handle_int10(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
     cpu.set_flag(FLAG_CF, fw_cpu.cf());
 }
 
-fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockDevice) {
+fn handle_int13(
+    bios: &mut Bios,
+    cpu: &mut CpuState,
+    bus: &mut dyn BiosBus,
+    disk: &mut dyn BlockDevice,
+) {
     let ah = ((cpu.rax >> 8) & 0xFF) as u8;
     let drive = (cpu.rdx & 0xFF) as u8;
 
     match ah {
         0x00 => {
             // Reset disk system.
+            bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
             cpu.rax &= !0xFF00u64;
+        }
+        0x01 => {
+            // Get status of last disk operation.
+            let status = bios.last_int13_status;
+            cpu.rax = (cpu.rax & 0xFF) | ((status as u64) << 8);
+            if status == 0 {
+                cpu.rflags &= !FLAG_CF;
+            } else {
+                cpu.rflags |= FLAG_CF;
+            }
         }
         0x02 => {
             // Read sectors (CHS).
@@ -116,6 +132,7 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
             let spt = 63u32;
             let heads = 16u32;
             if sector == 0 || sector > spt as u16 {
+                bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
                 cpu.rax = (cpu.rax & 0xFF) | ((0x01u64) << 8);
                 return;
@@ -133,12 +150,16 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
                     Err(e) => {
                         cpu.rflags |= FLAG_CF;
                         let status = disk_err_to_int13_status(e);
-                        cpu.rax = (cpu.rax & !0xFFFF) | ((status as u64) << 8);
+                        bios.last_int13_status = status;
+                        // AH=status, AL=sectors transferred.
+                        cpu.rax =
+                            (cpu.rax & !0xFFFF) | (i & 0xFF) | ((status as u64) << 8);
                         return;
                     }
                 }
             }
 
+            bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
             // AH=0 on success, AL = sectors transferred.
             let transferred = if count == 256 { 0u64 } else { count as u64 };
@@ -161,6 +182,7 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
             // DL = number of drives; DH = max head.
             cpu.rdx = (cpu.rdx & !0xFFFF) | 1u64 | ((dh as u64) << 8);
             cpu.rax &= !0xFF00u64;
+            bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
         }
         0x15 => {
@@ -170,30 +192,44 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
             } else {
                 cpu.rax = 0x0300;
             }
+            bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
         }
         0x41 => {
             // Extensions check.
-            if (cpu.rbx & 0xFFFF) == 0x55AA {
-                cpu.rax = (cpu.rax & 0xFF) | (0x30u64 << 8);
+            if (cpu.rbx & 0xFFFF) == 0x55AA && drive >= 0x80 {
+                // Report EDD 3.0 (AH=0x30) and that we support 42h + 48h.
+                cpu.rax = (cpu.rax & !0xFFFF) | (0x30u64 << 8);
                 cpu.rbx = (cpu.rbx & !0xFFFF) | 0xAA55;
-                cpu.rcx = (cpu.rcx & !0xFFFF) | 0x0007;
+                cpu.rcx = (cpu.rcx & !0xFFFF) | 0x0005;
+                bios.last_int13_status = 0;
                 cpu.rflags &= !FLAG_CF;
             } else {
+                bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
+                cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
             }
         }
         0x42 => {
             // Extended read via Disk Address Packet (DAP) at DS:SI.
+            if drive < 0x80 {
+                bios.last_int13_status = 0x01;
+                cpu.rflags |= FLAG_CF;
+                cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
+                return;
+            }
+
             let dap_addr = cpu.linear_addr(cpu.ds, (cpu.rsi & 0xFFFF) as u16);
             let dap_size = bus.read_u8(dap_addr);
             if dap_size != 0x10 && dap_size != 0x18 {
+                bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
                 cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
                 return;
             }
 
             if bus.read_u8(dap_addr + 1) != 0 {
+                bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
                 cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
                 return;
@@ -201,6 +237,7 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
 
             let count = bus.read_u16(dap_addr + 2) as u64;
             if count == 0 {
+                bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
                 cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
                 return;
@@ -219,11 +256,13 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
             }
 
             let Some(end) = lba.checked_add(count) else {
+                bios.last_int13_status = 0x04;
                 cpu.rflags |= FLAG_CF;
                 cpu.rax = (cpu.rax & 0xFF) | (0x04u64 << 8);
                 return;
             };
             if end > disk.size_in_sectors() {
+                bios.last_int13_status = 0x04;
                 cpu.rflags |= FLAG_CF;
                 cpu.rax = (cpu.rax & 0xFF) | (0x04u64 << 8);
                 return;
@@ -236,12 +275,14 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
                     Err(e) => {
                         cpu.rflags |= FLAG_CF;
                         let status = disk_err_to_int13_status(e);
+                        bios.last_int13_status = status;
                         cpu.rax = (cpu.rax & 0xFF) | ((status as u64) << 8);
                         return;
                     }
                 }
             }
 
+            bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
             cpu.rax &= !0xFF00u64;
         }
@@ -250,9 +291,17 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
             //
             // DS:SI points to a caller-supplied buffer; the first WORD is the
             // buffer size in bytes.
+            if drive < 0x80 {
+                bios.last_int13_status = 0x01;
+                cpu.rflags |= FLAG_CF;
+                cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
+                return;
+            }
+
             let table_addr = cpu.linear_addr(cpu.ds, (cpu.rsi & 0xFFFF) as u16);
             let buf_size = bus.read_u16(table_addr) as usize;
             if buf_size < 0x1A {
+                bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
                 cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
                 return;
@@ -284,11 +333,13 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
                 bus.write_u32(table_addr + 26, 0); // DPTE pointer (unused)
             }
 
+            bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
             cpu.rax &= !0xFF00u64;
         }
         _ => {
             eprintln!("BIOS: unhandled INT 13h AH={ah:02x}");
+            bios.last_int13_status = 0x01;
             cpu.rflags |= FLAG_CF;
             cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
         }
@@ -619,6 +670,7 @@ mod tests {
 
     #[test]
     fn int13_ext_read_reads_lba_into_memory() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
         let mut disk_bytes = vec![0u8; 512 * 4];
         disk_bytes[512..1024].fill(0xAA);
         let mut disk = InMemoryDisk::new(disk_bytes);
@@ -626,6 +678,7 @@ mod tests {
         let mut cpu = CpuState::default();
         cpu.ds.selector = 0;
         cpu.rsi = 0x0500;
+        cpu.rdx = 0x80; // DL = HDD0
         cpu.rax = 0x4200; // AH=42h
 
         let mut mem = PhysicalMemory::new(2 * 1024 * 1024);
@@ -637,7 +690,7 @@ mod tests {
         mem.write_u16(dap_addr + 6, 0x0000); // segment
         mem.write_u64(dap_addr + 8, 1); // LBA
 
-        handle_int13(&mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.rax >> 8) & 0xFF, 0);
@@ -648,6 +701,7 @@ mod tests {
 
     #[test]
     fn int13_ext_get_drive_params_reports_sector_count() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
         let disk_bytes = vec![0u8; 512 * 8];
         let sectors = (disk_bytes.len() / 512) as u64;
         let mut disk = InMemoryDisk::new(disk_bytes);
@@ -655,13 +709,14 @@ mod tests {
         let mut cpu = CpuState::default();
         cpu.ds.selector = 0;
         cpu.rsi = 0x0600;
+        cpu.rdx = 0x80; // DL = HDD0
         cpu.rax = 0x4800; // AH=48h
 
         let mut mem = PhysicalMemory::new(2 * 1024 * 1024);
         let table_addr = cpu.linear_addr(cpu.ds, 0x0600);
         mem.write_u16(table_addr, 0x1E); // buffer size
 
-        handle_int13(&mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.rax >> 8) & 0xFF, 0);
@@ -753,5 +808,36 @@ mod tests {
             assert_eq!(cpu.rcx as u16, case.ax);
             assert_eq!(cpu.rdx as u16, case.bx);
         }
+    }
+
+    #[test]
+    fn int13_get_status_reports_last_error() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::default();
+        cpu.ds.selector = 0;
+        cpu.rsi = 0x0700;
+        cpu.rdx = 0x80; // DL = HDD0
+        cpu.rax = 0x4200; // AH=42h
+
+        let mut mem = PhysicalMemory::new(2 * 1024 * 1024);
+        let dap_addr = cpu.linear_addr(cpu.ds, 0x0700);
+        mem.write_u8(dap_addr + 0, 0x10);
+        mem.write_u8(dap_addr + 1, 0x00);
+        mem.write_u16(dap_addr + 2, 1); // count
+        mem.write_u16(dap_addr + 4, 0x1000); // offset
+        mem.write_u16(dap_addr + 6, 0x0000); // segment
+        mem.write_u64(dap_addr + 8, 1); // LBA (out of range)
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        assert_ne!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.rax >> 8) & 0xFF, 0x04);
+
+        cpu.rax = 0x0100; // AH=01h
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        assert_ne!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.rax >> 8) & 0xFF, 0x04);
     }
 }
