@@ -11,6 +11,10 @@ rem   install.cmd
 rem   install.cmd aerogpu_dx11.inf
 
 set "SCRIPT_DIR=%~dp0"
+rem Access real System32 when running under WoW64 (32-bit cmd.exe on 64-bit Windows).
+set "SYS32=%SystemRoot%\System32"
+if defined PROCESSOR_ARCHITEW6432 set "SYS32=%SystemRoot%\Sysnative"
+set "PNPUTIL=%SYS32%\pnputil.exe"
 pushd "%SCRIPT_DIR%" >nul
 
 set "INF=%~1"
@@ -25,14 +29,13 @@ if not exist "%INF%" (
 echo [INFO] Installing driver package via pnputil...
 echo [INFO]   INF: %INF%
 
-where pnputil.exe >nul 2>&1
-if errorlevel 1 (
-  echo [ERROR] pnputil.exe not found. On Windows 7 it should exist in %%SystemRoot%%\System32.
+if not exist "%PNPUTIL%" (
+  echo [ERROR] pnputil.exe not found at "%PNPUTIL%".
   popd >nul
   exit /b 1
 )
 
-pnputil.exe -i -a "%INF%"
+"%PNPUTIL%" -i -a "%INF%"
 set "PNP_ERR=%ERRORLEVEL%"
 
 if not "%PNP_ERR%"=="0" (

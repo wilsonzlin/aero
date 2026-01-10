@@ -9,13 +9,16 @@ rem     reboot into Safe Mode, or first switch the device back to a different
 rem     driver (e.g. Standard VGA) and then rerun uninstall.cmd.
 
 set "SCRIPT_DIR=%~dp0"
+rem Access real System32 when running under WoW64 (32-bit cmd.exe on 64-bit Windows).
+set "SYS32=%SystemRoot%\System32"
+if defined PROCESSOR_ARCHITEW6432 set "SYS32=%SystemRoot%\Sysnative"
+set "PNPUTIL=%SYS32%\pnputil.exe"
 pushd "%SCRIPT_DIR%" >nul
 
 set "PROVIDER=AeroGPU"
 
-where pnputil.exe >nul 2>&1
-if errorlevel 1 (
-  echo [ERROR] pnputil.exe not found.
+if not exist "%PNPUTIL%" (
+  echo [ERROR] pnputil.exe not found at "%PNPUTIL%".
   popd >nul
   exit /b 1
 )
@@ -23,7 +26,7 @@ if errorlevel 1 (
 echo [INFO] Searching for installed driver packages with provider "%PROVIDER%"...
 
 set "TMP=%TEMP%\aerogpu_pnputil_%RANDOM%.txt"
-pnputil.exe -e > "%TMP%"
+"%PNPUTIL%" -e > "%TMP%"
 
 set "CURRENT_OEM="
 set "DELETED_ANY=0"
@@ -45,7 +48,7 @@ for /f "usebackq delims=" %%L in ("%TMP%") do (
     if not errorlevel 1 (
       if defined CURRENT_OEM (
         echo [INFO] Deleting driver package: !CURRENT_OEM!
-        pnputil.exe -d !CURRENT_OEM!
+        "%PNPUTIL%" -d !CURRENT_OEM!
         if "%ERRORLEVEL%"=="0" set "DELETED_ANY=1"
       )
     )

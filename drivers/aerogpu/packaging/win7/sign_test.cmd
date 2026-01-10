@@ -24,6 +24,11 @@ rem   sign_test.cmd --no-bcdedit
 rem   sign_test.cmd --no-inf2cat
 
 set "SCRIPT_DIR=%~dp0"
+rem Access real System32 when running under WoW64 (32-bit cmd.exe on 64-bit Windows).
+set "SYS32=%SystemRoot%\System32"
+if defined PROCESSOR_ARCHITEW6432 set "SYS32=%SystemRoot%\Sysnative"
+set "BCDEDIT=%SYS32%\bcdedit.exe"
+set "CERTUTIL=%SYS32%\certutil.exe"
 pushd "%SCRIPT_DIR%" >nul
 
 set "NO_BCDEDIT=0"
@@ -42,7 +47,7 @@ if not "%ERRORLEVEL%"=="0" (
 
 if "%NO_BCDEDIT%"=="0" (
   echo [INFO] Enabling test-signing mode...
-  bcdedit /set testsigning on >nul 2>&1
+  "%BCDEDIT%" /set testsigning on >nul 2>&1
   if not "%ERRORLEVEL%"=="0" (
     echo [WARN] bcdedit failed. If you are on a host with Secure Boot enabled, test-signing may be blocked.
     echo [WARN] On a Win7 VM, bcdedit should succeed.
@@ -81,7 +86,7 @@ if "%NEED_CERT%"=="1" (
   )
 
   rem Export the private key to a .pfx for signtool /f signing.
-  certutil -f -p "%CERT_PASSWORD%" -exportPFX My "%CERT_NAME%" "%PFX_FILE%" >nul
+  "%CERTUTIL%" -f -p "%CERT_PASSWORD%" -exportPFX My "%CERT_NAME%" "%PFX_FILE%" >nul
   if not "%ERRORLEVEL%"=="0" (
     echo [ERROR] certutil -exportPFX failed.
     goto :Fail
@@ -89,8 +94,8 @@ if "%NEED_CERT%"=="1" (
 )
 
 echo [INFO] Importing certificate into Trusted Root and Trusted Publishers...
-certutil -f -addstore "Root" "%CER_FILE%" >nul
-certutil -f -addstore "TrustedPublisher" "%CER_FILE%" >nul
+"%CERTUTIL%" -f -addstore "Root" "%CER_FILE%" >nul
+"%CERTUTIL%" -f -addstore "TrustedPublisher" "%CER_FILE%" >nul
 
 if "%NO_INF2CAT%"=="0" (
   rem If INF declares CatalogFile=..., pnputil expects the .cat to exist.
