@@ -30,7 +30,7 @@ This guide walks you through installing Windows 7 in Aero using the **baseline (
 - [Step 6: Run `verify.cmd` / read `report.txt`](#step-6-run-verifycmd-and-interpret-reporttxt)
 - [Rollback paths](#safe-rollback-path-if-virtio-blk-boot-fails)
 - [Optional: uninstall Guest Tools](#optional-uninstall-guest-tools)
-- [Optional: slipstream KB3033929 and drivers](#optional-slipstream-kb3033929-andor-drivers-into-your-windows-7-iso)
+- [Optional: slipstream SHA-2 updates and drivers](#optional-slipstream-sha-2-updates-and-drivers-into-your-windows-7-iso)
 - [Troubleshooting](./windows7-driver-troubleshooting.md)
 
 ## Prerequisites
@@ -255,14 +255,23 @@ If you are using production-signed drivers, keep test signing off.
 
 Use either `pnputil` (Windows 7 built-in) or DISM:
 
-- Recommended (recursively add everything under a folder):
-  - `dism /online /add-driver /driver:X:\drivers\ /recurse`
+- Recommended: DISM (recursively add everything under the correct arch folder):
+  - Windows 7 x64:
+    - `dism /online /add-driver /driver:X:\drivers\amd64\ /recurse`
+  - Windows 7 x86:
+    - `dism /online /add-driver /driver:X:\drivers\x86\ /recurse`
 - Alternative (if you prefer `pnputil`):
   - `pnputil -i -a X:\drivers\amd64\some-driver.inf` (x64) or `X:\drivers\x86\some-driver.inf` (x86)
   - To bulk-install multiple INFs from an elevated Command Prompt:
-    - `for /r "X:\drivers" %i in (*.inf) do pnputil -i -a "%i"`
+    - Windows 7 x64:
+      - `for /r "X:\drivers\amd64" %i in (*.inf) do pnputil -i -a "%i"`
+    - Windows 7 x86:
+      - `for /r "X:\drivers\x86" %i in (*.inf) do pnputil -i -a "%i"`
     - If you put this into a `.cmd` file, use `%%i` instead of `%i`:
-      - `for /r "X:\drivers" %%i in (*.inf) do pnputil -i -a "%%i"`
+      - Windows 7 x64:
+        - `for /r "X:\drivers\amd64" %%i in (*.inf) do pnputil -i -a "%%i"`
+      - Windows 7 x86:
+        - `for /r "X:\drivers\x86" %%i in (*.inf) do pnputil -i -a "%%i"`
 
 After staging, reboot once while still on baseline devices.
 
@@ -452,7 +461,7 @@ Guest Tools also includes `uninstall.cmd` for best-effort cleanup (useful for te
 
 Uninstall is best-effort and may not remove drivers that are currently in use.
 
-## Optional: Slipstream KB3033929 and/or drivers into your Windows 7 ISO
+## Optional: Slipstream SHA-2 updates and drivers into your Windows 7 ISO
 
 Slipstreaming is optional, but can reduce first-boot driver/signature problems (especially for offline installs).
 
@@ -465,6 +474,7 @@ Slipstreaming is optional, but can reduce first-boot driver/signature problems (
 
 - **KB3033929** (SHA-256 signature support)
 - **KB4474419** (additional SHA-2 code signing support; may require servicing stack updates depending on your base image)
+- **KB4490628** (servicing stack update; a common prerequisite for installing newer updates like KB4474419)
 - Aero driver `.inf` packages (virtio-blk/net and optionally Aero GPU)
 
 ### High-level DISM approach (Windows host)
@@ -477,11 +487,14 @@ On a Windows 10/11 host (or a Windows VM), you can use DISM:
 3. Mount `install.wim` (example index `1`):
    - `mkdir C:\wim\mount`
    - `dism /Mount-Wim /WimFile:C:\win7-iso\sources\install.wim /Index:1 /MountDir:C:\wim\mount`
-4. Add KB3033929:
-   - `dism /Image:C:\wim\mount /Add-Package /PackagePath:C:\updates\KB3033929-x64.msu`
+4. Add the update packages you need (repeat `/Add-Package` per update):
+   - Example:
+     - `dism /Image:C:\wim\mount /Add-Package /PackagePath:C:\updates\KB3033929-x64.msu`
+     - `dism /Image:C:\wim\mount /Add-Package /PackagePath:C:\updates\KB4474419-x64.msu`
+     - `dism /Image:C:\wim\mount /Add-Package /PackagePath:C:\updates\KB4490628-x64.msu`
    - If DISM refuses the `.msu`, extract it first and add the `.cab` instead:
-     - `expand -F:* C:\updates\KB3033929-x64.msu C:\updates\KB3033929\`
-     - `dism /Image:C:\wim\mount /Add-Package /PackagePath:C:\updates\KB3033929\Windows6.1-KB3033929-x64.cab`
+      - `expand -F:* C:\updates\KB3033929-x64.msu C:\updates\KB3033929\`
+      - `dism /Image:C:\wim\mount /Add-Package /PackagePath:C:\updates\KB3033929\Windows6.1-KB3033929-x64.cab`
 5. Add Aero drivers:
    - `dism /Image:C:\wim\mount /Add-Driver /Driver:C:\drivers\aero\ /Recurse`
 6. Commit and unmount:
