@@ -4,6 +4,14 @@ pub trait Bus {
     fn read_u8(&mut self, paddr: u32) -> u8;
     fn write_u8(&mut self, paddr: u32, val: u8);
 
+    /// A20 gate state exposed to firmware.
+    ///
+    /// When disabled, physical address bit 20 is forced low, aliasing addresses that differ
+    /// only by bit 20 (e.g. `0x00000` and `0x1_00000`).
+    fn a20_enabled(&self) -> bool;
+
+    fn set_a20_enabled(&mut self, enabled: bool);
+
     fn io_read_u8(&mut self, port: u16) -> u8;
     fn io_write_u8(&mut self, port: u16, val: u8);
 
@@ -65,6 +73,7 @@ pub struct TestBus {
     ram: Vec<u8>,
     serial: Vec<u8>,
     pub devices: Devices,
+    a20_enabled: bool,
 }
 
 impl TestBus {
@@ -73,6 +82,7 @@ impl TestBus {
             ram: vec![0; ram_size],
             serial: Vec::new(),
             devices,
+            a20_enabled: true,
         }
     }
 
@@ -91,6 +101,7 @@ impl TestBus {
 
 impl Bus for TestBus {
     fn read_u8(&mut self, paddr: u32) -> u8 {
+        let paddr = self.filter_a20(paddr);
         let addr = paddr as usize;
         if addr < self.ram.len() {
             return self.ram[addr];
@@ -104,6 +115,7 @@ impl Bus for TestBus {
     }
 
     fn write_u8(&mut self, paddr: u32, val: u8) {
+        let paddr = self.filter_a20(paddr);
         let addr = paddr as usize;
         if addr < self.ram.len() {
             self.ram[addr] = val;
@@ -126,5 +138,23 @@ impl Bus for TestBus {
     fn serial_write(&mut self, byte: u8) {
         self.serial.push(byte);
     }
+
+    fn a20_enabled(&self) -> bool {
+        self.a20_enabled
+    }
+
+    fn set_a20_enabled(&mut self, enabled: bool) {
+        self.a20_enabled = enabled;
+    }
 }
 
+impl TestBus {
+    #[inline]
+    fn filter_a20(&self, paddr: u32) -> u32 {
+        if self.a20_enabled {
+            paddr
+        } else {
+            paddr & !(1 << 20)
+        }
+    }
+}

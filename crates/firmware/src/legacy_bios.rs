@@ -217,7 +217,39 @@ impl LegacyBios {
     }
 
     pub fn handle_int15<B: Bus>(&mut self, bus: &mut B, cpu: &mut RealModeCpu) {
-        match cpu.eax {
+        match cpu.eax as u16 {
+            0x2400 => {
+                // Disable A20.
+                bus.set_a20_enabled(false);
+                cpu.set_ah(0);
+                cpu.set_carry(false);
+            }
+            0x2401 => {
+                // Enable A20.
+                bus.set_a20_enabled(true);
+                cpu.set_ah(0);
+                cpu.set_carry(false);
+            }
+            0x2402 => {
+                // Query A20: AL=0 disabled / AL=1 enabled.
+                cpu.set_al(if bus.a20_enabled() { 1 } else { 0 });
+                cpu.set_ah(0);
+                cpu.set_carry(false);
+            }
+            0x2403 => {
+                // A20 support bitmask (keyboard controller + port 92 + INT15).
+                cpu.set_bx(0x0007);
+                cpu.set_ah(0);
+                cpu.set_carry(false);
+            }
+            0xE801 => {
+                let (ax_kb, bx_blocks) = e801_from_e820(&self.e820);
+                cpu.set_ax(ax_kb);
+                cpu.set_bx(bx_blocks);
+                cpu.set_cx(ax_kb);
+                cpu.set_dx(bx_blocks);
+                cpu.set_carry(false);
+            }
             0xE820 => {
                 if cpu.edx != 0x534D_4150 {
                     // 'SMAP'
@@ -258,7 +290,38 @@ impl LegacyBios {
             }
             _ => {
                 cpu.set_carry(true);
+                cpu.set_ah(0x86);
             }
         }
     }
+}
+
+fn e801_from_e820(map: &[E820Entry]) -> (u16, u16) {
+    const ONE_MIB: u64 = 0x0010_0000;
+    const SIXTEEN_MIB: u64 = 0x0100_0000;
+    const FOUR_GIB: u64 = 0x1_0000_0000;
+
+    let bytes_1m_to_16m = sum_e820_ram(map, ONE_MIB, SIXTEEN_MIB);
+    let bytes_16m_to_4g = sum_e820_ram(map, SIXTEEN_MIB, FOUR_GIB);
+
+    let ax_kb = (bytes_1m_to_16m / 1024).min(0x3C00) as u16;
+    let bx_blocks = (bytes_16m_to_4g / 65536).min(0xFFFF) as u16;
+    (ax_kb, bx_blocks)
+}
+
+fn sum_e820_ram(map: &[E820Entry], start: u64, end: u64) -> u64 {
+    let mut total = 0u64;
+    for entry in map {
+        if entry.typ != E820Entry::TYPE_RAM || entry.length == 0 {
+            continue;
+        }
+        let entry_start = entry.base;
+        let entry_end = entry.end();
+        let overlap_start = entry_start.max(start);
+        let overlap_end = entry_end.min(end);
+        if overlap_end > overlap_start {
+            total = total.saturating_add(overlap_end - overlap_start);
+        }
+    }
+    total
 }

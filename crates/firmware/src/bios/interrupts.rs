@@ -287,12 +287,50 @@ fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockD
 
 fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
     let ax = (cpu.rax & 0xFFFF) as u16;
-    let ah = (ax >> 8) as u8;
-    match (ah, ax) {
-        (0xE8, 0xE820) => {
+    match ax {
+        0x2400 => {
+            // Disable A20 gate.
+            bus.set_a20_enabled(false);
+            cpu.rax &= !0xFF00u64; // AH=0
+            cpu.rflags &= !FLAG_CF;
+        }
+        0x2401 => {
+            // Enable A20 gate.
+            bus.set_a20_enabled(true);
+            cpu.rax &= !0xFF00u64; // AH=0
+            cpu.rflags &= !FLAG_CF;
+        }
+        0x2402 => {
+            // Query A20 gate status: AL=0 disabled / AL=1 enabled.
+            let al = if bus.a20_enabled() { 1u64 } else { 0u64 };
+            cpu.rax = (cpu.rax & !0xFFFF) | al;
+            cpu.rflags &= !FLAG_CF;
+        }
+        0x2403 => {
+            // Get A20 support (bitmask of supported methods).
+            // We advertise keyboard controller + port 0x92 + INT15 methods.
+            cpu.rbx = (cpu.rbx & !0xFFFF) | 0x0007;
+            cpu.rax &= !0xFF00u64; // AH=0
+            cpu.rflags &= !FLAG_CF;
+        }
+        0xE801 => {
+            // Alternative extended memory query used by many bootloaders.
+            if bios.e820_map.is_empty() {
+                bios.e820_map = build_e820_map(bios.config.memory_size_bytes);
+            }
+
+            let (ax_kb, bx_blocks) = e801_from_e820(&bios.e820_map);
+            cpu.rax = (cpu.rax & !0xFFFF) | (ax_kb as u64);
+            cpu.rbx = (cpu.rbx & !0xFFFF) | (bx_blocks as u64);
+            cpu.rcx = (cpu.rcx & !0xFFFF) | (ax_kb as u64);
+            cpu.rdx = (cpu.rdx & !0xFFFF) | (bx_blocks as u64);
+            cpu.rflags &= !FLAG_CF;
+        }
+        0xE820 => {
             // E820 memory map.
             if (cpu.rdx & 0xFFFF_FFFF) != 0x534D_4150 {
                 cpu.rflags |= FLAG_CF;
+                cpu.rax = (cpu.rax & 0xFF) | (0x86u64 << 8);
                 return;
             }
 
@@ -303,6 +341,7 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             let idx = (cpu.rbx & 0xFFFF_FFFF) as usize;
             if idx >= bios.e820_map.len() {
                 cpu.rflags |= FLAG_CF;
+                cpu.rax = (cpu.rax & 0xFF) | (0x86u64 << 8);
                 return;
             }
             let entry = bios.e820_map[idx];
@@ -321,17 +360,50 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             };
             cpu.rflags &= !FLAG_CF;
         }
-        (0x88, _) => {
-            // Extended memory size (KB above 1MB).
-            let ext_kb = bios.config.memory_size_bytes.saturating_sub(1024 * 1024) / 1024;
-            cpu.rax = ext_kb.min(0xFFFF) as u64;
-            cpu.rflags &= !FLAG_CF;
+        _ => match (ax >> 8) as u8 {
+            0x88 => {
+                // Extended memory size (KB above 1MB).
+                let ext_kb = bios.config.memory_size_bytes.saturating_sub(1024 * 1024) / 1024;
+                cpu.rax = ext_kb.min(0xFFFF) as u64;
+                cpu.rflags &= !FLAG_CF;
+            }
+            _ => {
+                eprintln!("BIOS: unhandled INT 15h AX={ax:04x}");
+                cpu.rflags |= FLAG_CF;
+                cpu.rax = (cpu.rax & 0xFF) | (0x86u64 << 8);
+            }
+        },
+    }
+}
+
+fn e801_from_e820(map: &[E820Entry]) -> (u16, u16) {
+    const ONE_MIB: u64 = 0x0010_0000;
+    const SIXTEEN_MIB: u64 = 0x0100_0000;
+    const FOUR_GIB: u64 = 0x1_0000_0000;
+
+    let bytes_1m_to_16m = sum_e820_ram(map, ONE_MIB, SIXTEEN_MIB);
+    let bytes_16m_to_4g = sum_e820_ram(map, SIXTEEN_MIB, FOUR_GIB);
+
+    let ax_kb = (bytes_1m_to_16m / 1024).min(0x3C00) as u16;
+    let bx_blocks = (bytes_16m_to_4g / 65536).min(0xFFFF) as u16;
+    (ax_kb, bx_blocks)
+}
+
+fn sum_e820_ram(map: &[E820Entry], start: u64, end: u64) -> u64 {
+    let mut total = 0u64;
+    for entry in map {
+        if entry.region_type != E820_RAM || entry.length == 0 {
+            continue;
         }
-        _ => {
-            eprintln!("BIOS: unhandled INT 15h AX={ax:04x}");
-            cpu.rflags |= FLAG_CF;
+        let entry_start = entry.base;
+        let entry_end = entry.base.saturating_add(entry.length);
+        let overlap_start = entry_start.max(start);
+        let overlap_end = entry_end.min(end);
+        if overlap_end > overlap_start {
+            total = total.saturating_add(overlap_end - overlap_start);
         }
     }
+    total
 }
 
 fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
@@ -523,6 +595,7 @@ fn build_e820_map(total_memory: u64) -> Vec<E820Entry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::BiosConfig;
     use machine::{CpuState, InMemoryDisk, MemoryAccess, PhysicalMemory, FLAG_CF};
 
     #[test]
@@ -576,5 +649,90 @@ mod tests {
 
         assert_eq!(mem.read_u64(table_addr + 16), sectors);
         assert_eq!(mem.read_u16(table_addr + 24), 512);
+    }
+
+    #[test]
+    fn int15_a20_services_toggle_bus_masking() {
+        let mut bios = Bios::new(BiosConfig {
+            memory_size_bytes: 2 * 1024 * 1024,
+            boot_drive: 0x80,
+        });
+        let mut bus = PhysicalMemory::new(2 * 1024 * 1024);
+        let mut cpu = CpuState::default();
+
+        // Enable A20 and verify 1MiB is distinct.
+        cpu.rax = 0x2401;
+        handle_int15(&mut bios, &mut cpu, &mut bus);
+        assert_eq!(cpu.rflags & FLAG_CF, 0, "CF should be cleared");
+        bus.write_u8(0x0, 0x11);
+        bus.write_u8(0x1_00000, 0x22);
+        assert_eq!(bus.read_u8(0x0), 0x11);
+        assert_eq!(bus.read_u8(0x1_00000), 0x22);
+
+        // Disable A20 and verify wraparound.
+        cpu.rax = 0x2400;
+        handle_int15(&mut bios, &mut cpu, &mut bus);
+        assert_eq!(bus.read_u8(0x1_00000), 0x11);
+    }
+
+    #[test]
+    fn int15_a20_query_reports_state() {
+        let mut bios = Bios::new(BiosConfig::default());
+        let mut bus = PhysicalMemory::new(2 * 1024 * 1024);
+        let mut cpu = CpuState::default();
+
+        cpu.rax = 0x2402;
+        handle_int15(&mut bios, &mut cpu, &mut bus);
+        assert_eq!(cpu.rax as u16, 0x0000);
+
+        cpu.rax = 0x2401;
+        handle_int15(&mut bios, &mut cpu, &mut bus);
+        cpu.rax = 0x2402;
+        handle_int15(&mut bios, &mut cpu, &mut bus);
+        assert_eq!(cpu.rax as u16, 0x0001);
+    }
+
+    #[test]
+    fn int15_e801_returns_expected_values() {
+        struct Case {
+            mem: u64,
+            ax: u16,
+            bx: u16,
+        }
+
+        let cases = [
+            Case {
+                mem: 512 * 1024 * 1024,
+                ax: 0x3C00,
+                bx: 0x1F00,
+            },
+            Case {
+                mem: 2 * 1024 * 1024 * 1024,
+                ax: 0x3C00,
+                bx: 0x7F00,
+            },
+            Case {
+                mem: 4 * 1024 * 1024 * 1024,
+                ax: 0x3C00,
+                bx: 0xFF00,
+            },
+        ];
+
+        for case in cases {
+            let mut bios = Bios::new(BiosConfig {
+                memory_size_bytes: case.mem,
+                boot_drive: 0x80,
+            });
+            let mut bus = PhysicalMemory::new(2 * 1024 * 1024);
+            let mut cpu = CpuState::default();
+            cpu.rax = 0xE801;
+            handle_int15(&mut bios, &mut cpu, &mut bus);
+
+            assert_eq!(cpu.rflags & FLAG_CF, 0);
+            assert_eq!(cpu.rax as u16, case.ax);
+            assert_eq!(cpu.rbx as u16, case.bx);
+            assert_eq!(cpu.rcx as u16, case.ax);
+            assert_eq!(cpu.rdx as u16, case.bx);
+        }
     }
 }

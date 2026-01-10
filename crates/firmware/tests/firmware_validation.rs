@@ -7,6 +7,7 @@ use firmware::devices::{Hpet, Pit};
 use firmware::e820::E820Entry;
 use firmware::realmode::RealModeCpu;
 use firmware::validate::{validate_acpi, validate_e820};
+use firmware::{bus::TestBus, devices::Devices, legacy_bios::LegacyBios};
 
 use common::TestMachine;
 
@@ -121,6 +122,103 @@ fn int15_e820_writes_entry_to_memory_and_returns_continuation() {
         "unexpected continuation value {}",
         cpu.ebx
     );
+}
+
+#[test]
+fn int15_a20_toggle_affects_address_masking_in_bus() {
+    let mut m = TestMachine::new();
+
+    // Disable A20 via INT 15h AX=2400.
+    let mut cpu = RealModeCpu::default();
+    cpu.set_ax(0x2400);
+    m.bios.handle_int15(&mut m.bus, &mut cpu);
+    assert!(!cpu.carry());
+    assert_eq!(cpu.ah(), 0);
+
+    // With A20 disabled, 0x1_00000 aliases to 0x0.
+    m.bus.write_u8(0x0, 0xAA);
+    assert_eq!(m.bus.read_u8(0x1_00000), 0xAA);
+
+    // Enable A20 via INT 15h AX=2401.
+    cpu.set_ax(0x2401);
+    m.bios.handle_int15(&mut m.bus, &mut cpu);
+    assert!(!cpu.carry());
+    assert_eq!(cpu.ah(), 0);
+
+    m.bus.write_u8(0x1_00000, 0xBB);
+    assert_eq!(m.bus.read_u8(0x0), 0xAA);
+    assert_eq!(m.bus.read_u8(0x1_00000), 0xBB);
+}
+
+#[test]
+fn int15_a20_query_reports_bus_state() {
+    let mut m = TestMachine::new();
+    let mut cpu = RealModeCpu::default();
+
+    // Default TestBus starts with A20 enabled to avoid breaking MMIO accesses in
+    // other firmware validation tests.
+    cpu.set_ax(0x2402);
+    m.bios.handle_int15(&mut m.bus, &mut cpu);
+    assert!(!cpu.carry());
+    assert_eq!(cpu.ah(), 0);
+    assert_eq!(cpu.al(), 1);
+
+    cpu.set_ax(0x2400);
+    m.bios.handle_int15(&mut m.bus, &mut cpu);
+    assert!(!cpu.carry());
+
+    cpu.set_ax(0x2402);
+    m.bios.handle_int15(&mut m.bus, &mut cpu);
+    assert!(!cpu.carry());
+    assert_eq!(cpu.al(), 0);
+}
+
+#[test]
+fn int15_e801_reports_expected_sizes() {
+    struct Case {
+        ram_size_bytes: u64,
+        ax_kb: u16,
+        bx_blocks: u16,
+    }
+
+    let cases = [
+        Case {
+            ram_size_bytes: 512 * 1024 * 1024,
+            ax_kb: 0x3C00,
+            bx_blocks: 0x1F00,
+        },
+        Case {
+            ram_size_bytes: 2 * 1024 * 1024 * 1024,
+            ax_kb: 0x3C00,
+            bx_blocks: 0x7F00,
+        },
+        Case {
+            ram_size_bytes: 4 * 1024 * 1024 * 1024,
+            ax_kb: 0x3C00,
+            bx_blocks: 0xFF00,
+        },
+    ];
+
+    for case in cases {
+        let devices = Devices::new(common::DEFAULT_HPET_BASE);
+        let mut bus = TestBus::new(2 * 1024 * 1024, devices);
+        let mut bios = LegacyBios::new(firmware::legacy_bios::BiosConfig {
+            ram_size: case.ram_size_bytes,
+            acpi_base: common::DEFAULT_ACPI_BASE,
+            hpet_base: common::DEFAULT_HPET_BASE,
+        });
+        bios.post(&mut bus);
+
+        let mut cpu = RealModeCpu::default();
+        cpu.eax = 0xE801;
+        bios.handle_int15(&mut bus, &mut cpu);
+
+        assert!(!cpu.carry(), "E801 should succeed for {}", case.ram_size_bytes);
+        assert_eq!(cpu.ax(), case.ax_kb);
+        assert_eq!(cpu.bx(), case.bx_blocks);
+        assert_eq!(cpu.cx(), case.ax_kb);
+        assert_eq!(cpu.dx(), case.bx_blocks);
+    }
 }
 
 #[test]
