@@ -61,6 +61,7 @@ export type GpuWorkerMetricsMessage = {
   framesReceived: number;
   framesPresented: number;
   framesDropped: number;
+  telemetry?: unknown;
 };
 
 export type GpuWorkerErrorMessage = {

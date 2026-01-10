@@ -15,6 +15,20 @@
 /** @typedef {{bucketSize:number, min:number, max:number, underflow:number, overflow:number, buckets:number[], stats:HistogramStats}} HistogramSnapshot */
 
 class FixedHistogram {
+  bucketSize = 0;
+  min = 0;
+  max = 1;
+
+  /** @type {Uint32Array} */
+  _buckets = new Uint32Array(0);
+
+  _underflow = 0;
+  _overflow = 0;
+  _count = 0;
+  _sum = 0;
+  _minSeen = Infinity;
+  _maxSeen = -Infinity;
+
   /**
    * @param {{bucketSize:number, min:number, max:number}} cfg
    */
@@ -168,6 +182,42 @@ class FixedHistogram {
  * points in their pipeline.
  */
 export class GpuTelemetry {
+  frameBudgetMs = 1000 / 60;
+
+  /** @type {number|null} */
+  _frameStartMs = null;
+  /** @type {number|null} */
+  _firstFrameStartMs = null;
+  /** @type {number|null} */
+  _lastFrameEndMs = null;
+  _currentFrameTextureUploadBytes = 0;
+
+  /** @type {FixedHistogram} */
+  frameTimeMs = new FixedHistogram({ bucketSize: 0.5, min: 0, max: 100 });
+  /** @type {FixedHistogram} */
+  presentLatencyMs = new FixedHistogram({ bucketSize: 0.25, min: 0, max: 50 });
+  /** @type {FixedHistogram} */
+  shaderTranslationMs = new FixedHistogram({ bucketSize: 0.1, min: 0, max: 50 });
+  /** @type {FixedHistogram} */
+  shaderCompilationMs = new FixedHistogram({ bucketSize: 0.1, min: 0, max: 50 });
+  /** @type {FixedHistogram} */
+  textureUploadBytesPerFrame = new FixedHistogram({
+    bucketSize: 256 * 1024,
+    min: 0,
+    max: 64 * 1024 * 1024,
+  });
+
+  droppedFrames = 0;
+
+  pipelineCacheHits = 0;
+  pipelineCacheMisses = 0;
+  /** @type {number|null} */
+  pipelineCacheEntries = null;
+  /** @type {number|null} */
+  pipelineCacheSizeBytes = null;
+
+  textureUploadBytesTotal = 0;
+
   /**
    * @param {{
    *   frameBudgetMs?: number,
@@ -179,41 +229,23 @@ export class GpuTelemetry {
    * }=} opts
    */
   constructor(opts = {}) {
-    this.frameBudgetMs = opts.frameBudgetMs ?? 1000 / 60;
+    this.frameBudgetMs = opts.frameBudgetMs ?? this.frameBudgetMs;
 
-    this._frameStartMs = null;
-    this._firstFrameStartMs = null;
-    this._lastFrameEndMs = null;
-    this._currentFrameTextureUploadBytes = 0;
-
-    this.frameTimeMs = new FixedHistogram(
-      opts.frameTimeHistogram ?? { bucketSize: 0.5, min: 0, max: 100 },
-    );
-    this.presentLatencyMs = new FixedHistogram(
-      opts.presentLatencyHistogram ?? { bucketSize: 0.25, min: 0, max: 50 },
-    );
-    this.shaderTranslationMs = new FixedHistogram(
-      opts.shaderTranslationHistogram ?? { bucketSize: 0.1, min: 0, max: 50 },
-    );
-    this.shaderCompilationMs = new FixedHistogram(
-      opts.shaderCompilationHistogram ?? { bucketSize: 0.1, min: 0, max: 50 },
-    );
-    this.textureUploadBytesPerFrame = new FixedHistogram(
-      opts.textureUploadBytesPerFrameHistogram ?? {
-        bucketSize: 256 * 1024,
-        min: 0,
-        max: 64 * 1024 * 1024,
-      },
-    );
-
-    this.droppedFrames = 0;
-
-    this.pipelineCacheHits = 0;
-    this.pipelineCacheMisses = 0;
-    this.pipelineCacheEntries = null;
-    this.pipelineCacheSizeBytes = null;
-
-    this.textureUploadBytesTotal = 0;
+    if (opts.frameTimeHistogram) {
+      this.frameTimeMs = new FixedHistogram(opts.frameTimeHistogram);
+    }
+    if (opts.presentLatencyHistogram) {
+      this.presentLatencyMs = new FixedHistogram(opts.presentLatencyHistogram);
+    }
+    if (opts.shaderTranslationHistogram) {
+      this.shaderTranslationMs = new FixedHistogram(opts.shaderTranslationHistogram);
+    }
+    if (opts.shaderCompilationHistogram) {
+      this.shaderCompilationMs = new FixedHistogram(opts.shaderCompilationHistogram);
+    }
+    if (opts.textureUploadBytesPerFrameHistogram) {
+      this.textureUploadBytesPerFrame = new FixedHistogram(opts.textureUploadBytesPerFrameHistogram);
+    }
   }
 
   reset() {

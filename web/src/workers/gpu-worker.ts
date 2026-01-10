@@ -23,6 +23,8 @@ import {
   SharedFramebufferHeaderIndex,
   type SharedFramebufferLayout,
 } from '../ipc/shared-layout';
+
+import { GpuTelemetry } from '../../gpu/telemetry.ts';
 type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<void | boolean>;
 type GetTimingsFn = () => FrameTimingsReport | null | Promise<FrameTimingsReport | null>;
 
@@ -112,6 +114,9 @@ const tryInitSharedFramebufferViews = () => {
 
 let lastInitMessage: Extract<GpuWorkerMessageFromMain, { type: 'init' }> | null = null;
 
+const telemetry = new GpuTelemetry({ frameBudgetMs: Number.POSITIVE_INFINITY });
+let lastFrameStartMs: number | null = null;
+
 const syncSharedMetrics = () => {
   if (!frameState) return;
   if (frameState.length <= FRAME_METRICS_DROPPED_INDEX) return;
@@ -127,11 +132,13 @@ const maybePostMetrics = () => {
 
   lastMetricsPostAtMs = nowMs;
   syncSharedMetrics();
+  telemetry.droppedFrames = framesDropped;
   postToMain({
     type: 'metrics',
     framesReceived,
     framesPresented,
     framesDropped,
+    telemetry: telemetry.snapshot(),
   });
 };
 
@@ -194,7 +201,9 @@ const presentOnce = async () => {
   if (!presentFn) return false;
   const dirtyRects = pendingDirtyRects;
   pendingDirtyRects = null;
+  const t0 = performance.now();
   const result = await presentFn(dirtyRects);
+  telemetry.recordPresentLatencyMs(performance.now() - t0);
   return typeof result === 'boolean' ? result : true;
 };
 
@@ -240,7 +249,16 @@ const handleTick = async () => {
   presenting = true;
   try {
     const didPresent = await presentOnce();
-    if (didPresent) framesPresented += 1;
+    if (didPresent) {
+      framesPresented += 1;
+
+      const now = performance.now();
+      if (lastFrameStartMs !== null) {
+        telemetry.beginFrame(lastFrameStartMs);
+        telemetry.endFrame(now);
+      }
+      lastFrameStartMs = now;
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     postToMain({ type: 'error', message });
@@ -274,6 +292,8 @@ self.onmessage = (event: MessageEvent<GpuWorkerMessageFromMain>) => {
         });
       }
 
+      telemetry.reset();
+      lastFrameStartMs = null;
       break;
     }
 

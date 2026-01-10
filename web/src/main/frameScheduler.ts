@@ -6,6 +6,8 @@ import {
   type GpuWorkerMessageToMain,
 } from '../shared/frameProtocol';
 
+import { DebugOverlay } from '../../ui/debug_overlay.ts';
+
 export type FrameSchedulerMetrics = {
   framesReceived: number;
   framesPresented: number;
@@ -19,14 +21,13 @@ export type FrameSchedulerOptions = {
   sharedFramebufferOffsetBytes?: number;
   showDebugOverlay?: boolean;
   overlayParent?: HTMLElement;
+  debugOverlayToggleKey?: string;
 };
 
 export type FrameSchedulerHandle = {
   stop: () => void;
   getMetrics: () => FrameSchedulerMetrics;
 };
-
-const formatRate = (rate: number) => (Number.isFinite(rate) ? rate.toFixed(1) : '0.0');
 
 export const startFrameScheduler = ({
   gpuWorker,
@@ -35,6 +36,7 @@ export const startFrameScheduler = ({
   sharedFramebufferOffsetBytes,
   showDebugOverlay = true,
   overlayParent,
+  debugOverlayToggleKey = 'F3',
 }: FrameSchedulerOptions): FrameSchedulerHandle => {
   let rafId: number | null = null;
   let stopped = false;
@@ -45,58 +47,19 @@ export const startFrameScheduler = ({
     framesDropped: 0,
   };
 
+  let lastTelemetry: unknown = null;
+
   const frameState = sharedFrameState ? new Int32Array(sharedFrameState) : null;
   gpuWorker.postMessage({ type: 'init', sharedFrameState, sharedFramebuffer, sharedFramebufferOffsetBytes });
 
-  let overlay: HTMLDivElement | null = null;
-  if (showDebugOverlay && typeof document !== 'undefined') {
-    overlay = document.createElement('div');
-    overlay.style.position = 'fixed';
-    overlay.style.top = '0';
-    overlay.style.left = '0';
-    overlay.style.padding = '6px 8px';
-    overlay.style.background = 'rgba(0, 0, 0, 0.75)';
-    overlay.style.color = '#d1f7ff';
-    overlay.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-    overlay.style.fontSize = '12px';
-    overlay.style.lineHeight = '1.35';
-    overlay.style.pointerEvents = 'none';
-    overlay.style.whiteSpace = 'pre';
-    overlay.style.zIndex = '999999';
-    (overlayParent ?? document.body).appendChild(overlay);
+  let overlay: DebugOverlay | null = null;
+  if (showDebugOverlay) {
+    overlay = new DebugOverlay(() => lastTelemetry as any, {
+      parent: overlayParent,
+      toggleKey: debugOverlayToggleKey,
+    });
+    overlay.show();
   }
-
-  let lastOverlayUpdateMs = 0;
-  let lastSampleMs = performance.now();
-  let lastSampleReceived = 0;
-  let lastSamplePresented = 0;
-  let lastSampleDropped = 0;
-
-  const updateOverlay = (nowMs: number) => {
-    if (!overlay) return;
-    if (nowMs - lastOverlayUpdateMs < 200) return;
-
-    const dtMs = Math.max(1, nowMs - lastSampleMs);
-    const recvDelta = metrics.framesReceived - lastSampleReceived;
-    const presDelta = metrics.framesPresented - lastSamplePresented;
-    const dropDelta = metrics.framesDropped - lastSampleDropped;
-
-    const recvRate = (recvDelta * 1000) / dtMs;
-    const presRate = (presDelta * 1000) / dtMs;
-    const dropRate = (dropDelta * 1000) / dtMs;
-
-    overlay.textContent = [
-      `frames received : ${metrics.framesReceived} (${formatRate(recvRate)}/s)`,
-      `frames presented: ${metrics.framesPresented} (${formatRate(presRate)}/s)`,
-      `frames dropped  : ${metrics.framesDropped} (${formatRate(dropRate)}/s)`,
-    ].join('\n');
-
-    lastOverlayUpdateMs = nowMs;
-    lastSampleMs = nowMs;
-    lastSampleReceived = metrics.framesReceived;
-    lastSamplePresented = metrics.framesPresented;
-    lastSampleDropped = metrics.framesDropped;
-  };
 
   const onWorkerMessage = (event: MessageEvent<GpuWorkerMessageToMain>) => {
     const msg = event.data;
@@ -104,6 +67,7 @@ export const startFrameScheduler = ({
       metrics.framesReceived = msg.framesReceived;
       metrics.framesPresented = msg.framesPresented;
       metrics.framesDropped = msg.framesDropped;
+      lastTelemetry = msg.telemetry ?? lastTelemetry;
       return;
     }
 
@@ -129,7 +93,6 @@ export const startFrameScheduler = ({
       gpuWorker.postMessage({ type: 'tick', frameTimeMs });
     }
 
-    updateOverlay(performance.now());
     rafId = requestAnimationFrame(loop);
   };
 
@@ -140,7 +103,7 @@ export const startFrameScheduler = ({
     stopped = true;
     if (rafId !== null) cancelAnimationFrame(rafId);
     gpuWorker.removeEventListener('message', onWorkerMessage);
-    overlay?.remove();
+    overlay?.detach();
   };
 
   const getMetrics = () => ({ ...metrics });

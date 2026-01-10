@@ -47,6 +47,22 @@ function fmtPct(value) {
 /** @typedef {any} GpuTelemetrySnapshot */
 
 export class DebugOverlay {
+  /** @type {() => (GpuTelemetrySnapshot | null)} */
+  _getSnapshot = () => null;
+  _toggleKey = "F2";
+  _updateIntervalMs = 250;
+  /** @type {HTMLElement | null} */
+  _parent = null;
+
+  _visible = false;
+  /** @type {HTMLDivElement | null} */
+  _root = null;
+  /** @type {number | null} */
+  _interval = null;
+
+  /** @type {(ev: KeyboardEvent) => void} */
+  _onKeyDown = () => {};
+
   /**
    * @param {() => (GpuTelemetrySnapshot | null)} getSnapshot
    * @param {{
@@ -57,13 +73,9 @@ export class DebugOverlay {
    */
   constructor(getSnapshot, opts = {}) {
     this._getSnapshot = getSnapshot;
-    this._toggleKey = opts.toggleKey ?? "F2";
-    this._updateIntervalMs = opts.updateIntervalMs ?? 250;
-    this._parent = opts.parent ?? document.body;
-
-    this._visible = false;
-    this._root = null;
-    this._interval = null;
+    this._toggleKey = opts.toggleKey ?? this._toggleKey;
+    this._updateIntervalMs = opts.updateIntervalMs ?? this._updateIntervalMs;
+    this._parent = opts.parent ?? (typeof document !== "undefined" ? document.body : null);
 
     this._onKeyDown = (ev) => {
       if (ev.code === this._toggleKey && !ev.repeat) {
@@ -75,6 +87,7 @@ export class DebugOverlay {
 
   attach() {
     if (this._root) return;
+    if (!this._parent || typeof document === "undefined") return;
 
     const el = document.createElement("div");
     el.style.position = "fixed";
