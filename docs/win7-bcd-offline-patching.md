@@ -71,10 +71,10 @@ Notes:
 
 The two BCD elements we care about are:
 
-| Element type ID | Elements subkey | `bcdedit` name | Common symbolic name |
+| Element type ID | Elements subkey | `bcdedit` name | BCD element constant name |
 | --- | --- | --- | --- |
-| `0x16000048` | `16000048` | `nointegritychecks` | `DisableIntegrityChecks` |
-| `0x16000049` | `16000049` | `testsigning` | `AllowPrereleaseSignatures` |
+| `0x16000048` | `16000048` | `nointegritychecks` | `BcdLibraryBoolean_DisableIntegrityChecks` (`DisableIntegrityChecks`) |
+| `0x16000049` | `16000049` | `testsigning` | `BcdLibraryBoolean_AllowPrereleaseSignatures` (`AllowPrereleaseSignatures`) |
 
 These are **Library Boolean** elements (they live in the `0x16xxxxxx` range).
 
