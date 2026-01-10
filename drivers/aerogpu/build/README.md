@@ -23,6 +23,7 @@ The build scripts use:
 * **Visual Studio 2022** (or “Build Tools for Visual Studio 2022”) for the UMD MSBuild project
   * Required components: **MSBuild** + **Desktop development with C++**
   * The KMD build does **not** require VS; it uses the WDK command-line toolchain.
+  * The UMD projects are configured to use the **static** MSVC runtime (`/MT`), so you typically do **not** need to install a VC++ Redistributable inside the Win7 VM to load the DLLs.
 
 ---
 
