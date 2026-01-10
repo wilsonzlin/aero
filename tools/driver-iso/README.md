@@ -19,6 +19,15 @@ python3 tools/driver-iso/build.py \
   --output dist/aero-virtio-win7-drivers.iso
 ```
 
+The builder can also consume the output of `drivers/scripts/make-driver-pack.ps1` (which creates
+`drivers/out/aero-win7-driver-pack/` containing `win7/x86/...` and `win7/amd64/...`):
+
+```bash
+python3 tools/driver-iso/build.py \
+  --drivers-root drivers/out/aero-win7-driver-pack \
+  --output dist/aero-virtio-win7-drivers.iso
+```
+
 To build a demo ISO from placeholders:
 
 ```bash
@@ -33,4 +42,3 @@ python3 tools/driver-iso/build.py \
 python3 tools/driver-iso/verify_iso.py \
   --iso dist/aero-virtio-win7-drivers-sample.iso
 ```
-

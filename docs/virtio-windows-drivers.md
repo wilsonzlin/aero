@@ -23,9 +23,18 @@ This document defines:
 - Win7 x64 test-signing mode flow + test certificate tooling
 - Optional offline driver injection into Windows install images (DISM)
 
+See also:
+
+- `drivers/README.md` (how Aero builds/ships driver packs in practice)
+- `docs/windows7-guest-tools.md` (end-user flow: Guest Tools, then switch to virtio)
+- `docs/16-win7-image-servicing.md` (detailed Win7 x64 offline servicing: cert injection + BCD test signing)
+- `docs/windows7-virtio-driver-contract.md` (Aero-specific virtio device IDs + contract)
+
 ---
 
-## Chosen approach: reuse upstream virtio-win driver packages
+## Chosen approach (short term): package upstream virtio-win drivers
+
+**Longer term:** Aero also has ongoing work toward clean-room, permissively licensed Windows 7 virtio drivers under `drivers/windows7/`. Until the storage (`virtio-blk`) and network (`virtio-net`) drivers are production-ready, the practical path for enabling virtio acceleration is to package the upstream virtio-win driver set.
 
 ### Why
 
@@ -45,7 +54,7 @@ We target the **virtio-win** driver distribution (commonly shipped as `virtio-wi
 Notes:
 
 - `VEN_1AF4` is the conventional VirtIO PCI vendor ID used by the upstream ecosystem.
-- Aero should expose **both transitional and modern IDs** where feasible so the same driver set can bind across OS versions.
+- Aero’s current virtio device contract (see `docs/windows7-virtio-driver-contract.md`) is trending toward **modern-only** device IDs (`0x1040 + device_id`). Transitional IDs may still be exposed for compatibility, but drivers should not rely on them.
 
 ### Licensing policy (project requirement)
 
@@ -70,6 +79,8 @@ This repo provides a **packaging + ISO build story** that works either way. The 
 
 - vendor a pinned virtio-win subset directly into `drivers/virtio/prebuilt/`, or
 - populate `drivers/virtio/prebuilt/` from an externally obtained virtio-win ISO.
+
+Practical note: this repo generally avoids committing `.sys` driver binaries directly. Instead, it provides tooling to build/pin driver packs and emits installable artifacts via CI/release workflows.
 
 ---
 
@@ -140,6 +151,44 @@ python3 tools/driver-iso/build.py \
   --output dist/aero-virtio-win7-drivers-sample.iso
 ```
 
+### Build an ISO from an upstream virtio-win ISO (recommended flow)
+
+On a Windows machine (or Windows VM) where you downloaded `virtio-win.iso`:
+
+Quick one-liner wrapper (does both steps):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-virtio-driver-iso.ps1 `
+  -VirtioWinIso C:\path\to\virtio-win.iso `
+  -OutIso .\dist\aero-virtio-win7-drivers.iso
+```
+
+1) Extract a Win7 driver pack from the ISO:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-driver-pack.ps1 `
+  -VirtioWinIso C:\path\to\virtio-win.iso `
+  -NoZip
+```
+
+This produces a staging directory (by default) at:
+
+`drivers\out\aero-win7-driver-pack\`
+
+2) Build a mountable drivers ISO from that staging directory:
+
+```powershell
+python .\tools\driver-iso\build.py `
+  --drivers-root .\drivers\out\aero-win7-driver-pack `
+  --output .\dist\aero-virtio-win7-drivers.iso
+```
+
+Notes:
+
+- `tools/driver-iso/build.py` needs an ISO authoring tool available on PATH:
+  - Linux/WSL: `xorriso` is easiest
+  - Windows: `oscdimg.exe` (Windows ADK) is commonly used
+
 ---
 
 ## Installing on Windows 7
@@ -187,6 +236,12 @@ Windows 7 x64 enforces driver signature checks. There are three practical scenar
 2. **Using modified drivers / self-built drivers**: requires test signing mode (or a production code-signing certificate + cross-signing, which is out of scope).
 3. **CI/dev-only experimentation**: test mode is acceptable.
 
+### SHA-256 signatures (Win7 update requirement)
+
+If the driver catalogs (`.cat`) are signed with **SHA-256**, Windows 7 needs **KB3033929** to validate those signatures. Without it, drivers may fail to load with **Code 52** (“Windows cannot verify the digital signature…”).
+
+This is a common failure mode when using modern tooling to sign Win7 drivers.
+
 ### Enable test-signing mode (Win7 x64)
 
 Run an elevated Command Prompt:
@@ -229,6 +284,8 @@ If you want Windows Setup to “just work” with virtio storage without clickin
    - `dism /Unmount-Wim /MountDir:C:\mount\boot /Commit`
 
 Repeat for `install.wim` (pick the correct edition index).
+
+For a much more complete, Win7 x64-focused servicing procedure (certificate injection + BCD template patching), see `docs/16-win7-image-servicing.md` and the helper script `drivers/scripts/inject-win7-wim.ps1`.
 
 ---
 

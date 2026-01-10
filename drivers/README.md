@@ -34,6 +34,18 @@ Output:
 - `drivers\out\aero-win7-driver-pack\` (staging dir)
 - `drivers\out\aero-win7-driver-pack.zip` (what the web UI/injector consumes)
 
+### Optional: build a mountable drivers ISO (for Windows Setup “Load driver”)
+
+If you want a CD-ROM ISO containing the same `win7/x86/...` and `win7/amd64/...` directories:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-virtio-driver-iso.ps1 `
+  -VirtioWinIso C:\path\to\virtio-win.iso `
+  -OutIso .\dist\aero-virtio-win7-drivers.iso
+```
+
+See also: `docs/virtio-windows-drivers.md`.
+
 ## In-guest install workflow (post-install)
 
 1. Copy `aero-win7-driver-pack.zip` into the Win7 guest.
