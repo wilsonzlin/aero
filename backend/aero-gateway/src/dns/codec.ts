@@ -241,6 +241,13 @@ export interface DnsAAnswer {
   address: string;
 }
 
+export interface DnsErrorResponseEncodeOptions {
+  id: number;
+  queryFlags?: number;
+  question?: DnsQuestion;
+  rcode: number;
+}
+
 export interface DnsResponseEncodeOptions {
   id: number;
   flags?: number;
@@ -290,3 +297,31 @@ export function encodeDnsResponseA(options: DnsResponseEncodeOptions): Buffer {
   return Buffer.concat([header, question, ...answerBuffers]);
 }
 
+export function encodeDnsErrorResponse(options: DnsErrorResponseEncodeOptions): Buffer {
+  const header = Buffer.alloc(12);
+  header.writeUInt16BE(options.id & 0xffff, 0);
+
+  const queryFlags = options.queryFlags ?? 0;
+  const flags =
+    0x8000 | // QR
+    (queryFlags & 0x7800) | // opcode
+    (queryFlags & 0x0100) | // RD
+    0x0080 | // RA
+    (options.rcode & 0x000f);
+
+  header.writeUInt16BE(flags, 2);
+
+  const hasQuestion = Boolean(options.question);
+  header.writeUInt16BE(hasQuestion ? 1 : 0, 4);
+  header.writeUInt16BE(0, 6);
+  header.writeUInt16BE(0, 8);
+  header.writeUInt16BE(0, 10);
+
+  if (!options.question) return header;
+
+  const qname = encodeDnsName(options.question.name);
+  const qtail = Buffer.alloc(4);
+  qtail.writeUInt16BE(options.question.type & 0xffff, 0);
+  qtail.writeUInt16BE(options.question.class & 0xffff, 2);
+  return Buffer.concat([header, qname, qtail]);
+}

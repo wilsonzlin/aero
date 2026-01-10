@@ -3,7 +3,7 @@ import * as dgram from 'node:dgram';
 import test from 'node:test';
 
 import { buildServer } from '../src/server.js';
-import { encodeDnsQuery } from '../src/dns/codec.js';
+import { decodeDnsHeader, encodeDnsQuery, getRcodeFromFlags } from '../src/dns/codec.js';
 
 const baseConfig = {
   HOST: '127.0.0.1',
@@ -53,9 +53,12 @@ test('ANY query is blocked by default', async () => {
       body: query,
     });
 
-    assert.equal(res.status, 403);
-    const body = (await res.json()) as { message?: string };
-    assert.match(body.message ?? '', /ANY queries are disabled/);
+    assert.equal(res.status, 200);
+    assert.ok((res.headers.get('content-type') ?? '').startsWith('application/dns-message'));
+    const body = Buffer.from(await res.arrayBuffer());
+    const header = decodeDnsHeader(body);
+    assert.equal(header.id, 1);
+    assert.equal(getRcodeFromFlags(header.flags), 5);
   } finally {
     await app.close();
   }
@@ -89,9 +92,12 @@ test('response size cap rejects large upstream responses', async () => {
       body: query,
     });
 
-    assert.equal(res.status, 502);
-    const body = (await res.json()) as { message?: string };
-    assert.match(body.message ?? '', /Upstream response too large/);
+    assert.equal(res.status, 200);
+    assert.ok((res.headers.get('content-type') ?? '').startsWith('application/dns-message'));
+    const body = Buffer.from(await res.arrayBuffer());
+    const header = decodeDnsHeader(body);
+    assert.equal(header.id, 1);
+    assert.equal(getRcodeFromFlags(header.flags), 2);
   } finally {
     upstream.close();
     await app.close();

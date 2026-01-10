@@ -12,7 +12,7 @@ function patchDnsId(message: Buffer, id: number): Buffer {
   return patched;
 }
 
-function qtypeToString(qtype: number): string {
+export function qtypeToString(qtype: number): string {
   // Minimal mapping for metrics.
   switch (qtype) {
     case 1:
@@ -38,7 +38,7 @@ function qtypeToString(qtype: number): string {
   }
 }
 
-function rcodeToString(rcode: number): string {
+export function rcodeToString(rcode: number): string {
   switch (rcode) {
     case 0:
       return 'NOERROR';

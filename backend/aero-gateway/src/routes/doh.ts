@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 
 import type { Config } from '../config.js';
 import type { DnsMetrics } from '../metrics.js';
-import { decodeFirstQuestion } from '../dns/codec.js';
-import { DnsResolver } from '../dns/resolver.js';
+import { decodeDnsHeader, decodeFirstQuestion, encodeDnsErrorResponse } from '../dns/codec.js';
+import { DnsResolver, qtypeToString, rcodeToString } from '../dns/resolver.js';
 import { TokenBucketRateLimiter } from '../dns/rateLimit.js';
 
 export function decodeBase64UrlToBuffer(base64url: string): Buffer {
@@ -22,6 +22,21 @@ export function setupDohRoutes(app: FastifyInstance, config: Config, metrics: Dn
   const resolver = new DnsResolver(config, metrics);
   const rateLimiter = new TokenBucketRateLimiter(config.DNS_QPS_PER_IP, config.DNS_BURST_PER_IP);
 
+  function sendDnsMessage(reply: import('fastify').FastifyReply, statusCode: number, message: Buffer) {
+    reply.code(statusCode);
+    reply.header('content-type', 'application/dns-message');
+    reply.header('cache-control', 'no-store');
+    return reply.send(message);
+  }
+
+  function sendDnsError(
+    reply: import('fastify').FastifyReply,
+    statusCode: number,
+    opts: Parameters<typeof encodeDnsErrorResponse>[0],
+  ) {
+    return sendDnsMessage(reply, statusCode, encodeDnsErrorResponse(opts));
+  }
+
   app.addContentTypeParser(
     'application/dns-message',
     { parseAs: 'buffer' },
@@ -34,7 +49,7 @@ export function setupDohRoutes(app: FastifyInstance, config: Config, metrics: Dn
     handler: async (request, reply) => {
       const ip = request.ip ?? 'unknown';
       if (!rateLimiter.allow(ip)) {
-        return reply.code(429).send({ error: 'too_many_requests', message: 'Rate limit exceeded' });
+        return sendDnsError(reply, 429, { id: 0, rcode: 2 });
       }
 
       let query: Buffer;
@@ -42,32 +57,56 @@ export function setupDohRoutes(app: FastifyInstance, config: Config, metrics: Dn
         if (request.method === 'GET') {
           const dns = (request.query as DohQuery).dns;
           if (!dns) {
-            return reply.code(400).send({ error: 'bad_request', message: "Missing 'dns' query parameter" });
+            return sendDnsError(reply, 400, { id: 0, rcode: 1 });
           }
           query = decodeBase64UrlToBuffer(dns);
         } else {
           const contentType = request.headers['content-type']?.split(';')[0]?.trim().toLowerCase();
           if (contentType !== 'application/dns-message') {
-            return reply.code(415).send({ error: 'unsupported_media_type', message: 'Expected application/dns-message' });
+            return sendDnsError(reply, 415, { id: 0, rcode: 1 });
           }
 
           const body = request.body;
           if (!Buffer.isBuffer(body)) {
-            return reply.code(400).send({ error: 'bad_request', message: 'Expected binary DNS message body' });
+            return sendDnsError(reply, 400, { id: 0, rcode: 1 });
           }
           query = body;
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Invalid request';
-        return reply.code(400).send({ error: 'bad_request', message });
+        return sendDnsError(reply, 400, { id: 0, rcode: 1 });
       }
 
       if (query.length > config.DNS_MAX_QUERY_BYTES) {
-        return reply.code(413).send({ error: 'payload_too_large', message: 'DNS query too large' });
+        // If the client sent a huge payload, avoid parsing more than the header.
+        let id = 0;
+        try {
+          id = decodeDnsHeader(query).id;
+        } catch {
+          if (query.length >= 2) id = query.readUInt16BE(0);
+        }
+        return sendDnsError(reply, 413, { id, rcode: 1 });
+      }
+
+      let id = 0;
+      let queryFlags = 0;
+      try {
+        const header = decodeDnsHeader(query);
+        id = header.id;
+        queryFlags = header.flags;
+      } catch {
+        if (query.length >= 2) id = query.readUInt16BE(0);
+        if (query.length >= 4) queryFlags = query.readUInt16BE(2);
+      }
+
+      let question;
+      try {
+        question = decodeFirstQuestion(query);
+      } catch (err) {
+        request.log.warn({ err }, 'dns_parse_error');
+        return sendDnsError(reply, 400, { id, queryFlags, rcode: 1 });
       }
 
       try {
-        const question = decodeFirstQuestion(query);
         request.log.info({ qname: question.name, qtype: question.type }, 'dns_query');
 
         const { response, rcode, cacheHit } = await resolver.resolve(query);
@@ -76,25 +115,29 @@ export function setupDohRoutes(app: FastifyInstance, config: Config, metrics: Dn
           'dns_response',
         );
 
-        reply.header('content-type', 'application/dns-message');
-        reply.header('cache-control', 'no-store');
-        return reply.send(response);
+        return sendDnsMessage(reply, 200, response);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'DNS resolution failed';
 
         if (message.includes('ANY queries are disabled') || message.includes('PTR queries to private ranges are disabled')) {
-          return reply.code(403).send({ error: 'forbidden', message });
+          metrics.dnsQueriesTotal.inc({
+            qtype: qtypeToString(question.type),
+            rcode: rcodeToString(5),
+            source: 'policy',
+          });
+          request.log.info({ qname: question.name, qtype: question.type, rcode: 5 }, 'dns_response');
+          return sendDnsError(reply, 200, { id, queryFlags, question, rcode: 5 });
         }
 
-        if (message.startsWith('DNS ') || message.startsWith('Invalid base64url')) {
-          return reply.code(400).send({ error: 'bad_request', message });
-        }
-
-        if (message.includes('Upstream response too large')) {
-          return reply.code(502).send({ error: 'bad_gateway', message });
-        }
-
-        return reply.code(502).send({ error: 'bad_gateway', message });
+        // All resolver failures should map to a standard DNS error response (SERVFAIL) so
+        // DoH clients always receive a valid DNS message payload.
+        metrics.dnsQueriesTotal.inc({
+          qtype: qtypeToString(question.type),
+          rcode: rcodeToString(2),
+          source: 'error',
+        });
+        request.log.warn({ qname: question.name, qtype: question.type, err: message }, 'dns_error');
+        return sendDnsError(reply, 200, { id, queryFlags, question, rcode: 2 });
       }
     },
   });
