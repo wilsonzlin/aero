@@ -139,33 +139,50 @@ fn verify_bcd_store(ctx: &DepContext, store: &Path, mode: SigningMode, verbose: 
     }
 
     if let Some(bcdedit) = ctx.bcdedit.as_deref() {
-        let out = run_capture(
-            Command::new(bcdedit)
-                .arg("/store")
-                .arg(store)
-                .arg("/enum")
-                .arg("{default}"),
-            verbose,
-        )
-        .context("bcdedit failed")?;
+        let identifiers = ["{default}", "{bootloadersettings}", "{globalsettings}"];
+        let mut any_enum_succeeded = false;
+        let mut last_err: Option<anyhow::Error> = None;
 
-        let out_lc = out.to_lowercase();
-        match mode {
-            SigningMode::TestSigning => {
-                if out_lc.contains("testsigning") && (out_lc.contains("yes") || out_lc.contains("on")) {
-                    return Ok(());
+        for id in identifiers {
+            match run_capture(
+                Command::new(bcdedit).arg("/store").arg(store).arg("/enum").arg(id),
+                verbose,
+            ) {
+                Ok(out) => {
+                    any_enum_succeeded = true;
+                    let out_lc = out.to_lowercase();
+                    match mode {
+                        SigningMode::TestSigning => {
+                            if out_lc.contains("testsigning")
+                                && (out_lc.contains("yes") || out_lc.contains("on"))
+                            {
+                                return Ok(());
+                            }
+                        }
+                        SigningMode::NoIntegrityChecks => {
+                            if out_lc.contains("nointegritychecks")
+                                && (out_lc.contains("yes") || out_lc.contains("on"))
+                            {
+                                return Ok(());
+                            }
+                        }
+                        SigningMode::None => {}
+                    }
                 }
-                return Err(anyhow!("bcdedit output did not show testsigning enabled"));
+                Err(err) => last_err = Some(err),
             }
-            SigningMode::NoIntegrityChecks => {
-                if out_lc.contains("nointegritychecks") && (out_lc.contains("yes") || out_lc.contains("on")) {
-                    return Ok(());
-                }
-                return Err(anyhow!(
-                    "bcdedit output did not show nointegritychecks enabled"
-                ));
-            }
-            SigningMode::None => {}
+        }
+
+        if any_enum_succeeded {
+            return Err(anyhow!(
+                "bcdedit output did not show {:?} enabled (checked: {})",
+                mode,
+                identifiers.join(", ")
+            ));
+        }
+
+        if ctx.hivexregedit.is_none() {
+            return Err(last_err.unwrap_or_else(|| anyhow!("bcdedit failed")));
         }
     }
 

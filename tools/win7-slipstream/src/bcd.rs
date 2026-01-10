@@ -2,6 +2,7 @@ use crate::wim::SigningMode;
 use anyhow::{anyhow, Context, Result};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const BCD_BOOTMGR_GUID: &str = "9dea862c-5cdd-4e70-acc1-f32b344d4795";
 const BCD_GLOBALSETTINGS_GUID: &str = "7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e";
@@ -11,36 +12,74 @@ const ELEMENT_TESTSIGNING: &str = "16000049";
 const ELEMENT_NOINTEGRITYCHECKS: &str = "16000048";
 const ELEMENT_BOOTMGR_DEFAULT_OBJECT: &str = "23000003";
 
-pub fn patch_with_bcdedit(bcdedit: &Path, store: &Path, mode: SigningMode, verbose: bool) -> Result<()> {
-    match mode {
-        SigningMode::None => Ok(()),
-        SigningMode::TestSigning => {
-            run(
-                Command::new(bcdedit)
-                    .arg("/store")
-                    .arg(store)
-                    .arg("/set")
-                    .arg("{default}")
-                    .arg("testsigning")
-                    .arg("on"),
-                verbose,
-            )?;
-            Ok(())
-        }
-        SigningMode::NoIntegrityChecks => {
-            run(
-                Command::new(bcdedit)
-                    .arg("/store")
-                    .arg(store)
-                    .arg("/set")
-                    .arg("{default}")
-                    .arg("nointegritychecks")
-                    .arg("on"),
-                verbose,
-            )?;
-            Ok(())
+/// Windows-native BCD patching without `bcdedit`.
+///
+/// Rationale: some offline BCD stores (notably `BCD-Template`) do not always expose the `{default}`
+/// alias in ways that `bcdedit /set {default} ...` can mutate reliably. Patching the hive
+/// directly (via `reg load` + `.reg` import) matches the approach used by the cross-platform
+/// backend (`hivexregedit`).
+pub fn patch_with_reg(reg: &Path, store: &Path, mode: SigningMode, verbose: bool) -> Result<()> {
+    let element_hex = match mode {
+        SigningMode::None => return Ok(()),
+        SigningMode::TestSigning => ELEMENT_TESTSIGNING,
+        SigningMode::NoIntegrityChecks => ELEMENT_NOINTEGRITYCHECKS,
+    };
+
+    let pid = std::process::id();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let mount = format!("HKLM\\AERO_BCD_{pid}_{nanos}");
+
+    run(Command::new(reg).arg("load").arg(&mount).arg(store), verbose)
+        .context("reg load (BCD hive) failed")?;
+
+    struct UnloadGuard<'a> {
+        reg: &'a Path,
+        mount: String,
+        verbose: bool,
+    }
+    impl Drop for UnloadGuard<'_> {
+        fn drop(&mut self) {
+            let _ = run(
+                Command::new(self.reg).arg("unload").arg(&self.mount),
+                self.verbose,
+            );
         }
     }
+    let _guard = UnloadGuard {
+        reg,
+        mount: mount.clone(),
+        verbose,
+    };
+
+    let default_obj = query_default_loader_object(reg, &mount, verbose)
+        .unwrap_or(None);
+
+    let mut object_guids = vec![
+        BCD_GLOBALSETTINGS_GUID.to_string(),
+        BCD_BOOTLOADERSETTINGS_GUID.to_string(),
+    ];
+    if let Some(guid) = default_obj {
+        object_guids.push(guid);
+    }
+    object_guids.sort();
+    object_guids.dedup();
+
+    let root_prefix = format!("HKEY_LOCAL_MACHINE\\{}", mount.trim_start_matches("HKLM\\"));
+    let reg_patch = render_bcd_boolean_patch(&root_prefix, &object_guids, element_hex);
+    let patch_file = tempfile::Builder::new()
+        .prefix("aero-win7-slipstream-bcd-")
+        .suffix(".reg")
+        .tempfile()
+        .context("Failed to create temporary BCD patch file")?;
+    std::fs::write(patch_file.path(), reg_patch)
+        .context("Failed to write temporary BCD patch file")?;
+
+    run(Command::new(reg).arg("import").arg(patch_file.path()), verbose)
+        .context("reg import (BCD patch) failed")?;
+    Ok(())
 }
 
 pub fn patch_with_hivex(hivexregedit: &Path, store: &Path, mode: SigningMode, verbose: bool) -> Result<()> {
@@ -76,7 +115,7 @@ pub fn patch_with_hivex(hivexregedit: &Path, store: &Path, mode: SigningMode, ve
         SigningMode::None => unreachable!(),
     };
 
-    let reg_patch = render_bcd_boolean_patch(&object_guids, element);
+    let reg_patch = render_bcd_boolean_patch("HKEY_LOCAL_MACHINE", &object_guids, element);
     let patch_file = tempfile::Builder::new()
         .prefix("aero-win7-slipstream-bcd-")
         .suffix(".reg")
@@ -106,22 +145,23 @@ pub fn hive_contains_policy(exported_reg: &str, mode: SigningMode) -> bool {
     }
 }
 
-fn render_bcd_boolean_patch(object_guids: &[String], element_hex: &str) -> String {
+fn render_bcd_boolean_patch(root_prefix: &str, object_guids: &[String], element_hex: &str) -> String {
     let mut out = String::new();
     out.push_str("Windows Registry Editor Version 5.00\n\n");
     for guid in object_guids {
-        out.push_str(&render_bool_element(guid, element_hex, true));
+        out.push_str(&render_bool_element(root_prefix, guid, element_hex, true));
     }
     out
 }
 
-fn render_bool_element(object_guid: &str, element_hex: &str, value: bool) -> String {
+fn render_bool_element(root_prefix: &str, object_guid: &str, element_hex: &str, value: bool) -> String {
     // For Win7 BCD hives, OS loader booleans are stored as REG_BINARY "Element" values containing
     // a 32-bit little-endian integer (0 or 1).
     let data = if value { [1u8, 0, 0, 0] } else { [0u8, 0, 0, 0] };
     let bytes = crate::wim::format_reg_binary(&data);
     format!(
-        "[HKEY_LOCAL_MACHINE\\Objects\\{{{object_guid}}}\\Elements\\{element_hex}]\n\"Element\"=hex:{bytes}\n\n",
+        "[{root_prefix}\\Objects\\{{{object_guid}}}\\Elements\\{element_hex}]\n\"Element\"=hex:{bytes}\n\n",
+        root_prefix = root_prefix,
         object_guid = object_guid,
         element_hex = element_hex,
         bytes = bytes
@@ -276,6 +316,58 @@ where
     Some(bytes)
 }
 
+fn query_default_loader_object(reg: &Path, mount: &str, verbose: bool) -> Result<Option<String>> {
+    let key = format!(
+        "{mount}\\Objects\\{{{bootmgr}}}\\Elements\\{elem}",
+        mount = mount,
+        bootmgr = BCD_BOOTMGR_GUID,
+        elem = ELEMENT_BOOTMGR_DEFAULT_OBJECT
+    );
+
+    let mut cmd = Command::new(reg);
+    cmd.arg("query").arg(&key).arg("/v").arg("Element");
+    if verbose {
+        eprintln!("> {:?}", cmd);
+    }
+    let output = cmd
+        .stdin(Stdio::null())
+        .output()
+        .context("Failed to spawn reg query for BCD default loader object")?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let bytes = parse_reg_query_binary_value(&stdout)
+        .ok_or_else(|| anyhow!("reg query succeeded but did not contain a parseable Element REG_BINARY value"))?;
+    Ok(guid_from_le_bytes(&bytes))
+}
+
+fn parse_reg_query_binary_value(output: &str) -> Option<Vec<u8>> {
+    for line in output.lines() {
+        let mut parts = line.split_whitespace();
+        let name = parts.next()?;
+        if !name.eq_ignore_ascii_case("Element") {
+            continue;
+        }
+        let ty = parts.next()?;
+        if !ty.eq_ignore_ascii_case("REG_BINARY") {
+            continue;
+        }
+
+        let mut bytes = Vec::new();
+        for p in parts {
+            if p.len() != 2 {
+                continue;
+            }
+            bytes.push(u8::from_str_radix(p, 16).ok()?);
+        }
+        if !bytes.is_empty() {
+            return Some(bytes);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,5 +399,24 @@ mod tests {
             parse_guid_element_from_export(&export, BCD_BOOTMGR_GUID, ELEMENT_BOOTMGR_DEFAULT_OBJECT)
                 .unwrap();
         assert_eq!(parsed, "01234567-89ab-cdef-0123-456789abcdef");
+    }
+
+    #[test]
+    fn parses_reg_query_binary_value() {
+        let out = r#"HKEY_LOCAL_MACHINE\AERO_BCD\Objects\{9dea862c-5cdd-4e70-acc1-f32b344d4795}\Elements\23000003
+    Element    REG_BINARY    67 45 23 01 AB 89 EF CD 01 23 45 67 89 AB CD EF
+"#;
+        let bytes = parse_reg_query_binary_value(out).unwrap();
+        assert_eq!(
+            bytes,
+            vec![
+                0x67, 0x45, 0x23, 0x01, 0xab, 0x89, 0xef, 0xcd, 0x01, 0x23, 0x45, 0x67,
+                0x89, 0xab, 0xcd, 0xef
+            ]
+        );
+        assert_eq!(
+            guid_from_le_bytes(&bytes).unwrap(),
+            "01234567-89ab-cdef-0123-456789abcdef"
+        );
     }
 }

@@ -241,11 +241,6 @@ impl Backend {
                         "windows-dism backend requires dism and reg.exe in PATH"
                     ));
                 }
-                if deps.bcdedit.is_none() {
-                    return Err(anyhow!(
-                        "windows-dism backend requires bcdedit in PATH"
-                    ));
-                }
             }
             BackendKind::CrossWimlib => {
                 if deps.wimlib_imagex.is_none() || deps.hivexregedit.is_none() {
@@ -276,15 +271,22 @@ impl Backend {
     }
 
     pub fn patch_bcd_store(&self, store: &Path, mode: SigningMode) -> Result<()> {
-        if let Some(bcdedit) = self.deps.bcdedit.as_deref() {
-            return bcd::patch_with_bcdedit(bcdedit, store, mode, self.verbose);
+        match self.kind {
+            BackendKind::WindowsDism => {
+                let reg = self.deps.reg.as_deref().ok_or_else(|| {
+                    anyhow!("windows-dism backend requires reg.exe to patch BCD stores")
+                })?;
+                bcd::patch_with_reg(reg, store, mode, self.verbose)
+            }
+            BackendKind::CrossWimlib => {
+                let hivex = self.deps.hivexregedit.as_deref().ok_or_else(|| {
+                    anyhow!(
+                        "cross-wimlib backend requires hivexregedit to patch BCD stores (run `aero-win7-slipstream deps`)"
+                    )
+                })?;
+                bcd::patch_with_hivex(hivex, store, mode, self.verbose)
+            }
         }
-        let hivex = self.deps.hivexregedit.as_deref().ok_or_else(|| {
-            anyhow!(
-                "No BCD patcher available: need bcdedit (Windows) or hivexregedit (cross)"
-            )
-        })?;
-        bcd::patch_with_hivex(hivex, store, mode, self.verbose)
     }
 
     pub fn wim_indexes(&self, wim: &Path) -> Result<Vec<u32>> {
@@ -625,32 +627,50 @@ fn verify_bcd_hive(deps: &DepContext, hive: &Path, mode: SigningMode, verbose: b
     }
 
     if let Some(bcdedit) = deps.bcdedit.as_deref() {
-        let out = run_capture(
-            Command::new(bcdedit)
-                .arg("/store")
-                .arg(hive)
-                .arg("/enum")
-                .arg("{default}"),
-            verbose,
-        )
-        .context("bcdedit failed")?;
-        let out_lc = out.to_lowercase();
-        match mode {
-            SigningMode::TestSigning => {
-                if out_lc.contains("testsigning") && (out_lc.contains("yes") || out_lc.contains("on")) {
-                    return Ok(());
+        let identifiers = ["{default}", "{bootloadersettings}", "{globalsettings}"];
+        let mut any_enum_succeeded = false;
+        let mut last_err: Option<anyhow::Error> = None;
+
+        for id in identifiers {
+            match run_capture(
+                Command::new(bcdedit).arg("/store").arg(hive).arg("/enum").arg(id),
+                verbose,
+            ) {
+                Ok(out) => {
+                    any_enum_succeeded = true;
+                    let out_lc = out.to_lowercase();
+                    match mode {
+                        SigningMode::TestSigning => {
+                            if out_lc.contains("testsigning")
+                                && (out_lc.contains("yes") || out_lc.contains("on"))
+                            {
+                                return Ok(());
+                            }
+                        }
+                        SigningMode::NoIntegrityChecks => {
+                            if out_lc.contains("nointegritychecks")
+                                && (out_lc.contains("yes") || out_lc.contains("on"))
+                            {
+                                return Ok(());
+                            }
+                        }
+                        SigningMode::None => {}
+                    }
                 }
-                return Err(anyhow!("bcdedit output did not show testsigning enabled"));
+                Err(err) => last_err = Some(err),
             }
-            SigningMode::NoIntegrityChecks => {
-                if out_lc.contains("nointegritychecks") && (out_lc.contains("yes") || out_lc.contains("on")) {
-                    return Ok(());
-                }
-                return Err(anyhow!(
-                    "bcdedit output did not show nointegritychecks enabled"
-                ));
-            }
-            SigningMode::None => {}
+        }
+
+        if any_enum_succeeded {
+            return Err(anyhow!(
+                "bcdedit output did not show {:?} enabled (checked: {})",
+                mode,
+                identifiers.join(", ")
+            ));
+        }
+
+        if deps.hivexregedit.is_none() {
+            return Err(last_err.unwrap_or_else(|| anyhow!("bcdedit failed")));
         }
     }
 
