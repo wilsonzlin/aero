@@ -136,6 +136,7 @@ Each check produces a `PASS` / `WARN` / `FAIL` result:
 - **Smoke tests**:
   - Disk I/O: create + read a temp file.
   - Network: detect IP-enabled adapters; optionally ping a target.
+  - Graphics: verify a `Win32_VideoController` exists and report basic adapter/driver state.
   - Audio: verify a `Win32_SoundDevice` exists; optionally play a `.wav`.
   - Input: report `Win32_Keyboard` and `Win32_PointingDevice` presence.
 

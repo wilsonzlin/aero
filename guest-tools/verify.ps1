@@ -383,7 +383,7 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         [void]$sb.Append($report.overall.summary + $nl)
     }
 
-    foreach ($key in @("os","kb3033929","certificate_store","signature_mode","driver_packages","bound_devices","device_binding_storage","device_binding_network","device_binding_graphics","device_binding_audio","device_binding_input","virtio_blk_service","virtio_blk_boot_critical","smoke_disk","smoke_network","smoke_audio","smoke_input")) {
+    foreach ($key in @("os","kb3033929","certificate_store","signature_mode","driver_packages","bound_devices","device_binding_storage","device_binding_network","device_binding_graphics","device_binding_audio","device_binding_input","virtio_blk_service","virtio_blk_boot_critical","smoke_disk","smoke_network","smoke_graphics","smoke_audio","smoke_input")) {
         if (-not $report.checks.ContainsKey($key)) { continue }
         $chk = $report.checks[$key]
         [void]$sb.Append($nl)
@@ -452,7 +452,7 @@ $txtPath = Join-Path $outDir "report.txt"
 $report = @{
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "1.4.0"
+        version = "1.5.0"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -1257,6 +1257,57 @@ try {
     Add-Check "smoke_network" "Smoke Test: Network" $netStatus $netSummary $netData $netDetails
 } catch {
     Add-Check "smoke_network" "Smoke Test: Network" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
+# --- Smoke test: graphics ---
+try {
+    $vc = Try-GetWmi "Win32_VideoController" ""
+    $controllers = @()
+    if ($vc) {
+        foreach ($v in $vc) {
+            $controllers += @{
+                name = "" + $v.Name
+                status = "" + $v.Status
+                driver_version = "" + $v.DriverVersion
+                driver_date = "" + $v.DriverDate
+                video_processor = "" + $v.VideoProcessor
+                adapter_ram = $v.AdapterRAM
+                current_horizontal_resolution = $v.CurrentHorizontalResolution
+                current_vertical_resolution = $v.CurrentVerticalResolution
+                current_refresh_rate = $v.CurrentRefreshRate
+            }
+        }
+    }
+
+    $gfxStatus = "PASS"
+    $gfxSummary = ""
+    $gfxDetails = @()
+
+    if (-not $controllers -or $controllers.Count -eq 0) {
+        $gfxStatus = "WARN"
+        $gfxSummary = "No Win32_VideoController entries detected."
+    } else {
+        $okCount = @($controllers | Where-Object { $_.status -eq "OK" }).Count
+        $gfxSummary = "Video controllers detected: " + $controllers.Count + " (Status=OK: " + $okCount + ")"
+        if ($okCount -eq 0) {
+            $gfxStatus = "WARN"
+            $gfxDetails += "No video controller reports Status=OK."
+        }
+
+        foreach ($c in $controllers) {
+            $line = "" + $c.name
+            if ($c.current_horizontal_resolution -and $c.current_vertical_resolution) {
+                $line += " (" + $c.current_horizontal_resolution + "x" + $c.current_vertical_resolution + ")"
+            }
+            if ($c.driver_version) { $line += ", DriverVersion=" + $c.driver_version }
+            if ($c.status) { $line += ", Status=" + $c.status }
+            $gfxDetails += $line
+        }
+    }
+
+    Add-Check "smoke_graphics" "Smoke Test: Graphics" $gfxStatus $gfxSummary @{ video_controllers = $controllers } $gfxDetails
+} catch {
+    Add-Check "smoke_graphics" "Smoke Test: Graphics" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
 # --- Smoke test: audio ---
