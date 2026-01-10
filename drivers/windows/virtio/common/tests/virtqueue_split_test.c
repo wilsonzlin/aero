@@ -378,6 +378,28 @@ static void TestRingLayoutEventIdx(void)
 	free(vq);
 }
 
+static void TestInitRejectsMisalignedRing(void)
+{
+	const UINT16 qsz = 8;
+	const UINT32 align = 16;
+
+	size_t vq_bytes = VirtqSplitStateSize(qsz);
+	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
+
+	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
+	UINT8 *ring_raw = (UINT8 *)calloc(1, ring_bytes + 1);
+
+	ASSERT_TRUE(vq != NULL);
+	ASSERT_TRUE(ring_raw != NULL);
+
+	/* Deliberately misalign ring VA/PA by 1 byte. */
+	ASSERT_EQ_U32(VirtqSplitInit(vq, qsz, FALSE, FALSE, ring_raw + 1, (UINT64)(uintptr_t)(ring_raw + 1), align, NULL, 0, 0, 0),
+		      STATUS_INVALID_PARAMETER);
+
+	free(ring_raw);
+	free(vq);
+}
+
 static void TestEventIdxKickPrepare(void)
 {
 	const UINT16 qsz = 8;
@@ -680,6 +702,7 @@ int main(void)
 	TestOutOfOrderCompletion();
 	TestNeedEventBoundaryCases();
 	TestRingLayoutEventIdx();
+	TestInitRejectsMisalignedRing();
 	TestEventIdxKickPrepare();
 	TestNoNotifyKickPrepare();
 	TestInterruptSuppressionNoEventIdx();

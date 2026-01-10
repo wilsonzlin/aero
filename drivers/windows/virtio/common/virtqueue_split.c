@@ -33,6 +33,10 @@ size_t VirtqSplitRingMemSize(UINT16 qsz, UINT32 align, BOOLEAN event_idx)
 	if ((align & (align - 1)) != 0) {
 		return 0;
 	}
+	if (align < 4) {
+		/* Used ring contains u32 fields and must be at least 4-byte aligned. */
+		return 0;
+	}
 
 	desc_sz = sizeof(VIRTQ_DESC) * (size_t)qsz;
 	avail_sz = VirtqSplitAvailSize(qsz, event_idx);
@@ -144,6 +148,13 @@ NTSTATUS VirtqSplitInit(VIRTQ_SPLIT *vq, UINT16 qsz, BOOLEAN event_idx, BOOLEAN 
 		/* VIRTIO_ALIGN_UP requires a power-of-two alignment. */
 		return STATUS_INVALID_PARAMETER;
 	}
+	if (ring_align < 4) {
+		return STATUS_INVALID_PARAMETER;
+	}
+	if (((size_t)ring_va & 0xFu) != 0 || (ring_pa & 0xFu) != 0) {
+		/* Descriptor table contains u64 fields and must be 16-byte aligned. */
+		return STATUS_INVALID_PARAMETER;
+	}
 
 	VirtioZeroMemory(vq, sizeof(*vq));
 
@@ -172,6 +183,9 @@ NTSTATUS VirtqSplitInit(VIRTQ_SPLIT *vq, UINT16 qsz, BOOLEAN event_idx, BOOLEAN 
 	/* Indirect table pool is optional even if the feature is negotiated. */
 	if (vq->indirect && indirect_pool_va != NULL && indirect_pool_pa != 0 && indirect_table_count != 0 &&
 	    indirect_max_desc != 0) {
+		if (((size_t)indirect_pool_va & 0xFu) != 0 || (indirect_pool_pa & 0xFu) != 0) {
+			return STATUS_INVALID_PARAMETER;
+		}
 		vq->indirect_pool_va = (VIRTQ_DESC *)indirect_pool_va;
 		vq->indirect_pool_pa = indirect_pool_pa;
 		vq->indirect_table_count = indirect_table_count;

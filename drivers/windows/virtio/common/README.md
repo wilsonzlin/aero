@@ -42,6 +42,11 @@ size_t ring_bytes = VirtqSplitRingMemSize(qsz, ring_align, event_idx);
 //   ring_va (CPU VA) and ring_pa (device DMA address)
 ```
 
+Notes:
+
+- `ring_va`/`ring_pa` must be **16-byte aligned** (descriptor table alignment).
+- `ring_align` must be a power-of-two and **>= 4** (used ring contains 32-bit fields).
+
 ### 3) (Optional) Allocate an indirect descriptor table pool
 
 If `VIRTIO_F_RING_INDIRECT_DESC` is negotiated, callers may supply a pool:
@@ -110,4 +115,3 @@ User-mode simulation tests live in `tests/`.
 cd drivers/windows/virtio/common/tests
 make test
 ```
-
