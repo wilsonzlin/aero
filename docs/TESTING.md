@@ -6,6 +6,18 @@ This document is the practical companion to [`12-testing-strategy.md`](./12-test
 
 ---
 
+## Test fixtures (boot sectors + tiny disk images)
+
+Boot/system tests use **tiny deterministic fixtures** under `tests/fixtures/boot/` (e.g. a 512-byte boot sector that writes a known pattern to VGA/serial).
+
+Regenerate them with:
+
+```bash
+cargo xtask fixtures
+```
+
+CI reruns the same command and fails if it produces any diff (determinism check).
+
 ## Quick start: run the full test suite
 
 ### Unified runner (recommended)

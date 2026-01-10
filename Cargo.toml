@@ -58,6 +58,7 @@ members = [
     "crates/aero-devices-storage",
     "crates/aero-wasm",
     "crates/nt-packetlib",
+    "server",
     "tools/bcd_patch",
     "tools/qemu_diff",
     "crates/virtio-gpu-proto",
@@ -75,6 +76,7 @@ members = [
     "crates/aero-time",
     "crates/aero-timers",
     "crates/aero-cpu-time",
+    "xtask",
 ]
 
 exclude = [

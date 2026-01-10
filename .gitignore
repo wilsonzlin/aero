@@ -109,6 +109,12 @@ bench-results/
 *.hdd
 *.ova
 *.ovf
+*.bin
+
+# Allow checked-in BIOS and tiny deterministic in-repo fixtures.
+!assets/bios.bin
+!tests/fixtures/boot/*.img
+!tests/fixtures/boot/*.bin
 
 # qemu_diff boot sector build byproducts (boot.bin is committed)
 tools/qemu_diff/boot/boot.o

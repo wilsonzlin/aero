@@ -362,20 +362,21 @@ Multi-core enablement needs focused tests because bugs often manifest as hangs o
 ### Boot Tests
 
 ```rust
-#[tokio::test]
-async fn test_bios_boot() {
+#[test]
+fn test_boot_sector_fixture_writes_vga_text() {
     let mut vm = VirtualMachine::new(Config {
-        memory: 512 * MB,
+        memory: 16 * MB,
         boot_device: BootDevice::HardDisk,
     });
-    
-    // Load FreeDOS boot disk
-    vm.load_disk("test_images/freedos.img").await;
-    
-    // Run until we see DOS prompt
-    let output = vm.run_until_output("C:\\>", Duration::from_secs(30)).await;
-    
-    assert!(output.contains("FreeDOS"));
+
+    // CI-safe: generated from source via `cargo xtask fixtures`.
+    vm.load_disk("tests/fixtures/boot/boot_vga_serial_8s.img");
+
+    vm.run_for(Duration::from_millis(50));
+
+    // VGA text mode memory starts at 0xB8000.
+    let vga = vm.read_physical(0xB8000, 10);
+    assert_eq!(vga, tests::fixtures::boot::boot_vga_serial::EXPECTED_VGA_TEXT_BYTES);
 }
 
 #[tokio::test]
@@ -1137,8 +1138,17 @@ See `drivers/README.md` for the current driver-pack workflow and the minimal in-
 // Generate minimal test disk images
 fn create_test_disk(scenario: TestScenario) -> DiskImage {
     match scenario {
-        TestScenario::EmptyDisk => DiskImage::empty(100 * MB),
+        TestScenario::EmptyDisk => DiskImage::empty(8 * MB),
+
+        // CI-safe: checked in as tiny deterministic binaries generated from source.
+        TestScenario::BootFixture => {
+            DiskImage::from_file("tests/fixtures/boot/boot_vga_serial_8s.img")
+        }
+
+        // Open-source OS images are valuable too, but are typically generated or
+        // downloaded during local setup (not committed).
         TestScenario::BootableDos => create_freedos_image(),
+
         // Aero does not ship Windows disk images. When developing locally, keep
         // any Windows image outside the repo and plumb it in via configuration.
         TestScenario::BootableWindows7 => DiskImage::from_path(

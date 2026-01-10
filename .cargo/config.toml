@@ -1,0 +1,3 @@
+[alias]
+# `cargo xtask <subcommand>` is shorthand for running the `xtask` helper binary.
+xtask = "run -p xtask --"

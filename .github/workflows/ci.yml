@@ -121,6 +121,11 @@ jobs:
 
       - name: Prepare net traces dir
         run: mkdir -p target/net-traces
+      - name: Generate test fixtures
+        run: cargo run ${{ steps.cargo-locked.outputs.locked }} -p xtask -- fixtures
+
+      - name: Ensure fixtures are checked in (determinism)
+        run: git diff --exit-code -- tests/fixtures/boot
 
       - name: Run Rust checks via test-all runner
         run: ./scripts/test-all.sh --skip-wasm --skip-ts --skip-e2e

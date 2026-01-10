@@ -15,6 +15,7 @@ SIZE_LIMIT_BYTES=$((SIZE_LIMIT_MB * 1024 * 1024))
 # Forbidden extensions (case-insensitive, without the leading dot).
 # Keep this list in sync with the "do not commit" patterns in `.gitignore`.
 FORBIDDEN_EXTENSIONS=(
+  bin
   iso
   img
   ima
@@ -48,6 +49,16 @@ FORBIDDEN_EXTENSIONS=(
   efi
 )
 
+# Allowlist for otherwise-forbidden extensions (bash patterns).
+#
+# These must remain tiny, deterministic, and license-safe. CI enforces a much
+# smaller size cap for allowlisted items.
+ALLOWLIST_FORBIDDEN_EXTENSION_GLOBS=(
+  assets/bios.bin
+  tests/fixtures/boot/*.bin
+  tests/fixtures/boot/*.img
+)
+
 # Forbidden path patterns (case-insensitive, bash patterns).
 # These are tuned to catch likely-proprietary Windows fixtures.
 FORBIDDEN_PATH_GLOBS=(
@@ -71,6 +82,9 @@ ALLOWLIST_FORBIDDEN_FILE_GLOBS=(
 # Example:
 #   ALLOWLIST_LARGE_FILE_GLOBS=(fixtures/oss/small-linux.img)
 ALLOWLIST_LARGE_FILE_GLOBS=()
+
+# Stricter size cap for allowlisted disk/firmware-like blobs.
+ALLOWLISTED_BINARY_SIZE_LIMIT_BYTES=$((1 * 1024 * 1024))
 
 BASE_REF="${BASE_REF:-}"
 HEAD_REF="${HEAD_REF:-HEAD}"
@@ -197,24 +211,34 @@ while IFS= read -r -d '' status; do
     allowlisted_forbidden=1
   fi
 
+  filename="${path##*/}"
+  ext=""
+  if [[ "$filename" == *.* && "$filename" != .* ]]; then
+    ext="${filename##*.}"
+  fi
+  ext_lc="$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')"
+  is_allowlisted_forbidden_ext=false
+  if matches_any_glob_ci "$path_lc" "${ALLOWLIST_FORBIDDEN_EXTENSION_GLOBS[@]}"; then
+    is_allowlisted_forbidden_ext=true
+  fi
+
   if [[ "$allowlisted_forbidden" -eq 0 ]]; then
     if matches_any_glob_ci "$path_lc" "${FORBIDDEN_PATH_GLOBS[@]}"; then
       forbidden_hits+=("$path|forbidden path (matches windows fixture pattern)")
     fi
 
-    filename="${path##*/}"
-    ext=""
-    if [[ "$filename" == *.* && "$filename" != .* ]]; then
-      ext="${filename##*.}"
-    fi
-    ext_lc="$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')"
-    if [[ -n "$ext_lc" ]] && is_forbidden_extension "$ext_lc"; then
+    if [[ -n "$ext_lc" ]] && is_forbidden_extension "$ext_lc" && [[ "$is_allowlisted_forbidden_ext" == "false" ]]; then
       forbidden_hits+=("$path|forbidden extension '.$ext_lc'")
     fi
   fi
 
+  blob_size="$(git cat-file -s "$HEAD_REF:$path")"
+
+  if [[ "$is_allowlisted_forbidden_ext" == "true" ]] && [[ "$blob_size" -gt "$ALLOWLISTED_BINARY_SIZE_LIMIT_BYTES" ]]; then
+    oversize_hits+=("$path|$(human_bytes "$blob_size") (limit: 1MB for allowlisted binary fixtures)")
+  fi
+
   if ! matches_any_glob_ci "$path_lc" "${ALLOWLIST_LARGE_FILE_GLOBS[@]}"; then
-    blob_size="$(git cat-file -s "$HEAD_REF:$path")"
     if [[ "$blob_size" -gt "$SIZE_LIMIT_BYTES" ]]; then
       oversize_hits+=("$path|$(human_bytes "$blob_size") (limit: ${SIZE_LIMIT_MB}MB)")
     fi
