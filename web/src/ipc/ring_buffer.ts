@@ -1,4 +1,4 @@
-import { alignUp, RECORD_ALIGN, ringCtrl, WRAP_MARKER } from "./layout";
+import { alignUp, RECORD_ALIGN, ringCtrl, WRAP_MARKER } from "./layout.ts";
 
 export type AtomicsWaitResult = "ok" | "not-equal" | "timed-out";
 

@@ -6,13 +6,18 @@ export type Command =
   | { kind: "nop"; seq: number }
   | { kind: "shutdown" }
   | { kind: "mmioRead"; id: number; addr: bigint; size: number }
-  | { kind: "mmioWrite"; id: number; addr: bigint; data: Uint8Array };
+  | { kind: "mmioWrite"; id: number; addr: bigint; data: Uint8Array }
+  | { kind: "portRead"; id: number; port: number; size: number }
+  | { kind: "portWrite"; id: number; port: number; size: number; value: number };
 
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";
 
 export type Event =
   | { kind: "ack"; seq: number }
   | { kind: "mmioReadResp"; id: number; data: Uint8Array }
+  | { kind: "portReadResp"; id: number; value: number }
+  | { kind: "mmioWriteResp"; id: number }
+  | { kind: "portWriteResp"; id: number }
   | { kind: "frameReady"; frameId: bigint }
   | { kind: "irqRaise"; irq: number }
   | { kind: "irqLower"; irq: number }
@@ -25,9 +30,14 @@ const CMD_TAG_NOP = 0x0000;
 const CMD_TAG_SHUTDOWN = 0x0001;
 const CMD_TAG_MMIO_READ = 0x0100;
 const CMD_TAG_MMIO_WRITE = 0x0101;
+const CMD_TAG_PORT_READ = 0x0102;
+const CMD_TAG_PORT_WRITE = 0x0103;
 
 const EVT_TAG_ACK = 0x1000;
 const EVT_TAG_MMIO_READ_RESP = 0x1100;
+const EVT_TAG_PORT_READ_RESP = 0x1101;
+const EVT_TAG_MMIO_WRITE_RESP = 0x1102;
+const EVT_TAG_PORT_WRITE_RESP = 0x1103;
 const EVT_TAG_FRAME_READY = 0x1200;
 const EVT_TAG_IRQ_RAISE = 0x1300;
 const EVT_TAG_IRQ_LOWER = 0x1301;
@@ -78,6 +88,19 @@ export function encodeCommand(cmd: Command): Uint8Array {
       pushU32(cmd.data.byteLength);
       for (const b of cmd.data) pushU8(b);
       break;
+    case "portRead":
+      pushU16(CMD_TAG_PORT_READ);
+      pushU32(cmd.id);
+      pushU16(cmd.port);
+      pushU32(cmd.size);
+      break;
+    case "portWrite":
+      pushU16(CMD_TAG_PORT_WRITE);
+      pushU32(cmd.id);
+      pushU16(cmd.port);
+      pushU32(cmd.size);
+      pushU32(cmd.value);
+      break;
   }
   return Uint8Array.from(out);
 }
@@ -122,6 +145,12 @@ export function decodeCommand(bytes: Uint8Array): Command {
       cmd = { kind: "mmioWrite", id, addr, data };
       break;
     }
+    case CMD_TAG_PORT_READ:
+      cmd = { kind: "portRead", id: readU32(), port: readU16(), size: readU32() };
+      break;
+    case CMD_TAG_PORT_WRITE:
+      cmd = { kind: "portWrite", id: readU32(), port: readU16(), size: readU32(), value: readU32() };
+      break;
     default:
       throw new Error(`unknown command tag 0x${tag.toString(16)}`);
   }
@@ -161,6 +190,19 @@ export function encodeEvent(evt: Event): Uint8Array {
       pushU32(evt.id);
       pushU32(evt.data.byteLength);
       for (const b of evt.data) pushU8(b);
+      break;
+    case "portReadResp":
+      pushU16(EVT_TAG_PORT_READ_RESP);
+      pushU32(evt.id);
+      pushU32(evt.value);
+      break;
+    case "mmioWriteResp":
+      pushU16(EVT_TAG_MMIO_WRITE_RESP);
+      pushU32(evt.id);
+      break;
+    case "portWriteResp":
+      pushU16(EVT_TAG_PORT_WRITE_RESP);
+      pushU32(evt.id);
       break;
     case "frameReady":
       pushU16(EVT_TAG_FRAME_READY);
@@ -238,6 +280,15 @@ export function decodeEvent(bytes: Uint8Array): Event {
       evt = { kind: "mmioReadResp", id, data };
       break;
     }
+    case EVT_TAG_PORT_READ_RESP:
+      evt = { kind: "portReadResp", id: readU32(), value: readU32() };
+      break;
+    case EVT_TAG_MMIO_WRITE_RESP:
+      evt = { kind: "mmioWriteResp", id: readU32() };
+      break;
+    case EVT_TAG_PORT_WRITE_RESP:
+      evt = { kind: "portWriteResp", id: readU32() };
+      break;
     case EVT_TAG_FRAME_READY:
       evt = { kind: "frameReady", frameId: readU64() };
       break;

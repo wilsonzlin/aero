@@ -1,0 +1,87 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { Worker } from "node:worker_threads";
+import { once } from "node:events";
+
+import { alignUp, ringCtrl } from "../src/ipc/layout.ts";
+
+function createCmdEvtSharedBuffer(cmdCapBytes: number, evtCapBytes: number): { sab: SharedArrayBuffer; cmdOffset: number; evtOffset: number } {
+  const cmdOffset = 0;
+  const evtOffset = alignUp(cmdOffset + ringCtrl.BYTES + cmdCapBytes, 4);
+  const totalBytes = evtOffset + ringCtrl.BYTES + evtCapBytes;
+
+  const sab = new SharedArrayBuffer(totalBytes);
+  new Int32Array(sab, cmdOffset, ringCtrl.WORDS).set([0, 0, 0, cmdCapBytes]);
+  new Int32Array(sab, evtOffset, ringCtrl.WORDS).set([0, 0, 0, evtCapBytes]);
+
+  return { sab, cmdOffset, evtOffset };
+}
+
+test("AIPC I/O worker: i8042 port I/O + IRQ signalling", async () => {
+  const { sab, cmdOffset, evtOffset } = createCmdEvtSharedBuffer(1 << 16, 1 << 16);
+
+  const ioWorker = new Worker(new URL("./workers/aero_ipc_io_server_worker.ts", import.meta.url), {
+    type: "module",
+    workerData: { sab, cmdOffset, evtOffset, devices: ["i8042"], tickIntervalMs: 1 },
+    execArgv: ["--experimental-strip-types"],
+  });
+
+  const cpuWorker = new Worker(new URL("./workers/aero_ipc_cpu_sequence_worker.ts", import.meta.url), {
+    type: "module",
+    workerData: { sab, cmdOffset, evtOffset, scenario: "i8042" },
+    execArgv: ["--experimental-strip-types"],
+  });
+
+  const [result] = (await once(cpuWorker, "message")) as [
+    {
+      ok: boolean;
+      statusBefore: number;
+      statusMid: number;
+      statusAfter: number;
+      bytes: number[];
+      irqEvents: Array<{ irq: number; level: boolean }>;
+    },
+  ];
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.bytes, [0xfa, 0xaa]);
+  assert.equal(result.statusBefore & 0x01, 0x01);
+  assert.equal(result.statusMid & 0x01, 0x01);
+  assert.equal(result.statusAfter & 0x01, 0x00);
+  assert.deepEqual(result.irqEvents, [
+    { irq: 1, level: true },
+    { irq: 1, level: false },
+  ]);
+
+  await cpuWorker.terminate();
+  await ioWorker.terminate();
+});
+
+test("AIPC I/O worker: PCI config + BAR-backed MMIO dispatch", async () => {
+  const { sab, cmdOffset, evtOffset } = createCmdEvtSharedBuffer(1 << 17, 1 << 17);
+
+  const ioWorker = new Worker(new URL("./workers/aero_ipc_io_server_worker.ts", import.meta.url), {
+    type: "module",
+    workerData: { sab, cmdOffset, evtOffset, devices: ["pci_test"], tickIntervalMs: 1 },
+    execArgv: ["--experimental-strip-types"],
+  });
+
+  const cpuWorker = new Worker(new URL("./workers/aero_ipc_cpu_sequence_worker.ts", import.meta.url), {
+    type: "module",
+    workerData: { sab, cmdOffset, evtOffset, scenario: "pci_test" },
+    execArgv: ["--experimental-strip-types"],
+  });
+
+  const [result] = (await once(cpuWorker, "message")) as [
+    { ok: boolean; idDword: number; bar0: number; mmioReadback: number },
+  ];
+
+  assert.equal(result.ok, true);
+  assert.equal(result.idDword >>> 0, 0x5678_1234);
+  assert.equal(result.bar0 >>> 0, 0xe000_0000);
+  assert.equal(result.mmioReadback >>> 0, 0x1234_5678);
+
+  await cpuWorker.terminate();
+  await ioWorker.terminate();
+});
+

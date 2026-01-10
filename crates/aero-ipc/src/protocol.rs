@@ -22,6 +22,23 @@ pub enum Command {
 
     /// MMIO write request. `data.len()` is the write size.
     MmioWrite { id: u32, addr: u64, data: Vec<u8> },
+
+    /// Port I/O read request. The worker should respond with an
+    /// [`Event::PortReadResp`].
+    ///
+    /// `size` is the access size in bytes (1/2/4).
+    PortRead { id: u32, port: u16, size: u32 },
+
+    /// Port I/O write request. The worker should respond with an
+    /// [`Event::PortWriteResp`].
+    ///
+    /// `size` is the access size in bytes (1/2/4).
+    PortWrite {
+        id: u32,
+        port: u16,
+        size: u32,
+        value: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +48,18 @@ pub enum Event {
 
     /// MMIO read response.
     MmioReadResp { id: u32, data: Vec<u8> },
+
+    /// Port I/O read response.
+    ///
+    /// The CPU side is expected to mask/truncate `value` based on the original
+    /// `size` requested.
+    PortReadResp { id: u32, value: u32 },
+
+    /// MMIO write completion response.
+    MmioWriteResp { id: u32 },
+
+    /// Port I/O write completion response.
+    PortWriteResp { id: u32 },
 
     /// Frame completed and ready for presentation.
     FrameReady { frame_id: u64 },
@@ -112,9 +141,14 @@ const CMD_TAG_NOP: u16 = 0x0000;
 const CMD_TAG_SHUTDOWN: u16 = 0x0001;
 const CMD_TAG_MMIO_READ: u16 = 0x0100;
 const CMD_TAG_MMIO_WRITE: u16 = 0x0101;
+const CMD_TAG_PORT_READ: u16 = 0x0102;
+const CMD_TAG_PORT_WRITE: u16 = 0x0103;
 
 const EVT_TAG_ACK: u16 = 0x1000;
 const EVT_TAG_MMIO_READ_RESP: u16 = 0x1100;
+const EVT_TAG_PORT_READ_RESP: u16 = 0x1101;
+const EVT_TAG_MMIO_WRITE_RESP: u16 = 0x1102;
+const EVT_TAG_PORT_WRITE_RESP: u16 = 0x1103;
 const EVT_TAG_FRAME_READY: u16 = 0x1200;
 const EVT_TAG_IRQ_RAISE: u16 = 0x1300;
 const EVT_TAG_IRQ_LOWER: u16 = 0x1301;
@@ -157,6 +191,24 @@ pub fn encode_command_into(cmd: &Command, out: &mut Vec<u8>) {
             push_u32(out, data.len() as u32);
             out.extend_from_slice(data);
         }
+        Command::PortRead { id, port, size } => {
+            push_u16(out, CMD_TAG_PORT_READ);
+            push_u32(out, *id);
+            push_u16(out, *port);
+            push_u32(out, *size);
+        }
+        Command::PortWrite {
+            id,
+            port,
+            size,
+            value,
+        } => {
+            push_u16(out, CMD_TAG_PORT_WRITE);
+            push_u32(out, *id);
+            push_u16(out, *port);
+            push_u32(out, *size);
+            push_u32(out, *value);
+        }
     }
 }
 
@@ -171,6 +223,19 @@ pub fn encode_event_into(evt: &Event, out: &mut Vec<u8>) {
             push_u32(out, *id);
             push_u32(out, data.len() as u32);
             out.extend_from_slice(data);
+        }
+        Event::PortReadResp { id, value } => {
+            push_u16(out, EVT_TAG_PORT_READ_RESP);
+            push_u32(out, *id);
+            push_u32(out, *value);
+        }
+        Event::MmioWriteResp { id } => {
+            push_u16(out, EVT_TAG_MMIO_WRITE_RESP);
+            push_u32(out, *id);
+        }
+        Event::PortWriteResp { id } => {
+            push_u16(out, EVT_TAG_PORT_WRITE_RESP);
+            push_u32(out, *id);
         }
         Event::FrameReady { frame_id } => {
             push_u16(out, EVT_TAG_FRAME_READY);
@@ -230,6 +295,17 @@ pub fn decode_command(bytes: &[u8]) -> Result<Command, DecodeError> {
             let data = r.read_bytes(len)?.to_vec();
             Command::MmioWrite { id, addr, data }
         }
+        CMD_TAG_PORT_READ => Command::PortRead {
+            id: r.read_u32()?,
+            port: r.read_u16()?,
+            size: r.read_u32()?,
+        },
+        CMD_TAG_PORT_WRITE => Command::PortWrite {
+            id: r.read_u32()?,
+            port: r.read_u16()?,
+            size: r.read_u32()?,
+            value: r.read_u32()?,
+        },
         _ => return Err(DecodeError::UnknownTag),
     };
     if r.remaining() != 0 {
@@ -253,6 +329,12 @@ pub fn decode_event(bytes: &[u8]) -> Result<Event, DecodeError> {
             let data = r.read_bytes(len)?.to_vec();
             Event::MmioReadResp { id, data }
         }
+        EVT_TAG_PORT_READ_RESP => Event::PortReadResp {
+            id: r.read_u32()?,
+            value: r.read_u32()?,
+        },
+        EVT_TAG_MMIO_WRITE_RESP => Event::MmioWriteResp { id: r.read_u32()? },
+        EVT_TAG_PORT_WRITE_RESP => Event::PortWriteResp { id: r.read_u32()? },
         EVT_TAG_FRAME_READY => Event::FrameReady {
             frame_id: r.read_u64()?,
         },

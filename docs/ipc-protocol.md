@@ -152,6 +152,8 @@ Each message begins with a 16-bit `tag` identifying the variant; the rest is var
 | `0x0001` | `Shutdown` | none |
 | `0x0100` | `MmioRead` | `u32 id`, `u64 addr`, `u32 size` |
 | `0x0101` | `MmioWrite` | `u32 id`, `u64 addr`, `u32 len`, `len bytes data` |
+| `0x0102` | `PortRead` | `u32 id`, `u16 port`, `u32 size` |
+| `0x0103` | `PortWrite` | `u32 id`, `u16 port`, `u32 size`, `u32 value` |
  
 ### 7.2 Events (worker → coordinator)
  
@@ -159,6 +161,9 @@ Each message begins with a 16-bit `tag` identifying the variant; the rest is var
 |---:|---|---|
 | `0x1000` | `Ack` | `u32 seq` |
 | `0x1100` | `MmioReadResp` | `u32 id`, `u32 len`, `len bytes data` |
+| `0x1101` | `PortReadResp` | `u32 id`, `u32 value` |
+| `0x1102` | `MmioWriteResp` | `u32 id` |
+| `0x1103` | `PortWriteResp` | `u32 id` |
 | `0x1200` | `FrameReady` | `u64 frame_id` |
 | `0x1300` | `IrqRaise` | `u8 irq` |
 | `0x1301` | `IrqLower` | `u8 irq` |

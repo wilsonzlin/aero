@@ -15,6 +15,17 @@ fn command_roundtrip() {
             addr: 0xFED0_0000,
             data: vec![1, 2, 3, 4, 5],
         },
+        Command::PortRead {
+            id: 3,
+            port: 0x0060,
+            size: 1,
+        },
+        Command::PortWrite {
+            id: 4,
+            port: 0x0064,
+            size: 1,
+            value: 0xAA,
+        },
     ];
 
     for cmd in cases {
@@ -32,6 +43,9 @@ fn event_roundtrip() {
             id: 9,
             data: vec![0xAA, 0xBB],
         },
+        Event::PortReadResp { id: 10, value: 0x1234_5678 },
+        Event::MmioWriteResp { id: 11 },
+        Event::PortWriteResp { id: 12 },
         Event::FrameReady { frame_id: 999 },
         Event::IrqRaise { irq: 5 },
         Event::IrqLower { irq: 5 },
