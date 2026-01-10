@@ -25,6 +25,11 @@ test('VM watchdog trips on a non-yielding CPU worker without freezing the page',
   await page.waitForFunction(() => window.__aeroVm?.lastHeartbeatAt && window.__aeroVm.lastHeartbeatAt > 0);
   await page.click('#vm-pause');
   await page.waitForFunction(() => window.__aeroVm?.state === 'paused');
+
+  const beforeInstructions = await page.evaluate(() => (window.__aeroVm?.lastHeartbeat as any)?.totalInstructions ?? 0);
+  await page.click('#vm-step');
+  await page.waitForFunction((prev) => ((window as any).__aeroVm?.lastHeartbeat?.totalInstructions ?? 0) > prev, beforeInstructions);
+  await page.waitForFunction(() => window.__aeroVm?.state === 'paused');
 });
 
 test('VM reports resource limit errors and can reset without reload', async ({ page }) => {
