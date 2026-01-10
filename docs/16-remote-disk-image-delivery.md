@@ -11,6 +11,8 @@ Aero supports **streaming 20GB+ disk images** into the browser without downloadi
 
 This document defines the **production contract** for the `remote_url` used by `StreamingDisk` and provides deployment guidance (caching, CORS, security).
 
+For the normative auth + CORS + COOP/COEP behavior of the disk bytes endpoint, see: [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md).
+
 ## Reference infrastructure in this repo
 
 - Local development (MinIO + optional reverse proxy for edge/CORS emulation):

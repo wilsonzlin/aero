@@ -16,7 +16,13 @@ This spec is written for both:
 
 **Normative language:** The terms **MUST**, **SHOULD**, and **MAY** are used as in RFC 2119.
 
-Related: [Storage Subsystem](./05-storage-subsystem.md) (streaming disk design), [Disk Image Lifecycle and Access Control](./17-disk-image-lifecycle-and-access-control.md) (uploads/ownership/sharing/writeback), and [Browser APIs](./11-browser-apis.md) (threads + cross-origin isolation context).
+Related:
+- [Storage Subsystem](./05-storage-subsystem.md) (client-side streaming disk design)
+- [Disk Image Lifecycle and Access Control](./17-disk-image-lifecycle-and-access-control.md) (uploads/ownership/sharing/writeback)
+- [Remote Disk Image Delivery](./16-remote-disk-image-delivery.md) (object store + CDN deployment contract)
+- [HTTP Range + CDN Behavior](./17-range-cdn-behavior.md) (CloudFront caching/limits considerations)
+- [Chunked Disk Image Format](./18-chunked-disk-image-format.md) (CDN-friendly alternative to `Range`)
+- [Browser APIs](./11-browser-apis.md) (threads + cross-origin isolation context)
 
 ---
 

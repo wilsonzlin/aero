@@ -22,6 +22,11 @@ If you are looking for a **deployment runbook** (S3 + CloudFront + signed URLs/c
 >
 > This repo does not contain AWS credentials or live infrastructure, so CloudFront behavior here is based on published AWS documentation and widely observed headers. Use the checklist below to validate the behavior in *your* distribution and region.
 
+Related:
+- [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md) (protocol + CORS/COEP requirements)
+- [Remote Disk Image Delivery](./16-remote-disk-image-delivery.md) (object store + CDN deployment contract)
+- [Chunked Disk Image Format](./18-chunked-disk-image-format.md) (avoid `Range` entirely)
+
 ## Reference infrastructure in this repo
 
 - Local development (MinIO + optional reverse proxy for edge/CORS emulation):
