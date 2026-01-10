@@ -58,9 +58,9 @@ pub fn compile_wasm_simd(
         )
     });
 
-    // We always declare three scratch v128 locals. This keeps the instruction emission simple
-    // while still producing SIMD opcodes in the output.
-    let mut func = Function::new(vec![(3, ValType::V128)]);
+    // We always declare three scratch v128 locals plus one i64 scratch for shift counts. This
+    // keeps the instruction emission simple while still producing SIMD opcodes in the output.
+    let mut func = Function::new(vec![(3, ValType::V128), (1, ValType::I64)]);
 
     if needs_default_mxcsr {
         emit_mxcsr_check(&mut func, layout)?;
@@ -95,6 +95,15 @@ pub fn compile_wasm_simd(
 
             Inst::Sqrtps { dst, src } => emit_unop(&mut func, dst, src, layout, Instruction::F32x4Sqrt)?,
             Inst::Sqrtpd { dst, src } => emit_unop(&mut func, dst, src, layout, Instruction::F64x2Sqrt)?,
+
+            Inst::Pslld { dst, src } => emit_shift_var(&mut func, dst, src, ShiftOp::I32x4Shl, layout)?,
+            Inst::Psrld { dst, src } => emit_shift_var(&mut func, dst, src, ShiftOp::I32x4ShrU, layout)?,
+
+            Inst::Psllw { dst, src } => emit_shift_var(&mut func, dst, src, ShiftOp::I16x8Shl, layout)?,
+            Inst::Psrlw { dst, src } => emit_shift_var(&mut func, dst, src, ShiftOp::I16x8ShrU, layout)?,
+
+            Inst::Psllq { dst, src } => emit_shift_var(&mut func, dst, src, ShiftOp::I64x2Shl, layout)?,
+            Inst::Psrlq { dst, src } => emit_shift_var(&mut func, dst, src, ShiftOp::I64x2ShrU, layout)?,
 
             Inst::PslldImm { dst, imm } => emit_shift_imm(&mut func, dst, imm, ShiftOp::I32x4Shl, layout)?,
             Inst::PsrldImm { dst, imm } => {
@@ -172,6 +181,7 @@ enum Local {
     Tmp0 = 0,
     Tmp1 = 1,
     Tmp2 = 2,
+    Cnt = 3,
 }
 
 #[derive(Clone, Copy)]
@@ -248,6 +258,50 @@ fn emit_shift_imm(
         ShiftOp::I64x2Shl => func.instruction(&Instruction::I64x2Shl),
         ShiftOp::I64x2ShrU => func.instruction(&Instruction::I64x2ShrU),
     };
+    func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
+    emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
+    Ok(())
+}
+
+fn emit_shift_var(
+    func: &mut Function,
+    dst: XmmReg,
+    src: Operand,
+    op: ShiftOp,
+    layout: WasmLayout,
+) -> Result<(), JitError> {
+    let max = match op {
+        ShiftOp::I16x8Shl | ShiftOp::I16x8ShrU => 15i64,
+        ShiftOp::I32x4Shl | ShiftOp::I32x4ShrU => 31i64,
+        ShiftOp::I64x2Shl | ShiftOp::I64x2ShrU => 63i64,
+    };
+
+    emit_load_reg(dst, func, layout)?;
+    emit_load_operand(src, func, layout)?;
+    func.instruction(&Instruction::I64x2ExtractLane(0));
+    func.instruction(&Instruction::LocalSet(Local::Cnt as u32));
+
+    // tmp0 = shift(dst, (cnt as i32)). Note that wasm masks counts, so we need a select below to
+    // produce x86's "count > lane_bits => 0" semantics.
+    func.instruction(&Instruction::LocalGet(Local::Cnt as u32));
+    func.instruction(&Instruction::I32WrapI64);
+    match op {
+        ShiftOp::I32x4Shl => func.instruction(&Instruction::I32x4Shl),
+        ShiftOp::I32x4ShrU => func.instruction(&Instruction::I32x4ShrU),
+        ShiftOp::I16x8Shl => func.instruction(&Instruction::I16x8Shl),
+        ShiftOp::I16x8ShrU => func.instruction(&Instruction::I16x8ShrU),
+        ShiftOp::I64x2Shl => func.instruction(&Instruction::I64x2Shl),
+        ShiftOp::I64x2ShrU => func.instruction(&Instruction::I64x2ShrU),
+    };
+    func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
+
+    // result = (cnt > max) ? 0 : tmp0
+    func.instruction(&Instruction::V128Const(0));
+    func.instruction(&Instruction::LocalGet(Local::Tmp0 as u32));
+    func.instruction(&Instruction::LocalGet(Local::Cnt as u32));
+    func.instruction(&Instruction::I64Const(max));
+    func.instruction(&Instruction::I64GtU);
+    func.instruction(&Instruction::Select);
     func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
     emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
     Ok(())

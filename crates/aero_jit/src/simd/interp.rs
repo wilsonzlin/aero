@@ -96,6 +96,39 @@ pub fn interpret(program: &Program, state: &mut SseState, mem: &mut [u8]) -> Res
                 state.xmm[dst.index()] = f64x2_unop(v, |x| x.sqrt());
             }
 
+            Inst::Pslld { dst, src } => {
+                let v = state.xmm[dst.index()];
+                let count = shift_count(load_operand(state, mem, src)?);
+                state.xmm[dst.index()] = shift_i32x4_count(v, count, ShiftDir::Left);
+            }
+            Inst::Psrld { dst, src } => {
+                let v = state.xmm[dst.index()];
+                let count = shift_count(load_operand(state, mem, src)?);
+                state.xmm[dst.index()] = shift_i32x4_count(v, count, ShiftDir::RightLogical);
+            }
+
+            Inst::Psllw { dst, src } => {
+                let v = state.xmm[dst.index()];
+                let count = shift_count(load_operand(state, mem, src)?);
+                state.xmm[dst.index()] = shift_i16x8_count(v, count, ShiftDir::Left);
+            }
+            Inst::Psrlw { dst, src } => {
+                let v = state.xmm[dst.index()];
+                let count = shift_count(load_operand(state, mem, src)?);
+                state.xmm[dst.index()] = shift_i16x8_count(v, count, ShiftDir::RightLogical);
+            }
+
+            Inst::Psllq { dst, src } => {
+                let v = state.xmm[dst.index()];
+                let count = shift_count(load_operand(state, mem, src)?);
+                state.xmm[dst.index()] = shift_i64x2_count(v, count, ShiftDir::Left);
+            }
+            Inst::Psrlq { dst, src } => {
+                let v = state.xmm[dst.index()];
+                let count = shift_count(load_operand(state, mem, src)?);
+                state.xmm[dst.index()] = shift_i64x2_count(v, count, ShiftDir::RightLogical);
+            }
+
             Inst::PslldImm { dst, imm } => {
                 let v = state.xmm[dst.index()];
                 state.xmm[dst.index()] = shift_i32x4(v, imm, ShiftDir::Left);
@@ -271,6 +304,13 @@ fn shift_i32x4(v: u128, imm: u8, dir: ShiftDir) -> u128 {
     u128::from_le_bytes(out)
 }
 
+fn shift_i32x4_count(v: u128, count: u64, dir: ShiftDir) -> u128 {
+    if count > 31 {
+        return 0;
+    }
+    shift_i32x4(v, count as u8, dir)
+}
+
 fn shift_i16x8(v: u128, imm: u8, dir: ShiftDir) -> u128 {
     if imm > 15 {
         return 0;
@@ -290,6 +330,13 @@ fn shift_i16x8(v: u128, imm: u8, dir: ShiftDir) -> u128 {
     u128::from_le_bytes(out)
 }
 
+fn shift_i16x8_count(v: u128, count: u64, dir: ShiftDir) -> u128 {
+    if count > 15 {
+        return 0;
+    }
+    shift_i16x8(v, count as u8, dir)
+}
+
 fn shift_i64x2(v: u128, imm: u8, dir: ShiftDir) -> u128 {
     if imm > 63 {
         return 0;
@@ -307,6 +354,13 @@ fn shift_i64x2(v: u128, imm: u8, dir: ShiftDir) -> u128 {
         out[off..off + 8].copy_from_slice(&y.to_le_bytes());
     }
     u128::from_le_bytes(out)
+}
+
+fn shift_i64x2_count(v: u128, count: u64, dir: ShiftDir) -> u128 {
+    if count > 63 {
+        return 0;
+    }
+    shift_i64x2(v, count as u8, dir)
 }
 
 fn shift_bytes(v: u128, imm: u8, dir: ShiftDir) -> u128 {
@@ -329,6 +383,10 @@ fn shift_bytes(v: u128, imm: u8, dir: ShiftDir) -> u128 {
         }
     }
     u128::from_le_bytes(out)
+}
+
+fn shift_count(src: u128) -> u64 {
+    src as u64
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]

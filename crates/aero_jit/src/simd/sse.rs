@@ -70,6 +70,21 @@ pub enum Inst {
     /// `SQRTPD xmm, xmm/m128`
     Sqrtpd { dst: XmmReg, src: Operand },
 
+    /// `PSLLD xmm, xmm/m128` (SSE2)
+    Pslld { dst: XmmReg, src: Operand },
+    /// `PSRLD xmm, xmm/m128` (SSE2)
+    Psrld { dst: XmmReg, src: Operand },
+
+    /// `PSLLW xmm, xmm/m128` (SSE2)
+    Psllw { dst: XmmReg, src: Operand },
+    /// `PSRLW xmm, xmm/m128` (SSE2)
+    Psrlw { dst: XmmReg, src: Operand },
+
+    /// `PSLLQ xmm, xmm/m128` (SSE2)
+    Psllq { dst: XmmReg, src: Operand },
+    /// `PSRLQ xmm, xmm/m128` (SSE2)
+    Psrlq { dst: XmmReg, src: Operand },
+
     /// `PSLLD xmm, imm8` (SSE2)
     PslldImm { dst: XmmReg, imm: u8 },
     /// `PSRLD xmm, imm8` (SSE2)

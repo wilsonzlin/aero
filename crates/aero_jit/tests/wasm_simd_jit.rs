@@ -426,6 +426,37 @@ fn wasm_simd_more_shift_immediates() {
 }
 
 #[test]
+fn wasm_simd_variable_shift_counts() {
+    let mut rng = StdRng::seed_from_u64(9);
+    let xmm0 = XmmReg::new(0).unwrap();
+    let xmm1 = XmmReg::new(1).unwrap();
+
+    let mut state = SseState::default();
+    state.xmm[xmm0.index()] = rng.gen::<u128>();
+    // Shift count lives in the low 64 bits of the src operand for PSLL*/PSRL*.
+    state.xmm[xmm1.index()] = 33u64 as u128; // >31 => zero for dword shifts
+
+    let program = Program {
+        insts: vec![
+            Inst::Pslld {
+                dst: xmm0,
+                src: Operand::Reg(xmm1),
+            },
+            Inst::Psrld {
+                dst: xmm0,
+                src: Operand::Reg(xmm1),
+            },
+        ],
+    };
+
+    let mem = vec![0u8; 64];
+    assert_jit_matches_interp(program.clone(), state.clone(), mem.clone());
+
+    let (_, _, wasm) = run_jit(&program, &state, &mem);
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::I64x2ExtractLane { .. }));
+}
+
+#[test]
 fn mxcsr_gate_traps_for_float_ops() {
     let xmm0 = XmmReg::new(0).unwrap();
     let xmm1 = XmmReg::new(1).unwrap();
