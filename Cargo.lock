@@ -31,6 +31,10 @@ dependencies = [
 [[package]]
 name = "aero-acpi"
 version = "0.1.0"
+dependencies = [
+ "aero-devices",
+ "aero-platform",
+]
 
 [[package]]
 name = "aero-audio"

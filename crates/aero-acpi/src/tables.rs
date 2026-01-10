@@ -46,6 +46,16 @@ pub struct AcpiConfig {
     /// ACPI SCI interrupt (legacy IRQ number).
     pub sci_irq: u8,
 
+    /// FADT SMI command port used for the ACPI enable/disable handshake.
+    ///
+    /// Windows (and many other OSes) will write `acpi_enable_cmd` to this port
+    /// to request firmware to set `PM1a_CNT.SCI_EN`.
+    pub smi_cmd_port: u16,
+    /// Value written to `smi_cmd_port` to enable ACPI (set `SCI_EN`).
+    pub acpi_enable_cmd: u8,
+    /// Value written to `smi_cmd_port` to disable ACPI (clear `SCI_EN`).
+    pub acpi_disable_cmd: u8,
+
     /// PM1a event block I/O port base.
     pub pm1a_evt_blk: u16,
     /// PM1a control block I/O port base.
@@ -77,6 +87,10 @@ impl Default for AcpiConfig {
             hpet_addr: 0xFED0_0000,
 
             sci_irq: 9,
+
+            smi_cmd_port: 0x00B2,
+            acpi_enable_cmd: 0xA0,
+            acpi_disable_cmd: 0xA1,
 
             pm1a_evt_blk: 0x0400,
             pm1a_cnt_blk: 0x0404,
@@ -385,9 +399,9 @@ fn build_fadt(cfg: &AcpiConfig, dsdt_addr: u64, facs_addr: u64) -> Vec<u8> {
     out.push(0); // reserved: Model (deprecated)
     out.push(1); // preferred PM profile: Desktop
     out.extend_from_slice(&(cfg.sci_irq as u16).to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes()); // SMI_CMD (not implemented)
-    out.push(0); // ACPI_ENABLE
-    out.push(0); // ACPI_DISABLE
+    out.extend_from_slice(&(cfg.smi_cmd_port as u32).to_le_bytes());
+    out.push(cfg.acpi_enable_cmd);
+    out.push(cfg.acpi_disable_cmd);
     out.push(0); // S4BIOS_REQ
     out.push(0); // PSTATE_CNT
 

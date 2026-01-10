@@ -160,6 +160,12 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     assert_eq!(fadt[91], 4); // PM_TMR_LEN
     assert_eq!(fadt[92], cfg.gpe0_blk_len);
 
+    // ACPI enable/disable handshake fields.
+    assert_ne!(read_u32_le(fadt, 48), 0, "SMI_CMD must be populated");
+    assert_eq!(read_u32_le(fadt, 48) as u16, cfg.smi_cmd_port);
+    assert_eq!(fadt[52], cfg.acpi_enable_cmd);
+    assert_eq!(fadt[53], cfg.acpi_disable_cmd);
+
     // DSDT header + checksum.
     let dsdt_hdr_raw = mem.read(tables.addresses.dsdt, 36);
     let dsdt_hdr = parse_sdt_header(dsdt_hdr_raw);
