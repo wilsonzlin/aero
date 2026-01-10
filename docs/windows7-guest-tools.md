@@ -4,6 +4,17 @@ This guide walks you through installing Windows 7 in Aero using the **baseline (
 
 > Aero does **not** include or distribute Windows. You must provide your own Windows 7 ISO and license.
 
+## Quick start (overview)
+
+1. Install Windows 7 SP1 using **baseline devices**: **AHCI + e1000 + VGA**.
+2. Mount `aero-guest-tools.iso` and run `setup.cmd` as Administrator.
+3. Reboot once (still on baseline devices).
+4. Switch devices in this order (reboot between each):
+   1. **AHCI → virtio-blk**
+   2. **e1000 → virtio-net**
+   3. **VGA → Aero GPU**
+5. Run `verify.cmd` as Administrator and check `report.txt`.
+
 ## Prerequisites
 
 ### What you need
@@ -35,6 +46,18 @@ If Aero’s driver packages are signed with **SHA-256**, Windows 7 requires **KB
 
 - If KB3033929 is missing you may see **Device Manager → Code 52** (“Windows cannot verify the digital signature…”).
 - You can install KB3033929 after Windows is installed, or **slipstream** it into your ISO (see the optional section at the end).
+
+### x86 vs x64 notes (driver signing and memory)
+
+- **Windows 7 x86**
+  - Does not enforce kernel-mode signature checks as strictly as x64, but you can still see warnings during driver install.
+  - Practical benefit: can be easier to get started if you are troubleshooting signing issues.
+- **Windows 7 x64**
+  - Enforces kernel driver signature validation.
+  - Depending on how the Aero drivers are signed, you may need:
+    - the Aero signing certificate installed (via Guest Tools), and/or
+    - **Test Signing** enabled, and/or
+    - **KB3033929** if the catalogs are SHA-256.
 
 ## Step 1: Install Windows 7 using baseline (compatibility) devices
 
@@ -140,6 +163,8 @@ Expected behavior:
 2. Switch the network adapter from **e1000** to **virtio-net**.
 3. Boot Windows and confirm networking works (optional).
 
+If the virtio-net driver fails to bind and you lose networking, you can always switch back to **e1000** to regain connectivity while troubleshooting.
+
 ### Stage C: switch graphics (VGA → Aero GPU)
 
 1. Shut down Windows.
@@ -220,6 +245,16 @@ On a Windows 10/11 host (or a Windows VM), you can use DISM:
    - `dism /Unmount-Wim /MountDir:C:\wim\mount /Commit`
 
 If you want Windows Setup itself to see a virtio-blk disk during installation, you must also add the storage driver to `sources\\boot.wim` (indexes 1 and 2).
+
+Example (adding drivers to `boot.wim`):
+
+1. Check boot indexes:
+   - `dism /Get-WimInfo /WimFile:C:\win7-iso\sources\boot.wim`
+2. Mount index 1 and add drivers:
+   - `dism /Mount-Wim /WimFile:C:\win7-iso\sources\boot.wim /Index:1 /MountDir:C:\wim\mount`
+   - `dism /Image:C:\wim\mount /Add-Driver /Driver:C:\drivers\aero\ /Recurse`
+   - `dism /Unmount-Wim /MountDir:C:\wim\mount /Commit`
+3. Repeat for index 2.
 
 ### Rebuilding a bootable ISO (optional)
 

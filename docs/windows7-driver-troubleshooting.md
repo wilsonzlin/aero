@@ -13,6 +13,7 @@ If you have not installed Guest Tools yet, start here:
 3. Confirm you’re using drivers that match your OS:
    - Windows 7 **x86** requires x86 drivers.
    - Windows 7 **x64** requires x64 drivers. (32-bit drivers cannot load.)
+4. If you changed multiple VM devices at once (storage + GPU + network), consider rolling back and switching **one class at a time** so failures are easier to isolate.
 
 ## Safe rollback path (storage boot failure)
 
@@ -65,7 +66,13 @@ Why this works: Windows can only boot from a storage controller if its driver is
    - Re-run `setup.cmd` as Administrator.
    - Or in Device Manager:
      - Right-click the device → Update Driver Software
-     - Browse to your Guest Tools driver folder
+      - Browse to your Guest Tools driver folder
+
+5. **Confirm the driver package is staged in the driver store (optional but useful):**
+   - In an elevated Command Prompt:
+     - `pnputil -e`
+   - Look for the published name (`oemXX.inf`) associated with the Aero/virtio devices.
+   - If you re-run `setup.cmd`, it should stage any missing packages automatically.
 
 ### One-time bypass (not recommended as the primary path)
 
@@ -150,6 +157,24 @@ Do storage first, then network, then GPU. If you change storage + GPU simultaneo
    - Browse to the Guest Tools driver folder and ensure you’re selecting the correct architecture.
 4. If installation is blocked by signatures, resolve Code 52 first.
 
+## Issue: Windows Setup can’t see a virtio-blk disk (slipstream installs)
+
+This only applies if you are attempting to install Windows directly onto **virtio-blk** during Windows Setup.
+
+**Symptom**
+
+- Windows Setup shows “Where do you want to install Windows?” but no disks are listed.
+
+**Cause**
+
+- The virtio-blk storage driver is not available in the Windows Setup environment (`boot.wim`).
+
+**Fix**
+
+- Either:
+  - Install Windows using baseline **AHCI** first (recommended), then switch to virtio-blk after running Guest Tools, **or**
+  - Slipstream the virtio-blk driver into `sources\\boot.wim` (indexes 1 and 2) and rebuild the ISO.
+
 ## Issue: Black screen after switching to the Aero GPU
 
 **Symptom**
@@ -209,6 +234,15 @@ From a working boot (typically while still on AHCI):
 After you recover, disable Safe Mode:
 
 - `bcdedit /deletevalue {current} safeboot`
+
+### If you got “stuck in Safe Mode”
+
+If you set `safeboot minimal` and forget to remove it, Windows will continue to boot into Safe Mode every time.
+
+Fix (from an elevated Command Prompt):
+
+- `bcdedit /deletevalue {current} safeboot`
+- Reboot
 
 ## Issue: “Test Mode” watermark on the desktop (x64)
 
