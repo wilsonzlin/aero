@@ -9,7 +9,7 @@ This document specifies the **public backend contract** for Aero networking feat
 - Optional **DNS JSON** convenience endpoint (`/dns-json`) for debugging/simple lookups
 - A lightweight **session bootstrap** endpoint (`POST /session`) that issues cookies used for rate-limiting and authorization
 
-HTTP request/response schemas are specified in [`docs/backend/openapi.yaml`](./openapi.yaml). The `/tcp` WebSocket upgrade is documented in this file (OpenAPI intentionally does not model WebSockets).
+HTTP request/response schemas are specified in [`docs/backend/openapi.yaml`](./openapi.yaml). The `/tcp` WebSocket upgrade is documented in this document (OpenAPI intentionally does not model WebSockets).
 
 The intent is that a frontend engineer can build a compatible client **without reading the gateway/server source code**.
 
