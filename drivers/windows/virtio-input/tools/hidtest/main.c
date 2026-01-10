@@ -1,6 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <winioctl.h>
 
 // Build (MSVC):
 //   cl /nologo /W4 /D_CRT_SECURE_NO_WARNINGS main.c /link setupapi.lib hid.lib
@@ -18,6 +19,20 @@
 
 #pragma comment(lib, "setupapi.lib")
 #pragma comment(lib, "hid.lib")
+
+#ifndef FILE_DEVICE_HID
+// Some SDKs/headers don't define FILE_DEVICE_HID. The HID class IOCTLs used by
+// HidD_* are historically defined under device type 0x0000000B.
+#define FILE_DEVICE_HID 0x0000000B
+#endif
+
+#ifndef HID_CTL_CODE
+#define HID_CTL_CODE(id) CTL_CODE(FILE_DEVICE_HID, (id), METHOD_NEITHER, FILE_ANY_ACCESS)
+#endif
+
+#ifndef IOCTL_HID_GET_REPORT_DESCRIPTOR
+#define IOCTL_HID_GET_REPORT_DESCRIPTOR HID_CTL_CODE(103)
+#endif
 
 typedef struct OPTIONS {
     int list_only;
@@ -39,6 +54,8 @@ typedef struct SELECTED_DEVICE {
     int attr_valid;
     HIDP_CAPS caps;
     int caps_valid;
+    DWORD report_desc_len;
+    int report_desc_valid;
 } SELECTED_DEVICE;
 
 static void print_win32_error_w(const wchar_t *prefix, DWORD err)
@@ -308,6 +325,28 @@ static int query_hid_caps(HANDLE handle, HIDP_CAPS *caps_out)
     return st == HIDP_STATUS_SUCCESS;
 }
 
+static int query_report_descriptor_length(HANDLE handle, DWORD *len_out)
+{
+    BYTE buf[4096];
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (len_out == NULL) {
+        return 0;
+    }
+
+    ZeroMemory(buf, sizeof(buf));
+
+    ok = DeviceIoControl(handle, IOCTL_HID_GET_REPORT_DESCRIPTOR, NULL, 0, buf, (DWORD)sizeof(buf),
+                         &bytes, NULL);
+    if (!ok) {
+        return 0;
+    }
+
+    *len_out = bytes;
+    return 1;
+}
+
 static HANDLE open_hid_path(const WCHAR *path, DWORD *desired_access_out)
 {
     HANDLE h;
@@ -363,6 +402,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         HIDP_CAPS caps;
         int caps_valid = 0;
         int attr_valid = 0;
+        DWORD report_desc_len = 0;
+        int report_desc_valid = 0;
         int match = 0;
         int is_virtio = 0;
 
@@ -419,6 +460,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
 
         ZeroMemory(&caps, sizeof(caps));
         caps_valid = query_hid_caps(handle, &caps);
+        report_desc_valid = query_report_descriptor_length(handle, &report_desc_len);
 
         wprintf(L"[%lu] %ls\n", iface_index, detail->DevicePath);
         if (attr_valid) {
@@ -434,6 +476,12 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
                     caps.OutputReportByteLength, caps.FeatureReportByteLength);
         } else {
             wprintf(L"      HidD_GetPreparsedData/HidP_GetCaps failed\n");
+        }
+
+        if (report_desc_valid) {
+            wprintf(L"      Report descriptor length: %lu bytes\n", report_desc_len);
+        } else {
+            wprintf(L"      IOCTL_HID_GET_REPORT_DESCRIPTOR failed\n");
         }
 
         if (desired_access & GENERIC_WRITE) {
@@ -478,6 +526,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
                 out->attr_valid = attr_valid;
                 out->caps = caps;
                 out->caps_valid = caps_valid;
+                out->report_desc_len = report_desc_len;
+                out->report_desc_valid = report_desc_valid;
                 free(detail);
                 break;
             }
@@ -490,6 +540,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             out->attr_valid = attr_valid;
             out->caps = caps;
             out->caps_valid = caps_valid;
+            out->report_desc_len = report_desc_len;
+            out->report_desc_valid = report_desc_valid;
             free(detail);
             break;
         } else if (fallback.handle == INVALID_HANDLE_VALUE) {
@@ -500,6 +552,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             fallback.attr_valid = attr_valid;
             fallback.caps = caps;
             fallback.caps_valid = caps_valid;
+            fallback.report_desc_len = report_desc_len;
+            fallback.report_desc_valid = report_desc_valid;
         } else {
             CloseHandle(handle);
         }
@@ -724,6 +778,9 @@ int wmain(int argc, wchar_t **argv)
         wprintf(L"  UsagePage:Usage %04X:%04X\n", dev.caps.UsagePage, dev.caps.Usage);
         wprintf(L"  Report bytes (in/out/feat): %u / %u / %u\n", dev.caps.InputReportByteLength,
                 dev.caps.OutputReportByteLength, dev.caps.FeatureReportByteLength);
+    }
+    if (dev.report_desc_valid) {
+        wprintf(L"  Report descriptor length: %lu bytes\n", dev.report_desc_len);
     }
 
     if (opt.have_led_mask) {
