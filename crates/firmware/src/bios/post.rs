@@ -1,6 +1,6 @@
 use machine::{CpuState, FLAG_ALWAYS_ON, FLAG_IF};
 
-use super::{acpi, ivt, rom, seg, Bios, BiosBus, BIOS_BASE, BIOS_SEGMENT};
+use super::{acpi, ivt, rom, seg, Bios, BiosBus, BiosMemoryBus, BIOS_BASE, BIOS_SEGMENT};
 
 impl Bios {
     pub(super) fn post_impl(
@@ -29,6 +29,11 @@ impl Bios {
         // 2) BDA/EBDA: reserve a 4KiB EBDA page below 1MiB and advertise base memory size.
         ivt::init_bda(bus);
         self.init(bus);
+        // Initialize VGA text mode state (mode 03h) so software querying BDA/INT 10h gets sane
+        // defaults without needing to explicitly set a mode first.
+        self.video
+            .vga
+            .set_text_mode_03h(&mut BiosMemoryBus::new(bus));
 
         // 3) Interrupt Vector Table.
         ivt::init_ivt(bus);

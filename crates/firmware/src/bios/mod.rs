@@ -60,6 +60,28 @@ pub const DEFAULT_INT_STUB_OFFSET: u16 = 0xEF00;
 pub trait BiosBus: MemoryAccess + FirmwareMemory + machine::A20Gate {}
 impl<T: MemoryAccess + FirmwareMemory + machine::A20Gate> BiosBus for T {}
 
+/// Adapter that lets BIOS code reuse helpers written against the firmware-side [`MemoryBus`]
+/// abstraction (used by the INT 10h text/VBE implementation).
+pub(super) struct BiosMemoryBus<'a> {
+    bus: &'a mut dyn BiosBus,
+}
+
+impl<'a> BiosMemoryBus<'a> {
+    pub(super) fn new(bus: &'a mut dyn BiosBus) -> Self {
+        Self { bus }
+    }
+}
+
+impl MemoryBus for BiosMemoryBus<'_> {
+    fn read_u8(&self, addr: u64) -> u8 {
+        self.bus.read_u8(addr)
+    }
+
+    fn write_u8(&mut self, addr: u64, value: u8) {
+        self.bus.write_u8(addr, value);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BiosConfig {
     /// Total guest RAM size.
@@ -112,7 +134,6 @@ pub struct Bios {
     config: BiosConfig,
     e820_map: Vec<E820Entry>,
     keyboard_queue: VecDeque<u16>,
-    video_mode: u8,
     tty_output: Vec<u8>,
 
     /// RSDP physical address (if ACPI tables were built).
@@ -136,7 +157,6 @@ impl Bios {
             config,
             e820_map: Vec::new(),
             keyboard_queue: VecDeque::new(),
-            video_mode: 3, // default VGA text mode
             tty_output: Vec::new(),
             rsdp_addr: None,
             acpi_builder: Box::new(acpi::FirmwareAcpiBuilder::default()),

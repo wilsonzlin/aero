@@ -1,8 +1,10 @@
 use machine::{BlockDevice, CpuState, FLAG_CF, FLAG_DF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
 
 use super::{
-    disk_err_to_int13_status, seg, Bios, BiosBus, BIOS_BASE, BIOS_SIZE, EBDA_BASE, EBDA_SIZE,
+    disk_err_to_int13_status, seg, Bios, BiosBus, BiosMemoryBus, BIOS_BASE, BIOS_SIZE, EBDA_BASE,
+    EBDA_SIZE,
 };
+use crate::cpu::CpuState as FirmwareCpuState;
 
 pub const E820_RAM: u32 = 1;
 pub const E820_RESERVED: u32 = 2;
@@ -52,32 +54,37 @@ pub fn dispatch_interrupt(
     bus.write_u16(flags_addr, new_flags);
 }
 
-fn handle_int10(bios: &mut Bios, cpu: &mut CpuState, _bus: &mut dyn BiosBus) {
+fn handle_int10(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
+    // Keep the historical "TTY output" buffer for tests/debugging.
     let ah = ((cpu.rax >> 8) & 0xFF) as u8;
-    match ah {
-        0x00 => {
-            // Set video mode (AL).
-            let mode = (cpu.rax & 0xFF) as u8;
-            bios.video_mode = mode;
-            cpu.rflags &= !FLAG_CF;
-        }
-        0x0E => {
-            // TTY output (AL).
-            let ch = (cpu.rax & 0xFF) as u8;
-            bios.tty_output.push(ch);
-            cpu.rflags &= !FLAG_CF;
-        }
-        0x0F => {
-            // Get current video mode.
-            cpu.rax = (bios.video_mode as u64) | ((80u64) << 8);
-            cpu.rbx &= !0xFFu64; // BH = active page (0)
-            cpu.rflags &= !FLAG_CF;
-        }
-        _ => {
-            eprintln!("BIOS: unhandled INT 10h AH={ah:02x}");
-            cpu.rflags &= !FLAG_CF;
-        }
+    if ah == 0x0E {
+        bios.tty_output.push((cpu.rax & 0xFF) as u8);
     }
+
+    // Bridge machine CPU state + memory bus to the firmware-side INT 10h implementation.
+    let mut fw_cpu = FirmwareCpuState {
+        rax: cpu.rax,
+        rbx: cpu.rbx,
+        rcx: cpu.rcx,
+        rdx: cpu.rdx,
+        rsi: cpu.rsi,
+        rdi: cpu.rdi,
+        rflags: 0, // INT 10h does not define flag inputs; start with CF clear.
+        ds: cpu.ds.selector,
+        es: cpu.es.selector,
+    };
+
+    bios.handle_int10(&mut fw_cpu, &mut BiosMemoryBus::new(bus));
+
+    cpu.rax = fw_cpu.rax;
+    cpu.rbx = fw_cpu.rbx;
+    cpu.rcx = fw_cpu.rcx;
+    cpu.rdx = fw_cpu.rdx;
+    cpu.rsi = fw_cpu.rsi;
+    cpu.rdi = fw_cpu.rdi;
+    cpu.ds.selector = fw_cpu.ds;
+    cpu.es.selector = fw_cpu.es;
+    cpu.set_flag(FLAG_CF, fw_cpu.cf());
 }
 
 fn handle_int13(cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockDevice) {
