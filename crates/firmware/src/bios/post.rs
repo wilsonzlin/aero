@@ -28,6 +28,7 @@ impl Bios {
 
         // 2) BDA/EBDA: reserve a 4KiB EBDA page below 1MiB and advertise base memory size.
         ivt::init_bda(bus);
+        self.init(bus);
 
         // 3) Interrupt Vector Table.
         ivt::init_ivt(bus);

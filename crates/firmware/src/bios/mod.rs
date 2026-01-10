@@ -51,6 +51,7 @@ pub const INT10_STUB_OFFSET: u16 = 0xE300;
 pub const INT13_STUB_OFFSET: u16 = 0xE400;
 pub const INT15_STUB_OFFSET: u16 = 0xE600;
 pub const INT16_STUB_OFFSET: u16 = 0xE700;
+pub const INT1A_STUB_OFFSET: u16 = 0xE900;
 pub const DEFAULT_INT_STUB_OFFSET: u16 = 0xEF00;
 
 /// Memory interface required by the BIOS.
@@ -139,11 +140,11 @@ impl Bios {
     }
 
     /// Initialize BDA time fields from the RTC.
-    pub fn init(&mut self, memory: &mut impl MemoryBus) {
+    pub fn init<M: MemoryBus + ?Sized>(&mut self, memory: &mut M) {
         self.bda_time.write_to_bda(memory);
     }
 
-    pub fn advance_time(&mut self, memory: &mut impl MemoryBus, delta: Duration) {
+    pub fn advance_time<M: MemoryBus + ?Sized>(&mut self, memory: &mut M, delta: Duration) {
         self.rtc.advance(delta);
         self.bda_time.advance(memory, delta);
     }
@@ -168,12 +169,7 @@ impl Bios {
         self.keyboard_queue.push_back(key);
     }
 
-    pub fn post(
-        &mut self,
-        cpu: &mut CpuState,
-        bus: &mut dyn BiosBus,
-        disk: &mut dyn BlockDevice,
-    ) {
+    pub fn post(&mut self, cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockDevice) {
         self.post_impl(cpu, bus, disk);
     }
 
@@ -221,13 +217,17 @@ mod tests {
 
         let read_vec = |mem: &PhysicalMemory, v: u8| -> (u16, u16) {
             let addr = (v as u64) * 4;
-            (mem.read_u16(addr), mem.read_u16(addr + 2))
+            (
+                MemoryAccess::read_u16(mem, addr),
+                MemoryAccess::read_u16(mem, addr + 2),
+            )
         };
 
         assert_eq!(read_vec(&mem, 0x10), (INT10_STUB_OFFSET, BIOS_SEGMENT));
         assert_eq!(read_vec(&mem, 0x13), (INT13_STUB_OFFSET, BIOS_SEGMENT));
         assert_eq!(read_vec(&mem, 0x15), (INT15_STUB_OFFSET, BIOS_SEGMENT));
         assert_eq!(read_vec(&mem, 0x16), (INT16_STUB_OFFSET, BIOS_SEGMENT));
+        assert_eq!(read_vec(&mem, 0x1A), (INT1A_STUB_OFFSET, BIOS_SEGMENT));
     }
 
     #[test]
@@ -239,13 +239,13 @@ mod tests {
 
         bios.post(&mut cpu, &mut mem, &mut disk);
 
-        let ebda_segment = mem.read_u16(BDA_BASE + 0x0E);
+        let ebda_segment = MemoryAccess::read_u16(&mem, BDA_BASE + 0x0E);
         assert_eq!(ebda_segment, (EBDA_BASE / 16) as u16);
 
-        let base_mem_kb = mem.read_u16(BDA_BASE + 0x13);
+        let base_mem_kb = MemoryAccess::read_u16(&mem, BDA_BASE + 0x13);
         assert_eq!(base_mem_kb, (EBDA_BASE / 1024) as u16);
 
-        let ebda_kb = mem.read_u16(EBDA_BASE);
+        let ebda_kb = MemoryAccess::read_u16(&mem, EBDA_BASE);
         assert_eq!(ebda_kb, (EBDA_SIZE / 1024) as u16);
     }
 

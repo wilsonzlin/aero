@@ -38,6 +38,7 @@ pub fn dispatch_interrupt(
         0x13 => handle_int13(cpu, bus, disk),
         0x15 => handle_int15(bios, cpu, bus),
         0x16 => handle_int16(bios, cpu),
+        0x1A => handle_int1a(bios, cpu, bus),
         _ => {
             // Safe default: do nothing and return.
             eprintln!("BIOS: unhandled interrupt {:02x}", vector);
@@ -359,6 +360,104 @@ fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
         }
         _ => {
             eprintln!("BIOS: unhandled INT 16h AH={ah:02x}");
+            cpu.rflags |= FLAG_CF;
+        }
+    }
+}
+
+fn handle_int1a(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
+    let ah = ((cpu.rax >> 8) & 0xFF) as u8;
+    match ah {
+        0x00 => {
+            // Get system time: CX:DX = ticks since midnight, AL = midnight flag.
+            let ticks = bios.bda_time.tick_count();
+            let midnight_flag = bios.bda_time.midnight_flag();
+
+            cpu.rcx = (cpu.rcx & !0xFFFF) | ((ticks >> 16) as u64);
+            cpu.rdx = (cpu.rdx & !0xFFFF) | ((ticks & 0xFFFF) as u64);
+            cpu.rax = (cpu.rax & !0xFF) | (midnight_flag as u64);
+            cpu.rflags &= !FLAG_CF;
+
+            bios.bda_time.clear_midnight_flag();
+            bios.bda_time.write_to_bda(bus);
+        }
+        0x01 => {
+            // Set system time from CX:DX.
+            let ticks = (((cpu.rcx & 0xFFFF) as u32) << 16) | ((cpu.rdx & 0xFFFF) as u32);
+            bios.bda_time.set_tick_count(bus, ticks);
+            let _ = bios
+                .rtc
+                .set_time_of_day(super::BdaTime::duration_from_ticks(ticks));
+
+            cpu.rax &= !0xFF00;
+            cpu.rflags &= !FLAG_CF;
+        }
+        0x02 => {
+            // Read RTC time.
+            let time = bios.rtc.read_time();
+            let cx = ((time.hour as u16) << 8) | (time.minute as u16);
+            let dx = ((time.second as u16) << 8) | (time.daylight_savings as u16);
+            cpu.rcx = (cpu.rcx & !0xFFFF) | (cx as u64);
+            cpu.rdx = (cpu.rdx & !0xFFFF) | (dx as u64);
+            cpu.rax &= !0xFF00;
+            cpu.rflags &= !FLAG_CF;
+        }
+        0x03 => {
+            // Set RTC time.
+            let cx = (cpu.rcx & 0xFFFF) as u16;
+            let dx = (cpu.rdx & 0xFFFF) as u16;
+            let hour = (cx >> 8) as u8;
+            let minute = (cx & 0xFF) as u8;
+            let second = (dx >> 8) as u8;
+            let daylight_savings = (dx & 0xFF) as u8;
+
+            match bios
+                .rtc
+                .set_time_cmos(hour, minute, second, daylight_savings)
+            {
+                Ok(()) => {
+                    bios.bda_time = super::BdaTime::from_rtc(&bios.rtc);
+                    bios.bda_time.write_to_bda(bus);
+                    cpu.rax &= !0xFF00;
+                    cpu.rflags &= !FLAG_CF;
+                }
+                Err(()) => {
+                    cpu.rax = (cpu.rax & !0xFF00) | (1u64 << 8);
+                    cpu.rflags |= FLAG_CF;
+                }
+            }
+        }
+        0x04 => {
+            // Read RTC date.
+            let date = bios.rtc.read_date();
+            let cx = ((date.century as u16) << 8) | (date.year as u16);
+            let dx = ((date.month as u16) << 8) | (date.day as u16);
+            cpu.rcx = (cpu.rcx & !0xFFFF) | (cx as u64);
+            cpu.rdx = (cpu.rdx & !0xFFFF) | (dx as u64);
+            cpu.rax &= !0xFF00;
+            cpu.rflags &= !FLAG_CF;
+        }
+        0x05 => {
+            // Set RTC date.
+            let cx = (cpu.rcx & 0xFFFF) as u16;
+            let dx = (cpu.rdx & 0xFFFF) as u16;
+            let century = (cx >> 8) as u8;
+            let year = (cx & 0xFF) as u8;
+            let month = (dx >> 8) as u8;
+            let day = (dx & 0xFF) as u8;
+
+            match bios.rtc.set_date_cmos(century, year, month, day) {
+                Ok(()) => {
+                    cpu.rax &= !0xFF00;
+                    cpu.rflags &= !FLAG_CF;
+                }
+                Err(()) => {
+                    cpu.rax = (cpu.rax & !0xFF00) | (1u64 << 8);
+                    cpu.rflags |= FLAG_CF;
+                }
+            }
+        }
+        _ => {
             cpu.rflags |= FLAG_CF;
         }
     }

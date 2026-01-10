@@ -64,3 +64,13 @@ impl MemoryBus for VecMemory {
     }
 }
 
+// Allow BIOS helpers to operate on the `machine` memory bus used by the HLE BIOS.
+impl<T: machine::MemoryAccess + ?Sized> MemoryBus for T {
+    fn read_u8(&self, addr: u64) -> u8 {
+        machine::MemoryAccess::read_u8(self, addr)
+    }
+
+    fn write_u8(&mut self, addr: u64, value: u8) {
+        machine::MemoryAccess::write_u8(self, addr, value)
+    }
+}

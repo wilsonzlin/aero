@@ -1,6 +1,6 @@
 use super::{
     BIOS_SIZE, DEFAULT_INT_STUB_OFFSET, INT10_STUB_OFFSET, INT13_STUB_OFFSET, INT15_STUB_OFFSET,
-    INT16_STUB_OFFSET,
+    INT16_STUB_OFFSET, INT1A_STUB_OFFSET,
 };
 
 /// Build the 64KiB BIOS ROM image.
@@ -16,6 +16,7 @@ pub fn build_bios_rom() -> Vec<u8> {
     write_stub(&mut rom, INT13_STUB_OFFSET, &stub);
     write_stub(&mut rom, INT15_STUB_OFFSET, &stub);
     write_stub(&mut rom, INT16_STUB_OFFSET, &stub);
+    write_stub(&mut rom, INT1A_STUB_OFFSET, &stub);
 
     rom
 }
