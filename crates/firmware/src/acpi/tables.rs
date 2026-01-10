@@ -115,6 +115,20 @@ fn build_fadt(dsdt_address: u64) -> Vec<u8> {
     table[175] = 2;
     table[176..184].copy_from_slice(&(PM1A_CNT_BLK as u64).to_le_bytes());
 
+    // ResetReg/ResetValue: expose the standard chipset reset control port 0xCF9.
+    //
+    // Many guest OSes (including Windows) rely on the ACPI reset register as the
+    // primary reboot path.
+    const FADT_FLAG_RESET_REG_SUP: u32 = 1 << 10;
+    table[112..116].copy_from_slice(&FADT_FLAG_RESET_REG_SUP.to_le_bytes());
+    // Generic Address Structure @ 116 (12 bytes): System I/O, 8-bit, byte access, port 0xCF9.
+    table[116] = 0x01; // address_space_id = System I/O
+    table[117] = 8; // register_bit_width
+    table[118] = 0; // register_bit_offset
+    table[119] = 1; // access_size = byte
+    table[120..128].copy_from_slice(&(0x0CF9u64).to_le_bytes()); // address
+    table[128] = 0x06; // reset value
+
     finalize_checksum(&mut table);
     table
 }
@@ -434,6 +448,15 @@ mod tests {
         assert_eq!(read_u32_le(&tables.fadt, 64), 0x404);
         assert_eq!(tables.fadt[88], 4);
         assert_eq!(tables.fadt[89], 2);
+
+        // Reset register (FADT.ResetReg/ResetValue).
+        let flags = read_u32_le(&tables.fadt, 112);
+        assert_ne!(flags & (1 << 10), 0, "RESET_REG_SUP should be set");
+        assert_eq!(tables.fadt[116], 0x01, "ResetReg must be System I/O");
+        assert_eq!(tables.fadt[117], 8, "ResetReg must be 8-bit");
+        assert_eq!(tables.fadt[119], 1, "ResetReg must use byte access");
+        assert_eq!(read_gas_address(&tables.fadt, 116), 0x0CF9);
+        assert_eq!(tables.fadt[128], 0x06, "ResetValue must be 0x06");
 
         // X_PM1a_EVT_BLK @ 148, X_PM1a_CNT_BLK @ 172
         assert_eq!(read_gas_address(&tables.fadt, 148), 0x400);
