@@ -19,9 +19,11 @@
     <ClInclude Include="include\aerogpu_d3d10_11_umd.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\protocol\aerogpu_protocol.h">
+    <ClInclude Include="src\aerogpu_cmd_writer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\protocol\aerogpu_cmd.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>
-

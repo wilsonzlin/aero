@@ -324,11 +324,54 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_shader_constants_f) == 24);
  * CREATE_INPUT_LAYOUT:
  * Opaque blob that describes the vertex input layout.
  *
+ * For D3D10/11 UMDs, the recommended blob format is:
+ *   struct aerogpu_input_layout_blob_header
+ *   struct aerogpu_input_layout_element_dxgi elements[element_count]
+ *
+ * D3D9 UMDs may instead upload a raw D3D9 vertex declaration token stream.
+ * Consumers should discriminate blob types using the header magic.
+ *
  * Payload format:
  *   struct aerogpu_cmd_create_input_layout
  *   uint8_t blob[blob_size_bytes]
  *   padding to 4-byte alignment
  */
+
+#define AEROGPU_INPUT_LAYOUT_BLOB_MAGIC 0x59414C49u /* "ILAY" little-endian */
+#define AEROGPU_INPUT_LAYOUT_BLOB_VERSION 1u
+
+#pragma pack(push, 1)
+struct aerogpu_input_layout_blob_header {
+  uint32_t magic; /* AEROGPU_INPUT_LAYOUT_BLOB_MAGIC */
+  uint32_t version; /* AEROGPU_INPUT_LAYOUT_BLOB_VERSION */
+  uint32_t element_count;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_input_layout_blob_header) == 16);
+
+/*
+ * D3D10/11-style input element. Fields intentionally mirror D3D11_INPUT_ELEMENT_DESC
+ * (but with the semantic name represented as a 32-bit FNV-1a hash).
+ *
+ * `dxgi_format` is the numeric value of DXGI_FORMAT (to avoid duplicating DXGI enums
+ * in the protocol).
+ */
+#pragma pack(push, 1)
+struct aerogpu_input_layout_element_dxgi {
+  uint32_t semantic_name_hash; /* FNV-1a hash of ASCII semantic name */
+  uint32_t semantic_index;
+  uint32_t dxgi_format; /* DXGI_FORMAT numeric */
+  uint32_t input_slot;
+  uint32_t aligned_byte_offset;
+  uint32_t input_slot_class; /* 0: per-vertex, 1: per-instance */
+  uint32_t instance_data_step_rate;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_input_layout_element_dxgi) == 28);
+
 #pragma pack(push, 1)
 struct aerogpu_cmd_create_input_layout {
   struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_CREATE_INPUT_LAYOUT */

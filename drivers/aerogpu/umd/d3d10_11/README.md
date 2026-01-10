@@ -37,7 +37,10 @@ All resources (buffers, textures, views) are referenced in the command stream us
 The core emission happens in `src/aerogpu_d3d10_11_umd.cpp` by building a linear command buffer consisting of:
 
 ```
-[AEROGPU_CMD_HEADER][payload...][AEROGPU_CMD_HEADER][payload...]...
+[aerogpu_cmd_stream_header]
+  [aerogpu_cmd_hdr + packet fields (+ payload...)]
+  [aerogpu_cmd_hdr + packet fields (+ payload...)]
+  ...
 ```
 
 ## Build

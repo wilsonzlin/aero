@@ -16,8 +16,6 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include "../../../protocol/aerogpu_protocol.h"
-
 // -------------------------------------------------------------------------------------------------
 // Platform / calling convention
 // -------------------------------------------------------------------------------------------------
@@ -49,6 +47,9 @@
   #endif
   #ifndef E_INVALIDARG
     #define E_INVALIDARG ((HRESULT)0x80070057L)
+  #endif
+  #ifndef E_OUTOFMEMORY
+    #define E_OUTOFMEMORY ((HRESULT)0x8007000EL)
   #endif
 #endif
 
