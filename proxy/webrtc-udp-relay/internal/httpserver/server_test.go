@@ -174,6 +174,88 @@ func TestICEEndpoint_RejectsCrossOrigin(t *testing.T) {
 	}
 }
 
+func TestICEEndpoint_AllowsConfiguredOrigin(t *testing.T) {
+	cfg := config.Config{
+		ListenAddr:      "127.0.0.1:0",
+		LogFormat:       config.LogFormatText,
+		LogLevel:        slog.LevelInfo,
+		ShutdownTimeout: 2 * time.Second,
+		Mode:            config.ModeDev,
+		AllowedOrigins:  []string{"https://app.example.com"},
+		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
+	}
+
+	baseURL := startTestServer(t, cfg, nil)
+
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Origin", "https://app.example.com")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "https://app.example.com" {
+		t.Fatalf("Access-Control-Allow-Origin=%q, want %q", got, "https://app.example.com")
+	}
+
+	if got := resp.Header.Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Fatalf("Access-Control-Allow-Credentials=%q, want %q", got, "true")
+	}
+	if got := resp.Header.Get("Access-Control-Expose-Headers"); !strings.Contains(got, "X-Request-ID") {
+		t.Fatalf("Access-Control-Expose-Headers=%q, expected it to include X-Request-ID", got)
+	}
+}
+
+func TestOriginMiddleware_Preflight(t *testing.T) {
+	cfg := config.Config{
+		ListenAddr:      "127.0.0.1:0",
+		LogFormat:       config.LogFormatText,
+		LogLevel:        slog.LevelInfo,
+		ShutdownTimeout: 2 * time.Second,
+		Mode:            config.ModeDev,
+		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
+	}
+
+	baseURL := startTestServer(t, cfg, nil)
+
+	req, err := http.NewRequest(http.MethodOptions, baseURL+"/webrtc/ice", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Origin", baseURL)
+	req.Header.Set("Access-Control-Request-Method", "GET")
+	req.Header.Set("Access-Control-Request-Headers", "content-type")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != baseURL {
+		t.Fatalf("Access-Control-Allow-Origin=%q, want %q", got, baseURL)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Methods"); !strings.Contains(got, "GET") {
+		t.Fatalf("Access-Control-Allow-Methods=%q, expected it to include GET", got)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Headers"); got != "content-type" {
+		t.Fatalf("Access-Control-Allow-Headers=%q, want %q", got, "content-type")
+	}
+}
+
 func TestReadyzFailsOnInvalidICEConfig(t *testing.T) {
 	t.Setenv("AERO_ICE_SERVERS_JSON", "[")
 
