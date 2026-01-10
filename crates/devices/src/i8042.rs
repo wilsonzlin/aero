@@ -44,6 +44,17 @@ impl I8042Ports {
         self.inner.clone()
     }
 
+    /// Convenience helper to route i8042 IRQ1/IRQ12 pulses to the platform interrupt router.
+    ///
+    /// The i8042 controller calls [`IrqSink::raise_irq`] when loading a byte into the output
+    /// buffer, which matches an edge-triggered interrupt source. The platform router models
+    /// edge detection by tracking line level, so we explicitly pulse the line high then low.
+    pub fn connect_irqs_to_platform_interrupts(&self, interrupts: Rc<RefCell<PlatformInterrupts>>) {
+        self.inner
+            .borrow_mut()
+            .set_irq_sink(Box::new(PlatformIrqSink::new(interrupts)));
+    }
+
     pub fn port60(&self) -> I8042Port {
         I8042Port::new(self.inner.clone(), I8042_DATA_PORT)
     }
@@ -161,4 +172,3 @@ impl SystemControlSink for PlatformSystemControlSink {
         }
     }
 }
-

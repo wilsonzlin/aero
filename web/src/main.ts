@@ -10,8 +10,8 @@ import { importFileToOpfs, openFileHandle, removeOpfsEntry } from "./platform/op
 import { RemoteStreamingDisk } from "./platform/remote_disk";
 import { ensurePersistentStorage, getPersistentStorageInfo, getStorageEstimate } from "./platform/storage_quota";
 import { initAeroStatusApi } from "./api/status";
-import { KeyboardCapture } from "./input/keyboard";
-import { MouseCapture } from "./input/mouse";
+import { InputCapture } from "./input/input_capture";
+import { InputEventType, type InputBatchTarget } from "./input/event_queue";
 import { installPerfHud } from "./perf/hud_entry";
 import { HEADER_INDEX_FRAME_COUNTER, HEADER_INDEX_HEIGHT, HEADER_INDEX_WIDTH, wrapSharedFramebuffer } from "./display/framebuffer_protocol";
 import { VgaPresenter } from "./display/vga_presenter";
@@ -1343,6 +1343,7 @@ function renderMicrobenchPanel(): HTMLElement {
 
 function renderInputPanel(): HTMLElement {
   const log = el("pre", { text: "" });
+  const status = el("div", { class: "mono", text: "" });
   const canvas = el("canvas", {
     width: "640",
     height: "360",
@@ -1355,31 +1356,40 @@ function renderInputPanel(): HTMLElement {
     log.scrollTop = log.scrollHeight;
   };
 
-  const keyboard = new KeyboardCapture(canvas, (bytes) => {
-    append(`kbd: ${bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ")}`);
-  });
-  keyboard.attach();
+  const inputTarget: InputBatchTarget = {
+    postMessage: (msg, transfer) => {
+      const words = new Int32Array(msg.buffer);
+      const count = words[0] >>> 0;
+      const base = 2;
+      for (let i = 0; i < count; i += 1) {
+        const off = base + i * 4;
+        const type = words[off] >>> 0;
+        if (type === InputEventType.KeyScancode) {
+          const packed = words[off + 2] >>> 0;
+          const len = words[off + 3] >>> 0;
+          const bytes = [];
+          for (let j = 0; j < len; j += 1) bytes.push((packed >>> (j * 8)) & 0xff);
+          append(`kbd: ${bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ")}`);
+        } else if (type === InputEventType.MouseButtons) {
+          append(`mouse: buttons=0x${(words[off + 2] >>> 0).toString(16)}`);
+        } else if (type === InputEventType.MouseWheel) {
+          append(`mouse: wheel=${words[off + 2] | 0}`);
+        }
+      }
 
-  const mouse = new MouseCapture(
-    canvas,
-    (dx, dy, wheel) => {
-      if (wheel !== 0) {
-        append(`mouse: wheel=${wheel}`);
-        return;
-      }
-      if (dx !== 0 || dy !== 0) {
-        append(`mouse: dx=${dx} dy=${dy}`);
+      const ioWorker = workerCoordinator.getIoWorker();
+      if (ioWorker) {
+        ioWorker.postMessage(msg, transfer);
       }
     },
-    (button, pressed) => {
-      append(`mouse: button=${button} ${pressed ? "down" : "up"}`);
-    },
-  );
-  mouse.attach();
+  };
+
+  const capture = new InputCapture(canvas, inputTarget);
+  capture.start();
 
   const hint = el("div", {
     class: "mono",
-    text: "Click the canvas to focus + request pointer lock. Keyboard events are captured via KeyboardEvent.code.",
+    text: "Click the canvas to focus + request pointer lock. Keyboard/mouse events are batched and forwarded to the I/O worker.",
   });
 
   const clear = el("button", {
@@ -1389,11 +1399,22 @@ function renderInputPanel(): HTMLElement {
     },
   });
 
+  const updateStatus = (): void => {
+    status.textContent =
+      `pointerLock=${capture.pointerLocked ? "yes" : "no"}  ` +
+      `ioWorker=${workerCoordinator.getIoWorker() ? "ready" : "stopped"}  ` +
+      `ioBatches=${workerCoordinator.getIoInputBatchCounter()}  ` +
+      `ioEvents=${workerCoordinator.getIoInputEventCounter()}`;
+  };
+  updateStatus();
+  globalThis.setInterval(updateStatus, 250);
+
   return el(
     "div",
     { class: "panel" },
     el("h2", { text: "Input capture (PS/2 Set-2 scancodes)" }),
     hint,
+    status,
     el("div", { class: "row" }, clear),
     canvas,
     log,

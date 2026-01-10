@@ -185,6 +185,20 @@ export class WorkerCoordinator {
     return Atomics.load(this.shared.guestI32, 0);
   }
 
+  getIoInputBatchCounter(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.IoInputBatchCounter);
+  }
+
+  getIoInputEventCounter(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.IoInputEventCounter);
+  }
+
+  getIoWorker(): Worker | null {
+    return this.workers.io?.worker ?? null;
+  }
+
   getVgaFramebuffer(): SharedArrayBuffer | null {
     return this.shared?.vgaFramebuffer ?? null;
   }
