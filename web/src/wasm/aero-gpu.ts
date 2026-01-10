@@ -5,7 +5,7 @@
 // - Until then, this stub lets the browser worker harness compile and provides
 //   deterministic WebGPU/WebGL2 test pattern + screenshot paths for smoke testing.
 
-import type { BackendKind, GpuAdapterInfo, GpuWorkerInitOptions } from '../ipc/gpu-messages';
+import type { BackendKind, FrameTimingsReport, GpuAdapterInfo, GpuWorkerInitOptions } from '../ipc/gpu-messages';
 
 import type { PresentationBackend } from '../../gpu/backend';
 import { WebGL2Backend } from '../../gpu/webgl2_backend';
@@ -183,4 +183,10 @@ export async function request_screenshot(): Promise<Uint8Array> {
 
   const captured = await backendImpl.captureFrame();
   return new Uint8Array(captured.data.buffer, captured.data.byteOffset, captured.data.byteLength);
+}
+
+export function get_frame_timings(): FrameTimingsReport | null {
+  // Not implemented in the JS stub. Real implementations should surface the
+  // latest CPU/GPU timing report from the wasm runtime.
+  return null;
 }

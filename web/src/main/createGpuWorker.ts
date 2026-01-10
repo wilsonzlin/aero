@@ -1,4 +1,5 @@
 import type {
+  FrameTimingsReport,
   GpuWorkerGpuErrorMessage,
   GpuWorkerErrorEventMessage,
   GpuWorkerInitOptions,
@@ -6,6 +7,7 @@ import type {
   GpuWorkerReadyMessage,
   GpuWorkerScreenshotMessage,
   GpuWorkerStatsMessage,
+  GpuWorkerTimingsMessage,
 } from '../ipc/gpu-messages';
 import { perf } from '../perf/perf';
 
@@ -26,6 +28,7 @@ export interface GpuWorkerHandle {
   resize(width: number, height: number, devicePixelRatio: number): void;
   presentTestPattern(): void;
   requestScreenshot(): Promise<GpuWorkerScreenshotMessage>;
+  requestTimings(): Promise<FrameTimingsReport | null>;
   shutdown(): void;
 }
 
@@ -54,12 +57,17 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     number,
     { resolve: (msg: GpuWorkerScreenshotMessage) => void; reject: (err: unknown) => void }
   >();
+  const timingsRequests = new Map<number, { resolve: (timings: FrameTimingsReport | null) => void; reject: (err: unknown) => void }>();
 
   function rejectAllPending(err: unknown): void {
     for (const [, pending] of screenshotRequests) {
       pending.reject(err);
     }
     screenshotRequests.clear();
+    for (const [, pending] of timingsRequests) {
+      pending.reject(err);
+    }
+    timingsRequests.clear();
   }
 
   worker.addEventListener('message', (event) => {
@@ -76,6 +84,13 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
         if (!pending) return;
         screenshotRequests.delete(msg.requestId);
         pending.resolve(msg);
+        break;
+      }
+      case 'timings': {
+        const pending = timingsRequests.get(msg.requestId);
+        if (!pending) return;
+        timingsRequests.delete(msg.requestId);
+        pending.resolve((msg as GpuWorkerTimingsMessage).timings);
         break;
       }
       case 'gpu_error': {
@@ -144,6 +159,15 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     });
   }
 
+  function requestTimings(): Promise<FrameTimingsReport | null> {
+    const requestId = nextRequestId++;
+    worker.postMessage({ type: 'request_timings', requestId });
+
+    return new Promise<FrameTimingsReport | null>((resolve, reject) => {
+      timingsRequests.set(requestId, { resolve, reject });
+    });
+  }
+
   function shutdown(): void {
     worker.postMessage({ type: 'shutdown' });
     worker.terminate();
@@ -155,6 +179,7 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     resize,
     presentTestPattern,
     requestScreenshot,
+    requestTimings,
     shutdown,
   };
 }

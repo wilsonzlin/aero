@@ -7,6 +7,7 @@ import wasmInit, {
   adapter_info,
   backend_kind,
   capabilities,
+  get_frame_timings,
   init_gpu,
   present_test_pattern,
   request_screenshot,
@@ -14,6 +15,11 @@ import wasmInit, {
 } from "../wasm/aero-gpu";
 
 import type {
+  BackendKind,
+  FrameTimingsReport,
+  GpuErrorCategory,
+  GpuErrorEvent,
+  GpuErrorSeverity,
   GpuWorkerErrorKind,
   GpuWorkerErrorPayload,
   GpuWorkerGpuErrorMessage,
@@ -22,12 +28,10 @@ import type {
   GpuWorkerInitMessage,
   GpuWorkerOutgoingMessage,
   GpuWorkerReadyMessage,
+  GpuWorkerRequestTimingsMessage,
   GpuWorkerResizeMessage,
   GpuWorkerScreenshotMessage,
-  GpuErrorEvent,
-  GpuErrorSeverity,
-  GpuErrorCategory,
-  BackendKind,
+  GpuWorkerTimingsMessage,
 } from "../ipc/gpu-messages";
 
 type WorkerScope = DedicatedWorkerGlobalScope;
@@ -398,6 +402,18 @@ async function handleRequestScreenshot(requestId: number): Promise<void> {
   }
 }
 
+async function handleRequestTimings(message: GpuWorkerRequestTimingsMessage): Promise<void> {
+  if (!initPromise || !isReady) return;
+
+  try {
+    const timings = await callMaybeAsync(() => get_frame_timings()) as FrameTimingsReport | null;
+    const response: GpuWorkerTimingsMessage = { type: "timings", requestId: message.requestId, timings };
+    postMessage(response);
+  } catch (err) {
+    forwardNonFatal("unexpected", err);
+  }
+}
+
 async function handleShutdown(): Promise<void> {
   // Best-effort: the wasm side may expose explicit cleanup hooks in the future.
   scope.close();
@@ -424,6 +440,9 @@ scope.addEventListener("message", (event: MessageEvent) => {
         break;
       case "request_screenshot":
         await handleRequestScreenshot(message.requestId);
+        break;
+      case "request_timings":
+        await handleRequestTimings(message);
         break;
       case "shutdown":
         await handleShutdown();

@@ -1,5 +1,13 @@
 export type BackendKind = "webgpu" | "webgl2";
 
+export interface FrameTimingsReport {
+  frame_index: number;
+  backend: BackendKind;
+  cpu_encode_us: number;
+  cpu_submit_us: number;
+  gpu_us?: number;
+}
+
 export interface GpuWorkerInitOptions {
   /**
    * Prefer attempting WebGPU first. If WebGPU initialization fails, the worker
@@ -51,6 +59,11 @@ export interface GpuWorkerRequestScreenshotMessage {
   requestId: number;
 }
 
+export interface GpuWorkerRequestTimingsMessage {
+  type: "request_timings";
+  requestId: number;
+}
+
 export interface GpuWorkerShutdownMessage {
   type: "shutdown";
 }
@@ -60,6 +73,7 @@ export type GpuWorkerIncomingMessage =
   | GpuWorkerResizeMessage
   | GpuWorkerPresentTestPatternMessage
   | GpuWorkerRequestScreenshotMessage
+  | GpuWorkerRequestTimingsMessage
   | GpuWorkerShutdownMessage;
 
 export interface GpuAdapterInfo {
@@ -98,6 +112,12 @@ export interface GpuWorkerScreenshotMessage {
    * top-to-bottom).
    */
   origin: "top-left";
+}
+
+export interface GpuWorkerTimingsMessage {
+  type: "timings";
+  requestId: number;
+  timings: FrameTimingsReport | null;
 }
 
 export type GpuWorkerErrorKind =
@@ -167,7 +187,7 @@ export interface GpuWorkerStatsMessage {
 export type GpuWorkerOutgoingMessage =
   | GpuWorkerReadyMessage
   | GpuWorkerScreenshotMessage
+  | GpuWorkerTimingsMessage
   | GpuWorkerGpuErrorMessage
   | GpuWorkerErrorEventMessage
   | GpuWorkerStatsMessage;
-
