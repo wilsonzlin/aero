@@ -34,6 +34,7 @@ pub struct HdaController {
     gsts: u16,
     intctl: u32,
     intsts: u32,
+    posbuf: DmaPositionBufferRegs,
 
     // CORB/RIRB.
     corb: Corb,
@@ -66,6 +67,7 @@ impl HdaController {
             gsts: 0,
             intctl: 0,
             intsts: 0,
+            posbuf: DmaPositionBufferRegs::default(),
             corb: Corb::new(),
             rirb: Rirb::new(),
             out_stream0: HdaStream::new(StreamId::Out0),
@@ -96,6 +98,7 @@ impl HdaController {
         // Stream DMA.
         self.out_stream0
             .process(mem, &mut self.audio, &mut self.intsts);
+        self.update_position_buffer(mem);
 
         self.recalc_intsts_summary();
         self.update_irq_line();
@@ -112,6 +115,8 @@ impl HdaController {
             Some(HdaMmioReg::Gsts) => (self.gsts as u64) & mask_for_size(size),
             Some(HdaMmioReg::Intctl) => (self.intctl as u64) & mask_for_size(size),
             Some(HdaMmioReg::Intsts) => (self.intsts as u64) & mask_for_size(size),
+            Some(HdaMmioReg::Dplbase) => (self.posbuf.dplbase() as u64) & mask_for_size(size),
+            Some(HdaMmioReg::Dpubase) => (self.posbuf.dpubase() as u64) & mask_for_size(size),
             Some(HdaMmioReg::Corb(reg)) => self.corb.mmio_read(reg, size),
             Some(HdaMmioReg::Rirb(reg)) => self.rirb.mmio_read(reg, size),
             Some(HdaMmioReg::Stream0(reg)) => self.out_stream0.mmio_read(reg, size),
@@ -162,6 +167,14 @@ impl HdaController {
                 self.recalc_intsts_summary();
                 self.update_irq_line();
             }
+            Some(HdaMmioReg::Dplbase) => {
+                self.posbuf
+                    .write_dplbase((value as u32) & mask_for_size(size) as u32);
+            }
+            Some(HdaMmioReg::Dpubase) => {
+                self.posbuf
+                    .write_dpubase((value as u32) & mask_for_size(size) as u32);
+            }
             Some(HdaMmioReg::Corb(reg)) => {
                 self.corb.mmio_write(reg, size, value);
             }
@@ -187,12 +200,21 @@ impl HdaController {
         self.gsts = 0;
         self.intctl = 0;
         self.intsts = 0;
+        self.posbuf = DmaPositionBufferRegs::default();
         self.corb.reset();
         self.rirb.reset();
         self.out_stream0.reset();
         self.codec.reset();
         self.audio.clear();
         self.irq_line = false;
+    }
+
+    fn update_position_buffer(&mut self, mem: &mut dyn MemoryBus) {
+        let Some(entry_addr) = self.posbuf.stream_entry_addr(StreamId::Out0.posbuf_index()) else {
+            return;
+        };
+        mem.write_u32(entry_addr, self.out_stream0.lpib());
+        mem.write_u32(entry_addr + 4, 0);
     }
 
     fn process_corb(&mut self, mem: &mut dyn MemoryBus) {
@@ -401,5 +423,80 @@ mod tests {
         // Clear stream status (SDSTS is in high byte of SDCTL register).
         hda.mmio_write(HDA_SD0CTL, 4, (SD_STS_BCIS as u64) << 24);
         assert_eq!(hda.mmio_read(HDA_INTSTS, 4) as u32 & INTSTS_SIS0, 0);
+    }
+
+    #[test]
+    fn position_buffer_is_not_written_when_disabled() {
+        let mut mem = TestMem::new(0x40_000);
+        let mut hda = HdaController::new();
+        hda.mmio_write(HDA_GCTL, 4, GCTL_CRST as u64);
+
+        let posbuf_base = 0x7000u64;
+        mem.write_u32(posbuf_base, 0xdead_beef);
+        hda.mmio_write(HDA_DPUBASE, 4, 0);
+        hda.mmio_write(HDA_DPLBASE, 4, posbuf_base as u64);
+
+        let bdl_base = 0x4000u64;
+        let buf0 = 0x5000u64;
+        mem.write_u64(bdl_base + 0, buf0);
+        mem.write_u32(bdl_base + 8, 8);
+        mem.write_u32(bdl_base + 12, 0);
+        mem.write_physical(buf0, &[1, 2, 3, 4, 5, 6, 7, 8]);
+
+        hda.mmio_write(HDA_SD0BDPL, 4, bdl_base as u64);
+        hda.mmio_write(HDA_SD0BDPU, 4, 0);
+        hda.mmio_write(HDA_SD0LVI, 2, 0);
+        hda.mmio_write(HDA_SD0CBL, 4, 16);
+        hda.mmio_write(HDA_SD0FMT, 2, 0x0011);
+
+        hda.mmio_write(HDA_SD0CTL, 4, (SD_CTL_SRST | SD_CTL_RUN) as u64);
+        hda.poll(&mut mem);
+
+        assert_eq!(hda.mmio_read(HDA_SD0LPIB, 4) as u32, 8);
+        assert_eq!(mem.read_u32(posbuf_base), 0xdead_beef);
+    }
+
+    #[test]
+    fn position_buffer_tracks_lpib_and_wraps_at_cbl() {
+        let mut mem = TestMem::new(0x80_000);
+        let mut hda = HdaController::new();
+        hda.mmio_write(HDA_GCTL, 4, GCTL_CRST as u64);
+
+        let posbuf_base = 0x7000u64;
+        hda.mmio_write(HDA_DPUBASE, 4, 0);
+        hda.mmio_write(
+            HDA_DPLBASE,
+            4,
+            (posbuf_base | DPLBASE_ENABLE as u64) as u64,
+        );
+
+        let bdl_base = 0x4000u64;
+        let buf0 = 0x5000u64;
+        let buf1 = 0x6000u64;
+
+        mem.write_u64(bdl_base + 0, buf0);
+        mem.write_u32(bdl_base + 8, 300);
+        mem.write_u32(bdl_base + 12, 0);
+        mem.write_u64(bdl_base + 16, buf1);
+        mem.write_u32(bdl_base + 24, 300);
+        mem.write_u32(bdl_base + 28, 1);
+
+        mem.write_physical(buf0, &[0xaa; 300]);
+        mem.write_physical(buf1, &[0xbb; 300]);
+
+        hda.mmio_write(HDA_SD0BDPL, 4, bdl_base as u64);
+        hda.mmio_write(HDA_SD0BDPU, 4, 0);
+        hda.mmio_write(HDA_SD0LVI, 2, 1);
+        hda.mmio_write(HDA_SD0CBL, 4, 600);
+        hda.mmio_write(HDA_SD0FMT, 2, 0x0011);
+        hda.mmio_write(HDA_SD0CTL, 4, (SD_CTL_SRST | SD_CTL_RUN) as u64);
+
+        hda.poll(&mut mem);
+        assert_eq!(hda.mmio_read(HDA_SD0LPIB, 4) as u32, 300);
+        assert_eq!(mem.read_u32(posbuf_base), 300);
+
+        hda.poll(&mut mem);
+        assert_eq!(hda.mmio_read(HDA_SD0LPIB, 4) as u32, 0);
+        assert_eq!(mem.read_u32(posbuf_base), 0);
     }
 }

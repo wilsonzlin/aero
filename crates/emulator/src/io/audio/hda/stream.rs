@@ -219,6 +219,10 @@ impl HdaStream {
         (self.ctl & SD_CTL_RUN != 0) && (self.ctl & SD_CTL_SRST != 0)
     }
 
+    pub fn lpib(&self) -> u32 {
+        self.lpib
+    }
+
     pub fn mmio_read(&self, reg: StreamReg, size: usize) -> u64 {
         match reg {
             StreamReg::CtlSts => {
@@ -296,7 +300,13 @@ impl HdaStream {
                 continue;
             }
 
-            let bytes = remaining as usize;
+            let format = StreamFormat::from_hda_fmt(self.fmt);
+            let bytes_per_sample = ((format.bits_per_sample as u32 + 7) / 8).max(1);
+            let bytes_per_frame = bytes_per_sample.saturating_mul(format.channels as u32);
+            let bytes_per_tick = bytes_per_frame.saturating_mul(128).max(1);
+            let take = remaining.min(bytes_per_tick);
+
+            let bytes = take as usize;
             self.dma_scratch.resize(bytes, 0);
             mem.read_physical(
                 entry.addr + self.bdl_offset as u64,
@@ -304,8 +314,8 @@ impl HdaStream {
             );
             audio.push(&self.dma_scratch[..bytes]);
 
-            self.bdl_offset += remaining;
-            self.lpib = self.lpib.wrapping_add(remaining) % self.cbl;
+            self.bdl_offset += take;
+            self.lpib = self.lpib.wrapping_add(take) % self.cbl;
             self.finish_bdl_entry(entry, intsts);
             break;
         }

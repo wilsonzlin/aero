@@ -26,6 +26,9 @@ pub const HDA_RIRBCTL: u32 = 0x5C;
 pub const HDA_RIRBSTS: u32 = 0x5D;
 pub const HDA_RIRBSIZE: u32 = 0x5E;
 
+pub const HDA_DPLBASE: u32 = 0x70;
+pub const HDA_DPUBASE: u32 = 0x74;
+
 // CORBSIZE/RIRBSIZE capability bits (RO) as defined by the Intel HDA spec.
 pub const RING_SIZE_CAP_2: u8 = 1 << 4;
 pub const RING_SIZE_CAP_16: u8 = 1 << 5;
@@ -59,9 +62,20 @@ pub const SD_CTL_RUN: u32 = 1 << 1;
 
 pub const SD_STS_BCIS: u8 = 1 << 2;
 
+pub const DPLBASE_ENABLE: u32 = 1 << 0;
+const DPLBASE_BASE_MASK: u32 = !0x7f;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum StreamId {
     Out0,
+}
+
+impl StreamId {
+    pub fn posbuf_index(self) -> u8 {
+        match self {
+            StreamId::Out0 => 0,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -75,6 +89,8 @@ pub enum HdaMmioReg {
     Gsts,
     Intctl,
     Intsts,
+    Dplbase,
+    Dpubase,
     Corb(CorbReg),
     Rirb(RirbReg),
     Stream0(StreamReg),
@@ -92,6 +108,8 @@ impl HdaMmioReg {
             HDA_GSTS => Some(Self::Gsts),
             HDA_INTCTL => Some(Self::Intctl),
             HDA_INTSTS => Some(Self::Intsts),
+            HDA_DPLBASE => Some(Self::Dplbase),
+            HDA_DPUBASE => Some(Self::Dpubase),
             HDA_CORBLBASE => Some(Self::Corb(CorbReg::Lbase)),
             HDA_CORBUBASE => Some(Self::Corb(CorbReg::Ubase)),
             HDA_CORBWP => Some(Self::Corb(CorbReg::Wp)),
@@ -174,5 +192,45 @@ pub fn rirb_entries(size_reg: u8) -> u16 {
         1 => 16,
         2 => 256,
         _ => 2,
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DmaPositionBufferRegs {
+    dplbase: u32,
+    dpubase: u32,
+}
+
+impl DmaPositionBufferRegs {
+    pub fn dplbase(&self) -> u32 {
+        self.dplbase
+    }
+
+    pub fn dpubase(&self) -> u32 {
+        self.dpubase
+    }
+
+    pub fn write_dplbase(&mut self, value: u32) {
+        self.dplbase = value;
+    }
+
+    pub fn write_dpubase(&mut self, value: u32) {
+        self.dpubase = value;
+    }
+
+    pub fn enabled(&self) -> bool {
+        (self.dplbase & DPLBASE_ENABLE) != 0
+    }
+
+    pub fn base_addr(&self) -> u64 {
+        ((self.dpubase as u64) << 32) | (self.dplbase & DPLBASE_BASE_MASK) as u64
+    }
+
+    pub fn stream_entry_addr(&self, stream_index: u8) -> Option<u64> {
+        if !self.enabled() {
+            return None;
+        }
+
+        Some(self.base_addr() + (stream_index as u64) * 8)
     }
 }
