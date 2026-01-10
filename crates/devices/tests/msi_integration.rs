@@ -1,5 +1,5 @@
 use aero_devices::pci::{MsiCapability, PciConfigSpace};
-use aero_platform::interrupts::{ApicSystem, LocalApic};
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 
 struct TestPciDevice {
     config: PciConfigSpace,
@@ -20,10 +20,10 @@ impl TestPciDevice {
         &mut self.config
     }
 
-    fn raise_interrupt(&mut self, platform: &mut ApicSystem) -> bool {
+    fn raise_interrupt(&mut self, interrupts: &mut PlatformInterrupts) -> bool {
         if let Some(msi) = self.config.capability_mut::<MsiCapability>() {
             if msi.enabled() {
-                return msi.trigger(platform);
+                return msi.trigger(interrupts);
             }
         }
 
@@ -49,20 +49,23 @@ impl GuestCpu {
         self.idt_installed[vector as usize] = true;
     }
 
-    fn service_next_interrupt(&mut self, lapic: &mut LocalApic) {
-        let Some(vector) = lapic.take_pending() else {
+    fn service_next_interrupt(&mut self, interrupts: &mut PlatformInterrupts) {
+        let Some(vector) = interrupts.get_pending() else {
             return;
         };
 
+        interrupts.acknowledge(vector);
         assert!(self.idt_installed[vector as usize]);
         self.handled_vectors.push(vector);
+        interrupts.eoi(vector);
     }
 }
 
 #[test]
 fn msi_interrupt_reaches_guest_idt_vector() {
     let mut device = TestPciDevice::new();
-    let mut platform = ApicSystem::new_single_cpu();
+    let mut interrupts = PlatformInterrupts::new();
+    interrupts.set_mode(PlatformInterruptMode::Apic);
 
     let mut cpu = GuestCpu::new();
     cpu.install_isr(0x45);
@@ -80,9 +83,9 @@ fn msi_interrupt_reaches_guest_idt_vector() {
         .config_mut()
         .write(cap_offset + 0x02, 2, (ctrl | 0x0001) as u32);
 
-    assert!(device.raise_interrupt(&mut platform));
+    assert!(device.raise_interrupt(&mut interrupts));
     assert_eq!(device.legacy_intx_asserts, 0);
 
-    cpu.service_next_interrupt(platform.lapic0_mut());
+    cpu.service_next_interrupt(&mut interrupts);
     assert_eq!(cpu.handled_vectors, vec![0x45]);
 }

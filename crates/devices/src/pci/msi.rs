@@ -205,7 +205,7 @@ impl PciCapability for MsiCapability {
 mod tests {
     use super::MsiCapability;
     use crate::pci::config::PciConfigSpace;
-    use aero_platform::interrupts::ApicSystem;
+    use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 
     #[test]
     fn trigger_msi_delivers_vector_to_lapic() {
@@ -219,9 +219,10 @@ mod tests {
         let ctrl = config.read(cap_offset + 0x02, 2) as u16;
         config.write(cap_offset + 0x02, 2, (ctrl | 0x0001) as u32);
 
-        let mut platform = ApicSystem::new_single_cpu();
+        let mut interrupts = PlatformInterrupts::new();
+        interrupts.set_mode(PlatformInterruptMode::Apic);
         let msi = config.capability_mut::<MsiCapability>().unwrap();
-        assert!(msi.trigger(&mut platform));
-        assert!(platform.lapic0().is_pending(0x45));
+        assert!(msi.trigger(&mut interrupts));
+        assert_eq!(interrupts.get_pending(), Some(0x45));
     }
 }

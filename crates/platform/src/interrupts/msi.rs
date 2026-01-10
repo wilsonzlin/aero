@@ -1,4 +1,5 @@
 use super::local_apic::LocalApic;
+use super::router::PlatformInterrupts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MsiMessage {
@@ -45,5 +46,12 @@ impl MsiTrigger for ApicSystem {
     fn trigger_msi(&mut self, message: MsiMessage) {
         let vector = message.vector();
         self.lapic0_mut().inject_vector(vector);
+    }
+}
+
+impl MsiTrigger for PlatformInterrupts {
+    fn trigger_msi(&mut self, message: MsiMessage) {
+        let vector = message.vector();
+        self.lapic_mut().inject_vector(vector);
     }
 }
