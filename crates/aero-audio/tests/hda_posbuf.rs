@@ -78,3 +78,26 @@ fn position_buffer_tracks_lpib_progress() {
     assert_eq!(hda.stream_mut(0).lpib, expected_lpib);
     assert_eq!(mem.read_u32(posbuf_base), expected_lpib);
 }
+
+#[test]
+fn position_buffer_reflects_cbl_wraparound() {
+    let mut hda = HdaController::new();
+    let mut mem = GuestMemory::new(0x20_000);
+
+    hda.mmio_write(REG_GCTL, 4, 0x1); // GCTL.CRST
+
+    let posbuf_base = 0x1800u64;
+    hda.mmio_write(REG_DPUBASE, 4, 0);
+    hda.mmio_write(REG_DPLBASE, 4, posbuf_base | 0x1); // enable
+
+    // 48kHz, 16-bit stereo => 4 bytes/frame.
+    let frames = 480usize; // 10ms
+    let cbl_bytes = (frames * 4) as u32;
+    configure_basic_stream(&mut mem, &mut hda, frames, cbl_bytes);
+
+    // Consume exactly one buffer worth of frames, which wraps LPIB to 0.
+    hda.process(&mut mem, frames);
+
+    assert_eq!(hda.stream_mut(0).lpib, 0);
+    assert_eq!(mem.read_u32(posbuf_base), 0);
+}

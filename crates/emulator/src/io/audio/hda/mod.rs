@@ -532,6 +532,10 @@ mod tests {
         let mut hda = HdaController::new();
         hda.mmio_write(HDA_GCTL, 4, GCTL_CRST as u64);
 
+        let posbuf_base = 0x7000u64;
+        hda.mmio_write(HDA_DPUBASE, 4, 0);
+        hda.mmio_write(HDA_DPLBASE, 4, posbuf_base | DPLBASE_ENABLE as u64);
+
         // Enable stream interrupt + global interrupt for stream 1 (input).
         hda.mmio_write(HDA_INTCTL, 4, (INTCTL_GIE | INTCTL_SIE1) as u64);
 
@@ -560,6 +564,7 @@ mod tests {
         hda.poll(&mut mem);
 
         assert_eq!(hda.mmio_read(HDA_SD1LPIB, 4) as u32, 8);
+        assert_eq!(mem.read_u32(posbuf_base + 8), 8);
         let mut out = [0u8; 8];
         mem.read_physical(buf0, &mut out);
         assert_eq!(out, [1, 2, 3, 4, 5, 6, 7, 8]);
