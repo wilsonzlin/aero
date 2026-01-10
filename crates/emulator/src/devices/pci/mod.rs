@@ -1,4 +1,5 @@
 pub mod aerogpu;
+pub mod aerogpu_legacy;
 
 use std::any::Any;
 use std::collections::HashMap;
