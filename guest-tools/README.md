@@ -129,6 +129,7 @@ Each check produces a `PASS` / `WARN` / `FAIL` result:
   - Audio (virtio-snd)
   - Input (virtio-input)
 - **virtio-blk storage service**: best-effort probe for the configured storage driver service (see `config\devices.cmd`; e.g. `aeroviostor`) with state + Start type.
+- **virtio-blk boot-critical registry**: validates `HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\...` mappings for the configured virtio-blk HWIDs (helps prevent `0x7B` when switching the boot disk from AHCI → virtio-blk).
 - **Signature mode**: parses `bcdedit` for `testsigning` and `nointegritychecks`.
 - **Smoke tests**:
   - Disk I/O: create + read a temp file.

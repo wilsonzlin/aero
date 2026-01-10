@@ -383,7 +383,7 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         [void]$sb.Append($report.overall.summary + $nl)
     }
 
-    foreach ($key in @("os","kb3033929","certificate_store","signature_mode","driver_packages","bound_devices","device_binding_storage","device_binding_network","device_binding_graphics","device_binding_audio","device_binding_input","virtio_blk_service","smoke_disk","smoke_network","smoke_audio","smoke_input")) {
+    foreach ($key in @("os","kb3033929","certificate_store","signature_mode","driver_packages","bound_devices","device_binding_storage","device_binding_network","device_binding_graphics","device_binding_audio","device_binding_input","virtio_blk_service","virtio_blk_boot_critical","smoke_disk","smoke_network","smoke_audio","smoke_input")) {
         if (-not $report.checks.ContainsKey($key)) { continue }
         $chk = $report.checks[$key]
         [void]$sb.Append($nl)
@@ -452,7 +452,7 @@ $txtPath = Join-Path $outDir "report.txt"
 $report = @{
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "1.2.0"
+        version = "1.3.0"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -1055,6 +1055,10 @@ try {
         if ($found.registry_start_type) {
             $svcDetails += ("Registry Start=" + $found.registry_start_value + " (" + $found.registry_start_type + ")")
         }
+        if ($found.registry_start_value -ne $null -and $found.registry_start_value -ne 0) {
+            $svcStatus = Merge-Status $svcStatus "WARN"
+            $svcDetails += "Storage service is not configured as BOOT_START (Start=0). Switching the boot disk to virtio-blk may fail (0x7B). Re-run setup.cmd."
+        }
         if ($found.state -ne "Running") {
             $svcStatus = "WARN"
             $svcDetails += "Service is not running. A reboot may be required after driver install, or storage is not using virtio-blk."
@@ -1068,6 +1072,72 @@ try {
     Add-Check "virtio_blk_service" "virtio-blk Storage Service" $svcStatus $svcSummary $svcData $svcDetails
 } catch {
     Add-Check "virtio_blk_service" "virtio-blk Storage Service" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
+# --- virtio-blk boot-critical registry (CriticalDeviceDatabase) ---
+try {
+    if (-not $cfgVirtioBlkService -or -not $cfgVirtioBlkHwids -or $cfgVirtioBlkHwids.Count -eq 0) {
+        $data = @{
+            config_loaded = $gtConfig.found
+            config_file = $gtConfig.file_path
+            config_service = $cfgVirtioBlkService
+            configured_hwids = $cfgVirtioBlkHwids
+        }
+        Add-Check "virtio_blk_boot_critical" "virtio-blk Boot Critical Registry" "WARN" "Guest Tools config (config\\devices.cmd) is missing or incomplete; skipping CriticalDeviceDatabase verification." $data @()
+    } else {
+        $expectedService = $cfgVirtioBlkService
+        $basePath = "HKLM:\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase"
+
+        $records = @()
+        $missing = 0
+        $mismatch = 0
+
+        foreach ($hwid in $cfgVirtioBlkHwids) {
+            $baseKey = $hwid.Replace("\", "#")
+            foreach ($suffix in @("", "&CC_010000", "&CC_0100")) {
+                $keyName = $baseKey + $suffix
+                $path = Join-Path $basePath $keyName
+
+                $exists = Test-Path $path
+                $svc = $null
+                if ($exists) {
+                    try {
+                        $svc = (Get-ItemProperty -Path $path -ErrorAction Stop).Service
+                    } catch {
+                        $svc = $null
+                    }
+                    if ($svc -and ($svc.ToLower() -ne $expectedService.ToLower())) { $mismatch++ }
+                } else {
+                    $missing++
+                }
+
+                $records += @{
+                    key = $keyName
+                    exists = $exists
+                    service = $svc
+                    expected_service = $expectedService
+                }
+            }
+        }
+
+        $status = "PASS"
+        if ($missing -gt 0 -or $mismatch -gt 0) { $status = "WARN" }
+
+        $summary = "Checked " + $records.Count + " CriticalDeviceDatabase key(s) for service '" + $expectedService + "' (missing: " + $missing + ", mismatched service: " + $mismatch + ")"
+        $details = @()
+        if ($missing -gt 0) { $details += "Missing CriticalDeviceDatabase keys can cause 0x7B (INACCESSIBLE_BOOT_DEVICE) when switching the boot disk to virtio-blk." }
+        if ($mismatch -gt 0) { $details += "Some keys do not map to the expected storage service; re-run setup.cmd and verify config\\devices.cmd matches your storage driver's INF AddService name." }
+
+        $data = @{
+            config_file = $gtConfig.file_path
+            config_service = $expectedService
+            configured_hwids = $cfgVirtioBlkHwids
+            checked_keys = $records
+        }
+        Add-Check "virtio_blk_boot_critical" "virtio-blk Boot Critical Registry" $status $summary $data $details
+    }
+} catch {
+    Add-Check "virtio_blk_boot_critical" "virtio-blk Boot Critical Registry" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
 # --- Smoke test: disk I/O ---
