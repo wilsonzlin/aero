@@ -140,7 +140,8 @@ To render anything, implement the “calc/create/destroy” triads for:
 
 Resources
 * `pfnCalcPrivateResourceSize` + `pfnCreateResource` + `pfnDestroyResource`
-  * structs: `D3D10DDIARG_CREATERESOURCE`, `D3D10DDIARG_DESTROYRESOURCE`
+  * struct: `D3D10DDIARG_CREATERESOURCE`
+  * note: destroy is typically `pfnDestroyResource(D3D10DDI_HDEVICE, D3D10DDI_HRESOURCE)` (no `*_ARG_DESTROY*` structure)
 
 Views
 * `pfnCalcPrivateShaderResourceViewSize` + `pfnCreateShaderResourceView` + `pfnDestroyShaderResourceView`
