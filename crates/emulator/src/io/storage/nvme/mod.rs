@@ -30,6 +30,7 @@ pub struct NvmeController {
     admin: Option<QueuePair>,
     io_sqs: HashMap<u16, SubmissionQueue>,
     io_cqs: HashMap<u16, CompletionQueue>,
+    features: HashMap<u8, u32>,
     disk: Box<dyn DiskBackend>,
     num_io_sqs: u16,
     num_io_cqs: u16,
@@ -42,8 +43,11 @@ impl NvmeController {
     pub fn new(disk: Box<dyn DiskBackend>) -> Self {
         let mqes = 0xffu64;
         let cqr = 1u64 << 16;
+        // NVMe CAP.TO is in 500ms units; keep it non-zero so guests don't treat the
+        // controller as immediately timing out.
+        let to = 0x0au64 << 24;
         let css_nvm = 1u64 << 37;
-        let cap = mqes | cqr | css_nvm;
+        let cap = mqes | cqr | to | css_nvm;
 
         Self {
             cap,
@@ -58,6 +62,7 @@ impl NvmeController {
             admin: None,
             io_sqs: HashMap::new(),
             io_cqs: HashMap::new(),
+            features: HashMap::new(),
             disk,
             num_io_sqs: 1,
             num_io_cqs: 1,
@@ -103,6 +108,7 @@ impl NvmeController {
 
         self.io_sqs.clear();
         self.io_cqs.clear();
+        self.features.clear();
         self.irq_level = false;
     }
 
@@ -111,6 +117,7 @@ impl NvmeController {
         self.admin = None;
         self.io_sqs.clear();
         self.io_cqs.clear();
+        self.features.clear();
         self.irq_level = false;
     }
 
@@ -143,8 +150,33 @@ impl NvmeController {
             NVME_REG_ASQ_HI => (self.asq >> 32) as u32,
             NVME_REG_ACQ => self.acq as u32,
             NVME_REG_ACQ_HI => (self.acq >> 32) as u32,
-            _ if offset >= NVME_DOORBELL_BASE => 0,
+            _ if offset >= NVME_DOORBELL_BASE => self.doorbell_read(offset),
             _ => 0,
+        }
+    }
+
+    fn doorbell_read(&self, offset: u64) -> u32 {
+        let stride = self.doorbell_stride();
+        let rel = offset.saturating_sub(NVME_DOORBELL_BASE);
+        let db_index = rel / stride;
+        let qid = (db_index / 2) as u16;
+        let is_cq = db_index % 2 == 1;
+
+        if qid == 0 {
+            let Some(admin) = self.admin.as_ref() else {
+                return 0;
+            };
+            return if is_cq {
+                u32::from(admin.cq.head)
+            } else {
+                u32::from(admin.sq.tail)
+            };
+        }
+
+        if is_cq {
+            self.io_cqs.get(&qid).map_or(0, |cq| u32::from(cq.head))
+        } else {
+            self.io_sqs.get(&qid).map_or(0, |sq| u32::from(sq.tail))
         }
     }
 
@@ -302,7 +334,10 @@ impl NvmeController {
     fn cmd_identify(&mut self, mem: &mut dyn MemoryBus, cmd: NvmeCommand) -> (u32, NvmeStatus) {
         match cmd.identify_cns() {
             1 => {
-                let mdts = 0;
+                // Advertise a relatively large max transfer size so guests can issue
+                // multi-page PRP transfers without falling back to tiny requests.
+                // Max transfer = 2^MDTS * min page size (typically 4KiB).
+                let mdts = 10;
                 let data = build_identify_controller(1, mdts);
                 if dma_write(mem, cmd.prp1, cmd.prp2, &data, self.page_size).is_err() {
                     return (0, NvmeStatus::invalid_field());
@@ -331,7 +366,10 @@ impl NvmeController {
                 let val = (nsq << 16) | (ncq & 0xffff);
                 (val, NvmeStatus::success())
             }
-            _ => (0, NvmeStatus::invalid_field()),
+            fid => {
+                let val = self.features.get(&fid).copied().unwrap_or(0);
+                (val, NvmeStatus::success())
+            }
         }
     }
 
@@ -347,7 +385,10 @@ impl NvmeController {
                     | (self.num_io_cqs.saturating_sub(1) as u32);
                 (val, NvmeStatus::success())
             }
-            _ => (0, NvmeStatus::invalid_field()),
+            fid => {
+                self.features.insert(fid, cmd.cdw11);
+                (cmd.cdw11, NvmeStatus::success())
+            }
         }
     }
 
@@ -824,5 +865,59 @@ mod tests {
         let status_b = (dw3b >> 16) as u16;
         assert_eq!(status_b & 1, 0);
     }
-}
 
+    #[test]
+    fn doorbell_reads_reflect_queue_pointers() {
+        let mut mem = VecMemory::new(4 * 1024 * 1024);
+        let mut ctrl = setup_controller(&mut mem);
+
+        let identify_buf = 0x30_000u64;
+        let cid = 0x2222u16;
+        let mut cmd = [0u32; 16];
+        cmd[0] = OPC_ADMIN_IDENTIFY as u32 | ((cid as u32) << 16);
+        cmd[6] = identify_buf as u32;
+        cmd[7] = (identify_buf >> 32) as u32;
+        cmd[10] = 1;
+        write_cmd(&mut mem, 0x10_000, cmd);
+
+        // Post the command via SQ0 tail doorbell and verify SQ/CQ doorbell reads.
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE, 1);
+        assert_eq!(ctrl.mmio_read_u32(&mut mem, NVME_DOORBELL_BASE), 1);
+        assert_eq!(ctrl.mmio_read_u32(&mut mem, NVME_DOORBELL_BASE + 4), 0);
+
+        // Consume CQE0 and verify head updates are reflected.
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE + 4, 1);
+        assert_eq!(ctrl.mmio_read_u32(&mut mem, NVME_DOORBELL_BASE + 4), 1);
+    }
+
+    #[test]
+    fn set_get_features_roundtrip_for_unknown_fid() {
+        let mut mem = VecMemory::new(4 * 1024 * 1024);
+        let mut ctrl = setup_controller(&mut mem);
+
+        let fid = 0x06u8; // Volatile Write Cache (we store but don't otherwise model).
+
+        let cid_set = 0x3000u16;
+        let mut cmd = [0u32; 16];
+        cmd[0] = OPC_ADMIN_SET_FEATURES as u32 | ((cid_set as u32) << 16);
+        cmd[10] = fid as u32;
+        cmd[11] = 0x1234_5678;
+        write_cmd(&mut mem, 0x10_000, cmd);
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE, 1);
+
+        let (dw0, _, _, dw3) = read_cqe(&mut mem, 0x20_000, 0);
+        assert_eq!(dw0, 0x1234_5678);
+        assert_eq!((dw3 & 0xffff) as u16, cid_set);
+
+        let cid_get = 0x3001u16;
+        let mut cmd = [0u32; 16];
+        cmd[0] = OPC_ADMIN_GET_FEATURES as u32 | ((cid_get as u32) << 16);
+        cmd[10] = fid as u32;
+        write_cmd(&mut mem, 0x10_000 + 64, cmd);
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE, 2);
+
+        let (dw0, _, _, dw3) = read_cqe(&mut mem, 0x20_000, 1);
+        assert_eq!(dw0, 0x1234_5678);
+        assert_eq!((dw3 & 0xffff) as u16, cid_get);
+    }
+}

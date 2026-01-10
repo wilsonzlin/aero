@@ -160,6 +160,17 @@ pub fn build_identify_controller(nsid_count: u32, mdts: u8) -> [u8; 4096] {
 
     buf[77] = mdts;
 
+    // SQES/CQES live near the tail end of the Identify Controller data and are used by
+    // operating systems to determine the valid queue entry sizes.
+    //
+    // Values are encoded as:
+    //   bits[3:0]  = minimum supported size as 2^n bytes
+    //   bits[7:4]  = maximum supported size as 2^n bytes
+    //
+    // We only support the baseline NVMe sizes: SQE=64B (2^6), CQE=16B (2^4).
+    buf[512] = 0x66;
+    buf[513] = 0x44;
+
     let nn_offset = 516;
     buf[nn_offset..nn_offset + 4].copy_from_slice(&nsid_count.to_le_bytes());
 
@@ -183,4 +194,3 @@ pub fn build_identify_namespace(disk: &dyn DiskBackend) -> [u8; 4096] {
 
     buf
 }
-
