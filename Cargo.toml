@@ -9,6 +9,7 @@ members = [
     "crates/aero-bios",
     "crates/aero_jit",
     "crates/aero-net-e1000",
+    "crates/aero-net-stack",
     "crates/aero-storage",
     "crates/aero-mem",
     "crates/aero-mmu",
