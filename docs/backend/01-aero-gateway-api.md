@@ -1,0 +1,439 @@
+# Aero Gateway API (Networking Backend Contract)
+*Status: draft, v1*
+
+This document specifies the **public backend contract** for Aero networking features that require server assistance in the browser:
+
+- A **TCP proxy** exposed as a WebSocket endpoint (`/tcp`)
+- A **DNS-over-HTTPS** endpoint (`/dns-query`) used by the guest network stack
+- A lightweight **session bootstrap** endpoint (`POST /session`) that issues cookies used for rate-limiting and authorization
+
+The intent is that a frontend engineer can build a compatible client **without reading the gateway/server source code**.
+
+> Non-goal: Documenting emulator internals. This doc only covers the backend contract.
+
+---
+
+## 1) Base URL / origin assumptions
+
+All endpoints are rooted at the **gateway origin**:
+
+- HTTP: `https://gateway.example.com/session`, `https://gateway.example.com/dns-query`
+- WebSocket: `wss://gateway.example.com/tcp`
+
+### Same-site vs cross-site deployments (cookies)
+
+The gateway uses **cookies** for session state. For this to work reliably in browsers:
+
+- **Recommended:** Deploy the frontend and gateway on the same *site* (same eTLD+1), e.g.
+  - Frontend: `https://app.example.com`
+  - Gateway: `https://gateway.example.com`
+- Avoid deploying the gateway on a completely different site (e.g. `https://gateway.example.net`), because third‑party cookie restrictions can prevent the browser from sending the session cookie.
+
+### Local development examples
+
+Generic form:
+
+- `POST http://localhost:PORT/session`
+- `ws://localhost:PORT/tcp?target=example.com:443`
+- `http://localhost:PORT/dns-query?...`
+
+Concrete example (assuming the gateway is running on port `8787`):
+
+- `POST http://localhost:8787/session`
+- `ws://localhost:8787/tcp?target=example.com:443`
+- `http://localhost:8787/dns-query?...`
+
+---
+
+## 2) Session model (`POST /session`, cookies)
+
+### Why sessions exist
+
+The gateway is a powerful primitive (TCP proxy + DNS). A session cookie allows the gateway to:
+
+- Apply rate limits and connection limits per browser user
+- Enforce an **Origin allowlist** (see Security Model)
+- Reduce open-proxy abuse by requiring a prior session bootstrap
+
+### `POST /session`
+
+Create or refresh a session. The gateway responds with a `Set-Cookie` header.
+
+**Request**
+
+- Method: `POST`
+- Path: `/session`
+- Body: optional JSON (may be empty)
+- CORS: if the gateway is on a different origin than the frontend, the gateway must allow CORS credentials for allowed origins.
+
+**Response**
+
+- Status: `201 Created`
+- Sets cookie:
+  - Name: `aero_session`
+  - Value: opaque (do not parse)
+  - Attributes (recommended):
+    - `HttpOnly`
+    - `Secure` (for HTTPS deployments)
+    - `SameSite=Lax` (works for same-site subdomains) or `SameSite=None; Secure` if truly cross-origin is required
+    - `Path=/`
+- Body: JSON with session metadata and limits (see `docs/backend/openapi.yaml`).
+
+### Browser usage pattern
+
+Call `/session` once during app startup **before** opening any TCP WebSockets or sending DoH requests:
+
+```ts
+await fetch(`${gatewayOrigin}/session`, {
+  method: 'POST',
+  credentials: 'include', // critical: persist aero_session cookie
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({}), // optional; may be omitted
+});
+```
+
+> Note: WebSockets do not have a `credentials` option; cookies are attached automatically if the browser considers them in-scope for the WebSocket URL.
+
+---
+
+## 3) `/tcp` WebSocket TCP proxy protocol
+
+### Endpoint
+
+`GET /tcp` **upgraded to WebSocket**.
+
+Each WebSocket connection proxies **one** TCP connection.
+
+### Query parameters
+
+#### `target` (required)
+
+`target` identifies the remote TCP endpoint:
+
+- Format: `<host>:<port>`
+- `<host>` may be:
+  - A DNS name (e.g. `example.com`)
+  - An IPv4 address (e.g. `93.184.216.34`)
+  - An IPv6 address in brackets (e.g. `[2606:4700:4700::1111]`)
+- `<port>` is an integer `1..65535`
+
+Examples:
+
+- `ws://localhost:8787/tcp?target=example.com:443`
+- `wss://example.com/tcp?target=example.org:443`
+- `wss://gateway.example.com/tcp?target=93.184.216.34:80`
+- `wss://gateway.example.com/tcp?target=%5B2606%3A4700%3A4700%3A%3A1111%5D:443`
+
+#### Compatibility aliases (optional)
+
+Some clients may use `host` and `port` query parameters instead of `target`. Gateways **may** support this as an alias, but `target` is the canonical parameter for Aero.
+
+### Authentication
+
+The WebSocket upgrade request must include the `aero_session` cookie issued by `POST /session`.
+
+If the cookie is missing/invalid, the gateway must reject the upgrade with `401 Unauthorized` (no WebSocket).
+
+### Connection lifecycle
+
+1. Client creates a WebSocket to `/tcp?target=...`.
+2. Gateway validates:
+   - Session cookie
+   - Origin allowlist
+   - Target parsing
+   - Port allowlist
+   - Destination IP policy (blocked ranges)
+3. Gateway attempts to connect to the target TCP endpoint.
+4. If the TCP connection succeeds, the gateway completes the WebSocket upgrade.
+
+### WebSocket message types
+
+The `/tcp` WebSocket uses two message “types” at the WebSocket layer:
+
+1) **Binary messages**: raw TCP payload bytes (data in either direction)
+2) **Text messages**: UTF‑8 JSON control/events
+
+Clients must set:
+
+```ts
+ws.binaryType = 'arraybuffer';
+```
+
+#### Binary messages: `TCP_DATA`
+
+Any WebSocket **binary** message is treated as a segment of TCP data.
+
+- Client → gateway: bytes are written to the TCP socket.
+- Gateway → client: bytes read from the TCP socket.
+
+Message boundaries are **not preserved** end-to-end (TCP is a byte stream). Clients must treat each message as an arbitrary-length chunk and reassemble as needed.
+
+#### Text JSON control messages
+
+Control messages are JSON objects with a required `"type"` field.
+
+##### `{"type":"open"}`
+
+Sent by the gateway **exactly once** after the TCP connection is established and before any `TCP_DATA` is sent.
+
+Example:
+
+```json
+{"type":"open","target":"example.com:443"}
+```
+
+Clients should not send `TCP_DATA` until after receiving `"open"` (to avoid buffering behavior differing across gateway implementations).
+
+##### `{"type":"eof"}`
+
+Sent by the gateway when the remote peer half-closes (TCP FIN received). No more `TCP_DATA` will be received from the remote.
+
+Clients may still be allowed to send `TCP_DATA` after `eof` (depending on peer behavior), but most client implementations should treat this as “read side closed” and proceed to close.
+
+Example:
+
+```json
+{"type":"eof"}
+```
+
+##### `{"type":"error", ...}`
+
+Sent by the gateway before closing the WebSocket when the TCP connection cannot be established or is terminated due to policy/limits.
+
+Example:
+
+```json
+{"type":"error","code":"PORT_NOT_ALLOWED","message":"Outbound port blocked by policy","retryable":false}
+```
+
+`code` is a short string intended for programmatic handling. Suggested values:
+
+- `INVALID_TARGET`
+- `PORT_NOT_ALLOWED`
+- `DESTINATION_BLOCKED`
+- `DNS_RESOLUTION_FAILED`
+- `CONNECT_TIMEOUT`
+- `CONNECT_REFUSED`
+- `CONNECTION_RESET`
+- `IDLE_TIMEOUT`
+- `RATE_LIMITED`
+- `MESSAGE_TOO_LARGE`
+
+### WebSocket close codes
+
+The gateway uses WebSocket close codes to communicate why a connection ended. Clients must handle both standard close codes and gateway-specific ones.
+
+#### Standard close codes
+
+- `1000` Normal closure (TCP session ended cleanly or client requested close)
+- `1001` Going away (server shutdown/redeploy)
+- `1006` Abnormal closure (network error; not sent explicitly)
+- `1011` Internal server error
+
+#### Gateway-specific close codes (4000–4999)
+
+- `4001` Session missing/invalid (authentication)
+- `4002` Origin not allowed
+- `4003` Invalid target string
+- `4004` Destination IP blocked
+- `4005` Destination port blocked
+- `4006` DNS resolution failed
+- `4007` TCP connect timeout
+- `4008` TCP connect refused / unreachable
+- `4009` Rate limited / too many connections
+- `4010` Message too large / protocol violation
+
+> The close `reason` string is intended for debugging only. Clients must not parse it.
+
+### Limits (what clients should assume)
+
+Specific limit values are deployment-dependent, but clients should assume at least:
+
+- The gateway may enforce **max concurrent TCP connections** per session.
+- The gateway may enforce a **max WebSocket message size**; clients should chunk large writes (e.g. ≤ 16–64 KiB).
+- The gateway may enforce **connect timeouts** and **idle timeouts**.
+
+The recommended way to obtain concrete limits is via the JSON response of `POST /session`.
+
+---
+
+## 4) `/dns-query` DNS-over-HTTPS (DoH)
+
+The gateway exposes a DNS-over-HTTPS endpoint compatible with **RFC 8484** at:
+
+`/dns-query`
+
+This is used by the guest stack to resolve hostnames without direct UDP access from the browser.
+
+### Authentication
+
+`/dns-query` requests must include the `aero_session` cookie.
+
+### GET (RFC 8484)
+
+**Request**
+
+- Method: `GET`
+- Query parameter: `dns=<base64url(dns_message)>`
+- Header: `Accept: application/dns-message`
+
+**Response**
+
+- Status: `200 OK` (including DNS errors encoded in the DNS message, e.g. `NXDOMAIN`)
+- Header: `Content-Type: application/dns-message`
+- Body: DNS response in wire format
+
+Example:
+
+```bash
+curl -sS \
+  -H 'accept: application/dns-message' \
+  'https://example.com/dns-query?dns=AAABAAABAAAAAAAAB2V4YW1wbGUDY29tAAABAAE' \
+  --output response.dns
+```
+
+### POST (RFC 8484)
+
+**Request**
+
+- Method: `POST`
+- Header: `Content-Type: application/dns-message`
+- Header: `Accept: application/dns-message`
+- Body: DNS query in wire format
+
+Example (build a query for `example.com A` and POST it):
+
+```bash
+python3 - <<'PY' > query.dns
+import struct
+# id=0, flags=0x0100, qdcount=1
+msg = struct.pack('!HHHHHH', 0, 0x0100, 1, 0, 0, 0)
+name = b''.join(len(l).to_bytes(1,'big') + l.encode() for l in 'example.com'.split('.')) + b'\\x00'
+msg += name + struct.pack('!HH', 1, 1)  # QTYPE=A, QCLASS=IN
+open('query.dns','wb').write(msg)
+PY
+
+curl -sS \
+  -H 'content-type: application/dns-message' \
+  -H 'accept: application/dns-message' \
+  --data-binary @query.dns \
+  'https://example.com/dns-query' \
+  --output response.dns
+```
+
+---
+
+## 5) Security model (gateway responsibilities)
+
+The gateway must treat all requests as untrusted and enforce the following controls.
+
+### 5.1 Origin allowlist
+
+- The gateway must validate the `Origin` header for:
+  - `POST /session` (CORS)
+  - WebSocket upgrades to `/tcp`
+  - `/dns-query` (CORS)
+- Only configured frontend origins may use the gateway.
+
+### 5.2 Port allowlist (TCP egress)
+
+The gateway should enforce an allowlist of outbound TCP ports (deployment-specific).
+
+Clients must be prepared for connections to be rejected even if they are valid TCP ports, e.g. blocking `25` to prevent SMTP abuse.
+
+### 5.3 Blocked destination IP ranges
+
+To mitigate SSRF and internal network scanning, the gateway should block connecting to private and special-purpose IP ranges. Recommended blocked ranges include (non-exhaustive):
+
+#### IPv4
+
+- `0.0.0.0/8` (this network)
+- `10.0.0.0/8` (RFC1918)
+- `100.64.0.0/10` (carrier-grade NAT)
+- `127.0.0.0/8` (loopback)
+- `169.254.0.0/16` (link-local)
+- `172.16.0.0/12` (RFC1918)
+- `192.0.0.0/24` (IETF protocol assignments)
+- `192.0.2.0/24` (TEST-NET-1)
+- `192.168.0.0/16` (RFC1918)
+- `198.18.0.0/15` (benchmarking)
+- `198.51.100.0/24` (TEST-NET-2)
+- `203.0.113.0/24` (TEST-NET-3)
+- `224.0.0.0/4` (multicast)
+- `240.0.0.0/4` (reserved)
+
+#### IPv6
+
+- `::/128` (unspecified)
+- `::1/128` (loopback)
+- `fe80::/10` (link-local)
+- `fc00::/7` (unique local)
+- `ff00::/8` (multicast)
+
+If a DNS name resolves to any blocked range, the gateway must treat the destination as blocked.
+
+---
+
+## 6) Recommended browser-side integration patterns
+
+### 6.1 WebSocket creation & readiness
+
+```ts
+async function openTcpProxySocket(gatewayOrigin: string, target: string): Promise<WebSocket> {
+  const url = `${gatewayOrigin.replace(/^http/, 'ws')}/tcp?target=${encodeURIComponent(target)}`;
+  const ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
+
+  // Wait for "open" control message from the gateway.
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('tcp proxy open timeout')), 10_000);
+    ws.addEventListener('message', (ev) => {
+      if (typeof ev.data === 'string') {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg?.type === 'open') {
+            clearTimeout(timeout);
+            resolve();
+          }
+          if (msg?.type === 'error') {
+            clearTimeout(timeout);
+            reject(new Error(`tcp proxy error: ${msg.code ?? 'unknown'}`));
+          }
+        } catch {
+          // Ignore unknown text frames.
+        }
+      }
+    });
+    ws.addEventListener('error', () => reject(new Error('websocket error')));
+    ws.addEventListener('close', (ev) => reject(new Error(`websocket closed: ${ev.code}`)));
+  });
+
+  return ws;
+}
+```
+
+### 6.2 Reconnect strategy (exponential backoff with jitter)
+
+For transient failures (network drops, gateway redeploy, rate limits), reconnect with exponential backoff:
+
+- base delay: 250ms
+- multiply by 2 each attempt
+- cap: 10–30s
+- add jitter: random 0–20% to avoid thundering herds
+
+Also:
+
+- If you receive `4001` (session invalid), recreate the session via `POST /session` then reconnect.
+- If you receive `4004/4005` (policy blocked), do not retry automatically.
+
+### 6.3 Chunk outgoing writes
+
+When sending large payloads, chunk to avoid hitting server or intermediary limits:
+
+```ts
+function wsSendChunked(ws: WebSocket, bytes: Uint8Array, chunkSize = 16 * 1024) {
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    ws.send(bytes.subarray(i, i + chunkSize));
+  }
+}
+```

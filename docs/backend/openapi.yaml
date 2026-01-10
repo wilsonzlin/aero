@@ -1,0 +1,260 @@
+openapi: 3.1.0
+info:
+  title: Aero Gateway HTTP API
+  version: 1.0.0
+  description: |
+    HTTP endpoints provided by the Aero networking gateway.
+
+    Notes:
+    - The WebSocket TCP proxy endpoint (`/tcp`) is documented in
+      `docs/backend/01-aero-gateway-api.md` and is intentionally not modeled
+      as an OpenAPI operation.
+servers:
+  - url: http://localhost:8787
+    description: Local development (example)
+  - url: https://example.com
+    description: Production (example)
+  - url: https://gateway.example.com
+    description: Production alternative (example)
+tags:
+  - name: session
+    description: Session bootstrap and cookies
+  - name: dns
+    description: DNS-over-HTTPS (RFC 8484)
+paths:
+  /session:
+    post:
+      tags: [session]
+      summary: Create or refresh a gateway session
+      description: |
+        Issues (or refreshes) a gateway session cookie (`aero_session`) used
+        by authenticated endpoints such as `/dns-query` and the `/tcp`
+        WebSocket upgrade.
+
+        Clients should call this during startup with `credentials: include`
+        so the browser stores the cookie.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+            examples:
+              empty:
+                summary: Minimal request
+                value: {}
+      responses:
+        '201':
+          description: Session created. Cookie is returned in `Set-Cookie`.
+          headers:
+            Set-Cookie:
+              description: Session cookie (opaque).
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSessionResponse'
+              examples:
+                example:
+                  value:
+                    session:
+                      expiresAt: '2026-01-10T00:00:00Z'
+                    endpoints:
+                      tcp: /tcp
+                      dnsQuery: /dns-query
+                    limits:
+                      tcp:
+                        maxConnections: 64
+                        maxMessageBytes: 1048576
+                        connectTimeoutMs: 10000
+                        idleTimeoutMs: 300000
+                      dns:
+                        maxQueryBytes: 4096
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /dns-query:
+    get:
+      tags: [dns]
+      summary: DNS-over-HTTPS (GET)
+      description: |
+        RFC 8484 DoH GET.
+
+        The query is passed via the `dns` query parameter as base64url without
+        padding, containing a DNS message in wire format.
+      security:
+        - aeroSession: []
+      parameters:
+        - name: dns
+          in: query
+          required: true
+          description: Base64url-encoded DNS query message (RFC 8484).
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: DNS response message (wire format).
+          content:
+            application/dns-message:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ErrorResponse'
+
+    post:
+      tags: [dns]
+      summary: DNS-over-HTTPS (POST)
+      description: |
+        RFC 8484 DoH POST.
+
+        The request body is a DNS query message in wire format with
+        `Content-Type: application/dns-message`.
+      security:
+        - aeroSession: []
+      requestBody:
+        required: true
+        content:
+          application/dns-message:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: DNS response message (wire format).
+          content:
+            application/dns-message:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ErrorResponse'
+
+components:
+  securitySchemes:
+    aeroSession:
+      type: apiKey
+      in: cookie
+      name: aero_session
+
+  responses:
+    ErrorResponse:
+      description: Error response (shape is stable; messages are not).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    CreateSessionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        origin:
+          type: string
+          description: |
+            Optional explicit origin string for debugging/telemetry. Gateways
+            should prefer the HTTP `Origin` header when present.
+        clientVersion:
+          type: string
+          description: Optional client version string.
+
+    CreateSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [session, endpoints, limits]
+      properties:
+        session:
+          type: object
+          additionalProperties: false
+          required: [expiresAt]
+          properties:
+            expiresAt:
+              type: string
+              format: date-time
+              description: UTC timestamp after which a new session is required.
+        endpoints:
+          type: object
+          additionalProperties: false
+          required: [tcp, dnsQuery]
+          properties:
+            tcp:
+              type: string
+              description: Path for the TCP WebSocket endpoint (upgrade).
+              example: /tcp
+            dnsQuery:
+              type: string
+              description: Path for DNS-over-HTTPS.
+              example: /dns-query
+        limits:
+          type: object
+          additionalProperties: false
+          required: [tcp, dns]
+          properties:
+            tcp:
+              type: object
+              additionalProperties: false
+              required: [maxConnections, maxMessageBytes, connectTimeoutMs, idleTimeoutMs]
+              properties:
+                maxConnections:
+                  type: integer
+                  minimum: 1
+                  description: Maximum concurrent `/tcp` connections for this session.
+                maxMessageBytes:
+                  type: integer
+                  minimum: 1
+                  description: |
+                    Maximum size in bytes of a single WebSocket message payload.
+                    Clients should chunk outgoing writes accordingly.
+                connectTimeoutMs:
+                  type: integer
+                  minimum: 1
+                  description: TCP connect timeout in milliseconds.
+                idleTimeoutMs:
+                  type: integer
+                  minimum: 1
+                  description: |
+                    Idle timeout in milliseconds after which inactive TCP proxy
+                    connections may be closed.
+            dns:
+              type: object
+              additionalProperties: false
+              required: [maxQueryBytes]
+              properties:
+                maxQueryBytes:
+                  type: integer
+                  minimum: 1
+                  description: Maximum accepted DNS query message size in bytes.
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Stable, machine-readable error identifier.
+        message:
+          type: string
+          description: Optional human-readable message (not stable).
+        retryable:
+          type: boolean
+          description: Whether the client should retry automatically.
