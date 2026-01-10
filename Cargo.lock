@@ -35,6 +35,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-emulator"
+version = "0.1.0"
+
+[[package]]
 name = "aero-gpu"
 version = "0.1.0"
 dependencies = [

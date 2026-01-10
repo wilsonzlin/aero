@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/aero-acpi",
     "crates/aero-gpu",
+    "crates/aero-emulator",
     "crates/aero-ipc",
     "crates/aero-bios",
     "crates/aero-net-e1000",
