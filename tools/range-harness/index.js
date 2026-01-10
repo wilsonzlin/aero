@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-'use strict';
+import { randomInt } from 'node:crypto';
 
 /**
  * Range Harness
@@ -11,8 +11,6 @@
  *   node tools/range-harness/index.js --url <URL> [--chunk-size 8388608] [--count 32]
  *     [--concurrency 4] [--random|--sequential]
  */
-
-const { randomInt } = require('crypto');
 
 if (typeof fetch !== 'function') {
   // eslint-disable-next-line no-console
