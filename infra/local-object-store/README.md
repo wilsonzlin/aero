@@ -149,6 +149,22 @@ curl -s -D - -o /dev/null \
 
 Browsers typically preflight a CORS request when you send a non-simple header like `Range`.
 
+### Browser console snippet (shows actual preflight)
+
+From a page served at your configured origin (default `http://localhost:5173`), run:
+
+```js
+const url = "http://localhost:9002/disk-images/large.bin"; // proxy (recommended)
+// const url = "http://localhost:9000/disk-images/large.bin"; // origin
+
+const res = await fetch(url, { headers: { Range: "bytes=0-15" } });
+console.log("status", res.status);
+console.log("content-range", res.headers.get("content-range"));
+console.log("bytes", new Uint8Array(await res.arrayBuffer()));
+```
+
+In DevTools → Network you should see an `OPTIONS` preflight followed by a `GET`, and `content-range` should be readable in JS.
+
 ### Preflight against MinIO origin
 
 ```bash
