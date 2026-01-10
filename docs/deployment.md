@@ -57,6 +57,10 @@ Then open the printed URL (usually `http://localhost:4173`) and verify:
 - Open DevTools Console and run: `crossOriginIsolated` → should be `true`
 - Optionally also check: `typeof SharedArrayBuffer !== 'undefined'`
 
+> Note: `http://localhost` is treated as a secure context by browsers, so COOP/COEP works
+> in local preview mode. In production you must serve over **HTTPS** (non-localhost
+> `http://` will not be cross-origin isolated and will not get SharedArrayBuffer).
+
 If `crossOriginIsolated` is `false`, inspect the **Network** tab and confirm the
 main document response includes the required headers.
 
