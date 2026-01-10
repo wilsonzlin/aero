@@ -7,6 +7,7 @@
 use aero_types::{Flag, Gpr, Width};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(C)]
 pub struct CpuState {
     pub gpr: [u64; 16],
     pub rip: u64,
@@ -15,11 +16,20 @@ pub struct CpuState {
 
 impl Default for CpuState {
     fn default() -> Self {
-        Self { gpr: [0; 16], rip: 0, rflags: 0x2 }
+        Self {
+            gpr: [0; 16],
+            rip: 0,
+            rflags: 0x2,
+        }
     }
 }
 
 impl CpuState {
+    pub const GPR_OFFSET: u32 = 0;
+    pub const RIP_OFFSET: u32 = (16 * 8) as u32;
+    pub const RFLAGS_OFFSET: u32 = Self::RIP_OFFSET + 8;
+    pub const BYTE_SIZE: usize = (16 * 8) + 8 + 8;
+
     #[must_use]
     pub fn read_flag(&self, flag: Flag) -> bool {
         ((self.rflags >> flag.rflags_bit()) & 1) != 0
@@ -86,6 +96,55 @@ impl CpuState {
             Width::W32 => masked & 0xffff_ffff,
             Width::W64 => masked,
         };
+    }
+
+    pub fn write_to_mem(&self, mem: &mut [u8], base: usize) {
+        assert!(
+            base + Self::BYTE_SIZE <= mem.len(),
+            "CpuState write out of bounds: base={base} size={} mem_len={}",
+            Self::BYTE_SIZE,
+            mem.len()
+        );
+
+        for (i, reg) in self.gpr.iter().enumerate() {
+            let off = base + i * 8;
+            mem[off..off + 8].copy_from_slice(&reg.to_le_bytes());
+        }
+
+        let rip_off = base + (16 * 8);
+        mem[rip_off..rip_off + 8].copy_from_slice(&self.rip.to_le_bytes());
+
+        let rflags_off = rip_off + 8;
+        mem[rflags_off..rflags_off + 8].copy_from_slice(&self.rflags.to_le_bytes());
+    }
+
+    #[must_use]
+    pub fn read_from_mem(mem: &[u8], base: usize) -> Self {
+        assert!(
+            base + Self::BYTE_SIZE <= mem.len(),
+            "CpuState read out of bounds: base={base} size={} mem_len={}",
+            Self::BYTE_SIZE,
+            mem.len()
+        );
+
+        let mut gpr = [0u64; 16];
+        for i in 0..16 {
+            let off = base + i * 8;
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&mem[off..off + 8]);
+            gpr[i] = u64::from_le_bytes(buf);
+        }
+
+        let rip_off = base + (16 * 8);
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&mem[rip_off..rip_off + 8]);
+        let rip = u64::from_le_bytes(buf);
+
+        let rflags_off = rip_off + 8;
+        buf.copy_from_slice(&mem[rflags_off..rflags_off + 8]);
+        let rflags = u64::from_le_bytes(buf);
+
+        Self { gpr, rip, rflags }
     }
 }
 
@@ -182,4 +241,3 @@ impl CpuBus for SimpleBus {
         self.mem[addr as usize] = value;
     }
 }
-
