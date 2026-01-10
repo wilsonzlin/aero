@@ -1,3 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["crates/aero_cpu_core", "crates/emulator", "crates/memory"]
+members = [
+    "crates/aero-storage-server",
+    "crates/aero_cpu_core",
+    "crates/emulator",
+    "crates/memory",
+]
