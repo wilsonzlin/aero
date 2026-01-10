@@ -310,8 +310,11 @@ impl NvmeController {
 
     fn enable(&mut self) {
         // Basic validation: admin queues must be configured and page aligned.
-        let asqs = (self.aqa & 0x0fff) as u16 + 1;
-        let acqs = ((self.aqa >> 16) & 0x0fff) as u16 + 1;
+        // NVMe AQA:
+        // - bits 11:0  = ACQS (0-based)
+        // - bits 27:16 = ASQS (0-based)
+        let acqs = (self.aqa & 0x0fff) as u16 + 1;
+        let asqs = ((self.aqa >> 16) & 0x0fff) as u16 + 1;
         if asqs == 0 || acqs == 0 || self.asq == 0 || self.acq == 0 {
             self.csts = 0;
             return;
@@ -381,24 +384,24 @@ impl NvmeController {
     fn set_sq_tail(&mut self, qid: u16, tail: u16) {
         if qid == 0 {
             if let Some(ref mut sq) = self.admin_sq {
-                sq.tail = tail;
+                sq.tail = tail % sq.size;
             }
             return;
         }
         if let Some(sq) = self.io_sqs.get_mut(&qid) {
-            sq.tail = tail;
+            sq.tail = tail % sq.size;
         }
     }
 
     fn set_cq_head(&mut self, qid: u16, head: u16) {
         if qid == 0 {
             if let Some(ref mut cq) = self.admin_cq {
-                cq.head = head;
+                cq.head = head % cq.size;
             }
             return;
         }
         if let Some(cq) = self.io_cqs.get_mut(&qid) {
-            cq.head = head;
+            cq.head = head % cq.size;
         }
     }
 
@@ -590,7 +593,7 @@ impl NvmeController {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
 
-        let cqid = ((cmd.cdw11 >> 16) & 0xffff) as u16;
+        let cqid = (cmd.cdw11 & 0xffff) as u16;
         if !self.io_cqs.contains_key(&cqid) {
             return (NvmeStatus::INVALID_QID, 0);
         }
@@ -910,7 +913,7 @@ fn prp_segments(
 /// Minimal PCI config space model for the NVMe controller.
 #[derive(Debug, Clone)]
 pub struct PciConfig {
-    bar0: u32,
+    bar0: u64,
     bar0_probe: bool,
     command: u16,
     status: u16,
@@ -933,11 +936,11 @@ impl PciConfig {
     pub const VENDOR_ID: u16 = 0x1b36;
     pub const DEVICE_ID: u16 = 0x0010;
 
-    pub fn bar0_base(&self) -> u32 {
+    pub fn bar0_base(&self) -> u64 {
         self.bar0
     }
 
-    pub fn read_u32(&mut self, offset: u16, bar0_size: u32) -> u32 {
+    pub fn read_u32(&mut self, offset: u16, bar0_size: u64) -> u32 {
         match offset {
             0x00 => (Self::DEVICE_ID as u32) << 16 | (Self::VENDOR_ID as u32),
             0x04 => (self.status as u32) << 16 | (self.command as u32),
@@ -945,13 +948,20 @@ impl PciConfig {
             0x0c => 0x00 << 16, // header type 0x00
             0x10 => {
                 if self.bar0_probe {
-                    if bar0_size.is_power_of_two() && bar0_size >= 0x10 {
-                        (!(bar0_size - 1)) & 0xffff_fff0
-                    } else {
-                        0xffff_fff0
-                    }
+                    let size = bar0_size.max(0x10);
+                    let mask_low = (!(size.saturating_sub(1)) as u32) & 0xffff_fff0;
+                    // bits 2:1 = 0b10 indicate a 64-bit MMIO BAR.
+                    mask_low | 0x4
                 } else {
-                    self.bar0 & 0xffff_fff0
+                    (self.bar0 as u32 & 0xffff_fff0) | 0x4
+                }
+            }
+            0x14 => {
+                if self.bar0_probe {
+                    let size = bar0_size.max(0x10);
+                    (!(size.saturating_sub(1)) >> 32) as u32
+                } else {
+                    (self.bar0 >> 32) as u32
                 }
             }
             0x3c => (1u32 << 8) | (self.interrupt_line as u32), // INTA#
@@ -970,7 +980,17 @@ impl PciConfig {
                     self.bar0_probe = true;
                 } else {
                     self.bar0_probe = false;
-                    self.bar0 = value & 0xffff_fff0;
+                    let low = u64::from(value & 0xffff_fff0);
+                    self.bar0 = (self.bar0 & 0xffff_ffff_0000_0000) | low;
+                }
+            }
+            0x14 => {
+                if value == 0xffff_ffff {
+                    self.bar0_probe = true;
+                } else {
+                    self.bar0_probe = false;
+                    let high = (value as u64) << 32;
+                    self.bar0 = (self.bar0 & 0x0000_0000_ffff_ffff) | high;
                 }
             }
             0x3c => {
@@ -1000,7 +1020,7 @@ impl NvmePciDevice {
     }
 
     pub fn pci_read_u32(&mut self, offset: u16) -> u32 {
-        let bar0_size = self.controller.bar0_len() as u32;
+        let bar0_size = self.controller.bar0_len();
         self.pci.read_u32(offset, bar0_size)
     }
 
@@ -1234,12 +1254,16 @@ mod tests {
         let mut dev = NvmePciDevice::new(disk);
 
         dev.pci_write_u32(0x10, 0xffff_ffff);
-        let mask = dev.pci_read_u32(0x10);
+        let mask_lo = dev.pci_read_u32(0x10);
+        let mask_hi = dev.pci_read_u32(0x14);
         let size = dev.controller.bar0_len() as u32;
-        assert_eq!(mask, (!(size - 1)) & 0xffff_fff0);
+        assert_eq!(mask_lo, (!(size - 1)) & 0xffff_fff0 | 0x4);
+        assert_eq!(mask_hi, 0xffff_ffff);
 
         dev.pci_write_u32(0x10, 0xfebf_0000);
-        assert_eq!(dev.pci_read_u32(0x10), 0xfebf_0000);
+        dev.pci_write_u32(0x14, 0);
+        assert_eq!(dev.pci_read_u32(0x10), 0xfebf_0004);
+        assert_eq!(dev.pci_read_u32(0x14), 0);
 
         assert_eq!(
             dev.pci_read_u32(0x00),
@@ -1260,6 +1284,22 @@ mod tests {
         ctrl.mmio_write(0x0014, 4, 1, &mut mem);
 
         assert_eq!(ctrl.mmio_read(0x001c, 4) & 1, 1);
+    }
+
+    #[test]
+    fn aqa_fields_map_to_admin_queue_sizes() {
+        let disk = Box::new(TestDisk::new(1024));
+        let mut ctrl = NvmeController::new(disk);
+        let mut mem = TestMem::new(1024 * 1024);
+
+        // ASQS = 8 entries, ACQS = 4 entries (both are 0-based in AQA).
+        ctrl.mmio_write(0x0024, 4, (7u64 << 16) | 3, &mut mem);
+        ctrl.mmio_write(0x0028, 8, 0x10000, &mut mem);
+        ctrl.mmio_write(0x0030, 8, 0x20000, &mut mem);
+        ctrl.mmio_write(0x0014, 4, 1, &mut mem);
+
+        assert_eq!(ctrl.admin_sq.as_ref().unwrap().size, 8);
+        assert_eq!(ctrl.admin_cq.as_ref().unwrap().size, 4);
     }
 
     #[test]
@@ -1330,7 +1370,7 @@ mod tests {
         set_cid(&mut cmd, 2);
         set_prp1(&mut cmd, io_sq);
         set_cdw10(&mut cmd, (15u32 << 16) | 1);
-        set_cdw11(&mut cmd, 1u32 << 16);
+        set_cdw11(&mut cmd, 1);
         mem.write_physical(asq + 1 * 64, &cmd);
         ctrl.mmio_write(0x1000, 4, 2, &mut mem);
 
@@ -1412,7 +1452,7 @@ mod tests {
         set_cid(&mut cmd, 2);
         set_prp1(&mut cmd, io_sq);
         set_cdw10(&mut cmd, (1u32 << 16) | 1);
-        set_cdw11(&mut cmd, 1u32 << 16);
+        set_cdw11(&mut cmd, 1);
         mem.write_physical(asq + 1 * 64, &cmd);
         ctrl.mmio_write(0x1000, 4, 2, &mut mem);
 
