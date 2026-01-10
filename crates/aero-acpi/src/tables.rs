@@ -932,8 +932,8 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
 fn pci0_prt() -> Vec<Vec<u8>> {
     // Provide a simple static _PRT mapping for PCI INTx. We follow the common
     // PIRQ swizzle used by many virtual platforms:
-    //   PIRQA-D -> GSIs 10,11,10,11.
-    let pirq_gsi = [10u64, 11u64, 10u64, 11u64];
+    //   PIRQA-D -> GSIs 10,11,12,13.
+    let pirq_gsi = [10u64, 11u64, 12u64, 13u64];
     let mut entries = Vec::new();
     for dev in 1u32..=31 {
         let addr = (dev << 16) | 0xFFFF;
