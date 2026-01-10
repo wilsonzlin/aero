@@ -12,21 +12,35 @@
 // Notes:
 // - GPU objects (GPUShaderModule/GPURenderPipeline) are NOT serializable and therefore
 //   are re-created each session. This cache only removes translation/descriptor work.
-// - Cache keys are SHA-256 of DXBC bytecode + translation flags + caps hash + key version.
+// - Cache keys include:
+//   - a SHA-256 hash of the "content bytes" (DXBC + translation flags)
+//   - an explicit `CACHE_SCHEMA_VERSION`
+//   - a `backendKind` string (to separate translation pipelines)
+//   - an optional device fingerprint (capabilities hash)
 //
 // This file intentionally avoids TypeScript-only syntax so it can be served directly
 // as an ES module in tests without a build step.
 
-const DB_NAME = "aero_gpu_cache";
+// NOTE: Keep this name stable; it is user data that persists across sessions.
+// If the schema changes incompatibly, bump `DB_VERSION` (to drop stores) and/or
+// bump `CACHE_SCHEMA_VERSION` (to orphan old keys).
+const DB_NAME = "aero-gpu-cache";
 const DB_VERSION = 1;
 
 const STORE_SHADERS = "shaders";
 const STORE_PIPELINES = "pipelines";
 
-// Bump this whenever the shader key derivation / persisted value schema changes.
-// This is included in the cache key preimage so old entries become unreachable.
-const SHADER_CACHE_KEY_VERSION = 1;
-const PIPELINE_CACHE_KEY_VERSION = 1;
+// Bump this whenever the persisted value schema or key derivation changes in a
+// way that would make old entries invalid to read.
+//
+// This version is embedded into cache keys so old entries become unreachable
+// without needing to bump IndexedDB's schema version.
+export const CACHE_SCHEMA_VERSION = 1;
+
+// Backend "kinds" are included in keys to prevent accidental cross-contamination
+// between different translation pipelines or codegen modes.
+export const BACKEND_KIND_DXBC_TO_WGSL = "dxbc-to-wgsl";
+export const BACKEND_KIND_PIPELINE_DESC = "pipeline-desc";
 
 const DEFAULT_LIMITS = Object.freeze({
   shaders: { maxEntries: 2048, maxBytes: 64 * 1024 * 1024 },
@@ -49,6 +63,15 @@ function stableStringify(value) {
   }
   // Functions/symbols/bigints should never appear in persisted structures.
   return JSON.stringify(String(value));
+}
+
+/**
+ * @param {string} part
+ * @returns {string}
+ */
+function sanitizeKeyPart(part) {
+  // The cache key may be reused as an OPFS file name, so keep it conservative.
+  return String(part).replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
 /**
@@ -88,40 +111,77 @@ export async function sha256Hex(data) {
 }
 
 /**
- * Compute a strong shader cache key.
+ * Compute a cache key using the standard Aero GPU cache scheme:
+ *
+ * `CacheKey = hash(content_bytes) + schema_version + backend_kind + device_fingerprint(optional)`
+ *
+ * This returns a *string* key that is safe to use as:
+ * - an IndexedDB key
+ * - an OPFS file name prefix
+ *
+ * @param {{schemaVersion:number, backendKind:string, deviceFingerprint?:string|null, contentHash:string}} parts
+ * @returns {string}
+ */
+export function formatCacheKey(parts) {
+  const v = parts.schemaVersion;
+  const backend = sanitizeKeyPart(parts.backendKind);
+  const device = parts.deviceFingerprint ? sanitizeKeyPart(parts.deviceFingerprint) : "none";
+  const hash = parts.contentHash;
+  return `gpu-cache-v${v}-${backend}-${device}-${hash}`;
+}
+
+/**
+ * Compute a stable cache key for shader translation artifacts.
  *
  * @param {ArrayBuffer|Uint8Array} dxbc
- * @param {{halfPixelCenter?: boolean, capsHash: string, [k: string]: any}} flags
+ * @param {{
+ *   halfPixelCenter?: boolean,
+ *   // Optional device fingerprint / capability hash. Include this only if the
+ *   // codegen can vary based on device limits or feature availability.
+ *   capsHash?: string | null,
+ *   [k: string]: any
+ * }} flags
  * @returns {Promise<string>}
  */
 export async function computeShaderCacheKey(dxbc, flags) {
   const enc = new TextEncoder();
   const canonicalFlags = { ...flags, halfPixelCenter: !!flags.halfPixelCenter };
-  const metaBytes = enc.encode(
-    stableStringify({
-      v: SHADER_CACHE_KEY_VERSION,
-      flags: canonicalFlags,
-    }),
-  );
-  const preimage = concatBytes([toU8(dxbc), metaBytes]);
-  return await sha256Hex(preimage);
+
+  // Treat capsHash as the optional device fingerprint component.
+  const deviceFingerprint = canonicalFlags.capsHash ?? null;
+  delete canonicalFlags.capsHash;
+
+  // Hash the *content bytes* that determine the translation output: DXBC bytes
+  // plus translation flags (excluding device fingerprint, which is already a
+  // dedicated key component).
+  const metaBytes = enc.encode(stableStringify(canonicalFlags));
+  const contentBytes = concatBytes([toU8(dxbc), metaBytes]);
+  const contentHash = await sha256Hex(contentBytes);
+
+  return formatCacheKey({
+    schemaVersion: CACHE_SCHEMA_VERSION,
+    backendKind: BACKEND_KIND_DXBC_TO_WGSL,
+    deviceFingerprint,
+    contentHash,
+  });
 }
 
 /**
- * Compute a stable key for pipeline descriptors.
+ * Compute a stable key for pipeline descriptors (NOT compiled pipelines).
  *
  * @param {any} pipelineDesc
  * @returns {Promise<string>}
  */
 export async function computePipelineCacheKey(pipelineDesc) {
   const enc = new TextEncoder();
-  const metaBytes = enc.encode(
-    stableStringify({
-      v: PIPELINE_CACHE_KEY_VERSION,
-      desc: pipelineDesc,
-    }),
-  );
-  return await sha256Hex(metaBytes);
+  const contentBytes = enc.encode(stableStringify(pipelineDesc));
+  const contentHash = await sha256Hex(contentBytes);
+  return formatCacheKey({
+    schemaVersion: CACHE_SCHEMA_VERSION,
+    backendKind: BACKEND_KIND_PIPELINE_DESC,
+    deviceFingerprint: null,
+    contentHash,
+  });
 }
 
 const WEBGPU_LIMIT_KEYS = [
@@ -258,7 +318,7 @@ async function tryOpenOpfsCacheDir() {
   if (!navigator.storage || typeof navigator.storage.getDirectory !== "function") return null;
   try {
     const root = await navigator.storage.getDirectory();
-    const cacheDir = await root.getDirectoryHandle("aero_gpu_cache", { create: true });
+    const cacheDir = await root.getDirectoryHandle(DB_NAME, { create: true });
     await cacheDir.getDirectoryHandle("shaders", { create: true });
     await cacheDir.getDirectoryHandle("pipelines", { create: true });
     return { root, cacheDir };
@@ -356,6 +416,25 @@ export class PersistentGpuCache {
 
     // Warmed pipeline descriptor cache (key -> desc)
     this.pipelineDescriptors = new Map();
+
+    this._telemetry = {
+      shader: {
+        hits: 0,
+        misses: 0,
+        bytesRead: 0,
+        bytesWritten: 0,
+        evictions: 0,
+        evictedBytes: 0,
+      },
+      pipeline: {
+        hits: 0,
+        misses: 0,
+        bytesRead: 0,
+        bytesWritten: 0,
+        evictions: 0,
+        evictedBytes: 0,
+      },
+    };
   }
 
   /**
@@ -390,10 +469,14 @@ export class PersistentGpuCache {
     if (didUpgrade && opfs) {
       // If we dropped IndexedDB stores due to a schema bump, also clear OPFS
       // payload files; otherwise we can leak orphaned blobs across upgrades.
-      try {
-        await opfs.root.removeEntry("aero_gpu_cache", { recursive: true });
-      } catch {
-        // Ignore.
+      //
+      // We also clear the legacy OPFS directory name used by earlier revisions.
+      for (const dirName of [DB_NAME, "aero_gpu_cache"]) {
+        try {
+          await opfs.root.removeEntry(dirName, { recursive: true });
+        } catch {
+          // Ignore.
+        }
       }
       opfs = await tryOpenOpfsCacheDir();
     }
@@ -406,6 +489,35 @@ export class PersistentGpuCache {
     await cache._evictIfNeeded();
     await cache.warmPipelines();
     return cache;
+  }
+
+  /**
+   * Remove all persisted GPU cache state for this origin.
+   *
+   * This deletes:
+   * - the IndexedDB database (`DB_NAME`)
+   * - the OPFS cache directory (if available)
+   *
+   * @returns {Promise<void>}
+   */
+  static async clearAll() {
+    await new Promise((resolve, reject) => {
+      const req = indexedDB.deleteDatabase(DB_NAME);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error ?? new Error("Failed to delete IndexedDB database"));
+      req.onblocked = () => resolve(); // best-effort: treat blocked as "done enough"
+    });
+
+    const opfs = await tryOpenOpfsCacheDir();
+    if (opfs) {
+      for (const dirName of [DB_NAME, "aero_gpu_cache"]) {
+        try {
+          await opfs.root.removeEntry(dirName, { recursive: true });
+        } catch {
+          // Ignore.
+        }
+      }
+    }
   }
 
   async close() {
@@ -427,6 +539,72 @@ export class PersistentGpuCache {
       pipelines: { entries: pipelineEntries, bytes: this._pipelineBytes },
       opfs: !!this._opfsCacheDir,
     };
+  }
+
+  /**
+   * Drop all cached entries (IndexedDB + any OPFS blobs) and reset byte counts.
+   *
+   * @returns {Promise<void>}
+   */
+  async clearCache() {
+    this.pipelineDescriptors.clear();
+
+    // Best-effort OPFS cleanup.
+    if (this._opfsCacheDir) {
+      try {
+        await this._opfsCacheDir.removeEntry("shaders", { recursive: true });
+      } catch {
+        // Ignore.
+      }
+      try {
+        await this._opfsCacheDir.removeEntry("pipelines", { recursive: true });
+      } catch {
+        // Ignore.
+      }
+      // Recreate directories so subsequent writes succeed without re-opening.
+      try {
+        await this._opfsCacheDir.getDirectoryHandle("shaders", { create: true });
+        await this._opfsCacheDir.getDirectoryHandle("pipelines", { create: true });
+      } catch {
+        // Ignore; we'll fall back to IDB payload storage.
+      }
+    }
+
+    const tx = this._db.transaction([STORE_SHADERS, STORE_PIPELINES], "readwrite");
+    tx.objectStore(STORE_SHADERS).clear();
+    tx.objectStore(STORE_PIPELINES).clear();
+    await txDone(tx);
+
+    this._shaderBytes = 0;
+    this._pipelineBytes = 0;
+    this.resetTelemetry();
+  }
+
+  /**
+   * @returns {{
+   *   shader: {hits:number, misses:number, bytesRead:number, bytesWritten:number, evictions:number, evictedBytes:number},
+   *   pipeline: {hits:number, misses:number, bytesRead:number, bytesWritten:number, evictions:number, evictedBytes:number},
+   * }}
+   */
+  getTelemetry() {
+    // Ensure the return value is structured-cloneable.
+    return JSON.parse(JSON.stringify(this._telemetry));
+  }
+
+  resetTelemetry() {
+    this._telemetry.shader.hits = 0;
+    this._telemetry.shader.misses = 0;
+    this._telemetry.shader.bytesRead = 0;
+    this._telemetry.shader.bytesWritten = 0;
+    this._telemetry.shader.evictions = 0;
+    this._telemetry.shader.evictedBytes = 0;
+
+    this._telemetry.pipeline.hits = 0;
+    this._telemetry.pipeline.misses = 0;
+    this._telemetry.pipeline.bytesRead = 0;
+    this._telemetry.pipeline.bytesWritten = 0;
+    this._telemetry.pipeline.evictions = 0;
+    this._telemetry.pipeline.evictedBytes = 0;
   }
 
   /**
@@ -477,14 +655,21 @@ export class PersistentGpuCache {
     /** @type {any} */
     const record = await reqToPromise(store.get(key));
     await txDone(tx);
-    if (!record) return null;
+    if (!record) {
+      this._telemetry.shader.misses += 1;
+      return null;
+    }
 
     const payload = await this._loadShaderPayload(record);
     if (payload === null) {
       // Stale record (e.g. OPFS file removed). Treat as miss and delete metadata.
       await this.deleteShader(key);
+      this._telemetry.shader.misses += 1;
       return null;
     }
+
+    this._telemetry.shader.hits += 1;
+    this._telemetry.shader.bytesRead += record.size ?? approxShaderBytes(payload.wgsl, payload.reflection);
 
     // Touch LRU (best-effort).
     await this._touchShader(key, record);
@@ -534,6 +719,7 @@ export class PersistentGpuCache {
     await txDone(tx);
 
     this._shaderBytes += size;
+    this._telemetry.shader.bytesWritten += size;
     await this._evictIfNeeded();
   }
 
@@ -568,13 +754,20 @@ export class PersistentGpuCache {
     const store = tx.objectStore(STORE_PIPELINES);
     const record = await reqToPromise(store.get(key));
     await txDone(tx);
-    if (!record) return null;
+    if (!record) {
+      this._telemetry.pipeline.misses += 1;
+      return null;
+    }
 
     const desc = await this._loadPipelinePayload(record);
     if (desc === null) {
       await this.deletePipelineDescriptor(key);
+      this._telemetry.pipeline.misses += 1;
       return null;
     }
+
+    this._telemetry.pipeline.hits += 1;
+    this._telemetry.pipeline.bytesRead += record.size ?? approxPipelineBytes(desc);
 
     await this._touchPipeline(key, record);
     this.pipelineDescriptors.set(key, desc);
@@ -623,6 +816,7 @@ export class PersistentGpuCache {
     await txDone(tx);
 
     this._pipelineBytes += size;
+    this._telemetry.pipeline.bytesWritten += size;
     this.pipelineDescriptors.set(key, pipelineDesc);
     await this._evictIfNeeded();
   }
@@ -740,6 +934,15 @@ export class PersistentGpuCache {
 
       if (!oldest) return;
 
+      const oldestSize = oldest.size ?? 0;
+      if (storeName === STORE_SHADERS) {
+        this._telemetry.shader.evictions += 1;
+        this._telemetry.shader.evictedBytes += oldestSize;
+      } else {
+        this._telemetry.pipeline.evictions += 1;
+        this._telemetry.pipeline.evictedBytes += oldestSize;
+      }
+
       // Deleting updates byte counts inside deleteFn.
       await deleteFn(oldest);
 
@@ -823,6 +1026,81 @@ export class PersistentGpuCache {
       }
     }
     return record.desc ?? null;
+  }
+}
+
+/**
+ * Shader translation cache that combines:
+ * - a persistent store (`PersistentGpuCache`) for cross-session reuse, and
+ * - an in-memory map for the current session.
+ *
+ * This is a higher-level helper intended for "DXBC -> WGSL + reflection"
+ * translation caching. It intentionally does not attempt to persist compiled
+ * GPU objects like `GPUShaderModule` or pipelines.
+ */
+export class ShaderTranslationCache {
+  /**
+   * @param {PersistentGpuCache} persistent
+   */
+  constructor(persistent) {
+    this._persistent = persistent;
+    /** @type {Map<string, {wgsl: string, reflection: any}>} */
+    this._memory = new Map();
+  }
+
+  /**
+   * Clear the in-memory (session) cache.
+   */
+  clearMemory() {
+    this._memory.clear();
+  }
+
+  /**
+   * Get a shader translation artifact, using the lookup order required by Aero:
+   *
+   * 1) persistent cache (cross-session)
+   * 2) in-memory cache (this session)
+   * 3) translate (slow) + persist
+   *
+   * On persistent hit, the caller may provide a validator (typically Naga) to
+   * defensively verify cached data before use. If validation fails, the cache
+   * entry is deleted and the shader is retranslated.
+   *
+   * @param {ArrayBuffer|Uint8Array} dxbc
+   * @param {{halfPixelCenter?: boolean, capsHash?: string|null, [k: string]: any}} flags
+   * @param {() => Promise<{wgsl: string, reflection: any}>} translateFn
+   * @param {{ validateWgsl?: (wgsl: string) => Promise<boolean> }} [opts]
+   * @returns {Promise<{key: string, value: {wgsl: string, reflection: any}, source: "persistent"|"memory"|"translated"}>}
+   */
+  async getOrTranslate(dxbc, flags, translateFn, opts = {}) {
+    const key = await computeShaderCacheKey(dxbc, flags);
+
+    const persistent = await this._persistent.getShader(key);
+    if (persistent) {
+      if (opts.validateWgsl) {
+        const ok = await opts.validateWgsl(persistent.wgsl);
+        if (!ok) {
+          // Corruption defense: drop entry and retranslate.
+          await this._persistent.deleteShader(key);
+        } else {
+          this._memory.set(key, persistent);
+          return { key, value: persistent, source: "persistent" };
+        }
+      } else {
+        this._memory.set(key, persistent);
+        return { key, value: persistent, source: "persistent" };
+      }
+    }
+
+    const mem = this._memory.get(key);
+    if (mem) {
+      return { key, value: mem, source: "memory" };
+    }
+
+    const translated = await translateFn();
+    this._memory.set(key, translated);
+    await this._persistent.putShader(key, translated);
+    return { key, value: translated, source: "translated" };
   }
 }
 

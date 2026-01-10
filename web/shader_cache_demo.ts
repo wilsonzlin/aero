@@ -1,5 +1,6 @@
 import {
   PersistentGpuCache,
+  ShaderTranslationCache,
   computeShaderCacheKey,
   computeWebGpuCapsHash,
   compileWgslModule,
@@ -65,6 +66,7 @@ async function main() {
   // Ensure deterministic output for tests.
   const dxbc = new Uint8Array([0x44, 0x58, 0x42, 0x43, 1, 2, 3, 4, 5, 6, 7, 8]);
   const webgpu = await tryInitWebGpu();
+  const device = webgpu?.device ?? null;
   const capsHash = webgpu ? await computeWebGpuCapsHash(webgpu.adapter) : "no-webgpu";
   const flags = { halfPixelCenter: false, capsHash };
   const key = await computeShaderCacheKey(dxbc, flags);
@@ -73,26 +75,35 @@ async function main() {
     shaderLimits: { maxEntries: 64, maxBytes: 4 * 1024 * 1024 },
     pipelineLimits: { maxEntries: 256, maxBytes: 4 * 1024 * 1024 },
   });
+  cache.resetTelemetry();
+  const shaderCache = new ShaderTranslationCache(cache);
 
   const t0 = performance.now();
-  const cached = await cache.getShader(key);
-
   let cacheHit = false;
   let payload;
-  if (cached) {
-    cacheHit = true;
-    payload = cached;
-    logLine(`shader_cache: hit key=${key}`);
-  } else {
-    logLine(`shader_cache: miss key=${key}`);
-    logLine("shader_translate: begin");
-    payload = await translateDxbcToWgslSlow(dxbc);
-    logLine("shader_translate: end");
-    await cache.putShader(key, payload);
-  }
+  const result = await shaderCache.getOrTranslate(
+    dxbc,
+    flags,
+    async () => {
+      logLine("shader_translate: begin");
+      const out = await translateDxbcToWgslSlow(dxbc);
+      logLine("shader_translate: end");
+      return out;
+    },
+    device
+      ? {
+          validateWgsl: async (wgsl) => {
+            // Cache-hit corruption defense: validate against current implementation.
+            const compile = await compileWgslModule(device, wgsl);
+            return !!compile.ok;
+          },
+        }
+      : undefined,
+  );
+  payload = result.value;
+  cacheHit = result.source === "persistent";
+  logLine(`shader_cache: ${cacheHit ? "hit" : "miss"} key=${key}`);
   const t1 = performance.now();
-
-  const device = webgpu?.device ?? null;
   if (device) {
     // Validate cached WGSL against current browser implementation.
     const compile = await compileWgslModule(device, payload.wgsl);
@@ -119,6 +130,7 @@ async function main() {
     key,
     cacheHit,
     translationMs,
+    telemetry: cache.getTelemetry(),
   };
 }
 
