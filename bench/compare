@@ -1,0 +1,137 @@
+#!/usr/bin/env node
+
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import compareLib from "./lib/compare.cjs";
+import reportLib from "./report.cjs";
+
+const { compareResults } = compareLib;
+const { renderMarkdown } = reportLib;
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function parseArgs(argv) {
+  const options = {
+    baseline: path.join(__dirname, 'baseline.json'),
+    current: path.join(__dirname, 'results.json'),
+    thresholds: path.join(__dirname, 'thresholds.json'),
+    profile: 'pr-smoke',
+    outputMd: path.join(__dirname, 'compare.md'),
+    outputJson: null,
+    failOnRegression: false,
+  };
+
+  function requireValue(flag, value) {
+    if (value === undefined) {
+      throw new Error(`${flag} requires a value`);
+    }
+    return value;
+  }
+
+  const args = [...argv];
+  while (args.length > 0) {
+    const arg = args.shift();
+    if (arg === '--baseline') {
+      options.baseline = requireValue('--baseline', args.shift());
+      continue;
+    }
+    if (arg === '--current') {
+      options.current = requireValue('--current', args.shift());
+      continue;
+    }
+    if (arg === '--thresholds') {
+      options.thresholds = requireValue('--thresholds', args.shift());
+      continue;
+    }
+    if (arg === '--profile') {
+      options.profile = requireValue('--profile', args.shift());
+      continue;
+    }
+    if (arg === '--output-md') {
+      options.outputMd = requireValue('--output-md', args.shift());
+      continue;
+    }
+    if (arg === '--output-json') {
+      options.outputJson = requireValue('--output-json', args.shift());
+      continue;
+    }
+    if (arg === '--json') {
+      options.outputJson = path.join(__dirname, 'compare.json');
+      continue;
+    }
+    if (arg === '--fail-on-regression') {
+      options.failOnRegression = true;
+      continue;
+    }
+    if (arg === '--help' || arg === '-h') {
+      return { options, help: true };
+    }
+    throw new Error(`Unknown argument: ${arg}`);
+  }
+
+  return { options, help: false };
+}
+
+function printHelp() {
+  process.stdout.write(`bench/compare
+
+Compares current benchmark results to a baseline and generates a Markdown report.
+
+Usage:
+  node bench/compare [options]
+
+Options:
+  --baseline <path>      Baseline JSON (default: bench/baseline.json)
+  --current <path>       Current results JSON (default: bench/results.json)
+  --thresholds <path>    Thresholds JSON (default: bench/thresholds.json)
+  --profile <name>       Threshold profile (default: pr-smoke)
+  --output-md <path>     Markdown output path (default: bench/compare.md)
+  --output-json <path>   JSON output path (optional)
+  --json                 Write JSON output to bench/compare.json
+  --fail-on-regression   Exit non-zero if any non-informational regression is detected
+`);
+}
+
+function readJsonFile(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function main() {
+  const { options, help } = parseArgs(process.argv.slice(2));
+  if (help) {
+    printHelp();
+    return;
+  }
+
+  const baseline = readJsonFile(options.baseline);
+  const current = readJsonFile(options.current);
+  const thresholds = readJsonFile(options.thresholds);
+
+  const result = compareResults({
+    baseline,
+    current,
+    thresholds,
+    profileName: options.profile,
+  });
+
+  const markdown = renderMarkdown(result);
+  fs.mkdirSync(path.dirname(options.outputMd), { recursive: true });
+  fs.writeFileSync(options.outputMd, markdown, 'utf8');
+
+  if (options.outputJson) {
+    fs.mkdirSync(path.dirname(options.outputJson), { recursive: true });
+    fs.writeFileSync(options.outputJson, JSON.stringify(result, null, 2) + '\n', 'utf8');
+  }
+
+  process.stdout.write(`Wrote ${options.outputMd}\n`);
+  if (options.outputJson) process.stdout.write(`Wrote ${options.outputJson}\n`);
+
+  if (options.failOnRegression && result.summary.regressions > 0) {
+    process.exitCode = 1;
+  }
+}
+
+main();

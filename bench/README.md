@@ -54,9 +54,34 @@ Generate a lightweight markdown report:
 node bench/history.js render-md --history bench/history.json --out bench/history.md
 ```
 
+### Baseline regression compare (PF-009)
+
+PF-009 adds a baseline/threshold compare tool that turns the microbench JSON into an actionable
+regression report (Markdown for CI artifacts/PR comments + optional JSON details).
+
+Files:
+
+- `bench/baseline.json` — checked-in baseline results (same schema as `bench/results.json`, plus optional metadata/variance expectations).
+- `bench/thresholds.json` — threshold policy (supports multiple profiles, e.g. `pr-smoke` vs `nightly`).
+- `bench/compare` — compares baseline vs current and writes:
+  - `bench/compare.md`
+  - `bench/compare.json` (optional; machine-readable)
+
+Example:
+
+```bash
+node bench/run.js --out bench/results.json
+node bench/compare --fail-on-regression --json
+```
+
+Comparisons use **median-of-N** (`samples`) per metric. If the current run has high variance, the
+report includes a warning section. Metrics can also be marked `informational` in thresholds so they
+never fail CI.
+
 ## GPU benchmark suite
 
-`bench/gpu_bench.ts` runs graphics-focused benchmarks (WebGPU with WebGL2 fallback) and emits a JSON report suitable for artifact upload and regression comparison.
+`bench/gpu_bench.ts` runs graphics-focused benchmarks (WebGPU with WebGL2 fallback) and emits a JSON
+report suitable for artifact upload and regression comparison.
 
 ### Running locally
 
@@ -80,7 +105,8 @@ node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
   --thresholdPct 5
 ```
 
-The compare script exits non-zero if any primary metric regresses by more than the configured threshold.
+The compare script exits non-zero if any primary metric regresses by more than the configured
+threshold.
 
 ## Scenario runner (PF-008 macrobench framework)
 

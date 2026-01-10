@@ -13,6 +13,8 @@
     "generate:mega-module": "node scripts/generate-mega-module.mjs",
     "demo": "node web/demo/server.js",
     "test": "npm run test:unit",
+    "bench:run": "node bench/run.js --out bench/results.json",
+    "bench:compare": "node bench/compare --json",
     "bench:gpu": "node --experimental-strip-types bench/gpu_bench.ts",
     "bench:storage": "node --experimental-strip-types bench/runner.ts storage_io",
     "compare:gpu": "node --experimental-strip-types scripts/compare_gpu_benchmarks.ts",

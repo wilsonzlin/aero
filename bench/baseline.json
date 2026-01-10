@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "meta": {
+    "recordedAt": "2026-01-10T00:00:00.000Z",
+    "environmentNotes": "Initial baseline for PF-009 regression tracking (recorded on a Linux x64 runner).",
+    "node": "v25.2.0",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "scenarios": {
+    "startup": {
+      "metrics": {
+        "startup_ms": {
+          "unit": "ms",
+          "better": "lower",
+          "samples": [
+            1.5295470000000009,
+            1.5027019999999993,
+            1.4362759999999994,
+            1.4791179999999997,
+            1.638853000000001,
+            1.5363029999999966,
+            1.551054999999998
+          ],
+          "expectedCvMax": 0.2
+        }
+      }
+    },
+    "microbench": {
+      "metrics": {
+        "json_parse_ops_s": {
+          "unit": "ops/s",
+          "better": "higher",
+          "samples": [
+            47347.81070842203,
+            53678.65803354917,
+            49751.56316201674,
+            46034.13778059935,
+            52436.62255714109
+          ],
+          "expectedCvMax": 0.15
+        },
+        "arith_ops_s": {
+          "unit": "ops/s",
+          "better": "higher",
+          "samples": [
+            1889637.8288244393,
+            1990534.336929812,
+            1894049.8387141908,
+            1990656.8746687078,
+            1970476.0886049639
+          ],
+          "expectedCvMax": 0.1
+        }
+      }
+    }
+  }
+}
+
