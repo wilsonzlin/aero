@@ -66,16 +66,29 @@ if not defined OBJARCH (
   exit /b 1
 )
 
-set "OBJDIR=obj%VARIANT%_win7_%OBJARCH%"
-
 pushd "%SRCDIR%" >nul
 
+rem setenv.cmd varies slightly across kits; the Win7 argument may be WIN7 or W7.
+rem We detect success by checking that BUILD_ALT_DIR is populated.
+set "BUILD_ALT_DIR="
 call "%SETENV%" "%WDKROOT%" %VARIANT% %ARCH% %TARGET_OS%
-if errorlevel 1 (
+if not defined BUILD_ALT_DIR (
+  if /i "%TARGET_OS%"=="WIN7" (
+    set "BUILD_ALT_DIR="
+    call "%SETENV%" "%WDKROOT%" %VARIANT% %ARCH% W7
+  ) else if /i "%TARGET_OS%"=="W7" (
+    set "BUILD_ALT_DIR="
+    call "%SETENV%" "%WDKROOT%" %VARIANT% %ARCH% WIN7
+  )
+)
+if not defined BUILD_ALT_DIR (
   echo ERROR: setenv failed for %VARIANT% %ARCH% %TARGET_OS%
+  echo        Tried "%TARGET_OS%" and the common Win7 alias (WIN7/W7).
   popd >nul
   exit /b 1
 )
+
+set "OBJDIR=obj%BUILD_ALT_DIR%"
 
 cd /d "%SRCDIR%"
 
