@@ -57,9 +57,11 @@
     <ClCompile Include="src\hid_write.c" />
     <ClCompile Include="src\queue.c" />
     <ClCompile Include="src\virtio_input.c" />
+    <ClCompile Include="src\virtio_pci_interrupts.c" />
     <ClCompile Include="src\virtio_statusq.c" />
     <ClInclude Include="src\hid_translate.h" />
     <ClInclude Include="src\virtio_input.h" />
+    <ClInclude Include="src\virtio_pci_interrupts.h" />
     <ClInclude Include="src\virtio_input_proto.h" />
     <ClInclude Include="src\virtio_statusq.h" />
     <None Include="virtio-input.inf" />

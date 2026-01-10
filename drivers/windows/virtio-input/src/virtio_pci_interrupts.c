@@ -29,8 +29,7 @@ static NTSTATUS VirtioPciFindInterruptResources(
     _In_ WDFCMRESLIST ResourcesRaw,
     _In_ WDFCMRESLIST ResourcesTranslated,
     _Out_ PCM_PARTIAL_RESOURCE_DESCRIPTOR* InterruptRaw,
-    _Out_ PCM_PARTIAL_RESOURCE_DESCRIPTOR* InterruptTranslated
-    )
+    _Out_ PCM_PARTIAL_RESOURCE_DESCRIPTOR* InterruptTranslated)
 {
     ULONG i;
     ULONG count;
@@ -74,8 +73,7 @@ static ULONGLONG VirtioPciQueueMaskAll(_In_ ULONG QueueCount)
 static VOID VirtioPciTraceVectorMapping(
     _In_ ULONG QueueCount,
     _In_ USHORT UsedVectorCount,
-    _In_ const USHORT* QueueVectors
-    )
+    _In_ const USHORT* QueueVectors)
 {
     ULONG vector;
     ULONG q;
@@ -106,8 +104,7 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
     _In_ volatile UCHAR* IsrStatusRegister,
     _In_opt_ EVT_VIRTIO_PCI_CONFIG_CHANGE* EvtConfigChange,
     _In_opt_ EVT_VIRTIO_PCI_DRAIN_QUEUE* EvtDrainQueue,
-    _In_opt_ PVOID CallbackContext
-    )
+    _In_opt_ PVOID CallbackContext)
 {
     NTSTATUS status;
     PCM_PARTIAL_RESOURCE_DESCRIPTOR interruptRaw;
@@ -294,8 +291,6 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
 
 VOID VirtioPciInterruptsReleaseHardware(_Inout_ PVIRTIO_PCI_INTERRUPTS Interrupts)
 {
-    ULONG q;
-
     if (Interrupts == NULL) {
         return;
     }
@@ -320,12 +315,6 @@ VOID VirtioPciInterruptsReleaseHardware(_Inout_ PVIRTIO_PCI_INTERRUPTS Interrupt
     if (Interrupts->QueueLocksMemory != NULL) {
         WdfObjectDelete(Interrupts->QueueLocksMemory);
         Interrupts->QueueLocksMemory = NULL;
-    } else if (Interrupts->QueueLocks != NULL) {
-        for (q = 0; q < Interrupts->QueueCount; q++) {
-            if (Interrupts->QueueLocks[q] != NULL) {
-                WdfObjectDelete(Interrupts->QueueLocks[q]);
-            }
-        }
     }
 
     RtlZeroMemory(Interrupts, sizeof(*Interrupts));
@@ -398,9 +387,13 @@ static VOID VirtioPciInterruptDpc(_In_ WDFINTERRUPT Interrupt, _In_ WDFOBJECT As
                 continue;
             }
 
-            WdfSpinLockAcquire(interrupts->QueueLocks[q]);
+            if (interrupts->QueueLocks != NULL) {
+                WdfSpinLockAcquire(interrupts->QueueLocks[q]);
+            }
             interrupts->EvtDrainQueue(device, q, interrupts->CallbackContext);
-            WdfSpinLockRelease(interrupts->QueueLocks[q]);
+            if (interrupts->QueueLocks != NULL) {
+                WdfSpinLockRelease(interrupts->QueueLocks[q]);
+            }
         }
     }
 }
@@ -410,8 +403,7 @@ NTSTATUS VirtioPciProgramMsixVectors(
     _In_ volatile VIRTIO_PCI_COMMON_CFG* CommonCfg,
     _In_ ULONG QueueCount,
     _In_ USHORT ConfigVector,
-    _In_reads_(QueueCount) const USHORT* QueueVectors
-    )
+    _In_reads_(QueueCount) const USHORT* QueueVectors)
 {
     USHORT readVector;
     ULONG q;
@@ -453,8 +445,7 @@ NTSTATUS VirtioPciProgramMsixVectors(
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS VirtioPciInterruptsProgramMsixVectors(
     _In_ const PVIRTIO_PCI_INTERRUPTS Interrupts,
-    _In_ volatile VIRTIO_PCI_COMMON_CFG* CommonCfg
-    )
+    _In_ volatile VIRTIO_PCI_COMMON_CFG* CommonCfg)
 {
     if (Interrupts == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -470,3 +461,4 @@ NTSTATUS VirtioPciInterruptsProgramMsixVectors(
         Interrupts->u.Msix.ConfigVector,
         Interrupts->u.Msix.QueueVectors);
 }
+

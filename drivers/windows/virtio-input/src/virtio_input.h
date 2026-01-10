@@ -67,6 +67,8 @@ bool virtio_input_try_pop_report(struct virtio_input_device *dev, struct virtio_
 #include <wdf.h>
 
 #include "virtio_statusq.h"
+#include "virtio_pci_interrupts.h"
+
 #ifndef HID_HID_DESCRIPTOR_TYPE
 #define HID_HID_DESCRIPTOR_TYPE 0x21
 #endif
@@ -99,6 +101,16 @@ typedef struct _VIRTIO_INPUT_PENDING_REPORT {
     size_t Size;
 } VIRTIO_INPUT_PENDING_REPORT, *PVIRTIO_INPUT_PENDING_REPORT;
 
+enum { VIRTIO_INPUT_QUEUE_COUNT = 2 };
+
+typedef struct _VIRTIO_PCI_BAR {
+    PHYSICAL_ADDRESS Base;
+    ULONG Length;
+    PVOID Va;
+} VIRTIO_PCI_BAR, *PVIRTIO_PCI_BAR;
+
+enum { VIRTIO_PCI_BAR_COUNT = 6 };
+
 typedef struct _DEVICE_CONTEXT {
     WDFQUEUE DefaultQueue;
     struct virtio_input_device InputDevice;
@@ -110,6 +122,12 @@ typedef struct _DEVICE_CONTEXT {
     VIRTIO_INPUT_PENDING_REPORT PendingReport[VIRTIO_INPUT_MAX_REPORT_ID + 1];
 
     PVIRTIO_STATUSQ StatusQ;
+
+    VIRTIO_PCI_BAR Bars[VIRTIO_PCI_BAR_COUNT];
+    volatile VIRTIO_PCI_COMMON_CFG* CommonCfg;
+    volatile UCHAR* IsrStatus;
+
+    VIRTIO_PCI_INTERRUPTS Interrupts;
 } DEVICE_CONTEXT, *PDEVICE_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, VirtioInputGetDeviceContext);
