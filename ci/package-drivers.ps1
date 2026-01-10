@@ -1,0 +1,376 @@
+[CmdletBinding()]
+param(
+    [string] $InputRoot = "out/packages",
+    [string] $CertPath = "out/certs/aero-test.cer",
+    [string] $OutDir = "out/artifacts",
+    [string] $Version,
+    [switch] $NoIso
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+function Resolve-RepoPath {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+
+    $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+    return [System.IO.Path]::GetFullPath((Join-Path $repoRoot $Path))
+}
+
+function Get-VersionString {
+    $date = Get-Date -Format "yyyyMMdd"
+
+    $sha = $null
+    try {
+        $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+        $sha = (& git -C $repoRoot rev-parse --short=12 HEAD 2>$null).Trim()
+    } catch {
+        $sha = $null
+    }
+
+    if ([string]::IsNullOrWhiteSpace($sha)) {
+        return $date
+    }
+
+    return "$date-$sha"
+}
+
+function Get-ArchFromPath {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    $p = $Path.ToLowerInvariant()
+
+    if ($p -match '(^|[\\/])(amd64|x64|x86_64)([\\/]|$)') {
+        return "x64"
+    }
+
+    if ($p -match '(^|[\\/])(x86|i386|win32)([\\/]|$)') {
+        return "x86"
+    }
+
+    return $null
+}
+
+function Get-DriverNameFromRelativeSegments {
+    param(
+        [Parameter(Mandatory = $true)][string[]] $Segments,
+        [Parameter(Mandatory = $true)][string] $Fallback
+    )
+
+    $skip = @(
+        "drivers",
+        "driver",
+        "packages",
+        "package",
+        "signed",
+        "release",
+        "debug",
+        "build",
+        "bin",
+        "dist",
+        "win7",
+        "w7",
+        "windows7",
+        "win7sp1",
+        "sp1"
+    )
+
+    foreach ($segment in $Segments) {
+        $s = $segment.ToLowerInvariant()
+        if ($s -in @("x86", "i386", "win32", "x64", "amd64", "x86_64")) {
+            continue
+        }
+        if ($s -in $skip) {
+            continue
+        }
+
+        return $segment
+    }
+
+    return $Fallback
+}
+
+function Normalize-PathComponent {
+    param([Parameter(Mandatory = $true)][string] $Value)
+
+    $invalid = [System.IO.Path]::GetInvalidFileNameChars()
+    foreach ($c in $invalid) {
+        $Value = $Value.Replace($c, "_")
+    }
+    return $Value
+}
+
+function Assert-ContainsFileExtension {
+    param(
+        [Parameter(Mandatory = $true)][string] $Root,
+        [Parameter(Mandatory = $true)][string] $Extension
+    )
+
+    $pattern = "*.$Extension"
+    $found = Get-ChildItem -Path $Root -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $found) {
+        throw "Expected at least one '$pattern' file under '$Root'."
+    }
+}
+
+function Write-InstallTxt {
+    param([Parameter(Mandatory = $true)][string] $DestPath)
+
+    $lines = @(
+        "AeroVirtIO Windows 7 Driver Package",
+        "",
+        "This folder contains signed driver packages for Windows 7 (x86 + x64).",
+        "These drivers are signed with a TEST certificate and are not suitable for production use.",
+        "",
+        "1) Enable test signing (Windows 7 x64 only)",
+        "-------------------------------------------",
+        "Open an elevated Command Prompt and run:",
+        "  bcdedit /set testsigning on",
+        "Reboot the machine.",
+        "",
+        "To disable later:",
+        "  bcdedit /set testsigning off",
+        "",
+        "2) Import the signing certificate",
+        "---------------------------------",
+        "The certificate is included as: aero-test.cer",
+        "",
+        "Option A (GUI):",
+        "  - Run: certmgr.msc",
+        "  - Import aero-test.cer into BOTH:",
+        "      * Trusted Root Certification Authorities",
+        "      * Trusted Publishers",
+        "",
+        "Option B (Command line, elevated):",
+        "  certutil -addstore -f Root aero-test.cer",
+        "  certutil -addstore -f TrustedPublisher aero-test.cer",
+        "",
+        "3) Install drivers (PnPUtil)",
+        "----------------------------",
+        "Open an elevated Command Prompt in the folder containing the driver files and run:",
+        "  pnputil -i -a <path-to-driver.inf>",
+        "",
+        "Example:",
+        "  pnputil -i -a drivers\\<driver>\\x64\\<something>.inf",
+        "",
+        "4) Windows Setup: \"Load driver\"",
+        "--------------------------------",
+        "If you built an ISO artifact, mount it in the VM and choose:",
+        "  Install Windows -> Load driver -> Browse",
+        "Then select the correct x86/x64 INF under the drivers\\ folder.",
+        ""
+    )
+
+    $dir = Split-Path -Parent $DestPath
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $lines | Set-Content -Path $DestPath -Encoding UTF8
+}
+
+function New-DriverArtifactRoot {
+    param(
+        [Parameter(Mandatory = $true)][string] $DestRoot,
+        [Parameter(Mandatory = $true)][string] $CertSourcePath
+    )
+
+    New-Item -ItemType Directory -Force -Path $DestRoot | Out-Null
+    Copy-Item -Path $CertSourcePath -Destination (Join-Path $DestRoot "aero-test.cer") -Force
+    Write-InstallTxt -DestPath (Join-Path $DestRoot "INSTALL.txt")
+}
+
+function Copy-DriversForArch {
+    param(
+        [Parameter(Mandatory = $true)][string] $InputRoot,
+        [Parameter(Mandatory = $true)][string[]] $Arches,
+        [Parameter(Mandatory = $true)][string] $DestRoot
+    )
+
+    $inputRootTrimmed = $InputRoot.TrimEnd("\", "/")
+
+    $infFiles = Get-ChildItem -Path $InputRoot -Recurse -File -Filter "*.inf" -ErrorAction SilentlyContinue
+    if (-not $infFiles) {
+        throw "No '.inf' files found under '$InputRoot'."
+    }
+
+    $seen = New-Object "System.Collections.Generic.HashSet[string]"
+    $copied = 0
+
+    foreach ($inf in $infFiles) {
+        $arch = Get-ArchFromPath -Path $inf.FullName
+        if (-not $arch) {
+            continue
+        }
+        if ($Arches -notcontains $arch) {
+            continue
+        }
+
+        $srcDir = Split-Path -Parent $inf.FullName
+        $relative = ""
+        if ($srcDir.Length -ge $inputRootTrimmed.Length -and $srcDir.StartsWith($inputRootTrimmed, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $relative = $srcDir.Substring($inputRootTrimmed.Length).TrimStart("\", "/")
+        }
+        $segments = @()
+        if (-not [string]::IsNullOrWhiteSpace($relative)) {
+            $segments = $relative -split "[\\/]+"
+        }
+
+        $driverName = Get-DriverNameFromRelativeSegments -Segments $segments -Fallback $inf.BaseName
+        $driverName = $driverName.Trim()
+        if ([string]::IsNullOrWhiteSpace($driverName)) {
+            $driverName = $inf.BaseName
+        }
+        $driverName = Normalize-PathComponent -Value $driverName
+
+        $destDir = Join-Path $DestRoot (Join-Path "drivers" (Join-Path $driverName $arch))
+        $key = "$arch|$driverName|$srcDir"
+        if ($seen.Contains($key)) {
+            continue
+        }
+        $null = $seen.Add($key)
+
+        New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+        Copy-Item -Path (Join-Path $srcDir "*") -Destination $destDir -Recurse -Force
+        $copied++
+    }
+
+    if ($copied -eq 0) {
+        throw "No driver packages found for architectures: $($Arches -join ', ')."
+    }
+
+    Assert-ContainsFileExtension -Root $DestRoot -Extension "inf"
+    Assert-ContainsFileExtension -Root $DestRoot -Extension "cat"
+    Assert-ContainsFileExtension -Root $DestRoot -Extension "sys"
+}
+
+function New-ZipFromFolder {
+    param(
+        [Parameter(Mandatory = $true)][string] $Folder,
+        [Parameter(Mandatory = $true)][string] $ZipPath
+    )
+
+    if (Test-Path $ZipPath) {
+        Remove-Item -Force $ZipPath
+    }
+
+    Compress-Archive -Path (Join-Path $Folder "*") -DestinationPath $ZipPath -Force
+    $zipFile = Get-Item -Path $ZipPath -ErrorAction SilentlyContinue
+    if (-not $zipFile -or $zipFile.Length -le 0) {
+        throw "Failed to create ZIP, or ZIP is empty: '$ZipPath'."
+    }
+}
+
+function New-IsoFromFolder {
+    param(
+        [Parameter(Mandatory = $true)][string] $Folder,
+        [Parameter(Mandatory = $true)][string] $IsoPath,
+        [Parameter(Mandatory = $true)][string] $VolumeLabel
+    )
+
+    $isWindows = $false
+    try {
+        $isWindows = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+    } catch {
+        $isWindows = $false
+    }
+
+    if (-not $isWindows) {
+        throw "ISO creation requires Windows (IMAPI2). Re-run with -NoIso, or run this script on Windows."
+    }
+
+    if (Test-Path $IsoPath) {
+        Remove-Item -Force $IsoPath
+    }
+
+    $helper = Join-Path $PSScriptRoot "lib/New-IsoFile.ps1"
+    if (-not (Test-Path $helper)) {
+        throw "Missing helper script: '$helper'."
+    }
+
+    $powershellExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
+    if ($powershellExe) {
+        & $powershellExe -NoProfile -ExecutionPolicy Bypass -STA -File $helper -SourcePath $Folder -IsoPath $IsoPath -VolumeLabel $VolumeLabel
+        if ($LASTEXITCODE -ne 0) {
+            throw "ISO creation failed (exit code $LASTEXITCODE)."
+        }
+    } else {
+        . $helper
+        New-IsoFile -SourcePath $Folder -IsoPath $IsoPath -VolumeLabel $VolumeLabel
+    }
+
+    $isoFile = Get-Item -Path $IsoPath -ErrorAction SilentlyContinue
+    if (-not $isoFile -or $isoFile.Length -le 0) {
+        throw "ISO file was not created or is empty: '$IsoPath'."
+    }
+}
+
+$inputRootResolved = Resolve-RepoPath -Path $InputRoot
+$certPathResolved = Resolve-RepoPath -Path $CertPath
+$outDirResolved = Resolve-RepoPath -Path $OutDir
+
+if (-not (Test-Path $inputRootResolved)) {
+    throw "InputRoot does not exist: '$inputRootResolved'."
+}
+if (-not (Test-Path $certPathResolved)) {
+    throw "CertPath does not exist: '$certPathResolved'."
+}
+
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = Get-VersionString
+}
+
+New-Item -ItemType Directory -Force -Path $outDirResolved | Out-Null
+
+$artifactBase = "AeroVirtIO-Win7-$Version"
+$zipX86 = Join-Path $outDirResolved "$artifactBase-x86.zip"
+$zipX64 = Join-Path $outDirResolved "$artifactBase-x64.zip"
+$zipBundle = Join-Path $outDirResolved "$artifactBase-bundle.zip"
+$isoBundle = Join-Path $outDirResolved "$artifactBase.iso"
+
+$stagingBase = Join-Path $outDirResolved "_staging"
+if (Test-Path $stagingBase) {
+    Remove-Item -Recurse -Force $stagingBase
+}
+New-Item -ItemType Directory -Force -Path $stagingBase | Out-Null
+
+$stageX86 = Join-Path $stagingBase "x86"
+$stageX64 = Join-Path $stagingBase "x64"
+$stageBundle = Join-Path $stagingBase "bundle"
+
+New-DriverArtifactRoot -DestRoot $stageX86 -CertSourcePath $certPathResolved
+New-DriverArtifactRoot -DestRoot $stageX64 -CertSourcePath $certPathResolved
+New-DriverArtifactRoot -DestRoot $stageBundle -CertSourcePath $certPathResolved
+
+Copy-DriversForArch -InputRoot $inputRootResolved -Arches @("x86") -DestRoot $stageX86
+Copy-DriversForArch -InputRoot $inputRootResolved -Arches @("x64") -DestRoot $stageX64
+Copy-DriversForArch -InputRoot $inputRootResolved -Arches @("x86", "x64") -DestRoot $stageBundle
+
+$success = $false
+try {
+    New-ZipFromFolder -Folder $stageX86 -ZipPath $zipX86
+    New-ZipFromFolder -Folder $stageX64 -ZipPath $zipX64
+    New-ZipFromFolder -Folder $stageBundle -ZipPath $zipBundle
+
+    if (-not $NoIso) {
+        $label = ("AEROVIRTIO_WIN7_" + $Version).ToUpperInvariant() -replace "[^A-Z0-9_]", "_"
+        if ($label.Length -gt 32) {
+            $label = $label.Substring(0, 32)
+        }
+        New-IsoFromFolder -Folder $stageBundle -IsoPath $isoBundle -VolumeLabel $label
+    }
+    $success = $true
+} finally {
+    if ($success -and (Test-Path $stagingBase)) {
+        Remove-Item -Recurse -Force $stagingBase
+    }
+}
+
+Write-Host "Artifacts created in '$outDirResolved':"
+Write-Host "  $zipX86"
+Write-Host "  $zipX64"
+Write-Host "  $zipBundle"
+if (-not $NoIso) {
+    Write-Host "  $isoBundle"
+}
