@@ -260,6 +260,8 @@ jobs:
 
           if [[ -n "${AERO_WASM_CRATE_DIR:-}" ]]; then
             dir="$AERO_WASM_CRATE_DIR"
+          elif [[ -f crates/aero-wasm/Cargo.toml ]]; then
+            dir="crates/aero-wasm"
           else
             if [[ ! -f Cargo.toml ]]; then
               echo "Cargo.toml not found at repo root; set AERO_WASM_CRATE_DIR to the crate directory containing Cargo.toml." >&2

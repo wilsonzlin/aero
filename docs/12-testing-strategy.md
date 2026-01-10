@@ -1014,6 +1014,13 @@ npm run test:gpu
 
 ## Continuous Integration
 
+### Running WASM unit tests locally
+
+```bash
+cd crates/aero-wasm
+wasm-pack test --node
+```
+
 ### GitHub Actions Workflow
 
 ```yaml
@@ -1027,17 +1034,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: nightly
-          target: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
       
       - name: Run unit tests
         run: cargo test --all-features
       
-      - name: Run WASM tests
-        run: wasm-pack test --headless --chrome
+      - name: Run WASM tests (node)
+        working-directory: crates/aero-wasm
+        run: wasm-pack test --node
       
       - name: Build
         run: cargo build --release --target wasm32-unknown-unknown
