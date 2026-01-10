@@ -462,13 +462,20 @@ jobs:
             }
           }
 
+          # Normalise to forward slashes so downstream tools/actions behave the
+          # same across OSes (esp. cache-dependency-path on Windows).
+          $dir = $dir.Trim() -replace '\\', '/'
+          if ($dir -ne "." -and $dir -ne "/" -and $dir -notmatch '^[A-Za-z]:/$') {
+            $dir = $dir.TrimEnd('/')
+          }
+
           if ($dir -eq ".") {
             $lockfile = "package-lock.json"
           } else {
             $lockfile = "$dir/package-lock.json"
           }
 
-          if (-not (Test-Path $lockfile)) {
+          if (-not (Test-Path -LiteralPath $lockfile)) {
             Write-Error "package-lock.json not found at '$lockfile'. This workflow expects npm; ensure a lockfile exists."
             exit 1
           }
@@ -518,6 +525,17 @@ jobs:
       - name: Production build
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npm run build
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Smoke matrix (${{ matrix.os }})"
+            echo ""
+            echo "- Node dir: \\`${{ steps.node-dir.outputs.dir }}\\`"
+            echo "- Lockfile: \\`${{ steps.node-dir.outputs.lockfile }}\\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   playwright:
     name: Playwright (browser automation)
