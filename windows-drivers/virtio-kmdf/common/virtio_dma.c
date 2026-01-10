@@ -29,6 +29,8 @@ NTSTATUS VirtioDmaCreate(
     WDFOBJECT ctxObject;
     VIRTIO_DMA_CONTEXT* ctx;
 
+    PAGED_CODE();
+
     if (OutCtx == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
@@ -101,6 +103,8 @@ NTSTATUS VirtioDmaCreate(
 
 VOID VirtioDmaDestroy(_Inout_opt_ VIRTIO_DMA_CONTEXT** Ctx)
 {
+    PAGED_CODE();
+
     if ((Ctx == NULL) || (*Ctx == NULL)) {
         return;
     }
@@ -119,6 +123,8 @@ NTSTATUS VirtioDmaAllocCommonBuffer(
     _In_ BOOLEAN CacheEnabled,
     _Out_ VIRTIO_COMMON_BUFFER* Out)
 {
+    PAGED_CODE();
+
     if (Ctx == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
@@ -137,6 +143,8 @@ NTSTATUS VirtioDmaAllocCommonBufferWithParent(
 {
     NTSTATUS status;
     ULONG alignmentRequirement;
+
+    PAGED_CODE();
 
     if ((Ctx == NULL) || (Out == NULL) || (ParentObject == NULL)) {
         return STATUS_INVALID_PARAMETER;
@@ -209,6 +217,8 @@ NTSTATUS VirtioDmaAllocCommonBufferWithParent(
 
 VOID VirtioDmaFreeCommonBuffer(_Inout_ VIRTIO_COMMON_BUFFER* Buffer)
 {
+    PAGED_CODE();
+
     if (Buffer == NULL) {
         return;
     }

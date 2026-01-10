@@ -93,6 +93,7 @@ typedef struct _VIRTIO_DMA_CONTEXT {
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VIRTIO_DMA_CONTEXT, VirtioDmaGetContext);
 
 _Must_inspect_result_
+_IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS VirtioDmaCreate(
     _In_ WDFDEVICE Device,
     _In_ size_t MaxTransferLength,
@@ -100,9 +101,11 @@ NTSTATUS VirtioDmaCreate(
     _In_ BOOLEAN Prefer64Bit,
     _Outptr_result_nullonfailure_ VIRTIO_DMA_CONTEXT** OutCtx);
 
+_IRQL_requires_max_(PASSIVE_LEVEL)
 VOID VirtioDmaDestroy(_Inout_opt_ VIRTIO_DMA_CONTEXT** Ctx);
 
 _Must_inspect_result_
+_IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS VirtioDmaAllocCommonBuffer(
     _In_ VIRTIO_DMA_CONTEXT* Ctx,
     _In_ size_t Length,
@@ -111,6 +114,7 @@ NTSTATUS VirtioDmaAllocCommonBuffer(
     _Out_ VIRTIO_COMMON_BUFFER* Out);
 
 _Must_inspect_result_
+_IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS VirtioDmaAllocCommonBufferWithParent(
     _In_ VIRTIO_DMA_CONTEXT* Ctx,
     _In_ size_t Length,
@@ -119,6 +123,7 @@ NTSTATUS VirtioDmaAllocCommonBufferWithParent(
     _In_ WDFOBJECT ParentObject,
     _Out_ VIRTIO_COMMON_BUFFER* Out);
 
+_IRQL_requires_max_(PASSIVE_LEVEL)
 VOID VirtioDmaFreeCommonBuffer(_Inout_ VIRTIO_COMMON_BUFFER* Buffer);
 
 __forceinline WDFDMAENABLER VirtioDmaGetEnabler(_In_ const VIRTIO_DMA_CONTEXT* Ctx)
