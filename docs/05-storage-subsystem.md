@@ -772,9 +772,8 @@ Minimum contract:
 - The server should either:
   - implement open-ended ranges (`bytes=<start>-`) and suffix ranges (`bytes=-<suffix-length>`), or
   - explicitly reject them (do not silently ignore the header)
-- Multi-range requests (e.g. `Range: bytes=0-0,100-199`):
-  - Recommended: implement full `multipart/byteranges` responses per RFC 9110.
-  - If not implemented, reject multi-range requests explicitly (e.g. `400`/`416`) rather than silently ignoring the header.
+- Multi-range requests (e.g. `Range: bytes=0-0,100-199`) are not used by `StreamingDisk` and are not required for production deployments.
+  - Reject multi-range requests explicitly (e.g. `416` or `400`) rather than silently ignoring the header.
 
 Critical implementation constraints:
 
