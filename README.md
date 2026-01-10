@@ -196,6 +196,20 @@ This repo includes a reference backend service at [`services/image-gateway/`](./
 - returns CloudFront signed-cookie (preferred) or signed-URL auth material for a stable, cacheable image URL
 - includes a dev-only `Range` proxy fallback for local testing without CloudFront
 
+### Local MinIO object store (Range + CORS)
+
+For a self-contained local environment to validate **HTTP Range** + **CORS/preflight** behavior against an S3-compatible endpoint (with an optional nginx “edge” proxy), see:
+
+- [`infra/local-object-store/README.md`](./infra/local-object-store/README.md)
+
+From the repo root:
+
+```bash
+just object-store-up        # MinIO origin on http://localhost:9000 + console on :9001
+just object-store-up-proxy  # adds an nginx proxy on http://localhost:9002 (edge/CORS emulation)
+just object-store-verify --down
+```
+
 ## Browser memory model PoC (SharedArrayBuffer + WebAssembly.Memory)
 
 Modern browsers impose practical limits around **wasm32** addressability and `SharedArrayBuffer` usage:
