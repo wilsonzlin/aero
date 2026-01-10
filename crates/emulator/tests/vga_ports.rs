@@ -63,7 +63,7 @@ fn attribute_flip_flop_resets_on_input_status_read() {
     // Register 0x10 should remain at its default value.
     vga.port_read(0x3DA, 1);
     vga.port_write(0x3C0, 1, 0x10);
-    assert_eq!(vga.port_read(0x3C1, 1) as u8, 0x00);
+    assert_eq!(vga.port_read(0x3C1, 1) as u8, 0x0C);
 }
 
 #[test]

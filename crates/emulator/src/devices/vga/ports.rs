@@ -3,8 +3,9 @@ use core::cell::Cell;
 use crate::io::PortIO;
 
 use super::regs::{
-    AC_REGS_INITIAL_LEN, CRTC_REGS_INITIAL_LEN, GC_REGS_INITIAL_LEN, SEQ_REGS_INITIAL_LEN,
-    VgaDerivedState, VgaPlanarShift,
+    AC_REGS_INITIAL_LEN, BIOS_MODE3_AC_REGS, BIOS_MODE3_CRTC_REGS, BIOS_MODE3_GC_REGS,
+    BIOS_MODE3_MISC_OUTPUT, BIOS_MODE3_SEQ_REGS, CRTC_REGS_INITIAL_LEN, GC_REGS_INITIAL_LEN,
+    POWER_ON_MISC_OUTPUT, SEQ_REGS_INITIAL_LEN, VgaDerivedState, VgaPlanarShift,
 };
 
 // VGA I/O port block 0x3C0..=0x3DF.
@@ -66,32 +67,7 @@ pub struct VgaDevice {
 
 impl Default for VgaDevice {
     fn default() -> Self {
-        let mut vga = Self {
-            // Defaults aim for a "BIOS mode 3-ish" baseline: colour I/O decode.
-            // VGA Misc Output Register bit 0 selects the I/O base:
-            // - 0 = 0x3Bx (mono)
-            // - 1 = 0x3Dx (colour)
-            misc_output: 0x01,
-
-            seq_index: 0,
-            seq_regs: vec![0; SEQ_REGS_INITIAL_LEN],
-
-            gc_index: 0,
-            gc_regs: vec![0; GC_REGS_INITIAL_LEN],
-
-            crtc_index: 0,
-            crtc_regs: vec![0; CRTC_REGS_INITIAL_LEN],
-
-            ac_index: 0,
-            ac_regs: vec![0; AC_REGS_INITIAL_LEN],
-            ac_flip_flop_data: Cell::new(false),
-            ac_display_enabled: false,
-
-            input_status1_vretrace: Cell::new(false),
-
-            derived: VgaDerivedState::default(),
-        };
-
+        let mut vga = Self::new_with_bios_mode3_defaults();
         vga.recompute_derived_state();
         vga
     }
@@ -102,8 +78,70 @@ impl VgaDevice {
         Self::default()
     }
 
+    /// Create a VGA device in a minimal "power-on reset" state.
+    ///
+    /// This is intentionally sparse; the BIOS is expected to program a real
+    /// mode (commonly mode 3) during POST.
+    pub fn new_power_on_reset() -> Self {
+        let mut vga = Self::new_with_bios_mode3_defaults();
+        vga.reset_power_on();
+        vga
+    }
+
     pub fn derived_state(&self) -> VgaDerivedState {
         self.derived
+    }
+
+    fn new_with_bios_mode3_defaults() -> Self {
+        Self {
+            // VGA Misc Output Register bit 0 selects the I/O base:
+            // - 0 = 0x3Bx (mono)
+            // - 1 = 0x3Dx (colour)
+            misc_output: BIOS_MODE3_MISC_OUTPUT,
+
+            seq_index: 0,
+            seq_regs: BIOS_MODE3_SEQ_REGS.to_vec(),
+
+            gc_index: 0,
+            gc_regs: BIOS_MODE3_GC_REGS.to_vec(),
+
+            crtc_index: 0,
+            crtc_regs: BIOS_MODE3_CRTC_REGS.to_vec(),
+
+            ac_index: 0,
+            ac_regs: BIOS_MODE3_AC_REGS.to_vec(),
+            ac_flip_flop_data: Cell::new(false),
+            ac_display_enabled: true,
+
+            input_status1_vretrace: Cell::new(false),
+
+            derived: VgaDerivedState::default(),
+        }
+    }
+
+    fn reset_power_on(&mut self) {
+        self.misc_output = POWER_ON_MISC_OUTPUT;
+        self.seq_index = 0;
+        self.seq_regs.clear();
+        self.seq_regs.resize(SEQ_REGS_INITIAL_LEN, 0);
+
+        self.gc_index = 0;
+        self.gc_regs.clear();
+        self.gc_regs.resize(GC_REGS_INITIAL_LEN, 0);
+
+        self.crtc_index = 0;
+        self.crtc_regs.clear();
+        self.crtc_regs.resize(CRTC_REGS_INITIAL_LEN, 0);
+
+        self.ac_index = 0;
+        self.ac_regs.clear();
+        self.ac_regs.resize(AC_REGS_INITIAL_LEN, 0);
+
+        self.ac_flip_flop_data.set(false);
+        self.ac_display_enabled = false;
+        self.input_status1_vretrace.set(false);
+
+        self.recompute_derived_state();
     }
 
     fn is_colour_io(&self) -> bool {
