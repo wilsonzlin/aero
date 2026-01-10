@@ -4,6 +4,8 @@
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VIRTIO_WDFDMA_MAPPING, VirtioWdfDmaGetMappingContext);
 
+static EVT_WDF_OBJECT_CONTEXT_CLEANUP VirtioWdfDmaMappingEvtCleanup;
+
 static _Must_inspect_result_ NTSTATUS
 VirtioSgGetMdlChainByteCount(
     _In_ PMDL Mdl,
@@ -42,6 +44,43 @@ VirtioSgFreeMdlChain(
         cur->Next = NULL;
         IoFreeMdl(cur);
         cur = next;
+    }
+}
+
+static VOID
+VirtioWdfDmaMappingEvtCleanup(
+    _In_ WDFOBJECT Object
+    )
+{
+    VIRTIO_WDFDMA_MAPPING* mapping = VirtioWdfDmaGetMappingContext(Object);
+
+    if (mapping == NULL) {
+        return;
+    }
+
+    /*
+     * Ensure any partial MDL chain we created is released even if the caller
+     * forgets to call VirtioWdfDmaCompleteAndRelease (e.g., PnP remove).
+     */
+    if (mapping->PartialMdlChain != NULL) {
+        VirtioSgFreeMdlChain(mapping->PartialMdlChain);
+        mapping->PartialMdlChain = NULL;
+    }
+
+    /*
+     * If the DMA transaction was executed but never finalized, finalize it so
+     * the DMA framework can release any bounce/map-register resources.
+     *
+     * We pass 0 bytes transferred here because cleanup is typically associated
+     * with an aborted/cancelled request rather than successful completion.
+     */
+    if (mapping->Transaction != NULL &&
+        mapping->TransactionExecuted &&
+        !mapping->TransactionFinalized) {
+        NTSTATUS status;
+        (VOID)WdfDmaTransactionDmaCompletedFinal(mapping->Transaction, 0, &status);
+        mapping->TransactionFinalized = TRUE;
+        mapping->Transaction = NULL;
     }
 }
 
@@ -355,6 +394,7 @@ VirtioWdfDmaStartMapping(
 
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&objAttributes, VIRTIO_WDFDMA_MAPPING);
     objAttributes.ParentObject = Parent;
+    objAttributes.EvtCleanupCallback = VirtioWdfDmaMappingEvtCleanup;
 
     status = WdfObjectCreate(&objAttributes, &obj);
     if (!NT_SUCCESS(status)) {
@@ -366,6 +406,8 @@ VirtioWdfDmaStartMapping(
 
     mapping->Object = obj;
     mapping->Transaction = NULL;
+    mapping->TransactionExecuted = FALSE;
+    mapping->TransactionFinalized = FALSE;
     mapping->PartialMdlChain = NULL;
     mapping->ElemMemory = NULL;
     mapping->Sg.Elems = NULL;
@@ -440,6 +482,13 @@ VirtioWdfDmaStartMapping(
         return status;
     }
 
+    mapping->TransactionExecuted = TRUE;
+
+    if (mapping->Sg.Count == 0) {
+        WdfObjectDelete(obj);
+        return STATUS_UNSUCCESSFUL;
+    }
+
     *OutMapping = mapping;
     return STATUS_SUCCESS;
 }
@@ -456,6 +505,8 @@ VirtioWdfDmaCompleteAndRelease(
     if (Mapping->Transaction != NULL) {
         NTSTATUS status;
         (VOID)WdfDmaTransactionDmaCompletedFinal(Mapping->Transaction, Mapping->ByteLength, &status);
+        Mapping->TransactionFinalized = TRUE;
+        Mapping->Transaction = NULL;
     }
 
     if (Mapping->PartialMdlChain != NULL) {

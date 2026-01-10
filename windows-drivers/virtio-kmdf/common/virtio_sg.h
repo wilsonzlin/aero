@@ -119,6 +119,8 @@ typedef struct _VIRTIO_WDFDMA_MAPPING {
 
     /* DMA transaction kept alive until virtio completion. */
     WDFDMATRANSACTION Transaction;
+    BOOLEAN TransactionExecuted;
+    BOOLEAN TransactionFinalized;
 
     /* Optional MDL chain created to represent a subrange of a larger buffer. */
     PMDL PartialMdlChain;
