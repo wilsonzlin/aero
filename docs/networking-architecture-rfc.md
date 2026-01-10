@@ -195,6 +195,8 @@ network stack (server-side slirp/NAT).**
 
 This RFC is accompanied by a minimal prototype that demonstrates the Option C shape:
 
+**Security note:** this prototype is for experimentation only and is not hardened for production use. For a maintained, policy-driven relay, use `backend/aero-gateway` (or `net-proxy/` for local development).
+
 - Client (“browser side”) sends:
   - ARP request (to discover gateway MAC)
   - DNS query (UDP/53)
@@ -206,4 +208,3 @@ See:
 - `prototype/nt-arch-rfc/proxy-server.js`
 - `prototype/nt-arch-rfc/client.js`
 - `tests/networking-architecture-rfc.test.js`
-
