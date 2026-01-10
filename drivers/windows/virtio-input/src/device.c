@@ -1,5 +1,20 @@
 #include "virtio_input.h"
 
+static void VirtioInputReportReady(_In_ void *context)
+{
+    WDFDEVICE device = (WDFDEVICE)context;
+    PDEVICE_CONTEXT deviceContext = VirtioInputGetDeviceContext(device);
+    struct virtio_input_report report;
+
+    while (virtio_input_try_pop_report(&deviceContext->InputDevice, &report)) {
+        if (report.len == 0) {
+            continue;
+        }
+
+        (VOID)VirtioInputReportArrived(device, report.data[0], report.data, report.len);
+    }
+}
+
 NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INIT DeviceInit)
 {
     WDF_PNPPOWER_EVENT_CALLBACKS pnpPowerCallbacks;
@@ -20,6 +35,11 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
 
     WdfDeviceInitSetIoType(DeviceInit, WdfDeviceIoBuffered);
 
+    status = VirtioInputFileConfigure(DeviceInit);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, DEVICE_CONTEXT);
 
     status = WdfDeviceCreate(&DeviceInit, &attributes, &device);
@@ -29,7 +49,12 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
 
     {
         PDEVICE_CONTEXT deviceContext = VirtioInputGetDeviceContext(device);
-        virtio_input_device_init(&deviceContext->InputDevice, NULL, NULL);
+        status = VirtioInputReadReportQueuesInitialize(device);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+
+        virtio_input_device_init(&deviceContext->InputDevice, VirtioInputReportReady, (void *)device);
     }
 
     return VirtioInputQueueInitialize(device);

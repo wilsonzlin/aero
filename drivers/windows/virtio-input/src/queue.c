@@ -28,11 +28,15 @@ VOID VirtioInputEvtIoInternalDeviceControl(
     _In_ size_t InputBufferLength,
     _In_ ULONG IoControlCode)
 {
-    UNREFERENCED_PARAMETER(Queue);
-    UNREFERENCED_PARAMETER(OutputBufferLength);
-    UNREFERENCED_PARAMETER(InputBufferLength);
-    UNREFERENCED_PARAMETER(IoControlCode);
-
-    WdfRequestComplete(Request, STATUS_NOT_SUPPORTED);
+    switch (IoControlCode) {
+    case IOCTL_HID_READ_REPORT:
+        (VOID)VirtioInputHandleHidReadReport(Queue, Request, OutputBufferLength);
+        return;
+    case IOCTL_HID_WRITE_REPORT:
+        (VOID)VirtioInputHandleHidWriteReport(Queue, Request, InputBufferLength);
+        return;
+    default:
+        WdfRequestComplete(Request, STATUS_NOT_SUPPORTED);
+        return;
+    }
 }
-

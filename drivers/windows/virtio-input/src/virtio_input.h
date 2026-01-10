@@ -66,11 +66,43 @@ bool virtio_input_try_pop_report(struct virtio_input_device *dev, struct virtio_
 #include <ntddk.h>
 #include <wdf.h>
 
+#include "virtio_statusq.h"
+
 #define VIRTIOINPUT_POOL_TAG 'pInV'
+
+#define VIRTIO_INPUT_REPORT_ID_ANY 0
+#define VIRTIO_INPUT_REPORT_ID_KEYBOARD HID_TRANSLATE_REPORT_ID_KEYBOARD
+#define VIRTIO_INPUT_REPORT_ID_MOUSE HID_TRANSLATE_REPORT_ID_MOUSE
+#define VIRTIO_INPUT_MAX_REPORT_ID VIRTIO_INPUT_REPORT_ID_MOUSE
+
+#define VIRTIO_INPUT_KBD_INPUT_REPORT_SIZE HID_TRANSLATE_KEYBOARD_REPORT_SIZE
+#define VIRTIO_INPUT_MOUSE_INPUT_REPORT_SIZE HID_TRANSLATE_MOUSE_REPORT_SIZE
+
+typedef struct _VIRTIO_INPUT_FILE_CONTEXT {
+    ULONG CollectionNumber;
+    UCHAR DefaultReportId;
+    BOOLEAN HasCollectionEa;
+} VIRTIO_INPUT_FILE_CONTEXT, *PVIRTIO_INPUT_FILE_CONTEXT;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VIRTIO_INPUT_FILE_CONTEXT, VirtioInputGetFileContext);
+
+typedef struct _VIRTIO_INPUT_PENDING_REPORT {
+    BOOLEAN Valid;
+    UCHAR Data[64];
+    size_t Size;
+} VIRTIO_INPUT_PENDING_REPORT, *PVIRTIO_INPUT_PENDING_REPORT;
 
 typedef struct _DEVICE_CONTEXT {
     WDFQUEUE DefaultQueue;
     struct virtio_input_device InputDevice;
+
+    // Manual read queues indexed by ReportID. Index 0 is a special "any report"
+    // queue used for non-collection (parent interface) opens.
+    WDFQUEUE ReadReportQueue[VIRTIO_INPUT_MAX_REPORT_ID + 1];
+    WDFSPINLOCK ReadReportLock;
+    VIRTIO_INPUT_PENDING_REPORT PendingReport[VIRTIO_INPUT_MAX_REPORT_ID + 1];
+
+    PVIRTIO_STATUSQ StatusQ;
 } DEVICE_CONTEXT, *PDEVICE_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, VirtioInputGetDeviceContext);
@@ -84,6 +116,16 @@ EVT_WDF_DEVICE_D0_EXIT VirtioInputEvtDeviceD0Exit;
 EVT_WDF_IO_QUEUE_IO_INTERNAL_DEVICE_CONTROL VirtioInputEvtIoInternalDeviceControl;
 
 NTSTATUS VirtioInputQueueInitialize(_In_ WDFDEVICE Device);
+NTSTATUS VirtioInputFileConfigure(_Inout_ WDFDEVICE_INIT *DeviceInit);
+NTSTATUS VirtioInputReadReportQueuesInitialize(_In_ WDFDEVICE Device);
+
+NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request, _In_ size_t OutputBufferLength);
+NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request, _In_ size_t InputBufferLength);
+NTSTATUS VirtioInputReportArrived(
+    _In_ WDFDEVICE Device,
+    _In_ UCHAR ReportId,
+    _In_reads_bytes_(ReportSize) const VOID *Report,
+    _In_ size_t ReportSize);
 #endif /* _WIN32 */
 
 #ifdef __cplusplus
