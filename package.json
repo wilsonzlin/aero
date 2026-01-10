@@ -19,13 +19,19 @@
     "test:protocol": "node --test --experimental-strip-types emulator/protocol/tests/*.test.ts",
     "test:unit": "npm run typecheck && node --test --experimental-strip-types --loader ./scripts/ts-strip-loader.mjs backend/aero-gateway/test/originGuard.test.ts backend/aero-gateway/test/tcp*.test.ts backend/aero-gateway/src/**/*.test.ts tests/*.test.js bench/history.test.js packages/aero-stats/test/*.test.js web/test/*.test.ts emulator/protocol/tests/*.test.ts",
     "test:e2e": "playwright test",
-    "test:coi": "playwright test tests/e2e/coi.spec.ts"
+    "test:coi": "playwright test tests/e2e/coi.spec.ts",
+    "generate:goldens": "node tests/golden/generate_goldens.cjs",
+    "test:gpu": "playwright test -c playwright.gpu.config.ts tests/playwright/gpu_golden.spec.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.41.2",
     "@types/wicg-file-system-access": "^2023.10.7",
     "@types/node": "^20.10.6",
     "@webgpu/types": "^0.1.68",
+    "@types/pixelmatch": "^5.2.6",
+    "@types/pngjs": "^6.0.5",
+    "pixelmatch": "^5.3.0",
+    "pngjs": "^7.0.0",
     "typescript": "^5.3.3",
     "vite": "^5.0.12",
     "ws": "^8.18.0"

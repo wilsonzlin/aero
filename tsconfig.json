@@ -10,5 +10,5 @@
     "noEmit": true,
     "types": ["vite/client", "node", "@webgpu/types"]
   },
-  "include": ["src", "tests", "vite.config.ts", "playwright.config.ts"]
+  "include": ["src", "tests", "vite.config.ts", "playwright.config.ts", "playwright.gpu.config.ts"]
 }

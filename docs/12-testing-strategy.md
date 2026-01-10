@@ -803,6 +803,36 @@ presented pixels per backend. See `web/src/gpu/validation-scene.ts` and the Play
 
 ---
 
+## GPU Golden-Image Correctness Tests (Playwright)
+
+The graphics subsystem needs **deterministic, automated correctness tests** that can catch subtle rendering regressions without requiring a full Windows boot.
+
+This repository includes a minimal Playwright-based harness that:
+
+- Renders **deterministic microtests** (VGA-style text, VBE-style LFB color bars, WebGL2, WebGPU).
+- Captures the rendered frame as **raw RGBA bytes** (WebGL2 `readPixels`, WebGPU buffer readback).
+- Compares the output against committed **golden PNGs**.
+- On failure, writes **expected/actual/diff** images as Playwright test artifacts.
+
+Key files:
+
+- `tests/playwright/gpu_golden.spec.ts` — microtests + capture
+- `tests/playwright/utils/image_diff.ts` — pixel diff + artifact emission
+- `tests/golden/*.png` — committed goldens (synthetic scenes only)
+
+Local usage:
+
+```bash
+# Generate/update goldens (pure CPU generation, no browser required)
+npm install
+npm run generate:goldens
+
+# Run golden tests (requires Playwright browsers; CI runs `npx playwright install --with-deps`)
+npm run test:gpu
+```
+
+---
+
 ## Continuous Integration
 
 ### GitHub Actions Workflow
