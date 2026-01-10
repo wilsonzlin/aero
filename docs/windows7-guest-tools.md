@@ -229,11 +229,11 @@ Configures driver services and boot-critical settings (especially important for 
 
 If `setup.cmd` fails (or you prefer to install components manually), you can typically do the same work yourself.
 
-> The exact file names and folder layout inside `aero-guest-tools.iso` may vary by version. The commands below use placeholders.
+> The exact file names and folder layout inside `aero-guest-tools.iso` may vary by version. The commands below use common paths used by Aero Guest Tools (for example `X:\certs\` and `X:\drivers\`), but always prefer the layout on your media.
 
 ### 1) Import the Aero signing certificate (Local Machine)
 
-Look on the Guest Tools media for a certificate file (commonly `.cer` / `.crt`).
+Look on the Guest Tools media for certificate file(s) (commonly under `X:\certs\` as `.cer`, `.crt`, or `.p7b`).
 
 From an elevated Command Prompt:
 
@@ -256,15 +256,26 @@ If you are using production-signed drivers, keep test signing off.
 Use either `pnputil` (Windows 7 built-in) or DISM:
 
 - Recommended (recursively add everything under a folder):
-  - `dism /online /add-driver /driver:X:\path\to\drivers\ /recurse`
+  - `dism /online /add-driver /driver:X:\drivers\ /recurse`
 - Alternative (if you prefer `pnputil`):
-  - `pnputil -i -a X:\path\to\driver.inf`
+  - `pnputil -i -a X:\drivers\amd64\some-driver.inf` (x64) or `X:\drivers\x86\some-driver.inf` (x86)
   - To bulk-install multiple INFs from an elevated Command Prompt:
-    - `for /r "X:\path\to\drivers" %i in (*.inf) do pnputil -i -a "%i"`
+    - `for /r "X:\drivers" %i in (*.inf) do pnputil -i -a "%i"`
     - If you put this into a `.cmd` file, use `%%i` instead of `%i`:
-      - `for /r "X:\path\to\drivers" %%i in (*.inf) do pnputil -i -a "%%i"`
+      - `for /r "X:\drivers" %%i in (*.inf) do pnputil -i -a "%%i"`
 
 After staging, reboot once while still on baseline devices.
+
+### 4) Pre-seed boot-critical virtio-blk storage (required before switching AHCI → virtio-blk)
+
+If you plan to boot Windows from **virtio-blk**, you must also set up boot-critical storage plumbing (otherwise switching the boot disk commonly results in `0x0000007B INACCESSIBLE_BOOT_DEVICE`).
+
+The safest approach is to get `setup.cmd` working, because it:
+
+- configures the storage driver service as BOOT_START, and
+- pre-seeds `HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\...` for the expected virtio-blk PCI IDs (based on `X:\config\devices.cmd`).
+
+If you cannot run `setup.cmd`, do **not** switch the boot disk to virtio-blk until you have replicated those registry/service steps.
 
 ## Step 4: Reboot (still on baseline devices)
 
@@ -349,6 +360,12 @@ Running `verify.cmd` typically writes:
 
 - `C:\AeroGuestTools\report.txt` (human-readable)
 - `C:\AeroGuestTools\report.json` (machine-readable)
+
+At the end, `verify.cmd` prints an overall status:
+
+- `Overall: PASS` (exit code 0)
+- `Overall: WARN` (exit code 1)
+- `Overall: FAIL` (exit code 2+)
 
 ### Optional `verify.cmd` parameters (advanced)
 
