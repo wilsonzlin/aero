@@ -154,7 +154,11 @@ function Get-WindowsKitsRoot {
     try {
       $props = Get-ItemProperty -Path $regRoot -ErrorAction Stop
       foreach ($propName in @('KitsRoot10', 'KitsRoot81')) {
-        $value = $props.PSObject.Properties[$propName].Value
+        $prop = $props.PSObject.Properties[$propName]
+        if ($null -eq $prop) {
+          continue
+        }
+        $value = $prop.Value
         if ([string]::IsNullOrWhiteSpace($value)) {
           continue
         }
@@ -410,7 +414,7 @@ function Invoke-ExternalCommand {
   try {
     $proc = Start-Process `
       -FilePath $FilePath `
-      -ArgumentList $Arguments `
+      -ArgumentList $prettyArgs `
       -NoNewWindow `
       -Wait `
       -PassThru `
