@@ -22,7 +22,9 @@ pub use vbe::{VbeControllerInfo, VbeModeInfo, VbeState, VBE_BIOS_DATA_PADDR, VBE
 
 pub use render::mode13h::{Mode13hRenderer, MODE13H_HEIGHT, MODE13H_VRAM_SIZE, MODE13H_WIDTH};
 pub use render::planar16::{Mode12hRenderer, MODE12H_HEIGHT, MODE12H_WIDTH};
-pub use render::text::{TextModeRenderer, TEXT_MODE_HEIGHT, TEXT_MODE_WIDTH};
+pub use render::text::{
+    TextModeRenderer, TEXT_MODE_CHAR_HEIGHT, TEXT_MODE_CHAR_WIDTH, TEXT_MODE_HEIGHT, TEXT_MODE_WIDTH,
+};
 
 /// VGA graphics memory base address (A000:0000).
 pub const VRAM_BASE: u32 = 0xA0000;
@@ -49,7 +51,7 @@ impl VgaDetectedMode {
             return Some(Self::TextMode);
         }
 
-        if derived.is_graphics && derived.chain4 && !derived.odd_even && derived.bpp_guess == 8 {
+        if derived.chain4 && !derived.odd_even && derived.bpp_guess == 8 {
             return Some(Self::Mode13h);
         }
 
@@ -57,8 +59,7 @@ impl VgaDetectedMode {
         // - 4bpp planar mode (no chain4, odd/even disabled)
         // - bytes/scanline = 80 (CRTC offset = 40 words)
         // - vertical display end = 479 (height 480)
-        if derived.is_graphics
-            && !derived.chain4
+        if !derived.chain4
             && !derived.odd_even
             && derived.bpp_guess == 4
             && matches!(derived.planar_shift, VgaPlanarShift::None)
@@ -116,18 +117,10 @@ impl VgaRenderer {
     ) -> Option<(usize, usize, &'a [u32])> {
         match VgaDetectedMode::detect(regs)? {
             VgaDetectedMode::TextMode => {
-                Some((TEXT_MODE_WIDTH, TEXT_MODE_HEIGHT, self.text.render(regs)))
+                Some((TEXT_MODE_WIDTH, TEXT_MODE_HEIGHT, self.text.render(regs, vram, dac)))
             }
-            VgaDetectedMode::Mode13h => Some((
-                MODE13H_WIDTH,
-                MODE13H_HEIGHT,
-                self.mode13h.render(vram, dac),
-            )),
-            VgaDetectedMode::Mode12h => Some((
-                MODE12H_WIDTH,
-                MODE12H_HEIGHT,
-                self.mode12h.render(regs, vram, dac),
-            )),
+            VgaDetectedMode::Mode13h => Some((MODE13H_WIDTH, MODE13H_HEIGHT, self.mode13h.render(vram, dac))),
+            VgaDetectedMode::Mode12h => Some((MODE12H_WIDTH, MODE12H_HEIGHT, self.mode12h.render(regs, vram, dac))),
         }
     }
 }
