@@ -133,6 +133,27 @@ On a clean Win7 SP1 VM:
       - `C:\Windows\System32\aerogpu_d3d9.dll` exists
       - (if you installed `aerogpu_dx11.inf`) `C:\Windows\System32\aerogpu_d3d10.dll` exists
 
+## 6.1) Optional: run the AeroGPU debug/control tool (dbgctl)
+
+For bring-up and debugging, you can use the Escape-based dbgctl tool:
+
+- Tool: `drivers/aerogpu/tools/win7_dbgctl/`
+- Docs/build: `drivers/aerogpu/tools/win7_dbgctl/README.md`
+
+Examples:
+
+```bat
+:: (Build the tool if needed; this does not require the WDK)
+cd drivers\aerogpu\tools\win7_dbgctl
+build_vs2010.cmd
+
+:: Run it
+bin\aerogpu_dbgctl.exe --query-version
+bin\aerogpu_dbgctl.exe --query-fence
+bin\aerogpu_dbgctl.exe --dump-ring
+bin\aerogpu_dbgctl.exe --selftest
+```
+
 ## 7) Run the guest-side Direct3D validation suite (recommended)
 
 After installation, run the small guest-side Direct3D tests under:
