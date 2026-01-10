@@ -54,6 +54,7 @@ pkg/
 *.wasm
 *.wat
 web/dist/
+web/src/wasm/pkg-*/
 bench/output/
 
 # Source-controlled build tooling (not build outputs)
