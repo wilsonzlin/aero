@@ -40,7 +40,8 @@ Prerequisites:
 
 ## Fixtures
 
-Deterministic binary fixtures are committed under `./fixtures/` so byte comparisons are stable:
+Deterministic binary fixtures are committed under `./fixtures/` so byte comparisons are stable.
+These are **synthetic byte patterns** (not Windows media):
 
 - `fixtures/win7.img` (public)
 - `fixtures/secret.img` (private)

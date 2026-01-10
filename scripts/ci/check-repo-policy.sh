@@ -59,8 +59,10 @@ FORBIDDEN_PATH_GLOBS=(
 # otherwise be rejected by extension/path rules. Keep this list tiny and
 # specific (prefer exact paths).
 ALLOWLIST_FORBIDDEN_FILE_GLOBS=(
+  # Synthetic, deterministic pattern images used for disk streaming E2E tests.
   tools/disk-streaming-browser-e2e/fixtures/secret.img
   tools/disk-streaming-browser-e2e/fixtures/win7.img
+  # Tiny text placeholders used by packaging tests (not real Windows drivers).
   tools/packaging/aero_packager/testdata/drivers/amd64/testdrv/test.sys
   tools/packaging/aero_packager/testdata/drivers/x86/testdrv/test.sys
 )
