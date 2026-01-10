@@ -378,6 +378,8 @@ If `-PingTarget` is not provided, the script may attempt to ping the default gat
 
 Depending on your Guest Tools version, the report may include:
 
+- Guest Tools build metadata (if `manifest.json` is present) so you can confirm which ISO/zip build you are using
+- Guest Tools config (`config\devices.cmd`) contents (service name + expected PCI IDs), which affects boot-critical storage checks
 - OS version and architecture (x86 vs x64)
 - Whether **KB3033929** is installed (required for validating many SHA-256-signed driver catalogs on Windows 7)
 - Whether signature enforcement is configured correctly (for example `testsigning` and/or `nointegritychecks`)
