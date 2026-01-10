@@ -469,7 +469,7 @@ See `docs/16-virtio-drivers-win7.md` for an implementation-oriented overview of 
 | PF-004 | Memory usage tracking        | P0       | None           | Low        |
 | PF-005 | Hot path identification      | P1       | PF-001         | Medium     |
 | PF-006 | JIT optimization analysis    | P1       | CJ-015, PF-001 | Medium     |
-| PF-007 | Graphics bottleneck analysis | P1       | PF-001         | Medium     |
+| PF-007 | Graphics bottleneck analysis | P1       | PF-001, WG-001..WG-002 | Medium     |
 | PF-008 | Benchmark suite              | P0       | None           | High       |
 | PF-009 | Regression tracking          | P0       | PF-008         | Medium     |
 

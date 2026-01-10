@@ -710,16 +710,44 @@ pub struct Profiler {
     samples: Vec<ProfileSample>,
     current_frame: FrameProfile,
     enabled: bool,
+    // Graphics profiling is split out so we can attribute frame time to
+    // (a) CPU-side translation/encoding vs (b) GPU-side execution.
+    //
+    // GPU timing is best-effort: it is only populated when the backend
+    // supports timestamp queries and they are explicitly enabled.
+    gpu_timing_supported: bool,
+    gpu_timing_enabled: bool,
+}
+
+#[derive(Default, Clone)]
+pub struct GraphicsFrameMetrics {
+    // Command buffer / state churn
+    pub draw_calls: u32,
+    pub render_passes: u32,
+    pub pipeline_switches: u32,
+    pub bind_group_changes: u32,
+
+    // CPU → GPU upload pressure
+    pub upload_bytes: u64, // buffers + textures
+
+    // CPU-side cost of producing a frame
+    pub cpu_translate_time: Duration, // DirectX → WebGPU translation
+    pub cpu_encode_time: Duration,    // WebGPU command encoding
+
+    // Best-effort GPU-side execution time (timestamp-query), else None.
+    pub gpu_time: Option<Duration>,
 }
 
 pub struct FrameProfile {
     start_time: Instant,
     cpu_time: Duration,
-    gpu_time: Duration,
+    // Best-effort. When WebGPU timestamp queries are unavailable, this is None
+    // and exports should encode this as `null` (not 0.0ms).
+    gpu_time: Option<Duration>,
     io_time: Duration,
     jit_time: Duration,
     instructions_executed: u64,
-    draw_calls: u32,
+    graphics: GraphicsFrameMetrics,
     memory_allocated: usize,
 }
 
@@ -888,7 +916,7 @@ Example shape:
       "cache_hit_rate": 0.9875,
       "compile_ms_per_s": 3.4,
       "blocks_compiled_per_s": 12.0
-    }
+	}
   }
 }
 ```
@@ -907,6 +935,195 @@ PF-006 should be validated with at least:
 
 - A synthetic benchmark that executes enough distinct blocks to force compilation → **non-zero compile ms and block counts**.
 - A run with JIT compilation disabled (interpreted-only mode) → **all `jit.*` counters and durations remain 0**, and the code path avoids doing cache lookups/instrumentation work.
+
+### Graphics bottleneck analysis (PF-007)
+
+To optimize rendering we need to answer:
+
+1. **Are we CPU-bound?** (DirectX translation, state setup, WebGPU command encoding, uploads)
+2. **Are we GPU-bound?** (shader execution / fragment workload / bandwidth)
+3. **What patterns are expensive?** (too many draws, too many pipeline/bind churn, too much upload)
+
+PF-007 adds per-frame and rolling-window metrics to make those questions measurable.
+
+#### Core per-frame counters
+
+Collected every frame and exported both as **instantaneous** values and as a **rolling window** (e.g. last 60 frames):
+
+| Metric | Meaning | Typical source |
+| --- | --- | --- |
+| `draw_calls` | Count of `draw*()` issued | WebGPU render/compute pass wrapper |
+| `render_passes` | Count of `beginRenderPass()` | WebGPU command encoder wrapper |
+| `pipeline_switches` | Count of pipeline changes (state churn) | `setPipeline()` wrapper + "last pipeline" tracking |
+| `bind_group_changes` | Count of bind group changes | `setBindGroup()` wrapper + per-index "last bind group" tracking |
+| `upload_bytes` | Bytes uploaded from CPU to GPU (buffers + textures) | `queue.writeBuffer`, `queue.writeTexture`, staging uploads |
+| `cpu_translate_time` | CPU time in DirectX → WebGPU translation | timer around translator entrypoints |
+| `cpu_encode_time` | CPU time in WebGPU command encoding | timer around command encoder/pass building |
+
+#### WebGPU instrumentation touch points
+
+To avoid sprinkling counters throughout the renderer, route WebGPU access through a thin "instrumented" facade:
+
+```rust
+pub struct InstrumentedCommandEncoder<'a> {
+    inner: wgpu::CommandEncoder,
+    metrics: &'a mut GraphicsFrameMetrics,
+}
+
+impl<'a> InstrumentedCommandEncoder<'a> {
+    pub fn begin_render_pass<'p>(
+        &'p mut self,
+        desc: &wgpu::RenderPassDescriptor<'p>,
+    ) -> InstrumentedRenderPass<'p> {
+        self.metrics.render_passes += 1;
+        let inner = self.inner.begin_render_pass(desc);
+        InstrumentedRenderPass::new(inner, self.metrics)
+    }
+}
+
+pub struct InstrumentedRenderPass<'a> {
+    inner: wgpu::RenderPass<'a>,
+    metrics: &'a mut GraphicsFrameMetrics,
+    last_pipeline: Option<u64>,
+    last_bind_groups: [Option<u64>; 4],
+}
+
+impl<'a> InstrumentedRenderPass<'a> {
+    fn new(inner: wgpu::RenderPass<'a>, metrics: &'a mut GraphicsFrameMetrics) -> Self {
+        Self {
+            inner,
+            metrics,
+            last_pipeline: None,
+            last_bind_groups: [None, None, None, None],
+        }
+    }
+
+    pub fn set_pipeline(&mut self, pipeline: &wgpu::RenderPipeline) {
+        let id = pipeline.global_id(); // any stable identifier works here
+        if self.last_pipeline != Some(id) {
+            self.metrics.pipeline_switches += 1;
+            self.last_pipeline = Some(id);
+        }
+        self.inner.set_pipeline(pipeline);
+    }
+
+    pub fn set_bind_group(&mut self, index: u32, bind_group: &wgpu::BindGroup, offsets: &[u32]) {
+        let id = bind_group.global_id();
+        let slot = index as usize;
+        if slot < self.last_bind_groups.len() && self.last_bind_groups[slot] != Some(id) {
+            self.metrics.bind_group_changes += 1;
+            self.last_bind_groups[slot] = Some(id);
+        }
+        self.inner.set_bind_group(index, bind_group, offsets);
+    }
+
+    pub fn draw(&mut self, vertices: std::ops::Range<u32>, instances: std::ops::Range<u32>) {
+        self.metrics.draw_calls += 1;
+        self.inner.draw(vertices, instances);
+    }
+}
+```
+
+Uploads are counted at the queue/resource layer:
+
+```rust
+pub struct InstrumentedQueue<'a> {
+    inner: &'a wgpu::Queue,
+    metrics: &'a mut GraphicsFrameMetrics,
+}
+
+impl<'a> InstrumentedQueue<'a> {
+    pub fn write_buffer(&mut self, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
+        self.metrics.upload_bytes += data.len() as u64;
+        self.inner.write_buffer(buffer, offset, data);
+    }
+
+    pub fn write_texture(
+        &mut self,
+        dst: wgpu::ImageCopyTexture,
+        data: &[u8],
+        layout: wgpu::ImageDataLayout,
+        size: wgpu::Extent3d,
+    ) {
+        self.metrics.upload_bytes += data.len() as u64;
+        self.inner.write_texture(dst, data, layout, size);
+    }
+}
+```
+
+#### Best-effort GPU timing (timestamp-query)
+
+When supported, GPU timing uses timestamp queries to measure **GPU execution time** without guessing from CPU submission time:
+
+- Request the WebGPU `timestamp-query` feature only when a runtime flag enables GPU timing.
+- If the feature is unavailable, keep all other graphics metrics active and export `gpu_time_ms: null`.
+- Prefer **asynchronous readback** (e.g. ring-buffered query resolve/readback) so the profiler does not stall on `mapAsync`.
+
+At a high level:
+
+```rust
+// frame start
+encoder.write_timestamp(&query_set, START);
+
+// ... encode major passes ...
+
+// frame end
+encoder.write_timestamp(&query_set, END);
+encoder.resolve_query_set(&query_set, 0..2, &resolve_buffer, 0);
+
+// submit, then read back later (N frames delayed) to populate `gpu_time`.
+```
+
+If we want per-major-pass timing, reserve additional query indices (e.g. `GBUFFER_START/END`, `COMPOSITE_START/END`) and export a pass breakdown alongside the per-frame total.
+
+#### Perf HUD surfacing
+
+Add a compact "graphics" panel to the on-screen perf HUD (values should be rolling-window averages):
+
+- `Draws`: draw calls / frame
+- `Pipes`: pipeline switches / frame
+- `Upload`: MB/s (from `upload_bytes` / time window)
+- `GPU`: indicator for timestamp query state
+  - `GPU: on` when supported + enabled
+  - `GPU: off` when supported but disabled
+  - `GPU: n/a` when unsupported
+
+#### JSON export schema (`graphics` section)
+
+Graphics telemetry should be exported under a dedicated `graphics` section so perf tooling can attribute regressions:
+
+```json
+{
+  "frame_index": 12345,
+  "frame_time_ms": 16.7,
+  "graphics": {
+    "draw_calls": 102,
+    "render_passes": 3,
+    "pipeline_switches": 12,
+    "bind_group_changes": 58,
+    "upload_bytes": 1048576,
+    "cpu_translate_ms": 1.2,
+    "cpu_encode_ms": 0.9,
+    "gpu_time_ms": null,
+    "rolling": {
+      "window_frames": 60,
+      "draw_calls_avg": 98.4,
+      "pipeline_switches_avg": 10.7,
+      "upload_mib_per_s": 45.2
+    },
+    "gpu_timing": {
+      "supported": false,
+      "enabled": false
+    }
+  }
+}
+```
+
+#### CI / benchmark considerations
+
+- Keep GPU timing **opt-in** (e.g. config flag or environment variable) so headless CI and smoke perf runs remain stable.
+- Treat `gpu_time_ms` as **informational** unless a benchmark explicitly enables GPU timing and asserts it.
+
 ### Standard performance metric definitions
 
 To avoid drift between in-app HUD, exported perf summaries, and benchmark tooling, compute metrics using a single shared implementation (`packages/aero-stats`) and the following definitions:

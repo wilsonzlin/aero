@@ -1085,6 +1085,29 @@ Telemetry should be queryable from the UI/devtools overlay to confirm the persis
 
 See `web/gpu/persistent_cache.ts` for a concrete implementation of the persistent cache layer.
 
+
+### Graphics telemetry hooks (PF-007)
+
+Graphics performance tuning needs visibility into two separate bottlenecks:
+
+- **CPU-bound:** DirectX translation/state setup, command encoding, and resource uploads
+- **GPU-bound:** shader execution and memory bandwidth
+
+To diagnose this, route WebGPU calls through a thin instrumented wrapper that records:
+
+- Draw calls / frame (`draw()` / `drawIndexed()` count)
+- Render passes / frame (`beginRenderPass()` count)
+- Pipeline switches / frame (`setPipeline()` churn)
+- Bind group changes / frame (`setBindGroup()` churn)
+- Bytes uploaded / frame (`queue.writeBuffer()` + `queue.writeTexture()` + staging copies)
+- CPU time in translation + command encoding (timers around translator + encoder building)
+- Best-effort GPU time when timestamp queries are available (`timestamp-query` feature)
+
+These metrics feed:
+
+1. The on-screen perf HUD (quick, human-readable diagnosis)
+2. JSON telemetry export (regression tracking and automated analysis)
+
 ---
 
 ## Next Steps

@@ -398,6 +398,21 @@ async fn test_directx_triangle() {
     let output = gpu.present().await;
     
     assert!(output.contains_red_triangle());
+
+    // PF-007 graphics telemetry: even this trivial scene should record
+    // at least one draw call and at least one pipeline bind.
+    let stats = gpu.last_frame_telemetry();
+    assert_eq!(stats.graphics.draw_calls, 1);
+    assert!(stats.graphics.pipeline_switches >= 1);
+
+    // GPU timing is best-effort (timestamp-query feature). In environments
+    // without support (common in headless CI), it must be null/None rather
+    // than causing a failure.
+    if stats.graphics.gpu_timing.supported && stats.graphics.gpu_timing.enabled {
+        assert!(stats.graphics.gpu_time_ms.is_some());
+    } else {
+        assert!(stats.graphics.gpu_time_ms.is_none());
+    }
 }
 ```
 
@@ -843,6 +858,14 @@ jobs:
        - name: Compare with baseline
          run: ./scripts/compare-benchmarks.sh
 ```
+
+#### CI note: GPU timing is optional
+
+GPU timing via WebGPU timestamp queries (`timestamp-query`) should be treated as **informational**:
+
+- Headless CI or software WebGPU adapters may not expose timestamp queries.
+- Tests and smoke perf runs should validate counter-based metrics (draw calls, pipeline switches, uploads) without requiring GPU timing.
+- If a CI lane wants to assert GPU timing, gate it behind an explicit opt-in (e.g. `AERO_ENABLE_GPU_TIMING=1`) and skip when unsupported.
 
 ---
 

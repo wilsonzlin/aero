@@ -289,7 +289,7 @@ For the concrete backend design (selection algorithm, OffscreenCanvas worker mod
 ### Device Initialization
 
 ```javascript
-async function initializeWebGPU() {
+async function initializeWebGPU({ enableGpuTiming = false } = {}) {
     if (!navigator.gpu) {
         throw new Error('WebGPU not supported');
     }
@@ -301,6 +301,12 @@ async function initializeWebGPU() {
     if (!adapter) {
         throw new Error('No GPU adapter found');
     }
+
+    // Timestamp queries are optional and may be unavailable in some browsers
+    // and in headless/CI environments. Only request them when explicitly
+    // enabled, otherwise keep GPU timing disabled and export `gpu_time_ms: null`.
+    const supportsTimestampQuery = adapter.features.has('timestamp-query');
+    const gpuTimingEnabled = enableGpuTiming && supportsTimestampQuery;
     
     // Aero should keep true requirements minimal and negotiate optional features.
     // Requiring rarely-supported features causes unnecessary init failures.
@@ -315,10 +321,11 @@ async function initializeWebGPU() {
     }
     
     // Optional features: use if available, otherwise fall back to CPU paths / simpler shaders.
+    // Only request timestamp queries when explicitly enabled (profiling/bench builds).
     const OPTIONAL_FEATURES = [
         'texture-compression-bc', // Use BCn/DXT directly when available; otherwise decompress on CPU.
         'float32-filterable',     // Quality/perf improvement for some HDR/linear paths.
-        'timestamp-query',        // Profiling only.
+        ...(gpuTimingEnabled ? ['timestamp-query'] : []),
     ];
     
     const enabledFeatures = OPTIONAL_FEATURES.filter(f => adapter.features.has(f));
@@ -328,9 +335,26 @@ async function initializeWebGPU() {
         requiredLimits: REQUIRED_LIMITS,
     });
     
-    return { adapter, device };
+    return {
+        adapter,
+        device,
+        gpuTiming: {
+            supported: supportsTimestampQuery,
+            enabled: gpuTimingEnabled,
+        },
+    };
 }
 ```
+
+### GPU timestamp queries (optional)
+
+When `timestamp-query` is supported and enabled, the renderer can measure **GPU execution time** using a `GPUQuerySet`:
+
+1. Write a timestamp at the start/end of a frame (or per major render pass).
+2. Resolve the query set into a buffer.
+3. Read the buffer back asynchronously on a later frame to avoid stalling.
+
+If `timestamp-query` is **unsupported**, all other graphics telemetry should still work; GPU timing fields should be exported as `null` and the perf HUD should display an `n/a` indicator.
 
 ### Render Pipeline
 
