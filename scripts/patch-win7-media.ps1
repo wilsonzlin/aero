@@ -280,7 +280,7 @@ function Patch-BcdStore {
   }
 
   $defaultPatched = $false
-  $patchedGuids = @()
+  $patchedIds = @()
   $attempt = Invoke-ExeResult -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', '{default}', 'testsigning', 'on')
   if ($attempt.ExitCode -eq 0) {
     $defaultPatched = $true
@@ -300,27 +300,37 @@ function Patch-BcdStore {
     }
   } else {
     $outText = ($attempt.Output | Out-String).Trim()
-    Write-Log "Failed to patch {default} in BCD store; falling back to patching Windows Boot Loader entries.`n$outText" 'WARN'
+    Write-Log "Failed to patch {default} in BCD store; falling back to patching compatible entries from /enum all.`n$outText" 'WARN'
 
-    $guids = Get-BcdWindowsBootLoaderGuids -StorePath $StorePath
-    if ($guids.Count -eq 0) {
-      throw "Unable to locate Windows Boot Loader entries in BCD store: $StorePath"
+    $ids = Get-BcdIdentifiers -StorePath $StorePath
+    if ($ids.Count -eq 0) {
+      throw "Unable to enumerate identifiers in BCD store: $StorePath"
     }
-    foreach ($guid in $guids) {
-      Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', $guid, 'testsigning', 'on') | Out-Null
+
+    foreach ($id in $ids) {
+      $setTestSigning = Invoke-ExeResult -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', $id, 'testsigning', 'on')
+      if ($setTestSigning.ExitCode -ne 0) {
+        continue
+      }
+
       if ($EnableNoIntegrityChecks) {
-        Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', $guid, 'nointegritychecks', 'on') | Out-Null
+        Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', $id, 'nointegritychecks', 'on') | Out-Null
       } else {
-        $del = Invoke-ExeResult -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/deletevalue', $guid, 'nointegritychecks')
+        $del = Invoke-ExeResult -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/deletevalue', $id, 'nointegritychecks')
         if ($del.ExitCode -ne 0) {
-          $setOff = Invoke-ExeResult -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', $guid, 'nointegritychecks', 'off')
+          $setOff = Invoke-ExeResult -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', $id, 'nointegritychecks', 'off')
           if ($setOff.ExitCode -ne 0) {
             $outText = ($setOff.Output | Out-String).Trim()
-            throw "Failed to disable nointegritychecks for $guid in BCD store: $StorePath`n$outText"
+            throw "Failed to disable nointegritychecks for $id in BCD store: $StorePath`n$outText"
           }
         }
       }
-      $patchedGuids += $guid
+
+      $patchedIds += $id
+    }
+
+    if ($patchedIds.Count -eq 0) {
+      throw "Fallback BCD patching did not find any compatible entries to patch in: $StorePath"
     }
   }
 
@@ -344,34 +354,34 @@ function Patch-BcdStore {
       }
     }
   } else {
-    if ($patchedGuids.Count -eq 0) {
+    if ($patchedIds.Count -eq 0) {
       throw "BCD store patch fallback did not identify any entries to patch: $StorePath"
     }
 
-    foreach ($guid in $patchedGuids) {
-      $out = Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/enum', $guid)
+    foreach ($id in $patchedIds) {
+      $out = Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/enum', $id)
       $outText = ($out | Out-String)
 
       $testSigningValue = Get-BcdSettingValue -EnumText $outText -SettingName 'testsigning'
       if ($testSigningValue -ne 'Yes') {
-        throw "Failed to verify testsigning=Yes in BCD store for $guid: $StorePath`n$outText"
+        throw "Failed to verify testsigning=Yes in BCD store for $id: $StorePath`n$outText"
       }
 
       $noIntegrityValue = Get-BcdSettingValue -EnumText $outText -SettingName 'nointegritychecks'
       if ($EnableNoIntegrityChecks) {
         if ($noIntegrityValue -ne 'Yes') {
-          throw "Failed to verify nointegritychecks=Yes in BCD store for $guid: $StorePath`n$outText"
+          throw "Failed to verify nointegritychecks=Yes in BCD store for $id: $StorePath`n$outText"
         }
       } else {
         if ($noIntegrityValue -eq 'Yes') {
-          throw "Failed to verify nointegritychecks is disabled in BCD store for $guid: $StorePath`n$outText"
+          throw "Failed to verify nointegritychecks is disabled in BCD store for $id: $StorePath`n$outText"
         }
       }
     }
   }
 }
 
-function Get-BcdWindowsBootLoaderGuids {
+function Get-BcdIdentifiers {
   param(
     [Parameter(Mandatory = $true)]
     [string]$StorePath
@@ -379,35 +389,19 @@ function Get-BcdWindowsBootLoaderGuids {
 
   $out = Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/enum', 'all')
 
-  $sectionTitle = $null
-  $guids = @()
-  for ($i = 0; $i -lt $out.Count; $i++) {
-    $line = $out[$i]
+  $ids = @()
+  foreach ($line in $out) {
     $trimmed = $line.Trim()
     if (-not $trimmed) {
       continue
     }
-
-    $nextLine = $null
-    if ($i + 1 -lt $out.Count) {
-      $nextLine = $out[$i + 1].Trim()
-    }
-
-    # bcdedit section headers are immediately followed by a dashed separator line.
-    if ($nextLine -and ($nextLine -match '^-+$')) {
-      $sectionTitle = $trimmed
-      continue
-    }
-
-    if ($sectionTitle -eq 'Windows Boot Loader') {
-      $m = [Regex]::Match($trimmed, '^identifier\s+(\{[0-9A-Fa-f\-]{36}\})\s*$')
-      if ($m.Success) {
-        $guids += $m.Groups[1].Value
-      }
+    $m = [Regex]::Match($trimmed, '^identifier\s+(?<id>\{[^\}]+\})\s*$')
+    if ($m.Success) {
+      $ids += $m.Groups['id'].Value
     }
   }
 
-  return @($guids | Sort-Object -Unique)
+  return @($ids | Sort-Object -Unique)
 }
 
 function Get-CertificateDerBlobs {

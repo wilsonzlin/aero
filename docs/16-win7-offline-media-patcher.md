@@ -90,7 +90,7 @@ On `{default}`:
 - `testsigning on`
 - `nointegritychecks on` (optional; defaults to on)
 
-If a given BCD store does not contain `{default}`, the script falls back to patching all `Windows Boot Loader` entries it finds via `bcdedit /enum all`.
+If a given BCD store does not contain `{default}`, the script falls back to patching any compatible entries it finds via `bcdedit /enum all` (typically the `Windows Boot Loader` entries).
 
 ### Offline registry hives inside WIM images
 
