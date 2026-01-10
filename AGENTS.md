@@ -48,6 +48,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 23. [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./docs/16-disk-image-streaming-auth.md)
 24. [HTTP Range + CDN Behavior](./docs/17-range-cdn-behavior.md)
 25. [Windows 7 SP1 Unattended Install (Drivers + Scripting)](./docs/16-win7-unattended-install.md)
+26. [Win7 Install Media Servicing (test-signed virtio drivers)](./docs/16-win7-image-servicing.md)
 
 ---
 
@@ -338,6 +339,7 @@ pub trait DisplayAdapter {
 | [18-chunked-disk-image-format.md](./docs/18-chunked-disk-image-format.md) | Chunked disk image delivery (no HTTP Range) | I/O               |
 | [windows7-guest-tools.md](./docs/windows7-guest-tools.md)               | End-user guide: install Guest Tools and switch to virtio + Aero GPU | All |
 | [windows7-driver-troubleshooting.md](./docs/windows7-driver-troubleshooting.md) | End-user guide: Windows 7 driver/signing troubleshooting | All |
+| [16-win7-image-servicing.md](./docs/16-win7-image-servicing.md)         | Win7 install media servicing for test-signed drivers | I/O               |
 | [windows7-virtio-driver-contract.md](./docs/windows7-virtio-driver-contract.md) | Virtio contract: Win7 drivers ↔ emulator | I/O               |
 | [virtqueue-split-ring-win7.md](./docs/virtio/virtqueue-split-ring-win7.md) | Virtio 1.0 split virtqueue implementation guide (Win7 KMDF) | I/O (virtio drivers) |
 | [backend/disk-image-streaming-service.md](./docs/backend/disk-image-streaming-service.md) | Disk image streaming (Range/CORS/COEP) | I/O / Infra       |
