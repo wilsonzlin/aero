@@ -213,6 +213,7 @@ At minimum, your dev server must:
 - Send the same COOP/COEP/CORP headers on the HTML + JS/worker responses
 
 For Vite, this is typically done by setting `server.headers` and enabling HTTPS.
+This repo’s Vite app (`web/`) already includes these headers in `web/vite.config.ts`.
 
 If you need to call the gateway from a different origin (e.g. Vite dev server),
 your gateway must also be configured with an explicit CORS allowlist (for
