@@ -33,8 +33,8 @@ jobs:
       code_changed: ${{ steps.changes.outputs.code_changed }}
       docs_only: ${{ steps.changes.outputs.docs_only }}
     env:
-      BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-      HEAD_REF: ${{ github.sha }}
+      BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
+      HEAD_REF: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
