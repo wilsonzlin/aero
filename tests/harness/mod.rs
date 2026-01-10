@@ -48,21 +48,12 @@ impl ImageDiff {
     }
 }
 
-pub fn compare_images(actual: &RgbaImage, expected: &RgbaImage, cfg: &ImageMatchConfig) -> Result<ImageDiff> {
-    let (actual, expected) = match cfg.crop {
-        Some(crop) => (crop_image(actual, crop)?, crop_image(expected, crop)?),
-        None => (actual.clone(), expected.clone()),
-    };
-
-    if actual.dimensions() != expected.dimensions() {
-        return Err(anyhow!(
-            "image dimensions differ: actual={}x{}, expected={}x{}",
-            actual.width(),
-            actual.height(),
-            expected.width(),
-            expected.height(),
-        ));
-    }
+pub fn compare_images(
+    actual: &RgbaImage,
+    expected: &RgbaImage,
+    cfg: &ImageMatchConfig,
+) -> Result<ImageDiff> {
+    let (actual, expected) = normalize_images_for_comparison(actual, expected, cfg)?;
 
     let mut mismatched_pixels: u64 = 0;
     let mut max_channel_diff: u8 = 0;
@@ -86,6 +77,112 @@ pub fn compare_images(actual: &RgbaImage, expected: &RgbaImage, cfg: &ImageMatch
     })
 }
 
+fn normalize_images_for_comparison(
+    actual: &RgbaImage,
+    expected: &RgbaImage,
+    cfg: &ImageMatchConfig,
+) -> Result<(RgbaImage, RgbaImage)> {
+    let mut actual = actual.clone();
+    let mut expected = expected.clone();
+
+    if actual.dimensions() != expected.dimensions() {
+        if let Some(rescaled_actual) =
+            rescale_integer_multiple(&actual, expected.width(), expected.height())
+        {
+            actual = rescaled_actual;
+        } else if let Some(rescaled_expected) =
+            rescale_integer_multiple(&expected, actual.width(), actual.height())
+        {
+            expected = rescaled_expected;
+        }
+    }
+
+    if actual.dimensions() != expected.dimensions() {
+        return Err(anyhow!(
+            "image dimensions differ: actual={}x{}, expected={}x{}",
+            actual.width(),
+            actual.height(),
+            expected.width(),
+            expected.height(),
+        ));
+    }
+
+    if let Some(crop) = cfg.crop {
+        actual = crop_image(&actual, crop)?;
+        expected = crop_image(&expected, crop)?;
+    }
+
+    Ok((actual, expected))
+}
+
+fn rescale_integer_multiple(image: &RgbaImage, target_w: u32, target_h: u32) -> Option<RgbaImage> {
+    if image.width() == target_w && image.height() == target_h {
+        return Some(image.clone());
+    }
+
+    // Downscale if the source is an integer multiple of the target.
+    if target_w != 0
+        && target_h != 0
+        && image.width() % target_w == 0
+        && image.height() % target_h == 0
+    {
+        let sx = image.width() / target_w;
+        let sy = image.height() / target_h;
+        if sx == sy && sx >= 2 {
+            return Some(resample_downscale_nearest(image, target_w, target_h, sx));
+        }
+    }
+
+    // Upscale if the target is an integer multiple of the source.
+    if image.width() != 0
+        && image.height() != 0
+        && target_w % image.width() == 0
+        && target_h % image.height() == 0
+    {
+        let sx = target_w / image.width();
+        let sy = target_h / image.height();
+        if sx == sy && sx >= 2 {
+            return Some(resample_upscale_nearest(image, target_w, target_h, sx));
+        }
+    }
+
+    None
+}
+
+fn resample_downscale_nearest(
+    image: &RgbaImage,
+    target_w: u32,
+    target_h: u32,
+    scale: u32,
+) -> RgbaImage {
+    let mut out = RgbaImage::new(target_w, target_h);
+    for y in 0..target_h {
+        for x in 0..target_w {
+            let src_x = x * scale;
+            let src_y = y * scale;
+            out.put_pixel(x, y, *image.get_pixel(src_x, src_y));
+        }
+    }
+    out
+}
+
+fn resample_upscale_nearest(
+    image: &RgbaImage,
+    target_w: u32,
+    target_h: u32,
+    scale: u32,
+) -> RgbaImage {
+    let mut out = RgbaImage::new(target_w, target_h);
+    for y in 0..target_h {
+        for x in 0..target_w {
+            let src_x = x / scale;
+            let src_y = y / scale;
+            out.put_pixel(x, y, *image.get_pixel(src_x, src_y));
+        }
+    }
+    out
+}
+
 fn crop_image(image: &RgbaImage, crop: ImageCrop) -> Result<RgbaImage> {
     if crop.x.checked_add(crop.width).unwrap_or(u32::MAX) > image.width()
         || crop.y.checked_add(crop.height).unwrap_or(u32::MAX) > image.height()
@@ -104,7 +201,10 @@ pub fn artifact_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| repo_root().join("target/aero-test-artifacts"));
     if let Err(err) = std::fs::create_dir_all(&dir) {
-        eprintln!("warning: failed to create artifact dir {}: {err}", dir.display());
+        eprintln!(
+            "warning: failed to create artifact dir {}: {err}",
+            dir.display()
+        );
     }
     dir
 }
@@ -112,7 +212,9 @@ pub fn artifact_dir() -> PathBuf {
 pub fn repo_root() -> PathBuf {
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     for _ in 0..8 {
-        let looks_like_repo_root = dir.join("Cargo.toml").is_file() && dir.join("crates").is_dir() && dir.join("tests").is_dir();
+        let looks_like_repo_root = dir.join("Cargo.toml").is_file()
+            && dir.join("crates").is_dir()
+            && dir.join("tests").is_dir();
         if looks_like_repo_root {
             return dir;
         }
@@ -175,7 +277,9 @@ impl QemuVm {
         let qemu = match Self::qemu_binary() {
             Some(path) => path,
             None => {
-                eprintln!("skipping: qemu-system-i386 not found (install QEMU or set AERO_QEMU=...)");
+                eprintln!(
+                    "skipping: qemu-system-i386 not found (install QEMU or set AERO_QEMU=...)"
+                );
                 return Ok(None);
             }
         };
@@ -275,17 +379,30 @@ impl QemuVm {
     }
 
     pub async fn screenshot_rgba(&mut self) -> Result<RgbaImage> {
-        let ppm_path = self.temp_dir.path().join(format!("screenshot-{}.ppm", self.qmp.next_nonce()));
+        let ppm_path = self
+            .temp_dir
+            .path()
+            .join(format!("screenshot-{}.ppm", self.qmp.next_nonce()));
         self.qmp
-            .execute("screendump", Some(json!({ "filename": ppm_path.display().to_string() })))
+            .execute(
+                "screendump",
+                Some(json!({ "filename": ppm_path.display().to_string() })),
+            )
             .await
             .context("QMP screendump")?;
 
-        load_image_rgba(&ppm_path).with_context(|| format!("load PPM screendump {}", ppm_path.display()))
+        load_image_rgba(&ppm_path)
+            .with_context(|| format!("load PPM screendump {}", ppm_path.display()))
     }
 
-    pub async fn wait_for_screenshot_match(&mut self, golden: &Path, timeout: Duration, cfg: &ImageMatchConfig) -> Result<()> {
-        let expected = load_image_rgba(golden).with_context(|| format!("load golden image {}", golden.display()))?;
+    pub async fn wait_for_screenshot_match(
+        &mut self,
+        golden: &Path,
+        timeout: Duration,
+        cfg: &ImageMatchConfig,
+    ) -> Result<()> {
+        let expected = load_image_rgba(golden)
+            .with_context(|| format!("load golden image {}", golden.display()))?;
         let deadline = Instant::now() + timeout;
 
         loop {
@@ -300,11 +417,17 @@ impl QemuVm {
                 let actual_path = dir.join("last-actual.png");
                 let diff_path = dir.join("diff.png");
                 if let Err(err) = actual.save(&actual_path) {
-                    eprintln!("warning: failed to save screenshot artifact {}: {err}", actual_path.display());
+                    eprintln!(
+                        "warning: failed to save screenshot artifact {}: {err}",
+                        actual_path.display()
+                    );
                 }
                 if let Ok(img) = render_diff_image(&actual, &expected, cfg) {
                     if let Err(err) = img.save(&diff_path) {
-                        eprintln!("warning: failed to save diff artifact {}: {err}", diff_path.display());
+                        eprintln!(
+                            "warning: failed to save diff artifact {}: {err}",
+                            diff_path.display()
+                        );
                     }
                 }
 
@@ -383,7 +506,10 @@ struct LogCapture {
 }
 
 impl LogCapture {
-    async fn consume_reader<R: tokio::io::AsyncRead + Unpin + Send + 'static>(&self, mut reader: R) {
+    async fn consume_reader<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
+        &self,
+        mut reader: R,
+    ) {
         let mut chunk = [0u8; 4096];
         loop {
             let n = match reader.read(&mut chunk).await {
@@ -454,7 +580,9 @@ async fn wait_for_file_contains(path: &Path, needle: &[u8], timeout: Duration) -
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 // QEMU hasn't created the file yet.
             }
-            Err(err) => return Err(err).with_context(|| format!("read serial log {}", path.display())),
+            Err(err) => {
+                return Err(err).with_context(|| format!("read serial log {}", path.display()))
+            }
         }
 
         if Instant::now() >= deadline {
@@ -479,14 +607,12 @@ fn load_image_rgba(path: &Path) -> Result<RgbaImage> {
     Ok(image::ImageReader::open(path)?.decode()?.to_rgba8())
 }
 
-fn render_diff_image(actual: &RgbaImage, expected: &RgbaImage, cfg: &ImageMatchConfig) -> Result<DynamicImage> {
-    let (actual, expected) = match cfg.crop {
-        Some(crop) => (crop_image(actual, crop)?, crop_image(expected, crop)?),
-        None => (actual.clone(), expected.clone()),
-    };
-    if actual.dimensions() != expected.dimensions() {
-        return Err(anyhow!("cannot diff images with different dimensions"));
-    }
+fn render_diff_image(
+    actual: &RgbaImage,
+    expected: &RgbaImage,
+    cfg: &ImageMatchConfig,
+) -> Result<DynamicImage> {
+    let (actual, expected) = normalize_images_for_comparison(actual, expected, cfg)?;
 
     let mut out = actual.clone();
     for (o, (a, e)) in out.pixels_mut().zip(actual.pixels().zip(expected.pixels())) {
@@ -590,7 +716,10 @@ impl QmpClient {
 
 pub fn write_floppy_image(path: &Path, bootsector: &[u8]) -> Result<()> {
     if bootsector.len() != 512 {
-        return Err(anyhow!("bootsector must be exactly 512 bytes, got {}", bootsector.len()));
+        return Err(anyhow!(
+            "bootsector must be exactly 512 bytes, got {}",
+            bootsector.len()
+        ));
     }
     let mut file = fs::File::create(path)?;
     file.write_all(bootsector)?;
@@ -605,7 +734,11 @@ mod which {
     pub fn which(name: &str) -> Option<PathBuf> {
         if name.contains(std::path::MAIN_SEPARATOR) {
             let path = PathBuf::from(name);
-            return if is_executable(&path) { Some(path) } else { None };
+            return if is_executable(&path) {
+                Some(path)
+            } else {
+                None
+            };
         }
 
         let path_env = std::env::var_os("PATH")?;
@@ -625,7 +758,11 @@ mod which {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            return (path.metadata().ok().map(|m| m.permissions().mode() & 0o111 != 0)).unwrap_or(false);
+            return (path
+                .metadata()
+                .ok()
+                .map(|m| m.permissions().mode() & 0o111 != 0))
+            .unwrap_or(false);
         }
         #[cfg(not(unix))]
         {

@@ -109,6 +109,49 @@ cargo test -p <crate-name> -- --ignored
 
 ---
 
+## QEMU boot tests (serial + framebuffer)
+
+Some integration tests boot guest media **headlessly under QEMU** to validate early boot flows and enable deterministic framebuffer/serial checkpoints.
+
+These tests are defined under the workspace root `tests/` directory, but are registered as `[[test]]` targets in the `emulator` crate.
+
+### Prerequisites
+
+- `qemu-system-i386`
+- `mtools` (for patching floppy images in `scripts/prepare-freedos.sh`)
+- `nasm` (for building the custom boot sector)
+- `unzip` + `curl` (for downloading FreeDOS)
+
+### Boot sector + FreeDOS (open-source, CI-safe)
+
+```bash
+# Build the synthetic boot sector used by the test (committed output is checked in CI).
+./scripts/build-bootsector.sh
+
+# Download + patch FreeDOS 1.4 floppy image (written under gitignored test-images/).
+./scripts/prepare-freedos.sh
+
+# Run the QEMU boot tests.
+cargo test -p emulator --test boot_sector --test freedos_boot
+```
+
+### Windows 7 (local only)
+
+The Windows boot test is intentionally gated and requires user-supplied media:
+
+```bash
+./scripts/prepare-windows7.sh
+cargo test -p emulator --test windows7_boot -- --ignored
+```
+
+### Useful environment variables
+
+- `AERO_QEMU=/path/to/qemu-system-i386` to override the QEMU binary
+- `AERO_ARTIFACT_DIR=...` to control where failing screenshots/diffs are written
+- `AERO_REQUIRE_TEST_IMAGES=1` to turn missing fixture files into hard errors (CI uses this)
+
+---
+
 ## WASM tests (Rust compiled to WebAssembly)
 
 For crates that use `wasm-bindgen-test`, run tests in a Node environment:

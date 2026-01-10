@@ -4,6 +4,8 @@ This repository must **not** distribute proprietary operating system media (espe
 
 In addition, large binary fixtures quickly bloat git history and slow down CI. To reduce this risk, CI enforces a repository policy check.
 
+For local-only fixtures (downloaded OSS images, user-supplied Windows media), use the gitignored `test-images/` directory (see `test-images/README.md`).
+
 ## What is NOT allowed in-repo
 
 Do not commit files that are (or look like) OS installation media, disk images, or Windows binaries, including (non-exhaustive):
