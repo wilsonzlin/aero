@@ -56,3 +56,23 @@ fn concurrent_writes_to_disjoint_ranges() {
         assert!(buf.iter().all(|b| *b == i as u8));
     }
 }
+
+#[test]
+fn typed_ops_across_chunk_boundary() {
+    let mem =
+        PhysicalMemory::with_options(0x3000, PhysicalMemoryOptions { chunk_size: 4096 }).unwrap();
+
+    // Address 0x0FFF is the last byte of chunk 0.
+    mem.write_u8(0x0FFF, 0x11);
+    mem.write_u8(0x1000, 0x22);
+    assert_eq!(mem.read_u16(0x0FFF), 0x2211);
+
+    mem.write_u8(0x0FFE, 0xAA);
+    mem.write_u8(0x0FFF, 0xBB);
+    mem.write_u8(0x1000, 0xCC);
+    mem.write_u8(0x1001, 0xDD);
+    assert_eq!(mem.read_u32(0x0FFE), 0xDDCC_BBAA);
+
+    mem.write_u64(0x0FFC, 0x1122_3344_5566_7788);
+    assert_eq!(mem.read_u64(0x0FFC), 0x1122_3344_5566_7788);
+}

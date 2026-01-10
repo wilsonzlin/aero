@@ -273,6 +273,19 @@ fn bulk_address_overflow_is_reported() {
 }
 
 #[test]
+fn typed_read_crossing_ram_to_rom_boundary() {
+    let ram = make_ram(0x210);
+    let mut bus = MemoryBus::new(ram.clone());
+
+    // Place ROM immediately after RAM.
+    bus.register_rom(0x200, Arc::from([0xFEu8, 0xED])).unwrap();
+
+    // Last byte in RAM + first byte in ROM.
+    ram.write_u8(0x1FF, 0xAA);
+    assert_eq!(bus.read_u16(0x1FF), 0xFEAA);
+}
+
+#[test]
 fn dma_bulk_read_rejects_mmio_without_side_effects() {
     let ram = make_ram(0x4000);
     let mut bus = MemoryBus::new(ram.clone());
