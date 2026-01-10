@@ -43,14 +43,8 @@ fn translate_single_stream_position_color_uv() {
         vertex_attribute_16bit: true,
     };
 
-    let translated = translate_vertex_declaration(
-        &decl,
-        &strides,
-        &freq,
-        caps,
-        &StandardLocationMap,
-    )
-    .unwrap();
+    let translated =
+        translate_vertex_declaration(&decl, &strides, &freq, caps, &StandardLocationMap).unwrap();
 
     assert_eq!(translated.buffers.len(), 1);
     assert_eq!(translated.stream_to_buffer_slot.get(&0), Some(&0));
@@ -121,14 +115,8 @@ fn translate_two_stream_layout() {
         vertex_attribute_16bit: true,
     };
 
-    let translated = translate_vertex_declaration(
-        &decl,
-        &strides,
-        &freq,
-        caps,
-        &StandardLocationMap,
-    )
-    .unwrap();
+    let translated =
+        translate_vertex_declaration(&decl, &strides, &freq, caps, &StandardLocationMap).unwrap();
 
     assert_eq!(translated.buffers.len(), 2);
     assert_eq!(translated.stream_to_buffer_slot.get(&0), Some(&0));
@@ -199,14 +187,8 @@ fn translate_instanced_color_stream() {
         vertex_attribute_16bit: true,
     };
 
-    let translated = translate_vertex_declaration(
-        &decl,
-        &strides,
-        &freq,
-        caps,
-        &StandardLocationMap,
-    )
-    .unwrap();
+    let translated =
+        translate_vertex_declaration(&decl, &strides, &freq, caps, &StandardLocationMap).unwrap();
 
     assert_eq!(translated.instancing.draw_instances(), 2);
     assert_eq!(translated.instancing.stream_step(0), StreamStep::Vertex);
@@ -215,7 +197,10 @@ fn translate_instanced_color_stream() {
         StreamStep::Instance { divisor: 1 }
     );
 
-    assert_eq!(translated.buffers[0].step_mode, wgpu::VertexStepMode::Vertex);
+    assert_eq!(
+        translated.buffers[0].step_mode,
+        wgpu::VertexStepMode::Vertex
+    );
     assert_eq!(
         translated.buffers[1].step_mode,
         wgpu::VertexStepMode::Instance
@@ -243,14 +228,8 @@ fn dec3n_requires_conversion_and_decodes_correctly() {
         vertex_attribute_16bit: true,
     };
 
-    let translated = translate_vertex_declaration(
-        &decl,
-        &strides,
-        &freq,
-        caps,
-        &StandardLocationMap,
-    )
-    .unwrap();
+    let translated =
+        translate_vertex_declaration(&decl, &strides, &freq, caps, &StandardLocationMap).unwrap();
 
     assert_eq!(translated.buffers[0].array_stride, 12);
     assert_eq!(translated.conversions.len(), 1);
@@ -288,24 +267,21 @@ fn half_promotes_to_f32_when_f16_vertex_attributes_unsupported() {
         vertex_attribute_16bit: false,
     };
 
-    let translated = translate_vertex_declaration(
-        &decl,
-        &strides,
-        &freq,
-        caps,
-        &StandardLocationMap,
-    )
-    .unwrap();
+    let translated =
+        translate_vertex_declaration(&decl, &strides, &freq, caps, &StandardLocationMap).unwrap();
 
     let b0 = &translated.buffers[0];
     assert_eq!(b0.array_stride, 8);
     assert_eq!(b0.attributes[0].format, wgpu::VertexFormat::Float32x2);
 
     let plan = translated.conversions.get(&0).unwrap();
-    let src = [half::f16::from_f32(0.5).to_bits(), half::f16::from_f32(1.0).to_bits()]
-        .into_iter()
-        .flat_map(|v| v.to_le_bytes())
-        .collect::<Vec<_>>();
+    let src = [
+        half::f16::from_f32(0.5).to_bits(),
+        half::f16::from_f32(1.0).to_bits(),
+    ]
+    .into_iter()
+    .flat_map(|v| v.to_le_bytes())
+    .collect::<Vec<_>>();
     let dst = plan.convert_vertices(&src, 1).unwrap();
     let x = f32::from_le_bytes(dst[0..4].try_into().unwrap());
     let y = f32::from_le_bytes(dst[4..8].try_into().unwrap());
@@ -366,18 +342,40 @@ fn fvf_decode_produces_declaration_compatible_with_fixed_function_locations() {
 }
 
 #[test]
+fn fvf_texcoord_size_bits_follow_d3d9_encoding() {
+    // XYZ | TEX1, default size for TEX0 is 2 components when the size bits are 0.
+    let base = 0x002 | 0x0100;
+
+    let fvf2 = Fvf(base);
+    let layout2 = fvf2.decode().unwrap();
+    assert_eq!(layout2.declaration.elements.len(), 2);
+    assert_eq!(layout2.declaration.elements[1].ty, DeclType::Float2);
+
+    // Bits=3 => 1 component (`D3DFVF_TEXCOORDSIZE1(0)`).
+    let fvf1 = Fvf(base | (3 << 16));
+    let layout1 = fvf1.decode().unwrap();
+    assert_eq!(layout1.declaration.elements[1].ty, DeclType::Float1);
+
+    // Bits=1 => 3 components (`D3DFVF_TEXCOORDSIZE3(0)`).
+    let fvf3 = Fvf(base | (1 << 16));
+    let layout3 = fvf3.decode().unwrap();
+    assert_eq!(layout3.declaration.elements[1].ty, DeclType::Float3);
+
+    // Bits=2 => 4 components (`D3DFVF_TEXCOORDSIZE4(0)`).
+    let fvf4 = Fvf(base | (2 << 16));
+    let layout4 = fvf4.decode().unwrap();
+    assert_eq!(layout4.declaration.elements[1].ty, DeclType::Float4);
+}
+
+#[test]
 fn expand_instance_data_emulates_divisor() {
     let stride = 4;
     let divisor = 2;
     let draw_instances = 5;
-    let src = [
-        1u32.to_le_bytes(),
-        2u32.to_le_bytes(),
-        3u32.to_le_bytes(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
+    let src = [1u32.to_le_bytes(), 2u32.to_le_bytes(), 3u32.to_le_bytes()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
 
     let expanded = expand_instance_data(&src, stride, divisor, draw_instances).unwrap();
     let words = expanded

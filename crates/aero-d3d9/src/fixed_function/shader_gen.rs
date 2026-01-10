@@ -215,14 +215,14 @@ fn generate_vertex_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) -> S
 
     // Diffuse color
     if layout.has_diffuse {
-        wgsl.push_str("  let diffuse = unpack_argb8(input.diffuse);\n");
+        wgsl.push_str("  let diffuse = d3dcolor_bgra_to_rgba(input.diffuse);\n");
     } else {
         wgsl.push_str("  let diffuse = vec4<f32>(1.0, 1.0, 1.0, 1.0);\n");
     }
     wgsl.push_str("  out.diffuse = diffuse;\n");
 
     if layout.has_specular {
-        wgsl.push_str("  out.specular = unpack_argb8(input.specular);\n");
+        wgsl.push_str("  out.specular = d3dcolor_bgra_to_rgba(input.specular);\n");
     } else {
         wgsl.push_str("  out.specular = vec4<f32>(0.0, 0.0, 0.0, 0.0);\n");
     }
@@ -384,6 +384,7 @@ fn wgsl_vertex_input_type(format: wgpu::VertexFormat) -> &'static str {
         wgpu::VertexFormat::Float32x2 => "vec2<f32>",
         wgpu::VertexFormat::Float32x3 => "vec3<f32>",
         wgpu::VertexFormat::Float32x4 => "vec4<f32>",
+        wgpu::VertexFormat::Unorm8x4 => "vec4<f32>",
         wgpu::VertexFormat::Uint32 => "u32",
         _ => panic!("Unsupported vertex format in FVF layout: {:?}", format),
     }
@@ -400,12 +401,10 @@ struct Globals {
 
 @group(0) @binding(0) var<uniform> globals: Globals;
 
-fn unpack_argb8(c: u32) -> vec4<f32> {
-  let a = f32((c >> 24u) & 255u) / 255.0;
-  let r = f32((c >> 16u) & 255u) / 255.0;
-  let g = f32((c >> 8u) & 255u) / 255.0;
-  let b = f32(c & 255u) / 255.0;
-  return vec4<f32>(r, g, b, a);
+fn d3dcolor_bgra_to_rgba(c: vec4<f32>) -> vec4<f32> {
+  // `D3DCOLOR` is 0xAARRGGBB in little-endian memory; when consumed as `unorm8x4` it arrives as
+  // (b, g, r, a).
+  return c.zyxw;
 }
 
 "#;

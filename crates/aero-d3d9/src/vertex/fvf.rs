@@ -1,4 +1,6 @@
-use crate::vertex::declaration::{DeclMethod, DeclType, DeclUsage, VertexDeclaration, VertexElement};
+use crate::vertex::declaration::{
+    DeclMethod, DeclType, DeclUsage, VertexDeclaration, VertexElement,
+};
 use thiserror::Error;
 
 /// D3D9 Flexible Vertex Format (FVF) code.
@@ -191,12 +193,16 @@ impl Fvf {
 fn texcoord_dim(fvf: u32, idx: u8) -> Result<u8, FvfDecodeError> {
     let shift = 16 + (idx as u32) * 2;
     let bits = ((fvf >> shift) & 0x3) as u8;
-    // In FVF, the value encodes size-1.
     Ok(match bits {
-        0 => 2, // default = 2
-        1 => 1,
-        2 => 3,
-        3 => 4,
+        // D3D9's `D3DFVF_TEXCOORDSIZE*` macros encode sizes oddly:
+        // - 00 => 2 components (default)
+        // - 01 => 3 components
+        // - 10 => 4 components
+        // - 11 => 1 component
+        0 => 2,
+        1 => 3,
+        2 => 4,
+        3 => 1,
         _ => return Err(FvfDecodeError::InvalidTexCoordSize { idx, bits }),
     })
 }
@@ -231,4 +237,3 @@ pub enum FvfDecodeError {
     #[error("FVF TEXCOORDSIZE bits for tex{idx} are invalid ({bits})")]
     InvalidTexCoordSize { idx: u8, bits: u8 },
 }
-

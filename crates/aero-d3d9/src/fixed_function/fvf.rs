@@ -1,5 +1,11 @@
 use wgpu::{VertexAttribute, VertexFormat};
 
+const POSITION_LOCATION: u32 = 0;
+const NORMAL_LOCATION: u32 = 1;
+const DIFFUSE_LOCATION: u32 = 3;
+const SPECULAR_LOCATION: u32 = 4;
+const TEXCOORD_BASE_LOCATION: u32 = 5;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Fvf(pub u32);
 
@@ -96,7 +102,6 @@ impl FvfLayout {
 
         let mut vertex_attributes = Vec::new();
         let mut offset: u64 = 0;
-        let mut location: u32 = 0;
 
         let (pos_format, pos_size) = match position {
             PositionType::Xyz => (VertexFormat::Float32x3, 12),
@@ -105,42 +110,38 @@ impl FvfLayout {
         vertex_attributes.push(VertexAttribute {
             format: pos_format,
             offset,
-            shader_location: location,
+            shader_location: POSITION_LOCATION,
         });
         offset += pos_size;
-        location += 1;
 
         if has_normal {
             vertex_attributes.push(VertexAttribute {
                 format: VertexFormat::Float32x3,
                 offset,
-                shader_location: location,
+                shader_location: NORMAL_LOCATION,
             });
             offset += 12;
-            location += 1;
         }
 
         if has_diffuse {
             vertex_attributes.push(VertexAttribute {
-                format: VertexFormat::Uint32,
+                format: VertexFormat::Unorm8x4,
                 offset,
-                shader_location: location,
+                shader_location: DIFFUSE_LOCATION,
             });
             offset += 4;
-            location += 1;
         }
 
         if has_specular {
             vertex_attributes.push(VertexAttribute {
-                format: VertexFormat::Uint32,
+                format: VertexFormat::Unorm8x4,
                 offset,
-                shader_location: location,
+                shader_location: SPECULAR_LOCATION,
             });
             offset += 4;
-            location += 1;
         }
 
-        for size in &texcoords {
+        for (i, size) in texcoords.iter().enumerate() {
             let (format, byte_len) = match size.components() {
                 1 => (VertexFormat::Float32, 4),
                 2 => (VertexFormat::Float32x2, 8),
@@ -152,10 +153,9 @@ impl FvfLayout {
             vertex_attributes.push(VertexAttribute {
                 format,
                 offset,
-                shader_location: location,
+                shader_location: TEXCOORD_BASE_LOCATION + (i as u32),
             });
             offset += byte_len;
-            location += 1;
         }
 
         Ok(Self {
