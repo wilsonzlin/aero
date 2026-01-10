@@ -78,19 +78,18 @@
       <PreprocessorDefinitions>_WINDLL;_USRDLL;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>include;..\..\protocol;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
-    <Link>
-      <ModuleDefinitionFile>aerogpu_d3d9_umd.def</ModuleDefinitionFile>
-    </Link>
   </ItemDefinitionGroup>
 
   <ItemDefinitionGroup Condition="'$(Platform)'=='Win32'">
     <Link>
+      <ModuleDefinitionFile>aerogpu_d3d9_x86.def</ModuleDefinitionFile>
       <TargetName>aerogpu_d3d9</TargetName>
     </Link>
   </ItemDefinitionGroup>
 
   <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
     <Link>
+      <ModuleDefinitionFile>aerogpu_d3d9_x64.def</ModuleDefinitionFile>
       <TargetName>aerogpu_d3d9_x64</TargetName>
     </Link>
   </ItemDefinitionGroup>
@@ -109,7 +108,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="aerogpu_d3d9_umd.def" />
+    <None Include="aerogpu_d3d9_x86.def" />
+    <None Include="aerogpu_d3d9_x64.def" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

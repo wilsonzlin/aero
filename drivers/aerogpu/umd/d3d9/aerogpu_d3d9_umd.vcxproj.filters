@@ -37,7 +37,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="aerogpu_d3d9_umd.def" />
+    <None Include="aerogpu_d3d9_x86.def" />
+    <None Include="aerogpu_d3d9_x64.def" />
   </ItemGroup>
 </Project>
 

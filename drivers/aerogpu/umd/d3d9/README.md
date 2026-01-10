@@ -19,7 +19,9 @@ This project is intended to be built in a Windows/WDK environment as a DLL for b
 Build files:
 
 - Visual Studio project: `aerogpu_d3d9_umd.vcxproj`
-- Exports: `aerogpu_d3d9_umd.def` (`OpenAdapter`, `OpenAdapter2`)
+- Exports:
+  - `aerogpu_d3d9_x86.def` (exports `OpenAdapter`, `OpenAdapter2` from stdcall-decorated x86 symbols)
+  - `aerogpu_d3d9_x64.def` (exports `OpenAdapter`, `OpenAdapter2`)
 
 ### Notes
 
@@ -28,7 +30,7 @@ Build files:
 
 ## Install / Register (INF)
 
-The D3D9 runtime loads the display driver’s UMD(s) based on registry values written by the display driver INF. The exact INF layout depends on the KMD packaging, but the critical part is that the service installs a WDDM display driver and registers the **user-mode driver DLL name**.
+On Windows 7, the D3D9 runtime loads the display driver’s UMD(s) based on registry values written by the display driver INF. For D3D9, this is typically done via `InstalledDisplayDrivers` (base name, no extension).
 
 In the Win7 packaging INFs in this repo (`drivers/aerogpu/packaging/win7/aerogpu.inf` and `aerogpu_dx11.inf`), the D3D9 UMD is registered via `InstalledDisplayDrivers` (base name, no extension):
 
