@@ -188,7 +188,8 @@ Use either `pnputil` (Windows 7 built-in) or DISM:
   - `pnputil -i -a X:\path\to\driver.inf`
   - To bulk-install multiple INFs from an elevated Command Prompt:
     - `for /r "X:\path\to\drivers" %i in (*.inf) do pnputil -i -a "%i"`
-    - If you put this into a `.cmd` file, use `%%i` instead of `%i`.
+    - If you put this into a `.cmd` file, use `%%i` instead of `%i`:
+      - `for /r "X:\path\to\drivers" %%i in (*.inf) do pnputil -i -a "%%i"`
 
 After staging, reboot once while still on baseline devices.
 
@@ -248,11 +249,12 @@ After you can boot with virtio + Aero GPU:
 2. Right-click `verify.cmd` → **Run as administrator**
 3. Open the generated `report.txt`
 
-Typical things `verify.cmd` reports:
+Depending on your Guest Tools version, `verify.cmd` / `report.txt` may include:
 
 - OS version and architecture (x86 vs x64)
 - Whether **KB3033929** is installed (required for validating many SHA-256-signed driver catalogs on Windows 7)
-- Whether **Test Signing** / signature enforcement is configured correctly (`testsigning`, `nointegritychecks`)
+- Whether signature enforcement is configured correctly (for example `testsigning` and/or `nointegritychecks`)
+  - `nointegritychecks` disables signature validation entirely and is generally not recommended; prefer properly signed/test-signed drivers + the correct certificate/updates.
 - Whether the Aero driver certificate(s) are installed into the expected certificate stores (**Local Machine** `Root` + `TrustedPublisher`)
 - Device/driver binding status (Device Manager health) for:
   - virtio-blk storage
