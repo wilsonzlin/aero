@@ -101,6 +101,32 @@ fn lddqu_memory_operand_protected32() {
 }
 
 #[test]
+fn pshufb_real16_segment_override() {
+    let mut cpu = Cpu::new(CpuMode::Real16);
+    let mut bus = RamBus::new(0x20_000);
+
+    cpu.sse.xmm[0] = xmm_from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+
+    // Addressing form [BX+SI] with an ES override.
+    cpu.regs.rbx = 0x0010;
+    cpu.regs.rsi = 0x0020;
+    cpu.segs.es.base = 0x1000;
+    let addr = cpu.segs.es.base + 0x30;
+
+    let mask = [0x80, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
+    bus.as_mut_slice()[addr as usize..addr as usize + 16].copy_from_slice(&mask);
+
+    // pshufb xmm0, es:[bx+si]
+    cpu.execute_bytes(&mut bus, &[0x26, 0x66, 0x0F, 0x38, 0x00, 0x00])
+        .unwrap();
+
+    assert_eq!(
+        xmm_to_bytes(cpu.sse.xmm[0]),
+        [0, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+    );
+}
+
+#[test]
 fn ud_when_disabled() {
     let (mut cpu, mut bus) = setup();
     cpu.features.win7_x86_extensions = false;

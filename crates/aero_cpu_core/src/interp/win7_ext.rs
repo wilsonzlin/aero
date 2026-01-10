@@ -469,9 +469,9 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
-                    let src_bytes = match rm {
-                        RmOperand::Reg(r) => cpu.sse.xmm[r as usize].to_le_bytes()[..8].to_vec(),
-                        RmOperand::Mem(addr) => bus.read_u64(addr).to_le_bytes().to_vec(),
+                    let src_bytes: [u8; 8] = match rm {
+                        RmOperand::Reg(r) => cpu.sse.xmm[r as usize].to_le_bytes()[..8].try_into().unwrap(),
+                        RmOperand::Mem(addr) => bus.read_u64(addr).to_le_bytes(),
                     };
                     cpu.sse.xmm[dst as usize] = sse41::pmovsxbw(&src_bytes);
                 }
@@ -480,9 +480,9 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
-                    let src_bytes = match rm {
-                        RmOperand::Reg(r) => cpu.sse.xmm[r as usize].to_le_bytes()[..4].to_vec(),
-                        RmOperand::Mem(addr) => bus.read_u32(addr).to_le_bytes().to_vec(),
+                    let src_bytes: [u8; 4] = match rm {
+                        RmOperand::Reg(r) => cpu.sse.xmm[r as usize].to_le_bytes()[..4].try_into().unwrap(),
+                        RmOperand::Mem(addr) => bus.read_u32(addr).to_le_bytes(),
                     };
                     cpu.sse.xmm[dst as usize] = sse41::pmovsxbd(&src_bytes);
                 }
@@ -491,9 +491,9 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
-                    let src_bytes = match rm {
-                        RmOperand::Reg(r) => cpu.sse.xmm[r as usize].to_le_bytes()[..2].to_vec(),
-                        RmOperand::Mem(addr) => bus.read_u16(addr).to_le_bytes().to_vec(),
+                    let src_bytes: [u8; 2] = match rm {
+                        RmOperand::Reg(r) => cpu.sse.xmm[r as usize].to_le_bytes()[..2].try_into().unwrap(),
+                        RmOperand::Mem(addr) => bus.read_u16(addr).to_le_bytes(),
                     };
                     cpu.sse.xmm[dst as usize] = sse41::pmovsxbq(&src_bytes);
                 }
@@ -502,9 +502,9 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
-                    let src_bytes = match rm {
-                        RmOperand::Reg(r) => cpu.sse.xmm[r as usize].to_le_bytes()[..8].to_vec(),
-                        RmOperand::Mem(addr) => bus.read_u64(addr).to_le_bytes().to_vec(),
+                    let src_bytes: [u8; 8] = match rm {
+                        RmOperand::Reg(r) => cpu.sse.xmm[r as usize].to_le_bytes()[..8].try_into().unwrap(),
+                        RmOperand::Mem(addr) => bus.read_u64(addr).to_le_bytes(),
                     };
                     cpu.sse.xmm[dst as usize] = sse41::pmovzxbw(&src_bytes);
                 }
@@ -513,9 +513,9 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
-                    let src_bytes = match rm {
-                        RmOperand::Reg(r) => cpu.sse.xmm[r as usize].to_le_bytes()[..4].to_vec(),
-                        RmOperand::Mem(addr) => bus.read_u32(addr).to_le_bytes().to_vec(),
+                    let src_bytes: [u8; 4] = match rm {
+                        RmOperand::Reg(r) => cpu.sse.xmm[r as usize].to_le_bytes()[..4].try_into().unwrap(),
+                        RmOperand::Mem(addr) => bus.read_u32(addr).to_le_bytes(),
                     };
                     cpu.sse.xmm[dst as usize] = sse41::pmovzxbd(&src_bytes);
                 }
@@ -524,9 +524,9 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                     let modrm = ModRm::decode(need_byte(bytes, &mut idx)?);
                     let dst = modrm.reg | ((rex.r as u8) << 3);
                     let rm = decode_rm_operand(cpu, bytes, &mut idx, modrm, rex, addr_size_bits, seg_override)?;
-                    let src_bytes = match rm {
-                        RmOperand::Reg(r) => cpu.sse.xmm[r as usize].to_le_bytes()[..2].to_vec(),
-                        RmOperand::Mem(addr) => bus.read_u16(addr).to_le_bytes().to_vec(),
+                    let src_bytes: [u8; 2] = match rm {
+                        RmOperand::Reg(r) => cpu.sse.xmm[r as usize].to_le_bytes()[..2].try_into().unwrap(),
+                        RmOperand::Mem(addr) => bus.read_u16(addr).to_le_bytes(),
                     };
                     cpu.sse.xmm[dst as usize] = sse41::pmovzxbq(&src_bytes);
                 }
