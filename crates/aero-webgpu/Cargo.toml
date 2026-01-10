@@ -2,6 +2,7 @@
 name = "aero-webgpu"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 bytemuck = { version = "1.14", features = ["derive"] }

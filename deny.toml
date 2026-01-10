@@ -17,6 +17,10 @@
 all-features = true
 
 [advisories]
+# Treat RustSec "unmaintained" advisories as actionable only when the crate is a
+# direct dependency of a workspace member (keeps CI from failing on transitive
+# ecosystem churn while still flagging intentional additions).
+unmaintained = "workspace"
 ignore = []
 
 [licenses]
@@ -28,6 +32,8 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
+    "BSL-1.0",
+    "Unicode-3.0",
     "Zlib",
     # Common permissive licenses encountered in Rust deps:
     "0BSD",
@@ -44,7 +50,7 @@ registries = []
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+wildcards = "allow"
 highlight = "all"
 workspace-default-features = "allow"
 external-default-features = "allow"

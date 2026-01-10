@@ -81,10 +81,6 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install production dependencies
-        if: steps.npm.outputs.has_npm == 'true'
-        run: npm ci --omit=dev --ignore-scripts
-
       - name: npm audit (high severity, production)
         if: steps.npm.outputs.has_npm == 'true'
-        run: npm audit --audit-level=high --omit=dev
+        run: npm audit --audit-level=high --omit=dev --package-lock-only

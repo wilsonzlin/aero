@@ -2,6 +2,7 @@
 name = "aero-gpu"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 [features]
 # Optional tile-based diffing when the caller doesn't supply dirty rectangles.
@@ -17,7 +18,7 @@ thiserror = "1.0"
 serde = { version = "1", features = ["derive"] }
 wgpu = "0.20"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
-lru = "0.12"
+lru = "0.16"
 
 # Shared-memory framebuffer protocol (CPU worker ↔ GPU worker).
 aero-shared = { path = "../aero-shared" }
