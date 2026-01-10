@@ -15,7 +15,7 @@ pub struct VgaDerivedState {
     pub is_graphics: bool,
     /// VGA chain-4 addressing (SEQ Memory Mode bit 3).
     pub chain4: bool,
-    /// Odd/even addressing enabled (SEQ Memory Mode bit 2 == 0).
+    /// Odd/even addressing enabled (SEQ Memory Mode bit 2 and/or GC Mode bit 4).
     pub odd_even: bool,
     pub planar_shift: VgaPlanarShift,
     /// Best-effort guess; not authoritative.

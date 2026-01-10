@@ -8,6 +8,7 @@ use super::regs::{
     SEQ_REGS_INITIAL_LEN, VgaDerivedState, VgaPlanarShift,
 };
 use super::vbe::{VbeControllerInfo, VbeModeInfo, VbeState, VBE_LFB_SIZE};
+use super::VgaMemory;
 
 // VGA I/O port block 0x3C0..=0x3DF.
 const PORT_MISC_OUTPUT_WRITE: u16 = 0x3C2;
@@ -104,6 +105,18 @@ impl VgaDevice {
         let mut vga = Self::new_with_bios_mode3_defaults();
         vga.reset_power_on();
         vga
+    }
+
+    /// Read a byte from the active VGA aperture, returning `None` if the address does not hit VGA
+    /// VRAM (as selected by GC reg 0x06).
+    pub fn mem_read_u8(&self, vram: &mut VgaMemory, paddr: u64) -> Option<u8> {
+        vram.read_u8(paddr, &self.seq_regs, &self.gc_regs)
+    }
+
+    /// Write a byte to the active VGA aperture, returning whether the address hit VGA VRAM (as
+    /// selected by GC reg 0x06).
+    pub fn mem_write_u8(&self, vram: &mut VgaMemory, paddr: u64, value: u8) -> bool {
+        vram.write_u8(paddr, value, &self.seq_regs, &self.gc_regs)
     }
 
     pub fn derived_state(&self) -> VgaDerivedState {
@@ -526,10 +539,12 @@ impl VgaDevice {
         // Sequencer Memory Mode register: index 0x04.
         let seq_mem_mode = self.seq_regs.get(4).copied().unwrap_or(0);
         let chain4 = (seq_mem_mode & 0x08) != 0;
-        let odd_even = (seq_mem_mode & 0x04) == 0;
 
         // Graphics controller Mode register: index 0x05.
         let gc_mode = self.gc_regs.get(5).copied().unwrap_or(0);
+        let seq_odd_even_disable = (seq_mem_mode & 0x04) != 0;
+        let gc_odd_even_enable = (gc_mode & 0x10) != 0;
+        let odd_even = (!seq_odd_even_disable) && gc_odd_even_enable;
         let shift_control = (gc_mode >> 5) & 0x03;
         let planar_shift = match shift_control {
             0 => VgaPlanarShift::None,

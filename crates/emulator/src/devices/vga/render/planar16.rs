@@ -1,6 +1,6 @@
 use crate::devices::vga::dac::VgaDac;
-use crate::devices::vga::memory::VgaMemory;
-use crate::devices::vga::{PLANE_SIZE, VgaDevice};
+use crate::devices::vga::memory::{VgaMemory, VramPlane};
+use crate::devices::vga::VgaDevice;
 
 pub const MODE12H_WIDTH: usize = 640;
 pub const MODE12H_HEIGHT: usize = 480;
@@ -33,7 +33,10 @@ impl Mode12hRenderer {
     }
 
     fn render_full(&mut self, regs: &VgaDevice, vram: &VgaMemory, dac: &VgaDac) {
-        let src = vram.data();
+        let plane0 = vram.plane(VramPlane(0));
+        let plane1 = vram.plane(VramPlane(1));
+        let plane2 = vram.plane(VramPlane(2));
+        let plane3 = vram.plane(VramPlane(3));
         let pel_mask = dac.pel_mask();
         let palette = dac.palette_rgba();
 
@@ -42,10 +45,10 @@ impl Mode12hRenderer {
             for byte_x in 0..MODE12H_BYTES_PER_SCANLINE {
                 let offset = row_offset + byte_x;
 
-                let p0 = src[0 * PLANE_SIZE + offset];
-                let p1 = src[1 * PLANE_SIZE + offset];
-                let p2 = src[2 * PLANE_SIZE + offset];
-                let p3 = src[3 * PLANE_SIZE + offset];
+                let p0 = plane0[offset];
+                let p1 = plane1[offset];
+                let p2 = plane2[offset];
+                let p3 = plane3[offset];
 
                 for bit in 0..8 {
                     let bit_index = 7 - bit;
@@ -89,4 +92,3 @@ fn map_attribute_controller(regs: &VgaDevice, index: u8) -> u8 {
     // Bits 7-6 of the final DAC index come from Color Select bits 1-0.
     ((color_select & 0x03) << 6) | pel
 }
-

@@ -2,7 +2,6 @@ mod modeset;
 mod mmio;
 mod ports;
 mod regs;
-
 pub mod dac;
 pub mod edid;
 pub mod memory;
@@ -12,7 +11,7 @@ pub mod vbe;
 use crate::io::PortIO;
 
 pub use dac::VgaDac;
-pub use memory::VgaMemory;
+pub use memory::{VgaMemory, VramPlane, VGA_PLANE_SIZE};
 pub use mmio::{VgaMmio, VgaMmioRegion, VGA_BANK_WINDOW_PADDR, VGA_BANK_WINDOW_SIZE};
 pub use ports::VgaDevice;
 pub use regs::{VgaDerivedState, VgaPlanarShift};
