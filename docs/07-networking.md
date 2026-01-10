@@ -77,6 +77,38 @@ Windows 7 networking requires TCP/IP stack emulation. Browser constraints mean w
 
 ---
 
+## Snapshot/Restore (Save States)
+
+Network snapshots are split into two layers:
+
+1. **NIC device model** (e1000/virtio-net): registers + DMA rings.
+2. **User-space network stack**: DHCP/NAT state and host-proxy connection bookkeeping.
+
+### What must be captured
+
+- **NIC state**
+  - RX/TX ring base addresses + head/tail indices
+  - MAC address and relevant control/status registers
+  - pending interrupts / interrupt mask state
+- **Network stack state**
+  - DHCP lease (assigned IP, gateway, DNS, lease timers)
+  - NAT mappings (stable ordering in serialization)
+  - proxy connection IDs and endpoints (remote IP/port)
+
+### Limitation: active TCP connections
+
+Browser-hosted networking relies on WebSocket/WebRTC transports and a proxy server. **Active TCP connections are not bit-restorable** across a snapshot because:
+
+- browser WebSocket objects cannot be serialized
+- server-side TCP sockets are independent of client snapshot state
+
+**Policy on restore:**
+
+- **Drop**: immediately close all active proxy connections and let the guest reconnect.
+- **Reconnect**: preserve connection IDs/endpoints and attempt a best-effort reconnect; if reconnection fails, drop.
+
+For deterministic testing, prefer **Drop** (removes timing-dependent reconnection behavior).
+
 ## E1000 NIC Emulation
 
 ### Register Interface

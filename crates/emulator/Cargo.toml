@@ -12,6 +12,7 @@ sinc-resampler = []
 
 [dependencies]
 aero-devices = { path = "../devices" }
+aero-io-snapshot = { path = "../aero-io-snapshot" }
 memory = { path = "../memory" }
 aero-net-e1000 = { path = "../aero-net-e1000" }
 serde = { version = "1", features = ["derive"] }

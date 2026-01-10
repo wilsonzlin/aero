@@ -25,6 +25,7 @@ members = [
     "crates/aero-mem",
     "crates/aero-mmu",
     "crates/aero-snapshot",
+    "crates/aero-io-snapshot",
     "crates/aero-storage-server",
     "crates/aero-virtio",
     "crates/aero-vm",

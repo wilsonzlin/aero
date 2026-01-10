@@ -281,6 +281,25 @@ In code:
 - Rust: `crates/aero-ipc/`
 - TypeScript: `web/src/ipc/`
 
+### Snapshot Protocol (Save/Restore)
+
+Snapshots enable fast resume, crash recovery, and deterministic testing.
+
+**Coordinator-level flow:**
+
+1. Coordinator broadcasts `STATE_SAVE` to workers.
+2. I/O worker forces storage flush (AHCI/NVMe/virtio-blk) and snapshots device + host-side metadata.
+3. Workers respond with a versioned, deterministic byte blob per subsystem.
+4. Coordinator stores the combined snapshot (IndexedDB / OPFS / download).
+5. On resume, Coordinator broadcasts `STATE_RESTORE` with the saved bytes.
+6. Workers restore device state; I/O worker reopens host handles (OPFS/IDB/WebSocket/WebRTC) as needed.
+
+**Deterministic serialization requirements:**
+
+- Use an explicit, versioned format (e.g. TLV).
+- Avoid nondeterministic iteration order (no `HashMap` without sorting).
+- Treat active host-side resources as *reconnectable* rather than bit-restorable (see networking limitations).
+
 ### Shared Memory Protocol
 
 Browsers cannot reliably allocate a single 5+GiB `SharedArrayBuffer`, and wasm32 linear memory is fundamentally **≤ 4GiB** addressable. To keep the architecture implementable today, Aero uses **Option B: split buffers**.

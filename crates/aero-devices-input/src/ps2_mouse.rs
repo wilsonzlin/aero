@@ -1,5 +1,8 @@
 use std::collections::VecDeque;
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ps2MouseButton {
     Left,
@@ -294,6 +297,119 @@ impl Ps2Mouse {
 impl Default for Ps2Mouse {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl IoSnapshot for Ps2Mouse {
+    const DEVICE_ID: [u8; 4] = *b"MSE0";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_CONFIG: u16 = 1;
+        const TAG_MOTION: u16 = 2;
+        const TAG_SEQ: u16 = 3;
+        const TAG_EXPECTING: u16 = 4;
+        const TAG_OUTPUT: u16 = 5;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        let config = Encoder::new()
+            .u8(match self.mode {
+                Mode::Stream => 1,
+                Mode::Remote => 2,
+            })
+            .u8(match self.scaling {
+                Scaling::OneToOne => 1,
+                Scaling::TwoToOne => 2,
+            })
+            .u8(self.resolution)
+            .u8(self.sample_rate)
+            .bool(self.reporting_enabled)
+            .u8(self.device_id)
+            .u8(self.buttons)
+            .finish();
+        w.field_bytes(TAG_CONFIG, config);
+
+        let motion = Encoder::new()
+            .i32(self.dx)
+            .i32(self.dy)
+            .i32(self.wheel)
+            .finish();
+        w.field_bytes(TAG_MOTION, motion);
+
+        w.field_bytes(TAG_SEQ, self.sample_rate_seq.to_vec());
+
+        let expecting = match self.expecting_data {
+            None => 0u8,
+            Some(ExpectingData::Resolution) => 1,
+            Some(ExpectingData::SampleRate) => 2,
+        };
+        w.field_u8(TAG_EXPECTING, expecting);
+
+        let out: Vec<u8> = self.out.iter().copied().collect();
+        w.field_bytes(TAG_OUTPUT, Encoder::new().vec_u8(&out).finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_CONFIG: u16 = 1;
+        const TAG_MOTION: u16 = 2;
+        const TAG_SEQ: u16 = 3;
+        const TAG_EXPECTING: u16 = 4;
+        const TAG_OUTPUT: u16 = 5;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        if let Some(buf) = r.bytes(TAG_CONFIG) {
+            let mut d = Decoder::new(buf);
+            self.mode = match d.u8()? {
+                2 => Mode::Remote,
+                _ => Mode::Stream,
+            };
+            self.scaling = match d.u8()? {
+                2 => Scaling::TwoToOne,
+                _ => Scaling::OneToOne,
+            };
+            self.resolution = d.u8()?;
+            self.sample_rate = d.u8()?;
+            self.reporting_enabled = d.bool()?;
+            self.device_id = d.u8()?;
+            self.buttons = d.u8()?;
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_MOTION) {
+            let mut d = Decoder::new(buf);
+            self.dx = d.i32()?;
+            self.dy = d.i32()?;
+            self.wheel = d.i32()?;
+            d.finish()?;
+        }
+
+        if let Some(seq) = r.bytes(TAG_SEQ) {
+            if seq.len() == 3 {
+                self.sample_rate_seq.copy_from_slice(seq);
+            }
+        }
+
+        self.expecting_data = match r.u8(TAG_EXPECTING)?.unwrap_or(0) {
+            1 => Some(ExpectingData::Resolution),
+            2 => Some(ExpectingData::SampleRate),
+            _ => None,
+        };
+
+        self.out.clear();
+        if let Some(buf) = r.bytes(TAG_OUTPUT) {
+            let mut d = Decoder::new(buf);
+            for byte in d.vec_u8()? {
+                self.out.push_back(byte);
+            }
+            d.finish()?;
+        }
+
+        Ok(())
     }
 }
 

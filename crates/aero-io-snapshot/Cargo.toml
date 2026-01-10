@@ -1,0 +1,9 @@
+[package]
+name = "aero-io-snapshot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[dev-dependencies]
+aero-devices-input = { path = "../aero-devices-input" }

@@ -48,6 +48,24 @@ For best performance and lowest complexity on the host side, we also plan a **pa
 
 ---
 
+## Snapshot/Restore (Save States)
+
+Input snapshots must preserve any **pending bytes** that the guest has not yet consumed, along with controller/device command state.
+
+### What must be captured
+
+- **i8042 controller**
+  - status register and command byte
+  - pending controller command (if awaiting a data byte)
+  - output buffer contents (bytes queued for port `0x60`)
+  - IRQ pending flags (keyboard/mouse)
+- **PS/2 keyboard and mouse**
+  - mode/configuration (scancode set, LEDs, sample rate, resolution, scaling)
+  - command parsing state (e.g. “expecting data”)
+  - device output queues
+
+This ensures that a snapshot taken between a host keypress and guest consumption will restore deterministically.
+
 ## PS/2 Controller (i8042)
 
 ### Controller Emulation

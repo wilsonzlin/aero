@@ -357,6 +357,36 @@ impl SectorCache {
 
 ---
 
+## Snapshot/Restore (Save States)
+
+Storage snapshots must be **durable** and **deterministic**:
+
+### What must be captured
+
+- **IDE / AHCI / NVMe controller state**
+  - full register sets (MMIO + PCI config where relevant)
+  - command list / queue base pointers, head/tail indices
+  - in-flight commands (slot/cid, PRDT/SG lists, transfer progress)
+  - pending interrupts
+- **Disk layer state**
+  - backend identity (OPFS file path / IDB database name + object store)
+  - optional read cache contents (hot sectors)
+  - write-back cache contents (if any) and dirty tracking
+  - flush-in-progress status
+
+### Snapshot protocol requirements
+
+1. **Force flush**: before accepting a snapshot, the I/O worker must flush any dirty write-back cache to the backing store.
+2. **Capture disk metadata**: record enough information to reopen OPFS/IDB handles on restore.
+3. **Versioned encoding**: snapshots must include a version header and be forward-compatible (unknown fields skipped).
+
+### Restore semantics
+
+- On restore, the I/O worker must **reopen OPFS/IDB handles** and then rehydrate any in-memory caches.
+- If a snapshot is taken mid-command, the controller must resume from the captured in-flight command state (or abort the command in a guest-visible way if unsupported).
+
+---
+
 ## Sparse Disk Format
 
 For efficient storage of mostly-empty disk images:

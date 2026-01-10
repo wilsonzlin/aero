@@ -319,6 +319,28 @@ mod gpu_cache_tests {
 
 ---
 
+### Snapshot Round-Trip Tests
+
+Every device that supports save/restore should have a unit test that validates:
+
+1. `save_state()` produces deterministic bytes for a given state
+2. `load_state()` restores an equivalent observable state
+
+```rust
+#[test]
+fn test_i8042_snapshot_roundtrip() {
+    let mut dev = I8042Controller::new();
+    dev.inject_scancode(0x1C);
+
+    let snap = dev.save_state();
+
+    let mut restored = I8042Controller::new();
+    restored.load_state(&snap).unwrap();
+
+    assert_eq!(dev.read_data_port(), restored.read_data_port());
+}
+```
+
 ## Integration Tests
 
 ### Boot Tests
@@ -358,6 +380,35 @@ async fn test_windows_7_boot() {
     
     // Visual regression test
     assert!(image_matches(screenshot, "expected/win7_login.png", 0.95));
+}
+```
+
+### Snapshot/Restore Integration Test
+
+Scripted scenario:
+
+1. perform a disk write (ensure it survives flush)
+2. inject keyboard input (pending i8042 bytes)
+3. create a network connection (TCP proxy)
+4. snapshot, reset VM, restore snapshot
+5. verify disk data + input bytes are preserved, and network follows the configured restore policy (drop/reconnect)
+
+```rust
+#[test]
+fn test_io_snapshot_restore() {
+    let mut vm = TestVm::new();
+
+    vm.disk_write(0, b"hello");
+    vm.key_press("A");
+    vm.tcp_connect("example.com:80");
+
+    let snap = vm.snapshot();
+    vm.reset();
+    vm.restore(&snap);
+
+    assert_eq!(vm.disk_read(0, 5), b"hello");
+    assert!(vm.has_pending_keyboard_bytes());
+    assert!(vm.network_is_reconnected_or_dropped_per_policy());
 }
 ```
 

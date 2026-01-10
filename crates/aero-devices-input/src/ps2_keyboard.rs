@@ -1,5 +1,8 @@
 use std::collections::VecDeque;
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+
 use crate::scancode::{push_set2_sequence, Set2Scancode};
 
 #[derive(Debug, Clone, Copy)]
@@ -155,5 +158,76 @@ impl Ps2Keyboard {
 impl Default for Ps2Keyboard {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl IoSnapshot for Ps2Keyboard {
+    const DEVICE_ID: [u8; 4] = *b"KBD0";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_CONFIG: u16 = 1;
+        const TAG_EXPECTING: u16 = 2;
+        const TAG_OUTPUT: u16 = 3;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        let config = Encoder::new()
+            .u8(self.scancode_set)
+            .u8(self.leds)
+            .u8(self.typematic)
+            .bool(self.scanning_enabled)
+            .finish();
+        w.field_bytes(TAG_CONFIG, config);
+
+        let expecting = match self.expecting_data {
+            None => 0u8,
+            Some(ExpectingData::LedState) => 1,
+            Some(ExpectingData::Typematic) => 2,
+            Some(ExpectingData::ScancodeSet) => 3,
+        };
+        w.field_u8(TAG_EXPECTING, expecting);
+
+        let out: Vec<u8> = self.out.iter().copied().collect();
+        w.field_bytes(TAG_OUTPUT, Encoder::new().vec_u8(&out).finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_CONFIG: u16 = 1;
+        const TAG_EXPECTING: u16 = 2;
+        const TAG_OUTPUT: u16 = 3;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        if let Some(buf) = r.bytes(TAG_CONFIG) {
+            let mut d = Decoder::new(buf);
+            self.scancode_set = d.u8()?;
+            self.leds = d.u8()?;
+            self.typematic = d.u8()?;
+            self.scanning_enabled = d.bool()?;
+            d.finish()?;
+        }
+
+        self.expecting_data = match r.u8(TAG_EXPECTING)?.unwrap_or(0) {
+            0 => None,
+            1 => Some(ExpectingData::LedState),
+            2 => Some(ExpectingData::Typematic),
+            3 => Some(ExpectingData::ScancodeSet),
+            _ => None,
+        };
+
+        self.out.clear();
+        if let Some(buf) = r.bytes(TAG_OUTPUT) {
+            let mut d = Decoder::new(buf);
+            for byte in d.vec_u8()? {
+                self.out.push_back(byte);
+            }
+            d.finish()?;
+        }
+
+        Ok(())
     }
 }

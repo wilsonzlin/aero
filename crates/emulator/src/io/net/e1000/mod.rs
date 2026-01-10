@@ -6,6 +6,9 @@ mod tx;
 
 pub use regs::*;
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+
 /// Guest physical memory access for DMA operations.
 ///
 /// This is intentionally small and can be implemented by the emulator's memory subsystem.
@@ -635,6 +638,187 @@ impl E1000Device {
     }
 }
 
+impl IoSnapshot for E1000Device {
+    const DEVICE_ID: [u8; 4] = *b"E1K0";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_REGS: u16 = 1;
+        const TAG_TX_PARTIAL: u16 = 2;
+        const TAG_MAC: u16 = 3;
+        const TAG_RA_VALID: u16 = 4;
+        const TAG_MTA: u16 = 5;
+        const TAG_EEPROM: u16 = 6;
+        const TAG_RX_QUEUE: u16 = 7;
+        const TAG_OTHER_REGS: u16 = 8;
+        const TAG_PCI: u16 = 9;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        let regs = Encoder::new()
+            .u32(self.ctrl)
+            .u32(self.status)
+            .u32(self.eecd)
+            .u32(self.eerd)
+            .u32(self.icr)
+            .u32(self.ims)
+            .u32(self.rctl)
+            .u32(self.rdbal)
+            .u32(self.rdbah)
+            .u32(self.rdlen)
+            .u32(self.rdh)
+            .u32(self.rdt)
+            .u32(self.tctl)
+            .u32(self.tdbal)
+            .u32(self.tdbah)
+            .u32(self.tdlen)
+            .u32(self.tdh)
+            .u32(self.tdt)
+            .finish();
+        w.field_bytes(TAG_REGS, regs);
+
+        w.field_bytes(TAG_TX_PARTIAL, Encoder::new().vec_u8(&self.tx_partial).finish());
+        w.field_bytes(TAG_MAC, self.mac.to_vec());
+        w.field_bool(TAG_RA_VALID, self.ra_valid);
+
+        let mut mta = Encoder::new();
+        for word in self.mta {
+            mta = mta.u32(word);
+        }
+        w.field_bytes(TAG_MTA, mta.finish());
+
+        let mut eeprom = Encoder::new();
+        for word in self.eeprom {
+            eeprom = eeprom.u16(word);
+        }
+        w.field_bytes(TAG_EEPROM, eeprom.finish());
+
+        let rx_frames: Vec<Vec<u8>> = self.rx_queue.iter().cloned().collect();
+        w.field_bytes(TAG_RX_QUEUE, Encoder::new().vec_bytes(&rx_frames).finish());
+
+        // Deterministic: encode HashMap entries ordered by key.
+        let mut keys: Vec<u32> = self.other_regs.keys().copied().collect();
+        keys.sort_unstable();
+        let mut other = Encoder::new().u32(keys.len() as u32);
+        for k in keys {
+            other = other.u32(k).u32(self.other_regs[&k]);
+        }
+        w.field_bytes(TAG_OTHER_REGS, other.finish());
+
+        let pci = Encoder::new()
+            .bytes(&self.pci.regs)
+            .u32(self.pci.bar0)
+            .bool(self.pci.bar0_probe)
+            .finish();
+        w.field_bytes(TAG_PCI, pci);
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_REGS: u16 = 1;
+        const TAG_TX_PARTIAL: u16 = 2;
+        const TAG_MAC: u16 = 3;
+        const TAG_RA_VALID: u16 = 4;
+        const TAG_MTA: u16 = 5;
+        const TAG_EEPROM: u16 = 6;
+        const TAG_RX_QUEUE: u16 = 7;
+        const TAG_OTHER_REGS: u16 = 8;
+        const TAG_PCI: u16 = 9;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        if let Some(buf) = r.bytes(TAG_REGS) {
+            let mut d = Decoder::new(buf);
+            self.ctrl = d.u32()?;
+            self.status = d.u32()?;
+            self.eecd = d.u32()?;
+            self.eerd = d.u32()?;
+            self.icr = d.u32()?;
+            self.ims = d.u32()?;
+            self.rctl = d.u32()?;
+            self.rdbal = d.u32()?;
+            self.rdbah = d.u32()?;
+            self.rdlen = d.u32()?;
+            self.rdh = d.u32()?;
+            self.rdt = d.u32()?;
+            self.tctl = d.u32()?;
+            self.tdbal = d.u32()?;
+            self.tdbah = d.u32()?;
+            self.tdlen = d.u32()?;
+            self.tdh = d.u32()?;
+            self.tdt = d.u32()?;
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_TX_PARTIAL) {
+            let mut d = Decoder::new(buf);
+            self.tx_partial = d.vec_u8()?;
+            d.finish()?;
+        } else {
+            self.tx_partial.clear();
+        }
+
+        if let Some(mac) = r.bytes(TAG_MAC) {
+            if mac.len() != 6 {
+                return Err(SnapshotError::InvalidFieldEncoding("mac"));
+            }
+            self.mac.copy_from_slice(mac);
+        }
+        self.ra_valid = r.bool(TAG_RA_VALID)?.unwrap_or(true);
+
+        if let Some(buf) = r.bytes(TAG_MTA) {
+            let mut d = Decoder::new(buf);
+            for word in &mut self.mta {
+                *word = d.u32()?;
+            }
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_EEPROM) {
+            let mut d = Decoder::new(buf);
+            for word in &mut self.eeprom {
+                *word = d.u16()?;
+            }
+            d.finish()?;
+        }
+
+        self.rx_queue.clear();
+        if let Some(buf) = r.bytes(TAG_RX_QUEUE) {
+            let mut d = Decoder::new(buf);
+            for frame in d.vec_bytes()? {
+                self.rx_queue.push_back(frame);
+            }
+            d.finish()?;
+        }
+
+        self.other_regs.clear();
+        if let Some(buf) = r.bytes(TAG_OTHER_REGS) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            for _ in 0..count {
+                let k = d.u32()?;
+                let v = d.u32()?;
+                self.other_regs.insert(k, v);
+            }
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_PCI) {
+            let mut d = Decoder::new(buf);
+            let regs = d.bytes(256)?;
+            self.pci.regs.copy_from_slice(regs);
+            self.pci.bar0 = d.u32()?;
+            self.pci.bar0_probe = d.bool()?;
+            d.finish()?;
+        }
+
+        self.update_irq_level();
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -789,6 +973,7 @@ mod tests {
         let icr = dev.mmio_read(REG_ICR, 4);
         assert_eq!(icr & ICR_TXDW, ICR_TXDW);
     }
+
     #[test]
     fn pci_config_bar_probing_and_eeprom_read_work() {
         let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
@@ -867,5 +1052,53 @@ mod tests {
         dev.mmio_write(REG_MDIC, 4, (0 << MDIC_REG_SHIFT) | (1 << MDIC_PHY_SHIFT) | MDIC_OP_READ);
         let mdic = dev.mmio_read(REG_MDIC, 4);
         assert_eq!(mdic & MDIC_DATA_MASK, 0x1234);
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_rx_queue_and_ring_state() {
+        let mut mem = TestMemory::new(0x20000);
+        let mut backend = TestBackend::default();
+        let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+        let mut dev = E1000Device::new(mac);
+
+        let ring_base = 0x3000u64;
+        let buf_addr = 0x4000u64;
+        let frame = vec![1, 2, 3, 4, 5, 6];
+
+        for i in 0..8u64 {
+            let desc = RxDesc {
+                buffer_addr: buf_addr + i * 0x800,
+                ..RxDesc::default()
+            };
+            desc.write(&mut mem, ring_base + i * 16);
+        }
+
+        dev.mmio_write(REG_RDBAL, 4, ring_base as u32);
+        dev.mmio_write(REG_RDBAH, 4, 0);
+        dev.mmio_write(REG_RDLEN, 4, 16 * 8);
+        dev.mmio_write(REG_RDH, 4, 0);
+        dev.mmio_write(REG_RDT, 4, 7);
+        dev.mmio_write(REG_RCTL, 4, RCTL_EN);
+        dev.mmio_write(REG_IMS, 4, ICR_RXT0);
+
+        dev.enqueue_rx_frame(frame.clone());
+        let snap = dev.save_state();
+
+        let mut restored = E1000Device::new(mac);
+        restored.load_state(&snap).unwrap();
+        restored.poll(&mut mem, &mut backend);
+
+        let desc0 = RxDesc::read(&mem, ring_base);
+        assert_eq!(desc0.length as usize, frame.len());
+        assert_eq!(
+            desc0.status & (RXD_STAT_DD | RXD_STAT_EOP),
+            RXD_STAT_DD | RXD_STAT_EOP
+        );
+
+        let mut written = vec![0u8; frame.len()];
+        mem.read(buf_addr, &mut written);
+        assert_eq!(written, frame);
+
+        assert!(restored.irq_level());
     }
 }

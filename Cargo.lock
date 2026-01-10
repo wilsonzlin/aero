@@ -126,6 +126,9 @@ dependencies = [
 [[package]]
 name = "aero-devices-input"
 version = "0.1.0"
+dependencies = [
+ "aero-io-snapshot",
+]
 
 [[package]]
 name = "aero-devices-nvme"
@@ -201,6 +204,13 @@ dependencies = [
 [[package]]
 name = "aero-gpu-vga"
 version = "0.1.0"
+
+[[package]]
+name = "aero-io-snapshot"
+version = "0.1.0"
+dependencies = [
+ "aero-devices-input",
+]
 
 [[package]]
 name = "aero-ipc"
@@ -1412,6 +1422,7 @@ version = "0.1.0"
 dependencies = [
  "aero-bios",
  "aero-devices",
+ "aero-io-snapshot",
  "aero-net-e1000",
  "anyhow",
  "criterion",

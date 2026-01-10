@@ -16,6 +16,9 @@ use command::{CommandHeader, PrdEntry};
 use fis::{build_reg_d2h_fis, RegH2dFis};
 use registers::*;
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+
 const ATA_CMD_IDENTIFY_DEVICE: u8 = 0xec;
 const ATA_CMD_SET_FEATURES: u8 = 0xef;
 const ATA_CMD_READ_DMA_EXT: u8 = 0x25;
@@ -516,6 +519,93 @@ impl AhciController {
     }
 }
 
+impl IoSnapshot for AhciController {
+    const DEVICE_ID: [u8; 4] = *b"AHCI";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_HBA: u16 = 1;
+        const TAG_PORT0: u16 = 2;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        let hba = Encoder::new()
+            .u32(self.hba.cap)
+            .u32(self.hba.ghc)
+            .u32(self.hba.is)
+            .u32(self.hba.pi)
+            .u32(self.hba.vs)
+            .u32(self.hba.cap2)
+            .u32(self.hba.bohc)
+            .finish();
+        w.field_bytes(TAG_HBA, hba);
+
+        let port0 = Encoder::new()
+            .u64(self.port0.clb)
+            .u64(self.port0.fb)
+            .u32(self.port0.is)
+            .u32(self.port0.ie)
+            .u32(self.port0.cmd)
+            .u32(self.port0.tfd)
+            .u32(self.port0.sig)
+            .u32(self.port0.ssts)
+            .u32(self.port0.sctl)
+            .u32(self.port0.serr)
+            .u32(self.port0.sact)
+            .u32(self.port0.ci)
+            .u32(self.port0.sntf)
+            .u32(self.port0.fbs)
+            .finish();
+        w.field_bytes(TAG_PORT0, port0);
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_HBA: u16 = 1;
+        const TAG_PORT0: u16 = 2;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        if let Some(buf) = r.bytes(TAG_HBA) {
+            let mut d = Decoder::new(buf);
+            self.hba.cap = d.u32()?;
+            self.hba.ghc = d.u32()?;
+            self.hba.is = d.u32()?;
+            self.hba.pi = d.u32()?;
+            self.hba.vs = d.u32()?;
+            self.hba.cap2 = d.u32()?;
+            self.hba.bohc = d.u32()?;
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_PORT0) {
+            let mut d = Decoder::new(buf);
+            self.port0.clb = d.u64()?;
+            self.port0.fb = d.u64()?;
+            self.port0.is = d.u32()?;
+            self.port0.ie = d.u32()?;
+            self.port0.cmd = d.u32()?;
+            self.port0.tfd = d.u32()?;
+            self.port0.sig = d.u32()?;
+            self.port0.ssts = d.u32()?;
+            self.port0.sctl = d.u32()?;
+            self.port0.serr = d.u32()?;
+            self.port0.sact = d.u32()?;
+            self.port0.ci = d.u32()?;
+            self.port0.sntf = d.u32()?;
+            self.port0.fbs = d.u32()?;
+            d.finish()?;
+        }
+
+        // Recompute derived bits / IRQ line level.
+        self.sync_cmd_running_bits();
+        self.update_irq();
+        Ok(())
+    }
+}
+
 impl MmioDevice for AhciController {
     fn mmio_read(&mut self, _mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
         let aligned = offset & !3;
@@ -1004,5 +1094,59 @@ mod tests {
         }
         let model = core::str::from_utf8(&model_bytes).unwrap().trim();
         assert_eq!(model, "Aero Virtual SATA Disk");
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_interrupt_and_mmio_state() {
+        let disk = Arc::new(Mutex::new(MemDisk::new(16)));
+        // Populate the disk with deterministic content.
+        {
+            let mut d = disk.lock().unwrap();
+            for (i, b) in d.data_mut().iter_mut().enumerate() {
+                *b = (i & 0xff) as u8;
+            }
+        }
+        let shared_disk = SharedDisk(disk.clone());
+
+        let mut mem = VecMemory::new(0x20_000);
+        let mut controller = AhciController::new(Box::new(shared_disk.clone()));
+
+        let clb = 0x1000u64;
+        let fb = 0x2000u64;
+        let ctba = 0x3000u64;
+        let dst = 0x4000u64;
+
+        controller.mmio_write_u32(&mut mem, HBA_GHC, GHC_AE | GHC_IE);
+        controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_CLB, clb as u32);
+        controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_FB, fb as u32);
+        controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_IE, PXIE_DHRE);
+        controller.mmio_write_u32(
+            &mut mem,
+            HBA_PORTS_BASE + PX_CMD,
+            PXCMD_FRE | PXCMD_ST | PXCMD_SUD,
+        );
+
+        let header = build_cmd_header(5, false, 1, ctba);
+        mem.write_physical(clb, &header);
+        write_reg_h2d_fis(&mut mem, ctba, ATA_CMD_READ_DMA_EXT, 2, 1);
+        write_prd(&mut mem, ctba + 0x80, dst, 512);
+
+        controller.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_CI, 1);
+        assert!(controller.irq_level());
+
+        let snap = controller.save_state();
+
+        let mut restored = AhciController::new(Box::new(shared_disk));
+        restored.load_state(&snap).unwrap();
+
+        assert!(restored.irq_level());
+        assert_eq!(
+            restored.mmio_read_u32(&mut mem, HBA_PORTS_BASE + PX_IS) & PXIS_DHRS,
+            PXIS_DHRS
+        );
+
+        // Clearing the interrupt after restore should deassert the IRQ line.
+        restored.mmio_write_u32(&mut mem, HBA_PORTS_BASE + PX_IS, PXIS_DHRS);
+        assert!(!restored.irq_level());
     }
 }

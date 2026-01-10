@@ -62,6 +62,25 @@ Windows 7 uses HD Audio (High Definition Audio, Intel HDA) as the primary audio 
 
 ---
 
+## Snapshot/Restore (Save States)
+
+Audio snapshots must capture guest-visible progress (DMA positions, buffer state) while treating the Web Audio pipeline as a host resource that may need reinitialization.
+
+### What must be captured
+
+- **HDA controller registers**
+  - global registers (GCTL/INTCTL/INTSTS, etc.)
+  - CORB/RIRB base addresses and read/write pointers
+  - stream descriptor registers (CTL/LPIB/CBL/LVI/FMT/BDL pointers)
+- **Host-side audio plumbing**
+  - AudioWorklet ring buffer indices (read/write positions)
+  - buffering/latency control variables
+
+### Restore semantics / limitations
+
+- The browser `AudioContext` / `AudioWorkletNode` is not serializable; on restore the host pipeline must be recreated.
+- Short glitches or buffer underruns immediately after restore are acceptable; the goal is to restore *guest-visible* device state deterministically.
+
 ## HD Audio Controller Emulation
 
 ### Controller Registers

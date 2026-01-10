@@ -1,5 +1,8 @@
 use std::collections::VecDeque;
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+
 use crate::ps2_keyboard::Ps2Keyboard;
 use crate::ps2_mouse::{Ps2Mouse, Ps2MouseButton};
 use crate::scancode::{browser_code_to_set2, Set2Scancode};
@@ -253,6 +256,13 @@ impl I8042Controller {
     }
 
     pub fn set_system_control_sink(&mut self, sink: Box<dyn SystemControlSink>) {
+        // The sink is expected to observe edges (set_output_port) rather than receive an initial
+        // callback on attach. We only push state when A20 is already enabled, which is useful
+        // for restore paths where the sink can be attached after `load_state`.
+        let mut sink = sink;
+        if (self.output_port & OUTPUT_PORT_A20) != 0 {
+            sink.set_a20(true);
+        }
         self.sys_ctrl = Some(sink);
     }
 
@@ -574,5 +584,195 @@ impl I8042Controller {
 impl Default for I8042Controller {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl IoSnapshot for I8042Controller {
+    const DEVICE_ID: [u8; 4] = *b"8042";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_REGS: u16 = 1;
+        const TAG_OUTPUT_BUFFER: u16 = 2;
+        const TAG_PENDING_OUTPUT: u16 = 3;
+        const TAG_PENDING_WRITE: u16 = 4;
+        const TAG_LAST_WRITE_WAS_CMD: u16 = 5;
+        const TAG_KEYBOARD: u16 = 6;
+        const TAG_MOUSE: u16 = 7;
+        const TAG_TRANSLATOR: u16 = 8;
+        const TAG_PREFER_MOUSE: u16 = 9;
+        const TAG_OUTPUT_PORT: u16 = 10;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_bytes(TAG_REGS, Encoder::new().u8(self.status).u8(self.command_byte).finish());
+        w.field_u8(TAG_OUTPUT_PORT, self.output_port);
+
+        if let Some(out) = self.output_buffer {
+            let source = match out.source {
+                OutputSource::Keyboard => 1u8,
+                OutputSource::Mouse => 2u8,
+                OutputSource::Controller => 3u8,
+            };
+            w.field_bytes(TAG_OUTPUT_BUFFER, Encoder::new().u8(out.value).u8(source).finish());
+        }
+
+        let pending: Vec<(u8, u8)> = self
+            .pending_output
+            .iter()
+            .map(|b| {
+                let source = match b.source {
+                    OutputSource::Keyboard => 1u8,
+                    OutputSource::Mouse => 2u8,
+                    OutputSource::Controller => 3u8,
+                };
+                (b.value, source)
+            })
+            .collect();
+        let mut pending_enc = Encoder::new().u32(pending.len() as u32);
+        for (value, source) in pending {
+            pending_enc = pending_enc.u8(value).u8(source);
+        }
+        w.field_bytes(TAG_PENDING_OUTPUT, pending_enc.finish());
+
+        let pending_write = match self.pending_write {
+            None => 0u8,
+            Some(PendingWrite::CommandByte) => 1,
+            Some(PendingWrite::OutputPort) => 3,
+            Some(PendingWrite::WriteToMouse) => 2,
+        };
+        w.field_u8(TAG_PENDING_WRITE, pending_write);
+
+        w.field_bool(TAG_LAST_WRITE_WAS_CMD, self.last_write_was_command);
+
+        // Nested snapshots for the PS/2 devices (versioned independently).
+        w.field_bytes(TAG_KEYBOARD, self.keyboard.save_state());
+        w.field_bytes(TAG_MOUSE, self.mouse.save_state());
+
+        w.field_bytes(
+            TAG_TRANSLATOR,
+            Encoder::new()
+                .bool(self.translator.saw_e0)
+                .bool(self.translator.saw_f0)
+                .finish(),
+        );
+        w.field_bool(TAG_PREFER_MOUSE, self.prefer_mouse);
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_REGS: u16 = 1;
+        const TAG_OUTPUT_BUFFER: u16 = 2;
+        const TAG_PENDING_OUTPUT: u16 = 3;
+        const TAG_PENDING_WRITE: u16 = 4;
+        const TAG_LAST_WRITE_WAS_CMD: u16 = 5;
+        const TAG_KEYBOARD: u16 = 6;
+        const TAG_MOUSE: u16 = 7;
+        const TAG_TRANSLATOR: u16 = 8;
+        const TAG_PREFER_MOUSE: u16 = 9;
+        const TAG_OUTPUT_PORT: u16 = 10;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Start from a deterministic baseline for forward-compatible snapshots that may omit fields.
+        self.status = STATUS_SYS;
+        self.command_byte = 0x45;
+        self.output_port = OUTPUT_PORT_RESET;
+        self.pending_output.clear();
+        self.pending_write = None;
+        self.last_write_was_command = false;
+        self.translator = Set2ToSet1::default();
+        self.prefer_mouse = false;
+
+        if let Some(buf) = r.bytes(TAG_REGS) {
+            let mut d = Decoder::new(buf);
+            self.status = d.u8()?;
+            self.command_byte = d.u8()?;
+            d.finish()?;
+        }
+
+        if let Some(port) = r.u8(TAG_OUTPUT_PORT)? {
+            self.output_port = port;
+        }
+
+        self.output_buffer = if let Some(buf) = r.bytes(TAG_OUTPUT_BUFFER) {
+            let mut d = Decoder::new(buf);
+            let value = d.u8()?;
+            let source = match d.u8()? {
+                1 => OutputSource::Keyboard,
+                2 => OutputSource::Mouse,
+                _ => OutputSource::Controller,
+            };
+            d.finish()?;
+            Some(OutputByte { value, source })
+        } else {
+            None
+        };
+
+        self.pending_output.clear();
+        if let Some(buf) = r.bytes(TAG_PENDING_OUTPUT) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            for _ in 0..count {
+                let value = d.u8()?;
+                let source = match d.u8()? {
+                    1 => OutputSource::Keyboard,
+                    2 => OutputSource::Mouse,
+                    _ => OutputSource::Controller,
+                };
+                self.pending_output.push_back(OutputByte { value, source });
+            }
+            d.finish()?;
+        }
+
+        self.pending_write = match r.u8(TAG_PENDING_WRITE)?.unwrap_or(0) {
+            1 => Some(PendingWrite::CommandByte),
+            2 => Some(PendingWrite::WriteToMouse),
+            3 => Some(PendingWrite::OutputPort),
+            _ => None,
+        };
+
+        self.last_write_was_command = r.bool(TAG_LAST_WRITE_WAS_CMD)?.unwrap_or(false);
+
+        if let Some(buf) = r.bytes(TAG_KEYBOARD) {
+            self.keyboard.load_state(buf)?;
+        }
+        if let Some(buf) = r.bytes(TAG_MOUSE) {
+            self.mouse.load_state(buf)?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_TRANSLATOR) {
+            let mut d = Decoder::new(buf);
+            self.translator.saw_e0 = d.bool()?;
+            self.translator.saw_f0 = d.bool()?;
+            d.finish()?;
+        } else {
+            self.translator = Set2ToSet1::default();
+        }
+
+        self.prefer_mouse = r.bool(TAG_PREFER_MOUSE)?.unwrap_or(false);
+
+        // `irq_sink` is a host integration point; it is expected to be (re)attached by the coordinator.
+        if let Some(sink) = self.sys_ctrl.as_deref_mut() {
+            if (self.output_port & OUTPUT_PORT_A20) != 0 {
+                sink.set_a20(true);
+            }
+        }
+
+        // Ensure output-buffer bits are coherent with the restored buffer source.
+        if let Some(out) = self.output_buffer {
+            self.status |= STATUS_OBF;
+            match out.source {
+                OutputSource::Mouse => self.status |= STATUS_AUX_OBF,
+                _ => self.status &= !STATUS_AUX_OBF,
+            }
+        } else {
+            self.status &= !STATUS_OBF;
+            self.status &= !STATUS_AUX_OBF;
+        }
+
+        Ok(())
     }
 }
