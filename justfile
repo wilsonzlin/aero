@@ -374,7 +374,7 @@ object-store-down:
     echo "error: docker is required to manage the local object store" >&2
     exit 1
   fi
-  (cd infra/local-object-store && docker compose down)
+  (cd infra/local-object-store && docker compose --profile proxy down)
 
 object-store-reset:
   #!/usr/bin/env bash
@@ -383,7 +383,7 @@ object-store-reset:
     echo "error: docker is required to manage the local object store" >&2
     exit 1
   fi
-  (cd infra/local-object-store && docker compose down -v)
+  (cd infra/local-object-store && docker compose --profile proxy down -v)
 
 object-store-verify *args:
   #!/usr/bin/env bash

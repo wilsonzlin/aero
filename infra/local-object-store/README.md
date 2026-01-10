@@ -55,19 +55,19 @@ There is an `.env.example` in this directory that you can copy to `.env` to get 
 If you change `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`, also reset volumes so the persisted `mc` config is regenerated:
 
 ```bash
-docker compose down -v
+docker compose --profile proxy down -v
 ```
 
 Stop and remove containers (keeps volumes by default):
 
 ```bash
-docker compose down
+docker compose --profile proxy down
 ```
 
 To also remove persisted data:
 
 ```bash
-docker compose down -v
+docker compose --profile proxy down -v
 ```
 
 ### Optional proxy (“CDN”) layer
