@@ -191,7 +191,7 @@ One-time setup:
 ```bash
 cd tools/perf
 npm ci
-npx playwright install chromium
+npx --yes playwright@$(node -p "require('./package.json').dependencies['playwright-core']") install chromium
 cd ../..
 ```
 
