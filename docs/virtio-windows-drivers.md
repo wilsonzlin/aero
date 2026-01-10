@@ -9,6 +9,11 @@ Enable Aero’s **virtio acceleration path** by making it straightforward to ins
 - **virtio-input** (keyboard/mouse/tablet) *(best-effort; PS/2/USB HID remains fallback)*
 - **virtio-snd** (audio) *(optional; HDA/AC’97 remains fallback)*
 
+See also:
+
+- [`windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) — Aero’s definitive device/feature/transport contract.
+- [`virtio/virtqueue-split-ring-win7.md`](./virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue implementation reference for Win7 KMDF drivers (descriptor mgmt, ordering/barriers, EVENT_IDX, indirect).
+
 This document defines:
 
 - The chosen driver approach (and licensing rationale)
