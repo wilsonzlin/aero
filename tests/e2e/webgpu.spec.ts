@@ -71,9 +71,12 @@ test('webgpu bench', async ({ page }, testInfo) => {
   const output = await runWebGpuScenario(page);
 
   expect(typeof output.bench?.supported).toBe('boolean');
+  expect(output.perfExport && typeof output.perfExport === 'object').toBe(true);
+  expect((output.perfExport as any).benchmarks).toBeTruthy();
+  expect((output.perfExport as any).benchmarks.webgpu).toBeTruthy();
+  expect((output.perfExport as any).benchmarks.webgpu).toEqual(output.bench);
 
   const outPath = testInfo.outputPath('webgpu.json');
   await fs.writeFile(outPath, `${JSON.stringify(output, null, 2)}\n`, 'utf8');
   testInfo.attach('webgpu.json', { path: outPath, contentType: 'application/json' });
 });
-
