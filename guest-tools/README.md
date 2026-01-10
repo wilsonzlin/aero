@@ -117,12 +117,18 @@ Each check produces a `PASS` / `WARN` / `FAIL` result:
 
 - **OS + arch**: version, build, service pack.
 - **KB3033929 (SHA-256 signatures)**: detects whether the hotfix is installed (relevant for SHA-256-signed driver packages on Win7).
-- **Certificate store**: if a `*.cer`/`*.crt` is bundled next to `verify.ps1`, verifies it is installed into **Local Machine**:
+- **Certificate store**: verifies that Guest Tools certificate(s) (from `certs\`, if present) are installed into **Local Machine**:
   - Trusted Root Certification Authorities (**Root**)
   - Trusted Publishers (**TrustedPublisher**)
 - **Driver packages**: `pnputil -e` output with a heuristic filter for Aero/virtio-related packages.
 - **Bound devices**: WMI `Win32_PnPEntity` enumeration (and optional `devcon.exe` if present alongside the script), including best-effort signed driver details via `Win32_PnPSignedDriver` (INF name, version, signer, etc).
-- **virtio-blk storage service**: best-effort probe for the configured storage driver service (see `config\devices.cmd`; e.g. `viostor`) with state + Start type.
+- **Device binding by class**: best-effort checks that look for virtio/Aero devices and whether they are error-free in Device Manager:
+  - Storage (virtio-blk)
+  - Network (virtio-net)
+  - Graphics (Aero GPU / virtio-gpu)
+  - Audio (virtio-snd)
+  - Input (virtio-input)
+- **virtio-blk storage service**: best-effort probe for the configured storage driver service (see `config\devices.cmd`; e.g. `aeroviostor`) with state + Start type.
 - **Signature mode**: parses `bcdedit` for `testsigning` and `nointegritychecks`.
 - **Smoke tests**:
   - Disk I/O: create + read a temp file.

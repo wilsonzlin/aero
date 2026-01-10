@@ -44,6 +44,61 @@ function Invoke-Capture([string]$file, [string[]]$args) {
     }
 }
 
+function Parse-CmdQuotedList([string]$value) {
+    # Parse a CMD-style list of quoted values:
+    #   "A" "B" "C"
+    $items = @()
+    if (-not $value -or $value.Length -eq 0) { return $items }
+    $matches = [regex]::Matches($value, '"([^"]+)"')
+    foreach ($m in $matches) {
+        $items += $m.Groups[1].Value
+    }
+    return $items
+}
+
+function Build-HwidPrefixRegex([string[]]$hwids) {
+    # Returns a case-insensitive regex that matches Win32_PnPEntity.PNPDeviceID
+    # starting with one of the configured PCI HWIDs (prefix match).
+    if (-not $hwids -or $hwids.Count -eq 0) { return $null }
+    $parts = @()
+    foreach ($h in $hwids) {
+        if (-not $h -or $h.Length -eq 0) { continue }
+        $parts += [regex]::Escape($h)
+    }
+    if ($parts.Count -eq 0) { return $null }
+    return "(?i)^(" + ($parts -join "|") + ")"
+}
+
+function Load-GuestToolsConfig([string]$scriptDir) {
+    $cfgFile = Join-Path (Join-Path $scriptDir "config") "devices.cmd"
+    $result = @{
+        found = $false
+        file_path = $cfgFile
+        exit_code = $null
+        raw = $null
+        vars = @{}
+    }
+
+    if (-not (Test-Path $cfgFile)) { return $result }
+
+    $result.found = $true
+    $cmd = 'call "' + $cfgFile + '" >nul 2>&1 & set AERO_'
+    $cap = Invoke-Capture "cmd.exe" @("/c", $cmd)
+    $result.exit_code = $cap.exit_code
+    $result.raw = $cap.output
+
+    if ($cap.exit_code -ne 0 -or -not $cap.output) { return $result }
+
+    foreach ($line in $cap.output -split "`r?`n") {
+        $t = $line.Trim()
+        if ($t -match '^([A-Za-z0-9_]+)=(.*)$') {
+            $result.vars[$matches[1]] = $matches[2]
+        }
+    }
+
+    return $result
+}
+
 function Try-GetWmi([string]$class, [string]$filter) {
     try {
         if ($filter -and $filter.Length -gt 0) {
@@ -98,6 +153,107 @@ function Get-ConfigManagerErrorMeaning($code) {
         52 { return "Windows cannot verify the digital signature for the drivers (Code 52)" }
         default { return $null }
     }
+}
+
+function Add-DeviceBindingCheck(
+    [string]$key,
+    [string]$title,
+    [object[]]$devices,
+    [string[]]$serviceCandidates,
+    [string[]]$pnpClassCandidates,
+    [string]$pnpIdRegex,
+    [string[]]$nameKeywords,
+    [string]$missingSummary
+) {
+    $matches = @()
+    foreach ($d in $devices) {
+        $svc = "" + $d.service
+        $name = "" + $d.name
+        $mfr = "" + $d.manufacturer
+        $cls = "" + $d.pnp_class
+        $pnpid = "" + $d.pnp_device_id
+
+        $match = $false
+        if ($svc -and $svc.Length -gt 0 -and $serviceCandidates -and $serviceCandidates.Count -gt 0) {
+            foreach ($c in $serviceCandidates) {
+                if ($svc.ToLower() -eq $c.ToLower()) { $match = $true; break }
+            }
+        }
+
+        if (-not $match -and $pnpClassCandidates -and $pnpClassCandidates.Count -gt 0) {
+            $classMatch = $false
+            foreach ($pc in $pnpClassCandidates) {
+                if ($cls -and ($cls.ToLower() -eq $pc.ToLower())) { $classMatch = $true; break }
+            }
+
+            if ($classMatch) {
+                if ($pnpIdRegex -and $pnpid -match $pnpIdRegex) { $match = $true }
+                if (-not $match -and $nameKeywords -and $nameKeywords.Count -gt 0) {
+                    $lower = ($name + " " + $mfr).ToLower()
+                    foreach ($kw in $nameKeywords) {
+                        if ($lower.Contains($kw.ToLower())) { $match = $true; break }
+                    }
+                }
+            }
+        }
+
+        if ($match) { $matches += $d }
+    }
+
+    $data = @{
+        service_candidates = $serviceCandidates
+        pnp_class_candidates = $pnpClassCandidates
+        pnp_id_regex = $pnpIdRegex
+        matched_devices = @()
+    }
+    $details = @()
+
+    foreach ($m in $matches) {
+        $inf = $null
+        $signer = $null
+        if ($m.signed_driver) {
+            $inf = "" + $m.signed_driver.inf_name
+            $signer = "" + $m.signed_driver.signer
+        }
+
+        $data.matched_devices += @{
+            name = "" + $m.name
+            manufacturer = "" + $m.manufacturer
+            pnp_device_id = "" + $m.pnp_device_id
+            pnp_class = "" + $m.pnp_class
+            service = "" + $m.service
+            status = "" + $m.status
+            config_manager_error_code = $m.config_manager_error_code
+            config_manager_error_meaning = "" + $m.config_manager_error_meaning
+            inf_name = $inf
+            signer = $signer
+        }
+
+        $line = "" + $m.name
+        if ($m.service) { $line += " (service=" + $m.service + ")" }
+        if ($m.config_manager_error_code -ne $null) {
+            $line += ", CM=" + $m.config_manager_error_code
+            if ($m.config_manager_error_meaning) { $line += " (" + $m.config_manager_error_meaning + ")" }
+        }
+        if ($inf) { $line += ", INF=" + $inf }
+        if ($signer) { $line += ", Signer=" + $signer }
+        $details += $line
+    }
+
+    if ($matches.Count -eq 0) {
+        Add-Check $key $title "WARN" $missingSummary $data $details
+        return
+    }
+
+    $ok = @($matches | Where-Object { $_.config_manager_error_code -eq 0 }).Count
+    $bad = @($matches | Where-Object { $_.config_manager_error_code -ne $null -and $_.config_manager_error_code -ne 0 }).Count
+
+    $status = "PASS"
+    $summary = "Matched devices: " + $matches.Count + " (OK: " + $ok + ", Problem: " + $bad + ")"
+    if ($bad -gt 0 -and $ok -gt 0) { $status = "WARN" }
+    if ($bad -gt 0 -and $ok -eq 0) { $status = "FAIL" }
+
+    Add-Check $key $title $status $summary $data $details
 }
 
 function Load-CertFromFile([string]$path) {
@@ -227,7 +383,7 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         [void]$sb.Append($report.overall.summary + $nl)
     }
 
-    foreach ($key in @("os","kb3033929","certificate_store","signature_mode","driver_packages","bound_devices","virtio_blk_service","smoke_disk","smoke_network","smoke_audio","smoke_input")) {
+    foreach ($key in @("os","kb3033929","certificate_store","signature_mode","driver_packages","bound_devices","device_binding_storage","device_binding_network","device_binding_graphics","device_binding_audio","device_binding_input","virtio_blk_service","smoke_disk","smoke_network","smoke_audio","smoke_input")) {
         if (-not $report.checks.ContainsKey($key)) { continue }
         $chk = $report.checks[$key]
         [void]$sb.Append($nl)
@@ -262,6 +418,33 @@ function Write-TextReport([hashtable]$report, [string]$path) {
 
 $started = Get-Date
 $isAdmin = Get-IsAdmin
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$gtConfig = Load-GuestToolsConfig $scriptDir
+
+$cfgVars = $gtConfig.vars
+$cfgVirtioBlkService = $null
+if ($cfgVars -and $cfgVars.ContainsKey("AERO_VIRTIO_BLK_SERVICE")) { $cfgVirtioBlkService = $cfgVars["AERO_VIRTIO_BLK_SERVICE"] }
+
+$cfgVirtioBlkHwids = @()
+$cfgVirtioNetHwids = @()
+$cfgVirtioSndHwids = @()
+$cfgVirtioInputHwids = @()
+$cfgGpuHwids = @()
+
+if ($cfgVars) {
+    if ($cfgVars.ContainsKey("AERO_VIRTIO_BLK_HWIDS")) { $cfgVirtioBlkHwids = Parse-CmdQuotedList $cfgVars["AERO_VIRTIO_BLK_HWIDS"] }
+    if ($cfgVars.ContainsKey("AERO_VIRTIO_NET_HWIDS")) { $cfgVirtioNetHwids = Parse-CmdQuotedList $cfgVars["AERO_VIRTIO_NET_HWIDS"] }
+    if ($cfgVars.ContainsKey("AERO_VIRTIO_SND_HWIDS")) { $cfgVirtioSndHwids = Parse-CmdQuotedList $cfgVars["AERO_VIRTIO_SND_HWIDS"] }
+    if ($cfgVars.ContainsKey("AERO_VIRTIO_INPUT_HWIDS")) { $cfgVirtioInputHwids = Parse-CmdQuotedList $cfgVars["AERO_VIRTIO_INPUT_HWIDS"] }
+    if ($cfgVars.ContainsKey("AERO_GPU_HWIDS")) { $cfgGpuHwids = Parse-CmdQuotedList $cfgVars["AERO_GPU_HWIDS"] }
+}
+
+$cfgVirtioBlkRegex = Build-HwidPrefixRegex $cfgVirtioBlkHwids
+$cfgVirtioNetRegex = Build-HwidPrefixRegex $cfgVirtioNetHwids
+$cfgVirtioSndRegex = Build-HwidPrefixRegex $cfgVirtioSndHwids
+$cfgVirtioInputRegex = Build-HwidPrefixRegex $cfgVirtioInputHwids
+$cfgGpuRegex = Build-HwidPrefixRegex $cfgGpuHwids
+
 $outDir = "C:\AeroGuestTools"
 $jsonPath = Join-Path $outDir "report.json"
 $txtPath = Join-Path $outDir "report.txt"
@@ -269,7 +452,7 @@ $txtPath = Join-Path $outDir "report.txt"
 $report = @{
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "1.1.0"
+        version = "1.2.0"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -278,6 +461,8 @@ $report = @{
         output_dir = $outDir
         report_json_path = $jsonPath
         report_txt_path = $txtPath
+        guest_tools_root = $scriptDir
+        guest_tools_config = $gtConfig
     }
     environment = @{
         computername = $env:COMPUTERNAME
@@ -404,10 +589,15 @@ try {
 
 # --- Certificate store (driver signing trust) ---
 try {
-    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $certSearchDirs = @($scriptDir)
+    $certDir = Join-Path $scriptDir "certs"
+    if (Test-Path $certDir) { $certSearchDirs += $certDir }
+
     $certFiles = @()
-    $certFiles += (Get-ChildItem -Path $scriptDir -Filter *.cer -ErrorAction SilentlyContinue)
-    $certFiles += (Get-ChildItem -Path $scriptDir -Filter *.crt -ErrorAction SilentlyContinue)
+    foreach ($dir in $certSearchDirs) {
+        $certFiles += (Get-ChildItem -Path $dir -Filter *.cer -ErrorAction SilentlyContinue)
+        $certFiles += (Get-ChildItem -Path $dir -Filter *.crt -ErrorAction SilentlyContinue)
+    }
 
     $certResults = @()
     foreach ($cf in $certFiles) {
@@ -441,7 +631,7 @@ try {
     $certDetails = @()
 
     if (-not $certFiles -or $certFiles.Count -eq 0) {
-        $certSummary = "No *.cer/*.crt found alongside verify.ps1; skipping certificate store verification."
+        $certSummary = "No certificate files found under Guest Tools root/certs; skipping certificate store verification."
     } else {
         $missing = @()
         foreach ($cr in $certResults) {
@@ -459,6 +649,7 @@ try {
 
     $certData = @{
         script_dir = $scriptDir
+        search_dirs = $certSearchDirs
         cert_files = @($certFiles | ForEach-Object { $_.Name })
         certificates = $certResults
     }
@@ -619,6 +810,16 @@ try {
     $devconPath = Join-Path $devconDir "devcon.exe"
 
     $svcCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","vionet","netkvm","viogpu","viosnd","vioinput")
+    if ($cfgVirtioBlkService) { $svcCandidates = @($cfgVirtioBlkService) + $svcCandidates }
+    $svcDedup = @()
+    foreach ($s in $svcCandidates) {
+        $exists = $false
+        foreach ($e in $svcDedup) {
+            if ($e.ToLower() -eq $s.ToLower()) { $exists = $true; break }
+        }
+        if (-not $exists) { $svcDedup += $s }
+    }
+    $svcCandidates = $svcDedup
     $kw = @("aero","virtio","1af4")
 
     $signedDriverMap = @{}
@@ -733,6 +934,75 @@ try {
         devcon_raw = (if ($devcon) { $devcon.output } else { $null })
     }
     Add-Check "bound_devices" "Bound Devices (WMI Win32_PnPEntity)" $devStatus $devSummary $devData $devDetails
+
+    # Per-device-class binding checks (best-effort).
+    # These are intentionally WARN (not FAIL) when missing, since the guest might still be
+    # using baseline devices (AHCI/e1000/VGA/PS2) even if Guest Tools are installed.
+
+    $hwidVendorFallback = '(?i)(VEN_1AF4|VID_1AF4)'
+    $blkRegex = $cfgVirtioBlkRegex
+    $netRegex = $cfgVirtioNetRegex
+    $sndRegex = $cfgVirtioSndRegex
+    $inputRegex = $cfgVirtioInputRegex
+    $gpuRegex = $cfgGpuRegex
+    if (-not $blkRegex) { $blkRegex = $hwidVendorFallback }
+    if (-not $netRegex) { $netRegex = $hwidVendorFallback }
+    if (-not $sndRegex) { $sndRegex = $hwidVendorFallback }
+    if (-not $inputRegex) { $inputRegex = $hwidVendorFallback }
+    if (-not $gpuRegex) { $gpuRegex = '(?i)(VEN_1AE0|VID_1AE0|VEN_1AF4|VID_1AF4)' }
+
+    $storageServiceCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","aerostor","aeroblk")
+    if ($cfgVirtioBlkService) { $storageServiceCandidates = @($cfgVirtioBlkService) + $storageServiceCandidates }
+
+    Add-DeviceBindingCheck `
+        "device_binding_storage" `
+        "Device Binding: Storage (virtio-blk)" `
+        $devices `
+        $storageServiceCandidates `
+        @("SCSIAdapter","HDC") `
+        $blkRegex `
+        @("virtio","aero") `
+        "No virtio-blk storage devices detected (system may still be using AHCI)."
+
+    Add-DeviceBindingCheck `
+        "device_binding_network" `
+        "Device Binding: Network (virtio-net)" `
+        $devices `
+        @("vionet","netkvm") `
+        @("NET") `
+        $netRegex `
+        @("virtio","aero") `
+        "No virtio-net devices detected (system may still be using e1000/baseline networking)."
+
+    Add-DeviceBindingCheck `
+        "device_binding_graphics" `
+        "Device Binding: Graphics (Aero GPU / virtio-gpu)" `
+        $devices `
+        @("viogpu","aerogpu","aero-gpu") `
+        @("DISPLAY") `
+        $gpuRegex `
+        @("aero","virtio","gpu") `
+        "No Aero/virtio GPU devices detected (system may still be using VGA/baseline graphics)."
+
+    Add-DeviceBindingCheck `
+        "device_binding_audio" `
+        "Device Binding: Audio (virtio-snd)" `
+        $devices `
+        @("viosnd","aerosnd") `
+        @("MEDIA") `
+        $sndRegex `
+        @("aero","virtio","audio") `
+        "No virtio audio devices detected."
+
+    Add-DeviceBindingCheck `
+        "device_binding_input" `
+        "Device Binding: Input (virtio-input)" `
+        $devices `
+        @("vioinput","aeroinput") `
+        @("HIDClass","Keyboard","Mouse") `
+        $inputRegex `
+        @("aero","virtio","input") `
+        "No virtio input devices detected (system may still be using PS/2 input)."
 } catch {
     Add-Check "bound_devices" "Bound Devices (WMI Win32_PnPEntity)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
@@ -740,6 +1010,19 @@ try {
 # --- virtio-blk storage service ---
 try {
     $candidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","aerostor","aeroblk")
+    if ($cfgVirtioBlkService) { $candidates = @($cfgVirtioBlkService) + $candidates }
+    $candDedup = @()
+    foreach ($c in $candidates) {
+        $exists = $false
+        foreach ($e in $candDedup) {
+            if ($e.ToLower() -eq $c.ToLower()) { $exists = $true; break }
+        }
+        if (-not $exists) { $candDedup += $c }
+    }
+    $candidates = $candDedup
+
+    $expected = $cfgVirtioBlkService
+    if (-not $expected) { $expected = "viostor" }
     $found = $null
     foreach ($name in $candidates) {
         $drv = Try-GetWmi "Win32_SystemDriver" ("Name='" + $name.Replace("'","''") + "'")
@@ -766,7 +1049,7 @@ try {
     if (-not $found) {
         $svcStatus = "WARN"
         $svcSummary = "virtio-blk service not found (tried: " + ($candidates -join ", ") + ")."
-        $svcDetails += "If Aero storage drivers are installed, expected a driver service like 'viostor'."
+        $svcDetails += ("If Aero storage drivers are installed, expected a driver service like '" + $expected + "'.")
     } else {
         $svcSummary = "Found service '" + $found.name + "': state=" + $found.state + ", start_mode=" + $found.start_mode
         if ($found.registry_start_type) {
