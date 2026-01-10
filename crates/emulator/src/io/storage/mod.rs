@@ -6,5 +6,6 @@ pub mod error;
 pub mod metadata;
 pub mod rangeset;
 pub mod sparse;
+pub mod nvme;
 
 pub const SECTOR_SIZE: usize = 512;

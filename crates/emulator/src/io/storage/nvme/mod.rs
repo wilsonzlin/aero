@@ -1,0 +1,828 @@
+//! Minimal NVMe (PCIe) controller emulation.
+
+mod commands;
+mod queue;
+mod registers;
+
+use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
+use crate::io::storage::disk::{DiskBackend, DiskError};
+use commands::{
+    build_identify_controller, build_identify_namespace, NvmeCommand, NvmeStatus, FID_NUMBER_OF_QUEUES,
+    OPC_ADMIN_CREATE_IO_CQ, OPC_ADMIN_CREATE_IO_SQ, OPC_ADMIN_DELETE_IO_CQ, OPC_ADMIN_DELETE_IO_SQ,
+    OPC_ADMIN_GET_FEATURES, OPC_ADMIN_IDENTIFY, OPC_ADMIN_SET_FEATURES, OPC_NVM_FLUSH, OPC_NVM_READ,
+    OPC_NVM_WRITE,
+};
+use memory::MemoryBus;
+use queue::{dma_read, dma_write, read_command_dwords, CompletionQueue, PrpError, QueuePair, SubmissionQueue};
+use registers::*;
+use std::collections::HashMap;
+
+pub struct NvmeController {
+    cap: u64,
+    vs: u32,
+    intms: u32,
+    cc: u32,
+    csts: u32,
+    aqa: u32,
+    asq: u64,
+    acq: u64,
+    page_size: usize,
+    admin: Option<QueuePair>,
+    io_sqs: HashMap<u16, SubmissionQueue>,
+    io_cqs: HashMap<u16, CompletionQueue>,
+    disk: Box<dyn DiskBackend>,
+    num_io_sqs: u16,
+    num_io_cqs: u16,
+    irq_level: bool,
+}
+
+impl NvmeController {
+    pub const BAR0_SIZE: u64 = 0x4000;
+
+    pub fn new(disk: Box<dyn DiskBackend>) -> Self {
+        let mqes = 0xffu64;
+        let cqr = 1u64 << 16;
+        let css_nvm = 1u64 << 37;
+        let cap = mqes | cqr | css_nvm;
+
+        Self {
+            cap,
+            vs: 0x0001_0300,
+            intms: 0,
+            cc: 0,
+            csts: 0,
+            aqa: 0,
+            asq: 0,
+            acq: 0,
+            page_size: 4096,
+            admin: None,
+            io_sqs: HashMap::new(),
+            io_cqs: HashMap::new(),
+            disk,
+            num_io_sqs: 1,
+            num_io_cqs: 1,
+            irq_level: false,
+        }
+    }
+
+    pub fn irq_level(&self) -> bool {
+        self.irq_level
+    }
+
+    fn doorbell_stride(&self) -> u64 {
+        4
+    }
+
+    fn enable(&mut self) {
+        self.csts &= !CSTS_CFS;
+        self.csts |= CSTS_RDY;
+        self.page_size = 4096usize << ((self.cc >> 7) & 0xf);
+
+        let asqs = (self.aqa & 0xffff) as u16 + 1;
+        let acqs = ((self.aqa >> 16) & 0xffff) as u16 + 1;
+        let admin_sq = SubmissionQueue {
+            id: 0,
+            base: self.asq,
+            size: asqs.max(1),
+            head: 0,
+            tail: 0,
+            cqid: 0,
+        };
+        let admin_cq = CompletionQueue {
+            base: self.acq,
+            size: acqs.max(1),
+            head: 0,
+            tail: 0,
+            phase: true,
+            host_phase: true,
+        };
+        self.admin = Some(QueuePair {
+            sq: admin_sq,
+            cq: admin_cq,
+        });
+
+        self.io_sqs.clear();
+        self.io_cqs.clear();
+        self.irq_level = false;
+    }
+
+    fn disable(&mut self) {
+        self.csts &= !CSTS_RDY;
+        self.admin = None;
+        self.io_sqs.clear();
+        self.io_cqs.clear();
+        self.irq_level = false;
+    }
+
+    fn update_irq_level(&mut self) {
+        if self.intms != 0 {
+            self.irq_level = false;
+            return;
+        }
+
+        let mut pending = false;
+        if let Some(admin) = self.admin.as_ref() {
+            pending |= !admin.cq.is_empty();
+        }
+        if !pending {
+            pending = self.io_cqs.values().any(|cq| !cq.is_empty());
+        }
+        self.irq_level = pending;
+    }
+
+    fn mmio_read_dword(&mut self, offset: u64) -> u32 {
+        match offset {
+            NVME_REG_CAP => self.cap as u32,
+            NVME_REG_CAP_HI => (self.cap >> 32) as u32,
+            NVME_REG_VS => self.vs,
+            NVME_REG_INTMS => self.intms,
+            NVME_REG_CC => self.cc,
+            NVME_REG_CSTS => self.csts,
+            NVME_REG_AQA => self.aqa,
+            NVME_REG_ASQ => self.asq as u32,
+            NVME_REG_ASQ_HI => (self.asq >> 32) as u32,
+            NVME_REG_ACQ => self.acq as u32,
+            NVME_REG_ACQ_HI => (self.acq >> 32) as u32,
+            _ if offset >= NVME_DOORBELL_BASE => 0,
+            _ => 0,
+        }
+    }
+
+    fn mmio_write_dword(&mut self, mem: &mut dyn MemoryBus, offset: u64, value: u32) {
+        match offset {
+            NVME_REG_INTMS => {
+                self.intms |= value;
+                self.update_irq_level();
+            }
+            NVME_REG_INTMC => {
+                self.intms &= !value;
+                self.update_irq_level();
+            }
+            NVME_REG_CC => {
+                let prev_en = self.cc & CC_EN != 0;
+                self.cc = value;
+                let next_en = self.cc & CC_EN != 0;
+                match (prev_en, next_en) {
+                    (false, true) => self.enable(),
+                    (true, false) => self.disable(),
+                    _ => {}
+                }
+            }
+            NVME_REG_AQA => self.aqa = value,
+            NVME_REG_ASQ => self.asq = (self.asq & 0xffff_ffff_0000_0000) | value as u64,
+            NVME_REG_ASQ_HI => self.asq = (self.asq & 0x0000_0000_ffff_ffff) | ((value as u64) << 32),
+            NVME_REG_ACQ => self.acq = (self.acq & 0xffff_ffff_0000_0000) | value as u64,
+            NVME_REG_ACQ_HI => self.acq = (self.acq & 0x0000_0000_ffff_ffff) | ((value as u64) << 32),
+            _ if offset >= NVME_DOORBELL_BASE => self.handle_doorbell(mem, offset, value),
+            _ => {}
+        }
+    }
+
+    fn handle_doorbell(&mut self, mem: &mut dyn MemoryBus, offset: u64, value: u32) {
+        let stride = self.doorbell_stride();
+        let rel = offset - NVME_DOORBELL_BASE;
+        let db_index = rel / stride;
+        let qid = (db_index / 2) as u16;
+        let is_cq = db_index % 2 == 1;
+        if is_cq {
+            self.update_cq_head(qid, value as u16);
+        } else {
+            self.update_sq_tail_and_process(mem, qid, value as u16);
+        }
+    }
+
+    fn update_cq_head(&mut self, qid: u16, head: u16) {
+        if qid == 0 {
+            if let Some(admin) = self.admin.as_mut() {
+                admin.cq.update_head(head);
+            }
+            self.update_irq_level();
+            return;
+        }
+        if let Some(cq) = self.io_cqs.get_mut(&qid) {
+            cq.update_head(head);
+        }
+        self.update_irq_level();
+    }
+
+    fn update_sq_tail_and_process(&mut self, mem: &mut dyn MemoryBus, qid: u16, tail: u16) {
+        if qid == 0 {
+            if let Some(admin) = self.admin.as_mut() {
+                admin.sq.tail = tail % admin.sq.size;
+            }
+            self.process_queue(mem, 0);
+            return;
+        }
+        if let Some(sq) = self.io_sqs.get_mut(&qid) {
+            sq.tail = tail % sq.size;
+        }
+        self.process_queue(mem, qid);
+    }
+
+    fn process_queue(&mut self, mem: &mut dyn MemoryBus, qid: u16) {
+        if self.csts & CSTS_RDY == 0 {
+            return;
+        }
+
+        if qid == 0 {
+            let Some(mut admin) = self.admin.take() else {
+                return;
+            };
+            self.process_submission_queue(mem, &mut admin.sq, &mut admin.cq, true);
+            self.admin = Some(admin);
+            self.update_irq_level();
+            return;
+        }
+
+        let Some(mut sq) = self.io_sqs.remove(&qid) else {
+            return;
+        };
+        let cqid = sq.cqid;
+        let Some(mut cq) = self.io_cqs.remove(&cqid) else {
+            self.io_sqs.insert(qid, sq);
+            return;
+        };
+        self.process_submission_queue(mem, &mut sq, &mut cq, false);
+        self.io_cqs.insert(cqid, cq);
+        self.io_sqs.insert(qid, sq);
+        self.update_irq_level();
+    }
+
+    fn process_submission_queue(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        sq: &mut SubmissionQueue,
+        cq: &mut CompletionQueue,
+        admin: bool,
+    ) {
+        while sq.head != sq.tail {
+            if cq.is_full() {
+                break;
+            }
+
+            let cmd_addr = sq.base + (sq.head as u64) * 64;
+            let dwords = read_command_dwords(mem, cmd_addr);
+            let cmd = NvmeCommand::from_dwords(&dwords);
+
+            sq.head = (sq.head + 1) % sq.size;
+
+            let (dw0, status) = if admin {
+                self.execute_admin(mem, cmd)
+            } else {
+                self.execute_io(mem, cmd)
+            };
+
+            let status_field = status.to_cqe_status_field(cq.phase);
+            cq.push(mem, dw0, sq.head, sq.id, cmd.cid, status_field);
+        }
+    }
+
+    fn execute_admin(&mut self, mem: &mut dyn MemoryBus, cmd: NvmeCommand) -> (u32, NvmeStatus) {
+        match cmd.opc {
+            OPC_ADMIN_IDENTIFY => self.cmd_identify(mem, cmd),
+            OPC_ADMIN_GET_FEATURES => self.cmd_get_features(cmd),
+            OPC_ADMIN_SET_FEATURES => self.cmd_set_features(cmd),
+            OPC_ADMIN_CREATE_IO_CQ => self.cmd_create_io_cq(cmd),
+            OPC_ADMIN_CREATE_IO_SQ => self.cmd_create_io_sq(cmd),
+            OPC_ADMIN_DELETE_IO_CQ => self.cmd_delete_io_cq(cmd),
+            OPC_ADMIN_DELETE_IO_SQ => self.cmd_delete_io_sq(cmd),
+            _ => (0, NvmeStatus::invalid_opcode()),
+        }
+    }
+
+    fn execute_io(&mut self, mem: &mut dyn MemoryBus, cmd: NvmeCommand) -> (u32, NvmeStatus) {
+        match cmd.opc {
+            OPC_NVM_FLUSH => self.cmd_flush(cmd),
+            OPC_NVM_READ => self.cmd_read(mem, cmd),
+            OPC_NVM_WRITE => self.cmd_write(mem, cmd),
+            _ => (0, NvmeStatus::invalid_opcode()),
+        }
+    }
+
+    fn cmd_identify(&mut self, mem: &mut dyn MemoryBus, cmd: NvmeCommand) -> (u32, NvmeStatus) {
+        match cmd.identify_cns() {
+            1 => {
+                let mdts = 0;
+                let data = build_identify_controller(1, mdts);
+                if dma_write(mem, cmd.prp1, cmd.prp2, &data, self.page_size).is_err() {
+                    return (0, NvmeStatus::invalid_field());
+                }
+                (0, NvmeStatus::success())
+            }
+            0 => {
+                if cmd.nsid != 1 {
+                    return (0, NvmeStatus::invalid_namespace());
+                }
+                let data = build_identify_namespace(&*self.disk);
+                if dma_write(mem, cmd.prp1, cmd.prp2, &data, self.page_size).is_err() {
+                    return (0, NvmeStatus::invalid_field());
+                }
+                (0, NvmeStatus::success())
+            }
+            _ => (0, NvmeStatus::invalid_field()),
+        }
+    }
+
+    fn cmd_get_features(&mut self, cmd: NvmeCommand) -> (u32, NvmeStatus) {
+        match cmd.feature_id() {
+            FID_NUMBER_OF_QUEUES => {
+                let nsq = self.num_io_sqs.saturating_sub(1) as u32;
+                let ncq = self.num_io_cqs.saturating_sub(1) as u32;
+                let val = (nsq << 16) | (ncq & 0xffff);
+                (val, NvmeStatus::success())
+            }
+            _ => (0, NvmeStatus::invalid_field()),
+        }
+    }
+
+    fn cmd_set_features(&mut self, cmd: NvmeCommand) -> (u32, NvmeStatus) {
+        match cmd.feature_id() {
+            FID_NUMBER_OF_QUEUES => {
+                let requested = cmd.cdw11;
+                let req_ncq = (requested & 0xffff) as u16 + 1;
+                let req_nsq = (requested >> 16) as u16 + 1;
+                self.num_io_cqs = req_ncq.min(1);
+                self.num_io_sqs = req_nsq.min(1);
+                let val = ((self.num_io_sqs.saturating_sub(1) as u32) << 16)
+                    | (self.num_io_cqs.saturating_sub(1) as u32);
+                (val, NvmeStatus::success())
+            }
+            _ => (0, NvmeStatus::invalid_field()),
+        }
+    }
+
+    fn cmd_create_io_cq(&mut self, cmd: NvmeCommand) -> (u32, NvmeStatus) {
+        let qid = cmd.qid();
+        if qid == 0 || self.io_cqs.contains_key(&qid) {
+            return (0, NvmeStatus::invalid_field());
+        }
+        let size = cmd.qsize();
+        if size == 0 || cmd.prp1 as usize % self.page_size != 0 {
+            return (0, NvmeStatus::invalid_field());
+        }
+
+        let cq = CompletionQueue {
+            base: cmd.prp1,
+            size,
+            head: 0,
+            tail: 0,
+            phase: true,
+            host_phase: true,
+        };
+        self.io_cqs.insert(qid, cq);
+        (0, NvmeStatus::success())
+    }
+
+    fn cmd_create_io_sq(&mut self, cmd: NvmeCommand) -> (u32, NvmeStatus) {
+        let qid = cmd.qid();
+        if qid == 0 || self.io_sqs.contains_key(&qid) {
+            return (0, NvmeStatus::invalid_field());
+        }
+        let size = cmd.qsize();
+        if size == 0 || cmd.prp1 as usize % self.page_size != 0 {
+            return (0, NvmeStatus::invalid_field());
+        }
+
+        let cqid = (cmd.cdw11 & 0xffff) as u16;
+        if !self.io_cqs.contains_key(&cqid) {
+            return (0, NvmeStatus::invalid_field());
+        }
+
+        let sq = SubmissionQueue {
+            id: qid,
+            base: cmd.prp1,
+            size,
+            head: 0,
+            tail: 0,
+            cqid,
+        };
+        self.io_sqs.insert(qid, sq);
+        (0, NvmeStatus::success())
+    }
+
+    fn cmd_delete_io_cq(&mut self, cmd: NvmeCommand) -> (u32, NvmeStatus) {
+        let qid = cmd.qid();
+        if qid == 0 || self.io_cqs.remove(&qid).is_none() {
+            return (0, NvmeStatus::invalid_field());
+        }
+        (0, NvmeStatus::success())
+    }
+
+    fn cmd_delete_io_sq(&mut self, cmd: NvmeCommand) -> (u32, NvmeStatus) {
+        let qid = cmd.qid();
+        if qid == 0 || self.io_sqs.remove(&qid).is_none() {
+            return (0, NvmeStatus::invalid_field());
+        }
+        (0, NvmeStatus::success())
+    }
+
+    fn cmd_flush(&mut self, cmd: NvmeCommand) -> (u32, NvmeStatus) {
+        if cmd.nsid != 1 {
+            return (0, NvmeStatus::invalid_namespace());
+        }
+        match self.disk.flush() {
+            Ok(()) => (0, NvmeStatus::success()),
+            Err(_) => (0, NvmeStatus::invalid_field()),
+        }
+    }
+
+    fn cmd_read(&mut self, mem: &mut dyn MemoryBus, cmd: NvmeCommand) -> (u32, NvmeStatus) {
+        if cmd.nsid != 1 {
+            return (0, NvmeStatus::invalid_namespace());
+        }
+        let page_size = self.page_size;
+        let sector_size = self.disk.sector_size() as usize;
+        let slba = cmd.slba();
+        let nlb = cmd.nlb() as u64;
+        if slba.checked_add(nlb).map_or(true, |end| end > self.disk.total_sectors()) {
+            return (0, NvmeStatus::lba_out_of_range());
+        }
+
+        let len = (nlb as usize) * sector_size;
+        let mut data = vec![0u8; len];
+        if self.disk.read_sectors(slba, &mut data).is_err() {
+            return (0, NvmeStatus::invalid_field());
+        }
+        if dma_write(mem, cmd.prp1, cmd.prp2, &data, page_size).is_err() {
+            return (0, NvmeStatus::invalid_field());
+        }
+        (0, NvmeStatus::success())
+    }
+
+    fn cmd_write(&mut self, mem: &mut dyn MemoryBus, cmd: NvmeCommand) -> (u32, NvmeStatus) {
+        if cmd.nsid != 1 {
+            return (0, NvmeStatus::invalid_namespace());
+        }
+        let page_size = self.page_size;
+        let sector_size = self.disk.sector_size() as usize;
+        let slba = cmd.slba();
+        let nlb = cmd.nlb() as u64;
+        if slba.checked_add(nlb).map_or(true, |end| end > self.disk.total_sectors()) {
+            return (0, NvmeStatus::lba_out_of_range());
+        }
+
+        let len = (nlb as usize) * sector_size;
+        let data = match dma_read(mem, cmd.prp1, cmd.prp2, len, page_size) {
+            Ok(data) => data,
+            Err(_) => return (0, NvmeStatus::invalid_field()),
+        };
+        if self.disk.write_sectors(slba, &data).is_err() {
+            return (0, NvmeStatus::invalid_field());
+        }
+        (0, NvmeStatus::success())
+    }
+}
+
+impl MmioDevice for NvmeController {
+    fn mmio_read(&mut self, _mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
+        let aligned = offset & !3;
+        let shift = (offset & 3) * 8;
+        let value = self.mmio_read_dword(aligned);
+        match size {
+            1 => (value >> shift) & 0xff,
+            2 => (value >> shift) & 0xffff,
+            4 => value,
+            _ => 0,
+        }
+    }
+
+    fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+        let aligned = offset & !3;
+        let shift = (offset & 3) * 8;
+
+        let value32 = match size {
+            1 => (value & 0xff) << shift,
+            2 => (value & 0xffff) << shift,
+            4 => value,
+            _ => return,
+        };
+
+        let merged = if size == 4 {
+            value32
+        } else {
+            let cur = self.mmio_read(mem, aligned, 4);
+            let mask = match size {
+                1 => 0xffu32 << shift,
+                2 => 0xffffu32 << shift,
+                _ => 0,
+            };
+            (cur & !mask) | value32
+        };
+
+        self.mmio_write_dword(mem, aligned, merged);
+    }
+}
+
+impl NvmeController {
+    pub fn mmio_read_u32(&mut self, mem: &mut dyn MemoryBus, offset: u64) -> u32 {
+        self.mmio_read(mem, offset, 4)
+    }
+
+    pub fn mmio_write_u32(&mut self, mem: &mut dyn MemoryBus, offset: u64, value: u32) {
+        self.mmio_write(mem, offset, 4, value);
+    }
+}
+
+pub struct NvmePciDevice {
+    config: PciConfigSpace,
+    pub bar0: u32,
+    pub controller: NvmeController,
+}
+
+impl NvmePciDevice {
+    pub fn new(controller: NvmeController, bar0: u32) -> Self {
+        let mut config = PciConfigSpace::new();
+        config.set_u16(0x00, 0x1b36);
+        config.set_u16(0x02, 0x0010);
+
+        config.write(0x09, 1, 0x02);
+        config.write(0x0a, 1, 0x08);
+        config.write(0x0b, 1, 0x01);
+
+        config.set_u32(0x10, bar0 & 0xffff_fff0);
+        config.write(0x3d, 1, 1);
+
+        Self {
+            config,
+            bar0,
+            controller,
+        }
+    }
+}
+
+impl PciDevice for NvmePciDevice {
+    fn config_read(&self, offset: u16, size: usize) -> u32 {
+        self.config.read(offset, size)
+    }
+
+    fn config_write(&mut self, offset: u16, size: usize, value: u32) {
+        if offset == 0x10 && size == 4 {
+            self.bar0 = value & 0xffff_fff0;
+        }
+        self.config.write(offset, size, value);
+    }
+}
+
+impl MmioDevice for NvmePciDevice {
+    fn mmio_read(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
+        self.controller.mmio_read(mem, offset, size)
+    }
+
+    fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+        self.controller.mmio_write(mem, offset, size, value);
+    }
+}
+
+impl From<DiskError> for NvmeStatus {
+    fn from(_: DiskError) -> Self {
+        NvmeStatus::invalid_field()
+    }
+}
+
+impl From<PrpError> for NvmeStatus {
+    fn from(_: PrpError) -> Self {
+        NvmeStatus::invalid_field()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::storage::disk::MemDisk;
+
+    #[derive(Clone, Debug)]
+    struct VecMemory {
+        data: Vec<u8>,
+    }
+
+    impl VecMemory {
+        fn new(size: usize) -> Self {
+            Self { data: vec![0; size] }
+        }
+
+        fn range(&self, paddr: u64, len: usize) -> core::ops::Range<usize> {
+            let start = usize::try_from(paddr).expect("paddr too large for VecMemory");
+            let end = start.checked_add(len).expect("address wrap");
+            assert!(end <= self.data.len(), "out-of-bounds physical access");
+            start..end
+        }
+    }
+
+    impl MemoryBus for VecMemory {
+        fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+            let range = self.range(paddr, buf.len());
+            buf.copy_from_slice(&self.data[range]);
+        }
+
+        fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+            let range = self.range(paddr, buf.len());
+            self.data[range].copy_from_slice(buf);
+        }
+    }
+
+    fn write_cmd(mem: &mut VecMemory, addr: u64, dwords: [u32; 16]) {
+        for (idx, dw) in dwords.iter().enumerate() {
+            mem.write_u32(addr + (idx as u64) * 4, *dw);
+        }
+    }
+
+    fn read_cqe(mem: &mut VecMemory, cq_base: u64, index: u16) -> (u32, u32, u32, u32) {
+        let addr = cq_base + (index as u64) * 16;
+        (
+            mem.read_u32(addr),
+            mem.read_u32(addr + 4),
+            mem.read_u32(addr + 8),
+            mem.read_u32(addr + 12),
+        )
+    }
+
+    fn setup_controller(mem: &mut VecMemory) -> NvmeController {
+        let disk = Box::new(MemDisk::new(20_000));
+        let mut ctrl = NvmeController::new(disk);
+
+        ctrl.mmio_write_u32(mem, NVME_REG_AQA, 0x0003_0003);
+        ctrl.mmio_write_u32(mem, NVME_REG_ASQ, 0x10_000);
+        ctrl.mmio_write_u32(mem, NVME_REG_ASQ_HI, 0);
+        ctrl.mmio_write_u32(mem, NVME_REG_ACQ, 0x20_000);
+        ctrl.mmio_write_u32(mem, NVME_REG_ACQ_HI, 0);
+        ctrl.mmio_write_u32(mem, NVME_REG_CC, (6 << 16) | (4 << 20) | CC_EN);
+        ctrl
+    }
+
+    #[test]
+    fn admin_identify_controller() {
+        let mut mem = VecMemory::new(4 * 1024 * 1024);
+        let mut ctrl = setup_controller(&mut mem);
+
+        let identify_buf = 0x30_000u64;
+        let cid = 0x1234u16;
+        let cmd_addr = 0x10_000u64;
+        let mut cmd = [0u32; 16];
+        cmd[0] = OPC_ADMIN_IDENTIFY as u32 | ((cid as u32) << 16);
+        cmd[6] = identify_buf as u32;
+        cmd[7] = (identify_buf >> 32) as u32;
+        cmd[10] = 1;
+        write_cmd(&mut mem, cmd_addr, cmd);
+
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE, 1);
+
+        let (_dw0, _dw1, _dw2, dw3) = read_cqe(&mut mem, 0x20_000, 0);
+        assert_eq!((dw3 & 0xffff) as u16, cid);
+        let status = (dw3 >> 16) as u16;
+        assert_eq!(status & 1, 1);
+        assert_eq!((status >> 1) & 0xff, 0);
+
+        let vid = mem.read_u16(identify_buf);
+        assert_eq!(vid, 0x1b36);
+    }
+
+    fn admin_create_io_queues(ctrl: &mut NvmeController, mem: &mut VecMemory, io_sq: u64, io_cq: u64) {
+        let mut cid = 1u16;
+
+        let mut cmd = [0u32; 16];
+        cmd[0] = OPC_ADMIN_CREATE_IO_CQ as u32 | ((cid as u32) << 16);
+        cmd[6] = io_cq as u32;
+        cmd[7] = (io_cq >> 32) as u32;
+        cmd[10] = 1 | ((3u32) << 16);
+        write_cmd(mem, 0x10_000, cmd);
+        ctrl.mmio_write_u32(mem, NVME_DOORBELL_BASE, 1);
+        ctrl.mmio_write_u32(mem, NVME_DOORBELL_BASE + 4, 1);
+
+        cid += 1;
+        let mut cmd = [0u32; 16];
+        cmd[0] = OPC_ADMIN_CREATE_IO_SQ as u32 | ((cid as u32) << 16);
+        cmd[6] = io_sq as u32;
+        cmd[7] = (io_sq >> 32) as u32;
+        cmd[10] = 1 | ((3u32) << 16);
+        cmd[11] = 1;
+        write_cmd(mem, 0x10_000 + 64, cmd);
+        ctrl.mmio_write_u32(mem, NVME_DOORBELL_BASE, 2);
+        ctrl.mmio_write_u32(mem, NVME_DOORBELL_BASE + 4, 2);
+    }
+
+    #[test]
+    fn io_write_read_with_chained_prp_lists() {
+        let mut mem = VecMemory::new(32 * 1024 * 1024);
+        let mut ctrl = setup_controller(&mut mem);
+
+        let io_sq_base = 0x40_000u64;
+        let io_cq_base = 0x50_000u64;
+        admin_create_io_queues(&mut ctrl, &mut mem, io_sq_base, io_cq_base);
+
+        let page_size = 4096u64;
+        let total_pages = 514u64;
+        let data_len = (total_pages * page_size) as usize;
+        let sectors = data_len / 512;
+        let slba = 100u64;
+
+        let data_base = 0x100_000u64;
+        for i in 0..data_len {
+            mem.write_u8(data_base + i as u64, (i as u8).wrapping_add(0x5a));
+        }
+
+        let prp_list1 = data_base + total_pages * page_size;
+        let prp_list2 = prp_list1 + page_size;
+        for idx in 0..511u64 {
+            let addr = data_base + (idx + 1) * page_size;
+            mem.write_u64(prp_list1 + idx * 8, addr);
+        }
+        mem.write_u64(prp_list1 + 511 * 8, prp_list2);
+        mem.write_u64(prp_list2, data_base + 512 * page_size);
+        mem.write_u64(prp_list2 + 8, data_base + 513 * page_size);
+
+        let cid = 0x9000u16;
+        let mut write_cmd_dw = [0u32; 16];
+        write_cmd_dw[0] = OPC_NVM_WRITE as u32 | ((cid as u32) << 16);
+        write_cmd_dw[1] = 1;
+        write_cmd_dw[6] = data_base as u32;
+        write_cmd_dw[7] = (data_base >> 32) as u32;
+        write_cmd_dw[8] = prp_list1 as u32;
+        write_cmd_dw[9] = (prp_list1 >> 32) as u32;
+        write_cmd_dw[10] = slba as u32;
+        write_cmd_dw[11] = (slba >> 32) as u32;
+        write_cmd_dw[12] = (sectors as u32) - 1;
+        write_cmd(&mut mem, io_sq_base, write_cmd_dw);
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE + 8, 1);
+
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE + 12, 1);
+        let (_dw0, _dw1, _dw2, dw3) = read_cqe(&mut mem, io_cq_base, 0);
+        assert_eq!((dw3 & 0xffff) as u16, cid);
+        let status = (dw3 >> 16) as u16;
+        assert_eq!((status >> 1) & 0xff, 0);
+
+        let read_base = prp_list2 + page_size;
+        mem.write_physical(read_base, &vec![0u8; data_len]);
+
+        let read_list1 = read_base + total_pages * page_size;
+        let read_list2 = read_list1 + page_size;
+        for idx in 0..511u64 {
+            let addr = read_base + (idx + 1) * page_size;
+            mem.write_u64(read_list1 + idx * 8, addr);
+        }
+        mem.write_u64(read_list1 + 511 * 8, read_list2);
+        mem.write_u64(read_list2, read_base + 512 * page_size);
+        mem.write_u64(read_list2 + 8, read_base + 513 * page_size);
+
+        let cid2 = 0x9001u16;
+        let mut read_cmd_dw = [0u32; 16];
+        read_cmd_dw[0] = OPC_NVM_READ as u32 | ((cid2 as u32) << 16);
+        read_cmd_dw[1] = 1;
+        read_cmd_dw[6] = read_base as u32;
+        read_cmd_dw[7] = (read_base >> 32) as u32;
+        read_cmd_dw[8] = read_list1 as u32;
+        read_cmd_dw[9] = (read_list1 >> 32) as u32;
+        read_cmd_dw[10] = slba as u32;
+        read_cmd_dw[11] = (slba >> 32) as u32;
+        read_cmd_dw[12] = (sectors as u32) - 1;
+        write_cmd(&mut mem, io_sq_base + 64, read_cmd_dw);
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE + 8, 2);
+
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE + 12, 2);
+        let (_dw0, _dw1, _dw2, dw3) = read_cqe(&mut mem, io_cq_base, 1);
+        assert_eq!((dw3 & 0xffff) as u16, cid2);
+        let status = (dw3 >> 16) as u16;
+        assert_eq!((status >> 1) & 0xff, 0);
+
+        for i in 0..data_len {
+            let expected = (i as u8).wrapping_add(0x5a);
+            let actual = mem.read_u8(read_base + i as u64);
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn completion_phase_wraparound() {
+        let mut mem = VecMemory::new(4 * 1024 * 1024);
+        let disk = Box::new(MemDisk::new(10_000));
+        let mut ctrl = NvmeController::new(disk);
+
+        ctrl.mmio_write_u32(&mut mem, NVME_REG_AQA, 0x0001_0003);
+        ctrl.mmio_write_u32(&mut mem, NVME_REG_ASQ, 0x10_000);
+        ctrl.mmio_write_u32(&mut mem, NVME_REG_ACQ, 0x20_000);
+        ctrl.mmio_write_u32(&mut mem, NVME_REG_CC, CC_EN);
+
+        let identify_buf = 0x30_000u64;
+        for (idx, cid) in [0x10u16, 0x11u16, 0x12u16].into_iter().enumerate() {
+            let mut cmd = [0u32; 16];
+            cmd[0] = OPC_ADMIN_IDENTIFY as u32 | ((cid as u32) << 16);
+            cmd[6] = identify_buf as u32;
+            cmd[7] = (identify_buf >> 32) as u32;
+            cmd[10] = 1;
+            write_cmd(&mut mem, 0x10_000 + (idx as u64) * 64, cmd);
+        }
+
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE, 3);
+
+        let (_, _, _, dw3a) = read_cqe(&mut mem, 0x20_000, 0);
+        let status_a = (dw3a >> 16) as u16;
+        assert_eq!(status_a & 1, 1);
+
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE + 4, 1);
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE, 3);
+
+        let (_, _, _, dw3b) = read_cqe(&mut mem, 0x20_000, 0);
+        let status_b = (dw3b >> 16) as u16;
+        assert_eq!(status_b & 1, 0);
+    }
+}
+

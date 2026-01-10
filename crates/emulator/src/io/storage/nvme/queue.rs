@@ -1,0 +1,191 @@
+use memory::MemoryBus;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SubmissionQueue {
+    pub id: u16,
+    pub base: u64,
+    pub size: u16,
+    pub head: u16,
+    pub tail: u16,
+    pub cqid: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CompletionQueue {
+    pub base: u64,
+    pub size: u16,
+    pub head: u16,
+    pub tail: u16,
+    pub phase: bool,
+    pub host_phase: bool,
+}
+
+impl CompletionQueue {
+    pub fn update_head(&mut self, new_head: u16) {
+        let new_head = new_head % self.size;
+        if new_head < self.head {
+            self.host_phase = !self.host_phase;
+        }
+        self.head = new_head;
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.tail == self.head && self.phase != self.host_phase
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tail == self.head && self.phase == self.host_phase
+    }
+
+    pub fn push(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        dw0: u32,
+        sq_head: u16,
+        sqid: u16,
+        cid: u16,
+        status: u16,
+    ) {
+        let entry_addr = self.base + (self.tail as u64) * 16;
+        mem.write_u32(entry_addr, dw0);
+        mem.write_u32(entry_addr + 4, 0);
+        let dw2 = (sq_head as u32) | ((sqid as u32) << 16);
+        mem.write_u32(entry_addr + 8, dw2);
+        let dw3 = (cid as u32) | ((status as u32) << 16);
+        mem.write_u32(entry_addr + 12, dw3);
+
+        self.tail += 1;
+        if self.tail >= self.size {
+            self.tail = 0;
+            self.phase = !self.phase;
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QueuePair {
+    pub sq: SubmissionQueue,
+    pub cq: CompletionQueue,
+}
+
+pub fn read_command_dwords(mem: &mut dyn MemoryBus, addr: u64) -> [u32; 16] {
+    let mut dwords = [0u32; 16];
+    for (idx, slot) in dwords.iter_mut().enumerate() {
+        *slot = mem.read_u32(addr + (idx as u64) * 4);
+    }
+    dwords
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrpError {
+    Invalid,
+}
+
+fn is_page_aligned(addr: u64, page_size: usize) -> bool {
+    addr as usize % page_size == 0
+}
+
+pub fn prp_segments(
+    mem: &mut dyn MemoryBus,
+    prp1: u64,
+    prp2: u64,
+    total_len: usize,
+    page_size: usize,
+) -> Result<Vec<(u64, usize)>, PrpError> {
+    if total_len == 0 {
+        return Ok(Vec::new());
+    }
+    if page_size == 0 || (page_size & (page_size - 1)) != 0 {
+        return Err(PrpError::Invalid);
+    }
+
+    let mut segments = Vec::new();
+    let first_offset = prp1 as usize & (page_size - 1);
+    let first_len = total_len.min(page_size - first_offset);
+    segments.push((prp1, first_len));
+
+    let mut remaining = total_len - first_len;
+    if remaining == 0 {
+        return Ok(segments);
+    }
+
+    let additional_pages = (remaining + page_size - 1) / page_size;
+    if additional_pages == 1 {
+        if !is_page_aligned(prp2, page_size) {
+            return Err(PrpError::Invalid);
+        }
+        segments.push((prp2, remaining));
+        return Ok(segments);
+    }
+
+    if !is_page_aligned(prp2, page_size) {
+        return Err(PrpError::Invalid);
+    }
+
+    let entries_per_list_page = page_size / 8;
+    let mut list_addr = prp2;
+    let mut entry_index = 0usize;
+    let mut pages_left = additional_pages;
+
+    while pages_left > 0 {
+        if entry_index >= entries_per_list_page {
+            return Err(PrpError::Invalid);
+        }
+
+        let entry = mem.read_u64(list_addr + (entry_index as u64) * 8);
+        let is_chain_entry = entry_index == entries_per_list_page - 1 && pages_left > 1;
+        if is_chain_entry {
+            if !is_page_aligned(entry, page_size) {
+                return Err(PrpError::Invalid);
+            }
+            list_addr = entry;
+            entry_index = 0;
+            continue;
+        }
+
+        if !is_page_aligned(entry, page_size) {
+            return Err(PrpError::Invalid);
+        }
+
+        let seg_len = remaining.min(page_size);
+        segments.push((entry, seg_len));
+        remaining -= seg_len;
+        pages_left -= 1;
+        entry_index += 1;
+    }
+
+    Ok(segments)
+}
+
+pub fn dma_read(
+    mem: &mut dyn MemoryBus,
+    prp1: u64,
+    prp2: u64,
+    total_len: usize,
+    page_size: usize,
+) -> Result<Vec<u8>, PrpError> {
+    let segments = prp_segments(mem, prp1, prp2, total_len, page_size)?;
+    let mut buf = vec![0u8; total_len];
+    let mut offset = 0usize;
+    for (addr, len) in segments {
+        mem.read_physical(addr, &mut buf[offset..offset + len]);
+        offset += len;
+    }
+    Ok(buf)
+}
+
+pub fn dma_write(
+    mem: &mut dyn MemoryBus,
+    prp1: u64,
+    prp2: u64,
+    data: &[u8],
+    page_size: usize,
+) -> Result<(), PrpError> {
+    let segments = prp_segments(mem, prp1, prp2, data.len(), page_size)?;
+    let mut offset = 0usize;
+    for (addr, len) in segments {
+        mem.write_physical(addr, &data[offset..offset + len]);
+        offset += len;
+    }
+    Ok(())
+}
