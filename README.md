@@ -12,6 +12,10 @@ Use [`just`](https://github.com/casey/just) from the repo root so contributors d
 - Node.js + npm
 - `just` (task runner)
   - Install via `cargo install just` or your OS package manager.
+- `wasm-pack` (to build the Rust→WASM packages)
+  - Install via `cargo install wasm-pack`
+- Optional: `watchexec` (for `just wasm-watch`)
+  - Install via `cargo install watchexec-cli`
 
 ### Common workflows
 

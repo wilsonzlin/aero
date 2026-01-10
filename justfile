@@ -217,7 +217,7 @@ Note: Aero relies on SharedArrayBuffer/WASM threads, which require cross-origin 
 Troubleshooting section in README.md.
 
 Tip: For automatic wasm rebuilds while the dev server is running, use a second terminal:
-  just wasm-watch
+  just wasm-watch  # rebuilds the threaded/shared-memory WASM variant
 EOF
 
     (cd "{{WEB_DIR}}" && npm run dev)
@@ -251,7 +251,7 @@ EOF
     exit 1
   fi
 
-  echo "==> Watching '${wasm_dir}' and rebuilding wasm on changes..."
+  echo "==> Watching '${wasm_dir}' and rebuilding threaded/shared-memory WASM on changes..."
   watchexec -w "${wasm_dir}" -- just wasm-threaded
 
 build:
