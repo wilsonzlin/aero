@@ -53,6 +53,11 @@ jobs:
       - name: Collect artifacts
         shell: powershell
         run: |
+          # ci/install-wdk.ps1 writes out/toolchain.json; keep build artifacts clean by
+          # recreating the directory used for upload.
+          if (Test-Path -LiteralPath out) {
+            Remove-Item -LiteralPath out -Recurse -Force
+          }
           New-Item -ItemType Directory -Force -Path out | Out-Null
           Copy-Item .\guest\windows\inf\aerogpu.inf out\
           Copy-Item .\guest\windows\wddm_kmd\x64\Release\aerogpu_kmd.sys out\
