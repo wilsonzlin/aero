@@ -446,6 +446,27 @@ See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitiona
 
 ---
 
+## Windows Guest Tools & Paravirtual Driver Tasks
+
+These tasks cover the **Windows-side packaging** needed for paravirtual devices to work reliably (especially boot-critical storage), plus the cross-team contract that prevents PCI ID drift.
+
+**Source of truth (must stay in sync with emulator + drivers):**
+
+- [`windows-device-contract.md`](./windows-device-contract.md)
+- [`windows-device-contract.json`](./windows-device-contract.json)
+
+| ID     | Task                                                                 | Priority | Dependencies | Complexity |
+| ------ | -------------------------------------------------------------------- | -------- | ------------ | ---------- |
+| GT-001 | Define/maintain the Windows PCI device contract (IDs, BAR usage, INF) | P0       | None         | Medium     |
+| GT-002 | Guest Tools installer consumes `windows-device-contract.json`         | P0       | GT-001       | Medium     |
+| GT-003 | Seed `CriticalDeviceDatabase` for boot-critical storage (virtio-blk)  | P0       | GT-002       | High       |
+| GT-004 | Ensure each driver INF models exactly match contract hardware IDs     | P0       | GT-001       | Medium     |
+| GT-005 | Add emulator CI check: PCI IDs emitted match `windows-device-contract.json` | P1  | GT-001       | Medium     |
+| GT-006 | Versioning policy: bump contract version on breaking PCI/ABI changes  | P1       | GT-001       | Low        |
+
+
+---
+
 ## FIRMWARE Tasks
 
 ### BIOS Tasks

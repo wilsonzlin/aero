@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "contract_name": "aero-windows-pci-device-contract",
+  "contract_version": "1.0.0",
+  "devices": [
+    {
+      "device": "virtio-blk",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1001",
+      "hardware_id_patterns": [
+        "PCI\\VEN_1AF4&DEV_1001&SUBSYS_00021AF4",
+        "PCI\\VEN_1AF4&DEV_1001"
+      ],
+      "driver_service_name": "aerovioblk",
+      "inf_name": "aero-virtio-blk.inf",
+      "virtio_device_type": 2
+    },
+    {
+      "device": "virtio-net",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1000",
+      "hardware_id_patterns": [
+        "PCI\\VEN_1AF4&DEV_1000&SUBSYS_00011AF4",
+        "PCI\\VEN_1AF4&DEV_1000"
+      ],
+      "driver_service_name": "aerovionet",
+      "inf_name": "aero-virtio-net.inf",
+      "virtio_device_type": 1
+    },
+    {
+      "device": "virtio-snd",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1018",
+      "hardware_id_patterns": [
+        "PCI\\VEN_1AF4&DEV_1018&SUBSYS_00191AF4",
+        "PCI\\VEN_1AF4&DEV_1018"
+      ],
+      "driver_service_name": "aeroviosnd",
+      "inf_name": "aero-virtio-snd.inf",
+      "virtio_device_type": 25
+    },
+    {
+      "device": "virtio-input",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1011",
+      "hardware_id_patterns": [
+        "PCI\\VEN_1AF4&DEV_1011&SUBSYS_00121AF4",
+        "PCI\\VEN_1AF4&DEV_1011"
+      ],
+      "driver_service_name": "aerovioinput",
+      "inf_name": "aero-virtio-input.inf",
+      "virtio_device_type": 18
+    },
+    {
+      "device": "aero-gpu",
+      "pci_vendor_id": "0xA0E0",
+      "pci_device_id": "0x0001",
+      "hardware_id_patterns": [
+        "PCI\\VEN_A0E0&DEV_0001&SUBSYS_0001A0E0",
+        "PCI\\VEN_A0E0&DEV_0001"
+      ],
+      "driver_service_name": "aerogpu",
+      "inf_name": "aero-gpu.inf"
+    }
+  ]
+}
+
