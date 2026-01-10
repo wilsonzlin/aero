@@ -82,16 +82,6 @@ function generateQuadrantPattern(width: number, height: number): Uint8Array {
   return out;
 }
 
-async function selectBackend(): Promise<PresentationBackend> {
-  const requested = getBackendParam();
-
-  if (requested === 'webgpu') return new WebGPUBackend();
-  if (requested === 'webgl2') return new WebGL2Backend();
-
-  if (navigator.gpu) return new WebGPUBackend();
-  return new WebGL2Backend();
-}
-
 async function main() {
   const canvas = document.getElementById('screen');
   if (!(canvas instanceof HTMLCanvasElement)) {
@@ -100,11 +90,45 @@ async function main() {
   }
 
   try {
-    const backend = await selectBackend();
-    await backend.init(canvas, {
+    const initOptions = {
       filter: getFilterParam(),
       preserveAspectRatio: getPreserveAspectRatioParam(),
-    });
+    };
+
+    const requested = getBackendParam();
+    let backend: PresentationBackend | null = null;
+
+    if (requested === 'webgpu') {
+      backend = new WebGPUBackend();
+      await backend.init(canvas, initOptions);
+    } else if (requested === 'webgl2') {
+      backend = new WebGL2Backend();
+      await backend.init(canvas, initOptions);
+    } else {
+      let webgpuError: string | null = null;
+      if (navigator.gpu) {
+        try {
+          const candidate = new WebGPUBackend();
+          await candidate.init(canvas, initOptions);
+          backend = candidate;
+        } catch (err) {
+          webgpuError = err instanceof Error ? err.message : String(err);
+        }
+      } else {
+        webgpuError = 'navigator.gpu is missing';
+      }
+
+      if (!backend) {
+        try {
+          const candidate = new WebGL2Backend();
+          await candidate.init(canvas, initOptions);
+          backend = candidate;
+        } catch (err) {
+          const webgl2Error = err instanceof Error ? err.message : String(err);
+          throw new Error(`No usable GPU backend (WebGPU: ${webgpuError}; WebGL2: ${webgl2Error})`);
+        }
+      }
+    }
 
     const width = 64;
     const height = 64;
@@ -150,4 +174,3 @@ async function main() {
 }
 
 void main();
-

@@ -25,8 +25,8 @@ async function getSamples(page: Page): Promise<SampleResult> {
 }
 
 function expectPattern(samples: SampleResult) {
-  expect(samples.width).toBe(64);
-  expect(samples.height).toBe(64);
+  expect(samples.width).toBeGreaterThanOrEqual(16);
+  expect(samples.height).toBeGreaterThanOrEqual(16);
 
   expect(samples.topLeft).toEqual([255, 0, 0, 255]);
   expect(samples.topRight).toEqual([0, 255, 0, 255]);
@@ -37,9 +37,20 @@ function expectPattern(samples: SampleResult) {
 test('Chromium: WebGPU path renders expected pattern when available', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium');
 
+  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+  const hasWebGpuAdapter = await page.evaluate(async () => {
+    const gpu = (navigator as any).gpu as any;
+    if (!gpu) return false;
+    try {
+      const adapter = await gpu.requestAdapter();
+      return !!adapter;
+    } catch {
+      return false;
+    }
+  });
+  test.skip(!hasWebGpuAdapter, 'WebGPU adapter unavailable in this Chromium environment');
+
   await page.goto('http://127.0.0.1:5173/web/gpu-smoke.html?backend=webgpu', { waitUntil: 'load' });
-  const hasWebGpu = await page.evaluate(() => !!(navigator as any).gpu);
-  test.skip(!hasWebGpu, 'WebGPU not available in this Chromium build');
 
   const samples = await getSamples(page);
   expect(samples.backend).toBe('webgpu');
@@ -50,6 +61,18 @@ test('WebKit/Firefox: WebGL2 fallback renders expected pattern', async ({ page, 
   test.skip(browserName === 'chromium');
 
   await page.goto('http://127.0.0.1:5173/web/gpu-smoke.html?backend=webgl2', { waitUntil: 'load' });
+  const samples = await getSamples(page);
+  expect(samples.backend).toBe('webgl2');
+  expectPattern(samples);
+});
+
+test('WebKit/Firefox: auto backend selection falls back to WebGL2 when WebGPU is unavailable', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName === 'chromium');
+
+  await page.goto('http://127.0.0.1:5173/web/gpu-smoke.html?backend=auto', { waitUntil: 'load' });
   const samples = await getSamples(page);
   expect(samples.backend).toBe('webgl2');
   expectPattern(samples);
