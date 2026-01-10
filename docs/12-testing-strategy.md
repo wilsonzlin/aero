@@ -340,6 +340,22 @@ fn test_i8042_snapshot_roundtrip() {
     assert_eq!(dev.read_data_port(), restored.read_data_port());
 }
 ```
+### SMP / APIC IPI Tests
+
+Multi-core enablement needs focused tests because bugs often manifest as hangs or heisenbugs:
+
+- **IPI delivery unit tests**
+  - Decode APIC ICR writes.
+  - Verify destination selection (physical destination + shorthand modes).
+  - Verify delivery modes:
+    - **INIT** transitions AP into *wait-for-SIPI*.
+    - **SIPI** starts AP at `vector << 12`.
+    - **Fixed** delivers an interrupt vector to the target vCPU.
+- **AP bring-up integration test**
+  - Synthetic "guest" that:
+    1. Reads ACPI MADT and asserts multiple processors are present.
+    2. BSP sends INIT+SIPI to start an AP.
+    3. BSP sends a fixed IPI; AP observes/handles it.
 
 ## Integration Tests
 

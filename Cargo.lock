@@ -1515,6 +1515,7 @@ dependencies = [
  "aero-net-e1000",
  "anyhow",
  "criterion",
+ "firmware",
  "hyper 0.14.32",
  "image",
  "memory",

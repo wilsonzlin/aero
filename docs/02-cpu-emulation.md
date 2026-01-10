@@ -635,6 +635,47 @@ impl CpuEmulator {
 
 ---
 
+## Symmetric Multiprocessing (SMP) / Multi-vCPU
+
+Windows 7 expects a real SMP platform:
+
+- **Separate architectural state per CPU** (registers, MSRs, MMU/TLB, flags).
+- **Shared physical memory and device models** (PCI, disks, timers, IOAPIC, etc.).
+- **A per-CPU local APIC** for interrupt delivery and inter-processor interrupts (IPIs).
+
+### Per-vCPU State
+
+At minimum, each vCPU must have:
+
+```rust
+pub struct Vcpu {
+    pub cpu: CpuState,     // GPRs, RIP/RFLAGS, segments, CR*, MSRs, MMU/TLB
+    pub lapic: LocalApic,  // local APIC registers + pending vectors
+}
+```
+
+### IPI Delivery via Local APIC (ICR)
+
+SMP boot and common OS paths rely on APIC IPIs sent through the **Interrupt Command Register (ICR)**:
+
+- **INIT IPI**: resets a target CPU and places it into a *wait-for-SIPI* state.
+- **SIPI (Startup IPI)**: releases an AP from *wait-for-SIPI* and starts execution at `vector << 12`.
+- **Fixed IPIs**: deliver a normal interrupt vector (e.g. TLB shootdowns, reschedule IPIs).
+
+### Scheduling Model (Browser-Friendly)
+
+Two practical approaches:
+
+1. **One worker per vCPU** (when `SharedArrayBuffer` + threads are available).
+   - vCPU workers execute in parallel.
+   - Shared devices must define clear synchronization/ownership to avoid pervasive locking.
+2. **Deterministic time-slicing in a single CPU worker** (recommended baseline).
+   - Round-robin vCPUs with a fixed instruction/tick quantum.
+   - Synchronization boundary at the end of each quantum:
+     - Drain device events (MMIO completions, timers).
+     - Deliver pending interrupts/IPIs.
+   - Determinism is helpful for debugging and for reproducible tests.
+
 ## System Instructions
 
 ### SYSCALL/SYSRET (64-bit Fast System Call)

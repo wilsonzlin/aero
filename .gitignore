@@ -26,6 +26,7 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+**/*.rs.bk
 
 # Build outputs (common)
 node_modules/
@@ -41,7 +42,6 @@ pkg/
 .vite/
 .cache/
 *.tsbuildinfo
-**/*.rs.bk
 *.wasm
 web/dist/
 bench/output/

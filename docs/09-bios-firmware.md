@@ -58,6 +58,32 @@ Windows 7 can boot from both legacy BIOS and UEFI. We implement a custom BIOS th
 
 ---
 
+## SMP Boot (BSP + APs)
+
+For multi-core guests, the emulator must model the x86 SMP bring-up sequence:
+
+- **BSP (CPU0)** starts executing at the reset vector (`0xFFFF_FFF0` → `F000:FFF0`).
+- **APs (CPU1..N-1)** do *not* start executing at reset; they begin in a *wait-for-SIPI* state.
+- The BSP brings up APs via **local APIC IPIs** (writes to the ICR register):
+  - **INIT IPI** (level assert): resets the AP and transitions it to wait-for-SIPI.
+  - **SIPI (Startup IPI)**: releases the AP and starts it at `vector << 12` in real mode.
+
+### Trampoline Region
+
+The BIOS (or OS) places a small real-mode trampoline in low memory at a SIPI-addressable page
+(below 1MiB, 4KiB aligned). A typical placement is:
+
+- **Physical:** `0x8000`
+- **SIPI vector:** `0x08`
+
+The trampoline's job is to:
+
+1. Set up a temporary real-mode environment (segments + stack).
+2. Load a GDT and enable protected mode.
+3. Enable paging and switch to long mode.
+4. Jump to a shared **AP entry point** provided by firmware/OS.
+5. Signal "CPU online" to the BSP (e.g. via an atomic flag in shared memory).
+
 ## BIOS Implementation
 
 ### BIOS Memory Map

@@ -130,6 +130,16 @@
 | **MMU** | Virtual → Physical address translation | `Translate(vaddr) -> paddr` |
 | **Interrupt Controller** | IRQ handling, APIC emulation | `RaiseIRQ(num)`, `CheckPending()` |
 
+#### Multi-vCPU execution
+
+To support SMP guests, the CPU emulation worker hosts **2+ vCPUs**:
+
+- Each vCPU has its own `CpuState` and local APIC state.
+- Guest physical memory and device models are shared.
+- Scheduling is either:
+  - **Parallel vCPU workers** (one Web Worker per vCPU), or
+  - A **deterministic time-sliced scheduler** inside a single CPU worker (baseline).
+
 ### GPU Emulation Worker
 
 | Component | Responsibility | Key Interfaces |
