@@ -239,6 +239,7 @@ export class PerfSession implements PerfApi {
     this.aggregator.drain();
 
     const stats = this.aggregator.getStats();
+    const hasGraphicsSamples = this.aggregator.totalGraphicsSampleRecords > 0;
 
     out.nowMs = performance.now();
     out.fpsAvg = stats.avgFps > 0 ? stats.avgFps : undefined;
@@ -252,7 +253,12 @@ export class PerfSession implements PerfApi {
     out.lastMips = windowAgg.lastMips;
     out.breakdownAvgMs = windowAgg.breakdownAvgMs;
     out.drawCallsPerFrame = windowAgg.drawCallsPerFrame;
+    out.pipelineSwitchesPerFrame = hasGraphicsSamples ? stats.pipelineSwitchesPerFrame : undefined;
     out.ioBytesPerSec = windowAgg.ioBytesPerSec;
+    out.gpuUploadBytesPerSec = hasGraphicsSamples ? stats.gpuUploadBytesPerSec : undefined;
+
+    out.gpuTimingSupported = hasGraphicsSamples ? stats.gpuTimingSupported : undefined;
+    out.gpuTimingEnabled = hasGraphicsSamples ? stats.gpuTimingEnabled : undefined;
 
     const memory = perfMemory();
     out.hostJsHeapUsedBytes = memory?.usedJSHeapSize;

@@ -20,6 +20,31 @@ export type FrameSample = {
   now_epoch_ms?: number;
 };
 
+export type GraphicsSampleCounters = {
+  render_passes?: number;
+  pipeline_switches?: number;
+  bind_group_changes?: number;
+  upload_bytes?: bigint | number;
+};
+
+export type GraphicsSampleDurations = {
+  cpu_translate_ms?: number;
+  cpu_encode_ms?: number;
+  gpu_time_ms?: number | null;
+};
+
+export type GraphicsSampleGpuTiming = {
+  supported?: boolean;
+  enabled?: boolean;
+};
+
+export type GraphicsSample = {
+  counters?: GraphicsSampleCounters;
+  durations?: GraphicsSampleDurations;
+  gpu_timing?: GraphicsSampleGpuTiming;
+  now_epoch_ms?: number;
+};
+
 export class PerfWriter {
   constructor(
     sharedArrayBuffer: SharedArrayBuffer,
@@ -29,5 +54,7 @@ export class PerfWriter {
   setEnabled(enabled: boolean): void;
   frameSample(frameId: number, sample?: FrameSample): boolean;
   frame_sample(frameId: number, sample?: FrameSample): boolean;
-}
 
+  graphicsSample(frameId: number, sample?: GraphicsSample): boolean;
+  graphics_sample(frameId: number, sample?: GraphicsSample): boolean;
+}

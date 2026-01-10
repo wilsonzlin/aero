@@ -12,6 +12,16 @@ export type AggregatedFrame = {
   instructions: bigint;
   memoryBytes: bigint;
   drawCalls: number;
+  renderPasses: number;
+  pipelineSwitches: number;
+  bindGroupChanges: number;
+  uploadBytes: bigint;
+  cpuTranslateUs: number;
+  cpuEncodeUs: number;
+  gpuTimeUs: number;
+  gpuTimeValid: boolean;
+  gpuTimingSupported: boolean;
+  gpuTimingEnabled: boolean;
   ioReadBytes: number;
   ioWriteBytes: number;
   hasMainFrameTime: boolean;
@@ -24,9 +34,27 @@ export type PerfStats = {
   p50FrameMs: number;
   p95FrameMs: number;
   p99FrameMs: number;
+  p999FrameMs: number;
   avgFps: number;
+  fpsMedian: number;
+  fpsP95: number;
   fps1pLow: number;
+  fps0_1pLow: number;
+  varianceFrameMs2: number;
+  stdevFrameMs: number;
+  covFrameTime: number;
   avgMips: number;
+
+  drawCallsPerFrame: number;
+  renderPassesPerFrame: number;
+  pipelineSwitchesPerFrame: number;
+  bindGroupChangesPerFrame: number;
+  gpuUploadBytesPerSec: number;
+  cpuTranslateMs: number;
+  cpuEncodeMs: number;
+  gpuTimeAvgMs: number | null;
+  gpuTimingSupported: boolean;
+  gpuTimingEnabled: boolean;
 };
 
 export class PerfAggregator {
@@ -47,12 +75,15 @@ export class PerfAggregator {
   readonly recordCountsByWorkerKind: Map<number, number>;
   readonly totalRecordsDrained: number;
   readonly totalFrameSampleRecords: number;
+  readonly totalGraphicsSampleRecords: number;
+
+  hotspots: unknown[];
 
   drain(): void;
   getStats(): PerfStats;
+  setHotspots(hotspots: unknown[]): void;
   export(): unknown;
 }
 
 export function collectEnvironmentMetadata(): unknown;
 export function collectBuildMetadata(): unknown;
-
