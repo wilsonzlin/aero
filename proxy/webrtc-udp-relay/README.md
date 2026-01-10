@@ -53,6 +53,14 @@ cd proxy/webrtc-udp-relay
 docker compose --profile relay-only up --build
 ```
 
+To populate `GET /version` in the container build, export build args first:
+
+```bash
+export BUILD_COMMIT="$(git rev-parse HEAD)"
+export BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+docker compose --profile relay-only up --build
+```
+
 Health check:
 
 ```bash
@@ -203,6 +211,8 @@ The service supports configuration via environment variables and equivalent flag
 - `AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR` / `--listen-addr` (default `127.0.0.1:8080`)
 - `AERO_WEBRTC_UDP_RELAY_PUBLIC_BASE_URL` / `--public-base-url` (optional; used for logging)
 - `ALLOWED_ORIGINS` / `--allowed-origins` (optional; comma-separated browser origins)
+  - Each entry must be an origin of the form `http(s)://host[:port]` (no path/query/fragment).
+  - Special values: `*` (allow any origin) and `null` (allow `Origin: null`).
 - `AERO_WEBRTC_UDP_RELAY_LOG_FORMAT` / `--log-format` (`text` or `json`)
 - `AERO_WEBRTC_UDP_RELAY_LOG_LEVEL` / `--log-level` (`debug`, `info`, `warn`, `error`)
 - `AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT` / `--shutdown-timeout` (default `15s`)
@@ -272,6 +282,7 @@ The container + client integration uses the following environment variables and 
 - `ALLOWED_ORIGINS`: CORS allow-list for browser clients (comma-separated).
   - Example: `http://localhost:5173,http://localhost:3000`
   - If unset, the relay defaults to allowing only same-host origins (so TURN credentials from `/webrtc/ice` are not exposed cross-origin).
+  - Entries must be `http(s)://host[:port]` (no path/query/fragment). `*` and `null` are also accepted.
 - `WEBRTC_UDP_PORT_MIN` / `WEBRTC_UDP_PORT_MAX`: UDP port range used for ICE candidates.
   - Must match your firewall rules and any container port publishing (see below).
   - The relay requires a minimum of 100 ports when a range is configured (rule of thumb: ~100 UDP ports per ~50 concurrent sessions).

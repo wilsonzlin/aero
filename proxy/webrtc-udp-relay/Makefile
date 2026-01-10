@@ -32,4 +32,4 @@ staticcheck:
 	"$$(go env GOPATH)/bin/staticcheck" ./...
 
 docker-build:
-	docker build -f Dockerfile .
+	docker build -f Dockerfile --build-arg BUILD_COMMIT="$(GIT_COMMIT)" --build-arg BUILD_TIME="$(BUILD_TIME)" .
