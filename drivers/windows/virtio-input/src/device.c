@@ -291,6 +291,11 @@ static void VirtioInputReportReady(_In_ void *context)
     }
 }
 
+static VOID VirtioInputEvtDeviceSurpriseRemoval(_In_ WDFDEVICE Device)
+{
+    VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_CANCELLED);
+}
+
 NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INIT DeviceInit)
 {
     WDF_PNPPOWER_EVENT_CALLBACKS pnpPowerCallbacks;
@@ -307,6 +312,7 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
     pnpPowerCallbacks.EvtDeviceReleaseHardware = VirtioInputEvtDeviceReleaseHardware;
     pnpPowerCallbacks.EvtDeviceD0Entry = VirtioInputEvtDeviceD0Entry;
     pnpPowerCallbacks.EvtDeviceD0Exit = VirtioInputEvtDeviceD0Exit;
+    pnpPowerCallbacks.EvtDeviceSurpriseRemoval = VirtioInputEvtDeviceSurpriseRemoval;
     WdfDeviceInitSetPnpPowerEventCallbacks(DeviceInit, &pnpPowerCallbacks);
 
     // Internal HID IOCTLs use the request's buffers directly; keep it simple for now.
@@ -480,6 +486,8 @@ NTSTATUS VirtioInputEvtDeviceReleaseHardware(_In_ WDFDEVICE Device, _In_ WDFCMRE
 
     PAGED_CODE();
 
+    VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_DEVICE_NOT_READY);
+
     {
         PDEVICE_CONTEXT deviceContext = VirtioInputGetDeviceContext(Device);
         VirtioPciInterruptsReleaseHardware(&deviceContext->Interrupts);
@@ -510,6 +518,8 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         }
     }
 
+    VirtioInputReadReportQueuesStart(Device);
+
     return STATUS_SUCCESS;
 }
 
@@ -517,11 +527,8 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
 {
     UNREFERENCED_PARAMETER(TargetState);
 
-    /*
-     * Clear any latched state (prevents "stuck keys" when the device is power
-     * cycled or the VM focus changes) and emit an all-zero report to the HID
-     * stacks.
-     */
+    VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_DEVICE_NOT_READY);
+
     {
         PDEVICE_CONTEXT deviceContext = VirtioInputGetDeviceContext(Device);
         virtio_input_device_reset_state(&deviceContext->InputDevice, true);

@@ -101,12 +101,6 @@ typedef struct _VIRTIO_INPUT_FILE_CONTEXT {
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VIRTIO_INPUT_FILE_CONTEXT, VirtioInputGetFileContext);
 
-typedef struct _VIRTIO_INPUT_PENDING_REPORT {
-    BOOLEAN Valid;
-    UCHAR Data[64];
-    size_t Size;
-} VIRTIO_INPUT_PENDING_REPORT, *PVIRTIO_INPUT_PENDING_REPORT;
-
 enum { VIRTIO_INPUT_QUEUE_COUNT = 2 };
 
 typedef struct _VIRTIO_PCI_BAR {
@@ -127,7 +121,9 @@ typedef struct _DEVICE_CONTEXT {
     // queue used for non-collection (parent interface) opens.
     WDFQUEUE ReadReportQueue[VIRTIO_INPUT_MAX_REPORT_ID + 1];
     WDFSPINLOCK ReadReportLock;
-    VIRTIO_INPUT_PENDING_REPORT PendingReport[VIRTIO_INPUT_MAX_REPORT_ID + 1];
+    WDFWAITLOCK ReadReportWaitLock;
+    BOOLEAN ReadReportsEnabled;
+    struct virtio_input_report_ring PendingReportRing[VIRTIO_INPUT_MAX_REPORT_ID + 1];
 
     PVIRTIO_STATUSQ StatusQ;
     VIOINPUT_COUNTERS Counters;
@@ -156,6 +152,8 @@ EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL VirtioInputEvtIoDeviceControl;
 NTSTATUS VirtioInputQueueInitialize(_In_ WDFDEVICE Device);
 NTSTATUS VirtioInputFileConfigure(_Inout_ WDFDEVICE_INIT *DeviceInit);
 NTSTATUS VirtioInputReadReportQueuesInitialize(_In_ WDFDEVICE Device);
+VOID VirtioInputReadReportQueuesStart(_In_ WDFDEVICE Device);
+VOID VirtioInputReadReportQueuesStopAndFlush(_In_ WDFDEVICE Device, _In_ NTSTATUS CompletionStatus);
 
 NTSTATUS VirtioInputHandleHidIoctl(
     _In_ WDFQUEUE Queue,
