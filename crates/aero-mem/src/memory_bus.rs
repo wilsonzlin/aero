@@ -184,6 +184,14 @@ impl MemoryBus {
         self.register_mmio(range, handler)
     }
 
+    /// Register an "open bus" region: reads return `0xFF`, writes are ignored.
+    ///
+    /// This is useful for reserving memory holes (e.g. PCI MMIO space) without
+    /// attaching a device model yet.
+    pub fn register_open_bus(&mut self, range: std::ops::Range<u64>) -> Result<(), MemoryBusError> {
+        self.register_mmio_fn(range, |_offset, data| data.fill(0xFF), |_offset, _data| {})
+    }
+
     /// Register a read-only ROM region.
     pub fn register_rom(&mut self, start: u64, data: Arc<[u8]>) -> Result<(), MemoryBusError> {
         let len_u64 = u64::try_from(data.len()).unwrap_or(u64::MAX);

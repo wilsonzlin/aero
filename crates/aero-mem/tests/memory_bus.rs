@@ -317,6 +317,23 @@ fn register_mmio_fn_works() {
 }
 
 #[test]
+fn open_bus_reads_as_ff_and_ignores_writes() {
+    let ram = make_ram(0x100);
+    let mut bus = MemoryBus::new(ram.clone());
+
+    ram.write_u8(0x50, 0x12);
+    bus.register_open_bus(0x50..0x60).unwrap();
+
+    assert_eq!(bus.read_u8(0x4F), 0x00);
+    assert_eq!(bus.read_u8(0x50), 0xFF);
+    assert_eq!(bus.read_u8(0x5F), 0xFF);
+    assert_eq!(bus.read_u8(0x60), 0x00);
+
+    bus.write_u8(0x50, 0x34);
+    assert_eq!(ram.read_u8(0x50), 0x12);
+}
+
+#[test]
 fn dma_bulk_read_rejects_mmio_without_side_effects() {
     let ram = make_ram(0x4000);
     let mut bus = MemoryBus::new(ram.clone());
