@@ -25,6 +25,7 @@ If you have not installed Guest Tools yet, start here:
 - Driver installed but not working:
   - [Device Manager Code 28 (drivers not installed)](#issue-device-manager-code-28-drivers-not-installed)
   - [Device Manager Code 10 (device cannot start)](#issue-device-manager-code-10-device-cannot-start)
+  - [Virtio device not found or Unknown device after switching](#issue-virtio-device-not-found-or-unknown-device-after-switching)
 - Boot failures after switching storage:
   - [Storage controller switch gotchas (boot loops, 0x7B)](#issue-storage-controller-switch-gotchas-boot-loops-0x7b)
   - [No bootable device or BOOTMGR is missing after switching storage](#issue-no-bootable-device-or-bootmgr-is-missing-after-switching-storage)
@@ -227,7 +228,7 @@ Do storage first, then network, then GPU. If you change storage + GPU simultaneo
 3. Verify the boot order still prefers the disk.
 4. If you can’t quickly resolve it, switch back to the known-good **AHCI** storage controller and boot Windows, then retry the switch to virtio-blk.
 
-## Issue: Virtio device “not found” / Unknown device after switching
+## Issue: Virtio device not found or Unknown device after switching
 
 **Symptom**
 
