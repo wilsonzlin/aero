@@ -2,6 +2,11 @@
 
 `image-gateway` is a small backend service that enables **secure browser streaming of large disk images** stored in S3 (or S3-compatible) via **HTTP Range**.
 
+Related docs:
+- [Disk Image Lifecycle and Access Control](../../docs/17-disk-image-lifecycle-and-access-control.md) (hosted uploads/ownership/sharing/writeback)
+- [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](../../docs/16-disk-image-streaming-auth.md) (normative disk-bytes endpoint behavior)
+- [deployment/cloudfront-disk-streaming.md](../../docs/deployment/cloudfront-disk-streaming.md) (concrete CloudFront setup)
+
 The intended production path is:
 
 1. Client uploads the disk image to S3 using **multipart upload** with presigned `PUT` URLs.
