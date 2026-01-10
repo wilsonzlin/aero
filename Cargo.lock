@@ -225,8 +225,16 @@ dependencies = [
 name = "aero-storage"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "hyper 0.14.32",
+ "hyper-rustls",
  "lru",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 1.0.69",
+ "tokio",
+ "url",
 ]
 
 [[package]]
@@ -1663,6 +1671,7 @@ dependencies = [
  "rustls",
  "tokio",
  "tokio-rustls",
+ "webpki-roots",
 ]
 
 [[package]]

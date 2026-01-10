@@ -6,3 +6,17 @@ edition = "2021"
 [dependencies]
 thiserror = "1.0"
 lru = "0.12"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bytes = "1"
+hyper = { version = "0.14", features = ["client", "http1", "tcp"] }
+hyper-rustls = { version = "0.24", default-features = false, features = ["http1", "tls12", "webpki-tokio"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+url = "2"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+hyper = { version = "0.14", features = ["full"] }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

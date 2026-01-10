@@ -93,6 +93,30 @@ export async function openFileHandle(
   return await parentDir.getFileHandle(filename, { create: options.create === true });
 }
 
+/**
+ * Remove a file or directory entry at `path`.
+ *
+ * Notes:
+ * - Directories require `{ recursive: true }`.
+ * - Missing entries are ignored.
+ */
+export async function removeOpfsEntry(path: string, options: { recursive?: boolean } = {}): Promise<void> {
+  const parts = splitOpfsPath(path);
+  const name = parts.pop();
+  if (!name) {
+    throw new Error("OPFS path must not be empty.");
+  }
+  const root = await getOpfsRoot();
+  const parentDir = await getDirectoryHandleForPath(root, parts, false);
+  try {
+    await parentDir.removeEntry(name, { recursive: options.recursive === true });
+  } catch (err) {
+    // NotFoundError etc: treat as already removed.
+    if (err instanceof DOMException && err.name === "NotFoundError") return;
+    throw err;
+  }
+}
+
 export async function importFileToOpfs(
   file: File,
   destPath: string,

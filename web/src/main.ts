@@ -6,6 +6,7 @@ import { fnv1a32Hex } from "./utils/fnv1a";
 import { createAudioOutput } from "./platform/audio";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { importFileToOpfs } from "./platform/opfs";
+import { RemoteStreamingDisk } from "./platform/remote_disk";
 import { requestWebGpuDevice } from "./platform/webgpu";
 import { installPerfHud } from "./perf/hud_entry";
 import { installAeroGlobal } from "./runtime/aero_global";
@@ -114,6 +115,7 @@ function render(): void {
     renderWebGpuPanel(),
     renderGpuWorkerPanel(),
     renderOpfsPanel(),
+    renderRemoteDiskPanel(),
     renderAudioPanel(),
     renderWorkersPanel(report),
     renderIpcDemoPanel(),
@@ -314,6 +316,125 @@ function renderOpfsPanel(): HTMLElement {
       progress,
     ),
     status,
+  );
+}
+
+function renderRemoteDiskPanel(): HTMLElement {
+  const warning = el(
+    "div",
+    { class: "mono" },
+    "Remote disk images are experimental. Only use images you own/have rights to. ",
+    "The server must support HTTP Range requests and CORS (see docs/disk-images.md).",
+  );
+
+  const enabledInput = el("input", { type: "checkbox" }) as HTMLInputElement;
+  const urlInput = el("input", { type: "url", placeholder: "https://example.com/disk.raw" }) as HTMLInputElement;
+  const blockSizeInput = el("input", { type: "number", value: String(1024), min: "4" }) as HTMLInputElement;
+  const cacheLimitInput = el("input", { type: "number", value: String(512), min: "0" }) as HTMLInputElement;
+  const output = el("pre", { text: "" });
+
+  const probeButton = el("button", { text: "Probe Range support" }) as HTMLButtonElement;
+  const readButton = el("button", { text: "Read sample bytes" }) as HTMLButtonElement;
+  const progress = el("progress", { value: "0", max: "1", style: "width: 320px" }) as HTMLProgressElement;
+
+  let disk: RemoteStreamingDisk | null = null;
+
+  function updateButtons(): void {
+    const enabled = enabledInput.checked;
+    probeButton.disabled = !enabled;
+    readButton.disabled = !enabled;
+  }
+
+  enabledInput.addEventListener("change", updateButtons);
+  updateButtons();
+
+  probeButton.onclick = async () => {
+    output.textContent = "";
+    progress.value = 0;
+    const url = urlInput.value.trim();
+    if (!url) {
+      output.textContent = "Enter a URL first.";
+      return;
+    }
+
+    try {
+      const blockSize = Number(blockSizeInput.value) * 1024;
+      const cacheLimitMiB = Number(cacheLimitInput.value);
+      const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
+
+      output.textContent = "Probing… (this will make HTTP requests)\n";
+      disk = await RemoteStreamingDisk.open(url, {
+        blockSize,
+        cacheLimitBytes,
+        prefetchSequentialBlocks: 2,
+      });
+      const status = await disk.getCacheStatus();
+      output.textContent = JSON.stringify(status, null, 2);
+    } catch (err) {
+      output.textContent = err instanceof Error ? err.message : String(err);
+    }
+  };
+
+  readButton.onclick = async () => {
+    output.textContent = "";
+    progress.value = 0;
+    const url = urlInput.value.trim();
+    if (!url) {
+      output.textContent = "Enter a URL first.";
+      return;
+    }
+
+    try {
+      if (!disk) {
+        const blockSize = Number(blockSizeInput.value) * 1024;
+        const cacheLimitMiB = Number(cacheLimitInput.value);
+        const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
+        disk = await RemoteStreamingDisk.open(url, { blockSize, cacheLimitBytes, prefetchSequentialBlocks: 2 });
+      }
+
+      const logLines: string[] = [];
+      const bytes = await disk.read(1024, 16, (msg) => {
+        logLines.push(msg);
+        output.textContent = logLines.join("\n");
+      });
+
+      const status = await disk.getCacheStatus();
+      output.textContent = JSON.stringify(
+        { read: { offset: 1024, length: 16, bytes: Array.from(bytes) }, cache: status, log: logLines },
+        null,
+        2,
+      );
+      progress.value = 1;
+    } catch (err) {
+      output.textContent = err instanceof Error ? err.message : String(err);
+    }
+  };
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Remote disk image (streaming via HTTP Range)" }),
+    warning,
+    el(
+      "div",
+      { class: "row" },
+      el("label", { text: "Enable:" }),
+      enabledInput,
+      el("label", { text: "URL:" }),
+      urlInput,
+    ),
+    el(
+      "div",
+      { class: "row" },
+      el("label", { text: "Block KiB:" }),
+      blockSizeInput,
+      el("label", { text: "Cache MiB (0=off):" }),
+      cacheLimitInput,
+      probeButton,
+      readButton,
+      progress,
+    ),
+    output,
   );
 }
 

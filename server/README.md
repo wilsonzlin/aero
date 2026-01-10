@@ -124,3 +124,21 @@ Response:
 | `AERO_PROXY_MAX_WS_MESSAGE_BYTES` | Max WebSocket message size | `1048576` |
 | `AERO_PROXY_ALLOWED_ORIGINS` | Optional comma-separated Origin allowlist for WS/DNS | *(disabled)* |
 
+---
+
+## Static file server with Range + CORS (for streaming disk images)
+
+For local development/testing of the streaming disk backend, this repo also
+includes a tiny standalone server script:
+
+```bash
+node server/range_server.js --dir /path/to/images --port 8081
+```
+
+It serves files with:
+
+- HTTP `Range` support (`206 Partial Content`)
+- CORS headers suitable for browser Range reads
+- Optional COOP/COEP headers (`--coop-coep`)
+
+This is intended for development only; it is not hardened.
