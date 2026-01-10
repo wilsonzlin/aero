@@ -11,6 +11,7 @@ pub mod render;
 pub mod vbe;
 
 use crate::io::PortIO;
+use core::sync::atomic::Ordering;
 
 pub use dac::VgaDac;
 pub use memory::{VgaMemory, VramPlane, VGA_PLANE_SIZE};
@@ -149,7 +150,7 @@ pub struct LegacyBdaInfo {
     pub active_page: u8,
 }
 
-use crate::display::framebuffer::{FramebufferError, OwnedSharedFramebuffer};
+use crate::display::framebuffer::{FramebufferError, OwnedSharedFramebuffer, SharedFramebuffer};
 
 pub struct VgaSharedFramebufferOutput {
     shared_framebuffer: OwnedSharedFramebuffer,
@@ -160,7 +161,17 @@ impl VgaSharedFramebufferOutput {
         let stride_bytes = max_width
             .checked_mul(4)
             .ok_or(FramebufferError::InvalidDimensions)?;
-        let shared_framebuffer = OwnedSharedFramebuffer::new(max_width, max_height, stride_bytes)?;
+        let mut shared_framebuffer = OwnedSharedFramebuffer::new(max_width, max_height, stride_bytes)?;
+        {
+            // Mark the buffer as "uninitialized" until the first successful `present_*` call.
+            // Consumers should ignore config_counter==0 and wait for a real mode to be set.
+            let view = shared_framebuffer.view_mut();
+            view.initialize_rgba8888();
+            let header = view.header();
+            header.width.store(0, Ordering::Relaxed);
+            header.height.store(0, Ordering::Relaxed);
+            header.stride_bytes.store(0, Ordering::Relaxed);
+        }
         Ok(Self { shared_framebuffer })
     }
 
@@ -170,6 +181,10 @@ impl VgaSharedFramebufferOutput {
 
     pub fn len_bytes(&self) -> usize {
         self.shared_framebuffer.len_bytes()
+    }
+
+    pub fn view_mut(&mut self) -> SharedFramebuffer<'_> {
+        self.shared_framebuffer.view_mut()
     }
 
     pub fn present_rgba8888(
@@ -279,6 +294,19 @@ impl Vga {
 
     pub fn render(&mut self) -> Option<(usize, usize, &[u32])> {
         self.renderer.render(&self.regs, &mut self.vram, &mut self.dac)
+    }
+
+    /// Renders the current VGA mode (if supported) and publishes the resulting
+    /// RGBA8888 pixels into the provided shared framebuffer.
+    pub fn present_to_shared_framebuffer(
+        &mut self,
+        output: &mut VgaSharedFramebufferOutput,
+    ) -> Result<bool, FramebufferError> {
+        let Some((width, height, framebuffer)) = self.render() else {
+            return Ok(false);
+        };
+        output.present_rgba8888_u32(width, height, framebuffer)?;
+        Ok(true)
     }
 
     fn dac_port_write_u8(&mut self, port: u16, val: u8) {

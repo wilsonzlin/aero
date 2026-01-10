@@ -93,6 +93,14 @@ impl<'a> SharedFramebuffer<'a> {
         self.pixels.len()
     }
 
+    pub fn pixels(&self) -> &[u8] {
+        &self.pixels
+    }
+
+    pub fn pixels_mut(&mut self) -> &mut [u8] {
+        &mut self.pixels
+    }
+
     pub fn initialize_rgba8888(&self) {
         self.header.magic.store(FRAMEBUFFER_MAGIC, Ordering::Relaxed);
         self.header.version.store(FRAMEBUFFER_VERSION, Ordering::Relaxed);
