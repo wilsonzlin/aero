@@ -944,13 +944,13 @@ impl DrawCallBatcher {
 }
 ```
 
- ### Shader Caching
- 
- ```rust
- pub struct ShaderCache {
-     compiled_shaders: HashMap<ShaderKey, CompiledShader>,
-     wgsl_cache: HashMap<Vec<u8>, String>,  // DXBC -> WGSL
- }
+### Shader Caching
+
+```rust
+pub struct ShaderCache {
+    compiled_shaders: HashMap<ShaderKey, CompiledShader>,
+    wgsl_cache: HashMap<Vec<u8>, String>,  // DXBC -> WGSL
+}
 
 impl ShaderCache {
     pub fn get_shader(&mut self, dxbc: &[u8], device: &GPUDevice) -> &CompiledShader {
@@ -979,27 +979,111 @@ impl ShaderCache {
         }
         
         self.compiled_shaders.get(&key).unwrap()
-     }
- }
- ```
- 
- In practice, an in-memory `HashMap` is not enough: the DXBC → WGSL translation and
- WGSL validation/compilation can dominate startup time on repeat runs. Persisting
- translation artifacts across sessions (IndexedDB with an OPFS blob store) avoids
- multi-second stalls while remaining safe:
- 
- - Cache keys are derived from a strong hash of DXBC bytecode plus translation flags
-   (e.g. half-pixel mode) and a capabilities hash.
- - On cache hit we still compile WGSL to a `GPUShaderModule`, but we skip translation.
- - If compilation fails (browser updates / WGSL validation changes), invalidate the
-   persistent entry and fall back to retranslation.
- - Use LRU eviction with entry/byte limits to avoid unbounded growth.
- 
- See `web/gpu/persistent_cache.ts` for a concrete implementation of the persistent
- cache layer.
- 
- ---
- 
+    }
+}
+```
+
+### Persistent GPU Cache (Phase 1: Shader Translation + Reflection)
+
+In practice, an in-memory `HashMap` is not enough: the DXBC → WGSL translation and reflection can dominate startup time on repeat runs. Persisting translation artifacts across sessions (IndexedDB, with optional OPFS indirection for large blobs) avoids multi-second stalls while remaining safe.
+
+We persist *derived artifacts* across browser sessions:
+
+- **DXBC → WGSL output** (string)
+- **Reflection metadata** required for bind-group/pipeline layout derivation
+
+> We intentionally do **not** persist compiled WebGPU pipelines or `GPUShaderModule` objects. Those are backend/driver-managed and not stable across sessions.
+
+#### Cache Key Scheme (Versioned)
+
+All persisted artifacts are keyed by a stable, versioned identifier:
+
+```
+CacheKey = hash(content_bytes) + schema_version + backend_kind + device_fingerprint(optional)
+```
+
+Where:
+
+- `content_bytes`: the *source* bytes that uniquely determine the derived artifact (e.g., raw DXBC bytecode).
+- `hash`: a strong hash such as BLAKE3/SHA-256 encoded as hex/base64url.
+- `schema_version`: explicit breaking-change counter.
+- `backend_kind`: identifies the translator/reflection backend and configuration (e.g., `dxbc->wgsl@v1`, `naga@0.20`). Translator flags (e.g., half-pixel mode) must be included here.
+- `device_fingerprint` (optional): include only when codegen depends on device limits/features (a capabilities hash).
+
+Example key string (human-readable, safe for IndexedDB keys):
+
+```
+gpu-cache/v{CACHE_SCHEMA_VERSION}/{backend_kind}/{device_hash_or_none}/{content_hash}
+```
+
+`CACHE_SCHEMA_VERSION` **must** be incremented whenever we change:
+
+- serialization format of the cached value
+- reflection schema
+- translation semantics (including dependency version bumps that change output)
+
+#### Storage Backends
+
+- **Primary: IndexedDB** for small blobs (WGSL + reflection metadata are typically small enough).
+- **Optional: OPFS** for large blobs if we later cache bigger artifacts (e.g., preprocessed shader libraries, large debug maps).
+
+In practice, the implementation can:
+
+- store the entry inline in IndexedDB when `value_bytes <= INLINE_THRESHOLD` (e.g., 64–256 KiB)
+- store larger values in OPFS (content-addressed file name = cache key hash) and keep a small IndexedDB record pointing to the OPFS path
+
+#### Entry Format + Corruption Defense
+
+Each record stores:
+
+- `value_bytes` (WGSL + reflection, serialized)
+- `size_bytes`
+- `created_at_ms`
+- `last_access_ms` (for LRU)
+
+On **persistent cache hit**, we still treat data as untrusted:
+
+1. Deserialize.
+2. **Validate WGSL via Naga** (parse + validate).
+3. If validation fails, treat as a miss and delete the corrupted entry.
+4. If WGSL compilation fails (browser updates / WGSL validation changes), invalidate the entry and fall back to retranslation.
+
+This prevents "poisoned" caches from permanently breaking startup.
+
+#### Integration with `ShaderCache`
+
+For the DXBC→WGSL/reflection phase:
+
+1. Check **persistent** cache.
+2. Check **in-memory** cache.
+3. Translate + reflect + validate, then populate both caches.
+
+The in-memory cache still holds session-only objects like `GPUShaderModule` and any compiled pipeline state.
+
+#### Eviction + `clear_cache()`
+
+Persisted caches must be bounded.
+
+- Maintain a **maximum total byte budget** (e.g., 32–128 MiB configurable).
+- Track `last_access_ms` per entry.
+- When inserting, evict least-recently-used entries until under budget.
+
+Expose a `clear_cache()` API that removes all persisted GPU cache state (IndexedDB + any OPFS files used).
+
+#### Telemetry
+
+Track at minimum:
+
+- `persistent_hits`, `persistent_misses`
+- `bytes_read`, `bytes_written`
+- `entries_evicted`, `eviction_bytes`
+
+Telemetry should be queryable from the UI/devtools overlay to confirm the persistent cache is working and to diagnose regressions.
+
+See `web/gpu/persistent_cache.ts` for a concrete implementation of the persistent cache layer.
+
+---
+
 ## Next Steps
 
 - See [`docs/graphics/win7-wddm11-aerogpu-driver.md`](./graphics/win7-wddm11-aerogpu-driver.md) for the Windows 7 WDDM 1.1 (KMD+UMD) architecture and command transport boundary.

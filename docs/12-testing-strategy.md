@@ -290,6 +290,33 @@ mod device_tests {
 }
 ```
 
+### GPU Persistent Cache Tests
+
+The persistent GPU cache should have unit tests that lock down **keying and versioning**, since subtle mistakes can lead to hard-to-debug correctness or performance issues.
+
+```rust
+#[cfg(test)]
+mod gpu_cache_tests {
+    use super::*;
+
+    #[test]
+    fn cache_key_changes_with_schema_version() {
+        let shader_bytes = b"dxbc...";
+        let k1 = CacheKey::new(1, BackendKind::DxbcToWgsl, shader_bytes, None);
+        let k2 = CacheKey::new(2, BackendKind::DxbcToWgsl, shader_bytes, None);
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn cache_key_changes_with_backend_kind() {
+        let shader_bytes = b"dxbc...";
+        let k1 = CacheKey::new(1, BackendKind::DxbcToWgsl, shader_bytes, None);
+        let k2 = CacheKey::new(1, BackendKind::HlslToWgsl, shader_bytes, None);
+        assert_ne!(k1, k2);
+    }
+}
+```
+
 ---
 
 ## Integration Tests
@@ -708,6 +735,42 @@ test.describe('Browser Compatibility', () => {
         const screenshot = await page.screenshot();
         expect(screenshot).toMatchSnapshot('desktop.png');
     });
+});
+```
+
+### Browser Integration Test: Persistent Shader Cache
+
+Use a browser automation test to verify persistence across reloads:
+
+1. Load the app.
+2. Trigger a shader translation/compile path that is known to populate the persistent cache.
+3. Capture telemetry counters (hits/misses, bytes written).
+4. Reload the page (new JS context).
+5. Trigger the same shader path again.
+6. Assert that **persistent cache hits** increased and translation work did not run.
+
+```javascript
+test('persists shader translations across reload', async ({ page }) => {
+  await page.goto('/');
+
+  // Ensure clean slate.
+  await page.evaluate(() => window.aero.gpu.clearCache());
+
+  // Warm the cache.
+  await page.evaluate(async () => {
+    await window.aero.gpu.compileKnownShaderSetForTests();
+  });
+  const warmStats = await page.evaluate(() => window.aero.gpu.getCacheTelemetry());
+  expect(warmStats.bytes_written).toBeGreaterThan(0);
+
+  // New session.
+  await page.reload();
+
+  await page.evaluate(async () => {
+    await window.aero.gpu.compileKnownShaderSetForTests();
+  });
+  const coldStats = await page.evaluate(() => window.aero.gpu.getCacheTelemetry());
+  expect(coldStats.persistent_hits).toBeGreaterThan(0);
 });
 ```
 

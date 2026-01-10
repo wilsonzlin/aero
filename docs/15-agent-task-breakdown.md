@@ -271,6 +271,7 @@ pub trait GpuCommandProcessor {
 | WG-007 | Draw call batching           | P1       | WG-002       | Medium     |
 | WG-008 | Framebuffer presentation     | P0       | WG-002       | Medium     |
 | WG-009 | WebGL2 fallback              | P2       | None         | Very High  |
+| WG-010 | Persistent GPU cache (shader translations + reflection, IndexedDB/OPFS, versioned keys, LRU, telemetry, clear API) | P1 | WG-001 | Medium |
 
 #### Implementation notes (WG-001..WG-009)
 

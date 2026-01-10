@@ -387,49 +387,91 @@ impl DrawBatcher {
 ### Shader Compilation Caching
 
 ```rust
+pub const CACHE_SCHEMA_VERSION: u32 = 1;
+
 pub struct ShaderCache {
-    // In-memory cache
+    // In-memory (session) cache for WebGPU objects we cannot persist.
     compiled: HashMap<ShaderKey, CompiledShader>,
     
-    // Persistent cache (IndexedDB)
-    persistent: PersistentCache,
+    // In-memory cache for derived artifacts (WGSL + reflection).
+    derived: HashMap<CacheKey, CachedShaderTranslation>,
+    
+    // Persistent cache (IndexedDB; optional OPFS indirection for large blobs).
+    persistent: PersistentGpuCache,
     
     // Compilation queue
     pending: VecDeque<ShaderCompileRequest>,
+
+    telemetry: ShaderCacheTelemetry,
 }
 
 impl ShaderCache {
-    pub async fn get_shader(&mut self, dxbc: &[u8], device: &GPUDevice) -> &CompiledShader {
-        let key = ShaderKey::from_bytecode(dxbc);
+    /// Returns a compiled shader module, persisting only CPU-derived artifacts.
+    pub async fn get_shader(&mut self, dxbc: &[u8], device: &GPUDevice) -> Result<&CompiledShader> {
+        let key = ShaderKey::from_bytecode(dxbc); // includes backend_kind + schema_version
+        let cache_key = CacheKey::new(CACHE_SCHEMA_VERSION, BackendKind::DxbcToWgsl, dxbc, device);
         
-        // Check memory cache
-        if self.compiled.contains_key(&key) {
-            return self.compiled.get(&key).unwrap();
+        // (1) Persistent cache first (cross-session derived artifacts).
+        if let Some(cached) = self.persistent.get(&cache_key).await? {
+            self.telemetry.persistent_hits += 1;
+            self.telemetry.bytes_read += cached.size_bytes;
+
+            // Corruption defense: validate cached WGSL with Naga.
+            if validate_wgsl_with_naga(&cached.wgsl).is_ok() {
+                return Ok(self.compile_from_translation(key, cached, device));
+            }
+
+            // Treat as miss and delete corrupted entry.
+            self.persistent.remove(&cache_key).await?;
         }
-        
-        // Check persistent cache
-        if let Some(cached) = self.persistent.get(&key).await {
-            let module = device.create_shader_module(&GPUShaderModuleDescriptor {
-                code: &cached.wgsl,
-            });
-            self.compiled.insert(key.clone(), CompiledShader { module, wgsl: cached.wgsl });
-            return self.compiled.get(&key).unwrap();
+        self.telemetry.persistent_misses += 1;
+
+        // (2) In-memory cache for derived artifacts.
+        if let Some(cached) = self.derived.get(&cache_key).cloned() {
+            return Ok(self.compile_from_translation(key, cached, device));
         }
+
+        // (3) Translate + reflect + validate, then populate caches.
+        let translated = translate_and_reflect_dxbc(dxbc)?;
+        validate_wgsl_with_naga(&translated.wgsl)?;
+        self.persistent.put(&cache_key, &translated).await?; // may trigger LRU eviction
+        self.telemetry.bytes_written += translated.size_bytes;
+        self.derived.insert(cache_key, translated.clone());
         
-        // Compile (potentially async)
-        let wgsl = translate_dxbc_to_wgsl(dxbc);
+        Ok(self.compile_from_translation(key, translated, device))
+    }
+
+    fn compile_from_translation(
+        &mut self,
+        key: ShaderKey,
+        translated: CachedShaderTranslation,
+        device: &GPUDevice,
+    ) -> &CompiledShader {
+        // If we already compiled this module this session, reuse it.
+        if let Some(existing) = self.compiled.get(&key) {
+            return existing;
+        }
+
         let module = device.create_shader_module(&GPUShaderModuleDescriptor {
-            code: &wgsl,
+            code: &translated.wgsl,
         });
-        
-        // Store in both caches
-        self.persistent.set(&key, &wgsl).await;
-        self.compiled.insert(key.clone(), CompiledShader { module, wgsl });
-        
+
+        self.compiled.insert(key.clone(), CompiledShader {
+            module,
+            wgsl: translated.wgsl,
+            reflection: translated.reflection,
+        });
         self.compiled.get(&key).unwrap()
     }
 }
 ```
+
+Key points:
+
+- The persistent cache stores **WGSL + reflection**, not `GPUShaderModule`/pipelines.
+- Cached WGSL is **validated via Naga** before use.
+- Persistent cache is **bounded** via a byte budget + LRU timestamps.
+- Expose a `clear_cache()` API and emit telemetry (hit/miss, bytes read/written) to verify behavior.
 
 ### Framebuffer Optimization
 
