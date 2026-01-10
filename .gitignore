@@ -17,6 +17,14 @@ aero-values*.yaml
 values.local.yaml
 values-local.yaml
 
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
 # OS / editor files
 .DS_Store
 Thumbs.db

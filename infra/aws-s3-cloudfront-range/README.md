@@ -140,6 +140,8 @@ If you set `custom_domain_names`, you must also set `acm_certificate_arn` (an AC
 - Fetching with `Range` headers typically triggers **CORS preflight** (`OPTIONS`) requests.
 - Configure `cors_allowed_origins` accordingly.
 
+If you allow **multiple** origins and rely on **S3** to emit CORS headers (`enable_edge_cors = false`), be aware that S3 will echo `Access-Control-Allow-Origin` based on the incoming `Origin` header, and CloudFront may cache that header along with the object. For multi-origin setups, prefer `enable_edge_cors = true` (and optionally `enable_edge_cors_preflight = true`) so CloudFront can add consistent CORS headers at the edge without fragmenting the cache.
+
 If you truly need *same-origin* (same scheme/host/port as your app), you usually need to serve both your app and `/images/*` through the **same CloudFront distribution**. You can still use this module as a reference for the S3 + OAC + caching pieces.
 
 #### Edge-handled preflight (`OPTIONS`) for `/images/*` (optional)

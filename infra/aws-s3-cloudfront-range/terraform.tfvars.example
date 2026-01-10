@@ -8,6 +8,10 @@ cors_allowed_origins = [
   "https://example.com",
 ]
 
+# Set true if browsers must send credentials (cookies) with requests.
+# Note: When true, you must use explicit origins (no "*").
+# cors_allow_credentials = false
+
 # Cache mode:
 # - immutable: long TTL (best for versioned object keys)
 # - mutable: short TTL (for overwrite-in-place workflows)
