@@ -28,7 +28,7 @@ pub enum Tag {
 
 impl Tag {
     fn from_f64(v: f64) -> Self {
-        if v.is_nan() || v.is_infinite() {
+        if v.is_nan() || v.is_infinite() || v.is_subnormal() {
             Tag::Special
         } else if v == 0.0 {
             Tag::Zero
@@ -328,6 +328,15 @@ impl X87 {
         self.write_st(0, st0 - v)
     }
 
+    pub fn fsubr_m32(&mut self, v: f32) -> Result<()> {
+        self.fsubr_m64(v as f64)
+    }
+
+    pub fn fsubr_m64(&mut self, v: f64) -> Result<()> {
+        let st0 = self.read_st(0)?;
+        self.write_st(0, v - st0)
+    }
+
     pub fn fmul_m32(&mut self, v: f32) -> Result<()> {
         self.fmul_m64(v as f64)
     }
@@ -349,6 +358,18 @@ impl X87 {
         self.write_st(0, st0 / v)
     }
 
+    pub fn fdivr_m32(&mut self, v: f32) -> Result<()> {
+        self.fdivr_m64(v as f64)
+    }
+
+    pub fn fdivr_m64(&mut self, v: f64) -> Result<()> {
+        let denom = self.read_st(0)?;
+        if denom == 0.0 {
+            self.signal_zero_divide()?;
+        }
+        self.write_st(0, v / denom)
+    }
+
     pub fn fadd_st0_sti(&mut self, i: usize) -> Result<()> {
         let a = self.read_st(0)?;
         let b = self.read_st(i)?;
@@ -367,10 +388,22 @@ impl X87 {
         self.write_st(0, a - b)
     }
 
+    pub fn fsubr_st0_sti(&mut self, i: usize) -> Result<()> {
+        let st0 = self.read_st(0)?;
+        let sti = self.read_st(i)?;
+        self.write_st(0, sti - st0)
+    }
+
     pub fn fsub_sti_st0(&mut self, i: usize) -> Result<()> {
         let a = self.read_st(i)?;
         let b = self.read_st(0)?;
         self.write_st(i, a - b)
+    }
+
+    pub fn fsubr_sti_st0(&mut self, i: usize) -> Result<()> {
+        let sti = self.read_st(i)?;
+        let st0 = self.read_st(0)?;
+        self.write_st(i, st0 - sti)
     }
 
     pub fn fmul_st0_sti(&mut self, i: usize) -> Result<()> {
@@ -394,6 +427,15 @@ impl X87 {
         self.write_st(0, a / b)
     }
 
+    pub fn fdivr_st0_sti(&mut self, i: usize) -> Result<()> {
+        let denom = self.read_st(0)?;
+        if denom == 0.0 {
+            self.signal_zero_divide()?;
+        }
+        let num = self.read_st(i)?;
+        self.write_st(0, num / denom)
+    }
+
     pub fn fdiv_sti_st0(&mut self, i: usize) -> Result<()> {
         let divisor = self.read_st(0)?;
         if divisor == 0.0 {
@@ -401,6 +443,15 @@ impl X87 {
         }
         let dividend = self.read_st(i)?;
         self.write_st(i, dividend / divisor)
+    }
+
+    pub fn fdivr_sti_st0(&mut self, i: usize) -> Result<()> {
+        let denom = self.read_st(i)?;
+        if denom == 0.0 {
+            self.signal_zero_divide()?;
+        }
+        let num = self.read_st(0)?;
+        self.write_st(i, num / denom)
     }
 
     pub fn faddp_sti_st0(&mut self, i: usize) -> Result<()> {
@@ -414,6 +465,13 @@ impl X87 {
         let a = self.read_st(0)?;
         let b = self.read_st(i)?;
         self.write_st(i, b - a)?;
+        self.pop()
+    }
+
+    pub fn fsubrp_sti_st0(&mut self, i: usize) -> Result<()> {
+        let st0 = self.read_st(0)?;
+        let sti = self.read_st(i)?;
+        self.write_st(i, st0 - sti)?;
         self.pop()
     }
 
@@ -431,6 +489,16 @@ impl X87 {
         }
         let b = self.read_st(i)?;
         self.write_st(i, b / a)?;
+        self.pop()
+    }
+
+    pub fn fdivrp_sti_st0(&mut self, i: usize) -> Result<()> {
+        let denom = self.read_st(i)?;
+        if denom == 0.0 {
+            self.signal_zero_divide()?;
+        }
+        let num = self.read_st(0)?;
+        self.write_st(i, num / denom)?;
         self.pop()
     }
 

@@ -132,3 +132,29 @@ fn fxsave_bridge_roundtrips_stack_registers() {
     assert_eq!(restored.st(0), Some(2.0));
     assert_eq!(restored.st(1), Some(1.0));
 }
+
+#[test]
+fn reverse_sub_and_div_variants_behave_plausibly() {
+    let mut fpu = X87::default();
+    fpu.fld_f64(2.0).unwrap();
+    fpu.fsubr_m64(10.0).unwrap(); // ST0 = 10 - 2
+    assert_eq!(fpu.st(0), Some(8.0));
+
+    fpu.fld_f64(3.0).unwrap(); // ST0=3, ST1=8
+    fpu.fsubr_st0_sti(1).unwrap(); // ST0 = ST1 - ST0
+    assert_eq!(fpu.st(0), Some(5.0));
+    fpu.fsubrp_sti_st0(1).unwrap(); // ST1 = ST0 - ST1; pop
+    assert_eq!(fpu.st(0), Some(-3.0));
+    assert_eq!(fpu.fstp_f64().unwrap(), -3.0);
+
+    let mut fpu = X87::default();
+    fpu.fld_f64(2.0).unwrap();
+    fpu.fdivr_m64(10.0).unwrap(); // ST0 = 10 / 2
+    assert_eq!(fpu.st(0), Some(5.0));
+
+    fpu.fld_f64(10.0).unwrap(); // ST0=10, ST1=5
+    fpu.fdivr_sti_st0(1).unwrap(); // ST1 = ST0 / ST1
+    assert_eq!(fpu.st(1), Some(2.0));
+    fpu.fdivrp_sti_st0(1).unwrap(); // ST1 = ST0 / ST1; pop
+    assert_eq!(fpu.st(0), Some(5.0));
+}
