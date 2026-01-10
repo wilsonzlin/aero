@@ -1,5 +1,5 @@
 use aero_net_stack::packet::*;
-use aero_net_stack::{Action, DnsResolved, NetworkStack, StackConfig, TcpProxyEvent};
+use aero_net_stack::{Action, DnsResolved, IpCidr, NetworkStack, StackConfig, TcpProxyEvent};
 use core::net::Ipv4Addr;
 
 #[test]
@@ -335,6 +335,56 @@ fn tcp_proxy_error_before_handshake_sends_rst() {
         seg.flags & (TcpFlags::RST | TcpFlags::ACK),
         TcpFlags::RST | TcpFlags::ACK
     );
+}
+
+#[test]
+fn dns_denied_ip_returns_nxdomain_and_is_not_cached() {
+    let mut cfg = StackConfig::default();
+    cfg.host_policy.enabled = true;
+    cfg.host_policy
+        .deny_ips
+        .push(IpCidr::new(Ipv4Addr::new(93, 184, 216, 0), 24));
+    let mut stack = NetworkStack::new(cfg);
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    dhcp_handshake(&mut stack, guest_mac);
+
+    let dns_query = build_dns_query(0x3333, "example.com", DnsType::A as u16);
+    let dns_frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        stack.config().dns_ip,
+        53002,
+        53,
+        &dns_query,
+    );
+    let actions = stack.process_outbound_ethernet(&dns_frame, 0);
+    let (dns_req_id, name) = match actions.as_slice() {
+        [Action::DnsResolve { request_id, name }] => (*request_id, name.clone()),
+        _ => panic!("expected single DnsResolve action, got {actions:?}"),
+    };
+
+    let resp_actions = stack.handle_dns_resolved(
+        DnsResolved {
+            request_id: dns_req_id,
+            name,
+            addr: Some(Ipv4Addr::new(93, 184, 216, 34)),
+            ttl_secs: 60,
+        },
+        1,
+    );
+    let resp_frame = extract_single_frame(&resp_actions);
+    assert_dns_response_has_rcode(&resp_frame, 0x3333, DnsResponseCode::NameError);
+
+    // Should not cache denied IPs, so we expect another resolve request on the same query.
+    let actions = stack.process_outbound_ethernet(&dns_frame, 2);
+    assert!(matches!(
+        actions.as_slice(),
+        [Action::DnsResolve {
+            request_id: _,
+            name: _
+        }]
+    ));
 }
 
 #[test]

@@ -329,7 +329,13 @@ impl NetworkStack {
             None => return Vec::new(),
         };
 
-        if let Some(addr) = resolved.addr {
+        // Apply outbound IP policy to DNS results too, otherwise the guest can learn disallowed
+        // IPs even though follow-up TCP/UDP connections would be denied.
+        let allowed_addr = resolved
+            .addr
+            .filter(|ip| self.cfg.host_policy.allows_ip(*ip));
+
+        if let Some(addr) = allowed_addr {
             let expires_at_ms = now_ms.saturating_add(resolved.ttl_secs as u64 * 1000);
             self.dns_cache.insert(
                 pending.name.clone(),
@@ -340,7 +346,7 @@ impl NetworkStack {
             );
         }
 
-        let (addr_opt, rcode) = match resolved.addr {
+        let (addr_opt, rcode) = match allowed_addr {
             Some(addr) => (Some(addr.octets()), DnsResponseCode::NoError),
             None => (None, DnsResponseCode::NameError),
         };
@@ -513,6 +519,18 @@ impl NetworkStack {
 
         if let Some(entry) = self.dns_cache.get(&name) {
             if entry.expires_at_ms > now_ms {
+                // Policy can change over time; re-check before serving from cache.
+                if !self.cfg.host_policy.allows_ip(entry.addr) {
+                    return self.emit_dns_error(
+                        msg.id,
+                        &name,
+                        qtype,
+                        qclass,
+                        udp.src_port,
+                        rd,
+                        DnsResponseCode::NameError,
+                    );
+                }
                 let guest_mac = match self.guest_mac {
                     Some(m) => m,
                     None => return Vec::new(),
