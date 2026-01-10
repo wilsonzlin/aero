@@ -147,7 +147,7 @@ NTSTATUS VirtioTestEvtDevicePrepareHardware(
     }
 
     negotiated = 0;
-    status = VirtioPciNegotiateFeatures(&ctx->Vdev, VIRTIO_F_VERSION_1, &negotiated);
+    status = VirtioPciNegotiateFeatures(&ctx->Vdev, VIRTIO_F_VERSION_1, VIRTIO_F_VERSION_1, &negotiated);
     if (!NT_SUCCESS(status)) {
         DbgPrint("virtio-transport-test: VirtioPciNegotiateFeatures failed 0x%08X\n", status);
         VirtioPciModernResetDevice(&ctx->Vdev);

@@ -78,6 +78,13 @@ typedef struct _VIRTIO_PCI_MODERN_DEVICE {
 #endif
 } VIRTIO_PCI_MODERN_DEVICE, *PVIRTIO_PCI_MODERN_DEVICE;
 
+/*
+ * Some helpers are specified in terms of a generic "VIRTIO_PCI_DEVICE".
+ * In this codebase, that corresponds to the modern PCI transport device.
+ */
+typedef VIRTIO_PCI_MODERN_DEVICE VIRTIO_PCI_DEVICE;
+typedef PVIRTIO_PCI_MODERN_DEVICE PVIRTIO_PCI_DEVICE;
+
 /* Initialization / discovery */
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS
@@ -85,10 +92,9 @@ VirtioPciModernInit(_In_ WDFDEVICE WdfDevice, _Out_ PVIRTIO_PCI_MODERN_DEVICE De
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS
-VirtioPciModernMapBars(
-    _Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
-    _In_ WDFCMRESLIST ResourcesRaw,
-    _In_ WDFCMRESLIST ResourcesTranslated);
+VirtioPciModernMapBars(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
+                       _In_ WDFCMRESLIST ResourcesRaw,
+                       _In_ WDFCMRESLIST ResourcesTranslated);
 
 /*
  * Transport smoke-test helpers.
@@ -99,11 +105,74 @@ _IRQL_requires_max_(PASSIVE_LEVEL)
 VOID
 VirtioPciModernResetDevice(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev);
 
+/*
+ * Virtio 1.0 status/reset helpers.
+ */
+
+/*
+ * Resets the device by writing 0 to device_status and polling until it reads
+ * back 0 (bounded timeout).
+ */
+_IRQL_requires_max_(PASSIVE_LEVEL)
+VOID
+VirtioPciResetDevice(_Inout_ PVIRTIO_PCI_DEVICE Dev);
+
+/* ORs Bits into device_status. */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtioPciAddStatus(_Inout_ PVIRTIO_PCI_DEVICE Dev, _In_ UCHAR Bits);
+
+/* Reads device_status. */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+UCHAR
+VirtioPciGetStatus(_Inout_ PVIRTIO_PCI_DEVICE Dev);
+
+/* Sets the FAILED bit in device_status. */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtioPciFailDevice(_Inout_ PVIRTIO_PCI_DEVICE Dev);
+
+/*
+ * Virtio 1.0 feature negotiation helper.
+ */
+
+/*
+ * Negotiates 64-bit feature bits for a modern Virtio device.
+ *
+ * Sequence:
+ *   - Reset
+ *   - ACKNOWLEDGE + DRIVER
+ *   - Read device features
+ *   - negotiated = (device & Wanted) | Required
+ *   - Always require VIRTIO_F_VERSION_1
+ *   - Write negotiated features
+ *   - Set FEATURES_OK
+ *   - Re-read status to ensure FEATURES_OK was accepted
+ */
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS
-VirtioPciNegotiateFeatures(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
-                           _In_ UINT64 RequestedFeatures,
-                           _Out_opt_ UINT64 *NegotiatedFeatures);
+VirtioPciNegotiateFeatures(_Inout_ PVIRTIO_PCI_DEVICE Dev,
+                           _In_ UINT64 Required,
+                           _In_ UINT64 Wanted,
+                           _Out_ UINT64 *NegotiatedOut);
+
+/*
+ * Device-specific config access helpers.
+ */
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+VirtioPciReadDeviceConfig(_Inout_ PVIRTIO_PCI_DEVICE Dev,
+                          _In_ ULONG Offset,
+                          _Out_writes_bytes_(Length) PVOID Buffer,
+                          _In_ ULONG Length);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+VirtioPciWriteDeviceConfig(_Inout_ PVIRTIO_PCI_DEVICE Dev,
+                           _In_ ULONG Offset,
+                           _In_reads_bytes_(Length) const VOID *Buffer,
+                           _In_ ULONG Length);
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 VOID

@@ -21,17 +21,47 @@
 #endif
 
 /* Common device status bits (virtio spec "Device Status Field"). */
-#define VIRTIO_STATUS_ACKNOWLEDGE 0x01
-#define VIRTIO_STATUS_DRIVER      0x02
-#define VIRTIO_STATUS_DRIVER_OK   0x04
-#define VIRTIO_STATUS_FEATURES_OK 0x08
-#define VIRTIO_STATUS_FAILED      0x80
+#define VIRTIO_STATUS_ACKNOWLEDGE        0x01
+#define VIRTIO_STATUS_DRIVER             0x02
+#define VIRTIO_STATUS_DRIVER_OK          0x04
+#define VIRTIO_STATUS_FEATURES_OK        0x08
+#define VIRTIO_STATUS_DEVICE_NEEDS_RESET 0x40
+#define VIRTIO_STATUS_FAILED             0x80
+
+/*
+ * Compatibility aliases.
+ *
+ * Some Virtio codebases (including the task spec for this repo) use the
+ * VIRTIO_CONFIG_S_* naming. Keep the canonical VIRTIO_STATUS_* names and
+ * provide aliases to avoid churn.
+ */
+#ifndef VIRTIO_CONFIG_S_ACKNOWLEDGE
+#define VIRTIO_CONFIG_S_ACKNOWLEDGE VIRTIO_STATUS_ACKNOWLEDGE
+#endif
+#ifndef VIRTIO_CONFIG_S_DRIVER
+#define VIRTIO_CONFIG_S_DRIVER VIRTIO_STATUS_DRIVER
+#endif
+#ifndef VIRTIO_CONFIG_S_DRIVER_OK
+#define VIRTIO_CONFIG_S_DRIVER_OK VIRTIO_STATUS_DRIVER_OK
+#endif
+#ifndef VIRTIO_CONFIG_S_FEATURES_OK
+#define VIRTIO_CONFIG_S_FEATURES_OK VIRTIO_STATUS_FEATURES_OK
+#endif
+#ifndef VIRTIO_CONFIG_S_DEVICE_NEEDS_RESET
+#define VIRTIO_CONFIG_S_DEVICE_NEEDS_RESET VIRTIO_STATUS_DEVICE_NEEDS_RESET
+#endif
+#ifndef VIRTIO_CONFIG_S_FAILED
+#define VIRTIO_CONFIG_S_FAILED VIRTIO_STATUS_FAILED
+#endif
 
 #pragma pack(push, 1)
 
 /*
  * Virtio PCI "common configuration" structure (virtio spec:
  * "Virtio Over PCI Bus -> Common configuration structure").
+ *
+ * Note: The spec defines 64-bit queue addresses, but using 32-bit lo/hi fields
+ * avoids unaligned 64-bit MMIO accesses on Windows.
  */
 typedef struct virtio_pci_common_cfg {
     ULONG device_feature_select; /* read-write */
@@ -48,12 +78,12 @@ typedef struct virtio_pci_common_cfg {
     USHORT queue_msix_vector; /* read-write */
     USHORT queue_enable;      /* read-write */
     USHORT queue_notify_off;  /* read-only  */
-    ULONG queue_desc_lo;  /* read-write */
-    ULONG queue_desc_hi;  /* read-write */
-    ULONG queue_avail_lo; /* read-write */
-    ULONG queue_avail_hi; /* read-write */
-    ULONG queue_used_lo;  /* read-write */
-    ULONG queue_used_hi;  /* read-write */
+    ULONG queue_desc_lo;      /* read-write */
+    ULONG queue_desc_hi;      /* read-write */
+    ULONG queue_avail_lo;     /* read-write */
+    ULONG queue_avail_hi;     /* read-write */
+    ULONG queue_used_lo;      /* read-write */
+    ULONG queue_used_hi;      /* read-write */
 } virtio_pci_common_cfg, *Pvirtio_pci_common_cfg;
 
 #pragma pack(pop)
