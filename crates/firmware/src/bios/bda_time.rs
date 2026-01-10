@@ -43,6 +43,22 @@ impl BdaTime {
         self.midnight_flag = 0;
     }
 
+    pub fn set_tick_count(&mut self, memory: &mut impl MemoryBus, tick_count: u32) {
+        self.tick_count = tick_count % TICKS_PER_DAY;
+        self.tick_remainder = 0;
+        self.midnight_flag = 0;
+        self.write_to_bda(memory);
+    }
+
+    pub fn duration_from_ticks(ticks: u32) -> Duration {
+        let ticks = u128::from(ticks % TICKS_PER_DAY);
+        let nanos = ticks * NANOS_PER_DAY / u128::from(TICKS_PER_DAY);
+        Duration::new(
+            (nanos / 1_000_000_000) as u64,
+            (nanos % 1_000_000_000) as u32,
+        )
+    }
+
     pub fn advance(&mut self, memory: &mut impl MemoryBus, delta: Duration) {
         let delta_nanos = delta.as_nanos();
         let numerator = delta_nanos * u128::from(TICKS_PER_DAY) + self.tick_remainder;

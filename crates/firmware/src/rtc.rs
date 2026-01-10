@@ -5,6 +5,16 @@ fn to_bcd(value: u8) -> u8 {
     (value / 10) << 4 | (value % 10)
 }
 
+fn from_bcd(value: u8) -> Option<u8> {
+    let hi = value >> 4;
+    let lo = value & 0x0F;
+    if hi < 10 && lo < 10 {
+        Some(hi * 10 + lo)
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct DateTime {
     pub year: u16,
@@ -50,6 +60,32 @@ impl DateTime {
         self.second = (secs % 60) as u8;
 
         self.add_days(days);
+    }
+
+    pub fn set_date(&mut self, year: u16, month: u8, day: u8) -> Result<(), ()> {
+        if !(1..=12).contains(&month) {
+            return Err(());
+        }
+        let dim = days_in_month(year, month);
+        if day == 0 || day > dim {
+            return Err(());
+        }
+        self.year = year;
+        self.month = month;
+        self.day = day;
+        Ok(())
+    }
+
+    pub fn set_time_of_day(&mut self, time: Duration) -> Result<(), ()> {
+        if time.as_secs() >= 86_400 {
+            return Err(());
+        }
+        let secs = time.as_secs();
+        self.hour = (secs / 3600) as u8;
+        self.minute = ((secs % 3600) / 60) as u8;
+        self.second = (secs % 60) as u8;
+        self.nanosecond = time.subsec_nanos();
+        Ok(())
     }
 
     fn add_days(&mut self, mut days: u64) {
@@ -140,6 +176,41 @@ impl CmosRtc {
         self.bcd_mode = enabled;
     }
 
+    pub fn set_time_of_day(&mut self, time: Duration) -> Result<(), ()> {
+        self.datetime.set_time_of_day(time)
+    }
+
+    pub fn set_time_cmos(
+        &mut self,
+        hour: u8,
+        minute: u8,
+        second: u8,
+        daylight_savings: u8,
+    ) -> Result<(), ()> {
+        let hour = self.decode_hour(hour).ok_or(())?;
+        let minute = self.decode_field(minute).ok_or(())?;
+        let second = self.decode_field(second).ok_or(())?;
+        if minute >= 60 || second >= 60 {
+            return Err(());
+        }
+
+        self.daylight_savings = daylight_savings != 0;
+        self.datetime.set_time_of_day(Duration::new(
+            (hour as u64) * 3600 + (minute as u64) * 60 + (second as u64),
+            0,
+        ))
+    }
+
+    pub fn set_date_cmos(&mut self, century: u8, year: u8, month: u8, day: u8) -> Result<(), ()> {
+        let century = self.decode_field(century).ok_or(())?;
+        let year = self.decode_field(year).ok_or(())?;
+        let month = self.decode_field(month).ok_or(())?;
+        let day = self.decode_field(day).ok_or(())?;
+
+        let full_year = (century as u16) * 100 + (year as u16);
+        self.datetime.set_date(full_year, month, day)
+    }
+
     pub fn read_time(&self) -> RtcTime {
         let mut hour = self.datetime.hour;
         if !self.hour_24 {
@@ -190,6 +261,36 @@ impl CmosRtc {
             year,
             month,
             day,
+        }
+    }
+
+    fn decode_field(&self, value: u8) -> Option<u8> {
+        if self.bcd_mode {
+            from_bcd(value)
+        } else {
+            Some(value)
+        }
+    }
+
+    fn decode_hour(&self, hour: u8) -> Option<u8> {
+        if self.hour_24 {
+            let hour = self.decode_field(hour)?;
+            if hour < 24 {
+                Some(hour)
+            } else {
+                None
+            }
+        } else {
+            let pm = (hour & 0x80) != 0;
+            let raw = self.decode_field(hour & 0x7F)?;
+            if !(1..=12).contains(&raw) {
+                return None;
+            }
+            let mut hour = raw % 12;
+            if pm {
+                hour += 12;
+            }
+            Some(hour)
         }
     }
 }
