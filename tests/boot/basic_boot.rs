@@ -403,7 +403,7 @@ fn boots_a_tiny_boot_sector_and_prints_text() {
 #[test]
 fn bios_post_writes_smbios_tables() {
     let boot = make_test_boot_sector();
-    let disk = VecDisk::new(boot.to_vec());
+    let mut disk = VecDisk::new(boot.to_vec());
 
     let mut mem = SimpleMemory::new(2 * 1024 * 1024);
     let mut cpu = RealModeCpu::default();
@@ -414,7 +414,7 @@ fn bios_post_writes_smbios_tables() {
         ..BiosConfig::default()
     });
 
-    bios.post(&mut cpu, &mut mem, &disk);
+    bios.post(&mut cpu, &mut mem, &mut disk);
 
     let eps_addr = find_smbios_eps(&mem).expect("SMBIOS EPS not found after BIOS POST");
     let eps = read_bytes(&mem, eps_addr, 0x1F);

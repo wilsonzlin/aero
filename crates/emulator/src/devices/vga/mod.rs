@@ -1,4 +1,5 @@
 mod modeset;
+mod mmio;
 mod ports;
 mod regs;
 
@@ -12,8 +13,10 @@ use crate::io::PortIO;
 
 pub use dac::VgaDac;
 pub use memory::VgaMemory;
+pub use mmio::{VgaMmio, VgaMmioRegion, VGA_BANK_WINDOW_PADDR, VGA_BANK_WINDOW_SIZE};
 pub use ports::VgaDevice;
 pub use regs::{VgaDerivedState, VgaPlanarShift};
+pub use vbe::{VbeControllerInfo, VbeModeInfo, VbeState, VBE_BIOS_DATA_PADDR, VBE_LFB_BASE, VBE_LFB_SIZE};
 
 pub use render::mode13h::{Mode13hRenderer, MODE13H_HEIGHT, MODE13H_VRAM_SIZE, MODE13H_WIDTH};
 pub use render::planar16::{Mode12hRenderer, MODE12H_HEIGHT, MODE12H_WIDTH};

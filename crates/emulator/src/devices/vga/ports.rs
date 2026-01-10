@@ -7,6 +7,7 @@ use super::regs::{
     AC_REGS_INITIAL_LEN, CRTC_REGS_INITIAL_LEN, GC_REGS_INITIAL_LEN, POWER_ON_MISC_OUTPUT,
     SEQ_REGS_INITIAL_LEN, VgaDerivedState, VgaPlanarShift,
 };
+use super::vbe::{VbeControllerInfo, VbeModeInfo, VbeState, VBE_LFB_SIZE};
 
 // VGA I/O port block 0x3C0..=0x3DF.
 const PORT_MISC_OUTPUT_WRITE: u16 = 0x3C2;
@@ -76,6 +77,12 @@ pub struct VgaDevice {
     legacy_bda: LegacyBdaInfo,
 
     derived: VgaDerivedState,
+
+    // --- VBE / SVGA state ---
+    vbe: VbeState,
+    lfb: Vec<u8>,
+    frontbuffer: Vec<u32>,
+    fb_dirty: bool,
 }
 
 impl Default for VgaDevice {
@@ -219,6 +226,11 @@ impl VgaDevice {
             },
 
             derived: VgaDerivedState::default(),
+
+            vbe: VbeState::new(),
+            lfb: vec![0; VBE_LFB_SIZE],
+            frontbuffer: Vec::new(),
+            fb_dirty: false,
         };
 
         // Seed a sane "BIOS mode 3" (80x25 text) baseline. This matches the same
@@ -262,8 +274,162 @@ impl VgaDevice {
             cursor_pos: [0; 8],
             active_page: 0,
         };
+        self.vbe = VbeState::new();
+        self.lfb.fill(0);
+        self.frontbuffer.clear();
+        self.fb_dirty = false;
 
         self.recompute_derived_state();
+    }
+
+    // --- VBE API surface (used by BIOS INT 10h handlers + unit tests) ---
+
+    pub fn vbe(&self) -> &VbeState {
+        &self.vbe
+    }
+
+    pub fn vbe_mut(&mut self) -> &mut VbeState {
+        &mut self.vbe
+    }
+
+    pub fn controller_info(&self) -> VbeControllerInfo {
+        self.vbe.controller_info()
+    }
+
+    pub fn mode_info(&self, mode: u16) -> Option<VbeModeInfo> {
+        self.vbe.mode_info(mode)
+    }
+
+    /// Set a VBE mode (INT 10h AX=4F02 semantics).
+    ///
+    /// Bit 14 (`0x4000`) enables the linear framebuffer (LFB).
+    pub fn set_mode(&mut self, mode: u16) -> Result<(), &'static str> {
+        self.vbe.set_mode(mode)?;
+
+        // Resize the host-visible buffer to the current mode.
+        if let Some((w, h)) = self.vbe.resolution() {
+            self.frontbuffer.resize(w as usize * h as usize, 0);
+        } else {
+            self.frontbuffer.clear();
+        }
+
+        self.fb_dirty = true;
+        Ok(())
+    }
+
+    pub fn is_lfb_enabled(&self) -> bool {
+        self.vbe.is_lfb_enabled()
+    }
+
+    pub fn resolution(&self) -> Option<(u16, u16)> {
+        self.vbe.resolution()
+    }
+
+    pub fn pitch_bytes(&self) -> Option<u16> {
+        self.vbe.pitch_bytes()
+    }
+
+    // --- Linear framebuffer + banked window backing store ---
+
+    pub fn lfb_read(&self, offset: usize, dst: &mut [u8]) {
+        let end = offset.saturating_add(dst.len()).min(self.lfb.len());
+        let len = end.saturating_sub(offset);
+        dst[..len].copy_from_slice(&self.lfb[offset..offset + len]);
+        if len < dst.len() {
+            dst[len..].fill(0);
+        }
+    }
+
+    pub fn lfb_write(&mut self, offset: usize, src: &[u8]) {
+        if !self.vbe.is_lfb_enabled() {
+            // The LFB aperture is mapped but intentionally inert until enabled
+            // via 4F02 (bit 14), matching real-world VBE implementations.
+            return;
+        }
+
+        let end = offset.saturating_add(src.len()).min(self.lfb.len());
+        let len = end.saturating_sub(offset);
+        self.lfb[offset..offset + len].copy_from_slice(&src[..len]);
+        if len > 0 {
+            self.fb_dirty = true;
+        }
+    }
+
+    pub fn banked_read(&self, offset: usize, dst: &mut [u8]) {
+        let bank_base = (self.vbe.bank_a() as usize) * 64 * 1024;
+        self.lfb_read(bank_base + offset, dst);
+    }
+
+    pub fn banked_write(&mut self, offset: usize, src: &[u8]) {
+        let bank_base = (self.vbe.bank_a() as usize) * 64 * 1024;
+        let end = (bank_base + offset)
+            .saturating_add(src.len())
+            .min(self.lfb.len());
+        let len = end.saturating_sub(bank_base + offset);
+        self.lfb[bank_base + offset..bank_base + offset + len].copy_from_slice(&src[..len]);
+        if len > 0 {
+            self.fb_dirty = true;
+        }
+    }
+
+    /// Convert the guest framebuffer into a host-visible packed pixel buffer.
+    ///
+    /// - 32bpp: direct copy of little-endian `0xAARRGGBB` pixels.
+    /// - 8bpp: palette lookup through the VGA palette stored in `VbeState`.
+    pub fn render(&mut self) -> &[u32] {
+        if !self.fb_dirty {
+            return &self.frontbuffer;
+        }
+        self.fb_dirty = false;
+
+        let Some(mode) = self.vbe.current_mode() else {
+            self.frontbuffer.clear();
+            return &self.frontbuffer;
+        };
+
+        let w = mode.width as usize;
+        let h = mode.height as usize;
+        let pitch = mode.pitch_bytes as usize;
+        let bytes_per_pixel = mode.bytes_per_pixel as usize;
+
+        self.frontbuffer.resize(w * h, 0);
+
+        match mode.bits_per_pixel {
+            32 => {
+                let needed = pitch * h;
+                let src = &self.lfb[..needed.min(self.lfb.len())];
+                for y in 0..h {
+                    let row = &src[y * pitch..(y + 1) * pitch];
+                    for x in 0..w {
+                        let base = x * bytes_per_pixel;
+                        let px = u32::from_le_bytes([
+                            row[base],
+                            row[base + 1],
+                            row[base + 2],
+                            row[base + 3],
+                        ]);
+                        self.frontbuffer[y * w + x] = px;
+                    }
+                }
+            }
+            8 => {
+                let palette = self.vbe.palette();
+                let needed = pitch * h;
+                let src = &self.lfb[..needed.min(self.lfb.len())];
+                for y in 0..h {
+                    let row = &src[y * pitch..(y + 1) * pitch];
+                    for x in 0..w {
+                        let idx = row[x] as usize;
+                        self.frontbuffer[y * w + x] = palette[idx];
+                    }
+                }
+            }
+            _ => {
+                self.frontbuffer.fill(0);
+            }
+        }
+
+        &self.frontbuffer
     }
 
     fn is_colour_io(&self) -> bool {
