@@ -39,18 +39,26 @@ The output `.sys` will be placed under the WDK `obj*` directory.
 
 ## Installing (Windows 7 VM)
 
-This repository does not include a production-ready INF; device IDs are part of the VM/device model. You will typically:
+Use the in-tree Win7 packaging folder (INF + signing + install helpers):
 
-1. Create an INF that matches your AeroGPU PCI VEN/DEV.
-2. Enable test-signing in the VM:
+* `drivers/aerogpu/packaging/win7/`
+
+Typical dev install flow:
+
+1. Stage the packaging folder with built binaries (from repo root, on the build machine):
 
 ```bat
-bcdedit /set testsigning on
-shutdown /r /t 0
+drivers\aerogpu\build\stage_packaging_win7.cmd fre x64
 ```
 
-3. Test-sign the built driver (or use a test certificate).
-4. Use **Device Manager → Update Driver** and point it at the INF.
+2. Copy `drivers\aerogpu\packaging\win7\` into the Win7 VM (or share the repo).
+3. In the Win7 VM, run as Administrator:
+
+```bat
+cd drivers\aerogpu\packaging\win7
+sign_test.cmd
+install.cmd
+```
 
 ## Debugging
 
