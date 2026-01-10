@@ -9,6 +9,10 @@ Windows 7 networking requires TCP/IP stack emulation. Browser constraints mean w
 > user-space stack**, to keep browser CPU usage low and avoid implementing TCP in WASM.
 > See [`networking-architecture-rfc.md`](./networking-architecture-rfc.md).
 
+For performance, **virtio-net** is the preferred paravirtualized NIC once virtio drivers are installed. For Windows 7 compatibility, expose virtio devices as **PCI transitional devices** (legacy + modern) so older virtio-win builds that rely on the legacy I/O port interface can bind.
+
+See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitional.md)
+
 ---
 
 ## Network Architecture

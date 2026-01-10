@@ -422,6 +422,23 @@ See `docs/16-virtio-drivers-win7.md` for an implementation-oriented overview of 
 | VIO-011 | Virtio-blk driver (Win7) (Storage lane: ST-009) | P1   | VIO-001..VIO-003    | High       |
 | VIO-012 | Virtio-net driver (Win7) (Network lane: NT-008) | P1   | VIO-001..VIO-003    | High       |
 
+### Virtio PCI transport (device model / emulator side)
+
+These tasks implement Aero’s virtio devices in the emulator. In addition to the modern virtio-pci transport used by Aero’s own Win7 drivers, we should also support **legacy/transitional virtio-pci** for maximum compatibility with older virtio-win drivers.
+
+See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitional.md)
+
+| ID      | Task                                                                    | Priority | Dependencies            | Complexity |
+| ------- | ----------------------------------------------------------------------- | -------- | ----------------------- | ---------- |
+| VTP-001 | Virtio core (virtqueue, feature negotiation, device status machine)     | P0       | DM-007                  | High       |
+| VTP-002 | Virtio PCI modern transport (virtio 1.0+ capabilities + MMIO layout)    | P0       | VTP-001, DM-007         | High       |
+| VTP-003 | Virtio PCI legacy transport (virtio 0.9 I/O port BAR + PFN queues)      | P0       | VTP-001, DM-007         | High       |
+| VTP-004 | Virtio PCI transitional device (expose both legacy + modern transports) | P0       | VTP-002, VTP-003        | Medium     |
+| VTP-005 | Legacy INTx wiring + ISR read-to-clear semantics                         | P0       | VTP-003                 | Medium     |
+| VTP-006 | MSI-X support for virtio PCI (recommended for virtio-net performance)   | P1       | VTP-002, DM-007         | High       |
+| VTP-007 | Unit tests: legacy guest flow (feature negotiation, PFN setup, notify)  | P0       | VTP-003                 | Medium     |
+| VTP-008 | Config option: disable modern caps (force legacy path for testing)      | P1       | VTP-004                 | Low        |
+
 
 ---
 

@@ -59,6 +59,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 34. [VM Snapshots (Save-State / Restore-State)](./docs/16-snapshots.md)
 35. [AeroGPU Legacy VGA/VBE Compatibility](./docs/16-aerogpu-vga-vesa-compat.md)
 36. [Virtio PCI (Modern) Interrupts on Windows 7 (KMDF)](./docs/windows/virtio-pci-modern-interrupts.md)
+37. [Virtio PCI: Legacy + Transitional Devices](./docs/16-virtio-pci-legacy-transitional.md)
 
 ---
 

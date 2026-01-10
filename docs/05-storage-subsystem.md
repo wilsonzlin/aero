@@ -4,6 +4,10 @@
 
 Windows 7 requires significant storage (15-40GB installed). The storage subsystem must efficiently emulate disk controllers while using browser storage APIs that have their own constraints.
 
+While AHCI provides out-of-the-box Windows compatibility, **virtio-blk** is the preferred high-performance path once virtio drivers are available. For Windows 7 compatibility, virtio devices should be presented as **PCI transitional devices** (legacy + modern) so older virtio-win drivers can bind.
+
+See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitional.md)
+
 ---
 
 ## Storage Architecture
