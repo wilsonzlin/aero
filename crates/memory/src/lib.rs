@@ -1,11 +1,15 @@
-//! Guest memory backends (dense + sparse).
+//! Guest physical memory utilities.
+//!
+//! This crate provides guest RAM backends (`DenseMemory`, `SparseMemory`) as well as a guest
+//! *physical* memory bus (`MemoryBus`) used by the MMU for page table walks. The [`bus`] module also
+//! contains routing implementations that support RAM/ROM/MMIO.
 
 pub mod bus;
 pub mod mmu;
 pub mod phys;
 pub mod tlb;
 
-pub use bus::{Bus, MemoryBus, MmioHandler};
+pub use bus::{Bus, MapError, MemoryBus, MmioHandler, MmioRegion, PhysicalMemoryBus, RomRegion};
 pub use mmu::{AccessType, Mmu, TranslateError};
 pub use phys::{DenseMemory, GuestMemory, GuestMemoryError, GuestMemoryResult, SparseMemory};
 pub use tlb::{PageSize, Tlb, TlbEntry};

@@ -1,3 +1,6 @@
+use crate::phys::GuestMemory;
+use std::sync::Arc;
+
 /// Abstraction for guest physical memory access.
 ///
 /// The MMU performs page table walks by reading and writing guest physical
@@ -31,6 +34,12 @@ pub trait MemoryBus {
         u64::from_le_bytes(buf)
     }
 
+    fn read_u128(&mut self, paddr: u64) -> u128 {
+        let mut buf = [0u8; 16];
+        self.read_physical(paddr, &mut buf);
+        u128::from_le_bytes(buf)
+    }
+
     fn write_u8(&mut self, paddr: u64, val: u8) {
         self.write_physical(paddr, &[val]);
     }
@@ -45,6 +54,717 @@ pub trait MemoryBus {
 
     fn write_u64(&mut self, paddr: u64, val: u64) {
         self.write_physical(paddr, &val.to_le_bytes());
+    }
+
+    fn write_u128(&mut self, paddr: u64, val: u128) {
+        self.write_physical(paddr, &val.to_le_bytes());
+    }
+
+    // Aliases matching the project documentation (physical accessors).
+    fn read_physical_u8(&mut self, paddr: u64) -> u8 {
+        self.read_u8(paddr)
+    }
+
+    fn read_physical_u16(&mut self, paddr: u64) -> u16 {
+        self.read_u16(paddr)
+    }
+
+    fn read_physical_u32(&mut self, paddr: u64) -> u32 {
+        self.read_u32(paddr)
+    }
+
+    fn read_physical_u64(&mut self, paddr: u64) -> u64 {
+        self.read_u64(paddr)
+    }
+
+    fn read_physical_u128(&mut self, paddr: u64) -> u128 {
+        self.read_u128(paddr)
+    }
+
+    fn write_physical_u8(&mut self, paddr: u64, val: u8) {
+        self.write_u8(paddr, val);
+    }
+
+    fn write_physical_u16(&mut self, paddr: u64, val: u16) {
+        self.write_u16(paddr, val);
+    }
+
+    fn write_physical_u32(&mut self, paddr: u64, val: u32) {
+        self.write_u32(paddr, val);
+    }
+
+    fn write_physical_u64(&mut self, paddr: u64, val: u64) {
+        self.write_u64(paddr, val);
+    }
+
+    fn write_physical_u128(&mut self, paddr: u64, val: u128) {
+        self.write_u128(paddr, val);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RomRegion {
+    pub start: u64,
+    pub data: Arc<[u8]>,
+}
+
+impl RomRegion {
+    fn len(&self) -> u64 {
+        self.data.len() as u64
+    }
+
+    fn end(&self) -> u64 {
+        self.start.saturating_add(self.len())
+    }
+}
+
+pub struct MmioRegion {
+    pub start: u64,
+    pub end: u64,
+    pub handler: Box<dyn MmioHandler>,
+}
+
+impl MmioRegion {
+    fn contains(&self, addr: u64) -> bool {
+        addr >= self.start && addr < self.end
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapError {
+    AddressOverflow,
+    Overlap,
+}
+
+/// Guest *physical* memory bus.
+///
+/// Routes accesses to:
+/// 1. MMIO regions (highest priority)
+/// 2. ROM regions
+/// 3. RAM
+/// 4. Unmapped (reads return all 1s, writes ignored)
+pub struct PhysicalMemoryBus {
+    pub ram: Box<dyn GuestMemory>,
+    rom_regions: Vec<RomRegion>,
+    mmio_regions: Vec<MmioRegion>,
+}
+
+impl PhysicalMemoryBus {
+    pub fn new(ram: Box<dyn GuestMemory>) -> Self {
+        Self {
+            ram,
+            rom_regions: Vec::new(),
+            mmio_regions: Vec::new(),
+        }
+    }
+
+    pub fn rom_regions(&self) -> &[RomRegion] {
+        &self.rom_regions
+    }
+
+    pub fn mmio_regions(&self) -> &[MmioRegion] {
+        &self.mmio_regions
+    }
+
+    pub fn map_rom(&mut self, start: u64, data: Arc<[u8]>) -> Result<(), MapError> {
+        let len = data.len() as u64;
+        let end = start.checked_add(len).ok_or(MapError::AddressOverflow)?;
+
+        let insert_idx = self.rom_regions.partition_point(|r| r.start < start);
+
+        if let Some(prev) = insert_idx
+            .checked_sub(1)
+            .and_then(|idx| self.rom_regions.get(idx))
+        {
+            if prev.end() > start {
+                return Err(MapError::Overlap);
+            }
+        }
+
+        if let Some(next) = self.rom_regions.get(insert_idx) {
+            if end > next.start {
+                return Err(MapError::Overlap);
+            }
+        }
+
+        self.rom_regions.insert(insert_idx, RomRegion { start, data });
+        Ok(())
+    }
+
+    pub fn map_mmio(
+        &mut self,
+        start: u64,
+        len: u64,
+        handler: Box<dyn MmioHandler>,
+    ) -> Result<(), MapError> {
+        let end = start.checked_add(len).ok_or(MapError::AddressOverflow)?;
+
+        let insert_idx = self.mmio_regions.partition_point(|r| r.start < start);
+
+        if let Some(prev) = insert_idx
+            .checked_sub(1)
+            .and_then(|idx| self.mmio_regions.get(idx))
+        {
+            if prev.end > start {
+                return Err(MapError::Overlap);
+            }
+        }
+
+        if let Some(next) = self.mmio_regions.get(insert_idx) {
+            if end > next.start {
+                return Err(MapError::Overlap);
+            }
+        }
+
+        self.mmio_regions.insert(
+            insert_idx,
+            MmioRegion {
+                start,
+                end,
+                handler,
+            },
+        );
+        Ok(())
+    }
+
+    fn find_mmio_region_index(&self, addr: u64) -> Option<usize> {
+        let idx = self.mmio_regions.partition_point(|r| r.start <= addr);
+        let idx = idx.checked_sub(1)?;
+        self.mmio_regions
+            .get(idx)
+            .is_some_and(|r| r.contains(addr))
+            .then_some(idx)
+    }
+
+    fn find_rom_region_index(&self, addr: u64) -> Option<usize> {
+        let idx = self.rom_regions.partition_point(|r| r.start <= addr);
+        let idx = idx.checked_sub(1)?;
+        self.rom_regions
+            .get(idx)
+            .is_some_and(|r| addr >= r.start && addr < r.end())
+            .then_some(idx)
+    }
+
+    fn next_mmio_start_after(&self, addr: u64) -> Option<u64> {
+        let idx = self.mmio_regions.partition_point(|r| r.start <= addr);
+        self.mmio_regions.get(idx).map(|r| r.start)
+    }
+
+    fn next_rom_start_after(&self, addr: u64) -> Option<u64> {
+        let idx = self.rom_regions.partition_point(|r| r.start <= addr);
+        self.rom_regions.get(idx).map(|r| r.start)
+    }
+
+    pub fn read_physical(&mut self, paddr: u64, dst: &mut [u8]) {
+        let mut pos = 0usize;
+        let ram_len = self.ram.size();
+
+        while pos < dst.len() {
+            let addr = match paddr.checked_add(pos as u64) {
+                Some(v) => v,
+                None => {
+                    dst[pos..].fill(0xFF);
+                    break;
+                }
+            };
+
+            if let Some(mmio_idx) = self.find_mmio_region_index(addr) {
+                let (region_start, region_end) = {
+                    let r = &self.mmio_regions[mmio_idx];
+                    (r.start, r.end)
+                };
+                let rem = dst.len() - pos;
+                let chunk_end = region_end.min(addr.saturating_add(rem as u64));
+                let chunk_len = (chunk_end - addr) as usize;
+
+                let dst_chunk = &mut dst[pos..pos + chunk_len];
+                self.read_mmio_chunk(mmio_idx, addr - region_start, dst_chunk);
+                pos += chunk_len;
+                continue;
+            }
+
+            if let Some(rom_idx) = self.find_rom_region_index(addr) {
+                let (rom_start, rom_end, rom_data) = {
+                    let r = &self.rom_regions[rom_idx];
+                    (r.start, r.end(), Arc::clone(&r.data))
+                };
+
+                let mut chunk_end = rom_end;
+                if let Some(next_mmio) = self.next_mmio_start_after(addr) {
+                    if next_mmio < chunk_end {
+                        chunk_end = next_mmio;
+                    }
+                }
+
+                let rem = dst.len() - pos;
+                let chunk_end = chunk_end.min(addr.saturating_add(rem as u64));
+                let chunk_len = (chunk_end - addr) as usize;
+
+                let src_off = (addr - rom_start) as usize;
+                let src = &rom_data[src_off..src_off + chunk_len];
+                dst[pos..pos + chunk_len].copy_from_slice(src);
+                pos += chunk_len;
+                continue;
+            }
+
+            if addr < ram_len {
+                let mut chunk_end = ram_len;
+                if let Some(next_mmio) = self.next_mmio_start_after(addr) {
+                    if next_mmio < chunk_end {
+                        chunk_end = next_mmio;
+                    }
+                }
+                if let Some(next_rom) = self.next_rom_start_after(addr) {
+                    if next_rom < chunk_end {
+                        chunk_end = next_rom;
+                    }
+                }
+
+                let rem = dst.len() - pos;
+                let chunk_end = chunk_end.min(addr.saturating_add(rem as u64));
+                let chunk_len = (chunk_end - addr) as usize;
+
+                if self
+                    .ram
+                    .read_into(addr, &mut dst[pos..pos + chunk_len])
+                    .is_err()
+                {
+                    dst[pos..pos + chunk_len].fill(0xFF);
+                }
+                pos += chunk_len;
+                continue;
+            }
+
+            // Unmapped: return all 1s for the requested width.
+            let mut chunk_end = None;
+            if let Some(next_mmio) = self.next_mmio_start_after(addr) {
+                chunk_end = Some(next_mmio);
+            }
+            if let Some(next_rom) = self.next_rom_start_after(addr) {
+                chunk_end = Some(match chunk_end {
+                    Some(existing) => existing.min(next_rom),
+                    None => next_rom,
+                });
+            }
+
+            let rem = dst.len() - pos;
+            let chunk_len = match chunk_end {
+                Some(end) => {
+                    let diff = end.saturating_sub(addr);
+                    diff.min(rem as u64) as usize
+                }
+                None => rem,
+            };
+
+            dst[pos..pos + chunk_len].fill(0xFF);
+            pos += chunk_len;
+        }
+    }
+
+    pub fn write_physical(&mut self, paddr: u64, src: &[u8]) {
+        let mut pos = 0usize;
+        let ram_len = self.ram.size();
+
+        while pos < src.len() {
+            let addr = match paddr.checked_add(pos as u64) {
+                Some(v) => v,
+                None => break,
+            };
+
+            if let Some(mmio_idx) = self.find_mmio_region_index(addr) {
+                let (region_start, region_end) = {
+                    let r = &self.mmio_regions[mmio_idx];
+                    (r.start, r.end)
+                };
+
+                let rem = src.len() - pos;
+                let chunk_end = region_end.min(addr.saturating_add(rem as u64));
+                let chunk_len = (chunk_end - addr) as usize;
+
+                let src_chunk = &src[pos..pos + chunk_len];
+                self.write_mmio_chunk(mmio_idx, addr - region_start, src_chunk);
+                pos += chunk_len;
+                continue;
+            }
+
+            if let Some(rom_idx) = self.find_rom_region_index(addr) {
+                let rom_end = self.rom_regions[rom_idx].end();
+
+                let mut chunk_end = rom_end;
+                if let Some(next_mmio) = self.next_mmio_start_after(addr) {
+                    if next_mmio < chunk_end {
+                        chunk_end = next_mmio;
+                    }
+                }
+
+                let rem = src.len() - pos;
+                let chunk_end = chunk_end.min(addr.saturating_add(rem as u64));
+                let chunk_len = (chunk_end - addr) as usize;
+
+                // ROM is read-only: ignore writes.
+                pos += chunk_len;
+                continue;
+            }
+
+            if addr < ram_len {
+                let mut chunk_end = ram_len;
+                if let Some(next_mmio) = self.next_mmio_start_after(addr) {
+                    if next_mmio < chunk_end {
+                        chunk_end = next_mmio;
+                    }
+                }
+                if let Some(next_rom) = self.next_rom_start_after(addr) {
+                    if next_rom < chunk_end {
+                        chunk_end = next_rom;
+                    }
+                }
+
+                let rem = src.len() - pos;
+                let chunk_end = chunk_end.min(addr.saturating_add(rem as u64));
+                let chunk_len = (chunk_end - addr) as usize;
+
+                let _ = self.ram.write_from(addr, &src[pos..pos + chunk_len]);
+                pos += chunk_len;
+                continue;
+            }
+
+            // Unmapped: writes are ignored. Skip until the next mapped region.
+            let mut chunk_end = None;
+            if let Some(next_mmio) = self.next_mmio_start_after(addr) {
+                chunk_end = Some(next_mmio);
+            }
+            if let Some(next_rom) = self.next_rom_start_after(addr) {
+                chunk_end = Some(match chunk_end {
+                    Some(existing) => existing.min(next_rom),
+                    None => next_rom,
+                });
+            }
+
+            let rem = src.len() - pos;
+            let chunk_len = match chunk_end {
+                Some(end) => {
+                    let diff = end.saturating_sub(addr);
+                    diff.min(rem as u64) as usize
+                }
+                None => rem,
+            };
+
+            pos += chunk_len;
+        }
+    }
+
+    fn read_mmio_chunk(&mut self, region_idx: usize, offset: u64, dst: &mut [u8]) {
+        let mut pos = 0usize;
+        while pos < dst.len() {
+            let size = (dst.len() - pos).min(8);
+            let value = self.mmio_regions[region_idx]
+                .handler
+                .read(offset + pos as u64, size);
+            let bytes = value.to_le_bytes();
+            dst[pos..pos + size].copy_from_slice(&bytes[..size]);
+            pos += size;
+        }
+    }
+
+    fn write_mmio_chunk(&mut self, region_idx: usize, offset: u64, src: &[u8]) {
+        let mut pos = 0usize;
+        while pos < src.len() {
+            let size = (src.len() - pos).min(8);
+            let mut buf = [0u8; 8];
+            buf[..size].copy_from_slice(&src[pos..pos + size]);
+            let value = u64::from_le_bytes(buf);
+            self.mmio_regions[region_idx]
+                .handler
+                .write(offset + pos as u64, size, value);
+            pos += size;
+        }
+    }
+
+    pub fn read_physical_u8(&mut self, paddr: u64) -> u8 {
+        let mut buf = [0u8; 1];
+        self.read_physical(paddr, &mut buf);
+        buf[0]
+    }
+
+    pub fn read_physical_u16(&mut self, paddr: u64) -> u16 {
+        let mut buf = [0u8; 2];
+        self.read_physical(paddr, &mut buf);
+        u16::from_le_bytes(buf)
+    }
+
+    pub fn read_physical_u32(&mut self, paddr: u64) -> u32 {
+        let mut buf = [0u8; 4];
+        self.read_physical(paddr, &mut buf);
+        u32::from_le_bytes(buf)
+    }
+
+    pub fn read_physical_u64(&mut self, paddr: u64) -> u64 {
+        let mut buf = [0u8; 8];
+        self.read_physical(paddr, &mut buf);
+        u64::from_le_bytes(buf)
+    }
+
+    pub fn read_physical_u128(&mut self, paddr: u64) -> u128 {
+        let mut buf = [0u8; 16];
+        self.read_physical(paddr, &mut buf);
+        u128::from_le_bytes(buf)
+    }
+
+    pub fn write_physical_u8(&mut self, paddr: u64, value: u8) {
+        self.write_physical(paddr, &[value]);
+    }
+
+    pub fn write_physical_u16(&mut self, paddr: u64, value: u16) {
+        self.write_physical(paddr, &value.to_le_bytes());
+    }
+
+    pub fn write_physical_u32(&mut self, paddr: u64, value: u32) {
+        self.write_physical(paddr, &value.to_le_bytes());
+    }
+
+    pub fn write_physical_u64(&mut self, paddr: u64, value: u64) {
+        self.write_physical(paddr, &value.to_le_bytes());
+    }
+
+    pub fn write_physical_u128(&mut self, paddr: u64, value: u128) {
+        self.write_physical(paddr, &value.to_le_bytes());
+    }
+}
+
+impl MemoryBus for PhysicalMemoryBus {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        PhysicalMemoryBus::read_physical(self, paddr, buf)
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        PhysicalMemoryBus::write_physical(self, paddr, buf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::phys::{GuestMemoryError, GuestMemoryResult};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct SharedRam {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl SharedRam {
+        fn new(bytes: Vec<u8>) -> Self {
+            Self {
+                bytes: Arc::new(Mutex::new(bytes)),
+            }
+        }
+
+        fn snapshot(&self) -> Vec<u8> {
+            self.bytes.lock().unwrap().clone()
+        }
+    }
+
+    impl GuestMemory for SharedRam {
+        fn size(&self) -> u64 {
+            self.bytes.lock().unwrap().len() as u64
+        }
+
+        fn read_into(&self, paddr: u64, dst: &mut [u8]) -> GuestMemoryResult<()> {
+            let bytes = self.bytes.lock().unwrap();
+            let size = bytes.len() as u64;
+            let len = dst.len();
+
+            let end = paddr
+                .checked_add(len as u64)
+                .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+            if end > size {
+                return Err(GuestMemoryError::OutOfRange { paddr, len, size });
+            }
+
+            let start = usize::try_from(paddr)
+                .map_err(|_| GuestMemoryError::OutOfRange { paddr, len, size })?;
+            let end = start
+                .checked_add(len)
+                .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+
+            dst.copy_from_slice(&bytes[start..end]);
+            Ok(())
+        }
+
+        fn write_from(&mut self, paddr: u64, src: &[u8]) -> GuestMemoryResult<()> {
+            let mut bytes = self.bytes.lock().unwrap();
+            let size = bytes.len() as u64;
+            let len = src.len();
+
+            let end = paddr
+                .checked_add(len as u64)
+                .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+            if end > size {
+                return Err(GuestMemoryError::OutOfRange { paddr, len, size });
+            }
+
+            let start = usize::try_from(paddr)
+                .map_err(|_| GuestMemoryError::OutOfRange { paddr, len, size })?;
+            let end = start
+                .checked_add(len)
+                .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+
+            bytes[start..end].copy_from_slice(src);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct MmioState {
+        mem: Vec<u8>,
+        reads: Vec<(u64, usize)>,
+        writes: Vec<(u64, usize, u64)>,
+    }
+
+    #[derive(Clone)]
+    struct RecordingMmio {
+        state: Arc<Mutex<MmioState>>,
+    }
+
+    impl RecordingMmio {
+        fn new(mem: Vec<u8>) -> (Self, Arc<Mutex<MmioState>>) {
+            let state = Arc::new(Mutex::new(MmioState {
+                mem,
+                ..Default::default()
+            }));
+            (Self { state: state.clone() }, state)
+        }
+    }
+
+    impl MmioHandler for RecordingMmio {
+        fn read(&mut self, offset: u64, size: usize) -> u64 {
+            let mut state = self.state.lock().unwrap();
+            state.reads.push((offset, size));
+            let mut buf = [0xFFu8; 8];
+            let off = offset as usize;
+            for i in 0..size.min(8) {
+                buf[i] = state.mem.get(off + i).copied().unwrap_or(0xFF);
+            }
+            u64::from_le_bytes(buf)
+        }
+
+        fn write(&mut self, offset: u64, size: usize, value: u64) {
+            let mut state = self.state.lock().unwrap();
+            state.writes.push((offset, size, value));
+            let bytes = value.to_le_bytes();
+            let off = offset as usize;
+            for i in 0..size.min(8) {
+                if let Some(dst) = state.mem.get_mut(off + i) {
+                    *dst = bytes[i];
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unmapped_reads_return_all_ones() {
+        let ram = SharedRam::new(vec![0u8; 4]);
+        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
+
+        assert_eq!(bus.read_physical_u8(10), 0xFF);
+        assert_eq!(bus.read_physical_u16(10), 0xFFFF);
+        assert_eq!(bus.read_physical_u32(10), 0xFFFF_FFFF);
+        assert_eq!(bus.read_physical_u64(10), 0xFFFF_FFFF_FFFF_FFFF);
+        assert_eq!(bus.read_physical_u128(10), u128::MAX);
+
+        let mut buf = [0u8; 3];
+        bus.read_physical(10, &mut buf);
+        assert_eq!(buf, [0xFF; 3]);
+    }
+
+    #[test]
+    fn rom_is_read_only_and_does_not_write_through_to_ram() {
+        let ram = SharedRam::new((0u8..16).collect());
+        let ram_view = ram.clone();
+        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
+
+        bus.map_rom(4, Arc::from([0x10u8, 0x11, 0x12, 0x13].as_slice()))
+            .unwrap();
+
+        assert_eq!(bus.read_physical_u32(4), 0x1312_1110);
+
+        bus.write_physical_u32(4, 0xAABB_CCDD);
+
+        // ROM view is unchanged.
+        assert_eq!(bus.read_physical_u32(4), 0x1312_1110);
+
+        // Underlying RAM is unchanged too.
+        let snap = ram_view.snapshot();
+        assert_eq!(&snap[4..8], &[4u8, 5, 6, 7]);
+    }
+
+    #[test]
+    fn mmio_overrides_rom_and_ram() {
+        let mut base_ram: Vec<u8> = vec![0; 32];
+        base_ram[8..12].copy_from_slice(&[0x01, 0x02, 0x03, 0x04]);
+        let ram = SharedRam::new(base_ram);
+        let ram_view = ram.clone();
+        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
+
+        bus.map_rom(8, Arc::from([0x10u8, 0x20, 0x30, 0x40].as_slice()))
+            .unwrap();
+
+        let (mmio, mmio_state) = RecordingMmio::new(vec![0xAA, 0xBB, 0xCC, 0xDD]);
+        bus.map_mmio(8, 4, Box::new(mmio)).unwrap();
+
+        assert_eq!(bus.read_physical_u32(8), 0xDDCC_BBAA);
+
+        bus.write_physical_u32(8, 0x1122_3344);
+
+        let state = mmio_state.lock().unwrap();
+        assert_eq!(state.writes.len(), 1);
+        assert_eq!(state.writes[0].0, 0);
+        assert_eq!(state.writes[0].1, 4);
+        assert_eq!(state.mem, vec![0x44, 0x33, 0x22, 0x11]);
+        drop(state);
+
+        // RAM was not modified by the MMIO write.
+        let snap = ram_view.snapshot();
+        assert_eq!(&snap[8..12], &[0x01, 0x02, 0x03, 0x04]);
+    }
+
+    #[test]
+    fn cross_boundary_accesses_are_split_safely() {
+        // Crossing the end of RAM should not panic and should use 0xFF for unmapped bytes.
+        let ram = SharedRam::new(vec![0x01, 0x02, 0x03, 0x04]);
+        let ram_view = ram.clone();
+        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
+
+        assert_eq!(bus.read_physical_u32(2), 0xFFFF_0403);
+
+        bus.write_physical_u32(2, 0xAABB_CCDD);
+        let snap = ram_view.snapshot();
+        assert_eq!(snap, vec![0x01, 0x02, 0xDD, 0xCC]);
+        assert_eq!(bus.read_physical_u32(2), 0xFFFF_CCDD);
+
+        // Crossing into MMIO: RAM[3], MMIO[0..2], RAM[6]
+        let base_ram: Vec<u8> = (0u8..8).collect();
+        let ram = SharedRam::new(base_ram.clone());
+        let ram_view = ram.clone();
+        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
+
+        let (mmio, mmio_state) = RecordingMmio::new(vec![0xAA, 0xBB]);
+        bus.map_mmio(4, 2, Box::new(mmio)).unwrap();
+
+        let v = bus.read_physical_u32(3);
+        assert_eq!(v, u32::from_le_bytes([3, 0xAA, 0xBB, 6]));
+
+        bus.write_physical_u32(3, u32::from_le_bytes([0x11, 0x22, 0x33, 0x44]));
+
+        let snap = ram_view.snapshot();
+        assert_eq!(snap[3], 0x11);
+        assert_eq!(snap[6], 0x44);
+
+        let state = mmio_state.lock().unwrap();
+        assert_eq!(state.writes.len(), 1);
+        assert_eq!(state.writes[0].0, 0);
+        assert_eq!(state.writes[0].1, 2);
+        assert_eq!(state.mem, vec![0x22, 0x33]);
     }
 }
 
