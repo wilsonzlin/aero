@@ -37,6 +37,24 @@ async fn persistence_across_reopen() {
 }
 
 #[wasm_bindgen_test(async)]
+async fn unwritten_blocks_read_as_zero() {
+    let db_name = unique_db_name("st-idb-zeros");
+    let _ = IndexedDbBackend::delete_database(&db_name).await;
+
+    let capacity = 8 * 1024 * 1024;
+    let mut backend =
+        IndexedDbBackend::open(&db_name, capacity, IndexedDbBackendOptions::default())
+            .await
+            .unwrap();
+
+    let mut buf = vec![0xAA; 32];
+    backend.read_at(0, &mut buf).await.unwrap();
+    assert_eq!(buf, vec![0u8; 32]);
+
+    IndexedDbBackend::delete_database(&db_name).await.unwrap();
+}
+
+#[wasm_bindgen_test(async)]
 async fn eviction_round_trip() {
     let db_name = unique_db_name("st-idb-evict");
     let _ = IndexedDbBackend::delete_database(&db_name).await;
@@ -73,6 +91,42 @@ async fn eviction_round_trip() {
     let mut buf = vec![0u8; 4];
     backend.read_at(0, &mut buf).await.unwrap();
     assert_eq!(&buf, &[0xAA; 4]);
+
+    IndexedDbBackend::delete_database(&db_name).await.unwrap();
+}
+
+#[wasm_bindgen_test(async)]
+async fn eviction_writeback_persists_without_explicit_flush() {
+    let db_name = unique_db_name("st-idb-evict-writeback");
+    let _ = IndexedDbBackend::delete_database(&db_name).await;
+
+    let capacity = 8 * 1024 * 1024;
+    let block_size = 1024 * 1024;
+
+    let mut backend = IndexedDbBackend::open(
+        &db_name,
+        capacity,
+        IndexedDbBackendOptions {
+            // Cache holds one 1MiB block, so writing another block forces eviction.
+            max_resident_bytes: block_size,
+            flush_chunk_blocks: 1,
+        },
+    )
+    .await
+    .unwrap();
+
+    backend.write_at(0, b"persist me").await.unwrap();
+    // Force eviction of block 0. The evicted dirty block should be persisted.
+    backend.write_at(block_size as u64, b"other").await.unwrap();
+    drop(backend);
+
+    let mut backend2 =
+        IndexedDbBackend::open(&db_name, capacity, IndexedDbBackendOptions::default())
+            .await
+            .unwrap();
+    let mut buf = vec![0u8; 10];
+    backend2.read_at(0, &mut buf).await.unwrap();
+    assert_eq!(&buf, b"persist me");
 
     IndexedDbBackend::delete_database(&db_name).await.unwrap();
 }
