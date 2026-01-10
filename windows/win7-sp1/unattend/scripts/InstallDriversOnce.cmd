@@ -34,11 +34,14 @@ if exist "%AERO_MARKER_FILE%" (
 set "AERO_PNPUTIL="
 call :FIND_PNPUTIL
 echo Using pnputil: "%AERO_PNPUTIL%"
-"%AERO_PNPUTIL%" /? >nul 2>&1
+"%AERO_PNPUTIL%" -? >nul 2>&1
 if errorlevel 1 (
-  echo ERROR: pnputil is not available; cannot install driver packages.
-  call :DELETE_TASK
-  exit /b 12
+  "%AERO_PNPUTIL%" /? >nul 2>&1
+  if errorlevel 1 (
+    echo ERROR: pnputil is not available; cannot install driver packages.
+    call :DELETE_TASK
+    exit /b 12
+  )
 )
 
 set "AERO_ROOT="

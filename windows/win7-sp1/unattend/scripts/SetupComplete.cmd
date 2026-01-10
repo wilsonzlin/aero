@@ -109,7 +109,9 @@ echo Creating scheduled task "%AERO_TASK_NAME%" to install Aero drivers on next 
 REM The task action we want is:
 REM   cmd.exe /c ""C:\...\InstallDriversOnce.cmd""
 echo Task action: cmd.exe /c ""%AERO_INSTALL_SCRIPT%""
-schtasks /Create /F /SC ONSTART /TN "%AERO_TASK_NAME%" /RU SYSTEM /RL HIGHEST /TR "cmd.exe /c ""%AERO_INSTALL_SCRIPT%"""
+REM Note: we need the nested quotes around the script path so cmd.exe /c
+REM preserves quoting when executing a path containing spaces.
+schtasks /Create /F /SC ONSTART /TN "%AERO_TASK_NAME%" /RU SYSTEM /RL HIGHEST /TR "cmd.exe /c """"%AERO_INSTALL_SCRIPT%"""""
 if errorlevel 1 (
   echo ERROR: Failed to create scheduled task "%AERO_TASK_NAME%".
   exit /b 31
