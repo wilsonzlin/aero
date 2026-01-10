@@ -17,6 +17,7 @@ Related references in this repo:
 
 - `docs/16-win7-image-servicing.md` (more detailed, Windows-first DISM/reg/bcd workflows)
 - `docs/16-win7-unattended-install.md` (unattended install details and hooks)
+- `docs/17-win7-unattend-validation.md` (practical validation/troubleshooting playbook for unattended installs with a separate config ISO)
 - `docs/win7-bcd-offline-patching.md` (BCD internals and robust offline patching strategy)
 - `windows/win7-sp1/unattend/` (ready-to-edit `autounattend.xml` templates and Win7-compatible post-install scripts)
 - `tools/win7-slipstream/patches/README.md` (auditable `.reg` patches for offline BCD + SOFTWARE hives)

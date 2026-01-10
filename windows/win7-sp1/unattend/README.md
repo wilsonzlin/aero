@@ -18,6 +18,7 @@ See:
 
 - [`docs/16-win7-unattended-install.md`](../../../docs/16-win7-unattended-install.md) (how the plumbing works)
 - [`docs/17-win7-unattend-validation.md`](../../../docs/17-win7-unattend-validation.md) (how to validate/debug on a real VM install)
+- [`docs/16-windows7-install-media-prep.md`](../../../docs/16-windows7-install-media-prep.md) (end-to-end install media preparation: WIM/BCD/certs + ISO rebuild)
 
 ---
 

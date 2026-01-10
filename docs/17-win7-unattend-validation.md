@@ -16,6 +16,7 @@ Where behavior varies by hypervisor or media type, this guide uses **“expected
 See also (related docs in this repo):
 
 * [`docs/16-win7-unattended-install.md`](./16-win7-unattended-install.md) (how to structure `autounattend.xml`, driver injection passes, and setup scripting hooks)
+* [`docs/16-windows7-install-media-prep.md`](./16-windows7-install-media-prep.md) (the broader “what to patch” install-media preparation workflow: WIM/BCD/certs + ISO rebuild + validation)
 * [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md) (post-install driver signing/trust failures, Device Manager codes, `setupapi.dev.log` triage)
 
 ---
