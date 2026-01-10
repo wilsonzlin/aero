@@ -39,11 +39,26 @@ const sampleNow = async (page: Page, event: string): Promise<MemorySampleLike> =
 };
 
 export const run = async (page: Page, baseUrl: string): Promise<MemoryStabilityResult> => {
-  await page.goto(baseUrl, { waitUntil: 'load' });
+  const normalizedBase = baseUrl.replace(/\/$/, '');
+  const url = normalizedBase.endsWith('/web') ? `${normalizedBase}/` : `${normalizedBase}/web/`;
+  await page.goto(url, { waitUntil: 'load' });
+
+  // Memory telemetry is installed by the `/web/` entrypoint. If it's missing,
+  // proceed in best-effort mode (returning null samples/deltas) rather than
+  // failing the entire scenario.
+  let telemetryAvailable = false;
+  try {
+    await page.waitForFunction(() => (window as any).aero?.perf?.memoryTelemetry?.sampleNow, {
+      timeout: 5_000,
+    });
+    telemetryAvailable = true;
+  } catch {
+    telemetryAvailable = false;
+  }
 
   const gc_available = await maybeGc(page);
 
-  const start = await sampleNow(page, 'bench_start');
+  const start = telemetryAvailable ? await sampleNow(page, 'bench_start') : null;
 
   // Workload + idle: allocate memory and release it, then wait to observe if the heap stabilizes.
   await page.evaluate(async ({ rounds, jsAllocBytes, gpuAllocBytes, idleMs }) => {
@@ -83,7 +98,7 @@ export const run = async (page: Page, baseUrl: string): Promise<MemoryStabilityR
 
   await maybeGc(page);
 
-  const end = await sampleNow(page, 'bench_end');
+  const end = telemetryAvailable ? await sampleNow(page, 'bench_end') : null;
 
   const deltas = {
     js_heap_used_bytes: bytesDelta(start, end, 'js_heap_used_bytes'),
@@ -122,4 +137,3 @@ export const run = async (page: Page, baseUrl: string): Promise<MemoryStabilityR
     suspicious,
   };
 };
-

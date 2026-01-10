@@ -11,5 +11,6 @@ test('memory_stability (informational)', async ({ page }, testInfo) => {
   });
 
   expect(result.scenario).toBe('memory_stability');
+  expect(result.start).not.toBeNull();
+  expect(result.end).not.toBeNull();
 });
-
