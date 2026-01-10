@@ -484,6 +484,40 @@ impl<C: Clock> Hpet<C> {
     }
 }
 
+/// [`memory::Bus`] MMIO adapter for [`Hpet`].
+///
+/// The core HPET model requires a [`GsiSink`] to deliver timer interrupts. The
+/// [`memory::MmioHandler`] trait doesn't carry an interrupt sink parameter, so
+/// this wrapper bundles the HPET instance with a sink and forwards reads/writes.
+pub struct HpetMmio<C: Clock, S: GsiSink> {
+    hpet: Hpet<C>,
+    sink: S,
+}
+
+impl<C: Clock, S: GsiSink> HpetMmio<C, S> {
+    pub fn new(hpet: Hpet<C>, sink: S) -> Self {
+        Self { hpet, sink }
+    }
+
+    pub fn hpet_mut(&mut self) -> &mut Hpet<C> {
+        &mut self.hpet
+    }
+
+    pub fn sink_mut(&mut self) -> &mut S {
+        &mut self.sink
+    }
+}
+
+impl<C: Clock, S: GsiSink> memory::MmioHandler for HpetMmio<C, S> {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.hpet.mmio_read(offset, size, &mut self.sink)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        self.hpet.mmio_write(offset, size, value, &mut self.sink);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

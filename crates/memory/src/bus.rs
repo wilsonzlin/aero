@@ -80,6 +80,20 @@ pub struct Bus {
     regions: Vec<Region>,
 }
 
+fn mask_for_size(size: usize) -> u64 {
+    match size {
+        0 => 0,
+        1 => 0xff,
+        2 => 0xffff,
+        3 => 0x00ff_ffff,
+        4 => 0xffff_ffff,
+        5 => 0x0000_ffff_ffff,
+        6 => 0x00ff_ffff_ffff,
+        7 => 0x00ff_ffff_ffff_ffff,
+        _ => u64::MAX,
+    }
+}
+
 impl Bus {
     pub fn new(ram_size: usize) -> Self {
         Self {
@@ -143,6 +157,30 @@ impl Bus {
             return 0;
         }
 
+        // Fast path for single-region MMIO/ROM reads that fit in one handler call. This avoids
+        // breaking devices like HPET whose registers have side effects on each write.
+        if matches!(size, 1 | 2 | 4 | 8) {
+            if let Some(region_idx) = self.find_region_index(addr) {
+                let last = addr.saturating_add(size.saturating_sub(1) as u64);
+                if self.regions[region_idx].contains(last) {
+                    let region = &mut self.regions[region_idx];
+                    let offset = addr - region.start;
+                    return match &mut region.kind {
+                        RegionKind::Mmio(handler) => handler.read(offset, size) & mask_for_size(size),
+                        RegionKind::Rom(bytes) => {
+                            let base = offset as usize;
+                            let mut out = 0u64;
+                            for i in 0..size {
+                                let byte = bytes.get(base + i).copied().unwrap_or(0xff);
+                                out |= (byte as u64) << (i * 8);
+                            }
+                            out
+                        }
+                    };
+                }
+            }
+        }
+
         let mut out = 0u64;
         for i in 0..size {
             let byte = self.read_u8(addr.wrapping_add(i as u64));
@@ -155,6 +193,26 @@ impl Bus {
     pub fn write(&mut self, addr: u64, size: usize, value: u64) {
         if !(1..=8).contains(&size) {
             return;
+        }
+
+        // Fast path for single-region MMIO writes. This keeps multi-byte register writes atomic
+        // from the device model's perspective, which is important for comparator-style devices
+        // like HPET.
+        if matches!(size, 1 | 2 | 4 | 8) {
+            if let Some(region_idx) = self.find_region_index(addr) {
+                let last = addr.saturating_add(size.saturating_sub(1) as u64);
+                if self.regions[region_idx].contains(last) {
+                    let region = &mut self.regions[region_idx];
+                    let offset = addr - region.start;
+                    match &mut region.kind {
+                        RegionKind::Rom(_) => {}
+                        RegionKind::Mmio(handler) => {
+                            handler.write(offset, size, value & mask_for_size(size));
+                        }
+                    }
+                    return;
+                }
+            }
         }
 
         for i in 0..size {

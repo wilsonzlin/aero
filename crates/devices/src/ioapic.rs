@@ -1,4 +1,6 @@
 use std::collections::BTreeSet;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 pub trait GsiSink {
     fn raise_gsi(&mut self, gsi: u32);
@@ -61,5 +63,17 @@ impl GsiSink for aero_platform::interrupts::PlatformInterrupts {
 
     fn lower_gsi(&mut self, gsi: u32) {
         self.lower_irq(aero_platform::interrupts::InterruptInput::Gsi(gsi));
+    }
+}
+
+impl GsiSink for Rc<RefCell<aero_platform::interrupts::PlatformInterrupts>> {
+    fn raise_gsi(&mut self, gsi: u32) {
+        self.borrow_mut()
+            .raise_irq(aero_platform::interrupts::InterruptInput::Gsi(gsi));
+    }
+
+    fn lower_gsi(&mut self, gsi: u32) {
+        self.borrow_mut()
+            .lower_irq(aero_platform::interrupts::InterruptInput::Gsi(gsi));
     }
 }
