@@ -339,6 +339,7 @@ pub trait DisplayAdapter {
 | [windows7-guest-tools.md](./docs/windows7-guest-tools.md)               | End-user guide: install Guest Tools and switch to virtio + Aero GPU | All |
 | [windows7-driver-troubleshooting.md](./docs/windows7-driver-troubleshooting.md) | End-user guide: Windows 7 driver/signing troubleshooting | All |
 | [windows7-virtio-driver-contract.md](./docs/windows7-virtio-driver-contract.md) | Virtio contract: Win7 drivers ↔ emulator | I/O               |
+| [virtqueue-split-ring-win7.md](./docs/virtio/virtqueue-split-ring-win7.md) | Virtio 1.0 split virtqueue implementation guide (Win7 KMDF) | I/O (virtio drivers) |
 | [backend/disk-image-streaming-service.md](./docs/backend/disk-image-streaming-service.md) | Disk image streaming (Range/CORS/COEP) | I/O / Infra       |
 | [security-headers.md](./docs/security-headers.md)                       | COOP/COEP, CSP, security headers       | Infrastructure    |
 | [16-disk-image-streaming-auth.md](./docs/16-disk-image-streaming-auth.md) | Disk byte streaming, auth, CORS/COEP   | I/O / Infra       |
