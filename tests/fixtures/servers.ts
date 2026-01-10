@@ -18,11 +18,15 @@ function rangeTestPageHtml(): string {
   </head>
   <body>
     <script>
-      window.__rangeFetch = async function (url, rangeHeaderValue) {
+      window.__rangeFetch = async function (url, rangeHeaderValue, extraHeaders) {
         try {
+          const headers = {
+            ...(extraHeaders || {}),
+            Range: rangeHeaderValue,
+          };
           const response = await fetch(url, {
             mode: "cors",
-            headers: { Range: rangeHeaderValue },
+            headers,
           });
           const bytes = new Uint8Array(await response.arrayBuffer());
           return {
@@ -74,7 +78,15 @@ function setCorsHeaders(res: ServerResponse, req: IncomingMessage): void {
   res.setHeader("Access-Control-Allow-Origin", requestOrigin ?? "*");
   if (requestOrigin) res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Range");
+  const requestedHeaders = req.headers["access-control-request-headers"];
+  const requestedHeadersValue = typeof requestedHeaders === "string" ? requestedHeaders : "";
+  const hasRange = requestedHeadersValue.toLowerCase().includes("range");
+  const allowHeaders = requestedHeadersValue
+    ? hasRange
+      ? requestedHeadersValue
+      : `Range, ${requestedHeadersValue}`
+    : "Range";
+  res.setHeader("Access-Control-Allow-Headers", allowHeaders);
   res.setHeader("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length");
 }
 
@@ -223,4 +235,3 @@ export async function startPageServer({ coopCoep = false }: { coopCoep?: boolean
 
   return await listen(server);
 }
-

@@ -25,7 +25,11 @@ type RangeFetchErrorResult = { ok: false; error: string };
 
 type RangeFetchResult = RangeFetchOkResult | RangeFetchErrorResult;
 
-type RangeFetchFn = (url: string, rangeHeaderValue: string) => Promise<RangeFetchResult>;
+type RangeFetchFn = (
+  url: string,
+  rangeHeaderValue: string,
+  extraHeaders?: Record<string, string>,
+) => Promise<RangeFetchResult>;
 
 function expectedBytes(start: number, endInclusive: number): number[] {
   const out: number[] = [];
@@ -35,15 +39,18 @@ function expectedBytes(start: number, endInclusive: number): number[] {
 
 async function runRangeFetch(
   page: Page,
-  opts: { pageOrigin: string; url: string; rangeHeaderValue: string },
+  opts: { pageOrigin: string; url: string; rangeHeaderValue: string; extraHeaders?: Record<string, string> },
 ): Promise<RangeFetchResult> {
   await page.goto(`${opts.pageOrigin}/`, { waitUntil: "load" });
-  return await page.evaluate<RangeFetchResult, { targetUrl: string; range: string }>(
-    async ({ targetUrl, range }) => {
+  return await page.evaluate<
+    RangeFetchResult,
+    { targetUrl: string; range: string; extraHeaders?: Record<string, string> }
+  >(
+    async ({ targetUrl, range, extraHeaders }) => {
       const rangeFetch = (window as unknown as { __rangeFetch: RangeFetchFn }).__rangeFetch;
-      return await rangeFetch(targetUrl, range);
+      return await rangeFetch(targetUrl, range, extraHeaders);
     },
-    { targetUrl: opts.url, range: opts.rangeHeaderValue },
+    { targetUrl: opts.url, range: opts.rangeHeaderValue, extraHeaders: opts.extraHeaders },
   );
 }
 
@@ -113,6 +120,10 @@ test.describe("disk-image Range fetch (cross origin CORS + preflight)", () => {
     await Promise.all([diskServer.close(), pageServer.close()]);
   });
 
+  test.beforeEach(() => {
+    diskServer.resetRequests();
+  });
+
   test("preflight OPTIONS advertises Range and exposes Content-Range", async () => {
     const resp = await fetch(diskServer.url("/disk.img"), {
       method: "OPTIONS",
@@ -150,8 +161,6 @@ test.describe("disk-image Range fetch (cross origin CORS + preflight)", () => {
     expect(exposeHeaders, "Access-Control-Expose-Headers must include Content-Length").toContain(
       "content-length",
     );
-
-    diskServer.resetRequests();
   });
 
   test("cross-origin Range fetch succeeds and Content-Range is readable", async ({ page }) => {
@@ -162,6 +171,9 @@ test.describe("disk-image Range fetch (cross origin CORS + preflight)", () => {
       pageOrigin: pageServer.origin,
       url: diskServer.url("/disk.img"),
       rangeHeaderValue: `bytes=${start}-${endInclusive}`,
+      // Force a CORS preflight in every browser so we can assert OPTIONS behavior even
+      // when a browser treats `Range` as CORS-safelisted.
+      extraHeaders: { "X-Force-Preflight": "1" },
     });
 
     if (!result.ok) throw new Error(`Cross-origin Range fetch failed (likely CORS): ${result.error}`);
@@ -178,14 +190,17 @@ test.describe("disk-image Range fetch (cross origin CORS + preflight)", () => {
     );
 
     const preflight = diskServer.requests.find((req) => req.method === "OPTIONS");
-    // Some engines preflight Range requests; others may treat `Range` as CORS-safelisted.
-    if (preflight) {
-      expect(headerValue(preflight.headers["access-control-request-headers"]) ?? "").toContain("range");
-    }
+    expect(preflight, "Browser should send a CORS preflight OPTIONS request").toBeTruthy();
+    expect(headerValue(preflight?.headers["access-control-request-headers"]) ?? "").toContain(
+      "x-force-preflight",
+    );
 
     const rangeReq = diskServer.requests.find((req) => req.method === "GET");
     expect(headerValue(rangeReq?.headers.range), "Browser must send Range request header").toBe(
       `bytes=${start}-${endInclusive}`,
+    );
+    expect(headerValue(rangeReq?.headers["x-force-preflight"]), "Browser must include extra header").toBe(
+      "1",
     );
   });
 });
@@ -217,7 +232,7 @@ test.describe("disk-image Range fetch (cross origin + COOP/COEP)", () => {
     const result = await page.evaluate<RangeFetchResult, { targetUrl: string; range: string }>(
       async ({ targetUrl, range }) => {
         const rangeFetch = (window as unknown as { __rangeFetch: RangeFetchFn }).__rangeFetch;
-        return await rangeFetch(targetUrl, range);
+        return await rangeFetch(targetUrl, range, { "X-Force-Preflight": "1" });
       },
       { targetUrl: diskServer.url("/disk.img"), range: `bytes=${start}-${endInclusive}` },
     );
