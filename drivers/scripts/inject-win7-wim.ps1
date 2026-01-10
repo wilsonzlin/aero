@@ -14,10 +14,10 @@ param(
 
   [string[]]$CertStores = @("ROOT", "TrustedPublisher"),
 
-  # Optional: explicit path to win-offline-cert-injector (Task 359). If omitted, the script will:
+  # Optional: explicit path to win-offline-cert-injector. If omitted, the script will:
   #   1) use it from PATH if present,
   #   2) otherwise look for a built binary under tools/win-offline-cert-injector/target/{release,debug},
-  #   3) otherwise fall back to direct offline SOFTWARE hive edits.
+  #   3) otherwise throw with build instructions.
   [string]$OfflineCertInjectorPath = "",
 
   [string]$MountDir = (Join-Path $env:TEMP "aero-wim-mount")
@@ -89,9 +89,7 @@ function Get-CertificateInfo {
   }
 
   return @{
-    Cert = $cert
     Thumbprint = $cert.Thumbprint.ToUpperInvariant()
-    RawData = $cert.RawData
   }
 }
 
@@ -188,7 +186,7 @@ function Get-MissingCertStoresFromOfflineSoftwareHive {
   }
 }
 
-function Try-Invoke-WinOfflineCertInjector {
+function Invoke-WinOfflineCertInjector {
   param(
     [Parameter(Mandatory = $true)][string]$WindowsDir,
     [Parameter(Mandatory = $true)][string]$CertPath,
@@ -197,9 +195,7 @@ function Try-Invoke-WinOfflineCertInjector {
   )
 
   $resolvedInjector = Resolve-WinOfflineCertInjectorPath -ExplicitPath $InjectorPath
-  if (-not $resolvedInjector) {
-    return $false
-  }
+  if (-not $resolvedInjector) { throw "win-offline-cert-injector not found. Build it with: cd tools\\win-offline-cert-injector; cargo build --release" }
 
   # Our native injector uses CryptoAPI to write the registry-backed certificate store entries
   # (including the correct `Blob` REG_BINARY values), and edits the offline SOFTWARE hive in-place.
@@ -207,44 +203,11 @@ function Try-Invoke-WinOfflineCertInjector {
   foreach ($store in $Stores) {
     $args += @("--store", $store)
   }
-  $args += @("--cert", $CertPath)
+  $args += @($CertPath)
 
   & $resolvedInjector @args | Out-Host
   if ($LASTEXITCODE -ne 0) {
     throw "win-offline-cert-injector failed (exit $LASTEXITCODE): $resolvedInjector"
-  }
-
-  return $true
-}
-
-function Inject-CertificateByEditingSoftwareHive {
-  param(
-    [Parameter(Mandatory = $true)][string]$WindowsDir,
-    [Parameter(Mandatory = $true)][string[]]$Stores,
-    [Parameter(Mandatory = $true)][string]$Thumbprint,
-    [Parameter(Mandatory = $true)][byte[]]$RawData
-  )
-
-  $hive = Get-OfflineSoftwareHivePath -WindowsDir $WindowsDir
-  $tempKey = "AERO_OFFLINE_SOFTWARE_$([Guid]::NewGuid().ToString('N'))"
-
-  & reg.exe load "HKLM\$tempKey" $hive | Out-Host
-  if ($LASTEXITCODE -ne 0) {
-    throw "reg.exe load failed (exit $LASTEXITCODE)."
-  }
-
-  try {
-    foreach ($store in $Stores) {
-      $certKey = "Registry::HKEY_LOCAL_MACHINE\$tempKey\Microsoft\SystemCertificates\$store\Certificates\$Thumbprint"
-      New-Item -Path $certKey -Force | Out-Null
-      New-ItemProperty -Path $certKey -Name "Blob" -PropertyType Binary -Value $RawData -Force | Out-Null
-    }
-  }
-  finally {
-    & reg.exe unload "HKLM\$tempKey" | Out-Host
-    if ($LASTEXITCODE -ne 0) {
-      throw "reg.exe unload failed (exit $LASTEXITCODE)."
-    }
   }
 }
 
@@ -257,7 +220,6 @@ function Ensure-OfflineCertTrust {
 
   $certInfo = Get-CertificateInfo -Path $CertPath
   $thumb = $certInfo.Thumbprint
-  $raw = $certInfo.RawData
 
   $missingBefore = Get-MissingCertStoresFromOfflineSoftwareHive -WindowsDir $WindowsDir -Stores $Stores -Thumbprint $thumb
   if ($missingBefore.Count -eq 0) {
@@ -267,10 +229,7 @@ function Ensure-OfflineCertTrust {
 
   Write-Host "Injecting certificate into offline image ($($Stores -join ', ')): $thumb"
 
-  $usedExternal = Try-Invoke-WinOfflineCertInjector -WindowsDir $WindowsDir -CertPath $CertPath -Stores $Stores -InjectorPath $OfflineCertInjectorPath
-  if (-not $usedExternal) {
-    Inject-CertificateByEditingSoftwareHive -WindowsDir $WindowsDir -Stores $Stores -Thumbprint $thumb -RawData $raw
-  }
+  Invoke-WinOfflineCertInjector -WindowsDir $WindowsDir -CertPath $CertPath -Stores $Stores -InjectorPath $OfflineCertInjectorPath
 
   $missingAfter = Get-MissingCertStoresFromOfflineSoftwareHive -WindowsDir $WindowsDir -Stores $Stores -Thumbprint $thumb
   if ($missingAfter.Count -ne 0) {

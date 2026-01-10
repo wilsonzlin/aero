@@ -306,7 +306,7 @@ At minimum, inject into:
 Recommended tooling (Windows host):
 
 - End-to-end media servicing: `tools/windows/patch-win7-media.ps1`
-- Offline hive injector: `tools/win-offline-cert-injector` (`win-offline-cert-injector --windows-dir <mount> --cert <path> --store ROOT --store TrustedPublisher`)
+- Offline hive injector: `tools/win-offline-cert-injector` (`win-offline-cert-injector --windows-dir <mount> --store ROOT --store TrustedPublisher <cert-file>...`)
 
 For a much more complete, Win7 x64-focused servicing procedure (certificate injection + BCD template patching), see `docs/16-win7-image-servicing.md` and the helper script `drivers/scripts/inject-win7-wim.ps1`.
 
