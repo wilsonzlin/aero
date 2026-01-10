@@ -356,8 +356,16 @@ mod tests {
 
     fn mk_ioapic() -> (IoApic, Arc<LocalApic>) {
         let lapic = Arc::new(LocalApic::new(0));
+        lapic.mmio_write(0xF0, &(1u32 << 8).to_le_bytes());
         let ioapic = IoApic::new(IoApicId(0), lapic.clone());
         (ioapic, lapic)
+    }
+
+    fn service_next(lapic: &LocalApic) -> Option<u8> {
+        let vector = lapic.get_pending_vector()?;
+        assert!(lapic.ack(vector));
+        lapic.eoi();
+        Some(vector)
     }
 
     #[test]
@@ -398,16 +406,16 @@ mod tests {
         ioapic.mmio_write(0x10, 4, 0x20);
 
         ioapic.set_irq_level(0, true);
-        assert_eq!(lapic.pop_pending(), Some(0x20));
+        assert_eq!(service_next(&lapic), Some(0x20));
 
         // Still asserted: should not re-deliver.
         ioapic.set_irq_level(0, true);
-        assert_eq!(lapic.pop_pending(), None);
+        assert_eq!(service_next(&lapic), None);
 
         // Deassert then assert again: new edge.
         ioapic.set_irq_level(0, false);
         ioapic.set_irq_level(0, true);
-        assert_eq!(lapic.pop_pending(), Some(0x20));
+        assert_eq!(service_next(&lapic), Some(0x20));
     }
 
     #[test]
@@ -419,19 +427,19 @@ mod tests {
         ioapic.mmio_write(0x10, 4, 0x21 | (1 << 15)); // trigger_mode=level
 
         ioapic.set_irq_level(1, true);
-        assert_eq!(lapic.pop_pending(), Some(0x21));
+        assert_eq!(service_next(&lapic), Some(0x21));
 
         // Still asserted: no re-delivery without EOI.
         ioapic.set_irq_level(1, true);
-        assert_eq!(lapic.pop_pending(), None);
+        assert_eq!(service_next(&lapic), None);
 
         // Deassert then assert: should deliver again.
         ioapic.set_irq_level(1, false);
         ioapic.set_irq_level(1, true);
-        assert_eq!(lapic.pop_pending(), Some(0x21));
+        assert_eq!(service_next(&lapic), Some(0x21));
 
         // Now emulate EOI while still asserted; should re-deliver (remote IRR cleared).
         ioapic.notify_eoi(0x21);
-        assert_eq!(lapic.pop_pending(), Some(0x21));
+        assert_eq!(service_next(&lapic), Some(0x21));
     }
 }

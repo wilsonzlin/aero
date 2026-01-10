@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod clock;
+
 pub mod a20_gate;
 pub mod acpi_pm;
 pub mod apic;
@@ -11,7 +13,6 @@ pub mod i8042;
 pub mod io;
 pub mod storage;
 
-pub mod clock;
 pub mod hpet;
 pub mod ioapic;
 pub mod irq;

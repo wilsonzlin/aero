@@ -24,6 +24,7 @@ fn pci_intx_can_drive_ioapic_and_be_mirrored_to_pic() {
     let mut router = PciIntxRouter::new(PciIntxRouterConfig::default());
 
     let lapic = Arc::new(LocalApic::new(0));
+    lapic.mmio_write(0xF0, &(1u32 << 8).to_le_bytes());
     let mut ioapic = IoApic::new(IoApicId(0), lapic.clone());
 
     // Configure GSI 10 -> vector 0x45, unmasked, active-low, level-triggered.
@@ -49,6 +50,6 @@ fn pci_intx_can_drive_ioapic_and_be_mirrored_to_pic() {
     let bdf = PciBdf::new(0, 0, 0);
     router.assert_intx(bdf, PciInterruptPin::IntA, &mut sink);
 
-    assert_eq!(lapic.pop_pending(), Some(vector));
+    assert_eq!(lapic.get_pending_vector(), Some(vector));
     assert_eq!(pic.get_pending_vector(), Some(0x2A)); // IRQ10 -> slave IRQ2 -> vector 0x28+2
 }

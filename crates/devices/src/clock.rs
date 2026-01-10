@@ -31,3 +31,11 @@ impl Clock for ManualClock {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct NullClock;
+
+impl Clock for NullClock {
+    fn now_ns(&self) -> u64 {
+        0
+    }
+}

@@ -7,6 +7,7 @@ use std::sync::Arc;
 fn hpet_timer0_interrupt_is_routed_via_ioapic_to_lapic() {
     let clock = ManualClock::new();
     let lapic = Arc::new(LocalApic::new(0));
+    lapic.mmio_write(0xF0, &(1u32 << 8).to_le_bytes());
     let mut ioapic = IoApic::new(IoApicId(0), lapic.clone());
 
     // Route HPET Timer 0 (default GSI 2) to vector 0x42.
@@ -32,7 +33,6 @@ fn hpet_timer0_interrupt_is_routed_via_ioapic_to_lapic() {
     clock.advance_ns(300);
     hpet.poll(&mut ioapic);
 
-    assert_eq!(lapic.pop_pending(), Some(vector));
+    assert_eq!(lapic.get_pending_vector(), Some(vector));
     assert_ne!(hpet.mmio_read(0x020, 8, &mut ioapic) & 1, 0);
 }
-
