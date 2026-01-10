@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use aero_platform::interrupts::{InterruptInput, PlatformInterrupts};
+
 use super::{PciBdf, PciConfigSpace, PciInterruptPin};
 use crate::apic::IoApic;
 use crate::pic8259::DualPic8259;
@@ -19,6 +21,27 @@ pub trait PicIrqLevelSink {
 impl GsiLevelSink for IoApic {
     fn set_gsi_level(&mut self, gsi: u32, level: bool) {
         self.set_irq_level(gsi, level);
+    }
+}
+
+impl GsiLevelSink for PlatformInterrupts {
+    fn set_gsi_level(&mut self, gsi: u32, level: bool) {
+        if let Ok(irq) = u8::try_from(gsi) {
+            if irq < 16 {
+                if level {
+                    self.raise_irq(InterruptInput::IsaIrq(irq));
+                } else {
+                    self.lower_irq(InterruptInput::IsaIrq(irq));
+                }
+                return;
+            }
+        }
+
+        if level {
+            self.raise_irq(InterruptInput::Gsi(gsi));
+        } else {
+            self.lower_irq(InterruptInput::Gsi(gsi));
+        }
     }
 }
 
