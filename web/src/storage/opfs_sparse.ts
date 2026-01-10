@@ -1,0 +1,418 @@
+import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
+
+type SyncAccessHandle = {
+  read(buffer: ArrayBufferView, options?: { at: number }): number;
+  write(buffer: ArrayBufferView, options?: { at: number }): number;
+  flush(): void;
+  close(): void;
+  getSize(): number;
+  truncate(size: number): void;
+};
+
+type FileHandle = {
+  createSyncAccessHandle(): Promise<SyncAccessHandle>;
+};
+
+type DirectoryHandle = {
+  getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<DirectoryHandle>;
+  getFileHandle(name: string, options?: { create?: boolean }): Promise<FileHandle>;
+};
+
+const MAGIC = "AEROSPAR";
+const VERSION = 1;
+const HEADER_SIZE = 64;
+
+function alignUp(value: number, alignment: number): number {
+  if (alignment <= 0) throw new Error("alignment must be > 0");
+  const aligned = Math.ceil(value / alignment) * alignment;
+  if (!Number.isSafeInteger(aligned)) {
+    throw new Error("alignUp overflow");
+  }
+  return aligned;
+}
+
+function divCeil(n: number, d: number): number {
+  return Math.floor((n + d - 1) / d);
+}
+
+function toSafeNumber(v: bigint, field: string): number {
+  const n = Number(v);
+  if (!Number.isSafeInteger(n)) {
+    throw new Error(`field ${field} is not a safe JS integer (${v})`);
+  }
+  return n;
+}
+
+async function getOpfsImagesDir(): Promise<DirectoryHandle> {
+  if (!navigator.storage?.getDirectory) {
+    throw new Error("OPFS is not available (navigator.storage.getDirectory missing)");
+  }
+  const root = (await navigator.storage.getDirectory()) as unknown as DirectoryHandle;
+  return await root.getDirectoryHandle("images", { create: true });
+}
+
+type SparseHeader = {
+  version: number;
+  blockSizeBytes: number;
+  diskSizeBytes: number;
+  tableEntries: number;
+  dataOffset: number;
+  allocatedBlocks: number;
+};
+
+function encodeHeader(h: SparseHeader): Uint8Array {
+  const buf = new ArrayBuffer(HEADER_SIZE);
+  const bytes = new Uint8Array(buf);
+  bytes.set(new TextEncoder().encode(MAGIC), 0);
+
+  const view = new DataView(buf);
+  view.setUint32(8, h.version, true);
+  view.setUint32(12, HEADER_SIZE, true);
+  view.setUint32(16, h.blockSizeBytes, true);
+  view.setUint32(20, 0, true);
+  view.setBigUint64(24, BigInt(h.diskSizeBytes), true);
+  view.setBigUint64(32, BigInt(HEADER_SIZE), true); // table_offset
+  view.setBigUint64(40, BigInt(h.tableEntries), true);
+  view.setBigUint64(48, BigInt(h.dataOffset), true);
+  view.setBigUint64(56, BigInt(h.allocatedBlocks), true);
+
+  return bytes;
+}
+
+function decodeHeader(bytes: Uint8Array): SparseHeader {
+  if (bytes.byteLength < HEADER_SIZE) {
+    throw new Error("sparse header too small");
+  }
+  const magic = new TextDecoder().decode(bytes.slice(0, 8));
+  if (magic !== MAGIC) {
+    throw new Error(`bad sparse magic: ${magic}`);
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const version = view.getUint32(8, true);
+  if (version !== VERSION) {
+    throw new Error(`unsupported sparse version ${version}`);
+  }
+  const headerSize = view.getUint32(12, true);
+  if (headerSize !== HEADER_SIZE) {
+    throw new Error(`unexpected header size ${headerSize}`);
+  }
+  const blockSizeBytes = view.getUint32(16, true);
+  const diskSizeBytes = toSafeNumber(view.getBigUint64(24, true), "diskSizeBytes");
+  const tableOffset = toSafeNumber(view.getBigUint64(32, true), "tableOffset");
+  if (tableOffset !== HEADER_SIZE) {
+    throw new Error(`unsupported tableOffset ${tableOffset}`);
+  }
+  const tableEntries = toSafeNumber(view.getBigUint64(40, true), "tableEntries");
+  const dataOffset = toSafeNumber(view.getBigUint64(48, true), "dataOffset");
+  const allocatedBlocks = toSafeNumber(view.getBigUint64(56, true), "allocatedBlocks");
+
+  return {
+    version,
+    blockSizeBytes,
+    diskSizeBytes,
+    tableEntries,
+    dataOffset,
+    allocatedBlocks,
+  };
+}
+
+type CacheEntry = { data: Uint8Array; dirty: boolean };
+
+export class OpfsAeroSparseDisk implements AsyncSectorDisk {
+  readonly sectorSize = SECTOR_SIZE;
+  readonly capacityBytes: number;
+  readonly blockSizeBytes: number;
+
+  private readonly table: Float64Array;
+  private header: SparseHeader;
+  private readonly cache = new Map<number, CacheEntry>();
+
+  private constructor(
+    private readonly sync: SyncAccessHandle,
+    header: SparseHeader,
+    table: Float64Array,
+    private readonly maxCachedBlocks: number,
+  ) {
+    this.header = header;
+    this.table = table;
+    this.capacityBytes = header.diskSizeBytes;
+    this.blockSizeBytes = header.blockSizeBytes;
+  }
+
+  static async create(
+    name: string,
+    opts: {
+      diskSizeBytes: number;
+      blockSizeBytes: number;
+      maxCachedBlocks?: number;
+    },
+  ): Promise<OpfsAeroSparseDisk> {
+    if (!Number.isSafeInteger(opts.diskSizeBytes) || opts.diskSizeBytes <= 0) {
+      throw new Error(`invalid diskSizeBytes=${opts.diskSizeBytes}`);
+    }
+    if (!Number.isSafeInteger(opts.blockSizeBytes) || opts.blockSizeBytes <= 0) {
+      throw new Error(`invalid blockSizeBytes=${opts.blockSizeBytes}`);
+    }
+    if (opts.blockSizeBytes % SECTOR_SIZE !== 0) {
+      throw new Error("blockSizeBytes must be a multiple of 512");
+    }
+    if ((BigInt(opts.blockSizeBytes) & (BigInt(opts.blockSizeBytes) - 1n)) !== 0n) {
+      throw new Error("blockSizeBytes must be a power of two");
+    }
+
+    const tableEntries = divCeil(opts.diskSizeBytes, opts.blockSizeBytes);
+    const tableBytes = tableEntries * 8;
+    const dataOffset = alignUp(HEADER_SIZE + tableBytes, opts.blockSizeBytes);
+
+    const images = await getOpfsImagesDir();
+    const file = await images.getFileHandle(name, { create: true });
+    const sync = await file.createSyncAccessHandle();
+
+    const header: SparseHeader = {
+      version: VERSION,
+      blockSizeBytes: opts.blockSizeBytes,
+      diskSizeBytes: opts.diskSizeBytes,
+      tableEntries,
+      dataOffset,
+      allocatedBlocks: 0,
+    };
+
+    // Ensure header + table exist in the file (filled with zeros).
+    sync.truncate(dataOffset);
+    sync.write(encodeHeader(header), { at: 0 });
+    sync.write(new Uint8Array(tableBytes), { at: HEADER_SIZE });
+
+    return new OpfsAeroSparseDisk(
+      sync,
+      header,
+      new Float64Array(tableEntries),
+      opts.maxCachedBlocks ?? 64,
+    );
+  }
+
+  static async open(
+    name: string,
+    opts: { maxCachedBlocks?: number } = {},
+  ): Promise<OpfsAeroSparseDisk> {
+    const images = await getOpfsImagesDir();
+    const file = await images.getFileHandle(name, { create: false });
+    const sync = await file.createSyncAccessHandle();
+
+    const headerBytes = new Uint8Array(HEADER_SIZE);
+    const n = sync.read(headerBytes, { at: 0 });
+    if (n !== HEADER_SIZE) {
+      sync.close();
+      throw new Error(`short header read: expected=${HEADER_SIZE} actual=${n}`);
+    }
+    const header = decodeHeader(headerBytes);
+
+    const tableBytesLen = header.tableEntries * 8;
+    const tableBytes = new Uint8Array(tableBytesLen);
+    const t = sync.read(tableBytes, { at: HEADER_SIZE });
+    if (t !== tableBytesLen) {
+      sync.close();
+      throw new Error(`short table read: expected=${tableBytesLen} actual=${t}`);
+    }
+    const view = new DataView(tableBytes.buffer, tableBytes.byteOffset, tableBytes.byteLength);
+    const table = new Float64Array(header.tableEntries);
+    for (let i = 0; i < header.tableEntries; i++) {
+      table[i] = toSafeNumber(view.getBigUint64(i * 8, true), `table[${i}]`);
+    }
+
+    return new OpfsAeroSparseDisk(sync, header, table, opts.maxCachedBlocks ?? 64);
+  }
+
+  isBlockAllocated(blockIndex: number): boolean {
+    if (!Number.isInteger(blockIndex) || blockIndex < 0 || blockIndex >= this.table.length) {
+      throw new Error(`blockIndex out of range: ${blockIndex}`);
+    }
+    return this.table[blockIndex] !== 0;
+  }
+
+  private touchCacheKey(key: number, entry: CacheEntry): void {
+    // Map maintains insertion order; delete+set moves key to the end (MRU).
+    this.cache.delete(key);
+    this.cache.set(key, entry);
+  }
+
+  private evictIfNeeded(): void {
+    while (this.cache.size > this.maxCachedBlocks) {
+      const lruKey = this.cache.keys().next().value as number | undefined;
+      if (lruKey === undefined) return;
+      const entry = this.cache.get(lruKey)!;
+      this.cache.delete(lruKey);
+      if (entry.dirty) {
+        this.writeBlockNow(lruKey, entry.data);
+      }
+    }
+  }
+
+  private persistHeader(): void {
+    this.sync.write(encodeHeader(this.header), { at: 0 });
+  }
+
+  private persistTableEntry(blockIndex: number, phys: number): void {
+    const buf = new ArrayBuffer(8);
+    new DataView(buf).setBigUint64(0, BigInt(phys), true);
+    this.sync.write(new Uint8Array(buf), { at: HEADER_SIZE + blockIndex * 8 });
+  }
+
+  private ensureAllocated(blockIndex: number): number {
+    if (!Number.isInteger(blockIndex) || blockIndex < 0 || blockIndex >= this.table.length) {
+      throw new Error(`blockIndex out of range: ${blockIndex}`);
+    }
+    const current = this.table[blockIndex];
+    if (current !== 0) return current;
+
+    const phys = this.header.dataOffset + this.header.allocatedBlocks * this.header.blockSizeBytes;
+    this.header.allocatedBlocks += 1;
+    this.table[blockIndex] = phys;
+
+    this.persistHeader();
+    this.persistTableEntry(blockIndex, phys);
+
+    // Ensure file covers the new block.
+    const end = phys + this.header.blockSizeBytes;
+    if (end > this.sync.getSize()) {
+      this.sync.truncate(end);
+    }
+
+    return phys;
+  }
+
+  private readBlockInto(blockIndex: number, dst: Uint8Array): void {
+    dst.fill(0);
+    if (!Number.isInteger(blockIndex) || blockIndex < 0 || blockIndex >= this.table.length) {
+      throw new Error(`blockIndex out of range: ${blockIndex}`);
+    }
+    const phys = this.table[blockIndex];
+    if (phys === 0) return;
+    const n = this.sync.read(dst, { at: phys });
+    if (n !== dst.byteLength) {
+      throw new Error(`short block read at=${phys}: expected=${dst.byteLength} actual=${n}`);
+    }
+  }
+
+  private writeBlockNow(blockIndex: number, src: Uint8Array): void {
+    const phys = this.ensureAllocated(blockIndex);
+    const n = this.sync.write(src, { at: phys });
+    if (n !== src.byteLength) {
+      throw new Error(`short block write at=${phys}: expected=${src.byteLength} actual=${n}`);
+    }
+  }
+
+  private getCachedBlock(blockIndex: number): CacheEntry {
+    if (!Number.isInteger(blockIndex) || blockIndex < 0 || blockIndex >= this.table.length) {
+      throw new Error(`blockIndex out of range: ${blockIndex}`);
+    }
+    const hit = this.cache.get(blockIndex);
+    if (hit) {
+      this.touchCacheKey(blockIndex, hit);
+      return hit;
+    }
+
+    const entry: CacheEntry = {
+      data: new Uint8Array(this.blockSizeBytes),
+      dirty: false,
+    };
+    this.readBlockInto(blockIndex, entry.data);
+    this.cache.set(blockIndex, entry);
+    this.evictIfNeeded();
+    return entry;
+  }
+
+  async readSectors(lba: number, buffer: Uint8Array): Promise<void> {
+    assertSectorAligned(buffer.byteLength);
+    const offset = checkedOffset(lba, buffer.byteLength);
+    if (offset + buffer.byteLength > this.capacityBytes) {
+      throw new Error("read past end of disk");
+    }
+
+    let pos = 0;
+    while (pos < buffer.byteLength) {
+      const abs = offset + pos;
+      const blockIndex = Math.floor(abs / this.blockSizeBytes);
+      const within = abs % this.blockSizeBytes;
+      const chunkLen = Math.min(this.blockSizeBytes - within, buffer.byteLength - pos);
+
+      const entry = this.getCachedBlock(blockIndex);
+      buffer.set(entry.data.subarray(within, within + chunkLen), pos);
+      pos += chunkLen;
+    }
+  }
+
+  async writeSectors(lba: number, data: Uint8Array): Promise<void> {
+    assertSectorAligned(data.byteLength);
+    const offset = checkedOffset(lba, data.byteLength);
+    if (offset + data.byteLength > this.capacityBytes) {
+      throw new Error("write past end of disk");
+    }
+
+    let pos = 0;
+    while (pos < data.byteLength) {
+      const abs = offset + pos;
+      const blockIndex = Math.floor(abs / this.blockSizeBytes);
+      const within = abs % this.blockSizeBytes;
+      const chunkLen = Math.min(this.blockSizeBytes - within, data.byteLength - pos);
+
+      if (within === 0 && chunkLen === this.blockSizeBytes) {
+        // Whole-block overwrite: avoid reading the old block.
+        const entry: CacheEntry = { data: new Uint8Array(this.blockSizeBytes), dirty: true };
+        entry.data.set(data.subarray(pos, pos + chunkLen));
+        this.cache.delete(blockIndex);
+        this.cache.set(blockIndex, entry);
+        this.evictIfNeeded();
+      } else {
+        const entry = this.getCachedBlock(blockIndex);
+        entry.data.set(data.subarray(pos, pos + chunkLen), within);
+        entry.dirty = true;
+        this.touchCacheKey(blockIndex, entry);
+      }
+
+      pos += chunkLen;
+    }
+  }
+
+  async flush(): Promise<void> {
+    for (const [blockIndex, entry] of this.cache) {
+      if (!entry.dirty) continue;
+      this.writeBlockNow(blockIndex, entry.data);
+      entry.dirty = false;
+    }
+    this.sync.flush();
+  }
+
+  async close(): Promise<void> {
+    await this.flush();
+    this.sync.close();
+  }
+
+  /**
+   * Convenience for overlay users: write an entire block.
+   *
+   * `data.byteLength` must equal `blockSizeBytes`.
+   */
+  async writeBlock(blockIndex: number, data: Uint8Array): Promise<void> {
+    if (!Number.isInteger(blockIndex) || blockIndex < 0 || blockIndex >= this.table.length) {
+      throw new Error(`blockIndex out of range: ${blockIndex}`);
+    }
+    if (data.byteLength !== this.blockSizeBytes) {
+      throw new Error("writeBlock: incorrect block size");
+    }
+    const entry: CacheEntry = { data: data.slice(), dirty: true };
+    this.cache.delete(blockIndex);
+    this.cache.set(blockIndex, entry);
+    this.evictIfNeeded();
+  }
+
+  async readBlock(blockIndex: number, dst: Uint8Array): Promise<void> {
+    if (!Number.isInteger(blockIndex) || blockIndex < 0 || blockIndex >= this.table.length) {
+      throw new Error(`blockIndex out of range: ${blockIndex}`);
+    }
+    if (dst.byteLength !== this.blockSizeBytes) {
+      throw new Error("readBlock: incorrect block size");
+    }
+    const entry = this.getCachedBlock(blockIndex);
+    dst.set(entry.data);
+  }
+}
