@@ -27,6 +27,9 @@ Browser (app) ── Range GET/HEAD/OPTIONS ──▶ CloudFront (cdn.example.co
 Backend (auth) ───────────────────────────────▶ S3 bucket (private)
 ```
 
+The “Backend (auth)” box can be implemented by the reference service at
+[`services/image-gateway/`](../../services/image-gateway/) (S3 multipart upload + CloudFront signed cookies/URLs).
+
 ### S3 layout: public vs private keys
 
 Use S3 object keys that make “public vs private” explicit and keep private objects isolated by key prefix:

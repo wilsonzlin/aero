@@ -72,11 +72,12 @@ For local development without AWS, you can run MinIO:
 docker compose -f docker-compose.minio.yml up
 ```
 
-Alternatively, if you just want a general-purpose local S3-compatible object store for Range + CORS testing, the repo also provides:
+Alternatively, if you just want a general-purpose local S3-compatible object store for Range + CORS testing,
+the repo also provides [`infra/local-object-store/`](../../infra/local-object-store/README.md).
 
-- [`infra/local-object-store/`](../../infra/local-object-store/)
-
-That setup includes an optional nginx “edge” proxy and a small `verify.sh` smoke test. If you use it with `image-gateway`, set `BUCKET_NAME` to match your `S3_BUCKET` (defaults differ), and note it configures the bucket for anonymous download by default to simplify browser/curl testing.
+That setup includes an optional nginx “edge” proxy and a `verify.sh` smoke test. If you use it with `image-gateway`,
+set `BUCKET_NAME` to match your `S3_BUCKET` (defaults differ), and note it configures the bucket for anonymous download
+by default to simplify browser/curl testing.
 
 Then set:
 

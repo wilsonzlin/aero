@@ -7,6 +7,9 @@ This is AWS-specific (uses CloudFront **Origin Access Control (OAC)**, not legac
 For a fully local Range + CORS validation setup (no AWS required), see
 [`infra/local-object-store/README.md`](../local-object-store/README.md).
 
+If you need a backend for **user uploads** (S3 multipart upload + CloudFront signed cookies/URLs),
+see the reference implementation at [`services/image-gateway/`](../../services/image-gateway/).
+
 ## Architecture
 
 - **S3 bucket (private)**
