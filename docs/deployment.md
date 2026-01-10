@@ -135,6 +135,20 @@ in front (e.g. Cloudflare) — but using a host with native header support
 
 ---
 
+## Kubernetes deployments
+
+If you are deploying the Aero backend gateway on Kubernetes, see:
+
+- `deploy/k8s/README.md`
+
+It includes:
+
+- a Helm chart for `aero-gateway`
+- Ingress examples for TLS termination + WebSocket upgrades
+- options to inject COOP/COEP headers at the Ingress (nginx/Traefik) or at the application layer
+
+---
+
 ## Troubleshooting / gotchas
 
 1. **Avoid third-party CDNs for JS/WASM/worker scripts**
