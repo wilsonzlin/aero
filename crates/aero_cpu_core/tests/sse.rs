@@ -296,6 +296,54 @@ fn movhlps_movlhps_and_unpcklps_unpckhps() {
 }
 
 #[test]
+fn shuffle_and_saturating_word_ops() {
+    let mut cpu = CpuState::default();
+    let mut bus = RamBus::new(64);
+
+    set_xmm(&mut cpu, XmmReg::Xmm0, u128_from_u32x4([1, 2, 3, 4]));
+    set_xmm(&mut cpu, XmmReg::Xmm1, u128_from_u32x4([10, 20, 30, 40]));
+    sse::shufps(
+        &mut cpu,
+        &mut bus,
+        XmmReg::Xmm0,
+        XmmOperand::Reg(XmmReg::Xmm1),
+        0x1B,
+    )
+    .unwrap();
+    assert_eq!(xmm(&cpu, XmmReg::Xmm0), u128_from_u32x4([4, 3, 20, 10]));
+
+    bus.write_u128(0, u128_from_u32x4([1, 2, 3, 4]));
+    sse2::pshufd(&mut cpu, &mut bus, XmmReg::Xmm2, XmmOperand::Mem(0), 0x1B).unwrap();
+    assert_eq!(xmm(&cpu, XmmReg::Xmm2), u128_from_u32x4([4, 3, 2, 1]));
+
+    // Signed-saturating word add.
+    set_xmm(
+        &mut cpu,
+        XmmReg::Xmm3,
+        u128_from_u16x8([0x7FFF, 0x8000, 1, 0, 0, 0, 0, 0]),
+    );
+    set_xmm(
+        &mut cpu,
+        XmmReg::Xmm4,
+        u128_from_u16x8([1, 0xFFFF, 0xFFFF, 2, 0, 0, 0, 0]),
+    );
+    sse2::paddsw(&mut cpu, &mut bus, XmmReg::Xmm3, XmmOperand::Reg(XmmReg::Xmm4)).unwrap();
+    assert_eq!(
+        xmm(&cpu, XmmReg::Xmm3),
+        u128_from_u16x8([0x7FFF, 0x8000, 0, 2, 0, 0, 0, 0])
+    );
+
+    // Unsigned-saturating word subtract.
+    set_xmm(&mut cpu, XmmReg::Xmm5, u128_from_u16x8([1, 0xFFFF, 5, 0, 0, 0, 0, 0]));
+    set_xmm(&mut cpu, XmmReg::Xmm6, u128_from_u16x8([2, 2, 10, 0, 0, 0, 0, 0]));
+    sse2::psubusw(&mut cpu, &mut bus, XmmReg::Xmm5, XmmOperand::Reg(XmmReg::Xmm6)).unwrap();
+    assert_eq!(
+        xmm(&cpu, XmmReg::Xmm5),
+        u128_from_u16x8([0, 0xFFFD, 0, 0, 0, 0, 0, 0])
+    );
+}
+
+#[test]
 fn logical_ops_and_integer_arith() {
     let mut cpu = CpuState::default();
     let mut bus = RamBus::new(64);

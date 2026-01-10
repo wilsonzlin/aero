@@ -556,6 +556,73 @@ pub fn psubusb(
     Ok(())
 }
 
+pub fn paddsw(
+    cpu: &mut CpuState,
+    bus: &mut impl Bus,
+    dst: XmmReg,
+    src: XmmOperand,
+) -> Result<()> {
+    let a = u128_to_u16x8(cpu.sse.xmm[dst.index()]);
+    let b = u128_to_u16x8(read_xmm_operand_128(cpu, bus, src));
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        let sum = (a[i] as i16 as i32) + (b[i] as i16 as i32);
+        out[i] = sum.clamp(i16::MIN as i32, i16::MAX as i32) as i16 as u16;
+    }
+    cpu.sse.xmm[dst.index()] = u16x8_to_u128(out);
+    Ok(())
+}
+
+pub fn paddusw(
+    cpu: &mut CpuState,
+    bus: &mut impl Bus,
+    dst: XmmReg,
+    src: XmmOperand,
+) -> Result<()> {
+    let a = u128_to_u16x8(cpu.sse.xmm[dst.index()]);
+    let b = u128_to_u16x8(read_xmm_operand_128(cpu, bus, src));
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        let sum = (a[i] as u32) + (b[i] as u32);
+        out[i] = sum.min(u16::MAX as u32) as u16;
+    }
+    cpu.sse.xmm[dst.index()] = u16x8_to_u128(out);
+    Ok(())
+}
+
+pub fn psubsw(
+    cpu: &mut CpuState,
+    bus: &mut impl Bus,
+    dst: XmmReg,
+    src: XmmOperand,
+) -> Result<()> {
+    let a = u128_to_u16x8(cpu.sse.xmm[dst.index()]);
+    let b = u128_to_u16x8(read_xmm_operand_128(cpu, bus, src));
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        let diff = (a[i] as i16 as i32) - (b[i] as i16 as i32);
+        out[i] = diff.clamp(i16::MIN as i32, i16::MAX as i32) as i16 as u16;
+    }
+    cpu.sse.xmm[dst.index()] = u16x8_to_u128(out);
+    Ok(())
+}
+
+pub fn psubusw(
+    cpu: &mut CpuState,
+    bus: &mut impl Bus,
+    dst: XmmReg,
+    src: XmmOperand,
+) -> Result<()> {
+    let a = u128_to_u16x8(cpu.sse.xmm[dst.index()]);
+    let b = u128_to_u16x8(read_xmm_operand_128(cpu, bus, src));
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        out[i] = a[i].saturating_sub(b[i]);
+    }
+    cpu.sse.xmm[dst.index()] = u16x8_to_u128(out);
+    Ok(())
+}
+
 pub fn psllw(cpu: &mut CpuState, dst: XmmReg, count: u8) {
     if count > 15 {
         cpu.sse.xmm[dst.index()] = 0;
@@ -662,6 +729,25 @@ pub fn psrldq(cpu: &mut CpuState, dst: XmmReg, count: u8) {
     } else {
         cpu.sse.xmm[dst.index()] >>= (count as u32) * 8;
     }
+}
+
+/// PSHUFD: shuffle packed 32-bit integers in `src` according to `imm8`.
+pub fn pshufd(
+    cpu: &mut CpuState,
+    bus: &mut impl Bus,
+    dst: XmmReg,
+    src: XmmOperand,
+    imm8: u8,
+) -> Result<()> {
+    let a = u128_to_u32x4(read_xmm_operand_128(cpu, bus, src));
+    let out = [
+        a[(imm8 & 0b11) as usize],
+        a[((imm8 >> 2) & 0b11) as usize],
+        a[((imm8 >> 4) & 0b11) as usize],
+        a[((imm8 >> 6) & 0b11) as usize],
+    ];
+    cpu.sse.xmm[dst.index()] = u32x4_to_u128(out);
+    Ok(())
 }
 
 pub fn pcmpeqb(

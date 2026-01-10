@@ -258,6 +258,28 @@ pub fn unpckhps(
     Ok(())
 }
 
+/// SHUFPS: shuffle packed single-precision floating-point values.
+///
+/// The low two lanes select from `dst`; the high two lanes select from `src`.
+pub fn shufps(
+    cpu: &mut CpuState,
+    bus: &mut impl Bus,
+    dst: XmmReg,
+    src: XmmOperand,
+    imm8: u8,
+) -> Result<()> {
+    let a = u128_to_u32x4(cpu.sse.xmm[dst.index()]);
+    let b = u128_to_u32x4(read_xmm_operand_128(cpu, bus, src));
+    let out = [
+        a[(imm8 & 0b11) as usize],
+        a[((imm8 >> 2) & 0b11) as usize],
+        b[((imm8 >> 4) & 0b11) as usize],
+        b[((imm8 >> 6) & 0b11) as usize],
+    ];
+    cpu.sse.xmm[dst.index()] = u32x4_to_u128(out);
+    Ok(())
+}
+
 pub fn andps(
     cpu: &mut CpuState,
     bus: &mut impl Bus,
