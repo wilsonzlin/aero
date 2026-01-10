@@ -57,18 +57,10 @@ fn hda_output_can_be_written_to_audio_worklet_ring_buffer() {
         sd.ctl = (1 << 1) | (1 << 2) | (1 << 20);
     }
 
-    // Run enough host time to consume the buffer once.
-    hda.process(&mut mem, frames);
-
-    // Pop some produced audio and write it into a worklet-style ring buffer.
-    let produced = hda.audio_out.pop_interleaved_stereo(128);
-    assert_eq!(produced.len(), 256);
-
     let mut ring = InterleavedRingBuffer::new(256, 2);
-    let written = ring.write_interleaved(&produced);
-    assert_eq!(written, 128);
+    hda.process_into(&mut mem, 128, &mut ring);
 
-    let mut out = vec![0.0f32; produced.len()];
+    let mut out = vec![0.0f32; 128 * 2];
     let read = ring.read_interleaved(&mut out);
     assert_eq!(read, 128);
 

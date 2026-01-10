@@ -8,6 +8,7 @@ pub mod hda;
 pub mod mem;
 pub mod pcm;
 pub mod ring;
+pub mod sink;
 
 /// `SharedArrayBuffer` ring buffer layout used by the web `AudioWorkletProcessor`.
 pub use aero_platform::audio::worklet_bridge;

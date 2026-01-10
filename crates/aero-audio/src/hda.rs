@@ -1,6 +1,7 @@
 use crate::mem::MemoryAccess;
 use crate::pcm::{decode_pcm_to_stereo_f32, LinearResampler, StreamFormat};
 use crate::ring::AudioRingBuffer;
+use crate::sink::AudioSink;
 
 /// Size of the HDA MMIO region.
 pub const HDA_MMIO_SIZE: usize = 0x1000;
@@ -531,7 +532,26 @@ impl HdaController {
     /// Advance the HDA device by `output_frames` worth of host time.
     pub fn process(&mut self, mem: &mut dyn MemoryAccess, output_frames: usize) {
         self.process_corb(mem);
-        self.process_output_stream(mem, 0, output_frames);
+        let out_samples = self.process_output_stream(mem, 0, output_frames);
+        if !out_samples.is_empty() {
+            self.audio_out.push_interleaved_stereo(&out_samples);
+        }
+        self.update_position_buffer(mem);
+    }
+
+    /// Advance the HDA device by `output_frames` worth of host time, writing any produced audio
+    /// directly into `sink`.
+    pub fn process_into(
+        &mut self,
+        mem: &mut dyn MemoryAccess,
+        output_frames: usize,
+        sink: &mut dyn AudioSink,
+    ) {
+        self.process_corb(mem);
+        let out_samples = self.process_output_stream(mem, 0, output_frames);
+        if !out_samples.is_empty() {
+            sink.push_interleaved_f32(&out_samples);
+        }
         self.update_position_buffer(mem);
     }
 
@@ -837,22 +857,22 @@ impl HdaController {
         mem: &mut dyn MemoryAccess,
         stream: usize,
         output_frames: usize,
-    ) {
+    ) -> Vec<f32> {
         if (self.gctl & GCTL_CRST) == 0 {
-            return;
+            return Vec::new();
         }
         let sd = &self.streams[stream];
         if (sd.ctl & SD_CTL_RUN) == 0 {
-            return;
+            return Vec::new();
         }
         let stream_num = ((sd.ctl & SD_CTL_STRM_MASK) >> SD_CTL_STRM_SHIFT) as u8;
         if stream_num == 0 || stream_num != self.codec.output_stream_id() {
-            return;
+            return Vec::new();
         }
 
         let fmt_raw = sd.fmt;
         if fmt_raw == 0 {
-            return;
+            return Vec::new();
         }
 
         let fmt = StreamFormat::from_hda_format(fmt_raw);
@@ -885,12 +905,9 @@ impl HdaController {
                 .push_source_frames(&decoded);
         }
 
-        let out_samples = self.stream_rt[stream]
+        self.stream_rt[stream]
             .resampler
-            .produce_interleaved_stereo(output_frames);
-        if !out_samples.is_empty() {
-            self.audio_out.push_interleaved_stereo(&out_samples);
-        }
+            .produce_interleaved_stereo(output_frames)
     }
 
     fn dma_read_stream_bytes(
