@@ -11,7 +11,8 @@ rem ---------------------------
 
 rem Service name for the virtio-blk storage miniport.
 rem This MUST match the INF AddService name for the storage driver.
-set "AERO_VIRTIO_BLK_SERVICE=aeroviostor"
+rem Default aligns with the upstream virtio-win `viostor` package.
+set "AERO_VIRTIO_BLK_SERVICE=viostor"
 
 rem Optional explicit .sys name for the storage driver.
 rem If empty, setup.cmd assumes "<service>.sys".
@@ -27,8 +28,8 @@ rem Non-boot-critical devices (used for documentation / potential future checks)
 rem ---------------------------
 
 set AERO_VIRTIO_NET_HWIDS="PCI\VEN_1AF4&DEV_1000" "PCI\VEN_1AF4&DEV_1041"
-set AERO_VIRTIO_SND_HWIDS="PCI\VEN_1AF4&DEV_1053"
-set AERO_VIRTIO_INPUT_HWIDS="PCI\VEN_1AF4&DEV_1052"
+set AERO_VIRTIO_INPUT_HWIDS="PCI\VEN_1AF4&DEV_1011" "PCI\VEN_1AF4&DEV_1052"
+set AERO_VIRTIO_SND_HWIDS="PCI\VEN_1AF4&DEV_1018" "PCI\VEN_1AF4&DEV_1059"
 
 rem Aero WDDM GPU stack (placeholder IDs; must match emulator + INFs).
 set AERO_GPU_HWIDS="PCI\VEN_1AE0&DEV_0001"
