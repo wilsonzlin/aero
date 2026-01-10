@@ -280,7 +280,7 @@ static void print_usage(void)
     wprintf(L"  --led-cycle     Cycle keyboard LEDs to visually confirm write path\n");
     wprintf(L"\n");
     wprintf(L"Notes:\n");
-    wprintf(L"  - Without filters, the tool prefers a virtio keyboard interface (VID 0x1AF4).\n");
+    wprintf(L"  - Without filters, the tool prefers a virtio-input keyboard interface (VID 0x1AF4).\n");
     wprintf(L"  - Press Ctrl+C to exit the report read loop.\n");
 }
 
@@ -485,7 +485,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         attr.Size = sizeof(attr);
         if (HidD_GetAttributes(handle, &attr)) {
             attr_valid = 1;
-            if (attr.VendorID == 0x1AF4) {
+            if (attr.VendorID == 0x1AF4 && (attr.ProductID == 0x1052 || attr.ProductID == 0x1011)) {
                 is_virtio = 1;
             }
         }
@@ -775,7 +775,8 @@ static void read_reports_loop(const SELECTED_DEVICE *dev)
     DWORD n;
     BOOL ok;
     DWORD seq = 0;
-    int is_virtio = dev->attr_valid && dev->attr.VendorID == 0x1AF4;
+    int is_virtio = dev->attr_valid && dev->attr.VendorID == 0x1AF4 &&
+                    (dev->attr.ProductID == 0x1052 || dev->attr.ProductID == 0x1011);
 
     if (!dev->caps_valid) {
         wprintf(L"Cannot read reports: HID caps not available.\n");

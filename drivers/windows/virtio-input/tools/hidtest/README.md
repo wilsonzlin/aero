@@ -55,7 +55,7 @@ Force selecting the mouse collection:
 hidtest.exe --mouse
 ```
 
-If multiple mice are present, `--mouse` prefers a virtio interface (VID `0x1AF4`) when available.
+If multiple mice are present, `--mouse` prefers a virtio-input interface (VID `0x1AF4`, PID `0x1052`/`0x1011`) when available.
 
 Write keyboard LEDs (NumLock|CapsLock|ScrollLock):
 
