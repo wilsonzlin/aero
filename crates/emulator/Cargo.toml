@@ -3,6 +3,10 @@ name = "emulator"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+net-trace = []
+
 [dependencies]
 memory = { path = "../memory" }
 

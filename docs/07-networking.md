@@ -736,6 +736,22 @@ impl VirtioNetDevice {
 
 ---
 
+## Network Tracing (PCAP/PCAPNG Export)
+
+When debugging network bring-up, it is often necessary to see the exact guest Ethernet frames (TX from the guest NIC and RX to the guest NIC), as well as emulator-generated traffic (e.g. TCP proxy I/O) for correlation.
+
+The network stack should support an *optional* tracing component that:
+
+- Captures **raw Ethernet frames** with timestamps (TX/RX) suitable for Wireshark.
+- Optionally captures **post-NAT / proxy bytes** on a separate pseudo-interface for correlation.
+- Can be enabled at runtime in dev builds, but is **off by default**.
+
+### Privacy / Security Warning
+
+Captures may include sensitive data such as credentials, cookies, private browsing traffic, or internal network metadata. Tracing must default to off and the UI should warn users before enabling or exporting captures. A redaction hook may be provided for stripping known sensitive payloads.
+
+---
+
 ## Performance Targets
 
 | Metric | Target | Notes |
