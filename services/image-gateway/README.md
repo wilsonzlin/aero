@@ -61,7 +61,7 @@ Useful optional knobs:
 
 - `CLOUDFRONT_AUTH_MODE=cookie|url` (default `cookie`)
 - `CLOUDFRONT_COOKIE_DOMAIN` (optional; e.g. `.example.com` when API runs on `api.example.com` and CloudFront on `images.example.com`)
-- `CORS_ALLOW_ORIGIN` (default `*`, used by the range-proxy fallback endpoint)
+- `CORS_ALLOW_ORIGIN` (default `*`, used for browser CORS; set an explicit origin if you need credentialed requests / cookie-based auth)
 - `MULTIPART_PART_SIZE_BYTES` (default `67108864` / 64MiB; must be 5MiB–5GiB)
 
 ### Local MinIO (optional)
@@ -167,7 +167,7 @@ set `CLOUDFRONT_AUTH_MODE=url` to return a signed URL instead.
 
 This is useful when you don't have CloudFront locally, but it proxies all bytes through the app (not recommended for production).
 
-The endpoint includes CORS headers and supports `OPTIONS` preflight. Set `CORS_ALLOW_ORIGIN` as needed.
+The service includes CORS headers and supports `OPTIONS` preflight for browser use. Set `CORS_ALLOW_ORIGIN` as needed.
 
 ## Notes for browser `StreamingDisk`
 

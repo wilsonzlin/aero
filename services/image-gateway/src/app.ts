@@ -8,7 +8,7 @@ import {
   type S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl as getS3SignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import fastify from "fastify";
 import { randomUUID } from "node:crypto";
 
@@ -66,6 +66,34 @@ function buildStableImagePath(config: Config, record: ImageRecord): string {
   return `${config.imageBasePath}/${record.ownerId}/${record.id}/${record.version}/disk.img`;
 }
 
+function applyCorsHeaders(reply: FastifyReply, config: Config): void {
+  const allowOrigin = config.corsAllowOrigin;
+  reply
+    .header("access-control-allow-origin", allowOrigin)
+    // Range reads require exposing non-safelisted headers; harmless for non-range endpoints.
+    .header(
+      "access-control-expose-headers",
+      "accept-ranges,content-range,content-length,etag,last-modified"
+    );
+
+  if (allowOrigin !== "*") {
+    reply.header("access-control-allow-credentials", "true").header("vary", "origin");
+  }
+}
+
+function applyCorsPreflight(req: FastifyRequest, reply: FastifyReply): void {
+  const requestedHeaders = req.headers["access-control-request-headers"];
+  reply
+    .header("access-control-allow-methods", "GET,POST,OPTIONS")
+    .header(
+      "access-control-allow-headers",
+      typeof requestedHeaders === "string"
+        ? requestedHeaders
+        : "range,if-range,content-type,x-user-id"
+    )
+    .header("access-control-max-age", "86400");
+}
+
 function buildSelfUrl(req: FastifyRequest, path: string): string {
   const rawHost = req.headers["x-forwarded-host"] ?? req.headers.host;
   const host =
@@ -91,6 +119,15 @@ function buildSelfUrl(req: FastifyRequest, path: string): string {
 export function buildApp(deps: BuildAppDeps): FastifyInstance {
   const app = fastify({
     logger: true,
+  });
+
+  app.addHook("onRequest", async (req, reply) => {
+    applyCorsHeaders(reply, deps.config);
+
+    if (req.method === "OPTIONS") {
+      applyCorsPreflight(req, reply);
+      return reply.status(204).send();
+    }
   });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -383,25 +420,6 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
     });
   });
 
-  app.options("/v1/images/:imageId/range", async (_req, reply) => {
-    const allowOrigin = deps.config.corsAllowOrigin;
-
-    const res = reply
-      .header("access-control-allow-origin", allowOrigin)
-      .header("access-control-allow-methods", "GET,OPTIONS")
-      .header(
-        "access-control-allow-headers",
-        "range,if-range,content-type,x-user-id"
-      )
-      .header("access-control-max-age", "86400");
-
-    if (allowOrigin !== "*") {
-      res.header("access-control-allow-credentials", "true").header("vary", "origin");
-    }
-
-    res.status(204).send();
-  });
-
   app.get("/v1/images/:imageId/range", async (req, reply) => {
     const callerUserId = getCallerUserId(req, deps.config);
     const imageId = (req.params as { imageId: string }).imageId;
@@ -447,20 +465,9 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
 
     const proxy = buildRangeProxyResponse({ s3: s3Res });
 
-    const allowOrigin = deps.config.corsAllowOrigin;
-
     reply
       .status(proxy.statusCode)
-      .headers(proxy.headers)
-      .header("access-control-allow-origin", allowOrigin)
-      .header(
-        "access-control-expose-headers",
-        "accept-ranges,content-range,content-length,etag,last-modified"
-      );
-
-    if (allowOrigin !== "*") {
-      reply.header("access-control-allow-credentials", "true").header("vary", "origin");
-    }
+      .headers(proxy.headers);
 
     return reply.send(s3Res.Body);
   });
