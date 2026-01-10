@@ -777,6 +777,7 @@ jobs:
           key: ${{ runner.os }}-playwright-disk-streaming-${{ hashFiles('tools/disk-streaming-browser-e2e/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-playwright-disk-streaming-
+            ${{ runner.os }}-playwright-
 
       - name: Install dependencies
         working-directory: tools/disk-streaming-browser-e2e
