@@ -5,10 +5,14 @@ on:
     paths:
       - "guest/windows/**"
       - ".github/workflows/windows-drivers.yml"
+    paths-ignore:
+      - "**/*.md"
   pull_request:
     paths:
       - "guest/windows/**"
       - ".github/workflows/windows-drivers.yml"
+    paths-ignore:
+      - "**/*.md"
   workflow_dispatch:
 
 jobs:

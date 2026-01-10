@@ -6,6 +6,8 @@ on:
     paths:
       - "ci/**"
       - ".github/workflows/toolchain-win7-smoke.yml"
+    paths-ignore:
+      - "**/*.md"
 
 jobs:
   validate:

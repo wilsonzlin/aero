@@ -5,10 +5,14 @@ on:
     paths:
       - proxy/webrtc-udp-relay/**
       - .github/workflows/webrtc-udp-relay.yml
+    paths-ignore:
+      - "**/*.md"
   pull_request:
     paths:
       - proxy/webrtc-udp-relay/**
       - .github/workflows/webrtc-udp-relay.yml
+    paths-ignore:
+      - "**/*.md"
 
 permissions:
   contents: read

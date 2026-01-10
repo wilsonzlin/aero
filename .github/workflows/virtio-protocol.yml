@@ -5,10 +5,14 @@ on:
     paths:
       - "drivers/protocol/virtio/**"
       - ".github/workflows/virtio-protocol.yml"
+    paths-ignore:
+      - "**/*.md"
   pull_request:
     paths:
       - "drivers/protocol/virtio/**"
       - ".github/workflows/virtio-protocol.yml"
+    paths-ignore:
+      - "**/*.md"
 
 jobs:
   test:
@@ -18,4 +22,3 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: cargo test (virtio protocol)
         run: cargo test --manifest-path drivers/protocol/virtio/Cargo.toml
-

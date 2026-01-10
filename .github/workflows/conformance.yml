@@ -2,8 +2,14 @@ name: Conformance
 
 on:
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   schedule:
     - cron: "17 4 * * *"
   workflow_dispatch:

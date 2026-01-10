@@ -5,12 +5,16 @@ on:
     paths:
       - services/image-gateway/**
       - .github/workflows/image-gateway.yml
+    paths-ignore:
+      - "**/*.md"
   push:
     branches:
       - main
     paths:
       - services/image-gateway/**
       - .github/workflows/image-gateway.yml
+    paths-ignore:
+      - "**/*.md"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -51,4 +55,3 @@ jobs:
 
       - name: Build
         run: npm run build
-

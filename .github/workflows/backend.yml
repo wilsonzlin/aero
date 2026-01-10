@@ -5,12 +5,16 @@ on:
     paths:
       - backend/aero-gateway/**
       - .github/workflows/backend.yml
+    paths-ignore:
+      - "**/*.md"
   push:
     branches:
       - main
     paths:
       - backend/aero-gateway/**
       - .github/workflows/backend.yml
+    paths-ignore:
+      - "**/*.md"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
