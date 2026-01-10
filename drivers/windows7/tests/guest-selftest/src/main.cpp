@@ -918,6 +918,9 @@ static std::optional<uint32_t> ParseU32(const wchar_t* s) {
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
+  // Avoid interactive error dialogs that can hang headless/automation runs.
+  SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+
   Options opt;
 
   for (int i = 1; i < argc; i++) {
