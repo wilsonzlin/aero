@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"net/netip"
+	"strings"
 	"testing"
 )
 
@@ -148,5 +149,31 @@ func TestEncodeDecodeV2IPv6Vector(t *testing.T) {
 	}
 	if !bytes.Equal(decoded.Payload, f.Payload) {
 		t.Fatalf("decoded payload = %x, want %x", decoded.Payload, f.Payload)
+	}
+}
+
+func TestDecodeV2RejectsUnsupportedMessageType(t *testing.T) {
+	pkt := []byte{
+		0xA2, 0x02, 0x04, 0x01, // type must be 0x00
+		0x00, 0x01,
+		127, 0, 0, 1,
+		0x00, 0x35,
+	}
+	_, err := Decode(pkt)
+	if err == nil || !strings.Contains(err.Error(), "unsupported message type") {
+		t.Fatalf("expected unsupported message type error, got %v", err)
+	}
+}
+
+func TestDecodeV2RejectsUnknownAddressFamily(t *testing.T) {
+	pkt := []byte{
+		0xA2, 0x02, 0xFF, 0x00, // unknown AF
+		0x00, 0x01,
+		127, 0, 0, 1,
+		0x00, 0x35,
+	}
+	_, err := Decode(pkt)
+	if err == nil || !strings.Contains(err.Error(), "unknown address family") {
+		t.Fatalf("expected unknown address family error, got %v", err)
 	}
 }
