@@ -20,6 +20,7 @@ pub use vbe::{VbeControllerInfo, VbeModeInfo, VbeState, VBE_BIOS_DATA_PADDR, VBE
 
 pub use render::mode13h::{Mode13hRenderer, MODE13H_HEIGHT, MODE13H_VRAM_SIZE, MODE13H_WIDTH};
 pub use render::planar16::{Mode12hRenderer, MODE12H_HEIGHT, MODE12H_WIDTH};
+pub use render::text::{TextModeRenderer, TEXT_MODE_HEIGHT, TEXT_MODE_WIDTH};
 
 /// VGA graphics memory base address (A000:0000).
 pub const VRAM_BASE: u32 = 0xA0000;
@@ -29,6 +30,7 @@ pub const VRAM_SIZE: usize = PLANE_SIZE * 4;
 /// VGA render modes that this crate can currently rasterize.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VgaDetectedMode {
+    TextMode,
     Mode13h,
     Mode12h,
 }
@@ -40,6 +42,10 @@ impl VgaDetectedMode {
     /// of the CRTC timing registers.
     pub fn detect(regs: &VgaDevice) -> Option<Self> {
         let derived = regs.derived_state();
+
+        if !derived.is_graphics {
+            return Some(Self::TextMode);
+        }
 
         if derived.is_graphics && derived.chain4 && !derived.odd_even && derived.bpp_guess == 8 {
             return Some(Self::Mode13h);
@@ -76,6 +82,7 @@ impl VgaDetectedMode {
 /// Render entrypoint that selects an appropriate rasterizer based on VGA register state.
 #[derive(Debug)]
 pub struct VgaRenderer {
+    text: TextModeRenderer,
     mode13h: Mode13hRenderer,
     mode12h: Mode12hRenderer,
 }
@@ -89,6 +96,7 @@ impl Default for VgaRenderer {
 impl VgaRenderer {
     pub fn new() -> Self {
         Self {
+            text: TextModeRenderer::new(),
             mode13h: Mode13hRenderer::new(),
             mode12h: Mode12hRenderer::new(),
         }
@@ -105,8 +113,19 @@ impl VgaRenderer {
         dac: &mut VgaDac,
     ) -> Option<(usize, usize, &'a [u32])> {
         match VgaDetectedMode::detect(regs)? {
-            VgaDetectedMode::Mode13h => Some((MODE13H_WIDTH, MODE13H_HEIGHT, self.mode13h.render(vram, dac))),
-            VgaDetectedMode::Mode12h => Some((MODE12H_WIDTH, MODE12H_HEIGHT, self.mode12h.render(regs, vram, dac))),
+            VgaDetectedMode::TextMode => {
+                Some((TEXT_MODE_WIDTH, TEXT_MODE_HEIGHT, self.text.render(regs)))
+            }
+            VgaDetectedMode::Mode13h => Some((
+                MODE13H_WIDTH,
+                MODE13H_HEIGHT,
+                self.mode13h.render(vram, dac),
+            )),
+            VgaDetectedMode::Mode12h => Some((
+                MODE12H_WIDTH,
+                MODE12H_HEIGHT,
+                self.mode12h.render(regs, vram, dac),
+            )),
         }
     }
 }
@@ -151,7 +170,12 @@ impl VgaSharedFramebufferOutput {
         self.shared_framebuffer.len_bytes()
     }
 
-    pub fn present_rgba8888(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<(), FramebufferError> {
+    pub fn present_rgba8888(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), FramebufferError> {
         let stride_bytes = width
             .checked_mul(4)
             .ok_or(FramebufferError::InvalidDimensions)?;
@@ -169,7 +193,12 @@ impl VgaSharedFramebufferOutput {
         view.present_rgba8888(width, height, stride_bytes, rgba)
     }
 
-    pub fn present_rgba8888_u32(&mut self, width: usize, height: usize, pixels: &[u32]) -> Result<(), FramebufferError> {
+    pub fn present_rgba8888_u32(
+        &mut self,
+        width: usize,
+        height: usize,
+        pixels: &[u32],
+    ) -> Result<(), FramebufferError> {
         let expected = width
             .checked_mul(height)
             .ok_or(FramebufferError::InvalidDimensions)?;

@@ -1,4 +1,7 @@
-use emulator::devices::vga::{VgaDac, VgaDevice, VgaMemory, VgaRenderer, MODE13H_HEIGHT, MODE13H_WIDTH};
+use emulator::devices::vga::{
+    VgaDac, VgaDevice, VgaMemory, VgaRenderer, MODE13H_HEIGHT, MODE13H_WIDTH, TEXT_MODE_HEIGHT,
+    TEXT_MODE_WIDTH,
+};
 use emulator::io::PortIO;
 
 #[test]
@@ -86,6 +89,17 @@ fn modeset_03h_programs_text_mode_and_clears_text_buffer() {
     vga.port_write(0x3D5, 1, u32::from(before.wrapping_add(1)));
     let after = vga.port_read(0x3D5, 1) as u8;
     assert_eq!(after, before);
+
+    // Text mode should be detectable by the renderer.
+    let mut renderer = VgaRenderer::new();
+    let mut vram = VgaMemory::new();
+    let mut dac = VgaDac::new();
+
+    let (w, h, framebuffer) = renderer
+        .render(&vga, &mut vram, &mut dac)
+        .expect("text mode should be detected");
+    assert_eq!((w, h), (TEXT_MODE_WIDTH, TEXT_MODE_HEIGHT));
+    assert_eq!(framebuffer.len(), TEXT_MODE_WIDTH * TEXT_MODE_HEIGHT);
 
     // VRAM clear should have written spaces + attribute 0x07.
     assert_eq!(vga.vram()[0], 0x20);
