@@ -355,7 +355,9 @@ pub trait DisplayAdapter {
 | [16-d3d10-11-translation.md](./docs/16-d3d10-11-translation.md)          | Direct3D 10/11 translation details     | Graphics          |
 | [16-perf-tracing.md](./docs/16-perf-tracing.md)                         | Chrome Trace/Perfetto export           | Performance       |
 | [16-windows7-driver-build-and-signing.md](./docs/16-windows7-driver-build-and-signing.md) | Driver build & signing toolchain notes | Infrastructure    |
+| [16-remote-disk-image-delivery.md](./docs/16-remote-disk-image-delivery.md) | Production delivery of disk bytes via object store + CDN + HTTP Range | I/O / Infra       |
 | [17-range-cdn-behavior.md](./docs/17-range-cdn-behavior.md)             | HTTP Range + CDN caching/limits        | Infrastructure    |
+| [17-disk-image-lifecycle-and-access-control.md](./docs/17-disk-image-lifecycle-and-access-control.md) | Hosted disk image uploads, ownership/sharing, leases, and writeback strategies | I/O / Infra       |
 | [18-chunked-disk-image-format.md](./docs/18-chunked-disk-image-format.md) | Chunked disk image delivery (no HTTP Range) | I/O               |
 | [windows7-guest-tools.md](./docs/windows7-guest-tools.md)               | End-user guide: install Guest Tools and switch to virtio + Aero GPU | All |
 | [windows7-driver-troubleshooting.md](./docs/windows7-driver-troubleshooting.md) | End-user guide: Windows 7 driver/signing troubleshooting | All |
