@@ -14,6 +14,55 @@ export interface RunningProxyServer {
   close: () => Promise<void>;
 }
 
+function stripOptionalIpv6Brackets(host: string): string {
+  const trimmed = host.trim();
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function parseTargetQuery(url: URL): { host: string; port: number; portRaw: string } | { error: string } {
+  const hostRaw = url.searchParams.get("host");
+  const portRaw = url.searchParams.get("port");
+  if (hostRaw !== null && portRaw !== null) {
+    const port = Number(portRaw);
+    if (hostRaw.trim() === "" || !Number.isInteger(port) || port < 1 || port > 65535) {
+      return { error: "Invalid host or port" };
+    }
+    return { host: stripOptionalIpv6Brackets(hostRaw), port, portRaw };
+  }
+
+  const target = url.searchParams.get("target");
+  if (target === null || target.trim() === "") {
+    return { error: "Missing host/port (or target)" };
+  }
+
+  const t = target.trim();
+  let host = "";
+  let portPart = "";
+  if (t.startsWith("[")) {
+    const closeIdx = t.indexOf("]");
+    if (closeIdx === -1) return { error: "Invalid target (missing closing ] for IPv6)" };
+    host = t.slice(1, closeIdx);
+    const rest = t.slice(closeIdx + 1);
+    if (!rest.startsWith(":")) return { error: "Invalid target (missing :port)" };
+    portPart = rest.slice(1);
+  } else {
+    const colonIdx = t.lastIndexOf(":");
+    if (colonIdx === -1) return { error: "Invalid target (missing :port)" };
+    host = t.slice(0, colonIdx);
+    portPart = t.slice(colonIdx + 1);
+  }
+
+  const port = Number(portPart);
+  if (host.trim() === "" || !Number.isInteger(port) || port < 1 || port > 65535) {
+    return { error: "Invalid target host or port" };
+  }
+
+  return { host: stripOptionalIpv6Brackets(host), port, portRaw: portPart };
+}
+
 export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Promise<RunningProxyServer> {
   const config: ProxyConfig = { ...loadConfigFromEnv(), ...overrides };
 
@@ -53,25 +102,23 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
     const url = new URL(req.url ?? "/", "http://localhost");
     const proto = url.pathname === "/udp" ? "udp" : "tcp";
 
-    const host = url.searchParams.get("host") ?? "";
-    const portRaw = url.searchParams.get("port") ?? "";
-    const port = Number(portRaw);
+    const parsedTarget = parseTargetQuery(url);
     const clientAddress = req.socket.remoteAddress ?? null;
 
-    log("info", "connect_requested", { connId, proto, host, port: portRaw, clientAddress });
-
-    if (host.trim() === "" || !Number.isInteger(port) || port < 1 || port > 65535) {
+    if ("error" in parsedTarget) {
       log("warn", "connect_denied", {
         connId,
         proto,
-        host,
-        port: portRaw,
         clientAddress,
-        reason: "Invalid host or port"
+        reason: parsedTarget.error
       });
-      ws.close(1008, "Invalid host or port");
+      ws.close(1008, parsedTarget.error);
       return;
     }
+
+    const { host, port, portRaw } = parsedTarget;
+
+    log("info", "connect_requested", { connId, proto, host, port: portRaw, clientAddress });
 
     void (async () => {
       try {
@@ -324,4 +371,3 @@ async function handleUdpRelay(
     socket.send(buf);
   });
 }
-

@@ -57,6 +57,14 @@ WebSocket URL:
 ws://<proxy-host>:<proxy-port>/tcp?host=<target-host>&port=<target-port>
 ```
 
+Compatibility alias:
+
+```
+ws://<proxy-host>:<proxy-port>/tcp?target=<target-host>:<target-port>
+```
+
+For IPv6 targets, `target` must use brackets, e.g. `target=[2606:4700:4700::1111]:443`.
+
 Example:
 
 ```js
@@ -79,5 +87,10 @@ WebSocket URL:
 ws://<proxy-host>:<proxy-port>/udp?host=<target-host>&port=<target-port>
 ```
 
-Each WebSocket binary message is sent as a single UDP datagram; each received datagram is forwarded as a single WebSocket binary message.
+Compatibility alias:
 
+```
+ws://<proxy-host>:<proxy-port>/udp?target=<target-host>:<target-port>
+```
+
+Each WebSocket binary message is sent as a single UDP datagram; each received datagram is forwarded as a single WebSocket binary message.

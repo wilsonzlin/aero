@@ -34,6 +34,49 @@ function normalizeHostname(hostname: string): string {
   return hostname.trim().toLowerCase().replace(/\.+$/, "");
 }
 
+function splitHostAndPortSpec(raw: string): { host: string; portSpec: string } {
+  const trimmed = raw.trim();
+
+  // Bracketed host form supports IPv6-with-port unambiguously, e.g.:
+  //   [2606:4700:4700::1111]:443
+  // Also accepted for consistency in other cases.
+  if (trimmed.startsWith("[")) {
+    const closeIdx = trimmed.indexOf("]");
+    if (closeIdx === -1) throw new Error(`Invalid allowlist entry (missing ]): ${raw}`);
+    const host = trimmed.slice(1, closeIdx);
+    const rest = trimmed.slice(closeIdx + 1);
+    if (rest === "") return { host, portSpec: "*" };
+    if (!rest.startsWith(":")) throw new Error(`Invalid allowlist entry (expected :port after ]): ${raw}`);
+    return { host, portSpec: rest.slice(1) || "*" };
+  }
+
+  // A bare IPv6 address contains ":" but has no unambiguous way to include a port without brackets.
+  // Treat it as "any port" rather than mis-parsing the final hextet as a port.
+  if (net.isIP(trimmed) === 6) {
+    return { host: trimmed, portSpec: "*" };
+  }
+
+  const colonIdx = trimmed.lastIndexOf(":");
+  if (colonIdx === -1) {
+    return { host: trimmed, portSpec: "*" };
+  }
+
+  const hostPart = trimmed.slice(0, colonIdx);
+  const maybePort = trimmed.slice(colonIdx + 1);
+  if (maybePort === "") {
+    throw new Error(`Invalid allowlist entry (empty port): ${raw}`);
+  }
+
+  // For IPv6 CIDRs like `2001:db8::/32`, `maybePort` will be `/32` which is not a port matcher.
+  // In that case, interpret the entire string as the host/cidr and default port to "*".
+  try {
+    parsePortMatcher(maybePort);
+    return { host: hostPart, portSpec: maybePort };
+  } catch {
+    return { host: trimmed, portSpec: "*" };
+  }
+}
+
 function parsePortMatcher(raw: string): PortMatcher {
   const trimmed = raw.trim();
   if (trimmed === "" || trimmed === "*") return () => true;
@@ -57,12 +100,14 @@ function parseAllowRule(entry: string): AllowRule {
   const raw = entry.trim();
   if (raw === "") throw new Error("Empty allowlist entry");
 
-  const colonIdx = raw.lastIndexOf(":");
-  const hostPart = colonIdx === -1 ? raw : raw.slice(0, colonIdx);
-  const portPart = colonIdx === -1 ? "*" : raw.slice(colonIdx + 1);
-  const ports = parsePortMatcher(portPart);
+  const { host: hostPartRaw, portSpec } = splitHostAndPortSpec(raw);
+  const ports = parsePortMatcher(portSpec);
 
-  const host = normalizeHostname(hostPart);
+  const host = normalizeHostname(hostPartRaw);
+
+  if (host === "*") {
+    return { kind: "domain", raw, ports, match: () => true };
+  }
 
   if (host.includes("/")) {
     const cidr = ipaddr.parseCIDR(host);

@@ -18,6 +18,40 @@ npm install
 npm run dev
 ```
 
+## Optional guest networking support (TCP/UDP via WebSocket relay)
+
+Browsers cannot open arbitrary TCP/UDP sockets directly. For guest networking, Aero can use a small local proxy that exposes WebSocket endpoints and relays to real TCP/UDP sockets from the server side.
+
+This repo includes a standalone proxy service at [`net-proxy/`](./net-proxy/).
+
+### Local dev workflow (run alongside Vite)
+
+Terminal 1 (network proxy):
+
+```bash
+cd net-proxy
+npm ci
+
+# Trusted local development mode: allows localhost + private ranges.
+AERO_PROXY_OPEN=1 npm run dev
+```
+
+Terminal 2 (frontend):
+
+```bash
+cd web
+npm ci
+npm run dev
+```
+
+The proxy exposes:
+
+- `GET /healthz`
+- `WS /tcp?host=<host>&port=<port>` (or `?target=<host>:<port>`)
+- `WS /udp?host=<host>&port=<port>` (or `?target=<host>:<port>`)
+
+See `net-proxy/README.md` for allowlisting and client URL examples.
+
 ## Browser memory model PoC (SharedArrayBuffer + WebAssembly.Memory)
 
 Modern browsers impose practical limits around **wasm32** addressability and `SharedArrayBuffer` usage:
