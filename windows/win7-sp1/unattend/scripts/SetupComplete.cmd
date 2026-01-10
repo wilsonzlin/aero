@@ -104,9 +104,16 @@ if /i "%AERO_ENABLE_NOINTEGRITYCHECKS%"=="1" (
 )
 
 set "AERO_TASK_NAME=Aero-InstallDriversOnce"
-set "AERO_INSTALL_SCRIPT=%AERO_ROOT%\Scripts\InstallDriversOnce.cmd"
+
+REM Prefer the script from the local staged payload if present.
+set "AERO_INSTALL_SCRIPT=C:\Aero\Scripts\InstallDriversOnce.cmd"
 if not exist "%AERO_INSTALL_SCRIPT%" (
-  echo ERROR: InstallDriversOnce.cmd not found: "%AERO_INSTALL_SCRIPT%"
+  set "AERO_INSTALL_SCRIPT=%AERO_ROOT%\Scripts\InstallDriversOnce.cmd"
+)
+if not exist "%AERO_INSTALL_SCRIPT%" (
+  echo ERROR: InstallDriversOnce.cmd not found.
+  echo Checked: "C:\Aero\Scripts\InstallDriversOnce.cmd"
+  echo Checked: "%AERO_ROOT%\Scripts\InstallDriversOnce.cmd"
   exit /b 30
 )
 

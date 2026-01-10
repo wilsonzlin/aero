@@ -75,6 +75,8 @@ Logs are appended to:
    - `Certs\AeroTestRoot.cer`
 3. Enables test signing via `bcdedit /set testsigning on`
 4. Creates a scheduled task (`Aero-InstallDriversOnce`) that runs `InstallDriversOnce.cmd` at next boot as `SYSTEM`.
+   - If `C:\Aero\Scripts\InstallDriversOnce.cmd` exists, it will be used for the scheduled task action (so the next boot does not depend on removable/config media).
+   - Otherwise it will run `InstallDriversOnce.cmd` directly from the located payload root.
 5. Reboots immediately to apply boot configuration changes.
 
 ### Optional: nointegritychecks
