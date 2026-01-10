@@ -54,9 +54,15 @@ struct virtq_desc {
 };
 
 /* Descriptor flags (virtio spec). */
+#ifndef VIRTQ_DESC_F_NEXT
 #define VIRTQ_DESC_F_NEXT 1
+#endif
+#ifndef VIRTQ_DESC_F_WRITE
 #define VIRTQ_DESC_F_WRITE 2
+#endif
+#ifndef VIRTQ_DESC_F_INDIRECT
 #define VIRTQ_DESC_F_INDIRECT 4
+#endif
 
 struct virtq_avail {
     UINT16 flags;
@@ -65,7 +71,9 @@ struct virtq_avail {
 };
 
 /* Available ring flags (virtio spec). */
+#ifndef VIRTQ_AVAIL_F_NO_INTERRUPT
 #define VIRTQ_AVAIL_F_NO_INTERRUPT 1
+#endif
 
 struct virtq_used_elem {
     UINT32 id;
@@ -79,7 +87,9 @@ struct virtq_used {
 };
 
 /* Used ring flags (virtio spec). */
+#ifndef VIRTQ_USED_F_NO_NOTIFY
 #define VIRTQ_USED_F_NO_NOTIFY 1
+#endif
 
 #include <poppack.h>
 
@@ -103,7 +113,7 @@ C_ASSERT(FIELD_OFFSET(struct virtq_used, ring) == 4);
 
 /* EVENT_IDX helper accessors (only valid if the feature is negotiated). */
 __forceinline volatile UINT16*
-VirtqAvailUsedEvent(
+VirtqueueRingAvailUsedEvent(
     _In_ volatile struct virtq_avail* Avail,
     _In_ USHORT QueueSize)
 {
@@ -111,7 +121,7 @@ VirtqAvailUsedEvent(
 }
 
 __forceinline volatile UINT16*
-VirtqUsedAvailEvent(
+VirtqueueRingUsedAvailEvent(
     _In_ volatile struct virtq_used* Used,
     _In_ USHORT QueueSize)
 {
@@ -160,6 +170,7 @@ VirtqueueRingLayoutCompute(
  * table).
  */
 _Must_inspect_result_
+_IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS
 VirtqueueRingDmaAlloc(
     _In_ VIRTIO_DMA_CONTEXT* DmaCtx,
@@ -173,6 +184,7 @@ VirtqueueRingDmaAlloc(
  *
  * This function may be called from EvtDeviceReleaseHardware.
  */
+_IRQL_requires_max_(PASSIVE_LEVEL)
 VOID
 VirtqueueRingDmaFree(
     _Inout_ VIRTQUEUE_RING_DMA* Ring);
