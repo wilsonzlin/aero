@@ -58,11 +58,12 @@ Disk streaming conformance
   AUTH:     (none)
 
 PASS HEAD: Accept-Ranges=bytes and Content-Length is present - size=2147483648 (2.00 GiB)
-PASS GET: valid Range returns 206 with correct Content-Range and body length - Content-Range='bytes 0-0/2147483648'
+PASS GET: valid Range (first byte) returns 206 with correct Content-Range and body length - Content-Range='bytes 0-0/2147483648'
+PASS GET: valid Range (mid-file) returns 206 with correct Content-Range and body length - Content-Range='bytes 1073741824-1073741824/2147483648'
 PASS GET: unsatisfiable Range returns 416 and Content-Range bytes */<size> - Content-Range='bytes */2147483648'
 PASS OPTIONS: CORS preflight allows Range + Authorization headers - status=204
 
-Summary: 4 passed, 0 failed, 0 skipped
+Summary: 5 passed, 0 failed, 0 skipped
 ```
 
 ## Running against the reference `server/disk-gateway`

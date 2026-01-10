@@ -260,46 +260,103 @@ def _test_get_valid_range(
     timeout_s: float,
     size: int | None,
 ) -> TestResult:
-    name = "GET: valid Range returns 206 with correct Content-Range and body length"
+    name = "GET: valid Range (first byte) returns 206 with correct Content-Range and body length"
     if size is None:
         return TestResult(name=name, status="SKIP", details="skipped (size unknown)")
 
     try:
         req_start = 0
         req_end = 0
-        headers: dict[str, str] = {
-            "Accept-Encoding": "identity",
-            "Range": f"bytes={req_start}-{req_end}",
-        }
-        if origin is not None:
-            headers["Origin"] = origin
-        if authorization is not None:
-            headers["Authorization"] = authorization
-
-        resp = _request(url=base_url, method="GET", headers=headers, timeout_s=timeout_s)
-        _require(resp.status == 206, f"expected 206, got {resp.status}")
-
-        content_range = _header(resp, "Content-Range")
-        _require(content_range is not None, "missing Content-Range header")
-        _require_cors(resp, origin, expose={"content-range"})
-        start, end, total = _parse_content_range(content_range)
-        _require(start == req_start and end == req_end, f"expected bytes {req_start}-{req_end}, got {start}-{end}")
-        _require(total == size, f"expected total size {size}, got {total}")
-
-        expected_len = req_end - req_start + 1
-        _require(len(resp.body) == expected_len, f"expected body length {expected_len}, got {len(resp.body)}")
-
-        content_length = _header(resp, "Content-Length")
-        if content_length is not None:
-            try:
-                resp_len = int(content_length)
-            except ValueError:
-                raise TestFailure(f"invalid Content-Length {content_length!r}") from None
-            _require(resp_len == expected_len, f"expected Content-Length {expected_len}, got {resp_len}")
-
-        return TestResult(name=name, status="PASS", details=f"Content-Range={content_range!r}")
+        return _test_get_range(
+            name=name,
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
+            size=size,
+            req_start=req_start,
+            req_end=req_end,
+        )
     except TestFailure as e:
         return TestResult(name=name, status="FAIL", details=str(e))
+
+
+def _test_get_mid_range(
+    *,
+    base_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    size: int | None,
+) -> TestResult:
+    name = "GET: valid Range (mid-file) returns 206 with correct Content-Range and body length"
+    if size is None:
+        return TestResult(name=name, status="SKIP", details="skipped (size unknown)")
+    if size < 2:
+        return TestResult(name=name, status="SKIP", details=f"skipped (size too small: {size})")
+
+    try:
+        req_start = size // 2
+        if req_start <= 0:
+            return TestResult(name=name, status="SKIP", details=f"skipped (size too small: {size})")
+        req_end = req_start
+        return _test_get_range(
+            name=name,
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
+            size=size,
+            req_start=req_start,
+            req_end=req_end,
+        )
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
+def _test_get_range(
+    *,
+    name: str,
+    base_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    size: int,
+    req_start: int,
+    req_end: int,
+) -> TestResult:
+    _require(0 <= req_start <= req_end < size, f"invalid test range {req_start}-{req_end} for size {size}")
+    headers: dict[str, str] = {
+        "Accept-Encoding": "identity",
+        "Range": f"bytes={req_start}-{req_end}",
+    }
+    if origin is not None:
+        headers["Origin"] = origin
+    if authorization is not None:
+        headers["Authorization"] = authorization
+
+    resp = _request(url=base_url, method="GET", headers=headers, timeout_s=timeout_s)
+    _require(resp.status == 206, f"expected 206, got {resp.status}")
+
+    content_range = _header(resp, "Content-Range")
+    _require(content_range is not None, "missing Content-Range header")
+    _require_cors(resp, origin, expose={"content-range"})
+    start, end, total = _parse_content_range(content_range)
+    _require(start == req_start and end == req_end, f"expected bytes {req_start}-{req_end}, got {start}-{end}")
+    _require(total == size, f"expected total size {size}, got {total}")
+
+    expected_len = req_end - req_start + 1
+    _require(len(resp.body) == expected_len, f"expected body length {expected_len}, got {len(resp.body)}")
+
+    content_length = _header(resp, "Content-Length")
+    if content_length is not None:
+        try:
+            resp_len = int(content_length)
+        except ValueError:
+            raise TestFailure(f"invalid Content-Length {content_length!r}") from None
+        _require(resp_len == expected_len, f"expected Content-Length {expected_len}, got {resp_len}")
+
+    return TestResult(name=name, status="PASS", details=f"Content-Range={content_range!r}")
 
 
 def _test_get_unsatisfiable_range(
@@ -468,6 +525,15 @@ def main(argv: Sequence[str]) -> int:
 
     results.append(
         _test_get_valid_range(
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
+            size=size,
+        )
+    )
+    results.append(
+        _test_get_mid_range(
             base_url=base_url,
             origin=origin,
             authorization=authorization,
