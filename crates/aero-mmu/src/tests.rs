@@ -690,3 +690,140 @@ fn pcid_tags_tlb_entries_and_invpcid_flushes_single_context() {
     assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
     assert!(mem.reads() > 0);
 }
+
+#[test]
+fn pcid_invlpg_invalidates_current_pcid_only() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x40000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page_base = 0x8000u64;
+
+    mem.write_u64_raw(pml4_base, pdpt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pd_base, pt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pt_base, page_base | PTE_P64 | PTE_RW64 | PTE_US64);
+
+    mmu.set_cr4(CR4_PAE | CR4_PCIDE);
+    mmu.set_efer(EFER_LME);
+    mmu.set_cr0(CR0_PG);
+
+    let base_cr3 = pml4_base;
+    let vaddr = 0x234u64;
+
+    // Fill PCID=1.
+    mmu.set_cr3(base_cr3 | 1);
+    let _ = mmu.translate(&mut mem, vaddr, AccessType::Read, 3).unwrap();
+
+    // Fill PCID=2.
+    mmu.set_cr3(base_cr3 | 2);
+    let _ = mmu.translate(&mut mem, vaddr, AccessType::Read, 3).unwrap();
+
+    // Switch back to PCID=1 without flushing it, then INVLPG.
+    mmu.set_cr3(base_cr3 | 1 | (1u64 << 63));
+    mmu.invlpg(vaddr);
+
+    // PCID=1 should miss now.
+    mem.reset_counters();
+    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert!(mem.reads() > 0);
+
+    // PCID=2 should still hit (INVLPG shouldn't invalidate other PCIDs).
+    mmu.set_cr3(base_cr3 | 2 | (1u64 << 63));
+    mem.reset_counters();
+    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(mem.reads(), 0);
+    assert_eq!(mem.writes(), 0);
+}
+
+#[test]
+fn pcid_invlpg_invalidates_global_for_all_pcids() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x40000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page_base = 0x8000u64;
+
+    mem.write_u64_raw(pml4_base, pdpt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pd_base, pt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pt_base, page_base | PTE_P64 | PTE_RW64 | PTE_US64 | PTE_G64);
+
+    mmu.set_cr4(CR4_PAE | CR4_PCIDE | CR4_PGE);
+    mmu.set_efer(EFER_LME);
+    mmu.set_cr0(CR0_PG);
+
+    let base_cr3 = pml4_base;
+    let vaddr = 0x234u64;
+
+    // Populate global entry under PCID=1.
+    mmu.set_cr3(base_cr3 | 1);
+    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+
+    // Should hit under a different PCID because it's global.
+    mmu.set_cr3(base_cr3 | 2);
+    mem.reset_counters();
+    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(mem.reads(), 0);
+    assert_eq!(mem.writes(), 0);
+
+    // INVLPG must invalidate global translations too.
+    mmu.invlpg(vaddr);
+    mem.reset_counters();
+    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert!(mem.reads() > 0);
+}
+
+#[test]
+fn invpcid_individual_address_targets_only_specified_pcid() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x40000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page_base = 0x8000u64;
+
+    mem.write_u64_raw(pml4_base, pdpt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pd_base, pt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pt_base, page_base | PTE_P64 | PTE_RW64 | PTE_US64);
+
+    mmu.set_cr4(CR4_PAE | CR4_PCIDE);
+    mmu.set_efer(EFER_LME);
+    mmu.set_cr0(CR0_PG);
+
+    let base_cr3 = pml4_base;
+    let vaddr = 0x234u64;
+
+    // Fill PCID=1.
+    mmu.set_cr3(base_cr3 | 1);
+    let _ = mmu.translate(&mut mem, vaddr, AccessType::Read, 3).unwrap();
+
+    // Fill PCID=2.
+    mmu.set_cr3(base_cr3 | 2);
+    let _ = mmu.translate(&mut mem, vaddr, AccessType::Read, 3).unwrap();
+
+    // Invalidate only the mapping for PCID=1.
+    mmu.invpcid(1, InvpcidType::IndividualAddress(vaddr));
+
+    // PCID=1 should miss now.
+    mmu.set_cr3(base_cr3 | 1 | (1u64 << 63));
+    mem.reset_counters();
+    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert!(mem.reads() > 0);
+
+    // PCID=2 should still hit.
+    mmu.set_cr3(base_cr3 | 2 | (1u64 << 63));
+    mem.reset_counters();
+    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(mem.reads(), 0);
+    assert_eq!(mem.writes(), 0);
+}

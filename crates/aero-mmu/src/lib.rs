@@ -270,7 +270,14 @@ impl Mmu {
 
     /// INVLPG.
     pub fn invlpg(&mut self, vaddr: u64) {
-        self.tlb.invalidate_address(vaddr);
+        if self.pcid_enabled() {
+            // In PCID mode, INVLPG invalidates the current PCID's translation and
+            // any global translation for the address. Other PCIDs are unaffected.
+            self.tlb
+                .invalidate_address_pcid(vaddr, self.current_pcid(), true);
+        } else {
+            self.tlb.invalidate_address_all(vaddr);
+        }
     }
 
     /// Optional extension point for INVPCID (not all invalidation types are

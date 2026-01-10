@@ -164,7 +164,7 @@ impl TlbSet {
         self.entries[set][way] = entry;
     }
 
-    fn invalidate_address(&mut self, vaddr: u64) {
+    fn invalidate_address_all(&mut self, vaddr: u64) {
         for page_size in [PageSize::Size1G, PageSize::Size4M, PageSize::Size2M, PageSize::Size4K] {
             let vbase = vaddr & !(page_size.bytes() - 1);
             let tag = vbase >> 12;
@@ -172,6 +172,29 @@ impl TlbSet {
             for way in 0..WAYS {
                 let entry = &mut self.entries[set][way];
                 if entry.valid && entry.vbase == vbase && entry.page_size == page_size {
+                    entry.valid = false;
+                }
+            }
+        }
+    }
+
+    fn invalidate_address_pcid(&mut self, vaddr: u64, pcid: u16, include_global: bool) {
+        for page_size in [PageSize::Size1G, PageSize::Size4M, PageSize::Size2M, PageSize::Size4K] {
+            let vbase = vaddr & !(page_size.bytes() - 1);
+            let tag = vbase >> 12;
+            let set = set_index(tag);
+            for way in 0..WAYS {
+                let entry = &mut self.entries[set][way];
+                if !entry.valid || entry.page_size != page_size || entry.vbase != vbase {
+                    continue;
+                }
+                if entry.global {
+                    if include_global {
+                        entry.valid = false;
+                    }
+                    continue;
+                }
+                if entry.pcid == pcid {
                     entry.valid = false;
                 }
             }
@@ -273,9 +296,14 @@ impl Tlb {
         }
     }
 
-    pub(crate) fn invalidate_address(&mut self, vaddr: u64) {
-        self.itlb.invalidate_address(vaddr);
-        self.dtlb.invalidate_address(vaddr);
+    pub(crate) fn invalidate_address_all(&mut self, vaddr: u64) {
+        self.itlb.invalidate_address_all(vaddr);
+        self.dtlb.invalidate_address_all(vaddr);
+    }
+
+    pub(crate) fn invalidate_address_pcid(&mut self, vaddr: u64, pcid: u16, include_global: bool) {
+        self.itlb.invalidate_address_pcid(vaddr, pcid, include_global);
+        self.dtlb.invalidate_address_pcid(vaddr, pcid, include_global);
     }
 
     pub(crate) fn set_dirty(&mut self, vaddr: u64, is_exec: bool, pcid: u16) -> bool {
@@ -314,10 +342,7 @@ impl Tlb {
     pub(crate) fn invpcid(&mut self, pcid: u16, kind: InvpcidType) {
         match kind {
             InvpcidType::IndividualAddress(vaddr) => {
-                // We don't store per-entry addresses beyond base, so just use the
-                // standard invalidation.
-                let _ = pcid;
-                self.invalidate_address(vaddr);
+                self.invalidate_address_pcid(vaddr, pcid, false);
             }
             InvpcidType::SingleContext => {
                 self.itlb.flush_pcid(pcid, false);
