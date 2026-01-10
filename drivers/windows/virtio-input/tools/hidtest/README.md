@@ -71,3 +71,9 @@ Cycle LEDs (guaranteed visible changes):
 ```bat
 hidtest.exe --led-cycle
 ```
+
+Dump the raw HID report descriptor bytes:
+
+```bat
+hidtest.exe --dump-desc
+```

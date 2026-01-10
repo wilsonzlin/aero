@@ -84,6 +84,7 @@ typedef struct OPTIONS {
     int have_index;
     int have_led_mask;
     int led_cycle;
+    int dump_desc;
     int want_keyboard;
     int want_mouse;
     USHORT vid;
@@ -207,6 +208,39 @@ static void dump_hex(const BYTE *buf, DWORD len)
     }
 }
 
+static void dump_report_descriptor(HANDLE handle)
+{
+    BYTE buf[4096];
+    DWORD bytes = 0;
+    BOOL ok;
+    DWORD i;
+
+    ZeroMemory(buf, sizeof(buf));
+    ok = DeviceIoControl(handle, IOCTL_HID_GET_REPORT_DESCRIPTOR, NULL, 0, buf, (DWORD)sizeof(buf), &bytes,
+                         NULL);
+    if (!ok || bytes == 0) {
+        bytes = 0;
+        ok = DeviceIoControl(handle, IOCTL_HID_GET_REPORT_DESCRIPTOR_ALT, NULL, 0, buf, (DWORD)sizeof(buf),
+                             &bytes, NULL);
+    }
+
+    if (!ok || bytes == 0) {
+        print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_REPORT_DESCRIPTOR)");
+        return;
+    }
+
+    wprintf(L"\nReport descriptor (%lu bytes):\n", bytes);
+    for (i = 0; i < bytes; i += 16) {
+        DWORD chunk = bytes - i;
+        if (chunk > 16) {
+            chunk = 16;
+        }
+        wprintf(L"  %04lX: ", i);
+        dump_hex(buf + i, chunk);
+        wprintf(L"\n");
+    }
+}
+
 static void dump_keyboard_report(const BYTE *buf, DWORD len)
 {
     DWORD off = 0;
@@ -314,7 +348,7 @@ static void print_usage(void)
     wprintf(L"Usage:\n");
     wprintf(L"  hidtest.exe [--list]\n");
     wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
-    wprintf(L"             [--led 0x07 | --led-cycle]\n");
+    wprintf(L"             [--led 0x07 | --led-cycle] [--dump-desc]\n");
     wprintf(L"\n");
     wprintf(L"Options:\n");
     wprintf(L"  --list          List all present HID interfaces and exit\n");
@@ -326,6 +360,7 @@ static void print_usage(void)
     wprintf(L"  --led 0xMASK    Send keyboard LED output report (ReportID=1)\n");
     wprintf(L"                 Bits: 0x01 NumLock, 0x02 CapsLock, 0x04 ScrollLock\n");
     wprintf(L"  --led-cycle     Cycle keyboard LEDs to visually confirm write path\n");
+    wprintf(L"  --dump-desc     Print the raw HID report descriptor bytes\n");
     wprintf(L"\n");
     wprintf(L"Notes:\n");
     wprintf(L"  - Without filters, the tool prefers a virtio-input keyboard interface (VID 0x1AF4).\n");
@@ -1003,6 +1038,11 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--dump-desc") == 0) {
+            opt.dump_desc = 1;
+            continue;
+        }
+
         if ((wcscmp(argv[i], L"--vid") == 0) && i + 1 < argc) {
             if (!parse_u16_hex(argv[i + 1], &opt.vid)) {
                 wprintf(L"Invalid VID: %ls\n", argv[i + 1]);
@@ -1102,6 +1142,9 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.led_cycle) {
         cycle_keyboard_leds(&dev);
+    }
+    if (opt.dump_desc) {
+        dump_report_descriptor(dev.handle);
     }
 
     read_reports_loop(&dev);
