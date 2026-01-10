@@ -172,5 +172,12 @@ yarn-error.log*
 **/*.ilk
 **/*.exp
 **/*.lib
+
 # Benchmark output (local runs)
 backend/aero-gateway/bench/results*.json
+
+# CMake (in-source builds)
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Testing/
