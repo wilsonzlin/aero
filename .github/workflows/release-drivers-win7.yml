@@ -57,7 +57,7 @@ jobs:
 
       - name: Package artifacts (ci/package-drivers.ps1)
         shell: pwsh
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/package-drivers.ps1' -Version '${{ github.ref_name }}'
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/package-drivers.ps1' -Version '${{ github.ref_name }}' -MakeFatImage -FatImageStrict
 
       - name: Stage public certificate as release asset
         shell: pwsh
@@ -93,4 +93,5 @@ jobs:
             artifacts/*.zip
             artifacts/*.iso
             artifacts/*.cer
+            artifacts/*.vhd
           generate_release_notes: true
