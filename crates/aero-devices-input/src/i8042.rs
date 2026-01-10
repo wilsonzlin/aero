@@ -51,6 +51,12 @@ enum PendingWrite {
     CommandByte,
     OutputPort,
     WriteToMouse,
+    /// Writes the next data byte directly into the controller output buffer as
+    /// keyboard-originated data (i8042 command 0xD2).
+    WriteToOutputBufferKeyboard,
+    /// Writes the next data byte directly into the controller output buffer as
+    /// mouse-originated data (i8042 command 0xD3).
+    WriteToOutputBufferMouse,
 }
 
 /// Set-2 -> Set-1 translation state, used when the command-byte translation bit
@@ -386,6 +392,14 @@ impl I8042Controller {
                 // Write output port (next data write).
                 self.pending_write = Some(PendingWrite::OutputPort);
             }
+            0xD2 => {
+                // Write output buffer as keyboard data (next data write).
+                self.pending_write = Some(PendingWrite::WriteToOutputBufferKeyboard);
+            }
+            0xD3 => {
+                // Write output buffer as mouse data (next data write).
+                self.pending_write = Some(PendingWrite::WriteToOutputBufferMouse);
+            }
             0xD4 => {
                 // Next data write goes to the mouse.
                 self.pending_write = Some(PendingWrite::WriteToMouse);
@@ -425,6 +439,22 @@ impl I8042Controller {
                 }
                 PendingWrite::WriteToMouse => {
                     self.mouse.receive_byte(value);
+                }
+                PendingWrite::WriteToOutputBufferKeyboard => {
+                    // Bypass translation and device state; this is a controller command
+                    // that forces the output buffer to appear as if the keyboard produced
+                    // the byte.
+                    self.pending_output.push_back(OutputByte {
+                        value,
+                        source: OutputSource::Keyboard,
+                    });
+                }
+                PendingWrite::WriteToOutputBufferMouse => {
+                    // Same as 0xD2, but marks the byte as mouse-originated (AUX).
+                    self.pending_output.push_back(OutputByte {
+                        value,
+                        source: OutputSource::Mouse,
+                    });
                 }
             }
             self.status &= !STATUS_IBF;
@@ -589,7 +619,7 @@ impl Default for I8042Controller {
 
 impl IoSnapshot for I8042Controller {
     const DEVICE_ID: [u8; 4] = *b"8042";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 2);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_REGS: u16 = 1;
@@ -640,6 +670,8 @@ impl IoSnapshot for I8042Controller {
             Some(PendingWrite::CommandByte) => 1,
             Some(PendingWrite::OutputPort) => 3,
             Some(PendingWrite::WriteToMouse) => 2,
+            Some(PendingWrite::WriteToOutputBufferKeyboard) => 4,
+            Some(PendingWrite::WriteToOutputBufferMouse) => 5,
         };
         w.field_u8(TAG_PENDING_WRITE, pending_write);
 
@@ -731,6 +763,8 @@ impl IoSnapshot for I8042Controller {
             1 => Some(PendingWrite::CommandByte),
             2 => Some(PendingWrite::WriteToMouse),
             3 => Some(PendingWrite::OutputPort),
+            4 => Some(PendingWrite::WriteToOutputBufferKeyboard),
+            5 => Some(PendingWrite::WriteToOutputBufferMouse),
             _ => None,
         };
 
