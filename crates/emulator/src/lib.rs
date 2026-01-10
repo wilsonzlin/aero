@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod chipset;
 pub mod display;
 pub mod devices;
