@@ -11,8 +11,8 @@ import { setupRateLimit } from './middleware/rateLimit.js';
 import { setupSecurityHeaders } from './middleware/securityHeaders.js';
 import { setupMetrics } from './metrics.js';
 import { setupDohRoutes } from './routes/doh.js';
-import { getVersionInfo } from './version.js';
 import { handleTcpProxyUpgrade } from './routes/tcpProxy.js';
+import { getVersionInfo } from './version.js';
 
 type ServerBundle = {
   app: FastifyInstance;
@@ -83,6 +83,14 @@ export function buildServer(config: Config): ServerBundle {
 
   setupDohRoutes(app, config, metrics.dns);
 
+  if (process.env.AERO_GATEWAY_E2E === '1') {
+    app.get('/e2e', async (_request, reply) => {
+      reply.type('text/html; charset=utf-8');
+      reply.header('cache-control', 'no-store');
+      return e2ePageHtml();
+    });
+  }
+
   // Handle CORS preflight requests, even when no route matches.
   app.options('/*', async (_request, reply) => reply.code(204).send());
 
@@ -101,3 +109,137 @@ export function buildServer(config: Config): ServerBundle {
     },
   };
 }
+
+function e2ePageHtml(): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>aero-gateway e2e</title>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script>
+      const outEl = document.getElementById('out');
+      function render(obj) {
+        outEl.textContent = JSON.stringify(obj, null, 2);
+      }
+      function withTimeout(promise, ms, label) {
+        return Promise.race([
+          promise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error(label + ' timed out after ' + ms + 'ms')), ms)),
+        ]);
+      }
+      function requireParam(name) {
+        const url = new URL(location.href);
+        const value = url.searchParams.get(name);
+        if (!value) throw new Error('Missing required query parameter: ' + name);
+        return value;
+      }
+      function buildDnsQueryA(name) {
+        const id = Math.floor(Math.random() * 65536);
+        const bytes = [];
+        bytes.push((id >> 8) & 0xff, id & 0xff); // ID
+        bytes.push(0x01, 0x00); // flags: RD
+        bytes.push(0x00, 0x01); // QDCOUNT
+        bytes.push(0x00, 0x00); // ANCOUNT
+        bytes.push(0x00, 0x00); // NSCOUNT
+        bytes.push(0x00, 0x00); // ARCOUNT
+
+        for (const label of name.split('.')) {
+          const encoded = new TextEncoder().encode(label);
+          if (encoded.length === 0 || encoded.length > 63) throw new Error('Invalid DNS label');
+          bytes.push(encoded.length);
+          for (const b of encoded) bytes.push(b);
+        }
+        bytes.push(0x00); // end of QNAME
+
+        bytes.push(0x00, 0x01); // QTYPE=A
+        bytes.push(0x00, 0x01); // QCLASS=IN
+
+        return { id, bytes: new Uint8Array(bytes) };
+      }
+      function base64Url(bytes) {
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');
+      }
+      function readU16BE(u8, off) {
+        return (u8[off] << 8) | u8[off + 1];
+      }
+
+      (async () => {
+        const results = {
+          crossOriginIsolated: window.crossOriginIsolated,
+          sharedArrayBuffer: { ok: false, error: null },
+          websocket: { ok: false, echo: null, error: null },
+          dnsQuery: { ok: false, meta: null, error: null },
+        };
+
+        try {
+          const buf = new SharedArrayBuffer(16);
+          results.sharedArrayBuffer.ok = buf.byteLength === 16;
+        } catch (err) {
+          results.sharedArrayBuffer.error = String(err && err.message ? err.message : err);
+        }
+
+        try {
+          const echoPort = Number(requireParam('echoPort'));
+          if (!Number.isInteger(echoPort) || echoPort < 1 || echoPort > 65535) {
+            throw new Error('Invalid echoPort');
+          }
+
+          const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/tcp?target=127.0.0.1:' + echoPort;
+          const echo = await withTimeout(new Promise((resolve, reject) => {
+            const ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer';
+            ws.onopen = () => {
+              const data = new TextEncoder().encode('ping');
+              ws.send(data);
+            };
+            ws.onerror = () => reject(new Error('WebSocket error'));
+            ws.onmessage = (event) => {
+              resolve(event.data);
+              ws.close();
+            };
+          }), 5000, 'WebSocket');
+
+          if (!(echo instanceof ArrayBuffer)) {
+            throw new Error('Expected ArrayBuffer echo, got ' + Object.prototype.toString.call(echo));
+          }
+          const decoded = new TextDecoder().decode(new Uint8Array(echo));
+          results.websocket.ok = decoded === 'ping';
+          results.websocket.echo = decoded;
+        } catch (err) {
+          results.websocket.error = String(err && err.message ? err.message : err);
+        }
+
+        try {
+          const query = buildDnsQueryA('example.com');
+          const dns = base64Url(query.bytes);
+          const res = await withTimeout(fetch('/dns-query?dns=' + encodeURIComponent(dns)), 5000, 'dns-query fetch');
+          const buf = new Uint8Array(await res.arrayBuffer());
+
+          if (buf.length < 12) throw new Error('DNS response too short');
+          const id = readU16BE(buf, 0);
+          const flags = readU16BE(buf, 2);
+          const qdcount = readU16BE(buf, 4);
+          const ancount = readU16BE(buf, 6);
+          const rcode = flags & 0x000f;
+          const qr = (flags & 0x8000) !== 0;
+
+          results.dnsQuery.meta = { id, rcode, qdcount, ancount };
+          results.dnsQuery.ok = id === query.id && qr && rcode === 0 && qdcount === 1 && ancount >= 1;
+        } catch (err) {
+          results.dnsQuery.error = String(err && err.message ? err.message : err);
+        }
+
+        window.__aeroGatewayE2E = results;
+        render(results);
+      })();
+    </script>
+  </body>
+</html>`;
+}
+

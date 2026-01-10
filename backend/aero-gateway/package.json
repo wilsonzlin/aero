@@ -10,6 +10,7 @@
     "dev": "tsx watch src/index.ts",
     "lint": "tsc -p tsconfig.lint.json",
     "test": "node ./scripts/run-tests.js",
+    "test:e2e": "playwright test",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js"
   },
@@ -20,6 +21,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.41.2",
     "@types/node": "^20.11.30",
     "tsx": "^4.19.2",
     "typescript": "^5.4.5"
