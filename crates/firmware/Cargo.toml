@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 emulator = { path = "../emulator" }
 memory = { path = "../memory" }
+machine = { path = "../machine" }
 
 [dev-dependencies]
 aero-devices = { path = "../devices" }

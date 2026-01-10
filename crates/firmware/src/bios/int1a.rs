@@ -102,9 +102,8 @@ mod tests {
 
     #[test]
     fn ah00_reports_bda_ticks_and_clears_midnight_flag() {
-        let mut bios = Bios::new(crate::rtc::CmosRtc::new(DateTime::new(
-            2026, 1, 1, 23, 59, 59,
-        )));
+        let rtc = crate::rtc::CmosRtc::new(DateTime::new(2026, 1, 1, 23, 59, 59));
+        let mut bios = Bios::new_with_rtc(crate::bios::BiosConfig::default(), rtc);
         let mut memory = VecMemory::new(0x100000);
         bios.init(&mut memory);
 
@@ -130,7 +129,7 @@ mod tests {
     fn rtc_time_and_date_respect_bcd_mode() {
         let mut rtc = crate::rtc::CmosRtc::new(DateTime::new(2026, 1, 10, 21, 34, 56));
         rtc.set_bcd_mode(true);
-        let mut bios = Bios::new(rtc.clone());
+        let mut bios = Bios::new_with_rtc(crate::bios::BiosConfig::default(), rtc.clone());
         let mut memory = VecMemory::new(0x100000);
         bios.init(&mut memory);
 
@@ -150,7 +149,7 @@ mod tests {
         assert_eq!((cpu.dx() & 0xFF) as u8, 0x10);
 
         rtc.set_bcd_mode(false);
-        let mut bios = Bios::new(rtc);
+        let mut bios = Bios::new_with_rtc(crate::bios::BiosConfig::default(), rtc);
         bios.init(&mut memory);
 
         cpu.set_ah(0x02);

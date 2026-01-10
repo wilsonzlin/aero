@@ -1150,6 +1150,7 @@ dependencies = [
  "aero-devices",
  "aero-platform",
  "emulator",
+ "machine",
  "memory",
 ]
 
@@ -2001,6 +2002,10 @@ checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
 dependencies = [
  "hashbrown 0.15.5",
 ]
+
+[[package]]
+name = "machine"
+version = "0.1.0"
 
 [[package]]
 name = "malloc_buf"
@@ -3495,6 +3500,14 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "virtio-gpu-proto"
 version = "0.1.0"
+
+[[package]]
+name = "vm"
+version = "0.1.0"
+dependencies = [
+ "firmware",
+ "machine",
+]
 
 [[package]]
 name = "wait-timeout"
