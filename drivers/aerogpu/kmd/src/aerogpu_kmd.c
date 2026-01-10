@@ -1,4 +1,5 @@
 #include "aerogpu_kmd.h"
+#include "aerogpu_dbgctl_escape.h"
 
 /*
  * WDDM miniport entrypoint from dxgkrnl.
@@ -1086,6 +1087,251 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->hdr.size = sizeof(*out);
         out->mmio_version = adapter->Bar0 ? AeroGpuReadRegU32(adapter, AEROGPU_REG_VERSION) : 0;
         out->reserved0 = 0;
+        return STATUS_SUCCESS;
+    }
+
+    if (hdr->op == AEROGPU_ESCAPE_OP_QUERY_FENCE) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_query_fence_out)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        aerogpu_escape_query_fence_out* out = (aerogpu_escape_query_fence_out*)pEscape->pPrivateDriverData;
+        out->hdr.version = AEROGPU_ESCAPE_VERSION;
+        out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
+        out->hdr.size = sizeof(*out);
+        out->hdr.reserved0 = 0;
+        out->last_submitted_fence = (aerogpu_u64)adapter->LastSubmittedFence;
+        out->last_completed_fence = (aerogpu_u64)adapter->LastCompletedFence;
+        return STATUS_SUCCESS;
+    }
+
+    if (hdr->op == AEROGPU_ESCAPE_OP_DUMP_RING) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_dump_ring_inout)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        aerogpu_escape_dump_ring_inout* io = (aerogpu_escape_dump_ring_inout*)pEscape->pPrivateDriverData;
+
+        /* Only ring 0 is currently implemented. */
+        if (io->ring_id != 0) {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        io->hdr.version = AEROGPU_ESCAPE_VERSION;
+        io->hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING;
+        io->hdr.size = sizeof(*io);
+        io->hdr.reserved0 = 0;
+        io->ring_size_bytes = adapter->RingEntryCount ? (ULONG)(adapter->RingEntryCount * sizeof(aerogpu_ring_entry)) : 0;
+
+        io->desc_capacity = (io->desc_capacity > AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS)
+                                ? AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS
+                                : io->desc_capacity;
+
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&adapter->RingLock, &oldIrql);
+
+        const ULONG head = adapter->Bar0 ? AeroGpuReadRegU32(adapter, AEROGPU_REG_RING_HEAD) : 0;
+        const ULONG tail = adapter->Bar0 ? AeroGpuReadRegU32(adapter, AEROGPU_REG_RING_TAIL) : adapter->RingTail;
+        io->head = head;
+        io->tail = tail;
+
+        ULONG pending = 0;
+        if (adapter->RingEntryCount != 0) {
+            if (tail >= head) {
+                pending = tail - head;
+            } else {
+                pending = tail + adapter->RingEntryCount - head;
+            }
+        }
+
+        ULONG outCount = pending;
+        if (outCount > io->desc_capacity) {
+            outCount = io->desc_capacity;
+        }
+        io->desc_count = outCount;
+
+        RtlZeroMemory(io->desc, sizeof(io->desc));
+        if (adapter->RingVa && adapter->RingEntryCount && outCount) {
+            aerogpu_ring_entry* ring = (aerogpu_ring_entry*)adapter->RingVa;
+            for (ULONG i = 0; i < outCount; ++i) {
+                const ULONG idx = (head + i) % adapter->RingEntryCount;
+                const aerogpu_ring_entry entry = ring[idx];
+                if (entry.type != AEROGPU_RING_ENTRY_SUBMIT) {
+                    continue;
+                }
+                io->desc[i].fence = (aerogpu_u64)entry.submit.fence;
+                io->desc[i].desc_gpa = (aerogpu_u64)entry.submit.desc_gpa;
+                io->desc[i].desc_size_bytes = entry.submit.desc_size;
+                io->desc[i].flags = entry.submit.flags;
+            }
+        }
+
+        KeReleaseSpinLock(&adapter->RingLock, oldIrql);
+        return STATUS_SUCCESS;
+    }
+
+    if (hdr->op == AEROGPU_ESCAPE_OP_SELFTEST) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_selftest_inout)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        aerogpu_escape_selftest_inout* io = (aerogpu_escape_selftest_inout*)pEscape->pPrivateDriverData;
+        io->hdr.version = AEROGPU_ESCAPE_VERSION;
+        io->hdr.op = AEROGPU_ESCAPE_OP_SELFTEST;
+        io->hdr.size = sizeof(*io);
+        io->hdr.reserved0 = 0;
+        io->passed = 0;
+        io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE;
+        io->reserved0 = 0;
+
+        if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+            io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE;
+            return STATUS_SUCCESS;
+        }
+
+        ULONG timeoutMs = io->timeout_ms ? io->timeout_ms : 2000u;
+        if (timeoutMs > 30000u) {
+            timeoutMs = 30000u;
+        }
+
+        if (!adapter->Bar0 || !adapter->RingVa || adapter->RingEntryCount == 0) {
+            io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY;
+            return STATUS_SUCCESS;
+        }
+
+        /*
+         * Submit a "no-op" entry using the current completed fence value so we
+         * don't advance the device fence beyond what dxgkrnl has issued.
+         *
+         * Completion is detected by observing ring head advancement, not fence
+         * advancement.
+         */
+        const ULONG fenceNoop = adapter->LastCompletedFence;
+
+        AEROGPU_CMD_HEADER cmdHdr;
+        RtlZeroMemory(&cmdHdr, sizeof(cmdHdr));
+        cmdHdr.opcode = AEROGPU_CMD_SIGNAL_FENCE;
+        cmdHdr.size_bytes = sizeof(AEROGPU_CMD_HEADER) + sizeof(AEROGPU_CMD_SIGNAL_FENCE_PAYLOAD);
+
+        AEROGPU_CMD_SIGNAL_FENCE_PAYLOAD cmdPayload;
+        RtlZeroMemory(&cmdPayload, sizeof(cmdPayload));
+        cmdPayload.fence_value = (aerogpu_u64)fenceNoop;
+
+        const ULONG dmaSize = (ULONG)(sizeof(cmdHdr) + sizeof(cmdPayload));
+
+        PHYSICAL_ADDRESS dmaPa;
+        PVOID dmaVa = AeroGpuAllocContiguous(dmaSize, &dmaPa);
+        if (!dmaVa) {
+            io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES;
+            return STATUS_SUCCESS;
+        }
+        RtlCopyMemory(dmaVa, &cmdHdr, sizeof(cmdHdr));
+        RtlCopyMemory((PUCHAR)dmaVa + sizeof(cmdHdr), &cmdPayload, sizeof(cmdPayload));
+
+        PHYSICAL_ADDRESS descPa;
+        aerogpu_submission_desc_header* desc =
+            (aerogpu_submission_desc_header*)AeroGpuAllocContiguous(sizeof(*desc), &descPa);
+        if (!desc) {
+            AeroGpuFreeContiguous(dmaVa);
+            io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES;
+            return STATUS_SUCCESS;
+        }
+
+        desc->version = AEROGPU_SUBMISSION_DESC_VERSION;
+        desc->type = AEROGPU_SUBMIT_RENDER;
+        desc->fence = fenceNoop;
+        desc->reserved0 = 0;
+        desc->dma_buffer_gpa = (aerogpu_u64)dmaPa.QuadPart;
+        desc->dma_buffer_size = dmaSize;
+        desc->allocation_count = 0;
+
+        /* Push directly to the ring under RingLock for determinism. */
+        ULONG headBefore = 0;
+        NTSTATUS pushStatus = STATUS_SUCCESS;
+        {
+            KIRQL oldIrql;
+            KeAcquireSpinLock(&adapter->RingLock, &oldIrql);
+
+            /* Require an idle GPU to avoid perturbing dxgkrnl's fence tracking. */
+            {
+                KIRQL pendingIrql;
+                KeAcquireSpinLock(&adapter->PendingLock, &pendingIrql);
+                BOOLEAN busy = !IsListEmpty(&adapter->PendingSubmissions) ||
+                               (adapter->LastSubmittedFence != adapter->LastCompletedFence);
+                KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
+                if (busy) {
+                    pushStatus = STATUS_DEVICE_BUSY;
+                }
+            }
+
+            ULONG head = AeroGpuReadRegU32(adapter, AEROGPU_REG_RING_HEAD);
+            ULONG tail = adapter->RingTail;
+            headBefore = head;
+
+            if (NT_SUCCESS(pushStatus) && head != tail) {
+                pushStatus = STATUS_DEVICE_BUSY;
+            }
+
+            ULONG nextTail = (adapter->RingTail + 1) % adapter->RingEntryCount;
+            if (NT_SUCCESS(pushStatus) && nextTail == head) {
+                pushStatus = STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
+            } else if (NT_SUCCESS(pushStatus)) {
+                aerogpu_ring_entry* ring = (aerogpu_ring_entry*)adapter->RingVa;
+                ring[adapter->RingTail].submit.type = AEROGPU_RING_ENTRY_SUBMIT;
+                ring[adapter->RingTail].submit.flags = 0;
+                ring[adapter->RingTail].submit.fence = fenceNoop;
+                ring[adapter->RingTail].submit.desc_size = (ULONG)sizeof(*desc);
+                ring[adapter->RingTail].submit.desc_gpa = (aerogpu_u64)descPa.QuadPart;
+
+                KeMemoryBarrier();
+                adapter->RingTail = nextTail;
+                AeroGpuWriteRegU32(adapter, AEROGPU_REG_RING_TAIL, adapter->RingTail);
+                AeroGpuWriteRegU32(adapter, AEROGPU_REG_RING_DOORBELL, 1);
+            }
+
+            KeReleaseSpinLock(&adapter->RingLock, oldIrql);
+        }
+
+        if (!NT_SUCCESS(pushStatus)) {
+            AeroGpuFreeContiguous(desc);
+            AeroGpuFreeContiguous(dmaVa);
+            io->error_code = (pushStatus == STATUS_DEVICE_BUSY)
+                                 ? AEROGPU_DBGCTL_SELFTEST_ERR_GPU_BUSY
+                                 : AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY;
+            return STATUS_SUCCESS;
+        }
+
+        /* Poll for ring head advancement. */
+        ULONGLONG start = KeQueryInterruptTime();
+        ULONGLONG deadline = start + ((ULONGLONG)timeoutMs * 10000ull);
+        NTSTATUS testStatus = STATUS_TIMEOUT;
+        while (KeQueryInterruptTime() < deadline) {
+            ULONG headNow = AeroGpuReadRegU32(adapter, AEROGPU_REG_RING_HEAD);
+            if (headNow != headBefore) {
+                testStatus = STATUS_SUCCESS;
+                break;
+            }
+
+            LARGE_INTEGER interval;
+            interval.QuadPart = -10000; /* 1ms */
+            KeDelayExecutionThread(KernelMode, FALSE, &interval);
+        }
+
+        if (NT_SUCCESS(testStatus)) {
+            AeroGpuFreeContiguous(desc);
+            AeroGpuFreeContiguous(dmaVa);
+            io->passed = 1;
+            io->error_code = AEROGPU_DBGCTL_SELFTEST_OK;
+        } else {
+            /*
+             * The device did not consume the entry in time. Do not free the
+             * descriptor/DMA buffer to avoid use-after-free if the device
+             * consumes it later.
+             */
+            io->passed = 0;
+            io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT;
+        }
+
         return STATUS_SUCCESS;
     }
 

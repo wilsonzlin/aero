@@ -58,5 +58,10 @@ The driver uses `DbgPrintEx` in checked builds (`DBG=1`). Typical workflow:
 - `AEROGPU_ESCAPE_OP_QUERY_DEVICE` (see `aerogpu_protocol.h`)
   - returns the device MMIO version (`AEROGPU_REG_VERSION`)
 
-This is intended for a small user-mode tool to validate KMD↔emulator communication early.
+Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
 
+- `AEROGPU_ESCAPE_OP_QUERY_FENCE` (see `aerogpu_dbgctl_escape.h`)
+- `AEROGPU_ESCAPE_OP_DUMP_RING` (see `aerogpu_dbgctl_escape.h`)
+- `AEROGPU_ESCAPE_OP_SELFTEST` (see `aerogpu_dbgctl_escape.h`)
+
+These are intended for a small user-mode tool to validate KMD↔emulator communication early.

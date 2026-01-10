@@ -1,83 +1,76 @@
+/*
+ * AeroGPU debug/control Escape ABI.
+ *
+ * This is a small, driver-private Escape protocol intended for bring-up tools
+ * (e.g. `drivers/aerogpu/tools/win7_dbgctl`).
+ *
+ * The packets are sent via `D3DKMTEscape` and are handled by the KMD's
+ * `DxgkDdiEscape`.
+ *
+ * NOTE: Escape packets must have a stable layout across x86/x64 because a 32-bit
+ * user-mode tool may send escapes to a 64-bit kernel. All structs are packed
+ * and contain no pointers.
+ */
 #pragma once
 
-#include <stdint.h>
+#include "aerogpu_protocol.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define AEROGPU_DBGCTL_ESCAPE_ABI_VERSION 1u
-
-#define AEROGPU_DBGCTL_U32_MAKE(a, b, c, d) \
-  ((uint32_t)(a) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16) | ((uint32_t)(d) << 24))
-
-#define AEROGPU_DBGCTL_ESCAPE_MAGIC AEROGPU_DBGCTL_U32_MAKE('A', 'G', 'D', 'B')
-
-typedef enum AEROGPU_DBGCTL_OP {
-  AEROGPU_DBGCTL_OP_QUERY_VERSION = 1,
-  AEROGPU_DBGCTL_OP_QUERY_FENCE = 2,
-  AEROGPU_DBGCTL_OP_DUMP_RING = 3,
-  AEROGPU_DBGCTL_OP_SELFTEST = 4,
-} AEROGPU_DBGCTL_OP;
-
-#pragma pack(push, 1)
-
-typedef struct AEROGPU_DBGCTL_HEADER {
-  uint32_t magic;
-  uint32_t abiVersion;
-  uint32_t op;
-  uint32_t reserved;
-} AEROGPU_DBGCTL_HEADER;
-
-typedef struct AEROGPU_DBGCTL_QUERY_VERSION {
-  AEROGPU_DBGCTL_HEADER hdr;
-  uint32_t deviceAbiMajor;
-  uint32_t deviceAbiMinor;
-  uint32_t kmdVersionMajor;
-  uint32_t kmdVersionMinor;
-  uint32_t umdVersionMajor;
-  uint32_t umdVersionMinor;
-  uint32_t reserved[10];
-} AEROGPU_DBGCTL_QUERY_VERSION;
-
-typedef struct AEROGPU_DBGCTL_QUERY_FENCE {
-  AEROGPU_DBGCTL_HEADER hdr;
-  uint64_t lastSubmittedFence;
-  uint64_t lastCompletedFence;
-  uint64_t reserved[4];
-} AEROGPU_DBGCTL_QUERY_FENCE;
+/* Escape ops specific to dbgctl. */
+#define AEROGPU_ESCAPE_OP_QUERY_FENCE 2u
+#define AEROGPU_ESCAPE_OP_DUMP_RING 3u
+#define AEROGPU_ESCAPE_OP_SELFTEST 4u
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 
-typedef struct AEROGPU_DBGCTL_RING_DESC {
-  uint64_t fence;
-  uint64_t cmdGpuVa;
-  uint32_t cmdBytes;
-  uint32_t flags;
-} AEROGPU_DBGCTL_RING_DESC;
+enum aerogpu_dbgctl_selftest_error {
+  AEROGPU_DBGCTL_SELFTEST_OK = 0,
+  AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE = 1,
+  AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY = 2,
+  AEROGPU_DBGCTL_SELFTEST_ERR_GPU_BUSY = 3,
+  AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES = 4,
+  AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT = 5,
+};
 
-typedef struct AEROGPU_DBGCTL_DUMP_RING {
-  AEROGPU_DBGCTL_HEADER hdr;
-  uint32_t ringId;
-  uint32_t ringSizeBytes;
-  uint32_t head;
-  uint32_t tail;
-  uint32_t descCount;
-  uint32_t descCapacity;
-  AEROGPU_DBGCTL_RING_DESC desc[AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS];
-} AEROGPU_DBGCTL_DUMP_RING;
+#pragma pack(push, 1)
 
-typedef struct AEROGPU_DBGCTL_SELFTEST {
-  AEROGPU_DBGCTL_HEADER hdr;
-  uint32_t timeoutMs;
-  uint32_t passed;
-  uint32_t errorCode;
-  uint32_t reserved[13];
-} AEROGPU_DBGCTL_SELFTEST;
+typedef struct aerogpu_escape_query_fence_out {
+  aerogpu_escape_header hdr;
+  aerogpu_u64 last_submitted_fence;
+  aerogpu_u64 last_completed_fence;
+} aerogpu_escape_query_fence_out;
+
+typedef struct aerogpu_dbgctl_ring_desc {
+  aerogpu_u64 fence;
+  aerogpu_u64 desc_gpa;
+  aerogpu_u32 desc_size_bytes;
+  aerogpu_u32 flags;
+} aerogpu_dbgctl_ring_desc;
+
+typedef struct aerogpu_escape_dump_ring_inout {
+  aerogpu_escape_header hdr;
+  aerogpu_u32 ring_id;
+  aerogpu_u32 ring_size_bytes;
+  aerogpu_u32 head;
+  aerogpu_u32 tail;
+  aerogpu_u32 desc_count;
+  aerogpu_u32 desc_capacity;
+  aerogpu_dbgctl_ring_desc desc[AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS];
+} aerogpu_escape_dump_ring_inout;
+
+typedef struct aerogpu_escape_selftest_inout {
+  aerogpu_escape_header hdr;
+  aerogpu_u32 timeout_ms;
+  aerogpu_u32 passed;
+  aerogpu_u32 error_code;
+  aerogpu_u32 reserved0;
+} aerogpu_escape_selftest_inout;
 
 #pragma pack(pop)
 
 #ifdef __cplusplus
 }
 #endif
-

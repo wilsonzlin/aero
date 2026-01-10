@@ -9,7 +9,7 @@ It talks to the installed AeroGPU driver via **`DxgkDdiEscape`** using `D3DKMTEs
 Minimum supported commands:
 
 - `aerogpu_dbgctl --query-version`  
-  Prints the AeroGPU device ABI version + KMD/UMD version (as reported by the driver).
+  Prints the AeroGPU MMIO/device version as reported by the KMD via `DxgkDdiEscape`.
 
 - `aerogpu_dbgctl --query-fence`  
   Prints the last submitted fence and last completed fence.
@@ -66,8 +66,14 @@ Packet definitions consumed by this tool live in:
 
 The AeroGPU KMD is expected to implement `DxgkDdiEscape` handling for these packets (driver-private escape).
 
+Escape ops used:
+
+- `AEROGPU_ESCAPE_OP_QUERY_DEVICE` → `--query-version`
+- `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`
+- `AEROGPU_ESCAPE_OP_DUMP_RING` → `--dump-ring`
+- `AEROGPU_ESCAPE_OP_SELFTEST` → `--selftest`
+
 ## Notes / troubleshooting
 
 - If `D3DKMTOpenAdapterFromHdc` or `D3DKMTEscape` cannot be resolved from `gdi32.dll`, the OS is too old or the environment is not WDDM-capable.
 - If `D3DKMTEscape` returns an error, ensure the AeroGPU driver is installed and exposes the required escapes.
-

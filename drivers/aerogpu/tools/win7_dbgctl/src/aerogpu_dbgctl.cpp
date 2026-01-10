@@ -175,11 +175,12 @@ static NTSTATUS SendAerogpuEscape(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter,
 }
 
 static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
-  AEROGPU_DBGCTL_QUERY_VERSION q;
+  aerogpu_escape_query_device_out q;
   ZeroMemory(&q, sizeof(q));
-  q.hdr.magic = AEROGPU_DBGCTL_ESCAPE_MAGIC;
-  q.hdr.abiVersion = AEROGPU_DBGCTL_ESCAPE_ABI_VERSION;
-  q.hdr.op = AEROGPU_DBGCTL_OP_QUERY_VERSION;
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_DEVICE;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
 
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
   if (!NT_SUCCESS(st)) {
@@ -187,19 +188,24 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     return 2;
   }
 
-  wprintf(L"AeroGPU dbgctl ABI: %lu\n", (unsigned long)q.hdr.abiVersion);
-  wprintf(L"Device ABI: %lu.%lu\n", (unsigned long)q.deviceAbiMajor, (unsigned long)q.deviceAbiMinor);
-  wprintf(L"KMD version: %lu.%lu\n", (unsigned long)q.kmdVersionMajor, (unsigned long)q.kmdVersionMinor);
-  wprintf(L"UMD version: %lu.%lu\n", (unsigned long)q.umdVersionMajor, (unsigned long)q.umdVersionMinor);
+  uint32_t major = (uint32_t)(q.mmio_version >> 16);
+  uint32_t minor = (uint32_t)(q.mmio_version & 0xFFFFu);
+
+  wprintf(L"AeroGPU escape ABI: %lu\n", (unsigned long)q.hdr.version);
+  wprintf(L"AeroGPU MMIO version: 0x%08lx (%lu.%lu)\n",
+          (unsigned long)q.mmio_version,
+          (unsigned long)major,
+          (unsigned long)minor);
   return 0;
 }
 
 static int DoQueryFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
-  AEROGPU_DBGCTL_QUERY_FENCE q;
+  aerogpu_escape_query_fence_out q;
   ZeroMemory(&q, sizeof(q));
-  q.hdr.magic = AEROGPU_DBGCTL_ESCAPE_MAGIC;
-  q.hdr.abiVersion = AEROGPU_DBGCTL_ESCAPE_ABI_VERSION;
-  q.hdr.op = AEROGPU_DBGCTL_OP_QUERY_FENCE;
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
 
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
   if (!NT_SUCCESS(st)) {
@@ -207,21 +213,22 @@ static int DoQueryFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     return 2;
   }
 
-  wprintf(L"Last submitted fence: 0x%I64x (%I64u)\n", (unsigned long long)q.lastSubmittedFence,
-          (unsigned long long)q.lastSubmittedFence);
-  wprintf(L"Last completed fence: 0x%I64x (%I64u)\n", (unsigned long long)q.lastCompletedFence,
-          (unsigned long long)q.lastCompletedFence);
+  wprintf(L"Last submitted fence: 0x%I64x (%I64u)\n", (unsigned long long)q.last_submitted_fence,
+          (unsigned long long)q.last_submitted_fence);
+  wprintf(L"Last completed fence: 0x%I64x (%I64u)\n", (unsigned long long)q.last_completed_fence,
+          (unsigned long long)q.last_completed_fence);
   return 0;
 }
 
 static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ringId) {
-  AEROGPU_DBGCTL_DUMP_RING q;
+  aerogpu_escape_dump_ring_inout q;
   ZeroMemory(&q, sizeof(q));
-  q.hdr.magic = AEROGPU_DBGCTL_ESCAPE_MAGIC;
-  q.hdr.abiVersion = AEROGPU_DBGCTL_ESCAPE_ABI_VERSION;
-  q.hdr.op = AEROGPU_DBGCTL_OP_DUMP_RING;
-  q.ringId = ringId;
-  q.descCapacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.ring_id = ringId;
+  q.desc_capacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
 
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
   if (!NT_SUCCESS(st)) {
@@ -229,21 +236,21 @@ static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ri
     return 2;
   }
 
-  wprintf(L"Ring %lu\n", (unsigned long)q.ringId);
-  wprintf(L"  size: %lu bytes\n", (unsigned long)q.ringSizeBytes);
+  wprintf(L"Ring %lu\n", (unsigned long)q.ring_id);
+  wprintf(L"  size: %lu bytes\n", (unsigned long)q.ring_size_bytes);
   wprintf(L"  head: 0x%08lx\n", (unsigned long)q.head);
   wprintf(L"  tail: 0x%08lx\n", (unsigned long)q.tail);
-  wprintf(L"  descriptors: %lu\n", (unsigned long)q.descCount);
+  wprintf(L"  descriptors: %lu\n", (unsigned long)q.desc_count);
 
-  uint32_t count = q.descCount;
+  uint32_t count = q.desc_count;
   if (count > AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
     count = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
   }
 
   for (uint32_t i = 0; i < count; ++i) {
-    const AEROGPU_DBGCTL_RING_DESC *d = &q.desc[i];
-    wprintf(L"    [%lu] fence=0x%I64x cmdGpuVa=0x%I64x cmdBytes=%lu flags=0x%08lx\n", (unsigned long)i,
-            (unsigned long long)d->fence, (unsigned long long)d->cmdGpuVa, (unsigned long)d->cmdBytes,
+    const aerogpu_dbgctl_ring_desc *d = &q.desc[i];
+    wprintf(L"    [%lu] fence=0x%I64x descGpa=0x%I64x descBytes=%lu flags=0x%08lx\n", (unsigned long)i,
+            (unsigned long long)d->fence, (unsigned long long)d->desc_gpa, (unsigned long)d->desc_size_bytes,
             (unsigned long)d->flags);
   }
 
@@ -251,12 +258,13 @@ static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ri
 }
 
 static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t timeoutMs) {
-  AEROGPU_DBGCTL_SELFTEST q;
+  aerogpu_escape_selftest_inout q;
   ZeroMemory(&q, sizeof(q));
-  q.hdr.magic = AEROGPU_DBGCTL_ESCAPE_MAGIC;
-  q.hdr.abiVersion = AEROGPU_DBGCTL_ESCAPE_ABI_VERSION;
-  q.hdr.op = AEROGPU_DBGCTL_OP_SELFTEST;
-  q.timeoutMs = timeoutMs;
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_SELFTEST;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.timeout_ms = timeoutMs;
 
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
   if (!NT_SUCCESS(st)) {
@@ -266,7 +274,7 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
 
   wprintf(L"Selftest: %s\n", q.passed ? L"PASS" : L"FAIL");
   if (!q.passed) {
-    wprintf(L"Error code: 0x%08lx\n", (unsigned long)q.errorCode);
+    wprintf(L"Error code: %lu\n", (unsigned long)q.error_code);
   }
   return q.passed ? 0 : 3;
 }
