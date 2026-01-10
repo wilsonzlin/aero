@@ -35,11 +35,11 @@ jobs:
 
       - name: Install / resolve toolchain
         shell: pwsh
-        run: ./ci/install-wdk.ps1
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/install-wdk.ps1'
 
       - name: Validate toolchain (Inf2Cat Win7 catalog generation)
         shell: pwsh
-        run: ./ci/validate-toolchain.ps1
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/validate-toolchain.ps1'
 
       - name: Upload validation logs
         if: always()
