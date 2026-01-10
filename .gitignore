@@ -42,6 +42,7 @@ pkg/
 .vite/
 .cache/
 *.tsbuildinfo
+*.proptest-regressions
 *.wasm
 *.wat
 web/dist/

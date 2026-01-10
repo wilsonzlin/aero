@@ -7,3 +7,9 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 aero-cpu-decoder = { path = "../aero-cpu-decoder" }
 aero_types = { path = "../aero_types" }
+yaxpeax-x86 = "1.1"
+yaxpeax-arch = "0.2"
+
+[dev-dependencies]
+iced-x86 = { workspace = true }
+proptest = "1.4"

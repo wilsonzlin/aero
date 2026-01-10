@@ -886,3 +886,7 @@ pub mod tier1 {
     }
 }
 
+/// Production-oriented instruction decoder and operand model.
+pub mod decoder;
+pub mod inst;
+pub mod opcode_tables;
