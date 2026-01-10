@@ -52,6 +52,11 @@ export class WorkerCoordinator {
   private lastHeartbeatFromRing = 0;
   private wasmStatus: Partial<Record<WorkerRole, WorkerWasmStatus>> = {};
 
+  // Optional SharedArrayBuffer-backed microphone ring buffer attachment. This
+  // is set by the UI and forwarded to the I/O worker when available.
+  private micRingBuffer: SharedArrayBuffer | null = null;
+  private micSampleRate = 0;
+
   checkSupport(): { ok: boolean; reason?: string } {
     return checkSharedMemorySupport();
   }
@@ -217,6 +222,30 @@ export class WorkerCoordinator {
     return this.shared?.vgaFramebuffer ?? null;
   }
 
+  setMicrophoneRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate: number): void {
+    if (ringBuffer !== null) {
+      const Sab = globalThis.SharedArrayBuffer;
+      if (typeof Sab === "undefined") {
+        throw new Error("SharedArrayBuffer is unavailable; microphone capture requires crossOriginIsolated.");
+      }
+      if (!(ringBuffer instanceof Sab)) {
+        throw new Error("setMicrophoneRingBuffer expects a SharedArrayBuffer or null.");
+      }
+    }
+
+    this.micRingBuffer = ringBuffer;
+    this.micSampleRate = (sampleRate ?? 0) | 0;
+
+    const info = this.workers.io;
+    if (info) {
+      info.worker.postMessage({
+        type: "setMicrophoneRingBuffer",
+        ringBuffer,
+        sampleRate: this.micSampleRate,
+      });
+    }
+  }
+
   private onWorkerMessage(role: WorkerRole, data: unknown): void {
     const info = this.workers[role];
     const shared = this.shared;
@@ -227,6 +256,14 @@ export class WorkerCoordinator {
     if (msg?.type === MessageType.READY) {
       info.status = { state: "ready" };
       setReadyFlag(shared.status, role, true);
+
+      if (role === "io" && this.micRingBuffer) {
+        info.worker.postMessage({
+          type: "setMicrophoneRingBuffer",
+          ringBuffer: this.micRingBuffer,
+          sampleRate: this.micSampleRate,
+        });
+      }
 
       // Kick the worker to start its minimal demo loop.
       info.commandRing.push(encodeProtocolMessage({ type: MessageType.START }));

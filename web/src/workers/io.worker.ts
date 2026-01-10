@@ -23,6 +23,11 @@ let pollTimer: number | undefined;
 
 type InputBatchMessage = { type: "in:input-batch"; buffer: ArrayBuffer };
 type OpenActiveDiskRequest = { id: number; type: "openActiveDisk"; token: WorkerOpenToken };
+type SetMicrophoneRingBufferMessage = {
+  type: "setMicrophoneRingBuffer";
+  ringBuffer: SharedArrayBuffer | null;
+  sampleRate?: number;
+};
 
 type OpenActiveDiskResult =
   | {
@@ -40,6 +45,24 @@ type OpenActiveDiskResult =
     };
 
 let activeAccessHandle: FileSystemSyncAccessHandle | null = null;
+
+let micRingBuffer: SharedArrayBuffer | null = null;
+let micSampleRate = 0;
+
+function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: number): void {
+  if (ringBuffer !== null) {
+    const Sab = globalThis.SharedArrayBuffer;
+    if (typeof Sab === "undefined") {
+      throw new Error("SharedArrayBuffer is unavailable; microphone capture requires crossOriginIsolated.");
+    }
+    if (!(ringBuffer instanceof Sab)) {
+      throw new Error("setMicrophoneRingBuffer expects a SharedArrayBuffer or null.");
+    }
+  }
+
+  micRingBuffer = ringBuffer;
+  micSampleRate = (sampleRate ?? 0) | 0;
+}
 
 async function openOpfsDisk(directory: string, name: string): Promise<{ size: number }> {
   const dirToUse = directory || DEFAULT_OPFS_DISK_IMAGES_DIRECTORY;
@@ -88,11 +111,18 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     | Partial<WorkerInitMessage>
     | Partial<InputBatchMessage>
     | Partial<OpenActiveDiskRequest>
+    | Partial<SetMicrophoneRingBufferMessage>
     | undefined;
   if (!data) return;
 
   if ((data as Partial<OpenActiveDiskRequest>).type === "openActiveDisk") {
     void handleOpenActiveDisk(data as OpenActiveDiskRequest);
+    return;
+  }
+
+  if ((data as Partial<SetMicrophoneRingBufferMessage>).type === "setMicrophoneRingBuffer") {
+    const msg = data as Partial<SetMicrophoneRingBufferMessage>;
+    attachMicRingBuffer((msg.ringBuffer as SharedArrayBuffer | null) ?? null, msg.sampleRate);
     return;
   }
 
