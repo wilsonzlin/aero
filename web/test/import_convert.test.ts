@@ -291,7 +291,7 @@ test("convertToAeroSparse: raw roundtrip preserves logical bytes and sparseness"
   const sync = new MemSyncAccessHandle();
   const { manifest } = await convertToAeroSparse(src, "raw", sync, { blockSizeBytes: blockSize });
   assert.equal(manifest.originalFormat, "raw");
-  assert.equal(manifest.convertedFormat, "aerosparse");
+  assert.equal(manifest.convertedFormat, "aerospar");
   assert.equal(manifest.logicalSize, logical.byteLength);
   assert.equal(manifest.blockSizeBytes, blockSize);
 
@@ -359,4 +359,3 @@ test("convertToAeroSparse: supports cancellation via AbortSignal", async () => {
     (err: any) => err instanceof DOMException && err.name === "AbortError",
   );
 });
-

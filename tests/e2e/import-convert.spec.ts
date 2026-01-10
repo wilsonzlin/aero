@@ -3,8 +3,39 @@ import { expect, test } from "@playwright/test";
 test.describe("web import_convert pipeline (OPFS aerosparse)", () => {
   test.skip(({ browserName }) => browserName !== "chromium", "requires Chromium OPFS sync access handles");
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }, testInfo) => {
     await page.goto("http://127.0.0.1:5173/", { waitUntil: "load" });
+    const supported = await page.evaluate(async () => {
+      if (!navigator.storage?.getDirectory) return false;
+      const url = URL.createObjectURL(
+        new Blob(
+          [
+            `
+              self.onmessage = async () => {
+                try {
+                  const root = await navigator.storage.getDirectory();
+                  const file = await root.getFileHandle("tmp-opfs-sync-check", { create: true });
+                  self.postMessage({ supported: typeof file.createSyncAccessHandle === "function" });
+                } catch (err) {
+                  self.postMessage({ supported: false, error: String(err) });
+                }
+              };
+            `,
+          ],
+          { type: "text/javascript" },
+        ),
+      );
+      return await new Promise<boolean>((resolve) => {
+        const w = new Worker(url);
+        w.onmessage = (event) => {
+          resolve(Boolean((event.data as any)?.supported));
+          w.terminate();
+          URL.revokeObjectURL(url);
+        };
+        w.postMessage(null);
+      });
+    });
+    if (!supported) testInfo.skip("OPFS SyncAccessHandle is not supported in this browser");
     await page.evaluate(async () => {
       if (!navigator.storage?.getDirectory) return;
       const root = await navigator.storage.getDirectory();
@@ -139,7 +170,7 @@ test.describe("web import_convert pipeline (OPFS aerosparse)", () => {
       const manifestFile = await (await dir.getFileHandle(`${baseName}.manifest.json`)).getFile();
       const manifestFromDisk = JSON.parse(await manifestFile.text());
 
-      const sparseFileHandle = await dir.getFileHandle(`${baseName}.aerosparse`, { create: false });
+      const sparseFileHandle = await dir.getFileHandle(`${baseName}.aerospar`, { create: false });
       const sparseBytes = new Uint8Array(await (await sparseFileHandle.getFile()).arrayBuffer());
       const parsed = parseAeroSparse(sparseBytes);
       const roundtrip = readLogical(parsed, sparseBytes, 0, logical.byteLength);
@@ -155,7 +186,7 @@ test.describe("web import_convert pipeline (OPFS aerosparse)", () => {
     expect(result.manifestFromDisk).toEqual(result.manifest);
     expect(result.actual).toEqual(result.expected);
     expect(result.manifest.originalFormat).toBe("qcow2");
-    expect(result.manifest.convertedFormat).toBe("aerosparse");
+    expect(result.manifest.convertedFormat).toBe("aerospar");
   });
 
   test("dynamic vhd -> aerosparse + logical bytes preserved", async ({ page }) => {
@@ -295,7 +326,7 @@ test.describe("web import_convert pipeline (OPFS aerosparse)", () => {
 
       const root = await navigator.storage.getDirectory();
       const dir = await root.getDirectoryHandle("import-convert-tests", { create: false });
-      const sparseFileHandle = await dir.getFileHandle(`${baseName}.aerosparse`, { create: false });
+      const sparseFileHandle = await dir.getFileHandle(`${baseName}.aerospar`, { create: false });
       const sparseBytes = new Uint8Array(await (await sparseFileHandle.getFile()).arrayBuffer());
       const parsed = parseAeroSparse(sparseBytes);
       const roundtrip = readLogical(parsed, sparseBytes, 0, logical.byteLength);
@@ -309,7 +340,7 @@ test.describe("web import_convert pipeline (OPFS aerosparse)", () => {
 
     expect(result.actual).toEqual(result.expected);
     expect(result.manifest.originalFormat).toBe("vhd");
-    expect(result.manifest.convertedFormat).toBe("aerosparse");
+    expect(result.manifest.convertedFormat).toBe("aerospar");
   });
 
   test("conversion can be canceled", async ({ page }) => {
@@ -353,4 +384,3 @@ test.describe("web import_convert pipeline (OPFS aerosparse)", () => {
     expect(result.errorName).toBe("AbortError");
   });
 });
-

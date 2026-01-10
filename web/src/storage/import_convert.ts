@@ -1,7 +1,7 @@
 import { crc32Final, crc32Init, crc32ToHex, crc32Update } from "./crc32.ts";
 
 export type ImageFormat = "raw" | "qcow2" | "vhd" | "iso";
-export type ConvertedFormat = "aerosparse" | "iso";
+export type ConvertedFormat = "aerospar" | "iso";
 
 export interface ImportProgress {
   processedBytes: number;
@@ -126,7 +126,7 @@ export async function importConvertToOpfs(
   }
 
   // For all HDD-ish formats we convert to Aero sparse.
-  const outName = `${baseName}.aerosparse`;
+  const outName = `${baseName}.aerospar`;
   const fileHandle = await destDir.getFileHandle(outName, { create: true });
   const sync = await createSyncAccessHandle(fileHandle);
   try {
@@ -439,7 +439,7 @@ async function convertRawToSparse(
   const manifest: ImportManifest = {
     manifestVersion: 1,
     originalFormat: "raw",
-    convertedFormat: "aerosparse",
+    convertedFormat: "aerospar",
     logicalSize,
     convertedSize: writer.convertedSize,
     checksum: { algorithm: "crc32", value: crc32ToHex(crc32Final(crc)) },
@@ -514,7 +514,7 @@ async function convertQcow2ToSparse(
   const manifest: ImportManifest = {
     manifestVersion: 1,
     originalFormat: "qcow2",
-    convertedFormat: "aerosparse",
+    convertedFormat: "aerospar",
     logicalSize: qcow.logicalSize,
     convertedSize: writer.convertedSize,
     checksum: { algorithm: "crc32", value: crc32ToHex(crc32Final(crc)) },
@@ -620,7 +620,7 @@ async function convertVhdToSparse(
   const manifest: ImportManifest = {
     manifestVersion: 1,
     originalFormat: "vhd",
-    convertedFormat: "aerosparse",
+    convertedFormat: "aerospar",
     logicalSize,
     convertedSize: writer.convertedSize,
     checksum: { algorithm: "crc32", value: crc32ToHex(crc32Final(crc)) },
@@ -669,7 +669,7 @@ async function convertRawSliceToSparse(
   const manifest: ImportManifest = {
     manifestVersion: 1,
     originalFormat,
-    convertedFormat: "aerosparse",
+    convertedFormat: "aerospar",
     logicalSize,
     convertedSize: writer.convertedSize,
     checksum: { algorithm: "crc32", value: crc32ToHex(crc32Final(crc)) },

@@ -5,12 +5,14 @@ import {
   inferKindFromFileName,
   newDiskId,
   openDiskManagerDb,
+  opfsGetDisksDir,
   type DiskBackend,
   type DiskFormat,
   type DiskImageMetadata,
   type DiskKind,
   type MountConfig,
 } from "./metadata";
+import { importConvertToOpfs } from "./import_convert.ts";
 import {
   idbCreateBlankDisk,
   idbDeleteDiskData,
@@ -238,6 +240,62 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         createdAtMs: Date.now(),
         lastUsedAtMs: undefined,
         checksum: checksumCrc32 ? { algorithm: "crc32", value: checksumCrc32 } : undefined,
+        sourceFileName: file.name,
+      };
+
+      await store.putDisk(meta);
+      postOk(requestId, meta);
+      return;
+    }
+
+    case "import_convert": {
+      if (backend !== "opfs") {
+        throw new Error("import_convert is only supported for the OPFS backend");
+      }
+
+      const file = msg.payload.file as File | undefined;
+      if (!file) throw new Error("Missing file");
+
+      const fileNameOverride = msg.payload.name;
+      const name = (fileNameOverride && String(fileNameOverride)) || file.name;
+
+      const id = newDiskId();
+      const baseName = id;
+
+      const destDir = await opfsGetDisksDir();
+
+      const manifest = await importConvertToOpfs({ kind: "file", file }, destDir, baseName, {
+        blockSizeBytes: typeof msg.payload.blockSizeBytes === "number" ? msg.payload.blockSizeBytes : undefined,
+        onProgress(p) {
+          postProgress(requestId, { phase: "import", processedBytes: p.processedBytes, totalBytes: p.totalBytes });
+        },
+      });
+
+      let kind: DiskKind;
+      let format: DiskFormat;
+      let fileName: string;
+
+      if (manifest.convertedFormat === "iso") {
+        kind = "cd";
+        format = "iso";
+        fileName = `${id}.iso`;
+      } else {
+        kind = "hdd";
+        format = "aerospar";
+        fileName = `${id}.aerospar`;
+      }
+
+      const meta: DiskImageMetadata = {
+        id,
+        name,
+        backend,
+        kind,
+        format,
+        fileName,
+        sizeBytes: manifest.logicalSize,
+        createdAtMs: Date.now(),
+        lastUsedAtMs: undefined,
+        checksum: manifest.checksum,
         sourceFileName: file.name,
       };
 

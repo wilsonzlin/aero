@@ -6,6 +6,7 @@ This repository now includes a minimal, browser-side **disk image manager** inte
 
 - Create blank HDD images of a configurable size (e.g. 20–60GB).
 - Import existing images (`.img`, `.iso`, `.qcow2`) via streaming `File.stream()` into OPFS (preferred) or IndexedDB (fallback).
+- Import and convert common disk images (`.img`/raw, `.qcow2`, `.vhd`) into Aero’s internal sparse-on-OPFS format (`AEROSPAR`) via `DiskManager.importDiskConverted()` (OPFS-only).
 - Export images as a `ReadableStream<Uint8Array>` (or via `DiskManager.exportDiskToFile()`), with optional gzip compression when `CompressionStream` is available.
 - Persist metadata (JSON) per backend: name, kind (HDD/CD), size, last used, and a streaming CRC32 checksum.
 - Maintain a mount selection: **one HDD (rw)** + **one CD (ro)** at minimum.

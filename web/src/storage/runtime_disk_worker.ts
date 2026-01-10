@@ -5,19 +5,7 @@ import { OpfsAeroSparseDisk } from "./opfs_sparse";
 import type { AsyncSectorDisk } from "./disk";
 import { IdbChunkDisk } from "./idb_chunk_disk";
 import { benchSequentialRead, benchSequentialWrite } from "./bench";
-
-type DiskBackend = "opfs" | "idb";
-type DiskKind = "hdd" | "cd";
-type DiskFormat = "raw" | "iso" | "qcow2" | "unknown";
-
-type DiskImageMetadata = {
-  id: string;
-  backend: DiskBackend;
-  kind: DiskKind;
-  format: DiskFormat;
-  fileName: string;
-  sizeBytes: number;
-};
+import type { DiskImageMetadata } from "./metadata";
 
 type OpenMode = "direct" | "cow";
 
@@ -75,11 +63,30 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
   const readOnly = meta.kind === "cd" || meta.format === "iso";
 
   if (meta.backend === "opfs") {
-    // OPFS stores images as raw files. For HDD images we default to a COW overlay so
-    // the imported base image remains unchanged.
+    async function openBase(): Promise<AsyncSectorDisk> {
+      switch (meta.format) {
+        case "aerospar": {
+          const disk = await OpfsAeroSparseDisk.open(meta.fileName);
+          if (disk.capacityBytes !== meta.sizeBytes) {
+            await disk.close?.();
+            throw new Error(`disk size mismatch: expected=${meta.sizeBytes} actual=${disk.capacityBytes}`);
+          }
+          return disk;
+        }
+        case "raw":
+        case "iso":
+        case "unknown":
+          return await OpfsRawDisk.open(meta.fileName, { create: false, sizeBytes: meta.sizeBytes });
+        case "qcow2":
+        case "vhd":
+          throw new Error(`unsupported OPFS disk format ${meta.format} (convert to aerospar first)`);
+      }
+    }
+
+    // For HDD images we default to a COW overlay so the imported base image remains unchanged.
     if (mode === "cow" && !readOnly) {
       try {
-        const base = await OpfsRawDisk.open(meta.fileName, { create: false, sizeBytes: meta.sizeBytes });
+        const base = await openBase();
         const overlayName = `${meta.id}.overlay.aerospar`;
 
         let overlay: OpfsAeroSparseDisk;
@@ -93,13 +100,14 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
         }
 
         return { disk: new OpfsCowDisk(base, overlay), readOnly: false };
-      } catch {
+      } catch (err) {
         // If SyncAccessHandle isn't available, sparse overlays can't work efficiently.
         // Fall back to direct raw writes (still in a worker, but slower).
+        if (meta.format !== "raw" && meta.format !== "iso" && meta.format !== "unknown") throw err;
       }
     }
 
-    const disk = await OpfsRawDisk.open(meta.fileName, { create: false, sizeBytes: meta.sizeBytes });
+    const disk = await openBase();
     return { disk, readOnly };
   }
 

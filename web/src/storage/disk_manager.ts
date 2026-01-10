@@ -34,7 +34,14 @@ function isHddKind(kind: DiskKind | undefined): kind is DiskKind {
 }
 
 function isFormat(format: DiskFormat | undefined): format is DiskFormat {
-  return format === "raw" || format === "iso" || format === "qcow2" || format === "unknown";
+  return (
+    format === "raw" ||
+    format === "iso" ||
+    format === "qcow2" ||
+    format === "vhd" ||
+    format === "aerospar" ||
+    format === "unknown"
+  );
 }
 
 /**
@@ -177,6 +184,27 @@ export class DiskManager {
     return this.request(
       "import_file",
       { file, name: options?.name, kind: isHddKind(options?.kind) ? options.kind : undefined, format: isFormat(options?.format) ? options.format : undefined },
+      { onProgress: options?.onProgress, transfer: [] },
+    );
+  }
+
+  /**
+   * Import and convert an image into Aero's internal sparse-on-OPFS format.
+   *
+   * This runs inside the disk worker so it can use OPFS SyncAccessHandles.
+   * Only supported for the OPFS backend.
+   *
+   * @param {File} file
+   * @param {{ name?: string; blockSizeBytes?: number; onProgress?: (p: ImportProgress) => void } | undefined} options
+   * @returns {Promise<DiskImageMetadata>}
+   */
+  async importDiskConverted(
+    file: File,
+    options?: { name?: string; blockSizeBytes?: number; onProgress?: (p: ImportProgress) => void },
+  ): Promise<DiskImageMetadata> {
+    return this.request(
+      "import_convert",
+      { file, name: options?.name, blockSizeBytes: options?.blockSizeBytes },
       { onProgress: options?.onProgress, transfer: [] },
     );
   }

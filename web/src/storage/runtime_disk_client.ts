@@ -1,18 +1,6 @@
 import type { BenchResult } from "./bench";
-
-type DiskBackend = "opfs" | "idb";
-type DiskKind = "hdd" | "cd";
-type DiskFormat = "raw" | "iso" | "qcow2" | "unknown";
-
-export type DiskImageMetadata = {
-  id: string;
-  name: string;
-  backend: DiskBackend;
-  kind: DiskKind;
-  format: DiskFormat;
-  fileName: string;
-  sizeBytes: number;
-};
+import type { DiskImageMetadata } from "./metadata";
+export type { DiskImageMetadata } from "./metadata";
 
 type OpenMode = "direct" | "cow";
 
@@ -116,4 +104,3 @@ export class RuntimeDiskClient {
     return this.request("bench", { handle, ...opts });
   }
 }
-

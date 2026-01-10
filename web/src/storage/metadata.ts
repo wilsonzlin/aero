@@ -15,7 +15,7 @@ export const METADATA_VERSION = 1;
 
 export type DiskBackend = "opfs" | "idb";
 export type DiskKind = "hdd" | "cd";
-export type DiskFormat = "raw" | "iso" | "qcow2" | "unknown";
+export type DiskFormat = "raw" | "iso" | "qcow2" | "vhd" | "aerospar" | "unknown";
 
 export type DiskChecksum = {
   algorithm: "crc32";
@@ -69,16 +69,22 @@ export function inferFormatFromFileName(fileName: string): DiskFormat {
   const lower = fileName.toLowerCase();
   if (lower.endsWith(".iso")) return "iso";
   if (lower.endsWith(".qcow2")) return "qcow2";
+  if (lower.endsWith(".vhd")) return "vhd";
+  if (lower.endsWith(".aerospar") || lower.endsWith(".aerosparse")) return "aerospar";
   if (lower.endsWith(".img")) return "raw";
   return "unknown";
 }
 
 export function extensionForFormat(format: DiskFormat): string {
   switch (format) {
+    case "aerospar":
+      return "aerospar";
     case "iso":
       return "iso";
     case "qcow2":
       return "qcow2";
+    case "vhd":
+      return "vhd";
     case "raw":
       return "img";
     default:
