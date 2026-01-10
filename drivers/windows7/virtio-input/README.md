@@ -52,6 +52,8 @@ The INF matches both common PCI device ID schemes for virtio-input:
 - **Modern** virtio-pci ID: `PCI\VEN_1AF4&DEV_1052`
   - `0x1040 + 18 = 0x1052`
 
+See also: `docs/pci-hwids.md` (QEMU behavior + spec mapping).
+
 If your emulator/QEMU build uses a different PCI device ID, update:
 
 - `drivers/windows7/virtio-input/inf/virtio-input.inf` → `[Aero.NTx86]` / `[Aero.NTamd64]`
