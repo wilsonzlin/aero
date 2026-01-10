@@ -464,13 +464,47 @@ function Add-OfflineTrustedCertificate {
     throw "Offline SOFTWARE hive not found at '$softwareHive'. Is this a Windows image?"
   }
 
+  $repoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..\\..")).Path
+  $candidates = @(
+    (Join-Path -Path $repoRoot -ChildPath "tools\\win-offline-cert-injector\\target\\release\\win-offline-cert-injector.exe"),
+    (Join-Path -Path $repoRoot -ChildPath "tools\\win-offline-cert-injector\\target\\debug\\win-offline-cert-injector.exe")
+  )
+  $injector = $null
+  foreach ($p in $candidates) {
+    if (Test-Path -LiteralPath $p -PathType Leaf) {
+      $injector = (Resolve-Path -LiteralPath $p).Path
+      break
+    }
+  }
+  if (-not $injector) {
+    $cmd = Get-Command "win-offline-cert-injector.exe" -ErrorAction SilentlyContinue
+    if ($cmd) {
+      $injector = $cmd.Source
+    }
+  }
+  if (-not $injector) {
+    throw ("win-offline-cert-injector.exe not found. Build it with:`n`n" +
+      "  cd tools\\win-offline-cert-injector`n" +
+      "  cargo build --release`n`n" +
+      "Then re-run this script.")
+  }
+
+  # Inject using CryptoAPI so the registry-backed store entry (including the `Blob` bytes) matches
+  # what Windows would create on a live system.
+  $injectArgs = @("--hive", $softwareHive)
+  foreach ($storeName in $Stores) {
+    $injectArgs += @("--store", $storeName)
+  }
+  $injectArgs += @("--cert", $CertPath)
+  Invoke-NativeCommand -FilePath $injector -ArgumentList $injectArgs
+
+  # Validate the offline hive contains the expected keys and a non-empty Blob.
   if (Test-Path "HKLM:\OFFLINE_SOFTWARE") {
     throw "HKLM:\OFFLINE_SOFTWARE already exists. Another offline hive may already be loaded. Unload it (reg unload HKLM\OFFLINE_SOFTWARE) or reboot, then retry."
   }
 
   $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($CertPath)
   $thumb = $cert.Thumbprint.ToUpperInvariant()
-  $rawBytes = [byte[]]$cert.RawData
 
   $loaded = $false
   $hadError = $false
@@ -479,13 +513,12 @@ function Add-OfflineTrustedCertificate {
     $loaded = $true
 
     foreach ($storeName in $Stores) {
-      $certificatesPath = "HKLM:\OFFLINE_SOFTWARE\Microsoft\SystemCertificates\$storeName\Certificates"
-      New-Item -Path $certificatesPath -Force | Out-Null
-      $keyPath = Join-Path -Path $certificatesPath -ChildPath $thumb
-      New-Item -Path $keyPath -Force | Out-Null
-      New-ItemProperty -Path $keyPath -Name "Blob" -PropertyType Binary -Value $rawBytes -Force | Out-Null
+      $keyPath = "HKLM:\OFFLINE_SOFTWARE\Microsoft\SystemCertificates\$storeName\Certificates\$thumb"
+      if (-not (Test-Path -LiteralPath $keyPath)) {
+        throw "Offline certificate injection failed validation for store '$storeName' (thumbprint $thumb): key not found: $keyPath"
+      }
 
-      $blob = (Get-ItemProperty -Path $keyPath -Name "Blob" -ErrorAction Stop).Blob
+      $blob = (Get-ItemProperty -LiteralPath $keyPath -Name "Blob" -ErrorAction Stop).Blob
       if ($null -eq $blob -or $blob.Length -eq 0) {
         throw "Offline certificate injection failed validation for store '$storeName' (thumbprint $thumb): missing/empty Blob value."
       }
