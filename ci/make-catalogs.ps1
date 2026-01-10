@@ -7,7 +7,8 @@
   repository `drivers/<name>` directories with built binaries from `out/drivers/<name>`
   and runs Inf2Cat to produce catalog files in a stable staging layout under `out/packages`.
 
-  The output staging folders are intended to be consumed by later signing/packaging steps.
+  If enabled (default), it stamps DriverVer in the staged INF(s) using `ci/stamp-infs.ps1`
+  before running Inf2Cat. Catalogs hash INF contents, so stamping must happen first.
 
 .PARAMETER OsList
   List of OS identifiers to pass to Inf2Cat. Defaults to @('7_X86','7_X64').
@@ -22,6 +23,10 @@
 .PARAMETER ToolchainJson
   Optional JSON file describing toolchain paths. If provided, the script will try to
   discover Inf2Cat.exe from it.
+
+.PARAMETER NoStampInfs
+  Disables stamping DriverVer in staged INFs before catalog generation. You can also set
+  AERO_STAMP_INFS=0/false/no/off to disable stamping in CI without changing arguments.
 #>
 
 [CmdletBinding()]
@@ -29,7 +34,8 @@ param(
   [string[]] $OsList = @('7_X86', '7_X64'),
   [string] $InputRoot = 'out/drivers',
   [string] $OutputRoot = 'out/packages',
-  [string] $ToolchainJson
+  [string] $ToolchainJson,
+  [switch] $NoStampInfs
 )
 
 Set-StrictMode -Version Latest
@@ -48,6 +54,33 @@ function Resolve-AbsolutePath {
   }
 
   return Join-Path -Path (Get-Location) -ChildPath $Path
+}
+
+function Get-TruthyEnvFlag {
+  param([Parameter(Mandatory = $true)][string] $Name)
+
+  $raw = [Environment]::GetEnvironmentVariable($Name)
+  if (-not $raw) {
+    return $null
+  }
+
+  switch ($raw.Trim().ToLowerInvariant()) {
+    '0' { return $false }
+    'false' { return $false }
+    'no' { return $false }
+    'off' { return $false }
+    default { return $true }
+  }
+}
+
+$stampInfs = $true
+if ($NoStampInfs) {
+  $stampInfs = $false
+} else {
+  $envStamp = Get-TruthyEnvFlag -Name 'AERO_STAMP_INFS'
+  if ($envStamp -eq $false) {
+    $stampInfs = $false
+  }
 }
 
 $inputRootAbs = Resolve-AbsolutePath -Path $InputRoot
@@ -71,6 +104,8 @@ $driverBuildDirs = Get-ChildItem -LiteralPath $inputRootAbs -Directory | Sort-Ob
 if (-not $driverBuildDirs) {
   throw "No driver build directories found under $inputRootAbs"
 }
+
+$stampScript = Join-Path -Path $PSScriptRoot -ChildPath 'stamp-infs.ps1'
 
 foreach ($driverBuildDir in $driverBuildDirs) {
   $driverName = $driverBuildDir.Name
@@ -106,9 +141,8 @@ foreach ($driverBuildDir in $driverBuildDirs) {
 
     Copy-Item -Path (Join-Path -Path $buildOutDir -ChildPath '*') -Destination $packageDir -Recurse -Force -ErrorAction Stop
 
-    # Copy INF(s) into the package root to keep the staging layout stable and to ensure
-    # Inf2Cat emits catalog files directly into the package directory.
     $infNameMap = @{}
+    $stagedInfPaths = @()
     foreach ($inf in $infFiles) {
       $support = Get-InfArchitectureSupport -InfPath $inf.FullName
       if ($support -ne 'both' -and $support -ne $arch) { continue }
@@ -118,16 +152,15 @@ foreach ($driverBuildDir in $driverBuildDirs) {
       }
       $infNameMap[$inf.Name] = $true
 
-      Copy-Item -LiteralPath $inf.FullName -Destination (Join-Path -Path $packageDir -ChildPath $inf.Name) -Force
+      $destInf = Join-Path -Path $packageDir -ChildPath $inf.Name
+      Copy-Item -LiteralPath $inf.FullName -Destination $destInf -Force
+      $stagedInfPaths += $destInf
     }
 
     if ($infNameMap.Count -eq 0) {
       throw "No INF files applicable to $arch were found for driver '$driverName'."
     }
 
-    # If the driver ships coinstallers, include them in the package. We copy the
-    # directory (for INFs that reference a subdir) and also flatten files into the root
-    # (for INFs that reference by basename).
     foreach ($coName in @('coinstallers', 'coinstaller')) {
       $coDir = Join-Path -Path $driverSourceDir -ChildPath $coName
       if (-not (Test-Path -LiteralPath $coDir)) { continue }
@@ -136,6 +169,13 @@ foreach ($driverBuildDir in $driverBuildDirs) {
       Get-ChildItem -LiteralPath $coDir -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination (Join-Path -Path $packageDir -ChildPath $_.Name) -Force
       }
+    }
+
+    if ($stampInfs) {
+      Write-Host "     Stamping staged INF(s) prior to catalog generation..."
+      & $stampScript -StagingDir $packageDir -InfPaths $stagedInfPaths -RepoRoot $repoRoot | Out-Null
+    } else {
+      Write-Host "     INF stamping disabled; using existing DriverVer values."
     }
 
     Invoke-Inf2Cat -Inf2CatPath $inf2catPath -PackageDir $packageDir -OsList $osListForArch
@@ -150,4 +190,3 @@ foreach ($driverBuildDir in $driverBuildDirs) {
     }
   }
 }
-
