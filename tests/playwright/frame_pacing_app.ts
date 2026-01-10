@@ -18,13 +18,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-class DelayPresenter implements FramePresenter<ClearFrame> {
+class WebGlFencePresenter implements FramePresenter<ClearFrame> {
   private readonly canvas: HTMLCanvasElement;
   private readonly simulateWorkDoneDelayMs: number;
+  private readonly gl: WebGL2RenderingContext;
 
   constructor(canvas: HTMLCanvasElement, simulateWorkDoneDelayMs: number) {
     this.canvas = canvas;
     this.simulateWorkDoneDelayMs = simulateWorkDoneDelayMs;
+
+    const gl = canvas.getContext("webgl2", {
+      alpha: false,
+      antialias: false,
+      depth: false,
+      stencil: false,
+      preserveDrawingBuffer: false,
+    });
+    if (!gl) {
+      throw new Error("WebGL2 not supported in this environment");
+    }
+    this.gl = gl;
   }
 
   onAnimationFrame(): void {
@@ -39,17 +52,60 @@ class DelayPresenter implements FramePresenter<ClearFrame> {
   }
 
   present(frame: ClearFrame): FrameSubmission {
-    const ctx = this.canvas.getContext("2d");
-    if (ctx) {
-      ctx.fillStyle = `rgba(${Math.round(frame.clearColor[0] * 255)}, ${Math.round(
-        frame.clearColor[1] * 255,
-      )}, ${Math.round(frame.clearColor[2] * 255)}, ${frame.clearColor[3]})`;
-      ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-    }
+    const gl = this.gl;
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.disable(gl.DITHER);
+    gl.disable(gl.BLEND);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.CULL_FACE);
+
+    gl.clearColor(frame.clearColor[0], frame.clearColor[1], frame.clearColor[2], frame.clearColor[3]);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
 
     const submittedAt = performance.now();
-    const workDone = sleep(this.simulateWorkDoneDelayMs);
+    const workDone = Promise.all([
+      this.waitForSync(sync),
+      this.simulateWorkDoneDelayMs > 0 ? sleep(this.simulateWorkDoneDelayMs) : Promise.resolve(),
+    ]).then(() => undefined);
+
     return { submittedAt, workDone };
+  }
+
+  private waitForSync(sync: WebGLSync | null): Promise<void> {
+    const gl = this.gl;
+    if (!sync) return Promise.resolve();
+
+    return new Promise((resolve) => {
+      const poll = () => {
+        let status: number;
+        try {
+          status = gl.clientWaitSync(sync, 0, 0);
+        } catch {
+          gl.deleteSync(sync);
+          resolve();
+          return;
+        }
+
+        if (status === gl.ALREADY_SIGNALED || status === gl.CONDITION_SATISFIED) {
+          gl.deleteSync(sync);
+          resolve();
+          return;
+        }
+
+        if (status === gl.WAIT_FAILED) {
+          gl.deleteSync(sync);
+          resolve();
+          return;
+        }
+
+        setTimeout(poll, 0);
+      };
+
+      poll();
+    });
   }
 }
 
@@ -65,7 +121,7 @@ window.__runFramePacingStressTest = async (options = {}) => {
   }
 
   const pacer = new FramePacer<ClearFrame>({
-    presenter: new DelayPresenter(canvas, simulateWorkDoneDelayMs),
+    presenter: new WebGlFencePresenter(canvas, simulateWorkDoneDelayMs),
     maxFramesInFlight,
     maxPendingFrames: 1,
   });
