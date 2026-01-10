@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+aero-gpu-trace = { path = "../aero-gpu-trace" }
 
 [dev-dependencies]
-

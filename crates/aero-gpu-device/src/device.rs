@@ -10,6 +10,9 @@ use crate::abi;
 use crate::backend::{BackendError, GpuBackend, PresentedFrame, Viewport};
 use crate::guest_memory::{GuestMemory, GuestMemoryError};
 use crate::ring::{ByteRing, RingError, RingLocation};
+use crate::trace::GpuTraceRecorder;
+
+use aero_gpu_trace::TraceWriteError;
 
 #[derive(Debug)]
 pub enum DeviceError {
@@ -71,6 +74,7 @@ pub trait InterruptSink {
 pub struct GpuCommandProcessor<B: GpuBackend> {
     backend: B,
     max_commands_per_doorbell: usize,
+    trace: Option<GpuTraceRecorder>,
 }
 
 impl<B: GpuBackend> GpuCommandProcessor<B> {
@@ -78,11 +82,23 @@ impl<B: GpuBackend> GpuCommandProcessor<B> {
         Self {
             backend,
             max_commands_per_doorbell: 1024,
+            trace: None,
         }
     }
 
     pub fn backend_mut(&mut self) -> &mut B {
         &mut self.backend
+    }
+
+    pub fn start_trace(&mut self, recorder: GpuTraceRecorder) {
+        self.trace = Some(recorder);
+    }
+
+    pub fn finish_trace(&mut self) -> Result<Option<Vec<u8>>, TraceWriteError> {
+        let Some(recorder) = self.trace.take() else {
+            return Ok(None);
+        };
+        Ok(Some(recorder.finish()?))
     }
 
     fn process(
@@ -123,18 +139,19 @@ impl<B: GpuBackend> GpuCommandProcessor<B> {
             };
             processed += 1;
 
-            let (opcode, seq, status) = match parse_and_dispatch(&mut self.backend, mem, &record) {
-                Ok((opcode, seq)) => (opcode, seq, abi::status::OK),
-                Err(CommandExecError {
-                    opcode,
-                    seq,
-                    status,
-                }) => {
-                    mmio.last_fault_seq = seq;
-                    mmio.int_status |= abi::mmio::INT_STATUS_FAULT;
-                    (opcode, seq, status)
-                }
-            };
+            let (opcode, seq, status) =
+                match parse_and_dispatch(&mut self.backend, mem, &record, self.trace.as_mut()) {
+                    Ok((opcode, seq)) => (opcode, seq, abi::status::OK),
+                    Err(CommandExecError {
+                        opcode,
+                        seq,
+                        status,
+                    }) => {
+                        mmio.last_fault_seq = seq;
+                        mmio.int_status |= abi::mmio::INT_STATUS_FAULT;
+                        (opcode, seq, status)
+                    }
+                };
 
             mmio.last_completed_seq = seq;
             let cpl = encode_completion(opcode, seq, status);
@@ -173,6 +190,25 @@ impl<B: GpuBackend> GpuDevice<B> {
 
     pub fn take_presented_frame(&mut self) -> Option<PresentedFrame> {
         self.processor.backend_mut().take_presented_frame()
+    }
+
+    /// Enable in-memory GPU trace recording.
+    ///
+    /// The trace captures the command stream after minimal normalization to make
+    /// it replayable without guest memory (see [`crate::trace::GpuTraceRecorder`]).
+    pub fn start_trace_in_memory(
+        &mut self,
+        emulator_version: impl Into<String>,
+    ) -> Result<(), TraceWriteError> {
+        let command_abi_version = ((abi::ABI_MAJOR as u32) << 16) | (abi::ABI_MINOR as u32);
+        let recorder = GpuTraceRecorder::new_in_memory(emulator_version, command_abi_version)?;
+        self.processor.start_trace(recorder);
+        Ok(())
+    }
+
+    /// Finish recording and return the resulting trace bytes (if tracing was enabled).
+    pub fn finish_trace(&mut self) -> Result<Option<Vec<u8>>, TraceWriteError> {
+        self.processor.finish_trace()
     }
 
     pub fn mmio_read32(&self, offset: u64) -> u32 {
@@ -279,6 +315,7 @@ fn parse_and_dispatch(
     backend: &mut dyn GpuBackend,
     mem: &mut dyn GuestMemory,
     record: &[u8],
+    mut trace: Option<&mut GpuTraceRecorder>,
 ) -> Result<(u16, u64), CommandExecError> {
     if record.len() < abi::GpuCmdHeader::SIZE {
         return Err(CommandExecError {
@@ -320,6 +357,21 @@ fn parse_and_dispatch(
     }
 
     let payload = &record[abi::GpuCmdHeader::SIZE..];
+
+    // Record packet bytes *before* execution for maximum debugging value.
+    // Upload commands (`WRITE_*`) are handled in their opcode paths to ensure
+    // the trace contains the referenced bytes as blobs.
+    if let Some(trace) = trace.as_deref_mut() {
+        if opcode != abi::opcode::WRITE_BUFFER && opcode != abi::opcode::WRITE_TEXTURE2D {
+            if trace.record_packet(record).is_err() {
+                return Err(CommandExecError {
+                    opcode,
+                    seq,
+                    status: abi::status::INTERNAL_ERROR,
+                });
+            }
+        }
+    }
 
     let result = match opcode {
         abi::opcode::NOP => Ok(()),
@@ -367,6 +419,22 @@ fn parse_and_dispatch(
                     seq,
                     status: abi::status::OUT_OF_BOUNDS,
                 })?;
+            if let Some(trace) = trace.as_deref_mut() {
+                // Patch `src_paddr` (u64) in the recorded packet to a blob id.
+                // Packet layout: GpuCmdHeader (24) + payload; src_paddr is at
+                // payload offset 16.
+                const SRC_PADDR_OFFSET: usize = abi::GpuCmdHeader::SIZE + 16;
+                if trace
+                    .record_write_buffer_packet(record, &tmp, SRC_PADDR_OFFSET)
+                    .is_err()
+                {
+                    return Err(CommandExecError {
+                        opcode,
+                        seq,
+                        status: abi::status::INTERNAL_ERROR,
+                    });
+                }
+            }
             backend.write_buffer(buffer_id, dst_offset, &tmp)
         }
         abi::opcode::READ_BUFFER => {
@@ -453,6 +521,22 @@ fn parse_and_dispatch(
                     seq,
                     status: abi::status::OUT_OF_BOUNDS,
                 })?;
+            if let Some(trace) = trace.as_deref_mut() {
+                // Patch `src_paddr` (u64) in the recorded packet to a blob id.
+                // Packet layout: GpuCmdHeader (24) + payload; src_paddr is at
+                // payload offset 8.
+                const SRC_PADDR_OFFSET: usize = abi::GpuCmdHeader::SIZE + 8;
+                if trace
+                    .record_write_texture_packet(record, &tmp, SRC_PADDR_OFFSET)
+                    .is_err()
+                {
+                    return Err(CommandExecError {
+                        opcode,
+                        seq,
+                        status: abi::status::INTERNAL_ERROR,
+                    });
+                }
+            }
             backend.write_texture2d(texture_id, mip_level, width, height, bytes_per_row, &tmp)
         }
         abi::opcode::READ_TEXTURE2D => {
@@ -579,7 +663,18 @@ fn parse_and_dispatch(
                 });
             }
             let texture_id = read_u32(payload, 0);
-            backend.present(texture_id)
+            let result = backend.present(texture_id);
+            if let Some(trace) = trace.as_deref_mut() {
+                // Close the current trace frame after the PRESENT packet.
+                if trace.record_present_marker().is_err() {
+                    return Err(CommandExecError {
+                        opcode,
+                        seq,
+                        status: abi::status::INTERNAL_ERROR,
+                    });
+                }
+            }
+            result
         }
 
         abi::opcode::FENCE_SIGNAL => {

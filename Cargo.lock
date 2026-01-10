@@ -213,6 +213,9 @@ dependencies = [
 [[package]]
 name = "aero-gpu-device"
 version = "0.1.0"
+dependencies = [
+ "aero-gpu-trace",
+]
 
 [[package]]
 name = "aero-gpu-trace"

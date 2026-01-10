@@ -200,3 +200,36 @@ All IDs are `u32`. Blob IDs are `u64` split into `(lo: u32, hi: u32)`.
 | 0x0009 | `DRAW` | `vertex_count`, `first_vertex` |
 | 0x000A | `PRESENT` | *(no payload)* |
 
+---
+
+## Appendix B: Recording AeroGPU ABI packets (`aero-gpu-device`)
+
+The **real** GPU command stream in this repository is the AeroGPU ring/opcode ABI
+defined by:
+- `docs/16-gpu-command-abi.md` and
+- `crates/aero-gpu-device/src/abi.rs`
+
+When `aero-gpu-device` records traces, it writes `RecordType::Packet` payloads that are
+the exact `GpuCmdHeader + payload` bytes consumed by the command processor.
+
+### Upload normalization: `src_paddr` → `blob_id`
+
+Many AeroGPU commands refer to guest physical memory addresses (e.g. buffer uploads).
+To keep traces replayable without the original guest RAM contents, `aero-gpu-device`
+records uploads as blobs and **patches the recorded command packet**:
+
+- `WRITE_BUFFER.src_paddr` is replaced with the associated `blob_id` (little-endian `u64`)
+  and a `BlobKind::BufferData` blob is emitted containing the exact bytes read from guest RAM.
+- `WRITE_TEXTURE2D.src_paddr` is replaced with the associated `blob_id` (little-endian `u64`)
+  and a `BlobKind::TextureData` blob is emitted containing the exact bytes read from guest RAM.
+
+Replayers must interpret these patched `src_paddr` fields as blob references when
+processing traces recorded by `aero-gpu-device`.
+
+### `command_abi_version`
+
+For traces recorded by `aero-gpu-device`, the trace header’s `command_abi_version` is:
+
+```
+(ABI_MAJOR << 16) | ABI_MINOR
+```

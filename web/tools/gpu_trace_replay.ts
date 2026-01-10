@@ -22,6 +22,7 @@
   const RECORD_BLOB = 0x04;
 
   const BLOB_BUFFER_DATA = 0x01;
+  const BLOB_TEXTURE_DATA = 0x02;
   const BLOB_SHADER_DXBC = 0x03;
   const BLOB_SHADER_WGSL = 0x04;
   const BLOB_SHADER_GLSL_ES300 = 0x05;
@@ -38,6 +39,26 @@
   const OP_DRAW = 0x0009;
   const OP_PRESENT = 0x000a;
 
+  // AeroGPU command ABI (crates/aero-gpu-device/src/abi.rs).
+  // Packet layout starts with magic "AGPC" (little-endian).
+  const AEROGPU_CMD_MAGIC = asciiBytes("AGPC");
+  const AEROGPU_OPCODE_CREATE_BUFFER = 0x0001;
+  const AEROGPU_OPCODE_DESTROY_BUFFER = 0x0002;
+  const AEROGPU_OPCODE_WRITE_BUFFER = 0x0003;
+  const AEROGPU_OPCODE_CREATE_TEXTURE2D = 0x0010;
+  const AEROGPU_OPCODE_DESTROY_TEXTURE = 0x0011;
+  const AEROGPU_OPCODE_WRITE_TEXTURE2D = 0x0012;
+  const AEROGPU_OPCODE_SET_RENDER_TARGET = 0x0020;
+  const AEROGPU_OPCODE_CLEAR = 0x0021;
+  const AEROGPU_OPCODE_SET_VIEWPORT = 0x0022;
+  const AEROGPU_OPCODE_SET_PIPELINE = 0x0030;
+  const AEROGPU_OPCODE_SET_VERTEX_BUFFER = 0x0031;
+  const AEROGPU_OPCODE_DRAW = 0x0032;
+  const AEROGPU_OPCODE_PRESENT = 0x0040;
+
+  const AEROGPU_TEXFMT_RGBA8_UNORM = 1; // abi::TextureFormat::Rgba8Unorm
+  const AEROGPU_PIPELINE_BASIC_VERTEX_COLOR = 1; // abi::pipeline::BASIC_VERTEX_COLOR
+
   function asciiBytes(s) {
     const out = new Uint8Array(s.length);
     for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
@@ -52,6 +73,10 @@
 
   function readU32(view, off) {
     return view.getUint32(off, true);
+  }
+
+  function readU16(view, off) {
+    return view.getUint16(off, true);
   }
 
   function readU64Big(view, off) {
@@ -108,6 +133,14 @@
       off += c.byteLength;
     }
     return out;
+  }
+
+  function u64BigToSafeNumber(v, label) {
+    const n = Number(v);
+    if (!Number.isFinite(n) || !Number.isSafeInteger(n)) {
+      fail("u64 out of JS safe integer range for " + label + ": " + v.toString());
+    }
+    return n;
   }
 
   function escapeJsonString(s) {
@@ -650,6 +683,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
     const buffers = new Map(); // u32 -> WebGLBuffer
     const shaders = new Map(); // u32 -> { stage, glslSource }
     const programs = new Map(); // u32 -> WebGLProgram
+    const textures = new Map(); // u32 -> { tex, fbo, w, h }
 
     function compileShader(stage, src) {
       const shader = gl.createShader(stage);
@@ -683,7 +717,249 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
 
     let currentProgram = null;
 
+    let aerogpuBasicProgram = null;
+    function getAerogpuBasicProgram() {
+      if (aerogpuBasicProgram) return aerogpuBasicProgram;
+      const vsSrc = `#version 300 es
+precision highp float;
+layout(location = 0) in vec2 a_position;
+layout(location = 1) in vec4 a_color;
+out vec4 v_color;
+void main() {
+  v_color = a_color;
+  gl_Position = vec4(a_position, 0.0, 1.0);
+}
+`;
+      const fsSrc = `#version 300 es
+precision highp float;
+in vec4 v_color;
+out vec4 o_color;
+void main() {
+  o_color = v_color;
+}
+`;
+      aerogpuBasicProgram = linkProgram(vsSrc, fsSrc);
+      return aerogpuBasicProgram;
+    }
+
+    function isAerogpuPacket(packetBytes) {
+      return (
+        packetBytes.byteLength >= 4 &&
+        packetBytes[0] === AEROGPU_CMD_MAGIC[0] &&
+        packetBytes[1] === AEROGPU_CMD_MAGIC[1] &&
+        packetBytes[2] === AEROGPU_CMD_MAGIC[2] &&
+        packetBytes[3] === AEROGPU_CMD_MAGIC[3]
+      );
+    }
+
+    function executeAerogpuPacket(packetBytes, trace) {
+      const pv = new DataView(packetBytes.buffer, packetBytes.byteOffset, packetBytes.byteLength);
+      const sizeBytes = readU32(pv, 4);
+      if (sizeBytes !== packetBytes.byteLength) fail("AGPC size_bytes mismatch");
+      const opcode = readU16(pv, 8);
+
+      // Common header is 24 bytes.
+      const payloadOff = 24;
+      function u32AtPayload(off) {
+        return readU32(pv, payloadOff + off);
+      }
+      function u64AtPayload(off) {
+        return readU64Big(pv, payloadOff + off);
+      }
+      function f32AtPayload(off) {
+        return readF32(pv, payloadOff + off);
+      }
+
+      switch (opcode) {
+        case AEROGPU_OPCODE_CREATE_BUFFER: {
+          const bufferId = u32AtPayload(0);
+          const size = u64BigToSafeNumber(u64AtPayload(8), "CreateBuffer.size_bytes");
+          const glBuf = gl.createBuffer();
+          if (!glBuf) fail("gl.createBuffer failed");
+          buffers.set(bufferId, glBuf);
+          gl.bindBuffer(gl.ARRAY_BUFFER, glBuf);
+          gl.bufferData(gl.ARRAY_BUFFER, size, gl.DYNAMIC_DRAW);
+          break;
+        }
+        case AEROGPU_OPCODE_DESTROY_BUFFER: {
+          const bufferId = u32AtPayload(0);
+          const glBuf = buffers.get(bufferId);
+          if (glBuf) gl.deleteBuffer(glBuf);
+          buffers.delete(bufferId);
+          break;
+        }
+        case AEROGPU_OPCODE_WRITE_BUFFER: {
+          const bufferId = u32AtPayload(0);
+          const dstOffset = u64BigToSafeNumber(u64AtPayload(8), "WriteBuffer.dst_offset");
+          const blobId = u64AtPayload(16);
+          const size = u32AtPayload(24);
+          const blob = trace.blobs.get(blobId);
+          if (!blob) fail("missing blob_id=" + blobId.toString());
+          if (blob.kind !== BLOB_BUFFER_DATA) fail("unexpected blob kind for WRITE_BUFFER");
+          if (blob.bytes.byteLength !== size) fail("WRITE_BUFFER size_bytes mismatch");
+          const glBuf = buffers.get(bufferId);
+          if (!glBuf) fail("unknown buffer_id=" + bufferId);
+          gl.bindBuffer(gl.ARRAY_BUFFER, glBuf);
+          gl.bufferSubData(gl.ARRAY_BUFFER, dstOffset, blob.bytes);
+          break;
+        }
+        case AEROGPU_OPCODE_CREATE_TEXTURE2D: {
+          const textureId = u32AtPayload(0);
+          const w = u32AtPayload(4);
+          const h = u32AtPayload(8);
+          const fmt = u32AtPayload(12);
+          if (fmt !== AEROGPU_TEXFMT_RGBA8_UNORM) fail("unsupported texture format=" + fmt);
+          const tex = gl.createTexture();
+          if (!tex) fail("gl.createTexture failed");
+          gl.bindTexture(gl.TEXTURE_2D, tex);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          gl.texImage2D(
+            gl.TEXTURE_2D,
+            0,
+            gl.RGBA8,
+            w,
+            h,
+            0,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            null,
+          );
+          const fbo = gl.createFramebuffer();
+          if (!fbo) fail("gl.createFramebuffer failed");
+          gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+          gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+          const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+          if (status !== gl.FRAMEBUFFER_COMPLETE) {
+            fail("framebuffer incomplete: 0x" + status.toString(16));
+          }
+          textures.set(textureId, { tex, fbo, w, h });
+          break;
+        }
+        case AEROGPU_OPCODE_DESTROY_TEXTURE: {
+          const textureId = u32AtPayload(0);
+          const t = textures.get(textureId);
+          if (t) {
+            gl.deleteFramebuffer(t.fbo);
+            gl.deleteTexture(t.tex);
+          }
+          textures.delete(textureId);
+          break;
+        }
+        case AEROGPU_OPCODE_WRITE_TEXTURE2D: {
+          const textureId = u32AtPayload(0);
+          const mipLevel = u32AtPayload(4);
+          if (mipLevel !== 0) fail("WRITE_TEXTURE2D only supports mip_level=0");
+          const blobId = u64AtPayload(8);
+          const bytesPerRow = u32AtPayload(16);
+          const w = u32AtPayload(20);
+          const h = u32AtPayload(24);
+          const blob = trace.blobs.get(blobId);
+          if (!blob) fail("missing blob_id=" + blobId.toString());
+          if (blob.kind !== BLOB_TEXTURE_DATA) fail("unexpected blob kind for WRITE_TEXTURE2D");
+          const expected = bytesPerRow * h;
+          if (blob.bytes.byteLength !== expected) fail("WRITE_TEXTURE2D byte size mismatch");
+          const t = textures.get(textureId);
+          if (!t) fail("unknown texture_id=" + textureId);
+          gl.bindTexture(gl.TEXTURE_2D, t.tex);
+          if (bytesPerRow % 4 !== 0) fail("bytes_per_row must be multiple of 4 for RGBA8");
+          gl.pixelStorei(gl.UNPACK_ROW_LENGTH, bytesPerRow / 4);
+          gl.texSubImage2D(
+            gl.TEXTURE_2D,
+            0,
+            0,
+            0,
+            w,
+            h,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            blob.bytes,
+          );
+          gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+          break;
+        }
+        case AEROGPU_OPCODE_SET_RENDER_TARGET: {
+          const textureId = u32AtPayload(0);
+          if (textureId === 0) {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          } else {
+            const t = textures.get(textureId);
+            if (!t) fail("unknown texture_id=" + textureId);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo);
+          }
+          break;
+        }
+        case AEROGPU_OPCODE_CLEAR: {
+          const r = f32AtPayload(0);
+          const g = f32AtPayload(4);
+          const b = f32AtPayload(8);
+          const a = f32AtPayload(12);
+          gl.clearColor(r, g, b, a);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          break;
+        }
+        case AEROGPU_OPCODE_SET_VIEWPORT: {
+          const x = f32AtPayload(0);
+          const y = f32AtPayload(4);
+          const w = f32AtPayload(8);
+          const h = f32AtPayload(12);
+          gl.viewport(x | 0, y | 0, w | 0, h | 0);
+          break;
+        }
+        case AEROGPU_OPCODE_SET_PIPELINE: {
+          const pipelineId = u32AtPayload(0);
+          if (pipelineId !== AEROGPU_PIPELINE_BASIC_VERTEX_COLOR) {
+            fail("unsupported pipeline_id=" + pipelineId);
+          }
+          const prog = getAerogpuBasicProgram();
+          gl.useProgram(prog);
+          currentProgram = prog;
+          break;
+        }
+        case AEROGPU_OPCODE_SET_VERTEX_BUFFER: {
+          if (!currentProgram) fail("SET_VERTEX_BUFFER without pipeline");
+          const bufferId = u32AtPayload(0);
+          const stride = u32AtPayload(4);
+          const baseOffset = u64BigToSafeNumber(u64AtPayload(8), "SetVertexBuffer.offset");
+          const glBuf = buffers.get(bufferId);
+          if (!glBuf) fail("unknown buffer_id=" + bufferId);
+          gl.bindBuffer(gl.ARRAY_BUFFER, glBuf);
+          // BASIC_VERTEX_COLOR: pos @location(0) = vec2<f32>, color @location(1) = vec4<f32>
+          gl.enableVertexAttribArray(0);
+          gl.vertexAttribPointer(0, 2, gl.FLOAT, false, stride, baseOffset + 0);
+          gl.enableVertexAttribArray(1);
+          gl.vertexAttribPointer(1, 4, gl.FLOAT, false, stride, baseOffset + 8);
+          break;
+        }
+        case AEROGPU_OPCODE_DRAW: {
+          const vertexCount = u32AtPayload(0);
+          const firstVertex = u32AtPayload(4);
+          gl.drawArrays(gl.TRIANGLES, firstVertex, vertexCount);
+          break;
+        }
+        case AEROGPU_OPCODE_PRESENT: {
+          const textureId = u32AtPayload(0);
+          const t = textures.get(textureId);
+          if (!t) fail("unknown texture_id=" + textureId);
+          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, t.fbo);
+          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+          gl.blitFramebuffer(0, 0, t.w, t.h, 0, 0, canvas.width, canvas.height, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          gl.finish();
+          break;
+        }
+        default:
+          fail("unknown AeroGPU opcode=0x" + opcode.toString(16));
+      }
+    }
+
     async function executePacket(packetBytes, trace) {
+      if (isAerogpuPacket(packetBytes)) {
+        executeAerogpuPacket(packetBytes, trace);
+        return;
+      }
       const pv = new DataView(packetBytes.buffer, packetBytes.byteOffset, packetBytes.byteLength);
       const opcode = readU32(pv, 0);
       const totalDwords = readU32(pv, 4);

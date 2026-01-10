@@ -20,3 +20,4 @@ pub mod device;
 pub mod guest;
 pub mod guest_memory;
 pub mod ring;
+pub mod trace;
