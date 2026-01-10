@@ -6,9 +6,9 @@ import { importFileToOpfs } from "./platform/opfs";
 import { requestWebGpuDevice } from "./platform/webgpu";
 import { installPerfHud } from "./perf/hud_entry";
 import { WorkerCoordinator } from "./runtime/coordinator";
-import { DEFAULT_GUEST_MEMORY_BYTES } from "./runtime/shared_layout";
+import { DEFAULT_GUEST_RAM_MIB, GUEST_RAM_PRESETS_MIB, type GuestRamMiB } from "./runtime/shared_layout";
 
-installPerfHud({ guestRamBytes: DEFAULT_GUEST_MEMORY_BYTES });
+installPerfHud({ guestRamBytes: DEFAULT_GUEST_RAM_MIB * 1024 * 1024 });
 
 const workerCoordinator = new WorkerCoordinator();
 
@@ -221,12 +221,19 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const heartbeatLine = el("div", { class: "mono", text: "" });
   const error = el("pre", { text: "" });
 
+  const guestRamSelect = el("select") as HTMLSelectElement;
+  for (const mib of GUEST_RAM_PRESETS_MIB) {
+    const label = mib % 1024 === 0 ? `${mib / 1024} GiB` : `${mib} MiB`;
+    guestRamSelect.append(el("option", { value: String(mib), text: label }));
+  }
+  guestRamSelect.value = String(DEFAULT_GUEST_RAM_MIB);
+
   const startButton = el("button", {
     text: "Start workers",
     onclick: () => {
       error.textContent = "";
       try {
-        workerCoordinator.start();
+        workerCoordinator.start({ guestRamMiB: Number(guestRamSelect.value) as GuestRamMiB });
       } catch (err) {
         error.textContent = err instanceof Error ? err.message : String(err);
       }
@@ -245,7 +252,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const hint = el("div", {
     class: "mono",
     text: support.ok
-      ? "Runs 4 module workers (cpu/gpu/io/jit). CPU increments a SharedArrayBuffer counter + emits ring-buffer heartbeats."
+      ? "Runs 4 module workers (cpu/gpu/io/jit). CPU increments a shared WebAssembly.Memory counter + emits ring-buffer heartbeats."
       : support.reason ?? "SharedArrayBuffer unavailable.",
   });
 
@@ -260,7 +267,10 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       ...Object.entries(statuses).map(([role, status]) => el("li", { text: `${role}: ${status.state}${status.error ? ` (${status.error})` : ""}` })),
     );
 
-    heartbeatLine.textContent = `status[HeartbeatCounter]=${workerCoordinator.getHeartbeatCounter()}  ring[Heartbeat]=${workerCoordinator.getLastHeartbeatFromRing()}`;
+    heartbeatLine.textContent =
+      `status[HeartbeatCounter]=${workerCoordinator.getHeartbeatCounter()}  ` +
+      `ring[Heartbeat]=${workerCoordinator.getLastHeartbeatFromRing()}  ` +
+      `guestI32[0]=${workerCoordinator.getGuestCounter0()}`;
   }
 
   update();
@@ -271,7 +281,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     { class: "panel" },
     el("h2", { text: "Workers" }),
     hint,
-    el("div", { class: "row" }, startButton, stopButton),
+    el("div", { class: "row" }, el("label", { text: "Guest RAM:" }), guestRamSelect, startButton, stopButton),
     heartbeatLine,
     statusList,
     error,

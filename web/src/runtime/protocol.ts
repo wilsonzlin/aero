@@ -66,7 +66,7 @@ export type WorkerInitMessage = {
   kind: "init";
   role: WorkerRole;
   controlSab: SharedArrayBuffer;
-  guestSab: SharedArrayBuffer;
+  guestMemory: WebAssembly.Memory;
 };
 
 const textEncoder = new TextEncoder();
@@ -145,4 +145,3 @@ export function decodeProtocolMessage(bytes: Uint8Array): ProtocolMessage | null
       return null;
   }
 }
-

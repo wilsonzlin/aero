@@ -16,15 +16,17 @@ let role: "cpu" | "gpu" | "io" | "jit" = "cpu";
 let status!: Int32Array;
 let commandRing!: RingBuffer;
 let eventRing!: RingBuffer;
+let guestI32!: Int32Array;
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   const init = ev.data as Partial<WorkerInitMessage>;
   if (init?.kind !== "init") return;
 
   role = init.role ?? "cpu";
-  const segments = { control: init.controlSab!, guest: init.guestSab! };
+  const segments = { control: init.controlSab!, guestMemory: init.guestMemory! };
   const views = createSharedMemoryViews(segments);
   status = views.status;
+  guestI32 = views.guestI32;
 
   const regions = ringRegionsForWorker(role);
   commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
@@ -58,6 +60,7 @@ function runLoop(): void {
 
     if (running) {
       const counter = Atomics.add(status, StatusIndex.HeartbeatCounter, 1) + 1;
+      Atomics.add(guestI32, 0, 1);
       // Best-effort: heartbeat events are allowed to drop if the ring is full.
       eventRing.push(encodeProtocolMessage({ type: MessageType.HEARTBEAT, role, counter }));
     }
@@ -69,4 +72,3 @@ function runLoop(): void {
   setReadyFlag(status, role, false);
   ctx.close();
 }
-

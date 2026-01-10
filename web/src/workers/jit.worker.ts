@@ -15,7 +15,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
   if (init?.kind !== "init") return;
 
   role = init.role ?? "jit";
-  const segments = { control: init.controlSab!, guest: init.guestSab! };
+  const segments = { control: init.controlSab!, guestMemory: init.guestMemory! };
   status = createSharedMemoryViews(segments).status;
   const regions = ringRegionsForWorker(role);
   commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
@@ -45,4 +45,3 @@ function runLoop(): void {
   setReadyFlag(status, role, false);
   ctx.close();
 }
-

@@ -6,6 +6,7 @@ import {
   allocateSharedMemorySegments,
   checkSharedMemorySupport,
   createSharedMemoryViews,
+  type GuestRamMiB,
   ringRegionsForWorker,
   setReadyFlag,
   type SharedMemoryViews,
@@ -44,7 +45,7 @@ export class WorkerCoordinator {
     return checkSharedMemorySupport();
   }
 
-  start(): void {
+  start(options?: { guestRamMiB?: GuestRamMiB }): void {
     if (this.shared) return;
 
     const support = this.checkSupport();
@@ -52,7 +53,7 @@ export class WorkerCoordinator {
       throw new Error(support.reason ?? "Shared memory unsupported");
     }
 
-    const segments = allocateSharedMemorySegments();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: options?.guestRamMiB });
     const shared = createSharedMemoryViews(segments);
     shared.status.fill(0);
     this.shared = shared;
@@ -104,7 +105,7 @@ export class WorkerCoordinator {
         kind: "init",
         role,
         controlSab: segments.control,
-        guestSab: segments.guest,
+        guestMemory: segments.guestMemory,
       };
       worker.postMessage(initMessage);
     }
@@ -152,6 +153,11 @@ export class WorkerCoordinator {
 
   getLastHeartbeatFromRing(): number {
     return this.lastHeartbeatFromRing;
+  }
+
+  getGuestCounter0(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.guestI32, 0);
   }
 
   private onWorkerMessage(role: WorkerRole, data: unknown): void {

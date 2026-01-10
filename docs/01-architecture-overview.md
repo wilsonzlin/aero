@@ -288,26 +288,37 @@ Browsers cannot reliably allocate a single 5+GiB `SharedArrayBuffer`, and wasm32
 | Buffer | Type | Typical Size | Contents | Access Pattern |
 |--------|------|--------------|----------|----------------|
 | `guestMemory` | `WebAssembly.Memory` (`shared: true`) | **512MiB / 1GiB / 2GiB / 3GiB** (best-effort) | Guest physical RAM | Shared read/write; the only region directly accessible from wasm today |
-| `stateSab` | `SharedArrayBuffer` | 64KiB | Small global state (run/pause/stop flags, liveness, stats) | Mostly atomic loads/stores |
-| `cmdSab` | `SharedArrayBuffer` | 64KiB+ | Command ring buffers (SPSC per producer/consumer pair) | Atomic head/tail + `Atomics.wait/notify` |
-| `eventSab` | `SharedArrayBuffer` | 64KiB+ | Event ring buffers (responses, interrupts, input events) | Atomic head/tail + `Atomics.wait/notify` |
+| `ipcSab` | `SharedArrayBuffer` | ~MiB (configurable) | IPC control block + ring buffers (cmd/evt per worker) | Atomics-driven ring buffer; `Atomics.wait` in workers, `Atomics.waitAsync`/polling on main |
 
 This avoids >4GiB offsets entirely: each buffer is independently addressable and can be sized/failed independently.
 
-#### Ring buffer layout (`cmdSab` / `eventSab`)
+#### Ring buffer layout (IPC queues)
 
-Command/event buffers use an SPSC ring per producer/consumer pair. The minimal, implementation-ready layout is:
+The IPC queues use a bounded, variable-length ring buffer that supports **SPSC**
+(per-worker cmd/evt) and can be extended to **MPSC** (e.g. a global log queue).
 
-| Offset | Type | Name | Notes |
-|--------|------|------|------|
-| `0x0000` | `Int32` | `head` | Write cursor (atomic). Producer updates after writing data. |
-| `0x0004` | `Int32` | `tail` | Read cursor (atomic). Consumer updates after reading data. |
-| `0x0008` | `Int32[]` | `data` | Ring storage. Length is a power of two. |
+The full definition is in [`docs/ipc-protocol.md`](./ipc-protocol.md). Summary:
 
-Consumers sleep on `head` changes:
+**Ring header (`Int32Array[4]`, 16 bytes):**
 
-- **Worker consumers** use `Atomics.wait(head)` (blocking, efficient).
-- **Main-thread consumers** use `Atomics.waitAsync(head)` (or polling fallback).
+| Index | Name | Description |
+|---:|---|---|
+| 0 | `head` | Consumer cursor (wrapping `u32` byte offset) |
+| 1 | `tail_reserve` | Producer reservation cursor (wrapping `u32` byte offset) |
+| 2 | `tail_commit` | Producer commit cursor (wrapping `u32` byte offset) |
+| 3 | `capacity` | Data region size in bytes (written once at init) |
+
+**Data region:** `Uint8Array(capacity)`
+
+**Record format (variable length):**
+
+- `u32 payload_len`
+- `payload_len` bytes of payload
+- padding to 4-byte alignment
+
+If there is insufficient contiguous space near the end of the buffer, producers
+write a **wrap marker** (`payload_len = 0xFFFF_FFFF`) and advance to the next
+segment start.
 
 ### Synchronization Primitives
 
@@ -336,7 +347,7 @@ queue), while still being efficient for **SPSC** use (per-worker cmd/evt).
 │                                                                  │
 │  2. Resource Allocation                                          │
 │     └─▶ Allocate shared `WebAssembly.Memory` (guest RAM, configurable) │
-│     └─▶ Allocate small `SharedArrayBuffer`s (state/cmd/event)     │
+│     └─▶ Allocate `SharedArrayBuffer` IPC region(s) (cmd/evt queues, state) │
 │         └─▶ Request storage access (OPFS)                        │
 │             └─▶ Load/create disk image                           │
 │                                                                  │

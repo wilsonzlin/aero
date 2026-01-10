@@ -51,6 +51,19 @@ function detectWasmSimd(): boolean {
   }
 }
 
+function detectWasmThreads(crossOriginIsolated: boolean, sharedArrayBuffer: boolean): boolean {
+  if (!crossOriginIsolated || !sharedArrayBuffer) return false;
+  if (typeof Atomics === 'undefined') return false;
+  if (typeof WebAssembly === 'undefined' || typeof WebAssembly.Memory !== 'function') return false;
+
+  try {
+    const mem = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+    return mem.buffer instanceof SharedArrayBuffer;
+  } catch {
+    return false;
+  }
+}
+
 function getAudioContextCtor(): typeof AudioContext | undefined {
   // Safari uses webkitAudioContext.
   return (
@@ -64,7 +77,7 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
     .crossOriginIsolated === true;
   const sharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
   const wasmSimd = detectWasmSimd();
-  const wasmThreads = crossOriginIsolated && sharedArrayBuffer && typeof Atomics !== 'undefined';
+  const wasmThreads = detectWasmThreads(crossOriginIsolated, sharedArrayBuffer);
 
   const webgpu = typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
   const opfs =
@@ -150,4 +163,3 @@ export function explainMissingRequirements(report: PlatformFeatureReport = platf
 
   return messages;
 }
-

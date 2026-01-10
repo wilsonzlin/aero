@@ -193,7 +193,9 @@ const wasmFeatures = {
 const GUEST_RAM_MIB = 1024; // 512 / 1024 / 2048 / 3072 (best-effort)
 const GUEST_RAM_BYTES = GUEST_RAM_MIB * 1024 * 1024;
 const WASM_PAGE_BYTES = 64 * 1024;
-const RING_CAPACITY_I32 = 16384; // power-of-two ring storage (excluding head/tail)
+const RING_CTRL_BYTES = 16;      // Int32Array[4] header (see docs/ipc-protocol.md)
+const CMD_CAP_BYTES = 1 << 20;   // 1 MiB ring data region
+const EVT_CAP_BYTES = 1 << 20;   // 1 MiB ring data region
 
 async function initializeMemory() {
     if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
@@ -210,16 +212,22 @@ async function initializeMemory() {
 
     // Separate small SABs for state + command/event rings (no >4GiB offsets).
     const stateSab = new SharedArrayBuffer(64 * 1024);
-    const cmdSab = new SharedArrayBuffer((2 + RING_CAPACITY_I32) * 4);   // head+tail + data
-    const eventSab = new SharedArrayBuffer((2 + RING_CAPACITY_I32) * 4); // head+tail + data
+    const cmdSab = new SharedArrayBuffer(RING_CTRL_BYTES + CMD_CAP_BYTES);
+    const eventSab = new SharedArrayBuffer(RING_CTRL_BYTES + EVT_CAP_BYTES);
+
+    // Initialize ring headers: [head, tail_reserve, tail_commit, capacity_bytes]
+    new Int32Array(cmdSab, 0, 4).set([0, 0, 0, CMD_CAP_BYTES]);
+    new Int32Array(eventSab, 0, 4).set([0, 0, 0, EVT_CAP_BYTES]);
     
     // Create views
     const views = {
         guestU8: new Uint8Array(guestMemory.buffer),
         guestU32: new Uint32Array(guestMemory.buffer),
         stateI32: new Int32Array(stateSab),
-        cmdI32: new Int32Array(cmdSab),
-        eventI32: new Int32Array(eventSab), // ring head/tail + data slots
+        cmdCtrl: new Int32Array(cmdSab, 0, 4),
+        evtCtrl: new Int32Array(eventSab, 0, 4),
+        cmdData: new Uint8Array(cmdSab, RING_CTRL_BYTES, CMD_CAP_BYTES),
+        evtData: new Uint8Array(eventSab, RING_CTRL_BYTES, EVT_CAP_BYTES),
     };
     
     return { guestMemory, stateSab, cmdSab, eventSab, views };

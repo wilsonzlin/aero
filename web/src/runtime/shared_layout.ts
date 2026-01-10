@@ -28,22 +28,31 @@ export const EVENT_RING_CAPACITY_BYTES = 32 * 1024;
 /**
  * Guest memory placeholder.
  *
- * In the real emulator this will likely become a shared WebAssembly.Memory
- * (backed by a SharedArrayBuffer) and be sized up to ~4GiB. The architecture
- * docs mention allocating "5+ GB", but without `memory64` most WebAssembly
- * tooling/browsers are constrained to a 32-bit linear memory index (~4GiB).
+ * In the real emulator this is a shared WebAssembly.Memory (wasm32) so it can be
+ * accessed directly from WASM code across worker threads.
  *
  * We intentionally keep control IPC memory separate from guest RAM so that:
- *  - The coordinator can run even if a giant guest allocation fails.
+ *  - The coordinator can still run even if a large guest allocation fails.
  *  - IPC buffers remain small and cache-friendly.
- *  - We can swap guest RAM implementations (SAB vs WASM memory) without
- *    changing IPC offsets.
+ *  - Guest RAM can be resized/failed independently of IPC buffers.
  */
-export const DEFAULT_GUEST_MEMORY_BYTES = 16 * 1024 * 1024;
+export const GUEST_RAM_PRESETS_MIB = [512, 1024, 2048, 3072] as const;
+export type GuestRamMiB = (typeof GUEST_RAM_PRESETS_MIB)[number];
+export const DEFAULT_GUEST_RAM_MIB: GuestRamMiB = 512;
+
+const WASM_PAGE_BYTES = 64 * 1024;
+
+function mibToBytes(mib: number): number {
+  return mib * 1024 * 1024;
+}
+
+function bytesToPages(bytes: number): number {
+  return Math.ceil(bytes / WASM_PAGE_BYTES);
+}
 
 export interface SharedMemorySegments {
   control: SharedArrayBuffer;
-  guest: SharedArrayBuffer;
+  guestMemory: WebAssembly.Memory;
 }
 
 export interface RingRegions {
@@ -55,6 +64,7 @@ export interface SharedMemoryViews {
   segments: SharedMemorySegments;
   status: Int32Array;
   guestU8: Uint8Array;
+  guestI32: Int32Array;
 }
 
 function align(value: number, alignment: number): number {
@@ -99,28 +109,61 @@ export function ringRegionsForWorker(role: WorkerRole): RingRegions {
 }
 
 export function allocateSharedMemorySegments(options?: {
-  guestBytes?: number;
+  guestRamMiB?: GuestRamMiB;
 }): SharedMemorySegments {
-  const guestBytes = options?.guestBytes ?? DEFAULT_GUEST_MEMORY_BYTES;
+  const guestRamMiB = options?.guestRamMiB ?? DEFAULT_GUEST_RAM_MIB;
+  const guestBytes = mibToBytes(guestRamMiB);
+  const pages = bytesToPages(guestBytes);
+  if (pages > 65536) {
+    throw new Error(`guestRamMiB too large for wasm32: ${guestRamMiB} MiB (${pages} pages)`);
+  }
+
+  let guestMemory: WebAssembly.Memory;
+  try {
+    guestMemory = new WebAssembly.Memory({ initial: pages, maximum: pages, shared: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Failed to allocate shared WebAssembly.Memory for guest RAM (${guestRamMiB} MiB). Try a smaller size. Error: ${msg}`,
+    );
+  }
+
+  if (!(guestMemory.buffer instanceof SharedArrayBuffer)) {
+    throw new Error(
+      "Shared WebAssembly.Memory is unavailable (memory.buffer is not a SharedArrayBuffer). " +
+        "Ensure COOP/COEP headers are set and the browser supports WASM threads.",
+    );
+  }
+
   return {
     control: new SharedArrayBuffer(CONTROL_BYTES),
-    guest: new SharedArrayBuffer(guestBytes),
+    guestMemory,
   };
 }
 
 export function createSharedMemoryViews(segments: SharedMemorySegments): SharedMemoryViews {
   const status = new Int32Array(segments.control, CONTROL_LAYOUT.statusOffset, STATUS_INTS);
-  const guestU8 = new Uint8Array(segments.guest);
-  return { segments, status, guestU8 };
+  const guestU8 = new Uint8Array(segments.guestMemory.buffer);
+  const guestI32 = new Int32Array(segments.guestMemory.buffer);
+  return { segments, status, guestU8, guestI32 };
 }
 
 export function checkSharedMemorySupport(): { ok: boolean; reason?: string } {
+  if (typeof WebAssembly === "undefined" || typeof WebAssembly.Memory !== "function") {
+    return { ok: false, reason: "WebAssembly is unavailable in this environment." };
+  }
+  if (typeof globalThis.isSecureContext !== "undefined" && !globalThis.isSecureContext) {
+    return { ok: false, reason: "SharedArrayBuffer requires a secure context (https:// or localhost)." };
+  }
   if (typeof SharedArrayBuffer === "undefined") {
     return {
       ok: false,
       reason:
         "SharedArrayBuffer is unavailable. Ensure the page is crossOriginIsolated (COOP/COEP headers).",
     };
+  }
+  if (typeof Atomics === "undefined") {
+    return { ok: false, reason: "Atomics is unavailable. WASM threads require Atomics." };
   }
   if (typeof crossOriginIsolated !== "undefined" && !crossOriginIsolated) {
     return {
@@ -129,6 +172,17 @@ export function checkSharedMemorySupport(): { ok: boolean; reason?: string } {
         "crossOriginIsolated is false. The server must send COOP/COEP headers for SharedArrayBuffer + Atomics.",
     };
   }
+
+  try {
+    const mem = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+    if (!(mem.buffer instanceof SharedArrayBuffer)) {
+      return { ok: false, reason: "Shared WebAssembly.Memory is unsupported in this browser configuration." };
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, reason: `Shared WebAssembly.Memory is unavailable: ${msg}` };
+  }
+
   return { ok: true };
 }
 
@@ -143,4 +197,3 @@ export function setReadyFlag(status: Int32Array, role: WorkerRole, ready: boolea
           : StatusIndex.JitReady;
   Atomics.store(status, idx, ready ? 1 : 0);
 }
-
