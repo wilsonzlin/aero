@@ -472,30 +472,50 @@ jobs:
             $dir = $dir.TrimEnd('/')
           }
 
+          # Cache/dependency install strategy:
+          # - If a lockfile exists, use `npm ci` and enable npm caching.
+          # - If there is no lockfile (e.g. new package / local experimentation),
+          #   fall back to `npm install` (without npm caching).
+          $lockfile = ""
           if ($dir -eq ".") {
-            $lockfile = "package-lock.json"
+            if (Test-Path -LiteralPath "package-lock.json") {
+              $lockfile = "package-lock.json"
+            }
           } else {
-            $lockfile = "$dir/package-lock.json"
-          }
-
-          if (-not (Test-Path -LiteralPath $lockfile)) {
-            Write-Error "package-lock.json not found at '$lockfile'. This workflow expects npm; ensure a lockfile exists."
-            exit 1
+            $candidate = "$dir/package-lock.json"
+            if (Test-Path -LiteralPath $candidate) {
+              $lockfile = $candidate
+            }
           }
 
           "dir=$dir" >> $env:GITHUB_OUTPUT
           "lockfile=$lockfile" >> $env:GITHUB_OUTPUT
 
       - name: Setup Node
+        if: steps.node-dir.outputs.lockfile == ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Node (npm cache)
+        if: steps.node-dir.outputs.lockfile != ''
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: ${{ steps.node-dir.outputs.lockfile }}
 
-      - name: Install dependencies
+      - name: Install dependencies (npm ci)
+        if: steps.node-dir.outputs.lockfile != ''
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Install dependencies (npm install)
+        if: steps.node-dir.outputs.lockfile == ''
+        working-directory: ${{ steps.node-dir.outputs.dir }}
+        run: npm install --no-audit --no-fund
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
