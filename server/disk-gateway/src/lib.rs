@@ -2,27 +2,37 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
+use async_stream::try_stream;
 use axum::body::Body;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::header::{
     ACCEPT_RANGES, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
     ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_MAX_AGE,
-    AUTHORIZATION, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, ETAG, ORIGIN, RANGE, VARY,
+    AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, ETAG, ORIGIN, RANGE,
+    VARY,
 };
-use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, options, post};
 use axum::Router;
+use bytes::Bytes;
+use futures_util::StreamExt;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio_util::io::ReaderStream;
+
+use aero_http_range::{
+    parse_range_header, resolve_ranges, RangeParseError, RangeResolveError, ResolvedByteRange,
+};
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -33,15 +43,17 @@ pub struct Config {
     pub cors_allowed_origins: AllowedOrigins,
     pub corp_policy: CorpPolicy,
     pub lease_ttl: Duration,
+    pub max_ranges: usize,
+    pub max_total_bytes: u64,
 }
 
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
         let bind = std::env::var("DISK_GATEWAY_BIND").unwrap_or_else(|_| "127.0.0.1:3000".into());
-        let public_dir = std::env::var("DISK_GATEWAY_PUBLIC_DIR")
-            .unwrap_or_else(|_| "./public-images".into());
-        let private_dir = std::env::var("DISK_GATEWAY_PRIVATE_DIR")
-            .unwrap_or_else(|_| "./private-images".into());
+        let public_dir =
+            std::env::var("DISK_GATEWAY_PUBLIC_DIR").unwrap_or_else(|_| "./public-images".into());
+        let private_dir =
+            std::env::var("DISK_GATEWAY_PRIVATE_DIR").unwrap_or_else(|_| "./private-images".into());
         let token_secret = std::env::var("DISK_GATEWAY_TOKEN_SECRET")
             .map_err(|_| ConfigError::MissingEnv("DISK_GATEWAY_TOKEN_SECRET"))?;
         let cors_allowed_origins = AllowedOrigins::from_env()?;
@@ -51,6 +63,16 @@ impl Config {
             .and_then(|s| s.parse::<u64>().ok())
             .map(Duration::from_secs)
             .unwrap_or_else(|| Duration::from_secs(15 * 60));
+        let max_ranges = std::env::var("DISK_GATEWAY_MAX_RANGES")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(16);
+        let max_total_bytes = std::env::var("DISK_GATEWAY_MAX_TOTAL_BYTES")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(512 * 1024 * 1024);
 
         Ok(Self {
             bind,
@@ -60,6 +82,8 @@ impl Config {
             cors_allowed_origins,
             corp_policy,
             lease_ttl,
+            max_ranges,
+            max_total_bytes,
         })
     }
 }
@@ -169,10 +193,7 @@ pub fn app(cfg: Config) -> Router {
         ));
 
     let disk_router = Router::new()
-        .route(
-            "/:id",
-            get(disk_get).head(disk_head).options(disk_options),
-        )
+        .route("/:id", get(disk_get).head(disk_head).options(disk_options))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             disk_headers_middleware,
@@ -203,6 +224,8 @@ async fn disk_headers_middleware(
     let origin = req.headers().get(ORIGIN).cloned();
     let mut resp = next.run(req).await;
     apply_cors_headers(&state.cfg, origin.as_ref(), &mut resp, false, "");
+    resp.headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-transform"));
     resp.headers_mut().insert(
         HeaderName::from_static("cross-origin-resource-policy"),
         state.cfg.corp_policy.as_header_value(),
@@ -242,7 +265,8 @@ fn apply_cors_headers(
             .insert(ACCESS_CONTROL_ALLOW_ORIGIN, allow_origin);
 
         if cfg.cors_allowed_origins.should_vary_origin() {
-            resp.headers_mut().insert(VARY, HeaderValue::from_static("Origin"));
+            resp.headers_mut()
+                .insert(VARY, HeaderValue::from_static("Origin"));
         }
 
         resp.headers_mut().insert(
@@ -294,12 +318,20 @@ fn scope_allows_disk_read(scope: &str) -> bool {
     scope.split_whitespace().any(|s| s == "disk:read")
 }
 
-fn sign_lease(cfg: &Config, image_id: &str, user_id: &str, expires_at: OffsetDateTime) -> Result<String, ApiError> {
+fn sign_lease(
+    cfg: &Config,
+    image_id: &str,
+    user_id: &str,
+    expires_at: OffsetDateTime,
+) -> Result<String, ApiError> {
     let claims = LeaseClaims {
         img: image_id.to_owned(),
         sub: user_id.to_owned(),
         scope: "disk:read".to_owned(),
-        exp: expires_at.unix_timestamp().try_into().map_err(|_| ApiError::Internal)?,
+        exp: expires_at
+            .unix_timestamp()
+            .try_into()
+            .map_err(|_| ApiError::Internal)?,
     };
 
     jsonwebtoken::encode(
@@ -374,7 +406,9 @@ async fn lease_post(
         .map_err(|_| ApiError::Internal)?
     {
         let expires_at = OffsetDateTime::now_utc() + time::Duration::days(365);
-        let expires_at_str = expires_at.format(&Rfc3339).map_err(|_| ApiError::Internal)?;
+        let expires_at_str = expires_at
+            .format(&Rfc3339)
+            .map_err(|_| ApiError::Internal)?;
         let body = LeaseResponse {
             url: format!("/disk/{image_id}"),
             token: None,
@@ -408,9 +442,12 @@ async fn lease_post(
         return Err(ApiError::NotFound);
     }
 
-    let expires_at = OffsetDateTime::now_utc() + time::Duration::try_from(state.cfg.lease_ttl).map_err(|_| ApiError::Internal)?;
+    let expires_at = OffsetDateTime::now_utc()
+        + time::Duration::try_from(state.cfg.lease_ttl).map_err(|_| ApiError::Internal)?;
     let token = sign_lease(&state.cfg, &image_id, user_id, expires_at)?;
-    let expires_at_str = expires_at.format(&Rfc3339).map_err(|_| ApiError::Internal)?;
+    let expires_at_str = expires_at
+        .format(&Rfc3339)
+        .map_err(|_| ApiError::Internal)?;
     let body = LeaseResponse {
         url: format!("/disk/{image_id}"),
         token: Some(token),
@@ -427,23 +464,64 @@ async fn disk_head(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let path = resolve_disk_path(&state.cfg, &image_id, &headers, query.token.as_deref()).await?;
-    let metadata = tokio::fs::metadata(&path).await.map_err(|err| match err.kind() {
-        std::io::ErrorKind::NotFound => ApiError::NotFound,
-        _ => ApiError::Internal,
-    })?;
+    let metadata = tokio::fs::metadata(&path)
+        .await
+        .map_err(|err| match err.kind() {
+            std::io::ErrorKind::NotFound => ApiError::NotFound,
+            _ => ApiError::Internal,
+        })?;
     let size = metadata.len();
 
     let etag = compute_etag(&metadata);
-    let mut resp = StatusCode::OK.into_response();
-    resp.headers_mut()
-        .insert(CONTENT_LENGTH, HeaderValue::from(size));
-    resp.headers_mut()
-        .insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
-    resp.headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
-    resp.headers_mut().insert(ETAG, etag);
+    let range_header = headers.get(RANGE).and_then(|v| v.to_str().ok());
 
-    Ok(resp)
+    let (status, content_type, content_range, content_length) =
+        match resolve_request_ranges(&state.cfg, range_header, size) {
+            Ok(None) => (StatusCode::OK, None, None, Some(size)),
+            Ok(Some(ranges)) if ranges.len() == 1 => {
+                let r = ranges[0];
+                (
+                    StatusCode::PARTIAL_CONTENT,
+                    None,
+                    Some(format!("bytes {}-{}/{}", r.start, r.end, size)),
+                    Some(r.len()),
+                )
+            }
+            Ok(Some(_ranges)) => {
+                let boundary = make_boundary();
+                (
+                    StatusCode::PARTIAL_CONTENT,
+                    Some(format!("multipart/byteranges; boundary={boundary}")),
+                    None,
+                    None,
+                )
+            }
+            Err(RangeRequestError::NotSatisfiable) => {
+                return Ok(range_not_satisfiable_response(size))
+            }
+            Err(RangeRequestError::TooLarge) => return Ok(payload_too_large_response()),
+        };
+
+    let mut builder = Response::builder()
+        .status(status)
+        .header(ACCEPT_RANGES, "bytes")
+        .header(
+            CONTENT_TYPE,
+            content_type.unwrap_or_else(|| "application/octet-stream".to_owned()),
+        )
+        .header(ETAG, etag);
+
+    if let Some(content_range) = content_range {
+        builder = builder.header(CONTENT_RANGE, content_range);
+    }
+    if let Some(content_length) = content_length {
+        builder = builder.header(CONTENT_LENGTH, content_length);
+    }
+
+    Ok(builder
+        .body(Body::empty())
+        .map_err(|_| ApiError::Internal)?
+        .into_response())
 }
 
 async fn disk_get(
@@ -453,74 +531,182 @@ async fn disk_get(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let path = resolve_disk_path(&state.cfg, &image_id, &headers, query.token.as_deref()).await?;
-    let metadata = tokio::fs::metadata(&path).await.map_err(|err| match err.kind() {
-        std::io::ErrorKind::NotFound => ApiError::NotFound,
-        _ => ApiError::Internal,
-    })?;
+    let metadata = tokio::fs::metadata(&path)
+        .await
+        .map_err(|err| match err.kind() {
+            std::io::ErrorKind::NotFound => ApiError::NotFound,
+            _ => ApiError::Internal,
+        })?;
     let size = metadata.len();
     let etag = compute_etag(&metadata);
 
     let range_header = headers.get(RANGE).and_then(|v| v.to_str().ok());
-    let mut file = File::open(&path).await.map_err(|err| match err.kind() {
+    let ranges = match resolve_request_ranges(&state.cfg, range_header, size) {
+        Ok(r) => r,
+        Err(RangeRequestError::NotSatisfiable) => return Ok(range_not_satisfiable_response(size)),
+        Err(RangeRequestError::TooLarge) => return Ok(payload_too_large_response()),
+    };
+
+    match ranges {
+        None => serve_full_file(&path, size, etag).await,
+        Some(ranges) if ranges.len() == 1 => serve_single_range(&path, size, etag, ranges[0]).await,
+        Some(ranges) => serve_multi_range(&path, size, etag, ranges).await,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RangeRequestError {
+    NotSatisfiable,
+    TooLarge,
+}
+
+fn resolve_request_ranges(
+    cfg: &Config,
+    header_value: Option<&str>,
+    size: u64,
+) -> Result<Option<Vec<ResolvedByteRange>>, RangeRequestError> {
+    let Some(header_value) = header_value else {
+        return Ok(None);
+    };
+
+    let specs = match parse_range_header(header_value) {
+        Ok(specs) => specs,
+        Err(RangeParseError::UnsupportedUnit) => return Ok(None),
+        Err(RangeParseError::TooManyRanges { .. }) => return Err(RangeRequestError::TooLarge),
+        Err(_) => return Err(RangeRequestError::NotSatisfiable),
+    };
+
+    // Multi-range abuse guard: cap the number of ranges we will serve and the total payload size.
+    if specs.len() > cfg.max_ranges {
+        return Err(RangeRequestError::TooLarge);
+    }
+
+    let resolved = match resolve_ranges(&specs, size, false) {
+        Ok(r) => r,
+        Err(RangeResolveError::Unsatisfiable) => return Err(RangeRequestError::NotSatisfiable),
+    };
+
+    if resolved.len() > cfg.max_ranges {
+        return Err(RangeRequestError::TooLarge);
+    }
+
+    let mut total: u64 = 0;
+    for r in &resolved {
+        total = total
+            .checked_add(r.len())
+            .ok_or(RangeRequestError::TooLarge)?;
+        if total > cfg.max_total_bytes {
+            return Err(RangeRequestError::TooLarge);
+        }
+    }
+
+    Ok(Some(resolved))
+}
+
+fn make_boundary() -> String {
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(32)
+        .map(char::from)
+        .collect()
+}
+
+async fn serve_full_file(
+    path: &PathBuf,
+    size: u64,
+    etag: HeaderValue,
+) -> Result<Response, ApiError> {
+    let file = File::open(path).await.map_err(|err| match err.kind() {
         std::io::ErrorKind::NotFound => ApiError::NotFound,
         _ => ApiError::Internal,
     })?;
 
-    let (status, content_range, stream_len) = if let Some(range_header) = range_header {
-        match parse_single_range(range_header, size) {
-            Ok(Some((start, end))) => {
-                let len = end - start + 1;
-                file.seek(SeekFrom::Start(start)).await.map_err(|_| ApiError::Internal)?;
-                (
-                    StatusCode::PARTIAL_CONTENT,
-                    Some(format!("bytes {start}-{end}/{size}")),
-                    Some(len),
-                )
-            }
-            Ok(None) => (StatusCode::OK, None, None),
-            Err(_) => return Ok(range_not_satisfiable_response(size)),
-        }
-    } else {
-        (StatusCode::OK, None, None)
-    };
-
-    let body: Body = match stream_len {
-        Some(len) => {
-            let stream = ReaderStream::new(file.take(len));
-            Body::from_stream(stream)
-        }
-        None => {
-            let stream = ReaderStream::new(file);
-            Body::from_stream(stream)
-        }
-    };
-
-    let mut resp = Response::builder()
-        .status(status)
+    Ok(Response::builder()
+        .status(StatusCode::OK)
         .header(ACCEPT_RANGES, "bytes")
         .header(CONTENT_TYPE, "application/octet-stream")
+        .header(CONTENT_LENGTH, size)
         .header(ETAG, etag)
-        .body(body)
+        .body(Body::from_stream(ReaderStream::new(file)))
         .map_err(|_| ApiError::Internal)?
-        .into_response();
-
-    if let Some(content_range) = content_range {
-        resp.headers_mut()
-            .insert(CONTENT_RANGE, HeaderValue::from_str(&content_range).map_err(|_| ApiError::Internal)?);
-    }
-
-    if let Some(len) = stream_len {
-        resp.headers_mut()
-            .insert(CONTENT_LENGTH, HeaderValue::from(len));
-    } else {
-        resp.headers_mut()
-            .insert(CONTENT_LENGTH, HeaderValue::from(size));
-    }
-
-    Ok(resp)
+        .into_response())
 }
 
-use axum::http::HeaderName;
+async fn serve_single_range(
+    path: &PathBuf,
+    size: u64,
+    etag: HeaderValue,
+    range: ResolvedByteRange,
+) -> Result<Response, ApiError> {
+    let mut file = File::open(path).await.map_err(|err| match err.kind() {
+        std::io::ErrorKind::NotFound => ApiError::NotFound,
+        _ => ApiError::Internal,
+    })?;
+
+    file.seek(SeekFrom::Start(range.start))
+        .await
+        .map_err(|_| ApiError::Internal)?;
+
+    let len = range.len();
+
+    Ok(Response::builder()
+        .status(StatusCode::PARTIAL_CONTENT)
+        .header(ACCEPT_RANGES, "bytes")
+        .header(CONTENT_TYPE, "application/octet-stream")
+        .header(
+            CONTENT_RANGE,
+            format!("bytes {}-{}/{}", range.start, range.end, size),
+        )
+        .header(CONTENT_LENGTH, len)
+        .header(ETAG, etag)
+        .body(Body::from_stream(ReaderStream::new(file.take(len))))
+        .map_err(|_| ApiError::Internal)?
+        .into_response())
+}
+
+async fn serve_multi_range(
+    path: &PathBuf,
+    size: u64,
+    etag: HeaderValue,
+    ranges: Vec<ResolvedByteRange>,
+) -> Result<Response, ApiError> {
+    let boundary = make_boundary();
+    let content_type = format!("multipart/byteranges; boundary={boundary}");
+
+    let path = path.clone();
+    let boundary_stream = boundary.clone();
+    let stream = try_stream! {
+        for range in ranges {
+            let header = format!(
+                "--{boundary_stream}\r\nContent-Type: application/octet-stream\r\nContent-Range: bytes {start}-{end}/{size}\r\n\r\n",
+                start = range.start,
+                end = range.end,
+                size = size,
+            );
+            yield Bytes::from(header);
+
+            let mut file = File::open(&path).await?;
+            file.seek(SeekFrom::Start(range.start)).await?;
+            let mut reader_stream = ReaderStream::new(file.take(range.len()));
+            while let Some(chunk) = reader_stream.next().await {
+                yield chunk?;
+            }
+            yield Bytes::from_static(b"\r\n");
+        }
+        yield Bytes::from(format!("--{boundary_stream}--\r\n"));
+    };
+    let stream: Pin<Box<dyn futures_core::Stream<Item = Result<Bytes, std::io::Error>> + Send>> =
+        Box::pin(stream);
+
+    Ok(Response::builder()
+        .status(StatusCode::PARTIAL_CONTENT)
+        .header(ACCEPT_RANGES, "bytes")
+        .header(CONTENT_TYPE, content_type)
+        .header(ETAG, etag)
+        .body(Body::from_stream(stream))
+        .map_err(|_| ApiError::Internal)?
+        .into_response())
+}
 
 async fn resolve_disk_path(
     cfg: &Config,
@@ -576,29 +762,6 @@ fn compute_etag(metadata: &std::fs::Metadata) -> HeaderValue {
     HeaderValue::from_str(&tag).unwrap_or_else(|_| HeaderValue::from_static("W/\"0-0\""))
 }
 
-#[derive(Debug)]
-enum RangeParseError {
-    Invalid,
-    Unsatisfiable,
-}
-
-fn parse_single_range(header_value: &str, size: u64) -> Result<Option<(u64, u64)>, RangeParseError> {
-    let header_value = header_value.trim();
-    if header_value.is_empty() {
-        return Ok(None);
-    }
-
-    let specs = aero_http_range::parse_range_header(header_value).map_err(|_| RangeParseError::Invalid)?;
-    if specs.len() != 1 {
-        return Err(RangeParseError::Invalid);
-    }
-
-    let resolved = aero_http_range::resolve_ranges(&specs, size, false)
-        .map_err(|_| RangeParseError::Unsatisfiable)?;
-    let r = resolved[0];
-    Ok(Some((r.start, r.end)))
-}
-
 fn range_not_satisfiable_response(size: u64) -> Response {
     let resp = Response::builder()
         .status(StatusCode::RANGE_NOT_SATISFIABLE)
@@ -608,6 +771,15 @@ fn range_not_satisfiable_response(size: u64) -> Response {
         .body(Body::empty())
         .unwrap_or_else(|_| StatusCode::RANGE_NOT_SATISFIABLE.into_response());
     resp
+}
+
+fn payload_too_large_response() -> Response {
+    Response::builder()
+        .status(StatusCode::PAYLOAD_TOO_LARGE)
+        .header(ACCEPT_RANGES, "bytes")
+        .header(CONTENT_LENGTH, "0")
+        .body(Body::empty())
+        .unwrap_or_else(|_| StatusCode::PAYLOAD_TOO_LARGE.into_response())
 }
 
 #[cfg(test)]
@@ -638,6 +810,8 @@ mod tests {
             cors_allowed_origins: AllowedOrigins::List(allowed),
             corp_policy: CorpPolicy::SameSite,
             lease_ttl: Duration::from_secs(60),
+            max_ranges: 16,
+            max_total_bytes: 512 * 1024 * 1024,
         }
     }
 
@@ -711,11 +885,7 @@ mod tests {
             "same-site"
         );
         assert_eq!(
-            resp.headers()
-                .get(CONTENT_RANGE)
-                .unwrap()
-                .to_str()
-                .unwrap(),
+            resp.headers().get(CONTENT_RANGE).unwrap().to_str().unwrap(),
             "bytes 1-3/6"
         );
         assert_eq!(
@@ -731,6 +901,134 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(&body[..], b"bcd");
+    }
+
+    #[tokio::test]
+    async fn head_range_206_has_headers_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+
+        let app = app(cfg);
+        let req = Request::builder()
+            .method(Method::HEAD)
+            .uri("/disk/win7")
+            .header(RANGE, "bytes=1-3")
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resp.headers().get(CONTENT_RANGE).unwrap().to_str().unwrap(),
+            "bytes 1-3/6"
+        );
+        assert_eq!(
+            resp.headers()
+                .get(CONTENT_LENGTH)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "3"
+        );
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn multi_range_returns_multipart_206() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+
+        let app = app(cfg);
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/win7")
+            .header(RANGE, "bytes=0-0,2-2")
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+
+        let content_type = resp
+            .headers()
+            .get(CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(content_type.starts_with("multipart/byteranges; boundary="));
+        let boundary = content_type.split("boundary=").nth(1).unwrap();
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        let expected = format!(
+            "--{b}\r\nContent-Type: application/octet-stream\r\nContent-Range: bytes 0-0/6\r\n\r\na\r\n--{b}\r\nContent-Type: application/octet-stream\r\nContent-Range: bytes 2-2/6\r\n\r\nc\r\n--{b}--\r\n",
+            b = boundary
+        );
+        assert_eq!(body_str, expected);
+    }
+
+    #[tokio::test]
+    async fn multi_range_abuse_guard_returns_413() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let mut cfg = test_config(public_dir.clone(), private_dir);
+        cfg.max_ranges = 1;
+
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+
+        let app = app(cfg);
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/win7")
+            .header(RANGE, "bytes=0-0,2-2")
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn max_total_bytes_guard_returns_413() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let mut cfg = test_config(public_dir.clone(), private_dir);
+        cfg.max_total_bytes = 2;
+
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+
+        let app = app(cfg);
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/win7")
+            .header(RANGE, "bytes=0-2")
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[tokio::test]
@@ -762,11 +1060,7 @@ mod tests {
             "same-site"
         );
         assert_eq!(
-            resp.headers()
-                .get(CONTENT_RANGE)
-                .unwrap()
-                .to_str()
-                .unwrap(),
+            resp.headers().get(CONTENT_RANGE).unwrap().to_str().unwrap(),
             "bytes */6"
         );
     }
@@ -968,10 +1262,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_single_range_tolerates_whitespace() {
+    fn parse_range_header_tolerates_whitespace() {
+        let specs = parse_range_header("bytes =\t 1 - 3").unwrap();
+        let resolved = resolve_ranges(&specs, 10, false).unwrap();
         assert_eq!(
-            parse_single_range("bytes =\t 1 - 3", 10).unwrap(),
-            Some((1, 3))
+            resolved,
+            vec![ResolvedByteRange {
+                start: 1,
+                end: 3
+            }]
         );
     }
 }

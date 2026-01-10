@@ -4,7 +4,7 @@ An authenticated, HTTP Range-capable disk-image gateway intended for the browser
 
 This server is a **reference implementation** for deployments that need:
 
-- Efficient random-access reads via `Range: bytes=start-end` (single range).
+- Efficient random-access reads via `Range: bytes=start-end` (single + multipart multi-range).
 - Public and private images on local filesystem.
 - Short-lived signed “disk access lease” tokens (JWT HS256).
 - Correct CORS preflights (including `Range` + `Authorization`).
@@ -25,6 +25,10 @@ export DISK_GATEWAY_CORS_ALLOWED_ORIGINS='http://localhost:5173'
 
 # CORP policy for /disk/* responses: "same-site" (default) or "cross-origin"
 export DISK_GATEWAY_CORP='same-site'
+
+# Multi-range abuse guards (defaults shown).
+export DISK_GATEWAY_MAX_RANGES=16
+export DISK_GATEWAY_MAX_TOTAL_BYTES=$((512 * 1024 * 1024))  # 512 MiB
 
 cargo run
 ```
@@ -60,10 +64,12 @@ Warning: `X-Debug-User` is **not production auth**. Replace this with real authe
 
 ### `GET /disk/{id}` (bytes)
 
-- Supports `Range: bytes=start-end` (single range only).
+- Supports `Range: bytes=start-end` and multipart multi-range (`bytes=0-0,2-2`).
 - Returns `206 Partial Content` with correct `Content-Range` when Range is present.
 - Returns `416 Range Not Satisfiable` with `Content-Range: bytes */<size>` for invalid/unsatisfiable ranges.
+- Returns `413 Payload Too Large` when multi-range limits are exceeded (`DISK_GATEWAY_MAX_RANGES`, `DISK_GATEWAY_MAX_TOTAL_BYTES`).
 - Sets `Accept-Ranges: bytes`, `Content-Length`, and a weak `ETag`.
+- Sets `Cache-Control: no-transform` to prevent intermediaries from applying compression to raw disk bytes.
 
 Private images require a valid lease token:
 
