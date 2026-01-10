@@ -69,6 +69,27 @@ describe("getStorageEstimate", () => {
     expect(estimate.remainingBytes).toBe(0);
     expect(estimate.warning).toBe(false);
   });
+
+  it("treats estimate() failures as supported-but-unavailable", async () => {
+    stubNavigator({
+      storage: {
+        estimate: async () => {
+          throw new Error("blocked");
+        },
+      },
+    });
+
+    const estimate = await getStorageEstimate();
+
+    expect(estimate).toEqual({
+      supported: true,
+      usageBytes: null,
+      quotaBytes: null,
+      usagePercent: null,
+      remainingBytes: null,
+      warning: false,
+    });
+  });
 });
 
 describe("persistent storage", () => {
@@ -120,6 +141,33 @@ describe("persistent storage", () => {
       storage: {
         persisted: async () => false,
         persist: async () => false,
+      },
+    });
+
+    const ensured = await ensurePersistentStorage();
+    expect(ensured).toEqual({ supported: true, persisted: false, granted: false });
+  });
+
+  it("treats persisted() failures as supported-but-unknown", async () => {
+    stubNavigator({
+      storage: {
+        persisted: async () => {
+          throw new Error("blocked");
+        },
+      },
+    });
+
+    const info = await getPersistentStorageInfo();
+    expect(info).toEqual({ supported: true, persisted: null });
+  });
+
+  it("treats persist() failures as denied", async () => {
+    stubNavigator({
+      storage: {
+        persisted: async () => false,
+        persist: async () => {
+          throw new Error("blocked");
+        },
       },
     });
 

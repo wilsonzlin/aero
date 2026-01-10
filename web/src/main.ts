@@ -836,7 +836,7 @@ function renderOpfsPanel(): HTMLElement {
   const panel = el(
     "div",
     { class: "panel" },
-    el("h2", { text: "OPFS (disk image import)" }),
+    el("h2", { text: "Disk Images" }),
     el("h3", { text: "Quota & durability" }),
     el("div", { class: "row" }, refreshButton, requestPersistenceButton),
     quotaLine,
