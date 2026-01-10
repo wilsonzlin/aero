@@ -78,6 +78,7 @@ Modern browsers gate **WebAssembly threads** and **SharedArrayBuffer** behind **
 - `globalThis.crossOriginIsolated` must be `true`
 - `SharedArrayBuffer` must be defined
 - `Atomics` must be available
+- Creating a shared wasm memory must succeed (feature-test via `new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true })`)
 
 Serve the **top-level HTML document** and all app-owned **JS / worker scripts / `.wasm` responses** with:
 
