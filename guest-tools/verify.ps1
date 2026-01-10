@@ -413,7 +413,46 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         [void]$sb.Append($report.overall.summary + $nl)
     }
 
-    foreach ($key in @("os","guest_tools_manifest","guest_tools_setup_state","kb3033929","certificate_store","signature_mode","driver_packages","bound_devices","device_binding_storage","device_binding_network","device_binding_graphics","device_binding_audio","device_binding_input","virtio_blk_service","virtio_blk_boot_critical","smoke_disk","smoke_network","smoke_graphics","smoke_audio","smoke_input")) {
+    $orderedKeys = @(
+        "os",
+        "guest_tools_manifest",
+        "guest_tools_setup_state",
+        "guest_tools_config",
+        "kb3033929",
+        "certificate_store",
+        "signature_mode",
+        "driver_packages",
+        "bound_devices",
+        "device_binding_storage",
+        "device_binding_network",
+        "device_binding_graphics",
+        "device_binding_audio",
+        "device_binding_input",
+        "virtio_blk_service",
+        "virtio_blk_boot_critical",
+        "smoke_disk",
+        "smoke_network",
+        "smoke_graphics",
+        "smoke_audio",
+        "smoke_input"
+    )
+
+    $nonPass = @()
+    foreach ($key in $orderedKeys) {
+        if (-not $report.checks.ContainsKey($key)) { continue }
+        $chk = $report.checks[$key]
+        if ($chk.status -ne "PASS") {
+            $nonPass += ($chk.status + " - " + $chk.title + " (" + $key + "): " + $chk.summary)
+        }
+    }
+    if ($nonPass.Count -gt 0) {
+        [void]$sb.Append($nl + "== Summary (non-PASS checks) ==$nl")
+        foreach ($line in $nonPass) {
+            [void]$sb.Append("  - " + $line + $nl)
+        }
+    }
+
+    foreach ($key in $orderedKeys) {
         if (-not $report.checks.ContainsKey($key)) { continue }
         $chk = $report.checks[$key]
         [void]$sb.Append($nl)
@@ -483,7 +522,7 @@ $report = @{
     schema_version = 1
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "1.8.0"
+        version = "1.9.0"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -659,6 +698,47 @@ try {
     Add-Check "guest_tools_setup_state" "Guest Tools Setup State" $st $sum $data $det
 } catch {
     Add-Check "guest_tools_setup_state" "Guest Tools Setup State" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
+# --- Guest Tools config (config\devices.cmd) ---
+try {
+    $cfgStatus = "PASS"
+    $cfgSummary = ""
+    $cfgDetails = @()
+
+    if (-not $gtConfig.found) {
+        $cfgStatus = "WARN"
+        $cfgSummary = "config\\devices.cmd not found; some storage/device binding checks will be heuristic-only."
+    } elseif ($gtConfig.exit_code -ne 0) {
+        $cfgStatus = "WARN"
+        $cfgSummary = "config\\devices.cmd exists but could not be loaded via cmd.exe (exit code " + $gtConfig.exit_code + ")."
+    } else {
+        $cfgSummary = "Loaded config\\devices.cmd (AERO_* variables: " + $gtConfig.vars.Count + ")"
+        if (-not $cfgVirtioBlkService) {
+            $cfgStatus = "WARN"
+            $cfgDetails += "AERO_VIRTIO_BLK_SERVICE is not set."
+        }
+        if (-not $cfgVirtioBlkHwids -or $cfgVirtioBlkHwids.Count -eq 0) {
+            $cfgStatus = "WARN"
+            $cfgDetails += "AERO_VIRTIO_BLK_HWIDS is not set."
+        }
+        if ($cfgVirtioBlkService) { $cfgDetails += "AERO_VIRTIO_BLK_SERVICE=" + $cfgVirtioBlkService }
+        if ($cfgVirtioBlkHwids -and $cfgVirtioBlkHwids.Count -gt 0) { $cfgDetails += "AERO_VIRTIO_BLK_HWIDS=" + ($cfgVirtioBlkHwids -join ", ") }
+        if ($cfgVirtioNetHwids -and $cfgVirtioNetHwids.Count -gt 0) { $cfgDetails += "AERO_VIRTIO_NET_HWIDS=" + ($cfgVirtioNetHwids -join ", ") }
+        if ($cfgVirtioSndHwids -and $cfgVirtioSndHwids.Count -gt 0) { $cfgDetails += "AERO_VIRTIO_SND_HWIDS=" + ($cfgVirtioSndHwids -join ", ") }
+        if ($cfgVirtioInputHwids -and $cfgVirtioInputHwids.Count -gt 0) { $cfgDetails += "AERO_VIRTIO_INPUT_HWIDS=" + ($cfgVirtioInputHwids -join ", ") }
+        if ($cfgGpuHwids -and $cfgGpuHwids.Count -gt 0) { $cfgDetails += "AERO_GPU_HWIDS=" + ($cfgGpuHwids -join ", ") }
+    }
+
+    $data = @{
+        config_file = $gtConfig.file_path
+        config_found = $gtConfig.found
+        config_exit_code = $gtConfig.exit_code
+        vars = $gtConfig.vars
+    }
+    Add-Check "guest_tools_config" "Guest Tools Config (devices.cmd)" $cfgStatus $cfgSummary $data $cfgDetails
+} catch {
+    Add-Check "guest_tools_config" "Guest Tools Config (devices.cmd)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
 # --- Hotfix: KB3033929 (SHA-256 signature support) ---
