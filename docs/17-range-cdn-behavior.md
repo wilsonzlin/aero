@@ -100,6 +100,9 @@ The origin must return correct `206` responses when given `Range: bytes=...`, in
 - `Accept-Ranges: bytes` (strongly recommended)
 - `Content-Range: bytes START-END/TOTAL`
 - A stable validator (`ETag` is ideal)
+- A concrete length (`Content-Length`) for the returned range
+
+**CloudFront gotcha:** AWS documents that if the viewer makes a `Range GET` request and the origin responds with `Transfer-Encoding: chunked`, CloudFront can return the **entire object** instead of the requested range. For disk images, ensure your origin always sets `Content-Length` on `206` responses and does not use chunked transfer encoding.
 
 For maximum CDN compatibility, clients should send **a single byte range per request** (avoid multipart `Range: bytes=a-b,c-d`).
 
