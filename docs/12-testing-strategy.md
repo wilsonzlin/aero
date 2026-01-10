@@ -809,6 +809,25 @@ cargo test -p conformance --test conformance -- --nocapture
 CI runs a fast subset on PRs and a larger corpus on a schedule via
 `.github/workflows/conformance.yml`.
 
+In addition, `tools/qemu_diff/` provides a **CI-friendly differential harness** that compares Aero
+execution against QEMU on synthetic 16-bit snippets (no QEMU/GPL code shipped; QEMU is an external
+tool invoked by tests).
+
+- `tools/qemu_diff/` builds a tiny bootable floppy image and runs it under an external
+  `qemu-system-*` binary.
+- `crates/aero_cpu_core` contains snippet runners that execute under the tier-0 engine (both a
+  single-step path and a batch path) and compares results against QEMU.
+
+Run locally:
+
+```bash
+# Tier-0 batch vs tier-0 single-step equivalence (always runs)
+cargo test -p aero_cpu_core
+
+# Differential tests vs QEMU (skips if QEMU is not installed)
+cargo test -p aero_cpu_core --features qemu-diff
+```
+
 ```rust
 /// Compare Aero execution against a reference backend (e.g. native host execution or QEMU)
 #[test]

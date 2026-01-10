@@ -59,6 +59,7 @@ members = [
     "crates/aero-wasm",
     "crates/nt-packetlib",
     "tools/bcd_patch",
+    "tools/qemu_diff",
     "crates/virtio-gpu-proto",
     "crates/vm",
     "backend/aero-gateway",

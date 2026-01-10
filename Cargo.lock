@@ -526,6 +526,7 @@ dependencies = [
  "aero-perf",
  "aero_x86",
  "criterion",
+ "qemu_diff",
 ]
 
 [[package]]
@@ -3328,6 +3329,10 @@ checksum = "7186d3822593aa4393561d186d1393b3923e9d6163d3fbfd6e825e3e6cf3e6a8"
 dependencies = [
  "num-traits",
 ]
+
+[[package]]
+name = "qemu_diff"
+version = "0.1.0"
 
 [[package]]
 name = "quick-error"

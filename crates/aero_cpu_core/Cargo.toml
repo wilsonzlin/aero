@@ -4,9 +4,14 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[features]
+default = []
+qemu-diff = ["dep:qemu_diff"]
+
 [dependencies]
 aero_x86 = { path = "../aero_x86" }
 aero-perf = { path = "../aero-perf" }
+qemu_diff = { path = "../../tools/qemu_diff", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"

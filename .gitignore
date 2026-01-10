@@ -110,6 +110,10 @@ bench-results/
 *.ova
 *.ovf
 
+# qemu_diff boot sector build byproducts (boot.bin is committed)
+tools/qemu_diff/boot/boot.o
+tools/qemu_diff/boot/boot.elf
+
 # Local disk image directory used by `aero-storage-server` docker compose setups.
 # Keep the directory itself tracked via `images/.gitkeep`.
 /images/*
