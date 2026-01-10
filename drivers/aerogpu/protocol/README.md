@@ -59,6 +59,7 @@ The key MMIO responsibilities are:
    - Completed fence value in MMIO and optionally a shared fence page.
 4. **Display output**
    - Scanout0 configuration (width/height/format/pitch/framebuffer GPA).
+   - Optional vblank timing registers + vblank IRQ (required for Win7 DWM pacing when `AEROGPU_FEATURE_VBLANK` is set; see `vblank.md`).
    - Cursor configuration is reserved and feature-gated.
 
 See `aerogpu_pci.h` for exact offsets and bit definitions.

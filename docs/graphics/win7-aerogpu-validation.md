@@ -259,6 +259,12 @@ If vblank delivery is broken, common symptoms:
 - DWM times out and disables Aero (Basic theme).
 - Present calls block forever (if you wait on an event that never fires).
 
+For the concrete “minimal contract” and a recommended device/emulator model, see:
+* `docs/graphics/win7-vblank-present-requirements.md`
+
+For a quick guest-side sanity check that DWM is actually pacing (not spinning and not stalling), run:
+* `drivers/aerogpu/tests/win7/dwm_flush_pacing`
+
 ### 3.1 Recommended options (ranked by bring-up stability)
 
 #### Option 1 — Fake periodic vblank IRQ (best for stability)
@@ -410,4 +416,3 @@ If you’re unsure what to implement first, aim for this minimal set:
 5. `aerogpu_dbgctl dump fences/ring/vblank` works even after a failure.
 
 Once this recipe is stable, expand: more modes, more features, better pacing accuracy, and higher throughput.
-
