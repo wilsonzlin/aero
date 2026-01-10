@@ -319,6 +319,19 @@ function Get-WingetExe {
   return $null
 }
 
+function Test-IsAdministrator {
+  [CmdletBinding()]
+  param()
+
+  try {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
+  } catch {
+    return $false
+  }
+}
+
 function Invoke-ExternalCommand {
   [CmdletBinding()]
   param(
@@ -334,13 +347,43 @@ function Invoke-ExternalCommand {
   }) -join ' '
 
   Write-ToolchainLog -Message "Running: $FilePath $prettyArgs"
-  $proc = Start-Process -FilePath $FilePath -ArgumentList $Arguments -NoNewWindow -Wait -PassThru
-  if ($proc.ExitCode -ne 0) {
-    $hint = ''
-    if (-not [string]::IsNullOrWhiteSpace($FailureHint)) {
-      $hint = "`n`n$FailureHint"
+
+  $stdoutFile = [System.IO.Path]::GetTempFileName()
+  $stderrFile = [System.IO.Path]::GetTempFileName()
+
+  try {
+    $proc = Start-Process `
+      -FilePath $FilePath `
+      -ArgumentList $Arguments `
+      -NoNewWindow `
+      -Wait `
+      -PassThru `
+      -RedirectStandardOutput $stdoutFile `
+      -RedirectStandardError $stderrFile
+
+    if ($proc.ExitCode -ne 0) {
+      $stdout = Get-Content -LiteralPath $stdoutFile -Raw -ErrorAction SilentlyContinue
+      $stderr = Get-Content -LiteralPath $stderrFile -Raw -ErrorAction SilentlyContinue
+
+      $details = @()
+      if (-not [string]::IsNullOrWhiteSpace($stdout)) { $details += "stdout:`n$stdout" }
+      if (-not [string]::IsNullOrWhiteSpace($stderr)) { $details += "stderr:`n$stderr" }
+
+      $hint = ''
+      if (-not [string]::IsNullOrWhiteSpace($FailureHint)) {
+        $hint = "`n`n$FailureHint"
+      }
+
+      $detailText = ''
+      if ($details.Count -gt 0) {
+        $detailText = "`n`n" + ($details -join "`n`n")
+      }
+
+      throw "Command failed with exit code $($proc.ExitCode): $FilePath $prettyArgs$detailText$hint"
     }
-    throw "Command failed with exit code $($proc.ExitCode): $FilePath $prettyArgs$hint"
+  } finally {
+    Remove-Item -LiteralPath $stdoutFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $stderrFile -Force -ErrorAction SilentlyContinue
   }
 }
 
@@ -364,27 +407,53 @@ Remediation:
 "@
   }
 
-  $args = @(
+  $baseArgs = @(
     'install',
     '--id', $WingetId,
     '--exact',
     '--source', 'winget',
     '--accept-source-agreements',
     '--accept-package-agreements',
-    '--silent',
-    '--disable-interactivity',
-    '--force'
+    '--silent'
+  )
+
+  $flagSets = @(
+    @('--disable-interactivity', '--force'),
+    @('--disable-interactivity'),
+    @('--force'),
+    @()
   )
 
   if (-not [string]::IsNullOrWhiteSpace($WingetVersion)) {
-    $args += @('--version', $WingetVersion)
+    $baseArgs += @('--version', $WingetVersion)
   }
 
-  Invoke-ExternalCommand -FilePath $winget -Arguments $args -FailureHint @"
+  foreach ($flags in $flagSets) {
+    $args = @($baseArgs + $flags)
+    try {
+      Invoke-ExternalCommand -FilePath $winget -Arguments $args -FailureHint @"
 If this keeps failing on a CI runner, check whether the winget package ID/version has changed.
 You can inspect available versions with:
   winget show --id $WingetId --versions
 "@
+      return
+    } catch {
+      $message = $_.Exception.Message
+
+      $unknownForce = $message -match '(?i)(unknown|unrecognized).*(--force)'
+      $unknownDisable = $message -match '(?i)(unknown|unrecognized).*(--disable-interactivity)'
+
+      # If the failure is clearly due to an unsupported flag, try the next reduced flag set.
+      if ($unknownForce -or $unknownDisable) {
+        Write-ToolchainLog -Level WARN -Message "winget does not support one or more flags ($($flags -join ' ')); retrying with fewer flags."
+        continue
+      }
+
+      throw
+    }
+  }
+
+  throw "winget install failed for $WingetId with all supported flag combinations."
 }
 
 function Ensure-WindowsKitToolchain {
@@ -411,6 +480,16 @@ function Ensure-WindowsKitToolchain {
   $missing = @()
   if ($needsWdk) { $missing += 'Inf2Cat.exe (WDK)' }
   if ($needsSdk) { $missing += 'signtool.exe (Windows SDK)' }
+
+  if (-not (Test-IsAdministrator)) {
+    throw @"
+Windows driver tooling is missing ($($missing -join ', ')), but this process is not running with Administrator privileges.
+
+Remediation:
+  - Re-run this script in an elevated PowerShell (Run as Administrator), or
+  - Install the Windows SDK/WDK manually.
+"@
+  }
 
   Write-ToolchainLog -Level WARN -Message "Required Windows Kits tooling not found ($($missing -join ', ')). Attempting to install via winget..."
 
