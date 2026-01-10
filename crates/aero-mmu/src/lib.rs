@@ -26,6 +26,96 @@ pub trait MemoryBus {
     fn write_u64(&mut self, paddr: u64, value: u64);
 }
 
+/// Enable use of [`memory::MemoryBus`] (the emulator's physical bus trait) as the MMU
+/// page-walk backend.
+#[cfg(feature = "memory-bus")]
+impl<T: memory::MemoryBus + ?Sized> MemoryBus for T {
+    #[inline]
+    fn read_u8(&mut self, paddr: u64) -> u8 {
+        memory::MemoryBus::read_u8(self, paddr)
+    }
+
+    #[inline]
+    fn read_u16(&mut self, paddr: u64) -> u16 {
+        memory::MemoryBus::read_u16(self, paddr)
+    }
+
+    #[inline]
+    fn read_u32(&mut self, paddr: u64) -> u32 {
+        memory::MemoryBus::read_u32(self, paddr)
+    }
+
+    #[inline]
+    fn read_u64(&mut self, paddr: u64) -> u64 {
+        memory::MemoryBus::read_u64(self, paddr)
+    }
+
+    #[inline]
+    fn write_u8(&mut self, paddr: u64, value: u8) {
+        memory::MemoryBus::write_u8(self, paddr, value)
+    }
+
+    #[inline]
+    fn write_u16(&mut self, paddr: u64, value: u16) {
+        memory::MemoryBus::write_u16(self, paddr, value)
+    }
+
+    #[inline]
+    fn write_u32(&mut self, paddr: u64, value: u32) {
+        memory::MemoryBus::write_u32(self, paddr, value)
+    }
+
+    #[inline]
+    fn write_u64(&mut self, paddr: u64, value: u64) {
+        memory::MemoryBus::write_u64(self, paddr, value)
+    }
+}
+
+/// Enable use of [`aero_mem::MemoryBus`] (the new shared physical address router) as the MMU
+/// page-walk backend.
+#[cfg(feature = "aero-mem-bus")]
+impl MemoryBus for aero_mem::MemoryBus {
+    #[inline]
+    fn read_u8(&mut self, paddr: u64) -> u8 {
+        (&*self).read_u8(paddr)
+    }
+
+    #[inline]
+    fn read_u16(&mut self, paddr: u64) -> u16 {
+        (&*self).read_u16(paddr)
+    }
+
+    #[inline]
+    fn read_u32(&mut self, paddr: u64) -> u32 {
+        (&*self).read_u32(paddr)
+    }
+
+    #[inline]
+    fn read_u64(&mut self, paddr: u64) -> u64 {
+        (&*self).read_u64(paddr)
+    }
+
+    #[inline]
+    fn write_u8(&mut self, paddr: u64, value: u8) {
+        (&*self).write_u8(paddr, value)
+    }
+
+    #[inline]
+    fn write_u16(&mut self, paddr: u64, value: u16) {
+        (&*self).write_u16(paddr, value)
+    }
+
+    #[inline]
+    fn write_u32(&mut self, paddr: u64, value: u32) {
+        (&*self).write_u32(paddr, value)
+    }
+
+    #[inline]
+    fn write_u64(&mut self, paddr: u64, value: u64) {
+        (&*self).write_u64(paddr, value)
+    }
+}
+
 /// Type of memory access being translated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessType {

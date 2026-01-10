@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+memory = { path = "../memory", optional = true }
+aero-mem = { path = "../aero-mem", optional = true }
 
 [dev-dependencies]
 
+[features]
+default = []
+memory-bus = ["dep:memory"]
+aero-mem-bus = ["dep:aero-mem"]

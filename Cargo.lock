@@ -215,6 +215,10 @@ dependencies = [
 [[package]]
 name = "aero-mmu"
 version = "0.1.0"
+dependencies = [
+ "aero-mem",
+ "memory",
+]
 
 [[package]]
 name = "aero-net"
