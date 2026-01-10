@@ -73,6 +73,14 @@ Notes:
 
 - `.pem` files may contain multiple `BEGIN CERTIFICATE` blocks; the script injects **all** of them.
 - `.pfx` files may contain multiple certificates; the script injects **all unique thumbprints** found.
+- Customize which LocalMachine certificate stores are populated (default is `ROOT,TrustedPublisher`):
+
+```powershell
+.\scripts\patch-win7-media.ps1 `
+  -IsoRoot 'C:\win7-iso' `
+  -CertPath 'C:\path\to\aero-test.cer' `
+  -CertStores ROOT,TrustedPublisher,TrustedPeople
+```
 
 ---
 
