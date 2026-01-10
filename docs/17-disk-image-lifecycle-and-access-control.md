@@ -81,15 +81,16 @@ The hosted service can accept multiple formats for user convenience, but should 
 
 For a hosted system, store images in object storage as **immutable objects** (even for “writable” disks; see writeback strategies). The one common exception is an **empty “zero disk” base**, which can be represented without pre-uploading gigabytes of zeros (e.g., by synthesizing zeros in the streaming endpoint, or by using a sparse/chunked representation).
 
-Each image record should point to at least one underlying blob:
+Each image record should point to at least one underlying storage location:
 
-- `canonicalObjectKey`: the blob the browser will stream (must support `Range`).
+- `canonicalObjectKey`: the canonical bytes object for the image (raw disk or ISO).
+- Optional: `chunkedManifestObjectKey` (and `chunkedChunksPrefix`): precomputed chunked delivery artifacts (see [Chunked Disk Image Format](./18-chunked-disk-image-format.md)).
 - Optional: `sourceObjectKey`: the original uploaded file, retained for debugging/audit or re-conversion.
 
-Canonical blob requirements:
-- Must support `GET` + `Range: bytes=...` with stable `Content-Length`.
-- Must not require whole-object downloads to read small ranges.
-- Prefer no compression that breaks random access (or use chunked formats where each chunk is independently ranged).
+Delivery requirements (random access in the browser):
+- **Range delivery:** the disk-bytes endpoint MUST support `GET` + `Range: bytes=...` with stable `Content-Length` (see [Disk Image Streaming](./16-disk-image-streaming-auth.md)).
+- **Chunked delivery (optional):** alternatively, the service MAY serve read-only base images via a manifest + fixed-size chunk objects (see [Chunked Disk Image Format](./18-chunked-disk-image-format.md)).
+- In either case, avoid compression/transforms that break deterministic offsets (see the streaming/auth spec for required headers).
 
 ---
 

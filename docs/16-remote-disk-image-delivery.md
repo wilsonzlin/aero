@@ -13,6 +13,8 @@ This document defines the **production contract** for the `remote_url` used by `
 
 For the normative auth + CORS + COOP/COEP behavior of the disk bytes endpoint, see: [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md).
 
+If you want a CDN-friendlier alternative that avoids `Range` (and therefore avoids `Range`-triggered CORS preflight in cross-origin deployments), see: [Chunked Disk Image Format](./18-chunked-disk-image-format.md).
+
 ## Reference infrastructure in this repo
 
 - Local development (MinIO + optional reverse proxy for edge/CORS emulation):
