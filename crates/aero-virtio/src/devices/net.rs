@@ -12,8 +12,7 @@ pub const VIRTIO_NET_F_MAC: u64 = 1 << 5;
 pub const VIRTIO_NET_F_HOST_TSO4: u64 = 1 << 11;
 pub const VIRTIO_NET_F_HOST_TSO6: u64 = 1 << 12;
 pub const VIRTIO_NET_F_HOST_ECN: u64 = 1 << 13;
-
-const VIRTIO_NET_HDR_LEN: usize = VirtioNetHdr::LEN;
+pub const VIRTIO_NET_F_MRG_RXBUF: u64 = 1 << 15;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VirtioNetOffloadConfig {
@@ -86,7 +85,8 @@ impl<B: NetBackend + 'static> VirtioDevice for VirtioNet<B> {
         let mut features = VIRTIO_F_VERSION_1
             | VIRTIO_F_RING_INDIRECT_DESC
             | VIRTIO_F_RING_EVENT_IDX
-            | VIRTIO_NET_F_MAC;
+            | VIRTIO_NET_F_MAC
+            | VIRTIO_NET_F_MRG_RXBUF;
 
         if !self.offload_config.disable_offloads {
             features |= VIRTIO_NET_F_CSUM
@@ -162,6 +162,14 @@ impl<B: NetBackend + 'static> VirtioDevice for VirtioNet<B> {
 }
 
 impl<B: NetBackend> VirtioNet<B> {
+    fn negotiated_hdr_len(&self) -> usize {
+        if (self.negotiated_features & VIRTIO_NET_F_MRG_RXBUF) != 0 {
+            VirtioNetHdr::LEN
+        } else {
+            VirtioNetHdr::BASE_LEN
+        }
+    }
+
     fn process_tx(
         &mut self,
         chain: DescriptorChain,
@@ -173,7 +181,8 @@ impl<B: NetBackend> VirtioNet<B> {
             return Err(VirtioDeviceError::BadDescriptorChain);
         }
 
-        let mut hdr_bytes = [0u8; VIRTIO_NET_HDR_LEN];
+        let hdr_len = self.negotiated_hdr_len();
+        let mut hdr_bytes = [0u8; VirtioNetHdr::LEN];
         let mut hdr_written = 0usize;
         let mut packet = Vec::new();
 
@@ -185,8 +194,8 @@ impl<B: NetBackend> VirtioNet<B> {
                 .get_slice(d.addr, d.len as usize)
                 .map_err(|_| VirtioDeviceError::IoError)?;
 
-            if hdr_written < VIRTIO_NET_HDR_LEN {
-                let take = (VIRTIO_NET_HDR_LEN - hdr_written).min(slice.len());
+            if hdr_written < hdr_len {
+                let take = (hdr_len - hdr_written).min(slice.len());
                 hdr_bytes[hdr_written..hdr_written + take].copy_from_slice(&slice[..take]);
                 hdr_written += take;
                 slice = &slice[take..];
@@ -195,11 +204,12 @@ impl<B: NetBackend> VirtioNet<B> {
             packet.extend_from_slice(slice);
         }
 
-        if hdr_written != VIRTIO_NET_HDR_LEN {
+        if hdr_written != hdr_len {
             return Err(VirtioDeviceError::BadDescriptorChain);
         }
 
-        let hdr = VirtioNetHdr::from_bytes_le(hdr_bytes);
+        let hdr =
+            VirtioNetHdr::from_slice_le(&hdr_bytes[..hdr_len]).ok_or(VirtioDeviceError::BadDescriptorChain)?;
         if self.offload_config.disable_offloads
             && (hdr.needs_csum() || hdr.gso_type_base() != net_offload::VIRTIO_NET_HDR_GSO_NONE)
         {
@@ -257,6 +267,17 @@ impl<B: NetBackend> VirtioNet<B> {
         mem: &mut dyn GuestMemory,
     ) -> Result<bool, VirtioDeviceError> {
         let mut need_irq = false;
+        let hdr_len = self.negotiated_hdr_len();
+        let header_bytes = VirtioNetHdr {
+            flags: 0,
+            gso_type: 0,
+            hdr_len: 0,
+            gso_size: 0,
+            csum_start: 0,
+            csum_offset: 0,
+            num_buffers: if hdr_len == VirtioNetHdr::LEN { 1 } else { 0 },
+        }
+        .to_bytes_le();
 
         while let Some(chain) = self.rx_buffers.pop_front() {
             let Some(pkt) = self.backend.poll_receive() else {
@@ -275,7 +296,7 @@ impl<B: NetBackend> VirtioNet<B> {
             }
 
             let mut written = 0usize;
-            let mut remaining_header = VIRTIO_NET_HDR_LEN;
+            let mut header_off = 0usize;
             let mut remaining_pkt = pkt.as_slice();
 
             for d in descs {
@@ -283,10 +304,10 @@ impl<B: NetBackend> VirtioNet<B> {
                     .get_slice_mut(d.addr, d.len as usize)
                     .map_err(|_| VirtioDeviceError::IoError)?;
                 let mut off = 0usize;
-                if remaining_header != 0 {
-                    let take = remaining_header.min(dst.len());
-                    dst[..take].fill(0);
-                    remaining_header -= take;
+                if header_off < hdr_len {
+                    let take = (hdr_len - header_off).min(dst.len());
+                    dst[..take].copy_from_slice(&header_bytes[header_off..header_off + take]);
+                    header_off += take;
                     off += take;
                     written += take;
                 }
@@ -296,7 +317,7 @@ impl<B: NetBackend> VirtioNet<B> {
                     remaining_pkt = &remaining_pkt[take..];
                     written += take;
                 }
-                if remaining_header == 0 && remaining_pkt.is_empty() {
+                if header_off == hdr_len && remaining_pkt.is_empty() {
                     break;
                 }
             }

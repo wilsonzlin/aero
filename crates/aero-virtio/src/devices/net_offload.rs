@@ -18,20 +18,52 @@ pub struct VirtioNetHdr {
     pub gso_size: u16,
     pub csum_start: u16,
     pub csum_offset: u16,
+    pub num_buffers: u16,
 }
 
 impl VirtioNetHdr {
-    pub const LEN: usize = 10;
+    /// Header length without the `num_buffers` field (when `VIRTIO_NET_F_MRG_RXBUF`
+    /// is not negotiated).
+    pub const BASE_LEN: usize = 10;
 
-    pub fn from_bytes_le(bytes: [u8; Self::LEN]) -> Self {
-        Self {
-            flags: bytes[0],
-            gso_type: bytes[1],
-            hdr_len: u16::from_le_bytes([bytes[2], bytes[3]]),
-            gso_size: u16::from_le_bytes([bytes[4], bytes[5]]),
-            csum_start: u16::from_le_bytes([bytes[6], bytes[7]]),
-            csum_offset: u16::from_le_bytes([bytes[8], bytes[9]]),
+    /// Header length including `num_buffers` (when `VIRTIO_NET_F_MRG_RXBUF` is
+    /// negotiated).
+    pub const LEN: usize = 12;
+
+    pub fn from_slice_le(bytes: &[u8]) -> Option<Self> {
+        match bytes.len() {
+            Self::BASE_LEN => Some(Self {
+                flags: bytes[0],
+                gso_type: bytes[1],
+                hdr_len: u16::from_le_bytes([bytes[2], bytes[3]]),
+                gso_size: u16::from_le_bytes([bytes[4], bytes[5]]),
+                csum_start: u16::from_le_bytes([bytes[6], bytes[7]]),
+                csum_offset: u16::from_le_bytes([bytes[8], bytes[9]]),
+                num_buffers: 0,
+            }),
+            Self::LEN => Some(Self {
+                flags: bytes[0],
+                gso_type: bytes[1],
+                hdr_len: u16::from_le_bytes([bytes[2], bytes[3]]),
+                gso_size: u16::from_le_bytes([bytes[4], bytes[5]]),
+                csum_start: u16::from_le_bytes([bytes[6], bytes[7]]),
+                csum_offset: u16::from_le_bytes([bytes[8], bytes[9]]),
+                num_buffers: u16::from_le_bytes([bytes[10], bytes[11]]),
+            }),
+            _ => None,
         }
+    }
+
+    pub fn to_bytes_le(self) -> [u8; Self::LEN] {
+        let mut out = [0u8; Self::LEN];
+        out[0] = self.flags;
+        out[1] = self.gso_type;
+        out[2..4].copy_from_slice(&self.hdr_len.to_le_bytes());
+        out[4..6].copy_from_slice(&self.gso_size.to_le_bytes());
+        out[6..8].copy_from_slice(&self.csum_start.to_le_bytes());
+        out[8..10].copy_from_slice(&self.csum_offset.to_le_bytes());
+        out[10..12].copy_from_slice(&self.num_buffers.to_le_bytes());
+        out
     }
 
     pub fn needs_csum(self) -> bool {
@@ -490,6 +522,7 @@ mod tests {
             gso_size: 0,
             csum_start: udp_off as u16,
             csum_offset: 6,
+            num_buffers: 0,
         };
 
         let processed = process_tx_packet(hdr, &packet).unwrap();
@@ -562,6 +595,7 @@ mod tests {
             gso_size: mss as u16,
             csum_start: 0,
             csum_offset: 0,
+            num_buffers: 0,
         };
 
         let segments = process_tx_packet(hdr, &packet).unwrap();

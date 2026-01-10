@@ -271,7 +271,10 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
 
     let used_idx = read_u16_le(&mem, rx_used + 2).unwrap();
     assert_eq!(used_idx, 1);
-    assert_eq!(mem.get_slice(rx_hdr_addr, hdr.len()).unwrap(), &hdr);
+
+    let mut expected_hdr = [0u8; VirtioNetHdr::LEN];
+    expected_hdr[10..12].copy_from_slice(&1u16.to_le_bytes());
+    assert_eq!(mem.get_slice(rx_hdr_addr, expected_hdr.len()).unwrap(), &expected_hdr);
     assert_eq!(
         mem.get_slice(rx_payload_addr, 5).unwrap(),
         b"\x01\x02\x03\x04\x05"
