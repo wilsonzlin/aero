@@ -23,6 +23,7 @@ use aero_net::{
 use aero_net_proxy_server::{start_proxy_server, ProxyServerOptions};
 use base64::Engine;
 use futures_util::FutureExt;
+use emulator::io::net::trace::{CaptureArtifactOnPanic, FrameDirection, NetTraceConfig, NetTracer};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -39,16 +40,25 @@ async fn net_e2e() {
         .try_init();
 
     let trace = Trace::default();
-    let res = std::panic::AssertUnwindSafe(run_net_e2e(trace.clone()))
+    let tracer = Arc::new(NetTracer::new(NetTraceConfig::default()));
+    tracer.enable();
+
+    let res = std::panic::AssertUnwindSafe(run_net_e2e(trace.clone(), tracer.clone()))
         .catch_unwind()
         .await;
     if let Err(panic) = res {
         trace.dump("net_e2e");
+        // If the panic occurred before `CaptureArtifactOnPanic` was constructed, still emit an
+        // artifact from the frames that were recorded.
+        let _ = std::fs::create_dir_all("target/nt-test-artifacts");
+        let _ = std::fs::write("target/nt-test-artifacts/net_e2e.pcapng", tracer.export_pcapng());
         std::panic::resume_unwind(panic);
     }
 }
 
-async fn run_net_e2e(trace: Trace) {
+async fn run_net_e2e(trace: Trace, tracer: Arc<NetTracer>) {
+    let _capture_guard = CaptureArtifactOnPanic::for_test(tracer.as_ref(), "net_e2e");
+
     let echo = TcpEchoServer::spawn().await;
     let doh = DohHttpServer::spawn(HashMap::from([(
         "echo.local".to_string(),
@@ -79,14 +89,16 @@ async fn run_net_e2e(trace: Trace) {
     // DHCP handshake.
     let xid = 0x1234_5678;
     trace.log(format!("dhcp: xid={xid:#x} sending DISCOVER"));
-    send_dhcp_discover(&trace, &guest_to_stack_tx, guest_mac, xid).await;
+    send_dhcp_discover(tracer.as_ref(), &trace, &guest_to_stack_tx, guest_mac, xid).await;
 
-    let offer = recv_dhcp(&trace, &mut stack_to_guest_rx, DhcpMessageType::Offer).await;
+    let offer =
+        recv_dhcp(tracer.as_ref(), &trace, &mut stack_to_guest_rx, DhcpMessageType::Offer).await;
     assert_eq!(offer.yiaddr, cfg.lease_ip);
     trace.log(format!("dhcp: got OFFER yiaddr={}", offer.yiaddr));
 
     trace.log("dhcp: sending REQUEST".to_string());
     send_dhcp_request(
+        tracer.as_ref(),
         &trace,
         &guest_to_stack_tx,
         guest_mac,
@@ -95,13 +107,15 @@ async fn run_net_e2e(trace: Trace) {
         cfg.router_ip,
     )
     .await;
-    let ack = recv_dhcp(&trace, &mut stack_to_guest_rx, DhcpMessageType::Ack).await;
+    let ack =
+        recv_dhcp(tracer.as_ref(), &trace, &mut stack_to_guest_rx, DhcpMessageType::Ack).await;
     assert_eq!(ack.yiaddr, cfg.lease_ip);
     trace.log(format!("dhcp: got ACK yiaddr={}", ack.yiaddr));
 
     // ARP for router.
     trace.log("arp: requesting router mac".to_string());
     send_arp_request(
+        tracer.as_ref(),
         &trace,
         &guest_to_stack_tx,
         guest_mac,
@@ -109,7 +123,8 @@ async fn run_net_e2e(trace: Trace) {
         cfg.router_ip,
     )
     .await;
-    let router_mac = recv_arp_reply(&trace, &mut stack_to_guest_rx, cfg.router_ip).await;
+    let router_mac =
+        recv_arp_reply(tracer.as_ref(), &trace, &mut stack_to_guest_rx, cfg.router_ip).await;
     assert_eq!(router_mac, cfg.router_mac);
 
     // DNS query (guest -> stack -> DoH over proxy -> stack -> guest).
@@ -117,6 +132,7 @@ async fn run_net_e2e(trace: Trace) {
     trace.log("dns: querying echo.local".to_string());
     let dns_query = build_dns_query(dns_id, "echo.local");
     send_udp(
+        tracer.as_ref(),
         &trace,
         &guest_to_stack_tx,
         guest_mac,
@@ -129,6 +145,7 @@ async fn run_net_e2e(trace: Trace) {
     )
     .await;
     let dns_resp = recv_udp_payload(
+        tracer.as_ref(),
         &trace,
         &mut stack_to_guest_rx,
         cfg.dns_ip,
@@ -150,6 +167,7 @@ async fn run_net_e2e(trace: Trace) {
 
     let (dispatch_shutdown_tx, dispatch_shutdown_rx) = oneshot::channel::<()>();
     let dispatcher = tokio::spawn(dispatch_frames(
+        tracer.clone(),
         stack_to_guest_rx,
         cfg.lease_ip,
         port_a,
@@ -161,6 +179,7 @@ async fn run_net_e2e(trace: Trace) {
 
     let a = tokio::spawn(tcp_echo_roundtrip(
         trace.clone(),
+        tracer.clone(),
         guest_to_stack_tx.clone(),
         guest_mac,
         router_mac,
@@ -173,6 +192,7 @@ async fn run_net_e2e(trace: Trace) {
     ));
     let b = tokio::spawn(tcp_echo_roundtrip(
         trace.clone(),
+        tracer.clone(),
         guest_to_stack_tx.clone(),
         guest_mac,
         router_mac,
@@ -248,6 +268,7 @@ async fn wait_for_zero(name: &str, f: impl Fn() -> usize) {
 }
 
 async fn dispatch_frames(
+    tracer: Arc<NetTracer>,
     mut stack_to_guest_rx: mpsc::Receiver<Vec<u8>>,
     guest_ip: Ipv4Addr,
     port_a: u16,
@@ -261,6 +282,7 @@ async fn dispatch_frames(
             _ = &mut shutdown_rx => break,
             frame = stack_to_guest_rx.recv() => {
                 let Some(frame) = frame else { break };
+                tracer.record_ethernet(FrameDirection::GuestRx, &frame);
                 let Some(eth) = parse_ethernet_frame(&frame) else { continue };
                 if eth.ethertype != ETHERTYPE_IPV4 { continue; }
                 let Some(ip) = parse_ipv4_packet(eth.payload) else { continue };
@@ -280,6 +302,7 @@ async fn dispatch_frames(
 #[allow(clippy::too_many_arguments)]
 async fn tcp_echo_roundtrip(
     trace: Trace,
+    tracer: Arc<NetTracer>,
     guest_to_stack_tx: mpsc::Sender<Vec<u8>>,
     guest_mac: MacAddr,
     router_mac: MacAddr,
@@ -297,6 +320,7 @@ async fn tcp_echo_roundtrip(
     ));
 
     send_tcp(
+        tracer.as_ref(),
         &trace,
         &guest_to_stack_tx,
         guest_mac,
@@ -327,6 +351,7 @@ async fn tcp_echo_roundtrip(
     let mut guest_next_seq = guest_isn.wrapping_add(1);
 
     send_tcp(
+        tracer.as_ref(),
         &trace,
         &guest_to_stack_tx,
         guest_mac,
@@ -344,6 +369,7 @@ async fn tcp_echo_roundtrip(
 
     // Send payload.
     send_tcp(
+        tracer.as_ref(),
         &trace,
         &guest_to_stack_tx,
         guest_mac,
@@ -377,6 +403,7 @@ async fn tcp_echo_roundtrip(
             got.extend_from_slice(&seg.payload);
             remote_next_seq = remote_next_seq.wrapping_add(seg.payload.len() as u32);
             send_tcp(
+                tracer.as_ref(),
                 &trace,
                 &guest_to_stack_tx,
                 guest_mac,
@@ -397,6 +424,7 @@ async fn tcp_echo_roundtrip(
 
     // Close (FIN handshake).
     send_tcp(
+        tracer.as_ref(),
         &trace,
         &guest_to_stack_tx,
         guest_mac,
@@ -429,6 +457,7 @@ async fn tcp_echo_roundtrip(
             assert_eq!(seg.seq, remote_next_seq);
             remote_next_seq = remote_next_seq.wrapping_add(1);
             send_tcp(
+                tracer.as_ref(),
                 &trace,
                 &guest_to_stack_tx,
                 guest_mac,
@@ -450,11 +479,13 @@ async fn tcp_echo_roundtrip(
 }
 
 async fn recv_dhcp(
+    tracer: &NetTracer,
     trace: &Trace,
     rx: &mut mpsc::Receiver<Vec<u8>>,
     expected: DhcpMessageType,
 ) -> aero_net::protocol::DhcpParsed {
     let frame = recv_frame_with_timeout(rx).await;
+    tracer.record_ethernet(FrameDirection::GuestRx, &frame);
     trace.log(format!("rx: dhcp frame {} bytes", frame.len()));
     let eth = parse_ethernet_frame(&frame).expect("ethernet");
     assert_eq!(eth.ethertype, ETHERTYPE_IPV4);
@@ -469,11 +500,13 @@ async fn recv_dhcp(
 }
 
 async fn recv_arp_reply(
+    tracer: &NetTracer,
     trace: &Trace,
     rx: &mut mpsc::Receiver<Vec<u8>>,
     expected_sender_ip: Ipv4Addr,
 ) -> MacAddr {
     let frame = recv_frame_with_timeout(rx).await;
+    tracer.record_ethernet(FrameDirection::GuestRx, &frame);
     trace.log(format!("rx: arp frame {} bytes", frame.len()));
     let eth = parse_ethernet_frame(&frame).expect("ethernet");
     assert_eq!(eth.ethertype, ETHERTYPE_ARP);
@@ -484,6 +517,7 @@ async fn recv_arp_reply(
 }
 
 async fn recv_udp_payload(
+    tracer: &NetTracer,
     trace: &Trace,
     rx: &mut mpsc::Receiver<Vec<u8>>,
     expected_src_ip: Ipv4Addr,
@@ -492,6 +526,7 @@ async fn recv_udp_payload(
     expected_dst_port: u16,
 ) -> Vec<u8> {
     let frame = recv_frame_with_timeout(rx).await;
+    tracer.record_ethernet(FrameDirection::GuestRx, &frame);
     trace.log(format!("rx: udp frame {} bytes", frame.len()));
     let eth = parse_ethernet_frame(&frame).expect("ethernet");
     assert_eq!(eth.ethertype, ETHERTYPE_IPV4);
@@ -577,7 +612,13 @@ async fn recv_frame_with_timeout(rx: &mut mpsc::Receiver<Vec<u8>>) -> Vec<u8> {
         .expect("rx closed")
 }
 
-async fn send_dhcp_discover(trace: &Trace, tx: &mpsc::Sender<Vec<u8>>, mac: MacAddr, xid: u32) {
+async fn send_dhcp_discover(
+    tracer: &NetTracer,
+    trace: &Trace,
+    tx: &mpsc::Sender<Vec<u8>>,
+    mac: MacAddr,
+    xid: u32,
+) {
     let dhcp = build_dhcp_discover(xid, mac);
     let udp = build_udp_packet(Ipv4Addr::UNSPECIFIED, Ipv4Addr::BROADCAST, 68, 67, &dhcp);
     let ip = build_ipv4_packet(
@@ -587,11 +628,13 @@ async fn send_dhcp_discover(trace: &Trace, tx: &mpsc::Sender<Vec<u8>>, mac: MacA
         &udp,
     );
     let eth = build_ethernet_frame(MacAddr::BROADCAST, mac, ETHERTYPE_IPV4, &ip);
+    tracer.record_ethernet(FrameDirection::GuestTx, &eth);
     trace.log(format!("tx: dhcp discover {} bytes", eth.len()));
     tx.send(eth).await.expect("send");
 }
 
 async fn send_dhcp_request(
+    tracer: &NetTracer,
     trace: &Trace,
     tx: &mpsc::Sender<Vec<u8>>,
     mac: MacAddr,
@@ -608,11 +651,13 @@ async fn send_dhcp_request(
         &udp,
     );
     let eth = build_ethernet_frame(MacAddr::BROADCAST, mac, ETHERTYPE_IPV4, &ip);
+    tracer.record_ethernet(FrameDirection::GuestTx, &eth);
     trace.log(format!("tx: dhcp request {} bytes", eth.len()));
     tx.send(eth).await.expect("send");
 }
 
 async fn send_arp_request(
+    tracer: &NetTracer,
     trace: &Trace,
     tx: &mpsc::Sender<Vec<u8>>,
     mac: MacAddr,
@@ -627,12 +672,14 @@ async fn send_arp_request(
         target_ip,
     );
     let eth = build_ethernet_frame(MacAddr::BROADCAST, mac, ETHERTYPE_ARP, &arp);
+    tracer.record_ethernet(FrameDirection::GuestTx, &eth);
     trace.log(format!("tx: arp request {} bytes", eth.len()));
     tx.send(eth).await.expect("send");
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn send_udp(
+    tracer: &NetTracer,
     trace: &Trace,
     tx: &mpsc::Sender<Vec<u8>>,
     src_mac: MacAddr,
@@ -646,6 +693,7 @@ async fn send_udp(
     let udp = build_udp_packet(src_ip, dst_ip, src_port, dst_port, payload);
     let ip = build_ipv4_packet(src_ip, dst_ip, IP_PROTO_UDP, &udp);
     let eth = build_ethernet_frame(dst_mac, src_mac, ETHERTYPE_IPV4, &ip);
+    tracer.record_ethernet(FrameDirection::GuestTx, &eth);
     trace.log(format!(
         "tx: udp {}:{} -> {}:{} ({} bytes)",
         src_ip,
@@ -659,6 +707,7 @@ async fn send_udp(
 
 #[allow(clippy::too_many_arguments)]
 async fn send_tcp(
+    tracer: &NetTracer,
     trace: &Trace,
     tx: &mpsc::Sender<Vec<u8>>,
     src_mac: MacAddr,
@@ -677,6 +726,7 @@ async fn send_tcp(
     );
     let ip = build_ipv4_packet(src_ip, dst_ip, IP_PROTO_TCP, &tcp);
     let eth = build_ethernet_frame(dst_mac, src_mac, ETHERTYPE_IPV4, &ip);
+    tracer.record_ethernet(FrameDirection::GuestTx, &eth);
     trace.log(format!(
         "tx: tcp {}:{} -> {}:{} flags={flags:#x} seq={seq} ack={ack} len={}",
         src_ip,

@@ -17,3 +17,4 @@ url = "2"
 [dev-dependencies]
 aero-net-proxy-server = { path = "../../tools/net-proxy-server" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+emulator = { path = "../emulator" }

@@ -307,6 +307,7 @@ dependencies = [
  "aero-net-proxy-server",
  "anyhow",
  "base64 0.22.1",
+ "emulator",
  "futures-util",
  "rand 0.8.5",
  "tokio",
