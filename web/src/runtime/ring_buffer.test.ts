@@ -106,6 +106,30 @@ describe("RingBuffer", () => {
     ring.data[3] = 0;
     expect(ring.pop()).toBeNull();
     expect(Atomics.load(ring.meta, 1)).toBe(4);
+
+    // Length looks plausible but extends beyond the currently used bytes; this
+    // should also recover by dropping the queue.
+    ring.reset();
+    // Simulate 8 bytes in the ring (enough for a length prefix plus 4 bytes of
+    // payload), but claim a longer payload.
+    Atomics.store(ring.meta, 0, 8); // head
+    Atomics.store(ring.meta, 1, 0); // tail
+    ring.data[0] = 20; // len=20 (<= maxMessageBytes for this ring)
+    ring.data[1] = 0;
+    ring.data[2] = 0;
+    ring.data[3] = 0;
+    expect(ring.pop()).toBeNull();
+    expect(Atomics.load(ring.meta, 1)).toBe(8);
+  });
+
+  it("waitForData returns immediately when data is already available", () => {
+    const ring = makeRing(64);
+    expect(ring.push(bytes(1, 2, 3))).toBe(true);
+
+    // If this were to call Atomics.wait while the ring is non-empty, it could
+    // block indefinitely on the main thread. The implementation should return
+    // immediately.
+    expect(ring.waitForData(0)).toBe("not-equal");
+    expect(Array.from(ring.pop() ?? [])).toEqual([1, 2, 3]);
   });
 });
-

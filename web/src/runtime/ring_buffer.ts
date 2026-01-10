@@ -128,8 +128,10 @@ export class RingBuffer {
 
     const totalBytes = 4 + len;
     if (used < totalBytes) {
-      // Should not happen for a correct single-producer implementation (writer
-      // updates head after writing), but guard against partial writes.
+      // Should never happen for a correct single-producer implementation (writer
+      // updates head after fully writing the message). Treat as corruption and
+      // drop everything so the consumer doesn't get stuck forever.
+      Atomics.store(this.meta, TAIL_INDEX, head);
       return null;
     }
 
@@ -148,9 +150,19 @@ export class RingBuffer {
    * block the UI (or throw in browsers that disallow it).
    */
   waitForData(timeoutMs?: number): AtomicsWaitResult {
-    const expectedHead = Atomics.load(this.meta, HEAD_INDEX);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return Atomics.wait(this.meta as any, HEAD_INDEX, expectedHead, timeoutMs) as AtomicsWaitResult;
+    // Important: never call `Atomics.wait` if the ring is already non-empty.
+    // Otherwise we can miss messages that arrive between "drain" and "wait",
+    // leading to deadlocks (e.g. waiting for head to change when head already
+    // includes unread data).
+    while (true) {
+      const head = Atomics.load(this.meta, HEAD_INDEX);
+      const tail = Atomics.load(this.meta, TAIL_INDEX);
+      if (head !== tail) return "not-equal";
+
+      const result = Atomics.wait(this.meta, HEAD_INDEX, head, timeoutMs) as AtomicsWaitResult;
+      if (result !== "not-equal") return result;
+      // Head changed between load and wait; loop and re-check emptiness.
+    }
   }
 
   notifyData(count = 1): number {
@@ -208,4 +220,3 @@ export class RingBuffer {
     }
   }
 }
-
