@@ -96,6 +96,12 @@ Or (equivalently) pass it as an argument:
 run_all.cmd --timeout-ms=120000
 ```
 
+To run without enforcing a timeout (even if `aerogpu_timeout_runner.exe` is present):
+
+```cmd
+run_all.cmd --no-timeout
+```
+
 To require a specific PCI VID/DID (recommended for automation):
 
 ```cmd

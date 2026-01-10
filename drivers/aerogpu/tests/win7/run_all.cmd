@@ -5,10 +5,12 @@ set "TIMEOUT_MS=%AEROGPU_TEST_TIMEOUT_MS%"
 if "%TIMEOUT_MS%"=="" set "TIMEOUT_MS=30000"
 
 set "SHOW_HELP="
+set "NO_TIMEOUT="
 for %%A in (%*) do (
   if /I "%%~A"=="--help" set "SHOW_HELP=1"
   if /I "%%~A"=="-h" set "SHOW_HELP=1"
   if "%%~A"=="/?" set "SHOW_HELP=1"
+  if /I "%%~A"=="--no-timeout" set "NO_TIMEOUT=1"
   for /f "tokens=1,2 delims==" %%a in ("%%~A") do (
     if /I "%%a"=="--timeout-ms" if not "%%b"=="" set "TIMEOUT_MS=%%b"
   )
@@ -20,7 +22,11 @@ set "RUNNER=%BIN%\\aerogpu_timeout_runner.exe"
 set /a FAILURES=0
 
 if exist "%RUNNER%" (
-  echo INFO: using timeout runner: %RUNNER% ^(timeout=%TIMEOUT_MS% ms^)
+  if defined NO_TIMEOUT (
+    echo INFO: timeout runner found but disabled by --no-timeout
+  ) else (
+    echo INFO: using timeout runner: %RUNNER% ^(timeout=%TIMEOUT_MS% ms^)
+  )
 ) else (
   echo INFO: timeout runner not found; running tests without enforced timeout
 )
@@ -52,7 +58,7 @@ if not exist "%EXE%" (
   exit /b 0
 )
 
-if exist "%RUNNER%" (
+if exist "%RUNNER%" if not defined NO_TIMEOUT (
   "%RUNNER%" %TIMEOUT_MS% "%EXE%" %*
 ) else (
   "%EXE%" %*
@@ -66,12 +72,13 @@ if errorlevel 1 (
 exit /b 0
 
 :help
-echo Usage: run_all.cmd [--dump] [--hidden] [--timeout-ms=NNNN] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--allow-remote]
+echo Usage: run_all.cmd [--dump] [--hidden] [--timeout-ms=NNNN] [--no-timeout] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--allow-remote]
 echo.
 echo Notes:
 echo   --require-vid/--require-did helps avoid false PASS when AeroGPU isn't active.
 echo   Rendering tests expect adapter description to contain "AeroGPU" unless --allow-non-aerogpu is provided.
 echo   --allow-remote only affects d3d9ex_dwm_probe; other tests ignore it.
 echo   Use --timeout-ms=NNNN or set AEROGPU_TEST_TIMEOUT_MS to override the default per-test timeout (%TIMEOUT_MS% ms) when aerogpu_timeout_runner.exe is present.
+echo   Use --no-timeout to run without enforcing a timeout.
 exit /b 0
 
