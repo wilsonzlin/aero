@@ -401,7 +401,7 @@ foreach ($driverBuildDir in $driverBuildDirs) {
   $wdfCoInstallerDllName = $null
   if ($needsWdfCoInstaller) {
     if (-not $allowWdfCoInstaller) {
-      throw "Driver '$driverName' declares a WDF coinstaller requirement in '$($manifest.ManifestPath)', but WDK redistributables are disabled. Re-run with -IncludeWdfCoInstaller."
+      throw "Driver '$driverNameForLog' declares a WDF coinstaller requirement in '$($manifest.ManifestPath)', but WDK redistributables are disabled. Re-run with -IncludeWdfCoInstaller."
     }
     $wdfCoInstallerDllName = $manifest.WdfCoInstaller.DllName
     if ([string]::IsNullOrWhiteSpace($wdfCoInstallerDllName)) {
@@ -411,7 +411,7 @@ foreach ($driverBuildDir in $driverBuildDirs) {
 
   $wdfInSource = Get-ChildItem -LiteralPath $driverSourceDir -Recurse -File -Filter 'WdfCoInstaller*.dll' -ErrorAction SilentlyContinue
   if ($wdfInSource) {
-    throw "Driver '$driverName' contains WdfCoInstaller*.dll under '$driverSourceDir'. Do not commit Microsoft WDK redistributables into the repo; use -IncludeWdfCoInstaller and '$($manifest.ManifestPath)' instead."
+    throw "Driver '$driverNameForLog' contains WdfCoInstaller*.dll under '$driverSourceDir'. Do not commit Microsoft WDK redistributables into the repo; use -IncludeWdfCoInstaller and '$($manifest.ManifestPath)' instead."
   }
 
   $infFiles = Get-ChildItem -LiteralPath $driverSourceDir -Recurse -File -Filter '*.inf' |
@@ -472,12 +472,12 @@ foreach ($driverBuildDir in $driverBuildDirs) {
     foreach ($relPath in $manifest.AdditionalFiles) {
       $ext = [IO.Path]::GetExtension($relPath)
       if ($ext -in @('.sys', '.dll', '.exe', '.cat', '.msi', '.cab')) {
-        throw "Driver '$driverName' additionalFiles must be non-binary; refusing to include '$relPath'."
+        throw "Driver '$driverNameForLog' additionalFiles must be non-binary; refusing to include '$relPath'."
       }
 
       $src = Resolve-ChildPathUnderRoot -Root $driverSourceDir -ChildPath $relPath
       if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
-        throw "Driver '$driverName' additional file not found: $src"
+        throw "Driver '$driverNameForLog' additional file not found: $src"
       }
 
       $dest = Resolve-ChildPathUnderRoot -Root $packageDir -ChildPath $relPath
@@ -494,7 +494,7 @@ foreach ($driverBuildDir in $driverBuildDirs) {
         throw "WDK redistributables are disabled, but staged package '$packageDir' already contains: $($existingWdf.Name -join ', ')"
       }
       if (-not $needsWdfCoInstaller) {
-        throw "Staged package '$packageDir' contains WdfCoInstaller*.dll, but driver '$driverName' does not declare wdfCoInstaller in '$($manifest.ManifestPath)'."
+        throw "Staged package '$packageDir' contains WdfCoInstaller*.dll, but driver '$driverNameForLog' does not declare wdfCoInstaller in '$($manifest.ManifestPath)'."
       }
       $existingWdf | Remove-Item -Force -ErrorAction Stop
     }
