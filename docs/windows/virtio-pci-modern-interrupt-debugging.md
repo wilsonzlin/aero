@@ -3,6 +3,11 @@
 This guide is a *validation/debug checklist* for getting interrupts working for a virtio-pci **modern** device on **Windows 7**.
 It focuses on the common “everything enumerates but no interrupts” / “INTx storm” class of failures, and on proving (with WinDbg + DbgView + driver prints) what Windows actually configured.
 
+See also:
+
+* [`../virtio/virtqueue-split-ring-win7.md`](../virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue algorithms (descriptor mgmt, ordering/barriers, EVENT_IDX, indirect).
+* [`../windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md) — Aero’s definitive virtio device/feature/transport contract.
+
 Assumptions:
 
 - You have a kernel debugger (WinDbg) attached or can capture `DbgPrint` output with **DbgView**.
@@ -372,4 +377,3 @@ This answers: “Are interrupts firing? Are DPCs scheduled? Is one vector stormi
 6. Read back all virtio vector selectors:
    - if any are `0xFFFF` unexpectedly, fix before chasing anything else.
 7. Verify ISR/DPC counters increment when generating known events (queue kick/completion).
-
