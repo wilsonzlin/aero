@@ -16,32 +16,39 @@ pub fn element_key_name(element_type: u32) -> String {
 }
 
 pub fn encode_bcd_boolean(element_type: u32, value: bool) -> Vec<u8> {
-    let mut out = Vec::with_capacity(8);
+    let mut out = Vec::with_capacity(12);
     out.extend_from_slice(&element_type.to_le_bytes());
+    out.extend_from_slice(&4u32.to_le_bytes());
     out.extend_from_slice(&(if value { 1u32 } else { 0u32 }).to_le_bytes());
     out
 }
 
 pub fn encode_bcd_string(element_type: u32, value: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    out.extend_from_slice(&element_type.to_le_bytes());
+    let mut string_bytes = Vec::new();
     for ch in value.encode_utf16() {
-        out.extend_from_slice(&ch.to_le_bytes());
+        string_bytes.extend_from_slice(&ch.to_le_bytes());
     }
-    out.extend_from_slice(&[0, 0]);
+    string_bytes.extend_from_slice(&[0, 0]);
+
+    let mut out = Vec::with_capacity(8 + string_bytes.len());
+    out.extend_from_slice(&element_type.to_le_bytes());
+    out.extend_from_slice(&(string_bytes.len() as u32).to_le_bytes());
+    out.extend_from_slice(&string_bytes);
     out
 }
 
 pub fn encode_bcd_guid(element_type: u32, guid: &Uuid) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + 16);
+    let mut out = Vec::with_capacity(4 + 4 + 16);
     out.extend_from_slice(&element_type.to_le_bytes());
+    out.extend_from_slice(&16u32.to_le_bytes());
     out.extend_from_slice(&guid.to_bytes_le());
     out
 }
 
 pub fn encode_bcd_guid_list(element_type: u32, guids: &[Uuid]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + 16 * guids.len());
+    let mut out = Vec::with_capacity(4 + 4 + 16 * guids.len());
     out.extend_from_slice(&element_type.to_le_bytes());
+    out.extend_from_slice(&((16 * guids.len()) as u32).to_le_bytes());
     for guid in guids {
         out.extend_from_slice(&guid.to_bytes_le());
     }
@@ -160,7 +167,13 @@ pub fn assert_boolean_element(hive: &RegistryHive, object: &str, elem: u32, expe
     let val = key.value("Element").unwrap();
     assert_eq!(val.data_type(), DataType::Binary);
     let data = val.raw_data().unwrap();
+    assert!(
+        data.len() >= 12,
+        "expected boolean element data to include length prefix (>= 12 bytes), got {}",
+        data.len()
+    );
     assert_eq!(&data[0..4], &elem.to_le_bytes());
-    let got = u32::from_le_bytes(data[4..8].try_into().unwrap());
+    assert_eq!(&data[4..8], &4u32.to_le_bytes());
+    let got = u32::from_le_bytes(data[8..12].try_into().unwrap());
     assert_eq!(got != 0, expected);
 }

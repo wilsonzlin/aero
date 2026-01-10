@@ -524,8 +524,13 @@ fn format_guid_key(guid: &Uuid) -> String {
 }
 
 fn bcd_encode_boolean(element_type: u32, value: bool) -> Vec<u8> {
-    let mut out = Vec::with_capacity(8);
+    // BCD elements are stored as a REG_BINARY value named "Element", typically encoded as:
+    //   [u32 element_type LE][u32 data_len LE][data...]
+    //
+    // For booleans, the data is a u32 (0 or 1) and the length is 4 bytes.
+    let mut out = Vec::with_capacity(12);
     out.extend_from_slice(&element_type.to_le_bytes());
+    out.extend_from_slice(&4u32.to_le_bytes());
     out.extend_from_slice(&(if value { 1u32 } else { 0u32 }).to_le_bytes());
     out
 }
@@ -536,19 +541,11 @@ fn bcd_decode_string(bytes: &[u8], expected_type: u32) -> Option<String> {
         return None;
     }
 
-    // Some stores include a u32 length prefix before the UTF-16LE string.
-    let payload = if payload.len() >= 4 {
-        let n = u32::from_le_bytes(payload[0..4].try_into().ok()?) as usize;
-        if n == payload.len().saturating_sub(4) {
-            &payload[4..]
-        } else {
-            payload
-        }
-    } else {
-        payload
-    };
+    // Many BCD element encodings include a u32 data length prefix (bytes). Be forgiving and
+    // accept a couple of common layouts.
+    let string_bytes = decode_len_prefixed_bytes(payload).unwrap_or(payload);
 
-    decode_utf16le_nul_terminated(payload)
+    decode_utf16le_nul_terminated(string_bytes)
 }
 
 fn bcd_decode_guid(bytes: &[u8], expected_type: u32) -> Option<Uuid> {
@@ -557,11 +554,17 @@ fn bcd_decode_guid(bytes: &[u8], expected_type: u32) -> Option<Uuid> {
         return None;
     }
 
-    for start in [0usize, 4, 8] {
-        if payload.len() == start + 16 {
-            let raw: [u8; 16] = payload[start..start + 16].try_into().ok()?;
+    // Common layout: [u32 len=16][guid bytes]
+    if let Some(bytes) = decode_len_prefixed_bytes(payload) {
+        if bytes.len() >= 16 {
+            let raw: [u8; 16] = bytes[0..16].try_into().ok()?;
             return Some(Uuid::from_bytes_le(raw));
         }
+    }
+
+    if payload.len() >= 16 {
+        let raw: [u8; 16] = payload[0..16].try_into().ok()?;
+        return Some(Uuid::from_bytes_le(raw));
     }
     None
 }
@@ -572,13 +575,19 @@ fn bcd_decode_guid_list(bytes: &[u8], expected_type: u32) -> Option<Vec<Uuid>> {
         return None;
     }
 
-    let list_bytes = [0usize, 4, 8].into_iter().find_map(|start| {
-        if payload.len() >= start && (payload.len() - start) % 16 == 0 {
-            Some(&payload[start..])
-        } else {
-            None
-        }
-    })?;
+    let list_bytes = if let Some(bytes) = decode_len_prefixed_bytes(payload) {
+        bytes
+    } else if payload.len() % 16 == 0 {
+        payload
+    } else if payload.len() >= 4 && (payload.len() - 4) % 16 == 0 {
+        // Some layouts use a u32 prefix other than length (e.g. count). Treat it like length for
+        // decoding purposes.
+        &payload[4..]
+    } else if payload.len() >= 8 && (payload.len() - 8) % 16 == 0 {
+        &payload[8..]
+    } else {
+        return None;
+    };
 
     let mut out = Vec::new();
     for chunk in list_bytes.chunks_exact(16) {
@@ -594,6 +603,39 @@ fn bcd_payload(bytes: &[u8]) -> Option<(u32, &[u8])> {
     }
     let ty = u32::from_le_bytes(bytes[0..4].try_into().ok()?);
     Some((ty, &bytes[4..]))
+}
+
+fn decode_len_prefixed_bytes(payload: &[u8]) -> Option<&[u8]> {
+    // Try: [u32 byte_len][data...]
+    for start in [0usize, 4] {
+        if payload.len() < start + 4 {
+            continue;
+        }
+        let n = u32::from_le_bytes(payload[start..start + 4].try_into().ok()?) as usize;
+        if n == 0 {
+            continue;
+        }
+
+        // Treat n as byte length.
+        if start + 4 + n <= payload.len() {
+            let end = start + 4 + n;
+            // Avoid mis-detecting random UTF-16 string data as a length prefix by requiring the
+            // next UTF-16 code unit boundary to either be the end of the payload or begin with a
+            // NUL terminator.
+            if end == payload.len() || payload[end..].starts_with(&[0, 0]) {
+                return Some(&payload[start + 4..end]);
+            }
+        }
+
+        // Treat n as count of UTF-16 code units.
+        if start + 4 + n * 2 <= payload.len() {
+            let end = start + 4 + n * 2;
+            if end == payload.len() || payload[end..].starts_with(&[0, 0]) {
+                return Some(&payload[start + 4..end]);
+            }
+        }
+    }
+    None
 }
 
 fn decode_utf16le_nul_terminated(bytes: &[u8]) -> Option<String> {
