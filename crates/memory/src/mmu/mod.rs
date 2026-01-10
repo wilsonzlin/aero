@@ -87,15 +87,15 @@ impl Mmu {
         bus: &mut impl MemoryBus,
         linear: u64,
         access: AccessType,
-    ) -> Result<u64, PageFault> {
+    ) -> Result<u64, TranslateError> {
         translate(
             bus,
             linear,
             access,
             self.cpl,
-            self.cr0 as u32,
-            self.cr3 as u32,
-            self.cr4 as u32,
+            self.cr0,
+            self.cr3,
+            self.cr4,
             self.efer,
         )
     }
@@ -135,4 +135,3 @@ pub fn translate(
     let _ = efer & EFER_LMA;
     long::translate_4level(bus, linear, access, cr3, cr0, efer, cpl).map(|r| r.paddr)
 }
-
