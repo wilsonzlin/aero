@@ -1,0 +1,11 @@
+[package]
+name = "aero-tests"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+aero-cpu = { path = "../aero-cpu" }
+iced-x86.workspace = true
+
+[dev-dependencies]
+proptest = "1.4.0"

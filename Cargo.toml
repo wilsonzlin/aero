@@ -14,6 +14,7 @@ members = [
     "crates/aero-emulator",
     "crates/aero-core",
     "crates/aero-cpu",
+    "crates/aero-tests",
     "crates/aero-ipc",
     "crates/aero-bios",
     "crates/aero_jit",
@@ -72,3 +73,11 @@ aero-d3d11 = { path = "crates/aero-d3d11" }
 aero-gpu = { path = "crates/aero-gpu" }
 bytemuck = { version = "1.14", features = ["derive"] }
 pollster = "0.3"
+
+[workspace.package]
+edition = "2021"
+
+[workspace.dependencies]
+bitflags = "2.4.2"
+iced-x86 = { version = "1.21.0", default-features = false, features = ["decoder", "instr_info", "std"] }
+thiserror = "1.0.56"

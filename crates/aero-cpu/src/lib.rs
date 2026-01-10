@@ -4,3 +4,5 @@ pub mod descriptors;
 pub mod interrupts;
 pub mod msr;
 pub mod state;
+
+pub mod tier0;

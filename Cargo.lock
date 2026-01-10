@@ -53,6 +53,8 @@ name = "aero-cpu"
 version = "0.1.0"
 dependencies = [
  "aero-core",
+ "iced-x86",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -309,6 +311,15 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tower",
+]
+
+[[package]]
+name = "aero-tests"
+version = "0.1.0"
+dependencies = [
+ "aero-cpu",
+ "iced-x86",
+ "proptest",
 ]
 
 [[package]]

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 aero-core = { path = "../aero-core" }
+iced-x86.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
-
