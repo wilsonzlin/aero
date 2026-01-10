@@ -7,6 +7,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "serve:coi": "vite build --emptyOutDir && vite preview --host 127.0.0.1 --port 4173 --strictPort",
+    "test": "npm run test:unit",
+    "test:unit": "node --test --experimental-strip-types backend/aero-gateway/src/**/*.test.ts",
     "test:e2e": "playwright test",
     "test:coi": "playwright test tests/e2e/coi.spec.ts"
   },

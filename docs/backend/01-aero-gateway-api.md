@@ -106,6 +106,13 @@ Each WebSocket connection proxies **one** TCP connection.
 
 ### Query parameters
 
+#### `v` (optional)
+
+Protocol version for the `/tcp` WebSocket connection.
+
+- Supported: `v=1`
+- If omitted, the gateway must default to **v1**.
+
 #### `target` (required)
 
 `target` identifies the remote TCP endpoint:
@@ -126,7 +133,10 @@ Examples:
 
 #### Compatibility aliases (optional)
 
-Some clients may use `host` and `port` query parameters instead of `target`. Gateways **may** support this as an alias, but `target` is the canonical parameter for Aero.
+Some clients may use `host` and `port` query parameters instead of `target`. Gateways **must** support this form for compatibility.
+
+- When both forms are provided, the gateway must prefer `target`.
+- IPv6 is accepted in bracket form for `host` (e.g. `host=[2606:4700:4700::1111]`).
 
 ### Authentication
 
