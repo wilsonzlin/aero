@@ -7,6 +7,8 @@
 nameOverride: ""
 fullnameOverride: ""
 
+imagePullSecrets: []
+
 gateway:
   replicaCount: 1
 

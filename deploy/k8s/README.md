@@ -171,6 +171,15 @@ If you are deploying **without** an Ingress, or the externally reachable URL is 
 
 If you see `403 Origin not allowed` responses, `PUBLIC_BASE_URL`/`ALLOWED_ORIGINS` is the first thing to check.
 
+## Private registry / imagePullSecrets (optional)
+
+If your gateway image is in a private registry, set `imagePullSecrets` in your values file:
+
+```yaml
+imagePullSecrets:
+  - name: regcred
+```
+
 ## Verify the rollout
 
 ```bash
