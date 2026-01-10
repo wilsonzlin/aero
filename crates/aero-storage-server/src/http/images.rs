@@ -292,6 +292,7 @@ fn response_from_store_error(state: &ImagesState, err: StoreError, len: u64) -> 
             response_with_status(StatusCode::NOT_FOUND, state)
         }
         StoreError::InvalidRange { .. } => range_not_satisfiable(state, len),
+        StoreError::Manifest(_) => response_with_status(StatusCode::INTERNAL_SERVER_ERROR, state),
         StoreError::Io(_) => response_with_status(StatusCode::INTERNAL_SERVER_ERROR, state),
     }
 }

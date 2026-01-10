@@ -44,6 +44,20 @@ These endpoints are recommended for operability. Exact paths may vary, but the s
 | `/readyz` | GET | Readiness | “Can serve images”; should check storage backend connectivity (filesystem/S3/etc). |
 | `/metrics` | GET | Prometheus metrics | Protect this endpoint (network policy or auth). |
 
+### Control-plane: image catalog + metadata (implemented)
+
+| Endpoint | Method | Purpose | Notes |
+|---|---:|---|---|
+| `/v1/images` | GET | List available disk images (JSON) | Includes size/etag/last_modified; response uses `Cache-Control: no-cache`. |
+| `/v1/images/{image_id}/meta` | GET | Fetch metadata for one image (JSON) | Same fields as the list response. |
+
+Metadata response fields:
+
+- `id`, `name`, `description` (optional)
+- `size_bytes`, `etag`, `last_modified`, `content_type`
+- `recommended_chunk_size_bytes` (optional)
+- `public` (boolean)
+
 ### Image streaming (planned)
 
 | Endpoint | Method | Purpose | Notes |
@@ -51,7 +65,7 @@ These endpoints are recommended for operability. Exact paths may vary, but the s
 | `/v1/images/{image_id}` | GET | Stream raw image bytes | Must support `Range`. |
 | `/v1/images/{image_id}` | HEAD | Fetch metadata headers only | Useful for verifying `Content-Length`/`ETag`. |
 | `/v1/images/{image_id}` | OPTIONS | CORS preflight | Must include `Access-Control-*` headers. |
-| `/v1/images/{image_id}/metadata` | GET | JSON metadata (optional) | Can include size, checksum, build ID, etc. |
+| `/v1/images/{image_id}/meta` | GET | JSON metadata (control-plane) | Image discovery + `size_bytes`/`etag` prior to `Range` reads. |
 
 ## Configuration
 
@@ -236,6 +250,32 @@ If images are on disk:
 - Store an allowlist mapping `{image_id -> absolute_path}` in config.
 - Reject `..`, `%2e%2e`, and other traversal patterns if paths are ever user-influenced.
 - Avoid following symlinks out of the image root.
+
+## LocalFS catalog (`manifest.json`)
+
+For `LocalFS` mode, the image catalog can be driven by a `manifest.json` file stored alongside the
+image files. This provides deterministic IDs and friendly names.
+
+Example:
+
+```json
+{
+  "images": [
+    {
+      "id": "win7",
+      "file": "win7.img",
+      "name": "Windows 7 SP1",
+      "description": "Clean install",
+      "public": true,
+      "recommended_chunk_size_bytes": 1048576,
+      "content_type": "application/octet-stream"
+    }
+  ]
+}
+```
+
+If no manifest is present, the server may fall back to a stable directory listing (development
+only).
 
 ## Troubleshooting
 

@@ -1,52 +1,119 @@
 use std::io::SeekFrom;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::sync::OnceCell;
 
-use super::{BoxedAsyncRead, ImageMeta, ImageStore, StoreError, CONTENT_TYPE_DISK_IMAGE};
+use super::manifest::{Manifest, ManifestImage};
+use super::{
+    validate_image_id, BoxedAsyncRead, ImageCatalogEntry, ImageMeta, ImageStore, StoreError,
+    CONTENT_TYPE_DISK_IMAGE,
+};
 
 /// Local filesystem-backed [`ImageStore`].
 ///
-/// # Security
-/// `image_id` is treated as an opaque identifier and is restricted to ASCII
-/// `[A-Za-z0-9._-]` to prevent path traversal.
+/// # Catalog source
+///
+/// If a `manifest.json` is present under `root`, it is used as the image catalog (preferred).
+/// Otherwise, the store falls back to a stable directory listing of `root` (development only).
 #[derive(Debug, Clone)]
 pub struct LocalFsImageStore {
     root: PathBuf,
+    manifest: std::sync::Arc<OnceCell<Option<Manifest>>>,
 }
 
 impl LocalFsImageStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            manifest: std::sync::Arc::new(OnceCell::new()),
+        }
     }
 
-    fn path_for(&self, image_id: &str) -> Result<PathBuf, StoreError> {
+    async fn load_manifest(&self) -> Result<Option<Manifest>, StoreError> {
+        let root = self.root.clone();
+        self.manifest
+            .get_or_try_init(|| async move {
+                let manifest_path = root.join("manifest.json");
+                match fs::read_to_string(manifest_path).await {
+                    Ok(raw) => Ok(Some(Manifest::parse_str(&raw)?)),
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                    Err(err) => Err(StoreError::Io(err)),
+                }
+            })
+            .await
+            .map(Clone::clone)
+    }
+
+    async fn lookup_manifest_image(
+        &self,
+        image_id: &str,
+    ) -> Result<Option<ManifestImage>, StoreError> {
+        let Some(manifest) = self.load_manifest().await? else {
+            return Ok(None);
+        };
+
+        manifest
+            .images
+            .iter()
+            .find(|img| img.id == image_id)
+            .cloned()
+            .ok_or(StoreError::NotFound)
+            .map(Some)
+    }
+
+    async fn resolve_image(&self, image_id: &str) -> Result<ResolvedImage, StoreError> {
         validate_image_id(image_id)?;
-        Ok(self.root.join(image_id))
+
+        if let Some(image) = self.lookup_manifest_image(image_id).await? {
+            let path = self.root.join(Path::new(&image.file));
+            return Ok(ResolvedImage {
+                id: image.id,
+                name: image.name,
+                description: image.description,
+                recommended_chunk_size_bytes: image.recommended_chunk_size_bytes,
+                public: image.public,
+                path,
+            });
+        }
+
+        // Directory-listing fallback (dev mode): `image_id` is also the filename.
+        let path = self.root.join(Path::new(image_id));
+
+        Ok(ResolvedImage {
+            id: image_id.to_string(),
+            name: image_id.to_string(),
+            description: None,
+            recommended_chunk_size_bytes: None,
+            public: true,
+            path,
+        })
+    }
+
+    async fn meta_from_path(&self, path: &Path) -> Result<ImageMeta, StoreError> {
+        let meta = fs::metadata(path).await.map_err(map_not_found)?;
+        let last_modified = meta.modified().ok();
+        let etag = Some(weak_etag_from_size_and_mtime(meta.len(), last_modified));
+
+        Ok(ImageMeta {
+            size: meta.len(),
+            etag,
+            last_modified,
+            content_type: CONTENT_TYPE_DISK_IMAGE,
+        })
     }
 }
 
-pub(crate) fn validate_image_id(image_id: &str) -> Result<(), StoreError> {
-    if image_id.is_empty() || image_id == "." || image_id == ".." {
-        return Err(StoreError::InvalidImageId {
-            image_id: image_id.to_string(),
-        });
-    }
-
-    let is_allowed = image_id.bytes().all(|b| match b {
-        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' => true,
-        _ => false,
-    });
-
-    if !is_allowed {
-        return Err(StoreError::InvalidImageId {
-            image_id: image_id.to_string(),
-        });
-    }
-
-    Ok(())
+#[derive(Debug, Clone)]
+struct ResolvedImage {
+    id: String,
+    name: String,
+    description: Option<String>,
+    recommended_chunk_size_bytes: Option<u64>,
+    public: bool,
+    path: PathBuf,
 }
 
 fn weak_etag_from_size_and_mtime(size: u64, mtime: Option<SystemTime>) -> String {
@@ -75,19 +142,75 @@ fn map_not_found(err: std::io::Error) -> StoreError {
 
 #[async_trait::async_trait]
 impl ImageStore for LocalFsImageStore {
-    async fn get_meta(&self, image_id: &str) -> Result<ImageMeta, StoreError> {
-        let path = self.path_for(image_id)?;
-        let meta = fs::metadata(path).await.map_err(map_not_found)?;
+    async fn list_images(&self) -> Result<Vec<ImageCatalogEntry>, StoreError> {
+        if let Some(manifest) = self.load_manifest().await? {
+            let mut out = Vec::with_capacity(manifest.images.len());
+            for image in &manifest.images {
+                let resolved = ResolvedImage {
+                    id: image.id.clone(),
+                    name: image.name.clone(),
+                    description: image.description.clone(),
+                    recommended_chunk_size_bytes: image.recommended_chunk_size_bytes,
+                    public: image.public,
+                    path: self.root.join(Path::new(&image.file)),
+                };
 
-        let last_modified = meta.modified().ok();
-        let etag = Some(weak_etag_from_size_and_mtime(meta.len(), last_modified));
+                let meta = self.meta_from_path(&resolved.path).await?;
 
-        Ok(ImageMeta {
-            size: meta.len(),
-            etag,
-            last_modified,
-            content_type: CONTENT_TYPE_DISK_IMAGE,
+                out.push(ImageCatalogEntry {
+                    id: resolved.id,
+                    name: resolved.name,
+                    description: resolved.description,
+                    recommended_chunk_size_bytes: resolved.recommended_chunk_size_bytes,
+                    public: resolved.public,
+                    meta,
+                });
+            }
+            return Ok(out);
+        }
+
+        let mut dir = fs::read_dir(&self.root).await?;
+        let mut ids = Vec::<String>::new();
+        while let Some(entry) = dir.next_entry().await? {
+            let file_type = entry.file_type().await?;
+            if !file_type.is_file() {
+                continue;
+            }
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            if file_name == "manifest.json" {
+                continue;
+            }
+            if validate_image_id(&file_name).is_err() {
+                continue;
+            }
+            ids.push(file_name);
+        }
+        ids.sort();
+
+        let mut out = Vec::with_capacity(ids.len());
+        for image_id in ids {
+            out.push(self.get_image(&image_id).await?);
+        }
+        Ok(out)
+    }
+
+    async fn get_image(&self, image_id: &str) -> Result<ImageCatalogEntry, StoreError> {
+        let resolved = self.resolve_image(image_id).await?;
+        let meta = self.meta_from_path(&resolved.path).await?;
+
+        Ok(ImageCatalogEntry {
+            id: resolved.id,
+            name: resolved.name,
+            description: resolved.description,
+            recommended_chunk_size_bytes: resolved.recommended_chunk_size_bytes,
+            public: resolved.public,
+            meta,
         })
+    }
+
+    async fn get_meta(&self, image_id: &str) -> Result<ImageMeta, StoreError> {
+        let resolved = self.resolve_image(image_id).await?;
+        self.meta_from_path(&resolved.path).await
     }
 
     async fn open_range(
@@ -96,9 +219,11 @@ impl ImageStore for LocalFsImageStore {
         start: u64,
         len: u64,
     ) -> Result<BoxedAsyncRead, StoreError> {
-        let path = self.path_for(image_id)?;
+        let resolved = self.resolve_image(image_id).await?;
 
-        let mut file = fs::File::open(&path).await.map_err(map_not_found)?;
+        let mut file = fs::File::open(&resolved.path)
+            .await
+            .map_err(map_not_found)?;
         let size = file.metadata().await?.len();
 
         let end = start

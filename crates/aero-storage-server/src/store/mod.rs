@@ -1,4 +1,5 @@
 mod local_fs;
+mod manifest;
 
 use std::pin::Pin;
 use std::time::SystemTime;
@@ -6,6 +7,7 @@ use std::time::SystemTime;
 use tokio::io::AsyncRead;
 
 pub use local_fs::LocalFsImageStore;
+pub use manifest::{Manifest, ManifestError, ManifestImage};
 
 pub const CONTENT_TYPE_DISK_IMAGE: &str = "application/octet-stream";
 
@@ -15,6 +17,16 @@ pub struct ImageMeta {
     pub etag: Option<String>,
     pub last_modified: Option<SystemTime>,
     pub content_type: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageCatalogEntry {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub recommended_chunk_size_bytes: Option<u64>,
+    pub public: bool,
+    pub meta: ImageMeta,
 }
 
 pub type BoxedAsyncRead = Pin<Box<dyn AsyncRead + Send>>;
@@ -27,14 +39,24 @@ pub enum StoreError {
     NotFound,
     #[error("invalid byte range start={start} len={len} for image of size {size}")]
     InvalidRange { start: u64, len: u64, size: u64 },
+    #[error("manifest error: {0}")]
+    Manifest(#[from] ManifestError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
 
 #[async_trait::async_trait]
 pub trait ImageStore: Send + Sync {
+    /// List available images (control-plane catalog).
+    async fn list_images(&self) -> Result<Vec<ImageCatalogEntry>, StoreError>;
+
+    /// Fetch catalog information for a single image.
+    async fn get_image(&self, image_id: &str) -> Result<ImageCatalogEntry, StoreError>;
+
+    /// Fetch core byte-stream metadata for a single image.
     async fn get_meta(&self, image_id: &str) -> Result<ImageMeta, StoreError>;
 
+    /// Open a range reader for a single image (data-plane).
     async fn open_range(
         &self,
         image_id: &str,
@@ -49,4 +71,27 @@ pub trait ImageStore: Send + Sync {
             Err(err) => Err(err),
         }
     }
+}
+
+pub(crate) fn validate_image_id(image_id: &str) -> Result<(), StoreError> {
+    if image_id.is_empty() || image_id == "." || image_id == ".." {
+        return Err(StoreError::InvalidImageId {
+            image_id: image_id.to_string(),
+        });
+    }
+
+    // Treat `image_id` as an opaque identifier and restrict it to ASCII
+    // `[A-Za-z0-9._-]` to prevent path traversal.
+    let is_allowed = image_id.bytes().all(|b| match b {
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' => true,
+        _ => false,
+    });
+
+    if !is_allowed {
+        return Err(StoreError::InvalidImageId {
+            image_id: image_id.to_string(),
+        });
+    }
+
+    Ok(())
 }
