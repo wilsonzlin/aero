@@ -2,6 +2,10 @@
 scratchpad.md
 handoff.md
 
+# Python
+__pycache__/
+*.py[cod]
+
 # Environment (secrets)
 .env
 .env.*

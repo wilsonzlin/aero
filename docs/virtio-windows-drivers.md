@@ -1,0 +1,252 @@
+# Virtio Windows 7 Drivers (virtio-blk / virtio-net / virtio-input / virtio-snd)
+
+## Goal
+
+Enable Aero’s **virtio acceleration path** by making it straightforward to install Windows 7 drivers for:
+
+- **virtio-blk** (storage) *(minimum deliverable)*
+- **virtio-net** (network) *(minimum deliverable)*
+- **virtio-input** (keyboard/mouse/tablet) *(best-effort; PS/2/USB HID remains fallback)*
+- **virtio-snd** (audio) *(optional; HDA/AC’97 remains fallback)*
+
+This document defines:
+
+- The chosen driver approach (and licensing rationale)
+- The required on-disk packaging layout (`.inf` + `.sys` + `.cat`)
+- A reproducible “drivers ISO” build flow for the emulator UX
+- Windows 7 installation steps (Device Manager + `pnputil`)
+- Win7 x64 test-signing mode flow + test certificate tooling
+- Optional offline driver injection into Windows install images (DISM)
+
+---
+
+## Chosen approach: reuse upstream virtio-win driver packages
+
+### Why
+
+Implementing Windows 7 kernel drivers for Storport (block) and NDIS (network) from scratch is a major standalone project. For Aero’s near-term goals, the pragmatic path is to **reuse the existing, widely deployed virtio driver stack** used by QEMU/KVM.
+
+### What we reuse
+
+We target the **virtio-win** driver distribution (commonly shipped as `virtio-win.iso`) and specifically the packages:
+
+| Aero device | virtio PCI ID (transitional / modern) | virtio-win package name (typical) |
+|------------|----------------------------------------|-----------------------------------|
+| virtio-net | `VEN_1AF4&DEV_1000` / `VEN_1AF4&DEV_1041` | `NetKVM` (`netkvm.inf` / `netkvm.sys`) |
+| virtio-blk | `VEN_1AF4&DEV_1001` / `VEN_1AF4&DEV_1042` | `viostor` (`viostor.inf` / `viostor.sys`) |
+| virtio-input | `VEN_1AF4&DEV_1011` / `VEN_1AF4&DEV_1052` | `vioinput` (best-effort) |
+| virtio-snd | `VEN_1AF4&DEV_1018` / `VEN_1AF4&DEV_1059` | `viosnd` (optional; may not support Win7 in all releases) |
+
+Notes:
+
+- `VEN_1AF4` is the conventional VirtIO PCI vendor ID used by the upstream ecosystem.
+- Aero should expose **both transitional and modern IDs** where feasible so the same driver set can bind across OS versions.
+
+### Licensing policy (project requirement)
+
+Aero aims for permissive licensing (MIT/Apache-2.0). This doc’s approach is only acceptable if the driver code we ship is under a license compatible with redistribution alongside an MIT/Apache project.
+
+**Upstream reference points (to pin during implementation):**
+
+- Driver sources: `kvm-guest-drivers-windows` (virtio-win project)
+- Binary distribution: `virtio-win.iso` (virtio-win project)
+
+In practice, virtio-win’s driver sources are typically distributed under a **BSD-style permissive license** (commonly BSD-3-Clause), which is compatible with Aero’s licensing goals, but Aero should still pin a version and ship the exact license texts for the specific artifacts it redistributes.
+
+**Repository policy:**
+
+- If Aero **vendors** virtio-win artifacts (or a source subtree), we must include:
+  - the upstream license texts
+  - a pinned upstream version/commit reference
+  - a `THIRD_PARTY_NOTICES` entry
+- If Aero chooses not to vendor binaries and instead requires users to supply them, we still document the flow, but Aero is no longer “shipping” the drivers.
+
+This repo provides a **packaging + ISO build story** that works either way. The directory layout and tooling are designed so that later work can:
+
+- vendor a pinned virtio-win subset directly into `drivers/virtio/prebuilt/`, or
+- populate `drivers/virtio/prebuilt/` from an externally obtained virtio-win ISO.
+
+---
+
+## Packaging layout (what Aero expects on disk)
+
+Drivers live under `drivers/virtio/`:
+
+```
+drivers/virtio/
+  manifest.json
+  prebuilt/                  # where real driver files go
+    win7/
+      x86/
+        viostor/
+          viostor.inf
+          viostor.sys
+          viostor.cat
+        netkvm/
+          netkvm.inf
+          netkvm.sys
+          netkvm.cat
+        vioinput/            # best-effort
+        viosnd/              # optional
+      amd64/                 # best-effort
+        viostor/
+        netkvm/
+        ...
+  sample/                    # repo-owned placeholders used by CI/tests
+    ...
+```
+
+### Why we require `.inf` + `.sys` + `.cat`
+
+- Windows installs PnP drivers via an **INF**.
+- On x64, Windows requires kernel drivers to be **signed**; the signature is normally validated via the **catalog (`.cat`)** for the driver package.
+- On Win7 x86, signature enforcement is generally off by default, but keeping `.cat` in the package makes the flow consistent.
+
+---
+
+## Building the “drivers ISO” (emulator UX integration)
+
+Aero should expose a UX action like:
+
+> “Mount driver ISO…” → select `aero-virtio-win7-drivers.iso`
+
+The ISO is a simple ISO-9660/Joliet filesystem containing the `win7/` driver directories.
+
+### Tooling provided
+
+- `tools/driver-iso/build.py` builds an ISO from a driver root directory and `drivers/virtio/manifest.json`.
+- `tools/driver-iso/verify_iso.py` verifies the ISO contains the required INF files.
+
+The builder requires an ISO authoring tool (Linux: `xorriso` preferred; also supports `genisoimage`/`mkisofs`).
+
+Example (from repo root):
+
+```bash
+python3 tools/driver-iso/build.py \
+  --drivers-root drivers/virtio/prebuilt \
+  --output dist/aero-virtio-win7-drivers.iso
+```
+
+To build a demo ISO from placeholders:
+
+```bash
+python3 tools/driver-iso/build.py \
+  --drivers-root drivers/virtio/sample \
+  --output dist/aero-virtio-win7-drivers-sample.iso
+```
+
+---
+
+## Installing on Windows 7
+
+### virtio-blk (storage) during Windows 7 setup (recommended)
+
+If the Windows installer can’t see the disk:
+
+1. Boot the Windows 7 installer ISO.
+2. When you reach “Where do you want to install Windows?”, choose **Load Driver**.
+3. Mount the Aero drivers ISO as a second CD-ROM and browse to:
+   - `\win7\x86\viostor\` for Win7 32-bit
+   - `\win7\amd64\viostor\` for Win7 64-bit
+4. Select `viostor.inf`.
+5. The virtio disk should appear; continue installation.
+
+### Post-install via Device Manager (net / input / snd)
+
+1. Boot Windows.
+2. Open **Device Manager**.
+3. For each unknown device (virtio-net, virtio-input, virtio-snd):
+   - Right click → **Update Driver Software…**
+   - “Browse my computer for driver software”
+   - Point it at the mounted drivers ISO
+   - Enable “Include subfolders”
+
+### Post-install via pnputil
+
+Windows 7 includes `pnputil.exe` (limited compared to newer Windows):
+
+```bat
+pnputil -i -a D:\win7\x86\viostor\viostor.inf
+pnputil -i -a D:\win7\x86\netkvm\netkvm.inf
+```
+
+Replace `D:` with your mounted drivers ISO drive letter and `x86` with `amd64` as appropriate.
+
+---
+
+## Win7 x64: test-signing mode + test certificate tooling
+
+Windows 7 x64 enforces driver signature checks. There are three practical scenarios:
+
+1. **Using upstream signed virtio-win packages**: should install without enabling test mode.
+2. **Using modified drivers / self-built drivers**: requires test signing mode (or a production code-signing certificate + cross-signing, which is out of scope).
+3. **CI/dev-only experimentation**: test mode is acceptable.
+
+### Enable test-signing mode (Win7 x64)
+
+Run an elevated Command Prompt:
+
+```bat
+bcdedit /set testsigning on
+shutdown /r /t 0
+```
+
+To disable:
+
+```bat
+bcdedit /set testsigning off
+shutdown /r /t 0
+```
+
+### Generate a test certificate + sign drivers
+
+See `tools/driver-signing/README.md` and scripts in `tools/driver-signing/`.
+
+High-level process:
+
+1. Create a code-signing certificate (self-signed is fine for test mode).
+2. Import it into:
+   - Trusted Root Certification Authorities
+   - Trusted Publishers
+3. Use the WDK `signtool.exe` to sign the `.cat` (and optionally `.sys`) files.
+
+---
+
+## Optional: offline injection into Windows install media (DISM)
+
+If you want Windows Setup to “just work” with virtio storage without clicking “Load Driver”, inject drivers into `boot.wim` and `install.wim` using DISM on a Windows host:
+
+1. Mount the image:
+   - `dism /Mount-Wim /WimFile:X:\sources\boot.wim /Index:2 /MountDir:C:\mount\boot`
+2. Add drivers:
+   - `dism /Image:C:\mount\boot /Add-Driver /Driver:C:\drivers\win7\amd64\viostor /Recurse`
+3. Commit/unmount:
+   - `dism /Unmount-Wim /MountDir:C:\mount\boot /Commit`
+
+Repeat for `install.wim` (pick the correct edition index).
+
+---
+
+## Manual verification checklist (Aero)
+
+**Storage (virtio-blk):**
+
+- [ ] Windows 7 detects the virtio disk during setup (with driver loaded).
+- [ ] Installation completes and boots from the virtio disk.
+- [ ] Disk is usable (create/copy large files; no I/O errors).
+
+**Networking (virtio-net):**
+
+- [ ] Windows 7 detects virtio NIC and installs the driver.
+- [ ] Windows obtains a DHCP lease using Aero’s network stack.
+- [ ] Basic connectivity works (ICMP/HTTP via Aero proxy).
+
+**Input (virtio-input, best-effort):**
+
+- [ ] Device appears and installs.
+- [ ] Mouse movement is smooth (no PS/2-rate limitations).
+
+**Sound (virtio-snd, optional):**
+
+- [ ] Device appears and installs.
+- [ ] Audio output works (system sounds).

@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def _load_manifest(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise SystemExit(f"manifest not found: {path}")
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"failed to parse manifest JSON ({path}): {e}")
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _find_iso_tool() -> tuple[str, list[str]]:
+    """
+    Returns (tool_kind, base_cmd).
+
+    tool_kind is used for friendly error messages and to select flags.
+    """
+
+    xorriso = shutil.which("xorriso")
+    if xorriso:
+        # xorriso provides mkisofs-compatible mode with better availability on Linux.
+        return ("xorriso", [xorriso, "-as", "mkisofs"])
+
+    genisoimage = shutil.which("genisoimage")
+    if genisoimage:
+        return ("genisoimage", [genisoimage])
+
+    mkisofs = shutil.which("mkisofs")
+    if mkisofs:
+        return ("mkisofs", [mkisofs])
+
+    oscdimg = shutil.which("oscdimg")
+    if oscdimg:
+        return ("oscdimg", [oscdimg])
+
+    raise SystemExit(
+        "no ISO authoring tool found. Install one of: xorriso, genisoimage, mkisofs "
+        "(or oscdimg on Windows)."
+    )
+
+
+def _validate_required_packages(manifest: dict, drivers_root: Path) -> None:
+    missing: list[str] = []
+    for pkg in manifest.get("packages", []):
+        if not pkg.get("required"):
+            continue
+        inf_rel = pkg.get("inf")
+        if not inf_rel:
+            missing.append(f"{pkg.get('id')} ({pkg.get('arch')}): missing 'inf' in manifest")
+            continue
+        inf_path = drivers_root / inf_rel
+        if not inf_path.is_file():
+            missing.append(f"{pkg.get('id')} ({pkg.get('arch')}): {inf_rel} not found under {drivers_root}")
+
+    if missing:
+        formatted = "\n".join(f"- {m}" for m in missing)
+        raise SystemExit(
+            "required driver package files are missing:\n"
+            f"{formatted}\n\n"
+            "Hint: for a demo build, use `--drivers-root drivers/virtio/sample`.\n"
+            "For a real build, populate `drivers/virtio/prebuilt/` with a Win7-capable virtio driver set."
+        )
+
+
+def _write_readme(stage_root: Path, filename: str, label: str) -> None:
+    (stage_root / filename).write_text(
+        "\n".join(
+            [
+                f"{label}",
+                "",
+                "Aero Virtio Drivers ISO",
+                "",
+                "This ISO is intended to be mounted inside the Aero Windows 7 VM as a CD-ROM.",
+                "Install drivers via Windows Setup (Load Driver) or Device Manager.",
+                "",
+                "See docs/virtio-windows-drivers.md in the Aero repo for the recommended flow.",
+                "",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def main() -> int:
+    repo_root = Path(__file__).resolve().parents[2]
+
+    parser = argparse.ArgumentParser(description="Build an Aero Windows virtio drivers ISO.")
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=repo_root / "drivers/virtio/manifest.json",
+        help="Path to drivers/virtio/manifest.json",
+    )
+    parser.add_argument(
+        "--drivers-root",
+        type=Path,
+        default=repo_root / "drivers/virtio/prebuilt",
+        help="Root directory containing win7/… driver files",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="Output ISO path",
+    )
+    parser.add_argument(
+        "--label",
+        type=str,
+        default=None,
+        help="Override ISO volume label (defaults to manifest)",
+    )
+    parser.add_argument(
+        "--include-manifest",
+        action="store_true",
+        help="Include the manifest.json in the ISO root (useful for debugging).",
+    )
+    args = parser.parse_args()
+
+    manifest = _load_manifest(args.manifest)
+    label = args.label or manifest.get("iso", {}).get("volume_label") or "AERO_VIRTIO"
+    readme_filename = manifest.get("iso", {}).get("readme_filename") or "README.txt"
+
+    drivers_root = args.drivers_root.resolve()
+    _validate_required_packages(manifest, drivers_root)
+
+    out_path = args.output.resolve()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    tool_kind, tool_cmd = _find_iso_tool()
+
+    with tempfile.TemporaryDirectory(prefix="aero-virtio-iso-") as tmp:
+        stage_root = Path(tmp) / "root"
+        stage_root.mkdir(parents=True, exist_ok=True)
+
+        # Copy driver directory tree into ISO root.
+        #
+        # We intentionally copy the directory contents rather than the directory itself so
+        # the ISO root contains `win7/…` directly.
+        for child in drivers_root.iterdir():
+            # Avoid copying local documentation.
+            if child.name.lower().endswith(".md"):
+                continue
+            dest = stage_root / child.name
+            if child.is_dir():
+                shutil.copytree(child, dest)
+            else:
+                shutil.copy2(child, dest)
+
+        _write_readme(stage_root, readme_filename, label)
+        if args.include_manifest:
+            shutil.copy2(args.manifest, stage_root / "manifest.json")
+
+        if tool_kind == "oscdimg":
+            cmd = [
+                *tool_cmd,
+                "-m",
+                "-o",
+                f"-l{label}",
+                str(stage_root),
+                str(out_path),
+            ]
+        else:
+            # -iso-level 3: allow files >2GB and deeper paths (harmless for small ISOs).
+            cmd = [
+                *tool_cmd,
+                "-iso-level",
+                "3",
+                "-J",
+                "-R",
+                "-V",
+                label,
+                "-o",
+                str(out_path),
+                str(stage_root),
+            ]
+
+        subprocess.run(cmd, check=True)
+
+    print(f"Wrote {out_path} (sha256={_sha256(out_path)})")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+

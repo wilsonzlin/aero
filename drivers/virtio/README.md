@@ -1,0 +1,18 @@
+# Virtio Windows driver packaging (Windows 7 focus)
+
+This directory is the **Aero packaging surface** for Windows virtio drivers.
+
+Goals:
+
+- Keep a stable directory layout that Aero can mount as a “drivers ISO”.
+- Make it possible to either:
+  - vendor a pinned set of driver binaries in-repo (`prebuilt/`), or
+  - populate `prebuilt/` from an externally obtained virtio-win distribution.
+
+Important:
+
+- The `sample/` subtree contains **non-functional placeholder files** used for tooling/CI.
+- Real driver artifacts (`.inf` / `.sys` / `.cat`) should be placed under `prebuilt/`.
+
+See `docs/virtio-windows-drivers.md` for installation steps and signing notes.
+

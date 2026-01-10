@@ -1,0 +1,35 @@
+name: virtio-driver-iso
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ISO tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xorriso
+
+      - name: Build sample virtio drivers ISO
+        run: |
+          python3 tools/driver-iso/build.py \
+            --drivers-root drivers/virtio/sample \
+            --output dist/aero-virtio-win7-drivers-sample.iso \
+            --include-manifest
+
+      - name: Verify ISO contents
+        run: |
+          python3 tools/driver-iso/verify_iso.py \
+            --iso dist/aero-virtio-win7-drivers-sample.iso
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aero-virtio-win7-drivers-sample-iso
+          path: dist/aero-virtio-win7-drivers-sample.iso
+

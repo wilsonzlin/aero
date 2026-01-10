@@ -54,6 +54,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 29. [Windows 7 Install Media Preparation (Slipstreaming)](./docs/16-windows7-install-media-prep.md)
 30. [Performance Tooling (Profiling, HUD, Traces, Benchmarks)](./docs/16-performance-tooling.md)
 31. [Guest Tools Packaging](./docs/16-guest-tools-packaging.md)
+32. [Virtio Windows Drivers](./docs/virtio-windows-drivers.md)
 
 ---
 
@@ -350,6 +351,7 @@ pub trait DisplayAdapter {
 | [win7-bcd-offline-patching.md](./docs/win7-bcd-offline-patching.md)     | Win7 offline patching of BCD stores for testsigning/nointegritychecks (element IDs + object selection) | I/O |
 | [windows/README.md](./docs/windows/README.md)                           | Windows driver development notes       | I/O               |
 | [windows7-virtio-driver-contract.md](./docs/windows7-virtio-driver-contract.md) | Virtio contract: Win7 drivers ↔ emulator | I/O               |
+| [virtio-windows-drivers.md](./docs/virtio-windows-drivers.md)           | Windows 7 virtio driver packaging      | I/O               |
 | [virtqueue-split-ring-win7.md](./docs/virtio/virtqueue-split-ring-win7.md) | Virtio 1.0 split virtqueue implementation guide (Win7 KMDF) | I/O (virtio drivers) |
 | [backend/disk-image-streaming-service.md](./docs/backend/disk-image-streaming-service.md) | Disk image streaming (Range/CORS/COEP) | I/O / Infra       |
 | [security-headers.md](./docs/security-headers.md)                       | COOP/COEP, CSP, security headers       | Infrastructure    |

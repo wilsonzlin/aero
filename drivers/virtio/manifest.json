@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "target": {
+    "os": "windows-7-sp1",
+    "notes": "File paths are relative to the chosen --drivers-root (e.g. drivers/virtio/prebuilt or drivers/virtio/sample)."
+  },
+  "iso": {
+    "volume_label": "AERO_VIRTIO",
+    "readme_filename": "README.txt"
+  },
+  "packages": [
+    {
+      "id": "virtio-blk",
+      "required": true,
+      "os": "win7",
+      "arch": "x86",
+      "package": "viostor",
+      "inf": "win7/x86/viostor/viostor.inf"
+    },
+    {
+      "id": "virtio-net",
+      "required": true,
+      "os": "win7",
+      "arch": "x86",
+      "package": "netkvm",
+      "inf": "win7/x86/netkvm/netkvm.inf"
+    },
+    {
+      "id": "virtio-blk",
+      "required": false,
+      "os": "win7",
+      "arch": "amd64",
+      "package": "viostor",
+      "inf": "win7/amd64/viostor/viostor.inf"
+    },
+    {
+      "id": "virtio-net",
+      "required": false,
+      "os": "win7",
+      "arch": "amd64",
+      "package": "netkvm",
+      "inf": "win7/amd64/netkvm/netkvm.inf"
+    },
+    {
+      "id": "virtio-input",
+      "required": false,
+      "os": "win7",
+      "arch": "x86",
+      "package": "vioinput",
+      "inf": "win7/x86/vioinput/vioinput.inf"
+    },
+    {
+      "id": "virtio-input",
+      "required": false,
+      "os": "win7",
+      "arch": "amd64",
+      "package": "vioinput",
+      "inf": "win7/amd64/vioinput/vioinput.inf"
+    },
+    {
+      "id": "virtio-snd",
+      "required": false,
+      "os": "win7",
+      "arch": "x86",
+      "package": "viosnd",
+      "inf": "win7/x86/viosnd/viosnd.inf"
+    },
+    {
+      "id": "virtio-snd",
+      "required": false,
+      "os": "win7",
+      "arch": "amd64",
+      "package": "viosnd",
+      "inf": "win7/amd64/viosnd/viosnd.inf"
+    }
+  ]
+}
+
