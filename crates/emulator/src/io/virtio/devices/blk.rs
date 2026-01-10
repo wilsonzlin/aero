@@ -197,6 +197,9 @@ impl VirtioBlkDevice {
         chain: &DescriptorChain,
         sector: u64,
     ) -> Result<u32, ()> {
+        if chain.descriptors.len() < 3 {
+            return Err(());
+        }
         let disk_sector_size = u64::from(self.drive.sector_size());
         let byte_offset = sector
             .checked_mul(VIRTIO_BLK_SECTOR_SIZE)
@@ -243,6 +246,9 @@ impl VirtioBlkDevice {
         chain: &DescriptorChain,
         sector: u64,
     ) -> Result<(), ()> {
+        if chain.descriptors.len() < 3 {
+            return Err(());
+        }
         let disk_sector_size = u64::from(self.drive.sector_size());
         let byte_offset = sector
             .checked_mul(VIRTIO_BLK_SECTOR_SIZE)
@@ -642,6 +648,109 @@ mod tests {
 
         dev.process_queue(&mut mem).unwrap();
         assert_eq!(mem.read_u8_le(status_addr).unwrap(), VIRTIO_BLK_S_IOERR);
+    }
+
+    #[test]
+    fn read_request_without_data_returns_ioerr() {
+        let disk = SharedDisk::new(8, 512);
+        let drive = VirtualDrive::new(Box::new(disk));
+        let vq = VirtQueue::new(8, DESC_TABLE, AVAIL_RING, USED_RING);
+        let mut dev = VirtioBlkDevice::new(drive, vq);
+
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+        let header_addr = 0x4000;
+        let status_addr = 0x6000;
+
+        mem.write_u32_le(header_addr, VIRTIO_BLK_T_IN).unwrap();
+        mem.write_u32_le(header_addr + 4, 0).unwrap();
+        mem.write_u64_le(header_addr + 8, 0).unwrap();
+
+        write_desc(
+            &mut mem,
+            0,
+            Descriptor {
+                addr: header_addr,
+                len: 16,
+                flags: VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            1,
+            Descriptor {
+                addr: status_addr,
+                len: 1,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, 0, 0);
+        mem.write_u16_le(USED_RING, 0).unwrap();
+        mem.write_u16_le(USED_RING + 2, 0).unwrap();
+
+        dev.process_queue(&mut mem).unwrap();
+        assert_eq!(mem.read_u8_le(status_addr).unwrap(), VIRTIO_BLK_S_IOERR);
+        assert_eq!(read_used_elem(&mem, 0), (0, 1));
+    }
+
+    #[test]
+    fn write_request_with_write_only_data_desc_returns_ioerr() {
+        let disk = SharedDisk::new(8, 512);
+        let drive = VirtualDrive::new(Box::new(disk));
+        let vq = VirtQueue::new(8, DESC_TABLE, AVAIL_RING, USED_RING);
+        let mut dev = VirtioBlkDevice::new(drive, vq);
+
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+        let header_addr = 0x4000;
+        let data_addr = 0x5000;
+        let status_addr = 0x6000;
+
+        mem.write_u32_le(header_addr, VIRTIO_BLK_T_OUT).unwrap();
+        mem.write_u32_le(header_addr + 4, 0).unwrap();
+        mem.write_u64_le(header_addr + 8, 0).unwrap();
+        mem.write_from(data_addr, &vec![0u8; 512]).unwrap();
+
+        write_desc(
+            &mut mem,
+            0,
+            Descriptor {
+                addr: header_addr,
+                len: 16,
+                flags: VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        // For OUT requests the data buffers must be read-only; mark it write-only to force IOERR.
+        write_desc(
+            &mut mem,
+            1,
+            Descriptor {
+                addr: data_addr,
+                len: 512,
+                flags: VRING_DESC_F_NEXT | VRING_DESC_F_WRITE,
+                next: 2,
+            },
+        );
+        write_desc(
+            &mut mem,
+            2,
+            Descriptor {
+                addr: status_addr,
+                len: 1,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, 0, 0);
+        mem.write_u16_le(USED_RING, 0).unwrap();
+        mem.write_u16_le(USED_RING + 2, 0).unwrap();
+
+        dev.process_queue(&mut mem).unwrap();
+        assert_eq!(mem.read_u8_le(status_addr).unwrap(), VIRTIO_BLK_S_IOERR);
+        assert_eq!(read_used_elem(&mem, 0), (0, 1));
     }
 
     #[test]

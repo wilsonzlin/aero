@@ -31,6 +31,10 @@ pub enum TranslateError {
     PageFault { vaddr: u64, code: u32 },
 }
 
+/// Legacy alias: older call sites treated all translation faults as "page faults".
+///
+/// Today translation can also fail with a long-mode #GP for non-canonical addresses, so the
+/// underlying type is [`TranslateError`].
 pub type PageFault = TranslateError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
