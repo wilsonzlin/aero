@@ -4,6 +4,9 @@ import { defineConfig } from "vite";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
+const coopCoepDisabled =
+  process.env.VITE_DISABLE_COOP_COEP === "1" || process.env.VITE_DISABLE_COOP_COEP === "true";
+
 const crossOriginIsolationHeaders = {
   // Aero relies on SharedArrayBuffer + WASM threads, which require cross-origin isolation.
   "Cross-Origin-Opener-Policy": "same-origin",
@@ -25,10 +28,10 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    headers: crossOriginIsolationHeaders,
+    headers: coopCoepDisabled ? undefined : crossOriginIsolationHeaders,
   },
   preview: {
-    headers: crossOriginIsolationHeaders,
+    headers: coopCoepDisabled ? undefined : crossOriginIsolationHeaders,
   },
   test: {
     environment: "node",

@@ -12,7 +12,10 @@
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
-    "test:unit:coverage": "vitest run --coverage"
+    "test:unit:coverage": "vitest run --coverage",
+    "wasm:build:threaded": "node ./scripts/build_wasm.mjs threaded",
+    "wasm:build:single": "node ./scripts/build_wasm.mjs single",
+    "wasm:build": "npm run wasm:build:single && npm run wasm:build:threaded"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

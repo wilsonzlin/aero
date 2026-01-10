@@ -11,6 +11,7 @@ import { requestWebGpuDevice } from "./platform/webgpu";
 import { installPerfHud } from "./perf/hud_entry";
 import { installAeroGlobal } from "./runtime/aero_global";
 import { WorkerCoordinator } from "./runtime/coordinator";
+import { initWasm } from "./runtime/wasm_loader";
 import { DEFAULT_GUEST_RAM_MIB, GUEST_RAM_PRESETS_MIB, type GuestRamMiB } from "./runtime/shared_layout";
 
 installPerfHud({ guestRamBytes: DEFAULT_GUEST_RAM_MIB * 1024 * 1024 });
@@ -112,6 +113,7 @@ function render(): void {
       el("h2", { text: "Capability report" }),
       renderCapabilityTable(report),
     ),
+    renderWasmPanel(),
     renderWebGpuPanel(),
     renderGpuWorkerPanel(),
     renderOpfsPanel(),
@@ -152,6 +154,33 @@ function renderCapabilityTable(report: PlatformFeatureReport): HTMLTableElement 
     {},
     el("thead", {}, el("tr", {}, el("th", { text: "feature" }), el("th", { text: "status" }))),
     tbody,
+  );
+}
+
+function renderWasmPanel(): HTMLElement {
+  const status = el("pre", { text: "Loading WASM…" });
+  const output = el("pre", { text: "" });
+  const error = el("pre", { text: "" });
+
+  initWasm()
+    .then(({ api, variant, reason }) => {
+      status.textContent = `Loaded variant: ${variant}\nReason: ${reason}`;
+      output.textContent = `greet(\"Aero\") → ${api.greet("Aero")}\nadd(2, 3) → ${api.add(2, 3)}`;
+    })
+    .catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      status.textContent = "Failed to initialize WASM";
+      error.textContent = message;
+      console.error(err);
+    });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "WASM runtime (threaded/single auto-selection)" }),
+    status,
+    output,
+    error,
   );
 }
 

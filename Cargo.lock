@@ -264,6 +264,13 @@ name = "aero-virtio"
 version = "0.1.0"
 
 [[package]]
+name = "aero-wasm"
+version = "0.1.0"
+dependencies = [
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "aero-webgpu"
 version = "0.1.0"
 dependencies = [

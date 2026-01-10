@@ -142,3 +142,7 @@ fuzz/Cargo.lock
 drivers/windows7/tests/guest-selftest/**/Debug/
 drivers/windows7/tests/guest-selftest/**/Release/
 **/*.snap.new
+
+# wasm-pack output (generated)
+web/src/wasm/pkg-threaded/
+web/src/wasm/pkg-single/

@@ -36,6 +36,7 @@ members = [
     "crates/memory",
     "crates/platform",
     "crates/aero-devices-input",
+    "crates/aero-wasm",
     "server",
     "crates/nt-packetlib",
     "tools/bcd_patch",
