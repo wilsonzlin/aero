@@ -76,6 +76,8 @@ pub struct CpuFeatures {
     pub ext1_ecx: u32,
     /// Extended leaf 0x8000_0001 EDX feature bits.
     pub ext1_edx: u32,
+    /// Extended leaf 0x8000_0007 EDX feature bits (invariant TSC/power management).
+    pub ext7_edx: u32,
 
     /// Physical address width (CPUID.8000_0008H:EAX[7:0]).
     pub physical_address_bits: u8,
@@ -131,6 +133,8 @@ impl CpuFeatures {
         // unavailable by the interpreter.
         let win7_x86_extensions = (advertised.leaf1_ecx & WIN7_X86_EXT_MASK) != 0;
 
+        let ext7_edx = bits::EXT7_EDX_INVARIANT_TSC;
+
         Ok(Self {
             win7_x86_extensions,
             // We implement up to leaf 0x1F and return 0 for unhandled leaves in-between.
@@ -147,6 +151,7 @@ impl CpuFeatures {
             leaf7_edx: advertised.leaf7_edx,
             ext1_ecx: advertised.ext1_ecx,
             ext1_edx: advertised.ext1_edx,
+            ext7_edx,
             // Windows guests generally assume 48-bit canonical virtual addresses.
             physical_address_bits: 48,
             linear_address_bits: 48,
@@ -412,6 +417,12 @@ pub fn cpuid(features: &CpuFeatures, leaf: u32, subleaf: u32) -> CpuidResult {
             ecx: features.ext1_ecx,
             edx: features.ext1_edx,
         },
+        0x8000_0007 => CpuidResult {
+            eax: 0,
+            ebx: 0,
+            ecx: 0,
+            edx: features.ext7_edx,
+        },
         0x8000_0002..=0x8000_0004 => {
             let chunk = (leaf - 0x8000_0002) as usize;
             let base = chunk * 16;
@@ -436,13 +447,6 @@ pub fn cpuid(features: &CpuFeatures, leaf: u32, subleaf: u32) -> CpuidResult {
                 edx: 0,
             }
         }
-        0x8000_0007 => CpuidResult {
-            // EDX[8] invariant TSC.
-            eax: 0,
-            ebx: 0,
-            ecx: 0,
-            edx: 1 << 8,
-        },
         0x8000_0008 => {
             let eax = (features.physical_address_bits as u32)
                 | ((features.linear_address_bits as u32) << 8);
@@ -635,4 +639,7 @@ pub mod bits {
 
     // CPUID.80000001:ECX
     pub const EXT1_ECX_LAHF_LM: u32 = 1 << 0;
+
+    // CPUID.80000007:EDX
+    pub const EXT7_EDX_INVARIANT_TSC: u32 = 1 << 8;
 }

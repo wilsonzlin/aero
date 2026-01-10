@@ -35,6 +35,10 @@ fn cpuid_leafs_are_deterministic() {
     assert_eq!(ext1.ecx, features.ext1_ecx);
     assert_eq!(ext1.edx, features.ext1_edx);
 
+    let ext7 = cpuid(&features, 0x8000_0007, 0);
+    assert_eq!(ext7.edx, features.ext7_edx);
+    assert_ne!(ext7.edx & (1 << 8), 0, "expected invariant TSC bit");
+
     let addr = cpuid(&features, 0x8000_0008, 0);
     assert_eq!(addr.eax & 0xFF, 48);
     assert_eq!((addr.eax >> 8) & 0xFF, 48);

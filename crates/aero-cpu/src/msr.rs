@@ -54,9 +54,9 @@ pub struct Msrs {
     pub gs_base: u64,
     pub kernel_gs_base: u64,
     pub tsc: u64,
+    pub tsc_aux: u32,
     pub apic_base: u64,
     pub pat: u64,
-    pub tsc_aux: u32,
 }
 
 impl Default for Msrs {
@@ -74,11 +74,11 @@ impl Default for Msrs {
             gs_base: 0,
             kernel_gs_base: 0,
             tsc: 0,
+            tsc_aux: 0,
             // Typical reset value: APIC enabled at 0xFEE00000, BSP bit set.
             apic_base: 0xFEE0_0000 | (1 << 11) | (1 << 8),
             // Intel SDM: the default PAT MSR reset value encodes WB/WT/UC-/UC.
             pat: 0x0007_0406_0007_0406,
-            tsc_aux: 0,
         }
     }
 }
@@ -98,9 +98,9 @@ impl Msrs {
             IA32_GS_BASE => Ok(self.gs_base),
             IA32_KERNEL_GS_BASE => Ok(self.kernel_gs_base),
             IA32_TSC => Ok(self.tsc),
+            IA32_TSC_AUX => Ok(self.tsc_aux as u64),
             IA32_APIC_BASE => Ok(self.apic_base),
             IA32_PAT => Ok(self.pat),
-            IA32_TSC_AUX => Ok(self.tsc_aux as u64),
             _ => Err(MsrError::Unknown { msr }),
         }
     }
@@ -157,16 +157,16 @@ impl Msrs {
                 self.tsc = val;
                 Ok(())
             }
+            IA32_TSC_AUX => {
+                self.tsc_aux = val as u32;
+                Ok(())
+            }
             IA32_APIC_BASE => {
                 self.apic_base = val;
                 Ok(())
             }
             IA32_PAT => {
                 self.pat = val;
-                Ok(())
-            }
-            IA32_TSC_AUX => {
-                self.tsc_aux = val as u32;
                 Ok(())
             }
             _ => Err(MsrError::Unknown { msr }),
