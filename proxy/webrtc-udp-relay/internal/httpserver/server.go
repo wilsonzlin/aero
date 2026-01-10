@@ -83,16 +83,28 @@ func (s *Server) registerRoutes() {
 	})
 
 	s.mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		if s.ready.Load() {
-			WriteJSON(w, http.StatusOK, map[string]any{"ready": true})
+		if !s.ready.Load() {
+			WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"ready": false})
 			return
 		}
-		WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"ready": false})
+		if err := s.cfg.ICEConfigError(); err != nil {
+			WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"ready": false, "error": err.Error()})
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"ready": true})
 	})
 
 	s.mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, http.StatusOK, s.build)
 	})
+
+	s.mux.HandleFunc("GET /webrtc/ice", s.withOriginPolicy(func(w http.ResponseWriter, r *http.Request) {
+		if err := s.cfg.ICEConfigError(); err != nil {
+			WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"iceServers": s.cfg.ICEServers})
+	}))
 }
 
 type Middleware func(http.Handler) http.Handler

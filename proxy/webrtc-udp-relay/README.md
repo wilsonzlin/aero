@@ -98,14 +98,17 @@ If Chromium fails to launch in CI, ensure the container/runner includes the Play
 ## HTTP endpoints
 
 - `GET /healthz` → `{"ok":true}`
-- `GET /readyz` → readiness (200 once serving, 503 during shutdown)
+- `GET /readyz` → readiness (200 once serving, 503 during shutdown or when ICE config is invalid)
 - `GET /version` → build metadata (commit/build time may be empty)
+- `GET /webrtc/ice` → ICE server list for browser clients: `{"iceServers":[...]}`
+  - guarded by the same origin policy as signaling endpoints (to avoid leaking TURN credentials cross-origin)
 
 ## Implemented
 
 - Minimal production-oriented HTTP server skeleton + middleware
 - Config system (env + flags): listen address, public base URL, log format/level, shutdown timeout, dev/prod mode
 - WebRTC network config (env + flags): ICE UDP port range, UDP listen IP, NAT 1:1 public IP advertisement
+- Configurable ICE servers (STUN/TURN) + client-facing discovery endpoint (`/webrtc/ice`)
 - Relay/policy primitives (not yet wired to WebRTC signaling)
 - Protocol documentation (`PROTOCOL.md`)
 - Playwright E2E test harness (`e2e/`) that verifies Chromium ↔ relay interoperability for the `udp` DataChannel.
@@ -141,10 +144,9 @@ The service supports configuration via environment variables and equivalent flag
 - `AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT` / `--shutdown-timeout` (default `15s`)
 - `AERO_WEBRTC_UDP_RELAY_MODE` / `--mode` (`dev` or `prod`)
 
-### WebRTC / signaling config (expected by upcoming tasks)
+### WebRTC / ICE config
 
-The container + client integration is expected to use the following environment variables once
-signaling and relay endpoints land:
+The container + client integration uses the following environment variables and equivalent flags:
 
 - `AUTH_MODE`: controls request authentication/authorization (implementation-defined).
 - `ALLOWED_ORIGINS`: CORS allow-list for browser clients (comma-separated).
@@ -158,8 +160,14 @@ signaling and relay endpoints land:
 - `WEBRTC_NAT_1TO1_IPS`: comma-separated public IPs to advertise for ICE when the relay is behind NAT.
 - `WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE`: `host` or `srflx` (default: `host`).
 - `AERO_ICE_SERVERS_JSON`: JSON string describing ICE servers that the relay advertises to clients.
+  - Flag: `--ice-servers-json`
   - For the `with-turn` profile, `docker-compose.yml` sets this automatically to point at the
     local coturn instance (and uses `TURN_PUBLIC_HOST` for the hostname/IP).
+- Convenience env vars (used only when `AERO_ICE_SERVERS_JSON`/`--ice-servers-json` are unset):
+  - `AERO_STUN_URLS` / `--stun-urls` (comma-separated)
+  - `AERO_TURN_URLS` / `--turn-urls` (comma-separated)
+  - `AERO_TURN_USERNAME` / `--turn-username`
+  - `AERO_TURN_CREDENTIAL` / `--turn-credential`
 
 Equivalent flags:
 
@@ -330,4 +338,3 @@ See "Destination policy (UDP egress)" above.
 cd proxy/webrtc-udp-relay
 docker build .
 ```
-

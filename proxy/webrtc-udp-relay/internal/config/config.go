@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pion/webrtc/v4"
 )
 
 const (
@@ -30,10 +32,10 @@ const (
 	EnvHardCloseAfterViolations        = "HARD_CLOSE_AFTER_VIOLATIONS"
 	EnvViolationWindowSeconds          = "VIOLATION_WINDOW_SECONDS"
 
-	DefaultListenAddr      = "127.0.0.1:8080"
-	DefaultShutdown        = 15 * time.Second
-	DefaultViolationWindow = 10 * time.Second
-	DefaultMode       Mode = ModeDev
+	DefaultListenAddr           = "127.0.0.1:8080"
+	DefaultShutdown             = 15 * time.Second
+	DefaultViolationWindow      = 10 * time.Second
+	DefaultMode            Mode = ModeDev
 )
 
 const (
@@ -125,6 +127,13 @@ type Config struct {
 	MaxDataChannelBpsPerSession     int
 	HardCloseAfterViolations        int
 	ViolationWindow                 time.Duration
+	ICEServers                      []webrtc.ICEServer
+
+	iceConfigErr error
+}
+
+func (c Config) ICEConfigError() error {
+	return c.iceConfigErr
 }
 
 func Load(args []string) (Config, error) {
@@ -154,6 +163,11 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 
 	listenAddr := envOrDefault(lookup, EnvListenAddr, DefaultListenAddr)
 	publicBaseURL := envOrDefault(lookup, EnvPublicBaseURL, "")
+	iceServersJSON := envOrDefault(lookup, envICEServersJSON, "")
+	stunURLs := envOrDefault(lookup, envStunURLs, "")
+	turnURLs := envOrDefault(lookup, envTurnURLs, "")
+	turnUsername := envOrDefault(lookup, envTurnUsername, "")
+	turnCredential := envOrDefault(lookup, envTurnCredential, "")
 
 	shutdownTimeout := DefaultShutdown
 	if raw, ok := lookup(EnvShutdownTimeout); ok && raw != "" {
@@ -250,6 +264,11 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.StringVar(&logFormatStr, "log-format", logFormatDefault, "Log format: text or json")
 	fs.StringVar(&logLevelStr, "log-level", logLevelDefault, "Log level: debug, info, warn, error")
 	fs.DurationVar(&shutdownTimeout, "shutdown-timeout", shutdownTimeout, "Graceful shutdown timeout (e.g. 15s)")
+	fs.StringVar(&iceServersJSON, "ice-servers-json", iceServersJSON, "ICE server JSON config (AERO_ICE_SERVERS_JSON)")
+	fs.StringVar(&stunURLs, "stun-urls", stunURLs, "comma-separated STUN URLs (AERO_STUN_URLS)")
+	fs.StringVar(&turnURLs, "turn-urls", turnURLs, "comma-separated TURN URLs (AERO_TURN_URLS)")
+	fs.StringVar(&turnUsername, "turn-username", turnUsername, "TURN username (AERO_TURN_USERNAME)")
+	fs.StringVar(&turnCredential, "turn-credential", turnCredential, "TURN credential (AERO_TURN_CREDENTIAL)")
 
 	fs.UintVar(&webrtcUDPPortMin, FlagWebRTCUDPPortMin, webrtcUDPPortMin, "Min UDP port for WebRTC ICE (0 = unset; env "+EnvWebRTCUDPPortMin+")")
 	fs.UintVar(&webrtcUDPPortMax, FlagWebRTCUDPPortMax, webrtcUDPPortMax, "Max UDP port for WebRTC ICE (0 = unset; env "+EnvWebRTCUDPPortMax+")")
@@ -353,7 +372,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, fmt.Errorf("invalid %s/%s %q: %w", EnvWebRTCNAT1To1IPCandidateType, "--"+FlagWebRTCNAT1To1IPCandidateType, webrtcNAT1To1CandidateTypeStr, err)
 	}
 
-	return Config{
+	cfg := Config{
 		ListenAddr:      listenAddr,
 		PublicBaseURL:   publicBaseURL,
 		LogFormat:       logFormat,
@@ -375,7 +394,16 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		MaxDataChannelBpsPerSession:     maxDataChannelBpsPerSession,
 		HardCloseAfterViolations:        hardCloseAfterViolations,
 		ViolationWindow:                 violationWindow,
-	}, nil
+	}
+
+	iceServers, err := parseICEServersFromValues(iceServersJSON, stunURLs, turnURLs, turnUsername, turnCredential)
+	if err != nil {
+		cfg.iceConfigErr = err
+	} else {
+		cfg.ICEServers = iceServers
+	}
+
+	return cfg, nil
 }
 
 func NewLogger(cfg Config) (*slog.Logger, error) {
@@ -518,4 +546,3 @@ func parseIPList(s string) ([]string, error) {
 	}
 	return out, nil
 }
-
