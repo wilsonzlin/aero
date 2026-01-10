@@ -77,8 +77,7 @@ export type WasmReadyMessage = {
   type: MessageType.WASM_READY;
   role: WorkerRole;
   variant: WasmVariant;
-  version: number;
-  sum: number;
+  value: number;
 };
 
 export type ProtocolMessage =
@@ -141,13 +140,12 @@ export function encodeProtocolMessage(msg: ProtocolMessage): Uint8Array {
       return buf;
     }
     case MessageType.WASM_READY: {
-      const buf = new Uint8Array(1 + 1 + 1 + 4 + 4);
+      const buf = new Uint8Array(1 + 1 + 1 + 4);
       buf[0] = msg.type;
       buf[1] = workerRoleToId(msg.role);
       buf[2] = wasmVariantToId(msg.variant);
       const view = new DataView(buf.buffer);
-      view.setInt32(3, msg.version | 0, true);
-      view.setInt32(7, msg.sum | 0, true);
+      view.setInt32(3, msg.value | 0, true);
       return buf;
     }
     default: {
@@ -191,15 +189,14 @@ export function decodeProtocolMessage(bytes: Uint8Array): ProtocolMessage | null
       return { type: MessageType.ERROR, role, message };
     }
     case MessageType.WASM_READY: {
-      if (bytes.byteLength !== 11) return null;
+      if (bytes.byteLength !== 7) return null;
       const role = idToWorkerRole(bytes[1]);
       if (!role) return null;
       const variant = idToWasmVariant(bytes[2]);
       if (!variant) return null;
       const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-      const version = view.getInt32(3, true);
-      const sum = view.getInt32(7, true);
-      return { type: MessageType.WASM_READY, role, variant, version, sum };
+      const value = view.getInt32(3, true);
+      return { type: MessageType.WASM_READY, role, variant, value };
     }
     default:
       return null;

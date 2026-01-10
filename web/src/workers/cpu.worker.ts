@@ -70,9 +70,8 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
 
       try {
         const { api, variant } = await perf.spanAsync("wasm:init", () => initWasmForContext());
-        const version = api.version();
-        const sum = api.sum(20, 22);
-        ctx.postMessage({ type: MessageType.WASM_READY, role, variant, version, sum } satisfies ProtocolMessage);
+        const value = api.add(20, 22);
+        ctx.postMessage({ type: MessageType.WASM_READY, role, variant, value } satisfies ProtocolMessage);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setReadyFlag(status, role, false);

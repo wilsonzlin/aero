@@ -31,8 +31,7 @@ export interface WorkerStatus {
 
 export interface WorkerWasmStatus {
   variant: WasmVariant;
-  version: number;
-  sum: number;
+  value: number;
 }
 
 interface WorkerInfo {
@@ -275,13 +274,11 @@ export class WorkerCoordinator {
       const wasmMsg = msg as Partial<WasmReadyMessage>;
       if (
         (wasmMsg.variant === "single" || wasmMsg.variant === "threaded") &&
-        typeof wasmMsg.version === "number" &&
-        typeof wasmMsg.sum === "number"
+        typeof wasmMsg.value === "number"
       ) {
         this.wasmStatus[role] = {
           variant: wasmMsg.variant,
-          version: wasmMsg.version,
-          sum: wasmMsg.sum,
+          value: wasmMsg.value,
         };
       }
       return;

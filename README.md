@@ -81,7 +81,7 @@ To avoid worker code accidentally referencing `window` (workers don’t have it)
 import { initWasmForContext } from "./runtime/wasm_context";
 
 const { api, variant } = await initWasmForContext();
-// api.version(), api.sum(a, b), ...
+// api.add(a, b), api.greet(name), ...
 ```
 
 This pattern:

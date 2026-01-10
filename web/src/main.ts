@@ -1718,7 +1718,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         const wasmSuffix =
           roleName === "cpu" && status.state !== "stopped"
             ? wasm
-              ? ` wasm(${wasm.variant}) version=${wasm.version} sum=${wasm.sum}`
+              ? ` wasm(${wasm.variant}) add(20,22)=${wasm.value}`
               : " wasm(pending)"
             : "";
         return el("li", {
