@@ -39,6 +39,7 @@ NTSTATUS
 VirtqueueRingLayoutCompute(
     _In_ USHORT QueueSize,
     _In_ BOOLEAN EventIdxEnabled,
+    _In_ SIZE_T RingAlignment,
     _Out_ VIRTQUEUE_RING_LAYOUT* Layout)
 {
     NTSTATUS status;
@@ -57,6 +58,9 @@ VirtqueueRingLayoutCompute(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (RingAlignment < 4 || (RingAlignment & (RingAlignment - 1)) != 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
     RtlZeroMemory(Layout, sizeof(*Layout));
 
     /*
@@ -69,7 +73,6 @@ VirtqueueRingLayoutCompute(
     if (!NT_SUCCESS(status)) {
         return status;
     }
-
     status = RtlSizeTMult(sizeof(struct virtq_desc), (SIZE_T)QueueSize, &descSize);
     if (!NT_SUCCESS(status)) {
         return status;
@@ -109,7 +112,7 @@ VirtqueueRingLayoutCompute(
     if (!NT_SUCCESS(status)) {
         return status;
     }
-    status = VirtqueueRingAlignUp(availEnd, 4, &usedOffset);
+    status = VirtqueueRingAlignUp(availEnd, RingAlignment, &usedOffset);
     if (!NT_SUCCESS(status)) {
         return status;
     }
@@ -168,7 +171,7 @@ VirtqueueRingDmaValidateAlignment(
 
     if (!VirtqueueRingIsAligned64(Ring->DescDma, 16) ||
         !VirtqueueRingIsAligned64(Ring->AvailDma, 2) ||
-        !VirtqueueRingIsAligned64(Ring->UsedDma, 4)) {
+        !VirtqueueRingIsAligned64(Ring->UsedDma, (UINT64)Ring->RingAlignment)) {
         return STATUS_DATATYPE_MISALIGNMENT;
     }
 
@@ -187,6 +190,7 @@ VirtqueueRingDmaAlloc(
     VIRTQUEUE_RING_LAYOUT layout;
     UINT64 baseDma;
     PUCHAR baseVa;
+    SIZE_T ringAlign;
 
     PAGED_CODE();
 
@@ -197,15 +201,21 @@ VirtqueueRingDmaAlloc(
     RtlZeroMemory(Ring, sizeof(*Ring));
     RtlZeroMemory(&layout, sizeof(layout));
 
-    status = VirtqueueRingLayoutCompute(QueueSize, EventIdxEnabled, &layout);
-    if (!NT_SUCCESS(status)) {
-        return status;
+    /*
+     * Prefer PAGE_SIZE ring alignment for legacy virtio-pci, but fall back to 16
+     * if the platform/DMA constraints can't satisfy that requirement.
+     */
+    ringAlign = PAGE_SIZE;
+    status = VirtqueueRingLayoutCompute(QueueSize, EventIdxEnabled, ringAlign, &layout);
+    if (NT_SUCCESS(status)) {
+        status = VirtqueueRingDmaAllocCommonBuffer(DmaCtx, ParentObject, layout.TotalSize, ringAlign, &Ring->CommonBuffer);
     }
-
-    /* Prefer page alignment but accept 16-byte alignment as a minimum. */
-    status = VirtqueueRingDmaAllocCommonBuffer(DmaCtx, ParentObject, layout.TotalSize, PAGE_SIZE, &Ring->CommonBuffer);
     if (!NT_SUCCESS(status)) {
-        status = VirtqueueRingDmaAllocCommonBuffer(DmaCtx, ParentObject, layout.TotalSize, 16, &Ring->CommonBuffer);
+        ringAlign = 16;
+        status = VirtqueueRingLayoutCompute(QueueSize, EventIdxEnabled, ringAlign, &layout);
+        if (NT_SUCCESS(status)) {
+            status = VirtqueueRingDmaAllocCommonBuffer(DmaCtx, ParentObject, layout.TotalSize, ringAlign, &Ring->CommonBuffer);
+        }
     }
     if (!NT_SUCCESS(status)) {
         RtlZeroMemory(Ring, sizeof(*Ring));
@@ -226,6 +236,7 @@ VirtqueueRingDmaAlloc(
     Ring->UsedDma = baseDma + (UINT64)layout.UsedOffset;
 
     Ring->QueueSize = QueueSize;
+    Ring->RingAlignment = ringAlign;
 
     status = VirtqueueRingDmaValidateAlignment(Ring);
     if (!NT_SUCCESS(status)) {
@@ -261,6 +272,7 @@ VirtqueueRingDmaSelfTest(
 {
     ASSERT(Ring != NULL);
     ASSERT(Ring->QueueSize != 0);
+    ASSERT(Ring->RingAlignment != 0);
 
     ASSERT(VirtqueueRingIsAligned64((UINT64)(ULONG_PTR)Ring->Desc, 16));
     ASSERT(VirtqueueRingIsAligned64((UINT64)(ULONG_PTR)Ring->Avail, 2));
@@ -268,6 +280,6 @@ VirtqueueRingDmaSelfTest(
 
     ASSERT(VirtqueueRingIsAligned64(Ring->DescDma, 16));
     ASSERT(VirtqueueRingIsAligned64(Ring->AvailDma, 2));
-    ASSERT(VirtqueueRingIsAligned64(Ring->UsedDma, 4));
+    ASSERT(VirtqueueRingIsAligned64(Ring->UsedDma, (UINT64)Ring->RingAlignment));
 }
 #endif

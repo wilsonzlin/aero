@@ -135,7 +135,7 @@ typedef struct _VIRTQUEUE_RING_LAYOUT {
 
     SIZE_T DescOffset;  /* aligned to 16 */
     SIZE_T AvailOffset; /* aligned to 2 */
-    SIZE_T UsedOffset;  /* aligned to 4 */
+    SIZE_T UsedOffset;  /* aligned to RingAlignment */
 
     SIZE_T TotalSize;
 } VIRTQUEUE_RING_LAYOUT;
@@ -150,6 +150,7 @@ typedef struct _VIRTQUEUE_RING_DMA {
     UINT64 UsedDma;
 
     USHORT QueueSize;
+    SIZE_T RingAlignment;
 
     VIRTIO_COMMON_BUFFER CommonBuffer;
 } VIRTQUEUE_RING_DMA;
@@ -159,6 +160,7 @@ NTSTATUS
 VirtqueueRingLayoutCompute(
     _In_ USHORT QueueSize,
     _In_ BOOLEAN EventIdxEnabled,
+    _In_ SIZE_T RingAlignment,
     _Out_ VIRTQUEUE_RING_LAYOUT* Layout);
 
 /*

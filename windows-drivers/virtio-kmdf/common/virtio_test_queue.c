@@ -23,7 +23,7 @@ NTSTATUS VirtioTestQueueAllocAndLog(_In_ WDFDEVICE Device)
 
     status = VirtioDmaAllocCommonBuffer(dma, 4096, 4096, FALSE, &buf);
     if (NT_SUCCESS(status)) {
-        VIRTIO_DMA_TRACE("test queue buffer va=%p dma=0x%I64x len=%Iu\n", buf.Va, (unsigned long long)buf.Dma, buf.Length);
+        VIRTIO_DMA_TRACE("test common buffer va=%p dma=0x%I64x len=%Iu\n", buf.Va, (unsigned long long)buf.Dma, buf.Length);
         VirtioDmaFreeCommonBuffer(&buf);
     }
 
