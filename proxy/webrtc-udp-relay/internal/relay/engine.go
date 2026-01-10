@@ -10,7 +10,7 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
-type Config struct {
+type EngineConfig struct {
 	PreferV2 bool
 	Policy   *policy.DestinationPolicy
 }
@@ -20,7 +20,7 @@ type Config struct {
 //
 // It supports both v1 (IPv4-only) and v2 (IPv4/IPv6) frames.
 type Engine struct {
-	cfg          Config
+	cfg          EngineConfig
 	sendToClient func([]byte) error
 
 	mu               sync.Mutex
@@ -39,7 +39,7 @@ type udpFlow struct {
 	conn *net.UDPConn
 }
 
-func NewEngine(cfg Config, sendToClient func([]byte) error) *Engine {
+func NewEngine(cfg EngineConfig, sendToClient func([]byte) error) *Engine {
 	return &Engine{
 		cfg:          cfg,
 		sendToClient: sendToClient,

@@ -16,7 +16,7 @@ func TestEngineIPv6EchoV2(t *testing.T) {
 	defer echoConn.Close()
 
 	outCh := make(chan []byte, 1)
-	engine := NewEngine(Config{
+	engine := NewEngine(EngineConfig{
 		PreferV2: true,
 		Policy:   policy.NewDevDestinationPolicy(),
 	}, func(b []byte) error {
