@@ -43,6 +43,19 @@ PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS
 
 On failure/timeout, it returns non-zero and prints the matching failure reason.
 
+### Python alternative (Linux-friendly)
+
+If you prefer not to depend on PowerShell, `invoke_aero_virtio_win7_tests.py` provides the same core behavior:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --serial-log ./win7-serial.log \
+  --timeout-seconds 600 \
+  --snapshot
+```
+
 ## How the harness works
 
 - Starts a tiny HTTP server on `127.0.0.1:<HttpPort>`
