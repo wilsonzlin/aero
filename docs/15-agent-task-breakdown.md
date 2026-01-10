@@ -49,6 +49,12 @@ This document breaks down Aero development into parallelizable work items. Tasks
 │  ├── Testing                                                    │
 │  └── Browser-Compat                                             │
 │                                                                  │
+│  SERVICE / DEPLOYMENT / SECURITY                                │
+│  ├── Disk-Auth                                                  │
+│  ├── Disk-Gateway                                               │
+│  ├── Upload/Import                                              │
+│  └── CDN (CloudFront)                                           │
+│                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -557,6 +563,22 @@ PF-008 specifically includes a **guest CPU instruction throughput** microbenchma
 | IF-009 | Release automation              | P1       | IF-003       | Medium     |
 | IF-010 | Performance regression CI       | P1       | PF-008       | Medium     |
 
+
+---
+
+## SERVICE / DEPLOYMENT / SECURITY Tasks
+
+These tasks cover the hosted-service components needed to support **user-provided disk images** (upload, storage, and streamed access) while meeting legal/security constraints.
+
+| ID     | Task                                                                  | Priority | Dependencies         | Complexity |
+| ------ | --------------------------------------------------------------------- | -------- | -------------------- | ---------- |
+| HS-001 | Disk image lifecycle + access control spec (`docs/17-*`)               | P0       | None                 | Medium     |
+| HS-002 | Disk image streaming authentication spec (`docs/16-*`)                 | P0       | HS-001               | Medium     |
+| HS-003 | `disk-gateway` server (Range GET, auth verification, CORS)             | P0       | HS-001, HS-002       | High       |
+| HS-004 | Upload/import pipeline (ingest, validate, store, attach to lifecycle)  | P0       | HS-001               | High       |
+| HS-005 | CDN profiles (CloudFront) for disk streaming (`docs/deployment/*`)     | P1       | HS-002, HS-003       | Medium     |
+| HS-006 | Hosted-service conformance tests (contract tests for gateway + auth)   | P1       | HS-003, HS-004, HS-005 | Medium   |
+| HS-007 | Browser E2E tests for disk streaming + auth failures                   | P1       | HS-003, IF-006       | High       |
 
 ---
 

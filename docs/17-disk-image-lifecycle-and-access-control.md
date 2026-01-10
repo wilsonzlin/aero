@@ -697,3 +697,11 @@ A simple, CDN-agnostic write API uses fixed-size blocks:
   - Recommend `If-Match: "<generation>"` (or similar) to enforce single-writer semantics.
 - `GET /v1/deltas/{deltaId}/blocks/{blockIndex}` — read a block (optional; many designs can serve reads via the normal disk-bytes endpoint).
 - `POST /v1/deltas/{deltaId}:flush` — optional explicit flush/commit point (often a no-op if each block write is durable).
+
+---
+
+## Testable invariants (minimum)
+
+- The service MUST NOT mint `disk:read`/streaming leases for images that are not in `ready`.
+- The data plane MUST reject expired or scope-mismatched leases (typically `401`/`403`).
+- A valid `Range` request MUST return `206 Partial Content` with a correct `Content-Range` and `Content-Length`.

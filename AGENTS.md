@@ -360,6 +360,7 @@ pub trait DisplayAdapter {
 | [16-perf-tracing.md](./docs/16-perf-tracing.md)                         | Chrome Trace/Perfetto export           | Performance       |
 | [16-remote-disk-image-delivery.md](./docs/16-remote-disk-image-delivery.md) | Production delivery of disk bytes via object store + CDN + HTTP Range | I/O / Infra       |
 | [17-range-cdn-behavior.md](./docs/17-range-cdn-behavior.md)             | HTTP Range + CDN caching/limits        | Infrastructure    |
+| [deployment/cloudfront-disk-streaming.md](./docs/deployment/cloudfront-disk-streaming.md) | Concrete CloudFront/S3 setup for authenticated disk Range streaming | I/O / Infra       |
 | [17-disk-image-lifecycle-and-access-control.md](./docs/17-disk-image-lifecycle-and-access-control.md) | Hosted disk image uploads, ownership/sharing, leases, and writeback strategies | I/O / Infra       |
 | [18-chunked-disk-image-format.md](./docs/18-chunked-disk-image-format.md) | Chunked disk image delivery (no HTTP Range) | I/O               |
 | [windows7-guest-tools.md](./docs/windows7-guest-tools.md)               | End-user guide: install Guest Tools and switch to virtio + Aero GPU | All |
