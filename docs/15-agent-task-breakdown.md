@@ -568,7 +568,7 @@ PF-008 specifically includes a **guest CPU instruction throughput** microbenchma
 │       │                │                │                       │
 │       ▼                ▼                ▼                       │
 │  ┌──────────┐     ┌──────────┐     ┌──────────┐                │
-│  │ D9-001   │     │ AU-001   │     │ IN-001/011│               │
+│  │ D9-001   │     │ AU-001   │     │ IN-001/11│                │
 │  └────┬─────┘     └────┬─────┘     └────┬─────┘                │
 │       │                │                │                       │
 │       ▼                ▼                ▼                       │
