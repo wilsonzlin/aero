@@ -22,7 +22,7 @@ pwsh -File ci/install-wdk.ps1
 pwsh -File ci/build-drivers.ps1 -ToolchainJson out/toolchain.json
 pwsh -File ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
 pwsh -File ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
-pwsh -File ci/package-drivers.ps1
+pwsh -File ci/package-drivers.ps1 -MakeFatImage
 ```
 
 ## `ci/stamp-infs.ps1`
@@ -76,3 +76,18 @@ If `-Version` is not provided, the script derives a deterministic version string
 Resulting artifact names look like:
 
 `AeroVirtIO-Win7-20260110-0.1.0+12.gabcdef123456-x64.zip`
+
+## `ci/make-fat-image.ps1`
+
+Creates a **mountable FAT32 VHD** containing a prepared driver package directory:
+
+- `aero-test.cer`
+- `INSTALL.txt`
+- `x86/`
+- `x64/`
+
+Notes:
+
+- Uses **DiskPart** to create + attach the VHD and to format FAT32.
+- Requires **Windows** and **Administrator** privileges.
+- By default, if the environment cannot create/mount the VHD, the script **skips** FAT image creation with a warning (exit code 0). Use `-Strict` to fail instead.
