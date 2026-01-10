@@ -347,6 +347,7 @@ Resource updates
 * `pfnMap` + `pfnUnmap` — `D3D11DDIARG_MAP`
 * `pfnUpdateSubresource`
 * `pfnCopyResource` / `pfnCopySubresourceRegion`
+* `pfnFlush` (submits pending work; corresponds to `ID3D11DeviceContext::Flush`)
 
 ---
 
