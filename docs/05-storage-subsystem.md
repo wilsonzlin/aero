@@ -633,7 +633,8 @@ To maximize cache hit-rate (especially when a CDN sits in front of the disk serv
 - **Align reads to a fixed `CHUNK_SIZE`** (e.g., 1 MiB).
 - **Reuse the same chunk boundaries** for all requests (always fetch whole chunks like `bytes=N..N+CHUNK_SIZE-1`), rather than issuing variable-sized ranges.
 
-Operational details for the backend **disk image streaming service** (HTTP `Range`, CORS preflight for `Range`, and cross-origin isolation considerations) are documented in [backend/disk-image-streaming-service.md](./backend/disk-image-streaming-service.md).
+Protocol-level requirements for authenticated disk streaming (HTTP `Range`, auth styles, CORS/COEP/CORP) are specified in [16 - Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md).
+Operational details for the backend **disk image streaming service** (deployment, troubleshooting) are documented in [backend/disk-image-streaming-service.md](./backend/disk-image-streaming-service.md).
 
 The example below uses HTTP `Range` requests for random-access reads. For a CDN-friendly alternative that avoids `Range` (and therefore avoids CORS preflight on cross-origin fetches), see [18 - Chunked Disk Image Format](./18-chunked-disk-image-format.md).
 For how disk/ISO images are uploaded/imported into a hosted service and kept private over time (including lease scopes and writeback options), see [Disk Image Lifecycle and Access Control](./17-disk-image-lifecycle-and-access-control.md).
@@ -762,7 +763,7 @@ Critical implementation constraints:
   - `Range` is not a CORS-safelisted request header, so browsers will send an `OPTIONS` preflight.
   - The server must allow the request headers used by the client (at minimum `Range`, and `Authorization` if using bearer tokens) and expose the response header (`Access-Control-Expose-Headers: Content-Range`).
 - If Aero is deployed with COOP/COEP to enable `SharedArrayBuffer` (`crossOriginIsolated`), disk image resources must be CORS-enabled (`Access-Control-Allow-Origin`) or served with a compatible `Cross-Origin-Resource-Policy` header; otherwise the browser will block the fetch.
-  - See the [disk image streaming service runbook](./backend/disk-image-streaming-service.md) for the required CORS/COEP/CORP headers when using authenticated and/or cross-origin streaming.
+  - See [16 - Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md) for the required CORS/COEP/CORP headers when using authenticated and/or cross-origin streaming.
 
 Concrete examples:
 
@@ -819,7 +820,7 @@ If you prefer the **signed URL** style instead of an `Authorization` header, the
 
 - `Range` header → **CORS preflight on cross-origin** requests.
 - Prefer a **same-origin** disk streaming endpoint (e.g., `/disk/...`) to avoid preflight and simplify COEP/cross-origin isolation.
-- If cross-origin is unavoidable, the disk server must return the CORS/COEP/CORP headers defined in the [disk image streaming service runbook](./backend/disk-image-streaming-service.md).
+- If cross-origin is unavoidable, the disk server must return the CORS/COEP/CORP headers defined in [16 - Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md).
 
 ---
 
@@ -839,5 +840,5 @@ If you prefer the **signed URL** style instead of an `Authorization` header, the
 
 - See [Audio Subsystem](./06-audio-subsystem.md) for sound emulation
 - See [Browser APIs](./11-browser-apis.md) for OPFS details
-- See the [disk image streaming service runbook](./backend/disk-image-streaming-service.md) for authenticated Range streaming requirements
+- See [16 - Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md) for authenticated Range streaming requirements
 - See [Task Breakdown](./15-agent-task-breakdown.md) for storage tasks
