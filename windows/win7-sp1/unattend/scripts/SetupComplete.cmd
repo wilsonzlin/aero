@@ -144,12 +144,45 @@ mkdir "%AERO_DST_ROOT%" >nul 2>&1
 
 set "AERO_COPY_FAILED=0"
 
+set "AERO_OS_ARCH=x86"
+if exist "%WINDIR%\SysWOW64\" set "AERO_OS_ARCH=amd64"
+
 if exist "%AERO_SRC_ROOT%\Drivers\" (
-  echo [COPY] Drivers\ -> "%AERO_DST_ROOT%\Drivers\"
-  xcopy "%AERO_SRC_ROOT%\Drivers" "%AERO_DST_ROOT%\Drivers\" /E /I /H /R /Y /C /Q
-  set "RC=!errorlevel!"
-  echo [COPY] xcopy Drivers exit code: !RC!
-  if !RC! GEQ 4 set "AERO_COPY_FAILED=1"
+  REM If the source uses the config-media driver layout (WinPE/Offline + arch),
+  REM copy only the matching architecture folders. Otherwise copy the full Drivers tree.
+  set "AERO_DRIVER_LAYOUT=flat"
+  if exist "%AERO_SRC_ROOT%\Drivers\WinPE\%AERO_OS_ARCH%\" set "AERO_DRIVER_LAYOUT=arch"
+  if exist "%AERO_SRC_ROOT%\Drivers\Offline\%AERO_OS_ARCH%\" set "AERO_DRIVER_LAYOUT=arch"
+
+  if /i "%AERO_DRIVER_LAYOUT%"=="arch" (
+    echo [COPY] Drivers (arch=%AERO_OS_ARCH%) -> "%AERO_DST_ROOT%\Drivers\"
+
+    if exist "%AERO_SRC_ROOT%\Drivers\WinPE\%AERO_OS_ARCH%\" (
+      echo [COPY] Drivers\WinPE\%AERO_OS_ARCH%\ -> "%AERO_DST_ROOT%\Drivers\WinPE\%AERO_OS_ARCH%\"
+      xcopy "%AERO_SRC_ROOT%\Drivers\WinPE\%AERO_OS_ARCH%" "%AERO_DST_ROOT%\Drivers\WinPE\%AERO_OS_ARCH%\" /E /I /H /R /Y /C /Q
+      set "RC=!errorlevel!"
+      echo [COPY] xcopy Drivers\WinPE exit code: !RC!
+      if !RC! GEQ 4 set "AERO_COPY_FAILED=1"
+    ) else (
+      echo [COPY] NOTE: "%AERO_SRC_ROOT%\Drivers\WinPE\%AERO_OS_ARCH%\" not found; skipping.
+    )
+
+    if exist "%AERO_SRC_ROOT%\Drivers\Offline\%AERO_OS_ARCH%\" (
+      echo [COPY] Drivers\Offline\%AERO_OS_ARCH%\ -> "%AERO_DST_ROOT%\Drivers\Offline\%AERO_OS_ARCH%\"
+      xcopy "%AERO_SRC_ROOT%\Drivers\Offline\%AERO_OS_ARCH%" "%AERO_DST_ROOT%\Drivers\Offline\%AERO_OS_ARCH%\" /E /I /H /R /Y /C /Q
+      set "RC=!errorlevel!"
+      echo [COPY] xcopy Drivers\Offline exit code: !RC!
+      if !RC! GEQ 4 set "AERO_COPY_FAILED=1"
+    ) else (
+      echo [COPY] NOTE: "%AERO_SRC_ROOT%\Drivers\Offline\%AERO_OS_ARCH%\" not found; skipping.
+    )
+  ) else (
+    echo [COPY] Drivers\ -> "%AERO_DST_ROOT%\Drivers\"
+    xcopy "%AERO_SRC_ROOT%\Drivers" "%AERO_DST_ROOT%\Drivers\" /E /I /H /R /Y /C /Q
+    set "RC=!errorlevel!"
+    echo [COPY] xcopy Drivers exit code: !RC!
+    if !RC! GEQ 4 set "AERO_COPY_FAILED=1"
+  )
 ) else (
   echo [COPY] WARNING: "%AERO_SRC_ROOT%\Drivers\" not found.
   set "AERO_COPY_FAILED=1"

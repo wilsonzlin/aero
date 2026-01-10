@@ -88,6 +88,8 @@ By default, `SetupComplete.cmd` copies the located payload (Drivers/Scripts/Cert
 
 This makes the next-boot driver installation independent of removable/config media drive letters.
 
+If the payload's `Drivers\` folder uses the Win7 unattend layout (`Drivers\WinPE\<arch>` and `Drivers\Offline\<arch>`), only the matching architecture subfolders are copied.
+
 To disable this behaviour, set:
 
 ```
