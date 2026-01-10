@@ -35,25 +35,65 @@ impl AudioRingBuffer {
     }
 
     pub fn push(&mut self, data: &[u8]) {
-        for &b in data {
-            if self.len == self.buf.len() {
-                // Drop oldest byte on overflow.
-                self.read = (self.read + 1) % self.buf.len();
-                self.len -= 1;
-            }
-            self.buf[self.write] = b;
-            self.write = (self.write + 1) % self.buf.len();
-            self.len += 1;
+        let cap = self.buf.len();
+        if data.is_empty() || cap == 0 {
+            return;
         }
+
+        // If the write exceeds capacity, keep only the newest `cap` bytes.
+        if data.len() >= cap {
+            let start = data.len() - cap;
+            self.buf.copy_from_slice(&data[start..]);
+            self.read = 0;
+            self.write = 0;
+            self.len = cap;
+            return;
+        }
+
+        let free = cap - self.len;
+        if data.len() > free {
+            // Drop the oldest bytes to make room.
+            let drop = data.len() - free;
+            self.read = (self.read + drop) % cap;
+            self.len -= drop;
+        }
+
+        let first = (cap - self.write).min(data.len());
+        self.buf[self.write..self.write + first].copy_from_slice(&data[..first]);
+        let remaining = data.len() - first;
+        if remaining != 0 {
+            self.buf[..remaining].copy_from_slice(&data[first..]);
+        }
+        self.write = (self.write + data.len()) % cap;
+        self.len += data.len();
+    }
+
+    /// Drain all buffered bytes into the provided output buffer.
+    ///
+    /// This is the preferred API for hot paths because it allows callers to reuse
+    /// allocations (unlike [`Self::drain_all`], which returns a newly allocated `Vec`).
+    pub fn drain_all_into(&mut self, out: &mut Vec<u8>) {
+        out.clear();
+        if self.len == 0 {
+            return;
+        }
+        out.reserve(self.len);
+
+        let cap = self.buf.len();
+        let first = (cap - self.read).min(self.len);
+        out.extend_from_slice(&self.buf[self.read..self.read + first]);
+        let remaining = self.len - first;
+        if remaining != 0 {
+            out.extend_from_slice(&self.buf[..remaining]);
+        }
+
+        self.read = self.write;
+        self.len = 0;
     }
 
     pub fn drain_all(&mut self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.len);
-        while self.len > 0 {
-            out.push(self.buf[self.read]);
-            self.read = (self.read + 1) % self.buf.len();
-            self.len -= 1;
-        }
+        let mut out = Vec::new();
+        self.drain_all_into(&mut out);
         out
     }
 }
@@ -135,6 +175,8 @@ pub struct HdaStream {
 
     bdl_index: u16,
     bdl_offset: u32,
+
+    dma_scratch: Vec<u8>,
 }
 
 impl HdaStream {
@@ -151,6 +193,7 @@ impl HdaStream {
             bdpu: 0,
             bdl_index: 0,
             bdl_offset: 0,
+            dma_scratch: Vec::new(),
         }
     }
 
@@ -165,6 +208,7 @@ impl HdaStream {
         self.bdpu = 0;
         self.bdl_index = 0;
         self.bdl_offset = 0;
+        self.dma_scratch.clear();
     }
 
     fn bdl_base(&self) -> u64 {
@@ -252,9 +296,13 @@ impl HdaStream {
                 continue;
             }
 
-            let mut buf = vec![0u8; remaining as usize];
-            mem.read_physical(entry.addr + self.bdl_offset as u64, &mut buf);
-            audio.push(&buf);
+            let bytes = remaining as usize;
+            self.dma_scratch.resize(bytes, 0);
+            mem.read_physical(
+                entry.addr + self.bdl_offset as u64,
+                &mut self.dma_scratch[..bytes],
+            );
+            audio.push(&self.dma_scratch[..bytes]);
 
             self.bdl_offset += remaining;
             self.lpib = self.lpib.wrapping_add(remaining) % self.cbl;
@@ -308,5 +356,37 @@ fn mask_for_size(size: usize) -> u64 {
         4 => 0xFFFF_FFFF,
         8 => 0xFFFF_FFFF_FFFF_FFFF,
         _ => 0xFFFF_FFFF_FFFF_FFFF,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AudioRingBuffer;
+
+    #[test]
+    fn ring_buffer_push_and_drain_roundtrip() {
+        let mut rb = AudioRingBuffer::new(4);
+        rb.push(&[1, 2, 3]);
+        assert_eq!(rb.len(), 3);
+
+        let drained = rb.drain_all();
+        assert_eq!(drained, vec![1, 2, 3]);
+        assert_eq!(rb.len(), 0);
+    }
+
+    #[test]
+    fn ring_buffer_wrap_and_overflow_keeps_newest_bytes() {
+        let mut rb = AudioRingBuffer::new(4);
+        rb.push(&[1, 2, 3]);
+        rb.push(&[4, 5]);
+
+        assert_eq!(rb.drain_all(), vec![2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn ring_buffer_large_push_truncates_to_capacity() {
+        let mut rb = AudioRingBuffer::new(4);
+        rb.push(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!(rb.drain_all(), vec![3, 4, 5, 6]);
     }
 }
