@@ -2,6 +2,7 @@ package signaling
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sync"
 
@@ -135,22 +136,17 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
-	type offerRequest struct {
-		Version int                       `json:"version"`
-		Offer   webrtc.SessionDescription `json:"offer"`
-	}
-	type answerResponse struct {
-		Version int                       `json:"version"`
-		Answer  webrtc.SessionDescription `json:"answer"`
-	}
-
-	var req offerRequest
+	var req OfferRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid offer", http.StatusBadRequest)
 		return
 	}
-	if req.Version != 1 {
-		http.Error(w, "unsupported protocol version", http.StatusBadRequest)
+	if err := req.Validate(); err != nil {
+		if errors.Is(err, ErrUnsupportedVersion) {
+			http.Error(w, "unsupported protocol version", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "invalid offer", http.StatusBadRequest)
 		return
 	}
 	if s.WebRTC == nil {
@@ -190,7 +186,10 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 
 	pc := sess.PeerConnection()
 
-	if err := pc.SetRemoteDescription(req.Offer); err != nil {
+	if err := pc.SetRemoteDescription(webrtc.SessionDescription{
+		Type: webrtc.SDPTypeOffer,
+		SDP:  req.Offer.SDP,
+	}); err != nil {
 		_ = sess.Close()
 		http.Error(w, "failed to set remote description", http.StatusBadRequest)
 		return
@@ -211,9 +210,19 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 	}
 	<-gatherComplete
 
+	local := pc.LocalDescription()
+	if local == nil {
+		_ = sess.Close()
+		http.Error(w, "failed to gather local description", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(answerResponse{
+	_ = json.NewEncoder(w).Encode(AnswerResponse{
 		Version: req.Version,
-		Answer:  *pc.LocalDescription(),
+		Answer: SessionDescription{
+			Type: "answer",
+			SDP:  local.SDP,
+		},
 	})
 }
