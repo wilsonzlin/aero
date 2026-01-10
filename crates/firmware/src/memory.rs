@@ -2,6 +2,18 @@ pub trait MemoryBus {
     fn read_u8(&self, addr: u64) -> u8;
     fn write_u8(&mut self, addr: u64, value: u8);
 
+    fn read_physical(&self, paddr: u64, buf: &mut [u8]) {
+        for (i, out) in buf.iter_mut().enumerate() {
+            *out = self.read_u8(paddr + i as u64);
+        }
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        for (i, &b) in buf.iter().enumerate() {
+            self.write_u8(paddr + i as u64, b);
+        }
+    }
+
     fn read_u16(&self, addr: u64) -> u16 {
         let lo = self.read_u8(addr) as u16;
         let hi = self.read_u8(addr + 1) as u16;
