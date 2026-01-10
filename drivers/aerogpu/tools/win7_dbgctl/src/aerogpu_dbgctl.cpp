@@ -174,6 +174,25 @@ static NTSTATUS SendAerogpuEscape(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter,
   return f->Escape(&e);
 }
 
+static const wchar_t *SelftestErrorToString(uint32_t code) {
+  switch (code) {
+  case AEROGPU_DBGCTL_SELFTEST_OK:
+    return L"OK";
+  case AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE:
+    return L"INVALID_STATE";
+  case AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY:
+    return L"RING_NOT_READY";
+  case AEROGPU_DBGCTL_SELFTEST_ERR_GPU_BUSY:
+    return L"GPU_BUSY";
+  case AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES:
+    return L"NO_RESOURCES";
+  case AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT:
+    return L"TIMEOUT";
+  default:
+    return L"UNKNOWN";
+  }
+}
+
 static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   aerogpu_escape_query_device_out q;
   ZeroMemory(&q, sizeof(q));
@@ -274,7 +293,7 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
 
   wprintf(L"Selftest: %s\n", q.passed ? L"PASS" : L"FAIL");
   if (!q.passed) {
-    wprintf(L"Error code: %lu\n", (unsigned long)q.error_code);
+    wprintf(L"Error code: %lu (%s)\n", (unsigned long)q.error_code, SelftestErrorToString(q.error_code));
   }
   return q.passed ? 0 : 3;
 }
