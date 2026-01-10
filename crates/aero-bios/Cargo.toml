@@ -5,5 +5,6 @@ edition = "2021"
 
 [dependencies]
 aero-acpi = { path = "../aero-acpi" }
+firmware-tables = { package = "firmware", path = "../firmware" }
 
 [dev-dependencies]

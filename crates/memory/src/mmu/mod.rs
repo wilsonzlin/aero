@@ -82,16 +82,7 @@ impl Mmu {
         linear: u64,
         access: AccessType,
     ) -> Result<u64, TranslateError> {
-        translate(
-            bus,
-            linear,
-            access,
-            self.cpl,
-            self.cr0,
-            self.cr3,
-            self.cr4,
-            self.efer,
-        )
+        translate(bus, linear, access, self.cpl, self.cr0, self.cr3, self.cr4, self.efer)
     }
 }
 

@@ -9,6 +9,7 @@ use crate::types::{
     E820Entry, RealModeCpu, E820_TYPE_ACPI, E820_TYPE_RAM, E820_TYPE_RESERVED, FLAG_CF, FLAG_IF,
     FLAG_ZF,
 };
+use firmware_tables::smbios::{SmbiosConfig, SmbiosTables};
 
 const BDA_BASE: u32 = 0x0400;
 const BDA_VIDEO_MODE_ADDR: u32 = BDA_BASE + 0x49;
@@ -264,6 +265,7 @@ impl Bios {
 
         self.init_ivt(mem);
         self.init_bda(mem);
+        self.init_smbios(mem);
 
         if let Some(pci) = pci.as_deref_mut() {
             self.enumerate_pci(pci);
@@ -424,6 +426,33 @@ impl Bios {
         let ticks = ticks_since_midnight();
         mem.write_u32(bda + 0x6C, ticks);
         mem.write_u8(bda + 0x70, 0);
+    }
+
+    fn init_smbios<M: Memory>(&self, mem: &mut M) {
+        struct FirmwareBus<'a, M>(&'a mut M);
+
+        impl<M: Memory> firmware_tables::memory::MemoryBus for FirmwareBus<'_, M> {
+            fn read_u8(&self, addr: u64) -> u8 {
+                let paddr = u32::try_from(addr).expect("SMBIOS address must fit in u32");
+                self.0.read_u8(paddr)
+            }
+
+            fn write_u8(&mut self, addr: u64, value: u8) {
+                let paddr = u32::try_from(addr).expect("SMBIOS address must fit in u32");
+                self.0.write_u8(paddr, value);
+            }
+        }
+
+        let config = SmbiosConfig {
+            ram_bytes: self.cfg.total_memory_bytes,
+            cpu_count: 1,
+            uuid_seed: 0,
+            eps_addr: None,
+            table_addr: None,
+        };
+
+        let mut bus = FirmwareBus(mem);
+        let _ = SmbiosTables::build_and_write(&config, &mut bus);
     }
 
     fn init_video<M: Memory>(&mut self, mem: &mut M) {

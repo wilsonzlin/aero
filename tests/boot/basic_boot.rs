@@ -281,6 +281,77 @@ fn read_vga_text_line(mem: &SimpleMemory, row: u32, cols: u32) -> String {
     s
 }
 
+fn checksum_ok(bytes: &[u8]) -> bool {
+    bytes.iter().fold(0u8, |acc, b| acc.wrapping_add(*b)) == 0
+}
+
+fn read_bytes(mem: &SimpleMemory, paddr: u32, len: usize) -> Vec<u8> {
+    (0..len).map(|i| mem.read_u8(paddr + i as u32)).collect()
+}
+
+fn scan_region_for_smbios(mem: &SimpleMemory, base: u32, len: u32) -> Option<u32> {
+    for off in (0..len).step_by(16) {
+        let addr = base + off;
+        if mem.read_u8(addr) == b'_'
+            && mem.read_u8(addr + 1) == b'S'
+            && mem.read_u8(addr + 2) == b'M'
+            && mem.read_u8(addr + 3) == b'_'
+        {
+            return Some(addr);
+        }
+    }
+    None
+}
+
+fn find_smbios_eps(mem: &SimpleMemory) -> Option<u32> {
+    // SMBIOS spec: search the first KiB of EBDA first, then scan 0xF0000-0xFFFFF
+    // on 16-byte boundaries.
+    let ebda_seg = mem.read_u16(0x040E);
+    if ebda_seg != 0 {
+        let ebda_base = (ebda_seg as u32) << 4;
+        if let Some(addr) = scan_region_for_smbios(mem, ebda_base, 1024) {
+            return Some(addr);
+        }
+    }
+    scan_region_for_smbios(mem, 0xF0000, 0x10000)
+}
+
+#[derive(Debug)]
+struct ParsedStructure {
+    ty: u8,
+    formatted: Vec<u8>,
+}
+
+fn parse_smbios_table(table: &[u8]) -> Vec<ParsedStructure> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < table.len() {
+        let ty = table[i];
+        let len = table[i + 1] as usize;
+        let formatted = table[i..i + len].to_vec();
+        let mut j = i + len;
+
+        // Skip strings.
+        loop {
+            if j + 1 >= table.len() {
+                panic!("unterminated string-set");
+            }
+            if table[j] == 0 && table[j + 1] == 0 {
+                j += 2;
+                break;
+            }
+            j += 1;
+        }
+
+        out.push(ParsedStructure { ty, formatted });
+        i = j;
+        if ty == 127 {
+            break;
+        }
+    }
+    out
+}
+
 #[test]
 fn boots_a_tiny_boot_sector_and_prints_text() {
     let boot = make_test_boot_sector();
@@ -313,6 +384,81 @@ fn boots_a_tiny_boot_sector_and_prints_text() {
     // VGA output: BIOS banner on line 0, then boot sector prints "BOOTED" on line 1.
     assert!(read_vga_text_line(&mem, 0, 9).starts_with("Aero BIOS"));
     assert!(read_vga_text_line(&mem, 1, 6).starts_with("BOOTED"));
+}
+
+#[test]
+fn bios_post_writes_smbios_tables() {
+    let boot = make_test_boot_sector();
+    let disk = VecDisk::new(boot.to_vec());
+
+    let mut mem = SimpleMemory::new(2 * 1024 * 1024);
+    let mut cpu = RealModeCpu::default();
+
+    let ram_bytes = 96 * 1024 * 1024;
+    let mut bios = Bios::new(BiosConfig {
+        total_memory_bytes: ram_bytes,
+        ..BiosConfig::default()
+    });
+
+    bios.post(&mut cpu, &mut mem, &disk);
+
+    let eps_addr = find_smbios_eps(&mem).expect("SMBIOS EPS not found after BIOS POST");
+    let eps = read_bytes(&mem, eps_addr, 0x1F);
+    assert_eq!(&eps[0..4], b"_SM_");
+    assert!(checksum_ok(&eps));
+    assert_eq!(&eps[0x10..0x15], b"_DMI_");
+    assert!(checksum_ok(&eps[0x10..]));
+
+    let table_len = u16::from_le_bytes([eps[0x16], eps[0x17]]) as usize;
+    let table_addr = u32::from_le_bytes([eps[0x18], eps[0x19], eps[0x1A], eps[0x1B]]);
+    let table = read_bytes(&mem, table_addr, table_len);
+    let structures = parse_smbios_table(&table);
+
+    assert!(structures.iter().any(|s| s.ty == 0), "missing Type 0");
+    assert!(structures.iter().any(|s| s.ty == 1), "missing Type 1");
+    assert!(structures.iter().any(|s| s.ty == 4), "missing Type 4");
+    assert!(structures.iter().any(|s| s.ty == 16), "missing Type 16");
+    assert!(structures.iter().any(|s| s.ty == 17), "missing Type 17");
+    assert!(structures.iter().any(|s| s.ty == 19), "missing Type 19");
+    assert!(structures.iter().any(|s| s.ty == 127), "missing Type 127");
+
+    let type16 = structures
+        .iter()
+        .find(|s| s.ty == 16)
+        .expect("Type 16 missing");
+    let max_capacity_kb = u32::from_le_bytes([
+        type16.formatted[7],
+        type16.formatted[8],
+        type16.formatted[9],
+        type16.formatted[10],
+    ]);
+    assert_eq!(u64::from(max_capacity_kb), ram_bytes / 1024);
+
+    let type17 = structures
+        .iter()
+        .find(|s| s.ty == 17)
+        .expect("Type 17 missing");
+    let size_mb = u16::from_le_bytes([type17.formatted[12], type17.formatted[13]]);
+    assert_eq!(u64::from(size_mb), ram_bytes / (1024 * 1024));
+
+    let type19 = structures
+        .iter()
+        .find(|s| s.ty == 19)
+        .expect("Type 19 missing");
+    let start_kb = u32::from_le_bytes([
+        type19.formatted[4],
+        type19.formatted[5],
+        type19.formatted[6],
+        type19.formatted[7],
+    ]);
+    let end_kb = u32::from_le_bytes([
+        type19.formatted[8],
+        type19.formatted[9],
+        type19.formatted[10],
+        type19.formatted[11],
+    ]);
+    assert_eq!(u64::from(start_kb), 0);
+    assert_eq!(u64::from(end_kb) + 1, ram_bytes / 1024);
 }
 
 #[test]
