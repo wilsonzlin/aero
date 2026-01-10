@@ -253,6 +253,12 @@ pub trait DiskBackend: Send + Sync {
 }
 ```
 
+**Implementation status (reference implementation):**
+The in-repo Rust implementation under `crates/emulator/src/io/storage/formats/` supports:
+
+- **QCOW2 v2/v3** (common unencrypted, uncompressed images; no backing files).
+- **VHD fixed and dynamic** (unallocated blocks read as zeros; writes allocate blocks and update BAT/bitmap).
+
 ### OPFS Backend
 
 ```rust

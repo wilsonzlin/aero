@@ -3,6 +3,8 @@ pub use crate::io::storage::error::{DiskError, DiskResult};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiskFormat {
     Raw,
+    Qcow2,
+    Vhd,
     Sparse,
 }
 
@@ -109,6 +111,33 @@ impl VirtualDrive {
             total_sectors,
             write_cache,
         })
+    }
+
+    pub fn open_auto<S: ByteStorage + 'static>(
+        mut storage: S,
+        raw_sector_size: u32,
+        write_cache: WriteCachePolicy,
+    ) -> DiskResult<Self> {
+        let format = crate::io::storage::formats::detect_format(&mut storage)?;
+        Self::open_with_format(format, storage, raw_sector_size, write_cache)
+    }
+
+    pub fn open_with_format<S: ByteStorage + 'static>(
+        format: DiskFormat,
+        storage: S,
+        raw_sector_size: u32,
+        write_cache: WriteCachePolicy,
+    ) -> DiskResult<Self> {
+        let backend: Box<dyn DiskBackend> = match format {
+            DiskFormat::Raw => Box::new(crate::io::storage::formats::RawDisk::open(
+                storage,
+                raw_sector_size,
+            )?),
+            DiskFormat::Sparse => Box::new(crate::io::storage::formats::SparseDisk::open(storage)?),
+            DiskFormat::Qcow2 => Box::new(crate::io::storage::formats::Qcow2Disk::open(storage)?),
+            DiskFormat::Vhd => Box::new(crate::io::storage::formats::VhdDisk::open(storage)?),
+        };
+        Self::new(format, backend, write_cache)
     }
 
     pub fn format(&self) -> DiskFormat {
