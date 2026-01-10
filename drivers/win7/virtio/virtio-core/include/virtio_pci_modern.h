@@ -102,6 +102,11 @@ void VirtioPciCommonCfgUnlock(_Inout_ PVIRTIO_PCI_DEVICE Dev);
 //
 // Selector-based CommonCfg helpers (internally serialized by CommonCfgLock)
 //
+// Functions without the "Locked" suffix acquire/release the CommonCfg lock
+// internally and must not be called while holding the lock. Callers that need
+// to perform a multi-step sequence atomically should use
+// VirtioPciCommonCfgLock/Unlock and then call the corresponding *Locked()
+// helper(s).
 
 // Reads the full 64-bit device feature bitmap.
 //
@@ -109,11 +114,25 @@ void VirtioPciCommonCfgUnlock(_Inout_ PVIRTIO_PCI_DEVICE Dev);
 _IRQL_requires_max_(DISPATCH_LEVEL)
 UINT64 VirtioPciReadDeviceFeatures(_Inout_ PVIRTIO_PCI_DEVICE Dev);
 
+// Reads the full 64-bit device feature bitmap.
+//
+// Caller must hold the CommonCfg lock.
+// IRQL: <= DISPATCH_LEVEL.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+UINT64 VirtioPciReadDeviceFeaturesLocked(_Inout_ PVIRTIO_PCI_DEVICE Dev);
+
 // Writes the full 64-bit driver feature bitmap.
 //
 // IRQL: <= DISPATCH_LEVEL. Serializes feature_select accesses.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void VirtioPciWriteDriverFeatures(_Inout_ PVIRTIO_PCI_DEVICE Dev, _In_ UINT64 Features);
+
+// Writes the full 64-bit driver feature bitmap.
+//
+// Caller must hold the CommonCfg lock.
+// IRQL: <= DISPATCH_LEVEL.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void VirtioPciWriteDriverFeaturesLocked(_Inout_ PVIRTIO_PCI_DEVICE Dev, _In_ UINT64 Features);
 
 // Reads queue_size for the given queue.
 //
@@ -121,11 +140,25 @@ void VirtioPciWriteDriverFeatures(_Inout_ PVIRTIO_PCI_DEVICE Dev, _In_ UINT64 Fe
 _IRQL_requires_max_(DISPATCH_LEVEL)
 USHORT VirtioPciReadQueueSize(_Inout_ PVIRTIO_PCI_DEVICE Dev, _In_ USHORT QueueIndex);
 
+// Reads queue_size for the given queue.
+//
+// Caller must hold the CommonCfg lock.
+// IRQL: <= DISPATCH_LEVEL.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+USHORT VirtioPciReadQueueSizeLocked(_Inout_ PVIRTIO_PCI_DEVICE Dev, _In_ USHORT QueueIndex);
+
 // Reads queue_notify_off for the given queue.
 //
 // IRQL: <= DISPATCH_LEVEL. Serializes queue_select accesses.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 USHORT VirtioPciReadQueueNotifyOffset(_Inout_ PVIRTIO_PCI_DEVICE Dev, _In_ USHORT QueueIndex);
+
+// Reads queue_notify_off for the given queue.
+//
+// Caller must hold the CommonCfg lock.
+// IRQL: <= DISPATCH_LEVEL.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+USHORT VirtioPciReadQueueNotifyOffsetLocked(_Inout_ PVIRTIO_PCI_DEVICE Dev, _In_ USHORT QueueIndex);
 
 // Programs the queue descriptor/avail/used addresses for the given queue.
 //
@@ -137,6 +170,17 @@ void VirtioPciWriteQueueAddresses(_Inout_ PVIRTIO_PCI_DEVICE Dev,
                                   _In_ UINT64 Avail,
                                   _In_ UINT64 Used);
 
+// Programs the queue descriptor/avail/used addresses for the given queue.
+//
+// Caller must hold the CommonCfg lock.
+// IRQL: <= DISPATCH_LEVEL.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void VirtioPciWriteQueueAddressesLocked(_Inout_ PVIRTIO_PCI_DEVICE Dev,
+                                        _In_ USHORT QueueIndex,
+                                        _In_ UINT64 Desc,
+                                        _In_ UINT64 Avail,
+                                        _In_ UINT64 Used);
+
 // Enables/disables the given queue.
 //
 // IRQL: <= DISPATCH_LEVEL. Serializes queue_select accesses.
@@ -144,3 +188,12 @@ _IRQL_requires_max_(DISPATCH_LEVEL)
 void VirtioPciWriteQueueEnable(_Inout_ PVIRTIO_PCI_DEVICE Dev,
                                _In_ USHORT QueueIndex,
                                _In_ BOOLEAN Enable);
+
+// Enables/disables the given queue.
+//
+// Caller must hold the CommonCfg lock.
+// IRQL: <= DISPATCH_LEVEL.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void VirtioPciWriteQueueEnableLocked(_Inout_ PVIRTIO_PCI_DEVICE Dev,
+                                     _In_ USHORT QueueIndex,
+                                     _In_ BOOLEAN Enable);
