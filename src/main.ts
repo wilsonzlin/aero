@@ -238,12 +238,11 @@ function startPerfTelemetry(report: PlatformFeatureReport): void {
     worker.postMessage({ type: 'setEnabled', enabled });
   }
 
-  globalThis.aero = {
-    perf: {
-      export: () => aggregator.export(),
-      getStats: () => aggregator.getStats(),
-      setEnabled,
-    },
+  const aero = (globalThis.aero ??= {});
+  aero.perf = {
+    export: () => aggregator.export(),
+    getStats: () => aggregator.getStats(),
+    setEnabled,
   };
 
   let frameId = 0;

@@ -1,6 +1,7 @@
-import type { AeroPhase, AeroStatusSnapshot } from '../../../shared/aero_status.ts';
+import type { AeroGlobalApi } from '../../../shared/aero_api.ts';
+import { isAeroPhase, type AeroPhase, type AeroStatusSnapshot } from '../../../shared/aero_status.ts';
 
-export interface AeroHostApi {
+export interface AeroStatusApi {
   status: AeroStatusSnapshot;
   events: EventTarget;
   setPhase(phase: AeroPhase): void;
@@ -8,20 +9,41 @@ export interface AeroHostApi {
   waitForEvent<T = unknown>(name: string, options?: { timeoutMs?: number }): Promise<T>;
 }
 
-declare global {
-  interface Window {
-    aero?: AeroHostApi;
-  }
+function isStatusSnapshot(value: unknown): value is AeroStatusSnapshot {
+  if (!value || typeof value !== 'object') return false;
+  const maybe = value as { phase?: unknown; phaseSinceMs?: unknown };
+  return isAeroPhase(maybe.phase) && typeof maybe.phaseSinceMs === 'number';
 }
 
-export function initAeroStatusApi(initialPhase: AeroPhase = 'booting'): AeroHostApi {
-  if (window.aero) return window.aero;
+function isEventTarget(value: unknown): value is EventTarget {
+  if (!value || typeof value !== 'object') return false;
+  const maybe = value as { addEventListener?: unknown; removeEventListener?: unknown; dispatchEvent?: unknown };
+  return (
+    typeof maybe.addEventListener === 'function' &&
+    typeof maybe.removeEventListener === 'function' &&
+    typeof maybe.dispatchEvent === 'function'
+  );
+}
 
-  const events = new EventTarget();
-  const status: AeroStatusSnapshot = {
-    phase: initialPhase,
-    phaseSinceMs: performance.now(),
-  };
+export function initAeroStatusApi(initialPhase: AeroPhase = 'booting'): AeroStatusApi {
+  const existing = window.aero;
+  const aero: AeroGlobalApi =
+    existing && typeof existing === 'object'
+      ? (existing as AeroGlobalApi)
+      : // If some consumer set `window.aero` to a non-object value, replace it so the API is usable.
+        ((window.aero = {}) as AeroGlobalApi);
+
+  const status: AeroStatusSnapshot = isStatusSnapshot(aero.status)
+    ? aero.status
+    : {
+        phase: initialPhase,
+        phaseSinceMs: performance.now(),
+      };
+
+  aero.status = status;
+
+  const events = isEventTarget(aero.events) ? aero.events : new EventTarget();
+  aero.events = events;
 
   function emitEvent(name: string, detail?: unknown) {
     events.dispatchEvent(new CustomEvent(name, { detail }));
@@ -54,14 +76,9 @@ export function initAeroStatusApi(initialPhase: AeroPhase = 'booting'): AeroHost
     });
   }
 
-  window.aero = {
-    status,
-    events,
-    setPhase,
-    emitEvent,
-    waitForEvent,
-  };
+  aero.setPhase = setPhase;
+  aero.emitEvent = emitEvent;
+  aero.waitForEvent = waitForEvent;
 
-  return window.aero;
+  return { status, events, setPhase, emitEvent, waitForEvent };
 }
-
