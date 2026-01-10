@@ -55,6 +55,16 @@ FORBIDDEN_PATH_GLOBS=(
   *fixtures/windows*
 )
 
+# Allowlist for known-safe, intentionally committed fixtures that would
+# otherwise be rejected by extension/path rules. Keep this list tiny and
+# specific (prefer exact paths).
+ALLOWLIST_FORBIDDEN_FILE_GLOBS=(
+  tools/disk-streaming-browser-e2e/fixtures/secret.img
+  tools/disk-streaming-browser-e2e/fixtures/win7.img
+  tools/packaging/aero_packager/testdata/drivers/amd64/testdrv/test.sys
+  tools/packaging/aero_packager/testdata/drivers/x86/testdrv/test.sys
+)
+
 # Allowlist for large blobs (bash patterns). Keep this small and justified.
 # Example:
 #   ALLOWLIST_LARGE_FILE_GLOBS=(fixtures/oss/small-linux.img)
@@ -180,18 +190,25 @@ while IFS= read -r -d '' status; do
 
   path_lc="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')"
 
-  if matches_any_glob_ci "$path_lc" "${FORBIDDEN_PATH_GLOBS[@]}"; then
-    forbidden_hits+=("$path|forbidden path (matches windows fixture pattern)")
+  allowlisted_forbidden=0
+  if matches_any_glob_ci "$path_lc" "${ALLOWLIST_FORBIDDEN_FILE_GLOBS[@]}"; then
+    allowlisted_forbidden=1
   fi
 
-  filename="${path##*/}"
-  ext=""
-  if [[ "$filename" == *.* && "$filename" != .* ]]; then
-    ext="${filename##*.}"
-  fi
-  ext_lc="$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')"
-  if [[ -n "$ext_lc" ]] && is_forbidden_extension "$ext_lc"; then
-    forbidden_hits+=("$path|forbidden extension '.$ext_lc'")
+  if [[ "$allowlisted_forbidden" -eq 0 ]]; then
+    if matches_any_glob_ci "$path_lc" "${FORBIDDEN_PATH_GLOBS[@]}"; then
+      forbidden_hits+=("$path|forbidden path (matches windows fixture pattern)")
+    fi
+
+    filename="${path##*/}"
+    ext=""
+    if [[ "$filename" == *.* && "$filename" != .* ]]; then
+      ext="${filename##*.}"
+    fi
+    ext_lc="$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')"
+    if [[ -n "$ext_lc" ]] && is_forbidden_extension "$ext_lc"; then
+      forbidden_hits+=("$path|forbidden extension '.$ext_lc'")
+    fi
   fi
 
   if ! matches_any_glob_ci "$path_lc" "${ALLOWLIST_LARGE_FILE_GLOBS[@]}"; then
