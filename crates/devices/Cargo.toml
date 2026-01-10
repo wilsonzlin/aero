@@ -5,4 +5,3 @@ edition = "2021"
 
 [dependencies]
 aero-platform = { path = "../platform" }
-
