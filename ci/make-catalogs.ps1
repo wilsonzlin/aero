@@ -4,11 +4,17 @@
 
 .DESCRIPTION
   This script combines driver packaging assets (INF + optional coinstallers) from the
-  repository `drivers/<name>` directories with built binaries from `out/drivers/<name>`
+  repository `drivers/<driver>` directories with built binaries from `out/drivers/<driver>`
   and runs Inf2Cat to produce catalog files in a stable staging layout under `out/packages`.
+
+  `<driver>` is a path relative to the `drivers/` directory. This supports both layouts:
+    - `drivers/<name>/...`
+    - `drivers/<group>/<name>/...` (e.g. `drivers/windows7/virtio-input/...`)
 
   If enabled (default), it stamps DriverVer in the staged INF(s) using `ci/stamp-infs.ps1`
   before running Inf2Cat. Catalogs hash INF contents, so stamping must happen first.
+
+  The output staging folders are intended to be consumed by later signing/packaging steps.
 
 .PARAMETER OsList
   List of OS identifiers to pass to Inf2Cat. Defaults to @('7_X86','7_X64').
@@ -56,6 +62,79 @@ function Resolve-AbsolutePath {
   return Join-Path -Path (Get-Location) -ChildPath $Path
 }
 
+function Get-RelativePathFromRoot {
+  param(
+    [Parameter(Mandatory)]
+    [string] $Root,
+    [Parameter(Mandatory)]
+    [string] $Path
+  )
+
+  $sep = [System.IO.Path]::DirectorySeparatorChar
+  $alt = [System.IO.Path]::AltDirectorySeparatorChar
+
+  $rootResolved = (Resolve-Path -LiteralPath $Root | Select-Object -ExpandProperty Path).TrimEnd($sep, $alt)
+  $pathResolved = (Resolve-Path -LiteralPath $Path | Select-Object -ExpandProperty Path).TrimEnd($sep, $alt)
+
+  $prefix = $rootResolved + $sep
+  if (-not $pathResolved.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Path '$pathResolved' is not under root '$rootResolved'."
+  }
+
+  return $pathResolved.Substring($prefix.Length)
+}
+
+function Find-DriverBuildDirs {
+  param(
+    [Parameter(Mandatory)]
+    [string] $InputRoot
+  )
+
+  if (-not (Test-Path -LiteralPath $InputRoot)) {
+    throw "InputRoot not found: $InputRoot"
+  }
+
+  # A driver build directory is expected to contain per-arch subdirectories (x86/x64, etc).
+  # We identify driver roots by scanning for directories which have an immediate child directory
+  # matching a known architecture directory name.
+  $archDirNames = @(
+    'x86', 'X86', 'Win32', 'win32', 'i386', 'I386',
+    'x64', 'X64', 'amd64', 'AMD64', 'x86_64', 'X86_64',
+    '7_X86', '7_X64', 'Server2008R2_X64'
+  )
+
+  $seen = @{}
+  $results = New-Object System.Collections.Generic.List[object]
+
+  $dirs = @(Get-ChildItem -LiteralPath $InputRoot -Directory -Recurse -ErrorAction SilentlyContinue)
+  foreach ($dir in $dirs) {
+    $children = @(Get-ChildItem -LiteralPath $dir.FullName -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+    if (-not $children -or $children.Count -eq 0) { continue }
+
+    $hasArchChild = $false
+    foreach ($child in $children) {
+      if ($archDirNames -contains $child) {
+        $hasArchChild = $true
+        break
+      }
+    }
+    if (-not $hasArchChild) { continue }
+
+    $rel = Get-RelativePathFromRoot -Root $InputRoot -Path $dir.FullName
+    $key = $rel.ToLowerInvariant()
+    if ($seen.ContainsKey($key)) { continue }
+    $seen[$key] = $true
+
+    [void]$results.Add([pscustomobject]@{
+      RelativePath = $rel
+      FullName = $dir.FullName
+      DisplayName = $rel.Replace([System.IO.Path]::DirectorySeparatorChar, '/').Replace([System.IO.Path]::AltDirectorySeparatorChar, '/')
+    })
+  }
+
+  return ($results | Sort-Object -Property RelativePath)
+}
+
 function Get-TruthyEnvFlag {
   param([Parameter(Mandatory = $true)][string] $Name)
 
@@ -100,7 +179,7 @@ Write-Host "Using Inf2Cat: $inf2catPath"
 $repoRoot = Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..') | Select-Object -ExpandProperty Path
 $driversRoot = Join-Path -Path $repoRoot -ChildPath 'drivers'
 
-$driverBuildDirs = Get-ChildItem -LiteralPath $inputRootAbs -Directory | Sort-Object -Property Name
+$driverBuildDirs = @(Find-DriverBuildDirs -InputRoot $inputRootAbs)
 if (-not $driverBuildDirs) {
   throw "No driver build directories found under $inputRootAbs"
 }
@@ -108,10 +187,10 @@ if (-not $driverBuildDirs) {
 $stampScript = Join-Path -Path $PSScriptRoot -ChildPath 'stamp-infs.ps1'
 
 foreach ($driverBuildDir in $driverBuildDirs) {
-  $driverName = $driverBuildDir.Name
+  $driverName = $driverBuildDir.DisplayName
   Write-Host "==> Driver: $driverName"
 
-  $driverSourceDir = Join-Path -Path $driversRoot -ChildPath $driverName
+  $driverSourceDir = Join-Path -Path $driversRoot -ChildPath $driverBuildDir.RelativePath
   if (-not (Test-Path -LiteralPath $driverSourceDir)) {
     throw "Driver source directory not found for '$driverName'. Expected: $driverSourceDir"
   }
@@ -128,7 +207,7 @@ foreach ($driverBuildDir in $driverBuildDirs) {
     $osListForArch = $osByArch[$arch]
     if (-not $osListForArch -or $osListForArch.Count -eq 0) { continue }
 
-    $packageDir = Join-Path -Path $outputRootAbs -ChildPath (Join-Path -Path $driverName -ChildPath $arch)
+    $packageDir = Join-Path -Path $outputRootAbs -ChildPath (Join-Path -Path $driverBuildDir.RelativePath -ChildPath $arch)
     Write-Host "  -> Staging package: $packageDir"
 
     if (Test-Path -LiteralPath $packageDir) {
