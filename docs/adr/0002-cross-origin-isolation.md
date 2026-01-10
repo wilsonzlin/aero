@@ -15,10 +15,15 @@ Support a **threaded build** that requires cross-origin isolation, and document 
 
 - `Cross-Origin-Opener-Policy: same-origin`
 - `Cross-Origin-Embedder-Policy: require-corp`
+- `Cross-Origin-Resource-Policy: same-origin` (recommended)
+- `Origin-Agent-Cluster: ?1` (recommended)
 
 When these headers are present (and the page is in a secure context), `crossOriginIsolated === true`, enabling `SharedArrayBuffer` and WASM threads.
 
 Also provide a **non-threaded fallback build** for environments where cross-origin isolation is not possible (see ADR 0004).
+
+For the full production header set used by Aero (including CSP with `script-src 'wasm-unsafe-eval'` to support dynamic WASM compilation for the JIT tier),
+see [`docs/security-headers.md`](../security-headers.md).
 
 ## Alternatives considered
 
@@ -42,4 +47,3 @@ Also provide a **non-threaded fallback build** for environments where cross-orig
   - fetched with CORS, or
   - served with a permissive `Cross-Origin-Resource-Policy` from the other origin.
 - COOP changes browsing context behavior (e.g., `window.opener` isolation), which can affect popups/auth flows and integration with other sites.
-
