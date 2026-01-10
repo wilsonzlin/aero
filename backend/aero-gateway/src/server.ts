@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type http from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Config } from './config.js';
+import { appendSetCookieHeader, isRequestSecure, serializeCookie } from './cookies.js';
 import { setupCrossOriginIsolation } from './middleware/crossOriginIsolation.js';
 import { originGuard } from './middleware/originGuard.js';
 import { setupRequestIdHeader } from './middleware/requestId.js';
@@ -80,6 +81,14 @@ export function buildServer(config: Config): ServerBundle {
     trustProxy: config.TRUST_PROXY,
     logger: { level: config.LOG_LEVEL },
     requestIdHeader: 'x-request-id',
+    ...(config.TLS_ENABLED
+      ? {
+          https: {
+            cert: fs.readFileSync(config.TLS_CERT_PATH),
+            key: fs.readFileSync(config.TLS_KEY_PATH),
+          },
+        }
+      : {}),
     genReqId: (req) => {
       const header = req.headers['x-request-id'];
       if (typeof header === 'string' && header.length > 0) return header;
@@ -108,6 +117,21 @@ export function buildServer(config: Config): ServerBundle {
   });
 
   app.get('/version', async () => getVersionInfo());
+
+  // Helper endpoint to validate Secure cookie behaviour in local dev (TLS vs proxy TLS termination).
+  app.get('/session', async (request, reply) => {
+    const secure = isRequestSecure(request.raw, { trustProxy: config.TRUST_PROXY });
+    appendSetCookieHeader(
+      reply.raw,
+      serializeCookie('aero_session', randomUUID(), {
+        httpOnly: true,
+        sameSite: 'Lax',
+        secure,
+        maxAgeSeconds: 60 * 60 * 24,
+      }),
+    );
+    return { ok: true };
+  });
 
   // WebSocket upgrade endpoints (/tcp and /tcp-mux) are handled at the Node HTTP
   // server layer (Fastify does not natively handle arbitrary upgrade routing).

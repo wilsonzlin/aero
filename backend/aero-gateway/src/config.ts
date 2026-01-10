@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { z } from 'zod';
 
 const logLevels = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
@@ -15,6 +16,12 @@ export type Config = Readonly<{
   TRUST_PROXY: boolean;
 
   RATE_LIMIT_REQUESTS_PER_MINUTE: number;
+
+  TRUST_PROXY: boolean;
+
+  TLS_ENABLED: boolean;
+  TLS_CERT_PATH: string;
+  TLS_KEY_PATH: string;
 
   // Placeholders for upcoming features (not implemented in this skeleton).
   TCP_PROXY_MAX_CONNECTIONS: number;
@@ -61,6 +68,17 @@ function normalizeOrigin(maybeOrigin: string): string {
   return url.origin;
 }
 
+function assertReadableFile(filePath: string, envName: string): void {
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) {
+      throw new Error(`${envName} must point to a file: ${filePath}`);
+    }
+  } catch {
+    throw new Error(`${envName} does not exist: ${filePath}`);
+  }
+}
+
 const envSchema = z.object({
   HOST: z.string().min(1).default('0.0.0.0'),
   PORT: z.coerce.number().int().min(1).max(65535).default(8080),
@@ -72,6 +90,12 @@ const envSchema = z.object({
   TRUST_PROXY: z.string().optional().default('0'),
 
   RATE_LIMIT_REQUESTS_PER_MINUTE: z.coerce.number().int().min(0).default(0),
+
+  TRUST_PROXY: z.enum(['0', '1']).optional().default('0'),
+
+  TLS_ENABLED: z.enum(['0', '1']).optional().default('0'),
+  TLS_CERT_PATH: z.string().optional().default(''),
+  TLS_KEY_PATH: z.string().optional().default(''),
 
   // Placeholders (unused today).
   TCP_PROXY_MAX_CONNECTIONS: z.coerce.number().int().min(0).default(0),
@@ -101,7 +125,27 @@ export function loadConfig(env: Env = process.env): Config {
   }
 
   const raw = parsed.data;
-  const publicBaseUrl = raw.PUBLIC_BASE_URL.length > 0 ? raw.PUBLIC_BASE_URL : `http://localhost:${raw.PORT}`;
+
+  const tlsEnabled = raw.TLS_ENABLED === '1';
+  const trustProxy = raw.TRUST_PROXY === '1';
+  const tlsCertPath = raw.TLS_CERT_PATH.trim();
+  const tlsKeyPath = raw.TLS_KEY_PATH.trim();
+
+  if (tlsEnabled) {
+    if (!tlsCertPath) {
+      throw new Error('TLS_CERT_PATH is required when TLS_ENABLED=1');
+    }
+    if (!tlsKeyPath) {
+      throw new Error('TLS_KEY_PATH is required when TLS_ENABLED=1');
+    }
+
+    assertReadableFile(tlsCertPath, 'TLS_CERT_PATH');
+    assertReadableFile(tlsKeyPath, 'TLS_KEY_PATH');
+  }
+
+  const defaultScheme = tlsEnabled ? 'https' : 'http';
+  const publicBaseUrl =
+    raw.PUBLIC_BASE_URL.length > 0 ? raw.PUBLIC_BASE_URL : `${defaultScheme}://localhost:${raw.PORT}`;
 
   let publicBaseUrlParsed: URL;
   try {
@@ -125,6 +169,12 @@ export function loadConfig(env: Env = process.env): Config {
     TRUST_PROXY: raw.TRUST_PROXY === '1',
 
     RATE_LIMIT_REQUESTS_PER_MINUTE: raw.RATE_LIMIT_REQUESTS_PER_MINUTE,
+
+    TRUST_PROXY: trustProxy,
+
+    TLS_ENABLED: tlsEnabled,
+    TLS_CERT_PATH: tlsCertPath,
+    TLS_KEY_PATH: tlsKeyPath,
 
     TCP_PROXY_MAX_CONNECTIONS: raw.TCP_PROXY_MAX_CONNECTIONS,
     TCP_PROXY_MAX_CONNECTIONS_PER_IP: raw.TCP_PROXY_MAX_CONNECTIONS_PER_IP,

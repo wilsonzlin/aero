@@ -12,6 +12,9 @@ const baseConfig = {
   CROSS_ORIGIN_ISOLATION: false,
   TRUST_PROXY: false,
   RATE_LIMIT_REQUESTS_PER_MINUTE: 1,
+  TLS_ENABLED: false,
+  TLS_CERT_PATH: '',
+  TLS_KEY_PATH: '',
   TCP_PROXY_MAX_CONNECTIONS: 0,
   TCP_PROXY_MAX_CONNECTIONS_PER_IP: 0,
   DNS_UPSTREAMS: [],
@@ -72,3 +75,4 @@ test('rate limiter keys off X-Forwarded-For when TRUST_PROXY=1', async () => {
 
   await app.close();
 });
+

@@ -34,6 +34,8 @@ async function main(): Promise<void> {
     {
       host: config.HOST,
       port: config.PORT,
+      scheme: config.TLS_ENABLED ? 'https' : 'http',
+      trustProxy: config.TRUST_PROXY,
       allowedOrigins: config.ALLOWED_ORIGINS,
       crossOriginIsolation: config.CROSS_ORIGIN_ISOLATION,
       trustProxy: config.TRUST_PROXY,

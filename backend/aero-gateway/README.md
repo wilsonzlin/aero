@@ -4,6 +4,11 @@ Production-grade backend service for Aero.
 
 This package includes a **DNS-over-HTTPS** endpoint (`RFC 8484`) intended for browser-based guest networking without relying on third-party DoH providers (and their CORS policies).
 
+This gateway can run either:
+
+- **Directly with built-in TLS** (HTTPS/WSS) for simpler local dev / single-binary deployments.
+- **Behind a reverse proxy** (HTTP internally, HTTPS externally).
+
 ## Requirements
 
 - Node.js 20+
@@ -65,8 +70,9 @@ docker run --rm -p 8080:8080 aero-gateway
 - `GET /readyz` readiness
 - `GET /version` build/version info
 - `GET /metrics` Prometheus metrics
+- `GET /session` sets a demo cookie so Secure-cookie behavior is easy to validate in local TLS / reverse-proxy setups
 - `GET|POST /dns-query` DNS-over-HTTPS (`RFC 8484`)
-- `GET ws(s)://<host>/tcp?...` TCP proxy upgrade endpoint (WebSocket; see `docs/backend/01-aero-gateway-api.md`)
+- `GET ws(s)://<host>/tcp?...` TCP proxy upgrade endpoint (WebSocket; see `docs/backend/01-aero-gateway-api.md` and `deploy/README.md`)
 
 ## DNS-over-HTTPS (`/dns-query`)
 
@@ -97,7 +103,7 @@ Required / commonly used:
 - `HOST` (default: `0.0.0.0`)
 - `PORT` (default: `8080`)
 - `LOG_LEVEL` (default: `info`)
-- `PUBLIC_BASE_URL` (default: `http://localhost:${PORT}`)
+- `PUBLIC_BASE_URL` (default: `http://localhost:${PORT}`, or `https://localhost:${PORT}` when `TLS_ENABLED=1`)
 - `ALLOWED_ORIGINS` (comma-separated origins; default: `PUBLIC_BASE_URL` origin)
 - `CROSS_ORIGIN_ISOLATION=1` to enable COOP/COEP headers
 - `TRUST_PROXY=1` to trust `X-Forwarded-*` headers from a reverse proxy (only enable when not directly exposed)
@@ -121,10 +127,68 @@ DNS-over-HTTPS:
 - `DNS_ALLOW_ANY=1` to allow `ANY` queries (default: blocked)
 - `DNS_ALLOW_PRIVATE_PTR=1` to allow PTR queries to private ranges (default: blocked)
 
+### Built-in TLS (HTTPS/WSS)
+
+- `TLS_ENABLED=1|0` (default: `0`)
+- `TLS_CERT_PATH` (required when `TLS_ENABLED=1`)
+- `TLS_KEY_PATH` (required when `TLS_ENABLED=1`)
+
+When `TLS_ENABLED=1`, the gateway listens on **HTTPS** and `/tcp` upgrades are **WSS**.
+
+### Reverse proxy support (TLS termination)
+
+- `TRUST_PROXY=1|0` (default: `0`)
+
+When `TRUST_PROXY=1`, the gateway will trust `X-Forwarded-Proto: https` for determining whether a
+request is “secure” (e.g. when deciding whether to add the `Secure` attribute to cookies).
+
+Only enable `TRUST_PROXY=1` when the gateway is **only reachable via a trusted reverse proxy**,
+otherwise clients can spoof `X-Forwarded-Proto`.
+
 Placeholders (not implemented yet):
 
 - `TCP_PROXY_MAX_CONNECTIONS`
 - `TCP_PROXY_MAX_CONNECTIONS_PER_IP`
+
+## Local dev: generate a self-signed cert
+
+This repo includes an OpenSSL-only helper script:
+
+```bash
+backend/aero-gateway/scripts/generate-dev-cert.sh
+```
+
+It writes a self-signed `localhost` certificate to:
+
+```
+backend/aero-gateway/.certs/localhost.crt
+backend/aero-gateway/.certs/localhost.key
+```
+
+Those files are gitignored.
+
+### Running with TLS
+
+```bash
+cd backend/aero-gateway
+npm run build
+
+TLS_ENABLED=1 \
+TLS_CERT_PATH="$PWD/.certs/localhost.crt" \
+TLS_KEY_PATH="$PWD/.certs/localhost.key" \
+npm start
+```
+
+Then:
+
+- `https://localhost:8080/healthz`
+- `wss://localhost:8080/tcp?target=example.com:80`
+
+### Trusting the certificate in your browser/OS
+
+Browsers will warn on self-signed certs by default. For a trusted local certificate experience,
+use a reverse proxy like **Caddy** (or similar) that can manage local trust, or add the generated
+certificate to your OS trust store.
 
 ## Local dev Origin allowlist
 
@@ -140,12 +204,13 @@ If you run the frontend via the gateway's own static hosting (same-origin), leav
 
 ## Running behind an HTTPS reverse proxy
 
-In production you typically terminate TLS in a reverse proxy (nginx, Caddy, Cloudflare) and forward requests to `aero-gateway` over HTTP.
+In production you typically terminate TLS in a reverse proxy (nginx, Caddy, Cloudflare) and
+forward requests to `aero-gateway` over HTTP.
 
 Make sure to set:
 
 - `PUBLIC_BASE_URL=https://<your-domain>`
 - `ALLOWED_ORIGINS=https://<your-domain>` (or leave unset to default to `PUBLIC_BASE_URL`)
-- `TRUST_PROXY=1` (so rate limiting and logs use the real client IP via `X-Forwarded-For`)
+- `TRUST_PROXY=1` (so rate limiting/logs use the real client IP via `X-Forwarded-For`, and secure cookies can rely on `X-Forwarded-Proto`)
 
 See [`deploy/README.md`](../../deploy/README.md) for a ready-to-run Caddy + docker-compose setup that terminates TLS, enforces COOP/COEP, and proxies `/tcp` + HTTP APIs to the gateway.
