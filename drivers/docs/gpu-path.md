@@ -10,6 +10,8 @@ Provide a paravirtual “Aero GPU” device and driver stack that:
 2. Accepts Direct3D/DirectX workloads via the normal Windows graphics stack.
 3. Intercepts/translates GPU command streams to the browser-side renderer (WebGPU) efficiently.
 
+The in-tree Win7 driver stack lives under `drivers/aerogpu/` (start at `drivers/aerogpu/README.md`).
+
 ## Practical approach (staged)
 
 ### Stage 0: Basic display
@@ -38,4 +40,3 @@ Provide a paravirtual “Aero GPU” device and driver stack that:
   - extensive testing across apps and the DWM compositor
 
 For now, virtio is the priority path for “system usability” (storage/network/input/audio). The GPU fast path becomes valuable once the emulator can run 3D apps.
-

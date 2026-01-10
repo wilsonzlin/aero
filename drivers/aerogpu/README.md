@@ -8,6 +8,8 @@ This directory contains the in-tree **AeroGPU WDDM 1.1** driver stack for **Wind
 
 ## Quickstart (build + install on a Win7 VM)
 
+Build host: **Windows 10/11 x64** (WDK 7.1 + VS2022/MSBuild).
+
 1. Build the drivers (from repo root):
 
 ```cmd
@@ -35,4 +37,3 @@ install.cmd
 * Guest-side validation tests: `drivers/aerogpu/tests/win7/README.md`
 * Protocol / device ABI: `drivers/aerogpu/protocol/README.md` and `drivers/aerogpu/protocol/aerogpu_protocol.h`
 * Debug control tool (bring-up): `drivers/aerogpu/tools/win7_dbgctl/README.md`
-

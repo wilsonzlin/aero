@@ -30,6 +30,14 @@ Windows 7 is WDDM 1.1 and uses older kernel/driver ABI expectations. When buildi
   - Audio: PortCls/WaveRT + (often) KMDF helpers (virtio-snd)
 - If you ship KMDF-based drivers, include the appropriate **WDF coinstaller** for Win7 (or require it preinstalled).
 
+## AeroGPU (Win7 WDDM) source builds
+
+The in-tree AeroGPU Windows 7 WDDM driver stack has its own build tooling under:
+
+- `drivers/aerogpu/build/README.md`
+
+It uses **WDK 7.1 BUILD** for the KMD and **MSBuild** for the UMDs.
+
 ## virtio-win source builds
 
 The upstream virtio-win drivers (viostor/NetKVM/viosnd/vioinput) are the practical baseline for Win7 virtio support.

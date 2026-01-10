@@ -12,8 +12,9 @@ The build scripts use:
 ## Supported toolchain
 
 ### Host OS (where you build)
-* **Recommended:** Windows 10/11 x64 (easiest way to get a modern MSBuild toolchain)
-* **Also workable:** Windows 7 SP1 x64 (WDK 7.1 installs cleanly, but modern VS/MSBuild may be harder)
+* **Supported:** Windows 10/11 x64
+  * WDK 7.1 is old, but this is the most practical host for the required MSBuild toolchain.
+* **KMD-only note:** you *can* build just the kernel driver on Windows 7 SP1 x64 with WDK 7.1, but building the UMDs requires a newer MSBuild/Visual Studio toolchain.
 
 ### WDK
 * **Windows Driver Kit 7.1** (typically installs to `C:\WinDDK\7600.16385.1`)
@@ -118,6 +119,15 @@ If the build succeeds, you should see:
 ---
 
 ## Notes on the WDK BUILD system (KMD)
+
+### Optional `dirs` file
+The classic WDK BUILD system can chain subprojects via a `dirs` file. AeroGPU does **not** use this as the primary entrypoint (because the UMDs are MSBuild projects), but if you want a WDK-only build root you can add:
+
+`drivers/aerogpu/dirs`
+```make
+DIRS= \
+    kmd
+```
 
 ### Minimal `sources` example (KMD)
 `drivers/aerogpu/kmd/sources`
