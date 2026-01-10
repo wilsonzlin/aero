@@ -160,15 +160,16 @@ Some deployments may additionally support a non-cookie authentication mode (toke
    - Target parsing
    - Port allowlist
    - Destination IP policy (blocked ranges)
-3. Gateway attempts to connect to the target TCP endpoint.
-4. If the TCP connection succeeds, the gateway completes the WebSocket upgrade.
+3. Gateway completes the WebSocket upgrade.
+4. Gateway attempts to connect to the target TCP endpoint and begins relaying bytes.
+5. If the TCP connection fails (or the relay encounters an error), the gateway closes the WebSocket.
 
-### WebSocket message types
+### WebSocket message types (v1)
 
-The `/tcp` WebSocket uses two message “types” at the WebSocket layer:
+The `/tcp` WebSocket is a **raw byte tunnel**:
 
-1) **Binary messages**: raw TCP payload bytes (data in either direction)
-2) **Text messages**: UTF‑8 JSON control/events
+- **Binary messages**: raw TCP payload bytes (data in either direction).
+- **Text messages**: treated as UTF‑8 bytes and forwarded to the TCP socket (supported for compatibility/debug; prefer binary).
 
 Clients must set:
 
@@ -176,91 +177,19 @@ Clients must set:
 ws.binaryType = 'arraybuffer';
 ```
 
-#### Binary messages: `TCP_DATA`
-
-Any WebSocket **binary** message is treated as a segment of TCP data.
+Any WebSocket message payload is treated as a chunk of the TCP byte stream:
 
 - Client → gateway: bytes are written to the TCP socket.
-- Gateway → client: bytes read from the TCP socket.
+- Gateway → client: bytes read from the TCP socket (sent as WebSocket binary messages).
 
 Message boundaries are **not preserved** end-to-end (TCP is a byte stream). Clients must treat each message as an arbitrary-length chunk and reassemble as needed.
 
-#### Text JSON control messages
+### Close / errors
 
-Control messages are JSON objects with a required `"type"` field.
-
-##### `{"type":"open"}`
-
-Sent by the gateway **exactly once** after the TCP connection is established and before any `TCP_DATA` is sent.
-
-Example:
-
-```json
-{"type":"open","target":"example.com:443"}
-```
-
-Clients should not send `TCP_DATA` until after receiving `"open"` (to avoid buffering behavior differing across gateway implementations).
-
-##### `{"type":"eof"}`
-
-Sent by the gateway when the remote peer half-closes (TCP FIN received). No more `TCP_DATA` will be received from the remote.
-
-Clients may still be allowed to send `TCP_DATA` after `eof` (depending on peer behavior), but most client implementations should treat this as “read side closed” and proceed to close.
-
-Example:
-
-```json
-{"type":"eof"}
-```
-
-##### `{"type":"error", ...}`
-
-Sent by the gateway before closing the WebSocket when the TCP connection cannot be established or is terminated due to policy/limits.
-
-Example:
-
-```json
-{"type":"error","code":"PORT_NOT_ALLOWED","message":"Outbound port blocked by policy","retryable":false}
-```
-
-`code` is a short string intended for programmatic handling. Suggested values:
-
-- `INVALID_TARGET`
-- `PORT_NOT_ALLOWED`
-- `DESTINATION_BLOCKED`
-- `DNS_RESOLUTION_FAILED`
-- `CONNECT_TIMEOUT`
-- `CONNECT_REFUSED`
-- `CONNECTION_RESET`
-- `IDLE_TIMEOUT`
-- `RATE_LIMITED`
-- `MESSAGE_TOO_LARGE`
-
-### WebSocket close codes
-
-The gateway uses WebSocket close codes to communicate why a connection ended. Clients must handle both standard close codes and gateway-specific ones.
-
-#### Standard close codes
-
-- `1000` Normal closure (TCP session ended cleanly or client requested close)
-- `1001` Going away (server shutdown/redeploy)
-- `1006` Abnormal closure (network error; not sent explicitly)
-- `1011` Internal server error
-
-#### Gateway-specific close codes (4000–4999)
-
-- `4001` Session missing/invalid (authentication)
-- `4002` Origin not allowed
-- `4003` Invalid target string
-- `4004` Destination IP blocked
-- `4005` Destination port blocked
-- `4006` DNS resolution failed
-- `4007` TCP connect timeout
-- `4008` TCP connect refused / unreachable
-- `4009` Rate limited / too many connections
-- `4010` Message too large / protocol violation
-
-> The close `reason` string is intended for debugging only. Clients must not parse it.
+- Closing the WebSocket closes the corresponding TCP socket.
+- If the WebSocket upgrade is rejected (origin/auth/policy), the browser will surface it as a generic WebSocket connection failure.
+- If the TCP connect fails or the relay encounters an error, the gateway closes the WebSocket. Clients should treat `close`/`error` as a generic failure and retry (with backoff) when appropriate.
+- Protocol violations may close with a standard close code (e.g. `1002` protocol error).
 
 ### Limits (what clients should assume)
 
@@ -517,7 +446,7 @@ Gateways should enforce rate limits and quotas to prevent abuse, including (depl
 When limits are exceeded:
 
 - HTTP endpoints should return `429 Too Many Requests`.
-- WebSocket endpoints should close with a gateway-specific close code (e.g. `4009`).
+- WebSocket upgrades may be rejected (or connections closed). In browsers this typically appears as a generic WebSocket connection failure.
 
 ---
 
@@ -536,28 +465,16 @@ async function openTcpProxySocket(gatewayOrigin: string, host: string, port: num
   const ws = new WebSocket(url.toString());
   ws.binaryType = 'arraybuffer';
 
-  // Wait for "open" control message from the gateway.
   await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('tcp proxy open timeout')), 10_000);
-    ws.addEventListener('message', (ev) => {
-      if (typeof ev.data === 'string') {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg?.type === 'open') {
-            clearTimeout(timeout);
-            resolve();
-          }
-          if (msg?.type === 'error') {
-            clearTimeout(timeout);
-            reject(new Error(`tcp proxy error: ${msg.code ?? 'unknown'}`));
-          }
-        } catch {
-          // Ignore unknown text frames.
-        }
-      }
+    const timeout = setTimeout(() => reject(new Error('tcp proxy connect timeout')), 10_000);
+    ws.addEventListener('open', () => {
+      clearTimeout(timeout);
+      resolve();
     });
-    ws.addEventListener('error', () => reject(new Error('websocket error')));
-    ws.addEventListener('close', (ev) => reject(new Error(`websocket closed: ${ev.code}`)));
+    ws.addEventListener('error', () => {
+      clearTimeout(timeout);
+      reject(new Error('websocket error'));
+    });
   });
 
   return ws;
@@ -575,8 +492,8 @@ For transient failures (network drops, gateway redeploy, rate limits), reconnect
 
 Also:
 
-- If you receive `4001` (session invalid), recreate the session via `POST /session` then reconnect.
-- If you receive `4004/4005` (policy blocked), do not retry automatically.
+- If the gateway uses short-lived sessions, recreate the session via `POST /session` then reconnect when you suspect expiry.
+- Avoid tight reconnect loops if the failure is deterministic (policy denial, blocked destinations, etc.).
 
 ### 6.3 Chunk outgoing writes
 
