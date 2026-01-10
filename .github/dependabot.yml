@@ -63,3 +63,144 @@ updates:
           - "vitest"
         update-types:
           - "major"
+
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+    allow:
+      - dependency-type: "development"
+    groups:
+      playwright:
+        patterns:
+          - "@playwright/*"
+          - "playwright"
+          - "playwright-core"
+        update-types:
+          - "minor"
+          - "patch"
+      playwright-major:
+        patterns:
+          - "@playwright/*"
+          - "playwright"
+          - "playwright-core"
+        update-types:
+          - "major"
+
+      test-lint-tooling:
+        patterns:
+          - "@eslint/*"
+          - "@typescript-eslint/*"
+          - "@vitest/*"
+          - "eslint"
+          - "eslint-*"
+          - "typescript"
+          - "vitest"
+        update-types:
+          - "minor"
+          - "patch"
+      test-lint-tooling-major:
+        patterns:
+          - "@eslint/*"
+          - "@typescript-eslint/*"
+          - "@vitest/*"
+          - "eslint"
+          - "eslint-*"
+          - "typescript"
+          - "vitest"
+        update-types:
+          - "major"
+
+  - package-ecosystem: "npm"
+    directory: "/backend/aero-gateway"
+    schedule:
+      interval: "weekly"
+    allow:
+      - dependency-type: "development"
+    groups:
+      playwright:
+        patterns:
+          - "@playwright/*"
+          - "playwright"
+          - "playwright-core"
+        update-types:
+          - "minor"
+          - "patch"
+      playwright-major:
+        patterns:
+          - "@playwright/*"
+          - "playwright"
+          - "playwright-core"
+        update-types:
+          - "major"
+
+      test-lint-tooling:
+        patterns:
+          - "@eslint/*"
+          - "@typescript-eslint/*"
+          - "@vitest/*"
+          - "eslint"
+          - "eslint-*"
+          - "typescript"
+          - "vitest"
+        update-types:
+          - "minor"
+          - "patch"
+      test-lint-tooling-major:
+        patterns:
+          - "@eslint/*"
+          - "@typescript-eslint/*"
+          - "@vitest/*"
+          - "eslint"
+          - "eslint-*"
+          - "typescript"
+          - "vitest"
+        update-types:
+          - "major"
+
+  - package-ecosystem: "npm"
+    directory: "/net-proxy"
+    schedule:
+      interval: "weekly"
+    allow:
+      - dependency-type: "development"
+    groups:
+      playwright:
+        patterns:
+          - "@playwright/*"
+          - "playwright"
+          - "playwright-core"
+        update-types:
+          - "minor"
+          - "patch"
+      playwright-major:
+        patterns:
+          - "@playwright/*"
+          - "playwright"
+          - "playwright-core"
+        update-types:
+          - "major"
+
+      test-lint-tooling:
+        patterns:
+          - "@eslint/*"
+          - "@typescript-eslint/*"
+          - "@vitest/*"
+          - "eslint"
+          - "eslint-*"
+          - "typescript"
+          - "vitest"
+        update-types:
+          - "minor"
+          - "patch"
+      test-lint-tooling-major:
+        patterns:
+          - "@eslint/*"
+          - "@typescript-eslint/*"
+          - "@vitest/*"
+          - "eslint"
+          - "eslint-*"
+          - "typescript"
+          - "vitest"
+        update-types:
+          - "major"
