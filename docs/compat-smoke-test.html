@@ -1,0 +1,96 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Aero storage compat smoke test</title>
+<style>
+  body {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+      "Courier New", monospace;
+    padding: 16px;
+  }
+  pre {
+    background: #f6f8fa;
+    padding: 12px;
+    border-radius: 6px;
+  }
+</style>
+
+<h1>Storage compat smoke test</h1>
+<p>
+  This page is intended for quick manual verification that IndexedDB is usable as a sparse block
+  store when OPFS is unavailable.
+</p>
+
+<pre id="log">Running…</pre>
+
+<script type="module">
+  const logEl = document.getElementById("log");
+  const lines = [];
+  const log = (msg) => {
+    lines.push(msg);
+    logEl.textContent = lines.join("\n");
+  };
+
+  const opfsAvailable = !!(navigator.storage && navigator.storage.getDirectory);
+  log(`OPFS available: ${opfsAvailable}`);
+  log(`IndexedDB available: ${"indexedDB" in globalThis}`);
+
+  const dbName = `aero-smoke-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+  const capacity = 8 * 1024 * 1024;
+  log(`DB: ${dbName}`);
+  log(`Capacity: ${capacity} bytes`);
+
+  // Minimal self-test using plain IndexedDB so it can run without a build step.
+  const blockSize = 1024 * 1024;
+  const blockKey = (idx) => String(idx);
+
+  const openDb = () =>
+    new Promise((resolve, reject) => {
+      const req = indexedDB.open(dbName, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        db.createObjectStore("meta");
+        db.createObjectStore("blocks");
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+
+  const put = (db, storeName, key, value) =>
+    new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, "readwrite");
+      const store = tx.objectStore(storeName);
+      store.put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+
+  const get = (db, storeName, key) =>
+    new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, "readonly");
+      const store = tx.objectStore(storeName);
+      const req = store.get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+
+  try {
+    const db = await openDb();
+    await put(db, "meta", "capacity", String(capacity));
+    await put(db, "meta", "block_size", String(blockSize));
+    await put(db, "meta", "format_version", "1");
+
+    const testData = new Uint8Array(blockSize);
+    testData.set([0xde, 0xad, 0xbe, 0xef], 123);
+    await put(db, "blocks", blockKey(0), testData);
+
+    const loaded = await get(db, "blocks", blockKey(0));
+    const loadedArr = new Uint8Array(loaded);
+    const ok = loadedArr[123] === 0xde && loadedArr[124] === 0xad && loadedArr[125] === 0xbe && loadedArr[126] === 0xef;
+
+    log(`Self-test: ${ok ? "PASS" : "FAIL"}`);
+  } catch (e) {
+    log(`Self-test: FAIL (${e && e.name ? e.name : e})`);
+  }
+</script>
+

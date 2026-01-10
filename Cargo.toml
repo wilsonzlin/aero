@@ -35,6 +35,7 @@ members = [
     "backend/aero-gateway",
     "crates/aero-jit",
     "crates/aero-usb",
+    "crates/st-idb",
 ]
 
 exclude = ["fuzz"]

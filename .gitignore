@@ -30,6 +30,7 @@ out/
 target/
 **/target/
 Cargo.lock
+pkg/
 .vite/
 .cache/
 *.tsbuildinfo

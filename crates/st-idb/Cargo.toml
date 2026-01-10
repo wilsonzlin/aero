@@ -1,0 +1,37 @@
+[package]
+name = "st-idb"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+futures-channel = "0.3"
+js-sys = "0.3"
+lru = "0.12"
+thiserror = "1"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+  "DomException",
+  "ErrorEvent",
+  "Event",
+  "IdbDatabase",
+  "IdbFactory",
+  "IdbObjectStore",
+  "IdbOpenDbRequest",
+  "IdbRequest",
+  "IdbTransaction",
+  "IdbTransactionMode",
+  "IdbVersionChangeEvent",
+  "Window",
+  "WorkerGlobalScope",
+]
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
