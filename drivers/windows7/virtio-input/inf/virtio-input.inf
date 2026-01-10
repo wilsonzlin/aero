@@ -57,9 +57,10 @@ aero_virtio_input.sys = 1
 ;        => 0x1040 + 18 = 0x1052
 ;        => HWID: PCI\VEN_1AF4&DEV_1052
 ;
-; Aero’s Windows 7 virtio contract v1 uses the legacy/transitional ID (0x1011).
-; QEMU’s virtio-input devices enumerate as DEV_1052 today; other virtio
-; implementations may expose the transitional ID.
+; Aero’s Windows 7 virtio contract v1 uses the **modern** ID space (DEV_1052) and
+; the modern virtio-pci transport (see `docs/windows7-virtio-driver-contract.md`).
+; The transitional ID (DEV_1011) is also matched here for compatibility with
+; virtio implementations that enumerate virtio-input in the transitional ID space.
 ;
 ; QEMU virtio-input devices that should match this INF include:
 ;   - virtio-keyboard-pci

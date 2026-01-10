@@ -18,7 +18,10 @@ Commonly observed IDs:
   - Derived as: `0x1040 + virtio_device_type`
   - virtio device type for input is **18**, so `0x1040 + 18 = 0x1052`
 
-The Aero emulator’s Windows 7 virtio contract v1 uses the **legacy/transitional** ID (`0x1011`).
+The Aero emulator’s Windows 7 virtio contract v1 uses the **modern** virtio-pci
+ID space (so virtio-input is `0x1052`) and the modern virtio-pci transport.
+The INF still matches `0x1011` for compatibility with transitional
+implementations.
 
 If the emulator uses a non-standard ID, update:
 
