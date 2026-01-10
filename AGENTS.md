@@ -46,6 +46,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 21. [Security Headers & Deployment Hardening](./docs/security-headers.md)
 22. [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./docs/16-disk-image-streaming-auth.md)
 23. [HTTP Range + CDN Behavior](./docs/17-range-cdn-behavior.md)
+24. [Windows 7 SP1 Unattended Install (Drivers + Scripting)](./docs/16-win7-unattended-install.md)
 
 ---
 
@@ -339,6 +340,7 @@ pub trait DisplayAdapter {
 | [backend/disk-image-streaming-service.md](./docs/backend/disk-image-streaming-service.md) | Disk image streaming (Range/CORS/COEP) | I/O / Infra       |
 | [security-headers.md](./docs/security-headers.md)                       | COOP/COEP, CSP, security headers       | Infrastructure    |
 | [16-disk-image-streaming-auth.md](./docs/16-disk-image-streaming-auth.md) | Disk byte streaming, auth, CORS/COEP   | I/O / Infra       |
+| [16-win7-unattended-install.md](./docs/16-win7-unattended-install.md)   | Unattended Win7 install (drivers/hooks) | All               |
 
 
 ---
