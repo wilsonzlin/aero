@@ -774,6 +774,35 @@ mod tests {
     }
 
     #[test]
+    fn alarm_interrupt_triggers_when_enabled_and_time_matches() {
+        let clock = ManualClock::new();
+        let irq = TestIrq::new();
+        let mut rtc = RtcCmos::new(clock.clone(), irq.clone());
+
+        // Alarm at 00:00:01.
+        write_reg(&mut rtc, REG_SECONDS_ALARM, 0x01);
+        write_reg(&mut rtc, REG_MINUTES_ALARM, 0x00);
+        write_reg(&mut rtc, REG_HOURS_ALARM, 0x00);
+        write_reg(&mut rtc, REG_STATUS_B, REG_B_24H | REG_B_AIE);
+
+        clock.advance_ns(1_000_000_000);
+        rtc.tick();
+        assert!(irq.level());
+
+        let c = read_reg(&mut rtc, REG_STATUS_C);
+        assert_eq!(c & (REG_C_IRQF | REG_C_AF), REG_C_IRQF | REG_C_AF);
+        assert!(!irq.level());
+
+        // With AIE disabled, no alarm flags should be raised even if the compare matches.
+        write_reg(&mut rtc, REG_STATUS_B, REG_B_24H);
+        write_reg(&mut rtc, REG_SECONDS_ALARM, 0x02);
+        clock.advance_ns(1_000_000_000);
+        rtc.tick();
+        assert!(!irq.level());
+        assert_eq!(read_reg(&mut rtc, REG_STATUS_C), 0);
+    }
+
+    #[test]
     fn irq8_routes_through_platform_interrupts_and_requires_status_c_clear() {
         let clock = ManualClock::new();
 
