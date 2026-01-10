@@ -73,6 +73,18 @@ struct vring_desc {
   * `VRING_DESC_F_INDIRECT` (4): this descriptor points to an *indirect table* (see §8).
 * `next`: next descriptor index in the chain (0..QueueSize-1), only valid when `NEXT` is set.
 
+**Recommended: verify struct sizes in your Windows build**
+
+To avoid subtle packing/typedef mistakes, add compile-time size checks in your driver:
+
+```c
+typedef struct vring_desc VRING_DESC;
+typedef struct vring_used_elem VRING_USED_ELEM;
+
+C_ASSERT(sizeof(VRING_DESC) == 16);
+C_ASSERT(sizeof(VRING_USED_ELEM) == 8);
+```
+
 Notes:
 
 * A “request” (TX) or “buffer” (RX) is typically represented as a **descriptor chain**:
@@ -265,6 +277,10 @@ When consuming a `used_elem`:
    * Stop when `VRING_DESC_F_NEXT` is not set.
 4. Complete the request / recycle the RX buffer using `ctx`.
 
+Robustness (recommended):
+
+* Bound the chain walk to at most `QueueSize` descriptors to avoid infinite loops if memory is corrupted.
+
 **Out-of-order completion**: do not assume `head` values return in the same order you posted them.
 
 ## 5) Publishing to the avail ring (driver → device)
@@ -328,6 +344,10 @@ To consume completions safely, you must ensure that after observing `used->idx` 
    * `last_used_idx++` (wrap in `u16`)
 
 Again, on Windows use `KeMemoryBarrier()` / `MemoryBarrier()` as the rmb.
+
+Robustness (recommended):
+
+* Validate `head < QueueSize` before using it to index `desc[]` / `cookie[]`. If it is out of range, treat it as device/memory corruption and reset/disable the queue.
 
 ### 6.2 Wraparound-safe loop patterns (`u16` modulo 65536)
 
