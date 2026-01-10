@@ -751,8 +751,9 @@ static void roundtrip_via_add_serialized(const BYTE *buf, DWORD len) {
     CertCloseStore(mem, 0);
 }
 
-static void compare_registry_blob(const wchar_t *storeName, PCCERT_CONTEXT storeCert,
-                                  const BYTE *expected, DWORD expectedLen) {
+static void compare_registry_blob(HKEY root, const wchar_t *rootName, const wchar_t *storeName,
+                                  PCCERT_CONTEXT storeCert, const BYTE *expected,
+                                  DWORD expectedLen) {
     wchar_t thumb[41];
     print_thumbprint_hex(storeCert, thumb);
 
@@ -762,9 +763,10 @@ static void compare_registry_blob(const wchar_t *storeName, PCCERT_CONTEXT store
              storeName, thumb);
 
     HKEY hKey = NULL;
-    LONG rc = RegOpenKeyExW(HKEY_CURRENT_USER, keyPath, 0, KEY_QUERY_VALUE, &hKey);
+    LONG rc = RegOpenKeyExW(root, keyPath, 0, KEY_QUERY_VALUE, &hKey);
     if (rc != ERROR_SUCCESS) {
-        fwprintf(stderr, L"warning: RegOpenKeyExW(%ls) failed (rc=%ld)\n", keyPath,
+        fwprintf(stderr, L"warning: RegOpenKeyExW(%ls\\%ls) failed (rc=%ld)\n", rootName,
+                 keyPath,
                  (long)rc);
         return;
     }
@@ -797,7 +799,7 @@ static void compare_registry_blob(const wchar_t *storeName, PCCERT_CONTEXT store
         return;
     }
 
-    printf("Registry Blob: %lu byte(s)\n", (unsigned long)cb);
+    printf("Registry Blob (%ls): %lu byte(s)\n", rootName, (unsigned long)cb);
     if (cb == expectedLen && memcmp(blob, expected, cb) == 0) {
         printf("Registry Blob matches CertSerializeCertificateStoreElement() output.\n");
     } else {
@@ -810,9 +812,10 @@ static void compare_registry_blob(const wchar_t *storeName, PCCERT_CONTEXT store
     free(blob);
 }
 
-static void cleanup_cert_from_store(const wchar_t *storeName, PCCERT_CONTEXT certToMatch) {
+static void cleanup_cert_from_store(DWORD storeLocation, const wchar_t *storeName,
+                                    PCCERT_CONTEXT certToMatch) {
     HCERTSTORE store = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0,
-                                     CERT_SYSTEM_STORE_CURRENT_USER, storeName);
+                                     storeLocation, storeName);
     if (!store) {
         return;
     }
@@ -929,25 +932,48 @@ int wmain(int argc, wchar_t **argv) {
     compare_serialized_property_with_context(certProps, ser1, cbSer1, CERT_KEY_PROV_INFO_PROP_ID);
     roundtrip_via_add_serialized(ser1, cbSer1);
 
-    // Cross-check against registry provider by adding to a real system store.
-    HCERTSTORE sysStore = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0,
-                                        CERT_SYSTEM_STORE_CURRENT_USER, storeName);
-    if (!sysStore) {
-        fwprintf(stderr, L"warning: CertOpenStore(system) failed (err=%lu)\n",
-                 (unsigned long)GetLastError());
-    } else {
+    // Cross-check against the registry provider by adding the cert to real
+    // registry-backed system stores.
+    //
+    // - Current user store: HKCU\Software\Microsoft\SystemCertificates\...
+    // - Local machine store: HKLM\Software\Microsoft\SystemCertificates\...
+    //
+    // The local machine store requires admin privileges; failures are non-fatal.
+    const struct {
+        DWORD storeLocation;
+        HKEY rootKey;
+        const wchar_t *rootName;
+    } locations[] = {
+        {CERT_SYSTEM_STORE_CURRENT_USER, HKEY_CURRENT_USER, L"HKCU"},
+        {CERT_SYSTEM_STORE_LOCAL_MACHINE, HKEY_LOCAL_MACHINE, L"HKLM"},
+    };
+
+    for (DWORD li = 0; li < (DWORD)(sizeof(locations) / sizeof(locations[0])); li++) {
+        DWORD storeLocation = locations[li].storeLocation;
+        HKEY rootKey = locations[li].rootKey;
+        const wchar_t *rootName = locations[li].rootName;
+
+        printf("\n=== Registry provider cross-check (%ls) ===\n", rootName);
+        HCERTSTORE sysStore =
+            CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, storeLocation, storeName);
+        if (!sysStore) {
+            fwprintf(stderr, L"warning: CertOpenStore(system, %ls) failed (err=%lu)\n",
+                     rootName, (unsigned long)GetLastError());
+            continue;
+        }
         PCCERT_CONTEXT added = NULL;
-        if (!CertAddCertificateContextToStore(sysStore, certProps,
-                                              CERT_STORE_ADD_REPLACE_EXISTING, &added)) {
-            fwprintf(stderr, L"warning: CertAddCertificateContextToStore failed (err=%lu)\n",
-                     (unsigned long)GetLastError());
+        if (!CertAddCertificateContextToStore(sysStore, certProps, CERT_STORE_ADD_REPLACE_EXISTING,
+                                              &added)) {
+            fwprintf(stderr,
+                     L"warning: CertAddCertificateContextToStore(%ls) failed (err=%lu)\n",
+                     rootName, (unsigned long)GetLastError());
         } else {
             // Re-serialize the context that came back from the system store.
             // This is the closest representation to what the registry provider
             // actually persisted.
             DWORD cbSerStore = 0;
             BYTE *serStore = serialize_cert(added, &cbSerStore);
-            printf("\n=== CertSerializeCertificateStoreElement (context returned from system store) ===\n");
+            printf("=== CertSerializeCertificateStoreElement (context returned from system store) ===\n");
             printf("Serialized size: %lu byte(s)\n", (unsigned long)cbSerStore);
             dump_context_properties(added);
             dump_serialized_cert_blob(serStore, cbSerStore);
@@ -957,14 +983,15 @@ int wmain(int argc, wchar_t **argv) {
             compare_serialized_property_with_context(added, serStore, cbSerStore,
                                                      CERT_KEY_PROV_INFO_PROP_ID);
 
-            compare_registry_blob(storeName, added, serStore, cbSerStore);
+            compare_registry_blob(rootKey, rootName, storeName, added, serStore, cbSerStore);
             free(serStore);
             CertFreeCertificateContext(added);
         }
         CertCloseStore(sysStore, 0);
     }
 
-    cleanup_cert_from_store(storeName, certProps);
+    cleanup_cert_from_store(CERT_SYSTEM_STORE_CURRENT_USER, storeName, certProps);
+    cleanup_cert_from_store(CERT_SYSTEM_STORE_LOCAL_MACHINE, storeName, certProps);
 
     free(ser1);
     CertFreeCertificateContext(certProps);

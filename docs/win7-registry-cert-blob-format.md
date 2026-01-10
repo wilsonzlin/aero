@@ -6,6 +6,10 @@ Windows 7 / WinPE system certificate stores persisted in the registry under:
 
 store each certificate as a `REG_BINARY` value called `Blob`.
 
+Per-user system stores use the same format under:
+
+`HKCU\SOFTWARE\Microsoft\SystemCertificates\<STORE>\Certificates\<SHA1>\Blob`
+
 This document specifies the **exact** binary layout of that `Blob` value on
 Windows 7, and how it relates to CryptoAPI serialization APIs.
 
@@ -22,7 +26,9 @@ and the resulting bytes can be round-tripped back into a store with:
 The included harness (`tools/win-blob-dump/`) prints and validates:
 
 1. The raw output of `CertSerializeCertificateStoreElement()`
-2. A byte-for-byte comparison with the registry `Blob` value for the same cert
+2. A byte-for-byte comparison with the registry `Blob` value for the same cert:
+   - `HKCU\...` always (current user store)
+   - `HKLM\...` when run with sufficient privileges (local machine store)
 
 > Note: Some *container* formats (e.g. a serialized store file created via
 > `CertSaveStore(CERT_STORE_SAVE_AS_STORE, ...)`) may wrap each element with an

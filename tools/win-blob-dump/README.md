@@ -16,9 +16,10 @@ It:
 4. Calls `CertSerializeCertificateStoreElement()` and prints a hexdump +
    decoded offsets.
 5. Round-trips the serialized bytes via `CertAddSerializedElementToStore()`.
-6. Adds the cert to a real registry-backed system store (current user), reads
-   the registry `Blob` value, and compares it byte-for-byte with the serialized
-   output.
+6. Adds the cert to real registry-backed system stores and compares the registry
+   `Blob` bytes to the serialized output:
+   - current user store (`HKCU\Software\Microsoft\SystemCertificates\...`)
+   - local machine store (`HKLM\Software\Microsoft\SystemCertificates\...`, requires admin)
 
 ## Build (MSVC)
 
