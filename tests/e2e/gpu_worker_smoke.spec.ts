@@ -40,3 +40,26 @@ test("gpu worker smoke: renders pattern and returns screenshot hash", async ({ p
   expect(result.samples.bottomRight).toEqual([255, 255, 255, 255]);
 });
 
+test("gpu worker smoke: disableWebGpu forces WebGL2 fallback", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
+
+  await page.goto("http://127.0.0.1:5173/web/gpu-worker-smoke.html?disableWebGpu=1", { waitUntil: "load" });
+  await waitForReady(page);
+
+  const result = await page.evaluate(() => {
+    const api = (window as any).__aeroTest;
+    if (!api) throw new Error("__aeroTest missing");
+    if (api.error) throw new Error(api.error);
+    return {
+      backend: api.backend ?? "unknown",
+      fallback: api.fallback ?? null,
+      pass: api.pass,
+    };
+  });
+
+  expect(result.backend).toBe("webgl2");
+  expect(result.fallback).not.toBeNull();
+  expect(result.fallback.from).toBe("webgpu");
+  expect(result.fallback.to).toBe("webgl2");
+  expect(result.pass).toBe(true);
+});

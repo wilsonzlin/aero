@@ -6,6 +6,11 @@ declare global {
     __aeroTest?: {
       ready?: boolean;
       backend?: string;
+      fallback?: {
+        from: string;
+        to: string;
+        reason: string;
+      };
       error?: string;
       hash?: string;
       expectedHash?: string;
@@ -25,6 +30,20 @@ declare global {
 
 function $(id: string): HTMLElement | null {
   return document.getElementById(id);
+}
+
+function getBoolParam(name: string): boolean {
+  const url = new URL(window.location.href);
+  const value = url.searchParams.get(name);
+  if (value === null) return false;
+  return value !== "0" && value !== "false";
+}
+
+function getBackendParam(): "auto" | "webgpu" | "webgl2" {
+  const url = new URL(window.location.href);
+  const value = url.searchParams.get("backend");
+  if (value === "webgpu" || value === "webgl2") return value;
+  return "auto";
 }
 
 function renderError(message: string) {
@@ -96,20 +115,31 @@ async function main() {
   canvas.style.height = `${cssHeight}px`;
 
   try {
+    const requestedBackend = getBackendParam();
+    const preferWebGpu = requestedBackend !== "webgl2";
+    const disableWebGpu = getBoolParam("disableWebGpu");
+
     const gpu = createGpuWorker({
       canvas,
       width: cssWidth,
       height: cssHeight,
       devicePixelRatio,
-      gpuOptions: { preferWebGpu: true },
+      gpuOptions: { preferWebGpu, disableWebGpu },
       onGpuError: (msg) => {
         if (!status) return;
         status.textContent += `gpu_error fatal=${msg.fatal} kind=${msg.error.kind} msg=${msg.error.message}\n`;
+      },
+      onGpuErrorEvent: (msg) => {
+        if (!status) return;
+        status.textContent += `gpu_error_event severity=${msg.event.severity} category=${msg.event.category} msg=${msg.event.message}\n`;
       },
     });
 
     const ready = await gpu.ready;
     if (backendEl) backendEl.textContent = ready.backendKind;
+    if (ready.fallback && status) {
+      status.textContent += `fallback ${ready.fallback.from} -> ${ready.fallback.to}: ${ready.fallback.reason}\n`;
+    }
 
     gpu.presentTestPattern();
     const screenshot = await gpu.requestScreenshot();
@@ -133,6 +163,7 @@ async function main() {
     window.__aeroTest = {
       ready: true,
       backend: ready.backendKind,
+      fallback: ready.fallback,
       hash,
       expectedHash,
       pass,
@@ -152,4 +183,3 @@ async function main() {
 }
 
 void main();
-
