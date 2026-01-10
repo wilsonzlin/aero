@@ -4,7 +4,10 @@ const DEV_PORT = 5173;
 const PREVIEW_PORT = 4173;
 
 export default defineConfig({
-  testDir: './tests/e2e',
+  // Keep Playwright tests under `tests/`, but only run the dedicated browser suites.
+  // (We also have Node/Vitest unit tests elsewhere under `tests/`.)
+  testDir: './tests',
+  testMatch: ['e2e/**/*.spec.ts', 'playwright/**/*.spec.ts'],
   use: {
     trace: 'on-first-retry',
   },

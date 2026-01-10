@@ -46,7 +46,11 @@ async function startStaticServer(rootDir: string): Promise<{ baseUrl: string; cl
   };
 }
 
-test("shader translation is persisted and skipped on next run", async () => {
+test("shader translation is persisted and skipped on next run", async ({}, testInfo) => {
+  // This test uses a Chromium persistent context to validate IndexedDB persistence.
+  // Skip in other projects to avoid running the same coverage multiple times.
+  if (testInfo.project.name !== "chromium") test.skip();
+
   const rootDir = path.resolve(process.cwd(), "web");
   const server = await startStaticServer(rootDir);
 
