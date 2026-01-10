@@ -186,7 +186,7 @@ fn pae_4kb_translation_sets_accessed_and_dirty() {
     let page_base = 0x4000u64;
 
     // PDPTE[0] -> PD
-    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64);
     // PDE[0] -> PT
     mem.write_u64_raw(pd_base, pt_base | PTE_P64 | PTE_RW64 | PTE_US64);
     // PTE[0] -> page
@@ -199,7 +199,8 @@ fn pae_4kb_translation_sets_accessed_and_dirty() {
     let vaddr = 0x456u64;
     assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
 
-    assert_ne!(mem.read_u64_raw(pdpt_base) & PTE_A64, 0);
+    // PDPT entries do not have an accessed bit in IA-32 PAE paging.
+    assert_eq!(mem.read_u64_raw(pdpt_base) & PTE_A64, 0);
     assert_ne!(mem.read_u64_raw(pd_base) & PTE_A64, 0);
     assert_ne!(mem.read_u64_raw(pt_base) & PTE_A64, 0);
     assert_eq!(mem.read_u64_raw(pt_base) & PTE_D64, 0);
@@ -298,7 +299,7 @@ fn pae_2mb_large_page_translation() {
     let pd_base = 0x2000u64;
 
     // PDPTE[0] -> PD
-    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64);
 
     // PDE[0] maps a 2MB page with base 0 (aligned), PS=1.
     mem.write_u64_raw(pd_base, PTE_P64 | PTE_RW64 | PTE_US64 | PTE_PS64);

@@ -571,8 +571,11 @@ impl Mmu {
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };
 
-        let mut eff_user = pdpte & PTE_US64 != 0;
-        let mut eff_writable = pdpte & PTE_RW64 != 0;
+        // In IA-32 PAE paging, the PDPT entry does not participate in U/S or
+        // R/W protection checks (bits 1 and 2 are reserved). It can, however,
+        // contribute NX when EFER.NXE is enabled.
+        let mut eff_user = true;
+        let mut eff_writable = true;
         let mut eff_nx = nx_enabled && (pdpte & PTE_NX != 0);
 
         let pd_base = (pdpte & addr_mask) & !0xfff;
@@ -875,8 +878,10 @@ impl Mmu {
             return Err(self.page_fault_rsvd(vaddr, access, is_user));
         }
 
+        // IA-32 PAE PDPT entries do not have Accessed/Dirty bits; all other
+        // paging-structure entries we emulate do.
         let mut entry = entry;
-        if entry & PTE_A64 == 0 {
+        if kind != EntryKind64::PdptePae && (entry & PTE_A64 == 0) {
             entry |= PTE_A64;
             bus.write_u64(entry_addr, entry);
         }
@@ -919,8 +924,29 @@ impl Mmu {
         }
 
         let addr_mask = self.phys_addr_mask();
+
+        if kind == EntryKind64::PdptePae {
+            // IA-32 PAE PDPT entry format:
+            //   - bit 0: Present
+            //   - bit 3: PWT
+            //   - bit 4: PCD
+            //   - bits 9..=11: available to software (AVL)
+            //   - bits 12..MAXPHYADDR-1: physical address of the PD base
+            //   - bit 63: NX (only if EFER.NXE=1)
+            //
+            // Bits 1,2,5..=8 are reserved and must be 0.
+            let allowed_flags = PTE_P64 | (1 << 3) | (1 << 4) | (0x7 << 9);
+            let allowed_addr = addr_mask & !0xfff;
+            let mut allowed = allowed_flags | allowed_addr;
+            if nx_enabled {
+                allowed |= PTE_NX;
+            }
+            return entry & !allowed != 0;
+        }
+
         let page_align = match kind {
-            EntryKind64::Pml4e | EntryKind64::PdptePae => 0x1000u64,
+            EntryKind64::Pml4e => 0x1000u64,
+            EntryKind64::PdptePae => 0x1000u64,
             EntryKind64::PdpteLong => {
                 if entry & PTE_PS64 != 0 {
                     PageSize::Size1G.bytes()
