@@ -186,12 +186,14 @@ jobs:
       issues: write
     steps:
       - name: Download perf artifacts
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: perf-smoke-${{ github.run_id }}
           path: perf-results
 
       - name: Comment on PR (summary)
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
