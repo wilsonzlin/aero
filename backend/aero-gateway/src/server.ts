@@ -247,9 +247,13 @@ function e2ePageHtml(): string {
             throw new Error('Invalid echoPort');
           }
 
-          const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/tcp?target=127.0.0.1:' + echoPort;
+          const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+          const wsUrl = new URL('/tcp', wsBase);
+          wsUrl.searchParams.set('v', '1');
+          wsUrl.searchParams.set('host', '127.0.0.1');
+          wsUrl.searchParams.set('port', String(echoPort));
           const echo = await withTimeout(new Promise((resolve, reject) => {
-            const ws = new WebSocket(wsUrl);
+            const ws = new WebSocket(wsUrl.toString());
             ws.binaryType = 'arraybuffer';
             ws.onopen = () => {
               const data = new TextEncoder().encode('ping');

@@ -24,7 +24,7 @@ const port = Number.parseInt(args.port ?? process.env.PORT ?? '8080', 10);
 const gateway = await startGateway({ host, port });
 
 console.log(`Aero gateway listening on ${gateway.url}`);
-console.log(`- TCP proxy: ws://${host}:${gateway.port}/tcp?target=127.0.0.1:1234`);
+console.log(`- TCP proxy: ws://${host}:${gateway.port}/tcp?v=1&host=127.0.0.1&port=1234`);
 console.log(`- DoH:       ${gateway.url}/dns-query`);
 console.log(`- Metrics:   ${gateway.url}/metrics`);
 
@@ -36,4 +36,3 @@ const shutdown = async (signal) => {
 
 process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
-

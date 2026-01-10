@@ -165,7 +165,11 @@ async function wsSend(ws, buf) {
 }
 
 async function benchTcpRttMs({ gatewayPort, targetHost, targetPort, payloadBytes, iterations, warmup }) {
-  const ws = new WebSocket(`ws://127.0.0.1:${gatewayPort}/tcp?target=${targetHost}:${targetPort}`);
+  const wsUrl = new URL(`ws://127.0.0.1:${gatewayPort}/tcp`);
+  wsUrl.searchParams.set('v', '1');
+  wsUrl.searchParams.set('host', targetHost);
+  wsUrl.searchParams.set('port', String(targetPort));
+  const ws = new WebSocket(wsUrl);
   await once(ws, 'open');
 
   const reader = createWsByteReader(ws);
@@ -200,7 +204,11 @@ async function benchTcpThroughputMiBps({
   totalBytes,
   chunkBytes,
 }) {
-  const ws = new WebSocket(`ws://127.0.0.1:${gatewayPort}/tcp?target=${targetHost}:${targetPort}`);
+  const wsUrl = new URL(`ws://127.0.0.1:${gatewayPort}/tcp`);
+  wsUrl.searchParams.set('v', '1');
+  wsUrl.searchParams.set('host', targetHost);
+  wsUrl.searchParams.set('port', String(targetPort));
+  const ws = new WebSocket(wsUrl);
   await once(ws, 'open');
 
   const reader = createWsByteReader(ws);
@@ -426,4 +434,3 @@ async function main() {
 }
 
 await main();
-
