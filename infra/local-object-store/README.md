@@ -119,6 +119,24 @@ docker compose --profile tools run --rm mc ls local/disk-images
 
 > These examples assume you uploaded `large.bin` to `disk-images/large.bin`.
 
+### Automated smoke check (origin + proxy)
+
+This directory includes a small script that will:
+
+- start the containers
+- upload a small random file
+- verify `HEAD`, `206` Range responses, and preflight behavior against both the origin and the proxy
+
+```bash
+./verify.sh
+```
+
+To stop containers at the end:
+
+```bash
+./verify.sh --down
+```
+
 ### Verify HEAD / size discovery
 
 The streaming disk client typically starts with a `HEAD` request to discover the object size (`Content-Length`).
