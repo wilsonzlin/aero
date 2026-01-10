@@ -51,3 +51,4 @@ impl MemoryBus for VecMemory {
         self.data[addr as usize] = value;
     }
 }
+
