@@ -397,12 +397,12 @@ Implementation references:
 | IN-008 | USB HID (mouse)          | P2       | None           | Medium     |
 | IN-009 | Gamepad support          | P2       | None           | Medium     |
 | IN-010 | Input test suite         | P0       | IN-001..IN-003 | Medium     |
-| IN-011 | Virtio-input device model (device config + event/status queues) | P1 | DM-008, VTP-002 | High     |
-| IN-012 | Windows 7 virtio-input KMDF HID minidriver (see VIO-010)         | P1 | VIO-001..VIO-003 | Very High |
+| IN-011 | Virtio-input (keyboard/mouse) device model (device config + event/status queues) | P1 | DM-008, VTP-002 | High     |
+| IN-012 | Windows 7 virtio-input (keyboard/mouse) KMDF HID minidriver (see VIO-010) | P1 | VIO-001..VIO-003 | Very High |
 | IN-013 | HID report descriptor + keyboard/mouse mapping (see VIO-013)      | P1 | IN-012         | High      |
 | IN-014 | Driver packaging/signing + installation docs (see VIO-014)        | P1 | IN-012, IN-013 | Medium    |
 | IN-015 | Browser events → virtio-input events (EV_KEY/EV_REL + SYN)        | P1 | IN-005..IN-006, IN-011 | Medium |
-| IN-016 | Virtio-input functional test plan/tooling (see VIO-015)           | P1 | IN-011..IN-015 | Medium    |
+| IN-016 | Virtio-input (keyboard/mouse) functional test plan/tooling (see VIO-015) | P1 | IN-011..IN-015 | Medium    |
 
 ### Virtio Drivers (Windows 7 guest)
 
@@ -419,7 +419,7 @@ See `docs/16-virtio-drivers-win7.md` for an implementation-oriented overview of 
 | VIO-001 | Virtio-pci modern transport library (shared) | P0     | None                | High       |
 | VIO-002 | Virtqueue split-ring implementation (shared) | P0     | VIO-001             | Very High  |
 | VIO-003 | MSI-X + legacy interrupt plumbing (shared)   | P0     | VIO-001             | High       |
-| VIO-010 | Virtio-input KMDF HID minidriver (Win7) (Input lane: IN-012) | P1 | VIO-001..VIO-003 | Very High |
+| VIO-010 | Virtio-input KMDF HID minidriver (Win7) (keyboard/mouse) (Input lane: IN-012) | P1 | VIO-001..VIO-003 | Very High |
 | VIO-011 | Virtio-blk driver (Win7) (Storage lane: ST-009) | P1   | VIO-001..VIO-003    | High       |
 | VIO-012 | Virtio-net driver (Win7) (Network lane: NT-008) | P1   | VIO-001..VIO-003    | High       |
 | VIO-013 | Virtio-input HID report descriptor + key mapping (Input lane: IN-013) | P1 | VIO-010         | High       |
