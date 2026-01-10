@@ -2,6 +2,7 @@
 name = "aero-wasm"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 [features]
 # Internal feature used by the build system to ensure the threaded/shared-memory
