@@ -257,7 +257,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                 offset: 0,
                 size: None,
             },
-            // Two contiguous draw calls that should get merged.
+            // Two contiguous draw calls that can be merged when draw coalescing is enabled.
             GpuCmd::DrawIndexed {
                 index_count: 3,
                 instance_count: 1,

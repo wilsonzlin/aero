@@ -16,13 +16,20 @@ pub struct CommandOptimizer {
     /// If enabled, the optimizer will attempt to merge *consecutive* draws into a
     /// single draw when it is provably safe (contiguous vertex/index ranges and
     /// identical instance parameters).
+    ///
+    /// This is only correct for list-style primitive topologies (point/line/triangle
+    /// lists). For strip topologies, draw boundaries affect primitive assembly, so
+    /// merging draws would change rendering output.
     pub enable_draw_coalescing: bool,
 }
 
 impl CommandOptimizer {
     pub fn new() -> Self {
         Self {
-            enable_draw_coalescing: true,
+            // Off by default: without knowing the active primitive topology we
+            // cannot guarantee that merging consecutive draws preserves
+            // primitive assembly semantics (see `enable_draw_coalescing` docs).
+            enable_draw_coalescing: false,
         }
     }
 
@@ -419,7 +426,9 @@ mod tests {
             GpuCmd::EndRenderPass,
         ];
 
-        let optimizer = CommandOptimizer::default();
+        let optimizer = CommandOptimizer {
+            enable_draw_coalescing: true,
+        };
         let result = optimizer.optimize(input);
 
         assert_eq!(

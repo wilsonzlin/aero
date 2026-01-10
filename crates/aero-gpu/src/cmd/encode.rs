@@ -25,6 +25,7 @@ pub enum EncodeError {
     MissingBindGroup(BindGroupId),
     MissingBuffer(BufferId),
     MissingTextureView(TextureViewId),
+    ArithmeticOverflow(&'static str),
     UnexpectedEndRenderPass,
     UnexpectedCommandOutsideRenderPass,
     UnterminatedRenderPass,
@@ -37,6 +38,9 @@ impl std::fmt::Display for EncodeError {
             EncodeError::MissingBindGroup(id) => write!(f, "missing bind group {id:?}"),
             EncodeError::MissingBuffer(id) => write!(f, "missing buffer {id:?}"),
             EncodeError::MissingTextureView(id) => write!(f, "missing texture view {id:?}"),
+            EncodeError::ArithmeticOverflow(ctx) => {
+                write!(f, "arithmetic overflow while encoding {ctx}")
+            }
             EncodeError::UnexpectedEndRenderPass => write!(f, "unexpected EndRenderPass"),
             EncodeError::UnexpectedCommandOutsideRenderPass => {
                 write!(f, "unexpected command outside render pass")
@@ -47,6 +51,18 @@ impl std::fmt::Display for EncodeError {
 }
 
 impl std::error::Error for EncodeError {}
+
+fn range_end_u32(start: u32, count: u32, context: &'static str) -> Result<u32, EncodeError> {
+    start
+        .checked_add(count)
+        .ok_or(EncodeError::ArithmeticOverflow(context))
+}
+
+fn range_end_u64(start: u64, size: u64, context: &'static str) -> Result<u64, EncodeError> {
+    start
+        .checked_add(size)
+        .ok_or(EncodeError::ArithmeticOverflow(context))
+}
 
 /// Lookup interface that maps lightweight IDs in [`GpuCmd`] to wgpu resources.
 pub trait ResourceProvider {
@@ -153,7 +169,10 @@ impl<'a, R: ResourceProvider> Encoder<'a, R> {
                         .buffer(*buffer)
                         .ok_or(EncodeError::MissingBuffer(*buffer))?;
                     let slice = match size {
-                        Some(size) => buf.slice(*offset..(*offset + *size)),
+                        Some(size) => {
+                            let end = range_end_u64(*offset, *size, "vertex buffer range")?;
+                            buf.slice(*offset..end)
+                        }
                         None => buf.slice(*offset..),
                     };
                     pass.set_vertex_buffer(*slot, slice);
@@ -169,7 +188,10 @@ impl<'a, R: ResourceProvider> Encoder<'a, R> {
                         .buffer(*buffer)
                         .ok_or(EncodeError::MissingBuffer(*buffer))?;
                     let slice = match size {
-                        Some(size) => buf.slice(*offset..(*offset + *size)),
+                        Some(size) => {
+                            let end = range_end_u64(*offset, *size, "index buffer range")?;
+                            buf.slice(*offset..end)
+                        }
                         None => buf.slice(*offset..),
                     };
                     pass.set_index_buffer(slice, (*format).into());
@@ -179,21 +201,28 @@ impl<'a, R: ResourceProvider> Encoder<'a, R> {
                     instance_count,
                     first_vertex,
                     first_instance,
-                } => pass.draw(
-                    *first_vertex..(*first_vertex + *vertex_count),
-                    *first_instance..(*first_instance + *instance_count),
-                ),
+                } => {
+                    let v_end = range_end_u32(*first_vertex, *vertex_count, "draw vertex range")?;
+                    let i_end =
+                        range_end_u32(*first_instance, *instance_count, "draw instance range")?;
+                    pass.draw(*first_vertex..v_end, *first_instance..i_end)
+                }
                 GpuCmd::DrawIndexed {
                     index_count,
                     instance_count,
                     first_index,
                     base_vertex,
                     first_instance,
-                } => pass.draw_indexed(
-                    *first_index..(*first_index + *index_count),
-                    *base_vertex,
-                    *first_instance..(*first_instance + *instance_count),
-                ),
+                } => {
+                    let idx_end = range_end_u32(*first_index, *index_count, "draw indexed range")?;
+                    let inst_end =
+                        range_end_u32(*first_instance, *instance_count, "draw instance range")?;
+                    pass.draw_indexed(
+                        *first_index..idx_end,
+                        *base_vertex,
+                        *first_instance..inst_end,
+                    )
+                }
                 GpuCmd::BeginRenderPass(_) => return Err(EncodeError::UnterminatedRenderPass),
             }
 
