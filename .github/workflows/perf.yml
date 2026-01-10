@@ -23,6 +23,7 @@ jobs:
       PERF_REGRESSION_THRESHOLD_PCT: "15"
       PERF_EXTREME_CV_THRESHOLD: "0.5"
       AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
+      AERO_REQUIRE_WEBGPU: "0"
     steps:
       - name: Checkout (candidate)
         uses: actions/checkout@v4

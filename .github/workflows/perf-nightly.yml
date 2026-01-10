@@ -21,6 +21,7 @@ jobs:
       NODE_VERSION: "20.11.1"
       PERF_ITERATIONS: ${{ github.event.inputs.iterations || '7' }}
       AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
+      AERO_REQUIRE_WEBGPU: "0"
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
