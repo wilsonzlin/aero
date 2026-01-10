@@ -27,6 +27,10 @@ Patch both of these (they are used for different firmware boot paths):
 - `boot/BCD` (BIOS/CSM boot path)
 - `efi/microsoft/boot/BCD` (UEFI boot path)
 
+Note: ISO extractors and non-Windows filesystems may change the case of these
+paths (e.g. `EFI/Microsoft/Boot/bcd`). Implementations should treat the path
+lookup as case-insensitive.
+
 ### Extracted OS image (installed OS template)
 
 Patch:
@@ -84,6 +88,16 @@ is a 4-byte little-endian integer written into the `Element` value:
 This matches the audited offline `.reg` patches under `tools/win7-slipstream/patches/`,
 which use `hex:01,00,00,00` for both `testsigning` and `nointegritychecks`.
 
+### Reference: audited `.reg` patches in this repo
+
+If you need a concrete, known-good offline patch format, see:
+
+- `tools/win7-slipstream/patches/bcd-testsigning.reg`
+- `tools/win7-slipstream/patches/bcd-nointegritychecks.reg`
+
+They patch the well-known settings objects by GUID (see below) by writing the
+`Element` value directly.
+
 ## Which BCD objects should be patched
 
 To make the setting effective across the different boot paths Windows 7 uses, patch multiple objects (when present):
@@ -109,7 +123,13 @@ To find them offline:
 - For each object, look for the element:
   - **`BcdLibraryString_ApplicationPath`** (`0x12000002`)
   - (i.e. `Objects\{GUID}\Elements\12000002\Element`)
-- Decode the element’s string value and check whether it contains **`winload`** (case-insensitive substring match is sufficient in practice).
+- Decode the element’s string value and check whether it contains **`winload`**
+  (case-insensitive substring match is sufficient in practice).
+
+In practice, `BcdLibraryString_ApplicationPath` is a Windows path such as
+`\\Windows\\system32\\winload.exe` / `winload.efi`. If you don’t want to fully
+decode the element, scanning the raw bytes for the UTF-16LE substring
+`w\0i\0n\0l\0o\0a\0d\0` is a pragmatic approach.
 
 Any object whose `BcdLibraryString_ApplicationPath` contains `winload` should be treated as an OS loader entry and receive the `testsigning` / `nointegritychecks` boolean elements.
 
