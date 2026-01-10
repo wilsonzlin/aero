@@ -350,6 +350,10 @@ This only applies if you are attempting to install Windows directly onto **virti
 
 - Either:
   - Install Windows using baseline **AHCI** first (recommended), then switch to virtio-blk after running Guest Tools, **or**
+  - Attach a driver media disk and use **Load Driver** during Windows Setup:
+    - Drivers ISO: browse `drivers\...\x86\` or `drivers\...\x64\` as appropriate
+    - FAT driver disk (`*-fat.vhd`): browse `x86\` or `x64\` (see [`docs/16-driver-install-media.md`](./16-driver-install-media.md))
+    - Then select the storage driver `.inf` and continue installation, **or**
   - Slipstream the virtio-blk driver into `sources\\boot.wim` (indexes 1 and 2) and rebuild the ISO.
 
 ## Issue: `setup.cmd` fails (won't run)
