@@ -175,6 +175,9 @@ dependencies = [
 [[package]]
 name = "aero_cpu_core"
 version = "0.1.0"
+dependencies = [
+ "aero_x86",
+]
 
 [[package]]
 name = "aero_jit"
@@ -183,6 +186,13 @@ dependencies = [
  "wasm-encoder",
  "wasmi",
  "wasmparser 0.228.0",
+]
+
+[[package]]
+name = "aero_x86"
+version = "0.1.0"
+dependencies = [
+ "iced-x86",
 ]
 
 [[package]]
@@ -1452,6 +1462,15 @@ dependencies = [
  "pin-project-lite",
  "tokio",
  "tower-service",
+]
+
+[[package]]
+name = "iced-x86"
+version = "1.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c447cff8c7f384a7d4f741cfcff32f75f3ad02b406432e8d6c878d56b1edf6b"
+dependencies = [
+ "lazy_static",
 ]
 
 [[package]]

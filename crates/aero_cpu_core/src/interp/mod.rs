@@ -1,6 +1,7 @@
-pub mod x87;
 pub mod decode;
 pub mod string;
+pub mod tier0;
+pub mod x87;
 
 use crate::bus::Bus;
 use crate::cpu::Cpu;
@@ -27,3 +28,4 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, inst: &DecodedInst) -> Result<()
         InstKind::String(s) => string::exec_string(cpu, bus, s),
     }
 }
+

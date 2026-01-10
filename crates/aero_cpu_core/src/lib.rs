@@ -17,13 +17,15 @@ pub mod fpu;
 pub mod interp;
 pub mod jit;
 pub mod interrupts;
+pub mod mem;
 pub mod msr;
 pub mod sse_state;
+pub mod state;
 pub mod system;
 pub mod time;
 pub mod time_insn;
 
-pub use exception::Exception;
+pub use exception::{AssistReason, Exception};
 
 pub use bus::{Bus, RamBus};
 pub use cpu::{Cpu, CpuMode, Segment};
