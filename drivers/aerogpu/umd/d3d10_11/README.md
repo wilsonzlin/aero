@@ -45,9 +45,9 @@ Build files provided:
 - `aerogpu_d3d10_11.sln`
 - `aerogpu_d3d10_11.vcxproj` (Win32 + x64)
 
-The output DLL names are aligned with the Win7 packaging INF:
+The project is configured to output binaries that match the Win7 packaging INF:
 
 - Win32: `aerogpu_d3d10.dll`
 - x64: `aerogpu_d3d10_x64.dll`
 
-The project expects the Windows SDK/WDK to provide D3D10/11 DDI headers (e.g. `d3d10umddi.h`, `d3d11umddi.h`) when building the real UMD.  
+The project expects the Windows SDK/WDK to provide D3D10/11 DDI headers (e.g. `d3d10umddi.h`, `d3d11umddi.h`) when building the real UMD.
