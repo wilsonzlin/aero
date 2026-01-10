@@ -969,7 +969,12 @@ The graphics subsystem needs **deterministic, automated correctness tests** that
 
 This repository includes a minimal Playwright-based harness that:
 
-- Renders **deterministic microtests** (VGA-style text, VBE-style LFB color bars, WebGL2, WebGPU).
+- Renders **deterministic microtests**:
+  - VGA-style text (chars + attrs)
+  - VBE-style LFB color bars
+  - WebGL2/WebGPU direct rendering microtests
+  - GPU backend “smoke page” (`web/gpu-smoke.html`) capture
+  - GPU trace replay (`tests/fixtures/triangle.aerogputrace`) capture
 - Captures the rendered frame as **raw RGBA bytes** (WebGL2 `readPixels`, WebGPU buffer readback).
 - Compares the output against committed **golden PNGs**.
 - On failure, writes **expected/actual/diff** images as Playwright test artifacts.
@@ -979,6 +984,7 @@ Key files:
 - `tests/playwright/gpu_golden.spec.ts` — microtests + capture
 - `tests/playwright/utils/image_diff.ts` — pixel diff + artifact emission
 - `tests/golden/*.png` — committed goldens (synthetic scenes only)
+- `playwright.gpu.config.ts` — Playwright config (Chromium+WebGPU flags + Firefox WebGL2)
 
 Local usage:
 
