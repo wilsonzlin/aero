@@ -10,6 +10,21 @@ struct Vertex {
   float color[4];
 };
 
+static int FailD3D11WithRemovedReason(const char* test_name,
+                                     const char* what,
+                                     HRESULT hr,
+                                     ID3D11Device* device) {
+  if (device) {
+    HRESULT reason = device->GetDeviceRemovedReason();
+    if (FAILED(reason)) {
+      aerogpu_test::PrintfStdout("INFO: %s: device removed reason: %s",
+                                 test_name,
+                                 aerogpu_test::HresultToString(reason).c_str());
+    }
+  }
+  return aerogpu_test::FailHresult(test_name, what, hr);
+}
+
 static int RunD3D11Triangle(int argc, char** argv) {
   const char* kTestName = "d3d11_triangle";
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
@@ -297,7 +312,7 @@ static int RunD3D11Triangle(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "Map(staging)", hr);
+    return FailD3D11WithRemovedReason(kTestName, "Map(staging)", hr, device.get());
   }
 
   const int cx = (int)bb_desc.Width / 2;
@@ -323,7 +338,7 @@ static int RunD3D11Triangle(int argc, char** argv) {
 
   hr = swapchain->Present(0, 0);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDXGISwapChain::Present", hr);
+    return FailD3D11WithRemovedReason(kTestName, "IDXGISwapChain::Present", hr, device.get());
   }
 
   if ((center & 0x00FFFFFFu) != (expected & 0x00FFFFFFu) ||

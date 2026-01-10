@@ -10,6 +10,21 @@ struct Vertex {
   float color[4];
 };
 
+static int FailD3D11WithRemovedReason(const char* test_name,
+                                     const char* what,
+                                     HRESULT hr,
+                                     ID3D11Device* device) {
+  if (device) {
+    HRESULT reason = device->GetDeviceRemovedReason();
+    if (FAILED(reason)) {
+      aerogpu_test::PrintfStdout("INFO: %s: device removed reason: %s",
+                                 test_name,
+                                 aerogpu_test::HresultToString(reason).c_str());
+    }
+  }
+  return aerogpu_test::FailHresult(test_name, what, hr);
+}
+
 static int RunReadbackSanity(int argc, char** argv) {
   const char* kTestName = "readback_sanity";
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
@@ -279,7 +294,7 @@ static int RunReadbackSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "Map(staging)", hr);
+    return FailD3D11WithRemovedReason(kTestName, "Map(staging)", hr, device.get());
   }
 
   const uint32_t corner = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 0, 0);
