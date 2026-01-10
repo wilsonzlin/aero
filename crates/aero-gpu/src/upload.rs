@@ -34,7 +34,8 @@ impl GpuCapabilities {
             min_storage_buffer_offset_alignment: limits.min_storage_buffer_offset_alignment,
             max_buffer_size: limits.max_buffer_size,
             supports_compute: true,
-            supports_bc_texture_compression: features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
+            supports_bc_texture_compression: features
+                .contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
             timestamp_queries_supported: features.contains(wgpu::Features::TIMESTAMP_QUERY)
                 && features.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS),
         }
@@ -174,6 +175,11 @@ pub struct UploadRingBuffer {
     small_write_threshold: u64,
     stats: UploadStats,
 }
+
+// `wgpu::Queue::write_buffer` requires the write size be a multiple of
+// `COPY_BUFFER_ALIGNMENT` (4). For small writes we want to avoid heap allocations
+// when padding/zero-filling, so keep a reusable zero chunk.
+const ZERO_CHUNK: [u8; 256] = [0u8; 256];
 
 impl UploadRingBuffer {
     pub fn new(
@@ -340,23 +346,46 @@ impl UploadRingBuffer {
         queue: &wgpu::Queue,
         offset: u64,
         bytes: &[u8],
+        total_size: u64,
     ) -> Result<(), UploadRingBufferError> {
-        let padded_len = align_up(bytes.len() as u64, wgpu::COPY_BUFFER_ALIGNMENT) as usize;
-        let byte_len = padded_len as u64;
+        debug_assert!(total_size >= bytes.len() as u64);
 
-        if byte_len == 0 {
+        let total_size = align_up(total_size, wgpu::COPY_BUFFER_ALIGNMENT);
+        debug_assert_eq!(total_size % wgpu::COPY_BUFFER_ALIGNMENT, 0);
+        let total_size_usize = total_size as usize;
+
+        if total_size == 0 {
             return Ok(());
         }
 
-        if byte_len <= self.small_write_threshold {
-            if padded_len == bytes.len() {
-                queue.write_buffer(&self.buffer, offset, bytes);
-            } else {
-                let mut tmp = vec![0u8; padded_len];
-                tmp[..bytes.len()].copy_from_slice(bytes);
-                queue.write_buffer(&self.buffer, offset, &tmp);
+        if total_size <= self.small_write_threshold {
+            // Write the aligned prefix directly.
+            let prefix_len = bytes.len() & !((wgpu::COPY_BUFFER_ALIGNMENT as usize) - 1);
+            if prefix_len != 0 {
+                queue.write_buffer(&self.buffer, offset, &bytes[..prefix_len]);
             }
-            self.stats.bytes_small_writes += byte_len;
+
+            // Pad the tail of the payload to 4 bytes, if needed.
+            let mut written = prefix_len;
+            if written != bytes.len() {
+                let rem = &bytes[written..];
+                debug_assert!(rem.len() < 4);
+                let mut tmp = [0u8; 4];
+                tmp[..rem.len()].copy_from_slice(rem);
+                queue.write_buffer(&self.buffer, offset + written as u64, &tmp);
+                written += 4;
+            }
+
+            // Zero-fill any remaining bytes to the full allocation size.
+            while written < total_size_usize {
+                let remaining = total_size_usize - written;
+                let chunk = remaining.min(ZERO_CHUNK.len());
+                debug_assert_eq!(chunk % (wgpu::COPY_BUFFER_ALIGNMENT as usize), 0);
+                queue.write_buffer(&self.buffer, offset + written as u64, &ZERO_CHUNK[..chunk]);
+                written += chunk;
+            }
+
+            self.stats.bytes_small_writes += total_size;
             return Ok(());
         }
 
@@ -365,7 +394,7 @@ impl UploadRingBuffer {
         }
 
         use std::num::NonZeroU64;
-        let size = NonZeroU64::new(byte_len).expect("byte_len is checked for zero");
+        let size = NonZeroU64::new(total_size).expect("total_size is checked for zero");
         let encoder = self.encoder.get_or_insert_with(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("aero upload ring encoder"),
@@ -375,8 +404,8 @@ impl UploadRingBuffer {
             .staging_belt
             .write_buffer(encoder, &self.buffer, offset, size, device);
         view[..bytes.len()].copy_from_slice(bytes);
-        view[bytes.len()..padded_len].fill(0);
-        self.stats.bytes_staged_writes += byte_len;
+        view[bytes.len()..total_size_usize].fill(0);
+        self.stats.bytes_staged_writes += total_size;
         Ok(())
     }
 
@@ -391,7 +420,8 @@ impl UploadRingBuffer {
         alignment: u64,
     ) -> Result<(Arc<wgpu::Buffer>, u64), UploadRingBufferError> {
         let offset = self.alloc_offset(bytes.len() as u64, alignment)?;
-        self.write_bytes_inner(device, queue, offset, bytes)?;
+        let total_size = align_up(bytes.len() as u64, wgpu::COPY_BUFFER_ALIGNMENT);
+        self.write_bytes_inner(device, queue, offset, bytes, total_size)?;
         Ok((Arc::clone(&self.buffer), offset))
     }
 
@@ -399,7 +429,7 @@ impl UploadRingBuffer {
     pub fn uniform_allocation_size<T: Pod>(&self) -> u64 {
         // WebGPU requires uniform binding sizes to be 16-byte aligned.
         let size = std::mem::size_of::<T>() as u64;
-        align_up(size, 16).max(wgpu::COPY_BUFFER_ALIGNMENT)
+        align_up(size.max(16), 16)
     }
 
     /// Upload a single uniform POD value and return a dynamic uniform offset.
@@ -418,9 +448,7 @@ impl UploadRingBuffer {
         #[cfg(debug_assertions)]
         debug_assert_eq!(offset % alignment, 0);
 
-        let mut padded = vec![0u8; size as usize];
-        padded[..bytes.len()].copy_from_slice(bytes);
-        self.write_bytes_inner(device, queue, offset, &padded)?;
+        self.write_bytes_inner(device, queue, offset, bytes, size)?;
 
         let dyn_off: u32 = offset
             .try_into()
@@ -445,7 +473,8 @@ impl UploadRingBuffer {
         #[cfg(debug_assertions)]
         debug_assert_eq!(offset % alignment, 0);
 
-        self.write_bytes_inner(device, queue, offset, bytes)?;
+        let total_size = align_up(bytes.len() as u64, wgpu::COPY_BUFFER_ALIGNMENT);
+        self.write_bytes_inner(device, queue, offset, bytes, total_size)?;
 
         let dyn_off: u32 = offset
             .try_into()
@@ -466,7 +495,8 @@ impl UploadRingBuffer {
         let alignment = (std::mem::align_of::<T>() as u64).max(wgpu::COPY_BUFFER_ALIGNMENT);
         let offset = self.alloc_offset(bytes.len() as u64, alignment)?;
 
-        self.write_bytes_inner(device, queue, offset, bytes)?;
+        let total_size = align_up(bytes.len() as u64, wgpu::COPY_BUFFER_ALIGNMENT);
+        self.write_bytes_inner(device, queue, offset, bytes, total_size)?;
 
         Ok(BufferSliceHandle {
             buffer: Arc::clone(&self.buffer),

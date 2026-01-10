@@ -275,7 +275,9 @@ fn fs_main() -> @location(0) vec4<f32> {
             GpuCmd::EndRenderPass,
         ];
 
-        let optimizer = CommandOptimizer::default();
+        let optimizer = CommandOptimizer {
+            enable_draw_coalescing: true,
+        };
         let optimized = optimizer.optimize(cmd_list);
         assert!(optimized.metrics.commands_out < optimized.metrics.commands_in);
 
