@@ -642,6 +642,29 @@ static std::optional<IN_ADDR> FindIpv4AddressForAdapterGuid(const std::wstring& 
   return std::nullopt;
 }
 
+static std::optional<bool> IsDhcpEnabledForAdapterGuid(const std::wstring& adapter_guid) {
+  ULONG size = 0;
+  if (GetAdaptersInfo(nullptr, &size) != ERROR_BUFFER_OVERFLOW || size == 0) {
+    return std::nullopt;
+  }
+
+  std::vector<BYTE> buf(size);
+  auto* info = reinterpret_cast<IP_ADAPTER_INFO*>(buf.data());
+  if (GetAdaptersInfo(info, &size) != NO_ERROR) {
+    return std::nullopt;
+  }
+
+  const auto needle = NormalizeGuidLikeString(adapter_guid);
+
+  for (auto* a = info; a != nullptr; a = a->Next) {
+    const auto name = NormalizeGuidLikeString(AnsiToWide(a->AdapterName));
+    if (name != needle) continue;
+    return a->DhcpEnabled != 0;
+  }
+
+  return std::nullopt;
+}
+
 static bool DnsResolve(Logger& log, const std::wstring& hostname) {
   addrinfoW hints{};
   hints.ai_family = AF_UNSPEC;
@@ -833,6 +856,16 @@ static bool VirtioNetTest(Logger& log, const Options& opt) {
 
   if (!chosen.has_value()) {
     log.LogLine("virtio-net: timed out waiting for adapter to be UP with non-APIPA IPv4");
+    return false;
+  }
+
+  const auto dhcp_enabled = IsDhcpEnabledForAdapterGuid(chosen->instance_id);
+  if (!dhcp_enabled.has_value()) {
+    log.LogLine("virtio-net: failed to query DHCP enabled state");
+    return false;
+  }
+  if (!*dhcp_enabled) {
+    log.LogLine("virtio-net: DHCP is not enabled for the virtio adapter");
     return false;
   }
 
