@@ -17,6 +17,7 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
   bool has_require_vid = false;
@@ -40,8 +41,8 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
 
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
-        "[--allow-non-aerogpu]",
+        "Usage: %s.exe [--dump] [--hidden] [--require-vid=0x####] [--require-did=0x####] "
+        "[--allow-microsoft] [--allow-non-aerogpu]",
         kTestName);
     return 0;
   }
@@ -52,7 +53,8 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExTriangle",
                                               L"AeroGPU D3D9Ex Triangle",
                                               kWidth,
-                                              kHeight);
+                                              kHeight,
+                                              !hidden);
   if (!hwnd) {
     return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
   }

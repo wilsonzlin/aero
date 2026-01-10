@@ -52,7 +52,7 @@ if errorlevel 1 (
 exit /b 0
 
 :help
-echo Usage: run_all.cmd [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--allow-remote]
+echo Usage: run_all.cmd [--dump] [--hidden] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--allow-remote]
 echo.
 echo Notes:
 echo   --require-vid/--require-did helps avoid false PASS when AeroGPU isn't active.

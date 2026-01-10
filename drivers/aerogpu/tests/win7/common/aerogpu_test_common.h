@@ -317,7 +317,8 @@ static LRESULT CALLBACK BasicWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
 static inline HWND CreateBasicWindow(const wchar_t* class_name,
                                      const wchar_t* title,
                                      int client_width,
-                                     int client_height) {
+                                     int client_height,
+                                     bool show = true) {
   HINSTANCE hinst = GetModuleHandleW(NULL);
 
   WNDCLASSEXW wc;
@@ -355,8 +356,10 @@ static inline HWND CreateBasicWindow(const wchar_t* class_name,
     return NULL;
   }
 
-  ShowWindow(hwnd, SW_SHOW);
-  UpdateWindow(hwnd);
+  if (show) {
+    ShowWindow(hwnd, SW_SHOW);
+    UpdateWindow(hwnd);
+  }
   return hwnd;
 }
 
