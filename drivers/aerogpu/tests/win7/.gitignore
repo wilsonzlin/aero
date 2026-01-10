@@ -1,0 +1,10 @@
+bin/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.cso
+*.bmp
+*.png
+
