@@ -32,7 +32,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.WDK_DOWNLOAD_CACHE }}
-          key: wdk-download-${{ runner.os }}-${{ hashFiles('ci/install-wdk.ps1') }}
+          key: wdk-download-${{ runner.os }}-${{ hashFiles('ci/install-wdk.ps1', 'ci/lib/Toolchain.psm1') }}
           restore-keys: |
             wdk-download-${{ runner.os }}-
 
