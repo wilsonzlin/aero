@@ -161,6 +161,10 @@ dumps/
 *.core
 *.trace
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # cargo-fuzz
 fuzz/artifacts/
@@ -175,10 +179,6 @@ drivers/windows7/tests/guest-selftest/**/Release/
 # wasm-pack output (generated)
 web/src/wasm/pkg-threaded/
 web/src/wasm/pkg-single/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
 # Visual Studio / MSBuild
 **/bin/
 **/obj/

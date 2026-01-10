@@ -1,0 +1,18 @@
+{
+  "name": "aero-net-proxy-server",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "WebSocket multiplexed TCP proxy relay for Aero (browser Windows emulator)",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}

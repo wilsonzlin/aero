@@ -603,6 +603,8 @@ Notes:
   resolves to multiple IPs, the proxy connects only to the **first** allowed
   public IP.
 
+For local development/testing of the `/tcp-mux` framing protocol, see the standalone reference relay in `tools/net-proxy-server/` and the browser client in `web/src/net/tcp_proxy.ts` (`OPEN`, `DATA`, `CLOSE`, `ERROR` framing).
+
 ---
 
 ## WebRTC UDP Proxy
