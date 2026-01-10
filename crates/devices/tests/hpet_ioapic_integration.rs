@@ -30,7 +30,11 @@ fn hpet_timer0_interrupt_is_routed_via_ioapic_to_lapic() {
     hpet.mmio_write(0x100, 8, timer0_cfg | (1 << 2), &mut ioapic);
     hpet.mmio_write(0x108, 8, 3, &mut ioapic);
 
-    clock.advance_ns(300);
+    clock.advance_ns(200);
+    hpet.poll(&mut ioapic);
+    assert_eq!(lapic.get_pending_vector(), None);
+
+    clock.advance_ns(100);
     hpet.poll(&mut ioapic);
 
     assert_eq!(lapic.get_pending_vector(), Some(vector));
