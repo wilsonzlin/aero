@@ -29,6 +29,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+Import-Module -Name PKI -ErrorAction SilentlyContinue
+
 function Resolve-AbsolutePath {
   param(
     [Parameter(Mandatory = $true)]
