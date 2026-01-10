@@ -72,3 +72,5 @@ The script prints `bcdedit /store ... /enum {default}` commands you can run to c
   - `efi\microsoft\boot\bcd` (if present)
 - Offline template inside each `install.wim` index:
   - `Windows\System32\Config\BCD-Template`
+
+If `{default}` is not present in a given store (common for some `BCD-Template` variants), the script falls back to enumerating `bcdedit /enum all` and patches the `Windows Boot Loader` GUIDs it finds.

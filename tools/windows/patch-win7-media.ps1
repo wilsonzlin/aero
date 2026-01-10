@@ -100,7 +100,7 @@ function Format-Arg {
   return $Arg
 }
 
-function Invoke-NativeCommand {
+function Invoke-NativeCommandResult {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][string]$FilePath,
@@ -111,22 +111,36 @@ function Invoke-NativeCommand {
   $cmdLine = ("{0} {1}" -f $FilePath, (($ArgumentList | ForEach-Object { Format-Arg $_ }) -join " ")).Trim()
   Write-Host "`n> $cmdLine"
 
-  $output = @()
-  if ($SuppressOutput) {
-    $output = & $FilePath @ArgumentList 2>&1
-  }
-  else {
-    $captured = @()
-    & $FilePath @ArgumentList 2>&1 | Tee-Object -Variable captured | Out-Host
-    $output = $captured
-  }
-  $exitCode = $LASTEXITCODE
-  if ($exitCode -ne 0) {
-    $outputText = ($output | Out-String).Trim()
-    if ($outputText) {
-      throw "Command failed with exit code $exitCode: $cmdLine`n`n$outputText"
+  $output = & $FilePath @ArgumentList 2>&1
+
+  if (-not $SuppressOutput) {
+    foreach ($line in $output) {
+      Write-Host $line
     }
-    throw "Command failed with exit code $exitCode: $cmdLine"
+  }
+
+  return [pscustomobject]@{
+    ExitCode = $LASTEXITCODE
+    Output = ,$output
+    CommandLine = $cmdLine
+  }
+}
+
+function Invoke-NativeCommand {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$FilePath,
+    [Parameter(Mandatory)][string[]]$ArgumentList,
+    [switch]$SuppressOutput
+  )
+
+  $result = Invoke-NativeCommandResult -FilePath $FilePath -ArgumentList $ArgumentList -SuppressOutput:$SuppressOutput
+  if ($result.ExitCode -ne 0) {
+    $outputText = ($result.Output | Out-String).Trim()
+    if ($outputText) {
+      throw "Command failed with exit code $($result.ExitCode): $($result.CommandLine)`n`n$outputText"
+    }
+    throw "Command failed with exit code $($result.ExitCode): $($result.CommandLine)"
   }
 }
 
@@ -137,20 +151,49 @@ function Invoke-NativeCommandWithOutput {
     [Parameter(Mandatory)][string[]]$ArgumentList
   )
 
-  $cmdLine = ("{0} {1}" -f $FilePath, (($ArgumentList | ForEach-Object { Format-Arg $_ }) -join " ")).Trim()
-  Write-Host "`n> $cmdLine"
-
-  $output = & $FilePath @ArgumentList 2>&1
-  $exitCode = $LASTEXITCODE
-  if ($exitCode -ne 0) {
-    $outputText = ($output | Out-String).Trim()
+  $result = Invoke-NativeCommandResult -FilePath $FilePath -ArgumentList $ArgumentList -SuppressOutput
+  if ($result.ExitCode -ne 0) {
+    $outputText = ($result.Output | Out-String).Trim()
     if ($outputText) {
-      throw "Command failed with exit code $exitCode: $cmdLine`n`n$outputText"
+      throw "Command failed with exit code $($result.ExitCode): $($result.CommandLine)`n`n$outputText"
     }
-    throw "Command failed with exit code $exitCode: $cmdLine"
+    throw "Command failed with exit code $($result.ExitCode): $($result.CommandLine)"
   }
 
-  return ,$output
+  return ,$result.Output
+}
+
+function Get-BcdBootLoaderGuids {
+  param([Parameter(Mandatory)][string]$StorePath)
+
+  $output = Invoke-NativeCommandWithOutput -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/enum", "all")
+
+  $sectionTitle = $null
+  $guids = @()
+  for ($i = 0; $i -lt $output.Count; $i++) {
+    $line = $output[$i]
+    $trimmed = $line.Trim()
+    if (-not $trimmed) {
+      continue
+    }
+
+    $nextLine = $null
+    if ($i + 1 -lt $output.Count) {
+      $nextLine = $output[$i + 1].Trim()
+    }
+
+    # bcdedit section headers are immediately followed by a dashed separator line.
+    if ($nextLine -and ($nextLine -match '^-+$')) {
+      $sectionTitle = $trimmed
+      continue
+    }
+
+    if ($sectionTitle -eq "Windows Boot Loader" -and ($trimmed -match '^identifier\s+(\{[0-9A-Fa-f\-]{36}\})\s*$')) {
+      $guids += $Matches[1]
+    }
+  }
+
+  return @($guids | Sort-Object -Unique)
 }
 
 function Get-WimIndexList {
@@ -248,13 +291,37 @@ function Set-BcdFlagsForStore {
   Write-Host "`n[$StoreLabel] Patching BCD store: $StorePath"
   Invoke-NativeCommand -FilePath "attrib.exe" -ArgumentList @("-h", "-s", "-r", $StorePath) -SuppressOutput
 
-  Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", "{default}", "testsigning", "on")
-  if ($EnableNoIntegrityChecks) {
-    Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", "{default}", "nointegritychecks", "on")
+  $defaultResult = Invoke-NativeCommandResult -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", "{default}", "testsigning", "on")
+  if ($defaultResult.ExitCode -eq 0) {
+    if ($EnableNoIntegrityChecks) {
+      Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", "{default}", "nointegritychecks", "on")
+    }
+
+    Write-Host "Verification hint:"
+    Write-Host ("  bcdedit /store {0} /enum {{default}}" -f (Format-Arg $StorePath))
+    return
+  }
+
+  Write-Warning "[$StoreLabel] Failed to patch {default} in this store. Attempting to patch Windows Boot Loader entries instead."
+  $outputText = ($defaultResult.Output | Out-String).Trim()
+  if ($outputText) {
+    Write-Warning $outputText
+  }
+
+  $bootLoaderGuids = Get-BcdBootLoaderGuids -StorePath $StorePath
+  if ($bootLoaderGuids.Count -eq 0) {
+    throw "Unable to locate any Windows Boot Loader GUIDs in '$StorePath'. Run: bcdedit /store $StorePath /enum all"
+  }
+
+  foreach ($guid in $bootLoaderGuids) {
+    Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", $guid, "testsigning", "on")
+    if ($EnableNoIntegrityChecks) {
+      Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $StorePath, "/set", $guid, "nointegritychecks", "on")
+    }
   }
 
   Write-Host "Verification hint:"
-  Write-Host ("  bcdedit /store {0} /enum {{default}}" -f (Format-Arg $StorePath))
+  Write-Host ("  bcdedit /store {0} /enum all" -f (Format-Arg $StorePath))
 }
 
 function Add-OfflineTrustedCertificate {
@@ -341,15 +408,7 @@ function Patch-InstallBcdTemplate {
   }
 
   Write-Host "`nPatching install.wim BCD template: $templatePath"
-  Invoke-NativeCommand -FilePath "attrib.exe" -ArgumentList @("-h", "-s", "-r", $templatePath) -SuppressOutput
-
-  Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $templatePath, "/set", "{default}", "testsigning", "on")
-  if ($EnableNoIntegrityChecks) {
-    Invoke-NativeCommand -FilePath "bcdedit.exe" -ArgumentList @("/store", $templatePath, "/set", "{default}", "nointegritychecks", "on")
-  }
-
-  Write-Host "Verification hint:"
-  Write-Host ("  bcdedit /store {0} /enum {{default}}" -f (Format-Arg $templatePath))
+  Set-BcdFlagsForStore -StorePath $templatePath -StoreLabel "install.wim BCD-Template" -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
 }
 
 function Service-WimIndex {
