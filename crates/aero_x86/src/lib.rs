@@ -4,9 +4,9 @@
 //! wrapper API so the rest of the emulator does not depend on `iced-x86`
 //! directly.
 
-use iced_x86::{Decoder, DecoderOptions};
+use aero_cpu_decoder::{decode_instruction, DecodeMode};
 
-pub use iced_x86::{Code, Instruction, MemorySize, Mnemonic, OpKind, Register};
+pub use aero_cpu_decoder::{Code, Instruction, MemorySize, Mnemonic, OpKind, Register};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
@@ -20,14 +20,14 @@ pub struct DecodedInst {
 }
 
 pub fn decode(bytes: &[u8], ip: u64, bitness: u32) -> Result<DecodedInst, DecodeError> {
-    // `bytes` is expected to be at least 1 byte and at most 15 bytes. The
-    // interpreter always fetches 15 bytes, matching the architectural max
-    // instruction length.
-    let mut decoder = Decoder::with_ip(bitness, bytes, ip, DecoderOptions::NONE);
-    let instr = decoder.decode();
-    if instr.is_invalid() {
-        return Err(DecodeError::InvalidInstruction);
-    }
+    let mode = match bitness {
+        16 => DecodeMode::Bits16,
+        32 => DecodeMode::Bits32,
+        64 => DecodeMode::Bits64,
+        _ => return Err(DecodeError::InvalidInstruction),
+    };
+
+    let instr = decode_instruction(mode, ip, bytes).map_err(|_| DecodeError::InvalidInstruction)?;
     Ok(DecodedInst {
         len: instr.len() as u8,
         instr,

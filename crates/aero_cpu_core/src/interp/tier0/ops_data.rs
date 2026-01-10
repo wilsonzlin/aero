@@ -345,7 +345,17 @@ pub(crate) fn calc_ea(
     let base = instr.memory_base();
     let index = instr.memory_index();
     let scale = instr.memory_index_scale() as u64;
-    let disp = instr.memory_displacement64() as i64 as i128;
+    // iced-x86 encodes RIP-relative displacements as an *absolute* address:
+    //   absolute = next_ip + disp32
+    //
+    // The rest of the EA calculation logic treats `memory_displacement64()` as
+    // the raw displacement, so we normalize it back to disp32 when the base is
+    // RIP. This keeps the address computation uniform and prevents double-
+    // adding `next_ip` for RIP-relative memory operands.
+    let mut disp = instr.memory_displacement64() as i128;
+    if base == Register::RIP {
+        disp -= next_ip as i128;
+    }
 
     let addr_bits = if base == Register::RIP {
         64
@@ -383,6 +393,27 @@ pub(crate) fn calc_ea(
             .wrapping_add(addr))
     } else {
         Ok(addr)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{CpuMode, CpuState};
+
+    #[test]
+    fn calc_ea_rip_relative_does_not_double_add_next_ip() {
+        // mov rax, qword ptr [rip+0x12345678]
+        let bytes = [0x48, 0x8B, 0x05, 0x78, 0x56, 0x34, 0x12];
+        let ip = 0x1000u64;
+        let decoded = aero_x86::decode(&bytes, ip, 64).expect("decode");
+        let next_ip = ip + decoded.len as u64;
+
+        let state = CpuState::new(CpuMode::Bit64);
+        let addr = calc_ea(&state, &decoded.instr, next_ip, false).expect("calc_ea");
+
+        // next_ip + disp32
+        assert_eq!(addr, next_ip.wrapping_add(0x12345678));
     }
 }
 

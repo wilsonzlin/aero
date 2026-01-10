@@ -194,22 +194,15 @@ impl DecodedInstruction {
     }
 }
 
-/// Decode a single instruction from `bytes`.
+/// Decode a single instruction from `bytes` without parsing prefix metadata.
 ///
-/// `bytes` should contain at least the next [`MAX_INSTRUCTION_LEN`] bytes from
-/// the instruction stream when possible. If fewer bytes are available, decode
-/// may return [`DecodeError::UnexpectedEof`].
-///
-/// `ip` is used for RIP-relative addressing and branch target calculation.
+/// This is the lowest-overhead entry point and is suitable for hot interpreter
+/// loops that only need the decoded operand forms.
 #[inline]
-pub fn decode_one(mode: DecodeMode, ip: u64, bytes: &[u8]) -> Result<DecodedInstruction, DecodeError> {
+pub fn decode_instruction(mode: DecodeMode, ip: u64, bytes: &[u8]) -> Result<Instruction, DecodeError> {
     if bytes.is_empty() {
         return Err(DecodeError::EmptyInput);
     }
-
-    // Best-effort prefix parsing for consumers that want raw prefix info.
-    // This does not affect the backend decode.
-    let prefixes = parse_prefixes(mode, bytes).map_err(|_| DecodeError::UnexpectedEof)?;
 
     let mut decoder = IcedDecoder::with_ip(mode.bitness(), bytes, ip, DecoderOptions::NONE);
     let instruction = decoder.decode();
@@ -223,7 +216,28 @@ pub fn decode_one(mode: DecodeMode, ip: u64, bytes: &[u8]) -> Result<DecodedInst
     }
 
     let len = instruction.len() as usize;
-    debug_assert!(len <= MAX_INSTRUCTION_LEN, "backend produced invalid length {len}");
+    if len == 0 || len > MAX_INSTRUCTION_LEN {
+        return Err(DecodeError::InvalidInstruction);
+    }
+
+    Ok(instruction)
+}
+
+/// Decode a single instruction from `bytes`.
+///
+/// `bytes` should contain at least the next [`MAX_INSTRUCTION_LEN`] bytes from
+/// the instruction stream when possible. If fewer bytes are available, decode
+/// may return [`DecodeError::UnexpectedEof`].
+///
+/// `ip` is used for RIP-relative addressing and branch target calculation.
+#[inline]
+pub fn decode_one(mode: DecodeMode, ip: u64, bytes: &[u8]) -> Result<DecodedInstruction, DecodeError> {
+    let instruction = decode_instruction(mode, ip, bytes)?;
+
+    // Best-effort prefix parsing for consumers that want raw prefix info.
+    // This does not affect the backend decode.
+    let prefixes = parse_prefixes(mode, bytes).map_err(|_| DecodeError::UnexpectedEof)?;
+
     Ok(DecodedInstruction { prefixes, instruction })
 }
 

@@ -480,8 +480,8 @@ version = "0.1.0"
 name = "aero_x86"
 version = "0.1.0"
 dependencies = [
+ "aero-cpu-decoder",
  "aero_types",
- "iced-x86",
 ]
 
 [[package]]

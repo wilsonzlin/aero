@@ -5,5 +5,5 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-iced-x86 = { version = "1.21.0", default-features = false, features = ["decoder", "std"] }
+aero-cpu-decoder = { path = "../aero-cpu-decoder" }
 aero_types = { path = "../aero_types" }
