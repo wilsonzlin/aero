@@ -2,6 +2,10 @@
 aws_region  = "us-west-2"
 bucket_name = "my-unique-disk-images-bucket"
 
+# Optional: use SSE-KMS instead of SSE-S3 (AES256). If set, ensure the KMS key policy allows
+# CloudFront to decrypt objects.
+# kms_key_arn = "arn:aws:kms:us-west-2:123456789012:key/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
 # Recommended: allow only the web origins that should be able to fetch with Range headers.
 # Leave empty for same-origin usage (no CORS).
 cors_allowed_origins = [

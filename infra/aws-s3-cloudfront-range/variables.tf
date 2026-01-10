@@ -36,7 +36,7 @@ variable "enable_versioning" {
 }
 
 variable "kms_key_arn" {
-  description = "Optional KMS key ARN for SSE-KMS. If null, SSE-S3 (AES256) is used."
+  description = "Optional KMS key ARN for SSE-KMS. If null, SSE-S3 (AES256) is used. Note: the KMS key policy must allow CloudFront to decrypt objects (or reads will fail)."
   type        = string
   default     = null
 }

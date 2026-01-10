@@ -41,6 +41,10 @@ For background and practical guidance (including a chunked-object strategy), see
 
 - [`docs/17-range-cdn-behavior.md`](../../docs/17-range-cdn-behavior.md)
 
+## SSE-KMS note (if using `kms_key_arn`)
+
+If you set `kms_key_arn` to enable SSE-KMS encryption for the bucket, ensure the referenced KMS key policy allows decrypt access for reads originating from this CloudFront distribution (otherwise CloudFront will receive `AccessDenied` when fetching objects from S3).
+
 ## Prerequisites
 
 - Terraform **0.13+**
