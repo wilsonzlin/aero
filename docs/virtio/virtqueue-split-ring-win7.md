@@ -585,15 +585,25 @@ typedef struct _VQ {
     UINT64 features;
 } VQ;
 
-VOID VirtQueueInit(VQ *vq, VOID *ring_va, UINT16 qsz, UINT64 features)
+static __forceinline SIZE_T align_up(SIZE_T x, SIZE_T a)
+{
+    return (x + (a - 1)) & ~(a - 1);
+}
+
+VOID VirtQueueInit(VQ *vq, VOID *ring_va, UINT16 qsz, UINT64 features, SIZE_T queue_align)
 {
     vq->qsz = qsz;
     vq->features = features;
 
     /* Compute desc/avail/used pointers using §2 formulas for your transport. */
-    vq->desc  = (struct vring_desc *)ring_va;
-    vq->avail = (struct vring_avail *)((PUCHAR)ring_va + desc_off);
-    vq->used  = (struct vring_used *)((PUCHAR)ring_va + used_off);
+    SIZE_T desc_off  = 0;
+    SIZE_T avail_off = desc_off + (SIZE_T)16 * qsz;
+    SIZE_T avail_len = 4 + (SIZE_T)2 * qsz + ((features & VIRTIO_F_RING_EVENT_IDX) ? 2 : 0);
+    SIZE_T used_off  = align_up(avail_off + avail_len, queue_align /* legacy QueueAlign (often 4096) */);
+
+    vq->desc  = (struct vring_desc *)((PUCHAR)ring_va + desc_off);
+    vq->avail = (struct vring_avail *)((PUCHAR)ring_va + avail_off);
+    vq->used  = (struct vring_used  *)((PUCHAR)ring_va + used_off);
 
     if (features & VIRTIO_F_RING_EVENT_IDX) {
         vq->used_event  = &vq->avail->ring[qsz];
@@ -613,14 +623,14 @@ VOID VirtQueueInit(VQ *vq, VOID *ring_va, UINT16 qsz, UINT64 features)
     vq->num_added = 0;
 
     /* Clear rings visible to device */
-    vq->avail->flags = 0;
-    vq->avail->idx = 0;
-    vq->used->flags = 0;
+    vq->avail->flags = cpu_to_le16(0);
+    vq->avail->idx   = cpu_to_le16(0);
+    vq->used->flags  = cpu_to_le16(0);
     /* used->idx is device-written; do not clear unless spec/transport requires */
 
     if (features & VIRTIO_F_RING_EVENT_IDX) {
         /* Start with interrupts enabled for first completion */
-        WRITE_ONCE(*vq->used_event, 0);
+        WRITE_ONCE(*vq->used_event, cpu_to_le16(0));
     }
 
     for (UINT16 i = 0; i < qsz; i++) {
