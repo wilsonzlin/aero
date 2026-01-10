@@ -1,3 +1,5 @@
+pub mod net;
+
 /// Trait implemented by devices that respond to x86 IN/OUT instructions.
 ///
 /// `size` is the access size in bytes (1/2/4). Implementations should handle
