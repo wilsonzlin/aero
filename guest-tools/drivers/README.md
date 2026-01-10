@@ -1,0 +1,11 @@
+# Driver payload
+
+The Guest Tools scripts scan `guest-tools\drivers\<arch>\` recursively for `*.inf` driver packages and stage/install them via `pnputil`.
+
+Populate these directories at release time:
+
+- `guest-tools\drivers\x86\` for Windows 7 x86
+- `guest-tools\drivers\amd64\` for Windows 7 x64
+
+Typical layout is one folder per device (virtio-blk/net/snd/input, Aero GPU), but any structure is fine as long as the `*.inf` files are present.
+

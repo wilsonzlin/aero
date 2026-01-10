@@ -1,6 +1,87 @@
 # Aero Guest Tools (Windows 7)
 
-This directory contains utilities intended to be shipped on the **Aero Guest Tools ISO** and run **inside** a Windows 7 SP1 VM.
+This directory is intended to be shipped as the root of the **Aero Guest Tools ISO** and run **inside** a Windows 7 SP1 VM.
+
+It provides:
+
+- `setup.cmd`: offline certificate + driver installer
+- `uninstall.cmd`: best-effort cleanup
+- `verify.cmd` / `verify.ps1`: offline diagnostics/verification
+- `certs\`: public certificate(s) needed to validate Aero driver signatures
+- `drivers\`: driver packages (`.inf/.cat/.sys`) for x86 + amd64
+- `config\`: expected device IDs (PCI VEN/DEV pairs) used for boot-critical pre-seeding
+
+## `setup.cmd`
+
+Designed for the standard flow:
+
+1. Install Windows 7 SP1 using “safe” emulated devices first (AHCI/e1000/HDA/PS2/VGA).
+2. Boot Windows and run `setup.cmd` **as Administrator**.
+3. Power off/reboot and switch the VM devices to Aero virtio devices (virtio-blk/net/snd/input + Aero WDDM GPU).
+4. Boot again. Plug and Play will bind the newly-present devices to the staged driver packages.
+
+### What it does
+
+1. Creates a state directory at `C:\AeroGuestTools\`.
+2. Installs Aero signing certificate(s) from `certs\` into:
+   - `Root` (Trusted Root Certification Authorities)
+   - `TrustedPublisher` (Trusted Publishers)
+3. On **Windows 7 x64**, optionally enables **test signing** (`bcdedit /set testsigning on`).
+4. Stages all driver packages found under:
+   - `drivers\x86\` (on Win7 x86)
+   - `drivers\amd64\` (on Win7 x64)
+5. Adds boot-critical registry plumbing for switching the boot disk from AHCI → virtio-blk:
+   - `HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\PCI#VEN_xxxx&DEV_yyyy...`
+   - `HKLM\SYSTEM\CurrentControlSet\Services\<storage-service>\Start=0` etc.
+
+### Output
+
+`setup.cmd` writes:
+
+- `C:\AeroGuestTools\install.log`
+- `C:\AeroGuestTools\installed-driver-packages.txt` (for best-effort uninstall)
+- `C:\AeroGuestTools\installed-certs.txt` (for best-effort uninstall)
+
+### Usage
+
+Run as Administrator:
+
+```bat
+setup.cmd
+```
+
+Optional flags:
+
+- `setup.cmd /stageonly`  
+  Only adds driver packages to the Driver Store (does not attempt immediate installs).
+- `setup.cmd /testsigning`  
+  On x64, enable test signing without prompting.
+- `setup.cmd /notestsigning`  
+  On x64, do not change the test-signing state.
+- `setup.cmd /noreboot`  
+  Do not prompt for shutdown/reboot at the end.
+
+## `uninstall.cmd`
+
+Run as Administrator:
+
+```bat
+uninstall.cmd
+```
+
+This is best-effort and may fail to remove in-use drivers (especially if the VM is currently using virtio-blk as the boot disk).
+
+Output:
+
+- `C:\AeroGuestTools\uninstall.log`
+
+## Troubleshooting / Recovery (storage)
+
+If the VM fails to boot after switching to **virtio-blk**:
+
+1. Switch storage back to **AHCI** and boot Windows again.
+2. Re-run `setup.cmd` as Administrator.
+3. Review `C:\AeroGuestTools\install.log`.
 
 ## `verify.cmd` / `verify.ps1`
 
@@ -16,7 +97,7 @@ Running `verify.cmd` writes:
 ### Usage
 
 1. Boot Windows 7 SP1 (x86 or x64).
-2. Install Aero drivers from the Guest Tools ISO.
+2. Install Aero drivers from the Guest Tools media.
 3. Run **as Administrator**:
    - Right-click `verify.cmd` → **Run as administrator**
 4. Open `C:\AeroGuestTools\report.txt`.
@@ -41,7 +122,7 @@ Each check produces a `PASS` / `WARN` / `FAIL` result:
   - Trusted Publishers (**TrustedPublisher**)
 - **Driver packages**: `pnputil -e` output with a heuristic filter for Aero/virtio-related packages.
 - **Bound devices**: WMI `Win32_PnPEntity` enumeration (and optional `devcon.exe` if present alongside the script), including best-effort signed driver details via `Win32_PnPSignedDriver` (INF name, version, signer, etc).
-- **virtio-blk storage service**: best-effort probe for a storage driver service (e.g. `viostor`) with state + Start type.
+- **virtio-blk storage service**: best-effort probe for the configured storage driver service (see `config\devices.cmd`; e.g. `viostor`) with state + Start type.
 - **Signature mode**: parses `bcdedit` for `testsigning` and `nointegritychecks`.
 - **Smoke tests**:
   - Disk I/O: create + read a temp file.

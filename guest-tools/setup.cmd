@@ -1,0 +1,456 @@
+@echo off
+setlocal EnableExtensions EnableDelayedExpansion
+
+rem Aero Guest Tools installer for Windows 7 SP1 (x86/x64).
+rem Offline + built-in tooling only: certutil, pnputil, reg, bcdedit, shutdown.
+
+set "SCRIPT_DIR=%~dp0"
+
+rem Access real System32 when running under WoW64 (32-bit cmd.exe on 64-bit Windows).
+set "SYS32=%SystemRoot%\System32"
+if defined PROCESSOR_ARCHITEW6432 set "SYS32=%SystemRoot%\Sysnative"
+
+pushd "%SCRIPT_DIR%" >nul 2>&1
+if errorlevel 1 (
+  echo ERROR: Could not cd to "%SCRIPT_DIR%".
+  exit /b 1
+)
+
+set "INSTALL_ROOT=C:\AeroGuestTools"
+set "LOG=%INSTALL_ROOT%\install.log"
+set "PKG_LIST=%INSTALL_ROOT%\installed-driver-packages.txt"
+set "CERT_LIST=%INSTALL_ROOT%\installed-certs.txt"
+set "STATE_TESTSIGN=%INSTALL_ROOT%\testsigning.enabled-by-aero.txt"
+
+set "ARG_STAGE_ONLY=0"
+set "ARG_FORCE_TESTSIGN=0"
+set "ARG_SKIP_TESTSIGN=0"
+set "ARG_NO_REBOOT=0"
+
+set "REBOOT_REQUIRED=0"
+
+if /i "%~1"=="/?" goto :usage
+if /i "%~1"=="-h" goto :usage
+if /i "%~1"=="--help" goto :usage
+
+for %%A in (%*) do (
+  if /i "%%~A"=="/stageonly" set "ARG_STAGE_ONLY=1"
+  if /i "%%~A"=="/stage-only" set "ARG_STAGE_ONLY=1"
+  if /i "%%~A"=="/testsigning" set "ARG_FORCE_TESTSIGN=1"
+  if /i "%%~A"=="/force-testsigning" set "ARG_FORCE_TESTSIGN=1"
+  if /i "%%~A"=="/notestsigning" set "ARG_SKIP_TESTSIGN=1"
+  if /i "%%~A"=="/no-testsigning" set "ARG_SKIP_TESTSIGN=1"
+  if /i "%%~A"=="/noreboot" set "ARG_NO_REBOOT=1"
+  if /i "%%~A"=="/no-reboot" set "ARG_NO_REBOOT=1"
+)
+
+call :init_logging || goto :fail
+call :log "Aero Guest Tools setup starting..."
+call :log "Script dir: %SCRIPT_DIR%"
+call :log "System tools: %SYS32%"
+call :log "Logs: %LOG%"
+
+call :require_admin || goto :fail
+call :detect_arch || goto :fail
+call :load_config || goto :fail
+
+call :install_certs || goto :fail
+call :maybe_enable_testsigning || goto :fail
+call :stage_all_drivers || goto :fail
+call :preseed_storage_boot || goto :fail
+
+call :log ""
+call :log "Setup complete."
+call :log "Next steps:"
+call :log "  1) Power off or reboot the VM."
+call :log "  2) Switch devices to virtio (blk/net/snd/input) and Aero GPU."
+call :log "  3) Boot Windows; Plug and Play should bind the devices to Aero drivers."
+call :log ""
+call :log "Recovery if boot fails after switching storage to virtio-blk:"
+call :log "  - switch storage back to AHCI and boot"
+call :log "  - review %LOG%"
+call :log "  - ensure Win7 x64 test signing is enabled if using test-signed drivers"
+
+call :maybe_reboot
+popd >nul 2>&1
+exit /b 0
+
+:usage
+echo Usage: setup.cmd [options]
+echo.
+echo Options:
+echo   /stageonly           Only stage drivers into the Driver Store (no install attempts)
+echo   /testsigning         Enable test signing on x64 without prompting
+echo   /notestsigning       Skip enabling test signing (x64)
+echo   /noreboot            Do not prompt to reboot/shutdown at the end
+echo.
+echo Logs are written to C:\AeroGuestTools\install.log
+popd >nul 2>&1
+exit /b 0
+
+:fail
+set "RC=%ERRORLEVEL%"
+call :log ""
+call :log "ERROR: setup failed (exit code %RC%). See %LOG% for details."
+call :log "Recovery: do NOT switch storage to virtio-blk until setup completes successfully."
+popd >nul 2>&1
+exit /b %RC%
+
+:init_logging
+if not exist "%INSTALL_ROOT%" mkdir "%INSTALL_ROOT%" >nul 2>&1
+if not exist "%INSTALL_ROOT%" (
+  echo ERROR: Could not create "%INSTALL_ROOT%".
+  exit /b 1
+)
+>>"%LOG%" echo ============================================================
+>>"%LOG%" echo [%DATE% %TIME%] Aero Guest Tools setup starting
+>>"%LOG%" echo ============================================================
+exit /b 0
+
+:log
+echo(%*
+>>"%LOG%" echo(%*
+exit /b 0
+
+:require_admin
+call :log "Checking for Administrator privileges..."
+"%SYS32%\fsutil.exe" dirty query %SYSTEMDRIVE% >nul 2>&1
+if errorlevel 1 (
+  call :log "ERROR: Administrator privileges are required."
+  call :log "Right-click setup.cmd and choose 'Run as administrator'."
+  exit /b 1
+)
+exit /b 0
+
+:detect_arch
+set "OS_ARCH=x86"
+if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" set "OS_ARCH=amd64"
+if /i "%PROCESSOR_ARCHITEW6432%"=="AMD64" set "OS_ARCH=amd64"
+call :log "Detected OS architecture: %OS_ARCH%"
+set "DRIVER_DIR=%SCRIPT_DIR%drivers\%OS_ARCH%"
+if not exist "%DRIVER_DIR%" (
+  call :log "ERROR: Driver directory not found: %DRIVER_DIR%"
+  exit /b 1
+)
+exit /b 0
+
+:load_config
+set "CONFIG_FILE=%SCRIPT_DIR%config\devices.cmd"
+if not exist "%CONFIG_FILE%" (
+  call :log "ERROR: Missing config file: %CONFIG_FILE%"
+  exit /b 1
+)
+call :log "Loading config: %CONFIG_FILE%"
+call "%CONFIG_FILE%"
+
+if not defined AERO_VIRTIO_BLK_SERVICE (
+  call :log "ERROR: AERO_VIRTIO_BLK_SERVICE is not set in %CONFIG_FILE%"
+  exit /b 1
+)
+if not defined AERO_VIRTIO_BLK_HWIDS (
+  call :log "ERROR: AERO_VIRTIO_BLK_HWIDS is not set in %CONFIG_FILE%"
+  exit /b 1
+)
+exit /b 0
+
+:install_certs
+set "CERT_DIR=%SCRIPT_DIR%certs"
+call :log ""
+call :log "Installing Aero certificate(s) from %CERT_DIR% ..."
+
+set "FOUND_CERT=0"
+
+for %%F in ("%CERT_DIR%\*.cer") do (
+  if exist "%%~fF" (
+    set "FOUND_CERT=1"
+    call :install_one_cert "%%~fF" || exit /b 1
+  )
+)
+
+for %%F in ("%CERT_DIR%\*.p7b") do (
+  if exist "%%~fF" (
+    set "FOUND_CERT=1"
+    call :install_one_cert "%%~fF" || exit /b 1
+  )
+)
+
+if "%FOUND_CERT%"=="0" (
+  call :log "ERROR: No certificates found under %CERT_DIR% (expected *.cer and/or *.p7b)."
+  exit /b 1
+)
+
+exit /b 0
+
+:install_one_cert
+set "CERT_FILE=%~1"
+call :log "  - %CERT_FILE%"
+
+rem Record thumbprint(s) for uninstall where possible.
+if /i "%~x1"==".cer" (
+  call :record_cert_thumbprint "%CERT_FILE%"
+)
+
+"%SYS32%\certutil.exe" -addstore -f Root "%CERT_FILE%" >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "ERROR: certutil failed adding to Root: %CERT_FILE%"
+  exit /b 1
+)
+
+"%SYS32%\certutil.exe" -addstore -f TrustedPublisher "%CERT_FILE%" >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "ERROR: certutil failed adding to TrustedPublisher: %CERT_FILE%"
+  exit /b 1
+)
+
+exit /b 0
+
+:record_cert_thumbprint
+set "CERT_FILE=%~1"
+set "DUMP_FILE=%TEMP%\aerogt_certdump_%RANDOM%.txt"
+
+"%SYS32%\certutil.exe" -dump "%CERT_FILE%" >"%DUMP_FILE%" 2>&1
+if errorlevel 1 (
+  del /q "%DUMP_FILE%" >nul 2>&1
+  exit /b 0
+)
+
+set "THUMB="
+for /f "tokens=2 delims=:" %%H in ('findstr /i "Cert Hash(sha1)" "%DUMP_FILE%"') do set "THUMB=%%H"
+del /q "%DUMP_FILE%" >nul 2>&1
+
+if not defined THUMB exit /b 0
+
+rem Trim leading spaces and remove embedded spaces.
+for /f "tokens=* delims= " %%T in ("!THUMB!") do set "THUMB=%%T"
+set "THUMB=!THUMB: =!"
+
+if not defined THUMB exit /b 0
+
+if not exist "%CERT_LIST%" (
+  >"%CERT_LIST%" echo !THUMB!
+  exit /b 0
+)
+
+findstr /i /x "!THUMB!" "%CERT_LIST%" >nul 2>&1
+if errorlevel 1 >>"%CERT_LIST%" echo !THUMB!
+exit /b 0
+
+:maybe_enable_testsigning
+if /i not "%OS_ARCH%"=="amd64" exit /b 0
+if "%ARG_SKIP_TESTSIGN%"=="1" (
+  call :log ""
+  call :log "Skipping test signing changes (/notestsigning)."
+  exit /b 0
+)
+
+call :log ""
+call :log "Windows 7 x64 detected. Kernel driver signature enforcement is strict."
+call :log "If Aero drivers are test-signed/custom-signed, enable Test Signing mode."
+
+set "TESTSIGNING=0"
+for /f "tokens=1,2" %%A in ('"%SYS32%\bcdedit.exe" /enum {current} ^| findstr /i "testsigning"') do (
+  if /i "%%B"=="Yes" set "TESTSIGNING=1"
+)
+
+if "%TESTSIGNING%"=="1" (
+  call :log "Test Signing is already enabled."
+  exit /b 0
+)
+
+set "DO_ENABLE=0"
+if "%ARG_FORCE_TESTSIGN%"=="1" (
+  set "DO_ENABLE=1"
+) else (
+  choice /c YN /n /m "Enable Test Signing now (recommended for test-signed drivers)? [Y/N] "
+  if errorlevel 2 set "DO_ENABLE=0"
+  if errorlevel 1 set "DO_ENABLE=1"
+)
+
+if "%DO_ENABLE%"=="0" (
+  call :log "Test Signing was not enabled."
+  exit /b 0
+)
+
+call :log "Enabling Test Signing via bcdedit..."
+"%SYS32%\bcdedit.exe" /set testsigning on >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "WARNING: Failed to enable Test Signing (bcdedit /set testsigning on)."
+  call :log "You may need to run this manually and reboot:"
+  call :log "  bcdedit /set testsigning on"
+  if "%ARG_FORCE_TESTSIGN%"=="1" exit /b 1
+  exit /b 0
+)
+
+> "%STATE_TESTSIGN%" echo TestSigning enabled by Aero Guest Tools on %DATE% %TIME%
+set "REBOOT_REQUIRED=1"
+call :log "Test Signing enabled. A reboot is required before it takes effect."
+exit /b 0
+
+:stage_all_drivers
+call :log ""
+call :log "Staging Aero drivers from %DRIVER_DIR% ..."
+if "%ARG_STAGE_ONLY%"=="1" (
+  call :log "Driver install attempts are disabled (/stageonly)."
+)
+
+set "INF_FOUND=0"
+for /r "%DRIVER_DIR%" %%F in (*.inf) do (
+  set "INF_FOUND=1"
+  call :stage_one_inf "%%~fF" || exit /b 1
+)
+
+if "%INF_FOUND%"=="0" (
+  call :log "ERROR: No .inf files found under %DRIVER_DIR%."
+  exit /b 1
+)
+
+exit /b 0
+
+:stage_one_inf
+set "INF=%~1"
+call :log ""
+call :log "INF: %INF%"
+
+set "OUT=%TEMP%\aerogt_pnputil_add_%RANDOM%.txt"
+"%SYS32%\pnputil.exe" -a "%INF%" >"%OUT%" 2>&1
+type "%OUT%" >>"%LOG%"
+set "RC=%ERRORLEVEL%"
+
+set "PUBLISHED="
+for /f "tokens=2 delims=:" %%A in ('findstr /i "Published name" "%OUT%"') do set "PUBLISHED=%%A"
+del /q "%OUT%" >nul 2>&1
+
+if not "%RC%"=="0" (
+  call :log "ERROR: pnputil -a failed for %INF% (exit code %RC%)."
+  exit /b 1
+)
+
+if defined PUBLISHED (
+  for /f "tokens=* delims= " %%B in ("!PUBLISHED!") do set "PUBLISHED=%%B"
+  call :record_published_inf "!PUBLISHED!"
+)
+
+if "%ARG_STAGE_ONLY%"=="1" exit /b 0
+
+set "OUT=%TEMP%\aerogt_pnputil_install_%RANDOM%.txt"
+"%SYS32%\pnputil.exe" -i -a "%INF%" >"%OUT%" 2>&1
+type "%OUT%" >>"%LOG%"
+set "RC=%ERRORLEVEL%"
+del /q "%OUT%" >nul 2>&1
+
+if not "%RC%"=="0" (
+  call :log "WARNING: pnputil -i -a returned %RC% for %INF%."
+  call :log "         This is expected if no matching device is currently present."
+)
+
+exit /b 0
+
+:record_published_inf
+set "PUB=%~1"
+if not defined PUB exit /b 0
+
+if not exist "%PKG_LIST%" (
+  >"%PKG_LIST%" echo %PUB%
+  exit /b 0
+)
+
+findstr /i /x "%PUB%" "%PKG_LIST%" >nul 2>&1
+if errorlevel 1 >>"%PKG_LIST%" echo %PUB%
+exit /b 0
+
+:preseed_storage_boot
+call :log ""
+call :log "Preparing boot-critical virtio-blk storage plumbing..."
+
+set "STOR_SERVICE=%AERO_VIRTIO_BLK_SERVICE%"
+set "STOR_SYS=%AERO_VIRTIO_BLK_SYS%"
+if not defined STOR_SYS set "STOR_SYS=%STOR_SERVICE%.sys"
+
+call :log "Storage service: %STOR_SERVICE%"
+call :log "Storage driver:  %STOR_SYS%"
+
+rem Ensure the driver binary is in \System32\drivers for boot-start loading.
+set "SYS_SOURCE="
+for /r "%DRIVER_DIR%" %%S in (%STOR_SYS%) do (
+  if exist "%%~fS" set "SYS_SOURCE=%%~fS"
+)
+if defined SYS_SOURCE (
+  call :log "Copying %STOR_SYS% to %SYS32%\\drivers ..."
+  copy /y "%SYS_SOURCE%" "%SYS32%\drivers\%STOR_SYS%" >>"%LOG%" 2>&1
+) else (
+  call :log "WARNING: Could not locate %STOR_SYS% under %DRIVER_DIR%."
+  call :log "         Booting from virtio-blk may fail if the storage .sys is not present in System32\\drivers."
+)
+
+rem Ensure the service exists and is BOOT_START.
+set "SVC_KEY=HKLM\SYSTEM\CurrentControlSet\Services\%STOR_SERVICE%"
+"%SYS32%\reg.exe" add "%SVC_KEY%" /f >>"%LOG%" 2>&1
+"%SYS32%\reg.exe" add "%SVC_KEY%" /v Type /t REG_DWORD /d 1 /f >>"%LOG%" 2>&1
+"%SYS32%\reg.exe" add "%SVC_KEY%" /v Start /t REG_DWORD /d 0 /f >>"%LOG%" 2>&1
+"%SYS32%\reg.exe" add "%SVC_KEY%" /v ErrorControl /t REG_DWORD /d 1 /f >>"%LOG%" 2>&1
+"%SYS32%\reg.exe" add "%SVC_KEY%" /v Group /t REG_SZ /d "SCSI miniport" /f >>"%LOG%" 2>&1
+"%SYS32%\reg.exe" add "%SVC_KEY%" /v ImagePath /t REG_EXPAND_SZ /d "system32\drivers\%STOR_SYS%" /f >>"%LOG%" 2>&1
+
+rem CriticalDeviceDatabase pre-seed: map PCI hardware IDs to the storage service.
+set "CDD_BASE=HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase"
+set "SCSIADAPTER_GUID={4D36E97B-E325-11CE-BFC1-08002BE10318}"
+
+for %%H in (%AERO_VIRTIO_BLK_HWIDS%) do (
+  call :add_cdd_keys "%%~H" "%STOR_SERVICE%" "%SCSIADAPTER_GUID%" || exit /b 1
+)
+
+exit /b 0
+
+:add_cdd_keys
+set "HWID=%~1"
+set "SERVICE=%~2"
+set "CLASSGUID=%~3"
+
+set "KEYNAME=%HWID:\=#%"
+
+call :add_one_cdd "%KEYNAME%" "%SERVICE%" "%CLASSGUID%" || exit /b 1
+call :add_one_cdd "%KEYNAME%&CC_010000" "%SERVICE%" "%CLASSGUID%" || exit /b 1
+call :add_one_cdd "%KEYNAME%&CC_0100" "%SERVICE%" "%CLASSGUID%" || exit /b 1
+exit /b 0
+
+:add_one_cdd
+set "CDD_KEY=%CDD_BASE%\%~1"
+set "SERVICE=%~2"
+set "CLASSGUID=%~3"
+
+"%SYS32%\reg.exe" add "%CDD_KEY%" /f >>"%LOG%" 2>&1
+"%SYS32%\reg.exe" add "%CDD_KEY%" /v Service /t REG_SZ /d "%SERVICE%" /f >>"%LOG%" 2>&1
+"%SYS32%\reg.exe" add "%CDD_KEY%" /v ClassGUID /t REG_SZ /d "%CLASSGUID%" /f >>"%LOG%" 2>&1
+"%SYS32%\reg.exe" add "%CDD_KEY%" /v Class /t REG_SZ /d "SCSIAdapter" /f >>"%LOG%" 2>&1
+
+if errorlevel 1 (
+  call :log "ERROR: Failed to write CriticalDeviceDatabase key: %CDD_KEY%"
+  exit /b 1
+)
+exit /b 0
+
+:maybe_reboot
+if "%ARG_NO_REBOOT%"=="1" exit /b 0
+
+call :log ""
+call :log "Reboot/shutdown is recommended before switching the VM's boot disk to virtio-blk."
+if "%REBOOT_REQUIRED%"=="1" (
+  call :log "A reboot is REQUIRED to apply Test Signing changes."
+)
+call :log ""
+
+choice /c RSN /n /m "Reboot (R), Shutdown (S), or No action (N)? "
+set "CH=%ERRORLEVEL%"
+if "%CH%"=="1" (
+  call :log "Rebooting now..."
+  "%SYS32%\shutdown.exe" /r /t 0 >>"%LOG%" 2>&1
+  exit /b 0
+)
+if "%CH%"=="2" (
+  call :log "Shutting down now..."
+  "%SYS32%\shutdown.exe" /s /t 0 >>"%LOG%" 2>&1
+  exit /b 0
+)
+
+call :log "No reboot/shutdown selected."
+exit /b 0
