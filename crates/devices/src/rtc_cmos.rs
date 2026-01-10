@@ -1,6 +1,8 @@
 use crate::clock::Clock;
 use crate::irq::IrqLine;
-use aero_platform::io::PortIoDevice;
+use aero_platform::io::{IoPortBus, PortIoDevice};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 const CMOS_LEN: usize = 128;
 
@@ -295,7 +297,7 @@ impl<C: Clock, I: IrqLine> RtcCmos<C, I> {
         }
 
         let rs = self.reg_a & 0x0F;
-        if rs == 0 {
+        if rs < 3 {
             self.periodic_interval_ns = None;
             self.next_periodic_ns = None;
             return;
@@ -318,7 +320,9 @@ impl<C: Clock, I: IrqLine> RtcCmos<C, I> {
             REG_MINUTES => {
                 self.encode_bcd(unix_seconds_to_datetime(self.rtc_seconds_at(now_ns)).minute)
             }
-            REG_HOURS => self.encode_hours(unix_seconds_to_datetime(self.rtc_seconds_at(now_ns)).hour),
+            REG_HOURS => {
+                self.encode_hours(unix_seconds_to_datetime(self.rtc_seconds_at(now_ns)).hour)
+            }
             REG_DAY_OF_WEEK => {
                 let weekday = weekday_from_unix_seconds(self.rtc_seconds_at(now_ns));
                 self.encode_bcd(weekday)
@@ -326,7 +330,9 @@ impl<C: Clock, I: IrqLine> RtcCmos<C, I> {
             REG_DAY_OF_MONTH => {
                 self.encode_bcd(unix_seconds_to_datetime(self.rtc_seconds_at(now_ns)).day)
             }
-            REG_MONTH => self.encode_bcd(unix_seconds_to_datetime(self.rtc_seconds_at(now_ns)).month),
+            REG_MONTH => {
+                self.encode_bcd(unix_seconds_to_datetime(self.rtc_seconds_at(now_ns)).month)
+            }
             REG_YEAR => {
                 let year = unix_seconds_to_datetime(self.rtc_seconds_at(now_ns)).year;
                 self.encode_bcd(year.rem_euclid(100) as u8)
@@ -489,6 +495,48 @@ impl<C: Clock, I: IrqLine> PortIoDevice for RtcCmos<C, I> {
     }
 }
 
+pub type SharedRtcCmos<C, I> = Rc<RefCell<RtcCmos<C, I>>>;
+
+/// I/O-port view of a shared [`RtcCmos`].
+///
+/// `IoPortBus` maps one port to one device instance. The RTC responds to two ports
+/// (0x70 and 0x71), so callers typically share it behind `Rc<RefCell<_>>` and
+/// register two `RtcCmosPort` instances.
+pub struct RtcCmosPort<C: Clock, I: IrqLine> {
+    rtc: SharedRtcCmos<C, I>,
+    port: u16,
+}
+
+impl<C: Clock, I: IrqLine> RtcCmosPort<C, I> {
+    pub fn new(rtc: SharedRtcCmos<C, I>, port: u16) -> Self {
+        Self { rtc, port }
+    }
+}
+
+impl<C: Clock + 'static, I: IrqLine + 'static> PortIoDevice for RtcCmosPort<C, I> {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        debug_assert_eq!(port, self.port);
+        self.rtc.borrow_mut().read(port, size)
+    }
+
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        debug_assert_eq!(port, self.port);
+        self.rtc.borrow_mut().write(port, size, value);
+    }
+}
+
+/// Convenience helper to register the RTC ports on an [`IoPortBus`].
+pub fn register_rtc_cmos<C: Clock + 'static, I: IrqLine + 'static>(
+    bus: &mut IoPortBus,
+    rtc: SharedRtcCmos<C, I>,
+) {
+    bus.register(
+        PORT_INDEX,
+        Box::new(RtcCmosPort::new(rtc.clone(), PORT_INDEX)),
+    );
+    bus.register(PORT_DATA, Box::new(RtcCmosPort::new(rtc, PORT_DATA)));
+}
+
 fn days_from_civil(year: i32, month: u8, day: u8) -> i64 {
     let mut y = year as i64;
     let m = month as i64;
@@ -567,7 +615,10 @@ fn is_leap_year(year: i32) -> bool {
 mod tests {
     use super::*;
     use crate::clock::ManualClock;
+    use crate::irq::PlatformIrqLine;
+    use aero_platform::interrupts::{InterruptController, PlatformInterrupts};
     use std::cell::Cell;
+    use std::cell::RefCell;
     use std::rc::Rc;
 
     #[derive(Clone)]
@@ -662,5 +713,46 @@ mod tests {
         let c = read_reg(&mut rtc, REG_STATUS_C);
         assert_ne!(c & REG_C_PF, 0);
         assert!(!irq.level());
+    }
+
+    #[test]
+    fn irq8_routes_through_platform_interrupts_and_requires_status_c_clear() {
+        let clock = ManualClock::new();
+
+        let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+        interrupts.borrow_mut().pic_mut().set_offsets(0x20, 0x28);
+
+        let irq_line = PlatformIrqLine::isa(interrupts.clone(), 8);
+        let rtc = Rc::new(RefCell::new(RtcCmos::new(clock.clone(), irq_line)));
+
+        let mut bus = IoPortBus::new();
+        register_rtc_cmos(&mut bus, rtc.clone());
+
+        // Enable update-ended interrupts.
+        bus.write_u8(PORT_INDEX, REG_STATUS_B);
+        bus.write_u8(PORT_DATA, REG_B_24H | REG_B_UIE);
+
+        clock.advance_ns(1_000_000_000);
+        rtc.borrow_mut().tick();
+        assert_eq!(interrupts.borrow().get_pending(), Some(0x28));
+
+        // Acknowledge and EOI without reading status C: the RTC line stays asserted,
+        // so no new edges should be observed.
+        interrupts.borrow_mut().acknowledge(0x28);
+        interrupts.borrow_mut().eoi(0x28);
+        assert_eq!(interrupts.borrow().get_pending(), None);
+
+        clock.advance_ns(1_000_000_000);
+        rtc.borrow_mut().tick();
+        assert_eq!(interrupts.borrow().get_pending(), None);
+
+        // Reading status C clears the event latch and lowers IRQ8, enabling the next edge.
+        bus.write_u8(PORT_INDEX, REG_STATUS_C);
+        let status_c = bus.read_u8(PORT_DATA);
+        assert_ne!(status_c & REG_C_UF, 0);
+
+        clock.advance_ns(1_000_000_000);
+        rtc.borrow_mut().tick();
+        assert_eq!(interrupts.borrow().get_pending(), Some(0x28));
     }
 }
