@@ -1,5 +1,8 @@
 /// <reference lib="webworker" />
 
+import { perf } from '../perf/perf';
+import { installWorkerPerfHandlers } from '../perf/worker';
+
 import {
   FRAME_DIRTY,
   FRAME_METRICS_DROPPED_INDEX,
@@ -27,6 +30,8 @@ import {
 import { GpuTelemetry } from '../../gpu/telemetry.ts';
 type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<void | boolean>;
 type GetTimingsFn = () => FrameTimingsReport | null | Promise<FrameTimingsReport | null>;
+
+void installWorkerPerfHandlers();
 
 const postToMain = (msg: GpuWorkerMessageToMain) => {
   self.postMessage(msg);
@@ -275,21 +280,25 @@ self.onmessage = (event: MessageEvent<GpuWorkerMessageFromMain>) => {
 
   switch (msg.type) {
     case 'init': {
-      lastInitMessage = msg;
-      if (msg.sharedFrameState) {
-        frameState = new Int32Array(msg.sharedFrameState);
-      }
+      perf.spanBegin('worker:init');
+      try {
+        lastInitMessage = msg;
+        if (msg.sharedFrameState) {
+          frameState = new Int32Array(msg.sharedFrameState);
+        }
 
-      // Optional: zero-copy framebuffer region for presenter modules.
-      // When present, the worker exposes `globalThis.__aeroSharedFramebuffer`
-      // (see `tryInitSharedFramebufferViews`).
-      tryInitSharedFramebufferViews();
+        tryInitSharedFramebufferViews();
 
-      if (msg.wasmModuleUrl) {
-        loadPresentFnFromModuleUrl(msg.wasmModuleUrl).catch((err) => {
-          const message = err instanceof Error ? err.message : String(err);
-          postToMain({ type: 'error', message });
-        });
+        if (msg.wasmModuleUrl) {
+          void perf
+            .spanAsync('wasm:init', () => loadPresentFnFromModuleUrl(msg.wasmModuleUrl))
+            .catch((err) => {
+              const message = err instanceof Error ? err.message : String(err);
+              postToMain({ type: 'error', message });
+            });
+        }
+      } finally {
+        perf.spanEnd('worker:init');
       }
 
       telemetry.reset();

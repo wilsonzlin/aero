@@ -20,6 +20,10 @@ declare global {
         gpuTracker?: GpuAllocationTracker;
         jitCacheTracker?: ByteSizedCacheTracker;
         shaderCacheTracker?: ByteSizedCacheTracker;
+        traceStart?: () => void;
+        traceStop?: () => void;
+        exportTrace?: (opts?: { asString?: boolean }) => Promise<unknown>;
+        traceEnabled?: boolean;
       };
     };
   }

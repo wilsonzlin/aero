@@ -1,5 +1,7 @@
 /// <reference lib="webworker" />
 
+import { perf } from "../perf/perf";
+import { installWorkerPerfHandlers } from "../perf/worker";
 import { initWasmForContext } from "../runtime/wasm_context";
 import { RingBuffer } from "../runtime/ring_buffer";
 import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
@@ -25,6 +27,8 @@ import {
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
+void installWorkerPerfHandlers();
+
 let role: "cpu" | "gpu" | "io" | "jit" = "cpu";
 let status!: Int32Array;
 let commandRing!: RingBuffer;
@@ -39,39 +43,50 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 };
 
 async function initAndRun(init: WorkerInitMessage): Promise<void> {
-  role = init.role ?? "cpu";
-  const segments = { control: init.controlSab!, guestMemory: init.guestMemory!, vgaFramebuffer: init.vgaFramebuffer! };
-  const views = createSharedMemoryViews(segments);
-  status = views.status;
-  guestI32 = views.guestI32;
-  vgaFramebuffer = wrapSharedFramebuffer(segments.vgaFramebuffer, 0);
-
-  initFramebufferHeader(vgaFramebuffer.header, {
-    width: 320,
-    height: 200,
-    strideBytes: 320 * 4,
-    format: FRAMEBUFFER_FORMAT_RGBA8888,
-  });
-
-  const regions = ringRegionsForWorker(role);
-  commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
-  eventRing = new RingBuffer(segments.control, regions.event.byteOffset, regions.event.byteLength);
-
+  perf.spanBegin("worker:boot");
   try {
-    const { api, variant } = await initWasmForContext();
-    const version = api.version();
-    const sum = api.sum(20, 22);
-    ctx.postMessage({ type: MessageType.WASM_READY, role, variant, version, sum } satisfies ProtocolMessage);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    setReadyFlag(status, role, false);
-    ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
-    ctx.close();
-    return;
-  }
+    perf.spanBegin("worker:init");
+    try {
+      role = init.role ?? "cpu";
+      const segments = { control: init.controlSab!, guestMemory: init.guestMemory!, vgaFramebuffer: init.vgaFramebuffer! };
+      const views = createSharedMemoryViews(segments);
+      status = views.status;
+      guestI32 = views.guestI32;
+      vgaFramebuffer = wrapSharedFramebuffer(segments.vgaFramebuffer, 0);
 
-  setReadyFlag(status, role, true);
-  ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
+      initFramebufferHeader(vgaFramebuffer.header, {
+        width: 320,
+        height: 200,
+        strideBytes: 320 * 4,
+        format: FRAMEBUFFER_FORMAT_RGBA8888,
+      });
+
+      const regions = ringRegionsForWorker(role);
+      commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
+      eventRing = new RingBuffer(segments.control, regions.event.byteOffset, regions.event.byteLength);
+
+      try {
+        const { api, variant } = await perf.spanAsync("wasm:init", () => initWasmForContext());
+        const version = api.version();
+        const sum = api.sum(20, 22);
+        ctx.postMessage({ type: MessageType.WASM_READY, role, variant, version, sum } satisfies ProtocolMessage);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setReadyFlag(status, role, false);
+        ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
+        ctx.close();
+        return;
+      }
+
+      setReadyFlag(status, role, true);
+      ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
+      perf.instant("boot:worker:ready", "p", { role });
+    } finally {
+      perf.spanEnd("worker:init");
+    }
+  } finally {
+    perf.spanEnd("worker:boot");
+  }
 
   void runLoop();
 }

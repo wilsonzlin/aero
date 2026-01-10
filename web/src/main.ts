@@ -3,6 +3,7 @@ import "./style.css";
 import { installAeroGlobals } from "./aero";
 import { createGpuWorker } from "./main/createGpuWorker";
 import { fnv1a32Hex } from "./utils/fnv1a";
+import { perf } from "./perf/perf";
 import { createAudioOutput } from "./platform/audio";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { importFileToOpfs } from "./platform/opfs";
@@ -23,6 +24,10 @@ import { DEFAULT_GUEST_RAM_MIB, GUEST_RAM_PRESETS_MIB, type GuestRamMiB, type Wo
 initAeroStatusApi("booting");
 installPerfHud({ guestRamBytes: DEFAULT_GUEST_RAM_MIB * 1024 * 1024 });
 installAeroGlobal();
+perf.installGlobalApi();
+
+if (new URLSearchParams(location.search).has("trace")) perf.traceStart();
+perf.instant("boot:main:start", "p");
 
 installAeroGlobals();
 

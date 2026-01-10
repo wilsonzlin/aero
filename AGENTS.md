@@ -351,6 +351,7 @@ pub trait DisplayAdapter {
 | [16-performance-tooling.md](./docs/16-performance-tooling.md)           | Profiling HUD, traces, benchmarks      | Performance       |
 | [16-d3d9ex-dwm-compatibility.md](./docs/16-d3d9ex-dwm-compatibility.md) | D3D9Ex surface + DWM requirements      | Graphics          |
 | [16-d3d10-11-translation.md](./docs/16-d3d10-11-translation.md)          | Direct3D 10/11 translation details     | Graphics          |
+| [16-perf-tracing.md](./docs/16-perf-tracing.md)                         | Chrome Trace/Perfetto export           | Performance       |
 | [16-windows7-driver-build-and-signing.md](./docs/16-windows7-driver-build-and-signing.md) | Driver build & signing toolchain notes | Infrastructure    |
 | [17-range-cdn-behavior.md](./docs/17-range-cdn-behavior.md)             | HTTP Range + CDN caching/limits        | Infrastructure    |
 | [18-chunked-disk-image-format.md](./docs/18-chunked-disk-image-format.md) | Chunked disk image delivery (no HTTP Range) | I/O               |

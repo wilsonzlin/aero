@@ -5,6 +5,7 @@ import {
   FRAME_STATUS_INDEX,
   type GpuWorkerMessageToMain,
 } from '../shared/frameProtocol';
+import { perf } from '../perf/perf';
 
 import { DebugOverlay } from '../../ui/debug_overlay.ts';
 
@@ -89,11 +90,26 @@ export const startFrameScheduler = ({
   const loop = (frameTimeMs: number) => {
     if (stopped) return;
 
-    if (shouldSendTick()) {
-      gpuWorker.postMessage({ type: 'tick', frameTimeMs });
-    }
+    perf.spanBegin('frame');
+    try {
+      perf.spanBegin('render');
+      try {
+        if (shouldSendTick()) {
+          perf.spanBegin('present');
+          try {
+            gpuWorker.postMessage({ type: 'tick', frameTimeMs });
+          } finally {
+            perf.spanEnd('present');
+          }
+        }
+      } finally {
+        perf.spanEnd('render');
+      }
 
-    rafId = requestAnimationFrame(loop);
+      rafId = requestAnimationFrame(loop);
+    } finally {
+      perf.spanEnd('frame');
+    }
   };
 
   rafId = requestAnimationFrame(loop);

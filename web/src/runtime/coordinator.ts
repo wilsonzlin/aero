@@ -1,4 +1,5 @@
 import { RingBuffer } from "./ring_buffer";
+import { perf } from "../perf/perf";
 import {
   WORKER_ROLES,
   type WorkerRole,
@@ -97,6 +98,8 @@ export class WorkerCoordinator {
           throw new Error(`Unknown worker role: ${String(neverRole)}`);
         }
       }
+      perf.registerWorker(worker, { threadName: role });
+      perf.instant("boot:worker:spawn", "p", { role });
 
       const info: WorkerInfo = {
         role,
@@ -236,7 +239,6 @@ export class WorkerCoordinator {
       }
     }
   }
-
   private async eventLoop(role: WorkerRole, runId: number): Promise<void> {
     while (this.shared && this.runId === runId) {
       const info = this.workers[role];
