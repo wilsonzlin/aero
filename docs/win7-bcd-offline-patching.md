@@ -31,6 +31,10 @@ Note: ISO extractors and non-Windows filesystems may change the case of these
 paths (e.g. `EFI/Microsoft/Boot/bcd`). Implementations should treat the path
 lookup as case-insensitive.
 
+Also note that on Windows these files are often marked hidden/system/read-only.
+An offline patcher must ensure the files are writable before attempting to write
+them back.
+
 ### Extracted OS image (installed OS template)
 
 Patch:
@@ -101,6 +105,12 @@ They patch the well-known settings objects by GUID (see below) by writing the
 ## Which BCD objects should be patched
 
 To make the setting effective across the different boot paths Windows 7 uses, patch multiple objects (when present):
+
+Note on object identifiers: `bcdedit` supports symbolic names like `{default}` and
+`{bootmgr}`. Offline patchers work directly with the REGF hive and therefore
+typically patch objects by their GUID keys under `Objects\{GUID}`. Patching the
+well-known settings objects and all `winload*` entries avoids having to resolve
+store-specific aliases like `{default}`.
 
 1. **`{globalsettings}`**
    - Central “library settings” object. Other objects can inherit from it.
