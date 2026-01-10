@@ -673,6 +673,9 @@ pub fn is_extended_key(code: &str) -> bool {
 
 ## USB HID (Optional)
 
+For browser input → USB HID usage mapping and report format details, see
+[`docs/usb-hid.md`](./usb-hid.md).
+
 ### USB HID Keyboard
 
 ```rust

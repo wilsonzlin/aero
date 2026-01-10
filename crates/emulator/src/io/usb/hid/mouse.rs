@@ -1,0 +1,362 @@
+use std::collections::VecDeque;
+
+use crate::io::usb::{ControlResponse, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel};
+
+use super::{
+    build_string_descriptor_utf16le, clamp_response, HidProtocol, HID_REQUEST_GET_IDLE,
+    HID_REQUEST_GET_PROTOCOL, HID_REQUEST_GET_REPORT, HID_REQUEST_SET_IDLE, HID_REQUEST_SET_PROTOCOL,
+    USB_DESCRIPTOR_TYPE_CONFIGURATION, USB_DESCRIPTOR_TYPE_DEVICE, USB_DESCRIPTOR_TYPE_HID,
+    USB_DESCRIPTOR_TYPE_HID_REPORT, USB_DESCRIPTOR_TYPE_STRING, USB_REQUEST_GET_CONFIGURATION,
+    USB_REQUEST_GET_DESCRIPTOR, USB_REQUEST_SET_CONFIGURATION,
+};
+
+const INTERRUPT_IN_EP: u8 = 0x81;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MouseReport {
+    pub buttons: u8,
+    pub x: i8,
+    pub y: i8,
+    pub wheel: i8,
+}
+
+impl MouseReport {
+    pub fn to_bytes(self, protocol: HidProtocol) -> Vec<u8> {
+        match protocol {
+            HidProtocol::Boot => vec![self.buttons, self.x as u8, self.y as u8],
+            HidProtocol::Report => vec![self.buttons, self.x as u8, self.y as u8, self.wheel as u8],
+        }
+    }
+}
+
+pub struct UsbHidMouse {
+    configuration: u8,
+    idle_rate: u8,
+    protocol: HidProtocol,
+
+    buttons: u8,
+    dx: i32,
+    dy: i32,
+    wheel: i32,
+
+    pending_reports: VecDeque<MouseReport>,
+}
+
+impl Default for UsbHidMouse {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl UsbHidMouse {
+    pub fn new() -> Self {
+        Self {
+            configuration: 0,
+            idle_rate: 0,
+            protocol: HidProtocol::Report,
+            buttons: 0,
+            dx: 0,
+            dy: 0,
+            wheel: 0,
+            pending_reports: VecDeque::new(),
+        }
+    }
+
+    /// Sets or clears a mouse button bit.
+    ///
+    /// Bit 0 = left, bit 1 = right, bit 2 = middle.
+    pub fn button_event(&mut self, button_bit: u8, pressed: bool) {
+        self.flush_motion();
+        let before = self.buttons;
+        if pressed {
+            self.buttons |= button_bit;
+        } else {
+            self.buttons &= !button_bit;
+        }
+        if self.buttons != before {
+            self.pending_reports.push_back(MouseReport {
+                buttons: self.buttons,
+                x: 0,
+                y: 0,
+                wheel: 0,
+            });
+        }
+    }
+
+    pub fn movement(&mut self, dx: i32, dy: i32) {
+        self.dx += dx;
+        self.dy += dy;
+        self.flush_motion();
+    }
+
+    pub fn wheel(&mut self, delta: i32) {
+        self.wheel += delta;
+        self.flush_motion();
+    }
+
+    fn flush_motion(&mut self) {
+        while self.dx != 0 || self.dy != 0 || self.wheel != 0 {
+            let step_x = self.dx.clamp(-127, 127) as i8;
+            let step_y = self.dy.clamp(-127, 127) as i8;
+            let step_wheel = self.wheel.clamp(-127, 127) as i8;
+
+            self.dx -= step_x as i32;
+            self.dy -= step_y as i32;
+            self.wheel -= step_wheel as i32;
+
+            self.pending_reports.push_back(MouseReport {
+                buttons: self.buttons,
+                x: step_x,
+                y: step_y,
+                wheel: step_wheel,
+            });
+        }
+    }
+
+    fn string_descriptor(&self, index: u8) -> Option<Vec<u8>> {
+        match index {
+            0 => Some(vec![0x04, USB_DESCRIPTOR_TYPE_STRING, 0x09, 0x04]), // en-US
+            1 => Some(build_string_descriptor_utf16le("Aero")),
+            2 => Some(build_string_descriptor_utf16le("Aero USB HID Mouse")),
+            _ => None,
+        }
+    }
+
+    fn hid_descriptor_bytes(&self) -> [u8; 9] {
+        let report_len = HID_REPORT_DESCRIPTOR.len() as u16;
+        [
+            0x09,                  // bLength
+            USB_DESCRIPTOR_TYPE_HID, // bDescriptorType
+            0x11,
+            0x01, // bcdHID (1.11)
+            0x00, // bCountryCode
+            0x01, // bNumDescriptors
+            USB_DESCRIPTOR_TYPE_HID_REPORT, // bDescriptorType (Report)
+            (report_len & 0x00ff) as u8,
+            (report_len >> 8) as u8,
+        ]
+    }
+}
+
+impl UsbDeviceModel for UsbHidMouse {
+    fn get_device_descriptor(&self) -> &'static [u8] {
+        &DEVICE_DESCRIPTOR
+    }
+
+    fn get_config_descriptor(&self) -> &'static [u8] {
+        &CONFIG_DESCRIPTOR
+    }
+
+    fn get_hid_report_descriptor(&self) -> &'static [u8] {
+        &HID_REPORT_DESCRIPTOR
+    }
+
+    fn handle_control_request(&mut self, setup: SetupPacket, _data_stage: Option<&[u8]>) -> ControlResponse {
+        match (setup.request_type(), setup.recipient()) {
+            (RequestType::Standard, RequestRecipient::Device) => match setup.b_request {
+                USB_REQUEST_GET_DESCRIPTOR => {
+                    let desc_type = setup.descriptor_type();
+                    let desc_index = setup.descriptor_index();
+                    let data = match desc_type {
+                        USB_DESCRIPTOR_TYPE_DEVICE => Some(self.get_device_descriptor().to_vec()),
+                        USB_DESCRIPTOR_TYPE_CONFIGURATION => Some(self.get_config_descriptor().to_vec()),
+                        USB_DESCRIPTOR_TYPE_STRING => self.string_descriptor(desc_index),
+                        _ => None,
+                    };
+                    data.map(|v| ControlResponse::Data(clamp_response(v, setup.w_length)))
+                        .unwrap_or(ControlResponse::Stall)
+                }
+                USB_REQUEST_SET_CONFIGURATION => {
+                    self.configuration = (setup.w_value & 0x00ff) as u8;
+                    ControlResponse::Ack
+                }
+                USB_REQUEST_GET_CONFIGURATION => ControlResponse::Data(vec![self.configuration]),
+                _ => ControlResponse::Stall,
+            },
+            (RequestType::Standard, RequestRecipient::Interface) => match setup.b_request {
+                USB_REQUEST_GET_DESCRIPTOR => {
+                    let desc_type = setup.descriptor_type();
+                    let data = match desc_type {
+                        USB_DESCRIPTOR_TYPE_HID_REPORT => Some(self.get_hid_report_descriptor().to_vec()),
+                        USB_DESCRIPTOR_TYPE_HID => Some(self.hid_descriptor_bytes().to_vec()),
+                        _ => None,
+                    };
+                    data.map(|v| ControlResponse::Data(clamp_response(v, setup.w_length)))
+                        .unwrap_or(ControlResponse::Stall)
+                }
+                _ => ControlResponse::Stall,
+            },
+            (RequestType::Class, RequestRecipient::Interface) => match setup.b_request {
+                HID_REQUEST_GET_REPORT => {
+                    let report = MouseReport {
+                        buttons: self.buttons,
+                        x: 0,
+                        y: 0,
+                        wheel: 0,
+                    }
+                    .to_bytes(self.protocol);
+                    ControlResponse::Data(clamp_response(report, setup.w_length))
+                }
+                HID_REQUEST_GET_IDLE => ControlResponse::Data(vec![self.idle_rate]),
+                HID_REQUEST_SET_IDLE => {
+                    self.idle_rate = (setup.w_value >> 8) as u8;
+                    ControlResponse::Ack
+                }
+                HID_REQUEST_GET_PROTOCOL => ControlResponse::Data(vec![self.protocol as u8]),
+                HID_REQUEST_SET_PROTOCOL => {
+                    if let Some(proto) = HidProtocol::from_u16(setup.w_value) {
+                        self.protocol = proto;
+                        ControlResponse::Ack
+                    } else {
+                        ControlResponse::Stall
+                    }
+                }
+                _ => ControlResponse::Stall,
+            },
+            _ => ControlResponse::Stall,
+        }
+    }
+
+    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
+        if ep != INTERRUPT_IN_EP {
+            return None;
+        }
+        self.pending_reports.pop_front().map(|r| r.to_bytes(self.protocol))
+    }
+}
+
+// USB device descriptor (Mouse)
+static DEVICE_DESCRIPTOR: [u8; 18] = [
+    0x12, // bLength
+    USB_DESCRIPTOR_TYPE_DEVICE,
+    0x00,
+    0x02, // bcdUSB (2.00)
+    0x00, // bDeviceClass (per interface)
+    0x00, // bDeviceSubClass
+    0x00, // bDeviceProtocol
+    0x40, // bMaxPacketSize0 (64)
+    0x34,
+    0x12, // idVendor (0x1234)
+    0x02,
+    0x00, // idProduct (0x0002)
+    0x00,
+    0x01, // bcdDevice (1.00)
+    0x01, // iManufacturer
+    0x02, // iProduct
+    0x00, // iSerialNumber
+    0x01, // bNumConfigurations
+];
+
+// USB configuration descriptor tree:
+//   Config(9) + Interface(9) + HID(9) + Endpoint(7) = 34 bytes
+static CONFIG_DESCRIPTOR: [u8; 34] = [
+    // Configuration descriptor
+    0x09, // bLength
+    USB_DESCRIPTOR_TYPE_CONFIGURATION,
+    34, 0x00, // wTotalLength
+    0x01, // bNumInterfaces
+    0x01, // bConfigurationValue
+    0x00, // iConfiguration
+    0xa0, // bmAttributes (bus powered + remote wake)
+    50,  // bMaxPower (100mA)
+    // Interface descriptor
+    0x09, // bLength
+    super::USB_DESCRIPTOR_TYPE_INTERFACE,
+    0x00, // bInterfaceNumber
+    0x00, // bAlternateSetting
+    0x01, // bNumEndpoints
+    0x03, // bInterfaceClass (HID)
+    0x01, // bInterfaceSubClass (Boot)
+    0x02, // bInterfaceProtocol (Mouse)
+    0x00, // iInterface
+    // HID descriptor
+    0x09, // bLength
+    USB_DESCRIPTOR_TYPE_HID,
+    0x11,
+    0x01, // bcdHID (1.11)
+    0x00, // bCountryCode
+    0x01, // bNumDescriptors
+    USB_DESCRIPTOR_TYPE_HID_REPORT,
+    HID_REPORT_DESCRIPTOR.len() as u8,
+    0x00, // wDescriptorLength
+    // Endpoint descriptor (Interrupt IN)
+    0x07, // bLength
+    super::USB_DESCRIPTOR_TYPE_ENDPOINT,
+    INTERRUPT_IN_EP, // bEndpointAddress
+    0x03, // bmAttributes (Interrupt)
+    0x04,
+    0x00, // wMaxPacketSize (4)
+    0x0a, // bInterval (10ms)
+];
+
+static HID_REPORT_DESCRIPTOR: [u8; 52] = [
+    0x05, 0x01, // Usage Page (Generic Desktop)
+    0x09, 0x02, // Usage (Mouse)
+    0xa1, 0x01, // Collection (Application)
+    0x09, 0x01, // Usage (Pointer)
+    0xa1, 0x00, // Collection (Physical)
+    0x05, 0x09, // Usage Page (Buttons)
+    0x19, 0x01, // Usage Minimum (Button 1)
+    0x29, 0x03, // Usage Maximum (Button 3)
+    0x15, 0x00, // Logical Minimum (0)
+    0x25, 0x01, // Logical Maximum (1)
+    0x95, 0x03, // Report Count (3)
+    0x75, 0x01, // Report Size (1)
+    0x81, 0x02, // Input (Data,Var,Abs) Button bits
+    0x95, 0x01, // Report Count (1)
+    0x75, 0x05, // Report Size (5)
+    0x81, 0x01, // Input (Const,Array,Abs) Padding
+    0x05, 0x01, // Usage Page (Generic Desktop)
+    0x09, 0x30, // Usage (X)
+    0x09, 0x31, // Usage (Y)
+    0x09, 0x38, // Usage (Wheel)
+    0x15, 0x81, // Logical Minimum (-127)
+    0x25, 0x7f, // Logical Maximum (127)
+    0x75, 0x08, // Report Size (8)
+    0x95, 0x03, // Report Count (3)
+    0x81, 0x06, // Input (Data,Var,Rel) X,Y,Wheel
+    0xc0, // End Collection
+    0xc0, // End Collection
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn w_le(bytes: &[u8], offset: usize) -> u16 {
+        u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+    }
+
+    #[test]
+    fn mouse_descriptors_reference_report_length() {
+        let mouse = UsbHidMouse::new();
+        let cfg = mouse.get_config_descriptor();
+        assert_eq!(cfg[1], USB_DESCRIPTOR_TYPE_CONFIGURATION);
+        assert_eq!(w_le(cfg, 2) as usize, cfg.len());
+
+        let hid = &cfg[18..27];
+        assert_eq!(hid[1], USB_DESCRIPTOR_TYPE_HID);
+        assert_eq!(w_le(hid, 7) as usize, HID_REPORT_DESCRIPTOR.len());
+    }
+
+    #[test]
+    fn mouse_motion_splits_large_deltas() {
+        let mut mouse = UsbHidMouse::new();
+        mouse.movement(200, 0);
+
+        let r1 = mouse.poll_interrupt_in(INTERRUPT_IN_EP).unwrap();
+        assert_eq!(r1, vec![0x00, 127u8, 0u8, 0u8]);
+
+        let r2 = mouse.poll_interrupt_in(INTERRUPT_IN_EP).unwrap();
+        assert_eq!(r2, vec![0x00, 73u8, 0u8, 0u8]);
+    }
+
+    #[test]
+    fn mouse_button_event_generates_report() {
+        let mut mouse = UsbHidMouse::new();
+        mouse.button_event(0x01, true);
+        let r = mouse.poll_interrupt_in(INTERRUPT_IN_EP).unwrap();
+        assert_eq!(r, vec![0x01, 0, 0, 0]);
+    }
+}
+
