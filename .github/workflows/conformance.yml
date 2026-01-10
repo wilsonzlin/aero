@@ -1,0 +1,50 @@
+name: Conformance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  conformance-pr:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    env:
+      AERO_CONFORMANCE_CASES: "512"
+      AERO_CONFORMANCE_REPORT_PATH: "${{ github.workspace }}/target/conformance/report.json"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run conformance subset
+        run: cargo test -p conformance --test conformance -- --nocapture
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-report-pr
+          path: target/conformance/report.json
+          if-no-files-found: ignore
+
+  conformance-scheduled:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    env:
+      AERO_CONFORMANCE_CASES: "10000"
+      AERO_CONFORMANCE_REPORT_PATH: "${{ github.workspace }}/target/conformance/report.json"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run conformance corpus
+        run: cargo test -p conformance --test conformance -- --nocapture
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-report-scheduled
+          path: target/conformance/report.json
+          if-no-files-found: ignore

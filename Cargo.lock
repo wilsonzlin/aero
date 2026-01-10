@@ -1234,6 +1234,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "conformance"
+version = "0.1.0"
+dependencies = [
+ "iced-x86",
+ "libc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "console"
 version = "0.15.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"

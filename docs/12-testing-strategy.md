@@ -796,8 +796,21 @@ See: [Guest CPU Instruction Throughput Benchmarks](./16-guest-cpu-benchmark-suit
 
 ### Against Reference Implementation
 
+The repository includes an initial differential testing harness at `crates/conformance/` that
+compares a small deterministic corpus against native host execution on `x86_64` (user-mode
+instructions only).
+
+Run it locally with:
+
+```bash
+cargo test -p conformance --test conformance -- --nocapture
+```
+
+CI runs a fast subset on PRs and a larger corpus on a schedule via
+`.github/workflows/conformance.yml`.
+
 ```rust
-/// Compare Aero execution against QEMU
+/// Compare Aero execution against a reference backend (e.g. native host execution or QEMU)
 #[test]
 fn conformance_test_instructions() {
     for instruction in ALL_X86_INSTRUCTIONS {
