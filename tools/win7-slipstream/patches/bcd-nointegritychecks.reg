@@ -21,7 +21,9 @@ Windows Registry Editor Version 5.00
 ;   reg unload HKLM\BCD
 
 [HKEY_LOCAL_MACHINE\BCD\Objects\{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}\Elements\16000048]
-"Element"=hex:01,00,00,00
+; Encoded as: [u32 element_type][u32 data_len=4][u32 value=1]
+"Element"=hex:48,00,00,16,04,00,00,00,01,00,00,00
 
 [HKEY_LOCAL_MACHINE\BCD\Objects\{6efb52bf-1766-41db-a6b3-0ee5eff72bd7}\Elements\16000048]
-"Element"=hex:01,00,00,00
+; Encoded as: [u32 element_type][u32 data_len=4][u32 value=1]
+"Element"=hex:48,00,00,16,04,00,00,00,01,00,00,00

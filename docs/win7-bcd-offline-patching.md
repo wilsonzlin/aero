@@ -83,14 +83,26 @@ The two BCD elements we care about are:
 These are **Library Boolean** elements (they live in the `0x16xxxxxx` range).
 
 Implementation detail (important for an offline patcher): element data in BCD hives is
-stored as `REG_BINARY`. For these Win7 boolean elements, the simplest working encoding
-is a 4-byte little-endian integer written into the `Element` value:
+stored as `REG_BINARY`. The common encoding layout is:
+
+```
+[u32 element_type (LE)] [u32 data_len (LE)] [data...]
+```
+
+For these Win7 boolean elements, `data_len` is 4 and the payload is a little-endian
+u32:
 
 - enabled: `01 00 00 00`
 - disabled: `00 00 00 00`
 
-This matches the audited offline `.reg` patches under `tools/win7-slipstream/patches/`,
-which use `hex:01,00,00,00` for both `testsigning` and `nointegritychecks`.
+So the full `Element` blob is typically 12 bytes, for example:
+
+- `testsigning` (`0x16000049`, enabled):
+  - `49 00 00 16  04 00 00 00  01 00 00 00`
+- `nointegritychecks` (`0x16000048`, enabled):
+  - `48 00 00 16  04 00 00 00  01 00 00 00`
+
+This matches the audited offline `.reg` patches under `tools/win7-slipstream/patches/`.
 
 ### Reference: audited `.reg` patches in this repo
 
