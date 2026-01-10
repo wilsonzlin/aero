@@ -1,0 +1,10 @@
+[package]
+name = "aero-platform"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[dev-dependencies]
+aero-devices = { path = "../devices" }
+

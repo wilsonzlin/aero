@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/aero-storage-server",
     "crates/aero_cpu_core",
+    "crates/devices",
     "crates/emulator",
     "crates/memory",
+    "crates/platform",
 ]
