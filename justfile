@@ -12,7 +12,8 @@
 #   just test
 #
 # Optional configuration:
-#   WEB_DIR=web WASM_CRATE_DIR=crates/aero-ipc WASM_PKG_DIR=web/src/wasm_pkg just build
+#   WEB_DIR=web just dev
+#   WEB_DIR=web WASM_CRATE_DIR=crates/aero-wasm just wasm-watch
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -65,6 +66,13 @@ setup:
   echo "==> Rust: installing formatter/linter components"
   rustup component add rustfmt clippy
 
+  # Threaded/shared-memory WASM builds use `-Z build-std` and therefore need
+  # nightly + rust-src. The web app's `npm run wasm:build` script depends on this.
+  echo "==> Rust: ensuring nightly + rust-src are available (for threaded WASM builds)"
+  rustup toolchain install nightly
+  rustup target add wasm32-unknown-unknown --toolchain nightly
+  rustup component add rust-src --toolchain nightly
+
   wasm_dir="$(just _detect_wasm_crate_dir)"
   if [[ -n "${wasm_dir}" ]]; then
     echo "==> Tooling: checking wasm build tools"
@@ -98,57 +106,80 @@ wasm:
   #!/usr/bin/env bash
   set -euo pipefail
 
-  wasm_dir="$(just _detect_wasm_crate_dir)"
-  if [[ -z "${wasm_dir}" ]]; then
-    echo "==> wasm: no Rust wasm crate found (set WASM_CRATE_DIR=...); nothing to build"
-    exit 0
+  # Prefer the web app's wasm build scripts, which produce both:
+  # - web/src/wasm/pkg-single
+  # - web/src/wasm/pkg-threaded (shared-memory)
+  if [[ -f "{{WEB_DIR}}/package.json" ]]; then
+    if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build']) ? 0 : 1)" >/dev/null 2>&1); then
+      if ! command -v wasm-pack >/dev/null; then
+        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
+        exit 1
+      fi
+      echo "==> Building WASM (single + threaded) via '{{WEB_DIR}}' npm scripts"
+      (cd "{{WEB_DIR}}" && npm run wasm:build)
+      exit 0
+    fi
   fi
 
+  # Fallback: build a single wasm-pack package directly from a detected crate.
+  wasm_dir="$(just _detect_wasm_crate_dir)"
+  if [[ -z "${wasm_dir}" ]]; then
+    echo "==> wasm: no web wasm build scripts found and no Rust wasm crate detected (set WASM_CRATE_DIR=...); nothing to build"
+    exit 0
+  fi
   if ! command -v wasm-pack >/dev/null; then
     echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
     exit 1
   fi
+  out_dir="${WASM_PKG_DIR:-${wasm_dir}/pkg}"
+  mkdir -p "${out_dir}"
+  echo "==> Building wasm package (fallback): ${wasm_dir} -> ${out_dir}"
+  wasm-pack build "${wasm_dir}" --dev --target web --out-dir "${out_dir}"
 
-  out_dir="${WASM_PKG_DIR:-}"
-  if [[ -z "${out_dir}" ]]; then
-    if [[ -d "{{WEB_DIR}}" ]]; then
-      out_dir="{{WEB_DIR}}/src/wasm_pkg"
-    else
-      out_dir="${wasm_dir}/pkg"
+wasm-single:
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  if [[ -f "{{WEB_DIR}}/package.json" ]]; then
+    if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:single']) ? 0 : 1)" >/dev/null 2>&1); then
+      if ! command -v wasm-pack >/dev/null; then
+        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
+        exit 1
+      fi
+      echo "==> Building WASM (single) via '{{WEB_DIR}}' npm scripts"
+      (cd "{{WEB_DIR}}" && npm run wasm:build:single)
+      exit 0
     fi
   fi
 
-  mkdir -p "${out_dir}"
-  echo "==> Building wasm package: ${wasm_dir} -> ${out_dir}"
-  wasm-pack build "${wasm_dir}" --dev --target web --out-dir "${out_dir}"
+  echo "==> wasm-single: web script not found; falling back to 'just wasm'"
+  just wasm
+
+wasm-threaded:
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  if [[ -f "{{WEB_DIR}}/package.json" ]]; then
+    if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:threaded']) ? 0 : 1)" >/dev/null 2>&1); then
+      if ! command -v wasm-pack >/dev/null; then
+        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
+        exit 1
+      fi
+      echo "==> Building WASM (threaded/shared-memory) via '{{WEB_DIR}}' npm scripts"
+      (cd "{{WEB_DIR}}" && npm run wasm:build:threaded)
+      exit 0
+    fi
+  fi
+
+  echo "error: wasm-threaded requires the web app's build script ({{WEB_DIR}}/package.json with wasm:build:threaded)" >&2
+  exit 1
 
 wasm-release:
   #!/usr/bin/env bash
   set -euo pipefail
 
-  wasm_dir="$(just _detect_wasm_crate_dir)"
-  if [[ -z "${wasm_dir}" ]]; then
-    echo "==> wasm-release: no Rust wasm crate found (set WASM_CRATE_DIR=...); nothing to build"
-    exit 0
-  fi
-
-  if ! command -v wasm-pack >/dev/null; then
-    echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
-    exit 1
-  fi
-
-  out_dir="${WASM_PKG_DIR:-}"
-  if [[ -z "${out_dir}" ]]; then
-    if [[ -d "{{WEB_DIR}}" ]]; then
-      out_dir="{{WEB_DIR}}/src/wasm_pkg"
-    else
-      out_dir="${wasm_dir}/pkg"
-    fi
-  fi
-
-  mkdir -p "${out_dir}"
-  echo "==> Building wasm package (release): ${wasm_dir} -> ${out_dir}"
-  wasm-pack build "${wasm_dir}" --target web --out-dir "${out_dir}"
+  # The web wasm build scripts use `--release` already.
+  just wasm
 
 [private]
 _maybe_run_web_script script:
@@ -172,7 +203,7 @@ dev:
   set -euo pipefail
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
-    echo "==> Building wasm (dev)"
+    echo "==> Building wasm (single + threaded)"
     just wasm
 
     cat <<'EOF'
@@ -221,14 +252,14 @@ EOF
   fi
 
   echo "==> Watching '${wasm_dir}' and rebuilding wasm on changes..."
-  watchexec -w "${wasm_dir}" -- just wasm
+  watchexec -w "${wasm_dir}" -- just wasm-threaded
 
 build:
   #!/usr/bin/env bash
   set -euo pipefail
 
-  echo "==> Building wasm (release)"
-  just wasm-release
+  echo "==> Building wasm (single + threaded)"
+  just wasm
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
     echo "==> Building web bundle (production)"

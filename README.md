@@ -30,8 +30,6 @@ just lint    # linting (if configured)
 The `justfile` is intentionally configurable so it can survive repo refactors:
 
 - `WEB_DIR` (default: `web`)
-- `WASM_CRATE_DIR` (default: auto-detected from common locations)
-- `WASM_PKG_DIR` (default: `web/src/wasm_pkg` when `web/` exists)
 
 ## Documentation
 
@@ -83,6 +81,7 @@ The CPU worker posts a `WASM_READY` message back to the main thread with the sel
 Aero prefers **WebGPU** when available, but can fall back to **WebGL2** (reduced capability) in environments where WebGPU is unavailable or disabled.
 
 The fallback backend is implemented under `web/src/graphics/` and includes a standalone demo page at `web/webgl2_fallback_demo.html`. CI covers this path via a Playwright smoke test that forces `navigator.gpu` to be unavailable and verifies WebGL2 rendering still works.
+
 ## WASM builds (threaded vs single fallback)
 
 Browsers only enable `SharedArrayBuffer` (and therefore WASM shared memory / threads) in **cross-origin isolated**
@@ -107,7 +106,13 @@ rustup toolchain install nightly
 rustup component add rust-src --toolchain nightly
 ```
 
-From `web/`:
+Recommended (repo root):
+
+```bash
+just wasm                # builds both variants (single + threaded)
+```
+
+Manual equivalent (from `web/`):
 
 ```bash
 npm run wasm:build        # builds both variants
