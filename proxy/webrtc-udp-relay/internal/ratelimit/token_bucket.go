@@ -41,11 +41,11 @@ func NewTokenBucket(clock Clock, capacityTokens, fillRate int64) *TokenBucket {
 	now := clock.Now()
 	capacityNano := mulTokenToNano(capacityTokens)
 	return &TokenBucket{
-		clock:              clock,
-		capacityTokens:     capacityTokens,
-		fillRate:           fillRate,
+		clock:               clock,
+		capacityTokens:      capacityTokens,
+		fillRate:            fillRate,
 		availableNanoTokens: capacityNano,
-		last:               now,
+		last:                now,
 	}
 }
 
@@ -129,4 +129,3 @@ func mulTokenToNano(tokens int64) int64 {
 	}
 	return tokens * nanoTokensPerToken
 }
-

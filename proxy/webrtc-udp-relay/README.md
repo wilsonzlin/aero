@@ -1,5 +1,7 @@
 # Aero WebRTC → UDP Relay
 
+[![webrtc-udp-relay](https://github.com/wilsonzlin/aero/actions/workflows/webrtc-udp-relay.yml/badge.svg)](https://github.com/wilsonzlin/aero/actions/workflows/webrtc-udp-relay.yml)
+
 This directory contains a standalone Go service intended to proxy UDP between:
 
 - the browser (guest networking stack running inside the emulator), and
@@ -12,6 +14,21 @@ It also includes a turnkey container deployment story:
 - `Dockerfile`: multi-stage Go build → minimal runtime image (distroless, non-root)
 - `docker-compose.yml`: run the relay alone, or with a local `coturn` TURN server
 - `turn/turnserver.conf`: minimal TURN config (committed)
+
+## CI / local checks
+
+CI is scoped to changes under `proxy/webrtc-udp-relay/**` and runs the same checks you can run locally:
+
+```bash
+cd proxy/webrtc-udp-relay
+make test
+make fmt-check
+make vet
+make staticcheck
+make docker-build
+```
+
+To apply formatting locally, run `make fmt`.
 
 ## Running (local)
 
@@ -467,5 +484,7 @@ See "Destination policy (UDP egress)" above.
 
 ```bash
 cd proxy/webrtc-udp-relay
-docker build .
+make docker-build
+# or:
+docker build -f Dockerfile .
 ```

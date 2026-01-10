@@ -1,0 +1,91 @@
+name: webrtc-udp-relay
+
+on:
+  push:
+    paths:
+      - proxy/webrtc-udp-relay/**
+      - .github/workflows/webrtc-udp-relay.yml
+  pull_request:
+    paths:
+      - proxy/webrtc-udp-relay/**
+      - .github/workflows/webrtc-udp-relay.yml
+
+permissions:
+  contents: read
+
+jobs:
+  go-test:
+    name: Go test/lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: proxy/webrtc-udp-relay
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: proxy/webrtc-udp-relay/go.mod
+          cache: true
+          cache-dependency-path: proxy/webrtc-udp-relay/go.sum
+
+      - name: Test
+        run: |
+          if [ -f Makefile ]; then
+            make test
+          else
+            go test ./...
+          fi
+
+      - name: Format (gofmt)
+        run: |
+          if [ -f Makefile ]; then
+            make fmt-check
+          else
+            unformatted="$(gofmt -l .)"
+            if [ -n "$unformatted" ]; then
+              echo "Files not formatted with gofmt:"
+              echo "$unformatted"
+              exit 1
+            fi
+          fi
+
+      - name: Vet
+        run: |
+          if [ -f Makefile ]; then
+            make vet
+          else
+            go vet ./...
+          fi
+
+      - name: Staticcheck (optional)
+        run: |
+          if [ -f Makefile ] && make -n staticcheck >/dev/null 2>&1; then
+            make staticcheck
+          else
+            go install honnef.co/go/tools/cmd/staticcheck@v0.5.1
+            "$(go env GOPATH)/bin/staticcheck" ./...
+          fi
+
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: |
+          if [ ! -f proxy/webrtc-udp-relay/Dockerfile ]; then
+            echo "proxy/webrtc-udp-relay/Dockerfile not present; skipping docker build."
+            exit 0
+          fi
+
+          cd proxy/webrtc-udp-relay
+          if [ -f Makefile ]; then
+            make docker-build
+          else
+            docker build -t webrtc-udp-relay:ci -f Dockerfile .
+          fi

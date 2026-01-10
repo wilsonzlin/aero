@@ -56,4 +56,3 @@ func TestTokenBucket_DoesNotExceedCapacity(t *testing.T) {
 		t.Fatalf("expected capacity clamp (only 1 token available)")
 	}
 }
-

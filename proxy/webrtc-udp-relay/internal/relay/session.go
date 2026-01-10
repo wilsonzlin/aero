@@ -17,9 +17,9 @@ type Session struct {
 
 	limiter *ratelimit.SessionLimiter
 
-	mu        sync.Mutex
-	closed    bool
-	bindings  map[uint16]struct{}
+	mu       sync.Mutex
+	closed   bool
+	bindings map[uint16]struct{}
 
 	lastViolation time.Time
 	violations    int
@@ -40,13 +40,13 @@ func newSession(id string, cfg config.Config, m *metrics.Metrics, clock ratelimi
 	})
 
 	return &Session{
-		id:        id,
-		cfg:       cfg,
-		metrics:   m,
-		clock:     clock,
-		limiter:   rl,
-		bindings:  make(map[uint16]struct{}),
-		onClose:   onClose,
+		id:       id,
+		cfg:      cfg,
+		metrics:  m,
+		clock:    clock,
+		limiter:  rl,
+		bindings: make(map[uint16]struct{}),
+		onClose:  onClose,
 	}
 }
 

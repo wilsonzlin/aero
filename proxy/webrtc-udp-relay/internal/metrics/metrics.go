@@ -37,4 +37,3 @@ func (m *Metrics) Get(name string) uint64 {
 	defer m.mu.Unlock()
 	return m.m[name]
 }
-

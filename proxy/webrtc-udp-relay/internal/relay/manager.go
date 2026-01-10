@@ -66,4 +66,3 @@ func (sm *SessionManager) deleteSession(id string) {
 	delete(sm.sessions, id)
 	sm.mu.Unlock()
 }
-

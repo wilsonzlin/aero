@@ -11,7 +11,7 @@ import (
 func TestSession_SoftRateLimitDropsButKeepsSession(t *testing.T) {
 	clk := &ratelimitTestClock{now: time.Unix(0, 0)}
 	cfg := config.Config{
-		MaxUDPPpsPerSession:      2,
+		MaxUDPPpsPerSession:             2,
 		MaxUniqueDestinationsPerSession: 10,
 	}
 	m := metrics.New()
@@ -41,9 +41,9 @@ func TestSession_SoftRateLimitDropsButKeepsSession(t *testing.T) {
 func TestSession_HardModeClosesAfterViolations(t *testing.T) {
 	clk := &ratelimitTestClock{now: time.Unix(0, 0)}
 	cfg := config.Config{
-		MaxUDPPpsPerSession:         1,
-		HardCloseAfterViolations:    2,
-		ViolationWindow:             10 * time.Second,
+		MaxUDPPpsPerSession:             1,
+		HardCloseAfterViolations:        2,
+		ViolationWindow:                 10 * time.Second,
 		MaxUniqueDestinationsPerSession: 10,
 	}
 	m := metrics.New()
@@ -162,7 +162,7 @@ func TestSession_EnforcesUDPBpsPerSession(t *testing.T) {
 func TestSession_EnforcesUDPPpsPerDest(t *testing.T) {
 	clk := &ratelimitTestClock{now: time.Unix(0, 0)}
 	cfg := config.Config{
-		MaxUDPPpsPerDest:           1,
+		MaxUDPPpsPerDest:                1,
 		MaxUniqueDestinationsPerSession: 10,
 	}
 	m := metrics.New()

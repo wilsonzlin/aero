@@ -9,4 +9,3 @@ type Clock interface {
 type RealClock struct{}
 
 func (RealClock) Now() time.Time { return time.Now() }
-

@@ -5,8 +5,8 @@ import "sync"
 type DropReason string
 
 const (
-	DropReasonRateLimited        DropReason = "rate_limited"
-	DropReasonQuotaExceeded      DropReason = "quota_exceeded"
+	DropReasonRateLimited         DropReason = "rate_limited"
+	DropReasonQuotaExceeded       DropReason = "quota_exceeded"
 	DropReasonTooManyDestinations DropReason = "too_many_destinations"
 )
 
@@ -54,14 +54,14 @@ func NewSessionLimiter(clock Clock, cfg SessionConfig) *SessionLimiter {
 	}
 
 	l := &SessionLimiter{
-		clock:                clock,
-		udpPackets:           udpPackets,
-		udpBytes:             udpBytes,
-		dcBytes:              dcBytes,
+		clock:                 clock,
+		udpPackets:            udpPackets,
+		udpBytes:              udpBytes,
+		dcBytes:               dcBytes,
 		maxUniqueDestinations: cfg.MaxUniqueDestinations,
-		perDestRate:          int64(cfg.UDPPacketsPerSecondPerDest),
-		destSeen:             make(map[string]struct{}),
-		perDest:              make(map[string]*TokenBucket),
+		perDestRate:           int64(cfg.UDPPacketsPerSecondPerDest),
+		destSeen:              make(map[string]struct{}),
+		perDest:               make(map[string]*TokenBucket),
 	}
 	return l
 }
