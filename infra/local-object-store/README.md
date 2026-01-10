@@ -269,3 +269,38 @@ For actual `GET` responses, ensure you can see (and access from JS) these header
   - Handle/terminate `OPTIONS` at the edge
   - Add/remove CORS headers
   - Cache (and sometimes break) `Range` responses depending on configuration
+
+## Publish a chunked disk image (no HTTP Range)
+
+This repo also supports serving disk images without HTTP `Range` by publishing the image as many fixed-size chunk objects plus a `manifest.json` (see [`docs/18-chunked-disk-image-format.md`](../../docs/18-chunked-disk-image-format.md)).
+
+### Publish with `aero-image-chunker`
+
+From the repo root:
+
+```bash
+export AWS_ACCESS_KEY_ID=minioadmin
+export AWS_SECRET_ACCESS_KEY=minioadmin
+
+# Create a sample file (5 MiB).
+dd if=/dev/urandom of=./scratch.img bs=1M count=5
+
+cargo run --manifest-path tools/image-chunker/Cargo.toml -- publish \
+  --file ./scratch.img \
+  --bucket disk-images \
+  --prefix images/demo/sha256-test/ \
+  --endpoint http://localhost:9000 \
+  --force-path-style \
+  --region us-east-1 \
+  --chunk-size 1048576 \
+  --concurrency 4
+```
+
+### Verify with `curl`
+
+This compose setup makes the bucket anonymously readable, so you can verify without signing:
+
+```bash
+curl -fSs http://localhost:9000/disk-images/images/demo/sha256-test/manifest.json | head
+curl -fSsI http://localhost:9000/disk-images/images/demo/sha256-test/chunks/00000000.bin
+```

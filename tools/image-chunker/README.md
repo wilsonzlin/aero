@@ -46,7 +46,16 @@ Artifacts uploaded under the given prefix:
 
 ## Publish (MinIO)
 
-Assuming MinIO is running locally on `http://localhost:9000` and your bucket already exists:
+This repo includes a ready-to-run local MinIO setup at `infra/local-object-store/`.
+
+Start it:
+
+```bash
+cd infra/local-object-store
+docker compose up -d
+```
+
+Then publish to the default bucket (`disk-images`):
 
 ```bash
 export AWS_ACCESS_KEY_ID=minioadmin
@@ -54,7 +63,7 @@ export AWS_SECRET_ACCESS_KEY=minioadmin
 
 ./tools/image-chunker/target/release/aero-image-chunker publish \
   --file ./disk.img \
-  --bucket my-bucket \
+  --bucket disk-images \
   --prefix images/<imageId>/<version>/ \
   --image-id <imageId> \
   --image-version <version> \

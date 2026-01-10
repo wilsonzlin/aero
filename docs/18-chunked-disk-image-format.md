@@ -240,6 +240,8 @@ Because chunk URLs are versioned and immutable, they should be cached very aggre
 
 This section describes a high-level pipeline for taking an uploaded disk image and producing chunk objects + manifest.
 
+This repo includes a reference publisher CLI at [`tools/image-chunker/`](../tools/image-chunker/) (`aero-image-chunker publish`) that implements this pipeline for S3-compatible object stores (AWS S3, MinIO, etc).
+
 ### 3.1 Pipeline steps
 
 1. **Ingest disk image**
