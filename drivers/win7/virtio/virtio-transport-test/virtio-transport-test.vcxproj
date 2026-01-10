@@ -38,23 +38,23 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <NMakeBuildCommandLine>build -cZ &amp;&amp; copy /y "obj*\\i386\\virtio-transport-test.sys" "$(OutDir)"</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>build -cZ &amp;&amp; copy /y "obj*\\i386\\virtio-transport-test.sys" "$(OutDir)"</NMakeReBuildCommandLine>
+    <NMakeBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\i386\\virtio-transport-test.sys" copy /y "%%D\\i386\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\i386\\virtio-transport-test.sys" copy /y "%%D\\i386\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeReBuildCommandLine>
     <NMakeCleanCommandLine>build -c</NMakeCleanCommandLine>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <NMakeBuildCommandLine>build -cZ &amp;&amp; copy /y "obj*\\i386\\virtio-transport-test.sys" "$(OutDir)"</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>build -cZ &amp;&amp; copy /y "obj*\\i386\\virtio-transport-test.sys" "$(OutDir)"</NMakeReBuildCommandLine>
+    <NMakeBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\i386\\virtio-transport-test.sys" copy /y "%%D\\i386\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\i386\\virtio-transport-test.sys" copy /y "%%D\\i386\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeReBuildCommandLine>
     <NMakeCleanCommandLine>build -c</NMakeCleanCommandLine>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <NMakeBuildCommandLine>build -cZ &amp;&amp; copy /y "obj*\\amd64\\virtio-transport-test.sys" "$(OutDir)"</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>build -cZ &amp;&amp; copy /y "obj*\\amd64\\virtio-transport-test.sys" "$(OutDir)"</NMakeReBuildCommandLine>
+    <NMakeBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\amd64\\virtio-transport-test.sys" copy /y "%%D\\amd64\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\amd64\\virtio-transport-test.sys" copy /y "%%D\\amd64\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeReBuildCommandLine>
     <NMakeCleanCommandLine>build -c</NMakeCleanCommandLine>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <NMakeBuildCommandLine>build -cZ &amp;&amp; copy /y "obj*\\amd64\\virtio-transport-test.sys" "$(OutDir)"</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>build -cZ &amp;&amp; copy /y "obj*\\amd64\\virtio-transport-test.sys" "$(OutDir)"</NMakeReBuildCommandLine>
+    <NMakeBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\amd64\\virtio-transport-test.sys" copy /y "%%D\\amd64\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\amd64\\virtio-transport-test.sys" copy /y "%%D\\amd64\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeReBuildCommandLine>
     <NMakeCleanCommandLine>build -c</NMakeCleanCommandLine>
   </PropertyGroup>
   <ItemGroup>
