@@ -239,6 +239,13 @@ Command submission
 
 The D3D11 DDI is structurally similar to D3D10, with additional shader stages and optional view types.
 
+**Important D3D11 DDI split (device vs immediate context):**
+
+* Object creation/destruction lives on the **device function table** (`D3D11DDI_DEVICEFUNCS`) and is typically called with a `D3D11DDI_HDEVICE`.
+* Most draw/clear/update/state-binding calls live on the **immediate context function table** (`D3D11DDI_DEVICECONTEXTFUNCS`) and are called with a `D3D11DDI_HDEVICECONTEXT`.
+
+When implementing the Win7 D3D11 UMD, treat “device” and “context” as separate state holders even if your backend is single-threaded; it avoids conflating lifetime (device objects) with per-command-stream state (bindings and draws).
+
 Resources
 * `pfnCalcPrivateResourceSize` + `pfnCreateResource` + `pfnDestroyResource`
   * `D3D11DDIARG_CREATERESOURCE`
@@ -289,6 +296,8 @@ These can return `E_NOTIMPL` / set error until the driver claims a higher featur
 #### 2.2.3 Mandatory context/state binding + draw path
 
 At FL10_0, D3D11 essentially needs the D3D10-era pipeline:
+
+Immediate context function table: `D3D11DDI_DEVICECONTEXTFUNCS`
 
 Input Assembler
 * `pfnIaSetInputLayout`
