@@ -337,6 +337,88 @@ fn tcp_proxy_error_before_handshake_sends_rst() {
     );
 }
 
+#[test]
+fn udp_proxy_send_and_receive_roundtrip() {
+    let mut stack = NetworkStack::new(StackConfig::default());
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    dhcp_handshake(&mut stack, guest_mac);
+    stack.set_network_enabled(true);
+
+    let remote_ip = Ipv4Addr::new(203, 0, 113, 10);
+    let guest_port = 50000;
+    let remote_port = 9999;
+
+    let payload = b"hi";
+    let frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        guest_port,
+        remote_port,
+        payload,
+    );
+    let actions = stack.process_outbound_ethernet(&frame, 0);
+    assert_eq!(
+        actions,
+        vec![Action::UdpProxySend {
+            transport: aero_net_stack::UdpTransport::WebRtc,
+            src_port: guest_port,
+            dst_ip: remote_ip,
+            dst_port: remote_port,
+            data: payload.to_vec(),
+        }]
+    );
+
+    // Response from proxy -> guest.
+    let resp_actions = stack.handle_udp_proxy_event(
+        aero_net_stack::UdpProxyEvent {
+            src_ip: remote_ip,
+            src_port: remote_port,
+            dst_port: guest_port,
+            data: b"ok".to_vec(),
+        },
+        1,
+    );
+    let resp_frame = extract_single_frame(&resp_actions);
+    let udp = parse_udp_from_frame(&resp_frame);
+    assert_eq!(udp.src_port, remote_port);
+    assert_eq!(udp.dst_port, guest_port);
+    assert_eq!(udp.payload, b"ok");
+}
+
+#[test]
+fn udp_proxy_fallback_transport() {
+    let mut cfg = StackConfig::default();
+    cfg.webrtc_udp = false;
+    let mut stack = NetworkStack::new(cfg);
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    dhcp_handshake(&mut stack, guest_mac);
+    stack.set_network_enabled(true);
+
+    let remote_ip = Ipv4Addr::new(203, 0, 113, 10);
+    let frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        50001,
+        9999,
+        b"hi",
+    );
+    let actions = stack.process_outbound_ethernet(&frame, 0);
+    assert_eq!(
+        actions,
+        vec![Action::UdpProxySend {
+            transport: aero_net_stack::UdpTransport::Proxy,
+            src_port: 50001,
+            dst_ip: remote_ip,
+            dst_port: 9999,
+            data: b"hi".to_vec(),
+        }]
+    );
+}
+
 fn dhcp_handshake(stack: &mut NetworkStack, guest_mac: MacAddr) {
     let xid = 0x1020_3040;
     let discover = build_dhcp_discover(xid, guest_mac);
@@ -432,6 +514,14 @@ fn parse_tcp_from_frame(frame: &[u8]) -> TcpSegment<'_> {
     let ip = Ipv4Packet::parse(eth.payload).unwrap();
     assert_eq!(ip.protocol, Ipv4Protocol::TCP);
     TcpSegment::parse(ip.payload).unwrap()
+}
+
+fn parse_udp_from_frame(frame: &[u8]) -> UdpDatagram<'_> {
+    let eth = EthernetFrame::parse(frame).unwrap();
+    assert_eq!(eth.ethertype, EtherType::IPV4);
+    let ip = Ipv4Packet::parse(eth.payload).unwrap();
+    assert_eq!(ip.protocol, Ipv4Protocol::UDP);
+    UdpDatagram::parse(ip.payload).unwrap()
 }
 
 fn assert_dns_response_has_a_record(frame: &[u8], id: u16, addr: [u8; 4]) {
