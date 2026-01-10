@@ -472,6 +472,75 @@ static void test_bad_argument_null_cfg_space(void) {
     expect_result("bad_argument_null_cfg_space.res", res, VIRTIO_PCI_CAP_PARSE_ERR_BAD_ARGUMENT);
 }
 
+static void test_bad_argument_null_bars(void) {
+    uint8_t cfg[256];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+
+    res = virtio_pci_cap_parse(cfg, sizeof(cfg), NULL, &caps);
+    expect_result("bad_argument_null_bars.res", res, VIRTIO_PCI_CAP_PARSE_ERR_BAD_ARGUMENT);
+}
+
+static void test_bad_argument_null_out_caps(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_cap_parse_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+
+    res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, NULL);
+    expect_result("bad_argument_null_out_caps.res", res, VIRTIO_PCI_CAP_PARSE_ERR_BAD_ARGUMENT);
+}
+
+static void test_no_cap_list_ptr_zero(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x00;
+
+    res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("no_cap_list_ptr_zero.res", res, VIRTIO_PCI_CAP_PARSE_ERR_NO_CAP_LIST);
+}
+
+static void test_non_vendor_cap_ignored(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    /* Capability ID 0x05 (MSI) with next pointer to the virtio vendor caps. */
+    cfg[0x40] = 0x05;
+    cfg[0x41] = 0x50;
+
+    add_virtio_cap(cfg, 0x50, 0x64, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
+    add_virtio_notify_cap(cfg, 0x64, 0x78, 2, 0x2000, 0x200, 4);
+    add_virtio_cap(cfg, 0x78, 0x88, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 1, 0x3000, 0x10, 16);
+    add_virtio_cap(cfg, 0x88, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 4, 0x4000, 0x400, 16);
+
+    bars[0] = 0xA0000000ULL;
+    bars[1] = 0xB0000000ULL;
+    bars[2] = 0xC0000000ULL;
+    bars[4] = 0xD0000000ULL;
+
+    res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("non_vendor_cap_ignored.res", res, VIRTIO_PCI_CAP_PARSE_OK);
+}
+
 static void test_missing_common_cfg(void) {
     uint8_t cfg[256];
     uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
@@ -563,6 +632,10 @@ int main(void) {
     test_cap_header_truncated();
     test_cap_next_unaligned();
     test_bad_argument_null_cfg_space();
+    test_bad_argument_null_bars();
+    test_bad_argument_null_out_caps();
+    test_no_cap_list_ptr_zero();
+    test_non_vendor_cap_ignored();
     test_missing_common_cfg();
     test_missing_isr_cfg();
     test_missing_device_cfg();
