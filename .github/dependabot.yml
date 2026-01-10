@@ -43,11 +43,15 @@ updates:
       test-lint-tooling:
         patterns:
           - "@eslint/*"
+          - "@types/*"
           - "@typescript-eslint/*"
           - "@vitest/*"
           - "eslint"
           - "eslint-*"
+          - "tsx"
           - "typescript"
+          - "vite"
+          - "vite-*"
           - "vitest"
         update-types:
           - "minor"
@@ -55,11 +59,15 @@ updates:
       test-lint-tooling-major:
         patterns:
           - "@eslint/*"
+          - "@types/*"
           - "@typescript-eslint/*"
           - "@vitest/*"
           - "eslint"
           - "eslint-*"
+          - "tsx"
           - "typescript"
+          - "vite"
+          - "vite-*"
           - "vitest"
         update-types:
           - "major"
@@ -90,11 +98,16 @@ updates:
       test-lint-tooling:
         patterns:
           - "@eslint/*"
+          - "@types/*"
           - "@typescript-eslint/*"
           - "@vitest/*"
+          - "@webgpu/types"
           - "eslint"
           - "eslint-*"
+          - "tsx"
           - "typescript"
+          - "vite"
+          - "vite-*"
           - "vitest"
         update-types:
           - "minor"
@@ -102,11 +115,16 @@ updates:
       test-lint-tooling-major:
         patterns:
           - "@eslint/*"
+          - "@types/*"
           - "@typescript-eslint/*"
           - "@vitest/*"
+          - "@webgpu/types"
           - "eslint"
           - "eslint-*"
+          - "tsx"
           - "typescript"
+          - "vite"
+          - "vite-*"
           - "vitest"
         update-types:
           - "major"
@@ -137,11 +155,15 @@ updates:
       test-lint-tooling:
         patterns:
           - "@eslint/*"
+          - "@types/*"
           - "@typescript-eslint/*"
           - "@vitest/*"
           - "eslint"
           - "eslint-*"
+          - "tsx"
           - "typescript"
+          - "vite"
+          - "vite-*"
           - "vitest"
         update-types:
           - "minor"
@@ -149,11 +171,15 @@ updates:
       test-lint-tooling-major:
         patterns:
           - "@eslint/*"
+          - "@types/*"
           - "@typescript-eslint/*"
           - "@vitest/*"
           - "eslint"
           - "eslint-*"
+          - "tsx"
           - "typescript"
+          - "vite"
+          - "vite-*"
           - "vitest"
         update-types:
           - "major"
@@ -178,6 +204,38 @@ updates:
           - "@playwright/*"
           - "playwright"
           - "playwright-core"
+        update-types:
+          - "major"
+
+      test-lint-tooling:
+        patterns:
+          - "@eslint/*"
+          - "@types/*"
+          - "@typescript-eslint/*"
+          - "@vitest/*"
+          - "eslint"
+          - "eslint-*"
+          - "tsx"
+          - "typescript"
+          - "vite"
+          - "vite-*"
+          - "vitest"
+        update-types:
+          - "minor"
+          - "patch"
+      test-lint-tooling-major:
+        patterns:
+          - "@eslint/*"
+          - "@types/*"
+          - "@typescript-eslint/*"
+          - "@vitest/*"
+          - "eslint"
+          - "eslint-*"
+          - "tsx"
+          - "typescript"
+          - "vite"
+          - "vite-*"
+          - "vitest"
         update-types:
           - "major"
 
@@ -207,11 +265,15 @@ updates:
       test-lint-tooling:
         patterns:
           - "@eslint/*"
+          - "@types/*"
           - "@typescript-eslint/*"
           - "@vitest/*"
           - "eslint"
           - "eslint-*"
+          - "tsx"
           - "typescript"
+          - "vite"
+          - "vite-*"
           - "vitest"
         update-types:
           - "minor"
@@ -219,11 +281,15 @@ updates:
       test-lint-tooling-major:
         patterns:
           - "@eslint/*"
+          - "@types/*"
           - "@typescript-eslint/*"
           - "@vitest/*"
           - "eslint"
           - "eslint-*"
+          - "tsx"
           - "typescript"
+          - "vite"
+          - "vite-*"
           - "vitest"
         update-types:
           - "major"
@@ -254,11 +320,15 @@ updates:
       test-lint-tooling:
         patterns:
           - "@eslint/*"
+          - "@types/*"
           - "@typescript-eslint/*"
           - "@vitest/*"
           - "eslint"
           - "eslint-*"
+          - "tsx"
           - "typescript"
+          - "vite"
+          - "vite-*"
           - "vitest"
         update-types:
           - "minor"
@@ -266,23 +336,55 @@ updates:
       test-lint-tooling-major:
         patterns:
           - "@eslint/*"
+          - "@types/*"
           - "@typescript-eslint/*"
           - "@vitest/*"
           - "eslint"
           - "eslint-*"
+          - "tsx"
           - "typescript"
+          - "vite"
+          - "vite-*"
           - "vitest"
+        update-types:
+          - "major"
+
+  - package-ecosystem: "npm"
+    directory: "/proxy/webrtc-udp-relay/e2e"
+    schedule:
+      interval: "weekly"
+    allow:
+      - dependency-type: "development"
+    groups:
+      playwright:
+        patterns:
+          - "@playwright/*"
+          - "playwright"
+          - "playwright-core"
+        update-types:
+          - "minor"
+          - "patch"
+      playwright-major:
+        patterns:
+          - "@playwright/*"
+          - "playwright"
+          - "playwright-core"
         update-types:
           - "major"
 
       test-lint-tooling:
         patterns:
           - "@eslint/*"
+          - "@types/*"
           - "@typescript-eslint/*"
           - "@vitest/*"
+          - "@webgpu/types"
           - "eslint"
           - "eslint-*"
+          - "tsx"
           - "typescript"
+          - "vite"
+          - "vite-*"
           - "vitest"
         update-types:
           - "minor"
@@ -290,11 +392,16 @@ updates:
       test-lint-tooling-major:
         patterns:
           - "@eslint/*"
+          - "@types/*"
           - "@typescript-eslint/*"
           - "@vitest/*"
+          - "@webgpu/types"
           - "eslint"
           - "eslint-*"
+          - "tsx"
           - "typescript"
+          - "vite"
+          - "vite-*"
           - "vitest"
         update-types:
           - "major"
