@@ -166,6 +166,16 @@ if ($NoStampInfs) {
   }
 }
 
+$envInf2CatOs = [Environment]::GetEnvironmentVariable('AERO_INF2CAT_OS')
+if (-not [string]::IsNullOrWhiteSpace($envInf2CatOs)) {
+  if ($PSBoundParameters.ContainsKey('OsList')) {
+    Write-Host "AERO_INF2CAT_OS is set; overriding -OsList with: $envInf2CatOs"
+  } else {
+    Write-Host "Using AERO_INF2CAT_OS: $envInf2CatOs"
+  }
+  $OsList = @($envInf2CatOs)
+}
+
 $inputRootAbs = Resolve-RepoPath -Path $InputRoot
 $outputRootAbs = Resolve-RepoPath -Path $OutputRoot
 $toolchainJsonAbs = if ($ToolchainJson) { Resolve-RepoPath -Path $ToolchainJson } else { $null }
