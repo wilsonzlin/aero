@@ -4,6 +4,8 @@ pub const REG_CTRL: u32 = 0x0000;
 pub const REG_STATUS: u32 = 0x0008;
 pub const REG_EECD: u32 = 0x0010;
 pub const REG_EERD: u32 = 0x0014;
+pub const REG_CTRL_EXT: u32 = 0x0018;
+pub const REG_MDIC: u32 = 0x0020;
 
 pub const REG_ICR: u32 = 0x00c0;
 pub const REG_ICS: u32 = 0x00c8;
@@ -32,8 +34,8 @@ pub const REG_RAH0: u32 = 0x5404;
 pub const CTRL_RST: u32 = 1 << 26;
 
 pub const STATUS_FD: u32 = 1 << 0;
-pub const STATUS_LU: u32 = 1 << 2;
-pub const STATUS_SPEED_1000: u32 = 2 << 6;
+pub const STATUS_LU: u32 = 1 << 1;
+pub const STATUS_SPEED_1000: u32 = 1 << 7;
 
 pub const EECD_EE_PRES: u32 = 1 << 8;
 
@@ -41,6 +43,15 @@ pub const EERD_START: u32 = 1 << 0;
 pub const EERD_DONE: u32 = 1 << 4;
 pub const EERD_ADDR_SHIFT: u32 = 8;
 pub const EERD_DATA_SHIFT: u32 = 16;
+
+pub const MDIC_DATA_MASK: u32 = 0x0000_ffff;
+pub const MDIC_REG_SHIFT: u32 = 16;
+pub const MDIC_REG_MASK: u32 = 0x001f_0000;
+pub const MDIC_PHY_SHIFT: u32 = 21;
+pub const MDIC_PHY_MASK: u32 = 0x03e0_0000;
+pub const MDIC_OP_WRITE: u32 = 0x0400_0000;
+pub const MDIC_OP_READ: u32 = 0x0800_0000;
+pub const MDIC_READY: u32 = 0x1000_0000;
 
 pub const ICR_TXDW: u32 = 1 << 0;
 pub const ICR_RXT0: u32 = 1 << 7;
@@ -136,4 +147,3 @@ impl RxDesc {
         mem.write_u16(addr + 14, self.special);
     }
 }
-

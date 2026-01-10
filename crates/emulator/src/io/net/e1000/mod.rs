@@ -181,6 +181,8 @@ pub struct E1000Device {
     status: u32,
     eecd: u32,
     eerd: u32,
+    ctrl_ext: u32,
+    mdic: u32,
 
     // Interrupts
     icr: u32,
@@ -210,6 +212,7 @@ pub struct E1000Device {
 
     // EEPROM
     eeprom: [u16; 64],
+    phy: [u16; 32],
 
     // Internal queues
     rx_queue: VecDeque<Vec<u8>>,
@@ -233,6 +236,8 @@ impl E1000Device {
             status: 0,
             eecd: 0,
             eerd: 0,
+            ctrl_ext: 0,
+            mdic: 0,
             icr: 0,
             ims: 0,
             rctl: 0,
@@ -252,6 +257,7 @@ impl E1000Device {
             ra_valid: true,
             mta: [0; 128],
             eeprom: [0; 64],
+            phy: [0; 32],
             rx_queue: VecDeque::new(),
             irq_level: false,
             other_regs: HashMap::new(),
@@ -269,6 +275,8 @@ impl E1000Device {
 
         self.eecd = EECD_EE_PRES;
         self.eerd = 0;
+        self.ctrl_ext = 0;
+        self.mdic = MDIC_READY;
 
         self.icr = 0;
         self.ims = 0;
@@ -296,6 +304,14 @@ impl E1000Device {
         self.eeprom[0] = u16::from_le_bytes([self.mac[0], self.mac[1]]);
         self.eeprom[1] = u16::from_le_bytes([self.mac[2], self.mac[3]]);
         self.eeprom[2] = u16::from_le_bytes([self.mac[4], self.mac[5]]);
+
+        // Minimal PHY register surface for drivers that probe link state via MDIC.
+        // - BMSR (reg 1): link up + auto-negotiation complete.
+        // - PHY ID (regs 2/3): plausible Intel-ish values.
+        self.phy = [0; 32];
+        self.phy[1] = 0x0004 | 0x0020;
+        self.phy[2] = 0x0141;
+        self.phy[3] = 0x0cc2;
 
         self.update_irq_level();
     }
@@ -384,6 +400,8 @@ impl E1000Device {
             REG_STATUS => self.status,
             REG_EECD => self.eecd,
             REG_EERD => self.eerd,
+            REG_CTRL_EXT => self.ctrl_ext,
+            REG_MDIC => self.mdic,
 
             REG_ICR => self.icr,
             REG_ICS => 0,
@@ -422,6 +440,8 @@ impl E1000Device {
             REG_STATUS => self.status,
             REG_EECD => self.eecd,
             REG_EERD => self.eerd,
+            REG_CTRL_EXT => self.ctrl_ext,
+            REG_MDIC => self.mdic,
 
             REG_ICR => {
                 let val = self.icr;
@@ -468,8 +488,10 @@ impl E1000Device {
                     self.ctrl = value;
                 }
             }
-            REG_EECD => self.eecd = value,
+            REG_EECD => self.eecd = value | EECD_EE_PRES,
             REG_EERD => self.handle_eerd_write(value),
+            REG_CTRL_EXT => self.ctrl_ext = value,
+            REG_MDIC => self.handle_mdic_write(value),
 
             REG_ICS => {
                 self.icr |= value;
@@ -519,8 +541,25 @@ impl E1000Device {
         }
 
         let addr = ((value >> EERD_ADDR_SHIFT) & 0xff) as usize;
-        let data = self.eeprom.get(addr).copied().unwrap_or(0) as u32;
+        let data = self.eeprom.get(addr).copied().unwrap_or(0xffff) as u32;
         self.eerd = (data << EERD_DATA_SHIFT) | ((addr as u32) << EERD_ADDR_SHIFT) | EERD_DONE;
+    }
+
+    fn handle_mdic_write(&mut self, value: u32) {
+        let reg = ((value & MDIC_REG_MASK) >> MDIC_REG_SHIFT) as usize;
+        let data = (value & MDIC_DATA_MASK) as u16;
+
+        if (value & MDIC_OP_READ) != 0 {
+            let v = self.phy.get(reg).copied().unwrap_or(0) as u32;
+            self.mdic = (value & (MDIC_REG_MASK | MDIC_PHY_MASK)) | MDIC_READY | v;
+        } else if (value & MDIC_OP_WRITE) != 0 {
+            if let Some(slot) = self.phy.get_mut(reg) {
+                *slot = data;
+            }
+            self.mdic = (value & (MDIC_REG_MASK | MDIC_PHY_MASK)) | MDIC_READY | data as u32;
+        } else {
+            self.mdic = value | MDIC_READY;
+        }
     }
 
     fn ral0(&self) -> u32 {
@@ -808,5 +847,29 @@ mod tests {
         let icr = dev.io_read(0x4, 4);
         assert_eq!(icr & ICR_TXDW, ICR_TXDW);
         assert!(!dev.irq_level());
+    }
+
+    #[test]
+    fn mdic_reads_phy_registers_and_sets_ready() {
+        let mut dev = E1000Device::new([0, 1, 2, 3, 4, 5]);
+
+        // Read BMSR (reg 1) via MDIC.
+        let cmd = (1 << MDIC_REG_SHIFT) | (1 << MDIC_PHY_SHIFT) | MDIC_OP_READ;
+        dev.mmio_write(REG_MDIC, 4, cmd);
+        let mdic = dev.mmio_read(REG_MDIC, 4);
+        assert_ne!(mdic & MDIC_READY, 0);
+        assert_eq!(mdic & MDIC_DATA_MASK, 0x0004 | 0x0020);
+
+        // Write BMCR (reg 0) and read back.
+        let write_cmd =
+            (0 << MDIC_REG_SHIFT) | (1 << MDIC_PHY_SHIFT) | MDIC_OP_WRITE | 0x1234;
+        dev.mmio_write(REG_MDIC, 4, write_cmd);
+        let mdic = dev.mmio_read(REG_MDIC, 4);
+        assert_ne!(mdic & MDIC_READY, 0);
+        assert_eq!(mdic & MDIC_DATA_MASK, 0x1234);
+
+        dev.mmio_write(REG_MDIC, 4, (0 << MDIC_REG_SHIFT) | (1 << MDIC_PHY_SHIFT) | MDIC_OP_READ);
+        let mdic = dev.mmio_read(REG_MDIC, 4);
+        assert_eq!(mdic & MDIC_DATA_MASK, 0x1234);
     }
 }
