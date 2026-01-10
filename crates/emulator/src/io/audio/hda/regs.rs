@@ -26,18 +26,20 @@ pub const HDA_RIRBCTL: u32 = 0x5C;
 pub const HDA_RIRBSTS: u32 = 0x5D;
 pub const HDA_RIRBSIZE: u32 = 0x5E;
 
-pub const HDA_DPLBASE: u32 = 0x70;
-pub const HDA_DPUBASE: u32 = 0x74;
-
 // CORBSIZE/RIRBSIZE capability bits (RO) as defined by the Intel HDA spec.
 pub const RING_SIZE_CAP_2: u8 = 1 << 4;
 pub const RING_SIZE_CAP_16: u8 = 1 << 5;
 pub const RING_SIZE_CAP_256: u8 = 1 << 6;
 
+pub const HDA_DPLBASE: u32 = 0x70;
+pub const HDA_DPUBASE: u32 = 0x74;
+
 pub const HDA_SD0CTL: u32 = 0x80;
 pub const HDA_SD0LPIB: u32 = 0x84;
 pub const HDA_SD0CBL: u32 = 0x88;
 pub const HDA_SD0LVI: u32 = 0x8C;
+pub const HDA_SD0FIFOW: u32 = 0x8E;
+pub const HDA_SD0FIFOS: u32 = 0x90;
 pub const HDA_SD0FMT: u32 = 0x92;
 pub const HDA_SD0BDPL: u32 = 0x98;
 pub const HDA_SD0BDPU: u32 = 0x9C;
@@ -69,6 +71,7 @@ pub const RIRBCTL_INTCTL: u8 = 1 << 0;
 
 pub const SD_CTL_SRST: u32 = 1 << 0;
 pub const SD_CTL_RUN: u32 = 1 << 1;
+pub const SD_CTL_IOCE: u32 = 1 << 2;
 
 pub const SD_STS_BCIS: u8 = 1 << 2;
 
@@ -141,6 +144,8 @@ impl HdaMmioReg {
             HDA_SD0LPIB => Some(Self::Stream0(StreamReg::Lpib)),
             HDA_SD0CBL => Some(Self::Stream0(StreamReg::Cbl)),
             HDA_SD0LVI => Some(Self::Stream0(StreamReg::Lvi)),
+            HDA_SD0FIFOW => Some(Self::Stream0(StreamReg::Fifow)),
+            HDA_SD0FIFOS => Some(Self::Stream0(StreamReg::Fifos)),
             HDA_SD0FMT => Some(Self::Stream0(StreamReg::Fmt)),
             HDA_SD0BDPL => Some(Self::Stream0(StreamReg::Bdpl)),
             HDA_SD0BDPU => Some(Self::Stream0(StreamReg::Bdpu)),
@@ -184,6 +189,8 @@ pub enum StreamReg {
     Lpib,
     Cbl,
     Lvi,
+    Fifow,
+    Fifos,
     Fmt,
     Bdpl,
     Bdpu,

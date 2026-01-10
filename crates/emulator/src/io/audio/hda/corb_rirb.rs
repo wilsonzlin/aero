@@ -56,13 +56,19 @@ impl Corb {
         match reg {
             CorbReg::Lbase => self.lbase = value as u32,
             CorbReg::Ubase => self.ubase = value as u32,
-            CorbReg::Wp => self.wp = value as u16,
+            CorbReg::Wp => {
+                let entries = corb_entries(self.size);
+                let mask = entries.saturating_sub(1);
+                self.wp = (value as u16) & mask;
+            }
             CorbReg::Rp => {
                 let val = value as u16;
                 if val & 0x8000 != 0 {
                     self.rp = 0;
                 } else {
-                    self.rp = val;
+                    let entries = corb_entries(self.size);
+                    let mask = entries.saturating_sub(1);
+                    self.rp = val & mask;
                 }
             }
             CorbReg::Ctl => self.ctl = value as u8,
@@ -149,6 +155,7 @@ impl Rirb {
                 let val = value as u16;
                 if val & 0x8000 != 0 {
                     self.wp = 0;
+                    self.responses_since_irq = 0;
                 }
             }
             RirbReg::RintCnt => self.rintcnt = value as u16,

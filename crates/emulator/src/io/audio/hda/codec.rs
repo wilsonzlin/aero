@@ -303,10 +303,15 @@ fn audio_widget_caps(kind: NodeKind) -> u32 {
 }
 
 fn supported_pcm() -> u32 {
-    // Supported PCM sizes/rates. This is intentionally conservative:
-    // 44.1/48 kHz, 16-bit.
-    // Bits are codec specific in spec; drivers generally only need non-zero.
-    0x0000_0011
+    // PCM Size, Rate Capabilities (HDA spec).
+    // Advertise just enough for the common initial format Windows/Linux use:
+    // - 16-bit samples
+    // - 44.1 kHz and 48 kHz
+    //
+    // Bits:
+    // - sample sizes: 8/16/20/24/32 at bits 0..4
+    // - sample rates: 44.1k (bit 13) and 48k (bit 14)
+    (1 << 1) | (1 << 13) | (1 << 14)
 }
 
 fn pin_caps_output() -> u32 {

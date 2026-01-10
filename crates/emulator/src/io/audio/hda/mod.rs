@@ -425,7 +425,7 @@ mod tests {
         hda.mmio_write(HDA_SD0FMT, 2, 0x0011); // 48kHz, 16-bit, 2ch-ish
 
         // Start stream.
-        let ctl = (SD_CTL_SRST | SD_CTL_RUN) as u64;
+        let ctl = (SD_CTL_SRST | SD_CTL_RUN | SD_CTL_IOCE) as u64;
         hda.mmio_write(HDA_SD0CTL, 4, ctl);
 
         // One poll consumes one BDL entry (8 bytes).
@@ -554,7 +554,7 @@ mod tests {
         hda.mmio_write(HDA_SD1FMT, 2, 0x0010); // 48kHz, 16-bit, mono
 
         // Start stream.
-        let ctl = (SD_CTL_SRST | SD_CTL_RUN) as u64;
+        let ctl = (SD_CTL_SRST | SD_CTL_RUN | SD_CTL_IOCE) as u64;
         hda.mmio_write(HDA_SD1CTL, 4, ctl);
 
         hda.poll(&mut mem);

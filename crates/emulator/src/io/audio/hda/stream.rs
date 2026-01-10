@@ -189,6 +189,8 @@ pub struct HdaStream {
     lpib: u32,
     cbl: u32,
     lvi: u16,
+    fifow: u16,
+    fifos: u16,
     fmt: u16,
     bdpl: u32,
     bdpu: u32,
@@ -208,6 +210,8 @@ impl HdaStream {
             lpib: 0,
             cbl: 0,
             lvi: 0,
+            fifow: 0,
+            fifos: 0x20,
             fmt: 0,
             bdpl: 0,
             bdpu: 0,
@@ -223,12 +227,18 @@ impl HdaStream {
         self.lpib = 0;
         self.cbl = 0;
         self.lvi = 0;
+        self.fifow = 0;
+        self.fifos = 0x20;
         self.fmt = 0;
         self.bdpl = 0;
         self.bdpu = 0;
         self.bdl_index = 0;
         self.bdl_offset = 0;
         self.dma_scratch.clear();
+    }
+
+    pub fn lpib(&self) -> u32 {
+        self.lpib
     }
 
     fn bdl_base(&self) -> u64 {
@@ -239,10 +249,6 @@ impl HdaStream {
         (self.ctl & SD_CTL_RUN != 0) && (self.ctl & SD_CTL_SRST != 0)
     }
 
-    pub fn lpib(&self) -> u32 {
-        self.lpib
-    }
-
     pub fn mmio_read(&self, reg: StreamReg, size: usize) -> u64 {
         match reg {
             StreamReg::CtlSts => {
@@ -251,6 +257,8 @@ impl HdaStream {
             StreamReg::Lpib => self.lpib as u64 & mask_for_size(size),
             StreamReg::Cbl => self.cbl as u64 & mask_for_size(size),
             StreamReg::Lvi => self.lvi as u64 & mask_for_size(size),
+            StreamReg::Fifow => self.fifow as u64 & mask_for_size(size),
+            StreamReg::Fifos => self.fifos as u64 & mask_for_size(size),
             StreamReg::Fmt => self.fmt as u64 & mask_for_size(size),
             StreamReg::Bdpl => self.bdpl as u64 & mask_for_size(size),
             StreamReg::Bdpu => self.bdpu as u64 & mask_for_size(size),
@@ -289,6 +297,10 @@ impl HdaStream {
             }
             StreamReg::Cbl => self.cbl = value as u32,
             StreamReg::Lvi => self.lvi = value as u16,
+            StreamReg::Fifow => self.fifow = value as u16,
+            StreamReg::Fifos => {
+                let _ = value;
+            }
             StreamReg::Fmt => self.fmt = value as u16,
             StreamReg::Bdpl => self.bdpl = value as u32,
             StreamReg::Bdpu => self.bdpu = value as u32,
@@ -397,9 +409,8 @@ impl HdaStream {
         self.bdl_offset = 0;
         if entry.ioc {
             self.sts |= SD_STS_BCIS;
-            match self.id {
-                StreamId::Out0 => *intsts |= INTSTS_SIS0,
-                StreamId::In0 => *intsts |= INTSTS_SIS1,
+            if self.ctl & SD_CTL_IOCE != 0 {
+                *intsts |= self.intsts_bit();
             }
         }
 
