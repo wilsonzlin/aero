@@ -1,6 +1,28 @@
 #include "virtio_input.h"
 
+#if defined(_WIN32)
+#include <ntddk.h>
+#else
 #include <string.h>
+#endif
+
+static void virtio_input_memzero(void *ptr, size_t len)
+{
+#if defined(_WIN32)
+  RtlZeroMemory(ptr, len);
+#else
+  memset(ptr, 0, len);
+#endif
+}
+
+static void virtio_input_memcpy(void *dst, const void *src, size_t len)
+{
+#if defined(_WIN32)
+  RtlCopyMemory(dst, src, len);
+#else
+  memcpy(dst, src, len);
+#endif
+}
 
 #ifdef _WIN32
 static __forceinline PDEVICE_CONTEXT virtio_input_get_device_context(_In_ struct virtio_input_device *dev) {
@@ -17,7 +39,7 @@ static __forceinline void virtio_input_diag_update_ring_depth(_Inout_ PDEVICE_CO
 #endif
 
 static void virtio_input_report_ring_init(struct virtio_input_report_ring *ring) {
-  memset(ring, 0, sizeof(*ring));
+  virtio_input_memzero(ring, sizeof(*ring));
 }
 
 static void virtio_input_report_ring_push(struct virtio_input_device *dev, const uint8_t *data, size_t len) {
@@ -66,7 +88,7 @@ static void virtio_input_report_ring_push(struct virtio_input_device *dev, const
   {
     struct virtio_input_report *slot = &ring->reports[ring->head];
     slot->len = (uint8_t)len;
-    memcpy(slot->data, data, len);
+    virtio_input_memcpy(slot->data, data, len);
 
     ring->head = (ring->head + 1u) % VIRTIO_INPUT_REPORT_RING_CAPACITY;
     ring->count++;
@@ -112,7 +134,7 @@ static void virtio_input_emit_report(void *context, const uint8_t *report, size_
 void virtio_input_device_init(struct virtio_input_device *dev, virtio_input_report_ready_fn report_ready,
                               void *report_ready_context, virtio_input_lock_fn lock, virtio_input_lock_fn unlock,
                               void *lock_context) {
-  memset(dev, 0, sizeof(*dev));
+  virtio_input_memzero(dev, sizeof(*dev));
   virtio_input_report_ring_init(&dev->report_ring);
   dev->lock = lock;
   dev->unlock = unlock;

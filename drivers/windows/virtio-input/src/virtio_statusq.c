@@ -26,11 +26,48 @@ typedef struct _VIOINPUT_SG_ENTRY {
     ULONG Length;
 } VIOINPUT_SG_ENTRY, *PVIOINPUT_SG_ENTRY;
 
-// virtqueue API is provided by the virtio-win support library.
-int virtqueue_add_buf(struct virtqueue* Vq, PVOID Sg, unsigned int OutNum, unsigned int InNum, void* Data, int Gfp);
-void virtqueue_kick(struct virtqueue* Vq);
-void* virtqueue_get_buf(struct virtqueue* Vq, unsigned int* Len);
-void* virtqueue_detach_unused_buf(struct virtqueue* Vq);
+/*
+ * The virtio-input driver will eventually provide a real virtqueue
+ * implementation (split ring) and wire `StatusQ->Vq` to it.
+ *
+ * For now, keep the KMDF HID skeleton buildable on Win7 by providing local
+ * no-op stubs. They are only used when a statusq is actually instantiated,
+ * which the current skeleton does not do.
+ */
+struct virtqueue {
+    ULONG Reserved;
+};
+
+static int virtqueue_add_buf(struct virtqueue* Vq, PVOID Sg, unsigned int OutNum, unsigned int InNum, void* Data, int Gfp)
+{
+    UNREFERENCED_PARAMETER(Vq);
+    UNREFERENCED_PARAMETER(Sg);
+    UNREFERENCED_PARAMETER(OutNum);
+    UNREFERENCED_PARAMETER(InNum);
+    UNREFERENCED_PARAMETER(Data);
+    UNREFERENCED_PARAMETER(Gfp);
+    return -1;
+}
+
+static void virtqueue_kick(struct virtqueue* Vq)
+{
+    UNREFERENCED_PARAMETER(Vq);
+}
+
+static void* virtqueue_get_buf(struct virtqueue* Vq, unsigned int* Len)
+{
+    UNREFERENCED_PARAMETER(Vq);
+    if (Len != NULL) {
+        *Len = 0;
+    }
+    return NULL;
+}
+
+static void* virtqueue_detach_unused_buf(struct virtqueue* Vq)
+{
+    UNREFERENCED_PARAMETER(Vq);
+    return NULL;
+}
 
 #define VIOINPUT_GFP_ATOMIC 0
 

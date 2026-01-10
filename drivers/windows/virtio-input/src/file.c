@@ -131,7 +131,8 @@ static VOID VirtioInputEvtFileCleanup(_In_ WDFFILEOBJECT FileObject)
     WDFDEVICE device = WdfFileObjectGetDevice(FileObject);
     PDEVICE_CONTEXT devCtx = VirtioInputGetDeviceContext(device);
 
-    for (UCHAR i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
+    UCHAR i;
+    for (i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
         if (devCtx->ReadReportQueue[i] == NULL) {
             continue;
         }

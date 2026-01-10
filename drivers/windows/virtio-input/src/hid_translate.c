@@ -1,6 +1,28 @@
 #include "hid_translate.h"
 
+#if defined(_WIN32)
+#include <ntddk.h>
+#else
 #include <string.h>
+#endif
+
+static void hid_translate_memzero(void *ptr, size_t len)
+{
+#if defined(_WIN32)
+  RtlZeroMemory(ptr, len);
+#else
+  memset(ptr, 0, len);
+#endif
+}
+
+static void hid_translate_memcpy(void *dst, const void *src, size_t len)
+{
+#if defined(_WIN32)
+  RtlCopyMemory(dst, src, len);
+#else
+  memcpy(dst, src, len);
+#endif
+}
 
 /* -------------------------------------------------------------------------- */
 /* Little-endian helpers                                                      */
@@ -25,7 +47,7 @@ static uint32_t hid_translate_le32_to_cpu(uint32_t v) {
 
 static int32_t hid_translate_i32_from_u32_bits(uint32_t u) {
   int32_t i;
-  memcpy(&i, &u, sizeof(i));
+  hid_translate_memcpy(&i, &u, sizeof(i));
   return i;
 }
 
@@ -122,7 +144,8 @@ static const struct hid_translate_keymap_entry kLinuxToHidKeymap[] = {
 };
 
 uint8_t hid_translate_linux_key_to_hid_usage(uint16_t linux_key_code) {
-  for (size_t i = 0; i < (sizeof(kLinuxToHidKeymap) / sizeof(kLinuxToHidKeymap[0])); ++i) {
+  size_t i;
+  for (i = 0; i < (sizeof(kLinuxToHidKeymap) / sizeof(kLinuxToHidKeymap[0])); ++i) {
     if (kLinuxToHidKeymap[i].linux_key_code == linux_key_code) {
       return kLinuxToHidKeymap[i].hid_usage;
     }
@@ -158,7 +181,8 @@ static uint8_t hid_translate_linux_key_to_modifier_bit(uint16_t linux_key_code) 
 }
 
 static bool hid_translate_keyboard_list_contains(const struct hid_translate *t, uint8_t usage) {
-  for (uint8_t i = 0; i < t->keyboard_pressed_len; ++i) {
+  uint8_t i;
+  for (i = 0; i < t->keyboard_pressed_len; ++i) {
     if (t->keyboard_pressed[i] == usage) {
       return true;
     }
@@ -167,13 +191,15 @@ static bool hid_translate_keyboard_list_contains(const struct hid_translate *t, 
 }
 
 static bool hid_translate_keyboard_list_remove(struct hid_translate *t, uint8_t usage) {
-  for (uint8_t i = 0; i < t->keyboard_pressed_len; ++i) {
+  uint8_t i;
+  uint8_t j;
+  for (i = 0; i < t->keyboard_pressed_len; ++i) {
     if (t->keyboard_pressed[i] != usage) {
       continue;
     }
 
     /* Stable remove. */
-    for (uint8_t j = (uint8_t)(i + 1); j < t->keyboard_pressed_len; ++j) {
+    for (j = (uint8_t)(i + 1); j < t->keyboard_pressed_len; ++j) {
       t->keyboard_pressed[j - 1] = t->keyboard_pressed[j];
     }
     t->keyboard_pressed_len--;
@@ -196,12 +222,13 @@ static bool hid_translate_keyboard_list_append(struct hid_translate *t, uint8_t 
 
 static void hid_translate_emit_keyboard_report(struct hid_translate *t) {
   uint8_t report[HID_TRANSLATE_KEYBOARD_REPORT_SIZE];
-  memset(report, 0, sizeof(report));
+  uint8_t i;
+  hid_translate_memzero(report, sizeof(report));
 
   report[0] = HID_TRANSLATE_REPORT_ID_KEYBOARD;
   report[1] = t->keyboard_modifiers;
   report[2] = 0;
-  for (uint8_t i = 0; i < 6; ++i) {
+  for (i = 0; i < 6; ++i) {
     report[3 + i] = (i < t->keyboard_pressed_len) ? t->keyboard_pressed[i] : 0;
   }
 
@@ -341,7 +368,7 @@ static void hid_translate_emit_mouse_reports(struct hid_translate *t) {
 /* -------------------------------------------------------------------------- */
 
 void hid_translate_init(struct hid_translate *t, hid_translate_emit_report_fn emit_report, void *emit_report_context) {
-  memset(t, 0, sizeof(*t));
+  hid_translate_memzero(t, sizeof(*t));
   t->emit_report = emit_report;
   t->emit_report_context = emit_report_context;
 }
