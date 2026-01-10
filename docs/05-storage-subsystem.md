@@ -713,9 +713,8 @@ impl StreamingDisk {
             }
         }
 
-        // NOTE: Cross-origin `Range` requests trigger a CORS preflight, and including an
-        // `Authorization` header requires allowing it in CORS (same-origin `/disk/...` avoids
-        // CORS entirely).
+        // NOTE: Cross-origin requests with `Range` (and `Authorization` when present) trigger a
+        // CORS preflight; prefer a same-origin `/disk/...` endpoint to avoid preflight entirely.
         let mut headers = vec![
             ("Range".to_string(), format!("bytes={}-{}", start, end - 1)),
         ];
@@ -840,6 +839,8 @@ If you prefer the **signed URL** style instead of an `Authorization` header, the
 #### CORS/COEP constraints for Range streaming
 
 - `Range` header → **CORS preflight on cross-origin** requests.
+- If using bearer tokens via `Authorization`, cross-origin fetches also require allowing the
+  `Authorization` request header in CORS preflight.
 - Prefer a **same-origin** disk streaming endpoint (e.g., `/disk/...`) to avoid preflight and simplify COEP/cross-origin isolation.
 - If cross-origin is unavoidable, the disk server must return the CORS/COEP/CORP headers defined in [16 - Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md).
 
