@@ -229,19 +229,24 @@ pub trait GpuCommandProcessor {
 
 
 ### DirectX-10/11 Tasks
-
-
-| ID     | Task                         | Priority | Dependencies   | Complexity |
-| ------ | ---------------------------- | -------- | -------------- | ---------- |
-| D1-001 | Shader model 4.0 translation | P1       | D9-003         | High       |
-| D1-002 | Shader model 5.0 translation | P1       | D1-001         | High       |
-| D1-003 | Geometry shader support      | P1       | D1-001         | High       |
-| D1-004 | Stream output                | P2       | D1-003         | Medium     |
-| D1-005 | Tessellation shaders         | P2       | D1-002         | High       |
-| D1-006 | Compute shaders              | P2       | D1-002         | High       |
-| D1-007 | Constant buffers             | P1       | None           | Medium     |
-| D1-008 | Structured buffers           | P2       | None           | Medium     |
-| D1-009 | D3D10/11 test suite          | P1       | D1-001..D1-007 | High       |
+ 
+ 
+| ID     | Task                                                                  | Priority | Dependencies           | Complexity |
+| ------ | --------------------------------------------------------------------- | -------- | ---------------------- | ---------- |
+| D1-001 | Extend DXBC parser for SM4/SM5 (SHEX/SHDR + ISGN/OSGN/RDEF reflection) | P1       | D9-001                 | High       |
+| D1-002 | Shader model 4.0 VS/PS translation (core ALU/flow/sampling)            | P1       | D1-001                 | High       |
+| D1-003 | Shader model 5.0 VS/PS translation (typed resources, integer ops)      | P1       | D1-002                 | High       |
+| D1-004 | Constant buffers (cbuffers) binding + dynamic update/renaming          | P1       | WG-004, D1-001         | Medium     |
+| D1-005 | Resource views: SRV/RTV/DSV (textures + texture arrays)                | P1       | WG-005                 | High       |
+| D1-006 | Input layouts + semantic→location mapping + instancing step rate        | P1       | D1-001, WG-002         | High       |
+| D1-007 | Blend/depth/rasterizer state objects                                   | P1       | WG-002                 | High       |
+| D1-008 | DrawIndexed/baseVertex + instancing + indirect draws                   | P1       | WG-002, WG-004         | Medium     |
+| D1-009 | Synchronization primitives (queries/event queries/fences)              | P1       | WG-008                 | Medium     |
+| D1-010 | Geometry shader support (lowering/emulation path)                      | P1       | D1-003                 | High       |
+| D1-011 | Structured buffers + UAV support (storage buffers/textures)            | P2       | D1-003, WG-004, WG-005 | High       |
+| D1-012 | Compute shaders + dispatch                                              | P2       | D1-003, WG-003         | High       |
+| D1-013 | Tessellation shaders (HS/DS) emulation                                  | P2       | D1-012                 | Very High  |
+| D1-014 | D3D10/11 conformance suite (pixel compare scenes + perf sanity)        | P1       | D1-002..D1-009         | High       |
 
 
 ### WebGPU Backend Tasks

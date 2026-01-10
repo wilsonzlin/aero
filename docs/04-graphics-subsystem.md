@@ -255,7 +255,12 @@ impl GpuCommandProcessor {
 
 ---
 
-## Shader Translation (HLSL → WGSL)
+## Shader Translation (DXBC → WGSL)
+
+This section sketches the DXBC parsing and WGSL generation pipeline at a high level.
+For the D3D10/11-specific details (SM4/SM5 resource binding, constant buffers, SRV/UAV/RTV/DSV, input layouts, pipeline-state caching, and shader-stage coverage), see:
+
+- [16 - Direct3D 10/11 Translation (SM4/SM5 → WebGPU)](./16-d3d10-11-translation.md)
 
 ### Translation Pipeline
 
@@ -420,6 +425,9 @@ impl WgslGenerator {
         let (entry_point, input_type, output_type) = match ir.shader_type {
             ShaderType::Vertex => ("vs_main", "VertexInput", "VertexOutput"),
             ShaderType::Pixel => ("fs_main", "FragmentInput", "FragmentOutput"),
+            ShaderType::Geometry => ("gs_main", "GeometryInput", "GeometryOutput"), // lowered/emulated on WebGPU
+            ShaderType::Hull => ("hs_main", "HullInput", "HullOutput"),             // lowered/emulated on WebGPU
+            ShaderType::Domain => ("ds_main", "DomainInput", "DomainOutput"),       // lowered/emulated on WebGPU
             ShaderType::Compute => ("cs_main", "ComputeInput", "void"),
         };
         
@@ -507,6 +515,11 @@ impl WgslGenerator {
 ## DirectX State Translation
 
 ### Render State Mapping
+
+The table below illustrates a D3D9-style “render state” mapping.
+D3D10/11 replaces most of these knobs with explicit state objects (blend/depth-stencil/rasterizer/sampler) and view-based binding; see:
+
+- [16 - Direct3D 10/11 Translation (SM4/SM5 → WebGPU)](./16-d3d10-11-translation.md)
 
 | DirectX State | WebGPU Equivalent |
 |---------------|-------------------|
@@ -922,3 +935,4 @@ impl ShaderCache {
 - See [Audio Subsystem](./06-audio-subsystem.md) for sound emulation
 - See [Performance Optimization](./10-performance-optimization.md) for GPU perf tips
 - See [Task Breakdown](./15-agent-task-breakdown.md) for graphics tasks
+- See [Direct3D 10/11 Translation](./16-d3d10-11-translation.md) for SM4/SM5 pipeline/resource details

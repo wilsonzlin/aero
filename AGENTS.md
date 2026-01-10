@@ -38,8 +38,9 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 13. [Legal & Licensing Considerations](./docs/13-legal-considerations.md)
 14. [Project Milestones & Roadmap](./docs/14-project-milestones.md)
 15. [Task Breakdown & Work Organization](./docs/15-agent-task-breakdown.md)
-16. [Windows 7 Guest Tools Install Guide](./docs/windows7-guest-tools.md)
-17. [Windows 7 Driver Troubleshooting](./docs/windows7-driver-troubleshooting.md)
+16. [Direct3D 10/11 Translation (SM4/SM5 → WebGPU)](./docs/16-d3d10-11-translation.md)
+17. [Windows 7 Guest Tools Install Guide](./docs/windows7-guest-tools.md)
+18. [Windows 7 Driver Troubleshooting](./docs/windows7-driver-troubleshooting.md)
 
 ---
 
@@ -323,6 +324,7 @@ pub trait DisplayAdapter {
 | [13-legal-considerations.md](./docs/13-legal-considerations.md)         | Licensing, IP concerns                 | All               |
 | [14-project-milestones.md](./docs/14-project-milestones.md)             | Timeline, deliverables                 | All               |
 | [15-agent-task-breakdown.md](./docs/15-agent-task-breakdown.md)         | Parallelizable work items              | All               |
+| [16-d3d10-11-translation.md](./docs/16-d3d10-11-translation.md)          | Direct3D 10/11 translation details     | Graphics          |
 | [windows7-guest-tools.md](./docs/windows7-guest-tools.md)               | End-user guide: install Guest Tools and switch to virtio + Aero GPU | All |
 | [windows7-driver-troubleshooting.md](./docs/windows7-driver-troubleshooting.md) | End-user guide: Windows 7 driver/signing troubleshooting | All |
 

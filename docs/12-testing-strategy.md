@@ -258,7 +258,7 @@ async fn test_windows_7_boot() {
 ```
 
 ### Graphics Tests
-
+ 
 ```rust
 #[wasm_bindgen_test]
 async fn test_vga_text_mode() {
@@ -297,8 +297,43 @@ async fn test_directx_triangle() {
 }
 ```
 
-### Input Tests
+#### D3D10/11 Conformance Scenes (SM4/SM5)
 
+As D3D10/11 support comes online, grow a small suite of shader-based scenes that render to an offscreen texture and use pixel-compare against known-good outputs.
+The intent is to validate the translator at the level D3D apps actually stress:
+
+- constant buffers (cbuffers) and update patterns
+- resource views (SRV/RTV/DSV, later UAV)
+- input layout semantics mapping
+- blend/depth/rasterizer state objects
+- instancing and `baseVertex`
+
+See: [16 - Direct3D 10/11 Translation (SM4/SM5 → WebGPU)](./16-d3d10-11-translation.md#conformance-suite-sm45--d3d11-features)
+
+```rust
+#[wasm_bindgen_test]
+async fn test_d3d11_sm5_constant_buffer_updates() {
+    let mut gpu = GpuEmulator::new().await;
+
+    // Load SM5 DXBC shaders (VS/PS).
+    gpu.d3d11_set_vertex_shader(SM5_TRIANGLE_VS_DXBC);
+    gpu.d3d11_set_pixel_shader(SM5_COLOR_PS_DXBC);
+
+    // Update cb0 every frame (WRITE_DISCARD-like pattern).
+    for frame in 0..4 {
+        gpu.d3d11_update_constant_buffer(0, &FrameConstants {
+            color: [frame as f32 / 3.0, 0.0, 0.0, 1.0],
+        });
+        gpu.d3d11_draw_triangle();
+    }
+
+    let output = gpu.present().await;
+    assert!(image_matches(output, "expected/d3d11_sm5_cb_updates.png", 0.995));
+}
+```
+
+### Input Tests
+ 
 ```rust
 #[test]
 fn test_keyboard_scancode_translation() {
@@ -441,6 +476,12 @@ fn bench_graphics_frame(b: &mut Bencher) {
     });
 }
 ```
+
+For D3D10/11 specifically, add a “many draws” microbench once the translation layer exists:
+
+- 1–10k draw calls with a stable pipeline key (measures per-draw binding overhead)
+- pipeline churn test (measures pipeline-cache behavior and compilation costs)
+- constant-buffer update bandwidth (measures ring allocator / renaming strategy)
 
 ---
 
