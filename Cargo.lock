@@ -65,6 +65,7 @@ name = "aero-cpu"
 version = "0.1.0"
 dependencies = [
  "aero-core",
+ "aero-jit",
  "iced-x86",
  "thiserror 1.0.69",
 ]

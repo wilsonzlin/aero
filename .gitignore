@@ -43,6 +43,7 @@ pkg/
 .cache/
 *.tsbuildinfo
 *.wasm
+*.wat
 web/dist/
 bench/output/
 

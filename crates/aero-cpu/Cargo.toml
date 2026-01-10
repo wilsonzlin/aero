@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 aero-core = { path = "../aero-core" }
+aero-jit = { path = "../aero-jit" }
 iced-x86.workspace = true
 thiserror.workspace = true
-
 [dev-dependencies]

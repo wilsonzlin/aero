@@ -23,3 +23,15 @@ mod tier;
 
 pub use microvm::{Cond, FuncId, Gpr, Program, Vm};
 pub use tier::{Engine, EngineStats, JitConfig};
+
+// -------------------------------------------------------------------------------------------------
+// Tier-1 baseline x86 pipeline (block discovery → IR → WASM emission).
+// -------------------------------------------------------------------------------------------------
+//
+// This is intentionally minimal and is expected to grow toward the Tier-1 JIT
+// described in `docs/02-cpu-emulation.md`.
+pub mod block;
+pub mod cpu;
+pub mod ir;
+pub mod wasm;
+pub mod x86;
