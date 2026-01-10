@@ -1,0 +1,11 @@
+[package]
+name = "aero-dxbc"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+md5 = ["dep:md5"]
+
+[dependencies]
+md5 = { version = "0.7.0", optional = true }

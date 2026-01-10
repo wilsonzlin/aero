@@ -8,6 +8,7 @@ members = [
     "crates/aero-storage-server",
     "crates/aero-webgpu",
     "crates/aero_cpu_core",
+    "crates/aero-dxbc",
     "crates/devices",
     "crates/emulator",
     "crates/firmware",
