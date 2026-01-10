@@ -1,0 +1,11 @@
+TARGETNAME=aerovblk
+TARGETTYPE=DRIVER
+DRIVERTYPE=MINIPORT
+
+INCLUDES=include;..\common\include
+
+SOURCES=src\aerovblk.c \
+        ..\common\src\aerovirtio_pci_legacy.c \
+        ..\common\src\aerovirtio_ring.c
+
+TARGETLIBS=$(DDK_LIB_PATH)\storport.lib
