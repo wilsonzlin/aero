@@ -551,6 +551,11 @@ Common root causes / fixes:
 * `$OEM$` wasn’t processed from CD1 (see [open questions](#5-explicit-notes-on-the-open-questions-config-set-config-iso-oem)).
 * The file path inside `$OEM$` is wrong (must be exactly `$$\Setup\Scripts\SetupComplete.cmd`).
 * Script ran but failed immediately; make the script write a first-line log entry before doing anything else.
+* If `$OEM$` processing is unreliable in your environment, don’t depend on it for `SetupComplete.cmd` delivery:
+  * Put `SetupComplete.cmd` on your config media and copy it into `%WINDIR%\Setup\Scripts\` via a `specialize` `RunSynchronous` command in `autounattend.xml`.
+  * Reference implementations exist in the repo’s templates; see:
+    * [`docs/16-win7-unattended-install.md`](./16-win7-unattended-install.md)
+    * [`windows/win7-sp1/unattend/`](../windows/win7-sp1/unattend/)
 
 ---
 
