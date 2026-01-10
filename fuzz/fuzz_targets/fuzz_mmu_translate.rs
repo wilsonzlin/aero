@@ -24,7 +24,9 @@ fuzz_target!(|data: &[u8]| {
     }
 
     let cr0 = parse_u64_le(&data[0x00..0x08]);
-    let cr3 = parse_u64_le(&data[0x08..0x10]);
+    // Keep CR3 inside our synthetic RAM so the fuzzer can reach deeper page-walk states without
+    // having to guess a large physical address space.
+    let cr3 = (parse_u64_le(&data[0x08..0x10]) & !0xfff) % (RAM_SIZE as u64);
     let cr4 = parse_u64_le(&data[0x10..0x18]);
     let efer = parse_u64_le(&data[0x18..0x20]);
     let cpl = data[0x20] & 3;

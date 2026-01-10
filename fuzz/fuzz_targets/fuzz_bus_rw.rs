@@ -4,6 +4,8 @@ use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 use memory::{Bus, MmioHandler};
 
+const ADDR_SPACE: u64 = 64 * 1024;
+
 #[derive(Default)]
 struct RecordingMmio {
     log: Vec<(bool, u64, usize, u64)>,
@@ -50,7 +52,7 @@ fn run(data: &[u8]) -> Vec<u64> {
     let map_ops: usize = u.int_in_range(0usize..=16).unwrap_or(0);
     for _ in 0..map_ops {
         let kind: u8 = u.int_in_range(0u8..=1).unwrap_or(0);
-        let start: u64 = u.arbitrary().unwrap_or(0);
+        let start: u64 = u.arbitrary().unwrap_or(0) % ADDR_SPACE;
         let len: u16 = u.arbitrary().unwrap_or(0);
         let len = len as u64;
         if len == 0 {
@@ -75,7 +77,7 @@ fn run(data: &[u8]) -> Vec<u64> {
     let mut ops = Vec::with_capacity(rw_ops);
     for _ in 0..rw_ops {
         let is_write: bool = u.arbitrary().unwrap_or(false);
-        let addr: u64 = u.arbitrary().unwrap_or(0);
+        let addr: u64 = u.arbitrary().unwrap_or(0) % ADDR_SPACE;
         let size_pow: u8 = u.int_in_range(0u8..=3).unwrap_or(0);
         let size = 1usize << size_pow;
         if is_write {
