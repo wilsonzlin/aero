@@ -39,11 +39,33 @@
 #define IOCTL_HID_GET_REPORT_DESCRIPTOR HID_CTL_CODE(1)
 #endif
 
+#ifndef IOCTL_HID_GET_DEVICE_DESCRIPTOR
+#define IOCTL_HID_GET_DEVICE_DESCRIPTOR HID_CTL_CODE(0)
+#endif
+
 // Historical/alternate function code seen in some header sets. If our primary
 // definition fails at runtime, we try this as a fallback.
 #ifndef IOCTL_HID_GET_REPORT_DESCRIPTOR_ALT
 #define IOCTL_HID_GET_REPORT_DESCRIPTOR_ALT HID_CTL_CODE(103)
 #endif
+
+#ifndef HID_REPORT_DESCRIPTOR_TYPE
+#define HID_REPORT_DESCRIPTOR_TYPE 0x22
+#endif
+
+#pragma pack(push, 1)
+typedef struct HID_DESCRIPTOR_MIN {
+    BYTE bLength;
+    BYTE bDescriptorType;
+    USHORT bcdHID;
+    BYTE bCountry;
+    BYTE bNumDescriptors;
+    struct {
+        BYTE bReportType;
+        USHORT wDescriptorLength;
+    } DescriptorList[1];
+} HID_DESCRIPTOR_MIN;
+#pragma pack(pop)
 
 typedef struct OPTIONS {
     int list_only;
@@ -70,6 +92,8 @@ typedef struct SELECTED_DEVICE {
     int caps_valid;
     DWORD report_desc_len;
     int report_desc_valid;
+    DWORD hid_report_desc_len;
+    int hid_report_desc_valid;
 } SELECTED_DEVICE;
 
 static void print_win32_error_w(const wchar_t *prefix, DWORD err)
@@ -370,6 +394,50 @@ static int query_report_descriptor_length(HANDLE handle, DWORD *len_out)
     return 1;
 }
 
+static int query_hid_descriptor_report_length(HANDLE handle, DWORD *len_out)
+{
+    BYTE buf[256];
+    DWORD bytes = 0;
+    BOOL ok;
+    const HID_DESCRIPTOR_MIN *desc;
+    DWORD min_bytes;
+    DWORD i;
+
+    if (len_out == NULL) {
+        return 0;
+    }
+
+    ZeroMemory(buf, sizeof(buf));
+    ok = DeviceIoControl(handle, IOCTL_HID_GET_DEVICE_DESCRIPTOR, NULL, 0, buf, (DWORD)sizeof(buf),
+                         &bytes, NULL);
+    if (!ok) {
+        return 0;
+    }
+
+    if (bytes < sizeof(HID_DESCRIPTOR_MIN)) {
+        return 0;
+    }
+
+    desc = (const HID_DESCRIPTOR_MIN *)buf;
+    min_bytes = (DWORD)(6 + desc->bNumDescriptors * 3);
+    if (bytes < min_bytes) {
+        return 0;
+    }
+
+    // Look for the report descriptor entry.
+    for (i = 0; i < desc->bNumDescriptors; i++) {
+        const BYTE *entry = buf + 6 + i * 3;
+        BYTE report_type = entry[0];
+        USHORT report_len = (USHORT)(entry[1] | ((USHORT)entry[2] << 8));
+        if (report_type == HID_REPORT_DESCRIPTOR_TYPE) {
+            *len_out = report_len;
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 static HANDLE open_hid_path(const WCHAR *path, DWORD *desired_access_out)
 {
     HANDLE h;
@@ -434,6 +502,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         int attr_valid = 0;
         DWORD report_desc_len = 0;
         int report_desc_valid = 0;
+        DWORD hid_report_desc_len = 0;
+        int hid_report_desc_valid = 0;
         int match = 0;
         int is_virtio = 0;
         int is_keyboard = 0;
@@ -493,6 +563,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         ZeroMemory(&caps, sizeof(caps));
         caps_valid = query_hid_caps(handle, &caps);
         report_desc_valid = query_report_descriptor_length(handle, &report_desc_len);
+        hid_report_desc_valid = query_hid_descriptor_report_length(handle, &hid_report_desc_len);
 
         wprintf(L"[%lu] %ls\n", iface_index, detail->DevicePath);
         if (attr_valid) {
@@ -517,6 +588,15 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             wprintf(L"      Report descriptor length: %lu bytes\n", report_desc_len);
         } else {
             wprintf(L"      IOCTL_HID_GET_REPORT_DESCRIPTOR failed\n");
+        }
+        if (hid_report_desc_valid) {
+            wprintf(L"      HID descriptor report length: %lu bytes\n", hid_report_desc_len);
+        } else {
+            wprintf(L"      IOCTL_HID_GET_DEVICE_DESCRIPTOR failed\n");
+        }
+        if (report_desc_valid && hid_report_desc_valid && report_desc_len != hid_report_desc_len) {
+            wprintf(L"      [WARN] report descriptor length mismatch (IOCTL=%lu, HID=%lu)\n",
+                    report_desc_len, hid_report_desc_len);
         }
 
         if (desired_access & GENERIC_WRITE) {
@@ -570,6 +650,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
                 out->caps_valid = caps_valid;
                 out->report_desc_len = report_desc_len;
                 out->report_desc_valid = report_desc_valid;
+                out->hid_report_desc_len = hid_report_desc_len;
+                out->hid_report_desc_valid = hid_report_desc_valid;
                 free(detail);
                 break;
             }
@@ -592,6 +674,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
                 out->caps_valid = caps_valid;
                 out->report_desc_len = report_desc_len;
                 out->report_desc_valid = report_desc_valid;
+                out->hid_report_desc_len = hid_report_desc_len;
+                out->hid_report_desc_valid = hid_report_desc_valid;
 
                 free_selected_device(&fallback_any);
 
@@ -609,6 +693,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
                 fallback_any.caps_valid = caps_valid;
                 fallback_any.report_desc_len = report_desc_len;
                 fallback_any.report_desc_valid = report_desc_valid;
+                fallback_any.hid_report_desc_len = hid_report_desc_len;
+                fallback_any.hid_report_desc_valid = hid_report_desc_valid;
             } else {
                 CloseHandle(handle);
             }
@@ -622,6 +708,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             out->caps_valid = caps_valid;
             out->report_desc_len = report_desc_len;
             out->report_desc_valid = report_desc_valid;
+            out->hid_report_desc_len = hid_report_desc_len;
+            out->hid_report_desc_valid = hid_report_desc_valid;
 
             free_selected_device(&fallback_any);
             free_selected_device(&fallback_virtio);
@@ -638,6 +726,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             fallback_virtio.caps_valid = caps_valid;
             fallback_virtio.report_desc_len = report_desc_len;
             fallback_virtio.report_desc_valid = report_desc_valid;
+            fallback_virtio.hid_report_desc_len = hid_report_desc_len;
+            fallback_virtio.hid_report_desc_valid = hid_report_desc_valid;
         } else if (fallback_any.handle == INVALID_HANDLE_VALUE) {
             fallback_any.handle = handle;
             fallback_any.desired_access = desired_access;
@@ -648,6 +738,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             fallback_any.caps_valid = caps_valid;
             fallback_any.report_desc_len = report_desc_len;
             fallback_any.report_desc_valid = report_desc_valid;
+            fallback_any.hid_report_desc_len = hid_report_desc_len;
+            fallback_any.hid_report_desc_valid = hid_report_desc_valid;
         } else {
             CloseHandle(handle);
         }
@@ -948,6 +1040,13 @@ int wmain(int argc, wchar_t **argv)
     }
     if (dev.report_desc_valid) {
         wprintf(L"  Report descriptor length: %lu bytes\n", dev.report_desc_len);
+    }
+    if (dev.hid_report_desc_valid) {
+        wprintf(L"  HID descriptor report length: %lu bytes\n", dev.hid_report_desc_len);
+    }
+    if (dev.report_desc_valid && dev.hid_report_desc_valid && dev.report_desc_len != dev.hid_report_desc_len) {
+        wprintf(L"  [WARN] report descriptor length mismatch (IOCTL=%lu, HID=%lu)\n", dev.report_desc_len,
+                dev.hid_report_desc_len);
     }
 
     if (opt.have_led_mask) {

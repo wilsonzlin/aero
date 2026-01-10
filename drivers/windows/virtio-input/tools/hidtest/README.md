@@ -10,6 +10,7 @@ Minimal user-mode HID probe utility for validating the `virtio-input` HID minidr
   - `HidD_GetAttributes` (VID/PID)
   - `HidD_GetPreparsedData` + `HidP_GetCaps` (report sizes / usage)
   - `IOCTL_HID_GET_REPORT_DESCRIPTOR` (descriptor length sanity check)
+  - `IOCTL_HID_GET_DEVICE_DESCRIPTOR` (cross-check reported descriptor length)
 - Reads input reports via `ReadFile` in a loop and prints raw bytes + best-effort decoding for:
   - virtio-input keyboard report (`ReportID=1`)
   - virtio-input mouse report (`ReportID=2`)
