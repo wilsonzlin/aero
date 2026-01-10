@@ -151,12 +151,19 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
   }
 
   function requestScreenshot(): Promise<GpuWorkerScreenshotMessage> {
-    const requestId = nextRequestId++;
-    worker.postMessage({ type: 'request_screenshot', requestId });
+    // Avoid leaving callers stuck waiting forever if they request a screenshot
+    // before initialization has completed (or if init fails).
+    return ready.then(
+      () => {
+        const requestId = nextRequestId++;
+        worker.postMessage({ type: 'request_screenshot', requestId });
 
-    return new Promise<GpuWorkerScreenshotMessage>((resolve, reject) => {
-      screenshotRequests.set(requestId, { resolve, reject });
-    });
+        return new Promise<GpuWorkerScreenshotMessage>((resolve, reject) => {
+          screenshotRequests.set(requestId, { resolve, reject });
+        });
+      },
+      (err) => Promise.reject(err),
+    );
   }
 
   function requestTimings(): Promise<FrameTimingsReport | null> {
