@@ -387,6 +387,8 @@ On Linux/macOS you can generally do the file/WIM manipulations with open-source 
 
 Tip: You can keep Aero content on a separate “config media” ISO (drivers/certs/scripts + `autounattend.xml`) and attach it alongside the Windows ISO. Windows Setup scans attached media for `autounattend.xml`, and the repo’s templates use `%configsetroot%` for stable paths. This keeps the Windows ISO’s file tree cleaner, while still requiring offline patching of BCD/certs inside the Windows WIMs for boot-critical drivers.
 
+If you only need an interactive “Load Driver” disk (no unattend/config scripts), CI can also optionally produce a small FAT32 driver disk (`*-fat.vhd`); see [`docs/16-driver-install-media.md`](./16-driver-install-media.md).
+
 ### 0) Prerequisites
 
 - `xorriso` (ISO rebuild)

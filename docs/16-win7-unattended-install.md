@@ -268,6 +268,10 @@ The recommended approach is to ship a **separate, tiny “config ISO”** (or US
 
 This avoids redistributing any Microsoft files and makes the process reproducible.
 
+> Note: If you only need drivers for an interactive install (Windows Setup → **Load Driver**),
+> CI can also produce a small FAT32 “driver disk” (`*-fat.vhd`) that you attach as a secondary disk.
+> See: [`docs/16-driver-install-media.md`](./16-driver-install-media.md).
+
 ### Expected config media layout
 
 The reference templates assume a layout like:
