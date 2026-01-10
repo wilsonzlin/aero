@@ -1,7 +1,7 @@
 use crate::bus::MemoryBus;
 use crate::mmu::{
-    long, AccessType, Mmu, TranslateError, CR0_PG, CR0_WP, CR4_PAE, CR4_PGE, CR4_PSE, EFER_LME,
-    EFER_NXE,
+    long, AccessType, Mmu, PageFault, TranslateError, CR0_PG, CR0_WP, CR4_PAE, CR4_PGE, CR4_PSE,
+    EFER_LME, EFER_NXE,
 };
 use crate::{Bus, Tlb, TlbEntry};
 
@@ -47,17 +47,7 @@ fn is_canonical_4level(vaddr: u64) -> bool {
 }
 
 fn pf_protection(vaddr: u64, access: AccessType, cpl: u8) -> TranslateError {
-    let mut code = crate::mmu::PFEC_P;
-    if access.is_write() {
-        code |= crate::mmu::PFEC_WR;
-    }
-    if cpl == 3 {
-        code |= crate::mmu::PFEC_US;
-    }
-    if access.is_execute() {
-        code |= crate::mmu::PFEC_ID;
-    }
-    TranslateError::PageFault { vaddr, code }
+    TranslateError::PageFault(PageFault::protection(vaddr, access, cpl))
 }
 
 fn check_tlb_permissions(entry: &TlbEntry, mmu: &Mmu, vaddr: u64, access: AccessType) -> Option<TranslateError> {
@@ -112,6 +102,9 @@ fn build_long_tlb_entry(
         crate::mmu::PageSize::Size1G => {
             debug_assert!((pdpte & ENTRY_PS) != 0);
             (pdpte, crate::tlb::PageSize::Size1G)
+        }
+        crate::mmu::PageSize::Size4M => {
+            unreachable!("4MiB pages are not supported in 4-level long mode paging")
         }
         crate::mmu::PageSize::Size2M => {
             let pd_base = pdpte & ADDR_MASK_4K;
@@ -178,7 +171,16 @@ impl TlbMmu {
         linear: u64,
         access: AccessType,
     ) -> Result<u64, TranslateError> {
-        self.mmu.translate(bus, linear, access)
+        crate::mmu::translate(
+            bus,
+            linear,
+            access,
+            self.mmu.cpl,
+            self.mmu.cr0,
+            self.mmu.cr3,
+            self.mmu.cr4,
+            self.mmu.efer,
+        )
     }
 
     pub fn translate_with_tlb(

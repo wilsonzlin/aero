@@ -82,14 +82,15 @@ proptest! {
         mappings in prop::collection::vec(arb_mapping(64), 1..16),
         accesses in prop::collection::vec((0usize..16usize, 0u16..4096u16, arb_access()), 1..32),
     ) {
-        let (mut bus_walk, mmu_walk) = build_long_mode_tables(&mappings);
+        let (mut bus_walk, mut mmu_walk) = build_long_mode_tables(&mappings);
         let (mut bus_tlb, mmu_tlb) = build_long_mode_tables(&mappings);
         let mut mmu_tlb = TlbMmu::new(mmu_tlb);
 
         for (page_idx, offset, access) in accesses {
             let vaddr = ((page_idx as u64) << 12) | (offset as u64);
 
-            let res_walk = mmu_walk.translate(&mut bus_walk, vaddr, access);
+            let cpl = mmu_walk.cpl;
+            let res_walk = mmu_walk.translate(&mut bus_walk, vaddr, access, cpl);
             let res_tlb = mmu_tlb.translate_with_tlb(&mut bus_tlb, vaddr, access);
             prop_assert_eq!(res_walk, res_tlb);
         }

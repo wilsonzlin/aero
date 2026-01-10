@@ -17,8 +17,8 @@ fn legacy32_minimal_4k_mapping_translation_and_ad_bits() {
     // PTE[0] -> phys
     bus.write_u32(pt_base + 0 * 4, (phys_page as u32) | 0x003); // P|RW
 
-    let mmu = new_mmu_legacy32(cr3);
-    let paddr = mmu.translate(&mut bus, vaddr, AccessType::Write).unwrap();
+    let mut mmu = new_mmu_legacy32(cr3);
+    let paddr = mmu.translate(&mut bus, vaddr, AccessType::Write, mmu.cpl).unwrap();
     assert_eq!(paddr, phys_page + (vaddr & 0xFFF));
 
     let pde = bus.read_u32(cr3 + 1 * 4);
@@ -38,8 +38,8 @@ fn legacy32_4mb_large_page_translation() {
     // PDE[2] maps 4MB page
     bus.write_u32(cr3 + 2 * 4, (phys_base as u32) | 0x083); // P|RW|PS
 
-    let mmu = new_mmu_legacy32(cr3);
-    let paddr = mmu.translate(&mut bus, vaddr, AccessType::Read).unwrap();
+    let mut mmu = new_mmu_legacy32(cr3);
+    let paddr = mmu.translate(&mut bus, vaddr, AccessType::Read, mmu.cpl).unwrap();
     assert_eq!(paddr, phys_base + (vaddr & 0x3F_FFFF));
 }
 
@@ -47,12 +47,14 @@ fn legacy32_4mb_large_page_translation() {
 fn legacy32_not_present_fault() {
     let mut bus = new_bus();
     let cr3 = 0x1000;
-    let mmu = new_mmu_legacy32(cr3);
+    let mut mmu = new_mmu_legacy32(cr3);
 
-    let err = mmu.translate(&mut bus, 0x0040_0000, AccessType::Read).unwrap_err();
+    let err = mmu
+        .translate(&mut bus, 0x0040_0000, AccessType::Read, mmu.cpl)
+        .unwrap_err();
 
     match err {
-        TranslateError::PageFault { code, .. } => assert_eq!(code & PFEC_P, 0),
+        TranslateError::PageFault(pf) => assert_eq!(pf.error_code & PFEC_P, 0),
         other => panic!("expected page fault, got {other:?}"),
     }
 }
@@ -71,10 +73,12 @@ fn legacy32_protection_fault_on_user_write_to_read_only() {
 
     let mut mmu = new_mmu_legacy32(cr3);
     mmu.cpl = 3;
-    let err = mmu.translate(&mut bus, vaddr, AccessType::Write).unwrap_err();
+    let err = mmu
+        .translate(&mut bus, vaddr, AccessType::Write, mmu.cpl)
+        .unwrap_err();
 
     match err {
-        TranslateError::PageFault { code, .. } => assert_eq!(code, PFEC_P | PFEC_WR | PFEC_US),
+        TranslateError::PageFault(pf) => assert_eq!(pf.error_code, PFEC_P | PFEC_WR | PFEC_US),
         other => panic!("expected page fault, got {other:?}"),
     }
 }
@@ -88,11 +92,11 @@ fn legacy32_rsvd_fault_on_misaligned_4mb_pde() {
     // Misaligned bits 21:13 set.
     bus.write_u32(cr3 + 2 * 4, 0x0000_2000u32 | 0x083);
 
-    let mmu = new_mmu_legacy32(cr3);
-    let err = mmu.translate(&mut bus, vaddr, AccessType::Read).unwrap_err();
+    let mut mmu = new_mmu_legacy32(cr3);
+    let err = mmu.translate(&mut bus, vaddr, AccessType::Read, mmu.cpl).unwrap_err();
 
     match err {
-        TranslateError::PageFault { code, .. } => assert_ne!(code & PFEC_RSVD, 0),
+        TranslateError::PageFault(pf) => assert_ne!(pf.error_code & PFEC_RSVD, 0),
         other => panic!("expected page fault, got {other:?}"),
     }
 }

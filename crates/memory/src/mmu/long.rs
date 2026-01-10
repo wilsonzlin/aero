@@ -1,8 +1,7 @@
 use crate::bus::MemoryBus;
 
 use super::{
-    AccessType, PageSize, TranslateError, TranslateResult, CR0_WP, EFER_NXE, PFEC_ID, PFEC_P,
-    PFEC_RSVD, PFEC_US, PFEC_WR,
+    AccessType, PageFault, PageSize, TranslateError, TranslateResult, CR0_WP, EFER_NXE,
 };
 
 const CR3_PML4_BASE_MASK: u64 = 0x000F_FFFF_FFFF_F000;
@@ -35,52 +34,22 @@ fn is_canonical_4level(vaddr: u64) -> bool {
 }
 
 #[inline]
-fn page_fault_code(access: AccessType, cpl: u8, present: bool, rsvd: bool) -> u32 {
-    let mut code = 0u32;
-    if present {
-        code |= PFEC_P;
-    }
-    if access.is_write() {
-        code |= PFEC_WR;
-    }
-    if cpl == 3 {
-        code |= PFEC_US;
-    }
-    if rsvd {
-        code |= PFEC_RSVD;
-    }
-    if access.is_execute() {
-        code |= PFEC_ID;
-    }
-    code
-}
-
-#[inline]
 fn pf_not_present(vaddr: u64, access: AccessType, cpl: u8) -> TranslateError {
-    TranslateError::PageFault {
-        vaddr,
-        code: page_fault_code(access, cpl, false, false),
-    }
+    TranslateError::PageFault(PageFault::not_present(vaddr, access, cpl))
 }
 
 #[inline]
 fn pf_protection(vaddr: u64, access: AccessType, cpl: u8) -> TranslateError {
-    TranslateError::PageFault {
-        vaddr,
-        code: page_fault_code(access, cpl, true, false),
-    }
+    TranslateError::PageFault(PageFault::protection(vaddr, access, cpl))
 }
 
 #[inline]
 fn pf_rsvd(vaddr: u64, access: AccessType, cpl: u8) -> TranslateError {
-    TranslateError::PageFault {
-        vaddr,
-        code: page_fault_code(access, cpl, true, true),
-    }
+    TranslateError::PageFault(PageFault::rsvd(vaddr, access, cpl))
 }
 
 #[inline]
-fn set_entry_bits<B: MemoryBus>(bus: &mut B, paddr: u64, entry: u64, mask: u64) -> u64 {
+fn set_entry_bits<B: MemoryBus + ?Sized>(bus: &mut B, paddr: u64, entry: u64, mask: u64) -> u64 {
     let new_entry = entry | mask;
     if new_entry != entry {
         bus.write_u64(paddr, new_entry);
@@ -118,7 +87,7 @@ fn check_execute_violation(entry: u64, access: AccessType, nxe: bool) -> bool {
 ///
 /// This models the paging behavior used by Windows 7 x64 (4-level paging, 48-bit canonical
 /// addresses) including 4KiB, 2MiB, and 1GiB pages, NX, and Accessed/Dirty updates.
-pub fn translate_4level<B: MemoryBus>(
+pub fn translate_4level<B: MemoryBus + ?Sized>(
     bus: &mut B,
     vaddr: u64,
     access: AccessType,
@@ -297,6 +266,7 @@ pub fn translate_4level<B: MemoryBus>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mmu::{PFEC_ID, PFEC_P, PFEC_RSVD, PFEC_US, PFEC_WR};
 
     struct TestBus {
         mem: Vec<u8>,
@@ -525,17 +495,19 @@ mod tests {
         )
         .unwrap_err();
 
-        match err {
-            TranslateError::PageFault { vaddr: fault_addr, code } => {
-                assert_eq!(fault_addr, vaddr);
-                assert!(code & PFEC_P != 0);
-                assert!(code & PFEC_ID != 0);
-                assert!(code & PFEC_US != 0);
-                assert!(code & PFEC_WR == 0);
-                assert!(code & PFEC_RSVD == 0);
+        let code = match err {
+            TranslateError::PageFault(pf) => {
+                assert_eq!(pf.cr2, vaddr);
+                pf.error_code
             }
             other => panic!("unexpected error: {other:?}"),
-        }
+        };
+
+        assert!(code & PFEC_P != 0);
+        assert!(code & PFEC_ID != 0);
+        assert!(code & PFEC_US != 0);
+        assert!(code & PFEC_WR == 0);
+        assert!(code & PFEC_RSVD == 0);
 
         // Protection faults still set Accessed on entries used.
         let pml4e = bus.read_u64_at(pml4_base + (((vaddr >> 39) & 0x1FF) * 8));
@@ -583,13 +555,12 @@ mod tests {
         )
         .unwrap_err();
 
-        match err {
-            TranslateError::PageFault { vaddr: fault_addr, code } => {
-                assert_eq!(fault_addr, vaddr);
-                assert_eq!(code, PFEC_P | PFEC_US);
-            }
+        let pf = match err {
+            TranslateError::PageFault(pf) => pf,
             other => panic!("unexpected error: {other:?}"),
-        }
+        };
+        assert_eq!(pf.cr2, vaddr);
+        assert_eq!(pf.error_code, PFEC_P | PFEC_US);
 
         let pml4e = bus.read_u64_at(pml4_base + pml4_index * 8);
         assert!(pml4e & ENTRY_ACCESSED != 0);
@@ -618,8 +589,8 @@ mod tests {
         )
         .unwrap_err();
         match err {
-            TranslateError::PageFault { code, .. } => {
-                assert_eq!(code, PFEC_P | PFEC_WR | PFEC_US);
+            TranslateError::PageFault(pf) => {
+                assert_eq!(pf.error_code, PFEC_P | PFEC_WR | PFEC_US);
             }
             other => panic!("unexpected error: {other:?}"),
         }

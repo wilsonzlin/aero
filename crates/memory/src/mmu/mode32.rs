@@ -3,9 +3,7 @@
 //! Supports 4KiB pages and 4MiB pages (when `CR4.PSE=1` and `PDE.PS=1`).
 
 use crate::bus::MemoryBus;
-use crate::mmu::{
-    AccessType, TranslateError, CR0_WP, CR4_PSE, PFEC_ID, PFEC_P, PFEC_RSVD, PFEC_US, PFEC_WR,
-};
+use crate::mmu::{AccessType, PageFault, TranslateError, CR0_WP, CR4_PSE};
 
 const PTE_P: u32 = 1 << 0;
 const PTE_RW: u32 = 1 << 1;
@@ -29,7 +27,7 @@ const RESERVED_PDE_4M_MASK: u32 = 0x003F_E000; // bits 21:13
 /// `linear` is masked to 32 bits internally.
 #[allow(clippy::too_many_arguments)]
 pub fn translate(
-    bus: &mut impl MemoryBus,
+    bus: &mut (impl MemoryBus + ?Sized),
     linear: u64,
     access: AccessType,
     cpl: u8,
@@ -40,18 +38,10 @@ pub fn translate(
     let vaddr = (linear & 0xFFFF_FFFF) as u32;
     let is_write = access == AccessType::Write;
     let is_user = cpl == 3;
-    let is_instr = access == AccessType::Execute;
 
-    let pf = |present: bool, write: bool, user: bool, rsvd: bool, instr: bool| {
-        TranslateError::PageFault {
-            vaddr: vaddr as u64,
-            code: (if present { PFEC_P } else { 0 })
-                | (if write { PFEC_WR } else { 0 })
-                | (if user { PFEC_US } else { 0 })
-                | (if rsvd { PFEC_RSVD } else { 0 })
-                | (if instr { PFEC_ID } else { 0 }),
-        }
-    };
+    let pf_not_present = || TranslateError::PageFault(PageFault::not_present(vaddr as u64, access, cpl));
+    let pf_protection = || TranslateError::PageFault(PageFault::protection(vaddr as u64, access, cpl));
+    let pf_rsvd = || TranslateError::PageFault(PageFault::rsvd(vaddr as u64, access, cpl));
 
     let pd_base = cr3 & CR3_PD_MASK;
     let pde_index = ((vaddr >> 22) & 0x3FF) as u64;
@@ -59,7 +49,7 @@ pub fn translate(
     let pde = bus.read_u32(pde_addr);
 
     if (pde & PTE_P) == 0 {
-        return Err(pf(false, is_write, is_user, false, is_instr));
+        return Err(pf_not_present());
     }
 
     let pde_rw = (pde & PTE_RW) != 0;
@@ -69,19 +59,19 @@ pub fn translate(
     let pde_ps = (pde & PDE_PS) != 0;
     if pde_ps {
         if !pse_enabled {
-            return Err(pf(true, is_write, is_user, true, is_instr));
+            return Err(pf_rsvd());
         }
 
         if (pde & RESERVED_PDE_4M_MASK) != 0 {
-            return Err(pf(true, is_write, is_user, true, is_instr));
+            return Err(pf_rsvd());
         }
 
         if is_user && !pde_us {
-            return Err(pf(true, is_write, true, false, is_instr));
+            return Err(pf_protection());
         }
 
         if is_write && !pde_rw && (is_user || (cr0 & CR0_WP) != 0) {
-            return Err(pf(true, true, is_user, false, is_instr));
+            return Err(pf_protection());
         }
 
         let paddr = ((pde & PDE_ADDR_MASK_4M) as u64) | ((vaddr & PAGE_OFFSET_MASK_4M) as u64);
@@ -104,7 +94,7 @@ pub fn translate(
     let pte = bus.read_u32(pte_addr);
 
     if (pte & PTE_P) == 0 {
-        return Err(pf(false, is_write, is_user, false, is_instr));
+        return Err(pf_not_present());
     }
 
     let pte_rw = (pte & PTE_RW) != 0;
@@ -113,11 +103,11 @@ pub fn translate(
     let eff_us = pde_us && pte_us;
 
     if is_user && !eff_us {
-        return Err(pf(true, is_write, true, false, is_instr));
+        return Err(pf_protection());
     }
 
     if is_write && !eff_rw && (is_user || (cr0 & CR0_WP) != 0) {
-        return Err(pf(true, true, is_user, false, is_instr));
+        return Err(pf_protection());
     }
 
     let paddr = ((pte & PTE_ADDR_MASK_4K) as u64) | ((vaddr & PAGE_OFFSET_MASK_4K) as u64);
@@ -196,12 +186,9 @@ mod tests {
 
     fn assert_pf(err: TranslateError, addr: u32, code: u32) {
         match err {
-            TranslateError::PageFault {
-                vaddr: got_addr,
-                code: got_code,
-            } => {
-                assert_eq!(got_addr, addr as u64);
-                assert_eq!(got_code, code);
+            TranslateError::PageFault(pf) => {
+                assert_eq!(pf.cr2, addr as u64);
+                assert_eq!(pf.error_code, code);
             }
             other => panic!("expected page fault, got {other:?}"),
         }

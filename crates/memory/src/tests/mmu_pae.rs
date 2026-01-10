@@ -19,8 +19,11 @@ fn pae_minimal_4k_mapping_translation_and_ad_bits() {
     // PTE[0] -> phys
     bus.write_u64(pt_base + 0 * 8, (phys_page as u64) | 0x003);
 
-    let mmu = new_mmu_pae(cr3);
-    let paddr = mmu.translate(&mut bus, vaddr, AccessType::Write).unwrap();
+    let mut mmu = new_mmu_pae(cr3);
+    let cpl = mmu.cpl;
+    let paddr = mmu
+        .translate(&mut bus, vaddr, AccessType::Write, cpl)
+        .unwrap();
     assert_eq!(paddr, phys_page + (vaddr & 0xFFF));
 
     let pde = bus.read_u64(pd_base + 2 * 8);
@@ -42,8 +45,9 @@ fn pae_2mb_large_page_translation() {
     // PDE[3] maps 2MB page
     bus.write_u64(pd_base + 3 * 8, phys_base | 0x083); // P|RW|PS
 
-    let mmu = new_mmu_pae(cr3);
-    let paddr = mmu.translate(&mut bus, vaddr, AccessType::Read).unwrap();
+    let mut mmu = new_mmu_pae(cr3);
+    let cpl = mmu.cpl;
+    let paddr = mmu.translate(&mut bus, vaddr, AccessType::Read, cpl).unwrap();
     assert_eq!(paddr, phys_base + (vaddr & 0x1F_FFFF));
 }
 
@@ -58,11 +62,14 @@ fn pae_rsvd_fault_on_misaligned_2mb_pde() {
     // Misaligned base.
     bus.write_u64(pd_base + 3 * 8, 0x0000_2000u64 | 0x083);
 
-    let mmu = new_mmu_pae(cr3);
-    let err = mmu.translate(&mut bus, vaddr, AccessType::Read).unwrap_err();
+    let mut mmu = new_mmu_pae(cr3);
+    let cpl = mmu.cpl;
+    let err = mmu
+        .translate(&mut bus, vaddr, AccessType::Read, cpl)
+        .unwrap_err();
 
     match err {
-        TranslateError::PageFault { code, .. } => assert_ne!(code & PFEC_RSVD, 0),
+        TranslateError::PageFault(pf) => assert_ne!(pf.error_code & PFEC_RSVD, 0),
         other => panic!("expected page fault, got {other:?}"),
     }
 }

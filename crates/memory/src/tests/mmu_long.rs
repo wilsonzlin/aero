@@ -24,8 +24,8 @@ fn long_mode_minimal_4k_mapping_translation_and_ad_bits() {
     // PTE[0] -> phys
     bus.write_u64(pt_base + 0 * 8, phys_page | 0x003);
 
-    let mmu = new_mmu_long(cr3, true);
-    let paddr = mmu.translate(&mut bus, vaddr, AccessType::Write).unwrap();
+    let mut mmu = new_mmu_long(cr3, true);
+    let paddr = mmu.translate(&mut bus, vaddr, AccessType::Write, mmu.cpl).unwrap();
     assert_eq!(paddr, phys_page + (vaddr & 0xFFF));
 
     let pml4e = bus.read_u64(cr3);
@@ -60,11 +60,11 @@ fn long_mode_large_pages_2mb_and_1gb() {
     bus.write_u64(pdpt_base + 0 * 8, pd_base | 0x003);
     bus.write_u64(pd_base + 0 * 8, phys_2m | 0x083);
 
-    let mmu = new_mmu_long(cr3, true);
-    let paddr_1g = mmu.translate(&mut bus, vaddr_1g, AccessType::Read).unwrap();
+    let mut mmu = new_mmu_long(cr3, true);
+    let paddr_1g = mmu.translate(&mut bus, vaddr_1g, AccessType::Read, mmu.cpl).unwrap();
     assert_eq!(paddr_1g, phys_1g + (vaddr_1g & 0x3FFF_FFFF));
 
-    let paddr_2m = mmu.translate(&mut bus, vaddr_2m, AccessType::Read).unwrap();
+    let paddr_2m = mmu.translate(&mut bus, vaddr_2m, AccessType::Read, mmu.cpl).unwrap();
     assert_eq!(paddr_2m, phys_2m + (vaddr_2m & 0x1F_FFFF));
 }
 
@@ -83,11 +83,13 @@ fn long_mode_nx_fault() {
     bus.write_u64(pd_base + 2 * 8, pt_base | 0x003);
     bus.write_u64(pt_base, phys_page | 0x8000_0000_0000_0003u64); // NX + P + RW
 
-    let mmu = new_mmu_long(cr3, true);
-    let err = mmu.translate(&mut bus, vaddr, AccessType::Execute).unwrap_err();
+    let mut mmu = new_mmu_long(cr3, true);
+    let err = mmu
+        .translate(&mut bus, vaddr, AccessType::Execute, mmu.cpl)
+        .unwrap_err();
 
     match err {
-        TranslateError::PageFault { code, .. } => assert_eq!(code, PFEC_P | PFEC_ID),
+        TranslateError::PageFault(pf) => assert_eq!(pf.error_code, PFEC_P | PFEC_ID),
         other => panic!("expected page fault, got {other:?}"),
     }
 }
@@ -107,11 +109,11 @@ fn long_mode_rsvd_fault_when_nx_disabled() {
     bus.write_u64(pd_base + 2 * 8, pt_base | 0x003);
     bus.write_u64(pt_base, phys_page | 0x8000_0000_0000_0003u64); // NX set but NXE disabled
 
-    let mmu = new_mmu_long(cr3, false);
-    let err = mmu.translate(&mut bus, vaddr, AccessType::Read).unwrap_err();
+    let mut mmu = new_mmu_long(cr3, false);
+    let err = mmu.translate(&mut bus, vaddr, AccessType::Read, mmu.cpl).unwrap_err();
 
     match err {
-        TranslateError::PageFault { code, .. } => assert_eq!(code, PFEC_P | PFEC_RSVD),
+        TranslateError::PageFault(pf) => assert_eq!(pf.error_code, PFEC_P | PFEC_RSVD),
         other => panic!("expected page fault, got {other:?}"),
     }
 }
@@ -119,9 +121,11 @@ fn long_mode_rsvd_fault_when_nx_disabled() {
 #[test]
 fn long_mode_non_canonical_address_is_gp() {
     let mut bus = new_bus();
-    let mmu = new_mmu_long(0x1000, true);
+    let mut mmu = new_mmu_long(0x1000, true);
 
-    let err = mmu.translate(&mut bus, 0x0000_8000_0000_0000u64, AccessType::Read).unwrap_err();
+    let err = mmu
+        .translate(&mut bus, 0x0000_8000_0000_0000u64, AccessType::Read, mmu.cpl)
+        .unwrap_err();
     assert!(matches!(err, TranslateError::GeneralProtection { .. }));
 }
 
