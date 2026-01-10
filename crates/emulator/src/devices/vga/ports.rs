@@ -2,6 +2,7 @@ use core::cell::Cell;
 
 use crate::io::PortIO;
 
+use super::{modeset, LegacyBdaInfo};
 use super::regs::{
     AC_REGS_INITIAL_LEN, BIOS_MODE3_AC_REGS, BIOS_MODE3_CRTC_REGS, BIOS_MODE3_GC_REGS,
     BIOS_MODE3_MISC_OUTPUT, BIOS_MODE3_SEQ_REGS, CRTC_REGS_INITIAL_LEN, GC_REGS_INITIAL_LEN,
@@ -62,6 +63,11 @@ pub struct VgaDevice {
     /// the bit on each status read.
     input_status1_vretrace: Cell<bool>,
 
+    /// 256 KiB VGA RAM, stored as four 64 KiB planes.
+    vram: Vec<u8>,
+
+    legacy_bda: LegacyBdaInfo,
+
     derived: VgaDerivedState,
 }
 
@@ -92,6 +98,79 @@ impl VgaDevice {
         self.derived
     }
 
+    pub fn vram(&self) -> &[u8] {
+        &self.vram
+    }
+
+    pub fn legacy_bda_info(&self) -> LegacyBdaInfo {
+        self.legacy_bda
+    }
+
+    /// Program VGA registers for a legacy BIOS mode (03h/12h/13h...).
+    ///
+    /// This updates the same internal register storage used by port I/O, so
+    /// later reads via the VGA I/O ports reflect the programmed values.
+    pub fn set_legacy_mode(&mut self, mode: u8, clear: bool) {
+        let table = modeset::legacy_mode_table(mode)
+            .unwrap_or_else(|| panic!("unsupported VGA legacy mode 0x{mode:02X}"));
+
+        self.misc_output = table.misc_output;
+
+        self.seq_regs.resize(SEQ_REGS_INITIAL_LEN, 0);
+        self.seq_regs.copy_from_slice(&table.sequencer);
+
+        self.gc_regs.resize(GC_REGS_INITIAL_LEN, 0);
+        self.gc_regs.copy_from_slice(&table.graphics_controller);
+
+        self.crtc_regs.resize(CRTC_REGS_INITIAL_LEN, 0);
+        self.crtc_regs.copy_from_slice(&table.crtc);
+
+        // Ensure the protected CRTC registers are unlocked while programming.
+        if self.crtc_regs.len() > 0x11 {
+            self.crtc_regs[0x03] |= 0x80;
+            self.crtc_regs[0x11] &= !0x80;
+        }
+
+        self.ac_regs.resize(AC_REGS_INITIAL_LEN, 0);
+        self.ac_regs.copy_from_slice(&table.attribute_controller);
+        self.ac_display_enabled = true;
+        self.ac_index = 0;
+        self.ac_flip_flop_data.set(false);
+
+        self.seq_index = 0;
+        self.gc_index = 0;
+        self.crtc_index = 0;
+
+        self.legacy_bda = table.bda_info;
+
+        self.recompute_derived_state();
+
+        if clear {
+            self.clear_vram_for_mode();
+        }
+    }
+
+    fn clear_vram_for_mode(&mut self) {
+        if !self.derived.is_graphics {
+            // Text mode: odd/even addressing, plane 0 = character, plane 1 = attribute.
+            self.vram[0..0x4000].fill(0x20);
+            self.vram[0x10000..0x10000 + 0x4000].fill(0x07);
+            return;
+        }
+
+        if self.derived.chain4 {
+            // Chain-4: 64 KiB window maps to 16 KiB in each plane.
+            for plane in 0..4 {
+                let base = plane * 0x10000;
+                self.vram[base..base + 0x4000].fill(0);
+            }
+            return;
+        }
+
+        // Planar modes: clear all planes.
+        self.vram.fill(0);
+    }
+
     fn new_with_bios_mode3_defaults() -> Self {
         Self {
             // VGA Misc Output Register bit 0 selects the I/O base:
@@ -114,6 +193,20 @@ impl VgaDevice {
             ac_display_enabled: true,
 
             input_status1_vretrace: Cell::new(false),
+
+            vram: vec![0; 256 * 1024],
+
+            legacy_bda: modeset::legacy_mode_table(0x03)
+                .map(|t| t.bda_info)
+                .unwrap_or(LegacyBdaInfo {
+                    video_mode: 0x03,
+                    columns: 80,
+                    rows: 25,
+                    page_size: 0x1000,
+                    text_base_segment: 0xB800,
+                    cursor_pos: [0; 8],
+                    active_page: 0,
+                }),
 
             derived: VgaDerivedState::default(),
         }
@@ -140,6 +233,17 @@ impl VgaDevice {
         self.ac_flip_flop_data.set(false);
         self.ac_display_enabled = false;
         self.input_status1_vretrace.set(false);
+
+        self.vram.fill(0);
+        self.legacy_bda = LegacyBdaInfo {
+            video_mode: 0,
+            columns: 0,
+            rows: 0,
+            page_size: 0,
+            text_base_segment: 0,
+            cursor_pos: [0; 8],
+            active_page: 0,
+        };
 
         self.recompute_derived_state();
     }
@@ -208,6 +312,12 @@ impl VgaDevice {
         if idx >= self.crtc_regs.len() {
             self.crtc_regs.resize(idx + 1, 0);
         }
+        if idx <= 0x07 {
+            let protect = self.crtc_regs.get(0x11).copied().unwrap_or(0);
+            if (protect & 0x80) != 0 {
+                return;
+            }
+        }
         self.crtc_regs[idx] = val;
         self.recompute_derived_state();
     }
@@ -261,12 +371,52 @@ impl VgaDevice {
             4
         };
 
+        let crtc_start_hi = self.crtc_regs.get(0x0C).copied().unwrap_or(0) as u32;
+        let crtc_start_lo = self.crtc_regs.get(0x0D).copied().unwrap_or(0) as u32;
+        let start_address = (crtc_start_hi << 8) | crtc_start_lo;
+
+        let crtc_offset = self.crtc_regs.get(0x13).copied().unwrap_or(0) as u32;
+        let crtc_underline = self.crtc_regs.get(0x14).copied().unwrap_or(0);
+        let crtc_mode = self.crtc_regs.get(0x17).copied().unwrap_or(0);
+        let mut pitch_bytes = crtc_offset.saturating_mul(2);
+        if (crtc_mode & 0x40) == 0 {
+            pitch_bytes = pitch_bytes.saturating_mul(2);
+        }
+        if (crtc_underline & 0x40) != 0 {
+            pitch_bytes = pitch_bytes.saturating_mul(2);
+        }
+
+        let mem_map = (gc_misc >> 2) & 0x03;
+        let (vram_window_base, vram_window_size) = match mem_map {
+            0 => (0xA0000, 0x20000),
+            1 => (0xA0000, 0x10000),
+            2 => (0xB0000, 0x8000),
+            3 => (0xB8000, 0x8000),
+            _ => (0xA0000, 0),
+        };
+
+        let (width, height, text_columns, text_rows) = if !is_graphics {
+            (0, 0, 80, 25)
+        } else if chain4 || matches!(planar_shift, VgaPlanarShift::Shift256) {
+            (320, 200, 0, 0)
+        } else {
+            (640, 480, 0, 0)
+        };
+
         self.derived = VgaDerivedState {
             is_graphics,
             chain4,
             odd_even,
             planar_shift,
             bpp_guess,
+            start_address,
+            pitch_bytes,
+            vram_window_base,
+            vram_window_size,
+            width,
+            height,
+            text_columns,
+            text_rows,
         };
     }
 

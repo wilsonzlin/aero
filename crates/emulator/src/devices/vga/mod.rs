@@ -1,3 +1,4 @@
+mod modeset;
 mod ports;
 mod regs;
 
@@ -67,5 +68,22 @@ impl VgaRenderer {
             }
         }
     }
+}
+
+/// Information needed to update the BIOS Data Area (BDA) after a legacy VGA
+/// mode set (INT 10h/AH=00h style).
+///
+/// The VGA device does not write the BDA itself; firmware should call
+/// [`VgaDevice::set_legacy_mode`] and then apply these values to BDA fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LegacyBdaInfo {
+    pub video_mode: u8,
+    pub columns: u16,
+    pub rows: u16,
+    pub page_size: u16,
+    pub text_base_segment: u16,
+    /// Cursor position for pages 0..=7, encoded as (row << 8) | col.
+    pub cursor_pos: [u16; 8],
+    pub active_page: u8,
 }
 
