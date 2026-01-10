@@ -15,7 +15,7 @@ impl VgaDevice {
         }
     }
 
-    pub fn set_text_mode_03h(&mut self, mem: &mut impl MemoryBus) {
+    pub fn set_text_mode_03h(&mut self, mem: &mut impl MemoryBus, clear: bool) {
         BiosDataArea::write_video_mode(mem, 0x03);
         BiosDataArea::write_screen_cols(mem, 80);
         BiosDataArea::write_page_size(mem, 80 * 25 * 2);
@@ -23,7 +23,9 @@ impl VgaDevice {
         BiosDataArea::write_cursor_pos_page0(mem, 0, 0);
         BiosDataArea::write_cursor_shape(mem, 0x06, 0x07);
 
-        self.clear_text_buffer(mem, 0x07);
+        if clear {
+            self.clear_text_buffer(mem, 0x07);
+        }
     }
 
     pub fn set_cursor_pos(&mut self, mem: &mut impl MemoryBus, page: u8, row: u8, col: u8) {

@@ -33,7 +33,7 @@ impl Bios {
         // defaults without needing to explicitly set a mode first.
         self.video
             .vga
-            .set_text_mode_03h(&mut BiosMemoryBus::new(bus));
+            .set_text_mode_03h(&mut BiosMemoryBus::new(bus), true);
 
         // 3) Interrupt Vector Table.
         ivt::init_ivt(bus);

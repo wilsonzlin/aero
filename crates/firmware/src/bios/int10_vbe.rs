@@ -1,6 +1,7 @@
 use emulator::devices::vga::vbe;
 
 use crate::{
+    bda::BiosDataArea,
     cpu::CpuState,
     memory::{real_addr, MemoryBus},
 };
@@ -34,6 +35,9 @@ impl Bios {
                 // bit 14 is "linear framebuffer requested". This implementation always provides an
                 // LFB; we accept the request bit but do not require it.
                 if self.video.vbe.set_mode(memory, mode, no_clear) {
+                    // Many BIOSes report "VESA mode active" via INT 10h AH=0F by storing 0x6F in
+                    // the BDA's video mode byte.
+                    BiosDataArea::write_video_mode(memory, 0x6F);
                     vbe_success(cpu);
                 } else {
                     vbe_failure(cpu);
@@ -249,4 +253,3 @@ fn handle_ddc(cpu: &mut CpuState, memory: &mut impl MemoryBus) {
         _ => vbe_failure(cpu),
     }
 }
-

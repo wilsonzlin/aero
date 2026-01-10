@@ -12,10 +12,12 @@ impl Bios {
         match cpu.ah() {
             0x00 => {
                 // Set Video Mode (AL = mode)
-                let mode = cpu.al();
+                let raw = cpu.al();
+                let mode = raw & 0x7F;
+                let clear = (raw & 0x80) == 0;
                 if mode == 0x03 {
                     self.video.vbe.current_mode = None;
-                    self.video.vga.set_text_mode_03h(memory);
+                    self.video.vga.set_text_mode_03h(memory, clear);
                 }
             }
             0x0F => {

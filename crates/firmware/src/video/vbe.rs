@@ -53,7 +53,11 @@ impl VbeDevice {
     pub const PRODUCT_REV_STRING_OFFSET: u16 = 0x0060;
     pub const MODE_LIST_OFFSET: u16 = 0x0080;
 
-    pub const LFB_BASE_DEFAULT: u32 = 0x0100_0000;
+    // Keep the linear framebuffer inside conventional guest RAM so the machine-based BIOS tests
+    // (which use a plain `PhysicalMemory` backing) can access it without MMIO routing.
+    //
+    // With the default 16MiB BIOS memory size this leaves enough headroom for 1024×768×32bpp.
+    pub const LFB_BASE_DEFAULT: u32 = 0x0080_0000;
 
     pub fn new() -> Self {
         const MODES: &[VbeMode] = &[
