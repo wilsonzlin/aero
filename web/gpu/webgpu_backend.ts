@@ -290,7 +290,7 @@ export class WebGPUBackend implements PresentationBackend {
     const canvas = this.canvas;
     if (!canvas) throw new Error('Backend not initialized');
 
-    if (canvas instanceof HTMLCanvasElement) {
+    if (typeof HTMLCanvasElement !== 'undefined' && canvas instanceof HTMLCanvasElement) {
       const dpr = window.devicePixelRatio || 1;
       const displayWidth = Math.max(1, Math.round(canvas.clientWidth * dpr));
       const displayHeight = Math.max(1, Math.round(canvas.clientHeight * dpr));
