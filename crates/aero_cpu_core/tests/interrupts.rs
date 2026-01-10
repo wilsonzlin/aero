@@ -102,6 +102,34 @@ fn int_protected_mode_no_privilege_change_pushes_eflags_cs_eip() -> Result<(), C
 }
 
 #[test]
+fn hlt_is_cleared_when_an_external_interrupt_is_delivered() -> Result<(), CpuExit> {
+    let mut mem = RamBus::new(0x10000);
+
+    let idt_base = 0x1000;
+    write_idt_gate32(&mut mem, idt_base, 0x20, 0x08, 0x2000, 0x8E); // present, DPL0, int gate
+
+    let mut cpu = Cpu::default();
+    cpu.mode = CpuMode::Protected32;
+    cpu.idtr = DescriptorTableRegister {
+        base: idt_base,
+        limit: 0x7FF,
+    };
+    cpu.cs = 0x08;
+    cpu.ss = 0x10;
+    cpu.rsp = 0x1000;
+    cpu.rflags = 0x202; // IF=1
+    cpu.halted = true;
+
+    cpu.inject_external_interrupt(0x20);
+    cpu.deliver_external_interrupt(&mut mem)?;
+
+    assert!(!cpu.halted, "CPU should wake on delivered external interrupt");
+    assert_eq!(cpu.rip, 0x2000);
+
+    Ok(())
+}
+
+#[test]
 fn int_protected_mode_cpl3_to_cpl0_stack_switch_and_iret_restore() -> Result<(), CpuExit> {
     let mut mem = RamBus::new(0x20000);
 

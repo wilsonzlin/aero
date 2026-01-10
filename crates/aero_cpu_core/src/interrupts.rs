@@ -110,6 +110,9 @@ impl Cpu {
             return Ok(());
         };
 
+        // Maskable interrupts wake the CPU from `HLT` when they are actually delivered.
+        self.halted = false;
+
         let saved_rip = self.rip;
         self.deliver_event(
             bus,
