@@ -22,6 +22,9 @@ Related:
 - [Remote Disk Image Delivery](./16-remote-disk-image-delivery.md) (object store + CDN deployment contract)
 - [HTTP Range + CDN Behavior](./17-range-cdn-behavior.md) (CloudFront/Cloudflare caching/limits considerations)
 - [Chunked Disk Image Format](./18-chunked-disk-image-format.md) (CDN-friendly alternative to `Range`)
+- [deployment/cloudfront-disk-streaming.md](./deployment/cloudfront-disk-streaming.md) (concrete AWS CloudFront setup)
+- [`services/image-gateway`](../services/image-gateway/README.md) (reference backend: multipart upload + signed CloudFront access)
+- [backend/disk-image-streaming-service.md](./backend/disk-image-streaming-service.md) (ops/runbook: headers, reverse proxy pitfalls, troubleshooting)
 - [Browser APIs](./11-browser-apis.md) (threads + cross-origin isolation context)
 
 ---
