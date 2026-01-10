@@ -492,10 +492,15 @@ function Assert-CertPresentInOfflineSoftwareHive {
     throw "Certificate not found after injection: $certKeyPath"
   }
 
+  $blob = $null
   try {
-    $null = (Get-ItemProperty -LiteralPath $certKeyPath -Name Blob -ErrorAction Stop).Blob
+    $blob = (Get-ItemProperty -LiteralPath $certKeyPath -Name Blob -ErrorAction Stop).Blob
   } catch {
     throw "Certificate registry entry missing expected 'Blob' value: $certKeyPath"
+  }
+
+  if ($null -eq $blob -or $blob.Length -eq 0) {
+    throw "Certificate registry entry has an empty 'Blob' value: $certKeyPath"
   }
 }
 

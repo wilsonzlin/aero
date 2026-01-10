@@ -14,6 +14,12 @@ param(
 
   [string[]]$CertStores = @("ROOT", "TrustedPublisher"),
 
+  # Optional: explicit path to win-offline-cert-injector (Task 359). If omitted, the script will:
+  #   1) use it from PATH if present,
+  #   2) otherwise look for a built binary under tools/win-offline-cert-injector/target/{release,debug},
+  #   3) otherwise fall back to direct offline SOFTWARE hive edits.
+  [string]$OfflineCertInjectorPath = "",
+
   [string]$MountDir = (Join-Path $env:TEMP "aero-wim-mount")
 )
 
@@ -56,6 +62,20 @@ function Map-ArchToPack {
   }
 }
 
+function Ensure-FileWritable {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  $item = Get-Item -LiteralPath $Path -ErrorAction Stop
+  if (($item.Attributes -band [System.IO.FileAttributes]::ReadOnly) -ne 0) {
+    Write-Host "Clearing read-only attribute: $Path"
+    $item.Attributes = ($item.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly))
+    $item = Get-Item -LiteralPath $Path -ErrorAction Stop
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReadOnly) -ne 0) {
+      throw "File is still read-only and cannot be modified: $Path"
+    }
+  }
+}
+
 function Get-CertificateInfo {
   param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -73,6 +93,44 @@ function Get-CertificateInfo {
     Thumbprint = $cert.Thumbprint.ToUpperInvariant()
     RawData = $cert.RawData
   }
+}
+
+function Resolve-WinOfflineCertInjectorPath {
+  param([Parameter(Mandatory = $true)][string]$ExplicitPath)
+
+  if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
+    $resolved = (Resolve-Path -LiteralPath $ExplicitPath -ErrorAction Stop).Path
+    if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+      throw "win-offline-cert-injector not found at: $resolved"
+    }
+    return $resolved
+  }
+
+  $cmd = Get-Command win-offline-cert-injector -ErrorAction SilentlyContinue
+  if ($cmd) {
+    if ($cmd.Source) { return $cmd.Source }
+    if ($cmd.Path) { return $cmd.Path }
+  }
+
+  # Best-effort: locate a previously-built binary under the repo checkout.
+  $repoRoot = $null
+  try {
+    $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\\..")).Path
+  } catch {
+    return $null
+  }
+
+  $candidates = @(
+    (Join-Path $repoRoot "tools\\win-offline-cert-injector\\target\\release\\win-offline-cert-injector.exe"),
+    (Join-Path $repoRoot "tools\\win-offline-cert-injector\\target\\debug\\win-offline-cert-injector.exe")
+  )
+  foreach ($candidate in $candidates) {
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+      return $candidate
+    }
+  }
+
+  return $null
 }
 
 function Get-OfflineSoftwareHivePath {
@@ -134,11 +192,12 @@ function Try-Invoke-WinOfflineCertInjector {
   param(
     [Parameter(Mandatory = $true)][string]$WindowsDir,
     [Parameter(Mandatory = $true)][string]$CertPath,
-    [Parameter(Mandatory = $true)][string[]]$Stores
+    [Parameter(Mandatory = $true)][string[]]$Stores,
+    [Parameter(Mandatory = $true)][string]$InjectorPath
   )
 
-  $cmd = Get-Command win-offline-cert-injector -ErrorAction SilentlyContinue
-  if (-not $cmd) {
+  $resolvedInjector = Resolve-WinOfflineCertInjectorPath -ExplicitPath $InjectorPath
+  if (-not $resolvedInjector) {
     return $false
   }
 
@@ -148,11 +207,11 @@ function Try-Invoke-WinOfflineCertInjector {
   foreach ($store in $Stores) {
     $args += @("--store", $store)
   }
-  $args += @($CertPath)
+  $args += @("--cert", $CertPath)
 
-  & win-offline-cert-injector @args | Out-Host
+  & $resolvedInjector @args | Out-Host
   if ($LASTEXITCODE -ne 0) {
-    throw "win-offline-cert-injector failed (exit $LASTEXITCODE)."
+    throw "win-offline-cert-injector failed (exit $LASTEXITCODE): $resolvedInjector"
   }
 
   return $true
@@ -208,7 +267,7 @@ function Ensure-OfflineCertTrust {
 
   Write-Host "Injecting certificate into offline image ($($Stores -join ', ')): $thumb"
 
-  $usedExternal = Try-Invoke-WinOfflineCertInjector -WindowsDir $WindowsDir -CertPath $CertPath -Stores $Stores
+  $usedExternal = Try-Invoke-WinOfflineCertInjector -WindowsDir $WindowsDir -CertPath $CertPath -Stores $Stores -InjectorPath $OfflineCertInjectorPath
   if (-not $usedExternal) {
     Inject-CertificateByEditingSoftwareHive -WindowsDir $WindowsDir -Stores $Stores -Thumbprint $thumb -RawData $raw
   }
@@ -225,10 +284,7 @@ $certPathResolved = (Resolve-Path $CertPath).Path
 
 Assert-IsAdmin
 
-$wimInfo = Get-Item $wim
-if ($wimInfo.Attributes -band [System.IO.FileAttributes]::ReadOnly) {
-  throw "WIM file is read-only and cannot be modified: $wim"
-}
+Ensure-FileWritable -Path $wim
 
 $arch = Map-ArchToPack (Get-WimArchitecture -WimFile $wim -Index $Index)
 $drivers = Join-Path $pack "win7\$arch"
