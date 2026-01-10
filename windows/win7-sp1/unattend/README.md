@@ -54,6 +54,7 @@ Notes:
 - **WinPE drivers** (`Drivers/WinPE/...`) are for storage/NIC drivers needed by Setup itself.
 - **Offline drivers** (`Drivers/Offline/...`) are staged into the installed OS driver store during `offlineServicing`.
 - `Scripts/SetupComplete.cmd` is copied into `%WINDIR%\\Setup\\Scripts\\SetupComplete.cmd` during the `specialize` pass.
+- If `Scripts/FirstLogon.cmd` exists, the templates also copy it into `%WINDIR%\\Setup\\Scripts\\FirstLogon.cmd` and run it via `FirstLogonCommands`.
 
 > Verify on real Win7 setup: the availability of `%configsetroot%` after the first reboot depends on how Setup handles configuration sets in your scenario. For robustness, keep the config ISO attached until the desktop appears and/or copy needed files to the system drive during `specialize`.
 
@@ -90,4 +91,3 @@ If you need the 100MB “System Reserved” partition, GPT/UEFI, BitLocker, or a
 
 - `ImageInstall` → `InstallTo` matches the partition you intend to install Windows onto.
 - The target partition is bootable for your firmware model (BIOS vs. UEFI).
-

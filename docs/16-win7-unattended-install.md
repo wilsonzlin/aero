@@ -126,6 +126,50 @@ This is often the easiest place to:
 - Install INF drivers via `pnputil` (Win7 has `pnputil.exe`; exact flags differ by OS version—verify on Win7 SP1)
 - Trigger a reboot (for example after enabling test signing)
 
+### Example: `SetupComplete.cmd` skeleton
+
+If you ship a config ISO that includes `Scripts\\SetupComplete.cmd`, you can use it to enable test signing, trust your signing certificate, and stage/install drivers.
+
+Minimal example (treat this as a starting point and **verify on real Win7 SP1**):
+
+```bat
+@echo off
+setlocal EnableExtensions
+
+set LOG=%WINDIR%\Temp\Aero-SetupComplete.log
+echo [%DATE% %TIME%] SetupComplete starting>>"%LOG%"
+
+REM If you used UseConfigurationSet=true, Setup may provide %configsetroot%.
+REM Verify on real Win7 setup (and consider copying payloads to C:\Aero\ during specialize).
+set SRC=%configsetroot%
+if not defined configsetroot (
+  echo [%DATE% %TIME%] WARNING: configsetroot is not set>>"%LOG%"
+)
+
+REM Enable test signing (requires reboot to take effect)
+bcdedit /set testsigning on>>"%LOG%" 2>&1
+
+REM Trust the driver signing certificate (optional; adjust file name/store as needed)
+if exist "%SRC%\Certs\AeroTestRoot.cer" (
+  certutil -addstore -f Root "%SRC%\Certs\AeroTestRoot.cer">>"%LOG%" 2>&1
+  certutil -addstore -f TrustedPublisher "%SRC%\Certs\AeroTestRoot.cer">>"%LOG%" 2>&1
+)
+
+REM Stage/install INF drivers (verify pnputil flags on Win7 SP1)
+REM - Staging only: pnputil -a <inf>
+REM - Stage + install: pnputil -i -a <inf>
+if exist "%SRC%\Drivers\Offline\amd64" (
+  for /r "%SRC%\Drivers\Offline\amd64" %%I in (*.inf) do (
+    pnputil -i -a "%%I">>"%LOG%" 2>&1
+  )
+)
+
+REM Reboot if you enabled test signing (otherwise you can remove this)
+shutdown /r /t 0
+```
+
+> Note: For x86 installs, change the driver folder to `...\Offline\x86`. For robustness, you can also copy the needed drivers/certs from `%configsetroot%` to a stable location (for example `C:\Aero\`) during the `specialize` pass, then have `SetupComplete.cmd` use that stable path.
+
 ---
 
 ## Test-signing for Windows 7 x64 (test-signed drivers)
@@ -235,4 +279,3 @@ Tradeoffs:
 - Modifies Microsoft media (still fine for personal use, but changes your reproducibility story)
 
 For Aero’s use case, the config ISO + unattend driver paths is the preferred baseline.
-

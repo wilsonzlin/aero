@@ -133,6 +133,11 @@
           <Description>Copy SetupComplete.cmd from config set</Description>
           <Path>cmd /c mkdir "%WINDIR%\Setup\Scripts" 2&gt;NUL &amp; if exist "%configsetroot%\Scripts\SetupComplete.cmd" copy /y "%configsetroot%\Scripts\SetupComplete.cmd" "%WINDIR%\Setup\Scripts\SetupComplete.cmd"</Path>
         </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Description>Copy FirstLogon.cmd from config set (optional)</Description>
+          <Path>cmd /c if exist "%configsetroot%\Scripts\FirstLogon.cmd" copy /y "%configsetroot%\Scripts\FirstLogon.cmd" "%WINDIR%\Setup\Scripts\FirstLogon.cmd"</Path>
+        </RunSynchronousCommand>
       </RunSynchronous>
     </component>
 
@@ -200,4 +205,3 @@
   <!-- Used by Windows SIM; not required by Setup itself. -->
   <cpi:offlineImage cpi:source="wim://sources/install.wim#Windows 7 PROFESSIONAL" />
 </unattend>
-
