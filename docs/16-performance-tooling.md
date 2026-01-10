@@ -394,10 +394,14 @@ Capture a perf export:
 
 Run the microbench benchmark locally:
 
-1. `cd tools/perf && npm ci && npx playwright install chromium && cd ../..` (one-time)
-2. `node tools/perf/run.mjs --out-dir perf-results/local --iterations 7`
+1. `cd tools/perf && npm ci && npx --yes playwright@$(node -p "require('./package.json').dependencies['playwright-core']") install chromium && cd ../..` (one-time; see above if `$(...)` doesn’t work in your shell)
+2. `node bench/run --scenario microbench --iterations 7`
+
+Alternative (run the underlying runner directly, without the wrapper):
+
+- `node tools/perf/run.mjs --out-dir perf-results/local --iterations 7`
 
 To benchmark your locally served build instead of the built-in `data:` page:
 
 1. `npm ci && npm run serve:coi`
-2. `node tools/perf/run.mjs --out-dir perf-results/local --iterations 7 --url http://127.0.0.1:4173/`
+2. `node bench/run --scenario microbench --iterations 7 --url http://127.0.0.1:4173/`
