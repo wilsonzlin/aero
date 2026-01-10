@@ -215,6 +215,8 @@ VOID VirtqSplitReset(VIRTQ_SPLIT *vq)
 	vq->free_head = (vq->qsz == 0) ? VIRTQ_SPLIT_NO_DESC : 0;
 
 	for (i = 0; i < vq->qsz; i++) {
+		vq->desc[i].addr = 0;
+		vq->desc[i].len = 0;
 		vq->desc[i].flags = 0;
 		vq->desc[i].next = (i + 1 < vq->qsz) ? (UINT16)(i + 1) : VIRTQ_SPLIT_NO_DESC;
 	}

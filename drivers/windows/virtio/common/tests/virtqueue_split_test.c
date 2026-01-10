@@ -388,6 +388,123 @@ static void TestEventIdxKickPrepare(void)
 	free(vq);
 }
 
+static void TestNoNotifyKickPrepare(void)
+{
+	const UINT16 qsz = 8;
+	const UINT32 align = 16;
+
+	size_t vq_bytes = VirtqSplitStateSize(qsz);
+	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
+
+	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
+	void *ring = calloc(1, ring_bytes);
+
+	UINT8 buf[16];
+	VIRTQ_SG sg[1];
+	UINT16 head;
+
+	ASSERT_TRUE(vq != NULL);
+	ASSERT_TRUE(ring != NULL);
+
+	sg[0].addr = (UINT64)(uintptr_t)buf;
+	sg[0].len = sizeof(buf);
+	sg[0].write = TRUE;
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitInit(vq, qsz, FALSE, FALSE, ring, (UINT64)(uintptr_t)ring, align, NULL, 0, 0, 0)));
+
+	/* When NO_NOTIFY is set by the device, the driver should suppress kicks. */
+	VirtioWriteU16((volatile UINT16 *)&vq->used->flags, VIRTQ_USED_F_NO_NOTIFY);
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitAddBuffer(vq, sg, 1, (void *)0x1, &head)));
+	VirtqSplitPublish(vq, head);
+	ASSERT_TRUE(VirtqSplitKickPrepare(vq) == FALSE);
+	VirtqSplitKickCommit(vq);
+
+	/* When NO_NOTIFY is clear, the driver should kick if it added buffers. */
+	VirtioWriteU16((volatile UINT16 *)&vq->used->flags, 0);
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitAddBuffer(vq, sg, 1, (void *)0x2, &head)));
+	VirtqSplitPublish(vq, head);
+	ASSERT_TRUE(VirtqSplitKickPrepare(vq) != FALSE);
+	VirtqSplitKickCommit(vq);
+
+	free(ring);
+	free(vq);
+}
+
+static void TestIndirectPoolExhaustionFallsBackToDirect(void)
+{
+	const UINT16 qsz = 8;
+	const UINT32 align = 16;
+
+	const UINT16 table_count = 1;
+	const UINT16 max_desc = 4;
+
+	size_t vq_bytes = VirtqSplitStateSize(qsz);
+	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
+	size_t pool_bytes = (size_t)table_count * max_desc * sizeof(VIRTQ_DESC);
+
+	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
+	void *ring = calloc(1, ring_bytes);
+	void *pool = calloc(1, pool_bytes);
+
+	UINT8 buf1[8], buf2[8];
+	VIRTQ_SG sg[2];
+	UINT16 head_indirect;
+	UINT16 head_direct;
+	UINT16 dev_avail_idx = 0;
+	UINT16 dev_used_idx = 0;
+	void *cookie_out = NULL;
+	UINT32 len_out = 0;
+
+	ASSERT_TRUE(vq != NULL);
+	ASSERT_TRUE(ring != NULL);
+	ASSERT_TRUE(pool != NULL);
+
+	sg[0].addr = (UINT64)(uintptr_t)buf1;
+	sg[0].len = sizeof(buf1);
+	sg[0].write = FALSE;
+
+	sg[1].addr = (UINT64)(uintptr_t)buf2;
+	sg[1].len = sizeof(buf2);
+	sg[1].write = TRUE;
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitInit(vq, qsz, FALSE, TRUE, ring, (UINT64)(uintptr_t)ring, align, pool,
+					     (UINT64)(uintptr_t)pool, table_count, max_desc)));
+
+	/* Force indirect for sg_count=2 while a table is available. */
+	vq->indirect_threshold = 1;
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitAddBuffer(vq, sg, 2, (void *)0x1111, &head_indirect)));
+	ASSERT_TRUE((vq->desc[head_indirect].flags & VIRTQ_DESC_F_INDIRECT) != 0);
+	ASSERT_EQ_U16(vq->indirect_num_free, 0);
+	VirtqSplitPublish(vq, head_indirect);
+
+	/* Pool is now exhausted; next buffer should fall back to direct chaining. */
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitAddBuffer(vq, sg, 2, (void *)0x2222, &head_direct)));
+	ASSERT_TRUE((vq->desc[head_direct].flags & VIRTQ_DESC_F_INDIRECT) == 0);
+	VirtqSplitPublish(vq, head_direct);
+
+	DeviceConsumeAvailOne(vq, &dev_avail_idx, &dev_used_idx, sg, 2, 11);
+	DeviceConsumeAvailOne(vq, &dev_avail_idx, &dev_used_idx, sg, 2, 22);
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitGetUsed(vq, &cookie_out, &len_out)));
+	ASSERT_TRUE(cookie_out == (void *)0x1111);
+	ASSERT_EQ_U32(len_out, 11);
+	ASSERT_EQ_U16(vq->indirect_num_free, 1);
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitGetUsed(vq, &cookie_out, &len_out)));
+	ASSERT_TRUE(cookie_out == (void *)0x2222);
+	ASSERT_EQ_U32(len_out, 22);
+
+	ASSERT_EQ_U16(vq->num_free, qsz);
+	ASSERT_EQ_U16(vq->indirect_num_free, table_count);
+	AssertRingFreeListIntact(vq);
+	AssertIndirectFreeListIntact(vq);
+
+	free(pool);
+	free(ring);
+	free(vq);
+}
+
 static void TestInterruptSuppressionNoEventIdx(void)
 {
 	const UINT16 qsz = 8;
@@ -530,9 +647,11 @@ int main(void)
 	TestOutOfOrderCompletion();
 	TestNeedEventBoundaryCases();
 	TestEventIdxKickPrepare();
+	TestNoNotifyKickPrepare();
 	TestInterruptSuppressionNoEventIdx();
 	TestInterruptSuppressionEventIdx();
 	TestIndirectDescriptors();
+	TestIndirectPoolExhaustionFallsBackToDirect();
 
 	printf("virtqueue_split_test: all tests passed\n");
 	return 0;
