@@ -40,11 +40,13 @@ pub struct HdaController {
     corb: Corb,
     rirb: Rirb,
 
-    // Streams (only output stream 0 is implemented for now).
+    // Streams.
     out_stream0: HdaStream,
+    in_stream0: HdaStream,
 
     codec: HdaCodec,
     audio: AudioRingBuffer,
+    capture: AudioRingBuffer,
 
     irq_line: bool,
 }
@@ -58,7 +60,7 @@ impl Default for HdaController {
 impl HdaController {
     pub fn new() -> Self {
         let mut controller = Self {
-            gcap: gcap_with_streams(1, 0, 0, 1),
+            gcap: gcap_with_streams(1, 1, 0, 1),
             vmin: 0x00,
             vmaj: 0x01,
             gctl: 0x0,
@@ -71,8 +73,10 @@ impl HdaController {
             corb: Corb::new(),
             rirb: Rirb::new(),
             out_stream0: HdaStream::new(StreamId::Out0),
+            in_stream0: HdaStream::new(StreamId::In0),
             codec: HdaCodec::new_minimal(),
             audio: AudioRingBuffer::new(48000 * 4),
+            capture: AudioRingBuffer::new(48000 * 4),
             irq_line: false,
         };
         controller.reset();
@@ -87,6 +91,10 @@ impl HdaController {
         &mut self.audio
     }
 
+    pub fn capture_ring(&mut self) -> &mut AudioRingBuffer {
+        &mut self.capture
+    }
+
     pub fn poll(&mut self, mem: &mut dyn MemoryBus) {
         if self.gctl & GCTL_CRST == 0 {
             return;
@@ -98,6 +106,8 @@ impl HdaController {
         // Stream DMA.
         self.out_stream0
             .process(mem, &mut self.audio, &mut self.intsts);
+        self.in_stream0
+            .process_capture(mem, &mut self.capture, &mut self.intsts);
         self.update_position_buffer(mem);
 
         self.recalc_intsts_summary();
@@ -120,6 +130,7 @@ impl HdaController {
             Some(HdaMmioReg::Corb(reg)) => self.corb.mmio_read(reg, size),
             Some(HdaMmioReg::Rirb(reg)) => self.rirb.mmio_read(reg, size),
             Some(HdaMmioReg::Stream0(reg)) => self.out_stream0.mmio_read(reg, size),
+            Some(HdaMmioReg::Stream1(reg)) => self.in_stream0.mmio_read(reg, size),
             None => 0,
         }
     }
@@ -189,6 +200,12 @@ impl HdaController {
                 self.recalc_intsts_summary();
                 self.update_irq_line();
             }
+            Some(HdaMmioReg::Stream1(reg)) => {
+                self.in_stream0
+                    .mmio_write(reg, size, value, &mut self.intsts);
+                self.recalc_intsts_summary();
+                self.update_irq_line();
+            }
             _ => {}
         }
     }
@@ -204,17 +221,22 @@ impl HdaController {
         self.corb.reset();
         self.rirb.reset();
         self.out_stream0.reset();
+        self.in_stream0.reset();
         self.codec.reset();
         self.audio.clear();
+        self.capture.clear();
         self.irq_line = false;
     }
 
     fn update_position_buffer(&mut self, mem: &mut dyn MemoryBus) {
-        let Some(entry_addr) = self.posbuf.stream_entry_addr(StreamId::Out0.posbuf_index()) else {
-            return;
-        };
-        mem.write_u32(entry_addr, self.out_stream0.lpib());
-        mem.write_u32(entry_addr + 4, 0);
+        if let Some(entry_addr) = self.posbuf.stream_entry_addr(StreamId::Out0.posbuf_index()) {
+            mem.write_u32(entry_addr, self.out_stream0.lpib());
+            mem.write_u32(entry_addr + 4, 0);
+        }
+        if let Some(entry_addr) = self.posbuf.stream_entry_addr(StreamId::In0.posbuf_index()) {
+            mem.write_u32(entry_addr, self.in_stream0.lpib());
+            mem.write_u32(entry_addr + 4, 0);
+        }
     }
 
     fn process_corb(&mut self, mem: &mut dyn MemoryBus) {
@@ -256,6 +278,7 @@ impl HdaController {
         let gie = self.intctl & INTCTL_GIE != 0;
         let cie = self.intctl & INTCTL_CIE != 0;
         let sis0_en = self.intctl & INTCTL_SIE0 != 0;
+        let sis1_en = self.intctl & INTCTL_SIE1 != 0;
 
         let mut pending = false;
         if gie {
@@ -263,6 +286,9 @@ impl HdaController {
                 pending = true;
             }
             if (self.intsts & INTSTS_SIS0 != 0) && sis0_en {
+                pending = true;
+            }
+            if (self.intsts & INTSTS_SIS1 != 0) && sis1_en {
                 pending = true;
             }
         }
@@ -498,5 +524,52 @@ mod tests {
         hda.poll(&mut mem);
         assert_eq!(hda.mmio_read(HDA_SD0LPIB, 4) as u32, 0);
         assert_eq!(mem.read_u32(posbuf_base), 0);
+    }
+
+    #[test]
+    fn capture_stream_writes_bytes_into_guest_memory() {
+        let mut mem = TestMem::new(0x20_000);
+        let mut hda = HdaController::new();
+        hda.mmio_write(HDA_GCTL, 4, GCTL_CRST as u64);
+
+        // Enable stream interrupt + global interrupt for stream 1 (input).
+        hda.mmio_write(HDA_INTCTL, 4, (INTCTL_GIE | INTCTL_SIE1) as u64);
+
+        // Provide 8 bytes of "mic" data to be captured.
+        hda.capture_ring().push(&[1, 2, 3, 4, 5, 6, 7, 8]);
+
+        let bdl_base = 0x4000u64;
+        let buf0 = 0x5000u64;
+
+        // One BDL entry, IOC set.
+        mem.write_u64(bdl_base + 0, buf0);
+        mem.write_u32(bdl_base + 8, 8);
+        mem.write_u32(bdl_base + 12, 1);
+
+        // Program stream 1 descriptor.
+        hda.mmio_write(HDA_SD1BDPL, 4, bdl_base as u64);
+        hda.mmio_write(HDA_SD1BDPU, 4, 0);
+        hda.mmio_write(HDA_SD1LVI, 2, 0);
+        hda.mmio_write(HDA_SD1CBL, 4, 32);
+        hda.mmio_write(HDA_SD1FMT, 2, 0x0010); // 48kHz, 16-bit, mono
+
+        // Start stream.
+        let ctl = (SD_CTL_SRST | SD_CTL_RUN) as u64;
+        hda.mmio_write(HDA_SD1CTL, 4, ctl);
+
+        hda.poll(&mut mem);
+
+        assert_eq!(hda.mmio_read(HDA_SD1LPIB, 4) as u32, 8);
+        let mut out = [0u8; 8];
+        mem.read_physical(buf0, &mut out);
+        assert_eq!(out, [1, 2, 3, 4, 5, 6, 7, 8]);
+
+        // IOC sets stream interrupt.
+        assert!(hda.mmio_read(HDA_INTSTS, 4) as u32 & INTSTS_SIS1 != 0);
+        assert!(hda.irq_line());
+
+        // Clear stream status.
+        hda.mmio_write(HDA_SD1CTL, 4, (SD_STS_BCIS as u64) << 24);
+        assert_eq!(hda.mmio_read(HDA_INTSTS, 4) as u32 & INTSTS_SIS1, 0);
     }
 }

@@ -42,15 +42,25 @@ pub const HDA_SD0FMT: u32 = 0x92;
 pub const HDA_SD0BDPL: u32 = 0x98;
 pub const HDA_SD0BDPU: u32 = 0x9C;
 
+pub const HDA_SD1CTL: u32 = 0xA0;
+pub const HDA_SD1LPIB: u32 = 0xA4;
+pub const HDA_SD1CBL: u32 = 0xA8;
+pub const HDA_SD1LVI: u32 = 0xAC;
+pub const HDA_SD1FMT: u32 = 0xB2;
+pub const HDA_SD1BDPL: u32 = 0xB8;
+pub const HDA_SD1BDPU: u32 = 0xBC;
+
 pub const GCTL_CRST: u32 = 1 << 0;
 
 pub const INTCTL_GIE: u32 = 1 << 31;
 pub const INTCTL_CIE: u32 = 1 << 30;
 pub const INTCTL_SIE0: u32 = 1 << 0;
+pub const INTCTL_SIE1: u32 = 1 << 1;
 
 pub const INTSTS_GIS: u32 = 1 << 31;
 pub const INTSTS_CIS: u32 = 1 << 30;
 pub const INTSTS_SIS0: u32 = 1 << 0;
+pub const INTSTS_SIS1: u32 = 1 << 1;
 
 pub const CORBCTL_RUN: u8 = 1 << 1;
 
@@ -68,12 +78,14 @@ const DPLBASE_BASE_MASK: u32 = !0x7f;
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum StreamId {
     Out0,
+    In0,
 }
 
 impl StreamId {
     pub fn posbuf_index(self) -> u8 {
         match self {
             StreamId::Out0 => 0,
+            StreamId::In0 => 1,
         }
     }
 }
@@ -94,6 +106,7 @@ pub enum HdaMmioReg {
     Corb(CorbReg),
     Rirb(RirbReg),
     Stream0(StreamReg),
+    Stream1(StreamReg),
 }
 
 impl HdaMmioReg {
@@ -131,6 +144,13 @@ impl HdaMmioReg {
             HDA_SD0FMT => Some(Self::Stream0(StreamReg::Fmt)),
             HDA_SD0BDPL => Some(Self::Stream0(StreamReg::Bdpl)),
             HDA_SD0BDPU => Some(Self::Stream0(StreamReg::Bdpu)),
+            HDA_SD1CTL => Some(Self::Stream1(StreamReg::CtlSts)),
+            HDA_SD1LPIB => Some(Self::Stream1(StreamReg::Lpib)),
+            HDA_SD1CBL => Some(Self::Stream1(StreamReg::Cbl)),
+            HDA_SD1LVI => Some(Self::Stream1(StreamReg::Lvi)),
+            HDA_SD1FMT => Some(Self::Stream1(StreamReg::Fmt)),
+            HDA_SD1BDPL => Some(Self::Stream1(StreamReg::Bdpl)),
+            HDA_SD1BDPU => Some(Self::Stream1(StreamReg::Bdpu)),
             _ => None,
         }
     }

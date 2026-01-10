@@ -649,6 +649,19 @@ Reference implementation files:
 - `web/src/audio/mic_capture.ts` (permission + lifecycle + ring buffer allocation)
 - `web/src/audio/mic-worklet-processor.js` (AudioWorklet capture writer)
 - `crates/emulator/src/io/audio/input.rs` + `crates/emulator/src/io/audio/dsp/pcm.rs` (ring buffer + float32→PCM16 conversion)
+- `crates/emulator/src/io/audio/hda/*` (HDA capture stream + mic pin exposure)
+
+### HDA capture exposure (guest)
+
+The emulator's HDA model now advertises one input stream and a microphone pin:
+
+- **Stream DMA**: `SD1` (input stream 0) writes capture bytes into guest memory.
+- **Codec topology**: input converter + mic pin widgets are exposed so Windows can
+  enumerate a recording endpoint.
+
+Host code should push capture PCM bytes into `HdaController::capture_ring()`; the
+controller drains this buffer into guest BDL entries when the capture stream is
+running.
 
 ### Ring buffer layout
 

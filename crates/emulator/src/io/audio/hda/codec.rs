@@ -49,6 +49,7 @@ enum NodeKind {
     Root,
     AudioFunctionGroup,
     AudioOutputConverter,
+    AudioInputConverter,
     PinComplex,
 }
 
@@ -68,7 +69,10 @@ impl NodeState {
     fn new(kind: NodeKind) -> Self {
         Self {
             kind,
-            converter_format: 0x0011, // 48kHz, 16-bit, 2ch (typical default)
+            converter_format: match kind {
+                NodeKind::AudioInputConverter => 0x0010, // 48kHz, 16-bit, mono
+                _ => 0x0011,                             // 48kHz, 16-bit, 2ch (typical default)
+            },
             stream_channel: 0,
             amp_gain_mute: 0,
             pin_widget_ctl: 0,
@@ -114,6 +118,15 @@ impl HdaCodec {
         // This is a "plausible" line-out jack; Windows uses it to build endpoints.
         pin.config_default = 0x0101_0010;
         codec.nodes.insert(3, pin);
+
+        // Microphone input path: input converter + input pin.
+        codec
+            .nodes
+            .insert(4, NodeState::new(NodeKind::AudioInputConverter));
+        let mut mic_pin = NodeState::new(NodeKind::PinComplex);
+        // Config default: microphone input jack.
+        mic_pin.config_default = 0x01A1_0010;
+        codec.nodes.insert(5, mic_pin);
 
         codec
     }
@@ -213,7 +226,7 @@ impl HdaCodec {
             0x02 => self.revision_id,
             0x04 => match nid {
                 0 => (1u32 << 16) | 1, // start=1, count=1 (one function group)
-                1 => (2u32 << 16) | 2, // start=2, count=2 (converter + pin)
+                1 => (2u32 << 16) | 4, // start=2, count=4 (out converter+pin, in converter+pin)
                 _ => 0,
             },
             0x05 => {
@@ -234,20 +247,26 @@ impl HdaCodec {
             0x0A => match nid {
                 2 => supported_pcm(),
                 3 => supported_pcm(),
+                4 => supported_pcm(),
+                5 => supported_pcm(),
                 _ => 0,
             },
             0x0B => match nid {
                 2 => 1, // PCM stream format supported
                 3 => 1,
+                4 => 1,
+                5 => 1,
                 _ => 0,
             },
             0x0C => match nid {
-                3 => pin_caps(),
+                3 => pin_caps_output(),
+                5 => pin_caps_input(),
                 _ => 0,
             },
             0x0D => 0, // AMP IN caps (none)
             0x0E => match nid {
                 3 => 1, // one connection (to NID 2)
+                5 => 1, // one connection (to NID 4)
                 _ => 0,
             },
             0x12 => amp_out_caps(), // AMP OUT caps (basic)
@@ -256,15 +275,19 @@ impl HdaCodec {
     }
 
     fn get_conn_list_entry(&self, nid: u8, index: u8) -> u32 {
-        if nid != 3 {
+        if nid != 3 && nid != 5 {
             return 0;
         }
-        // Short-form connection list with a single entry to the converter (NID 2).
+        // Short-form connection list with a single entry to the converter.
         // The GET verb returns up to 4 entries per request; index selects the 4-entry block.
         if index != 0 {
             return 0;
         }
-        2 // entry0=NID2, remaining entries 0
+        match nid {
+            3 => 2, // output pin -> output converter
+            5 => 4, // mic pin -> input converter
+            _ => 0,
+        }
     }
 }
 
@@ -273,6 +296,7 @@ fn audio_widget_caps(kind: NodeKind) -> u32 {
     // Widget Type is bits 23:20.
     match kind {
         NodeKind::AudioOutputConverter => 0x0000_0001, // stereo + output widget (type 0)
+        NodeKind::AudioInputConverter => (0x1u32 << 20) | 0x0000_0001, // stereo + input widget (type 1)
         NodeKind::PinComplex => (0x4u32 << 20) | 0x0000_0001,
         _ => 0,
     }
@@ -285,9 +309,14 @@ fn supported_pcm() -> u32 {
     0x0000_0011
 }
 
-fn pin_caps() -> u32 {
+fn pin_caps_output() -> u32 {
     // Output capable + presence detect.
     0x0000_0010 | 0x0000_0004
+}
+
+fn pin_caps_input() -> u32 {
+    // Input capable + presence detect.
+    0x0000_0020 | 0x0000_0004
 }
 
 fn amp_out_caps() -> u32 {

@@ -68,6 +68,26 @@ impl AudioRingBuffer {
         self.len += data.len();
     }
 
+    /// Pop up to `out.len()` bytes into `out`, returning the number of bytes written.
+    pub fn pop_into(&mut self, out: &mut [u8]) -> usize {
+        let to_read = out.len().min(self.len);
+        if to_read == 0 {
+            return 0;
+        }
+
+        let cap = self.buf.len();
+        let first = (cap - self.read).min(to_read);
+        out[..first].copy_from_slice(&self.buf[self.read..self.read + first]);
+        let remaining = to_read - first;
+        if remaining != 0 {
+            out[first..to_read].copy_from_slice(&self.buf[..remaining]);
+        }
+
+        self.read = (self.read + to_read) % cap;
+        self.len -= to_read;
+        to_read
+    }
+
     /// Drain all buffered bytes into the provided output buffer.
     ///
     /// This is the preferred API for hot paths because it allows callers to reuse
@@ -247,7 +267,7 @@ impl HdaStream {
                 if sts_clear != 0 {
                     self.sts &= !sts_clear;
                     if self.sts & SD_STS_BCIS == 0 {
-                        *intsts &= !INTSTS_SIS0;
+                        *intsts &= !self.intsts_bit();
                     }
                 }
 
@@ -260,7 +280,7 @@ impl HdaStream {
                     self.sts = 0;
                     self.bdl_index = 0;
                     self.bdl_offset = 0;
-                    *intsts &= !INTSTS_SIS0;
+                    *intsts &= !self.intsts_bit();
                 }
             }
             StreamReg::Lpib => {
@@ -321,6 +341,55 @@ impl HdaStream {
         }
     }
 
+    pub fn process_capture(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        capture: &mut AudioRingBuffer,
+        intsts: &mut u32,
+    ) {
+        if !self.is_running() {
+            return;
+        }
+        if self.cbl == 0 {
+            return;
+        }
+
+        let max_entries = self.lvi as usize + 1;
+        for _ in 0..max_entries.max(1) {
+            let entry = self.read_bdl_entry(mem, self.bdl_index);
+            let remaining = entry.len.saturating_sub(self.bdl_offset);
+            if remaining == 0 {
+                self.finish_bdl_entry(entry, intsts);
+                continue;
+            }
+
+            let bytes = remaining as usize;
+            self.dma_scratch.resize(bytes, 0);
+
+            // Fill from capture buffer; any missing bytes remain as zero (silence).
+            let read = capture.pop_into(&mut self.dma_scratch[..bytes]);
+            if read < bytes {
+                self.dma_scratch[read..bytes].fill(0);
+            }
+            mem.write_physical(
+                entry.addr + self.bdl_offset as u64,
+                &self.dma_scratch[..bytes],
+            );
+
+            self.bdl_offset += remaining;
+            self.lpib = self.lpib.wrapping_add(remaining) % self.cbl;
+            self.finish_bdl_entry(entry, intsts);
+            break;
+        }
+    }
+
+    fn intsts_bit(&self) -> u32 {
+        match self.id {
+            StreamId::Out0 => INTSTS_SIS0,
+            StreamId::In0 => INTSTS_SIS1,
+        }
+    }
+
     fn finish_bdl_entry(&mut self, entry: BdlEntry, intsts: &mut u32) {
         if self.bdl_offset < entry.len {
             return;
@@ -330,6 +399,7 @@ impl HdaStream {
             self.sts |= SD_STS_BCIS;
             match self.id {
                 StreamId::Out0 => *intsts |= INTSTS_SIS0,
+                StreamId::In0 => *intsts |= INTSTS_SIS1,
             }
         }
 
@@ -398,5 +468,15 @@ mod tests {
         let mut rb = AudioRingBuffer::new(4);
         rb.push(&[1, 2, 3, 4, 5, 6]);
         assert_eq!(rb.drain_all(), vec![3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn ring_buffer_pop_into_reads_and_removes_bytes() {
+        let mut rb = AudioRingBuffer::new(8);
+        rb.push(&[1, 2, 3, 4]);
+        let mut out = [0u8; 3];
+        assert_eq!(rb.pop_into(&mut out), 3);
+        assert_eq!(out, [1, 2, 3]);
+        assert_eq!(rb.drain_all(), vec![4]);
     }
 }
