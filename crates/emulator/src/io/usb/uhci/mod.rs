@@ -144,7 +144,7 @@ impl Default for UhciController {
     }
 }
 
-/// A PCI wrapper that exposes a UHCI controller as an Intel PIIX4-style device.
+/// A PCI wrapper that exposes a UHCI controller as an Intel PIIX3-style device.
 pub struct UhciPciDevice {
     config: PciConfigSpace,
     pub io_base: u16,
@@ -155,9 +155,9 @@ impl UhciPciDevice {
     pub fn new(controller: UhciController, io_base: u16) -> Self {
         let mut config = PciConfigSpace::new();
 
-        // Vendor/device: Intel PIIX4 UHCI.
+        // Vendor/device: Intel PIIX3 UHCI.
         config.set_u16(0x00, 0x8086);
-        config.set_u16(0x02, 0x7112);
+        config.set_u16(0x02, 0x7020);
 
         // Class code: serial bus / USB / UHCI.
         config.write(0x09, 1, 0x00); // prog IF

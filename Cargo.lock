@@ -420,6 +420,7 @@ name = "aero-virtio"
 version = "0.1.0"
 dependencies = [
  "aero-audio",
+ "aero-devices",
  "virtio-gpu-proto",
 ]
 

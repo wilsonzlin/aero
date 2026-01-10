@@ -9,3 +9,4 @@ aero-audio = { path = "../aero-audio" }
 virtio-gpu-proto = { path = "../virtio-gpu-proto" }
 
 [dev-dependencies]
+aero-devices = { path = "../devices" }
