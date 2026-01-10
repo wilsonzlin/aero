@@ -83,6 +83,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-cpu-time"
+version = "0.1.0"
+dependencies = [
+ "aero-time",
+ "aero-timers",
+]
+
+[[package]]
 name = "aero-d3d11"
 version = "0.1.0"
 dependencies = [
@@ -431,6 +439,17 @@ name = "aero-tier0"
 version = "0.1.0"
 dependencies = [
  "rustc-hash 1.1.0",
+]
+
+[[package]]
+name = "aero-time"
+version = "0.1.0"
+
+[[package]]
+name = "aero-timers"
+version = "0.1.0"
+dependencies = [
+ "aero-time",
 ]
 
 [[package]]

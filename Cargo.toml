@@ -70,6 +70,9 @@ members = [
     "emulator/protocol",
     "crates/aero-gpu-vga",
     "drivers/protocol/virtio",
+    "crates/aero-time",
+    "crates/aero-timers",
+    "crates/aero-cpu-time",
 ]
 
 exclude = [
