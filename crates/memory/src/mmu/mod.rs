@@ -60,6 +60,7 @@ pub const CR0_PG: u64 = 1 << 31;
 pub const CR0_WP: u64 = 1 << 16;
 pub const CR4_PSE: u64 = 1 << 4;
 pub const CR4_PAE: u64 = 1 << 5;
+pub const CR4_PGE: u64 = 1 << 7;
 
 pub const EFER_LME: u64 = 1 << 8;
 pub const EFER_LMA: u64 = 1 << 10;

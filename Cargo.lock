@@ -2664,6 +2664,9 @@ dependencies = [
 [[package]]
 name = "memory"
 version = "0.1.0"
+dependencies = [
+ "proptest",
+]
 
 [[package]]
 name = "metal"

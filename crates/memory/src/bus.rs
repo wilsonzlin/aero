@@ -125,8 +125,16 @@ impl Bus {
     }
 
     fn find_region_index(&self, addr: u64) -> Option<usize> {
-        // Last mapping wins to keep behavior deterministic even with overlaps.
-        self.regions.iter().rposition(|r| r.contains(addr))
+        // MMIO always takes precedence over ROM (and RAM). Within each region kind,
+        // the last mapping wins to keep behavior deterministic even with overlaps.
+        self.regions
+            .iter()
+            .rposition(|r| matches!(&r.kind, RegionKind::Mmio(_)) && r.contains(addr))
+            .or_else(|| {
+                self.regions
+                    .iter()
+                    .rposition(|r| matches!(&r.kind, RegionKind::Rom(_)) && r.contains(addr))
+            })
     }
 
     /// Reads up to 8 bytes little-endian from the bus.
