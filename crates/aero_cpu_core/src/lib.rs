@@ -1,22 +1,26 @@
 //! Core architectural CPU state and privileged instruction helpers used by Aero.
 //!
-//! This crate serves two purposes:
-//! - x87/SSE context save/restore (`FXSAVE`/`FXRSTOR`) used by Windows for thread
-//!   switching.
-//! - Privileged/system instruction surface (CPUID/MSR/SYSCALL/SYSENTER/IN/OUT)
-//!   required by Windows 7 boot and kernel runtime.
+//! This crate serves multiple purposes:
+//! - x87/SSE context save/restore (`FXSAVE`/`FXRSTOR`) used by Windows for thread switching.
+//! - Privileged/system instruction surface (CPUID/MSR/SYSCALL/SYSENTER/IN/OUT) required by
+//!   Windows 7 boot and kernel runtime.
+//! - Interpreter helpers used by unit tests (string ops + REP semantics).
 
 mod exception;
 
+pub mod bus;
+pub mod cpu;
 pub mod cpuid;
+pub mod fpu;
+pub mod interp;
 pub mod msr;
+pub mod sse_state;
 pub mod system;
 
-pub mod fpu;
-pub mod sse_state;
-pub mod interp;
-
 pub use exception::Exception;
+
+pub use bus::{Bus, RamBus};
+pub use cpu::{Cpu, CpuMode, Segment};
 
 use crate::fpu::FpuState;
 use crate::sse_state::{SseState, MXCSR_MASK};
