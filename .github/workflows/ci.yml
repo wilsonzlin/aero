@@ -167,6 +167,15 @@ jobs:
         working-directory: ${{ steps.wasm-crate.outputs.dir }}
         run: wasm-pack test --node -- ${{ steps.cargo-locked.outputs.locked }}
 
+      - name: Upload wasm-pack output (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pack-pkg
+          path: ${{ steps.wasm-crate.outputs.dir }}/pkg/
+          if-no-files-found: ignore
+          retention-days: 7
+
   node-unit:
     name: Node (lint, unit, build)
     needs: policy
