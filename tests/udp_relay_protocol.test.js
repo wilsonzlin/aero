@@ -6,6 +6,7 @@ import {
   UDP_RELAY_V1_HEADER_LEN,
   UDP_RELAY_V2_AF_IPV6,
   UDP_RELAY_V2_MAGIC,
+  UDP_RELAY_V2_TYPE_DATAGRAM,
   UDP_RELAY_V2_VERSION,
   UdpRelayDecodeError,
   decodeUdpRelayFrame,
@@ -49,7 +50,7 @@ test("udp relay v2: ipv6 golden vector matches PROTOCOL.md", () => {
     UDP_RELAY_V2_MAGIC,
     UDP_RELAY_V2_VERSION,
     UDP_RELAY_V2_AF_IPV6,
-    0x00,
+    UDP_RELAY_V2_TYPE_DATAGRAM,
     0xbe,
     0xef,
     ...remoteIp,
@@ -97,12 +98,12 @@ test("udp relay v1: decode rejects frames shorter than header", () => {
   }
 });
 
-test("udp relay v2: decode rejects invalid reserved byte", () => {
+test("udp relay v2: decode rejects invalid message type", () => {
   const frame = new Uint8Array([
     UDP_RELAY_V2_MAGIC,
     UDP_RELAY_V2_VERSION,
     UDP_RELAY_V2_AF_IPV6,
-    0x01, // reserved must be 0x00
+    0x01, // type must be 0x00
     0x00,
     0x01,
     ...new Uint8Array(16),

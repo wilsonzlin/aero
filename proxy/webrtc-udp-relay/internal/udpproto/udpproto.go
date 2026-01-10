@@ -28,6 +28,9 @@ const (
 	AFIPv4 = 0x04
 	AFIPv6 = 0x06
 
+	// v2 message types.
+	V2TypeDatagram = 0x00
+
 	// PREFER_V2 controls whether the server prefers encoding outbound (UDP→client)
 	// packets as v2 when it is safe to do so.
 	//
@@ -232,7 +235,7 @@ func (c Codec) EncodeFrameV2(f Frame) ([]byte, error) {
 	out[0] = V2Magic
 	out[1] = V2Version
 	out[2] = af
-	out[3] = 0x00
+	out[3] = V2TypeDatagram
 	binary.BigEndian.PutUint16(out[4:6], f.GuestPort)
 
 	ipOff := 6
@@ -255,8 +258,8 @@ func (c Codec) decodeV2(b []byte) (Frame, error) {
 	if len(b) < 12 {
 		return Frame{}, ErrTooShort
 	}
-	if b[3] != 0x00 {
-		return Frame{}, fmt.Errorf("udpproto: v2 non-zero reserved byte: 0x%02x", b[3])
+	if b[3] != V2TypeDatagram {
+		return Frame{}, fmt.Errorf("udpproto: v2 unsupported message type: 0x%02x", b[3])
 	}
 
 	af := b[2]

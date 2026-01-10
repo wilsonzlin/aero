@@ -4,6 +4,7 @@ export const UDP_RELAY_V2_MAGIC = 0xa2;
 export const UDP_RELAY_V2_VERSION = 0x02;
 export const UDP_RELAY_V2_AF_IPV4 = 0x04;
 export const UDP_RELAY_V2_AF_IPV6 = 0x06;
+export const UDP_RELAY_V2_TYPE_DATAGRAM = 0x00;
 
 // Keep in sync with proxy/webrtc-udp-relay/internal/udpproto.DefaultMaxPayload and
 // proxy/webrtc-udp-relay/PROTOCOL.md.
@@ -158,7 +159,7 @@ export function encodeUdpRelayV2Datagram(
   out[0] = UDP_RELAY_V2_MAGIC;
   out[1] = UDP_RELAY_V2_VERSION;
   out[2] = af;
-  out[3] = 0x00;
+  out[3] = UDP_RELAY_V2_TYPE_DATAGRAM;
   out[4] = (d.guestPort >>> 8) & 0xff;
   out[5] = d.guestPort & 0xff;
   out.set(d.remoteIp, 6);
@@ -184,8 +185,9 @@ export function decodeUdpRelayV2Datagram(
   }
 
   const af = frame[2];
-  if (frame[3] !== 0x00) {
-    throw new UdpRelayDecodeError('invalid_v2', `v2 reserved byte must be 0x00 (got 0x${frame[3].toString(16)})`);
+  const msgType = frame[3];
+  if (msgType !== UDP_RELAY_V2_TYPE_DATAGRAM) {
+    throw new UdpRelayDecodeError('invalid_v2', `unsupported v2 message type: 0x${msgType.toString(16)}`);
   }
 
   const ipLen = af === UDP_RELAY_V2_AF_IPV4 ? 4 : af === UDP_RELAY_V2_AF_IPV6 ? 16 : 0;
