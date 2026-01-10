@@ -423,6 +423,17 @@ impl D3D11Runtime {
             .get(&texture_id)
             .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?;
 
+        let mip_level_count = if mip_level_count == 0 {
+            None
+        } else {
+            Some(mip_level_count)
+        };
+        let array_layer_count = if array_layer_count == 0 {
+            None
+        } else {
+            Some(array_layer_count)
+        };
+
         let view = texture.texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some("aero-d3d11 texture view"),
             format: None,
@@ -433,9 +444,9 @@ impl D3D11Runtime {
             }),
             aspect: wgpu::TextureAspect::All,
             base_mip_level,
-            mip_level_count: Some(mip_level_count),
+            mip_level_count,
             base_array_layer,
-            array_layer_count: Some(array_layer_count),
+            array_layer_count,
         });
         self.resources
             .texture_views

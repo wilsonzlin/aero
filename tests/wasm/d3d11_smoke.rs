@@ -298,3 +298,67 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     });
 }
+
+#[test]
+fn d3d11_compute_writes_storage_texture() {
+    pollster::block_on(async {
+        let mut rt = match D3D11Runtime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("wgpu unavailable ({e:#}); skipping compute texture smoke test");
+                return;
+            }
+        };
+
+        const TEX: u32 = 201;
+        const VIEW: u32 = 202;
+        const SHADER: u32 = 203;
+        const PIPE: u32 = 204;
+
+        let wgsl = r#"
+@group(0) @binding(0) var out_tex: texture_storage_2d<rgba8unorm, write>;
+
+@compute @workgroup_size(1, 1, 1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x < 4u && gid.y < 4u) {
+        textureStore(out_tex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4<f32>(0.0, 0.0, 1.0, 1.0));
+    }
+}
+"#;
+
+        let bindings = [BindingDesc {
+            binding: 0,
+            ty: BindingType::StorageTexture2DWriteOnly,
+            visibility: ShaderStageFlags::COMPUTE,
+            storage_texture_format: Some(DxgiFormat::R8G8B8A8Unorm),
+        }];
+
+        let mut w = CmdWriter::new();
+        w.create_texture2d(
+            TEX,
+            4,
+            4,
+            1,
+            1,
+            DxgiFormat::R8G8B8A8Unorm,
+            TextureUsage::STORAGE_BINDING | TextureUsage::COPY_SRC,
+        );
+        w.create_texture_view(VIEW, TEX, 0, 1, 0, 1);
+        w.create_shader_module_wgsl(SHADER, wgsl);
+        w.create_compute_pipeline(PIPE, SHADER, &bindings);
+
+        w.begin_compute_pass();
+        w.set_pipeline(PipelineKind::Compute, PIPE);
+        w.set_bind_texture_view(0, VIEW);
+        w.dispatch(4, 4, 1);
+        w.end_compute_pass();
+
+        rt.execute(&w.finish()).unwrap();
+        rt.poll_wait();
+
+        let pixels = rt.read_texture_rgba8(TEX).await.unwrap();
+        assert_eq!(pixels.len(), 4 * 4 * 4);
+        assert_eq!(&pixels[0..4], &[0, 0, 255, 255]);
+        assert_eq!(&pixels[(3 * 4 + 3) * 4..(3 * 4 + 4) * 4], &[0, 0, 255, 255]);
+    });
+}
