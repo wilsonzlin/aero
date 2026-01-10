@@ -32,6 +32,14 @@ Required:
 - `S3_BUCKET`
 - `AWS_REGION`
 
+Credentials:
+
+The AWS SDK uses the standard default credential provider chain (env vars, shared config files, instance roles, etc).
+For local MinIO, set:
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+
 Optional (S3-compatible / MinIO):
 
 - `S3_ENDPOINT` (e.g. `http://127.0.0.1:9000`)
@@ -69,6 +77,8 @@ Then set:
 - `S3_ENDPOINT=http://127.0.0.1:9000`
 - `S3_FORCE_PATH_STYLE=true`
 - `S3_BUCKET=aero-images` (or change the bucket name in `.env` and in `docker-compose.minio.yml`)
+- `AWS_ACCESS_KEY_ID=minioadmin`
+- `AWS_SECRET_ACCESS_KEY=minioadmin`
 
 ### Run
 

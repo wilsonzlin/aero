@@ -8,7 +8,7 @@ import {
   type S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl as getS3SignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import fastify from "fastify";
 import { randomUUID } from "node:crypto";
 
@@ -64,6 +64,28 @@ function assertOwner(record: ImageRecord, callerUserId: string): void {
 
 function buildStableImagePath(config: Config, record: ImageRecord): string {
   return `${config.imageBasePath}/${record.ownerId}/${record.id}/${record.version}/disk.img`;
+}
+
+function buildSelfUrl(req: FastifyRequest, path: string): string {
+  const rawHost = req.headers["x-forwarded-host"] ?? req.headers.host;
+  const host =
+    typeof rawHost === "string"
+      ? rawHost.split(",")[0].trim()
+      : Array.isArray(rawHost)
+        ? rawHost[0]
+        : undefined;
+
+  const rawProto = req.headers["x-forwarded-proto"];
+  const proto =
+    typeof rawProto === "string"
+      ? rawProto.split(",")[0].trim()
+      : Array.isArray(rawProto)
+        ? rawProto[0]
+        : req.protocol;
+
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  if (!host) return normalizedPath;
+  return `${proto}://${host}${normalizedPath}`;
 }
 
 export function buildApp(deps: BuildAppDeps): FastifyInstance {
@@ -285,7 +307,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
     const path = buildStableImagePath(deps.config, record);
     const url = deps.config.cloudfrontDomain
       ? buildCloudFrontUrl({ cloudfrontDomain: deps.config.cloudfrontDomain, path })
-      : `/v1/images/${imageId}/range`;
+      : buildSelfUrl(req, `/v1/images/${imageId}/range`);
 
     reply.send({
       size: record.size,
@@ -349,7 +371,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
     } else {
       // Local/dev fallback: stream via the range proxy endpoint on the same host.
       // This path is stable but does proxy bytes through the service.
-      url = `/v1/images/${imageId}/range`;
+      url = buildSelfUrl(req, `/v1/images/${imageId}/range`);
       auth = { type: "none" };
     }
 
