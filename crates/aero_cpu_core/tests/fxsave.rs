@@ -177,3 +177,47 @@ fn fxsave64_roundtrip_restores_state() {
     assert_eq!(restored.fpu.st, original.fpu.st);
     assert_eq!(restored.sse.xmm, original.sse.xmm);
 }
+
+#[test]
+fn fxrstor_rejects_reserved_mxcsr_without_modifying_state() {
+    let mut cpu = CpuState::default();
+    cpu.fpu.fcw = 0x1234;
+    cpu.sse.mxcsr = 0x1F80;
+    cpu.sse.xmm[0] = patterned_u128(0xAA);
+    let snapshot = cpu.clone();
+
+    let mut image = [0u8; FXSAVE_AREA_SIZE];
+    snapshot.fxsave(&mut image);
+
+    // Set a reserved MXCSR bit (outside MXCSR_MASK).
+    image[24..28].copy_from_slice(&(MXCSR_MASK | (1 << 31)).to_le_bytes());
+
+    let err = cpu.fxrstor(&image).unwrap_err();
+    assert!(matches!(
+        err,
+        aero_cpu_core::FxStateError::MxcsrReservedBits { .. }
+    ));
+    assert_eq!(cpu, snapshot);
+}
+
+#[test]
+fn fxrstor64_rejects_reserved_mxcsr_without_modifying_state() {
+    let mut cpu = CpuState::default();
+    cpu.fpu.fcw = 0xBEEF;
+    cpu.fpu.fip = 0x1122_3344_5566_7788;
+    cpu.sse.mxcsr = 0x1F80;
+    cpu.sse.xmm[15] = patterned_u128(0xCC);
+    let snapshot = cpu.clone();
+
+    let mut image = [0u8; FXSAVE_AREA_SIZE];
+    snapshot.fxsave64(&mut image);
+
+    image[24..28].copy_from_slice(&(MXCSR_MASK | (1 << 30)).to_le_bytes());
+
+    let err = cpu.fxrstor64(&image).unwrap_err();
+    assert!(matches!(
+        err,
+        aero_cpu_core::FxStateError::MxcsrReservedBits { .. }
+    ));
+    assert_eq!(cpu, snapshot);
+}

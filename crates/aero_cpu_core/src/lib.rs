@@ -131,31 +131,39 @@ impl CpuState {
 
     /// Implements the legacy (32-bit) `FXRSTOR m512byte` memory image.
     pub fn fxrstor(&mut self, src: &[u8; FXSAVE_AREA_SIZE]) -> Result<(), FxStateError> {
-        self.fpu.fcw = read_u16(src, 0);
-        self.fpu.fsw = read_u16(src, 2);
-        self.fpu.top = ((self.fpu.fsw >> 11) & 0b111) as u8;
-        self.fpu.ftw = src[4];
-        self.fpu.fop = read_u16(src, 6);
-
-        self.fpu.fip = read_u32(src, 8) as u64;
-        self.fpu.fcs = read_u16(src, 12);
-        self.fpu.fdp = read_u32(src, 16) as u64;
-        self.fpu.fds = read_u16(src, 20);
-
+        // Intel SDM: if MXCSR is invalid (reserved bits set), `FXRSTOR` raises
+        // `#GP(0)` and *does not* restore any state. We model that by validating
+        // MXCSR before committing changes to `self`.
+        let mxcsr = read_u32(src, 24);
+        let mut sse = self.sse.clone();
         // `MXCSR_MASK` is a CPU capability and is ignored by `FXRSTOR` on real
-        // hardware.
-        self.sse.set_mxcsr(read_u32(src, 24))?;
+        // hardware, but the *value* must still be validated.
+        sse.set_mxcsr(mxcsr)?;
+
+        let fsw = read_u16(src, 2);
+        let mut fpu = self.fpu.clone();
+        fpu.fcw = read_u16(src, 0);
+        fpu.fsw = fsw;
+        fpu.top = ((fsw >> 11) & 0b111) as u8;
+        fpu.ftw = src[4];
+        fpu.fop = read_u16(src, 6);
+        fpu.fip = read_u32(src, 8) as u64;
+        fpu.fcs = read_u16(src, 12);
+        fpu.fdp = read_u32(src, 16) as u64;
+        fpu.fds = read_u16(src, 20);
 
         for i in 0..8 {
             let start = 32 + i * 16;
-            self.fpu.st[i] = canonicalize_st(read_u128(src, start));
+            fpu.st[i] = canonicalize_st(read_u128(src, start));
         }
 
         for i in 0..8 {
             let start = 160 + i * 16;
-            self.sse.xmm[i] = read_u128(src, start);
+            sse.xmm[i] = read_u128(src, start);
         }
 
+        self.fpu = fpu;
+        self.sse = sse;
         Ok(())
     }
 
@@ -211,27 +219,32 @@ impl CpuState {
 
     /// Implements the 64-bit `FXRSTOR64 m512byte` memory image.
     pub fn fxrstor64(&mut self, src: &[u8; FXSAVE_AREA_SIZE]) -> Result<(), FxStateError> {
-        self.fpu.fcw = read_u16(src, 0);
-        self.fpu.fsw = read_u16(src, 2);
-        self.fpu.top = ((self.fpu.fsw >> 11) & 0b111) as u8;
-        self.fpu.ftw = src[4];
-        self.fpu.fop = read_u16(src, 6);
+        let mxcsr = read_u32(src, 24);
+        let mut sse = self.sse.clone();
+        sse.set_mxcsr(mxcsr)?;
 
-        self.fpu.fip = read_u64(src, 8);
-        self.fpu.fdp = read_u64(src, 16);
-
-        self.sse.set_mxcsr(read_u32(src, 24))?;
+        let fsw = read_u16(src, 2);
+        let mut fpu = self.fpu.clone();
+        fpu.fcw = read_u16(src, 0);
+        fpu.fsw = fsw;
+        fpu.top = ((fsw >> 11) & 0b111) as u8;
+        fpu.ftw = src[4];
+        fpu.fop = read_u16(src, 6);
+        fpu.fip = read_u64(src, 8);
+        fpu.fdp = read_u64(src, 16);
 
         for i in 0..8 {
             let start = 32 + i * 16;
-            self.fpu.st[i] = canonicalize_st(read_u128(src, start));
+            fpu.st[i] = canonicalize_st(read_u128(src, start));
         }
 
         for i in 0..16 {
             let start = 160 + i * 16;
-            self.sse.xmm[i] = read_u128(src, start);
+            sse.xmm[i] = read_u128(src, start);
         }
 
+        self.fpu = fpu;
+        self.sse = sse;
         Ok(())
     }
 
