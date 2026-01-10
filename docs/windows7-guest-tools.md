@@ -125,6 +125,8 @@ After you have a working Windows 7 desktop:
 2. Mount/insert `aero-guest-tools.iso` as the virtual CD/DVD.
 3. In Windows 7, open **Computer** and verify you see the CD drive.
 
+If you were given `aero-guest-tools.zip` instead of an ISO, you can extract it on the host and copy the extracted folder into the VM (for example into `C:\AeroGuestTools\media\`) and run `setup.cmd` from there.
+
 ### Where Guest Tools writes logs/reports
 
 Regardless of whether you run Guest Tools from the mounted CD/DVD or from a copied folder, the scripts write their output to:
