@@ -167,6 +167,13 @@ for %%F in ("%CERT_DIR%\*.cer") do (
   )
 )
 
+for %%F in ("%CERT_DIR%\*.crt") do (
+  if exist "%%~fF" (
+    set "FOUND_CERT=1"
+    call :install_one_cert "%%~fF" || exit /b 1
+  )
+)
+
 for %%F in ("%CERT_DIR%\*.p7b") do (
   if exist "%%~fF" (
     set "FOUND_CERT=1"
@@ -175,7 +182,7 @@ for %%F in ("%CERT_DIR%\*.p7b") do (
 )
 
 if "%FOUND_CERT%"=="0" (
-  call :log "ERROR: No certificates found under %CERT_DIR% (expected *.cer and/or *.p7b)."
+  call :log "ERROR: No certificates found under %CERT_DIR% (expected *.cer/*.crt and/or *.p7b)."
   exit /b 1
 )
 
@@ -187,6 +194,9 @@ call :log "  - %CERT_FILE%"
 
 rem Record thumbprint(s) for uninstall where possible.
 if /i "%~x1"==".cer" (
+  call :record_cert_thumbprint "%CERT_FILE%"
+)
+if /i "%~x1"==".crt" (
   call :record_cert_thumbprint "%CERT_FILE%"
 )
 
@@ -318,6 +328,17 @@ set "RC=%ERRORLEVEL%"
 
 set "PUBLISHED="
 for /f "tokens=2 delims=:" %%A in ('findstr /i "Published name" "%OUT%"') do set "PUBLISHED=%%A"
+
+rem pnputil on Windows 7 is not consistent about exit codes for idempotent "already imported" cases.
+rem Treat common "already" messages as success so setup.cmd is safe to run multiple times.
+if not "%RC%"=="0" (
+  findstr /i /c:"already imported" /c:"already exists" /c:"already installed" /c:"already in the system" /c:"already in the driver store" "%OUT%" >nul 2>&1
+  if not errorlevel 1 (
+    call :log "pnputil reports the driver package is already present; continuing."
+    set "RC=0"
+  )
+)
+
 del /q "%OUT%" >nul 2>&1
 
 if not "%RC%"=="0" (

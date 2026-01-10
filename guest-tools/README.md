@@ -23,7 +23,7 @@ Designed for the standard flow:
 ### What it does
 
 1. Creates a state directory at `C:\AeroGuestTools\`.
-2. Installs Aero signing certificate(s) from `certs\` into:
+2. Installs Aero signing certificate(s) from `certs\` (`*.cer`, `*.crt`, `*.p7b`) into:
    - `Root` (Trusted Root Certification Authorities)
    - `TrustedPublisher` (Trusted Publishers)
 3. On **Windows 7 x64**, optionally enables **test signing** (`bcdedit /set testsigning on`).
