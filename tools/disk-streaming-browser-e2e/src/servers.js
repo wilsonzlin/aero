@@ -290,6 +290,13 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
     cwd: diskGatewaySourceDir,
     env: {
       ...process.env,
+      // Build disk-gateway into the repo-level target dir so CI's rust-cache
+      // (which caches `${repo}/target`) can reuse compilation artifacts.
+      //
+      // This also avoids rebuilding disk-gateway from scratch when the harness
+      // is run repeatedly during local development.
+      CARGO_TARGET_DIR:
+        process.env.CARGO_TARGET_DIR ?? path.join(getRepoRoot(), 'target', 'disk-gateway-e2e'),
       DISK_GATEWAY_BIND: bind,
       DISK_GATEWAY_PUBLIC_DIR: publicDir,
       DISK_GATEWAY_PRIVATE_DIR: privateDir,
