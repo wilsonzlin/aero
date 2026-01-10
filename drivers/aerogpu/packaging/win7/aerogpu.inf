@@ -1,0 +1,124 @@
+; AeroGPU Windows 7 SP1 (WDDM 1.1) display driver package
+;
+; This INF is intended for test-signed development installs.
+;
+; IMPORTANT:
+;   - The Hardware ID(s) below MUST match the AeroGPU PCI device model.
+;   - Replace the placeholder PCI\VEN_1234&DEV_1111 with the real AeroGPU HW ID.
+;
+; Expected package contents (same directory as this INF):
+;   - aerogpu.sys                 (kernel-mode miniport)
+;   - aerogpu_d3d9.dll            (32-bit D3D9 UMD)
+;   - aerogpu_d3d9_x64.dll        (64-bit D3D9 UMD)
+;
+; Optional (use aerogpu_dx11.inf if you ship D3D10/11 UMDs):
+;   - aerogpu_d3d10.dll
+;   - aerogpu_d3d10_x64.dll
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = Display
+ClassGuid   = {4d36e968-e325-11ce-bfc1-08002be10318}
+Provider    = %AeroGPU.Provider%
+DriverVer   = 01/01/2026,0.0.1.0
+CatalogFile = aerogpu.cat
+
+[Manufacturer]
+%AeroGPU.Manufacturer% = AeroGPU_Models,NTx86.6.1,NTamd64.6.1
+
+[AeroGPU_Models.NTx86.6.1]
+%AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_1234&DEV_1111
+
+[AeroGPU_Models.NTamd64.6.1]
+%AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_1234&DEV_1111
+
+; -------------------------------
+; Install (x86)
+; -------------------------------
+[AeroGPU_Install.NTx86.6.1]
+CopyFiles = AeroGPU_KMD.CopyFiles, AeroGPU_UMD_x86.CopyFiles
+AddReg    = AeroGPU_Device_AddReg_x86
+
+[AeroGPU_Install.NTx86.6.1.Services]
+AddService = AeroGPU,0x00000002,AeroGPU_Service_Install
+
+; -------------------------------
+; Install (amd64)
+; -------------------------------
+[AeroGPU_Install.NTamd64.6.1]
+CopyFiles = AeroGPU_KMD.CopyFiles, AeroGPU_UMD_x64.CopyFiles, AeroGPU_UMD_Wow64.CopyFiles
+AddReg    = AeroGPU_Device_AddReg_amd64
+
+[AeroGPU_Install.NTamd64.6.1.Services]
+AddService = AeroGPU,0x00000002,AeroGPU_Service_Install
+
+; -------------------------------
+; File copy lists
+; -------------------------------
+[AeroGPU_KMD.CopyFiles]
+aerogpu.sys
+
+[AeroGPU_UMD_x86.CopyFiles]
+aerogpu_d3d9.dll
+
+[AeroGPU_UMD_x64.CopyFiles]
+aerogpu_d3d9_x64.dll
+
+[AeroGPU_UMD_Wow64.CopyFiles]
+aerogpu_d3d9.dll
+
+[DestinationDirs]
+DefaultDestDir           = 11
+AeroGPU_KMD.CopyFiles    = 12
+AeroGPU_UMD_x86.CopyFiles   = 11
+AeroGPU_UMD_x64.CopyFiles   = 11
+; SysWOW64 is under %SystemRoot% on x64.
+AeroGPU_UMD_Wow64.CopyFiles = 10,SysWOW64
+
+; -------------------------------
+; Registry settings
+; -------------------------------
+[AeroGPU_Device_AddReg_x86]
+; Driver ranking (lower is better). Value chosen to be non-zero but not special.
+HKR,,FeatureScore,0x00010001,0x000000F8
+
+; D3D9 UMD registration (32-bit).
+; InstalledDisplayDrivers entries are base names (no extension).
+HKR,,InstalledDisplayDrivers,0x00010000,"aerogpu_d3d9"
+
+[AeroGPU_Device_AddReg_amd64]
+HKR,,FeatureScore,0x00010001,0x000000F8
+
+; D3D9 UMD registration (64-bit + WoW32).
+HKR,,InstalledDisplayDrivers,0x00010000,"aerogpu_d3d9_x64"
+HKR,,InstalledDisplayDriversWow,0x00010000,"aerogpu_d3d9"
+
+; -------------------------------
+; Service installation
+; -------------------------------
+[AeroGPU_Service_Install]
+DisplayName   = %AeroGPU.ServiceDesc%
+ServiceType   = 1  ; SERVICE_KERNEL_DRIVER
+StartType     = 3  ; SERVICE_DEMAND_START
+ErrorControl  = 1  ; SERVICE_ERROR_NORMAL
+ServiceBinary = %12%\aerogpu.sys
+LoadOrderGroup = Video
+
+; -------------------------------
+; Source media
+; -------------------------------
+[SourceDisksNames]
+1 = %AeroGPU.DiskName%,,,""
+
+[SourceDisksFiles]
+aerogpu.sys          = 1
+aerogpu_d3d9.dll     = 1
+aerogpu_d3d9_x64.dll = 1
+
+[Strings]
+AeroGPU.Provider     = "AeroGPU"
+AeroGPU.Manufacturer = "AeroGPU"
+AeroGPU.DeviceDesc   = "AeroGPU Display Adapter"
+AeroGPU.ServiceDesc  = "AeroGPU WDDM Miniport"
+AeroGPU.DiskName     = "AeroGPU Driver Disk"
