@@ -57,6 +57,14 @@ describe("parseTcpTarget", () => {
     });
   });
 
+  it("rejects unbracketed IPv6 in target form", () => {
+    assert.throws(
+      () => parse("target=2001:db8::1:443"),
+      (err: unknown) =>
+        err instanceof TcpTargetParseError && err.code === "ERR_TCP_INVALID_TARGET",
+    );
+  });
+
   it("accepts bracketed IPv6 host param", () => {
     assert.deepEqual(parse("host=%5B2001:db8::1%5D&port=443"), {
       host: "2001:db8::1",

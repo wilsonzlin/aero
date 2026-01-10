@@ -138,6 +138,14 @@ function parseTargetParam(target: string): { host: string; port: number } {
       "Invalid target: expected <host>:<port>",
     );
   }
+  // IPv6 literals must use RFC3986 bracket form (`[::1]:443`), otherwise they
+  // are ambiguous (e.g. `2001:db8::1` could be interpreted as host+port).
+  if (rawHost.includes(":")) {
+    throw new TcpTargetParseError(
+      "ERR_TCP_INVALID_TARGET",
+      "Invalid target: IPv6 literals must use bracket form, e.g. [::1]:443",
+    );
+  }
   if (rawHost.includes("[") || rawHost.includes("]")) {
     throw new TcpTargetParseError(
       "ERR_TCP_INVALID_TARGET",
@@ -192,4 +200,3 @@ function parsePort(port: string): number {
   }
   return n;
 }
-
