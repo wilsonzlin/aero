@@ -46,7 +46,8 @@ export const storageIoScenario: Scenario = {
       browser = await playwright.chromium.launch({ headless: true });
 
       const page = await browser.newPage();
-      await page.goto(url, { waitUntil: "domcontentloaded" });
+      const benchUrl = new URL("storage_bench.html", url).toString();
+      await page.goto(benchUrl, { waitUntil: "domcontentloaded" });
 
       await page.waitForFunction(() => Boolean(window.aero?.bench?.runStorageBench));
 

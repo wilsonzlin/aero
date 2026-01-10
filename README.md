@@ -223,7 +223,7 @@ await window.aero.perf.export();
 
 ### Playwright scenario runner
 
-Run the `storage_io` scenario (writes results under `bench-results/`):
+Run the `storage_io` scenario (writes results under `bench/results/`):
 
 ```bash
 node --experimental-strip-types bench/runner.ts storage_io
@@ -238,7 +238,7 @@ AERO_BENCH_SKIP_STORAGE_IO=1 node --experimental-strip-types bench/runner.ts sto
 Check default thresholds (informational by default; add `--enforce` for CI gating):
 
 ```bash
-node --experimental-strip-types bench/compare.ts --input bench-results/<run>/perf_export.json
+node --experimental-strip-types bench/compare.ts --input bench/results/<run>/perf_export.json
 ```
 
 ## Disk image manager UI (OPFS)
