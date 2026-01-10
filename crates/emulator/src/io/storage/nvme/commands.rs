@@ -8,6 +8,8 @@ pub const OPC_ADMIN_CREATE_IO_CQ: u8 = 0x05;
 pub const OPC_ADMIN_IDENTIFY: u8 = 0x06;
 pub const OPC_ADMIN_SET_FEATURES: u8 = 0x09;
 pub const OPC_ADMIN_GET_FEATURES: u8 = 0x0a;
+pub const OPC_ADMIN_ASYNC_EVENT_REQUEST: u8 = 0x0c;
+pub const OPC_ADMIN_KEEP_ALIVE: u8 = 0x18;
 
 pub const OPC_NVM_FLUSH: u8 = 0x00;
 pub const OPC_NVM_WRITE: u8 = 0x01;
@@ -80,7 +82,7 @@ impl NvmeStatus {
         status |= (self.sc & 0xff) << 1;
         status |= ((self.sct as u16) & 0x7) << 9;
         if self.dnr {
-            status |= 1 << 13;
+            status |= 1 << 15;
         }
         status
     }

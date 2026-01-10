@@ -8,9 +8,9 @@ use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
 use crate::io::storage::disk::{DiskBackend, DiskError};
 use commands::{
     build_identify_controller, build_identify_namespace, NvmeCommand, NvmeStatus, FID_NUMBER_OF_QUEUES,
-    OPC_ADMIN_CREATE_IO_CQ, OPC_ADMIN_CREATE_IO_SQ, OPC_ADMIN_DELETE_IO_CQ, OPC_ADMIN_DELETE_IO_SQ,
-    OPC_ADMIN_GET_FEATURES, OPC_ADMIN_GET_LOG_PAGE, OPC_ADMIN_IDENTIFY, OPC_ADMIN_SET_FEATURES,
-    OPC_NVM_FLUSH, OPC_NVM_READ, OPC_NVM_WRITE,
+    OPC_ADMIN_ASYNC_EVENT_REQUEST, OPC_ADMIN_CREATE_IO_CQ, OPC_ADMIN_CREATE_IO_SQ, OPC_ADMIN_DELETE_IO_CQ,
+    OPC_ADMIN_DELETE_IO_SQ, OPC_ADMIN_GET_FEATURES, OPC_ADMIN_GET_LOG_PAGE, OPC_ADMIN_IDENTIFY,
+    OPC_ADMIN_KEEP_ALIVE, OPC_ADMIN_SET_FEATURES, OPC_NVM_FLUSH, OPC_NVM_READ, OPC_NVM_WRITE,
 };
 use memory::MemoryBus;
 use queue::{
@@ -34,6 +34,7 @@ pub struct NvmeController {
     io_sqs: HashMap<u16, SubmissionQueue>,
     io_cqs: HashMap<u16, CompletionQueue>,
     features: HashMap<u8, u32>,
+    pending_aer: Vec<u16>,
     disk: Box<dyn DiskBackend>,
     num_io_sqs: u16,
     num_io_cqs: u16,
@@ -66,6 +67,7 @@ impl NvmeController {
             io_sqs: HashMap::new(),
             io_cqs: HashMap::new(),
             features: HashMap::new(),
+            pending_aer: Vec::new(),
             disk,
             num_io_sqs: 1,
             num_io_cqs: 1,
@@ -112,6 +114,7 @@ impl NvmeController {
         self.io_sqs.clear();
         self.io_cqs.clear();
         self.features.clear();
+        self.pending_aer.clear();
         self.irq_level = false;
     }
 
@@ -121,6 +124,7 @@ impl NvmeController {
         self.io_sqs.clear();
         self.io_cqs.clear();
         self.features.clear();
+        self.pending_aer.clear();
         self.irq_level = false;
     }
 
@@ -301,28 +305,35 @@ impl NvmeController {
 
             sq.head = (sq.head + 1) % sq.size;
 
-            let (dw0, status) = if admin {
-                self.execute_admin(mem, cmd)
+            if admin {
+                if let Some((dw0, status)) = self.execute_admin(mem, cmd) {
+                    let status_field = status.to_cqe_status_field(cq.phase);
+                    cq.push(mem, dw0, sq.head, sq.id, cmd.cid, status_field);
+                }
             } else {
-                self.execute_io(mem, cmd)
-            };
-
-            let status_field = status.to_cqe_status_field(cq.phase);
-            cq.push(mem, dw0, sq.head, sq.id, cmd.cid, status_field);
+                let (dw0, status) = self.execute_io(mem, cmd);
+                let status_field = status.to_cqe_status_field(cq.phase);
+                cq.push(mem, dw0, sq.head, sq.id, cmd.cid, status_field);
+            }
         }
     }
 
-    fn execute_admin(&mut self, mem: &mut dyn MemoryBus, cmd: NvmeCommand) -> (u32, NvmeStatus) {
+    fn execute_admin(&mut self, mem: &mut dyn MemoryBus, cmd: NvmeCommand) -> Option<(u32, NvmeStatus)> {
         match cmd.opc {
-            OPC_ADMIN_IDENTIFY => self.cmd_identify(mem, cmd),
-            OPC_ADMIN_GET_LOG_PAGE => self.cmd_get_log_page(mem, cmd),
-            OPC_ADMIN_GET_FEATURES => self.cmd_get_features(cmd),
-            OPC_ADMIN_SET_FEATURES => self.cmd_set_features(cmd),
-            OPC_ADMIN_CREATE_IO_CQ => self.cmd_create_io_cq(cmd),
-            OPC_ADMIN_CREATE_IO_SQ => self.cmd_create_io_sq(cmd),
-            OPC_ADMIN_DELETE_IO_CQ => self.cmd_delete_io_cq(cmd),
-            OPC_ADMIN_DELETE_IO_SQ => self.cmd_delete_io_sq(cmd),
-            _ => (0, NvmeStatus::invalid_opcode()),
+            OPC_ADMIN_IDENTIFY => Some(self.cmd_identify(mem, cmd)),
+            OPC_ADMIN_GET_LOG_PAGE => Some(self.cmd_get_log_page(mem, cmd)),
+            OPC_ADMIN_ASYNC_EVENT_REQUEST => {
+                self.pending_aer.push(cmd.cid);
+                None
+            }
+            OPC_ADMIN_KEEP_ALIVE => Some((0, NvmeStatus::success())),
+            OPC_ADMIN_GET_FEATURES => Some(self.cmd_get_features(cmd)),
+            OPC_ADMIN_SET_FEATURES => Some(self.cmd_set_features(cmd)),
+            OPC_ADMIN_CREATE_IO_CQ => Some(self.cmd_create_io_cq(cmd)),
+            OPC_ADMIN_CREATE_IO_SQ => Some(self.cmd_create_io_sq(cmd)),
+            OPC_ADMIN_DELETE_IO_CQ => Some(self.cmd_delete_io_cq(cmd)),
+            OPC_ADMIN_DELETE_IO_SQ => Some(self.cmd_delete_io_sq(cmd)),
+            _ => Some((0, NvmeStatus::invalid_opcode())),
         }
     }
 
@@ -1016,5 +1027,64 @@ mod tests {
         for i in 0..len {
             assert_eq!(mem.read_u8(buf + i as u64), 0);
         }
+    }
+
+    #[test]
+    fn async_event_request_is_deferred_without_completion() {
+        let mut mem = VecMemory::new(4 * 1024 * 1024);
+        let mut ctrl = setup_controller(&mut mem);
+
+        // Pre-fill CQ so we can detect any writes.
+        for i in 0..(4 * 16) {
+            mem.write_u8(0x20_000 + i as u64, 0xee);
+        }
+
+        let identify_buf = 0x30_000u64;
+
+        let cid_aer = 0x5000u16;
+        let mut aer_cmd = [0u32; 16];
+        aer_cmd[0] = OPC_ADMIN_ASYNC_EVENT_REQUEST as u32 | ((cid_aer as u32) << 16);
+        write_cmd(&mut mem, 0x10_000, aer_cmd);
+
+        let cid_ident = 0x5001u16;
+        let mut ident_cmd = [0u32; 16];
+        ident_cmd[0] = OPC_ADMIN_IDENTIFY as u32 | ((cid_ident as u32) << 16);
+        ident_cmd[6] = identify_buf as u32;
+        ident_cmd[7] = (identify_buf >> 32) as u32;
+        ident_cmd[10] = 1;
+        write_cmd(&mut mem, 0x10_000 + 64, ident_cmd);
+
+        // Ring SQ0 tail = 2; only Identify should complete.
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE, 2);
+
+        let (_, _, _, dw3) = read_cqe(&mut mem, 0x20_000, 0);
+        assert_eq!((dw3 & 0xffff) as u16, cid_ident);
+        let status = (dw3 >> 16) as u16;
+        assert_eq!((status >> 1) & 0xff, 0);
+        assert!(ctrl.irq_level());
+
+        // CQE[1] must be untouched (AER did not complete).
+        let (_, _, _, dw3) = read_cqe(&mut mem, 0x20_000, 1);
+        assert_eq!(dw3, 0xeeee_eeee);
+    }
+
+    #[test]
+    fn invalid_opcode_sets_dnr_bit() {
+        let mut mem = VecMemory::new(4 * 1024 * 1024);
+        let mut ctrl = setup_controller(&mut mem);
+
+        let cid = 0x6000u16;
+        let mut cmd = [0u32; 16];
+        cmd[0] = 0xffu32 | ((cid as u32) << 16); // invalid admin opcode
+        write_cmd(&mut mem, 0x10_000, cmd);
+
+        ctrl.mmio_write_u32(&mut mem, NVME_DOORBELL_BASE, 1);
+
+        let (_, _, _, dw3) = read_cqe(&mut mem, 0x20_000, 0);
+        let status = (dw3 >> 16) as u16;
+        // DNR is bit 15 of the status field.
+        assert_ne!(status & (1 << 15), 0);
+        // SC=1 (invalid opcode).
+        assert_eq!((status >> 1) & 0xff, 1);
     }
 }
