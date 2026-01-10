@@ -19,27 +19,23 @@
  *   free at DISPATCH_LEVEL using a spinlock + allocation bitmap.
  */
 
-#include <ntddk.h>
-#include <wdf.h>
+#include "virtio_dma.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct _VIRTIO_DMA_CONTEXT VIRTIO_DMA_CONTEXT;
 typedef struct _VIRTIO_DMA_POOL VIRTIO_DMA_POOL;
 
 /*
- * The pool needs access to a WDFDMAENABLER.  The virtio-kmdf codebase typically
- * stores it in the per-device DMA context; however the exact layout is outside
- * the scope of this module.
+ * The pool needs access to a WDFDMAENABLER. By default, we use the DMA enabler
+ * stored in the VIRTIO_DMA_CONTEXT created by VirtioDmaCreate() (virtio_dma.h).
  *
- * By default, the pool assumes that the first field of VIRTIO_DMA_CONTEXT is a
- * WDFDMAENABLER handle.  Drivers with a different layout must override this
- * macro (e.g. via a compiler define) to return the appropriate handle.
+ * Drivers with a different DMA context layout can override this macro (e.g. via
+ * a compiler define) to return the appropriate handle.
  */
 #ifndef VIRTIO_DMA_CONTEXT_GET_WDF_DMA_ENABLER
-#define VIRTIO_DMA_CONTEXT_GET_WDF_DMA_ENABLER(_dmaCtx) (*(WDFDMAENABLER*)(_dmaCtx))
+#define VIRTIO_DMA_CONTEXT_GET_WDF_DMA_ENABLER(_dmaCtx) VirtioDmaGetEnabler((_dmaCtx))
 #endif
 
 typedef struct _VIRTIO_DMA_SLOT {
@@ -85,4 +81,3 @@ NTSTATUS VirtioIndirectTableInit(
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
-
