@@ -1,13 +1,13 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     pub schema_version: u32,
     pub package: ManifestPackage,
     pub files: Vec<ManifestFileEntry>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestPackage {
     pub name: String,
     pub version: String,
@@ -15,7 +15,7 @@ pub struct ManifestPackage {
     pub source_date_epoch: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestFileEntry {
     pub path: String,
     pub sha256: String,

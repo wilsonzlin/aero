@@ -16,7 +16,7 @@ cd tools/packaging/aero_packager
 # Example:
 #   drivers/ contains:
 #     x86/<driver>/*.inf|*.sys|*.cat
-#     amd64/<driver>/*.inf|*.sys|*.cat
+#     amd64/<driver>/*.inf|*.sys|*.cat   (or x64/ on input; the packaged output uses amd64/)
 #   guest-tools/ contains:
 #     setup.cmd
 #     uninstall.cmd

@@ -128,7 +128,10 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
     if verify_cmd.exists() || verify_ps1.exists() {
         for (name, path) in [("verify.cmd", &verify_cmd), ("verify.ps1", &verify_ps1)] {
             if !path.is_file() {
-                bail!("guest tools missing required file: {}", path.to_string_lossy());
+                bail!(
+                    "guest tools missing required file: {}",
+                    path.to_string_lossy()
+                );
             }
             out.push(FileToPackage {
                 rel_path: name.to_string(),
@@ -246,14 +249,9 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
     }
 
     // Drivers.
-    for (arch_in, arch_out) in [("x86", "x86"), ("amd64", "amd64")] {
-        let arch_dir = config.drivers_dir.join(arch_in);
-        if !arch_dir.is_dir() {
-            bail!(
-                "drivers dir missing required architecture directory: {}",
-                arch_dir.to_string_lossy()
-            );
-        }
+    for arch_out in ["x86", "amd64"] {
+        let arch_dir = resolve_input_arch_dir(&config.drivers_dir, arch_out)
+            .with_context(|| format!("resolve driver input directory for {arch_out}"))?;
 
         // Only include files underneath each driver directory, preserving hierarchy.
         let mut driver_dirs = Vec::new();
@@ -308,9 +306,14 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
 }
 
 fn validate_drivers(spec: &PackagingSpec, drivers_dir: &Path) -> Result<()> {
+    let drivers_x86_dir = resolve_input_arch_dir(drivers_dir, "x86")
+        .with_context(|| "resolve driver input directory for x86")?;
+    let drivers_amd64_dir = resolve_input_arch_dir(drivers_dir, "amd64")
+        .with_context(|| "resolve driver input directory for amd64")?;
+
     for required in &spec.required_drivers {
-        for arch in ["x86", "amd64"] {
-            let driver_dir = drivers_dir.join(arch).join(&required.name);
+        for (arch, arch_dir) in [("x86", &drivers_x86_dir), ("amd64", &drivers_amd64_dir)] {
+            let driver_dir = arch_dir.join(&required.name);
             if !driver_dir.is_dir() {
                 bail!(
                     "required driver directory missing: {}",
@@ -373,6 +376,30 @@ fn validate_drivers(spec: &PackagingSpec, drivers_dir: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_input_arch_dir(drivers_dir: &Path, arch_out: &str) -> Result<PathBuf> {
+    let candidates: &[&str] = match arch_out {
+        // ISO layout + setup.cmd uses `x86` and `amd64`. For convenience, accept
+        // common build-output directory names too (especially `x64`).
+        "x86" => &["x86", "win32", "i386"],
+        "amd64" => &["amd64", "x64", "x86_64", "x86-64"],
+        other => bail!("unsupported arch: {other}"),
+    };
+
+    for name in candidates {
+        let p = drivers_dir.join(name);
+        if p.is_dir() {
+            return Ok(p);
+        }
+    }
+
+    let tried = candidates
+        .iter()
+        .map(|n| drivers_dir.join(n).display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    bail!("drivers dir missing required architecture directory for {arch_out}; tried: {tried}");
 }
 
 fn read_inf_text(path: &Path) -> Result<String> {

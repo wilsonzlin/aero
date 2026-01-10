@@ -1,5 +1,7 @@
+use sha2::Digest as _;
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::Read;
 
 #[test]
 fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Result<()> {
@@ -37,6 +39,29 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     assert_eq!(
         fs::read(&outputs1.manifest_path)?,
         fs::read(&outputs2.manifest_path)?
+    );
+
+    // Optional: ensure we accept common input arch directory names (`x64` instead of `amd64`)
+    // while still emitting `drivers/amd64/...` paths inside the ISO/zip.
+    let drivers_x64_tmp = tempfile::tempdir()?;
+    copy_dir_all(&drivers_dir, drivers_x64_tmp.path())?;
+    fs::rename(
+        drivers_x64_tmp.path().join("amd64"),
+        drivers_x64_tmp.path().join("x64"),
+    )?;
+
+    let out3 = tempfile::tempdir()?;
+    let config3 = aero_packager::PackageConfig {
+        drivers_dir: drivers_x64_tmp.path().to_path_buf(),
+        out_dir: out3.path().to_path_buf(),
+        ..config1.clone()
+    };
+    let outputs3 = aero_packager::package_guest_tools(&config3)?;
+    assert_eq!(fs::read(&outputs1.iso_path)?, fs::read(&outputs3.iso_path)?);
+    assert_eq!(fs::read(&outputs1.zip_path)?, fs::read(&outputs3.zip_path)?);
+    assert_eq!(
+        fs::read(&outputs1.manifest_path)?,
+        fs::read(&outputs3.manifest_path)?
     );
 
     // Verify ISO contains expected tree (via Joliet directory records).
@@ -79,5 +104,59 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     }
     assert_eq!(zip_paths, tree.paths);
 
+    // Verify manifest hashes match the packaged bytes (via the zip).
+    let manifest_bytes = fs::read(&outputs1.manifest_path)?;
+    let manifest: aero_packager::Manifest = serde_json::from_slice(&manifest_bytes)?;
+    assert_eq!(manifest.package.version, "1.2.3");
+    assert_eq!(manifest.package.build_id, "test");
+    assert_eq!(manifest.package.source_date_epoch, 0);
+
+    let mut manifest_paths = BTreeSet::new();
+    for entry in &manifest.files {
+        assert_ne!(entry.path, "manifest.json");
+        manifest_paths.insert(entry.path.clone());
+
+        let mut zf = zip.by_name(&entry.path)?;
+        let mut buf = Vec::new();
+        zf.read_to_end(&mut buf)?;
+
+        let mut h = sha2::Sha256::new();
+        h.update(&buf);
+        let sha = hex::encode(h.finalize());
+        assert_eq!(sha, entry.sha256, "sha mismatch for {}", entry.path);
+        assert_eq!(
+            buf.len() as u64,
+            entry.size,
+            "size mismatch for {}",
+            entry.path
+        );
+    }
+
+    // Zip includes manifest.json in addition to the files hashed within it.
+    assert!(zip_paths.contains("manifest.json"));
+    assert_eq!(manifest_paths.len() + 1, zip_paths.len());
+    assert_eq!(
+        manifest_paths
+            .into_iter()
+            .chain(std::iter::once("manifest.json".to_string()))
+            .collect::<BTreeSet<_>>(),
+        zip_paths
+    );
+
+    Ok(())
+}
+
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &dst_path)?;
+        } else {
+            fs::copy(entry.path(), dst_path)?;
+        }
+    }
     Ok(())
 }

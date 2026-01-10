@@ -75,6 +75,9 @@ jobs:
 
       - name: cargo test
         run: cargo test ${{ steps.cargo-locked.outputs.locked }} --workspace --all-features
+
+      - name: Test guest tools packager
+        run: cargo test --manifest-path tools/packaging/aero_packager/Cargo.toml --locked
  
       - name: Upload net traces
         if: failure()

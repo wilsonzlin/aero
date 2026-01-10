@@ -19,7 +19,7 @@ drivers/
       *.inf
       *.sys
       *.cat
-  amd64/
+  amd64/   (or `x64/` on input; the packaged output uses `amd64/`)
     <driver-name>/
       *.inf
       *.sys
