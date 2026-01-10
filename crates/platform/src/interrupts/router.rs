@@ -1,7 +1,6 @@
 use super::ioapic::{IoApic, IoApicDelivery};
 use super::local_apic::LocalApic;
 use super::pic::Pic8259;
-use super::TriggerMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlatformInterruptMode {
@@ -21,11 +20,6 @@ pub trait InterruptController {
     fn eoi(&mut self, vector: u8);
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InterruptSource {
-    IoApic { gsi: u32, trigger: TriggerMode },
-}
-
 #[derive(Debug, Clone)]
 pub struct PlatformInterrupts {
     mode: PlatformInterruptMode,
@@ -33,8 +27,6 @@ pub struct PlatformInterrupts {
     pic: Pic8259,
     ioapic: IoApic,
     lapic: LocalApic,
-    pending_sources: Vec<Vec<InterruptSource>>,
-    in_service_sources: Vec<Vec<InterruptSource>>,
     imcr_select: u8,
     imcr: u8,
 }
@@ -52,8 +44,6 @@ impl PlatformInterrupts {
             pic: Pic8259::new(0x08, 0x70),
             ioapic: IoApic::new(24),
             lapic: LocalApic::new(0),
-            pending_sources: vec![Vec::new(); 256],
-            in_service_sources: vec![Vec::new(); 256],
             imcr_select: 0,
             imcr: 0,
         }
@@ -188,19 +178,7 @@ impl PlatformInterrupts {
                 continue;
             }
 
-            let was_pending = self.lapic.is_pending(delivery.vector);
             self.lapic.inject_vector(delivery.vector);
-            if !was_pending {
-                let trigger = self
-                    .ioapic
-                    .entry(delivery.gsi)
-                    .map(|entry| entry.trigger)
-                    .unwrap_or(TriggerMode::Edge);
-                self.pending_sources[delivery.vector as usize].push(InterruptSource::IoApic {
-                    gsi: delivery.gsi,
-                    trigger,
-                });
-            }
         }
     }
 
@@ -233,9 +211,6 @@ impl InterruptController for PlatformInterrupts {
             PlatformInterruptMode::LegacyPic => self.pic.acknowledge(vector),
             PlatformInterruptMode::Apic => {
                 self.lapic.acknowledge_vector(vector);
-                if let Some(source) = self.pending_sources[vector as usize].pop() {
-                    self.in_service_sources[vector as usize].push(source);
-                }
             }
         }
     }
@@ -244,16 +219,8 @@ impl InterruptController for PlatformInterrupts {
         match self.mode {
             PlatformInterruptMode::LegacyPic => self.pic.eoi(vector),
             PlatformInterruptMode::Apic => {
-                if let Some(source) = self.in_service_sources[vector as usize].pop() {
-                    match source {
-                        InterruptSource::IoApic { gsi, trigger } => {
-                            if trigger == TriggerMode::Level {
-                                let deliveries = self.ioapic.eoi(gsi);
-                                self.deliver_ioapic_deliveries(deliveries);
-                            }
-                        }
-                    }
-                }
+                let deliveries = self.ioapic.notify_eoi(vector);
+                self.deliver_ioapic_deliveries(deliveries);
             }
         }
     }
@@ -262,7 +229,7 @@ impl InterruptController for PlatformInterrupts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interrupts::IoApicRedirectionEntry;
+    use crate::interrupts::{IoApicRedirectionEntry, TriggerMode};
 
     #[test]
     fn legacy_pic_irq1_delivers_pic_vector() {
@@ -319,6 +286,35 @@ mod tests {
 
         ints.eoi(0x40);
         assert_eq!(ints.get_pending(), Some(0x40));
+    }
+
+    #[test]
+    fn apic_eoi_clears_remote_irr_for_shared_vectors() {
+        let mut ints = PlatformInterrupts::new();
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        let vector = 0x50;
+
+        let mut entry1 = IoApicRedirectionEntry::fixed(vector, 0);
+        entry1.masked = false;
+        entry1.trigger = TriggerMode::Level;
+        ints.ioapic_mut().set_entry(1, entry1);
+
+        let mut entry2 = IoApicRedirectionEntry::fixed(vector, 0);
+        entry2.masked = false;
+        entry2.trigger = TriggerMode::Level;
+        ints.ioapic_mut().set_entry(2, entry2);
+
+        ints.raise_irq(InterruptInput::Gsi(1));
+        ints.raise_irq(InterruptInput::Gsi(2));
+        assert_eq!(ints.get_pending(), Some(vector));
+
+        ints.acknowledge(vector);
+        ints.lower_irq(InterruptInput::Gsi(1));
+        assert_eq!(ints.get_pending(), None);
+
+        ints.eoi(vector);
+        assert_eq!(ints.get_pending(), Some(vector));
     }
 
     #[test]

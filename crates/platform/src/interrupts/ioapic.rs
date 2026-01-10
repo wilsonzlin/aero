@@ -125,6 +125,40 @@ impl IoApic {
         self.sync_gsi(gsi)
     }
 
+    /// Notify the IOAPIC that the CPU issued an EOI for `vector`.
+    ///
+    /// For level-triggered interrupts, IOAPICs track "Remote-IRR" per redirection entry.
+    /// A LAPIC EOI clears Remote-IRR for entries that match the EOI vector, allowing
+    /// level-triggered lines that remain asserted to be re-delivered.
+    pub fn notify_eoi(&mut self, vector: u8) -> Vec<IoApicDelivery> {
+        let mut deliveries = Vec::new();
+
+        for (gsi, entry) in self.entries.iter_mut().enumerate() {
+            if entry.trigger != TriggerMode::Level {
+                continue;
+            }
+            if !entry.remote_irr {
+                continue;
+            }
+            if entry.vector != vector {
+                continue;
+            }
+
+            entry.remote_irr = false;
+
+            if self.line_asserted[gsi] && !entry.masked {
+                entry.remote_irr = true;
+                deliveries.push(IoApicDelivery {
+                    gsi: gsi as u32,
+                    vector: entry.vector,
+                    dest: entry.dest,
+                });
+            }
+        }
+
+        deliveries
+    }
+
     pub fn mmio_read(&self, offset: u64) -> u32 {
         match offset {
             0x00 => self.select as u32,
