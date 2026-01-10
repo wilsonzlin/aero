@@ -28,6 +28,7 @@ members = [
     "crates/nt-packetlib",
     "tools/bcd_patch",
     "crates/virtio-gpu-proto",
+    "backend/aero-gateway",
 ]
 
 exclude = ["fuzz"]
