@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/aero-gpu",
     "crates/aero-ipc",
     "crates/aero-storage-server",
     "crates/aero-webgpu",

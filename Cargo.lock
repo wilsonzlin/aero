@@ -20,6 +20,15 @@ name = "aero-devices-input"
 version = "0.1.0"
 
 [[package]]
+name = "aero-gpu"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "pollster",
+ "wgpu",
+]
+
+[[package]]
 name = "aero-ipc"
 version = "0.1.0"
 dependencies = [
