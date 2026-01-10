@@ -3,6 +3,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::e1000::{E1000Device, NetworkBackend};
+use super::stack::dns::DnsUpstream;
+use super::stack::{NetConfig, NetCounters, NetworkStack, ProxyAction, ProxyEvent, StackOutput};
+use crate::io::virtio::devices::net::{EthernetFrameSink, VirtioNetDevice};
+use crate::io::virtio::vio_core::VirtQueueError;
+use memory::GuestMemory;
 
 pub mod pcapng;
 
@@ -27,7 +32,7 @@ pub trait NetTraceRedactor: Send + Sync {
     fn redact_tcp_proxy(
         &self,
         direction: ProxyDirection,
-        connection_id: u32,
+        connection_id: u64,
         data: &[u8],
     ) -> Option<Vec<u8>> {
         let _ = (direction, connection_id);
@@ -62,7 +67,7 @@ enum TraceRecord {
     TcpProxy {
         timestamp_ns: u64,
         direction: ProxyDirection,
-        connection_id: u32,
+        connection_id: u64,
         data: Vec<u8>,
     },
 }
@@ -125,7 +130,7 @@ impl NetTracer {
         );
     }
 
-    pub fn record_tcp_proxy(&self, direction: ProxyDirection, connection_id: u32, data: &[u8]) {
+    pub fn record_tcp_proxy(&self, direction: ProxyDirection, connection_id: u64, data: &[u8]) {
         let ts = now_unix_timestamp_ns();
         self.record_tcp_proxy_at(ts, direction, connection_id, data);
     }
@@ -134,7 +139,7 @@ impl NetTracer {
         &self,
         timestamp_ns: u64,
         direction: ProxyDirection,
-        connection_id: u32,
+        connection_id: u64,
         data: &[u8],
     ) {
         if !self.is_enabled() || !self.cfg.capture_tcp_proxy {
@@ -224,6 +229,91 @@ impl NetTracer {
     }
 }
 
+pub struct TracedNetworkStack<U: DnsUpstream> {
+    tracer: Arc<NetTracer>,
+    inner: NetworkStack<U>,
+}
+
+impl<U: DnsUpstream> TracedNetworkStack<U> {
+    pub fn new(tracer: Arc<NetTracer>, cfg: NetConfig, dns_upstream: U) -> Self {
+        Self {
+            tracer,
+            inner: NetworkStack::new(cfg, dns_upstream),
+        }
+    }
+
+    pub fn tracer(&self) -> &NetTracer {
+        &self.tracer
+    }
+
+    pub fn inner(&self) -> &NetworkStack<U> {
+        &self.inner
+    }
+
+    pub fn inner_mut(&mut self) -> &mut NetworkStack<U> {
+        &mut self.inner
+    }
+
+    pub fn into_inner(self) -> NetworkStack<U> {
+        self.inner
+    }
+
+    pub fn config(&self) -> &NetConfig {
+        self.inner.config()
+    }
+
+    pub fn counters(&self) -> NetCounters {
+        self.inner.counters()
+    }
+
+    pub fn process_frame_from_guest(&mut self, frame: &[u8]) -> StackOutput {
+        self.tracer.record_ethernet(FrameDirection::GuestTx, frame);
+        let out = self.inner.process_frame_from_guest(frame);
+        self.record_stack_output(&out);
+        out
+    }
+
+    pub fn process_proxy_event(&mut self, event: ProxyEvent) -> StackOutput {
+        self.record_proxy_event(&event);
+        let out = self.inner.process_proxy_event(event);
+        self.record_stack_output(&out);
+        out
+    }
+
+    fn record_stack_output(&self, out: &StackOutput) {
+        for frame in &out.frames_to_guest {
+            self.tracer.record_ethernet(FrameDirection::GuestRx, frame);
+        }
+
+        for action in &out.proxy_actions {
+            self.record_proxy_action(action);
+        }
+    }
+
+    fn record_proxy_action(&self, action: &ProxyAction) {
+        match action {
+            ProxyAction::TcpSend { conn_id, data } => {
+                self.tracer
+                    .record_tcp_proxy(ProxyDirection::GuestToRemote, *conn_id, data);
+            }
+            ProxyAction::TcpConnect { .. } | ProxyAction::TcpClose { .. } | ProxyAction::UdpSend { .. } => {}
+        }
+    }
+
+    fn record_proxy_event(&self, event: &ProxyEvent) {
+        match event {
+            ProxyEvent::TcpData { conn_id, data } => {
+                self.tracer
+                    .record_tcp_proxy(ProxyDirection::RemoteToGuest, *conn_id, data);
+            }
+            ProxyEvent::TcpConnected { .. }
+            | ProxyEvent::TcpConnectFailed { .. }
+            | ProxyEvent::TcpClosed { .. }
+            | ProxyEvent::UdpData { .. } => {}
+        }
+    }
+}
+
 pub struct TracingBackend<'a, B> {
     tracer: &'a NetTracer,
     inner: &'a mut B,
@@ -253,6 +343,45 @@ impl E1000DeviceTraceExt for E1000Device {
     }
 }
 
+pub struct TracingEthernetFrameSink<'a, S> {
+    tracer: &'a NetTracer,
+    inner: &'a mut S,
+}
+
+impl<'a, S> TracingEthernetFrameSink<'a, S> {
+    pub fn new(tracer: &'a NetTracer, inner: &'a mut S) -> Self {
+        Self { tracer, inner }
+    }
+}
+
+impl<S: EthernetFrameSink> EthernetFrameSink for TracingEthernetFrameSink<'_, S> {
+    fn send(&mut self, frame: Vec<u8>) {
+        self.tracer.record_ethernet(FrameDirection::GuestTx, &frame);
+        self.inner.send(frame);
+    }
+}
+
+pub trait VirtioNetDeviceTraceExt {
+    fn inject_rx_frame_traced(
+        &mut self,
+        tracer: &NetTracer,
+        mem: &mut impl GuestMemory,
+        frame: &[u8],
+    ) -> Result<bool, VirtQueueError>;
+}
+
+impl VirtioNetDeviceTraceExt for VirtioNetDevice {
+    fn inject_rx_frame_traced(
+        &mut self,
+        tracer: &NetTracer,
+        mem: &mut impl GuestMemory,
+        frame: &[u8],
+    ) -> Result<bool, VirtQueueError> {
+        tracer.record_ethernet(FrameDirection::GuestRx, frame);
+        self.inject_rx_frame(mem, frame)
+    }
+}
+
 fn now_unix_timestamp_ns() -> u64 {
     match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(dur) => duration_to_ns(dur),
@@ -266,7 +395,7 @@ fn duration_to_ns(dur: Duration) -> u64 {
         .saturating_add(u64::from(dur.subsec_nanos()))
 }
 
-fn tcp_proxy_pseudo_packet(connection_id: u32, direction: ProxyDirection, payload: &[u8]) -> Vec<u8> {
+fn tcp_proxy_pseudo_packet(connection_id: u64, direction: ProxyDirection, payload: &[u8]) -> Vec<u8> {
     const MAGIC: [u8; 4] = *b"ATCP";
 
     let dir = match direction {
@@ -274,7 +403,7 @@ fn tcp_proxy_pseudo_packet(connection_id: u32, direction: ProxyDirection, payloa
         ProxyDirection::RemoteToGuest => 1u8,
     };
 
-    let mut buf = Vec::with_capacity(12 + payload.len());
+    let mut buf = Vec::with_capacity(16 + payload.len());
     buf.extend_from_slice(&MAGIC);
     buf.push(dir);
     buf.extend_from_slice(&[0u8; 3]);
@@ -347,4 +476,3 @@ pub fn net_tracing_available() -> bool {
 pub fn net_tracing_available() -> bool {
     false
 }
-

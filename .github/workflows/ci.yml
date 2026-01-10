@@ -72,6 +72,15 @@ jobs:
       - name: cargo test
         run: cargo test ${{ steps.cargo-locked.outputs.locked }} --workspace --all-features
 
+      - name: Upload network captures (pcapng)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: net-captures
+          path: target/nt-test-artifacts/**/*.pcapng
+          if-no-files-found: ignore
+          retention-days: 7
+
   win7-virtio-portable-tests:
     name: Win7 virtio (portable tests)
     runs-on: ubuntu-latest

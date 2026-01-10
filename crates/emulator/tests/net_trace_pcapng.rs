@@ -1,4 +1,4 @@
-use emulator::io::net::trace::{FrameDirection, NetTraceConfig, NetTracer};
+use emulator::io::net::trace::{CaptureArtifactOnPanic, FrameDirection, NetTraceConfig, NetTracer};
 
 fn make_ipv4_tcp_frame(
     src_mac: [u8; 6],
@@ -105,6 +105,7 @@ fn epb_payload_and_flags(body: &[u8]) -> (&[u8], Option<u32>) {
 fn synthetic_tcp_exchange_is_written_to_pcapng() {
     let tracer = NetTracer::new(NetTraceConfig::default());
     tracer.enable();
+    let _artifact = CaptureArtifactOnPanic::for_test(&tracer, "synthetic_tcp_exchange_is_written_to_pcapng");
 
     let guest_mac = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
     let remote_mac = [0x02, 0x00, 0x00, 0x00, 0x00, 0x02];
@@ -156,4 +157,3 @@ fn synthetic_tcp_exchange_is_written_to_pcapng() {
     assert_eq!(rx_payload[23], 6);
     assert_eq!(rx_flags.map(|v| v & 0b11), Some(1));
 }
-

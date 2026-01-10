@@ -751,6 +751,15 @@ The network stack should support an *optional* tracing component that:
 - Optionally captures **post-NAT / proxy bytes** on a separate pseudo-interface for correlation.
 - Can be enabled at runtime in dev builds, but is **off by default**.
 
+### Implementation Notes (Repo)
+
+The Rust implementation lives in `crates/emulator/src/io/net/trace/` and provides:
+
+- `NetTracer` + `NetTraceConfig` for capturing frames and exporting PCAPNG.
+- `TracedNetworkStack` wrapper that records:
+  - Guest TX/RX Ethernet frames at the stack boundary
+  - TCP proxy payloads (`ProxyAction::TcpSend` / `ProxyEvent::TcpData`) on a separate pseudo-interface.
+
 ### Privacy / Security Warning
 
 Captures may include sensitive data such as credentials, cookies, private browsing traffic, or internal network metadata. Tracing must default to off and the UI should warn users before enabling or exporting captures. A redaction hook may be provided for stripping known sensitive payloads.

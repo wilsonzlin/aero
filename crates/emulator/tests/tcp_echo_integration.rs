@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::sync::Arc;
 use std::time::Duration;
 
 use emulator::io::net::stack::dns::{DnsAnswer, DnsUpstream};
 use emulator::io::net::stack::ethernet::{build_ethernet_frame, EtherType, EthernetFrame, MacAddr};
 use emulator::io::net::stack::ipv4::{checksum_pseudo_header, finalize_checksum, IpProtocol, Ipv4Packet, Ipv4PacketBuilder};
 use emulator::io::net::stack::tcp_nat::TcpSegment;
-use emulator::io::net::stack::{NetConfig, NetworkStack, ProxyAction, ProxyEvent};
+use emulator::io::net::stack::{NetConfig, ProxyAction, ProxyEvent};
+use emulator::io::net::trace::{CaptureArtifactOnPanic, NetTraceConfig, NetTracer, TracedNetworkStack};
 
 struct NoDns;
 
@@ -96,7 +98,14 @@ fn tcp_proxy_echo_end_to_end() {
     let guest_mac = MacAddr::new([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
     let remote_ip = Ipv4Addr::new(127, 0, 0, 1);
 
-    let mut stack = NetworkStack::new(cfg.clone(), NoDns);
+    let tracer = Arc::new(NetTracer::new(NetTraceConfig {
+        capture_tcp_proxy: true,
+        ..NetTraceConfig::default()
+    }));
+    tracer.enable();
+    let _artifact = CaptureArtifactOnPanic::for_test(tracer.as_ref(), "tcp_proxy_echo_end_to_end");
+
+    let mut stack = TracedNetworkStack::new(tracer.clone(), cfg.clone(), NoDns);
     let mut streams: HashMap<u64, TcpStream> = HashMap::new();
 
     let guest_port = 40000u16;
@@ -240,6 +249,12 @@ fn tcp_proxy_echo_end_to_end() {
     let final_ack_frame = build_guest_frame(&cfg, guest_mac, remote_ip, final_ack);
     let out = stack.process_frame_from_guest(&final_ack_frame);
     assert!(out.frames_to_guest.is_empty());
+
+    let capture = tracer.export_pcapng();
+    assert!(
+        capture.windows(4).any(|w| w == b"ATCP"),
+        "expected traced capture to include tcp-proxy packets"
+    );
 
     server_handle.join().unwrap();
 }
