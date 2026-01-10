@@ -66,6 +66,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-gpu-trace"
+version = "0.1.0"
+
+[[package]]
 name = "aero-ipc"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,60 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Aero GPU Trace Replay</title>
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    margin: 16px;
+  }
+  canvas {
+    border: 1px solid #ccc;
+    image-rendering: pixelated;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+</style>
+
+<div class="row">
+  <input id="file" type="file" />
+  <button id="step" disabled>Step Frame</button>
+  <button id="screenshot" disabled>Dump Screenshot (console)</button>
+</div>
+
+<canvas id="canvas" width="640" height="480"></canvas>
+
+<script src="./gpu_trace_replay.ts"></script>
+<script>
+  const file = document.getElementById("file");
+  const stepBtn = document.getElementById("step");
+  const screenshotBtn = document.getElementById("screenshot");
+  const canvas = document.getElementById("canvas");
+
+  let replayer = null;
+
+  file.addEventListener("change", async () => {
+    const f = file.files && file.files[0];
+    if (!f) return;
+    const bytes = await f.arrayBuffer();
+    replayer = await window.AeroGpuTraceReplay.load(bytes, canvas, { backend: "webgl2" });
+    stepBtn.disabled = false;
+    screenshotBtn.disabled = false;
+    console.log("AeroGpuTraceReplay loaded:", replayer);
+    console.log("Try: await replayer.step()");
+  });
+
+  stepBtn.addEventListener("click", async () => {
+    if (!replayer) return;
+    const ok = await replayer.step();
+    console.log(ok ? "stepped" : "eof");
+  });
+
+  screenshotBtn.addEventListener("click", () => {
+    if (!replayer) return;
+    console.log(replayer.dumpScreenshotDataUrl());
+  });
+</script>
+
