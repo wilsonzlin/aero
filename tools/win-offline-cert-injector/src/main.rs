@@ -292,7 +292,7 @@ fn inject_all(
     certs: &[InputCert],
 ) -> Result<std::process::ExitCode, ToolError> {
     for store in stores {
-        let store_key = winapi::RegKey::create(
+        let store_key = winapi::RegKey::create_path(
             hive_root.raw(),
             &format!("Microsoft\\SystemCertificates\\{store}"),
         )?;

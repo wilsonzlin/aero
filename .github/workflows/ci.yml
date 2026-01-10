@@ -316,6 +316,14 @@ jobs:
       - name: cargo build
         run: cargo build --locked --workspace
 
+      - name: Build offline cert injector (Windows)
+        if: matrix.os == 'windows-latest'
+        run: cargo build --manifest-path tools/win-offline-cert-injector/Cargo.toml --locked
+
+      - name: Test offline cert injector (Windows)
+        if: matrix.os == 'windows-latest'
+        run: cargo test --manifest-path tools/win-offline-cert-injector/Cargo.toml --locked
+
       - name: Determine Node workspace directory
         id: node-dir
         shell: pwsh

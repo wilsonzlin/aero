@@ -377,6 +377,20 @@ impl RegKey {
         Ok(Self(out))
     }
 
+    pub fn create_path(parent: HKEY, subkey_path: &str) -> Result<Self, WinError> {
+        let mut current_parent = parent;
+        let mut current_key: Option<RegKey> = None;
+        for part in subkey_path.split('\\').filter(|p| !p.is_empty()) {
+            let next = RegKey::create(current_parent, part)?;
+            current_parent = next.raw();
+            current_key = Some(next);
+        }
+        current_key.ok_or_else(|| WinError {
+            context: "RegCreateKeyExW(empty subkey path)".to_string(),
+            code: 0,
+        })
+    }
+
     pub fn raw(&self) -> HKEY {
         self.0
     }
