@@ -41,6 +41,8 @@ pub fn handles_mnemonic(m: Mnemonic) -> bool {
             | Mnemonic::Fcom
             | Mnemonic::Fcomp
             | Mnemonic::Fcompp
+            | Mnemonic::Fcomi
+            | Mnemonic::Fcomip
             | Mnemonic::Fucomi
             | Mnemonic::Fucomip
             | Mnemonic::Fldcw
@@ -137,8 +139,8 @@ pub fn exec<B: CpuBus>(
             state.x87_mut().fcompp().map_err(map_x87_fault)?;
             Ok(ExecOutcome::Continue)
         }
-        Mnemonic::Fucomi | Mnemonic::Fucomip => {
-            exec_fucomi(state, instr)?;
+        Mnemonic::Fcomi | Mnemonic::Fcomip | Mnemonic::Fucomi | Mnemonic::Fucomip => {
+            exec_comparei(state, instr)?;
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Fldcw => {
@@ -497,17 +499,26 @@ fn exec_compare<B: CpuBus>(
     Ok(())
 }
 
-fn exec_fucomi(state: &mut CpuState, instr: &Instruction) -> Result<(), Exception> {
-    let i = if instr.op_count() == 1 {
-        st_index(instr.op0_register()).ok_or(Exception::InvalidOpcode)?
-    } else if instr.op_count() == 2 {
-        // iced-x86 can emit FUCOMI ST0, ST(i)
-        st_index(instr.op1_register()).ok_or(Exception::InvalidOpcode)?
-    } else {
-        return Err(Exception::InvalidOpcode);
+fn exec_comparei(state: &mut CpuState, instr: &Instruction) -> Result<(), Exception> {
+    let i = match instr.op_count() {
+        1 => st_index(instr.op0_register()).ok_or(Exception::InvalidOpcode)?,
+        2 => {
+            let a = st_index(instr.op0_register()).ok_or(Exception::InvalidOpcode)?;
+            let b = st_index(instr.op1_register()).ok_or(Exception::InvalidOpcode)?;
+            if a == 0 {
+                b
+            } else if b == 0 {
+                a
+            } else {
+                return Err(Exception::InvalidOpcode);
+            }
+        }
+        _ => return Err(Exception::InvalidOpcode),
     };
 
     let flags = match instr.mnemonic() {
+        Mnemonic::Fcomi => state.x87_mut().fcomi_sti(i),
+        Mnemonic::Fcomip => state.x87_mut().fcomip_sti(i),
         Mnemonic::Fucomi => state.x87_mut().fucomi_sti(i),
         Mnemonic::Fucomip => state.x87_mut().fucomip_sti(i),
         _ => return Err(Exception::InvalidOpcode),

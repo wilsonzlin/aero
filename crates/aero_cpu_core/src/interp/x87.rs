@@ -621,6 +621,21 @@ impl X87 {
         Ok(flags)
     }
 
+    pub fn fcomi_sti(&mut self, i: usize) -> Result<Eflags> {
+        let a = self.read_st(0)?;
+        let b = self.read_st(i)?;
+        if a.is_nan() || b.is_nan() {
+            self.signal_invalid(true)?;
+        }
+        Ok(eflags_from_cmp(a, b))
+    }
+
+    pub fn fcomip_sti(&mut self, i: usize) -> Result<Eflags> {
+        let flags = self.fcomi_sti(i)?;
+        self.pop()?;
+        Ok(flags)
+    }
+
     fn phys_index(&self, st: usize) -> Option<usize> {
         if st < 8 {
             Some((self.top as usize + st) & 7)

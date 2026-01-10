@@ -104,6 +104,33 @@ fn tier0_fucomi_sets_eflags_for_setcc() {
 }
 
 #[test]
+fn tier0_fcomi_sets_eflags_for_setcc() {
+    // fld dword ptr [0x100]      ; 2.0
+    // fld dword ptr [0x104]      ; 1.0 (ST0=1.0, ST1=2.0)
+    // fcomi st0, st1             ; 1.0 < 2.0 => CF=1
+    // setb al
+    // hlt
+    let code = [
+        0xD9, 0x05, 0x00, 0x01, 0x00, 0x00, // fld dword ptr [0x100]
+        0xD9, 0x05, 0x04, 0x01, 0x00, 0x00, // fld dword ptr [0x104]
+        0xDB, 0xF1, // fcomi st0, st1
+        0x0F, 0x92, 0xC0, // setb al
+        0xF4, // hlt
+    ];
+
+    let mut bus = FlatTestBus::new(0x2000);
+    bus.load(0, &code);
+    bus.load(0x100, &2.0f32.to_bits().to_le_bytes());
+    bus.load(0x104, &1.0f32.to_bits().to_le_bytes());
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    run_to_halt(&mut state, &mut bus, 100);
+
+    assert_eq!(state.read_reg(Register::AL), 1);
+}
+
+#[test]
 fn tier0_fxch_and_fninit_reset_state() {
     // fld dword ptr [0x100]      ; 1.0
     // fld dword ptr [0x104]      ; 2.0 (ST0=2.0, ST1=1.0)
