@@ -264,7 +264,23 @@ function Patch-BcdStore {
 
   Ensure-FileWritable -Path $StorePath
 
+  function Get-BcdSettingValue {
+    param(
+      [Parameter(Mandatory = $true)]
+      [string]$EnumText,
+      [Parameter(Mandatory = $true)]
+      [string]$SettingName
+    )
+
+    $m = [Regex]::Match($EnumText, "(?im)^\\s*$SettingName\\s+(?<val>\\S+)")
+    if ($m.Success) {
+      return $m.Groups['val'].Value
+    }
+    return $null
+  }
+
   $defaultPatched = $false
+  $patchedGuids = @()
   $attempt = Invoke-ExeResult -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', '{default}', 'testsigning', 'on')
   if ($attempt.ExitCode -eq 0) {
     $defaultPatched = $true
@@ -304,6 +320,7 @@ function Patch-BcdStore {
           }
         }
       }
+      $patchedGuids += $guid
     }
   }
 
@@ -311,21 +328,45 @@ function Patch-BcdStore {
     $out = Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/enum', '{default}')
     $outText = ($out | Out-String)
 
-    if ($outText -notmatch '(?im)^\s*testsigning\s+') {
-      throw "Failed to verify testsigning in BCD store: $StorePath`n$outText"
+    $testSigningValue = Get-BcdSettingValue -EnumText $outText -SettingName 'testsigning'
+    if ($testSigningValue -ne 'Yes') {
+      throw "Failed to verify testsigning=Yes in BCD store: $StorePath`n$outText"
     }
-    if ($EnableNoIntegrityChecks -and ($outText -notmatch '(?im)^\s*nointegritychecks\s+')) {
-      throw "Failed to verify nointegritychecks in BCD store: $StorePath`n$outText"
+
+    $noIntegrityValue = Get-BcdSettingValue -EnumText $outText -SettingName 'nointegritychecks'
+    if ($EnableNoIntegrityChecks) {
+      if ($noIntegrityValue -ne 'Yes') {
+        throw "Failed to verify nointegritychecks=Yes in BCD store: $StorePath`n$outText"
+      }
+    } else {
+      if ($noIntegrityValue -eq 'Yes') {
+        throw "Failed to verify nointegritychecks is disabled in BCD store: $StorePath`n$outText"
+      }
     }
   } else {
-    $out = Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/enum', 'all')
-    $outText = ($out | Out-String)
-
-    if ($outText -notmatch '(?im)^\s*testsigning\s+') {
-      throw "Failed to verify testsigning in BCD store (fallback mode): $StorePath`n$outText"
+    if ($patchedGuids.Count -eq 0) {
+      throw "BCD store patch fallback did not identify any entries to patch: $StorePath"
     }
-    if ($EnableNoIntegrityChecks -and ($outText -notmatch '(?im)^\s*nointegritychecks\s+')) {
-      throw "Failed to verify nointegritychecks in BCD store (fallback mode): $StorePath`n$outText"
+
+    foreach ($guid in $patchedGuids) {
+      $out = Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/enum', $guid)
+      $outText = ($out | Out-String)
+
+      $testSigningValue = Get-BcdSettingValue -EnumText $outText -SettingName 'testsigning'
+      if ($testSigningValue -ne 'Yes') {
+        throw "Failed to verify testsigning=Yes in BCD store for $guid: $StorePath`n$outText"
+      }
+
+      $noIntegrityValue = Get-BcdSettingValue -EnumText $outText -SettingName 'nointegritychecks'
+      if ($EnableNoIntegrityChecks) {
+        if ($noIntegrityValue -ne 'Yes') {
+          throw "Failed to verify nointegritychecks=Yes in BCD store for $guid: $StorePath`n$outText"
+        }
+      } else {
+        if ($noIntegrityValue -eq 'Yes') {
+          throw "Failed to verify nointegritychecks is disabled in BCD store for $guid: $StorePath`n$outText"
+        }
+      }
     }
   }
 }
