@@ -487,8 +487,8 @@ foreach ($driverBuildDir in $driverBuildDirs) {
         InfPaths   = $stagedInfPaths
         RepoRoot   = $repoRoot
       }
-      if ($ToolchainJson) {
-        $stampArgs.ToolchainJson = $ToolchainJson
+      if ($toolchainJsonAbs) {
+        $stampArgs.ToolchainJson = $toolchainJsonAbs
       }
       & $stampScript @stampArgs | Out-Null
     } else {
