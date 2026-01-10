@@ -38,13 +38,13 @@ The gateway uses **cookies** for session state. For this to work reliably in bro
 Generic form:
 
 - `POST http://localhost:PORT/session`
-- `ws://localhost:PORT/tcp?host=example.com&port=443`
+- `ws://localhost:PORT/tcp?v=1&host=example.com&port=443`
 - `http://localhost:PORT/dns-query?...`
 
 Concrete example (assuming the gateway is running on port `8787`):
 
 - `POST http://localhost:8787/session`
-- `ws://localhost:8787/tcp?host=example.com&port=443`
+- `ws://localhost:8787/tcp?v=1&host=example.com&port=443`
 - `http://localhost:8787/dns-query?...`
 
 ---
@@ -123,7 +123,7 @@ Protocol version for the `/tcp` WebSocket connection.
 
 - A DNS name (e.g. `example.com`)
 - An IPv4 address (e.g. `93.184.216.34`)
-- An IPv6 address in brackets (e.g. `[2606:4700:4700::1111]`)
+- An IPv6 address (e.g. `2606:4700:4700::1111`). Bracket form (`[::1]`) is also accepted for compatibility.
 
 #### `port` (required)
 
@@ -131,9 +131,9 @@ Protocol version for the `/tcp` WebSocket connection.
 
 Examples (canonical form):
 
-- `ws://localhost:8787/tcp?host=example.com&port=443`
-- `wss://gateway.example.com/tcp?host=93.184.216.34&port=80`
-- `wss://gateway.example.com/tcp?host=%5B2606%3A4700%3A4700%3A%3A1111%5D&port=443`
+ - `ws://localhost:8787/tcp?v=1&host=example.com&port=443`
+ - `wss://gateway.example.com/tcp?v=1&host=93.184.216.34&port=80`
+ - `wss://gateway.example.com/tcp?v=1&host=2606:4700:4700::1111&port=443`
 
 #### Compatibility alias: `target` (optional)
 
@@ -153,7 +153,7 @@ Some deployments may additionally support a non-cookie authentication mode (toke
 
 ### Connection lifecycle
 
-1. Client creates a WebSocket to `/tcp?host=...&port=...` (or the legacy `target=...` form).
+1. Client creates a WebSocket to `/tcp?v=1&host=...&port=...` (or the legacy `target=...` form).
 2. Gateway validates:
    - Session cookie
    - Origin allowlist
@@ -429,6 +429,7 @@ When limits are exceeded:
 async function openTcpProxySocket(gatewayOrigin: string, host: string, port: number): Promise<WebSocket> {
   const wsOrigin = gatewayOrigin.replace(/^http/, 'ws');
   const url = new URL('/tcp', wsOrigin);
+  url.searchParams.set('v', '1');
   url.searchParams.set('host', host);
   url.searchParams.set('port', String(port));
 
