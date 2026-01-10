@@ -10,6 +10,10 @@ To run the gated Windows 7 boot test locally:
        test-images/local/windows7.img
      (or set AERO_WINDOWS7_IMAGE=/path/to/image)
 
+     If you need to build/patch a Windows 7 SP1 install ISO to include Aero drivers,
+     certificates, and boot policy flags (testsigning/nointegritychecks), see:
+       docs/16-windows7-install-media-prep.md
+
   2) Optionally, provide a golden framebuffer snapshot:
        test-images/local/windows7_login.png
      (or set AERO_WINDOWS7_GOLDEN=/path/to/golden.png)
@@ -21,4 +25,3 @@ Notes:
   - Do NOT commit Windows images or golden screenshots.
   - Use a valid Windows 7 license and installation media.
 EOF
-

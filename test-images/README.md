@@ -25,3 +25,6 @@ See:
 ./scripts/prepare-windows7.sh
 ```
 
+If you need to prepare a Windows 7 SP1 install ISO to load Aero drivers/certs during setup and first boot, see:
+
+- `docs/16-windows7-install-media-prep.md`
