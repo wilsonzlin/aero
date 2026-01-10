@@ -19,7 +19,6 @@ jobs:
     timeout-minutes: 60
     env:
       NODE_VERSION: "20.11.1"
-      PLAYWRIGHT_VERSION: "1.57.0"
       PERF_ITERATIONS: ${{ github.event.inputs.iterations || '7' }}
     steps:
       - name: Checkout main
@@ -34,12 +33,25 @@ jobs:
           cache: npm
           cache-dependency-path: tools/perf/package-lock.json
 
+      - name: Determine Playwright version
+        id: playwright-version
+        run: |
+          set -euo pipefail
+          version="$(node -p "const pkg=require('./tools/perf/package.json'); (pkg.dependencies && pkg.dependencies['playwright-core']) || (pkg.devDependencies && pkg.devDependencies['playwright-core']) || ''")"
+          version="${version#^}"
+          version="${version#~}"
+          if [[ -z "$version" ]]; then
+            echo "playwright-core version not found in tools/perf/package.json" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Install perf tool dependencies
         run: npm ci
         working-directory: tools/perf
 
       - name: Install Chromium (Playwright)
-        run: npx --yes playwright@${{ env.PLAYWRIGHT_VERSION }} install --with-deps chromium
+        run: npx --yes playwright@${{ steps.playwright-version.outputs.version }} install --with-deps chromium
 
       - name: Run browser perf (nightly)
         run: node tools/perf/run.mjs --out-dir perf-results/nightly --iterations ${{ env.PERF_ITERATIONS }}
