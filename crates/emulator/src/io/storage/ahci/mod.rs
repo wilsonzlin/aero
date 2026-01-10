@@ -436,7 +436,7 @@ impl AhciController {
         }
     }
 
-    fn port0_mmio_write_dword(&mut self, offset: u64, value: u32) {
+    fn port0_mmio_write_dword(&mut self, mem: &mut dyn MemoryBus, offset: u64, value: u32) {
         match offset {
             PX_CLB => self.port0.clb = (self.port0.clb & 0xffff_ffff_0000_0000) | value as u64,
             PX_CLBU => {
@@ -465,6 +465,7 @@ impl AhciController {
             PX_SACT => self.port0.sact = value,
             PX_CI => {
                 self.port0.ci = value;
+                self.poll(mem);
             }
             PX_SNTF => self.port0.sntf = value,
             PX_FBS => self.port0.fbs = value,
@@ -565,7 +566,7 @@ impl MmioDevice for AhciController {
         if aligned >= HBA_PORTS_BASE {
             let port_off = aligned - HBA_PORTS_BASE;
             if port_off < HBA_PORT_STRIDE {
-                self.port0_mmio_write_dword(port_off, merged);
+                self.port0_mmio_write_dword(mem, port_off, merged);
             }
         } else {
             self.hba_mmio_write_dword(aligned, merged);
