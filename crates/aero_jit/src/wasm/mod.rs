@@ -682,7 +682,10 @@ impl Emitter<'_> {
             .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
         self.f
             .instruction(&Instruction::LocalGet(self.layout.tlb_salt_local()));
-        self.f.instruction(&Instruction::I64Xor); // expect_tag
+        self.f.instruction(&Instruction::I64Xor);
+        // expect_tag = (vpn ^ salt) | 1; keep 0 reserved for invalidation.
+        self.f.instruction(&Instruction::I64Const(1));
+        self.f.instruction(&Instruction::I64Or);
         self.f.instruction(&Instruction::I64Eq);
 
         self.f.instruction(&Instruction::If(BlockType::Empty));

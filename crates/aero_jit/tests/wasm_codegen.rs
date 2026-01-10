@@ -334,6 +334,8 @@ fn define_mmu_translate(
                     );
 
                     let tag = vpn ^ salt;
+                    // Keep tag 0 reserved for invalidation.
+                    let tag = tag | 1;
 
                     let is_ram = vaddr_u < caller.data().ram_size;
                     let phys_base = vaddr_u & aero_jit::PAGE_BASE_MASK;

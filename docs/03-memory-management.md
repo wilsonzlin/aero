@@ -376,7 +376,11 @@ pub const JIT_TLB_ENTRIES: usize = 256; // power-of-two for masking
 /// Hot entry format: two u64s to keep JIT codegen simple.
 #[repr(C)]
 pub struct JitTlbEntry {
-    /// Tag match: (vpn ^ salt). `0` means invalid.
+    /// Tag match: ((vpn ^ salt) | 1). `0` means invalid.
+    ///
+    /// The `| 1` keeps the all-zero tag reserved for invalidation, and avoids an ambiguity where
+    /// `vpn ^ salt == 0` would otherwise make a valid translation indistinguishable from an
+    /// invalid entry (especially relevant for `vpn == 0`).
     pub tag: u64,
     /// Packed: phys_page_base | flags (low 12 bits).
     pub data: u64,
