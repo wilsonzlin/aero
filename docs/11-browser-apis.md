@@ -886,6 +886,12 @@ Expose explicit host controls (useful if the guest hangs during shutdown):
 These should call the same coordinator entry points as the ACPI-triggered
 requests to ensure consistent cleanup and state transitions.
 
+### OffscreenCanvas Compatibility Fallback (Safari)
+
+The preferred design is to run the GPU presenter in a dedicated worker using `OffscreenCanvas` transferred from the main thread via `HTMLCanvasElement.transferControlToOffscreen()`. However, some browsers (notably Safari) either lack `OffscreenCanvas` support in workers or do not expose `transferControlToOffscreen`.
+
+To maintain broad browser coverage, the GPU presenter should support a **main-thread fallback mode** that uses a regular `HTMLCanvasElement` directly, while keeping higher-level code agnostic via a unified `GpuRuntime` facade.
+
 ### CPU Worker
 
 ```javascript

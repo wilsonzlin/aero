@@ -1,8 +1,8 @@
 import "./style.css";
 
 import { installAeroGlobals } from "./aero";
-import { createGpuWorker } from "./main/createGpuWorker";
 import { startFrameScheduler, type FrameSchedulerHandle } from "./main/frameScheduler";
+import { GpuRuntime } from "./gpu/gpuRuntime";
 import { fnv1a32Hex } from "./utils/fnv1a";
 import { perf } from "./perf/perf";
 import { createAudioOutput } from "./platform/audio";
@@ -526,23 +526,19 @@ function renderGpuWorkerPanel(): HTMLElement {
     output.textContent += `${line}\n`;
   }
 
-  let gpu: ReturnType<typeof createGpuWorker> | null = null;
+  let runtime: GpuRuntime | null = null;
 
   const button = el("button", {
-    text: "Run GPU worker smoke test",
+    text: "Run GPU runtime smoke test",
     onclick: async () => {
       output.textContent = "";
 
       try {
-        if (!gpu) {
-          gpu = createGpuWorker({
-            canvas,
-            width: cssWidth,
-            height: cssHeight,
-            devicePixelRatio,
-            gpuOptions: {
-              preferWebGpu: true,
-            },
+        if (!runtime) {
+          runtime = new GpuRuntime();
+          await runtime.init(canvas, cssWidth, cssHeight, devicePixelRatio, {
+            mode: "auto",
+            gpuOptions: { preferWebGpu: true },
             onGpuError: (msg) => {
               appendLog(`gpu_error fatal=${msg.fatal} kind=${msg.error.kind} msg=${msg.error.message}`);
               if (msg.error.hints?.length) {
@@ -560,21 +556,28 @@ function renderGpuWorkerPanel(): HTMLElement {
               );
             },
           });
+          if (runtime.workerReady) {
+            const ready = runtime.workerReady;
+            appendLog(`ready backend=${ready.backendKind}`);
+            if (ready.fallback) {
+              appendLog(`fallback ${ready.fallback.from} -> ${ready.fallback.to}: ${ready.fallback.reason}`);
+            }
+            if (ready.adapterInfo?.vendor || ready.adapterInfo?.renderer) {
+              appendLog(
+                `adapter vendor=${ready.adapterInfo.vendor ?? "n/a"} renderer=${ready.adapterInfo.renderer ?? "n/a"}`,
+              );
+            }
+          } else {
+            appendLog(`ready backend=${runtime.backendKind ?? "webgl2"} (main-thread)`);
+          }
+
+          appendLog(`runtime mode=${runtime.mode} backend=${runtime.backendKind ?? "n/a"}`);
         }
 
-        const ready = await gpu.ready;
-        appendLog(`ready backend=${ready.backendKind}`);
-        if (ready.fallback) {
-          appendLog(`fallback ${ready.fallback.from} -> ${ready.fallback.to}: ${ready.fallback.reason}`);
-        }
-        if (ready.adapterInfo?.vendor || ready.adapterInfo?.renderer) {
-          appendLog(`adapter vendor=${ready.adapterInfo.vendor ?? "n/a"} renderer=${ready.adapterInfo.renderer ?? "n/a"}`);
-        }
+        await runtime.present();
+        const screenshot = await runtime.screenshot();
 
-        gpu.presentTestPattern();
-        const screenshot = await gpu.requestScreenshot();
-
-        const actual = new Uint8Array(screenshot.rgba8);
+        const actual = new Uint8Array(screenshot.data.buffer, screenshot.data.byteOffset, screenshot.data.byteLength);
         const expected = createExpectedTestPattern(screenshot.width, screenshot.height);
 
         const actualHash = fnv1a32Hex(actual);
@@ -592,7 +595,7 @@ function renderGpuWorkerPanel(): HTMLElement {
   return el(
     "div",
     { class: "panel" },
-    el("h2", { text: "GPU Worker" }),
+    el("h2", { text: "GPU Runtime" }),
     el("div", { class: "row" }, button, canvas),
     output,
   );
