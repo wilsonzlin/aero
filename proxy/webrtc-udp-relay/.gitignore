@@ -1,0 +1,4 @@
+# Local build output (from `make build` / `go build`)
+/aero-webrtc-udp-relay
+*.test
+

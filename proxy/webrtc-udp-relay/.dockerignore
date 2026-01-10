@@ -1,0 +1,14 @@
+.git
+.gitignore
+
+# Local build artifacts
+aero-webrtc-udp-relay
+*.test
+
+# Playwright / E2E harness isn't needed in the container build context.
+e2e/
+node_modules/
+.playwright/
+playwright-report/
+test-results/
+
