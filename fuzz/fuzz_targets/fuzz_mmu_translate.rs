@@ -14,6 +14,10 @@ fn canonicalize_4level(vaddr: u64) -> u64 {
     }
 }
 
+fn is_canonical_4level(vaddr: u64) -> bool {
+    vaddr == canonicalize_4level(vaddr)
+}
+
 fn write_u32(ram: &mut [u8], addr: u64, val: u32) {
     let start = addr as usize;
     if start + 4 > ram.len() {
@@ -76,6 +80,7 @@ fuzz_target!(|data: &[u8]| {
     // For a subset of inputs, force a well-formed page-table chain that maps `vaddr` so the fuzzer
     // spends time in deeper page-walk code paths. This overwrites a small portion of the RAM blob
     // (page tables only), while still keeping the rest of the input-driven memory state intact.
+    let mut expected_paddr = None;
     if (cr0 & (1 << 31)) != 0 && (data[0x21] & 0x40) == 0 {
         let ram_size = RAM_SIZE as u64;
         if (cr4 & (1 << 5)) == 0 {
@@ -95,6 +100,7 @@ fuzz_target!(|data: &[u8]| {
             // P, RW, US
             write_u32(ram, pde_addr, (pt_base as u32) | 0x7);
             write_u32(ram, pte_addr, (page_base as u32) | 0x7);
+            expected_paddr = Some(page_base + (v & 0xfff));
         } else if !long_mode {
             // IA-32 PAE paging: PDPT -> PD -> PT -> 4KiB page.
             let pdpt_base = cr3 & !0x1f;
@@ -116,30 +122,37 @@ fuzz_target!(|data: &[u8]| {
             write_u64(ram, pdpte_addr, (pd_base & !0xfff) | 0x1);
             write_u64(ram, pde_addr, (pt_base & !0xfff) | 0x7);
             write_u64(ram, pte_addr, (page_base & !0xfff) | 0x7);
+            expected_paddr = Some(page_base + (v & 0xfff));
         } else {
             // 4-level IA-32e paging: PML4 -> PDPT -> PD -> PT -> 4KiB page.
-            let pml4_base = cr3 & !0xfff;
-            let pml4_base = pml4_base % ram_size;
-            let pdpt_base = (pml4_base + 0x1000) % ram_size;
-            let pd_base = (pml4_base + 0x2000) % ram_size;
-            let pt_base = (pml4_base + 0x3000) % ram_size;
-            let page_base = (pml4_base + 0x4000) % ram_size;
+            if !is_canonical_4level(vaddr) {
+                // Long-mode translations reject non-canonical vaddrs (would raise #GP), so avoid
+                // asserting a successful translation in that case.
+            } else {
+                let pml4_base = cr3 & !0xfff;
+                let pml4_base = pml4_base % ram_size;
+                let pdpt_base = (pml4_base + 0x1000) % ram_size;
+                let pd_base = (pml4_base + 0x2000) % ram_size;
+                let pt_base = (pml4_base + 0x3000) % ram_size;
+                let page_base = (pml4_base + 0x4000) % ram_size;
 
-            let pml4_index = (vaddr >> 39) & 0x1ff;
-            let pdpt_index = (vaddr >> 30) & 0x1ff;
-            let pd_index = (vaddr >> 21) & 0x1ff;
-            let pt_index = (vaddr >> 12) & 0x1ff;
+                let pml4_index = (vaddr >> 39) & 0x1ff;
+                let pdpt_index = (vaddr >> 30) & 0x1ff;
+                let pd_index = (vaddr >> 21) & 0x1ff;
+                let pt_index = (vaddr >> 12) & 0x1ff;
 
-            let pml4e_addr = pml4_base + pml4_index * 8;
-            let pdpte_addr = pdpt_base + pdpt_index * 8;
-            let pde_addr = pd_base + pd_index * 8;
-            let pte_addr = pt_base + pt_index * 8;
+                let pml4e_addr = pml4_base + pml4_index * 8;
+                let pdpte_addr = pdpt_base + pdpt_index * 8;
+                let pde_addr = pd_base + pd_index * 8;
+                let pte_addr = pt_base + pt_index * 8;
 
-            // P, RW, US
-            write_u64(ram, pml4e_addr, (pdpt_base & !0xfff) | 0x7);
-            write_u64(ram, pdpte_addr, (pd_base & !0xfff) | 0x7);
-            write_u64(ram, pde_addr, (pt_base & !0xfff) | 0x7);
-            write_u64(ram, pte_addr, (page_base & !0xfff) | 0x7);
+                // P, RW, US
+                write_u64(ram, pml4e_addr, (pdpt_base & !0xfff) | 0x7);
+                write_u64(ram, pdpte_addr, (pd_base & !0xfff) | 0x7);
+                write_u64(ram, pde_addr, (pt_base & !0xfff) | 0x7);
+                write_u64(ram, pte_addr, (page_base & !0xfff) | 0x7);
+                expected_paddr = Some(page_base + (vaddr & 0xfff));
+            }
         }
     }
 
@@ -151,5 +164,8 @@ fuzz_target!(|data: &[u8]| {
         cpl,
     };
 
-    let _ = mmu.translate(&mut bus, vaddr, access);
+    let result = mmu.translate(&mut bus, vaddr, access);
+    if let Some(expected) = expected_paddr {
+        assert_eq!(result, Ok(expected));
+    }
 });
