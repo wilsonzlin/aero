@@ -1,0 +1,29 @@
+# Avoid sending large/unrelated files to the Docker daemon as build context.
+.git
+target
+**/target
+
+# Node / frontend build outputs.
+node_modules
+**/node_modules
+dist
+**/dist
+build
+**/build
+out
+**/out
+coverage
+**/coverage
+playwright-report
+test-results
+
+# Disk images can be tens of GB.
+images
+
+# Local environment (may contain secrets).
+.env
+.env.*
+
+# Local-only notes for agent workflow.
+scratchpad.md
+handoff.md

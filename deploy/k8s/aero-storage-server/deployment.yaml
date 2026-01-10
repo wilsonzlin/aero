@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aero-storage-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aero-storage-server
+  template:
+    metadata:
+      labels:
+        app: aero-storage-server
+    spec:
+      containers:
+        - name: aero-storage-server
+          image: aero-storage-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: aero-storage-server
+          volumeMounts:
+            - name: images
+              mountPath: /images
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+      volumes:
+        - name: images
+          persistentVolumeClaim:
+            claimName: aero-storage-images
+

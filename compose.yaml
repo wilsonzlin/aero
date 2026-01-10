@@ -1,0 +1,15 @@
+services:
+  aero-storage-server:
+    build:
+      context: .
+      dockerfile: crates/aero-storage-server/Dockerfile
+    environment:
+      # The server listens inside the container. The host port mapping is below.
+      AERO_STORAGE_LISTEN_ADDR: 0.0.0.0:8080
+      # Local `./images` is mounted to `/images` in the container.
+      AERO_STORAGE_IMAGE_ROOT: /images
+    volumes:
+      - ./images:/images
+    ports:
+      - "8080:8080"
+

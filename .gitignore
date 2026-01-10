@@ -90,6 +90,11 @@ test-images/*
 *.ova
 *.ovf
 
+# Local disk image directory used by `aero-storage-server` docker compose setups.
+# Keep the directory itself tracked via `images/.gitkeep`.
+/images/*
+!/images/.gitkeep
+
 # Windows installation / update packages (do not commit)
 *.wim
 *.esd

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: aero-storage-server
+spec:
+  selector:
+    app: aero-storage-server
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  type: ClusterIP
+
