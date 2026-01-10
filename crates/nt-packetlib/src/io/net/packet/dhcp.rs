@@ -16,6 +16,8 @@ pub const DHCP_OPT_SUBNET_MASK: u8 = 1;
 pub const DHCP_OPT_ROUTER: u8 = 3;
 pub const DHCP_OPT_DNS: u8 = 6;
 pub const DHCP_OPT_IP_LEASE_TIME: u8 = 51;
+pub const DHCP_OPT_RENEWAL_TIME: u8 = 58;
+pub const DHCP_OPT_REBINDING_TIME: u8 = 59;
 pub const DHCP_OPT_END: u8 = 255;
 
 pub const DHCP_MSG_OFFER: u8 = 2;
@@ -49,6 +51,8 @@ impl<'a> DhcpOfferAckBuilder<'a> {
             options_len += 2 + 4 * self.dns_servers.len();
         }
         options_len += 6; // lease time
+        options_len += 6; // renewal (T1)
+        options_len += 6; // rebinding (T2)
         options_len += 1; // end
 
         let total_len = Self::BOOTP_FIXED_LEN + options_len;
@@ -118,6 +122,20 @@ impl<'a> DhcpOfferAckBuilder<'a> {
         out[off + 2..off + 6].copy_from_slice(&self.lease_time_secs.to_be_bytes());
         off += 6;
 
+        // Renewal/rebinding timers, best-effort defaults (same logic as many DHCP servers).
+        let t1 = self.lease_time_secs / 2;
+        let t2 = self.lease_time_secs.saturating_mul(7) / 8;
+
+        out[off] = DHCP_OPT_RENEWAL_TIME;
+        out[off + 1] = 4;
+        out[off + 2..off + 6].copy_from_slice(&t1.to_be_bytes());
+        off += 6;
+
+        out[off] = DHCP_OPT_REBINDING_TIME;
+        out[off + 1] = 4;
+        out[off + 2..off + 6].copy_from_slice(&t2.to_be_bytes());
+        off += 6;
+
         out[off] = DHCP_OPT_END;
         off += 1;
 
@@ -151,6 +169,39 @@ mod tests {
         assert_eq!(buf[16..20], builder.your_ip.octets());
         assert_eq!(buf[28..34], builder.client_mac.0);
         assert_eq!(buf[DhcpOfferAckBuilder::BOOTP_FIXED_LEN..DhcpOfferAckBuilder::BOOTP_FIXED_LEN + 4], DHCP_MAGIC_COOKIE);
+
+        // Spot-check that T1/T2 are present and match our defaults.
+        let opts = &buf[DhcpOfferAckBuilder::BOOTP_FIXED_LEN + 4..len];
+        fn find_opt<'a>(opts: &'a [u8], code: u8) -> Option<&'a [u8]> {
+            let mut i = 0;
+            while i < opts.len() {
+                let c = opts[i];
+                i += 1;
+                if c == 0 {
+                    continue;
+                }
+                if c == 255 {
+                    break;
+                }
+                if i >= opts.len() {
+                    break;
+                }
+                let l = opts[i] as usize;
+                i += 1;
+                if i + l > opts.len() {
+                    break;
+                }
+                if c == code {
+                    return Some(&opts[i..i + l]);
+                }
+                i += l;
+            }
+            None
+        }
+
+        let t1 = u32::from_be_bytes(find_opt(opts, DHCP_OPT_RENEWAL_TIME).unwrap().try_into().unwrap());
+        let t2 = u32::from_be_bytes(find_opt(opts, DHCP_OPT_REBINDING_TIME).unwrap().try_into().unwrap());
+        assert_eq!(t1, 1800);
+        assert_eq!(t2, 3150);
     }
 }
-

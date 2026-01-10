@@ -73,6 +73,15 @@ pub struct IcmpEchoBuilder<'a> {
 }
 
 impl<'a> IcmpEchoBuilder<'a> {
+    pub fn echo_request(identifier: u16, sequence: u16, payload: &'a [u8]) -> Self {
+        Self {
+            icmp_type: 8,
+            identifier,
+            sequence,
+            payload,
+        }
+    }
+
     pub fn echo_reply(identifier: u16, sequence: u16, payload: &'a [u8]) -> Self {
         Self {
             icmp_type: 0,
@@ -119,5 +128,19 @@ mod tests {
         assert_eq!(echo.sequence, 0x0001);
         assert_eq!(echo.payload, &payload);
     }
-}
 
+    #[test]
+    fn build_and_parse_echo_request() {
+        let payload = *b"ping";
+        let builder = IcmpEchoBuilder::echo_request(0x1234, 0x0001, &payload);
+        let mut buf = [0u8; 64];
+        let len = builder.write(&mut buf).unwrap();
+        let pkt = Icmpv4Packet::parse(&buf[..len]).unwrap();
+        assert!(pkt.checksum_valid());
+        let echo = pkt.echo().unwrap();
+        assert_eq!(echo.icmp_type, 8);
+        assert_eq!(echo.identifier, 0x1234);
+        assert_eq!(echo.sequence, 0x0001);
+        assert_eq!(echo.payload, &payload);
+    }
+}
