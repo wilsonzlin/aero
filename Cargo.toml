@@ -20,4 +20,5 @@ members = [
     "crates/platform",
     "crates/aero-devices-input",
     "server",
+    "crates/nt-packetlib",
 ]
