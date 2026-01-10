@@ -7,6 +7,10 @@ const crossOriginIsolationHeaders = {
 } as const;
 
 export default defineConfig({
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+  },
   server: {
     headers: crossOriginIsolationHeaders,
   },

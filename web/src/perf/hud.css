@@ -1,0 +1,118 @@
+.aero-dev-menu {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 10000;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.aero-dev-menu button {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.6);
+  color: #f5f5f5;
+  font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.aero-dev-menu button:hover {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.aero-perf-hud {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  width: 360px;
+  z-index: 10000;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  color: #f5f5f5;
+  font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  padding: 10px;
+}
+
+.aero-perf-hud[hidden] {
+  display: none;
+}
+
+.aero-perf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.aero-perf-title {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.aero-perf-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.aero-perf-controls button {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.aero-perf-controls button:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.aero-perf-metrics {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+
+.aero-perf-label {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.aero-perf-value {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.aero-perf-sparklines {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.aero-perf-sparkline {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 6px;
+}
+
+.aero-perf-sparkline-title {
+  font-size: 11px;
+  margin-bottom: 4px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.aero-perf-sparkline canvas {
+  width: 160px;
+  height: 34px;
+  display: block;
+}
