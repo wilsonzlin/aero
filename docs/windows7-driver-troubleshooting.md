@@ -162,6 +162,27 @@ Windows is booting from a disk controller whose driver is not installed or not c
 
 Do storage first, then network, then GPU. If you change storage + GPU simultaneously and the guest can’t boot or can’t display, recovery becomes much harder.
 
+## Issue: “No bootable device” / “BOOTMGR is missing” after switching storage
+
+**Symptom**
+
+- The VM firmware shows an error like:
+  - `No bootable device`, or
+  - `BOOTMGR is missing`
+
+**Common causes**
+
+- The disk image is not attached after the hardware profile change.
+- Boot order changed and the VM is trying to boot from the wrong device (for example, CD/DVD with no media).
+- The disk/controller change did not actually map the existing system disk to the new controller.
+
+**Fix**
+
+1. Power off the VM.
+2. Verify the system disk image is still attached.
+3. Verify the boot order still prefers the disk.
+4. If you can’t quickly resolve it, switch back to the known-good **AHCI** storage controller and boot Windows, then retry the switch to virtio-blk.
+
 ## Issue: Virtio device “not found” / Unknown device after switching
 
 **Symptom**

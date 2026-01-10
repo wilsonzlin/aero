@@ -206,6 +206,10 @@ Expected behavior:
 - Windows boots to desktop.
 - It may install new devices and ask for another reboot.
 
+If you see firmware-level errors like “No bootable device” or “BOOTMGR is missing”, see:
+
+- [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md#issue-no-bootable-device--bootmgr-is-missing-after-switching-storage)
+
 ### Stage B: switch networking (e1000 → virtio-net)
 
 1. Shut down Windows.
