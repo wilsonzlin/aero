@@ -141,7 +141,7 @@
         <RunSynchronousCommand wcm:action="add">
           <Order>3</Order>
           <Description>Optional: copy Aero payload to C:\Aero for persistence</Description>
-          <Path>cmd /c mkdir "C:\Aero" 2&gt;NUL &amp; if defined configsetroot if exist "%configsetroot%\Drivers\" xcopy "%configsetroot%\Drivers" "C:\Aero\Drivers\" /E /I /H /R /Y /C /Q &amp; if defined configsetroot if exist "%configsetroot%\Scripts\" xcopy "%configsetroot%\Scripts" "C:\Aero\Scripts\" /E /I /H /R /Y /C /Q &amp; if defined configsetroot if exist "%configsetroot%\Cert\" xcopy "%configsetroot%\Cert" "C:\Aero\Cert\" /E /I /H /R /Y /C /Q &amp; if defined configsetroot if exist "%configsetroot%\Certs\" xcopy "%configsetroot%\Certs" "C:\Aero\Certs\" /E /I /H /R /Y /C /Q</Path>
+          <Path>cmd /c mkdir "C:\Aero" 2&gt;NUL &amp; if defined configsetroot if exist "%configsetroot%\Drivers\WinPE\amd64\" xcopy "%configsetroot%\Drivers\WinPE\amd64" "C:\Aero\Drivers\WinPE\amd64\" /E /I /H /R /Y /C /Q &amp; if defined configsetroot if exist "%configsetroot%\Drivers\Offline\amd64\" xcopy "%configsetroot%\Drivers\Offline\amd64" "C:\Aero\Drivers\Offline\amd64\" /E /I /H /R /Y /C /Q &amp; if defined configsetroot if exist "%configsetroot%\Scripts\" xcopy "%configsetroot%\Scripts" "C:\Aero\Scripts\" /E /I /H /R /Y /C /Q &amp; if defined configsetroot if exist "%configsetroot%\Cert\" xcopy "%configsetroot%\Cert" "C:\Aero\Cert\" /E /I /H /R /Y /C /Q &amp; if defined configsetroot if exist "%configsetroot%\Certs\" xcopy "%configsetroot%\Certs" "C:\Aero\Certs\" /E /I /H /R /Y /C /Q</Path>
         </RunSynchronousCommand>
       </RunSynchronous>
     </component>
