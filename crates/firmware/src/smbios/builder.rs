@@ -174,6 +174,15 @@ mod tests {
     }
 
     #[test]
+    fn placement_falls_back_to_bios_scan_region_when_ebda_missing() {
+        let mem = VecMemory::new(2 * 1024 * 1024);
+
+        let placement = choose_placement(&SmbiosConfig::default(), &mem);
+        assert_eq!(placement.eps_addr, BIOS_SCAN_BASE);
+        assert_eq!(placement.table_addr, BIOS_SCAN_BASE + 0x200);
+    }
+
+    #[test]
     fn eps_checksums_are_correct() {
         let table = BuiltTable {
             bytes: vec![0, 0, 0, 0, 0, 0],
