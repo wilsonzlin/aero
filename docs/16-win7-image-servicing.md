@@ -17,6 +17,21 @@ This document answers, precisely:
 
 > Note: Windows 7 **x86** does not enforce kernel-mode driver signing in the same way as x64. This doc is primarily for **Windows 7 x64**.
 
+## Automated servicing (recommended)
+
+For a repeatable, automated implementation of the steps in this document, use:
+
+- [`tools/windows/patch-win7-media.ps1`](../tools/windows/patch-win7-media.ps1)
+
+It patches:
+
+- Media BCD stores (`boot\BCD` and `efi\microsoft\boot\bcd` when present)
+- Selected `boot.wim` + `install.wim` indices (driver injection optional)
+- Offline certificate trust injection into each image’s SOFTWARE hive
+- Offline `install.wim` `BCD-Template` so the installed OS inherits `testsigning`
+
+See [`tools/windows/README.md`](../tools/windows/README.md) for prerequisites and usage examples.
+
 ---
 
 ## Mental model: what needs patching
@@ -320,4 +335,3 @@ reg unload HKLM\OFFSOFT
 ```
 
 You should see a subkey whose name matches your certificate thumbprint (no spaces).
-
