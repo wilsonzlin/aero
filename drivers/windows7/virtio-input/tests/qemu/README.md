@@ -12,6 +12,10 @@ It uses QEMU to provide virtio-input keyboard/mouse devices, then verifies:
 3. Windows built-in `kbdhid.sys` and `mouhid.sys` attach to the resulting HID keyboard/mouse collections
 4. Keyboard/mouse input reports are correct (validated with `hidtest`)
 
+Hardware ID (HWID) references are documented in:
+
+- `drivers/windows7/virtio-input/docs/pci-hwids.md`
+
 ## Prerequisites
 
 - QEMU new enough to provide `virtio-keyboard-pci` and `virtio-mouse-pci` devices.
@@ -26,7 +30,7 @@ It uses QEMU to provide virtio-input keyboard/mouse devices, then verifies:
 
 The examples below are intentionally explicit and can be used as a starting point. Adjust paths, CPU accel, and disk/network options as needed.
 
-### Windows 7 SP1 x86 (transitional virtio devices)
+### Windows 7 SP1 x86
 
 Keep the default PS/2 devices enabled during initial driver installation so you do not lose input.
 
@@ -41,7 +45,7 @@ qemu-system-i386 \
   -net nic,model=e1000 -net user
 ```
 
-### Windows 7 SP1 x64 (transitional virtio devices)
+### Windows 7 SP1 x64
 
 ```bash
 qemu-system-x86_64 \
@@ -54,16 +58,25 @@ qemu-system-x86_64 \
   -net nic,model=e1000 -net user
 ```
 
-### Modern-only virtio (virtio 1.0) devices
+### Modern-only vs transitional virtio-input
 
-If (and only if) the Windows 7 virtio-input driver supports modern-only virtio, run the same command lines but add `disable-legacy=on`:
+Virtio-input has two PCI IDs defined in the virtio spec:
+
+- **Modern / non-transitional**: `PCI\VEN_1AF4&DEV_1052`
+- **Transitional (legacy+modern)**: `PCI\VEN_1AF4&DEV_1011`
+
+QEMU’s virtio-input PCI devices currently enumerate as **modern/non-transitional**
+(`DEV_1052`) even without `disable-legacy=on`. However, you can still include
+`disable-legacy=on` to make your intent explicit:
 
 ```bash
 -device virtio-keyboard-pci,disable-legacy=on \
 -device virtio-mouse-pci,disable-legacy=on
 ```
 
-If the driver only supports legacy/transitional virtio, keep the default transitional devices (do **not** set `disable-legacy=on`).
+If you encounter `DEV_1011` in the field (e.g. a different hypervisor or a future
+QEMU variant that provides a transitional virtio-input PCI function), the INF is
+expected to match it.
 
 ### Optional: validate without PS/2 input (post-install)
 
@@ -78,6 +91,42 @@ qemu-system-x86_64 \
 ```
 
 Only do this after you have a known-good virtio-input driver; otherwise you may lose keyboard/mouse access in the guest.
+
+## Verifying HWID
+
+Before installing the driver (or when troubleshooting binding), confirm the device HWID that Windows sees:
+
+1. In the Windows 7 VM, open **Device Manager**.
+2. Find the virtio-input device (often under **Other devices** as an unknown “PCI Device” before the driver is installed).
+3. Right-click → **Properties** → **Details** tab.
+4. In the **Property** dropdown, select **Hardware Ids**.
+
+Expected values include at least one of:
+
+- `PCI\VEN_1AF4&DEV_1052` (modern / non-transitional, used by QEMU today)
+- `PCI\VEN_1AF4&DEV_1011` (transitional, per virtio spec)
+
+The list will also include more specific forms, e.g.:
+
+- `PCI\VEN_1AF4&DEV_1052&SUBSYS_11001AF4&REV_00`
+
+The INF should match the shorter `VEN/DEV` form.
+
+## Cross-checking with QEMU monitor (no guest required)
+
+You can validate the PCI ID that QEMU is emitting without booting Windows:
+
+```bash
+printf 'info pci\nquit\n' | \
+  qemu-system-x86_64 -nodefaults -machine q35 -m 128 -nographic -monitor stdio \
+    -device virtio-keyboard-pci
+```
+
+Expected `info pci` line (device ID may be shown in lowercase):
+
+```
+Keyboard: PCI device 1af4:1052
+```
 
 ## Driver installation (Windows 7 guest)
 
@@ -162,8 +211,8 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
   - Ensure `bcdedit /set testsigning on` was applied and the VM rebooted.
   - Ensure you installed the correct x86 vs x64 build of the driver.
 - **Code 10**: device cannot start
-  - Confirm the QEMU device type matches what the driver expects (transitional vs modern-only).
-  - If using `disable-legacy=on`, try removing it (use transitional devices).
+  - Confirm the guest is binding the expected hardware ID (see “Verifying HWID”).
+  - Confirm the QEMU device type matches what the driver expects (modern/non-transitional vs transitional).
 
 ### `hidtest` cannot open the device
 
@@ -176,4 +225,3 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
 
 - Ensure you are listening to the correct index (keyboard and mouse are often separate HID collections).
 - Verify you are not testing PS/2 input unintentionally; after the driver works, re-run QEMU with `-machine ... ,i8042=off` to force virtio-only input.
-
