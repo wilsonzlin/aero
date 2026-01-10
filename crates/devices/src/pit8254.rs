@@ -231,11 +231,21 @@ impl Channel {
     }
 
     fn latch_count(&mut self) {
+        // Real hardware ignores additional latch commands until the latched value has
+        // been fully read; doing the same avoids surprising guest code that issues
+        // redundant latch commands in tight loops.
+        if self.latched_count.is_some() {
+            return;
+        }
         let raw = self.current_count_raw();
         self.latched_count = Some(LatchedValue::new(raw));
+        self.read_phase = BytePhase::Low;
     }
 
     fn latch_status(&mut self) {
+        if self.latched_status.is_some() {
+            return;
+        }
         let out = self.current_out();
         let rw = self.access_mode.status_bits();
         let status = ((out as u8) << 7)
@@ -244,6 +254,7 @@ impl Channel {
             | ((self.mode & 0b111) << 1)
             | (self.bcd as u8);
         self.latched_status = Some(status);
+        self.read_phase = BytePhase::Low;
     }
 
     fn advance_ticks(&mut self, ticks: u64) -> u64 {
@@ -269,6 +280,7 @@ impl Channel {
 
     fn read_data(&mut self) -> u8 {
         if let Some(status) = self.latched_status.take() {
+            self.read_phase = BytePhase::Low;
             return status;
         }
 
