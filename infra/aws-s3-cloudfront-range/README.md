@@ -174,7 +174,7 @@ Expected response headers (abridged):
 HTTP/2 204
 access-control-allow-origin: https://app.example.com
 access-control-allow-methods: GET,HEAD,OPTIONS
-access-control-allow-headers: Range,Content-Type,If-None-Match,If-Modified-Since
+access-control-allow-headers: Range,If-Range,Content-Type,If-None-Match,If-Modified-Since
 access-control-allow-credentials: false
 access-control-max-age: 86400
 vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers

@@ -90,6 +90,7 @@ variable "cors_allowed_headers" {
   type        = list(string)
   default = [
     "Range",
+    "If-Range",
     "Content-Type",
     "If-None-Match",
     "If-Modified-Since",

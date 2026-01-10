@@ -16,12 +16,13 @@ locals {
   # Origin request headers:
   # - CORS preflight (OPTIONS) needs these forwarded to S3 unless you enable the optional
   #   edge-handled preflight function (enable_edge_cors_preflight).
+  # - Forward Range headers to S3 for efficient partial responses. CloudFront can cache byte
+  #   ranges without including Range in the cache key (avoids cache fragmentation).
+  #   See docs/17-range-cdn-behavior.md.
   origin_request_headers = [
     "Origin",
     "Access-Control-Request-Method",
     "Access-Control-Request-Headers",
-    # Forward Range headers to S3 for efficient partial responses. CloudFront can cache byte
-    # ranges without including Range in the cache key (avoids cache fragmentation).
     "Range",
     "If-Range",
   ]
