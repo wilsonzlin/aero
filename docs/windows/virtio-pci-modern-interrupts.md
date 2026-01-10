@@ -7,6 +7,11 @@ This document is a **hands-on implementation guide** for wiring up interrupt han
 
 The intent is that a virtio-input (or any virtio-pci modern) driver can implement interrupts correctly **without additional research**.
 
+See also:
+
+* [`../virtio/virtqueue-split-ring-win7.md`](../virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue algorithms (descriptor mgmt, ordering/barriers, EVENT_IDX, indirect).
+* [`../windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md) — Aero’s definitive virtio device/feature/transport contract.
+
 ## Terminology / constants (virtio + Windows)
 
 * **INTx**: legacy PCI line interrupt (level-triggered, frequently shared).

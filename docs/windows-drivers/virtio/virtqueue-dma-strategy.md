@@ -2,6 +2,11 @@
 
 This document describes a **recommended DMA and memory-allocation strategy** for Aero’s Windows 7 KMDF virtio drivers when implementing **virtio 1.0 PCI “modern”** devices using the **split virtqueue** layout (descriptor table + avail ring + used ring).
 
+See also:
+
+* [`../../virtio/virtqueue-split-ring-win7.md`](../../virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue algorithms (descriptor mgmt, ordering/barriers, EVENT_IDX, indirect).
+* [`../../windows7-virtio-driver-contract.md`](../../windows7-virtio-driver-contract.md) — Aero’s definitive virtio device/feature/transport contract.
+
 The focus is on:
 
 * Allocating virtqueue rings / indirect tables in DMA-safe memory.

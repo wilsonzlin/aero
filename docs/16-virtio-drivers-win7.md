@@ -120,6 +120,10 @@ This matters most for larger config structures (e.g., net config) or when the de
 
 Virtio 1.0 drivers commonly use **split virtqueues** (descriptor table + avail ring + used ring) in guest memory.
 
+For the detailed split-ring virtqueue implementation algorithms (descriptor free list + cookies, ordering/barriers, EVENT_IDX, indirect descriptors, and end-to-end virtio-input-style usage), see:
+
+* [`virtio/virtqueue-split-ring-win7.md`](./virtio/virtqueue-split-ring-win7.md)
+
 ### Memory layout
 
 A split virtqueue consists of:
