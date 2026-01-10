@@ -379,6 +379,7 @@ impl DiskBackend for IndexedDbBackend {
                         block.dirty = false;
                     }
                     self.dirty.remove(&block_idx);
+                    self.stats.blocks_written += 1;
                 }
 
                 // Yield to the event loop between chunks.

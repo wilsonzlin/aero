@@ -8,8 +8,45 @@ use wasm_bindgen::JsValue;
 ///
 /// Used between flush chunks so large flushes don't monopolize the worker.
 pub async fn yield_to_event_loop() {
-    let _ =
-        wasm_bindgen_futures::JsFuture::from(js_sys::Promise::resolve(&JsValue::UNDEFINED)).await;
+    // Prefer `setTimeout(0)` over a resolved Promise: awaiting a microtask can
+    // still monopolize the worker and starve message handling. A macrotask yield
+    // gives the event loop a chance to process other tasks in between flush
+    // chunks.
+    let (send, recv) = oneshot::channel::<()>();
+    let send = std::rc::Rc::new(std::cell::RefCell::new(Some(send)));
+
+    let cb_send = send.clone();
+    let cb = Closure::once(move || {
+        if let Some(send) = cb_send.borrow_mut().take() {
+            let _ = send.send(());
+        }
+    });
+
+    let scheduled = if let Some(window) = web_sys::window() {
+        window.set_timeout_with_callback_and_timeout_and_arguments_0(cb.as_ref().unchecked_ref(), 0)
+    } else {
+        let global = js_sys::global();
+        let scope: web_sys::WorkerGlobalScope = match global.dyn_into() {
+            Ok(scope) => scope,
+            Err(_) => {
+                // Fall back to a microtask yield if we can't determine the scope.
+                let _ = wasm_bindgen_futures::JsFuture::from(js_sys::Promise::resolve(
+                    &JsValue::UNDEFINED,
+                ))
+                .await;
+                return;
+            }
+        };
+        scope.set_timeout_with_callback_and_timeout_and_arguments_0(cb.as_ref().unchecked_ref(), 0)
+    };
+
+    if scheduled.is_err() {
+        let _ = wasm_bindgen_futures::JsFuture::from(js_sys::Promise::resolve(&JsValue::UNDEFINED))
+            .await;
+        return;
+    }
+
+    let _ = recv.await;
 }
 
 fn factory() -> Result<web_sys::IdbFactory> {
