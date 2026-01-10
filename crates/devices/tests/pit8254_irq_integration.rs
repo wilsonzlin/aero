@@ -1,6 +1,17 @@
 use aero_devices::pit8254::{Pit8254, PIT_CH0, PIT_CMD};
+use aero_platform::interrupts::{
+    InterruptController, IoApicRedirectionEntry, PlatformInterruptMode, PlatformInterrupts,
+};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+fn program_mode2(pit: &mut Pit8254, divisor: u16) {
+    pit.port_write(PIT_CMD, 1, 0x34);
+    pit.port_write(PIT_CH0, 1, u32::from(divisor & 0x00FF));
+    pit.port_write(PIT_CH0, 1, u32::from(divisor >> 8));
+}
 
 #[test]
 fn irq0_callback_is_invoked() {
@@ -12,10 +23,58 @@ fn irq0_callback_is_invoked() {
     });
 
     // Program channel 0: mode2, lobyte/hibyte, divisor=3.
-    pit.port_write(PIT_CMD, 1, 0x34);
-    pit.port_write(PIT_CH0, 1, 3);
-    pit.port_write(PIT_CH0, 1, 0);
+    program_mode2(&mut pit, 3);
 
     pit.advance_ticks(9);
     assert_eq!(seen.load(Ordering::Relaxed), 3);
+}
+
+#[test]
+fn pit_irq0_routes_to_pic_in_legacy_mode() {
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    {
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        ints.pic_mut().set_masked(0, false);
+    }
+
+    let mut pit = Pit8254::new();
+    pit.connect_irq0_to_platform_interrupts(interrupts.clone());
+    program_mode2(&mut pit, 4);
+
+    pit.advance_ticks(4);
+    assert_eq!(interrupts.borrow().get_pending(), Some(0x20));
+
+    interrupts.borrow_mut().acknowledge(0x20);
+    interrupts.borrow_mut().eoi(0x20);
+
+    pit.advance_ticks(4);
+    assert_eq!(interrupts.borrow().get_pending(), Some(0x20));
+}
+
+#[test]
+fn pit_irq0_respects_isa_irq_override_in_apic_mode() {
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    {
+        let mut ints = interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+        // Simulate an MADT ISO remapping IRQ0 -> GSI2.
+        ints.set_isa_irq_override(0, 2);
+
+        let mut entry = IoApicRedirectionEntry::fixed(0x31, 0);
+        entry.masked = false;
+        ints.ioapic_mut().set_entry(2, entry);
+    }
+
+    let mut pit = Pit8254::new();
+    pit.connect_irq0_to_platform_interrupts(interrupts.clone());
+    program_mode2(&mut pit, 5);
+
+    pit.advance_ticks(5);
+    assert_eq!(interrupts.borrow().get_pending(), Some(0x31));
+    interrupts.borrow_mut().acknowledge(0x31);
+    interrupts.borrow_mut().eoi(0x31);
+
+    pit.advance_ticks(5);
+    assert_eq!(interrupts.borrow().get_pending(), Some(0x31));
 }
