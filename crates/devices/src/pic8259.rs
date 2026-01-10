@@ -79,6 +79,12 @@ struct Pic8259 {
 
     /// Whether ICW4 is expected (ICW1.IC4).
     expect_icw4: bool,
+
+    /// Lowest priority IRQ (0-7) for rotating priority mode.
+    ///
+    /// The highest priority is the next IRQ in sequence. A value of 7 yields the
+    /// classic fixed priority order (IRQ0 highest .. IRQ7 lowest).
+    lowest_priority: u8,
 }
 
 impl Pic8259 {
@@ -98,7 +104,22 @@ impl Pic8259 {
             single: true,
             init_state: InitState::None,
             expect_icw4: false,
+            lowest_priority: 7,
         }
+    }
+
+    fn irq_priority_order(&self) -> impl Iterator<Item = u8> {
+        // Iterate from highest priority to lowest priority given the current
+        // rotation state.
+        //
+        // If lowest_priority == 7 (default), this yields 0..=7.
+        let base = self.lowest_priority & 7;
+        (1u8..=8).map(move |i| base.wrapping_add(i) & 7)
+    }
+
+    fn highest_in_service(&self) -> Option<u8> {
+        self.irq_priority_order()
+            .find(|irq| (self.isr & (1u8 << irq)) != 0)
     }
 
     fn command_read(&self) -> u8 {
@@ -128,6 +149,7 @@ impl Pic8259 {
             self.line_level = 0;
             self.read_isr = false;
             self.auto_eoi = false;
+            self.lowest_priority = 7;
 
             // IMR is cleared on initialization (all interrupts enabled) on
             // real hardware. Guests typically follow up with an OCW1 write.
@@ -147,17 +169,34 @@ impl Pic8259 {
 
         // OCW2
         if (val & 0x20) != 0 {
+            let rotate = (val & 0x80) != 0;
             let specific = (val & 0x40) != 0;
-            if specific {
+            let cleared = if specific {
                 let level = val & 0x07;
                 self.isr &= !(1u8 << level);
-            } else if let Some(level) = lowest_set_bit(self.isr) {
+                Some(level)
+            } else if let Some(level) = self.highest_in_service() {
                 self.isr &= !(1u8 << level);
+                Some(level)
+            } else {
+                None
+            };
+
+            if rotate {
+                if let Some(level) = cleared {
+                    self.lowest_priority = level & 7;
+                }
             }
 
             if self.level_triggered {
                 self.refresh_level_triggered_irr();
             }
+            return;
+        }
+
+        // OCW2: Set priority (rotate only, no EOI).
+        if (val & 0xC0) == 0xC0 {
+            self.lowest_priority = val & 0x07;
         }
     }
 
@@ -229,12 +268,12 @@ impl Pic8259 {
             return None;
         }
 
-        let threshold = match lowest_set_bit(self.isr) {
-            Some(level) => level,
-            None => 8,
-        };
+        let highest_in_service = self.highest_in_service();
 
-        for irq in 0..threshold {
+        for irq in self.irq_priority_order() {
+            if Some(irq) == highest_in_service {
+                break;
+            }
             if (pending & (1u8 << irq)) != 0 {
                 return Some(irq);
             }
@@ -678,5 +717,28 @@ mod tests {
         pic.port_write_u8(MASTER_CMD, 0x20);
         pic.port_write_u8(MASTER_CMD, 0x0B);
         assert_eq!(pic.port_read_u8(MASTER_CMD), 0x00);
+    }
+
+    #[test]
+    fn rotate_on_eoi_changes_priority_order() {
+        let mut pic = DualPic8259::new();
+        init_legacy_pc(&mut pic);
+
+        // First, deliver IRQ0.
+        pic.raise_irq(0);
+        let vec0 = pic.get_pending_vector().unwrap();
+        assert_eq!(vec0, 0x20);
+        pic.lower_irq(0);
+        assert_eq!(pic.acknowledge(vec0), Some(0));
+
+        // Rotate on non-specific EOI: the just-serviced IRQ0 becomes lowest priority.
+        pic.port_write_u8(MASTER_CMD, 0xA0);
+
+        // Now, IRQ1 should win over IRQ0 (since IRQ0 is rotated to lowest).
+        pic.raise_irq(0);
+        pic.raise_irq(1);
+
+        let vec = pic.get_pending_vector().unwrap();
+        assert_eq!(vec, 0x21);
     }
 }
