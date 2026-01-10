@@ -5,9 +5,11 @@ use crate::protocol::{
     Rect, VIRTIO_GPU_CMD_GET_DISPLAY_INFO, VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING, VIRTIO_GPU_CMD_RESOURCE_CREATE_2D,
     VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING, VIRTIO_GPU_CMD_RESOURCE_FLUSH, VIRTIO_GPU_CMD_RESOURCE_UNREF,
     VIRTIO_GPU_CMD_SET_SCANOUT, VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D, VIRTIO_GPU_CMD_UPDATE_CURSOR,
-    VIRTIO_GPU_CMD_MOVE_CURSOR, VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM,
-    VIRTIO_GPU_MAX_SCANOUTS, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER, VIRTIO_GPU_RESP_ERR_UNSPEC,
-    VIRTIO_GPU_RESP_OK_DISPLAY_INFO, VIRTIO_GPU_RESP_OK_NODATA,
+    VIRTIO_GPU_CMD_MOVE_CURSOR, VIRTIO_GPU_CMD_GET_EDID, VIRTIO_GPU_EDID_BLOB_SIZE,
+    VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM, VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM, VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM,
+    VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM, VIRTIO_GPU_MAX_SCANOUTS, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+    VIRTIO_GPU_RESP_ERR_UNSPEC, VIRTIO_GPU_RESP_OK_DISPLAY_INFO, VIRTIO_GPU_RESP_OK_EDID,
+    VIRTIO_GPU_RESP_OK_NODATA,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,9 +42,19 @@ struct Resource2D {
 impl Resource2D {
     fn bytes_per_pixel(&self) -> Result<usize, ProtocolError> {
         match self.format {
-            VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM => Ok(4),
+            VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM
+            | VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM
+            | VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM
+            | VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM => Ok(4),
             _ => Err(ProtocolError::InvalidParameter("unsupported resource format")),
         }
+    }
+
+    fn needs_opaque_alpha(&self) -> bool {
+        matches!(
+            self.format,
+            VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM | VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM
+        )
     }
 
     fn required_backing_len(&self) -> Result<u64, ProtocolError> {
@@ -167,6 +179,7 @@ impl VirtioGpuDevice {
         let hdr = parse_ctrl_hdr(req_bytes)?;
         match hdr.type_ {
             VIRTIO_GPU_CMD_GET_DISPLAY_INFO => self.cmd_get_display_info(&hdr),
+            VIRTIO_GPU_CMD_GET_EDID => self.cmd_get_edid(&hdr, req_bytes),
             VIRTIO_GPU_CMD_RESOURCE_CREATE_2D => self.cmd_resource_create_2d(&hdr, req_bytes),
             VIRTIO_GPU_CMD_RESOURCE_UNREF => self.cmd_resource_unref(&hdr, req_bytes),
             VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING => self.cmd_resource_attach_backing(&hdr, req_bytes),
@@ -181,6 +194,36 @@ impl VirtioGpuDevice {
             }
             other => Err(ProtocolError::UnknownCommand(other)),
         }
+    }
+
+    fn cmd_get_edid(&self, req: &CtrlHdr, req_bytes: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+        // struct virtio_gpu_cmd_get_edid:
+        // hdr + scanout_id(u32) + padding(u32)
+        let base = CtrlHdr::WIREFORMAT_SIZE;
+        let want = base + 8;
+        if req_bytes.len() < want {
+            return Err(ProtocolError::BufferTooShort {
+                want,
+                got: req_bytes.len(),
+            });
+        }
+        let scanout_id = read_u32_le(req_bytes, base)? as usize;
+        if scanout_id >= VIRTIO_GPU_MAX_SCANOUTS {
+            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+        }
+
+        // Return a minimal, valid EDID blob. Many guest drivers only need *some* EDID in order to
+        // expose a stable set of modes.
+        let edid_128 = default_edid_1024x768();
+
+        // struct virtio_gpu_resp_edid:
+        // hdr + size(u32) + padding(u32) + edid[1024]
+        let mut out = encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_OK_EDID);
+        out.extend_from_slice(&(edid_128.len() as u32).to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&edid_128);
+        out.resize(out.len() + (VIRTIO_GPU_EDID_BLOB_SIZE - edid_128.len()), 0);
+        Ok(out)
     }
 
     fn cmd_get_display_info(&self, req: &CtrlHdr) -> Result<Vec<u8>, ProtocolError> {
@@ -219,7 +262,13 @@ impl VirtioGpuDevice {
         if width == 0 || height == 0 {
             return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
         }
-        if format != VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM {
+        if !matches!(
+            format,
+            VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM
+                | VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM
+                | VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM
+                | VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM
+        ) {
             return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
         }
 
@@ -375,6 +424,7 @@ impl VirtioGpuDevice {
 
         let row_bytes = rect.width as usize * bpp as usize;
         let mut row_buf = vec![0u8; row_bytes];
+        let needs_opaque_alpha = res.needs_opaque_alpha();
 
         for row in 0..rect.height as u64 {
             let src_off = offset
@@ -388,7 +438,13 @@ impl VirtioGpuDevice {
                 .checked_mul(bpp)
                 .ok_or(ProtocolError::InvalidParameter("dst overflow"))?;
             let dst_off = dst_pixel as usize;
-            res.pixels_bgra[dst_off..dst_off + row_bytes].copy_from_slice(&row_buf);
+            let dst = &mut res.pixels_bgra[dst_off..dst_off + row_bytes];
+            dst.copy_from_slice(&row_buf);
+            if needs_opaque_alpha {
+                for px in dst.chunks_exact_mut(4) {
+                    px[3] = 0xff;
+                }
+            }
         }
 
         Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_OK_NODATA))
@@ -515,4 +571,103 @@ impl VirtioGpuDevice {
         }
         Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_OK_NODATA))
     }
+}
+
+fn default_edid_1024x768() -> [u8; 128] {
+    // A minimal, "good enough" EDID 1.4 blob advertising a 1024x768@60 preferred mode.
+    //
+    // This is intentionally simple (one detailed timing descriptor + blank fillers). It's not
+    // intended to model a specific real monitor.
+    let mut edid = [0u8; 128];
+    edid[0..8].copy_from_slice(&[0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00]);
+
+    // Manufacturer ID "AER" (encoded as 5-bit letters, big-endian).
+    // A=1, E=5, R=18 => 0b00001_00101_10010 = 0x04B2.
+    edid[8] = 0x04;
+    edid[9] = 0xb2;
+
+    // Product code (little-endian) + serial.
+    edid[10] = 0x01;
+    edid[11] = 0x00;
+    edid[12..16].copy_from_slice(&0u32.to_le_bytes());
+
+    // Manufacture week/year.
+    edid[16] = 1;
+    edid[17] = 36; // 1990 + 36 = 2026
+
+    // EDID version/revision.
+    edid[18] = 1;
+    edid[19] = 4;
+
+    // Digital input.
+    edid[20] = 0x80;
+    // Screen size (cm) - unknown/unspecified.
+    edid[21] = 0;
+    edid[22] = 0;
+    // Gamma: 2.2 => (2.2*100)-100 = 120.
+    edid[23] = 120;
+    // Features: default to RGB + preferred timing.
+    edid[24] = 0x0a;
+
+    // Chromaticity coordinates (leave as zero).
+    // Established timings: 640x480@60, 800x600@60, 1024x768@60.
+    edid[35] = 0x21; // 640x480@60 (bit0) + 800x600@60 (bit5)
+    edid[36] = 0x08; // 1024x768@60 (bit3)
+    edid[37] = 0x00;
+
+    // Standard timings: unused (0x01 0x01).
+    for i in 0..8 {
+        edid[38 + i * 2] = 0x01;
+        edid[38 + i * 2 + 1] = 0x01;
+    }
+
+    // Detailed timing descriptor 1: 1024x768 @ 60Hz (VESA).
+    // Pixel clock: 65.00 MHz (6500 * 10kHz) => 0x1964 (LE).
+    let dtd = 54;
+    edid[dtd + 0] = 0x64;
+    edid[dtd + 1] = 0x19;
+    // H active/blanking: 1024 / 320.
+    edid[dtd + 2] = 0x00; // 1024 LSB
+    edid[dtd + 3] = 0x40; // 320 LSB
+    edid[dtd + 4] = 0x41; // 1024 MSB=4, 320 MSB=1
+    // V active/blanking: 768 / 38.
+    edid[dtd + 5] = 0x00; // 768 LSB
+    edid[dtd + 6] = 0x26; // 38 LSB
+    edid[dtd + 7] = 0x30; // 768 MSB=3, 38 MSB=0
+    // Sync offsets/pulse widths: hsync 24/136, vsync 3/6.
+    edid[dtd + 8] = 0x18;
+    edid[dtd + 9] = 0x88;
+    edid[dtd + 10] = 0x36;
+    edid[dtd + 11] = 0x00; // high bits
+    // Physical size (mm) - unknown.
+    edid[dtd + 12] = 0;
+    edid[dtd + 13] = 0;
+    edid[dtd + 14] = 0;
+    edid[dtd + 15] = 0;
+    edid[dtd + 16] = 0;
+    // Separate sync, +H +V (bit4 + bits1..0).
+    edid[dtd + 17] = 0x13;
+
+    // Descriptor 2: monitor name "AERO".
+    let name = 72;
+    edid[name + 0..name + 18].copy_from_slice(&[
+        0x00, 0x00, 0x00, 0xfc, 0x00, b'A', b'E', b'R', b'O', b'\n', 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+    ]);
+
+    // Descriptors 3/4 unused.
+    for base in [90usize, 108usize] {
+        edid[base + 0..base + 18].copy_from_slice(&[
+            0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00,
+        ]);
+    }
+
+    // No extensions.
+    edid[126] = 0;
+
+    // Checksum: sum of all 128 bytes must be 0 mod 256.
+    let sum: u8 = edid.iter().fold(0u8, |acc, b| acc.wrapping_add(*b));
+    edid[127] = (0u8).wrapping_sub(sum);
+    edid
 }

@@ -178,12 +178,13 @@ This repository includes a narrow virtio-gpu 2D command-processing prototype:
 - `crates/virtio-gpu-proto`
   - Implements the control-queue subset needed for basic scanout:
     - `GET_DISPLAY_INFO`
+    - `GET_EDID` (returns a minimal EDID blob)
     - `RESOURCE_CREATE_2D`
     - `RESOURCE_ATTACH_BACKING`
     - `TRANSFER_TO_HOST_2D`
     - `SET_SCANOUT`
     - `RESOURCE_FLUSH`
-  - Restricts to a single contiguous backing entry and BGRA8888 resources (intentionally minimal).
+  - Supports multi-entry (scatter/gather) backing and a small set of 32-bit formats (BGRA/BGRX variants).
   - Validation test:
   - `cargo test -p virtio-gpu-proto`
   - `basic_2d_scanout_roundtrip` simulates a guest writing a BGRA framebuffer in “guest memory”, transferring it to the device, and flushing to scanout; the resulting scanout buffer is byte-for-byte verified.

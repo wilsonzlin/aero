@@ -259,6 +259,32 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
         proto::VIRTIO_GPU_RESP_OK_DISPLAY_INFO
     );
 
+    // GET_EDID (ensures large response writes correctly through virtqueue).
+    let mut req = ctrl_hdr(proto::VIRTIO_GPU_CMD_GET_EDID);
+    proto::write_u32_le(&mut req, 0); // scanout_id
+    proto::write_u32_le(&mut req, 0); // padding
+    let resp = submit_control(
+        &mut dev,
+        &mut mem,
+        &caps,
+        qsz,
+        desc,
+        avail,
+        used,
+        &mut avail_idx,
+        &mut used_idx,
+        req_addr,
+        resp_addr,
+        &req,
+        2048,
+    );
+    assert_eq!(
+        u32::from_le_bytes(resp[0..4].try_into().unwrap()),
+        proto::VIRTIO_GPU_RESP_OK_EDID
+    );
+    let edid_size = u32::from_le_bytes(resp[24..28].try_into().unwrap());
+    assert!(edid_size >= 128);
+
     // RESOURCE_CREATE_2D.
     let mut req = ctrl_hdr(proto::VIRTIO_GPU_CMD_RESOURCE_CREATE_2D);
     proto::write_u32_le(&mut req, 1);
