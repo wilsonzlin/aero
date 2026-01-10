@@ -39,6 +39,15 @@ gcc -Wall -Wextra -municode -o win_blob_dump.exe win_blob_dump.c -lcrypt32 -ladv
 win_blob_dump.exe path\to\cert.der
 ```
 
+An example DER certificate is included at:
+
+`tools/win-blob-dump/examples/example_cert.der`
+
+so from the repo root you can run:
+
+```bat
+tools\win-blob-dump\win_blob_dump.exe tools\win-blob-dump\examples\example_cert.der
+```
+
 The harness uses a dedicated per-user test store called `AERO_BLOB_DUMP` and
 attempts to delete the added certificate when done.
-
