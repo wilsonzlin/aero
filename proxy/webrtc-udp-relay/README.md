@@ -113,6 +113,10 @@ If Chromium fails to launch in CI, ensure the container/runner includes the Play
 - Configurable ICE servers (STUN/TURN) + client-facing discovery endpoint (`/webrtc/ice`)
 - WebRTC signaling (`POST /offer`) and server-side PeerConnection lifecycle (`pion/webrtc`)
 - WebRTC DataChannel (`udp`) ↔ UDP datagram relay with per-guest-port UDP bindings and destination policy enforcement
+- WebSocket signaling handshake hardening:
+  - auth via first WebSocket message or query params
+  - authentication deadline
+  - per-connection signaling message size + rate limits
 - Protocol documentation (`PROTOCOL.md`)
 - Playwright E2E test harness (`e2e/`) that verifies Chromium ↔ relay interoperability for the `udp` DataChannel.
 
@@ -154,11 +158,57 @@ The service supports configuration via environment variables and equivalent flag
 - `UDP_READ_BUFFER_BYTES` / `--udp-read-buffer-bytes` (default `65535`)
 - `DATACHANNEL_SEND_QUEUE_BYTES` / `--datachannel-send-queue-bytes` (default `1048576`)
 
+### Signaling config
+
+#### Authentication
+
+Because browsers can't set arbitrary headers on WebSocket upgrade requests, the signaling server
+supports two auth delivery options:
+
+1. **Preferred:** send credentials in the first WebSocket message:
+
+```json
+{"type":"auth","apiKey":"..."}
+```
+
+or:
+
+```json
+{"type":"auth","token":"..."}
+```
+
+2. **Alternative:** include credentials in the WebSocket URL query string:
+
+- `AUTH_MODE=api_key` → `?apiKey=...`
+- `AUTH_MODE=jwt` → `?token=...`
+
+Tradeoff: query parameters can leak into browser history, reverse-proxy logs, and monitoring.
+Prefer the first-message `{type:"auth"}` flow when possible.
+
+#### Auth & resource limits
+
+To prevent resource exhaustion:
+
+- Unauthenticated WebSocket connections must authenticate within `SIGNALING_AUTH_TIMEOUT` (default: `2s`).
+- Incoming signaling messages are limited by:
+  - `MAX_SIGNALING_MESSAGE_BYTES` (default: `65536`)
+  - `MAX_SIGNALING_MESSAGES_PER_SECOND` (default: `50`)
+
+Violations close the WebSocket connection with an error.
+
+#### Env vars
+
+- `AUTH_MODE` (`api_key` or `jwt`)
+- `API_KEY` (used when `AUTH_MODE=api_key`)
+- `JWT_SECRET` (used when `AUTH_MODE=jwt`, HS256)
+- `SIGNALING_AUTH_TIMEOUT` (Go duration, e.g. `2s`)
+- `MAX_SIGNALING_MESSAGE_BYTES`
+- `MAX_SIGNALING_MESSAGES_PER_SECOND`
+
 ### WebRTC / ICE config
 
 The container + client integration uses the following environment variables and equivalent flags:
 
-- `AUTH_MODE`: controls request authentication/authorization (implementation-defined).
 - `ALLOWED_ORIGINS`: CORS allow-list for browser clients (comma-separated).
   - Example: `http://localhost:5173,http://localhost:3000`
   - If unset, the relay defaults to allowing only same-host origins (so TURN credentials from `/webrtc/ice` are not exposed cross-origin).

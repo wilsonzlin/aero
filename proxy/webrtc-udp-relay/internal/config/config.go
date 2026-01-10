@@ -39,6 +39,14 @@ const (
 	EnvHardCloseAfterViolations        = "HARD_CLOSE_AFTER_VIOLATIONS"
 	EnvViolationWindowSeconds          = "VIOLATION_WINDOW_SECONDS"
 
+	// Signaling / WebSocket auth + hardening.
+	EnvAuthMode                      = "AUTH_MODE"
+	EnvAPIKey                        = "API_KEY"
+	EnvJWTSecret                     = "JWT_SECRET"
+	EnvSignalingAuthTimeout          = "SIGNALING_AUTH_TIMEOUT"
+	EnvMaxSignalingMessageBytes      = "MAX_SIGNALING_MESSAGE_BYTES"
+	EnvMaxSignalingMessagesPerSecond = "MAX_SIGNALING_MESSAGES_PER_SECOND"
+
 	DefaultListenAddr           = "127.0.0.1:8080"
 	DefaultShutdown             = 15 * time.Second
 	DefaultViolationWindow      = 10 * time.Second
@@ -48,6 +56,12 @@ const (
 	DefaultUDPReadBufferBytes        = 65535
 	DefaultDataChannelSendQueueBytes = 1 << 20 // 1MiB
 	DefaultMaxUDPBindingsPerSession  = 128
+
+	DefaultAuthMode AuthMode = AuthModeAPIKey
+
+	DefaultSignalingAuthTimeout          = 2 * time.Second
+	DefaultMaxSignalingMessageBytes      = int64(64 * 1024)
+	DefaultMaxSignalingMessagesPerSecond = 50
 )
 
 const (
@@ -91,6 +105,13 @@ const (
 	LogFormatJSON LogFormat = "json"
 )
 
+type AuthMode string
+
+const (
+	AuthModeAPIKey AuthMode = "api_key"
+	AuthModeJWT    AuthMode = "jwt"
+)
+
 type NAT1To1IPCandidateType string
 
 const (
@@ -111,6 +132,16 @@ type Config struct {
 	LogLevel        slog.Level
 	ShutdownTimeout time.Duration
 	Mode            Mode
+
+	// Signaling / WebSocket auth + hardening.
+	AuthMode  AuthMode
+	APIKey    string
+	JWTSecret string
+
+	SignalingAuthTimeout time.Duration
+
+	MaxSignalingMessageBytes      int64
+	MaxSignalingMessagesPerSecond int
 
 	// Relay engine limits.
 	UDPBindingIdleTimeout     time.Duration
@@ -259,6 +290,41 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		}
 	}
 
+	authModeDefault := string(DefaultAuthMode)
+	if raw, ok := lookup(EnvAuthMode); ok && strings.TrimSpace(raw) != "" {
+		authModeDefault = strings.TrimSpace(raw)
+	}
+
+	apiKey := envOrDefault(lookup, EnvAPIKey, "")
+	jwtSecret := envOrDefault(lookup, EnvJWTSecret, "")
+
+	signalingAuthTimeout := DefaultSignalingAuthTimeout
+	if raw, ok := lookup(EnvSignalingAuthTimeout); ok && strings.TrimSpace(raw) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvSignalingAuthTimeout, raw, err)
+		}
+		signalingAuthTimeout = d
+	}
+
+	maxSignalingMessageBytes := DefaultMaxSignalingMessageBytes
+	if raw, ok := lookup(EnvMaxSignalingMessageBytes); ok && strings.TrimSpace(raw) != "" {
+		n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvMaxSignalingMessageBytes, raw, err)
+		}
+		maxSignalingMessageBytes = n
+	}
+
+	maxSignalingMessagesPerSecond := DefaultMaxSignalingMessagesPerSecond
+	if raw, ok := lookup(EnvMaxSignalingMessagesPerSecond); ok && strings.TrimSpace(raw) != "" {
+		n, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvMaxSignalingMessagesPerSecond, raw, err)
+		}
+		maxSignalingMessagesPerSecond = n
+	}
+
 	// WebRTC network defaults (env values become flag defaults).
 	var webrtcUDPPortMin uint
 	if raw, ok := lookup(EnvWebRTCUDPPortMin); ok && strings.TrimSpace(raw) != "" {
@@ -293,6 +359,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		modeStr      string
 		logFormatStr string
 		logLevelStr  string
+		authModeStr  string
 	)
 
 	fs.StringVar(&listenAddr, "listen-addr", listenAddr, "HTTP listen address (host:port)")
@@ -328,6 +395,11 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.IntVar(&udpReadBufferBytes, "udp-read-buffer-bytes", udpReadBufferBytes, "UDP socket read buffer size in bytes (env "+EnvUDPReadBufferBytes+")")
 	fs.IntVar(&dataChannelSendQueueBytes, "datachannel-send-queue-bytes", dataChannelSendQueueBytes, "Max queued outbound DataChannel bytes before dropping (env "+EnvDataChannelSendQueueBytes+")")
 
+	fs.StringVar(&authModeStr, "auth-mode", authModeDefault, "Signaling auth mode: api_key or jwt (env "+EnvAuthMode+")")
+	fs.DurationVar(&signalingAuthTimeout, "signaling-auth-timeout", signalingAuthTimeout, "Signaling WS auth timeout (env "+EnvSignalingAuthTimeout+")")
+	fs.Int64Var(&maxSignalingMessageBytes, "max-signaling-message-bytes", maxSignalingMessageBytes, "Max inbound signaling WS message size in bytes (env "+EnvMaxSignalingMessageBytes+")")
+	fs.IntVar(&maxSignalingMessagesPerSecond, "max-signaling-messages-per-second", maxSignalingMessagesPerSecond, "Max inbound signaling WS messages per second (env "+EnvMaxSignalingMessagesPerSecond+")")
+
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -359,6 +431,11 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, err
 	}
 
+	authMode, err := parseAuthMode(authModeStr)
+	if err != nil {
+		return Config{}, err
+	}
+
 	if listenAddr == "" {
 		return Config{}, fmt.Errorf("listen address must not be empty")
 	}
@@ -376,6 +453,18 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	if maxUDPBindingsPerSession <= 0 {
 		return Config{}, fmt.Errorf("%s/--max-udp-bindings-per-session must be > 0", EnvMaxUDPBindingsPerSession)
+	}
+	if authMode == AuthModeJWT && strings.TrimSpace(jwtSecret) == "" {
+		return Config{}, fmt.Errorf("%s must be set when %s=%s", EnvJWTSecret, EnvAuthMode, AuthModeJWT)
+	}
+	if signalingAuthTimeout <= 0 {
+		return Config{}, fmt.Errorf("%s/--signaling-auth-timeout must be > 0", EnvSignalingAuthTimeout)
+	}
+	if maxSignalingMessageBytes <= 0 {
+		return Config{}, fmt.Errorf("%s/--max-signaling-message-bytes must be > 0", EnvMaxSignalingMessageBytes)
+	}
+	if maxSignalingMessagesPerSecond <= 0 {
+		return Config{}, fmt.Errorf("%s/--max-signaling-messages-per-second must be > 0", EnvMaxSignalingMessagesPerSecond)
 	}
 
 	var webrtcUDPPortRange *UDPPortRange
@@ -439,6 +528,13 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		LogLevel:        level,
 		ShutdownTimeout: shutdownTimeout,
 		Mode:            mode,
+
+		AuthMode:                      authMode,
+		APIKey:                        apiKey,
+		JWTSecret:                     jwtSecret,
+		SignalingAuthTimeout:          signalingAuthTimeout,
+		MaxSignalingMessageBytes:      maxSignalingMessageBytes,
+		MaxSignalingMessagesPerSecond: maxSignalingMessagesPerSecond,
 
 		UDPBindingIdleTimeout:     udpBindingIdleTimeout,
 		UDPReadBufferBytes:        udpReadBufferBytes,
@@ -559,6 +655,17 @@ func parseLogLevel(raw string) (slog.Level, error) {
 		return slog.LevelError, nil
 	default:
 		return slog.LevelInfo, fmt.Errorf("invalid log level %q (expected debug, info, warn, error)", raw)
+	}
+}
+
+func parseAuthMode(raw string) (AuthMode, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(AuthModeAPIKey):
+		return AuthModeAPIKey, nil
+	case string(AuthModeJWT):
+		return AuthModeJWT, nil
+	default:
+		return "", fmt.Errorf("invalid %s %q (expected %s or %s)", EnvAuthMode, raw, AuthModeAPIKey, AuthModeJWT)
 	}
 }
 

@@ -2,7 +2,10 @@ module github.com/wilsonzlin/aero/proxy/webrtc-udp-relay
 
 go 1.22
 
-require github.com/pion/webrtc/v4 v4.1.4
+require (
+	github.com/gorilla/websocket v1.5.1
+	github.com/pion/webrtc/v4 v4.1.4
+)
 
 require (
 	github.com/google/uuid v1.6.0 // indirect

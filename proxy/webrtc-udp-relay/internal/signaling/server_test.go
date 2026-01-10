@@ -34,4 +34,3 @@ func TestServer_EnforcesMaxSessions(t *testing.T) {
 		t.Fatalf("expected too_many_sessions metric increment")
 	}
 }
-

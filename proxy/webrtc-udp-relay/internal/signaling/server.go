@@ -134,7 +134,6 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	_, _ = w.Write([]byte(session.ID()))
 }
-
 func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 	var req OfferRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
