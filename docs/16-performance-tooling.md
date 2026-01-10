@@ -131,6 +131,11 @@ Notes:
 
 - Keep traces short (seconds, not minutes). Long traces are hard to analyze and expensive to record.
 - Prefer capturing a trace immediately after a cold start if you’re investigating startup costs (shader compilation, caches).
+- Trace recording uses bounded ring buffers; if you capture too long, you may see dropped events under `trace.otherData.aero.droppedRecordsByThread`.
+
+For more details on trace instrumentation, worker lanes, and dropped-event accounting, see:
+
+- [`docs/16-perf-tracing.md`](./16-perf-tracing.md)
 
 ### Opening a trace in Perfetto
 
