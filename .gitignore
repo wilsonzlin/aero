@@ -23,6 +23,7 @@ __pycache__/
 
 # Build outputs (common)
 node_modules/
+coverage/
 dist/
 build/
 out/

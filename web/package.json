@@ -8,11 +8,16 @@
     "build": "vite build",
     "preview": "vite preview",
     "serve": "vite preview",
+    "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json"
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:unit:coverage": "vitest run --coverage"
   },
   "devDependencies": {
+    "@types/node": "^20.11.30",
     "@types/wicg-file-system-access": "^2023.10.7",
+    "@vitest/coverage-v8": "^1.6.0",
     "@webgpu/types": "^0.1.68",
     "typescript": "^5.5.4",
     "vite": "^5.4.10",
