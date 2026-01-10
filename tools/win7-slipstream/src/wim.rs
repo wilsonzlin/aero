@@ -670,11 +670,11 @@ fn verify_cert_hivex(deps: &DepContext, software_hive: &Path, thumbprint_sha1: &
         .context("hivexregedit export failed")?;
 
     let root_key = format!(
-        "\\SystemCertificates\\ROOT\\Certificates\\{}]",
+        "\\Microsoft\\SystemCertificates\\ROOT\\Certificates\\{}]",
         thumbprint_sha1
     );
     let tp_key = format!(
-        "\\SystemCertificates\\TrustedPublisher\\Certificates\\{}]",
+        "\\Microsoft\\SystemCertificates\\TrustedPublisher\\Certificates\\{}]",
         thumbprint_sha1
     );
 

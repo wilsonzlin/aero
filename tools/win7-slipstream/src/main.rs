@@ -89,6 +89,7 @@ fn patch_iso(ctx: &DepContext, args: &PatchIsoArgs) -> Result<()> {
     extractor
         .extract(&input_iso, &iso_root, args.verbose)
         .context("Failed to extract input ISO")?;
+    iso::make_tree_writable(&iso_root).context("Failed to make extracted ISO tree writable")?;
 
     let arch = wim::resolve_arch(&iso_root, &args.arch).context("Failed to resolve arch")?;
     let signing_mode = args.signing_mode;

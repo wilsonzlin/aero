@@ -1,8 +1,10 @@
 use crate::deps::DepContext;
 use anyhow::{anyhow, Context, Result};
 use std::ffi::OsStr;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use walkdir::WalkDir;
 
 pub struct IsoExtractor {
     kind: IsoExtractorKind,
@@ -113,6 +115,37 @@ try {
 pub struct IsoBuilder {
     kind: IsoBuilderKind,
     xorriso_for_label: Option<PathBuf>,
+}
+
+/// ISO extractors often preserve the "read-only" attribute from ISO9660/UDF metadata.
+/// That breaks patching steps that need to modify files in-place (e.g. `boot/BCD`, WIMs).
+pub fn make_tree_writable(root: &Path) -> Result<()> {
+    for entry in WalkDir::new(root).follow_links(false) {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = fs::metadata(path)?;
+        let mut perms = metadata.permissions();
+
+        #[cfg(windows)]
+        {
+            if perms.readonly() {
+                perms.set_readonly(false);
+                fs::set_permissions(path, perms)?;
+            }
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = perms.mode();
+            let new_mode = mode | 0o200;
+            if new_mode != mode {
+                perms.set_mode(new_mode);
+                fs::set_permissions(path, perms)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 enum IsoBuilderKind {
