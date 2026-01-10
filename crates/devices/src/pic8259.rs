@@ -455,12 +455,22 @@ impl Pic8259Port {
 impl PortIoDevice for Pic8259Port {
     fn read(&mut self, port: u16, size: u8) -> u32 {
         debug_assert_eq!(port, self.port);
-        let value = self.pic.borrow().port_read_u8(port) as u32;
+        let pic = self.pic.borrow();
         match size {
-            1 => value,
-            2 => value | (value << 8),
-            4 => value | (value << 8) | (value << 16) | (value << 24),
-            _ => value,
+            1 => u32::from(pic.port_read_u8(port)),
+            2 => {
+                let lo = pic.port_read_u8(port) as u16;
+                let hi = pic.port_read_u8(port.wrapping_add(1)) as u16;
+                u32::from(lo | (hi << 8))
+            }
+            4 => {
+                let b0 = pic.port_read_u8(port);
+                let b1 = pic.port_read_u8(port.wrapping_add(1));
+                let b2 = pic.port_read_u8(port.wrapping_add(2));
+                let b3 = pic.port_read_u8(port.wrapping_add(3));
+                u32::from_le_bytes([b0, b1, b2, b3])
+            }
+            _ => u32::from(pic.port_read_u8(port)),
         }
     }
 
@@ -469,10 +479,17 @@ impl PortIoDevice for Pic8259Port {
         let mut pic = self.pic.borrow_mut();
         match size {
             1 => pic.port_write_u8(port, value as u8),
-            2 | 4 => {
-                for i in 0..(size as usize) {
-                    pic.port_write_u8(port, (value >> (i * 8)) as u8);
-                }
+            2 => {
+                let [b0, b1] = (value as u16).to_le_bytes();
+                pic.port_write_u8(port, b0);
+                pic.port_write_u8(port.wrapping_add(1), b1);
+            }
+            4 => {
+                let [b0, b1, b2, b3] = value.to_le_bytes();
+                pic.port_write_u8(port, b0);
+                pic.port_write_u8(port.wrapping_add(1), b1);
+                pic.port_write_u8(port.wrapping_add(2), b2);
+                pic.port_write_u8(port.wrapping_add(3), b3);
             }
             _ => pic.port_write_u8(port, value as u8),
         }
@@ -481,9 +498,18 @@ impl PortIoDevice for Pic8259Port {
 
 /// Convenience helper to register a dual PIC on an [`IoPortBus`].
 pub fn register_pic8259(bus: &mut IoPortBus, pic: SharedPic8259) {
-    bus.register(MASTER_CMD, Box::new(Pic8259Port::new(pic.clone(), MASTER_CMD)));
-    bus.register(MASTER_DATA, Box::new(Pic8259Port::new(pic.clone(), MASTER_DATA)));
-    bus.register(SLAVE_CMD, Box::new(Pic8259Port::new(pic.clone(), SLAVE_CMD)));
+    bus.register(
+        MASTER_CMD,
+        Box::new(Pic8259Port::new(pic.clone(), MASTER_CMD)),
+    );
+    bus.register(
+        MASTER_DATA,
+        Box::new(Pic8259Port::new(pic.clone(), MASTER_DATA)),
+    );
+    bus.register(
+        SLAVE_CMD,
+        Box::new(Pic8259Port::new(pic.clone(), SLAVE_CMD)),
+    );
     bus.register(SLAVE_DATA, Box::new(Pic8259Port::new(pic, SLAVE_DATA)));
 }
 
@@ -500,6 +526,19 @@ mod tests {
 
         // Initialize slave PIC: base 0x28, cascade identity 2, 8086 mode.
         pic.port_write_u8(SLAVE_CMD, 0x11);
+        pic.port_write_u8(SLAVE_DATA, 0x28);
+        pic.port_write_u8(SLAVE_DATA, 0x02);
+        pic.port_write_u8(SLAVE_DATA, 0x01);
+    }
+
+    fn init_legacy_pc_level_triggered(pic: &mut DualPic8259) {
+        // Same as `init_legacy_pc`, but with ICW1.LTIM set (level triggered).
+        pic.port_write_u8(MASTER_CMD, 0x19);
+        pic.port_write_u8(MASTER_DATA, 0x20);
+        pic.port_write_u8(MASTER_DATA, 0x04);
+        pic.port_write_u8(MASTER_DATA, 0x01);
+
+        pic.port_write_u8(SLAVE_CMD, 0x19);
         pic.port_write_u8(SLAVE_DATA, 0x28);
         pic.port_write_u8(SLAVE_DATA, 0x02);
         pic.port_write_u8(SLAVE_DATA, 0x01);
@@ -594,5 +633,50 @@ mod tests {
         // through.
         pic.port_write_u8(MASTER_CMD, 0x20);
         assert_eq!(pic.get_pending_vector(), Some(0x29));
+    }
+
+    #[test]
+    fn spurious_irq7_does_not_set_isr() {
+        let mut pic = DualPic8259::new();
+        init_legacy_pc_level_triggered(&mut pic);
+
+        pic.raise_irq(7);
+        let vec = pic.get_pending_vector().unwrap();
+        assert_eq!(vec, 0x27);
+
+        // Withdraw the request before the CPU acknowledges (level-triggered).
+        pic.lower_irq(7);
+        assert_eq!(pic.acknowledge(vec), None);
+
+        // Master ISR must remain clear.
+        pic.port_write_u8(MASTER_CMD, 0x0B);
+        assert_eq!(pic.port_read_u8(MASTER_CMD), 0x00);
+    }
+
+    #[test]
+    fn spurious_irq15_sets_only_master_cascade_in_service() {
+        let mut pic = DualPic8259::new();
+        init_legacy_pc_level_triggered(&mut pic);
+
+        pic.raise_irq(15);
+        let vec = pic.get_pending_vector().unwrap();
+        assert_eq!(vec, 0x2F);
+
+        // Withdraw request before INTA (level-triggered), causing a spurious IRQ15.
+        pic.lower_irq(15);
+        assert_eq!(pic.acknowledge(vec), None);
+
+        // Slave ISR must remain clear.
+        pic.port_write_u8(SLAVE_CMD, 0x0B);
+        assert_eq!(pic.port_read_u8(SLAVE_CMD), 0x00);
+
+        // Master should have the cascade IRQ in service.
+        pic.port_write_u8(MASTER_CMD, 0x0B);
+        assert_eq!(pic.port_read_u8(MASTER_CMD), 1u8 << 2);
+
+        // EOI to the master clears it.
+        pic.port_write_u8(MASTER_CMD, 0x20);
+        pic.port_write_u8(MASTER_CMD, 0x0B);
+        assert_eq!(pic.port_read_u8(MASTER_CMD), 0x00);
     }
 }
