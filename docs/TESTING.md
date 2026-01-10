@@ -379,6 +379,13 @@ When debugging a CI failure locally, prefer matching the CI environment as close
 We use [Criterion.rs](https://github.com/bheisler/criterion.rs) to measure a
 small set of emulator-critical hot paths with stable statistics.
 
+Current benchmarks:
+
+- `decoder_throughput`: string-op decoder throughput (`aero_cpu_core::interp::decode`)
+- `x86_decode_throughput`: instruction decode throughput via the `aero_x86` wrapper (iced-x86)
+- `interpreter_hot_loop`: tight interpreter dispatch loop (`aero_cpu_core::interp::exec`)
+- `memory/bulk_copy_1mib`: `RamBus` bulk copy throughput (1 MiB)
+
 ### Run the emulator-critical microbenchmarks
 
 ```bash

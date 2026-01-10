@@ -11,6 +11,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "crates/aero_cpu_core/**"
+      - "crates/aero_x86/**"
+      - "crates/aero-cpu-decoder/**"
       - "scripts/bench_compare.py"
       - ".github/workflows/bench.yml"
       - "docs/TESTING.md"
