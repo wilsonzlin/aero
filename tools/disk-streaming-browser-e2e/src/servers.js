@@ -248,7 +248,7 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
     if (output.length > outputLimit) output = output.slice(-outputLimit);
   };
 
-  const child = spawn('cargo', ['run'], {
+  const child = spawn('cargo', ['run', '--locked', '--bin', 'disk-gateway'], {
     cwd: diskGatewaySourceDir,
     env: {
       ...process.env,
@@ -265,6 +265,9 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
 
   child.stdout?.on('data', appendOutput);
   child.stderr?.on('data', appendOutput);
+  child.on('error', (err) => {
+    appendOutput(`\n[disk-gateway spawn error] ${err.message}\n`);
+  });
 
   try {
     await waitForHttpOk(`${origin}/disk/${PUBLIC_IMAGE_ID}`, { timeoutMs: 120_000 });
