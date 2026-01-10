@@ -171,3 +171,7 @@ certManager:
       # Which ingress class should solve the ACME HTTP-01 challenge.
       # If empty, defaults to ingress.className.
       ingressClass: ""
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
