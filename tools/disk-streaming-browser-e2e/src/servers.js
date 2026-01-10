@@ -34,11 +34,17 @@ async function getFreePort() {
   });
 }
 
-async function waitForHttpOk(url, { timeoutMs }) {
+async function waitForHttpOk(url, { timeoutMs, shouldAbort }) {
   const start = Date.now();
   // Poll until the server is listening. This has to tolerate a cold `cargo run`
   // which may compile the binary first.
   while (Date.now() - start < timeoutMs) {
+    if (shouldAbort) {
+      const reason = shouldAbort();
+      if (reason) {
+        throw new Error(reason);
+      }
+    }
     try {
       const res = await fetch(url, { method: 'HEAD' });
       if (res.ok) return;
@@ -248,6 +254,9 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
     if (output.length > outputLimit) output = output.slice(-outputLimit);
   };
 
+  /** @type {Error | null} */
+  let spawnError = null;
+
   const child = spawn('cargo', ['run', '--locked', '--bin', 'disk-gateway'], {
     cwd: diskGatewaySourceDir,
     env: {
@@ -266,11 +275,23 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
   child.stdout?.on('data', appendOutput);
   child.stderr?.on('data', appendOutput);
   child.on('error', (err) => {
+    spawnError = err;
     appendOutput(`\n[disk-gateway spawn error] ${err.message}\n`);
   });
 
   try {
-    await waitForHttpOk(`${origin}/disk/${PUBLIC_IMAGE_ID}`, { timeoutMs: 120_000 });
+    await waitForHttpOk(`${origin}/disk/${PUBLIC_IMAGE_ID}`, {
+      timeoutMs: 120_000,
+      shouldAbort: () => {
+        if (spawnError) {
+          return `disk-gateway failed to spawn: ${spawnError.message}\n\nOutput:\n${output}`;
+        }
+        if (child.exitCode !== null) {
+          return `disk-gateway exited early (exit ${child.exitCode}). Output:\n${output}`;
+        }
+        return null;
+      },
+    });
   } catch (err) {
     await killChildProcess(child);
     await fs.rm(tmpRoot, { recursive: true, force: true });
