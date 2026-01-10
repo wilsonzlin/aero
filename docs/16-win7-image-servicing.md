@@ -145,7 +145,7 @@ cargo build --release
 .\target\release\win-offline-cert-injector.exe `
   --windows-dir $MountDir `
   --store ROOT --store TrustedPublisher `
-  $CertPath
+  --cert $CertPath
 ```
 
 ---

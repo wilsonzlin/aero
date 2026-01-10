@@ -285,6 +285,23 @@ If you want Windows Setup to “just work” with virtio storage without clickin
 
 Repeat for `install.wim` (pick the correct edition index).
 
+### Important: test-signed drivers also require offline certificate trust
+
+If the driver package you’re injecting is **test-signed** (common for development), you must also inject the public signing certificate into the offline certificate stores for **both**:
+
+- `boot.wim` (WinPE / Setup index, typically 2)
+- `install.wim` (the edition index you plan to install)
+
+At minimum, inject into:
+
+- `ROOT`
+- `TrustedPublisher`
+
+Recommended tooling (Windows host):
+
+- End-to-end media servicing: `tools/windows/patch-win7-media.ps1`
+- Offline hive injector: `tools/win-offline-cert-injector` (`win-offline-cert-injector --windows-dir <mount> --cert <path> --store ROOT --store TrustedPublisher`)
+
 For a much more complete, Win7 x64-focused servicing procedure (certificate injection + BCD template patching), see `docs/16-win7-image-servicing.md` and the helper script `drivers/scripts/inject-win7-wim.ps1`.
 
 ---

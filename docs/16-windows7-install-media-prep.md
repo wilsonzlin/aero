@@ -170,6 +170,9 @@ Even when using DISM to inject drivers, keeping a copy of the exact inputs on th
 
 ### 0) Prerequisites
 
+- Fast path: if you just want a repeatable one-command workflow (drivers + offline cert trust + BCD patching), use:
+  - `tools/windows/patch-win7-media.ps1` (see `tools/windows/README.md`)
+
 - Windows 10/11 host (or Windows VM) with:
   - DISM (`dism.exe`) available (built-in).
   - Optional: Windows ADK `oscdimg.exe` for ISO rebuild.
@@ -243,6 +246,17 @@ Windows stores LocalMachine certificate stores under the SOFTWARE hive at:
 - `…\\Microsoft\\SystemCertificates\\TrustedPublisher\\Certificates\\<thumbprint>`
 
 The key name is the certificate **SHA-1 thumbprint of the certificate DER bytes** (uppercase hex, no spaces).
+
+Recommended tooling (preferred over manual registry editing):
+
+```powershell
+# After mounting a WIM index to $Mount:
+win-offline-cert-injector `
+  --windows-dir "$Mount" `
+  --store ROOT `
+  --store TrustedPublisher `
+  --cert "C:\\path\\to\\aero-test-root.cer"
+```
 
 PowerShell helper (repeat for each mounted image where you need trust):
 
