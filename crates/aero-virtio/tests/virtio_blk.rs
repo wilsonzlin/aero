@@ -119,6 +119,16 @@ fn virtio_blk_enumerates_and_processes_requests() {
     let vendor = u16::from_le_bytes(id[0..2].try_into().unwrap());
     assert_eq!(vendor, PCI_VENDOR_ID_VIRTIO);
 
+    // BAR0 size probing (basic PCI correctness).
+    dev.config_write(0x10, &0xffff_ffffu32.to_le_bytes());
+    let mut bar = [0u8; 4];
+    dev.config_read(0x10, &mut bar);
+    let expected_mask = (!(dev.bar0_size() as u32 - 1)) & 0xffff_fff0;
+    assert_eq!(u32::from_le_bytes(bar), expected_mask);
+    dev.config_write(0x10, &0x8000_0000u32.to_le_bytes());
+    dev.config_read(0x10, &mut bar);
+    assert_eq!(u32::from_le_bytes(bar), 0x8000_0000);
+
     let caps = parse_caps(&dev);
     // `common` may legitimately be at BAR offset 0; the rest should be mapped.
     assert_ne!(caps.notify, 0);

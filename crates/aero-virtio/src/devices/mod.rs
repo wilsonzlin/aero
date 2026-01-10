@@ -1,5 +1,6 @@
 use crate::memory::GuestMemory;
 use crate::queue::{DescriptorChain, VirtQueue};
+use core::any::Any;
 
 pub mod blk;
 pub mod input;
@@ -19,7 +20,7 @@ pub enum VirtioDeviceError {
 /// This trait is focused on the "device logic" side. The virtio-pci transport
 /// (`crate::pci`) handles feature negotiation, queue configuration, and
 /// interrupts.
-pub trait VirtioDevice {
+pub trait VirtioDevice: Any {
     /// Virtio device type (e.g. 1 = net, 2 = block).
     fn device_type(&self) -> u16;
 
@@ -47,6 +48,23 @@ pub trait VirtioDevice {
         mem: &mut dyn GuestMemory,
     ) -> Result<bool, VirtioDeviceError>;
 
+    /// Allow the device to perform work even when the guest did not kick the queue.
+    ///
+    /// This is primarily used for device → guest paths (e.g. network RX, input events)
+    /// where the guest first posts buffers and the host later has data to place into
+    /// those buffers.
+    ///
+    /// Return `Ok(true)` when the device produced used entries that should trigger an
+    /// interrupt.
+    fn poll_queue(
+        &mut self,
+        _queue_index: u16,
+        _queue: &mut VirtQueue,
+        _mem: &mut dyn GuestMemory,
+    ) -> Result<bool, VirtioDeviceError> {
+        Ok(false)
+    }
+
     /// Read from device-specific configuration space.
     fn read_config(&self, offset: u64, data: &mut [u8]);
 
@@ -55,4 +73,8 @@ pub trait VirtioDevice {
 
     /// Reset to power-on state.
     fn reset(&mut self);
+
+    fn as_any(&self) -> &dyn Any;
+
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }

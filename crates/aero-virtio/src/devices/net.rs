@@ -3,6 +3,7 @@ use crate::devices::{VirtioDevice, VirtioDeviceError};
 use crate::memory::GuestMemory;
 use crate::pci::{VIRTIO_F_RING_EVENT_IDX, VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
 use crate::queue::{DescriptorChain, VirtQueue};
+use std::collections::VecDeque;
 
 pub const VIRTIO_DEVICE_TYPE_NET: u16 = 1;
 
@@ -49,6 +50,7 @@ pub struct VirtioNet<B: NetBackend> {
     mac: [u8; 6],
     offload_config: VirtioNetOffloadConfig,
     negotiated_features: u64,
+    rx_buffers: VecDeque<DescriptorChain>,
 }
 
 impl<B: NetBackend> VirtioNet<B> {
@@ -66,6 +68,7 @@ impl<B: NetBackend> VirtioNet<B> {
             mac,
             offload_config,
             negotiated_features: 0,
+            rx_buffers: VecDeque::new(),
         }
     }
 
@@ -121,6 +124,18 @@ impl<B: NetBackend + 'static> VirtioDevice for VirtioNet<B> {
         }
     }
 
+    fn poll_queue(
+        &mut self,
+        queue_index: u16,
+        queue: &mut VirtQueue,
+        mem: &mut dyn GuestMemory,
+    ) -> Result<bool, VirtioDeviceError> {
+        if queue_index != 0 {
+            return Ok(false);
+        }
+        self.flush_rx(queue, mem)
+    }
+
     fn read_config(&self, offset: u64, data: &mut [u8]) {
         data.fill(0);
         let start = offset as usize;
@@ -134,6 +149,15 @@ impl<B: NetBackend + 'static> VirtioDevice for VirtioNet<B> {
 
     fn reset(&mut self) {
         self.negotiated_features = 0;
+        self.rx_buffers.clear();
+    }
+
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
+        self
     }
 }
 
@@ -223,54 +247,66 @@ impl<B: NetBackend> VirtioNet<B> {
         queue: &mut VirtQueue,
         mem: &mut dyn GuestMemory,
     ) -> Result<bool, VirtioDeviceError> {
-        let Some(pkt) = self.backend.poll_receive() else {
-            // No packet available; keep the buffer until later. In a real device we'd
-            // stash it, but for now just return it unused.
-            return queue
-                .add_used(mem, chain.head_index(), 0)
-                .map_err(|_| VirtioDeviceError::IoError);
-        };
+        self.rx_buffers.push_back(chain);
+        self.flush_rx(queue, mem)
+    }
 
-        let descs = chain.descriptors();
-        if descs.is_empty() {
-            return Err(VirtioDeviceError::BadDescriptorChain);
-        }
-        for d in descs {
-            if !d.is_write_only() {
+    fn flush_rx(
+        &mut self,
+        queue: &mut VirtQueue,
+        mem: &mut dyn GuestMemory,
+    ) -> Result<bool, VirtioDeviceError> {
+        let mut need_irq = false;
+
+        while let Some(chain) = self.rx_buffers.pop_front() {
+            let Some(pkt) = self.backend.poll_receive() else {
+                self.rx_buffers.push_front(chain);
+                break;
+            };
+
+            let descs = chain.descriptors();
+            if descs.is_empty() {
                 return Err(VirtioDeviceError::BadDescriptorChain);
             }
-        }
+            for d in descs {
+                if !d.is_write_only() {
+                    return Err(VirtioDeviceError::BadDescriptorChain);
+                }
+            }
 
-        let mut written = 0usize;
-        let mut remaining_header = VIRTIO_NET_HDR_LEN;
-        let mut remaining_pkt = pkt.as_slice();
+            let mut written = 0usize;
+            let mut remaining_header = VIRTIO_NET_HDR_LEN;
+            let mut remaining_pkt = pkt.as_slice();
 
-        for d in descs {
-            let dst = mem
-                .get_slice_mut(d.addr, d.len as usize)
+            for d in descs {
+                let dst = mem
+                    .get_slice_mut(d.addr, d.len as usize)
+                    .map_err(|_| VirtioDeviceError::IoError)?;
+                let mut off = 0usize;
+                if remaining_header != 0 {
+                    let take = remaining_header.min(dst.len());
+                    dst[..take].fill(0);
+                    remaining_header -= take;
+                    off += take;
+                    written += take;
+                }
+                if off < dst.len() && !remaining_pkt.is_empty() {
+                    let take = remaining_pkt.len().min(dst.len() - off);
+                    dst[off..off + take].copy_from_slice(&remaining_pkt[..take]);
+                    remaining_pkt = &remaining_pkt[take..];
+                    written += take;
+                }
+                if remaining_header == 0 && remaining_pkt.is_empty() {
+                    break;
+                }
+            }
+
+            need_irq |= queue
+                .add_used(mem, chain.head_index(), written as u32)
                 .map_err(|_| VirtioDeviceError::IoError)?;
-            let mut off = 0usize;
-            if remaining_header != 0 {
-                let take = remaining_header.min(dst.len());
-                dst[..take].fill(0);
-                remaining_header -= take;
-                off += take;
-                written += take;
-            }
-            if off < dst.len() && !remaining_pkt.is_empty() {
-                let take = remaining_pkt.len().min(dst.len() - off);
-                dst[off..off + take].copy_from_slice(&remaining_pkt[..take]);
-                remaining_pkt = &remaining_pkt[take..];
-                written += take;
-            }
-            if remaining_header == 0 && remaining_pkt.is_empty() {
-                break;
-            }
         }
 
-        queue
-            .add_used(mem, chain.head_index(), written as u32)
-            .map_err(|_| VirtioDeviceError::IoError)
+        Ok(need_irq)
     }
 }
 

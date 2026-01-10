@@ -1,6 +1,7 @@
 use crate::devices::VirtioDevice;
 use crate::memory::{read_u16_le, GuestMemory};
 use crate::queue::{VirtQueue, VirtQueueConfig};
+use core::any::Any;
 
 pub const PCI_VENDOR_ID_VIRTIO: u16 = 0x1af4;
 
@@ -42,6 +43,9 @@ pub trait InterruptSink {
 /// transport logic lives here so it can be unit-tested in isolation.
 pub struct VirtioPciDevice {
     config_space: [u8; 256],
+    command: u16,
+    bar0: u32,
+    bar0_probe: bool,
 
     // BAR0 layout (all capabilities point into BAR0 for now).
     bar0_common_offset: u64,
@@ -74,6 +78,7 @@ pub struct VirtioPciDevice {
 #[derive(Debug, Clone)]
 struct QueueState {
     max_size: u16,
+    size: u16,
     msix_vector: u16,
     enable: bool,
     notify_off: u16,
@@ -87,6 +92,7 @@ impl QueueState {
     fn new(max_size: u16, notify_off: u16) -> Self {
         Self {
             max_size,
+            size: max_size,
             msix_vector: 0xffff,
             enable: false,
             notify_off,
@@ -102,6 +108,9 @@ impl VirtioPciDevice {
     pub fn new(device: Box<dyn VirtioDevice>, interrupts: Box<dyn InterruptSink>) -> Self {
         let mut me = Self {
             config_space: [0u8; 256],
+            command: 0,
+            bar0: 0,
+            bar0_probe: false,
             bar0_common_offset: 0x0000,
             bar0_notify_offset: 0x1000,
             bar0_isr_offset: 0x2000,
@@ -131,18 +140,75 @@ impl VirtioPciDevice {
         self.bar0_size
     }
 
+    pub fn bar0_base(&self) -> u32 {
+        self.bar0
+    }
+
+    pub fn device_as_any_mut(&mut self) -> &mut dyn Any {
+        self.device.as_any_mut()
+    }
+
+    pub fn device_mut<T: VirtioDevice + 'static>(&mut self) -> Option<&mut T> {
+        self.device.as_any_mut().downcast_mut::<T>()
+    }
+
     pub fn config_read(&self, offset: u16, data: &mut [u8]) {
         let offset = offset as usize;
         for (i, b) in data.iter_mut().enumerate() {
-            *b = *self.config_space.get(offset + i).unwrap_or(&0);
+            *b = self.read_config_u8(offset + i);
         }
     }
 
     pub fn config_write(&mut self, offset: u16, data: &[u8]) {
-        // This is a minimal implementation; only BAR programming and command/status bits
-        // are relevant to virtio, and the emulator's PCI layer will usually handle that.
-        // For now, we treat config space as mostly read-only.
-        let _ = (offset, data);
+        let offset = offset as usize;
+        match (offset, data.len()) {
+            // command register (status is read-only).
+            (0x04, 2) => {
+                self.command = u16::from_le_bytes(data.try_into().unwrap());
+                self.config_space[0x04..0x06].copy_from_slice(&self.command.to_le_bytes());
+            }
+            (0x04, 4) => {
+                self.command = u16::from_le_bytes([data[0], data[1]]);
+                self.config_space[0x04..0x06].copy_from_slice(&self.command.to_le_bytes());
+            }
+            // BAR0 (32-bit MMIO)
+            (0x10, 4) => {
+                let value = u32::from_le_bytes(data.try_into().unwrap());
+                if value == 0xffff_ffff {
+                    self.bar0_probe = true;
+                    self.bar0 = 0;
+                    self.config_space[0x10..0x14].fill(0);
+                } else {
+                    self.bar0_probe = false;
+                    self.bar0 = value & 0xffff_fff0;
+                    self.config_space[0x10..0x14].copy_from_slice(&self.bar0.to_le_bytes());
+                }
+            }
+            // interrupt line (writable)
+            (0x3c, 1) => self.config_space[0x3c] = data[0],
+            _ => {}
+        }
+    }
+
+    fn read_config_u8(&self, offset: usize) -> u8 {
+        match offset {
+            // BAR0 is emulated to support size probing.
+            0x10..=0x13 => {
+                let value = if self.bar0_probe {
+                    let size = u32::try_from(self.bar0_size).unwrap_or(u32::MAX);
+                    if size.is_power_of_two() {
+                        (!(size - 1)) & 0xffff_fff0
+                    } else {
+                        0
+                    }
+                } else {
+                    self.bar0
+                };
+                let shift = (offset - 0x10) * 8;
+                ((value >> shift) & 0xff) as u8
+            }
+            _ => *self.config_space.get(offset).unwrap_or(&0),
+        }
     }
 
     pub fn bar0_read(&mut self, offset: u64, data: &mut [u8]) {
@@ -174,6 +240,15 @@ impl VirtioPciDevice {
             self.device_cfg_write(offset - self.bar0_device_offset, data);
         } else {
             // ignore
+        }
+    }
+
+    /// Process any pending queue work (including device-driven paths such as
+    /// network RX) and deliver interrupts when required.
+    pub fn poll(&mut self, mem: &mut dyn GuestMemory) {
+        let queue_count = self.queues.len();
+        for queue_index in 0..queue_count {
+            self.process_queue_activity(queue_index as u16, mem);
         }
     }
 
@@ -213,10 +288,43 @@ impl VirtioPciDevice {
         let device_id = VIRTIO_PCI_DEVICE_ID_BASE + self.device.device_type();
         self.config_space[2..4].copy_from_slice(&device_id.to_le_bytes());
 
+        // Command (rw) and status (ro-ish). We set the status bit that indicates a
+        // capabilities list is present.
+        self.command = 0;
+        self.config_space[0x04..0x06].copy_from_slice(&self.command.to_le_bytes());
+
+        // Revision + class code.
+        self.config_space[0x08] = 0x01; // revision
+        let (class, subclass) = match self.device.device_type() {
+            // Network controller / Ethernet controller.
+            1 => (0x02, 0x00),
+            // Mass storage / SCSI (commonly used for virtio-blk).
+            2 => (0x01, 0x00),
+            // Input device controller.
+            18 => (0x09, 0x00),
+            // Multimedia / audio device.
+            25 => (0x04, 0x01),
+            _ => (0x00, 0x00),
+        };
+        self.config_space[0x09] = 0; // prog-if
+        self.config_space[0x0a] = subclass;
+        self.config_space[0x0b] = class;
+        self.config_space[0x0e] = 0x00; // header type
+
+        // Subsystem vendor/device (mirror primary IDs by default).
+        self.config_space[0x2c..0x2e].copy_from_slice(&PCI_VENDOR_ID_VIRTIO.to_le_bytes());
+        self.config_space[0x2e..0x30].copy_from_slice(&device_id.to_le_bytes());
+
+        // INTA#
+        self.config_space[0x3d] = 0x01;
+
         // Status register: capability list.
         // PCI status is at 0x06.
         let status = 1u16 << 4;
         self.config_space[6..8].copy_from_slice(&status.to_le_bytes());
+
+        // BAR0 (32-bit MMIO)
+        self.config_space[0x10..0x14].copy_from_slice(&self.bar0.to_le_bytes());
 
         // Capability pointer at 0x34.
         let cap_base = 0x50u8;
@@ -303,7 +411,7 @@ impl VirtioPciDevice {
         buf[22..24].copy_from_slice(&self.queue_select.to_le_bytes());
 
         let q = self.selected_queue();
-        buf[24..26].copy_from_slice(&q.max_size.to_le_bytes());
+        buf[24..26].copy_from_slice(&q.size.to_le_bytes());
         buf[26..28].copy_from_slice(&q.msix_vector.to_le_bytes());
         buf[28..30].copy_from_slice(&(q.enable as u16).to_le_bytes());
         buf[30..32].copy_from_slice(&q.notify_off.to_le_bytes());
@@ -348,6 +456,13 @@ impl VirtioPciDevice {
                 }
             }
             (0x16, 2) => self.queue_select = u16::from_le_bytes(data.try_into().unwrap()),
+            (0x18, 2) => {
+                let val = u16::from_le_bytes(data.try_into().unwrap());
+                let q = self.selected_queue_mut();
+                if val != 0 && val <= q.max_size && val.is_power_of_two() {
+                    q.size = val;
+                }
+            }
             (0x1a, 2) => {
                 self.selected_queue_mut().msix_vector = u16::from_le_bytes(data.try_into().unwrap())
             }
@@ -422,7 +537,7 @@ impl VirtioPciDevice {
         q.enable = true;
         q.queue = VirtQueue::new(
             VirtQueueConfig {
-                size: q.max_size,
+                size: q.size,
                 desc_addr: q.desc_addr,
                 avail_addr: q.avail_addr,
                 used_addr: q.used_addr,
@@ -472,22 +587,45 @@ impl VirtioPciDevice {
     }
 
     fn notify_cfg_write(&mut self, offset: u64, _data: &[u8], mem: &mut dyn GuestMemory) {
-        let q_index = (offset / u64::from(self.notify_off_multiplier)) as u16;
-        let Some(q) = self.queues.get_mut(q_index as usize) else {
+        let mult = u64::from(self.notify_off_multiplier);
+        if mult == 0 || offset % mult != 0 {
+            return;
+        }
+        let notify_off = (offset / mult) as u16;
+        let Some(queue_index) = self
+            .queues
+            .iter()
+            .position(|q| q.notify_off == notify_off)
+            .map(|idx| idx as u16)
+        else {
             return;
         };
-        let Some(queue) = q.queue.as_mut() else {
-            return;
-        };
+        self.process_queue_activity(queue_index, mem);
+    }
+
+    fn process_queue_activity(&mut self, queue_index: u16, mem: &mut dyn GuestMemory) {
         let mut need_irq = false;
-        while let Ok(Some(chain)) = queue.pop_descriptor_chain(mem) {
+        {
+            let Some(q) = self.queues.get_mut(queue_index as usize) else {
+                return;
+            };
+            let Some(queue) = q.queue.as_mut() else {
+                return;
+            };
+
+            while let Ok(Some(chain)) = queue.pop_descriptor_chain(mem) {
+                need_irq |= self
+                    .device
+                    .process_queue(queue_index, chain, queue, mem)
+                    .unwrap_or(false);
+            }
             need_irq |= self
                 .device
-                .process_queue(q_index, chain, queue, mem)
+                .poll_queue(queue_index, queue, mem)
                 .unwrap_or(false);
         }
         if need_irq {
-            self.signal_queue_interrupt(q_index);
+            self.signal_queue_interrupt(queue_index);
         }
     }
 
@@ -536,4 +674,3 @@ impl InterruptSink for InterruptLog {
         self.msix_vectors.push(vector);
     }
 }
-

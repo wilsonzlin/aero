@@ -24,12 +24,14 @@ impl VirtioInputEvent {
 
 pub struct VirtioInput {
     pending: std::collections::VecDeque<VirtioInputEvent>,
+    buffers: std::collections::VecDeque<DescriptorChain>,
 }
 
 impl VirtioInput {
     pub fn new() -> Self {
         Self {
             pending: std::collections::VecDeque::new(),
+            buffers: std::collections::VecDeque::new(),
         }
     }
 
@@ -75,37 +77,20 @@ impl VirtioDevice for VirtioInput {
             return Err(VirtioDeviceError::Unsupported);
         }
 
-        let Some(event) = self.pending.pop_front() else {
-            return queue
-                .add_used(mem, chain.head_index(), 0)
-                .map_err(|_| VirtioDeviceError::IoError);
-        };
+        self.buffers.push_back(chain);
+        self.flush_events(queue, mem)
+    }
 
-        let bytes = event.to_le_bytes();
-        let descs = chain.descriptors();
-        if descs.is_empty() {
-            return Err(VirtioDeviceError::BadDescriptorChain);
+    fn poll_queue(
+        &mut self,
+        queue_index: u16,
+        queue: &mut VirtQueue,
+        mem: &mut dyn GuestMemory,
+    ) -> Result<bool, VirtioDeviceError> {
+        if queue_index != 0 {
+            return Ok(false);
         }
-
-        let mut written = 0usize;
-        for d in descs {
-            if !d.is_write_only() {
-                return Err(VirtioDeviceError::BadDescriptorChain);
-            }
-            if written == bytes.len() {
-                break;
-            }
-            let take = (d.len as usize).min(bytes.len() - written);
-            let dst = mem
-                .get_slice_mut(d.addr, take)
-                .map_err(|_| VirtioDeviceError::IoError)?;
-            dst.copy_from_slice(&bytes[written..written + take]);
-            written += take;
-        }
-
-        queue
-            .add_used(mem, chain.head_index(), written as u32)
-            .map_err(|_| VirtioDeviceError::IoError)
+        self.flush_events(queue, mem)
     }
 
     fn read_config(&self, _offset: u64, data: &mut [u8]) {
@@ -119,6 +104,58 @@ impl VirtioDevice for VirtioInput {
 
     fn reset(&mut self) {
         self.pending.clear();
+        self.buffers.clear();
+    }
+
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
+        self
     }
 }
 
+impl VirtioInput {
+    fn flush_events(
+        &mut self,
+        queue: &mut VirtQueue,
+        mem: &mut dyn GuestMemory,
+    ) -> Result<bool, VirtioDeviceError> {
+        let mut need_irq = false;
+        while let Some(chain) = self.buffers.pop_front() {
+            let Some(event) = self.pending.pop_front() else {
+                self.buffers.push_front(chain);
+                break;
+            };
+
+            let bytes = event.to_le_bytes();
+            let descs = chain.descriptors();
+            if descs.is_empty() {
+                return Err(VirtioDeviceError::BadDescriptorChain);
+            }
+
+            let mut written = 0usize;
+            for d in descs {
+                if !d.is_write_only() {
+                    return Err(VirtioDeviceError::BadDescriptorChain);
+                }
+                if written == bytes.len() {
+                    break;
+                }
+                let take = (d.len as usize).min(bytes.len() - written);
+                let dst = mem
+                    .get_slice_mut(d.addr, take)
+                    .map_err(|_| VirtioDeviceError::IoError)?;
+                dst.copy_from_slice(&bytes[written..written + take]);
+                written += take;
+            }
+
+            need_irq |= queue
+                .add_used(mem, chain.head_index(), written as u32)
+                .map_err(|_| VirtioDeviceError::IoError)?;
+        }
+
+        Ok(need_irq)
+    }
+}
