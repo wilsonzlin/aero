@@ -359,7 +359,7 @@ impl Tlb {
 ```rust
 pub struct MemoryBus {
     // Main RAM (guest physical memory)
-    ram: SharedArrayBuffer,
+    ram: GuestRam, // backed by shared WebAssembly.Memory (wasm32) in browser builds
     ram_size: usize,
     
     // Memory-mapped I/O regions
@@ -418,7 +418,7 @@ impl MemoryBus {
     fn read_ram(&self, paddr: u64, size: usize) -> u64 {
         let offset = paddr as usize;
         
-        // Use SharedArrayBuffer views for efficient access
+        // Use TypedArray views for efficient access over shared wasm memory
         match size {
             1 => self.ram_u8[offset] as u64,
             2 => u16::from_le_bytes(self.ram[offset..offset+2].try_into().unwrap()) as u64,
