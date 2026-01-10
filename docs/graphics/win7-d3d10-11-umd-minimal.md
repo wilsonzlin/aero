@@ -209,6 +209,12 @@ Clears and draws
 * `pfnDraw`
 * `pfnDrawIndexed` (many samples use indexed draws)
 
+Presentation / swapchain integration
+* `pfnPresent` (DXGI ultimately drives this from `IDXGISwapChain::Present`)
+  * structs: `D3D10DDIARG_PRESENT` (and the corresponding D3D11 variant, if exposed by your D3D11 DDI version)
+* `pfnRotateResourceIdentities`
+  * used by DXGI swapchains to rotate backbuffer “resource identities” after present without requiring a full copy
+
 Resource update/copy (minimum)
 * `pfnMap` + `pfnUnmap` (dynamic VB/IB/CB uploads) — `D3D10DDIARG_MAP`
 * `pfnUpdateSubresource` (some apps prefer this over map/unmap)
@@ -352,6 +358,11 @@ On Win7 **windowed** swapchains, Present is effectively “make the backbuffer v
 1. Ensure all pending rendering to the backbuffer is flushed/submitted (`pfnFlush` or equivalent).
 2. Signal the host/emulator with the presented resource ID and dirty rectangle (if any).
 3. Host composites to the browser canvas.
+
+Implementation note: in practice DXGI will often call into the UMD’s D3D10/11 DDI device functions for present and (for multi-buffer scenarios) buffer rotation:
+
+* `pfnPresent` (with `D3D10DDIARG_PRESENT` or equivalent)
+* `pfnRotateResourceIdentities` (rotate swapchain backbuffer resources)
 
 ### 3.3 ResizeBuffers / ResizeTarget expectations
 

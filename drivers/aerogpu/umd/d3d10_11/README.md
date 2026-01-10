@@ -18,6 +18,10 @@ This implementation is intentionally conservative and targets **the minimum func
 
 Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDARG`) rather than crashing or dereferencing null DDI function pointers.
 
+For a full “bring-up spec” (Win7 driver model overview, minimal D3D10DDI/D3D11DDI entrypoints to implement, swapchain behavior expectations, shader handling, and a test plan), see:
+
+- `docs/graphics/win7-d3d10-11-umd-minimal.md`
+
 ## Feature level strategy
 
 The initial feature claim is **D3D_FEATURE_LEVEL_10_0**:
