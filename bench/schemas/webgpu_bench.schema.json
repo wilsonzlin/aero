@@ -21,10 +21,10 @@
         "capabilities",
         "frames",
         "fps",
-        "drawCallsPerFrame",
-        "pipelineSwitchesPerFrame",
-        "cpuEncodeTimeMs",
-        "gpuTimeMs",
+        "draw_calls_per_frame",
+        "pipeline_switches_per_frame",
+        "cpu_encode_time_ms",
+        "gpu_time_ms",
         "compute"
       ],
       "properties": {
@@ -47,16 +47,16 @@
         "capabilities": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["timestampQuery"],
+          "required": ["timestamp_query"],
           "properties": {
-            "timestampQuery": { "type": "boolean" }
+            "timestamp_query": { "type": "boolean" }
           }
         },
         "frames": { "type": "integer", "minimum": 1 },
         "fps": { "type": "number", "minimum": 0 },
-        "drawCallsPerFrame": { "type": "integer", "minimum": 1 },
-        "pipelineSwitchesPerFrame": { "type": "integer", "minimum": 0 },
-        "cpuEncodeTimeMs": {
+        "draw_calls_per_frame": { "type": "integer", "minimum": 1 },
+        "pipeline_switches_per_frame": { "type": "integer", "minimum": 0 },
+        "cpu_encode_time_ms": {
           "type": "object",
           "additionalProperties": false,
           "required": ["avg", "p95"],
@@ -65,7 +65,7 @@
             "p95": { "type": "number", "minimum": 0 }
           }
         },
-        "gpuTimeMs": { "anyOf": [{ "type": "number", "minimum": 0 }, { "type": "null" }] },
+        "gpu_time_ms": { "anyOf": [{ "type": "number", "minimum": 0 }, { "type": "null" }] },
         "compute": {
           "type": "object",
           "additionalProperties": false,

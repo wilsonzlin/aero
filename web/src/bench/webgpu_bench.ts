@@ -3,12 +3,16 @@ import { LogHistogram, RunningStats, msToUs, usToMs } from '../perf/stats';
 export type WebGpuBenchOptions = {
   frames?: number;
   warmupFrames?: number;
+  warmup_frames?: number;
   width?: number;
   height?: number;
   drawCallsPerFrame?: number;
+  draw_calls_per_frame?: number;
   pipelineSwitchesPerFrame?: number;
+  pipeline_switches_per_frame?: number;
   compute?: boolean;
   computeWorkgroups?: number;
+  compute_workgroups?: number;
 };
 
 export type WebGpuBenchAdapterInfo = {
@@ -27,17 +31,17 @@ export type WebGpuBenchResult =
       supported: true;
       adapter: WebGpuBenchAdapterInfo | null;
       capabilities: {
-        timestampQuery: boolean;
+        timestamp_query: boolean;
       };
       frames: number;
       fps: number;
-      drawCallsPerFrame: number;
-      pipelineSwitchesPerFrame: number;
-      cpuEncodeTimeMs: {
+      draw_calls_per_frame: number;
+      pipeline_switches_per_frame: number;
+      cpu_encode_time_ms: {
         avg: number;
         p95: number;
       };
-      gpuTimeMs: number | null;
+      gpu_time_ms: number | null;
       compute: {
         enabled: boolean;
         workgroups: number;
@@ -139,13 +143,17 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
   if (!gpu) return { supported: false, reason: "navigator.gpu is not available" };
 
   const frames = clampInt(options.frames ?? 120, 1, 10_000);
-  const warmupFrames = clampInt(options.warmupFrames ?? 10, 0, 10_000);
+  const warmupFrames = clampInt(options.warmupFrames ?? options.warmup_frames ?? 10, 0, 10_000);
   const width = clampInt(options.width ?? 256, 1, 4096);
   const height = clampInt(options.height ?? 256, 1, 4096);
-  const drawCallsPerFrame = clampInt(options.drawCallsPerFrame ?? 200, 1, 100_000);
-  const pipelineSwitchesPerFrameRequested = clampInt(options.pipelineSwitchesPerFrame ?? 50, 0, 100_000);
+  const drawCallsPerFrame = clampInt(options.drawCallsPerFrame ?? options.draw_calls_per_frame ?? 200, 1, 100_000);
+  const pipelineSwitchesPerFrameRequested = clampInt(
+    options.pipelineSwitchesPerFrame ?? options.pipeline_switches_per_frame ?? 50,
+    0,
+    100_000,
+  );
   const includeCompute = Boolean(options.compute ?? false);
-  const computeWorkgroups = clampInt(options.computeWorkgroups ?? 256, 1, 65_535);
+  const computeWorkgroups = clampInt(options.computeWorkgroups ?? options.compute_workgroups ?? 256, 1, 65_535);
 
   let adapter: GPUAdapter | null = null;
   try {
@@ -418,17 +426,17 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
       supported: true,
       adapter: adapterInfo,
       capabilities: {
-        timestampQuery: querySet !== null,
+        timestamp_query: querySet !== null,
       },
       frames,
       fps: round3(fps),
-      drawCallsPerFrame,
-      pipelineSwitchesPerFrame,
-      cpuEncodeTimeMs: {
+      draw_calls_per_frame: drawCallsPerFrame,
+      pipeline_switches_per_frame: pipelineSwitchesPerFrame,
+      cpu_encode_time_ms: {
         avg: round3(encodeAvg),
         p95: round3(encodeP95),
       },
-      gpuTimeMs,
+      gpu_time_ms: gpuTimeMs,
       compute: {
         enabled: includeCompute,
         workgroups: includeCompute ? computeWorkgroups : 0,

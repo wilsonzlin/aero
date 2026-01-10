@@ -2,6 +2,8 @@ import './style.css';
 
 import { PerfAggregator, PerfWriter, WorkerKind, createPerfChannel } from '../web/src/perf/index.js';
 import { installNetTraceUI, type NetTraceBackend } from '../web/src/net/trace_ui';
+import { installAeroGlobal } from '../web/src/runtime/aero_global';
+import { installNetTraceUI, type NetTraceBackend } from '../web/src/net/trace_ui';
 
 import { createHotspotsPanel } from './ui/hud_hotspots.js';
 
@@ -17,6 +19,10 @@ declare global {
     __aeroVm?: VmCoordinator;
   }
 }
+
+// Install optional `window.aero.bench` helpers early so automation can invoke
+// microbenchmarks without requiring the emulator/guest OS.
+installAeroGlobal();
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -266,6 +272,10 @@ function startPerfTelemetry(report: PlatformFeatureReport): void {
     getStats: () => aggregator.getStats(),
     setEnabled,
   };
+
+  // Ensure optional perf benchmarks (e.g. WebGPU microbench) are installed and
+  // wired into the export payload without clobbering `aero.perf`.
+  installAeroGlobal();
 
   let frameId = 0;
   let lastNow = performance.now();

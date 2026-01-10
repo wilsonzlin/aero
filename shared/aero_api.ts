@@ -6,8 +6,61 @@ export interface AeroPerfApi {
   setEnabled?: (enabled: boolean) => void;
 }
 
+export interface WebGpuBenchOptions {
+  frames?: number;
+  warmupFrames?: number;
+  warmup_frames?: number;
+  width?: number;
+  height?: number;
+  drawCallsPerFrame?: number;
+  draw_calls_per_frame?: number;
+  pipelineSwitchesPerFrame?: number;
+  pipeline_switches_per_frame?: number;
+  compute?: boolean;
+  computeWorkgroups?: number;
+  compute_workgroups?: number;
+}
+
+export interface WebGpuBenchAdapterInfo {
+  vendor: string | null;
+  architecture: string | null;
+  device: string | null;
+  description: string | null;
+}
+
+export type WebGpuBenchResult =
+  | {
+      supported: false;
+      reason: string;
+    }
+  | {
+      supported: true;
+      adapter: WebGpuBenchAdapterInfo | null;
+      capabilities: {
+        timestamp_query: boolean;
+      };
+      frames: number;
+      fps: number;
+      draw_calls_per_frame: number;
+      pipeline_switches_per_frame: number;
+      cpu_encode_time_ms: {
+        avg: number;
+        p95: number;
+      };
+      gpu_time_ms: number | null;
+      compute: {
+        enabled: boolean;
+        workgroups: number;
+      };
+    };
+
+export interface AeroBenchApi {
+  runWebGpuBench?: (opts?: WebGpuBenchOptions) => Promise<WebGpuBenchResult>;
+}
+
 export interface AeroGlobalApi {
   perf?: AeroPerfApi;
+  bench?: AeroBenchApi;
 
   /**
    * Host-visible status that macrobench scenarios can wait on.
