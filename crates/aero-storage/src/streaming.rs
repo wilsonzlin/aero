@@ -345,7 +345,7 @@ impl StreamingDisk {
 
     fn build_client() -> Client<hyper_rustls::HttpsConnector<HttpConnector>> {
         let https = HttpsConnectorBuilder::new()
-            .with_webpki_roots()
+            .with_native_roots()
             .https_or_http()
             .enable_http1()
             .build();

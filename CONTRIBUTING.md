@@ -94,6 +94,23 @@ When submitting a change:
 - If you compare against Windows behavior, do it locally and describe the
   methodology in the PR. Do not upload Windows binaries/media as evidence.
 
+## Dependency policy (licenses + advisories)
+
+CI enforces a dependency policy to help keep the project compatible with the
+repository’s **MIT OR Apache-2.0** licensing and to catch known vulnerabilities
+early:
+
+- Rust: `cargo-deny` (`deny.toml`) checks license allowlist + banned sources
+  (no git deps by default) + RustSec advisories.
+- npm: a scheduled `npm audit` runs against the lockfile for high/critical
+  issues (nightly/manual only to avoid PR noise).
+
+If you add or update dependencies and CI fails:
+
+- Prefer switching to an equivalent permissively licensed crate.
+- If a new license is acceptable for the project, update `deny.toml` with a
+  justification in the PR.
+
 ## Security issues
 
 Please do not open public issues for security vulnerabilities. See

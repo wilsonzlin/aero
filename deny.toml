@@ -21,6 +21,9 @@ all-features = true
 # direct dependency of a workspace member (keeps CI from failing on transitive
 # ecosystem churn while still flagging intentional additions).
 unmaintained = "workspace"
+# Unsoundness is treated as actionable for the whole graph, since it can lead to
+# undefined behavior even when it comes in transitively.
+unsound = "all"
 ignore = []
 
 [licenses]

@@ -12,7 +12,7 @@ half = "2.7.1"
 hashbrown = "0.14"
 thiserror = "2.0.9"
 # WebGPU pipeline creation/state translation.
-lru = "0.12"
+lru = "0.16"
 wgpu = "0.20"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
