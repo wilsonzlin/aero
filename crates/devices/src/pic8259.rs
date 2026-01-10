@@ -741,4 +741,27 @@ mod tests {
         let vec = pic.get_pending_vector().unwrap();
         assert_eq!(vec, 0x21);
     }
+
+    #[test]
+    fn ioportbus_word_accesses_span_command_and_data_ports() {
+        let pic = Rc::new(RefCell::new(DualPic8259::new()));
+        let mut bus = IoPortBus::new();
+        register_pic8259(&mut bus, pic.clone());
+
+        // Initialize via the bus to ensure the port device wrapper behaves like the real hardware.
+        bus.write_u8(MASTER_CMD, 0x11);
+        bus.write_u8(MASTER_DATA, 0x20);
+        bus.write_u8(MASTER_DATA, 0x04);
+        bus.write_u8(MASTER_DATA, 0x01);
+
+        // Program IMR via a 16-bit write to the command port: low byte goes to 0x20, high byte to
+        // 0x21.
+        bus.write(MASTER_CMD, 2, 0xAA0A);
+        assert_eq!(bus.read_u8(MASTER_DATA), 0xAA);
+
+        // Reading a 16-bit word from 0x20 should return (data_port << 8) | command_port.
+        pic.borrow_mut().raise_irq(0);
+        let v = bus.read(MASTER_CMD, 2) as u16;
+        assert_eq!(v, 0xAA01);
+    }
 }
