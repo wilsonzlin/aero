@@ -10,6 +10,7 @@ diff-engine = []
 
 [dependencies]
 bytemuck = { version = "1.14", features = ["derive"] }
+bitflags = "2.4"
 thiserror = "1.0"
 wgpu = "0.20"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }

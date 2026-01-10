@@ -1,0 +1,1535 @@
+use std::num::NonZeroU64;
+
+use aero_gpu::protocol_d3d11::{
+    BindingType, BufferUsage, CmdPacket, CmdStream, D3D11Opcode, DxgiFormat, IndexFormat,
+    PipelineKind, PrimitiveTopology, ShaderStageFlags, TextureUsage, VertexFormat, VertexStepMode,
+};
+use anyhow::{anyhow, bail, Context, Result};
+
+use super::resources::{
+    BindingDef, BindingKind, BufferResource, ComputePipelineResource, D3D11Resources,
+    RenderPipelineResource, SamplerResource, ShaderModuleResource, Texture2dDesc, TextureResource,
+    TextureViewResource,
+};
+use super::state::{
+    BoundIndexBuffer, BoundResource, BoundVertexBuffer, D3D11State, PipelineBinding,
+};
+
+pub struct D3D11Runtime {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    pub resources: D3D11Resources,
+    pub state: D3D11State,
+}
+
+impl D3D11Runtime {
+    pub async fn new_for_tests() -> Result<Self> {
+        let instance = wgpu::Instance::default();
+
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: true,
+            })
+            .await
+        {
+            Some(adapter) => Some(adapter),
+            None => {
+                instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    })
+                    .await
+            }
+        }
+        .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("aero-d3d11 test device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                },
+                None,
+            )
+            .await
+            .context("wgpu: request_device failed")?;
+
+        Ok(Self {
+            device,
+            queue,
+            resources: D3D11Resources::default(),
+            state: D3D11State::new(),
+        })
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn execute(&mut self, words: &[u32]) -> Result<()> {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aero-d3d11 execute"),
+            });
+
+        let mut stream = CmdStream::new(words);
+        while let Some(packet) = stream.next() {
+            let packet = packet.map_err(|e| anyhow!("{e}"))?;
+            self.exec_packet(&mut encoder, packet, &mut stream)?;
+        }
+
+        self.queue.submit([encoder.finish()]);
+        Ok(())
+    }
+
+    pub fn poll_wait(&self) {
+        self.device.poll(wgpu::Maintain::Wait);
+    }
+
+    pub fn buffer_size(&self, id: u32) -> Result<u64> {
+        self.resources
+            .buffers
+            .get(&id)
+            .map(|b| b.size)
+            .ok_or_else(|| anyhow!("unknown buffer {id}"))
+    }
+
+    pub async fn read_buffer(&self, id: u32, offset: u64, size: u64) -> Result<Vec<u8>> {
+        let buffer = self
+            .resources
+            .buffers
+            .get(&id)
+            .ok_or_else(|| anyhow!("unknown buffer {id}"))?;
+
+        let slice = buffer.buffer.slice(offset..offset.saturating_add(size));
+
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |v| {
+            sender.send(v).ok();
+        });
+        self.device.poll(wgpu::Maintain::Wait);
+        receiver
+            .receive()
+            .await
+            .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
+            .context("wgpu: map_async failed")?;
+
+        let data = slice.get_mapped_range().to_vec();
+        buffer.buffer.unmap();
+        Ok(data)
+    }
+
+    pub async fn read_texture_rgba8(&self, texture_id: u32) -> Result<Vec<u8>> {
+        let texture = self
+            .resources
+            .textures
+            .get(&texture_id)
+            .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?;
+
+        if texture.desc.format != wgpu::TextureFormat::Rgba8Unorm {
+            bail!("read_texture_rgba8 only supports Rgba8Unorm for now");
+        }
+
+        let width = texture.desc.width;
+        let height = texture.desc.height;
+
+        let bytes_per_pixel = 4u32;
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
+        let buffer_size = padded_bytes_per_row as u64 * height as u64;
+
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d11 read_texture staging"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aero-d3d11 read_texture encoder"),
+            });
+
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                texture: &texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &staging,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.queue.submit([encoder.finish()]);
+
+        let slice = staging.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |v| {
+            sender.send(v).ok();
+        });
+        self.device.poll(wgpu::Maintain::Wait);
+        receiver
+            .receive()
+            .await
+            .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
+            .context("wgpu: map_async failed")?;
+
+        let mapped = slice.get_mapped_range();
+        let mut out = Vec::with_capacity((unpadded_bytes_per_row * height) as usize);
+        for row in 0..height as usize {
+            let start = row * padded_bytes_per_row as usize;
+            out.extend_from_slice(&mapped[start..start + unpadded_bytes_per_row as usize]);
+        }
+        drop(mapped);
+        staging.unmap();
+        Ok(out)
+    }
+
+    fn exec_packet(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        packet: CmdPacket<'_>,
+        stream: &mut CmdStream<'_>,
+    ) -> Result<()> {
+        match packet.header.opcode {
+            D3D11Opcode::CreateBuffer => self.exec_create_buffer(packet.payload),
+            D3D11Opcode::UpdateBuffer => self.exec_update_buffer(packet.payload),
+            D3D11Opcode::CreateTexture2D => self.exec_create_texture2d(packet.payload),
+            D3D11Opcode::UpdateTexture2D => self.exec_update_texture2d(packet.payload),
+            D3D11Opcode::CreateTextureView => self.exec_create_texture_view(packet.payload),
+            D3D11Opcode::CreateSampler => self.exec_create_sampler(packet.payload),
+            D3D11Opcode::CreateShaderModuleWgsl => {
+                self.exec_create_shader_module_wgsl(packet.payload)
+            }
+            D3D11Opcode::CreateRenderPipeline => self.exec_create_render_pipeline(packet.payload),
+            D3D11Opcode::CreateComputePipeline => self.exec_create_compute_pipeline(packet.payload),
+            D3D11Opcode::SetPipeline => state_set_pipeline(&mut self.state, packet.payload),
+            D3D11Opcode::SetVertexBuffer => {
+                state_set_vertex_buffer(&mut self.state, packet.payload)
+            }
+            D3D11Opcode::SetIndexBuffer => state_set_index_buffer(&mut self.state, packet.payload),
+            D3D11Opcode::SetBindBuffer => state_set_bind_buffer(&mut self.state, packet.payload),
+            D3D11Opcode::SetBindSampler => state_set_bind_sampler(&mut self.state, packet.payload),
+            D3D11Opcode::SetBindTextureView => {
+                state_set_bind_texture_view(&mut self.state, packet.payload)
+            }
+            D3D11Opcode::BeginRenderPass => self.exec_render_pass(encoder, packet.payload, stream),
+            D3D11Opcode::EndRenderPass => bail!("unexpected EndRenderPass outside render pass"),
+            D3D11Opcode::BeginComputePass => self.exec_compute_pass(encoder, stream),
+            D3D11Opcode::EndComputePass => bail!("unexpected EndComputePass outside compute pass"),
+            D3D11Opcode::Draw | D3D11Opcode::DrawIndexed => {
+                bail!("draw commands must be inside BeginRenderPass/EndRenderPass")
+            }
+            D3D11Opcode::Dispatch => {
+                bail!("dispatch must be inside BeginComputePass/EndComputePass")
+            }
+            D3D11Opcode::CopyBufferToBuffer => {
+                self.exec_copy_buffer_to_buffer(encoder, packet.payload)
+            }
+        }
+    }
+
+    fn take_bytes(payload: &[u32], fixed_words: usize) -> Result<&[u8]> {
+        if payload.len() < fixed_words + 1 {
+            bail!(
+                "expected at least {} words for fixed payload + byte len",
+                fixed_words
+            );
+        }
+        let byte_len = payload[fixed_words] as usize;
+        let bytes_start = fixed_words + 1;
+        let bytes_words = (byte_len + 3) / 4;
+        if payload.len() < bytes_start + bytes_words {
+            bail!(
+                "truncated byte payload: need {} words, have {}",
+                bytes_words,
+                payload.len() - bytes_start
+            );
+        }
+        let byte_words = &payload[bytes_start..bytes_start + bytes_words];
+        let bytes_ptr = byte_words.as_ptr() as *const u8;
+        // Safety: `u32` slice is properly aligned and we only read within it.
+        let bytes = unsafe { std::slice::from_raw_parts(bytes_ptr, bytes_words * 4) };
+        Ok(&bytes[..byte_len])
+    }
+
+    fn exec_create_buffer(&mut self, payload: &[u32]) -> Result<()> {
+        if payload.len() != 4 {
+            bail!(
+                "CreateBuffer payload words expected 4, got {}",
+                payload.len()
+            );
+        }
+        let id = payload[0];
+        let size = (payload[1] as u64) | ((payload[2] as u64) << 32);
+        let usage = BufferUsage::from_bits_truncate(payload[3]);
+
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d11 buffer"),
+            size,
+            usage: map_buffer_usage(usage),
+            mapped_at_creation: false,
+        });
+        self.resources
+            .buffers
+            .insert(id, BufferResource { buffer, size });
+        Ok(())
+    }
+
+    fn exec_update_buffer(&mut self, payload: &[u32]) -> Result<()> {
+        if payload.len() < 4 {
+            bail!("UpdateBuffer payload too small");
+        }
+        let id = payload[0];
+        let offset = (payload[1] as u64) | ((payload[2] as u64) << 32);
+        let bytes = Self::take_bytes(payload, 3)?;
+        let buffer = self
+            .resources
+            .buffers
+            .get(&id)
+            .ok_or_else(|| anyhow!("unknown buffer {id}"))?;
+        self.queue.write_buffer(&buffer.buffer, offset, bytes);
+        Ok(())
+    }
+
+    fn exec_create_texture2d(&mut self, payload: &[u32]) -> Result<()> {
+        if payload.len() != 7 {
+            bail!(
+                "CreateTexture2D payload words expected 7, got {}",
+                payload.len()
+            );
+        }
+        let id = payload[0];
+        let width = payload[1];
+        let height = payload[2];
+        let array_layers = payload[3];
+        let mip_level_count = payload[4];
+        let format = DxgiFormat::from_word(payload[5]);
+        let usage = TextureUsage::from_bits_truncate(payload[6]);
+
+        let format = map_texture_format(format)?;
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("aero-d3d11 texture2d"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: array_layers,
+            },
+            mip_level_count,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: map_texture_usage(usage),
+            view_formats: &[],
+        });
+
+        self.resources.textures.insert(
+            id,
+            TextureResource {
+                texture,
+                desc: Texture2dDesc {
+                    width,
+                    height,
+                    array_layers,
+                    mip_level_count,
+                    format,
+                },
+            },
+        );
+        Ok(())
+    }
+
+    fn exec_update_texture2d(&mut self, payload: &[u32]) -> Result<()> {
+        if payload.len() < 7 {
+            bail!("UpdateTexture2D payload too small");
+        }
+        let texture_id = payload[0];
+        let mip_level = payload[1];
+        let array_layer = payload[2];
+        let width = payload[3];
+        let height = payload[4];
+        let bytes_per_row = payload[5];
+        let bytes = Self::take_bytes(payload, 6)?;
+
+        let texture = self
+            .resources
+            .textures
+            .get(&texture_id)
+            .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?;
+
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &texture.texture,
+                mip_level,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: array_layer,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytes,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        Ok(())
+    }
+
+    fn exec_create_texture_view(&mut self, payload: &[u32]) -> Result<()> {
+        if payload.len() != 6 {
+            bail!(
+                "CreateTextureView payload words expected 6, got {}",
+                payload.len()
+            );
+        }
+        let view_id = payload[0];
+        let texture_id = payload[1];
+        let base_mip_level = payload[2];
+        let mip_level_count = payload[3];
+        let base_array_layer = payload[4];
+        let array_layer_count = payload[5];
+
+        let texture = self
+            .resources
+            .textures
+            .get(&texture_id)
+            .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?;
+
+        let view = texture.texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("aero-d3d11 texture view"),
+            format: None,
+            dimension: Some(if texture.desc.array_layers > 1 {
+                wgpu::TextureViewDimension::D2Array
+            } else {
+                wgpu::TextureViewDimension::D2
+            }),
+            aspect: wgpu::TextureAspect::All,
+            base_mip_level,
+            mip_level_count: Some(mip_level_count),
+            base_array_layer,
+            array_layer_count: Some(array_layer_count),
+        });
+        self.resources
+            .texture_views
+            .insert(view_id, TextureViewResource { view });
+        Ok(())
+    }
+
+    fn exec_create_sampler(&mut self, payload: &[u32]) -> Result<()> {
+        if payload.len() != 2 {
+            bail!(
+                "CreateSampler payload words expected 2, got {}",
+                payload.len()
+            );
+        }
+        let sampler_id = payload[0];
+        let filter_mode = payload[1];
+
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("aero-d3d11 sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: if filter_mode == 0 {
+                wgpu::FilterMode::Nearest
+            } else {
+                wgpu::FilterMode::Linear
+            },
+            min_filter: if filter_mode == 0 {
+                wgpu::FilterMode::Nearest
+            } else {
+                wgpu::FilterMode::Linear
+            },
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        self.resources
+            .samplers
+            .insert(sampler_id, SamplerResource { sampler });
+        Ok(())
+    }
+
+    fn exec_create_shader_module_wgsl(&mut self, payload: &[u32]) -> Result<()> {
+        if payload.len() < 2 {
+            bail!("CreateShaderModuleWgsl payload too small");
+        }
+        let shader_id = payload[0];
+        let bytes = Self::take_bytes(payload, 1)?;
+        let wgsl = std::str::from_utf8(bytes).context("shader WGSL not valid UTF-8")?;
+        let module = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("aero-d3d11 shader module"),
+                source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+            });
+        self.resources
+            .shaders
+            .insert(shader_id, ShaderModuleResource { module });
+        Ok(())
+    }
+
+    fn exec_create_render_pipeline(&mut self, payload: &[u32]) -> Result<()> {
+        let mut cursor = 0usize;
+        let take = |payload: &[u32], cursor: &mut usize| -> Result<u32> {
+            if *cursor >= payload.len() {
+                bail!("unexpected end of payload while decoding render pipeline");
+            }
+            let v = payload[*cursor];
+            *cursor += 1;
+            Ok(v)
+        };
+
+        let pipeline_id = take(payload, &mut cursor)?;
+        let vs_shader = take(payload, &mut cursor)?;
+        let fs_shader = take(payload, &mut cursor)?;
+        let color_format = DxgiFormat::from_word(take(payload, &mut cursor)?);
+        let depth_format = DxgiFormat::from_word(take(payload, &mut cursor)?);
+        let topology = take(payload, &mut cursor)?;
+
+        let vs = self
+            .resources
+            .shaders
+            .get(&vs_shader)
+            .ok_or_else(|| anyhow!("unknown shader module {vs_shader}"))?;
+        let fs = self
+            .resources
+            .shaders
+            .get(&fs_shader)
+            .ok_or_else(|| anyhow!("unknown shader module {fs_shader}"))?;
+
+        let color_format = map_texture_format(color_format)?;
+        let depth_stencil = if depth_format == DxgiFormat::Unknown {
+            None
+        } else {
+            Some(wgpu::DepthStencilState {
+                format: map_texture_format(depth_format)?,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: Default::default(),
+                bias: Default::default(),
+            })
+        };
+
+        let topology = match topology {
+            x if x == PrimitiveTopology::TriangleList as u32 => {
+                wgpu::PrimitiveTopology::TriangleList
+            }
+            x if x == PrimitiveTopology::TriangleStrip as u32 => {
+                wgpu::PrimitiveTopology::TriangleStrip
+            }
+            x if x == PrimitiveTopology::LineList as u32 => wgpu::PrimitiveTopology::LineList,
+            x if x == PrimitiveTopology::LineStrip as u32 => wgpu::PrimitiveTopology::LineStrip,
+            x if x == PrimitiveTopology::PointList as u32 => wgpu::PrimitiveTopology::PointList,
+            _ => bail!("unknown primitive topology {topology}"),
+        };
+
+        struct ParsedVertexBuffer {
+            array_stride: u64,
+            step_mode: wgpu::VertexStepMode,
+            attrs: Box<[wgpu::VertexAttribute]>,
+        }
+
+        let vb_count = take(payload, &mut cursor)? as usize;
+        let mut parsed_vbs: Vec<ParsedVertexBuffer> = Vec::with_capacity(vb_count);
+        for _ in 0..vb_count {
+            let array_stride = take(payload, &mut cursor)?;
+            let step_mode = take(payload, &mut cursor)?;
+            let attr_count = take(payload, &mut cursor)? as usize;
+            let mut attrs: Vec<wgpu::VertexAttribute> = Vec::with_capacity(attr_count);
+            for _ in 0..attr_count {
+                let shader_location = take(payload, &mut cursor)?;
+                let offset = take(payload, &mut cursor)?;
+                let format = take(payload, &mut cursor)?;
+                attrs.push(wgpu::VertexAttribute {
+                    shader_location,
+                    offset: offset as u64,
+                    format: map_vertex_format(format)?,
+                });
+            }
+            parsed_vbs.push(ParsedVertexBuffer {
+                array_stride: array_stride as u64,
+                step_mode: if step_mode == VertexStepMode::Vertex as u32 {
+                    wgpu::VertexStepMode::Vertex
+                } else {
+                    wgpu::VertexStepMode::Instance
+                },
+                attrs: attrs.into_boxed_slice(),
+            });
+        }
+
+        let vertex_buffers: Vec<wgpu::VertexBufferLayout<'_>> = parsed_vbs
+            .iter()
+            .map(|vb| wgpu::VertexBufferLayout {
+                array_stride: vb.array_stride,
+                step_mode: vb.step_mode,
+                attributes: &vb.attrs,
+            })
+            .collect();
+
+        let binding_count = take(payload, &mut cursor)? as usize;
+        let bindings = self.decode_binding_defs(payload, &mut cursor, binding_count)?;
+        let bind_group_layout =
+            self.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("aero-d3d11 bind group layout"),
+                    entries: &bindings
+                        .iter()
+                        .map(binding_def_to_layout_entry)
+                        .collect::<Vec<_>>(),
+                });
+
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("aero-d3d11 pipeline layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let pipeline = self
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("aero-d3d11 render pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &vs.module,
+                    entry_point: "vs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &vertex_buffers,
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &fs.module,
+                    entry_point: "fs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: color_format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+            });
+
+        self.resources.render_pipelines.insert(
+            pipeline_id,
+            RenderPipelineResource {
+                pipeline,
+                bind_group_layout,
+                bindings,
+            },
+        );
+        Ok(())
+    }
+
+    fn exec_create_compute_pipeline(&mut self, payload: &[u32]) -> Result<()> {
+        let mut cursor = 0usize;
+        let take = |payload: &[u32], cursor: &mut usize| -> Result<u32> {
+            if *cursor >= payload.len() {
+                bail!("unexpected end of payload while decoding compute pipeline");
+            }
+            let v = payload[*cursor];
+            *cursor += 1;
+            Ok(v)
+        };
+
+        let pipeline_id = take(payload, &mut cursor)?;
+        let cs_shader = take(payload, &mut cursor)?;
+        let cs = self
+            .resources
+            .shaders
+            .get(&cs_shader)
+            .ok_or_else(|| anyhow!("unknown shader module {cs_shader}"))?;
+
+        let binding_count = take(payload, &mut cursor)? as usize;
+        let bindings = self.decode_binding_defs(payload, &mut cursor, binding_count)?;
+        let bind_group_layout =
+            self.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("aero-d3d11 compute bind group layout"),
+                    entries: &bindings
+                        .iter()
+                        .map(binding_def_to_layout_entry)
+                        .collect::<Vec<_>>(),
+                });
+
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("aero-d3d11 compute pipeline layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("aero-d3d11 compute pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &cs.module,
+                entry_point: "cs_main",
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            });
+
+        self.resources.compute_pipelines.insert(
+            pipeline_id,
+            ComputePipelineResource {
+                pipeline,
+                bind_group_layout,
+                bindings,
+            },
+        );
+        Ok(())
+    }
+
+    fn decode_binding_defs(
+        &self,
+        payload: &[u32],
+        cursor: &mut usize,
+        binding_count: usize,
+    ) -> Result<Vec<BindingDef>> {
+        let mut bindings = Vec::with_capacity(binding_count);
+        for _ in 0..binding_count {
+            if *cursor + 4 > payload.len() {
+                bail!("unexpected end of payload while decoding binding defs");
+            }
+            let binding = payload[*cursor];
+            let ty = payload[*cursor + 1];
+            let visibility_bits = payload[*cursor + 2];
+            let storage_tex_format = DxgiFormat::from_word(payload[*cursor + 3]);
+            *cursor += 4;
+
+            let visibility =
+                map_shader_stages(ShaderStageFlags::from_bits_truncate(visibility_bits))?;
+            let kind = match ty {
+                x if x == BindingType::UniformBuffer as u32 => BindingKind::UniformBuffer,
+                x if x == BindingType::StorageBufferReadOnly as u32 => {
+                    BindingKind::StorageBuffer { read_only: true }
+                }
+                x if x == BindingType::StorageBufferReadWrite as u32 => {
+                    BindingKind::StorageBuffer { read_only: false }
+                }
+                x if x == BindingType::Sampler as u32 => BindingKind::Sampler,
+                x if x == BindingType::Texture2D as u32 => BindingKind::Texture2D,
+                x if x == BindingType::StorageTexture2DWriteOnly as u32 => {
+                    BindingKind::StorageTexture2DWriteOnly {
+                        format: map_texture_format(storage_tex_format)?,
+                    }
+                }
+                _ => bail!("unknown binding type {ty}"),
+            };
+            bindings.push(BindingDef {
+                binding,
+                visibility,
+                kind,
+            });
+        }
+        Ok(bindings)
+    }
+
+    fn exec_copy_buffer_to_buffer(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        payload: &[u32],
+    ) -> Result<()> {
+        if payload.len() != 8 {
+            bail!(
+                "CopyBufferToBuffer payload words expected 8, got {}",
+                payload.len()
+            );
+        }
+        let src = payload[0];
+        let src_offset = (payload[1] as u64) | ((payload[2] as u64) << 32);
+        let dst = payload[3];
+        let dst_offset = (payload[4] as u64) | ((payload[5] as u64) << 32);
+        let size = (payload[6] as u64) | ((payload[7] as u64) << 32);
+
+        let src_buf = self
+            .resources
+            .buffers
+            .get(&src)
+            .ok_or_else(|| anyhow!("unknown buffer {src}"))?;
+        let dst_buf = self
+            .resources
+            .buffers
+            .get(&dst)
+            .ok_or_else(|| anyhow!("unknown buffer {dst}"))?;
+
+        encoder.copy_buffer_to_buffer(
+            &src_buf.buffer,
+            src_offset,
+            &dst_buf.buffer,
+            dst_offset,
+            size,
+        );
+        Ok(())
+    }
+
+    fn exec_render_pass(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        payload: &[u32],
+        stream: &mut CmdStream<'_>,
+    ) -> Result<()> {
+        if payload.len() != 8 {
+            bail!(
+                "BeginRenderPass payload words expected 8, got {}",
+                payload.len()
+            );
+        }
+
+        let (device, resources, state) = (&self.device, &self.resources, &mut self.state);
+
+        let color_view_id = payload[0];
+        let clear_color = wgpu::Color {
+            r: f32::from_bits(payload[1]) as f64,
+            g: f32::from_bits(payload[2]) as f64,
+            b: f32::from_bits(payload[3]) as f64,
+            a: f32::from_bits(payload[4]) as f64,
+        };
+        let depth_view_id = payload[5];
+        let clear_depth = f32::from_bits(payload[6]);
+        let clear_stencil = payload[7];
+
+        let color_view = &resources
+            .texture_views
+            .get(&color_view_id)
+            .ok_or_else(|| anyhow!("unknown texture view {color_view_id}"))?
+            .view;
+
+        let depth_stencil_attachment = if depth_view_id == 0 {
+            None
+        } else {
+            let depth_view = &resources
+                .texture_views
+                .get(&depth_view_id)
+                .ok_or_else(|| anyhow!("unknown depth texture view {depth_view_id}"))?
+                .view;
+            Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(clear_depth),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(clear_stencil),
+                    store: wgpu::StoreOp::Store,
+                }),
+            })
+        };
+
+        // NOTE: `wgpu::RenderPass::set_bind_group` requires the bind group reference to live for
+        // the entire pass lifetime. To keep the executor simple, we currently build the bind group
+        // once (right before the first draw) and then disallow further binding changes until
+        // `EndRenderPass`.
+        let bind_group: wgpu::BindGroup;
+
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("aero-d3d11 render pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: color_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(clear_color),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        enum FirstDraw {
+            Draw {
+                vertex_count: u32,
+                instance_count: u32,
+                first_vertex: u32,
+                first_instance: u32,
+            },
+            DrawIndexed {
+                index_count: u32,
+                instance_count: u32,
+                first_index: u32,
+                base_vertex: i32,
+                first_instance: u32,
+            },
+        }
+
+        let first_draw = loop {
+            let packet = stream
+                .next()
+                .ok_or_else(|| anyhow!("unexpected end of command stream inside render pass"))?
+                .map_err(|e| anyhow!("{e}"))?;
+
+            match packet.header.opcode {
+                D3D11Opcode::EndRenderPass => return Ok(()),
+                D3D11Opcode::SetPipeline => {
+                    state_set_pipeline(state, packet.payload)?;
+                    let Some(PipelineBinding::Render(pipeline_id)) = state.current_pipeline else {
+                        bail!("SetPipeline inside render pass did not select a render pipeline");
+                    };
+                    let pipeline = resources
+                        .render_pipelines
+                        .get(&pipeline_id)
+                        .ok_or_else(|| anyhow!("unknown render pipeline {pipeline_id}"))?;
+                    render_pass.set_pipeline(&pipeline.pipeline);
+                }
+                D3D11Opcode::SetVertexBuffer => state_set_vertex_buffer(state, packet.payload)?,
+                D3D11Opcode::SetIndexBuffer => state_set_index_buffer(state, packet.payload)?,
+                D3D11Opcode::SetBindBuffer => state_set_bind_buffer(state, packet.payload)?,
+                D3D11Opcode::SetBindSampler => state_set_bind_sampler(state, packet.payload)?,
+                D3D11Opcode::SetBindTextureView => {
+                    state_set_bind_texture_view(state, packet.payload)?
+                }
+                D3D11Opcode::Draw => {
+                    if packet.payload.len() != 4 {
+                        bail!(
+                            "Draw payload words expected 4, got {}",
+                            packet.payload.len()
+                        );
+                    }
+                    break FirstDraw::Draw {
+                        vertex_count: packet.payload[0],
+                        instance_count: packet.payload[1],
+                        first_vertex: packet.payload[2],
+                        first_instance: packet.payload[3],
+                    };
+                }
+                D3D11Opcode::DrawIndexed => {
+                    if packet.payload.len() != 5 {
+                        bail!(
+                            "DrawIndexed payload words expected 5, got {}",
+                            packet.payload.len()
+                        );
+                    }
+                    break FirstDraw::DrawIndexed {
+                        index_count: packet.payload[0],
+                        instance_count: packet.payload[1],
+                        first_index: packet.payload[2],
+                        base_vertex: packet.payload[3] as i32,
+                        first_instance: packet.payload[4],
+                    };
+                }
+                _ => bail!(
+                    "opcode {:?} not allowed inside render pass",
+                    packet.header.opcode
+                ),
+            }
+        };
+
+        let Some(PipelineBinding::Render(pipeline_id)) = state.current_pipeline else {
+            bail!("render pass draw without a bound render pipeline");
+        };
+        let pipeline = resources
+            .render_pipelines
+            .get(&pipeline_id)
+            .ok_or_else(|| anyhow!("unknown render pipeline {pipeline_id}"))?;
+        bind_group = build_bind_group(
+            device,
+            resources,
+            state,
+            &pipeline.bind_group_layout,
+            &pipeline.bindings,
+        )?;
+
+        match first_draw {
+            FirstDraw::Draw {
+                vertex_count,
+                instance_count,
+                first_vertex,
+                first_instance,
+            } => {
+                set_vertex_buffers(&mut render_pass, resources, state)?;
+                render_pass.set_bind_group(0, &bind_group, &[]);
+                render_pass.draw(
+                    first_vertex..first_vertex + vertex_count,
+                    first_instance..first_instance + instance_count,
+                );
+            }
+            FirstDraw::DrawIndexed {
+                index_count,
+                instance_count,
+                first_index,
+                base_vertex,
+                first_instance,
+            } => {
+                set_vertex_buffers(&mut render_pass, resources, state)?;
+                let Some(index) = state.index_buffer else {
+                    bail!("DrawIndexed without an index buffer bound");
+                };
+                let index_buf = resources
+                    .buffers
+                    .get(&index.buffer)
+                    .ok_or_else(|| anyhow!("unknown index buffer {}", index.buffer))?;
+                render_pass.set_index_buffer(index_buf.buffer.slice(index.offset..), index.format);
+                render_pass.set_bind_group(0, &bind_group, &[]);
+                render_pass.draw_indexed(
+                    first_index..first_index + index_count,
+                    base_vertex,
+                    first_instance..first_instance + instance_count,
+                );
+            }
+        }
+
+        loop {
+            let packet = stream
+                .next()
+                .ok_or_else(|| anyhow!("unexpected end of command stream inside render pass"))?
+                .map_err(|e| anyhow!("{e}"))?;
+
+            match packet.header.opcode {
+                D3D11Opcode::EndRenderPass => break,
+                D3D11Opcode::SetVertexBuffer => state_set_vertex_buffer(state, packet.payload)?,
+                D3D11Opcode::SetIndexBuffer => state_set_index_buffer(state, packet.payload)?,
+                D3D11Opcode::Draw => {
+                    if packet.payload.len() != 4 {
+                        bail!(
+                            "Draw payload words expected 4, got {}",
+                            packet.payload.len()
+                        );
+                    }
+                    set_vertex_buffers(&mut render_pass, resources, state)?;
+                    render_pass.set_bind_group(0, &bind_group, &[]);
+                    render_pass.draw(
+                        packet.payload[2]..packet.payload[2] + packet.payload[0],
+                        packet.payload[3]..packet.payload[3] + packet.payload[1],
+                    );
+                }
+                D3D11Opcode::DrawIndexed => {
+                    if packet.payload.len() != 5 {
+                        bail!(
+                            "DrawIndexed payload words expected 5, got {}",
+                            packet.payload.len()
+                        );
+                    }
+                    set_vertex_buffers(&mut render_pass, resources, state)?;
+                    let Some(index) = state.index_buffer else {
+                        bail!("DrawIndexed without an index buffer bound");
+                    };
+                    let index_buf = resources
+                        .buffers
+                        .get(&index.buffer)
+                        .ok_or_else(|| anyhow!("unknown index buffer {}", index.buffer))?;
+                    render_pass
+                        .set_index_buffer(index_buf.buffer.slice(index.offset..), index.format);
+                    render_pass.set_bind_group(0, &bind_group, &[]);
+                    render_pass.draw_indexed(
+                        packet.payload[2]..packet.payload[2] + packet.payload[0],
+                        packet.payload[3] as i32,
+                        packet.payload[4]..packet.payload[4] + packet.payload[1],
+                    );
+                }
+                D3D11Opcode::SetPipeline
+                | D3D11Opcode::SetBindBuffer
+                | D3D11Opcode::SetBindSampler
+                | D3D11Opcode::SetBindTextureView => {
+                    bail!(
+                        "{:?} after the first draw is not supported yet; end the render pass first",
+                        packet.header.opcode
+                    );
+                }
+                _ => bail!(
+                    "opcode {:?} not allowed inside render pass",
+                    packet.header.opcode
+                ),
+            }
+        }
+
+        Ok(())
+    }
+
+    fn exec_compute_pass(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        stream: &mut CmdStream<'_>,
+    ) -> Result<()> {
+        let (device, resources, state) = (&self.device, &self.resources, &mut self.state);
+
+        // Same lifetime constraints as `exec_render_pass` (see note above): build the bind group
+        // exactly once right before the first dispatch.
+        let bind_group: wgpu::BindGroup;
+
+        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("aero-d3d11 compute pass"),
+            timestamp_writes: None,
+        });
+
+        let first_dispatch = loop {
+            let packet = stream
+                .next()
+                .ok_or_else(|| anyhow!("unexpected end of command stream inside compute pass"))?
+                .map_err(|e| anyhow!("{e}"))?;
+
+            match packet.header.opcode {
+                D3D11Opcode::EndComputePass => return Ok(()),
+                D3D11Opcode::SetPipeline => {
+                    state_set_pipeline(state, packet.payload)?;
+                    let Some(PipelineBinding::Compute(pipeline_id)) = state.current_pipeline else {
+                        bail!("SetPipeline inside compute pass did not select a compute pipeline");
+                    };
+                    let pipeline = resources
+                        .compute_pipelines
+                        .get(&pipeline_id)
+                        .ok_or_else(|| anyhow!("unknown compute pipeline {pipeline_id}"))?;
+                    compute_pass.set_pipeline(&pipeline.pipeline);
+                }
+                D3D11Opcode::SetBindBuffer => state_set_bind_buffer(state, packet.payload)?,
+                D3D11Opcode::SetBindSampler => state_set_bind_sampler(state, packet.payload)?,
+                D3D11Opcode::SetBindTextureView => {
+                    state_set_bind_texture_view(state, packet.payload)?
+                }
+                D3D11Opcode::Dispatch => {
+                    if packet.payload.len() != 3 {
+                        bail!(
+                            "Dispatch payload words expected 3, got {}",
+                            packet.payload.len()
+                        );
+                    }
+                    break (packet.payload[0], packet.payload[1], packet.payload[2]);
+                }
+                _ => bail!(
+                    "opcode {:?} not allowed inside compute pass",
+                    packet.header.opcode
+                ),
+            }
+        };
+
+        let Some(PipelineBinding::Compute(pipeline_id)) = state.current_pipeline else {
+            bail!("compute pass dispatch without a bound compute pipeline");
+        };
+        let pipeline = resources
+            .compute_pipelines
+            .get(&pipeline_id)
+            .ok_or_else(|| anyhow!("unknown compute pipeline {pipeline_id}"))?;
+        bind_group = build_bind_group(
+            device,
+            resources,
+            state,
+            &pipeline.bind_group_layout,
+            &pipeline.bindings,
+        )?;
+
+        compute_pass.set_bind_group(0, &bind_group, &[]);
+        compute_pass.dispatch_workgroups(first_dispatch.0, first_dispatch.1, first_dispatch.2);
+
+        loop {
+            let packet = stream
+                .next()
+                .ok_or_else(|| anyhow!("unexpected end of command stream inside compute pass"))?
+                .map_err(|e| anyhow!("{e}"))?;
+
+            match packet.header.opcode {
+                D3D11Opcode::EndComputePass => break,
+                D3D11Opcode::Dispatch => {
+                    if packet.payload.len() != 3 {
+                        bail!(
+                            "Dispatch payload words expected 3, got {}",
+                            packet.payload.len()
+                        );
+                    }
+                    compute_pass.set_bind_group(0, &bind_group, &[]);
+                    compute_pass.dispatch_workgroups(
+                        packet.payload[0],
+                        packet.payload[1],
+                        packet.payload[2],
+                    );
+                }
+                D3D11Opcode::SetPipeline
+                | D3D11Opcode::SetBindBuffer
+                | D3D11Opcode::SetBindSampler
+                | D3D11Opcode::SetBindTextureView => {
+                    bail!(
+                        "{:?} after the first dispatch is not supported yet; end the compute pass first",
+                        packet.header.opcode
+                    );
+                }
+                _ => bail!(
+                    "opcode {:?} not allowed inside compute pass",
+                    packet.header.opcode
+                ),
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn state_set_pipeline(state: &mut D3D11State, payload: &[u32]) -> Result<()> {
+    if payload.len() != 2 {
+        bail!(
+            "SetPipeline payload words expected 2, got {}",
+            payload.len()
+        );
+    }
+    let kind = payload[0];
+    let pipeline_id = payload[1];
+    state.current_pipeline = Some(match kind {
+        x if x == PipelineKind::Render as u32 => PipelineBinding::Render(pipeline_id),
+        x if x == PipelineKind::Compute as u32 => PipelineBinding::Compute(pipeline_id),
+        _ => bail!("unknown pipeline kind {kind}"),
+    });
+    Ok(())
+}
+
+fn state_set_vertex_buffer(state: &mut D3D11State, payload: &[u32]) -> Result<()> {
+    if payload.len() != 4 {
+        bail!(
+            "SetVertexBuffer payload words expected 4, got {}",
+            payload.len()
+        );
+    }
+    let slot = payload[0] as usize;
+    let buffer_id = payload[1];
+    let offset = (payload[2] as u64) | ((payload[3] as u64) << 32);
+    if slot >= state.vertex_buffers.len() {
+        bail!("vertex buffer slot {slot} out of range");
+    }
+    state.vertex_buffers[slot] = Some(BoundVertexBuffer {
+        buffer: buffer_id,
+        offset,
+    });
+    Ok(())
+}
+
+fn state_set_index_buffer(state: &mut D3D11State, payload: &[u32]) -> Result<()> {
+    if payload.len() != 4 {
+        bail!(
+            "SetIndexBuffer payload words expected 4, got {}",
+            payload.len()
+        );
+    }
+    let buffer_id = payload[0];
+    let format = payload[1];
+    let offset = (payload[2] as u64) | ((payload[3] as u64) << 32);
+    let format = match format {
+        x if x == IndexFormat::Uint16 as u32 => wgpu::IndexFormat::Uint16,
+        x if x == IndexFormat::Uint32 as u32 => wgpu::IndexFormat::Uint32,
+        _ => bail!("unknown index format {format}"),
+    };
+    state.index_buffer = Some(BoundIndexBuffer {
+        buffer: buffer_id,
+        format,
+        offset,
+    });
+    Ok(())
+}
+
+fn state_set_bind_buffer(state: &mut D3D11State, payload: &[u32]) -> Result<()> {
+    if payload.len() != 6 {
+        bail!(
+            "SetBindBuffer payload words expected 6, got {}",
+            payload.len()
+        );
+    }
+    let binding = payload[0];
+    let buffer_id = payload[1];
+    let offset = (payload[2] as u64) | ((payload[3] as u64) << 32);
+    let size = (payload[4] as u64) | ((payload[5] as u64) << 32);
+    state.bindings.insert(
+        binding,
+        BoundResource::Buffer {
+            buffer: buffer_id,
+            offset,
+            size: if size == 0 { None } else { Some(size) },
+        },
+    );
+    Ok(())
+}
+
+fn state_set_bind_sampler(state: &mut D3D11State, payload: &[u32]) -> Result<()> {
+    if payload.len() != 2 {
+        bail!(
+            "SetBindSampler payload words expected 2, got {}",
+            payload.len()
+        );
+    }
+    let binding = payload[0];
+    let sampler_id = payload[1];
+    state.bindings.insert(
+        binding,
+        BoundResource::Sampler {
+            sampler: sampler_id,
+        },
+    );
+    Ok(())
+}
+
+fn state_set_bind_texture_view(state: &mut D3D11State, payload: &[u32]) -> Result<()> {
+    if payload.len() != 2 {
+        bail!(
+            "SetBindTextureView payload words expected 2, got {}",
+            payload.len()
+        );
+    }
+    let binding = payload[0];
+    let view_id = payload[1];
+    state
+        .bindings
+        .insert(binding, BoundResource::TextureView { view: view_id });
+    Ok(())
+}
+
+fn build_bind_group(
+    device: &wgpu::Device,
+    resources: &D3D11Resources,
+    state: &D3D11State,
+    layout: &wgpu::BindGroupLayout,
+    bindings: &[BindingDef],
+) -> Result<wgpu::BindGroup> {
+    let mut entries: Vec<wgpu::BindGroupEntry<'_>> = Vec::with_capacity(bindings.len());
+    for def in bindings {
+        let bound = state
+            .bindings
+            .get(&def.binding)
+            .ok_or_else(|| anyhow!("binding {} is not set", def.binding))?;
+
+        match (&def.kind, bound) {
+            (
+                BindingKind::UniformBuffer,
+                BoundResource::Buffer {
+                    buffer,
+                    offset,
+                    size,
+                },
+            )
+            | (
+                BindingKind::StorageBuffer { .. },
+                BoundResource::Buffer {
+                    buffer,
+                    offset,
+                    size,
+                },
+            ) => {
+                let buf = resources
+                    .buffers
+                    .get(buffer)
+                    .ok_or_else(|| anyhow!("unknown buffer {buffer}"))?;
+                entries.push(wgpu::BindGroupEntry {
+                    binding: def.binding,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buf.buffer,
+                        offset: *offset,
+                        size: size.and_then(NonZeroU64::new),
+                    }),
+                });
+            }
+            (BindingKind::Sampler, BoundResource::Sampler { sampler }) => {
+                let sampler = resources
+                    .samplers
+                    .get(sampler)
+                    .ok_or_else(|| anyhow!("unknown sampler {sampler}"))?;
+                entries.push(wgpu::BindGroupEntry {
+                    binding: def.binding,
+                    resource: wgpu::BindingResource::Sampler(&sampler.sampler),
+                });
+            }
+            (BindingKind::Texture2D, BoundResource::TextureView { view })
+            | (
+                BindingKind::StorageTexture2DWriteOnly { .. },
+                BoundResource::TextureView { view },
+            ) => {
+                let view = resources
+                    .texture_views
+                    .get(view)
+                    .ok_or_else(|| anyhow!("unknown texture view {view}"))?;
+                entries.push(wgpu::BindGroupEntry {
+                    binding: def.binding,
+                    resource: wgpu::BindingResource::TextureView(&view.view),
+                });
+            }
+            _ => bail!(
+                "binding {} kind mismatch between pipeline ({:?}) and bound resource ({:?})",
+                def.binding,
+                def.kind,
+                bound
+            ),
+        }
+    }
+
+    Ok(device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("aero-d3d11 bind group"),
+        layout,
+        entries: &entries,
+    }))
+}
+
+fn set_vertex_buffers<'a>(
+    pass: &mut wgpu::RenderPass<'a>,
+    resources: &'a D3D11Resources,
+    state: &D3D11State,
+) -> Result<()> {
+    for (slot, vb) in state.vertex_buffers.iter().enumerate() {
+        if let Some(vb) = vb {
+            let buf = resources
+                .buffers
+                .get(&vb.buffer)
+                .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
+            pass.set_vertex_buffer(slot as u32, buf.buffer.slice(vb.offset..));
+        }
+    }
+    Ok(())
+}
+
+fn map_buffer_usage(usage: BufferUsage) -> wgpu::BufferUsages {
+    let mut out = wgpu::BufferUsages::empty();
+    if usage.contains(BufferUsage::MAP_READ) {
+        out |= wgpu::BufferUsages::MAP_READ;
+    }
+    if usage.contains(BufferUsage::MAP_WRITE) {
+        out |= wgpu::BufferUsages::MAP_WRITE;
+    }
+    if usage.contains(BufferUsage::COPY_SRC) {
+        out |= wgpu::BufferUsages::COPY_SRC;
+    }
+    if usage.contains(BufferUsage::COPY_DST) {
+        out |= wgpu::BufferUsages::COPY_DST;
+    }
+    if usage.contains(BufferUsage::INDEX) {
+        out |= wgpu::BufferUsages::INDEX;
+    }
+    if usage.contains(BufferUsage::VERTEX) {
+        out |= wgpu::BufferUsages::VERTEX;
+    }
+    if usage.contains(BufferUsage::UNIFORM) {
+        out |= wgpu::BufferUsages::UNIFORM;
+    }
+    if usage.contains(BufferUsage::STORAGE) {
+        out |= wgpu::BufferUsages::STORAGE;
+    }
+    if usage.contains(BufferUsage::INDIRECT) {
+        out |= wgpu::BufferUsages::INDIRECT;
+    }
+    out
+}
+
+fn map_texture_usage(usage: TextureUsage) -> wgpu::TextureUsages {
+    let mut out = wgpu::TextureUsages::empty();
+    if usage.contains(TextureUsage::COPY_SRC) {
+        out |= wgpu::TextureUsages::COPY_SRC;
+    }
+    if usage.contains(TextureUsage::COPY_DST) {
+        out |= wgpu::TextureUsages::COPY_DST;
+    }
+    if usage.contains(TextureUsage::TEXTURE_BINDING) {
+        out |= wgpu::TextureUsages::TEXTURE_BINDING;
+    }
+    if usage.contains(TextureUsage::STORAGE_BINDING) {
+        out |= wgpu::TextureUsages::STORAGE_BINDING;
+    }
+    if usage.contains(TextureUsage::RENDER_ATTACHMENT) {
+        out |= wgpu::TextureUsages::RENDER_ATTACHMENT;
+    }
+    out
+}
+
+fn map_texture_format(format: DxgiFormat) -> Result<wgpu::TextureFormat> {
+    Ok(match format {
+        DxgiFormat::R8G8B8A8Unorm => wgpu::TextureFormat::Rgba8Unorm,
+        DxgiFormat::R8G8B8A8UnormSrgb => wgpu::TextureFormat::Rgba8UnormSrgb,
+        DxgiFormat::B8G8R8A8Unorm => wgpu::TextureFormat::Bgra8Unorm,
+        DxgiFormat::B8G8R8A8UnormSrgb => wgpu::TextureFormat::Bgra8UnormSrgb,
+        DxgiFormat::R16G16B16A16Float => wgpu::TextureFormat::Rgba16Float,
+        DxgiFormat::R32G32B32A32Float => wgpu::TextureFormat::Rgba32Float,
+        DxgiFormat::R32Float => wgpu::TextureFormat::R32Float,
+        DxgiFormat::D32Float => wgpu::TextureFormat::Depth32Float,
+        DxgiFormat::D24UnormS8Uint => wgpu::TextureFormat::Depth24PlusStencil8,
+        DxgiFormat::Unknown => bail!("DXGI format UNKNOWN is not a valid WebGPU format here"),
+    })
+}
+
+fn map_vertex_format(format: u32) -> Result<wgpu::VertexFormat> {
+    Ok(match format {
+        x if x == VertexFormat::Float32x2 as u32 => wgpu::VertexFormat::Float32x2,
+        x if x == VertexFormat::Float32x3 as u32 => wgpu::VertexFormat::Float32x3,
+        x if x == VertexFormat::Float32x4 as u32 => wgpu::VertexFormat::Float32x4,
+        x if x == VertexFormat::Uint32 as u32 => wgpu::VertexFormat::Uint32,
+        x if x == VertexFormat::Uint32x2 as u32 => wgpu::VertexFormat::Uint32x2,
+        x if x == VertexFormat::Uint32x4 as u32 => wgpu::VertexFormat::Uint32x4,
+        _ => bail!("unknown vertex format {format}"),
+    })
+}
+
+fn map_shader_stages(stages: ShaderStageFlags) -> Result<wgpu::ShaderStages> {
+    let mut out = wgpu::ShaderStages::empty();
+    if stages.contains(ShaderStageFlags::VERTEX) {
+        out |= wgpu::ShaderStages::VERTEX;
+    }
+    if stages.contains(ShaderStageFlags::FRAGMENT) {
+        out |= wgpu::ShaderStages::FRAGMENT;
+    }
+    if stages.contains(ShaderStageFlags::COMPUTE) {
+        out |= wgpu::ShaderStages::COMPUTE;
+    }
+    Ok(out)
+}
+
+fn binding_def_to_layout_entry(def: &BindingDef) -> wgpu::BindGroupLayoutEntry {
+    let ty = match def.kind {
+        BindingKind::UniformBuffer => wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        BindingKind::StorageBuffer { read_only } => wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        BindingKind::Sampler => wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        BindingKind::Texture2D => wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        BindingKind::StorageTexture2DWriteOnly { format } => wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::WriteOnly,
+            format,
+            view_dimension: wgpu::TextureViewDimension::D2,
+        },
+    };
+
+    wgpu::BindGroupLayoutEntry {
+        binding: def.binding,
+        visibility: def.visibility,
+        ty,
+        count: None,
+    }
+}

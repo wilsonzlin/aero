@@ -20,6 +20,7 @@ mod error;
 pub mod cmd;
 pub mod pipeline_cache;
 pub mod pipeline_key;
+pub mod protocol_d3d11;
 pub mod stats;
 
 pub use buffer_arena::BufferArena;

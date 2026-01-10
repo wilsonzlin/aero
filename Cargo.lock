@@ -9,6 +9,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "aero"
+version = "0.1.0"
+dependencies = [
+ "aero-bios",
+ "aero-d3d11",
+ "aero-gpu",
+ "bytemuck",
+ "pollster",
+]
+
+[[package]]
 name = "aero-acpi"
 version = "0.1.0"
 
@@ -28,6 +39,18 @@ name = "aero-cpu"
 version = "0.1.0"
 dependencies = [
  "aero-core",
+]
+
+[[package]]
+name = "aero-d3d11"
+version = "0.1.0"
+dependencies = [
+ "aero-gpu",
+ "anyhow",
+ "bytemuck",
+ "futures-intrusive",
+ "pollster",
+ "wgpu",
 ]
 
 [[package]]
@@ -106,6 +129,7 @@ dependencies = [
 name = "aero-gpu"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.10.0",
  "bytemuck",
  "lru",
  "pollster",
@@ -218,6 +242,10 @@ dependencies = [
  "tokio-util",
  "tower",
 ]
+
+[[package]]
+name = "aero-usb"
+version = "0.1.0"
 
 [[package]]
 name = "aero-virtio"
@@ -1213,6 +1241,17 @@ dependencies = [
  "futures-core",
  "futures-task",
  "futures-util",
+]
+
+[[package]]
+name = "futures-intrusive"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d930c203dd0b6ff06e0201a4a2fe9149b43c684fd4420555b26d21b1a02956f"
+dependencies = [
+ "futures-core",
+ "lock_api",
+ "parking_lot",
 ]
 
 [[package]]

@@ -1,3 +1,8 @@
+[package]
+name = "aero"
+version = "0.1.0"
+edition = "2021"
+
 [workspace]
 resolver = "2"
 members = [
@@ -23,6 +28,7 @@ members = [
     "crates/aero-dxbc",
     "crates/aero-d3d9",
     "crates/aero-debug",
+    "crates/aero-d3d11",
     "crates/devices",
     "crates/emulator",
     "crates/firmware",
@@ -42,3 +48,10 @@ members = [
 ]
 
 exclude = ["fuzz"]
+
+[dev-dependencies]
+aero-bios = { path = "crates/aero-bios" }
+aero-d3d11 = { path = "crates/aero-d3d11" }
+aero-gpu = { path = "crates/aero-gpu" }
+bytemuck = { version = "1.14", features = ["derive"] }
+pollster = "0.3"
