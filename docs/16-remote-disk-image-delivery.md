@@ -11,6 +11,13 @@ Aero supports **streaming 20GB+ disk images** into the browser without downloadi
 
 This document defines the **production contract** for the `remote_url` used by `StreamingDisk` and provides deployment guidance (caching, CORS, security).
 
+## Reference infrastructure in this repo
+
+- Local development (MinIO + optional reverse proxy for edge/CORS emulation):
+  - [`infra/local-object-store/README.md`](../infra/local-object-store/README.md)
+- AWS production reference (S3 + CloudFront tuned for Range + CORS):
+  - [`infra/aws-s3-cloudfront-range/README.md`](../infra/aws-s3-cloudfront-range/README.md)
+
 ---
 
 ## End-to-end architecture

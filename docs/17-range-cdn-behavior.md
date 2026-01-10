@@ -18,6 +18,13 @@ This document turns the “will the CDN do the right thing?” uncertainty into 
 >
 > This repo does not contain AWS credentials or live infrastructure, so CloudFront behavior here is based on published AWS documentation and widely observed headers. Use the checklist below to validate the behavior in *your* distribution and region.
 
+## Reference infrastructure in this repo
+
+- Local development (MinIO + optional reverse proxy for edge/CORS emulation):
+  - [`infra/local-object-store/README.md`](../infra/local-object-store/README.md)
+- AWS production reference (S3 + CloudFront tuned for Range + CORS):
+  - [`infra/aws-s3-cloudfront-range/README.md`](../infra/aws-s3-cloudfront-range/README.md)
+
 ---
 
 ## CloudFront: direct answers
