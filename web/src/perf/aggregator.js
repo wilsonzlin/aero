@@ -33,6 +33,7 @@ export class PerfAggregator {
     this.recordCountsByWorkerKind = new Map();
     this.totalRecordsDrained = 0;
     this.totalFrameSampleRecords = 0;
+    this.totalGraphicsSampleRecords = 0;
 
     // PF-005 (hot path identification): populated by the CPU worker and
     // forwarded to the main thread via postMessage. Exported as a snapshot.
@@ -54,6 +55,9 @@ export class PerfAggregator {
         if (record?.type === PerfRecordType.FrameSample) {
           this.totalFrameSampleRecords++;
           this.#mergeFrameSample(record);
+        } else if (record?.type === PerfRecordType.GraphicsSample) {
+          this.totalGraphicsSampleRecords++;
+          this.#mergeGraphicsSample(record);
         }
       });
     }
@@ -73,6 +77,16 @@ export class PerfAggregator {
         instructions: 0n,
         memoryBytes: 0n,
         drawCalls: 0,
+        renderPasses: 0,
+        pipelineSwitches: 0,
+        bindGroupChanges: 0,
+        uploadBytes: 0n,
+        cpuTranslateUs: 0,
+        cpuEncodeUs: 0,
+        gpuTimeUs: 0,
+        gpuTimeValid: false,
+        gpuTimingSupported: false,
+        gpuTimingEnabled: false,
         ioReadBytes: 0,
         ioWriteBytes: 0,
         hasMainFrameTime: false,
@@ -115,6 +129,34 @@ export class PerfAggregator {
     frame.ioWriteBytes = addU32Saturating(frame.ioWriteBytes, sample.ioWriteBytes);
   }
 
+  #mergeGraphicsSample(sample) {
+    const frameId = sample.frameId >>> 0;
+    const frame = this.#getOrCreateFrame(frameId);
+
+    if (sample.workerKind === 0 /* main */ && sample.tUs !== 0) {
+      frame.tUs = sample.tUs >>> 0;
+    } else if (frame.tUs == null && sample.tUs !== 0) {
+      frame.tUs = sample.tUs >>> 0;
+    }
+
+    frame.renderPasses = addU32Saturating(frame.renderPasses, sample.renderPasses);
+    frame.pipelineSwitches = addU32Saturating(frame.pipelineSwitches, sample.pipelineSwitches);
+    frame.bindGroupChanges = addU32Saturating(frame.bindGroupChanges, sample.bindGroupChanges);
+    frame.cpuTranslateUs = addU32Saturating(frame.cpuTranslateUs, sample.cpuTranslateUs);
+    frame.cpuEncodeUs = addU32Saturating(frame.cpuEncodeUs, sample.cpuEncodeUs);
+
+    const nextUploadBytes = frame.uploadBytes + sample.uploadBytes;
+    frame.uploadBytes = nextUploadBytes > 0xffff_ffff_ffff_ffffn ? 0xffff_ffff_ffff_ffffn : nextUploadBytes;
+
+    frame.gpuTimingSupported = frame.gpuTimingSupported || sample.gpuTimingSupported !== 0;
+    frame.gpuTimingEnabled = frame.gpuTimingEnabled || sample.gpuTimingEnabled !== 0;
+
+    if (sample.gpuTimeValid !== 0) {
+      frame.gpuTimeValid = true;
+      frame.gpuTimeUs = Math.max(frame.gpuTimeUs, sample.gpuTimeUs >>> 0);
+    }
+  }
+
   #evictIfNeeded() {
     while (this.completedFrameIds.length > this.captureSize) {
       const evicted = this.completedFrameIds.shift();
@@ -145,6 +187,16 @@ export class PerfAggregator {
         stdevFrameMs: 0,
         covFrameTime: 0,
         avgMips: 0,
+        drawCallsPerFrame: 0,
+        renderPassesPerFrame: 0,
+        pipelineSwitchesPerFrame: 0,
+        bindGroupChangesPerFrame: 0,
+        gpuUploadBytesPerSec: 0,
+        cpuTranslateMs: 0,
+        cpuEncodeMs: 0,
+        gpuTimeAvgMs: null,
+        gpuTimingSupported: false,
+        gpuTimingEnabled: false,
       };
     }
 
@@ -163,6 +215,39 @@ export class PerfAggregator {
 
     const avgMips = bigintDivToNumberScaled(totalInstructions, totalTimeUs, 1000);
 
+    const drawCallsSum = frames.reduce((acc, f) => acc + (f.drawCalls >>> 0), 0);
+    const renderPassesSum = frames.reduce((acc, f) => acc + (f.renderPasses >>> 0), 0);
+    const pipelineSwitchesSum = frames.reduce((acc, f) => acc + (f.pipelineSwitches >>> 0), 0);
+    const bindGroupChangesSum = frames.reduce((acc, f) => acc + (f.bindGroupChanges >>> 0), 0);
+    const cpuTranslateUsSum = frames.reduce((acc, f) => acc + (f.cpuTranslateUs >>> 0), 0);
+    const cpuEncodeUsSum = frames.reduce((acc, f) => acc + (f.cpuEncodeUs >>> 0), 0);
+    const uploadBytesSum = frames.reduce((acc, f) => acc + (f.uploadBytes ?? 0n), 0n);
+
+    let gpuTimeUsSum = 0;
+    let gpuTimeCount = 0;
+    let gpuTimingSupported = false;
+    let gpuTimingEnabled = false;
+    for (const f of frames) {
+      gpuTimingSupported = gpuTimingSupported || !!f.gpuTimingSupported;
+      gpuTimingEnabled = gpuTimingEnabled || !!f.gpuTimingEnabled;
+      if (f.gpuTimeValid) {
+        gpuTimeUsSum += f.gpuTimeUs >>> 0;
+        gpuTimeCount += 1;
+      }
+    }
+
+    const drawCallsPerFrame = frames.length ? drawCallsSum / frames.length : 0;
+    const renderPassesPerFrame = frames.length ? renderPassesSum / frames.length : 0;
+    const pipelineSwitchesPerFrame = frames.length ? pipelineSwitchesSum / frames.length : 0;
+    const bindGroupChangesPerFrame = frames.length ? bindGroupChangesSum / frames.length : 0;
+    const cpuTranslateMs = frames.length ? cpuTranslateUsSum / 1000 / frames.length : 0;
+    const cpuEncodeMs = frames.length ? cpuEncodeUsSum / 1000 / frames.length : 0;
+
+    const gpuUploadBytesPerSec =
+      totalTimeUs > 0n ? bigintDivToNumberScaled(uploadBytesSum * 1_000_000n, totalTimeUs, 1000) : 0;
+
+    const gpuTimeAvgMs = gpuTimeCount > 0 ? gpuTimeUsSum / 1000 / gpuTimeCount : null;
+
     return {
       windowSize: this.windowSize,
       frames: ft.frames,
@@ -180,6 +265,16 @@ export class PerfAggregator {
       stdevFrameMs: ft.stdevFrameTimeMs,
       covFrameTime: ft.covFrameTime,
       avgMips,
+      drawCallsPerFrame,
+      renderPassesPerFrame,
+      pipelineSwitchesPerFrame,
+      bindGroupChangesPerFrame,
+      gpuUploadBytesPerSec,
+      cpuTranslateMs,
+      cpuEncodeMs,
+      gpuTimeAvgMs,
+      gpuTimingSupported,
+      gpuTimingEnabled,
     };
   }
 
@@ -240,6 +335,7 @@ export class PerfAggregator {
       counts: {
         records_drained_total: this.totalRecordsDrained,
         frame_sample_records_total: this.totalFrameSampleRecords,
+        graphics_sample_records_total: this.totalGraphicsSampleRecords,
         dropped_records_total: droppedTotal,
       },
       capture: {
@@ -253,6 +349,23 @@ export class PerfAggregator {
       },
       hud_window_summary: windowSummary,
       hotspots: this.hotspots,
+      graphics: {
+        rolling: {
+          window_frames: this.windowSize,
+          draw_calls_avg: windowSummary.drawCallsPerFrame,
+          render_passes_avg: windowSummary.renderPassesPerFrame,
+          pipeline_switches_avg: windowSummary.pipelineSwitchesPerFrame,
+          bind_group_changes_avg: windowSummary.bindGroupChangesPerFrame,
+          upload_mib_per_s: windowSummary.gpuUploadBytesPerSec / (1024 * 1024),
+          cpu_translate_ms_avg: windowSummary.cpuTranslateMs,
+          cpu_encode_ms_avg: windowSummary.cpuEncodeMs,
+          gpu_time_ms_avg: windowSummary.gpuTimeAvgMs,
+        },
+        gpu_timing: {
+          supported: windowSummary.gpuTimingSupported,
+          enabled: windowSummary.gpuTimingEnabled,
+        },
+      },
       samples: {
         frame_count: frames.length,
         frames: frames.map((f) => ({
@@ -271,6 +384,20 @@ export class PerfAggregator {
             draw_calls: f.drawCalls,
             io_read_bytes: f.ioReadBytes,
             io_write_bytes: f.ioWriteBytes,
+          },
+          graphics: {
+            draw_calls: f.drawCalls,
+            render_passes: f.renderPasses,
+            pipeline_switches: f.pipelineSwitches,
+            bind_group_changes: f.bindGroupChanges,
+            upload_bytes: f.uploadBytes.toString(),
+            cpu_translate_ms: f.cpuTranslateUs / 1000,
+            cpu_encode_ms: f.cpuEncodeUs / 1000,
+            gpu_time_ms: f.gpuTimeValid ? f.gpuTimeUs / 1000 : null,
+            gpu_timing: {
+              supported: !!f.gpuTimingSupported,
+              enabled: !!f.gpuTimingEnabled,
+            },
           },
         })),
       },

@@ -10,6 +10,10 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EncodeMetrics {
     pub commands_in: usize,
+    pub render_passes: u32,
+    pub draw_calls: u32,
+    pub pipeline_switches: u32,
+    pub bind_group_changes: u32,
     pub encode_time: Duration,
 }
 
@@ -85,6 +89,10 @@ impl<'a, R: ResourceProvider> Encoder<'a, R> {
 
     pub fn encode(&self, cmds: &[GpuCmd]) -> Result<EncodeResult, EncodeError> {
         let start = Instant::now();
+        let mut metrics = EncodeMetrics {
+            commands_in: cmds.len(),
+            ..EncodeMetrics::default()
+        };
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -93,7 +101,7 @@ impl<'a, R: ResourceProvider> Encoder<'a, R> {
         while i < cmds.len() {
             match &cmds[i] {
                 GpuCmd::BeginRenderPass(desc) => {
-                    i = self.encode_render_pass(&mut encoder, desc, cmds, i + 1)?;
+                    i = self.encode_render_pass(&mut encoder, desc, cmds, i + 1, &mut metrics)?;
                 }
                 GpuCmd::EndRenderPass => return Err(EncodeError::UnexpectedEndRenderPass),
                 _ => return Err(EncodeError::UnexpectedCommandOutsideRenderPass),
@@ -101,12 +109,10 @@ impl<'a, R: ResourceProvider> Encoder<'a, R> {
         }
 
         let command_buffer = encoder.finish();
+        metrics.encode_time = start.elapsed();
         Ok(EncodeResult {
             command_buffer,
-            metrics: EncodeMetrics {
-                commands_in: cmds.len(),
-                encode_time: start.elapsed(),
-            },
+            metrics,
         })
     }
 
@@ -116,7 +122,9 @@ impl<'a, R: ResourceProvider> Encoder<'a, R> {
         desc: &RenderPassDesc,
         cmds: &[GpuCmd],
         mut i: usize,
+        metrics: &mut EncodeMetrics,
     ) -> Result<usize, EncodeError> {
+        metrics.render_passes = metrics.render_passes.saturating_add(1);
         let mut color_attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> =
             Vec::with_capacity(desc.color_attachments.len());
         for ca in &desc.color_attachments {
@@ -137,6 +145,9 @@ impl<'a, R: ResourceProvider> Encoder<'a, R> {
             timestamp_writes: None,
         });
 
+        let mut last_pipeline: Option<PipelineId> = None;
+        let mut last_bind_groups: Vec<Option<(BindGroupId, &[u32])>> = Vec::new();
+
         while i < cmds.len() {
             match &cmds[i] {
                 GpuCmd::EndRenderPass => return Ok(i + 1),
@@ -145,6 +156,10 @@ impl<'a, R: ResourceProvider> Encoder<'a, R> {
                         .resources
                         .pipeline(*id)
                         .ok_or(EncodeError::MissingPipeline(*id))?;
+                    if last_pipeline != Some(*id) {
+                        metrics.pipeline_switches = metrics.pipeline_switches.saturating_add(1);
+                        last_pipeline = Some(*id);
+                    }
                     pass.set_pipeline(pipeline);
                 }
                 GpuCmd::SetBindGroup {
@@ -156,6 +171,20 @@ impl<'a, R: ResourceProvider> Encoder<'a, R> {
                         .resources
                         .bind_group(*bind_group)
                         .ok_or(EncodeError::MissingBindGroup(*bind_group))?;
+
+                    let slot_idx = *slot as usize;
+                    if slot_idx >= last_bind_groups.len() {
+                        last_bind_groups.resize_with(slot_idx + 1, || None);
+                    }
+                    let offsets = dynamic_offsets.as_slice();
+                    let is_same = last_bind_groups[slot_idx]
+                        .as_ref()
+                        .is_some_and(|(id, last_offsets)| id == bind_group && *last_offsets == offsets);
+                    if !is_same {
+                        metrics.bind_group_changes = metrics.bind_group_changes.saturating_add(1);
+                        last_bind_groups[slot_idx] = Some((*bind_group, offsets));
+                    }
+
                     pass.set_bind_group(*slot, bg, dynamic_offsets);
                 }
                 GpuCmd::SetVertexBuffer {
@@ -224,6 +253,10 @@ impl<'a, R: ResourceProvider> Encoder<'a, R> {
                     )
                 }
                 GpuCmd::BeginRenderPass(_) => return Err(EncodeError::UnterminatedRenderPass),
+            }
+
+            if matches!(&cmds[i], GpuCmd::Draw { .. } | GpuCmd::DrawIndexed { .. }) {
+                metrics.draw_calls = metrics.draw_calls.saturating_add(1);
             }
 
             i += 1;

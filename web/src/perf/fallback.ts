@@ -326,7 +326,11 @@ export class FallbackPerf implements PerfApi {
       out.lastMips = this.lastMips;
       out.breakdownAvgMs = undefined;
       out.drawCallsPerFrame = undefined;
+      out.pipelineSwitchesPerFrame = undefined;
       out.ioBytesPerSec = undefined;
+      out.gpuUploadBytesPerSec = undefined;
+      out.gpuTimingSupported = undefined;
+      out.gpuTimingEnabled = undefined;
     } else {
       this.frameTimeScratch.clear();
       for (let i = 0; i < this.statsCount; i += 1) {
@@ -361,11 +365,15 @@ export class FallbackPerf implements PerfApi {
       }
 
       out.drawCallsPerFrame = this.drawCallsCount > 0 ? this.drawCallsSum / this.drawCallsCount : undefined;
+      out.pipelineSwitchesPerFrame = undefined;
       if (this.ioBytesCount > 0 && this.ioBytesFrameTimeSumMs > 0) {
         out.ioBytesPerSec = this.ioBytesSum / (this.ioBytesFrameTimeSumMs / 1000);
       } else {
         out.ioBytesPerSec = undefined;
       }
+      out.gpuUploadBytesPerSec = undefined;
+      out.gpuTimingSupported = undefined;
+      out.gpuTimingEnabled = undefined;
     }
 
     const memSample = this.memoryTelemetry.getLatestSample();

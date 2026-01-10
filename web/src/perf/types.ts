@@ -77,7 +77,12 @@ export type PerfHudSnapshot = {
   breakdownAvgMs?: PerfTimeBreakdownMs;
 
   drawCallsPerFrame?: number;
+  pipelineSwitchesPerFrame?: number;
   ioBytesPerSec?: number;
+  gpuUploadBytesPerSec?: number;
+
+  gpuTimingSupported?: boolean;
+  gpuTimingEnabled?: boolean;
 
   hostJsHeapUsedBytes?: number;
   hostJsHeapTotalBytes?: number;

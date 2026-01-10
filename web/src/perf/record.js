@@ -2,6 +2,7 @@ export const PERF_RECORD_SIZE_BYTES = 64;
 
 export const PerfRecordType = Object.freeze({
   FrameSample: 1,
+  GraphicsSample: 2,
 });
 
 export const WorkerKind = Object.freeze({
@@ -75,6 +76,9 @@ export function decodePerfRecord(view, byteOffset) {
   if (type === PerfRecordType.FrameSample) {
     return decodeFrameSampleRecord(view, byteOffset);
   }
+  if (type === PerfRecordType.GraphicsSample) {
+    return decodeGraphicsSampleRecord(view, byteOffset);
+  }
   return { type };
 }
 
@@ -142,6 +146,68 @@ export function encodeFrameSampleRecord(view, byteOffset, record) {
   view.setUint32(byteOffset + 60, record.ioWriteBytes >>> 0, true);
 }
 
+export function decodeGraphicsSampleRecord(view, byteOffset) {
+  const type = view.getUint32(byteOffset + 0, true);
+  const workerKind = view.getUint32(byteOffset + 4, true);
+  const frameId = view.getUint32(byteOffset + 8, true);
+  const tUs = view.getUint32(byteOffset + 12, true);
+  const renderPasses = view.getUint32(byteOffset + 16, true);
+  const pipelineSwitches = view.getUint32(byteOffset + 20, true);
+  const bindGroupChanges = view.getUint32(byteOffset + 24, true);
+  const cpuTranslateUs = view.getUint32(byteOffset + 28, true);
+  const cpuEncodeUs = view.getUint32(byteOffset + 32, true);
+
+  const uploadBytesLo = view.getUint32(byteOffset + 36, true);
+  const uploadBytesHi = view.getUint32(byteOffset + 40, true);
+
+  const gpuTimeUs = view.getUint32(byteOffset + 44, true);
+  const gpuTimeValid = view.getUint32(byteOffset + 48, true);
+  const gpuTimingSupported = view.getUint32(byteOffset + 52, true);
+  const gpuTimingEnabled = view.getUint32(byteOffset + 56, true);
+
+  return {
+    type,
+    workerKind,
+    frameId,
+    tUs,
+    renderPasses,
+    pipelineSwitches,
+    bindGroupChanges,
+    cpuTranslateUs,
+    cpuEncodeUs,
+    uploadBytes: u64FromHiLo(uploadBytesHi, uploadBytesLo),
+    gpuTimeUs,
+    gpuTimeValid,
+    gpuTimingSupported,
+    gpuTimingEnabled,
+  };
+}
+
+export function encodeGraphicsSampleRecord(view, byteOffset, record) {
+  // Header
+  view.setUint32(byteOffset + 0, PerfRecordType.GraphicsSample, true);
+  view.setUint32(byteOffset + 4, record.workerKind >>> 0, true);
+  view.setUint32(byteOffset + 8, record.frameId >>> 0, true);
+  view.setUint32(byteOffset + 12, record.tUs >>> 0, true);
+
+  view.setUint32(byteOffset + 16, record.renderPasses >>> 0, true);
+  view.setUint32(byteOffset + 20, record.pipelineSwitches >>> 0, true);
+  view.setUint32(byteOffset + 24, record.bindGroupChanges >>> 0, true);
+  view.setUint32(byteOffset + 28, record.cpuTranslateUs >>> 0, true);
+  view.setUint32(byteOffset + 32, record.cpuEncodeUs >>> 0, true);
+
+  view.setUint32(byteOffset + 36, record.uploadBytesLo >>> 0, true);
+  view.setUint32(byteOffset + 40, record.uploadBytesHi >>> 0, true);
+
+  view.setUint32(byteOffset + 44, record.gpuTimeUs >>> 0, true);
+  view.setUint32(byteOffset + 48, record.gpuTimeValid >>> 0, true);
+  view.setUint32(byteOffset + 52, record.gpuTimingSupported >>> 0, true);
+  view.setUint32(byteOffset + 56, record.gpuTimingEnabled >>> 0, true);
+
+  // Reserved (future expansion; keep deterministic).
+  view.setUint32(byteOffset + 60, 0, true);
+}
+
 export function makeEncodedFrameSample({
   workerKind,
   frameId,
@@ -179,3 +245,39 @@ export function makeEncodedFrameSample({
   };
 }
 
+export function makeEncodedGraphicsSample({
+  workerKind,
+  frameId,
+  tUs,
+  renderPasses = 0,
+  pipelineSwitches = 0,
+  bindGroupChanges = 0,
+  cpuTranslateMs = 0,
+  cpuEncodeMs = 0,
+  uploadBytes = 0n,
+  gpuTimeMs = null,
+  gpuTimingSupported = false,
+  gpuTimingEnabled = false,
+}) {
+  const { hi: uploadBytesHi, lo: uploadBytesLo } = u64ToHiLo(uploadBytes);
+
+  const gpuTimeValid = gpuTimeMs == null ? 0 : 1;
+  const gpuTimeUs = gpuTimeValid ? msToUsU32(gpuTimeMs) : 0;
+
+  return {
+    workerKind: workerKind >>> 0,
+    frameId: frameId >>> 0,
+    tUs: tUs >>> 0,
+    renderPasses: clampU32(renderPasses, "renderPasses"),
+    pipelineSwitches: clampU32(pipelineSwitches, "pipelineSwitches"),
+    bindGroupChanges: clampU32(bindGroupChanges, "bindGroupChanges"),
+    cpuTranslateUs: msToUsU32(cpuTranslateMs),
+    cpuEncodeUs: msToUsU32(cpuEncodeMs),
+    uploadBytesHi,
+    uploadBytesLo,
+    gpuTimeUs,
+    gpuTimeValid,
+    gpuTimingSupported: gpuTimingSupported ? 1 : 0,
+    gpuTimingEnabled: gpuTimingEnabled ? 1 : 0,
+  };
+}

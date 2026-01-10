@@ -1,5 +1,11 @@
 import { SpscRingBuffer } from "./ring_buffer.js";
-import { encodeFrameSampleRecord, makeEncodedFrameSample, PERF_RECORD_SIZE_BYTES } from "./record.js";
+import {
+  encodeFrameSampleRecord,
+  encodeGraphicsSampleRecord,
+  makeEncodedFrameSample,
+  makeEncodedGraphicsSample,
+  PERF_RECORD_SIZE_BYTES,
+} from "./record.js";
 import { nowEpochMs } from "./shared.js";
 
 export class PerfWriter {
@@ -64,5 +70,52 @@ export class PerfWriter {
   // Snake_case alias for callers matching the PF task spec.
   frame_sample(frameId, sample = {}) {
     return this.frameSample(frameId, sample);
+  }
+
+  /**
+   * Emit per-frame graphics metrics (draw calls/state churn/uploads), suitable for
+   * CPU-vs-GPU bottleneck analysis.
+   *
+   * @param {number} frameId u32
+   * @param {{
+   *   counters?: { render_passes?: number, pipeline_switches?: number, bind_group_changes?: number, upload_bytes?: bigint | number },
+   *   durations?: { cpu_translate_ms?: number, cpu_encode_ms?: number, gpu_time_ms?: number | null },
+   *   gpu_timing?: { supported?: boolean, enabled?: boolean },
+   *   now_epoch_ms?: number,
+   * }} sample
+   */
+  graphicsSample(frameId, sample = {}) {
+    if (!this.enabled) {
+      return false;
+    }
+    const nowMs = sample.now_epoch_ms ?? nowEpochMs();
+    const tUs = Math.max(0, Math.min(0xffff_ffff, Math.round((nowMs - this.runStartEpochMs) * 1000))) >>> 0;
+
+    const counters = sample.counters ?? {};
+    const durations = sample.durations ?? {};
+    const gpuTiming = sample.gpu_timing ?? {};
+
+    const encoded = makeEncodedGraphicsSample({
+      workerKind: this.workerKind,
+      frameId,
+      tUs,
+      renderPasses: counters.render_passes ?? 0,
+      pipelineSwitches: counters.pipeline_switches ?? 0,
+      bindGroupChanges: counters.bind_group_changes ?? 0,
+      uploadBytes: counters.upload_bytes ?? 0n,
+      cpuTranslateMs: durations.cpu_translate_ms ?? 0,
+      cpuEncodeMs: durations.cpu_encode_ms ?? 0,
+      gpuTimeMs: durations.gpu_time_ms ?? null,
+      gpuTimingSupported: gpuTiming.supported ?? false,
+      gpuTimingEnabled: gpuTiming.enabled ?? false,
+    });
+
+    return this.ring.tryWriteRecord((view, byteOffset) => {
+      encodeGraphicsSampleRecord(view, byteOffset, encoded);
+    });
+  }
+
+  graphics_sample(frameId, sample = {}) {
+    return this.graphicsSample(frameId, sample);
   }
 }

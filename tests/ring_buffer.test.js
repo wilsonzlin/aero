@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createSpscRingBufferSharedArrayBuffer, SpscRingBuffer } from "../web/src/perf/ring_buffer.js";
-import { createPerfChannel, WorkerKind } from "../web/src/perf/index.js";
+import { WorkerKind } from "../web/src/perf/record.js";
+import { createPerfChannel } from "../web/src/perf/shared.js";
 import { PerfWriter } from "../web/src/perf/writer.js";
 import { PerfAggregator } from "../web/src/perf/aggregator.js";
 
@@ -56,7 +57,7 @@ test("SpscRingBuffer wraparound preserves ordering", () => {
 });
 
 test("PerfAggregator merges per-frame samples and exports JSON without bigint", () => {
-  const channel = createPerfChannel({ capacity: 16, workerKinds: [WorkerKind.Main, WorkerKind.CPU] });
+  const channel = createPerfChannel({ capacity: 16, workerKinds: [WorkerKind.Main, WorkerKind.CPU, WorkerKind.GPU] });
 
   const mainWriter = new PerfWriter(channel.buffers[WorkerKind.Main], {
     workerKind: WorkerKind.Main,
@@ -68,10 +69,20 @@ test("PerfAggregator merges per-frame samples and exports JSON without bigint", 
     runStartEpochMs: channel.runStartEpochMs,
   });
 
+  const gpuWriter = new PerfWriter(channel.buffers[WorkerKind.GPU], {
+    workerKind: WorkerKind.GPU,
+    runStartEpochMs: channel.runStartEpochMs,
+  });
+
   const aggregator = new PerfAggregator(channel, { windowSize: 10, captureSize: 20 });
 
   mainWriter.frameSample(1, { durations: { frame_ms: 16 }, counters: { memory_bytes: 123n } });
   cpuWriter.frameSample(1, { durations: { cpu_ms: 10 }, counters: { instructions: 9_000_000n } });
+  gpuWriter.graphicsSample(1, {
+    counters: { render_passes: 2, pipeline_switches: 3, bind_group_changes: 4, upload_bytes: 1024n },
+    durations: { cpu_translate_ms: 1.5, cpu_encode_ms: 0.5, gpu_time_ms: 2 },
+    gpu_timing: { supported: true, enabled: true },
+  });
 
   aggregator.drain();
 
@@ -88,5 +99,13 @@ test("PerfAggregator merges per-frame samples and exports JSON without bigint", 
   assert.equal(frame0.frame_id, 1);
   assert.equal(frame0.counters.instructions, "9000000");
   assert.equal(frame0.counters.memory_bytes, "123");
+  assert.equal(frame0.graphics.render_passes, 2);
+  assert.equal(frame0.graphics.pipeline_switches, 3);
+  assert.equal(frame0.graphics.bind_group_changes, 4);
+  assert.equal(frame0.graphics.upload_bytes, "1024");
+  assert.equal(frame0.graphics.cpu_translate_ms, 1.5);
+  assert.equal(frame0.graphics.cpu_encode_ms, 0.5);
+  assert.equal(frame0.graphics.gpu_time_ms, 2);
+  assert.equal(frame0.graphics.gpu_timing.supported, true);
+  assert.equal(frame0.graphics.gpu_timing.enabled, true);
 });
-

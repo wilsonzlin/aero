@@ -283,6 +283,10 @@ fn fs_main() -> @location(0) vec4<f32> {
 
         device.push_error_scope(wgpu::ErrorFilter::Validation);
         let encoded = encoder.encode(&optimized.cmds).expect("encode");
+        assert_eq!(encoded.metrics.render_passes, 1);
+        assert_eq!(encoded.metrics.draw_calls, 1);
+        assert_eq!(encoded.metrics.pipeline_switches, 1);
+        assert_eq!(encoded.metrics.bind_group_changes, 0);
         queue.submit(Some(encoded.command_buffer));
         device.poll(wgpu::Maintain::Wait);
         let err = device.pop_error_scope().await;

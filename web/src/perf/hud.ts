@@ -193,6 +193,9 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
   const jitBlocksRow = makeRow('JIT blocks compiled');
   const jitCompileRateRow = makeRow('JIT compile rate');
   const drawCallsRow = makeRow('Draw calls (avg/frame)');
+  const pipelineSwitchesRow = makeRow('Pipeline switches (avg/frame)');
+  const gpuUploadRow = makeRow('GPU upload');
+  const gpuTimingRow = makeRow('GPU timing');
   const ioBytesRow = makeRow('IO throughput');
   const hostHeapRow = makeRow('Host heap');
   const guestRamRow = makeRow('Guest RAM');
@@ -290,6 +293,18 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
     }
 
     setText(drawCallsRow, snapshot.drawCallsPerFrame === undefined ? '-' : snapshot.drawCallsPerFrame.toFixed(1));
+    setText(
+      pipelineSwitchesRow,
+      snapshot.pipelineSwitchesPerFrame === undefined ? '-' : snapshot.pipelineSwitchesPerFrame.toFixed(1),
+    );
+    setText(gpuUploadRow, formatBytesPerSec(snapshot.gpuUploadBytesPerSec));
+
+    const gpuTimingSupported = snapshot.gpuTimingSupported;
+    const gpuTimingEnabled = snapshot.gpuTimingEnabled;
+    let gpuTimingText = '-';
+    if (gpuTimingSupported === false) gpuTimingText = 'n/a';
+    else if (gpuTimingSupported === true) gpuTimingText = gpuTimingEnabled ? 'on' : 'off';
+    setText(gpuTimingRow, gpuTimingText);
     setText(ioBytesRow, formatBytesPerSec(snapshot.ioBytesPerSec));
 
     const heapUsed = formatBytes(snapshot.hostJsHeapUsedBytes);
