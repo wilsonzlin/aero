@@ -281,6 +281,9 @@ test:
 
   just _maybe_run_web_script test
 
+test-all:
+  ./scripts/test-all.sh
+
 fmt:
   #!/usr/bin/env bash
   set -euo pipefail

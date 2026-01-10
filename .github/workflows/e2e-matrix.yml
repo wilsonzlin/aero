@@ -116,8 +116,9 @@ jobs:
         run: npx playwright install --with-deps ${{ matrix.project }}
 
       - name: Run Playwright tests
-        working-directory: ${{ steps.node-dir.outputs.dir }}
-        run: npx playwright test --project=${{ matrix.project }} --reporter=dot,html --trace=retain-on-failure
+        env:
+          AERO_NODE_DIR: ${{ steps.node-dir.outputs.dir }}
+        run: ./scripts/test-all.sh --skip-rust --skip-wasm --skip-ts --pw-project ${{ matrix.project }} -- --reporter=dot,html --trace=retain-on-failure
 
       - name: Upload Playwright artifacts
         if: always()
