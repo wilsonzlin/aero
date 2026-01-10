@@ -19,6 +19,9 @@ wgpu = "0.20"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 lru = "0.12"
 
+# Shared-memory framebuffer protocol (CPU worker ↔ GPU worker).
+aero-shared = { path = "../aero-shared" }
+
 [dev-dependencies]
 pollster = "0.3"
 pretty_assertions = "1"

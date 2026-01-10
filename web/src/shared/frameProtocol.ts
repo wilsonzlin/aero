@@ -20,6 +20,19 @@ export type FrameTimingsReport = {
 export type GpuWorkerInitMessage = {
   type: 'init';
   sharedFrameState?: SharedArrayBuffer;
+  /**
+   * Optional shared-memory region containing the emulator framebuffer.
+   *
+   * This is a zero-copy alternative to sending full frames via `postMessage`.
+   * The GPU worker (or its presenter module) can read pixels directly from this
+   * buffer using `Atomics` + typed array views.
+   */
+  sharedFramebuffer?: SharedArrayBuffer;
+  /**
+   * Byte offset within `sharedFramebuffer` where the framebuffer header begins.
+   * Allows embedding the framebuffer region within a larger `SharedArrayBuffer`.
+   */
+  sharedFramebufferOffsetBytes?: number;
   wasmModuleUrl?: string;
 };
 

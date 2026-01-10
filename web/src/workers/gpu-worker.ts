@@ -15,6 +15,14 @@ import {
   type GpuWorkerMessageToMain,
 } from '../shared/frameProtocol';
 
+import {
+  layoutFromHeader,
+  SHARED_FRAMEBUFFER_HEADER_U32_LEN,
+  SHARED_FRAMEBUFFER_MAGIC,
+  SHARED_FRAMEBUFFER_VERSION,
+  SharedFramebufferHeaderIndex,
+  type SharedFramebufferLayout,
+} from '../ipc/shared-layout';
 type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<void | boolean>;
 type GetTimingsFn = () => FrameTimingsReport | null | Promise<FrameTimingsReport | null>;
 
@@ -42,6 +50,67 @@ let lastMetricsPostAtMs = 0;
 const METRICS_POST_INTERVAL_MS = 250;
 
 let latestTimings: FrameTimingsReport | null = null;
+type SharedFramebufferViews = {
+  header: Int32Array;
+  layout: SharedFramebufferLayout;
+  slot0: Uint8Array;
+  slot1: Uint8Array;
+  dirty0: Uint32Array | null;
+  dirty1: Uint32Array | null;
+};
+
+let framebufferViews: SharedFramebufferViews | null = null;
+
+const tryInitSharedFramebufferViews = () => {
+  if (framebufferViews) return;
+
+  const initMsg = lastInitMessage;
+  if (!initMsg?.sharedFramebuffer) return;
+
+  const offsetBytes = initMsg.sharedFramebufferOffsetBytes ?? 0;
+  const header = new Int32Array(initMsg.sharedFramebuffer, offsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
+
+  const magic = Atomics.load(header, SharedFramebufferHeaderIndex.MAGIC);
+  const version = Atomics.load(header, SharedFramebufferHeaderIndex.VERSION);
+  if (magic !== SHARED_FRAMEBUFFER_MAGIC || version !== SHARED_FRAMEBUFFER_VERSION) {
+    return;
+  }
+
+  try {
+    const layout = layoutFromHeader(header);
+    const slot0 = new Uint8Array(
+      initMsg.sharedFramebuffer,
+      offsetBytes + layout.framebufferOffsets[0],
+      layout.strideBytes * layout.height,
+    );
+    const slot1 = new Uint8Array(
+      initMsg.sharedFramebuffer,
+      offsetBytes + layout.framebufferOffsets[1],
+      layout.strideBytes * layout.height,
+    );
+
+    const dirty0 =
+      layout.dirtyWordsPerBuffer === 0
+        ? null
+        : new Uint32Array(initMsg.sharedFramebuffer, offsetBytes + layout.dirtyOffsets[0], layout.dirtyWordsPerBuffer);
+    const dirty1 =
+      layout.dirtyWordsPerBuffer === 0
+        ? null
+        : new Uint32Array(initMsg.sharedFramebuffer, offsetBytes + layout.dirtyOffsets[1], layout.dirtyWordsPerBuffer);
+
+    framebufferViews = { header, layout, slot0, slot1, dirty0, dirty1 };
+
+    // Expose on the worker global so the dynamically-imported presenter module
+    // can read the framebuffer without plumbing arguments through `present()`.
+    // This keeps the hot path (per-frame) allocation-free and avoids `postMessage`
+    // copies.
+    (globalThis as unknown as { __aeroSharedFramebuffer?: SharedFramebufferViews }).__aeroSharedFramebuffer = framebufferViews;
+  } catch {
+    // Header likely not initialized yet; caller should retry later.
+  }
+};
+
+let lastInitMessage: Extract<GpuWorkerMessageFromMain, { type: 'init' }> | null = null;
 
 const syncSharedMetrics = () => {
   if (!frameState) return;
@@ -130,6 +199,7 @@ const presentOnce = async () => {
 };
 
 const handleTick = async () => {
+  tryInitSharedFramebufferViews();
   maybeUpdateFramesReceivedFromSeq();
 
   if (!presentFn) {
@@ -187,9 +257,15 @@ self.onmessage = (event: MessageEvent<GpuWorkerMessageFromMain>) => {
 
   switch (msg.type) {
     case 'init': {
+      lastInitMessage = msg;
       if (msg.sharedFrameState) {
         frameState = new Int32Array(msg.sharedFrameState);
       }
+
+      // Optional: zero-copy framebuffer region for presenter modules.
+      // When present, the worker exposes `globalThis.__aeroSharedFramebuffer`
+      // (see `tryInitSharedFramebufferViews`).
+      tryInitSharedFramebufferViews();
 
       if (msg.wasmModuleUrl) {
         loadPresentFnFromModuleUrl(msg.wasmModuleUrl).catch((err) => {

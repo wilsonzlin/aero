@@ -16,6 +16,7 @@ mod error;
 mod present;
 #[cfg(feature = "diff-engine")]
 mod tile_diff;
+pub mod frame_source;
 mod upload;
 
 mod bc_decompress;

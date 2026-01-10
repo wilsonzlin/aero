@@ -15,6 +15,8 @@ export type FrameSchedulerMetrics = {
 export type FrameSchedulerOptions = {
   gpuWorker: Worker;
   sharedFrameState?: SharedArrayBuffer;
+  sharedFramebuffer?: SharedArrayBuffer;
+  sharedFramebufferOffsetBytes?: number;
   showDebugOverlay?: boolean;
   overlayParent?: HTMLElement;
 };
@@ -29,6 +31,8 @@ const formatRate = (rate: number) => (Number.isFinite(rate) ? rate.toFixed(1) : 
 export const startFrameScheduler = ({
   gpuWorker,
   sharedFrameState,
+  sharedFramebuffer,
+  sharedFramebufferOffsetBytes,
   showDebugOverlay = true,
   overlayParent,
 }: FrameSchedulerOptions): FrameSchedulerHandle => {
@@ -42,7 +46,7 @@ export const startFrameScheduler = ({
   };
 
   const frameState = sharedFrameState ? new Int32Array(sharedFrameState) : null;
-  gpuWorker.postMessage({ type: 'init', sharedFrameState });
+  gpuWorker.postMessage({ type: 'init', sharedFrameState, sharedFramebuffer, sharedFramebufferOffsetBytes });
 
   let overlay: HTMLDivElement | null = null;
   if (showDebugOverlay && typeof document !== 'undefined') {
