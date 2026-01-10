@@ -132,4 +132,13 @@ describe("RingBuffer", () => {
     expect(ring.waitForData(0)).toBe("not-equal");
     expect(Array.from(ring.pop() ?? [])).toEqual([1, 2, 3]);
   });
+
+  it("waitForDataAsync is non-blocking and respects timeout", async () => {
+    const ring = makeRing(64);
+    expect(await ring.waitForDataAsync(0)).toBe("timed-out");
+
+    expect(ring.push(bytes(4, 5))).toBe(true);
+    expect(await ring.waitForDataAsync(0)).toBe("not-equal");
+    expect(Array.from(ring.pop() ?? [])).toEqual([4, 5]);
+  });
 });

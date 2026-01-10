@@ -4,7 +4,7 @@ import { createAudioOutput } from "./platform/audio";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { importFileToOpfs } from "./platform/opfs";
 import { requestWebGpuDevice } from "./platform/webgpu";
-import { installPerfHud } from "./perf";
+import { installPerfHud } from "./perf/hud_entry";
 import { WorkerCoordinator } from "./runtime/coordinator";
 import { DEFAULT_GUEST_MEMORY_BYTES } from "./runtime/shared_layout";
 

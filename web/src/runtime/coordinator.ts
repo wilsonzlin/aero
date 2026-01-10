@@ -36,7 +36,7 @@ interface WorkerInfo {
 export class WorkerCoordinator {
   private shared?: SharedMemoryViews;
   private workers: Partial<Record<WorkerRole, WorkerInfo>> = {};
-  private pollIntervalId?: number;
+  private runId = 0;
 
   private lastHeartbeatFromRing = 0;
 
@@ -56,6 +56,8 @@ export class WorkerCoordinator {
     const shared = createSharedMemoryViews(segments);
     shared.status.fill(0);
     this.shared = shared;
+    this.runId += 1;
+    const runId = this.runId;
 
     for (const role of WORKER_ROLES) {
       const regions = ringRegionsForWorker(role);
@@ -106,26 +108,25 @@ export class WorkerCoordinator {
       };
       worker.postMessage(initMessage);
     }
-
-    this.pollIntervalId = globalThis.setInterval(() => this.poll(), 100) as unknown as number;
+    for (const role of WORKER_ROLES) {
+      void this.eventLoop(role, runId);
+    }
   }
 
   stop(): void {
     const shared = this.shared;
     if (!shared) return;
 
+    // Cancel any in-flight async loops, then wake waiters so they can exit.
+    this.runId += 1;
     Atomics.store(shared.status, StatusIndex.StopRequested, 1);
-
-    if (this.pollIntervalId !== undefined) {
-      clearInterval(this.pollIntervalId);
-      this.pollIntervalId = undefined;
-    }
 
     for (const role of WORKER_ROLES) {
       const info = this.workers[role];
       if (!info) continue;
       info.commandRing.push(encodeProtocolMessage({ type: MessageType.STOP }));
       info.commandRing.notifyData();
+      info.eventRing.notifyData();
       info.worker.terminate();
       info.status = { state: "stopped" };
       setReadyFlag(shared.status, role, false);
@@ -176,24 +177,27 @@ export class WorkerCoordinator {
     }
   }
 
-  private poll(): void {
-    const shared = this.shared;
-    if (!shared) return;
+  private drainEventRing(info: WorkerInfo): void {
+    while (true) {
+      const payload = info.eventRing.pop();
+      if (!payload) break;
 
-    for (const role of WORKER_ROLES) {
-      const info = this.workers[role];
-      if (!info) continue;
-
-      while (true) {
-        const payload = info.eventRing.pop();
-        if (!payload) break;
-
-        const msg = decodeProtocolMessage(payload);
-        if (msg?.type === MessageType.HEARTBEAT) {
-          this.lastHeartbeatFromRing = msg.counter;
-        }
+      const msg = decodeProtocolMessage(payload);
+      if (msg?.type === MessageType.HEARTBEAT) {
+        this.lastHeartbeatFromRing = msg.counter;
       }
     }
   }
-}
 
+  private async eventLoop(role: WorkerRole, runId: number): Promise<void> {
+    while (this.shared && this.runId === runId) {
+      const info = this.workers[role];
+      if (!info) return;
+
+      this.drainEventRing(info);
+
+      if (!this.shared || this.runId !== runId) return;
+      await info.eventRing.waitForDataAsync(1000);
+    }
+  }
+}
