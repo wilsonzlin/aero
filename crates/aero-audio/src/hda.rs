@@ -32,6 +32,10 @@ const REG_RIRBCTL: u64 = 0x5c;
 const REG_RIRBSTS: u64 = 0x5d;
 const REG_RIRBSIZE: u64 = 0x5e;
 
+// DMA position buffer registers.
+const REG_DPLBASE: u64 = 0x70;
+const REG_DPUBASE: u64 = 0x74;
+
 const REG_SD_BASE: u64 = 0x80;
 const SD_STRIDE: u64 = 0x20;
 
@@ -55,6 +59,9 @@ const INTSTS_GIS: u32 = 1 << 31;
 const CORBCTL_RUN: u8 = 1 << 0;
 const RIRBCTL_RUN: u8 = 1 << 0;
 const RIRBCTL_RINTCTL: u8 = 1 << 1;
+
+const DPLBASE_ENABLE: u32 = 1 << 0;
+const DPLBASE_ADDR_MASK: u32 = !0x7f;
 
 const SD_CTL_RST: u32 = 1 << 0;
 const SD_CTL_RUN: u32 = 1 << 1;
@@ -300,8 +307,8 @@ impl HdaCodec {
     fn get_parameter_afg(&self, param_id: u8) -> u32 {
         match param_id {
             0x04 => (2u32 << 16) | 2u32, // widgets start at 2, count 2
-            0x05 => 0x01,               // audio function group
-            0x08 => 0,                  // audio FG caps (minimal)
+            0x05 => 0x01,                // audio function group
+            0x08 => 0,                   // audio FG caps (minimal)
             _ => 0,
         }
     }
@@ -428,6 +435,9 @@ pub struct HdaController {
     intctl: u32,
     intsts: u32,
 
+    dplbase: u32,
+    dpubase: u32,
+
     corblbase: u32,
     corbubase: u32,
     corbwp: u16,
@@ -467,6 +477,9 @@ impl HdaController {
             statests: 0x0001, // codec 0 present
             intctl: 0,
             intsts: 0,
+
+            dplbase: 0,
+            dpubase: 0,
 
             corblbase: 0,
             corbubase: 0,
@@ -519,6 +532,7 @@ impl HdaController {
     pub fn process(&mut self, mem: &mut dyn MemoryAccess, output_frames: usize) {
         self.process_corb(mem);
         self.process_output_stream(mem, 0, output_frames);
+        self.update_position_buffer(mem);
     }
 
     pub fn mmio_read(&mut self, offset: u64, size: usize) -> u64 {
@@ -547,7 +561,12 @@ impl HdaController {
             (REG_RIRBSTS, 1) => self.rirbsts as u64,
             (REG_RIRBSIZE, 1) => self.rirbsize as u64,
 
-            _ if offset >= REG_SD_BASE && offset < REG_SD_BASE + SD_STRIDE * self.streams.len() as u64 => {
+            (REG_DPLBASE, 4) => self.dplbase as u64,
+            (REG_DPUBASE, 4) => self.dpubase as u64,
+
+            _ if offset >= REG_SD_BASE
+                && offset < REG_SD_BASE + SD_STRIDE * self.streams.len() as u64 =>
+            {
                 let stream = ((offset - REG_SD_BASE) / SD_STRIDE) as usize;
                 let reg = (offset - REG_SD_BASE) % SD_STRIDE;
                 let sd = &self.streams[stream];
@@ -628,7 +647,12 @@ impl HdaController {
             (REG_RIRBSTS, 1) => self.rirbsts &= !(value as u8),
             (REG_RIRBSIZE, 1) => self.rirbsize = value as u8,
 
-            _ if offset >= REG_SD_BASE && offset < REG_SD_BASE + SD_STRIDE * self.streams.len() as u64 => {
+            (REG_DPLBASE, 4) => self.dplbase = value as u32,
+            (REG_DPUBASE, 4) => self.dpubase = value as u32,
+
+            _ if offset >= REG_SD_BASE
+                && offset < REG_SD_BASE + SD_STRIDE * self.streams.len() as u64 =>
+            {
                 let stream = ((offset - REG_SD_BASE) / SD_STRIDE) as usize;
                 let reg = (offset - REG_SD_BASE) % SD_STRIDE;
                 let sd = &mut self.streams[stream];
@@ -663,6 +687,9 @@ impl HdaController {
         self.intsts = 0;
         self.irq_pending = false;
 
+        self.dplbase = 0;
+        self.dpubase = 0;
+
         self.corbwp = 0;
         self.corbrp = 0;
         self.corbctl = 0;
@@ -682,6 +709,30 @@ impl HdaController {
 
         self.audio_out.clear();
         self.codec = HdaCodec::new();
+    }
+
+    fn posbuf_enabled(&self) -> bool {
+        (self.dplbase & DPLBASE_ENABLE) != 0
+    }
+
+    fn posbuf_base_addr(&self) -> u64 {
+        ((self.dpubase as u64) << 32) | (self.dplbase & DPLBASE_ADDR_MASK) as u64
+    }
+
+    fn update_position_buffer(&mut self, mem: &mut dyn MemoryAccess) {
+        if (self.gctl & GCTL_CRST) == 0 {
+            return;
+        }
+        if !self.posbuf_enabled() {
+            return;
+        }
+
+        let base = self.posbuf_base_addr();
+        for (stream, sd) in self.streams.iter().enumerate() {
+            let entry_addr = base + (stream as u64) * 8;
+            mem.write_u32(entry_addr, sd.lpib);
+            mem.write_u32(entry_addr + 4, 0);
+        }
     }
 
     fn corb_entries(&self) -> u16 {
@@ -781,7 +832,12 @@ impl HdaController {
         self.irq_pending = (pending_streams & enabled_streams) != 0 || pending_controller;
     }
 
-    fn process_output_stream(&mut self, mem: &mut dyn MemoryAccess, stream: usize, output_frames: usize) {
+    fn process_output_stream(
+        &mut self,
+        mem: &mut dyn MemoryAccess,
+        stream: usize,
+        output_frames: usize,
+    ) {
         if (self.gctl & GCTL_CRST) == 0 {
             return;
         }
@@ -807,7 +863,8 @@ impl HdaController {
                 || rt.resampler.src_rate_hz() != fmt.sample_rate_hz
                 || rt.resampler.dst_rate_hz() != self.output_rate_hz
             {
-                rt.resampler.reset_rates(fmt.sample_rate_hz, self.output_rate_hz);
+                rt.resampler
+                    .reset_rates(fmt.sample_rate_hz, self.output_rate_hz);
                 rt.last_fmt_raw = fmt_raw;
                 rt.bdl_index = 0;
                 rt.bdl_offset = 0;
@@ -823,7 +880,9 @@ impl HdaController {
             let bytes = need_src * fmt.bytes_per_frame();
             let raw = self.dma_read_stream_bytes(mem, stream, bytes);
             let decoded = decode_pcm_to_stereo_f32(&raw, fmt);
-            self.stream_rt[stream].resampler.push_source_frames(&decoded);
+            self.stream_rt[stream]
+                .resampler
+                .push_source_frames(&decoded);
         }
 
         let out_samples = self.stream_rt[stream]
@@ -859,10 +918,7 @@ impl HdaController {
                     break;
                 }
 
-                let remaining = entry
-                    .len
-                    .saturating_sub(rt.bdl_offset)
-                    .min(bytes as u32) as usize;
+                let remaining = entry.len.saturating_sub(rt.bdl_offset).min(bytes as u32) as usize;
                 if remaining == 0 {
                     // Move to next entry.
                     rt.bdl_offset = 0;
@@ -926,13 +982,13 @@ impl HdaPciDevice {
         // Vendor / device.
         config[0x00..0x02].copy_from_slice(&0x8086u16.to_le_bytes());
         config[0x02..0x04].copy_from_slice(&0x2668u16.to_le_bytes()); // ICH6 HDA
-        // Revision ID.
+                                                                      // Revision ID.
         config[0x08] = 0x01;
         // Class code: multimedia audio controller (0x04), HDA (0x03).
         config[0x09] = 0x00; // prog-if
         config[0x0a] = 0x03; // subclass
         config[0x0b] = 0x04; // class
-        // Interrupt pin: INTA#.
+                             // Interrupt pin: INTA#.
         config[0x3d] = 0x01;
 
         Self {
