@@ -1,17 +1,12 @@
 pub fn decode_cert_file(contents: &[u8]) -> Result<Vec<Vec<u8>>, String> {
-    if looks_like_pem(contents) {
+    // Many Windows-generated PEMs may include a UTF-8 BOM or other leading bytes. Instead of
+    // requiring the file to *start* with the PEM header, treat it as PEM if it contains at least
+    // one `BEGIN CERTIFICATE` block.
+    if find_bytes(contents, b"-----BEGIN CERTIFICATE-----").is_some() {
         parse_pem_certificates(contents)
     } else {
         Ok(vec![contents.to_vec()])
     }
-}
-
-fn looks_like_pem(contents: &[u8]) -> bool {
-    let mut i = 0usize;
-    while i < contents.len() && contents[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    contents[i..].starts_with(b"-----BEGIN")
 }
 
 fn parse_pem_certificates(contents: &[u8]) -> Result<Vec<Vec<u8>>, String> {
@@ -136,5 +131,13 @@ mod tests {
         assert_eq!(certs.len(), 2);
         assert_eq!(certs[0], b"M");
         assert_eq!(certs[1], b"Ma");
+    }
+
+    #[test]
+    fn pem_with_utf8_bom_is_detected() {
+        let pem = b"\xEF\xBB\xBF-----BEGIN CERTIFICATE-----\nTQ==\n-----END CERTIFICATE-----\n";
+        let certs = decode_cert_file(pem).unwrap();
+        assert_eq!(certs.len(), 1);
+        assert_eq!(certs[0], b"M");
     }
 }
