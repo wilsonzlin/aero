@@ -35,6 +35,8 @@
   AERO_STAMP_INFS=0/false/no/off to disable stamping in CI without changing arguments.
 #>
 
+#Requires -Version 5.1
+
 [CmdletBinding()]
 param(
   [string[]] $OsList = @('7_X86', '7_X64'),
@@ -49,17 +51,19 @@ $ErrorActionPreference = 'Stop'
 
 Import-Module -Force (Join-Path -Path $PSScriptRoot -ChildPath 'lib/Catalog.psm1')
 
-function Resolve-AbsolutePath {
+$repoRoot = Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..') | Select-Object -ExpandProperty Path
+
+function Resolve-RepoPath {
   param(
     [Parameter(Mandatory)]
     [string] $Path
   )
 
   if ([System.IO.Path]::IsPathRooted($Path)) {
-    return $Path
+    return [System.IO.Path]::GetFullPath($Path)
   }
 
-  return Join-Path -Path (Get-Location) -ChildPath $Path
+  return [System.IO.Path]::GetFullPath((Join-Path -Path $repoRoot -ChildPath $Path))
 }
 
 function Get-RelativePathFromRoot {
@@ -162,8 +166,9 @@ if ($NoStampInfs) {
   }
 }
 
-$inputRootAbs = Resolve-AbsolutePath -Path $InputRoot
-$outputRootAbs = Resolve-AbsolutePath -Path $OutputRoot
+$inputRootAbs = Resolve-RepoPath -Path $InputRoot
+$outputRootAbs = Resolve-RepoPath -Path $OutputRoot
+$toolchainJsonAbs = if ($ToolchainJson) { Resolve-RepoPath -Path $ToolchainJson } else { $null }
 
 if (-not (Test-Path -LiteralPath $inputRootAbs)) {
   throw "InputRoot not found: $inputRootAbs"
@@ -173,10 +178,9 @@ New-Item -ItemType Directory -Path $outputRootAbs -Force | Out-Null
 
 $osByArch = Split-OsListByArchitecture -OsList $OsList
 
-$inf2catPath = Resolve-Inf2CatPath -ToolchainJson $ToolchainJson
+$inf2catPath = Resolve-Inf2CatPath -ToolchainJson $toolchainJsonAbs
 Write-Host "Using Inf2Cat: $inf2catPath"
 
-$repoRoot = Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..') | Select-Object -ExpandProperty Path
 $driversRoot = Join-Path -Path $repoRoot -ChildPath 'drivers'
 
 $driverBuildDirs = @(Find-DriverBuildDirs -InputRoot $inputRootAbs)
@@ -269,3 +273,4 @@ foreach ($driverBuildDir in $driverBuildDirs) {
     }
   }
 }
+
