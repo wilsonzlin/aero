@@ -19,8 +19,20 @@ const (
 	EnvShutdownTimeout = "AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT"
 	EnvMode            = "AERO_WEBRTC_UDP_RELAY_MODE"
 
+	// Quota/rate limiting knobs (required by the task).
+	EnvMaxSessions                     = "MAX_SESSIONS"
+	EnvMaxUDPPpsPerSession             = "MAX_UDP_PPS_PER_SESSION"
+	EnvMaxUDPBpsPerSession             = "MAX_UDP_BPS_PER_SESSION"
+	EnvMaxUDPPpsPerDest                = "MAX_UDP_PPS_PER_DEST"
+	EnvMaxUDPBindingsPerSession        = "MAX_UDP_BINDINGS_PER_SESSION"
+	EnvMaxUniqueDestinationsPerSession = "MAX_UNIQUE_DESTINATIONS_PER_SESSION"
+	EnvMaxDataChannelBpsPerSession     = "MAX_DC_BPS_PER_SESSION"
+	EnvHardCloseAfterViolations        = "HARD_CLOSE_AFTER_VIOLATIONS"
+	EnvViolationWindowSeconds          = "VIOLATION_WINDOW_SECONDS"
+
 	DefaultListenAddr      = "127.0.0.1:8080"
 	DefaultShutdown        = 15 * time.Second
+	DefaultViolationWindow = 10 * time.Second
 	DefaultMode       Mode = ModeDev
 )
 
@@ -100,6 +112,19 @@ type Config struct {
 	// WebRTCUDPListenIP restricts which local interface address ICE will bind UDP
 	// sockets to. 0.0.0.0 means "use library default" (typically all interfaces).
 	WebRTCUDPListenIP net.IP
+
+	// Quotas/rate limiting.
+	//
+	// A value <= 0 generally means "unlimited" / disabled.
+	MaxSessions                     int
+	MaxUDPPpsPerSession             int
+	MaxUDPBpsPerSession             int
+	MaxUDPPpsPerDest                int
+	MaxUDPBindingsPerSession        int
+	MaxUniqueDestinationsPerSession int
+	MaxDataChannelBpsPerSession     int
+	HardCloseAfterViolations        int
+	ViolationWindow                 time.Duration
 }
 
 func Load(args []string) (Config, error) {
@@ -137,6 +162,50 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvShutdownTimeout, raw, err)
 		}
 		shutdownTimeout = d
+	}
+
+	maxSessions, err := envIntOrDefault(lookup, EnvMaxSessions, 0)
+	if err != nil {
+		return Config{}, err
+	}
+	maxUDPPpsPerSession, err := envIntOrDefault(lookup, EnvMaxUDPPpsPerSession, 0)
+	if err != nil {
+		return Config{}, err
+	}
+	maxUDPBpsPerSession, err := envIntOrDefault(lookup, EnvMaxUDPBpsPerSession, 0)
+	if err != nil {
+		return Config{}, err
+	}
+	maxUDPPpsPerDest, err := envIntOrDefault(lookup, EnvMaxUDPPpsPerDest, 0)
+	if err != nil {
+		return Config{}, err
+	}
+	maxUDPBindingsPerSession, err := envIntOrDefault(lookup, EnvMaxUDPBindingsPerSession, 0)
+	if err != nil {
+		return Config{}, err
+	}
+	maxUniqueDestinationsPerSession, err := envIntOrDefault(lookup, EnvMaxUniqueDestinationsPerSession, 0)
+	if err != nil {
+		return Config{}, err
+	}
+	maxDataChannelBpsPerSession, err := envIntOrDefault(lookup, EnvMaxDataChannelBpsPerSession, 0)
+	if err != nil {
+		return Config{}, err
+	}
+	hardCloseAfterViolations, err := envIntOrDefault(lookup, EnvHardCloseAfterViolations, 0)
+	if err != nil {
+		return Config{}, err
+	}
+
+	violationWindow := DefaultViolationWindow
+	if raw, ok := lookup(EnvViolationWindowSeconds); ok && strings.TrimSpace(raw) != "" {
+		seconds, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvViolationWindowSeconds, raw, err)
+		}
+		if seconds > 0 {
+			violationWindow = time.Duration(seconds) * time.Second
+		}
 	}
 
 	// WebRTC network defaults (env values become flag defaults).
@@ -187,6 +256,16 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.StringVar(&webrtcUDPListenIPStr, FlagWebRTCUDPListenIP, webrtcUDPListenIPStr, "Local listen IP for WebRTC ICE UDP sockets (env "+EnvWebRTCUDPListenIP+")")
 	fs.StringVar(&webrtcNAT1To1IPsStr, FlagWebRTCNAT1To1IPs, webrtcNAT1To1IPsStr, "Comma-separated public IPs to advertise for WebRTC ICE (env "+EnvWebRTCNAT1To1IPs+")")
 	fs.StringVar(&webrtcNAT1To1CandidateTypeStr, FlagWebRTCNAT1To1IPCandidateType, webrtcNAT1To1CandidateTypeStr, "Candidate type for NAT 1:1 IPs: host or srflx (env "+EnvWebRTCNAT1To1IPCandidateType+")")
+
+	fs.IntVar(&maxSessions, "max-sessions", maxSessions, "Maximum concurrent sessions (0 = unlimited)")
+	fs.IntVar(&maxUDPPpsPerSession, "max-udp-pps-per-session", maxUDPPpsPerSession, "Outbound UDP packets/sec per session (0 = unlimited)")
+	fs.IntVar(&maxUDPBpsPerSession, "max-udp-bps-per-session", maxUDPBpsPerSession, "Outbound UDP bytes/sec per session (0 = unlimited)")
+	fs.IntVar(&maxUDPPpsPerDest, "max-udp-pps-per-dest", maxUDPPpsPerDest, "Outbound UDP packets/sec per destination per session (0 = unlimited)")
+	fs.IntVar(&maxUDPBindingsPerSession, "max-udp-bindings-per-session", maxUDPBindingsPerSession, "Maximum UDP bindings per session (0 = unlimited)")
+	fs.IntVar(&maxUniqueDestinationsPerSession, "max-unique-destinations-per-session", maxUniqueDestinationsPerSession, "Maximum unique UDP destinations per session (0 = unlimited)")
+	fs.IntVar(&maxDataChannelBpsPerSession, "max-dc-bps-per-session", maxDataChannelBpsPerSession, "DataChannel bytes/sec per session (relay -> client) (0 = unlimited)")
+	fs.IntVar(&hardCloseAfterViolations, "hard-close-after-violations", hardCloseAfterViolations, "Close session after N rate/quota violations (0 = disabled)")
+	fs.DurationVar(&violationWindow, "violation-window", violationWindow, "Violation window for hard close")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -286,6 +365,16 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		WebRTCUDPListenIP:            webrtcUDPListenIP,
 		WebRTCNAT1To1IPs:             webrtcNAT1To1IPs,
 		WebRTCNAT1To1IPCandidateType: webrtcNAT1To1CandidateType,
+
+		MaxSessions:                     maxSessions,
+		MaxUDPPpsPerSession:             maxUDPPpsPerSession,
+		MaxUDPBpsPerSession:             maxUDPBpsPerSession,
+		MaxUDPPpsPerDest:                maxUDPPpsPerDest,
+		MaxUDPBindingsPerSession:        maxUDPBindingsPerSession,
+		MaxUniqueDestinationsPerSession: maxUniqueDestinationsPerSession,
+		MaxDataChannelBpsPerSession:     maxDataChannelBpsPerSession,
+		HardCloseAfterViolations:        hardCloseAfterViolations,
+		ViolationWindow:                 violationWindow,
 	}, nil
 }
 
@@ -312,6 +401,18 @@ func envOrDefault(lookup func(string) (string, bool), key, fallback string) stri
 		return v
 	}
 	return fallback
+}
+
+func envIntOrDefault(lookup func(string) (string, bool), key string, fallback int) (int, error) {
+	raw, ok := lookup(key)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", key, raw, err)
+	}
+	return n, nil
 }
 
 func defaultLogFormatForMode(mode string) string {
@@ -417,3 +518,4 @@ func parseIPList(s string) ([]string, error) {
 	}
 	return out, nil
 }
+
