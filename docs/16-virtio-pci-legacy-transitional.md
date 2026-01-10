@@ -116,6 +116,10 @@ ring_base = (QUEUE_PFN as u64) << 12
 
 From `ring_base` and `QUEUE_NUM`, compute descriptor/avail/used addresses using the standard **vring** layout with **alignment = 4096** (often referred to as `VIRTIO_PCI_VRING_ALIGN` in OS code).
 
+See also:
+
+- [`docs/virtio/virtqueue-split-ring-win7.md`](./virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue layout/alignment rules and the driver-side algorithms for publishing/consuming entries (Win7 KMDF focus).
+
 This allows the core virtqueue implementation to operate on the same internal representation regardless of transport:
 
 ```rust
@@ -362,4 +366,3 @@ If/when a bootable guest harness exists:
 - **Windows 7 virtio-win bind test**:
   - attach virtio-win ISO
   - verify that virtio-net/virtio-blk devices are detected and the driver binds successfully
-

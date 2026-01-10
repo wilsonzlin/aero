@@ -11,6 +11,11 @@ Project context (Aero): this guide is **transport-agnostic** and focuses only on
 
 * [`docs/windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md)
 
+Related Aero Windows driver references:
+
+* [`docs/windows-drivers/virtio/virtqueue-dma-strategy.md`](../windows-drivers/virtio/virtqueue-dma-strategy.md) — DMA/common-buffer strategy for split rings + indirect tables on Win7.
+* [`docs/windows/virtio-pci-modern-interrupts.md`](../windows/virtio-pci-modern-interrupts.md) — virtio-pci modern interrupts on Win7 (MSI-X vs INTx).
+
 ## Scope / non-scope
 
 **In scope**
@@ -381,6 +386,10 @@ UINT16 pending = (UINT16)(used_idx - vq->last_used_idx);
 
 * Virtio 1.0 feature bit: **29**
 
+Note (Aero contract v1): `VIRTIO_F_RING_EVENT_IDX` is **not offered**. Aero v1 drivers must not assume `used_event`/`avail_event` fields exist; they should use the non-EVENT_IDX paths (`VRING_AVAIL_F_NO_INTERRUPT`, `VRING_USED_F_NO_NOTIFY`). See:
+
+* [`docs/windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md)
+
 ### 7.1 Extra fields in ring layout
 
 When negotiated, two extra `u16` fields are defined:
@@ -516,6 +525,10 @@ for (;;) {
 Indirect descriptors let you represent a request with an arbitrary-length scatter/gather list while consuming only **one** descriptor in the main descriptor table.
 
 * Virtio 1.0 feature bit: **28**
+
+Note (Aero contract v1): `VIRTIO_F_RING_INDIRECT_DESC` is **required** and is expected to be used for performance and to bound “in-flight request count” to “ring size”. See:
+
+* [`docs/windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md)
 
 ### 8.1 How indirect works
 
