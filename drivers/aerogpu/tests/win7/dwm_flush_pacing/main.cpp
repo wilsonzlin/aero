@@ -11,14 +11,20 @@ static double QpcToMs(LONGLONG qpc_delta, LONGLONG qpc_freq) {
 
 static int RunDwmFlushPacing(int argc, char** argv) {
   const char* kTestName = "dwm_flush_pacing";
-  const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
-  uint32_t samples = 120;
-  aerogpu_test::GetArgUint32(argc, argv, "--samples", &samples);
-
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout("Usage: %s.exe [--samples=N] [--allow-remote]", kTestName);
+    aerogpu_test::PrintfStdout("Default: --samples=120");
     aerogpu_test::PrintfStdout("Measures DWM pacing by timing successive DwmFlush() calls.");
     return 0;
+  }
+  const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
+  uint32_t samples = 120;
+  std::string samples_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--samples", &samples_str)) {
+    std::string err;
+    if (!aerogpu_test::ParseUint32(samples_str, &samples, &err)) {
+      return aerogpu_test::Fail(kTestName, "invalid --samples: %s", err.c_str());
+    }
   }
 
   // DWM is per-session; composition is typically disabled in RDP sessions.

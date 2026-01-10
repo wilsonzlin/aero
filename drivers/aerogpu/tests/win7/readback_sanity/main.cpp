@@ -27,6 +27,13 @@ static int FailD3D11WithRemovedReason(const char* test_name,
 
 static int RunReadbackSanity(int argc, char** argv) {
   const char* kTestName = "readback_sanity";
+  if (aerogpu_test::HasHelpArg(argc, argv)) {
+    aerogpu_test::PrintfStdout(
+        "Usage: %s.exe [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
+        "[--allow-non-aerogpu]",
+        kTestName);
+    return 0;
+  }
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
@@ -49,14 +56,6 @@ static int RunReadbackSanity(int argc, char** argv) {
       return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
     }
     has_require_did = true;
-  }
-
-  if (aerogpu_test::HasHelpArg(argc, argv)) {
-    aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
-        "[--allow-non-aerogpu]",
-        kTestName);
-    return 0;
   }
 
   D3D_FEATURE_LEVEL feature_levels[] = {D3D_FEATURE_LEVEL_11_0,

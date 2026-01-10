@@ -112,7 +112,7 @@ You can find the correct VID/DID in the Win7 guest via:
 In a Win7 VM with AeroGPU installed and working correctly:
 
 * `d3d9ex_dwm_probe` reports composition enabled (or successfully enables it)
-* `dwm_flush_pacing` measures `DwmFlush()` pacing and fails on extremely fast returns (not vsync paced) or very large gaps
+* `dwm_flush_pacing` measures `DwmFlush()` pacing and fails on extremely fast returns (not vsync paced) or very large gaps (`--samples=N` controls sample count; default 120)
 * `d3d9ex_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `d3d11_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
