@@ -17,7 +17,7 @@ function emitText(text: string): void {
   emitToUi({ type: "SerialOutput", port: 0x3f8, data: bytes });
 }
 
-function startSerialDemo(): void {
+function startDebugDemo(): void {
   if (typeof SharedArrayBuffer === "undefined") {
     emitText(
       "SharedArrayBuffer unavailable; enable COOP/COEP (crossOriginIsolated) to use the debug worker demo.\n",
@@ -33,18 +33,23 @@ function startSerialDemo(): void {
     type: "init",
     requestRing: req.sab,
     responseRing: resp.sab,
-    devices: ["uart16550"],
+    devices: ["i8042", "uart16550"],
     tickIntervalMs: 1,
   });
 
-  const cpuWorker = new Worker(new URL("../workers/serial_demo_cpu_worker.ts", import.meta.url), { type: "module" });
+  const cpuWorker = new Worker(new URL("../workers/debug_cpu_worker.ts", import.meta.url), { type: "module" });
   cpuWorker.onmessage = (ev) => emitToUi(ev.data);
   cpuWorker.postMessage({ type: "init", requestRing: req.sab, responseRing: resp.sab });
+
+  window.addEventListener("aero-debug-command", (ev) => {
+    const cmd = (ev as CustomEvent<unknown>).detail;
+    if (!cmd) return;
+    cpuWorker.postMessage(cmd);
+  });
 }
 
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", startSerialDemo, { once: true });
+  document.addEventListener("DOMContentLoaded", startDebugDemo, { once: true });
 } else {
-  startSerialDemo();
+  startDebugDemo();
 }
-
