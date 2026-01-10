@@ -1091,6 +1091,7 @@ See `web/gpu/persistent_cache.ts` for a concrete implementation of the persisten
 - For Windows 7 D3D10/D3D11 UMD bring-up (DDI entrypoints, DXGI swapchain expectations), see [Win7 D3D10/11 UMD minimal surface](./graphics/win7-d3d10-11-umd-minimal.md)
 - See [Direct3D 10/11 Translation](./16-d3d10-11-translation.md) for SM4/SM5 pipeline/resource details
 - See [Guest GPU driver strategy](./graphics/guest-gpu-driver-strategy.md) for Windows guest driver options (virtio-gpu reuse vs custom WDDM)
+- See [Win7 vblank/present timing requirements](./graphics/win7-vblank-present-requirements.md) for the minimal contract needed to keep DWM (Aero) composition stable.
 - See [Audio Subsystem](./06-audio-subsystem.md) for sound emulation
 - See [Performance Optimization](./10-performance-optimization.md) for GPU perf tips
 - See [Task Breakdown](./15-agent-task-breakdown.md) for graphics tasks
