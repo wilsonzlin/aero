@@ -104,6 +104,13 @@ test('KeyboardEvent.code → PS/2 set 2 bytes (i8042 feed)', async ({ page }) =>
     window.__pressCode('AltRight');
     window.__pressCode('NumpadEnter');
     window.__pressCode('NumpadDivide');
+
+    window.__pressCode('PrintScreen');
+    window.__pressCode('Pause');
+    window.__pressCode('MetaLeft');
+    window.__pressCode('ContextMenu');
+    window.__pressCode('NumpadClear');
+    window.__pressCode('NumpadComma');
   });
 
   const bytes = await page.evaluate(() => window.__i8042Bytes);
@@ -130,6 +137,18 @@ test('KeyboardEvent.code → PS/2 set 2 bytes (i8042 feed)', async ({ page }) =>
     0xe0, 0x5a, 0xe0, 0xf0, 0x5a,
     // NumpadDivide (E0 4A)
     0xe0, 0x4a, 0xe0, 0xf0, 0x4a,
+
+    // PrintScreen
+    0xe0, 0x12, 0xe0, 0x7c, 0xe0, 0xf0, 0x7c, 0xe0, 0xf0, 0x12,
+    // Pause
+    0xe1, 0x14, 0x77, 0xe1, 0xf0, 0x14, 0xf0, 0x77,
+    // MetaLeft (E0 1F)
+    0xe0, 0x1f, 0xe0, 0xf0, 0x1f,
+    // ContextMenu (E0 2F)
+    0xe0, 0x2f, 0xe0, 0xf0, 0x2f,
+    // NumpadClear (alias Numpad5)
+    0x73, 0xf0, 0x73,
+    // NumpadComma (alias NumpadDecimal)
+    0x71, 0xf0, 0x71,
   ]);
 });
-

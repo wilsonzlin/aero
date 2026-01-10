@@ -124,6 +124,8 @@ pub fn ps2_set2_scancode_for_code(code: &str) -> Option<Ps2Set2Scancode> {
         "Numpad8" => Some(Ps2Set2Scancode::Simple { make: 0x75, extended: false }),
         "Numpad9" => Some(Ps2Set2Scancode::Simple { make: 0x7D, extended: false }),
         "NumpadAdd" => Some(Ps2Set2Scancode::Simple { make: 0x79, extended: false }),
+        "NumpadClear" => Some(Ps2Set2Scancode::Simple { make: 0x73, extended: false }),
+        "NumpadComma" => Some(Ps2Set2Scancode::Simple { make: 0x71, extended: false }),
         "NumpadDecimal" => Some(Ps2Set2Scancode::Simple { make: 0x71, extended: false }),
         "NumpadDivide" => Some(Ps2Set2Scancode::Simple { make: 0x4A, extended: true }),
         "NumpadEnter" => Some(Ps2Set2Scancode::Simple { make: 0x5A, extended: true }),

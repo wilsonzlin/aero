@@ -68,6 +68,7 @@
     "NumpadSubtract": { "make": ["7B"] },
     "Numpad4": { "make": ["6B"] },
     "Numpad5": { "make": ["73"] },
+    "NumpadClear": { "make": ["73"] },
     "Numpad6": { "make": ["74"] },
     "NumpadAdd": { "make": ["79"] },
     "Numpad1": { "make": ["69"] },
@@ -75,6 +76,7 @@
     "Numpad3": { "make": ["7A"] },
     "Numpad0": { "make": ["70"] },
     "NumpadDecimal": { "make": ["71"] },
+    "NumpadComma": { "make": ["71"] },
 
     "CapsLock": { "make": ["58"] },
     "KeyA": { "make": ["1C"] },
@@ -126,4 +128,3 @@
     "NumpadMultiply": { "make": ["7C"] }
   }
 }
-
