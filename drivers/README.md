@@ -103,6 +103,16 @@ Run:
 cargo test --manifest-path drivers/protocol/virtio/Cargo.toml
 ```
 
+## Portable virtio-pci capability parser tests (hardware-free)
+
+`drivers/win7/virtio/virtio-core/portable/` contains a small C99 module that walks a PCI capability list and extracts the **Virtio 1.0+ "modern"** vendor capabilities (common/notify/isr/device). This is intended to prevent regressions in Windows driver capability discovery logic without requiring any real hardware.
+
+Run:
+
+```bash
+./drivers/win7/virtio/tests/build_and_run.sh
+```
+
 ## Optional: custom GPU path (WDDM)
 
 Design notes live in `drivers/docs/gpu-path.md`. This is the long-term “fast path” for DirectX command interception/translation, but it is not required for the initial virtio bring-up.
