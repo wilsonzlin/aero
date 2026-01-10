@@ -211,11 +211,21 @@ pub enum RegFile {
     Temp,
     Input,
     Const,
-    Output,
-    Sampler,
     Addr,
-    Predicate,
     Texture,
+    Sampler,
+    Predicate,
+    RastOut,
+    AttrOut,
+    TexCoordOut,
+    Output,
+    ColorOut,
+    DepthOut,
+    ConstInt,
+    ConstBool,
+    Loop,
+    Label,
+    MiscType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -303,11 +313,39 @@ fn format_reg(reg: &RegRef) -> String {
         RegFile::Temp => format!("r{}", reg.index),
         RegFile::Input => format!("v{}", reg.index),
         RegFile::Const => format!("c{}", reg.index),
-        RegFile::Output => format!("o{}", reg.index),
-        RegFile::Sampler => format!("s{}", reg.index),
         RegFile::Addr => format!("a{}", reg.index),
-        RegFile::Predicate => format!("p{}", reg.index),
         RegFile::Texture => format!("t{}", reg.index),
+        RegFile::Sampler => format!("s{}", reg.index),
+        RegFile::Predicate => format!("p{}", reg.index),
+        RegFile::RastOut => {
+            if reg.index == 0 {
+                "oPos".to_owned()
+            } else {
+                format!("oPos{}", reg.index)
+            }
+        }
+        RegFile::AttrOut => format!("oD{}", reg.index),
+        RegFile::TexCoordOut => format!("oT{}", reg.index),
+        RegFile::Output => format!("o{}", reg.index),
+        RegFile::ColorOut => format!("oC{}", reg.index),
+        RegFile::DepthOut => {
+            if reg.index == 0 {
+                "oDepth".to_owned()
+            } else {
+                format!("oDepth{}", reg.index)
+            }
+        }
+        RegFile::ConstInt => format!("i{}", reg.index),
+        RegFile::ConstBool => format!("b{}", reg.index),
+        RegFile::Loop => {
+            if reg.index == 0 {
+                "aL".to_owned()
+            } else {
+                format!("aL{}", reg.index)
+            }
+        }
+        RegFile::Label => format!("l{}", reg.index),
+        RegFile::MiscType => format!("misc{}", reg.index),
     };
     if let Some(rel) = &reg.relative {
         format!("{}[{}.{:?}]", base, format_reg(&rel.reg), rel.component)

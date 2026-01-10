@@ -13,7 +13,7 @@ const-defs:
 body:
   texld r0, v0, s0
   if r0.xxxx > c0.xxxx {
-    mov o64, r0
+    mov oC0, r0
   } else {
-    mov o64, c0
+    mov oC0, c0
   }

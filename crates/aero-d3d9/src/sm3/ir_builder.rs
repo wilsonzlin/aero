@@ -275,7 +275,12 @@ fn handle_dcl(
             let semantic = map_semantic(&dcl.usage, dcl.usage_index, version.stage);
             match reg.file {
                 RegFile::Input | RegFile::Texture => inputs.push(IoDecl { reg, semantic, mask }),
-                RegFile::Output => outputs.push(IoDecl { reg, semantic, mask }),
+                RegFile::RastOut
+                | RegFile::AttrOut
+                | RegFile::TexCoordOut
+                | RegFile::Output
+                | RegFile::ColorOut
+                | RegFile::DepthOut => outputs.push(IoDecl { reg, semantic, mask }),
                 _ => {
                     // Some decls apply to special register files; ignore them for now.
                 }
@@ -614,18 +619,17 @@ fn to_ir_reg(inst: &DecodedInstruction, reg: &crate::sm3::decode::RegisterRef) -
         RegisterFile::Texture => (RegFile::Texture, reg.index),
         RegisterFile::Sampler => (RegFile::Sampler, reg.index),
         RegisterFile::Predicate => (RegFile::Predicate, reg.index),
-
-        // Vertex shader outputs (SM2): separate register files.
-        RegisterFile::RastOut => (RegFile::Output, 0 + reg.index),
-        RegisterFile::AttrOut => (RegFile::Output, 16 + reg.index),
-        RegisterFile::TexCoordOut => (RegFile::Output, 32 + reg.index),
-
-        // Vertex shader outputs (SM3): generic `o#`.
-        RegisterFile::Output => (RegFile::Output, 48 + reg.index),
-
-        // Pixel shader outputs.
-        RegisterFile::ColorOut => (RegFile::Output, 64 + reg.index),
-        RegisterFile::DepthOut => (RegFile::Output, 80 + reg.index),
+        RegisterFile::RastOut => (RegFile::RastOut, reg.index),
+        RegisterFile::AttrOut => (RegFile::AttrOut, reg.index),
+        RegisterFile::TexCoordOut => (RegFile::TexCoordOut, reg.index),
+        RegisterFile::Output => (RegFile::Output, reg.index),
+        RegisterFile::ColorOut => (RegFile::ColorOut, reg.index),
+        RegisterFile::DepthOut => (RegFile::DepthOut, reg.index),
+        RegisterFile::ConstInt => (RegFile::ConstInt, reg.index),
+        RegisterFile::ConstBool => (RegFile::ConstBool, reg.index),
+        RegisterFile::Loop => (RegFile::Loop, reg.index),
+        RegisterFile::Label => (RegFile::Label, reg.index),
+        RegisterFile::MiscType => (RegFile::MiscType, reg.index),
 
         other => {
             return Err(BuildError {

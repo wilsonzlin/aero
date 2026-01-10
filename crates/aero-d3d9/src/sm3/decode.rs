@@ -99,11 +99,6 @@ impl Opcode {
             11 => Self::Max,
             12 => Self::Slt,
             13 => Self::Sge,
-            // NOTE: `seq`/`sne` are not present in all published opcode tables for D3D9.
-            // Some toolchains appear to emit them; we map them to commonly-used values
-            // in community disassemblers. Unknown values fall back to `Unknown`.
-            81 => Self::Seq,
-            82 => Self::Sne,
             25 => Self::Call,
             27 => Self::Loop,
             28 => Self::Ret,
@@ -115,14 +110,19 @@ impl Opcode {
             43 => Self::EndIf,
             44 => Self::Break,
             45 => Self::Breakc,
-            47 => Self::DefB,
-            48 => Self::DefI,
-            50 => Self::TexKill,
-            51 => Self::Tex,
-            65 => Self::Def,
-            77 => Self::TexLdd,
-            78 => Self::Setp,
-            79 => Self::TexLdl,
+            65 => Self::TexKill, // 0x41
+            66 => Self::Tex,     // 0x42 (texld/texldp)
+            77 => Self::TexLdd,  // 0x4D
+            78 => Self::Setp,    // 0x4E
+            79 => Self::TexLdl,  // 0x4F
+            81 => Self::Def,     // 0x51
+            82 => Self::DefI,    // 0x52
+            83 => Self::DefB,    // 0x53
+            // Some opcode tables list `seq`/`sne` (set on equal / set on not equal)
+            // in this neighborhood. We accept the commonly cited values; anything
+            // else is treated as `Unknown`.
+            84 => Self::Seq, // 0x54
+            85 => Self::Sne, // 0x55
             0xFFFE => Self::Comment,
             0xFFFF => Self::End,
             other => Self::Unknown(other),
@@ -280,27 +280,48 @@ pub enum RegisterFile {
     Unknown(u8),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RegDecodeContext {
+    Src,
+    Dst,
+    Relative,
+}
+
 impl RegisterFile {
-    pub fn from_raw(raw: u8) -> Self {
+    fn from_raw(raw: u8, stage: ShaderStage, ctx: RegDecodeContext) -> Self {
+        // Register type values follow `D3DSHADER_PARAM_REGISTER_TYPE` from the
+        // Direct3D 9 SDK. Some encodings are stage-dependent:
+        //   - type 3 is `a#` (vertex) or `t#` (pixel)
+        //   - type 8 is `o#` (vertex) or `oC#` (pixel)
+        //
+        // Additionally, type 3 used in a relative-addressing token (the token
+        // after a parameter with the RELATIVE bit set) is always treated as an
+        // address register, regardless of stage.
         match raw {
             0 => Self::Temp,
             1 => Self::Input,
             2 => Self::Const,
-            3 => Self::Addr,
-            4 => Self::Texture,
-            5 => Self::RastOut,
-            6 => Self::AttrOut,
-            7 => Self::TexCoordOut,
-            8 => Self::Output,
-            9 => Self::ConstInt,
-            10 => Self::ColorOut,
-            11 => Self::DepthOut,
-            12 => Self::Sampler,
-            15 => Self::ConstBool,
-            16 => Self::Loop,
-            18 => Self::MiscType,
-            19 => Self::Label,
-            20 => Self::Predicate,
+            3 => match (stage, ctx) {
+                (_, RegDecodeContext::Dst) => Self::Addr,
+                (_, RegDecodeContext::Relative) => Self::Addr,
+                (ShaderStage::Pixel, RegDecodeContext::Src) => Self::Texture,
+                (ShaderStage::Vertex, RegDecodeContext::Src) => Self::Addr,
+            },
+            4 => Self::RastOut,
+            5 => Self::AttrOut,
+            6 => Self::TexCoordOut,
+            7 => Self::ConstInt,
+            8 => match stage {
+                ShaderStage::Vertex => Self::Output,
+                ShaderStage::Pixel => Self::ColorOut,
+            },
+            9 => Self::DepthOut,
+            10 => Self::Sampler,
+            14 => Self::ConstBool,
+            15 => Self::Loop,
+            17 => Self::MiscType,
+            18 => Self::Label,
+            19 => Self::Predicate,
             other => Self::Unknown(other),
         }
     }
@@ -312,7 +333,7 @@ impl RegisterFile {
             Self::Const => "c",
             Self::Addr => "a",
             Self::Texture => "t",
-            Self::RastOut => "oR",
+            Self::RastOut => "oPos",
             Self::AttrOut => "oD",
             Self::TexCoordOut => "oT",
             Self::Output => "o",
@@ -512,8 +533,8 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
             break;
         }
 
-        let length = ((opcode_token >> 24) & 0x0F) as usize;
-        let length = if length == 0 { 1 } else { length };
+        let param_count = ((opcode_token >> 24) & 0x0F) as usize;
+        let length = 1usize + param_count;
         if token_index + length > tokens.len() {
             return Err(DecodeError {
                 token_index,
@@ -544,7 +565,7 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
             }
             let pred_token = *operand_tokens.last().unwrap();
             operand_tokens = &operand_tokens[..operand_tokens.len() - 1];
-            let (pred_src, consumed) = decode_src_operand(&[pred_token], 0)?;
+            let (pred_src, consumed) = decode_src_operand(&[pred_token], 0, stage)?;
             if consumed != 1 {
                 return Err(DecodeError {
                     token_index,
@@ -570,9 +591,10 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
             None
         };
 
-        let (operands, dcl, comment_data) = decode_operands_and_extras(opcode_token, opcode, operand_tokens)
+        let (operands, dcl, comment_data) =
+            decode_operands_and_extras(opcode_token, opcode, stage, operand_tokens)
             .map_err(|mut err| {
-                err.token_index = location.token_index + err.token_index;
+                err.token_index = location.token_index + 1 + err.token_index;
                 err
             })?;
 
@@ -600,6 +622,7 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
 fn decode_operands_and_extras(
     opcode_token: u32,
     opcode: Opcode,
+    stage: ShaderStage,
     operand_tokens: &[u32],
 ) -> Result<(Vec<Operand>, Option<DclInfo>, Option<Vec<u32>>), DecodeError> {
     let mut operands = Vec::new();
@@ -620,11 +643,18 @@ fn decode_operands_and_extras(
             }
         }
         Opcode::Mov | Opcode::Rcp | Opcode::Rsq => {
-            parse_fixed_operands(opcode, operand_tokens, &[OperandKind::Dst, OperandKind::Src], &mut operands)?;
+            parse_fixed_operands(
+                opcode,
+                stage,
+                operand_tokens,
+                &[OperandKind::Dst, OperandKind::Src],
+                &mut operands,
+            )?;
         }
         Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Min | Opcode::Max | Opcode::Sge | Opcode::Slt | Opcode::Seq | Opcode::Sne | Opcode::Dp3 | Opcode::Dp4 => {
             parse_fixed_operands(
                 opcode,
+                stage,
                 operand_tokens,
                 &[OperandKind::Dst, OperandKind::Src, OperandKind::Src],
                 &mut operands,
@@ -633,18 +663,20 @@ fn decode_operands_and_extras(
         Opcode::Mad => {
             parse_fixed_operands(
                 opcode,
+                stage,
                 operand_tokens,
                 &[OperandKind::Dst, OperandKind::Src, OperandKind::Src, OperandKind::Src],
                 &mut operands,
             )?;
         }
         Opcode::If => {
-            parse_fixed_operands(opcode, operand_tokens, &[OperandKind::Src], &mut operands)?;
+            parse_fixed_operands(opcode, stage, operand_tokens, &[OperandKind::Src], &mut operands)?;
         }
         Opcode::Ifc | Opcode::Breakc => {
             // Comparison type is encoded in opcode_token[16..20].
             parse_fixed_operands(
                 opcode,
+                stage,
                 operand_tokens,
                 &[OperandKind::Src, OperandKind::Src],
                 &mut operands,
@@ -667,16 +699,17 @@ fn decode_operands_and_extras(
             // file, not a write).
             parse_fixed_operands(
                 opcode,
+                stage,
                 operand_tokens,
                 &[OperandKind::Src, OperandKind::Src],
                 &mut operands,
             )?;
         }
         Opcode::Call => {
-            parse_fixed_operands(opcode, operand_tokens, &[OperandKind::Src], &mut operands)?;
+            parse_fixed_operands(opcode, stage, operand_tokens, &[OperandKind::Src], &mut operands)?;
         }
         Opcode::Dcl => {
-            parse_fixed_operands(opcode, operand_tokens, &[OperandKind::Dst], &mut operands)?;
+            parse_fixed_operands(opcode, stage, operand_tokens, &[OperandKind::Dst], &mut operands)?;
             let usage_raw = ((opcode_token >> 16) & 0xF) as u8;
             let usage_index = ((opcode_token >> 20) & 0xF) as u8;
             let usage = decode_dcl_usage(usage_raw, operands.first())?;
@@ -685,6 +718,7 @@ fn decode_operands_and_extras(
         Opcode::Def => {
             parse_fixed_operands(
                 opcode,
+                stage,
                 operand_tokens,
                 &[
                     OperandKind::Dst,
@@ -699,6 +733,7 @@ fn decode_operands_and_extras(
         Opcode::DefI => {
             parse_fixed_operands(
                 opcode,
+                stage,
                 operand_tokens,
                 &[
                     OperandKind::Dst,
@@ -713,6 +748,7 @@ fn decode_operands_and_extras(
         Opcode::DefB => {
             parse_fixed_operands(
                 opcode,
+                stage,
                 operand_tokens,
                 &[OperandKind::Dst, OperandKind::Imm32],
                 &mut operands,
@@ -722,6 +758,7 @@ fn decode_operands_and_extras(
             // Comparison type is encoded in opcode_token[16..20].
             parse_fixed_operands(
                 opcode,
+                stage,
                 operand_tokens,
                 &[OperandKind::Dst, OperandKind::Src, OperandKind::Src],
                 &mut operands,
@@ -735,12 +772,19 @@ fn decode_operands_and_extras(
             if operand_tokens.len() >= 3 {
                 parse_fixed_operands(
                     opcode,
+                    stage,
                     operand_tokens,
                     &[OperandKind::Dst, OperandKind::Src, OperandKind::Src],
                     &mut operands,
                 )?;
             } else if operand_tokens.len() == 2 {
-                parse_fixed_operands(opcode, operand_tokens, &[OperandKind::Dst, OperandKind::Src], &mut operands)?;
+                parse_fixed_operands(
+                    opcode,
+                    stage,
+                    operand_tokens,
+                    &[OperandKind::Dst, OperandKind::Src],
+                    &mut operands,
+                )?;
             } else {
                 return Err(DecodeError {
                     token_index: 0,
@@ -759,6 +803,7 @@ fn decode_operands_and_extras(
             // texldd: dst, coord, ddx, ddy, sampler
             parse_fixed_operands(
                 opcode,
+                stage,
                 operand_tokens,
                 &[
                     OperandKind::Dst,
@@ -774,13 +819,14 @@ fn decode_operands_and_extras(
             // texldl: dst, coord, sampler
             parse_fixed_operands(
                 opcode,
+                stage,
                 operand_tokens,
                 &[OperandKind::Dst, OperandKind::Src, OperandKind::Src],
                 &mut operands,
             )?;
         }
         Opcode::TexKill => {
-            parse_fixed_operands(opcode, operand_tokens, &[OperandKind::Src], &mut operands)?;
+            parse_fixed_operands(opcode, stage, operand_tokens, &[OperandKind::Src], &mut operands)?;
         }
         Opcode::Unknown(op) => {
             return Err(DecodeError {
@@ -796,6 +842,7 @@ fn decode_operands_and_extras(
 
 fn parse_fixed_operands(
     opcode: Opcode,
+    stage: ShaderStage,
     operand_tokens: &[u32],
     pattern: &[OperandKind],
     out: &mut Vec<Operand>,
@@ -804,12 +851,12 @@ fn parse_fixed_operands(
     for expected in pattern {
         match expected {
             OperandKind::Dst => {
-                let (dst, consumed) = decode_dst_operand(operand_tokens, token_cursor)?;
+                let (dst, consumed) = decode_dst_operand(operand_tokens, token_cursor, stage)?;
                 out.push(Operand::Dst(dst));
                 token_cursor += consumed;
             }
             OperandKind::Src => {
-                let (src, consumed) = decode_src_operand(operand_tokens, token_cursor)?;
+                let (src, consumed) = decode_src_operand(operand_tokens, token_cursor, stage)?;
                 out.push(Operand::Src(src));
                 token_cursor += consumed;
             }
@@ -887,13 +934,13 @@ const SWIZZLE_SHIFT: u32 = 16;
 const SRCMOD_MASK: u32 = 0x0F00_0000;
 const SRCMOD_SHIFT: u32 = 24;
 
-fn decode_dst_operand(tokens: &[u32], start: usize) -> Result<(DstOperand, usize), DecodeError> {
+fn decode_dst_operand(tokens: &[u32], start: usize, stage: ShaderStage) -> Result<(DstOperand, usize), DecodeError> {
     let token = *tokens.get(start).ok_or_else(|| DecodeError {
         token_index: start,
         message: "unexpected end of operand tokens".to_owned(),
     })?;
 
-    let (reg, reg_consumed) = decode_register_ref(tokens, start)?;
+    let (reg, reg_consumed) = decode_register_ref(tokens, start, stage, RegDecodeContext::Dst)?;
     let mut mask = ((token & WRITEMASK_MASK) >> WRITEMASK_SHIFT) as u8;
     if mask == 0 {
         mask = 0xF;
@@ -901,13 +948,13 @@ fn decode_dst_operand(tokens: &[u32], start: usize) -> Result<(DstOperand, usize
     Ok((DstOperand { reg, mask: WriteMask(mask) }, reg_consumed))
 }
 
-fn decode_src_operand(tokens: &[u32], start: usize) -> Result<(SrcOperand, usize), DecodeError> {
+fn decode_src_operand(tokens: &[u32], start: usize, stage: ShaderStage) -> Result<(SrcOperand, usize), DecodeError> {
     let token = *tokens.get(start).ok_or_else(|| DecodeError {
         token_index: start,
         message: "unexpected end of operand tokens".to_owned(),
     })?;
 
-    let (reg, reg_consumed) = decode_register_ref(tokens, start)?;
+    let (reg, reg_consumed) = decode_register_ref(tokens, start, stage, RegDecodeContext::Src)?;
     let swizzle_raw = ((token & SWIZZLE_MASK) >> SWIZZLE_SHIFT) as u8;
     let swizzle = decode_swizzle(swizzle_raw);
     let modifier_raw = ((token & SRCMOD_MASK) >> SRCMOD_SHIFT) as u8;
@@ -916,7 +963,12 @@ fn decode_src_operand(tokens: &[u32], start: usize) -> Result<(SrcOperand, usize
     Ok((SrcOperand { reg, swizzle, modifier }, reg_consumed))
 }
 
-fn decode_register_ref(tokens: &[u32], start: usize) -> Result<(RegisterRef, usize), DecodeError> {
+fn decode_register_ref(
+    tokens: &[u32],
+    start: usize,
+    stage: ShaderStage,
+    ctx: RegDecodeContext,
+) -> Result<(RegisterRef, usize), DecodeError> {
     let token = *tokens.get(start).ok_or_else(|| DecodeError {
         token_index: start,
         message: "unexpected end of operand tokens".to_owned(),
@@ -925,22 +977,35 @@ fn decode_register_ref(tokens: &[u32], start: usize) -> Result<(RegisterRef, usi
     let index = (token & REGNUM_MASK) as u32;
     let regtype_raw = (((token & REGTYPE_MASK) >> REGTYPE_SHIFT)
         | ((token & REGTYPE_MASK2) >> REGTYPE_SHIFT2)) as u8;
-    let file = RegisterFile::from_raw(regtype_raw);
+    let file = RegisterFile::from_raw(regtype_raw, stage, ctx);
     let mut consumed = 1usize;
 
     let relative = if (token & RELATIVE) != 0 {
+        if ctx == RegDecodeContext::Relative {
+            return Err(DecodeError {
+                token_index: start,
+                message: "nested relative addressing not supported".to_owned(),
+            });
+        }
         let relative_token_index = start + 1;
-        let (rel_src, rel_consumed) = decode_src_operand(tokens, relative_token_index)?;
+        let rel_token = *tokens.get(relative_token_index).ok_or_else(|| DecodeError {
+            token_index: relative_token_index,
+            message: "relative addressing missing register token".to_owned(),
+        })?;
+        let (rel_reg, rel_consumed) =
+            decode_register_ref(tokens, relative_token_index, stage, RegDecodeContext::Relative)?;
         if rel_consumed != 1 {
             return Err(DecodeError {
                 token_index: relative_token_index,
                 message: "nested relative addressing not supported".to_owned(),
             });
         }
+        let swizzle_raw = ((rel_token & SWIZZLE_MASK) >> SWIZZLE_SHIFT) as u8;
+        let rel_swizzle = decode_swizzle(swizzle_raw);
         consumed += rel_consumed;
         Some(Box::new(RelativeAddress {
-            reg: Box::new(rel_src.reg),
-            component: rel_src.swizzle.0[0],
+            reg: Box::new(rel_reg),
+            component: rel_swizzle.0[0],
         }))
     } else {
         None

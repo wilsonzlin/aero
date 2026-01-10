@@ -1,4 +1,5 @@
-use aero_d3d9::sm3::{build_ir, decode_u32_tokens, verify_ir};
+use aero_d3d9::dxbc;
+use aero_d3d9::sm3::{build_ir, decode_u8_le_bytes, verify_ir};
 use aero_d3d9::sm3::types::ShaderStage;
 
 fn version_token(stage: ShaderStage, major: u8, minor: u8) -> u32 {
@@ -27,6 +28,14 @@ fn src_token(regtype: u8, index: u32, swizzle: u8, srcmod: u8) -> u32 {
     reg_token(regtype, index) | ((swizzle as u32) << 16) | ((srcmod as u32) << 24)
 }
 
+fn to_bytes(words: &[u32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(words.len() * 4);
+    for w in words {
+        out.extend_from_slice(&w.to_le_bytes());
+    }
+    out
+}
+
 #[test]
 fn ir_snapshot_ps3_tex_ifc() {
     // ps_3_0:
@@ -43,46 +52,48 @@ fn ir_snapshot_ps3_tex_ifc() {
     let tokens = vec![
         version_token(ShaderStage::Pixel, 3, 0),
         // dcl_texcoord0 v0.xy
-        31u32 | (2u32 << 24) | (5u32 << 16) | (0u32 << 20),
+        31u32 | (1u32 << 24) | (5u32 << 16) | (0u32 << 20),
         dst_token(1, 0, 0x3),
         // dcl_2d s0
-        31u32 | (2u32 << 24) | (2u32 << 16) | (0u32 << 20),
-        dst_token(12, 0, 0xF),
+        31u32 | (1u32 << 24) | (2u32 << 16) | (0u32 << 20),
+        dst_token(10, 0, 0xF),
         // def c0, 0.5, 0, 0, 0
-        opcode_token(65, 6),
+        opcode_token(81, 5),
         dst_token(2, 0, 0xF),
         0x3F00_0000,
         0x0000_0000,
         0x0000_0000,
         0x0000_0000,
         // texld r0, v0, s0
-        opcode_token(51, 4),
+        opcode_token(0x0042, 3),
         dst_token(0, 0, 0xF),
         src_token(1, 0, 0xE4, 0),
-        src_token(12, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
         // ifc_gt r0.x, c0.x  (compare op 0 = gt)
-        opcode_token(41, 3),
+        opcode_token(41, 2),
         src_token(0, 0, 0x00, 0),
         src_token(2, 0, 0x00, 0),
         // mov oC0, r0
-        opcode_token(1, 3),
-        dst_token(10, 0, 0xF),
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
         src_token(0, 0, 0xE4, 0),
         // else
-        opcode_token(42, 1),
+        opcode_token(42, 0),
         // mov oC0, c0
-        opcode_token(1, 3),
-        dst_token(10, 0, 0xF),
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         // endif
-        opcode_token(43, 1),
+        opcode_token(43, 0),
         0x0000_FFFF,
     ];
 
-    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let token_bytes = to_bytes(&tokens);
+    let container = dxbc::build_container(&[(dxbc::FourCC::SHDR, &token_bytes)]);
+    let shdr = dxbc::extract_shader_bytecode(&container).unwrap();
+    let decoded = decode_u8_le_bytes(shdr).unwrap();
     let ir = build_ir(&decoded).unwrap();
     verify_ir(&ir).unwrap();
 
     insta::assert_snapshot!(ir.to_string());
 }
-
