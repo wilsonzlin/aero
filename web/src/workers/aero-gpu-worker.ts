@@ -338,7 +338,7 @@ async function handleInit(message: GpuWorkerInitMessage): Promise<void> {
         const ready = await perf.spanAsync("gpu:init", () => initWithFallback(message));
         isReady = true;
         postMessage(ready);
-        perf.instant("boot:worker:ready", "p", { role: "aero-gpu" });
+        if (perf.traceEnabled) perf.instant("boot:worker:ready", "p", { role: "aero-gpu" });
       } catch (err) {
         // `initWithFallback` throws `GpuWorkerErrorPayload` on purpose so the main
         // thread can show actionable hints.

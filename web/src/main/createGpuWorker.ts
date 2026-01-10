@@ -39,7 +39,7 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
 
   const worker = new Worker(new URL('../workers/aero-gpu-worker.ts', import.meta.url), { type: 'module' });
   perf.registerWorker(worker, { threadName: 'aero-gpu' });
-  perf.instant('boot:worker:spawn', 'p', { role: 'aero-gpu' });
+  if (perf.traceEnabled) perf.instant('boot:worker:spawn', 'p', { role: 'aero-gpu' });
 
   const offscreen = params.canvas.transferControlToOffscreen();
 

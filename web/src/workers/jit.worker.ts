@@ -33,7 +33,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
       setReadyFlag(status, role, true);
       ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
-      perf.instant("boot:worker:ready", "p", { role });
+      if (perf.traceEnabled) perf.instant("boot:worker:ready", "p", { role });
     } finally {
       perf.spanEnd("worker:init");
     }

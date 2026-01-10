@@ -107,7 +107,7 @@ export class WorkerCoordinator {
         }
       }
       perf.registerWorker(worker, { threadName: role });
-      perf.instant("boot:worker:spawn", "p", { role });
+      if (perf.traceEnabled) perf.instant("boot:worker:spawn", "p", { role });
 
       const info: WorkerInfo = {
         role,
