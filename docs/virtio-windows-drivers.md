@@ -199,6 +199,7 @@ If the Windows installer can’t see the disk:
 
 1. Boot the Windows 7 installer ISO.
 2. When you reach “Where do you want to install Windows?”, choose **Load Driver**.
+   - If you have Aero’s packaged driver artifacts, you can also attach the optional FAT driver disk image (`*-fat.vhd`) as a secondary disk and browse `x86\` or `x64\` instead of mounting an ISO. See: [`docs/16-driver-install-media.md`](./16-driver-install-media.md).
 3. Mount the Aero drivers ISO as a second CD-ROM and browse to:
    - `\win7\x86\viostor\` for Win7 32-bit
    - `\win7\amd64\viostor\` for Win7 64-bit
@@ -225,6 +226,11 @@ pnputil -i -a D:\win7\x86\netkvm\netkvm.inf
 ```
 
 Replace `D:` with your mounted drivers ISO drive letter and `x86` with `amd64` as appropriate.
+
+If you’re using the FAT driver disk image instead, the layout is typically:
+
+- `E:\x86\<driver>\*.inf`
+- `E:\x64\<driver>\*.inf`
 
 ---
 

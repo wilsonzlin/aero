@@ -52,6 +52,14 @@ Environment variables:
 
 Packages signed driver staging folders from `out/packages/` into release artifacts under `out/artifacts/`.
 
+Artifacts (typical):
+
+- `AeroVirtIO-Win7-<version>-x86.zip`
+- `AeroVirtIO-Win7-<version>-x64.zip`
+- `AeroVirtIO-Win7-<version>-bundle.zip`
+- `AeroVirtIO-Win7-<version>.iso` (unless `-NoIso`; Windows only)
+- `AeroVirtIO-Win7-<version>-fat.vhd` (when `-MakeFatImage` or `AERO_MAKE_FAT_IMAGE=1`; requires Windows + admin; skipped unless `-FatImageStrict`)
+
 If `-Version` is not provided, the script derives a deterministic version string from git:
 
 - date: HEAD commit date (formatted `yyyyMMdd`)

@@ -28,6 +28,17 @@ Run:
 pwsh ci/package-drivers.ps1 -MakeFatImage
 ```
 
+In CI, you can enable FAT image creation without changing invocation by setting:
+
+```text
+AERO_MAKE_FAT_IMAGE=1
+```
+
+To make FAT image creation a hard requirement, pass:
+
+- `ci/package-drivers.ps1 -FatImageStrict` (packaging-level strictness), or
+- `ci/make-fat-image.ps1 -Strict` (image creation strictness)
+
 To build a FAT image from an already-prepared directory (containing `aero-test.cer`, `INSTALL.txt`, `x86/`, `x64/`), run:
 
 ```powershell

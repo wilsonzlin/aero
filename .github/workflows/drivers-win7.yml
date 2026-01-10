@@ -120,7 +120,7 @@ jobs:
           if (!(Test-Path -LiteralPath 'ci\package-drivers.ps1')) {
             throw "Expected script ci\package-drivers.ps1 to exist."
           }
-          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\package-drivers.ps1'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\package-drivers.ps1' -MakeFatImage
 
       - name: Upload artifacts (out/artifacts/)
         if: steps.detect.outputs.skip != 'true'

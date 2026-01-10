@@ -141,8 +141,8 @@ if ($null -eq $driveLetter) {
 }
 
 $destRoot = "{0}:\\" -f $driveLetter
-$attached = $false
-$cleanupOutFile = $false
+$attemptDetach = $false
+$success = $false
 
 try {
     Write-Host ("[make-fat-image] Creating {0}MB FAT32 VHD at {1}" -f $SizeMB, $outFilePath)
@@ -157,8 +157,8 @@ assign letter=$driveLetter
 exit
 "@
 
+    $attemptDetach = $true
     Invoke-DiskPart -Script $createScript | Out-Null
-    $attached = $true
 
     for ($i = 0; $i -lt 50; $i++) {
         if (Test-Path -LiteralPath $destRoot) {
@@ -190,15 +190,15 @@ exit
     }
 
     Write-Host "[make-fat-image] FAT image contents verified."
+    $success = $true
 } catch {
     $message = $_.Exception.Message
     if (-not (Skip-OrThrow ("FAT image creation failed: {0}" -f $message))) {
-        $cleanupOutFile = $true
         return
     }
     throw
 } finally {
-    if ($attached) {
+    if ($attemptDetach -and (Test-Path -LiteralPath $outFilePath)) {
         try {
             $detachScript = @"
 select vdisk file="$outFilePath"
@@ -211,7 +211,7 @@ exit
         }
     }
 
-    if ($cleanupOutFile) {
+    if (-not $success) {
         Remove-Item -LiteralPath $outFilePath -Force -ErrorAction SilentlyContinue
     }
 }
