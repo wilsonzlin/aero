@@ -1,0 +1,384 @@
+import {
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  UploadPartCommand,
+  type S3Client,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl as getS3SignedUrl } from "@aws-sdk/s3-request-presigner";
+import type { FastifyInstance } from "fastify";
+import fastify from "fastify";
+import { randomUUID } from "node:crypto";
+
+import { getCallerUserId } from "./auth";
+import type { Config } from "./config";
+import {
+  assertCloudFrontSigningConfiguredForConfig,
+  buildCloudFrontUrl,
+  createSignedCookies,
+  createSignedUrl,
+  formatSetCookie,
+  type StreamAuth,
+} from "./cloudfront";
+import { ApiError } from "./errors";
+import { buildRangeProxyResponse } from "./rangeProxy";
+import type { ImageRecord, ImageStore } from "./store";
+import { buildImageObjectKey } from "./s3";
+
+export interface BuildAppDeps {
+  config: Config;
+  s3: S3Client;
+  store: ImageStore;
+}
+
+function assertBodyObject(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  body: any
+): asserts body is Record<string, unknown> {
+  if (!body || typeof body !== "object") {
+    throw new ApiError(400, "Invalid JSON body", "BAD_REQUEST");
+  }
+}
+
+function normalizeEtag(etag: string): string {
+  const trimmed = etag.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) return trimmed;
+  return `"${trimmed.replace(/"/g, "")}"`;
+}
+
+function requireImage(store: ImageStore, imageId: string): ImageRecord {
+  const record = store.get(imageId);
+  if (!record) throw new ApiError(404, "Image not found", "NOT_FOUND");
+  return record;
+}
+
+function assertOwner(record: ImageRecord, callerUserId: string): void {
+  if (record.ownerId !== callerUserId) {
+    throw new ApiError(403, "Forbidden", "FORBIDDEN");
+  }
+}
+
+function buildStableImagePath(config: Config, record: ImageRecord): string {
+  return `${config.imageBasePath}/${record.ownerId}/${record.id}/${record.version}/disk.img`;
+}
+
+export function buildApp(deps: BuildAppDeps): FastifyInstance {
+  const app = fastify({
+    logger: true,
+  });
+
+  app.setErrorHandler((err, _req, reply) => {
+    const statusCode =
+      typeof (err as Partial<ApiError>).statusCode === "number"
+        ? (err as ApiError).statusCode
+        : 500;
+    const code =
+      typeof (err as Partial<ApiError>).code === "string"
+        ? (err as ApiError).code
+        : "INTERNAL";
+
+    const message =
+      statusCode >= 500
+        ? "Internal Server Error"
+        : err.message || "Request failed";
+
+    if (statusCode >= 500) {
+      app.log.error({ err });
+    }
+
+    reply.status(statusCode).send({ error: { code, message } });
+  });
+
+  app.get("/health", async () => ({ ok: true }));
+
+  app.post("/v1/images", async (req, reply) => {
+    const callerUserId = getCallerUserId(req, deps.config);
+
+    const imageId = randomUUID();
+    const version = randomUUID();
+    const createdAt = new Date().toISOString();
+
+    const s3Key = buildImageObjectKey({
+      imageBasePath: deps.config.imageBasePath,
+      ownerId: callerUserId,
+      imageId,
+      version,
+    });
+
+    const res = await deps.s3.send(
+      new CreateMultipartUploadCommand({
+        Bucket: deps.config.s3Bucket,
+        Key: s3Key,
+        ContentType: "application/octet-stream",
+      })
+    );
+
+    const uploadId: string | undefined = res.UploadId;
+    if (!uploadId) {
+      throw new ApiError(502, "S3 did not return an UploadId", "S3_ERROR");
+    }
+
+    deps.store.create({
+      id: imageId,
+      ownerId: callerUserId,
+      createdAt,
+      version,
+      s3Key,
+      uploadId,
+      status: "uploading",
+    });
+
+    reply.send({ imageId, uploadId, partSize: deps.config.partSizeBytes });
+  });
+
+  app.post("/v1/images/:imageId/upload-url", async (req, reply) => {
+    const callerUserId = getCallerUserId(req, deps.config);
+    const imageId = (req.params as { imageId: string }).imageId;
+    const record = requireImage(deps.store, imageId);
+    assertOwner(record, callerUserId);
+
+    assertBodyObject(req.body);
+    const uploadId = req.body.uploadId;
+    const partNumber = req.body.partNumber;
+
+    if (typeof uploadId !== "string" || !uploadId) {
+      throw new ApiError(400, "uploadId must be a string", "BAD_REQUEST");
+    }
+    if (typeof partNumber !== "number" || !Number.isInteger(partNumber) || partNumber <= 0) {
+      throw new ApiError(400, "partNumber must be a positive integer", "BAD_REQUEST");
+    }
+    if (record.status !== "uploading") {
+      throw new ApiError(409, "Image is not in uploading state", "INVALID_STATE");
+    }
+    if (record.uploadId !== uploadId) {
+      throw new ApiError(400, "uploadId does not match image record", "BAD_REQUEST");
+    }
+
+    const url = await getS3SignedUrl(
+      deps.s3,
+      new UploadPartCommand({
+        Bucket: deps.config.s3Bucket,
+        Key: record.s3Key,
+        UploadId: uploadId,
+        PartNumber: partNumber,
+      }),
+      { expiresIn: 60 * 60 }
+    );
+
+    reply.send({ url });
+  });
+
+  app.post("/v1/images/:imageId/complete", async (req, reply) => {
+    const callerUserId = getCallerUserId(req, deps.config);
+    const imageId = (req.params as { imageId: string }).imageId;
+    const record = requireImage(deps.store, imageId);
+    assertOwner(record, callerUserId);
+
+    assertBodyObject(req.body);
+    const uploadId = req.body.uploadId;
+    const parts = req.body.parts;
+
+    if (typeof uploadId !== "string" || !uploadId) {
+      throw new ApiError(400, "uploadId must be a string", "BAD_REQUEST");
+    }
+    if (!Array.isArray(parts) || parts.length === 0) {
+      throw new ApiError(400, "parts must be a non-empty array", "BAD_REQUEST");
+    }
+    if (record.status !== "uploading") {
+      throw new ApiError(409, "Image is not in uploading state", "INVALID_STATE");
+    }
+    if (record.uploadId !== uploadId) {
+      throw new ApiError(400, "uploadId does not match image record", "BAD_REQUEST");
+    }
+
+    const normalizedParts = parts
+      .map((p) => {
+        if (!p || typeof p !== "object") {
+          throw new ApiError(400, "Invalid parts entry", "BAD_REQUEST");
+        }
+        const partNumber = (p as { partNumber?: unknown }).partNumber;
+        const etag = (p as { etag?: unknown }).etag;
+        if (
+          typeof partNumber !== "number" ||
+          !Number.isInteger(partNumber) ||
+          partNumber <= 0
+        ) {
+          throw new ApiError(400, "Invalid partNumber", "BAD_REQUEST");
+        }
+        if (typeof etag !== "string" || !etag) {
+          throw new ApiError(400, "Invalid etag", "BAD_REQUEST");
+        }
+        return { PartNumber: partNumber, ETag: normalizeEtag(etag) };
+      })
+      .sort((a, b) => a.PartNumber - b.PartNumber);
+
+    await deps.s3.send(
+      new CompleteMultipartUploadCommand({
+        Bucket: deps.config.s3Bucket,
+        Key: record.s3Key,
+        UploadId: uploadId,
+        MultipartUpload: { Parts: normalizedParts },
+      })
+    );
+
+    const head = await deps.s3.send(
+      new HeadObjectCommand({
+        Bucket: deps.config.s3Bucket,
+        Key: record.s3Key,
+      })
+    );
+
+    const size = typeof head.ContentLength === "number" ? head.ContentLength : undefined;
+    const etag = typeof head.ETag === "string" ? head.ETag : undefined;
+    const lastModified =
+      head.LastModified instanceof Date ? head.LastModified.toISOString() : undefined;
+
+    deps.store.update(imageId, {
+      status: "complete",
+      size,
+      etag,
+      lastModified,
+    });
+
+    reply.send({ ok: true, size, etag, lastModified });
+  });
+
+  app.get("/v1/images/:imageId/metadata", async (req, reply) => {
+    const callerUserId = getCallerUserId(req, deps.config);
+    const imageId = (req.params as { imageId: string }).imageId;
+    const record = requireImage(deps.store, imageId);
+    assertOwner(record, callerUserId);
+
+    const path = buildStableImagePath(deps.config, record);
+    const url = deps.config.cloudfrontDomain
+      ? buildCloudFrontUrl({ cloudfrontDomain: deps.config.cloudfrontDomain, path })
+      : `/v1/images/${imageId}/range`;
+
+    reply.send({
+      size: record.size,
+      etag: record.etag,
+      lastModified: record.lastModified,
+      url,
+    });
+  });
+
+  app.get("/v1/images/:imageId/stream-url", async (req, reply) => {
+    const callerUserId = getCallerUserId(req, deps.config);
+    const imageId = (req.params as { imageId: string }).imageId;
+    const record = requireImage(deps.store, imageId);
+    assertOwner(record, callerUserId);
+
+    if (record.status !== "complete") {
+      throw new ApiError(409, "Image is not complete", "INVALID_STATE");
+    }
+
+    const path = buildStableImagePath(deps.config, record);
+
+    let url: string;
+    let auth: StreamAuth;
+
+    if (deps.config.cloudfrontDomain) {
+      assertCloudFrontSigningConfiguredForConfig(deps.config);
+
+      const stableUrl = buildCloudFrontUrl({
+        cloudfrontDomain: deps.config.cloudfrontDomain,
+        path,
+      });
+
+      const expiresAt = new Date(Date.now() + deps.config.cloudfrontSignedTtlSeconds * 1000);
+
+      if (deps.config.cloudfrontAuthMode === "cookie") {
+        const cookies = createSignedCookies({
+          url: stableUrl,
+          keyPairId: deps.config.cloudfrontKeyPairId,
+          privateKeyPem: deps.config.cloudfrontPrivateKeyPem,
+          expiresAt,
+          cookieDomain: deps.config.cloudfrontCookieDomain,
+          cookiePath: deps.config.imageBasePath,
+        });
+
+        const setCookie = cookies.map(formatSetCookie);
+        reply.header("set-cookie", setCookie);
+
+        url = stableUrl;
+        auth = { type: "cookie", cookies, expiresAt: expiresAt.toISOString() };
+      } else {
+        const signedUrl = createSignedUrl({
+          url: stableUrl,
+          keyPairId: deps.config.cloudfrontKeyPairId,
+          privateKeyPem: deps.config.cloudfrontPrivateKeyPem,
+          expiresAt,
+        });
+
+        url = signedUrl;
+        auth = { type: "url", expiresAt: expiresAt.toISOString() };
+      }
+    } else {
+      // Local/dev fallback: stream via the range proxy endpoint on the same host.
+      // This path is stable but does proxy bytes through the service.
+      url = `/v1/images/${imageId}/range`;
+      auth = { type: "none" };
+    }
+
+    reply.send({
+      url,
+      auth,
+      size: record.size,
+      etag: record.etag,
+    });
+  });
+
+  app.options("/v1/images/:imageId/range", async (_req, reply) => {
+    reply
+      .header("access-control-allow-origin", deps.config.corsAllowOrigin)
+      .header("access-control-allow-methods", "GET,OPTIONS")
+      .header(
+        "access-control-allow-headers",
+        "range,content-type,x-user-id"
+      )
+      .header("access-control-max-age", "86400")
+      .status(204)
+      .send();
+  });
+
+  app.get("/v1/images/:imageId/range", async (req, reply) => {
+    const callerUserId = getCallerUserId(req, deps.config);
+    const imageId = (req.params as { imageId: string }).imageId;
+    const record = requireImage(deps.store, imageId);
+    assertOwner(record, callerUserId);
+
+    const requestedRange = typeof req.headers.range === "string" ? req.headers.range : undefined;
+
+    const s3Res = await deps.s3.send(
+      new GetObjectCommand({
+        Bucket: deps.config.s3Bucket,
+        Key: record.s3Key,
+        Range: requestedRange,
+      })
+    );
+
+    if (!s3Res.Body) {
+      throw new ApiError(502, "S3 did not return a response body", "S3_ERROR");
+    }
+
+    const proxy = buildRangeProxyResponse({
+      requestedRange,
+      s3: s3Res,
+    });
+
+    reply
+      .status(proxy.statusCode)
+      .headers(proxy.headers)
+      .header("access-control-allow-origin", deps.config.corsAllowOrigin)
+      .header("access-control-allow-credentials", "true")
+      .header(
+        "access-control-expose-headers",
+        "accept-ranges,content-range,content-length,etag,last-modified"
+      );
+
+    return reply.send(s3Res.Body);
+  });
+
+  return app;
+}

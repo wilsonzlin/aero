@@ -1,0 +1,30 @@
+{
+  "name": "image-gateway",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Reference implementation for secure streaming of S3-backed disk images via CloudFront signed access",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.540.0",
+    "@aws-sdk/cloudfront-signer": "^3.540.0",
+    "@aws-sdk/s3-request-presigner": "^3.540.0",
+    "fastify": "^4.26.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsx": "^4.7.2",
+    "typescript": "^5.4.5",
+    "vitest": "^1.4.0"
+  }
+}
+
