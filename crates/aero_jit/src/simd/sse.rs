@@ -65,6 +65,21 @@ pub enum Inst {
     PslldImm { dst: XmmReg, imm: u8 },
     /// `PSRLD xmm, imm8` (SSE2)
     PsrldImm { dst: XmmReg, imm: u8 },
+
+    /// `PSLLW xmm, imm8` (SSE2)
+    PsllwImm { dst: XmmReg, imm: u8 },
+    /// `PSRLW xmm, imm8` (SSE2)
+    PsrlwImm { dst: XmmReg, imm: u8 },
+
+    /// `PSLLQ xmm, imm8` (SSE2)
+    PsllqImm { dst: XmmReg, imm: u8 },
+    /// `PSRLQ xmm, imm8` (SSE2)
+    PsrlqImm { dst: XmmReg, imm: u8 },
+
+    /// `PSLLDQ xmm, imm8` (SSE2)
+    PslldqImm { dst: XmmReg, imm: u8 },
+    /// `PSRLDQ xmm, imm8` (SSE2)
+    PsrldqImm { dst: XmmReg, imm: u8 },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

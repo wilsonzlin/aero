@@ -85,6 +85,33 @@ pub fn interpret(program: &Program, state: &mut SseState, mem: &mut [u8]) -> Res
                 let v = state.xmm[dst.index()];
                 state.xmm[dst.index()] = shift_i32x4(v, imm, ShiftDir::RightLogical);
             }
+
+            Inst::PsllwImm { dst, imm } => {
+                let v = state.xmm[dst.index()];
+                state.xmm[dst.index()] = shift_i16x8(v, imm, ShiftDir::Left);
+            }
+            Inst::PsrlwImm { dst, imm } => {
+                let v = state.xmm[dst.index()];
+                state.xmm[dst.index()] = shift_i16x8(v, imm, ShiftDir::RightLogical);
+            }
+
+            Inst::PsllqImm { dst, imm } => {
+                let v = state.xmm[dst.index()];
+                state.xmm[dst.index()] = shift_i64x2(v, imm, ShiftDir::Left);
+            }
+            Inst::PsrlqImm { dst, imm } => {
+                let v = state.xmm[dst.index()];
+                state.xmm[dst.index()] = shift_i64x2(v, imm, ShiftDir::RightLogical);
+            }
+
+            Inst::PslldqImm { dst, imm } => {
+                let v = state.xmm[dst.index()];
+                state.xmm[dst.index()] = shift_bytes(v, imm, ShiftDir::Left);
+            }
+            Inst::PsrldqImm { dst, imm } => {
+                let v = state.xmm[dst.index()];
+                state.xmm[dst.index()] = shift_bytes(v, imm, ShiftDir::RightLogical);
+            }
         }
     }
 
@@ -195,6 +222,66 @@ fn shift_i32x4(v: u128, imm: u8, dir: ShiftDir) -> u128 {
             ShiftDir::RightLogical => x.wrapping_shr(imm as u32),
         };
         out[off..off + 4].copy_from_slice(&y.to_le_bytes());
+    }
+    u128::from_le_bytes(out)
+}
+
+fn shift_i16x8(v: u128, imm: u8, dir: ShiftDir) -> u128 {
+    if imm > 15 {
+        return 0;
+    }
+
+    let bytes = v.to_le_bytes();
+    let mut out = [0u8; 16];
+    for lane in 0..8 {
+        let off = lane * 2;
+        let x = u16::from_le_bytes(bytes[off..off + 2].try_into().expect("slice len matches"));
+        let y = match dir {
+            ShiftDir::Left => x.wrapping_shl(imm as u32),
+            ShiftDir::RightLogical => x.wrapping_shr(imm as u32),
+        };
+        out[off..off + 2].copy_from_slice(&y.to_le_bytes());
+    }
+    u128::from_le_bytes(out)
+}
+
+fn shift_i64x2(v: u128, imm: u8, dir: ShiftDir) -> u128 {
+    if imm > 63 {
+        return 0;
+    }
+
+    let bytes = v.to_le_bytes();
+    let mut out = [0u8; 16];
+    for lane in 0..2 {
+        let off = lane * 8;
+        let x = u64::from_le_bytes(bytes[off..off + 8].try_into().expect("slice len matches"));
+        let y = match dir {
+            ShiftDir::Left => x.wrapping_shl(imm as u32),
+            ShiftDir::RightLogical => x.wrapping_shr(imm as u32),
+        };
+        out[off..off + 8].copy_from_slice(&y.to_le_bytes());
+    }
+    u128::from_le_bytes(out)
+}
+
+fn shift_bytes(v: u128, imm: u8, dir: ShiftDir) -> u128 {
+    if imm > 15 {
+        return 0;
+    }
+    let bytes = v.to_le_bytes();
+    let shift = imm as usize;
+    let mut out = [0u8; 16];
+    match dir {
+        ShiftDir::Left => {
+            for i in shift..16 {
+                out[i] = bytes[i - shift];
+            }
+        }
+        ShiftDir::RightLogical => {
+            for i in 0..(16 - shift) {
+                out[i] = bytes[i + shift];
+            }
+        }
     }
     u128::from_le_bytes(out)
 }

@@ -314,6 +314,36 @@ fn wasm_simd_pslld_psrld_imm() {
 }
 
 #[test]
+fn wasm_simd_more_shift_immediates() {
+    let mut rng = StdRng::seed_from_u64(6);
+    let xmm0 = XmmReg::new(0).unwrap();
+
+    let mut state = SseState::default();
+    state.xmm[xmm0.index()] = rng.gen::<u128>();
+
+    let program = Program {
+        insts: vec![
+            Inst::PsllwImm { dst: xmm0, imm: 4 },
+            Inst::PsrlwImm { dst: xmm0, imm: 3 },
+            Inst::PsllqImm { dst: xmm0, imm: 9 },
+            Inst::PsrlqImm { dst: xmm0, imm: 7 },
+            Inst::PslldqImm { dst: xmm0, imm: 5 },
+            Inst::PsrldqImm { dst: xmm0, imm: 2 },
+        ],
+    };
+
+    let mem = vec![0u8; 64];
+    assert_jit_matches_interp(program.clone(), state.clone(), mem.clone());
+
+    let (_, _, wasm) = run_jit(&program, &state, &mem);
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::I16x8Shl));
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::I16x8ShrU));
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::I64x2Shl));
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::I64x2ShrU));
+    assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::I8x16Shuffle { .. }));
+}
+
+#[test]
 fn mxcsr_gate_traps_for_float_ops() {
     let xmm0 = XmmReg::new(0).unwrap();
     let xmm1 = XmmReg::new(1).unwrap();

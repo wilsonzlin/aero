@@ -91,6 +91,17 @@ pub fn compile_wasm_simd(
             Inst::PsrldImm { dst, imm } => {
                 emit_shift_imm(&mut func, dst, imm, ShiftOp::I32x4ShrU, layout)?
             }
+
+            Inst::PsllwImm { dst, imm } => emit_shift_imm(&mut func, dst, imm, ShiftOp::I16x8Shl, layout)?,
+            Inst::PsrlwImm { dst, imm } => emit_shift_imm(&mut func, dst, imm, ShiftOp::I16x8ShrU, layout)?,
+
+            Inst::PsllqImm { dst, imm } => emit_shift_imm(&mut func, dst, imm, ShiftOp::I64x2Shl, layout)?,
+            Inst::PsrlqImm { dst, imm } => emit_shift_imm(&mut func, dst, imm, ShiftOp::I64x2ShrU, layout)?,
+
+            Inst::PslldqImm { dst, imm } => emit_shift_bytes_imm(&mut func, dst, imm, ShiftDir::Left, layout)?,
+            Inst::PsrldqImm { dst, imm } => {
+                emit_shift_bytes_imm(&mut func, dst, imm, ShiftDir::RightLogical, layout)?
+            }
         }
     }
 
@@ -158,6 +169,16 @@ enum Local {
 enum ShiftOp {
     I32x4Shl,
     I32x4ShrU,
+    I16x8Shl,
+    I16x8ShrU,
+    I64x2Shl,
+    I64x2ShrU,
+}
+
+#[derive(Clone, Copy)]
+enum ShiftDir {
+    Left,
+    RightLogical,
 }
 
 fn emit_binop(
@@ -182,7 +203,12 @@ fn emit_shift_imm(
     op: ShiftOp,
     layout: WasmLayout,
 ) -> Result<(), JitError> {
-    if imm > 31 {
+    let max_imm = match op {
+        ShiftOp::I16x8Shl | ShiftOp::I16x8ShrU => 15,
+        ShiftOp::I32x4Shl | ShiftOp::I32x4ShrU => 31,
+        ShiftOp::I64x2Shl | ShiftOp::I64x2ShrU => 63,
+    };
+    if imm > max_imm {
         func.instruction(&Instruction::V128Const(0));
         func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
         emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
@@ -194,7 +220,55 @@ fn emit_shift_imm(
     match op {
         ShiftOp::I32x4Shl => func.instruction(&Instruction::I32x4Shl),
         ShiftOp::I32x4ShrU => func.instruction(&Instruction::I32x4ShrU),
+        ShiftOp::I16x8Shl => func.instruction(&Instruction::I16x8Shl),
+        ShiftOp::I16x8ShrU => func.instruction(&Instruction::I16x8ShrU),
+        ShiftOp::I64x2Shl => func.instruction(&Instruction::I64x2Shl),
+        ShiftOp::I64x2ShrU => func.instruction(&Instruction::I64x2ShrU),
     };
+    func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
+    emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
+    Ok(())
+}
+
+fn emit_shift_bytes_imm(
+    func: &mut Function,
+    dst: XmmReg,
+    imm: u8,
+    dir: ShiftDir,
+    layout: WasmLayout,
+) -> Result<(), JitError> {
+    if imm > 15 {
+        func.instruction(&Instruction::V128Const(0));
+        func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
+        emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
+        return Ok(());
+    }
+
+    let shift = imm as u8;
+
+    let mut lanes = [0u8; 16];
+    for i in 0..16u8 {
+        lanes[i as usize] = match dir {
+            ShiftDir::Left => {
+                if i < shift {
+                    16
+                } else {
+                    i - shift
+                }
+            }
+            ShiftDir::RightLogical => {
+                if i + shift >= 16 {
+                    16
+                } else {
+                    i + shift
+                }
+            }
+        };
+    }
+
+    emit_load_reg(dst, func, layout)?;
+    func.instruction(&Instruction::V128Const(0));
+    func.instruction(&Instruction::I8x16Shuffle(lanes));
     func.instruction(&Instruction::LocalSet(Local::Tmp0 as u32));
     emit_store_local_to_reg(func, dst, layout, Local::Tmp0)?;
     Ok(())
