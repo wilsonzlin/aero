@@ -15,6 +15,11 @@ pub struct BiosSnapshot {
     pub bda_time: BdaTimeSnapshot,
     pub e820_map: Vec<E820Entry>,
     pub keyboard_queue: Vec<u16>,
+    /// Current BIOS video mode (BDA 0x449).
+    ///
+    /// This value also lives in guest RAM (the BIOS Data Area), but we capture
+    /// it explicitly so BIOS snapshot payloads can restore it even when callers
+    /// choose a RAM snapshot mode that does not include low memory.
     pub video_mode: u8,
     pub tty_output: Vec<u8>,
     pub rsdp_addr: Option<u64>,

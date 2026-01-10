@@ -123,8 +123,7 @@ impl AcpiTables {
         }
 
         // Place ACPI windows at the top of low RAM, below the PCI MMIO hole.
-        let reclaim_base =
-            align_down(low_ram_top - total_acpi_window, ACPI_TABLE_ALIGNMENT);
+        let reclaim_base = align_down(low_ram_top - total_acpi_window, ACPI_TABLE_ALIGNMENT);
         let nvs_base = reclaim_base + config.reclaim_window_size;
 
         // NVS: allocate FACS first.
@@ -321,18 +320,50 @@ fn build_fadt(dsdt_addr: PhysAddr, facs_addr: PhysAddr) -> Result<Vec<u8>, AcpiB
     // ISA IRQ9 -> GSI9.
     fadt.SciInt = 9u16.to_le();
 
-    // If we do not implement the ACPI PM I/O device yet, advertise fixed
-    // registers as not present. This avoids the guest OS touching unhandled I/O
-    // ports during early boot.
+    // ACPI enable/disable handshake + minimal fixed register blocks.
     //
-    // When an ACPI PM device is implemented, populate Pm1aEvtBlk/Pm1aCntBlk/
-    // PmTmrBlk (+ their X_* GAS versions) coherently.
-    fadt.Pm1EvtLen = 0;
-    fadt.Pm1CntLen = 0;
+    // Windows expects firmware to expose an `SMI_CMD` port plus `ACPI_ENABLE` /
+    // `ACPI_DISABLE` values. When the OS writes `ACPI_ENABLE`, firmware sets the
+    // `SCI_EN` bit in `PM1a_CNT` and starts delivering SCI interrupts for enabled
+    // events.
+    //
+    // We only advertise the PM1 event/control blocks that we model today.
+    // Leaving PM timer / GPE blocks absent avoids the guest touching unhandled
+    // I/O ports during early boot.
+    const SMI_CMD_PORT: u32 = 0xB2;
+    const ACPI_ENABLE: u8 = 0xA0;
+    const ACPI_DISABLE: u8 = 0xA1;
+    const PM1A_EVT_BLK: u32 = 0x400;
+    const PM1A_CNT_BLK: u32 = 0x404;
+
+    fadt.SmiCmd = SMI_CMD_PORT.to_le();
+    fadt.AcpiEnable = ACPI_ENABLE;
+    fadt.AcpiDisable = ACPI_DISABLE;
+
+    fadt.Pm1aEvtBlk = PM1A_EVT_BLK.to_le();
+    fadt.Pm1aCntBlk = PM1A_CNT_BLK.to_le();
+
+    fadt.Pm1EvtLen = 4;
+    fadt.Pm1CntLen = 2;
     fadt.Pm2CntLen = 0;
     fadt.PmTmrLen = 0;
     fadt.Gpe0BlkLen = 0;
     fadt.Gpe1BlkLen = 0;
+
+    fadt.X_Pm1aEvtBlk = GenericAddress {
+        address_space_id: 1, // System I/O
+        register_bit_width: 32,
+        register_bit_offset: 0,
+        access_size: 0, // unspecified
+        address: (PM1A_EVT_BLK as u64).to_le(),
+    };
+    fadt.X_Pm1aCntBlk = GenericAddress {
+        address_space_id: 1, // System I/O
+        register_bit_width: 16,
+        register_bit_offset: 0,
+        access_size: 0, // unspecified
+        address: (PM1A_CNT_BLK as u64).to_le(),
+    };
 
     // Legacy devices present (PIC/PIT/RTC), 8042 present, VGA present.
     fadt.IapcBootArch = 0x0007u16.to_le();
