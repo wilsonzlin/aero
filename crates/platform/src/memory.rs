@@ -53,4 +53,22 @@ impl MemoryBus {
         let paddr = self.filter.filter_paddr(paddr);
         self.ram.write_u8(paddr, value);
     }
+
+    pub fn read_physical(&self, paddr: u64, buf: &mut [u8]) {
+        for (offset, dst) in buf.iter_mut().enumerate() {
+            let addr = paddr
+                .checked_add(offset as u64)
+                .expect("physical address overflow");
+            *dst = self.read_u8(addr);
+        }
+    }
+
+    pub fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        for (offset, &src) in buf.iter().enumerate() {
+            let addr = paddr
+                .checked_add(offset as u64)
+                .expect("physical address overflow");
+            self.write_u8(addr, src);
+        }
+    }
 }
