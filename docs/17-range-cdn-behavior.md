@@ -235,6 +235,14 @@ Typical Cloudflare cache-debugging headers:
 - `CF-Cache-Status`: `HIT`, `MISS`, `BYPASS`, etc.
 - `Age`: on cache hits (similar semantics to other CDNs)
 
+**Spot-check (public Cloudflare, Jan 2026):**
+
+```bash
+curl -fsS -D - -o /dev/null -H 'Range: bytes=0-10' \
+  'https://www.cloudflare.com/ips-v4' \
+  | grep -iE '^(http/|cf-cache-status|age|content-range):'
+```
+
 ### Hard limits: cacheable file size
 
 Cloudflare documents the following **cacheable file size limits**:
