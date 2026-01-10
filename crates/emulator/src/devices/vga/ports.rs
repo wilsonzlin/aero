@@ -466,8 +466,8 @@ impl VgaDevice {
             p if p == active_crtc_index => self.crtc_index,
             p if p == active_crtc_data => self.crtc_reg_read(),
 
-            0x3CB | 0x3CD => 0x00,
-
+            // Unimplemented ports.
+            0x3C0..=0x3DF => UNIMPLEMENTED_READ_VALUE,
             _ => UNIMPLEMENTED_READ_VALUE,
         }
     }

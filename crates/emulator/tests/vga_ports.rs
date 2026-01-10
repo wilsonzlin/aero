@@ -126,3 +126,12 @@ fn derived_state_detects_graphics_and_shift_controls() {
     assert_eq!(vga.derived_state().planar_shift, VgaPlanarShift::Shift256);
     assert_eq!(vga.derived_state().bpp_guess, 8);
 }
+
+#[test]
+fn unimplemented_vga_ports_return_ff() {
+    let vga = VgaDevice::new();
+
+    // 0x3CB/0x3CD are reserved/unassigned in standard VGA I/O maps.
+    assert_eq!(vga.port_read(0x3CB, 1) as u8, 0xFF);
+    assert_eq!(vga.port_read(0x3CD, 1) as u8, 0xFF);
+}
