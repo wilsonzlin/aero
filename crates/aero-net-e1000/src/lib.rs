@@ -14,6 +14,10 @@ use std::collections::{HashMap, VecDeque};
 
 use memory::MemoryBus;
 
+mod offload;
+
+use offload::{apply_checksum_offload, tso_segment, TxChecksumFlags, TxOffloadContext};
+
 /// Size of the E1000 MMIO BAR.
 pub const E1000_MMIO_SIZE: u32 = 0x20_000;
 
@@ -90,8 +94,15 @@ const TCTL_EN: u32 = 1 << 1;
 
 // TX descriptor bits (legacy).
 const TXD_CMD_EOP: u8 = 1 << 0;
+const TXD_CMD_IC: u8 = 1 << 2;
 const TXD_CMD_RS: u8 = 1 << 3;
+const TXD_CMD_DEXT: u8 = 1 << 5;
+const TXD_CMD_TSE: u8 = 1 << 7;
 const TXD_STAT_DD: u8 = 1 << 0;
+
+// TX descriptor "DTYP" field (advanced).
+const TXD_DTYP_CTXT: u8 = 0x2;
+const TXD_DTYP_DATA: u8 = 0x3;
 
 // RX descriptor bits (legacy).
 const RXD_STAT_DD: u8 = 1 << 0;
@@ -170,6 +181,104 @@ impl TxDesc {
         bytes[14..16].copy_from_slice(&self.special.to_le_bytes());
         bytes
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TxContextDesc {
+    ipcss: u8,
+    ipcso: u8,
+    ipcse: u16,
+    tucss: u8,
+    tucso: u8,
+    tucse: u16,
+    mss: u16,
+    hdr_len: u8,
+    cmd: u8,
+    tcp_hdr_len: u8,
+}
+
+impl TxContextDesc {
+    fn from_bytes(bytes: [u8; TxDesc::LEN]) -> Self {
+        Self {
+            ipcss: bytes[0],
+            ipcso: bytes[1],
+            ipcse: u16::from_le_bytes(bytes[2..4].try_into().unwrap()),
+            tucss: bytes[4],
+            tucso: bytes[5],
+            tucse: u16::from_le_bytes(bytes[6..8].try_into().unwrap()),
+            mss: u16::from_le_bytes(bytes[12..14].try_into().unwrap()),
+            hdr_len: bytes[14],
+            cmd: bytes[11],
+            tcp_hdr_len: bytes[15],
+        }
+    }
+}
+
+impl From<TxContextDesc> for TxOffloadContext {
+    fn from(value: TxContextDesc) -> Self {
+        Self {
+            ipcss: value.ipcss as usize,
+            ipcso: value.ipcso as usize,
+            ipcse: value.ipcse as usize,
+            tucss: value.tucss as usize,
+            tucso: value.tucso as usize,
+            tucse: value.tucse as usize,
+            mss: value.mss as usize,
+            hdr_len: value.hdr_len as usize,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TxDataDesc {
+    buffer_addr: u64,
+    length: u16,
+    cmd: u8,
+    status: u8,
+    popts: u8,
+    special: u16,
+}
+
+impl TxDataDesc {
+    fn from_bytes(bytes: [u8; TxDesc::LEN]) -> Self {
+        Self {
+            buffer_addr: u64::from_le_bytes(bytes[0..8].try_into().unwrap()),
+            length: u16::from_le_bytes(bytes[8..10].try_into().unwrap()),
+            cmd: bytes[11],
+            status: bytes[12],
+            popts: bytes[13],
+            special: u16::from_le_bytes(bytes[14..16].try_into().unwrap()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TxDescriptor {
+    Legacy(TxDesc),
+    Context(TxContextDesc),
+    Data(TxDataDesc),
+}
+
+impl TxDescriptor {
+    fn parse(bytes: [u8; TxDesc::LEN]) -> Option<Self> {
+        let cmd = bytes[11];
+        if (cmd & TXD_CMD_DEXT) == 0 {
+            return Some(Self::Legacy(TxDesc::from_bytes(bytes)));
+        }
+
+        let dtyp = bytes[10] >> 4;
+        match dtyp {
+            TXD_DTYP_CTXT => Some(Self::Context(TxContextDesc::from_bytes(bytes))),
+            TXD_DTYP_DATA => Some(Self::Data(TxDataDesc::from_bytes(bytes))),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TxPacketState {
+    Legacy { cmd: u8, css: usize, cso: usize },
+    Advanced { cmd: u8, popts: u8 },
 }
 
 fn read_desc<const N: usize>(mem: &mut dyn MemoryBus, addr: u64) -> [u8; N] {
@@ -317,6 +426,8 @@ pub struct E1000Device {
     tdh: u32,
     tdt: u32,
     tx_partial: Vec<u8>,
+    tx_ctx: TxOffloadContext,
+    tx_state: Option<TxPacketState>,
 
     mac_addr: [u8; 6],
     eeprom: [u16; 64],
@@ -353,6 +464,8 @@ impl E1000Device {
             tdh: 0,
             tdt: 0,
             tx_partial: Vec::new(),
+            tx_ctx: TxOffloadContext::default(),
+            tx_state: None,
             mac_addr,
             eeprom: [0xFFFF; 64],
             phy: [0; 32],
@@ -518,6 +631,8 @@ impl E1000Device {
         self.tdh = 0;
         self.tdt = 0;
         self.tx_partial.clear();
+        self.tx_ctx = TxOffloadContext::default();
+        self.tx_state = None;
 
         self.other_regs.clear();
         self.rx_pending.clear();
@@ -786,27 +901,160 @@ impl E1000Device {
         while self.tdh != self.tdt {
             let idx = (self.tdh % desc_count) as u64;
             let desc_addr = base + idx * TxDesc::LEN as u64;
-            let desc_bytes = read_desc::<{ TxDesc::LEN }>(mem, desc_addr);
-            let mut desc = TxDesc::from_bytes(desc_bytes);
+            let mut desc_bytes = read_desc::<{ TxDesc::LEN }>(mem, desc_addr);
 
-            if desc.buffer_addr != 0 && desc.length != 0 {
-                let mut buf = vec![0u8; desc.length as usize];
-                mem.read_physical(desc.buffer_addr, &mut buf);
-                self.tx_partial.extend_from_slice(&buf);
-            }
+            let Some(desc) = TxDescriptor::parse(desc_bytes) else {
+                // Unknown descriptor type; best-effort mark completion and move on.
+                desc_bytes[12] |= TXD_STAT_DD;
+                write_desc(mem, desc_addr, &desc_bytes);
+                self.tdh = (self.tdh + 1) % desc_count;
+                continue;
+            };
 
-            // Mark descriptor done.
-            desc.status |= TXD_STAT_DD;
-            write_desc(mem, desc_addr, &desc.to_bytes());
+            match desc {
+                TxDescriptor::Context(ctx_desc) => {
+                    self.tx_ctx = ctx_desc.into();
 
-            if (desc.cmd & TXD_CMD_RS) != 0 {
-                should_raise_txdw = true;
-            }
+                    if (ctx_desc.cmd & TXD_CMD_RS) != 0 {
+                        should_raise_txdw = true;
+                    }
 
-            let eop = (desc.cmd & TXD_CMD_EOP) != 0;
-            if eop {
-                if !self.tx_partial.is_empty() {
-                    self.tx_out.push_back(std::mem::take(&mut self.tx_partial));
+                    // Context descriptors have a different upper dword layout. We
+                    // best-effort mark completion in the last byte without
+                    // clobbering MSS/hdr_len.
+                    desc_bytes[15] |= TXD_STAT_DD;
+                    write_desc(mem, desc_addr, &desc_bytes);
+                }
+                TxDescriptor::Legacy(mut desc) => {
+                    match self.tx_state {
+                        None => {
+                            self.tx_state = Some(TxPacketState::Legacy {
+                                cmd: desc.cmd,
+                                css: desc.css as usize,
+                                cso: desc.cso as usize,
+                            });
+                        }
+                        Some(TxPacketState::Legacy {
+                            ref mut cmd,
+                            ref mut css,
+                            ref mut cso,
+                        }) => {
+                            *cmd |= desc.cmd;
+                            *css = desc.css as usize;
+                            *cso = desc.cso as usize;
+                        }
+                        Some(TxPacketState::Advanced { .. }) => {
+                            self.tx_partial.clear();
+                            self.tx_state = Some(TxPacketState::Legacy {
+                                cmd: desc.cmd,
+                                css: desc.css as usize,
+                                cso: desc.cso as usize,
+                            });
+                        }
+                    }
+
+                    if desc.buffer_addr != 0 && desc.length != 0 {
+                        let mut buf = vec![0u8; desc.length as usize];
+                        mem.read_physical(desc.buffer_addr, &mut buf);
+                        self.tx_partial.extend_from_slice(&buf);
+                    }
+
+                    desc.status |= TXD_STAT_DD;
+                    write_desc(mem, desc_addr, &desc.to_bytes());
+
+                    if (desc.cmd & TXD_CMD_RS) != 0 {
+                        should_raise_txdw = true;
+                    }
+
+                    if (desc.cmd & TXD_CMD_EOP) != 0 {
+                        let Some(TxPacketState::Legacy { cmd, css, cso }) = self.tx_state.take() else {
+                            self.tx_partial.clear();
+                            self.tx_state = None;
+                            self.tdh = (self.tdh + 1) % desc_count;
+                            continue;
+                        };
+
+                        if !self.tx_partial.is_empty() {
+                            use nt_packetlib::io::net::packet::checksum::internet_checksum;
+
+                            let mut frame = std::mem::take(&mut self.tx_partial);
+                            if (cmd & TXD_CMD_IC) != 0 && css < frame.len() && cso + 2 <= frame.len() {
+                                frame[cso..cso + 2].fill(0);
+                                let csum = internet_checksum(&frame[css..]);
+                                frame[cso..cso + 2].copy_from_slice(&csum.to_be_bytes());
+                            }
+
+                            self.tx_out.push_back(frame);
+                        }
+                    }
+                }
+                TxDescriptor::Data(desc) => {
+                    match self.tx_state {
+                        None => {
+                            self.tx_state = Some(TxPacketState::Advanced {
+                                cmd: desc.cmd,
+                                popts: desc.popts,
+                            });
+                        }
+                        Some(TxPacketState::Advanced {
+                            ref mut cmd,
+                            ref mut popts,
+                        }) => {
+                            *cmd |= desc.cmd;
+                            *popts |= desc.popts;
+                        }
+                        Some(TxPacketState::Legacy { .. }) => {
+                            self.tx_partial.clear();
+                            self.tx_state = Some(TxPacketState::Advanced {
+                                cmd: desc.cmd,
+                                popts: desc.popts,
+                            });
+                        }
+                    }
+
+                    if desc.buffer_addr != 0 && desc.length != 0 {
+                        let mut buf = vec![0u8; desc.length as usize];
+                        mem.read_physical(desc.buffer_addr, &mut buf);
+                        self.tx_partial.extend_from_slice(&buf);
+                    }
+
+                    desc_bytes[12] |= TXD_STAT_DD;
+                    write_desc(mem, desc_addr, &desc_bytes);
+
+                    if (desc.cmd & TXD_CMD_RS) != 0 {
+                        should_raise_txdw = true;
+                    }
+
+                    if (desc.cmd & TXD_CMD_EOP) != 0 {
+                        let Some(TxPacketState::Advanced { cmd, popts }) = self.tx_state.take() else {
+                            self.tx_partial.clear();
+                            self.tx_state = None;
+                            self.tdh = (self.tdh + 1) % desc_count;
+                            continue;
+                        };
+
+                        if !self.tx_partial.is_empty() {
+                            let flags = TxChecksumFlags::from_popts(popts);
+                            let mut frame = std::mem::take(&mut self.tx_partial);
+
+                            if (cmd & TXD_CMD_TSE) != 0 {
+                                match tso_segment(&frame, self.tx_ctx, flags) {
+                                    Ok(frames) => {
+                                        for frame in frames {
+                                            self.tx_out.push_back(frame);
+                                        }
+                                    }
+                                    Err(_) => {
+                                        let _ = apply_checksum_offload(&mut frame, self.tx_ctx, flags);
+                                        self.tx_out.push_back(frame);
+                                    }
+                                }
+                            } else {
+                                let _ = apply_checksum_offload(&mut frame, self.tx_ctx, flags);
+                                self.tx_out.push_back(frame);
+                            }
+                        }
+                    }
                 }
             }
 

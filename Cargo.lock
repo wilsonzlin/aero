@@ -287,6 +287,7 @@ name = "aero-net-e1000"
 version = "0.1.0"
 dependencies = [
  "memory",
+ "nt-packetlib",
 ]
 
 [[package]]

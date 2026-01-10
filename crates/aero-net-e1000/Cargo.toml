@@ -12,3 +12,4 @@ default = []
 
 [dependencies]
 memory = { path = "../memory" }
+nt-packetlib = { path = "../nt-packetlib" }
