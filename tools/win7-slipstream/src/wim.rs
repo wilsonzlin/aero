@@ -139,8 +139,12 @@ pub struct CertInfo {
 
 impl CertInfo {
     pub fn from_path(path: &Path) -> Result<Self> {
-        let bytes = fs::read(path).with_context(|| format!("Failed to read cert: {}", path.display()))?;
-        let der = if bytes.starts_with(b"-----BEGIN") {
+        let bytes = fs::read(path)
+            .with_context(|| format!("Failed to read cert: {}", path.display()))?;
+        let der = if bytes
+            .windows(b"-----BEGIN CERTIFICATE-----".len())
+            .any(|w| w == b"-----BEGIN CERTIFICATE-----")
+        {
             pem_to_der(&bytes).context("Failed to parse PEM certificate")?
         } else {
             bytes

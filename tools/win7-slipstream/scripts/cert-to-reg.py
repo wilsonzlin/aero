@@ -38,8 +38,9 @@ from pathlib import Path
 def _read_cert_der(cert_path: Path) -> bytes:
     raw = cert_path.read_bytes()
 
-    # Heuristic: treat anything starting with ASCII PEM header as PEM.
-    if raw.startswith(b"-----BEGIN"):
+    # Heuristic: treat anything containing an ASCII PEM certificate header as PEM.
+    # This is tolerant of UTF-8 BOMs or other leading bytes before the header.
+    if b"-----BEGIN CERTIFICATE-----" in raw:
         text = raw.decode("ascii", errors="strict")
         m = re.search(
             r"-----BEGIN CERTIFICATE-----\s*(?P<b64>[A-Za-z0-9+/=\s]+?)\s*-----END CERTIFICATE-----",
