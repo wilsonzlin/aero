@@ -9,6 +9,7 @@ thiserror = "2.0.17"
 
 [dev-dependencies]
 rand = "0.8.5"
+rand_chacha = "0.3"
 wasmparser = "0.244.0"
 wasmi = "1.0.7"
 wasmtime = "40.0.1"
