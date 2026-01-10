@@ -95,12 +95,18 @@ jobs:
 
   win7-virtio-portable-tests:
     name: Win7 virtio (portable tests)
+    needs: policy
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - name: Build + run virtio-pci cap parser tests
-        run: ./drivers/win7/virtio/tests/build_and_run.sh
+        run: |
+          set -euo pipefail
+          ./drivers/win7/virtio/tests/build_and_run.sh
+          if command -v clang >/dev/null 2>&1; then
+            CC=clang ./drivers/win7/virtio/tests/build_and_run.sh
+          fi
   qemu-boot:
     name: QEMU boot tests (boot sector + FreeDOS)
     needs: policy
