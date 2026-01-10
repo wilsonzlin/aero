@@ -12,6 +12,12 @@ set "BIN=%~dp0bin"
 set "RUNNER=%BIN%\\aerogpu_timeout_runner.exe"
 set /a FAILURES=0
 
+if exist "%RUNNER%" (
+  echo INFO: using timeout runner: %RUNNER% ^(timeout=%TIMEOUT_MS% ms^)
+) else (
+  echo INFO: timeout runner not found; running tests without enforced timeout
+)
+
 call :run_test d3d9ex_dwm_probe %*
 call :run_test dwm_flush_pacing %*
 call :run_test d3d9ex_triangle %*
