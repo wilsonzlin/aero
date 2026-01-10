@@ -672,25 +672,21 @@ impl DnsResolver {
     
     pub async fn resolve_doh(&self, hostname: &str) -> Result<Ipv4Addr> {
         // Use Aero Gateway DNS-over-HTTPS (first-party).
-        // Prefer `/dns-query` for raw DNS messages; `/dns-json` is an optional
-        // convenience endpoint for A/AAAA lookups and debugging.
-        let url = format!(
-            "{}/dns-json?name={}&type=A",
-            self.gateway_url,
-            hostname
-        );
+        // Canonical DoH: `/dns-query` (RFC 8484, `application/dns-message`).
+        //
+        // Note: some deployments may also expose `/dns-json` for simple lookups,
+        // but clients should not depend on it (it is not required for DoH).
+        let query = self.build_query_message(hostname, RecordType::A)?;
+        let dns = base64url_encode(&query);
+        let url = format!("{}/dns-query?dns={}", self.gateway_url, dns);
         
         let response = fetch(&url, FetchOptions {
-            headers: vec![("Accept".to_string(), "application/dns-json".to_string())],
+            headers: vec![("Accept".to_string(), "application/dns-message".to_string())],
         }).await?;
         
-        let json: DnsJsonResponse = response.json().await?;
-        
-        if let Some(answer) = json.answer.first() {
-            Ok(answer.data.parse()?)
-        } else {
-            Err(Error::DnsResolutionFailed)
-        }
+        let bytes = response.bytes().await?;
+        let ip = parse_first_a_record(&bytes)?;
+        Ok(ip)
     }
 }
 ```
