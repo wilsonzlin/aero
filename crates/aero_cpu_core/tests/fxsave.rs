@@ -1,4 +1,12 @@
-use aero_cpu_core::{sse_state::MXCSR_MASK, Bus, CpuState, RamBus, FXSAVE_AREA_SIZE};
+use aero_cpu_core::{
+    mem::{CpuBus as MemCpuBus, FlatTestBus},
+    sse_state::MXCSR_MASK,
+    Bus,
+    CpuState,
+    Exception,
+    RamBus,
+    FXSAVE_AREA_SIZE,
+};
 
 const ST80_MASK: u128 = (1u128 << 80) - 1;
 const FSW_TOP_MASK: u16 = 0b111 << 11;
@@ -273,4 +281,50 @@ fn ldmxcsr_bus_rejects_reserved_bits() {
     bus.write_u32(0, MXCSR_MASK | (1 << 31));
     assert!(cpu.ldmxcsr_from_bus(&mut bus, 0).is_err());
     assert_eq!(cpu, snapshot);
+}
+
+#[test]
+fn fxsave_to_mem_writes_same_image_as_fxsave() {
+    let mut cpu = CpuState::default();
+    cpu.fpu.fcw = 0x4242;
+    cpu.sse.mxcsr = 0x1F80;
+
+    let mut expected = [0u8; FXSAVE_AREA_SIZE];
+    cpu.fxsave(&mut expected);
+
+    let mut bus = FlatTestBus::new(4096);
+    let base = 0x100u64;
+    cpu.fxsave_to_mem(&mut bus, base).unwrap();
+    assert_eq!(bus.slice(base, FXSAVE_AREA_SIZE), &expected);
+}
+
+#[test]
+fn fxrstor_from_mem_restores_state() {
+    let mut original = CpuState::default();
+    original.fpu.fcw = 0x1111;
+    original.fpu.fsw = 0x2222 & !FSW_TOP_MASK;
+    original.fpu.top = 6;
+    original.fpu.ftw = 0x0F;
+    original.sse.mxcsr = 0x1F80;
+    original.sse.xmm[0] = patterned_u128(0x42);
+
+    let mut image = [0u8; FXSAVE_AREA_SIZE];
+    original.fxsave(&mut image);
+
+    let mut bus = FlatTestBus::new(4096);
+    let base = 0x200u64;
+    bus.load(base, &image);
+
+    let mut restored = CpuState::default();
+    restored.fxrstor_from_mem(&mut bus, base).unwrap();
+    assert_eq!(restored, original);
+}
+
+#[test]
+fn ldmxcsr_from_mem_returns_gp0_on_reserved_bits() {
+    let mut cpu = CpuState::default();
+    let mut bus = FlatTestBus::new(16);
+    bus.write_u32(0, MXCSR_MASK | (1 << 31)).unwrap();
+
+    assert_eq!(cpu.ldmxcsr_from_mem(&mut bus, 0).unwrap_err(), Exception::gp0());
 }

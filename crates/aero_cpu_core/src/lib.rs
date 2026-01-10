@@ -117,6 +117,13 @@ pub enum FxStateError {
     MxcsrReservedBits { value: u32, mask: u32 },
 }
 
+impl From<FxStateError> for Exception {
+    fn from(_value: FxStateError) -> Self {
+        // Both `LDMXCSR` and `FXRSTOR` raise #GP(0) when MXCSR has reserved bits set.
+        Exception::gp0()
+    }
+}
+
 impl CpuState {
     pub fn new() -> Self {
         Self {
@@ -169,6 +176,15 @@ impl CpuState {
         bus.write_u32(addr, self.sse.mxcsr);
     }
 
+    /// `STMXCSR` convenience wrapper that writes MXCSR via [`mem::CpuBus`].
+    pub fn stmxcsr_to_mem<B: mem::CpuBus>(
+        &self,
+        bus: &mut B,
+        addr: u64,
+    ) -> Result<(), Exception> {
+        bus.write_u32(addr, self.sse.mxcsr)
+    }
+
     /// Implements `LDMXCSR m32`.
     pub fn ldmxcsr(&mut self, src: &[u8; 4]) -> Result<(), FxStateError> {
         self.sse.set_mxcsr(u32::from_le_bytes(*src))
@@ -178,6 +194,17 @@ impl CpuState {
     pub fn ldmxcsr_from_bus<B: Bus>(&mut self, bus: &mut B, addr: u64) -> Result<(), FxStateError> {
         let value = bus.read_u32(addr);
         self.sse.set_mxcsr(value)
+    }
+
+    /// `LDMXCSR` convenience wrapper that loads MXCSR via [`mem::CpuBus`].
+    pub fn ldmxcsr_from_mem<B: mem::CpuBus>(
+        &mut self,
+        bus: &mut B,
+        addr: u64,
+    ) -> Result<(), Exception> {
+        let value = bus.read_u32(addr)?;
+        self.sse.set_mxcsr(value)?;
+        Ok(())
     }
 
     /// Implements the legacy (32-bit) `FXSAVE m512byte` memory image.
@@ -229,6 +256,20 @@ impl CpuState {
         }
     }
 
+    /// `FXSAVE` convenience wrapper that writes the 512-byte image into guest memory via [`mem::CpuBus`].
+    pub fn fxsave_to_mem<B: mem::CpuBus>(
+        &self,
+        bus: &mut B,
+        addr: u64,
+    ) -> Result<(), Exception> {
+        let mut image = [0u8; FXSAVE_AREA_SIZE];
+        self.fxsave(&mut image);
+        for (i, byte) in image.iter().copied().enumerate() {
+            bus.write_u8(addr + i as u64, byte)?;
+        }
+        Ok(())
+    }
+
     /// Implements the legacy (32-bit) `FXRSTOR m512byte` memory image.
     pub fn fxrstor(&mut self, src: &[u8; FXSAVE_AREA_SIZE]) -> Result<(), FxStateError> {
         // Intel SDM: if MXCSR is invalid (reserved bits set), `FXRSTOR` raises
@@ -278,6 +319,20 @@ impl CpuState {
         self.fxrstor(&image)
     }
 
+    /// `FXRSTOR` convenience wrapper that reads the 512-byte image from guest memory via [`mem::CpuBus`].
+    pub fn fxrstor_from_mem<B: mem::CpuBus>(
+        &mut self,
+        bus: &mut B,
+        addr: u64,
+    ) -> Result<(), Exception> {
+        let mut image = [0u8; FXSAVE_AREA_SIZE];
+        for i in 0..FXSAVE_AREA_SIZE {
+            image[i] = bus.read_u8(addr + i as u64)?;
+        }
+        self.fxrstor(&image)?;
+        Ok(())
+    }
+
     /// Implements the 64-bit `FXSAVE64 m512byte` memory image.
     pub fn fxsave64(&self, dst: &mut [u8; FXSAVE_AREA_SIZE]) {
         let mut out = [0u8; FXSAVE_AREA_SIZE];
@@ -317,6 +372,20 @@ impl CpuState {
         for (i, byte) in image.iter().copied().enumerate() {
             bus.write_u8(addr + i as u64, byte);
         }
+    }
+
+    /// `FXSAVE64` convenience wrapper that writes the 512-byte image into guest memory via [`mem::CpuBus`].
+    pub fn fxsave64_to_mem<B: mem::CpuBus>(
+        &self,
+        bus: &mut B,
+        addr: u64,
+    ) -> Result<(), Exception> {
+        let mut image = [0u8; FXSAVE_AREA_SIZE];
+        self.fxsave64(&mut image);
+        for (i, byte) in image.iter().copied().enumerate() {
+            bus.write_u8(addr + i as u64, byte)?;
+        }
+        Ok(())
     }
 
     /// Implements the 64-bit `FXRSTOR64 m512byte` memory image.
@@ -363,6 +432,20 @@ impl CpuState {
             image[i] = bus.read_u8(addr + i as u64);
         }
         self.fxrstor64(&image)
+    }
+
+    /// `FXRSTOR64` convenience wrapper that reads the 512-byte image from guest memory via [`mem::CpuBus`].
+    pub fn fxrstor64_from_mem<B: mem::CpuBus>(
+        &mut self,
+        bus: &mut B,
+        addr: u64,
+    ) -> Result<(), Exception> {
+        let mut image = [0u8; FXSAVE_AREA_SIZE];
+        for i in 0..FXSAVE_AREA_SIZE {
+            image[i] = bus.read_u8(addr + i as u64)?;
+        }
+        self.fxrstor64(&image)?;
+        Ok(())
     }
 }
 
