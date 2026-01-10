@@ -15,12 +15,18 @@ services:
       - "9001:9001" # Console UI
     volumes:
       - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   # One-shot bucket bootstrapper.
   minio-init:
     image: minio/mc:latest
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -55,7 +61,8 @@ services:
     image: nginx:alpine
     profiles: ["proxy"]
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     environment:
       S3_UPSTREAM: ${S3_UPSTREAM:-minio:9000}
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:5173}
@@ -72,7 +79,8 @@ services:
     image: minio/mc:latest
     profiles: ["tools"]
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
