@@ -1,7 +1,11 @@
 use std::sync::{Arc, Mutex};
 
-use aero_devices::apic::{IoApic, IoApicId, LocalApic, IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE};
+use aero_devices::apic::{
+    IoApic, IoApicId, LocalApic, IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE,
+    LAPIC_MMIO_SIZE,
+};
 use emulator::devices::ioapic::IoApicMmio;
+use emulator::devices::lapic::LapicMmio;
 use emulator::memory_bus::MemoryBus;
 use memory::DenseMemory;
 
@@ -20,10 +24,18 @@ fn ioapic_mmio_programming_via_system_bus() {
     let ioapic = Arc::new(Mutex::new(IoApic::new(IoApicId(0), lapic.clone())));
 
     bus.add_mmio_region(
+        LAPIC_MMIO_BASE,
+        LAPIC_MMIO_SIZE,
+        Box::new(LapicMmio::new(lapic.clone())),
+    );
+    bus.add_mmio_region(
         IOAPIC_MMIO_BASE,
         IOAPIC_MMIO_SIZE,
         Box::new(IoApicMmio::new(ioapic.clone())),
     );
+
+    // Enable the LAPIC (SVR[8] = 1).
+    write_u32(&mut bus, LAPIC_MMIO_BASE + 0xF0, 1 << 8);
 
     // Configure GSI 5 -> vector 0x45, unmasked.
     let gsi = 5u32;
@@ -34,6 +46,5 @@ fn ioapic_mmio_programming_via_system_bus() {
     write_u32(&mut bus, IOAPIC_MMIO_BASE + 0x10, vector);
 
     ioapic.lock().unwrap().set_irq_level(gsi, true);
-    assert_eq!(lapic.pop_pending(), Some(vector as u8));
+    assert_eq!(lapic.get_pending_vector(), Some(vector as u8));
 }
-
