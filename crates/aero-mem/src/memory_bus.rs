@@ -284,7 +284,11 @@ impl MemoryBus {
             return Ok(());
         }
 
-        let _ = Self::checked_end(addr, dst.len())?;
+        let end = Self::checked_end(addr, dst.len())?;
+        if end <= self.ram.len() && self.overlapping_overlay(addr, end).is_none() {
+            self.ram.try_read_bytes(addr, dst)?;
+            return Ok(());
+        }
 
         let mut cur_addr = addr;
         let mut dst_offset = 0usize;
@@ -346,7 +350,11 @@ impl MemoryBus {
             return Ok(());
         }
 
-        let _ = Self::checked_end(addr, src.len())?;
+        let end = Self::checked_end(addr, src.len())?;
+        if end <= self.ram.len() && self.overlapping_overlay(addr, end).is_none() {
+            self.ram.try_write_bytes(addr, src)?;
+            return Ok(());
+        }
 
         let mut cur_addr = addr;
         let mut src_offset = 0usize;
@@ -486,52 +494,102 @@ impl MemoryBus {
     }
 
     pub fn try_read_u8(&self, addr: u64) -> Result<u8, MemoryBusError> {
+        let end = Self::checked_end(addr, 1)?;
+        if end <= self.ram.len() && self.find_overlay_idx(addr).is_none() {
+            return Ok(self.ram.try_read_u8(addr)?);
+        }
+
         let mut buf = [0u8; 1];
         self.try_read_bytes(addr, &mut buf)?;
         Ok(buf[0])
     }
 
     pub fn try_read_u16(&self, addr: u64) -> Result<u16, MemoryBusError> {
+        let end = Self::checked_end(addr, 2)?;
+        if end <= self.ram.len() && self.overlapping_overlay(addr, end).is_none() {
+            return Ok(self.ram.try_read_u16(addr)?);
+        }
+
         let mut buf = [0u8; 2];
         self.try_read_bytes(addr, &mut buf)?;
         Ok(u16::from_le_bytes(buf))
     }
 
     pub fn try_read_u32(&self, addr: u64) -> Result<u32, MemoryBusError> {
+        let end = Self::checked_end(addr, 4)?;
+        if end <= self.ram.len() && self.overlapping_overlay(addr, end).is_none() {
+            return Ok(self.ram.try_read_u32(addr)?);
+        }
+
         let mut buf = [0u8; 4];
         self.try_read_bytes(addr, &mut buf)?;
         Ok(u32::from_le_bytes(buf))
     }
 
     pub fn try_read_u64(&self, addr: u64) -> Result<u64, MemoryBusError> {
+        let end = Self::checked_end(addr, 8)?;
+        if end <= self.ram.len() && self.overlapping_overlay(addr, end).is_none() {
+            return Ok(self.ram.try_read_u64(addr)?);
+        }
+
         let mut buf = [0u8; 8];
         self.try_read_bytes(addr, &mut buf)?;
         Ok(u64::from_le_bytes(buf))
     }
 
     pub fn try_read_u128(&self, addr: u64) -> Result<u128, MemoryBusError> {
+        let end = Self::checked_end(addr, 16)?;
+        if end <= self.ram.len() && self.overlapping_overlay(addr, end).is_none() {
+            return Ok(self.ram.try_read_u128(addr)?);
+        }
+
         let mut buf = [0u8; 16];
         self.try_read_bytes(addr, &mut buf)?;
         Ok(u128::from_le_bytes(buf))
     }
 
     pub fn try_write_u8(&self, addr: u64, value: u8) -> Result<(), MemoryBusError> {
+        let end = Self::checked_end(addr, 1)?;
+        if end <= self.ram.len() && self.find_overlay_idx(addr).is_none() {
+            return Ok(self.ram.try_write_u8(addr, value)?);
+        }
+
         self.try_write_bytes(addr, &[value])
     }
 
     pub fn try_write_u16(&self, addr: u64, value: u16) -> Result<(), MemoryBusError> {
+        let end = Self::checked_end(addr, 2)?;
+        if end <= self.ram.len() && self.overlapping_overlay(addr, end).is_none() {
+            return Ok(self.ram.try_write_u16(addr, value)?);
+        }
+
         self.try_write_bytes(addr, &value.to_le_bytes())
     }
 
     pub fn try_write_u32(&self, addr: u64, value: u32) -> Result<(), MemoryBusError> {
+        let end = Self::checked_end(addr, 4)?;
+        if end <= self.ram.len() && self.overlapping_overlay(addr, end).is_none() {
+            return Ok(self.ram.try_write_u32(addr, value)?);
+        }
+
         self.try_write_bytes(addr, &value.to_le_bytes())
     }
 
     pub fn try_write_u64(&self, addr: u64, value: u64) -> Result<(), MemoryBusError> {
+        let end = Self::checked_end(addr, 8)?;
+        if end <= self.ram.len() && self.overlapping_overlay(addr, end).is_none() {
+            return Ok(self.ram.try_write_u64(addr, value)?);
+        }
+
         self.try_write_bytes(addr, &value.to_le_bytes())
     }
 
     pub fn try_write_u128(&self, addr: u64, value: u128) -> Result<(), MemoryBusError> {
+        let end = Self::checked_end(addr, 16)?;
+        if end <= self.ram.len() && self.overlapping_overlay(addr, end).is_none() {
+            return Ok(self.ram.try_write_u128(addr, value)?);
+        }
+
         self.try_write_bytes(addr, &value.to_le_bytes())
     }
 
