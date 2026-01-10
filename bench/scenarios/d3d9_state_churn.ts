@@ -65,7 +65,69 @@ function fakeDxbcToWgsl(stateKey) {
   return { wgsl, translationMs: elapsed };
 }
 
-async function tryRunWebGpu(ctx, params) {
+function dxbcBytesForStateKey(stateKey) {
+  // Not real DXBC; just a deterministic byte payload so we can exercise the
+  // persistent cache using the same keying strategy as the real emulator.
+  const buf = new ArrayBuffer(8);
+  const view = new DataView(buf);
+  // "DXBC" magic (little endian) + state key.
+  view.setUint32(0, 0x43425844, true);
+  view.setUint32(4, stateKey >>> 0, true);
+  return new Uint8Array(buf);
+}
+
+async function initPersistentShaderCache(uniqueStates) {
+  const g = /** @type {any} */ (globalThis);
+  const api = g.AeroPersistentGpuCache;
+  if (!api?.PersistentGpuCache || !api?.computeShaderCacheKey) {
+    return null;
+  }
+
+  /** @type {any} */
+  let cache = null;
+  try {
+    cache = await api.PersistentGpuCache.open({
+      shaderLimits: { maxEntries: 1024, maxBytes: 8 * 1024 * 1024 },
+      pipelineLimits: { maxEntries: 2048, maxBytes: 8 * 1024 * 1024 },
+    });
+  } catch {
+    return null;
+  }
+
+  // Real usage would include a capabilities hash derived from the WebGPU adapter
+  // and translation flags (half-pixel mode, etc). For this benchmark we use a
+  // stable constant to keep the cache shared across the WebGPU/WebGL2 paths.
+  const flags = { halfPixelCenter: false, capsHash: "bench-d3d9-state-churn-v1" };
+
+  /** @type {Map<number, string>} */
+  const shaderKeys = new Map();
+  /** @type {Map<number, string>} */
+  const wgslByStateKey = new Map();
+
+  await Promise.all(
+    Array.from({ length: uniqueStates }, (_, stateKey) =>
+      (async () => {
+        const key = await api.computeShaderCacheKey(dxbcBytesForStateKey(stateKey), flags);
+        shaderKeys.set(stateKey, key);
+        const hit = await cache.getShader(key);
+        if (hit && typeof hit.wgsl === "string") {
+          wgslByStateKey.set(stateKey, hit.wgsl);
+        }
+      })(),
+    ),
+  );
+
+  return {
+    api,
+    cache,
+    flags,
+    shaderKeys,
+    wgslByStateKey,
+    pendingWrites: /** @type {Promise<void>[]} */ ([]),
+  };
+}
+
+async function tryRunWebGpu(ctx, params, persistent) {
   if (!navigator.gpu) {
     return { status: "skipped", reason: "WebGPU not available", api: "webgpu", params };
   }
@@ -109,6 +171,33 @@ async function tryRunWebGpu(ctx, params) {
   /** @type {Promise<void>[]} */
   const pendingCompilation = [];
 
+  /** @type {Map<number, string>} */
+  const pipelineKeyByStateKey = new Map();
+  /** @type {Map<number, any>} */
+  const pipelineDescByStateKey = new Map();
+  if (persistent?.api?.computePipelineCacheKey && persistent?.shaderKeys) {
+    const VS_ID = "bench_vs_main_v1";
+    await Promise.all(
+      Array.from({ length: params.uniqueStates }, (_, stateKey) =>
+        (async () => {
+          const shaderKey = persistent.shaderKeys.get(stateKey) ?? null;
+          const blendEnabled = (stateKey & 1) !== 0;
+          const desc = {
+            kind: "render",
+            format,
+            topology: "triangle-list",
+            blendEnabled,
+            vertex: { shaderId: VS_ID, entryPoint: "vs_main" },
+            fragment: { shaderKey, entryPoint: "fs_main" },
+          };
+          const pkey = await persistent.api.computePipelineCacheKey(desc);
+          pipelineDescByStateKey.set(stateKey, desc);
+          pipelineKeyByStateKey.set(stateKey, pkey);
+        })(),
+      ),
+    );
+  }
+
   function getPipeline(stateKey) {
     const cached = pipelineCache.get(stateKey);
     if (cached) {
@@ -117,7 +206,18 @@ async function tryRunWebGpu(ctx, params) {
     }
     ctx.telemetry.recordPipelineCacheMiss();
 
-    const { wgsl, translationMs } = fakeDxbcToWgsl(stateKey);
+    let wgsl = persistent?.wgslByStateKey?.get(stateKey);
+    let translationMs = 0;
+    if (typeof wgsl !== "string") {
+      const translated = fakeDxbcToWgsl(stateKey);
+      wgsl = translated.wgsl;
+      translationMs = translated.translationMs;
+      persistent?.wgslByStateKey?.set(stateKey, wgsl);
+      const key = persistent?.shaderKeys?.get(stateKey);
+      if (key && persistent?.cache) {
+        persistent.pendingWrites.push(persistent.cache.putShader(key, { wgsl, reflection: {} }));
+      }
+    }
     ctx.telemetry.recordShaderTranslationMs(translationMs);
 
     // Shader compilation is asynchronous in most implementations. Record the
@@ -163,6 +263,14 @@ async function tryRunWebGpu(ctx, params) {
       entries: pipelineCache.size,
       sizeBytes: pipelineCache.size * estimatedPipelineBytes,
     });
+
+    const pipelineKey = pipelineKeyByStateKey.get(stateKey);
+    if (pipelineKey && persistent?.cache && !persistent.cache.pipelineDescriptors?.has(pipelineKey)) {
+      const desc = pipelineDescByStateKey.get(stateKey);
+      if (desc) {
+        persistent.pendingWrites.push(persistent.cache.putPipelineDescriptor(pipelineKey, desc));
+      }
+    }
     return pipeline;
   }
 
@@ -211,7 +319,7 @@ async function tryRunWebGpu(ctx, params) {
   return { status: "ok", api: "webgpu", params };
 }
 
-function tryRunWebGl2(ctx, params) {
+function tryRunWebGl2(ctx, params, persistent) {
   const gl = ctx.canvas.getContext("webgl2", { alpha: false, antialias: false, depth: false, stencil: false });
   if (!gl) {
     return { status: "skipped", reason: "WebGL2 context unavailable", api: "webgl2", params };
@@ -240,7 +348,18 @@ function tryRunWebGl2(ctx, params) {
     }
     ctx.telemetry.recordPipelineCacheMiss();
 
-    const { wgsl, translationMs } = fakeDxbcToWgsl(stateKey);
+    let wgsl = persistent?.wgslByStateKey?.get(stateKey);
+    let translationMs = 0;
+    if (typeof wgsl !== "string") {
+      const translated = fakeDxbcToWgsl(stateKey);
+      wgsl = translated.wgsl;
+      translationMs = translated.translationMs;
+      persistent?.wgslByStateKey?.set(stateKey, wgsl);
+      const key = persistent?.shaderKeys?.get(stateKey);
+      if (key && persistent?.cache) {
+        persistent.pendingWrites.push(persistent.cache.putShader(key, { wgsl, reflection: {} }));
+      }
+    }
     ctx.telemetry.recordShaderTranslationMs(translationMs);
 
     // Convert our tiny WGSL-like output into a simple WebGL fragment shader by
@@ -315,10 +434,17 @@ export const scenario = {
     ctx.canvas.width = params.width;
     ctx.canvas.height = params.height;
 
-    const webgpu = await tryRunWebGpu(ctx, params);
-    if (webgpu.status === "ok") return webgpu;
-
-    return await tryRunWebGl2(ctx, params);
+    const persistent = await initPersistentShaderCache(params.uniqueStates);
+    try {
+      const webgpu = await tryRunWebGpu(ctx, params, persistent);
+      if (webgpu.status === "ok") return webgpu;
+      return await tryRunWebGl2(ctx, params, persistent);
+    } finally {
+      if (persistent) {
+        await Promise.allSettled(persistent.pendingWrites);
+        await persistent.cache.close();
+      }
+    }
   },
 };
 

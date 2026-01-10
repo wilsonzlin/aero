@@ -706,3 +706,24 @@ export async function compileWgslModule(device, wgsl) {
   }
   return { module, ok: true };
 }
+
+// Optional global registration to make it easy for benchmark pages and ad-hoc
+// debugging to access the implementation without a bundler.
+if (typeof globalThis !== "undefined") {
+  const g = /** @type {any} */ (globalThis);
+  if (!g.AeroPersistentGpuCache) {
+    g.AeroPersistentGpuCache = {
+      PersistentGpuCache,
+      computeShaderCacheKey,
+      computePipelineCacheKey,
+      compileWgslModule,
+      sha256Hex,
+    };
+  } else {
+    g.AeroPersistentGpuCache.PersistentGpuCache ??= PersistentGpuCache;
+    g.AeroPersistentGpuCache.computeShaderCacheKey ??= computeShaderCacheKey;
+    g.AeroPersistentGpuCache.computePipelineCacheKey ??= computePipelineCacheKey;
+    g.AeroPersistentGpuCache.compileWgslModule ??= compileWgslModule;
+    g.AeroPersistentGpuCache.sha256Hex ??= sha256Hex;
+  }
+}
