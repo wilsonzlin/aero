@@ -7,6 +7,8 @@
 use std::collections::VecDeque;
 use std::net::Ipv4Addr;
 
+use super::NetworkBackend;
+
 pub mod arp;
 pub mod dhcp;
 pub mod dns;
@@ -203,7 +205,10 @@ impl<U: DnsUpstream> NetworkStack<U> {
             }
             ProxyEvent::TcpData { conn_id, data } => {
                 if let Some(guest_mac) = self.guest_mac {
-                    for frame in self.tcp.on_proxy_data(conn_id, &data, guest_mac, self.cfg.gateway_mac) {
+                    for frame in
+                        self.tcp
+                            .on_proxy_data(conn_id, &data, guest_mac, self.cfg.gateway_mac)
+                    {
                         self.pending_frames.push_back(frame);
                     }
                 }
@@ -211,7 +216,8 @@ impl<U: DnsUpstream> NetworkStack<U> {
             ProxyEvent::TcpClosed { conn_id } => {
                 if let Some(guest_mac) = self.guest_mac {
                     let (frames, closed) =
-                        self.tcp.on_proxy_closed(conn_id, guest_mac, self.cfg.gateway_mac);
+                        self.tcp
+                            .on_proxy_closed(conn_id, guest_mac, self.cfg.gateway_mac);
                     for frame in frames {
                         self.pending_frames.push_back(frame);
                     }
@@ -220,8 +226,13 @@ impl<U: DnsUpstream> NetworkStack<U> {
             }
             ProxyEvent::UdpData { flow_id, data } => {
                 if let Some(guest_mac) = self.guest_mac {
-                    if let Some(frame) = self.udp.on_proxy_data(flow_id, &data, guest_mac, self.cfg.gateway_mac, self.cfg.guest_ip)
-                    {
+                    if let Some(frame) = self.udp.on_proxy_data(
+                        flow_id,
+                        &data,
+                        guest_mac,
+                        self.cfg.gateway_mac,
+                        self.cfg.guest_ip,
+                    ) {
                         self.pending_frames.push_back(frame);
                     }
                 }
@@ -280,7 +291,12 @@ impl<U: DnsUpstream> NetworkStack<U> {
                     .protocol(ipv4::IpProtocol::Icmp)
                     .payload(reply)
                     .build();
-                let frame = ethernet::build_ethernet_frame(guest_mac, self.cfg.gateway_mac, EtherType::Ipv4, &ip_reply);
+                let frame = ethernet::build_ethernet_frame(
+                    guest_mac,
+                    self.cfg.gateway_mac,
+                    EtherType::Ipv4,
+                    &ip_reply,
+                );
                 self.pending_frames.push_back(frame);
             }
         }
@@ -297,18 +313,34 @@ impl<U: DnsUpstream> NetworkStack<U> {
         if udp.dst_port == 67 && udp.src_port == 68 {
             if let Some(dhcp_reply) = self.dhcp.handle_message(udp.payload, src_mac) {
                 if let Some(guest_mac) = self.guest_mac {
-                    let udp_reply = UdpDatagram::build(67, 68, &dhcp_reply, self.cfg.gateway_ip, Ipv4Addr::new(255, 255, 255, 255));
+                    let udp_reply = UdpDatagram::build(
+                        67,
+                        68,
+                        &dhcp_reply,
+                        self.cfg.gateway_ip,
+                        Ipv4Addr::new(255, 255, 255, 255),
+                    );
                     let ip_reply = ipv4::Ipv4PacketBuilder::new()
                         .src(self.cfg.gateway_ip)
                         .dst(Ipv4Addr::new(255, 255, 255, 255))
                         .protocol(ipv4::IpProtocol::Udp)
                         .payload(udp_reply)
                         .build();
-                    let frame = ethernet::build_ethernet_frame(MacAddr::BROADCAST, self.cfg.gateway_mac, EtherType::Ipv4, &ip_reply);
+                    let frame = ethernet::build_ethernet_frame(
+                        MacAddr::BROADCAST,
+                        self.cfg.gateway_mac,
+                        EtherType::Ipv4,
+                        &ip_reply,
+                    );
                     // Also send unicast to the guest if we know it; some stacks accept only unicast.
                     self.pending_frames.push_back(frame);
                     if guest_mac != MacAddr::BROADCAST {
-                        let frame2 = ethernet::build_ethernet_frame(guest_mac, self.cfg.gateway_mac, EtherType::Ipv4, &ip_reply);
+                        let frame2 = ethernet::build_ethernet_frame(
+                            guest_mac,
+                            self.cfg.gateway_mac,
+                            EtherType::Ipv4,
+                            &ip_reply,
+                        );
                         self.pending_frames.push_back(frame2);
                     }
                 }
@@ -324,14 +356,20 @@ impl<U: DnsUpstream> NetworkStack<U> {
             }
             if let Some(resp) = resp {
                 if let Some(guest_mac) = self.guest_mac {
-                    let udp_reply = UdpDatagram::build(53, udp.src_port, &resp, self.cfg.gateway_ip, ip.src);
+                    let udp_reply =
+                        UdpDatagram::build(53, udp.src_port, &resp, self.cfg.gateway_ip, ip.src);
                     let ip_reply = ipv4::Ipv4PacketBuilder::new()
                         .src(self.cfg.gateway_ip)
                         .dst(ip.src)
                         .protocol(ipv4::IpProtocol::Udp)
                         .payload(udp_reply)
                         .build();
-                    let frame = ethernet::build_ethernet_frame(guest_mac, self.cfg.gateway_mac, EtherType::Ipv4, &ip_reply);
+                    let frame = ethernet::build_ethernet_frame(
+                        guest_mac,
+                        self.cfg.gateway_mac,
+                        EtherType::Ipv4,
+                        &ip_reply,
+                    );
                     self.pending_frames.push_back(frame);
                 }
             }
@@ -387,5 +425,108 @@ impl<U: DnsUpstream> NetworkStack<U> {
             out.proxy_actions.push(action);
         }
         out
+    }
+}
+
+/// Adapter that lets the in-emulator [`NetworkStack`] act as a NIC [`NetworkBackend`].
+///
+/// The backend collects `frames_to_guest` and `proxy_actions` produced by the stack so that the
+/// emulator can forward them to the emulated NIC RX path and host-side proxy implementation.
+pub struct StackBackend<U: DnsUpstream> {
+    stack: NetworkStack<U>,
+    frames_to_guest: VecDeque<Vec<u8>>,
+    proxy_actions: VecDeque<ProxyAction>,
+}
+
+impl<U: DnsUpstream> StackBackend<U> {
+    pub fn new(stack: NetworkStack<U>) -> Self {
+        Self {
+            stack,
+            frames_to_guest: VecDeque::new(),
+            proxy_actions: VecDeque::new(),
+        }
+    }
+
+    pub fn stack(&self) -> &NetworkStack<U> {
+        &self.stack
+    }
+
+    pub fn stack_mut(&mut self) -> &mut NetworkStack<U> {
+        &mut self.stack
+    }
+
+    pub fn process_proxy_event(&mut self, event: ProxyEvent) {
+        let out = self.stack.process_proxy_event(event);
+        self.push_output(out);
+    }
+
+    pub fn drain_frames_to_guest(&mut self) -> Vec<Vec<u8>> {
+        self.frames_to_guest.drain(..).collect()
+    }
+
+    pub fn drain_proxy_actions(&mut self) -> Vec<ProxyAction> {
+        self.proxy_actions.drain(..).collect()
+    }
+
+    fn push_output(&mut self, out: StackOutput) {
+        self.frames_to_guest.extend(out.frames_to_guest);
+        self.proxy_actions.extend(out.proxy_actions);
+    }
+}
+
+impl<U: DnsUpstream> NetworkBackend for StackBackend<U> {
+    fn transmit(&mut self, frame: Vec<u8>) {
+        let out = self.stack.process_frame_from_guest(&frame);
+        self.push_output(out);
+    }
+}
+
+#[cfg(test)]
+mod backend_tests {
+    use super::arp::{ArpOp, ArpPacket};
+    use super::dns::{DnsAnswer, DnsUpstream};
+    use super::ethernet::{build_ethernet_frame, EtherType, EthernetFrame, MacAddr};
+    use super::*;
+
+    struct NoDns;
+
+    impl DnsUpstream for NoDns {
+        fn resolve_a(&mut self, _name: &str) -> Option<DnsAnswer> {
+            None
+        }
+    }
+
+    #[test]
+    fn stack_backend_transmit_queues_frames_to_guest() {
+        let cfg = NetConfig::default();
+        let guest_mac = MacAddr::new([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
+
+        let stack = NetworkStack::new(cfg.clone(), NoDns);
+        let mut backend = StackBackend::new(stack);
+
+        let arp = ArpPacket {
+            op: ArpOp::Request,
+            sender_mac: guest_mac,
+            sender_ip: cfg.guest_ip,
+            target_mac: MacAddr::new([0; 6]),
+            target_ip: cfg.gateway_ip,
+        };
+        let frame = build_ethernet_frame(
+            MacAddr::BROADCAST,
+            guest_mac,
+            EtherType::Arp,
+            &arp.serialize(),
+        );
+
+        backend.transmit(frame);
+
+        let frames = backend.drain_frames_to_guest();
+        assert_eq!(frames.len(), 1);
+        assert!(backend.drain_proxy_actions().is_empty());
+
+        let eth = EthernetFrame::parse(&frames[0]).unwrap();
+        assert_eq!(eth.dst, guest_mac);
+        assert_eq!(eth.src, cfg.gateway_mac);
+        assert_eq!(eth.ethertype, EtherType::Arp);
     }
 }
