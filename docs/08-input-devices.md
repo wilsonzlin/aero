@@ -2,7 +2,9 @@
 
 ## Overview
 
-Windows 7 requires keyboard, mouse, and optionally USB input device support. We must capture browser events and translate them to PS/2 or USB HID protocols.
+Windows 7 requires keyboard and mouse input. The baseline approach is to capture browser events and translate them into **legacy PS/2** (works out-of-the-box), or **USB HID** (also inbox, but requires a much larger emulation surface).
+
+For best performance and lowest complexity on the host side, we also plan a **paravirtualized virtio-input** path. This avoids USB controller emulation entirely, but requires a custom Windows 7 driver to surface the virtio device as standard HID keyboard/mouse devices.
 
 ---
 
@@ -32,13 +34,14 @@ Windows 7 requires keyboard, mouse, and optionally USB input device support. We 
 │  │    - Browser keyCode → PS/2 scancode                     │    │
 │  │    - Mouse movement → PS/2 packets                       │    │
 │  │    - USB HID report generation                           │    │
+│  │    - Browser events → virtio-input events                │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │       │                                                          │
 │       ▼                                                          │
-│  ┌────────────────────┐  ┌────────────────────┐                 │
-│  │   PS/2 Controller  │  │   USB Controller   │                 │
-│  │   (i8042)          │  │   (UHCI/EHCI)      │                 │
-│  └────────────────────┘  └────────────────────┘                 │
+│  ┌────────────────────┐  ┌────────────────────┐  ┌─────────────┐│
+│  │   PS/2 Controller  │  │   USB Controller   │  │ virtio-input ││
+│  │   (i8042)          │  │   (UHCI/EHCI)      │  │ (kbd + mouse)││
+│  └────────────────────┘  └────────────────────┘  └─────────────┘│
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -761,6 +764,80 @@ impl UsbHidKeyboard {
     }
 }
 ```
+
+---
+
+## Virtio-input (Paravirtualized Keyboard/Mouse)
+
+Virtio-input is the virtio device for input peripherals. Conceptually it is a stream of small typed events (similar to Linux `evdev`) delivered over virtqueues, rather than a full USB bus + endpoints + HID polling model.
+
+For Aero, virtio-input is the intended “fast path” for keyboard/mouse once a guest driver is available:
+
+- **Host side is simpler**: no USB host controller state machines, device enumeration, descriptors, periodic interrupt transfers, etc.
+- **Lower latency / easier batching**: we can push events as they happen (or coalesce them per frame) into a ring buffer and raise an interrupt, instead of modeling USB frames/microframes.
+- **Guest sees standard Windows input**: the custom virtio driver exposes a normal HID keyboard/mouse stack, so applications remain unaware of virtio.
+
+### Browser events → virtio-input events
+
+Virtio-input uses `virtio_input_event { type, code, value }` entries, with `EV_SYN` used to delimit a coherent “report” (similar to committing a packet).
+
+At a high level we map:
+
+- **Keyboard**
+  - `keydown` → `EV_KEY` + `KEY_*` + `value=1`
+  - `keyup` → `EV_KEY` + `KEY_*` + `value=0`
+  - End of report → `EV_SYN` + `SYN_REPORT` + `value=0`
+- **Mouse (relative, pointer-lock)**
+  - `mousemove` (`movementX/Y`) → `EV_REL` + `REL_X`/`REL_Y` + signed delta
+  - Wheel → `EV_REL` + `REL_WHEEL` (and optionally `REL_HWHEEL`)
+  - Buttons (`mousedown`/`mouseup`) → `EV_KEY` + `BTN_LEFT`/`BTN_RIGHT`/`BTN_MIDDLE`… + `value=1/0`
+  - End of report → `EV_SYN` + `SYN_REPORT` + `value=0`
+
+Compared to USB HID, this is essentially a direct “event injection” interface: the host translates browser input into a small fixed struct and places it in a queue.
+
+### Windows 7 guest driver model (HID minidriver)
+
+Windows 7 does not ship a virtio-input driver, so virtio-input requires a custom guest driver that speaks virtio and presents a HID device to the OS.
+
+Intended stack:
+
+```
+virtio-input device (PCI / virtqueues)
+  → our virtio-input KMDF HID minidriver
+    → hidclass.sys
+      → kbdhid.sys / mouhid.sys
+        → kbdclass.sys / mouclass.sys
+```
+
+Responsibilities of the virtio-input driver at a conceptual level:
+
+- Initialize the virtio device and negotiate features.
+- Provide buffers for the **eventq** (device → driver) and parse incoming `EV_KEY`/`EV_REL`/`EV_SYN`.
+- Convert virtio-input events into **HID input reports** and submit them up to `hidclass.sys`.
+- Accept **HID output reports** (keyboard LEDs) and emit virtio-input output events over the **statusq**.
+
+### Two-queue model (eventq + statusq) and LEDs
+
+Virtio-input uses two virtqueues:
+
+- **eventq**: host/device publishes input events (key presses, relative motion).
+- **statusq**: guest/driver publishes output events back to the host (primarily keyboard LED state like Caps Lock / Num Lock).
+
+For Aero, we should handle LED output events even if we don’t initially surface them to the browser UI. Keeping the round-trip correct avoids subtle guest driver behavior differences (e.g., toggling Caps Lock producing output reports that must be acknowledged).
+
+### Recommended device model: 2 virtio-input devices
+
+Emulate **two separate virtio-input devices**:
+
+1. A virtio-input **keyboard** that maps cleanly to a single HID keyboard top-level collection.
+2. A virtio-input **mouse** (relative) that maps cleanly to a single HID mouse top-level collection.
+
+This avoids composite HID device complexity and lets Windows naturally bind the inbox `kbdhid.sys` and `mouhid.sys` clients.
+
+### Testing notes
+
+- **Reference implementation**: validate the guest driver + device model in QEMU first using `virtio-keyboard-pci` and `virtio-mouse-pci` (or `virtio-tablet-pci` if experimenting with absolute coordinates).
+- **Windows 7 driver install**: plan on **test signing** for development (enable test mode and sign the KMDF driver with a test certificate) before tackling production signing/distribution.
 
 ---
 
