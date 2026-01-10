@@ -76,6 +76,56 @@ function StartType-FromStartValue($startValue) {
     }
 }
 
+function Get-ConfigManagerErrorMeaning($code) {
+    # Common subset of ConfigManagerErrorCode meanings for quick triage.
+    # See: https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-pnpentity
+    switch ($code) {
+        0 { return "OK" }
+        1 { return "Device is not configured correctly" }
+        10 { return "Device cannot start" }
+        12 { return "Not enough resources" }
+        14 { return "Device cannot work properly until restarted" }
+        18 { return "Drivers must be reinstalled" }
+        19 { return "Registry configuration is incomplete or damaged" }
+        22 { return "Device is disabled" }
+        24 { return "Device is not present / not working properly / drivers not installed" }
+        28 { return "Drivers for this device are not installed" }
+        31 { return "Device is not working properly; Windows cannot load required drivers" }
+        32 { return "Driver (service) is disabled" }
+        37 { return "Windows cannot initialize the device driver" }
+        39 { return "Windows cannot load the device driver (driver may be corrupted/missing)" }
+        43 { return "Windows has stopped this device (it reported problems)" }
+        52 { return "Windows cannot verify the digital signature for the drivers (Code 52)" }
+        default { return $null }
+    }
+}
+
+function Load-CertFromFile([string]$path) {
+    try {
+        return New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($path)
+    } catch {
+        return $null
+    }
+}
+
+function Find-CertInStore([string]$thumbprint, [string]$storeName, [string]$storeLocation) {
+    try {
+        $loc = [System.Security.Cryptography.X509Certificates.StoreLocation]::$storeLocation
+        $store = New-Object System.Security.Cryptography.X509Certificates.X509Store($storeName, $loc)
+        $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+        foreach ($cert in $store.Certificates) {
+            if ($cert.Thumbprint -and ($cert.Thumbprint.ToUpper() -eq $thumbprint.ToUpper())) {
+                $store.Close()
+                return $true
+            }
+        }
+        $store.Close()
+        return $false
+    } catch {
+        return $false
+    }
+}
+
 function ConvertTo-JsonCompat($obj) {
     try {
         [void][System.Reflection.Assembly]::LoadWithPartialName("System.Web.Extensions")
@@ -177,7 +227,7 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         [void]$sb.Append($report.overall.summary + $nl)
     }
 
-    foreach ($key in @("os","signature_mode","driver_packages","bound_devices","virtio_blk_service","smoke_disk","smoke_network","smoke_audio","smoke_input")) {
+    foreach ($key in @("os","kb3033929","certificate_store","signature_mode","driver_packages","bound_devices","virtio_blk_service","smoke_disk","smoke_network","smoke_audio","smoke_input")) {
         if (-not $report.checks.ContainsKey($key)) { continue }
         $chk = $report.checks[$key]
         [void]$sb.Append($nl)
@@ -219,7 +269,7 @@ $txtPath = Join-Path $outDir "report.txt"
 $report = @{
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "1.0.0"
+        version = "1.1.0"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -303,6 +353,120 @@ try {
     Add-Check "os" "OS + Architecture" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
+# --- Hotfix: KB3033929 (SHA-256 signature support) ---
+try {
+    $kb = Try-GetWmi "Win32_QuickFixEngineering" "HotFixID='KB3033929'"
+    $installed = $false
+    $kbInfo = $null
+    if ($kb) {
+        $installed = $true
+        $one = $kb | Select-Object -First 1
+        $kbInfo = @{
+            hotfix_id = "" + $one.HotFixID
+            description = "" + $one.Description
+            installed_on = "" + $one.InstalledOn
+            installed_by = "" + $one.InstalledBy
+        }
+    } else {
+        $kbInfo = @{
+            hotfix_id = "KB3033929"
+            installed = $false
+        }
+    }
+
+    $is64 = $false
+    if ($report.checks.ContainsKey("os") -and $report.checks.os.data -and $report.checks.os.data.architecture) {
+        $is64 = ("" + $report.checks.os.data.architecture) -match '64'
+    } else {
+        $is64 = ("" + $env:PROCESSOR_ARCHITECTURE) -match '64'
+    }
+
+    $kbStatus = "PASS"
+    $kbSummary = ""
+    $kbDetails = @()
+
+    if ($installed) {
+        $kbSummary = "KB3033929 is installed."
+    } else {
+        $kbSummary = "KB3033929 is NOT installed."
+        if ($is64) {
+            $kbStatus = "WARN"
+            $kbDetails += "Windows 7 x64 may require KB3033929 to validate SHA-256-signed driver catalogs (otherwise Device Manager Code 52)."
+        } else {
+            $kbDetails += "If your driver packages are SHA-256 signed, KB3033929 may still be required."
+        }
+    }
+
+    Add-Check "kb3033929" "Hotfix: KB3033929 (SHA-256 signatures)" $kbStatus $kbSummary $kbInfo $kbDetails
+} catch {
+    Add-Check "kb3033929" "Hotfix: KB3033929 (SHA-256 signatures)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
+# --- Certificate store (driver signing trust) ---
+try {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $certFiles = @()
+    $certFiles += (Get-ChildItem -Path $scriptDir -Filter *.cer -ErrorAction SilentlyContinue)
+    $certFiles += (Get-ChildItem -Path $scriptDir -Filter *.crt -ErrorAction SilentlyContinue)
+
+    $certResults = @()
+    foreach ($cf in $certFiles) {
+        $cert = Load-CertFromFile $cf.FullName
+        if (-not $cert) {
+            $certResults += @{
+                file = $cf.Name
+                status = "WARN"
+                error = "Unable to load certificate file."
+            }
+            continue
+        }
+
+        $thumb = "" + $cert.Thumbprint
+        $subj = "" + $cert.Subject
+        $rootLM = Find-CertInStore $thumb "Root" "LocalMachine"
+        $pubLM = Find-CertInStore $thumb "TrustedPublisher" "LocalMachine"
+
+        $certResults += @{
+            file = $cf.Name
+            thumbprint = $thumb
+            subject = $subj
+            not_after = $cert.NotAfter.ToUniversalTime().ToString("o")
+            local_machine_root = $rootLM
+            local_machine_trusted_publisher = $pubLM
+        }
+    }
+
+    $certStatus = "PASS"
+    $certSummary = ""
+    $certDetails = @()
+
+    if (-not $certFiles -or $certFiles.Count -eq 0) {
+        $certSummary = "No *.cer/*.crt found alongside verify.ps1; skipping certificate store verification."
+    } else {
+        $missing = @()
+        foreach ($cr in $certResults) {
+            if ($cr.status -eq "WARN") { $missing += $cr; continue }
+            if (-not $cr.local_machine_root -or -not $cr.local_machine_trusted_publisher) { $missing += $cr }
+        }
+
+        $certSummary = "Certificate file(s) found: " + $certFiles.Count
+        if ($missing.Count -gt 0) {
+            $certStatus = "WARN"
+            $certDetails += ($missing.Count.ToString() + " certificate(s) are not installed in both LocalMachine Root + TrustedPublisher stores.")
+            $certDetails += "Re-run Guest Tools setup as Administrator to install the driver certificate."
+        }
+    }
+
+    $certData = @{
+        script_dir = $scriptDir
+        cert_files = @($certFiles | ForEach-Object { $_.Name })
+        certificates = $certResults
+    }
+    Add-Check "certificate_store" "Certificate Store (driver signing trust)" $certStatus $certSummary $certData $certDetails
+} catch {
+    Add-Check "certificate_store" "Certificate Store (driver signing trust)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
 # --- Signature mode (bcdedit) ---
 try {
     $bcd = Invoke-Capture "bcdedit.exe" @("/enum")
@@ -344,14 +508,22 @@ try {
         # Interpret values loosely (locales vary).
         $tsOn = ($testsigning -match '^(?i)(yes|on|true|1)$')
         $nicOn = ($nointegritychecks -match '^(?i)(yes|on|true|1)$')
+        $is64 = $false
+        if ($report.checks.ContainsKey("os") -and $report.checks.os.data -and $report.checks.os.data.architecture) {
+            $is64 = ("" + $report.checks.os.data.architecture) -match '64'
+        } else {
+            $is64 = ("" + $env:PROCESSOR_ARCHITECTURE) -match '64'
+        }
 
         if ($nicOn) {
             $sigStatus = "WARN"
             $sigDetails += "nointegritychecks is enabled. This is not recommended; prefer testsigning or properly signed drivers."
         }
         if (-not $tsOn) {
-            $sigStatus = Merge-Status $sigStatus "WARN"
-            $sigDetails += "testsigning is not enabled. If Aero drivers are test-signed, enable it: bcdedit /set testsigning on"
+            if ($is64) {
+                $sigStatus = Merge-Status $sigStatus "WARN"
+            }
+            $sigDetails += "testsigning is not enabled. If Aero drivers are test-signed (common on Windows 7 x64), enable it: bcdedit /set testsigning on"
         }
     }
 
@@ -383,6 +555,18 @@ try {
         $m = [regex]::Match($b, '(?i)\boem\d+\.inf\b')
         if ($m.Success) { $published = $m.Value }
 
+        $provider = $null
+        $class = $null
+        $driverDateAndVersion = $null
+        $signerName = $null
+        foreach ($line in $b -split "`r?`n") {
+            $t = $line.Trim()
+            if ($t -match '(?i)^driver package provider\s*:\s*(.+)$') { $provider = $matches[1].Trim(); continue }
+            if ($t -match '(?i)^class\s*:\s*(.+)$') { $class = $matches[1].Trim(); continue }
+            if ($t -match '(?i)^driver date and version\s*:\s*(.+)$') { $driverDateAndVersion = $matches[1].Trim(); continue }
+            if ($t -match '(?i)^signer name\s*:\s*(.+)$') { $signerName = $matches[1].Trim(); continue }
+        }
+
         $isAero = $false
         $lower = $b.ToLower()
         foreach ($kw in $keywords) {
@@ -392,6 +576,10 @@ try {
         $packages += @{
             published_name = $published
             is_aero_related = $isAero
+            class = $class
+            provider = $provider
+            driver_date_and_version = $driverDateAndVersion
+            signer_name = $signerName
             raw_block = $b
         }
     }
@@ -433,6 +621,27 @@ try {
     $svcCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","vionet","netkvm","viogpu","viosnd","vioinput")
     $kw = @("aero","virtio","1af4")
 
+    $signedDriverMap = @{}
+    $signedDrivers = Try-GetWmi "Win32_PnPSignedDriver" ""
+    if ($signedDrivers) {
+        foreach ($sd in $signedDrivers) {
+            $id = "" + $sd.DeviceID
+            if (-not $id -or $id.Length -eq 0) { continue }
+            $signedDriverMap[$id.ToUpper()] = @{
+                device_name = "" + $sd.DeviceName
+                inf_name = "" + $sd.InfName
+                driver_version = "" + $sd.DriverVersion
+                driver_date = "" + $sd.DriverDate
+                driver_provider_name = "" + $sd.DriverProviderName
+                is_signed = $sd.IsSigned
+                signer = "" + $sd.Signer
+                manufacturer = "" + $sd.Manufacturer
+                friendly_name = "" + $sd.FriendlyName
+                driver_class = "" + $sd.DriverClass
+            }
+        }
+    }
+
     $devices = @()
     $pnp = Try-GetWmi "Win32_PnPEntity" ""
     if ($pnp) {
@@ -456,14 +665,27 @@ try {
             }
 
             if ($relevant) {
+                $err = $d.ConfigManagerErrorCode
+                $errMeaning = $null
+                if ($err -ne $null) { $errMeaning = Get-ConfigManagerErrorMeaning $err }
+
+                $signed = $null
+                if ($pnpid) {
+                    $key = $pnpid.ToUpper()
+                    if ($signedDriverMap.ContainsKey($key)) { $signed = $signedDriverMap[$key] }
+                }
+
                 $devices += @{
                     name = $name
                     manufacturer = $mfr
                     pnp_device_id = $pnpid
                     service = $svc
                     status = "" + $d.Status
-                    config_manager_error_code = $d.ConfigManagerErrorCode
+                    pnp_class = "" + $d.PNPClass
+                    config_manager_error_code = $err
+                    config_manager_error_meaning = $errMeaning
                     class_guid = "" + $d.ClassGuid
+                    signed_driver = $signed
                 }
             }
         }
@@ -490,6 +712,16 @@ try {
         if ($bad.Count -gt 0) {
             $devStatus = Merge-Status $devStatus "WARN"
             $devDetails += ($bad.Count.ToString() + " device(s) report ConfigManagerErrorCode != 0 (driver binding/problem).")
+        }
+        $code52 = @($devices | Where-Object { $_.config_manager_error_code -eq 52 })
+        if ($code52.Count -gt 0) {
+            $devStatus = Merge-Status $devStatus "WARN"
+            $devDetails += ($code52.Count.ToString() + " device(s) report Code 52 (signature/trust failure). Review Signature Mode + Certificate Store + KB3033929 checks.")
+        }
+        $code28 = @($devices | Where-Object { $_.config_manager_error_code -eq 28 })
+        if ($code28.Count -gt 0) {
+            $devStatus = Merge-Status $devStatus "WARN"
+            $devDetails += ($code28.Count.ToString() + " device(s) report Code 28 (drivers not installed). Re-run Guest Tools setup / update driver in Device Manager.")
         }
     }
 

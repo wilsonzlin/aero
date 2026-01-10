@@ -35,8 +35,12 @@ If `-PingTarget` is not provided, the script will attempt to ping the default ga
 Each check produces a `PASS` / `WARN` / `FAIL` result:
 
 - **OS + arch**: version, build, service pack.
+- **KB3033929 (SHA-256 signatures)**: detects whether the hotfix is installed (relevant for SHA-256-signed driver packages on Win7).
+- **Certificate store**: if a `*.cer`/`*.crt` is bundled next to `verify.ps1`, verifies it is installed into **Local Machine**:
+  - Trusted Root Certification Authorities (**Root**)
+  - Trusted Publishers (**TrustedPublisher**)
 - **Driver packages**: `pnputil -e` output with a heuristic filter for Aero/virtio-related packages.
-- **Bound devices**: WMI `Win32_PnPEntity` enumeration (and optional `devcon.exe` if present alongside the script).
+- **Bound devices**: WMI `Win32_PnPEntity` enumeration (and optional `devcon.exe` if present alongside the script), including best-effort signed driver details via `Win32_PnPSignedDriver` (INF name, version, signer, etc).
 - **virtio-blk storage service**: best-effort probe for a storage driver service (e.g. `viostor`) with state + Start type.
 - **Signature mode**: parses `bcdedit` for `testsigning` and `nointegritychecks`.
 - **Smoke tests**:
@@ -49,4 +53,3 @@ Each check produces a `PASS` / `WARN` / `FAIL` result:
 
 - `bcdedit` and some driver/service information may be incomplete without Administrator privileges.
 - The tool is designed to work on **Windows 7 SP1** without any external dependencies beyond built-in Windows components.
-
