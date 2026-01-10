@@ -1,17 +1,12 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VgaPlanarShift {
     /// Standard planar shift (text mode / planar graphics).
+    #[default]
     None,
     /// 256-colour shift (packed/chain4-style).
     Shift256,
     /// Interleaved shift (packed pixels across planes).
     Interleaved,
-}
-
-impl Default for VgaPlanarShift {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

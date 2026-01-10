@@ -463,8 +463,6 @@ impl VgaDevice {
 
             0x3CB | 0x3CD => 0x00,
 
-            // Unimplemented ports.
-            0x3C0..=0x3DF => UNIMPLEMENTED_READ_VALUE,
             _ => UNIMPLEMENTED_READ_VALUE,
         }
     }
