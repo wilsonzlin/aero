@@ -2,6 +2,7 @@ pub mod capabilities;
 pub mod config;
 pub mod irq_router;
 pub mod msi;
+pub mod profile;
 
 pub use config::PciConfigSpace;
 pub use irq_router::{
