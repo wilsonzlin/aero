@@ -43,6 +43,15 @@ PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS
 
 On failure/timeout, it returns non-zero and prints the matching failure reason.
 
+For live debugging, you can stream the guest serial output while waiting:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -FollowSerial
+```
+
 ### Python alternative (Linux-friendly)
 
 If you prefer not to depend on PowerShell, `invoke_aero_virtio_win7_tests.py` provides the same core behavior:
@@ -55,6 +64,8 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --timeout-seconds 600 \
   --snapshot
 ```
+
+Add `--follow-serial` to stream COM1 serial output while waiting.
 
 ## How the harness works
 

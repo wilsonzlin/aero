@@ -93,6 +93,11 @@ def main() -> int:
     parser.add_argument("--http-port", type=int, default=18080)
     parser.add_argument("--http-path", default="/aero-virtio-selftest")
     parser.add_argument("--snapshot", action="store_true", help="Discard disk writes (snapshot=on)")
+    parser.add_argument(
+        "--follow-serial",
+        action="store_true",
+        help="Stream newly captured COM1 serial output to stdout while waiting",
+    )
 
     # Any remaining args are passed directly to QEMU.
     args, qemu_extra = parser.parse_known_args()
@@ -146,6 +151,10 @@ def main() -> int:
             while time.monotonic() < deadline:
                 chunk, pos = _read_new_bytes(serial_log, pos)
                 if chunk:
+                    if args.follow_serial:
+                        sys.stdout.write(chunk.decode("utf-8", errors="replace"))
+                        sys.stdout.flush()
+
                     tail += chunk
                     if len(tail) > 131072:
                         tail = tail[-131072:]

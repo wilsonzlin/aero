@@ -24,6 +24,10 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$Snapshot,
 
+  # If set, stream newly captured COM1 serial output to stdout while waiting.
+  [Parameter(Mandatory = $false)]
+  [switch]$FollowSerial,
+
   [Parameter(Mandatory = $false)]
   [int]$TimeoutSeconds = 600,
 
@@ -130,7 +134,8 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $true)] [System.Diagnostics.Process]$QemuProcess,
     [Parameter(Mandatory = $true)] [int]$TimeoutSeconds,
     [Parameter(Mandatory = $true)] $HttpListener,
-    [Parameter(Mandatory = $true)] [string]$HttpPath
+    [Parameter(Mandatory = $true)] [string]$HttpPath,
+    [Parameter(Mandatory = $true)] [bool]$FollowSerial
   )
 
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -142,6 +147,10 @@ function Wait-AeroSelftestResult {
 
     $chunk = Read-NewText -Path $SerialLogPath -Position ([ref]$pos)
     if ($chunk.Length -gt 0) {
+      if ($FollowSerial) {
+        [Console]::Out.Write($chunk)
+      }
+
       $tail += $chunk
       if ($tail.Length -gt 131072) { $tail = $tail.Substring($tail.Length - 131072) }
 
@@ -212,7 +221,7 @@ try {
   $proc = Start-Process -FilePath $QemuSystem -ArgumentList $qemuArgs -PassThru
 
   try {
-    $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath
+    $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial)
   } finally {
     if (-not $proc.HasExited) {
       Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
