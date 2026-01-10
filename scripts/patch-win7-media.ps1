@@ -580,6 +580,8 @@ foreach ($idx in $PatchBootWimIndices) {
   }
 }
 
+$availableInstallIndices = Get-WimIndices -WimFile $installWimPath
+
 $mountRoot = Join-Path $env:TEMP ("aero-win7-media-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $mountRoot -Force | Out-Null
 
@@ -609,12 +611,18 @@ try {
 
   $installIndices = if ($PatchInstallWimAllIndices) {
     Write-Log 'Discovering install.wim indices (PatchInstallWimAllIndices=true)'
-    Get-WimIndices -WimFile $installWimPath
+    $availableInstallIndices
   } else {
     if (-not $PatchInstallWimIndices -or $PatchInstallWimIndices.Count -eq 0) {
       throw '-PatchInstallWimAllIndices is false but -PatchInstallWimIndices was not provided.'
     }
     $PatchInstallWimIndices
+  }
+
+  foreach ($idx in $installIndices) {
+    if ($availableInstallIndices -notcontains $idx) {
+      throw "install.wim index $idx does not exist. Available indices: $($availableInstallIndices -join ', ')"
+    }
   }
 
   foreach ($idx in $installIndices) {
