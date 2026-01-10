@@ -1,0 +1,65 @@
+# cargo-deny configuration
+#
+# Policy intent:
+# - Keep Aero's dependency graph compatible with permissive licensing (MIT/Apache-2.0 dual-license friendly).
+# - Reject copyleft dependencies (e.g. GPL/LGPL/AGPL) by omission from the allow list.
+#   NOTE: cargo-deny removed the old `licenses.deny` key; a strict allow list is the
+#   supported way to keep copyleft out.
+# - Reject non-crates.io sources (unknown registries / git deps) unless explicitly allowlisted.
+#   NOTE: `cargo deny check sources` lints registries and git sources; path dependencies
+#   are local to the repo/workspace and aren't covered by the sources check.
+#
+# Docs context: see `docs/13-legal-considerations.md` (license compatibility and audits).
+
+[graph]
+# Check the full feature graph so optional feature flags can't accidentally
+# smuggle in an incompatible license/source.
+all-features = true
+
+[advisories]
+ignore = []
+
+[licenses]
+# Allow only permissive licenses (plus a few common "permissive data" licenses
+# used by foundational Rust crates such as `unicode-ident`).
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    # Common permissive licenses encountered in Rust deps:
+    "0BSD",
+    "CC0-1.0",
+    "Unicode-DFS-2016",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+[licenses.private]
+# Enforce that workspace crates declare a license (we expect MIT OR Apache-2.0).
+ignore = false
+registries = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow = []
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+[sources.allow-org]
+github = []
+gitlab = []
+bitbucket = []

@@ -1,0 +1,90 @@
+name: Dependency policy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Nightly run catches newly published advisories even if the lockfile hasn't changed.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    name: cargo-deny (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect Rust workspace
+        id: rust
+        run: |
+          set -euo pipefail
+          if [[ -f Cargo.toml ]]; then
+            echo "has_rust=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "has_rust=false" >>"$GITHUB_OUTPUT"
+            echo "No Cargo.toml found at repository root; skipping cargo-deny."
+          fi
+
+      - name: Install Rust toolchain
+        if: steps.rust.outputs.has_rust == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-deny
+        if: steps.rust.outputs.has_rust == 'true'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Generate Cargo.lock (if missing)
+        if: steps.rust.outputs.has_rust == 'true'
+        run: cargo generate-lockfile
+
+      # Fast + deterministic policy checks run on every PR.
+      - name: cargo-deny check (licenses, bans, sources)
+        if: steps.rust.outputs.has_rust == 'true'
+        run: cargo deny check licenses bans sources
+
+      # Advisories are checked on PRs (to prevent introducing known vulns)
+      # and nightly (to detect newly disclosed advisories without a dependency bump).
+      - name: cargo-deny check (advisories)
+        if: steps.rust.outputs.has_rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        run: cargo deny check advisories
+
+  npm-audit:
+    name: npm audit (high severity, prod deps)
+    runs-on: ubuntu-latest
+    # NPM advisory churn can be noisy; gate only on the nightly job (and manual runs) for now.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect npm lockfile
+        id: npm
+        run: |
+          set -euo pipefail
+          if [[ -f package-lock.json || -f npm-shrinkwrap.json ]]; then
+            echo "has_npm=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "has_npm=false" >>"$GITHUB_OUTPUT"
+            echo "No package-lock.json/npm-shrinkwrap.json found; skipping npm audit."
+          fi
+
+      - name: Install Node.js
+        if: steps.npm.outputs.has_npm == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install production dependencies
+        if: steps.npm.outputs.has_npm == 'true'
+        run: npm ci --omit=dev --ignore-scripts
+
+      - name: npm audit (high severity, production)
+        if: steps.npm.outputs.has_npm == 'true'
+        run: npm audit --audit-level=high --omit=dev

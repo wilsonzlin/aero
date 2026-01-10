@@ -315,6 +315,7 @@ The DMCA prohibits circumventing "technological protection measures":
 - [ ] Monitor for legal challenges
 - [ ] Respond to takedown requests
 - [ ] Update licenses as dependencies change
+- [ ] Enforce dependency license/vulnerability policy in CI (e.g. `cargo-deny`, npm advisory scanning)
 - [ ] Review user-contributed code
 
 ---
