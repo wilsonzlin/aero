@@ -133,7 +133,10 @@ jobs:
 
       - name: Test guest tools packager
         run: cargo test --manifest-path tools/packaging/aero_packager/Cargo.toml --locked
- 
+
+      - name: cargo test (disk-gateway reference server)
+        run: cargo test --manifest-path server/disk-gateway/Cargo.toml --locked
+
       - name: Upload net traces
         if: failure()
         uses: actions/upload-artifact@v4

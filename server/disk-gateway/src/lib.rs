@@ -619,7 +619,13 @@ mod tests {
     use http::header::ACCESS_CONTROL_REQUEST_HEADERS;
     use http::header::ACCESS_CONTROL_REQUEST_METHOD;
     use http::Method;
+    use tokio::io::{AsyncSeekExt, AsyncWriteExt, SeekFrom};
     use tower::ServiceExt;
+
+    const LARGE_FILE_SIZE: u64 = 5_368_709_120; // 5 GiB
+    const LARGE_HIGH_OFFSET: u64 = 4_294_967_296 + 123; // 2^32 + 123
+    const LARGE_SENTINEL_HIGH: &[u8] = b"AERO_RANGE_4GB";
+    const LARGE_SENTINEL_END: &[u8] = b"AERO_RANGE_END";
 
     fn test_config(public_dir: PathBuf, private_dir: PathBuf) -> Config {
         let mut allowed = HashSet::new();
@@ -640,6 +646,32 @@ mod tests {
             .await
             .unwrap();
         tokio::fs::write(path, data).await.unwrap();
+    }
+
+    async fn write_sparse_test_image(path: &Path) {
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
+
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .open(path)
+            .await
+            .unwrap();
+
+        file.set_len(LARGE_FILE_SIZE).await.unwrap();
+
+        file.seek(SeekFrom::Start(LARGE_HIGH_OFFSET)).await.unwrap();
+        file.write_all(LARGE_SENTINEL_HIGH).await.unwrap();
+
+        let end_offset = LARGE_FILE_SIZE - (LARGE_SENTINEL_END.len() as u64);
+        file.seek(SeekFrom::Start(end_offset)).await.unwrap();
+        file.write_all(LARGE_SENTINEL_END).await.unwrap();
+
+        file.flush().await.unwrap();
     }
 
     #[tokio::test]
@@ -737,6 +769,58 @@ mod tests {
                 .unwrap(),
             "bytes */6"
         );
+    }
+
+    #[tokio::test]
+    async fn range_supports_offsets_beyond_4gib_and_suffix_ranges() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+
+        write_sparse_test_image(&public_image_path(&cfg, "win7")).await;
+
+        let app = app(cfg);
+
+        // Explicit range starting beyond 2^32.
+        let high_end = LARGE_HIGH_OFFSET + LARGE_SENTINEL_HIGH.len() as u64 - 1;
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/win7")
+            .header(RANGE, format!("bytes={}-{}", LARGE_HIGH_OFFSET, high_end))
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resp.headers().get(CONTENT_RANGE).unwrap().to_str().unwrap(),
+            format!("bytes {}-{}/{}", LARGE_HIGH_OFFSET, high_end, LARGE_FILE_SIZE)
+        );
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        assert_eq!(&body[..], LARGE_SENTINEL_HIGH);
+
+        // Suffix range on a file > 4 GiB.
+        let suffix_len = LARGE_SENTINEL_END.len();
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/win7")
+            .header(RANGE, format!("bytes=-{suffix_len}"))
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+
+        let suffix_start = LARGE_FILE_SIZE - suffix_len as u64;
+        let suffix_end = LARGE_FILE_SIZE - 1;
+        assert_eq!(
+            resp.headers().get(CONTENT_RANGE).unwrap().to_str().unwrap(),
+            format!("bytes {suffix_start}-{suffix_end}/{LARGE_FILE_SIZE}")
+        );
+
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        assert_eq!(&body[..], LARGE_SENTINEL_END);
     }
 
     #[tokio::test]
