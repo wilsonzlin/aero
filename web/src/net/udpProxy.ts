@@ -1,3 +1,5 @@
+import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram } from "../shared/udpRelayProtocol";
+
 export type UdpProxyEvent = {
   srcIp: string;
   srcPort: number;
@@ -7,34 +9,32 @@ export type UdpProxyEvent = {
 
 export type UdpProxyEventSink = (event: UdpProxyEvent) => void;
 
-function encodeUdpProxyPacket(
-  srcPort: number,
-  dstIp: string,
-  dstPort: number,
-  payload: Uint8Array,
-): Uint8Array {
-  const ipParts = dstIp.split(".").map((s) => Number(s));
-  if (ipParts.length !== 4 || ipParts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
-    throw new Error(`invalid IPv4 address: ${dstIp}`);
-  }
+const formatIpv4 = (octets: ArrayLike<number>) => `${octets[0]}.${octets[1]}.${octets[2]}.${octets[3]}`;
 
-  const out = new Uint8Array(2 + 4 + 2 + payload.length);
-  const dv = new DataView(out.buffer);
-  dv.setUint16(0, srcPort, false);
-  out.set(ipParts as unknown as number[], 2);
-  dv.setUint16(6, dstPort, false);
-  out.set(payload, 8);
-  return out;
+const formatIpv6 = (bytes: Uint8Array) => {
+  // This intentionally does not perform :: zero-compression; it only needs to
+  // produce a stable, valid string representation for logging/debugging.
+  const parts: string[] = [];
+  for (let i = 0; i < 16; i += 2) {
+    const v = (bytes[i] << 8) | bytes[i + 1];
+    parts.push(v.toString(16).padStart(4, "0"));
+  }
+  return parts.join(":");
+};
+
+function parseIpv4(ip: string): [number, number, number, number] {
+  const parts = ip.split(".").map((s) => Number(s));
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+    throw new Error(`invalid IPv4 address: ${ip}`);
+  }
+  return [parts[0], parts[1], parts[2], parts[3]];
 }
 
 /**
  * UDP proxy over WebSocket (fallback when WebRTC isn't available).
  *
- * Wire format:
- *   u16 src_port (guest port)
- *   u8[4] dst_ip
- *   u16 dst_port
- *   payload bytes...
+ * Wire format is the same as the WebRTC UDP relay datagram framing. See:
+ * - proxy/webrtc-udp-relay/PROTOCOL.md
  */
 export class WebSocketUdpProxyClient {
   private ws: WebSocket | null = null;
@@ -55,19 +55,44 @@ export class WebSocketUdpProxyClient {
     ws.onmessage = (evt) => {
       if (!(evt.data instanceof ArrayBuffer)) return;
       const buf = new Uint8Array(evt.data);
-      if (buf.length < 8) return;
-      const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-      const srcPort = dv.getUint16(0, false);
-      const srcIp = `${buf[2]}.${buf[3]}.${buf[4]}.${buf[5]}`;
-      const dstPort = dv.getUint16(6, false);
-      this.sink({ srcIp, srcPort, dstPort, data: buf.slice(8) });
+      try {
+        const frame = decodeUdpRelayFrame(buf);
+        if (frame.version === 1) {
+          this.sink({
+            srcIp: formatIpv4(frame.remoteIpv4),
+            srcPort: frame.remotePort,
+            dstPort: frame.guestPort,
+            data: frame.payload,
+          });
+        } else {
+          this.sink({
+            srcIp: frame.addressFamily === 4 ? formatIpv4(frame.remoteIp) : formatIpv6(frame.remoteIp),
+            srcPort: frame.remotePort,
+            dstPort: frame.guestPort,
+            data: frame.payload,
+          });
+        }
+      } catch {
+        // Drop malformed frames.
+      }
     };
     this.ws = ws;
   }
 
   send(srcPort: number, dstIp: string, dstPort: number, payload: Uint8Array): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this.ws.send(encodeUdpProxyPacket(srcPort, dstIp, dstPort, payload));
+    try {
+      this.ws.send(
+        encodeUdpRelayV1Datagram({
+          guestPort: srcPort,
+          remoteIpv4: parseIpv4(dstIp),
+          remotePort: dstPort,
+          payload,
+        }),
+      );
+    } catch {
+      // Drop invalid/oversized datagrams.
+    }
   }
 
   close(): void {
@@ -91,18 +116,42 @@ export class WebRtcUdpProxyClient {
     channel.onmessage = (evt) => {
       if (!(evt.data instanceof ArrayBuffer)) return;
       const buf = new Uint8Array(evt.data);
-      if (buf.length < 8) return;
-      const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-      const srcPort = dv.getUint16(0, false);
-      const srcIp = `${buf[2]}.${buf[3]}.${buf[4]}.${buf[5]}`;
-      const dstPort = dv.getUint16(6, false);
-      this.sink({ srcIp, srcPort, dstPort, data: buf.slice(8) });
+      try {
+        const frame = decodeUdpRelayFrame(buf);
+        if (frame.version === 1) {
+          this.sink({
+            srcIp: formatIpv4(frame.remoteIpv4),
+            srcPort: frame.remotePort,
+            dstPort: frame.guestPort,
+            data: frame.payload,
+          });
+        } else {
+          this.sink({
+            srcIp: frame.addressFamily === 4 ? formatIpv4(frame.remoteIp) : formatIpv6(frame.remoteIp),
+            srcPort: frame.remotePort,
+            dstPort: frame.guestPort,
+            data: frame.payload,
+          });
+        }
+      } catch {
+        // Drop malformed frames.
+      }
     };
   }
 
   send(srcPort: number, dstIp: string, dstPort: number, payload: Uint8Array): void {
     if (this.channel.readyState !== "open") return;
-    this.channel.send(encodeUdpProxyPacket(srcPort, dstIp, dstPort, payload));
+    try {
+      this.channel.send(
+        encodeUdpRelayV1Datagram({
+          guestPort: srcPort,
+          remoteIpv4: parseIpv4(dstIp),
+          remotePort: dstPort,
+          payload,
+        }),
+      );
+    } catch {
+      // Drop invalid/oversized datagrams.
+    }
   }
 }
-
