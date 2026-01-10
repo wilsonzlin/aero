@@ -8,6 +8,7 @@
 
 pub mod abi;
 pub mod dxbc;
+pub mod fixed_function;
 pub mod resources;
 pub mod shader;
 pub mod software;
