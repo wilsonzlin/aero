@@ -46,16 +46,17 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 21. [Windows 7 Virtio Device Contract](./docs/windows7-virtio-driver-contract.md)
 22. [Security Headers & Deployment Hardening](./docs/security-headers.md)
 23. [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./docs/16-disk-image-streaming-auth.md)
-24. [HTTP Range + CDN Behavior](./docs/17-range-cdn-behavior.md)
-25. [Windows 7 SP1 Unattended Install (Drivers + Scripting)](./docs/16-win7-unattended-install.md)
-26. [Win7 Install Media Servicing (test-signed virtio drivers)](./docs/16-win7-image-servicing.md)
-27. [Win7 BCD offline patching (testsigning / nointegritychecks)](./docs/win7-bcd-offline-patching.md)
-28. [Windows Driver Development](./docs/windows/README.md)
-29. [Windows 7 Install Media Preparation (Slipstreaming)](./docs/16-windows7-install-media-prep.md)
-30. [Performance Tooling (Profiling, HUD, Traces, Benchmarks)](./docs/16-performance-tooling.md)
-31. [Guest Tools Packaging](./docs/16-guest-tools-packaging.md)
-32. [Virtio Windows Drivers](./docs/virtio-windows-drivers.md)
-33. [VM Snapshots (Save-State / Restore-State)](./docs/16-snapshots.md)
+ 24. [HTTP Range + CDN Behavior](./docs/17-range-cdn-behavior.md)
+ 25. [Windows 7 SP1 Unattended Install (Drivers + Scripting)](./docs/16-win7-unattended-install.md)
+ 26. [Windows 7 Unattended Install Validation & Troubleshooting](./docs/17-win7-unattend-validation.md)
+ 27. [Win7 Install Media Servicing (test-signed virtio drivers)](./docs/16-win7-image-servicing.md)
+ 28. [Win7 BCD offline patching (testsigning / nointegritychecks)](./docs/win7-bcd-offline-patching.md)
+ 29. [Windows Driver Development](./docs/windows/README.md)
+ 30. [Windows 7 Install Media Preparation (Slipstreaming)](./docs/16-windows7-install-media-prep.md)
+ 31. [Performance Tooling (Profiling, HUD, Traces, Benchmarks)](./docs/16-performance-tooling.md)
+ 32. [Guest Tools Packaging](./docs/16-guest-tools-packaging.md)
+ 33. [Virtio Windows Drivers](./docs/virtio-windows-drivers.md)
+ 34. [VM Snapshots (Save-State / Restore-State)](./docs/16-snapshots.md)
 
 ---
 
@@ -359,6 +360,7 @@ pub trait DisplayAdapter {
 | [security-headers.md](./docs/security-headers.md)                       | COOP/COEP, CSP, security headers       | Infrastructure    |
 | [16-disk-image-streaming-auth.md](./docs/16-disk-image-streaming-auth.md) | Disk byte streaming, auth, CORS/COEP   | I/O / Infra       |
 | [16-win7-unattended-install.md](./docs/16-win7-unattended-install.md)   | Unattended Win7 install (drivers/hooks) | All               |
+| [17-win7-unattend-validation.md](./docs/17-win7-unattend-validation.md) | Validate/debug Win7 unattended installs (logs, config-set, SetupComplete) | All |
 | [16-windows7-install-media-prep.md](./docs/16-windows7-install-media-prep.md) | Preparing a Win7 SP1 ISO with Aero drivers/certs | All |
 | [16-guest-tools-packaging.md](./docs/16-guest-tools-packaging.md)       | Guest Tools ISO/zip packaging          | Infrastructure    |
 

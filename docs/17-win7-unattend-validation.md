@@ -13,6 +13,11 @@ It is written to answer (by *verification*, not assumptions) the open questions 
 
 Where behavior varies by hypervisor or media type, this guide uses **“expected”** language and provides concrete steps to prove what happened from logs and on-screen state.
 
+See also (related docs in this repo):
+
+* [`docs/16-win7-unattended-install.md`](./16-win7-unattended-install.md) (how to structure `autounattend.xml`, driver injection passes, and setup scripting hooks)
+* [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md) (post-install driver signing/trust failures, Device Manager codes, `setupapi.dev.log` triage)
+
 ---
 
 ## Prerequisites
@@ -205,6 +210,8 @@ During setup (WinPE), logs are written to the WinPE RAM disk:
 
 * `X:\Windows\Panther\setupact.log`
 * `X:\Windows\Panther\setuperr.log`
+* `X:\Windows\Panther\UnattendGC\setupact.log`
+* `X:\Windows\Panther\UnattendGC\setuperr.log`
 
 After Windows is installed, logs are copied to:
 
@@ -283,6 +290,12 @@ This is the fastest way to prove whether CD1 is visible and whether `%configsetr
 ### A. Enumerate disks/volumes and identify CD0 vs CD1
 
 List volumes:
+
+```bat
+wmic logicaldisk get name,description,filesystem
+```
+
+Optional (include volume label for easier CD0/CD1 identification):
 
 ```bat
 wmic logicaldisk get name,description,filesystem,volumename
@@ -383,6 +396,13 @@ Common causes / fixes:
 
 * Wrong filename (`unattend.xml` instead of `autounattend.xml` for removable-media discovery).
 * Wrong placement (nested folder instead of root).
+* Wrong media type / discovery behavior:
+  * **Expected (but not guaranteed):** Windows Setup scans *some* removable/optical media for `autounattend.xml`, but the exact search order varies by Windows version and environment.
+  * If you place `autounattend.xml` on **CD1** and Setup behaves as if it never saw it, verify in `X:\Windows\Panther\setupact.log` / `UnattendGC\setupact.log` whether Setup enumerated that drive for answer files.
+  * If CD1 is not scanned in your environment, the practical fixes are:
+    - Put `autounattend.xml` on a **USB** device image instead (often treated as removable media), or
+    - Rebuild the Windows install ISO so `autounattend.xml` is on **CD0** (customized install media), or
+    - Ensure your workflow does not depend on “CD1 answer file discovery” and instead uses a slipstream/patcher approach.
 * The hypervisor attaches CD1 too late (attach before boot).
 * Multiple unattend files present on multiple devices; Setup may pick an unexpected one.
 
@@ -608,4 +628,3 @@ Key idea:
 * Instead, design the automation to succeed with either:
   * config-set semantics (when available), or
   * simple “find the CD by marker and copy from it” semantics (always available when the CD is attached).
-
