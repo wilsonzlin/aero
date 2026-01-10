@@ -423,6 +423,11 @@ impl DhcpClient {
 
 ## WebSocket TCP Proxy
 
+All outbound TCP connections from Aero are bridged through the **Aero Gateway** backend (see `backend/aero-gateway`). For the authoritative contract, see:
+
+- [Aero Gateway API](./backend/01-aero-gateway-api.md)
+- [Aero Gateway OpenAPI](./backend/openapi.yaml)
+
 ### Reference implementation: `net-proxy/`
 
 This repository includes a standalone WebSocket → TCP/UDP relay service in [`net-proxy/`](../net-proxy/). It is suitable for:
@@ -459,13 +464,18 @@ impl TcpProxy {
         let id = self.next_id;
         self.next_id += 1;
         
-         // Connect to proxy server with target info
-         let url = format!(
-            "{}/tcp?v=1&target={}:{}",
-            self.proxy_url,
-            remote_ip,
-            remote_port
-         );
+        // Canonical Aero Gateway endpoint format:
+        //   /tcp?v=1&host=<hostname-or-ip>&port=<port>
+        //
+        // For compatibility with older clients, the gateway may also accept
+        // a legacy `target=<host>:<port>` query parameter, but new clients
+        // should always use `host` + `port`.
+        let url = format!(
+            "{}/tcp?v=1&host={}&port={}",
+             self.proxy_url,
+             remote_ip,
+             remote_port
+        );
         
         let ws = WebSocket::new(&url)?;
         
@@ -500,58 +510,28 @@ impl TcpProxy {
 }
 ```
 
-### Server-side (Node.js Proxy)
+### Server-side (Aero Gateway)
 
-```javascript
-// proxy-server.js
-const WebSocket = require('ws');
-const net = require('net');
+The TCP relay is a security-critical component (SSRF, port scanning, abuse). Do not deploy an ad-hoc “minimal TCP proxy” in production.
 
-const wss = new WebSocket.Server({ port: 8080 });
+Use the maintained gateway implementation in `backend/aero-gateway` and follow:
 
-wss.on('connection', (ws, req) => {
-    const url = new URL(req.url, 'http://localhost');
-    
-    if (url.pathname === '/tcp') {
-        const target = url.searchParams.get('target');
-        const [host, port] = target.split(':');
-        
-        // Create TCP connection to target
-        const socket = net.createConnection(parseInt(port), host);
-        
-        socket.on('connect', () => {
-            console.log(`Connected to ${target}`);
-        });
-        
-        socket.on('data', (data) => {
-            // Forward data to WebSocket
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(data);
-            }
-        });
-        
-        socket.on('error', (err) => {
-            console.error(`Socket error: ${err}`);
-            ws.close();
-        });
-        
-        socket.on('close', () => {
-            ws.close();
-        });
-        
-        ws.on('message', (data) => {
-            // Forward data to TCP
-            socket.write(data);
-        });
-        
-        ws.on('close', () => {
-            socket.destroy();
-        });
-    }
-});
+- [Aero Gateway API](./backend/01-aero-gateway-api.md)
+- [Aero Gateway OpenAPI](./backend/openapi.yaml)
 
-console.log('Proxy server running on ws://localhost:8080');
-```
+### Security
+
+The gateway must enforce (at minimum):
+
+- **Origin allowlist**: validate `Origin` (WebSockets) and apply strict CORS (HTTP endpoints).
+- **Authentication**: require a cookie-backed session or an explicit token (including a WebSocket-compatible mechanism).
+- **Blocked destinations**: deny private/loopback/link-local/multicast ranges, and re-check post-DNS resolution to prevent DNS rebinding.
+- **Port allowlist**: only allow configured outbound ports (deny-by-default).
+- **Rate limiting & quotas**: per-user/IP limits on connection attempts, concurrent sockets, and bytes transferred.
+
+### Scaling: TCP multiplexing (`/tcp-mux`)
+
+For workloads that need many concurrent TCP connections, the gateway can optionally expose a multiplexed WebSocket endpoint (`/tcp-mux`) that carries many logical TCP streams over a single socket. This reduces WebSocket overhead and avoids browser connection limits. See the [Aero Gateway API](./backend/01-aero-gateway-api.md) for details.
 
 ---
 
@@ -625,8 +605,14 @@ impl UdpProxy {
 
 ## DNS Resolution
 
+In browser environments, DNS lookups should go through the gateway’s **first-party** DNS-over-HTTPS endpoints:
+
+- `/dns-query` (RFC 8484 DoH, `application/dns-message`)
+- `/dns-json` (optional JSON convenience endpoint)
+
 ```rust
 pub struct DnsResolver {
+    gateway_url: String,
     dns_servers: Vec<Ipv4Addr>,
     cache: HashMap<String, DnsCacheEntry>,
 }
@@ -649,9 +635,12 @@ impl DnsResolver {
     }
     
     pub async fn resolve_doh(&self, hostname: &str) -> Result<Ipv4Addr> {
-        // Use DNS-over-HTTPS (e.g., Cloudflare)
+        // Use Aero Gateway DNS-over-HTTPS (first-party).
+        // Prefer `/dns-query` for raw DNS messages; `/dns-json` is an optional
+        // convenience endpoint for A/AAAA lookups and debugging.
         let url = format!(
-            "https://cloudflare-dns.com/dns-query?name={}&type=A",
+            "{}/dns-json?name={}&type=A",
+            self.gateway_url,
             hostname
         );
         

@@ -845,16 +845,35 @@ function setupKeyboard(canvas) {
 
 ### WebSocket
 
+All TCP egress uses the **Aero Gateway** backend (see `backend/aero-gateway`):
+
+- [Aero Gateway API](./backend/01-aero-gateway-api.md)
+- [Aero Gateway OpenAPI](./backend/openapi.yaml)
+
 ```javascript
 class NetworkProxy {
-    constructor(proxyUrl) {
-        this.proxyUrl = proxyUrl;
+    // `gatewayWsBaseUrl` should be `ws://...` or `wss://...`.
+    constructor(gatewayWsBaseUrl, { token } = {}) {
+        this.gatewayWsBaseUrl = gatewayWsBaseUrl;
+        this.token = token;
         this.connections = new Map();
+        this.nextId = 1;
     }
     
     async connect(host, port) {
-        const target = host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`;
-        const ws = new WebSocket(`${this.proxyUrl}/tcp?v=1&target=${encodeURIComponent(target)}`);
+        const url = new URL('/tcp', this.gatewayWsBaseUrl);
+        url.searchParams.set('v', '1');
+        url.searchParams.set('host', host);
+        url.searchParams.set('port', String(port));
+
+        // If the gateway is same-origin, cookie-based auth is typically sufficient.
+        //
+        // Browsers don't allow setting arbitrary headers on WebSocket handshakes,
+        // so token auth must be passed via a WebSocket-compatible mechanism
+        // (commonly `Sec-WebSocket-Protocol`). See the gateway API for the exact
+        // subprotocol format.
+        const protocols = this.token ? [`aero-auth.${this.token}`] : undefined;
+        const ws = new WebSocket(url.toString(), protocols);
         ws.binaryType = 'arraybuffer';
          
         return new Promise((resolve, reject) => {

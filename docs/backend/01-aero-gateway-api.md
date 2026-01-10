@@ -4,8 +4,12 @@
 This document specifies the **public backend contract** for Aero networking features that require server assistance in the browser:
 
 - A **TCP proxy** exposed as a WebSocket endpoint (`/tcp`)
+- Optional **TCP multiplexing** over WebSocket (`/tcp-mux`) for scaling high connection counts
 - A **DNS-over-HTTPS** endpoint (`/dns-query`) used by the guest network stack
+- Optional **DNS JSON** convenience endpoint (`/dns-json`) for debugging/simple lookups
 - A lightweight **session bootstrap** endpoint (`POST /session`) that issues cookies used for rate-limiting and authorization
+
+HTTP request/response schemas are specified in [`docs/backend/openapi.yaml`](./openapi.yaml). The `/tcp` WebSocket upgrade is documented in this file (OpenAPI intentionally does not model WebSockets).
 
 The intent is that a frontend engineer can build a compatible client **without reading the gateway/server source code**.
 
@@ -34,13 +38,13 @@ The gateway uses **cookies** for session state. For this to work reliably in bro
 Generic form:
 
 - `POST http://localhost:PORT/session`
-- `ws://localhost:PORT/tcp?target=example.com:443`
+- `ws://localhost:PORT/tcp?host=example.com&port=443`
 - `http://localhost:PORT/dns-query?...`
 
 Concrete example (assuming the gateway is running on port `8787`):
 
 - `POST http://localhost:8787/session`
-- `ws://localhost:8787/tcp?target=example.com:443`
+- `ws://localhost:8787/tcp?host=example.com&port=443`
 - `http://localhost:8787/dns-query?...`
 
 ---
@@ -113,30 +117,31 @@ Protocol version for the `/tcp` WebSocket connection.
 - Supported: `v=1`
 - If omitted, the gateway must default to **v1**.
 
-#### `target` (required)
+#### `host` (required)
 
-`target` identifies the remote TCP endpoint:
+`host` identifies the remote TCP endpoint host:
 
-- Format: `<host>:<port>`
-- `<host>` may be:
-  - A DNS name (e.g. `example.com`)
-  - An IPv4 address (e.g. `93.184.216.34`)
-  - An IPv6 address in brackets (e.g. `[2606:4700:4700::1111]`)
-- `<port>` is an integer `1..65535`
+- A DNS name (e.g. `example.com`)
+- An IPv4 address (e.g. `93.184.216.34`)
+- An IPv6 address in brackets (e.g. `[2606:4700:4700::1111]`)
 
-Examples:
+#### `port` (required)
 
-- `ws://localhost:8787/tcp?target=example.com:443`
-- `wss://example.com/tcp?target=example.org:443`
-- `wss://gateway.example.com/tcp?target=93.184.216.34:80`
-- `wss://gateway.example.com/tcp?target=%5B2606%3A4700%3A4700%3A%3A1111%5D:443`
+`port` is an integer `1..65535`.
 
-#### Compatibility aliases (optional)
+Examples (canonical form):
 
-Some clients may use `host` and `port` query parameters instead of `target`. Gateways **must** support this form for compatibility.
+- `ws://localhost:8787/tcp?host=example.com&port=443`
+- `wss://gateway.example.com/tcp?host=93.184.216.34&port=80`
+- `wss://gateway.example.com/tcp?host=%5B2606%3A4700%3A4700%3A%3A1111%5D&port=443`
 
-- When both forms are provided, the gateway must prefer `target`.
-- IPv6 is accepted in bracket form for `host` (e.g. `host=[2606:4700:4700::1111]`).
+#### Compatibility alias: `target` (optional)
+
+Some clients may use a single `target` query parameter instead of `host` + `port`. Gateways **must** support this form for compatibility.
+
+`target` format: `<host>:<port>` (IPv6 must use RFC3986 bracket form, e.g. `target=[2606:4700:4700::1111]:443`).
+
+When both forms are provided, the gateway must prefer `target`.
 
 ### Authentication
 
@@ -144,9 +149,11 @@ The WebSocket upgrade request must include the `aero_session` cookie issued by `
 
 If the cookie is missing/invalid, the gateway must reject the upgrade with `401 Unauthorized` (no WebSocket).
 
+Some deployments may additionally support a non-cookie authentication mode (token auth). Because browsers cannot set arbitrary headers for `new WebSocket(...)`, any token must be passed via a WebSocket-compatible mechanism (commonly `Sec-WebSocket-Protocol`). This is deployment-specific and not required for v1 cookie-based sessions.
+
 ### Connection lifecycle
 
-1. Client creates a WebSocket to `/tcp?target=...`.
+1. Client creates a WebSocket to `/tcp?host=...&port=...` (or the legacy `target=...` form).
 2. Gateway validates:
    - Session cookie
    - Origin allowlist
@@ -265,6 +272,14 @@ Specific limit values are deployment-dependent, but clients should assume at lea
 
 The recommended way to obtain concrete limits is via the JSON response of `POST /session`.
 
+### Optional: `/tcp-mux` (multiplexed TCP over one WebSocket)
+
+Browsers limit concurrent WebSockets per origin and each socket has overhead. For workloads that need many concurrent TCP connections (e.g. many short-lived HTTP connections), some gateway deployments may expose:
+
+- `GET /tcp-mux` (WebSocket upgrade)
+
+`/tcp-mux` carries multiple logical TCP streams over a single WebSocket using a gateway-defined framing protocol. This document treats `/tcp-mux` as an optional scaling path; clients should implement `/tcp` first.
+
 ---
 
 ## 4) `/dns-query` DNS-over-HTTPS (DoH)
@@ -331,6 +346,15 @@ curl -sS \
   --output response.dns
 ```
 
+### Optional: `/dns-json` (JSON DoH convenience)
+
+Some deployments may additionally expose a JSON endpoint intended for debugging and simple A/AAAA lookups:
+
+- `GET /dns-json?name=example.com&type=A`
+- Response `Content-Type: application/dns-json`
+
+`/dns-query` remains the canonical DoH interface and the only endpoint described by the OpenAPI spec.
+
 ---
 
 ## 5) Security model (gateway responsibilities)
@@ -382,6 +406,19 @@ To mitigate SSRF and internal network scanning, the gateway should block connect
 
 If a DNS name resolves to any blocked range, the gateway must treat the destination as blocked.
 
+### 5.4 Rate limiting & quotas
+
+Gateways should enforce rate limits and quotas to prevent abuse, including (deployment-specific):
+
+- requests/minute (HTTP endpoints like `/session` and `/dns-query`)
+- max concurrent `/tcp` connections per session/IP
+- bytes transferred per session/IP
+
+When limits are exceeded:
+
+- HTTP endpoints should return `429 Too Many Requests`.
+- WebSocket endpoints should close with a gateway-specific close code (e.g. `4009`).
+
 ---
 
 ## 6) Recommended browser-side integration patterns
@@ -389,9 +426,13 @@ If a DNS name resolves to any blocked range, the gateway must treat the destinat
 ### 6.1 WebSocket creation & readiness
 
 ```ts
-async function openTcpProxySocket(gatewayOrigin: string, target: string): Promise<WebSocket> {
-  const url = `${gatewayOrigin.replace(/^http/, 'ws')}/tcp?target=${encodeURIComponent(target)}`;
-  const ws = new WebSocket(url);
+async function openTcpProxySocket(gatewayOrigin: string, host: string, port: number): Promise<WebSocket> {
+  const wsOrigin = gatewayOrigin.replace(/^http/, 'ws');
+  const url = new URL('/tcp', wsOrigin);
+  url.searchParams.set('host', host);
+  url.searchParams.set('port', String(port));
+
+  const ws = new WebSocket(url.toString());
   ws.binaryType = 'arraybuffer';
 
   // Wait for "open" control message from the gateway.
