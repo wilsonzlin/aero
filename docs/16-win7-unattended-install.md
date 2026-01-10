@@ -204,6 +204,14 @@ Windows 7 x64 enforces kernel-mode driver signing. If Aero’s drivers are test-
 1. Windows booted with **test signing enabled**, and
 2. The **signing certificate trusted** by the local machine.
 
+### SHA-2 update note (KB3033929 / KB4474419)
+
+If your driver packages (or the signing certificate itself) use **SHA-256** signatures, stock Windows 7 SP1 may be unable to validate them until SHA-2 support updates are installed (commonly **KB3033929** and **KB4474419**).
+
+If you see signature/trust failures (for example Device Manager **Code 52**), see:
+
+- [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md#issue-missing-kb3033929-sha-256-signature-support)
+
 ### Enable test signing (requires reboot)
 
 Run as Administrator (SYSTEM is fine):
