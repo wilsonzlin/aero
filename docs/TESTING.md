@@ -393,6 +393,26 @@ When debugging a CI failure locally, prefer matching the CI environment as close
 
 ---
 
+## Win7 virtio portable tests (C, hardware-free)
+
+The Win7 virtio driver stack includes a small **portable C99** module that parses the PCI
+capability list for Virtio 1.0 "modern" devices. It is unit-tested using synthetic PCI
+config-space images (runs on Linux CI; no hardware required).
+
+From the repo root:
+
+```bash
+./drivers/win7/virtio/tests/build_and_run.sh
+```
+
+Optionally select a compiler:
+
+```bash
+CC=clang ./drivers/win7/virtio/tests/build_and_run.sh
+```
+
+---
+
 ## Rust microbenchmarks (Criterion)
 
 We use [Criterion.rs](https://github.com/bheisler/criterion.rs) to measure a
