@@ -157,6 +157,7 @@ The service supports configuration via environment variables and equivalent flag
 - `UDP_BINDING_IDLE_TIMEOUT` / `--udp-binding-idle-timeout` (default `60s`)
 - `UDP_READ_BUFFER_BYTES` / `--udp-read-buffer-bytes` (default `65535`)
 - `DATACHANNEL_SEND_QUEUE_BYTES` / `--datachannel-send-queue-bytes` (default `1048576`)
+- `PREFER_V2` / `--prefer-v2` (default `false`) — prefer v2 framing for relay→client packets once the client demonstrates v2 support
 
 ### Signaling config
 

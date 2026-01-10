@@ -45,6 +45,9 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.DataChannelSendQueueBytes != DefaultDataChannelSendQueueBytes {
 		t.Fatalf("DataChannelSendQueueBytes=%d, want %d", cfg.DataChannelSendQueueBytes, DefaultDataChannelSendQueueBytes)
 	}
+	if cfg.PreferV2 {
+		t.Fatalf("PreferV2=true, want false")
+	}
 	if cfg.MaxUDPBindingsPerSession != DefaultMaxUDPBindingsPerSession {
 		t.Fatalf("MaxUDPBindingsPerSession=%d, want %d", cfg.MaxUDPBindingsPerSession, DefaultMaxUDPBindingsPerSession)
 	}

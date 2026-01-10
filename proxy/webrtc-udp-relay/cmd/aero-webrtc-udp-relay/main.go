@@ -77,6 +77,7 @@ func main() {
 		UDPBindingIdleTimeout:     cfg.UDPBindingIdleTimeout,
 		UDPReadBufferBytes:        cfg.UDPReadBufferBytes,
 		DataChannelSendQueueBytes: cfg.DataChannelSendQueueBytes,
+		PreferV2:                  cfg.PreferV2,
 	}
 	sig := signaling.NewServer(signaling.Config{
 		Sessions:    sessionMgr,

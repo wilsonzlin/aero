@@ -27,6 +27,7 @@ const (
 	EnvUDPBindingIdleTimeout     = "UDP_BINDING_IDLE_TIMEOUT"
 	EnvUDPReadBufferBytes        = "UDP_READ_BUFFER_BYTES"
 	EnvDataChannelSendQueueBytes = "DATACHANNEL_SEND_QUEUE_BYTES"
+	EnvPreferV2                  = "PREFER_V2"
 
 	// Quota/rate limiting knobs (required by the task).
 	EnvMaxSessions                     = "MAX_SESSIONS"
@@ -147,6 +148,7 @@ type Config struct {
 	UDPBindingIdleTimeout     time.Duration
 	UDPReadBufferBytes        int
 	DataChannelSendQueueBytes int
+	PreferV2                  bool
 
 	// WebRTCUDPPortRange restricts the UDP ports used for ICE. When nil, pion uses
 	// its defaults (OS ephemeral port selection).
@@ -218,6 +220,15 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	turnURLs := envOrDefault(lookup, envTurnURLs, "")
 	turnUsername := envOrDefault(lookup, envTurnUsername, "")
 	turnCredential := envOrDefault(lookup, envTurnCredential, "")
+
+	preferV2 := false
+	if raw, ok := lookup(EnvPreferV2); ok && strings.TrimSpace(raw) != "" {
+		v, err := strconv.ParseBool(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvPreferV2, raw, err)
+		}
+		preferV2 = v
+	}
 
 	udpBindingIdleTimeout := DefaultUDPBindingIdleTimeout
 	if raw, ok := lookup(EnvUDPBindingIdleTimeout); ok && strings.TrimSpace(raw) != "" {
@@ -391,6 +402,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.IntVar(&hardCloseAfterViolations, "hard-close-after-violations", hardCloseAfterViolations, "Close session after N rate/quota violations (0 = disabled)")
 	fs.DurationVar(&violationWindow, "violation-window", violationWindow, "Violation window for hard close")
 
+	fs.BoolVar(&preferV2, "prefer-v2", preferV2, "Prefer v2 relay->client frames once the client demonstrates v2 support (env "+EnvPreferV2+")")
 	fs.DurationVar(&udpBindingIdleTimeout, "udp-binding-idle-timeout", udpBindingIdleTimeout, "Close idle UDP bindings after this duration (env "+EnvUDPBindingIdleTimeout+")")
 	fs.IntVar(&udpReadBufferBytes, "udp-read-buffer-bytes", udpReadBufferBytes, "UDP socket read buffer size in bytes (env "+EnvUDPReadBufferBytes+")")
 	fs.IntVar(&dataChannelSendQueueBytes, "datachannel-send-queue-bytes", dataChannelSendQueueBytes, "Max queued outbound DataChannel bytes before dropping (env "+EnvDataChannelSendQueueBytes+")")
@@ -539,6 +551,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		UDPBindingIdleTimeout:     udpBindingIdleTimeout,
 		UDPReadBufferBytes:        udpReadBufferBytes,
 		DataChannelSendQueueBytes: dataChannelSendQueueBytes,
+		PreferV2:                  preferV2,
 
 		WebRTCUDPPortRange:           webrtcUDPPortRange,
 		WebRTCUDPListenIP:            webrtcUDPListenIP,
