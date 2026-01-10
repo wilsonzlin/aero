@@ -24,6 +24,11 @@ To stream a remote image, the server **must** support byte-range requests:
 - Correct `206 Partial Content` responses to `Range: bytes=start-end`
 - Correct `Content-Range: bytes start-end/total`
 
+Notes:
+
+- Some servers disallow `HEAD`. Aero can fall back to a small `Range: bytes=0-0` probe,
+  but that requires a valid `Content-Range` header (and appropriate CORS exposure).
+
 ### CORS headers (browser requirement)
 
 Browsers will block cross-origin range reads unless the server is configured for CORS.

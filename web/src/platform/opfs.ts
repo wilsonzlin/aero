@@ -107,7 +107,14 @@ export async function removeOpfsEntry(path: string, options: { recursive?: boole
     throw new Error("OPFS path must not be empty.");
   }
   const root = await getOpfsRoot();
-  const parentDir = await getDirectoryHandleForPath(root, parts, false);
+  let parentDir: FileSystemDirectoryHandle;
+  try {
+    parentDir = await getDirectoryHandleForPath(root, parts, false);
+  } catch (err) {
+    // If any parent directory is missing, the entry is effectively already removed.
+    if (err instanceof DOMException && err.name === "NotFoundError") return;
+    throw err;
+  }
   try {
     await parentDir.removeEntry(name, { recursive: options.recursive === true });
   } catch (err) {

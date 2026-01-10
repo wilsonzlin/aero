@@ -481,39 +481,38 @@ async fn probe_range_support(
         }
     })?;
 
-    // HEAD probe for size and Accept-Ranges.
+    // HEAD probe for size and Accept-Ranges. Some servers disallow HEAD (405),
+    // so we treat it as a best-effort hint and fall back to a Range GET probe.
+    let mut head_total_size: Option<u64> = None;
+
     let head = Request::builder()
         .method(Method::HEAD)
         .uri(uri.clone())
         .body(Body::empty())
         .expect("valid request");
-
-    let resp = client.request(head).await?;
-    if !resp.status().is_success() {
-        return Err(StreamingDiskError::UnexpectedHttpResponse {
-            status: resp.status().as_u16(),
-            reason: format!("HEAD {}", resp.status()),
-        });
+    if let Ok(resp) = client.request(head).await {
+        if resp.status().is_success() {
+            head_total_size = resp
+                .headers()
+                .get(CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok());
+            let accept_ranges_bytes = resp
+                .headers()
+                .get(ACCEPT_RANGES)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_ascii_lowercase().contains("bytes"))
+                .unwrap_or(false);
+            if accept_ranges_bytes {
+                if let Some(total_size) = head_total_size {
+                    return Ok((total_size, true));
+                }
+            }
+        }
     }
 
-    let total_size = resp
-        .headers()
-        .get(CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
-        .ok_or(StreamingDiskError::MissingContentLength)?;
-
-    let accept_ranges = resp
-        .headers()
-        .get(ACCEPT_RANGES)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if accept_ranges.to_ascii_lowercase().contains("bytes") {
-        return Ok((total_size, true));
-    }
-
-    // Some servers omit Accept-Ranges but still honor Range. Probe with a small
-    // request and look for 206 + Content-Range.
+    // Some servers omit Accept-Ranges (or disallow HEAD) but still honor Range.
+    // Probe with a small request and look for 206 + Content-Range.
     let range_get = Request::builder()
         .method(Method::GET)
         .uri(uri)
@@ -523,7 +522,18 @@ async fn probe_range_support(
 
     let resp = client.request(range_get).await?;
     if resp.status() != StatusCode::PARTIAL_CONTENT {
-        return Ok((total_size, false));
+        if let Some(total) = head_total_size {
+            return Ok((total, false));
+        }
+        // Best-effort: some servers include the full Content-Length on a 200
+        // even if Range is ignored.
+        let total = resp
+            .headers()
+            .get(CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .ok_or(StreamingDiskError::MissingContentLength)?;
+        return Ok((total, false));
     }
 
     let content_range = resp
@@ -531,8 +541,13 @@ async fn probe_range_support(
         .get(CONTENT_RANGE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-
-    parse_content_range(content_range, Some(total_size)).map(|_| (total_size, true))
+    let parsed = parse_content_range_full(content_range)?;
+    if let Some(expected) = head_total_size {
+        if parsed.total != expected {
+            return Err(StreamingDiskError::InvalidContentRange(content_range.to_string()));
+        }
+    }
+    Ok((parsed.total, true))
 }
 
 fn block_span_for_range(offset: u64, len: u64, block_size: u64) -> Option<(u64, u64)> {
@@ -606,6 +621,23 @@ fn parse_content_range(
     content_range: &str,
     expected_total_size: Option<u64>,
 ) -> Result<(u64, u64), StreamingDiskError> {
+    let parsed = parse_content_range_full(content_range)?;
+    if let Some(expected) = expected_total_size {
+        if parsed.total != expected {
+            return Err(StreamingDiskError::InvalidContentRange(content_range.to_string()));
+        }
+    }
+    Ok((parsed.start, parsed.end))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ParsedContentRange {
+    start: u64,
+    end: u64,
+    total: u64,
+}
+
+fn parse_content_range_full(content_range: &str) -> Result<ParsedContentRange, StreamingDiskError> {
     // Example: "bytes 0-0/12345"
     let content_range = content_range.trim();
     let Some(rest) = content_range.strip_prefix("bytes ") else {
@@ -636,16 +668,11 @@ fn parse_content_range(
         .checked_add(1)
         .ok_or_else(|| StreamingDiskError::InvalidContentRange(content_range.to_string()))?;
 
-    if let Some(expected) = expected_total_size {
-        let total: u64 = total_part
-            .parse()
-            .map_err(|_| StreamingDiskError::InvalidContentRange(content_range.to_string()))?;
-        if total != expected {
-            return Err(StreamingDiskError::InvalidContentRange(content_range.to_string()));
-        }
-    }
+    let total: u64 = total_part
+        .parse()
+        .map_err(|_| StreamingDiskError::InvalidContentRange(content_range.to_string()))?;
 
-    Ok((start, end))
+    Ok(ParsedContentRange { start, end, total })
 }
 
 #[cfg(test)]

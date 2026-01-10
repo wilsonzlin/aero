@@ -101,26 +101,84 @@ export type RemoteDiskProbeResult = {
 };
 
 export async function probeRemoteDisk(url: string): Promise<RemoteDiskProbeResult> {
-  const head = await fetch(url, { method: "HEAD" });
-  if (!head.ok) {
-    throw new Error(`HEAD failed: ${head.status} ${head.statusText}`);
-  }
+  let acceptRanges = "";
+  let size: number | null = null;
 
-  const size = Number(head.headers.get("content-length") ?? "NaN");
-  if (!Number.isFinite(size) || size <= 0) {
-    throw new Error("Remote server did not provide a valid Content-Length.");
+  // Prefer HEAD for a cheap size probe, but fall back to a Range GET for servers that
+  // disallow HEAD (or omit Content-Length from HEAD).
+  try {
+    const head = await fetch(url, { method: "HEAD" });
+    if (head.ok) {
+      const headSize = Number(head.headers.get("content-length") ?? "NaN");
+      if (Number.isFinite(headSize) && headSize > 0) {
+        size = headSize;
+      }
+      acceptRanges = head.headers.get("accept-ranges") ?? "";
+    }
+  } catch {
+    // ignore; fall back to GET probe
   }
-  const acceptRanges = head.headers.get("accept-ranges") ?? "";
 
   const probe = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" } });
   const contentRange = probe.headers.get("content-range") ?? "";
+  const partialOk = probe.status === 206;
+
+  if (size === null && partialOk) {
+    if (!contentRange) {
+      throw new Error(
+        "Range probe returned 206 Partial Content, but Content-Range is not visible. " +
+          "If this is cross-origin, the server must set Access-Control-Expose-Headers: Content-Range, Content-Length.",
+      );
+    }
+    size = parseContentRangeHeader(contentRange).total;
+  }
+
+  if (size === null || !Number.isFinite(size) || size <= 0) {
+    throw new Error(
+      "Remote server did not provide a readable image size via Content-Length (HEAD) or Content-Range (Range GET).",
+    );
+  }
+
+  if (!acceptRanges) {
+    acceptRanges = probe.headers.get("accept-ranges") ?? "";
+  }
+
   return {
     size,
     acceptRanges,
     rangeProbeStatus: probe.status,
-    partialOk: probe.status === 206,
+    partialOk,
     contentRange,
   };
+}
+
+function parseContentRangeHeader(header: string): { start: number; endExclusive: number; total: number } {
+  // Example: "bytes 0-0/12345"
+  const trimmed = header.trim();
+  if (!trimmed.startsWith("bytes ")) {
+    throw new Error(`invalid Content-Range (expected 'bytes ...'): ${header}`);
+  }
+  const rest = trimmed.slice("bytes ".length);
+  const parts = rest.split("/");
+  if (parts.length !== 2) {
+    throw new Error(`invalid Content-Range: ${header}`);
+  }
+  const [rangePart, totalPart] = parts;
+  const rangeParts = rangePart.split("-");
+  if (rangeParts.length !== 2) {
+    throw new Error(`invalid Content-Range: ${header}`);
+  }
+  const start = Number(rangeParts[0]);
+  const endInclusive = Number(rangeParts[1]);
+  const total = Number(totalPart);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(endInclusive) || !Number.isSafeInteger(total) || total <= 0) {
+    throw new Error(`invalid Content-Range numbers: ${header}`);
+  }
+  const endExclusive = endInclusive + 1;
+  if (!Number.isSafeInteger(endExclusive) || endExclusive <= start) {
+    throw new Error(`invalid Content-Range: ${header}`);
+  }
+  return { start, endExclusive, total };
 }
 
 type CacheMeta = {
@@ -192,6 +250,21 @@ export class RemoteStreamingDisk {
       cacheLimitBytes: options.cacheLimitBytes ?? 512 * 1024 * 1024,
       prefetchSequentialBlocks: options.prefetchSequentialBlocks ?? 2,
     };
+
+    if (!Number.isSafeInteger(resolved.blockSize) || resolved.blockSize <= 0) {
+      throw new Error(`Invalid blockSize=${resolved.blockSize}`);
+    }
+    if (resolved.blockSize % REMOTE_DISK_SECTOR_SIZE !== 0) {
+      throw new Error(`blockSize must be a multiple of ${REMOTE_DISK_SECTOR_SIZE}`);
+    }
+    if (resolved.cacheLimitBytes !== null) {
+      if (!Number.isSafeInteger(resolved.cacheLimitBytes) || resolved.cacheLimitBytes < 0) {
+        throw new Error(`Invalid cacheLimitBytes=${resolved.cacheLimitBytes}`);
+      }
+    }
+    if (!Number.isSafeInteger(resolved.prefetchSequentialBlocks) || resolved.prefetchSequentialBlocks < 0) {
+      throw new Error(`Invalid prefetchSequentialBlocks=${resolved.prefetchSequentialBlocks}`);
+    }
 
     const cacheKey = await stableCacheKey(url);
     const disk = new RemoteStreamingDisk(url, probe.size, cacheKey, resolved);
