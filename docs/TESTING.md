@@ -436,7 +436,6 @@ cargo bench -p aero_cpu_core --bench emulator_critical -- --noplot
 
 Criterion writes results to `target/criterion/`.
 
-Note: Criterion does **not** respect `CARGO_TARGET_DIR` for its output directory.
 In CI we move `target/criterion` into `target/bench-*/criterion` so the base/head
 runs don't overwrite each other.
 
@@ -459,6 +458,10 @@ on regressions:
 - **schedule / workflow_dispatch**: runs the suite on `main`, compares against
   the previous successful `main` run artifact, and uploads the current results
   as the new baseline artifact (`criterion`).
+
+Regression detection uses Criterion's 95% confidence intervals to avoid flakey
+failures on noisy CI runners (it only fails when the slowdown is both above the
+threshold and statistically significant).
 
 Artifacts:
 

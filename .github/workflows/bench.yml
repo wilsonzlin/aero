@@ -70,13 +70,31 @@ jobs:
           set -euo pipefail
           echo "Benchmarking baseline (base SHA): $BASE_SHA"
           git checkout "$BASE_SHA"
-          CARGO_TARGET_DIR=target/bench-base cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
 
-          # Criterion always writes benchmark results to `target/criterion` (it does not
-          # respect `CARGO_TARGET_DIR`). Move the results out so the next run doesn't
-          # overwrite them.
+          # Warm up the runner CPU so base/head runs are less sensitive to
+          # frequency scaling and low-power states.
+          python3 - <<'PY'
+          import time
+          x = 0
+          end = time.time() + 1.0
+          while time.time() < end:
+              x = (x * 1664525 + 1013904223) & 0xFFFFFFFF
+          print(x)
+          PY
+
+          if command -v taskset >/dev/null 2>&1; then
+            taskset -c 0 cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+          else
+            cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+          fi
+
+          # Criterion writes benchmark results to `target/criterion`. Move the results
+          # out so the next run doesn't overwrite them.
           rm -rf target/bench-base/criterion
           mv target/criterion target/bench-base/criterion
+
+          # Avoid thermal bias carrying into the head run.
+          sleep 2
 
       - name: "Run benchmarks (PR: head commit)"
         if: github.event_name == 'pull_request'
@@ -86,7 +104,21 @@ jobs:
           set -euo pipefail
           echo "Benchmarking PR head (head SHA): $HEAD_SHA"
           git checkout "$HEAD_SHA"
-          CARGO_TARGET_DIR=target/bench-new cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+
+          python3 - <<'PY'
+          import time
+          x = 0
+          end = time.time() + 1.0
+          while time.time() < end:
+              x = (x * 1664525 + 1013904223) & 0xFFFFFFFF
+          print(x)
+          PY
+
+          if command -v taskset >/dev/null 2>&1; then
+            taskset -c 0 cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+          else
+            cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+          fi
 
           rm -rf target/bench-new/criterion
           mv target/criterion target/bench-new/criterion
@@ -106,7 +138,20 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
-          CARGO_TARGET_DIR=target/bench-new cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+          python3 - <<'PY'
+          import time
+          x = 0
+          end = time.time() + 1.0
+          while time.time() < end:
+              x = (x * 1664525 + 1013904223) & 0xFFFFFFFF
+          print(x)
+          PY
+
+          if command -v taskset >/dev/null 2>&1; then
+            taskset -c 0 cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+          else
+            cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+          fi
 
           rm -rf target/bench-new/criterion
           mv target/criterion target/bench-new/criterion

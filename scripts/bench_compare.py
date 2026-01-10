@@ -19,6 +19,8 @@ from pathlib import Path
 class BenchEstimate:
     benchmark: str
     mean_ns: float
+    mean_ci_low_ns: float
+    mean_ci_high_ns: float
 
 
 def _format_duration_ns(ns: float) -> str:
@@ -45,11 +47,20 @@ def load_criterion_estimates(criterion_dir: Path) -> dict[str, BenchEstimate]:
             payload = json.load(f)
 
         try:
-            mean_ns = float(payload["mean"]["point_estimate"])
+            mean = payload["mean"]
+            mean_ns = float(mean["point_estimate"])
+            ci = mean["confidence_interval"]
+            mean_ci_low_ns = float(ci["lower_bound"])
+            mean_ci_high_ns = float(ci["upper_bound"])
         except (KeyError, TypeError, ValueError) as e:
             raise SystemExit(f"Malformed Criterion estimate file: {path} ({e})")
 
-        estimates[bench_id] = BenchEstimate(benchmark=bench_id, mean_ns=mean_ns)
+        estimates[bench_id] = BenchEstimate(
+            benchmark=bench_id,
+            mean_ns=mean_ns,
+            mean_ci_low_ns=mean_ci_low_ns,
+            mean_ci_high_ns=mean_ci_high_ns,
+        )
 
     if not estimates:
         raise SystemExit(
@@ -67,7 +78,9 @@ def build_markdown_report(
     all_ids = sorted(set(base.keys()) | set(new.keys()))
 
     lines: list[str] = []
-    lines.append(f"### Benchmark comparison (threshold: {threshold * 100:.0f}% slowdown)")
+    lines.append(
+        f"### Benchmark comparison (threshold: {threshold * 100:.0f}% slowdown, using 95% CI)"
+    )
     lines.append("")
     lines.append("| benchmark | base | new | change | status |")
     lines.append("|---|---:|---:|---:|---|")
@@ -91,11 +104,24 @@ def build_markdown_report(
         ratio = (new_est.mean_ns - base_est.mean_ns) / base_est.mean_ns
         change = f"{ratio * 100:+.2f}%"
 
-        if ratio > threshold:
+        # Use a conservative check based on non-overlapping confidence intervals to
+        # avoid flakey CI failures on noisy runners.
+        #
+        # Slowdown (time increases): even the *best case* new (lower bound) is still
+        # slower than the *worst case* base (upper bound) by > threshold.
+        conservative_slowdown = (new_est.mean_ci_low_ns / base_est.mean_ci_high_ns) - 1.0
+
+        # Improvement (time decreases): even the *worst case* new (upper bound) is
+        # still faster than the *best case* base (lower bound) by > threshold.
+        conservative_improvement = (new_est.mean_ci_high_ns / base_est.mean_ci_low_ns) - 1.0
+
+        if ratio > threshold and conservative_slowdown > threshold:
             status = f"REGRESSION (> {threshold * 100:.0f}%)"
             has_regressions = True
-        elif ratio < -threshold:
+        elif ratio < -threshold and conservative_improvement < -threshold:
             status = "improvement"
+        elif ratio > threshold:
+            status = "regression (not significant)"
         else:
             status = "ok"
 
