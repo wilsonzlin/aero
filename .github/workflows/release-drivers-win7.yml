@@ -45,13 +45,34 @@ jobs:
             Remove-Item -Force $pfxPath
           } else {
             $mode = 'ephemeral'
-            $cert = New-SelfSignedCertificate `
-              -Subject 'CN=Aero Win7 Driver Test Signing (ephemeral)' `
-              -Type CodeSigningCert `
-              -KeyExportPolicy Exportable `
-              -HashAlgorithm SHA256 `
-              -CertStoreLocation 'Cert:\CurrentUser\My' `
-              -NotAfter (Get-Date).AddYears(5)
+            $subject = 'CN=Aero Win7 Driver Test Signing (ephemeral)'
+
+            # Prefer a SHA-1-signed certificate for maximum Windows 7 SP1 compatibility.
+            # Some environments may block SHA-1 certificate creation; fall back to SHA-256 in that case.
+            try {
+              $cert = New-SelfSignedCertificate `
+                -Subject $subject `
+                -Type CodeSigningCert `
+                -KeyExportPolicy Exportable `
+                -KeyAlgorithm RSA `
+                -KeyLength 2048 `
+                -KeySpec Signature `
+                -HashAlgorithm SHA1 `
+                -CertStoreLocation 'Cert:\CurrentUser\My' `
+                -NotAfter (Get-Date).AddYears(5)
+            } catch {
+              Write-Warning "Failed to create a SHA-1-signed self-signed cert; falling back to SHA-256. Error: $($_.Exception.Message)"
+              $cert = New-SelfSignedCertificate `
+                -Subject $subject `
+                -Type CodeSigningCert `
+                -KeyExportPolicy Exportable `
+                -KeyAlgorithm RSA `
+                -KeyLength 2048 `
+                -KeySpec Signature `
+                -HashAlgorithm SHA256 `
+                -CertStoreLocation 'Cert:\CurrentUser\My' `
+                -NotAfter (Get-Date).AddYears(5)
+            }
           }
 
           Export-Certificate -Cert $cert -FilePath $cerPath | Out-Null
@@ -260,11 +281,19 @@ jobs:
 
           foreach ($t in $targets) {
             Write-Host "Signing $($t.FullName)"
-            & $signtoolExe sign /v /fd SHA256 /sha1 $env:CERT_THUMBPRINT /s My $t.FullName
+            # For maximum Windows 7 SP1 compatibility, use SHA-1 file digests for signing.
+            & $signtoolExe sign /v /fd SHA1 /sha1 $env:CERT_THUMBPRINT /s My $t.FullName
             if ($LASTEXITCODE -ne 0) {
               throw "signtool sign failed for $($t.FullName) (exit $LASTEXITCODE)."
             }
-            & $signtoolExe verify /pa /v $t.FullName
+            $ext = $t.Extension.ToLowerInvariant()
+            if ($ext -eq ".sys") {
+              & $signtoolExe verify /kp /v $t.FullName
+            } elseif ($ext -eq ".cat") {
+              & $signtoolExe verify /v $t.FullName
+            } else {
+              & $signtoolExe verify /pa /v $t.FullName
+            }
             if ($LASTEXITCODE -ne 0) {
               throw "signtool verify failed for $($t.FullName) (exit $LASTEXITCODE)."
             }
@@ -301,6 +330,7 @@ jobs:
 
           # Public cert is identical for both arch artifacts; use either if present.
           cp "artifacts/win7-drivers/dist/aero-driver-public.cer" "aero-driver-public.cer"
+          cp "artifacts/win7-drivers/dist/aero-driver-public.cer" "release_root/aero-driver-public.cer"
 
           (cd release_root && zip -r "../aero-win7-drivers-${tag}-x86.zip" "x86")
           (cd release_root && zip -r "../aero-win7-drivers-${tag}-x64.zip" "x64")
