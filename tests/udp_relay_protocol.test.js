@@ -92,7 +92,54 @@ test("udp relay v1: max payload enforcement", () => {
   );
 });
 
+test("udp relay v1: encode validates ports and IPv4 octets", () => {
+  const payload = new Uint8Array([1, 2, 3]);
+
+  assert.throws(
+    () =>
+      encodeUdpRelayV1Datagram({
+        guestPort: -1,
+        remoteIpv4: [1, 2, 3, 4],
+        remotePort: 1,
+        payload,
+      }),
+    /guestPort/i,
+  );
+
+  assert.throws(
+    () =>
+      encodeUdpRelayV1Datagram({
+        guestPort: 0,
+        remoteIpv4: [1, 2, 3, 4],
+        remotePort: 65536,
+        payload,
+      }),
+    /remotePort/i,
+  );
+
+  assert.throws(
+    () =>
+      encodeUdpRelayV1Datagram({
+        guestPort: 0,
+        remoteIpv4: [256, 0, 0, 1],
+        remotePort: 1,
+        payload,
+      }),
+    /remoteIpv4/i,
+  );
+
+  assert.throws(
+    () =>
+      encodeUdpRelayV1Datagram({
+        guestPort: 0,
+        remoteIpv4: /** @type {any} */ ([1, 2, 3]),
+        remotePort: 1,
+        payload,
+      }),
+    /remoteIpv4/i,
+  );
+});
+
 test("udp relay v1: default max payload constant is sensible", () => {
   assert.ok(UDP_RELAY_DEFAULT_MAX_PAYLOAD >= 1200);
 });
-

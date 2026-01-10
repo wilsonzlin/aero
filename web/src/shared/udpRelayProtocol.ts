@@ -36,6 +36,24 @@ export class UdpRelayDecodeError extends Error {
   }
 }
 
+function assertUint16(name: string, value: number): void {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffff) {
+    throw new RangeError(`${name} must be an integer in [0, 65535] (got ${value})`);
+  }
+}
+
+function assertIpv4(name: string, value: readonly number[]): asserts value is [number, number, number, number] {
+  if (value.length !== 4) {
+    throw new RangeError(`${name} must have length 4 (got ${value.length})`);
+  }
+  for (let i = 0; i < 4; i++) {
+    const octet = value[i];
+    if (!Number.isInteger(octet) || octet < 0 || octet > 255) {
+      throw new RangeError(`${name}[${i}] must be an integer in [0, 255] (got ${octet})`);
+    }
+  }
+}
+
 export function encodeUdpRelayV1Datagram(
   d: UdpRelayV1Datagram,
   { maxPayload = UDP_RELAY_DEFAULT_MAX_PAYLOAD }: { maxPayload?: number } = {},
@@ -43,6 +61,10 @@ export function encodeUdpRelayV1Datagram(
   if (maxPayload < 0) {
     throw new RangeError(`maxPayload must be >= 0 (got ${maxPayload})`);
   }
+  assertUint16('guestPort', d.guestPort);
+  assertIpv4('remoteIpv4', d.remoteIpv4);
+  assertUint16('remotePort', d.remotePort);
+
   if (d.payload.length > maxPayload) {
     throw new RangeError(`payload too large: ${d.payload.length} > ${maxPayload}`);
   }
@@ -86,4 +108,3 @@ export function decodeUdpRelayV1Datagram(
     payload: frame.subarray(UDP_RELAY_V1_HEADER_LEN),
   };
 }
-
