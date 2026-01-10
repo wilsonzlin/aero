@@ -54,10 +54,7 @@ pub trait GuestMemory {
     }
 }
 
-/// Network backend to bridge frames between the emulated NIC and the host network stack.
-pub trait NetworkBackend {
-    fn transmit(&mut self, frame: Vec<u8>);
-}
+pub use crate::io::net::NetworkBackend;
 
 #[derive(Clone, Debug)]
 pub struct PciConfigSpace {
@@ -792,7 +789,6 @@ mod tests {
         let icr = dev.mmio_read(REG_ICR, 4);
         assert_eq!(icr & ICR_TXDW, ICR_TXDW);
     }
-
     #[test]
     fn pci_config_bar_probing_and_eeprom_read_work() {
         let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];

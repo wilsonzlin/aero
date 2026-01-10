@@ -2,10 +2,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use super::e1000::{E1000Device, NetworkBackend};
+use super::e1000::E1000Device;
+use super::NetworkBackend;
 use super::stack::dns::DnsUpstream;
 use super::stack::{NetConfig, NetCounters, NetworkStack, ProxyAction, ProxyEvent, StackOutput};
-use crate::io::virtio::devices::net::{EthernetFrameSink, VirtioNetDevice};
+use crate::io::virtio::devices::net::VirtioNetDevice;
 use crate::io::virtio::vio_core::VirtQueueError;
 use memory::GuestMemory;
 
@@ -340,24 +341,6 @@ impl E1000DeviceTraceExt for E1000Device {
     fn enqueue_rx_frame_traced(&mut self, tracer: &NetTracer, frame: Vec<u8>) {
         tracer.record_ethernet(FrameDirection::GuestRx, &frame);
         self.enqueue_rx_frame(frame);
-    }
-}
-
-pub struct TracingEthernetFrameSink<'a, S> {
-    tracer: &'a NetTracer,
-    inner: &'a mut S,
-}
-
-impl<'a, S> TracingEthernetFrameSink<'a, S> {
-    pub fn new(tracer: &'a NetTracer, inner: &'a mut S) -> Self {
-        Self { tracer, inner }
-    }
-}
-
-impl<S: EthernetFrameSink> EthernetFrameSink for TracingEthernetFrameSink<'_, S> {
-    fn send(&mut self, frame: Vec<u8>) {
-        self.tracer.record_ethernet(FrameDirection::GuestTx, &frame);
-        self.inner.send(frame);
     }
 }
 

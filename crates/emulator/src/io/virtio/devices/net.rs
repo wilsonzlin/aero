@@ -1,3 +1,4 @@
+use crate::io::net::NetworkBackend;
 use crate::io::virtio::vio_core::{
     Descriptor, DescriptorChain, VirtQueue, VirtQueueError, VRING_DESC_F_WRITE,
 };
@@ -69,10 +70,6 @@ impl VirtioNetConfig {
     }
 }
 
-pub trait EthernetFrameSink {
-    fn send(&mut self, frame: Vec<u8>);
-}
-
 #[derive(Debug)]
 pub struct VirtioNetDevice {
     pub config: VirtioNetConfig,
@@ -108,13 +105,13 @@ impl VirtioNetDevice {
     pub fn process_tx(
         &mut self,
         mem: &mut impl GuestMemory,
-        sink: &mut impl EthernetFrameSink,
+        backend: &mut impl NetworkBackend,
     ) -> Result<bool, VirtQueueError> {
         let mut should_interrupt = false;
 
         while let Some(chain) = self.tx_vq.pop_available(mem)? {
             if let Some(frame) = read_tx_frame(mem, &chain)? {
-                sink.send(frame);
+                backend.transmit(frame);
             }
 
             if self.tx_vq.push_used(mem, &chain, 0)? {
@@ -139,6 +136,28 @@ impl VirtioNetDevice {
     ) -> Result<bool, VirtQueueError> {
         self.pending_rx.push_back(frame.to_vec());
         self.process_pending_rx(mem)
+    }
+
+    pub fn enqueue_rx_frame(&mut self, frame: Vec<u8>) {
+        self.pending_rx.push_back(frame);
+    }
+
+    pub fn poll(
+        &mut self,
+        mem: &mut impl GuestMemory,
+        backend: &mut impl NetworkBackend,
+    ) -> Result<bool, VirtQueueError> {
+        let mut should_interrupt = false;
+
+        if self.process_tx(mem, backend)? {
+            should_interrupt = true;
+        }
+
+        if self.process_pending_rx(mem)? {
+            should_interrupt = true;
+        }
+
+        Ok(should_interrupt)
     }
 
     /// Called when the guest notifies the receive queue.
@@ -311,18 +330,13 @@ mod tests {
     use crate::io::virtio::vio_core::{VRING_AVAIL_F_NO_INTERRUPT, VRING_DESC_F_NEXT};
     use memory::DenseMemory;
 
-    struct CaptureSink {
+    #[derive(Default)]
+    struct TestBackend {
         frames: Vec<Vec<u8>>,
     }
 
-    impl CaptureSink {
-        fn new() -> Self {
-            Self { frames: Vec::new() }
-        }
-    }
-
-    impl EthernetFrameSink for CaptureSink {
-        fn send(&mut self, frame: Vec<u8>) {
+    impl NetworkBackend for TestBackend {
+        fn transmit(&mut self, frame: Vec<u8>) {
             self.frames.push(frame);
         }
     }
@@ -396,12 +410,12 @@ mod tests {
         };
         let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
 
-        let mut sink = CaptureSink::new();
-        let irq = dev.process_tx(&mut mem, &mut sink).unwrap();
+        let mut backend = TestBackend::default();
+        let irq = dev.process_tx(&mut mem, &mut backend).unwrap();
         assert!(irq);
         assert_eq!(dev.take_isr(), 0x1);
 
-        assert_eq!(sink.frames, vec![payload.to_vec()]);
+        assert_eq!(backend.frames, vec![payload.to_vec()]);
 
         let used_idx = mem.read_u16_le(used + 2).unwrap();
         assert_eq!(used_idx, 1);
@@ -535,8 +549,8 @@ mod tests {
         };
         let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
 
-        let mut sink = CaptureSink::new();
-        let irq = dev.process_tx(&mut mem, &mut sink).unwrap();
+        let mut backend = TestBackend::default();
+        let irq = dev.process_tx(&mut mem, &mut backend).unwrap();
         assert!(!irq);
         assert_eq!(dev.take_isr(), 0x0);
     }
