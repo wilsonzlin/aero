@@ -310,6 +310,10 @@ fn segment_tcpv4(hdr: VirtioNetHdr, packet: &[u8]) -> Result<Vec<Vec<u8>>, NetOf
         if !is_last {
             seg[l4_offset + 13] &= !(0x01 | 0x08);
         }
+        // virtio-net ECN TSO semantics: only the first segment should carry the TCP CWR flag.
+        if hdr.has_ecn() && i != 0 {
+            seg[l4_offset + 13] &= !0x80;
+        }
 
         // Recompute TCP checksum (includes pseudo-header).
         seg[l4_offset + 16..l4_offset + 18].copy_from_slice(&0u16.to_be_bytes());
@@ -382,6 +386,10 @@ fn segment_tcpv6(hdr: VirtioNetHdr, packet: &[u8]) -> Result<Vec<Vec<u8>>, NetOf
         let is_last = i + 1 == total_segments;
         if !is_last {
             seg[l4_offset + 13] &= !(0x01 | 0x08);
+        }
+        // virtio-net ECN TSO semantics: only the first segment should carry the TCP CWR flag.
+        if hdr.has_ecn() && i != 0 {
+            seg[l4_offset + 13] &= !0x80;
         }
 
         // Recompute TCP checksum (includes pseudo-header).
@@ -939,5 +947,37 @@ mod tests {
             );
             assert_eq!(tcp_csum, 0);
         }
+    }
+
+    #[test]
+    fn tx_gso_tcpv4_ecn_clears_cwr_after_first_segment() {
+        let payload_len = 3000;
+        let mss = 1000usize;
+        // CWR|PSH|ACK
+        let flags = 0x80 | 0x18;
+        let packet = build_ipv4_tcp_frame(payload_len, flags);
+
+        let hdr = VirtioNetHdr {
+            flags: VIRTIO_NET_HDR_F_NEEDS_CSUM,
+            gso_type: VIRTIO_NET_HDR_GSO_TCPV4 | VIRTIO_NET_HDR_GSO_ECN,
+            hdr_len: (ETH_HEADER_LEN + 20 + 20) as u16,
+            gso_size: mss as u16,
+            csum_start: 0,
+            csum_offset: 0,
+            num_buffers: 0,
+        };
+
+        let segments = process_tx_packet(hdr, &packet).unwrap();
+        assert_eq!(segments.len(), 3);
+
+        let ip_offset = ETH_HEADER_LEN;
+        let tcp_offset = ip_offset + 20;
+
+        // First segment: keep CWR, clear PSH.
+        assert_eq!(segments[0][tcp_offset + 13], 0x80 | 0x10);
+        // Middle segment: clear CWR + PSH.
+        assert_eq!(segments[1][tcp_offset + 13], 0x10);
+        // Last segment: clear CWR, keep PSH.
+        assert_eq!(segments[2][tcp_offset + 13], 0x18);
     }
 }
