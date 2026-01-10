@@ -39,6 +39,38 @@ pub trait MemoryBus {
         self.write_u8(addr + 2, ((value >> 16) & 0xFF) as u8);
         self.write_u8(addr + 3, ((value >> 24) & 0xFF) as u8);
     }
+
+    fn read_bytes(&self, addr: u64, out: &mut [u8]) {
+        for (i, b) in out.iter_mut().enumerate() {
+            *b = self.read_u8(addr + i as u64);
+        }
+    }
+
+    fn write_bytes(&mut self, addr: u64, bytes: &[u8]) {
+        for (i, b) in bytes.iter().copied().enumerate() {
+            self.write_u8(addr + i as u64, b);
+        }
+    }
+}
+
+/// Convert a real-mode segment:offset pair into a physical address.
+#[inline]
+pub fn real_addr(seg: u16, off: u16) -> u64 {
+    ((seg as u64) << 4) + (off as u64)
+}
+
+/// Encode a far pointer as a 32-bit value (offset in low word, segment in high word).
+#[inline]
+pub fn make_far_ptr(seg: u16, off: u16) -> u32 {
+    ((seg as u32) << 16) | (off as u32)
+}
+
+/// Decode a far pointer and convert it to a physical address.
+#[inline]
+pub fn far_ptr_to_phys(ptr: u32) -> u64 {
+    let off = (ptr & 0xFFFF) as u16;
+    let seg = (ptr >> 16) as u16;
+    real_addr(seg, off)
 }
 
 #[derive(Debug, Clone)]
@@ -48,9 +80,7 @@ pub struct VecMemory {
 
 impl VecMemory {
     pub fn new(size: usize) -> Self {
-        Self {
-            data: vec![0; size],
-        }
+        Self { data: vec![0; size] }
     }
 }
 

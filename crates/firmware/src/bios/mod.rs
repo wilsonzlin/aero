@@ -16,6 +16,7 @@
 
 mod acpi;
 mod bda_time;
+mod int10;
 mod int10_vbe;
 mod int1a;
 mod interrupts;
@@ -28,6 +29,7 @@ use std::time::Duration;
 
 use crate::memory::MemoryBus;
 use crate::rtc::{CmosRtc, DateTime};
+use crate::video::VideoDevice;
 use machine::{BlockDevice, CpuState, DiskError, FirmwareMemory, MemoryAccess, Segment};
 
 pub use acpi::{AcpiBuilder, AcpiPlacement};
@@ -104,6 +106,7 @@ impl From<CmosRtc> for BiosInit {
 
 pub struct Bios {
     pub rtc: CmosRtc,
+    pub video: VideoDevice,
     bda_time: BdaTime,
 
     config: BiosConfig,
@@ -128,6 +131,7 @@ impl Bios {
         let bda_time = BdaTime::from_rtc(&rtc);
         Self {
             rtc,
+            video: VideoDevice::new(),
             bda_time,
             config,
             e820_map: Vec::new(),

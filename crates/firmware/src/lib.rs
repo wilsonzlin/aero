@@ -3,6 +3,7 @@
 //! The crate also contains a host-side validation suite (ACPI + BIOS interrupt
 //! surface) that can run without a full CPU emulator.
 pub mod acpi;
+pub mod bda;
 pub mod bios;
 pub mod bus;
 pub mod cpu;
@@ -13,5 +14,6 @@ pub mod memory;
 pub mod realmode;
 pub mod rtc;
 pub mod smbios;
+pub mod video;
 pub mod validate;
 pub mod vm;
