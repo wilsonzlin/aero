@@ -14,8 +14,12 @@ variable "image_prefix" {
   default     = "images"
 
   validation {
-    condition     = length(var.image_prefix) > 0 && substr(var.image_prefix, 0, 1) != "/"
-    error_message = "The image_prefix value must be non-empty and must not start with '/'."
+    condition = (
+      length(var.image_prefix) > 0
+      && substr(var.image_prefix, 0, 1) != "/"
+      && substr(var.image_prefix, length(var.image_prefix) - 1, 1) != "/"
+    )
+    error_message = "The image_prefix value must be non-empty and must not start or end with '/'."
   }
 }
 
