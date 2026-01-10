@@ -343,8 +343,11 @@ small set of emulator-critical hot paths with stable statistics.
 cargo bench -p aero_cpu_core --bench emulator_critical -- --noplot
 ```
 
-Criterion writes results to `target/criterion/` (or `${CARGO_TARGET_DIR}/criterion`
-if `CARGO_TARGET_DIR` is set).
+Criterion writes results to `target/criterion/`.
+
+Note: Criterion does **not** respect `CARGO_TARGET_DIR` for its output directory.
+In CI we move `target/criterion` into `target/bench-*/criterion` so the base/head
+runs don't overwrite each other.
 
 ### CI / PR profile (fast)
 
@@ -365,6 +368,12 @@ on regressions:
 - **schedule / workflow_dispatch**: runs the suite on `main`, compares against
   the previous successful `main` run artifact, and uploads the current results
   as the new baseline artifact (`criterion`).
+
+Artifacts:
+
+- `bench-pr` contains both PR base + head Criterion results plus the comparison report.
+- `criterion` is the moving baseline artifact for `main` (only updated on successful runs).
+- `criterion-run-<run_id>` is uploaded for every `main` run to aid debugging.
 
 ### Manual comparison
 
