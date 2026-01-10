@@ -381,6 +381,8 @@ Playwright E2E coverage is split into two workflows:
   matrix over **Chromium + Firefox + WebKit** on a nightly schedule and via
   `workflow_dispatch`. This workflow is intended to catch browser-specific
   regressions without blocking PR merges.
+  - When the scheduled run fails, the workflow opens/updates a single tracking
+    issue so failures are visible outside of Actions.
 
 Environment variables commonly affect CI behavior:
 
