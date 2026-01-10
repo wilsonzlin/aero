@@ -725,6 +725,38 @@ mod tests {
         packet
     }
 
+    fn build_ipv6_tcp_frame(payload_len: usize, flags: u8) -> Vec<u8> {
+        let mut packet = Vec::new();
+        packet.extend_from_slice(&[0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        packet.extend_from_slice(&[0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb]);
+        packet.extend_from_slice(&ETHERTYPE_IPV6.to_be_bytes());
+
+        let payload_length = (20 + payload_len) as u16;
+        let mut ipv6 = [0u8; 40];
+        ipv6[0] = 0x60; // version 6
+        ipv6[4..6].copy_from_slice(&payload_length.to_be_bytes());
+        ipv6[6] = 6; // TCP
+        ipv6[7] = 64;
+        ipv6[8..24].copy_from_slice(&[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+        ipv6[24..40].copy_from_slice(&[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]);
+        packet.extend_from_slice(&ipv6);
+
+        let seq = 0x01020304u32;
+        let ack = 0u32;
+        let mut tcp = [0u8; 20];
+        tcp[0..2].copy_from_slice(&1000u16.to_be_bytes());
+        tcp[2..4].copy_from_slice(&2000u16.to_be_bytes());
+        tcp[4..8].copy_from_slice(&seq.to_be_bytes());
+        tcp[8..12].copy_from_slice(&ack.to_be_bytes());
+        tcp[12] = 5u8 << 4;
+        tcp[13] = flags;
+        tcp[14..16].copy_from_slice(&4096u16.to_be_bytes());
+        packet.extend_from_slice(&tcp);
+
+        packet.extend(std::iter::repeat(0x42u8).take(payload_len));
+        packet
+    }
+
     #[test]
     fn tx_checksum_offload_fills_tcp_checksum() {
         let payload_len = 128;
@@ -809,6 +841,102 @@ mod tests {
             let tcp_len = (20 + seg_payload_len) as u16;
             let tcp_segment = &seg[tcp_offset..tcp_offset + 20 + seg_payload_len];
             let tcp_csum = tcp_checksum_ipv4(&[10, 0, 0, 1], &[10, 0, 0, 2], tcp_segment, tcp_len);
+            assert_eq!(tcp_csum, 0);
+        }
+    }
+
+    #[test]
+    fn tx_gso_tcpv4_respects_ip_total_length_over_trailing_bytes() {
+        let payload_len = 1500usize;
+        let mss = 1000usize;
+        let flags = 0x18; // PSH|ACK
+
+        let mut packet = build_ipv4_tcp_frame(payload_len, flags);
+        // Append junk beyond the IPv4 total length.
+        packet.extend(std::iter::repeat(0x99u8).take(128));
+
+        let hdr = VirtioNetHdr {
+            flags: VIRTIO_NET_HDR_F_NEEDS_CSUM,
+            gso_type: VIRTIO_NET_HDR_GSO_TCPV4,
+            hdr_len: (ETH_HEADER_LEN + 20 + 20) as u16,
+            gso_size: mss as u16,
+            csum_start: 0,
+            csum_offset: 0,
+            num_buffers: 0,
+        };
+
+        let segments = process_tx_packet(hdr, &packet).unwrap();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].len(), ETH_HEADER_LEN + 20 + 20 + mss);
+        assert_eq!(
+            segments[1].len(),
+            ETH_HEADER_LEN + 20 + 20 + (payload_len - mss)
+        );
+
+        let header_len = ETH_HEADER_LEN + 20 + 20;
+        assert!(segments[0][header_len..].iter().all(|&b| b == 0x42));
+        assert!(segments[1][header_len..].iter().all(|&b| b == 0x42));
+    }
+
+    #[test]
+    fn tx_gso_tcpv6_segments_and_updates_headers() {
+        let payload_len = 3000;
+        let mss = 1000usize;
+        let flags = 0x18; // PSH|ACK
+        let packet = build_ipv6_tcp_frame(payload_len, flags);
+
+        let hdr = VirtioNetHdr {
+            flags: VIRTIO_NET_HDR_F_NEEDS_CSUM,
+            gso_type: VIRTIO_NET_HDR_GSO_TCPV6,
+            hdr_len: (ETH_HEADER_LEN + 40 + 20) as u16,
+            gso_size: mss as u16,
+            csum_start: 0,
+            csum_offset: 0,
+            num_buffers: 0,
+        };
+
+        let segments = process_tx_packet(hdr, &packet).unwrap();
+        assert_eq!(segments.len(), 3);
+
+        let base_seq = 0x01020304u32;
+        let ip_offset = ETH_HEADER_LEN;
+        let tcp_offset = ip_offset + 40;
+
+        for (i, seg) in segments.iter().enumerate() {
+            let seg_payload_len = if i < 2 { mss } else { payload_len - 2 * mss };
+            assert_eq!(seg.len(), ETH_HEADER_LEN + 40 + 20 + seg_payload_len);
+
+            // IPv6 payload length updated
+            let payload_len_out =
+                u16::from_be_bytes([seg[ip_offset + 4], seg[ip_offset + 5]]) as usize;
+            assert_eq!(payload_len_out, 20 + seg_payload_len);
+
+            // TCP seq updated
+            let seq = u32::from_be_bytes([
+                seg[tcp_offset + 4],
+                seg[tcp_offset + 5],
+                seg[tcp_offset + 6],
+                seg[tcp_offset + 7],
+            ]);
+            assert_eq!(seq, base_seq + (i * mss) as u32);
+
+            // FIN/PSH cleared for non-last segments
+            let flags_out = seg[tcp_offset + 13];
+            if i < 2 {
+                assert_eq!(flags_out, 0x10);
+            } else {
+                assert_eq!(flags_out, flags);
+            }
+
+            // TCP checksum correct
+            let tcp_len = (20 + seg_payload_len) as u32;
+            let tcp_segment = &seg[tcp_offset..tcp_offset + 20 + seg_payload_len];
+            let tcp_csum = tcp_checksum_ipv6(
+                &[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+                &[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2],
+                tcp_segment,
+                tcp_len,
+            );
             assert_eq!(tcp_csum, 0);
         }
     }
