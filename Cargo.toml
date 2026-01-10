@@ -37,6 +37,8 @@ members = [
     "crates/aero-jit",
     "crates/aero-usb",
     "crates/st-idb",
+    "crates/aero-net",
+    "tools/net-proxy-server",
 ]
 
 exclude = ["fuzz"]

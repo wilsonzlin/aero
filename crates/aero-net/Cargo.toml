@@ -1,0 +1,18 @@
+[package]
+name = "aero-net"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+futures-util = "0.3"
+rand = "0.8"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = "0.26"
+tracing = "0.1"
+url = "2"
+
+[dev-dependencies]
+aero-net-proxy-server = { path = "../../tools/net-proxy-server" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

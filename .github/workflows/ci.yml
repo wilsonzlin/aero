@@ -69,8 +69,20 @@ jobs:
       - name: cargo clippy
         run: cargo clippy ${{ steps.cargo-locked.outputs.locked }} --workspace --all-targets --all-features -- -D warnings
 
+      - name: Prepare net traces dir
+        run: mkdir -p target/net-traces
+
       - name: cargo test
         run: cargo test ${{ steps.cargo-locked.outputs.locked }} --workspace --all-features
+ 
+      - name: Upload net traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: net-traces
+          path: target/net-traces
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload network captures (pcapng)
         if: failure()
