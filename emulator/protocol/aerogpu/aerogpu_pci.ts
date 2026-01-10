@@ -61,6 +61,7 @@ export const AEROGPU_MMIO_MAGIC = 0x55504741;
 export const AEROGPU_FEATURE_FENCE_PAGE = 1n << 0n;
 export const AEROGPU_FEATURE_CURSOR = 1n << 1n;
 export const AEROGPU_FEATURE_SCANOUT = 1n << 2n;
+export const AEROGPU_FEATURE_VBLANK = 1n << 3n;
 
 export const AEROGPU_MMIO_REG_RING_GPA_LO = 0x0100;
 export const AEROGPU_MMIO_REG_RING_GPA_HI = 0x0104;
@@ -94,6 +95,12 @@ export const AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES = 0x0410;
 export const AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO = 0x0414;
 export const AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI = 0x0418;
 
+export const AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO = 0x0420;
+export const AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI = 0x0424;
+export const AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO = 0x0428;
+export const AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI = 0x042c;
+export const AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS = 0x0430;
+
 export const AEROGPU_MMIO_REG_CURSOR_ENABLE = 0x0500;
 export const AEROGPU_MMIO_REG_CURSOR_X = 0x0504;
 export const AEROGPU_MMIO_REG_CURSOR_Y = 0x0508;
@@ -121,4 +128,3 @@ export const AerogpuFormat = {
 } as const;
 
 export type AerogpuFormat = (typeof AerogpuFormat)[keyof typeof AerogpuFormat];
-

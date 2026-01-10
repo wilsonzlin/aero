@@ -22,8 +22,9 @@ pub const AEROGPU_MMIO_MAGIC: u32 = 0x5550_4741; // "AGPU" little-endian
 pub const FEATURE_FENCE_PAGE: u64 = 1u64 << 0;
 pub const FEATURE_CURSOR: u64 = 1u64 << 1;
 pub const FEATURE_SCANOUT: u64 = 1u64 << 2;
+pub const FEATURE_VBLANK: u64 = 1u64 << 3;
 
-pub const SUPPORTED_FEATURES: u64 = FEATURE_FENCE_PAGE | FEATURE_SCANOUT;
+pub const SUPPORTED_FEATURES: u64 = FEATURE_FENCE_PAGE | FEATURE_SCANOUT | FEATURE_VBLANK;
 
 pub mod mmio {
     pub const MAGIC: u64 = 0x0000;
@@ -55,6 +56,12 @@ pub mod mmio {
     pub const SCANOUT0_PITCH_BYTES: u64 = 0x0410;
     pub const SCANOUT0_FB_GPA_LO: u64 = 0x0414;
     pub const SCANOUT0_FB_GPA_HI: u64 = 0x0418;
+
+    pub const SCANOUT0_VBLANK_SEQ_LO: u64 = 0x0420;
+    pub const SCANOUT0_VBLANK_SEQ_HI: u64 = 0x0424;
+    pub const SCANOUT0_VBLANK_TIME_NS_LO: u64 = 0x0428;
+    pub const SCANOUT0_VBLANK_TIME_NS_HI: u64 = 0x042c;
+    pub const SCANOUT0_VBLANK_PERIOD_NS: u64 = 0x0430;
 
     pub const CURSOR_ENABLE: u64 = 0x0500;
     pub const CURSOR_X: u64 = 0x0504;
@@ -103,6 +110,9 @@ pub struct AeroGpuRegs {
     pub irq_enable: u32,
 
     pub scanout0: AeroGpuScanoutConfig,
+    pub scanout0_vblank_seq: u64,
+    pub scanout0_vblank_time_ns: u64,
+    pub scanout0_vblank_period_ns: u32,
     pub cursor: AeroGpuCursorConfig,
 
     pub stats: AeroGpuStats,
@@ -121,9 +131,11 @@ impl Default for AeroGpuRegs {
             irq_status: 0,
             irq_enable: 0,
             scanout0: AeroGpuScanoutConfig::default(),
+            scanout0_vblank_seq: 0,
+            scanout0_vblank_time_ns: 0,
+            scanout0_vblank_period_ns: 0,
             cursor: AeroGpuCursorConfig::default(),
             stats: AeroGpuStats::default(),
         }
     }
 }
-

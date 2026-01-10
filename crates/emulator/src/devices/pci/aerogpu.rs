@@ -6,7 +6,7 @@ use crate::devices::aerogpu_regs::{
     irq_bits, mmio, ring_control, AeroGpuRegs, AEROGPU_MMIO_MAGIC, AEROGPU_PCI_BAR0_SIZE_BYTES,
     AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER, AEROGPU_PCI_DEVICE_ID, AEROGPU_PCI_PROG_IF,
     AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE, AEROGPU_PCI_SUBSYSTEM_ID, AEROGPU_PCI_SUBSYSTEM_VENDOR_ID,
-    AEROGPU_PCI_VENDOR_ID, SUPPORTED_FEATURES,
+    AEROGPU_PCI_VENDOR_ID, FEATURE_VBLANK,
 };
 use crate::devices::aerogpu_ring::{AeroGpuRingHeader, RING_TAIL_OFFSET};
 use crate::devices::aerogpu_scanout::AeroGpuFormat;
@@ -37,6 +37,7 @@ pub struct AeroGpuPciDevice {
     executor: AeroGpuExecutor,
     irq_level: bool,
 
+    boot_time: Instant,
     vblank_interval: Option<Duration>,
     next_vblank: Option<Instant>,
 }
@@ -63,19 +64,30 @@ impl AeroGpuPciDevice {
 
         let vblank_interval = cfg.vblank_hz.and_then(|hz| {
             if hz == 0 {
-                None
-            } else {
-                Some(Duration::from_nanos(1_000_000_000u64 / hz as u64))
+                return None;
             }
+            // Use ceil division to keep 60 Hz at 16_666_667 ns (rather than truncating to 16_666_666).
+            let period_ns = (1_000_000_000u64 + hz as u64 - 1) / hz as u64;
+            Some(Duration::from_nanos(period_ns))
         });
+
+        let mut regs = AeroGpuRegs::default();
+        if let Some(interval) = vblank_interval {
+            regs.scanout0_vblank_period_ns = interval.as_nanos().min(u32::MAX as u128) as u32;
+        } else {
+            // If vblank is disabled by configuration, also clear the advertised feature bit so
+            // guests don't wait on a vblank that will never arrive.
+            regs.features &= !FEATURE_VBLANK;
+        }
 
         Self {
             config: config_space,
             bar0,
             bar0_probe: false,
-            regs: AeroGpuRegs::default(),
+            regs,
             executor: AeroGpuExecutor::new(cfg.executor),
             irq_level: false,
+            boot_time: Instant::now(),
             vblank_interval,
             next_vblank: None,
         }
@@ -101,14 +113,31 @@ impl AeroGpuPciDevice {
             self.next_vblank = Some(next);
             return;
         }
-        let mut fired = 0u32;
-        while now >= next && fired < 4 {
-            self.regs.irq_status |= irq_bits::SCANOUT_VBLANK;
-            self.update_irq_level();
+
+        let mut ticks = 0u32;
+        while now >= next {
+            // Counters advance even if vblank IRQ delivery is masked.
+            self.regs.scanout0_vblank_seq = self.regs.scanout0_vblank_seq.wrapping_add(1);
+            let t_ns = next.saturating_duration_since(self.boot_time).as_nanos();
+            self.regs.scanout0_vblank_time_ns = t_ns.min(u64::MAX as u128) as u64;
+
+            // Only latch the vblank IRQ status bit while the guest has it enabled.
+            // This prevents an immediate "stale" interrupt on re-enable.
+            if (self.regs.irq_enable & irq_bits::SCANOUT_VBLANK) != 0 {
+                self.regs.irq_status |= irq_bits::SCANOUT_VBLANK;
+            }
+
             next += interval;
-            fired += 1;
+            ticks += 1;
+
+            // Avoid unbounded catch-up work if the host stalls for a very long time.
+            if ticks >= 1024 {
+                next = now + interval;
+                break;
+            }
         }
         self.next_vblank = Some(next);
+        self.update_irq_level();
     }
 
     pub fn read_scanout0_rgba(&self, mem: &mut dyn MemoryBus) -> Option<Vec<u8>> {
@@ -133,8 +162,8 @@ impl AeroGpuPciDevice {
         match offset {
             mmio::MAGIC => AEROGPU_MMIO_MAGIC,
             mmio::ABI_VERSION => self.regs.abi_version,
-            mmio::FEATURES_LO => (SUPPORTED_FEATURES & 0xffff_ffff) as u32,
-            mmio::FEATURES_HI => (SUPPORTED_FEATURES >> 32) as u32,
+            mmio::FEATURES_LO => (self.regs.features & 0xffff_ffff) as u32,
+            mmio::FEATURES_HI => (self.regs.features >> 32) as u32,
 
             mmio::RING_GPA_LO => self.regs.ring_gpa as u32,
             mmio::RING_GPA_HI => (self.regs.ring_gpa >> 32) as u32,
@@ -157,6 +186,12 @@ impl AeroGpuPciDevice {
             mmio::SCANOUT0_PITCH_BYTES => self.regs.scanout0.pitch_bytes,
             mmio::SCANOUT0_FB_GPA_LO => self.regs.scanout0.fb_gpa as u32,
             mmio::SCANOUT0_FB_GPA_HI => (self.regs.scanout0.fb_gpa >> 32) as u32,
+
+            mmio::SCANOUT0_VBLANK_SEQ_LO => self.regs.scanout0_vblank_seq as u32,
+            mmio::SCANOUT0_VBLANK_SEQ_HI => (self.regs.scanout0_vblank_seq >> 32) as u32,
+            mmio::SCANOUT0_VBLANK_TIME_NS_LO => self.regs.scanout0_vblank_time_ns as u32,
+            mmio::SCANOUT0_VBLANK_TIME_NS_HI => (self.regs.scanout0_vblank_time_ns >> 32) as u32,
+            mmio::SCANOUT0_VBLANK_PERIOD_NS => self.regs.scanout0_vblank_period_ns,
 
             // Cursor registers are feature-gated; we keep them as inert storage.
             mmio::CURSOR_ENABLE => self.regs.cursor.enable as u32,
@@ -208,6 +243,9 @@ impl AeroGpuPciDevice {
             }
             mmio::IRQ_ENABLE => {
                 self.regs.irq_enable = value;
+                if (value & irq_bits::SCANOUT_VBLANK) == 0 {
+                    self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
+                }
                 self.update_irq_level();
             }
             mmio::IRQ_ACK => {
@@ -216,7 +254,14 @@ impl AeroGpuPciDevice {
             }
 
             mmio::SCANOUT0_ENABLE => {
-                self.regs.scanout0.enable = value != 0;
+                let new_enable = value != 0;
+                if self.regs.scanout0.enable && !new_enable {
+                    // When scanout is disabled, stop vblank scheduling and drop any pending vblank IRQ.
+                    self.next_vblank = None;
+                    self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
+                    self.update_irq_level();
+                }
+                self.regs.scanout0.enable = new_enable;
             }
             mmio::SCANOUT0_WIDTH => {
                 self.regs.scanout0.width = value;
