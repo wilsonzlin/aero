@@ -1,0 +1,26 @@
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  margin: 2rem;
+  line-height: 1.45;
+}
+code {
+  background: #f4f4f5;
+  padding: 0.15rem 0.3rem;
+  border-radius: 0.25rem;
+}
+.ok {
+  color: #0a7a2f;
+  font-weight: 600;
+}
+.bad {
+  color: #b42318;
+  font-weight: 600;
+}
+pre {
+  background: #0b1020;
+  color: #e6edf3;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow: auto;
+}
+

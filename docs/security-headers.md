@@ -20,6 +20,7 @@ These are required for `SharedArrayBuffer` (and therefore `wasm32-threads` / par
 - `Cross-Origin-Opener-Policy: same-origin`
 - `Cross-Origin-Embedder-Policy: require-corp`
 - `Cross-Origin-Resource-Policy: same-origin`
+- `Origin-Agent-Cluster: ?1` (recommended hardening; keeps the origin in an origin-keyed agent cluster)
 
 **Tradeoff:** COEP will block embedding cross-origin resources unless they send `Cross-Origin-Resource-Policy` / CORS headers. Keep all JS/WASM/assets same-origin where possible.
 
@@ -42,6 +43,15 @@ Directive rationale:
 - `style-src 'self'`: allow same-origin CSS without allowing inline script execution.
   - If you must use inline styles (e.g. CSS-in-JS), consider `'unsafe-inline'` here **only** (avoid it in `script-src`).
 - `base-uri 'none'`, `object-src 'none'`, `frame-ancestors 'none'`: reduce common injection and clickjacking risks.
+
+#### No inline scripts/styles by default
+
+This CSP intentionally does **not** include `'unsafe-inline'`. That means:
+
+- `<script>…</script>` (inline) will be blocked
+- `<style>…</style>` and `style="…"` (inline) will be blocked
+
+Prefer external JS/CSS files loaded from `'self'`. If you absolutely must use inline code, use **nonces/hashes** rather than `'unsafe-inline'` (note that many static host header configs cannot inject per-request nonces).
 
 #### Why `wasm-unsafe-eval` is needed
 
@@ -120,6 +130,10 @@ See: `deploy/vercel.json`
 See: `deploy/cloudflare-pages/_headers`
 
 Cloudflare Pages requires `_headers` to be present at the **root of the build output directory**. Depending on your build tool, you may need to copy it into `dist/` (or equivalent) as part of the build.
+
+### Caddy / Docker (local dev + self-host)
+
+See: `deploy/caddy/Caddyfile`
 
 ---
 

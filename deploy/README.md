@@ -6,7 +6,8 @@ This directory contains **production** and **local-dev** deployment artifacts th
 2) Enforce **cross-origin isolation** headers (COOP/COEP/CORP) required for:
    - `SharedArrayBuffer` + WASM threads
    - some high-performance browser execution patterns
-3) Reverse-proxy backend HTTP APIs and WebSocket upgrades (e.g. `/tcp`) to the Aero gateway
+3) Set additional hardening headers (CSP, Referrer-Policy, Permissions-Policy, etc.)
+4) Reverse-proxy backend HTTP APIs and WebSocket upgrades (e.g. `/tcp`) to the Aero gateway
 
 The recommended topology is **single-origin**:
 
@@ -22,6 +23,9 @@ Browser  ──HTTPS/WSS──▶  Caddy (edge)  ──HTTP/WS──▶  aero-ga
   - `aero-gateway` (your backend container) on the internal docker network
 - `deploy/caddy/Caddyfile` – TLS termination, COOP/COEP headers, reverse proxy rules
 - `deploy/static/index.html` – a small **smoke test page** to validate `window.crossOriginIsolated`
+
+For CSP details and tradeoffs (including why Aero needs `'wasm-unsafe-eval'` for WASM-based JIT),
+see: `docs/security-headers.md`.
 
 ## Production DNS requirements
 

@@ -19,6 +19,14 @@
 
 		# Basic hardening.
 		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+
+		# CSP: allow same-origin ESM, WASM JIT via `wasm-unsafe-eval`, and module workers.
+		#
+		# Keep the origin single-tenant: if you need to connect to a separate proxy
+		# origin, tighten/extend `connect-src` deliberately (see docs/security-headers.md).
+		Content-Security-Policy "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'; img-src 'self' data: blob:; style-src 'self'; font-src 'self'"
 
 		# HSTS is enabled by setting a non-zero max-age.
 		# - Local dev default: max-age=0 (disabled)
