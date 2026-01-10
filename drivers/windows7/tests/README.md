@@ -63,6 +63,8 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
 - Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL`.
 - Exits with `0` on PASS, non-zero on FAIL/timeout.
 
+For Linux/CI environments, `host-harness/invoke_aero_virtio_win7_tests.py` provides the same behavior without requiring PowerShell.
+
 See `host-harness/README.md` for required prerequisites and usage.
 
 ---
