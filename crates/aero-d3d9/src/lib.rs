@@ -2,9 +2,13 @@
 //!
 //! This crate is intentionally self-contained so it can be used both in the
 //! emulator and in host-side test harnesses.
+//!
+//! The [`resources`] module provides a D3D9-ish resource management layer (VB/IB/textures/samplers
+//! and RT/DS surfaces) mapped to `wgpu` objects with lock/unlock update semantics.
 
 pub mod abi;
 pub mod dxbc;
+pub mod resources;
 pub mod shader;
 pub mod software;
 pub mod state;

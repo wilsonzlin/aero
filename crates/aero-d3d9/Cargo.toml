@@ -4,10 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1"
+bitflags = "2"
 blake3 = "1.5.0"
+hashbrown = "0.14"
 thiserror = "2.0.9"
+wgpu = { version = "0.19", default-features = true }
 
 [dev-dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+futures = "0.3"
 naga = { version = "24.0.0", default-features = false, features = ["wgsl-in"] }
 pretty_assertions = "1.4.1"
 insta = "1.39.0"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+wasm-bindgen-test = "0.3"
