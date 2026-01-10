@@ -54,6 +54,7 @@
     "BracketRight": { "make": ["5B"] },
     "Backslash": { "make": ["5D"] },
     "IntlHash": { "make": ["5D"] },
+    "IntlYen": { "make": ["5D"] },
 
     "Insert": { "make": ["E0", "70"] },
     "Home": { "make": ["E0", "6C"] },
@@ -95,6 +96,7 @@
 
     "ShiftLeft": { "make": ["12"] },
     "IntlBackslash": { "make": ["61"] },
+    "IntlRo": { "make": ["61"] },
     "KeyZ": { "make": ["1A"] },
     "KeyX": { "make": ["22"] },
     "KeyC": { "make": ["21"] },

@@ -83,6 +83,8 @@ pub fn ps2_set2_scancode_for_code(code: &str) -> Option<Ps2Set2Scancode> {
         "Insert" => Some(Ps2Set2Scancode::Simple { make: 0x70, extended: true }),
         "IntlBackslash" => Some(Ps2Set2Scancode::Simple { make: 0x61, extended: false }),
         "IntlHash" => Some(Ps2Set2Scancode::Simple { make: 0x5D, extended: false }),
+        "IntlRo" => Some(Ps2Set2Scancode::Simple { make: 0x61, extended: false }),
+        "IntlYen" => Some(Ps2Set2Scancode::Simple { make: 0x5D, extended: false }),
         "KeyA" => Some(Ps2Set2Scancode::Simple { make: 0x1C, extended: false }),
         "KeyB" => Some(Ps2Set2Scancode::Simple { make: 0x32, extended: false }),
         "KeyC" => Some(Ps2Set2Scancode::Simple { make: 0x21, extended: false }),

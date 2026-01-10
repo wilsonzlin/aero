@@ -111,6 +111,9 @@ test('KeyboardEvent.code → PS/2 set 2 bytes (i8042 feed)', async ({ page }) =>
     window.__pressCode('ContextMenu');
     window.__pressCode('NumpadClear');
     window.__pressCode('NumpadComma');
+
+    window.__pressCode('IntlYen');
+    window.__pressCode('IntlRo');
   });
 
   const bytes = await page.evaluate(() => window.__i8042Bytes);
@@ -150,5 +153,10 @@ test('KeyboardEvent.code → PS/2 set 2 bytes (i8042 feed)', async ({ page }) =>
     0x73, 0xf0, 0x73,
     // NumpadComma (alias NumpadDecimal)
     0x71, 0xf0, 0x71,
+
+    // IntlYen (best-effort alias of Backslash)
+    0x5d, 0xf0, 0x5d,
+    // IntlRo (best-effort alias of IntlBackslash)
+    0x61, 0xf0, 0x61,
   ]);
 });

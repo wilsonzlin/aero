@@ -56,6 +56,8 @@ export const PS2_SET2_CODE_TO_SCANCODE: Record<string, Ps2Set2Scancode> = {
   "Insert": { kind: 'simple', make: 0x70, extended: true },
   "IntlBackslash": { kind: 'simple', make: 0x61, extended: false },
   "IntlHash": { kind: 'simple', make: 0x5D, extended: false },
+  "IntlRo": { kind: 'simple', make: 0x61, extended: false },
+  "IntlYen": { kind: 'simple', make: 0x5D, extended: false },
   "KeyA": { kind: 'simple', make: 0x1C, extended: false },
   "KeyB": { kind: 'simple', make: 0x32, extended: false },
   "KeyC": { kind: 'simple', make: 0x21, extended: false },

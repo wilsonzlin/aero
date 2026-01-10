@@ -116,3 +116,15 @@ fn special_multi_byte_sequences() {
     );
 }
 
+#[test]
+fn non_us_layout_keys_best_effort() {
+    // Japanese Yen key is best-effort mapped to the same scancode as the ANSI backslash key.
+    let yen = ps2_set2_scancode_for_code("IntlYen").expect("IntlYen should map");
+    assert_eq!(yen.bytes(true), vec![0x5D]);
+    assert_eq!(yen.bytes(false), vec![0xF0, 0x5D]);
+
+    // Japanese Ro key is best-effort mapped to the ISO 102-key extra backslash key.
+    let ro = ps2_set2_scancode_for_code("IntlRo").expect("IntlRo should map");
+    assert_eq!(ro.bytes(true), vec![0x61]);
+    assert_eq!(ro.bytes(false), vec![0xF0, 0x61]);
+}
