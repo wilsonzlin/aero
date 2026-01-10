@@ -146,6 +146,8 @@ name = "aero-devices-nvme"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "emulator",
+ "memory",
 ]
 
 [[package]]

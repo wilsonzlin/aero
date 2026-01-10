@@ -19,7 +19,7 @@ This crate implements an NVMe controller with:
 The controller is intentionally implemented against two small traits:
 
 - `DiskBackend` (block storage backend)
-- `MemoryBus` (guest physical memory DMA access)
+- `memory::MemoryBus` (guest physical memory DMA access)
 
 ## Interrupts
 
@@ -31,4 +31,3 @@ implemented; this is sufficient for functional testing but may limit peak perfor
 Windows 7 has no in-box NVMe driver. NVMe should be considered **experimental** for Win7
 guests unless an NVMe driver is installed in the guest (e.g. Microsoft hotfixes KB2990941 +
 KB3087873, or a vendor driver). This repository does not distribute third-party drivers.
-

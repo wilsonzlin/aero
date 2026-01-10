@@ -6,11 +6,12 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
+memory = { path = "../memory" }
 
 [dev-dependencies]
 criterion = "0.5"
+emulator = { path = "../emulator" }
 
 [[bench]]
 name = "nvme_vs_ahci"
 harness = false
-
