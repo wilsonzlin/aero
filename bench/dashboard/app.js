@@ -23,7 +23,7 @@ function formatValue(value) {
   return value.toFixed(3);
 }
 
-function classifyDelta(prev, next, better) {
+function classifyDelta(prev, next, better, unit) {
   if (!Number.isFinite(prev) || !Number.isFinite(next)) return { className: "neutral", text: "—" };
   const delta = next - prev;
   const pct = prev === 0 ? null : (delta / prev) * 100;
@@ -35,7 +35,8 @@ function classifyDelta(prev, next, better) {
   const className = delta === 0 ? "neutral" : improved ? "improvement" : "regression";
   const sign = delta > 0 ? "+" : "";
   const pctText = pct === null ? "" : ` (${pct > 0 ? "+" : ""}${pct.toFixed(2)}%)`.replace("+-", "-");
-  return { className, text: `${sign}${formatValue(delta)}${pctText}`.replace("+-", "-") };
+  const unitText = unit ? ` ${unit}` : "";
+  return { className, text: `${sign}${formatValue(delta)}${unitText}${pctText}`.replace("+-", "-") };
 }
 
 function createSvgLineChart(points, { width = 840, height = 220, padding = 36 } = {}) {
@@ -157,18 +158,6 @@ function renderDashboard(history) {
 
   const envHtml = envParts.length ? `<div><strong>Env:</strong> ${envParts.join(" • ")}</div>` : "";
 
-  summary.innerHTML = `
-    <div><strong>Runs:</strong> ${entries.length}</div>
-    <div><strong>Schema:</strong> v${history.schemaVersion ?? "?"} • <strong>Updated:</strong> ${history.generatedAt ?? "—"}</div>
-    <div><strong>Latest:</strong> ${latest.timestamp} • <a href="${latest.commit.url}" target="_blank" rel="noreferrer">${latest.commit.sha.slice(0, 7)}</a></div>
-    ${envHtml}
-    <div class="links">
-      <a href="./history.json">history.json</a>
-      <a href="./history.md">history.md</a>
-      <a href="./history.schema.json">history.schema.json</a>
-    </div>
-  `;
-
   const metricIndex = new Map();
 
   for (const entry of entries) {
@@ -197,6 +186,62 @@ function renderDashboard(history) {
     }
   }
 
+  const changes = [];
+  for (const metric of metricIndex.values()) {
+    const pts = metric.points;
+    if (pts.length < 2) continue;
+    const last = pts[pts.length - 1];
+    const prev = pts[pts.length - 2];
+    const delta = classifyDelta(prev.y, last.y, metric.better, metric.unit);
+    const pct = Number.isFinite(prev.y) && prev.y !== 0 ? (last.y - prev.y) / prev.y : null;
+    changes.push({
+      id: `${metric.scenarioName}.${metric.metricName}`,
+      pct,
+      delta,
+    });
+  }
+
+  const sortByMagnitudeDesc = (a, b) => Math.abs(b.pct ?? 0) - Math.abs(a.pct ?? 0);
+  const topRegressions = changes
+    .filter((c) => c.delta.className === "regression")
+    .sort(sortByMagnitudeDesc)
+    .slice(0, 5);
+  const topImprovements = changes
+    .filter((c) => c.delta.className === "improvement")
+    .sort(sortByMagnitudeDesc)
+    .slice(0, 5);
+
+  const renderChangeList = (label, items) => {
+    if (items.length === 0) return "";
+    return `
+      <div class="delta-list">
+        <div class="delta-list-title">${label}</div>
+        <ul>
+          ${items
+            .map(
+              (c) =>
+                `<li><code>${c.id}</code> <span class="delta-text ${c.delta.className}">${c.delta.text}</span></li>`,
+            )
+            .join("")}
+        </ul>
+      </div>
+    `;
+  };
+
+  summary.innerHTML = `
+    <div><strong>Runs:</strong> ${entries.length}</div>
+    <div><strong>Schema:</strong> v${history.schemaVersion ?? "?"} • <strong>Updated:</strong> ${history.generatedAt ?? "—"}</div>
+    <div><strong>Latest:</strong> ${latest.timestamp} • <a href="${latest.commit.url}" target="_blank" rel="noreferrer">${latest.commit.sha.slice(0, 7)}</a></div>
+    ${envHtml}
+    ${renderChangeList("Top regressions (vs prev):", topRegressions)}
+    ${renderChangeList("Top improvements (vs prev):", topImprovements)}
+    <div class="links">
+      <a href="./history.json">history.json</a>
+      <a href="./history.md">history.md</a>
+      <a href="./history.schema.json">history.schema.json</a>
+    </div>
+  `;
+
   metricsContainer.innerHTML = "";
 
   const grouped = new Map();
@@ -220,7 +265,9 @@ function renderDashboard(history) {
       const pts = metric.points;
       const last = pts[pts.length - 1];
       const prev = pts.length > 1 ? pts[pts.length - 2] : undefined;
-      const delta = prev ? classifyDelta(prev.y, last.y, metric.better) : { className: "neutral", text: "—" };
+      const delta = prev
+        ? classifyDelta(prev.y, last.y, metric.better, metric.unit)
+        : { className: "neutral", text: "—" };
       const samplesText = [];
       if (Number.isFinite(last.n)) samplesText.push(`n=${last.n}`);
       if (Number.isFinite(last.cv)) samplesText.push(`CV ${(last.cv * 100).toFixed(2)}%`);

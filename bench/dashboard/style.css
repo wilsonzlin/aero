@@ -59,6 +59,42 @@ main {
   opacity: 0.9;
 }
 
+.delta-list {
+  margin-top: 6px;
+}
+
+.delta-list-title {
+  font-weight: 600;
+  opacity: 0.9;
+  margin-bottom: 2px;
+}
+
+.delta-list ul {
+  margin: 4px 0 0 18px;
+  padding: 0;
+}
+
+.delta-list li {
+  margin: 2px 0;
+  font-size: 13px;
+}
+
+.delta-list code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.delta-text.improvement {
+  color: #b9ffd3;
+}
+
+.delta-text.regression {
+  color: #ffd1d1;
+}
+
 .scenario {
   margin-bottom: 34px;
 }
