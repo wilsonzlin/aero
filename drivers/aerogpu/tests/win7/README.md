@@ -83,6 +83,11 @@ To require a specific PCI VID/DID (recommended for automation):
 run_all.cmd --require-vid=0x1234 --require-did=0x1111
 ```
 
+You can find the correct VID/DID in the Win7 guest via:
+
+* Device Manager → Display adapters → Properties → Details → **Hardware Ids**
+* Or by reading the PCI ID from the AeroGPU driver INF you installed (see `drivers/aerogpu/packaging/win7/README.md`).
+
 ## Expected results
 
 In a Win7 VM with AeroGPU installed and working correctly:
