@@ -19,6 +19,7 @@ win-offline-cert-injector --windows-dir <mount-root> [--store <STORE> ...] [--ve
 
 Stores (case-insensitive):
   ROOT
+  CA
   TrustedPublisher
   TrustedPeople
 ```

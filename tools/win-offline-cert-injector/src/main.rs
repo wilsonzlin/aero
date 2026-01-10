@@ -66,7 +66,7 @@ Usage:\n\
   win-offline-cert-injector --hive <path-to-SOFTWARE> [--store <STORE> ...] [--verify-only] [--cert <cert-file> ...] [<cert-file>...]\n\
   win-offline-cert-injector --windows-dir <mount-root> [--store <STORE> ...] [--verify-only] [--cert <cert-file> ...] [<cert-file>...]\n\
 \n\
-Stores (case-insensitive): ROOT, TrustedPublisher, TrustedPeople\n\
+Stores (case-insensitive): ROOT, CA, TrustedPublisher, TrustedPeople\n\
 Default stores: ROOT + TrustedPublisher\n"
 }
 
@@ -75,6 +75,7 @@ fn normalize_store_name(input: &str) -> Result<&'static str, ToolError> {
     let upper = input.to_ascii_uppercase();
     match upper.as_str() {
         "ROOT" => Ok("ROOT"),
+        "CA" => Ok("CA"),
         "TRUSTEDPUBLISHER" => Ok("TrustedPublisher"),
         "TRUSTEDPEOPLE" => Ok("TrustedPeople"),
         _ => Err(ToolError::Usage(format!(
