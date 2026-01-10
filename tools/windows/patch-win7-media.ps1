@@ -50,9 +50,10 @@ function Normalize-CertStoreName {
   $upper = $Name.Trim().ToUpperInvariant()
   switch ($upper) {
     "ROOT" { return "ROOT" }
+    "CA" { return "CA" }
     "TRUSTEDPUBLISHER" { return "TrustedPublisher" }
     "TRUSTEDPEOPLE" { return "TrustedPeople" }
-    default { throw "Unsupported certificate store '$Name'. Supported values: ROOT, TrustedPublisher, TrustedPeople." }
+    default { throw "Unsupported certificate store '$Name'. Supported values: ROOT, CA, TrustedPublisher, TrustedPeople." }
   }
 }
 

@@ -52,14 +52,14 @@ Patch *all* `install.wim` indices (default) and both `boot.wim` indices (default
   -DriversPath C:\drivers\win7
 ```
 
-Inject the certificate into an additional store (`TrustedPeople`):
+Inject the certificate into additional stores (`TrustedPeople` + `CA`):
 
 ```powershell
 .\tools\windows\patch-win7-media.ps1 `
   -MediaRoot C:\iso\win7sp1 `
   -CertPath  C:\certs\driver-test.cer `
   -DriversPath C:\drivers\win7 `
-  -CertStores ROOT,TrustedPublisher,TrustedPeople
+  -CertStores ROOT,CA,TrustedPublisher,TrustedPeople
 ```
 
 Patch with `nointegritychecks` enabled as well:
