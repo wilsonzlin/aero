@@ -120,6 +120,32 @@ Disk image streaming is implemented via `fetch()` (often with HTTP `Range` reque
 - **Range requests may trigger preflight:** `Range` is not a CORS-safelisted request header, so browsers will send an `OPTIONS` preflight. Ensure the service allows the headers you use (commonly `Range, Authorization`) and exposes `Content-Range` so JS can read it.
 - **Do not transform/compress disk bytes:** byte offsets must match the on-disk stream. If you use a CDN/reverse proxy, disable gzip/auto-compression for the disk route.
 
+**Quick header checklist for a cross-origin image host (example):**
+
+_Preflight (`OPTIONS`) response_:
+
+```http
+HTTP/1.1 204 No Content
+Access-Control-Allow-Origin: https://app.example.com
+Access-Control-Allow-Methods: GET, HEAD, OPTIONS
+Access-Control-Allow-Headers: Range, If-Range, Authorization
+Access-Control-Max-Age: 600
+Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
+```
+
+_Disk byte response (`GET`/`HEAD`, including `206 Partial Content`)_:
+
+```http
+Access-Control-Allow-Origin: https://app.example.com
+Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag
+Cross-Origin-Resource-Policy: same-site
+Vary: Origin
+Accept-Ranges: bytes
+Cache-Control: no-transform
+```
+
+If you use cookies/other credentials, add `Access-Control-Allow-Credentials: true` and do not use `Access-Control-Allow-Origin: *`.
+
 For the detailed header matrix and troubleshooting guidance, see:
 
 - [Disk Image Streaming Service (Runbook)](./backend/disk-image-streaming-service.md)
