@@ -89,8 +89,12 @@ To make the setting effective across the different boot paths Windows 7 uses, pa
 
 1. **`{globalsettings}`**
    - Central “library settings” object. Other objects can inherit from it.
+   - In the on-disk hive this is typically the object with key name:
+     - `{7ea2e1ac-2e61-4728-aaa3-896d9d0a9f0e}`
 2. **`{bootloadersettings}`**
    - Another “library settings” object commonly inherited by OS loader entries.
+   - In the on-disk hive this is typically the object with key name:
+     - `{6efb52bf-1766-41db-a6b3-0ee5eff72bd7}`
 3. **All OS loader (`winload*`) entries**
    - Patch the actual boot application entries to be robust even if inheritance differs between media templates.
 
