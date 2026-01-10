@@ -68,21 +68,13 @@ if /i "%AERO_COPY_PAYLOAD_TO_C%"=="1" (
   echo Payload copy disabled (AERO_COPY_PAYLOAD_TO_C=%AERO_COPY_PAYLOAD_TO_C%).
 )
 
-REM Certificate file is optional. Accept multiple common names so the unattended
-REM workflow doesn't depend on a single artifact naming convention.
-set "AERO_CERT_FILE=%AERO_ROOT%\Cert\aero_test.cer"
-if not exist "%AERO_CERT_FILE%" set "AERO_CERT_FILE=%AERO_ROOT%\Cert\aero-test.cer"
-if not exist "%AERO_CERT_FILE%" set "AERO_CERT_FILE=%AERO_ROOT%\Cert\aero-test-root.cer"
-if not exist "%AERO_CERT_FILE%" set "AERO_CERT_FILE=%AERO_ROOT%\Certs\AeroTestRoot.cer"
-
-if exist "%AERO_CERT_FILE%" (
-  echo Importing test certificate: "%AERO_CERT_FILE%"
-  certutil -addstore -f Root "%AERO_CERT_FILE%"
-  echo certutil Root exit code: !errorlevel!
-  certutil -addstore -f TrustedPublisher "%AERO_CERT_FILE%"
-  echo certutil TrustedPublisher exit code: !errorlevel!
-) else (
-  echo No certificate found under "%AERO_ROOT%\Cert\" or "%AERO_ROOT%\Certs\". Skipping certificate import.
+REM Certificate(s) are optional. If present, import them into Root and TrustedPublisher.
+REM We accept multiple common layouts and import all *.cer/*.p7b found.
+set "AERO_CERT_IMPORTED=0"
+call :IMPORT_CERT_DIR "%AERO_ROOT%\Cert"
+call :IMPORT_CERT_DIR "%AERO_ROOT%\Certs"
+if "%AERO_CERT_IMPORTED%"=="0" (
+  echo No certificate files (*.cer or *.p7b) found under "%AERO_ROOT%\Cert\" or "%AERO_ROOT%\Certs\". Skipping certificate import.
 )
 
 echo Enabling test signing...
@@ -144,6 +136,31 @@ if errorlevel 1 (
 
 echo Rebooting now to apply boot configuration changes...
 shutdown /r /t 0
+exit /b 0
+
+:IMPORT_CERT_DIR
+set "AERO_CERT_DIR=%~1"
+if "%AERO_CERT_DIR%"=="" exit /b 0
+if not exist "%AERO_CERT_DIR%\" exit /b 0
+
+if exist "%AERO_CERT_DIR%\*.cer" (
+  for %%F in ("%AERO_CERT_DIR%\*.cer") do call :IMPORT_CERT_FILE "%%~fF"
+)
+if exist "%AERO_CERT_DIR%\*.p7b" (
+  for %%F in ("%AERO_CERT_DIR%\*.p7b") do call :IMPORT_CERT_FILE "%%~fF"
+)
+exit /b 0
+
+:IMPORT_CERT_FILE
+set "AERO_CERT_FILE=%~1"
+if "%AERO_CERT_FILE%"=="" exit /b 0
+if not exist "%AERO_CERT_FILE%" exit /b 0
+echo Importing certificate: "%AERO_CERT_FILE%"
+certutil -addstore -f Root "%AERO_CERT_FILE%"
+echo certutil Root exit code: !errorlevel!
+certutil -addstore -f TrustedPublisher "%AERO_CERT_FILE%"
+echo certutil TrustedPublisher exit code: !errorlevel!
+set "AERO_CERT_IMPORTED=1"
 exit /b 0
 
 :COPY_PAYLOAD_TO_C
