@@ -66,6 +66,27 @@ JSON exports are meant to be attached to issues/PRs. They should include:
 - Environment metadata (browser version, OS, device info)
 - Aggregated counters and histograms for the current run
 
+### Capturing a window of data
+
+`window.aero.perf.export()` exports the **most recent capture buffer**. To collect a useful per-frame trace:
+
+- Start a capture
+- Reproduce the workload for ~5–15 seconds
+- Stop the capture
+- Export / download
+
+You can do this either:
+
+- via the Perf HUD buttons (**Start**, **Stop**, then **Download**), or
+- via the console API:
+
+```js
+window.aero.perf.captureStart();
+// Reproduce the workload for ~5–15 seconds.
+window.aero.perf.captureStop();
+const data = window.aero.perf.export();
+```
+
 ### Export from the DevTools console
 
 Run this in the page console:
@@ -366,9 +387,10 @@ Best practices:
 Capture a perf export:
 
 1. Run Aero locally and reproduce the workload.
-2. Open DevTools → Console.
-3. Run: `window.aero.perf.export()`
-4. Save/download the JSON and attach it to your issue/PR.
+2. Start a capture (HUD **Start**, or run `window.aero.perf.captureStart()`).
+3. Reproduce the issue for ~5–15 seconds, then stop capture (HUD **Stop**, or `window.aero.perf.captureStop()`).
+4. Open DevTools → Console and run: `window.aero.perf.export()`
+5. Save/download the JSON and attach it to your issue/PR.
 
 Run the microbench benchmark locally:
 
