@@ -102,7 +102,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "images" {
 }
 
 resource "aws_s3_bucket_cors_configuration" "images" {
-  count  = length(var.cors_allowed_origins) == 0 ? 0 : 1
+  count  = var.enable_s3_cors && length(var.cors_allowed_origins) > 0 ? 1 : 0
   bucket = aws_s3_bucket.images.id
 
   cors_rule {

@@ -24,6 +24,10 @@ enable_edge_cors_preflight = true
 # headers across objects without relying on per-object metadata.
 enable_edge_cors = true
 
+# Optional: if CORS is handled fully at CloudFront (enable_edge_cors + enable_edge_cors_preflight),
+# you can disable S3 CORS configuration.
+# enable_s3_cors = false
+
 # Optional: custom domain(s) for the CloudFront distribution.
 # If set, you MUST provide an ACM certificate ARN in us-east-1.
 # custom_domain_names = ["images.example.com"]

@@ -71,6 +71,12 @@ variable "noncurrent_version_expiration_days" {
   default     = null
 }
 
+variable "enable_s3_cors" {
+  description = "If true, configure S3 bucket CORS for cors_allowed_* settings. Set false if you handle CORS fully at CloudFront (enable_edge_cors and enable_edge_cors_preflight) and want S3 to be unaware of CORS."
+  type        = bool
+  default     = true
+}
+
 variable "enable_edge_cors_preflight" {
   description = "If true, attach a CloudFront Function that answers CORS preflight (OPTIONS) requests at the edge for /<image_prefix>/*."
   type        = bool

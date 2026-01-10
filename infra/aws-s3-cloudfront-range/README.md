@@ -16,7 +16,7 @@ For a fully local Range + CORS validation setup (no AWS required), see
   - Lifecycle rules:
     - Abort incomplete multipart uploads (important for very large uploads).
     - Optional transition/expiration knobs.
-  - Optional CORS configuration (secure default requires an explicit allowlist of origins).
+  - Optional CORS configuration (secure default requires an explicit allowlist of origins; can be disabled if CORS is handled fully at CloudFront).
 - **CloudFront distribution**
   - Origin is the S3 bucket, access controlled by **OAC**.
   - `http_version = http2and3` (HTTP/2 + HTTP/3).
