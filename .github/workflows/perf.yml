@@ -31,13 +31,13 @@ jobs:
       - name: Checkout (candidate)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           path: head
 
       - name: Checkout (baseline)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
 
