@@ -5,6 +5,11 @@ import test from 'node:test';
 import { buildServer } from '../src/server.js';
 import { decodeDnsHeader, decodeFirstQuestion, encodeDnsQuery, encodeDnsResponseA } from '../src/dns/codec.js';
 
+function bufferToArrayBuffer(buf: Buffer): ArrayBuffer {
+  const ab = buf.buffer as ArrayBuffer;
+  return ab.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+}
+
 const baseConfig = {
   HOST: '127.0.0.1',
   PORT: 0,
@@ -16,6 +21,17 @@ const baseConfig = {
   TRUST_PROXY: false,
 
   RATE_LIMIT_REQUESTS_PER_MINUTE: 0,
+
+  TLS_ENABLED: false,
+  TLS_CERT_PATH: '',
+  TLS_KEY_PATH: '',
+
+  TCP_ALLOWED_HOSTS: [],
+  TCP_ALLOWED_PORTS: [],
+  TCP_BLOCKED_CLIENT_IPS: [],
+  TCP_MUX_MAX_STREAMS: 1024,
+  TCP_MUX_MAX_STREAM_BUFFER_BYTES: 1024 * 1024,
+  TCP_MUX_MAX_FRAME_PAYLOAD_BYTES: 16 * 1024 * 1024,
 
   TCP_PROXY_MAX_CONNECTIONS: 0,
   TCP_PROXY_MAX_CONNECTIONS_PER_IP: 0,
@@ -80,7 +96,7 @@ test('GET /dns-json resolves via UDP upstream and shares cache with /dns-query',
     const r2 = await fetch(`http://127.0.0.1:${port}/dns-query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/dns-message' },
-      body: q2,
+      body: bufferToArrayBuffer(q2),
     });
     assert.equal(r2.status, 200);
     assert.ok((r2.headers.get('content-type') ?? '').startsWith('application/dns-message'));
@@ -94,4 +110,3 @@ test('GET /dns-json resolves via UDP upstream and shares cache with /dns-query',
     await app.close();
   }
 });
-

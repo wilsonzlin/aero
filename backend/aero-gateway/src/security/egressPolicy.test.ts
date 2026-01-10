@@ -6,8 +6,8 @@ import {
   normalizeHostname,
   parseHostnamePattern,
   parseHostnamePatterns,
-} from "./egressPolicy.ts";
-import { isPublicIpAddress } from "./ipPolicy.ts";
+} from "./egressPolicy.js";
+import { isPublicIpAddress } from "./ipPolicy.js";
 
 test("wildcard matching: exact match does not match suffixes/prefixes", () => {
   const pattern = parseHostnamePattern("example.com");
