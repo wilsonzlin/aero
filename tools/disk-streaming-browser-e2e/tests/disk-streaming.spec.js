@@ -43,20 +43,22 @@ test.describe('disk streaming COOP/COEP + Range + auth', () => {
     const start = 123;
     const endInclusive = 123 + 1024 - 1;
     const expectedBytes = Array.from(publicFixtureBytes.subarray(start, endInclusive + 1));
+    const expectedFileSize = publicFixtureBytes.length;
 
     await page.goto(`${app.origin}/?diskOrigin=${encodeURIComponent(disk.origin)}`);
 
     await page.evaluate(() => window.__diskStreamingE2E.assertCrossOriginIsolated());
 
     await page.evaluate(
-      ({ imageId, start, endInclusive, expectedBytes }) =>
+      ({ imageId, start, endInclusive, expectedBytes, expectedFileSize }) =>
         window.__diskStreamingE2E.fetchPublicRange({
           imageId,
           start,
           endInclusive,
           expectedBytes,
+          expectedFileSize,
         }),
-      { imageId: PUBLIC_IMAGE_ID, start, endInclusive, expectedBytes },
+      { imageId: PUBLIC_IMAGE_ID, start, endInclusive, expectedBytes, expectedFileSize },
     );
 
     await page.evaluate(() => window.__diskStreamingE2E.assertCrossOriginIsolated());
@@ -66,6 +68,7 @@ test.describe('disk streaming COOP/COEP + Range + auth', () => {
     const start = 4096;
     const endInclusive = 4096 + 2048 - 1;
     const expectedBytes = Array.from(privateFixtureBytes.subarray(start, endInclusive + 1));
+    const expectedFileSize = privateFixtureBytes.length;
 
     await page.goto(`${app.origin}/?diskOrigin=${encodeURIComponent(disk.origin)}`);
     await page.evaluate(() => window.__diskStreamingE2E.assertCrossOriginIsolated());
@@ -86,15 +89,16 @@ test.describe('disk streaming COOP/COEP + Range + auth', () => {
     );
 
     await page.evaluate(
-      ({ imageId, token, start, endInclusive, expectedBytes }) =>
+      ({ imageId, token, start, endInclusive, expectedBytes, expectedFileSize }) =>
         window.__diskStreamingE2E.fetchPrivateRangeWithToken({
           imageId,
           token,
           start,
           endInclusive,
           expectedBytes,
+          expectedFileSize,
         }),
-      { imageId: PRIVATE_IMAGE_ID, token, start, endInclusive, expectedBytes },
+      { imageId: PRIVATE_IMAGE_ID, token, start, endInclusive, expectedBytes, expectedFileSize },
     );
 
     await page.evaluate(() => window.__diskStreamingE2E.assertCrossOriginIsolated());

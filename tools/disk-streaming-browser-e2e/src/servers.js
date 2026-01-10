@@ -99,9 +99,14 @@ function renderIndexHtml() {
       },
     });
     const status = res.status;
+    const type = res.type;
+    const contentRange = res.headers.get('Content-Range');
+    const acceptRanges = res.headers.get('Accept-Ranges');
+    const contentLength = res.headers.get('Content-Length');
+    const etag = res.headers.get('ETag');
     const bytes = new Uint8Array(await res.arrayBuffer());
     assertCrossOriginIsolated('after fetchRange');
-    return { status, bytes };
+    return { status, type, headers: { contentRange, acceptRanges, contentLength, etag }, bytes };
   }
 
   function assertBytesEqual(actualU8, expectedArray) {
@@ -120,17 +125,26 @@ function renderIndexHtml() {
       assertCrossOriginIsolated('assertCrossOriginIsolated');
     },
 
-    async fetchPublicRange({ imageId, start, endInclusive, expectedBytes }) {
+    async fetchPublicRange({ imageId, start, endInclusive, expectedBytes, expectedFileSize }) {
       const url = diskOrigin + '/disk/' + encodeURIComponent(imageId);
-      const { status, bytes } = await fetchRange(url, { start, endInclusive });
+      const { status, type, headers, bytes } = await fetchRange(url, { start, endInclusive });
       assert(status === 206, 'Expected 206 Partial Content, got ' + status);
+      assert(type === 'cors', 'Expected CORS fetch response type, got ' + type);
+      assert(headers.acceptRanges === 'bytes', 'Expected Accept-Ranges: bytes, got ' + headers.acceptRanges);
+      assert(
+        headers.contentRange === 'bytes ' + start + '-' + endInclusive + '/' + expectedFileSize,
+        'Unexpected Content-Range: ' + headers.contentRange,
+      );
+      assert(headers.contentLength === String(expectedBytes.length), 'Unexpected Content-Length: ' + headers.contentLength);
+      assert(typeof headers.etag === 'string' && headers.etag.length > 0, 'Missing ETag (and/or not exposed via CORS)');
       assertBytesEqual(bytes, expectedBytes);
     },
 
     async fetchPrivateRangeExpectUnauthorized({ imageId, start, endInclusive }) {
       const url = diskOrigin + '/disk/' + encodeURIComponent(imageId);
-      const { status } = await fetchRange(url, { start, endInclusive });
+      const { status, type } = await fetchRange(url, { start, endInclusive });
       assert(status === 401, 'Expected 401 Unauthorized, got ' + status);
+      assert(type === 'cors', 'Expected CORS fetch response type, got ' + type);
     },
 
     async fetchLeaseToken({ imageId, userId = '${PRIVATE_USER_ID}' }) {
@@ -149,9 +163,9 @@ function renderIndexHtml() {
       return body.token;
     },
 
-    async fetchPrivateRangeWithToken({ imageId, token, start, endInclusive, expectedBytes }) {
+    async fetchPrivateRangeWithToken({ imageId, token, start, endInclusive, expectedBytes, expectedFileSize }) {
       const url = diskOrigin + '/disk/' + encodeURIComponent(imageId);
-      const { status, bytes } = await fetchRange(url, {
+      const { status, type, headers, bytes } = await fetchRange(url, {
         start,
         endInclusive,
         headers: {
@@ -159,6 +173,14 @@ function renderIndexHtml() {
         },
       });
       assert(status === 206, 'Expected 206 Partial Content, got ' + status);
+      assert(type === 'cors', 'Expected CORS fetch response type, got ' + type);
+      assert(headers.acceptRanges === 'bytes', 'Expected Accept-Ranges: bytes, got ' + headers.acceptRanges);
+      assert(
+        headers.contentRange === 'bytes ' + start + '-' + endInclusive + '/' + expectedFileSize,
+        'Unexpected Content-Range: ' + headers.contentRange,
+      );
+      assert(headers.contentLength === String(expectedBytes.length), 'Unexpected Content-Length: ' + headers.contentLength);
+      assert(typeof headers.etag === 'string' && headers.etag.length > 0, 'Missing ETag (and/or not exposed via CORS)');
       assertBytesEqual(bytes, expectedBytes);
     },
   };
