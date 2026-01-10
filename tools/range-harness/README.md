@@ -97,11 +97,14 @@ Each request prints a line including:
 
 - The requested `Range` (e.g. `bytes=0-8388607`)
 - `status` (expected: `206`; `200` indicates the server ignored the `Range`)
+- `content-range` (expected to match the requested offsets when `status=206`)
 - `bytes` read
 - `time` (end-to-end latency for downloading the response body)
 - `rate` (per-request throughput, derived from `bytes/time`)
 - `x-cache` (if present)
 - `WARN=...` when the harness detects an issue (bad/missing `Content-Range`, `416`, etc)
+
+If a server ignores `Range` and returns `200`, the harness will warn and abort the response body read early (after the expected chunk size) to avoid accidentally downloading a multi-GB disk image.
 
 ### Summary
 
@@ -125,4 +128,3 @@ Typical workflow:
 1. Start with **8MiB** chunks and `--concurrency 4`
 2. Increase concurrency until throughput stops improving (or latencies become too spiky)
 3. Try 4MiB vs 16MiB to see if the bottleneck is per-request overhead vs bandwidth
-

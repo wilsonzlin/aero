@@ -1,0 +1,9 @@
+{
+  "name": "aero-range-harness",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  }
+}
+
