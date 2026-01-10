@@ -29,6 +29,8 @@ just fmt     # formatting (if configured)
 just lint    # linting (if configured)
 ```
 
+Tip: if you have `watchexec` installed, `just dev` will also rebuild the threaded/shared-memory WASM variant on changes. Otherwise, run `just wasm-watch` in a second terminal.
+
 #### Optional configuration
 
 The `justfile` is intentionally configurable so it can survive repo refactors:

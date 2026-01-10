@@ -226,10 +226,19 @@ Note: Aero relies on SharedArrayBuffer/WASM threads, which require cross-origin 
 (COOP/COEP headers => `crossOriginIsolated === true`). If you see
 `SharedArrayBuffer is not defined` or `crossOriginIsolated is false`, see the
 Troubleshooting section in README.md.
-
-Tip: For automatic wasm rebuilds while the dev server is running, use a second terminal:
-  just wasm-watch  # rebuilds the threaded/shared-memory WASM variant
 EOF
+
+    wasm_dir="$(just _detect_wasm_crate_dir || true)"
+    if [[ -n "${wasm_dir}" ]] && command -v watchexec >/dev/null 2>&1; then
+      echo "==> watchexec detected; rebuilding threaded/shared-memory WASM on changes in '${wasm_dir}'"
+      # Run the watcher in the background and kill it when the dev server exits.
+      watchexec -w "${wasm_dir}" -- just wasm-threaded &
+      watcher_pid=$!
+      trap 'kill "${watcher_pid}" >/dev/null 2>&1 || true' EXIT
+    else
+      echo "==> Tip: For automatic wasm rebuilds while the dev server is running, use a second terminal:"
+      echo "     just wasm-watch  # rebuilds the threaded/shared-memory WASM variant"
+    fi
 
     (cd "{{WEB_DIR}}" && npm run dev)
   else
