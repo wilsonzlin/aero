@@ -81,6 +81,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 {{- end -}}
 
+{{- define "aero-gateway.tlsSecretName" -}}
+{{- if .Values.ingress.tls.secretName -}}
+{{- .Values.ingress.tls.secretName -}}
+{{- else -}}
+{{- printf "%s-tls" (include "aero-gateway.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "aero-gateway.coopCoepSnippet" -}}
 add_header Cross-Origin-Opener-Policy "{{ .Values.ingress.coopCoep.coop }}" always;
 add_header Cross-Origin-Embedder-Policy "{{ .Values.ingress.coopCoep.coep }}" always;

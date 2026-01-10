@@ -40,6 +40,10 @@ kubectl -n aero create secret tls aero-tls \
   --key=./key.pem
 ```
 
+Alternatively, if you have **cert-manager** installed, you can have the chart
+create a `Certificate` resource and skip manual TLS secret creation (see the
+`values-prod-certmanager.yaml` example).
+
 3) Create a values file (do **not** commit this file; it contains secrets):
 
 ```bash
@@ -104,6 +108,20 @@ The chart ships example values you can copy locally:
 - `deploy/k8s/chart/aero-gateway/values-prod.yaml` – production-ish defaults (TLS + 2 replicas)
 - `deploy/k8s/chart/aero-gateway/values-traefik.yaml` – Traefik Ingress + Middleware headers
 - `deploy/k8s/chart/aero-gateway/values-prod-appheaders.yaml` – production with app-level COOP/COEP (no ingress snippets)
+- `deploy/k8s/chart/aero-gateway/values-prod-certmanager.yaml` – production with cert-manager-managed TLS
+
+## TLS with cert-manager (optional)
+
+If cert-manager is available in your cluster, you can automate certificate issuance.
+
+1) Ensure a `ClusterIssuer` exists (example names: `letsencrypt-prod`, `letsencrypt-staging`).
+2) Set:
+   - `ingress.tls.enabled=true`
+   - `certManager.enabled=true`
+   - `certManager.issuerRef.kind/name` appropriately
+
+The chart will create a `Certificate` resource and use a deterministic TLS secret name
+`<release>-aero-gateway-tls` unless you set `ingress.tls.secretName` explicitly.
 
 ## Gateway config notes (PUBLIC_BASE_URL / origin allowlist)
 

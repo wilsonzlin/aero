@@ -134,3 +134,14 @@ networkPolicy:
     # CIDRs to exclude from allowed ranges (only applies when allowedCIDRs is set).
     # Useful for blocking private ranges to reduce SSRF/blast radius.
     exceptCIDRs: []
+
+certManager:
+  # If enabled, this chart can create a cert-manager Certificate resource to
+  # provision the Ingress TLS secret automatically.
+  enabled: false
+
+  # Issuer reference used by the generated Certificate.
+  # Requires cert-manager to be installed in the cluster.
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-prod

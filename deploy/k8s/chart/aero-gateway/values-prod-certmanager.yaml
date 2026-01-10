@@ -1,0 +1,30 @@
+# Example production values using cert-manager for TLS automation.
+#
+# Prereq: cert-manager installed + a ClusterIssuer (e.g. letsencrypt-prod).
+# Copy locally and replace placeholders before deploying.
+
+gateway:
+  replicaCount: 2
+  image:
+    tag: "<REPLACE_WITH_IMAGE_TAG>"
+
+ingress:
+  host: "aero.example.com"
+  tls:
+    enabled: true
+    # secretName is optional when certManager.enabled=true; defaults to "<release>-aero-gateway-tls".
+    secretName: ""
+
+certManager:
+  enabled: true
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-prod
+
+redis:
+  enabled: true
+
+secrets:
+  data:
+    SESSION_SECRET: "<REPLACE_WITH_RANDOM_SECRET>"
+    ADMIN_API_KEY: "<REPLACE_WITH_RANDOM_KEY>"

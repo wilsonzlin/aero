@@ -1,0 +1,15 @@
+{{- if and (default false .Values.certManager.enabled) .Values.ingress.enabled .Values.ingress.tls.enabled -}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "aero-gateway.fullname" . }}
+  labels:
+    {{- include "aero-gateway.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "aero-gateway.tlsSecretName" . }}
+  dnsNames:
+    - {{ .Values.ingress.host | quote }}
+  issuerRef:
+    kind: {{ .Values.certManager.issuerRef.kind | quote }}
+    name: {{ .Values.certManager.issuerRef.name | quote }}
+{{- end }}
