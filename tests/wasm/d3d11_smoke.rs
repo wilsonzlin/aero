@@ -362,3 +362,48 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_eq!(&pixels[(3 * 4 + 3) * 4..(3 * 4 + 4) * 4], &[0, 0, 255, 255]);
     });
 }
+
+#[test]
+fn d3d11_update_texture2d_unaligned_bytes_per_row() {
+    pollster::block_on(async {
+        let mut rt = match D3D11Runtime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("wgpu unavailable ({e:#}); skipping texture upload smoke test");
+                return;
+            }
+        };
+
+        const TEX: u32 = 301;
+
+        // 3 * 4 = 12 bytes/row, which is not 256-aligned and height > 1, so the executor must
+        // repack before calling into WebGPU.
+        let data: [u8; 24] = [
+            // Row 0: red, green, blue.
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, // Row 1: white, black, magenta.
+            255, 255, 255, 255, 0, 0, 0, 255, 255, 0, 255, 255,
+        ];
+
+        let mut w = CmdWriter::new();
+        w.create_texture2d(
+            TEX,
+            3,
+            2,
+            1,
+            1,
+            DxgiFormat::R8G8B8A8Unorm,
+            TextureUsage::COPY_DST | TextureUsage::COPY_SRC,
+        );
+        w.update_texture2d(TEX, 0, 0, 3, 2, 12, &data);
+
+        rt.execute(&w.finish()).unwrap();
+        rt.poll_wait();
+
+        let pixels = rt.read_texture_rgba8(TEX).await.unwrap();
+        assert_eq!(pixels.len(), 3 * 2 * 4);
+        assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
+        assert_eq!(&pixels[8..12], &[0, 0, 255, 255]);
+        assert_eq!(&pixels[12..16], &[255, 255, 255, 255]);
+        assert_eq!(&pixels[20..24], &[255, 0, 255, 255]);
+    });
+}

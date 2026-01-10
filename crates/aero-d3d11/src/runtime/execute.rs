@@ -377,6 +377,73 @@ impl D3D11Runtime {
             .get(&texture_id)
             .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?;
 
+        if width == 0 || height == 0 {
+            bail!("UpdateTexture2D width/height must be non-zero");
+        }
+
+        let bytes_per_texel = match texture.desc.format {
+            wgpu::TextureFormat::Rgba8Unorm
+            | wgpu::TextureFormat::Rgba8UnormSrgb
+            | wgpu::TextureFormat::Bgra8Unorm
+            | wgpu::TextureFormat::Bgra8UnormSrgb
+            | wgpu::TextureFormat::R32Float
+            | wgpu::TextureFormat::Depth32Float
+            | wgpu::TextureFormat::Depth24PlusStencil8 => 4u32,
+            wgpu::TextureFormat::Rgba16Float => 8u32,
+            wgpu::TextureFormat::Rgba32Float => 16u32,
+            other => bail!("UpdateTexture2D: unsupported texture format for CPU upload: {other:?}"),
+        };
+
+        let unpadded_bytes_per_row = width
+            .checked_mul(bytes_per_texel)
+            .ok_or_else(|| anyhow!("UpdateTexture2D: bytes_per_row overflow"))?;
+
+        let src_bytes_per_row = if bytes_per_row == 0 {
+            unpadded_bytes_per_row
+        } else {
+            bytes_per_row
+        };
+
+        if src_bytes_per_row < unpadded_bytes_per_row {
+            bail!(
+                "UpdateTexture2D: bytes_per_row {} is smaller than required row size {}",
+                src_bytes_per_row,
+                unpadded_bytes_per_row
+            );
+        }
+
+        let required_src_len = (src_bytes_per_row as usize).saturating_mul(height as usize);
+        if bytes.len() < required_src_len {
+            bail!(
+                "UpdateTexture2D: source data too small: need {} bytes for {} rows, got {}",
+                required_src_len,
+                height,
+                bytes.len()
+            );
+        }
+
+        // WebGPU requires `bytes_per_row` to be aligned to 256 bytes for multi-row uploads. D3D
+        // workloads frequently use tightly-packed rows that are not 256-aligned, so we repack into
+        // an aligned scratch buffer when needed.
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let needs_repack = height > 1 && (src_bytes_per_row % align != 0);
+
+        let (repacked, upload_bytes_per_row) = if needs_repack {
+            let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
+            let mut tmp = vec![0u8; padded_bytes_per_row as usize * height as usize];
+            for row in 0..height as usize {
+                let src_start = row * src_bytes_per_row as usize;
+                let dst_start = row * padded_bytes_per_row as usize;
+                tmp[dst_start..dst_start + unpadded_bytes_per_row as usize].copy_from_slice(
+                    &bytes[src_start..src_start + unpadded_bytes_per_row as usize],
+                );
+            }
+            (Some(tmp), padded_bytes_per_row)
+        } else {
+            (None, src_bytes_per_row)
+        };
+        let upload_bytes = repacked.as_deref().unwrap_or(bytes);
+
         self.queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &texture.texture,
@@ -388,10 +455,10 @@ impl D3D11Runtime {
                 },
                 aspect: wgpu::TextureAspect::All,
             },
-            bytes,
+            upload_bytes,
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(bytes_per_row),
+                bytes_per_row: Some(upload_bytes_per_row),
                 rows_per_image: Some(height),
             },
             wgpu::Extent3d {
