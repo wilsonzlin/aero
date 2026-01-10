@@ -1,235 +1,439 @@
 #Requires -Version 5.1
-<#
-.SYNOPSIS
-Create a CI test code signing certificate and sign driver artifacts.
-
-.DESCRIPTION
-This script is intended for CI use (e.g. GitHub Actions Windows runners).
-It creates a self-signed code signing certificate and signs the provided
-driver artifacts using `signtool`.
-
-Windows 7 SHA-1/SHA-2 compatibility note:
-When signing files with `/fd sha1`, Windows 7 without SHA-2 updates
-(KB3033929 / KB4474419) can still fail if the *certificate itself* is signed
-using SHA-256. For maximum compatibility, when `-Digest sha1` (or `-DualSign`)
-is selected this script attempts to create the self-signed certificate using
-`New-SelfSignedCertificate -HashAlgorithm sha1`.
-
-If the runner cannot create SHA-1-signed certificates, the script fails unless
-`-AllowSha2CertFallback` is explicitly provided, in which case it falls back to
-creating a SHA-256-signed certificate with a loud warning.
-
-.PARAMETER Path
-Files or directories to sign. Directories are searched recursively for common
-driver artifacts: *.sys, *.cat, *.dll, *.exe.
-
-.PARAMETER Digest
-File digest algorithm passed to `signtool sign /fd` when not using `-DualSign`.
-Valid values: sha1, sha256.
-
-.PARAMETER DualSign
-If set, performs dual signing: first `/fd sha1`, then appends a second
-signature using `/fd sha256` (`signtool /as`).
-
-.PARAMETER AllowSha2CertFallback
-If set, and SHA-1 certificate creation fails, the script will fall back to a
-SHA-256-signed self-signed certificate and continue. This may produce binaries
-that fail to validate on stock Windows 7 SP1 without KB3033929/KB4474419.
-
-.EXAMPLE
-.\ci\sign-drivers.ps1 -Path .\out\drivers -Digest sha1
-
-.EXAMPLE
-.\ci\sign-drivers.ps1 -Path .\out\drivers -DualSign
-#>
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true, Position = 0)]
-    [string[]] $Path,
+  [Parameter()]
+  [string]$InputRoot = "out/packages",
 
-    [Parameter()]
-    [ValidateSet('sha1', 'sha256')]
-    [string] $Digest = 'sha256',
+  [Parameter()]
+  [string]$CertOutDir = "out/certs",
 
-    [Parameter()]
-    [switch] $DualSign,
+  [Parameter()]
+  [ValidateSet("sha1", "sha256")]
+  [string]$Digest = "sha1",
 
-    [Parameter()]
-    [switch] $AllowSha2CertFallback,
+  [Parameter()]
+  [switch]$DualSign,
 
-    [Parameter()]
-    [string] $CertSubject = 'CN=Aero CI Test Code Signing'
+  [Parameter()]
+  [string]$ToolchainJson
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = "Stop"
 
-function Write-Section([string] $Title) {
-    Write-Host ""
-    Write-Host "== $Title =="
+function Resolve-AbsolutePath {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+
+    [Parameter(Mandatory = $true)]
+    [string]$BaseDir
+  )
+
+  if ([System.IO.Path]::IsPathRooted($Path)) {
+    return [System.IO.Path]::GetFullPath($Path)
+  }
+
+  return [System.IO.Path]::GetFullPath((Join-Path $BaseDir $Path))
 }
 
-function Resolve-SigntoolPath {
-    $cmd = Get-Command signtool.exe -ErrorAction SilentlyContinue
-    if ($cmd) {
-        return $cmd.Path
+function Get-JsonPropertyValueRecursive {
+  param(
+    [Parameter(Mandatory = $true)]
+    $Object,
+
+    [Parameter(Mandatory = $true)]
+    [string[]]$PropertyNames
+  )
+
+  if ($null -eq $Object) {
+    return $null
+  }
+
+  if ($Object -is [string] -or $Object -is [ValueType]) {
+    return $null
+  }
+
+  if ($Object -is [System.Collections.IDictionary]) {
+    foreach ($key in $Object.Keys) {
+      if ($PropertyNames -contains $key) {
+        return $Object[$key]
+      }
+
+      $value = Get-JsonPropertyValueRecursive -Object $Object[$key] -PropertyNames $PropertyNames
+      if ($null -ne $value) {
+        return $value
+      }
     }
 
-    $candidateRoots = @()
-    if ($env:ProgramFiles) {
-        $candidateRoots += (Join-Path $env:ProgramFiles 'Windows Kits\10\bin')
-    }
-    if (${env:ProgramFiles(x86)}) {
-        $candidateRoots += (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin')
-    }
+    return $null
+  }
 
-    foreach ($root in $candidateRoots) {
-        if (-not (Test-Path -LiteralPath $root)) {
-            continue
-        }
-
-        # Prefer the highest version and x64 when available.
-        $versionDirs = Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name -Descending
-        foreach ($verDir in $versionDirs) {
-            foreach ($arch in @('x64', 'x86', 'arm64')) {
-                $exe = Join-Path (Join-Path $verDir.FullName $arch) 'signtool.exe'
-                if (Test-Path -LiteralPath $exe) {
-                    return $exe
-                }
-            }
-        }
-
-        foreach ($arch in @('x64', 'x86', 'arm64')) {
-            $exe = Join-Path (Join-Path $root $arch) 'signtool.exe'
-            if (Test-Path -LiteralPath $exe) {
-                return $exe
-            }
-        }
+  if ($Object -is [System.Collections.IEnumerable]) {
+    foreach ($item in $Object) {
+      $value = Get-JsonPropertyValueRecursive -Object $item -PropertyNames $PropertyNames
+      if ($null -ne $value) {
+        return $value
+      }
     }
 
-    throw "signtool.exe not found. Install the Windows SDK 'Signing Tools' feature or add signtool.exe to PATH."
+    return $null
+  }
+
+  foreach ($property in $Object.PSObject.Properties) {
+    if ($PropertyNames -contains $property.Name) {
+      return $property.Value
+    }
+
+    $value = Get-JsonPropertyValueRecursive -Object $property.Value -PropertyNames $PropertyNames
+    if ($null -ne $value) {
+      return $value
+    }
+  }
+
+  return $null
 }
 
-function Expand-SignableFiles([string[]] $InputPaths) {
-    $allowedExtensions = @('.sys', '.cat', '.dll', '.exe')
-    $files = New-Object System.Collections.Generic.List[string]
+function Resolve-SignToolPath {
+  param(
+    [string]$ToolchainJsonPath,
+    [string]$RepoRoot
+  )
 
-    foreach ($p in $InputPaths) {
-        $resolved = Resolve-Path -Path $p -ErrorAction Stop
-        foreach ($rp in $resolved) {
-            if (Test-Path -LiteralPath $rp.Path -PathType Container) {
-                Get-ChildItem -LiteralPath $rp.Path -Recurse -File |
-                    Where-Object { $allowedExtensions -contains $_.Extension.ToLowerInvariant() } |
-                    ForEach-Object { $files.Add($_.FullName) }
-            }
-            else {
-                $files.Add($rp.Path)
-            }
-        }
+  if ($ToolchainJsonPath) {
+    $toolchainAbs = Resolve-AbsolutePath -Path $ToolchainJsonPath -BaseDir $RepoRoot
+    if (-not (Test-Path -LiteralPath $toolchainAbs)) {
+      throw "Toolchain JSON '$ToolchainJsonPath' not found at '$toolchainAbs'."
     }
 
-    return $files | Sort-Object -Unique
+    $toolchain = Get-Content -LiteralPath $toolchainAbs -Raw | ConvertFrom-Json
+    $signtoolFromJson = Get-JsonPropertyValueRecursive -Object $toolchain -PropertyNames @(
+      "signtool",
+      "signTool",
+      "SignTool",
+      "signtoolPath",
+      "signToolPath",
+      "SignToolPath"
+    )
+
+    if ($signtoolFromJson) {
+      $candidate = [string]$signtoolFromJson
+      if (-not [System.IO.Path]::IsPathRooted($candidate)) {
+        $candidate = Join-Path (Split-Path -Parent $toolchainAbs) $candidate
+      }
+
+      $candidate = [System.IO.Path]::GetFullPath($candidate)
+      if (Test-Path -LiteralPath $candidate) {
+        return $candidate
+      }
+
+      throw "signtool.exe path from Toolchain JSON does not exist: '$candidate'."
+    }
+  }
+
+  $signtoolCmd = Get-Command signtool.exe -ErrorAction SilentlyContinue
+  if ($signtoolCmd) {
+    return $signtoolCmd.Source
+  }
+
+  $candidateBases = @()
+  if ($env:ProgramFiles -and (Test-Path -LiteralPath $env:ProgramFiles)) {
+    $candidateBases += Join-Path $env:ProgramFiles "Windows Kits\\10\\bin"
+    $candidateBases += Join-Path $env:ProgramFiles "Windows Kits\\8.1\\bin"
+  }
+  if ($env:"ProgramFiles(x86)" -and (Test-Path -LiteralPath $env:"ProgramFiles(x86)")) {
+    $candidateBases += Join-Path $env:"ProgramFiles(x86)" "Windows Kits\\10\\bin"
+    $candidateBases += Join-Path $env:"ProgramFiles(x86)" "Windows Kits\\8.1\\bin"
+  }
+
+  $archOrder = @("x64", "x86", "arm64")
+
+  foreach ($base in ($candidateBases | Select-Object -Unique)) {
+    if (-not (Test-Path -LiteralPath $base)) {
+      continue
+    }
+
+    foreach ($arch in $archOrder) {
+      $direct = Join-Path $base (Join-Path $arch "signtool.exe")
+      if (Test-Path -LiteralPath $direct) {
+        return $direct
+      }
+    }
+
+    $versionDirs = Get-ChildItem -LiteralPath $base -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name -Descending
+    foreach ($dir in $versionDirs) {
+      foreach ($arch in $archOrder) {
+        $candidate = Join-Path $dir.FullName (Join-Path $arch "signtool.exe")
+        if (Test-Path -LiteralPath $candidate) {
+          return $candidate
+        }
+      }
+    }
+  }
+
+  throw "signtool.exe not found. Ensure the Windows SDK is installed or provide -ToolchainJson with a signtool path."
 }
 
-function New-CodeSigningCertificate([string] $HashAlgorithm) {
-    $notAfter = (Get-Date).AddYears(5)
+function Invoke-SignTool {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$SignToolPath,
 
-    return New-SelfSignedCertificate `
+    [Parameter(Mandatory = $true)]
+    [string[]]$Arguments,
+
+    [Parameter(Mandatory = $true)]
+    [string]$ContextFile
+  )
+
+  $output = & $SignToolPath @Arguments 2>&1
+  $exitCode = $LASTEXITCODE
+
+  if ($exitCode -ne 0) {
+    $joined = ($output | Out-String).TrimEnd()
+    throw "signtool failed (exit $exitCode) for '$ContextFile'.`nCommand: $SignToolPath $($Arguments -join ' ')`n$joined"
+  }
+}
+
+function Ensure-TrustedCertificate {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$CerPath
+  )
+
+  $stores = @(
+    "Cert:\CurrentUser\Root",
+    "Cert:\CurrentUser\TrustedPublisher",
+    "Cert:\LocalMachine\Root",
+    "Cert:\LocalMachine\TrustedPublisher"
+  )
+
+  foreach ($store in $stores) {
+    try {
+      Import-Certificate -FilePath $CerPath -CertStoreLocation $store -ErrorAction Stop | Out-Null
+    } catch {
+      Write-Warning "Failed to import '$CerPath' into '$store': $($_.Exception.Message)"
+    }
+  }
+}
+
+function Ensure-TestSigningCertificate {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$CerPath,
+
+    [Parameter(Mandatory = $true)]
+    [string]$PfxPath,
+
+    [Parameter(Mandatory = $true)]
+    [SecureString]$PfxPassword,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("sha1", "sha256")]
+    [string]$HashAlgorithm
+  )
+
+  if (-not (Get-Command New-SelfSignedCertificate -ErrorAction SilentlyContinue)) {
+    throw "New-SelfSignedCertificate is not available. Install the PKI module/Windows SDK."
+  }
+
+  $shouldGenerate = -not (Test-Path -LiteralPath $CerPath) -or -not (Test-Path -LiteralPath $PfxPath)
+  if (-not $shouldGenerate) {
+    try {
+      $existingCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CerPath)
+      $existingSigAlg = $existingCert.SignatureAlgorithm.FriendlyName.ToLowerInvariant()
+      $existingIsDesiredHash = $existingSigAlg.Contains($HashAlgorithm.ToLowerInvariant())
+      $validLongEnough = $existingCert.NotAfter -gt (Get-Date).AddYears(5)
+      if (-not $existingIsDesiredHash -or -not $validLongEnough) {
+        $shouldGenerate = $true
+      }
+    } catch {
+      $shouldGenerate = $true
+    }
+  }
+
+  if ($shouldGenerate) {
+    $requestedHashAlgorithm = $HashAlgorithm.ToLowerInvariant()
+    $notAfter = (Get-Date).AddYears(10)
+    $subject = "CN=Aero Test Driver Signing"
+    $certHashAlgorithm = $requestedHashAlgorithm
+
+    try {
+      $cert = New-SelfSignedCertificate `
         -Type CodeSigningCert `
-        -Subject $CertSubject `
-        -CertStoreLocation 'Cert:\CurrentUser\My' `
+        -Subject $subject `
+        -CertStoreLocation "Cert:\CurrentUser\My" `
+        -NotAfter $notAfter `
+        -KeyExportPolicy Exportable `
         -KeyAlgorithm RSA `
         -KeyLength 2048 `
-        -KeyExportPolicy Exportable `
         -KeySpec Signature `
-        -HashAlgorithm $HashAlgorithm `
-        -NotAfter $notAfter
-}
-
-function Write-CertificateInfo($Cert) {
-    $sigFriendly = $Cert.SignatureAlgorithm.FriendlyName
-    $sigOid = $Cert.SignatureAlgorithm.Value
-
-    Write-Host "Certificate:"
-    Write-Host "  Subject:            $($Cert.Subject)"
-    Write-Host "  Thumbprint:         $($Cert.Thumbprint)"
-    Write-Host "  SignatureAlgorithm: $sigFriendly ($sigOid)"
-    Write-Host "  NotAfter:           $($Cert.NotAfter.ToString('u'))"
-}
-
-function Invoke-Signtool([string[]] $Args) {
-    Write-Host "signtool $($Args -join ' ')"
-    & $script:SigntoolPath @Args
-    if ($LASTEXITCODE -ne 0) {
-        throw "signtool failed with exit code $LASTEXITCODE"
-    }
-}
-
-Write-Section "Inputs"
-Write-Host "Digest:    $Digest"
-Write-Host "DualSign:  $DualSign"
-Write-Host "Subject:   $CertSubject"
-Write-Host "Paths:     $($Path -join ', ')"
-
-# If we are producing a SHA-1 file signature (explicit sha1 digest or dual-sign),
-# try to also create a SHA-1-signed certificate for maximum Win7 compatibility.
-$desiredCertHash = if (($Digest -eq 'sha1') -or $DualSign) { 'sha1' } else { 'sha256' }
-
-Write-Section "Creating self-signed certificate (requested: $desiredCertHash)"
-$cert = $null
-try {
-    $cert = New-CodeSigningCertificate -HashAlgorithm $desiredCertHash
-}
-catch {
-    if ($desiredCertHash -ne 'sha1') {
+        -HashAlgorithm $certHashAlgorithm `
+        -TextExtension @(
+          "2.5.29.37={text}1.3.6.1.5.5.7.3.3,1.3.6.1.4.1.311.10.3.6"
+        )
+    } catch {
+      if ($requestedHashAlgorithm -ne "sha1") {
         throw
+      }
+
+      Write-Warning "Failed to create a SHA-1-signed self-signed certificate. Falling back to SHA-256: $($_.Exception.Message)"
+      $certHashAlgorithm = "sha256"
+      $cert = New-SelfSignedCertificate `
+        -Type CodeSigningCert `
+        -Subject $subject `
+        -CertStoreLocation "Cert:\CurrentUser\My" `
+        -NotAfter $notAfter `
+        -KeyExportPolicy Exportable `
+        -KeyAlgorithm RSA `
+        -KeyLength 2048 `
+        -KeySpec Signature `
+        -HashAlgorithm $certHashAlgorithm `
+        -TextExtension @(
+          "2.5.29.37={text}1.3.6.1.5.5.7.3.3,1.3.6.1.4.1.311.10.3.6"
+        )
     }
 
-    Write-Warning "Requested a SHA-1-signed certificate (-HashAlgorithm sha1) but certificate creation failed on this runner."
-    Write-Warning "Error: $($_.Exception.Message)"
-
-    if (-not $AllowSha2CertFallback) {
-        throw "Refusing to proceed without a SHA-1-signed certificate. Re-run with -AllowSha2CertFallback to continue anyway (may break stock Win7 without KB3033929/KB4474419)."
+    if (-not $cert) {
+      throw "New-SelfSignedCertificate did not return a certificate object."
     }
 
-    Write-Warning "Proceeding due to -AllowSha2CertFallback: creating a SHA-256-signed certificate instead."
-    Write-Warning "WARNING: Stock Windows 7 SP1 without KB3033929 (kernel-mode SHA-2 support) / KB4474419 (general SHA-2 support) may fail to validate the signature chain, even if /fd sha1 is used."
+    Export-Certificate -Cert $cert -FilePath $CerPath -Force | Out-Null
+    Export-PfxCertificate -Cert $cert -FilePath $PfxPath -Password $PfxPassword -Force | Out-Null
+  }
 
-    $cert = New-CodeSigningCertificate -HashAlgorithm 'sha256'
+  if (-not (Test-Path -LiteralPath $CerPath)) {
+    throw "Expected certificate '$CerPath' to exist after generation."
+  }
+  if (-not (Test-Path -LiteralPath $PfxPath)) {
+    throw "Expected PFX '$PfxPath' to exist after generation."
+  }
+
+  Ensure-TrustedCertificate -CerPath $CerPath
 }
 
-Write-Section "Certificate details"
-Write-CertificateInfo -Cert $cert
+try {
+  $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 
-$script:SigntoolPath = Resolve-SigntoolPath
-Write-Host "Using signtool: $script:SigntoolPath"
+  $inputRootAbs = Resolve-AbsolutePath -Path $InputRoot -BaseDir $repoRoot
+  $certOutDirAbs = Resolve-AbsolutePath -Path $CertOutDir -BaseDir $repoRoot
+  $outDirAbs = Resolve-AbsolutePath -Path "out" -BaseDir $repoRoot
 
-$files = @(Expand-SignableFiles -InputPaths $Path)
-if ($files.Count -eq 0) {
-    throw "No signable files found in: $($Path -join ', ')"
-}
+  if (-not (Test-Path -LiteralPath $inputRootAbs)) {
+    throw "InputRoot '$InputRoot' does not exist at '$inputRootAbs'."
+  }
 
-Write-Section "Signing files"
-foreach ($file in $files) {
-    Write-Host " - $file"
-}
+  New-Item -ItemType Directory -Force -Path $certOutDirAbs | Out-Null
+  New-Item -ItemType Directory -Force -Path $outDirAbs | Out-Null
 
-foreach ($file in $files) {
-    Write-Section "Signing: $file"
-    if ($DualSign) {
-        # Sign SHA-1 first, then append SHA-256 (dual signing).
-        Invoke-Signtool -Args @('sign', '/v', '/fd', 'sha1', '/sha1', $cert.Thumbprint, '/s', 'My', $file)
-        Invoke-Signtool -Args @('sign', '/v', '/as', '/fd', 'sha256', '/sha1', $cert.Thumbprint, '/s', 'My', $file)
+  $cerPath = Join-Path $certOutDirAbs "aero-test.cer"
+  $pfxPath = Join-Path $outDirAbs "aero-test.pfx"
+  $pfxPasswordPlain = "aero-test"
+  $pfxPassword = ConvertTo-SecureString -String $pfxPasswordPlain -AsPlainText -Force
+
+  $needsSha1 = $DualSign -or ($Digest.ToLowerInvariant() -eq "sha1")
+  $certHashAlgorithm = if ($needsSha1) { "sha1" } else { "sha256" }
+
+  Ensure-TestSigningCertificate -CerPath $cerPath -PfxPath $pfxPath -PfxPassword $pfxPassword -HashAlgorithm $certHashAlgorithm
+
+  $signtoolPath = Resolve-SignToolPath -ToolchainJsonPath $ToolchainJson -RepoRoot $repoRoot
+  Write-Host "Using signtool: $signtoolPath"
+
+  $files = @(Get-ChildItem -LiteralPath $inputRootAbs -Recurse -File | Where-Object {
+      $ext = $_.Extension.ToLowerInvariant()
+      $ext -eq ".sys" -or $ext -eq ".cat"
+    })
+
+  if (-not $files -or $files.Count -eq 0) {
+    throw "No .sys or .cat files found under '$inputRootAbs'."
+  }
+
+  $sysFiles = @($files | Where-Object { $_.Extension.ToLowerInvariant() -eq ".sys" })
+  $catFiles = @($files | Where-Object { $_.Extension.ToLowerInvariant() -eq ".cat" })
+
+  $primaryDigest = $Digest.ToLowerInvariant()
+  $appendDigest = $null
+  if ($DualSign) {
+    $primaryDigest = "sha1"
+    $appendDigest = "sha256"
+  }
+
+  function Sign-File {
+    param([string]$Path)
+
+    Invoke-SignTool -SignToolPath $signtoolPath -ContextFile $Path -Arguments @(
+      "sign",
+      "/v",
+      "/f", $pfxPath,
+      "/p", $pfxPasswordPlain,
+      "/fd", $primaryDigest,
+      $Path
+    )
+
+    if ($appendDigest) {
+      Invoke-SignTool -SignToolPath $signtoolPath -ContextFile $Path -Arguments @(
+        "sign",
+        "/v",
+        "/as",
+        "/f", $pfxPath,
+        "/p", $pfxPasswordPlain,
+        "/fd", $appendDigest,
+        $Path
+      )
     }
-    else {
-        Invoke-Signtool -Args @('sign', '/v', '/fd', $Digest, '/sha1', $cert.Thumbprint, '/s', 'My', $file)
+  }
+
+  function Verify-File {
+    param(
+      [string]$Path,
+      [string]$ExtensionLower
+    )
+
+    if ($ExtensionLower -eq ".sys") {
+      Invoke-SignTool -SignToolPath $signtoolPath -ContextFile $Path -Arguments @(
+        "verify",
+        "/kp",
+        "/v",
+        $Path
+      )
+      return
     }
 
-    Write-Section "Verifying: $file"
-    Invoke-Signtool -Args @('verify', '/pa', '/v', '/all', $file)
-}
+    if ($ExtensionLower -eq ".cat") {
+      Invoke-SignTool -SignToolPath $signtoolPath -ContextFile $Path -Arguments @(
+        "verify",
+        "/v",
+        $Path
+      )
+      return
+    }
 
-Write-Host ""
-Write-Host "Done."
+    throw "Unexpected file extension for verification: '$Path'"
+  }
+
+  foreach ($file in $sysFiles) {
+    Write-Host "Signing: $($file.FullName)"
+    Sign-File -Path $file.FullName
+    Write-Host "Verifying (kernel policy): $($file.FullName)"
+    Verify-File -Path $file.FullName -ExtensionLower ".sys"
+  }
+
+  foreach ($file in $catFiles) {
+    Write-Host "Signing: $($file.FullName)"
+    Sign-File -Path $file.FullName
+    Write-Host "Verifying (catalog): $($file.FullName)"
+    Verify-File -Path $file.FullName -ExtensionLower ".cat"
+  }
+
+  if (-not (Test-Path -LiteralPath $cerPath)) {
+    throw "Expected '$cerPath' to exist after signing."
+  }
+
+  Write-Host "All driver binaries and catalogs were signed and verified successfully."
+  exit 0
+} catch {
+  Write-Error $_
+  exit 1
+}
 
