@@ -327,6 +327,27 @@ pub enum VertexInputError {
     #[error("vertex declaration is missing the required end marker (stream=0xFF)")]
     VertexDeclMissingEndMarker,
 
+    #[error(
+        "vertex declaration uses {count} attributes but WebGPU guarantees only {max} vertex attributes"
+    )]
+    TooManyVertexAttributes { count: usize, max: usize },
+
+    #[error(
+        "vertex declaration uses {count} streams but WebGPU guarantees only {max} vertex buffers"
+    )]
+    TooManyVertexBuffers { count: usize, max: usize },
+
+    #[error(
+        "vertex declaration maps multiple elements to WGSL @location({location}): {first_usage:?}{first_usage_index} and {second_usage:?}{second_usage_index}"
+    )]
+    DuplicateShaderLocation {
+        location: u32,
+        first_usage: DeclUsage,
+        first_usage_index: u8,
+        second_usage: DeclUsage,
+        second_usage_index: u8,
+    },
+
     #[error(transparent)]
     Location(#[from] LocationMapError),
 

@@ -119,6 +119,17 @@ pub fn translate_vertex_declaration(
     caps: WebGpuVertexCaps,
     location_map: &dyn VertexLocationMap,
 ) -> Result<TranslatedVertexInput, VertexInputError> {
+    // WebGPU minimum limits (and D3D9 compatibility expectations).
+    const MAX_VERTEX_BUFFERS: usize = 8;
+    const MAX_VERTEX_ATTRIBUTES: usize = 16;
+
+    if decl.elements.len() > MAX_VERTEX_ATTRIBUTES {
+        return Err(VertexInputError::TooManyVertexAttributes {
+            count: decl.elements.len(),
+            max: MAX_VERTEX_ATTRIBUTES,
+        });
+    }
+
     let mut used_streams: Vec<u8> = decl
         .elements
         .iter()
@@ -126,6 +137,29 @@ pub fn translate_vertex_declaration(
         .collect();
     used_streams.sort_unstable();
     used_streams.dedup();
+
+    if used_streams.len() > MAX_VERTEX_BUFFERS {
+        return Err(VertexInputError::TooManyVertexBuffers {
+            count: used_streams.len(),
+            max: MAX_VERTEX_BUFFERS,
+        });
+    }
+
+    // Ensure no two elements map to the same shader location.
+    let mut seen_locations = BTreeMap::<u32, (DeclUsage, u8)>::new();
+    for e in &decl.elements {
+        let loc = location_map.location_for(e.usage, e.usage_index)?;
+        if let Some((prev_usage, prev_index)) = seen_locations.insert(loc, (e.usage, e.usage_index))
+        {
+            return Err(VertexInputError::DuplicateShaderLocation {
+                location: loc,
+                first_usage: prev_usage,
+                first_usage_index: prev_index,
+                second_usage: e.usage,
+                second_usage_index: e.usage_index,
+            });
+        }
+    }
 
     let mut stream_to_buffer_slot = BTreeMap::<u8, u32>::new();
     for (slot, stream) in used_streams.iter().copied().enumerate() {

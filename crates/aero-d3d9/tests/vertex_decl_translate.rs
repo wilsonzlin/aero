@@ -461,3 +461,84 @@ fn vertex_decl_bytes_len_must_be_multiple_of_8() {
         VertexInputError::VertexDeclBytesNotMultipleOf8 { .. }
     ));
 }
+
+#[test]
+fn rejects_duplicate_shader_locations() {
+    #[derive(Debug)]
+    struct BadMap;
+
+    impl VertexLocationMap for BadMap {
+        fn location_for(&self, _usage: DeclUsage, _usage_index: u8) -> Result<u32, LocationMapError> {
+            Ok(0)
+        }
+    }
+
+    let decl = VertexDeclaration {
+        elements: vec![
+            VertexElement::new(
+                0,
+                0,
+                DeclType::Float3,
+                DeclMethod::Default,
+                DeclUsage::Position,
+                0,
+            ),
+            VertexElement::new(
+                0,
+                12,
+                DeclType::Float3,
+                DeclMethod::Default,
+                DeclUsage::Normal,
+                0,
+            ),
+        ],
+    };
+
+    let mut strides = BTreeMap::new();
+    strides.insert(0, 24);
+
+    let err = translate_vertex_declaration(
+        &decl,
+        &strides,
+        &StreamsFreqState::default(),
+        WebGpuVertexCaps {
+            vertex_attribute_16bit: true,
+        },
+        &BadMap,
+    )
+    .unwrap_err();
+
+    assert!(matches!(err, VertexInputError::DuplicateShaderLocation { .. }));
+}
+
+#[test]
+fn rejects_vertex_decls_exceeding_webgpu_min_vertex_buffers() {
+    // WebGPU guarantees at least 8 vertex buffers. D3D9 has 16 streams, so we need an explicit
+    // error rather than silently dropping streams.
+    let mut elements = Vec::new();
+    for stream in 0..9u8 {
+        elements.push(VertexElement::new(
+            stream,
+            0,
+            DeclType::Float3,
+            DeclMethod::Default,
+            DeclUsage::Position,
+            0,
+        ));
+    }
+
+    let decl = VertexDeclaration { elements };
+
+    let err = translate_vertex_declaration(
+        &decl,
+        &BTreeMap::new(),
+        &StreamsFreqState::default(),
+        WebGpuVertexCaps {
+            vertex_attribute_16bit: true,
+        },
+        &StandardLocationMap,
+    )
+    .unwrap_err();
+
+    assert!(matches!(err, VertexInputError::TooManyVertexBuffers { .. }));
+}
