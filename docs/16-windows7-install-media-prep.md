@@ -279,56 +279,17 @@ Windows stores LocalMachine certificate stores under the SOFTWARE hive at:
 
 The key name is the certificate **SHA-1 thumbprint of the certificate DER bytes** (uppercase hex, no spaces).
 
+Note: the `Blob` value stored under `SystemCertificates` is written by CryptoAPI and is **not guaranteed to be raw DER**.
 Recommended tooling (preferred over manual registry editing):
 
 ```powershell
-# After mounting a WIM index to $Mount:
-win-offline-cert-injector `
-  --windows-dir "$Mount" `
-  --store ROOT `
-  --store TrustedPublisher `
-  --cert "C:\\path\\to\\aero-test-root.cer"
-```
+cd tools\win-offline-cert-injector
+cargo build --release
 
-PowerShell helper (repeat for each mounted image where you need trust):
-
-```powershell
-function Add-CertToOfflineHive {
-  param(
-    [Parameter(Mandatory=$true)][string]$OfflineSoftwareHivePath,
-    [Parameter(Mandatory=$true)][string]$CertPath
-  )
-
-  # Use X509Certificate2 so standard Windows-exported DER/Base64 .cer files work.
-  # If you have a PEM certificate, use `tools/win7-slipstream/scripts/cert-to-reg.py` + `reg import`,
-  # or `tools/win-offline-cert-injector/` (Windows-native), or convert to DER first.
-  $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CertPath)
-  $thumb = $cert.Thumbprint.ToUpperInvariant()
-  $der = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
-
-  reg load HKLM\\AERO_OFFLINE "$OfflineSoftwareHivePath" | Out-Null
-
-  foreach ($store in @("ROOT","TrustedPublisher")) {
-    $k = "HKLM\\AERO_OFFLINE\\Microsoft\\SystemCertificates\\$store\\Certificates\\$thumb"
-    reg add $k /f | Out-Null
-    reg add $k /v Blob /t REG_BINARY /d ([BitConverter]::ToString($der).Replace("-","")) /f | Out-Null
-  }
-
-  reg unload HKLM\\AERO_OFFLINE | Out-Null
-}
-```
-
-Apply it to `boot.wim` indexes (mount, add cert, commit) and to the relevant `install.wim` index(es):
-
-```powershell
 $Cert = "C:\\aero\\certs\\aero-test-root.cer"
 
-# Example: boot.wim index 2
-dism /Mount-Wim /WimFile:"$WorkDir\\sources\\boot.wim" /Index:2 /MountDir:"$Mount"
-Add-CertToOfflineHive -OfflineSoftwareHivePath "$Mount\\Windows\\System32\\config\\SOFTWARE" -CertPath $Cert
-dism /Unmount-Wim /MountDir:"$Mount" /Commit
-
-# Repeat for boot.wim index 1 and install.wim indexes
+# After mounting a WIM index to $Mount:
+.\target\release\win-offline-cert-injector.exe --windows-dir "$Mount" --store ROOT --store TrustedPublisher "$Cert"
 ```
 
 ### 5) Patch WinPE boot BCD on the ISO (BIOS + UEFI)
@@ -476,21 +437,19 @@ Prerequisites:
 
 - `wimlib-imagex` (FUSE-based mounting; on macOS you may need macFUSE)
 - `hivexregedit`
-- `python3`
 
 ```sh
 CERT_PATH="iso-root/aero/certs/aero-test-root.cer"
 
+# Generate `aero-cert.reg` on a Windows machine (once) using CryptoAPI, then copy it here:
+#   win-certstore-regblob-export --store ROOT --store TrustedPublisher --format reg --reg-hklm-subkey SOFTWARE "$CERT_PATH" > aero-cert.reg
+#
+# (Fallback: tools/win7-slipstream/scripts/cert-to-reg.py can generate a best-effort .reg from raw DER,
+# but it may not match CryptoAPI's exact registry-backed `Blob` representation.)
+
 # Mount boot.wim index 2 (Windows Setup) read-write.
 mkdir -p mnt
 wimlib-imagex mount iso-root/sources/boot.wim 2 mnt --read-write
-
-# Generate an importable .reg patch for an offline SOFTWARE hive.
-# (Handles both DER and PEM certificates.)
-python3 tools/win7-slipstream/scripts/cert-to-reg.py \
-  --mount-key SOFTWARE \
-  --out aero-cert.reg \
-  "$CERT_PATH"
 
 hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\SOFTWARE' mnt/Windows/System32/config/SOFTWARE aero-cert.reg
 wimlib-imagex unmount mnt --commit
