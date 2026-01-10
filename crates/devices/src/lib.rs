@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod a20_gate;
+pub mod acpi_pm;
 pub mod apic;
 pub mod pci;
 pub mod pic8259;

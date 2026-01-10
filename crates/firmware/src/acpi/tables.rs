@@ -54,6 +54,17 @@ fn build_fadt(dsdt_address: u64) -> Vec<u8> {
     table.extend_from_slice(&header);
     table.resize(244, 0);
 
+    // Handshake ports used by Windows (and most ACPI-aware OSes):
+    // - Guest writes ACPI_ENABLE to SMI_CMD.
+    // - Firmware sets SCI_EN in PM1a_CNT.
+    //
+    // We model the common PC layout (ACPI PM base at 0x400, SMI_CMD at 0xB2).
+    const SMI_CMD_PORT: u32 = 0xB2;
+    const ACPI_ENABLE: u8 = 0xA0;
+    const ACPI_DISABLE: u8 = 0xA1;
+    const PM1A_EVT_BLK: u32 = 0x400;
+    const PM1A_CNT_BLK: u32 = 0x404;
+
     // firmware_ctrl (u32) @ 36
     // dsdt (u32) @ 40
     table[40..44].copy_from_slice(&(dsdt_address as u32).to_le_bytes());
@@ -62,10 +73,39 @@ fn build_fadt(dsdt_address: u64) -> Vec<u8> {
     // SCI interrupt @ 46 (u16). Use the traditional ISA IRQ 9.
     table[46..48].copy_from_slice(&9u16.to_le_bytes());
 
+    // SMI_CMD (u32) @ 48, ACPI_ENABLE (u8) @ 52, ACPI_DISABLE (u8) @ 53
+    table[48..52].copy_from_slice(&SMI_CMD_PORT.to_le_bytes());
+    table[52] = ACPI_ENABLE;
+    table[53] = ACPI_DISABLE;
+
+    // PM1a event/control blocks used to read PM1_STS/PM1_EN and PM1_CNT.
+    // PM1a_EVT_BLK (u32) @ 56
+    table[56..60].copy_from_slice(&PM1A_EVT_BLK.to_le_bytes());
+    // PM1a_CNT_BLK (u32) @ 64
+    table[64..68].copy_from_slice(&PM1A_CNT_BLK.to_le_bytes());
+
+    // PM1_EVT_LEN (u8) @ 88, PM1_CNT_LEN (u8) @ 89
+    table[88] = 4;
+    table[89] = 2;
+
     // 64-bit pointers added in ACPI 2.0+.
     // x_firmware_ctrl (u64) @ 132
     // x_dsdt (u64) @ 140
     table[140..148].copy_from_slice(&dsdt_address.to_le_bytes());
+
+    // Extended address blocks (Generic Address Structures).
+    // X_PM1a_EVT_BLK @ 148, X_PM1a_CNT_BLK @ 172
+    // GAS layout: [space_id, bit_width, bit_offset, access_size, address(u64)]
+    // We advertise System I/O (space_id=1) with 16-bit word accesses.
+    table[148] = 1;
+    table[149] = 32;
+    table[151] = 2;
+    table[152..160].copy_from_slice(&(PM1A_EVT_BLK as u64).to_le_bytes());
+
+    table[172] = 1;
+    table[173] = 16;
+    table[175] = 2;
+    table[176..184].copy_from_slice(&(PM1A_CNT_BLK as u64).to_le_bytes());
 
     finalize_checksum(&mut table);
     table
@@ -250,12 +290,21 @@ pub fn parse_prt_entries(aml_body: &[u8]) -> Option<Vec<(u32, u8, u32)>> {
 mod tests {
     use super::*;
 
+    fn read_u16_le(bytes: &[u8], offset: usize) -> u16 {
+        u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
+    }
+
     fn read_u32_le(bytes: &[u8], offset: usize) -> u32 {
         u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
     }
 
     fn read_u64_le(bytes: &[u8], offset: usize) -> u64 {
         u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
+    }
+
+    fn read_gas_address(bytes: &[u8], offset: usize) -> u64 {
+        // Generic Address Structure: address is at +4.
+        read_u64_le(bytes, offset + 4)
     }
 
     #[test]
@@ -276,6 +325,24 @@ mod tests {
         assert_eq!(read_u32_le(&tables.fadt, 40) as u64, tables.dsdt_address);
         assert_eq!(read_u64_le(&tables.fadt, 140), tables.dsdt_address);
 
+        // SCI interrupt @ 46 (u16) should be IRQ9.
+        assert_eq!(read_u16_le(&tables.fadt, 46), 9);
+
+        // ACPI enable/disable handshake (SMI_CMD + command values).
+        assert_eq!(read_u32_le(&tables.fadt, 48), 0xB2);
+        assert_eq!(tables.fadt[52], 0xA0);
+        assert_eq!(tables.fadt[53], 0xA1);
+
+        // PM1 block addresses.
+        assert_eq!(read_u32_le(&tables.fadt, 56), 0x400);
+        assert_eq!(read_u32_le(&tables.fadt, 64), 0x404);
+        assert_eq!(tables.fadt[88], 4);
+        assert_eq!(tables.fadt[89], 2);
+
+        // X_PM1a_EVT_BLK @ 148, X_PM1a_CNT_BLK @ 172
+        assert_eq!(read_gas_address(&tables.fadt, 148), 0x400);
+        assert_eq!(read_gas_address(&tables.fadt, 172), 0x404);
+
         assert_eq!(&tables.rsdt[0..4], b"RSDT");
         assert_eq!(checksum::acpi_checksum(&tables.rsdt), 0);
         assert_eq!(read_u32_le(&tables.rsdt, 36) as u64, tables.fadt_address);
@@ -290,4 +357,3 @@ mod tests {
         assert_eq!(checksum::acpi_checksum(&tables.rsdp), 0);
     }
 }
-
