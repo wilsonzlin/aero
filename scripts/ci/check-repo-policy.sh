@@ -51,8 +51,8 @@ FORBIDDEN_EXTENSIONS=(
 # Forbidden path patterns (case-insensitive, bash patterns).
 # These are tuned to catch likely-proprietary Windows fixtures.
 FORBIDDEN_PATH_GLOBS=(
-  test_images/windows*
-  fixtures/windows*
+  *test_images/windows*
+  *fixtures/windows*
 )
 
 # Allowlist for large blobs (bash patterns). Keep this small and justified.

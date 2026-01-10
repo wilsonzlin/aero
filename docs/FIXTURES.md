@@ -10,7 +10,7 @@ Do not commit files that are (or look like) OS installation media, disk images, 
 
 - Disk/VM images: `.iso`, `.img`, `.vhd`, `.vhdx`, `.vmdk`, `.qcow`, `.qcow2`, `.wim`
 - Windows binaries: `.exe`, `.dll`
-- Anything under Windows fixture directories such as `test_images/windows*` or `fixtures/windows*`
+- Anything under Windows fixture directories such as `*/test_images/windows*` or `*/fixtures/windows*`
 
 See `docs/13-legal-considerations.md` for the broader legal rationale.
 
