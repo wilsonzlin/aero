@@ -69,7 +69,7 @@ jobs:
           set -euo pipefail
           echo "Benchmarking baseline (base SHA): $BASE_SHA"
           git checkout "$BASE_SHA"
-          CARGO_TARGET_DIR=target/bench-base cargo bench -p aero_cpu_core --bench emulator_critical -- --noplot
+          CARGO_TARGET_DIR=target/bench-base cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
 
           # Criterion always writes benchmark results to `target/criterion` (it does not
           # respect `CARGO_TARGET_DIR`). Move the results out so the next run doesn't
@@ -85,7 +85,7 @@ jobs:
           set -euo pipefail
           echo "Benchmarking PR head (head SHA): $HEAD_SHA"
           git checkout "$HEAD_SHA"
-          CARGO_TARGET_DIR=target/bench-new cargo bench -p aero_cpu_core --bench emulator_critical -- --noplot
+          CARGO_TARGET_DIR=target/bench-new cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
 
           rm -rf target/bench-new/criterion
           mv target/criterion target/bench-new/criterion
@@ -105,7 +105,7 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
-          CARGO_TARGET_DIR=target/bench-new cargo bench -p aero_cpu_core --bench emulator_critical -- --noplot
+          CARGO_TARGET_DIR=target/bench-new cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
 
           rm -rf target/bench-new/criterion
           mv target/criterion target/bench-new/criterion
