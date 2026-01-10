@@ -185,8 +185,8 @@ function Resolve-Inf2CatPath {
   if ($cmd) { return $cmd.Source }
 
   $kitsRoots = @()
-  if ($env:ProgramFiles -and $env:'ProgramFiles(x86)') {
-    $kitsRoots += Join-Path -Path $env:'ProgramFiles(x86)' -ChildPath 'Windows Kits'
+  if ($env:ProgramFiles -and ${env:ProgramFiles(x86)}) {
+    $kitsRoots += Join-Path -Path ${env:ProgramFiles(x86)} -ChildPath 'Windows Kits'
   }
 
   foreach ($kitsRoot in $kitsRoots) {
@@ -386,4 +386,3 @@ Export-ModuleMember -Function @(
   'Resolve-DriverBuildOutputDir',
   'Invoke-Inf2Cat'
 )
-
