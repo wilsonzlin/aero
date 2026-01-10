@@ -14,6 +14,10 @@ param(
   # If -CertPath is a .pfx, supply its password via -PfxPassword.
   [string]$PfxPassword,
 
+  # Offline certificate stores to populate in both boot.wim and install.wim.
+  # Defaults match the minimum needed for trusting test-signed kernel-mode driver catalogs.
+  [string[]]$CertStores = @('ROOT', 'TrustedPublisher'),
+
   # Optional but default ON for Windows 7 media patching.
   [bool]$EnableNoIntegrityChecks = $true,
 
@@ -59,6 +63,45 @@ function Assert-ToolExists {
   if (-not (Get-Command $ToolName -ErrorAction SilentlyContinue)) {
     throw "Required tool not found in PATH: $ToolName"
   }
+}
+
+function Normalize-CertStoreName {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$StoreName
+  )
+
+  $upper = $StoreName.Trim().ToUpperInvariant()
+  switch ($upper) {
+    'ROOT' { return 'ROOT' }
+    'TRUSTEDPUBLISHER' { return 'TrustedPublisher' }
+    'TRUSTEDPEOPLE' { return 'TrustedPeople' }
+    default { throw "Unsupported certificate store '$StoreName'. Supported values: ROOT, TrustedPublisher, TrustedPeople." }
+  }
+}
+
+function Normalize-CertStoreList {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string[]]$Stores
+  )
+
+  $out = New-Object System.Collections.Generic.List[string]
+  foreach ($store in $Stores) {
+    if ([string]::IsNullOrWhiteSpace($store)) {
+      continue
+    }
+    $norm = Normalize-CertStoreName -StoreName $store
+    if (-not ($out -contains $norm)) {
+      $out.Add($norm) | Out-Null
+    }
+  }
+
+  if ($out.Count -eq 0) {
+    throw '-CertStores must contain at least one store.'
+  }
+
+  return $out.ToArray()
 }
 
 function Ensure-FileWritable {
@@ -498,11 +541,14 @@ function Inject-CertIntoOfflineSoftwareHive {
     [Parameter(Mandatory = $true)]
     [string]$HiveName,
     [Parameter(Mandatory = $true)]
-    [byte[]]$CertificateDer
+    [byte[]]$CertificateDer,
+    [Parameter(Mandatory = $true)]
+    [string[]]$Stores
   )
 
-  [OfflineCertInjector]::AddCertificateToLoadedOfflineSoftwareHive($HiveName, 'ROOT', $CertificateDer)
-  [OfflineCertInjector]::AddCertificateToLoadedOfflineSoftwareHive($HiveName, 'TrustedPublisher', $CertificateDer)
+  foreach ($store in $Stores) {
+    [OfflineCertInjector]::AddCertificateToLoadedOfflineSoftwareHive($HiveName, $store, $CertificateDer)
+  }
 }
 
 function Assert-CertPresentInOfflineSoftwareHive {
@@ -539,6 +585,8 @@ function Patch-MountedImage {
     [Parameter(Mandatory = $true)]
     [byte[][]]$CertificateDers,
     [Parameter(Mandatory = $true)]
+    [string[]]$CertStores,
+    [Parameter(Mandatory = $true)]
     [bool]$PatchBcdTemplate,
     [Parameter(Mandatory = $true)]
     [bool]$EnableNoIntegrityChecks
@@ -556,12 +604,14 @@ function Patch-MountedImage {
     Load-OfflineHive -HivePath $softwareHivePath -HiveName $hiveName
     $hiveLoaded = $true
 
+    $storesText = ($CertStores -join ', ')
     foreach ($certDer in $CertificateDers) {
       $thumbprint = Get-CertificateThumbprintHex -CertificateDer $certDer
-      Write-Log "Injecting certificate into offline ROOT + TrustedPublisher stores (thumbprint=$thumbprint)"
-      Inject-CertIntoOfflineSoftwareHive -HiveName $hiveName -CertificateDer $certDer
-      Assert-CertPresentInOfflineSoftwareHive -HiveName $hiveName -StoreName 'ROOT' -ThumbprintHex $thumbprint
-      Assert-CertPresentInOfflineSoftwareHive -HiveName $hiveName -StoreName 'TrustedPublisher' -ThumbprintHex $thumbprint
+      Write-Log ("Injecting certificate into offline store(s): $storesText (thumbprint=$thumbprint)")
+      Inject-CertIntoOfflineSoftwareHive -HiveName $hiveName -CertificateDer $certDer -Stores $CertStores
+      foreach ($store in $CertStores) {
+        Assert-CertPresentInOfflineSoftwareHive -HiveName $hiveName -StoreName $store -ThumbprintHex $thumbprint
+      }
     }
   } finally {
     if ($hiveLoaded) {
@@ -591,6 +641,9 @@ $certFull = (Resolve-Path -LiteralPath $CertPath).Path
 Write-Log "ISO root: $isoRootFull"
 Write-Log "Certificate: $certFull"
 Write-Log "EnableNoIntegrityChecks: $EnableNoIntegrityChecks"
+
+$normalizedCertStores = Normalize-CertStoreList -Stores $CertStores
+Write-Log ("CertStores: " + ($normalizedCertStores -join ', '))
 
 $bootWimPath = Join-Path $isoRootFull 'sources\boot.wim'
 $installWimPath = Join-Path $isoRootFull 'sources\install.wim'
@@ -634,7 +687,7 @@ try {
         Mount-Wim -WimFile $bootWimPath -Index $idx -MountDir $mountDir
         $mounted = $true
 
-        Patch-MountedImage -MountDir $mountDir -CertificateDers $certificateDers -PatchBcdTemplate:$false -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
+        Patch-MountedImage -MountDir $mountDir -CertificateDers $certificateDers -CertStores $normalizedCertStores -PatchBcdTemplate:$false -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
         $commit = $true
       } finally {
         if ($mounted) {
@@ -672,7 +725,7 @@ try {
       Mount-Wim -WimFile $installWimPath -Index $idx -MountDir $mountDir
       $mounted = $true
 
-      Patch-MountedImage -MountDir $mountDir -CertificateDers $certificateDers -PatchBcdTemplate:$true -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
+      Patch-MountedImage -MountDir $mountDir -CertificateDers $certificateDers -CertStores $normalizedCertStores -PatchBcdTemplate:$true -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
       $commit = $true
     } finally {
       if ($mounted) {

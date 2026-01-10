@@ -51,6 +51,15 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\patch-win7-media.ps1 -IsoRoot C:\win7-iso -CertPath C:\aero-test.cer -PatchBootWimIndices 2
 ```
 
+- Inject the certificate into an additional store (example: `TrustedPeople`):
+  
+```powershell
+.\scripts\patch-win7-media.ps1 `
+  -IsoRoot C:\win7-iso `
+  -CertPath C:\aero-test.cer `
+  -CertStores ROOT,TrustedPublisher,TrustedPeople
+```
+
 - Use a `.pfx` certificate bundle:
 
 ```powershell
@@ -91,6 +100,7 @@ For each selected mounted WIM index, the script:
 2. Uses Windows CryptoAPI (`crypt32.dll`) against the loaded hive to add the certificate to:
    - `ROOT`
    - `TrustedPublisher`
+   - (optional) `TrustedPeople` (if specified via `-CertStores`)
 3. Unloads the hive via `reg unload`.
 
 ### BCD-Template inside install.wim
