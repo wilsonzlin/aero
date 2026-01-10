@@ -30,12 +30,33 @@ typedef struct _virtio_pci_common_cfg {
     USHORT queue_msix_vector; /* read-write */
     USHORT queue_enable;      /* read-write */
     USHORT queue_notify_off;  /* read-only  */
-    USHORT queue_reserved;
     ULONG64 queue_desc;  /* read-write */
     ULONG64 queue_avail; /* read-write */
     ULONG64 queue_used;  /* read-write */
 } virtio_pci_common_cfg, *Pvirtio_pci_common_cfg;
 #pragma pack(pop)
+
+//
+// CommonCfg offsets are defined by the virtio spec. Assert the layout so any
+// accidental padding or stray fields are caught at compile time.
+//
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, device_feature_select) == 0x00);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, device_feature) == 0x04);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, driver_feature_select) == 0x08);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, driver_feature) == 0x0C);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, msix_config) == 0x10);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, num_queues) == 0x12);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, device_status) == 0x14);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, config_generation) == 0x15);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_select) == 0x16);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_size) == 0x18);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_msix_vector) == 0x1A);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_enable) == 0x1C);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_notify_off) == 0x1E);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_desc) == 0x20);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_avail) == 0x28);
+C_ASSERT(FIELD_OFFSET(virtio_pci_common_cfg, queue_used) == 0x30);
+C_ASSERT(sizeof(virtio_pci_common_cfg) == 0x38);
 
 typedef struct _VIRTIO_PCI_DEVICE {
     WDFDEVICE WdfDevice;
@@ -123,4 +144,3 @@ _IRQL_requires_max_(DISPATCH_LEVEL)
 void VirtioPciWriteQueueEnable(_Inout_ PVIRTIO_PCI_DEVICE Dev,
                                _In_ USHORT QueueIndex,
                                _In_ BOOLEAN Enable);
-
