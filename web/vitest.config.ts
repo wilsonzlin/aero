@@ -8,7 +8,7 @@ export default mergeConfig(
     test: {
       // Keep unit tests fast and deterministic; stub browser APIs explicitly.
       environment: "node",
-      include: ["src/**/__tests__/**/*.test.ts", "tests/unit/**/*.test.ts"],
+      include: ["src/**/*.test.ts", "src/**/__tests__/**/*.test.ts", "tests/unit/**/*.test.ts"],
       coverage: {
         provider: "v8",
         reportsDirectory: "coverage",
@@ -30,4 +30,3 @@ export default mergeConfig(
     },
   }),
 );
-

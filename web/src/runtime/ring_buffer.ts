@@ -179,27 +179,9 @@ export class RingBuffer {
    * where `Atomics.wait` is not permitted.
    */
   async waitForDataAsync(timeoutMs?: number): Promise<AtomicsWaitResult> {
-    const waitAsync = (Atomics as typeof Atomics & { waitAsync?: typeof Atomics.waitAsync }).waitAsync;
-    const deadline = timeoutMs === undefined ? undefined : Date.now() + Math.max(0, timeoutMs);
-
-    while (true) {
-      const head = Atomics.load(this.meta, HEAD_INDEX);
-      const tail = Atomics.load(this.meta, TAIL_INDEX);
-      if (head !== tail) return "not-equal";
-
-      if (waitAsync) {
-        const remaining = deadline === undefined ? undefined : Math.max(0, deadline - Date.now());
-        const result = waitAsync(this.meta, HEAD_INDEX, head, remaining);
-        if (!result.async) {
-          if (result.value === "not-equal") continue;
-          return result.value;
-        }
-        return (await result.value) as AtomicsWaitResult;
-      }
-
-      if (deadline !== undefined && Date.now() >= deadline) return "timed-out";
-      await new Promise<void>((resolve) => setTimeout(resolve, 25));
-    }
+    // `waitForData()` already routes through `waitUntilNotEqual`, which is
+    // environment-aware (workers can block; Window thread uses waitAsync/polling).
+    return this.waitForData(timeoutMs);
   }
 
   notifyData(count = 1): number {
@@ -257,4 +239,3 @@ export class RingBuffer {
     }
   }
 }
-
