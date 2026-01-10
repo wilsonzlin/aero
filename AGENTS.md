@@ -42,6 +42,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 17. [Windows 7 Guest Tools Install Guide](./docs/windows7-guest-tools.md)
 18. [Windows 7 Driver Troubleshooting](./docs/windows7-driver-troubleshooting.md)
 19. [Backend: Disk Image Streaming Service](./docs/backend/disk-image-streaming-service.md)
+20. [Windows 7 Virtio Device Contract](./docs/windows7-virtio-driver-contract.md)
 
 ---
 
@@ -328,6 +329,7 @@ pub trait DisplayAdapter {
 | [16-d3d10-11-translation.md](./docs/16-d3d10-11-translation.md)          | Direct3D 10/11 translation details     | Graphics          |
 | [windows7-guest-tools.md](./docs/windows7-guest-tools.md)               | End-user guide: install Guest Tools and switch to virtio + Aero GPU | All |
 | [windows7-driver-troubleshooting.md](./docs/windows7-driver-troubleshooting.md) | End-user guide: Windows 7 driver/signing troubleshooting | All |
+| [windows7-virtio-driver-contract.md](./docs/windows7-virtio-driver-contract.md) | Virtio contract: Win7 drivers ↔ emulator | I/O               |
 | [backend/disk-image-streaming-service.md](./docs/backend/disk-image-streaming-service.md) | Disk image streaming (Range/CORS/COEP) | I/O / Infra       |
 
 
