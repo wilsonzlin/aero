@@ -82,7 +82,7 @@ Generate a `.reg` that targets a hive named `SOFTWARE` (run the exporter on Wind
 Then merge into the offline hive:
 
 ```sh
-hivexregedit --merge /path/to/SOFTWARE aero-cert.reg
+hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\SOFTWARE' /path/to/SOFTWARE aero-cert.reg
 ```
 
 ---
@@ -123,8 +123,8 @@ reg unload HKLM\BCD
 ### Linux/macOS (hivexregedit)
 
 ```sh
-hivexregedit --merge /path/to/BCD tools/win7-slipstream/patches/bcd-testsigning.reg
-hivexregedit --merge /path/to/BCD tools/win7-slipstream/patches/bcd-nointegritychecks.reg
+hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\BCD' /path/to/BCD tools/win7-slipstream/patches/bcd-testsigning.reg
+hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\BCD' /path/to/BCD tools/win7-slipstream/patches/bcd-nointegritychecks.reg
 ```
 
 ---
@@ -143,7 +143,7 @@ reg query HKLM\OFFSOFT\Microsoft\SystemCertificates\TrustedPublisher\Certificate
 On Linux/macOS:
 
 ```sh
-hivexregedit --export /path/to/SOFTWARE | rg -i "<THUMBPRINT>"
+hivexregedit --export --prefix 'HKEY_LOCAL_MACHINE\SOFTWARE' /path/to/SOFTWARE '\Microsoft\SystemCertificates' | rg -i "<THUMBPRINT>"
 ```
 
 ### Verify BCD flags
