@@ -59,6 +59,11 @@ gateway:
 
   resources: {}
 
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+
 service:
   type: ClusterIP
   port: 80
