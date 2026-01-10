@@ -207,6 +207,18 @@ autoscaling:
 When autoscaling is enabled, the chart sets the Deployment replica count to `autoscaling.minReplicas`
 and the HPA will manage scaling from there.
 
+## Prometheus ServiceMonitor (optional)
+
+If you use the Prometheus Operator (kube-prometheus-stack), you can enable a `ServiceMonitor`
+to scrape `GET /metrics`:
+
+```yaml
+serviceMonitor:
+  enabled: true
+```
+
+This requires the `monitoring.coreos.com/v1` CRDs to be installed in your cluster.
+
 ## Verify the rollout
 
 ```bash

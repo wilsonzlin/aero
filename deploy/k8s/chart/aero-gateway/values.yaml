@@ -71,6 +71,13 @@ autoscaling:
   targetCPUUtilizationPercentage: 80
   targetMemoryUtilizationPercentage: null
 
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  path: /metrics
+  additionalLabels: {}
+
 service:
   type: ClusterIP
   port: 80
