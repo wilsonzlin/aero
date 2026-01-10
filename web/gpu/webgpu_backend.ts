@@ -19,6 +19,10 @@ function align(value: number, alignment: number): number {
   return Math.ceil(value / alignment) * alignment;
 }
 
+function isBgraFormat(format: GPUTextureFormat): boolean {
+  return format === 'bgra8unorm' || format === 'bgra8unorm-srgb';
+}
+
 function computeLetterboxViewport(
   canvasWidth: number,
   canvasHeight: number,
@@ -54,6 +58,8 @@ export class WebGPUBackend implements PresentationBackend {
   private device: GPUDevice | null = null;
   private queue: GPUQueue | null = null;
   private format: GPUTextureFormat | null = null;
+  private configuredCanvasWidth = 0;
+  private configuredCanvasHeight = 0;
 
   private pipeline: GPURenderPipeline | null = null;
   private sampler: GPUSampler | null = null;
@@ -61,6 +67,10 @@ export class WebGPUBackend implements PresentationBackend {
   private frameTexture: GPUTexture | null = null;
   private frameTextureView: GPUTextureView | null = null;
   private bindGroup: GPUBindGroup | null = null;
+  private captureTexture: GPUTexture | null = null;
+  private captureTextureView: GPUTextureView | null = null;
+  private captureWidth = 0;
+  private captureHeight = 0;
 
   private frameWidth = 0;
   private frameHeight = 0;
@@ -83,7 +93,12 @@ export class WebGPUBackend implements PresentationBackend {
     if (!context) throw new Error('Failed to acquire WebGPU canvas context');
 
     const format = navigator.gpu.getPreferredCanvasFormat();
-    context.configure({ device, format, alphaMode: 'opaque' });
+    context.configure({
+      device,
+      format,
+      alphaMode: 'opaque',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
 
     const shaderModule = device.createShaderModule({
       code: `
@@ -152,8 +167,32 @@ export class WebGPUBackend implements PresentationBackend {
     this.device = device;
     this.queue = device.queue;
     this.format = format;
+    this.configuredCanvasWidth = (canvas as any).width as number;
+    this.configuredCanvasHeight = (canvas as any).height as number;
     this.pipeline = pipeline;
     this.sampler = sampler;
+  }
+
+  private ensureCanvasConfigured(): void {
+    const device = this.device;
+    const context = this.context;
+    const canvas = this.canvas;
+    const format = this.format;
+    if (!device || !context || !canvas || !format) throw new Error('Backend not initialized');
+
+    const width = (canvas as any).width as number;
+    const height = (canvas as any).height as number;
+
+    if (width === this.configuredCanvasWidth && height === this.configuredCanvasHeight) return;
+
+    context.configure({
+      device,
+      format,
+      alphaMode: 'opaque',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    this.configuredCanvasWidth = width;
+    this.configuredCanvasHeight = height;
   }
 
   uploadFrameRGBA(
@@ -259,10 +298,10 @@ export class WebGPUBackend implements PresentationBackend {
         await device.queue.onSubmittedWorkDone();
         canvas.width = displayWidth;
         canvas.height = displayHeight;
-        if (!this.format) throw new Error('Backend not initialized');
-        context.configure({ device, format: this.format, alphaMode: 'opaque' });
       }
     }
+
+    this.ensureCanvasConfigured();
 
     const textureView = context.getCurrentTexture().createView();
 
@@ -296,10 +335,56 @@ export class WebGPUBackend implements PresentationBackend {
   async captureFrame(): Promise<CapturedFrame> {
     const device = this.device;
     const texture = this.frameTexture;
-    if (!device || !texture) throw new Error('Frame not available');
+    const pipeline = this.pipeline;
+    const bindGroup = this.bindGroup;
+    const canvas = this.canvas;
+    const format = this.format;
+    if (!device || !texture || !pipeline || !bindGroup || !canvas || !format) {
+      throw new Error('Frame not available');
+    }
 
-    const width = this.frameWidth;
-    const height = this.frameHeight;
+    this.ensureCanvasConfigured();
+
+    const width = (canvas as any).width as number;
+    const height = (canvas as any).height as number;
+    if (width <= 0 || height <= 0) throw new Error('Canvas size is invalid');
+
+    if (!this.captureTexture || width !== this.captureWidth || height !== this.captureHeight) {
+      this.captureTexture?.destroy();
+      this.captureTexture = device.createTexture({
+        size: { width, height },
+        format,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+      });
+      this.captureTextureView = this.captureTexture.createView();
+      this.captureWidth = width;
+      this.captureHeight = height;
+    }
+
+    const captureView = this.captureTextureView;
+    const captureTex = this.captureTexture;
+    if (!captureView || !captureTex) throw new Error('Capture texture unavailable');
+
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: captureView,
+          loadOp: 'clear',
+          storeOp: 'store',
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        },
+      ],
+    });
+
+    const viewport = this.preserveAspectRatio
+      ? computeLetterboxViewport(width, height, this.frameWidth, this.frameHeight)
+      : { x: 0, y: 0, width, height };
+    pass.setViewport(viewport.x, viewport.y, viewport.width, viewport.height, 0, 1);
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(6, 1, 0, 0);
+    pass.end();
 
     const bytesPerRow = align(width * 4, 256);
     const buffer = device.createBuffer({
@@ -307,8 +392,7 @@ export class WebGPUBackend implements PresentationBackend {
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
 
-    const encoder = device.createCommandEncoder();
-    encoder.copyTextureToBuffer({ texture }, { buffer, bytesPerRow }, { width, height });
+    encoder.copyTextureToBuffer({ texture: captureTex }, { buffer, bytesPerRow }, { width, height });
     device.queue.submit([encoder.finish()]);
 
     await buffer.mapAsync(GPUMapMode.READ);
@@ -319,6 +403,14 @@ export class WebGPUBackend implements PresentationBackend {
     }
     buffer.unmap();
     buffer.destroy();
+
+    if (isBgraFormat(format)) {
+      for (let i = 0; i < out.length; i += 4) {
+        const b = out[i + 0];
+        out[i + 0] = out[i + 2];
+        out[i + 2] = b;
+      }
+    }
 
     return { width, height, data: out };
   }
