@@ -2,6 +2,8 @@ import { defineConfig, devices } from '@playwright/test';
 
 const DEV_PORT = 5173;
 const PREVIEW_PORT = 4173;
+const EXPOSE_GC = process.env.AERO_PLAYWRIGHT_EXPOSE_GC === '1';
+const CHROMIUM_ARGS = ['--enable-unsafe-webgpu', ...(EXPOSE_GC ? ['--js-flags=--expose-gc'] : [])];
 
 export default defineConfig({
   // Keep Playwright tests under `tests/`, but only run the dedicated browser suites.
@@ -24,7 +26,7 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         browserName: 'chromium',
         launchOptions: {
-          args: ['--enable-unsafe-webgpu'],
+          args: CHROMIUM_ARGS,
         },
       },
     },

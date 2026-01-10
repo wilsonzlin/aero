@@ -40,6 +40,8 @@ pkg/
 *.tsbuildinfo
 **/*.rs.bk
 *.wasm
+web/dist/
+bench/output/
 
 # Coverage
 coverage/

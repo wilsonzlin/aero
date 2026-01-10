@@ -1,4 +1,6 @@
-import type { WebGpuBenchOptions, WebGpuBenchResult } from "./bench/webgpu_bench";
+import type { WebGpuBenchOptions, WebGpuBenchResult } from './bench/webgpu_bench';
+import type { ByteSizedCacheTracker, GpuAllocationTracker, MemoryTelemetry } from './perf/memory';
+import type { PerfApi } from './perf/types';
 
 export {};
 
@@ -8,10 +10,11 @@ declare global {
       bench?: {
         runWebGpuBench?: (opts?: WebGpuBenchOptions) => Promise<WebGpuBenchResult>;
       };
-      perf?: {
-        export: () => unknown;
-        getStats?: () => unknown;
-        setEnabled?: (enabled: boolean) => void;
+      perf?: PerfApi & {
+        memoryTelemetry?: MemoryTelemetry;
+        gpuTracker?: GpuAllocationTracker;
+        jitCacheTracker?: ByteSizedCacheTracker;
+        shaderCacheTracker?: ByteSizedCacheTracker;
       };
     };
   }

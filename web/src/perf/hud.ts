@@ -188,6 +188,10 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
   const ioBytesRow = makeRow('IO throughput');
   const hostHeapRow = makeRow('Host heap');
   const guestRamRow = makeRow('Guest RAM');
+  const wasmMemoryRow = makeRow('WASM memory');
+  const gpuMemoryRow = makeRow('GPU memory (est)');
+  const cachesRow = makeRow('Code caches');
+  const memoryPeaksRow = makeRow('Memory peaks');
   const captureRow = makeRow('Capture');
 
   const sparklines = document.createElement('div');
@@ -206,7 +210,8 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
 
   const frameSpark = makeSparklineBox('Frame time');
   const mipsSpark = makeSparklineBox('MIPS');
-  sparklines.append(frameSpark.box, mipsSpark.box);
+  const memorySpark = makeSparklineBox('Memory');
+  sparklines.append(frameSpark.box, mipsSpark.box, memorySpark.box);
 
   hud.append(header, metrics, sparklines);
   document.body.append(hud);
@@ -215,11 +220,14 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
   const sparkCssHeight = 34;
   const frameSparkCtx = setupCanvas(frameSpark.canvas, sparkCssWidth, sparkCssHeight);
   const mipsSparkCtx = setupCanvas(mipsSpark.canvas, sparkCssWidth, sparkCssHeight);
+  const memorySparkCtx = setupCanvas(memorySpark.canvas, sparkCssWidth, sparkCssHeight);
 
   const frameSparkValues = new Float32Array(SPARKLINE_SAMPLES);
   const mipsSparkValues = new Float32Array(SPARKLINE_SAMPLES);
+  const memorySparkValues = new Float32Array(SPARKLINE_SAMPLES);
   frameSparkValues.fill(Number.NaN);
   mipsSparkValues.fill(Number.NaN);
+  memorySparkValues.fill(Number.NaN);
 
   let sparkCursor = 0;
   let sparkCount = 0;
@@ -258,9 +266,39 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
 
     const heapUsed = formatBytes(snapshot.hostJsHeapUsedBytes);
     const heapTotal = formatBytes(snapshot.hostJsHeapTotalBytes);
-    setText(hostHeapRow, heapUsed === '-' ? '-' : `${heapUsed} / ${heapTotal}`);
+    const heapLimit = formatBytes(snapshot.hostJsHeapLimitBytes);
+    setText(
+      hostHeapRow,
+      heapUsed === '-'
+        ? '-'
+        : heapLimit === '-' || heapLimit === heapTotal
+          ? `${heapUsed} / ${heapTotal}`
+          : `${heapUsed} / ${heapTotal} (limit ${heapLimit})`,
+    );
 
     setText(guestRamRow, formatBytes(snapshot.guestRamBytes));
+
+    const wasmBytes = formatBytes(snapshot.wasmMemoryBytes);
+    const wasmPages = snapshot.wasmMemoryPages === undefined ? '-' : `${Math.floor(snapshot.wasmMemoryPages)} pages`;
+    const wasmMaxPages = snapshot.wasmMemoryMaxPages === undefined ? '' : ` / ${snapshot.wasmMemoryMaxPages} max`;
+    setText(wasmMemoryRow, wasmBytes === '-' ? '-' : `${wasmBytes} (${wasmPages}${wasmMaxPages})`);
+
+    setText(gpuMemoryRow, formatBytes(snapshot.gpuEstimatedBytes));
+
+    const jitBytes = formatBytes(snapshot.jitCodeCacheBytes);
+    const shaderBytes = formatBytes(snapshot.shaderCacheBytes);
+    setText(
+      cachesRow,
+      jitBytes === '-' && shaderBytes === '-' ? '-' : `JIT ${jitBytes} · Shaders ${shaderBytes}`,
+    );
+
+    const peakJs = formatBytes(snapshot.peakHostJsHeapUsedBytes);
+    const peakWasm = formatBytes(snapshot.peakWasmMemoryBytes);
+    const peakGpu = formatBytes(snapshot.peakGpuEstimatedBytes);
+    setText(
+      memoryPeaksRow,
+      peakJs === '-' && peakWasm === '-' && peakGpu === '-' ? '-' : `JS ${peakJs} · WASM ${peakWasm} · GPU ${peakGpu}`,
+    );
 
     const durationSec = snapshot.capture.durationMs / 1000;
     setText(
@@ -273,15 +311,27 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
 
     const ftSample = snapshot.lastFrameTimeMs ?? snapshot.frameTimeAvgMs ?? Number.NaN;
     const mipsSample = snapshot.lastMips ?? snapshot.mipsAvg ?? Number.NaN;
+    const memSample =
+      snapshot.hostJsHeapUsedBytes ?? snapshot.wasmMemoryBytes ?? snapshot.gpuEstimatedBytes ?? Number.NaN;
 
     frameSparkValues[sparkCursor] = ftSample;
     mipsSparkValues[sparkCursor] = mipsSample;
+    memorySparkValues[sparkCursor] = memSample;
 
     sparkCursor = (sparkCursor + 1) % SPARKLINE_SAMPLES;
     sparkCount = Math.min(SPARKLINE_SAMPLES, sparkCount + 1);
 
     drawSparkline(frameSparkCtx, sparkCssWidth, sparkCssHeight, frameSparkValues, sparkCursor, sparkCount, '#61dafb');
     drawSparkline(mipsSparkCtx, sparkCssWidth, sparkCssHeight, mipsSparkValues, sparkCursor, sparkCount, '#7CFC90');
+    drawSparkline(
+      memorySparkCtx,
+      sparkCssWidth,
+      sparkCssHeight,
+      memorySparkValues,
+      sparkCursor,
+      sparkCount,
+      '#ffcc66',
+    );
   };
 
   const startUpdates = () => {

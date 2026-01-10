@@ -1,10 +1,16 @@
 import type { PerfApi } from './types';
+import type { ByteSizedCacheTracker, GpuAllocationTracker } from './memory';
 
 import { installFallbackPerf } from './fallback';
 import { installHud } from './hud';
 
 export type InstallPerfHudOptions = {
   guestRamBytes?: number;
+  wasmMemory?: WebAssembly.Memory;
+  wasmMemoryMaxPages?: number;
+  gpuTracker?: GpuAllocationTracker;
+  jitCacheTracker?: ByteSizedCacheTracker;
+  shaderCacheTracker?: ByteSizedCacheTracker;
 };
 
 const isPerfApi = (value: unknown): value is PerfApi => {
@@ -17,7 +23,14 @@ export const installPerfHud = (options: InstallPerfHudOptions = {}) => {
   const aero = (window.aero ??= {});
 
   if (!isPerfApi(aero.perf)) {
-    aero.perf = installFallbackPerf({ guestRamBytes: options.guestRamBytes });
+    aero.perf = installFallbackPerf({
+      guestRamBytes: options.guestRamBytes,
+      wasmMemory: options.wasmMemory,
+      wasmMemoryMaxPages: options.wasmMemoryMaxPages,
+      gpuTracker: options.gpuTracker,
+      jitCacheTracker: options.jitCacheTracker,
+      shaderCacheTracker: options.shaderCacheTracker,
+    });
   }
 
   const perf = aero.perf as PerfApi;
@@ -25,4 +38,3 @@ export const installPerfHud = (options: InstallPerfHudOptions = {}) => {
 };
 
 export type { PerfApi, PerfHudSnapshot } from './types';
-

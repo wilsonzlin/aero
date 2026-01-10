@@ -32,8 +32,21 @@ export type PerfHudSnapshot = {
 
   hostJsHeapUsedBytes?: number;
   hostJsHeapTotalBytes?: number;
+  hostJsHeapLimitBytes?: number;
 
   guestRamBytes?: number;
+
+  wasmMemoryBytes?: number;
+  wasmMemoryPages?: number;
+  wasmMemoryMaxPages?: number;
+
+  gpuEstimatedBytes?: number;
+  jitCodeCacheBytes?: number;
+  shaderCacheBytes?: number;
+
+  peakHostJsHeapUsedBytes?: number;
+  peakWasmMemoryBytes?: number;
+  peakGpuEstimatedBytes?: number;
 
   capture: PerfCaptureState;
 };
@@ -47,4 +60,3 @@ export interface PerfApi {
   captureReset(): void;
   export(): unknown;
 }
-

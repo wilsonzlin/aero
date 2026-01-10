@@ -2,21 +2,19 @@ import type { PerfApi, PerfCaptureState, PerfHudSnapshot, PerfTimeBreakdownMs } 
 
 import { FrameTimeStats } from '../../../packages/aero-stats/src/index.js';
 
+import { ByteSizedCacheTracker, GpuAllocationTracker, MemoryTelemetry } from './memory';
+
 export type InstallFallbackPerfOptions = {
   guestRamBytes?: number;
+  wasmMemory?: WebAssembly.Memory;
+  wasmMemoryMaxPages?: number;
+  gpuTracker?: GpuAllocationTracker;
+  jitCacheTracker?: ByteSizedCacheTracker;
+  shaderCacheTracker?: ByteSizedCacheTracker;
 };
 
 const STATS_CAPACITY = 600;
 const CAPTURE_CAPACITY = 12_000;
-
-type PerformanceMemoryLike = {
-  usedJSHeapSize: number;
-  jsHeapSizeLimit: number;
-};
-
-const perfMemory = (): PerformanceMemoryLike | undefined => {
-  return (performance as unknown as { memory?: PerformanceMemoryLike }).memory;
-};
 
 const clampMs = (ms: number): number => {
   if (!Number.isFinite(ms)) return 0;
@@ -29,6 +27,10 @@ const isValidNumber = (value: number): boolean => Number.isFinite(value) && !Num
 
 export class FallbackPerf implements PerfApi {
   readonly guestRamBytes?: number;
+  readonly memoryTelemetry: MemoryTelemetry;
+  readonly gpuTracker: GpuAllocationTracker;
+  readonly jitCacheTracker: ByteSizedCacheTracker;
+  readonly shaderCacheTracker: ByteSizedCacheTracker;
 
   private frameTimeScratch = new FrameTimeStats();
 
@@ -95,6 +97,25 @@ export class FallbackPerf implements PerfApi {
 
   constructor(options: InstallFallbackPerfOptions = {}) {
     this.guestRamBytes = options.guestRamBytes;
+
+    this.gpuTracker = options.gpuTracker ?? new GpuAllocationTracker();
+    this.jitCacheTracker = options.jitCacheTracker ?? new ByteSizedCacheTracker();
+    this.shaderCacheTracker = options.shaderCacheTracker ?? new ByteSizedCacheTracker();
+
+    this.memoryTelemetry = new MemoryTelemetry({
+      wasmMemory: options.wasmMemory,
+      wasmMemoryMaxPages: options.wasmMemoryMaxPages ?? null,
+      getGuestMemoryStats: options.guestRamBytes
+        ? () => ({ configured_bytes: options.guestRamBytes!, committed_bytes: options.guestRamBytes! })
+        : null,
+      gpuTracker: this.gpuTracker,
+      jitCacheTracker: this.jitCacheTracker,
+      shaderCacheTracker: this.shaderCacheTracker,
+      sampleHz: 1,
+      maxSamples: 600,
+    });
+    this.memoryTelemetry.start();
+    this.memoryTelemetry.sampleNow('boot');
 
     this.instructions.fill(Number.NaN);
     this.cpuMs.fill(Number.NaN);
@@ -331,11 +352,24 @@ export class FallbackPerf implements PerfApi {
       }
     }
 
-    const memory = perfMemory();
-    out.hostJsHeapUsedBytes = memory?.usedJSHeapSize;
-    out.hostJsHeapTotalBytes = memory?.jsHeapSizeLimit;
+    const memSample = this.memoryTelemetry.getLatestSample();
+    out.hostJsHeapUsedBytes = memSample?.js_heap_used_bytes ?? undefined;
+    out.hostJsHeapTotalBytes = memSample?.js_heap_total_bytes ?? undefined;
+    out.hostJsHeapLimitBytes = memSample?.js_heap_limit_bytes ?? undefined;
 
     out.guestRamBytes = this.guestRamBytes;
+
+    out.wasmMemoryBytes = memSample?.wasm_memory_bytes ?? undefined;
+    out.wasmMemoryPages = memSample?.wasm_memory_pages ?? undefined;
+    out.wasmMemoryMaxPages = memSample?.wasm_memory_max_pages ?? undefined;
+
+    out.gpuEstimatedBytes = memSample?.gpu_total_bytes ?? undefined;
+    out.jitCodeCacheBytes = memSample?.jit_code_cache_bytes ?? undefined;
+    out.shaderCacheBytes = memSample?.shader_cache_bytes ?? undefined;
+
+    out.peakHostJsHeapUsedBytes = this.memoryTelemetry.peaks.js_heap_used_bytes ?? undefined;
+    out.peakWasmMemoryBytes = this.memoryTelemetry.peaks.wasm_memory_bytes ?? undefined;
+    out.peakGpuEstimatedBytes = this.memoryTelemetry.peaks.gpu_total_bytes ?? undefined;
 
     const captureDurationMs = this.captureActive ? performance.now() - this.captureStartNowMs : this.captureDurationMs;
     const capture: PerfCaptureState = out.capture;
@@ -361,6 +395,7 @@ export class FallbackPerf implements PerfApi {
     this.captureDurationMs = 0;
     this.captureDroppedRecords = 0;
     this.captureRecords = 0;
+    this.memoryTelemetry.sampleNow('capture_start');
     this.syncRaf();
   }
 
@@ -368,10 +403,13 @@ export class FallbackPerf implements PerfApi {
     if (!this.captureActive) return;
     this.captureDurationMs = performance.now() - this.captureStartNowMs;
     this.captureActive = false;
+    this.memoryTelemetry.sampleNow('capture_stop');
     this.syncRaf();
   }
 
   captureReset(): void {
+    this.memoryTelemetry.reset();
+    this.memoryTelemetry.sampleNow('capture_reset');
     if (this.captureActive) {
       this.captureStartNowMs = performance.now();
       this.captureStartUnixMs = Date.now();
@@ -429,6 +467,7 @@ export class FallbackPerf implements PerfApi {
       durationMs: this.captureActive ? performance.now() - this.captureStartNowMs : this.captureDurationMs,
       droppedRecords: this.captureDroppedRecords,
       guestRamBytes: this.guestRamBytes ?? null,
+      memory: this.memoryTelemetry.export(),
       summary: {
         frameTime: frameTimeStats.summary(),
         mipsAvg,
