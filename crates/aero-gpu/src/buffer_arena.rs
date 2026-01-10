@@ -15,6 +15,23 @@ pub(crate) fn align_up(value: u64, alignment: u64) -> u64 {
     }
 }
 
+pub(crate) fn gcd_u64(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let r = a % b;
+        a = b;
+        b = r;
+    }
+    a
+}
+
+pub(crate) fn lcm_u64(a: u64, b: u64) -> u64 {
+    debug_assert!(a > 0);
+    debug_assert!(b > 0);
+
+    let g = gcd_u64(a, b);
+    (a / g).saturating_mul(b)
+}
+
 /// A simple linear allocator for sub-allocating a fixed byte range.
 ///
 /// This is intentionally CPU-only: it tracks offsets, not actual GPU memory.
@@ -107,6 +124,14 @@ mod tests {
         assert_eq!(align_up(5, 4), 8);
         assert_eq!(align_up(255, 256), 256);
         assert_eq!(align_up(256, 256), 256);
+    }
+
+    #[test]
+    fn lcm_u64_produces_common_multiple() {
+        assert_eq!(lcm_u64(4, 4), 4);
+        assert_eq!(lcm_u64(4, 8), 8);
+        assert_eq!(lcm_u64(6, 4), 12);
+        assert_eq!(lcm_u64(3, 5), 15);
     }
 
     #[test]

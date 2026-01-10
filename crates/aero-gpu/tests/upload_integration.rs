@@ -48,7 +48,7 @@ fn upload_each_frame_without_validation_errors() {
         UploadRingBufferDescriptor {
             per_frame_size: 64 * 1024,
             frames_in_flight: 3,
-            small_write_threshold: 64, // Force staging path for most writes.
+            small_write_threshold: 0, // Force staging path.
             ..Default::default()
         },
     )
@@ -149,9 +149,9 @@ fn upload_each_frame_without_validation_errors() {
                 pos: [0.5 + shift, -0.5],
             },
         ];
-        let vb = uploads.write_slice(&queue, &verts).unwrap();
+        let vb = uploads.write_slice(&device, &queue, &verts).unwrap();
 
-        let flush_cmd = uploads.flush_staged_writes(&device);
+        let flush_cmd = uploads.flush_staged_writes();
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("render encoder"),

@@ -1,6 +1,5 @@
-use crate::buffer_arena::{align_up, BufferArena};
+use crate::buffer_arena::{align_up, lcm_u64, BufferArena};
 use bytemuck::Pod;
-use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
 
@@ -97,6 +96,7 @@ pub enum UploadRingBufferError {
         per_frame_capacity: u64,
     },
     OffsetDoesNotFitInDynamicOffset(u64),
+    StagingBeltNeedsRecall,
 }
 
 impl fmt::Display for UploadRingBufferError {
@@ -120,17 +120,15 @@ impl fmt::Display for UploadRingBufferError {
                 f,
                 "offset {offset} does not fit in u32 dynamic offset"
             ),
+            UploadRingBufferError::StagingBeltNeedsRecall => write!(
+                f,
+                "staging belt is finished; call recall() after submitting the flush command buffer (and polling the device) before staging more uploads"
+            ),
         }
     }
 }
 
 impl std::error::Error for UploadRingBufferError {}
-
-#[derive(Debug)]
-struct PendingWrite {
-    offset: u64,
-    bytes: Vec<u8>,
-}
 
 /// High-throughput dynamic buffer uploads for emulator-style streaming updates.
 ///
@@ -147,7 +145,8 @@ pub struct UploadRingBuffer {
     per_frame_capacity: u64,
     arenas: Vec<BufferArena>,
     arena_index: usize,
-    pending: Vec<PendingWrite>,
+    encoder: Option<wgpu::CommandEncoder>,
+    staging_finished: bool,
     staging_belt: wgpu::util::StagingBelt,
     small_write_threshold: u64,
     stats: UploadStats,
@@ -216,7 +215,8 @@ impl UploadRingBuffer {
             // `begin_frame` increments before use. Start at the end so the
             // first `begin_frame` selects arena 0.
             arena_index: desc.frames_in_flight - 1,
-            pending: Vec::new(),
+            encoder: None,
+            staging_finished: false,
             staging_belt: wgpu::util::StagingBelt::new(desc.staging_belt_chunk_size),
             small_write_threshold: desc.small_write_threshold,
             stats: UploadStats::default(),
@@ -244,17 +244,25 @@ impl UploadRingBuffer {
     /// Call this once per frame, before any allocations/writes.
     pub fn begin_frame(&mut self) {
         debug_assert!(
-            self.pending.is_empty(),
+            self.encoder.is_none(),
             "begin_frame called with staged writes still pending; call flush_staged_writes (and submit the returned command buffer) before starting the next frame"
+        );
+        debug_assert!(
+            !self.staging_finished,
+            "begin_frame called while the staging belt is still in the finished state; call recall() after submitting the flush command buffer (and polling the device)"
         );
         self.arena_index = (self.arena_index + 1) % self.arenas.len();
         self.arenas[self.arena_index].reset();
-        self.pending.clear();
+        self.encoder = None;
         self.stats = UploadStats::default();
     }
 
     fn alloc_offset(&mut self, size: u64, alignment: u64) -> Result<u64, UploadRingBufferError> {
-        let alignment = alignment.max(1).max(wgpu::COPY_BUFFER_ALIGNMENT); // WebGPU copy/write alignment.
+        // Offsets used by `queue.write_buffer` / copy operations must be
+        // aligned to `COPY_BUFFER_ALIGNMENT`. Also respect the user-provided
+        // alignment by aligning to the least common multiple.
+        let alignment = alignment.max(1);
+        let alignment = lcm_u64(alignment, wgpu::COPY_BUFFER_ALIGNMENT);
         let size = align_up(size, wgpu::COPY_BUFFER_ALIGNMENT);
 
         let arena = &mut self.arenas[self.arena_index];
@@ -286,40 +294,48 @@ impl UploadRingBuffer {
         Ok((Arc::clone(&self.buffer), offset))
     }
 
-    fn padded_bytes<'a>(&self, bytes: &'a [u8]) -> Cow<'a, [u8]> {
-        let padded_len = align_up(bytes.len() as u64, wgpu::COPY_BUFFER_ALIGNMENT) as usize;
-        if padded_len == bytes.len() {
-            return Cow::Borrowed(bytes);
-        }
-
-        let mut out = vec![0u8; padded_len];
-        out[..bytes.len()].copy_from_slice(bytes);
-        Cow::Owned(out)
-    }
-
     fn write_bytes_inner(
         &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         offset: u64,
         bytes: &[u8],
     ) -> Result<(), UploadRingBufferError> {
-        let bytes = self.padded_bytes(bytes);
-        let byte_len = bytes.len() as u64;
+        let padded_len = align_up(bytes.len() as u64, wgpu::COPY_BUFFER_ALIGNMENT) as usize;
+        let byte_len = padded_len as u64;
 
         if byte_len == 0 {
             return Ok(());
         }
 
         if byte_len <= self.small_write_threshold {
-            queue.write_buffer(&self.buffer, offset, &bytes);
+            if padded_len == bytes.len() {
+                queue.write_buffer(&self.buffer, offset, bytes);
+            } else {
+                let mut tmp = vec![0u8; padded_len];
+                tmp[..bytes.len()].copy_from_slice(bytes);
+                queue.write_buffer(&self.buffer, offset, &tmp);
+            }
             self.stats.bytes_small_writes += byte_len;
             return Ok(());
         }
 
-        self.pending.push(PendingWrite {
-            offset,
-            bytes: bytes.into_owned(),
+        if self.staging_finished {
+            return Err(UploadRingBufferError::StagingBeltNeedsRecall);
+        }
+
+        use std::num::NonZeroU64;
+        let size = NonZeroU64::new(byte_len).expect("byte_len is checked for zero");
+        let encoder = self.encoder.get_or_insert_with(|| {
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aero upload ring encoder"),
+            })
         });
+        let mut view = self
+            .staging_belt
+            .write_buffer(encoder, &self.buffer, offset, size, device);
+        view[..bytes.len()].copy_from_slice(bytes);
+        view[bytes.len()..padded_len].fill(0);
         self.stats.bytes_staged_writes += byte_len;
         Ok(())
     }
@@ -329,12 +345,13 @@ impl UploadRingBuffer {
     /// Returns `(buffer, offset)` pointing at the uploaded data.
     pub fn write_bytes(
         &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         bytes: &[u8],
         alignment: u64,
     ) -> Result<(Arc<wgpu::Buffer>, u64), UploadRingBufferError> {
         let offset = self.alloc_offset(bytes.len() as u64, alignment)?;
-        self.write_bytes_inner(queue, offset, bytes)?;
+        self.write_bytes_inner(device, queue, offset, bytes)?;
         Ok((Arc::clone(&self.buffer), offset))
     }
 
@@ -348,6 +365,7 @@ impl UploadRingBuffer {
     /// Upload a single uniform POD value and return a dynamic uniform offset.
     pub fn write_uniform<T: Pod>(
         &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         data: &T,
     ) -> Result<DynamicOffset, UploadRingBufferError> {
@@ -360,15 +378,9 @@ impl UploadRingBuffer {
         #[cfg(debug_assertions)]
         debug_assert_eq!(offset % alignment, 0);
 
-        let padded = if size as usize == bytes.len() {
-            Cow::Borrowed(bytes)
-        } else {
-            let mut out = vec![0u8; size as usize];
-            out[..bytes.len()].copy_from_slice(bytes);
-            Cow::Owned(out)
-        };
-
-        self.write_bytes_inner(queue, offset, &padded)?;
+        let mut padded = vec![0u8; size as usize];
+        padded[..bytes.len()].copy_from_slice(bytes);
+        self.write_bytes_inner(device, queue, offset, &padded)?;
 
         let dyn_off: u32 = offset
             .try_into()
@@ -379,6 +391,7 @@ impl UploadRingBuffer {
     /// Upload a POD slice and return a handle describing the resulting buffer slice.
     pub fn write_slice<T: Pod>(
         &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         data: &[T],
     ) -> Result<BufferSliceHandle, UploadRingBufferError> {
@@ -388,7 +401,7 @@ impl UploadRingBuffer {
         let alignment = (std::mem::align_of::<T>() as u64).max(wgpu::COPY_BUFFER_ALIGNMENT);
         let offset = self.alloc_offset(bytes.len() as u64, alignment)?;
 
-        self.write_bytes_inner(queue, offset, bytes)?;
+        self.write_bytes_inner(device, queue, offset, bytes)?;
 
         Ok(BufferSliceHandle {
             buffer: Arc::clone(&self.buffer),
@@ -404,32 +417,10 @@ impl UploadRingBuffer {
     ///
     /// After submitting, call `device.poll(...)` and then [`Self::recall`] to
     /// recycle staging buffers.
-    pub fn flush_staged_writes(&mut self, device: &wgpu::Device) -> Option<wgpu::CommandBuffer> {
-        if self.pending.is_empty() {
-            return None;
-        }
-
-        use std::num::NonZeroU64;
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("aero upload ring flush"),
-        });
-
-        for pending in self.pending.drain(..) {
-            let Some(size) = NonZeroU64::new(pending.bytes.len() as u64) else {
-                continue;
-            };
-            let mut view = self.staging_belt.write_buffer(
-                &mut encoder,
-                &self.buffer,
-                pending.offset,
-                size,
-                device,
-            );
-            view.copy_from_slice(&pending.bytes);
-        }
-
+    pub fn flush_staged_writes(&mut self) -> Option<wgpu::CommandBuffer> {
+        let encoder = self.encoder.take()?;
         self.staging_belt.finish();
+        self.staging_finished = true;
         Some(encoder.finish())
     }
 
@@ -439,6 +430,7 @@ impl UploadRingBuffer {
     /// known to have progressed.
     pub fn recall(&mut self) {
         self.staging_belt.recall();
+        self.staging_finished = false;
     }
 }
 
@@ -502,5 +494,38 @@ mod tests {
 
         let total = per_frame_capacity * desc.frames_in_flight as u64;
         assert_eq!(total, 768);
+    }
+
+    #[test]
+    fn ring_wraps_across_frame_segments() {
+        let per_frame_capacity = 64;
+        let frames_in_flight = 3;
+
+        let mut arenas = (0..frames_in_flight)
+            .map(|i| BufferArena::new(i as u64 * per_frame_capacity, per_frame_capacity))
+            .collect::<Vec<_>>();
+
+        // Mirrors the `UploadRingBuffer` behavior: start at the end so the first
+        // `begin_frame` wraps to index 0.
+        let mut arena_index = frames_in_flight - 1;
+
+        let mut first_offsets = Vec::new();
+        for _ in 0..(frames_in_flight * 2) {
+            arena_index = (arena_index + 1) % frames_in_flight;
+            arenas[arena_index].reset();
+            first_offsets.push(arenas[arena_index].alloc(4, 4).unwrap());
+        }
+
+        assert_eq!(
+            first_offsets,
+            vec![
+                0,
+                per_frame_capacity,
+                per_frame_capacity * 2,
+                0,
+                per_frame_capacity,
+                per_frame_capacity * 2
+            ]
+        );
     }
 }
