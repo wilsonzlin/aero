@@ -51,9 +51,9 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 26. [Win7 Install Media Servicing (test-signed virtio drivers)](./docs/16-win7-image-servicing.md)
 27. [Win7 BCD offline patching (testsigning / nointegritychecks)](./docs/win7-bcd-offline-patching.md)
 28. [Windows Driver Development](./docs/windows/README.md)
-28. [Windows 7 Install Media Preparation (Slipstreaming)](./docs/16-windows7-install-media-prep.md)
-29. [Performance Tooling (Profiling, HUD, Traces, Benchmarks)](./docs/16-performance-tooling.md)
-30. [Guest Tools Packaging](./docs/16-guest-tools-packaging.md)
+29. [Windows 7 Install Media Preparation (Slipstreaming)](./docs/16-windows7-install-media-prep.md)
+30. [Performance Tooling (Profiling, HUD, Traces, Benchmarks)](./docs/16-performance-tooling.md)
+31. [Guest Tools Packaging](./docs/16-guest-tools-packaging.md)
 
 ---
 
