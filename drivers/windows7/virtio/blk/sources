@@ -1,8 +1,8 @@
 TARGETNAME=aerovblk
-TARGETTYPE=DRIVER
-DRIVERTYPE=MINIPORT
+TARGETTYPE=MINIPORT
+TARGETEXT=.sys
 
-INCLUDES=include;..\common\include
+INCLUDES=$(INCLUDES);.\include;..\common\include
 
 SOURCES=src\aerovblk.c \
         ..\common\src\virtio_pci_legacy.c \
