@@ -1,5 +1,8 @@
 import "./style.css";
 
+import { createGpuWorker } from "./main/createGpuWorker";
+import { fnv1a32Hex } from "./utils/fnv1a";
+
 import { createAudioOutput } from "./platform/audio";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { importFileToOpfs } from "./platform/opfs";
@@ -38,6 +41,47 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+function createExpectedTestPattern(width: number, height: number): Uint8Array {
+  const halfW = Math.floor(width / 2);
+  const halfH = Math.floor(height / 2);
+  const out = new Uint8Array(width * height * 4);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const i = (y * width + x) * 4;
+      const isLeft = x < halfW;
+      const isTop = y < halfH;
+
+      // Top-left origin:
+      // - top-left: blue
+      // - top-right: white
+      // - bottom-left: red
+      // - bottom-right: green
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      if (isTop && isLeft) {
+        b = 255;
+      } else if (isTop && !isLeft) {
+        r = 255;
+        g = 255;
+        b = 255;
+      } else if (!isTop && isLeft) {
+        r = 255;
+      } else {
+        g = 255;
+      }
+
+      out[i] = r;
+      out[i + 1] = g;
+      out[i + 2] = b;
+      out[i + 3] = 255;
+    }
+  }
+
+  return out;
+}
+
 function render(): void {
   const app = document.getElementById("app");
   if (!app) throw new Error("Missing #app element");
@@ -66,6 +110,7 @@ function render(): void {
       renderCapabilityTable(report),
     ),
     renderWebGpuPanel(),
+    renderGpuWorkerPanel(),
     renderOpfsPanel(),
     renderAudioPanel(),
     renderWorkersPanel(report),
@@ -130,6 +175,87 @@ function renderWebGpuPanel(): HTMLElement {
   });
 
   return el("div", { class: "panel" }, el("h2", { text: "WebGPU" }), el("div", { class: "row" }, button), output);
+}
+
+function renderGpuWorkerPanel(): HTMLElement {
+  const output = el("pre", { text: "" });
+  const canvas = el("canvas") as HTMLCanvasElement;
+
+  const cssWidth = 64;
+  const cssHeight = 64;
+  const devicePixelRatio = window.devicePixelRatio || 1;
+
+  canvas.width = Math.max(1, Math.round(cssWidth * devicePixelRatio));
+  canvas.height = Math.max(1, Math.round(cssHeight * devicePixelRatio));
+  canvas.style.width = `${cssWidth}px`;
+  canvas.style.height = `${cssHeight}px`;
+  canvas.style.border = "1px solid #333";
+  canvas.style.imageRendering = "pixelated";
+
+  function appendLog(line: string): void {
+    output.textContent += `${line}\n`;
+  }
+
+  let gpu: ReturnType<typeof createGpuWorker> | null = null;
+
+  const button = el("button", {
+    text: "Run GPU worker smoke test",
+    onclick: async () => {
+      output.textContent = "";
+
+      try {
+        if (!gpu) {
+          gpu = createGpuWorker({
+            canvas,
+            width: cssWidth,
+            height: cssHeight,
+            devicePixelRatio,
+            gpuOptions: {
+              preferWebGpu: true,
+            },
+            onGpuError: (msg) => {
+              appendLog(`gpu_error fatal=${msg.fatal} kind=${msg.error.kind} msg=${msg.error.message}`);
+              if (msg.error.hints?.length) {
+                for (const hint of msg.error.hints) appendLog(`  hint: ${hint}`);
+              }
+            },
+          });
+        }
+
+        const ready = await gpu.ready;
+        appendLog(`ready backend=${ready.backendKind}`);
+        if (ready.fallback) {
+          appendLog(`fallback ${ready.fallback.from} -> ${ready.fallback.to}: ${ready.fallback.reason}`);
+        }
+        if (ready.adapterInfo?.vendor || ready.adapterInfo?.renderer) {
+          appendLog(`adapter vendor=${ready.adapterInfo.vendor ?? "n/a"} renderer=${ready.adapterInfo.renderer ?? "n/a"}`);
+        }
+
+        gpu.presentTestPattern();
+        const screenshot = await gpu.requestScreenshot();
+
+        const actual = new Uint8Array(screenshot.rgba8);
+        const expected = createExpectedTestPattern(screenshot.width, screenshot.height);
+
+        const actualHash = fnv1a32Hex(actual);
+        const expectedHash = fnv1a32Hex(expected);
+
+        appendLog(`screenshot ${screenshot.width}x${screenshot.height} rgba8 bytes=${actual.byteLength}`);
+        appendLog(`hash actual=${actualHash} expected=${expectedHash}`);
+        appendLog(actualHash === expectedHash ? "PASS" : "FAIL");
+      } catch (err) {
+        appendLog(err instanceof Error ? err.message : String(err));
+      }
+    },
+  });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "GPU Worker" }),
+    el("div", { class: "row" }, button, canvas),
+    output,
+  );
 }
 
 function renderOpfsPanel(): HTMLElement {
