@@ -29,7 +29,7 @@ These are required for `SharedArrayBuffer` (and therefore `wasm32-threads` / par
 Recommended CSP (single line):
 
 ```
-default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-proxy.invalid wss://aero-proxy.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'
+default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-gateway.invalid wss://aero-gateway.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'
 ```
 
 Directive rationale:
@@ -38,7 +38,7 @@ Directive rationale:
 - `script-src 'self' 'wasm-unsafe-eval'`: allow ESM from same-origin **and** dynamic WASM compilation for JIT **without** enabling JS `eval`.
 - `worker-src 'self' blob:`: allow module workers from same-origin; allow `blob:` workers for bundlers/worklets that generate worker code at runtime.
 - `connect-src 'self' …`: allow `fetch()` / `WebAssembly.compileStreaming()` from same-origin and optionally a WebSocket proxy origin.
-  - `https://aero-proxy.invalid` and `wss://aero-proxy.invalid` are **documentation-only placeholders** (the `.invalid` TLD will never resolve). Replace with your real proxy origin or remove them entirely.
+  - `https://aero-gateway.invalid` and `wss://aero-gateway.invalid` are **documentation-only placeholders** (the `.invalid` TLD will never resolve). Replace with your real gateway/proxy origin or remove them entirely.
 - `img-src 'self' data: blob:`: allow icons and generated object URLs.
 - `style-src 'self'`: allow same-origin CSS without allowing inline script execution.
   - If you must use inline styles (e.g. CSS-in-JS), consider `'unsafe-inline'` here **only** (avoid it in `script-src`).
