@@ -11,9 +11,12 @@ async-stream = "0.3"
 axum = "0.7"
 bytes = "1"
 futures = "0.3"
+hex = "0.4"
+httpdate = "1"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 thiserror = "1"
 time = { version = "0.3", features = ["formatting", "std"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync"] }

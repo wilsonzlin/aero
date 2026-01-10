@@ -125,6 +125,37 @@ Notes:
 - Avoid content transformations. **Disable compression** (see below). Byte ranges are defined over the *wire representation*; a `Content-Encoding: gzip` response makes “disk byte offsets” meaningless.
 - If using caching/CDNs, ensure `Range` is forwarded and not normalized away.
 
+### HTTP caching (ETag / Last-Modified / Cache-Control)
+
+To make `StreamingDisk` range reads cache-friendly (browser cache + CDN) while remaining correct:
+
+- **Always include validators when available**
+  - `ETag` (strongly recommended)
+  - `Last-Modified` (when the underlying image has a meaningful mtime)
+- **Return `304 Not Modified`** for conditional `GET`/`HEAD` where applicable.
+- **Set explicit `Cache-Control`**
+  - Metadata endpoints should be revalidated (`no-cache`) rather than cached blindly.
+  - Raw bytes can be cached aggressively for public/immutable images, but must not be cached for
+    authenticated/private responses.
+- Ensure cache-aware responses include the correct `Vary` headers (at minimum `Vary: Origin` if the
+  service varies CORS responses by `Origin`).
+
+Recommended policy:
+
+- **Metadata** (`/v1/images`, `/v1/images/{image_id}/meta`)
+  - `Cache-Control: no-cache`
+  - Always send `ETag`
+  - Support `If-None-Match` on `GET`/`HEAD` (return `304` when matched)
+- **Data** (`/v1/images/{image_id}` or `/v1/images/{image_id}/data`)
+  - Send `ETag` and `Last-Modified` when available
+  - `Accept-Ranges: bytes`
+  - Public images: `Cache-Control: public, max-age=<n>, no-transform` (max-age configurable)
+  - Authenticated/private images: `Cache-Control: private, no-store, no-transform`
+  - `HEAD` should support `If-None-Match` / `If-Modified-Since` and return `304` when matched.
+  - If implementing `If-Range`, follow RFC 9110: if the validator doesn't match the current image
+    version, ignore the `Range` header and return a full `200` response (to avoid mixed-version
+    bytes).
+
 ### Required CORS headers (including `Range`)
 
 Because browsers preflight cross-origin `Range` requests, you must support `OPTIONS` and include the correct headers on both the preflight and the actual response.

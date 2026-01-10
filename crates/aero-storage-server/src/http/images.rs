@@ -1,5 +1,8 @@
 use crate::{
-    http::range::{parse_range_header, resolve_ranges, ByteRange, RangeOptions, RangeResolveError},
+    http::{
+        cache,
+        range::{parse_range_header, resolve_ranges, ByteRange, RangeOptions, RangeResolveError},
+    },
     store::{ImageStore, StoreError},
 };
 use async_stream::try_stream;
@@ -17,17 +20,19 @@ use axum::{
 use bytes::Bytes;
 use futures::StreamExt;
 use rand::{distributions::Alphanumeric, Rng};
-use std::{io, pin::Pin, sync::Arc};
+use std::{io, pin::Pin, sync::Arc, time::Duration};
 use tokio_util::io::ReaderStream;
 
 const DEFAULT_MAX_RANGES: usize = 16;
 const DEFAULT_MAX_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
+const DEFAULT_PUBLIC_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone)]
 pub struct ImagesState {
     store: Arc<dyn ImageStore>,
     range_options: RangeOptions,
     cors_allow_origin: HeaderValue,
+    public_cache_max_age: Duration,
 }
 
 impl ImagesState {
@@ -39,6 +44,7 @@ impl ImagesState {
                 max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
             },
             cors_allow_origin: HeaderValue::from_static("*"),
+            public_cache_max_age: DEFAULT_PUBLIC_MAX_AGE,
         }
     }
 
@@ -51,6 +57,12 @@ impl ImagesState {
         self.cors_allow_origin = cors_allow_origin;
         self
     }
+
+    /// Set the max-age used for publicly cacheable image bytes responses.
+    pub fn with_public_cache_max_age(mut self, max_age: Duration) -> Self {
+        self.public_cache_max_age = max_age;
+        self
+    }
 }
 
 pub fn router(store: Arc<dyn ImageStore>) -> Router {
@@ -59,6 +71,10 @@ pub fn router(store: Arc<dyn ImageStore>) -> Router {
 
 pub fn router_with_state(state: ImagesState) -> Router {
     Router::new()
+        .route(
+            "/v1/images/:image_id/data",
+            get(get_image).head(head_image).options(options_image),
+        )
         .route(
             "/v1/images/:image_id",
             get(get_image).head(head_image).options(options_image),
@@ -104,14 +120,28 @@ async fn serve_image(
     };
 
     let len = meta.size;
+    let cache_control = data_cache_control_value(&state, &req_headers);
+
+    // Conditional requests: only required for HEAD, but safe for GET too (when present).
+    if !want_body && cache::is_not_modified(&req_headers, meta.etag.as_deref(), meta.last_modified)
+    {
+        return not_modified_response(&state, &meta, cache_control);
+    }
 
     let range_header = req_headers.get(header::RANGE).and_then(|v| v.to_str().ok());
     if let Some(range_header) = range_header {
         let specs = match parse_range_header(range_header) {
             Ok(Some(v)) => v,
-            Ok(None) => return full_response(&state, &image_id, meta, want_body).await,
+            Ok(None) => {
+                return full_response(&state, &image_id, meta, want_body, cache_control).await
+            }
             Err(_) => return range_not_satisfiable(&state, len),
         };
+
+        // RFC 9110 If-Range support: if validator doesn't match, ignore Range and return 200.
+        if !cache::if_range_allows_range(&req_headers, meta.etag.as_deref(), meta.last_modified) {
+            return full_response(&state, &image_id, meta, want_body, cache_control).await;
+        }
 
         let ranges = match resolve_ranges(&specs, len, state.range_options) {
             Ok(r) => r,
@@ -126,12 +156,28 @@ async fn serve_image(
         };
 
         if ranges.len() == 1 {
-            return single_range_response(&state, &image_id, meta, ranges[0], want_body).await;
+            return single_range_response(
+                &state,
+                &image_id,
+                meta,
+                ranges[0],
+                want_body,
+                cache_control,
+            )
+            .await;
         }
-        return multipart_range_response(&state, &image_id, meta, ranges, want_body).await;
+        return multipart_range_response(
+            &state,
+            &image_id,
+            meta,
+            ranges,
+            want_body,
+            cache_control,
+        )
+        .await;
     }
 
-    full_response(&state, &image_id, meta, want_body).await
+    full_response(&state, &image_id, meta, want_body, cache_control).await
 }
 
 async fn full_response(
@@ -139,6 +185,7 @@ async fn full_response(
     image_id: &str,
     meta: crate::store::ImageMeta,
     want_body: bool,
+    cache_control: HeaderValue,
 ) -> Response {
     let mut response = Response::new(if want_body {
         match state.store.open_range(image_id, 0, meta.size).await {
@@ -151,7 +198,7 @@ async fn full_response(
 
     *response.status_mut() = StatusCode::OK;
     let headers = response.headers_mut();
-    insert_common_headers(headers, state);
+    insert_cors_headers(headers, state);
     headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static(meta.content_type),
@@ -160,9 +207,7 @@ async fn full_response(
         header::CONTENT_LENGTH,
         HeaderValue::from_str(&meta.size.to_string()).unwrap(),
     );
-    if let Some(etag) = meta.etag {
-        headers.insert(header::ETAG, HeaderValue::from_str(&etag).unwrap());
-    }
+    insert_data_cache_headers(headers, &meta, cache_control);
     response
 }
 
@@ -172,6 +217,7 @@ async fn single_range_response(
     meta: crate::store::ImageMeta,
     range: ByteRange,
     want_body: bool,
+    cache_control: HeaderValue,
 ) -> Response {
     let range_len = range.len();
     let mut response = Response::new(if want_body {
@@ -189,7 +235,7 @@ async fn single_range_response(
 
     *response.status_mut() = StatusCode::PARTIAL_CONTENT;
     let headers = response.headers_mut();
-    insert_common_headers(headers, state);
+    insert_cors_headers(headers, state);
     headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static(meta.content_type),
@@ -206,9 +252,7 @@ async fn single_range_response(
         header::CONTENT_LENGTH,
         HeaderValue::from_str(&range_len.to_string()).unwrap(),
     );
-    if let Some(etag) = meta.etag {
-        headers.insert(header::ETAG, HeaderValue::from_str(&etag).unwrap());
-    }
+    insert_data_cache_headers(headers, &meta, cache_control);
     response
 }
 
@@ -218,6 +262,7 @@ async fn multipart_range_response(
     meta: crate::store::ImageMeta,
     ranges: Vec<ByteRange>,
     want_body: bool,
+    cache_control: HeaderValue,
 ) -> Response {
     let boundary: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
@@ -268,11 +313,9 @@ async fn multipart_range_response(
 
     *response.status_mut() = StatusCode::PARTIAL_CONTENT;
     let headers = response.headers_mut();
-    insert_common_headers(headers, state);
+    insert_cors_headers(headers, state);
     headers.insert(header::CONTENT_TYPE, content_type);
-    if let Some(etag) = meta.etag {
-        headers.insert(header::ETAG, HeaderValue::from_str(&etag).unwrap());
-    }
+    insert_data_cache_headers(headers, &meta, cache_control);
     response
 }
 
@@ -280,7 +323,12 @@ fn range_not_satisfiable(state: &ImagesState, len: u64) -> Response {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
     let headers = response.headers_mut();
-    insert_common_headers(headers, state);
+    insert_cors_headers(headers, state);
+    headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store, no-transform"),
+    );
     headers.insert(
         header::CONTENT_RANGE,
         HeaderValue::from_str(&format!("bytes */{len}")).unwrap(),
@@ -302,31 +350,40 @@ fn response_from_store_error(state: &ImagesState, err: StoreError, len: u64) -> 
 fn response_with_status(status: StatusCode, state: &ImagesState) -> Response {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = status;
-    insert_common_headers(response.headers_mut(), state);
-    response
-}
-
-fn insert_common_headers(headers: &mut HeaderMap, state: &ImagesState) {
+    let headers = response.headers_mut();
+    insert_cors_headers(headers, state);
     headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     headers.insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static("no-transform"),
+        HeaderValue::from_static("no-store, no-transform"),
     );
+    response
+}
 
+pub(crate) fn insert_cors_headers(headers: &mut HeaderMap, state: &ImagesState) {
     headers.insert(
         HeaderName::from_static("access-control-allow-origin"),
         state.cors_allow_origin.clone(),
     );
+    // Be conservative: even when `Access-Control-Allow-Origin: *`, varying on Origin is safe and
+    // avoids surprising cache poisoning if deployments change to an allowlist.
+    headers.insert(header::VARY, HeaderValue::from_static("Origin"));
     headers.insert(
         HeaderName::from_static("access-control-expose-headers"),
-        HeaderValue::from_static("ETag, Content-Range, Accept-Ranges, Content-Length"),
+        HeaderValue::from_static(
+            "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length",
+        ),
     );
 }
 
-fn insert_cors_preflight_headers(headers: &mut HeaderMap, state: &ImagesState) {
+pub(crate) fn insert_cors_preflight_headers(headers: &mut HeaderMap, state: &ImagesState) {
     headers.insert(
         HeaderName::from_static("access-control-allow-origin"),
         state.cors_allow_origin.clone(),
+    );
+    headers.insert(
+        header::VARY,
+        HeaderValue::from_static("Origin, Access-Control-Request-Method, Access-Control-Request-Headers"),
     );
     headers.insert(
         HeaderName::from_static("access-control-allow-methods"),
@@ -334,10 +391,50 @@ fn insert_cors_preflight_headers(headers: &mut HeaderMap, state: &ImagesState) {
     );
     headers.insert(
         HeaderName::from_static("access-control-allow-headers"),
-        HeaderValue::from_static("Range, If-Range, Content-Type"),
+        HeaderValue::from_static(
+            "Range, If-Range, If-None-Match, If-Modified-Since, Authorization, Content-Type",
+        ),
     );
     headers.insert(
         HeaderName::from_static("access-control-max-age"),
         HeaderValue::from_static("86400"),
     );
+}
+
+fn insert_data_cache_headers(
+    headers: &mut HeaderMap,
+    meta: &crate::store::ImageMeta,
+    cache_control: HeaderValue,
+) {
+    headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    headers.insert(header::CACHE_CONTROL, cache_control);
+    headers.insert(
+        header::ETAG,
+        HeaderValue::from_str(&cache::etag_or_fallback(meta)).unwrap(),
+    );
+    if let Some(last_modified) = cache::last_modified_header_value(meta.last_modified) {
+        headers.insert(header::LAST_MODIFIED, last_modified);
+    }
+}
+
+fn data_cache_control_value(state: &ImagesState, req_headers: &HeaderMap) -> HeaderValue {
+    if req_headers.contains_key(header::AUTHORIZATION) {
+        HeaderValue::from_static("private, no-store, no-transform")
+    } else {
+        let secs = state.public_cache_max_age.as_secs();
+        HeaderValue::from_str(&format!("public, max-age={secs}, no-transform")).unwrap()
+    }
+}
+
+fn not_modified_response(
+    state: &ImagesState,
+    meta: &crate::store::ImageMeta,
+    cache_control: HeaderValue,
+) -> Response {
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::NOT_MODIFIED;
+    let headers = response.headers_mut();
+    insert_cors_headers(headers, state);
+    insert_data_cache_headers(headers, meta, cache_control);
+    response
 }
