@@ -10,6 +10,7 @@ Common flags:
 * `--require-vid=0x####` / `--require-did=0x####` – fail the test if the active adapter VID/DID does not match.
 * `--allow-microsoft` – allow running on the Microsoft Basic Render Driver (normally treated as a failure to avoid false PASS when AeroGPU isn’t active).
 * `--allow-remote` – for `d3d9ex_dwm_probe` only: skip the composition check when running under RDP (`SM_REMOTESESSION=1`).
+* `--help` / `/?` – print per-test usage.
 
 ## Layout
 
@@ -68,6 +69,12 @@ To also write BMP dumps next to the binaries:
 
 ```cmd
 run_all.cmd --dump
+```
+
+For suite usage:
+
+```cmd
+run_all.cmd --help
 ```
 
 To require a specific PCI VID/DID (recommended for automation):

@@ -35,6 +35,12 @@ static int RunReadbackSanity(int argc, char** argv) {
     has_require_did = true;
   }
 
+  if (aerogpu_test::HasHelpArg(argc, argv)) {
+    aerogpu_test::PrintfStdout("Usage: %s.exe [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft]",
+                               kTestName);
+    return 0;
+  }
+
   D3D_FEATURE_LEVEL feature_levels[] = {D3D_FEATURE_LEVEL_11_0,
                                        D3D_FEATURE_LEVEL_10_1,
                                        D3D_FEATURE_LEVEL_10_0,

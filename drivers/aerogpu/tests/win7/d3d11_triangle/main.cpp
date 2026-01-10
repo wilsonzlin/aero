@@ -35,6 +35,12 @@ static int RunD3D11Triangle(int argc, char** argv) {
     has_require_did = true;
   }
 
+  if (aerogpu_test::HasHelpArg(argc, argv)) {
+    aerogpu_test::PrintfStdout("Usage: %s.exe [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft]",
+                               kTestName);
+    return 0;
+  }
+
   const int kWidth = 256;
   const int kHeight = 256;
 

@@ -33,6 +33,10 @@ static inline bool HasArg(int argc, char** argv, const char* needle) {
   return false;
 }
 
+static inline bool HasHelpArg(int argc, char** argv) {
+  return HasArg(argc, argv, "--help") || HasArg(argc, argv, "-h") || HasArg(argc, argv, "/?");
+}
+
 static inline bool StrIStartsWith(const char* s, const char* prefix) {
   if (!s || !prefix) {
     return false;

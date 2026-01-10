@@ -6,6 +6,11 @@ static int RunDwmProbe(int argc, char** argv) {
   const char* kTestName = "d3d9ex_dwm_probe";
   const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
 
+  if (aerogpu_test::HasHelpArg(argc, argv)) {
+    aerogpu_test::PrintfStdout("Usage: %s.exe [--allow-remote]", kTestName);
+    return 0;
+  }
+
   // DWM is per-session; composition is typically disabled in RDP sessions.
   if (GetSystemMetrics(SM_REMOTESESSION)) {
     if (allow_remote) {

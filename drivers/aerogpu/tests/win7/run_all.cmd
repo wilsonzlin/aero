@@ -1,6 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
 
+if /I "%~1"=="--help" goto :help
+if /I "%~1"=="-h" goto :help
+if "%~1"=="/?" goto :help
+
 set "BIN=%~dp0bin"
 set /a FAILURES=0
 
@@ -37,5 +41,12 @@ if errorlevel 1 (
 ) else (
   echo PASS: %NAME%
 )
+exit /b 0
+
+:help
+echo Usage: run_all.cmd [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-remote]
+echo.
+echo Notes:
+echo   --allow-remote only affects d3d9ex_dwm_probe; other tests ignore it.
 exit /b 0
 
