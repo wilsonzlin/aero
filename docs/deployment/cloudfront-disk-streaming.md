@@ -37,11 +37,17 @@ This path split enables two CloudFront cache behaviors:
 - `/public/*` → public behavior, long cache TTLs
 - `/users/*` → private behavior, viewer access restricted
 
-### CloudFront maximum object size (Range does not bypass it)
+### CloudFront cacheable size limits (Range helps; chunking is still a good default)
 
-CloudFront enforces a maximum object size for “one URL → one object”. For large VM disks, this matters because `Range` requests still reference the **total object size** in `Content-Range`, and CloudFront’s size limit applies to the whole object.
+CloudFront enforces a maximum **cacheable file size per HTTP response**. If a client ever triggers a full-object `GET` (no `Range`) for a very large disk, you can run into CloudFront size-limit behavior (cache bypass or errors depending on settings and size).
 
-If your per-user disk images can exceed CloudFront’s object size limit, publish them as **multiple fixed-size chunk objects** instead of one giant object:
+`Range` requests help because a `206 Partial Content` response’s `Content-Length` is only the requested slice; CloudFront can cache those slices and serve subsequent requests for the same ranges from the edge cache.
+
+Practical guidance:
+
+- Ensure the browser always reads disk bytes via `Range`.
+- For very large objects, prefer learning total size via `Range: bytes=0-0` + `Content-Range` instead of relying on `HEAD` (see [`docs/17-range-cdn-behavior.md`](../17-range-cdn-behavior.md)).
+- For the most predictable behavior across CDNs (and to avoid “first Range miss downloads a lot” surprises), consider storing the disk as **multiple fixed-size chunk objects** instead of one giant object:
 
 ```
 users/<uid>/images/<image-id>/manifest.json
@@ -508,4 +514,4 @@ Example cookie attributes to use when setting them from your backend:
    - response headers policy sets CORS + `Cross-Origin-Resource-Policy`
 4. Backend mints **signed cookies** scoped to `https://cdn.example.com/users/<uid>/*`.
 5. Client aligns reads to a fixed `CHUNK_SIZE` to reduce redundant downloads and improve local caching behavior (independent of CloudFront’s cache key).
-6. If disks can exceed CloudFront’s max object size, publish them as multiple chunk objects (see [CloudFront maximum object size](#cloudfront-maximum-object-size-range-does-not-bypass-it)).
+6. If disks are large enough that CloudFront size limits become relevant, enforce **range-only** access (for non-`HEAD` size discovery, use `Range: bytes=0-0`) or publish them as multiple chunk objects (see [CloudFront cacheable size limits](#cloudfront-cacheable-size-limits-range-helps-chunking-is-still-a-good-default)).

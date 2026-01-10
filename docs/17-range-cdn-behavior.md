@@ -14,6 +14,10 @@ This document turns the “will the CDN do the right thing?” uncertainty into 
 - A summary of one alternative cache (Nginx reverse proxy cache).
 - A checklist that operators can run with `curl` to validate their own deployment.
 
+If you are looking for a **deployment runbook** (S3 + CloudFront + signed URLs/cookies, plus CORS/COEP/CORP headers), see:
+
+- [`docs/deployment/cloudfront-disk-streaming.md`](./deployment/cloudfront-disk-streaming.md)
+
 > **Assumptions / limitations**
 >
 > This repo does not contain AWS credentials or live infrastructure, so CloudFront behavior here is based on published AWS documentation and widely observed headers. Use the checklist below to validate the behavior in *your* distribution and region.

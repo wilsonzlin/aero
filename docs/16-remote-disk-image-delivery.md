@@ -389,11 +389,12 @@ Range fetches return `206 Partial Content`. Your CDN must handle these correctly
 - Forward the `Range` header to the origin.
 - Cache must not confuse different ranges for the same object.
 
-In CloudFront, the safe approach is:
+In CloudFront, keep the cache key minimal (path + version) and **do not** vary the cache key on `Range`.
 
-- Include the `Range` request header in the **cache key** (Cache Policy).
+- CloudFront supports byte-range requests and can satisfy subsequent ranges from its edge cache.
+- Including `Range` in the cache key typically explodes cache cardinality for random access patterns.
 
-This typically results in one cache entry per aligned chunk, which is exactly what `StreamingDisk` wants.
+If you run your own proxy cache (e.g., Nginx), use a **slice** strategy so the cache stores fixed-size slices and the cache key varies by slice range (not arbitrary viewer ranges). See: [17 - HTTP Range + CDN Behavior](./17-range-cdn-behavior.md).
 
 ### Recommended CloudFront behavior policies (outline)
 
@@ -404,7 +405,6 @@ You can implement this with CloudFront “Policies” (console) or in IaC.
 - Query strings: **none** (or only those that are stable and not user-specific)
 - Cookies: **none**
 - Headers in cache key:
-  - `Range`
   - (Optional) `Origin` if you serve CORS responses that vary by origin
 - TTL:
   - For immutable objects: allow long TTLs (up to 1 year) and respect origin `Cache-Control`
