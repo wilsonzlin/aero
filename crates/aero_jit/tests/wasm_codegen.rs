@@ -352,3 +352,81 @@ fn wasm_codegen_load_store_helpers_match_interpreter() {
     assert_eq!(&got_mem[0x1000..0x1001], &expected_mem[0x1000..0x1001]);
     assert_eq!(&got_mem[0x1004..0x1008], &expected_mem[0x1004..0x1008]);
 }
+
+#[test]
+fn wasm_codegen_exit_if_matches_interpreter() {
+    let t_cond = Temp(0);
+    let block = IrBlock::new(vec![
+        IrOp::Cmp {
+            dst: Place::Temp(t_cond),
+            op: CmpOp::Eq,
+            lhs: Operand::Reg(Reg::Rax),
+            rhs: Operand::Reg(Reg::Rbx),
+        },
+        IrOp::ExitIf {
+            cond: Operand::Temp(t_cond),
+            next_rip: Operand::Imm(0x1111),
+        },
+        IrOp::Bin {
+            dst: Place::Reg(Reg::Rcx),
+            op: BinOp::Add,
+            lhs: Operand::Reg(Reg::Rcx),
+            rhs: Operand::Imm(1),
+        },
+        IrOp::Exit {
+            next_rip: Operand::Imm(0x2222),
+        },
+    ]);
+
+    for (rax, rbx) in [(5u64, 5u64), (5u64, 7u64)] {
+        let mut cpu = CpuState::default();
+        cpu.set_reg(Reg::Rax, rax);
+        cpu.set_reg(Reg::Rbx, rbx);
+        cpu.set_reg(Reg::Rcx, 123);
+        cpu.rip = 0x3333;
+
+        let mem = vec![0u8; 65536];
+        let (expected_rip, expected_cpu, _expected_mem) = run_case(&block, cpu, mem.clone());
+        let (got_rip, got_cpu, _got_mem) = run_wasm(&block, cpu, mem);
+
+        assert_eq!(got_rip, expected_rip);
+        assert_eq!(got_cpu, expected_cpu);
+    }
+}
+
+#[test]
+fn wasm_codegen_bailout_matches_interpreter() {
+    let block = IrBlock::new(vec![
+        IrOp::Bin {
+            dst: Place::Reg(Reg::Rax),
+            op: BinOp::Add,
+            lhs: Operand::Reg(Reg::Rax),
+            rhs: Operand::Imm(5),
+        },
+        IrOp::Bailout {
+            kind: 7,
+            rip: Operand::Imm(0x9999),
+        },
+        IrOp::Bin {
+            dst: Place::Reg(Reg::Rbx),
+            op: BinOp::Add,
+            lhs: Operand::Reg(Reg::Rbx),
+            rhs: Operand::Imm(1),
+        },
+        IrOp::Exit {
+            next_rip: Operand::Imm(0x2222),
+        },
+    ]);
+
+    let mut cpu = CpuState::default();
+    cpu.set_reg(Reg::Rax, 10);
+    cpu.set_reg(Reg::Rbx, 20);
+    cpu.rip = 0x1234;
+
+    let mem = vec![0u8; 65536];
+    let (expected_rip, expected_cpu, _expected_mem) = run_case(&block, cpu, mem.clone());
+    let (got_rip, got_cpu, _got_mem) = run_wasm(&block, cpu, mem);
+
+    assert_eq!(got_rip, expected_rip);
+    assert_eq!(got_cpu, expected_cpu);
+}
