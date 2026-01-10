@@ -116,10 +116,16 @@ Windows Boot Configuration Data (BCD) stores are registry-hive-like files:
 - Template (used by Setup to create new stores): `Windows/System32/Config/BCD-Template`
   - On install media, this file is **inside** `sources/install.wim` (mount an index to access it).
 
-These patches set OS-loader booleans using their element IDs:
+These patches set Win7 BCD **library boolean** elements using their element IDs:
 
 - `testsigning` → `BcdLibraryBoolean_AllowPrereleaseSignatures` (`0x16000049`)
 - `nointegritychecks` → `BcdLibraryBoolean_DisableIntegrityChecks` (`0x16000048`)
+
+The `Element` values are encoded as the standard BCD element record:
+
+`[u32 element_type][u32 data_len][data...]`
+
+(See `docs/win7-bcd-offline-patching.md` for details.)
 
 Both patches target the well-known BCD “library settings” objects which Win7 loader entries commonly inherit:
 
