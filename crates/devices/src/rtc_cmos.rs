@@ -24,6 +24,15 @@ const REG_STATUS_B: u8 = 0x0B;
 const REG_STATUS_C: u8 = 0x0C;
 const REG_STATUS_D: u8 = 0x0D;
 
+const REG_BASE_MEM_LO: u8 = 0x15;
+const REG_BASE_MEM_HI: u8 = 0x16;
+const REG_EXT_MEM_LO: u8 = 0x17;
+const REG_EXT_MEM_HI: u8 = 0x18;
+const REG_EXT_MEM2_LO: u8 = 0x30;
+const REG_EXT_MEM2_HI: u8 = 0x31;
+const REG_HIGH_MEM_LO: u8 = 0x34;
+const REG_HIGH_MEM_HI: u8 = 0x35;
+
 const REG_CENTURY: u8 = 0x32;
 
 const REG_B_SET: u8 = 1 << 7;
@@ -131,9 +140,35 @@ impl<C: Clock, I: IrqLine> RtcCmos<C, I> {
     }
 
     fn init_nvram(&mut self) {
+        self.set_memory_size_bytes(0);
+    }
+
+    pub fn set_memory_size_bytes(&mut self, total_ram_bytes: u64) {
+        fn write_u16(buf: &mut [u8; CMOS_LEN], idx_lo: u8, idx_hi: u8, value: u16) {
+            buf[idx_lo as usize] = (value & 0xFF) as u8;
+            buf[idx_hi as usize] = (value >> 8) as u8;
+        }
+
+        const ONE_MIB: u64 = 1024 * 1024;
+        const SIXTEEN_MIB: u64 = 16 * 1024 * 1024;
+        const SIXTY_FOUR_KIB: u64 = 64 * 1024;
+
         let base_kb: u16 = 640;
-        self.nvram[0x15] = (base_kb & 0xFF) as u8;
-        self.nvram[0x16] = (base_kb >> 8) as u8;
+        write_u16(&mut self.nvram, REG_BASE_MEM_LO, REG_BASE_MEM_HI, base_kb);
+
+        let ext_kb = total_ram_bytes.saturating_sub(ONE_MIB) / 1024;
+        let ext_kb = ext_kb.min(u64::from(u16::MAX)) as u16;
+        write_u16(&mut self.nvram, REG_EXT_MEM_LO, REG_EXT_MEM_HI, ext_kb);
+        write_u16(&mut self.nvram, REG_EXT_MEM2_LO, REG_EXT_MEM2_HI, ext_kb);
+
+        let high_blocks = total_ram_bytes.saturating_sub(SIXTEEN_MIB) / SIXTY_FOUR_KIB;
+        let high_blocks = high_blocks.min(u64::from(u16::MAX)) as u16;
+        write_u16(
+            &mut self.nvram,
+            REG_HIGH_MEM_LO,
+            REG_HIGH_MEM_HI,
+            high_blocks,
+        );
     }
 
     fn tick_at(&mut self, now_ns: u64) {
@@ -754,5 +789,30 @@ mod tests {
         clock.advance_ns(1_000_000_000);
         rtc.borrow_mut().tick();
         assert_eq!(interrupts.borrow().get_pending(), Some(0x28));
+    }
+
+    #[test]
+    fn nvram_reports_base_and_extended_memory_sizes() {
+        let clock = ManualClock::new();
+        let irq = TestIrq::new();
+        let mut rtc = RtcCmos::new(clock, irq);
+
+        rtc.set_memory_size_bytes(32 * 1024 * 1024);
+
+        let base_lo = read_reg(&mut rtc, REG_BASE_MEM_LO);
+        let base_hi = read_reg(&mut rtc, REG_BASE_MEM_HI);
+        assert_eq!(u16::from_le_bytes([base_lo, base_hi]), 640);
+
+        let ext_lo = read_reg(&mut rtc, REG_EXT_MEM_LO);
+        let ext_hi = read_reg(&mut rtc, REG_EXT_MEM_HI);
+        assert_eq!(u16::from_le_bytes([ext_lo, ext_hi]), 31_744);
+
+        let ext2_lo = read_reg(&mut rtc, REG_EXT_MEM2_LO);
+        let ext2_hi = read_reg(&mut rtc, REG_EXT_MEM2_HI);
+        assert_eq!(u16::from_le_bytes([ext2_lo, ext2_hi]), 31_744);
+
+        let high_lo = read_reg(&mut rtc, REG_HIGH_MEM_LO);
+        let high_hi = read_reg(&mut rtc, REG_HIGH_MEM_HI);
+        assert_eq!(u16::from_le_bytes([high_lo, high_hi]), 256);
     }
 }
