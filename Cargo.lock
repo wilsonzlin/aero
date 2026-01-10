@@ -348,6 +348,7 @@ version = "0.1.0"
 dependencies = [
  "emulator",
  "js-sys",
+ "st-idb",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",

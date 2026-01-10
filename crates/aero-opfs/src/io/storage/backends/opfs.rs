@@ -6,6 +6,8 @@ pub enum OpfsBackendMode {
     SyncAccessHandle,
     /// Uses Promise-based OPFS APIs (`getFile` + `createWritable`).
     AsyncOpfs,
+    /// Uses IndexedDB block storage (fallback when OPFS is unavailable).
+    IndexedDb,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -13,6 +15,12 @@ mod wasm {
     use super::*;
     use crate::platform::storage::opfs as opfs_platform;
     use js_sys::{Object, Reflect, Uint8Array};
+    use st_idb::{
+        DiskBackend as StIdbDiskBackend,
+        IndexedDbBackend as StIndexedDbBackend,
+        IndexedDbBackendOptions,
+        StorageError as StIdbError,
+    };
     use wasm_bindgen::JsValue;
 
     const DEFAULT_SECTOR_SIZE: u32 = 512;
@@ -42,6 +50,21 @@ mod wasm {
         Reflect::set(opts, at_key, &JsValue::from_f64(u64_to_f64_checked(at)?))
             .map_err(opfs_platform::disk_error_from_js)?;
         Ok(())
+    }
+
+    fn disk_error_from_idb(err: StIdbError) -> DiskError {
+        match err {
+            StIdbError::IndexedDbUnavailable => {
+                DiskError::NotSupported("IndexedDB is unavailable in this context".to_string())
+            }
+            StIdbError::QuotaExceeded => DiskError::QuotaExceeded,
+            StIdbError::OutOfBounds { .. } => DiskError::OutOfBounds,
+            StIdbError::Corrupt(msg) => DiskError::CorruptImage(msg),
+            StIdbError::UnsupportedFormat(version) => DiskError::Io(format!(
+                "unsupported indexeddb format version {version}"
+            )),
+            StIdbError::Js(err) => DiskError::Io(format!("{err:?}")),
+        }
     }
 
     pub struct OpfsBackend {
@@ -462,10 +485,118 @@ mod wasm {
         }
     }
 
+    pub struct OpfsIndexedDbBackend {
+        inner: StIndexedDbBackend,
+        sector_size: u32,
+        total_sectors: u64,
+        size_bytes: u64,
+        closed: bool,
+    }
+
+    impl core::fmt::Debug for OpfsIndexedDbBackend {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.debug_struct("OpfsIndexedDbBackend")
+                .field("sector_size", &self.sector_size)
+                .field("total_sectors", &self.total_sectors)
+                .field("size_bytes", &self.size_bytes)
+                .field("closed", &self.closed)
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl OpfsIndexedDbBackend {
+        pub fn mode(&self) -> OpfsBackendMode {
+            OpfsBackendMode::IndexedDb
+        }
+
+        pub async fn open(db_name: &str, size_bytes: u64) -> DiskResult<Self> {
+            if size_bytes % DEFAULT_SECTOR_SIZE as u64 != 0 {
+                return Err(DiskError::Io(format!(
+                    "disk size {size_bytes} is not a multiple of sector size {DEFAULT_SECTOR_SIZE}"
+                )));
+            }
+
+            let inner = StIndexedDbBackend::open(
+                db_name,
+                size_bytes,
+                IndexedDbBackendOptions::default(),
+            )
+            .await
+            .map_err(disk_error_from_idb)?;
+
+            Ok(Self {
+                inner,
+                sector_size: DEFAULT_SECTOR_SIZE,
+                total_sectors: size_bytes / DEFAULT_SECTOR_SIZE as u64,
+                size_bytes,
+                closed: false,
+            })
+        }
+
+        fn check_io_bounds(&self, lba: u64, len_bytes: usize) -> DiskResult<()> {
+            if self.closed {
+                return Err(DiskError::InvalidState(
+                    "backend already closed".to_string(),
+                ));
+            }
+
+            if len_bytes as u64 % self.sector_size as u64 != 0 {
+                return Err(DiskError::InvalidBufferLength);
+            }
+
+            let sectors = len_bytes as u64 / self.sector_size as u64;
+            let end = lba
+                .checked_add(sectors)
+                .ok_or_else(|| DiskError::OutOfBounds)?;
+            if end > self.total_sectors {
+                return Err(DiskError::OutOfBounds);
+            }
+            Ok(())
+        }
+
+        pub async fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
+            self.check_io_bounds(lba, buf.len())?;
+            let offset = lba
+                .checked_mul(self.sector_size as u64)
+                .ok_or(DiskError::OutOfBounds)?;
+            self.inner.read_at(offset, buf).await.map_err(disk_error_from_idb)
+        }
+
+        pub async fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
+            self.check_io_bounds(lba, buf.len())?;
+            let offset = lba
+                .checked_mul(self.sector_size as u64)
+                .ok_or(DiskError::OutOfBounds)?;
+            self.inner
+                .write_at(offset, buf)
+                .await
+                .map_err(disk_error_from_idb)
+        }
+
+        pub async fn flush(&mut self) -> DiskResult<()> {
+            if self.closed {
+                return Err(DiskError::InvalidState(
+                    "backend already closed".to_string(),
+                ));
+            }
+            self.inner.flush().await.map_err(disk_error_from_idb)
+        }
+
+        pub async fn close(&mut self) -> DiskResult<()> {
+            if self.closed {
+                return Ok(());
+            }
+            self.flush().await?;
+            self.closed = true;
+            Ok(())
+        }
+    }
+
     #[derive(Debug)]
     pub enum OpfsStorage {
         Sync(OpfsBackend),
         Async(OpfsAsyncBackend),
+        IndexedDb(OpfsIndexedDbBackend),
     }
 
     impl OpfsStorage {
@@ -473,15 +604,20 @@ mod wasm {
             match self {
                 Self::Sync(_) => OpfsBackendMode::SyncAccessHandle,
                 Self::Async(_) => OpfsBackendMode::AsyncOpfs,
+                Self::IndexedDb(_) => OpfsBackendMode::IndexedDb,
             }
         }
 
         pub async fn open(path: &str, create: bool, size_bytes: u64) -> DiskResult<Self> {
             match OpfsBackend::open(path, create, size_bytes).await {
                 Ok(backend) => Ok(Self::Sync(backend)),
-                Err(DiskError::NotSupported(_)) => Ok(Self::Async(
-                    OpfsAsyncBackend::open(path, create, size_bytes).await?,
-                )),
+                Err(DiskError::NotSupported(_)) => match OpfsAsyncBackend::open(path, create, size_bytes).await {
+                    Ok(backend) => Ok(Self::Async(backend)),
+                    Err(DiskError::NotSupported(_)) => Ok(Self::IndexedDb(
+                        OpfsIndexedDbBackend::open(&format!("aero-opfs:{path}"), size_bytes).await?,
+                    )),
+                    Err(e) => Err(e),
+                },
                 Err(e) => Err(e),
             }
         }
@@ -489,21 +625,28 @@ mod wasm {
         pub fn into_sync(self) -> Option<OpfsBackend> {
             match self {
                 Self::Sync(backend) => Some(backend),
-                Self::Async(_) => None,
+                Self::Async(_) | Self::IndexedDb(_) => None,
             }
         }
 
         pub fn into_async(self) -> Option<OpfsAsyncBackend> {
             match self {
-                Self::Sync(_) => None,
+                Self::Sync(_) | Self::IndexedDb(_) => None,
                 Self::Async(backend) => Some(backend),
+            }
+        }
+
+        pub fn into_indexeddb(self) -> Option<OpfsIndexedDbBackend> {
+            match self {
+                Self::IndexedDb(backend) => Some(backend),
+                Self::Sync(_) | Self::Async(_) => None,
             }
         }
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use wasm::{OpfsAsyncBackend, OpfsBackend, OpfsStorage};
+pub use wasm::{OpfsAsyncBackend, OpfsBackend, OpfsIndexedDbBackend, OpfsStorage};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
@@ -548,21 +691,50 @@ mod native {
     pub struct OpfsAsyncBackend;
 
     #[derive(Debug)]
+    pub struct OpfsIndexedDbBackend;
+
+    #[derive(Debug)]
     pub enum OpfsStorage {
         Sync(OpfsBackend),
         Async(OpfsAsyncBackend),
+        IndexedDb(OpfsIndexedDbBackend),
     }
 
     impl OpfsStorage {
         pub fn mode(&self) -> OpfsBackendMode {
-            OpfsBackendMode::AsyncOpfs
+            match self {
+                Self::Sync(_) => OpfsBackendMode::SyncAccessHandle,
+                Self::Async(_) => OpfsBackendMode::AsyncOpfs,
+                Self::IndexedDb(_) => OpfsBackendMode::IndexedDb,
+            }
         }
 
         pub async fn open(_path: &str, _create: bool, _size_bytes: u64) -> DiskResult<Self> {
             Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
         }
+
+        pub fn into_sync(self) -> Option<OpfsBackend> {
+            match self {
+                Self::Sync(backend) => Some(backend),
+                Self::Async(_) | Self::IndexedDb(_) => None,
+            }
+        }
+
+        pub fn into_async(self) -> Option<OpfsAsyncBackend> {
+            match self {
+                Self::Async(backend) => Some(backend),
+                Self::Sync(_) | Self::IndexedDb(_) => None,
+            }
+        }
+
+        pub fn into_indexeddb(self) -> Option<OpfsIndexedDbBackend> {
+            match self {
+                Self::IndexedDb(backend) => Some(backend),
+                Self::Sync(_) | Self::Async(_) => None,
+            }
+        }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{OpfsAsyncBackend, OpfsBackend, OpfsStorage};
+pub use native::{OpfsAsyncBackend, OpfsBackend, OpfsIndexedDbBackend, OpfsStorage};

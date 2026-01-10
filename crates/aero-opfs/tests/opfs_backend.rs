@@ -25,6 +25,7 @@ async fn write_sectors(storage: &mut OpfsStorage, lba: u64, buf: &[u8]) {
     match storage {
         OpfsStorage::Sync(backend) => backend.write_sectors(lba, buf).unwrap(),
         OpfsStorage::Async(backend) => backend.write_sectors(lba, buf).await.unwrap(),
+        OpfsStorage::IndexedDb(backend) => backend.write_sectors(lba, buf).await.unwrap(),
     }
 }
 
@@ -32,6 +33,7 @@ async fn read_sectors(storage: &mut OpfsStorage, lba: u64, buf: &mut [u8]) {
     match storage {
         OpfsStorage::Sync(backend) => backend.read_sectors(lba, buf).unwrap(),
         OpfsStorage::Async(backend) => backend.read_sectors(lba, buf).await.unwrap(),
+        OpfsStorage::IndexedDb(backend) => backend.read_sectors(lba, buf).await.unwrap(),
     }
 }
 
@@ -39,19 +41,20 @@ async fn flush(storage: &mut OpfsStorage) {
     match storage {
         OpfsStorage::Sync(backend) => backend.flush().unwrap(),
         OpfsStorage::Async(backend) => backend.flush().await.unwrap(),
+        OpfsStorage::IndexedDb(backend) => backend.flush().await.unwrap(),
     }
 }
 
 #[wasm_bindgen_test(async)]
 async fn opfs_roundtrip_small() {
-    if !aero_opfs::platform::storage::opfs::is_opfs_supported() {
-        return;
-    }
-
     let path = unique_path("roundtrip");
     let size = 8 * 1024 * 1024u64;
 
-    let mut backend = OpfsStorage::open(&path, true, size).await.unwrap();
+    let mut backend = match OpfsStorage::open(&path, true, size).await {
+        Ok(b) => b,
+        Err(emulator::io::storage::disk::DiskError::NotSupported(_)) => return,
+        Err(e) => panic!("open failed: {e:?}"),
+    };
 
     let lba = 7u64;
     let mut write_buf = vec![0u8; 4096];
@@ -67,15 +70,12 @@ async fn opfs_roundtrip_small() {
 
 #[wasm_bindgen_test(async)]
 async fn opfs_large_offset_over_2gb() {
-    if !aero_opfs::platform::storage::opfs::is_opfs_supported() {
-        return;
-    }
-
     let path = unique_path("large-offset");
     let size = 2 * 1024 * 1024 * 1024u64 + 16 * 1024 * 1024;
 
     let mut backend = match OpfsStorage::open(&path, true, size).await {
         Ok(b) => b,
+        Err(emulator::io::storage::disk::DiskError::NotSupported(_)) => return,
         Err(emulator::io::storage::disk::DiskError::QuotaExceeded) => return,
         Err(e) => panic!("open failed: {e:?}"),
     };
