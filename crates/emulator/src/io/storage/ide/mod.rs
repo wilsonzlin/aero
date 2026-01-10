@@ -293,6 +293,9 @@ struct Channel {
     // DMA requested by the currently-selected device and waiting for the Bus
     // Master engine to be started.
     pending_dma: Option<busmaster::DmaRequest>,
+
+    // Latched parameters for an in-flight ATA PIO write command.
+    pio_write: Option<(u64, u64)>,
 }
 
 impl Channel {
@@ -310,6 +313,7 @@ impl Channel {
             data_index: 0,
             irq_pending: false,
             pending_dma: None,
+            pio_write: None,
         }
     }
 
@@ -336,6 +340,7 @@ impl Channel {
         self.data.clear();
         self.data_index = 0;
         self.pending_dma = None;
+        self.pio_write = None;
         self.clear_irq();
     }
 
@@ -424,8 +429,9 @@ impl Channel {
     fn finish_data_phase(&mut self) {
         match self.transfer_kind {
             Some(TransferKind::AtaPioWrite) => {
-                let lba = self.tf.lba28();
-                let sectors = self.tf.sector_count28() as u64;
+                let (lba, sectors) = self.pio_write.take().unwrap_or_else(|| {
+                    (self.tf.lba28(), self.tf.sector_count28() as u64)
+                });
                 let data = std::mem::take(&mut self.data);
                 let idx = self.selected_drive() as usize;
                 if let Some(IdeDevice::Ata(dev)) = self.devices[idx].as_mut() {
@@ -959,12 +965,16 @@ impl IdeController {
             0x30 | 0x34 => {
                 // WRITE SECTORS (PIO) / WRITE SECTORS EXT (PIO).
                 if matches!(chan.devices[dev_idx], Some(IdeDevice::Ata(_))) {
-                    let sectors = if cmd == 0x34 {
-                        chan.tf.sector_count48() as usize
+                    let (lba, sectors) = if cmd == 0x34 {
+                        (chan.tf.lba48(), chan.tf.sector_count48() as u64)
                     } else {
-                        chan.tf.sector_count28() as usize
+                        (chan.tf.lba28(), chan.tf.sector_count28() as u64)
                     };
-                    chan.begin_pio_out(TransferKind::AtaPioWrite, sectors * SECTOR_SIZE);
+                    chan.pio_write = Some((lba, sectors));
+                    chan.begin_pio_out(
+                        TransferKind::AtaPioWrite,
+                        (sectors as usize) * SECTOR_SIZE,
+                    );
                 } else {
                     chan.set_error(0x04);
                     chan.status &= !IDE_STATUS_BSY;

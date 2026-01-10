@@ -1,5 +1,5 @@
 use super::{AtapiCdrom, AtaDevice, IdeController, IsoBackend, PRIMARY_PORTS};
-use crate::io::storage::disk::{DiskError, DiskResult, MemDisk};
+use crate::io::storage::disk::{DiskBackend, DiskError, DiskResult, MemDisk};
 use memory::MemoryBus;
 
 #[derive(Clone, Debug)]
@@ -67,6 +67,52 @@ impl IsoBackend for MemIso {
             return Err(DiskError::OutOfBounds);
         }
         buf.copy_from_slice(&self.data[start..end]);
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct RecordingDisk {
+    total_sectors: u64,
+    last_write_lba: Option<u64>,
+    last_write_len: usize,
+}
+
+impl RecordingDisk {
+    fn new(total_sectors: u64) -> Self {
+        Self {
+            total_sectors,
+            last_write_lba: None,
+            last_write_len: 0,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SharedRecordingDisk(std::sync::Arc<std::sync::Mutex<RecordingDisk>>);
+
+impl DiskBackend for SharedRecordingDisk {
+    fn sector_size(&self) -> u32 {
+        512
+    }
+
+    fn total_sectors(&self) -> u64 {
+        self.0.lock().unwrap().total_sectors
+    }
+
+    fn read_sectors(&mut self, _lba: u64, buf: &mut [u8]) -> Result<(), DiskError> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> Result<(), DiskError> {
+        let mut inner = self.0.lock().unwrap();
+        inner.last_write_lba = Some(lba);
+        inner.last_write_len = buf.len();
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), DiskError> {
         Ok(())
     }
 }
@@ -153,6 +199,45 @@ fn ata_pio_write_multi_sector() {
         readback[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
     }
     assert_eq!(readback, payload);
+}
+
+#[test]
+fn ata_pio_write_sectors_ext_uses_lba48() {
+    // Use a "high" LBA that requires the HOB bytes.
+    let lba: u64 = 0x01_00_00_00;
+    let shared = std::sync::Arc::new(std::sync::Mutex::new(RecordingDisk::new(lba + 16)));
+    let disk = SharedRecordingDisk(shared.clone());
+
+    let mut ide = IdeController::new(0xC000);
+    ide.attach_primary_master_ata(AtaDevice::new(Box::new(disk), "Aero HDD"));
+
+    // Select master, LBA mode.
+    ide.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+
+    // Sector count (48-bit): high byte then low byte => 1 sector.
+    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, 0x00);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 2, 1, 0x01);
+
+    // LBA bytes (48-bit): write high bytes first, then low bytes.
+    // LBA = 0x01_00_00_00 => HOB LBA0=0x01, others 0.
+    ide.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0x01);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0x00);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0x00);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0x00);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0x00);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0x00);
+
+    // Command: WRITE SECTORS EXT.
+    ide.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0x34);
+
+    // Transfer one sector (PIO OUT).
+    for i in 0..256u16 {
+        ide.io_write(PRIMARY_PORTS.cmd_base + 0, 2, i as u32);
+    }
+
+    let inner = shared.lock().unwrap();
+    assert_eq!(inner.last_write_lba, Some(lba));
+    assert_eq!(inner.last_write_len, 512);
 }
 
 #[test]
