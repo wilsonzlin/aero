@@ -58,6 +58,8 @@ Optional flags:
   On x64, enable test signing without prompting.
 - `setup.cmd /notestsigning`  
   On x64, do not change the test-signing state.
+- `setup.cmd /nointegritychecks`  
+  On x64, disable signature enforcement entirely (**not recommended**; use only if test signing is not sufficient).
 - `setup.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
 

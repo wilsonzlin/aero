@@ -21,6 +21,7 @@ set "LOG=%INSTALL_ROOT%\uninstall.log"
 set "PKG_LIST=%INSTALL_ROOT%\installed-driver-packages.txt"
 set "CERT_LIST=%INSTALL_ROOT%\installed-certs.txt"
 set "STATE_TESTSIGN=%INSTALL_ROOT%\testsigning.enabled-by-aero.txt"
+set "STATE_NOINTEGRITY=%INSTALL_ROOT%\nointegritychecks.enabled-by-aero.txt"
 
 set "ARG_NO_REBOOT=0"
 if /i "%~1"=="/?" goto :usage
@@ -42,7 +43,7 @@ call :load_config || goto :fail
 call :log ""
 call :log "WARNING:"
 call :log "  If this VM is currently booting from virtio-blk using the Aero storage driver,"
-call :log "  removing that driver package or disabling test signing can make the VM unbootable."
+call :log "  removing that driver package or re-enabling signature enforcement can make the VM unbootable."
 call :log ""
 
 choice /c YN /n /m "Continue with uninstall? [Y/N] "
@@ -55,6 +56,7 @@ if errorlevel 2 (
 call :remove_driver_packages || goto :fail
 call :remove_certs || goto :fail
 call :maybe_disable_testsigning || goto :fail
+call :maybe_disable_nointegritychecks || goto :fail
 
 call :log ""
 call :log "Uninstall complete."
@@ -165,6 +167,25 @@ if errorlevel 1 (
 )
 
 del /q "%STATE_TESTSIGN%" >nul 2>&1
+exit /b 0
+
+:maybe_disable_nointegritychecks
+rem Only prompt if we previously enabled it.
+if not exist "%STATE_NOINTEGRITY%" exit /b 0
+
+call :log ""
+call :log "nointegritychecks may have been enabled by Aero Guest Tools."
+choice /c YN /n /m "Disable nointegritychecks now? (bcdedit /set nointegritychecks off) [Y/N] "
+if errorlevel 2 exit /b 0
+
+call :log "Disabling nointegritychecks..."
+"%SYS32%\bcdedit.exe" /set nointegritychecks off >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "WARNING: Failed to disable nointegritychecks."
+  exit /b 0
+)
+
+del /q "%STATE_NOINTEGRITY%" >nul 2>&1
 exit /b 0
 
 :maybe_reboot

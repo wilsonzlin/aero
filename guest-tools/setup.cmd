@@ -21,10 +21,12 @@ set "LOG=%INSTALL_ROOT%\install.log"
 set "PKG_LIST=%INSTALL_ROOT%\installed-driver-packages.txt"
 set "CERT_LIST=%INSTALL_ROOT%\installed-certs.txt"
 set "STATE_TESTSIGN=%INSTALL_ROOT%\testsigning.enabled-by-aero.txt"
+set "STATE_NOINTEGRITY=%INSTALL_ROOT%\nointegritychecks.enabled-by-aero.txt"
 
 set "ARG_STAGE_ONLY=0"
 set "ARG_FORCE_TESTSIGN=0"
 set "ARG_SKIP_TESTSIGN=0"
+set "ARG_FORCE_NOINTEGRITY=0"
 set "ARG_NO_REBOOT=0"
 
 set "REBOOT_REQUIRED=0"
@@ -40,6 +42,8 @@ for %%A in (%*) do (
   if /i "%%~A"=="/force-testsigning" set "ARG_FORCE_TESTSIGN=1"
   if /i "%%~A"=="/notestsigning" set "ARG_SKIP_TESTSIGN=1"
   if /i "%%~A"=="/no-testsigning" set "ARG_SKIP_TESTSIGN=1"
+  if /i "%%~A"=="/nointegritychecks" set "ARG_FORCE_NOINTEGRITY=1"
+  if /i "%%~A"=="/no-integrity-checks" set "ARG_FORCE_NOINTEGRITY=1"
   if /i "%%~A"=="/noreboot" set "ARG_NO_REBOOT=1"
   if /i "%%~A"=="/no-reboot" set "ARG_NO_REBOOT=1"
 )
@@ -82,6 +86,7 @@ echo Options:
 echo   /stageonly           Only stage drivers into the Driver Store (no install attempts)
 echo   /testsigning         Enable test signing on x64 without prompting
 echo   /notestsigning       Skip enabling test signing (x64)
+echo   /nointegritychecks   Disable signature enforcement (x64; not recommended)
 echo   /noreboot            Do not prompt to reboot/shutdown at the end
 echo.
 echo Logs are written to C:\AeroGuestTools\install.log
@@ -247,6 +252,44 @@ exit /b 0
 
 :maybe_enable_testsigning
 if /i not "%OS_ARCH%"=="amd64" exit /b 0
+if "%ARG_FORCE_TESTSIGN%"=="1" if "%ARG_FORCE_NOINTEGRITY%"=="1" (
+  call :log ""
+  call :log "ERROR: /testsigning and /nointegritychecks cannot be used together."
+  exit /b 1
+)
+
+set "NOINTEGRITY=0"
+for /f "tokens=1,2" %%A in ('"%SYS32%\bcdedit.exe" /enum {current} ^| findstr /i "nointegritychecks"') do (
+  if /i "%%B"=="Yes" set "NOINTEGRITY=1"
+)
+
+set "TESTSIGNING=0"
+for /f "tokens=1,2" %%A in ('"%SYS32%\bcdedit.exe" /enum {current} ^| findstr /i "testsigning"') do (
+  if /i "%%B"=="Yes" set "TESTSIGNING=1"
+)
+
+if "%ARG_FORCE_NOINTEGRITY%"=="1" (
+  if "%NOINTEGRITY%"=="1" (
+    call :log ""
+    call :log "nointegritychecks is already enabled."
+    exit /b 0
+  )
+
+  call :log "Enabling nointegritychecks via bcdedit (NOT RECOMMENDED)..."
+  "%SYS32%\bcdedit.exe" /set nointegritychecks on >>"%LOG%" 2>&1
+  if errorlevel 1 (
+    call :log "ERROR: Failed to enable nointegritychecks."
+    call :log "You may need to run this manually and reboot:"
+    call :log "  bcdedit /set nointegritychecks on"
+    exit /b 1
+  )
+
+  > "%STATE_NOINTEGRITY%" echo nointegritychecks enabled by Aero Guest Tools on %DATE% %TIME%
+  set "REBOOT_REQUIRED=1"
+  call :log "nointegritychecks enabled. A reboot is required before it takes effect."
+  exit /b 0
+)
+
 if "%ARG_SKIP_TESTSIGN%"=="1" (
   call :log ""
   call :log "Skipping test signing changes (/notestsigning)."
@@ -256,15 +299,20 @@ if "%ARG_SKIP_TESTSIGN%"=="1" (
 call :log ""
 call :log "Windows 7 x64 detected. Kernel driver signature enforcement is strict."
 call :log "If Aero drivers are test-signed/custom-signed, enable Test Signing mode."
-
-set "TESTSIGNING=0"
-for /f "tokens=1,2" %%A in ('"%SYS32%\bcdedit.exe" /enum {current} ^| findstr /i "testsigning"') do (
-  if /i "%%B"=="Yes" set "TESTSIGNING=1"
-)
+call :log "Alternative (less safe): disable signature checks entirely (nointegritychecks)."
 
 if "%TESTSIGNING%"=="1" (
   call :log "Test Signing is already enabled."
   exit /b 0
+)
+
+if "%NOINTEGRITY%"=="1" (
+  if "%ARG_FORCE_TESTSIGN%"=="1" (
+    call :log "nointegritychecks is enabled, but /testsigning was requested; enabling Test Signing anyway..."
+  ) else (
+    call :log "nointegritychecks is already enabled. Test Signing is not required."
+    exit /b 0
+  )
 )
 
 set "DO_ENABLE=0"
@@ -287,6 +335,8 @@ if errorlevel 1 (
   call :log "WARNING: Failed to enable Test Signing (bcdedit /set testsigning on)."
   call :log "You may need to run this manually and reboot:"
   call :log "  bcdedit /set testsigning on"
+  call :log "Alternative (less safe):"
+  call :log "  bcdedit /set nointegritychecks on"
   if "%ARG_FORCE_TESTSIGN%"=="1" exit /b 1
   exit /b 0
 )
@@ -391,16 +441,27 @@ call :log "Storage service: %STOR_SERVICE%"
 call :log "Storage driver:  %STOR_SYS%"
 
 rem Ensure the driver binary is in \System32\drivers for boot-start loading.
-set "SYS_SOURCE="
-for /r "%DRIVER_DIR%" %%S in (%STOR_SYS%) do (
-  if exist "%%~fS" set "SYS_SOURCE=%%~fS"
-)
-if defined SYS_SOURCE (
-  call :log "Copying %STOR_SYS% to %SYS32%\\drivers ..."
-  copy /y "%SYS_SOURCE%" "%SYS32%\drivers\%STOR_SYS%" >>"%LOG%" 2>&1
+set "STOR_TARGET=%SYS32%\drivers\%STOR_SYS%"
+if exist "%STOR_TARGET%" (
+  call :log "Storage driver already present: %STOR_TARGET%"
 ) else (
-  call :log "WARNING: Could not locate %STOR_SYS% under %DRIVER_DIR%."
-  call :log "         Booting from virtio-blk may fail if the storage .sys is not present in System32\\drivers."
+  set "SYS_SOURCE="
+  for /r "%DRIVER_DIR%" %%S in (%STOR_SYS%) do (
+    if exist "%%~fS" set "SYS_SOURCE=%%~fS"
+  )
+
+  if defined SYS_SOURCE (
+    call :log "Copying %STOR_SYS% to %SYS32%\\drivers ..."
+    copy /y "%SYS_SOURCE%" "%STOR_TARGET%" >>"%LOG%" 2>&1
+    if errorlevel 1 (
+      call :log "ERROR: Failed to copy %STOR_SYS% to %STOR_TARGET%."
+      exit /b 1
+    )
+  ) else (
+    call :log "ERROR: Could not locate %STOR_SYS% under %DRIVER_DIR%, and it is not present in %STOR_TARGET%."
+    call :log "       Refusing to continue because switching the boot disk to virtio-blk will likely BSOD (0x7B)."
+    exit /b 1
+  )
 )
 
 rem Ensure the service exists and is BOOT_START.
@@ -456,7 +517,7 @@ if "%ARG_NO_REBOOT%"=="1" exit /b 0
 call :log ""
 call :log "Reboot/shutdown is recommended before switching the VM's boot disk to virtio-blk."
 if "%REBOOT_REQUIRED%"=="1" (
-  call :log "A reboot is REQUIRED to apply Test Signing changes."
+  call :log "A reboot is REQUIRED to apply boot configuration changes (test signing / nointegritychecks)."
 )
 call :log ""
 
