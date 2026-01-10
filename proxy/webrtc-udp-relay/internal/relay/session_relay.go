@@ -2,7 +2,6 @@ package relay
 
 import (
 	"context"
-	"errors"
 	"net"
 	"net/netip"
 	"sync"
@@ -163,7 +162,7 @@ func (s *SessionRelay) getOrCreateBinding(guestPort uint16) (*UdpPortBinding, er
 	s.mu.Lock()
 	if s.closed.Load() {
 		s.mu.Unlock()
-		return nil, errors.New("session relay closed")
+		return nil, ErrSessionClosed
 	}
 	if b, ok := s.bindings[guestPort]; ok {
 		s.mu.Unlock()
@@ -180,7 +179,7 @@ func (s *SessionRelay) getOrCreateBinding(guestPort uint16) (*UdpPortBinding, er
 		if evicted != nil {
 			evicted.Close()
 		}
-		return nil, errors.New("max udp bindings exceeded")
+		return nil, ErrTooManyBindings
 	}
 
 	b, err := newUdpPortBinding(guestPort, s.cfg, s.codec, s.queue, &s.clientSupportsV2)

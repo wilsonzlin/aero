@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -86,7 +87,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip(t *testing.T) {
 	t.Cleanup(func() { _ = pc.Close() })
 
 	openCh := make(chan struct{})
-	gotCh := make(chan udpproto.Datagram, 1)
+	gotCh := make(chan udpproto.Frame, 1)
 
 	ordered := false
 	maxRetransmits := uint16(0)
@@ -105,7 +106,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip(t *testing.T) {
 		if msg.IsString {
 			return
 		}
-		d, err := udpproto.DecodeDatagram(msg.Data)
+		d, err := udpproto.Decode(msg.Data)
 		if err != nil {
 			return
 		}
@@ -171,12 +172,13 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip(t *testing.T) {
 	copy(echoIP[:], ip4)
 	const guestPort = uint16(4242)
 	wantPayload := []byte("hello")
-	frame, err := udpproto.EncodeDatagram(udpproto.Datagram{
+	frame, err := udpproto.EncodeV2(udpproto.Frame{
+		Version:    2,
 		GuestPort:  guestPort,
-		RemoteIP:   echoIP,
+		RemoteIP:   netip.AddrFrom4(echoIP),
 		RemotePort: uint16(echoAddr.Port),
 		Payload:    wantPayload,
-	}, nil)
+	})
 	if err != nil {
 		t.Fatalf("encode datagram: %v", err)
 	}
@@ -184,7 +186,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip(t *testing.T) {
 		t.Fatalf("send datagram: %v", err)
 	}
 
-	var got udpproto.Datagram
+	var got udpproto.Frame
 	select {
 	case got = <-gotCh:
 	case <-time.After(5 * time.Second):
@@ -197,8 +199,8 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip(t *testing.T) {
 	if got.RemotePort != uint16(echoAddr.Port) {
 		t.Fatalf("remote port mismatch: %d != %d", got.RemotePort, echoAddr.Port)
 	}
-	if got.RemoteIP != echoIP {
-		t.Fatalf("remote ip mismatch: %v != %v", got.RemoteIP, echoIP)
+	if got.RemoteIP != netip.AddrFrom4(echoIP) {
+		t.Fatalf("remote ip mismatch: %v != %v", got.RemoteIP, netip.AddrFrom4(echoIP))
 	}
 	if !bytes.Equal(got.Payload, wantPayload) {
 		t.Fatalf("payload mismatch: %q != %q", got.Payload, wantPayload)
