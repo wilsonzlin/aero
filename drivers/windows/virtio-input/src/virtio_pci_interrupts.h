@@ -3,30 +3,13 @@
 #include <ntddk.h>
 #include <wdf.h>
 
+#include "virtio_spec.h"
+
 #define VIRTIO_PCI_ISR_QUEUE_INTERRUPT  0x01
 #define VIRTIO_PCI_ISR_CONFIG_INTERRUPT 0x02
 
-#pragma pack(push, 1)
-typedef struct _VIRTIO_PCI_COMMON_CFG {
-    ULONG device_feature_select;
-    ULONG device_feature;
-    ULONG driver_feature_select;
-    ULONG driver_feature;
-    USHORT msix_config;
-    USHORT num_queues;
-    UCHAR device_status;
-    UCHAR config_generation;
-    USHORT queue_select;
-    USHORT queue_size;
-    USHORT queue_msix_vector;
-    USHORT queue_enable;
-    USHORT queue_notify_off;
-    USHORT queue_reserved;
-    ULONGLONG queue_desc;
-    ULONGLONG queue_avail;
-    ULONGLONG queue_used;
-} VIRTIO_PCI_COMMON_CFG, *PVIRTIO_PCI_COMMON_CFG;
-#pragma pack(pop)
+typedef virtio_pci_common_cfg VIRTIO_PCI_COMMON_CFG;
+typedef Pvirtio_pci_common_cfg PVIRTIO_PCI_COMMON_CFG;
 
 typedef enum _VIRTIO_PCI_INTERRUPT_MODE {
     VirtioPciInterruptModeUnknown = 0,

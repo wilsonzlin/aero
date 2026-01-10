@@ -15,6 +15,7 @@
 #include "hid_translate.h"
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -73,6 +74,7 @@ bool virtio_input_try_pop_report(struct virtio_input_device *dev, struct virtio_
 
 #include "virtio_statusq.h"
 #include "virtio_pci_interrupts.h"
+#include "virtio_pci_modern.h"
 
 #ifndef HID_HID_DESCRIPTOR_TYPE
 #define HID_HID_DESCRIPTOR_TYPE 0x21
@@ -103,14 +105,6 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VIRTIO_INPUT_FILE_CONTEXT, VirtioInputGetFile
 
 enum { VIRTIO_INPUT_QUEUE_COUNT = 2 };
 
-typedef struct _VIRTIO_PCI_BAR {
-    PHYSICAL_ADDRESS Base;
-    ULONG Length;
-    PVOID Va;
-} VIRTIO_PCI_BAR, *PVIRTIO_PCI_BAR;
-
-enum { VIRTIO_PCI_BAR_COUNT = 6 };
-
 typedef struct _DEVICE_CONTEXT {
     WDFQUEUE DefaultQueue;
     WDFQUEUE PendingReadQueue;
@@ -127,10 +121,7 @@ typedef struct _DEVICE_CONTEXT {
 
     PVIRTIO_STATUSQ StatusQ;
     VIOINPUT_COUNTERS Counters;
-
-    VIRTIO_PCI_BAR Bars[VIRTIO_PCI_BAR_COUNT];
-    volatile VIRTIO_PCI_COMMON_CFG* CommonCfg;
-    volatile UCHAR* IsrStatus;
+    VIRTIO_PCI_MODERN_DEVICE PciDevice;
 
     VIRTIO_PCI_INTERRUPTS Interrupts;
 
