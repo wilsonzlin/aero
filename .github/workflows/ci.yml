@@ -72,6 +72,15 @@ jobs:
       - name: cargo test
         run: cargo test ${{ steps.cargo-locked.outputs.locked }} --workspace --all-features
 
+  win7-virtio-portable-tests:
+    name: Win7 virtio (portable tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build + run virtio-pci cap parser tests
+        run: ./drivers/win7/virtio/tests/build_and_run.sh
+
   wasm:
     name: WASM (wasm-pack build + test)
     needs: policy
