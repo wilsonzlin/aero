@@ -17,6 +17,7 @@ type sendQueue struct {
 	maxBytes int
 	curBytes int
 	frames   [][]byte
+	head     int
 
 	drops atomic.Uint64
 }
@@ -59,17 +60,37 @@ func (q *sendQueue) Enqueue(frame []byte) bool {
 func (q *sendQueue) Dequeue() ([]byte, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	for len(q.frames) == 0 && !q.closed {
+	for q.head >= len(q.frames) && !q.closed {
+		// Reset to keep the slice compact when drained.
+		if q.head > 0 {
+			q.frames = q.frames[:0]
+			q.head = 0
+		}
 		q.notEmpty.Wait()
 	}
-	if len(q.frames) == 0 {
+	if q.head >= len(q.frames) {
 		return nil, false
 	}
-	frame := q.frames[0]
-	copy(q.frames, q.frames[1:])
-	q.frames[len(q.frames)-1] = nil
-	q.frames = q.frames[:len(q.frames)-1]
+	frame := q.frames[q.head]
+	q.frames[q.head] = nil
+	q.head++
 	q.curBytes -= len(frame)
+
+	// Compact occasionally to avoid unbounded growth in the underlying array.
+	//
+	// This keeps Dequeue O(1) amortized instead of shifting the slice on every
+	// call.
+	if q.head >= len(q.frames) {
+		q.frames = q.frames[:0]
+		q.head = 0
+	} else if q.head > 1024 && q.head*2 >= len(q.frames) {
+		n := copy(q.frames, q.frames[q.head:])
+		for i := n; i < len(q.frames); i++ {
+			q.frames[i] = nil
+		}
+		q.frames = q.frames[:n]
+		q.head = 0
+	}
 	return frame, true
 }
 
@@ -80,6 +101,7 @@ func (q *sendQueue) Close() {
 		q.frames[i] = nil
 	}
 	q.frames = nil
+	q.head = 0
 	q.curBytes = 0
 	q.mu.Unlock()
 	q.notEmpty.Broadcast()
