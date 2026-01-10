@@ -1,0 +1,24 @@
+# Example cert-manager ClusterIssuer for Let's Encrypt (production).
+#
+# WARNING: This is a cluster-scoped resource. Review with your cluster admins.
+# Replace the email address and (optionally) the solver ingress class.
+#
+# Apply:
+#   kubectl apply -f deploy/k8s/examples/cert-manager/clusterissuer-letsencrypt-prod.yaml
+#
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    email: you@example.com
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            # For Traefik, set this to "traefik" (or your IngressClass name).
+            # Some cert-manager versions also support "ingressClassName".
+            class: nginx

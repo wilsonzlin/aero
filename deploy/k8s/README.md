@@ -126,6 +126,11 @@ If cert-manager is available in your cluster, you can automate certificate issua
 The chart will create a `Certificate` resource and use a deterministic TLS secret name
 `<release>-aero-gateway-tls` unless you set `ingress.tls.secretName` explicitly.
 
+Example `ClusterIssuer` manifests are provided under:
+
+- `deploy/k8s/examples/cert-manager/clusterissuer-letsencrypt-staging.yaml`
+- `deploy/k8s/examples/cert-manager/clusterissuer-letsencrypt-prod.yaml`
+
 ### Option B: have the chart create a namespace-scoped Issuer
 
 If you prefer a single `helm install` (no separate Issuer/ClusterIssuer YAML), set (see `values-prod-certmanager-issuer.yaml`):
