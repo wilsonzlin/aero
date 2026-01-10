@@ -202,9 +202,7 @@ function normalisePerfToolResult(result) {
     }
 
     let stats;
-    if (Array.isArray(bench.samples) && bench.samples.length > 0) {
-      stats = computeStats(bench.samples);
-    } else if (bench.stats && typeof bench.stats === "object") {
+    if (bench.stats && typeof bench.stats === "object") {
       const s = bench.stats;
       if (!Number.isFinite(s.n) || !Number.isFinite(s.min) || !Number.isFinite(s.max) || !Number.isFinite(s.mean)) {
         throw new Error(`tools/perf benchmark ${name} has invalid stats`);
@@ -217,6 +215,8 @@ function normalisePerfToolResult(result) {
         stdev: Number.isFinite(s.stdev) ? s.stdev : 0,
         cv: Number.isFinite(s.cv) ? s.cv : 0,
       };
+    } else if (Array.isArray(bench.samples) && bench.samples.length > 0) {
+      stats = computeStats(bench.samples);
     } else {
       throw new Error(`tools/perf benchmark ${name} must provide samples[] or stats`);
     }
