@@ -249,6 +249,7 @@ If a CDN is in front:
 - Ensure it forwards `Range` and does not collapse multiple `Range` requests into a cached 200.
 - Ensure CORS response headers are preserved.
 - Avoid “automatic compression” features on binary routes.
+- See [17 - HTTP Range + CDN Behavior](../17-range-cdn-behavior.md) for CloudFront/Cloudflare limits and an operator validation checklist.
 
 ## Security recommendations
 

@@ -6,6 +6,7 @@ When streaming a large disk image into the browser, the most natural approach is
 
 1. **CORS preflight:** `Range` is not a CORS-safelisted request header, so cross-origin `fetch()` of ranges triggers an `OPTIONS` preflight. This adds latency and can fail in environments where preflights are blocked or poorly cached.
 2. **CDN/object-store limitations:** many CDNs do not cache `206 Partial Content` responses well, vary cache keys in surprising ways, impose size/offset limits, or require special configuration to forward `Range` at all.
+   - See: [17 - HTTP Range + CDN Behavior](./17-range-cdn-behavior.md) (CloudFront/Cloudflare behavior and size limits).
 
 This document specifies a complete alternative delivery format for *read-only base images*: store the disk image as many fixed-size **chunk objects** plus a small **manifest**. Clients then fetch data using only plain `GET` requests (no `Range` header), which improves CDN compatibility and avoids CORS preflight.
 
@@ -383,4 +384,3 @@ Example manifest:
   ]
 }
 ```
-

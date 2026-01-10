@@ -20,7 +20,7 @@ Related:
 - [Storage Subsystem](./05-storage-subsystem.md) (client-side streaming disk design)
 - [Disk Image Lifecycle and Access Control](./17-disk-image-lifecycle-and-access-control.md) (uploads/ownership/sharing/writeback)
 - [Remote Disk Image Delivery](./16-remote-disk-image-delivery.md) (object store + CDN deployment contract)
-- [HTTP Range + CDN Behavior](./17-range-cdn-behavior.md) (CloudFront caching/limits considerations)
+- [HTTP Range + CDN Behavior](./17-range-cdn-behavior.md) (CloudFront/Cloudflare caching/limits considerations)
 - [Chunked Disk Image Format](./18-chunked-disk-image-format.md) (CDN-friendly alternative to `Range`)
 - [Browser APIs](./11-browser-apis.md) (threads + cross-origin isolation context)
 
