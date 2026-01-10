@@ -19,6 +19,8 @@ pub fn handles_mnemonic(m: Mnemonic) -> bool {
             | Mnemonic::Fxch
             | Mnemonic::Fld1
             | Mnemonic::Fldz
+            | Mnemonic::Fincstp
+            | Mnemonic::Fdecstp
             | Mnemonic::Fld
             | Mnemonic::Fst
             | Mnemonic::Fstp
@@ -67,6 +69,14 @@ pub fn exec<B: CpuBus>(
         }
         Mnemonic::Fclex | Mnemonic::Fnclex => {
             state.x87_mut().fnclex();
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fincstp => {
+            state.x87_mut().fincstp();
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fdecstp => {
+            state.x87_mut().fdecstp();
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Fld1 => {
@@ -308,6 +318,10 @@ fn exec_fistp<B: CpuBus>(
         MemorySize::Int32 => {
             let v = state.x87_mut().fistp_i32().map_err(map_x87_fault)?;
             bus.write_u32(addr, v as u32)?;
+        }
+        MemorySize::Int64 => {
+            let v = state.x87_mut().fistp_i64().map_err(map_x87_fault)?;
+            bus.write_u64(addr, v as u64)?;
         }
         _ => return Err(Exception::InvalidOpcode),
     }

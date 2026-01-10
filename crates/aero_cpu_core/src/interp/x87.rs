@@ -325,6 +325,21 @@ impl X87 {
         Ok(())
     }
 
+    /// Implements `FINCSTP` (increment TOP).
+    pub fn fincstp(&mut self) {
+        self.top = (self.top + 1) & 7;
+        // SDM: C1 cleared for FINCSTP/FDECSTP.
+        self.fsw &= !FSW_C1;
+        self.sync_top();
+    }
+
+    /// Implements `FDECSTP` (decrement TOP).
+    pub fn fdecstp(&mut self) {
+        self.top = (self.top + 7) & 7;
+        self.fsw &= !FSW_C1;
+        self.sync_top();
+    }
+
     pub fn fild_i16(&mut self, v: i16) -> Result<()> {
         self.push(v as f64)
     }
@@ -362,6 +377,21 @@ impl X87 {
             i32::MIN
         } else {
             rounded as i32
+        };
+        self.pop()?;
+        Ok(out)
+    }
+
+    pub fn fistp_i64(&mut self) -> Result<i64> {
+        let v = self.read_st(0)?;
+        let rc = RoundingControl::from_fcw(self.fcw);
+        let rounded = rc.round(v);
+        let out = if !rounded.is_finite() || rounded < i64::MIN as f64 || rounded > i64::MAX as f64
+        {
+            self.signal_invalid(false)?;
+            i64::MIN
+        } else {
+            rounded as i64
         };
         self.pop()?;
         Ok(out)

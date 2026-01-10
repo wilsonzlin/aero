@@ -195,3 +195,62 @@ fn tier0_unmasked_invalid_raises_mf() {
     assert_eq!(res.executed, 2);
     assert!(matches!(res.exit, BatchExit::Exception(Exception::X87Fpu)));
 }
+
+#[test]
+fn tier0_fincstp_and_fdecstp_rotate_top() {
+    // fld dword ptr [0x100]      ; 1.0
+    // fld dword ptr [0x104]      ; 2.0 (ST0=2.0, ST1=1.0)
+    // fincstp                    ; ST0=1.0, ST7=2.0
+    // fst dword ptr [0x108]      ; store ST0 (1.0)
+    // fdecstp                    ; ST0=2.0
+    // fst dword ptr [0x10C]      ; store ST0 (2.0)
+    // hlt
+    let code = [
+        0xD9, 0x05, 0x00, 0x01, 0x00, 0x00, // fld dword ptr [0x100]
+        0xD9, 0x05, 0x04, 0x01, 0x00, 0x00, // fld dword ptr [0x104]
+        0xD9, 0xF7, // fincstp
+        0xD9, 0x15, 0x08, 0x01, 0x00, 0x00, // fst dword ptr [0x108]
+        0xD9, 0xF6, // fdecstp
+        0xD9, 0x15, 0x0C, 0x01, 0x00, 0x00, // fst dword ptr [0x10C]
+        0xF4, // hlt
+    ];
+
+    let mut bus = FlatTestBus::new(0x2000);
+    bus.load(0, &code);
+    bus.load(0x100, &1.0f32.to_bits().to_le_bytes());
+    bus.load(0x104, &2.0f32.to_bits().to_le_bytes());
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    run_to_halt(&mut state, &mut bus, 200);
+
+    let a = f32::from_bits(bus.read_u32(0x108).unwrap());
+    let b = f32::from_bits(bus.read_u32(0x10C).unwrap());
+    assert_eq!(a, 1.0);
+    assert_eq!(b, 2.0);
+}
+
+#[test]
+fn tier0_fistp_int64_writes_qword() {
+    // fninit
+    // fld dword ptr [0x100]
+    // fistp qword ptr [0x108]
+    // hlt
+    let code = [
+        0xDB, 0xE3, // fninit
+        0xD9, 0x05, 0x00, 0x01, 0x00, 0x00, // fld dword ptr [0x100]
+        0xDF, 0x3D, 0x08, 0x01, 0x00, 0x00, // fistp qword ptr [0x108]
+        0xF4, // hlt
+    ];
+
+    let mut bus = FlatTestBus::new(0x2000);
+    bus.load(0, &code);
+    bus.load(0x100, &12345.0f32.to_bits().to_le_bytes());
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    run_to_halt(&mut state, &mut bus, 200);
+
+    let out = bus.read_u64(0x108).unwrap() as i64;
+    assert_eq!(out, 12345);
+}
