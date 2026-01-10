@@ -1,6 +1,67 @@
 pub mod capabilities;
 pub mod config;
+pub mod irq_router;
 pub mod msi;
 
 pub use config::PciConfigSpace;
+pub use irq_router::{
+    GsiLevelSink, IoApicPicMirrorSink, PciIntxRouter, PciIntxRouterConfig, PicIrqLevelSink,
+};
 pub use msi::MsiCapability;
+
+/// PCI bus/device/function identifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct PciBdf {
+    pub bus: u8,
+    pub device: u8,
+    pub function: u8,
+}
+
+impl PciBdf {
+    /// Creates a new BDF.
+    ///
+    /// The caller is responsible for ensuring the values are within the PCI ranges:
+    /// bus < 256, device < 32, function < 8.
+    pub const fn new(bus: u8, device: u8, function: u8) -> Self {
+        Self {
+            bus,
+            device,
+            function,
+        }
+    }
+}
+
+/// PCI INTx interrupt pin.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum PciInterruptPin {
+    IntA,
+    IntB,
+    IntC,
+    IntD,
+}
+
+impl PciInterruptPin {
+    pub const fn index(self) -> usize {
+        match self {
+            Self::IntA => 0,
+            Self::IntB => 1,
+            Self::IntC => 2,
+            Self::IntD => 3,
+        }
+    }
+
+    /// Converts to the PCI config-space encoding (1 = INTA#, 2 = INTB#, ...).
+    pub const fn to_config_u8(self) -> u8 {
+        self.index() as u8 + 1
+    }
+
+    pub const fn from_config_u8(val: u8) -> Option<Self> {
+        match val {
+            1 => Some(Self::IntA),
+            2 => Some(Self::IntB),
+            3 => Some(Self::IntC),
+            4 => Some(Self::IntD),
+            _ => None,
+        }
+    }
+}

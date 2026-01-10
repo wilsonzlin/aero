@@ -11,6 +11,9 @@ pub struct PciConfigSpace {
 }
 
 impl PciConfigSpace {
+    pub const INTERRUPT_LINE_OFFSET: u16 = 0x3C;
+    pub const INTERRUPT_PIN_OFFSET: u16 = 0x3D;
+
     pub fn new(vendor_id: u16, device_id: u16) -> Self {
         let mut bytes = [0u8; PCI_CONFIG_SPACE_SIZE];
         bytes[0x00..0x02].copy_from_slice(&vendor_id.to_le_bytes());
@@ -75,6 +78,22 @@ impl PciConfigSpace {
 
         self.sync_capabilities_from_config();
         self.sync_capabilities_to_config();
+    }
+
+    pub fn interrupt_line(&mut self) -> u8 {
+        self.read(Self::INTERRUPT_LINE_OFFSET, 1) as u8
+    }
+
+    pub fn set_interrupt_line(&mut self, line: u8) {
+        self.write(Self::INTERRUPT_LINE_OFFSET, 1, u32::from(line));
+    }
+
+    pub fn interrupt_pin(&mut self) -> u8 {
+        self.read(Self::INTERRUPT_PIN_OFFSET, 1) as u8
+    }
+
+    pub fn set_interrupt_pin(&mut self, pin: u8) {
+        self.write(Self::INTERRUPT_PIN_OFFSET, 1, u32::from(pin));
     }
 
     pub fn capability_list(&mut self) -> Vec<PciCapabilityInfo> {

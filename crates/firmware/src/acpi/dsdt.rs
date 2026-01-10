@@ -5,8 +5,8 @@ pub const HPET_BASE: u32 = 0xFED0_0000;
 pub const HPET_LENGTH: u32 = 0x400;
 
 /// ISA IRQ routing used by the emulator's PCI INTx swizzle:
-/// PIRQ A-D → GSIs 10, 11, 10, 11.
-pub const PCI_PIRQ_GSI: [u32; 4] = [10, 11, 10, 11];
+/// PIRQ A-D → GSIs 10, 11, 12, 13.
+pub const PCI_PIRQ_GSI: [u32; 4] = [10, 11, 12, 13];
 
 pub const DSDT_AML: &[u8] = include_bytes!("../../acpi/dsdt.aml");
 
@@ -203,4 +203,3 @@ mod tests {
         }
     }
 }
-

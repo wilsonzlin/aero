@@ -340,10 +340,11 @@ impl Bios {
                     let device_id = (id >> 16) as u16;
                     let class_reg = pci.read_config_dword(bus, device, function, 0x08);
                     let class_code = (class_reg >> 8) & 0x00FF_FFFF;
-                    let irq_line = assign_pci_irq(bus, device, function);
+                    let reg_3c = pci.read_config_dword(bus, device, function, 0x3C);
+                    let interrupt_pin = ((reg_3c >> 8) & 0xFF) as u8; // 1=INTA#, 2=INTB#, ...
+                    let irq_line = assign_pci_irq(device, interrupt_pin);
 
                     // Program Interrupt Line register (0x3C, low byte).
-                    let reg_3c = pci.read_config_dword(bus, device, function, 0x3C);
                     let new_3c = (reg_3c & 0xFFFF_FF00) | irq_line as u32;
                     pci.write_config_dword(bus, device, function, 0x3C, new_3c);
 
@@ -1163,14 +1164,21 @@ fn civil_from_days(days: i64) -> (i32, u8, u8) {
     (year as i32, m as u8, d as u8)
 }
 
-fn assign_pci_irq(_bus: u8, device: u8, function: u8) -> u8 {
-    // Deterministic, simple routing: map to IRQ10/IRQ11 via PIRQ A-D.
-    // This matches the design stub in docs/09-bios-firmware.md.
-    let pirq = (device.wrapping_add(function)) & 0x03;
-    match pirq {
-        0 | 2 => 10,
-        _ => 11,
+fn assign_pci_irq(device: u8, interrupt_pin: u8) -> u8 {
+    // Deterministic, simple routing: QEMU-style INTx swizzle.
+    //
+    // - Compute PIRQ from the slot device number + the function's Interrupt Pin:
+    //     PIRQ = (pin + device) mod 4
+    //   where `pin` is 0 for INTA#, 1 for INTB#, etc.
+    // - Map PIRQ[A-D] -> ISA IRQ/GSI 10-13.
+    //
+    // This must stay consistent with the ACPI DSDT `_PRT`.
+    if interrupt_pin == 0 {
+        return 0xFF;
     }
+    let pin_index = interrupt_pin.wrapping_sub(1) & 0x03;
+    let pirq = device.wrapping_add(pin_index) & 0x03;
+    [10, 11, 12, 13][pirq as usize]
 }
 
 fn acpi_region_from_tables(tables: &AcpiTables) -> (u64, u64) {

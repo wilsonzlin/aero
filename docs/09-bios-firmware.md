@@ -589,19 +589,25 @@ impl Bios {
                         continue;  // No device
                     }
                     
-                    let device_id = (self.pci_read_config(bus as u8, device, function, 0) >> 16) as u16;
-                    let class_code = self.pci_read_config(bus as u8, device, function, 8);
-                    
-                    let pci_device = PciDevice {
-                        bus: bus as u8,
-                        device,
-                        function,
-                        vendor_id,
-                        device_id,
-                        class_code: (class_code >> 8) & 0xFFFFFF,
-                        subsystem_id: 0,
-                        irq: self.assign_irq(bus as u8, device, function),
-                    };
+                     let device_id = (self.pci_read_config(bus as u8, device, function, 0) >> 16) as u16;
+                     let class_code = self.pci_read_config(bus as u8, device, function, 8);
+                     let intr = self.pci_read_config(bus as u8, device, function, 0x3C);
+                     let interrupt_pin = ((intr >> 8) & 0xFF) as u8; // 1=INTA#, 2=INTB#, ...
+                     let irq = self.assign_irq(device, interrupt_pin);
+                     
+                     // Write back the Interrupt Line register (0x3C) so the guest sees the routing.
+                     self.pci_write_config_byte(bus as u8, device, function, 0x3C, irq);
+                     
+                     let pci_device = PciDevice {
+                         bus: bus as u8,
+                         device,
+                         function,
+                         vendor_id,
+                         device_id,
+                         class_code: (class_code >> 8) & 0xFFFFFF,
+                         subsystem_id: 0,
+                        irq,
+                     };
                     
                     self.pci_devices.push(pci_device);
                     
@@ -617,13 +623,30 @@ impl Bios {
         }
     }
     
-    fn assign_irq(&self, bus: u8, device: u8, function: u8) -> u8 {
-        // Simple IRQ routing: (device + function) % 4 -> PIRQ A-D -> IRQ 10-11
-        let pirq = ((device + function) % 4) as usize;
-        [10, 11, 10, 11][pirq]
+    fn assign_irq(&self, device: u8, interrupt_pin: u8) -> u8 {
+        // QEMU-style INTx swizzle:
+        //   PIRQ = (pin + device) mod 4
+        // and map PIRQ[A-D] -> IRQ/GSI 10-13 (IOAPIC input pins in APIC mode, ISA IRQs in PIC mode).
+        if interrupt_pin == 0 {
+            return 0xFF; // No INTx pin.
+        }
+        let pin = (interrupt_pin - 1) as usize; // 0=INTA#, 1=INTB#, ...
+        let pirq = (pin + device as usize) & 3;
+        [10, 11, 12, 13][pirq]
     }
 }
 ```
+
+> ACPI note: the DSDT `_PRT` for `\_SB.PCI0` must report the same GSI numbers (10-13) for each device/pin swizzled onto PIRQA-D. No MADT Interrupt Source Override (ISO) entries are needed for these lines since they are not remapped ISA IRQs.
+>
+> With the swizzle `PIRQ = (pin + device) mod 4` and `PIRQ[A-D] -> GSI[10-13]`, the first four PCI device numbers map like this (then repeat every 4 devices):
+>
+> | PCI device | INTA# | INTB# | INTC# | INTD# |
+> | ---------- | ----- | ----- | ----- | ----- |
+> | 0          | 10    | 11    | 12    | 13    |
+> | 1          | 11    | 12    | 13    | 10    |
+> | 2          | 12    | 13    | 10    | 11    |
+> | 3          | 13    | 10    | 11    | 12    |
 
 ---
 
