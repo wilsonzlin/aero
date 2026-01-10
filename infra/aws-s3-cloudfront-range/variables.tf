@@ -77,11 +77,6 @@ variable "cors_allowed_origins" {
   description = "Allowed origins for CORS. If empty, no S3 CORS configuration is applied (same-origin only). Required if enable_edge_cors_preflight or enable_edge_cors is true."
   type        = list(string)
   default     = []
-
-  validation {
-    condition     = (!var.enable_edge_cors_preflight && !var.enable_edge_cors) || length(var.cors_allowed_origins) > 0
-    error_message = "cors_allowed_origins must be non-empty when enable_edge_cors_preflight or enable_edge_cors is true."
-  }
 }
 
 variable "cors_allowed_methods" {
@@ -102,7 +97,7 @@ variable "cors_allowed_headers" {
 
   validation {
     condition     = contains([for h in var.cors_allowed_headers : lower(h)], "range")
-    error_message = "cors_allowed_headers must include Range."
+    error_message = "The cors_allowed_headers list must include Range."
   }
 }
 
@@ -130,7 +125,7 @@ variable "cors_max_age_seconds" {
 
   validation {
     condition     = var.cors_max_age_seconds >= 0
-    error_message = "cors_max_age_seconds must be >= 0."
+    error_message = "The cors_max_age_seconds value must be >= 0."
   }
 }
 
@@ -210,4 +205,3 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
-

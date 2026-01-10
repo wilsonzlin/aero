@@ -13,21 +13,17 @@ locals {
   cache_policy_id = var.cache_policy_mode == "immutable" ? aws_cloudfront_cache_policy.immutable.id : aws_cloudfront_cache_policy.mutable.id
   primary_domain  = length(var.custom_domain_names) > 0 ? var.custom_domain_names[0] : aws_cloudfront_distribution.images.domain_name
 
-  # Cache key headers:
-  # - Range/If-Range enable efficient partial caching for large artifacts.
-  cache_key_headers = [
-    "Range",
-    "If-Range",
-  ]
-
   # Origin request headers:
   # - CORS preflight (OPTIONS) needs these forwarded to S3 unless you enable the optional
   #   edge-handled preflight function (enable_edge_cors_preflight).
-  # - Range headers are forwarded via the cache policy above.
   origin_request_headers = [
     "Origin",
     "Access-Control-Request-Method",
     "Access-Control-Request-Headers",
+    # Forward Range headers to S3 for efficient partial responses. CloudFront can cache byte
+    # ranges without including Range in the cache key (avoids cache fragmentation).
+    "Range",
+    "If-Range",
   ]
 }
 
@@ -138,10 +134,7 @@ resource "aws_cloudfront_cache_policy" "immutable" {
     }
 
     headers_config {
-      header_behavior = "whitelist"
-      headers {
-        items = local.cache_key_headers
-      }
+      header_behavior = "none"
     }
 
     query_strings_config {
@@ -166,10 +159,7 @@ resource "aws_cloudfront_cache_policy" "mutable" {
     }
 
     headers_config {
-      header_behavior = "whitelist"
-      headers {
-        items = local.cache_key_headers
-      }
+      header_behavior = "none"
     }
 
     query_strings_config {
@@ -238,10 +228,10 @@ resource "aws_cloudfront_function" "cors_preflight" {
   publish = true
 
   code = templatefile("${path.module}/cors-preflight.js.tftpl", {
-    allowed_origins_json = jsonencode(var.cors_allowed_origins)
-    allowed_headers_json = jsonencode(var.cors_allowed_headers)
-    allow_credentials    = var.cors_allow_credentials
-    max_age_seconds      = var.cors_max_age_seconds
+    allowed_origins_json  = jsonencode(var.cors_allowed_origins)
+    allowed_headers_json  = jsonencode(var.cors_allowed_headers)
+    allow_credentials     = var.cors_allow_credentials
+    max_age_seconds       = var.cors_max_age_seconds
     image_uri_prefix_json = jsonencode(local.image_uri_prefix)
   })
 }

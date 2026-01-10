@@ -25,7 +25,7 @@ For a fully local Range + CORS validation setup (no AWS required), see
     - Only `GET`/`HEAD` responses are cached by default (OPTIONS preflight is forwarded to origin; browsers cache via `Access-Control-Max-Age`).
     - Compression disabled (disk images are already compressed or not worth compressing).
     - Origin request policy forwards headers needed for **CORS preflight** (unless edge-handled preflight is enabled).
-    - Cache policy includes `Range`/`If-Range` in the cache key for HTTP Range streaming + caching.
+    - `Range`/`If-Range` are forwarded to S3 so byte-range reads work, but **are not included in the CloudFront cache key** (avoids cache fragmentation for random-access workloads).
     - Two cache policies: `immutable` (long TTL) vs `mutable` (short TTL), selectable via variable.
     - Optional CloudFront **response headers policy** for injecting CORS headers at the edge.
     - Optional CloudFront **Function** to answer CORS preflight (`OPTIONS`) at the edge for `/images/*`, avoiding OPTIONS to S3.
@@ -179,4 +179,3 @@ access-control-allow-credentials: false
 access-control-max-age: 86400
 vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
 ```
-
