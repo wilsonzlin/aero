@@ -747,7 +747,7 @@ impl StreamingDisk {
     }
 
     async fn refresh_lease(&mut self) -> Result<()> {
-        // Fetch a new short-lived disk access lease (remote_url + token) from the backend.
+        // Fetch a new short-lived disk access lease (remote_url + optional auth) from the backend.
         // The previous token/URL should be treated as secret and discarded.
         self.lease = request_new_lease_from_backend().await?;
         Ok(())
@@ -817,8 +817,8 @@ The `StreamingDisk` design supports both **public** and **private** remote disk 
 
 For private images, treat the following as **secrets**:
 
-- `remote_url` (if it contains a signed query parameter)
-- `bearer_token` / session cookies / any auth material
+- `remote_url` (for private images it may embed auth via a signed query parameter, or it may be an unguessable lease URL)
+- `bearer_token` / session cookies / any auth material (if used)
 
 Do **not** persist these secrets to OPFS/IndexedDB (or logs) “for convenience”. Persist stable identifiers instead (e.g., `image_id`, `snapshot_id`) and reacquire credentials each time a VM session starts.
 
