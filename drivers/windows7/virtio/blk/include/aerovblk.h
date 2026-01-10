@@ -5,7 +5,9 @@
 #include <scsi.h>
 #include <ntddscsi.h>
 
-#include "../../common/include/aerovirtio.h"
+#include "../../common/include/virtio_bits.h"
+#include "../../common/include/virtio_pci_legacy.h"
+#include "../../common/include/virtio_queue.h"
 
 #if DBG
 #define AEROVBLK_LOG(fmt, ...) DbgPrint("aerovblk: " fmt "\n", __VA_ARGS__)
@@ -15,33 +17,62 @@
     } while (0)
 #endif
 
-#define AEROVBLK_PCI_VENDOR_ID 0x1AF4
-#define AEROVBLK_PCI_DEVICE_ID 0x1001
-
 #define AEROVBLK_LOGICAL_SECTOR_SIZE 512u
 
-#define AEROVBLK_REQ_HDR_OFFSET 0u
-#define AEROVBLK_REQ_STATUS_OFFSET 16u
-#define AEROVBLK_REQ_INDIRECT_OFFSET 32u
+#define AEROVBLK_CTX_HDR_OFFSET 0u
+#define AEROVBLK_CTX_STATUS_OFFSET 16u
+#define AEROVBLK_CTX_TABLE_OFFSET 32u
 
-#define AEROVBLK_MAX_INDIRECT_DESCS ((PAGE_SIZE - AEROVBLK_REQ_INDIRECT_OFFSET) / sizeof(AEROVIRTQ_DESC))
+#define AEROVBLK_MAX_TABLE_DESCS ((PAGE_SIZE - AEROVBLK_CTX_TABLE_OFFSET) / sizeof(VRING_DESC))
+#define AEROVBLK_MAX_SG_ELEMENTS (AEROVBLK_MAX_TABLE_DESCS - 2u)
+
+#define VIRTIO_BLK_F_BLK_SIZE (1u << 6)
+#define VIRTIO_BLK_F_FLUSH (1u << 9)
+
+#define VIRTIO_BLK_T_IN 0u
+#define VIRTIO_BLK_T_OUT 1u
+#define VIRTIO_BLK_T_FLUSH 4u
+
+#define VIRTIO_BLK_S_OK 0u
+#define VIRTIO_BLK_S_IOERR 1u
+#define VIRTIO_BLK_S_UNSUPP 2u
+
+#pragma pack(push, 1)
+typedef struct _VIRTIO_BLK_REQ_HDR {
+    ULONG Type;
+    ULONG Reserved;
+    ULONGLONG Sector;
+} VIRTIO_BLK_REQ_HDR, *PVIRTIO_BLK_REQ_HDR;
+
+typedef struct _VIRTIO_BLK_CONFIG {
+    ULONGLONG Capacity;
+    ULONG SizeMax;
+    ULONG SegMax;
+    USHORT Cylinders;
+    UCHAR Heads;
+    UCHAR Sectors;
+    ULONG BlkSize;
+} VIRTIO_BLK_CONFIG, *PVIRTIO_BLK_CONFIG;
+#pragma pack(pop)
 
 typedef struct _AEROVBLK_REQUEST_CONTEXT {
+    LIST_ENTRY Link;
     PVOID SharedPageVa;
-    STOR_PHYSICAL_ADDRESS SharedPagePa;
+    PHYSICAL_ADDRESS SharedPagePa;
 
-    volatile AEROVIRTIO_BLK_REQ* ReqHdr;
+    volatile VIRTIO_BLK_REQ_HDR* ReqHdr;
     volatile UCHAR* StatusByte;
-    volatile AEROVIRTQ_DESC* IndirectDesc;
+    volatile VRING_DESC* TableDesc;
+    PHYSICAL_ADDRESS TableDescPa;
+    volatile VIRTIO_SG_ENTRY* Sg;
 
     PSCSI_REQUEST_BLOCK Srb;
-    UCHAR ScsiOp;
     BOOLEAN IsWrite;
 } AEROVBLK_REQUEST_CONTEXT, *PAEROVBLK_REQUEST_CONTEXT;
 
 typedef struct _AEROVBLK_DEVICE_EXTENSION {
-    AEROVIRTIO_PCI_LEGACY_DEVICE Pci;
-    AEROVIRTQ Vq;
+    VIRTIO_PCI_DEVICE Vdev;
+    VIRTIO_QUEUE Vq;
 
     ULONG NegotiatedFeatures;
     BOOLEAN SupportsIndirect;
@@ -51,6 +82,9 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
     ULONG LogicalSectorSize;
 
     PAEROVBLK_REQUEST_CONTEXT RequestContexts;
+    ULONG RequestContextCount;
+    LIST_ENTRY FreeRequestList;
+    ULONG FreeRequestCount;
 
     BOOLEAN Removed;
     SENSE_DATA LastSense;

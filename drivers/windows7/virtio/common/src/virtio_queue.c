@@ -32,6 +32,10 @@ static VOID VirtioQueueInitLayout(_Inout_ VIRTIO_QUEUE* Queue) {
 VOID VirtioQueueResetState(_Inout_ VIRTIO_QUEUE* Queue) {
   USHORT I;
 
+  if (!Queue || Queue->QueueSize == 0 || Queue->RingVa == NULL || Queue->Desc == NULL || Queue->Avail == NULL || Queue->Used == NULL) {
+    return;
+  }
+
   Queue->FreeHead = 0;
   Queue->NumFree = Queue->QueueSize;
   Queue->LastUsedIdx = 0;
@@ -200,6 +204,43 @@ NTSTATUS VirtioQueueAddBuffer(_Inout_ VIRTIO_QUEUE* Queue, _In_reads_(SgCount) c
 
   *HeadId = Head;
 
+  return STATUS_SUCCESS;
+}
+
+NTSTATUS VirtioQueueAddIndirectTable(_Inout_ VIRTIO_QUEUE* Queue, _In_ PHYSICAL_ADDRESS IndirectTablePa, _In_ USHORT IndirectDescCount,
+                                     _In_opt_ PVOID Context, _Out_ USHORT* HeadId) {
+  USHORT Head;
+  ULONG TableBytes;
+
+  if (!Queue || IndirectDescCount == 0 || !HeadId) {
+    return STATUS_INVALID_PARAMETER;
+  }
+
+  TableBytes = (ULONG)IndirectDescCount * sizeof(VRING_DESC);
+  if (IndirectDescCount != (USHORT)(TableBytes / sizeof(VRING_DESC))) {
+    return STATUS_INVALID_PARAMETER;
+  }
+
+  if (Queue->NumFree < 1) {
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+
+  Head = Queue->FreeHead;
+  Queue->FreeHead = Queue->Desc[Head].Next;
+  Queue->NumFree--;
+
+  Queue->Desc[Head].Addr = (ULONGLONG)IndirectTablePa.QuadPart;
+  Queue->Desc[Head].Len = TableBytes;
+  Queue->Desc[Head].Flags = VRING_DESC_F_INDIRECT;
+  Queue->Desc[Head].Next = 0;
+
+  Queue->Context[Head] = Context;
+
+  Queue->Avail->Ring[Queue->Avail->Idx % Queue->QueueSize] = Head;
+  KeMemoryBarrier();
+  Queue->Avail->Idx++;
+
+  *HeadId = Head;
   return STATUS_SUCCESS;
 }
 

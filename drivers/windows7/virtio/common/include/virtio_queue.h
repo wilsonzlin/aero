@@ -19,6 +19,7 @@
 
 #define VRING_DESC_F_NEXT  0x0001
 #define VRING_DESC_F_WRITE 0x0002
+#define VRING_DESC_F_INDIRECT 0x0004
 
 #pragma pack(push, 1)
 typedef struct _VRING_DESC {
@@ -83,7 +84,10 @@ VOID VirtioQueueResetState(_Inout_ VIRTIO_QUEUE* Queue);
 _Must_inspect_result_ NTSTATUS VirtioQueueAddBuffer(_Inout_ VIRTIO_QUEUE* Queue, _In_reads_(SgCount) const VIRTIO_SG_ENTRY* Sg,
                                                     _In_ USHORT SgCount, _In_opt_ PVOID Context, _Out_ USHORT* HeadId);
 
+_Must_inspect_result_ NTSTATUS VirtioQueueAddIndirectTable(_Inout_ VIRTIO_QUEUE* Queue, _In_ PHYSICAL_ADDRESS IndirectTablePa,
+                                                           _In_ USHORT IndirectDescCount, _In_opt_ PVOID Context,
+                                                           _Out_ USHORT* HeadId);
+
 BOOLEAN VirtioQueuePopUsed(_Inout_ VIRTIO_QUEUE* Queue, _Out_ USHORT* HeadId, _Out_ ULONG* Len, _Out_opt_ PVOID* Context);
 
 VOID VirtioQueueNotify(_In_ const VIRTIO_PCI_DEVICE* Device, _In_ const VIRTIO_QUEUE* Queue);
-

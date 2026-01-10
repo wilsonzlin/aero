@@ -7,6 +7,7 @@
 The INF binds to the standard virtio-blk PCI ID used by QEMU/virtio:
 
 - `PCI\VEN_1AF4&DEV_1001`
+- `PCI\VEN_1AF4&DEV_1042` (virtio 1.0 transitional virtio-blk)
 
 ## Installation (non-boot disk)
 
@@ -28,4 +29,3 @@ The driver supports a minimal `IOCTL_SCSI_MINIPORT` query:
 - `SRB_IO_CONTROL.ControlCode = 0x8000A001`
 
 Returns `AEROVBLK_QUERY_INFO` (negotiated features + queue stats).
-
