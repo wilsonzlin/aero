@@ -115,6 +115,15 @@ enum aerogpu_cmd_opcode {
 
   /* Presentation */
   AEROGPU_CMD_PRESENT = 0x700,
+  /* D3D9Ex-style presentation (PresentEx flags, etc). */
+  AEROGPU_CMD_PRESENT_EX = 0x701,
+
+  /* D3D9Ex/DWM shared surface interop. */
+  AEROGPU_CMD_EXPORT_SHARED_SURFACE = 0x710,
+  AEROGPU_CMD_IMPORT_SHARED_SURFACE = 0x711,
+
+  /* Explicit flush point (may be a no-op on some hosts). */
+  AEROGPU_CMD_FLUSH = 0x720,
 };
 
 enum aerogpu_shader_stage {
@@ -657,6 +666,79 @@ struct aerogpu_cmd_present {
 #pragma pack(pop)
 
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_present) == 16);
+
+/*
+ * PRESENT_EX:
+ * - Like PRESENT, but additionally carries D3D9Ex PresentEx flags as observed by
+ *   the guest UMD.
+ * - `d3d9_present_flags` is the raw `dwFlags` passed to IDirect3DDevice9Ex::PresentEx.
+ * - The host may ignore unknown/unsupported bits; the primary requirement is
+ *   that the command does not fail parsing and is fence-trackable.
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_present_ex {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_PRESENT_EX */
+  uint32_t scanout_id; /* 0 for now */
+  uint32_t flags; /* aerogpu_present_flags */
+  uint32_t d3d9_present_flags; /* D3DPRESENT_* (from d3d9.h) */
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_present_ex) == 24);
+
+/*
+ * EXPORT_SHARED_SURFACE:
+ * - Associates an existing `resource_handle` with a driver-chosen `share_token`.
+ * - `share_token` is an opaque 64-bit value that must be stable across guest
+ *   processes (the UMD/KMD is responsible for coordinating that).
+ * - The host stores a mapping of (share_token -> resource).
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_export_shared_surface {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_EXPORT_SHARED_SURFACE */
+  aerogpu_handle_t resource_handle;
+  uint32_t reserved0;
+  uint64_t share_token;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_export_shared_surface) == 24);
+
+/*
+ * IMPORT_SHARED_SURFACE:
+ * - Creates an alias handle `out_resource_handle` which refers to the same
+ *   underlying resource previously exported under `share_token`.
+ * - If the `share_token` is unknown, the host should treat the command as a
+ *   validation error (implementation-defined error reporting).
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_import_shared_surface {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_IMPORT_SHARED_SURFACE */
+  aerogpu_handle_t out_resource_handle;
+  uint32_t reserved0;
+  uint64_t share_token;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_import_shared_surface) == 24);
+
+/*
+ * FLUSH:
+ * - Explicitly requests that the host schedule/submit all prior work for
+ *   execution. This is intended to model D3D9Ex-style flush semantics.
+ * - For implementations that already submit at every ring submission boundary,
+ *   this is typically a no-op.
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_flush {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_FLUSH */
+  uint32_t reserved0;
+  uint32_t reserved1;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_flush) == 16);
 
 #ifdef __cplusplus
 } /* extern "C" */

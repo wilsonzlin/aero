@@ -146,7 +146,9 @@ The initial protocol defines an IR sufficient for D3D9-style rendering and can b
 - Input assembler: vertex/index buffers.
 - Draw, draw indexed.
 - Clear.
-- Present.
+- Present / PresentEx (D3D9Ex flags).
+- Shared surface export/import (cross-process DWM redirected surfaces).
+- Flush (explicit scheduling point).
 
 See `aerogpu_cmd.h` for the full opcode list and packet layouts.
 

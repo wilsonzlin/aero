@@ -14,6 +14,7 @@
 //!   backend.
 
 mod buffer_arena;
+mod command_processor;
 mod context;
 mod dirty_rect;
 mod error;
@@ -21,11 +22,13 @@ mod error_event;
 mod present;
 #[cfg(feature = "diff-engine")]
 mod tile_diff;
+
 pub mod frame_source;
 pub mod shader_lib;
 mod recovery;
 mod surface;
 mod time;
+mod protocol;
 mod upload;
 mod wgpu_integration;
 
@@ -48,6 +51,7 @@ pub use bc_decompress::{
     decompress_bc1_rgba8, decompress_bc2_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8,
 };
 pub use buffer_arena::BufferArena;
+pub use command_processor::{AeroGpuCommandProcessor, AeroGpuEvent, CommandProcessorError};
 pub use context::WgpuContext;
 pub use dirty_rect::{merge_and_cap_rects, Rect, RectMergeOutcome};
 pub use error::GpuError;
@@ -55,6 +59,10 @@ pub use error_event::{GpuErrorCategory, GpuErrorEvent, GpuErrorSeverity, GpuErro
 pub use present::{PresentError, PresentTelemetry, Presenter, TextureWriter};
 pub use profiler::{
     FrameTimingsReport, GpuBackendKind, GpuProfiler, GpuProfilerConfig, GpuTimestampPhase,
+};
+pub use protocol::{
+    parse_cmd_stream, AeroGpuCmd, AeroGpuCmdHdr, AeroGpuCmdStreamHeader,
+    AeroGpuCmdStreamParseError, AeroGpuCmdStreamView, AeroGpuOpcode, AEROGPU_CMD_STREAM_MAGIC,
 };
 pub use readback::readback_rgba8;
 pub use texture_format::{TextureFormat, TextureFormatSelection, TextureUploadTransform};

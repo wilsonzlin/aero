@@ -279,6 +279,29 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::PresentEx", hr);
   }
 
+  // Exercise D3D9Ex present statistics APIs (DWM relies on these).
+  D3DPRESENTSTATS stats;
+  ZeroMemory(&stats, sizeof(stats));
+  hr = dev->GetPresentStats(&stats);
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetPresentStats", hr);
+  }
+
+  UINT last_present_count = 0;
+  hr = dev->GetLastPresentCount(&last_present_count);
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetLastPresentCount", hr);
+  }
+
+  // The exact meaning of refresh counts is implementation-dependent for now,
+  // but PresentCount/LastPresentCount must be sane and monotonic.
+  if (stats.PresentCount == 0 || last_present_count == 0 || stats.PresentCount < last_present_count) {
+    return aerogpu_test::Fail(kTestName,
+                              "present stats invalid: PresentCount=%lu LastPresentCount=%lu",
+                              (unsigned long)stats.PresentCount,
+                              (unsigned long)last_present_count);
+  }
+
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
   return 0;
 }
