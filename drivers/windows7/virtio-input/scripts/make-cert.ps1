@@ -11,8 +11,9 @@
   The exported .pfx is used by signtool to sign the .sys and .cat.
 
 .NOTES
-  - Uses New-SelfSignedCertificate when available (Windows 10/11).
-  - Falls back to makecert.exe (older SDK/WDK tool) if New-SelfSignedCertificate is not present.
+  - Prefers New-SelfSignedCertificate when available (Windows 10/11).
+  - Falls back to makecert.exe (older SDK/WDK tool) if New-SelfSignedCertificate cannot create the
+    requested certificate (or is not present).
   - Export is done via certutil.exe for broad Windows compatibility.
   - Defaults to a SHA-1-signed certificate for maximum Windows 7 compatibility. A SHA-2-signed
     certificate may not be accepted by stock Windows 7 SP1 without SHA-2 updates
@@ -30,6 +31,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version 2.0
 
 if (-not (Test-Path -LiteralPath $OutDir)) {
   New-Item -ItemType Directory -Path $OutDir | Out-Null
@@ -89,109 +91,116 @@ function Get-HashAlgorithmName([ValidateSet('sha1', 'sha256')] [string]$HashValu
   return 'SHA256'
 }
 
-if ($newSelfSigned) {
-  $requested = $CertHashAlgorithm.ToLowerInvariant()
-  $hashName = Get-HashAlgorithmName $requested
+function Try-NewSelfSignedCertificate([ValidateSet('sha1', 'sha256')] [string]$HashValue) {
+  if (-not $newSelfSigned) { return $null }
 
-  try {
-    $cert = New-SelfSignedCertificate `
-      -Type CodeSigningCert `
-      -Subject $Subject `
-      -KeyAlgorithm RSA `
-      -KeyLength 2048 `
-      -KeyExportPolicy Exportable `
-      -HashAlgorithm $hashName `
-      -CertStoreLocation "Cert:\\CurrentUser\\My"
+  $hashName = Get-HashAlgorithmName $HashValue
+  $notAfter = (Get-Date).AddYears(10)
 
-    if (-not (Test-CertificateSignatureHash -Cert $cert -ExpectedHash $requested)) {
-      $actual = "{0} ({1})" -f $cert.SignatureAlgorithm.FriendlyName, $cert.SignatureAlgorithm.Value
-      throw "New-SelfSignedCertificate did not produce a $requested-signed certificate (got: $actual)."
-    }
+  $cert = New-SelfSignedCertificate `
+    -Type CodeSigningCert `
+    -Subject $Subject `
+    -KeyAlgorithm RSA `
+    -KeyLength 2048 `
+    -KeyExportPolicy Exportable `
+    -KeySpec Signature `
+    -HashAlgorithm $hashName `
+    -NotAfter $notAfter `
+    -CertStoreLocation "Cert:\\CurrentUser\\My"
 
-    $thumbprint = $cert.Thumbprint
+  if (-not (Test-CertificateSignatureHash -Cert $cert -ExpectedHash $HashValue)) {
+    $actual = "{0} ({1})" -f $cert.SignatureAlgorithm.FriendlyName, $cert.SignatureAlgorithm.Value
+    throw "New-SelfSignedCertificate did not produce a $HashValue-signed certificate (got: $actual)."
   }
-  catch {
-    if (($requested -eq 'sha1') -and $AllowSha2CertFallback) {
-      Write-Warning "Failed to create a SHA-1-signed certificate; falling back to SHA-256 due to -AllowSha2CertFallback."
-      Write-Warning "WARNING: Stock Windows 7 SP1 without SHA-2 updates (KB3033929 / KB4474419) may reject the signature chain."
 
-      $cert = New-SelfSignedCertificate `
-        -Type CodeSigningCert `
-        -Subject $Subject `
-        -KeyAlgorithm RSA `
-        -KeyLength 2048 `
-        -KeyExportPolicy Exportable `
-        -HashAlgorithm (Get-HashAlgorithmName 'sha256') `
-        -CertStoreLocation "Cert:\\CurrentUser\\My"
-
-      if (-not (Test-CertificateSignatureHash -Cert $cert -ExpectedHash 'sha256')) {
-        $actual = "{0} ({1})" -f $cert.SignatureAlgorithm.FriendlyName, $cert.SignatureAlgorithm.Value
-        throw "SHA-256 fallback certificate had unexpected signature algorithm (got: $actual)."
-      }
-
-      $thumbprint = $cert.Thumbprint
-    }
-    else {
-      throw
-    }
-  }
+  return $cert.Thumbprint
 }
-elseif ($makecert) {
+
+function Try-MakeCert([ValidateSet('sha1', 'sha256')] [string]$HashValue) {
+  if (-not $makecert) { return $null }
+
   $start = Get-Date
   $end = $start.AddYears(10)
 
   $startStr = $start.ToString("MM/dd/yyyy")
   $endStr = $end.ToString("MM/dd/yyyy")
 
-  $requested = $CertHashAlgorithm.ToLowerInvariant()
+  if (Test-Path -LiteralPath $cerPath) { Remove-Item -LiteralPath $cerPath -Force }
 
-  function Invoke-MakeCert([ValidateSet('sha1', 'sha256')] [string]$HashValue) {
-    & makecert.exe `
-      -r `
-      -pe `
-      -ss My `
-      -sr CurrentUser `
-      -n $Subject `
-      -eku 1.3.6.1.5.5.7.3.3 `
-      -a $HashValue `
-      -len 2048 `
-      -b $startStr `
-      -e $endStr `
-      $cerPath | Out-Null
+  & makecert.exe `
+    -r `
+    -pe `
+    -ss My `
+    -sr CurrentUser `
+    -n $Subject `
+    -eku 1.3.6.1.5.5.7.3.3 `
+    -a $HashValue `
+    -len 2048 `
+    -b $startStr `
+    -e $endStr `
+    $cerPath | Out-Null
+
+  if (-not (Test-Path -LiteralPath $cerPath)) {
+    throw "makecert.exe did not produce the expected output file: $cerPath"
+  }
+
+  $created = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($cerPath)
+
+  if (-not (Test-CertificateSignatureHash -Cert $created -ExpectedHash $HashValue)) {
+    $actual = "{0} ({1})" -f $created.SignatureAlgorithm.FriendlyName, $created.SignatureAlgorithm.Value
+    throw "makecert.exe produced a certificate with unexpected signature algorithm (expected $HashValue, got: $actual)."
+  }
+
+  return $created.Thumbprint
+}
+
+$requested = $CertHashAlgorithm.ToLowerInvariant()
+$thumbprint = $null
+$lastError = $null
+
+foreach ($hashAttempt in @($requested)) {
+  try {
+    $thumbprint = Try-NewSelfSignedCertificate -HashValue $hashAttempt
+    if ($thumbprint) { break }
+  }
+  catch {
+    $lastError = $_
   }
 
   try {
-    Invoke-MakeCert -HashValue $requested
+    $thumbprint = Try-MakeCert -HashValue $hashAttempt
+    if ($thumbprint) { break }
   }
   catch {
-    if (($requested -eq 'sha1') -and $AllowSha2CertFallback) {
-      Write-Warning "makecert.exe failed to create a SHA-1-signed certificate; falling back to SHA-256 due to -AllowSha2CertFallback."
-      Write-Warning "WARNING: Stock Windows 7 SP1 without SHA-2 updates (KB3033929 / KB4474419) may reject the signature chain."
-      Invoke-MakeCert -HashValue 'sha256'
-      $requested = 'sha256'
-    }
-    else {
-      throw
-    }
+    $lastError = $_
   }
-
-  $store = New-Object System.Security.Cryptography.X509Certificates.X509Store("My", "CurrentUser")
-  $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
-  $match = $store.Certificates | Where-Object { $_.Subject -eq $Subject } | Sort-Object NotBefore -Descending | Select-Object -First 1
-  $store.Close()
-
-  if (-not $match) {
-    throw "makecert.exe succeeded but the certificate could not be located in CurrentUser\\My."
-  }
-
-  if (-not (Test-CertificateSignatureHash -Cert $match -ExpectedHash $requested)) {
-    $actual = "{0} ({1})" -f $match.SignatureAlgorithm.FriendlyName, $match.SignatureAlgorithm.Value
-    throw "makecert.exe produced a certificate with unexpected signature algorithm (expected $requested, got: $actual)."
-  }
-
-  $thumbprint = $match.Thumbprint
 }
-else {
+
+if ((-not $thumbprint) -and ($requested -eq 'sha1') -and $AllowSha2CertFallback) {
+  Write-Warning "Failed to create a SHA-1-signed certificate; falling back to SHA-256 due to -AllowSha2CertFallback."
+  Write-Warning "WARNING: Stock Windows 7 SP1 without SHA-2 updates (KB3033929 / KB4474419) may reject the signature chain."
+
+  foreach ($hashAttempt in @('sha256')) {
+    try {
+      $thumbprint = Try-NewSelfSignedCertificate -HashValue $hashAttempt
+      if ($thumbprint) { break }
+    }
+    catch {
+      $lastError = $_
+    }
+
+    try {
+      $thumbprint = Try-MakeCert -HashValue $hashAttempt
+      if ($thumbprint) { break }
+    }
+    catch {
+      $lastError = $_
+    }
+  }
+}
+
+if (-not $thumbprint) {
+  if ($lastError) { throw $lastError }
   throw "Neither New-SelfSignedCertificate nor makecert.exe is available. Install the Windows SDK/WDK (or run on Windows 10+)."
 }
 
