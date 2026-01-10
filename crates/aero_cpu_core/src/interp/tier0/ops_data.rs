@@ -27,6 +27,14 @@ pub fn exec<B: CpuBus>(
     let instr = &decoded.instr;
     match instr.mnemonic() {
         Mnemonic::Mov => {
+            if instr.op_kind(0) == OpKind::Register && is_ctrl_or_debug_reg(instr.op0_register())
+                || instr.op_kind(1) == OpKind::Register
+                    && is_ctrl_or_debug_reg(instr.op1_register())
+            {
+                // MOV to/from control/debug registers is privileged (and updates CPU mode/paging).
+                return Ok(ExecOutcome::Assist(AssistReason::Privileged));
+            }
+
             if state.mode != crate::state::CpuMode::Bit16
                 && instr.op_kind(0) == OpKind::Register
                 && is_seg_reg(instr.op0_register())
@@ -209,6 +217,23 @@ fn is_seg_reg(reg: Register) -> bool {
     matches!(
         reg,
         Register::ES | Register::CS | Register::SS | Register::DS | Register::FS | Register::GS
+    )
+}
+
+fn is_ctrl_or_debug_reg(reg: Register) -> bool {
+    matches!(
+        reg,
+        Register::CR0
+            | Register::CR2
+            | Register::CR3
+            | Register::CR4
+            | Register::CR8
+            | Register::DR0
+            | Register::DR1
+            | Register::DR2
+            | Register::DR3
+            | Register::DR6
+            | Register::DR7
     )
 }
 

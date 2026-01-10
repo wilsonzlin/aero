@@ -93,6 +93,23 @@ fn far_jump_requests_assist() {
 }
 
 #[test]
+fn mov_cr0_requests_assist() {
+    // mov cr0,eax (0F 22 C0)
+    let code = [0x0F, 0x22, 0xC0];
+    let mut bus = FlatTestBus::new(0x1000);
+    bus.load(0, &code);
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+
+    let res = run_batch(&mut state, &mut bus, 1);
+    assert!(matches!(
+        res.exit,
+        BatchExit::Assist(AssistReason::Privileged)
+    ));
+    assert_eq!(state.rip(), 0);
+}
+
+#[test]
 fn bsf_bsr_bt() {
     // mov eax,0x10; bsf ecx,eax; bsr edx,eax; bt eax,4; hlt
     let code = [
