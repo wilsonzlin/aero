@@ -108,7 +108,9 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
     let mut out = Vec::new();
 
     // Guest tools top-level scripts/doc.
-    for file_name in ["setup.cmd", "uninstall.cmd", "README.md"] {
+    //
+    // Keep this list in sync with the published Guest Tools ISO root.
+    for file_name in ["setup.cmd", "uninstall.cmd", "verify.cmd", "verify.ps1", "README.md"] {
         let src = config.guest_tools_dir.join(file_name);
         if !src.is_file() {
             bail!(
@@ -120,25 +122,6 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
             rel_path: file_name.to_string(),
             bytes: fs::read(&src).with_context(|| format!("read {}", src.display()))?,
         });
-    }
-
-    // Optional verifier scripts (useful for debugging driver binding in-guest).
-    // If present, we require both files since `verify.cmd` references `verify.ps1`.
-    let verify_cmd = config.guest_tools_dir.join("verify.cmd");
-    let verify_ps1 = config.guest_tools_dir.join("verify.ps1");
-    if verify_cmd.exists() || verify_ps1.exists() {
-        for (name, path) in [("verify.cmd", &verify_cmd), ("verify.ps1", &verify_ps1)] {
-            if !path.is_file() {
-                bail!(
-                    "guest tools missing required file: {}",
-                    path.to_string_lossy()
-                );
-            }
-            out.push(FileToPackage {
-                rel_path: name.to_string(),
-                bytes: fs::read(path).with_context(|| format!("read {}", path.display()))?,
-            });
-        }
     }
 
     // Guest tools config (expected device IDs / service names).
