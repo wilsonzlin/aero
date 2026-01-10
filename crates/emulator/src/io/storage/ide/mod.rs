@@ -432,6 +432,11 @@ impl Channel {
                 }
                 self.complete_non_data_command();
             }
+            Some(TransferKind::AtapiPioIn) => {
+                // Data phase complete; transition to status phase.
+                self.tf.sector_count = 0x03; // IO=1, CoD=1
+                self.complete_non_data_command();
+            }
             Some(TransferKind::AtapiPacket) => {
                 let mut packet = [0u8; 12];
                 packet.copy_from_slice(&self.data[..12]);
@@ -486,7 +491,7 @@ impl Channel {
                     }
                 }
             }
-            Some(TransferKind::Identify) | Some(TransferKind::AtaPioRead) | Some(TransferKind::AtapiPioIn) => {
+            Some(TransferKind::Identify) | Some(TransferKind::AtaPioRead) => {
                 self.complete_non_data_command();
             }
             None => {
@@ -962,6 +967,11 @@ impl IdeController {
                     }
                 }
                 bm.finish_success();
+                // For ATAPI DMA commands, transition to status phase (interrupt reason).
+                let dev_idx = chan.selected_drive() as usize;
+                if matches!(chan.devices[dev_idx], Some(IdeDevice::Atapi(_))) {
+                    chan.tf.sector_count = 0x03; // IO=1, CoD=1
+                }
                 chan.complete_non_data_command();
             }
             Err(_) => {

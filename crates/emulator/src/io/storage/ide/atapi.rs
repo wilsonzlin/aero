@@ -15,6 +15,7 @@ const SENSE_UNIT_ATTENTION: u8 = 0x06;
 
 const ASC_MEDIUM_NOT_PRESENT: u8 = 0x3A;
 const ASC_MEDIUM_CHANGED: u8 = 0x28;
+const ASC_INVALID_COMMAND: u8 = 0x20;
 
 #[derive(Debug, Clone, Copy)]
 struct Sense {
@@ -177,6 +178,8 @@ impl AtapiCdrom {
                 // REQUEST SENSE
                 let alloc_len = packet[4] as usize;
                 let sense = self.request_sense();
+                // Per SCSI, a successful REQUEST SENSE clears the current sense data.
+                self.set_sense(SENSE_NO_SENSE, 0, 0);
                 PacketResult::DataIn(sense[..alloc_len.min(sense.len())].to_vec())
             }
             0x43 => {
@@ -199,11 +202,49 @@ impl AtapiCdrom {
                 }
                 PacketResult::NoDataSuccess
             }
+            0x1E => {
+                // PREVENT ALLOW MEDIUM REMOVAL (no-op for our model).
+                PacketResult::NoDataSuccess
+            }
+            0x46 => {
+                // GET CONFIGURATION.
+                // Many OSes query this to detect DVD capabilities. We return a minimal header with
+                // the current profile set to DVD-ROM (0x0010).
+                if let Err(e) = self.check_ready() {
+                    return e;
+                }
+                let alloc_len = u16::from_be_bytes([packet[7], packet[8]]) as usize;
+                let data = self.get_configuration();
+                PacketResult::DataIn(data[..alloc_len.min(data.len())].to_vec())
+            }
+            0x5A | 0x1A => {
+                // MODE SENSE (10)/(6): return a minimal CD/DVD capabilities page (0x2A).
+                if let Err(e) = self.check_ready() {
+                    return e;
+                }
+                let page_code = packet[2] & 0x3F;
+                let alloc_len = if opcode == 0x5A {
+                    u16::from_be_bytes([packet[7], packet[8]]) as usize
+                } else {
+                    packet[4] as usize
+                };
+                match self.mode_sense(page_code, opcode == 0x5A) {
+                    Some(data) => PacketResult::DataIn(data[..alloc_len.min(data.len())].to_vec()),
+                    None => {
+                        self.set_sense(SENSE_ILLEGAL_REQUEST, ASC_INVALID_COMMAND, 0);
+                        PacketResult::Error {
+                            sense_key: SENSE_ILLEGAL_REQUEST,
+                            asc: ASC_INVALID_COMMAND,
+                            ascq: 0,
+                        }
+                    }
+                }
+            }
             _ => {
-                self.set_sense(SENSE_ILLEGAL_REQUEST, 0x20, 0);
+                self.set_sense(SENSE_ILLEGAL_REQUEST, ASC_INVALID_COMMAND, 0);
                 PacketResult::Error {
                     sense_key: SENSE_ILLEGAL_REQUEST,
-                    asc: 0x20,
+                    asc: ASC_INVALID_COMMAND,
                     ascq: 0,
                 }
             }
@@ -295,6 +336,62 @@ impl AtapiCdrom {
         out[16..20].copy_from_slice(&lead_out_lba.to_be_bytes());
 
         out
+    }
+
+    fn get_configuration(&self) -> Vec<u8> {
+        // Minimal "Feature Header" (8 bytes) with no feature descriptors.
+        // Data Length (4 bytes) is the number of bytes following itself.
+        let mut out = vec![0u8; 8];
+        let data_len = (out.len() - 4) as u32;
+        out[0..4].copy_from_slice(&data_len.to_be_bytes());
+        // Current Profile (DVD-ROM 0x0010).
+        out[6..8].copy_from_slice(&0x0010u16.to_be_bytes());
+        out
+    }
+
+    fn mode_sense(&self, page_code: u8, is_10: bool) -> Option<Vec<u8>> {
+        match page_code {
+            0x2A | 0x3F => {
+                let page = self.mode_page_2a();
+                if is_10 {
+                    let mut out = vec![0u8; 8 + page.len()];
+                    // Mode data length (bytes after this field).
+                    let mdl = (out.len() - 2) as u16;
+                    out[0..2].copy_from_slice(&mdl.to_be_bytes());
+                    out[2] = 0; // medium type
+                    out[3] = 0x80; // write protected
+                    // Block descriptor length = 0 (no descriptors).
+                    out[6..8].copy_from_slice(&0u16.to_be_bytes());
+                    out[8..].copy_from_slice(&page);
+                    Some(out)
+                } else {
+                    // MODE SENSE(6) header is 4 bytes.
+                    let mut out = vec![0u8; 4 + page.len()];
+                    out[0] = (out.len() - 1) as u8;
+                    out[1] = 0; // medium type
+                    out[2] = 0x80; // write protected
+                    out[3] = 0; // block descriptor length
+                    out[4..].copy_from_slice(&page);
+                    Some(out)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn mode_page_2a(&self) -> Vec<u8> {
+        // Mode page 0x2A: CD/DVD capabilities and mechanical status.
+        // Provide a minimal, mostly-zero page that advertises a read-only DVD-ROM.
+        //
+        // Many fields are capability bits; we keep them conservative to avoid
+        // guests attempting unsupported write paths.
+        let mut page = vec![0u8; 0x16];
+        page[0] = 0x2A;
+        page[1] = (page.len() - 2) as u8;
+        // Byte 2-3: set "DVD-ROM read" (bit1 in byte2 in some implementations) and "CD-ROM read".
+        // We simply indicate that the drive can read and is removable.
+        page[2] = 0x01; // arbitrary non-zero to avoid "no media" heuristics
+        page
     }
 }
 
