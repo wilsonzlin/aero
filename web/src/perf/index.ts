@@ -50,6 +50,9 @@ export const installPerfHud = (options: InstallPerfHudOptions = {}) => {
 };
 
 export type { PerfApi, PerfHudSnapshot } from "./types";
+export type { PerfExport } from "./export";
+export type { ResponsivenessExport, ResponsivenessHudSnapshot } from "./responsiveness";
+export { ResponsivenessTracker } from "./responsiveness";
 
 export { PerfAggregator } from "./aggregator.js";
 export { createPerfChannel, nowEpochMs } from "./shared.js";

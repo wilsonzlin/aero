@@ -1,3 +1,5 @@
+import type { ResponsivenessHudSnapshot } from './responsiveness';
+
 export type PerfTimeBreakdownMs = {
   cpu?: number;
   gpu?: number;
@@ -96,6 +98,7 @@ export type PerfHudSnapshot = {
   peakHostJsHeapUsedBytes?: number;
   peakWasmMemoryBytes?: number;
   peakGpuEstimatedBytes?: number;
+  responsiveness?: ResponsivenessHudSnapshot;
 
   capture: PerfCaptureState;
 };
@@ -103,6 +106,11 @@ export type PerfHudSnapshot = {
 export interface PerfApi {
   getHudSnapshot(out: PerfHudSnapshot): PerfHudSnapshot;
   setHudActive(active: boolean): void;
+
+  noteInputCaptured?(id: number, tCaptureMs?: number): void;
+  noteInputInjected?(id: number, tInjectedMs?: number, queueDepth?: number, queueOldestCaptureMs?: number | null): void;
+  noteInputConsumed?(id: number, tConsumedMs?: number, queueDepth?: number, queueOldestCaptureMs?: number | null): void;
+  notePresent?(tPresentMs?: number): void;
 
   captureStart(): void;
   captureStop(): void;

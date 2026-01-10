@@ -16,6 +16,11 @@ const formatMs = (ms: number | undefined): string => {
   return `${ms.toFixed(2)} ms`;
 };
 
+const formatMs0 = (ms: number | undefined): string => {
+  if (ms === undefined || !Number.isFinite(ms)) return '-';
+  return `${ms.toFixed(0)} ms`;
+};
+
 const formatFps = (fps: number | undefined): string => {
   if (fps === undefined || !Number.isFinite(fps)) return '-';
   return `${fps.toFixed(1)}`;
@@ -196,6 +201,9 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
   const cachesRow = makeRow('Code caches');
   const memoryPeaksRow = makeRow('Memory peaks');
   const captureRow = makeRow('Capture');
+  const inputLatencyRow = makeRow('Input latency (p50/p95)');
+  const inputQueueRow = makeRow('Input queue');
+  const longTasksRow = makeRow('Main thread stalls');
 
   const sparklines = document.createElement('div');
   sparklines.className = 'aero-perf-sparklines';
@@ -325,6 +333,30 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
       captureRow,
       `${snapshot.capture.active ? 'REC' : 'idle'} · ${durationSec.toFixed(1)}s · dropped ${snapshot.capture.droppedRecords} · ${snapshot.capture.records} samples`,
     );
+
+    const resp = snapshot.responsiveness;
+    if (!resp) {
+      setText(inputLatencyRow, '-');
+      setText(inputQueueRow, '-');
+      setText(longTasksRow, '-');
+    } else {
+      const capInj = `${formatMs(resp.capToInjectP50Ms)} / ${formatMs(resp.capToInjectP95Ms)}`;
+      const injCons = `${formatMs(resp.injectToConsumeP50Ms)} / ${formatMs(resp.injectToConsumeP95Ms)}`;
+      const capPres = `${formatMs(resp.capToPresentP50Ms)} / ${formatMs(resp.capToPresentP95Ms)}`;
+      setText(inputLatencyRow, `cap→inj ${capInj} · inj→cpu ${injCons} · cap→prs ${capPres}`);
+
+      const depth = resp.queueDepth === undefined ? '-' : `${resp.queueDepth}`;
+      const oldest = formatMs0(resp.queueOldestAgeMs);
+      setText(inputQueueRow, `depth ${depth} · oldest ${oldest}`);
+
+      if (resp.longTaskWarning) {
+        setText(longTasksRow, resp.longTaskWarning);
+      } else if (resp.longTaskCount !== undefined || resp.longTaskMaxMs !== undefined) {
+        setText(longTasksRow, `count ${resp.longTaskCount ?? 0} · max ${formatMs0(resp.longTaskMaxMs)} · last ${formatMs0(resp.longTaskLastMs)}`);
+      } else {
+        setText(longTasksRow, '-');
+      }
+    }
 
     captureActive = snapshot.capture.active;
     setText(captureBtn, captureActive ? 'Stop' : 'Start');

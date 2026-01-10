@@ -1,4 +1,6 @@
 import type { PerfApi, PerfCaptureState, PerfHudSnapshot, PerfJitSnapshot, PerfTimeBreakdownMs } from './types';
+import type { PerfExport } from './export';
+import { ResponsivenessTracker, type ResponsivenessHudSnapshot } from './responsiveness';
 
 import { FrameTimeStats } from '../../../packages/aero-stats/src/index.js';
 
@@ -88,6 +90,9 @@ export class FallbackPerf implements PerfApi {
 
   private lastFrameTimeMs: number | undefined;
   private lastMips: number | undefined;
+
+  private responsiveness = new ResponsivenessTracker();
+  private responsivenessSnapshot: ResponsivenessHudSnapshot = {};
 
   private captureActive = false;
   private captureStartNowMs = 0;
@@ -383,6 +388,7 @@ export class FallbackPerf implements PerfApi {
     out.peakHostJsHeapUsedBytes = this.memoryTelemetry.peaks.js_heap_used_bytes ?? undefined;
     out.peakWasmMemoryBytes = this.memoryTelemetry.peaks.wasm_memory_bytes ?? undefined;
     out.peakGpuEstimatedBytes = this.memoryTelemetry.peaks.gpu_total_bytes ?? undefined;
+    out.responsiveness = this.responsiveness.getHudSnapshot(this.responsivenessSnapshot);
 
     const captureDurationMs = this.captureActive ? performance.now() - this.captureStartNowMs : this.captureDurationMs;
     const capture: PerfCaptureState = out.capture;
@@ -398,6 +404,32 @@ export class FallbackPerf implements PerfApi {
     if (this.hudActive === active) return;
     this.hudActive = active;
     this.syncRaf();
+  }
+
+  noteInputCaptured(id: number, tCaptureMs: number = performance.now()): void {
+    this.responsiveness.noteInputCaptured(id, tCaptureMs);
+  }
+
+  noteInputInjected(
+    id: number,
+    tInjectedMs: number = performance.now(),
+    queueDepth?: number,
+    queueOldestCaptureMs?: number | null,
+  ): void {
+    this.responsiveness.noteInputInjected(id, tInjectedMs, queueDepth, queueOldestCaptureMs);
+  }
+
+  noteInputConsumed(
+    id: number,
+    tConsumedMs: number = performance.now(),
+    queueDepth?: number,
+    queueOldestCaptureMs?: number | null,
+  ): void {
+    this.responsiveness.noteInputConsumed(id, tConsumedMs, queueDepth, queueOldestCaptureMs);
+  }
+
+  notePresent(tPresentMs: number = performance.now()): void {
+    this.responsiveness.notePresent(tPresentMs);
   }
 
   captureStart(): void {
@@ -430,9 +462,10 @@ export class FallbackPerf implements PerfApi {
     this.captureDurationMs = 0;
     this.captureDroppedRecords = 0;
     this.captureRecords = 0;
+    this.responsiveness.reset();
   }
 
-  export(): unknown {
+  export(): PerfExport {
     const records = new Array(this.captureRecords);
     for (let i = 0; i < this.captureRecords; i += 1) {
       const instructions = this.captureInstructions[i];
@@ -490,12 +523,14 @@ export class FallbackPerf implements PerfApi {
         summary: frameTimeStats.summary(),
         stats: frameTimeStats.toJSON(),
       },
+      responsiveness: this.responsiveness.export(),
       records,
     };
   }
 
   private syncRaf(): void {
     const shouldRun = this.hudActive || this.captureActive;
+    this.responsiveness.setActive(shouldRun);
     if (shouldRun) {
       if (this.raf !== null) return;
       this.lastRafNowMs = performance.now();
@@ -504,6 +539,7 @@ export class FallbackPerf implements PerfApi {
         this.raf = requestAnimationFrame(tick);
         const frameTimeMs = nowMs - this.lastRafNowMs;
         this.lastRafNowMs = nowMs;
+        this.responsiveness.notePresent(nowMs);
         this.recordFrame(frameTimeMs);
       };
       this.raf = requestAnimationFrame(tick);
