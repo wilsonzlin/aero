@@ -167,6 +167,8 @@ dependencies = [
  "lru",
  "pollster",
  "pretty_assertions",
+ "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "wgpu",
  "xxhash-rust",

@@ -9,12 +9,14 @@ import {
   FRAME_PRESENTING,
   FRAME_SEQ_INDEX,
   FRAME_STATUS_INDEX,
+  type DirtyRect,
+  type FrameTimingsReport,
   type GpuWorkerMessageFromMain,
   type GpuWorkerMessageToMain,
 } from '../shared/frameProtocol';
 
-type DirtyRect = { x: number; y: number; w: number; h: number };
 type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<void | boolean>;
+type GetTimingsFn = () => FrameTimingsReport | null | Promise<FrameTimingsReport | null>;
 
 const postToMain = (msg: GpuWorkerMessageToMain) => {
   self.postMessage(msg);
@@ -23,6 +25,7 @@ const postToMain = (msg: GpuWorkerMessageToMain) => {
 let frameState: Int32Array | null = null;
 
 let presentFn: PresentFn | null = null;
+let getTimingsFn: GetTimingsFn | null = null;
 let presenting = false;
 
 let pendingDirtyRects: DirtyRect[] | null = null;
@@ -37,6 +40,8 @@ let lastPresentedSeq = 0;
 
 let lastMetricsPostAtMs = 0;
 const METRICS_POST_INTERVAL_MS = 250;
+
+let latestTimings: FrameTimingsReport | null = null;
 
 const syncSharedMetrics = () => {
   if (!frameState) return;
@@ -63,12 +68,17 @@ const maybePostMetrics = () => {
 
 const loadPresentFnFromModuleUrl = async (wasmModuleUrl: string) => {
   const mod: unknown = await import(/* @vite-ignore */ wasmModuleUrl);
+
   const maybePresent = (mod as { present?: unknown }).present;
   if (typeof maybePresent !== 'function') {
     throw new Error(`Module ${wasmModuleUrl} did not export a present() function`);
   }
-
   presentFn = maybePresent as PresentFn;
+
+  const maybeGetTimings =
+    (mod as { get_frame_timings?: unknown }).get_frame_timings ??
+    (mod as { getFrameTimings?: unknown }).getFrameTimings;
+  getTimingsFn = typeof maybeGetTimings === 'function' ? (maybeGetTimings as GetTimingsFn) : null;
 };
 
 const maybeUpdateFramesReceivedFromSeq = () => {
@@ -197,6 +207,20 @@ self.onmessage = (event: MessageEvent<GpuWorkerMessageFromMain>) => {
         pendingFrames += 1;
         framesReceived += 1;
       }
+      break;
+    }
+
+    case 'request_timings': {
+      void (async () => {
+        try {
+          const timings = getTimingsFn ? await getTimingsFn() : latestTimings;
+          latestTimings = timings;
+          postToMain({ type: 'timings', timings });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          postToMain({ type: 'error', message });
+        }
+      })();
       break;
     }
 

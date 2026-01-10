@@ -13,17 +13,29 @@ pub struct GpuCapabilities {
     ///
     /// WebGL2 backends (wgpu's `Backend::Gl` on wasm) do not support compute.
     pub supports_compute: bool,
+    /// Whether the currently-enabled device features allow GPU timestamp queries.
+    ///
+    /// Note: this reflects *enabled* features (what the device was created with),
+    /// not just adapter support.
+    pub timestamp_queries_supported: bool,
 }
 
 impl GpuCapabilities {
     pub fn from_device(device: &wgpu::Device) -> Self {
         let limits = device.limits();
+        let features = device.features();
         Self {
             min_uniform_buffer_offset_alignment: limits.min_uniform_buffer_offset_alignment,
             min_storage_buffer_offset_alignment: limits.min_storage_buffer_offset_alignment,
             max_buffer_size: limits.max_buffer_size,
             supports_compute: true,
+            timestamp_queries_supported: features.contains(wgpu::Features::TIMESTAMP_QUERY)
+                && features.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS),
         }
+    }
+
+    pub fn supports_timestamp_queries(self) -> bool {
+        self.timestamp_queries_supported
     }
 }
 
@@ -500,6 +512,7 @@ mod tests {
             min_storage_buffer_offset_alignment: 256,
             max_buffer_size: 1024 * 1024,
             supports_compute: true,
+            timestamp_queries_supported: false,
         };
 
         // We can't instantiate UploadRingBuffer without a Device, but we can
@@ -521,6 +534,7 @@ mod tests {
             min_storage_buffer_offset_alignment: 128,
             max_buffer_size: 4096,
             supports_compute: true,
+            timestamp_queries_supported: false,
         };
 
         let desc = UploadRingBufferDescriptor {

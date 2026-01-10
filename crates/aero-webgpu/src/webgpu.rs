@@ -180,6 +180,15 @@ fn negotiated_features(adapter: &wgpu::Adapter) -> wgpu::Features {
         }
     }
 
+    // Timestamp queries are extremely useful for profiling, but are optional and not supported on
+    // all platforms (notably some browser/WebGL2 fallbacks). wgpu further splits the capability
+    // into finer-grained feature bits; we rely on encoder timestamps.
+    if available.contains(wgpu::Features::TIMESTAMP_QUERY)
+        && available.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
+    {
+        requested |= wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+    }
+
     requested
 }
 
