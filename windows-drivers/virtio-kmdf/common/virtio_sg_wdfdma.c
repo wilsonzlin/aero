@@ -304,7 +304,7 @@ VirtioWdfDmaStartMapping(
     }
 
     {
-        size_t maxLen = WdfDmaEnablerGetMaximumLength(Dma->DmaEnabler);
+        size_t maxLen = Dma->MaxTransferLength;
         if (Length > maxLen) {
             /*
              * WDF will split transfers larger than the enabler/adapter maximum
@@ -348,7 +348,7 @@ VirtioWdfDmaStartMapping(
         return STATUS_INVALID_PARAMETER;
     }
 
-    maxSg = WdfDmaEnablerGetMaximumScatterGatherElements(Dma->DmaEnabler);
+    maxSg = Dma->MaxScatterGatherElements;
     if (maxSg == 0) {
         return STATUS_INVALID_DEVICE_STATE;
     }
