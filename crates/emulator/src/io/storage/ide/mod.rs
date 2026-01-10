@@ -12,6 +12,7 @@ pub use ata::AtaDevice;
 pub use atapi::{AtapiCdrom, IsoBackend};
 pub use busmaster::{BusMasterChannel, PrdEntry};
 
+use crate::io::storage::SECTOR_SIZE;
 use memory::MemoryBus;
 
 const IDE_STATUS_BSY: u8 = 0x80;
@@ -501,41 +502,46 @@ pub struct IdeController {
     secondary: Channel,
     bus_master_base: u16,
     bus_master: [BusMasterChannel; 2],
-    pci_config: [u8; 256],
+    pci_regs: [u8; 256],
+    bar4: u32,
+    bar4_probe: bool,
 }
 
 impl IdeController {
     pub fn new(bus_master_base: u16) -> Self {
         let primary = Channel::new(PRIMARY_PORTS);
         let secondary = Channel::new(SECONDARY_PORTS);
-        let mut pci_config = [0u8; 256];
+        let mut pci_regs = [0u8; 256];
         // PIIX3-ish identifiers: vendor/device/class are enough for Windows IDE mode.
-        pci_config[0x00..0x02].copy_from_slice(&0x8086u16.to_le_bytes()); // Intel
-        pci_config[0x02..0x04].copy_from_slice(&0x7010u16.to_le_bytes()); // PIIX3 IDE
-        pci_config[0x04..0x06].copy_from_slice(&0x0005u16.to_le_bytes()); // I/O space + bus master
-        pci_config[0x08] = 0x00; // revision
-        pci_config[0x09] = 0x8A; // prog IF: legacy primary/secondary + bus master
-        pci_config[0x0A] = 0x01; // subclass: IDE
-        pci_config[0x0B] = 0x01; // class: mass storage
-        pci_config[0x0E] = 0x00; // header type
+        pci_regs[0x00..0x02].copy_from_slice(&0x8086u16.to_le_bytes()); // Intel
+        pci_regs[0x02..0x04].copy_from_slice(&0x7010u16.to_le_bytes()); // PIIX3 IDE
+        pci_regs[0x04..0x06].copy_from_slice(&0x0005u16.to_le_bytes()); // I/O space + bus master
+        pci_regs[0x08] = 0x00; // revision
+        pci_regs[0x09] = 0x8A; // prog IF: legacy primary/secondary + bus master
+        pci_regs[0x0A] = 0x01; // subclass: IDE
+        pci_regs[0x0B] = 0x01; // class: mass storage
+        pci_regs[0x0E] = 0x00; // header type
 
         // BAR0-3: legacy I/O windows (command/control blocks). We keep these fixed.
-        pci_config[0x10..0x14].copy_from_slice(&(0x1F0u32 | 0x01).to_le_bytes());
-        pci_config[0x14..0x18].copy_from_slice(&(0x3F4u32 | 0x01).to_le_bytes());
-        pci_config[0x18..0x1C].copy_from_slice(&(0x170u32 | 0x01).to_le_bytes());
-        pci_config[0x1C..0x20].copy_from_slice(&(0x374u32 | 0x01).to_le_bytes());
+        pci_regs[0x10..0x14].copy_from_slice(&(0x1F0u32 | 0x01).to_le_bytes());
+        pci_regs[0x14..0x18].copy_from_slice(&(0x3F4u32 | 0x01).to_le_bytes());
+        pci_regs[0x18..0x1C].copy_from_slice(&(0x170u32 | 0x01).to_le_bytes());
+        pci_regs[0x1C..0x20].copy_from_slice(&(0x374u32 | 0x01).to_le_bytes());
         // BAR4: Bus Master IDE.
-        pci_config[0x20..0x24].copy_from_slice(&((bus_master_base as u32) | 0x01).to_le_bytes());
+        let bar4 = (bus_master_base as u32) | 0x01;
+        pci_regs[0x20..0x24].copy_from_slice(&bar4.to_le_bytes());
 
-        pci_config[0x3C] = PRIMARY_PORTS.irq; // interrupt line (best-effort)
-        pci_config[0x3D] = 0x01; // INTA#
+        pci_regs[0x3C] = PRIMARY_PORTS.irq; // interrupt line (best-effort)
+        pci_regs[0x3D] = 0x01; // INTA#
 
         Self {
             primary,
             secondary,
             bus_master_base,
             bus_master: [BusMasterChannel::new(), BusMasterChannel::new()],
-            pci_config,
+            pci_regs,
+            bar4,
+            bar4_probe: false,
         }
     }
 
@@ -655,30 +661,30 @@ impl IdeController {
     }
 
     /// Read from the PCI configuration space (little-endian).
-    pub fn pci_config_read(&self, offset: u8, size: u8) -> u32 {
-        let off = offset as usize;
-        if off >= self.pci_config.len() {
-            return 0xFFFF_FFFF;
+    pub fn pci_config_read(&self, offset: u16, size: u8) -> u32 {
+        let offset = offset as usize;
+        if offset >= self.pci_regs.len() || offset + size as usize > self.pci_regs.len() {
+            return match size {
+                1 => 0xff,
+                2 => 0xffff,
+                4 => 0xffff_ffff,
+                _ => 0xffff_ffff,
+            };
         }
         match size {
-            1 => self.pci_config[off] as u32,
-            2 => {
-                if off + 1 >= self.pci_config.len() {
-                    0xFFFF
-                } else {
-                    u16::from_le_bytes([self.pci_config[off], self.pci_config[off + 1]]) as u32
-                }
-            }
+            1 => self.pci_regs[offset] as u32,
+            2 => u16::from_le_bytes(self.pci_regs[offset..offset + 2].try_into().unwrap()) as u32,
             4 => {
-                if off + 3 >= self.pci_config.len() {
-                    0xFFFF_FFFF
+                if offset == 0x20 {
+                    // BAR4: Bus Master IDE.
+                    if self.bar4_probe {
+                        // Size mask response (16-byte I/O BAR).
+                        !(0x10u32 - 1) & 0xffff_fffc | 0x01
+                    } else {
+                        self.bar4
+                    }
                 } else {
-                    u32::from_le_bytes([
-                        self.pci_config[off],
-                        self.pci_config[off + 1],
-                        self.pci_config[off + 2],
-                        self.pci_config[off + 3],
-                    ])
+                    u32::from_le_bytes(self.pci_regs[offset..offset + 4].try_into().unwrap())
                 }
             }
             _ => 0,
@@ -686,27 +692,32 @@ impl IdeController {
     }
 
     /// Write to the PCI configuration space (little-endian).
-    pub fn pci_config_write(&mut self, offset: u8, size: u8, val: u32) {
-        match (offset, size) {
-            // Command register (I/O enable + bus master enable).
-            (0x04, 2) => {
-                let v = (val as u16).to_le_bytes();
-                self.pci_config[0x04..0x06].copy_from_slice(&v);
+    pub fn pci_config_write(&mut self, offset: u16, size: u8, val: u32) {
+        let offset = offset as usize;
+        if offset >= self.pci_regs.len() || offset + size as usize > self.pci_regs.len() {
+            return;
+        }
+        match size {
+            1 => self.pci_regs[offset] = val as u8,
+            2 => self.pci_regs[offset..offset + 2].copy_from_slice(&(val as u16).to_le_bytes()),
+            4 => {
+                if offset == 0x20 {
+                    // BAR4: Bus Master IDE base.
+                    if val == 0xffff_ffff {
+                        self.bar4_probe = true;
+                        self.bar4 = 0;
+                    } else {
+                        self.bar4_probe = false;
+                        self.bar4 = (val & 0xffff_fff0) | 0x01;
+                        self.bus_master_base = (self.bar4 as u16) & 0xfff0;
+                    }
+                    self.pci_regs[offset..offset + 4].copy_from_slice(&self.bar4.to_le_bytes());
+                    return;
+                }
+
+                self.pci_regs[offset..offset + 4].copy_from_slice(&val.to_le_bytes());
             }
-            // BAR4: Bus Master IDE base.
-            (0x20, 4) => {
-                let base = (val & 0xFFFF_FFF0) as u16;
-                self.bus_master_base = base;
-                let bar = (base as u32) | 0x01;
-                self.pci_config[0x20..0x24].copy_from_slice(&bar.to_le_bytes());
-            }
-            // Interrupt line.
-            (0x3C, 1) => {
-                self.pci_config[0x3C] = val as u8;
-            }
-            _ => {
-                // Ignore writes to read-only/unsupported config registers for now.
-            }
+            _ => {}
         }
     }
 
@@ -842,7 +853,7 @@ impl IdeController {
                     } else {
                         chan.tf.sector_count28() as usize
                     };
-                    chan.begin_pio_out(TransferKind::AtaPioWrite, sectors * 512);
+                    chan.begin_pio_out(TransferKind::AtaPioWrite, sectors * SECTOR_SIZE);
                 } else {
                     chan.set_error(0x04);
                     chan.status &= !IDE_STATUS_BSY;

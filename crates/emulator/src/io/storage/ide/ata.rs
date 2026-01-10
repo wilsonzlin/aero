@@ -1,4 +1,4 @@
-use crate::io::storage::disk::{DiskBackend, DiskError, DiskResult};
+use crate::io::storage::{disk::{DiskBackend, DiskError, DiskResult}, SECTOR_SIZE};
 
 pub struct AtaDevice {
     backend: Box<dyn DiskBackend>,
@@ -24,7 +24,7 @@ impl AtaDevice {
     }
 
     pub fn sector_bytes(&self, sectors: u64) -> Vec<u8> {
-        vec![0u8; sectors as usize * 512]
+        vec![0u8; sectors as usize * SECTOR_SIZE]
     }
 
     pub fn identify_data(&self) -> Vec<u8> {
@@ -101,19 +101,19 @@ impl AtaDevice {
     }
 
     pub fn pio_read(&mut self, lba: u64, sectors: u64) -> DiskResult<Vec<u8>> {
-        if self.backend.sector_size() != 512 {
+        if self.backend.sector_size() != SECTOR_SIZE as u32 {
             return Err(DiskError::InvalidBufferLength);
         }
-        let mut buf = vec![0u8; sectors as usize * 512];
+        let mut buf = vec![0u8; sectors as usize * SECTOR_SIZE];
         self.backend.read_sectors(lba, &mut buf)?;
         Ok(buf)
     }
 
     pub fn pio_write(&mut self, lba: u64, sectors: u64, data: &[u8]) -> DiskResult<()> {
-        if self.backend.sector_size() != 512 {
+        if self.backend.sector_size() != SECTOR_SIZE as u32 {
             return Err(DiskError::InvalidBufferLength);
         }
-        let expected = sectors as usize * 512;
+        let expected = sectors as usize * SECTOR_SIZE;
         let slice = if data.len() >= expected {
             &data[..expected]
         } else {
