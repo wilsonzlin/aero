@@ -130,6 +130,7 @@ dependencies = [
  "aero-acpi",
  "aero-devices-input",
  "aero-platform",
+ "aero_cpu_core",
  "memory",
 ]
 
