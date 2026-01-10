@@ -52,6 +52,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 27. [Windows Driver Development](./docs/windows/README.md)
 28. [Windows 7 Install Media Preparation (Slipstreaming)](./docs/16-windows7-install-media-prep.md)
 29. [Performance Tooling (Profiling, HUD, Traces, Benchmarks)](./docs/16-performance-tooling.md)
+30. [Guest Tools Packaging](./docs/16-guest-tools-packaging.md)
 
 ---
 
@@ -352,6 +353,7 @@ pub trait DisplayAdapter {
 | [16-disk-image-streaming-auth.md](./docs/16-disk-image-streaming-auth.md) | Disk byte streaming, auth, CORS/COEP   | I/O / Infra       |
 | [16-win7-unattended-install.md](./docs/16-win7-unattended-install.md)   | Unattended Win7 install (drivers/hooks) | All               |
 | [16-windows7-install-media-prep.md](./docs/16-windows7-install-media-prep.md) | Preparing a Win7 SP1 ISO with Aero drivers/certs | All |
+| [16-guest-tools-packaging.md](./docs/16-guest-tools-packaging.md)       | Guest Tools ISO/zip packaging          | Infrastructure    |
 
 
 ---

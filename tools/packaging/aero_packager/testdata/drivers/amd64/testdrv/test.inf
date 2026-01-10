@@ -1,0 +1,13 @@
+; Minimal INF fixture
+[Version]
+Signature="$Windows NT$"
+
+[Manufacturer]
+%Mfg%=Mfg,NTamd64
+
+[Mfg.NTamd64]
+%Dev%=Install, PCI\VEN_1234&DEV_5678
+
+[Strings]
+Mfg="Aero"
+Dev="Test Device"

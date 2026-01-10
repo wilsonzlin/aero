@@ -1,0 +1,10 @@
+{
+  "required_drivers": [
+    {
+      "name": "testdrv",
+      "expected_hardware_ids": [
+        "PCI\\\\VEN_1234&DEV_5678"
+      ]
+    }
+  ]
+}
