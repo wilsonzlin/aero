@@ -316,8 +316,13 @@ function Resolve-WdfCoInstallerPath {
     [string] $Arch
   )
 
-  $archDirs = if ($Arch -eq 'x86') { @('x86') } else { @('amd64', 'x64') }
-  $archRegex = "\\(" + (($archDirs | ForEach-Object { [Regex]::Escape($_) }) -join '|') + ")\\"
+  # Redist layout varies a bit across Windows Kits versions, but typically includes an
+  # arch directory segment like "\x86\" or "\amd64\". Match by path segment.
+  $archRegex = if ($Arch -eq 'x86') {
+    '(?i)(^|[\\/])x86([\\/]|$)'
+  } else {
+    '(?i)(^|[\\/])(amd64|x64)([\\/]|$)'
+  }
 
   foreach ($kitRoot in (Get-WdkKitRoots)) {
     foreach ($wdfRoot in @(
