@@ -86,6 +86,27 @@ On Windows 7 x64 you can sometimes boot once with driver signature enforcement d
 
 This only affects that one boot. For a repeatable setup, prefer installing properly signed/test-signed drivers and configuring test signing as required.
 
+## Issue: “The hash for the file is not present in the specified catalog file”
+
+**Symptom**
+
+During driver installation (or on boot), Windows reports an error like:
+
+- `The hash for the file is not present in the specified catalog file. The file is likely corrupt or the victim of tampering.`
+
+**Common causes**
+
+- The Guest Tools media is corrupted or incomplete.
+- The `.cat` file does not match the `.sys`/`.inf` (wrong driver set or mixed versions).
+- Signature validation is failing (for example: incorrect system time, missing KB3033929 for SHA-256).
+
+**Fix**
+
+1. Verify the guest clock/date/time is correct.
+2. Ensure KB3033929 is installed if your drivers are SHA-256-signed.
+3. Replace the Guest Tools ISO with a fresh copy (don’t mix driver folders across versions).
+4. Re-run `setup.cmd` as Administrator (or use the manual install fallback).
+
 ## Issue: Missing KB3033929 (SHA-256 signature support)
 
 Windows 7 needs KB3033929 to validate many SHA-256 signatures. Without it, drivers that are correctly signed may still appear “unsigned”.
