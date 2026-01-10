@@ -119,17 +119,11 @@ jobs:
             echo "locked=" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: cargo fmt
-        run: cargo fmt --all -- --check
-
-      - name: cargo clippy
-        run: cargo clippy ${{ steps.cargo-locked.outputs.locked }} --workspace --all-targets --all-features -- -D warnings
-
       - name: Prepare net traces dir
         run: mkdir -p target/net-traces
 
-      - name: cargo test
-        run: cargo test ${{ steps.cargo-locked.outputs.locked }} --workspace --all-features
+      - name: Run Rust checks via test-all runner
+        run: ./scripts/test-all.sh --skip-wasm --skip-ts --skip-e2e
 
       - name: Test guest tools packager
         run: cargo test --manifest-path tools/packaging/aero_packager/Cargo.toml --locked
@@ -318,8 +312,7 @@ jobs:
         run: wasm-pack build --release --target web -- ${{ steps.cargo-locked.outputs.locked }}
 
       - name: wasm-pack test (node)
-        working-directory: ${{ steps.wasm-crate.outputs.dir }}
-        run: wasm-pack test --node -- ${{ steps.cargo-locked.outputs.locked }}
+        run: ./scripts/test-all.sh --skip-rust --skip-ts --skip-e2e --wasm-crate-dir "${{ steps.wasm-crate.outputs.dir }}"
 
       - name: Upload wasm-pack output (on failure)
         if: failure()
@@ -640,8 +633,9 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Playwright tests (non-WebGPU)
-        working-directory: ${{ steps.node-dir.outputs.dir }}
-        run: npx playwright test --project=chromium
+        env:
+          AERO_NODE_DIR: ${{ steps.node-dir.outputs.dir }}
+        run: ./scripts/test-all.sh --skip-rust --skip-wasm --skip-ts --pw-project chromium
 
       - name: Publish E2E test report
         if: always()
