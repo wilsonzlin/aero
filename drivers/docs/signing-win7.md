@@ -4,6 +4,11 @@
 
 The upstream virtio-win drivers are typically already signed for Windows. However, **custom Aero drivers** (notably the optional GPU path) will need a signing strategy.
 
+For the in-tree **AeroGPU** Win7 WDDM package, the repo includes scripted helpers:
+
+- `drivers/aerogpu/packaging/win7/sign_test.cmd` (creates/installs a test cert, generates `.cat` via `inf2cat` if available, signs binaries)
+- `drivers/aerogpu/packaging/win7/install.cmd` / `uninstall.cmd` (PnP install/remove via `pnputil`)
+
 ## Test-signing (recommended for development)
 
 Inside the Windows 7 guest (run in an elevated command prompt):
