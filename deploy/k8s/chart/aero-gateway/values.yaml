@@ -145,3 +145,27 @@ certManager:
   issuerRef:
     kind: ClusterIssuer
     name: letsencrypt-prod
+
+  # Optional: have this chart create a namespace-scoped Issuer resource so TLS
+  # can be provisioned with a single `helm install` (assuming cert-manager is
+  # already installed in the cluster).
+  #
+  # When enabled, the Certificate will reference the created Issuer instead of
+  # issuerRef above.
+  createIssuer: false
+
+  issuer:
+    # If empty, defaults to "<release>-aero-gateway".
+    name: ""
+    # ACME account email (required when createIssuer=true).
+    email: ""
+    # Let's Encrypt production endpoint by default. For testing use:
+    # https://acme-staging-v02.api.letsencrypt.org/directory
+    server: https://acme-v02.api.letsencrypt.org/directory
+    # Where cert-manager stores the ACME account private key.
+    # If empty, defaults to "<issuer-name>-account-key".
+    privateKeySecretName: ""
+    http01:
+      # Which ingress class should solve the ACME HTTP-01 challenge.
+      # If empty, defaults to ingress.className.
+      ingressClass: ""

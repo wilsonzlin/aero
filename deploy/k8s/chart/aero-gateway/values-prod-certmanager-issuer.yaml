@@ -1,0 +1,30 @@
+# Example production values using cert-manager with a namespace-scoped Issuer
+# created by this chart (single Helm install, assuming cert-manager is already installed).
+#
+# Copy locally and replace placeholders before deploying.
+
+gateway:
+  replicaCount: 2
+  image:
+    tag: "<REPLACE_WITH_IMAGE_TAG>"
+
+ingress:
+  host: "aero.example.com"
+  tls:
+    enabled: true
+    secretName: ""
+
+certManager:
+  enabled: true
+  createIssuer: true
+  issuer:
+    email: "<REPLACE_WITH_ACME_EMAIL>"
+    server: https://acme-v02.api.letsencrypt.org/directory
+
+redis:
+  enabled: true
+
+secrets:
+  data:
+    SESSION_SECRET: "<REPLACE_WITH_RANDOM_SECRET>"
+    ADMIN_API_KEY: "<REPLACE_WITH_RANDOM_KEY>"

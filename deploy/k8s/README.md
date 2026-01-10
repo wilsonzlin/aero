@@ -109,19 +109,30 @@ The chart ships example values you can copy locally:
 - `deploy/k8s/chart/aero-gateway/values-traefik.yaml` – Traefik Ingress + Middleware headers
 - `deploy/k8s/chart/aero-gateway/values-prod-appheaders.yaml` – production with app-level COOP/COEP (no ingress snippets)
 - `deploy/k8s/chart/aero-gateway/values-prod-certmanager.yaml` – production with cert-manager-managed TLS
+- `deploy/k8s/chart/aero-gateway/values-prod-certmanager-issuer.yaml` – production with cert-manager TLS + chart-managed Issuer
 
 ## TLS with cert-manager (optional)
 
 If cert-manager is available in your cluster, you can automate certificate issuance.
 
-1) Ensure a `ClusterIssuer` exists (example names: `letsencrypt-prod`, `letsencrypt-staging`).
-2) Set:
+### Option A: use an existing ClusterIssuer/Issuer
+
+1) Ensure a `ClusterIssuer` (or namespace-scoped `Issuer`) exists (example names: `letsencrypt-prod`, `letsencrypt-staging`).
+2) Set (see `values-prod-certmanager.yaml`):
    - `ingress.tls.enabled=true`
    - `certManager.enabled=true`
    - `certManager.issuerRef.kind/name` appropriately
 
 The chart will create a `Certificate` resource and use a deterministic TLS secret name
 `<release>-aero-gateway-tls` unless you set `ingress.tls.secretName` explicitly.
+
+### Option B: have the chart create a namespace-scoped Issuer
+
+If you prefer a single `helm install` (no separate Issuer/ClusterIssuer YAML), set (see `values-prod-certmanager-issuer.yaml`):
+
+- `certManager.enabled=true`
+- `certManager.createIssuer=true`
+- `certManager.issuer.email=<your-email>` (required)
 
 ## Gateway config notes (PUBLIC_BASE_URL / origin allowlist)
 

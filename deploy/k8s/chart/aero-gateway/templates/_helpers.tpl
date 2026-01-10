@@ -89,6 +89,34 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 {{- end -}}
 
+{{- define "aero-gateway.certManagerIssuerName" -}}
+{{- if (default false .Values.certManager.createIssuer) -}}
+{{- if .Values.certManager.issuer.name -}}
+{{- .Values.certManager.issuer.name -}}
+{{- else -}}
+{{- include "aero-gateway.fullname" . -}}
+{{- end -}}
+{{- else -}}
+{{- .Values.certManager.issuerRef.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "aero-gateway.certManagerIssuerKind" -}}
+{{- if (default false .Values.certManager.createIssuer) -}}
+Issuer
+{{- else -}}
+{{- .Values.certManager.issuerRef.kind -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "aero-gateway.certManagerIssuerAccountKeySecretName" -}}
+{{- if .Values.certManager.issuer.privateKeySecretName -}}
+{{- .Values.certManager.issuer.privateKeySecretName -}}
+{{- else -}}
+{{- printf "%s-account-key" (include "aero-gateway.certManagerIssuerName" .) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "aero-gateway.coopCoepSnippet" -}}
 add_header Cross-Origin-Opener-Policy "{{ .Values.ingress.coopCoep.coop }}" always;
 add_header Cross-Origin-Embedder-Policy "{{ .Values.ingress.coopCoep.coep }}" always;

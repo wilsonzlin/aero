@@ -1,4 +1,7 @@
 {{- if and (default false .Values.certManager.enabled) .Values.ingress.enabled .Values.ingress.tls.enabled -}}
+{{- if and (default false .Values.certManager.createIssuer) (not .Values.certManager.issuer.email) -}}
+{{- fail "certManager.createIssuer=true requires certManager.issuer.email to be set." -}}
+{{- end -}}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -10,6 +13,6 @@ spec:
   dnsNames:
     - {{ .Values.ingress.host | quote }}
   issuerRef:
-    kind: {{ .Values.certManager.issuerRef.kind | quote }}
-    name: {{ .Values.certManager.issuerRef.name | quote }}
+    kind: {{ include "aero-gateway.certManagerIssuerKind" . | quote }}
+    name: {{ include "aero-gateway.certManagerIssuerName" . | quote }}
 {{- end }}

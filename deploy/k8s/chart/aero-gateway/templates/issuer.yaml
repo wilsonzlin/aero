@@ -1,0 +1,24 @@
+{{- if and (default false .Values.certManager.enabled) (default false .Values.certManager.createIssuer) -}}
+{{- if not .Values.certManager.issuer.email -}}
+{{- fail "certManager.createIssuer=true requires certManager.issuer.email to be set." -}}
+{{- end -}}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "aero-gateway.certManagerIssuerName" . }}
+  labels:
+    {{- include "aero-gateway.labels" . | nindent 4 }}
+spec:
+  acme:
+    email: {{ .Values.certManager.issuer.email | quote }}
+    server: {{ .Values.certManager.issuer.server | quote }}
+    privateKeySecretRef:
+      name: {{ include "aero-gateway.certManagerIssuerAccountKeySecretName" . }}
+    solvers:
+      - http01:
+          ingress:
+            {{- $solverClass := default .Values.ingress.className .Values.certManager.issuer.http01.ingressClass -}}
+            {{- if $solverClass }}
+            class: {{ $solverClass | quote }}
+            {{- end }}
+{{- end }}
