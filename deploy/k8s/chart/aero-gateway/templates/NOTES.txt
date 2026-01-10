@@ -18,7 +18,7 @@
 
 3. Verify WebSocket handshake:
    {{- if .Values.ingress.tls.enabled }}
-   websocat -v 'wss://{{ .Values.ingress.host }}/tcp?host=example.com&port=80'
+   websocat -v 'wss://{{ .Values.ingress.host }}/tcp?v=1&host=example.com&port=80'
    {{- else }}
-   websocat -v 'ws://{{ .Values.ingress.host }}/tcp?host=example.com&port=80'
+   websocat -v 'ws://{{ .Values.ingress.host }}/tcp?v=1&host=example.com&port=80'
    {{- end }}
