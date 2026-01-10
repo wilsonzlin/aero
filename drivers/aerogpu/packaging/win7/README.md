@@ -13,6 +13,16 @@ It also includes scripts for **test-signing** and **install/uninstall** in a Win
 
 Copy the built driver binaries into this directory (same folder as the `.inf` files):
 
+> Tip: if you built via `drivers\aerogpu\build\build_all.cmd`, you can stage this folder automatically:
+>
+> ```bat
+> :: For a Win7 x64 VM (copies x64 aerogpu.sys + x86/x64 UMDs)
+> drivers\aerogpu\build\stage_packaging_win7.cmd fre x64
+>
+> :: For a Win7 x86 VM (copies x86 aerogpu.sys + x86 UMDs)
+> drivers\aerogpu\build\stage_packaging_win7.cmd fre x86
+> ```
+
 ### Required (D3D9)
 
 | File | Arch | Destination after install |
