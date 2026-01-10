@@ -174,7 +174,7 @@ function Import-EnvironmentFromBatchFile {
 function Initialize-ToolchainEnvironment {
   param(
     $Toolchain,
-    [string[]]$NormalizedPlatforms
+    [Parameter(Mandatory = $true)][string]$Platform
   )
 
   if ($null -eq $Toolchain) { return }
@@ -205,13 +205,31 @@ function Initialize-ToolchainEnvironment {
   $vcVarsAll = Get-ToolchainPropertyValue -Toolchain $Toolchain -Names @('VcVarsAll', 'vcVarsAll', 'vcvarsall')
 
   # If we have a dev-environment batch file, use it to populate PATH/INCLUDE/LIB/etc.
-  # For simplicity we import a single environment that is sufficient for building both Win32 and x64.
+  # We import an environment per *target* platform so that building both Win32 and x64 works reliably.
   if ($vsDevCmd) {
-    $arch = if ($NormalizedPlatforms -contains 'x64') { 'x64' } else { 'x86' }
-    Write-Host "Importing Visual Studio environment via VsDevCmd: $vsDevCmd (-arch=$arch -host_arch=$arch)"
-    Import-EnvironmentFromBatchFile -BatchPath $vsDevCmd -Arguments @("-arch=$arch", "-host_arch=$arch")
+    $hostVsArch = 'x64'
+    $procArch = [string]$env:PROCESSOR_ARCHITECTURE
+    if ($procArch -and $procArch.Trim().ToLowerInvariant() -eq 'x86') {
+      $hostVsArch = 'x86'
+    }
+
+    $targetVsArch = if ($Platform -eq 'Win32') { 'x86' } else { 'x64' }
+
+    Write-Host "Importing Visual Studio environment via VsDevCmd: $vsDevCmd (-arch=$targetVsArch -host_arch=$hostVsArch)"
+    Import-EnvironmentFromBatchFile -BatchPath $vsDevCmd -Arguments @("-arch=$targetVsArch", "-host_arch=$hostVsArch")
   } elseif ($vcVarsAll) {
-    $archArg = if ($NormalizedPlatforms -contains 'x64') { 'amd64' } else { 'x86' }
+    $hostVcArch = 'amd64'
+    $procArch = [string]$env:PROCESSOR_ARCHITECTURE
+    if ($procArch -and $procArch.Trim().ToLowerInvariant() -eq 'x86') {
+      $hostVcArch = 'x86'
+    }
+
+    if ($Platform -eq 'Win32') {
+      $archArg = if ($hostVcArch -eq 'amd64') { 'amd64_x86' } else { 'x86' }
+    } else {
+      $archArg = if ($hostVcArch -eq 'amd64') { 'amd64' } else { 'x86_amd64' }
+    }
+
     Write-Host "Importing Visual Studio environment via vcvarsall: $vcVarsAll ($archArg)"
     Import-EnvironmentFromBatchFile -BatchPath $vcVarsAll -Arguments @($archArg)
   }
@@ -271,6 +289,68 @@ function Resolve-MSBuildPath {
   throw "MSBuild not found. Install Visual Studio Build Tools/WDK or provide -ToolchainJson with an MSBuild path."
 }
 
+function Get-SafeFileName {
+  param([Parameter(Mandatory = $true)][string]$Value)
+  $result = $Value
+  foreach ($c in [IO.Path]::GetInvalidFileNameChars()) {
+    $result = $result.Replace([string]$c, '_')
+  }
+  $result = $result.Replace('/', '_').Replace('\', '_')
+  return $result
+}
+
+function Try-GetDriverBuildTargetFromDirectory {
+  param(
+    [Parameter(Mandatory = $true)][System.IO.DirectoryInfo]$Directory,
+    [Parameter(Mandatory = $true)][string]$DriversRootResolved
+  )
+
+  $name = $Directory.Name
+  $sln = Join-Path $Directory.FullName ("{0}.sln" -f $name)
+  $buildPath = $null
+  $kind = $null
+
+  if (Test-Path -LiteralPath $sln -PathType Leaf) {
+    $buildPath = $sln
+    $kind = 'sln'
+  } else {
+    $vcxprojs = @(Get-ChildItem -LiteralPath $Directory.FullName -File -Filter '*.vcxproj')
+    if ($vcxprojs.Count -eq 1) {
+      $buildPath = $vcxprojs[0].FullName
+      $kind = 'vcxproj'
+    } elseif ($vcxprojs.Count -eq 0) {
+      return $null
+    } else {
+      throw "Directory '$($Directory.FullName)' has multiple '*.vcxproj' files but no '$name.sln'."
+    }
+  }
+
+  $sep = [IO.Path]::DirectorySeparatorChar
+  $altSep = [IO.Path]::AltDirectorySeparatorChar
+  $driversRootNormalized = $DriversRootResolved.TrimEnd($sep, $altSep)
+  $dirResolved = (Resolve-Path -LiteralPath $Directory.FullName).Path.TrimEnd($sep, $altSep)
+  $prefix = $driversRootNormalized + $sep
+
+  if (-not $dirResolved.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Internal error: expected '$dirResolved' to be under '$driversRootNormalized'."
+  }
+
+  $relativePath = $dirResolved.Substring($prefix.Length)
+  $displayName = $relativePath.Replace($sep, '/')
+  if ($altSep -ne $sep) {
+    $displayName = $displayName.Replace($altSep, '/')
+  }
+
+  return [pscustomobject]@{
+    Name = $displayName
+    RelativePath = $relativePath
+    LeafName = $name
+    Kind = $kind
+    BuildPath = (Resolve-Path -LiteralPath $buildPath).Path
+    Directory = $dirResolved
+  }
+}
+
 function Discover-DriverBuildTargets {
   param(
     [Parameter(Mandatory = $true)][string]$DriversRoot,
@@ -281,57 +361,62 @@ function Discover-DriverBuildTargets {
     return @()
   }
 
-  $allDirs = @(Get-ChildItem -LiteralPath $DriversRoot -Directory)
-  $selectedDirs = @()
+  $driversRootResolved = (Resolve-Path -LiteralPath $DriversRoot).Path
 
-  if ($AllowList -and $AllowList.Count -gt 0) {
-    foreach ($name in $AllowList) {
-      $dir = $allDirs | Where-Object { $_.Name -ieq $name } | Select-Object -First 1
-      if (-not $dir) {
-        throw "Requested driver '$name' not found under: $DriversRoot"
-      }
-      $selectedDirs += $dir
-    }
-  } else {
-    $selectedDirs = $allDirs | Sort-Object -Property Name
-  }
+  # Support both layouts:
+  #   - drivers/<name>/...
+  #   - drivers/<group>/<name>/...
+  $level1 = @(Get-ChildItem -LiteralPath $DriversRoot -Directory | Sort-Object -Property Name)
 
   $targets = New-Object System.Collections.Generic.List[object]
 
-  foreach ($dir in $selectedDirs) {
-    $name = $dir.Name
-    $sln = Join-Path $dir.FullName ("{0}.sln" -f $name)
-    $buildPath = $null
-    $kind = $null
-
-    if (Test-Path -LiteralPath $sln -PathType Leaf) {
-      $buildPath = $sln
-      $kind = 'sln'
-    } else {
-      $vcxprojs = @(Get-ChildItem -LiteralPath $dir.FullName -File -Filter '*.vcxproj')
-      if ($vcxprojs.Count -eq 1) {
-        $buildPath = $vcxprojs[0].FullName
-        $kind = 'vcxproj'
-      } elseif ($vcxprojs.Count -eq 0) {
-        if ($AllowList) {
-          throw "Driver '$name' has no '$name.sln' and no '*.vcxproj' under: $($dir.FullName)"
-        }
-        Write-Host "Skipping drivers/$name: no '$name.sln' or '*.vcxproj' found."
-        continue
-      } else {
-        throw "Driver '$name' has multiple '*.vcxproj' files but no '$name.sln' under: $($dir.FullName)"
-      }
+  foreach ($dir1 in $level1) {
+    $target = Try-GetDriverBuildTargetFromDirectory -Directory $dir1 -DriversRootResolved $driversRootResolved
+    if ($null -ne $target) {
+      [void]$targets.Add($target)
+      continue
     }
 
-    [void]$targets.Add([pscustomobject]@{
-      Name = $name
-      Kind = $kind
-      BuildPath = (Resolve-Path -LiteralPath $buildPath).Path
-      Directory = (Resolve-Path -LiteralPath $dir.FullName).Path
-    })
+    $level2 = @(Get-ChildItem -LiteralPath $dir1.FullName -Directory | Sort-Object -Property Name)
+    foreach ($dir2 in $level2) {
+      $target2 = Try-GetDriverBuildTargetFromDirectory -Directory $dir2 -DriversRootResolved $driversRootResolved
+      if ($null -ne $target2) {
+        [void]$targets.Add($target2)
+      }
+    }
   }
 
-  return ,$targets.ToArray()
+  $allTargets = ,$targets.ToArray()
+
+  if (-not $AllowList -or $AllowList.Count -eq 0) {
+    return $allTargets
+  }
+
+  $selected = New-Object System.Collections.Generic.List[object]
+  $normalizedAllow = Get-UniqueStringsInOrder -Values $AllowList
+
+  foreach ($requestedRaw in $normalizedAllow) {
+    $requested = ([string]$requestedRaw).Trim()
+    if ([string]::IsNullOrWhiteSpace($requested)) { continue }
+
+    $requestedNorm = $requested.Replace('\', '/')
+    $matches = @($allTargets | Where-Object { $_.Name -ieq $requestedNorm })
+    if ($matches.Count -eq 0) {
+      $matches = @($allTargets | Where-Object { $_.LeafName -ieq $requestedNorm })
+    }
+
+    if ($matches.Count -eq 0) {
+      throw "Requested driver '$requested' not found under: $DriversRoot"
+    }
+    if ($matches.Count -gt 1) {
+      $ids = ($matches | Select-Object -ExpandProperty Name | Sort-Object -Unique) -join ', '
+      throw "Requested driver '$requested' is ambiguous. Matches: $ids"
+    }
+
+    [void]$selected.Add($matches[0])
+  }
+
+  return ,$selected.ToArray()
 }
 
 function Format-CommandLine {
@@ -395,8 +480,8 @@ $repoRoot = Get-RepoRoot
 $driversRoot = Join-Path $repoRoot 'drivers'
 $outRoot = Join-Path $repoRoot 'out'
 $outDriversRoot = Join-Path $outRoot 'drivers'
-$logRoot = Join-Path $outRoot 'logs\\drivers'
-$objRoot = Join-Path $outRoot 'obj\\drivers'
+$logRoot = Join-Path (Join-Path $outRoot 'logs') 'drivers'
+$objRoot = Join-Path (Join-Path $outRoot 'obj') 'drivers'
 
 $normalizedPlatforms = @()
 foreach ($p in $Platforms) { $normalizedPlatforms += (Normalize-Platform -Platform $p) }
@@ -407,7 +492,10 @@ Write-Host ("Platforms: {0}" -f ($normalizedPlatforms -join ', '))
 if ($Drivers) { Write-Host ("Drivers allowlist: {0}" -f ($Drivers -join ', ')) }
 
 $toolchain = Read-ToolchainJson -ToolchainJsonPath $ToolchainJson
-Initialize-ToolchainEnvironment -Toolchain $toolchain -NormalizedPlatforms $normalizedPlatforms
+if ($null -ne $toolchain) {
+  $bootstrapPlatform = if ($normalizedPlatforms -contains 'x64') { 'x64' } else { $normalizedPlatforms[0] }
+  Initialize-ToolchainEnvironment -Toolchain $toolchain -Platform $bootstrapPlatform
+}
 $msbuild = Resolve-MSBuildPath -Toolchain $toolchain
 Write-Host "Using MSBuild: $msbuild"
 
@@ -434,16 +522,21 @@ $failed = $false
 
 foreach ($target in $targets) {
   foreach ($platform in $normalizedPlatforms) {
+    if ($null -ne $toolchain) {
+      Initialize-ToolchainEnvironment -Toolchain $toolchain -Platform $platform
+    }
+
     $arch = Platform-ToArch -Platform $platform
 
-    $driverOutDir = Join-Path $outDriversRoot (Join-Path $target.Name $arch)
-    $driverObjDir = Join-Path $objRoot (Join-Path $target.Name $arch)
+    $driverOutDir = Join-Path (Join-Path $outDriversRoot $target.RelativePath) $arch
+    $driverObjDir = Join-Path (Join-Path $objRoot $target.RelativePath) $arch
 
     Ensure-EmptyDirectory -Path $driverOutDir
     Ensure-EmptyDirectory -Path $driverObjDir
 
-    $logFile = Join-Path $logRoot ("{0}-{1}.msbuild.log" -f $target.Name, $arch)
-    $binLogFile = Join-Path $logRoot ("{0}-{1}.msbuild.binlog" -f $target.Name, $arch)
+    $logBase = Get-SafeFileName -Value $target.Name
+    $logFile = Join-Path $logRoot ("{0}-{1}.msbuild.log" -f $logBase, $arch)
+    $binLogFile = Join-Path $logRoot ("{0}-{1}.msbuild.binlog" -f $logBase, $arch)
 
     Write-Host ""
     Write-Host ("==> Building driver '{0}' ({1}) [{2}|{3}]" -f $target.Name, $target.Kind, $Configuration, $platform)
