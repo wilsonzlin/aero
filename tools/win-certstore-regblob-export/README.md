@@ -33,6 +33,9 @@ For a single `(store, certificate)` pair the output is a single JSON object:
   "thumbprint_sha1": "0123ABCD...",
   "values": {
     "Blob": "base64..."
+  },
+  "value_types": {
+    "Blob": 3
   }
 }
 ```
@@ -46,3 +49,10 @@ If multiple stores and/or multiple certificates are provided, the output is a JS
 3. Adds the certificate via `CertAddEncodedCertificateToStore`.
 4. Reads back the resulting `Certificates\<thumbprint>` registry subkey and exports *all* values it contains.
 5. Deletes the temporary key tree (no admin required).
+
+## `.reg` output and offline hives
+
+By default, `.reg` output targets the live machine store under `HKLM\SOFTWARE\...`.
+
+If you want to import into an **offline** SOFTWARE hive loaded under a custom key (e.g. `reg load HKLM\OFFSOFT <path-to-SOFTWARE>`),
+pass `--reg-hklm-subkey OFFSOFT` so the keys are emitted under `HKEY_LOCAL_MACHINE\OFFSOFT\...`.

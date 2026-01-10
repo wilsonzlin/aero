@@ -29,10 +29,7 @@ impl std::str::FromStr for StoreName {
     type Err = String;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        let normalized = s
-            .trim()
-            .to_ascii_lowercase()
-            .replace(['-', '_'], "");
+        let normalized = s.trim().to_ascii_lowercase().replace(['-', '_'], "");
         match normalized.as_str() {
             "root" => Ok(StoreName::Root),
             "trustedpublisher" => Ok(StoreName::TrustedPublisher),
@@ -65,6 +62,15 @@ struct Args {
     #[arg(long)]
     reg_out: Option<PathBuf>,
 
+    /// For .reg output: the HKLM subkey to write under.
+    ///
+    /// - Live system store uses `SOFTWARE` (default), yielding:
+    ///   `HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\SystemCertificates\\...`
+    /// - Offline hive loaded via `reg load HKLM\\OFFSOFT <SOFTWARE>` should use `OFFSOFT`, yielding:
+    ///   `HKEY_LOCAL_MACHINE\\OFFSOFT\\Microsoft\\SystemCertificates\\...`
+    #[arg(long, default_value = "SOFTWARE")]
+    reg_hklm_subkey: String,
+
     /// Certificate file(s) in PEM or DER
     #[arg(value_name = "CERT_FILE", required = true)]
     cert_files: Vec<PathBuf>,
@@ -75,6 +81,7 @@ struct PatchJson {
     store: String,
     thumbprint_sha1: String,
     values: BTreeMap<String, String>,
+    value_types: BTreeMap<String, u32>,
 }
 
 fn patch_to_json(patch: &export::CertRegistryPatch) -> PatchJson {
@@ -91,6 +98,11 @@ fn patch_to_json(patch: &export::CertRegistryPatch) -> PatchJson {
                 )
             })
             .collect(),
+        value_types: patch
+            .values
+            .iter()
+            .map(|(k, v)| (k.clone(), v.ty))
+            .collect(),
     }
 }
 
@@ -103,8 +115,8 @@ fn main() -> Result<()> {
 
     let mut patches = Vec::new();
     for cert_file in &args.cert_files {
-        let ders =
-            export::load_certificates_from_file(cert_file).with_context(|| format!("{cert_file:?}"))?;
+        let ders = export::load_certificates_from_file(cert_file)
+            .with_context(|| format!("{cert_file:?}"))?;
         for der in ders {
             for store in &args.store {
                 patches.push(
@@ -127,12 +139,15 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&json_value)?);
 
             if let Some(path) = &args.reg_out {
-                let reg = export::render_reg_file(&patches)?;
+                let reg = export::render_reg_file(&patches, &args.reg_hklm_subkey)?;
                 std::fs::write(path, reg).with_context(|| format!("write {}", path.display()))?;
             }
         }
         OutputFormat::Reg => {
-            print!("{}", export::render_reg_file(&patches)?);
+            print!(
+                "{}",
+                export::render_reg_file(&patches, &args.reg_hklm_subkey)?
+            );
         }
     }
 

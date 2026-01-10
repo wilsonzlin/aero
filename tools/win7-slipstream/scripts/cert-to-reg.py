@@ -9,7 +9,18 @@ into an OFFLINE Windows 7 SOFTWARE hive (machine-wide certificate stores):
   - Microsoft\\SystemCertificates\\TrustedPublisher\\Certificates\\<SHA1_THUMBPRINT>
 
 The registry key name is the SHA-1 thumbprint of the certificate DER bytes.
-The registry value "Blob" is the certificate DER bytes encoded as REG_BINARY.
+
+Note: For `HKLM\\...\\Microsoft\\SystemCertificates\\...`, the `Blob` value is
+written by CryptoAPI's registry-backed cert store provider and is **not guaranteed
+to be raw DER** (it may include additional serialized metadata/properties).
+
+This script writes the certificate's raw DER bytes into `Blob`. That may work in
+some environments, but for an exact/portable representation you should generate
+the patch on Windows using:
+
+  tools/win-certstore-regblob-export
+
+and then apply the resulting `.reg`/JSON patch to the offline hive.
 
 This script is intentionally dependency-free (Python stdlib only).
 """
@@ -126,4 +137,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-

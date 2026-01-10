@@ -21,20 +21,33 @@ pub struct CertRegistryPatch {
 }
 
 pub fn load_certificates_from_file(path: &Path) -> Result<Vec<Vec<u8>>> {
-    let data = std::fs::read(path).with_context(|| format!("read certificate file: {}", path.display()))?;
+    let data = std::fs::read(path)
+        .with_context(|| format!("read certificate file: {}", path.display()))?;
 
-    if data.windows(b"-----BEGIN".len()).any(|w| w == b"-----BEGIN") {
-        let pem_text = std::str::from_utf8(&data)
-            .with_context(|| format!("certificate file is not valid UTF-8 PEM: {}", path.display()))?;
+    if data
+        .windows(b"-----BEGIN".len())
+        .any(|w| w == b"-----BEGIN")
+    {
+        let pem_text = std::str::from_utf8(&data).with_context(|| {
+            format!(
+                "certificate file is not valid UTF-8 PEM: {}",
+                path.display()
+            )
+        })?;
 
         let mut certs = Vec::new();
-        for block in pem::parse_many(pem_text).with_context(|| format!("parse PEM: {}", path.display()))? {
+        for block in
+            pem::parse_many(pem_text).with_context(|| format!("parse PEM: {}", path.display()))?
+        {
             if block.tag() == "CERTIFICATE" {
                 certs.push(block.contents().to_vec());
             }
         }
         if certs.is_empty() {
-            bail!("no CERTIFICATE blocks found in PEM file: {}", path.display());
+            bail!(
+                "no CERTIFICATE blocks found in PEM file: {}",
+                path.display()
+            );
         }
         Ok(certs)
     } else {
@@ -45,14 +58,19 @@ pub fn load_certificates_from_file(path: &Path) -> Result<Vec<Vec<u8>>> {
     }
 }
 
-pub fn render_reg_file(patches: &[CertRegistryPatch]) -> Result<String> {
+pub fn render_reg_file(patches: &[CertRegistryPatch], hklm_subkey: &str) -> Result<String> {
+    if hklm_subkey.trim().is_empty() {
+        bail!("HKLM subkey must be non-empty (e.g. SOFTWARE, OFFSOFT)");
+    }
     let mut out = String::new();
     out.push_str("Windows Registry Editor Version 5.00\r\n\r\n");
 
     for patch in patches {
         let key_path = format!(
-            "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\SystemCertificates\\{}\\Certificates\\{}",
-            patch.store, patch.thumbprint_sha1
+            "HKEY_LOCAL_MACHINE\\{}\\Microsoft\\SystemCertificates\\{}\\Certificates\\{}",
+            hklm_subkey.trim_matches('\\'),
+            patch.store,
+            patch.thumbprint_sha1
         );
         out.push('[');
         out.push_str(&key_path);
@@ -84,7 +102,10 @@ fn render_reg_value(name: &str, value: &RegistryValue) -> Result<String> {
     match value.ty {
         REG_DWORD => {
             if value.bytes.len() != 4 {
-                bail!("REG_DWORD value {name:?} expected 4 bytes, got {}", value.bytes.len());
+                bail!(
+                    "REG_DWORD value {name:?} expected 4 bytes, got {}",
+                    value.bytes.len()
+                );
             }
             let v = u32::from_le_bytes(value.bytes.as_slice().try_into().unwrap());
             out.push_str(&format!("dword:{:08x}", v));
@@ -129,7 +150,10 @@ fn format_hex_bytes(bytes: &[u8], indent: &str) -> String {
 
 fn decode_reg_sz(bytes: &[u8]) -> Result<String> {
     if bytes.len() % 2 != 0 {
-        return Err(anyhow!("REG_SZ bytes must be valid UTF-16LE (even length), got {}", bytes.len()));
+        return Err(anyhow!(
+            "REG_SZ bytes must be valid UTF-16LE (even length), got {}",
+            bytes.len()
+        ));
     }
 
     let mut utf16: Vec<u16> = bytes
@@ -203,7 +227,7 @@ mod windows_impl {
         match values.get("Blob") {
             Some(v) if v.ty == REG_BINARY && !v.bytes.is_empty() => {}
             _ => {
-            bail!("registry-backed store did not create a non-empty REG_BINARY Blob value");
+                bail!("registry-backed store did not create a non-empty REG_BINARY Blob value");
             }
         }
 
@@ -334,9 +358,10 @@ mod windows_impl {
             )
         };
         if !ok.as_bool() {
-            return Err(anyhow!("CertAddEncodedCertificateToStore failed: {:?}", unsafe {
-                GetLastError()
-            }));
+            return Err(anyhow!(
+                "CertAddEncodedCertificateToStore failed: {:?}",
+                unsafe { GetLastError() }
+            ));
         }
         Ok(CertContext(ctx))
     }
@@ -363,7 +388,10 @@ mod windows_impl {
 
     fn resolve_cert_subkey_name(certs_key: &OwnedHKey, expected: &str) -> Result<String> {
         let subkeys = enumerate_subkeys(certs_key)?;
-        if let Some(found) = subkeys.iter().find(|name| name.eq_ignore_ascii_case(expected)) {
+        if let Some(found) = subkeys
+            .iter()
+            .find(|name| name.eq_ignore_ascii_case(expected))
+        {
             return Ok(found.clone());
         }
         if subkeys.len() == 1 {
@@ -547,6 +575,7 @@ pub fn hex_upper(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn hex_upper_is_uppercase() {
@@ -558,5 +587,42 @@ mod tests {
         let bytes: Vec<u8> = (0u8..40).collect();
         let s = format_hex_bytes(&bytes, "  ");
         assert!(s.contains("\\\r\n  "));
+    }
+
+    #[test]
+    fn load_certificates_from_file_der_round_trip() {
+        let tmp = temp_path("der");
+        std::fs::write(&tmp, [1u8, 2, 3, 4]).unwrap();
+        let certs = load_certificates_from_file(&tmp).unwrap();
+        assert_eq!(certs, vec![vec![1u8, 2, 3, 4]]);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn load_certificates_from_file_pem_multiple() {
+        let tmp = temp_path("pem");
+        let pem = concat!(
+            "-----BEGIN CERTIFICATE-----\n",
+            "AQID\n",
+            "-----END CERTIFICATE-----\n",
+            "-----BEGIN CERTIFICATE-----\n",
+            "BAU=\n",
+            "-----END CERTIFICATE-----\n",
+        );
+        std::fs::write(&tmp, pem).unwrap();
+        let certs = load_certificates_from_file(&tmp).unwrap();
+        assert_eq!(certs, vec![vec![1u8, 2, 3], vec![4u8, 5]]);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    fn temp_path(suffix: &str) -> PathBuf {
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "win-certstore-regblob-export-test-{pid}-{nanos}.{suffix}"
+        ))
     }
 }

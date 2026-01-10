@@ -9,11 +9,12 @@ Windows Registry Editor Version 5.00
 ;
 ; Tokens you must replace:
 ;   __AERO_CERT_SHA1__     = SHA-1 thumbprint of the certificate DER bytes (40 hex chars).
-;   __AERO_CERT_DER_HEX__  = certificate DER bytes as comma-separated hex (REG_BINARY).
+;   __AERO_CERT_BLOB_HEX__ = the exact REG_BINARY `Blob` bytes as comma-separated hex.
+;                           (Produced by CryptoAPI for the SystemCertificates registry store; not guaranteed to be raw DER.)
 ;
 ; Recommended workflow:
-;   Use tools/win7-slipstream/scripts/cert-to-reg.py to generate an importable .reg
-;   directly from a .cer (DER or PEM).
+;   Use tools/win-certstore-regblob-export on Windows to generate an importable .reg
+;   with the exact `Blob` (and any other values) that CryptoAPI creates.
 ;
 ; Windows (offline hive via reg.exe):
 ;   reg load HKLM\OFFSOFT X:\path\to\Windows\System32\config\SOFTWARE
@@ -24,8 +25,7 @@ Windows Registry Editor Version 5.00
 ;   hivexregedit --merge /path/to/SOFTWARE <generated-cert.reg>
 
 [HKEY_LOCAL_MACHINE\OFFSOFT\Microsoft\SystemCertificates\ROOT\Certificates\__AERO_CERT_SHA1__]
-"Blob"=hex:__AERO_CERT_DER_HEX__
+"Blob"=hex:__AERO_CERT_BLOB_HEX__
 
 [HKEY_LOCAL_MACHINE\OFFSOFT\Microsoft\SystemCertificates\TrustedPublisher\Certificates\__AERO_CERT_SHA1__]
-"Blob"=hex:__AERO_CERT_DER_HEX__
-
+"Blob"=hex:__AERO_CERT_BLOB_HEX__

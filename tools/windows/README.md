@@ -15,12 +15,20 @@ Patches extracted Windows 7 install media to support **test-signed drivers** by:
 
 - Windows PowerShell **5.1+**
 - Run from an **elevated** PowerShell prompt (Run as Administrator)
-- `dism.exe`, `bcdedit.exe`, `reg.exe` available (standard on Windows)
+- `dism.exe`, `bcdedit.exe`, `attrib.exe` available (standard on Windows)
+- `win-offline-cert-injector.exe` (build from `tools/win-offline-cert-injector` or place it in `PATH`)
 - A **writable** extracted Windows 7 ISO directory:
   - Must contain `sources\boot.wim` and `sources\install.wim`
   - Recommended: copy ISO contents to a local NTFS directory (don’t patch directly on read-only media)
 - A certificate file (`.cer`) used to sign your test drivers
   - `patch-win7-media.ps1` will clear the filesystem `Read-only` attribute on `boot.wim`/`install.wim` if present, but it cannot patch files on truly read-only media.
+
+Build the offline injector once:
+
+```powershell
+cd tools\win-offline-cert-injector
+cargo build --release
+```
 
 ### Usage examples
 

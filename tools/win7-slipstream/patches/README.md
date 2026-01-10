@@ -23,7 +23,9 @@ Windows stores machine certificate trust for the OS in:
 Where:
 
 - `<SHA1_THUMBPRINT>` is the **SHA-1** hash of the certificate’s **DER** bytes, encoded as **40 hex chars**.
-- `Blob` is the certificate’s **DER** bytes (`REG_BINARY`) encoded as `.reg` `hex:` data.
+- `Blob` is a `REG_BINARY` payload produced by CryptoAPI for the registry-backed certificate store entry
+  (**not guaranteed to be raw DER**). To generate the exact bytes, use `tools/win-certstore-regblob-export`
+  on Windows and then apply the resulting `.reg`/JSON patch to the offline hive.
 
 ### Where the SOFTWARE hive comes from (Win7 ISO)
 
@@ -39,19 +41,25 @@ In a stock Windows 7 ISO, that file lives **inside WIMs**:
 To patch those, mount the WIM (DISM on Windows, or `wimlib-imagex` cross-platform), then use the mounted
 `Windows\System32\config\SOFTWARE` path with the commands below.
 
-### Generate a concrete `.reg` from a `.cer`
+### Generate a concrete `.reg` for an offline SOFTWARE hive
 
-Use `tools/win7-slipstream/scripts/cert-to-reg.py` to generate an importable `.reg` with the correct thumbprint + Blob.
+To avoid guessing the registry representation, generate the `.reg` using CryptoAPI on Windows:
+
+```powershell
+cd tools\win-certstore-regblob-export
+cargo build --release
+```
 
 #### Windows (reg.exe / reg import)
 
 Generate a `.reg` that targets a hive loaded under `HKLM\\OFFSOFT`:
 
 ```bat
-py -3 tools\win7-slipstream\scripts\cert-to-reg.py ^
-  --mount-key OFFSOFT ^
-  --out aero-cert.reg ^
-  path\to\aero.cer
+tools\win-certstore-regblob-export\target\release\win-certstore-regblob-export.exe ^
+  --store ROOT --store TrustedPublisher ^
+  --format reg ^
+  --reg-hklm-subkey OFFSOFT ^
+  path\to\aero.cer > aero-cert.reg
 ```
 
 Apply to an **offline** `SOFTWARE` hive (run in an elevated Administrator shell):
@@ -64,13 +72,11 @@ reg unload HKLM\OFFSOFT
 
 #### Linux/macOS (hivexregedit)
 
-Generate a `.reg` that targets a hive named `SOFTWARE` (first component after `HKLM\\` is ignored by some tools and required by others, so use the conventional hive name here):
+Generate a `.reg` that targets a hive named `SOFTWARE` (run the exporter on Windows, then copy the file):
 
 ```sh
-python3 tools/win7-slipstream/scripts/cert-to-reg.py \
-  --mount-key SOFTWARE \
-  --out aero-cert.reg \
-  /path/to/aero.cer
+# The exporter defaults to --reg-hklm-subkey SOFTWARE, producing keys like:
+#   [HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\SystemCertificates\\...]
 ```
 
 Then merge into the offline hive:

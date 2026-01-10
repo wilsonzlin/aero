@@ -56,7 +56,12 @@ members = [
     "emulator/protocol",
 ]
 
-exclude = ["fuzz"]
+exclude = [
+    "fuzz",
+    # Standalone tools with their own lockfiles (build by `cd tools/<name> && cargo ...`).
+    "tools/win-offline-cert-injector",
+    "tools/win-certstore-regblob-export",
+]
 
 [dev-dependencies]
 aero-bios = { path = "crates/aero-bios" }

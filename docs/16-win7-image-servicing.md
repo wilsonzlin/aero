@@ -113,7 +113,8 @@ Windows “Local Machine” certificate stores are registry-backed under the SOF
 
 - Store location: `HKLM\SOFTWARE\Microsoft\SystemCertificates\<STORE>\Certificates`
 - Each certificate is a subkey named by its **SHA-1 thumbprint** (no spaces, typically uppercase)
-- The certificate body is stored as a `REG_BINARY` value named **`Blob`**
+- The certificate entry is stored as one or more values (typically a `REG_BINARY` value named **`Blob`**)
+  written by CryptoAPI's registry-backed cert store provider (**not guaranteed to be raw DER**)
 
 For test-signed kernel drivers, it is common to install the test certificate into both:
 
@@ -125,14 +126,10 @@ Offline, that becomes:
 - `HKLM\<OFFLINE_SOFTWARE>\Microsoft\SystemCertificates\ROOT\Certificates\<thumbprint>\Blob`
 - `HKLM\<OFFLINE_SOFTWARE>\Microsoft\SystemCertificates\TrustedPublisher\Certificates\<thumbprint>\Blob`
 
-### PowerShell: inject a `.cer` into an offline-mounted image
+### Recommended: inject a certificate into an offline-mounted image using CryptoAPI
 
-The snippet below:
-
-- Loads the mounted image’s `SOFTWARE` hive under a temporary name
-- Reads a `.cer` file
-- Computes its thumbprint
-- Writes the DER bytes into `Blob` for both ROOT + TrustedPublisher
+Rather than hand-writing registry values, use the Windows-native `tools/win-offline-cert-injector`,
+which loads the offline SOFTWARE hive and uses CryptoAPI to create the exact registry-backed store entry.
 
 Run from an elevated PowerShell prompt:
 
@@ -140,26 +137,15 @@ Run from an elevated PowerShell prompt:
 $MountDir = "C:\mount\boot2"  # change per image
 $CertPath = "C:\certs\AeroTestRoot.cer"
 
-$OfflineHivePath = Join-Path $MountDir "Windows\System32\Config\SOFTWARE"
-reg.exe load HKLM\OFFLINE_SOFTWARE "$OfflineHivePath" | Out-Null
+# Build once (or use a prebuilt binary)
+cd tools\win-offline-cert-injector
+cargo build --release
 
-try {
-    $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CertPath)
-    $thumb = $cert.Thumbprint.ToUpperInvariant()
-    $der = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
-
-    foreach ($store in @("ROOT", "TrustedPublisher")) {
-        $key = "HKLM:\OFFLINE_SOFTWARE\Microsoft\SystemCertificates\$store\Certificates\$thumb"
-        New-Item -Path $key -Force | Out-Null
-        New-ItemProperty -Path $key -Name "Blob" -PropertyType Binary -Value $der -Force | Out-Null
-    }
-}
-finally {
-    reg.exe unload HKLM\OFFLINE_SOFTWARE | Out-Null
-}
+.\target\release\win-offline-cert-injector.exe `
+  --windows-dir $MountDir `
+  --store ROOT --store TrustedPublisher `
+  $CertPath
 ```
-
-> Why this is “safe”: it does not modify the host machine’s certificate stores; it only writes into the offline-loaded hive.
 
 ---
 

@@ -327,7 +327,7 @@ function Set-BcdFlagsForStore {
 function Add-OfflineTrustedCertificate {
   param(
     [Parameter(Mandatory)][string]$MountedImageRoot,
-    [Parameter(Mandatory)][System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate,
+    [Parameter(Mandatory)][string]$CertPath,
     [Parameter(Mandatory)][string[]]$Stores
   )
 
@@ -336,49 +336,39 @@ function Add-OfflineTrustedCertificate {
     throw "Offline SOFTWARE hive not found at '$softwareHive'. Is this a Windows image?"
   }
 
-  if (Test-Path "HKLM:\OFFLINE_SOFTWARE") {
-    throw "HKLM:\OFFLINE_SOFTWARE already exists. Another offline hive may already be loaded. Unload it (reg unload HKLM\OFFLINE_SOFTWARE) or reboot, then retry."
-  }
-
-  $thumb = $Certificate.Thumbprint.ToUpperInvariant()
-  $rawBytes = [byte[]]$Certificate.RawData
-
-  $loaded = $false
-  $hadError = $false
-  try {
-    Invoke-NativeCommand -FilePath "reg.exe" -SuppressOutput -ArgumentList @("load", "HKLM\OFFLINE_SOFTWARE", $softwareHive)
-    $loaded = $true
-
-    foreach ($storeName in $Stores) {
-      $certificatesPath = "HKLM:\OFFLINE_SOFTWARE\Microsoft\SystemCertificates\$storeName\Certificates"
-      New-Item -Path $certificatesPath -Force | Out-Null
-      $keyPath = Join-Path -Path $certificatesPath -ChildPath $thumb
-      New-Item -Path $keyPath -Force | Out-Null
-      New-ItemProperty -Path $keyPath -Name "Blob" -PropertyType Binary -Value $rawBytes -Force | Out-Null
-
-      $blob = (Get-ItemProperty -Path $keyPath -Name "Blob" -ErrorAction Stop).Blob
-      if ($null -eq $blob -or $blob.Length -eq 0) {
-        throw "Offline certificate injection failed validation for store '$storeName' (thumbprint $thumb): missing/empty Blob value."
-      }
+  $repoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..\\..")).Path
+  $candidates = @(
+    (Join-Path -Path $repoRoot -ChildPath "tools\\win-offline-cert-injector\\target\\release\\win-offline-cert-injector.exe"),
+    (Join-Path -Path $repoRoot -ChildPath "tools\\win-offline-cert-injector\\target\\debug\\win-offline-cert-injector.exe")
+  )
+  $injector = $null
+  foreach ($p in $candidates) {
+    if (Test-Path -LiteralPath $p -PathType Leaf) {
+      $injector = (Resolve-Path -LiteralPath $p).Path
+      break
     }
   }
-  catch {
-    $hadError = $true
-    throw
-  }
-  finally {
-    if ($loaded) {
-      try {
-        Invoke-NativeCommand -FilePath "reg.exe" -SuppressOutput -ArgumentList @("unload", "HKLM\OFFLINE_SOFTWARE")
-      }
-      catch {
-        Write-Warning "Failed to unload HKLM\OFFLINE_SOFTWARE. You may need to run: reg unload HKLM\OFFLINE_SOFTWARE"
-        if (-not $hadError) {
-          throw
-        }
-      }
+  if (-not $injector) {
+    $cmd = Get-Command "win-offline-cert-injector.exe" -ErrorAction SilentlyContinue
+    if ($cmd) {
+      $injector = $cmd.Source
     }
   }
+  if (-not $injector) {
+    throw ("win-offline-cert-injector.exe not found. Build it with:`n`n" +
+      "  cd tools\\win-offline-cert-injector`n" +
+      "  cargo build --release`n`n" +
+      "Then re-run this script.")
+  }
+
+  $args = @("--hive", $softwareHive)
+  foreach ($storeName in $Stores) {
+    $args += "--store"
+    $args += $storeName
+  }
+  $args += $CertPath
+
+  Invoke-NativeCommand -FilePath $injector -ArgumentList $args
 }
 
 function Add-DriversToOfflineImage {
@@ -417,7 +407,7 @@ function Service-WimIndex {
     [Parameter(Mandatory)][int]$Index,
     [Parameter(Mandatory)][string]$MountDir,
     [Parameter(Mandatory)][string]$Label,
-    [Parameter(Mandatory)][System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate,
+    [Parameter(Mandatory)][string]$CertPath,
     [Parameter(Mandatory)][string[]]$CertStores,
     [string]$DriversRoot,
     [switch]$IsInstallImage,
@@ -446,7 +436,7 @@ function Service-WimIndex {
     }
 
     Write-Host "`n[$Label] Trusting certificate offline ($($CertStores -join ', '))..."
-    Add-OfflineTrustedCertificate -MountedImageRoot $MountDir -Certificate $Certificate -Stores $CertStores
+    Add-OfflineTrustedCertificate -MountedImageRoot $MountDir -CertPath $CertPath -Stores $CertStores
 
     if ($IsInstallImage) {
       Patch-InstallBcdTemplate -MountedImageRoot $MountDir -EnableNoIntegrityChecks:$EnableNoIntegrityChecks
@@ -506,7 +496,6 @@ function Service-WimIndex {
 Assert-IsAdministrator
 Assert-CommandAvailable -Name "dism.exe"
 Assert-CommandAvailable -Name "bcdedit.exe"
-Assert-CommandAvailable -Name "reg.exe"
 Assert-CommandAvailable -Name "attrib.exe"
 
 if (-not (Test-Path -LiteralPath $MediaRoot -PathType Container)) {
@@ -622,7 +611,7 @@ try {
       -Index $idx `
       -MountDir $mountDir `
       -Label ("boot.wim index $idx") `
-      -Certificate $certificate `
+      -CertPath $resolvedCertPath `
       -CertStores $normalizedCertStores `
       -DriversRoot $resolvedDriversPath `
       -IsInstallImage:$false `
@@ -637,7 +626,7 @@ try {
       -Index $idx `
       -MountDir $mountDir `
       -Label ("install.wim index $idx") `
-      -Certificate $certificate `
+      -CertPath $resolvedCertPath `
       -CertStores $normalizedCertStores `
       -DriversRoot $resolvedDriversPath `
       -IsInstallImage `
