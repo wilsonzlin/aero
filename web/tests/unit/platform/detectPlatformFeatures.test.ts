@@ -1,15 +1,32 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { expect, test } from "@playwright/test";
 
 import { detectPlatformFeatures } from "../../../src/platform/features";
 
-afterEach(() => {
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
+const originalValidate = WebAssembly.validate;
+
+test.afterEach(() => {
+  WebAssembly.validate = originalValidate;
+  delete (globalThis as typeof globalThis & { crossOriginIsolated?: boolean }).crossOriginIsolated;
+
+  // Node.js provides a `navigator` getter; it is extensible, so we can delete any
+  // stubbed properties after each test.
+  if (typeof navigator !== "undefined") {
+    delete (navigator as unknown as { gpu?: unknown }).gpu;
+    delete (navigator as unknown as { storage?: unknown }).storage;
+  }
+
+  delete (globalThis as typeof globalThis & { AudioWorkletNode?: unknown }).AudioWorkletNode;
+  delete (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext;
+  delete (globalThis as typeof globalThis & { OffscreenCanvas?: unknown }).OffscreenCanvas;
 });
 
-describe("detectPlatformFeatures", () => {
-  it("treats WASM threads as requiring crossOriginIsolated, SharedArrayBuffer, and Atomics", () => {
-    const validateSpy = vi.spyOn(WebAssembly, "validate").mockReturnValue(true);
+test.describe("detectPlatformFeatures", () => {
+  test("treats WASM threads as requiring crossOriginIsolated, SharedArrayBuffer, and Atomics", () => {
+    let validateCalls = 0;
+    WebAssembly.validate = (() => {
+      validateCalls += 1;
+      return true;
+    }) as typeof WebAssembly.validate;
 
     // Node provides SharedArrayBuffer + Atomics but is not cross-origin isolated by default.
     const baseline = detectPlatformFeatures();
@@ -18,30 +35,29 @@ describe("detectPlatformFeatures", () => {
     expect(baseline.wasmSimd).toBe(true);
     expect(baseline.wasmThreads).toBe(false);
 
-    vi.stubGlobal("crossOriginIsolated", true);
+    (globalThis as typeof globalThis & { crossOriginIsolated?: boolean }).crossOriginIsolated = true;
 
     const isolated = detectPlatformFeatures();
     expect(isolated.crossOriginIsolated).toBe(true);
     expect(isolated.sharedArrayBuffer).toBe(true);
     expect(isolated.wasmThreads).toBe(true);
 
-    expect(validateSpy).toHaveBeenCalled();
+    expect(validateCalls).toBeGreaterThan(0);
   });
 
-  it("detects exposed browser APIs via globals (navigator.*, Audio*, OffscreenCanvas)", () => {
-    vi.spyOn(WebAssembly, "validate").mockReturnValue(false);
-    vi.stubGlobal("crossOriginIsolated", true);
+  test("detects exposed browser APIs via globals (navigator.*, Audio*, OffscreenCanvas)", () => {
+    WebAssembly.validate = (() => false) as typeof WebAssembly.validate;
+    (globalThis as typeof globalThis & { crossOriginIsolated?: boolean }).crossOriginIsolated = true;
 
-    vi.stubGlobal("navigator", {
-      gpu: {},
-      storage: {
-        getDirectory: () => Promise.resolve(null),
-      },
-    });
+    // Node's global `navigator` is extensible. Stub the fields used by our detector.
+    (navigator as unknown as { gpu?: unknown }).gpu = {};
+    (navigator as unknown as { storage?: unknown }).storage = {
+      getDirectory: () => Promise.resolve(null),
+    };
 
-    vi.stubGlobal("AudioWorkletNode", class AudioWorkletNode {});
-    vi.stubGlobal("AudioContext", class AudioContext {});
-    vi.stubGlobal("OffscreenCanvas", class OffscreenCanvas {});
+    (globalThis as typeof globalThis & { AudioWorkletNode?: unknown }).AudioWorkletNode = class AudioWorkletNode {};
+    (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext = class AudioContext {};
+    (globalThis as typeof globalThis & { OffscreenCanvas?: unknown }).OffscreenCanvas = class OffscreenCanvas {};
 
     const report = detectPlatformFeatures();
     expect(report.webgpu).toBe(true);

@@ -532,6 +532,16 @@ function renderGpuWorkerPanel(): HTMLElement {
                 for (const hint of msg.error.hints) appendLog(`  hint: ${hint}`);
               }
             },
+            onGpuErrorEvent: (msg) => {
+              appendLog(
+                `gpu_event severity=${msg.event.severity} category=${msg.event.category} msg=${msg.event.message}`,
+              );
+            },
+            onGpuStats: (msg) => {
+              appendLog(
+                `gpu_stats presents=${msg.stats.presents_succeeded}/${msg.stats.presents_attempted} recoveries=${msg.stats.recoveries_succeeded}/${msg.stats.recoveries_attempted} surface_reconfigures=${msg.stats.surface_reconfigures}`,
+              );
+            },
           });
         }
 

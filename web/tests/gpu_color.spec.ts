@@ -8,6 +8,8 @@ import { expect, test } from "@playwright/test";
 // such that `/src/...` maps to `web/src/...` (e.g. via Vite).
 
 async function renderHash(page: any, opts: any): Promise<string> {
+  // Ensure module imports use the static test server origin.
+  await page.goto("/blank.html");
   await page.setContent(`
     <style>
       html, body { margin: 0; padding: 0; background: #000; }
@@ -27,6 +29,10 @@ async function renderHash(page: any, opts: any): Promise<string> {
 
 test.describe("gpu color policy", () => {
   test("webgpu and webgl2 match (sRGB + opaque)", async ({ page }) => {
+    await page.goto("/blank.html");
+    const hasWebGpu = await page.evaluate(() => !!navigator.gpu);
+    test.skip(!hasWebGpu, "WebGPU is not available in this Playwright environment.");
+
     const common = { width: 128, height: 128, outputColorSpace: "srgb", alphaMode: "opaque" };
     const webgpu = await renderHash(page, { backend: "webgpu", ...common });
     const webgl2 = await renderHash(page, { backend: "webgl2", ...common });
@@ -34,6 +40,10 @@ test.describe("gpu color policy", () => {
   });
 
   test("webgpu and webgl2 match (linear + opaque)", async ({ page }) => {
+    await page.goto("/blank.html");
+    const hasWebGpu = await page.evaluate(() => !!navigator.gpu);
+    test.skip(!hasWebGpu, "WebGPU is not available in this Playwright environment.");
+
     const common = { width: 128, height: 128, outputColorSpace: "linear", alphaMode: "opaque" };
     const webgpu = await renderHash(page, { backend: "webgpu", ...common });
     const webgl2 = await renderHash(page, { backend: "webgl2", ...common });
@@ -47,4 +57,3 @@ test.describe("gpu color policy", () => {
     expect(opaque).not.toBe(premul);
   });
 });
-

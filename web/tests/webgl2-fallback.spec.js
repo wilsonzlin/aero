@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+import { expect, test } from "@playwright/test";
 
 test('falls back to WebGL2 when WebGPU is unavailable', async ({ page }) => {
   await page.addInitScript(() => {

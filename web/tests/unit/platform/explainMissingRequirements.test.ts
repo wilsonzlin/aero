@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { expect, test } from "@playwright/test";
 
 import { explainMissingRequirements, type PlatformFeatureReport } from "../../../src/platform/features";
 
@@ -15,12 +15,13 @@ function report(overrides: Partial<PlatformFeatureReport> = {}): PlatformFeature
     opfsSyncAccessHandle: false,
     audioWorklet: false,
     offscreenCanvas: false,
+    jit_dynamic_wasm: false,
     ...overrides,
   };
 }
 
-describe("explainMissingRequirements", () => {
-  it("returns no messages when all requirements are satisfied", () => {
+test.describe("explainMissingRequirements", () => {
+  test("returns no messages when all requirements are satisfied", () => {
     expect(
       explainMissingRequirements(
         report({
@@ -40,7 +41,7 @@ describe("explainMissingRequirements", () => {
     ).toEqual([]);
   });
 
-  it("returns actionable messages for missing capabilities", () => {
+  test("returns actionable messages for missing capabilities", () => {
     const messages = explainMissingRequirements(report());
 
     // Keep this intentionally broad (copy edits shouldn't break tests).
@@ -48,8 +49,10 @@ describe("explainMissingRequirements", () => {
     expect(messages.join("\n")).toContain("cross-origin isolated");
     expect(messages.join("\n")).toContain("SharedArrayBuffer");
     expect(messages.join("\n")).toContain("WebAssembly SIMD");
+    expect(messages.join("\n")).toContain("Dynamic WebAssembly compilation");
     expect(messages.join("\n")).toContain("WebGPU");
     expect(messages.join("\n")).toContain("WebGL2");
     expect(messages.join("\n")).toContain("wasm-unsafe-eval");
   });
 });
+

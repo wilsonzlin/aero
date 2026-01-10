@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("gpu worker falls back to WebGL2 when WebGPU is disabled", async ({ page }) => {
-  await page.goto("about:blank");
+  await page.goto("/blank.html");
 
   const result = await page.evaluate(async () => {
     const canvas = document.createElement("canvas");
@@ -9,8 +9,7 @@ test("gpu worker falls back to WebGL2 when WebGPU is disabled", async ({ page })
 
     const offscreen = canvas.transferControlToOffscreen();
 
-    // In the real app this resolves to the bundled worker module URL.
-    const worker = new Worker(new URL("../src/workers/aero-gpu-worker.ts", import.meta.url), {
+    const worker = new Worker("/src/workers/aero-gpu-worker.ts", {
       type: "module",
     });
 

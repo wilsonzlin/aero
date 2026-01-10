@@ -1,6 +1,10 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+// Playwright runs against this static server in CI. To keep tests lightweight we
+// avoid a full Vite build/dev server, but we still need to execute TypeScript
+// modules in the browser. Transpile `.ts`/`.tsx` on the fly using esbuild.
+const esbuild = require('esbuild');
 
 function parseArgs(argv) {
   const out = { host: '127.0.0.1', port: 4173 };
@@ -20,6 +24,7 @@ function contentTypeFor(filePath) {
     case '.html':
       return 'text/html; charset=utf-8';
     case '.js':
+    case '.mjs':
       return 'text/javascript; charset=utf-8';
     case '.css':
       return 'text/css; charset=utf-8';
@@ -32,32 +37,113 @@ function contentTypeFor(filePath) {
   }
 }
 
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? host}`);
-  const rawPath = url.pathname === '/' ? '/index.html' : url.pathname;
+const tsCache = new Map();
 
+function resolveExistingFile(absPath) {
+  try {
+    const stat = fs.statSync(absPath);
+    return stat.isFile() ? absPath : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveRequestPath(rawPath) {
   const resolvedPath = path.normalize(path.join(rootDir, rawPath));
-  if (!resolvedPath.startsWith(rootDir)) {
-    res.writeHead(403);
-    res.end('Forbidden');
-    return;
+  if (resolvedPath !== rootDir && !resolvedPath.startsWith(`${rootDir}${path.sep}`)) {
+    return null;
   }
 
-  fs.readFile(resolvedPath, (err, data) => {
-    if (err) {
+  const direct = resolveExistingFile(resolvedPath);
+  if (direct) {
+    return direct;
+  }
+
+  const ext = path.extname(resolvedPath);
+  if (ext) {
+    return null;
+  }
+
+  const candidates = [
+    `${resolvedPath}.ts`,
+    `${resolvedPath}.tsx`,
+    `${resolvedPath}.js`,
+    `${resolvedPath}.mjs`,
+    path.join(resolvedPath, 'index.ts'),
+    path.join(resolvedPath, 'index.tsx'),
+    path.join(resolvedPath, 'index.js'),
+    path.join(resolvedPath, 'index.mjs'),
+  ];
+
+  for (const candidate of candidates) {
+    const found = resolveExistingFile(candidate);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+async function transpileTs(absPath) {
+  const stat = await fs.promises.stat(absPath);
+  const cached = tsCache.get(absPath);
+  if (cached && cached.mtimeMs === stat.mtimeMs) {
+    return cached.code;
+  }
+
+  const source = await fs.promises.readFile(absPath, 'utf8');
+  const ext = path.extname(absPath);
+  const loader = ext === '.tsx' ? 'tsx' : 'ts';
+
+  const result = await esbuild.transform(source, {
+    loader,
+    format: 'esm',
+    target: 'es2022',
+    sourcemap: 'inline',
+    sourcefile: absPath,
+  });
+
+  tsCache.set(absPath, { mtimeMs: stat.mtimeMs, code: result.code });
+  return result.code;
+}
+
+const server = http.createServer((req, res) => {
+  (async () => {
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? host}`);
+    const rawPath = url.pathname === '/' ? '/index.html' : url.pathname;
+
+    const absPath = resolveRequestPath(rawPath);
+    if (!absPath) {
       res.writeHead(404);
       res.end('Not found');
       return;
     }
 
-    res.writeHead(200, {
-      'Content-Type': contentTypeFor(resolvedPath),
+    const commonHeaders = {
       // The real Aero project requires COOP/COEP for SharedArrayBuffer. Keeping these
       // headers here makes the demo behave like production from day one.
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
+    };
+
+    if (absPath.endsWith('.ts') || absPath.endsWith('.tsx')) {
+      const code = await transpileTs(absPath);
+      res.writeHead(200, {
+        ...commonHeaders,
+        'Content-Type': 'text/javascript; charset=utf-8',
+      });
+      res.end(code);
+      return;
+    }
+
+    const data = await fs.promises.readFile(absPath);
+    res.writeHead(200, {
+      ...commonHeaders,
+      'Content-Type': contentTypeFor(absPath),
     });
     res.end(data);
+  })().catch((err) => {
+    res.writeHead(500);
+    res.end(`Internal server error: ${err instanceof Error ? err.message : String(err)}`);
   });
 });
 
@@ -67,4 +153,3 @@ server.listen(port, host, () => {
 
 process.on('SIGTERM', () => server.close());
 process.on('SIGINT', () => server.close());
-
