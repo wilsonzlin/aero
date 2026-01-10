@@ -1,5 +1,7 @@
 import './style.css';
 
+import { PerfAggregator, PerfWriter, WorkerKind, createPerfChannel } from '../web/src/perf/index.js';
+
 import { createAudioOutput } from './platform/audio';
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from './platform/features';
 import { importFileToOpfs } from './platform/opfs';
@@ -172,6 +174,101 @@ function renderAudioPanel(): HTMLElement {
   return el('div', { class: 'panel' }, el('h2', { text: 'Audio' }), el('div', { class: 'row' }, button), status);
 }
 
+let perfHud: HTMLElement | null = null;
+let perfStarted = false;
+
+function renderPerfPanel(report: PlatformFeatureReport): HTMLElement {
+  const supported = report.sharedArrayBuffer && typeof Atomics !== 'undefined';
+  const hud = el('pre', { text: supported ? 'Initializing…' : 'Perf telemetry unavailable (SharedArrayBuffer/Atomics missing).' });
+  perfHud = hud;
+
+  return el(
+    'div',
+    { class: 'panel' },
+    el('h2', { text: 'Perf telemetry' }),
+    el(
+      'div',
+      {
+        text:
+          'Exports window.aero.perf.export() for automation. ' +
+          'Main thread records frame times; a synthetic worker emits instruction counts.',
+      },
+    ),
+    hud,
+  );
+}
+
+function startPerfTelemetry(report: PlatformFeatureReport): void {
+  if (perfStarted) return;
+  perfStarted = true;
+
+  if (!perfHud) return;
+  if (!report.wasmThreads) {
+    perfHud.textContent = 'Perf telemetry unavailable: requires cross-origin isolation + SharedArrayBuffer + Atomics.';
+    return;
+  }
+
+  const channel = createPerfChannel({
+    capacity: 1024,
+    workerKinds: [WorkerKind.Main, WorkerKind.CPU],
+  });
+
+  const mainWriter = new PerfWriter(channel.buffers[WorkerKind.Main], {
+    workerKind: WorkerKind.Main,
+    runStartEpochMs: channel.runStartEpochMs,
+  });
+
+  const aggregator = new PerfAggregator(channel, { windowSize: 120, captureSize: 2000 });
+
+  const worker = new Worker(new URL('./perf_worker.ts', import.meta.url), { type: 'module' });
+  worker.postMessage({ type: 'init', channel, workerKind: WorkerKind.CPU });
+
+  let enabled = true;
+  function setEnabled(next: boolean): void {
+    enabled = Boolean(next);
+    mainWriter.setEnabled(enabled);
+    worker.postMessage({ type: 'setEnabled', enabled });
+  }
+
+  globalThis.aero = {
+    perf: {
+      export: () => aggregator.export(),
+      getStats: () => aggregator.getStats(),
+      setEnabled,
+    },
+  };
+
+  let frameId = 0;
+  let lastNow = performance.now();
+
+  function tick(now: number): void {
+    const dt = now - lastNow;
+    lastNow = now;
+    frameId = (frameId + 1) >>> 0;
+
+    const usedHeap = (performance as unknown as { memory?: { usedJSHeapSize?: number } }).memory?.usedJSHeapSize ?? 0;
+    mainWriter.frameSample(frameId, {
+      durations: { frame_ms: dt },
+      counters: { memory_bytes: BigInt(usedHeap) },
+    });
+
+    worker.postMessage({ type: 'frame', frameId, dt });
+
+    aggregator.drain();
+    const stats = aggregator.getStats();
+    perfHud!.textContent =
+      `window=${stats.frames}/${stats.windowSize} frames\n` +
+      `avg frame=${stats.avgFrameMs.toFixed(2)}ms p95=${stats.p95FrameMs.toFixed(2)}ms\n` +
+      `avg fps=${stats.avgFps.toFixed(1)} 1% low=${stats.fps1pLow.toFixed(1)}\n` +
+      `avg MIPS=${stats.avgMips.toFixed(1)}\n` +
+      `enabled=${enabled}\n`;
+
+    requestAnimationFrame(tick);
+  }
+
+  requestAnimationFrame(tick);
+}
+
 function render(): void {
   const app = document.querySelector<HTMLDivElement>('#app');
   if (!app) throw new Error('Missing #app element');
@@ -185,15 +282,16 @@ function render(): void {
       'div',
       { class: `panel ${missing.length ? 'missing' : ''}` },
       el('h2', { text: 'Required features' }),
-      missing.length
-        ? el('ul', {}, ...missing.map((m) => el('li', { text: m })))
-        : el('div', { text: 'All required features appear to be available.' }),
+      missing.length ? el('ul', {}, ...missing.map((m) => el('li', { text: m }))) : el('div', { text: 'All required features appear to be available.' }),
     ),
     el('div', { class: 'panel' }, el('h2', { text: 'Capability report' }), renderCapabilityTable(report)),
     renderWebGpuPanel(),
     renderOpfsPanel(),
     renderAudioPanel(),
+    renderPerfPanel(report),
   );
+
+  startPerfTelemetry(report);
 }
 
 render();
