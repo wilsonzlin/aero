@@ -74,14 +74,15 @@ The two BCD elements we care about are:
 
 These are **Library Boolean** elements (they live in the `0x16xxxxxx` range).
 
-Implementation detail (important for an offline patcher): BCD element data is typically
-stored as `REG_BINARY`. For boolean elements, the encoded value is typically “1”
-(enabled) vs “0” (disabled), but the exact binary layout is a BCD element record
-(not a plain `REG_DWORD`).
+Implementation detail (important for an offline patcher): element data in BCD hives is
+stored as `REG_BINARY`. For these Win7 boolean elements, the simplest working encoding
+is a 4-byte little-endian integer written into the `Element` value:
 
-An implementation should confirm the expected on-disk encoding by inspecting an
-existing boolean element in a known-good store and then matching that format when
-writing `DisableIntegrityChecks` / `AllowPrereleaseSignatures`.
+- enabled: `01 00 00 00`
+- disabled: `00 00 00 00`
+
+This matches the audited offline `.reg` patches under `tools/win7-slipstream/patches/`,
+which use `hex:01,00,00,00` for both `testsigning` and `nointegritychecks`.
 
 ## Which BCD objects should be patched
 
@@ -107,6 +108,7 @@ To find them offline:
 - Enumerate `Objects\{GUID}` under the BCD hive.
 - For each object, look for the element:
   - **`BcdLibraryString_ApplicationPath`** (`0x12000002`)
+  - (i.e. `Objects\{GUID}\Elements\12000002\Element`)
 - Decode the element’s string value and check whether it contains **`winload`** (case-insensitive substring match is sufficient in practice).
 
 Any object whose `BcdLibraryString_ApplicationPath` contains `winload` should be treated as an OS loader entry and receive the `testsigning` / `nointegritychecks` boolean elements.
