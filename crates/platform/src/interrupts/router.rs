@@ -101,8 +101,15 @@ impl PlatformInterrupts {
     }
 
     pub fn set_mode(&mut self, mode: PlatformInterruptMode) {
+        let prev = self.mode;
         self.mode = mode;
-        if mode == PlatformInterruptMode::Apic {
+
+        if prev != PlatformInterruptMode::Apic && mode == PlatformInterruptMode::Apic {
+            // If the IOAPIC has been programmed while still routing through the legacy
+            // PIC (or has seen input levels change without delivery), Remote-IRR may not
+            // represent a real in-service interrupt. Reset it before syncing asserted
+            // level-triggered lines into the LAPIC.
+            self.ioapic.clear_remote_irr();
             self.sync_ioapic();
         }
     }
@@ -139,34 +146,42 @@ impl PlatformInterrupts {
 
     pub fn raise_irq(&mut self, input: InterruptInput) {
         match input {
-            InterruptInput::IsaIrq(irq) => match self.mode {
-                PlatformInterruptMode::LegacyPic => self.pic.raise_irq(irq),
-                PlatformInterruptMode::Apic => {
-                    let gsi = self
-                        .isa_irq_to_gsi
-                        .get(irq as usize)
-                        .copied()
-                        .unwrap_or(irq as u32);
-                    self.raise_gsi(gsi);
+            InterruptInput::IsaIrq(irq) => {
+                let gsi = self
+                    .isa_irq_to_gsi
+                    .get(irq as usize)
+                    .copied()
+                    .unwrap_or(irq as u32);
+
+                match self.mode {
+                    PlatformInterruptMode::LegacyPic => {
+                        self.pic.raise_irq(irq);
+                        self.ioapic.set_line_level(gsi, true);
+                    }
+                    PlatformInterruptMode::Apic => self.raise_gsi(gsi),
                 }
-            },
+            }
             InterruptInput::Gsi(gsi) => self.raise_gsi(gsi),
         }
     }
 
     pub fn lower_irq(&mut self, input: InterruptInput) {
         match input {
-            InterruptInput::IsaIrq(irq) => match self.mode {
-                PlatformInterruptMode::LegacyPic => self.pic.lower_irq(irq),
-                PlatformInterruptMode::Apic => {
-                    let gsi = self
-                        .isa_irq_to_gsi
-                        .get(irq as usize)
-                        .copied()
-                        .unwrap_or(irq as u32);
-                    self.lower_gsi(gsi);
+            InterruptInput::IsaIrq(irq) => {
+                let gsi = self
+                    .isa_irq_to_gsi
+                    .get(irq as usize)
+                    .copied()
+                    .unwrap_or(irq as u32);
+
+                match self.mode {
+                    PlatformInterruptMode::LegacyPic => {
+                        self.pic.lower_irq(irq);
+                        self.ioapic.set_line_level(gsi, false);
+                    }
+                    PlatformInterruptMode::Apic => self.lower_gsi(gsi),
                 }
-            },
+            }
             InterruptInput::Gsi(gsi) => self.lower_gsi(gsi),
         }
     }
@@ -177,7 +192,13 @@ impl PlatformInterrupts {
 
     pub fn ioapic_mmio_write(&mut self, offset: u64, value: u32) {
         let deliveries = self.ioapic.mmio_write(offset, value);
-        self.deliver_ioapic_deliveries(deliveries);
+        if self.mode == PlatformInterruptMode::Apic {
+            self.deliver_ioapic_deliveries(deliveries);
+        } else {
+            // While in legacy PIC mode, IOAPIC programming should not result in a
+            // delivered interrupt or a latched Remote-IRR bit.
+            self.ioapic.clear_remote_irr();
+        }
     }
 
     /// Emulates the Interrupt Mode Configuration Register (IMCR).
@@ -220,18 +241,32 @@ impl PlatformInterrupts {
     }
 
     pub fn register_imcr_ports(bus: &mut IoPortBus, interrupts: SharedPlatformInterrupts) {
-        bus.register(IMCR_SELECT_PORT, Box::new(ImcrPort::new(interrupts.clone(), IMCR_SELECT_PORT)));
-        bus.register(IMCR_DATA_PORT, Box::new(ImcrPort::new(interrupts, IMCR_DATA_PORT)));
+        bus.register(
+            IMCR_SELECT_PORT,
+            Box::new(ImcrPort::new(interrupts.clone(), IMCR_SELECT_PORT)),
+        );
+        bus.register(
+            IMCR_DATA_PORT,
+            Box::new(ImcrPort::new(interrupts, IMCR_DATA_PORT)),
+        );
     }
 
     fn raise_gsi(&mut self, gsi: u32) {
-        let deliveries = self.ioapic.set_line(gsi, true);
-        self.deliver_ioapic_deliveries(deliveries);
+        if self.mode == PlatformInterruptMode::Apic {
+            let deliveries = self.ioapic.set_line(gsi, true);
+            self.deliver_ioapic_deliveries(deliveries);
+        } else {
+            self.ioapic.set_line_level(gsi, true);
+        }
     }
 
     fn lower_gsi(&mut self, gsi: u32) {
-        let deliveries = self.ioapic.set_line(gsi, false);
-        self.deliver_ioapic_deliveries(deliveries);
+        if self.mode == PlatformInterruptMode::Apic {
+            let deliveries = self.ioapic.set_line(gsi, false);
+            self.deliver_ioapic_deliveries(deliveries);
+        } else {
+            self.ioapic.set_line_level(gsi, false);
+        }
     }
 
     fn deliver_ioapic_deliveries(&mut self, deliveries: Vec<IoApicDelivery>) {
@@ -348,6 +383,22 @@ mod tests {
 
         ints.raise_irq(InterruptInput::IsaIrq(1));
         assert_eq!(ints.get_pending(), Some(0x31));
+    }
+
+    #[test]
+    fn switching_to_apic_delivers_asserted_level_lines() {
+        let mut ints = PlatformInterrupts::new();
+
+        let mut entry = IoApicRedirectionEntry::fixed(0x60, 0);
+        entry.masked = false;
+        entry.trigger = TriggerMode::Level;
+        ints.ioapic_mut().set_entry(1, entry);
+
+        ints.raise_irq(InterruptInput::Gsi(1));
+        assert_eq!(ints.get_pending(), None);
+
+        ints.set_mode(PlatformInterruptMode::Apic);
+        assert_eq!(ints.get_pending(), Some(0x60));
     }
 
     #[test]

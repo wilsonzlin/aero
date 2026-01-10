@@ -105,6 +105,33 @@ impl IoApic {
         self.on_line_change(gsi, was_asserted, asserted)
     }
 
+    /// Update the raw input level for a pin without performing delivery.
+    ///
+    /// This is useful when the platform is still routing interrupts through the legacy PIC.
+    /// In that mode, the IOAPIC should not deliver (or set Remote-IRR) yet, but we still
+    /// want to remember the physical input levels so that switching to APIC mode can
+    /// immediately synchronize level-triggered lines.
+    pub fn set_line_level(&mut self, gsi: u32, asserted: bool) {
+        let idx = gsi as usize;
+        if idx >= self.line_asserted.len() {
+            return;
+        }
+        self.line_asserted[idx] = asserted;
+    }
+
+    /// Clear Remote-IRR for all redirection entries.
+    ///
+    /// Remote-IRR is only meaningful once the IOAPIC has delivered a level-triggered
+    /// interrupt to a LAPIC. If the platform has been routing interrupts through the
+    /// legacy PIC, we may have observed input level changes or IOAPIC programming
+    /// updates without actually delivering interrupts; clearing Remote-IRR keeps
+    /// the IOAPIC in a sane state before switching into APIC mode.
+    pub fn clear_remote_irr(&mut self) {
+        for entry in &mut self.entries {
+            entry.remote_irr = false;
+        }
+    }
+
     pub fn sync(&mut self) -> Vec<IoApicDelivery> {
         let mut deliveries = Vec::new();
         for gsi in 0..self.entries.len() as u32 {
