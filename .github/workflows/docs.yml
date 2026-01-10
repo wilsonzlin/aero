@@ -1,0 +1,68 @@
+name: Docs
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "AGENTS.md"
+      - "README*"
+  push:
+    branches: ["main"]
+    paths:
+      - "docs/**"
+      - "AGENTS.md"
+      - "README*"
+  workflow_dispatch:
+    inputs:
+      check_external:
+        description: "Also check external links (slower and can be flaky)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    name: Docs (markdown + links)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Fast, deterministic check for broken relative links in markdown.
+      # We intentionally run lychee in `--offline` mode so docs-only PRs get
+      # meaningful CI without depending on external network reliability.
+      - name: Check internal markdown links (offline)
+        uses: lycheeverse/lychee-action@v1
+        with:
+          args: >-
+            --verbose
+            --no-progress
+            --offline
+            ./**/*.md
+          fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Optional: manually check external links. This is opt-in to avoid flakes.
+      - name: Check external links (manual)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.check_external == 'true'
+        uses: lycheeverse/lychee-action@v1
+        with:
+          args: >-
+            --verbose
+            --no-progress
+            --timeout 10
+            --exclude ^http://localhost
+            --exclude ^http://example\.com
+            --exclude ^https://cloudflare-dns\.com/dns-query
+            ./**/*.md
+          fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
