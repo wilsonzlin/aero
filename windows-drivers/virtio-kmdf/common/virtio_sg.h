@@ -98,6 +98,12 @@ VirtioSgBuildFromMdl(
  * VirtioWdfDmaStartMapping allocates WDF objects and (optionally) builds a
  * partial MDL chain. Callers should invoke it at <= APC_LEVEL.
  *
+ * This helper is single-shot: it expects WDF to translate the entire buffer
+ * range in one EvtProgramDma invocation. If the DMA adapter/framework must
+ * split the buffer (max-length, max-SG elements, etc.), mapping will fail and
+ * the caller should fall back to INDIRECT descriptors, a bounce buffer, or
+ * otherwise segment the request.
+ *
  * If EvtProgramDma is provided, it is invoked from the internal program-DMA
  * callback after the mapping object's Sg list has been populated. The callback
  * receives Context == VIRTIO_WDFDMA_MAPPING* (the same context passed to

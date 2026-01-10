@@ -201,6 +201,8 @@ VirtioWdfDmaEvtProgramDma(
     BOOLEAN deviceWrite;
     ULONG count;
     NTSTATUS status;
+    size_t bytesMapped;
+    ULONG i;
 
     UNREFERENCED_PARAMETER(Transaction);
     UNREFERENCED_PARAMETER(Device);
@@ -221,6 +223,25 @@ VirtioWdfDmaEvtProgramDma(
         &count);
 
     if (!NT_SUCCESS(status)) {
+        mapping->Sg.Count = 0;
+        return FALSE;
+    }
+
+    bytesMapped = 0;
+    for (i = 0; i < SgList->NumberOfElements; i++) {
+        status = RtlSizeTAdd(bytesMapped, (size_t)SgList->Elements[i].Length, &bytesMapped);
+        if (!NT_SUCCESS(status)) {
+            mapping->Sg.Count = 0;
+            return FALSE;
+        }
+    }
+
+    /*
+     * Virtio expects a single descriptor chain to describe the entire buffer.
+     * If the DMA adapter/framework split the mapping (max-length, max-SG, etc.),
+     * bytesMapped will be smaller than the requested transfer length.
+     */
+    if (bytesMapped != mapping->ByteLength) {
         mapping->Sg.Count = 0;
         return FALSE;
     }
@@ -252,6 +273,7 @@ VirtioWdfDmaStartMapping(
     NTSTATUS status;
     size_t totalBytes;
     ULONG maxElems;
+    ULONG maxSg;
     WDF_OBJECT_ATTRIBUTES objAttributes;
     WDFOBJECT obj;
     VIRTIO_WDFDMA_MAPPING* mapping;
@@ -279,6 +301,19 @@ VirtioWdfDmaStartMapping(
 
     if (Dma->DmaEnabler == NULL) {
         return STATUS_INVALID_PARAMETER;
+    }
+
+    {
+        size_t maxLen = WdfDmaEnablerGetMaximumLength(Dma->DmaEnabler);
+        if (Length > maxLen) {
+            /*
+             * WDF will split transfers larger than the enabler/adapter maximum
+             * into multiple EvtProgramDma invocations. This mapping helper is
+             * intentionally single-shot (one SG list for the entire virtqueue
+             * submission), so reject oversize buffers early.
+             */
+            return STATUS_INVALID_BUFFER_SIZE;
+        }
     }
 
     sourceMdl = Mdl;
@@ -313,6 +348,11 @@ VirtioWdfDmaStartMapping(
         return STATUS_INVALID_PARAMETER;
     }
 
+    maxSg = WdfDmaEnablerGetMaximumScatterGatherElements(Dma->DmaEnabler);
+    if (maxSg == 0) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&objAttributes, VIRTIO_WDFDMA_MAPPING);
     objAttributes.ParentObject = Parent;
 
@@ -330,7 +370,7 @@ VirtioWdfDmaStartMapping(
     mapping->ElemMemory = NULL;
     mapping->Sg.Elems = NULL;
     mapping->Sg.Count = 0;
-    mapping->SgCapacity = maxElems;
+    mapping->SgCapacity = maxSg;
     mapping->ByteLength = Length;
     mapping->UserEvtProgramDma = EvtProgramDma;
 
@@ -339,7 +379,7 @@ VirtioWdfDmaStartMapping(
 
     {
         size_t elemBytes = 0;
-        status = RtlSizeTMult((size_t)maxElems, sizeof(VIRTIO_SG_ELEM), &elemBytes);
+        status = RtlSizeTMult((size_t)mapping->SgCapacity, sizeof(VIRTIO_SG_ELEM), &elemBytes);
         if (NT_SUCCESS(status)) {
             status = WdfMemoryCreate(
                 &memAttributes,
