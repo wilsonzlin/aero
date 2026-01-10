@@ -3,6 +3,7 @@ use aero_storage_server::{
         images::{router_with_state, ImagesState},
         range::RangeOptions,
     },
+    metrics::Metrics,
     store::LocalFsImageStore,
 };
 use axum::{
@@ -21,7 +22,8 @@ async fn setup_app(max_ranges: usize, max_total_bytes: u64) -> (axum::Router, te
         .expect("write test file");
 
     let store = Arc::new(LocalFsImageStore::new(dir.path()));
-    let state = ImagesState::new(store).with_range_options(RangeOptions {
+    let metrics = Arc::new(Metrics::new());
+    let state = ImagesState::new(store, metrics).with_range_options(RangeOptions {
         max_ranges,
         max_total_bytes,
     });

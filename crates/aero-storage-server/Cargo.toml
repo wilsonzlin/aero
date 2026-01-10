@@ -13,6 +13,7 @@ bytes = "1"
 futures = "0.3"
 hex = "0.4"
 httpdate = "1"
+prometheus = "0.13"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -22,10 +23,11 @@ time = { version = "0.3", features = ["formatting", "std"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
-tower = "0.5"
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

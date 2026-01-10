@@ -1,10 +1,14 @@
 pub mod api;
 pub mod http;
+pub mod metrics;
 pub mod server;
 pub mod store;
 
 use std::sync::Arc;
 
+use axum::middleware;
+
+use metrics::Metrics;
 use store::ImageStore;
 
 #[derive(Clone)]
@@ -20,8 +24,14 @@ impl AppState {
 
 pub fn app(state: AppState) -> axum::Router {
     let store = Arc::clone(&state.store);
+    let metrics = Arc::new(Metrics::new());
+
     axum::Router::new()
-        .merge(http::images::router(store))
+        .merge(http::router(store, Arc::clone(&metrics)))
         .merge(api::router(state))
+        .route_layer(middleware::from_fn_with_state(
+            metrics,
+            http::observability::middleware,
+        ))
 }
 pub use server::{start, RunningStorageServer, StorageServerConfig};

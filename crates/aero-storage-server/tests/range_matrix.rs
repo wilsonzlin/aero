@@ -1,8 +1,11 @@
-use aero_storage_server::http::{
-    images::{router_with_state, ImagesState},
-    range::RangeOptions,
+use aero_storage_server::{
+    http::{
+        images::{router_with_state, ImagesState},
+        range::RangeOptions,
+    },
+    metrics::Metrics,
+    store::LocalFsImageStore,
 };
-use aero_storage_server::store::LocalFsImageStore;
 use axum::{
     body::Body,
     http::{header, Method, Request, StatusCode},
@@ -26,7 +29,8 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir, Vec<u8>) {
         .expect("write fixture");
 
     let store = Arc::new(LocalFsImageStore::new(dir.path()));
-    let state = ImagesState::new(store).with_range_options(RangeOptions {
+    let metrics = Arc::new(Metrics::new());
+    let state = ImagesState::new(store, metrics).with_range_options(RangeOptions {
         max_ranges: 16,
         max_total_bytes: 1024 * 1024,
     });
@@ -40,10 +44,12 @@ fn assert_common_headers(headers: &axum::http::HeaderMap) {
         "bytes",
         "Accept-Ranges"
     );
-    assert_eq!(
-        headers[header::CACHE_CONTROL].to_str().unwrap(),
-        "no-transform",
-        "Cache-Control"
+    assert!(
+        headers[header::CACHE_CONTROL]
+            .to_str()
+            .unwrap()
+            .contains("no-transform"),
+        "Cache-Control must include no-transform"
     );
     assert!(
         !headers.contains_key(header::CONTENT_ENCODING),

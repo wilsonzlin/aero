@@ -2,6 +2,7 @@ use aero_storage_server::http::{
     images::{router_with_state, ImagesState},
     range::RangeOptions,
 };
+use aero_storage_server::metrics::Metrics;
 use aero_storage_server::store::LocalFsImageStore;
 use axum::{
     body::Body,
@@ -50,7 +51,8 @@ async fn http_range_supports_offsets_beyond_4gib_and_suffix_ranges() {
     drop(file);
 
     let store = Arc::new(LocalFsImageStore::new(dir.path()));
-    let state = ImagesState::new(store).with_range_options(RangeOptions {
+    let metrics = Arc::new(Metrics::new());
+    let state = ImagesState::new(store, metrics).with_range_options(RangeOptions {
         // Keep abuse guards low; the test only requests a few bytes.
         max_ranges: 4,
         max_total_bytes: 1024,

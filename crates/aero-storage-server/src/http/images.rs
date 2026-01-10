@@ -1,10 +1,12 @@
 use crate::{
+    metrics::Metrics,
     http::{
         cache,
         range::{parse_range_header, resolve_ranges, ByteRange, RangeOptions, RangeResolveError},
     },
     store::{ImageStore, StoreError},
 };
+
 use async_stream::try_stream;
 use axum::{
     body::Body,
@@ -18,10 +20,17 @@ use axum::{
     Router,
 };
 use bytes::Bytes;
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use rand::{distributions::Alphanumeric, Rng};
-use std::{io, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    io,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
 use tokio_util::io::ReaderStream;
+use tracing::Instrument;
 
 const DEFAULT_MAX_RANGES: usize = 16;
 const DEFAULT_MAX_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
@@ -30,15 +39,17 @@ const DEFAULT_PUBLIC_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 #[derive(Clone)]
 pub struct ImagesState {
     store: Arc<dyn ImageStore>,
+    metrics: Arc<Metrics>,
     range_options: RangeOptions,
     cors_allow_origin: HeaderValue,
     public_cache_max_age: Duration,
 }
 
 impl ImagesState {
-    pub fn new(store: Arc<dyn ImageStore>) -> Self {
+    pub fn new(store: Arc<dyn ImageStore>, metrics: Arc<Metrics>) -> Self {
         Self {
             store,
+            metrics,
             range_options: RangeOptions {
                 max_ranges: DEFAULT_MAX_RANGES,
                 max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
@@ -63,14 +74,14 @@ impl ImagesState {
         self.public_cache_max_age = max_age;
         self
     }
+
+    pub(crate) fn metrics(&self) -> &Metrics {
+        self.metrics.as_ref()
+    }
 }
 
-pub fn router(store: Arc<dyn ImageStore>) -> Router {
-    router_with_state(ImagesState::new(store))
-}
-
-pub fn router_with_state(state: ImagesState) -> Router {
-    Router::new()
+pub fn router() -> Router<ImagesState> {
+    Router::<ImagesState>::new()
         .route(
             "/v1/images/:image_id/data",
             get(get_image).head(head_image).options(options_image),
@@ -79,7 +90,10 @@ pub fn router_with_state(state: ImagesState) -> Router {
             "/v1/images/:image_id",
             get(get_image).head(head_image).options(options_image),
         )
-        .with_state(state)
+}
+
+pub fn router_with_state(state: ImagesState) -> Router {
+    router().with_state(state)
 }
 
 pub async fn get_image(
@@ -87,6 +101,7 @@ pub async fn get_image(
     State(state): State<ImagesState>,
     headers: HeaderMap,
 ) -> Response {
+    tracing::Span::current().record("image_id", &tracing::field::display(&image_id));
     serve_image(image_id, state, headers, true).await
 }
 
@@ -95,6 +110,7 @@ pub async fn head_image(
     State(state): State<ImagesState>,
     headers: HeaderMap,
 ) -> Response {
+    tracing::Span::current().record("image_id", &tracing::field::display(&image_id));
     serve_image(image_id, state, headers, false).await
 }
 
@@ -114,9 +130,23 @@ async fn serve_image(
     let meta = match state.store.get_meta(&image_id).await {
         Ok(meta) => meta,
         Err(StoreError::NotFound) | Err(StoreError::InvalidImageId { .. }) => {
-            return response_with_status(StatusCode::NOT_FOUND, &state)
+            return response_with_status(StatusCode::NOT_FOUND, &state);
         }
-        Err(_) => return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state),
+        Err(StoreError::Manifest(err)) => {
+            state.metrics.inc_store_error("manifest");
+            tracing::error!(error = %err, "store manifest error");
+            return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state);
+        }
+        Err(StoreError::Io(err)) => {
+            state.metrics.inc_store_error("meta");
+            tracing::error!(error = %err, "store get_meta failed");
+            return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state);
+        }
+        Err(StoreError::InvalidRange { .. }) => {
+            // `get_meta` doesn't currently produce this, but keep mapping defensive.
+            state.metrics.inc_store_error("meta");
+            return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state);
+        }
     };
 
     let len = meta.size;
@@ -135,7 +165,10 @@ async fn serve_image(
             Ok(None) => {
                 return full_response(&state, &image_id, meta, want_body, cache_control).await
             }
-            Err(_) => return range_not_satisfiable(&state, len),
+            Err(_) => {
+                state.metrics.inc_range_request_invalid();
+                return range_not_satisfiable(&state, len);
+            }
         };
 
         // RFC 9110 If-Range support: if validator doesn't match, ignore Range and return 200.
@@ -148,12 +181,16 @@ async fn serve_image(
             // Abuse guard: large multi-range requests can be used for amplification. We return
             // 413 rather than attempting to serve it.
             Err(RangeResolveError::TooManyRanges | RangeResolveError::TooManyBytes) => {
-                return response_with_status(StatusCode::PAYLOAD_TOO_LARGE, &state)
+                state.metrics.inc_range_request_invalid();
+                return response_with_status(StatusCode::PAYLOAD_TOO_LARGE, &state);
             }
             Err(RangeResolveError::NoSatisfiableRanges) => {
-                return range_not_satisfiable(&state, len)
+                state.metrics.inc_range_request_invalid();
+                return range_not_satisfiable(&state, len);
             }
         };
+
+        state.metrics.inc_range_request_valid();
 
         if ranges.len() == 1 {
             return single_range_response(
@@ -187,9 +224,22 @@ async fn full_response(
     want_body: bool,
     cache_control: HeaderValue,
 ) -> Response {
+    if want_body {
+        state.metrics.observe_image_bytes_served(image_id, meta.size);
+    }
+
     let mut response = Response::new(if want_body {
-        match state.store.open_range(image_id, 0, meta.size).await {
-            Ok(reader) => Body::from_stream(ReaderStream::new(reader)),
+        let span = tracing::info_span!("store_read", image_id = %image_id, start = 0_u64, len = meta.size);
+        match state
+            .store
+            .open_range(image_id, 0, meta.size)
+            .instrument(span.clone())
+            .await
+        {
+            Ok(reader) => {
+                let stream = InstrumentedStream::new(ReaderStream::new(reader), span);
+                Body::from_stream(stream)
+            }
             Err(err) => return response_from_store_error(state, err, meta.size),
         }
     } else {
@@ -220,13 +270,27 @@ async fn single_range_response(
     cache_control: HeaderValue,
 ) -> Response {
     let range_len = range.len();
+    if want_body {
+        state.metrics.observe_image_bytes_served(image_id, range_len);
+    }
+
     let mut response = Response::new(if want_body {
+        let span = tracing::info_span!(
+            "store_read",
+            image_id = %image_id,
+            start = range.start,
+            len = range_len,
+        );
         match state
             .store
             .open_range(image_id, range.start, range_len)
+            .instrument(span.clone())
             .await
         {
-            Ok(reader) => Body::from_stream(ReaderStream::new(reader)),
+            Ok(reader) => {
+                let stream = InstrumentedStream::new(ReaderStream::new(reader), span);
+                Body::from_stream(stream)
+            }
             Err(err) => return response_from_store_error(state, err, meta.size),
         }
     } else {
@@ -264,6 +328,11 @@ async fn multipart_range_response(
     want_body: bool,
     cache_control: HeaderValue,
 ) -> Response {
+    if want_body {
+        let total = ranges.iter().map(|r| r.len()).sum();
+        state.metrics.observe_image_bytes_served(image_id, total);
+    }
+
     let boundary: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
         .take(32)
@@ -273,8 +342,11 @@ async fn multipart_range_response(
     let content_type =
         HeaderValue::from_str(&format!("multipart/byteranges; boundary={boundary}")).unwrap();
 
+    let content_length = multipart_content_length(&boundary, &ranges, meta.content_type, meta.size);
+
     let mut response = Response::new(if want_body {
         let store = Arc::clone(&state.store);
+        let metrics = Arc::clone(&state.metrics);
         let image_id = image_id.to_string();
         let boundary = boundary.clone();
         let content_type_part = meta.content_type;
@@ -289,12 +361,27 @@ async fn multipart_range_response(
                 );
                 yield Bytes::from(part_headers);
 
+                let span = tracing::info_span!(
+                    "store_read",
+                    image_id = %image_id,
+                    start = range.start,
+                    len = range.len(),
+                );
+
                 let reader = store
                     .open_range(&image_id, range.start, range.len())
+                    .instrument(span.clone())
                     .await
-                    .map_err(io::Error::other)?;
+                    .map_err(|err| {
+                        match err {
+                            StoreError::Io(_) => metrics.inc_store_error("open_range"),
+                            StoreError::Manifest(_) => metrics.inc_store_error("manifest"),
+                            _ => {}
+                        };
+                        io::Error::new(io::ErrorKind::Other, err)
+                    })?;
 
-                let mut reader_stream = ReaderStream::new(reader);
+                let mut reader_stream = InstrumentedStream::new(ReaderStream::new(reader), span);
                 while let Some(chunk) = reader_stream.next().await {
                     yield chunk?;
                 }
@@ -315,8 +402,35 @@ async fn multipart_range_response(
     let headers = response.headers_mut();
     insert_cors_headers(headers, state);
     headers.insert(header::CONTENT_TYPE, content_type);
+    headers.insert(
+        header::CONTENT_LENGTH,
+        HeaderValue::from_str(&content_length.to_string()).unwrap(),
+    );
     insert_data_cache_headers(headers, &meta, cache_control);
     response
+}
+
+fn multipart_content_length(
+    boundary: &str,
+    ranges: &[ByteRange],
+    content_type_part: &str,
+    total_size: u64,
+) -> u64 {
+    let mut total = 0u64;
+
+    for range in ranges {
+        let part_headers = format!(
+            "--{boundary}\r\nContent-Type: {content_type_part}\r\nContent-Range: bytes {start}-{end}/{total_size}\r\n\r\n",
+            start = range.start,
+            end = range.end,
+        );
+        total += part_headers.len() as u64;
+        total += range.len();
+        total += 2; // trailing CRLF after each range body
+    }
+
+    total += format!("--{boundary}--\r\n").len() as u64;
+    total
 }
 
 fn range_not_satisfiable(state: &ImagesState, len: u64) -> Response {
@@ -342,8 +456,16 @@ fn response_from_store_error(state: &ImagesState, err: StoreError, len: u64) -> 
             response_with_status(StatusCode::NOT_FOUND, state)
         }
         StoreError::InvalidRange { .. } => range_not_satisfiable(state, len),
-        StoreError::Manifest(_) => response_with_status(StatusCode::INTERNAL_SERVER_ERROR, state),
-        StoreError::Io(_) => response_with_status(StatusCode::INTERNAL_SERVER_ERROR, state),
+        StoreError::Manifest(err) => {
+            state.metrics.inc_store_error("manifest");
+            tracing::error!(error = %err, "store manifest error");
+            response_with_status(StatusCode::INTERNAL_SERVER_ERROR, state)
+        }
+        StoreError::Io(err) => {
+            state.metrics.inc_store_error("open_range");
+            tracing::error!(error = %err, "store open_range failed");
+            response_with_status(StatusCode::INTERNAL_SERVER_ERROR, state)
+        }
     }
 }
 
@@ -437,4 +559,31 @@ fn not_modified_response(
     insert_cors_headers(headers, state);
     insert_data_cache_headers(headers, meta, cache_control);
     response
+}
+
+struct InstrumentedStream<S> {
+    inner: Pin<Box<S>>,
+    span: tracing::Span,
+}
+
+impl<S> InstrumentedStream<S> {
+    fn new(inner: S, span: tracing::Span) -> Self {
+        Self {
+            inner: Box::pin(inner),
+            span,
+        }
+    }
+}
+
+impl<S> Stream for InstrumentedStream<S>
+where
+    S: Stream,
+{
+    type Item = S::Item;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        let _guard = this.span.enter();
+        this.inner.as_mut().poll_next(cx)
+    }
 }
