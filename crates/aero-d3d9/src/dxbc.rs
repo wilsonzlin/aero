@@ -8,6 +8,8 @@ use std::collections::HashMap;
 
 use thiserror::Error;
 
+pub mod robust;
+
 #[derive(Debug, Error)]
 pub enum DxbcError {
     #[error("buffer too small")]
