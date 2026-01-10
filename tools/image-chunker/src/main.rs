@@ -17,11 +17,12 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 
-const MANIFEST_SCHEMA_VERSION: u32 = 1;
+const MANIFEST_SCHEMA: &str = "aero.chunked-disk-image.v1";
+const CHUNK_MIME_TYPE: &str = "application/octet-stream";
 const DEFAULT_CHUNK_SIZE_BYTES: u64 = 8 * 1024 * 1024;
 const DEFAULT_CONCURRENCY: usize = 8;
 const DEFAULT_RETRIES: usize = 5;
-const CHUNK_KEY_WIDTH: usize = 8;
+const CHUNK_INDEX_WIDTH: usize = 8;
 const MAX_CHUNKS: u64 = 100_000_000;
 
 #[derive(Debug, Parser)]
@@ -50,6 +51,19 @@ struct PublishArgs {
     /// Key prefix to upload under (e.g. images/<imageId>/<version>/).
     #[arg(long)]
     prefix: String,
+
+    /// Image identifier written into the manifest (recommended stable id, e.g. `win7-sp1-x64`).
+    ///
+    /// If omitted, it is inferred from `--prefix` by taking the second-to-last non-empty path
+    /// segment.
+    #[arg(long)]
+    image_id: Option<String>,
+
+    /// Version identifier written into the manifest (recommended: content hash, e.g. `sha256-...`).
+    ///
+    /// If omitted, it is inferred from `--prefix` by taking the last non-empty path segment.
+    #[arg(long)]
+    image_version: Option<String>,
 
     /// Chunk size in bytes.
     #[arg(long, default_value_t = DEFAULT_CHUNK_SIZE_BYTES)]
@@ -113,27 +127,21 @@ struct ChunkResult {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Manifest {
-    schema_version: u32,
+struct ManifestV1 {
+    schema: String,
+    image_id: String,
+    version: String,
+    mime_type: String,
     total_size: u64,
     chunk_size: u64,
     chunk_count: u64,
-    checksum: ManifestChecksum,
-    chunks: Vec<ManifestChunk>,
+    chunk_index_width: u32,
+    chunks: Vec<ManifestChunkV1>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ManifestChecksum {
-    algorithm: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ManifestChunk {
-    index: u64,
-    key: String,
-    offset: u64,
+struct ManifestChunkV1 {
     size: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     sha256: Option<String>,
@@ -162,6 +170,7 @@ async fn publish(args: PublishArgs) -> Result<()> {
     validate_args(&args)?;
 
     let prefix = normalize_prefix(&args.prefix);
+    let (image_id, version) = resolve_image_id_and_version(&args, &prefix)?;
     let file_metadata = tokio::fs::metadata(&args.file)
         .await
         .with_context(|| format!("stat {}", args.file.display()))?;
@@ -176,8 +185,10 @@ async fn publish(args: PublishArgs) -> Result<()> {
     let s3 = build_s3_client(&args).await?;
 
     eprintln!(
-        "Publishing {}\n  total size: {} bytes\n  chunk size: {} bytes\n  chunk count: {}\n  destination: s3://{}/{}",
+        "Publishing {}\n  imageId: {}\n  version: {}\n  total size: {} bytes\n  chunk size: {} bytes\n  chunk count: {}\n  destination: s3://{}/{}",
         args.file.display(),
+        image_id,
+        version,
         total_size,
         args.chunk_size,
         chunk_count,
@@ -280,7 +291,14 @@ async fn publish(args: PublishArgs) -> Result<()> {
 
     pb.finish_with_message(format!("{chunk_count}/{chunk_count} chunks"));
 
-    let manifest = build_manifest(total_size, args.chunk_size, args.checksum, &sha256_by_index)?;
+    let manifest = build_manifest_v1(
+        total_size,
+        args.chunk_size,
+        &image_id,
+        &version,
+        args.checksum,
+        &sha256_by_index,
+    )?;
     upload_json_object(
         &s3,
         &args.bucket,
@@ -322,6 +340,9 @@ fn validate_args(args: &PublishArgs) -> Result<()> {
     if args.chunk_size == 0 {
         bail!("--chunk-size must be > 0");
     }
+    if args.chunk_size % 512 != 0 {
+        bail!("--chunk-size must be a multiple of 512 bytes");
+    }
     if args.concurrency == 0 {
         bail!("--concurrency must be > 0");
     }
@@ -349,6 +370,38 @@ fn normalize_prefix(prefix: &str) -> String {
     }
 }
 
+fn resolve_image_id_and_version(args: &PublishArgs, prefix: &str) -> Result<(String, String)> {
+    let inferred = infer_image_id_and_version(prefix);
+    let image_id = args
+        .image_id
+        .clone()
+        .or_else(|| inferred.as_ref().map(|(image_id, _)| image_id.clone()))
+        .ok_or_else(|| {
+            anyhow!("--image-id is required when it cannot be inferred from --prefix")
+        })?;
+    let version = args
+        .image_version
+        .clone()
+        .or_else(|| inferred.as_ref().map(|(_, version)| version.clone()))
+        .ok_or_else(|| {
+            anyhow!("--image-version is required when it cannot be inferred from --prefix")
+        })?;
+    Ok((image_id, version))
+}
+
+fn infer_image_id_and_version(prefix: &str) -> Option<(String, String)> {
+    let segments: Vec<&str> = prefix
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    if segments.len() < 2 {
+        return None;
+    }
+    let version = segments[segments.len() - 1].to_string();
+    let image_id = segments[segments.len() - 2].to_string();
+    Some((image_id, version))
+}
+
 fn chunk_object_key(index: u64) -> Result<String> {
     if index >= MAX_CHUNKS {
         bail!(
@@ -356,7 +409,10 @@ fn chunk_object_key(index: u64) -> Result<String> {
             MAX_CHUNKS - 1
         );
     }
-    Ok(format!("chunks/{index:0width$}", width = CHUNK_KEY_WIDTH))
+    Ok(format!(
+        "chunks/{index:0width$}.bin",
+        width = CHUNK_INDEX_WIDTH
+    ))
 }
 
 fn chunk_size_at_index(total_size: u64, chunk_size: u64, index: u64) -> Result<u64> {
@@ -369,20 +425,18 @@ fn chunk_size_at_index(total_size: u64, chunk_size: u64, index: u64) -> Result<u
     Ok(std::cmp::min(chunk_size, total_size - offset))
 }
 
-fn build_manifest(
+fn build_manifest_v1(
     total_size: u64,
     chunk_size: u64,
+    image_id: &str,
+    version: &str,
     checksum: ChecksumAlgorithm,
     sha256_by_index: &[Option<String>],
-) -> Result<Manifest> {
+) -> Result<ManifestV1> {
     let chunk_count = chunk_count(total_size, chunk_size);
     let mut chunks = Vec::with_capacity(chunk_count as usize);
 
     for index in 0..chunk_count {
-        let key = chunk_object_key(index)?;
-        let offset = index
-            .checked_mul(chunk_size)
-            .ok_or_else(|| anyhow!("chunk offset overflows u64"))?;
         let size = chunk_size_at_index(total_size, chunk_size, index)?;
 
         let sha256 = match checksum {
@@ -395,23 +449,18 @@ fn build_manifest(
             ),
         };
 
-        chunks.push(ManifestChunk {
-            index,
-            key,
-            offset,
-            size,
-            sha256,
-        });
+        chunks.push(ManifestChunkV1 { size, sha256 });
     }
 
-    Ok(Manifest {
-        schema_version: MANIFEST_SCHEMA_VERSION,
+    Ok(ManifestV1 {
+        schema: MANIFEST_SCHEMA.to_string(),
+        image_id: image_id.to_string(),
+        version: version.to_string(),
+        mime_type: CHUNK_MIME_TYPE.to_string(),
         total_size,
         chunk_size,
         chunk_count,
-        checksum: ManifestChecksum {
-            algorithm: checksum.as_str().to_string(),
-        },
+        chunk_index_width: CHUNK_INDEX_WIDTH as u32,
         chunks,
     })
 }
@@ -455,15 +504,7 @@ async fn worker_loop(
         };
 
         let key = format!("{}{}", prefix, chunk_object_key(job.index)?);
-        put_object_with_retry(
-            &s3,
-            &bucket,
-            &key,
-            job.bytes,
-            "application/octet-stream",
-            retries,
-        )
-        .await?;
+        put_object_with_retry(&s3, &bucket, &key, job.bytes, CHUNK_MIME_TYPE, retries).await?;
 
         pb.inc(size);
         let uploaded = chunks_uploaded.fetch_add(1, Ordering::SeqCst) + 1;
@@ -560,10 +601,24 @@ mod tests {
 
     #[test]
     fn chunk_key_is_fixed_width() -> Result<()> {
-        assert_eq!(chunk_object_key(0)?, "chunks/00000000");
-        assert_eq!(chunk_object_key(1)?, "chunks/00000001");
-        assert_eq!(chunk_object_key(42)?, "chunks/00000042");
+        assert_eq!(chunk_object_key(0)?, "chunks/00000000.bin");
+        assert_eq!(chunk_object_key(1)?, "chunks/00000001.bin");
+        assert_eq!(chunk_object_key(42)?, "chunks/00000042.bin");
         Ok(())
+    }
+
+    #[test]
+    fn infer_image_id_and_version_from_prefix() {
+        assert_eq!(
+            infer_image_id_and_version("images/win7/sha256-abc/"),
+            Some(("win7".to_string(), "sha256-abc".to_string()))
+        );
+        assert_eq!(
+            infer_image_id_and_version("win7/sha256-abc"),
+            Some(("win7".to_string(), "sha256-abc".to_string()))
+        );
+        assert_eq!(infer_image_id_and_version(""), None);
+        assert_eq!(infer_image_id_and_version("onlyone/"), None);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 Chunks a large **raw disk image** into fixed-size objects and uploads them to an **S3-compatible object store** (AWS S3, MinIO, etc.), along with a `manifest.json`.
 
-This enables CDN-friendly delivery without relying on HTTP `Range` requests: clients fetch `manifest.json`, then fetch `chunks/00000000`, `chunks/00000001`, … as needed.
+This enables CDN-friendly delivery without relying on HTTP `Range` requests: clients fetch `manifest.json`, then fetch `chunks/00000000.bin`, `chunks/00000001.bin`, … as needed.
 
 ## Build
 
@@ -20,6 +20,8 @@ Binary path:
 
 Credentials are resolved via the standard AWS SDK chain (env vars, `~/.aws/config`, profiles, IAM role, etc.).
 
+Note: `--chunk-size` must be a multiple of **512 bytes** (ATA sector size).
+
 Example:
 
 ```bash
@@ -27,14 +29,18 @@ Example:
   --file ./disk.img \
   --bucket my-bucket \
   --prefix images/<imageId>/<version>/ \
+  --image-id <imageId> \
+  --image-version <version> \
   --chunk-size 8388608 \
   --region us-east-1 \
   --concurrency 8
 ```
 
+`--image-id`/`--image-version` can be omitted if `--prefix` already ends with `/<imageId>/<version>/`.
+
 Artifacts uploaded under the given prefix:
 
-- `chunks/00000000`, `chunks/00000001`, …
+- `chunks/00000000.bin`, `chunks/00000001.bin`, …
 - `manifest.json`
 - `meta.json` (unless `--no-meta`)
 
@@ -50,6 +56,8 @@ export AWS_SECRET_ACCESS_KEY=minioadmin
   --file ./disk.img \
   --bucket my-bucket \
   --prefix images/<imageId>/<version>/ \
+  --image-id <imageId> \
+  --image-version <version> \
   --chunk-size 8388608 \
   --endpoint http://localhost:9000 \
   --force-path-style \
@@ -63,8 +71,8 @@ If your bucket/prefix is publicly readable (or your local MinIO is configured to
 
 ```bash
 curl -fSs http://localhost:9000/my-bucket/images/<imageId>/<version>/manifest.json | head
-curl -fSsI http://localhost:9000/my-bucket/images/<imageId>/<version>/chunks/00000000
-curl -fSsI http://localhost:9000/my-bucket/images/<imageId>/<version>/chunks/00000001
+curl -fSsI http://localhost:9000/my-bucket/images/<imageId>/<version>/chunks/00000000.bin
+curl -fSsI http://localhost:9000/my-bucket/images/<imageId>/<version>/chunks/00000001.bin
 ```
 
 If your objects are private, generate a presigned URL and `curl` that instead:
@@ -81,27 +89,31 @@ curl -fSs "<presigned-url>"
 
 ## Manifest format
 
-`manifest.json` is a single JSON document that describes the chunked image:
+`manifest.json` is a single JSON document that describes the chunked image (see [`docs/18-chunked-disk-image-format.md`](../../docs/18-chunked-disk-image-format.md)):
 
+- `schema`: `aero.chunked-disk-image.v1`
+- `imageId` and `version`: identifiers for the image/version
+- `mimeType`: MIME type for chunk objects
 - `totalSize`: original file size in bytes
 - `chunkSize`: the chosen chunk size in bytes
 - `chunkCount`: total number of chunk objects
-- `chunks[i].sha256`: per-chunk checksum (present when `--checksum sha256`, absent when `--checksum none`)
+- `chunkIndexWidth`: decimal zero-padding width (8)
+- `chunks[i].sha256`: per-chunk checksum (present when `--checksum sha256`, omitted when `--checksum none`)
 
 Example (abridged):
 
 ```json
 {
-  "schemaVersion": 1,
+  "schema": "aero.chunked-disk-image.v1",
+  "imageId": "win7-sp1-x64",
+  "version": "sha256-...",
+  "mimeType": "application/octet-stream",
   "totalSize": 123456789,
   "chunkSize": 8388608,
   "chunkCount": 15,
-  "checksum": { "algorithm": "sha256" },
+  "chunkIndexWidth": 8,
   "chunks": [
     {
-      "index": 0,
-      "key": "chunks/00000000",
-      "offset": 0,
       "size": 8388608,
       "sha256": "…"
     }
