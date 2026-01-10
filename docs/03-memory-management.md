@@ -4,6 +4,9 @@
 
 Memory management is critical for both correctness and performance. Windows 7 heavily uses paging, and the MMU must accurately emulate address translation while maintaining reasonable speed through TLB caching.
 
+> **Browser reality:** In the web build, guest RAM is backed by wasm32 `WebAssembly.Memory`, so the emulator is constrained to **≤ 4 GiB** of linear memory total. Large control/IPC buffers (rings, status, audio) should live in separate `SharedArrayBuffer`s.  
+> See [ADR 0003](./adr/0003-shared-memory-layout.md).
+
 ---
 
 ## x86-64 Paging Modes
