@@ -4,6 +4,12 @@
 
 Comprehensive testing is critical for an emulator. We must verify correctness at the instruction level, system level, and application level.
 
+## Practical guide (running tests locally)
+
+This document describes *what* we test and *why*. For the practical, developer-facing guide to running the full test stack locally (Rust, WASM, TypeScript, Playwright), plus common issues like COOP/COEP and WebGPU gating, see:
+
+- [`TESTING.md`](./TESTING.md)
+
 ---
 
 ## Testing Pyramid
@@ -237,7 +243,11 @@ async fn test_windows_7_boot() {
         boot_device: BootDevice::HardDisk,
     });
     
-    vm.load_disk("test_images/windows7.img").await;
+    // Aero does not ship Windows images. This test is opt-in and requires a
+    // locally-provided disk image path.
+    let win7_image = std::env::var("AERO_WIN7_IMAGE")
+        .expect("set AERO_WIN7_IMAGE to a locally-provided Windows 7 disk image");
+    vm.load_disk(&win7_image).await;
     
     // Boot to login screen
     let screenshot = vm.run_until_stable_frame(Duration::from_secs(120)).await;
@@ -328,6 +338,8 @@ fn test_mouse_packet_generation() {
 ### Application Compatibility Tests
 
 ```rust
+// NOTE: End-to-end Windows application tests require a user-supplied Windows
+// installation and are not expected to run in default OSS CI.
 #[tokio::test]
 async fn test_notepad() {
     let vm = boot_windows_7().await;
@@ -609,7 +621,12 @@ fn create_test_disk(scenario: TestScenario) -> DiskImage {
     match scenario {
         TestScenario::EmptyDisk => DiskImage::empty(100 * MB),
         TestScenario::BootableDos => create_freedos_image(),
-        TestScenario::BootableWindows7 => load_reference_image("win7_base.img"),
+        // Aero does not ship Windows disk images. When developing locally, keep
+        // any Windows image outside the repo and plumb it in via configuration.
+        TestScenario::BootableWindows7 => DiskImage::from_path(
+            std::env::var("AERO_WIN7_IMAGE")
+                .expect("set AERO_WIN7_IMAGE to a locally-provided Windows 7 disk image"),
+        ),
     }
 }
 ```
