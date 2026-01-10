@@ -1,9 +1,27 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ensurePersistentStorage, getPersistentStorageInfo, getStorageEstimate } from "./storage_quota";
+
+const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+
+function stubNavigator(value: unknown): void {
+  Object.defineProperty(globalThis, "navigator", {
+    value,
+    configurable: true,
+    writable: true,
+  });
+}
+
+afterEach(() => {
+  if (originalNavigatorDescriptor) {
+    Object.defineProperty(globalThis, "navigator", originalNavigatorDescriptor);
+  } else {
+    Reflect.deleteProperty(globalThis as any, "navigator");
+  }
+});
 
 describe("getStorageEstimate", () => {
   it("returns supported=false when StorageManager is unavailable", async () => {
-    (globalThis as any).navigator = {};
+    stubNavigator({});
 
     const estimate = await getStorageEstimate();
 
@@ -18,11 +36,11 @@ describe("getStorageEstimate", () => {
   });
 
   it("returns usage/quota/percent and sets warning when over threshold", async () => {
-    (globalThis as any).navigator = {
+    stubNavigator({
       storage: {
         estimate: async () => ({ usage: 81, quota: 100 }),
       },
-    };
+    });
 
     const estimate = await getStorageEstimate({ warningThresholdPercent: 80 });
 
@@ -35,11 +53,11 @@ describe("getStorageEstimate", () => {
   });
 
   it("returns unknown percent if quota is missing/invalid", async () => {
-    (globalThis as any).navigator = {
+    stubNavigator({
       storage: {
         estimate: async () => ({ usage: 10, quota: 0 }),
       },
-    };
+    });
 
     const estimate = await getStorageEstimate();
 
@@ -54,7 +72,7 @@ describe("getStorageEstimate", () => {
 
 describe("persistent storage", () => {
   it("returns supported=false when persistence APIs are missing", async () => {
-    (globalThis as any).navigator = { storage: {} };
+    stubNavigator({ storage: {} });
 
     const info = await getPersistentStorageInfo();
     expect(info).toEqual({ supported: false, persisted: null });
@@ -66,7 +84,7 @@ describe("persistent storage", () => {
   it("does not call persist() if already persisted", async () => {
     let persistCalls = 0;
 
-    (globalThis as any).navigator = {
+    stubNavigator({
       storage: {
         persisted: async () => true,
         persist: async () => {
@@ -74,7 +92,7 @@ describe("persistent storage", () => {
           return true;
         },
       },
-    };
+    });
 
     const info = await getPersistentStorageInfo();
     expect(info).toEqual({ supported: true, persisted: true });
@@ -85,27 +103,26 @@ describe("persistent storage", () => {
   });
 
   it("requests persist() when not yet persisted", async () => {
-    (globalThis as any).navigator = {
+    stubNavigator({
       storage: {
         persisted: async () => false,
         persist: async () => true,
       },
-    };
+    });
 
     const ensured = await ensurePersistentStorage();
     expect(ensured).toEqual({ supported: true, persisted: true, granted: true });
   });
 
   it("handles denied persistence requests", async () => {
-    (globalThis as any).navigator = {
+    stubNavigator({
       storage: {
         persisted: async () => false,
         persist: async () => false,
       },
-    };
+    });
 
     const ensured = await ensurePersistentStorage();
     expect(ensured).toEqual({ supported: true, persisted: false, granted: false });
   });
 });
-

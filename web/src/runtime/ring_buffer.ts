@@ -1,4 +1,4 @@
-import { notify, waitUntilNotEqual } from "./atomics_wait";
+import { notify, waitUntilNotEqual } from "./atomics_wait.ts";
 
 /**
  * Lock-free single-producer/single-consumer (SPSC) ring buffer implemented over a

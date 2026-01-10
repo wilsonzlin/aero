@@ -9,7 +9,8 @@ body {
   padding: 24px;
 }
 
-h1 {
+h1,
+h2 {
   margin: 0 0 12px;
 }
 
@@ -79,4 +80,19 @@ pre {
   border-radius: 6px;
   overflow: auto;
   max-height: 240px;
+}
+
+.warning {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.25);
+}
+
+.muted {
+  opacity: 0.7;
+}
+
+.actions button {
+  margin-right: 8px;
 }

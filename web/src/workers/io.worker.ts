@@ -6,6 +6,9 @@ import { RingBuffer } from "../runtime/ring_buffer";
 import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage, decodeProtocolMessage } from "../runtime/protocol";
 import { InputEventType } from "../input/event_queue";
+import { openSyncAccessHandleInDedicatedWorker } from "../platform/opfs";
+import { DEFAULT_OPFS_DISK_IMAGES_DIRECTORY } from "../storage/disk_image_store";
+import type { WorkerOpenToken } from "../storage/disk_image_store";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -19,10 +22,79 @@ let started = false;
 let pollTimer: number | undefined;
 
 type InputBatchMessage = { type: "in:input-batch"; buffer: ArrayBuffer };
+type OpenActiveDiskRequest = { id: number; type: "openActiveDisk"; token: WorkerOpenToken };
+
+type OpenActiveDiskResult =
+  | {
+      id: number;
+      type: "openActiveDiskResult";
+      ok: true;
+      size: number;
+      syncAccessHandleAvailable: boolean;
+    }
+  | {
+      id: number;
+      type: "openActiveDiskResult";
+      ok: false;
+      error: string;
+    };
+
+let activeAccessHandle: FileSystemSyncAccessHandle | null = null;
+
+async function openOpfsDisk(directory: string, name: string): Promise<{ size: number }> {
+  const dirToUse = directory || DEFAULT_OPFS_DISK_IMAGES_DIRECTORY;
+  const path = `${dirToUse}/${name}`;
+  activeAccessHandle?.close();
+  activeAccessHandle = await openSyncAccessHandleInDedicatedWorker(path, { create: false });
+  return { size: activeAccessHandle.getSize() };
+}
+
+async function handleOpenActiveDisk(msg: OpenActiveDiskRequest): Promise<void> {
+  try {
+    if (msg.token.kind === "opfs") {
+      const { size } = await openOpfsDisk(msg.token.directory, msg.token.name);
+      const res: OpenActiveDiskResult = {
+        id: msg.id,
+        type: "openActiveDiskResult",
+        ok: true,
+        size,
+        syncAccessHandleAvailable: true,
+      };
+      ctx.postMessage(res);
+      return;
+    }
+
+    const res: OpenActiveDiskResult = {
+      id: msg.id,
+      type: "openActiveDiskResult",
+      ok: true,
+      size: msg.token.blob.size,
+      syncAccessHandleAvailable: false,
+    };
+    ctx.postMessage(res);
+  } catch (err) {
+    const res: OpenActiveDiskResult = {
+      id: msg.id,
+      type: "openActiveDiskResult",
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+    ctx.postMessage(res);
+  }
+}
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
-  const data = ev.data as Partial<WorkerInitMessage> | Partial<InputBatchMessage> | undefined;
+  const data = ev.data as
+    | Partial<WorkerInitMessage>
+    | Partial<InputBatchMessage>
+    | Partial<OpenActiveDiskRequest>
+    | undefined;
   if (!data) return;
+
+  if ((data as Partial<OpenActiveDiskRequest>).type === "openActiveDisk") {
+    void handleOpenActiveDisk(data as OpenActiveDiskRequest);
+    return;
+  }
 
   // First message is the shared-memory init handshake.
   if ((data as Partial<WorkerInitMessage>).kind === "init") {
@@ -119,6 +191,7 @@ function shutdown(): void {
     pollTimer = undefined;
   }
 
+  activeAccessHandle?.close();
   setReadyFlag(status, role, false);
   ctx.close();
 }

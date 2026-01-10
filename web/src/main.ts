@@ -20,6 +20,10 @@ import { createWebGpuCanvasContext, requestWebGpuDevice } from "./platform/webgp
 import { WorkerCoordinator } from "./runtime/coordinator";
 import { initWasm } from "./runtime/wasm_loader";
 import { DEFAULT_GUEST_RAM_MIB, GUEST_RAM_PRESETS_MIB, type GuestRamMiB, type WorkerRole } from "./runtime/shared_layout";
+import { createDefaultDiskImageStore } from "./storage/default_disk_image_store";
+import type { DiskImageInfo, WorkerOpenToken } from "./storage/disk_image_store";
+import { formatByteSize } from "./storage/disk_image_store";
+import { IoWorkerClient } from "./workers/io_worker_client";
 
 initAeroStatusApi("booting");
 installPerfHud({ guestRamBytes: DEFAULT_GUEST_RAM_MIB * 1024 * 1024 });
@@ -115,6 +119,20 @@ function formatMaybeBytes(bytes: number | null): string {
   return bytes === null ? "unknown" : formatBytes(bytes);
 }
 
+const ACTIVE_DISK_KEY = "aero.activeDiskImage";
+
+function getActiveDiskName(): string | null {
+  return localStorage.getItem(ACTIVE_DISK_KEY);
+}
+
+function setActiveDiskName(name: string | null): void {
+  if (name === null) {
+    localStorage.removeItem(ACTIVE_DISK_KEY);
+    return;
+  }
+  localStorage.setItem(ACTIVE_DISK_KEY, name);
+}
+
 function render(): void {
   const app = document.getElementById("app");
   if (!app) throw new Error("Missing #app element");
@@ -148,6 +166,7 @@ function render(): void {
     renderGpuWorkerPanel(),
     renderSm5TrianglePanel(),
     renderOpfsPanel(),
+    renderDiskImagesPanel(),
     renderRemoteDiskPanel(),
     renderAudioPanel(),
     renderInputPanel(),
@@ -632,6 +651,211 @@ function renderOpfsPanel(): HTMLElement {
   });
 
   return panel;
+}
+
+function renderDiskImagesPanel(): HTMLElement {
+  const { store, persistent, warning } = createDefaultDiskImageStore();
+  const ioWorker = new IoWorkerClient();
+
+  const warningEl = el("div", {
+    class: "warning",
+    text: warning ?? "OPFS unavailable; using in-memory disk image store.",
+  });
+  warningEl.hidden = persistent;
+
+  const statusEl = el("span", { class: "muted", text: "" }) as HTMLSpanElement;
+
+  const importNameInput = el("input", { type: "text", placeholder: "Defaults to file name" }) as HTMLInputElement;
+  const fileInput = el("input", { type: "file", style: "display: none" }) as HTMLInputElement;
+
+  const importProgress = el("progress", { value: "0", max: "1", style: "width: 320px" }) as HTMLProgressElement;
+  importProgress.hidden = true;
+  const importProgressText = el("span", { class: "muted", text: "" }) as HTMLSpanElement;
+
+  const tableBody = el("tbody");
+
+  const setProgress = (loaded: number, total: number) => {
+    importProgress.hidden = false;
+    importProgress.max = Math.max(total, 1);
+    importProgress.value = loaded;
+    const pct = total > 0 ? Math.floor((loaded / total) * 100) : 0;
+    importProgressText.textContent = `${formatByteSize(loaded)} / ${formatByteSize(total)} (${pct}%)`;
+  };
+
+  const clearProgress = () => {
+    importProgress.hidden = true;
+    importProgress.value = 0;
+    importProgress.max = 1;
+    importProgressText.textContent = "";
+  };
+
+  const renderList = (images: DiskImageInfo[]) => {
+    const active = getActiveDiskName();
+    tableBody.replaceChildren();
+
+    if (images.length === 0) {
+      tableBody.append(el("tr", {}, el("td", { colspan: "4", class: "muted", text: "No disk images imported yet." })));
+      return;
+    }
+
+    for (const image of images) {
+      const radio = el("input", {
+        type: "radio",
+        name: "active-disk",
+        onchange: () => {
+          setActiveDiskName(image.name);
+          void refreshList();
+        },
+      }) as HTMLInputElement;
+      radio.checked = image.name === active;
+
+      const exportButton = el("button", {
+        text: "Export",
+        onclick: async () => {
+          const blob = await store.export(image.name);
+          const url = URL.createObjectURL(blob);
+          try {
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = image.name;
+            a.click();
+          } finally {
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }
+        },
+      });
+
+      const deleteButton = el("button", {
+        text: "Delete",
+        onclick: async () => {
+          if (!confirm(`Delete disk image "${image.name}"?`)) return;
+          await store.delete(image.name);
+          if (getActiveDiskName() === image.name) setActiveDiskName(null);
+          await refreshList();
+        },
+      });
+
+      tableBody.append(
+        el(
+          "tr",
+          {},
+          el("td", {}, radio),
+          el("td", { text: image.name }),
+          el("td", { text: formatByteSize(image.size) }),
+          el("td", { class: "actions" }, exportButton, deleteButton),
+        ),
+      );
+    }
+  };
+
+  const refreshList = async () => {
+    try {
+      const images = await store.list();
+      renderList(images);
+    } catch (err) {
+      statusEl.textContent = err instanceof Error ? err.message : String(err);
+    }
+  };
+
+  const importButton = el("button", {
+    text: "Import…",
+    onclick: () => {
+      statusEl.textContent = "";
+      clearProgress();
+      fileInput.value = "";
+      fileInput.click();
+    },
+  }) as HTMLButtonElement;
+
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+
+    statusEl.textContent = "";
+    importButton.disabled = true;
+    clearProgress();
+    setProgress(0, file.size);
+
+    try {
+      const desiredName = importNameInput.value.trim();
+      const imported = await store.import(
+        file,
+        desiredName.length > 0 ? desiredName : undefined,
+        ({ loaded, total }) => setProgress(loaded, total),
+      );
+      statusEl.textContent = `Imported "${imported.name}" (${formatByteSize(imported.size)})`;
+      if (!getActiveDiskName()) setActiveDiskName(imported.name);
+      await refreshList();
+    } catch (err) {
+      statusEl.textContent = err instanceof Error ? err.message : String(err);
+    } finally {
+      importButton.disabled = false;
+      clearProgress();
+    }
+  });
+
+  const openWorkerStatus = el("span", { class: "muted", text: "" }) as HTMLSpanElement;
+  const openWorkerButton = el("button", {
+    text: "Open active disk in I/O worker",
+    onclick: async () => {
+      const activeName = getActiveDiskName();
+      if (!activeName) {
+        openWorkerStatus.textContent = "No active disk selected.";
+        return;
+      }
+
+      openWorkerButton.disabled = true;
+      openWorkerStatus.textContent = "Opening…";
+
+      try {
+        const tokenOrHandle = await store.openForWorker(activeName);
+        if (!tokenOrHandle || typeof tokenOrHandle !== "object" || !("kind" in tokenOrHandle)) {
+          throw new Error("Disk store returned an unsupported worker handle descriptor.");
+        }
+
+        const result = await ioWorker.openActiveDisk(tokenOrHandle as WorkerOpenToken);
+        openWorkerStatus.textContent = result.syncAccessHandleAvailable
+          ? `Opened (size: ${formatByteSize(result.size)}).`
+          : `Opened without sync access handle (size: ${formatByteSize(result.size)}).`;
+      } catch (err) {
+        openWorkerStatus.textContent = err instanceof Error ? err.message : String(err);
+      } finally {
+        openWorkerButton.disabled = false;
+      }
+    },
+  }) as HTMLButtonElement;
+
+  const table = el(
+    "table",
+    {},
+    el(
+      "thead",
+      {},
+      el(
+        "tr",
+        {},
+        el("th", { text: "Active" }),
+        el("th", { text: "Name" }),
+        el("th", { text: "Size" }),
+        el("th", { text: "Actions" }),
+      ),
+    ),
+    tableBody,
+  );
+
+  void refreshList();
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Disk Images" }),
+    warningEl,
+    el("div", { class: "row" }, el("label", { text: "Name:" }), importNameInput, importButton, fileInput),
+    el("div", { class: "row" }, importProgress, importProgressText),
+    el("div", { class: "row" }, openWorkerButton, openWorkerStatus),
+    el("div", { class: "row" }, statusEl),
+    table,
+  );
 }
 
 function renderRemoteDiskPanel(): HTMLElement {

@@ -241,6 +241,28 @@ Check default thresholds (informational by default; add `--enforce` for CI gatin
 node --experimental-strip-types bench/compare.ts --input bench-results/<run>/perf_export.json
 ```
 
+## Disk image manager UI (OPFS)
+
+The `web/` app includes a **Disk Images** panel backed by OPFS (Origin Private File System):
+
+- Import with progress, list/delete, export/download
+- Select an image as “active” (persisted in `localStorage`)
+- Minimal I/O worker stub to open the active disk via `FileSystemSyncAccessHandle` and report its size
+
+### OPFS smoke test (manual)
+
+In a Chromium-based browser with OPFS support:
+
+1. Open the app.
+2. In **Disk Images**, click **Import…** and select a `.img` / `.iso` / raw disk file.
+3. The disk should appear in the list with its size.
+4. Click **Export** to download the stored image and compare size/hash with the original.
+5. Select a disk as **Active** and click **Open active disk in I/O worker**.
+   - The worker will attempt to create a `FileSystemSyncAccessHandle` and report the disk size.
+
+If the UI shows “OPFS unavailable”, the app falls back to an in-memory store; images will not persist across reloads and the
+I/O worker cannot open a sync access handle.
+
 ## Troubleshooting
 
 ### `crossOriginIsolated` is `false` / `SharedArrayBuffer` is not defined

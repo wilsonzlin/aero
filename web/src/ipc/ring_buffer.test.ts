@@ -31,11 +31,13 @@ describe("ipc/ring_buffer", () => {
     first.fill(7);
     expect(ring.tryPush(first)).toBe(true);
 
+    // Advance the head so there is free space at the start of the ring, while leaving the tail near the end.
+    expect(Array.from(ring.tryPop() ?? [])).toEqual(Array.from(first));
+
     // This push forces a wrap marker because only 4 bytes remain at the end,
     // which is enough for a marker but not enough for the record.
     expect(ring.tryPush(Uint8Array.of(1, 2, 3, 4))).toBe(true);
 
-    expect(Array.from(ring.tryPop() ?? [])).toEqual(Array.from(first));
     expect(Array.from(ring.tryPop() ?? [])).toEqual([1, 2, 3, 4]);
     expect(ring.tryPop()).toBeNull();
   });
@@ -64,4 +66,3 @@ describe("ipc/ring_buffer", () => {
     expect((ring.tryPop() ?? new Uint8Array(1)).byteLength).toBe(0);
   });
 });
-
