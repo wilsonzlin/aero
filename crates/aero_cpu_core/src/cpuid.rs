@@ -27,26 +27,12 @@ impl CpuidResult {
     };
 }
 
-// Leaf 1 ECX feature bits we optionally gate behind `CpuFeatures::win7_x86_extensions`.
-const FEAT_ECX_SSE3: u32 = 1 << 0;
-const FEAT_ECX_SSSE3: u32 = 1 << 9;
-const FEAT_ECX_SSE41: u32 = 1 << 19;
-const FEAT_ECX_SSE42: u32 = 1 << 20;
-const FEAT_ECX_POPCNT: u32 = 1 << 23;
-
-const WIN7_X86_EXT_MASK: u32 =
-    FEAT_ECX_SSE3 | FEAT_ECX_SSSE3 | FEAT_ECX_SSE41 | FEAT_ECX_SSE42 | FEAT_ECX_POPCNT;
-
 /// Configurable CPUID surface.
 ///
 /// The fields map 1:1 to architecturally visible CPUID leaves so tests can
 /// assert exact values without having to re-derive leaf packing logic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuFeatures {
-    /// When false we hide the Win7-relevant modern x86 extensions (SSE3/SSSE3/SSE4.1/SSE4.2 +
-    /// POPCNT) from CPUID leaf 1 and treat those instructions as unavailable in the
-    /// interpreter.
-    pub win7_x86_extensions: bool,
     /// Maximum supported basic leaf (returned in CPUID(0).EAX).
     pub max_basic_leaf: u32,
     /// Maximum supported extended leaf (returned in CPUID(0x8000_0000).EAX).
@@ -127,16 +113,9 @@ impl CpuFeatures {
             | (u32::from(logical_count) << 16)
             | (u32::from(clflush_line_size) << 8);
 
-        // `win7_x86_extensions` gates the Win7-era SIMD extensions implemented in
-        // `interp/win7_ext.rs` (SSE3/SSSE3/SSE4.1/SSE4.2 + POPCNT). Keep it coherent with
-        // CPUID leaf1 ECX: if the bits are not exposed, the instructions must be treated as
-        // unavailable by the interpreter.
-        let win7_x86_extensions = (advertised.leaf1_ecx & WIN7_X86_EXT_MASK) != 0;
-
         let ext7_edx = bits::EXT7_EDX_INVARIANT_TSC;
 
         Ok(Self {
-            win7_x86_extensions,
             // We implement up to leaf 0x1F and return 0 for unhandled leaves in-between.
             max_basic_leaf: 0x1F,
             max_extended_leaf: 0x8000_0008,
@@ -162,17 +141,9 @@ impl CpuFeatures {
 
 impl Default for CpuFeatures {
     fn default() -> Self {
-        // The Aero interpreter implements the Win7-era SIMD extensions in `interp/win7_ext.rs`,
-        // so we enable them by default for better guest compatibility. A more conservative
-        // surface can be built via `CpuProfile::Win7Minimum`.
-        let implemented = CpuFeatureSet::win7_minimum().union(CpuFeatureSet {
-            leaf1_ecx: WIN7_X86_EXT_MASK,
-            ..CpuFeatureSet::default()
-        });
-
         CpuFeatures::from_profile(
-            CpuProfile::Optimized,
-            implemented,
+            CpuProfile::Win7Minimum,
+            CpuFeatureSet::win7_minimum(),
             CpuFeatureOverrides::default(),
             CpuTopology::default(),
         )
@@ -286,6 +257,7 @@ impl CpuFeatureSet {
     pub fn optimized_mask() -> Self {
         Self::win7_minimum().union(Self {
             leaf1_ecx: bits::LEAF1_ECX_SSE3
+                | bits::LEAF1_ECX_PCLMULQDQ
                 | bits::LEAF1_ECX_SSSE3
                 | bits::LEAF1_ECX_SSE41
                 | bits::LEAF1_ECX_SSE42
@@ -369,18 +341,12 @@ pub fn cpuid(features: &CpuFeatures, leaf: u32, subleaf: u32) -> CpuidResult {
                 edx,
             }
         }
-        0x0000_0001 => {
-            let mut ecx = features.leaf1_ecx;
-            if !features.win7_x86_extensions {
-                ecx &= !WIN7_X86_EXT_MASK;
-            }
-            CpuidResult {
-                eax: features.leaf1_eax,
-                ebx: features.leaf1_ebx,
-                ecx,
-                edx: features.leaf1_edx,
-            }
-        }
+        0x0000_0001 => CpuidResult {
+            eax: features.leaf1_eax,
+            ebx: features.leaf1_ebx,
+            ecx: features.leaf1_ecx,
+            edx: features.leaf1_edx,
+        },
         0x0000_0002 => CpuidResult {
             // QEMU-like cache/TLB descriptor bytes. Modern guests prefer leaf 4.
             eax: 0x7603_6301,

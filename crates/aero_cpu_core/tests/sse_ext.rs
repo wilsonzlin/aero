@@ -1,4 +1,5 @@
 use aero_cpu_core::interp::ExecError;
+use aero_cpu_core::cpuid::bits;
 use aero_cpu_core::{Cpu, CpuMode, RamBus};
 
 fn crc32c_sw(mut crc: u32, bytes: &[u8]) -> u32 {
@@ -59,7 +60,13 @@ fn xmm_to_f32x4(xmm: u128) -> [f32; 4] {
 }
 
 fn setup() -> (Cpu, RamBus) {
-    (Cpu::new(CpuMode::Long64), RamBus::new(0x10_000))
+    let mut cpu = Cpu::new(CpuMode::Long64);
+    cpu.features.leaf1_ecx |= bits::LEAF1_ECX_SSE3
+        | bits::LEAF1_ECX_SSSE3
+        | bits::LEAF1_ECX_SSE41
+        | bits::LEAF1_ECX_SSE42
+        | bits::LEAF1_ECX_POPCNT;
+    (cpu, RamBus::new(0x10_000))
 }
 
 #[test]
@@ -82,6 +89,7 @@ fn pshufb_shuffle() {
 fn pshufb_memory_operand_protected32() {
     let mut cpu = Cpu::new(CpuMode::Protected32);
     let mut bus = RamBus::new(0x10_000);
+    cpu.features.leaf1_ecx |= bits::LEAF1_ECX_SSSE3;
 
     cpu.sse.xmm[0] = xmm_from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
 
@@ -104,6 +112,7 @@ fn pshufb_memory_operand_protected32() {
 fn lddqu_memory_operand_protected32() {
     let mut cpu = Cpu::new(CpuMode::Protected32);
     let mut bus = RamBus::new(0x10_000);
+    cpu.features.leaf1_ecx |= bits::LEAF1_ECX_SSE3;
 
     let addr = 0x400u64;
     cpu.regs.rax = addr; // EAX base
@@ -121,6 +130,7 @@ fn lddqu_memory_operand_protected32() {
 fn pshufb_real16_segment_override() {
     let mut cpu = Cpu::new(CpuMode::Real16);
     let mut bus = RamBus::new(0x20_000);
+    cpu.features.leaf1_ecx |= bits::LEAF1_ECX_SSSE3;
 
     cpu.sse.xmm[0] = xmm_from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
 
@@ -173,7 +183,7 @@ fn insertps_basic() {
 #[test]
 fn ud_when_disabled() {
     let (mut cpu, mut bus) = setup();
-    cpu.features.win7_x86_extensions = false;
+    cpu.features.leaf1_ecx &= !bits::LEAF1_ECX_SSSE3;
     cpu.sse.xmm[0] = 0;
     cpu.sse.xmm[1] = 0;
 
@@ -274,7 +284,7 @@ fn pcmpestri_finds_nul() {
 #[test]
 fn scalar_ud_when_disabled() {
     let (mut cpu, mut bus) = setup();
-    cpu.features.win7_x86_extensions = false;
+    cpu.features.leaf1_ecx &= !(bits::LEAF1_ECX_POPCNT | bits::LEAF1_ECX_SSE42);
     cpu.regs.rax = 0;
     cpu.regs.rcx = 123;
 

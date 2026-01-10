@@ -303,9 +303,6 @@ fn write_gpr(cpu: &mut Cpu, index: u8, width_bits: u32, value: u64) {
 }
 
 fn require_feature(cpu: &Cpu, opcode: u8, leaf1_ecx_mask: u32) -> Result<(), ExecError> {
-    if !cpu.features.win7_x86_extensions {
-        return Err(ExecError::InvalidOpcode(opcode));
-    }
     if (cpu.features.leaf1_ecx & leaf1_ecx_mask) == 0 {
         return Err(ExecError::InvalidOpcode(opcode));
     }
