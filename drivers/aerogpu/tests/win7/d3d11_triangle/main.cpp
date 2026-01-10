@@ -13,6 +13,11 @@ struct Vertex {
 static int RunD3D11Triangle(int argc, char** argv) {
   const char* kTestName = "d3d11_triangle";
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
+  const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
+  uint32_t require_vid = 0;
+  uint32_t require_did = 0;
+  const bool has_require_vid = aerogpu_test::GetArgUint32(argc, argv, "--require-vid", &require_vid);
+  const bool has_require_did = aerogpu_test::GetArgUint32(argc, argv, "--require-did", &require_did);
 
   const int kWidth = 256;
   const int kHeight = 256;
@@ -77,17 +82,51 @@ static int RunD3D11Triangle(int argc, char** argv) {
   hr = device->QueryInterface(__uuidof(IDXGIDevice), (void**)dxgi_device.put());
   if (SUCCEEDED(hr)) {
     ComPtr<IDXGIAdapter> adapter;
-    if (SUCCEEDED(dxgi_device->GetAdapter(adapter.put()))) {
+    HRESULT hr_adapter = dxgi_device->GetAdapter(adapter.put());
+    if (FAILED(hr_adapter)) {
+      if (has_require_vid || has_require_did) {
+        return aerogpu_test::FailHresult(kTestName,
+                                         "IDXGIDevice::GetAdapter (required for --require-vid/--require-did)",
+                                         hr_adapter);
+      }
+    } else {
       DXGI_ADAPTER_DESC ad;
       ZeroMemory(&ad, sizeof(ad));
-      if (SUCCEEDED(adapter->GetDesc(&ad))) {
+      HRESULT hr_desc = adapter->GetDesc(&ad);
+      if (FAILED(hr_desc)) {
+        if (has_require_vid || has_require_did) {
+          return aerogpu_test::FailHresult(
+              kTestName, "IDXGIAdapter::GetDesc (required for --require-vid/--require-did)", hr_desc);
+        }
+      } else {
         aerogpu_test::PrintfStdout("INFO: %s: adapter: %ls (VID=0x%04X DID=0x%04X)",
                                    kTestName,
                                    ad.Description,
                                    (unsigned)ad.VendorId,
                                    (unsigned)ad.DeviceId);
+        if (!allow_microsoft && ad.VendorId == 0x1414) {
+          return aerogpu_test::Fail(kTestName,
+                                    "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
+                                    "Install AeroGPU driver or pass --allow-microsoft.",
+                                    (unsigned)ad.VendorId,
+                                    (unsigned)ad.DeviceId);
+        }
+        if (has_require_vid && ad.VendorId != require_vid) {
+          return aerogpu_test::Fail(kTestName,
+                                    "adapter VID mismatch: got 0x%04X expected 0x%04X",
+                                    (unsigned)ad.VendorId,
+                                    (unsigned)require_vid);
+        }
+        if (has_require_did && ad.DeviceId != require_did) {
+          return aerogpu_test::Fail(kTestName,
+                                    "adapter DID mismatch: got 0x%04X expected 0x%04X",
+                                    (unsigned)ad.DeviceId,
+                                    (unsigned)require_did);
+        }
       }
     }
+  } else if (has_require_vid || has_require_did) {
+    return aerogpu_test::FailHresult(kTestName, "QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
   }
 
   ComPtr<ID3D11Texture2D> backbuffer;

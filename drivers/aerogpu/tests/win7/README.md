@@ -4,6 +4,12 @@ This directory contains small Windows 7 **guest-side** test programs intended to
 
 Each test prints a clear `PASS:` / `FAIL:` line to stdout and returns a non-zero exit code on failure. Some tests can optionally dump a `.bmp` to disk for manual inspection (`--dump`).
 
+Common flags:
+
+* `--dump` – write a `*.bmp` next to the executable.
+* `--require-vid=0x####` / `--require-did=0x####` – fail the test if the active adapter VID/DID does not match.
+* `--allow-microsoft` – allow running on the Microsoft Basic Render Driver (normally treated as a failure to avoid false PASS when AeroGPU isn’t active).
+
 ## Layout
 
 ```
@@ -61,6 +67,12 @@ To also write BMP dumps next to the binaries:
 
 ```cmd
 run_all.cmd --dump
+```
+
+To require a specific PCI VID/DID (recommended for automation):
+
+```cmd
+run_all.cmd --require-vid=0x1234 --require-did=0x1111
 ```
 
 ## Expected results

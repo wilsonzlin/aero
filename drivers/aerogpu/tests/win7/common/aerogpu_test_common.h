@@ -11,6 +11,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdlib.h>
+#include <ctype.h>
 
 #include <string>
 #include <vector>
@@ -28,6 +30,70 @@ static inline bool HasArg(int argc, char** argv, const char* needle) {
     }
   }
   return false;
+}
+
+static inline bool StrIStartsWith(const char* s, const char* prefix) {
+  if (!s || !prefix) {
+    return false;
+  }
+  while (*prefix) {
+    if (!*s) {
+      return false;
+    }
+    char a = *s++;
+    char b = *prefix++;
+    a = (char)tolower((unsigned char)a);
+    b = (char)tolower((unsigned char)b);
+    if (a != b) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static inline bool GetArgValue(int argc, char** argv, const char* key, std::string* out) {
+  if (!key || !out) {
+    return false;
+  }
+  const std::string key_str(key);
+  const std::string prefix = key_str + "=";
+  for (int i = 1; i < argc; ++i) {
+    const char* arg = argv[i];
+    if (!arg) {
+      continue;
+    }
+    if (StrIStartsWith(arg, prefix.c_str())) {
+      *out = std::string(arg + prefix.size());
+      return true;
+    }
+    if (lstrcmpiA(arg, key_str.c_str()) == 0) {
+      if (i + 1 < argc && argv[i + 1]) {
+        *out = std::string(argv[i + 1]);
+        return true;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
+static inline bool GetArgUint32(int argc, char** argv, const char* key, uint32_t* out) {
+  std::string val;
+  if (!GetArgValue(argc, argv, key, &val)) {
+    return false;
+  }
+  if (val.empty()) {
+    return false;
+  }
+  char* end = NULL;
+  unsigned long v = strtoul(val.c_str(), &end, 0);
+  if (!end || *end != 0) {
+    return false;
+  }
+  if (out) {
+    *out = (uint32_t)v;
+  }
+  return true;
 }
 
 static inline std::string Win32ErrorToString(DWORD err) {

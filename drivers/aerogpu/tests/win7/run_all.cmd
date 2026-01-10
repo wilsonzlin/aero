@@ -1,16 +1,13 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set "ARGS="
-if "%~1"=="--dump" set "ARGS=--dump"
-
 set "BIN=%~dp0bin"
 set /a FAILURES=0
 
-call :run_test d3d9ex_dwm_probe
-call :run_test d3d9ex_triangle
-call :run_test d3d11_triangle
-call :run_test readback_sanity
+call :run_test d3d9ex_dwm_probe %*
+call :run_test d3d9ex_triangle %*
+call :run_test d3d11_triangle %*
+call :run_test readback_sanity %*
 
 echo.
 if %FAILURES%==0 (
@@ -24,6 +21,7 @@ if %FAILURES%==0 (
 :run_test
 set "NAME=%~1"
 set "EXE=%BIN%\\%NAME%.exe"
+shift
 echo.
 echo === Running %NAME% ===
 if not exist "%EXE%" (
@@ -32,7 +30,7 @@ if not exist "%EXE%" (
   exit /b 0
 )
 
-"%EXE%" %ARGS%
+"%EXE%" %*
 if errorlevel 1 (
   echo FAIL: %NAME%
   set /a FAILURES+=1

@@ -15,6 +15,11 @@ struct Vertex {
 static int RunD3D9ExTriangle(int argc, char** argv) {
   const char* kTestName = "d3d9ex_triangle";
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
+  const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
+  uint32_t require_vid = 0;
+  uint32_t require_did = 0;
+  const bool has_require_vid = aerogpu_test::GetArgUint32(argc, argv, "--require-vid", &require_vid);
+  const bool has_require_did = aerogpu_test::GetArgUint32(argc, argv, "--require-did", &require_did);
 
   const int kWidth = 256;
   const int kHeight = 256;
@@ -76,6 +81,27 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
                                ident.Description,
                                (unsigned)ident.VendorId,
                                (unsigned)ident.DeviceId);
+    if (!allow_microsoft && ident.VendorId == 0x1414) {
+      return aerogpu_test::Fail(kTestName,
+                                "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
+                                "Install AeroGPU driver or pass --allow-microsoft.",
+                                (unsigned)ident.VendorId,
+                                (unsigned)ident.DeviceId);
+    }
+    if (has_require_vid && ident.VendorId != require_vid) {
+      return aerogpu_test::Fail(kTestName,
+                                "adapter VID mismatch: got 0x%04X expected 0x%04X",
+                                (unsigned)ident.VendorId,
+                                (unsigned)require_vid);
+    }
+    if (has_require_did && ident.DeviceId != require_did) {
+      return aerogpu_test::Fail(kTestName,
+                                "adapter DID mismatch: got 0x%04X expected 0x%04X",
+                                (unsigned)ident.DeviceId,
+                                (unsigned)require_did);
+    }
+  } else if (has_require_vid || has_require_did) {
+    return aerogpu_test::FailHresult(kTestName, "GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
   }
 
   dev->SetRenderState(D3DRS_LIGHTING, FALSE);
