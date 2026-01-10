@@ -2,10 +2,12 @@ data "aws_caller_identity" "current" {}
 
 locals {
   # CloudFront policy names only allow alphanumerics, hyphens, and underscores.
-  name_prefix = substr(regexreplace(var.bucket_name, "[^0-9A-Za-z_-]", "-"), 0, 64)
+  name_prefix = substr(replace(var.bucket_name, "/[^0-9A-Za-z_-]/", "-"), 0, 64)
   origin_id   = "${local.name_prefix}-s3-origin"
 
-  image_path_pattern = "/${var.image_prefix}/*"
+  # CloudFront path patterns are specified without a leading "/" (for example: "images/*"),
+  # but they apply to request paths like "/images/...".
+  image_path_pattern = "${var.image_prefix}/*"
 
   cache_policy_id = var.cache_policy_mode == "immutable" ? aws_cloudfront_cache_policy.immutable.id : aws_cloudfront_cache_policy.mutable.id
   primary_domain  = length(var.custom_domain_names) > 0 ? var.custom_domain_names[0] : aws_cloudfront_distribution.images.domain_name

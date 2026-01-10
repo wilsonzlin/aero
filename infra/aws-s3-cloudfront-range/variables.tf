@@ -111,11 +111,6 @@ variable "enable_edge_cors" {
   description = "If true, attach a CloudFront response headers policy to inject/override CORS headers at the edge."
   type        = bool
   default     = false
-
-  validation {
-    condition     = !var.enable_edge_cors || length(var.cors_allowed_origins) > 0
-    error_message = "enable_edge_cors=true requires cors_allowed_origins to be non-empty."
-  }
 }
 
 variable "cache_policy_mode" {
@@ -181,11 +176,6 @@ variable "acm_certificate_arn" {
   description = "ACM certificate ARN (must be in us-east-1) for custom_domain_names. Required if custom_domain_names is non-empty."
   type        = string
   default     = null
-
-  validation {
-    condition     = length(var.custom_domain_names) == 0 || var.acm_certificate_arn != null
-    error_message = "acm_certificate_arn must be set when custom_domain_names is non-empty."
-  }
 }
 
 variable "tags" {
