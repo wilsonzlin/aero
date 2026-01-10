@@ -13,6 +13,9 @@ import (
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/httpserver"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/signaling"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/webrtcpeer"
 )
 
@@ -41,7 +44,8 @@ func main() {
 	// Construct the WebRTC API early so misconfigurations are caught on startup.
 	// This does not start any networking; ICE sockets are only created once we
 	// start creating PeerConnections.
-	if _, err := webrtcpeer.NewAPI(cfg); err != nil {
+	api, err := webrtcpeer.NewAPI(cfg)
+	if err != nil {
 		logger.Error("failed to configure webrtc", "err", err)
 		os.Exit(2)
 	}
@@ -52,6 +56,12 @@ func main() {
 		"mode", cfg.Mode,
 	)
 
+	destPolicy, err := policy.NewDestinationPolicyFromEnv()
+	if err != nil {
+		logger.Error("failed to load destination policy", "err", err)
+		os.Exit(2)
+	}
+
 	ln, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
 		logger.Error("failed to listen", "err", err)
@@ -61,6 +71,14 @@ func main() {
 	build := resolveBuildInfo(buildCommit, buildTime)
 
 	srv := httpserver.New(cfg, logger, build)
+	sessionMgr := relay.NewSessionManager(cfg, nil, nil)
+	sig := signaling.NewServer(signaling.Config{
+		Sessions:    sessionMgr,
+		WebRTC:      api,
+		RelayConfig: relay.ConfigFromEnv(),
+		Policy:      destPolicy,
+	})
+	sig.RegisterRoutes(srv.Mux())
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -72,6 +90,7 @@ func main() {
 
 	select {
 	case err := <-errCh:
+		sig.Close()
 		if err != nil && !errors.Is(err, httpserver.ErrServerClosed) {
 			logger.Error("http server exited", "err", err)
 			os.Exit(1)
@@ -87,6 +106,7 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("http server shutdown failed", "err", err)
 	}
+	sig.Close()
 
 	if err := <-errCh; err != nil && !errors.Is(err, httpserver.ErrServerClosed) {
 		logger.Error("http server exited after shutdown", "err", err)
