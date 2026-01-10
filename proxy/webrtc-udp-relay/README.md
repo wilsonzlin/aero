@@ -238,6 +238,7 @@ or:
 
 2. **Alternative:** include credentials in the WebSocket URL query string:
 
+- `AUTH_MODE=none` → no credentials required
 - `AUTH_MODE=api_key` → `?apiKey=...`
 - `AUTH_MODE=jwt` → `?token=...`
 
@@ -257,7 +258,7 @@ Violations close the WebSocket connection with an error.
 
 #### Env vars
 
-- `AUTH_MODE` (`api_key` or `jwt`)
+- `AUTH_MODE` (`none`, `api_key`, or `jwt`)
 - `API_KEY` (used when `AUTH_MODE=api_key`)
 - `JWT_SECRET` (used when `AUTH_MODE=jwt`, HS256)
 - `SIGNALING_AUTH_TIMEOUT` (Go duration, e.g. `2s`)

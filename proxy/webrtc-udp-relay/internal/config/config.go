@@ -120,6 +120,7 @@ const (
 type AuthMode string
 
 const (
+	AuthModeNone   AuthMode = "none"
 	AuthModeAPIKey AuthMode = "api_key"
 	AuthModeJWT    AuthMode = "jwt"
 )
@@ -484,7 +485,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.IntVar(&udpReadBufferBytes, "udp-read-buffer-bytes", udpReadBufferBytes, "UDP socket read buffer size in bytes (env "+EnvUDPReadBufferBytes+")")
 	fs.IntVar(&dataChannelSendQueueBytes, "datachannel-send-queue-bytes", dataChannelSendQueueBytes, "Max queued outbound DataChannel bytes before dropping (env "+EnvDataChannelSendQueueBytes+")")
 
-	fs.StringVar(&authModeStr, "auth-mode", authModeDefault, "Signaling auth mode: api_key or jwt (env "+EnvAuthMode+")")
+	fs.StringVar(&authModeStr, "auth-mode", authModeDefault, "Signaling auth mode: none, api_key, or jwt (env "+EnvAuthMode+")")
 	fs.DurationVar(&signalingAuthTimeout, "signaling-auth-timeout", signalingAuthTimeout, "Signaling WS auth timeout (env "+EnvSignalingAuthTimeout+")")
 	fs.Int64Var(&maxSignalingMessageBytes, "max-signaling-message-bytes", maxSignalingMessageBytes, "Max inbound signaling WS message size in bytes (env "+EnvMaxSignalingMessageBytes+")")
 	fs.IntVar(&maxSignalingMessagesPerSecond, "max-signaling-messages-per-second", maxSignalingMessagesPerSecond, "Max inbound signaling WS messages per second (env "+EnvMaxSignalingMessagesPerSecond+")")
@@ -779,12 +780,14 @@ func parseLogLevel(raw string) (slog.Level, error) {
 
 func parseAuthMode(raw string) (AuthMode, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(AuthModeNone):
+		return AuthModeNone, nil
 	case string(AuthModeAPIKey):
 		return AuthModeAPIKey, nil
 	case string(AuthModeJWT):
 		return AuthModeJWT, nil
 	default:
-		return "", fmt.Errorf("invalid %s %q (expected %s or %s)", EnvAuthMode, raw, AuthModeAPIKey, AuthModeJWT)
+		return "", fmt.Errorf("invalid %s %q (expected %s, %s, or %s)", EnvAuthMode, raw, AuthModeNone, AuthModeAPIKey, AuthModeJWT)
 	}
 }
 

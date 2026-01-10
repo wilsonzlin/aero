@@ -13,6 +13,8 @@ import (
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/auth"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/webrtcpeer"
 )
 
@@ -26,6 +28,8 @@ type WebSocketServer struct {
 	cfg      config.Config
 	verifier auth.Verifier
 	api      *webrtc.API
+	relayCfg relay.Config
+	policy   *policy.DestinationPolicy
 	upgrader websocket.Upgrader
 }
 
@@ -40,10 +44,25 @@ func NewWebSocketServer(cfg config.Config) (*WebSocketServer, error) {
 		return nil, err
 	}
 
+	destPolicy, err := policy.NewDestinationPolicyFromEnv()
+	if err != nil {
+		return nil, err
+	}
+
+	relayCfg := relay.Config{
+		MaxUDPBindingsPerSession:  cfg.MaxUDPBindingsPerSession,
+		UDPBindingIdleTimeout:     cfg.UDPBindingIdleTimeout,
+		UDPReadBufferBytes:        cfg.UDPReadBufferBytes,
+		DataChannelSendQueueBytes: cfg.DataChannelSendQueueBytes,
+		PreferV2:                  cfg.PreferV2,
+	}.WithDefaults()
+
 	return &WebSocketServer{
 		cfg:      cfg,
 		verifier: verifier,
 		api:      api,
+		relayCfg: relayCfg,
+		policy:   destPolicy,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -75,10 +94,10 @@ func (s *WebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	limiter := newRateLimiter(s.cfg.MaxSignalingMessagesPerSecond)
 
-	var pc *webrtc.PeerConnection
+	var sess *webrtcpeer.Session
 	defer func() {
-		if pc != nil {
-			_ = pc.Close()
+		if sess != nil {
+			_ = sess.Close()
 		}
 	}()
 
@@ -153,16 +172,18 @@ func (s *WebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeClose(conn, websocket.CloseUnsupportedData, "invalid offer")
 			return
 		}
-		if pc != nil {
+		if sess != nil {
 			writeClose(conn, websocket.ClosePolicyViolation, "offer already received")
 			return
 		}
 
-		pc, err = s.api.NewPeerConnection(webrtc.Configuration{})
+		sess, err = webrtcpeer.NewSession(s.api, s.cfg.ICEServers, s.relayCfg, s.policy, nil)
 		if err != nil {
 			writeClose(conn, websocket.CloseInternalServerErr, "failed to create peer connection")
 			return
 		}
+
+		pc := sess.PeerConnection()
 
 		if err := pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offerReq.Offer.SDP}); err != nil {
 			writeClose(conn, websocket.ClosePolicyViolation, "invalid offer")

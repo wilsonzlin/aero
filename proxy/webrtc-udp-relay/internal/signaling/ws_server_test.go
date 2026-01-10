@@ -15,6 +15,13 @@ import (
 )
 
 func TestWebSocket_QueryParamAuthOfferAnswer(t *testing.T) {
+	t.Setenv("DESTINATION_POLICY_PRESET", "dev")
+	t.Setenv("ALLOW_PRIVATE_NETWORKS", "true")
+	t.Setenv("ALLOW_UDP_CIDRS", "")
+	t.Setenv("DENY_UDP_CIDRS", "")
+	t.Setenv("ALLOW_UDP_PORTS", "")
+	t.Setenv("DENY_UDP_PORTS", "")
+
 	cfg := config.Config{
 		AuthMode:                      config.AuthModeAPIKey,
 		APIKey:                        "secret",
@@ -106,6 +113,13 @@ func TestWebSocket_QueryParamAuthOfferAnswer(t *testing.T) {
 }
 
 func TestWebSocket_UnauthenticatedClosesAfterTimeout(t *testing.T) {
+	t.Setenv("DESTINATION_POLICY_PRESET", "dev")
+	t.Setenv("ALLOW_PRIVATE_NETWORKS", "true")
+	t.Setenv("ALLOW_UDP_CIDRS", "")
+	t.Setenv("DENY_UDP_CIDRS", "")
+	t.Setenv("ALLOW_UDP_PORTS", "")
+	t.Setenv("DENY_UDP_PORTS", "")
+
 	cfg := config.Config{
 		AuthMode:                      config.AuthModeAPIKey,
 		APIKey:                        "secret",
@@ -139,6 +153,13 @@ func TestWebSocket_UnauthenticatedClosesAfterTimeout(t *testing.T) {
 }
 
 func TestWebSocket_OversizedMessageIsRejected(t *testing.T) {
+	t.Setenv("DESTINATION_POLICY_PRESET", "dev")
+	t.Setenv("ALLOW_PRIVATE_NETWORKS", "true")
+	t.Setenv("ALLOW_UDP_CIDRS", "")
+	t.Setenv("DENY_UDP_CIDRS", "")
+	t.Setenv("ALLOW_UDP_PORTS", "")
+	t.Setenv("DENY_UDP_PORTS", "")
+
 	cfg := config.Config{
 		AuthMode:                      config.AuthModeAPIKey,
 		APIKey:                        "secret",
@@ -173,5 +194,98 @@ func TestWebSocket_OversizedMessageIsRejected(t *testing.T) {
 	}
 	if !websocket.IsCloseError(err, websocket.CloseMessageTooBig) {
 		t.Fatalf("expected message too big close; got %v", err)
+	}
+}
+
+func TestWebSocket_NoneAuthOfferAnswer(t *testing.T) {
+	t.Setenv("DESTINATION_POLICY_PRESET", "dev")
+	t.Setenv("ALLOW_PRIVATE_NETWORKS", "true")
+	t.Setenv("ALLOW_UDP_CIDRS", "")
+	t.Setenv("DENY_UDP_CIDRS", "")
+	t.Setenv("ALLOW_UDP_PORTS", "")
+	t.Setenv("DENY_UDP_PORTS", "")
+
+	cfg := config.Config{
+		AuthMode:                      config.AuthModeNone,
+		SignalingAuthTimeout:          2 * time.Second,
+		MaxSignalingMessageBytes:      64 * 1024,
+		MaxSignalingMessagesPerSecond: 50,
+	}
+	srv, err := signaling.NewWebSocketServer(cfg)
+	if err != nil {
+		t.Fatalf("NewWebSocketServer: %v", err)
+	}
+
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/"
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("NewPeerConnection: %v", err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+
+	ordered := false
+	maxRetransmits := uint16(0)
+	if _, err := pc.CreateDataChannel("udp", &webrtc.DataChannelInit{Ordered: &ordered, MaxRetransmits: &maxRetransmits}); err != nil {
+		t.Fatalf("CreateDataChannel: %v", err)
+	}
+
+	offer, err := pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatalf("CreateOffer: %v", err)
+	}
+	if err := pc.SetLocalDescription(offer); err != nil {
+		t.Fatalf("SetLocalDescription: %v", err)
+	}
+	<-webrtc.GatheringCompletePromise(pc)
+
+	localOffer := pc.LocalDescription()
+	if localOffer == nil {
+		t.Fatalf("missing local offer")
+	}
+
+	req := map[string]any{
+		"version": 1,
+		"offer": map[string]any{
+			"type": localOffer.Type.String(),
+			"sdp":  localOffer.SDP,
+		},
+	}
+	if err := c.WriteJSON(req); err != nil {
+		t.Fatalf("WriteJSON offer: %v", err)
+	}
+
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err := c.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+
+	var resp struct {
+		Version int `json:"version"`
+		Answer  struct {
+			Type string `json:"type"`
+			SDP  string `json:"sdp"`
+		} `json:"answer"`
+	}
+	if err := json.Unmarshal(msg, &resp); err != nil {
+		t.Fatalf("unmarshal answer: %v", err)
+	}
+	if resp.Version != 1 {
+		t.Fatalf("version=%d, want 1", resp.Version)
+	}
+	if resp.Answer.Type != "answer" {
+		t.Fatalf("answer.type=%q, want %q", resp.Answer.Type, "answer")
+	}
+	if resp.Answer.SDP == "" {
+		t.Fatalf("answer.sdp empty")
 	}
 }

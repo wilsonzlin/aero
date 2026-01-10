@@ -12,8 +12,14 @@ type Verifier interface {
 	Verify(credential string) error
 }
 
+type NoopVerifier struct{}
+
+func (NoopVerifier) Verify(string) error { return nil }
+
 func NewVerifier(cfg config.Config) (Verifier, error) {
 	switch cfg.AuthMode {
+	case config.AuthModeNone:
+		return NoopVerifier{}, nil
 	case config.AuthModeAPIKey:
 		return APIKeyVerifier{Expected: cfg.APIKey}, nil
 	case config.AuthModeJWT:
@@ -27,6 +33,8 @@ var ErrMissingCredentials = errors.New("missing credentials")
 
 func CredentialFromQuery(mode config.AuthMode, q url.Values) (string, error) {
 	switch mode {
+	case config.AuthModeNone:
+		return "", nil
 	case config.AuthModeAPIKey:
 		if apiKey := q.Get("apiKey"); apiKey != "" {
 			return apiKey, nil
@@ -50,6 +58,8 @@ type WireAuthMessage struct {
 
 func CredentialFromAuthMessage(mode config.AuthMode, msg WireAuthMessage) (string, error) {
 	switch mode {
+	case config.AuthModeNone:
+		return "", nil
 	case config.AuthModeAPIKey:
 		if msg.APIKey != "" {
 			return msg.APIKey, nil
