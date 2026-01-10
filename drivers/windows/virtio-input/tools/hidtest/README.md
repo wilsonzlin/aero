@@ -24,6 +24,8 @@ From a Visual Studio / Windows SDK command prompt:
 cl /nologo /W4 /D_CRT_SECURE_NO_WARNINGS main.c /link setupapi.lib hid.lib
 ```
 
+Or open `hidtest.vcxproj` in Visual Studio (VS2010+).
+
 ## Build (MinGW-w64)
 
 ```sh
