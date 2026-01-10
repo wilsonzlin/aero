@@ -285,3 +285,27 @@ pub fn convert_guest_texture_to_rgba8(
 
     out
 }
+
+// ---------------------------------------------------------------------------
+// WebGPU pipeline translation + cache (D3D9 fixed-function state → wgpu)
+// ---------------------------------------------------------------------------
+
+pub mod pipeline_cache;
+pub mod topology;
+pub mod tracker;
+pub mod translate;
+
+pub use pipeline_cache::{PipelineCache, PipelineCacheStats};
+pub use topology::{
+    expand_triangle_fan_nonindexed_u32, expand_triangle_fan_u16, expand_triangle_fan_u32,
+    translate_primitive_topology, D3DPrimitiveType, PrimitiveTopologyTranslation,
+};
+pub use tracker::{
+    PipelineKey, ShaderKey, StateTracker, VertexAttributeKey, VertexBufferLayoutKey,
+};
+pub use translate::{
+    translate_blend_factor, translate_blend_op, translate_color_write_mask, translate_compare_func,
+    translate_cull_and_front_face, translate_depth_stencil_state, translate_pipeline_state,
+    translate_rasterizer_state, translate_stencil_op, translate_texture_format_srgb,
+};
+pub use translate::{DynamicRenderState, TranslatedPipelineState};

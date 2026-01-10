@@ -9,14 +9,27 @@ bitflags = "2"
 blake3 = "1.5.0"
 hashbrown = "0.14"
 thiserror = "2.0.9"
-wgpu = { version = "0.19", default-features = true }
+
+# WebGPU pipeline creation/state translation.
+lru = "0.12"
+wgpu = "0.20"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]
-bytemuck = { version = "1", features = ["derive"] }
+bytemuck = { version = "1.14", features = ["derive"] }
 futures = "0.3"
-naga = { version = "24.0.0", default-features = false, features = ["wgsl-in"] }
-pretty_assertions = "1.4.1"
 insta = "1.39.0"
+naga = { version = "24.0.0", default-features = false, features = ["wgsl-in"] }
+pollster = "0.3"
+pretty_assertions = "1.4.1"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 wasm-bindgen-test = "0.3"
+
+[[test]]
+name = "d3d9_state_translate"
+path = "../../tests/state_translate.rs"
+
+[[test]]
+name = "d3d9_blend_depth_stencil"
+path = "../../tests/d3d9_blend_depth_stencil.rs"
