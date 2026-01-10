@@ -29,6 +29,7 @@ function printUsage(exitCode = 0) {
     '  --count <N>            Number of range requests to perform (default: 32)',
     '  --concurrency <N>      Number of in-flight requests (default: 4)',
     '  --passes <N>           Repeat the same range plan N times (default: 1; useful for cache hit verification)',
+    '  --seed <N>             Seed for deterministic random ranges (only affects --random)',
     '  --header <k:v>         Extra request header (repeatable), e.g. --header \"Authorization: Bearer ...\"',
     '  --json                 Emit machine-readable JSON (suppresses human-readable logs)',
     '  --strict               Exit non-zero if any request fails correctness checks',
@@ -55,6 +56,20 @@ function parsePositiveInt(name, value) {
   return n;
 }
 
+function parseNonNegativeInt(name, value) {
+  if (value == null) {
+    throw new Error(`Missing value for ${name}`);
+  }
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`Invalid ${name}: ${value} (expected a non-negative integer)`);
+  }
+  const n = Number(value);
+  if (!Number.isSafeInteger(n) || n < 0) {
+    throw new Error(`Invalid ${name}: ${value} (expected a non-negative integer)`);
+  }
+  return n;
+}
+
 function parseArgs(argv) {
   /** @type {Record<string, any>} */
   const opts = {
@@ -65,6 +80,7 @@ function parseArgs(argv) {
     mode: 'sequential',
     headers: {},
     passes: 1,
+    seed: null,
     json: false,
     strict: false,
   };
@@ -83,6 +99,8 @@ function parseArgs(argv) {
       opts.concurrency = parsePositiveInt('--concurrency', argv[++i]);
     } else if (arg === '--passes') {
       opts.passes = parsePositiveInt('--passes', argv[++i]);
+    } else if (arg === '--seed') {
+      opts.seed = parseNonNegativeInt('--seed', argv[++i]);
     } else if (arg === '--header') {
       const raw = argv[++i];
       if (raw == null) {
@@ -198,6 +216,18 @@ function parseContentRange(value) {
   return null;
 }
 
+function makeMulberry32(seed) {
+  // Deterministic PRNG for reproducible random range plans across runs.
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 function buildBaseHeaders(extraHeaders) {
   return {
     ...(extraHeaders ?? {}),
@@ -305,11 +335,13 @@ async function getResourceInfo(url, extraHeaders) {
   );
 }
 
-function buildPlan({ size, chunkSize, count, mode }) {
+function buildPlan({ size, chunkSize, count, mode, seed }) {
   const chunks = Math.max(1, Math.ceil(size / chunkSize));
+  const rng = seed == null ? null : makeMulberry32(seed);
   const plan = [];
   for (let i = 0; i < count; i++) {
-    const chunkIndex = mode === 'random' ? randomInt(0, chunks) : i % chunks;
+    const chunkIndex =
+      mode === 'random' ? (rng ? Math.floor(rng() * chunks) : randomInt(0, chunks)) : i % chunks;
     const start = chunkIndex * chunkSize;
     const end = Math.min(start + chunkSize - 1, size - 1);
     plan.push({ index: i, start, end });
@@ -409,7 +441,9 @@ async function main() {
 
   log(`URL: ${opts.url}`);
   log(
-    `Config: chunkSize=${formatBytes(opts.chunkSize)} count=${opts.count} concurrency=${opts.concurrency} passes=${opts.passes} mode=${opts.mode}`,
+    `Config: chunkSize=${formatBytes(opts.chunkSize)} count=${opts.count} concurrency=${opts.concurrency} passes=${opts.passes} seed=${
+      opts.seed ?? '(random)'
+    } mode=${opts.mode}`,
   );
 
   const info = await getResourceInfo(opts.url, opts.headers);
@@ -425,6 +459,7 @@ async function main() {
     chunkSize: opts.chunkSize,
     count: opts.count,
     mode: opts.mode,
+    seed: opts.seed,
   });
 
   let warned200 = false;
@@ -645,6 +680,7 @@ async function main() {
             count: opts.count,
             concurrency: opts.concurrency,
             passes: opts.passes,
+            seed: opts.seed,
             mode: opts.mode,
             headers: opts.headers,
           },
