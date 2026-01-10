@@ -97,7 +97,7 @@ export class VgaPresenter {
     this.running = false;
     this.lastPresentedFrame = -1;
     this.lastConfigCounter = -1;
-    this.lastPresentTime = 0;
+    this.nextPresentTimeMs = 0;
     this.timerHandle = null;
     this.rafHandle = null;
 
@@ -139,7 +139,11 @@ export class VgaPresenter {
   start() {
     if (this.running) return;
     this.running = true;
-    this.lastPresentTime = performance.now ? performance.now() : Date.now();
+    // Schedule an immediate present attempt on `start()`. We store the *next*
+    // eligible present time instead of the last time we presented so that we
+    // can achieve a stable average present rate even when
+    // `requestAnimationFrame` runs at an arbitrary refresh rate (e.g. 75/144Hz).
+    this.nextPresentTimeMs = 0;
     this.scheduleNextTick();
   }
 
@@ -181,15 +185,23 @@ export class VgaPresenter {
 
     const intervalMs = 1000 / clampPositiveInt("maxPresentHz", this.options.maxPresentHz);
     const now = performance.now ? performance.now() : Date.now();
-    const elapsed = now - this.lastPresentTime;
-    const delay = Math.max(0, intervalMs - elapsed);
+    const delay = Math.max(0, this.nextPresentTimeMs - now);
 
+    // Prefer `requestAnimationFrame` for vsync-aligned presents when available,
+    // but use a timeout to avoid spinning the worker/main thread when the next
+    // eligible present is far in the future.
     if (hasRaf()) {
-      this.rafHandle = requestAnimationFrame(() => this.tick());
+      if (delay <= 0) {
+        this.rafHandle = requestAnimationFrame(() => this.tick());
+      } else {
+        this.timerHandle = setTimeout(() => {
+          this.rafHandle = requestAnimationFrame(() => this.tick());
+        }, delay);
+      }
       return;
     }
 
-    this.timerHandle = setTimeout(() => this.tick(), delay);
+    this.timerHandle = setTimeout(() => this.tick(), delay <= 0 ? 0 : Math.min(delay, intervalMs));
   }
 
   tick() {
@@ -197,7 +209,20 @@ export class VgaPresenter {
 
     perf.spanBegin("frame");
     try {
-      this.lastPresentTime = performance.now ? performance.now() : Date.now();
+      const intervalMs = 1000 / clampPositiveInt("maxPresentHz", this.options.maxPresentHz);
+      const now = performance.now ? performance.now() : Date.now();
+
+      if (this.nextPresentTimeMs !== 0 && now < this.nextPresentTimeMs) {
+        return;
+      }
+
+      // Advance the next-present schedule. If we've fallen behind by more than
+      // one interval (tab suspended / debugger break), drop frames and resync.
+      if (this.nextPresentTimeMs === 0 || now - this.nextPresentTimeMs > intervalMs) {
+        this.nextPresentTimeMs = now + intervalMs;
+      } else {
+        this.nextPresentTimeMs += intervalMs;
+      }
 
       perf.spanBegin("present");
       try {
