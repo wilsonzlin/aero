@@ -247,6 +247,14 @@ kubectl -n aero get pods,svc,ingress
 kubectl -n aero describe ingress aero-gateway
 ```
 
+## Helm test (optional)
+
+The chart includes a basic Helm test pod that hits `/healthz` and `/readyz` through the ClusterIP service:
+
+```bash
+helm test aero-gateway -n aero
+```
+
 ## Verify COOP/COEP headers
 
 These headers are required for `SharedArrayBuffer` (Chrome/Edge/Firefox):
