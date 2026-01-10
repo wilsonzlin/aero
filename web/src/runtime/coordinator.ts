@@ -15,15 +15,23 @@ import {
   MessageType,
   type ProtocolMessage,
   type WorkerInitMessage,
+  type WasmReadyMessage,
   decodeProtocolMessage,
   encodeProtocolMessage,
 } from "./protocol";
+import type { WasmVariant } from "./wasm_context";
 
 export type WorkerState = "starting" | "ready" | "failed" | "stopped";
 
 export interface WorkerStatus {
   state: WorkerState;
   error?: string;
+}
+
+export interface WorkerWasmStatus {
+  variant: WasmVariant;
+  version: number;
+  sum: number;
 }
 
 interface WorkerInfo {
@@ -40,6 +48,7 @@ export class WorkerCoordinator {
   private runId = 0;
 
   private lastHeartbeatFromRing = 0;
+  private wasmStatus: Partial<Record<WorkerRole, WorkerWasmStatus>> = {};
 
   checkSupport(): { ok: boolean; reason?: string } {
     return checkSharedMemorySupport();
@@ -71,16 +80,27 @@ export class WorkerCoordinator {
       commandRing.reset();
       eventRing.reset();
 
-      const workerUrl =
-        role === "cpu"
-          ? new URL("../workers/cpu.worker.ts", import.meta.url)
-          : role === "gpu"
-            ? new URL("../workers/gpu.worker.ts", import.meta.url)
-            : role === "io"
-              ? new URL("../workers/io.worker.ts", import.meta.url)
-              : new URL("../workers/jit.worker.ts", import.meta.url);
-
-      const worker = new Worker(workerUrl, { type: "module" });
+      // IMPORTANT: Keep the `new Worker(new URL(..., import.meta.url), ...)` shape so Vite
+      // can statically detect and bundle workers (including their own dependencies/assets).
+      let worker: Worker;
+      switch (role) {
+        case "cpu":
+          worker = new Worker(new URL("../workers/cpu.worker.ts", import.meta.url), { type: "module" });
+          break;
+        case "gpu":
+          worker = new Worker(new URL("../workers/gpu.worker.ts", import.meta.url), { type: "module" });
+          break;
+        case "io":
+          worker = new Worker(new URL("../workers/io.worker.ts", import.meta.url), { type: "module" });
+          break;
+        case "jit":
+          worker = new Worker(new URL("../workers/jit.worker.ts", import.meta.url), { type: "module" });
+          break;
+        default: {
+          const neverRole: never = role;
+          throw new Error(`Unknown worker role: ${String(neverRole)}`);
+        }
+      }
 
       const info: WorkerInfo = {
         role,
@@ -135,6 +155,7 @@ export class WorkerCoordinator {
 
     this.workers = {};
     this.shared = undefined;
+    this.wasmStatus = {};
   }
 
   getWorkerStatuses(): Record<WorkerRole, WorkerStatus> {
@@ -144,6 +165,10 @@ export class WorkerCoordinator {
       io: this.workers.io?.status ?? { state: "stopped" },
       jit: this.workers.jit?.status ?? { state: "stopped" },
     };
+  }
+
+  getWorkerWasmStatus(role: WorkerRole): WorkerWasmStatus | undefined {
+    return this.wasmStatus[role];
   }
 
   getHeartbeatCounter(): number {
@@ -174,6 +199,22 @@ export class WorkerCoordinator {
       // Kick the worker to start its minimal demo loop.
       info.commandRing.push(encodeProtocolMessage({ type: MessageType.START }));
       info.commandRing.notifyData();
+      return;
+    }
+
+    if (msg?.type === MessageType.WASM_READY) {
+      const wasmMsg = msg as Partial<WasmReadyMessage>;
+      if (
+        (wasmMsg.variant === "single" || wasmMsg.variant === "threaded") &&
+        typeof wasmMsg.version === "number" &&
+        typeof wasmMsg.sum === "number"
+      ) {
+        this.wasmStatus[role] = {
+          variant: wasmMsg.variant,
+          version: wasmMsg.version,
+          sum: wasmMsg.sum,
+        };
+      }
       return;
     }
 

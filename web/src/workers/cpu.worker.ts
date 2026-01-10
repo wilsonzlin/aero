@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 
+import { initWasmForContext } from "../runtime/wasm_context";
 import { RingBuffer } from "../runtime/ring_buffer";
 import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
 import {
@@ -21,7 +22,10 @@ let guestI32!: Int32Array;
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   const init = ev.data as Partial<WorkerInitMessage>;
   if (init?.kind !== "init") return;
+  void initAndRun(init as WorkerInitMessage);
+};
 
+async function initAndRun(init: WorkerInitMessage): Promise<void> {
   role = init.role ?? "cpu";
   const segments = { control: init.controlSab!, guestMemory: init.guestMemory! };
   const views = createSharedMemoryViews(segments);
@@ -32,11 +36,24 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
   commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
   eventRing = new RingBuffer(segments.control, regions.event.byteOffset, regions.event.byteLength);
 
+  try {
+    const { api, variant } = await initWasmForContext();
+    const version = api.version();
+    const sum = api.sum(20, 22);
+    ctx.postMessage({ type: MessageType.WASM_READY, role, variant, version, sum } satisfies ProtocolMessage);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    setReadyFlag(status, role, false);
+    ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
+    ctx.close();
+    return;
+  }
+
   setReadyFlag(status, role, true);
   ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
 
   runLoop();
-};
+}
 
 function runLoop(): void {
   let running = false;

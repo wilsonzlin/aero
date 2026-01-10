@@ -14,6 +14,7 @@ import { installAeroGlobal } from "./runtime/aero_global";
 import { WorkerCoordinator } from "./runtime/coordinator";
 import { initWasm } from "./runtime/wasm_loader";
 import { DEFAULT_GUEST_RAM_MIB, GUEST_RAM_PRESETS_MIB, type GuestRamMiB } from "./runtime/shared_layout";
+import { DEFAULT_GUEST_RAM_MIB, GUEST_RAM_PRESETS_MIB, type GuestRamMiB, type WorkerRole } from "./runtime/shared_layout";
 
 initAeroStatusApi("booting");
 installPerfHud({ guestRamBytes: DEFAULT_GUEST_RAM_MIB * 1024 * 1024 });
@@ -594,7 +595,19 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     stopButton.disabled = !anyActive;
 
     statusList.replaceChildren(
-      ...Object.entries(statuses).map(([role, status]) => el("li", { text: `${role}: ${status.state}${status.error ? ` (${status.error})` : ""}` })),
+      ...Object.entries(statuses).map(([role, status]) => {
+        const roleName = role as WorkerRole;
+        const wasm = workerCoordinator.getWorkerWasmStatus(roleName);
+        const wasmSuffix =
+          roleName === "cpu" && status.state !== "stopped"
+            ? wasm
+              ? ` wasm(${wasm.variant}) version=${wasm.version} sum=${wasm.sum}`
+              : " wasm(pending)"
+            : "";
+        return el("li", {
+          text: `${roleName}: ${status.state}${status.error ? ` (${status.error})` : ""}${wasmSuffix}`,
+        });
+      }),
     );
 
     heartbeatLine.textContent =

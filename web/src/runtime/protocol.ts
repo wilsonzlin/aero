@@ -1,3 +1,4 @@
+import type { WasmVariant } from "./wasm_context";
 import type { WorkerRole } from "./shared_layout";
 
 /**
@@ -10,6 +11,7 @@ export enum MessageType {
   STOP = 3,
   HEARTBEAT = 4,
   ERROR = 5,
+  WASM_READY = 6,
 }
 
 export const WORKER_ROLE_IDS: Record<WorkerRole, number> = {
@@ -26,6 +28,22 @@ export function workerRoleToId(role: WorkerRole): number {
 export function idToWorkerRole(id: number): WorkerRole | null {
   for (const [role, roleId] of Object.entries(WORKER_ROLE_IDS) as Array<[WorkerRole, number]>) {
     if (roleId === id) return role;
+  }
+  return null;
+}
+
+const WASM_VARIANT_IDS: Record<WasmVariant, number> = {
+  single: 1,
+  threaded: 2,
+};
+
+function wasmVariantToId(variant: WasmVariant): number {
+  return WASM_VARIANT_IDS[variant];
+}
+
+function idToWasmVariant(id: number): WasmVariant | null {
+  for (const [variant, variantId] of Object.entries(WASM_VARIANT_IDS) as Array<[WasmVariant, number]>) {
+    if (variantId === id) return variant;
   }
   return null;
 }
@@ -55,7 +73,21 @@ export type ErrorMessage = {
   message: string;
 };
 
-export type ProtocolMessage = ReadyMessage | StartMessage | StopMessage | HeartbeatMessage | ErrorMessage;
+export type WasmReadyMessage = {
+  type: MessageType.WASM_READY;
+  role: WorkerRole;
+  variant: WasmVariant;
+  version: number;
+  sum: number;
+};
+
+export type ProtocolMessage =
+  | ReadyMessage
+  | StartMessage
+  | StopMessage
+  | HeartbeatMessage
+  | ErrorMessage
+  | WasmReadyMessage;
 
 /**
  * `postMessage`-only init message used to hand SharedArrayBuffers to workers.
@@ -101,6 +133,16 @@ export function encodeProtocolMessage(msg: ProtocolMessage): Uint8Array {
       buf.set(encoded, 4);
       return buf;
     }
+    case MessageType.WASM_READY: {
+      const buf = new Uint8Array(1 + 1 + 1 + 4 + 4);
+      buf[0] = msg.type;
+      buf[1] = workerRoleToId(msg.role);
+      buf[2] = wasmVariantToId(msg.variant);
+      const view = new DataView(buf.buffer);
+      view.setInt32(3, msg.version | 0, true);
+      view.setInt32(7, msg.sum | 0, true);
+      return buf;
+    }
     default: {
       // Ensure exhaustive checking if MessageType changes.
       const neverType: never = msg;
@@ -140,6 +182,17 @@ export function decodeProtocolMessage(bytes: Uint8Array): ProtocolMessage | null
       if (bytes.byteLength !== 4 + msgLen) return null;
       const message = textDecoder.decode(bytes.subarray(4));
       return { type: MessageType.ERROR, role, message };
+    }
+    case MessageType.WASM_READY: {
+      if (bytes.byteLength !== 11) return null;
+      const role = idToWorkerRole(bytes[1]);
+      if (!role) return null;
+      const variant = idToWasmVariant(bytes[2]);
+      if (!variant) return null;
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const version = view.getInt32(3, true);
+      const sum = view.getInt32(7, true);
+      return { type: MessageType.WASM_READY, role, variant, version, sum };
     }
     default:
       return null;

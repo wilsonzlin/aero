@@ -57,6 +57,27 @@ npm ci
 npm run dev
 ```
 
+## WASM in workers
+
+The `web/` package uses module workers for CPU/GPU/I/O/JIT stubs and needs to initialize the same WASM module from both the **main thread** and **workers**.
+
+To avoid worker code accidentally referencing `window` (workers don’t have it), the runtime exposes a single initialization entrypoint that works in either context:
+
+```ts
+import { initWasmForContext } from "./runtime/wasm_context";
+
+const { api, variant } = await initWasmForContext();
+// api.version(), api.sum(a, b), ...
+```
+
+This pattern:
+
+- Uses `globalThis` (no direct `window` access) so it can run in workers.
+- Selects a WASM **variant** (`single` vs `threaded`) based on runtime capabilities.
+- Loads the `.wasm` via `new URL(..., import.meta.url)` so Vite bundles it correctly for both the main app and worker bundles.
+
+The CPU worker posts a `WASM_READY` message back to the main thread with the selected variant and a value computed by calling exported WASM functions.
+
 ## Graphics backend fallback (WebGPU → WebGL2)
 
 Aero prefers **WebGPU** when available, but can fall back to **WebGL2** (reduced capability) in environments where WebGPU is unavailable or disabled.
@@ -164,7 +185,7 @@ node poc/browser-memory/server.mjs
 
 Then open:
 
-```
+```txt
 http://localhost:8080/
 ```
 
@@ -196,4 +217,3 @@ If you see errors like:
    CORS/CORP that satisfies COEP. A single non-compliant subresource can break isolation.
 3. **Vite dev server headers:** if the dev server doesn’t set COOP/COEP by default, add headers in
    `vite.config.*` via `server.headers` and (for preview) `preview.headers`.
-
