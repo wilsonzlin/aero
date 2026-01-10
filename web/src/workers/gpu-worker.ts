@@ -1,5 +1,14 @@
 /// <reference lib="webworker" />
 
+// This worker serves two roles:
+// 1) A frame-protocol driven scheduler that calls an externally-provided `present()` function
+//    (typically from a wasm module) and reports presentation metrics.
+// 2) A lightweight "presenter worker" harness used by Playwright to validate
+//    WebGPU/WebGL2 presenter backends (including the raw WebGL2 fallback).
+//
+// Both protocols use `type: "init"`; we disambiguate by checking for an OffscreenCanvas
+// `canvas` field.
+
 import { perf } from '../perf/perf';
 import { installWorkerPerfHandlers } from '../perf/worker';
 
@@ -16,7 +25,7 @@ import {
   type FrameTimingsReport,
   type GpuWorkerMessageFromMain,
   type GpuWorkerMessageToMain,
-} from "../shared/frameProtocol";
+} from '../shared/frameProtocol';
 
 import {
   layoutFromHeader,
@@ -25,15 +34,25 @@ import {
   SHARED_FRAMEBUFFER_VERSION,
   SharedFramebufferHeaderIndex,
   type SharedFramebufferLayout,
-} from "../ipc/shared-layout";
+} from '../ipc/shared-layout';
 
-import { GpuTelemetry } from "../../gpu/telemetry.ts";
-import type { WorkerRole } from "../runtime/shared_layout";
-import { createSharedMemoryViews, setReadyFlag } from "../runtime/shared_layout";
-import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
+import { GpuTelemetry } from '../../gpu/telemetry.ts';
+import type { WorkerRole } from '../runtime/shared_layout';
+import { createSharedMemoryViews, setReadyFlag } from '../runtime/shared_layout';
+import { MessageType, type ProtocolMessage, type WorkerInitMessage } from '../runtime/protocol';
+
+import type { Presenter, PresenterBackendKind, PresenterInitOptions } from '../gpu/presenter';
+import { PresenterError } from '../gpu/presenter';
+import { RawWebGl2Presenter } from '../gpu/raw-webgl2-presenter-backend';
+import type {
+  GpuWorkerInMessage as PresenterWorkerInMessage,
+  GpuWorkerOutMessage as PresenterWorkerOutMessage,
+} from './gpu-worker-protocol';
 
 type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<void | boolean>;
 type GetTimingsFn = () => FrameTimingsReport | null | Promise<FrameTimingsReport | null>;
+
+type AnyInboundMessage = GpuWorkerMessageFromMain | PresenterWorkerInMessage;
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 void installWorkerPerfHandlers();
@@ -47,7 +66,7 @@ const postRuntimeError = (message: string) => {
   ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
 };
 
-let role: WorkerRole = "gpu";
+let role: WorkerRole = 'gpu';
 let status: Int32Array | null = null;
 
 let frameState: Int32Array | null = null;
@@ -84,7 +103,7 @@ type SharedFramebufferViews = {
 };
 
 let framebufferViews: SharedFramebufferViews | null = null;
-let lastInitMessage: Extract<GpuWorkerMessageFromMain, { type: "init" }> | null = null;
+let lastInitMessage: Extract<GpuWorkerMessageFromMain, { type: 'init' }> | null = null;
 
 const telemetry = new GpuTelemetry({ frameBudgetMs: Number.POSITIVE_INFINITY });
 let lastFrameStartMs: number | null = null;
@@ -204,7 +223,7 @@ const maybePostMetrics = () => {
   perf.counter("framesPresented", framesPresented);
   perf.counter("framesDropped", framesDropped);
   postToMain({
-    type: "metrics",
+    type: 'metrics',
     framesReceived,
     framesPresented,
     framesDropped,
@@ -214,7 +233,7 @@ const maybePostMetrics = () => {
 
 const sendError = (err: unknown) => {
   const message = err instanceof Error ? err.message : String(err);
-  postToMain({ type: "error", message });
+  postToMain({ type: 'error', message });
   postRuntimeError(message);
 };
 
@@ -222,7 +241,7 @@ const loadPresentFnFromModuleUrl = async (wasmModuleUrl: string) => {
   const mod: unknown = await import(/* @vite-ignore */ wasmModuleUrl);
 
   const maybePresent = (mod as { present?: unknown }).present;
-  if (typeof maybePresent !== "function") {
+  if (typeof maybePresent !== 'function') {
     throw new Error(`Module ${wasmModuleUrl} did not export a present() function`);
   }
   presentFn = maybePresent as PresentFn;
@@ -230,7 +249,7 @@ const loadPresentFnFromModuleUrl = async (wasmModuleUrl: string) => {
   const maybeGetTimings =
     (mod as { get_frame_timings?: unknown }).get_frame_timings ??
     (mod as { getFrameTimings?: unknown }).getFrameTimings;
-  getTimingsFn = typeof maybeGetTimings === "function" ? (maybeGetTimings as GetTimingsFn) : null;
+  getTimingsFn = typeof maybeGetTimings === 'function' ? (maybeGetTimings as GetTimingsFn) : null;
 };
 
 const maybeUpdateFramesReceivedFromSeq = () => {
@@ -278,7 +297,7 @@ const presentOnce = async (dirtyRects: DirtyRect[] | null) => {
   const t0 = performance.now();
   const result = await presentFn(dirtyRects);
   telemetry.recordPresentLatencyMs(performance.now() - t0);
-  return typeof result === "boolean" ? result : true;
+  return typeof result === 'boolean' ? result : true;
 };
 
 const handleTick = async () => {
@@ -345,8 +364,96 @@ const handleTick = async () => {
   }
 };
 
+// -----------------------------------------------------------------------------
+// Presenter-worker protocol (init/resize/present/screenshot)
+// -----------------------------------------------------------------------------
+
+let presenter: Presenter | null = null;
+
+function postPresenterMessage(msg: PresenterWorkerOutMessage, transfer?: Transferable[]) {
+  ctx.postMessage(msg, transfer ?? []);
+}
+
+function postPresenterError(err: unknown, backend?: PresenterBackendKind) {
+  if (err instanceof PresenterError) {
+    postPresenterMessage({ type: 'error', message: err.message, code: err.code, backend });
+    return;
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  postPresenterMessage({ type: 'error', message: msg, backend });
+}
+
+async function tryInitBackend(
+  backend: PresenterBackendKind,
+  canvas: OffscreenCanvas,
+  width: number,
+  height: number,
+  dpr: number,
+  opts?: PresenterInitOptions,
+): Promise<Presenter> {
+  const mergedOpts: PresenterInitOptions = {
+    ...opts,
+    onError: (e) => {
+      postPresenterError(e, backend);
+      opts?.onError?.(e);
+    },
+  };
+
+  switch (backend) {
+    case 'webgpu': {
+      const mod = await import('../gpu/webgpu-presenter-backend');
+      const p = new mod.WebGpuPresenterBackend();
+      await p.init(canvas, width, height, dpr, mergedOpts);
+      return p;
+    }
+    case 'webgl2_wgpu': {
+      const mod = await import('../gpu/wgpu-webgl2-presenter');
+      const p = new mod.WgpuWebGl2Presenter();
+      await p.init(canvas, width, height, dpr, mergedOpts);
+      return p;
+    }
+    case 'webgl2_raw': {
+      const p = new RawWebGl2Presenter();
+      p.init(canvas, width, height, dpr, mergedOpts);
+      return p;
+    }
+    default: {
+      const unreachable: never = backend;
+      throw new PresenterError('unknown_backend', `Unknown backend ${unreachable}`);
+    }
+  }
+}
+
+async function initPresenter(
+  canvas: OffscreenCanvas,
+  width: number,
+  height: number,
+  dpr: number,
+  opts?: PresenterInitOptions,
+  forceBackend?: PresenterBackendKind,
+): Promise<void> {
+  presenter?.destroy?.();
+  presenter = null;
+
+  const backends: PresenterBackendKind[] = forceBackend ? [forceBackend] : ['webgpu', 'webgl2_wgpu', 'webgl2_raw'];
+
+  let lastError: unknown = null;
+
+  for (const backend of backends) {
+    try {
+      presenter = await tryInitBackend(backend, canvas, width, height, dpr, opts);
+      postPresenterMessage({ type: 'inited', backend: presenter.backend });
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  postPresenterError(lastError ?? new PresenterError('no_backend', 'No GPU presenter backend could be initialized'));
+}
+
 const handleRuntimeInit = (init: WorkerInitMessage) => {
-  role = init.role ?? "gpu";
+  role = init.role ?? 'gpu';
   const segments = { control: init.controlSab, guestMemory: init.guestMemory, vgaFramebuffer: init.vgaFramebuffer };
   status = createSharedMemoryViews(segments).status;
   setReadyFlag(status, role, true);
@@ -362,40 +469,102 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
   const data = event.data;
 
   // Runtime/harness init (SharedArrayBuffers + worker role).
-  if (data && typeof data === "object" && "kind" in data && (data as { kind?: unknown }).kind === "init") {
+  if (data && typeof data === 'object' && 'kind' in data && (data as { kind?: unknown }).kind === 'init') {
     handleRuntimeInit(data as WorkerInitMessage);
     return;
   }
 
-  // Frame protocol messages (tick/dirty + optional presenter wiring).
-  const msg = data as Partial<GpuWorkerMessageFromMain>;
-  if (!msg || typeof msg !== "object" || typeof msg.type !== "string") return;
+  const msg = data as Partial<AnyInboundMessage>;
+  if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
 
   switch (msg.type) {
-    case "init": {
-      perf.spanBegin("worker:init");
+    case 'init': {
+      // Presenter-worker init includes an OffscreenCanvas.
+      if (typeof (msg as { canvas?: unknown }).canvas !== 'undefined') {
+        const presenterMsg = msg as PresenterWorkerInMessage;
+        void initPresenter(
+          presenterMsg.canvas,
+          presenterMsg.width,
+          presenterMsg.height,
+          presenterMsg.dpr,
+          presenterMsg.opts,
+          presenterMsg.forceBackend,
+        ).catch((err) => {
+          postPresenterError(err, presenter?.backend);
+        });
+        return;
+      }
+
+      perf.spanBegin('worker:init');
       try {
-        lastInitMessage = msg as Extract<GpuWorkerMessageFromMain, { type: "init" }>;
-        if (msg.sharedFrameState) {
-          frameState = new Int32Array(msg.sharedFrameState);
+        const frameMsg = msg as Extract<GpuWorkerMessageFromMain, { type: 'init' }>;
+        lastInitMessage = frameMsg;
+        if (frameMsg.sharedFrameState) {
+          frameState = new Int32Array(frameMsg.sharedFrameState);
         }
 
         tryInitSharedFramebufferViews();
 
-        if (msg.wasmModuleUrl) {
-          void perf.spanAsync("wasm:init", () => loadPresentFnFromModuleUrl(msg.wasmModuleUrl)).catch(sendError);
+        if (frameMsg.wasmModuleUrl) {
+          void perf.spanAsync('wasm:init', () => loadPresentFnFromModuleUrl(frameMsg.wasmModuleUrl)).catch(sendError);
         }
 
         telemetry.reset();
         lastFrameStartMs = null;
       } finally {
-        perf.spanEnd("worker:init");
+        perf.spanEnd('worker:init');
       }
       break;
     }
 
-    case "frame_dirty": {
-      pendingDirtyRects = msg.dirtyRects ?? null;
+    case 'resize': {
+      const presenterMsg = msg as PresenterWorkerInMessage;
+      try {
+        if (!presenter) throw new PresenterError('not_initialized', 'resize before init');
+        presenter.resize(presenterMsg.width, presenterMsg.height, presenterMsg.dpr);
+      } catch (err) {
+        postPresenterError(err, presenter?.backend);
+      }
+      break;
+    }
+
+    case 'present': {
+      const presenterMsg = msg as PresenterWorkerInMessage;
+      try {
+        if (!presenter) throw new PresenterError('not_initialized', 'present before init');
+        presenter.present(presenterMsg.frame, presenterMsg.stride);
+      } catch (err) {
+        postPresenterError(err, presenter?.backend);
+      }
+      break;
+    }
+
+    case 'screenshot': {
+      const presenterMsg = msg as PresenterWorkerInMessage;
+      void (async () => {
+        try {
+          if (!presenter) throw new PresenterError('not_initialized', 'screenshot before init');
+          const shot = await presenter.screenshot();
+          postPresenterMessage(
+            {
+              type: 'screenshot',
+              requestId: presenterMsg.requestId,
+              width: shot.width,
+              height: shot.height,
+              pixels: shot.pixels,
+            },
+            [shot.pixels],
+          );
+        } catch (err) {
+          postPresenterError(err, presenter?.backend);
+        }
+      })();
+      break;
+    }
+
+    case 'frame_dirty': {
+      const frameMsg = msg as Extract<GpuWorkerMessageFromMain, { type: 'frame_dirty' }>;
+      pendingDirtyRects = frameMsg.dirtyRects ?? null;
       if (!frameState) {
         pendingFrames += 1;
         framesReceived += 1;
@@ -403,12 +572,12 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       break;
     }
 
-    case "request_timings": {
+    case 'request_timings': {
       void (async () => {
         try {
           const timings = getTimingsFn ? await getTimingsFn() : latestTimings;
           latestTimings = timings;
-          postToMain({ type: "timings", timings });
+          postToMain({ type: 'timings', timings });
         } catch (err) {
           sendError(err);
         }
@@ -416,8 +585,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       break;
     }
 
-    case "tick": {
-      void msg.frameTimeMs;
+    case 'tick': {
+      void (msg as Extract<GpuWorkerMessageFromMain, { type: 'tick' }>).frameTimeMs;
       void handleTick();
       break;
     }
