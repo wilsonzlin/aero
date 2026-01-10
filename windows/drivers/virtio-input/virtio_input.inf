@@ -86,8 +86,8 @@ AddReg = VirtioInput_EventLog_AddReg
 [VirtioInput_EventLog_AddReg]
 ; The EventLog install section root (HKR) is already:
 ;   HKLM\SYSTEM\CurrentControlSet\Services\EventLog\System\<ServiceName>
-HKR, , "EventMessageFile", 0x00020000, "%SystemRoot%\\System32\\IoLogMsg.dll;%SystemRoot%\\System32\\drivers\\virtioinput.sys"
-HKR, , "TypesSupported",   0x00010001, 7
+HKR,,EventMessageFile,0x00020000,"%SystemRoot%\\System32\\IoLogMsg.dll;%SystemRoot%\\System32\\drivers\\virtioinput.sys"
+HKR,,TypesSupported,0x00010001,7
 
 ;------------------------------------------------------------------------------
 ; Interrupt Management (MSI/MSI-X)
