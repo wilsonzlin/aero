@@ -8,6 +8,9 @@ use aero_platform::audio::worklet_bridge::WorkletBridge;
 #[cfg(target_arch = "wasm32")]
 use js_sys::SharedArrayBuffer;
 
+#[cfg(target_arch = "wasm32")]
+use aero_audio::pcm::{decode_pcm_to_stereo_f32, LinearResampler, StreamFormat};
+
 // wasm-bindgen's "threads" transform expects TLS metadata symbols (e.g.
 // `__tls_size`) to exist in shared-memory builds. Those symbols are only emitted
 // by the linker when there is at least one TLS variable. We keep a tiny TLS
@@ -111,6 +114,106 @@ impl SineTone {
         }
 
         bridge.write_f32_interleaved(&self.scratch)
+    }
+}
+
+/// Stateful converter for guest HDA PCM streams into the Web Audio ring buffer.
+///
+/// This is designed to be driven from JS: feed guest PCM bytes + HDA `SDnFMT`,
+/// and it will decode to stereo `f32`, resample to the AudioContext rate, and
+/// write into the shared ring buffer consumed by the AudioWorklet.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub struct HdaPcmWriter {
+    dst_sample_rate_hz: u32,
+    resampler: LinearResampler,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl HdaPcmWriter {
+    #[wasm_bindgen(constructor)]
+    pub fn new(dst_sample_rate_hz: u32) -> Result<Self, JsValue> {
+        if dst_sample_rate_hz == 0 {
+            return Err(JsValue::from_str("dst_sample_rate_hz must be non-zero"));
+        }
+        Ok(Self {
+            dst_sample_rate_hz,
+            resampler: LinearResampler::new(dst_sample_rate_hz, dst_sample_rate_hz),
+        })
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn dst_sample_rate_hz(&self) -> u32 {
+        self.dst_sample_rate_hz
+    }
+
+    pub fn set_dst_sample_rate_hz(&mut self, dst_sample_rate_hz: u32) -> Result<(), JsValue> {
+        if dst_sample_rate_hz == 0 {
+            return Err(JsValue::from_str("dst_sample_rate_hz must be non-zero"));
+        }
+        self.dst_sample_rate_hz = dst_sample_rate_hz;
+        let src = self.resampler.src_rate_hz();
+        self.resampler.reset_rates(src, dst_sample_rate_hz);
+        Ok(())
+    }
+
+    pub fn reset(&mut self) {
+        let src = self.resampler.src_rate_hz();
+        self.resampler.reset_rates(src, self.dst_sample_rate_hz);
+    }
+
+    /// Decode HDA PCM bytes into stereo f32, resample, then write into the ring buffer.
+    ///
+    /// Returns the number of frames written to the ring buffer.
+    pub fn push_hda_pcm_bytes(
+        &mut self,
+        bridge: &WorkletBridge,
+        hda_format: u16,
+        pcm_bytes: &[u8],
+    ) -> Result<u32, JsValue> {
+        if bridge.channel_count() != 2 {
+            return Err(JsValue::from_str(
+                "WorkletBridge channel_count must be 2 for HdaPcmWriter (stereo output)",
+            ));
+        }
+
+        let fmt = StreamFormat::from_hda_format(hda_format);
+        match fmt.bits_per_sample {
+            8 | 16 | 20 | 24 | 32 => {}
+            other => {
+                return Err(JsValue::from_str(&format!(
+                    "Unsupported bits_per_sample in HDA format: {other}"
+                )));
+            }
+        }
+
+        if fmt.sample_rate_hz == 0 || self.dst_sample_rate_hz == 0 {
+            return Ok(0);
+        }
+
+        if fmt.sample_rate_hz != self.resampler.src_rate_hz() || self.dst_sample_rate_hz != self.resampler.dst_rate_hz()
+        {
+            self.resampler.reset_rates(fmt.sample_rate_hz, self.dst_sample_rate_hz);
+        }
+
+        let decoded = decode_pcm_to_stereo_f32(pcm_bytes, fmt);
+        if decoded.is_empty() {
+            return Ok(0);
+        }
+        self.resampler.push_source_frames(&decoded);
+
+        let capacity = bridge.capacity_frames();
+        let level = bridge.buffer_level_frames();
+        let free_frames = capacity.saturating_sub(level);
+        if free_frames == 0 {
+            return Ok(0);
+        }
+
+        let out = self
+            .resampler
+            .produce_interleaved_stereo(free_frames as usize);
+        Ok(bridge.write_f32_interleaved(&out))
     }
 }
 

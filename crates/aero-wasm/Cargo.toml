@@ -18,3 +18,4 @@ wasm-bindgen = "0.2"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
 aero-platform = { path = "../platform" }
+aero-audio = { path = "../aero-audio" }

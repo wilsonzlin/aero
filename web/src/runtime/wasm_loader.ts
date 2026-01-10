@@ -26,6 +26,13 @@ export interface WasmApi {
         ): number;
         free(): void;
     };
+    HdaPcmWriter?: new (dstSampleRateHz: number) => {
+        readonly dst_sample_rate_hz: number;
+        set_dst_sample_rate_hz(dstSampleRateHz: number): void;
+        reset(): void;
+        push_hda_pcm_bytes(bridge: unknown, hdaFormat: number, pcmBytes: Uint8Array): number;
+        free(): void;
+    };
 }
 
 export interface WasmInitResult {
@@ -97,6 +104,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         create_worklet_bridge: mod.create_worklet_bridge,
         attach_worklet_bridge: mod.attach_worklet_bridge,
         SineTone: mod.SineTone,
+        HdaPcmWriter: mod.HdaPcmWriter,
     };
 }
 
