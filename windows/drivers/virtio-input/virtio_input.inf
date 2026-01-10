@@ -77,19 +77,19 @@ ServiceBinary = %12%\virtio_input.sys
 AddReg = VirtioInput_EventLog_AddReg
 
 [VirtioInput_EventLog_AddReg]
-HKR, "EventLog\System\virtio_input", "EventMessageFile", 0x00020000, "%SystemRoot%\System32\IoLogMsg.dll;%SystemRoot%\System32\drivers\virtio_input.sys"
-HKR, "EventLog\System\virtio_input", "TypesSupported",   0x00010001, 7
+HKR, "EventLog\\System\\virtio_input", "EventMessageFile", 0x00020000, "%SystemRoot%\\System32\\IoLogMsg.dll;%SystemRoot%\\System32\\drivers\\virtio_input.sys"
+HKR, "EventLog\\System\\virtio_input", "TypesSupported",   0x00010001, 7
 
 ;------------------------------------------------------------------------------
 ; Interrupt Management (MSI/MSI-X)
 ;------------------------------------------------------------------------------
 
 [VirtioInput_InterruptManagement_AddReg]
-HKR, "Interrupt Management", 0x00000010
-HKR, "Interrupt Management\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
 ; virtio-input needs >=3 vectors (config + 2 queues). Request a small, future-
 ; proof value so additional virtqueues can be added without changing the INF.
-HKR, "Interrupt Management\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
 
 [Strings]
 ProviderName             = "Aero Project"
