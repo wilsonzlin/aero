@@ -16,13 +16,15 @@ This allows the emulator to boot quickly and only download the parts of the OS/i
 
 For the hosted-service model (user uploads, ownership/visibility, lease scopes, and writeback options), see: [Disk Image Lifecycle and Access Control](../17-disk-image-lifecycle-and-access-control.md).
 
+For the normative protocol/auth/CORS contract of the disk bytes endpoint, see: [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](../16-disk-image-streaming-auth.md).
+
 ## How it interacts with `StreamingDisk`
 
 `StreamingDisk` issues HTTP requests like:
 
 ```http
-GET /v1/images/win7.img HTTP/1.1
-Host: images.example.com
+GET /disks/disk_123/bytes HTTP/1.1
+Host: disks.examplecdn.com
 Range: bytes=1048576-2097151
 Origin: https://app.example.com
 ```
@@ -64,9 +66,9 @@ Metadata response fields:
 
 | Endpoint | Method | Purpose | Notes |
 |---|---:|---|---|
-| `/v1/images/{image_id}` | GET | Stream raw image bytes | Must support `Range`. |
-| `/v1/images/{image_id}` | HEAD | Fetch metadata headers only | Useful for verifying `Content-Length`/`ETag`. |
-| `/v1/images/{image_id}` | OPTIONS | CORS preflight | Must include `Access-Control-*` headers. |
+| `/disks/{disk_id}/bytes` | GET | Stream raw disk bytes | Must support `Range`. (Some deployments route this as `/disk/{id}` or `/v1/images/{id}`.) |
+| `/disks/{disk_id}/bytes` | HEAD | Fetch metadata headers only | Useful for verifying `Content-Length`/`ETag`. |
+| `/disks/{disk_id}/bytes` | OPTIONS | CORS preflight | Must include `Access-Control-*` headers. |
 | `/v1/images/{image_id}/meta` | GET | JSON metadata (control-plane) | Image discovery + `size_bytes`/`etag` prior to `Range` reads. |
 
 ## Configuration
@@ -190,7 +192,7 @@ General recommendations:
 
 ```nginx
 # Disk images are large and use byte ranges; avoid transformations.
-location /v1/images/ {
+location /disks/ {
   proxy_pass http://disk-image-service;
 
   # Keep range semantics intact.
@@ -299,10 +301,10 @@ How to debug:
 
 ```bash
 # Does the service return 206 for a trivial range?
-curl -v -H 'Range: bytes=0-0' https://images.example.com/v1/images/win7.img
+curl -v -H 'Range: bytes=0-0' https://disks.examplecdn.com/disks/disk_123/bytes
 
 # Check key headers (you want 206 + Content-Range).
-curl -I -H 'Range: bytes=0-0' https://images.example.com/v1/images/win7.img
+curl -I -H 'Range: bytes=0-0' https://disks.examplecdn.com/disks/disk_123/bytes
 ```
 
 Expected (example):
@@ -328,7 +330,7 @@ curl -i -X OPTIONS \
   -H 'Origin: https://app.example.com' \
   -H 'Access-Control-Request-Method: GET' \
   -H 'Access-Control-Request-Headers: range' \
-  https://images.example.com/v1/images/win7.img
+  https://disks.examplecdn.com/disks/disk_123/bytes
 ```
 
 The response must include:
