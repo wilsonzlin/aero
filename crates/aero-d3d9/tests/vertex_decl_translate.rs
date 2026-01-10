@@ -1,0 +1,380 @@
+use aero_d3d9::vertex::*;
+use pretty_assertions::assert_eq;
+use std::collections::BTreeMap;
+
+fn decl(elements: Vec<VertexElement>) -> VertexDeclaration {
+    VertexDeclaration { elements }
+}
+
+#[test]
+fn translate_single_stream_position_color_uv() {
+    let decl = decl(vec![
+        VertexElement::new(
+            0,
+            0,
+            DeclType::Float3,
+            DeclMethod::Default,
+            DeclUsage::Position,
+            0,
+        ),
+        VertexElement::new(
+            0,
+            12,
+            DeclType::D3dColor,
+            DeclMethod::Default,
+            DeclUsage::Color,
+            0,
+        ),
+        VertexElement::new(
+            0,
+            16,
+            DeclType::Float2,
+            DeclMethod::Default,
+            DeclUsage::TexCoord,
+            0,
+        ),
+    ]);
+
+    let mut strides = BTreeMap::new();
+    strides.insert(0, 24);
+
+    let freq = StreamsFreqState::default();
+    let caps = WebGpuVertexCaps {
+        vertex_attribute_16bit: true,
+    };
+
+    let translated = translate_vertex_declaration(
+        &decl,
+        &strides,
+        &freq,
+        caps,
+        &StandardLocationMap,
+    )
+    .unwrap();
+
+    assert_eq!(translated.buffers.len(), 1);
+    assert_eq!(translated.stream_to_buffer_slot.get(&0), Some(&0));
+    assert_eq!(translated.conversions.len(), 0);
+    assert_eq!(translated.instancing.draw_instances(), 1);
+
+    let b0 = &translated.buffers[0];
+    assert_eq!(b0.array_stride, 24);
+    assert_eq!(b0.step_mode, wgpu::VertexStepMode::Vertex);
+    assert_eq!(
+        b0.attributes,
+        vec![
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Unorm8x4,
+                offset: 12,
+                shader_location: 6,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: 16,
+                shader_location: 8,
+            },
+        ]
+    );
+}
+
+#[test]
+fn translate_two_stream_layout() {
+    let decl = decl(vec![
+        VertexElement::new(
+            0,
+            0,
+            DeclType::Float3,
+            DeclMethod::Default,
+            DeclUsage::Position,
+            0,
+        ),
+        VertexElement::new(
+            1,
+            0,
+            DeclType::Float2,
+            DeclMethod::Default,
+            DeclUsage::TexCoord,
+            0,
+        ),
+        VertexElement::new(
+            1,
+            8,
+            DeclType::D3dColor,
+            DeclMethod::Default,
+            DeclUsage::Color,
+            0,
+        ),
+    ]);
+
+    let mut strides = BTreeMap::new();
+    strides.insert(0, 12);
+    strides.insert(1, 12);
+
+    let freq = StreamsFreqState::default();
+    let caps = WebGpuVertexCaps {
+        vertex_attribute_16bit: true,
+    };
+
+    let translated = translate_vertex_declaration(
+        &decl,
+        &strides,
+        &freq,
+        caps,
+        &StandardLocationMap,
+    )
+    .unwrap();
+
+    assert_eq!(translated.buffers.len(), 2);
+    assert_eq!(translated.stream_to_buffer_slot.get(&0), Some(&0));
+    assert_eq!(translated.stream_to_buffer_slot.get(&1), Some(&1));
+
+    let b0 = &translated.buffers[0];
+    assert_eq!(b0.array_stride, 12);
+    assert_eq!(
+        b0.attributes,
+        vec![wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 0,
+            shader_location: 0,
+        }]
+    );
+
+    let b1 = &translated.buffers[1];
+    assert_eq!(b1.array_stride, 12);
+    assert_eq!(
+        b1.attributes,
+        vec![
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: 0,
+                shader_location: 8,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Unorm8x4,
+                offset: 8,
+                shader_location: 6,
+            },
+        ]
+    );
+}
+
+#[test]
+fn translate_instanced_color_stream() {
+    let decl = decl(vec![
+        VertexElement::new(
+            0,
+            0,
+            DeclType::Float3,
+            DeclMethod::Default,
+            DeclUsage::Position,
+            0,
+        ),
+        VertexElement::new(
+            1,
+            0,
+            DeclType::D3dColor,
+            DeclMethod::Default,
+            DeclUsage::Color,
+            0,
+        ),
+    ]);
+
+    let mut strides = BTreeMap::new();
+    strides.insert(0, 12);
+    strides.insert(1, 4);
+
+    let mut freq = StreamsFreqState::default();
+    freq.set(0, 0x4000_0000 | 2).unwrap(); // INDEXEDDATA (draw 2 instances)
+    freq.set(1, 0x8000_0000 | 1).unwrap(); // INSTANCEDATA divisor=1
+
+    let caps = WebGpuVertexCaps {
+        vertex_attribute_16bit: true,
+    };
+
+    let translated = translate_vertex_declaration(
+        &decl,
+        &strides,
+        &freq,
+        caps,
+        &StandardLocationMap,
+    )
+    .unwrap();
+
+    assert_eq!(translated.instancing.draw_instances(), 2);
+    assert_eq!(translated.instancing.stream_step(0), StreamStep::Vertex);
+    assert_eq!(
+        translated.instancing.stream_step(1),
+        StreamStep::Instance { divisor: 1 }
+    );
+
+    assert_eq!(translated.buffers[0].step_mode, wgpu::VertexStepMode::Vertex);
+    assert_eq!(
+        translated.buffers[1].step_mode,
+        wgpu::VertexStepMode::Instance
+    );
+}
+
+#[test]
+fn dec3n_requires_conversion_and_decodes_correctly() {
+    let decl = decl(vec![VertexElement::new(
+        0,
+        0,
+        DeclType::Dec3N,
+        DeclMethod::Default,
+        DeclUsage::Normal,
+        0,
+    )]);
+
+    let mut strides = BTreeMap::new();
+    strides.insert(0, 4);
+
+    let freq = StreamsFreqState::default();
+    let caps = WebGpuVertexCaps {
+        vertex_attribute_16bit: true,
+    };
+
+    let translated = translate_vertex_declaration(
+        &decl,
+        &strides,
+        &freq,
+        caps,
+        &StandardLocationMap,
+    )
+    .unwrap();
+
+    assert_eq!(translated.buffers[0].array_stride, 12);
+    assert_eq!(translated.conversions.len(), 1);
+    let plan = translated.conversions.get(&0).unwrap();
+    assert_eq!(plan.src_stride, 4);
+    assert_eq!(plan.dst_stride, 12);
+    assert_eq!(plan.elements.len(), 1);
+
+    // Packed DEC3N: x=511 (1.0), y=0 (0.0), z=-512 (-1.0).
+    let packed: u32 = 0x2000_01ff;
+    let src = packed.to_le_bytes();
+    let dst = plan.convert_vertices(&src, 1).unwrap();
+    let x = f32::from_le_bytes(dst[0..4].try_into().unwrap());
+    let y = f32::from_le_bytes(dst[4..8].try_into().unwrap());
+    let z = f32::from_le_bytes(dst[8..12].try_into().unwrap());
+    assert_eq!((x, y, z), (1.0, 0.0, -1.0));
+}
+
+#[test]
+fn half_promotes_to_f32_when_f16_vertex_attributes_unsupported() {
+    let decl = decl(vec![VertexElement::new(
+        0,
+        0,
+        DeclType::Float16_2,
+        DeclMethod::Default,
+        DeclUsage::TexCoord,
+        0,
+    )]);
+
+    let mut strides = BTreeMap::new();
+    strides.insert(0, 4);
+
+    let freq = StreamsFreqState::default();
+    let caps = WebGpuVertexCaps {
+        vertex_attribute_16bit: false,
+    };
+
+    let translated = translate_vertex_declaration(
+        &decl,
+        &strides,
+        &freq,
+        caps,
+        &StandardLocationMap,
+    )
+    .unwrap();
+
+    let b0 = &translated.buffers[0];
+    assert_eq!(b0.array_stride, 8);
+    assert_eq!(b0.attributes[0].format, wgpu::VertexFormat::Float32x2);
+
+    let plan = translated.conversions.get(&0).unwrap();
+    let src = [half::f16::from_f32(0.5).to_bits(), half::f16::from_f32(1.0).to_bits()]
+        .into_iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect::<Vec<_>>();
+    let dst = plan.convert_vertices(&src, 1).unwrap();
+    let x = f32::from_le_bytes(dst[0..4].try_into().unwrap());
+    let y = f32::from_le_bytes(dst[4..8].try_into().unwrap());
+    assert_eq!((x, y), (0.5, 1.0));
+}
+
+#[test]
+fn fvf_decode_produces_declaration_compatible_with_fixed_function_locations() {
+    // XYZ | NORMAL | DIFFUSE | TEX1 (default texcoord size=2)
+    let fvf = Fvf(0x002 | 0x010 | 0x040 | 0x0100);
+    let layout = fvf.decode().unwrap();
+    assert_eq!(layout.stride, 36);
+    assert_eq!(layout.pretransformed, false);
+
+    let mut strides = BTreeMap::new();
+    strides.insert(0, layout.stride);
+
+    let translated = translate_vertex_declaration(
+        &layout.declaration,
+        &strides,
+        &StreamsFreqState::default(),
+        WebGpuVertexCaps {
+            vertex_attribute_16bit: true,
+        },
+        &FixedFunctionLocationMap,
+    )
+    .unwrap();
+
+    let attrs = &translated.buffers[0].attributes;
+    assert_eq!(
+        attrs,
+        &[
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 12,
+                shader_location: 1,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Unorm8x4,
+                offset: 24,
+                shader_location: 3,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: 28,
+                shader_location: 5,
+            },
+        ]
+    );
+}
+
+#[test]
+fn expand_instance_data_emulates_divisor() {
+    let stride = 4;
+    let divisor = 2;
+    let draw_instances = 5;
+    let src = [
+        1u32.to_le_bytes(),
+        2u32.to_le_bytes(),
+        3u32.to_le_bytes(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+
+    let expanded = expand_instance_data(&src, stride, divisor, draw_instances).unwrap();
+    let words = expanded
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    assert_eq!(words, vec![1, 1, 2, 2, 3]);
+}

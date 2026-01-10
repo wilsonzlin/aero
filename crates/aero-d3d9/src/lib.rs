@@ -13,6 +13,7 @@ pub mod shader;
 pub mod software;
 pub mod state;
 pub mod sm3;
+pub mod vertex;
 
 #[cfg(test)]
 mod tests;

@@ -87,6 +87,7 @@ dependencies = [
  "blake3",
  "bytemuck",
  "futures",
+ "half",
  "hashbrown 0.14.5",
  "insta",
  "lru",
