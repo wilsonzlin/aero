@@ -1,4 +1,7 @@
 {{- if .Values.ingress.enabled -}}
+{{- if and .Values.ingress.coopCoep.enabled .Values.gateway.crossOriginIsolation.enabled -}}
+{{- fail "Both ingress.coopCoep.enabled and gateway.crossOriginIsolation.enabled are enabled. Enable only one to avoid duplicate COOP/COEP headers." -}}
+{{- end -}}
 {{- $fullName := include "aero-gateway.fullname" . -}}
 {{- $svcPort := .Values.service.port -}}
 {{- $mode := default "auto" .Values.ingress.coopCoep.mode -}}

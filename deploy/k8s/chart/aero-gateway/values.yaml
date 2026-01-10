@@ -17,6 +17,25 @@ gateway:
 
   containerPort: 8080
 
+  # The URL that browser clients use to reach the gateway.
+  # If unset and ingress.enabled=true, this chart derives it from ingress.host + TLS.
+  publicBaseUrl: ""
+
+  # Optional comma-separated origin allowlist for CORS/Origin checks.
+  # If unset, aero-gateway defaults it to PUBLIC_BASE_URL's origin.
+  allowedOrigins: ""
+
+  # Enable COOP/COEP headers at the application layer (alternative to ingress injection).
+  # NOTE: Do not enable this at the same time as ingress.coopCoep.enabled to avoid
+  # duplicate COOP/COEP headers.
+  crossOriginIsolation:
+    enabled: false
+
+  logLevel: info
+  shutdownGraceMs: 10000
+  rateLimit:
+    requestsPerMinute: 0
+
   # Extra environment variables to set directly on the container.
   # Example:
   # extraEnv:

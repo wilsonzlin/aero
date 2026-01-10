@@ -8,7 +8,7 @@ The chart includes:
 - `Ingress` example (defaults to `ingress-nginx`) that:
   - terminates TLS (optional in dev; recommended in prod)
   - supports WebSocket upgrades (Aero uses `wss://<host>/tcp?...`)
-  - injects COOP/COEP headers required for `SharedArrayBuffer` / `crossOriginIsolated`
+  - can inject COOP/COEP headers required for `SharedArrayBuffer` / `crossOriginIsolated`
 - Optional in-cluster Redis (useful when running multiple gateway replicas)
 - Optional `NetworkPolicy` template to help restrict ingress/egress
 
@@ -61,6 +61,15 @@ secrets:
     SESSION_SECRET: "<REPLACE_WITH_RANDOM_SECRET>"
     ADMIN_API_KEY: "<REPLACE_WITH_RANDOM_KEY>"
 
+# If your ingress controller does not allow header snippet annotations, you can
+# alternatively enable COOP/COEP at the application layer and disable ingress injection:
+# gateway:
+#   crossOriginIsolation:
+#     enabled: true
+# ingress:
+#   coopCoep:
+#     enabled: false
+#
 # Recommended for multi-replica deployments (session storage, rate limiting, etc.)
 redis:
   enabled: true
@@ -86,6 +95,19 @@ helm upgrade --install aero-gateway ./deploy/k8s/chart/aero-gateway \
 ```
 
 Note: `SharedArrayBuffer` / `crossOriginIsolated` requires HTTPS + COOP/COEP, so a non-TLS dev setup is useful for iteration but not browser-threaded production mode.
+
+## Gateway config notes (PUBLIC_BASE_URL / origin allowlist)
+
+`aero-gateway` enforces an `Origin` allowlist for browser-initiated requests.
+
+This chart sets `PUBLIC_BASE_URL` automatically when `ingress.enabled=true` (derived from `ingress.host` and whether TLS is enabled).
+
+If you are deploying **without** an Ingress, or the externally reachable URL is different from `ingress.host`, set:
+
+- `gateway.publicBaseUrl=https://<your-domain>` (or `http://...` in dev)
+- (Optional) `gateway.allowedOrigins=https://<your-frontend-origin>` (comma-separated)
+
+If you see `403 Origin not allowed` responses, `PUBLIC_BASE_URL`/`ALLOWED_ORIGINS` is the first thing to check.
 
 ## Verify the rollout
 
@@ -129,6 +151,11 @@ websocat -v 'wss://aero.example.com/tcp?host=example.com&port=80'
 
 You should see an HTTP 101 Switching Protocols response.
 
+If your gateway enforces authentication (e.g. requires a session cookie from `POST /session`),
+you may see `401 Unauthorized` instead. In that case, first obtain a cookie using your
+gateway's session endpoint, then retry with a WebSocket client that can send custom
+headers (e.g. `wscat -H 'Cookie: ...'`).
+
 ## Ingress notes (COOP/COEP header injection)
 
 ### ingress-nginx
@@ -141,7 +168,9 @@ Newer `ingress-nginx` releases may disable snippet annotations by default (for s
 
 1. Enable snippet annotations in the controller (cluster-level decision).
 2. Switch to Traefik and use a `Middleware` for headers (see below).
-3. Inject COOP/COEP headers directly in `aero-gateway` (application-level).
+3. Inject COOP/COEP headers directly in `aero-gateway` (application-level) by setting:
+   - `gateway.crossOriginIsolation.enabled=true`
+   - `ingress.coopCoep.enabled=false`
 
 ### Traefik (alternative)
 
@@ -167,4 +196,3 @@ Egress is highly environment-specific:
 
 - If `aero-gateway` needs to open arbitrary outbound TCP connections (typical for a TCP proxy), you may need to allow broad egress.
 - If you can constrain destination IP ranges/ports, populate `networkPolicy.egress.allowedCIDRs` accordingly.
-

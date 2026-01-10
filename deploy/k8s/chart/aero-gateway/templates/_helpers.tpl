@@ -65,6 +65,22 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- printf "%s-redis" (include "aero-gateway.fullname" .) -}}
 {{- end -}}
 
+{{- define "aero-gateway.publicBaseUrl" -}}
+{{- if .Values.gateway.publicBaseUrl -}}
+{{- .Values.gateway.publicBaseUrl -}}
+{{- else -}}
+{{- $scheme := "http" -}}
+{{- if and .Values.ingress.enabled .Values.ingress.tls.enabled -}}
+{{- $scheme = "https" -}}
+{{- end -}}
+{{- if and .Values.ingress.enabled .Values.ingress.host -}}
+{{- printf "%s://%s" $scheme .Values.ingress.host -}}
+{{- else -}}
+{{- printf "%s://localhost:%v" $scheme .Values.gateway.containerPort -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "aero-gateway.coopCoepSnippet" -}}
 add_header Cross-Origin-Opener-Policy "{{ .Values.ingress.coopCoep.coop }}" always;
 add_header Cross-Origin-Embedder-Policy "{{ .Values.ingress.coopCoep.coep }}" always;

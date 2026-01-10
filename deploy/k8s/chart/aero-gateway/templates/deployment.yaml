@@ -39,6 +39,24 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.gateway.containerPort | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.gateway.logLevel | quote }}
+            - name: SHUTDOWN_GRACE_MS
+              value: {{ .Values.gateway.shutdownGraceMs | quote }}
+            - name: RATE_LIMIT_REQUESTS_PER_MINUTE
+              value: {{ .Values.gateway.rateLimit.requestsPerMinute | quote }}
+            {{- if or .Values.gateway.publicBaseUrl .Values.ingress.enabled }}
+            - name: PUBLIC_BASE_URL
+              value: {{ include "aero-gateway.publicBaseUrl" . | quote }}
+            {{- end }}
+            {{- if .Values.gateway.allowedOrigins }}
+            - name: ALLOWED_ORIGINS
+              value: {{ .Values.gateway.allowedOrigins | quote }}
+            {{- end }}
+            {{- if .Values.gateway.crossOriginIsolation.enabled }}
+            - name: CROSS_ORIGIN_ISOLATION
+              value: "1"
+            {{- end }}
             {{- if .Values.redis.enabled }}
             - name: REDIS_URL
               value: {{ printf "redis://%s:%v" (include "aero-gateway.redisFullname" .) .Values.redis.port | quote }}
@@ -61,12 +79,14 @@ spec:
             {{- end }}
           {{- end }}
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /readyz
               port: http
             initialDelaySeconds: 2
             periodSeconds: 5
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /healthz
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
