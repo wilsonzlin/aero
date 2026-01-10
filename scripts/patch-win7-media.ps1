@@ -227,6 +227,17 @@ function Patch-BcdStore {
     $defaultPatched = $true
     if ($EnableNoIntegrityChecks) {
       Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', '{default}', 'nointegritychecks', 'on') | Out-Null
+    } else {
+      # Explicitly ensure it is not enabled. Prefer deletevalue to keep the store clean, but fall
+      # back to an explicit "off" setting if deletevalue fails for any reason.
+      $del = Invoke-ExeResult -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/deletevalue', '{default}', 'nointegritychecks')
+      if ($del.ExitCode -ne 0) {
+        $setOff = Invoke-ExeResult -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', '{default}', 'nointegritychecks', 'off')
+        if ($setOff.ExitCode -ne 0) {
+          $outText = ($setOff.Output | Out-String).Trim()
+          throw "Failed to disable nointegritychecks in BCD store: $StorePath`n$outText"
+        }
+      }
     }
   } else {
     $outText = ($attempt.Output | Out-String).Trim()
@@ -240,6 +251,15 @@ function Patch-BcdStore {
       Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', $guid, 'testsigning', 'on') | Out-Null
       if ($EnableNoIntegrityChecks) {
         Invoke-Exe -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', $guid, 'nointegritychecks', 'on') | Out-Null
+      } else {
+        $del = Invoke-ExeResult -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/deletevalue', $guid, 'nointegritychecks')
+        if ($del.ExitCode -ne 0) {
+          $setOff = Invoke-ExeResult -FilePath bcdedit.exe -ArgumentList @('/store', $StorePath, '/set', $guid, 'nointegritychecks', 'off')
+          if ($setOff.ExitCode -ne 0) {
+            $outText = ($setOff.Output | Out-String).Trim()
+            throw "Failed to disable nointegritychecks for $guid in BCD store: $StorePath`n$outText"
+          }
+        }
       }
     }
   }
