@@ -1,6 +1,9 @@
 *.sys
 *.dll
 *.cat
+*.pdb
+*.map
 *.cer
 *.pfx
 *.pvk
+devcon.exe

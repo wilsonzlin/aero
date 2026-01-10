@@ -95,6 +95,11 @@ After reboot, run (as Administrator):
 install.cmd
 ```
 
+Notes:
+
+- `install.cmd` uses `pnputil` by default.
+- If you have `devcon.exe` available, you can place it in this directory (next to `install.cmd`) and the script will use it as a fallback for device update if `pnputil` fails.
+
 To install with the optional D3D10/11 UMDs:
 
 ```bat
