@@ -1,31 +1,33 @@
 # QEMU manual test plan: Windows 7 virtio-input (HID) driver
 
-This document describes a repeatable way to manually validate the virtio-input **HID** driver end-to-end on:
+This document describes a repeatable way to manually validate the virtio-input **HID**
+driver end-to-end on:
 
 - Windows 7 SP1 x86
 - Windows 7 SP1 x64
 
 It uses QEMU to provide virtio-input keyboard/mouse devices, then verifies:
 
-1. The virtio-input HID miniport/minidriver binds to the virtio PCI function(s)
+1. The virtio-input HID minidriver binds to the virtio PCI function(s)
 2. Windows `hidclass.sys` enumerates HID collections correctly
 3. Windows built-in `kbdhid.sys` and `mouhid.sys` attach to the resulting HID keyboard/mouse collections
 4. Keyboard/mouse input reports are correct (validated with `hidtest`)
 
 Hardware ID (HWID) references are documented in:
 
-- `drivers/windows7/virtio-input/docs/pci-hwids.md`
+- `drivers/windows/virtio-input/docs/pci-hwids.md`
 
 ## Prerequisites
 
 - QEMU new enough to provide `virtio-keyboard-pci` and `virtio-mouse-pci` devices.
   - For Aero contract v1 driver testing (Revision ID enforcement), QEMU must support `x-pci-revision=0x01`.
 - A Windows 7 SP1 VM disk image (x86 or x64).
-- The virtio-input HID driver package built for the target architecture, including an INF under:
-  - `drivers/windows7/virtio-input/inf/`
+- A built virtio-input driver package for the target architecture (INF + SYS + CAT).
+  - CI output layout: `out/packages/windows/virtio-input/<arch>/`
+  - `<arch>` is `x86` or `x64` (CI naming).
 - Test-signing enabled in the guest (or a properly-signed driver package).
 - `hidtest.exe` built from:
-  - `drivers/windows7/virtio-input/tools/hidtest/`
+  - `drivers/windows/virtio-input/tools/hidtest/`
 
 ## QEMU command lines
 
@@ -63,8 +65,8 @@ qemu-system-x86_64 \
 
 Virtio-input has two PCI IDs defined in the virtio spec:
 
-- **Modern / non-transitional**: `PCI\VEN_1AF4&DEV_1052`
-- **Transitional (legacy+modern)**: `PCI\VEN_1AF4&DEV_1011`
+- **Modern / non-transitional**: `PCI\\VEN_1AF4&DEV_1052`
+- **Transitional (legacy+modern)**: `PCI\\VEN_1AF4&DEV_1011`
 
 QEMU’s virtio-input PCI devices currently enumerate as **modern/non-transitional**
 (`DEV_1052`) even without `disable-legacy=on`. However, you can still include
@@ -87,10 +89,6 @@ the Aero contract Revision ID, pass `x-pci-revision=0x01`:
 -device virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01 \
 -device virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01
 ```
-
-If you encounter `DEV_1011` in the field (e.g. a different hypervisor or a future
-QEMU variant that provides a transitional virtio-input PCI function), the INF is
-expected to match it.
 
 ### Optional: validate without PS/2 input (post-install)
 
@@ -115,14 +113,13 @@ Before installing the driver (or when troubleshooting binding), confirm the devi
 3. Right-click → **Properties** → **Details** tab.
 4. In the **Property** dropdown, select **Hardware Ids**.
 
-Expected values include at least one of:
+Expected values include at least:
 
-- `PCI\VEN_1AF4&DEV_1052` (modern / non-transitional, used by QEMU today)
-- `PCI\VEN_1AF4&DEV_1011` (transitional, per virtio spec)
+- `PCI\\VEN_1AF4&DEV_1052` (modern / non-transitional, used by QEMU today)
 
 The list will also include more specific forms, e.g.:
 
-- `PCI\VEN_1AF4&DEV_1052&SUBSYS_11001AF4&REV_01` (when using `x-pci-revision=0x01`)
+- `PCI\\VEN_1AF4&DEV_1052&SUBSYS_11001AF4&REV_01` (when using `x-pci-revision=0x01`)
 
 The INF should match the shorter `VEN/DEV` form.
 
@@ -131,7 +128,7 @@ The INF should match the shorter `VEN/DEV` form.
 You can validate the PCI ID that QEMU is emitting without booting Windows:
 
 ```bash
-printf 'info pci\nquit\n' | \
+printf 'info pci\\nquit\\n' | \
   qemu-system-x86_64 -nodefaults -machine q35 -m 128 -nographic -monitor stdio \
     -device virtio-keyboard-pci
 ```
@@ -150,13 +147,13 @@ Keyboard: PCI device 1af4:1052
    bcdedit /set testsigning on
    ```
    Reboot the VM. You should see "Test Mode" on the desktop.
-3. Install the virtio-input driver using the INF directory:
+3. Install the virtio-input driver using the **built package directory** for the matching architecture:
    - Open **Device Manager**
    - Find the new/unknown device(s) created by the virtio-input PCI functions
      - Often shows under **Other devices** as an unknown PCI device until the INF is installed.
    - Right click → **Update Driver Software...**
    - **Browse my computer for driver software**
-   - Point it to: `drivers/windows7/virtio-input/inf/`
+   - Point it to a directory containing `virtio-input.inf` + `virtioinput.sys` (for example: `out\\packages\\windows\\virtio-input\\x64\\`)
 4. Reboot when prompted.
 
 ## Verify the Windows HID stacks attach (`kbdhid.sys` / `mouhid.sys`)
@@ -187,31 +184,25 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
 
 1. List devices:
    ```bat
-   hidtest.exe list
+   hidtest.exe --list
    ```
    Look for entries with:
    - Usage `0x0001/0x0006` (GenericDesktop/Keyboard)
    - Usage `0x0001/0x0002` (GenericDesktop/Mouse)
 
-2. Listen on the keyboard collection:
+2. Read keyboard reports (prefers a virtio keyboard device when present):
    ```bat
-   hidtest.exe listen <kbd_index>
+   hidtest.exe --keyboard
    ```
-   Expected output while pressing/releasing keys:
-   - Modifier transitions (e.g. `kbd: mod LSHIFT down`)
-   - Key transitions (e.g. `kbd: key A (0x04) down` / `up`)
 
-3. Listen on the mouse collection:
+3. Read mouse reports (prefers a virtio mouse device when present):
    ```bat
-   hidtest.exe listen <mouse_index>
+   hidtest.exe --mouse
    ```
-   Expected output while moving/clicking:
-   - `mouse: buttons=0x.. x=.. y=.. [wheel=..]`
-   - Button transitions (left/right/middle down/up)
 
 4. (Optional) send a keyboard LED output report:
    ```bat
-   hidtest.exe setleds <kbd_index> 0x02
+   hidtest.exe --keyboard --led 0x02
    ```
    This validates that the device exposes an output report and accepts writes. (In a VM there may not be a physical LED to observe.)
 
@@ -220,7 +211,7 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
 ### Device Manager shows an error code
 
 - **Code 28**: driver not installed
-  - Re-run **Update Driver...** and ensure you pointed to `drivers/windows7/virtio-input/inf/`.
+  - Re-run **Update Driver...** and ensure you pointed to a directory containing the correct `virtio-input.inf` + `virtioinput.sys` for that guest architecture.
 - **Code 52**: Windows cannot verify the digital signature
   - Ensure `bcdedit /set testsigning on` was applied and the VM rebooted.
   - Ensure you installed the correct x86 vs x64 build of the driver.
@@ -230,12 +221,12 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
 
 ### `hidtest` cannot open the device
 
-- Some HID devices cannot be opened with `GENERIC_WRITE`; `hidtest list` will note read-only opens.
-- If `hidtest listen` fails to read:
+- Some HID devices cannot be opened with `GENERIC_WRITE`; try running without `--led`.
+- If `hidtest` fails to read:
   - Confirm the device is present and enabled in Device Manager.
-  - Try listening to the correct HID collection (`...&col01`, `...&col02` entries usually correspond to different top-level collections).
+  - Try selecting the other collection (keyboard vs mouse).
 
 ### Input works in Windows but `hidtest` prints nothing
 
-- Ensure you are listening to the correct index (keyboard and mouse are often separate HID collections).
 - Verify you are not testing PS/2 input unintentionally; after the driver works, re-run QEMU with `-machine ... ,i8042=off` to force virtio-only input.
+

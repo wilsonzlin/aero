@@ -128,7 +128,9 @@ To add a new driver to CI packaging:
 2. Update the `$schema` relative path as needed
 3. Optionally set `infFiles` to an explicit allowlist (recommended if the driver directory contains multiple INFs)
 
-> Note: Drivers without `ci-package.json` are treated as dev/test and are skipped by CI. For example, `drivers/win7/virtio/virtio-transport-test/` is a smoke-test driver and is intentionally excluded from CI-produced artifacts.
+> Note: CI only builds drivers with `ci-package.json`; drivers without it are treated as dev/test and skipped (for example, `drivers/win7/virtio/virtio-transport-test/` is a smoke-test driver and is intentionally excluded from CI-produced artifacts).
+>
+> `drivers/windows/virtio-input/` is CI-packaged and binds to the real virtio-input PCI HWID (`PCI\\VEN_1AF4&DEV_1052`). Keep its INF/HWID matches unique (avoid duplicate INFs that bind the same IDs) so Guest Tools packaging and the Win7 host harness remain deterministic.
 
 ```powershell
 .\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json

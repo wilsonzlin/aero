@@ -23,8 +23,8 @@ Vendor ID: **`VEN_1AF4`**
 
 | Variant | PCI Device ID | Windows HWID prefix | Notes |
 | --- | --- | --- | --- |
-| Modern / non-transitional | **`DEV_1052`** | `PCI\VEN_1AF4&DEV_1052` | Matches virtio device type **18 / `0x12`** (`VIRTIO_ID_INPUT`). |
-| Transitional (legacy+modern) | **`DEV_1011`** | `PCI\VEN_1AF4&DEV_1011` | Virtio “transitional” PCI ID for virtio-input (per virtio spec table). |
+| Modern / non-transitional | **`DEV_1052`** | `PCI\\VEN_1AF4&DEV_1052` | Matches virtio device type **18 / `0x12`** (`VIRTIO_ID_INPUT`). |
+| Transitional (legacy+modern) | **`DEV_1011`** | `PCI\\VEN_1AF4&DEV_1011` | Virtio “transitional” PCI ID for virtio-input (per virtio spec table). |
 
 ### Relationship to virtio-input type ID
 
@@ -51,7 +51,7 @@ virtio-input device type:
 
 These devices currently enumerate as **modern/non-transitional** virtio-input:
 
-* `PCI\VEN_1AF4&DEV_1052` (and a `SUBSYS_11001AF4...` variant)
+* `PCI\\VEN_1AF4&DEV_1052` (and a `SUBSYS_11001AF4...` variant)
 * Changing `disable-legacy=` / `disable-modern=` does **not** change the PCI ID;
   QEMU’s virtio-input PCI devices are effectively modern-only today.
 
@@ -75,8 +75,7 @@ Keyboard: PCI device 1af4:1052
   is installed.
 * The “Hardware Ids” list in Device Manager includes more-specific forms (with
   `SUBSYS_...` and `REV_...`). The INF should match at least the short form
-  `PCI\VEN_1AF4&DEV_1052` (and optionally `...DEV_1011` for transitional
-  implementations).
+  `PCI\\VEN_1AF4&DEV_1052`.
 * Aero’s Win7 virtio contract encodes the contract major version in the PCI Revision
   ID (contract v1 = `REV_01`). Some QEMU virtio devices report `REV_00` by default;
   for contract testing, use `x-pci-revision=0x01` on the QEMU `-device ...` args.
