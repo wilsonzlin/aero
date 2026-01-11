@@ -424,6 +424,61 @@ if (-not $OmitOptionalDrivers) {
   }
 }
 
+# Validate the wrapper defaults without explicitly passing -Profile/-SpecPath, so any
+# drift between docs/script defaults is caught by CI.
+$guestToolsDefaultsOutDir = Join-Path $OutRoot "guest-tools-defaults"
+Ensure-EmptyDirectory -Path $guestToolsDefaultsOutDir
+$guestToolsDefaultsLog = Join-Path $logsDir "make-guest-tools-from-virtio-win-defaults.log"
+
+Write-Host "Running make-guest-tools-from-virtio-win.ps1 (defaults)..."
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript `
+  -VirtioWinRoot $syntheticRoot `
+  -OutDir $guestToolsDefaultsOutDir `
+  -Version "0.0.0" `
+  -BuildId "ci-defaults" `
+  -CleanStage *>&1 | Tee-Object -FilePath $guestToolsDefaultsLog
+if ($LASTEXITCODE -ne 0) {
+  throw "make-guest-tools-from-virtio-win.ps1 (defaults) failed (exit $LASTEXITCODE). See $guestToolsDefaultsLog"
+}
+
+$defaultsIso = Join-Path $guestToolsDefaultsOutDir "aero-guest-tools.iso"
+$defaultsZip = Join-Path $guestToolsDefaultsOutDir "aero-guest-tools.zip"
+$defaultsManifest = Join-Path $guestToolsDefaultsOutDir "manifest.json"
+foreach ($p in @($defaultsIso, $defaultsZip, $defaultsManifest)) {
+  if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {
+    throw "Expected Guest Tools output missing (defaults run): $p"
+  }
+}
+
+$defaultsLogText = Get-Content -LiteralPath $guestToolsDefaultsLog -Raw
+if ($defaultsLogText -notmatch '(?m)^\\s*profile\\s*:\\s*full\\s*$') {
+  throw "Expected defaults run to use -Profile full. See $guestToolsDefaultsLog"
+}
+if ($defaultsLogText -notmatch 'win7-virtio-full\\.json') {
+  throw "Expected defaults run to select win7-virtio-full.json. See $guestToolsDefaultsLog"
+}
+
+$defaultsManifestObj = Get-Content -LiteralPath $defaultsManifest -Raw | ConvertFrom-Json
+if ($defaultsManifestObj.package.build_id -ne "ci-defaults") {
+  throw "Guest Tools defaults manifest build_id mismatch: expected ci-defaults, got $($defaultsManifestObj.package.build_id)"
+}
+
+# Default profile is 'full', so when optional drivers are present in the source, they should be
+# present in the packaged output too.
+if (-not $OmitOptionalDrivers) {
+  $defaultsPaths = @($defaultsManifestObj.files | ForEach-Object { $_.path })
+  foreach ($want in @(
+    "drivers/x86/viosnd/viosnd.inf",
+    "drivers/amd64/viosnd/viosnd.inf",
+    "drivers/x86/vioinput/vioinput.inf",
+    "drivers/amd64/vioinput/vioinput.inf"
+  )) {
+    if (-not ($defaultsPaths -contains $want)) {
+      throw "Defaults Guest Tools manifest missing expected optional driver file path: $want"
+    }
+  }
+}
+
 $isoScript = Join-Path $repoRoot "drivers\scripts\make-virtio-driver-iso.ps1"
 if (-not (Test-Path -LiteralPath $isoScript -PathType Leaf)) {
   throw "Expected script not found: $isoScript"
