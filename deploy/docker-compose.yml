@@ -171,7 +171,9 @@ services:
       # - an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
       #   `aero-l2-tunnel-v1`).
       #
-      # This is ignored when AERO_L2_AUTH_MODE is explicitly set to cookie/jwt/etc.
+      # In `AERO_L2_AUTH_MODE=api_key`, this is also accepted as a fallback value for `AERO_L2_API_KEY`.
+      #
+      # This is ignored when `AERO_L2_AUTH_MODE` is explicitly set to `cookie`, `jwt`, `cookie_or_jwt`, or `none`.
       AERO_L2_TOKEN: ${AERO_L2_TOKEN:-}
 
       # Egress policy (highly recommended to set allowlists for production deployments).
