@@ -68,4 +68,3 @@ fn verify_session_token_accepts_exp_at_i64_max() {
         .expect("expected token with exp=i64::MAX to verify");
     assert_eq!(verified.exp_unix, i64::MAX);
 }
-
