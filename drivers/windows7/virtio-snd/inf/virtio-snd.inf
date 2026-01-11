@@ -22,8 +22,11 @@ CatalogFile = virtio-snd.cat
 ; device (MMIO BAR0 + vendor-specific capabilities), Vendor ID 0x1AF4, Device ID
 ; 0x1059, Revision ID 0x01 (see `docs/windows7-virtio-driver-contract.md`).
 ;
-; This driver is modern-transport-only and MUST NOT bind to virtio-pci
-; transitional/legacy IDs (for virtio-snd that would be DEV_1018).
+; This driver uses the virtio-pci **modern** transport (MMIO + vendor-specific
+; capabilities). It prefers the modern/non-transitional virtio-snd ID
+; (`DEV_1059`). The transitional ID (`DEV_1018`) is also matched for
+; compatibility with hypervisors that expose legacy+modern virtio frontends by
+; default; the driver still uses the modern interface.
 ;
 ; The REV_01 match is listed first to prefer contract v1 devices; the driver still
 ; validates Revision ID at runtime.
@@ -71,6 +74,8 @@ HKR,,CLSID,,%KSProxy.CLSID%
 HKR,,FriendlyName,,%VirtioSnd.TopoDesc%
 
 [VirtioSnd.AddReg]
+HKR,,CLSID,,%KSProxy.CLSID%
+HKR,,FriendlyName,,%VirtioSnd.DeviceDesc%
 HKR,,DevLoader,,*ntkern
 HKR,,NTMPDriver,,virtiosnd.sys
 HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
@@ -111,8 +116,8 @@ ProviderName           = "Aero Project"
 DiskName               = "Aero virtio-snd Driver Disk"
 VirtioSnd.DeviceDesc   = "Aero VirtIO Sound Device"
 VirtioSnd.ServiceDesc  = "Aero VirtIO Sound Driver"
-VirtioSnd.WaveDesc     = "Aero VirtIO Sound (WaveRT)"
-VirtioSnd.TopoDesc     = "Aero VirtIO Sound (Topology)"
+VirtioSnd.WaveDesc     = "Aero VirtIO Sound Output"
+VirtioSnd.TopoDesc     = "Aero VirtIO Sound Topology"
 
 ; KS / audio stack identifiers (Windows 7).
 KSProxy.CLSID        = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
