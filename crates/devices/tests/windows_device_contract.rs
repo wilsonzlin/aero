@@ -1,4 +1,6 @@
-use aero_devices::pci::profile::{PciDeviceProfile, PCI_VENDOR_ID_VIRTIO, VIRTIO_SND};
+use aero_devices::pci::profile::{
+    PciDeviceProfile, PCI_VENDOR_ID_VIRTIO, VIRTIO_BLK, VIRTIO_NET, VIRTIO_SND,
+};
 
 fn parse_hex_u16(value: &str) -> u16 {
     let value = value
@@ -102,3 +104,56 @@ fn windows_device_contract_virtio_snd_matches_pci_profile() {
     assert_eq!(snd.get("virtio_device_type").and_then(|v| v.as_u64()), Some(25));
 }
 
+#[test]
+fn windows_device_contract_virtio_blk_matches_pci_profile() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../../../docs/windows-device-contract.json"))
+            .expect("parse windows-device-contract.json");
+
+    let devices = contract
+        .get("devices")
+        .and_then(|v| v.as_array())
+        .expect("windows-device-contract.json missing devices array");
+
+    let blk = find_contract_device(devices, "virtio-blk");
+
+    assert_contract_matches_profile(VIRTIO_BLK, blk);
+
+    assert_eq!(VIRTIO_BLK.vendor_id, PCI_VENDOR_ID_VIRTIO);
+    assert_eq!(
+        blk.get("driver_service_name").and_then(|v| v.as_str()),
+        Some("aerovblk")
+    );
+    assert_eq!(
+        blk.get("inf_name").and_then(|v| v.as_str()),
+        Some("aerovblk.inf")
+    );
+    assert_eq!(blk.get("virtio_device_type").and_then(|v| v.as_u64()), Some(2));
+}
+
+#[test]
+fn windows_device_contract_virtio_net_matches_pci_profile() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../../../docs/windows-device-contract.json"))
+            .expect("parse windows-device-contract.json");
+
+    let devices = contract
+        .get("devices")
+        .and_then(|v| v.as_array())
+        .expect("windows-device-contract.json missing devices array");
+
+    let net = find_contract_device(devices, "virtio-net");
+
+    assert_contract_matches_profile(VIRTIO_NET, net);
+
+    assert_eq!(VIRTIO_NET.vendor_id, PCI_VENDOR_ID_VIRTIO);
+    assert_eq!(
+        net.get("driver_service_name").and_then(|v| v.as_str()),
+        Some("aerovnet")
+    );
+    assert_eq!(
+        net.get("inf_name").and_then(|v| v.as_str()),
+        Some("aerovnet.inf")
+    );
+    assert_eq!(net.get("virtio_device_type").and_then(|v| v.as_u64()), Some(1));
+}

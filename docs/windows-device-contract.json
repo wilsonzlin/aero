@@ -52,8 +52,8 @@
         "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4",
         "PCI\\VEN_1AF4&DEV_1052"
       ],
-      "driver_service_name": "aerovioinput",
-      "inf_name": "aero-virtio-input.inf",
+      "driver_service_name": "aero_virtio_input",
+      "inf_name": "virtio-input.inf",
       "virtio_device_type": 18
     },
     {
