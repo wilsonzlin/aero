@@ -224,6 +224,11 @@ export const AerogpuCmdOpcode = {
   SetSamplerState: 0x511,
   SetRenderState: 0x512,
 
+  CreateSampler: 0x520,
+  DestroySampler: 0x521,
+  SetSamplers: 0x522,
+  SetConstantBuffers: 0x523,
+
   Clear: 0x600,
   Draw: 0x601,
   DrawIndexed: 0x602,
@@ -388,6 +393,11 @@ export const AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE = 16;
 export const AEROGPU_CMD_SET_TEXTURE_SIZE = 24;
 export const AEROGPU_CMD_SET_SAMPLER_STATE_SIZE = 24;
 export const AEROGPU_CMD_SET_RENDER_STATE_SIZE = 16;
+export const AEROGPU_CMD_CREATE_SAMPLER_SIZE = 28;
+export const AEROGPU_CMD_DESTROY_SAMPLER_SIZE = 16;
+export const AEROGPU_CMD_SET_SAMPLERS_SIZE = 24;
+export const AEROGPU_CONSTANT_BUFFER_BINDING_SIZE = 16;
+export const AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE = 24;
 export const AEROGPU_CMD_CLEAR_SIZE = 36;
 export const AEROGPU_CMD_DRAW_SIZE = 24;
 export const AEROGPU_CMD_DRAW_INDEXED_SIZE = 28;

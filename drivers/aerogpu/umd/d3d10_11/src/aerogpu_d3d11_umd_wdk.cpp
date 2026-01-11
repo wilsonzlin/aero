@@ -1299,6 +1299,126 @@ inline void ReportNotImpl(Handle0 handle0, Rest...) {
   SetError(DeviceFromHandle(handle0), E_NOTIMPL);
 }
 
+static void SetTextureLocked(Device* dev, uint32_t shader_stage, uint32_t slot, aerogpu_handle_t texture) {
+  if (!dev) {
+    return;
+  }
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  cmd->shader_stage = shader_stage;
+  cmd->slot = slot;
+  cmd->texture = texture;
+  cmd->reserved0 = 0;
+}
+
+static aerogpu_handle_t* ShaderResourceTableForStage(Device* dev, uint32_t shader_stage) {
+  if (!dev) {
+    return nullptr;
+  }
+  switch (shader_stage) {
+    case AEROGPU_SHADER_STAGE_VERTEX:
+      return dev->vs_srvs;
+    case AEROGPU_SHADER_STAGE_PIXEL:
+      return dev->ps_srvs;
+    default:
+      return nullptr;
+  }
+}
+
+static aerogpu_handle_t* SamplerTableForStage(Device* dev, uint32_t shader_stage) {
+  if (!dev) {
+    return nullptr;
+  }
+  switch (shader_stage) {
+    case AEROGPU_SHADER_STAGE_VERTEX:
+      return dev->vs_samplers;
+    case AEROGPU_SHADER_STAGE_PIXEL:
+      return dev->ps_samplers;
+    default:
+      return nullptr;
+  }
+}
+
+static aerogpu_constant_buffer_binding* ConstantBufferTableForStage(Device* dev, uint32_t shader_stage) {
+  if (!dev) {
+    return nullptr;
+  }
+  switch (shader_stage) {
+    case AEROGPU_SHADER_STAGE_VERTEX:
+      return dev->vs_constant_buffers;
+    case AEROGPU_SHADER_STAGE_PIXEL:
+      return dev->ps_constant_buffers;
+    default:
+      return nullptr;
+  }
+}
+
+static void SetShaderResourceSlotLocked(Device* dev, uint32_t shader_stage, uint32_t slot, aerogpu_handle_t texture) {
+  if (!dev || slot >= kMaxShaderResourceSlots) {
+    return;
+  }
+  aerogpu_handle_t* table = ShaderResourceTableForStage(dev, shader_stage);
+  if (!table) {
+    return;
+  }
+  if (table[slot] == texture) {
+    return;
+  }
+  table[slot] = texture;
+  SetTextureLocked(dev, shader_stage, slot, texture);
+}
+
+static void UnbindResourceFromSrvsLocked(Device* dev, aerogpu_handle_t resource) {
+  if (!dev || !resource) {
+    return;
+  }
+  for (uint32_t slot = 0; slot < kMaxShaderResourceSlots; ++slot) {
+    if (dev->vs_srvs[slot] == resource) {
+      SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_VERTEX, slot, 0);
+    }
+    if (dev->ps_srvs[slot] == resource) {
+      SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_PIXEL, slot, 0);
+    }
+  }
+}
+
+static void EmitSetRenderTargetsLocked(Device* dev) {
+  if (!dev) {
+    return;
+  }
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+  cmd->color_count = dev->current_rtv ? 1u : 0u;
+  cmd->depth_stencil = dev->current_dsv;
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
+    cmd->colors[i] = 0;
+  }
+  if (dev->current_rtv) {
+    cmd->colors[0] = dev->current_rtv;
+  }
+}
+
+static void UnbindResourceFromOutputsLocked(Device* dev, aerogpu_handle_t resource) {
+  if (!dev || !resource) {
+    return;
+  }
+  bool changed = false;
+  if (dev->current_rtv == resource) {
+    dev->current_rtv = 0;
+    dev->current_rtv_resource = nullptr;
+    changed = true;
+  }
+  if (dev->current_dsv == resource) {
+    dev->current_dsv = 0;
+    changed = true;
+  }
+  if (changed) {
+    EmitSetRenderTargetsLocked(dev);
+  }
+}
+
 template <typename TFnPtr>
 struct DdiStub;
 
@@ -2547,8 +2667,17 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
   }
 
   auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hRes);
+  if (!res) {
+    return E_INVALIDARG;
+  }
+  if (res->kind != ResourceKind::Texture2D) {
+    return E_NOTIMPL;
+  }
+  if (res->mip_levels != 1 || res->array_size != 1) {
+    return E_NOTIMPL;
+  }
   auto* srv = new (hView.pDrvPrivate) ShaderResourceView();
-  srv->texture = res ? res->handle : 0;
+  srv->texture = res->handle;
   srv->resource = res;
   return S_OK;
 }
@@ -2560,30 +2689,148 @@ void AEROGPU_APIENTRY DestroyShaderResourceView11(D3D11DDI_HDEVICE, D3D11DDI_HSH
   FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(hView)->~ShaderResourceView();
 }
 
+template <typename T, typename = void>
+struct has_member_Desc : std::false_type {};
+template <typename T>
+struct has_member_Desc<T, std::void_t<decltype(std::declval<T>().Desc)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SamplerDesc : std::false_type {};
+template <typename T>
+struct has_member_SamplerDesc<T, std::void_t<decltype(std::declval<T>().SamplerDesc)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Filter : std::false_type {};
+template <typename T>
+struct has_member_Filter<T, std::void_t<decltype(std::declval<T>().Filter)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_AddressU : std::false_type {};
+template <typename T>
+struct has_member_AddressU<T, std::void_t<decltype(std::declval<T>().AddressU)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_AddressV : std::false_type {};
+template <typename T>
+struct has_member_AddressV<T, std::void_t<decltype(std::declval<T>().AddressV)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_AddressW : std::false_type {};
+template <typename T>
+struct has_member_AddressW<T, std::void_t<decltype(std::declval<T>().AddressW)>> : std::true_type {};
+
+static uint32_t aerogpu_sampler_filter_from_d3d_filter(uint32_t filter) {
+  // D3D10/11 point filtering is encoded as 0 for MIN_MAG_MIP_POINT; treat all
+  // other filters as linear for MVP bring-up.
+  return filter == 0 ? AEROGPU_SAMPLER_FILTER_NEAREST : AEROGPU_SAMPLER_FILTER_LINEAR;
+}
+
+static uint32_t aerogpu_sampler_address_from_d3d_mode(uint32_t mode) {
+  // D3D10/11 numeric values: 1=WRAP, 2=MIRROR, 3=CLAMP.
+  switch (mode) {
+    case 1:
+      return AEROGPU_SAMPLER_ADDRESS_REPEAT;
+    case 2:
+      return AEROGPU_SAMPLER_ADDRESS_MIRROR_REPEAT;
+    default:
+      return AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  }
+}
+
 struct Sampler {
-  uint32_t dummy = 0;
+  aerogpu_handle_t handle = 0;
+  uint32_t filter = AEROGPU_SAMPLER_FILTER_LINEAR;
+  uint32_t address_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  uint32_t address_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  uint32_t address_w = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
 };
+
+template <typename DescT>
+static void InitSamplerFromDesc(Sampler* sampler, const DescT& desc) {
+  if (!sampler) {
+    return;
+  }
+
+  uint32_t filter = 1;
+  uint32_t addr_u = 3;
+  uint32_t addr_v = 3;
+  uint32_t addr_w = 3;
+  if constexpr (has_member_Filter<DescT>::value) {
+    filter = static_cast<uint32_t>(desc.Filter);
+  }
+  if constexpr (has_member_AddressU<DescT>::value) {
+    addr_u = static_cast<uint32_t>(desc.AddressU);
+  }
+  if constexpr (has_member_AddressV<DescT>::value) {
+    addr_v = static_cast<uint32_t>(desc.AddressV);
+  }
+  if constexpr (has_member_AddressW<DescT>::value) {
+    addr_w = static_cast<uint32_t>(desc.AddressW);
+  }
+
+  sampler->filter = aerogpu_sampler_filter_from_d3d_filter(filter);
+  sampler->address_u = aerogpu_sampler_address_from_d3d_mode(addr_u);
+  sampler->address_v = aerogpu_sampler_address_from_d3d_mode(addr_v);
+  sampler->address_w = aerogpu_sampler_address_from_d3d_mode(addr_w);
+}
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateSamplerSize11(D3D11DDI_HDEVICE, const D3D11DDIARG_CREATESAMPLER*) {
   return sizeof(Sampler);
 }
 
 HRESULT AEROGPU_APIENTRY CreateSampler11(D3D11DDI_HDEVICE hDevice,
-                                         const D3D11DDIARG_CREATESAMPLER*,
+                                         const D3D11DDIARG_CREATESAMPLER* pDesc,
                                          D3D11DDI_HSAMPLER hSampler,
                                          D3D11DDI_HRTSAMPLER) {
   if (!hDevice.pDrvPrivate || !hSampler.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  new (hSampler.pDrvPrivate) Sampler();
+  auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
+  if (!dev || !dev->adapter) {
+    return E_FAIL;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto* sampler = new (hSampler.pDrvPrivate) Sampler();
+  sampler->handle = AllocateGlobalHandle(dev->adapter);
+  if (!sampler->handle) {
+    sampler->~Sampler();
+    return E_FAIL;
+  }
+
+  if (pDesc) {
+    if constexpr (has_member_Desc<D3D11DDIARG_CREATESAMPLER>::value) {
+      InitSamplerFromDesc(sampler, pDesc->Desc);
+    } else if constexpr (has_member_SamplerDesc<D3D11DDIARG_CREATESAMPLER>::value) {
+      InitSamplerFromDesc(sampler, pDesc->SamplerDesc);
+    }
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_sampler>(AEROGPU_CMD_CREATE_SAMPLER);
+  cmd->sampler_handle = sampler->handle;
+  cmd->filter = sampler->filter;
+  cmd->address_u = sampler->address_u;
+  cmd->address_v = sampler->address_v;
+  cmd->address_w = sampler->address_w;
   return S_OK;
 }
 
-void AEROGPU_APIENTRY DestroySampler11(D3D11DDI_HDEVICE, D3D11DDI_HSAMPLER hSampler) {
-  if (!hSampler.pDrvPrivate) {
+void AEROGPU_APIENTRY DestroySampler11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HSAMPLER hSampler) {
+  if (!hDevice.pDrvPrivate || !hSampler.pDrvPrivate) {
     return;
   }
-  FromHandle<D3D11DDI_HSAMPLER, Sampler>(hSampler)->~Sampler();
+  auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
+  auto* sampler = FromHandle<D3D11DDI_HSAMPLER, Sampler>(hSampler);
+  if (!dev || !sampler) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  if (sampler->handle) {
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_sampler>(AEROGPU_CMD_DESTROY_SAMPLER);
+    cmd->sampler_handle = sampler->handle;
+    cmd->reserved0 = 0;
+  }
+  sampler->~Sampler();
 }
 
 // Shaders
@@ -3071,9 +3318,9 @@ void AEROGPU_APIENTRY PsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
 }
 
 void AEROGPU_APIENTRY GsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                   D3D11DDI_HGEOMETRYSHADER hShader,
-                                   const D3D11DDI_HCLASSINSTANCE*,
-                                   UINT) {
+                                    D3D11DDI_HGEOMETRYSHADER hShader,
+                                    const D3D11DDI_HCLASSINSTANCE*,
+                                    UINT) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
     return;
@@ -3083,42 +3330,112 @@ void AEROGPU_APIENTRY GsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
   // Geometry stage not yet translated into the command stream.
 }
 
+static void SetConstantBuffers11Locked(Device* dev,
+                                       uint32_t shader_stage,
+                                       UINT start_slot,
+                                       UINT buffer_count,
+                                       const D3D11DDI_HRESOURCE* phBuffers,
+                                       const UINT* pFirstConstant,
+                                       const UINT* pNumConstants) {
+  if (!dev || buffer_count == 0) {
+    return;
+  }
+  if (start_slot >= kMaxConstantBufferSlots) {
+    return;
+  }
+  if (start_slot + buffer_count > kMaxConstantBufferSlots) {
+    buffer_count = kMaxConstantBufferSlots - start_slot;
+  }
+
+  aerogpu_constant_buffer_binding* table = ConstantBufferTableForStage(dev, shader_stage);
+  if (!table) {
+    return;
+  }
+
+  std::vector<aerogpu_constant_buffer_binding> bindings;
+  bindings.resize(buffer_count);
+  for (UINT i = 0; i < buffer_count; i++) {
+    aerogpu_constant_buffer_binding b{};
+    b.buffer = 0;
+    b.offset_bytes = 0;
+    b.size_bytes = 0;
+    b.reserved0 = 0;
+
+    Resource* buf = (phBuffers && phBuffers[i].pDrvPrivate) ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[i]) : nullptr;
+    if (buf && buf->kind == ResourceKind::Buffer) {
+      uint64_t offset_bytes = 0;
+      uint64_t size_bytes = buf->size_bytes;
+      if (pFirstConstant && pNumConstants) {
+        offset_bytes = static_cast<uint64_t>(pFirstConstant[i]) * 16ull;
+        size_bytes = static_cast<uint64_t>(pNumConstants[i]) * 16ull;
+        if (size_bytes == 0) {
+          size_bytes = buf->size_bytes;
+        }
+      }
+
+      if (offset_bytes > buf->size_bytes) {
+        offset_bytes = buf->size_bytes;
+      }
+      if (size_bytes > buf->size_bytes - offset_bytes) {
+        size_bytes = buf->size_bytes - offset_bytes;
+      }
+
+      b.buffer = buf->handle;
+      b.offset_bytes = offset_bytes > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(offset_bytes);
+      b.size_bytes = size_bytes > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(size_bytes);
+    }
+
+    table[start_slot + i] = b;
+    bindings[i] = b;
+  }
+
+  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
+      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), bindings.size() * sizeof(bindings[0]));
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  cmd->shader_stage = shader_stage;
+  cmd->start_slot = start_slot;
+  cmd->buffer_count = static_cast<uint32_t>(buffer_count);
+  cmd->reserved0 = 0;
+}
+
 void AEROGPU_APIENTRY VsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
                                              UINT StartSlot,
                                              UINT NumBuffers,
                                              const D3D11DDI_HRESOURCE* phBuffers,
-                                             const UINT*,
-                                             const UINT*) {
+                                              const UINT* pFirstConstant,
+                                              const UINT* pNumConstants) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
     return;
   }
-
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (StartSlot == 0 && NumBuffers >= 1) {
     dev->current_vs_cb0 = (phBuffers && phBuffers[0].pDrvPrivate) ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[0])
                                                                   : nullptr;
   }
+  SetConstantBuffers11Locked(dev, AEROGPU_SHADER_STAGE_VERTEX, StartSlot, NumBuffers, phBuffers, pFirstConstant, pNumConstants);
 }
 
 void AEROGPU_APIENTRY PsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
                                              UINT StartSlot,
                                              UINT NumBuffers,
                                              const D3D11DDI_HRESOURCE* phBuffers,
-                                             const UINT*,
-                                             const UINT*) {
+                                              const UINT* pFirstConstant,
+                                              const UINT* pNumConstants) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
     return;
   }
-
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (StartSlot == 0 && NumBuffers >= 1) {
     dev->current_ps_cb0 = (phBuffers && phBuffers[0].pDrvPrivate) ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[0])
                                                                   : nullptr;
   }
+  SetConstantBuffers11Locked(dev, AEROGPU_SHADER_STAGE_PIXEL, StartSlot, NumBuffers, phBuffers, pFirstConstant, pNumConstants);
 }
-
 void AEROGPU_APIENTRY GsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HRESOURCE*, const UINT*, const UINT*) {}
 
 template <typename THandle>
@@ -3322,9 +3639,9 @@ void AEROGPU_APIENTRY CsSetUnorderedAccessViews11(D3D11DDI_HDEVICECONTEXT hCtx,
 }
 
 void AEROGPU_APIENTRY VsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                             UINT StartSlot,
-                                             UINT NumViews,
-                                             const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
+                                              UINT StartSlot,
+                                              UINT NumViews,
+                                              const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev || NumViews == 0) {
     return;
@@ -3333,11 +3650,17 @@ void AEROGPU_APIENTRY VsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (StartSlot == 0 && NumViews >= 1) {
     Resource* bound = nullptr;
-    if (phViews[0].pDrvPrivate) {
+    if (phViews && phViews[0].pDrvPrivate) {
       auto* view = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(phViews[0]);
       bound = view ? view->resource : nullptr;
     }
     dev->current_vs_srv0 = bound;
+  }
+  if (StartSlot >= kMaxShaderResourceSlots) {
+    return;
+  }
+  if (StartSlot + NumViews > kMaxShaderResourceSlots) {
+    NumViews = kMaxShaderResourceSlots - StartSlot;
   }
   for (UINT i = 0; i < NumViews; i++) {
     const uint32_t slot = static_cast<uint32_t>(StartSlot + i);
@@ -3353,18 +3676,17 @@ void AEROGPU_APIENTRY VsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
     if (slot < dev->current_vs_srvs.size()) {
       dev->current_vs_srvs[slot] = res;
     }
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
-    cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
-    cmd->slot = slot;
-    cmd->texture = tex;
-    cmd->reserved0 = 0;
+    if (tex) {
+      UnbindResourceFromOutputsLocked(dev, tex);
+    }
+    SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_VERTEX, slot, tex);
   }
 }
 
 void AEROGPU_APIENTRY PsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                             UINT StartSlot,
-                                             UINT NumViews,
-                                             const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
+                                              UINT StartSlot,
+                                              UINT NumViews,
+                                              const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev || NumViews == 0) {
     return;
@@ -3373,11 +3695,17 @@ void AEROGPU_APIENTRY PsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (StartSlot == 0 && NumViews >= 1) {
     Resource* bound = nullptr;
-    if (phViews[0].pDrvPrivate) {
+    if (phViews && phViews[0].pDrvPrivate) {
       auto* view = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(phViews[0]);
       bound = view ? view->resource : nullptr;
     }
     dev->current_ps_srv0 = bound;
+  }
+  if (StartSlot >= kMaxShaderResourceSlots) {
+    return;
+  }
+  if (StartSlot + NumViews > kMaxShaderResourceSlots) {
+    NumViews = kMaxShaderResourceSlots - StartSlot;
   }
   for (UINT i = 0; i < NumViews; i++) {
     const uint32_t slot = static_cast<uint32_t>(StartSlot + i);
@@ -3393,18 +3721,81 @@ void AEROGPU_APIENTRY PsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
     if (slot < dev->current_ps_srvs.size()) {
       dev->current_ps_srvs[slot] = res;
     }
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
-    cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
-    cmd->slot = slot;
-    cmd->texture = tex;
-    cmd->reserved0 = 0;
+    if (tex) {
+      UnbindResourceFromOutputsLocked(dev, tex);
+    }
+    SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_PIXEL, slot, tex);
   }
 }
 
 void AEROGPU_APIENTRY GsSetShaderResources11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HSHADERRESOURCEVIEW*) {}
 
-void AEROGPU_APIENTRY VsSetSamplers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HSAMPLER*) {}
-void AEROGPU_APIENTRY PsSetSamplers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HSAMPLER*) {}
+static void SetSamplers11Locked(Device* dev,
+                                uint32_t shader_stage,
+                                UINT start_slot,
+                                UINT sampler_count,
+                                const D3D11DDI_HSAMPLER* phSamplers) {
+  if (!dev || sampler_count == 0) {
+    return;
+  }
+  if (start_slot >= kMaxSamplerSlots) {
+    return;
+  }
+  if (start_slot + sampler_count > kMaxSamplerSlots) {
+    sampler_count = kMaxSamplerSlots - start_slot;
+  }
+
+  aerogpu_handle_t* table = SamplerTableForStage(dev, shader_stage);
+  if (!table) {
+    return;
+  }
+
+  std::vector<aerogpu_handle_t> handles;
+  handles.resize(sampler_count);
+  for (UINT i = 0; i < sampler_count; i++) {
+    aerogpu_handle_t handle = 0;
+    if (phSamplers && phSamplers[i].pDrvPrivate) {
+      handle = FromHandle<D3D11DDI_HSAMPLER, Sampler>(phSamplers[i])->handle;
+    }
+    table[start_slot + i] = handle;
+    handles[i] = handle;
+  }
+
+  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
+      AEROGPU_CMD_SET_SAMPLERS, handles.data(), handles.size() * sizeof(handles[0]));
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  cmd->shader_stage = shader_stage;
+  cmd->start_slot = start_slot;
+  cmd->sampler_count = sampler_count;
+  cmd->reserved0 = 0;
+}
+
+void AEROGPU_APIENTRY VsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                      UINT StartSlot,
+                                      UINT NumSamplers,
+                                      const D3D11DDI_HSAMPLER* phSamplers) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  SetSamplers11Locked(dev, AEROGPU_SHADER_STAGE_VERTEX, StartSlot, NumSamplers, phSamplers);
+}
+
+void AEROGPU_APIENTRY PsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                      UINT StartSlot,
+                                      UINT NumSamplers,
+                                      const D3D11DDI_HSAMPLER* phSamplers) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  SetSamplers11Locked(dev, AEROGPU_SHADER_STAGE_PIXEL, StartSlot, NumSamplers, phSamplers);
+}
 void AEROGPU_APIENTRY GsSetSamplers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HSAMPLER*) {}
 
 void AEROGPU_APIENTRY SetViewports11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumViewports, const D3D10_DDI_VIEWPORT* pViewports) {
@@ -3467,6 +3858,46 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+
+  // Unbind shader resources explicitly (no range command in the protocol yet).
+  for (uint32_t slot = 0; slot < kMaxShaderResourceSlots; ++slot) {
+    if (dev->vs_srvs[slot]) {
+      SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_VERTEX, slot, 0);
+    }
+    if (dev->ps_srvs[slot]) {
+      SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_PIXEL, slot, 0);
+    }
+  }
+
+  // Unbind constant buffers and samplers using the range commands.
+  std::vector<aerogpu_constant_buffer_binding> null_cbs(kMaxConstantBufferSlots);
+  auto emit_null_cbs = [&](uint32_t stage) {
+    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
+        AEROGPU_CMD_SET_CONSTANT_BUFFERS, null_cbs.data(), null_cbs.size() * sizeof(null_cbs[0]));
+    cmd->shader_stage = stage;
+    cmd->start_slot = 0;
+    cmd->buffer_count = kMaxConstantBufferSlots;
+    cmd->reserved0 = 0;
+  };
+  emit_null_cbs(AEROGPU_SHADER_STAGE_VERTEX);
+  emit_null_cbs(AEROGPU_SHADER_STAGE_PIXEL);
+  std::memset(dev->vs_constant_buffers, 0, sizeof(dev->vs_constant_buffers));
+  std::memset(dev->ps_constant_buffers, 0, sizeof(dev->ps_constant_buffers));
+
+  std::vector<aerogpu_handle_t> null_samplers(kMaxSamplerSlots);
+  auto emit_null_samplers = [&](uint32_t stage) {
+    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
+        AEROGPU_CMD_SET_SAMPLERS, null_samplers.data(), null_samplers.size() * sizeof(null_samplers[0]));
+    cmd->shader_stage = stage;
+    cmd->start_slot = 0;
+    cmd->sampler_count = kMaxSamplerSlots;
+    cmd->reserved0 = 0;
+  };
+  emit_null_samplers(AEROGPU_SHADER_STAGE_VERTEX);
+  emit_null_samplers(AEROGPU_SHADER_STAGE_PIXEL);
+  std::memset(dev->vs_samplers, 0, sizeof(dev->vs_samplers));
+  std::memset(dev->ps_samplers, 0, sizeof(dev->ps_samplers));
+
   dev->current_rtv = 0;
   dev->current_rtv_resource = nullptr;
   dev->current_dsv = 0;
@@ -3508,9 +3939,9 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
 }
 
 void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                         UINT NumViews,
-                                         const D3D11DDI_HRENDERTARGETVIEW* phRtvs,
-                                         D3D11DDI_HDEPTHSTENCILVIEW hDsv) {
+                                          UINT NumViews,
+                                          const D3D11DDI_HRENDERTARGETVIEW* phRtvs,
+                                          D3D11DDI_HDEPTHSTENCILVIEW hDsv) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
     return;
@@ -3533,15 +3964,11 @@ void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,
     dev->current_dsv_resource = nullptr;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-  cmd->color_count = dev->current_rtv ? 1u : 0u;
-  cmd->depth_stencil = dev->current_dsv;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-    cmd->colors[i] = 0;
-  }
-  if (dev->current_rtv) {
-    cmd->colors[0] = dev->current_rtv;
-  }
+  // Auto-unbind SRVs that alias the newly bound render targets/depth buffer.
+  UnbindResourceFromSrvsLocked(dev, dev->current_rtv);
+  UnbindResourceFromSrvsLocked(dev, dev->current_dsv);
+
+  EmitSetRenderTargetsLocked(dev);
 }
 
 // D3D11 exposes OMSetRenderTargetsAndUnorderedAccessViews which may map to

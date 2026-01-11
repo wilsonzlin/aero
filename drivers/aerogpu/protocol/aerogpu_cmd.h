@@ -120,6 +120,12 @@ enum aerogpu_cmd_opcode {
   AEROGPU_CMD_SET_SAMPLER_STATE = 0x511,
   AEROGPU_CMD_SET_RENDER_STATE = 0x512,
 
+  /* D3D10/11-style binding tables (FL10_0 baseline). */
+  AEROGPU_CMD_CREATE_SAMPLER = 0x520,
+  AEROGPU_CMD_DESTROY_SAMPLER = 0x521,
+  AEROGPU_CMD_SET_SAMPLERS = 0x522,
+  AEROGPU_CMD_SET_CONSTANT_BUFFERS = 0x523,
+
   /* Drawing */
   AEROGPU_CMD_CLEAR = 0x600,
   AEROGPU_CMD_DRAW = 0x601,
@@ -147,6 +153,17 @@ enum aerogpu_shader_stage {
 enum aerogpu_index_format {
   AEROGPU_INDEX_FORMAT_UINT16 = 0,
   AEROGPU_INDEX_FORMAT_UINT32 = 1,
+};
+
+enum aerogpu_sampler_filter {
+  AEROGPU_SAMPLER_FILTER_NEAREST = 0,
+  AEROGPU_SAMPLER_FILTER_LINEAR = 1,
+};
+
+enum aerogpu_sampler_address_mode {
+  AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE = 0,
+  AEROGPU_SAMPLER_ADDRESS_REPEAT = 1,
+  AEROGPU_SAMPLER_ADDRESS_MIRROR_REPEAT = 2,
 };
 
 enum aerogpu_primitive_topology {
@@ -731,6 +748,81 @@ struct aerogpu_cmd_set_sampler_state {
 #pragma pack(pop)
 
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_sampler_state) == 24);
+
+#pragma pack(push, 1)
+struct aerogpu_cmd_create_sampler {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_CREATE_SAMPLER */
+  aerogpu_handle_t sampler_handle;
+  uint32_t filter; /* enum aerogpu_sampler_filter */
+  uint32_t address_u; /* enum aerogpu_sampler_address_mode */
+  uint32_t address_v; /* enum aerogpu_sampler_address_mode */
+  uint32_t address_w; /* enum aerogpu_sampler_address_mode */
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_create_sampler) == 28);
+
+#pragma pack(push, 1)
+struct aerogpu_cmd_destroy_sampler {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_DESTROY_SAMPLER */
+  aerogpu_handle_t sampler_handle;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_destroy_sampler) == 16);
+
+/*
+ * SET_SAMPLERS:
+ *
+ * Payload format:
+ *   struct aerogpu_cmd_set_samplers
+ *   aerogpu_handle_t samplers[sampler_count]
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_set_samplers {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_SAMPLERS */
+  uint32_t shader_stage; /* enum aerogpu_shader_stage */
+  uint32_t start_slot;
+  uint32_t sampler_count;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_samplers) == 24);
+
+/*
+ * Constant buffer binding entry for SET_CONSTANT_BUFFERS.
+ */
+#pragma pack(push, 1)
+struct aerogpu_constant_buffer_binding {
+  aerogpu_handle_t buffer; /* 0 = unbound */
+  uint32_t offset_bytes;
+  uint32_t size_bytes;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_constant_buffer_binding) == 16);
+
+/*
+ * SET_CONSTANT_BUFFERS:
+ *
+ * Payload format:
+ *   struct aerogpu_cmd_set_constant_buffers
+ *   struct aerogpu_constant_buffer_binding bindings[buffer_count]
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_set_constant_buffers {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_CONSTANT_BUFFERS */
+  uint32_t shader_stage; /* enum aerogpu_shader_stage */
+  uint32_t start_slot;
+  uint32_t buffer_count;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_constant_buffers) == 24);
 
 #pragma pack(push, 1)
 struct aerogpu_cmd_set_render_state {

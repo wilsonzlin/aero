@@ -125,6 +125,14 @@ typedef struct D3D10DDI_HDEPTHSTENCILVIEW {
   void *pDrvPrivate;
 } D3D10DDI_HDEPTHSTENCILVIEW;
 
+typedef struct D3D10DDI_HSHADERRESOURCEVIEW {
+  void *pDrvPrivate;
+} D3D10DDI_HSHADERRESOURCEVIEW;
+
+typedef struct D3D10DDI_HSAMPLER {
+  void *pDrvPrivate;
+} D3D10DDI_HSAMPLER;
+
 typedef struct D3D10DDI_HBLENDSTATE {
   void *pDrvPrivate;
 } D3D10DDI_HBLENDSTATE;
@@ -344,6 +352,26 @@ typedef struct AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW {
   D3D10DDI_HRESOURCE hResource;
 } AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW;
 
+typedef enum AEROGPU_DDI_SRV_DIMENSION {
+  AEROGPU_DDI_SRV_DIMENSION_UNKNOWN = 0,
+  AEROGPU_DDI_SRV_DIMENSION_TEXTURE2D = 3,
+} AEROGPU_DDI_SRV_DIMENSION;
+
+typedef struct AEROGPU_DDIARG_CREATESHADERRESOURCEVIEW {
+  D3D10DDI_HRESOURCE hResource;
+  uint32_t Format; // DXGI_FORMAT numeric value (0 = use resource format)
+  uint32_t ViewDimension; // AEROGPU_DDI_SRV_DIMENSION
+  uint32_t MostDetailedMip;
+  uint32_t MipLevels;
+} AEROGPU_DDIARG_CREATESHADERRESOURCEVIEW;
+
+typedef struct AEROGPU_DDIARG_CREATESAMPLER {
+  uint32_t Filter; // D3D11_FILTER numeric value (subset accepted)
+  uint32_t AddressU; // D3D11_TEXTURE_ADDRESS_MODE numeric value
+  uint32_t AddressV;
+  uint32_t AddressW;
+} AEROGPU_DDIARG_CREATESAMPLER;
+
 typedef struct AEROGPU_DDIARG_CREATEBLENDSTATE {
   uint32_t dummy;
 } AEROGPU_DDIARG_CREATEBLENDSTATE;
@@ -501,9 +529,22 @@ typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYRTV)(D3D10DDI_HDEVICE, D3D1
 typedef SIZE_T(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CALCPRIVATEDSVSIZE)(D3D10DDI_HDEVICE,
                                                                     const AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW *);
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATEDSV)(D3D10DDI_HDEVICE,
-                                                            const AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW *,
-                                                            D3D10DDI_HDEPTHSTENCILVIEW);
+                                                             const AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW *,
+                                                             D3D10DDI_HDEPTHSTENCILVIEW);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYDSV)(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILVIEW);
+
+typedef SIZE_T(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CALCPRIVATESHADERRESOURCEVIEWSIZE)(
+    D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATESHADERRESOURCEVIEW *);
+typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATESHADERRESOURCEVIEW)(D3D10DDI_HDEVICE,
+                                                                          const AEROGPU_DDIARG_CREATESHADERRESOURCEVIEW *,
+                                                                          D3D10DDI_HSHADERRESOURCEVIEW);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYSHADERRESOURCEVIEW)(D3D10DDI_HDEVICE, D3D10DDI_HSHADERRESOURCEVIEW);
+
+typedef SIZE_T(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CALCPRIVATESAMPLERSIZE)(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATESAMPLER *);
+typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATESAMPLER)(D3D10DDI_HDEVICE,
+                                                                const AEROGPU_DDIARG_CREATESAMPLER *,
+                                                                D3D10DDI_HSAMPLER);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYSAMPLER)(D3D10DDI_HDEVICE, D3D10DDI_HSAMPLER);
 
 typedef SIZE_T(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CALCPRIVATEBLENDSTATESIZE)(D3D10DDI_HDEVICE,
                                                                            const AEROGPU_DDIARG_CREATEBLENDSTATE *);
@@ -546,6 +587,18 @@ typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETBLENDSTATE)(D3D10DDI_HDEVICE, D
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETRASTERIZERSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HRASTERIZERSTATE);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETDEPTHSTENCILSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILSTATE);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETPRIMITIVETOPOLOGY)(D3D10DDI_HDEVICE, uint32_t topology);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETCONSTANTBUFFERS)(D3D10DDI_HDEVICE,
+                                                                 uint32_t start_slot,
+                                                                 uint32_t buffer_count,
+                                                                 const D3D10DDI_HRESOURCE *pBuffers);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETSHADERRESOURCES)(D3D10DDI_HDEVICE,
+                                                                 uint32_t start_slot,
+                                                                 uint32_t view_count,
+                                                                 const D3D10DDI_HSHADERRESOURCEVIEW *pViews);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETSAMPLERS)(D3D10DDI_HDEVICE,
+                                                         uint32_t start_slot,
+                                                         uint32_t sampler_count,
+                                                         const D3D10DDI_HSAMPLER *pSamplers);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DRAW)(D3D10DDI_HDEVICE, uint32_t vertex_count, uint32_t start_vertex);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DRAWINDEXED)(D3D10DDI_HDEVICE, uint32_t index_count, uint32_t start_index,
                                                            int32_t base_vertex);
@@ -643,6 +696,14 @@ struct AEROGPU_D3D10_11_DEVICEFUNCS {
   PFNAEROGPU_DDI_CREATEDSV pfnCreateDSV;
   PFNAEROGPU_DDI_DESTROYDSV pfnDestroyDSV;
 
+  PFNAEROGPU_DDI_CALCPRIVATESHADERRESOURCEVIEWSIZE pfnCalcPrivateShaderResourceViewSize;
+  PFNAEROGPU_DDI_CREATESHADERRESOURCEVIEW pfnCreateShaderResourceView;
+  PFNAEROGPU_DDI_DESTROYSHADERRESOURCEVIEW pfnDestroyShaderResourceView;
+
+  PFNAEROGPU_DDI_CALCPRIVATESAMPLERSIZE pfnCalcPrivateSamplerSize;
+  PFNAEROGPU_DDI_CREATESAMPLER pfnCreateSampler;
+  PFNAEROGPU_DDI_DESTROYSAMPLER pfnDestroySampler;
+
   PFNAEROGPU_DDI_CALCPRIVATEBLENDSTATESIZE pfnCalcPrivateBlendStateSize;
   PFNAEROGPU_DDI_CREATEBLENDSTATE pfnCreateBlendState;
   PFNAEROGPU_DDI_DESTROYBLENDSTATE pfnDestroyBlendState;
@@ -668,6 +729,13 @@ struct AEROGPU_D3D10_11_DEVICEFUNCS {
   PFNAEROGPU_DDI_SETRASTERIZERSTATE pfnSetRasterizerState;
   PFNAEROGPU_DDI_SETDEPTHSTENCILSTATE pfnSetDepthStencilState;
   PFNAEROGPU_DDI_SETPRIMITIVETOPOLOGY pfnSetPrimitiveTopology;
+
+  PFNAEROGPU_DDI_SETCONSTANTBUFFERS pfnVsSetConstantBuffers;
+  PFNAEROGPU_DDI_SETCONSTANTBUFFERS pfnPsSetConstantBuffers;
+  PFNAEROGPU_DDI_SETSHADERRESOURCES pfnVsSetShaderResources;
+  PFNAEROGPU_DDI_SETSHADERRESOURCES pfnPsSetShaderResources;
+  PFNAEROGPU_DDI_SETSAMPLERS pfnVsSetSamplers;
+  PFNAEROGPU_DDI_SETSAMPLERS pfnPsSetSamplers;
 
   PFNAEROGPU_DDI_DRAW pfnDraw;
   PFNAEROGPU_DDI_DRAWINDEXED pfnDrawIndexed;

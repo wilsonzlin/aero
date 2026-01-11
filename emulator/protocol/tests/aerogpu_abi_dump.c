@@ -49,6 +49,11 @@ int main(void) {
   PRINT_SIZE("aerogpu_cmd_set_texture", struct aerogpu_cmd_set_texture);
   PRINT_SIZE("aerogpu_cmd_set_sampler_state", struct aerogpu_cmd_set_sampler_state);
   PRINT_SIZE("aerogpu_cmd_set_render_state", struct aerogpu_cmd_set_render_state);
+  PRINT_SIZE("aerogpu_cmd_create_sampler", struct aerogpu_cmd_create_sampler);
+  PRINT_SIZE("aerogpu_cmd_destroy_sampler", struct aerogpu_cmd_destroy_sampler);
+  PRINT_SIZE("aerogpu_cmd_set_samplers", struct aerogpu_cmd_set_samplers);
+  PRINT_SIZE("aerogpu_constant_buffer_binding", struct aerogpu_constant_buffer_binding);
+  PRINT_SIZE("aerogpu_cmd_set_constant_buffers", struct aerogpu_cmd_set_constant_buffers);
   PRINT_SIZE("aerogpu_cmd_clear", struct aerogpu_cmd_clear);
   PRINT_SIZE("aerogpu_cmd_draw", struct aerogpu_cmd_draw);
   PRINT_SIZE("aerogpu_cmd_draw_indexed", struct aerogpu_cmd_draw_indexed);
@@ -287,6 +292,34 @@ int main(void) {
   PRINT_OFF("aerogpu_cmd_set_sampler_state", struct aerogpu_cmd_set_sampler_state, slot);
   PRINT_OFF("aerogpu_cmd_set_sampler_state", struct aerogpu_cmd_set_sampler_state, state);
   PRINT_OFF("aerogpu_cmd_set_sampler_state", struct aerogpu_cmd_set_sampler_state, value);
+
+  PRINT_OFF("aerogpu_cmd_create_sampler", struct aerogpu_cmd_create_sampler, hdr);
+  PRINT_OFF("aerogpu_cmd_create_sampler", struct aerogpu_cmd_create_sampler, sampler_handle);
+  PRINT_OFF("aerogpu_cmd_create_sampler", struct aerogpu_cmd_create_sampler, filter);
+  PRINT_OFF("aerogpu_cmd_create_sampler", struct aerogpu_cmd_create_sampler, address_u);
+  PRINT_OFF("aerogpu_cmd_create_sampler", struct aerogpu_cmd_create_sampler, address_v);
+  PRINT_OFF("aerogpu_cmd_create_sampler", struct aerogpu_cmd_create_sampler, address_w);
+
+  PRINT_OFF("aerogpu_cmd_destroy_sampler", struct aerogpu_cmd_destroy_sampler, hdr);
+  PRINT_OFF("aerogpu_cmd_destroy_sampler", struct aerogpu_cmd_destroy_sampler, sampler_handle);
+  PRINT_OFF("aerogpu_cmd_destroy_sampler", struct aerogpu_cmd_destroy_sampler, reserved0);
+
+  PRINT_OFF("aerogpu_cmd_set_samplers", struct aerogpu_cmd_set_samplers, hdr);
+  PRINT_OFF("aerogpu_cmd_set_samplers", struct aerogpu_cmd_set_samplers, shader_stage);
+  PRINT_OFF("aerogpu_cmd_set_samplers", struct aerogpu_cmd_set_samplers, start_slot);
+  PRINT_OFF("aerogpu_cmd_set_samplers", struct aerogpu_cmd_set_samplers, sampler_count);
+  PRINT_OFF("aerogpu_cmd_set_samplers", struct aerogpu_cmd_set_samplers, reserved0);
+
+  PRINT_OFF("aerogpu_constant_buffer_binding", struct aerogpu_constant_buffer_binding, buffer);
+  PRINT_OFF("aerogpu_constant_buffer_binding", struct aerogpu_constant_buffer_binding, offset_bytes);
+  PRINT_OFF("aerogpu_constant_buffer_binding", struct aerogpu_constant_buffer_binding, size_bytes);
+  PRINT_OFF("aerogpu_constant_buffer_binding", struct aerogpu_constant_buffer_binding, reserved0);
+
+  PRINT_OFF("aerogpu_cmd_set_constant_buffers", struct aerogpu_cmd_set_constant_buffers, hdr);
+  PRINT_OFF("aerogpu_cmd_set_constant_buffers", struct aerogpu_cmd_set_constant_buffers, shader_stage);
+  PRINT_OFF("aerogpu_cmd_set_constant_buffers", struct aerogpu_cmd_set_constant_buffers, start_slot);
+  PRINT_OFF("aerogpu_cmd_set_constant_buffers", struct aerogpu_cmd_set_constant_buffers, buffer_count);
+  PRINT_OFF("aerogpu_cmd_set_constant_buffers", struct aerogpu_cmd_set_constant_buffers, reserved0);
 
   PRINT_OFF("aerogpu_cmd_set_render_state", struct aerogpu_cmd_set_render_state, hdr);
   PRINT_OFF("aerogpu_cmd_set_render_state", struct aerogpu_cmd_set_render_state, state);
@@ -560,6 +593,10 @@ int main(void) {
   PRINT_CONST(AEROGPU_CMD_SET_TEXTURE);
   PRINT_CONST(AEROGPU_CMD_SET_SAMPLER_STATE);
   PRINT_CONST(AEROGPU_CMD_SET_RENDER_STATE);
+  PRINT_CONST(AEROGPU_CMD_CREATE_SAMPLER);
+  PRINT_CONST(AEROGPU_CMD_DESTROY_SAMPLER);
+  PRINT_CONST(AEROGPU_CMD_SET_SAMPLERS);
+  PRINT_CONST(AEROGPU_CMD_SET_CONSTANT_BUFFERS);
   PRINT_CONST(AEROGPU_CMD_CLEAR);
   PRINT_CONST(AEROGPU_CMD_DRAW);
   PRINT_CONST(AEROGPU_CMD_DRAW_INDEXED);

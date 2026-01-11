@@ -79,6 +79,11 @@ pub enum AerogpuCmdOpcode {
     SetSamplerState = 0x511,
     SetRenderState = 0x512,
 
+    CreateSampler = 0x520,
+    DestroySampler = 0x521,
+    SetSamplers = 0x522,
+    SetConstantBuffers = 0x523,
+
     Clear = 0x600,
     Draw = 0x601,
     DrawIndexed = 0x602,
@@ -123,6 +128,10 @@ impl AerogpuCmdOpcode {
             0x510 => Some(Self::SetTexture),
             0x511 => Some(Self::SetSamplerState),
             0x512 => Some(Self::SetRenderState),
+            0x520 => Some(Self::CreateSampler),
+            0x521 => Some(Self::DestroySampler),
+            0x522 => Some(Self::SetSamplers),
+            0x523 => Some(Self::SetConstantBuffers),
             0x600 => Some(Self::Clear),
             0x601 => Some(Self::Draw),
             0x602 => Some(Self::DrawIndexed),
@@ -149,6 +158,21 @@ pub enum AerogpuShaderStage {
 pub enum AerogpuIndexFormat {
     Uint16 = 0,
     Uint32 = 1,
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AerogpuSamplerFilter {
+    Nearest = 0,
+    Linear = 1,
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AerogpuSamplerAddressMode {
+    ClampToEdge = 0,
+    Repeat = 1,
+    MirrorRepeat = 2,
 }
 
 #[repr(u32)]
@@ -686,6 +710,74 @@ pub struct AerogpuCmdSetRenderState {
 
 impl AerogpuCmdSetRenderState {
     pub const SIZE_BYTES: usize = 16;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdCreateSampler {
+    pub hdr: AerogpuCmdHdr,
+    pub sampler_handle: AerogpuHandle,
+    pub filter: u32,
+    pub address_u: u32,
+    pub address_v: u32,
+    pub address_w: u32,
+}
+
+impl AerogpuCmdCreateSampler {
+    pub const SIZE_BYTES: usize = 28;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdDestroySampler {
+    pub hdr: AerogpuCmdHdr,
+    pub sampler_handle: AerogpuHandle,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdDestroySampler {
+    pub const SIZE_BYTES: usize = 16;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdSetSamplers {
+    pub hdr: AerogpuCmdHdr,
+    pub shader_stage: u32,
+    pub start_slot: u32,
+    pub sampler_count: u32,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdSetSamplers {
+    pub const SIZE_BYTES: usize = 24;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuConstantBufferBinding {
+    pub buffer: AerogpuHandle,
+    pub offset_bytes: u32,
+    pub size_bytes: u32,
+    pub reserved0: u32,
+}
+
+impl AerogpuConstantBufferBinding {
+    pub const SIZE_BYTES: usize = 16;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdSetConstantBuffers {
+    pub hdr: AerogpuCmdHdr,
+    pub shader_stage: u32,
+    pub start_slot: u32,
+    pub buffer_count: u32,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdSetConstantBuffers {
+    pub const SIZE_BYTES: usize = 24;
 }
 
 /* -------------------------------- Drawing -------------------------------- */

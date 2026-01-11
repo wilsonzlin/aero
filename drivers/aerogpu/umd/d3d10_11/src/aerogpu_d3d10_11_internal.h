@@ -28,6 +28,9 @@
 namespace aerogpu::d3d10_11 {
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
+constexpr uint32_t kMaxConstantBufferSlots = 14;
+constexpr uint32_t kMaxShaderResourceSlots = 128;
+constexpr uint32_t kMaxSamplerSlots = 16;
 
 // D3D11_BIND_* subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
@@ -483,6 +486,13 @@ struct Device {
   aerogpu_handle_t current_gs = 0;
   aerogpu_handle_t current_input_layout = 0;
   uint32_t current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
+
+  aerogpu_constant_buffer_binding vs_constant_buffers[kMaxConstantBufferSlots] = {};
+  aerogpu_constant_buffer_binding ps_constant_buffers[kMaxConstantBufferSlots] = {};
+  aerogpu_handle_t vs_srvs[kMaxShaderResourceSlots] = {};
+  aerogpu_handle_t ps_srvs[kMaxShaderResourceSlots] = {};
+  aerogpu_handle_t vs_samplers[kMaxSamplerSlots] = {};
+  aerogpu_handle_t ps_samplers[kMaxSamplerSlots] = {};
 
   // Minimal software-state tracking for the Win7 guest tests. This allows the
   // UMD to produce correct staging readback results even when the submission
