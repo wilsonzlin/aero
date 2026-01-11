@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use aero_cpu::CpuBus;
-use aero_types::{Cond, Flag, FlagSet, Gpr, Width};
+use aero_types::{Cond, Flag, FlagSet, Width};
 
 use crate::tier1_ir::{BinOp as T1BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId as T1ValueId};
 use crate::t2_ir::{
@@ -162,9 +162,13 @@ impl LowerCtx {
                 let sf = load_flag(self, Flag::Sf);
                 self.emit_not(dst, Operand::Value(sf));
             }
-            Cond::P | Cond::Np => {
-                // Parity flag is not tracked in Tier-2 yet.
-                return Err(());
+            Cond::P => {
+                self.instrs
+                    .push(Instr::LoadFlag { dst, flag: Flag::Pf });
+            }
+            Cond::Np => {
+                let pf = load_flag(self, Flag::Pf);
+                self.emit_not(dst, Operand::Value(pf));
             }
             Cond::L => {
                 let sf = load_flag(self, Flag::Sf);
@@ -247,7 +251,6 @@ impl LowerCtx {
                 });
             }
             GuestReg::Gpr { reg, width, high8 } => {
-                let reg = map_gpr(reg);
                 if width == Width::W64 && !high8 {
                     self.instrs.push(Instr::LoadReg { dst, reg });
                     return;
@@ -292,20 +295,13 @@ impl LowerCtx {
                     flags: FlagMask::EMPTY,
                 });
             }
-            GuestReg::Flag(flag) => {
-                if let Some(flag) = map_flag(flag) {
-                    self.instrs.push(Instr::LoadFlag { dst, flag });
-                } else {
-                    self.bail_to_interp(self.entry_rip);
-                }
-            }
+            GuestReg::Flag(flag) => self.instrs.push(Instr::LoadFlag { dst, flag }),
         }
     }
 
     fn lower_write_reg(&mut self, reg: GuestReg, src: ValueId) {
         match reg {
             GuestReg::Gpr { reg, width, high8 } => {
-                let reg = map_gpr(reg);
                 match width {
                     Width::W64 if !high8 => {
                         self.instrs
@@ -396,26 +392,16 @@ impl LowerCtx {
     }
 }
 
-fn map_gpr(reg: Gpr) -> Gpr {
-    reg
-}
-
-fn map_flag(flag: Flag) -> Option<Flag> {
-    match flag {
-        Flag::Cf | Flag::Zf | Flag::Sf | Flag::Of => Some(flag),
-        Flag::Pf | Flag::Af => None,
-    }
-}
-
 fn map_flag_set(flags: FlagSet) -> FlagMask {
     let mut mask = FlagMask::EMPTY;
     for flag in flags.iter() {
         match flag {
-            aero_types::Flag::Cf => mask.insert(FlagMask::CF),
-            aero_types::Flag::Zf => mask.insert(FlagMask::ZF),
-            aero_types::Flag::Sf => mask.insert(FlagMask::SF),
-            aero_types::Flag::Of => mask.insert(FlagMask::OF),
-            aero_types::Flag::Pf | aero_types::Flag::Af => {}
+            Flag::Cf => mask.insert(FlagMask::CF),
+            Flag::Pf => mask.insert(FlagMask::PF),
+            Flag::Af => mask.insert(FlagMask::AF),
+            Flag::Zf => mask.insert(FlagMask::ZF),
+            Flag::Sf => mask.insert(FlagMask::SF),
+            Flag::Of => mask.insert(FlagMask::OF),
         }
     }
     mask
@@ -460,10 +446,16 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
                     flags: FlagMask::EMPTY,
                 });
             }
-            IrInst::Load { .. } | IrInst::Store { .. } => {
-                // Tier-2 doesn't model memory yet. Bail out conservatively.
-                ctx.bail_to_interp(ir.entry_rip);
-            }
+            IrInst::Load { dst, addr, width } => ctx.instrs.push(Instr::LoadMem {
+                dst: ctx.v(*dst),
+                addr: ctx.op(*addr),
+                width: *width,
+            }),
+            IrInst::Store { addr, src, width } => ctx.instrs.push(Instr::StoreMem {
+                addr: ctx.op(*addr),
+                src: ctx.op(*src),
+                width: *width,
+            }),
             IrInst::BinOp {
                 dst,
                 op,
