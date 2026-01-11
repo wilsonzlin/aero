@@ -35,8 +35,6 @@ pub const OPCODE_CUSTOMDATA: u32 = 0x1f;
 
 pub const OPCODE_RET: u32 = 0x3e;
 
-// Texture ops are not used by the bootstrap translator yet; include likely
-// numeric IDs but also support structural detection in the decoder.
 pub const OPCODE_SAMPLE: u32 = 0x45;
 pub const OPCODE_SAMPLE_L: u32 = 0x46;
 /// `ld` (Resource load; used by `Texture2D.Load`).

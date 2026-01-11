@@ -724,3 +724,56 @@ fn decodes_ld_texture_load() {
         }
     );
 }
+
+#[test]
+fn decodes_ld_via_structural_fallback() {
+    const DCL_DUMMY: u32 = 0x300;
+    const OPCODE_UNKNOWN_LD: u32 = 0x4b;
+
+    let mut body = Vec::<u32>::new();
+
+    // Decls to skip.
+    body.extend_from_slice(&[opcode_token(DCL_DUMMY, 2), 1]);
+
+    // Unknown-opcode texture load: ld r0, v0, t0
+    let mut ld = vec![opcode_token(OPCODE_UNKNOWN_LD, 1 + 2 + 2 + 2)];
+    ld.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    ld.extend_from_slice(&reg_src(
+        OPERAND_TYPE_INPUT,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    ld.extend_from_slice(&reg_src(
+        OPERAND_TYPE_RESOURCE,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&ld);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = program.decode().expect("decode");
+
+    assert_eq!(module.decls, vec![Sm4Decl::Unknown { opcode: DCL_DUMMY }]);
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::Ld {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            coord: src_reg(RegFile::Input, 0),
+            texture: TextureRef { slot: 0 },
+            lod: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Input,
+                    index: 0,
+                }),
+                swizzle: Swizzle::ZZZZ,
+                modifier: OperandModifier::None,
+            },
+        }
+    );
+}

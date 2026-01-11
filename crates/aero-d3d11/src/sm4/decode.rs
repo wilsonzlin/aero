@@ -279,6 +279,10 @@ fn decode_instruction(
             if let Some(sample) = try_decode_sample_like(saturate, inst_toks, at)? {
                 return Ok(sample);
             }
+            // Structural fallback for texture load (ld) when opcode IDs differ.
+            if let Some(ld) = try_decode_ld_like(saturate, inst_toks, at)? {
+                return Ok(ld);
+            }
             Ok(Sm4Inst::Unknown { opcode: other })
         }
     }
@@ -482,6 +486,58 @@ fn try_decode_sample_like(
             texture,
             sampler,
             lod,
+        }));
+    }
+
+    Ok(None)
+}
+
+fn try_decode_ld_like(
+    saturate: bool,
+    inst_toks: &[u32],
+    at: usize,
+) -> Result<Option<Sm4Inst>, Sm4DecodeError> {
+    let mut r = InstrReader::new(inst_toks, at);
+    let opcode_token = r.read_u32()?;
+    let _ = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
+
+    let mut dst = match decode_dst(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    dst.saturate = saturate;
+    let coord = match decode_src(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let texture = match decode_texture_ref(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+
+    if r.is_eof() {
+        let default_lod_sel = coord.swizzle.0[2];
+        let mut lod = coord.clone();
+        lod.swizzle = Swizzle([default_lod_sel; 4]);
+        return Ok(Some(Sm4Inst::Ld {
+            dst,
+            coord,
+            texture,
+            lod,
+        }));
+    }
+
+    // Optional explicit LOD operand.
+    let explicit_lod = match decode_src(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    if r.is_eof() {
+        return Ok(Some(Sm4Inst::Ld {
+            dst,
+            coord,
+            texture,
+            lod: explicit_lod,
         }));
     }
 

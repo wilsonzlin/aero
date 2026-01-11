@@ -461,21 +461,16 @@ fn translates_texture_load_ld() {
         swizzle: Swizzle::XXXX,
         modifier: OperandModifier::None,
     };
-
     let module = Sm4Module {
         stage: ShaderStage::Pixel,
         model: ShaderModel { major: 5, minor: 0 },
         decls: Vec::new(),
         instructions: vec![
             Sm4Inst::Ld {
-                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
                 coord,
                 texture: TextureRef { slot: 0 },
                 lod,
-            },
-            Sm4Inst::Mov {
-                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
-                src: src_reg(RegFile::Temp, 0),
             },
             Sm4Inst::Ret,
         ],
@@ -485,6 +480,18 @@ fn translates_texture_load_ld() {
     assert_wgsl_validates(&translated.wgsl);
     assert!(translated.wgsl.contains("textureLoad(t0"));
     assert!(translated.wgsl.contains("bitcast<i32>(0x00000001u)"));
+
+    // Reflection should surface the referenced texture slot (no sampler needed for ld).
+    assert!(translated
+        .reflection
+        .bindings
+        .iter()
+        .any(|b| matches!(b.kind, BindingKind::Texture2D { slot: 0 })));
+    assert!(!translated
+        .reflection
+        .bindings
+        .iter()
+        .any(|b| matches!(b.kind, BindingKind::Sampler { .. })));
 }
 
 #[test]
