@@ -3438,36 +3438,27 @@ uint64_t submit(Device* dev, bool is_present) {
         }
 
         if (!SUCCEEDED(submit_hr)) {
+          // SubmitCommandCb is widely supported by Win7-era D3D9 runtimes. Prefer
+          // it over a RenderCb fallback that cannot explicitly signal "present",
+          // because the KMD can derive PRESENT vs RENDER from AEROGPU_DMA_PRIV
+          // even when dxgkrnl routes straight to DxgkDdiSubmitCommand.
           if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
             if (dev->wddm_callbacks.pfnSubmitCommandCb) {
-              using SubmitCbT = decltype(dev->wddm_callbacks.pfnSubmitCommandCb);
-              if constexpr (submit_callback_can_signal_present<SubmitCbT>()) {
-                submission_fence = 0;
-                submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnSubmitCommandCb, cmd_len, /*is_present=*/true,
-                                                   &submission_fence);
-              }
+              submission_fence = 0;
+              submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnSubmitCommandCb, cmd_len, /*is_present=*/true,
+                                                 &submission_fence);
             }
           }
         }
 
-        // Last resort: allow submitting even when we can't explicitly signal
-        // present via the callback args. This is primarily a bring-up aid; the
-        // KMD/emulator may observe the submission as render if the runtime cannot
-        // dispatch to DxgkDdiPresent.
+        // Last resort: RenderCb even if we can't explicitly signal present.
+        // Some runtimes may only expose RenderCb; submitting is better than
+        // failing outright, but PRESENT vs RENDER may be ambiguous on this path.
         if (!SUCCEEDED(submit_hr)) {
           if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
             if (dev->wddm_callbacks.pfnRenderCb) {
               submission_fence = 0;
               submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/true,
-                                                 &submission_fence);
-            }
-          }
-        }
-        if (!SUCCEEDED(submit_hr)) {
-          if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
-            if (dev->wddm_callbacks.pfnSubmitCommandCb) {
-              submission_fence = 0;
-              submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnSubmitCommandCb, cmd_len, /*is_present=*/true,
                                                  &submission_fence);
             }
           }
@@ -9658,6 +9649,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
       const void* render_cb = nullptr;
       const void* present_cb = nullptr;
       bool submit_cb_can_present = false;
+      bool render_cb_can_present = false;
       if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
         submit_cb = reinterpret_cast<const void*>(dev->wddm_callbacks.pfnSubmitCommandCb);
         using SubmitCbT = decltype(dev->wddm_callbacks.pfnSubmitCommandCb);
@@ -9665,6 +9657,8 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
       }
       if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
         render_cb = reinterpret_cast<const void*>(dev->wddm_callbacks.pfnRenderCb);
+        using RenderCbT = decltype(dev->wddm_callbacks.pfnRenderCb);
+        render_cb_can_present = submit_callback_can_signal_present<RenderCbT>();
       }
       if constexpr (has_pfnPresentCb<WddmDeviceCallbacks>::value) {
         present_cb = reinterpret_cast<const void*>(dev->wddm_callbacks.pfnPresentCb);
@@ -9673,6 +9667,9 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
                     submit_cb, render_cb, present_cb);
       if (submit_cb) {
         aerogpu::logf("aerogpu-d3d9: SubmitCommandCb can_signal_present=%u\n", submit_cb_can_present ? 1u : 0u);
+      }
+      if (render_cb) {
+        aerogpu::logf("aerogpu-d3d9: RenderCb can_signal_present=%u\n", render_cb_can_present ? 1u : 0u);
       }
     });
   }
