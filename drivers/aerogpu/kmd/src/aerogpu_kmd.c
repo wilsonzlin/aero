@@ -2939,8 +2939,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG))) {
                     const uint64_t maybeFeatures = (uint64_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
                                                    ((uint64_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
-                    const uint64_t knownFeatures =
-                        AEROGPU_FEATURE_FENCE_PAGE | AEROGPU_FEATURE_CURSOR | AEROGPU_FEATURE_SCANOUT | AEROGPU_FEATURE_VBLANK;
+                    const uint64_t knownFeatures = AEROGPU_FEATURE_FENCE_PAGE | AEROGPU_FEATURE_CURSOR | AEROGPU_FEATURE_SCANOUT |
+                                                  AEROGPU_FEATURE_VBLANK | AEROGPU_FEATURE_TRANSFER;
                     if ((maybeFeatures & ~knownFeatures) == 0) {
                         features = maybeFeatures;
                     }
