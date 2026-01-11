@@ -451,7 +451,6 @@ dependencies = [
 name = "aero-net-stack"
 version = "0.1.0"
 dependencies = [
- "aero-gateway-rs",
  "axum",
  "futures-util",
  "nt-packetlib",

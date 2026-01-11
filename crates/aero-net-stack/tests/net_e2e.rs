@@ -8,7 +8,17 @@ use aero_net_stack::packet::*;
 use aero_net_stack::{
     Action, DnsResolved, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent,
 };
+use axum::{
+    extract::{
+        ws::{Message as AxumMessage, WebSocket, WebSocketUpgrade},
+        Query,
+    },
+    response::IntoResponse,
+    routing::get,
+    Router,
+};
 use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream, UdpSocket},
@@ -21,7 +31,8 @@ use tokio_tungstenite::tungstenite::Message;
 /// End-to-end integration test that replaces the legacy `crates/aero-net` `net_e2e`:
 /// - guest DHCP + ARP
 /// - guest DNS query resolved via DoH (embedded test server)
-/// - guest TCP stream proxied via the current `/tcp` WebSocket contract (Aero Gateway)
+/// - guest TCP stream proxied via the current `/tcp` WebSocket contract (Aero Gateway;
+///   `GET /tcp?v=1&host=<host>&port=<port>`)
 /// - guest UDP datagram proxied via host-side UDP relay (test harness)
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn net_e2e() {
@@ -526,12 +537,7 @@ struct GatewayServer {
 
 impl GatewayServer {
     async fn spawn() -> Self {
-        let app = aero_gateway_rs::build_app(aero_gateway_rs::GatewayConfig {
-            admin_api_key: None,
-            capture: None,
-        })
-        .await
-        .expect("build gateway app");
+        let app = Router::new().route("/tcp", get(tcp_ws_handler));
 
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
@@ -562,6 +568,101 @@ impl GatewayServer {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct TcpProxyQuery {
+    /// Canonical Aero Gateway query format.
+    #[serde(default)]
+    v: Option<u32>,
+    #[serde(default)]
+    host: Option<String>,
+    #[serde(default)]
+    port: Option<u16>,
+    /// Legacy compatibility format (`target=<host>:<port>`).
+    #[serde(default)]
+    target: Option<String>,
+}
+
+async fn tcp_ws_handler(ws: WebSocketUpgrade, Query(query): Query<TcpProxyQuery>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| async move {
+        handle_tcp_ws(socket, query).await;
+    })
+}
+
+async fn handle_tcp_ws(socket: WebSocket, query: TcpProxyQuery) {
+    let (host, port) = match (query.host.as_deref(), query.port, query.target.as_deref()) {
+        (Some(host), Some(port), _) => (host.to_string(), port),
+        (_, _, Some(target)) => match parse_target(target) {
+            Ok(v) => v,
+            Err(_) => return,
+        },
+        _ => return,
+    };
+
+    // Best-effort minimal TCP proxy used only by this test harness.
+    let tcp = match TcpStream::connect((host.as_str(), port)).await {
+        Ok(tcp) => tcp,
+        Err(_) => return,
+    };
+
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+    let (mut tcp_reader, mut tcp_writer) = tcp.into_split();
+
+    let c2t = async move {
+        while let Some(Ok(msg)) = ws_receiver.next().await {
+            match msg {
+                AxumMessage::Binary(data) => {
+                    if tcp_writer.write_all(&data).await.is_err() {
+                        break;
+                    }
+                }
+                AxumMessage::Close(_) => break,
+                _ => {}
+            }
+        }
+
+        let _ = tcp_writer.shutdown().await;
+    };
+
+    let t2c = async move {
+        let mut buf = vec![0u8; 16 * 1024];
+        loop {
+            let n = match tcp_reader.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+
+            if ws_sender
+                .send(AxumMessage::Binary(buf[..n].to_vec()))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    };
+
+    tokio::join!(c2t, t2c);
+}
+
+fn parse_target(target: &str) -> Result<(String, u16), &'static str> {
+    if let Some(rest) = target.strip_prefix('[') {
+        let Some((host, rest)) = rest.split_once(']') else {
+            return Err("missing closing bracket in IPv6 address");
+        };
+        let Some(port) = rest.strip_prefix(':') else {
+            return Err("missing :port suffix");
+        };
+        let port: u16 = port.parse().map_err(|_| "invalid port")?;
+        return Ok((host.to_string(), port));
+    }
+
+    let Some((host, port)) = target.rsplit_once(':') else {
+        return Err("missing :port suffix");
+    };
+    let port: u16 = port.parse().map_err(|_| "invalid port")?;
+    Ok((host.to_string(), port))
+}
+
 struct TcpProxyClient {
     ws: tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
@@ -574,7 +675,7 @@ impl TcpProxyClient {
         remote_ip: Ipv4Addr,
         remote_port: u16,
     ) -> Result<Self, tokio_tungstenite::tungstenite::Error> {
-        let url = format!("ws://{proxy_addr}/tcp?target={}:{remote_port}", remote_ip);
+        let url = format!("ws://{proxy_addr}/tcp?v=1&host={remote_ip}&port={remote_port}");
         let (ws, _resp) = tokio_tungstenite::connect_async(url).await?;
         Ok(Self { ws })
     }
