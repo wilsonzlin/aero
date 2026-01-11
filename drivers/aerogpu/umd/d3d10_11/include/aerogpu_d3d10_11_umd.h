@@ -409,11 +409,12 @@ typedef struct AEROGPU_DDIARG_PRESENT {
 
 // Stable allocation ID used by the AeroGPU per-submit allocation table (`alloc_id`).
 //
-// This is the value that must be placed in `AEROGPU_CMD_CREATE_*.backing_alloc_id`
-// when a resource is backed by guest memory.
+// This is the value that must be placed in `aerogpu_cmd_create_*::backing_alloc_id`
+// (and therefore matches `aerogpu_alloc_entry.alloc_id`) when a resource is backed
+// by guest memory.
 //
-// On real Win7/WDDM 1.1, this is a **driver-defined** `u32` persisted in WDDM
-// allocation private driver data (`aerogpu_wddm_alloc_priv.alloc_id` in
+// On real Win7/WDDM 1.1, this is a driver-defined `u32` persisted in WDDM
+// allocation private driver data (`aerogpu_wddm_alloc_priv{,_v2}.alloc_id` in
 // `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). It is intentionally not the
 // numeric value of the UMD-visible allocation handle (`D3DKMT_HANDLE`) and not
 // the KMD-visible `DXGK_ALLOCATIONLIST::hAllocation` identity.

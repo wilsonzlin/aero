@@ -604,6 +604,15 @@ struct AeroGpuResource {
   // allocation private driver data (`aerogpu_wddm_alloc_priv.alloc_id`).
   //
   // 0 means "host allocated" (no allocation-table entry).
+  //
+  // IMPORTANT: On real Win7/WDDM 1.1 builds, do NOT use the numeric value of the
+  // runtime's `hAllocation` handle as this ID: dxgkrnl does not preserve that
+  // identity across UMD↔KMD. The stable cross-layer key is the driver-defined
+  // `alloc_id` carried in WDDM allocation private driver data
+  // (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+  //
+  // The repository build's harness may choose to use `alloc_handle` as the
+  // `backing_alloc_id`, but that is a harness contract, not a WDDM contract.
   uint32_t backing_alloc_id = 0;
 
   // Allocation backing this resource as understood by the repo-local harness
