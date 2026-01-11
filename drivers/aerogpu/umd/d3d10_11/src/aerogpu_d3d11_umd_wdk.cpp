@@ -14,6 +14,8 @@
 #include <d3dkmthk.h>
 
 #include <algorithm>
+#include <cassert>
+#include <cstdio>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -462,6 +464,28 @@ struct DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
   }
 };
 
+static void AssertNoNullDdiTable(const char* name, const void* table, size_t bytes) {
+#if !defined(NDEBUG)
+  assert(table && "DDI table pointer must be non-null");
+  assert((bytes % sizeof(void*)) == 0);
+
+  const auto* ptrs = reinterpret_cast<const void* const*>(table);
+  const size_t count = bytes / sizeof(void*);
+  for (size_t i = 0; i < count; ++i) {
+    if (!ptrs[i]) {
+      char buf[256] = {};
+      snprintf(buf, sizeof(buf), "aerogpu-d3d11: NULL DDI entry in %s at index=%zu\n", name ? name : "?", i);
+      OutputDebugStringA(buf);
+      assert(ptrs[i] && "NULL DDI function pointer");
+    }
+  }
+#else
+  (void)name;
+  (void)table;
+  (void)bytes;
+#endif
+}
+
 // Some DDIs (notably Present/RotateResourceIdentities) historically move between
 // the device and context tables across D3D11 DDI interface versions. Bind them
 // opportunistically based on whether the field exists and the pointer type
@@ -653,6 +677,7 @@ static D3D11DDI_DEVICEFUNCS MakeStubDeviceFuncs11() {
 #undef STUB_FIELD
 
   StubPresentAndRotate(&funcs);
+  AssertNoNullDdiTable("D3D11DDI_DEVICEFUNCS (stub)", &funcs, sizeof(funcs));
   return funcs;
 }
 
@@ -774,6 +799,7 @@ static D3D11DDI_DEVICECONTEXTFUNCS MakeStubContextFuncs11() {
 #undef STUB_FIELD
 
   StubPresentAndRotate(&funcs);
+  AssertNoNullDdiTable("D3D11DDI_DEVICECONTEXTFUNCS (stub)", &funcs, sizeof(funcs));
   return funcs;
 }
 
@@ -2964,6 +2990,9 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
 
   ctx_funcs->pfnFlush = &Flush11;
   BindPresentAndRotate(ctx_funcs);
+
+  AssertNoNullDdiTable("D3D11DDI_DEVICEFUNCS", pCreateDevice->pDeviceFuncs, sizeof(*pCreateDevice->pDeviceFuncs));
+  AssertNoNullDdiTable("D3D11DDI_DEVICECONTEXTFUNCS", ctx_funcs, sizeof(*ctx_funcs));
 
   return S_OK;
 }
