@@ -1702,7 +1702,8 @@ impl AerogpuD3d11Executor {
                     })
                 };
 
-                if next_blend != self.state.blend || next_write_mask != self.state.color_write_mask {
+                if next_blend != self.state.blend || next_write_mask != self.state.color_write_mask
+                {
                     break;
                 }
             }
