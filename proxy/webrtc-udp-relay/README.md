@@ -248,8 +248,10 @@ must satisfy the proxy's Origin allowlist and auth policy:
   checks it against `AERO_L2_ALLOWED_ORIGINS`.
   - By default the relay forwards the client signaling Origin (`L2_BACKEND_FORWARD_ORIGIN=1`).
   - Use `L2_BACKEND_ORIGIN` to pin a specific Origin value (must be in the backend allowlist).
-- **Auth:** cookie auth (`AERO_L2_AUTH_MODE=cookie`) does not work for relay bridging (the relay
-  cannot forward browser cookies). Use `AERO_L2_AUTH_MODE=api_key`, `jwt`, or `cookie_or_jwt`.
+- **Auth:** if the backend uses gateway session cookies (`AERO_L2_AUTH_MODE=cookie`), enable
+  `L2_BACKEND_FORWARD_AERO_SESSION=1` so the relay forwards `Cookie: aero_session=<...>` extracted
+  from the signaling request. Otherwise, use token/JWT auth (`AERO_L2_AUTH_MODE=api_key|jwt|cookie_or_jwt`)
+  and configure `L2_BACKEND_TOKEN` and/or `L2_BACKEND_AUTH_FORWARD_MODE`.
 
 #### Docker / docker-compose
 
