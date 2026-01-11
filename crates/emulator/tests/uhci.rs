@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -6,7 +7,7 @@ use emulator::io::usb::hid::composite::UsbCompositeHidInputHandle;
 use emulator::io::usb::hid::gamepad::UsbHidGamepadHandle;
 use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use emulator::io::usb::hid::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
-use emulator::io::usb::core::UsbOutResult;
+use emulator::io::usb::core::{UsbInResult, UsbOutResult};
 use emulator::io::usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
 };
@@ -39,6 +40,7 @@ const PID_SETUP: u8 = 0x2d;
 
 const TD_STATUS_ACTIVE: u32 = 1 << 23;
 const TD_STATUS_STALLED: u32 = 1 << 22;
+const TD_STATUS_NAK: u32 = 1 << 19;
 const TD_CTRL_IOC: u32 = 1 << 24;
 const TD_CTRL_SPD: u32 = 1 << 29;
 
@@ -263,6 +265,131 @@ impl UsbDeviceModel for DynamicDescriptorDevice {
 
     fn poll_interrupt_in(&mut self, _ep: u8) -> Option<Vec<u8>> {
         None
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PendingControlInDevice {
+    ready: Rc<RefCell<bool>>,
+    data: Vec<u8>,
+}
+
+impl PendingControlInDevice {
+    fn new(ready: Rc<RefCell<bool>>, data: Vec<u8>) -> Self {
+        Self { ready, data }
+    }
+}
+
+impl UsbDeviceModel for PendingControlInDevice {
+    fn handle_control_request(
+        &mut self,
+        setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        if setup.bm_request_type == 0xc0 && setup.b_request == 0x01 {
+            if *self.ready.borrow() {
+                ControlResponse::Data(self.data.clone())
+            } else {
+                ControlResponse::Nak
+            }
+        } else {
+            ControlResponse::Stall
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PendingControlOutDevice {
+    ready: Rc<RefCell<bool>>,
+    received: Rc<RefCell<Vec<u8>>>,
+    started: bool,
+}
+
+impl PendingControlOutDevice {
+    fn new(ready: Rc<RefCell<bool>>, received: Rc<RefCell<Vec<u8>>>) -> Self {
+        Self {
+            ready,
+            received,
+            started: false,
+        }
+    }
+}
+
+impl UsbDeviceModel for PendingControlOutDevice {
+    fn handle_control_request(
+        &mut self,
+        setup: SetupPacket,
+        data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        if setup.bm_request_type != 0x40 || setup.b_request != 0x02 {
+            return ControlResponse::Stall;
+        }
+
+        let Some(data_stage) = data_stage else {
+            return ControlResponse::Stall;
+        };
+
+        if !self.started {
+            self.received.borrow_mut().extend_from_slice(data_stage);
+            self.started = true;
+        }
+
+        if *self.ready.borrow() {
+            ControlResponse::Ack
+        } else {
+            ControlResponse::Nak
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct BulkEndpointDevice {
+    in_queue: Rc<RefCell<VecDeque<Vec<u8>>>>,
+    out_received: Rc<RefCell<Vec<Vec<u8>>>>,
+}
+
+impl BulkEndpointDevice {
+    fn new(
+        in_queue: Rc<RefCell<VecDeque<Vec<u8>>>>,
+        out_received: Rc<RefCell<Vec<Vec<u8>>>>,
+    ) -> Self {
+        Self {
+            in_queue,
+            out_received,
+        }
+    }
+}
+
+impl UsbDeviceModel for BulkEndpointDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+
+    fn handle_in_transfer(&mut self, ep_addr: u8, max_len: usize) -> UsbInResult {
+        if ep_addr != 0x81 {
+            return UsbInResult::Stall;
+        }
+
+        let Some(mut data) = self.in_queue.borrow_mut().pop_front() else {
+            return UsbInResult::Nak;
+        };
+        if data.len() > max_len {
+            data.truncate(max_len);
+        }
+        UsbInResult::Data(data)
+    }
+
+    fn handle_out_transfer(&mut self, ep_addr: u8, data: &[u8]) -> UsbOutResult {
+        if ep_addr != 0x01 {
+            return UsbOutResult::Stall;
+        }
+
+        self.out_received.borrow_mut().push(data.to_vec());
+        UsbOutResult::Ack
     }
 }
 
@@ -564,6 +691,229 @@ fn uhci_control_get_descriptor_device_runtime_descriptor() {
 }
 
 #[test]
+fn uhci_control_in_pending_naks_data_td_until_ready() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let ready = Rc::new(RefCell::new(false));
+    let response_data = vec![0x11, 0x22, 0x33, 0x44];
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(PendingControlInDevice::new(ready.clone(), response_data.clone())));
+    reset_port(&mut uhci, &mut mem, 0x10);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    // Vendor DeviceToHost control transfer with a 4-byte data stage.
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0xc0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00],
+    );
+
+    let sentinel = [0xa5, 0xa5, 0xa5, 0xa5];
+    mem.write_physical(BUF_DATA as u64, &sentinel);
+
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        TD2,
+        td_status(true, false),
+        td_token(PID_IN, 0, 0, 1, response_data.len()),
+        BUF_DATA,
+    );
+    write_td(
+        &mut mem,
+        TD2,
+        1,
+        td_status(true, true),
+        td_token(PID_OUT, 0, 0, 1, 0),
+        0,
+    );
+
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    let st0 = mem.read_u32(TD0 as u64 + 4);
+    assert_eq!(st0 & TD_STATUS_ACTIVE, 0);
+    let st1 = mem.read_u32(TD1 as u64 + 4);
+    assert_ne!(st1 & TD_STATUS_ACTIVE, 0);
+    assert_ne!(st1 & TD_STATUS_NAK, 0);
+
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, TD1);
+    assert_eq!(
+        mem.slice(BUF_DATA as usize..BUF_DATA as usize + sentinel.len()),
+        sentinel
+    );
+
+    *ready.borrow_mut() = true;
+    uhci.tick_1ms(&mut mem);
+
+    assert_eq!(
+        mem.slice(BUF_DATA as usize..BUF_DATA as usize + response_data.len()),
+        response_data
+    );
+
+    let st1 = mem.read_u32(TD1 as u64 + 4);
+    let st2 = mem.read_u32(TD2 as u64 + 4);
+    assert_eq!(st1 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(st2 & TD_STATUS_ACTIVE, 0);
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, 1);
+}
+
+#[test]
+fn uhci_control_out_pending_acks_data_stage_and_naks_status_in() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let ready = Rc::new(RefCell::new(false));
+    let received = Rc::new(RefCell::new(Vec::new()));
+    uhci.controller.hub_mut().attach(
+        0,
+        Box::new(PendingControlOutDevice::new(ready.clone(), received.clone())),
+    );
+    reset_port(&mut uhci, &mut mem, 0x10);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    // Vendor HostToDevice control transfer with a 4-byte OUT data stage.
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x40, 0x02, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00],
+    );
+
+    let payload = [0xde, 0xad, 0xbe, 0xef];
+    mem.write_physical(BUF_DATA as u64, &payload);
+
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        TD2,
+        td_status(true, false),
+        td_token(PID_OUT, 0, 0, 1, payload.len()),
+        BUF_DATA,
+    );
+    write_td(
+        &mut mem,
+        TD2,
+        1,
+        td_status(true, true),
+        td_token(PID_IN, 0, 0, 1, 0),
+        0,
+    );
+
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    let st0 = mem.read_u32(TD0 as u64 + 4);
+    let st1 = mem.read_u32(TD1 as u64 + 4);
+    let st2 = mem.read_u32(TD2 as u64 + 4);
+    assert_eq!(st0 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(st1 & TD_STATUS_ACTIVE, 0);
+    assert_ne!(st2 & TD_STATUS_ACTIVE, 0);
+    assert_ne!(st2 & TD_STATUS_NAK, 0);
+
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, TD2);
+    assert_eq!(received.borrow().as_slice(), payload);
+
+    *ready.borrow_mut() = true;
+    uhci.tick_1ms(&mut mem);
+
+    let st2 = mem.read_u32(TD2 as u64 + 4);
+    assert_eq!(st2 & TD_STATUS_ACTIVE, 0);
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, 1);
+    assert_eq!(received.borrow().as_slice(), payload);
+}
+
+#[test]
+fn uhci_bulk_in_out_smoke_test_with_nak() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    uhci.controller.hub_mut().attach(
+        0,
+        Box::new(BulkEndpointDevice::new(in_queue.clone(), out_received.clone())),
+    );
+    reset_port(&mut uhci, &mut mem, 0x10);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    let out_payload = [0x10, 0x20, 0x30];
+    mem.write_physical(BUF_DATA as u64, &out_payload);
+
+    let sentinel = [0xa5, 0xa5, 0xa5, 0xa5];
+    mem.write_physical(BUF_INT as u64, &sentinel);
+
+    // Bulk OUT EP1 (ACK) followed by bulk IN EP1 (initially NAK).
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_OUT, 0, 1, 0, out_payload.len()),
+        BUF_DATA,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, true),
+        td_token(PID_IN, 0, 1, 0, 3),
+        BUF_INT,
+    );
+
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    let st0 = mem.read_u32(TD0 as u64 + 4);
+    let st1 = mem.read_u32(TD1 as u64 + 4);
+    assert_eq!(st0 & TD_STATUS_ACTIVE, 0);
+    assert_ne!(st1 & TD_STATUS_ACTIVE, 0);
+    assert_ne!(st1 & TD_STATUS_NAK, 0);
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, TD1);
+
+    assert_eq!(out_received.borrow().as_slice(), &[out_payload.to_vec()]);
+    assert_eq!(
+        mem.slice(BUF_INT as usize..BUF_INT as usize + sentinel.len()),
+        sentinel
+    );
+
+    in_queue.borrow_mut().push_back(vec![1, 2, 3]);
+    uhci.tick_1ms(&mut mem);
+
+    let st1 = mem.read_u32(TD1 as u64 + 4);
+    assert_eq!(st1 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(mem.slice(BUF_INT as usize..BUF_INT as usize + 3), [1, 2, 3]);
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, 1);
+}
+
+#[test]
 fn uhci_interrupt_in_polling_reads_hid_reports() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
@@ -647,7 +997,7 @@ fn uhci_interrupt_in_polling_reads_hid_reports() {
     run_one_frame(&mut uhci, &mut mem, TD0);
     let st = mem.read_u32(TD0 as u64 + 4);
     assert!(st & TD_STATUS_ACTIVE != 0);
-    assert!(st & (1 << 19) != 0); // NAK
+    assert!(st & TD_STATUS_NAK != 0); // NAK
 }
 
 #[test]
@@ -813,7 +1163,7 @@ fn uhci_interrupt_in_out_passthrough_device_queues_reports() {
     run_one_frame(&mut uhci, &mut mem, TD0);
     let st = mem.read_u32(TD0 as u64 + 4);
     assert!(st & TD_STATUS_ACTIVE != 0);
-    assert!(st & (1 << 19) != 0); // NAK
+    assert!(st & TD_STATUS_NAK != 0); // NAK
 
     // Interrupt OUT: first byte is report ID since report IDs are present.
     let payload = [7u8, 0x10, 0x20];
@@ -1175,7 +1525,7 @@ fn uhci_interrupt_in_polling_reads_gamepad_reports() {
     run_one_frame(&mut uhci, &mut mem, TD0);
     let st = mem.read_u32(TD0 as u64 + 4);
     assert!(st & TD_STATUS_ACTIVE != 0);
-    assert!(st & (1 << 19) != 0); // NAK
+    assert!(st & TD_STATUS_NAK != 0); // NAK
 }
 
 #[test]

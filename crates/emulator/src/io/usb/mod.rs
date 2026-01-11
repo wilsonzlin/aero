@@ -90,6 +90,14 @@ pub enum RequestRecipient {
 pub enum ControlResponse {
     Data(Vec<u8>),
     Ack,
+    /// Indicates the control request is still in-flight.
+    ///
+    /// The host should observe a NAK on the relevant data/status stage TD and retry in a later
+    /// frame.
+    ///
+    /// Returning `Nak` means the request has been *started*; subsequent calls to
+    /// [`UsbDeviceModel::handle_control_request`] with the same `(setup, data_stage)` are
+    /// *polls* and must not re-trigger side effects.
     Nak,
     Stall,
 }
@@ -231,6 +239,7 @@ pub trait UsbDeviceModel {
     /// Legacy helper for interrupt IN endpoints.
     ///
     /// Returning `None` indicates the endpoint would NAK (no data available).
+    #[deprecated(note = "use handle_in_transfer")]
     fn poll_interrupt_in(&mut self, _ep: u8) -> Option<Vec<u8>> {
         None
     }
@@ -240,6 +249,7 @@ pub trait UsbDeviceModel {
     /// The default implementation bridges the legacy [`UsbDeviceModel::poll_interrupt_in`]
     /// interface, treating `None` as NAK. Device models that implement endpoint halt should
     /// override this to return [`crate::io::usb::core::UsbInResult::Stall`] when halted.
+    #[allow(deprecated)]
     fn handle_interrupt_in(&mut self, ep_addr: u8) -> crate::io::usb::core::UsbInResult {
         match self.poll_interrupt_in(ep_addr) {
             Some(data) => crate::io::usb::core::UsbInResult::Data(data),
