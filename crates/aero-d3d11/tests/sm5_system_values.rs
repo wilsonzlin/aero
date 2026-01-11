@@ -1,7 +1,7 @@
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{
-    parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, DxbcSignatureParameter, FourCC,
-    OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Inst, Sm4Module,
+    parse_signatures, translate_sm4_module_to_wgsl, Builtin, DxbcFile, DxbcSignatureParameter,
+    FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Inst, Sm4Module,
     Sm4Program, SrcKind, SrcOperand, Swizzle, WriteMask,
 };
 
@@ -234,6 +234,18 @@ fn translates_vertex_id_and_instance_id_builtins() {
     assert!(translated
         .wgsl
         .contains("@builtin(position) pos: vec4<f32>"));
+
+    assert!(translated.reflection.inputs.iter().any(|p| {
+        p.semantic_name == "VID" && p.builtin == Some(Builtin::VertexIndex) && p.location.is_none()
+    }));
+    assert!(translated.reflection.inputs.iter().any(|p| {
+        p.semantic_name == "IID"
+            && p.builtin == Some(Builtin::InstanceIndex)
+            && p.location.is_none()
+    }));
+    assert!(translated.reflection.outputs.iter().any(|p| {
+        p.semantic_name == "POS" && p.builtin == Some(Builtin::Position) && p.location.is_none()
+    }));
 }
 
 #[test]
@@ -280,6 +292,17 @@ fn translates_vertex_id_and_instance_id_builtins_from_semantics() {
         .contains("@builtin(instance_index) instance_id: u32"));
     assert!(translated.wgsl.contains("f32(input.vertex_id)"));
     assert!(translated.wgsl.contains("f32(input.instance_id)"));
+
+    assert!(translated.reflection.inputs.iter().any(|p| {
+        p.semantic_name.eq_ignore_ascii_case("SV_VertexID")
+            && p.builtin == Some(Builtin::VertexIndex)
+            && p.location.is_none()
+    }));
+    assert!(translated.reflection.inputs.iter().any(|p| {
+        p.semantic_name.eq_ignore_ascii_case("SV_InstanceID")
+            && p.builtin == Some(Builtin::InstanceIndex)
+            && p.location.is_none()
+    }));
 }
 
 #[test]
@@ -324,6 +347,18 @@ fn translates_vertex_id_and_instance_id_builtins_from_system_value_type() {
     assert!(translated
         .wgsl
         .contains("@builtin(instance_index) instance_id: u32"));
+
+    assert!(translated.reflection.inputs.iter().any(|p| {
+        p.semantic_name == "VID" && p.builtin == Some(Builtin::VertexIndex) && p.location.is_none()
+    }));
+    assert!(translated.reflection.inputs.iter().any(|p| {
+        p.semantic_name == "IID"
+            && p.builtin == Some(Builtin::InstanceIndex)
+            && p.location.is_none()
+    }));
+    assert!(translated.reflection.outputs.iter().any(|p| {
+        p.semantic_name == "POS" && p.builtin == Some(Builtin::Position) && p.location.is_none()
+    }));
 }
 
 #[test]
@@ -363,4 +398,10 @@ fn translates_front_facing_builtin() {
     assert!(translated
         .wgsl
         .contains("select(0.0, 1.0, input.front_facing)"));
+
+    assert!(translated.reflection.inputs.iter().any(|p| {
+        p.semantic_name.eq_ignore_ascii_case("SV_IsFrontFace")
+            && p.builtin == Some(Builtin::FrontFacing)
+            && p.location.is_none()
+    }));
 }
