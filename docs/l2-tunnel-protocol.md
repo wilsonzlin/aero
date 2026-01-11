@@ -283,7 +283,7 @@ Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint:
   - Configure the cookie signing secret via `AERO_GATEWAY_SESSION_SECRET` (preferred), or
     `SESSION_SECRET`, or `AERO_L2_SESSION_SECRET` (legacy).
 - `token`: requires `AERO_L2_API_KEY` (or legacy `AERO_L2_TOKEN`) (legacy alias: `api_key`).
-  - Clients can provide credentials via `?apiKey=<value>` (or `?token=<value>` for compatibility), or
+  - Clients can provide credentials via `?token=<value>` (or `?apiKey=<value>` for compatibility), or
     an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
     `aero-l2-tunnel-v1`).
 - `jwt`: requires `AERO_L2_JWT_SECRET` and a JWT provided via:

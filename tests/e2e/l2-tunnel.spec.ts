@@ -201,12 +201,12 @@ async function startL2Proxy(opts: {
   };
 }
 
-test.describe.serial('l2 tunnel (cookie auth)', () => {
+test.describe.serial('l2 tunnel (session auth)', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'l2 tunnel regression test runs on Chromium only');
   // This spec may need to compile `aero-l2-proxy` on first run. Give it ample time so CI isn't flaky on cold caches.
   test.describe.configure({ timeout: 600_000 });
 
-  test('cookie-authenticated WebSocket /l2 negotiates subprotocol and relays frames', async ({ page }) => {
+  test('session-authenticated WebSocket /l2 negotiates subprotocol and relays frames', async ({ page }) => {
     const sessionSecret = 'aero-e2e-session-secret';
     const webOrigin = 'http://127.0.0.1:5173';
 

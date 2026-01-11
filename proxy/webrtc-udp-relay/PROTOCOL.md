@@ -94,8 +94,8 @@ reliable-but-unordered DataChannel can deliver frames out of order under loss
 #### Backend dialing configuration
 
 These settings configure the relay's **server → server** WebSocket dial to the
-backend. They are separate from browser signaling auth (`AUTH_MODE`, JWT/API key
-options), and are never sent by the browser.
+backend. They are separate from browser signaling auth (`AUTH_MODE=none|api_key|jwt`),
+and are never sent by the browser.
 
 - `L2_BACKEND_WS_URL` (optional): Backend WebSocket URL (must be `ws://` or
   `wss://`). When unset/empty, `l2` DataChannels are rejected.

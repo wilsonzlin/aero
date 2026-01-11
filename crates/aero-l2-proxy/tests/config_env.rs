@@ -107,12 +107,37 @@ fn auth_mode_session_requires_secret() {
 }
 
 #[test]
+fn auth_mode_cookie_alias_is_accepted() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let _guards = reset_common_env();
+
+    let _auth = EnvVarGuard::set("AERO_L2_AUTH_MODE", "cookie");
+    let _secret = EnvVarGuard::set("AERO_GATEWAY_SESSION_SECRET", "sekrit");
+
+    let cfg = SecurityConfig::from_env().unwrap();
+    assert_eq!(cfg.auth_mode, AuthMode::Cookie);
+}
+
+#[test]
 fn auth_mode_token_requires_token() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _guards = reset_common_env();
 
     let _auth = EnvVarGuard::set("AERO_L2_AUTH_MODE", "token");
     SecurityConfig::from_env().expect_err("expected token mode to require AERO_L2_TOKEN");
+}
+
+#[test]
+fn auth_mode_api_key_alias_is_accepted() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let _guards = reset_common_env();
+
+    let _auth = EnvVarGuard::set("AERO_L2_AUTH_MODE", "api_key");
+    let _token = EnvVarGuard::set("AERO_L2_API_KEY", "sekrit");
+
+    let cfg = SecurityConfig::from_env().unwrap();
+    assert_eq!(cfg.auth_mode, AuthMode::ApiKey);
+    assert_eq!(cfg.api_key.as_deref(), Some("sekrit"));
 }
 
 #[test]

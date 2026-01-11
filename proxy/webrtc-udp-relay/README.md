@@ -233,7 +233,7 @@ Configuration env vars (server → server dialing):
 
 These settings are **not** browser auth knobs; they configure only the relay's
 outbound connection to the backend. Browser signaling auth is configured via
-`AUTH_MODE` / JWT / API key.
+`AUTH_MODE` (`api_key`/`jwt`).
 
 Security note: If you need to pass a token that cannot be represented as a WebSocket
 subprotocol token, you can embed `?token=...` in `L2_BACKEND_WS_URL` instead. This is
@@ -398,7 +398,7 @@ Env vars / flags:
 
 The relay requires that the backend negotiates `aero-l2-tunnel-v1` (strict).
 
-The forwarded `<credential>` is the same JWT/API key that authenticated the relay's signaling endpoints
+The forwarded `<credential>` is the same JWT or API key that authenticated the relay's signaling endpoints
 (`AUTH_MODE`). When `AUTH_MODE=none`, no credential is forwarded.
 
 ### Quota + rate limiting (env + flags)

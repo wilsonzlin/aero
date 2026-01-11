@@ -1700,7 +1700,7 @@ async fn open_mode_disables_origin_but_not_token_auth() {
 }
 
 #[tokio::test]
-async fn auth_rejection_metrics_increment_for_missing_and_invalid_api_key() {
+async fn auth_rejection_metrics_increment_for_missing_and_invalid_token() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
@@ -1710,7 +1710,7 @@ async fn auth_rejection_metrics_increment_for_missing_and_invalid_api_key() {
     let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
     let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
     let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
-    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "api_key");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "token");
     let _api_key = EnvVarGuard::set("AERO_L2_API_KEY", "sekrit");
     let _legacy_token = EnvVarGuard::unset("AERO_L2_TOKEN");
 
@@ -1722,7 +1722,7 @@ async fn auth_rejection_metrics_increment_for_missing_and_invalid_api_key() {
     let req = base_ws_request(addr);
     let err = tokio_tungstenite::connect_async(req)
         .await
-        .expect_err("expected missing api key to be rejected");
+        .expect_err("expected missing token to be rejected");
     assert_http_status(err, StatusCode::UNAUTHORIZED);
 
     // Invalid token => auth_invalid.
@@ -1734,7 +1734,7 @@ async fn auth_rejection_metrics_increment_for_missing_and_invalid_api_key() {
     );
     let err = tokio_tungstenite::connect_async(req)
         .await
-        .expect_err("expected invalid api key to be rejected");
+        .expect_err("expected invalid token to be rejected");
     assert_http_status(err, StatusCode::UNAUTHORIZED);
 
     let body = reqwest::get(format!("http://{addr}/metrics"))
@@ -1769,6 +1769,7 @@ async fn auth_rejection_metrics_increment_for_missing_and_invalid_api_key() {
         missing_label >= 1,
         "expected missing-credentials label counter >= 1, got {missing_label}"
     );
+    // Kept as `invalid_api_key` for historical compatibility; it corresponds to token auth too.
     let invalid_label =
         parse_metric(&body, r#"l2_auth_reject_total{reason="invalid_api_key"}"#).unwrap();
     assert!(
@@ -1780,7 +1781,7 @@ async fn auth_rejection_metrics_increment_for_missing_and_invalid_api_key() {
 }
 
 #[tokio::test]
-async fn auth_rejection_metrics_increment_for_invalid_cookie() {
+async fn auth_rejection_metrics_increment_for_invalid_session_cookie() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
@@ -1790,7 +1791,7 @@ async fn auth_rejection_metrics_increment_for_invalid_cookie() {
     let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
     let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
     let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
-    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "cookie");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "session");
     let _secret = EnvVarGuard::set("AERO_L2_SESSION_SECRET", "sekrit");
 
     let cfg = ProxyConfig::from_env().unwrap();
