@@ -14,7 +14,7 @@ sinc-resampler = []
 # browser/WASM runtime path; it is retained for reference and for targeted tests.
 legacy-audio = []
 aerogpu-trace = ["dep:aero-gpu-trace"]
-# Legacy AeroGPU PCI/MMIO bring-up device model + tests (VEN_1AED).
+# Legacy AeroGPU PCI/MMIO bring-up device model + tests (legacy vendor 1AED).
 aerogpu-legacy = []
 
 [dependencies]
