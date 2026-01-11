@@ -109,8 +109,14 @@ pub trait UsbDevice {
 
     fn handle_setup(&mut self, setup: SetupPacket);
 
+    /// Handle an OUT transaction to endpoint number `ep`.
+    ///
+    /// `ep` is the endpoint **number** (0..=15), not the endpoint address (e.g. not `0x01`).
     fn handle_out(&mut self, ep: u8, data: &[u8]) -> UsbHandshake;
 
+    /// Handle an IN transaction to endpoint number `ep`.
+    ///
+    /// `ep` is the endpoint **number** (0..=15), not the endpoint address (e.g. not `0x81`).
     fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake;
 }
 
