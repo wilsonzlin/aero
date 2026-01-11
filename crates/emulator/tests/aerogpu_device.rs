@@ -475,3 +475,41 @@ fn vsynced_present_does_not_complete_on_catchup_vblank_before_submission() {
     assert_eq!(dev.regs.completed_fence, 42);
     assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
 }
+
+#[test]
+fn scanout_disable_stops_vblank_and_clears_pending_irq() {
+    let mut cfg = AeroGpuDeviceConfig::default();
+    cfg.vblank_hz = Some(10);
+    let mut mem = VecMemory::new(0x1000);
+    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+    dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::SCANOUT_VBLANK);
+
+    let t0 = Instant::now();
+    dev.tick(&mut mem, t0);
+    dev.tick(&mut mem, t0 + Duration::from_millis(100));
+
+    let seq_before_disable = dev.regs.scanout0_vblank_seq;
+    assert_ne!(seq_before_disable, 0);
+    assert_ne!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+    assert!(dev.irq_level());
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 0);
+    assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+    assert!(!dev.irq_level());
+
+    dev.tick(&mut mem, t0 + Duration::from_millis(200));
+    assert_eq!(dev.regs.scanout0_vblank_seq, seq_before_disable);
+
+    // Re-enable scanout and tick before the next period: should not generate a "stale" vblank.
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+    dev.tick(&mut mem, t0 + Duration::from_millis(250));
+    assert_eq!(dev.regs.scanout0_vblank_seq, seq_before_disable);
+    assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+
+    dev.tick(&mut mem, t0 + Duration::from_millis(350));
+    assert!(dev.regs.scanout0_vblank_seq > seq_before_disable);
+    assert_ne!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+    assert!(dev.irq_level());
+}
