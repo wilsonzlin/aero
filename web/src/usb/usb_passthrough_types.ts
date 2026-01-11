@@ -15,6 +15,10 @@ export interface SetupPacket {
 
 // `id` is a Rust-generated u32 used to correlate an action with its completion.
 // Keep it representable as a JS number (<= 0xffff_ffff).
+//
+// For bulk transfers, `endpoint` is a USB endpoint *address* (not just the endpoint number):
+// - IN endpoints have bit7 set (e.g. `0x81`)
+// - OUT endpoints have bit7 clear (e.g. `0x02`)
 export type UsbHostAction =
   | { kind: "controlIn"; id: number; setup: SetupPacket }
   | { kind: "controlOut"; id: number; setup: SetupPacket; data: Uint8Array }
