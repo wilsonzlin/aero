@@ -30,6 +30,35 @@ struct has_member_write_operation : std::false_type {};
 template <typename T>
 struct has_member_write_operation<T, std::void_t<decltype(std::declval<T&>().WriteOperation)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_flags : std::false_type {};
+
+template <typename T>
+struct has_member_flags<T, std::void_t<decltype(std::declval<T&>().Flags)>> : std::true_type {};
+
+template <typename FlagsT>
+void set_write_operation_in_flags(FlagsT& flags, bool write) {
+  if constexpr (std::is_integral_v<std::remove_reference_t<FlagsT>>) {
+    if (write) {
+      flags |= 0x1u;
+    } else {
+      flags &= ~0x1u;
+    }
+  } else if constexpr (has_member_value<FlagsT>::value &&
+                       std::is_integral_v<std::remove_reference_t<decltype(std::declval<FlagsT&>().Value)>>) {
+    if (write) {
+      flags.Value |= 0x1u;
+    } else {
+      flags.Value &= ~0x1u;
+    }
+  } else if constexpr (has_member_write_operation<FlagsT>::value) {
+    flags.WriteOperation = write ? 1u : 0u;
+  } else {
+    static_assert(has_member_write_operation<FlagsT>::value,
+                  "D3DDDI_ALLOCATIONLIST flags are missing WriteOperation (WDDM 1.1 required)");
+  }
+}
+
 template <typename AllocationListT>
 void set_allocation_list_slot_id(AllocationListT& entry, UINT slot_id) {
   // NOTE: This is intentionally a function template so the non-selected branch
@@ -47,15 +76,14 @@ void set_allocation_list_slot_id(AllocationListT& entry, UINT slot_id) {
 template <typename AllocationListT>
 void set_write_operation(AllocationListT& entry, bool write) {
   if constexpr (has_member_value<AllocationListT>::value) {
-    if (write) {
-      entry.Value |= 0x1u;
-    } else {
-      entry.Value &= ~0x1u;
-    }
+    set_write_operation_in_flags(entry.Value, write);
+  } else if constexpr (has_member_flags<AllocationListT>::value) {
+    set_write_operation_in_flags(entry.Flags, write);
   } else if constexpr (has_member_write_operation<AllocationListT>::value) {
     entry.WriteOperation = write ? 1u : 0u;
   } else {
-    static_assert(has_member_value<AllocationListT>::value || has_member_write_operation<AllocationListT>::value,
+    static_assert(has_member_value<AllocationListT>::value || has_member_flags<AllocationListT>::value ||
+                      has_member_write_operation<AllocationListT>::value,
                   "D3DDDI_ALLOCATIONLIST is missing a write-operation flag field (WDDM 1.1 required)");
   }
 }
