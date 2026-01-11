@@ -1588,7 +1588,7 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
     return E_INVALIDARG;
   }
 
-#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
   if (src->storage.size() < dst->size_bytes) {
     return E_INVALIDARG;
   }
