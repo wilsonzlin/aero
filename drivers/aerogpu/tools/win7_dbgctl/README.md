@@ -43,6 +43,13 @@ Minimum supported commands:
 - `aerogpu_dbgctl --query-fence`  
   Prints the last submitted fence and last completed fence.
 
+- `aerogpu_dbgctl --query-scanout`  
+  Dumps scanout 0 state as seen by the KMD, including:
+  - cached mode (`CurrentWidth/Height/Format/Pitch`) and visibility (`enable`)
+  - best-effort MMIO snapshot (`SCANOUT0_*` registers), including the current framebuffer GPA
+  
+  Useful for diagnosing mode/pitch mismatches (e.g. scanline bounds issues or a blank display even though fences advance).
+
 - `aerogpu_dbgctl --dump-ring`  
   Dumps ring head/tail + recent submissions. Fields include:
   - `signal_fence`
@@ -102,6 +109,7 @@ aerogpu_dbgctl --status
 aerogpu_dbgctl --query-device
  aerogpu_dbgctl --query-umd-private
  aerogpu_dbgctl --query-fence
+ aerogpu_dbgctl --query-scanout
  aerogpu_dbgctl --dump-ring --ring-id 0
  aerogpu_dbgctl --dump-createalloc
  aerogpu_dbgctl --dump-vblank
