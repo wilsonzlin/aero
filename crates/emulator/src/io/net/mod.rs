@@ -1,4 +1,3 @@
-pub mod e1000;
 pub mod e1000_aero;
 pub mod stack;
 pub mod trace;

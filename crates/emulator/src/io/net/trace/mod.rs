@@ -3,7 +3,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use super::e1000::E1000Device;
 use super::stack::{
     Action, DnsResolved, Millis, NetStackBackend, StackConfig, TcpProxyEvent, UdpProxyEvent,
     UdpTransport,
@@ -512,17 +511,6 @@ impl<B: NetworkBackend> NetworkBackend for TracingBackend<'_, B> {
         let frame = self.inner.poll_receive()?;
         self.tracer.record_ethernet(FrameDirection::GuestRx, &frame);
         Some(frame)
-    }
-}
-
-pub trait E1000DeviceTraceExt {
-    fn enqueue_rx_frame_traced(&mut self, tracer: &NetTracer, frame: Vec<u8>);
-}
-
-impl E1000DeviceTraceExt for E1000Device {
-    fn enqueue_rx_frame_traced(&mut self, tracer: &NetTracer, frame: Vec<u8>) {
-        tracer.record_ethernet(FrameDirection::GuestRx, &frame);
-        self.enqueue_rx_frame(frame);
     }
 }
 
