@@ -341,10 +341,10 @@ Compare two GPU bench reports (baseline vs candidate) and emit a Markdown report
 ```bash
 node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
   --baseline gpu_bench_base.json \
-  --current gpu_bench_head.json \
-  --outDir gpu_bench_compare \
-  --thresholdPct 15 \
-  --cvThreshold 0.5
+  --candidate gpu_bench_head.json \
+  --out-dir gpu_bench_compare \
+  --thresholds-file bench/perf_thresholds.json \
+  --profile pr-smoke
 ```
 
 ### Run the Storage I/O benchmark (Playwright + OPFS/IndexedDB)
@@ -363,15 +363,15 @@ Run the scenario runner (writes `report.json`, `storage_bench.json`, and `perf_e
 npm run bench:storage -- --out-dir storage-perf-results/head
 ```
 
-Compare two `storage_bench.json` outputs and write a Markdown diff (plus optional JSON summary):
+Compare two `storage_bench.json` outputs and write a Markdown diff:
 
 ```bash
-node --experimental-strip-types scripts/compare_storage_benchmarks.ts \
+node --experimental-strip-types bench/compare.ts \
   --baseline storage-perf-results/base/storage_bench.json \
-  --current storage-perf-results/head/storage_bench.json \
-  --outDir storage-perf-results \
-  --thresholdPct 15 \
-  --json
+  --candidate storage-perf-results/head/storage_bench.json \
+  --out-dir storage-perf-results \
+  --thresholds-file bench/perf_thresholds.json \
+  --profile pr-smoke
 ```
 
 ### Interpreting summary output and variance warnings
