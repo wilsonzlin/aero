@@ -3,9 +3,9 @@
 #include <ntddk.h>
 
 #include "portcls_compat.h"
-#include "aeroviosnd.h"
 #include "topology.h"
 #include "trace.h"
+#include "virtiosnd.h"
 
 typedef struct _VIRTIOSND_TOPOLOGY_MINIPORT {
     IMiniportTopology Interface;

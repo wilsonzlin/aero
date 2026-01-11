@@ -62,7 +62,7 @@
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PreprocessorDefinitions>_KERNEL_MODE;_WIN32_WINNT=0x0601;WINVER=0x0601;NTDDI_VERSION=NTDDI_WIN7;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)..\virtio\common\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)..\..\win7\virtio\virtio-core\include;$(ProjectDir)..\..\win7\virtio\virtio-core\portable;$(ProjectDir)..\virtio\common\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <SpectreMitigation>false</SpectreMitigation>
     </ClCompile>
     <Link>
@@ -98,19 +98,30 @@
 
   <ItemGroup>
     <ClCompile Include="src\adapter.c" />
+    <ClCompile Include="src\backend_null.c" />
+    <ClCompile Include="src\backend_virtio.c" />
+    <ClCompile Include="src\pci_interface.c" />
     <ClCompile Include="src\topology.c" />
+    <ClCompile Include="src\virtio_pci_modern_wdm.c" />
+    <ClCompile Include="src\virtio_snd_proto.c" />
+    <ClCompile Include="src\virtiosnd_control.c" />
+    <ClCompile Include="src\virtiosnd_dma.c" />
+    <ClCompile Include="src\virtiosnd_hw.c" />
+    <ClCompile Include="src\virtiosnd_intx.c" />
+    <ClCompile Include="src\virtiosnd_queue_split.c" />
+    <ClCompile Include="src\virtiosnd_rx.c" />
+    <ClCompile Include="src\virtiosnd_sg.c" />
+    <ClCompile Include="src\virtiosnd_sg_core.c" />
+    <ClCompile Include="src\virtiosnd_sg_tx.c" />
+    <ClCompile Include="src\virtiosnd_tx.c" />
     <ClCompile Include="src\wavert.c" />
-    <ClCompile Include="src\backend_virtio_legacy.c" />
-    <ClCompile Include="src\aeroviosnd_hw.c" />
-    <ClCompile Include="..\virtio\common\src\virtio_pci_legacy.c" />
-    <ClCompile Include="..\virtio\common\src\virtio_queue.c" />
+    <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c" />
+    <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
   </ItemGroup>
 
   <!--
-    virtiosnd_backend_virtio.c is a standalone virtio-core + virtqueue_split based backend
-    intended for a separate PortCls/WaveRT integration path. The current virtiosnd WDM
-    driver skeleton uses its own transport/queue plumbing, so exclude this optional
-    backend from the default build to avoid pulling in conflicting dependencies.
+    virtiosnd_backend_virtio.c is an experimental alternative backend implementation.
+    The default PortCls/WaveRT path uses backend_virtio.c + virtiosnd_hw.c.
   -->
   <ItemGroup>
     <ClCompile Remove="src\virtiosnd_backend_virtio.c" />

@@ -2,10 +2,10 @@
 
 #include <ntddk.h>
 
-#include "aeroviosnd.h"
-#include "aeroviosnd_backend.h"
+#include "backend.h"
 #include "portcls_compat.h"
 #include "trace.h"
+#include "virtiosnd.h"
 #include "wavert.h"
 
 typedef struct _VIRTIOSND_WAVERT_STREAM VIRTIOSND_WAVERT_STREAM, *PVIRTIOSND_WAVERT_STREAM;
@@ -14,7 +14,7 @@ typedef struct _VIRTIOSND_WAVERT_MINIPORT {
     IMiniportWaveRT Interface;
     LONG RefCount;
 
-    PAEROVIOSND_DEVICE_EXTENSION Dx;
+    PVIRTIOSND_DEVICE_EXTENSION Dx;
     PVIRTIOSND_BACKEND Backend;
 
     KSPIN_LOCK Lock;
@@ -369,10 +369,7 @@ static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Release(_In_ IMiniportWav
     LONG ref = InterlockedDecrement(&miniport->RefCount);
     if (ref == 0) {
         VirtIoSndBackend_Destroy(miniport->Backend);
-        if (miniport->Dx != NULL) {
-            VirtIoSndMiniportReleaseRef(miniport->Dx);
-            miniport->Dx = NULL;
-        }
+        miniport->Dx = NULL;
         ExFreePoolWithTag(miniport, VIRTIOSND_POOL_TAG);
         return 0;
     }
@@ -402,7 +399,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Init(
         return STATUS_SUCCESS;
     }
 
-    status = VirtIoSndBackendLegacy_Create(miniport->Dx, &miniport->Backend);
+    status = VirtIoSndBackendVirtio_Create(miniport->Dx, &miniport->Backend);
     return status;
 }
 
@@ -1374,7 +1371,7 @@ static const IMiniportWaveRTStreamVtbl g_VirtIoSndWaveRtStreamVtbl = {
 };
 
 NTSTATUS
-VirtIoSndMiniportWaveRT_Create(_In_ struct _AEROVIOSND_DEVICE_EXTENSION *Dx, _Outptr_result_maybenull_ PUNKNOWN *OutUnknown)
+VirtIoSndMiniportWaveRT_Create(_In_ struct _VIRTIOSND_DEVICE_EXTENSION *Dx, _Outptr_result_maybenull_ PUNKNOWN *OutUnknown)
 {
     PVIRTIOSND_WAVERT_MINIPORT miniport;
 
@@ -1397,7 +1394,6 @@ VirtIoSndMiniportWaveRT_Create(_In_ struct _AEROVIOSND_DEVICE_EXTENSION *Dx, _Ou
     miniport->Interface.lpVtbl = &g_VirtIoSndWaveRtMiniportVtbl;
     miniport->RefCount = 1;
     miniport->Dx = Dx;
-    VirtIoSndMiniportAddRef(Dx);
     KeInitializeSpinLock(&miniport->Lock);
 
     *OutUnknown = (PUNKNOWN)&miniport->Interface;

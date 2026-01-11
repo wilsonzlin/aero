@@ -4,9 +4,10 @@
 
 #include "portcls_compat.h"
 
-#include "aeroviosnd.h"
 #include "topology.h"
 #include "trace.h"
+#include "virtiosnd.h"
+#include "virtiosnd_intx.h"
 #include "wavert.h"
 
 DRIVER_INITIALIZE DriverEntry;
@@ -14,6 +15,12 @@ DRIVER_INITIALIZE DriverEntry;
 static DRIVER_ADD_DEVICE VirtIoSndAddDevice;
 static DRIVER_DISPATCH VirtIoSndDispatchPnp;
 static NTSTATUS VirtIoSndStartDevice(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp, _In_ PRESOURCELIST ResourceList);
+
+typedef struct _VIRTIOSND_ADAPTER_EXTENSION {
+    VIRTIOSND_DEVICE_EXTENSION Dx;
+    BOOLEAN TopologyRegistered;
+    BOOLEAN WaveRegistered;
+} VIRTIOSND_ADAPTER_EXTENSION, *PVIRTIOSND_ADAPTER_EXTENSION;
 
 _Use_decl_annotations_
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
@@ -43,7 +50,7 @@ static NTSTATUS VirtIoSndAddDevice(PDRIVER_OBJECT DriverObject, PDEVICE_OBJECT P
         PhysicalDeviceObject,
         VirtIoSndStartDevice,
         2, // max miniports/subdevices
-        sizeof(AEROVIOSND_DEVICE_EXTENSION) // device extension size
+        sizeof(VIRTIOSND_ADAPTER_EXTENSION) // device extension size
     );
 }
 
@@ -58,8 +65,13 @@ static NTSTATUS
 VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
-    PAEROVIOSND_DEVICE_EXTENSION dx = (PAEROVIOSND_DEVICE_EXTENSION)DeviceObject->DeviceExtension;
+    PVIRTIOSND_ADAPTER_EXTENSION ext = (PVIRTIOSND_ADAPTER_EXTENSION)DeviceObject->DeviceExtension;
+    PVIRTIOSND_DEVICE_EXTENSION dx = (ext != NULL) ? &ext->Dx : NULL;
     NTSTATUS status;
+
+    if (ext == NULL || dx == NULL || dx->Signature != VIRTIOSND_DX_SIGNATURE || dx->Self != DeviceObject) {
+        return PcDispatchIrp(DeviceObject, Irp);
+    }
 
     switch (stack->MinorFunction) {
     case IRP_MN_STOP_DEVICE:
@@ -68,12 +80,29 @@ VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
          * stopped before we tear down the virtio transport.
          */
         status = PcDispatchIrp(DeviceObject, Irp);
-        VirtIoSndHwStop(dx);
+        if (ext->WaveRegistered) {
+            (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_WAVE);
+            ext->WaveRegistered = FALSE;
+        }
+        if (ext->TopologyRegistered) {
+            (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_TOPOLOGY);
+            ext->TopologyRegistered = FALSE;
+        }
+        VirtIoSndStopHardware(dx);
         return status;
 
     case IRP_MN_SURPRISE_REMOVAL:
     case IRP_MN_REMOVE_DEVICE:
-        VirtIoSndHwStop(dx);
+        dx->Removed = TRUE;
+        if (ext->WaveRegistered) {
+            (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_WAVE);
+            ext->WaveRegistered = FALSE;
+        }
+        if (ext->TopologyRegistered) {
+            (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_TOPOLOGY);
+            ext->TopologyRegistered = FALSE;
+        }
+        VirtIoSndStopHardware(dx);
         break;
 
     default:
@@ -83,11 +112,50 @@ VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
     return PcDispatchIrp(DeviceObject, Irp);
 }
 
+static NTSTATUS
+VirtIoSndCapturePdoAndLower(_In_ PDEVICE_OBJECT DeviceObject, _Out_ PDEVICE_OBJECT *PdoOut, _Out_ PDEVICE_OBJECT *LowerOut)
+{
+    PDEVICE_OBJECT base;
+    PDEVICE_OBJECT prev;
+    PDEVICE_OBJECT cur;
+
+    if (PdoOut == NULL || LowerOut == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    *PdoOut = NULL;
+    *LowerOut = NULL;
+
+    base = IoGetDeviceAttachmentBaseRef(DeviceObject);
+    if (base == NULL) {
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    prev = base;
+    cur = base;
+    while (cur != NULL && cur != DeviceObject) {
+        prev = cur;
+        cur = cur->AttachedDevice;
+    }
+
+    if (cur != DeviceObject) {
+        ObDereferenceObject(base);
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    *PdoOut = base;
+    *LowerOut = prev;
+
+    ObDereferenceObject(base);
+    return STATUS_SUCCESS;
+}
+
 _Use_decl_annotations_
 static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRESOURCELIST ResourceList)
 {
     NTSTATUS status;
-    PAEROVIOSND_DEVICE_EXTENSION dx = (PAEROVIOSND_DEVICE_EXTENSION)DeviceObject->DeviceExtension;
+    PVIRTIOSND_ADAPTER_EXTENSION ext = (PVIRTIOSND_ADAPTER_EXTENSION)DeviceObject->DeviceExtension;
+    PVIRTIOSND_DEVICE_EXTENSION dx;
     BOOLEAN hwStarted = FALSE;
     PUNKNOWN unknownAdapter = NULL;
     PUNKNOWN unknownWave = NULL;
@@ -111,18 +179,35 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
         goto Exit;
     }
 
-    if (dx == NULL) {
+    if (ext == NULL) {
         status = STATUS_DEVICE_CONFIGURATION_ERROR;
         goto Exit;
     }
 
-    RtlZeroMemory(dx, sizeof(*dx));
-    dx->DeviceObject = DeviceObject;
+    RtlZeroMemory(ext, sizeof(*ext));
+    dx = &ext->Dx;
 
-    status = VirtIoSndHwStart(dx, Irp);
+    dx->Signature = VIRTIOSND_DX_SIGNATURE;
+    dx->Self = DeviceObject;
+    dx->Removed = FALSE;
+
+    status = VirtIoSndCapturePdoAndLower(DeviceObject, &dx->Pdo, &dx->LowerDeviceObject);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("VirtIoSndHwStart failed: 0x%08X\n", (UINT)status);
-        VirtIoSndHwStop(dx); // best-effort cleanup of partial allocations
+        VIRTIOSND_TRACE_ERROR("failed to capture PDO/lower device object: 0x%08X\n", (UINT)status);
+        goto Exit;
+    }
+
+    VirtIoSndIntxInitialize(dx);
+
+    {
+        PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+        PCM_RESOURCE_LIST raw = stack->Parameters.StartDevice.AllocatedResources;
+        PCM_RESOURCE_LIST translated = stack->Parameters.StartDevice.AllocatedResourcesTranslated;
+        status = VirtIoSndStartHardware(dx, raw, translated);
+    }
+    if (!NT_SUCCESS(status)) {
+        VIRTIOSND_TRACE_ERROR("VirtIoSndStartHardware failed: 0x%08X\n", status);
+        VirtIoSndStopHardware(dx); // best-effort cleanup of partial allocations
         goto Exit;
     }
     hwStarted = TRUE;
@@ -156,6 +241,7 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
         VIRTIOSND_TRACE_ERROR("PcRegisterSubdevice(topology) failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
+    ext->TopologyRegistered = TRUE;
 
     status = VirtIoSndMiniportWaveRT_Create(dx, &unknownWave);
     if (!NT_SUCCESS(status)) {
@@ -186,6 +272,7 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
         VIRTIOSND_TRACE_ERROR("PcRegisterSubdevice(wave) failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
+    ext->WaveRegistered = TRUE;
 
     status = PcRegisterPhysicalConnection(
         DeviceObject,
@@ -210,7 +297,17 @@ Exit:
     VirtIoSndSafeRelease(unknownAdapter);
 
     if (!NT_SUCCESS(status) && hwStarted) {
-        VirtIoSndHwStop(dx);
+        if (ext != NULL) {
+            if (ext->WaveRegistered) {
+                (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_WAVE);
+                ext->WaveRegistered = FALSE;
+            }
+            if (ext->TopologyRegistered) {
+                (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_TOPOLOGY);
+                ext->TopologyRegistered = FALSE;
+            }
+        }
+        VirtIoSndStopHardware(dx);
     }
     return status;
 }

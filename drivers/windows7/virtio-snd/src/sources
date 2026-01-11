@@ -12,7 +12,7 @@ TARGETNAME=virtiosnd
 TARGETTYPE=DRIVER
 TARGETPATH=obj
 
-INCLUDES=$(INCLUDES);..\include;..\..\virtio\common\include
+INCLUDES=$(INCLUDES);..\include;..\..\virtio\common\include;..\..\..\win7\virtio\virtio-core\include;..\..\..\win7\virtio\virtio-core\portable
 
 TARGETLIBS=$(TARGETLIBS) \
   $(DDK_LIB_PATH)\portcls.lib \
@@ -22,7 +22,20 @@ SOURCES= \
     adapter.c \
     topology.c \
     wavert.c \
-    backend_virtio_legacy.c \
-    aeroviosnd_hw.c \
-    ..\..\virtio\common\src\virtio_pci_legacy.c \
-    ..\..\virtio\common\src\virtio_queue.c
+    backend_null.c \
+    backend_virtio.c \
+    pci_interface.c \
+    virtio_pci_modern_wdm.c \
+    virtio_snd_proto.c \
+    virtiosnd_control.c \
+    virtiosnd_dma.c \
+    virtiosnd_hw.c \
+    virtiosnd_intx.c \
+    virtiosnd_queue_split.c \
+    virtiosnd_rx.c \
+    virtiosnd_sg.c \
+    virtiosnd_sg_core.c \
+    virtiosnd_sg_tx.c \
+    virtiosnd_tx.c \
+    ..\..\..\windows\virtio\common\virtqueue_split.c \
+    ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c
