@@ -796,11 +796,6 @@ HRESULT InitKernelDeviceContext(AeroGpuDevice* dev, D3D10DDI_HADAPTER hAdapter) 
         hr = CallCbMaybeHandle(cb->pfnCreateContextCb, dev->hrt_device, &create_ctx);
       }
     }
-    if (FAILED(hr) || !create_ctx.hContext || !create_ctx.hSyncObject) {
-      DestroyKernelDeviceContext(dev);
-      return FAILED(hr) ? hr : E_FAIL;
-    }
-
     dev->kmt_context = static_cast<D3DKMT_HANDLE>(D3dHandleToUintPtr(create_ctx.hContext));
     dev->kmt_fence_syncobj = static_cast<D3DKMT_HANDLE>(D3dHandleToUintPtr(create_ctx.hSyncObject));
     dev->monitored_fence_value = nullptr;
@@ -811,6 +806,11 @@ HRESULT InitKernelDeviceContext(AeroGpuDevice* dev, D3D10DDI_HADAPTER hAdapter) 
       if (!dev->monitored_fence_value) {
         dev->monitored_fence_value = reinterpret_cast<volatile uint64_t*>(create_ctx.pFenceValue);
       }
+    }
+    if (FAILED(hr) || dev->kmt_context == 0 || dev->kmt_fence_syncobj == 0) {
+      // Even on failure, attempt to tear down any partially-created objects.
+      DestroyKernelDeviceContext(dev);
+      return FAILED(hr) ? hr : E_FAIL;
     }
     __if_exists(D3DDDICB_CREATECONTEXT::pDmaBufferPrivateData) {
       dev->dma_buffer_private_data = create_ctx.pDmaBufferPrivateData;
