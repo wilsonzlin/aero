@@ -371,7 +371,14 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
                 continue;
             }
 
+            /*
+             * LastKnownPa is consumed by the CPU mapping path (DxgkDdiLock) and
+             * may be read/written concurrently. Guard it with CpuMapMutex to
+             * avoid torn 64-bit writes on x86.
+             */
+            ExAcquireFastMutex(&alloc->CpuMapMutex);
             alloc->LastKnownPa.QuadPart = List[i].PhysicalAddress.QuadPart;
+            ExReleaseFastMutex(&alloc->CpuMapMutex);
 
             const uint32_t allocId = (uint32_t)alloc->AllocationId;
             if (allocId == 0) {
@@ -2442,7 +2449,14 @@ static NTSTATUS APIENTRY AeroGpuDdiLock(_In_ const HANDLE hAdapter, _Inout_ DXGK
 
     NTSTATUS st = STATUS_SUCCESS;
     if (alloc->CpuMapRefCount <= 0) {
-        const ULONGLONG physBase = pLock->PhysicalAddress.QuadPart;
+        ULONGLONG physBase = pLock->PhysicalAddress.QuadPart;
+        if (physBase == 0) {
+            physBase = (ULONGLONG)alloc->LastKnownPa.QuadPart;
+        }
+        if (physBase == 0) {
+            st = STATUS_DEVICE_NOT_READY;
+            goto Exit;
+        }
         alloc->LastKnownPa.QuadPart = physBase;
 
         const SIZE_T pageOffset = (SIZE_T)(physBase & (PAGE_SIZE - 1));
