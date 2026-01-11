@@ -41,6 +41,7 @@ import { FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "./shared/frameProtocol";
 import { mountSettingsPanel } from "./ui/settings_panel";
 import { mountStatusPanel } from "./ui/status_panel";
 import { renderWebUsbPanel } from "./usb/webusb_panel";
+import { UsbBroker } from "./usb/usb_broker";
 
 const configManager = new AeroConfigManager({ staticConfigUrl: "/aero.config.json" });
 const configInitPromise = configManager.init();
@@ -56,6 +57,7 @@ perf.instant("boot:main:start", "p");
 installAeroGlobals();
 
 const workerCoordinator = new WorkerCoordinator();
+const usbBroker = new UsbBroker();
 configManager.subscribe((state) => {
   workerCoordinator.updateConfig(state.effective);
 });
@@ -260,6 +262,7 @@ function render(): void {
     renderWebUsbPanel(report),
     renderWebHidPassthroughPanel(),
     renderInputPanel(),
+    renderWebUsbBrokerPanel(),
     renderWorkersPanel(report),
     renderIpcDemoPanel(),
     renderMicrobenchPanel(),
@@ -2331,6 +2334,51 @@ function renderInputPanel(): HTMLElement {
   );
 }
 
+function renderWebUsbBrokerPanel(): HTMLElement {
+  const status = el("pre", { text: "" });
+  const error = el("pre", { text: "" });
+
+  function setStatus(info: { vendorId: number; productId: number; productName?: string } | null): void {
+    if (!info) {
+      status.textContent = "Selected device: (none)";
+      return;
+    }
+    const vid = info.vendorId.toString(16).padStart(4, "0");
+    const pid = info.productId.toString(16).padStart(4, "0");
+    status.textContent = `Selected device: ${info.productName ? `${info.productName} ` : ""}(vid=0x${vid} pid=0x${pid})`;
+  }
+
+  setStatus(null);
+
+  const supported = typeof (navigator as unknown as { usb?: unknown }).usb !== "undefined";
+  if (!supported) {
+    error.textContent = "WebUSB is not available in this browser context.";
+  }
+
+  const selectButton = el("button", {
+    text: "Select WebUSB device for passthrough broker",
+    disabled: supported ? undefined : "true",
+    onclick: () => {
+      error.textContent = "";
+      usbBroker
+        .requestDevice()
+        .then((info) => {
+          setStatus(info);
+        })
+        .catch((err) => {
+          error.textContent = err instanceof Error ? err.message : String(err);
+        });
+    },
+  }) as HTMLButtonElement;
+
+  const hint = el("div", {
+    class: "mono",
+    text: "The main thread owns WebUSB; workers send usb.action messages and receive usb.completion replies.",
+  });
+
+  return el("div", { class: "panel" }, el("h2", { text: "WebUSB passthrough broker" }), hint, el("div", { class: "row" }, selectButton), status, error);
+}
+
 function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const support = workerCoordinator.checkSupport();
 
@@ -2425,6 +2473,10 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       try {
         const platformFeatures = forceJitCspBlock.checked ? { ...report, jit_dynamic_wasm: false } : report;
         workerCoordinator.start(config, { platformFeatures });
+        const ioWorker = workerCoordinator.getIoWorker();
+        if (ioWorker) {
+          usbBroker.attachWorkerPort(ioWorker);
+        }
         const gpuWorker = workerCoordinator.getWorker("gpu");
         const frameStateSab = workerCoordinator.getFrameStateSab();
         const sharedFramebuffer = workerCoordinator.getVgaFramebuffer();

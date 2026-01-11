@@ -28,6 +28,7 @@ import {
 import { openSyncAccessHandleInDedicatedWorker } from "../platform/opfs";
 import { DEFAULT_OPFS_DISK_IMAGES_DIRECTORY } from "../storage/disk_image_store";
 import type { WorkerOpenToken } from "../storage/disk_image_store";
+import type { UsbActionMessage, UsbCompletionMessage, UsbHostAction, UsbSelectedMessage } from "../usb/usb_proxy_protocol";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -116,6 +117,9 @@ function maybeEmitPerfSample(): void {
   perfIoWriteBytes = 0;
 }
 
+let usbAvailable = false;
+let usbDemoNextId = 1;
+
 function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: number): void {
   if (ringBuffer !== null) {
     const Sab = globalThis.SharedArrayBuffer;
@@ -184,6 +188,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<InputBatchMessage>
       | Partial<OpenActiveDiskRequest>
       | Partial<SetMicrophoneRingBufferMessage>
+      | Partial<UsbSelectedMessage>
+      | Partial<UsbCompletionMessage>
       | undefined;
     if (!data) return;
 
@@ -203,6 +209,42 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     if ((data as Partial<SetMicrophoneRingBufferMessage>).type === "setMicrophoneRingBuffer") {
       const msg = data as Partial<SetMicrophoneRingBufferMessage>;
       attachMicRingBuffer((msg.ringBuffer as SharedArrayBuffer | null) ?? null, msg.sampleRate);
+      return;
+    }
+
+    if ((data as Partial<UsbSelectedMessage>).type === "usb.selected") {
+      const msg = data as UsbSelectedMessage;
+      usbAvailable = msg.ok;
+
+      // Dev-only smoke test: once a device is selected on the main thread, request the
+      // first 18 bytes of the device descriptor to prove the cross-thread broker works.
+      if (msg.ok && import.meta.env.DEV) {
+        const id = usbDemoNextId++;
+        const action: UsbHostAction = {
+          kind: "controlIn",
+          id,
+          setup: {
+            bmRequestType: 0x80, // device-to-host | standard | device
+            bRequest: 0x06, // GET_DESCRIPTOR
+            wValue: 0x0100, // DEVICE descriptor (1) index 0
+            wIndex: 0x0000,
+            wLength: 18,
+          },
+        };
+        ctx.postMessage({ type: "usb.action", action } satisfies UsbActionMessage);
+      }
+      return;
+    }
+
+    if ((data as Partial<UsbCompletionMessage>).type === "usb.completion") {
+      const msg = data as UsbCompletionMessage;
+      if (import.meta.env.DEV) {
+        if (msg.completion.kind === "okIn") {
+          console.log("[io.worker] WebUSB completion okIn", msg.completion.id, Array.from(msg.completion.data));
+        } else {
+          console.log("[io.worker] WebUSB completion", msg.completion);
+        }
+      }
       return;
     }
 
