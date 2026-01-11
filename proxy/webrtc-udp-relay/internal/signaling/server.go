@@ -87,7 +87,7 @@ type Server struct {
 	MaxSignalingMessagesPerSecond int
 
 	mu             sync.Mutex
-	webrtcSessions []*webrtcpeer.Session
+	webrtcSessions map[*webrtcpeer.Session]struct{}
 	preSessions    []*relay.Session
 }
 
@@ -104,6 +104,8 @@ func NewServer(cfg Config) *Server {
 
 		MaxSignalingMessageBytes:      cfg.MaxSignalingMessageBytes,
 		MaxSignalingMessagesPerSecond: cfg.MaxSignalingMessagesPerSecond,
+
+		webrtcSessions: make(map[*webrtcpeer.Session]struct{}),
 	}
 }
 
@@ -142,7 +144,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) Close() {
 	s.mu.Lock()
-	webrtcSessions := s.webrtcSessions
+	webrtcSessions := make([]*webrtcpeer.Session, 0, len(s.webrtcSessions))
+	for sess := range s.webrtcSessions {
+		webrtcSessions = append(webrtcSessions, sess)
+	}
 	preSessions := s.preSessions
 	s.webrtcSessions = nil
 	s.preSessions = nil
@@ -154,6 +159,29 @@ func (s *Server) Close() {
 	for _, sess := range preSessions {
 		sess.Close()
 	}
+}
+
+func (s *Server) trackWebRTCSession(sess *webrtcpeer.Session) {
+	if sess == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.webrtcSessions == nil {
+		s.webrtcSessions = make(map[*webrtcpeer.Session]struct{})
+	}
+	s.webrtcSessions[sess] = struct{}{}
+	s.mu.Unlock()
+}
+
+func (s *Server) untrackWebRTCSession(sess *webrtcpeer.Session) {
+	if sess == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.webrtcSessions != nil {
+		delete(s.webrtcSessions, sess)
+	}
+	s.mu.Unlock()
 }
 
 func (s *Server) authorizer() Authorizer {
@@ -280,15 +308,22 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err := webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, cleanupRelaySession)
+	var sess *webrtcpeer.Session
+	var err error
+	cleanup := func() {
+		cleanupRelaySession()
+		if sess != nil {
+			s.untrackWebRTCSession(sess)
+		}
+	}
+
+	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, cleanup)
 	if err != nil {
 		cleanupRelaySession()
 		http.Error(w, "failed to create session", http.StatusInternalServerError)
 		return
 	}
-	s.mu.Lock()
-	s.webrtcSessions = append(s.webrtcSessions, sess)
-	s.mu.Unlock()
+	s.trackWebRTCSession(sess)
 
 	pc := sess.PeerConnection()
 
@@ -382,15 +417,21 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err := webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, cleanupRelaySession)
+	var sess *webrtcpeer.Session
+	cleanup := func() {
+		cleanupRelaySession()
+		if sess != nil {
+			s.untrackWebRTCSession(sess)
+		}
+	}
+
+	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, cleanup)
 	if err != nil {
 		cleanupRelaySession()
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	s.mu.Lock()
-	s.webrtcSessions = append(s.webrtcSessions, sess)
-	s.mu.Unlock()
+	s.trackWebRTCSession(sess)
 
 	pc := sess.PeerConnection()
 	if err := pc.SetRemoteDescription(offer); err != nil {
@@ -742,21 +783,26 @@ func (wss *wsSession) handleOffer(offerWire SDP) error {
 	}
 	wss.relaySession = relaySession
 
+	var sess *webrtcpeer.Session
 	cleanupRelaySession := func() {
 		if relaySession != nil {
 			relaySession.Close()
 		}
 		_ = wss.conn.Close()
 	}
+	cleanup := func() {
+		cleanupRelaySession()
+		if sess != nil {
+			wss.srv.untrackWebRTCSession(sess)
+		}
+	}
 
-	sess, err := webrtcpeer.NewSession(wss.srv.WebRTC, wss.srv.ICEServers, wss.srv.RelayConfig, wss.srv.Policy, relaySession, cleanupRelaySession)
+	sess, err = webrtcpeer.NewSession(wss.srv.WebRTC, wss.srv.ICEServers, wss.srv.RelayConfig, wss.srv.Policy, relaySession, cleanup)
 	if err != nil {
 		cleanupRelaySession()
 		return err
 	}
-	wss.srv.mu.Lock()
-	wss.srv.webrtcSessions = append(wss.srv.webrtcSessions, sess)
-	wss.srv.mu.Unlock()
+	wss.srv.trackWebRTCSession(sess)
 
 	wss.session = sess
 	wss.installPeerHandlers()
