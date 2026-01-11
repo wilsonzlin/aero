@@ -974,6 +974,48 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
           (unsigned long)expected_green);
     }
 
+    // RSSetState(NULL) should restore the default rasterizer state, where DepthClipEnable is TRUE.
+    // The primitive should be clipped again.
+    context->RSSetState(NULL);
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    context->Draw(3, 0);
+
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->Flush();
+
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(
+          &reporter, kTestName, "Map(staging) [depth clip NULL state]", hr, device.get());
+    }
+    map_rc = ValidateStagingMap("Map(staging) [depth clip NULL state]", map);
+    if (map_rc != 0) {
+      return map_rc;
+    }
+
+    const uint32_t center_null = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
+    if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_depth_clip_null_state.bmp");
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: depth-clip-NULL-state BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
+      }
+    }
+    context->Unmap(staging.get(), 0);
+
+    if ((center_null & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
+      return reporter.Fail(
+          "depth clip NULL state failed (expected clipped): center(%d,%d)=0x%08lX expected ~0x%08lX",
+          cx,
+          cy,
+          (unsigned long)center_null,
+          (unsigned long)expected_red);
+    }
+
     context->VSSetShader(vs.get(), NULL, 0);
   }
 
