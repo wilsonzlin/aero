@@ -33,7 +33,7 @@
       "name": "virtio-snd",
       "required": false,
       "expected_hardware_ids": [
-        "PCI\\\\VEN_1AF4&DEV_(1018|1059)"
+        "PCI\\\\VEN_1AF4&DEV_1059"
       ]
     }
   ]
