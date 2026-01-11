@@ -142,7 +142,7 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
   const wasmThreads = detectWasmThreads(crossOriginIsolated, sharedArrayBuffer);
 
   const webgpu = typeof navigator !== "undefined" && !!(navigator as Navigator & { gpu?: unknown }).gpu;
-  const webusb = typeof navigator !== "undefined" && typeof (navigator as Navigator & { usb?: unknown }).usb !== "undefined";
+  const webusb = typeof navigator !== "undefined" && "usb" in navigator;
   const webgl2 = detectWebGl2();
   const opfs =
     typeof navigator !== "undefined" &&

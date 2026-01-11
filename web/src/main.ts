@@ -34,6 +34,7 @@ import { JitWorkerClient } from "./workers/jit_worker_client";
 import { FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "./shared/frameProtocol";
 import { mountSettingsPanel } from "./ui/settings_panel";
 import { mountStatusPanel } from "./ui/status_panel";
+import { renderWebUsbPanel } from "./usb/webusb_panel";
 
 const configManager = new AeroConfigManager({ staticConfigUrl: "/aero.config.json" });
 void configManager.init();
@@ -251,6 +252,7 @@ function render(): void {
     renderMicrophonePanel(),
     renderWebHidPassthroughPanel(),
     renderInputPanel(),
+    renderWebUsbPanel(report),
     renderWorkersPanel(report),
     renderIpcDemoPanel(),
     renderMicrobenchPanel(),
