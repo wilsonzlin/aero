@@ -17,6 +17,10 @@ async function renderHash(page: any, opts: any): Promise<string> {
   }, opts);
 }
 
+function isWebGPURequired() {
+  return process.env.AERO_REQUIRE_WEBGPU === "1";
+}
+
 async function webGpuIsUsable(page: any): Promise<boolean> {
   await page.goto("/web/blank.html");
   return await page.evaluate(async () => {
@@ -69,7 +73,14 @@ async function webGpuIsUsable(page: any): Promise<boolean> {
 
 test.describe("gpu color policy", () => {
   test("webgpu and webgl2 match (sRGB + opaque) @webgpu", async ({ page }) => {
-    test.skip(!(await webGpuIsUsable(page)), "WebGPU is not available/usable in this Playwright environment.");
+    const usable = await webGpuIsUsable(page);
+    if (!usable) {
+      const message = "WebGPU is not available/usable in this Playwright environment.";
+      if (isWebGPURequired()) {
+        throw new Error(message);
+      }
+      test.skip(true, message);
+    }
 
     const common = { width: 128, height: 128, outputColorSpace: "srgb", alphaMode: "opaque" };
     const webgpu = await renderHash(page, { backend: "webgpu", ...common });
@@ -78,7 +89,14 @@ test.describe("gpu color policy", () => {
   });
 
   test("webgpu and webgl2 match (linear + opaque) @webgpu", async ({ page }) => {
-    test.skip(!(await webGpuIsUsable(page)), "WebGPU is not available/usable in this Playwright environment.");
+    const usable = await webGpuIsUsable(page);
+    if (!usable) {
+      const message = "WebGPU is not available/usable in this Playwright environment.";
+      if (isWebGPURequired()) {
+        throw new Error(message);
+      }
+      test.skip(true, message);
+    }
 
     const common = { width: 128, height: 128, outputColorSpace: "linear", alphaMode: "opaque" };
     const webgpu = await renderHash(page, { backend: "webgpu", ...common });
