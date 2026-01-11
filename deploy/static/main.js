@@ -111,57 +111,59 @@ try {
   const l2Path = sessionJson?.endpoints?.l2 ?? "/l2";
   const wsUrl = new URL(l2Path, `${wsProto}//${location.host}`);
   const wsEl = document.querySelector("#ws-l2");
-  if (!sessionOk) {
-    wsEl.textContent = "skipped (no session)";
-    wsEl.className = "bad";
-  } else {
-    // Prefer URL fragment params (`#l2Token=...`) over query params (`?l2Token=...`) so secrets
-    // don't end up in server logs by default.
-    const fragmentParams = new URLSearchParams(location.hash.slice(1));
-    const queryParams = new URLSearchParams(location.search);
-    const l2Token = fragmentParams.get("l2Token") ?? queryParams.get("l2Token");
-    const l2TokenTransportRaw = fragmentParams.get("l2TokenTransport") ?? queryParams.get("l2TokenTransport");
-    const l2TokenTransport =
-      l2TokenTransportRaw === "query" || l2TokenTransportRaw === "subprotocol" || l2TokenTransportRaw === "both"
-        ? l2TokenTransportRaw
-        : "subprotocol";
+  // `/l2` auth is deployment-dependent:
+  // - Canonical compose (`deploy/docker-compose.yml`) defaults to `AERO_L2_AUTH_MODE=none`, so
+  //   `/l2` should succeed even if `POST /session` failed.
+  // - If your deployment uses cookie auth (`AERO_L2_AUTH_MODE=cookie`), `POST /session` is still
+  //   required to mint the `aero_session` cookie.
+  const noSessionSuffix = sessionOk ? "" : " (no session)";
 
-    // Optional: allow the smoke test page to validate token-authenticated `/l2`
-    // deployments by visiting e.g.:
-    //   https://localhost/#l2Token=sekrit&l2TokenTransport=subprotocol
-    //
-    // If not set, the default compose stack still succeeds (no token required unless `/l2`
-    // is configured with token/JWT auth).
-    let protocols = "aero-l2-tunnel-v1";
-    if (l2Token) {
-      if (l2TokenTransport === "query" || l2TokenTransport === "both") {
-        wsUrl.searchParams.set("token", l2Token);
-      }
-      if (l2TokenTransport === "subprotocol" || l2TokenTransport === "both") {
-        protocols = ["aero-l2-tunnel-v1", `aero-l2-token.${l2Token}`];
-      }
+  // Prefer URL fragment params (`#l2Token=...`) over query params (`?l2Token=...`) so secrets
+  // don't end up in server logs by default.
+  const fragmentParams = new URLSearchParams(location.hash.slice(1));
+  const queryParams = new URLSearchParams(location.search);
+  const l2Token = fragmentParams.get("l2Token") ?? queryParams.get("l2Token");
+  const l2TokenTransportRaw = fragmentParams.get("l2TokenTransport") ?? queryParams.get("l2TokenTransport");
+  const l2TokenTransport =
+    l2TokenTransportRaw === "query" || l2TokenTransportRaw === "subprotocol" || l2TokenTransportRaw === "both"
+      ? l2TokenTransportRaw
+      : "subprotocol";
+
+  // Optional: allow the smoke test page to validate token-authenticated `/l2`
+  // deployments by visiting e.g.:
+  //   https://localhost/#l2Token=sekrit&l2TokenTransport=subprotocol
+  //
+  // If not set, the default compose stack still succeeds (no token required unless `/l2`
+  // is configured with token/JWT auth).
+  let protocols = "aero-l2-tunnel-v1";
+  if (l2Token) {
+    if (l2TokenTransport === "query" || l2TokenTransport === "both") {
+      wsUrl.searchParams.set("token", l2Token);
     }
-
-    const ws = new WebSocket(wsUrl.toString(), protocols);
-    const timeout = setTimeout(() => {
-      wsEl.textContent = "timeout";
-      wsEl.className = "bad";
-      ws.close();
-    }, 5000);
-
-    ws.onopen = () => {
-      clearTimeout(timeout);
-      wsEl.textContent = "ok";
-      wsEl.className = "ok";
-      ws.close();
-    };
-
-    ws.onerror = () => {
-      clearTimeout(timeout);
-      wsEl.textContent = "failed";
-      wsEl.className = "bad";
-    };
+    if (l2TokenTransport === "subprotocol" || l2TokenTransport === "both") {
+      protocols = ["aero-l2-tunnel-v1", `aero-l2-token.${l2Token}`];
+    }
   }
+
+  const ws = new WebSocket(wsUrl.toString(), protocols);
+  const timeout = setTimeout(() => {
+    wsEl.textContent = `timeout${noSessionSuffix}`;
+    wsEl.className = "bad";
+    ws.close();
+  }, 5000);
+
+  ws.onopen = () => {
+    clearTimeout(timeout);
+    wsEl.textContent = `ok${noSessionSuffix}`;
+    wsEl.className = "ok";
+    ws.close();
+  };
+
+  ws.onerror = () => {
+    clearTimeout(timeout);
+    wsEl.textContent = `failed${noSessionSuffix}`;
+    wsEl.className = "bad";
+  };
 } catch (err) {
   const el = document.querySelector("#ws-l2");
   el.textContent = "failed";
