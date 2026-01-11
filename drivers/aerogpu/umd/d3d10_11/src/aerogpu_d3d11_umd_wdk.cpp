@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <cstdio>
 #include <cmath>
 #include <cstdio>
@@ -915,19 +916,42 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       zero_out();
       static const D3D_FEATURE_LEVEL kLevels[] = {D3D_FEATURE_LEVEL_10_0};
 
-      // Win7 D3D11 runtime expects a "count + inline list" in practice, but be
-      // permissive to alternate layouts.
+      // Win7 D3D11 runtime generally expects "count + inline list", but some
+      // header/runtime combinations treat this as a {count, pointer} struct.
+      // Populate both layouts when we have enough space so we avoid mismatched
+      // interpretation (in particular on 64-bit where the pointer lives at a
+      // different offset than the inline list element).
+      struct FeatureLevelsCapsPtr {
+        UINT NumFeatureLevels;
+        const D3D_FEATURE_LEVEL* pFeatureLevels;
+      };
+
       if (size >= sizeof(UINT) + sizeof(D3D_FEATURE_LEVEL)) {
         auto* out_count = reinterpret_cast<UINT*>(data);
         *out_count = 1;
         auto* out_levels = reinterpret_cast<D3D_FEATURE_LEVEL*>(out_count + 1);
         out_levels[0] = kLevels[0];
+        constexpr size_t kInlineLevelsOffset = sizeof(UINT);
+        constexpr size_t kPtrOffset = offsetof(FeatureLevelsCapsPtr, pFeatureLevels);
+        if (size >= sizeof(FeatureLevelsCapsPtr) && kPtrOffset >= kInlineLevelsOffset + sizeof(D3D_FEATURE_LEVEL)) {
+          auto* out_ptr = reinterpret_cast<FeatureLevelsCapsPtr*>(data);
+          out_ptr->pFeatureLevels = kLevels;
+        }
         return S_OK;
       }
+
+      if (size >= sizeof(FeatureLevelsCapsPtr)) {
+        auto* out_ptr = reinterpret_cast<FeatureLevelsCapsPtr*>(data);
+        out_ptr->NumFeatureLevels = 1;
+        out_ptr->pFeatureLevels = kLevels;
+        return S_OK;
+      }
+
       if (size >= sizeof(D3D_FEATURE_LEVEL)) {
         *reinterpret_cast<D3D_FEATURE_LEVEL*>(data) = kLevels[0];
         return S_OK;
       }
+
       return E_INVALIDARG;
     }
 
