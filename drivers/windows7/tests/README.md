@@ -5,7 +5,7 @@ This directory contains a **basic, automatable functional test harness** for the
 Goals:
 - Run **end-to-end**, **repeatable** tests under **QEMU**.
 - Validate **virtio-blk** (disk I/O), **virtio-net** (DHCP + outbound TCP), **virtio-input** (HID enumeration), and
-  **virtio-snd** (audio endpoint enumeration + WASAPI render) without manual UI interaction.
+  **virtio-snd** (audio endpoint enumeration + basic playback) without manual UI interaction.
 - Produce logs over **COM1 serial** so the host can deterministically parse **PASS/FAIL**.
 - Keep the structure extensible (more tests later).
 
@@ -30,7 +30,8 @@ drivers/windows7/tests/
 - Runs a virtio-blk file I/O test (write/readback, sequential read, flush) on a **virtio-backed volume**.
 - Runs a virtio-net test (wait for DHCP, DNS resolve, HTTP GET).
 - Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
-- Runs a virtio-snd test (enumerate render endpoints via MMDevice API and start a short WASAPI render stream).
+- Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when enabled with `--test-snd`
+  (or `--require-snd`).
 - Logs to:
   - stdout
   - `C:\aero-virtio-selftest.log`
@@ -41,15 +42,18 @@ The selftest emits machine-parseable markers:
 ```
 AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS|...    # or SKIP if virtio-snd is disabled/absent
+# (either, depending on flags/device):
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|...
+# or:
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|...
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
 The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line.
 
-Note: The virtio-snd test is enabled by default and will FAIL if no virtio-snd render endpoint is present. If you need
-to keep older images passing until virtio-snd is provisioned, run the guest tool with `--disable-snd`.
+Note: The virtio-snd test emits `SKIP` by default unless enabled via `--test-snd` / `--require-snd`.
+When enabled, missing virtio-snd or playback failure causes the overall selftest to FAIL.
 
 ### Building (Windows)
 
@@ -99,19 +103,20 @@ For a standardized QEMU command line to perform an interactive Windows 7 install
 
 ---
 
-## Extensibility hooks (future tests)
+## Extensibility hooks
 
 The guest tool is structured so adding more tests is straightforward:
 
 ### virtio-snd
 - Enumerate audio render endpoints via MMDevice API and log them (friendly name + device ID).
-- Select the virtio-snd PortCls endpoint by friendly name substring and/or hardware ID.
-- Start a shared-mode WASAPI render stream and play a short deterministic tone (440Hz).
+- Select the virtio-snd endpoint by friendly name substring and/or hardware ID.
+- Start a shared-mode WASAPI render stream and play a short deterministic tone (440Hz), with a waveOut fallback.
+- Enabled via `--test-snd` / `--require-snd` (otherwise reported as `SKIP`).
 
 ### virtio-input
 - Enumerate HID devices via SetupAPI/HIDClass.
 - Validate virtio-input HID report descriptors correspond to separate keyboard and mouse devices.
 
 When adding tests:
-- Emit `AERO_VIRTIO_SELFTEST|TEST|<name>|PASS/FAIL|...` lines.
-- Keep each test independently pass/fail so the harness can report granular failures.
+- Emit `AERO_VIRTIO_SELFTEST|TEST|<name>|PASS/FAIL/SKIP|...` lines.
+- Keep each test independently pass/fail/skip so the harness can report granular failures.

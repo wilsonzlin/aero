@@ -48,9 +48,10 @@ struct Options {
   // This must be a directory on a virtio-backed volume (e.g. "D:\\aero-test\\").
   // If empty, the selftest will attempt to auto-detect a mounted virtio volume.
   std::wstring blk_root;
-  // Skip the virtio-snd test even if an audio device is present.
+  // Skip the virtio-snd test (always emits a SKIP marker).
   bool disable_snd = false;
-  // If set, missing virtio-snd causes the overall selftest to fail (instead of SKIP).
+  // Enable the virtio-snd test and treat virtio-snd as REQUIRED (missing device or playback
+  // failure => overall FAIL).
   bool require_snd = false;
 
   DWORD net_timeout_sec = 120;
@@ -435,6 +436,7 @@ static std::optional<std::wstring> GetDeviceInstanceIdString(HDEVINFO devinfo, S
 static bool IsVirtioSndPciHardwareId(const std::vector<std::wstring>& hwids) {
   for (const auto& id : hwids) {
     if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1059")) return true;
+    if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1018")) return true;
   }
   return false;
 }
@@ -1519,7 +1521,8 @@ static bool LooksLikeVirtioSndEndpoint(const std::wstring& friendly_name, const 
   for (const auto& m : match_names) {
     if (!m.empty() && ContainsInsensitive(friendly_name, m)) return true;
   }
-  if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059")) {
+  if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059") ||
+      ContainsInsensitive(instance_id, L"DEV_1018") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1018")) {
     return true;
   }
   if (IsVirtioSndPciHardwareId(hwids)) return true;
@@ -1748,7 +1751,8 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
       for (const auto& m : match_names) {
         if (!m.empty() && ContainsInsensitive(friendly, m)) score += 200;
       }
-      if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059")) {
+      if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059") ||
+          ContainsInsensitive(instance_id, L"DEV_1018") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1018")) {
         score += 150;
       }
       if (ContainsInsensitive(instance_id, L"VEN_1AF4") || ContainsInsensitive(instance_id, L"VIRTIO")) {
@@ -2116,7 +2120,8 @@ static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_
     if (inst_id.has_value()) {
       log.Logf("virtio-snd: waveOut[%u]=%s instance_id=%s", i, WideToUtf8(caps.szPname).c_str(),
                WideToUtf8(*inst_id).c_str());
-      if (ContainsInsensitive(*inst_id, L"DEV_1059") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1059")) {
+      if (ContainsInsensitive(*inst_id, L"DEV_1059") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1059") ||
+          ContainsInsensitive(*inst_id, L"DEV_1018") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1018")) {
         score += 500;
       }
       const auto hwids = GetHardwareIdsForInstanceId(*inst_id);
@@ -2226,7 +2231,8 @@ static void PrintUsage() {
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
       "  --disable-snd             Skip virtio-snd test (emit SKIP)\n"
-      "  --require-snd             Fail if virtio-snd is missing (default: SKIP)\n"
+      "  --test-snd                Run virtio-snd test (FAIL if missing/playback fails)\n"
+      "  --require-snd             Alias for --test-snd\n"
       "  --net-timeout-sec <sec>   Wait time for DHCP/link\n"
       "  --io-size-mib <mib>       virtio-blk test file size\n"
       "  --io-chunk-kib <kib>      virtio-blk chunk size\n"
@@ -2289,7 +2295,7 @@ int wmain(int argc, wchar_t** argv) {
       opt.log_file = v;
     } else if (arg == L"--disable-snd") {
       opt.disable_snd = true;
-    } else if (arg == L"--require-snd") {
+    } else if (arg == L"--test-snd" || arg == L"--require-snd") {
       opt.require_snd = true;
     } else if (arg == L"--net-timeout-sec") {
       const wchar_t* v = next();
@@ -2323,7 +2329,7 @@ int wmain(int argc, wchar_t** argv) {
   }
 
   if (opt.disable_snd && opt.require_snd) {
-    printf("--disable-snd and --require-snd cannot both be set\n");
+    printf("--disable-snd and --test-snd/--require-snd cannot both be set\n");
     PrintUsage();
     return 2;
   }
@@ -2352,19 +2358,16 @@ int wmain(int argc, wchar_t** argv) {
 
   if (opt.disable_snd) {
     log.LogLine("virtio-snd: disabled by --disable-snd");
-    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled");
+  } else if (!opt.require_snd) {
+    log.LogLine("virtio-snd: skipped (enable with --test-snd)");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set");
   } else {
     const auto snd_pci = DetectVirtioSndPciDevices(log);
     if (snd_pci.empty()) {
-      log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 device not detected");
-      if (opt.require_snd) {
-        log.LogLine("virtio-snd: --require-snd set; failing");
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL");
-        all_ok = false;
-      } else {
-        log.LogLine("virtio-snd: skipping (use --require-snd to require device)");
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
-      }
+      log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 or PCI\\VEN_1AF4&DEV_1018 device not detected");
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing");
+      all_ok = false;
     } else {
       std::vector<std::wstring> match_names;
       for (const auto& d : snd_pci) {
