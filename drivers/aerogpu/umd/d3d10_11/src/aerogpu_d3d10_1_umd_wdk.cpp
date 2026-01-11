@@ -255,19 +255,14 @@ struct AeroGpuResource {
   uint32_t dxgi_format = 0;
   uint32_t row_pitch_bytes = 0;
 
-  // Map state (for UP resources backed by `storage`).
-  bool mapped = false;
-  uint64_t mapped_offset = 0;
-  uint64_t mapped_size = 0;
-
   std::vector<uint8_t> storage;
 
-  // Map/unmap tracking.
+  // Map state (for UP resources backed by `storage`).
   bool mapped = false;
   bool mapped_write = false;
   uint32_t mapped_subresource = 0;
-  uint64_t mapped_offset_bytes = 0;
-  uint64_t mapped_size_bytes = 0;
+  uint64_t mapped_offset = 0;
+  uint64_t mapped_size = 0;
 };
 
 struct AeroGpuShader {
@@ -1080,8 +1075,8 @@ HRESULT map_resource_locked(AeroGpuResource* res,
   res->mapped = true;
   res->mapped_write = want_write;
   res->mapped_subresource = subresource;
-  res->mapped_offset_bytes = 0;
-  res->mapped_size_bytes = total;
+  res->mapped_offset = 0;
+  res->mapped_size = total;
   return S_OK;
 }
 
@@ -1096,19 +1091,15 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
     return;
   }
 
-  if (res->mapped_write && res->handle != kInvalidHandle) {
-    auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-    dirty->resource_handle = res->handle;
-    dirty->reserved0 = 0;
-    dirty->offset_bytes = res->mapped_offset_bytes;
-    dirty->size_bytes = res->mapped_size_bytes;
+  if (res->mapped_write) {
+    emit_upload_resource_locked(dev, res, res->mapped_offset, res->mapped_size);
   }
 
   res->mapped = false;
   res->mapped_write = false;
   res->mapped_subresource = 0;
-  res->mapped_offset_bytes = 0;
-  res->mapped_size_bytes = 0;
+  res->mapped_offset = 0;
+  res->mapped_size = 0;
 }
 
 HRESULT map_dynamic_buffer_locked(AeroGpuResource* res, bool discard, void** ppData) {
@@ -1140,8 +1131,8 @@ HRESULT map_dynamic_buffer_locked(AeroGpuResource* res, bool discard, void** ppD
   res->mapped = true;
   res->mapped_write = true;
   res->mapped_subresource = 0;
-  res->mapped_offset_bytes = 0;
-  res->mapped_size_bytes = total;
+  res->mapped_offset = 0;
+  res->mapped_size = total;
   *ppData = res->storage.data();
   return S_OK;
 }
@@ -1208,7 +1199,7 @@ HRESULT AEROGPU_APIENTRY DynamicIABufferMapDiscard(D3D10DDI_HDEVICE hDevice, D3D
   if (!dev || !res) {
     return E_INVALIDARG;
   }
-  if ((res->bind_flags & (D3D10_BIND_VERTEX_BUFFER | D3D10_BIND_INDEX_BUFFER)) == 0) {
+  if ((res->bind_flags & (kD3D10BindVertexBuffer | kD3D10BindIndexBuffer)) == 0) {
     return E_INVALIDARG;
   }
 
@@ -1229,7 +1220,7 @@ HRESULT AEROGPU_APIENTRY DynamicIABufferMapNoOverwrite(D3D10DDI_HDEVICE hDevice,
   if (!dev || !res) {
     return E_INVALIDARG;
   }
-  if ((res->bind_flags & (D3D10_BIND_VERTEX_BUFFER | D3D10_BIND_INDEX_BUFFER)) == 0) {
+  if ((res->bind_flags & (kD3D10BindVertexBuffer | kD3D10BindIndexBuffer)) == 0) {
     return E_INVALIDARG;
   }
 
@@ -1266,7 +1257,7 @@ HRESULT AEROGPU_APIENTRY DynamicConstantBufferMapDiscard(D3D10DDI_HDEVICE hDevic
   if (!dev || !res) {
     return E_INVALIDARG;
   }
-  if ((res->bind_flags & D3D10_BIND_CONSTANT_BUFFER) == 0) {
+  if ((res->bind_flags & kD3D10BindConstantBuffer) == 0) {
     return E_INVALIDARG;
   }
 
@@ -1317,7 +1308,7 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
     if (subresource != 0) {
       return E_INVALIDARG;
     }
-    if (res->bind_flags & (D3D10_BIND_VERTEX_BUFFER | D3D10_BIND_INDEX_BUFFER)) {
+    if (res->bind_flags & (kD3D10BindVertexBuffer | kD3D10BindIndexBuffer)) {
       void* data = nullptr;
       HRESULT hr = map_dynamic_buffer_locked(res, /*discard=*/true, &data);
       if (FAILED(hr)) {
@@ -1328,7 +1319,7 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
       pMapped->DepthPitch = 0;
       return S_OK;
     }
-    if (res->bind_flags & D3D10_BIND_CONSTANT_BUFFER) {
+    if (res->bind_flags & kD3D10BindConstantBuffer) {
       void* data = nullptr;
       HRESULT hr = map_dynamic_buffer_locked(res, /*discard=*/true, &data);
       if (FAILED(hr)) {
@@ -1343,7 +1334,7 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
     if (subresource != 0) {
       return E_INVALIDARG;
     }
-    if (res->bind_flags & (D3D10_BIND_VERTEX_BUFFER | D3D10_BIND_INDEX_BUFFER)) {
+    if (res->bind_flags & (kD3D10BindVertexBuffer | kD3D10BindIndexBuffer)) {
       void* data = nullptr;
       HRESULT hr = map_dynamic_buffer_locked(res, /*discard=*/false, &data);
       if (FAILED(hr)) {
@@ -1370,22 +1361,6 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
     return map_resource_locked(res, subresource, map_type_u, pMapped);
   }
   return E_NOTIMPL;
-}
-
-void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, UINT subresource) {
-  AEROGPU_D3D10_11_LOG("pfnUnmap subresource=%u", static_cast<unsigned>(subresource));
-
-  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
-    return;
-  }
-  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
-  if (!dev || !res) {
-    return;
-  }
-
-  std::lock_guard<std::mutex> lock(dev->mutex);
-  unmap_resource_locked(dev, res, subresource);
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateVertexShaderSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATEVERTEXSHADER*) {
@@ -2066,6 +2041,8 @@ void AEROGPU_APIENTRY Flush(D3D10DDI_HDEVICE hDevice) {
 void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
                           const D3D10DDIARG_MAP* pMap,
                           D3D10DDI_MAPPED_SUBRESOURCE* pOut) {
+  AEROGPU_D3D10_11_LOG("pfnMap(D3D10DDIARG_MAP) subresource=%u",
+                       static_cast<unsigned>(pMap ? pMap->Subresource : 0));
   if (!hDevice.pDrvPrivate || !pMap || !pOut) {
     return;
   }
@@ -2105,6 +2082,9 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
   }
 
   res->mapped = true;
+  // D3D10.x uses this map path primarily for CPU write uploads. Treat it as a write mapping.
+  res->mapped_write = true;
+  res->mapped_subresource = pMap->Subresource;
   res->mapped_offset = 0;
   res->mapped_size = res->storage.size();
 
@@ -2114,6 +2094,7 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, UINT subresource) {
+  AEROGPU_D3D10_11_LOG("pfnUnmap subresource=%u", static_cast<unsigned>(subresource));
   if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
     return;
   }
@@ -2139,9 +2120,11 @@ void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResour
   }
 
   res->mapped = false;
-  if (!res->storage.empty()) {
+  if (res->mapped_write && !res->storage.empty()) {
     emit_upload_resource_locked(dev, res, res->mapped_offset, res->mapped_size);
   }
+  res->mapped_write = false;
+  res->mapped_subresource = 0;
   res->mapped_offset = 0;
   res->mapped_size = 0;
 }
