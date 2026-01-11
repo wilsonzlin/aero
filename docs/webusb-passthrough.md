@@ -25,6 +25,7 @@ Implementation references (current repo):
 - TS canonical wire types (`SetupPacket`/`UsbHostAction`/`UsbHostCompletion`): `web/src/usb/usb_passthrough_types.ts`
 - TS WebUSB backend/executor (`WebUsbBackend`): `web/src/usb/webusb_backend.ts` (+ `web/src/usb/webusb_executor.ts`)
 - TS main-thread broker for workers (optional): `web/src/usb/usb_broker.ts` (+ `web/src/usb/usb_proxy_protocol.ts`, `web/src/usb/usb_proxy_ring.ts`)
+- TS worker-side completion ring dispatcher (completion-ring fan-out when multiple runtimes subscribe): `web/src/usb/usb_proxy_ring_dispatcher.ts`
 - TS worker-side passthrough runtime (action/completion pump): `web/src/usb/webusb_passthrough_runtime.ts`
 - Guest-visible worker wiring (UHCI PCI device + WebUSB hotplug + passthrough runtime): `web/src/workers/io.worker.ts`
 - TS worker-side demo runtime (drains `UsbPassthroughDemo` actions, pushes completions, defines `usb.demo.run`, emits `usb.demoResult`): `web/src/usb/usb_passthrough_demo_runtime.ts`
