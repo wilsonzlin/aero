@@ -1287,6 +1287,20 @@ async fn cookie_auth_requires_valid_session_cookie() {
         .expect_err("expected first invalid cookie to poison the request");
     assert_http_status(err, StatusCode::UNAUTHORIZED);
 
+    // Empty cookie values are treated as missing but still \"win\" over later values (matches gateway
+    // `if (!value) return null` behavior).
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .append("cookie", HeaderValue::from_static("aero_session="));
+    req.headers_mut().append(
+        "cookie",
+        HeaderValue::from_str(&format!("aero_session={token}")).unwrap(),
+    );
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected empty cookie to poison the request");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
     // Expired cookies should be rejected.
     let expired = exp.saturating_sub(120);
     let token = mint_session_token("sekrit", "sid", expired);

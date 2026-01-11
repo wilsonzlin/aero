@@ -1295,10 +1295,12 @@ fn token_present_in_subprotocol(headers: &HeaderMap) -> bool {
 }
 
 fn session_cookie_present(headers: &HeaderMap) -> bool {
-    headers
+    let value = headers
         .get_all(header::COOKIE)
         .iter()
-        .any(|cookie| gateway_session::extract_session_cookie_value(cookie).is_some())
+        .find_map(gateway_session::extract_session_cookie_value);
+    // Match gateway semantics: an empty cookie value is treated as missing (`if (!value) return null`).
+    matches!(value.as_deref(), Some(v) if !v.is_empty())
 }
 
 fn query_param(uri: &axum::http::Uri, key: &str) -> Option<String> {
