@@ -87,7 +87,7 @@ export class WorkerCoordinator {
   private wasmStatus: Partial<Record<WorkerRole, WorkerWasmStatus>> = {};
 
   // Optional SharedArrayBuffer-backed microphone ring buffer attachment. This
-  // is set by the UI and forwarded to the I/O worker when available.
+  // is set by the UI and forwarded to workers that consume mic input.
   // IMPORTANT: `micSampleRate` is the *actual* capture sample rate
   // (AudioContext.sampleRate), not the requested rate.
   private micRingBuffer: SharedArrayBuffer | null = null;
@@ -343,8 +343,9 @@ export class WorkerCoordinator {
     this.micRingBuffer = ringBuffer;
     this.micSampleRate = (sampleRate ?? 0) | 0;
 
-    const info = this.workers.io;
-    if (info) {
+    for (const role of ["io", "cpu"] as const) {
+      const info = this.workers[role];
+      if (!info) continue;
       info.worker.postMessage({
         type: "setMicrophoneRingBuffer",
         ringBuffer,
@@ -510,7 +511,7 @@ export class WorkerCoordinator {
       info.status = { state: "ready" };
       setReadyFlag(shared.status, role, true);
 
-      if (role === "io" && this.micRingBuffer) {
+      if ((role === "io" || role === "cpu") && this.micRingBuffer) {
         info.worker.postMessage({
           type: "setMicrophoneRingBuffer",
           ringBuffer: this.micRingBuffer,

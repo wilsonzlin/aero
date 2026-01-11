@@ -6,7 +6,8 @@ import { GpuRuntime } from "./gpu/gpuRuntime";
 import { fnv1a32Hex } from "./utils/fnv1a";
 import { perf } from "./perf/perf";
 import { createAdaptiveRingBufferTarget, createAudioOutput, startAudioPerfSampling } from "./platform/audio";
-import { MicCapture } from "./audio/mic_capture";
+import { MicCapture, micRingBufferReadInto, type MicRingBuffer } from "./audio/mic_capture";
+import { startSyntheticMic } from "./audio/synthetic_mic";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { importFileToOpfs, openFileHandle, removeOpfsEntry } from "./platform/opfs";
 import { ensurePersistentStorage, getPersistentStorageInfo, getStorageEstimate } from "./platform/storage_quota";
@@ -1416,6 +1417,9 @@ function renderAudioPanel(): HTMLElement {
   let wasmTone: { free(): void } | null = null;
   let stopPerfSampling: (() => void) | null = null;
 
+  let loopbackTimer: number | null = null;
+  let syntheticMic: { stop(): void } | null = null;
+
   function stopTone() {
     toneGeneration += 1;
     if (toneTimer !== null) {
@@ -1434,6 +1438,23 @@ function renderAudioPanel(): HTMLElement {
       (wasmBridge as { free(): void }).free();
       wasmBridge = null;
     }
+  }
+
+  function stopLoopback(): void {
+    if (loopbackTimer !== null) {
+      window.clearInterval(loopbackTimer);
+      loopbackTimer = null;
+    }
+    syntheticMic?.stop();
+    syntheticMic = null;
+    // Restore the currently-selected real microphone attachment (if any) so
+    // the microphone panel remains functional after toggling loopback.
+    if (micAttachment) {
+      workerCoordinator.setMicrophoneRingBuffer(micAttachment.ringBuffer, micAttachment.sampleRate);
+    } else {
+      workerCoordinator.setMicrophoneRingBuffer(null, 0);
+    }
+    workerCoordinator.setAudioOutputRingBuffer(null, 0, 0, 0);
   }
 
   async function startTone(output: Exclude<Awaited<ReturnType<typeof createAudioOutput>>, { enabled: false }>) {
@@ -1521,6 +1542,7 @@ function renderAudioPanel(): HTMLElement {
     text: "Init audio output (test tone)",
     onclick: async () => {
       status.textContent = "";
+      stopLoopback();
       const output = await createAudioOutput({ sampleRate: 48_000, latencyHint: "interactive" });
       // Expose for Playwright smoke tests.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1551,6 +1573,7 @@ function renderAudioPanel(): HTMLElement {
     onclick: async () => {
       status.textContent = "";
       stopTone();
+      stopLoopback();
 
       try {
         workerCoordinator.start(configManager.getState().effective);
@@ -1617,11 +1640,120 @@ function renderAudioPanel(): HTMLElement {
     },
   });
 
+  const loopbackButton = el("button", {
+    id: "init-audio-loopback-synthetic",
+    text: "Init audio loopback (synthetic mic)",
+    onclick: async () => {
+      status.textContent = "";
+      stopTone();
+      stopLoopback();
+
+      const output = await createAudioOutput({
+        sampleRate: 48_000,
+        latencyHint: "interactive",
+        ringBufferFrames: 16_384, // ~340ms @ 48k; target buffering stays ~200ms.
+      });
+      // Expose for Playwright.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroAudioOutputLoopback = output;
+
+      if (!output.enabled) {
+        status.textContent = output.message;
+        return;
+      }
+
+      // Start the synthetic microphone at the *actual* AudioContext rate so we
+      // don't slowly drift and underrun if the browser ignores our requested
+      // 48kHz.
+      const mic = startSyntheticMic({
+        sampleRate: output.context.sampleRate,
+        bufferMs: 250,
+        freqHz: 440,
+        gain: 0.1,
+      });
+      syntheticMic = mic;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroSyntheticMic = mic;
+
+      // Prefill ~200ms of silence so the AudioWorklet doesn't count underruns
+      // while the workers spin up.
+      const sr = output.context.sampleRate;
+      const prefillFrames = Math.floor(sr / 5);
+      output.writeInterleaved(new Float32Array(prefillFrames * output.ringBuffer.channelCount), sr);
+
+      // Default to the worker-based loopback path; fall back to a main-thread
+      // pump if the worker harness cannot start (e.g. shared WebAssembly.Memory
+      // unsupported).
+      let backend: "worker" | "main" = "worker";
+      let workerError: string | null = null;
+      try {
+        const base = configManager.getState().effective;
+        // This debug path does not need a full guest RAM allocation; keep it
+        // small so Playwright runs don't reserve hundreds of MiB per page.
+        workerCoordinator.start({ ...base, enableWorkers: true, guestMemoryMiB: Math.min(base.guestMemoryMiB, 64) });
+
+        workerCoordinator.setMicrophoneRingBuffer(mic.ringBuffer, mic.sampleRate);
+        workerCoordinator.setAudioOutputRingBuffer(
+          output.ringBuffer.buffer,
+          sr,
+          output.ringBuffer.channelCount,
+          output.ringBuffer.capacityFrames,
+        );
+      } catch (err) {
+        backend = "main";
+        workerError = err instanceof Error ? err.message : String(err);
+
+        const header = new Uint32Array(mic.ringBuffer, 0, 4);
+        const capacity = header[3] >>> 0;
+        const data = new Float32Array(mic.ringBuffer, 16, capacity);
+        const micRb: MicRingBuffer = { sab: mic.ringBuffer, header, data, capacity };
+
+        let tmpMono = new Float32Array(256);
+        let tmpInterleaved = new Float32Array(256 * output.ringBuffer.channelCount);
+
+        loopbackTimer = window.setInterval(() => {
+          const target = Math.floor(output.context.sampleRate / 5);
+          const level = output.getBufferLevelFrames();
+          let need = Math.max(0, target - level);
+          if (need === 0) return;
+
+          while (need > 0) {
+            const chunk = Math.min(need, 256);
+            if (tmpMono.length < chunk) tmpMono = new Float32Array(chunk);
+            const read = micRingBufferReadInto(micRb, tmpMono.subarray(0, chunk));
+            if (read === 0) break;
+
+            const cc = output.ringBuffer.channelCount;
+            const outSamples = read * cc;
+            if (tmpInterleaved.length < outSamples) tmpInterleaved = new Float32Array(outSamples);
+            for (let i = 0; i < read; i++) {
+              const s = tmpMono[i];
+              const base = i * cc;
+              for (let c = 0; c < cc; c++) tmpInterleaved[base + c] = s;
+            }
+
+            const written = output.writeInterleaved(tmpInterleaved.subarray(0, outSamples), mic.sampleRate);
+            if (written === 0) break;
+            need -= written;
+          }
+        }, 25);
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroAudioLoopbackBackend = backend;
+
+      await output.resume();
+      status.textContent = workerError
+        ? `Audio loopback initialized (backend=${backend}). Worker init failed: ${workerError}`
+        : `Audio loopback initialized (backend=${backend}).`;
+    },
+  });
+
   return el(
     "div",
     { class: "panel" },
     el("h2", { text: "Audio" }),
-    el("div", { class: "row" }, button, workerButton),
+    el("div", { class: "row" }, button, workerButton, loopbackButton),
     status,
   );
 }

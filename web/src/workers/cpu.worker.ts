@@ -64,6 +64,24 @@ let perfInstructions = 0n;
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
+type SetMicrophoneRingBufferMessage = {
+  type: "setMicrophoneRingBuffer";
+  ringBuffer: SharedArrayBuffer | null;
+  sampleRate?: number;
+};
+
+type MicRingBufferView = {
+  sab: SharedArrayBuffer;
+  header: Uint32Array;
+  data: Float32Array;
+  capacity: number;
+  sampleRate: number;
+};
+
+let micRingBuffer: MicRingBufferView | null = null;
+let micScratch = new Float32Array();
+let loopbackScratch = new Float32Array();
+
 let wasmApi: WasmApi | null = null;
 
 // Demo framebuffer region inside shared guest memory. The worker drives a tiny JS→WASM→SAB
@@ -81,12 +99,76 @@ let sineTone: { write: (...args: unknown[]) => number; free?: () => void } | nul
 
 let nextAudioFillDeadlineMs = 0;
 
+const MIC_HEADER_U32_LEN = 4;
+const MIC_HEADER_BYTES = MIC_HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
+const MIC_WRITE_POS_INDEX = 0;
+const MIC_READ_POS_INDEX = 1;
+const MIC_DROPPED_SAMPLES_INDEX = 2;
+const MIC_CAPACITY_SAMPLES_INDEX = 3;
+
 const AUDIO_HEADER_U32_LEN = 4;
 const AUDIO_HEADER_BYTES = AUDIO_HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
 const AUDIO_READ_FRAME_INDEX = 0;
 const AUDIO_WRITE_FRAME_INDEX = 1;
 const AUDIO_UNDERRUN_COUNT_INDEX = 2;
 const AUDIO_OVERRUN_COUNT_INDEX = 3;
+
+function micSamplesAvailable(readPos: number, writePos: number): number {
+  return (writePos - readPos) >>> 0;
+}
+
+function micSamplesAvailableClamped(readPos: number, writePos: number, capacitySamples: number): number {
+  return Math.min(micSamplesAvailable(readPos, writePos), capacitySamples >>> 0);
+}
+
+function micRingBufferReadInto(rb: MicRingBufferView, out: Float32Array): number {
+  const readPos = Atomics.load(rb.header, MIC_READ_POS_INDEX) >>> 0;
+  const writePos = Atomics.load(rb.header, MIC_WRITE_POS_INDEX) >>> 0;
+  const available = micSamplesAvailableClamped(readPos, writePos, rb.capacity);
+  const toRead = Math.min(out.length, available);
+  if (toRead === 0) return 0;
+
+  const start = readPos % rb.capacity;
+  const firstPart = Math.min(toRead, rb.capacity - start);
+  out.set(rb.data.subarray(start, start + firstPart), 0);
+  const remaining = toRead - firstPart;
+  if (remaining) {
+    out.set(rb.data.subarray(0, remaining), firstPart);
+  }
+
+  Atomics.store(rb.header, MIC_READ_POS_INDEX, (readPos + toRead) >>> 0);
+  return toRead;
+}
+
+function attachMicrophoneRingBuffer(msg: SetMicrophoneRingBufferMessage): void {
+  const ringBuffer = msg.ringBuffer;
+  if (ringBuffer !== null) {
+    const Sab = globalThis.SharedArrayBuffer;
+    if (typeof Sab === "undefined") {
+      throw new Error("SharedArrayBuffer is unavailable; microphone capture requires crossOriginIsolated.");
+    }
+    if (!(ringBuffer instanceof Sab)) {
+      throw new Error("setMicrophoneRingBuffer expects a SharedArrayBuffer or null.");
+    }
+  }
+
+  micRingBuffer = null;
+  if (!ringBuffer) return;
+
+  const header = new Uint32Array(ringBuffer, 0, MIC_HEADER_U32_LEN);
+  const capacity = header[MIC_CAPACITY_SAMPLES_INDEX] >>> 0;
+  if (capacity === 0) {
+    throw new Error("mic ring buffer capacity must be non-zero");
+  }
+
+  const requiredBytes = MIC_HEADER_BYTES + capacity * Float32Array.BYTES_PER_ELEMENT;
+  if (ringBuffer.byteLength < requiredBytes) {
+    throw new Error(`mic ring buffer is too small: need ${requiredBytes} bytes, got ${ringBuffer.byteLength} bytes`);
+  }
+
+  const data = new Float32Array(ringBuffer, MIC_HEADER_BYTES, capacity);
+  micRingBuffer = { sab: ringBuffer, header, data, capacity, sampleRate: (msg.sampleRate ?? 0) | 0 };
+}
 
 function audioFramesAvailable(readFrameIndex: number, writeFrameIndex: number): number {
   return (writeFrameIndex - readFrameIndex) >>> 0;
@@ -276,6 +358,50 @@ function attachAudioRingBuffer(msg: SetAudioRingBufferMessage): void {
 
   maybeInitAudioOutput();
 }
+
+function pumpMicLoopback(maxWriteFrames: number): number {
+  const mic = micRingBuffer;
+  const bridge = workletBridge as { write_f32_interleaved?: (samples: Float32Array) => number } | null;
+  if (!mic || !bridge || typeof bridge.write_f32_interleaved !== "function") return 0;
+
+  const cc = audioChannelCount;
+  if (cc <= 0) return 0;
+
+  const gain = 1.0;
+  const maxChunkFrames = 256;
+
+  let remaining = Math.max(0, maxWriteFrames | 0);
+  let totalWritten = 0;
+
+  while (remaining > 0) {
+    const frames = Math.min(remaining, maxChunkFrames);
+    if (micScratch.length < frames) micScratch = new Float32Array(frames);
+
+    const read = micRingBufferReadInto(mic, micScratch.subarray(0, frames));
+    if (read === 0) break;
+
+    const outSamples = read * cc;
+    if (loopbackScratch.length < outSamples) loopbackScratch = new Float32Array(outSamples);
+
+    if (cc === 1) {
+      for (let i = 0; i < read; i++) loopbackScratch[i] = micScratch[i] * gain;
+    } else {
+      for (let i = 0; i < read; i++) {
+        const s = micScratch[i] * gain;
+        const base = i * cc;
+        for (let c = 0; c < cc; c++) loopbackScratch[base + c] = s;
+      }
+    }
+
+    const written = bridge.write_f32_interleaved(loopbackScratch.subarray(0, outSamples)) | 0;
+    if (written === 0) break;
+    totalWritten += written;
+    remaining -= written;
+  }
+
+  return totalWritten;
+}
+
 let ioCmdRing: IpcRingBuffer | null = null;
 let ioEvtRing: IpcRingBuffer | null = null;
 
@@ -284,11 +410,18 @@ let diskDemoResponses = 0;
 let nextIoIpcId = 1;
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
-  const msg = ev.data as Partial<WorkerInitMessage | ConfigUpdateMessage | SetAudioRingBufferMessage>;
+  const msg = ev.data as Partial<
+    WorkerInitMessage | ConfigUpdateMessage | SetAudioRingBufferMessage | SetMicrophoneRingBufferMessage
+  >;
   if (msg?.kind === "config.update") {
     currentConfig = (msg as ConfigUpdateMessage).config;
     currentConfigVersion = (msg as ConfigUpdateMessage).version;
     ctx.postMessage({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
+    return;
+  }
+
+  if ((msg as Partial<SetMicrophoneRingBufferMessage>)?.type === "setMicrophoneRingBuffer") {
+    attachMicrophoneRingBuffer(msg as SetMicrophoneRingBufferMessage);
     return;
   }
 
@@ -500,7 +633,7 @@ async function runLoop(): Promise<void> {
     if (running) {
       const now = performance.now();
 
-      if (workletBridge && sineTone && audioDstSampleRate > 0 && audioCapacityFrames > 0) {
+      if (workletBridge && audioDstSampleRate > 0 && audioCapacityFrames > 0) {
         if (nextAudioFillDeadlineMs === 0) nextAudioFillDeadlineMs = now;
         if (now >= nextAudioFillDeadlineMs) {
           let level = 0;
@@ -520,7 +653,11 @@ async function runLoop(): Promise<void> {
           if (need > 0) {
             const maxWriteFrames = Math.min(need, Math.min(targetFrames, Math.floor(audioDstSampleRate / 10))); // cap to ~100ms
             if (maxWriteFrames > 0) {
-              sineTone.write(workletBridge, maxWriteFrames, 440, audioDstSampleRate, 0.1);
+              if (micRingBuffer) {
+                pumpMicLoopback(maxWriteFrames);
+              } else {
+                sineTone?.write(workletBridge, maxWriteFrames, 440, audioDstSampleRate, 0.1);
+              }
             }
           }
 
@@ -598,7 +735,7 @@ async function runLoop(): Promise<void> {
     }
 
     const now = performance.now();
-    const nextAudioMs = workletBridge && sineTone ? nextAudioFillDeadlineMs : Number.POSITIVE_INFINITY;
+    const nextAudioMs = workletBridge ? nextAudioFillDeadlineMs : Number.POSITIVE_INFINITY;
     const until = Math.min(nextHeartbeatMs, nextFrameMs, nextModeSwitchMs, nextAudioMs) - now;
     await commandRing.waitForData(Math.max(0, Math.min(heartbeatIntervalMs, until)));
   }
