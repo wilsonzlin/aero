@@ -39,7 +39,7 @@
     <ClCompile Include="src\virtio_input.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\virtio_pci_interrupts.c">
+    <ClCompile Include="..\virtio\kmdf\virtio_pci_interrupts.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\virtio_statusq.c">

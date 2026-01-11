@@ -11,7 +11,7 @@ SOURCES= \
     src\hid_translate.c \
     src\virtio_input.c \
     src\virtio_statusq.c \
-    src\virtio_pci_interrupts.c \
+    ..\virtio\kmdf\virtio_pci_interrupts.c \
     ..\..\win7\virtio\virtio-core\src\virtio_pci_caps.c \
     ..\..\win7\virtio\virtio-core\src\virtio_pci_modern.c \
     src\log.c \

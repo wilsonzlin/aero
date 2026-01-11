@@ -36,6 +36,44 @@ NTSTATUS EvtDevicePrepareHardware(
 
 You must locate interrupt resources in the translated list, determine whether you got MSI-X (message) or INTx (line), and capture the MSI-X message count.
 
+### Canonical helper (recommended)
+
+Aero’s Windows virtio drivers use a shared helper that implements the patterns in this
+document:
+
+* `drivers/windows/virtio/kmdf/virtio_pci_interrupts.{c,h}`
+
+Key entry points:
+
+* `VirtioPciInterruptsPrepareHardware(...)` — enumerates resources and creates the KMDF `WDFINTERRUPT` objects (MSI-X or INTx).
+* `VirtioPciInterruptsProgramMsixVectors(...)` — programs `common_cfg.msix_config` / `queue_msix_vector` using the mapping chosen at prepare time.
+* `VirtioPciInterruptsQuiesce(...)` / `VirtioPciInterruptsResume(...)` — implements the MSI-X reset/quiesce sequencing described in section 4.1.
+
+Example usage (simplified):
+
+```c
+// EvtDevicePrepareHardware
+status = VirtioPciInterruptsPrepareHardware(
+    Device,
+    &ctx->Interrupts,
+    ResourcesRaw,
+    ResourcesTranslated,
+    ctx->NumQueues,
+    ctx->Pci.IsrStatus,
+    ctx->Pci.CommonCfgLock, // serializes queue_select sequences
+    VirtioConfigChanged,
+    VirtioDrainQueue,
+    ctx);
+
+// EvtDeviceD0Entry (after each virtio reset)
+status = VirtioPciInterruptsProgramMsixVectors(&ctx->Interrupts, ctx->Pci.CommonCfg);
+
+// Reset/reconfigure path (PASSIVE_LEVEL)
+status = VirtioPciInterruptsQuiesce(&ctx->Interrupts, ctx->Pci.CommonCfg);
+// ... reset device + re-init queues ...
+status = VirtioPciInterruptsResume(&ctx->Interrupts, ctx->Pci.CommonCfg);
+```
+
 ### Step-by-step: find `CmResourceTypeInterrupt`
 
 1. Enumerate the **translated** resource list with `WdfCmResourceListGetCount/Descriptor`.
@@ -535,7 +573,7 @@ At PASSIVE_LEVEL (e.g. device reset / D0Exit):
 
 Concrete code implementing this model lives in:
 
-* `drivers/windows/virtio_pci_modern/virtio_pci_modern_interrupts.c`
+* `drivers/windows/virtio/kmdf/virtio_pci_interrupts.c` (`VirtioPciInterruptsQuiesce` / `VirtioPciInterruptsResume`)
 
 ## 5) Windows 7 INF: enabling MSI/MSI-X
 

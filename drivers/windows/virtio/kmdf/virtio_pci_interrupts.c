@@ -11,26 +11,29 @@ typedef struct _VIRTIO_PCI_INTERRUPT_CONTEXT {
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VIRTIO_PCI_INTERRUPT_CONTEXT, VirtioPciInterruptGetContext);
 
-#if DBG
-#define VIRTIO_PCI_TRACE_INFO(...) \
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "virtio-input: " __VA_ARGS__)
-#define VIRTIO_PCI_TRACE_ERROR(...) \
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "virtio-input: " __VA_ARGS__)
-#else
-#define VIRTIO_PCI_TRACE_INFO(...) ((void)0)
-#define VIRTIO_PCI_TRACE_ERROR(...) ((void)0)
-#endif
-
 static BOOLEAN VirtioPciIntxIsr(_In_ WDFINTERRUPT Interrupt, _In_ ULONG MessageID);
 static BOOLEAN VirtioPciMsixIsr(_In_ WDFINTERRUPT Interrupt, _In_ ULONG MessageID);
 static VOID VirtioPciInterruptDpc(_In_ WDFINTERRUPT Interrupt, _In_ WDFOBJECT AssociatedObject);
+
+static __forceinline VOID VirtioPciAcquireOptSpinLock(_In_opt_ WDFSPINLOCK Lock)
+{
+    if (Lock != NULL) {
+        WdfSpinLockAcquire(Lock);
+    }
+}
+
+static __forceinline VOID VirtioPciReleaseOptSpinLock(_In_opt_ WDFSPINLOCK Lock)
+{
+    if (Lock != NULL) {
+        WdfSpinLockRelease(Lock);
+    }
+}
 
 static NTSTATUS VirtioPciFindInterruptResources(
     _In_ WDFCMRESLIST ResourcesRaw,
     _In_ WDFCMRESLIST ResourcesTranslated,
     _Out_ PCM_PARTIAL_RESOURCE_DESCRIPTOR* InterruptRaw,
-    _Out_ PCM_PARTIAL_RESOURCE_DESCRIPTOR* InterruptTranslated
-    )
+    _Out_ PCM_PARTIAL_RESOURCE_DESCRIPTOR* InterruptTranslated)
 {
     ULONG i;
     ULONG count;
@@ -98,43 +101,47 @@ static ULONGLONG VirtioPciQueueMaskAll(_In_ ULONG QueueCount)
     return mask;
 }
 
-static VOID VirtioPciTraceVectorMapping(
-    _In_ ULONG QueueCount,
-    _In_ USHORT UsedVectorCount,
-    _In_ const USHORT* QueueVectors
-    )
+_IRQL_requires_max_(PASSIVE_LEVEL)
+static NTSTATUS VirtioPciDisableMsixVectors(
+    _In_ volatile VIRTIO_PCI_COMMON_CFG* CommonCfg,
+    _In_opt_ WDFSPINLOCK CommonCfgLock,
+    _In_ ULONG QueueCount)
 {
-    ULONG vector;
     ULONG q;
 
+    if (CommonCfg == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    VirtioPciAcquireOptSpinLock(CommonCfgLock);
+
+    WRITE_REGISTER_USHORT(&CommonCfg->msix_config, VIRTIO_PCI_MSI_NO_VECTOR);
+    (VOID)READ_REGISTER_USHORT(&CommonCfg->msix_config);
+
     for (q = 0; q < QueueCount; q++) {
-        VIRTIO_PCI_TRACE_INFO("queue[%lu] -> vector %u\n", q, QueueVectors[q]);
+        WRITE_REGISTER_USHORT(&CommonCfg->queue_select, (USHORT)q);
+        (VOID)READ_REGISTER_USHORT(&CommonCfg->queue_select);
+        WRITE_REGISTER_USHORT(&CommonCfg->queue_msix_vector, VIRTIO_PCI_MSI_NO_VECTOR);
+        (VOID)READ_REGISTER_USHORT(&CommonCfg->queue_msix_vector);
     }
 
-    for (vector = 0; vector < UsedVectorCount; vector++) {
-        VIRTIO_PCI_TRACE_INFO("vector %lu: config=%s\n", vector, (vector == 0) ? "yes" : "no");
-        for (q = 0; q < QueueCount; q++) {
-            if (QueueVectors[q] == (USHORT)vector) {
-                VIRTIO_PCI_TRACE_INFO("  queue %lu\n", q);
-            }
-        }
-    }
+    VirtioPciReleaseOptSpinLock(CommonCfgLock);
 
-    VIRTIO_PCI_TRACE_INFO("used vectors: %u\n", UsedVectorCount);
+    return STATUS_SUCCESS;
 }
 
-_IRQL_requires_max_(PASSIVE_LEVEL)
+_Use_decl_annotations_
 NTSTATUS VirtioPciInterruptsPrepareHardware(
-    _In_ WDFDEVICE Device,
-    _Inout_ PVIRTIO_PCI_INTERRUPTS Interrupts,
-    _In_ WDFCMRESLIST ResourcesRaw,
-    _In_ WDFCMRESLIST ResourcesTranslated,
-    _In_ ULONG QueueCount,
-    _In_ volatile UCHAR* IsrStatusRegister,
-    _In_opt_ EVT_VIRTIO_PCI_CONFIG_CHANGE* EvtConfigChange,
-    _In_opt_ EVT_VIRTIO_PCI_DRAIN_QUEUE* EvtDrainQueue,
-    _In_opt_ PVOID CallbackContext
-    )
+    WDFDEVICE Device,
+    PVIRTIO_PCI_INTERRUPTS Interrupts,
+    WDFCMRESLIST ResourcesRaw,
+    WDFCMRESLIST ResourcesTranslated,
+    ULONG QueueCount,
+    volatile UCHAR* IsrStatusRegister,
+    WDFSPINLOCK CommonCfgLock,
+    EVT_VIRTIO_PCI_CONFIG_CHANGE* EvtConfigChange,
+    EVT_VIRTIO_PCI_DRAIN_QUEUE* EvtDrainQueue,
+    PVOID CallbackContext)
 {
     NTSTATUS status;
     PCM_PARTIAL_RESOURCE_DESCRIPTOR interruptRaw;
@@ -151,12 +158,24 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
     Interrupts->Mode = VirtioPciInterruptModeUnknown;
     Interrupts->QueueCount = QueueCount;
     Interrupts->IsrStatusRegister = IsrStatusRegister;
+    Interrupts->CommonCfgLock = CommonCfgLock;
+    Interrupts->ResetInProgress = 0;
     Interrupts->EvtConfigChange = EvtConfigChange;
     Interrupts->EvtDrainQueue = EvtDrainQueue;
     Interrupts->CallbackContext = CallbackContext;
 
     if (QueueCount > 64) {
         return STATUS_NOT_SUPPORTED;
+    }
+
+    {
+        WDF_OBJECT_ATTRIBUTES lockAttributes;
+        WDF_OBJECT_ATTRIBUTES_INIT(&lockAttributes);
+        lockAttributes.ParentObject = Device;
+        status = WdfSpinLockCreate(&lockAttributes, &Interrupts->ConfigLock);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
     }
 
     if (QueueCount != 0) {
@@ -217,7 +236,6 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
         interruptContext->HandlesConfig = TRUE;
         interruptContext->QueueMask = VirtioPciQueueMaskAll(QueueCount);
 
-        VIRTIO_PCI_TRACE_INFO("interrupt mode: INTx\n");
         return STATUS_SUCCESS;
     }
 
@@ -242,7 +260,7 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
         }
 
         Interrupts->u.Msix.UsedVectorCount = usedVectorCount;
-        Interrupts->u.Msix.ConfigVector = 0;
+        Interrupts->u.Msix.ConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
 
         if (QueueCount != 0) {
             WDF_OBJECT_ATTRIBUTES_INIT(&memoryAttributes);
@@ -257,10 +275,7 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
             if (!NT_SUCCESS(status)) {
                 return status;
             }
-
-            for (q = 0; q < QueueCount; q++) {
-                Interrupts->u.Msix.QueueVectors[q] = (usedVectorCount == 1) ? 0 : (USHORT)(1 + q);
-            }
+            RtlZeroMemory(Interrupts->u.Msix.QueueVectors, sizeof(USHORT) * QueueCount);
         }
 
         WDF_OBJECT_ATTRIBUTES_INIT(&memoryAttributes);
@@ -310,19 +325,46 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
             interruptContext->QueueMask = queueMask;
         }
 
-        VIRTIO_PCI_TRACE_INFO("interrupt mode: MSI/MSI-X\n");
-        VIRTIO_PCI_TRACE_INFO("message count: %lu\n", messageCount);
-        if (Interrupts->u.Msix.QueueVectors != NULL) {
-            VirtioPciTraceVectorMapping(QueueCount, usedVectorCount, Interrupts->u.Msix.QueueVectors);
+        //
+        // MSI-X vector programming uses the message numbers (MSI-X table entry
+        // indices) that KMDF actually connected. Query these via
+        // WdfInterruptGetInfo so drivers never accidentally program APIC vectors.
+        //
+        {
+            WDF_INTERRUPT_INFO info;
+            ULONG messageNumber;
+
+            WDF_INTERRUPT_INFO_INIT(&info);
+            WdfInterruptGetInfo(Interrupts->u.Msix.Interrupts[0], &info);
+            messageNumber = info.MessageNumber;
+            Interrupts->u.Msix.ConfigVector = (messageNumber >= VIRTIO_PCI_MSI_NO_VECTOR) ?
+                VIRTIO_PCI_MSI_NO_VECTOR :
+                (USHORT)messageNumber;
+
+            if (Interrupts->u.Msix.QueueVectors != NULL) {
+                if (usedVectorCount == 1) {
+                    for (q = 0; q < QueueCount; q++) {
+                        Interrupts->u.Msix.QueueVectors[q] = Interrupts->u.Msix.ConfigVector;
+                    }
+                } else {
+                    for (q = 0; q < QueueCount; q++) {
+                        WDF_INTERRUPT_INFO_INIT(&info);
+                        WdfInterruptGetInfo(Interrupts->u.Msix.Interrupts[1 + q], &info);
+                        messageNumber = info.MessageNumber;
+                        Interrupts->u.Msix.QueueVectors[q] = (messageNumber >= VIRTIO_PCI_MSI_NO_VECTOR) ?
+                            VIRTIO_PCI_MSI_NO_VECTOR :
+                            (USHORT)messageNumber;
+                    }
+                }
+            }
         }
+
         return STATUS_SUCCESS;
     }
 }
 
 VOID VirtioPciInterruptsReleaseHardware(_Inout_ PVIRTIO_PCI_INTERRUPTS Interrupts)
 {
-    ULONG q;
-
     if (Interrupts == NULL) {
         return;
     }
@@ -347,12 +389,11 @@ VOID VirtioPciInterruptsReleaseHardware(_Inout_ PVIRTIO_PCI_INTERRUPTS Interrupt
     if (Interrupts->QueueLocksMemory != NULL) {
         WdfObjectDelete(Interrupts->QueueLocksMemory);
         Interrupts->QueueLocksMemory = NULL;
-    } else if (Interrupts->QueueLocks != NULL) {
-        for (q = 0; q < Interrupts->QueueCount; q++) {
-            if (Interrupts->QueueLocks[q] != NULL) {
-                WdfObjectDelete(Interrupts->QueueLocks[q]);
-            }
-        }
+    }
+
+    if (Interrupts->ConfigLock != NULL) {
+        WdfObjectDelete(Interrupts->ConfigLock);
+        Interrupts->ConfigLock = NULL;
     }
 
     RtlZeroMemory(Interrupts, sizeof(*Interrupts));
@@ -373,10 +414,21 @@ static BOOLEAN VirtioPciIntxIsr(_In_ WDFINTERRUPT Interrupt, _In_ ULONG MessageI
         return FALSE;
     }
 
+    //
+    // Read-to-ack: deasserts the level-triggered INTx line.
+    //
     isrStatus = READ_REGISTER_UCHAR(interrupts->IsrStatusRegister);
     if (isrStatus == 0) {
         InterlockedIncrement(&interrupts->u.Intx.SpuriousCount);
         return FALSE;
+    }
+
+    if (interrupts->InterruptCounter != NULL) {
+        (VOID)InterlockedIncrement(interrupts->InterruptCounter);
+    }
+
+    if (InterlockedCompareExchange(&interrupts->ResetInProgress, 0, 0) != 0) {
+        return TRUE;
     }
 
     InterlockedOr(&interrupts->u.Intx.PendingIsrStatus, (LONG)isrStatus);
@@ -386,7 +438,18 @@ static BOOLEAN VirtioPciIntxIsr(_In_ WDFINTERRUPT Interrupt, _In_ ULONG MessageI
 
 static BOOLEAN VirtioPciMsixIsr(_In_ WDFINTERRUPT Interrupt, _In_ ULONG MessageID)
 {
+    PVIRTIO_PCI_INTERRUPT_CONTEXT interruptContext = VirtioPciInterruptGetContext(Interrupt);
+    PVIRTIO_PCI_INTERRUPTS interrupts = interruptContext->Interrupts;
+
     UNREFERENCED_PARAMETER(MessageID);
+
+    if (interrupts->InterruptCounter != NULL) {
+        (VOID)InterlockedIncrement(interrupts->InterruptCounter);
+    }
+
+    if (InterlockedCompareExchange(&interrupts->ResetInProgress, 0, 0) != 0) {
+        return TRUE;
+    }
 
     WdfInterruptQueueDpcForIsr(Interrupt);
     return TRUE;
@@ -406,8 +469,20 @@ static VOID VirtioPciInterruptDpc(_In_ WDFINTERRUPT Interrupt, _In_ WDFOBJECT As
     interrupts = interruptContext->Interrupts;
     device = (WDFDEVICE)AssociatedObject;
 
+    if (interrupts->DpcCounter != NULL) {
+        (VOID)InterlockedIncrement(interrupts->DpcCounter);
+    }
+
+    if (InterlockedCompareExchange(&interrupts->ResetInProgress, 0, 0) != 0) {
+        if (interrupts->Mode == VirtioPciInterruptModeIntx) {
+            (VOID)InterlockedExchange(&interrupts->u.Intx.PendingIsrStatus, 0);
+        }
+        return;
+    }
+
     processQueues = TRUE;
     processConfig = interruptContext->HandlesConfig;
+    isrStatus = 0;
 
     if (interrupts->Mode == VirtioPciInterruptModeIntx) {
         isrStatus = (UCHAR)InterlockedExchange(&interrupts->u.Intx.PendingIsrStatus, 0);
@@ -416,7 +491,11 @@ static VOID VirtioPciInterruptDpc(_In_ WDFINTERRUPT Interrupt, _In_ WDFOBJECT As
     }
 
     if (processConfig && (interrupts->EvtConfigChange != NULL)) {
-        interrupts->EvtConfigChange(device, interrupts->CallbackContext);
+        WdfSpinLockAcquire(interrupts->ConfigLock);
+        if (InterlockedCompareExchange(&interrupts->ResetInProgress, 0, 0) == 0) {
+            interrupts->EvtConfigChange(device, interrupts->CallbackContext);
+        }
+        WdfSpinLockRelease(interrupts->ConfigLock);
     }
 
     if (processQueues && (interrupts->EvtDrainQueue != NULL)) {
@@ -425,20 +504,26 @@ static VOID VirtioPciInterruptDpc(_In_ WDFINTERRUPT Interrupt, _In_ WDFOBJECT As
                 continue;
             }
 
-            WdfSpinLockAcquire(interrupts->QueueLocks[q]);
-            interrupts->EvtDrainQueue(device, q, interrupts->CallbackContext);
-            WdfSpinLockRelease(interrupts->QueueLocks[q]);
+            if (interrupts->QueueLocks != NULL) {
+                WdfSpinLockAcquire(interrupts->QueueLocks[q]);
+            }
+            if (InterlockedCompareExchange(&interrupts->ResetInProgress, 0, 0) == 0) {
+                interrupts->EvtDrainQueue(device, q, interrupts->CallbackContext);
+            }
+            if (interrupts->QueueLocks != NULL) {
+                WdfSpinLockRelease(interrupts->QueueLocks[q]);
+            }
         }
     }
 }
 
-_IRQL_requires_max_(PASSIVE_LEVEL)
+_Use_decl_annotations_
 NTSTATUS VirtioPciProgramMsixVectors(
-    _In_ volatile VIRTIO_PCI_COMMON_CFG* CommonCfg,
-    _In_ ULONG QueueCount,
-    _In_ USHORT ConfigVector,
-    _In_reads_(QueueCount) const USHORT* QueueVectors
-    )
+    volatile VIRTIO_PCI_COMMON_CFG* CommonCfg,
+    WDFSPINLOCK CommonCfgLock,
+    ULONG QueueCount,
+    USHORT ConfigVector,
+    const USHORT* QueueVectors)
 {
     USHORT readVector;
     ULONG q;
@@ -451,42 +536,38 @@ NTSTATUS VirtioPciProgramMsixVectors(
         return STATUS_INVALID_PARAMETER;
     }
 
+    VirtioPciAcquireOptSpinLock(CommonCfgLock);
+
     WRITE_REGISTER_USHORT(&CommonCfg->msix_config, ConfigVector);
     readVector = READ_REGISTER_USHORT(&CommonCfg->msix_config);
 
-    if (readVector == 0xFFFF || readVector != ConfigVector) {
-        VIRTIO_PCI_TRACE_ERROR("failed to set msix_config vector %u (read back %u)\n", ConfigVector, readVector);
+    if (readVector == VIRTIO_PCI_MSI_NO_VECTOR || readVector != ConfigVector) {
+        VirtioPciReleaseOptSpinLock(CommonCfgLock);
         return STATUS_DEVICE_HARDWARE_ERROR;
     }
 
     for (q = 0; q < QueueCount; q++) {
-        USHORT queueVector;
-
-        queueVector = QueueVectors[q];
+        USHORT queueVector = QueueVectors[q];
 
         WRITE_REGISTER_USHORT(&CommonCfg->queue_select, (USHORT)q);
         (VOID)READ_REGISTER_USHORT(&CommonCfg->queue_select);
         WRITE_REGISTER_USHORT(&CommonCfg->queue_msix_vector, queueVector);
         readVector = READ_REGISTER_USHORT(&CommonCfg->queue_msix_vector);
 
-        if (readVector == 0xFFFF || readVector != queueVector) {
-            VIRTIO_PCI_TRACE_ERROR(
-                "failed to set queue %lu msix vector %u (read back %u)\n",
-                q,
-                queueVector,
-                readVector);
+        if (readVector == VIRTIO_PCI_MSI_NO_VECTOR || readVector != queueVector) {
+            VirtioPciReleaseOptSpinLock(CommonCfgLock);
             return STATUS_DEVICE_HARDWARE_ERROR;
         }
     }
 
+    VirtioPciReleaseOptSpinLock(CommonCfgLock);
     return STATUS_SUCCESS;
 }
 
-_IRQL_requires_max_(PASSIVE_LEVEL)
+_Use_decl_annotations_
 NTSTATUS VirtioPciInterruptsProgramMsixVectors(
-    _In_ const PVIRTIO_PCI_INTERRUPTS Interrupts,
-    _In_ volatile VIRTIO_PCI_COMMON_CFG* CommonCfg
-    )
+    const PVIRTIO_PCI_INTERRUPTS Interrupts,
+    volatile VIRTIO_PCI_COMMON_CFG* CommonCfg)
 {
     if (Interrupts == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -498,7 +579,109 @@ NTSTATUS VirtioPciInterruptsProgramMsixVectors(
 
     return VirtioPciProgramMsixVectors(
         CommonCfg,
+        Interrupts->CommonCfgLock,
         Interrupts->QueueCount,
         Interrupts->u.Msix.ConfigVector,
         Interrupts->u.Msix.QueueVectors);
+}
+
+_Use_decl_annotations_
+NTSTATUS VirtioPciInterruptsQuiesce(PVIRTIO_PCI_INTERRUPTS Interrupts, volatile VIRTIO_PCI_COMMON_CFG* CommonCfg)
+{
+    NTSTATUS status;
+    ULONG i;
+
+    if (Interrupts == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    InterlockedExchange(&Interrupts->ResetInProgress, 1);
+
+    status = STATUS_SUCCESS;
+
+    if (Interrupts->Mode == VirtioPciInterruptModeIntx) {
+        if (Interrupts->u.Intx.Interrupt != NULL) {
+            status = WdfInterruptDisable(Interrupts->u.Intx.Interrupt);
+        }
+    } else if (Interrupts->Mode == VirtioPciInterruptModeMsix) {
+        for (i = 0; i < Interrupts->u.Msix.UsedVectorCount; i++) {
+            if (Interrupts->u.Msix.Interrupts != NULL && Interrupts->u.Msix.Interrupts[i] != NULL) {
+                NTSTATUS disableStatus = WdfInterruptDisable(Interrupts->u.Msix.Interrupts[i]);
+                if (!NT_SUCCESS(disableStatus) && NT_SUCCESS(status)) {
+                    status = disableStatus;
+                }
+            }
+        }
+
+        if (CommonCfg != NULL) {
+            NTSTATUS vectorStatus = VirtioPciDisableMsixVectors(CommonCfg, Interrupts->CommonCfgLock, Interrupts->QueueCount);
+            if (!NT_SUCCESS(vectorStatus) && NT_SUCCESS(status)) {
+                status = vectorStatus;
+            }
+        } else if (NT_SUCCESS(status)) {
+            status = STATUS_INVALID_PARAMETER;
+        }
+    }
+
+    //
+    // Synchronize with any in-flight DPC work:
+    // - Config callback section (ConfigLock)
+    // - Per-queue callback sections (QueueLocks)
+    //
+    if (Interrupts->ConfigLock != NULL) {
+        WdfSpinLockAcquire(Interrupts->ConfigLock);
+        WdfSpinLockRelease(Interrupts->ConfigLock);
+    }
+
+    if (Interrupts->QueueLocks != NULL) {
+        for (i = 0; i < Interrupts->QueueCount; i++) {
+            WdfSpinLockAcquire(Interrupts->QueueLocks[i]);
+            WdfSpinLockRelease(Interrupts->QueueLocks[i]);
+        }
+    }
+
+    return status;
+}
+
+_Use_decl_annotations_
+NTSTATUS VirtioPciInterruptsResume(PVIRTIO_PCI_INTERRUPTS Interrupts, volatile VIRTIO_PCI_COMMON_CFG* CommonCfg)
+{
+    NTSTATUS status;
+    ULONG i;
+
+    if (Interrupts == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Interrupts->Mode == VirtioPciInterruptModeMsix) {
+        if (CommonCfg == NULL) {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        status = VirtioPciInterruptsProgramMsixVectors(Interrupts, CommonCfg);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+
+        for (i = 0; i < Interrupts->u.Msix.UsedVectorCount; i++) {
+            if (Interrupts->u.Msix.Interrupts == NULL || Interrupts->u.Msix.Interrupts[i] == NULL) {
+                continue;
+            }
+
+            status = WdfInterruptEnable(Interrupts->u.Msix.Interrupts[i]);
+            if (!NT_SUCCESS(status)) {
+                return status;
+            }
+        }
+    } else if (Interrupts->Mode == VirtioPciInterruptModeIntx) {
+        if (Interrupts->u.Intx.Interrupt != NULL) {
+            status = WdfInterruptEnable(Interrupts->u.Intx.Interrupt);
+            if (!NT_SUCCESS(status)) {
+                return status;
+            }
+        }
+    }
+
+    InterlockedExchange(&Interrupts->ResetInProgress, 0);
+    return STATUS_SUCCESS;
 }

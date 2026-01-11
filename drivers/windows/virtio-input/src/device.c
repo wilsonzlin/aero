@@ -277,16 +277,17 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
         }
     }
 
-    status = VirtioPciInterruptsPrepareHardware(
-        Device,
-        &deviceContext->Interrupts,
-        ResourcesRaw,
-        ResourcesTranslated,
-        VIRTIO_INPUT_QUEUE_COUNT,
-        deviceContext->PciDevice.IsrStatus,
-        VioInputEvtConfigChange,
-        VioInputEvtDrainQueue,
-        deviceContext);
+     status = VirtioPciInterruptsPrepareHardware(
+         Device,
+         &deviceContext->Interrupts,
+         ResourcesRaw,
+         ResourcesTranslated,
+         VIRTIO_INPUT_QUEUE_COUNT,
+         deviceContext->PciDevice.IsrStatus,
+         deviceContext->PciDevice.CommonCfgLock,
+         VioInputEvtConfigChange,
+         VioInputEvtDrainQueue,
+         deviceContext);
     if (!NT_SUCCESS(status)) {
         VirtioPciInterruptsReleaseHardware(&deviceContext->Interrupts);
         VirtioPciModernUninit(&deviceContext->PciDevice);

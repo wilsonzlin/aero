@@ -1,0 +1,12 @@
+TARGETNAME=virtio_pci_interrupts_build
+TARGETTYPE=LIBRARY
+
+SOURCES= \
+    build_only.c \
+    ..\..\virtio_pci_interrupts.c
+
+INCLUDES=$(INCLUDES);..\..;..\..\..\..\..\win7\virtio\virtio-core\include
+
+KMDF_VERSION_MAJOR=1
+KMDF_VERSION_MINOR=9
+

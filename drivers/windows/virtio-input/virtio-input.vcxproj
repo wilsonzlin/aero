@@ -85,7 +85,7 @@
     <ClCompile Include="src\power.c" />
     <ClCompile Include="src\queue.c" />
     <ClCompile Include="src\virtio_input.c" />
-    <ClCompile Include="src\virtio_pci_interrupts.c" />
+    <ClCompile Include="..\virtio\kmdf\virtio_pci_interrupts.c" />
     <ClCompile Include="src\virtio_statusq.c" />
     <ClCompile Include="..\..\win7\virtio\virtio-core\src\virtio_pci_caps.c" />
     <ClCompile Include="..\..\win7\virtio\virtio-core\src\virtio_pci_modern.c" />
