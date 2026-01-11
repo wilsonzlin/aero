@@ -39,7 +39,8 @@ func NormalizeHeader(originHeader string) (normalizedOrigin string, host string,
 // IsAllowed returns true when the normalized origin is allowed to access the
 // given request host.
 //
-// If allowedOrigins is empty, only same-host origins are allowed (host[:port]).
+// If allowedOrigins is empty, only same-host origins are allowed (host:port must
+// match the incoming request's Host header).
 // Otherwise each entry must be either "*" or a normalized origin string.
 func IsAllowed(normalizedOrigin, originHost, requestHost string, allowedOrigins []string) bool {
 	if len(allowedOrigins) > 0 {
@@ -51,8 +52,8 @@ func IsAllowed(normalizedOrigin, originHost, requestHost string, allowedOrigins 
 		return false
 	}
 
-	// Default: same host only. This still allows a TLS-terminating reverse proxy
-	// that forwards the request over HTTP without an X-Forwarded-Proto header,
-	// because we compare only host:port here.
+	// Default: same host:port only. This still allows a TLS-terminating reverse
+	// proxy that forwards the request over HTTP without an X-Forwarded-Proto
+	// header, because we compare only host:port here.
 	return originHost == strings.ToLower(strings.TrimSpace(requestHost))
 }
