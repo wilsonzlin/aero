@@ -131,32 +131,32 @@ static int RunD3D9ExSharedAllocations(int argc, char** argv) {
   }
 
   // ---------------------------------------------------------------------------
-  // Case A: shared render-target texture (Levels=1).
+  // Case A: shared render-target surface.
   // ---------------------------------------------------------------------------
-  HANDLE shared_rt_handle = NULL;
-  ComPtr<IDirect3DTexture9> shared_rt_tex;
-  hr = dev->CreateTexture(256,
-                          256,
-                          1,
-                          D3DUSAGE_RENDERTARGET,
-                          D3DFMT_A8R8G8B8,
-                          D3DPOOL_DEFAULT,
-                          shared_rt_tex.put(),
-                          &shared_rt_handle);
+  HANDLE shared_rt_surface_handle = NULL;
+  ComPtr<IDirect3DSurface9> shared_rt_surface;
+  hr = dev->CreateRenderTarget(256,
+                               256,
+                               D3DFMT_A8R8G8B8,
+                               D3DMULTISAMPLE_NONE,
+                               0,
+                               FALSE,
+                               shared_rt_surface.put(),
+                               &shared_rt_surface_handle);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture(shared render target, Levels=1)", hr);
+    return aerogpu_test::FailHresult(kTestName, "CreateRenderTarget(shared)", hr);
   }
-  aerogpu_test::PrintfStdout("INFO: %s: shared RT texture handle=%p", kTestName, shared_rt_handle);
-  if (!shared_rt_handle) {
-    return aerogpu_test::Fail(kTestName, "CreateTexture(shared render target) returned NULL shared handle");
+  aerogpu_test::PrintfStdout("INFO: %s: shared RT surface handle=%p", kTestName, shared_rt_surface_handle);
+  if (!shared_rt_surface_handle) {
+    return aerogpu_test::Fail(kTestName, "CreateRenderTarget(shared) returned NULL shared handle");
   }
 
-  ComPtr<IDirect3DTexture9> opened_rt_tex;
-  hr = dev->OpenSharedResource(shared_rt_handle,
-                               IID_IDirect3DTexture9,
-                               reinterpret_cast<void**>(opened_rt_tex.put()));
+  ComPtr<IDirect3DSurface9> opened_rt_surface;
+  hr = dev->OpenSharedResource(shared_rt_surface_handle,
+                               IID_IDirect3DSurface9,
+                               reinterpret_cast<void**>(opened_rt_surface.put()));
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "OpenSharedResource(shared render target)", hr);
+    return aerogpu_test::FailHresult(kTestName, "OpenSharedResource(shared render target surface)", hr);
   }
 
   // ---------------------------------------------------------------------------
