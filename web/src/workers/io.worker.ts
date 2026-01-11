@@ -845,7 +845,16 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
             }
           }
 
-          hidGuest = new CompositeHidGuestBridge([hidGuestInMemory, wasmHidGuest]);
+          // After WASM is ready we no longer need to buffer every input report in JS.
+          // Keeping the in-memory bridge in the hot path is useful for debugging in dev
+          // mode, but it adds avoidable per-report allocations/copies in production.
+          if (import.meta.env.DEV) {
+            hidGuest = new CompositeHidGuestBridge([hidGuestInMemory, wasmHidGuest]);
+          } else {
+            hidGuest = wasmHidGuest;
+            hidGuestInMemory.devices.clear();
+            hidGuestInMemory.inputReports.clear();
+          }
         } catch (err) {
           console.warn("[io.worker] Failed to initialize WebHID passthrough WASM bridge", err);
         }

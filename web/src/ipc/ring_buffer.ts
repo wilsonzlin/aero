@@ -240,6 +240,48 @@ export class RingBuffer {
     }
   }
 
+  /**
+   * Consume (and commit) the next record without allocating a new payload buffer.
+   *
+   * Returns `false` when the ring is empty. The `payload` passed to `consumer` is
+   * only valid until the next write to the ring (copy it if you need to retain
+   * it asynchronously).
+   */
+  consumeNext(consumer: (payload: Uint8Array) => void): boolean {
+    for (;;) {
+      const head = u32(Atomics.load(this.ctrl, ringCtrl.HEAD));
+      const tail = u32(Atomics.load(this.ctrl, ringCtrl.TAIL_COMMIT));
+      if (head === tail) return false;
+
+      const headIndex = head % this.cap;
+      const remaining = this.cap - headIndex;
+      if (remaining < 4) {
+        Atomics.store(this.ctrl, ringCtrl.HEAD, u32(head + remaining) | 0);
+        Atomics.notify(this.ctrl, ringCtrl.HEAD, 1);
+        continue;
+      }
+
+      const len = this.view.getUint32(headIndex, true);
+      if (len === WRAP_MARKER) {
+        Atomics.store(this.ctrl, ringCtrl.HEAD, u32(head + remaining) | 0);
+        Atomics.notify(this.ctrl, ringCtrl.HEAD, 1);
+        continue;
+      }
+
+      const total = alignUp(4 + len, RECORD_ALIGN);
+      if (total > remaining) return false; // corruption
+
+      const payloadStart = headIndex + 4;
+      const payloadEnd = payloadStart + len;
+      const payload = this.data.subarray(payloadStart, payloadEnd);
+      consumer(payload);
+
+      Atomics.store(this.ctrl, ringCtrl.HEAD, u32(head + total) | 0);
+      Atomics.notify(this.ctrl, ringCtrl.HEAD, 1);
+      return true;
+    }
+  }
+
   waitForData(timeoutMs?: number): AtomicsWaitResult {
     if (!canAtomicsWait()) throw new Error("Atomics.wait not available in this context");
     for (;;) {

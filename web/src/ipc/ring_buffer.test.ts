@@ -75,4 +75,18 @@ describe("ipc/ring_buffer", () => {
     ).toBe(true);
     expect(Array.from(ring.tryPop() ?? [])).toEqual([9, 8, 7, 6]);
   });
+
+  it("can consume records without allocating a new payload buffer", () => {
+    const ring = makeRing(64);
+    expect(ring.tryPush(Uint8Array.of(1, 2, 3))).toBe(true);
+
+    let out: number[] | null = null;
+    expect(
+      ring.consumeNext((payload) => {
+        out = Array.from(payload);
+      }),
+    ).toBe(true);
+    expect(out).toEqual([1, 2, 3]);
+    expect(ring.tryPop()).toBeNull();
+  });
 });
