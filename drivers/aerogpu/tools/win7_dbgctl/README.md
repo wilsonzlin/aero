@@ -111,8 +111,8 @@ Outputs:
 
 Packet definitions consumed by this tool live in:
 
-- `drivers/aerogpu/protocol/aerogpu_escape.h` (base Escape header + query-device)
-- `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h`
+- `drivers/aerogpu/protocol/aerogpu_escape.h` (base Escape header + `AEROGPU_ESCAPE_OP_QUERY_DEVICE` fallback)
+- `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h` (dbgctl ops, including `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2`)
 
 The AeroGPU KMD is expected to implement `DxgkDdiEscape` handling for these packets (driver-private escape).
 

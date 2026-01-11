@@ -152,7 +152,7 @@ The driver uses `DbgPrintEx` in checked builds (`DBG=1`). Typical workflow:
 
 `DxgkDdiEscape` supports bring-up/debug queries:
 
-- `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (see `drivers/aerogpu/protocol/aerogpu_escape.h`)
+- `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (see `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h`)
   - returns the detected device ABI (`detected_mmio_magic`), ABI version, and (for versioned devices) feature bits
   - older tools may use the legacy `AEROGPU_ESCAPE_OP_QUERY_DEVICE` response
 

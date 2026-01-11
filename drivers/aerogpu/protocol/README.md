@@ -27,7 +27,7 @@ The contract is expressed as C/C++ headers suitable for **Windows 7-targeted WDK
 - `aerogpu_umd_private.h` – `DXGKQAITYPE_UMDRIVERPRIVATE` blob used by UMDs/tools to discover active ABI + feature bits.
 - `aerogpu_wddm_alloc.h` – WDDM allocation private-data contract for stable `alloc_id` / `share_token` exchange across CreateAllocation/OpenAllocation.
 - `aerogpu_escape.h` – driver-private `DxgkDdiEscape` packet header + common ops (tooling/debug surfaces).
-- `aerogpu_dbgctl_escape.h` – driver-private `DxgkDdiEscape` packets used by bring-up tooling (`drivers/aerogpu/tools/win7_dbgctl`). (Layered on top of `aerogpu_escape.h`.)
+- `aerogpu_dbgctl_escape.h` – driver-private `DxgkDdiEscape` packets used by bring-up tooling (`drivers/aerogpu/tools/win7_dbgctl`). (Layered on top of `aerogpu_escape.h`; ring dumps report canonical submit fields like `cmd_gpa`/`cmd_size_bytes`/`signal_fence`.)
 - `aerogpu_protocol.h` – **legacy bring-up ABI** (monolithic header; PCI `1AED:0001`). Kept only so the KMD compatibility path and legacy emulator device model can continue to function during migration.
 - `vblank.md` – vblank IRQ + timing registers required for Win7 DWM/D3D pacing.
 
