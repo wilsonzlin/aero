@@ -44,3 +44,6 @@ set_target_properties(virtiosnd_proto_tests PROPERTIES
 )
 
 add_test(NAME virtiosnd_proto_tests COMMAND virtiosnd_proto_tests)
+
+# Additional protocol engine unit tests built with their own minimal shims.
+add_subdirectory(host)

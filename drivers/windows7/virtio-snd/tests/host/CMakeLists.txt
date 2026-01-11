@@ -1,9 +1,13 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-cmake_minimum_required(VERSION 3.15)
-project(virtiosnd_host_tests C)
-
-enable_testing()
+# This CMake file is designed to work in two modes:
+#  - Standalone: `cmake -S drivers/windows7/virtio-snd/tests/host -B ...`
+#  - As a subdirectory of `drivers/windows7/virtio-snd/tests` (CI path)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    cmake_minimum_required(VERSION 3.15)
+    project(virtiosnd_host_tests C)
+    enable_testing()
+endif()
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED YES)
@@ -54,14 +58,16 @@ target_link_libraries(virtiosnd_rx_tests PRIVATE virtiosnd_host_shim)
 add_test(NAME virtiosnd_rx_tests COMMAND virtiosnd_rx_tests)
 
 # Existing scatter/gather core tests (host-buildable).
-add_executable(virtiosnd_sg_tests
-    ${VIRTIOSND_ROOT}/tests/test_sg.c
-    ${VIRTIOSND_SRC}/virtiosnd_sg_core.c
-)
+if (NOT TARGET virtiosnd_sg_tests)
+    add_executable(virtiosnd_sg_tests
+        ${VIRTIOSND_ROOT}/tests/test_sg.c
+        ${VIRTIOSND_SRC}/virtiosnd_sg_core.c
+    )
 
-target_include_directories(virtiosnd_sg_tests PRIVATE
-    ${VIRTIOSND_INCLUDE}
-    ${VIRTIO_COMMON_INCLUDE}
-)
+    target_include_directories(virtiosnd_sg_tests PRIVATE
+        ${VIRTIOSND_INCLUDE}
+        ${VIRTIO_COMMON_INCLUDE}
+    )
 
-add_test(NAME virtiosnd_sg_tests COMMAND virtiosnd_sg_tests)
+    add_test(NAME virtiosnd_sg_tests COMMAND virtiosnd_sg_tests)
+endif()
