@@ -2340,12 +2340,6 @@ void unmap_resource_locked(AeroGpuImmediateContext* ctx, AeroGpuResource* res, u
       upload->offset_bytes = res->mapped_offset_bytes;
       upload->size_bytes = res->mapped_size_bytes;
     }
-
-    auto* dirty = ctx->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-    dirty->resource_handle = res->handle;
-    dirty->reserved0 = 0;
-    dirty->offset_bytes = res->mapped_offset_bytes;
-    dirty->size_bytes = res->mapped_size_bytes;
   }
 
   res->mapped = false;
@@ -2515,12 +2509,6 @@ HRESULT UpdateSubresourceUPImpl(AeroGpuImmediateContext* ctx,
     upload->reserved0 = 0;
     upload->offset_bytes = 0;
     upload->size_bytes = res->storage.size();
-
-    auto* dirty = ctx->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-    dirty->resource_handle = res->handle;
-    dirty->reserved0 = 0;
-    dirty->offset_bytes = 0;
-    dirty->size_bytes = res->storage.size();
     return S_OK;
   }
 
@@ -2557,12 +2545,6 @@ HRESULT UpdateSubresourceUPImpl(AeroGpuImmediateContext* ctx,
     upload->reserved0 = 0;
     upload->offset_bytes = offset;
     upload->size_bytes = size;
-
-    auto* dirty = ctx->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-    dirty->resource_handle = res->handle;
-    dirty->reserved0 = 0;
-    dirty->offset_bytes = offset;
-    dirty->size_bytes = size;
     return S_OK;
   }
 
@@ -2603,20 +2585,16 @@ HRESULT UpdateSubresourceUPImpl(AeroGpuImmediateContext* ctx,
     for (uint32_t y = 0; y < (box->bottom - box->top); ++y) {
       const size_t dst_offset = (static_cast<size_t>(box->top) + y) * dst_pitch + dst_x_bytes;
       std::memcpy(res->storage.data() + dst_offset, src + y * src_pitch, row_bytes);
-
-      auto* upload = ctx->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-          AEROGPU_CMD_UPLOAD_RESOURCE, src + y * src_pitch, row_bytes);
-      upload->resource_handle = res->handle;
-      upload->reserved0 = 0;
-      upload->offset_bytes = dst_offset;
-      upload->size_bytes = row_bytes;
-
-      auto* dirty = ctx->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      dirty->resource_handle = res->handle;
-      dirty->reserved0 = 0;
-      dirty->offset_bytes = dst_offset;
-      dirty->size_bytes = row_bytes;
     }
+
+    const size_t upload_offset = static_cast<size_t>(box->top) * dst_pitch;
+    const size_t upload_size = static_cast<size_t>(box->bottom - box->top) * dst_pitch;
+    auto* upload = ctx->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+        AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + upload_offset, upload_size);
+    upload->resource_handle = res->handle;
+    upload->reserved0 = 0;
+    upload->offset_bytes = upload_offset;
+    upload->size_bytes = upload_size;
     return S_OK;
   }
 
@@ -4138,12 +4116,6 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       upload->reserved0 = 0;
       upload->offset_bytes = 0;
       upload->size_bytes = res->size_bytes;
-
-      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      dirty->resource_handle = res->handle;
-      dirty->reserved0 = 0;
-      dirty->offset_bytes = 0;
-      dirty->size_bytes = res->size_bytes;
     }
     AEROGPU_D3D10_RET_HR(S_OK);
   }
@@ -4253,12 +4225,6 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       upload->reserved0 = 0;
       upload->offset_bytes = 0;
       upload->size_bytes = res->storage.size();
-
-      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      dirty->resource_handle = res->handle;
-      dirty->reserved0 = 0;
-      dirty->offset_bytes = 0;
-      dirty->size_bytes = res->storage.size();
     }
     AEROGPU_D3D10_RET_HR(S_OK);
   }
@@ -4409,12 +4375,6 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
       upload->offset_bytes = res->mapped_offset_bytes;
       upload->size_bytes = res->mapped_size_bytes;
     }
-
-    auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-    dirty->resource_handle = res->handle;
-    dirty->reserved0 = 0;
-    dirty->offset_bytes = res->mapped_offset_bytes;
-    dirty->size_bytes = res->mapped_size_bytes;
   }
 
   res->mapped = false;
@@ -4755,12 +4715,6 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
     upload->reserved0 = 0;
     upload->offset_bytes = 0;
     upload->size_bytes = res->storage.size();
-
-    auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-    dirty->resource_handle = res->handle;
-    dirty->reserved0 = 0;
-    dirty->offset_bytes = 0;
-    dirty->size_bytes = res->storage.size();
     return;
   }
 
@@ -4789,12 +4743,6 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
     upload->reserved0 = 0;
     upload->offset_bytes = offset;
     upload->size_bytes = size;
-
-    auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-    dirty->resource_handle = res->handle;
-    dirty->reserved0 = 0;
-    dirty->offset_bytes = offset;
-    dirty->size_bytes = size;
     return;
   }
 
@@ -4833,20 +4781,16 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
     for (uint32_t y = 0; y < (pDstBox->bottom - pDstBox->top); ++y) {
       const size_t dst_offset = (static_cast<size_t>(pDstBox->top) + y) * dst_pitch + dst_x_bytes;
       std::memcpy(res->storage.data() + dst_offset, src + y * src_pitch, row_bytes);
-
-      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-          AEROGPU_CMD_UPLOAD_RESOURCE, src + y * src_pitch, row_bytes);
-      upload->resource_handle = res->handle;
-      upload->reserved0 = 0;
-      upload->offset_bytes = dst_offset;
-      upload->size_bytes = row_bytes;
-
-      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      dirty->resource_handle = res->handle;
-      dirty->reserved0 = 0;
-      dirty->offset_bytes = dst_offset;
-      dirty->size_bytes = row_bytes;
     }
+
+    const size_t upload_offset = static_cast<size_t>(pDstBox->top) * dst_pitch;
+    const size_t upload_size = static_cast<size_t>(pDstBox->bottom - pDstBox->top) * dst_pitch;
+    auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+        AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + upload_offset, upload_size);
+    upload->resource_handle = res->handle;
+    upload->reserved0 = 0;
+    upload->offset_bytes = upload_offset;
+    upload->size_bytes = upload_size;
     return;
   }
 }
