@@ -25,7 +25,16 @@ import {
   WRITE_POS_INDEX,
 } from "./mic_ring.js";
 
-class AeroMicCaptureProcessor extends AudioWorkletProcessor {
+const WorkletProcessorBase =
+  typeof AudioWorkletProcessor === "undefined"
+    ? class {
+        constructor() {
+          this.port = { postMessage() {} };
+        }
+      }
+    : AudioWorkletProcessor;
+
+export class AeroMicCaptureProcessor extends WorkletProcessorBase {
   constructor(options) {
     super();
     const ringBuffer = options?.processorOptions?.ringBuffer;
@@ -121,4 +130,11 @@ class AeroMicCaptureProcessor extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor("aero-mic-capture", AeroMicCaptureProcessor);
+if (typeof registerProcessor === "function") {
+  registerProcessor("aero-mic-capture", AeroMicCaptureProcessor);
+}
+
+// When this module is imported directly (e.g. by Node-based tests), provide a
+// default export so `import ... from "./mic-worklet-processor.js?worker&url"`
+// can resolve without Vite's `?worker&url` transform.
+export default import.meta.url;
