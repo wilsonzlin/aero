@@ -192,6 +192,15 @@ Then it submits via the runtime callbacks which route into:
 
 followed by dxgkrnl scheduling and eventual KMD `DxgkDdiSubmitCommand`.
 
+> AeroGPU note: the DMA buffer payload is an AeroGPU command stream:
+> `drivers/aerogpu/protocol/aerogpu_cmd.h` (`aerogpu_cmd_stream_header` followed
+> by `aerogpu_cmd_hdr` packets). The stream header’s `magic` and `abi_version`
+> must match, and `size_bytes` must be within the submitted buffer length
+> (`<= cmd_size_bytes`; any trailing bytes beyond `size_bytes` are ignored). The
+> in-repo Win7 submission backend
+> (`drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_wddm_submit.cpp`)
+> validates this before submission.
+
 ### 3.1 Create the kernel device + context (get `hContext`, `hSyncObject`, and initial DMA buffer pointers)
 
 The submission callbacks in `d3dumddi.h` are **context-scoped**: before you can submit anything, you need:
