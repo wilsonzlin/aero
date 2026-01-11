@@ -23,7 +23,7 @@ Minimum supported commands:
   Prints the available `\\.\DISPLAY*` names to use with `--display`.
 
 - `aerogpu_dbgctl --query-version` (alias: `--query-device`)  
-  Prints the detected AeroGPU device ABI (**legacy ARGP** vs **new AGPU**), ABI version, and (for AGPU) device feature bits.
+  Prints the detected AeroGPU device ABI (**legacy ARGP** vs **new AGPU**), ABI version, and (when exposed) device feature bits.
   Also prints a fence snapshot and (when available) a scanout0 vblank timing snapshot.
 
 - `aerogpu_dbgctl --query-umd-private`  
