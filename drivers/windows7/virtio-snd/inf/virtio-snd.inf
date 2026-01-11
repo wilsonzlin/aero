@@ -29,10 +29,13 @@ CatalogFile = virtio-snd.cat
 ; validates Revision ID at runtime.
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
+; Transitional (legacy+modern) virtio-snd device ID (optional).
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018
 
 [VirtioSndModels.NTamd64]
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018
 
 [DestinationDirs]
 VirtioSnd.CopyFiles = 12
