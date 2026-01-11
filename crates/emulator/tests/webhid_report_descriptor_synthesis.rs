@@ -92,3 +92,26 @@ fn synth_emits_correct_collection_item_payload() {
         );
     }
 }
+
+#[test]
+fn webhid_collection_type_serializes_as_numeric_collection_type_field() {
+    let collection = deserialize_collection(
+        r#"{
+          "usagePage": 1,
+          "usage": 0,
+          "type": "application",
+          "inputReports": [],
+          "outputReports": [],
+          "featureReports": [],
+          "children": []
+        }"#,
+    );
+
+    let value = serde_json::to_value(&collection).expect("serialize collection");
+
+    assert_eq!(value.get("collectionType"), Some(&serde_json::json!(1)));
+    assert!(
+        value.get("type").is_none(),
+        "normalized JSON should not use the WebHID string enum field name: {value}"
+    );
+}
