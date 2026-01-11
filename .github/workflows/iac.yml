@@ -85,7 +85,7 @@ jobs:
 
       - name: terraform init (backend disabled)
         working-directory: ${{ matrix.module }}
-        run: terraform init -backend=false -input=false
+        run: terraform init -backend=false -input=false -lockfile=readonly
 
       - name: terraform validate
         working-directory: ${{ matrix.module }}
