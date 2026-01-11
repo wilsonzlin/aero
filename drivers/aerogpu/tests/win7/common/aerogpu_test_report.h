@@ -471,29 +471,73 @@ static inline int RequireAeroGpuUmdLoaded(TestReporter* reporter,
   std::wstring path;
   std::string err;
   if (GetLoadedModulePathByBaseName(expected, &path, &err)) {
-    if (!path.empty()) {
-      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD (%s%s): %ls",
-                   tn,
-                   api,
-                   GetProcessBitnessString(),
-                   GetWow64SuffixString(),
-                   path.c_str());
-    } else if (!err.empty()) {
-      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD module %ls (%s%s; path unavailable: %s)",
-                   tn,
-                   api,
-                   expected,
-                   GetProcessBitnessString(),
-                   GetWow64SuffixString(),
-                   err.c_str());
-    } else {
-      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD module %ls (%s%s; path unavailable)",
-                   tn,
-                   api,
-                   expected,
-                   GetProcessBitnessString(),
-                   GetWow64SuffixString());
+    if (path.empty()) {
+      DumpLoadedAeroGpuUmdModules(tn);
+      if (!err.empty()) {
+        if (reporter) {
+          return reporter->Fail("AeroGPU %s UMD module %ls is loaded (%s%s), but GetModuleFileNameW failed (%s).",
+                                api,
+                                expected,
+                                GetProcessBitnessString(),
+                                GetWow64SuffixString(),
+                                err.c_str());
+        }
+        return Fail(tn,
+                    "AeroGPU %s UMD module %ls is loaded (%s%s), but GetModuleFileNameW failed (%s).",
+                    api,
+                    expected,
+                    GetProcessBitnessString(),
+                    GetWow64SuffixString(),
+                    err.c_str());
+      }
+      if (reporter) {
+        return reporter->Fail("AeroGPU %s UMD module %ls is loaded (%s%s), but module path is unavailable.",
+                              api,
+                              expected,
+                              GetProcessBitnessString(),
+                              GetWow64SuffixString());
+      }
+      return Fail(tn,
+                  "AeroGPU %s UMD module %ls is loaded (%s%s), but module path is unavailable.",
+                  api,
+                  expected,
+                  GetProcessBitnessString(),
+                  GetWow64SuffixString());
     }
+
+    const wchar_t* expected_dir = ExpectedWindowsSystemDirSubstringForCurrentProcess();
+    if (!StrIContainsW(path.c_str(), expected_dir) || !StrIEndsWithW(path, expected)) {
+      DumpLoadedAeroGpuUmdModules(tn);
+      if (reporter) {
+        return reporter->Fail(
+            "expected AeroGPU %s UMD DLL %ls to be loaded from %ls (process=%s%s), but got: %ls. "
+            "Check INF CopyFiles/DestinationDirs and registry keys (%s).",
+            api,
+            expected,
+            expected_dir,
+            GetProcessBitnessString(),
+            GetWow64SuffixString(),
+            path.c_str(),
+            reg);
+      }
+      return Fail(tn,
+                  "expected AeroGPU %s UMD DLL %ls to be loaded from %ls (process=%s%s), but got: %ls. "
+                  "Check INF CopyFiles/DestinationDirs and registry keys (%s).",
+                  api,
+                  expected,
+                  expected_dir,
+                  GetProcessBitnessString(),
+                  GetWow64SuffixString(),
+                  path.c_str(),
+                  reg);
+    }
+
+    PrintfStdout("INFO: %s: loaded AeroGPU %s UMD (%s%s): %ls",
+                 tn,
+                 api,
+                 GetProcessBitnessString(),
+                 GetWow64SuffixString(),
+                 path.c_str());
     return 0;
   }
 
