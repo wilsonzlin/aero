@@ -279,7 +279,8 @@ See also:
 
 **Dirty range notifications (MVP):**
 
-* Any `Map` that permits CPU writing (`WRITE`, `WRITE_DISCARD`, `WRITE_NO_OVERWRITE`) must emit `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` on `Unmap`.
+* For resources backed by guest memory (`backing_alloc_id != 0`), any `Map` that permits CPU writing (`WRITE`, `WRITE_DISCARD`, `WRITE_NO_OVERWRITE`) must emit `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` on `Unmap`.
+  * For host-owned resources (`backing_alloc_id == 0`, e.g. dynamic buffers in the bring-up path), the UMD must upload bytes explicitly via `AEROGPU_CMD_UPLOAD_RESOURCE` instead of relying on dirty ranges.
 * For MVP, mark the entire allocation dirty:
   * `offset_bytes = 0`
   * `size_bytes = allocation_size`
