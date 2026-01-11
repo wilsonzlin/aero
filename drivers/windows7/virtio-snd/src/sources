@@ -10,11 +10,13 @@ TARGETNAME=virtiosnd
 TARGETTYPE=DRIVER
 TARGETPATH=obj
 
-INCLUDES=$(INCLUDES);..\include;..\..\..\windows\virtio\common
+INCLUDES=$(INCLUDES);..\include;..\..\..\windows\virtio\common;..\..\..\win7\virtio\virtio-core\include;..\..\..\win7\virtio\virtio-core\portable
 
 SOURCES= \
     driver.c \
     pci_interface.c \
+    virtio_pci_modern_wdm.c \
     virtio_snd_proto.c \
     virtiosnd_queue_split.c \
-    ..\..\..\windows\virtio\common\virtqueue_split.c
+    ..\..\..\windows\virtio\common\virtqueue_split.c \
+    ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c
