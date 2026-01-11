@@ -218,6 +218,11 @@ WDM drivers can use the WDM transport + INTx helper:
 4. `VirtioPciSetupQueue(&Dev, ...)` / `VirtioPciNotifyQueue(&Dev, ...)` (or your own queue implementation)
 5. `VirtioIntxConnect(...)` / `VirtioIntxDisconnect(...)`
 
+Note: `virtio_queue.*` is built on the miniport `VIRTIO_PCI_DEVICE` type from
+`virtio_pci_modern_miniport.h` and is primarily intended for miniports. WDM
+drivers typically pair `VirtioPciSetupQueue` with `virtqueue_split.*` directly or
+use their own queue wrapper.
+
 ## virtio-pci legacy register offsets
 
 The legacy register set is a byte-addressed I/O port (or MMIO) block. Offsets
