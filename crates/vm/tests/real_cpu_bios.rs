@@ -277,6 +277,7 @@ fn aero_cpu_core_int10_tty_hypercall_roundtrip() {
     let cfg = BiosConfig {
         memory_size_bytes: 16 * 1024 * 1024,
         boot_drive: 0x80,
+        ..Default::default()
     };
     let bios = Bios::new(cfg);
     let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
@@ -305,6 +306,7 @@ fn aero_cpu_core_int13_chs_read_reads_second_sector_into_memory() {
     let cfg = BiosConfig {
         memory_size_bytes: 16 * 1024 * 1024,
         boot_drive: 0x80,
+        ..Default::default()
     };
     let bios = Bios::new(cfg);
 
@@ -336,4 +338,3 @@ fn aero_cpu_core_int13_chs_read_reads_second_sector_into_memory() {
     assert_eq!(vm.mem.read_u8(0x0500), 0x42);
     assert!(!vm.cpu.get_flag(FLAG_CF));
 }
-

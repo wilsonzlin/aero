@@ -11,7 +11,9 @@ fn run_to_halt<B: CpuBus>(state: &mut CpuState, bus: &mut B, max: u64) {
         match res.exit {
             BatchExit::Completed | BatchExit::Branch => continue,
             BatchExit::Halted => return,
-            BatchExit::BiosInterrupt(vector) => panic!("unexpected BIOS interrupt: {vector:#x}"),
+            BatchExit::BiosInterrupt(vector) => {
+                panic!("unexpected BIOS interrupt {vector:#x} at rip=0x{:X}", state.rip())
+            }
             BatchExit::Assist(r) => panic!("unexpected assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
         }
