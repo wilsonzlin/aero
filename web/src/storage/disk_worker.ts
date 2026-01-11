@@ -4,6 +4,7 @@ import {
   inferFormatFromFileName,
   inferKindFromFileName,
   newDiskId,
+  idbTxDone,
   openDiskManagerDb,
   opfsGetDisksDir,
   type DiskBackend,
@@ -135,6 +136,27 @@ function assertValidLeaseEndpoint(endpoint: string | undefined): void {
   if (!endpoint.startsWith("/")) {
     throw new Error("leaseEndpoint must be a same-origin path starting with '/'");
   }
+}
+
+async function idbDeleteRemoteChunkCache(db: IDBDatabase, cacheKey: string): Promise<void> {
+  const tx = db.transaction(["remote_chunks", "remote_chunk_meta"], "readwrite");
+  const chunksStore = tx.objectStore("remote_chunks");
+  const metaStore = tx.objectStore("remote_chunk_meta");
+  metaStore.delete(cacheKey);
+
+  const range = IDBKeyRange.bound([cacheKey, -Infinity], [cacheKey, Infinity]);
+  await new Promise<void>((resolve, reject) => {
+    const req = chunksStore.openCursor(range);
+    req.onerror = () => reject(req.error || new Error("IndexedDB cursor failed"));
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) return resolve(undefined);
+      cursor.delete();
+      cursor.continue();
+    };
+  });
+
+  await idbTxDone(tx);
 }
 
 /**
@@ -605,6 +627,11 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         } else {
           const db = await openDiskManagerDb();
           try {
+            // Remote disk caches may be stored in the dedicated `remote_chunks` store (LRU cache)
+            // and/or in the legacy `chunks` store (disk-style sparse chunks).
+            // Best-effort cleanup: try both.
+            await idbDeleteRemoteChunkCache(db, meta.cache.fileName);
+            await idbDeleteRemoteChunkCache(db, meta.cache.overlayFileName);
             await idbDeleteDiskData(db, meta.cache.fileName);
             await idbDeleteDiskData(db, meta.cache.overlayFileName);
           } finally {
