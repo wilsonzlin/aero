@@ -6,6 +6,7 @@ import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/pro
 import { RingBuffer } from "../ipc/ring_buffer";
 import { WebSocketL2TunnelClient } from "../net/l2Tunnel";
 import { L2TunnelForwarder } from "../net/l2TunnelForwarder";
+import { L2TunnelTelemetry } from "../net/l2TunnelTelemetry";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import {
@@ -40,12 +41,18 @@ let netRxRing: RingBuffer | null = null;
 let l2Forwarder: L2TunnelForwarder | null = null;
 let l2TunnelClient: WebSocketL2TunnelClient | null = null;
 let l2TunnelProxyUrl: string | null = null;
+let l2TunnelTelemetry: L2TunnelTelemetry | null = null;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
 const NET_IDLE_WAIT_MS = 1000;
 const NET_PENDING_RX_POLL_MS = 20;
+const L2_STATS_LOG_INTERVAL_MS = 1000;
+
+function nowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+}
 
 function pushEvent(evt: Event): void {
   if (!eventRing) return;
@@ -66,20 +73,34 @@ function pushEventBlocking(evt: Event, timeoutMs = 1000): void {
 function applyL2TunnelConfig(config: AeroConfig | null): void {
   const proxyUrl = config?.proxyUrl ?? null;
   const forwarder = l2Forwarder;
+  const telemetry = l2TunnelTelemetry;
   if (!forwarder) return;
 
   // Ensure we stop/close the previous tunnel when the proxy URL changes.
   if (proxyUrl !== l2TunnelProxyUrl) {
+    telemetry?.onStopped();
     forwarder.stop();
     l2TunnelClient = null;
     l2TunnelProxyUrl = proxyUrl;
   }
 
-  if (proxyUrl === null) return;
+  if (proxyUrl === null) {
+    telemetry?.onStopped();
+    return;
+  }
 
   if (!l2TunnelClient) {
-    l2TunnelClient = new WebSocketL2TunnelClient(proxyUrl, forwarder.sink);
+    const client = new WebSocketL2TunnelClient(proxyUrl, (ev) => {
+      // Avoid stale events from previously replaced tunnels clobbering telemetry state.
+      if (l2TunnelClient !== client) return;
+      forwarder.sink(ev);
+    });
+    l2TunnelClient = client;
     forwarder.setTunnel(l2TunnelClient);
+  }
+
+  if (telemetry && telemetry.connectionState !== "open") {
+    telemetry.onConnectInitiated();
   }
 
   forwarder.start();
@@ -117,6 +138,10 @@ async function runLoop(): Promise<void> {
 
     forwarder.tick();
 
+    if (l2TunnelProxyUrl !== null) {
+      l2TunnelTelemetry?.tick(nowMs());
+    }
+
     const pendingRx = forwarder.stats().rxPendingFrames > 0;
     const timeoutMs = pendingRx ? NET_PENDING_RX_POLL_MS : NET_IDLE_WAIT_MS;
     await txRing.waitForDataAsync(timeoutMs);
@@ -127,6 +152,7 @@ async function runLoop(): Promise<void> {
   l2Forwarder = null;
   l2TunnelClient = null;
   l2TunnelProxyUrl = null;
+  l2TunnelTelemetry = null;
   setReadyFlag(status, role, false);
   ctx.close();
 }
@@ -136,6 +162,7 @@ function fatal(err: unknown): void {
   l2Forwarder = null;
   l2TunnelClient = null;
   l2TunnelProxyUrl = null;
+  l2TunnelTelemetry = null;
 
   const message = err instanceof Error ? err.message : String(err);
   pushEventBlocking({ kind: "panic", message });
@@ -171,18 +198,11 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
       netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
 
-      l2Forwarder = new L2TunnelForwarder(netTxRing, netRxRing, {
-        onTunnelEvent: (ev) => {
-          if (ev.type === "open") {
-            pushEvent({ kind: "log", level: "info", message: "L2 tunnel connected" });
-          } else if (ev.type === "close") {
-            const suffix = ev.code === undefined ? "" : ` (code=${ev.code}${ev.reason ? ` reason=${ev.reason}` : ""})`;
-            pushEvent({ kind: "log", level: "warn", message: `L2 tunnel disconnected${suffix}` });
-          } else if (ev.type === "error") {
-            const msg = ev.error instanceof Error ? ev.error.message : String(ev.error);
-            pushEvent({ kind: "log", level: "warn", message: `L2 tunnel error: ${msg}` });
-          }
-        },
+      l2Forwarder = new L2TunnelForwarder(netTxRing, netRxRing, { onTunnelEvent: (ev) => l2TunnelTelemetry?.onTunnelEvent(ev) });
+      l2TunnelTelemetry = new L2TunnelTelemetry({
+        intervalMs: L2_STATS_LOG_INTERVAL_MS,
+        getStats: () => l2Forwarder!.stats(),
+        emitLog: (level, message) => pushEvent({ kind: "log", level, message }),
       });
 
       // Apply any config already received before the init handshake completed.
@@ -228,4 +248,3 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     fatal(err);
   }
 };
-
