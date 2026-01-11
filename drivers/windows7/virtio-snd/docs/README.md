@@ -119,7 +119,7 @@ weakening the default Aero contract-v1 INF:
 | Variant | MSBuild config | SYS | INF | Binds to |
 | --- | --- | --- | --- | --- |
 | **Aero contract v1 (default)** | `Release` | `virtiosnd.sys` | `inf/aero-virtio-snd.inf` | `PCI\VEN_1AF4&DEV_1059&REV_01` |
-| **QEMU compatibility (optional)** | `Legacy` | `virtiosnd_legacy.sys` | `inf/aero-virtio-snd-legacy.inf` | transitional virtio-snd PCI ID (no revision gate) |
+| **QEMU compatibility (optional)** | `Legacy` | `virtiosnd_legacy.sys` | `inf/aero-virtio-snd-legacy.inf` | `PCI\VEN_1AF4&DEV_1018` (transitional; no revision gate) |
 
 The two INFs intentionally have **no overlapping hardware IDs**, so they do not compete for the
 same device.
@@ -641,7 +641,7 @@ Note: the default Guest Tools tree does not include the QEMU compatibility varia
 INF selection note:
 
 - `aero-virtio-snd.inf` is the **canonical** Aero contract v1 package (matches `PCI\VEN_1AF4&DEV_1059&REV_01` and installs service `aeroviosnd`).
-- `aero-virtio-snd-legacy.inf` is an opt-in QEMU compatibility package (binds the transitional virtio-snd PCI ID with no revision gate and installs service `aeroviosnd_legacy`).
+- `aero-virtio-snd-legacy.inf` is an opt-in QEMU compatibility package (binds the transitional virtio-snd PCI ID `PCI\VEN_1AF4&DEV_1018` with no revision gate and installs service `aeroviosnd_legacy`).
 - `virtio-snd.inf` is a legacy filename alias kept for compatibility with older tooling/workflows.
   It installs the same driver/service as `aero-virtio-snd.inf` and matches the same Aero contract v1 HWIDs,
   but uses `CatalogFile = virtio-snd.cat`.
