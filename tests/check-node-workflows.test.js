@@ -79,6 +79,23 @@ test("check-node-workflows: accepts multi-line setup-node steps using node-versi
   }
 });
 
+test("check-node-workflows: accepts node-version-file with an inline YAML comment", () => {
+  const temp = setupTempRepo();
+  try {
+    const workflowsDir = path.join(temp.repoRoot, ".github/workflows");
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowsDir, "ok.yml"),
+      `name: ok\non: [push]\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Setup Node\n        uses: actions/setup-node@v4\n        with:\n          node-version-file: .nvmrc # keep in sync\n`,
+    );
+
+    const res = runCheck(temp);
+    assert.equal(res.status, 0, `expected exit 0, got ${res.status}\n\nstderr:\n${res.stderr}`);
+  } finally {
+    fs.rmSync(temp.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("check-node-workflows: rejects Dockerfile node base images without an exact semver tag", () => {
   const temp = setupTempRepo();
   try {

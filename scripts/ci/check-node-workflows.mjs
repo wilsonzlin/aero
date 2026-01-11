@@ -22,6 +22,31 @@ function stripQuotes(value) {
   return trimmed;
 }
 
+function stripYamlComment(value) {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i];
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (ch === "#" && !inSingle && !inDouble) {
+      // YAML comments start with `#` when it appears at the start of the value or is
+      // preceded by whitespace. Keep this lightweight so we can scan workflows without a
+      // full YAML parser.
+      if (i === 0 || /\s/.test(value[i - 1])) {
+        return value.slice(0, i).trimEnd();
+      }
+    }
+  }
+  return value;
+}
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
 const workflowsDir = path.join(repoRoot, ".github", "workflows");
@@ -297,7 +322,7 @@ for (const filename of workflowFiles) {
     }
 
     const rawValue = nodeVersionFileLine.split(":").slice(1).join(":");
-    const value = stripQuotes(rawValue);
+    const value = stripQuotes(stripYamlComment(rawValue));
     if (!value.endsWith(".nvmrc")) {
       errors.push({
         file: filename,
