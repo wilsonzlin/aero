@@ -853,6 +853,13 @@ try {
   Assert-FileExistsNonEmpty -Path $zipPath
   Assert-FileExistsNonEmpty -Path $manifestPath
 
+  # Backwards-compat: CI workflows and release pipelines historically referenced a
+  # prefixed manifest file name alongside the ISO/zip. Keep emitting it as an alias
+  # (the packager's canonical output is still manifest.json).
+  $manifestAliasPath = Join-Path $outDirResolved "aero-guest-tools.manifest.json"
+  Copy-Item -LiteralPath $manifestPath -Destination $manifestAliasPath -Force
+  Assert-FileExistsNonEmpty -Path $manifestAliasPath
+ 
   if ($includeCerts) {
     $certLeaf = Split-Path -Leaf $certPathResolved
     Assert-ZipContainsFile -ZipPath $zipPath -EntryPath ("certs/{0}" -f $certLeaf)
