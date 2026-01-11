@@ -364,15 +364,17 @@ jobs:
 
             if ($t.Kind -eq 'sln') {
               if (-not (Test-HasInfInTree -RootDir $t.Directory)) { continue }
-              if (Test-SlnHasBuildableProjects -SlnPath $t.BuildPath) {
-                [void]$buildable.Add($t)
-              }
-              continue
+            if (Test-SlnHasBuildableProjects -SlnPath $t.BuildPath) {
+              [void]$buildable.Add($t)
             }
-
-            # "ambiguous" target (multiple vcxproj, no matching <dir>.sln): run CI to surface it.
-            [void]$buildable.Add($t)
+            continue
           }
+
+          # "ambiguous" target (multiple vcxproj, no matching <dir>.sln):
+          # require an INF (to match build-drivers.ps1), but still run CI to surface the ambiguity.
+          if (-not (Test-HasInfInTree -RootDir $t.Directory)) { continue }
+          [void]$buildable.Add($t)
+        }
 
           if ($buildable.Count -eq 0) {
             Write-Host "No CI-buildable Win7 driver targets were found (expected MSBuild-based solution/project with an .inf under drivers/<name>/ or drivers/<group>/<name>/; ignoring WDK 7.1 NMake/build.exe wrappers). Skipping."
