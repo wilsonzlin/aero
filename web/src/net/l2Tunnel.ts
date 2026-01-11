@@ -102,8 +102,10 @@ export type L2TunnelClientOptions = {
    * How to transport `token` to the server (WebSocket only).
    *
    * - `"query"` (default): send `?token=<token>` (legacy servers).
-   * - `"subprotocol"`: send `aero-l2-token.<token>` via `Sec-WebSocket-Protocol`
-   *   to avoid leaking tokens via URLs/logs/referrers.
+   * - `"subprotocol"`: offer an additional `Sec-WebSocket-Protocol` entry
+   *   `aero-l2-token.<token>` alongside `aero-l2-tunnel-v1` to avoid leaking
+   *   tokens via URLs/logs/referrers. The negotiated subprotocol must still be
+   *   `aero-l2-tunnel-v1`.
    * - `"both"`: send both mechanisms for compatibility during migrations.
    *
    * Note: `Sec-WebSocket-Protocol` values must be valid HTTP "tokens" (RFC
