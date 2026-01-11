@@ -94,6 +94,34 @@ jobs:
           }
           Copy-Item -LiteralPath 'out/certs/aero-test.cer' -Destination 'out/artifacts/aero-driver-public.cer' -Force
 
+      - name: Install Rust toolchain (for aero_packager)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache (for aero_packager)
+        uses: Swatinem/rust-cache@v2
+
+      - name: Package Guest Tools media (ci/package-guest-tools.ps1)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!(Test-Path -LiteralPath 'ci\package-guest-tools.ps1')) {
+            throw "Expected script ci\package-guest-tools.ps1 to exist."
+          }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\package-guest-tools.ps1' -SpecPath 'tools\packaging\specs\win7-signed.json' -Version '${{ github.ref_name }}'
+
+      - name: Smoke check Guest Tools outputs (sizes)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($name in @('aero-guest-tools.iso', 'aero-guest-tools.zip', 'manifest.json')) {
+            $p = Join-Path 'out\artifacts' $name
+            if (!(Test-Path -LiteralPath $p -PathType Leaf)) {
+              throw "Expected Guest Tools output missing: $p"
+            }
+            $f = Get-Item -LiteralPath $p
+            Write-Host ("{0} - {1} bytes" -f $f.Name, $f.Length)
+          }
+
       - name: Build Win7 virtio selftest (guest tool)
         shell: pwsh
         run: |
@@ -198,12 +226,13 @@ jobs:
             throw "Expected signing cert at out/certs/aero-test.cer (download artifact step may have failed)."
           }
 
-          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/package-guest-tools.ps1' `
-            -InputRoot 'out/packages' `
-            -CertPath 'out/certs/aero-test.cer' `
-            -OutDir 'artifacts' `
-            -Version '${{ github.ref_name }}' `
-            -BuildId '${{ github.run_id }}'
+           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/package-guest-tools.ps1' `
+             -InputRoot 'out/packages' `
+             -CertPath 'out/certs/aero-test.cer' `
+             -SpecPath 'tools/packaging/specs/win7-signed.json' `
+             -OutDir 'artifacts' `
+             -Version '${{ github.ref_name }}' `
+             -BuildId '${{ github.run_id }}'
 
           # The Guest Tools wrapper script previously emitted `aero-guest-tools.manifest.json`,
           # but now emits `manifest.json` directly. Keep both filenames available for

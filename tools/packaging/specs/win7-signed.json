@@ -1,0 +1,29 @@
+{
+  "drivers": [
+    {
+      "name": "aerogpu",
+      "required": true,
+      "expected_hardware_ids": []
+    },
+    {
+      "name": "virtio-blk",
+      "required": true,
+      "expected_hardware_ids": []
+    },
+    {
+      "name": "virtio-net",
+      "required": true,
+      "expected_hardware_ids": []
+    },
+    {
+      "name": "virtio-input",
+      "required": true,
+      "expected_hardware_ids": []
+    },
+    {
+      "name": "virtio-snd",
+      "required": false,
+      "expected_hardware_ids": []
+    }
+  ]
+}

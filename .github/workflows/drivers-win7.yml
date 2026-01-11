@@ -509,6 +509,38 @@ jobs:
           }
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\package-drivers.ps1' -MakeFatImage
 
+      - name: Install Rust toolchain (for aero_packager)
+        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache (for aero_packager)
+        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
+        uses: Swatinem/rust-cache@v2
+
+      - name: Package Guest Tools media (ci/package-guest-tools.ps1)
+        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!(Test-Path -LiteralPath 'ci\package-guest-tools.ps1')) {
+            throw "Expected script ci\package-guest-tools.ps1 to exist."
+          }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\package-guest-tools.ps1' -SpecPath 'tools\packaging\specs\win7-signed.json'
+
+      - name: Smoke check Guest Tools outputs (sizes)
+        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($name in @('aero-guest-tools.iso', 'aero-guest-tools.zip', 'manifest.json')) {
+            $p = Join-Path 'out\artifacts' $name
+            if (!(Test-Path -LiteralPath $p -PathType Leaf)) {
+              throw "Expected Guest Tools output missing: $p"
+            }
+            $f = Get-Item -LiteralPath $p
+            Write-Host ("{0} - {1} bytes" -f $f.Name, $f.Length)
+          }
+
       - name: Upload artifacts (out/artifacts/)
         if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
         uses: actions/upload-artifact@v4
@@ -582,10 +614,11 @@ jobs:
             throw "Expected signing cert at out/certs/aero-test.cer (download artifact step may have failed)."
           }
 
-          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/package-guest-tools.ps1' `
-            -InputRoot 'out/packages' `
-            -CertPath 'out/certs/aero-test.cer' `
-            -OutDir 'out/guest-tools'
+           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/package-guest-tools.ps1' `
+             -InputRoot 'out/packages' `
+             -CertPath 'out/certs/aero-test.cer' `
+             -SpecPath 'tools/packaging/specs/win7-signed.json' `
+             -OutDir 'out/guest-tools'
 
       - name: Verify Guest Tools outputs
         shell: pwsh

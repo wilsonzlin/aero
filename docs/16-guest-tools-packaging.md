@@ -28,10 +28,10 @@ By default this will:
   directory names (e.g. `drivers/aerogpu` → `aerogpu`, `windows7/virtio/blk` → `virtio-blk`)
 - stage `guest-tools/` and replace `guest-tools/certs/*` with `out/certs/aero-test.cer` (keeping `certs/README.md` if present)
 - produce:
-  - `out/artifacts/guest-tools/aero-guest-tools.iso`
-  - `out/artifacts/guest-tools/aero-guest-tools.zip`
-  - `out/artifacts/guest-tools/manifest.json`
-  - `out/artifacts/guest-tools/aero-guest-tools.manifest.json` (alias of `manifest.json` for CI/release asset naming)
+  - `out/artifacts/aero-guest-tools.iso`
+  - `out/artifacts/aero-guest-tools.zip`
+  - `out/artifacts/manifest.json`
+  - `out/artifacts/aero-guest-tools.manifest.json` (alias of `manifest.json` for CI/release asset naming)
 
 The default packaging spec is:
 
@@ -180,7 +180,7 @@ This uses the modern-only validation spec:
 ### CI-style flow (signed drivers → Guest Tools ISO/zip)
 
 The repository ships a CI-friendly wrapper script that consumes the signed driver packages
-produced by the Win7 driver pipeline and emits Guest Tools media into `out/artifacts/guest-tools/`:
+produced by the Win7 driver pipeline and emits Guest Tools media into `out/artifacts/`:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File ci/install-wdk.ps1
@@ -212,10 +212,10 @@ Notes:
 
 Outputs:
 
-- `out/artifacts/guest-tools/aero-guest-tools.iso`
-- `out/artifacts/guest-tools/aero-guest-tools.zip`
-- `out/artifacts/guest-tools/manifest.json`
-- `out/artifacts/guest-tools/aero-guest-tools.manifest.json`
+- `out/artifacts/aero-guest-tools.iso`
+- `out/artifacts/aero-guest-tools.zip`
+- `out/artifacts/manifest.json`
+- `out/artifacts/aero-guest-tools.manifest.json`
 
 ### Direct packager invocation (advanced)
 

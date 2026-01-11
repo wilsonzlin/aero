@@ -34,7 +34,8 @@ param(
   [string] $CertPath = "out/certs/aero-test.cer",
 
   [string] $SpecPath = "tools/packaging/specs/win7-aero-guest-tools.json",
-  [string] $OutDir = "out/artifacts/guest-tools",
+  [string] $DriverNameMapJson,
+  [string] $OutDir = "out/artifacts",
   [string] $Version,
   [string] $BuildId,
   [Nullable[long]] $SourceDateEpoch
@@ -42,6 +43,12 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# Optional driver rename overrides loaded from -DriverNameMapJson.
+# Keys may be either:
+# - a driverRel (relative path under out/packages, e.g. "windows7/virtio/blk"), or
+# - a leaf driver folder name (e.g. "blk")
+$script:DriverNameMap = @{}
 
 function Resolve-RepoPath {
   param([Parameter(Mandatory = $true)][string] $Path)
@@ -296,6 +303,43 @@ function Normalize-DriverRel {
   return $normalized
 }
 
+function Load-DriverNameMap {
+  param([string] $Path)
+
+  $map = @{}
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    return $map
+  }
+
+  $resolved = Resolve-RepoPath -Path $Path
+  if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+    throw "DriverNameMapJson does not exist: '$resolved'."
+  }
+
+  $raw = Get-Content -LiteralPath $resolved -Raw
+  if ([string]::IsNullOrWhiteSpace($raw)) {
+    throw "DriverNameMapJson is empty: '$resolved'."
+  }
+
+  $obj = $raw | ConvertFrom-Json
+  if ($null -eq $obj) {
+    throw "DriverNameMapJson did not parse as JSON: '$resolved'."
+  }
+
+  foreach ($prop in $obj.PSObject.Properties) {
+    $kRaw = ([string]$prop.Name).Trim()
+    $vRaw = ([string]$prop.Value).Trim()
+    if ([string]::IsNullOrWhiteSpace($kRaw) -or [string]::IsNullOrWhiteSpace($vRaw)) {
+      continue
+    }
+
+    $key = (Normalize-DriverRel -Value $kRaw).ToLowerInvariant()
+    $map[$key] = $vRaw
+  }
+
+  return $map
+}
+
 function Get-GuestToolsDriverNameFromDriverRel {
   param([Parameter(Mandatory = $true)][string] $DriverRel)
 
@@ -313,6 +357,9 @@ function Get-GuestToolsDriverNameFromDriverRel {
 
   $relNorm = Normalize-DriverRel -Value $DriverRel
   $key = $relNorm.ToLowerInvariant()
+  if ($script:DriverNameMap.ContainsKey($key)) {
+    return $script:DriverNameMap[$key]
+  }
   if ($overrides.ContainsKey($key)) {
     return $overrides[$key]
   }
@@ -328,6 +375,9 @@ function Normalize-GuestToolsDriverName {
   param([Parameter(Mandatory = $true)][string] $Name)
 
   $normalized = (Normalize-PathComponent -Value $Name.Trim()).ToLowerInvariant()
+  if ($script:DriverNameMap.ContainsKey($normalized)) {
+    return (Normalize-PathComponent -Value $script:DriverNameMap[$normalized]).ToLowerInvariant()
+  }
   $overrides = @{
     # Support staging from historical layouts that used a dash in the AeroGPU directory name.
     "aero-gpu" = "aerogpu"
@@ -842,6 +892,14 @@ if (-not (Test-Path -LiteralPath $specPathResolved -PathType Leaf)) {
   throw "SpecPath does not exist: '$specPathResolved'."
 }
 
+if (-not [string]::IsNullOrWhiteSpace($DriverNameMapJson)) {
+  $script:DriverNameMap = Load-DriverNameMap -Path $DriverNameMapJson
+  if ($script:DriverNameMap.Count -gt 0) {
+    $driverNameMapResolved = Resolve-RepoPath -Path $DriverNameMapJson
+    Write-Host ("Loaded driver name overrides: {0} entry(s) from {1}" -f $script:DriverNameMap.Count, $driverNameMapResolved)
+  }
+}
+
 if ([string]::IsNullOrWhiteSpace($Version)) {
   $Version = Get-VersionString
 }
@@ -851,11 +909,20 @@ if ([string]::IsNullOrWhiteSpace($BuildId)) {
 
 $epoch = Get-DefaultSourceDateEpoch
 
+# Propagate the epoch through the environment for any tools/libraries that depend on SOURCE_DATE_EPOCH
+# for reproducible timestamps.
+$env:SOURCE_DATE_EPOCH = "$epoch"
+
 Require-Command -Name "cargo" | Out-Null
 
 $packagerManifest = Resolve-RepoPath -Path "tools/packaging/aero_packager/Cargo.toml"
 if (-not (Test-Path -LiteralPath $packagerManifest -PathType Leaf)) {
   throw "Missing packager Cargo.toml: '$packagerManifest'."
+}
+
+$windowsDeviceContractResolved = Resolve-RepoPath -Path "docs/windows-device-contract.json"
+if (-not (Test-Path -LiteralPath $windowsDeviceContractResolved -PathType Leaf)) {
+  throw "Missing Windows device contract JSON: '$windowsDeviceContractResolved'."
 }
 
 $stageRoot = Resolve-RepoPath -Path "out/_staging_guest_tools"
@@ -939,6 +1006,7 @@ try {
     --drivers-dir $stageDriversRoot `
     --guest-tools-dir $stageGuestTools `
     --spec $specPathResolved `
+    --windows-device-contract $windowsDeviceContractResolved `
     --out-dir $outDirResolved `
     --version $Version `
     --build-id $BuildId `
