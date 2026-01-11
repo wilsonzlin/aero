@@ -134,15 +134,29 @@ impl D3D11Runtime {
                 label: Some("aero-d3d11 execute"),
             });
 
-        let mut stream = CmdStream::new(words);
-        while let Some(packet) = stream.next() {
-            let packet = packet.map_err(|e| anyhow!("{e}"))?;
-            self.exec_packet(&mut encoder, packet, &mut stream)?;
-        }
+        let result: Result<()> = (|| {
+            let mut stream = CmdStream::new(words);
+            while let Some(packet) = stream.next() {
+                let packet = packet.map_err(|e| anyhow!("{e}"))?;
+                self.exec_packet(&mut encoder, packet, &mut stream)?;
+            }
+            Ok(())
+        })();
 
-        self.queue.submit([encoder.finish()]);
-        self.encoder_has_commands = false;
-        Ok(())
+        match result {
+            Ok(()) => {
+                self.queue.submit([encoder.finish()]);
+                self.encoder_has_commands = false;
+                Ok(())
+            }
+            Err(err) => {
+                // Drop partially-recorded work, but still flush `queue.write_*` uploads so they
+                // don't stay queued indefinitely and reorder with later submissions.
+                self.encoder_has_commands = false;
+                self.queue.submit([]);
+                Err(err)
+            }
+        }
     }
 
     fn submit_encoder(&mut self, encoder: &mut wgpu::CommandEncoder, label: &'static str) {
