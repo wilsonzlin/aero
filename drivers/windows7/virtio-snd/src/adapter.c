@@ -484,6 +484,17 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
         goto Exit;
     }
 
+    status = PcRegisterPhysicalConnection(
+        DeviceObject,
+        VIRTIOSND_SUBDEVICE_TOPOLOGY,
+        VIRTIOSND_TOPO_PIN_BRIDGE_CAPTURE,
+        VIRTIOSND_SUBDEVICE_WAVE,
+        VIRTIOSND_WAVE_PIN_BRIDGE_CAPTURE);
+    if (!NT_SUCCESS(status)) {
+        VIRTIOSND_TRACE_ERROR("PcRegisterPhysicalConnection(capture) failed: 0x%08X\n", (UINT)status);
+        goto Exit;
+    }
+
 Exit:
     if (!NT_SUCCESS(status) && adapterContextRegistered) {
         VirtIoSndAdapterContext_Unregister(unknownAdapter);

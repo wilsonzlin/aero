@@ -10,13 +10,13 @@ What this test plan verifies:
 2. Windows 7 binds the virtio-snd driver package (INF/SYS) to that PCI function
 3. The Windows audio stack enumerates a **render** endpoint (Control Panel → Sound)
 4. Audio playback works (audible on the host, or captured to a WAV file in headless runs)
-5. (Future) The Windows audio stack enumerates a **capture** endpoint (Control Panel → Sound → Recording)
-6. (Future) Audio capture works (records host input if available, otherwise records silence)
+5. The Windows audio stack enumerates a **capture** endpoint (Control Panel → Sound → Recording)
+6. Audio capture works (records host input if available, otherwise records silence)
 7. The **virtio-snd** portion of the guest audio smoke test passes (selftest **Task 128**)
 
-> Note: The current Aero Windows 7 virtio-snd driver package is **render-only** (playback).
-> Capture is defined by `AERO-W7-VIRTIO` v1 (`rxq`, stream id `1`), but the current
-> PortCls driver is render-only and does not expose a Windows capture endpoint yet.
+> Note: virtio-snd capture depends on the host/QEMU audio backend providing an input
+> source. If none is available, the capture stream will record silence, but
+> endpoint enumeration should still work.
 
 References:
 
@@ -260,10 +260,7 @@ Reboot if prompted.
 
 If you used the `wav` audio backend, the host-side `virtio-snd-*.wav` file should be created and grow when sound plays.
 
-### 4b) (Future) Verify a capture endpoint exists
-
-This section is forward-looking. It will not pass until a PortCls capture endpoint
-is implemented for virtio-snd stream id `1` (RX).
+### 4b) Verify a capture endpoint exists
 
 1. Open **Control Panel** → **Sound** (or run `mmsys.cpl`).
 2. On the **Recording** tab, confirm a new recording device exists (capture endpoint).
@@ -301,15 +298,26 @@ The selftest logs to:
    ```bat
    REM Contract v1 device (DEV_1059 + REV_01):
    C:\AeroTests\aero-virtio-selftest.exe --test-snd
-   ```
+ 
+    REM Stock QEMU transitional device (DEV_1018) + legacy INF/package:
+    C:\AeroTests\aero-virtio-selftest.exe --test-snd --allow-virtio-snd-transitional
+    ```
     Notes:
     - `--test-snd` (alias: `--require-snd`) enables virtio-snd playback testing. Missing virtio-snd is treated as a FAIL in this mode.
-    - The selftest expects the contract-v1 HWID (`...DEV_1059&REV_01`). Under QEMU, configure the device with
+    - The strict `aero-virtio-snd.inf` package expects the contract-v1 HWID (`...DEV_1059&REV_01`). Under QEMU, configure the device with
       `disable-legacy=on,x-pci-revision=0x01` so the strict INF can bind.
+    - When `--test-snd` is enabled, the selftest also checks for a virtio-snd capture endpoint and emits
+      `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|endpoint_present` when present.
+      If the capture endpoint is missing, the capture test is reported as `SKIP|endpoint_missing` unless `--require-snd-capture` is set.
+    - `--test-snd-capture` runs a capture smoke test (WASAPI, fallback to waveIn) that records for a short interval.
+      This passes even on silence by default; use `--require-non-silence` to require a non-silent buffer.
+    - `--require-snd-capture` fails the overall selftest if the capture endpoint is missing (instead of `SKIP`).
+    - If your device enumerates as transitional (`PCI\\VEN_1AF4&DEV_1018`), pass `--allow-virtio-snd-transitional`
+      so the selftest accepts the transitional ID (intended for QEMU bring-up/regression).
     - If you run without `--test-snd` / `--require-snd`, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`
       (and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`).
     - Use `--disable-snd` to force `SKIP` even when capture/playback flags are present.
-3. Review `C:\aero-virtio-selftest.log` and locate the virtio-snd marker:
+ 3. Review `C:\aero-virtio-selftest.log` and locate the virtio-snd marker:
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL` (playback failed; also used when the device is missing or the Topology KS interface is missing)
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|driver_not_bound` / `...|wrong_service` / `...|device_error` (driver binding not healthy)

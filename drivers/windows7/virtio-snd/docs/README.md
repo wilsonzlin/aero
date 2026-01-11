@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 
-# Aero virtio-snd (Windows 7) PortCls/WaveRT driver
+# Aero virtio-snd (Windows 7) PortCls/WaveRT driver (render + capture)
 
 This directory contains implementation notes for a clean-room **PortCls + WaveRT** Windows 7 audio driver that targets the Aero **virtio-snd** PCI device.
 
@@ -11,10 +11,18 @@ This `docs/README.md` is the **source of truth** for the in-tree Windows 7 `virt
 - What (if any) QEMU configuration is supported
 - What render/capture endpoints exist today
 
-The shipped driver package produces `virtiosnd.sys` and currently exposes a single **render** endpoint:
+The shipped driver package produces `virtiosnd.sys` and exposes two fixed-format endpoints:
+
+Render (output):
 
 * 48,000 Hz
 * Stereo (2 channels)
+* 16-bit PCM little-endian (S16_LE)
+
+Capture (input):
+
+* 48,000 Hz
+* Mono (1 channel)
 * 16-bit PCM little-endian (S16_LE)
 
 ## What ships / compatibility contract
@@ -80,8 +88,10 @@ The contract defines **two** fixed-format PCM streams:
 - Stream 0 (playback/output): 48,000 Hz, stereo (2ch), signed 16-bit little-endian (`S16_LE`)
 - Stream 1 (capture/input): 48,000 Hz, mono (1ch), signed 16-bit little-endian (`S16_LE`)
 
-The current shipped PortCls miniports expose **stream 0 only** as a Windows render endpoint.
-**Capture (stream 1) is not yet shipped** as a Windows capture endpoint, even though it is part of the `AERO-W7-VIRTIO` v1 contract.
+The shipped PortCls miniports expose both:
+
+- Stream 0 as a Windows render endpoint.
+- Stream 1 as a Windows capture endpoint.
 
 ### QEMU support (manual testing)
 
@@ -123,15 +133,16 @@ PortCls miniports:
 
 - Registers `Wave` (PortWaveRT + IMiniportWaveRT) and `Topology` (PortTopology + IMiniportTopology) subdevices.
 - Physically bridges them via `PcRegisterPhysicalConnection`.
-- Exposes a single **render** endpoint (fixed format):
-  - 48,000 Hz, stereo (2ch), 16-bit PCM LE (S16_LE)
+- Exposes fixed-format endpoints:
+  - Render (stream 0): 48,000 Hz, stereo (2ch), 16-bit PCM LE (S16_LE)
+  - Capture (stream 1): 48,000 Hz, mono (1ch), 16-bit PCM LE (S16_LE)
 - Uses a periodic timer/DPC “software DMA” model that:
-  - submits one period of PCM to a backend callback
-  - advances play position + signals the WaveRT notification event only when the backend accepts the period (backpressure-aware)
+  - for render: submits one period of PCM to a backend callback and advances play position (backpressure-aware)
+  - for capture: submits one RX period buffer; RX completion advances write position and signals the WaveRT notification event
 
 * `src/adapter.c` — PortCls adapter driver (`PcInitializeAdapterDriver` / `PcAddAdapterDevice`)
-* `src/topology.c` — minimal topology miniport (speaker jack + channel config properties)
-* `src/wavert.c` — WaveRT miniport + stream (periodic timer/DPC advances the ring position and pushes PCM)
+* `src/topology.c` — topology miniport (speaker + microphone jacks + channel config properties)
+* `src/wavert.c` — WaveRT miniport + stream (fixed-format render + capture)
 
 Backend layer (WaveRT ↔ virtio-snd):
 
@@ -167,9 +178,8 @@ Scatter/gather helpers (WaveRT cyclic buffer → virtio descriptors):
 
 Notes:
 
-* **Queues:** `controlq`/`eventq`/`txq`/`rxq` are initialized per contract v1; playback uses `controlq` (0) + `txq` (2).
-  - `eventq` is initialized for contract conformance but is not currently used by the render-only PortCls endpoint.
-  - `rxq` (capture) bring-up exists in-tree, but capture is not yet exposed as a Windows endpoint.
+* **Queues:** `controlq`/`eventq`/`txq`/`rxq` are initialized per contract v1; render uses `controlq` (0) + `txq` (2), capture uses `controlq` (0) + `rxq` (3).
+  - `eventq` is initialized for contract conformance but is not currently used by the PortCls endpoints.
 * **Interrupts:** **INTx** only (MSI/MSI-X not currently used by this driver package).
 * **Feature negotiation:** contract v1 requires 64-bit feature negotiation (`VIRTIO_F_VERSION_1` is bit 32) and `VIRTIO_F_RING_INDIRECT_DESC` (bit 28).
 
@@ -204,15 +214,14 @@ CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See
 ## Protocol implemented (Aero subset)
 
 This driver targets the **Aero Windows 7 virtio device contract v1** (virtio-snd §3.4).
-The contract (and emulator) define two fixed-format PCM streams. The current shipped
-driver package only exposes **stream 0** (playback/output) as a Windows render endpoint;
-capture (stream 1) is not yet exposed via PortCls.
+The contract (and emulator) define two fixed-format PCM streams. The shipped driver
+package exposes both streams via PortCls/WaveRT:
 
 - Stream 0 (playback/output): 48,000 Hz, stereo (2ch), signed 16-bit little-endian (`S16_LE`)
-- Stream 1 (capture/input): 48,000 Hz, mono (1ch), signed 16-bit little-endian (`S16_LE`) (capture endpoint TBD)
+- Stream 1 (capture/input): 48,000 Hz, mono (1ch), signed 16-bit little-endian (`S16_LE`)
 
-Basic playback uses `controlq` + `txq`. The device model also defines `rxq` for capture,
-but capture is not implemented by the current PortCls miniport.
+Basic playback uses `controlq` + `txq`. Capture uses `controlq` + `rxq`; the emulator
+fills silence when host input is unavailable.
 
 All multi-byte fields described below are **little-endian**.
 
@@ -221,7 +230,7 @@ All multi-byte fields described below are **little-endian**.
 The controlq request payload begins with a 32-bit `code` and the response always begins with a 32-bit `status`.
 
 Contract v1 defines these request codes (for both streams 0 and 1). The current
-PortCls endpoint driver uses them only for **stream 0** (playback):
+PortCls miniports use them for **stream 0** (render) and **stream 1** (capture):
 
 - `VIRTIO_SND_R_PCM_INFO (0x0100)`
 - `VIRTIO_SND_R_PCM_SET_PARAMS (0x0101)`

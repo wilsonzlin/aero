@@ -15,10 +15,8 @@ This design targets the simplest useful audio path for Aero:
 
 - Windows 7 SP1 (x86/x64).
 - One **render** endpoint (speaker/headphones style) backed by `virtio-snd` stream id `0` (TX).
-- A single fixed format (see [Assumptions and limits](#assumptions-and-limits)).
-
-Capture and format negotiation (beyond the single fixed render format), plus
-advanced DSP/offload, are out of scope for the first implementation.
+- One **capture** endpoint (microphone style) backed by `virtio-snd` stream id `1` (RX).
+- Fixed formats (see [Assumptions and limits](#assumptions-and-limits)).
 
 ## Why PortCls + WaveRT (Windows 7+)
 
@@ -78,10 +76,10 @@ The intended structure is a classic PortCls “adapter + miniports” design:
 
 - **Adapter / FDO**: owns the virtio transport (virtio-pci + virtqueues) and
   provides shared device services.
-- **Topology miniport**: exposes the endpoint topology (minimal for a basic render device).
-- **WaveRT miniport**: exposes one render pin that supports WaveRT.
-- **WaveRT stream object**: created per open stream (render); owns the cyclic buffer mapping,
-  clock state, and notification timer.
+- **Topology miniport**: exposes the endpoint topology (speaker + microphone).
+- **WaveRT miniport**: exposes one render pin and one capture pin that support WaveRT.
+- **WaveRT stream object**: created per open stream (render or capture); owns the cyclic buffer mapping,
+  clock state, and notification timer/period scheduling.
 
 The KS pin state changes drive stream start/stop, and PortCls calls into the
 WaveRT stream’s `SetState` to request those transitions.
@@ -94,6 +92,7 @@ The `virtio-snd` device provides:
   `START`, `STOP`, `RELEASE`, ...).
 - One or more **PCM data queues**. For this design, we assume:
   - a render TX queue feeding stream id `0`
+  - a capture RX queue feeding stream id `1`
 
 The driver’s render loop:
 
@@ -105,10 +104,10 @@ The driver’s render loop:
 Because TX completions are not used for timing, virtqueue “used” processing is
 treated as backpressure/resource reclamation only.
 
-Capture note: this document (and the current driver plan) is **render-only** and
-does not wire up the virtio-snd capture queue (`rxq`) yet. If/when capture is
-implemented, this document should be updated with the corresponding RX
-scheduling model.
+The driver’s capture loop uses the same WaveRT cyclic-buffer contract as render,
+but the dataflow is reversed: the virtio-snd device writes PCM into the buffer
+via `rxq`, and the driver advances the WaveRT **write cursor** and signals the
+notification event once per period.
 
 ## Buffer strategy (cyclic buffer + periods)
 

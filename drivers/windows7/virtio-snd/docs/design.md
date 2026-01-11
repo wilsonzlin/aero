@@ -60,11 +60,13 @@ CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See
 ## Default build architecture (virtio-pci modern endpoint driver)
 
 - **Transport:** virtio-pci **modern** (BAR0 MMIO + PCI vendor-specific capabilities; negotiates `VIRTIO_F_VERSION_1`).
-- **Queues:** contract v1 defines `controlq`/`eventq`/`txq`/`rxq`. The driver initializes all four, but the current
-  PortCls integration is render-only and primarily uses `controlq` (0) + `txq` (2). `eventq` is currently unused by the render endpoint, and capture endpoint plumbing is still pending.
+- **Queues:** contract v1 defines `controlq`/`eventq`/`txq`/`rxq`. The driver initializes all four; PortCls
+  uses `controlq` (0) + `txq` (2) for render (stream 0) and `controlq` (0) + `rxq` (3) for capture (stream 1).
+  `eventq` is currently unused by the PortCls endpoints.
 - **Interrupts:** INTx only.
-- **Protocol:** PCM control + TX/RX protocol engines for streams 0/1 (PortCls integration is render-only today).
-- **Pacing:** WaveRT period timer/DPC provides the playback clock; virtqueue used entries are treated as resource reclamation rather than timing.
+- **Protocol:** PCM control + TX/RX protocol engines for streams 0/1.
+- **Pacing:** WaveRT period timer/DPC provides the playback clock; virtqueue used
+  entries are treated as resource reclamation rather than timing.
 
 The optional `aero-virtio-snd-legacy.inf` package uses the same virtio-pci modern
 transport stack but relaxes PCI identity/version gating so it can be used with
@@ -117,13 +119,11 @@ Responsibilities:
   - query PCM stream capabilities (`PCM_INFO`)
   - configure params (`PCM_SET_PARAMS`)
   - prepare/start/stop/release for playback and capture (streams 0 and 1)
-- Handle `eventq` for asynchronous device events (if used by the device model).
-- Implement the PCM data path:
-   - playback: submit PCM buffers on `txq`
-   - capture: submit capture buffers on `rxq` (stream id `1`) and process
-     completions via the RX engine. The current PortCls integration is still
-     render-only (no capture endpoint wired up yet), but the protocol layer is
-     contract-complete.
+ - Handle `eventq` for asynchronous device events (if used by the device model).
+ - Implement the PCM data path:
+    - playback: submit PCM buffers on `txq`
+    - capture: submit capture buffers on `rxq` (stream id `1`) and process
+      completions via the RX engine.
 
 The protocol engine should be written to:
 
@@ -145,16 +145,20 @@ The driver registers `Wave` (PortWaveRT + IMiniportWaveRT) and `Topology`
 
 Current behavior:
 
-- Exposes a single render endpoint with a fixed format (48kHz, stereo, 16-bit
-  PCM LE).
+- Exposes fixed-format endpoints:
+  - Render (stream 0): 48kHz, stereo, 16-bit PCM LE.
+  - Capture (stream 1): 48kHz, mono, 16-bit PCM LE.
 - Uses a periodic timer/DPC “software DMA” model to:
-  - advance play position and signal the WaveRT notification event, and
-  - submit one period of PCM into a backend callback.
+  - for render: advance play position, signal the WaveRT notification event, and
+    submit one period of PCM into a backend callback.
+  - for capture: submit one RX period buffer; RX completion advances the WaveRT
+    write cursor and signals the notification event.
 - Uses a backend abstraction (`include/backend.h`) so the WaveRT period timer path
   can remain decoupled from virtio transport details.
-- The shipped driver package uses the virtio-pci modern backend (`backend_virtio.c`) and pushes PCM via `controlq`/`txq`.
-  A legacy I/O-port backend exists for compatibility testing with transitional devices, but it is not shipped. Capture is not
-  yet exposed as a Windows endpoint.
+- The shipped driver package uses the virtio-pci modern backend (`backend_virtio.c`) for render (stream 0), pushing PCM via
+  `controlq`/`txq`.
+- Capture (stream 1) uses the RX protocol engine (`virtiosnd_rx.c`) and submits MDL-backed buffers to `rxq`.
+- A legacy I/O-port backend exists for compatibility testing with transitional devices, but it is not shipped.
 
 ### 5) Interrupt + timer pacing model
 
@@ -206,7 +210,7 @@ Contract v1 requirements include:
   - `controlq = 64`
   - `eventq = 64` (initialized; currently unused unless the device model emits events)
   - `txq = 256`
-- `rxq = 64` (initialized; RX engine exists, capture endpoint integration is TBD)
+- `rxq = 64` (initialized; used by the WaveRT capture endpoint)
 
 Driver stance (strict contract-v1):
 
