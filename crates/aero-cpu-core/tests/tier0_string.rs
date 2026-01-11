@@ -46,7 +46,7 @@ impl SparseBus {
 
     fn load(&mut self, addr: u64, bytes: &[u8]) {
         for (i, b) in bytes.iter().copied().enumerate() {
-            self.mem.insert(addr + i as u64, b);
+            self.mem.insert(addr.wrapping_add(i as u64), b);
         }
     }
 
@@ -62,14 +62,14 @@ impl CpuBus for SparseBus {
 
     fn read_u16(&mut self, vaddr: u64) -> Result<u16, aero_cpu_core::Exception> {
         let b0 = self.read_u8_raw(vaddr) as u16;
-        let b1 = self.read_u8_raw(vaddr + 1) as u16;
+        let b1 = self.read_u8_raw(vaddr.wrapping_add(1)) as u16;
         Ok(b0 | (b1 << 8))
     }
 
     fn read_u32(&mut self, vaddr: u64) -> Result<u32, aero_cpu_core::Exception> {
         let mut out = 0u32;
         for i in 0..4 {
-            out |= (self.read_u8_raw(vaddr + i) as u32) << (i * 8);
+            out |= (self.read_u8_raw(vaddr.wrapping_add(i)) as u32) << (i * 8);
         }
         Ok(out)
     }
@@ -77,7 +77,7 @@ impl CpuBus for SparseBus {
     fn read_u64(&mut self, vaddr: u64) -> Result<u64, aero_cpu_core::Exception> {
         let mut out = 0u64;
         for i in 0..8 {
-            out |= (self.read_u8_raw(vaddr + i) as u64) << (i * 8);
+            out |= (self.read_u8_raw(vaddr.wrapping_add(i)) as u64) << (i * 8);
         }
         Ok(out)
     }
@@ -85,7 +85,7 @@ impl CpuBus for SparseBus {
     fn read_u128(&mut self, vaddr: u64) -> Result<u128, aero_cpu_core::Exception> {
         let mut out = 0u128;
         for i in 0..16 {
-            out |= (self.read_u8_raw(vaddr + i) as u128) << (i * 8);
+            out |= (self.read_u8_raw(vaddr.wrapping_add(i)) as u128) << (i * 8);
         }
         Ok(out)
     }
@@ -97,28 +97,28 @@ impl CpuBus for SparseBus {
 
     fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), aero_cpu_core::Exception> {
         for (i, b) in val.to_le_bytes().iter().copied().enumerate() {
-            self.mem.insert(vaddr + i as u64, b);
+            self.mem.insert(vaddr.wrapping_add(i as u64), b);
         }
         Ok(())
     }
 
     fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), aero_cpu_core::Exception> {
         for (i, b) in val.to_le_bytes().iter().copied().enumerate() {
-            self.mem.insert(vaddr + i as u64, b);
+            self.mem.insert(vaddr.wrapping_add(i as u64), b);
         }
         Ok(())
     }
 
     fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), aero_cpu_core::Exception> {
         for (i, b) in val.to_le_bytes().iter().copied().enumerate() {
-            self.mem.insert(vaddr + i as u64, b);
+            self.mem.insert(vaddr.wrapping_add(i as u64), b);
         }
         Ok(())
     }
 
     fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), aero_cpu_core::Exception> {
         for (i, b) in val.to_le_bytes().iter().copied().enumerate() {
-            self.mem.insert(vaddr + i as u64, b);
+            self.mem.insert(vaddr.wrapping_add(i as u64), b);
         }
         Ok(())
     }
@@ -143,10 +143,10 @@ impl CpuBus for SparseBus {
         // fast path across wrapped address ranges.
         let mut tmp = vec![0u8; len];
         for (i, slot) in tmp.iter_mut().enumerate() {
-            *slot = self.read_u8_raw(src + i as u64);
+            *slot = self.read_u8_raw(src.wrapping_add(i as u64));
         }
         for (i, b) in tmp.into_iter().enumerate() {
-            self.mem.insert(dst + i as u64, b);
+            self.mem.insert(dst.wrapping_add(i as u64), b);
         }
         Ok(true)
     }
@@ -169,7 +169,7 @@ impl CpuBus for SparseBus {
         // Like `bulk_copy`, operate on the raw u64 address range without applying wrapping.
         for i in 0..repeat {
             for (j, b) in pattern.iter().copied().enumerate() {
-                let addr = dst + (i * pattern.len() + j) as u64;
+                let addr = dst.wrapping_add((i * pattern.len() + j) as u64);
                 self.mem.insert(addr, b);
             }
         }
@@ -181,7 +181,7 @@ impl CpuBus for SparseBus {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
         for i in 0..len {
-            buf[i] = self.read_u8_raw(vaddr + i as u64);
+            buf[i] = self.read_u8_raw(vaddr.wrapping_add(i as u64));
         }
         Ok(buf)
     }
