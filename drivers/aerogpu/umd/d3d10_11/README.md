@@ -26,6 +26,7 @@ Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDA
 For a full “bring-up spec” (Win7 driver model overview, minimal D3D10DDI/D3D11DDI entrypoints to implement, swapchain behavior expectations, shader handling, and a test plan), see:
 
 - [`docs/graphics/win7-d3d10-11-umd-minimal.md`](../../../../docs/graphics/win7-d3d10-11-umd-minimal.md)
+- [`docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md`](../../../../docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md) (Win7/WDDM 1.1 alloc + Map/Unmap reference: `pfnAllocateCb`/`pfnLockCb`)
 - [`docs/graphics/win7-d3d11ddi-function-tables.md`](../../../../docs/graphics/win7-d3d11ddi-function-tables.md) (DDI function-table checklist: REQUIRED vs stub for FL10_0)
 - [`docs/graphics/win7-d3d10-11-umd-allocations.md`](../../../../docs/graphics/win7-d3d10-11-umd-allocations.md) (resource allocation contract: `CreateResource` → `pfnAllocateCb` + `D3DDDI_ALLOCATIONINFO`)
 - [`docs/graphics/win7-d3d11-map-unmap.md`](../../../../docs/graphics/win7-d3d11-map-unmap.md) (`Map`/`Unmap` contract: `LockCb`/`UnlockCb`, DO_NOT_WAIT, staging readback sync)

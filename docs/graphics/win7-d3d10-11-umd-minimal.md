@@ -20,7 +20,7 @@ This document is an implementation-oriented checklist/spec for bringing up **Dir
 
 * `docs/graphics/win7-wddm11-aerogpu-driver.md` — KMD+UMD architecture, memory model, fence/vblank requirements, and the guest↔emulator command transport.
 * `docs/graphics/win7-aerogpu-validation.md` — bring-up/stability checklist (TDR avoidance, vblank pacing, debug playbook).
-* `docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — deprecated redirect to the focused allocation + Map/Unmap docs under `docs/graphics/`.
+* `docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — Win7/WDDM 1.1 alloc + Map/Unmap reference (`D3DDDICB_ALLOCATE`, `D3DDDICB_LOCK`/`D3DDDICB_UNLOCK`).
 * `docs/graphics/win7-d3d10-11-umd-allocations.md` — CreateResource-side allocation contract details (allocation-info arrays, `pfnAllocateCb`/`pfnDeallocateCb`, and `DXGI_DDI_PRIMARY_DESC` primaries/backbuffers).
 * `docs/graphics/win7-d3d11-map-unmap.md` — Win7 D3D11 `Map`/`Unmap` contract (`pfnLockCb`/`pfnUnlockCb`, DO_NOT_WAIT, staging readback sync).
 * `docs/graphics/win7-d3d11ddi-function-tables.md` — D3D11 `d3d11umddi.h` function-table checklist (which entries must be non-null vs safely stubbed for FL10_0 bring-up).
@@ -249,6 +249,7 @@ Resource update/copy (minimum)
 
 See also:
 
+* `docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — Win7/WDDM 1.1 alloc + Map/Unmap reference (`D3DDDICB_ALLOCATE`, `D3DDDICB_LOCK`/`D3DDDICB_UNLOCK`).
 * `docs/graphics/win7-d3d10-11-umd-allocations.md` — Win7/WDDM 1.1 resource allocation (`CreateResource` → `pfnAllocateCb`) contract.
 * `docs/graphics/win7-d3d11-map-unmap.md` — Win7 `Map`/`Unmap` semantics (`LockCb`/`UnlockCb`) for dynamic uploads + staging readback.
 
