@@ -272,3 +272,6 @@ For canonical WDDM AeroGPU A3A0 traces, the trace header’s `command_abi_versio
 ```
 (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR
 ```
+
+Any legacy/prototype AeroGPU ABIs are retired and are not supported for trace capture
+or replay.

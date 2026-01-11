@@ -59,15 +59,15 @@ The protocol is still documented for reference, but it is archived:
 
 It is **not** compatible with the Win7/WDDM AeroGPU protocol.
 
-## Retired prototype ABI: A0E0 experimental ring (removed)
+## Retired prototype ABI: experimental cmd/completion ring (removed)
 
 This repository previously contained an experimental ring/opcode ABI used for early backend
 experiments and for exercising gpu-trace plumbing. It has been removed so the repo only
 supports the canonical A3A0 AeroGPU protocol.
 
-The archived specification is kept under:
+The archived note is kept under:
 
-- `docs/legacy/experimental-a0e0-gpu-command-abi.md`
+- `docs/legacy/experimental-gpu-command-abi.md`
 
 ## Summary / guidance
 

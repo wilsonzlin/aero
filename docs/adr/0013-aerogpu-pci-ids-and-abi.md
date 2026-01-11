@@ -9,7 +9,7 @@ AeroGPU spans multiple layers (emulator device model, guest kernel-mode driver, 
 - Legacy stacks exist with different IDs/ABIs, notably:
   - **1AED**: legacy BAR0 MMIO ABI (and associated INF matching).
   - **1AE0**: older in-tree guest stack / placeholder PCI IDs.
-  - **A0E0**: retired experimental ABI used for early host-side experiments (implementation removed).
+  - Prototype cmd/completion-ring ABI: retired experimental ABI used for early host-side experiments (implementation removed).
 
 This drift is costly because **PCI IDs and guest↔host ABIs are API**:
 
@@ -56,7 +56,7 @@ These documents must reflect the canonical AeroGPU PCI identity and the canonica
 
 ## Alternatives considered
 
-1. **Keep the A0E0 cmd/completion ring ABI as “the” AeroGPU ABI**
+1. **Keep the prototype cmd/completion-ring ABI as “the” AeroGPU ABI**
    - Pros: already exists; useful for host-side experiments.
    - Cons: does not match the WDDM driver protocol headers, does not align with current driver packaging, and encourages a split-brain GPU device story (two different “AeroGPU” devices).
 
@@ -75,11 +75,11 @@ These documents must reflect the canonical AeroGPU PCI identity and the canonica
 - **Legacy IDs/ABIs are deprecated and must be explicitly labeled + gated.**
   - **1AE0** (older guest stack / placeholder IDs): supported only for historical bring-up; must not be the default anywhere.
   - **1AED** (legacy MMIO ABI): supported only behind an explicit “legacy ABI” compatibility mode; no new features added.
-  - **A0E0**: treated as an internal/experimental ABI; must not be presented as the AeroGPU WDDM device.
+  - Prototype cmd/completion-ring ABI: treated as an internal/experimental ABI; must not be presented as the AeroGPU WDDM device.
 
 - **Migration / removal timeline (project policy):**
   1. Immediately: new development targets **A3A0 + versioned protocol headers** only. Legacy IDs/ABIs must not be used by default.
-  2. After **one release cycle** with A3A0 as default: remove A0E0 and 1AE0 from any default configs and docs; keep only if explicitly enabled for development/testing.
+  2. After **one release cycle** with A3A0 as default: remove the prototype cmd/completion-ring ABI and 1AE0 from any default configs and docs; keep only if explicitly enabled for development/testing.
   3. After **two release cycles** with A3A0 as default: drop 1AED compatibility unless there is a documented, actively-used downstream dependency that requires it.
 
 - **CI drift checks are required.** CI must detect mismatches between:

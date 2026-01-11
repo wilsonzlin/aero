@@ -64,7 +64,13 @@ Subsystem IDs are Aero-specific and are used as stable secondary identifiers:
 Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual PCI IDs:
 
 - Primary HWID (new versioned ABI): `A3A0:0001` (`drivers/aerogpu/protocol/aerogpu_pci.h`)
+  - Subsystem vendor/device: `A3A0:0001`
+  - Class code: `03/00/00` (display / VGA)
+  - Windows hardware IDs:
+    - `PCI\VEN_A3A0&DEV_0001`
+    - `PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0` (optional; only if the INF matches it)
 - Secondary/legacy HWID (legacy bring-up ABI): `1AED:0001` (`drivers/aerogpu/protocol/aerogpu_protocol.h`)
+  - Legacy hardware ID: `PCI\VEN_1AED&DEV_0001`
 
 > Note: these are virtual-only IDs used inside the guest; they are not required to be PCI-SIG allocated.
 >
@@ -98,8 +104,8 @@ Notes:
 - `aerogpu_dx11.inf` is an optional alternative INF that binds to the same device IDs and additionally installs D3D10/11 user-mode components.
 
 Compatibility note (non-canonical virtio PCI Device IDs):
-  
-Transitional virtio-pci IDs are intentionally out of scope for `AERO-W7-VIRTIO` v1 and are not part of the Aero Win7 virtio contract.
+
+Transitional virtio-pci IDs (e.g. `1AF4:1000`, `1AF4:1018`) are intentionally out of scope for `AERO-W7-VIRTIO` v1 and are not part of the Aero Win7 virtio contract.
 
 ## Windows hardware IDs and driver binding
 
