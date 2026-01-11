@@ -530,9 +530,14 @@ function maybeEmitL2TunnelStatsLog(nowMs: number): void {
   const dropsSinceLast = computeL2TunnelForwarderDropDeltas(l2LastStats, stats);
   l2LastStats = stats;
 
+  const anyDrops =
+    dropsSinceLast.rxDroppedNetRxFull > 0 ||
+    dropsSinceLast.rxDroppedPendingOverflow > 0 ||
+    dropsSinceLast.txDroppedTunnelBackpressure > 0;
+
   pushEvent({
     kind: "log",
-    level: "info",
+    level: anyDrops ? "warn" : "info",
     message: formatL2TunnelForwarderLog({ connection: l2ConnectionState, stats, dropsSinceLast }),
   });
 }
