@@ -32,7 +32,7 @@ class FakeDemo {
     });
   }
 
-  queue_get_config_descriptor(): void {
+  queue_get_config_descriptor(_len: number): void {
     throw new Error("not used");
   }
 
@@ -76,6 +76,7 @@ describe("UsbPassthroughDemoRuntime", () => {
     expect(isUsbPassthroughDemoRunMessage({ type: "usb.demo.run", request: "unknown" })).toBe(false);
     expect(isUsbPassthroughDemoRunMessage({ type: "usb.demo.run", request: "deviceDescriptor", length: -1 })).toBe(false);
     expect(isUsbPassthroughDemoRunMessage({ type: "usb.demo.run", request: "deviceDescriptor", length: 1.5 })).toBe(false);
+    expect(isUsbPassthroughDemoRunMessage({ type: "usb.demo.run", request: "deviceDescriptor", length: 0x1_0000 })).toBe(false);
     expect(isUsbPassthroughDemoRunMessage({ type: "usb.demo.run" })).toBe(false);
   });
 
