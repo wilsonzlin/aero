@@ -3294,16 +3294,19 @@ static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstri
     return out;
   }
 
-  WAVEFORMATEX desired{};
-  desired.wFormatTag = WAVE_FORMAT_PCM;
-  desired.nChannels = 1;
-  desired.nSamplesPerSec = 48000;
-  desired.wBitsPerSample = 16;
-  desired.nBlockAlign = static_cast<WORD>((desired.nChannels * desired.wBitsPerSample) / 8);
-  desired.nAvgBytesPerSec = desired.nSamplesPerSec * desired.nBlockAlign;
-  desired.cbSize = 0;
+  std::vector<BYTE> fmt_bytes;
+  fmt_bytes.resize(sizeof(WAVEFORMATEX));
+  auto* desired = reinterpret_cast<WAVEFORMATEX*>(fmt_bytes.data());
+  *desired = {};
+  desired->wFormatTag = WAVE_FORMAT_PCM;
+  desired->nChannels = 1;
+  desired->nSamplesPerSec = 48000;
+  desired->wBitsPerSample = 16;
+  desired->nBlockAlign = static_cast<WORD>((desired->nChannels * desired->wBitsPerSample) / 8);
+  desired->nAvgBytesPerSec = desired->nSamplesPerSec * desired->nBlockAlign;
+  desired->cbSize = 0;
 
-  log.Logf("virtio-snd: capture desired format=%s", WaveFormatToString(&desired).c_str());
+  log.Logf("virtio-snd: capture desired format=%s", WaveFormatToString(desired).c_str());
 
   WAVEFORMATEX* mix = nullptr;
   hr = client->GetMixFormat(&mix);
@@ -3314,15 +3317,37 @@ static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstri
     log.Logf("virtio-snd: capture GetMixFormat failed hr=0x%08lx (continuing)", static_cast<unsigned long>(hr));
   }
   constexpr REFERENCE_TIME kBufferDuration100ms = 1000000; // 100ms in 100ns units
-  hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, &desired, nullptr);
+  hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, desired, nullptr);
   if (FAILED(hr)) {
-    out.fail_reason = "initialize_fixed_failed";
-    out.hr = hr;
-    log.Logf("virtio-snd: capture Initialize(shared desired 48kHz S16 mono) failed hr=0x%08lx",
+    log.Logf("virtio-snd: capture Initialize(shared desired 48kHz S16 mono) failed hr=0x%08lx; trying WAVE_FORMAT_EXTENSIBLE",
              static_cast<unsigned long>(hr));
-    return out;
+
+    fmt_bytes.resize(sizeof(WAVEFORMATEXTENSIBLE));
+    auto* ext = reinterpret_cast<WAVEFORMATEXTENSIBLE*>(fmt_bytes.data());
+    *ext = {};
+    ext->Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+    ext->Format.nChannels = 1;
+    ext->Format.nSamplesPerSec = 48000;
+    ext->Format.wBitsPerSample = 16;
+    ext->Format.nBlockAlign = static_cast<WORD>((ext->Format.nChannels * ext->Format.wBitsPerSample) / 8);
+    ext->Format.nAvgBytesPerSec = ext->Format.nSamplesPerSec * ext->Format.nBlockAlign;
+    ext->Format.cbSize = static_cast<WORD>(sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX));
+    ext->Samples.wValidBitsPerSample = 16;
+    ext->dwChannelMask = SPEAKER_FRONT_CENTER;
+    ext->SubFormat = kWaveSubFormatPcm;
+    desired = &ext->Format;
+
+    hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, desired, nullptr);
+    if (FAILED(hr)) {
+      out.fail_reason = "initialize_fixed_failed";
+      out.hr = hr;
+      log.Logf("virtio-snd: capture Initialize(shared desired extensible) failed hr=0x%08lx",
+               static_cast<unsigned long>(hr));
+      return out;
+    }
   }
-  const DWORD sample_rate_hz = desired.nSamplesPerSec;
+  const auto* fmt = reinterpret_cast<const WAVEFORMATEX*>(fmt_bytes.data());
+  const DWORD sample_rate_hz = fmt->nSamplesPerSec;
 
   UINT32 buffer_frames = 0;
   hr = client->GetBufferSize(&buffer_frames);

@@ -58,6 +58,7 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
       - Use `--require-non-silence` to fail the capture smoke test if no non-silent buffers are observed.
       - `--test-snd-capture` can also be enabled via env var: `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`.
   - Use `--disable-snd` to force **SKIP** for both playback and capture.
+  - Use `--disable-snd-capture` to force **SKIP** for capture only (while still exercising playback).
 
 Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` is `host.lan`
 (with fallbacks like `gateway.lan` / `dns.lan`).
@@ -109,6 +110,8 @@ Notes:
   is set and only silence is captured, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|silence`.
 - If the virtio-snd test is disabled via `--disable-snd`, the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled`.
+- If capture is disabled via `--disable-snd-capture`, the tool emits
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled` (playback behavior unchanged).
 
 ## Building
 
