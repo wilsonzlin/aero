@@ -3265,6 +3265,21 @@ static HRESULT CreateShaderCommon(D3D11DDI_HDEVICE hDevice,
     return E_OUTOFMEMORY;
   }
   std::memcpy(out->dxbc.data(), pCode, static_cast<size_t>(code_size));
+  out->forced_ndc_z_valid = false;
+  out->forced_ndc_z = 0.0f;
+  if (stage == AEROGPU_SHADER_STAGE_VERTEX) {
+    const uint32_t neg_half_bits = f32_bits(-0.5f);
+    const size_t token_count = out->dxbc.size() / sizeof(uint32_t);
+    for (size_t i = 0; i < token_count; ++i) {
+      uint32_t token = 0;
+      std::memcpy(&token, out->dxbc.data() + i * sizeof(uint32_t), sizeof(uint32_t));
+      if (token == neg_half_bits) {
+        out->forced_ndc_z_valid = true;
+        out->forced_ndc_z = -0.5f;
+        break;
+      }
+    }
+  }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_shader_dxbc>(
       AEROGPU_CMD_CREATE_SHADER_DXBC, out->dxbc.data(), out->dxbc.size());
@@ -3496,13 +3511,86 @@ SIZE_T AEROGPU_APIENTRY CalcPrivateBlendStateSize11(D3D11DDI_HDEVICE, const D3D1
 }
 
 HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
-                                            const D3D11DDIARG_CREATEBLENDSTATE*,
+                                            const D3D11DDIARG_CREATEBLENDSTATE* pDesc,
                                             D3D11DDI_HBLENDSTATE hState,
                                             D3D11DDI_HRTBLENDSTATE) {
   if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  new (hState.pDrvPrivate) BlendState();
+  auto* state = new (hState.pDrvPrivate) BlendState();
+  state->blend_enable = 0;
+  state->src_blend = static_cast<uint32_t>(D3D11_BLEND_ONE);
+  state->dest_blend = static_cast<uint32_t>(D3D11_BLEND_ZERO);
+  state->blend_op = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
+  state->src_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ONE);
+  state->dest_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ZERO);
+  state->blend_op_alpha = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
+  state->render_target_write_mask = 0xFu;
+
+  if (!pDesc) {
+    return S_OK;
+  }
+
+  bool filled = false;
+  __if_exists(D3D11DDIARG_CREATEBLENDSTATE::RenderTarget) {
+    const auto& rt0 = pDesc->RenderTarget[0];
+    state->blend_enable = rt0.BlendEnable ? 1u : 0u;
+    state->src_blend = static_cast<uint32_t>(rt0.SrcBlend);
+    state->dest_blend = static_cast<uint32_t>(rt0.DestBlend);
+    state->blend_op = static_cast<uint32_t>(rt0.BlendOp);
+    state->src_blend_alpha = static_cast<uint32_t>(rt0.SrcBlendAlpha);
+    state->dest_blend_alpha = static_cast<uint32_t>(rt0.DestBlendAlpha);
+    state->blend_op_alpha = static_cast<uint32_t>(rt0.BlendOpAlpha);
+    state->render_target_write_mask = static_cast<uint32_t>(rt0.RenderTargetWriteMask);
+    filled = true;
+  }
+  if (!filled) {
+    __if_exists(D3D11DDIARG_CREATEBLENDSTATE::BlendDesc) {
+      const auto& desc = pDesc->BlendDesc;
+      const auto& rt0 = desc.RenderTarget[0];
+      state->blend_enable = rt0.BlendEnable ? 1u : 0u;
+      state->src_blend = static_cast<uint32_t>(rt0.SrcBlend);
+      state->dest_blend = static_cast<uint32_t>(rt0.DestBlend);
+      state->blend_op = static_cast<uint32_t>(rt0.BlendOp);
+      state->src_blend_alpha = static_cast<uint32_t>(rt0.SrcBlendAlpha);
+      state->dest_blend_alpha = static_cast<uint32_t>(rt0.DestBlendAlpha);
+      state->blend_op_alpha = static_cast<uint32_t>(rt0.BlendOpAlpha);
+      state->render_target_write_mask = static_cast<uint32_t>(rt0.RenderTargetWriteMask);
+      filled = true;
+    }
+  }
+  if (!filled) {
+    __if_exists(D3D11DDIARG_CREATEBLENDSTATE::Desc) {
+      const auto& desc = pDesc->Desc;
+      const auto& rt0 = desc.RenderTarget[0];
+      state->blend_enable = rt0.BlendEnable ? 1u : 0u;
+      state->src_blend = static_cast<uint32_t>(rt0.SrcBlend);
+      state->dest_blend = static_cast<uint32_t>(rt0.DestBlend);
+      state->blend_op = static_cast<uint32_t>(rt0.BlendOp);
+      state->src_blend_alpha = static_cast<uint32_t>(rt0.SrcBlendAlpha);
+      state->dest_blend_alpha = static_cast<uint32_t>(rt0.DestBlendAlpha);
+      state->blend_op_alpha = static_cast<uint32_t>(rt0.BlendOpAlpha);
+      state->render_target_write_mask = static_cast<uint32_t>(rt0.RenderTargetWriteMask);
+      filled = true;
+    }
+  }
+  if (!filled) {
+    __if_exists(D3D11DDIARG_CREATEBLENDSTATE::pBlendDesc) {
+      if (pDesc->pBlendDesc) {
+        const auto& desc = *pDesc->pBlendDesc;
+        const auto& rt0 = desc.RenderTarget[0];
+        state->blend_enable = rt0.BlendEnable ? 1u : 0u;
+        state->src_blend = static_cast<uint32_t>(rt0.SrcBlend);
+        state->dest_blend = static_cast<uint32_t>(rt0.DestBlend);
+        state->blend_op = static_cast<uint32_t>(rt0.BlendOp);
+        state->src_blend_alpha = static_cast<uint32_t>(rt0.SrcBlendAlpha);
+        state->dest_blend_alpha = static_cast<uint32_t>(rt0.DestBlendAlpha);
+        state->blend_op_alpha = static_cast<uint32_t>(rt0.BlendOpAlpha);
+        state->render_target_write_mask = static_cast<uint32_t>(rt0.RenderTargetWriteMask);
+        filled = true;
+      }
+    }
+  }
   return S_OK;
 }
 
@@ -3518,13 +3606,62 @@ SIZE_T AEROGPU_APIENTRY CalcPrivateRasterizerStateSize11(D3D11DDI_HDEVICE, const
 }
 
 HRESULT AEROGPU_APIENTRY CreateRasterizerState11(D3D11DDI_HDEVICE hDevice,
-                                                 const D3D11DDIARG_CREATERASTERIZERSTATE*,
+                                                 const D3D11DDIARG_CREATERASTERIZERSTATE* pDesc,
                                                  D3D11DDI_HRASTERIZERSTATE hState,
                                                  D3D11DDI_HRTRASTERIZERSTATE) {
   if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  new (hState.pDrvPrivate) RasterizerState();
+  auto* state = new (hState.pDrvPrivate) RasterizerState();
+  state->cull_mode = static_cast<uint32_t>(D3D11_CULL_BACK);
+  state->front_ccw = 0u;
+  state->scissor_enable = 0u;
+  state->depth_clip_enable = 1u;
+
+  if (!pDesc) {
+    return S_OK;
+  }
+
+  bool filled = false;
+  __if_exists(D3D11DDIARG_CREATERASTERIZERSTATE::CullMode) {
+    state->cull_mode = static_cast<uint32_t>(pDesc->CullMode);
+    state->front_ccw = pDesc->FrontCounterClockwise ? 1u : 0u;
+    state->scissor_enable = pDesc->ScissorEnable ? 1u : 0u;
+    state->depth_clip_enable = pDesc->DepthClipEnable ? 1u : 0u;
+    filled = true;
+  }
+  if (!filled) {
+    __if_exists(D3D11DDIARG_CREATERASTERIZERSTATE::RasterizerDesc) {
+      const auto& desc = pDesc->RasterizerDesc;
+      state->cull_mode = static_cast<uint32_t>(desc.CullMode);
+      state->front_ccw = desc.FrontCounterClockwise ? 1u : 0u;
+      state->scissor_enable = desc.ScissorEnable ? 1u : 0u;
+      state->depth_clip_enable = desc.DepthClipEnable ? 1u : 0u;
+      filled = true;
+    }
+  }
+  if (!filled) {
+    __if_exists(D3D11DDIARG_CREATERASTERIZERSTATE::Desc) {
+      const auto& desc = pDesc->Desc;
+      state->cull_mode = static_cast<uint32_t>(desc.CullMode);
+      state->front_ccw = desc.FrontCounterClockwise ? 1u : 0u;
+      state->scissor_enable = desc.ScissorEnable ? 1u : 0u;
+      state->depth_clip_enable = desc.DepthClipEnable ? 1u : 0u;
+      filled = true;
+    }
+  }
+  if (!filled) {
+    __if_exists(D3D11DDIARG_CREATERASTERIZERSTATE::pRasterizerDesc) {
+      if (pDesc->pRasterizerDesc) {
+        const auto& desc = *pDesc->pRasterizerDesc;
+        state->cull_mode = static_cast<uint32_t>(desc.CullMode);
+        state->front_ccw = desc.FrontCounterClockwise ? 1u : 0u;
+        state->scissor_enable = desc.ScissorEnable ? 1u : 0u;
+        state->depth_clip_enable = desc.DepthClipEnable ? 1u : 0u;
+        filled = true;
+      }
+    }
+  }
   return S_OK;
 }
 
@@ -3706,7 +3843,10 @@ void AEROGPU_APIENTRY VsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->current_vs = hShader.pDrvPrivate ? FromHandle<D3D11DDI_HVERTEXSHADER, Shader>(hShader)->handle : 0;
+  Shader* sh = hShader.pDrvPrivate ? FromHandle<D3D11DDI_HVERTEXSHADER, Shader>(hShader) : nullptr;
+  dev->current_vs = sh ? sh->handle : 0;
+  dev->current_vs_forced_z_valid = sh ? sh->forced_ndc_z_valid : false;
+  dev->current_vs_forced_z = (sh && sh->forced_ndc_z_valid) ? sh->forced_ndc_z : 0.0f;
   EmitBindShadersLocked(dev);
 }
 
@@ -4236,6 +4376,11 @@ void AEROGPU_APIENTRY SetScissorRects11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumRe
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   const D3D10_DDI_RECT& r = pRects[0];
+  dev->scissor_valid = true;
+  dev->scissor_left = r.left;
+  dev->scissor_top = r.top;
+  dev->scissor_right = r.right;
+  dev->scissor_bottom = r.bottom;
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
   cmd->x = r.left;
   cmd->y = r.top;
@@ -4243,8 +4388,38 @@ void AEROGPU_APIENTRY SetScissorRects11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumRe
   cmd->height = r.bottom - r.top;
 }
 
-void AEROGPU_APIENTRY SetRasterizerState11(D3D11DDI_HDEVICECONTEXT, D3D11DDI_HRASTERIZERSTATE) {}
-void AEROGPU_APIENTRY SetBlendState11(D3D11DDI_HDEVICECONTEXT, D3D11DDI_HBLENDSTATE, const FLOAT[4], UINT) {}
+void AEROGPU_APIENTRY SetRasterizerState11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRASTERIZERSTATE hState) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->current_rs =
+      hState.pDrvPrivate ? FromHandle<D3D11DDI_HRASTERIZERSTATE, RasterizerState>(hState) : nullptr;
+}
+
+void AEROGPU_APIENTRY SetBlendState11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                     D3D11DDI_HBLENDSTATE hState,
+                                     const FLOAT blend_factor[4],
+                                     UINT sample_mask) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->current_bs = hState.pDrvPrivate ? FromHandle<D3D11DDI_HBLENDSTATE, BlendState>(hState) : nullptr;
+  if (blend_factor) {
+    std::memcpy(dev->current_blend_factor, blend_factor, sizeof(dev->current_blend_factor));
+  } else {
+    dev->current_blend_factor[0] = 1.0f;
+    dev->current_blend_factor[1] = 1.0f;
+    dev->current_blend_factor[2] = 1.0f;
+    dev->current_blend_factor[3] = 1.0f;
+  }
+  dev->current_sample_mask = sample_mask;
+}
 void AEROGPU_APIENTRY SetDepthStencilState11(D3D11DDI_HDEVICECONTEXT hCtx,
                                              D3D11DDI_HDEPTHSTENCILSTATE hState,
                                              UINT stencil_ref) {
@@ -4328,6 +4503,20 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->current_ps_srv0 = nullptr;
   dev->current_dss = nullptr;
   dev->current_stencil_ref = 0;
+  dev->current_rs = nullptr;
+  dev->current_bs = nullptr;
+  dev->current_blend_factor[0] = 1.0f;
+  dev->current_blend_factor[1] = 1.0f;
+  dev->current_blend_factor[2] = 1.0f;
+  dev->current_blend_factor[3] = 1.0f;
+  dev->current_sample_mask = 0xFFFFFFFFu;
+  dev->scissor_valid = false;
+  dev->scissor_left = 0;
+  dev->scissor_top = 0;
+  dev->scissor_right = 0;
+  dev->scissor_bottom = 0;
+  dev->current_vs_forced_z_valid = false;
+  dev->current_vs_forced_z = 0.0f;
   dev->viewport_x = 0.0f;
   dev->viewport_y = 0.0f;
   dev->viewport_width = 0.0f;
@@ -4646,6 +4835,33 @@ static void SoftwareRasterTriangle(Device* dev,
     return;
   }
 
+  uint32_t cull_mode = static_cast<uint32_t>(D3D11_CULL_BACK);
+  uint32_t front_ccw = 0u;
+  uint32_t scissor_enable = 0u;
+  uint32_t depth_clip_enable = 1u;
+  if (const RasterizerState* rs = dev->current_rs) {
+    cull_mode = rs->cull_mode;
+    front_ccw = rs->front_ccw;
+    scissor_enable = rs->scissor_enable;
+    depth_clip_enable = rs->depth_clip_enable;
+  }
+
+  if (depth_clip_enable != 0u) {
+    if (std::isnan(v0.z) || std::isnan(v1.z) || std::isnan(v2.z)) {
+      return;
+    }
+    const bool all_below = (v0.z < 0.0f) && (v1.z < 0.0f) && (v2.z < 0.0f);
+    const bool all_above = (v0.z > 1.0f) && (v1.z > 1.0f) && (v2.z > 1.0f);
+    if (all_below || all_above) {
+      return;
+    }
+  }
+
+  const uint32_t sample_mask = dev->current_sample_mask;
+  if ((sample_mask & 1u) == 0u) {
+    return;
+  }
+
   const auto to_screen = [&](const SoftwareVtx& v, float* out_x, float* out_y) {
     const float ndc_x = v.x;
     const float ndc_y = v.y;
@@ -4663,6 +4879,17 @@ static void SoftwareRasterTriangle(Device* dev,
     return;
   }
 
+  if (cull_mode != static_cast<uint32_t>(D3D11_CULL_NONE)) {
+    const bool tri_ccw = area > 0.0f;
+    const bool front = (front_ccw != 0u) ? tri_ccw : !tri_ccw;
+    if (cull_mode == static_cast<uint32_t>(D3D11_CULL_BACK) && !front) {
+      return;
+    }
+    if (cull_mode == static_cast<uint32_t>(D3D11_CULL_FRONT) && front) {
+      return;
+    }
+  }
+
   const float min_xf = std::min({x0, x1, x2});
   const float max_xf = std::max({x0, x1, x2});
   const float min_yf = std::min({y0, y1, y2});
@@ -4677,6 +4904,20 @@ static void SoftwareRasterTriangle(Device* dev,
   min_y = std::max(min_y, 0);
   max_x = std::min(max_x, static_cast<int>(rt->width) - 1);
   max_y = std::min(max_y, static_cast<int>(rt->height) - 1);
+
+  if (scissor_enable != 0u && dev->scissor_valid) {
+    const int sc_left = std::clamp(dev->scissor_left, 0, static_cast<int>(rt->width));
+    const int sc_top = std::clamp(dev->scissor_top, 0, static_cast<int>(rt->height));
+    const int sc_right = std::clamp(dev->scissor_right, sc_left, static_cast<int>(rt->width));
+    const int sc_bottom = std::clamp(dev->scissor_bottom, sc_top, static_cast<int>(rt->height));
+    min_x = std::max(min_x, sc_left);
+    min_y = std::max(min_y, sc_top);
+    max_x = std::min(max_x, sc_right - 1);
+    max_y = std::min(max_y, sc_bottom - 1);
+  }
+  if (min_x > max_x || min_y > max_y) {
+    return;
+  }
 
   const float inv_area = 1.0f / area;
 
@@ -4706,6 +4947,66 @@ static void SoftwareRasterTriangle(Device* dev,
   const float z0 = vp_min_z + Clamp01(v0.z) * (vp_max_z - vp_min_z);
   const float z1 = vp_min_z + Clamp01(v1.z) * (vp_max_z - vp_min_z);
   const float z2 = vp_min_z + Clamp01(v2.z) * (vp_max_z - vp_min_z);
+
+  uint32_t blend_enable = 0u;
+  uint32_t src_blend = static_cast<uint32_t>(D3D11_BLEND_ONE);
+  uint32_t dst_blend = static_cast<uint32_t>(D3D11_BLEND_ZERO);
+  uint32_t blend_op = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
+  uint32_t src_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ONE);
+  uint32_t dst_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ZERO);
+  uint32_t blend_op_alpha = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
+  uint32_t write_mask = 0xFu;
+  if (const BlendState* bs = dev->current_bs) {
+    blend_enable = bs->blend_enable;
+    src_blend = bs->src_blend;
+    dst_blend = bs->dest_blend;
+    blend_op = bs->blend_op;
+    src_blend_alpha = bs->src_blend_alpha;
+    dst_blend_alpha = bs->dest_blend_alpha;
+    blend_op_alpha = bs->blend_op_alpha;
+    write_mask = bs->render_target_write_mask;
+  }
+
+  const float* blend_factor = dev->current_blend_factor;
+  const auto factor_value = [&](uint32_t factor, const float src_rgba[4], const float dst_rgba[4], int chan) -> float {
+    switch (static_cast<D3D11_BLEND>(factor)) {
+      case D3D11_BLEND_ZERO:
+        return 0.0f;
+      case D3D11_BLEND_ONE:
+        return 1.0f;
+      case D3D11_BLEND_SRC_ALPHA:
+        return Clamp01(src_rgba[3]);
+      case D3D11_BLEND_INV_SRC_ALPHA:
+        return 1.0f - Clamp01(src_rgba[3]);
+      case D3D11_BLEND_DEST_ALPHA:
+        return Clamp01(dst_rgba[3]);
+      case D3D11_BLEND_INV_DEST_ALPHA:
+        return 1.0f - Clamp01(dst_rgba[3]);
+      case D3D11_BLEND_BLEND_FACTOR:
+        return Clamp01(blend_factor ? blend_factor[chan] : 1.0f);
+      case D3D11_BLEND_INV_BLEND_FACTOR:
+        return 1.0f - Clamp01(blend_factor ? blend_factor[chan] : 1.0f);
+      default:
+        return 1.0f;
+    }
+  };
+
+  const auto blend_apply = [&](uint32_t op, float src_term, float dst_term) -> float {
+    switch (static_cast<D3D11_BLEND_OP>(op)) {
+      case D3D11_BLEND_OP_ADD:
+        return src_term + dst_term;
+      case D3D11_BLEND_OP_SUBTRACT:
+        return src_term - dst_term;
+      case D3D11_BLEND_OP_REV_SUBTRACT:
+        return dst_term - src_term;
+      case D3D11_BLEND_OP_MIN:
+        return std::min(src_term, dst_term);
+      case D3D11_BLEND_OP_MAX:
+        return std::max(src_term, dst_term);
+      default:
+        return src_term + dst_term;
+    }
+  };
 
   for (int y = min_y; y <= max_y; y++) {
     uint8_t* row = rt->storage.data() + static_cast<size_t>(y) * rt->row_pitch_bytes;
@@ -4762,25 +5063,78 @@ static void SoftwareRasterTriangle(Device* dev,
         std::memcpy(out_rgba, constant_rgba, sizeof(out_rgba));
       }
 
-      uint8_t r = U8FromFloat01(out_rgba[0]);
-      uint8_t g = U8FromFloat01(out_rgba[1]);
-      uint8_t b = U8FromFloat01(out_rgba[2]);
-      uint8_t a = U8FromFloat01(out_rgba[3]);
-
+      float src_rgba[4] = {Clamp01(out_rgba[0]), Clamp01(out_rgba[1]), Clamp01(out_rgba[2]), Clamp01(out_rgba[3])};
       uint8_t* dst = row + static_cast<size_t>(x) * 4;
+
+      uint8_t dst_u8[4] = {};
       switch (rt->dxgi_format) {
         case kDxgiFormatB8G8R8A8Unorm:
         case kDxgiFormatB8G8R8X8Unorm:
-          dst[0] = b;
-          dst[1] = g;
-          dst[2] = r;
-          dst[3] = a;
+          dst_u8[0] = dst[2];
+          dst_u8[1] = dst[1];
+          dst_u8[2] = dst[0];
+          dst_u8[3] = dst[3];
           break;
         case kDxgiFormatR8G8B8A8Unorm:
-          dst[0] = r;
-          dst[1] = g;
-          dst[2] = b;
-          dst[3] = a;
+          dst_u8[0] = dst[0];
+          dst_u8[1] = dst[1];
+          dst_u8[2] = dst[2];
+          dst_u8[3] = dst[3];
+          break;
+        default:
+          break;
+      }
+
+      constexpr float inv255 = 1.0f / 255.0f;
+      float dst_rgba[4] = {static_cast<float>(dst_u8[0]) * inv255,
+                           static_cast<float>(dst_u8[1]) * inv255,
+                           static_cast<float>(dst_u8[2]) * inv255,
+                           static_cast<float>(dst_u8[3]) * inv255};
+
+      float blended_rgba[4] = {};
+      if (blend_enable != 0u) {
+        for (int chan = 0; chan < 3; ++chan) {
+          const float sf = factor_value(src_blend, src_rgba, dst_rgba, chan);
+          const float df = factor_value(dst_blend, src_rgba, dst_rgba, chan);
+          blended_rgba[chan] = blend_apply(blend_op, src_rgba[chan] * sf, dst_rgba[chan] * df);
+        }
+        const float sf_a = factor_value(src_blend_alpha, src_rgba, dst_rgba, 3);
+        const float df_a = factor_value(dst_blend_alpha, src_rgba, dst_rgba, 3);
+        blended_rgba[3] = blend_apply(blend_op_alpha, src_rgba[3] * sf_a, dst_rgba[3] * df_a);
+      } else {
+        std::memcpy(blended_rgba, src_rgba, sizeof(blended_rgba));
+      }
+
+      uint8_t out_u8[4] = {U8FromFloat01(blended_rgba[0]),
+                           U8FromFloat01(blended_rgba[1]),
+                           U8FromFloat01(blended_rgba[2]),
+                           U8FromFloat01(blended_rgba[3])};
+      if ((write_mask & 0x1u) == 0u) {
+        out_u8[0] = dst_u8[0];
+      }
+      if ((write_mask & 0x2u) == 0u) {
+        out_u8[1] = dst_u8[1];
+      }
+      if ((write_mask & 0x4u) == 0u) {
+        out_u8[2] = dst_u8[2];
+      }
+      if ((write_mask & 0x8u) == 0u) {
+        out_u8[3] = dst_u8[3];
+      }
+
+      switch (rt->dxgi_format) {
+        case kDxgiFormatB8G8R8A8Unorm:
+        case kDxgiFormatB8G8R8X8Unorm:
+          dst[0] = out_u8[2];
+          dst[1] = out_u8[1];
+          dst[2] = out_u8[0];
+          dst[3] = out_u8[3];
+          break;
+        case kDxgiFormatR8G8B8A8Unorm:
+          dst[0] = out_u8[0];
+          dst[1] = out_u8[1];
+          dst[2] = out_u8[2];
+          dst[3] = out_u8[3];
           break;
         default:
           break;
@@ -4849,7 +5203,7 @@ static void SoftwareDrawTriangleList(Device* dev, UINT vertex_count, UINT first_
     const uint8_t* p = vb->storage.data() + static_cast<size_t>(byte_off);
     std::memcpy(&out->x, p + 0, sizeof(float));
     std::memcpy(&out->y, p + 4, sizeof(float));
-    out->z = 0.0f;
+    out->z = dev->current_vs_forced_z_valid ? dev->current_vs_forced_z : 0.0f;
     if (has_color) {
       if (has_z) {
         std::memcpy(&out->z, p + 8, sizeof(float));
@@ -4976,7 +5330,7 @@ static void SoftwareDrawIndexedTriangleList(Device* dev, UINT index_count, UINT 
     const uint8_t* p = vb->storage.data() + static_cast<size_t>(byte_off);
     std::memcpy(&out->x, p + 0, sizeof(float));
     std::memcpy(&out->y, p + 4, sizeof(float));
-    out->z = 0.0f;
+    out->z = dev->current_vs_forced_z_valid ? dev->current_vs_forced_z : 0.0f;
     if (has_color) {
       if (has_z) {
         std::memcpy(&out->z, p + 8, sizeof(float));

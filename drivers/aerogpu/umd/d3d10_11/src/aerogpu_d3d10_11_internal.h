@@ -416,6 +416,8 @@ struct Shader {
   aerogpu_handle_t handle = 0;
   uint32_t stage = AEROGPU_SHADER_STAGE_VERTEX;
   std::vector<uint8_t> dxbc;
+  bool forced_ndc_z_valid = false;
+  float forced_ndc_z = 0.0f;
 };
 
 struct InputLayout {
@@ -436,10 +438,20 @@ struct DepthStencilView {
 // Pipeline state objects are accepted and can be bound, but the host translator
 // may use conservative defaults until more encoding is implemented.
 struct BlendState {
-  uint32_t dummy = 0;
+  uint32_t blend_enable = 0;
+  uint32_t src_blend = 0;
+  uint32_t dest_blend = 0;
+  uint32_t blend_op = 0;
+  uint32_t src_blend_alpha = 0;
+  uint32_t dest_blend_alpha = 0;
+  uint32_t blend_op_alpha = 0;
+  uint32_t render_target_write_mask = 0xFu;
 };
 struct RasterizerState {
-  uint32_t dummy = 0;
+  uint32_t cull_mode = 0;
+  uint32_t front_ccw = 0;
+  uint32_t scissor_enable = 0;
+  uint32_t depth_clip_enable = 1u;
 };
 struct DepthStencilState {
   // Stored as raw numeric values so this header remains WDK-free.
@@ -524,6 +536,19 @@ struct Device {
   Resource* current_ps_srv0 = nullptr;
   DepthStencilState* current_dss = nullptr;
   uint32_t current_stencil_ref = 0;
+  RasterizerState* current_rs = nullptr;
+  BlendState* current_bs = nullptr;
+  float current_blend_factor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+  uint32_t current_sample_mask = 0xFFFFFFFFu;
+
+  bool scissor_valid = false;
+  int32_t scissor_left = 0;
+  int32_t scissor_top = 0;
+  int32_t scissor_right = 0;
+  int32_t scissor_bottom = 0;
+
+  bool current_vs_forced_z_valid = false;
+  float current_vs_forced_z = 0.0f;
 
   float viewport_x = 0.0f;
   float viewport_y = 0.0f;
