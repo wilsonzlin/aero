@@ -14,6 +14,8 @@ Implementation references (current repo):
 - Rust device model + canonical host-action wire types: `crates/aero-usb/src/passthrough.rs`
 - WASM export bridge (JS object conversion): `crates/aero-wasm/src/lib.rs` (`UsbPassthroughBridge`)
 - TS WebUSB backend + executor: `web/src/usb/webusb_{backend,executor}.ts`
+- Production host main-thread broker + cross-thread message protocol: `web/src/usb/{usb_broker,usb_proxy_protocol}.ts`
+- Production host UI panel (device selection + known devices): `web/src/usb/usb_broker_panel.ts`
 - Cross-language wire fixture: `docs/fixtures/webusb_passthrough_wire.json`
 - (Legacy Vite harness) TS main-thread broker + worker client RPC: `src/platform/webusb_{broker,client,protocol}.ts`
 
@@ -152,22 +154,19 @@ The host side owns the actual `USBDevice` handle and performs WebUSB calls:
   - (re)open/select configuration/claim interfaces
   - handling `disconnect` events and surfacing errors to UI
 
-In this repo, the browser-side WebUSB integration is split into:
+In this repo, there are two WebUSB “hosts”:
 
-- **Main thread broker** (owns `USBDevice` handles): `src/platform/webusb_broker.ts`
-- **Worker client** (RPC stub used from workers): `src/platform/webusb_client.ts`
-- **Typed request/response protocol**: `src/platform/webusb_protocol.ts`
+- **Production browser host (under `web/`)**:
+  - **Main-thread broker** (owns the `USBDevice` and services `usb.action` requests): `web/src/usb/usb_broker.ts`
+  - **Structured-clone message protocol**: `web/src/usb/usb_proxy_protocol.ts`
+  - **WebUSB backend/executor** (implements the Rust `UsbHostAction`/`UsbHostCompletion` contract): `web/src/usb/webusb_backend.ts`
+- **Repo-root Vite harness (under `src/`)**:
+  - **Main-thread broker** (owns the `USBDevice`): `src/platform/webusb_broker.ts`
+  - **Worker client** (RPC stub used from workers): `src/platform/webusb_client.ts`
+  - **Typed request/response protocol**: `src/platform/webusb_protocol.ts`
 
-The broker attaches a `MessagePort` to a worker, and the worker uses `WebUsbClient`
-to perform WebUSB operations without requiring `USBDevice` transferability.
-
-Note: `src/` is the repo-root Vite harness entrypoint used for debugging/tests; the production
-browser host lives under `web/` (ADR 0001). The broker/client pattern is still the recommended
-shape for production when WebUSB work must be serviced on the main thread.
-
-There is also a smaller “direct executor” implementation under the production host tree:
-
-- `web/src/usb/webusb_backend.ts`
+Both patterns attach a `MessagePort` to a worker so WebUSB calls can be serviced on the main thread
+without relying on `USBDevice` being transferable/structured-cloneable.
 
 ### Device lifecycle: open/configuration/interface claiming
 
@@ -177,7 +176,7 @@ WebUSB requires the browser process to:
 2. `device.selectConfiguration(...)` (if no active configuration)
 3. `device.claimInterface(...)` for any interface whose endpoints will be used
 
-In this repo, these operations are exposed to workers via the `WebUsbBroker`/`WebUsbClient`
+In the repo-root Vite harness, these operations are exposed to workers via the `WebUsbBroker`/`WebUsbClient`
 protocol (`src/platform/webusb_protocol.ts`). The current RPC surface includes:
 
 - open/close
@@ -204,9 +203,9 @@ Important constraints for passthrough:
   - virtualize them (presenting descriptors/configuration state to the guest without mutating the
     already-open physical device).
 
-The current Rust `UsbHostAction` surface does not yet include “select configuration / claim
-interface” actions; today these operations are expected to be performed by the host-side broker
-when attaching a physical device.
+The Rust `UsbHostAction` wire contract intentionally does not include “select configuration / claim
+interface” actions; these operations are expected to be performed by the host-side broker when
+attaching a physical device.
 
 ### Encoding `SetupPacket` for WebUSB
 
@@ -238,7 +237,7 @@ In this repo:
 - The production WebUSB executor has helpers for this conversion and direction checking:
   `web/src/usb/webusb_backend.ts` (`parseBmRequestType`, `validateControlTransferDirection`,
   `setupPacketToWebUsbParameters`).
-- The broker RPC layer (`src/platform/webusb_broker.ts`) serializes `USBInTransferResult.data`
+- The legacy harness broker RPC layer (`src/platform/webusb_broker.ts`) serializes `USBInTransferResult.data`
   (a `DataView`) into `{ data: ArrayBuffer, dataOffset, dataLength }` so the worker can avoid
   copying unless needed.
 
@@ -250,7 +249,9 @@ port so the guest OS can tear down drivers cleanly.
 
 In this repo:
 
-- `src/platform/webusb_broker.ts` listens for `usb.addEventListener('disconnect', ...)` and broadcasts
+- `web/src/usb/usb_broker.ts` listens for `navigator.usb` connect/disconnect events and broadcasts
+  `usb.selected` updates to attached worker ports.
+- `src/platform/webusb_broker.ts` (legacy harness) also listens for `usb.addEventListener('disconnect', ...)` and broadcasts
   `{ type: 'disconnect', deviceId }` events to attached worker ports.
 - `src/platform/webusb_client.ts` exposes `onBrokerEvent(...)` for workers to subscribe.
 - The UHCI root hub supports detach via `RootHub::detach(port)` (`crates/emulator/src/io/usb/hub/root.rs`),
@@ -481,8 +482,9 @@ to `CONFIGURATION` before returning it to the guest (`executeWebUsbControlIn` in
 - the main thread is responsible for prompting and persisting the selected device,
 - the emulator worker cannot autonomously attach arbitrary devices.
 
-In the repo’s WebUSB broker implementation, this is enforced via `navigator.userActivation`
-(`src/platform/webusb_broker.ts`).
+In the repo-root harness broker (`src/platform/webusb_broker.ts`), this is enforced via `navigator.userActivation`.
+In the production host, callers are expected to invoke `UsbBroker.requestDevice()` from a click handler; browsers will
+otherwise throw (typically `NotAllowedError`).
 
 ### `USBDevice` is likely non-transferable
 
@@ -500,8 +502,10 @@ Assume WebUSB calls must run on the main thread:
 - **Worker (WASM):** UHCI + `UsbPassthroughDevice` emits actions via a queue/ring buffer.
 - **Main thread:** broker/executor receives actions, calls WebUSB, and returns completions.
 
-This pattern is implemented by `WebUsbBroker` (main thread) + `WebUsbClient` (worker) using
-a `MessagePort` RPC protocol (`src/platform/webusb_{broker,client,protocol}.ts`).
+This pattern is implemented by:
+
+- production host: `UsbBroker` + `usb_proxy_protocol` (`web/src/usb/{usb_broker,usb_proxy_protocol}.ts`)
+- repo-root harness: `WebUsbBroker` + `WebUsbClient` (`src/platform/webusb_{broker,client,protocol}.ts`)
 
 If the emulator uses WASM threads / SharedArrayBuffer (preferred), use the existing
 cross-thread IPC mechanism described in [`docs/11-browser-apis.md`](./11-browser-apis.md)
@@ -547,11 +551,18 @@ record:
 
 ### Web UI smoke panel (manual)
 
-Use the repo-root Vite harness WebUSB panel (`src/main.ts`), which:
+Use the production WebUSB panels rendered from `web/src/main.ts`:
+
+- WebUSB diagnostics/probe panel: `web/src/usb/webusb_panel.ts`
+- WebUSB passthrough broker panel: `web/src/usb/usb_broker_panel.ts`
+
+Or the repo-root Vite harness WebUSB panel (`src/main.ts`).
+
+These panels:
 
 - prompts for a device (`requestDevice`)
-- probes worker-side WebUSB availability and (non-)transferability of `USBDevice`
-- demonstrates broker-backed worker I/O via `WebUsbBroker`/`WebUsbClient`
+- probe worker-side WebUSB availability and (non-)transferability of `USBDevice` (where supported)
+- demonstrate broker-backed worker I/O via a main-thread WebUSB broker
 - runs a simple control transfer (`GET_DESCRIPTOR(Device)`) and prints the raw bytes
 - (recommended extension) add buttons for `transferIn`/`transferOut` so bulk endpoints can be smoke-tested too
 
@@ -561,7 +572,7 @@ translation.
 ### Emulator unit tests (automated)
 
 The Rust passthrough device model already has unit tests in
-`crates/emulator/src/io/usb/passthrough.rs` that validate:
+`crates/aero-usb/src/passthrough.rs` that validate:
 
 - control-IN/OUT emits exactly one `UsbHostAction` and returns NAK while in flight
 - bulk IN/OUT emits one action per endpoint while in flight (no duplicates) and completes on
