@@ -236,11 +236,11 @@ fn exec_decoded<B: CpuBus>(
             Ok(())
         }
         Mnemonic::Syscall => {
-            instr_syscall(state, next_ip_raw)?;
+            instr_syscall(ctx, state, next_ip_raw)?;
             Ok(())
         }
         Mnemonic::Sysret => {
-            instr_sysret(state)?;
+            instr_sysret(ctx, state)?;
             Ok(())
         }
         Mnemonic::Sysenter => {
@@ -1767,7 +1767,7 @@ fn is_canonical(addr: u64, bits: u8) -> bool {
     }
 }
 
-fn instr_syscall(state: &mut CpuState, return_ip: u64) -> Result<(), Exception> {
+fn instr_syscall(ctx: &AssistContext, state: &mut CpuState, return_ip: u64) -> Result<(), Exception> {
     if state.mode != CpuMode::Long {
         return Err(Exception::InvalidOpcode);
     }
@@ -1787,14 +1787,14 @@ fn instr_syscall(state: &mut CpuState, return_ip: u64) -> Result<(), Exception> 
     state.set_rflags(state.rflags() & !fmask);
 
     let target = state.msr.lstar;
-    if !is_canonical(target, state.mode.bitness() as u8) {
+    if !is_canonical(target, ctx.features.linear_address_bits) {
         return Err(Exception::gp0());
     }
     state.set_rip(target);
     Ok(())
 }
 
-fn instr_sysret(state: &mut CpuState) -> Result<(), Exception> {
+fn instr_sysret(ctx: &AssistContext, state: &mut CpuState) -> Result<(), Exception> {
     require_cpl0(state)?;
     if state.mode != CpuMode::Long {
         return Err(Exception::InvalidOpcode);
@@ -1804,7 +1804,7 @@ fn instr_sysret(state: &mut CpuState) -> Result<(), Exception> {
     }
 
     let target = state.read_reg(Register::RCX);
-    if !is_canonical(target, state.mode.bitness() as u8) {
+    if !is_canonical(target, ctx.features.linear_address_bits) {
         return Err(Exception::gp0());
     }
 

@@ -288,6 +288,66 @@ fn syscall_sysret_transitions_privilege() {
 }
 
 #[test]
+fn syscall_rejects_noncanonical_lstar() {
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+    let mut ctx = AssistContext::default();
+    let mut state = CpuState::new(CpuMode::Bit64);
+
+    // User mode starting state.
+    state.segments.cs.selector = 0x33;
+    state.segments.ss.selector = 0x2B;
+    state.set_rip(0x1000);
+    state.set_rflags(RFLAGS_RESERVED1 | RFLAGS_IF);
+
+    state.msr.efer = msr::EFER_SCE;
+    state.msr.star = ((0x08u64) << 32) | ((0x23u64) << 48);
+    // Non-canonical 48-bit address (bit 47 = 1 but upper bits are 0).
+    state.msr.lstar = 0x0000_8000_0000_0000;
+
+    let err = exec_assist(
+        &mut ctx,
+        &mut state,
+        &mut bus,
+        0x1000,
+        &[0x0F, 0x05], // SYSCALL
+        AssistReason::Privileged,
+    )
+    .unwrap_err();
+    assert_eq!(err, Exception::gp0());
+}
+
+#[test]
+fn sysret_rejects_noncanonical_target() {
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+    let mut ctx = AssistContext::default();
+    let mut state = CpuState::new(CpuMode::Bit64);
+
+    // CPL0 state required for SYSRET.
+    state.segments.cs.selector = 0x08;
+    state.segments.ss.selector = 0x10;
+    state.set_rip(CODE_BASE);
+    state.set_rflags(RFLAGS_RESERVED1 | RFLAGS_IF);
+
+    state.msr.efer = msr::EFER_SCE;
+    state.msr.star = ((0x08u64) << 32) | ((0x23u64) << 48);
+
+    // Non-canonical return RIP.
+    state.write_reg(Register::RCX, 0x0000_8000_0000_0000);
+    state.write_reg(Register::R11, RFLAGS_RESERVED1 | RFLAGS_IF);
+
+    let err = exec_assist(
+        &mut ctx,
+        &mut state,
+        &mut bus,
+        CODE_BASE,
+        &[0x0F, 0x07], // SYSRET
+        AssistReason::Privileged,
+    )
+    .unwrap_err();
+    assert_eq!(err, Exception::gp0());
+}
+
+#[test]
 fn sysenter_sysexit_transitions_32bit() {
     let mut bus = FlatTestBus::new(BUS_SIZE);
     let mut ctx = AssistContext::default();
