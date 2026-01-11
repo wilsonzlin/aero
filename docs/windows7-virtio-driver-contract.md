@@ -772,7 +772,7 @@ The guest MAY send output/LED events via `statusq`.
 | 0 | `controlq` | driver → device | **64** |
 | 1 | `eventq` | device → driver | **64** |
 | 2 | `txq` | driver → device (PCM playback) | **256** |
-| 3 | `rxq` | device → driver (PCM capture) | **256** |
+| 3 | `rxq` | device → driver (PCM capture) | **64** |
 
 #### 3.4.3 Feature bits
 
