@@ -2,8 +2,14 @@ pub mod gamepad;
 pub mod keyboard;
 pub mod mouse;
 pub mod composite;
+pub mod report_descriptor;
 pub mod usage;
 pub mod webhid;
+
+pub use report_descriptor::{
+    parse_report_descriptor, synthesize_report_descriptor, HidCollectionInfo, HidDescriptorError,
+    HidReportInfo, HidReportItem,
+};
 
 const USB_DESCRIPTOR_TYPE_DEVICE: u8 = 0x01;
 const USB_DESCRIPTOR_TYPE_CONFIGURATION: u8 = 0x02;
