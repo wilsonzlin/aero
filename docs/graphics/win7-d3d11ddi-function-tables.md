@@ -243,11 +243,14 @@ This is a reliability requirement: **Win7 will probe more caps than you expect**
 
 Recommended robust behavior:
 
-1. Validate `pData != NULL` and `DataSize` is at least what you need for that `Type`.
-2. If `Type` is unknown:
+1. Treat `pData == NULL` as a “size query” when possible:
+   * For fixed-size outputs, set `DataSize = sizeof(<expected struct>)` (if `DataSize` is in/out for your header version) and return `S_OK`.
+   * For variable-size outputs, report the required size for the current adapter/device configuration and return `S_OK`.
+2. For non-null `pData`, validate `DataSize` is at least what you need for that `Type` (fail with `E_INVALIDARG` rather than overrunning the buffer).
+3. If `Type` is unknown:
    * **zero-fill** `pData` (up to `DataSize`) and return `S_OK`, **or**
    * return `E_INVALIDARG` (only if you’ve confirmed Win7 runtime tolerates failure for that `Type`).
-3. Log unknown `Type` values (once) so you can expand coverage intentionally.
+4. Log unknown `Type` values (once) so you can expand coverage intentionally.
 
 ### 3.2 Minimum caps queries that typically gate device creation (FL10_0)
 
@@ -276,6 +279,11 @@ For the current guest tests, the runtime needs at least:
 | `DXGI_FORMAT_B8G8R8A8_UNORM` | `RENDER_TARGET`, `TEXTURE2D` | swapchain backbuffer in `d3d11_triangle` and render-target texture in `readback_sanity`. |
 | `DXGI_FORMAT_R8G8B8A8_UNORM` | `RENDER_TARGET`, `TEXTURE2D` | common app fallback; good to support early even if tests use BGRA. |
 | Depth formats (`DXGI_FORMAT_D24_UNORM_S8_UINT` or `DXGI_FORMAT_D32_FLOAT`) | `DEPTH_STENCIL`, `TEXTURE2D` | not required by current tests, but common for real apps (recommended). |
+
+BGRA device flag note:
+
+* The Win7 tests create the device with `D3D11_CREATE_DEVICE_BGRA_SUPPORT`.
+* In practice this means you must report BGRA support in `pfnGetCaps` (format caps) and successfully create BGRA render targets, or `D3D11CreateDevice*` may fail early.
 
 Staging readback path requirements:
 
