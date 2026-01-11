@@ -101,6 +101,8 @@ interface HidGuestBridge {
   destroy?(): void;
 }
 
+const MAX_BUFFERED_HID_INPUT_REPORTS_PER_DEVICE = 256;
+
 class InMemoryHidGuestBridge implements HidGuestBridge {
   readonly devices = new Map<number, HidAttachMessage>();
   readonly inputReports = new Map<number, HidInputReportMessage[]>();
@@ -111,7 +113,8 @@ class InMemoryHidGuestBridge implements HidGuestBridge {
 
   attach(msg: HidAttachMessage): void {
     this.devices.set(msg.deviceId, msg);
-    if (!this.inputReports.has(msg.deviceId)) this.inputReports.set(msg.deviceId, []);
+    // Treat (re-)attach as a new session; clear any buffered reports.
+    this.inputReports.set(msg.deviceId, []);
     this.host.log(
       `hid.attach deviceId=${msg.deviceId} vid=0x${msg.vendorId.toString(16).padStart(4, "0")} pid=0x${msg.productId.toString(16).padStart(4, "0")}`,
       msg.deviceId,
@@ -120,6 +123,7 @@ class InMemoryHidGuestBridge implements HidGuestBridge {
 
   detach(msg: HidDetachMessage): void {
     this.devices.delete(msg.deviceId);
+    this.inputReports.delete(msg.deviceId);
     this.host.log(`hid.detach deviceId=${msg.deviceId}`, msg.deviceId);
   }
 
@@ -130,6 +134,9 @@ class InMemoryHidGuestBridge implements HidGuestBridge {
       this.inputReports.set(msg.deviceId, queue);
     }
     queue.push(msg);
+    if (queue.length > MAX_BUFFERED_HID_INPUT_REPORTS_PER_DEVICE) {
+      queue.splice(0, queue.length - MAX_BUFFERED_HID_INPUT_REPORTS_PER_DEVICE);
+    }
 
     this.#inputCount += 1;
     if (import.meta.env.DEV && (this.#inputCount & 0xff) === 0) {
