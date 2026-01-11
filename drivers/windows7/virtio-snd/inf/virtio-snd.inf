@@ -76,14 +76,13 @@ HKR,,CLSID,,%KSProxy.CLSID%
 HKR,,FriendlyName,,%VirtioSnd.DeviceDesc%
 HKR,,DevLoader,,*ntkern
 HKR,,NTMPDriver,,virtiosnd.sys
+HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
 
 HKR,%KSNAME_Wave%,CLSID,,%KSProxy.CLSID%
 HKR,%KSNAME_Wave%,FriendlyName,,%VirtioSnd.EndpointDesc%
-HKR,%KSNAME_Wave%,Driver,,virtiosnd.sys
 
 HKR,%KSNAME_Topology%,CLSID,,%KSProxy.CLSID%
 HKR,%KSNAME_Topology%,FriendlyName,,%VirtioSnd.TopologyDesc%
-HKR,%KSNAME_Topology%,Driver,,virtiosnd.sys
  
 [VirtioSnd.CopyFiles]
 virtiosnd.sys
