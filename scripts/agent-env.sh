@@ -40,6 +40,17 @@ case "${AERO_ISOLATE_CARGO_HOME:-}" in
     ;;
 esac
 
+# Some environments export `RUSTC_WRAPPER=sccache` (or the `CARGO_BUILD_*` equivalents).
+# When sccache is missing or its server is unavailable, Cargo fails before compilation starts.
+# Clear sccache-based wrappers by default for agent sandboxes; developers can opt back in by
+# exporting the wrapper variables again after sourcing this file.
+for var in RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER; do
+  val="${!var:-}"
+  if [[ "$val" == "sccache" || "$val" == */sccache || "$val" == "sccache.exe" || "$val" == */sccache.exe ]]; then
+    export "${var}="
+  fi
+done
+
 # Rust/Cargo - balance speed vs memory
 export CARGO_BUILD_JOBS=4
 export CARGO_INCREMENTAL=1

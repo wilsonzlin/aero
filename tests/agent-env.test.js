@@ -37,3 +37,50 @@ test("agent-env: AERO_ISOLATE_CARGO_HOME overrides an existing CARGO_HOME", { sk
   }
 });
 
+test("agent-env: clears sccache rustc wrapper variables", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const stdout = execFileSync(
+      "bash",
+      [
+        "-c",
+        'source scripts/agent-env.sh >/dev/null; printf "%s|%s|%s|%s" "$RUSTC_WRAPPER" "$RUSTC_WORKSPACE_WRAPPER" "$CARGO_BUILD_RUSTC_WRAPPER" "$CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER"',
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUSTC_WRAPPER: "sccache",
+          RUSTC_WORKSPACE_WRAPPER: "/usr/bin/sccache",
+          CARGO_BUILD_RUSTC_WRAPPER: "sccache",
+          CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER: "sccache",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    assert.equal(stdout, "|||");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("agent-env: preserves non-sccache rustc wrappers", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$RUSTC_WRAPPER"'], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RUSTC_WRAPPER: "ccache",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assert.equal(stdout, "ccache");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
