@@ -206,6 +206,19 @@ jobs:
             }
           }
 
+      - name: Stage Guest Tools artifact directory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $dst = 'out/guest-tools'
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+
+          Copy-Item -LiteralPath 'artifacts/aero-guest-tools.iso' -Destination (Join-Path $dst 'aero-guest-tools.iso') -Force
+          Copy-Item -LiteralPath 'artifacts/aero-guest-tools.zip' -Destination (Join-Path $dst 'aero-guest-tools.zip') -Force
+          Copy-Item -LiteralPath 'artifacts/manifest.json' -Destination (Join-Path $dst 'manifest.json') -Force
+          Copy-Item -LiteralPath 'artifacts/aero-guest-tools.manifest.json' -Destination (Join-Path $dst 'aero-guest-tools.manifest.json') -Force
+
       - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2
         with:
@@ -223,9 +236,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aero-guest-tools
-          path: |
-            artifacts/aero-guest-tools.iso
-            artifacts/aero-guest-tools.zip
-            artifacts/aero-guest-tools.manifest.json
-            artifacts/manifest.json
+          # Upload a dedicated directory so the artifact root contains the files
+          # directly (no `artifacts/` path prefix when downloaded).
+          path: out/guest-tools
           if-no-files-found: error

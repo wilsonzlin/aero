@@ -534,9 +534,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aero-guest-tools
-          path: |
-            out/guest-tools/aero-guest-tools.iso
-            out/guest-tools/aero-guest-tools.zip
-            out/guest-tools/aero-guest-tools.manifest.json
-            out/guest-tools/manifest.json
+          # Upload the output directory so the artifact root contains the files
+          # directly (no `out/guest-tools/` path prefix when downloaded).
+          path: out/guest-tools
           if-no-files-found: error
