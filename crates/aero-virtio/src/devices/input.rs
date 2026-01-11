@@ -357,6 +357,70 @@ impl VirtioInput {
         self.pending.push_back(event);
     }
 
+    pub fn inject_key(&mut self, code: u16, pressed: bool) {
+        self.push_event(VirtioInputEvent {
+            type_: EV_KEY,
+            code,
+            value: if pressed { 1 } else { 0 },
+        });
+        self.push_event(VirtioInputEvent {
+            type_: EV_SYN,
+            code: SYN_REPORT,
+            value: 0,
+        });
+    }
+
+    pub fn inject_rel_move(&mut self, dx: i32, dy: i32) {
+        if dx != 0 {
+            self.push_event(VirtioInputEvent {
+                type_: EV_REL,
+                code: REL_X,
+                value: dx,
+            });
+        }
+        if dy != 0 {
+            self.push_event(VirtioInputEvent {
+                type_: EV_REL,
+                code: REL_Y,
+                value: dy,
+            });
+        }
+        self.push_event(VirtioInputEvent {
+            type_: EV_SYN,
+            code: SYN_REPORT,
+            value: 0,
+        });
+    }
+
+    pub fn inject_wheel(&mut self, delta: i32) {
+        if delta == 0 {
+            return;
+        }
+        self.push_event(VirtioInputEvent {
+            type_: EV_REL,
+            code: REL_WHEEL,
+            value: delta,
+        });
+        self.push_event(VirtioInputEvent {
+            type_: EV_SYN,
+            code: SYN_REPORT,
+            value: 0,
+        });
+    }
+
+    pub fn inject_button(&mut self, code: u16, pressed: bool) {
+        self.push_event(VirtioInputEvent {
+            type_: EV_KEY,
+            code,
+            value: if pressed { 1 } else { 0 },
+        });
+        self.push_event(VirtioInputEvent {
+            type_: EV_SYN,
+            code: SYN_REPORT,
+            value: 0,
+        });
+    }
+
     pub fn kind(&self) -> VirtioInputDeviceKind {
         self.kind
     }
