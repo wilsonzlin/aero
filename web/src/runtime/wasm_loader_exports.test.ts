@@ -12,6 +12,18 @@ afterEach(() => {
   (globalThis as any).__aeroWasmJsImporterOverride = originalJsOverride;
 });
 
+function sharedMemorySupported(): boolean {
+  if (typeof WebAssembly === "undefined" || typeof WebAssembly.Memory !== "function") return false;
+  if (typeof SharedArrayBuffer === "undefined") return false;
+  try {
+    // eslint-disable-next-line no-new
+    const mem = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+    return mem.buffer instanceof SharedArrayBuffer;
+  } catch {
+    return false;
+  }
+}
+
 describe("runtime/wasm_loader (optional exports)", () => {
   it("surfaces SharedRingBuffer/open_ring_by_kind when present", async () => {
     const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
@@ -66,5 +78,65 @@ describe("runtime/wasm_loader (optional exports)", () => {
     expect(api.SharedRingBuffer).toBe(FakeSharedRingBuffer);
     expect(api.open_ring_by_kind).toBe(open_ring_by_kind);
   });
-});
 
+  it("surfaces SharedRingBuffer/open_ring_by_kind for threaded init when present", async () => {
+    if (!sharedMemorySupported()) return;
+    const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+    class FakeSharedRingBuffer {
+      constructor(_buffer: SharedArrayBuffer, _offsetBytes: number) {}
+      capacity_bytes(): number {
+        return 0;
+      }
+      try_push(_payload: Uint8Array): boolean {
+        return true;
+      }
+      try_pop(): Uint8Array | null {
+        return null;
+      }
+      wait_for_data(): void {}
+      push_blocking(_payload: Uint8Array): void {}
+      pop_blocking(): Uint8Array {
+        return new Uint8Array();
+      }
+      free(): void {}
+    }
+
+    const open_ring_by_kind = (_buffer: SharedArrayBuffer, _kind: number, _nth: number) =>
+      new FakeSharedRingBuffer(_buffer, 0);
+
+    // `initWasm` only selects the threaded build when `crossOriginIsolated` is true.
+    const hadCrossOriginIsolated = Object.prototype.hasOwnProperty.call(globalThis, "crossOriginIsolated");
+    const originalCrossOriginIsolated = (globalThis as any).crossOriginIsolated;
+    (globalThis as any).crossOriginIsolated = true;
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroWasmJsImporterOverride = {
+        threaded: async () => ({
+          default: async (_input?: unknown) => {},
+          greet: (name: string) => `hello ${name}`,
+          add: (a: number, b: number) => a + b,
+          version: () => 1,
+          sum: (a: number, b: number) => a + b,
+          mem_store_u32: (_offset: number, _value: number) => {},
+          mem_load_u32: (_offset: number) => 0,
+          guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+          SharedRingBuffer: FakeSharedRingBuffer,
+          open_ring_by_kind,
+        }),
+      };
+
+      const { api, variant } = await initWasm({ variant: "threaded", module });
+      expect(variant).toBe("threaded");
+      expect(api.SharedRingBuffer).toBe(FakeSharedRingBuffer);
+      expect(api.open_ring_by_kind).toBe(open_ring_by_kind);
+    } finally {
+      if (hadCrossOriginIsolated) {
+        (globalThis as any).crossOriginIsolated = originalCrossOriginIsolated;
+      } else {
+        delete (globalThis as any).crossOriginIsolated;
+      }
+    }
+  });
+});
