@@ -21,11 +21,12 @@ Then pass the extracted directory to the existing packaging scripts:
 pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root
 ```
 
-Alternatively, you can pass `-VirtioWinIso` directly under `pwsh` on non-Windows hosts and
-`make-driver-pack.ps1` will fall back to running the extractor automatically:
+Note: `make-driver-pack.ps1 -VirtioWinIso ...` mounts ISOs via `Mount-DiskImage` and is
+therefore Windows-only. On Linux/macOS, use the extracted root (`-VirtioWinRoot`) or the
+one-shot shell wrapper that runs the extractor for you:
 
 ```bash
-pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinIso virtio-win.iso
+drivers/scripts/make-driver-pack.sh --virtio-win-iso virtio-win.iso
 ```
 
 For convenience, Aero also provides one-shot wrappers that do the extraction + packaging in one command:
