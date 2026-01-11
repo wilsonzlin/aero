@@ -413,6 +413,16 @@ function snapshotDeviceDescriptors(device: USBDevice): unknown {
   };
 }
 
+function downloadText(text: string, filename: string): void {
+  const blob = new Blob([text], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function main(): void {
   const app = document.getElementById("app");
   if (!app) throw new Error("Missing #app element");
@@ -563,23 +573,36 @@ function main(): void {
         return;
       }
 
+      const autoClaim = findBestClaimCandidate(selectedDevice, selectedClass);
       const payload = {
         generatedAt: new Date().toISOString(),
+        userAgent: navigator.userAgent,
+        isSecureContext: globalThis.isSecureContext,
+        crossOriginIsolated: (globalThis as unknown as { crossOriginIsolated?: unknown }).crossOriginIsolated ?? null,
+        permissionsPolicyUsb: ppUsb,
         filterNote: lastFilterNote,
+        autoClaim,
         device: snapshotDeviceDescriptors(selectedDevice),
         classification: selectedClass,
       };
       const text = JSON.stringify(payload, null, 2);
 
       try {
-        if (!navigator.clipboard?.writeText) {
-          throw new Error("Clipboard API unavailable (navigator.clipboard.writeText).");
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+          status.textContent = "Copied JSON summary to clipboard.";
+          return;
         }
-        await navigator.clipboard.writeText(text);
-        status.textContent = "Copied JSON summary to clipboard.";
       } catch (err) {
-        showError(err);
+        console.warn("Clipboard write failed; falling back to download:", err);
       }
+
+      const fileStamp = new Date().toISOString().replaceAll(":", "").replaceAll("-", "");
+      const filename = `webusb_${selectedDevice.vendorId.toString(16).padStart(4, "0")}_${selectedDevice.productId
+        .toString(16)
+        .padStart(4, "0")}_${fileStamp}.json`;
+      downloadText(text, filename);
+      status.textContent = "Clipboard unavailable; downloaded JSON summary instead.";
     })();
   };
 
