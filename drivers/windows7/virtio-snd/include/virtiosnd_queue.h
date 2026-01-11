@@ -5,12 +5,28 @@
 #include <ntddk.h>
 
 /*
- * Internal virtio-snd queue abstraction.
+ * virtio-snd queue abstraction.
  *
- * This is intentionally minimal and transport-agnostic so the virtio-snd
- * protocol/control/streaming code can land before the virtqueue/transport
- * integration is wired up.
+ * This is intentionally small and keeps higher-level virtio-snd protocol/control
+ * code transport-agnostic. Concrete implementations (e.g. split virtqueues) are
+ * expected to provide an ops table + context pointer.
+ *
+ * Contract v1 queue indices/sizes:
+ *  - 0: controlq (64)
+ *  - 1: eventq   (64)
+ *  - 2: txq     (256)
+ *  - 3: rxq      (64) exists but is unused in contract v1; may be left uninitialized.
  */
+
+#define VIRTIOSND_QUEUE_INDEX_CONTROLQ ((USHORT)0u)
+#define VIRTIOSND_QUEUE_INDEX_EVENTQ ((USHORT)1u)
+#define VIRTIOSND_QUEUE_INDEX_TXQ ((USHORT)2u)
+#define VIRTIOSND_QUEUE_INDEX_RXQ ((USHORT)3u) /* Unused in contract v1. */
+
+#define VIRTIOSND_QUEUE_SIZE_CONTROLQ ((USHORT)64u)
+#define VIRTIOSND_QUEUE_SIZE_EVENTQ ((USHORT)64u)
+#define VIRTIOSND_QUEUE_SIZE_TXQ ((USHORT)256u)
+#define VIRTIOSND_QUEUE_SIZE_RXQ ((USHORT)64u) /* Unused in contract v1. */
 
 typedef struct _VIRTIOSND_SG {
     UINT64 addr;
@@ -20,45 +36,42 @@ typedef struct _VIRTIOSND_SG {
 
 typedef struct _VIRTIOSND_QUEUE_OPS {
     _Must_inspect_result_ NTSTATUS (*Submit)(
-        _In_ void* ctx,
-        _In_reads_(sg_count) const VIRTIOSND_SG* sg,
+        _In_ void *ctx,
+        _In_reads_(sg_count) const VIRTIOSND_SG *sg,
         _In_ USHORT sg_count,
-        _In_opt_ void* cookie);
+        _In_opt_ void *cookie);
 
     _Must_inspect_result_ BOOLEAN (*PopUsed)(
-        _In_ void* ctx,
-        _Out_ void** cookie_out,
-        _Out_ UINT32* used_len_out);
+        _In_ void *ctx,
+        _Out_ void **cookie_out,
+        _Out_ UINT32 *used_len_out);
 
-    VOID (*Kick)(_In_ void* ctx);
+    VOID (*Kick)(_In_ void *ctx);
 } VIRTIOSND_QUEUE_OPS, *PVIRTIOSND_QUEUE_OPS;
 
 typedef struct _VIRTIOSND_QUEUE {
-    const VIRTIOSND_QUEUE_OPS* Ops;
-    void* Ctx;
+    const VIRTIOSND_QUEUE_OPS *Ops;
+    void *Ctx;
 } VIRTIOSND_QUEUE, *PVIRTIOSND_QUEUE;
 
 static __inline NTSTATUS
 VirtioSndQueueSubmit(
-    _In_ const VIRTIOSND_QUEUE* Queue,
-    _In_reads_(SgCount) const VIRTIOSND_SG* Sg,
+    _In_ const VIRTIOSND_QUEUE *Queue,
+    _In_reads_(SgCount) const VIRTIOSND_SG *Sg,
     _In_ USHORT SgCount,
-    _In_opt_ void* Cookie)
+    _In_opt_ void *Cookie)
 {
     return Queue->Ops->Submit(Queue->Ctx, Sg, SgCount, Cookie);
 }
 
 static __inline VOID
-VirtioSndQueueKick(_In_ const VIRTIOSND_QUEUE* Queue)
+VirtioSndQueueKick(_In_ const VIRTIOSND_QUEUE *Queue)
 {
     Queue->Ops->Kick(Queue->Ctx);
 }
 
 static __inline BOOLEAN
-VirtioSndQueuePopUsed(
-    _In_ const VIRTIOSND_QUEUE* Queue,
-    _Out_ void** CookieOut,
-    _Out_ UINT32* UsedLenOut)
+VirtioSndQueuePopUsed(_In_ const VIRTIOSND_QUEUE *Queue, _Out_ void **CookieOut, _Out_ UINT32 *UsedLenOut)
 {
     return Queue->Ops->PopUsed(Queue->Ctx, CookieOut, UsedLenOut);
 }

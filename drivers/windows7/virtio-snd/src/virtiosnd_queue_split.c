@@ -2,7 +2,9 @@
 
 #include <ntddk.h>
 
+#include "trace.h"
 #include "virtiosnd.h"
+#include "virtio_pci_modern_wdm.h"
 #include "virtiosnd_queue_split.h"
 
 typedef struct _VIRTIOSND_QUEUE_SPLIT_LOCK_STATE {
@@ -108,7 +110,7 @@ VirtioSndQueueSplitKick(_In_ void* ctx)
 {
     VIRTIOSND_QUEUE_SPLIT* qs;
     VIRTIOSND_QUEUE_SPLIT_LOCK_STATE lock_state;
-    volatile ULONG* addr;
+    volatile UINT16* addr;
     BOOLEAN should_kick;
 
     qs = (VIRTIOSND_QUEUE_SPLIT*)ctx;
@@ -129,11 +131,11 @@ VirtioSndQueueSplitKick(_In_ void* ctx)
 
         addr = qs->NotifyAddr;
         if (addr == NULL && qs->NotifyBase != NULL && qs->NotifyOffMultiplier != 0) {
-            addr = (volatile ULONG*)(qs->NotifyBase + (ULONG)qs->QueueNotifyOff * qs->NotifyOffMultiplier);
+            addr = (volatile UINT16*)(qs->NotifyBase + (ULONG)qs->QueueNotifyOff * qs->NotifyOffMultiplier);
         }
 
         if (addr != NULL) {
-            WRITE_REGISTER_ULONG((volatile ULONG*)addr, (ULONG)qs->QueueIndex);
+            WRITE_REGISTER_USHORT((volatile USHORT*)addr, qs->QueueIndex);
         }
     }
 
@@ -199,12 +201,13 @@ VirtioSndQueueSplitCreate(
     KeInitializeSpinLock(&qs->Lock);
 
     qs->QueueIndex = queue_index;
+    qs->QueueSize = queue_size;
     qs->NotifyBase = notify_base;
     qs->NotifyOffMultiplier = notify_off_multiplier;
     qs->QueueNotifyOff = queue_notify_off;
 
     if (notify_base != NULL && notify_off_multiplier != 0) {
-        qs->NotifyAddr = (volatile ULONG*)(notify_base + (ULONG)queue_notify_off * notify_off_multiplier);
+        qs->NotifyAddr = (volatile UINT16*)(notify_base + (ULONG)queue_notify_off * notify_off_multiplier);
     }
 
     ring_bytes = VirtqSplitRingMemSize(queue_size, PAGE_SIZE, event_idx);
@@ -215,6 +218,11 @@ VirtioSndQueueSplitCreate(
 
     status = VirtIoSndAllocCommonBuffer(DmaCtx, ring_bytes, FALSE, &qs->Ring);
     if (!NT_SUCCESS(status)) {
+        goto Fail;
+    }
+
+    if ((((ULONG_PTR)qs->Ring.Va) & 0xFu) != 0 || (qs->Ring.DmaAddr & 0xFu) != 0) {
+        status = STATUS_DATATYPE_MISALIGNMENT;
         goto Fail;
     }
 
@@ -247,16 +255,22 @@ VirtioSndQueueSplitCreate(
                     VirtIoSndFreeCommonBuffer(DmaCtx, &qs->IndirectPool);
                     indirect_table_count = 0;
                     indirect_max_desc = 0;
+                    qs->IndirectTableCount = 0;
+                    qs->IndirectMaxDesc = 0;
                 } else {
                     /*
                      * This DMA buffer is shared with the (potentially untrusted) device; clear it
                      * to avoid leaking stale kernel memory.
                      */
                     RtlZeroMemory(qs->IndirectPool.Va, indirect_bytes);
+                    qs->IndirectTableCount = indirect_table_count;
+                    qs->IndirectMaxDesc = indirect_max_desc;
                 }
             } else {
                 indirect_table_count = 0;
                 indirect_max_desc = 0;
+                qs->IndirectTableCount = 0;
+                qs->IndirectMaxDesc = 0;
             }
         }
     }
@@ -313,4 +327,64 @@ VirtioSndQueueSplitDestroy(PVIRTIOSND_DMA_CONTEXT DmaCtx, VIRTIOSND_QUEUE_SPLIT*
     }
 
     RtlZeroMemory(qs, sizeof(*qs));
+}
+
+_Use_decl_annotations_
+VOID
+VirtioSndQueueSplitDrainUsed(VIRTIOSND_QUEUE_SPLIT* qs,
+                             EVT_VIRTIOSND_QUEUE_SPLIT_USED* Callback,
+                             void* Context)
+{
+    typedef struct _USED_ENTRY {
+        void* Cookie;
+        UINT32 Len;
+    } USED_ENTRY;
+
+    USED_ENTRY used[VIRTIOSND_QUEUE_SIZE_TXQ];
+    ULONG count;
+    VIRTIOSND_QUEUE_SPLIT_LOCK_STATE lock_state;
+
+    if (qs == NULL || qs->Vq == NULL || Callback == NULL) {
+        return;
+    }
+
+    count = 0;
+
+    VirtioSndQueueSplitLock(qs, &lock_state);
+
+    for (;;) {
+        void* cookie;
+        UINT32 len;
+        NTSTATUS status;
+
+        cookie = NULL;
+        len = 0;
+
+        status = VirtqSplitGetUsed(qs->Vq, &cookie, &len);
+        if (status == STATUS_NOT_FOUND) {
+            break;
+        }
+        if (!NT_SUCCESS(status)) {
+            VIRTIOSND_TRACE_ERROR("queue[%u] VirtqSplitGetUsed failed: 0x%08X\n", (UINT)qs->QueueIndex, status);
+            break;
+        }
+
+        if (count >= ARRAYSIZE(used)) {
+            VIRTIOSND_TRACE_ERROR("queue[%u] used drain overflow\n", (UINT)qs->QueueIndex);
+            break;
+        }
+
+        used[count].Cookie = cookie;
+        used[count].Len = len;
+        count++;
+    }
+
+    VirtioSndQueueSplitUnlock(qs, &lock_state);
+
+    {
+        ULONG i;
+        for (i = 0; i < count; i++) {
+            Callback(qs->QueueIndex, used[i].Cookie, used[i].Len, Context);
+        }
+    }
 }

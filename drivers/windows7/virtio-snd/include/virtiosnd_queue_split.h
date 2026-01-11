@@ -10,6 +10,9 @@
 #include "virtqueue_split.h"
 
 typedef struct _VIRTIOSND_QUEUE_SPLIT {
+    USHORT QueueIndex;
+    USHORT QueueSize;
+
     VIRTQ_SPLIT* Vq;
 
     /*
@@ -21,21 +24,21 @@ typedef struct _VIRTIOSND_QUEUE_SPLIT {
      */
     KSPIN_LOCK Lock;
 
-    USHORT QueueIndex;
-
     /* Transport-supplied virtio-pci modern notify information. */
     volatile UCHAR* NotifyBase;
     ULONG NotifyOffMultiplier;
     USHORT QueueNotifyOff;
 
-    /* Optional precomputed notify register address. */
-    volatile ULONG* NotifyAddr;
+    /* Optional precomputed notify register address (notify_base + off * mult). */
+    volatile UINT16* NotifyAddr;
 
-    /* Split ring (desc + avail + used) memory, physically contiguous. */
+    /* Split ring (desc + avail + used) memory (DMA-safe). */
     VIRTIOSND_DMA_BUFFER Ring;
 
-    /* Optional physically contiguous indirect descriptor table pool. */
+    /* Optional indirect descriptor table pool (DMA-safe). */
     VIRTIOSND_DMA_BUFFER IndirectPool;
+    USHORT IndirectTableCount;
+    USHORT IndirectMaxDesc;
 } VIRTIOSND_QUEUE_SPLIT, *PVIRTIOSND_QUEUE_SPLIT;
 
 _Must_inspect_result_ NTSTATUS
@@ -56,3 +59,19 @@ VirtioSndQueueSplitCreate(
 
 VOID
 VirtioSndQueueSplitDestroy(_In_ PVIRTIOSND_DMA_CONTEXT DmaCtx, _Inout_ VIRTIOSND_QUEUE_SPLIT* qs);
+
+typedef VOID EVT_VIRTIOSND_QUEUE_SPLIT_USED(
+    _In_ USHORT QueueIndex,
+    _In_opt_ void* Cookie,
+    _In_ UINT32 UsedLen,
+    _In_opt_ void* Context);
+
+/*
+ * Drains all currently used entries from the queue, intended for DPC context.
+ * The callback is invoked once per completed buffer.
+ */
+VOID
+VirtioSndQueueSplitDrainUsed(_Inout_ VIRTIOSND_QUEUE_SPLIT* qs,
+                             _In_ EVT_VIRTIOSND_QUEUE_SPLIT_USED* Callback,
+                             _In_opt_ void* Context);
+
