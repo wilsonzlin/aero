@@ -316,7 +316,7 @@ HRESULT throttle_presents_locked(Device* dev, uint32_t d3d9_present_flags) {
 
     const uint64_t oldest = dev->inflight_present_fences.front();
     const uint32_t time_left = static_cast<uint32_t>(std::min<uint64_t>(deadline - now, kPresentThrottleMaxWaitMs));
-    (void)wait_for_fence(dev->adapter, oldest, time_left);
+    (void)wait_for_fence(dev, oldest, time_left);
     retire_completed_presents_locked(dev);
   }
 
