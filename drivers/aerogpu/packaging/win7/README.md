@@ -122,8 +122,8 @@ To run `sign_test.cmd` inside the Windows 7 VM, you need tooling from a Windows 
 - `signtool.exe`
 - `inf2cat.exe` (recommended; required if the INF declares `CatalogFile=...`)
 
-The **Windows 7 WDK (7600)** includes all of these tools and is often the most straightforward option for Win7 VMs.
-Newer Windows SDK/WDK releases (Windows Kits 10+) also include them (CI uses a pinned Windows Kits 10 toolchain).
+The **Windows 7 WDK (7600)** includes all of these tools and is often the most straightforward option for signing inside a Win7 VM.
+Newer Windows SDK/WDK releases (Windows Kits 10+) generally include `signtool.exe`/`inf2cat.exe` (CI uses a pinned Windows Kits 10 toolchain), but may not include the deprecated `makecert.exe`; if it’s missing, prefer the host-signed CI workflow above.
 
 ## 4) Install (Windows 7 SP1 VM)
 
