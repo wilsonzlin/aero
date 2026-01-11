@@ -5,13 +5,13 @@
  */
 
 export const DISK_MANAGER_DB_NAME = "aero-disk-manager";
-export const DISK_MANAGER_DB_VERSION = 1;
+export const DISK_MANAGER_DB_VERSION = 2;
 
 export const OPFS_AERO_DIR = "aero";
 export const OPFS_DISKS_DIR = "disks";
 export const OPFS_METADATA_FILE = "metadata.json";
 
-export const METADATA_VERSION = 1;
+export const METADATA_VERSION = 2;
 
 export type DiskBackend = "opfs" | "idb";
 export type DiskKind = "hdd" | "cd";
@@ -22,7 +22,30 @@ export type DiskChecksum = {
   value: string;
 };
 
-export type DiskImageMetadata = {
+export type RemoteDiskDelivery = "range" | "chunked";
+
+export type RemoteDiskValidator = {
+  etag?: string;
+  lastModified?: string;
+};
+
+export type RemoteDiskUrls = {
+  /**
+   * Stable, non-secret URL to the disk bytes endpoint (Range) or manifest (chunked).
+   *
+   * MUST NOT be a signed URL containing embedded credentials (query params, etc).
+   */
+  url?: string;
+  /**
+   * Stable, same-origin API endpoint that returns a temporary signed URL.
+   *
+   * Storing this endpoint is safe; storing the signed URL is not.
+   */
+  leaseEndpoint?: string;
+};
+
+export type LocalDiskImageMetadata = {
+  source: "local";
   id: string;
   name: string;
   backend: DiskBackend;
@@ -36,6 +59,42 @@ export type DiskImageMetadata = {
   sourceFileName?: string;
 };
 
+export type RemoteDiskImageMetadata = {
+  source: "remote";
+  id: string;
+  name: string;
+  kind: DiskKind;
+  format: DiskFormat;
+  /**
+   * Expected total disk size in bytes.
+   *
+   * Used as a cache binding check (size mismatch => cached bytes are invalid).
+   */
+  sizeBytes: number;
+  createdAtMs: number;
+  lastUsedAtMs?: number;
+  remote: {
+    imageId: string;
+    version: string;
+    delivery: RemoteDiskDelivery;
+    urls: RemoteDiskUrls;
+    /**
+     * Optional expected validator for cache binding. If the remote validator changes,
+     * any previously cached bytes must be treated as stale.
+     */
+    validator?: RemoteDiskValidator;
+  };
+  cache: {
+    chunkSizeBytes: number;
+    backend: DiskBackend;
+    fileName: string;
+    overlayFileName: string;
+    overlayBlockSizeBytes: number;
+  };
+};
+
+export type DiskImageMetadata = LocalDiskImageMetadata | RemoteDiskImageMetadata;
+
 export type MountConfig = {
   hddId?: string;
   cdId?: string;
@@ -46,6 +105,68 @@ export type DiskManagerState = {
   disks: Record<string, DiskImageMetadata>;
   mounts: MountConfig;
 };
+
+type DiskImageMetadataV1 = Omit<LocalDiskImageMetadata, "source">;
+type DiskManagerStateV1 = { version: 1; disks: Record<string, DiskImageMetadataV1>; mounts: MountConfig };
+
+export function isRemoteDisk(meta: DiskImageMetadata): meta is RemoteDiskImageMetadata {
+  return meta.source === "remote";
+}
+
+export function isLocalDisk(meta: DiskImageMetadata): meta is LocalDiskImageMetadata {
+  return meta.source === "local";
+}
+
+export function upgradeDiskMetadata(record: unknown): DiskImageMetadata | undefined {
+  if (!record || typeof record !== "object") return undefined;
+  const r = record as Partial<DiskImageMetadata> & { source?: unknown };
+
+  if (r.source === "remote") return r as RemoteDiskImageMetadata;
+  if (r.source === "local") return r as LocalDiskImageMetadata;
+
+  // v1 records had no `source` field. Treat them as local disks.
+  const maybeV1 = record as Partial<DiskImageMetadataV1>;
+  if (typeof maybeV1.id === "string" && typeof maybeV1.backend === "string" && typeof maybeV1.fileName === "string") {
+    return { ...(maybeV1 as DiskImageMetadataV1), source: "local" };
+  }
+
+  return undefined;
+}
+
+export function upgradeDiskManagerStateJson(text: string): { state: DiskManagerState; migrated: boolean } {
+  if (!text.trim()) return { state: emptyState(), migrated: false };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    return { state: emptyState(), migrated: false };
+  }
+
+  if (!parsed || typeof parsed !== "object") return { state: emptyState(), migrated: false };
+  const raw = parsed as Partial<DiskManagerStateV1 & DiskManagerState>;
+  const version = raw.version;
+
+  if (version !== 1 && version !== METADATA_VERSION) return { state: emptyState(), migrated: false };
+
+  const migrated = version === 1;
+
+  const out: DiskManagerState = {
+    version: METADATA_VERSION,
+    disks: {},
+    mounts: raw.mounts || {},
+  };
+
+  const disks = raw.disks;
+  if (disks && typeof disks === "object") {
+    for (const [key, value] of Object.entries(disks as Record<string, unknown>)) {
+      const upgraded = upgradeDiskMetadata(value);
+      if (upgraded) out.disks[upgraded.id || key] = upgraded;
+    }
+  }
+
+  return { state: out, migrated };
+}
 
 export function hasOpfs(): boolean {
   return typeof navigator !== "undefined" && !!navigator.storage?.getDirectory;
@@ -126,17 +247,35 @@ export function idbTxDone(tx: IDBTransaction): Promise<void> {
 
 export async function openDiskManagerDb(): Promise<IDBDatabase> {
   const req = indexedDB.open(DISK_MANAGER_DB_NAME, DISK_MANAGER_DB_VERSION);
-  req.onupgradeneeded = () => {
+  req.onupgradeneeded = (event) => {
     const db = req.result;
-    if (!db.objectStoreNames.contains("disks")) {
-      db.createObjectStore("disks", { keyPath: "id" });
-    }
+    const upgradeTx = req.transaction;
+    if (!upgradeTx) throw new Error("IndexedDB upgrade transaction missing");
+
+    const disksStore = db.objectStoreNames.contains("disks")
+      ? upgradeTx.objectStore("disks")
+      : db.createObjectStore("disks", { keyPath: "id" });
+
     if (!db.objectStoreNames.contains("mounts")) {
       db.createObjectStore("mounts", { keyPath: "key" });
     }
     if (!db.objectStoreNames.contains("chunks")) {
       const chunks = db.createObjectStore("chunks", { keyPath: ["id", "index"] });
       chunks.createIndex("by_id", "id", { unique: false });
+    }
+
+    // v2: add `source` discriminant to disk metadata records so we can support remote-backed disks.
+    if (event.oldVersion < 2) {
+      const cursorReq = disksStore.openCursor();
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result;
+        if (!cursor) return;
+        const upgraded = upgradeDiskMetadata(cursor.value);
+        if (upgraded && (cursor.value as { source?: unknown }).source !== (upgraded as { source?: unknown }).source) {
+          cursor.update(upgraded);
+        }
+        cursor.continue();
+      };
     }
   };
   return idbReq(req);
@@ -178,15 +317,15 @@ export async function opfsReadState(): Promise<DiskManagerState> {
   if (file.size === 0) return emptyState();
   const text = await file.text();
   if (!text.trim()) return emptyState();
-  const parsed = JSON.parse(text) as Partial<DiskManagerState> | null;
-  if (!parsed || parsed.version !== METADATA_VERSION || typeof parsed.disks !== "object") {
-    return emptyState();
+  const { state, migrated } = upgradeDiskManagerStateJson(text);
+  if (migrated) {
+    try {
+      await opfsWriteState(state);
+    } catch {
+      // If the migration write fails (quota, transient errors), keep using the upgraded state.
+    }
   }
-  return {
-    version: METADATA_VERSION,
-    disks: (parsed.disks as DiskManagerState["disks"]) || {},
-    mounts: parsed.mounts || {},
-  };
+  return state;
 }
 
 export async function opfsWriteState(state: DiskManagerState): Promise<void> {
@@ -257,7 +396,8 @@ export function createIdbMetadataStore(): DiskMetadataStore {
       const db = await openDiskManagerDb();
       const tx = db.transaction(["disks"], "readonly");
       const store = tx.objectStore("disks");
-      const values = (await idbReq(store.getAll())) as DiskImageMetadata[];
+      const raw = (await idbReq(store.getAll())) as unknown[];
+      const values = raw.map((v) => upgradeDiskMetadata(v)).filter(Boolean) as DiskImageMetadata[];
       await idbTxDone(tx);
       db.close();
       return values.sort((a, b) => (b.lastUsedAtMs || 0) - (a.lastUsedAtMs || 0));
@@ -266,10 +406,10 @@ export function createIdbMetadataStore(): DiskMetadataStore {
       const db = await openDiskManagerDb();
       const tx = db.transaction(["disks"], "readonly");
       const store = tx.objectStore("disks");
-      const value = (await idbReq(store.get(id))) as DiskImageMetadata | undefined;
+      const raw = (await idbReq(store.get(id))) as unknown;
       await idbTxDone(tx);
       db.close();
-      return value || undefined;
+      return upgradeDiskMetadata(raw) || undefined;
     },
     async putDisk(meta: DiskImageMetadata) {
       const db = await openDiskManagerDb();

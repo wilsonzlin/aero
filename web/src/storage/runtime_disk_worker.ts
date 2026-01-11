@@ -100,6 +100,9 @@ function emptyIoTelemetry(): DiskIoTelemetry {
 }
 
 async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSizeBytes?: number): Promise<DiskEntry> {
+  if (meta.source === "remote") {
+    throw new Error("remote disks are not supported by this worker yet");
+  }
   const readOnly = meta.kind === "cd" || meta.format === "iso";
 
   if (meta.backend === "opfs") {

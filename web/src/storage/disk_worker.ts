@@ -11,6 +11,9 @@ import {
   type DiskImageMetadata,
   type DiskKind,
   type MountConfig,
+  type RemoteDiskDelivery,
+  type RemoteDiskValidator,
+  type RemoteDiskUrls,
 } from "./metadata";
 import { importConvertToOpfs } from "./import_convert.ts";
 import {
@@ -64,6 +67,43 @@ function postErr(requestId: number, error: unknown): void {
     ok: false,
     error: serializeError(error),
   });
+}
+
+function assertNonSecretUrl(url: string | undefined): void {
+  if (!url) return;
+  let parsed: URL;
+  try {
+    parsed = new URL(url, "https://example.invalid");
+  } catch {
+    // If URL parsing fails, fall back to best-effort substring checks.
+    const lower = url.toLowerCase();
+    if (lower.includes("x-amz-signature") || lower.includes("key-pair-id=") || lower.includes("signature=")) {
+      throw new Error("Refusing to persist what looks like a signed URL; store a stable URL or a leaseEndpoint instead.");
+    }
+    return;
+  }
+
+  const banned = new Set([
+    // AWS S3 presigned query params.
+    "x-amz-algorithm",
+    "x-amz-credential",
+    "x-amz-date",
+    "x-amz-expires",
+    "x-amz-security-token",
+    "x-amz-signature",
+    "x-amz-signedheaders",
+    // CloudFront signed URL params (and other common CDNs).
+    "expires",
+    "key-pair-id",
+    "policy",
+    "signature",
+  ]);
+
+  for (const [key] of parsed.searchParams) {
+    if (banned.has(key.toLowerCase())) {
+      throw new Error("Refusing to persist what looks like a signed URL; store a stable URL or a leaseEndpoint instead.");
+    }
+  }
 }
 
 /**
@@ -184,6 +224,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       }
 
       const meta = {
+        source: "local",
         id,
         name,
         backend,
@@ -194,7 +235,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         createdAtMs: Date.now(),
         lastUsedAtMs: undefined,
         checksum: checksumCrc32 ? { algorithm: "crc32", value: checksumCrc32 } : undefined,
-      };
+      } satisfies DiskImageMetadata;
 
       await store.putDisk(meta);
       postOk(requestId, meta);
@@ -230,6 +271,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       }
 
       const meta = {
+        source: "local",
         id,
         name,
         backend,
@@ -241,7 +283,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         lastUsedAtMs: undefined,
         checksum: checksumCrc32 ? { algorithm: "crc32", value: checksumCrc32 } : undefined,
         sourceFileName: file.name,
-      };
+      } satisfies DiskImageMetadata;
 
       await store.putDisk(meta);
       postOk(requestId, meta);
@@ -286,6 +328,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       }
 
       const meta: DiskImageMetadata = {
+        source: "local",
         id,
         name,
         backend,
@@ -304,11 +347,138 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       return;
     }
 
+    case "create_remote": {
+      const payload = msg.payload || {};
+      const name = String(payload.name || "");
+      const imageId = String(payload.imageId || "");
+      const version = String(payload.version || "");
+      const delivery = payload.delivery as RemoteDiskDelivery;
+      const sizeBytes = payload.sizeBytes;
+      const kind = (payload.kind || "hdd") as DiskKind;
+      const format = (payload.format || "raw") as DiskFormat;
+
+      if (!name.trim()) throw new Error("Remote disk name is required");
+      if (!imageId) throw new Error("imageId is required");
+      if (!version) throw new Error("version is required");
+      if (delivery !== "range" && delivery !== "chunked") {
+        throw new Error("delivery must be 'range' or 'chunked'");
+      }
+      if (kind !== "hdd" && kind !== "cd") throw new Error("kind must be 'hdd' or 'cd'");
+      if (typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+        throw new Error("sizeBytes must be a positive number");
+      }
+
+      const id = newDiskId();
+      const cacheBackend = (payload.cacheBackend || backend) as DiskBackend;
+      const chunkSizeBytes =
+        typeof payload.chunkSizeBytes === "number" && Number.isFinite(payload.chunkSizeBytes) && payload.chunkSizeBytes > 0
+          ? payload.chunkSizeBytes
+          : 1024 * 1024;
+      if (chunkSizeBytes % 512 !== 0) throw new Error("chunkSizeBytes must be a multiple of 512");
+
+      const overlayBlockSizeBytes =
+        typeof payload.overlayBlockSizeBytes === "number" && Number.isFinite(payload.overlayBlockSizeBytes) && payload.overlayBlockSizeBytes > 0
+          ? payload.overlayBlockSizeBytes
+          : 1024 * 1024;
+      if (overlayBlockSizeBytes % 512 !== 0) throw new Error("overlayBlockSizeBytes must be a multiple of 512");
+
+      const urls: RemoteDiskUrls = {
+        ...((payload.urls || {}) as RemoteDiskUrls),
+        ...(payload.url ? { url: String(payload.url) } : {}),
+        ...(payload.leaseEndpoint ? { leaseEndpoint: String(payload.leaseEndpoint) } : {}),
+      };
+      assertNonSecretUrl(urls.url);
+      const validator = payload.validator as RemoteDiskValidator | undefined;
+
+      const cacheFileName = typeof payload.cacheFileName === "string" && payload.cacheFileName ? payload.cacheFileName : `${id}.cache.aerospar`;
+      const overlayFileName = typeof payload.overlayFileName === "string" && payload.overlayFileName ? payload.overlayFileName : `${id}.overlay.aerospar`;
+
+      const meta: DiskImageMetadata = {
+        source: "remote",
+        id,
+        name,
+        kind,
+        format,
+        sizeBytes,
+        createdAtMs: Date.now(),
+        lastUsedAtMs: undefined,
+        remote: {
+          imageId,
+          version,
+          delivery,
+          urls,
+          validator,
+        },
+        cache: {
+          chunkSizeBytes,
+          backend: cacheBackend,
+          fileName: cacheFileName,
+          overlayFileName,
+          overlayBlockSizeBytes,
+        },
+      };
+
+      await store.putDisk(meta);
+      postOk(requestId, meta);
+      return;
+    }
+
+    case "update_remote": {
+      const payload = msg.payload || {};
+      const id = String(payload.id || "");
+      if (!id) throw new Error("Missing remote disk id");
+
+      const meta = await requireDisk(backend, id);
+      if (meta.source !== "remote") {
+        throw new Error("update_remote can only be used with remote disks");
+      }
+
+      if (payload.name !== undefined) meta.name = String(payload.name);
+      if (payload.kind !== undefined) meta.kind = payload.kind as DiskKind;
+      if (payload.format !== undefined) meta.format = payload.format as DiskFormat;
+      if (payload.sizeBytes !== undefined) meta.sizeBytes = Number(payload.sizeBytes);
+
+      if (payload.imageId !== undefined) meta.remote.imageId = String(payload.imageId);
+      if (payload.version !== undefined) meta.remote.version = String(payload.version);
+      if (payload.delivery !== undefined) meta.remote.delivery = payload.delivery as RemoteDiskDelivery;
+      if (payload.urls !== undefined || payload.url !== undefined || payload.leaseEndpoint !== undefined) {
+        const nextUrls: RemoteDiskUrls = {
+          ...meta.remote.urls,
+          ...(payload.urls ? (payload.urls as RemoteDiskUrls) : {}),
+          ...(payload.url ? { url: String(payload.url) } : {}),
+          ...(payload.leaseEndpoint ? { leaseEndpoint: String(payload.leaseEndpoint) } : {}),
+        };
+        assertNonSecretUrl(nextUrls.url);
+        meta.remote.urls = nextUrls;
+      }
+      if (payload.validator !== undefined) meta.remote.validator = payload.validator as RemoteDiskValidator;
+
+      if (payload.cacheBackend !== undefined) meta.cache.backend = payload.cacheBackend as DiskBackend;
+      if (payload.chunkSizeBytes !== undefined) meta.cache.chunkSizeBytes = Number(payload.chunkSizeBytes);
+      if (payload.cacheFileName !== undefined) meta.cache.fileName = String(payload.cacheFileName);
+      if (payload.overlayFileName !== undefined) meta.cache.overlayFileName = String(payload.overlayFileName);
+      if (payload.overlayBlockSizeBytes !== undefined) meta.cache.overlayBlockSizeBytes = Number(payload.overlayBlockSizeBytes);
+
+      await store.putDisk(meta);
+      postOk(requestId, meta);
+      return;
+    }
+
     case "stat_disk": {
       const meta = await requireDisk(backend, msg.payload.id);
       let actualSize = meta.sizeBytes;
-      if (backend === "opfs") {
-        actualSize = await opfsGetDiskSizeBytes(meta.fileName);
+      if (meta.source === "local") {
+        if (meta.backend === "opfs") {
+          actualSize = await opfsGetDiskSizeBytes(meta.fileName);
+        }
+      } else {
+        if (meta.cache.backend === "opfs") {
+          try {
+            actualSize = await opfsGetDiskSizeBytes(meta.cache.fileName);
+          } catch {
+            actualSize = meta.sizeBytes;
+          }
+        }
       }
       postOk(requestId, { meta, actualSizeBytes: actualSize });
       return;
@@ -316,6 +486,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
     case "resize_disk": {
       const meta = await requireDisk(backend, msg.payload.id);
+      if (meta.source !== "local") {
+        throw new Error("Remote disks cannot be resized");
+      }
       const newSizeBytes = msg.payload.newSizeBytes;
       if (typeof newSizeBytes !== "number" || newSizeBytes < 0) throw new Error("Invalid newSizeBytes");
       if (meta.kind !== "hdd") {
@@ -324,7 +497,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
       const progressCb = (p: ImportProgress) => postProgress(requestId, p);
 
-      if (backend === "opfs") {
+      if (meta.backend === "opfs") {
         await opfsResizeDisk(meta.fileName, newSizeBytes, progressCb);
         // Resizing invalidates COW overlays (table size depends on disk size).
         await opfsDeleteDisk(`${meta.id}.overlay.aerospar`);
@@ -342,16 +515,31 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
     case "delete_disk": {
       const meta = await requireDisk(backend, msg.payload.id);
-      if (backend === "opfs") {
-        await opfsDeleteDisk(meta.fileName);
-        // Best-effort cleanup of runtime COW overlay files.
-        await opfsDeleteDisk(`${meta.id}.overlay.aerospar`);
+      if (meta.source === "local") {
+        if (meta.backend === "opfs") {
+          await opfsDeleteDisk(meta.fileName);
+          // Best-effort cleanup of runtime COW overlay files.
+          await opfsDeleteDisk(`${meta.id}.overlay.aerospar`);
+        } else {
+          const db = await openDiskManagerDb();
+          try {
+            await idbDeleteDiskData(db, meta.id);
+          } finally {
+            db.close();
+          }
+        }
       } else {
-        const db = await openDiskManagerDb();
-        try {
-          await idbDeleteDiskData(db, meta.id);
-        } finally {
-          db.close();
+        if (meta.cache.backend === "opfs") {
+          await opfsDeleteDisk(meta.cache.fileName);
+          await opfsDeleteDisk(meta.cache.overlayFileName);
+        } else {
+          const db = await openDiskManagerDb();
+          try {
+            await idbDeleteDiskData(db, meta.cache.fileName);
+            await idbDeleteDiskData(db, meta.cache.overlayFileName);
+          } finally {
+            db.close();
+          }
         }
       }
       await store.deleteDisk(meta.id);
@@ -361,6 +549,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
     case "export_disk": {
       const meta = await requireDisk(backend, msg.payload.id);
+      if (meta.source !== "local") {
+        throw new Error("Remote disks cannot be exported");
+      }
       const port = msg.port;
       if (!port) throw new Error("Missing MessagePort for export");
 
@@ -376,7 +567,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
       void (async () => {
         try {
-          if (backend === "opfs") {
+          if (meta.backend === "opfs") {
             await opfsExportToPort(meta.fileName, port, options, progressCb);
           } else {
             await idbExportToPort(meta.id, meta.sizeBytes, port, options, progressCb);

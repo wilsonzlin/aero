@@ -1,4 +1,17 @@
-import { clearIdb, clearOpfs, extensionForFormat, pickDefaultBackend, type DiskBackend, type DiskImageMetadata, type DiskKind, type DiskFormat, type MountConfig } from "./metadata";
+import {
+  clearIdb,
+  clearOpfs,
+  extensionForFormat,
+  pickDefaultBackend,
+  type DiskBackend,
+  type DiskImageMetadata,
+  type DiskKind,
+  type DiskFormat,
+  type MountConfig,
+  type RemoteDiskDelivery,
+  type RemoteDiskUrls,
+  type RemoteDiskValidator,
+} from "./metadata";
 import type { ImportProgress } from "./import_export";
 
 export type ExportHandle = {
@@ -237,6 +250,62 @@ export class DiskManager {
    */
   async deleteDisk(id: string): Promise<void> {
     await this.request("delete_disk", { id });
+  }
+
+  async addRemoteDisk(options: {
+    name: string;
+    imageId: string;
+    version: string;
+    delivery: RemoteDiskDelivery;
+    urls: RemoteDiskUrls;
+    sizeBytes: number;
+    validator?: RemoteDiskValidator;
+    kind?: DiskKind;
+    format?: DiskFormat;
+    cacheBackend?: DiskBackend;
+    chunkSizeBytes?: number;
+    cacheFileName?: string;
+    overlayFileName?: string;
+    overlayBlockSizeBytes?: number;
+  }): Promise<DiskImageMetadata> {
+    return this.request("create_remote", {
+      name: options.name,
+      imageId: options.imageId,
+      version: options.version,
+      delivery: options.delivery,
+      urls: options.urls,
+      sizeBytes: options.sizeBytes,
+      validator: options.validator,
+      kind: isHddKind(options.kind) ? options.kind : undefined,
+      format: isFormat(options.format) ? options.format : undefined,
+      cacheBackend: options.cacheBackend,
+      chunkSizeBytes: options.chunkSizeBytes,
+      cacheFileName: options.cacheFileName,
+      overlayFileName: options.overlayFileName,
+      overlayBlockSizeBytes: options.overlayBlockSizeBytes,
+    });
+  }
+
+  async updateRemoteDisk(
+    id: string,
+    patch: Partial<{
+      name: string;
+      imageId: string;
+      version: string;
+      delivery: RemoteDiskDelivery;
+      urls: RemoteDiskUrls;
+      sizeBytes: number;
+      validator: RemoteDiskValidator;
+      kind: DiskKind;
+      format: DiskFormat;
+      cacheBackend: DiskBackend;
+      chunkSizeBytes: number;
+      cacheFileName: string;
+      overlayFileName: string;
+      overlayBlockSizeBytes: number;
+    }>,
+  ): Promise<DiskImageMetadata> {
+    return this.request("update_remote", { id, ...patch });
   }
 
   /**
