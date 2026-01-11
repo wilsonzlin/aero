@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use aero_jit::block::{BlockBuildError, BlockBuilder};
-use aero_jit::cpu::CpuState;
-use aero_jit::ir::{IrBlock, IrBuilder, IrOp, MemSize, ValueId};
-use aero_jit::wasm::codegen_wasm;
+use aero_jit_proto::block::{BlockBuildError, BlockBuilder};
+use aero_jit_proto::cpu::CpuState;
+use aero_jit_proto::ir::{IrBlock, IrBuilder, IrOp, MemSize, ValueId};
+use aero_jit_proto::wasm::codegen_wasm;
 
 use crate::interpreter::{ExecError, Interpreter};
 use crate::memory::Memory;

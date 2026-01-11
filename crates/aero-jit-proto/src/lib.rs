@@ -1,4 +1,4 @@
-//! `aero-jit` is a self-contained prototype of Aero's tiered JIT pipeline.
+//! `aero-jit-proto` is a self-contained prototype of Aero's tiered JIT pipeline.
 //!
 //! This crate intentionally does **not** attempt to emulate x86. Instead, it
 //! provides a small "guest ISA" plus tiered execution (interpreter → tier1 →
@@ -11,7 +11,7 @@
 //!   reduction, LICM, and a WASM-local-style register allocation).
 //! - Deoptimization guards (self-modifying code / page permission epoch).
 //! - Differential testing harness vs interpreter.
-//! - Microbench binary (`cargo run -p aero-jit --bin microbench`).
+//! - Microbench binary (`cargo run -p aero-jit-proto --bin microbench`).
 //!
 //! The intent is to serve as an executable specification for the Tier-2 design
 //! described in `docs/10-performance-optimization.md`.

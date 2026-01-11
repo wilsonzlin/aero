@@ -65,7 +65,7 @@ members = [
     "crates/virtio-gpu-proto",
     "crates/vm",
     "backend/aero-gateway",
-    "crates/aero-jit",
+    "crates/aero-jit-proto",
     "crates/aero-usb",
     "crates/st-idb",
     "crates/aero-net",

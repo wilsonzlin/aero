@@ -1,5 +1,5 @@
 use aero_cpu::baseline::{CpuWorker, Interpreter, JitConfig, Memory};
-use aero_jit::cpu::{CpuState, Reg};
+use aero_jit_proto::cpu::{CpuState, Reg};
 
 fn run_interpreter(code: &[u8], mut cpu: CpuState, max_steps: u64) -> CpuState {
     let mut mem = Memory::new(64 * 1024);

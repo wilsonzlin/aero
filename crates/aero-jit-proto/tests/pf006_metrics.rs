@@ -1,7 +1,7 @@
-use aero_jit::{Engine, JitConfig, Program, Vm};
+use aero_jit_proto::{Engine, JitConfig, Program, Vm};
 
 fn build_program() -> Program {
-    use aero_jit::microvm::{Block, Cond, Function, Gpr, Instr, Terminator, Xmm};
+    use aero_jit_proto::microvm::{Block, Cond, Function, Gpr, Instr, Terminator, Xmm};
 
     let r0 = Gpr(0);
     let r1 = Gpr(1);

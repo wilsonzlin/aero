@@ -1,6 +1,6 @@
-use aero_jit::block::CodeSource;
-use aero_jit::cpu::{CpuState, Flag, FlagOp, Reg};
-use aero_jit::x86::{Cond, DecodeError, Decoder, InstKind, MemOperand, Operand64};
+use aero_jit_proto::block::CodeSource;
+use aero_jit_proto::cpu::{CpuState, Flag, FlagOp, Reg};
+use aero_jit_proto::x86::{Cond, DecodeError, Decoder, InstKind, MemOperand, Operand64};
 
 use crate::memory::Memory;
 

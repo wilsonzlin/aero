@@ -71,7 +71,7 @@ name = "aero-cpu"
 version = "0.1.0"
 dependencies = [
  "aero-core",
- "aero-jit",
+ "aero-jit-proto",
  "iced-x86",
  "thiserror 1.0.69",
 ]
@@ -282,7 +282,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aero-jit"
+name = "aero-jit-proto"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.10.0",

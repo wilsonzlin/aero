@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use aero_core::memory::{Memory as CoreMemory, MemoryError};
-use aero_jit::block::CodeSource;
+use aero_jit_proto::block::CodeSource;
 
 /// Flat guest memory used by the baseline CPU worker.
 ///

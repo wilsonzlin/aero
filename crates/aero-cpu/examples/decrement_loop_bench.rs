@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use aero_cpu::baseline::{CpuWorker, Interpreter, JitConfig, Memory};
-use aero_jit::cpu::{CpuState, Reg};
+use aero_jit_proto::cpu::{CpuState, Reg};
 
 fn main() {
     // mov rcx, N

@@ -1,8 +1,8 @@
-use aero_jit::{Cond, Engine, FuncId, Gpr, JitConfig, Program, Vm};
+use aero_jit_proto::{Cond, Engine, FuncId, Gpr, JitConfig, Program, Vm};
 use std::time::Instant;
 
 fn build_program() -> Program {
-    use aero_jit::microvm::{Block, Function, Instr, Terminator, Xmm};
+    use aero_jit_proto::microvm::{Block, Function, Instr, Terminator, Xmm};
 
     let r0 = Gpr(0);
     let r1 = Gpr(1);
