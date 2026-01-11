@@ -1,4 +1,4 @@
-# ADR 0013: Networking via L2 tunnel (Option C) to an unprivileged proxy
+# ADR 0005: Networking via L2 tunnel (Option C) to an unprivileged proxy
 
 ## Context
 

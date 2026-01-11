@@ -103,11 +103,11 @@ Infrastructure decisions are captured as ADRs in [`docs/adr/`](./docs/adr/):
 - [`docs/adr/0002-cross-origin-isolation.md`](./docs/adr/0002-cross-origin-isolation.md)
 - [`docs/adr/0003-shared-memory-layout.md`](./docs/adr/0003-shared-memory-layout.md)
 - [`docs/adr/0004-wasm-build-variants.md`](./docs/adr/0004-wasm-build-variants.md)
-- [`docs/adr/0005-aerogpu-pci-ids-and-abi.md`](./docs/adr/0005-aerogpu-pci-ids-and-abi.md)
+- [`docs/adr/0005-networking-l2-tunnel.md`](./docs/adr/0005-networking-l2-tunnel.md)
 - [`docs/adr/0006-node-monorepo-tooling.md`](./docs/adr/0006-node-monorepo-tooling.md)
 - [`docs/adr/0009-rust-toolchain-policy.md`](./docs/adr/0009-rust-toolchain-policy.md)
 - [`docs/adr/0012-cargo-lock-policy.md`](./docs/adr/0012-cargo-lock-policy.md)
-- [`docs/adr/0013-networking-l2-tunnel.md`](./docs/adr/0013-networking-l2-tunnel.md)
+- [`docs/adr/0013-aerogpu-pci-ids-and-abi.md`](./docs/adr/0013-aerogpu-pci-ids-and-abi.md)
 
 ## Web (Vite)
 

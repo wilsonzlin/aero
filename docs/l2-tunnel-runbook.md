@@ -4,7 +4,7 @@ This document is a practical guide for running Aero’s **Option C** networking 
 **tunnel raw Ethernet frames (L2)** between the browser and a proxy that runs the user-space NAT
 stack, using the versioned framing described in [`l2-tunnel-protocol.md`](./l2-tunnel-protocol.md).
 
-**Final decision:** [ADR 0013: Networking via L2 tunnel (Option C) to an unprivileged proxy](./adr/0013-networking-l2-tunnel.md).
+**Final decision:** [ADR 0005: Networking via L2 tunnel (Option C) to an unprivileged proxy](./adr/0005-networking-l2-tunnel.md).
 For background/tradeoffs, see [`networking-architecture-rfc.md`](./networking-architecture-rfc.md).
 For the wire protocol/framing, see [`l2-tunnel-protocol.md`](./l2-tunnel-protocol.md).
 
@@ -50,7 +50,7 @@ If you carry the **L2 tunnel** over WebRTC, the DataChannel must be configured a
 - **reliable** (no frame loss / no partial reliability)
 - **ordered is recommended; unordered is OK**
 
-See ADR 0013 for the rationale.
+See ADR 0005 for the rationale.
 
 The existing relay implementation lives at `proxy/webrtc-udp-relay/`:
 

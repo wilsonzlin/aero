@@ -10,12 +10,12 @@ were considered, and what the consequences are.
 - [ADR 0002: Cross-origin isolation (COOP/COEP) for threads + SharedArrayBuffer](./0002-cross-origin-isolation.md)
 - [ADR 0003: Shared memory layout (multiple SABs; WASM 4 GiB constraint)](./0003-shared-memory-layout.md)
 - [ADR 0004: WebAssembly build variants (threaded vs single-threaded; runtime selection)](./0004-wasm-build-variants.md)
-- [ADR 0005: AeroGPU PCI IDs and ABI (canonical + deprecation plan)](./0005-aerogpu-pci-ids-and-abi.md)
+- [ADR 0005: Networking via L2 tunnel (Option C) to an unprivileged proxy](./0005-networking-l2-tunnel.md)
 - [ADR 0006: Node monorepo tooling (npm workspaces + single lockfile)](./0006-node-monorepo-tooling.md)
 - [ADR 0009: Rust toolchain policy (pinned stable + pinned nightly for threaded WASM)](./0009-rust-toolchain-policy.md)
 - [ADR 0010: Canonical audio stack (aero-audio + aero-virtio; legacy emulator audio gated)](./0010-canonical-audio-stack.md)
 - [ADR 0012: Commit `Cargo.lock` for reproducible Rust builds](./0012-cargo-lock-policy.md)
-- [ADR 0013: Networking via L2 tunnel (Option C) to an unprivileged proxy](./0013-networking-l2-tunnel.md)
+- [ADR 0013: AeroGPU PCI IDs and ABI (canonical + deprecation plan)](./0013-aerogpu-pci-ids-and-abi.md)
 
 ## Creating a new ADR
 
