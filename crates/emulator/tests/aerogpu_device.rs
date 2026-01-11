@@ -3280,6 +3280,24 @@ fn cmd_exec_d3d11_texture_sampling_point_clamp_matches_expected_texels() {
     stream.extend_from_slice(&ilay);
     stream.resize(stream.len() + (ilay_pkt_size - ilay_pkt_size_no_pad), 0);
 
+    // CREATE_SAMPLER (handle 6): point sampling + clamp.
+    push_u32(&mut stream, cmd::AerogpuCmdOpcode::CreateSampler as u32);
+    push_u32(&mut stream, 28);
+    push_u32(&mut stream, 6);
+    push_u32(&mut stream, cmd::AerogpuSamplerFilter::Nearest as u32);
+    push_u32(
+        &mut stream,
+        cmd::AerogpuSamplerAddressMode::ClampToEdge as u32,
+    );
+    push_u32(
+        &mut stream,
+        cmd::AerogpuSamplerAddressMode::ClampToEdge as u32,
+    );
+    push_u32(
+        &mut stream,
+        cmd::AerogpuSamplerAddressMode::ClampToEdge as u32,
+    );
+
     // SET_INPUT_LAYOUT = 5.
     push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetInputLayout as u32);
     push_u32(&mut stream, 16);
@@ -3343,6 +3361,24 @@ fn cmd_exec_d3d11_texture_sampling_point_clamp_matches_expected_texels() {
     push_u32(&mut stream, 0);
     push_u32(&mut stream, 2);
     push_u32(&mut stream, 0);
+
+    // SET_SAMPLERS: PS s0 = sampler 6 (point+clamp).
+    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetSamplers as u32);
+    push_u32(&mut stream, 28);
+    push_u32(&mut stream, cmd::AerogpuShaderStage::Pixel as u32);
+    push_u32(&mut stream, 0); // start_slot
+    push_u32(&mut stream, 1); // sampler_count
+    push_u32(&mut stream, 0);
+    push_u32(&mut stream, 6);
+
+    // Mirror D3D11 by also binding to VS, even though the software executor samples in PS.
+    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetSamplers as u32);
+    push_u32(&mut stream, 28);
+    push_u32(&mut stream, cmd::AerogpuShaderStage::Vertex as u32);
+    push_u32(&mut stream, 0);
+    push_u32(&mut stream, 1);
+    push_u32(&mut stream, 0);
+    push_u32(&mut stream, 6);
 
     // CLEAR black.
     push_u32(&mut stream, cmd::AerogpuCmdOpcode::Clear as u32);

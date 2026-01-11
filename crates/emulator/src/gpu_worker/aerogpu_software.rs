@@ -55,6 +55,26 @@ struct ShaderResource {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct SamplerResource {
+    filter: u32,
+    address_u: u32,
+    address_v: u32,
+    #[allow(dead_code)]
+    address_w: u32,
+}
+
+impl Default for SamplerResource {
+    fn default() -> Self {
+        Self {
+            filter: cmd::AerogpuSamplerFilter::Nearest as u32,
+            address_u: cmd::AerogpuSamplerAddressMode::ClampToEdge as u32,
+            address_v: cmd::AerogpuSamplerAddressMode::ClampToEdge as u32,
+            address_w: cmd::AerogpuSamplerAddressMode::ClampToEdge as u32,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 struct InputElement {
     input_slot: u32,
     aligned_byte_offset: u32,
@@ -196,6 +216,8 @@ struct PipelineState {
     depth_stencil_state: DepthStencilState,
     textures_vs: [u32; MAX_TEXTURE_SLOTS],
     textures_ps: [u32; MAX_TEXTURE_SLOTS],
+    samplers_vs: [u32; MAX_TEXTURE_SLOTS],
+    samplers_ps: [u32; MAX_TEXTURE_SLOTS],
     vertex_buffers: [VertexBufferBinding; MAX_VERTEX_BUFFER_SLOTS],
     index_buffer: Option<IndexBufferBinding>,
     input_layout: u32,
@@ -217,6 +239,8 @@ impl Default for PipelineState {
             depth_stencil_state: DepthStencilState::default(),
             textures_vs: [0; MAX_TEXTURE_SLOTS],
             textures_ps: [0; MAX_TEXTURE_SLOTS],
+            samplers_vs: [0; MAX_TEXTURE_SLOTS],
+            samplers_ps: [0; MAX_TEXTURE_SLOTS],
             vertex_buffers: [VertexBufferBinding::default(); MAX_VERTEX_BUFFER_SLOTS],
             index_buffer: None,
             input_layout: 0,
@@ -231,6 +255,7 @@ impl Default for PipelineState {
 pub struct AeroGpuSoftwareExecutor {
     buffers: HashMap<u32, BufferResource>,
     textures: HashMap<u32, Texture2DResource>,
+    samplers: HashMap<u32, SamplerResource>,
     shaders: HashMap<u32, ShaderResource>,
     input_layouts: HashMap<u32, InputLayoutResource>,
     shared_surfaces: HashMap<u64, u32>,
@@ -247,6 +272,7 @@ impl AeroGpuSoftwareExecutor {
     pub fn reset(&mut self) {
         self.buffers.clear();
         self.textures.clear();
+        self.samplers.clear();
         self.shaders.clear();
         self.input_layouts.clear();
         self.shared_surfaces.clear();
@@ -545,19 +571,37 @@ impl AeroGpuSoftwareExecutor {
         }
     }
 
-    fn sample_texture_point_clamp(tex: &Texture2DResource, uv: (f32, f32)) -> [f32; 4] {
+    fn address_texel(idx: i32, dim: i32, mode: u32) -> i32 {
+        if dim <= 0 {
+            return 0;
+        }
+        match mode {
+            x if x == cmd::AerogpuSamplerAddressMode::Repeat as u32 => idx.rem_euclid(dim),
+            x if x == cmd::AerogpuSamplerAddressMode::MirrorRepeat as u32 => {
+                let period = dim.saturating_mul(2).max(1);
+                let t = idx.rem_euclid(period);
+                if t >= dim {
+                    period - 1 - t
+                } else {
+                    t
+                }
+            }
+            _ => idx.clamp(0, dim - 1),
+        }
+    }
+
+    fn read_texel_rgba_f32(
+        tex: &Texture2DResource,
+        sampler: SamplerResource,
+        x: i32,
+        y: i32,
+    ) -> [f32; 4] {
         if tex.width == 0 || tex.height == 0 {
             return [0.0, 0.0, 0.0, 1.0];
         }
 
-        let u = uv.0.clamp(0.0, 1.0);
-        let v = uv.1.clamp(0.0, 1.0);
-
-        let mut x = (u * tex.width as f32).floor() as i32;
-        let mut y = (v * tex.height as f32).floor() as i32;
-
-        x = x.clamp(0, tex.width.saturating_sub(1) as i32);
-        y = y.clamp(0, tex.height.saturating_sub(1) as i32);
+        let x = Self::address_texel(x, tex.width as i32, sampler.address_u);
+        let y = Self::address_texel(y, tex.height as i32, sampler.address_v);
 
         let off = y as usize * tex.row_pitch_bytes as usize + x as usize * 4;
         let Some(rgba_u8) = Self::read_pixel_rgba_u8(tex, off) else {
@@ -569,6 +613,55 @@ impl AeroGpuSoftwareExecutor {
             rgba_u8[2] as f32 / 255.0,
             rgba_u8[3] as f32 / 255.0,
         ]
+    }
+
+    fn sample_texture_2d(
+        tex: &Texture2DResource,
+        sampler: SamplerResource,
+        uv: (f32, f32),
+    ) -> [f32; 4] {
+        if tex.width == 0 || tex.height == 0 {
+            return [0.0, 0.0, 0.0, 1.0];
+        }
+
+        let u = if uv.0.is_finite() { uv.0 } else { 0.0 };
+        let v = if uv.1.is_finite() { uv.1 } else { 0.0 };
+
+        match sampler.filter {
+            x if x == cmd::AerogpuSamplerFilter::Linear as u32 => {
+                fn lerp(a: f32, b: f32, t: f32) -> f32 {
+                    a + (b - a) * t
+                }
+
+                let x = u * tex.width as f32 - 0.5;
+                let y = v * tex.height as f32 - 0.5;
+                let x0 = x.floor() as i32;
+                let y0 = y.floor() as i32;
+                let fx = x - x0 as f32;
+                let fy = y - y0 as f32;
+                let x1 = x0 + 1;
+                let y1 = y0 + 1;
+
+                let c00 = Self::read_texel_rgba_f32(tex, sampler, x0, y0);
+                let c10 = Self::read_texel_rgba_f32(tex, sampler, x1, y0);
+                let c01 = Self::read_texel_rgba_f32(tex, sampler, x0, y1);
+                let c11 = Self::read_texel_rgba_f32(tex, sampler, x1, y1);
+
+                let mut out = [0.0f32; 4];
+                for i in 0..4 {
+                    let a = lerp(c00[i], c10[i], fx);
+                    let b = lerp(c01[i], c11[i], fx);
+                    out[i] = lerp(a, b, fy);
+                }
+                out
+            }
+            _ => {
+                // Nearest filter.
+                let x = (u * tex.width as f32).floor() as i32;
+                let y = (v * tex.height as f32).floor() as i32;
+                Self::read_texel_rgba_f32(tex, sampler, x, y)
+            }
+        }
     }
 
     fn write_pixel_rgba_u8(tex: &mut Texture2DResource, off: usize, rgba: [u8; 4]) {
@@ -1032,6 +1125,7 @@ impl AeroGpuSoftwareExecutor {
     fn rasterize_triangle_textured(
         tex: &mut Texture2DResource,
         src_tex: &Texture2DResource,
+        sampler: SamplerResource,
         clip: (i32, i32, i32, i32),
         v0: (f32, f32),
         v1: (f32, f32),
@@ -1091,7 +1185,7 @@ impl AeroGpuSoftwareExecutor {
                     uv0.0 * w0 + uv1.0 * w1 + uv2.0 * w2,
                     uv0.1 * w0 + uv1.1 * w1 + uv2.1 * w2,
                 );
-                let out = Self::sample_texture_point_clamp(src_tex, uv);
+                let out = Self::sample_texture_2d(src_tex, sampler, uv);
                 Self::blend_and_write_pixel(tex, x, y, out, blend);
             }
         }
@@ -1101,6 +1195,7 @@ impl AeroGpuSoftwareExecutor {
         tex: &mut Texture2DResource,
         depth_tex: &mut Texture2DResource,
         src_tex: &Texture2DResource,
+        sampler: SamplerResource,
         depth_state: DepthStencilState,
         clip: (i32, i32, i32, i32),
         v0: (f32, f32, f32),
@@ -1182,7 +1277,7 @@ impl AeroGpuSoftwareExecutor {
                     uv0.0 * w0 + uv1.0 * w1 + uv2.0 * w2,
                     uv0.1 * w0 + uv1.1 * w1 + uv2.1 * w2,
                 );
-                let out = Self::sample_texture_point_clamp(src_tex, uv);
+                let out = Self::sample_texture_2d(src_tex, sampler, uv);
                 Self::blend_and_write_pixel(tex, x, y, out, blend);
             }
         }
@@ -1343,6 +1438,19 @@ impl AeroGpuSoftwareExecutor {
                 return;
             }
 
+            let ps_samp0 = self.state.samplers_ps[0];
+            let sampler = if ps_samp0 == 0 {
+                SamplerResource::default()
+            } else {
+                match self.samplers.get(&ps_samp0).copied() {
+                    Some(s) => s,
+                    None => {
+                        Self::record_error(regs);
+                        SamplerResource::default()
+                    }
+                }
+            };
+
             if can_depth_test {
                 let Some(mut depth_tex) = self.textures.remove(&ds_handle) else {
                     self.textures.insert(ps_tex0, src_tex);
@@ -1403,6 +1511,7 @@ impl AeroGpuSoftwareExecutor {
                             tex,
                             &mut depth_tex,
                             &src_tex,
+                            sampler,
                             depth_state,
                             (clip_x0, clip_y0, clip_x1, clip_y1),
                             (tri[0].pos.0, tri[0].pos.1, tri[0].depth),
@@ -1448,6 +1557,7 @@ impl AeroGpuSoftwareExecutor {
                     Self::rasterize_triangle_textured(
                         tex,
                         &src_tex,
+                        sampler,
                         (clip_x0, clip_y0, clip_x1, clip_y1),
                         tri[0].pos,
                         tri[1].pos,
@@ -2765,11 +2875,112 @@ impl AeroGpuSoftwareExecutor {
                     _ => {}
                 }
             }
+            cmd::AerogpuCmdOpcode::CreateSampler => {
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdCreateSampler>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                let handle = u32::from_le(packet_cmd.sampler_handle);
+                if handle == 0 {
+                    return true;
+                }
+                self.samplers.insert(
+                    handle,
+                    SamplerResource {
+                        filter: u32::from_le(packet_cmd.filter),
+                        address_u: u32::from_le(packet_cmd.address_u),
+                        address_v: u32::from_le(packet_cmd.address_v),
+                        address_w: u32::from_le(packet_cmd.address_w),
+                    },
+                );
+            }
+            cmd::AerogpuCmdOpcode::DestroySampler => {
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdDestroySampler>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                let handle = u32::from_le(packet_cmd.sampler_handle);
+                if handle == 0 {
+                    return true;
+                }
+                self.samplers.remove(&handle);
+                self.state.samplers_vs.iter_mut().for_each(|sampler| {
+                    if *sampler == handle {
+                        *sampler = 0;
+                    }
+                });
+                self.state.samplers_ps.iter_mut().for_each(|sampler| {
+                    if *sampler == handle {
+                        *sampler = 0;
+                    }
+                });
+            }
+            cmd::AerogpuCmdOpcode::SetSamplers => {
+                if packet.len() < cmd::AerogpuCmdSetSamplers::SIZE_BYTES {
+                    Self::record_error(regs);
+                    return false;
+                }
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdSetSamplers>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+
+                let shader_stage = u32::from_le(packet_cmd.shader_stage);
+                let start_slot = u32::from_le(packet_cmd.start_slot) as usize;
+                let sampler_count = u32::from_le(packet_cmd.sampler_count) as usize;
+                let expected_size = match cmd::AerogpuCmdSetSamplers::SIZE_BYTES
+                    .checked_add(sampler_count.checked_mul(4).unwrap_or(usize::MAX))
+                {
+                    Some(v) => v,
+                    None => {
+                        Self::record_error(regs);
+                        return true;
+                    }
+                };
+                if packet.len() < expected_size {
+                    Self::record_error(regs);
+                    return true;
+                }
+
+                let mut off = cmd::AerogpuCmdSetSamplers::SIZE_BYTES;
+                for i in 0..sampler_count {
+                    let slot = match start_slot.checked_add(i) {
+                        Some(v) => v,
+                        None => break,
+                    };
+                    let Some(bytes) = packet.get(off..off + 4) else {
+                        break;
+                    };
+                    off += 4;
+                    if slot >= MAX_TEXTURE_SLOTS {
+                        continue;
+                    }
+                    let sampler = u32::from_le_bytes(bytes.try_into().unwrap());
+                    match shader_stage {
+                        x if x == cmd::AerogpuShaderStage::Vertex as u32 => {
+                            self.state.samplers_vs[slot] = sampler;
+                        }
+                        x if x == cmd::AerogpuShaderStage::Pixel as u32 => {
+                            self.state.samplers_ps[slot] = sampler;
+                        }
+                        _ => {}
+                    }
+                }
+            }
             cmd::AerogpuCmdOpcode::SetSamplerState
             | cmd::AerogpuCmdOpcode::SetRenderState
-            | cmd::AerogpuCmdOpcode::CreateSampler
-            | cmd::AerogpuCmdOpcode::DestroySampler
-            | cmd::AerogpuCmdOpcode::SetSamplers
             | cmd::AerogpuCmdOpcode::SetConstantBuffers => {
                 // Parsed but currently ignored by the software backend.
             }
