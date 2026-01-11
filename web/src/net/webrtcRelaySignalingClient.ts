@@ -115,7 +115,7 @@ function toHttpUrl(baseUrl: string, path: string): URL {
 function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
   if (pc.iceGatheringState === "complete") return Promise.resolve();
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -132,7 +132,7 @@ function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
       if (settled) return;
       settled = true;
       pc.removeEventListener("icegatheringstatechange", onChange);
-      reject(new Error("ICE gathering timed out"));
+      resolve();
     }, DEFAULT_ICE_GATHER_TIMEOUT_MS);
 
     pc.addEventListener("icegatheringstatechange", onChange);
