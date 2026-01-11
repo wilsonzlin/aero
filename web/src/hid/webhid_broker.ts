@@ -22,7 +22,9 @@ function computeHasInterruptOut(collections: NormalizedHidCollectionInfo[]): boo
   const stack = [...collections];
   while (stack.length) {
     const node = stack.pop()!;
-    if (node.outputReports.length > 0 || node.featureReports.length > 0) return true;
+    // Feature reports are transferred over the control endpoint (SET_REPORT/GET_REPORT) and do
+    // not require an interrupt OUT endpoint. Only output reports imply an interrupt OUT endpoint.
+    if (node.outputReports.length > 0) return true;
     for (const child of node.children) stack.push(child);
   }
   return false;

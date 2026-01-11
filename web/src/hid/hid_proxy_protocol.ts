@@ -10,9 +10,9 @@ export type HidAttachMessage = {
   productName?: string;
   collections: NormalizedHidCollectionInfo[];
   /**
-   * True when the device declares any output or feature reports. This is used by
-   * the guest-side USB stack to decide whether it needs to expose an interrupt
-   * OUT endpoint.
+   * True when the device declares any output reports. This is used by the
+   * guest-side USB stack to decide whether it needs to expose an interrupt OUT
+   * endpoint (feature reports are sent over the control endpoint).
    */
   hasInterruptOut: boolean;
 };
