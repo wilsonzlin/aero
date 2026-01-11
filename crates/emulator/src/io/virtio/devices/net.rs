@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 const MIN_FRAME_LEN: usize = 14;
 const MAX_FRAME_LEN: usize = 1514;
 const MAX_TX_TOTAL_LEN: usize = VirtioNetHeader::SIZE + MAX_FRAME_LEN;
+const MAX_PENDING_RX_FRAMES: usize = 256;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct VirtioNetHeader {
@@ -142,7 +143,7 @@ impl VirtioNetDevice {
             return Ok(false);
         }
 
-        self.pending_rx.push_back(frame.to_vec());
+        self.enqueue_rx_frame(frame.to_vec());
         self.process_pending_rx(mem)
     }
 
@@ -151,6 +152,9 @@ impl VirtioNetDevice {
             return;
         }
 
+        if self.pending_rx.len() >= MAX_PENDING_RX_FRAMES {
+            self.pending_rx.pop_front();
+        }
         self.pending_rx.push_back(frame);
     }
 
@@ -1359,6 +1363,84 @@ mod tests {
         let mut payload = vec![0u8; frame.len()];
         mem.read_into(payload_addr, &mut payload).unwrap();
         assert_eq!(payload, frame);
+    }
+
+    #[test]
+    fn pending_rx_is_bounded_when_polling_backend() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        mem.write_u16_le(avail, 0).unwrap();
+        mem.write_u16_le(avail + 2, 0).unwrap();
+
+        let rx_vq = VirtQueue::new(8, desc_table, avail, used);
+        let tx_vq = VirtQueue::new(8, 0, 0, 0);
+        let config = VirtioNetConfig {
+            mac: [0; 6],
+            status: 1,
+            max_queue_pairs: 1,
+        };
+        let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
+
+        mem.write_u16_le(used, 0).unwrap();
+        mem.write_u16_le(used + 2, 0).unwrap();
+
+        let mut backend = TestBackend::default();
+        for idx in 0..=MAX_PENDING_RX_FRAMES {
+            let mut frame = vec![0u8; MIN_FRAME_LEN];
+            frame[0] = (idx & 0xff) as u8;
+            frame[1] = ((idx >> 8) & 0xff) as u8;
+            backend.rx_frames.push_back(frame);
+        }
+
+        let irq = dev.poll(&mut mem, &mut backend).unwrap();
+        assert!(!irq);
+        assert_eq!(dev.take_isr(), 0x0);
+        assert!(backend.rx_frames.is_empty());
+
+        let header_addr = 0x400;
+        let payload_addr = 0x500;
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: header_addr,
+                len: VirtioNetHeader::SIZE as u32,
+                flags: VRING_DESC_F_WRITE | VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            Descriptor {
+                addr: payload_addr,
+                len: 64,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 0);
+
+        let irq = dev.notify_rx(&mut mem).unwrap();
+        assert!(irq);
+        assert_eq!(dev.take_isr(), 0x1);
+
+        let expected_idx = 1usize; // first frame should be dropped once the queue is full
+        let mut expected = vec![0u8; MIN_FRAME_LEN];
+        expected[0] = (expected_idx & 0xff) as u8;
+        expected[1] = ((expected_idx >> 8) & 0xff) as u8;
+
+        let mut payload = vec![0u8; expected.len()];
+        mem.read_into(payload_addr, &mut payload).unwrap();
+        assert_eq!(payload, expected);
     }
 
     #[test]
