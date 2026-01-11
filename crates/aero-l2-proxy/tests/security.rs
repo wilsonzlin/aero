@@ -56,12 +56,36 @@ fn assert_http_status(err: WsError, expected: StatusCode) {
 }
 
 #[tokio::test]
+async fn subprotocol_required_rejects_missing_protocol() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let ws_url = format!("ws://{addr}/l2");
+    let req = ws_url.into_client_request().unwrap();
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected missing subprotocol to be rejected");
+    assert_http_status(err, StatusCode::BAD_REQUEST);
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn origin_required_by_default_rejects_missing_origin() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -81,6 +105,7 @@ async fn origin_allowlist_and_open_mode() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     // Allowlist enforcement.
     {
@@ -134,6 +159,7 @@ async fn token_required_query_and_subprotocol() {
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
     let _token = EnvVarGuard::set("AERO_L2_TOKEN", "sekrit");
+    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -188,6 +214,7 @@ async fn max_connections_enforced() {
     let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _max_conn = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "1");
+    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -229,6 +256,7 @@ async fn byte_quota_closes_connection() {
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _quota = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "100");
     let _fps = EnvVarGuard::unset("AERO_L2_MAX_FRAMES_PER_SECOND");
+    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -271,6 +299,54 @@ async fn byte_quota_closes_connection() {
 }
 
 #[tokio::test]
+async fn byte_quota_counts_tx_bytes() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _quota = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "40");
+    let _fps = EnvVarGuard::unset("AERO_L2_MAX_FRAMES_PER_SECOND");
+    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+
+    // 20-byte payload => 24-byte ws message. With max_bytes=40, the inbound ping is allowed but
+    // the outbound pong exceeds the rx+tx quota, proving tx bytes are counted.
+    let payload = vec![0u8; 20];
+    let ping = aero_l2_protocol::encode_ping(Some(&payload)).unwrap();
+    ws.send(Message::Binary(ping.into())).await.unwrap();
+
+    let close = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(Message::Close(frame))) => return frame,
+                Some(Ok(_)) => continue,
+                Some(Err(err)) => panic!("ws recv error: {err}"),
+                None => return None,
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    let frame = close.expect("expected close frame");
+    assert_eq!(
+        frame.code,
+        tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy
+    );
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn fps_quota_closes_connection() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -279,6 +355,7 @@ async fn fps_quota_closes_connection() {
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _quota = EnvVarGuard::unset("AERO_L2_MAX_BYTES_PER_CONNECTION");
     let _fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "2");
+    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
