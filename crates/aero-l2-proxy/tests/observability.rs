@@ -1,9 +1,9 @@
-use std::{net::SocketAddr, path::PathBuf, time::Duration};
+use std::{net::Ipv4Addr, net::SocketAddr, path::PathBuf, time::Duration};
 
 use aero_l2_proxy::{
     start_server, AllowedOrigins, EgressPolicy, ProxyConfig, SecurityConfig, TUNNEL_SUBPROTOCOL,
 };
-use aero_net_stack::StackConfig;
+use aero_net_stack::{packet::*, StackConfig};
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest,
@@ -106,6 +106,108 @@ async fn metrics_increment_after_frames() {
         frame.len()
     );
 
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn metrics_increment_after_stack_emits_frames() {
+    let server = TestServer::start(None, None).await;
+
+    let body = reqwest::get(server.http_url("/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(parse_metric(&body, "l2_frames_tx_total").unwrap(), 0);
+    assert_eq!(parse_metric(&body, "l2_bytes_tx_total").unwrap(), 0);
+
+    let mut req = server.ws_url().into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let (mut ws_sender, mut ws_receiver) = ws.split();
+
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    let arp_req = ArpPacketBuilder {
+        opcode: ARP_OP_REQUEST,
+        sender_mac: guest_mac,
+        sender_ip: Ipv4Addr::UNSPECIFIED,
+        target_mac: MacAddr([0, 0, 0, 0, 0, 0]),
+        target_ip: Ipv4Addr::new(10, 0, 2, 2),
+    }
+    .build_vec()
+    .expect("build ARP request");
+    let arp_frame = EthernetFrameBuilder {
+        dest_mac: MacAddr::BROADCAST,
+        src_mac: guest_mac,
+        ethertype: EtherType::ARP,
+        payload: &arp_req,
+    }
+    .build_vec()
+    .expect("build ARP Ethernet frame");
+
+    let wire = aero_l2_protocol::encode_frame(&arp_frame).unwrap();
+    ws_sender
+        .send(tokio_tungstenite::tungstenite::Message::Binary(wire.into()))
+        .await
+        .unwrap();
+
+    let reply_len = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let msg = ws_receiver
+                .next()
+                .await
+                .expect("ws closed")
+                .expect("ws recv");
+            let tokio_tungstenite::tungstenite::Message::Binary(buf) = msg else {
+                continue;
+            };
+            let decoded = aero_l2_protocol::decode_message(buf.as_ref()).unwrap();
+            if decoded.msg_type != aero_l2_protocol::L2_TUNNEL_TYPE_FRAME {
+                continue;
+            }
+            let Ok(eth) = EthernetFrame::parse(decoded.payload) else {
+                continue;
+            };
+            if eth.ethertype() != EtherType::ARP {
+                continue;
+            }
+            let Ok(arp) = ArpPacket::parse(eth.payload()) else {
+                continue;
+            };
+            if arp.opcode() == ARP_OP_REPLY {
+                break decoded.payload.len();
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let body = reqwest::get(server.http_url("/metrics"))
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            let tx = parse_metric(&body, "l2_frames_tx_total").unwrap();
+            let bytes_tx = parse_metric(&body, "l2_bytes_tx_total").unwrap();
+            if tx >= 1 && bytes_tx >= reply_len as u64 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let _ = ws_sender
+        .send(tokio_tungstenite::tungstenite::Message::Close(None))
+        .await;
     server.shutdown().await;
 }
 

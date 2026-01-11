@@ -50,6 +50,21 @@ pub fn encode_error_payload(code: u16, message: &str, max_payload_bytes: usize) 
     out
 }
 
+/// Attempt to decode a structured `ERROR` payload.
+///
+/// Returns `(code, message)` only if the payload matches the exact structured encoding.
+pub fn decode_error_payload(payload: &[u8]) -> Option<(u16, String)> {
+    let header: [u8; 4] = payload.get(..4)?.try_into().ok()?;
+    let code = u16::from_be_bytes([header[0], header[1]]);
+    let msg_len = u16::from_be_bytes([header[2], header[3]]) as usize;
+    if payload.len() != 4usize.checked_add(msg_len)? {
+        return None;
+    }
+    let msg_bytes = payload.get(4..)?;
+    let msg = String::from_utf8(msg_bytes.to_vec()).ok()?;
+    Some((code, msg))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,19 +86,4 @@ mod tests {
         let payload = encode_error_payload(1, "😃", 5);
         assert_eq!(payload.len(), 4);
     }
-}
-
-/// Attempt to decode a structured `ERROR` payload.
-///
-/// Returns `(code, message)` only if the payload matches the exact structured encoding.
-pub fn decode_error_payload(payload: &[u8]) -> Option<(u16, String)> {
-    let header: [u8; 4] = payload.get(..4)?.try_into().ok()?;
-    let code = u16::from_be_bytes([header[0], header[1]]);
-    let msg_len = u16::from_be_bytes([header[2], header[3]]) as usize;
-    if payload.len() != 4usize.checked_add(msg_len)? {
-        return None;
-    }
-    let msg_bytes = payload.get(4..)?;
-    let msg = String::from_utf8(msg_bytes.to_vec()).ok()?;
-    Some((code, msg))
 }
