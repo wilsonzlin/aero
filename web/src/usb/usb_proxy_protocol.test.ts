@@ -32,6 +32,32 @@ describe("usb/usb_proxy_protocol", () => {
     expect(isUsbHostAction({ kind: "unknown", id: 1 })).toBe(false);
   });
 
+  it("rejects invalid numeric ranges in actions/completions", () => {
+    const setup = { bmRequestType: 0x80, bRequest: 6, wValue: 0x0100, wIndex: 0, wLength: 18 };
+
+    // id must be a safe integer.
+    expect(isUsbHostAction({ kind: "controlIn", id: 1.5, setup })).toBe(false);
+    expect(isUsbHostAction({ kind: "controlIn", id: Number.NaN, setup })).toBe(false);
+    expect(isUsbHostAction({ kind: "controlIn", id: -1, setup })).toBe(false);
+
+    // Setup packet fields are u8/u16.
+    expect(isUsbHostAction({ kind: "controlIn", id: 1, setup: { ...setup, wLength: 0x1_0000 } })).toBe(false);
+    expect(isUsbHostAction({ kind: "controlIn", id: 1, setup: { ...setup, bmRequestType: 0x1_00 } })).toBe(false);
+
+    // Endpoint is u8, length is non-negative.
+    expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 0x1_00, length: 8 })).toBe(false);
+    expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 1, length: -1 })).toBe(false);
+
+    // bytesWritten must be a non-negative safe integer.
+    expect(isUsbHostCompletion({ kind: "bulkOut", id: 1, status: "success", bytesWritten: 1.5 })).toBe(false);
+    expect(isUsbHostCompletion({ kind: "bulkOut", id: 1, status: "success", bytesWritten: -1 })).toBe(false);
+
+    // usb.selected vendor/product IDs are u16.
+    expect(
+      isUsbProxyMessage({ type: "usb.selected", ok: true, info: { vendorId: 0x1_0000, productId: 1 } }),
+    ).toBe(false);
+  });
+
   it("accepts the supported completion shapes", () => {
     const completions: UsbHostCompletion[] = [
       { kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1) },

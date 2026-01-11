@@ -453,7 +453,12 @@ async function getOpfsFileIfExists(path: string): Promise<File | null> {
 async function writeBytesToOpfs(path: string, bytes: Uint8Array): Promise<void> {
   const handle = await openFileHandle(path, { create: true });
   const writable = await handle.createWritable({ keepExistingData: false });
-  await writable.write(bytes);
+  // `FileSystemWritableFileStream.write()` only accepts ArrayBuffer-backed views in the
+  // lib.dom typings. Snapshot buffers coming from threaded WASM builds can be backed by
+  // SharedArrayBuffer, so always clone into a fresh Uint8Array (ArrayBuffer-backed)
+  // before writing.
+  const clone = new Uint8Array(bytes);
+  await writable.write(clone);
   await writable.close();
 }
 
