@@ -856,6 +856,30 @@ static int RunSubmitFenceStress(int argc, char** argv) {
                 (unsigned long)sizeof(struct aerogpu_alloc_table_header));
           }
 
+          // Best-effort sanity check: ensure a known non-present submission is NOT flagged as PRESENT.
+          aerogpu_dbgctl_ring_desc_v2 issue_desc;
+          uint32_t issue_desc_index = 0;
+          if (aerogpu_test::kmt::FindRingDescByFence(dump, issue_fence, &issue_desc, &issue_desc_index)) {
+            aerogpu_test::PrintfStdout("INFO: %s: matched ring desc[%lu] for non-present fence=%I64u flags=0x%08lX",
+                                       kTestName,
+                                       (unsigned long)issue_desc_index,
+                                       issue_fence,
+                                       (unsigned long)issue_desc.flags);
+            if ((issue_desc.flags & AEROGPU_SUBMIT_FLAG_PRESENT) != 0) {
+              DumpRingDumpV2(kTestName, dump);
+              aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
+              return reporter.Fail(
+                  "non-present fence=%I64u unexpectedly has AEROGPU_SUBMIT_FLAG_PRESENT set (flags=0x%08lX)",
+                  issue_fence,
+                  (unsigned long)issue_desc.flags);
+            }
+          } else {
+            aerogpu_test::PrintfStdout(
+                "INFO: %s: could not find ring descriptor for non-present fence=%I64u (continuing)",
+                kTestName,
+                issue_fence);
+          }
+
           validated_ring_desc = true;
         }
       }
