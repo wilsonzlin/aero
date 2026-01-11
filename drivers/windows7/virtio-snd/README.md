@@ -13,6 +13,7 @@ The intended developer workflow is:
 
 | Path | Purpose |
 | --- | --- |
+| `SOURCES.md` | Clean-room/source tracking record (see `drivers/windows7/LEGAL.md` §2.6). |
 | `src/`, `include/`, `makefile` | Driver sources (WDK 7.1 build). |
 | `inf/` | Driver package staging directory (INF/CAT/SYS live together for “Have Disk…” installs). |
 | `scripts/` | Utilities for generating a test cert, generating the catalog, signing, and optional release packaging. |
