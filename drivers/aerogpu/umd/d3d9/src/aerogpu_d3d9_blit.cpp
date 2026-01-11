@@ -12,6 +12,11 @@
 namespace aerogpu {
 namespace {
 
+// D3D9 format subset (numeric values from d3d9types.h).
+constexpr uint32_t kD3d9FmtA8R8G8B8 = 21u;
+constexpr uint32_t kD3d9FmtX8R8G8B8 = 22u;
+constexpr uint32_t kD3d9FmtA8B8G8R8 = 32u;
+
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
 constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
 constexpr uint32_t kDxgiFormatR32G32Float = 16;
@@ -65,6 +70,62 @@ uint32_t hash_semantic_name(const char* s) {
     hash *= 16777619u;
   }
   return hash;
+}
+
+bool convert_pixel_4bpp(uint32_t src_format, uint32_t dst_format, const uint8_t* src, uint8_t* dst) {
+  if (!src || !dst) {
+    return false;
+  }
+
+  if (src_format == dst_format) {
+    std::memcpy(dst, src, 4);
+    return true;
+  }
+
+  // NOTE: D3D9 A8R8G8B8 and X8R8G8B8 have identical byte ordering (B,G,R,A/X).
+  // A8B8G8R8 differs in that it stores bytes as (R,G,B,A).
+  const bool src_is_argb = (src_format == kD3d9FmtA8R8G8B8);
+  const bool src_is_xrgb = (src_format == kD3d9FmtX8R8G8B8);
+  const bool src_is_abgr = (src_format == kD3d9FmtA8B8G8R8);
+  const bool dst_is_argb = (dst_format == kD3d9FmtA8R8G8B8);
+  const bool dst_is_xrgb = (dst_format == kD3d9FmtX8R8G8B8);
+  const bool dst_is_abgr = (dst_format == kD3d9FmtA8B8G8R8);
+
+  if (!((src_is_argb || src_is_xrgb || src_is_abgr) && (dst_is_argb || dst_is_xrgb || dst_is_abgr))) {
+    return false;
+  }
+
+  uint8_t r = 0;
+  uint8_t g = 0;
+  uint8_t b = 0;
+  uint8_t a = 0xFF;
+  if (src_is_abgr) {
+    // Bytes: R,G,B,A.
+    r = src[0];
+    g = src[1];
+    b = src[2];
+    a = src[3];
+  } else {
+    // Bytes: B,G,R,A/X.
+    b = src[0];
+    g = src[1];
+    r = src[2];
+    a = src_is_argb ? src[3] : 0xFF;
+  }
+
+  if (dst_is_abgr) {
+    dst[0] = r;
+    dst[1] = g;
+    dst[2] = b;
+    dst[3] = a;
+    return true;
+  }
+
+  dst[0] = b;
+  dst[1] = g;
+  dst[2] = r;
+  dst[3] = dst_is_argb ? a : 0xFF;
+  return true;
 }
 
 struct BlitVertex {
@@ -852,8 +913,15 @@ HRESULT update_surface_locked(Device* dev,
   if (!dev || !src || !dst) {
     return E_INVALIDARG;
   }
-  if (src->format != dst->format) {
-    return E_NOTIMPL;
+  const bool can_fast_copy = (src->format == dst->format);
+  const bool can_convert_4bpp =
+      (bytes_per_pixel(src->format) == 4u) && (bytes_per_pixel(dst->format) == 4u) &&
+      ((src->format == kD3d9FmtA8R8G8B8 || src->format == kD3d9FmtX8R8G8B8 || src->format == kD3d9FmtA8B8G8R8) &&
+       (dst->format == kD3d9FmtA8R8G8B8 || dst->format == kD3d9FmtX8R8G8B8 || dst->format == kD3d9FmtA8B8G8R8));
+  if (!can_fast_copy && !can_convert_4bpp) {
+    // UpdateSurface requires compatible formats; return INVALIDCALL-style failure
+    // rather than E_NOTIMPL (which can cause callers to assume the DDI is missing).
+    return D3DERR_INVALIDCALL;
   }
   if (dst->handle == 0) {
     // System-memory pool surfaces are CPU-only and do not have a backing GPU
@@ -956,7 +1024,20 @@ HRESULT update_surface_locked(Device* dev,
       return E_INVALIDARG;
     }
 
-    std::memcpy(dst->storage.data() + dst_off, src->storage.data() + src_off, row_bytes);
+    uint8_t* dst_row = dst->storage.data() + dst_off;
+    const uint8_t* src_row = src->storage.data() + src_off;
+    if (can_fast_copy) {
+      std::memcpy(dst_row, src_row, row_bytes);
+    } else {
+      // 4-byte format conversion (ARGB/XRGB/ABGR).
+      for (uint32_t x = 0; x < copy_w; ++x) {
+        const uint8_t* s = src_row + static_cast<size_t>(x) * 4;
+        uint8_t* d = dst_row + static_cast<size_t>(x) * 4;
+        if (!convert_pixel_4bpp(src->format, dst->format, s, d)) {
+          return D3DERR_INVALIDCALL;
+        }
+      }
+    }
 
     if (!upload_resource_bytes_locked(dev,
                                       dst->handle,
@@ -974,15 +1055,34 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
   if (!dev || !src || !dst) {
     return E_INVALIDARG;
   }
-  if (src->format != dst->format || src->width != dst->width || src->height != dst->height ||
+  if (src->width != dst->width || src->height != dst->height ||
       src->mip_levels != dst->mip_levels || src->size_bytes != dst->size_bytes) {
-    return E_NOTIMPL;
+    return D3DERR_INVALIDCALL;
+  }
+
+  if (src->format != dst->format) {
+    // Only support conversions between a small subset of 32bpp formats.
+    const bool can_convert =
+        (bytes_per_pixel(src->format) == 4u) && (bytes_per_pixel(dst->format) == 4u) &&
+        ((src->format == kD3d9FmtA8R8G8B8 || src->format == kD3d9FmtX8R8G8B8 || src->format == kD3d9FmtA8B8G8R8) &&
+         (dst->format == kD3d9FmtA8R8G8B8 || dst->format == kD3d9FmtX8R8G8B8 || dst->format == kD3d9FmtA8B8G8R8));
+    if (!can_convert) {
+      return D3DERR_INVALIDCALL;
+    }
+
+    dst->storage.resize(src->storage.size());
+    for (size_t i = 0; i + 3 < src->storage.size(); i += 4) {
+      if (!convert_pixel_4bpp(src->format, dst->format, &src->storage[i], &dst->storage[i])) {
+        return D3DERR_INVALIDCALL;
+      }
+    }
+  } else {
+    dst->storage = src->storage;
   }
   if (dst->handle == 0) {
     return E_INVALIDARG;
   }
 
-  dst->storage = src->storage;
   if (!upload_resource_bytes_locked(dev,
                                     dst->handle,
                                     /*offset_bytes=*/0,
