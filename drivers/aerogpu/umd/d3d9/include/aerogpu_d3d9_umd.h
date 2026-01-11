@@ -491,6 +491,8 @@ typedef struct _D3DDDIARG_CREATECONTEXT {
   UINT NodeOrdinal;
   UINT EngineAffinity;
   D3DDDIARG_CREATECONTEXTFLAGS Flags;
+  void* pPrivateDriverData;      // in
+  UINT PrivateDriverDataSize;    // in
   D3DKMT_HANDLE hContext;    // out
   D3DKMT_HANDLE hSyncObject; // out
   void* pCommandBuffer;      // out
@@ -501,8 +503,6 @@ typedef struct _D3DDDIARG_CREATECONTEXT {
   UINT PatchLocationListSize;                   // out (entries)
   void* pDmaBufferPrivateData;   // out (optional; sized by KMD caps)
   UINT DmaBufferPrivateDataSize; // out (bytes)
-  void* pPrivateDriverData;      // in
-  UINT PrivateDriverDataSize;    // in
 } D3DDDIARG_CREATECONTEXT;
 
 typedef struct _D3DDDIARG_DESTROYCONTEXT {
@@ -512,6 +512,29 @@ typedef struct _D3DDDIARG_DESTROYCONTEXT {
 typedef struct _D3DDDIARG_DESTROYSYNCHRONIZATIONOBJECT {
   D3DKMT_HANDLE hSyncObject;
 } D3DDDIARG_DESTROYSYNCHRONIZATIONOBJECT;
+
+// SubmitCommand callback args (Win7 D3D9 runtimes commonly route submissions
+// through this entrypoint instead of Render/Present).
+typedef struct _D3DDDIARG_SUBMITCOMMAND {
+  D3DKMT_HANDLE hContext;
+  void* pCommandBuffer;
+  UINT CommandLength;     // bytes used
+  UINT CommandBufferSize; // bytes capacity
+  D3DDDI_ALLOCATIONLIST* pAllocationList;
+  UINT AllocationListSize; // entries used (legacy: no NumAllocations field)
+  D3DDDI_PATCHLOCATIONLIST* pPatchLocationList;
+  UINT PatchLocationListSize; // entries used
+  void* pDmaBufferPrivateData;
+  UINT DmaBufferPrivateDataSize; // bytes
+  // Win7/WDDM 1.1 submission fences are 32-bit (ULONG).
+  UINT SubmissionFenceId; // out
+  void* pNewCommandBuffer; // out
+  UINT NewCommandBufferSize;
+  D3DDDI_ALLOCATIONLIST* pNewAllocationList; // out
+  UINT NewAllocationListSize;
+  D3DDDI_PATCHLOCATIONLIST* pNewPatchLocationList; // out
+  UINT NewPatchLocationListSize;
+} D3DDDIARG_SUBMITCOMMAND;
 
 typedef struct _D3DDDICB_RENDER {
   D3DKMT_HANDLE hContext;
@@ -564,10 +587,23 @@ typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_CREATECONTEXT)(D3DDDIARG_CREATECO
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_CREATECONTEXT2)(D3DDDIARG_CREATECONTEXT* pData);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_DESTROYCONTEXT)(D3DDDIARG_DESTROYCONTEXT* pData);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_DESTROYSYNCOBJECT)(D3DDDIARG_DESTROYSYNCHRONIZATIONOBJECT* pData);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_SUBMITCOMMAND)(D3DDDIARG_SUBMITCOMMAND* pData);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_RENDER)(D3DDDICB_RENDER* pData);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_PRESENT)(D3DDDICB_PRESENT* pData);
 
 typedef struct _D3DDDI_DEVICECALLBACKS {
+  // DMA buffer/resource allocation management.
+  // NOTE: In the Win7 WDK ABI, `pfnAllocateCb` is the first member (offset 0).
+  void* pfnAllocateCb;
+  void* pfnDeallocateCb;
+  PFND3DDDICB_SUBMITCOMMAND pfnSubmitCommandCb;
+  PFND3DDDICB_RENDER pfnRenderCb;
+  PFND3DDDICB_PRESENT pfnPresentCb;
+  void* pfnWaitForSynchronizationObjectCb;
+  void* pfnLockCb;
+  void* pfnUnlockCb;
+  void* pfnSetErrorCb;
+
   // Device/context lifecycle.
   PFND3DDDICB_CREATEDEVICE pfnCreateDeviceCb;
   PFND3DDDICB_DESTROYDEVICE pfnDestroyDeviceCb;
@@ -576,23 +612,69 @@ typedef struct _D3DDDI_DEVICECALLBACKS {
   PFND3DDDICB_DESTROYCONTEXT pfnDestroyContextCb;
   PFND3DDDICB_DESTROYSYNCOBJECT pfnDestroySynchronizationObjectCb;
 
-  // DMA buffer management. (Not currently used by the D3D9 UMD; we submit using
-  // the runtime-provided "current" DMA buffer pointers returned by CreateContext
-  // and/or rotated through in/out submit structs.)
-  void* pfnAllocateCb;
-  void* pfnDeallocateCb;
+  // DMA buffer acquisition helper (optional).
   void* pfnGetCommandBufferCb;
-
-  // Submission callbacks.
-  PFND3DDDICB_RENDER pfnRenderCb;
-  PFND3DDDICB_PRESENT pfnPresentCb;
-
-  // Optional sync/lock/error helpers (not used by AeroGPU D3D9; reserved for ABI).
-  void* pfnWaitForSynchronizationObjectCb;
-  void* pfnLockCb;
-  void* pfnUnlockCb;
-  void* pfnSetErrorCb;
 } D3DDDI_DEVICECALLBACKS;
+
+// -----------------------------------------------------------------------------
+// Portable ABI sanity checks (anchors)
+// -----------------------------------------------------------------------------
+// These offsets are validated against Win7-era WDK headers via the probe in:
+//   drivers/aerogpu/umd/d3d9/tools/wdk_abi_probe/
+// Keep a few compile-time anchors here so portable builds do not silently drift.
+static_assert(offsetof(D3DDDI_DEVICECALLBACKS, pfnAllocateCb) == 0,
+              "D3DDDI_DEVICECALLBACKS ABI mismatch: pfnAllocateCb must be at offset 0");
+static_assert(offsetof(D3DDDI_DEVICECALLBACKS, pfnDeallocateCb) == sizeof(decltype(D3DDDI_DEVICECALLBACKS{}.pfnAllocateCb)),
+              "D3DDDI_DEVICECALLBACKS ABI mismatch: pfnDeallocateCb offset drift");
+static_assert(offsetof(D3DDDI_DEVICECALLBACKS, pfnSubmitCommandCb) ==
+                  sizeof(decltype(D3DDDI_DEVICECALLBACKS{}.pfnAllocateCb)) * 2,
+              "D3DDDI_DEVICECALLBACKS ABI mismatch: pfnSubmitCommandCb offset drift");
+static_assert(offsetof(D3DDDI_DEVICECALLBACKS, pfnRenderCb) ==
+                  sizeof(decltype(D3DDDI_DEVICECALLBACKS{}.pfnAllocateCb)) * 3,
+              "D3DDDI_DEVICECALLBACKS ABI mismatch: pfnRenderCb offset drift");
+
+static_assert(offsetof(D3DDDIARG_CREATECONTEXT, pPrivateDriverData) == 16,
+              "D3DDDIARG_CREATECONTEXT ABI mismatch: pPrivateDriverData offset drift");
+static_assert(offsetof(D3DDDIARG_CREATECONTEXT, PrivateDriverDataSize) ==
+                  offsetof(D3DDDIARG_CREATECONTEXT, pPrivateDriverData) + sizeof(void*),
+              "D3DDDIARG_CREATECONTEXT ABI mismatch: PrivateDriverDataSize offset drift");
+static_assert(offsetof(D3DDDIARG_CREATECONTEXT, hContext) ==
+                  offsetof(D3DDDIARG_CREATECONTEXT, PrivateDriverDataSize) + sizeof(UINT),
+              "D3DDDIARG_CREATECONTEXT ABI mismatch: hContext offset drift");
+
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, hContext) == 0,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: hContext offset drift");
+#if UINTPTR_MAX == 0xFFFFFFFFu
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, pCommandBuffer) == 4,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: pCommandBuffer offset drift (x86)");
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, CommandLength) == 8,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: CommandLength offset drift (x86)");
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, CommandBufferSize) == 12,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: CommandBufferSize offset drift (x86)");
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, pAllocationList) == 16,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: pAllocationList offset drift (x86)");
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, AllocationListSize) == 20,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: AllocationListSize offset drift (x86)");
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, pPatchLocationList) == 24,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: pPatchLocationList offset drift (x86)");
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, PatchLocationListSize) == 28,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: PatchLocationListSize offset drift (x86)");
+#else
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, pCommandBuffer) == 8,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: pCommandBuffer offset drift (x64)");
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, CommandLength) == 16,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: CommandLength offset drift (x64)");
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, CommandBufferSize) == 20,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: CommandBufferSize offset drift (x64)");
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, pAllocationList) == 24,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: pAllocationList offset drift (x64)");
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, AllocationListSize) == 32,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: AllocationListSize offset drift (x64)");
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, pPatchLocationList) == 40,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: pPatchLocationList offset drift (x64)");
+static_assert(offsetof(D3DDDIARG_SUBMITCOMMAND, PatchLocationListSize) == 48,
+              "D3DDDIARG_SUBMITCOMMAND ABI mismatch: PatchLocationListSize offset drift (x64)");
+#endif
 
 // ---- Adapter open ABI ---------------------------------------------------------
 typedef struct _D3DDDIARG_OPENADAPTER {
