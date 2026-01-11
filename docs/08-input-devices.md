@@ -662,6 +662,10 @@ For WebHID device passthrough (where the browser does not expose the raw HID
 report descriptor bytes), see
 [`docs/webhid-hid-report-descriptor-synthesis.md`](./webhid-hid-report-descriptor-synthesis.md).
 
+For the end-to-end “real device” passthrough architecture (main thread owns the
+handle; worker models UHCI + a generic HID device), see
+[`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md).
+
 ### USB HID Keyboard
 
 ```rust
