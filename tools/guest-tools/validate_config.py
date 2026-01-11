@@ -419,6 +419,30 @@ def _find_transitional_virtio_device_ids(pattern: str) -> List[str]:
     return sorted(found)
 
 
+def _pattern_matches_transitional_virtio_device_ids(pattern: str) -> List[str]:
+    """
+    Return a sorted list of transitional virtio PCI device IDs whose base HWID would match
+    `pattern` as a regex.
+
+    This is stricter than `_find_transitional_virtio_device_ids`, which only flags patterns
+    that *explicitly mention* a transitional DEV_XXXX. Specs can accidentally accept
+    transitional IDs via broad regexes (e.g. `DEV_10..`), so we also test-match against the
+    known transitional ID set.
+    """
+
+    try:
+        regex = re.compile(pattern, re.IGNORECASE)
+    except re.error as e:
+        raise ValidationError(f"Invalid regex in packaging spec: {pattern!r}\n{e}") from e
+
+    matches: List[str] = []
+    for dev in sorted(TRANSITIONAL_VIRTIO_DEVICE_IDS):
+        hwid = f"PCI\\VEN_1AF4&DEV_{dev}"
+        if regex.search(hwid):
+            matches.append(dev)
+    return matches
+
+
 def _find_uncovered_hwids(patterns: Sequence[str], hwids: Sequence[str]) -> List[str]:
     compiled = _compile_patterns(patterns)
     uncovered: List[str] = []
@@ -705,8 +729,16 @@ def validate(
                     patterns.append(re.escape(base))
 
             for pattern in patterns:
-                for dev_id in _find_transitional_virtio_device_ids(pattern):
+                explicit = set(_find_transitional_virtio_device_ids(pattern))
+                for dev_id in sorted(explicit):
                     offenders.append(f"{driver_name}: {pattern} (contains 1AF4:{dev_id})")
+
+                # Also flag regexes that *match* transitional IDs even if they don't explicitly
+                # mention them (e.g. DEV_10..).
+                for dev_id in _pattern_matches_transitional_virtio_device_ids(pattern):
+                    if dev_id in explicit:
+                        continue
+                    offenders.append(f"{driver_name}: {pattern} (matches 1AF4:{dev_id})")
         if offenders:
             raise ValidationError(
                 f"Packaging spec {spec_path.name} contains transitional virtio PCI IDs, but AERO-W7-VIRTIO v1 is modern-only.\n"
