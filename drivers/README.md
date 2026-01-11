@@ -92,7 +92,7 @@ so redistributed media carries virtio-win attribution requirements.
 
 ### Optional: build `aero-guest-tools.iso` from virtio-win (post-install enablement)
 
-If you want the full Guest Tools ISO (scripts + certs + drivers), use:
+If you want the Guest Tools ISO (scripts + drivers; certificates are optional depending on signing policy), use:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
@@ -100,6 +100,8 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -Profile full `
   -OutDir .\dist\guest-tools
 ```
+
+By default, this wrapper builds media with `signing_policy=none` (for WHQL/production-signed virtio-win drivers), so it does **not** require or inject any custom certificate files and `setup.cmd` will not prompt to enable Test Mode by default.
 
 On non-Windows hosts, extract first with `tools/virtio-win/extract.py` and pass `-VirtioWinRoot` instead.
 
