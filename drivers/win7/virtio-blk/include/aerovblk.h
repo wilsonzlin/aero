@@ -7,7 +7,8 @@
 
 /* Shared virtio headers (WDF-free). */
 #include "aero_virtio_pci_modern.h" /* drivers/windows7/virtio-modern/common/include */
-#include "virtqueue_split.h" /* drivers/windows/virtio/common */
+/* Explicit include to avoid picking up the legacy virtqueue header via include path order. */
+#include "../../../windows/virtio/common/virtqueue_split.h"
 #include "virtio_pci_cap_parser.h" /* drivers/win7/virtio/virtio-core/portable */
 #include "virtio_pci_identity.h" /* drivers/win7/virtio/virtio-core/portable */
 
