@@ -261,10 +261,11 @@ Once the system boots with virtio-snd hardware present:
   - the device hardware ID (for virtio-snd contract v1: `PCI\VEN_1AF4&DEV_1059&REV_01`; more-specific `SUBSYS_...` qualifiers may also appear)
 
   Note: `aero-virtio-snd.inf` is intentionally strict and matches only `PCI\VEN_1AF4&DEV_1059&REV_01`.
-  If the device does not expose that HWID (for example it reports `REV_00` under QEMU defaults), either:
+  If the device does not expose that HWID:
   
-  - configure QEMU to expose the contract identity (for example `disable-legacy=on,x-pci-revision=0x01`), or
-  - inject/install the legacy package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
+  - If the device enumerates as transitional virtio-snd (`PCI\VEN_1AF4&DEV_1018`; common for stock QEMU defaults),
+    inject/install the legacy package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
+  - Otherwise, configure QEMU to expose the contract identity (for example `disable-legacy=on,x-pci-revision=0x01`).
 
  If the driver package is staged but the device doesn’t bind:
 
