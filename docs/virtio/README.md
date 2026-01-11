@@ -51,9 +51,9 @@ These are the build entry points that pull in each implementation (kept here so
 it’s obvious which driver binaries are expected to link which engine):
 
 - Canonical engine (`drivers/windows/virtio/common/virtqueue_split.c`)
-  - `drivers/windows7/virtio-blk/aerovblk.vcxproj`
+  - `drivers/windows7/virtio-blk/aero_virtio_blk.vcxproj`
   - `drivers/windows7/virtio-blk/sources` (WinDDK 7600 / WDK 7.1 `build.exe`)
-  - `drivers/windows7/virtio-net/aerovnet.vcxproj`
+  - `drivers/windows7/virtio-net/aero_virtio_net.vcxproj`
   - `drivers/windows7/virtio-net/sources` (WinDDK 7600 / WDK 7.1 `build.exe`)
   - `drivers/windows7/virtio-snd/virtio-snd.vcxproj`
   - `drivers/windows7/virtio-snd/src/sources` (WinDDK 7600 / WDK 7.1 `build.exe`)

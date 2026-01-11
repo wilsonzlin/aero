@@ -37,11 +37,11 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 
 ## Building
 
-CI builds this driver with a modern WDK (currently pinned to 10.0.22621.0) via the MSBuild project `aerovnet.vcxproj`.
+CI builds this driver with a modern WDK (currently pinned to 10.0.22621.0) via the MSBuild project `aero_virtio_net.vcxproj`.
 
 For local development you can use either:
 
-- `aerovnet.vcxproj` (Visual Studio / MSBuild + WDK 10), or
+- `aero_virtio_net.vcxproj` (Visual Studio / MSBuild + WDK 10), or
 - the legacy WinDDK 7600 `build` utility (`sources`/`makefile` are kept for that workflow).
 
 ## Installing on Windows 7

@@ -11,11 +11,11 @@
 
 ## Building
 
-CI builds this driver with a modern WDK (currently pinned to 10.0.22621.0) via the MSBuild project `aerovblk.vcxproj`.
+CI builds this driver with a modern WDK (currently pinned to 10.0.22621.0) via the MSBuild project `aero_virtio_blk.vcxproj`.
 
 For local development you can use either:
 
-- `aerovblk.vcxproj` (Visual Studio / MSBuild + WDK 10), or
+- `aero_virtio_blk.vcxproj` (Visual Studio / MSBuild + WDK 10), or
 - the legacy WinDDK 7600 `build` utility (`sources`/`makefile` are kept for that workflow).
 
 ## Hardware IDs

@@ -120,13 +120,13 @@ def main() -> None:
     msbuild_projects: dict[str, tuple[Path, str, str, str]] = {
         # Win7 miniports (StorPort/NDIS) use the WDF-free canonical split-ring engine.
         "virtio-blk": (
-            REPO_ROOT / "drivers/windows7/virtio-blk/aerovblk.vcxproj",
+            REPO_ROOT / "drivers/windows7/virtio-blk/aero_virtio_blk.vcxproj",
             "virtqueue_split.c",
             "virtqueue_split_legacy.c",
             "windows/virtio/common",
         ),
         "virtio-net": (
-            REPO_ROOT / "drivers/windows7/virtio-net/aerovnet.vcxproj",
+            REPO_ROOT / "drivers/windows7/virtio-net/aero_virtio_net.vcxproj",
             "virtqueue_split.c",
             "virtqueue_split_legacy.c",
             "windows/virtio/common",
