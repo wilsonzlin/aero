@@ -66,6 +66,12 @@ typedef struct D3DKMT_FUNCS {
   PFND3DKMTEscape Escape;
 } D3DKMT_FUNCS;
 
+// If an escape call times out, the worker thread may still be blocked inside a kernel thunk.
+// In that scenario, calling D3DKMTCloseAdapter can deadlock (the kernel may be holding locks
+// needed by close). Mirror the win7_dbgctl safety behavior and skip adapter close when any
+// timed escape has hit a timeout.
+static volatile LONG g_skip_close_adapter = 0;
+
 static inline bool LoadD3DKMT(D3DKMT_FUNCS* out, std::string* err) {
   if (err) {
     err->clear();
@@ -155,6 +161,9 @@ static inline bool OpenPrimaryAdapter(const D3DKMT_FUNCS* f, D3DKMT_HANDLE* out_
 
 static inline void CloseAdapter(const D3DKMT_FUNCS* f, D3DKMT_HANDLE adapter) {
   if (!f || !adapter || !f->CloseAdapter) {
+    return;
+  }
+  if (InterlockedCompareExchange(&g_skip_close_adapter, 0, 0) != 0) {
     return;
   }
   D3DKMT_CLOSEADAPTER close;
@@ -277,6 +286,9 @@ static inline bool AerogpuEscapeWithTimeout(const D3DKMT_FUNCS* f,
   CloseHandle(thread);
   if (out_status) {
     *out_status = (w == WAIT_TIMEOUT) ? (NTSTATUS)0xC0000102L /* STATUS_TIMEOUT */ : (NTSTATUS)GetLastError();
+  }
+  if (w == WAIT_TIMEOUT) {
+    InterlockedExchange(&g_skip_close_adapter, 1);
   }
   return false;
 }
