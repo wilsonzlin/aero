@@ -82,6 +82,9 @@ jobs:
           # We intentionally skip npm lifecycle scripts in this workflow because
           # license metadata does not depend on build steps.
           NPM_CONFIG_IGNORE_SCRIPTS: "true"
+          # Keep Playwright installs explicit/cached elsewhere; npm dependency inspection does not
+          # need browser binaries.
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: Check npm dependency licenses (allowlist)
         shell: bash
