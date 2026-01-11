@@ -409,3 +409,311 @@ fn d3d9_cmd_stream_flushes_guest_backed_resources_from_dirty_ranges() {
         .expect("readback should succeed");
     assert_eq!(&rgba[0..4], &[255, 0, 0, 255]);
 }
+
+#[test]
+fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping copy/dirty range test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    // Protocol constants from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
+    const OPC_CREATE_BUFFER: u32 = 0x100;
+    const OPC_CREATE_TEXTURE2D: u32 = 0x101;
+    const OPC_RESOURCE_DIRTY_RANGE: u32 = 0x103;
+    const OPC_UPLOAD_RESOURCE: u32 = 0x104;
+    const OPC_COPY_TEXTURE2D: u32 = 0x106;
+    const OPC_CREATE_SHADER_DXBC: u32 = 0x200;
+    const OPC_BIND_SHADERS: u32 = 0x202;
+    const OPC_CREATE_INPUT_LAYOUT: u32 = 0x204;
+    const OPC_SET_INPUT_LAYOUT: u32 = 0x206;
+    const OPC_SET_RENDER_TARGETS: u32 = 0x400;
+    const OPC_SET_VIEWPORT: u32 = 0x401;
+    const OPC_SET_SCISSOR: u32 = 0x402;
+    const OPC_SET_VERTEX_BUFFERS: u32 = 0x500;
+    const OPC_SET_PRIMITIVE_TOPOLOGY: u32 = 0x502;
+    const OPC_SET_TEXTURE: u32 = 0x510;
+    const OPC_DRAW: u32 = 0x601;
+
+    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = 3;
+    const AEROGPU_RESOURCE_USAGE_TEXTURE: u32 = 1 << 3;
+    const AEROGPU_RESOURCE_USAGE_RENDER_TARGET: u32 = 1 << 4;
+    const AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER: u32 = 1 << 0;
+    const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = 4;
+
+    const RT_HANDLE: u32 = 1;
+    const SRC_TEX_HANDLE: u32 = 2;
+    const DST_TEX_HANDLE: u32 = 3;
+    const VB_HANDLE: u32 = 4;
+    const VS_HANDLE: u32 = 5;
+    const PS_HANDLE: u32 = 6;
+    const IL_HANDLE: u32 = 7;
+
+    const DST_ALLOC_ID: u32 = 1;
+    const DST_GPA: u64 = 0x1000;
+
+    let width = 1u32;
+    let height = 1u32;
+
+    let mut vb_data = Vec::new();
+    let verts = [
+        (-1.0f32, -1.0f32, 0.0f32, 1.0f32),
+        (3.0f32, -1.0f32, 0.0f32, 1.0f32),
+        (-1.0f32, 3.0f32, 0.0f32, 1.0f32),
+    ];
+    for (x, y, z, w) in verts {
+        // position
+        push_f32(&mut vb_data, x);
+        push_f32(&mut vb_data, y);
+        push_f32(&mut vb_data, z);
+        push_f32(&mut vb_data, w);
+        // texcoord float4 (all vertices sample the same texel).
+        push_f32(&mut vb_data, 0.5);
+        push_f32(&mut vb_data, 0.5);
+        push_f32(&mut vb_data, 0.0);
+        push_f32(&mut vb_data, 0.0);
+    }
+    assert_eq!(vb_data.len(), 3 * 32);
+
+    let src_tex_data = [255u8, 0, 0, 255];
+    let dst_tex_data = [0u8, 255, 0, 255];
+
+    let mut guest_memory = VecGuestMemory::new(0x4000);
+    guest_memory.write(DST_GPA, &dst_tex_data).unwrap();
+
+    let alloc_table = AllocTable::new([(
+        DST_ALLOC_ID,
+        AllocEntry {
+            gpa: DST_GPA,
+            size_bytes: 4096,
+        },
+    )]);
+
+    let vs_bytes = assemble_vs_fullscreen_pos_tex();
+    let ps_bytes = assemble_ps_sample_tex0();
+
+    let mut vertex_decl = Vec::new();
+    // POSITION0 float4 at stream 0 offset 0.
+    push_u16(&mut vertex_decl, 0);
+    push_u16(&mut vertex_decl, 0);
+    push_u8(&mut vertex_decl, 3); // FLOAT4
+    push_u8(&mut vertex_decl, 0);
+    push_u8(&mut vertex_decl, 0); // POSITION
+    push_u8(&mut vertex_decl, 0);
+    // TEXCOORD0 float4 at offset 16.
+    push_u16(&mut vertex_decl, 0);
+    push_u16(&mut vertex_decl, 16);
+    push_u8(&mut vertex_decl, 3); // FLOAT4
+    push_u8(&mut vertex_decl, 0);
+    push_u8(&mut vertex_decl, 5); // TEXCOORD
+    push_u8(&mut vertex_decl, 0);
+    // End marker.
+    push_u16(&mut vertex_decl, 0x00FF);
+    push_u16(&mut vertex_decl, 0);
+    push_u8(&mut vertex_decl, 17); // UNUSED
+    push_u8(&mut vertex_decl, 0);
+    push_u8(&mut vertex_decl, 0);
+    push_u8(&mut vertex_decl, 0);
+
+    let stream = build_stream(|out| {
+        // Render target.
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, RT_HANDLE);
+            push_u32(
+                out,
+                AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            );
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, width * 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        // Source texture (host-owned).
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, SRC_TEX_HANDLE);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, 1);
+            push_u32(out, 1);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, SRC_TEX_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, src_tex_data.len() as u64); // size_bytes
+            out.extend_from_slice(&src_tex_data);
+        });
+
+        // Destination texture (guest-backed), pre-filled with green in guest memory and marked dirty.
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX_HANDLE);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, 1);
+            push_u32(out, 1);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 4); // row_pitch_bytes
+            push_u32(out, DST_ALLOC_ID);
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_RESOURCE_DIRTY_RANGE, |out| {
+            push_u32(out, DST_TEX_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0);
+            push_u64(out, dst_tex_data.len() as u64);
+        });
+
+        emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX_HANDLE);
+            push_u32(out, SRC_TEX_HANDLE);
+            push_u32(out, 0); // dst_mip_level
+            push_u32(out, 0); // dst_array_layer
+            push_u32(out, 0); // src_mip_level
+            push_u32(out, 0); // src_array_layer
+            push_u32(out, 0); // dst_x
+            push_u32(out, 0); // dst_y
+            push_u32(out, 0); // src_x
+            push_u32(out, 0); // src_y
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, 0); // flags
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, VB_HANDLE);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
+            push_u64(out, vb_data.len() as u64);
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, VB_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, vb_data.len() as u64); // size_bytes
+            out.extend_from_slice(&vb_data);
+        });
+
+        emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
+            push_u32(out, VS_HANDLE);
+            push_u32(out, 0); // AEROGPU_SHADER_STAGE_VERTEX
+            push_u32(out, vs_bytes.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&vs_bytes);
+        });
+
+        emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
+            push_u32(out, PS_HANDLE);
+            push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
+            push_u32(out, ps_bytes.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&ps_bytes);
+        });
+
+        emit_packet(out, OPC_BIND_SHADERS, |out| {
+            push_u32(out, VS_HANDLE);
+            push_u32(out, PS_HANDLE);
+            push_u32(out, 0); // cs
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_CREATE_INPUT_LAYOUT, |out| {
+            push_u32(out, IL_HANDLE);
+            push_u32(out, vertex_decl.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&vertex_decl);
+        });
+
+        emit_packet(out, OPC_SET_INPUT_LAYOUT, |out| {
+            push_u32(out, IL_HANDLE);
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_SET_VERTEX_BUFFERS, |out| {
+            push_u32(out, 0); // start_slot
+            push_u32(out, 1); // buffer_count
+            push_u32(out, VB_HANDLE);
+            push_u32(out, 32); // stride_bytes
+            push_u32(out, 0); // offset_bytes
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_SET_PRIMITIVE_TOPOLOGY, |out| {
+            push_u32(out, AEROGPU_TOPOLOGY_TRIANGLELIST);
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_SET_RENDER_TARGETS, |out| {
+            push_u32(out, 1); // color_count
+            push_u32(out, 0); // depth_stencil
+            push_u32(out, RT_HANDLE);
+            for _ in 0..7 {
+                push_u32(out, 0);
+            }
+        });
+
+        emit_packet(out, OPC_SET_VIEWPORT, |out| {
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, width as f32);
+            push_f32(out, height as f32);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+        });
+
+        emit_packet(out, OPC_SET_SCISSOR, |out| {
+            push_i32(out, 0);
+            push_i32(out, 0);
+            push_i32(out, width as i32);
+            push_i32(out, height as i32);
+        });
+
+        emit_packet(out, OPC_SET_TEXTURE, |out| {
+            push_u32(out, 1); // shader_stage pixel
+            push_u32(out, 0); // slot
+            push_u32(out, DST_TEX_HANDLE);
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_DRAW, |out| {
+            push_u32(out, 3);
+            push_u32(out, 1);
+            push_u32(out, 0);
+            push_u32(out, 0);
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+        .expect("execute should succeed");
+
+    let (_out_w, _out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))
+        .expect("readback should succeed");
+    assert_eq!(
+        &rgba[0..4],
+        &src_tex_data,
+        "copy should win over stale dirty-range upload"
+    );
+}

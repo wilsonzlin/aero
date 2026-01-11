@@ -856,32 +856,35 @@ impl AerogpuD3d9Executor {
 
                     let src_underlying = self.resolve_resource_handle(src_buffer)?;
                     let dst_underlying = self.resolve_resource_handle(dst_buffer)?;
-                    let src = self
-                        .resources
-                        .get(&src_underlying)
-                        .ok_or(AerogpuD3d9Error::UnknownResource(src_buffer))?;
-                    let dst = self
-                        .resources
-                        .get(&dst_underlying)
-                        .ok_or(AerogpuD3d9Error::UnknownResource(dst_buffer))?;
+                    let (src_size, dst_size) = {
+                        let src = self
+                            .resources
+                            .get(&src_underlying)
+                            .ok_or(AerogpuD3d9Error::UnknownResource(src_buffer))?;
+                        let dst = self
+                            .resources
+                            .get(&dst_underlying)
+                            .ok_or(AerogpuD3d9Error::UnknownResource(dst_buffer))?;
 
-                    let (src_buf, src_size) = match src {
-                        Resource::Buffer { buffer, size, .. } => (buffer, *size),
-                        _ => {
-                            return Err(AerogpuD3d9Error::CopyNotSupported {
-                                src: src_buffer,
-                                dst: dst_buffer,
-                            })
-                        }
-                    };
-                    let (dst_buf, dst_size) = match dst {
-                        Resource::Buffer { buffer, size, .. } => (buffer, *size),
-                        _ => {
-                            return Err(AerogpuD3d9Error::CopyNotSupported {
-                                src: src_buffer,
-                                dst: dst_buffer,
-                            })
-                        }
+                        let src_size = match src {
+                            Resource::Buffer { size, .. } => *size,
+                            _ => {
+                                return Err(AerogpuD3d9Error::CopyNotSupported {
+                                    src: src_buffer,
+                                    dst: dst_buffer,
+                                })
+                            }
+                        };
+                        let dst_size = match dst {
+                            Resource::Buffer { size, .. } => *size,
+                            _ => {
+                                return Err(AerogpuD3d9Error::CopyNotSupported {
+                                    src: src_buffer,
+                                    dst: dst_buffer,
+                                })
+                            }
+                        };
+                        (src_size, dst_size)
                     };
 
                     let src_end = src_offset_bytes.saturating_add(size_bytes);
@@ -892,6 +895,37 @@ impl AerogpuD3d9Executor {
                             dst: dst_buffer,
                         });
                     }
+
+                    // Flush any pending CPU writes before GPU reads/writes this buffer.
+                    self.flush_buffer_if_dirty(src_buffer, ctx.guest_memory)?;
+                    self.flush_buffer_if_dirty(dst_buffer, ctx.guest_memory)?;
+
+                    let src_buf = match self
+                        .resources
+                        .get(&src_underlying)
+                        .ok_or(AerogpuD3d9Error::UnknownResource(src_buffer))?
+                    {
+                        Resource::Buffer { buffer, .. } => buffer,
+                        _ => {
+                            return Err(AerogpuD3d9Error::CopyNotSupported {
+                                src: src_buffer,
+                                dst: dst_buffer,
+                            })
+                        }
+                    };
+                    let dst_buf = match self
+                        .resources
+                        .get(&dst_underlying)
+                        .ok_or(AerogpuD3d9Error::UnknownResource(dst_buffer))?
+                    {
+                        Resource::Buffer { buffer, .. } => buffer,
+                        _ => {
+                            return Err(AerogpuD3d9Error::CopyNotSupported {
+                                src: src_buffer,
+                                dst: dst_buffer,
+                            })
+                        }
+                    };
 
                     encoder.copy_buffer_to_buffer(
                         src_buf,
@@ -929,49 +963,51 @@ impl AerogpuD3d9Executor {
 
                     let src_underlying = self.resolve_resource_handle(src_texture)?;
                     let dst_underlying = self.resolve_resource_handle(dst_texture)?;
-                    let src = self
-                        .resources
-                        .get(&src_underlying)
-                        .ok_or(AerogpuD3d9Error::UnknownResource(src_texture))?;
-                    let dst = self
-                        .resources
-                        .get(&dst_underlying)
-                        .ok_or(AerogpuD3d9Error::UnknownResource(dst_texture))?;
+                    let ((src_format, src_w, src_h, src_mips, src_layers), (dst_format, dst_w, dst_h, dst_mips, dst_layers)) =
+                        {
+                            let src = self
+                                .resources
+                                .get(&src_underlying)
+                                .ok_or(AerogpuD3d9Error::UnknownResource(src_texture))?;
+                            let dst = self
+                                .resources
+                                .get(&dst_underlying)
+                                .ok_or(AerogpuD3d9Error::UnknownResource(dst_texture))?;
 
-                    let (src_tex, src_format, src_w, src_h, src_mips, src_layers) = match src {
-                        Resource::Texture2d {
-                            texture,
-                            format,
-                            width,
-                            height,
-                            mip_level_count,
-                            array_layers,
-                            ..
-                        } => (texture, *format, *width, *height, *mip_level_count, *array_layers),
-                        _ => {
-                            return Err(AerogpuD3d9Error::CopyNotSupported {
-                                src: src_texture,
-                                dst: dst_texture,
-                            })
-                        }
-                    };
-                    let (dst_tex, dst_format, dst_w, dst_h, dst_mips, dst_layers) = match dst {
-                        Resource::Texture2d {
-                            texture,
-                            format,
-                            width,
-                            height,
-                            mip_level_count,
-                            array_layers,
-                            ..
-                        } => (texture, *format, *width, *height, *mip_level_count, *array_layers),
-                        _ => {
-                            return Err(AerogpuD3d9Error::CopyNotSupported {
-                                src: src_texture,
-                                dst: dst_texture,
-                            })
-                        }
-                    };
+                            let src_info = match src {
+                                Resource::Texture2d {
+                                    format,
+                                    width,
+                                    height,
+                                    mip_level_count,
+                                    array_layers,
+                                    ..
+                                } => (*format, *width, *height, *mip_level_count, *array_layers),
+                                _ => {
+                                    return Err(AerogpuD3d9Error::CopyNotSupported {
+                                        src: src_texture,
+                                        dst: dst_texture,
+                                    })
+                                }
+                            };
+                            let dst_info = match dst {
+                                Resource::Texture2d {
+                                    format,
+                                    width,
+                                    height,
+                                    mip_level_count,
+                                    array_layers,
+                                    ..
+                                } => (*format, *width, *height, *mip_level_count, *array_layers),
+                                _ => {
+                                    return Err(AerogpuD3d9Error::CopyNotSupported {
+                                        src: src_texture,
+                                        dst: dst_texture,
+                                    })
+                                }
+                            };
+                            (src_info, dst_info)
+                        };
 
                     if src_format != dst_format {
                         return Err(AerogpuD3d9Error::CopyNotSupported {
@@ -1025,6 +1061,37 @@ impl AerogpuD3d9Executor {
                             dst: dst_texture,
                         });
                     }
+
+                    // Flush any pending CPU writes before GPU reads/writes these subresources.
+                    self.flush_texture_if_dirty_strict(src_texture, ctx.guest_memory)?;
+                    self.flush_texture_if_dirty_strict(dst_texture, ctx.guest_memory)?;
+
+                    let src_tex = match self
+                        .resources
+                        .get(&src_underlying)
+                        .ok_or(AerogpuD3d9Error::UnknownResource(src_texture))?
+                    {
+                        Resource::Texture2d { texture, .. } => texture,
+                        _ => {
+                            return Err(AerogpuD3d9Error::CopyNotSupported {
+                                src: src_texture,
+                                dst: dst_texture,
+                            })
+                        }
+                    };
+                    let dst_tex = match self
+                        .resources
+                        .get(&dst_underlying)
+                        .ok_or(AerogpuD3d9Error::UnknownResource(dst_texture))?
+                    {
+                        Resource::Texture2d { texture, .. } => texture,
+                        _ => {
+                            return Err(AerogpuD3d9Error::CopyNotSupported {
+                                src: src_texture,
+                                dst: dst_texture,
+                            })
+                        }
+                    };
 
                     encoder.copy_texture_to_texture(
                         wgpu::ImageCopyTexture {
