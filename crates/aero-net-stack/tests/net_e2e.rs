@@ -586,10 +586,24 @@ async fn create_gateway_session(addr: SocketAddr) -> String {
         .await
         .expect("send tcp relay /session request");
 
-    let (_proto, status, headers, _body) = read_http_response(&mut stream)
+    let (_proto, status, headers, body) = read_http_response(&mut stream)
         .await
         .expect("read tcp relay /session response");
     assert_eq!(status, "201", "expected 201 Created from /session");
+
+    assert!(
+        !body.is_empty(),
+        "expected non-empty json body from /session"
+    );
+    let payload = std::str::from_utf8(&body).expect("tcp relay /session json is utf-8");
+    assert!(
+        payload.contains("\"tcp\":\"/tcp\""),
+        "expected /session response to advertise endpoints.tcp"
+    );
+    assert!(
+        payload.contains("\"dnsQuery\":\"/dns-query\""),
+        "expected /session response to advertise endpoints.dnsQuery"
+    );
 
     let set_cookie = headers
         .get("set-cookie")
@@ -841,8 +855,10 @@ async fn handle_tcp_relay_client(mut stream: TcpStream) -> std::io::Result<()> {
     let path = parts.next().unwrap_or_default();
 
     if method == "POST" && path == "/session" {
+        let body = r#"{"session":{"expiresAt":"2099-01-01T00:00:00Z"},"endpoints":{"tcp":"/tcp","tcpMux":"/tcp-mux","dnsQuery":"/dns-query","dnsJson":"/dns-json","l2":"/l2","udpRelayToken":"/udp-relay/token"},"limits":{"tcp":{"maxConnections":64,"maxMessageBytes":1048576,"connectTimeoutMs":10000,"idleTimeoutMs":300000},"dns":{"maxQueryBytes":4096},"l2":{"maxFramePayloadBytes":2048,"maxControlPayloadBytes":256}}}"#.to_string();
         let response = format!(
-            "HTTP/1.1 201 Created\r\nSet-Cookie: aero_session={TEST_AERO_SESSION}; Path=/; HttpOnly\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            "HTTP/1.1 201 Created\r\nSet-Cookie: aero_session={TEST_AERO_SESSION}; Path=/; HttpOnly\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
         );
         stream.write_all(response.as_bytes()).await?;
         return Ok(());
