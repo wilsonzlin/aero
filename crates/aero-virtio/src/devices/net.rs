@@ -173,7 +173,16 @@ impl<B: NetBackend> VirtioNet<B> {
         let hdr_len = self.negotiated_hdr_len();
         let mut hdr_bytes = [0u8; VirtioNetHdr::LEN];
         let mut hdr_written = 0usize;
-        let mut packet = Vec::new();
+        let offload_features = VIRTIO_NET_F_CSUM | VIRTIO_NET_F_HOST_TSO4 | VIRTIO_NET_F_HOST_TSO6 | VIRTIO_NET_F_HOST_ECN;
+        let max_packet_bytes = if (self.negotiated_features & offload_features) != 0 {
+            1024 * 1024
+        } else {
+            // Contract v1 frames are at most 1514 bytes; keep one extra byte so we can detect
+            // oversize frames without copying unbounded guest data.
+            1515
+        };
+        let mut packet = Vec::with_capacity(max_packet_bytes.min(4096));
+        let mut packet_truncated = false;
         let mut valid_chain = true;
 
         for d in descs {
@@ -192,10 +201,22 @@ impl<B: NetBackend> VirtioNet<B> {
                 slice = &slice[take..];
             }
 
-            packet.extend_from_slice(slice);
+            if !slice.is_empty() {
+                let remaining = max_packet_bytes.saturating_sub(packet.len());
+                if remaining == 0 {
+                    packet_truncated = true;
+                } else {
+                    let take = remaining.min(slice.len());
+                    packet.extend_from_slice(&slice[..take]);
+                    if take < slice.len() {
+                        packet_truncated = true;
+                    }
+                }
+            }
         }
 
         valid_chain &= hdr_written == hdr_len;
+        valid_chain &= !packet_truncated;
 
         if valid_chain {
             if let Some(hdr) = VirtioNetHdr::from_slice_le(&hdr_bytes[..hdr_len]) {
