@@ -184,7 +184,7 @@ fn root_hub_routes_to_device_behind_single_hub() {
         set_address(hub_dev, 1);
     }
 
-    root.attach_at_path(&[0, 0], Box::new(TestLeaf))
+    root.attach_at_path(&[0, 1], Box::new(TestLeaf))
         .expect("attach leaf behind hub");
     hub_ctl.set_port_enabled(0, true);
 
@@ -219,7 +219,7 @@ fn root_hub_routes_to_device_behind_nested_hubs() {
     }
 
     let (hub2, hub2_ctl) = TestHub::new(2);
-    root.attach_at_path(&[0, 0], Box::new(hub2))
+    root.attach_at_path(&[0, 1], Box::new(hub2))
         .expect("attach hub2 behind hub1");
     hub1_ctl.set_port_enabled(0, true);
 
@@ -230,7 +230,7 @@ fn root_hub_routes_to_device_behind_nested_hubs() {
         set_address(hub2_dev, 2);
     }
 
-    root.attach_at_path(&[0, 0, 1], Box::new(TestLeaf))
+    root.attach_at_path(&[0, 1, 2], Box::new(TestLeaf))
         .expect("attach leaf behind hub2");
     hub2_ctl.set_port_enabled(1, true);
 
@@ -262,7 +262,7 @@ fn disabled_downstream_port_is_not_routable() {
         set_address(hub_dev, 1);
     }
 
-    root.attach_at_path(&[0, 0], Box::new(TestLeaf)).unwrap();
+    root.attach_at_path(&[0, 1], Box::new(TestLeaf)).unwrap();
     hub_ctl.set_port_enabled(0, true);
 
     {
@@ -274,4 +274,3 @@ fn disabled_downstream_port_is_not_routable() {
     hub_ctl.set_port_enabled(0, false);
     assert!(root.device_mut_for_address(5).is_none());
 }
-

@@ -57,6 +57,10 @@ impl AttachedUsbDevice {
         self.address
     }
 
+    pub fn model_mut(&mut self) -> &mut dyn UsbDeviceModel {
+        &mut *self.model
+    }
+
     pub fn as_hub(&self) -> Option<&dyn crate::io::usb::hub::UsbHub> {
         self.model.as_hub()
     }

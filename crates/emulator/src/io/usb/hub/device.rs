@@ -1,10 +1,10 @@
 use crate::io::usb::core::AttachedUsbDevice;
 use crate::io::usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
+    UsbHubAttachError,
 };
 
 use super::UsbHub;
-
 const USB_DESCRIPTOR_TYPE_DEVICE: u8 = 0x01;
 const USB_DESCRIPTOR_TYPE_CONFIGURATION: u8 = 0x02;
 const USB_DESCRIPTOR_TYPE_STRING: u8 = 0x03;
@@ -270,6 +270,55 @@ impl UsbDeviceModel for UsbHubDevice {
 
     fn get_hid_report_descriptor(&self) -> &[u8] {
         &[]
+    }
+
+    fn hub_port_count(&self) -> Option<u8> {
+        Some(HUB_NUM_PORTS as u8)
+    }
+
+    fn hub_attach_device(
+        &mut self,
+        port: u8,
+        model: Box<dyn UsbDeviceModel>,
+    ) -> Result<(), UsbHubAttachError> {
+        if port == 0 {
+            return Err(UsbHubAttachError::InvalidPort);
+        }
+        let idx = (port - 1) as usize;
+        let Some(p) = self.ports.get_mut(idx) else {
+            return Err(UsbHubAttachError::InvalidPort);
+        };
+        if p.device.is_some() {
+            return Err(UsbHubAttachError::PortOccupied);
+        }
+        p.attach(model);
+        Ok(())
+    }
+
+    fn hub_detach_device(&mut self, port: u8) -> Result<(), UsbHubAttachError> {
+        if port == 0 {
+            return Err(UsbHubAttachError::InvalidPort);
+        }
+        let idx = (port - 1) as usize;
+        let Some(p) = self.ports.get_mut(idx) else {
+            return Err(UsbHubAttachError::InvalidPort);
+        };
+        if p.device.is_none() {
+            return Err(UsbHubAttachError::NoDevice);
+        }
+        p.detach();
+        Ok(())
+    }
+
+    fn hub_port_device_mut(&mut self, port: u8) -> Result<&mut AttachedUsbDevice, UsbHubAttachError> {
+        if port == 0 {
+            return Err(UsbHubAttachError::InvalidPort);
+        }
+        let idx = (port - 1) as usize;
+        let Some(p) = self.ports.get_mut(idx) else {
+            return Err(UsbHubAttachError::InvalidPort);
+        };
+        p.device.as_mut().ok_or(UsbHubAttachError::NoDevice)
     }
 
     fn reset(&mut self) {

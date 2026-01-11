@@ -90,10 +90,103 @@ pub enum ControlResponse {
     Stall,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsbHubAttachError {
+    NotAHub,
+    InvalidPort,
+    PortOccupied,
+    NoDevice,
+}
+
+impl std::fmt::Display for UsbHubAttachError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UsbHubAttachError::NotAHub => write!(f, "device is not a USB hub"),
+            UsbHubAttachError::InvalidPort => write!(f, "invalid hub port"),
+            UsbHubAttachError::PortOccupied => write!(f, "hub port is already occupied"),
+            UsbHubAttachError::NoDevice => write!(f, "no device attached to hub port"),
+        }
+    }
+}
+
+impl std::error::Error for UsbHubAttachError {}
+
 pub trait UsbDeviceModel {
     fn get_device_descriptor(&self) -> &[u8];
     fn get_config_descriptor(&self) -> &[u8];
     fn get_hid_report_descriptor(&self) -> &[u8];
+
+    /// Returns the number of downstream ports if this device is a hub.
+    fn hub_port_count(&self) -> Option<u8> {
+        self.as_hub()
+            .and_then(|hub| u8::try_from(hub.num_ports()).ok())
+    }
+
+    /// Attach a device model to the specified downstream port (1-based).
+    fn hub_attach_device(
+        &mut self,
+        port: u8,
+        model: Box<dyn UsbDeviceModel>,
+    ) -> Result<(), UsbHubAttachError> {
+        let Some(hub) = self.as_hub_mut() else {
+            return Err(UsbHubAttachError::NotAHub);
+        };
+
+        let port = port
+            .checked_sub(1)
+            .ok_or(UsbHubAttachError::InvalidPort)? as usize;
+        if port >= hub.num_ports() {
+            return Err(UsbHubAttachError::InvalidPort);
+        }
+        if hub.downstream_device_mut(port).is_some() {
+            return Err(UsbHubAttachError::PortOccupied);
+        }
+        hub.attach_downstream(port, model);
+        Ok(())
+    }
+
+    /// Detach any device model from the specified downstream port (1-based).
+    fn hub_detach_device(&mut self, port: u8) -> Result<(), UsbHubAttachError> {
+        let Some(hub) = self.as_hub_mut() else {
+            return Err(UsbHubAttachError::NotAHub);
+        };
+
+        let port = port
+            .checked_sub(1)
+            .ok_or(UsbHubAttachError::InvalidPort)? as usize;
+        if port >= hub.num_ports() {
+            return Err(UsbHubAttachError::InvalidPort);
+        }
+        if hub.downstream_device_mut(port).is_none() {
+            return Err(UsbHubAttachError::NoDevice);
+        }
+        hub.detach_downstream(port);
+        Ok(())
+    }
+
+    /// Return the attached device on a downstream port, regardless of whether the port is
+    /// powered/enabled.
+    ///
+    /// This is used by host-side topology management (e.g. `RootHub::attach_at_path`) to
+    /// traverse nested hubs by port-number without relying on concrete downcasting.
+    #[doc(hidden)]
+    fn hub_port_device_mut(
+        &mut self,
+        port: u8,
+    ) -> Result<&mut crate::io::usb::core::AttachedUsbDevice, UsbHubAttachError> {
+        let Some(hub) = self.as_hub_mut() else {
+            return Err(UsbHubAttachError::NotAHub);
+        };
+
+        let port = port
+            .checked_sub(1)
+            .ok_or(UsbHubAttachError::InvalidPort)? as usize;
+        if port >= hub.num_ports() {
+            return Err(UsbHubAttachError::InvalidPort);
+        }
+        hub.downstream_device_mut(port)
+            .ok_or(UsbHubAttachError::NoDevice)
+    }
 
     /// Resets device state due to a USB bus reset (e.g. PORTSC reset).
     ///
