@@ -87,7 +87,7 @@ Escape ops used:
 - `AEROGPU_ESCAPE_OP_QUERY_DEVICE` → `--query-version`
 - `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`
 - `AEROGPU_ESCAPE_OP_DUMP_RING` → `--dump-ring`
-- `AEROGPU_ESCAPE_OP_DUMP_VBLANK` → `--dump-vblank`
+- `AEROGPU_ESCAPE_OP_QUERY_VBLANK` → `--dump-vblank`
 - `AEROGPU_ESCAPE_OP_SELFTEST` → `--selftest`
 
 ## Notes / troubleshooting

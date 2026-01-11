@@ -25,8 +25,8 @@ extern "C" {
 #define AEROGPU_ESCAPE_OP_QUERY_FENCE 2u
 #define AEROGPU_ESCAPE_OP_DUMP_RING 3u
 #define AEROGPU_ESCAPE_OP_SELFTEST 4u
-#define AEROGPU_ESCAPE_OP_DUMP_VBLANK 5u
-#define AEROGPU_ESCAPE_OP_QUERY_VBLANK AEROGPU_ESCAPE_OP_DUMP_VBLANK
+#define AEROGPU_ESCAPE_OP_QUERY_VBLANK 5u
+#define AEROGPU_ESCAPE_OP_DUMP_VBLANK AEROGPU_ESCAPE_OP_QUERY_VBLANK
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 
@@ -42,11 +42,6 @@ enum aerogpu_dbgctl_selftest_error {
   AEROGPU_DBGCTL_SELFTEST_ERR_GPU_BUSY = 3,
   AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES = 4,
   AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT = 5,
-};
-
-enum aerogpu_dbgctl_vblank_flags {
-  /* KMD observed AEROGPU_FEATURE_VBLANK and populated vblank fields. */
-  AEROGPU_DBGCTL_VBLANK_SUPPORTED = (1u << 0),
 };
 
 #pragma pack(push, 1)
@@ -92,28 +87,30 @@ typedef struct aerogpu_escape_selftest_inout {
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_selftest_inout) == 32);
 
-typedef struct aerogpu_escape_dump_vblank_inout {
+typedef struct aerogpu_escape_query_vblank_out {
   aerogpu_escape_header hdr;
-  aerogpu_u32 vidpn_source_id;
-  aerogpu_u32 irq_status;
+  aerogpu_u32 vidpn_source_id; /* input (0 for MVP), echoed back */
   aerogpu_u32 irq_enable;
-  aerogpu_u32 flags; /* aerogpu_dbgctl_vblank_flags */
+  aerogpu_u32 irq_status;
+  aerogpu_u32 reserved0;
   aerogpu_u64 vblank_seq;
   aerogpu_u64 last_vblank_time_ns;
   aerogpu_u32 vblank_period_ns;
-  aerogpu_u32 reserved0;
-} aerogpu_escape_dump_vblank_inout;
+  aerogpu_u32 reserved1;
+} aerogpu_escape_query_vblank_out;
 
 /* Must remain stable across x86/x64. */
-AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_dump_vblank_inout) == 56);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, vidpn_source_id) == 16);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, irq_status) == 20);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, irq_enable) == 24);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, flags) == 28);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, vblank_seq) == 32);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, last_vblank_time_ns) == 40);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, vblank_period_ns) == 48);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, reserved0) == 52);
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_vblank_out) == 56);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, vidpn_source_id) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, irq_enable) == 20);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, irq_status) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, reserved0) == 28);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, vblank_seq) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, last_vblank_time_ns) == 40);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, vblank_period_ns) == 48);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, reserved1) == 52);
+
+typedef aerogpu_escape_query_vblank_out aerogpu_escape_dump_vblank_inout;
 
 #pragma pack(pop)
 

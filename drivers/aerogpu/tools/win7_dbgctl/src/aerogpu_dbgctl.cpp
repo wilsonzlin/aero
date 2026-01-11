@@ -307,10 +307,10 @@ static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ri
 }
 
 static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId,
-                        aerogpu_escape_dump_vblank_inout *out) {
+                        aerogpu_escape_query_vblank_out *out) {
   ZeroMemory(out, sizeof(*out));
   out->hdr.version = AEROGPU_ESCAPE_VERSION;
-  out->hdr.op = AEROGPU_ESCAPE_OP_DUMP_VBLANK;
+  out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_VBLANK;
   out->hdr.size = sizeof(*out);
   out->hdr.reserved0 = 0;
   out->vidpn_source_id = vidpnSourceId;
@@ -325,21 +325,16 @@ static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     return true;
   }
   if (!NT_SUCCESS(st)) {
-    PrintNtStatus(L"D3DKMTEscape(dump-vblank) failed", f, st);
+    PrintNtStatus(L"D3DKMTEscape(query-vblank) failed", f, st);
     return false;
   }
   return true;
 }
 
-static void PrintVblankSnapshot(const aerogpu_escape_dump_vblank_inout *q) {
+static void PrintVblankSnapshot(const aerogpu_escape_query_vblank_out *q) {
   wprintf(L"Vblank (VidPn source %lu)\n", (unsigned long)q->vidpn_source_id);
-  wprintf(L"  IRQ_STATUS: 0x%08lx\n", (unsigned long)q->irq_status);
-  wprintf(L"  IRQ_ENABLE: 0x%08lx\n", (unsigned long)q->irq_enable);
-
-  if ((q->flags & AEROGPU_DBGCTL_VBLANK_SUPPORTED) == 0) {
-    wprintf(L"  vblank: not supported (AEROGPU_FEATURE_VBLANK not set)\n");
-    return;
-  }
+  wprintf(L"  irq_enable: 0x%08lx\n", (unsigned long)q->irq_enable);
+  wprintf(L"  irq_status: 0x%08lx\n", (unsigned long)q->irq_status);
 
   wprintf(L"  vblank_seq: 0x%I64x (%I64u)\n", (unsigned long long)q->vblank_seq, (unsigned long long)q->vblank_seq);
   wprintf(L"  last_vblank_time_ns: 0x%I64x (%I64u ns)\n",
@@ -363,8 +358,8 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     samples = 10000;
   }
 
-  aerogpu_escape_dump_vblank_inout q;
-  aerogpu_escape_dump_vblank_inout prev;
+  aerogpu_escape_query_vblank_out q;
+  aerogpu_escape_query_vblank_out prev;
   bool havePrev = false;
 
   for (uint32_t i = 0; i < samples; ++i) {
@@ -377,8 +372,7 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     }
     PrintVblankSnapshot(&q);
 
-    if (havePrev && (q.flags & AEROGPU_DBGCTL_VBLANK_SUPPORTED) != 0 &&
-        (prev.flags & AEROGPU_DBGCTL_VBLANK_SUPPORTED) != 0) {
+    if (havePrev) {
       const uint64_t dseq = q.vblank_seq - prev.vblank_seq;
       const uint64_t dt = q.last_vblank_time_ns - prev.last_vblank_time_ns;
       wprintf(L"  delta: seq=%I64u time=%I64u ns\n", (unsigned long long)dseq, (unsigned long long)dt);
