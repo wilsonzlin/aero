@@ -167,7 +167,7 @@ jobs:
             values-prod-certmanager-issuer.yaml \
             values-prod-appheaders.yaml; do
             out="/tmp/aero-gateway-${values%.yaml}.yaml"
-            helm template aero-gateway "$CHART" -n aero -f "$CHART/$values" > "$out"
+            helm template aero-gateway "$CHART" -n aero --kube-version "$K8S_VERSION" -f "$CHART/$values" > "$out"
 
             kubeconform \
               -cache "$KUBECONFORM_CACHE_DIR" \

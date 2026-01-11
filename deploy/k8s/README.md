@@ -51,7 +51,7 @@ for values in \
   values-prod-certmanager-issuer.yaml \
   values-prod-appheaders.yaml; do
   out="/tmp/aero-${values%.yaml}.yaml"
-  helm template aero-gateway "$CHART" -n aero -f "$CHART/$values" > "$out"
+  helm template aero-gateway "$CHART" -n aero --kube-version 1.28.0 -f "$CHART/$values" > "$out"
 
   kubeconform -strict -ignore-missing-schemas \
     -schema-location default \
