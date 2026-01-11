@@ -183,6 +183,10 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     let max_pairs = u16::from_le_bytes(cfg[8..10].try_into().unwrap());
     assert_eq!(max_pairs, 1);
 
+    // Remaining config fields are not required by contract v1 and must read as 0.
+    assert_eq!(bar_read_u32(&mut dev, caps.device + 12), 0);
+    assert_eq!(bar_read_u32(&mut dev, caps.device + 0x40), 0);
+
     // Configure RX queue 0.
     let rx_desc = 0x1000;
     let rx_avail = 0x2000;
