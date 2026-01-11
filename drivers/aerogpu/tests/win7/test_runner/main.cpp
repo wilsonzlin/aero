@@ -391,6 +391,30 @@ static std::string ReadJsonFileOrEmpty(const std::wstring& path) {
   return TrimAsciiWhitespace(std::string(bytes.begin(), bytes.end()));
 }
 
+static bool LooksLikeTestReportJsonObject(const std::string& obj) {
+  if (obj.size() < 2) {
+    return false;
+  }
+  if (obj[0] != '{' || obj[obj.size() - 1] != '}') {
+    return false;
+  }
+  // Very small sanity checks to avoid embedding truncated/corrupted output into the suite JSON.
+  // We intentionally do not attempt to fully parse JSON here (no dependency and no STL iostreams).
+  if (obj.find("\"schema_version\":") == std::string::npos) {
+    return false;
+  }
+  if (obj.find("\"test_name\":") == std::string::npos) {
+    return false;
+  }
+  if (obj.find("\"status\":") == std::string::npos) {
+    return false;
+  }
+  if (obj.find("\"exit_code\":") == std::string::npos) {
+    return false;
+  }
+  return true;
+}
+
 static std::string BuildAdapterJsonObject(const aerogpu_test::TestReportAdapterInfo& info) {
   if (!info.present) {
     return std::string("null");
@@ -716,6 +740,11 @@ int main(int argc, char** argv) {
 
     if (emit_json) {
       std::string obj = ReadJsonFileOrEmpty(per_test_json_path);
+      if (!obj.empty() && !LooksLikeTestReportJsonObject(obj)) {
+        aerogpu_test::PrintfStdout("INFO: %s: invalid per-test JSON output; using fallback report",
+                                   test_name.c_str());
+        obj.clear();
+      }
       if (!obj.empty()) {
         // Most tests include adapter info, but some low-level tests intentionally avoid instantiating
         // D3D/DXGI and therefore leave the adapter field null. Keep the suite report useful by
