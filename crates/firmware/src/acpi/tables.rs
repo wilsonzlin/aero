@@ -1,5 +1,4 @@
-use super::{aml, checksum, dsdt};
-use crate::devices::{DEFAULT_IOAPIC_BASE, DEFAULT_LAPIC_BASE};
+use super::{aml, checksum, constants, dsdt};
 
 #[derive(Debug, Clone)]
 pub struct BuiltAcpiTables {
@@ -134,8 +133,8 @@ fn build_fadt(dsdt_address: u64) -> Vec<u8> {
 }
 
 fn build_madt() -> Vec<u8> {
-    let lapic_addr = DEFAULT_LAPIC_BASE as u32;
-    let ioapic_addr = DEFAULT_IOAPIC_BASE as u32;
+    let lapic_addr = constants::LOCAL_APIC_BASE;
+    let ioapic_addr = constants::IO_APIC_BASE;
 
     let mut body = Vec::new();
     body.extend_from_slice(&lapic_addr.to_le_bytes());
