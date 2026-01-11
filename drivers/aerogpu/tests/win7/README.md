@@ -188,6 +188,8 @@ Or (equivalently) pass it as an argument:
 
 ```cmd
 run_all.cmd --timeout-ms=120000
+:: or:
+run_all.cmd --timeout-ms 120000
 ```
 
 To run without enforcing a timeout (even if `aerogpu_timeout_runner.exe` is present):
