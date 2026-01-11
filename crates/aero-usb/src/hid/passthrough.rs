@@ -365,7 +365,15 @@ impl UsbHidPassthrough {
 
     fn handle_setup_inner(&mut self, setup: SetupPacket) -> Option<Vec<u8>> {
         match (setup.request_type, setup.request) {
-            (0x80, REQ_GET_DESCRIPTOR) | (0x81, REQ_GET_DESCRIPTOR) => {
+            (0x80, REQ_GET_DESCRIPTOR) => {
+                let desc_type = (setup.value >> 8) as u8;
+                let index = (setup.value & 0xFF) as u8;
+                self.get_descriptor(desc_type, index)
+            }
+            (0x81, REQ_GET_DESCRIPTOR) => {
+                if setup.index != 0 {
+                    return None;
+                }
                 let desc_type = (setup.value >> 8) as u8;
                 let index = (setup.value & 0xFF) as u8;
                 self.get_descriptor(desc_type, index)
@@ -404,6 +412,9 @@ impl UsbHidPassthrough {
                 (setup.value == 0 && setup.index == 0).then_some(vec![0u8])
             }
             (0xA1, REQ_HID_GET_REPORT) => {
+                if setup.index != 0 {
+                    return None;
+                }
                 let report_type = (setup.value >> 8) as u8;
                 let report_id = (setup.value & 0xFF) as u8;
                 let data = match report_type {
@@ -432,8 +443,12 @@ impl UsbHidPassthrough {
                 };
                 Some(data)
             }
-            (0xA1, REQ_HID_GET_PROTOCOL) => Some(vec![self.protocol]),
-            (0xA1, REQ_HID_GET_IDLE) => Some(vec![self.idle_rate]),
+            (0xA1, REQ_HID_GET_PROTOCOL) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![self.protocol])
+            }
+            (0xA1, REQ_HID_GET_IDLE) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![self.idle_rate])
+            }
             _ => None,
         }
     }
@@ -504,11 +519,21 @@ impl UsbHidPassthrough {
                 false
             }
             (0x21, REQ_HID_SET_IDLE) => {
+                if setup.index != 0 {
+                    return false;
+                }
                 self.idle_rate = (setup.value >> 8) as u8;
                 true
             }
             (0x21, REQ_HID_SET_PROTOCOL) => {
-                self.protocol = (setup.value & 0xFF) as u8;
+                if setup.index != 0 || (setup.value & 0xFF00) != 0 {
+                    return false;
+                }
+                let protocol = (setup.value & 0xFF) as u8;
+                if protocol > 1 {
+                    return false;
+                }
+                self.protocol = protocol;
                 true
             }
             _ => false,
@@ -591,7 +616,7 @@ impl UsbDevice for UsbHidPassthrough {
             matches!(
                 (setup.request_type, setup.request),
                 (0x21, REQ_HID_SET_REPORT)
-            )
+            ) && setup.index == 0
         };
 
         if !supported {

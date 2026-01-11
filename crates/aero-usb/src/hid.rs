@@ -396,7 +396,15 @@ impl UsbHidKeyboard {
 
     fn handle_setup_inner(&mut self, setup: SetupPacket) -> Option<Vec<u8>> {
         match (setup.request_type, setup.request) {
-            (0x80, REQ_GET_DESCRIPTOR) | (0x81, REQ_GET_DESCRIPTOR) => {
+            (0x80, REQ_GET_DESCRIPTOR) => {
+                let desc_type = (setup.value >> 8) as u8;
+                let index = (setup.value & 0xFF) as u8;
+                self.get_descriptor(desc_type, index)
+            }
+            (0x81, REQ_GET_DESCRIPTOR) => {
+                if setup.index != 0 {
+                    return None;
+                }
                 let desc_type = (setup.value >> 8) as u8;
                 let index = (setup.value & 0xFF) as u8;
                 self.get_descriptor(desc_type, index)
@@ -430,6 +438,9 @@ impl UsbHidKeyboard {
                 (setup.value == 0 && setup.index == 0).then_some(vec![0u8])
             }
             (0xA1, REQ_HID_GET_REPORT) => {
+                if setup.index != 0 || (setup.value & 0xFF) != 0 {
+                    return None;
+                }
                 let report_type = (setup.value >> 8) as u8;
                 match report_type {
                     1 => Some(
@@ -441,8 +452,12 @@ impl UsbHidKeyboard {
                     _ => None,
                 }
             }
-            (0xA1, REQ_HID_GET_PROTOCOL) => Some(vec![self.protocol]),
-            (0xA1, REQ_HID_GET_IDLE) => Some(vec![self.idle_rate]),
+            (0xA1, REQ_HID_GET_PROTOCOL) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![self.protocol])
+            }
+            (0xA1, REQ_HID_GET_IDLE) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![self.idle_rate])
+            }
             _ => None,
         }
     }
@@ -501,11 +516,21 @@ impl UsbHidKeyboard {
                 }
             }
             (0x21, REQ_HID_SET_IDLE) => {
+                if setup.index != 0 || (setup.value & 0xFF) != 0 {
+                    return false;
+                }
                 self.idle_rate = (setup.value >> 8) as u8;
                 true
             }
             (0x21, REQ_HID_SET_PROTOCOL) => {
-                self.protocol = (setup.value & 0xFF) as u8;
+                if setup.index != 0 || (setup.value & 0xFF00) != 0 {
+                    return false;
+                }
+                let protocol = (setup.value & 0xFF) as u8;
+                if protocol > 1 {
+                    return false;
+                }
+                self.protocol = protocol;
                 true
             }
             _ => false,
@@ -576,7 +601,7 @@ impl UsbDevice for UsbHidKeyboard {
             matches!(
                 (setup.request_type, setup.request),
                 (0x21, REQ_HID_SET_REPORT)
-            )
+            ) && setup.index == 0
         };
 
         if !supported {
@@ -891,7 +916,15 @@ impl UsbHidMouse {
 
     fn handle_setup_inner(&mut self, setup: SetupPacket) -> Option<Vec<u8>> {
         match (setup.request_type, setup.request) {
-            (0x80, REQ_GET_DESCRIPTOR) | (0x81, REQ_GET_DESCRIPTOR) => {
+            (0x80, REQ_GET_DESCRIPTOR) => {
+                let desc_type = (setup.value >> 8) as u8;
+                let index = (setup.value & 0xFF) as u8;
+                self.get_descriptor(desc_type, index)
+            }
+            (0x81, REQ_GET_DESCRIPTOR) => {
+                if setup.index != 0 {
+                    return None;
+                }
                 let desc_type = (setup.value >> 8) as u8;
                 let index = (setup.value & 0xFF) as u8;
                 self.get_descriptor(desc_type, index)
@@ -925,14 +958,21 @@ impl UsbHidMouse {
                 (setup.value == 0 && setup.index == 0).then_some(vec![0u8])
             }
             (0xA1, REQ_HID_GET_REPORT) => {
+                if setup.index != 0 || (setup.value & 0xFF) != 0 {
+                    return None;
+                }
                 let report_type = (setup.value >> 8) as u8;
                 match report_type {
                     1 => Some(vec![self.buttons & 0x07, 0, 0, 0]),
                     _ => None,
                 }
             }
-            (0xA1, REQ_HID_GET_PROTOCOL) => Some(vec![self.protocol]),
-            (0xA1, REQ_HID_GET_IDLE) => Some(vec![self.idle_rate]),
+            (0xA1, REQ_HID_GET_PROTOCOL) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![self.protocol])
+            }
+            (0xA1, REQ_HID_GET_IDLE) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![self.idle_rate])
+            }
             _ => None,
         }
     }
@@ -991,11 +1031,21 @@ impl UsbHidMouse {
                 }
             }
             (0x21, REQ_HID_SET_IDLE) => {
+                if setup.index != 0 || (setup.value & 0xFF) != 0 {
+                    return false;
+                }
                 self.idle_rate = (setup.value >> 8) as u8;
                 true
             }
             (0x21, REQ_HID_SET_PROTOCOL) => {
-                self.protocol = (setup.value & 0xFF) as u8;
+                if setup.index != 0 || (setup.value & 0xFF00) != 0 {
+                    return false;
+                }
+                let protocol = (setup.value & 0xFF) as u8;
+                if protocol > 1 {
+                    return false;
+                }
+                self.protocol = protocol;
                 true
             }
             _ => false,
@@ -1065,7 +1115,7 @@ impl UsbDevice for UsbHidMouse {
             matches!(
                 (setup.request_type, setup.request),
                 (0x21, REQ_HID_SET_REPORT)
-            )
+            ) && setup.index == 0
         };
 
         if !supported {
@@ -1437,7 +1487,15 @@ impl UsbHidGamepad {
 
     fn handle_setup_inner(&mut self, setup: SetupPacket) -> Option<Vec<u8>> {
         match (setup.request_type, setup.request) {
-            (0x80, REQ_GET_DESCRIPTOR) | (0x81, REQ_GET_DESCRIPTOR) => {
+            (0x80, REQ_GET_DESCRIPTOR) => {
+                let desc_type = (setup.value >> 8) as u8;
+                let index = (setup.value & 0xFF) as u8;
+                self.get_descriptor(desc_type, index)
+            }
+            (0x81, REQ_GET_DESCRIPTOR) => {
+                if setup.index != 0 {
+                    return None;
+                }
                 let desc_type = (setup.value >> 8) as u8;
                 let index = (setup.value & 0xFF) as u8;
                 self.get_descriptor(desc_type, index)
@@ -1471,14 +1529,21 @@ impl UsbHidGamepad {
                 (setup.value == 0 && setup.index == 0).then_some(vec![0u8])
             }
             (0xA1, REQ_HID_GET_REPORT) => {
+                if setup.index != 0 || (setup.value & 0xFF) != 0 {
+                    return None;
+                }
                 let report_type = (setup.value >> 8) as u8;
                 match report_type {
                     1 => Some(self.report.to_bytes().to_vec()),
                     _ => None,
                 }
             }
-            (0xA1, REQ_HID_GET_PROTOCOL) => Some(vec![self.protocol]),
-            (0xA1, REQ_HID_GET_IDLE) => Some(vec![self.idle_rate]),
+            (0xA1, REQ_HID_GET_PROTOCOL) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![self.protocol])
+            }
+            (0xA1, REQ_HID_GET_IDLE) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![self.idle_rate])
+            }
             _ => None,
         }
     }
@@ -1537,11 +1602,21 @@ impl UsbHidGamepad {
                 }
             }
             (0x21, REQ_HID_SET_IDLE) => {
+                if setup.index != 0 || (setup.value & 0xFF) != 0 {
+                    return false;
+                }
                 self.idle_rate = (setup.value >> 8) as u8;
                 true
             }
             (0x21, REQ_HID_SET_PROTOCOL) => {
-                self.protocol = (setup.value & 0xFF) as u8;
+                if setup.index != 0 || (setup.value & 0xFF00) != 0 {
+                    return false;
+                }
+                let protocol = (setup.value & 0xFF) as u8;
+                if protocol > 1 {
+                    return false;
+                }
+                self.protocol = protocol;
                 true
             }
             _ => false,
@@ -1608,7 +1683,7 @@ impl UsbDevice for UsbHidGamepad {
             matches!(
                 (setup.request_type, setup.request),
                 (0x21, REQ_HID_SET_REPORT)
-            )
+            ) && setup.index == 0
         };
 
         if !supported {
@@ -2038,7 +2113,15 @@ impl UsbHidCompositeInput {
     fn handle_setup_inner(&mut self, setup: SetupPacket) -> Option<Vec<u8>> {
         let interface = (setup.index & 0xFF) as u8;
         match (setup.request_type, setup.request) {
-            (0x80, REQ_GET_DESCRIPTOR) | (0x81, REQ_GET_DESCRIPTOR) => {
+            (0x80, REQ_GET_DESCRIPTOR) => {
+                let desc_type = (setup.value >> 8) as u8;
+                let index = (setup.value & 0xFF) as u8;
+                self.get_descriptor(desc_type, index, interface)
+            }
+            (0x81, REQ_GET_DESCRIPTOR) => {
+                if setup.index > 2 {
+                    return None;
+                }
                 let desc_type = (setup.value >> 8) as u8;
                 let index = (setup.value & 0xFF) as u8;
                 self.get_descriptor(desc_type, index, interface)
@@ -2074,6 +2157,9 @@ impl UsbHidCompositeInput {
                 (setup.value == 0 && setup.index <= 2).then_some(vec![0u8])
             }
             (0xA1, REQ_HID_GET_REPORT) => {
+                if setup.index > 2 || (setup.value & 0xFF) != 0 {
+                    return None;
+                }
                 let report_type = (setup.value >> 8) as u8;
                 match (interface, report_type) {
                     (0, 1) => Some(
@@ -2097,11 +2183,13 @@ impl UsbHidCompositeInput {
                 .protocols
                 .get(interface as usize)
                 .copied()
+                .filter(|_| setup.value == 0 && setup.index <= 2)
                 .map(|v| vec![v]),
             (0xA1, REQ_HID_GET_IDLE) => self
                 .idle_rates
                 .get(interface as usize)
                 .copied()
+                .filter(|_| setup.value == 0 && setup.index <= 2)
                 .map(|v| vec![v]),
             _ => None,
         }
@@ -2170,6 +2258,9 @@ impl UsbHidCompositeInput {
                 true
             }
             (0x21, REQ_HID_SET_IDLE) => {
+                if setup.index > 2 || (setup.value & 0xFF) != 0 {
+                    return false;
+                }
                 if let Some(rate) = self.idle_rates.get_mut(interface) {
                     *rate = (setup.value >> 8) as u8;
                     true
@@ -2178,8 +2269,15 @@ impl UsbHidCompositeInput {
                 }
             }
             (0x21, REQ_HID_SET_PROTOCOL) => {
+                if setup.index > 2 || (setup.value & 0xFF00) != 0 {
+                    return false;
+                }
+                let protocol = (setup.value & 0xFF) as u8;
+                if protocol > 1 {
+                    return false;
+                }
                 if let Some(proto) = self.protocols.get_mut(interface) {
-                    *proto = (setup.value & 0xFF) as u8;
+                    *proto = protocol;
                     true
                 } else {
                     false
@@ -2256,7 +2354,7 @@ impl UsbDevice for UsbHidCompositeInput {
             matches!(
                 (setup.request_type, setup.request),
                 (0x21, REQ_HID_SET_REPORT)
-            )
+            ) && setup.index <= 2
         };
 
         if !supported {
