@@ -118,7 +118,7 @@ export function gamepadButtonsToBitfield(buttons: readonly GamepadButtonLike[]):
 
 /**
  * 8-byte report layout (little-endian):
- *   (Must match `crates/emulator/src/io/usb/hid/gamepad.rs`.)
+ *   (Must match `crates/aero-usb/src/hid.rs::GamepadReport`.)
  *   Byte 0: buttons low 8
  *   Byte 1: buttons high 8
  *   Byte 2: hat (low 4 bits; 8=neutral/null)
@@ -132,7 +132,7 @@ export function packGamepadReport(fields: GamepadReportFields): PackedGamepadRep
   const buttons = fields.buttons & 0xffff;
   const b0 = buttons & 0xff;
   const b1 = (buttons >>> 8) & 0xff;
-  // Match emulator-side clamping semantics (`UsbHidGamepad::set_hat` / `set_axes`).
+  // Match Rust-side clamping semantics (`UsbHidGamepad::set_hat` / `set_axes` in `crates/aero-usb/src/hid.rs`).
   const hat = Number.isFinite(fields.hat) && fields.hat >= 0 && fields.hat <= GAMEPAD_HAT_NEUTRAL ? fields.hat : GAMEPAD_HAT_NEUTRAL;
   const b2 = hat & 0x0f;
   const x = Math.max(-127, Math.min(127, fields.x | 0));

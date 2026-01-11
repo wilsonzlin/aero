@@ -10,8 +10,9 @@
 // - deep-copied (no retained references to platform objects)
 // - arrays are real JS arrays (via Array.from)
 // - shape matches the Rust `HidCollectionInfo`/`HidReportInfo`/`HidReportItem`
-//   structs in `crates/emulator/src/io/usb/hid/webhid.rs` and is locked down by
-//   fixtures under `tests/fixtures/hid/`.
+//   structs in `crates/aero-usb/src/hid/webhid.rs` and is locked down by fixtures
+//   under `tests/fixtures/hid/` (the native emulator stack mirrors the same schema
+//   under `crates/emulator/src/io/usb/hid/webhid.rs`).
 
 export type HidCollectionType =
   | "physical"
