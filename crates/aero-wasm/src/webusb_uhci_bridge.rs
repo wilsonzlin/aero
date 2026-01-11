@@ -409,6 +409,12 @@ impl WebUsbUhciBridge {
 
         // Ensure the topology exists before restoring port-connected state. The controller snapshot
         // includes per-port connected/enabled bits but does not create USB device instances.
+        if r.bytes(TAG_EXTERNAL_HUB).is_some() && self.external_hub().is_none() {
+            self.controller.connect_device(
+                ROOT_PORT_EXTERNAL_HUB,
+                Box::new(UsbHubDevice::with_port_count(EXTERNAL_HUB_PORT_COUNT)),
+            );
+        }
         if r.bytes(TAG_WEBUSB_DEVICE).is_some() {
             self.set_connected(true);
         }
