@@ -6049,6 +6049,7 @@ HRESULT AEROGPU_D3D9_CALL device_lock(
                                            res->wddm_hAllocation,
                                            offset,
                                            size,
+                                           res->locked_flags,
                                            &ptr);
     if (FAILED(hr) || !ptr) {
       res->locked = false;

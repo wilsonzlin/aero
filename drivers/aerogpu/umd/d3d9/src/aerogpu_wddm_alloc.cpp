@@ -171,6 +171,90 @@ struct has_member_pData : std::false_type {};
 template <typename T>
 struct has_member_pData<T, std::void_t<decltype(std::declval<T&>().pData)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_Flags : std::false_type {};
+
+template <typename T>
+struct has_member_Flags<T, std::void_t<decltype(std::declval<T&>().Flags)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_flags : std::false_type {};
+
+template <typename T>
+struct has_member_flags<T, std::void_t<decltype(std::declval<T&>().flags)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Value : std::false_type {};
+
+template <typename T>
+struct has_member_Value<T, std::void_t<decltype(std::declval<T&>().Value)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Discard : std::false_type {};
+
+template <typename T>
+struct has_member_Discard<T, std::void_t<decltype(std::declval<T&>().Discard)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NoOverwrite : std::false_type {};
+
+template <typename T>
+struct has_member_NoOverwrite<T, std::void_t<decltype(std::declval<T&>().NoOverwrite)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NoOverWrite : std::false_type {};
+
+template <typename T>
+struct has_member_NoOverWrite<T, std::void_t<decltype(std::declval<T&>().NoOverWrite)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_ReadOnly : std::false_type {};
+
+template <typename T>
+struct has_member_ReadOnly<T, std::void_t<decltype(std::declval<T&>().ReadOnly)>> : std::true_type {};
+
+// D3DLOCK_* flags (numeric values from d3d9.h). Only the bits we care about are
+// defined here to keep the allocation helper self-contained.
+constexpr uint32_t kD3DLOCK_READONLY = 0x00000010u;
+constexpr uint32_t kD3DLOCK_DISCARD = 0x00002000u;
+constexpr uint32_t kD3DLOCK_NOOVERWRITE = 0x00001000u;
+
+template <typename FlagsT>
+void set_lock_flags(FlagsT& flags, uint32_t lock_flags) {
+  const bool discard = (lock_flags & kD3DLOCK_DISCARD) != 0;
+  const bool no_overwrite = (lock_flags & kD3DLOCK_NOOVERWRITE) != 0;
+  const bool read_only = (lock_flags & kD3DLOCK_READONLY) != 0;
+
+  constexpr bool has_bitfields = has_member_Discard<FlagsT>::value ||
+                                 has_member_NoOverwrite<FlagsT>::value ||
+                                 has_member_NoOverWrite<FlagsT>::value ||
+                                 has_member_ReadOnly<FlagsT>::value;
+  if constexpr (has_bitfields) {
+    if constexpr (has_member_Discard<FlagsT>::value) {
+      flags.Discard = discard ? 1u : 0u;
+    }
+    if constexpr (has_member_NoOverwrite<FlagsT>::value) {
+      flags.NoOverwrite = no_overwrite ? 1u : 0u;
+    }
+    if constexpr (has_member_NoOverWrite<FlagsT>::value) {
+      flags.NoOverWrite = no_overwrite ? 1u : 0u;
+    }
+    if constexpr (has_member_ReadOnly<FlagsT>::value) {
+      flags.ReadOnly = read_only ? 1u : 0u;
+    }
+  } else if constexpr (has_member_Value<FlagsT>::value &&
+                       std::is_integral_v<std::remove_reference_t<decltype(std::declval<FlagsT&>().Value)>>) {
+    // Fallback: if the flag struct only exposes a `Value` member, assume it uses
+    // the D3DLOCK bit layout (Win7-compatible).
+    flags.Value = static_cast<decltype(flags.Value)>(lock_flags);
+  } else if constexpr (std::is_integral_v<std::remove_reference_t<FlagsT>>) {
+    flags = static_cast<std::remove_reference_t<FlagsT>>(lock_flags);
+  } else {
+    // Unknown representation; leave flags as zero.
+    (void)lock_flags;
+  }
+}
+
 } // namespace
 
 template <typename CallbackFn>
@@ -347,6 +431,7 @@ HRESULT wddm_lock_allocation(const WddmDeviceCallbacks& callbacks,
                              WddmAllocationHandle hAllocation,
                              uint64_t offset_bytes,
                              uint64_t size_bytes,
+                             uint32_t lock_flags,
                              void** out_ptr) {
   if (!out_ptr) {
     return E_INVALIDARG;
@@ -386,6 +471,12 @@ HRESULT wddm_lock_allocation(const WddmDeviceCallbacks& callbacks,
       data.Size = static_cast<decltype(data.Size)>(size_bytes);
     } else if constexpr (has_member_SizeToLock<Args>::value) {
       data.SizeToLock = static_cast<decltype(data.SizeToLock)>(size_bytes);
+    }
+
+    if constexpr (has_member_Flags<Args>::value) {
+      set_lock_flags(data.Flags, lock_flags);
+    } else if constexpr (has_member_flags<Args>::value) {
+      set_lock_flags(data.flags, lock_flags);
     }
 
     const HRESULT hr = callbacks.pfnLockCb(&data);
@@ -453,6 +544,7 @@ HRESULT wddm_lock_allocation(const WddmDeviceCallbacks&,
                              WddmAllocationHandle,
                              uint64_t,
                              uint64_t,
+                             uint32_t,
                              void**) {
   return E_NOTIMPL;
 }

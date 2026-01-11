@@ -38,7 +38,8 @@ HRESULT wddm_lock_allocation(const WddmDeviceCallbacks& callbacks,
                              WddmAllocationHandle hAllocation,
                              uint64_t offset_bytes,
                              uint64_t size_bytes,
-                             void** out_ptr);
+                             uint32_t lock_flags = 0,
+                             void** out_ptr = nullptr);
 
 HRESULT wddm_unlock_allocation(const WddmDeviceCallbacks& callbacks,
                                WddmHandle hDevice,
