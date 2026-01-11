@@ -130,9 +130,11 @@ export const decodeAerogpuAllocTable = (buf: ArrayBuffer): AeroGpuAllocTable => 
 
   const entryCount = dv.getUint32(12, true);
   const entryStrideBytes = dv.getUint32(16, true);
-  if (entryStrideBytes !== AEROGPU_ALLOC_ENTRY_BYTES) {
+  // Forward-compat: newer guests may extend `aerogpu_alloc_entry` and increase the declared
+  // stride. We only read the entry prefix we understand.
+  if (entryStrideBytes < AEROGPU_ALLOC_ENTRY_BYTES) {
     throw new Error(
-      `aerogpu: invalid alloc table entry_stride_bytes=${entryStrideBytes} (expected ${AEROGPU_ALLOC_ENTRY_BYTES})`,
+      `aerogpu: invalid alloc table entry_stride_bytes=${entryStrideBytes} (expected at least ${AEROGPU_ALLOC_ENTRY_BYTES})`,
     );
   }
 

@@ -24,8 +24,9 @@ import {
 
 function buildAllocTable(
   entries: Array<{ allocId: number; flags: number; gpa: number; sizeBytes: number }>,
+  entryStrideBytes: number = AEROGPU_ALLOC_ENTRY_SIZE,
 ): ArrayBuffer {
-  const totalSize = AEROGPU_ALLOC_TABLE_HEADER_SIZE + entries.length * AEROGPU_ALLOC_ENTRY_SIZE;
+  const totalSize = AEROGPU_ALLOC_TABLE_HEADER_SIZE + entries.length * entryStrideBytes;
   const buf = new ArrayBuffer(totalSize);
   const view = new DataView(buf);
 
@@ -33,16 +34,19 @@ function buildAllocTable(
   view.setUint32(4, AEROGPU_ABI_VERSION_U32, true);
   view.setUint32(8, totalSize, true);
   view.setUint32(12, entries.length, true);
-  view.setUint32(16, AEROGPU_ALLOC_ENTRY_SIZE, true);
+  view.setUint32(16, entryStrideBytes, true);
 
   for (let i = 0; i < entries.length; i += 1) {
     const e = entries[i]!;
-    const base = AEROGPU_ALLOC_TABLE_HEADER_SIZE + i * AEROGPU_ALLOC_ENTRY_SIZE;
+    const base = AEROGPU_ALLOC_TABLE_HEADER_SIZE + i * entryStrideBytes;
     view.setUint32(base + 0, e.allocId, true);
     view.setUint32(base + 4, e.flags, true);
     view.setBigUint64(base + 8, BigInt(e.gpa), true);
     view.setBigUint64(base + 16, BigInt(e.sizeBytes), true);
     view.setBigUint64(base + 24, 0n, true);
+    if (entryStrideBytes > AEROGPU_ALLOC_ENTRY_SIZE) {
+      view.setUint32(base + AEROGPU_ALLOC_ENTRY_SIZE, 0xdeadbeef, true);
+    }
   }
 
   return buf;
@@ -87,6 +91,15 @@ test("ACMD COPY_BUFFER writeback rejects READONLY allocs", () => {
 test("decodeAerogpuAllocTable rejects entries with gpa=0", () => {
   const allocTableBuf = buildAllocTable([{ allocId: 1, flags: 0, gpa: 0, sizeBytes: 128 }]);
   assert.throws(() => decodeAerogpuAllocTable(allocTableBuf), /gpa=0/);
+});
+
+test("decodeAerogpuAllocTable accepts extended entry_stride_bytes", () => {
+  const allocTableBuf = buildAllocTable(
+    [{ allocId: 1, flags: 0, gpa: 100, sizeBytes: 128 }],
+    AEROGPU_ALLOC_ENTRY_SIZE + 16,
+  );
+  const allocTable = decodeAerogpuAllocTable(allocTableBuf);
+  assert.deepEqual(allocTable.get(1), { gpa: 100, sizeBytes: 128, flags: 0 });
 });
 
 test("ACMD COPY_TEXTURE2D writeback packs rows using row_pitch_bytes and encodes X8 alpha as 255", () => {
