@@ -34,10 +34,9 @@ drivers/windows7/tests/
   (or `--require-snd`).
   - Detects the virtio-snd PCI function by hardware ID:
     - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01`)
-    - `PCI\VEN_1AF4&DEV_1018` (transitional; stock QEMU default)
-    - The selftest only accepts transitional `DEV_1018` when `--allow-virtio-snd-transitional` is set.
-      When using the transitional ID, install the opt-in legacy package (`drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf`
-      + `virtiosnd_legacy.sys`).
+    - If the device enumerates as a transitional virtio-snd PCI ID (stock QEMU defaults), the selftest only accepts it
+      when `--allow-virtio-snd-transitional` is set. In that mode, install the opt-in legacy package
+      (`drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
 - Also emits a `virtio-snd-capture` marker (capture endpoint detection + optional WASAPI capture smoke test).
 - Logs to:
   - stdout
@@ -66,8 +65,8 @@ Note:
 - virtio-snd playback is **skipped by default**; enable it with `--test-snd` / `--require-snd`.
   When enabled, missing virtio-snd or playback failure causes the overall selftest to FAIL.
   Use `--disable-snd` to force `SKIP` for both playback and capture.
-  - For stock QEMU transitional virtio-snd (`DEV_1018`), also pass `--allow-virtio-snd-transitional` and install the
-    legacy virtio-snd package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
+  - For stock QEMU transitional virtio-snd, also pass `--allow-virtio-snd-transitional` and install the legacy
+    virtio-snd package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
 - Capture is reported separately via the `virtio-snd-capture` marker. Missing capture is `SKIP` by default unless
   `--require-snd-capture` is set. Use `--test-snd-capture` to run the capture smoke test (otherwise only endpoint
   detection is performed).
