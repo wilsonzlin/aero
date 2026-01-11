@@ -166,6 +166,7 @@ export default defineConfig({
         main: resolve(rootDir, "index.html"),
         debug: resolve(rootDir, "debug.html"),
         ipc_demo: resolve(rootDir, "demo/ipc_demo.html"),
+        webusb_diagnostics: resolve(rootDir, "webusb_diagnostics.html"),
       },
     },
   },

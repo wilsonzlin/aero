@@ -172,6 +172,19 @@ Aero prefers **WebGPU** when available, but can fall back to **WebGL2** (reduced
 
 The fallback backend is implemented under `web/src/graphics/` and includes a standalone demo page at `web/webgl2_fallback_demo.html`. CI covers this path via a Playwright smoke test that forces `navigator.gpu` to be unavailable and verifies WebGL2 rendering still works.
 
+## WebUSB diagnostics (bulk device feasibility / bug reports)
+
+To inspect what WebUSB can “see” on a developer machine (and why a device might not appear in the chooser), open:
+
+- `web/webusb_diagnostics.html`
+
+The diagnostics page:
+
+- Calls `navigator.usb.requestDevice(...)` via a broad filter.
+- Prints the selected device’s configurations / interfaces / endpoints.
+- Marks interfaces that are likely **WebUSB-protected** (e.g. HID / Mass Storage) vs **claimable**.
+- Offers a best-effort “open + claim” button for the first claimable interface.
+
 ## WASM builds (threaded vs single fallback)
 
 Browsers only enable `SharedArrayBuffer` (and therefore WASM shared memory / threads) in **cross-origin isolated**
