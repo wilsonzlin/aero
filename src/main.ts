@@ -325,6 +325,8 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let selectedDevice: any | null = null;
   let selectedSummary: Record<string, unknown> | null = null;
+  let workerProbe: Record<string, unknown> | null = null;
+  let workerProbeError: { name: string; message: string } | null = null;
 
   function serializeError(err: unknown): { name: string; message: string } {
     if (err instanceof DOMException) return { name: err.name, message: err.message };
@@ -389,9 +391,27 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       .userActivation;
     const liveSummary = selectedDevice ? summarizeUsbDevice(selectedDevice) : selectedSummary;
     if (selectedDevice) selectedSummary = liveSummary;
+
+    const workerHasUsb = typeof workerProbe?.hasUsb === 'boolean' ? (workerProbe.hasUsb as boolean) : null;
+    const workerHasRequestDevice =
+      typeof workerProbe?.hasRequestDevice === 'boolean' ? (workerProbe.hasRequestDevice as boolean) : null;
+    const workerRequestDevice =
+      workerProbe && typeof workerProbe.requestDevice === 'object' && workerProbe.requestDevice !== null
+        ? (workerProbe.requestDevice as { ok?: unknown; error?: unknown })
+        : null;
+    const workerRequestDeviceText =
+      workerRequestDevice && workerRequestDevice.ok === true
+        ? 'resolved'
+        : workerRequestDevice && workerRequestDevice.ok === false
+          ? 'rejected'
+          : 'not run';
+
     info.textContent =
       `isSecureContext=${(globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true}\n` +
       `navigator.usb=${report.webusb ? 'present' : 'missing'}\n` +
+      `worker navigator.usb=${workerHasUsb === null ? '(probe pending)' : workerHasUsb ? 'present' : 'missing'}\n` +
+      `worker requestDevice=${workerHasRequestDevice === null ? '(probe pending)' : workerHasRequestDevice ? 'function' : 'missing'} (${workerRequestDeviceText})\n` +
+      `workerProbeError=${workerProbeError ? `${workerProbeError.name}: ${workerProbeError.message}` : 'none'}\n` +
       `userActivation.isActive=${userActivation?.isActive ?? 'n/a'}\n` +
       `userActivation.hasBeenActive=${userActivation?.hasBeenActive ?? 'n/a'}\n` +
       `selectedDevice=${liveSummary ? JSON.stringify(liveSummary) : 'none'}\n`;
@@ -416,12 +436,22 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   async function runWorkerProbe(): Promise<void> {
     output.textContent = '';
     clearError();
+    workerProbe = null;
+    workerProbeError = null;
+    updateInfo();
     try {
       const resp = await runWebUsbProbeWorker({ type: 'probe' });
+      workerProbe =
+        resp && typeof resp === 'object' && !Array.isArray(resp)
+          ? ((resp as { report?: unknown }).report as Record<string, unknown> | null) ?? null
+          : null;
       output.textContent = JSON.stringify(resp, null, 2);
+      updateInfo();
     } catch (err) {
+      workerProbeError = serializeError(err);
       showError(err);
       output.textContent = JSON.stringify({ ok: false, error: serializeError(err) }, null, 2);
+      updateInfo();
     }
   }
 
