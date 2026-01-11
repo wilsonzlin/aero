@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createIpcBuffer, openRingByKind } from "../ipc/ipc";
 import { WebHidPassthroughManager } from "../platform/webhid_passthrough";
+import { StatusIndex } from "../runtime/shared_layout";
 import { HidReportRing, HidReportType } from "../usb/hid_report_ring";
 import { decodeHidInputReportRingRecord } from "./hid_input_report_ring";
 import { WebHidBroker } from "./webhid_broker";
@@ -232,6 +233,48 @@ describe("hid/WebHidBroker", () => {
       expect(decoded!.deviceId).toBe(attach!.deviceId);
       expect(decoded!.reportId).toBe(5);
       expect(Array.from(decoded!.data)).toEqual([1, 2, 3]);
+    } finally {
+      if (prev) {
+        Object.defineProperty(globalThis, "crossOriginIsolated", prev);
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        delete (globalThis as any).crossOriginIsolated;
+      }
+    }
+  });
+
+  it("increments the drop counter when the input report ring is full", async () => {
+    const prev = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      // Capacity chosen so exactly one small input report fits.
+      const kind = 1;
+      const sab = createIpcBuffer([{ kind, capacityBytes: 32 }]).buffer;
+      const ring = openRingByKind(sab, kind);
+      const status = new Int32Array(new SharedArrayBuffer(64 * 4));
+      broker.setInputReportRing(ring, status);
+
+      const device = new FakeHidDevice();
+      await broker.attachDevice(device as unknown as HIDDevice);
+
+      device.dispatchInputReport(1, Uint8Array.of(1, 2, 3));
+      device.dispatchInputReport(2, Uint8Array.of(4, 5, 6));
+
+      expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.inputReport")).toBe(false);
+
+      const firstPayload = ring.tryPop();
+      expect(firstPayload).toBeTruthy();
+      const first = decodeHidInputReportRingRecord(firstPayload!);
+      expect(first).toBeTruthy();
+      expect(first!.reportId).toBe(1);
+      expect(ring.tryPop()).toBeNull();
+
+      expect(Atomics.load(status, StatusIndex.IoHidInputReportDropCounter)).toBe(1);
     } finally {
       if (prev) {
         Object.defineProperty(globalThis, "crossOriginIsolated", prev);
