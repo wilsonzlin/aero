@@ -382,7 +382,7 @@ bool AerogpuKmdQuery::ProbeUmdPrivateTypeLocked() {
       continue;
     }
 
-    if (blob.size_bytes != sizeof(blob) || blob.struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
+    if (blob.size_bytes < sizeof(blob) || blob.struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
       continue;
     }
 
@@ -473,7 +473,7 @@ bool AerogpuKmdQuery::QueryUmdPrivate(aerogpu_umd_private_v1* out) {
     return false;
   }
 
-  if (out->size_bytes != sizeof(*out) || out->struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
+  if (out->size_bytes < sizeof(*out) || out->struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
     return false;
   }
   return true;

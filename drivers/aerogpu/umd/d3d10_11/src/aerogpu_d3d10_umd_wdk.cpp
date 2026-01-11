@@ -352,7 +352,7 @@ static bool QueryUmdPrivateFromPrimaryDisplay(aerogpu_umd_private_v1* out) {
       continue;
     }
 
-    if (blob.size_bytes != sizeof(blob) || blob.struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
+    if (blob.size_bytes < sizeof(blob) || blob.struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
       continue;
     }
 
