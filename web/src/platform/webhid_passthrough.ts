@@ -312,8 +312,13 @@ export class WebHidPassthroughManager {
               dest.set(src, HID_INPUT_REPORT_RECORD_HEADER_BYTES);
             });
             if (ok) return;
-            if (this.#status) {
-              Atomics.add(this.#status, StatusIndex.IoHidInputReportDropCounter, 1);
+            const status = this.#status;
+            if (status) {
+              try {
+                Atomics.add(status, StatusIndex.IoHidInputReportDropCounter, 1);
+              } catch {
+                // ignore (status may not be SharedArrayBuffer-backed in tests/harnesses)
+              }
             }
             return;
           }
