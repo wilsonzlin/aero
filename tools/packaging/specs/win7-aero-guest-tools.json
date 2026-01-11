@@ -4,7 +4,8 @@
       "name": "aerogpu",
       "required": true,
       "expected_hardware_ids": [
-        "PCI\\\\VEN_A3A0&DEV_0001"
+        "PCI\\\\VEN_A3A0&DEV_0001",
+        "PCI\\\\VEN_1AED&DEV_0001"
       ]
     },
     {

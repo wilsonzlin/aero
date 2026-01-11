@@ -41,6 +41,12 @@ class DevicesConfig:
     aero_gpu_hwids: Tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class SpecDriver:
+    required: bool
+    expected_hardware_ids: Tuple[str, ...]
+
+
 def _resolve_path(value: str) -> Path:
     path = Path(value)
     if not path.is_absolute():
@@ -135,7 +141,7 @@ def load_devices_cmd(path: Path) -> DevicesConfig:
     )
 
 
-def load_packaging_spec_expected_hwids(path: Path) -> Mapping[str, Tuple[str, ...]]:
+def load_packaging_spec(path: Path) -> Mapping[str, SpecDriver]:
     if not path.exists():
         raise ValidationError(f"Packaging spec not found: {path}")
 
@@ -149,6 +155,17 @@ def load_packaging_spec_expected_hwids(path: Path) -> Mapping[str, Tuple[str, ..
     # - Legacy: {"required_drivers": [{"name": "...", "expected_hardware_ids": [...]}, ...]}
     #
     # We merge both if present, matching aero_packager behavior.
+    out: Dict[str, Dict[str, object]] = {}
+
+    def merge_driver(*, name: str, required: bool, patterns: Sequence[str]) -> None:
+        entry = out.setdefault(name, {"required": False, "patterns": []})
+        entry["required"] = bool(entry["required"]) or required
+        existing_patterns = entry["patterns"]
+        assert isinstance(existing_patterns, list)
+        for pattern in patterns:
+            if pattern not in existing_patterns:
+                existing_patterns.append(pattern)
+
     def add_entries(field: str) -> None:
         entries = spec.get(field)
         if entries is None:
@@ -162,25 +179,46 @@ def load_packaging_spec_expected_hwids(path: Path) -> Mapping[str, Tuple[str, ..
             hwids = entry.get("expected_hardware_ids")
             if not isinstance(name, str) or not name:
                 raise ValidationError(f"Spec {path} driver entry missing valid 'name': {entry!r}")
+
+            required = False
+            if field == "drivers":
+                required_value = entry.get("required")
+                if not isinstance(required_value, bool):
+                    raise ValidationError(
+                        f"Spec {path} driver {name!r} has invalid/missing 'required' (expected boolean)."
+                    )
+                required = required_value
+            elif field == "required_drivers":
+                required = True
+
             if hwids is None:
                 hwids = []
             if not isinstance(hwids, list) or not all(isinstance(x, str) for x in hwids):
                 raise ValidationError(
                     f"Spec {path} driver {name!r} has invalid 'expected_hardware_ids' (expected list[str])."
                 )
-            existing = out.setdefault(name, [])
-            for pattern in hwids:
-                if pattern not in existing:
-                    existing.append(pattern)
 
-    out: Dict[str, List[str]] = {}
+            merge_driver(name=name, required=required, patterns=hwids)
+
     add_entries("drivers")
     add_entries("required_drivers")
 
     if not out:
         raise ValidationError(f"Spec {path} must contain a list field 'drivers' or 'required_drivers'.")
 
-    return {name: tuple(patterns) for name, patterns in out.items()}
+    parsed: Dict[str, SpecDriver] = {}
+    for name, entry in out.items():
+        required_val = entry.get("required", False)
+        patterns_val = entry.get("patterns", [])
+        if not isinstance(required_val, bool) or not isinstance(patterns_val, list):
+            raise ValidationError(f"Spec {path} contains an invalid driver entry for {name!r}.")
+        if not all(isinstance(p, str) for p in patterns_val):
+            raise ValidationError(
+                f"Spec {path} driver {name!r} has invalid expected_hardware_ids (expected list[str])."
+            )
+        parsed[name] = SpecDriver(required=required_val, expected_hardware_ids=tuple(patterns_val))
+
+    return parsed
 
 
 def _compile_patterns(patterns: Sequence[str]) -> List[re.Pattern[str]]:
@@ -278,15 +316,27 @@ def _validate_hwid_contract(
     return match
 
 
-def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str, Tuple[str, ...]]) -> None:
-    missing = [name for name in ("viostor", "netkvm") if name not in spec_expected]
+def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str, SpecDriver]) -> None:
+    # Some specs have an expected minimum set of drivers. Enforce that so the
+    # validator fails loudly if someone accidentally edits the spec to remove a
+    # boot-critical entry.
+    if spec_path.name in ("win7-virtio-win.json", "win7-virtio-full.json"):
+        required_names = ("viostor", "netkvm")
+    elif spec_path.name == "win7-aero-guest-tools.json":
+        required_names = ("aerogpu", "virtio-input")
+    else:
+        required_names = ()
+
+    missing = [name for name in required_names if name not in spec_expected]
     if missing:
         raise ValidationError(
             f"Spec {spec_path} is missing required driver entries: {', '.join(missing)}\n"
             f"Remediation: update {spec_path} to include them."
         )
 
-    if devices.virtio_blk_service.strip().lower() != "viostor":
+    # Only enforce the virtio-win service name when validating a spec that
+    # includes the virtio-win storage driver entry.
+    if "viostor" in spec_expected and devices.virtio_blk_service.strip().lower() != "viostor":
         raise ValidationError(
             "Mismatch: devices.cmd storage service name does not match the virtio-win storage driver.\n"
             "\n"
@@ -300,54 +350,94 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             "  Guest Tools preseed (devices.cmd), and packaging inputs are all updated together.\n"
         )
 
-    blk_match = _validate_hwid_contract(
-        spec_path=spec_path,
-        driver_name="viostor",
-        patterns=spec_expected["viostor"],
-        hwids=devices.virtio_blk_hwids,
+    matches: List[Tuple[str, Tuple[str, str]]] = []
+
+    def maybe_validate(
+        driver_name: str, *, devices_var: str, hwids: Tuple[str, ...], driver_kind: str
+    ) -> None:
+        drv = spec_expected.get(driver_name)
+        if drv is None:
+            return
+        # Optional drivers may not be configured in devices.cmd; only validate
+        # them when HWIDs are present.
+        if not drv.required and not hwids:
+            return
+        match = _validate_hwid_contract(
+            spec_path=spec_path,
+            driver_name=driver_name,
+            patterns=drv.expected_hardware_ids,
+            hwids=hwids,
+            devices_var=devices_var,
+            driver_kind=driver_kind,
+        )
+        matches.append((driver_name, match))
+
+    maybe_validate(
+        "viostor",
         devices_var="AERO_VIRTIO_BLK_HWIDS",
+        hwids=devices.virtio_blk_hwids,
         driver_kind="virtio-blk",
     )
-    net_match = _validate_hwid_contract(
-        spec_path=spec_path,
-        driver_name="netkvm",
-        patterns=spec_expected["netkvm"],
-        hwids=devices.virtio_net_hwids,
+    maybe_validate(
+        "netkvm",
         devices_var="AERO_VIRTIO_NET_HWIDS",
+        hwids=devices.virtio_net_hwids,
         driver_kind="virtio-net",
     )
+    # Upstream virtio-win naming.
+    maybe_validate(
+        "vioinput",
+        devices_var="AERO_VIRTIO_INPUT_HWIDS",
+        hwids=devices.virtio_input_hwids,
+        driver_kind="virtio-input",
+    )
+    maybe_validate(
+        "viosnd",
+        devices_var="AERO_VIRTIO_SND_HWIDS",
+        hwids=devices.virtio_snd_hwids,
+        driver_kind="virtio-snd",
+    )
+    # Aero driver naming.
+    maybe_validate(
+        "virtio-input",
+        devices_var="AERO_VIRTIO_INPUT_HWIDS",
+        hwids=devices.virtio_input_hwids,
+        driver_kind="virtio-input",
+    )
+    maybe_validate(
+        "virtio-snd",
+        devices_var="AERO_VIRTIO_SND_HWIDS",
+        hwids=devices.virtio_snd_hwids,
+        driver_kind="virtio-snd",
+    )
+    maybe_validate(
+        "aerogpu",
+        devices_var="AERO_GPU_HWIDS",
+        hwids=devices.aero_gpu_hwids,
+        driver_kind="aero-gpu",
+    )
 
-    optional_matches: List[Tuple[str, Tuple[str, str]]] = []
-    for driver_name, devices_var, hwids, kind in [
-        ("vioinput", "AERO_VIRTIO_INPUT_HWIDS", devices.virtio_input_hwids, "virtio-input"),
-        ("viosnd", "AERO_VIRTIO_SND_HWIDS", devices.virtio_snd_hwids, "virtio-snd"),
-    ]:
-        patterns = spec_expected.get(driver_name)
-        if patterns is None or not patterns:
-            continue
-        optional_matches.append(
-            (
-                driver_name,
-                _validate_hwid_contract(
-                    spec_path=spec_path,
-                    driver_name=driver_name,
-                    patterns=patterns,
-                    hwids=hwids,
-                    devices_var=devices_var,
-                    driver_kind=kind,
-                ),
-            )
+    if not matches:
+        supported = [
+            "viostor",
+            "netkvm",
+            "vioinput",
+            "viosnd",
+            "virtio-input",
+            "virtio-snd",
+            "aerogpu",
+        ]
+        raise ValidationError(
+            f"Spec {spec_path} does not contain any driver entries that this validator knows how to check.\n"
+            f"Supported driver names: {', '.join(supported)}"
         )
 
-    # Provide context in success output to make debugging CI failures easier.
-    blk_pattern, blk_hwid = blk_match
-    net_pattern, net_hwid = net_match
     print("Guest Tools config/spec validation: OK")
-    print(f"- virtio-blk service : {devices.virtio_blk_service}")
-    print(f"- viostor HWID match : {blk_pattern!r} matched {blk_hwid!r}")
-    print(f"- netkvm HWID match  : {net_pattern!r} matched {net_hwid!r}")
-    for name, (pattern, hwid) in optional_matches:
-        print(f"- {name} HWID match  : {pattern!r} matched {hwid!r}")
+    print(f"- spec: {spec_path}")
+    if "viostor" in spec_expected:
+        print(f"- virtio-blk service : {devices.virtio_blk_service}")
+    for name, (pattern, hwid) in matches:
+        print(f"- {name} HWID match : {pattern!r} matched {hwid!r}")
 
 
 def main(argv: Sequence[str]) -> int:
@@ -369,7 +459,7 @@ def main(argv: Sequence[str]) -> int:
 
     try:
         devices = load_devices_cmd(devices_path)
-        spec_expected = load_packaging_spec_expected_hwids(spec_path)
+        spec_expected = load_packaging_spec(spec_path)
         validate(devices, spec_path, spec_expected)
     except ValidationError as e:
         print(f"ERROR: {e}", file=sys.stderr)

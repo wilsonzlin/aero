@@ -265,11 +265,15 @@ packaging inputs (`tools/packaging/**`, `guest-tools/**`, etc.). It covers:
 - A smoke packaging run that verifies the in-repo `guest-tools/` directory can be packaged (using the
   packager's dummy driver fixtures).
 - A lightweight consistency check that ensures `guest-tools/config/devices.cmd` (service name + HWIDs)
-  stays in sync with the virtio-win packaging specs (`win7-virtio-win.json` + `win7-virtio-full.json`).
+  stays in sync with the in-repo packaging specs:
+  - `win7-virtio-win.json`
+  - `win7-virtio-full.json`
+  - `win7-aero-guest-tools.json`
 
 You can run the same check locally:
 
 ```bash
 python tools/guest-tools/validate_config.py
 python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-virtio-full.json
+python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-aero-guest-tools.json
 ```
