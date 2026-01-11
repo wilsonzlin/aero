@@ -24,6 +24,14 @@ cd "$(git rev-parse --show-toplevel)"
 need_file "docs/repo-layout.md"
 need_file "docs/adr/0001-repo-layout.md"
 
+# Local-only agent notes should never be checked in. They're ignored by default, but
+# `git add -f` would still stage them. Keep the repo clean by failing CI if they
+# become tracked.
+mapfile -t tracked_agent_notes < <(git ls-files | grep -E '(^|/)(scratchpad|handoff)\.md$' || true)
+if (( ${#tracked_agent_notes[@]} > 0 )); then
+  die "local-only agent note file(s) are tracked; remove them from git: ${tracked_agent_notes[*]}"
+fi
+
 # Windows driver CI packaging template guardrails.
 #
 # These files are intended to be copied by new driver authors, so keep them present and
