@@ -405,7 +405,9 @@ Recommended guardrails:
     - UHCI integration tests: `crates/aero-usb/tests/uhci_external_hub.rs`
   - Current host-side WebHID UI assumes an external hub is attached on UHCI root port 0 and allocates
     passthrough devices behind it using guest paths like `0.3`.
-    - UHCI root port 1 is reserved for the guest-visible WebUSB passthrough device.
+    - UHCI root port 1 is reserved for the guest-visible WebUSB passthrough device, so WebHID attachments
+      do not use path `1`. Increase the external hub port count instead if you need more guest attachment
+      paths.
     - Implementation: `web/src/platform/webhid_passthrough.ts` (guest path allocator + UI hint)
 - **No low-speed modeling**
   - Low-speed (1.5 Mbps) USB devices are not modeled correctly yet.
