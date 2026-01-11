@@ -1555,8 +1555,10 @@ fn copy_texture2d_writeback_rejects_readonly_alloc() {
         assert!(
             report.events.iter().any(|e| matches!(
                 e,
-                ExecutorEvent::Error { message, .. }
-                    if message.contains("READONLY") || message.contains("read-only")
+                ExecutorEvent::Error { message, .. } if {
+                    let msg = message.to_ascii_lowercase();
+                    msg.contains("readonly") || msg.contains("read-only")
+                }
             )),
             "expected read-only validation error, got: {:#?}",
             report.events

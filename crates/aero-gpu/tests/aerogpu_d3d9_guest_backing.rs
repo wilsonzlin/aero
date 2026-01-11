@@ -893,10 +893,13 @@ fn d3d9_copy_buffer_writeback_rejects_readonly_alloc() {
         .execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
         .expect_err("execute should fail");
     match err {
-        AerogpuD3d9Error::Validation(msg) => assert!(
-            msg.contains("READONLY"),
-            "expected READONLY validation error, got: {msg}"
-        ),
+        AerogpuD3d9Error::Validation(msg) => {
+            let msg_lc = msg.to_ascii_lowercase();
+            assert!(
+                msg_lc.contains("readonly") || msg_lc.contains("read-only"),
+                "expected READONLY validation error, got: {msg}"
+            );
+        }
         other => panic!("unexpected error: {other}"),
     }
 
