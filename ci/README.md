@@ -96,8 +96,8 @@ WDK redistributables (WDF coinstaller):
 
 Other per-driver packaging manifest features:
 
-- `infFiles`: explicitly select which INF(s) are staged for a driver (useful when a driver ships multiple INFs with overlapping HWIDs and should not be packaged as a single combined folder).
-- `wow64Files`: for x64 packages that need 32-bit user-mode components, copy specific DLLs from the x86 build output into the x64 staging directory *before* stamping INFs + running Inf2Cat.
+- `infFiles`: explicitly select which INF(s) are staged for a driver (useful when a driver ships multiple INFs with overlapping HWIDs and should not be packaged as a single combined folder). If present, the list must be non-empty.
+- `wow64Files`: for x64 packages that need 32-bit user-mode components, copy specific `.dll` file names (no paths) from the x86 build output into the x64 staging directory *before* stamping INFs + running Inf2Cat. Requires x86 build outputs to be present even when generating/staging only x64 packages.
 
 See: `docs/16-driver-packaging-and-signing.md`.
 
