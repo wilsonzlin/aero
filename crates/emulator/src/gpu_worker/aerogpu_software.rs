@@ -110,6 +110,7 @@ struct Scissor {
 #[derive(Clone, Copy, Debug)]
 struct Vertex {
     pos: (f32, f32),
+    depth: f32,
     color: [f32; 4],
 }
 
@@ -153,14 +154,33 @@ impl Default for RasterizerState {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct DepthStencilState {
+    depth_enable: bool,
+    depth_write_enable: bool,
+    depth_func: u32,
+}
+
+impl Default for DepthStencilState {
+    fn default() -> Self {
+        Self {
+            depth_enable: false,
+            depth_write_enable: false,
+            depth_func: cmd::AerogpuCompareFunc::Always as u32,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct PipelineState {
     render_targets: [u32; cmd::AEROGPU_MAX_RENDER_TARGETS],
+    depth_stencil: u32,
     viewport: Option<Viewport>,
     scissor: Option<Scissor>,
     topology: u32,
     blend: BlendState,
     rasterizer: RasterizerState,
+    depth_stencil_state: DepthStencilState,
     vertex_buffers: [VertexBufferBinding; MAX_VERTEX_BUFFER_SLOTS],
     index_buffer: Option<IndexBufferBinding>,
     input_layout: u32,
@@ -173,11 +193,13 @@ impl Default for PipelineState {
     fn default() -> Self {
         Self {
             render_targets: [0; cmd::AEROGPU_MAX_RENDER_TARGETS],
+            depth_stencil: 0,
             viewport: None,
             scissor: None,
             topology: 4, // AEROGPU_TOPOLOGY_TRIANGLELIST
             blend: BlendState::default(),
             rasterizer: RasterizerState::default(),
+            depth_stencil_state: DepthStencilState::default(),
             vertex_buffers: [VertexBufferBinding::default(); MAX_VERTEX_BUFFER_SLOTS],
             index_buffer: None,
             input_layout: 0,
@@ -444,6 +466,19 @@ impl AeroGpuSoftwareExecutor {
         }
     }
 
+    fn texture_bytes_per_pixel(format: AeroGpuFormat) -> Option<usize> {
+        match format {
+            AeroGpuFormat::B8G8R8A8Unorm
+            | AeroGpuFormat::B8G8R8X8Unorm
+            | AeroGpuFormat::R8G8B8A8Unorm
+            | AeroGpuFormat::R8G8B8X8Unorm
+            | AeroGpuFormat::D24UnormS8Uint
+            | AeroGpuFormat::D32Float => Some(4),
+            AeroGpuFormat::B5G6R5Unorm | AeroGpuFormat::B5G5R5A1Unorm => Some(2),
+            AeroGpuFormat::Invalid => None,
+        }
+    }
+
     fn decode_color_f32_as_u8(rgba: [f32; 4]) -> [u8; 4] {
         fn f(v: f32) -> u8 {
             let v = v.clamp(0.0, 1.0);
@@ -656,6 +691,120 @@ impl AeroGpuSoftwareExecutor {
         }
     }
 
+    fn depth_compare(func: u32, src: f32, dst: f32) -> bool {
+        match func {
+            x if x == cmd::AerogpuCompareFunc::Never as u32 => false,
+            x if x == cmd::AerogpuCompareFunc::Less as u32 => src < dst,
+            x if x == cmd::AerogpuCompareFunc::Equal as u32 => src == dst,
+            x if x == cmd::AerogpuCompareFunc::LessEqual as u32 => src <= dst,
+            x if x == cmd::AerogpuCompareFunc::Greater as u32 => src > dst,
+            x if x == cmd::AerogpuCompareFunc::NotEqual as u32 => src != dst,
+            x if x == cmd::AerogpuCompareFunc::GreaterEqual as u32 => src >= dst,
+            x if x == cmd::AerogpuCompareFunc::Always as u32 => true,
+            _ => true,
+        }
+    }
+
+    fn read_depth_stencil(tex: &Texture2DResource, off: usize) -> Option<(f32, u8)> {
+        if off + 4 > tex.data.len() {
+            return None;
+        }
+
+        match tex.format {
+            AeroGpuFormat::D32Float => {
+                let bits = u32::from_le_bytes(tex.data[off..off + 4].try_into().unwrap());
+                Some((f32::from_bits(bits), 0))
+            }
+            AeroGpuFormat::D24UnormS8Uint => {
+                let v = u32::from_le_bytes(tex.data[off..off + 4].try_into().unwrap());
+                let depth_bits = v & 0x00ff_ffff;
+                let depth = depth_bits as f32 / 0x00ff_ffff as f32;
+                let stencil = (v >> 24) as u8;
+                Some((depth, stencil))
+            }
+            _ => None,
+        }
+    }
+
+    fn write_depth_stencil(tex: &mut Texture2DResource, off: usize, depth: f32, stencil: u8) {
+        if off + 4 > tex.data.len() {
+            return;
+        }
+
+        match tex.format {
+            AeroGpuFormat::D32Float => {
+                let bits = depth.clamp(0.0, 1.0).to_bits();
+                tex.data[off..off + 4].copy_from_slice(&bits.to_le_bytes());
+            }
+            AeroGpuFormat::D24UnormS8Uint => {
+                let depth_bits =
+                    (depth.clamp(0.0, 1.0) * 0x00ff_ffff as f32 + 0.5).floor() as u32;
+                let v = (depth_bits & 0x00ff_ffff) | ((stencil as u32) << 24);
+                tex.data[off..off + 4].copy_from_slice(&v.to_le_bytes());
+            }
+            _ => {}
+        }
+    }
+
+    fn clear_depth_stencil(tex: &mut Texture2DResource, flags: u32, depth: f32, stencil: u8) {
+        let width = tex.width as usize;
+        let height = tex.height as usize;
+        let row_pitch = tex.row_pitch_bytes as usize;
+        if width == 0 || height == 0 || row_pitch < width.saturating_mul(4) {
+            return;
+        }
+
+        match tex.format {
+            AeroGpuFormat::D32Float => {
+                if (flags & cmd::AEROGPU_CLEAR_DEPTH) == 0 {
+                    return;
+                }
+                let bits = depth.clamp(0.0, 1.0).to_bits().to_le_bytes();
+                for y in 0..height {
+                    let row_start = y.saturating_mul(row_pitch);
+                    let row_end = row_start.saturating_add(width.saturating_mul(4));
+                    if row_end > tex.data.len() {
+                        break;
+                    }
+                    for x in 0..width {
+                        let off = row_start + x * 4;
+                        tex.data[off..off + 4].copy_from_slice(&bits);
+                    }
+                }
+            }
+            AeroGpuFormat::D24UnormS8Uint => {
+                let clear_depth = (flags & cmd::AEROGPU_CLEAR_DEPTH) != 0;
+                let clear_stencil = (flags & cmd::AEROGPU_CLEAR_STENCIL) != 0;
+                if !clear_depth && !clear_stencil {
+                    return;
+                }
+
+                let depth_bits =
+                    (depth.clamp(0.0, 1.0) * 0x00ff_ffff as f32 + 0.5).floor() as u32 & 0x00ff_ffff;
+                for y in 0..height {
+                    let row_start = y.saturating_mul(row_pitch);
+                    let row_end = row_start.saturating_add(width.saturating_mul(4));
+                    if row_end > tex.data.len() {
+                        break;
+                    }
+                    for x in 0..width {
+                        let off = row_start + x * 4;
+                        let old = u32::from_le_bytes(tex.data[off..off + 4].try_into().unwrap());
+                        let mut v = old;
+                        if clear_depth {
+                            v = (v & 0xff00_0000) | depth_bits;
+                        }
+                        if clear_stencil {
+                            v = (v & 0x00ff_ffff) | ((stencil as u32) << 24);
+                        }
+                        tex.data[off..off + 4].copy_from_slice(&v.to_le_bytes());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn rasterize_triangle(
         tex: &mut Texture2DResource,
         clip: (i32, i32, i32, i32),
@@ -709,6 +858,92 @@ impl AeroGpuSoftwareExecutor {
                 let w0 = w0 * inv_area;
                 let w1 = w1 * inv_area;
                 let w2 = w2 * inv_area;
+                let mut out = [0.0f32; 4];
+                for i in 0..4 {
+                    out[i] = c0[i] * w0 + c1[i] * w1 + c2[i] * w2;
+                }
+                Self::blend_and_write_pixel(tex, x, y, out, blend);
+            }
+        }
+    }
+
+    fn rasterize_triangle_depth(
+        tex: &mut Texture2DResource,
+        depth_tex: &mut Texture2DResource,
+        depth_state: DepthStencilState,
+        clip: (i32, i32, i32, i32),
+        v0: (f32, f32, f32),
+        v1: (f32, f32, f32),
+        v2: (f32, f32, f32),
+        c0: [f32; 4],
+        c1: [f32; 4],
+        c2: [f32; 4],
+        blend: BlendState,
+    ) {
+        fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
+            (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+        }
+
+        let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
+        if area == 0.0 {
+            return;
+        }
+
+        let (sign, inv_area) = if area < 0.0 {
+            (-1.0f32, 1.0f32 / (-area))
+        } else {
+            (1.0f32, 1.0f32 / area)
+        };
+
+        let min_x = v0.0.min(v1.0).min(v2.0).floor() as i32;
+        let max_x = v0.0.max(v1.0).max(v2.0).ceil() as i32;
+        let min_y = v0.1.min(v1.1).min(v2.1).floor() as i32;
+        let max_y = v0.1.max(v1.1).max(v2.1).ceil() as i32;
+
+        let (clip_x0, clip_y0, clip_x1, clip_y1) = clip;
+        let start_x = min_x.max(clip_x0);
+        let end_x = max_x.min(clip_x1);
+        let start_y = min_y.max(clip_y0);
+        let end_y = max_y.min(clip_y1);
+        if start_x >= end_x || start_y >= end_y {
+            return;
+        }
+
+        let depth_pitch = depth_tex.row_pitch_bytes as usize;
+
+        for y in start_y..end_y {
+            for x in start_x..end_x {
+                let px = x as f32 + 0.5;
+                let py = y as f32 + 0.5;
+                let w0 = edge(v1.0, v1.1, v2.0, v2.1, px, py) * sign;
+                let w1 = edge(v2.0, v2.1, v0.0, v0.1, px, py) * sign;
+                let w2 = edge(v0.0, v0.1, v1.0, v1.1, px, py) * sign;
+                if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+                    continue;
+                }
+                let w0 = w0 * inv_area;
+                let w1 = w1 * inv_area;
+                let w2 = w2 * inv_area;
+
+                let depth = (v0.2 * w0 + v1.2 * w1 + v2.2 * w2).clamp(0.0, 1.0);
+
+                let (Ok(xu), Ok(yu)) = (usize::try_from(x), usize::try_from(y)) else {
+                    continue;
+                };
+                let depth_off = yu * depth_pitch + xu * 4;
+                let Some((dst_depth, dst_stencil)) = Self::read_depth_stencil(depth_tex, depth_off)
+                else {
+                    continue;
+                };
+                if !Self::depth_compare(depth_state.depth_func, depth, dst_depth) {
+                    continue;
+                }
+
+                if depth_state.depth_write_enable {
+                    Self::write_depth_stencil(depth_tex, depth_off, depth, dst_stencil);
+                    depth_tex.dirty = true;
+                }
+
                 let mut out = [0.0f32; 4];
                 for i in 0..4 {
                     out[i] = c0[i] * w0 + c1[i] * w1 + c2[i] * w2;
@@ -795,7 +1030,7 @@ impl AeroGpuSoftwareExecutor {
             // D3D11 path: ILAY blob present and contains POSITION+COLOR.
             if let Some(layout) = parsed_layout.as_ref() {
                 if let (Some(pos_el), Some(col_el)) = (layout.position, layout.color) {
-                    let pos = match self.read_vertex_elem_f32x2(mem, pos_el, idx_u32) {
+                    let pos = match self.read_vertex_elem_position(mem, pos_el, idx_u32) {
                         Some(v) => v,
                         None => continue,
                     };
@@ -806,7 +1041,12 @@ impl AeroGpuSoftwareExecutor {
                     // NDC -> viewport pixels.
                     let x = vp.x + (pos.0 * 0.5 + 0.5) * vp.width;
                     let y = vp.y + (1.0 - (pos.1 * 0.5 + 0.5)) * vp.height;
-                    vertices.push(Vertex { pos: (x, y), color });
+                    let z = (vp.min_depth + pos.2 * (vp.max_depth - vp.min_depth)).clamp(0.0, 1.0);
+                    vertices.push(Vertex {
+                        pos: (x, y),
+                        depth: z,
+                        color,
+                    });
                     continue;
                 }
             }
@@ -824,45 +1064,110 @@ impl AeroGpuSoftwareExecutor {
         }
 
         let blend = self.state.blend;
+        let depth_state = self.state.depth_stencil_state;
+        let ds_handle = self.resolve_handle(self.state.depth_stencil);
 
-        let Some(tex) = self.textures.get_mut(&rt_handle) else {
-            Self::record_error(regs);
-            return;
-        };
-        for tri in vertices.chunks_exact(3) {
-            if rast.cull_mode != cmd::AerogpuCullMode::None as u32 {
-                let area = (tri[1].pos.0 - tri[0].pos.0) * (tri[2].pos.1 - tri[0].pos.1)
-                    - (tri[1].pos.1 - tri[0].pos.1) * (tri[2].pos.0 - tri[0].pos.0);
-                if area != 0.0 {
-                    let front_facing = if rast.front_ccw {
-                        area < 0.0
-                    } else {
-                        area > 0.0
-                    };
-                    let culled = match rast.cull_mode {
-                        x if x == cmd::AerogpuCullMode::Front as u32 => front_facing,
-                        x if x == cmd::AerogpuCullMode::Back as u32 => !front_facing,
-                        _ => false,
-                    };
-                    if culled {
-                        continue;
+        let can_depth_test = depth_state.depth_enable && ds_handle != 0 && ds_handle != rt_handle;
+
+        if can_depth_test {
+            let Some(mut depth_tex) = self.textures.remove(&ds_handle) else {
+                Self::record_error(regs);
+                return;
+            };
+
+            if !matches!(depth_tex.format, AeroGpuFormat::D24UnormS8Uint | AeroGpuFormat::D32Float) {
+                self.textures.insert(ds_handle, depth_tex);
+                Self::record_error(regs);
+                return;
+            }
+
+            // Clamp clip to depth texture bounds as well.
+            let clip_x1 = clip_x1.min(depth_tex.width as i32);
+            let clip_y1 = clip_y1.min(depth_tex.height as i32);
+            if clip_x0 >= clip_x1 || clip_y0 >= clip_y1 {
+                self.textures.insert(ds_handle, depth_tex);
+                return;
+            }
+
+            {
+                let Some(tex) = self.textures.get_mut(&rt_handle) else {
+                    self.textures.insert(ds_handle, depth_tex);
+                    Self::record_error(regs);
+                    return;
+                };
+
+                for tri in vertices.chunks_exact(3) {
+                    if rast.cull_mode != cmd::AerogpuCullMode::None as u32 {
+                        let area = (tri[1].pos.0 - tri[0].pos.0) * (tri[2].pos.1 - tri[0].pos.1)
+                            - (tri[1].pos.1 - tri[0].pos.1) * (tri[2].pos.0 - tri[0].pos.0);
+                        if area != 0.0 {
+                            let front_facing = if rast.front_ccw { area < 0.0 } else { area > 0.0 };
+                            let culled = match rast.cull_mode {
+                                x if x == cmd::AerogpuCullMode::Front as u32 => front_facing,
+                                x if x == cmd::AerogpuCullMode::Back as u32 => !front_facing,
+                                _ => false,
+                            };
+                            if culled {
+                                continue;
+                            }
+                        }
+                    }
+
+                    Self::rasterize_triangle_depth(
+                        tex,
+                        &mut depth_tex,
+                        depth_state,
+                        (clip_x0, clip_y0, clip_x1, clip_y1),
+                        (tri[0].pos.0, tri[0].pos.1, tri[0].depth),
+                        (tri[1].pos.0, tri[1].pos.1, tri[1].depth),
+                        (tri[2].pos.0, tri[2].pos.1, tri[2].depth),
+                        tri[0].color,
+                        tri[1].color,
+                        tri[2].color,
+                        blend,
+                    );
+                }
+
+                tex.dirty = true;
+            }
+
+            self.textures.insert(ds_handle, depth_tex);
+        } else {
+            let Some(tex) = self.textures.get_mut(&rt_handle) else {
+                Self::record_error(regs);
+                return;
+            };
+            for tri in vertices.chunks_exact(3) {
+                if rast.cull_mode != cmd::AerogpuCullMode::None as u32 {
+                    let area = (tri[1].pos.0 - tri[0].pos.0) * (tri[2].pos.1 - tri[0].pos.1)
+                        - (tri[1].pos.1 - tri[0].pos.1) * (tri[2].pos.0 - tri[0].pos.0);
+                    if area != 0.0 {
+                        let front_facing = if rast.front_ccw { area < 0.0 } else { area > 0.0 };
+                        let culled = match rast.cull_mode {
+                            x if x == cmd::AerogpuCullMode::Front as u32 => front_facing,
+                            x if x == cmd::AerogpuCullMode::Back as u32 => !front_facing,
+                            _ => false,
+                        };
+                        if culled {
+                            continue;
+                        }
                     }
                 }
+                Self::rasterize_triangle(
+                    tex,
+                    (clip_x0, clip_y0, clip_x1, clip_y1),
+                    tri[0].pos,
+                    tri[1].pos,
+                    tri[2].pos,
+                    tri[0].color,
+                    tri[1].color,
+                    tri[2].color,
+                    blend,
+                );
             }
-            Self::rasterize_triangle(
-                tex,
-                (clip_x0, clip_y0, clip_x1, clip_y1),
-                tri[0].pos,
-                tri[1].pos,
-                tri[2].pos,
-                tri[0].color,
-                tri[1].color,
-                tri[2].color,
-                blend,
-            );
-        }
 
-        tex.dirty = true;
+            tex.dirty = true;
+        }
     }
 
     fn read_vertex_d3d9(&mut self, mem: &mut dyn MemoryBus, index: u32) -> Option<Vertex> {
@@ -889,6 +1194,7 @@ impl AeroGpuSoftwareExecutor {
 
         let x = f32::from_bits(u32::from_le_bytes(buf[0..4].try_into().unwrap()));
         let y = f32::from_bits(u32::from_le_bytes(buf[4..8].try_into().unwrap()));
+        let z = f32::from_bits(u32::from_le_bytes(buf[8..12].try_into().unwrap()));
         let color_argb = u32::from_le_bytes(buf[16..20].try_into().unwrap());
         let a = ((color_argb >> 24) & 0xff) as f32 / 255.0;
         let r = ((color_argb >> 16) & 0xff) as f32 / 255.0;
@@ -897,20 +1203,23 @@ impl AeroGpuSoftwareExecutor {
 
         Some(Vertex {
             pos: (x, y),
+            depth: z,
             color: [r, g, b, a],
         })
     }
 
-    fn read_vertex_elem_f32x2(
+    fn read_vertex_elem_position(
         &mut self,
         mem: &mut dyn MemoryBus,
         elem: InputElement,
         index: u32,
-    ) -> Option<(f32, f32)> {
-        if elem.dxgi_format != 16 {
-            // DXGI_FORMAT_R32G32_FLOAT
-            return None;
-        }
+    ) -> Option<(f32, f32, f32)> {
+        let components = match elem.dxgi_format {
+            16 => 2, // DXGI_FORMAT_R32G32_FLOAT
+            6 => 3,  // DXGI_FORMAT_R32G32B32_FLOAT
+            2 => 4,  // DXGI_FORMAT_R32G32B32A32_FLOAT
+            _ => return None,
+        };
         let slot = usize::try_from(elem.input_slot).ok()?;
         if slot >= self.state.vertex_buffers.len() {
             return None;
@@ -923,14 +1232,20 @@ impl AeroGpuSoftwareExecutor {
         let stride = binding.stride_bytes as u64;
         let start =
             binding.offset_bytes as u64 + (index as u64) * stride + elem.aligned_byte_offset as u64;
-        let mut buf = [0u8; 8];
-        if !self.read_buffer_bytes(mem, handle, start, &mut buf) {
+        let bytes = components * 4;
+        let mut buf = [0u8; 16];
+        let slice = &mut buf[..bytes];
+        if !self.read_buffer_bytes(mem, handle, start, slice) {
             return None;
         }
-        Some((
-            f32::from_bits(u32::from_le_bytes(buf[0..4].try_into().unwrap())),
-            f32::from_bits(u32::from_le_bytes(buf[4..8].try_into().unwrap())),
-        ))
+        let x = f32::from_bits(u32::from_le_bytes(buf[0..4].try_into().unwrap()));
+        let y = f32::from_bits(u32::from_le_bytes(buf[4..8].try_into().unwrap()));
+        let z = if components >= 3 {
+            f32::from_bits(u32::from_le_bytes(buf[8..12].try_into().unwrap()))
+        } else {
+            0.0
+        };
+        Some((x, y, z))
     }
 
     fn read_vertex_elem_f32x4(
@@ -1187,7 +1502,7 @@ impl AeroGpuSoftwareExecutor {
                 }
 
                 let format = AeroGpuFormat::from_u32(format_u32);
-                let Some(bpp) = format.bytes_per_pixel() else {
+                let Some(bpp) = Self::texture_bytes_per_pixel(format) else {
                     Self::record_error(regs);
                     return true;
                 };
@@ -1274,6 +1589,9 @@ impl AeroGpuSoftwareExecutor {
                         *rt = 0;
                     }
                 });
+                if self.state.depth_stencil == handle || self.state.depth_stencil == resolved {
+                    self.state.depth_stencil = 0;
+                }
                 for vb in self.state.vertex_buffers.iter_mut() {
                     if vb.buffer == handle || vb.buffer == resolved {
                         *vb = VertexBufferBinding::default();
@@ -1565,7 +1883,7 @@ impl AeroGpuSoftwareExecutor {
                         Self::record_error(regs);
                         return true;
                     };
-                    let Some(bpp) = src_tex.format.bytes_per_pixel() else {
+                    let Some(bpp) = Self::texture_bytes_per_pixel(src_tex.format) else {
                         Self::record_error(regs);
                         return true;
                     };
@@ -1644,7 +1962,7 @@ impl AeroGpuSoftwareExecutor {
                     Self::record_error(regs);
                     return true;
                 }
-                let Some(bpp) = dst_tex.format.bytes_per_pixel() else {
+                let Some(bpp) = Self::texture_bytes_per_pixel(dst_tex.format) else {
                     Self::record_error(regs);
                     return true;
                 };
@@ -1838,8 +2156,24 @@ impl AeroGpuSoftwareExecutor {
                     scissor_enable: u32::from_le(state.scissor_enable) != 0,
                 };
             }
-            cmd::AerogpuCmdOpcode::SetDepthStencilState
-            | cmd::AerogpuCmdOpcode::SetTexture
+            cmd::AerogpuCmdOpcode::SetDepthStencilState => {
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdSetDepthStencilState>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+
+                let state = packet_cmd.state;
+                self.state.depth_stencil_state = DepthStencilState {
+                    depth_enable: u32::from_le(state.depth_enable) != 0,
+                    depth_write_enable: u32::from_le(state.depth_write_enable) != 0,
+                    depth_func: u32::from_le(state.depth_func),
+                };
+            }
+            cmd::AerogpuCmdOpcode::SetTexture
             | cmd::AerogpuCmdOpcode::SetSamplerState
             | cmd::AerogpuCmdOpcode::SetRenderState => {
                 // Parsed but currently ignored by the software backend.
@@ -1852,9 +2186,10 @@ impl AeroGpuSoftwareExecutor {
                             Self::record_error(regs);
                             return false;
                         }
-                    };
+                };
 
                 // color_count ignored for now; we accept RT0 and clear the rest.
+                self.state.depth_stencil = u32::from_le(packet_cmd.depth_stencil);
                 let colors = packet_cmd.colors;
                 for (dst, &src) in self.state.render_targets.iter_mut().zip(colors.iter()) {
                     *dst = u32::from_le(src);
@@ -1971,19 +2306,27 @@ impl AeroGpuSoftwareExecutor {
                     }
                 };
                 let flags = u32::from_le(packet_cmd.flags);
-                if flags & cmd::AEROGPU_CLEAR_COLOR == 0 {
-                    return true;
+                if (flags & cmd::AEROGPU_CLEAR_COLOR) != 0 {
+                    let r = f32::from_bits(u32::from_le(packet_cmd.color_rgba_f32[0]));
+                    let g = f32::from_bits(u32::from_le(packet_cmd.color_rgba_f32[1]));
+                    let b = f32::from_bits(u32::from_le(packet_cmd.color_rgba_f32[2]));
+                    let a = f32::from_bits(u32::from_le(packet_cmd.color_rgba_f32[3]));
+                    let rt_handle = self.resolve_handle(self.state.render_targets[0]);
+                    if let Some(tex) = self.textures.get_mut(&rt_handle) {
+                        Self::clear_texture(tex, [r, g, b, a]);
+                        tex.dirty = true;
+                    }
                 }
-                let r = f32::from_bits(u32::from_le(packet_cmd.color_rgba_f32[0]));
-                let g = f32::from_bits(u32::from_le(packet_cmd.color_rgba_f32[1]));
-                let b = f32::from_bits(u32::from_le(packet_cmd.color_rgba_f32[2]));
-                let a = f32::from_bits(u32::from_le(packet_cmd.color_rgba_f32[3]));
-                let rt_handle = self.resolve_handle(self.state.render_targets[0]);
-                let Some(tex) = self.textures.get_mut(&rt_handle) else {
-                    return true;
-                };
-                Self::clear_texture(tex, [r, g, b, a]);
-                tex.dirty = true;
+
+                if (flags & (cmd::AEROGPU_CLEAR_DEPTH | cmd::AEROGPU_CLEAR_STENCIL)) != 0 {
+                    let depth = f32::from_bits(u32::from_le(packet_cmd.depth_f32));
+                    let stencil = u32::from_le(packet_cmd.stencil) as u8;
+                    let ds_handle = self.resolve_handle(self.state.depth_stencil);
+                    if let Some(tex) = self.textures.get_mut(&ds_handle) {
+                        Self::clear_depth_stencil(tex, flags, depth, stencil);
+                        tex.dirty = true;
+                    }
+                }
             }
             cmd::AerogpuCmdOpcode::Draw => {
                 let packet_cmd = match Self::read_packed_prefix::<cmd::AerogpuCmdDraw>(packet) {

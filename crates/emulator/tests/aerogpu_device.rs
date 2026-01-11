@@ -2719,3 +2719,289 @@ fn cmd_exec_d3d11_alpha_blend_matches_src_alpha_over() {
     assert!((r as i32 - 0x80).abs() <= 2);
     assert!((g as i32 - 0x80).abs() <= 2);
 }
+
+#[test]
+fn cmd_exec_d3d11_depth_test_rejects_farther_triangle() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+
+    // Ring layout in guest memory.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = 64u32;
+
+    // Backing allocation for the render target texture (64x64 BGRA).
+    let rt_width = 64u32;
+    let rt_height = 64u32;
+    let rt_pitch = rt_width * 4;
+    let rt_bytes = (rt_pitch * rt_height) as u64;
+    let rt_alloc_gpa = 0x6000u64;
+
+    // Allocation table (single entry).
+    let alloc_table_gpa = 0x4000u64;
+    let alloc_table_size =
+        ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
+    let mut alloc_table = Vec::with_capacity(alloc_table_size);
+    push_u32(&mut alloc_table, ring::AEROGPU_ALLOC_TABLE_MAGIC);
+    push_u32(&mut alloc_table, dev.regs.abi_version);
+    push_u32(&mut alloc_table, alloc_table_size as u32);
+    push_u32(&mut alloc_table, 1);
+    push_u32(&mut alloc_table, ring::AerogpuAllocEntry::SIZE_BYTES as u32);
+    push_u32(&mut alloc_table, 0);
+    push_u32(&mut alloc_table, 1); // alloc_id
+    push_u32(&mut alloc_table, 0);
+    push_u64(&mut alloc_table, rt_alloc_gpa);
+    push_u64(&mut alloc_table, rt_bytes);
+    push_u64(&mut alloc_table, 0);
+    mem.write_physical(alloc_table_gpa, &alloc_table);
+
+    // Vertex buffer payload: POSITION(float3) + COLOR(float4).
+    const VTX_STRIDE_D3D11: u32 = 28;
+    let mut vb_payload = Vec::with_capacity(6 * (VTX_STRIDE_D3D11 as usize));
+    // Near triangle (blue) at z=0.2.
+    for (x, y) in [(-0.5f32, -0.5f32), (0.0f32, 0.5f32), (0.5f32, -0.5f32)] {
+        push_f32(&mut vb_payload, x);
+        push_f32(&mut vb_payload, y);
+        push_f32(&mut vb_payload, 0.2);
+        push_f32(&mut vb_payload, 0.0);
+        push_f32(&mut vb_payload, 0.0);
+        push_f32(&mut vb_payload, 1.0);
+        push_f32(&mut vb_payload, 1.0);
+    }
+    // Far triangle (green) at z=0.8.
+    for (x, y) in [(-0.5f32, -0.5f32), (0.0f32, 0.5f32), (0.5f32, -0.5f32)] {
+        push_f32(&mut vb_payload, x);
+        push_f32(&mut vb_payload, y);
+        push_f32(&mut vb_payload, 0.8);
+        push_f32(&mut vb_payload, 0.0);
+        push_f32(&mut vb_payload, 1.0);
+        push_f32(&mut vb_payload, 0.0);
+        push_f32(&mut vb_payload, 1.0);
+    }
+
+    // Input layout blob (ILAY).
+    let mut ilay = Vec::new();
+    push_u32(&mut ilay, cmd::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+    push_u32(&mut ilay, cmd::AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+    push_u32(&mut ilay, 2); // element_count
+    push_u32(&mut ilay, 0);
+    // POSITION
+    push_u32(&mut ilay, fnv1a32("POSITION"));
+    push_u32(&mut ilay, 0);
+    push_u32(&mut ilay, 6); // DXGI_FORMAT_R32G32B32_FLOAT
+    push_u32(&mut ilay, 0); // slot 0
+    push_u32(&mut ilay, 0); // offset 0
+    push_u32(&mut ilay, 0);
+    push_u32(&mut ilay, 0);
+    // COLOR
+    push_u32(&mut ilay, fnv1a32("COLOR"));
+    push_u32(&mut ilay, 0);
+    push_u32(&mut ilay, 2); // DXGI_FORMAT_R32G32B32A32_FLOAT
+    push_u32(&mut ilay, 0); // slot 0
+    push_u32(&mut ilay, 12); // offset 12
+    push_u32(&mut ilay, 0);
+    push_u32(&mut ilay, 0);
+
+    // Command stream.
+    let cmd_gpa = 0x2000u64;
+    let mut stream = Vec::new();
+    push_u32(&mut stream, cmd::AEROGPU_CMD_STREAM_MAGIC);
+    push_u32(&mut stream, dev.regs.abi_version);
+    push_u32(&mut stream, 0); // size_bytes placeholder
+    push_u32(&mut stream, 0); // flags
+    push_u32(&mut stream, 0);
+    push_u32(&mut stream, 0);
+
+    // CREATE_TEXTURE2D (handle 1) backed by alloc_id=1.
+    push_u32(&mut stream, cmd::AerogpuCmdOpcode::CreateTexture2d as u32);
+    push_u32(&mut stream, 56);
+    push_u32(&mut stream, 1);
+    push_u32(&mut stream, cmd::AEROGPU_RESOURCE_USAGE_RENDER_TARGET);
+    push_u32(&mut stream, AeroGpuFormat::B8G8R8A8Unorm as u32);
+    push_u32(&mut stream, rt_width);
+    push_u32(&mut stream, rt_height);
+    push_u32(&mut stream, 1);
+    push_u32(&mut stream, 1);
+    push_u32(&mut stream, rt_pitch);
+    push_u32(&mut stream, 1); // backing_alloc_id
+    push_u32(&mut stream, 0);
+    push_u64(&mut stream, 0);
+
+    // CREATE_TEXTURE2D (handle 2) depth buffer (host allocated).
+    push_u32(&mut stream, cmd::AerogpuCmdOpcode::CreateTexture2d as u32);
+    push_u32(&mut stream, 56);
+    push_u32(&mut stream, 2);
+    push_u32(&mut stream, cmd::AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL);
+    push_u32(&mut stream, AeroGpuFormat::D32Float as u32);
+    push_u32(&mut stream, rt_width);
+    push_u32(&mut stream, rt_height);
+    push_u32(&mut stream, 1);
+    push_u32(&mut stream, 1);
+    push_u32(&mut stream, 0); // row_pitch_bytes (auto)
+    push_u32(&mut stream, 0); // backing_alloc_id
+    push_u32(&mut stream, 0);
+    push_u64(&mut stream, 0);
+
+    // CREATE_BUFFER (handle 3) host-allocated.
+    push_u32(&mut stream, cmd::AerogpuCmdOpcode::CreateBuffer as u32);
+    push_u32(&mut stream, 40);
+    push_u32(&mut stream, 3);
+    push_u32(&mut stream, cmd::AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
+    push_u64(&mut stream, vb_payload.len() as u64);
+    push_u32(&mut stream, 0);
+    push_u32(&mut stream, 0);
+    push_u64(&mut stream, 0);
+
+    // UPLOAD_RESOURCE into VB.
+    let upload_size_no_pad = 32 + vb_payload.len();
+    let upload_size = (upload_size_no_pad + 3) & !3;
+    push_u32(&mut stream, cmd::AerogpuCmdOpcode::UploadResource as u32);
+    push_u32(&mut stream, upload_size as u32);
+    push_u32(&mut stream, 3);
+    push_u32(&mut stream, 0);
+    push_u64(&mut stream, 0);
+    push_u64(&mut stream, vb_payload.len() as u64);
+    stream.extend_from_slice(&vb_payload);
+    stream.resize(stream.len() + (upload_size - upload_size_no_pad), 0);
+
+    // CREATE_INPUT_LAYOUT (handle 4) with ILAY blob.
+    let ilay_pkt_size_no_pad = 20 + ilay.len();
+    let ilay_pkt_size = (ilay_pkt_size_no_pad + 3) & !3;
+    push_u32(&mut stream, cmd::AerogpuCmdOpcode::CreateInputLayout as u32);
+    push_u32(&mut stream, ilay_pkt_size as u32);
+    push_u32(&mut stream, 4);
+    push_u32(&mut stream, ilay.len() as u32);
+    push_u32(&mut stream, 0);
+    stream.extend_from_slice(&ilay);
+    stream.resize(stream.len() + (ilay_pkt_size - ilay_pkt_size_no_pad), 0);
+
+    // SET_INPUT_LAYOUT = 4.
+    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetInputLayout as u32);
+    push_u32(&mut stream, 16);
+    push_u32(&mut stream, 4);
+    push_u32(&mut stream, 0);
+
+    // SET_RENDER_TARGETS: RT0 = texture 1, depth = texture 2.
+    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetRenderTargets as u32);
+    push_u32(&mut stream, 48);
+    push_u32(&mut stream, 1);
+    push_u32(&mut stream, 2);
+    push_u32(&mut stream, 1);
+    for _ in 1..cmd::AEROGPU_MAX_RENDER_TARGETS {
+        push_u32(&mut stream, 0);
+    }
+
+    // SET_VIEWPORT full RT.
+    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetViewport as u32);
+    push_u32(&mut stream, 32);
+    push_f32(&mut stream, 0.0);
+    push_f32(&mut stream, 0.0);
+    push_f32(&mut stream, rt_width as f32);
+    push_f32(&mut stream, rt_height as f32);
+    push_f32(&mut stream, 0.0);
+    push_f32(&mut stream, 1.0);
+
+    // SET_VERTEX_BUFFERS slot 0 -> buffer 3.
+    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetVertexBuffers as u32);
+    push_u32(&mut stream, 32);
+    push_u32(&mut stream, 0);
+    push_u32(&mut stream, 1);
+    push_u32(&mut stream, 3);
+    push_u32(&mut stream, VTX_STRIDE_D3D11);
+    push_u32(&mut stream, 0);
+    push_u32(&mut stream, 0);
+
+    // SET_PRIMITIVE_TOPOLOGY.
+    push_u32(
+        &mut stream,
+        cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32,
+    );
+    push_u32(&mut stream, 16);
+    push_u32(
+        &mut stream,
+        cmd::AerogpuPrimitiveTopology::TriangleList as u32,
+    );
+    push_u32(&mut stream, 0);
+
+    // SET_DEPTH_STENCIL_STATE: depth test enabled, write enabled, func=LESS.
+    push_u32(
+        &mut stream,
+        cmd::AerogpuCmdOpcode::SetDepthStencilState as u32,
+    );
+    push_u32(&mut stream, 28);
+    push_u32(&mut stream, 1); // depth_enable
+    push_u32(&mut stream, 1); // depth_write_enable
+    push_u32(&mut stream, cmd::AerogpuCompareFunc::Less as u32);
+    push_u32(&mut stream, 0); // stencil_enable
+    push_u32(&mut stream, 0x0000_FFFF); // read/write masks + reserved
+
+    // CLEAR red + depth=1.0.
+    push_u32(&mut stream, cmd::AerogpuCmdOpcode::Clear as u32);
+    push_u32(&mut stream, 36);
+    push_u32(
+        &mut stream,
+        cmd::AEROGPU_CLEAR_COLOR | cmd::AEROGPU_CLEAR_DEPTH,
+    );
+    push_f32(&mut stream, 1.0);
+    push_f32(&mut stream, 0.0);
+    push_f32(&mut stream, 0.0);
+    push_f32(&mut stream, 1.0);
+    push_f32(&mut stream, 1.0); // depth
+    push_u32(&mut stream, 0); // stencil
+
+    // DRAW 6 verts (2 triangles).
+    push_u32(&mut stream, cmd::AerogpuCmdOpcode::Draw as u32);
+    push_u32(&mut stream, 24);
+    push_u32(&mut stream, 6);
+    push_u32(&mut stream, 1);
+    push_u32(&mut stream, 0);
+    push_u32(&mut stream, 0);
+
+    // Patch stream size.
+    let stream_size = stream.len() as u32;
+    stream[8..12].copy_from_slice(&stream_size.to_le_bytes());
+    mem.write_physical(cmd_gpa, &stream);
+
+    // Ring header.
+    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + 8, ring_size);
+    mem.write_u32(ring_gpa + 12, entry_count);
+    mem.write_u32(ring_gpa + 16, entry_stride);
+    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + 24, 0);
+    mem.write_u32(ring_gpa + 28, 1);
+
+    // Submit descriptor at slot 0.
+    let desc_gpa = ring_gpa + 64;
+    mem.write_u32(desc_gpa + 0, 64);
+    mem.write_u32(desc_gpa + 4, 0);
+    mem.write_u32(desc_gpa + 8, 0);
+    mem.write_u32(desc_gpa + 12, 0);
+    mem.write_u64(desc_gpa + 16, cmd_gpa);
+    mem.write_u32(desc_gpa + 24, stream_size);
+    mem.write_u64(desc_gpa + 32, alloc_table_gpa);
+    mem.write_u32(desc_gpa + 40, alloc_table_size as u32);
+    mem.write_u64(desc_gpa + 48, 1);
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+
+    assert_eq!(dev.regs.completed_fence, 1);
+
+    let corner = read_pixel_bgra(&mut mem, rt_alloc_gpa, rt_pitch, 0, 0);
+    let center = read_pixel_bgra(
+        &mut mem,
+        rt_alloc_gpa,
+        rt_pitch,
+        rt_width / 2,
+        rt_height / 2,
+    );
+
+    assert_eq!(corner & 0x00FF_FFFF, 0x00FF_0000);
+    assert_eq!(center & 0x00FF_FFFF, 0x0000_00FF);
+}
