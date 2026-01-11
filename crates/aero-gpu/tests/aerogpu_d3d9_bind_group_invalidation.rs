@@ -369,6 +369,11 @@ fn d3d9_import_shared_surface_invalidates_bind_groups_for_all_contexts() {
     exec.execute_cmd_stream_for_context(CTX_B, &stream_b1.finish())
         .expect("context B initial draw should succeed");
 
+    // Before the alias is imported, context B should sample the executor's dummy texture.
+    let (_w, _h, rgba_before) =
+        pollster::block_on(exec.readback_texture_rgba8(RT)).expect("readback of RT should succeed");
+    assert_triangle_color(&rgba_before, width, [255, 255, 255, 255]);
+
     let mut stream_a = AerogpuCmdWriter::new();
     stream_a.import_shared_surface(TEX_ALIAS, TOKEN);
     exec.execute_cmd_stream_for_context(CTX_A, &stream_a.finish())

@@ -97,6 +97,42 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
         });
     }
 
+    // Intel TSX `XABORT` (`C6 F8 ib`) and `XBEGIN` (`C7 F8 iw/id`) share legacy opcode bytes with
+    // Group 11 `MOV r/m, imm`. Some upstream decoders (yaxpeax) treat them as `MOV` even when the
+    // ModRM byte is the TSX-fixed `0xF8`. Decode them with the iced-powered decoder so validity,
+    // length, and relative targets match iced-x86.
+    if opcode.map == OpcodeMap::Primary
+        && matches!(opcode.opcode, 0xC6 | 0xC7)
+        && matches!(opcode.opcode_ext, Some(7))
+    {
+        let (mut operands, inst_len) =
+            decode_with_aero_cpu_decoder(bytes, mode, ip, prefixes, address_size)?;
+
+        if inst_len > MAX_INST_LEN {
+            return Err(DecodeError::TooLong);
+        }
+
+        fixup_implicit_operands(
+            opcode,
+            mode,
+            prefixes,
+            operand_size,
+            address_size,
+            &mut operands,
+        );
+        let flags = classify_inst(opcode, &operands);
+
+        return Ok(DecodedInst {
+            length: inst_len as u8,
+            opcode,
+            prefixes,
+            operand_size,
+            address_size,
+            operands,
+            flags,
+        });
+    }
+
     // Some relative branch/call opcodes have operand-size-dependent immediate widths, and not all
     // upstream decoders agree on how to interpret `0x66` in 16-bit mode. Decode these cases
     // ourselves so we match iced-x86 for block formation.
@@ -562,6 +598,24 @@ fn parse_opcode(
         // which would make the legacy opcodes invalid (they require a memory operand).
         let b1 = *bytes.get(off + 1).ok_or(DecodeError::UnexpectedEof)?;
         let is_extended = mode == DecodeMode::Bits64 || (b1 & 0xC0) == 0xC0;
+        Ok((
+            OpcodeBytes {
+                map: if is_extended {
+                    OpcodeMap::Extended
+                } else {
+                    OpcodeMap::Primary
+                },
+                opcode: b0,
+                opcode_ext: None,
+            },
+            1,
+        ))
+    } else if b0 == 0x8F {
+        // AMD XOP prefix shares its first byte with `POP r/m` (Group 1A, `/0`). Disambiguate it by
+        // inspecting the ModRM.reg bits: `POP` requires `/0`, while XOP encodings always use a
+        // non-zero value in those bits.
+        let b1 = *bytes.get(off + 1).ok_or(DecodeError::UnexpectedEof)?;
+        let is_extended = (b1 & 0x38) != 0;
         Ok((
             OpcodeBytes {
                 map: if is_extended {
