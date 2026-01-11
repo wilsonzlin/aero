@@ -327,6 +327,12 @@ Instead of copying manually, you can use:
 powershell -ExecutionPolicy Bypass -File .\scripts\stage-built-sys.ps1 -Arch amd64
 ```
 
+To build a signed `release/` package in one step (stages SYS → Inf2Cat → sign → package):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Arch both -InputDir <build-output-root>
+```
+
 ## Prerequisites (host build/sign machine)
 
 Run the signing tooling from a WDK Developer Command Prompt (so the tools are in `PATH`):

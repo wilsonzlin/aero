@@ -82,6 +82,12 @@ Instead of copying manually, you can use:
 powershell -ExecutionPolicy Bypass -File .\scripts\stage-built-sys.ps1 -Arch amd64
 ```
 
+To build a signed `release/` package in one step (stages SYS → Inf2Cat → sign → package):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Arch both -InputDir <build-output-root>
+```
+
 ## Windows 7 test-signing enablement (test VM / machine)
 
 On the Windows 7 test machine, enable test-signing mode from an elevated cmd prompt:

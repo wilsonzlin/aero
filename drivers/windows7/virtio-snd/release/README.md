@@ -61,6 +61,14 @@ To produce both `release/x86/virtio-snd/` and `release/amd64/virtio-snd/`:
 
 > Catalogs must be regenerated per-architecture because `Inf2Cat` hashes the staged `virtiosnd.sys`.
 
+### One-shot helper (both architectures)
+
+The same sequence can be run by a wrapper script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/build-release.ps1 -Arch both -InputDir <build-output-root>
+```
+
 ### Optional: deterministic zip bundle
 
 To also emit a deterministic zip into `release/out/`:
