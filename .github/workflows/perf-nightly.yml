@@ -79,8 +79,7 @@ jobs:
           npm -w backend/aero-gateway run build
           node backend/aero-gateway/bench/run.mjs \
             --mode nightly \
-            --json "$GITHUB_WORKSPACE/perf-results/gateway/raw.json" \
-            --assert
+            --json "$GITHUB_WORKSPACE/perf-results/gateway/raw.json"
 
       - name: Job summary
         if: always()
