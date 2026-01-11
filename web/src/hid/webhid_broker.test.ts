@@ -107,6 +107,28 @@ describe("hid/WebHidBroker", () => {
     expect(input!.transfer?.[0]).toBe(input!.msg.data.buffer);
   });
 
+  it("bridges manager-initiated detaches (e.g. physical disconnect) to the worker", async () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const device = new FakeHidDevice();
+    const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+    await manager.detachDevice(device as unknown as HIDDevice);
+    // The broker reacts to manager detaches asynchronously.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.detach" && (p.msg as any).deviceId === id)).toBe(
+      true,
+    );
+
+    const before = port.posted.length;
+    device.dispatchInputReport(1, Uint8Array.of(1));
+    expect(port.posted.length).toBe(before);
+  });
+
   it("handles hid.sendReport requests from the worker", async () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });
@@ -150,4 +172,3 @@ describe("hid/WebHidBroker", () => {
     expect(port2.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.attach" && (p.msg as any).deviceId === id)).toBe(true);
   });
 });
-
