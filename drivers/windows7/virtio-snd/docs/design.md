@@ -55,7 +55,7 @@ Responsibilities:
 - Handle `eventq` for asynchronous device events (if used by the device model).
 - Implement the PCM data path:
   - playback: submit PCM buffers on `txq`
-  - capture: receive buffers on `rxq` (defined by the contract, but not implemented by this driver yet)
+  - capture: receive buffers on `rxq` (stream id `1`; defined by the contract, but not implemented by this driver yet)
 
 The protocol engine should be written to:
 
@@ -116,14 +116,13 @@ Power:
 - Treat any virtio device reset (including `device_status = 0`) as requiring full
   reinitialization of queue state and interrupt routing.
 
-## Contract drift note (contract v1 vs current emulator)
+## Contract conformance note (contract v1 vs current emulator)
 
-Observed drift between the definitive contract and the current emulator:
+The virtio-snd device model in `crates/aero-virtio/src/devices/snd.rs` is expected to match
+the definitive contract in `docs/windows7-virtio-driver-contract.md`, including:
 
-- Contract v1 (`docs/windows7-virtio-driver-contract.md`):
-  - does **not** negotiate `VIRTIO_F_RING_EVENT_IDX`
-- Emulator implementation (`crates/aero-virtio/src/devices/snd.rs`):
-  - advertises `VIRTIO_F_RING_EVENT_IDX`
+- Contract v1 does **not** negotiate `VIRTIO_F_RING_EVENT_IDX`.
+- Queue sizes: `controlq/eventq/rxq = 64`, `txq = 256`.
 
 Driver stance:
 

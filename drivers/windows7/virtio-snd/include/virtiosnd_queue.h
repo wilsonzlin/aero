@@ -15,7 +15,7 @@
  *  - 0: controlq (64)
  *  - 1: eventq   (64)
  *  - 2: txq     (256)
- *  - 3: rxq     (256) exists for PCM capture. The current driver does not use
+ *  - 3: rxq      (64) exists for PCM capture. The current driver does not use
  *    it yet, so it may be left uninitialized for now.
  */
 
@@ -27,7 +27,7 @@
 #define VIRTIOSND_QUEUE_SIZE_CONTROLQ ((USHORT)64u)
 #define VIRTIOSND_QUEUE_SIZE_EVENTQ ((USHORT)64u)
 #define VIRTIOSND_QUEUE_SIZE_TXQ ((USHORT)256u)
-#define VIRTIOSND_QUEUE_SIZE_RXQ ((USHORT)256u) /* Not implemented by the driver yet. */
+#define VIRTIOSND_QUEUE_SIZE_RXQ ((USHORT)64u) /* Not implemented by the driver yet. */
 
 typedef struct _VIRTIOSND_SG {
     UINT64 addr;

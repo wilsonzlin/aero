@@ -263,16 +263,16 @@ consumption cadence.
 
 The initial virtio-snd WaveRT implementation intentionally starts narrow:
 
-- **Fixed format only**:
-  - One `WAVEFORMATEX` / `WAVEFORMATEXTENSIBLE` configuration (e.g. 48 kHz,
-    stereo, 16-bit PCM). The exact choice should match what Aero exposes on the
-    host side and what Windows 7 happily accepts in shared mode.
-- **Render-only**:
-  - No capture pin.
+- **Fixed formats only**:
+  - Stream `0` (render): 48 kHz, **stereo**, 16-bit PCM (S16_LE)
+  - Stream `1` (capture): 48 kHz, **mono**, 16-bit PCM (S16_LE)
+- **Single render + single capture endpoint**:
+  - One render pin and one capture pin.
   - No loopback.
-- **Single stream**:
-  - Map the Windows render stream to `virtio-snd` **stream id 0**.
-  - Do not expose multiple endpoints or multiple concurrent hardware streams.
+- **Fixed stream mapping**:
+  - Map the Windows render stream to `virtio-snd` **stream id 0** (TX).
+  - Map the Windows capture stream to `virtio-snd` **stream id 1** (RX).
+  - Do not expose multiple endpoints or multiple concurrent hardware streams per direction.
 
 If the device/host later supports a real playback clock or delayed completions,
 the QPC-based clock can be replaced or corrected, but the WaveRT contract should
