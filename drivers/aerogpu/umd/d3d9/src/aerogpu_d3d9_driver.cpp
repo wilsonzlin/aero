@@ -114,15 +114,24 @@ namespace {
 
 template <typename FuncTable>
 bool d3d9_validate_nonnull_vtable(const FuncTable* table, const char* table_name) {
+#if !defined(_WIN32)
+  (void)table;
+  (void)table_name;
+  return true;
+#else
   if (!table || !table_name) {
     return false;
   }
 
   static_assert(sizeof(FuncTable) % sizeof(void*) == 0, "D3D9 DDI function tables must be pointer arrays");
-  const void* const* ptrs = reinterpret_cast<const void* const*>(table);
-  const size_t count = sizeof(FuncTable) / sizeof(void*);
+  const uint8_t* bytes = reinterpret_cast<const uint8_t*>(table);
+  constexpr size_t kPtrBytes = sizeof(void*);
+  const std::array<uint8_t, kPtrBytes> zero{};
+  const size_t count = sizeof(FuncTable) / kPtrBytes;
+
   for (size_t i = 0; i < count; ++i) {
-    if (!ptrs[i]) {
+    const uint8_t* slot = bytes + i * kPtrBytes;
+    if (std::memcmp(slot, zero.data(), kPtrBytes) == 0) {
       aerogpu::logf("aerogpu-d3d9: %s missing entry index=%llu (bytes=%llu)\n",
                     table_name,
                     static_cast<unsigned long long>(i),
@@ -131,6 +140,7 @@ bool d3d9_validate_nonnull_vtable(const FuncTable* table, const char* table_name
     }
   }
   return true;
+#endif
 }
 
 constexpr int32_t kMinGpuThreadPriority = -7;
