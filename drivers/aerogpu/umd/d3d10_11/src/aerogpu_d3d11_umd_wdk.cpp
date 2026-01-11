@@ -1238,6 +1238,13 @@ static void BindPresentAndRotate(TFuncs* funcs) {
   }
 }
 
+HRESULT AEROGPU_APIENTRY GetDeviceRemovedReason11(D3D11DDI_HDEVICE) {
+  // The runtime expects S_OK when the device is healthy. Returning E_NOTIMPL
+  // here can cause higher-level API calls like ID3D11Device::GetDeviceRemovedReason
+  // to fail unexpectedly.
+  return S_OK;
+}
+
 static D3D11DDI_DEVICEFUNCS MakeStubDeviceFuncs11() {
   D3D11DDI_DEVICEFUNCS funcs = {};
 
@@ -1350,7 +1357,7 @@ static D3D11DDI_DEVICEFUNCS MakeStubDeviceFuncs11() {
     STUB_FIELD(pfnCheckCounter);
   }
   __if_exists(D3D11DDI_DEVICEFUNCS::pfnGetDeviceRemovedReason) {
-    STUB_FIELD(pfnGetDeviceRemovedReason);
+    funcs.pfnGetDeviceRemovedReason = &GetDeviceRemovedReason11;
   }
   __if_exists(D3D11DDI_DEVICEFUNCS::pfnGetExceptionMode) {
     STUB_FIELD(pfnGetExceptionMode);
