@@ -427,10 +427,13 @@ fn enforce_security(
                 .as_deref()
                 .unwrap_or_default();
             let now_ms = now_ms();
-            let sid = headers
+            let session_token = headers
                 .get_all(header::COOKIE)
                 .iter()
-                .find_map(|cookie| gateway_session::verify_session_cookie(cookie, secret, now_ms))
+                .find_map(gateway_session::extract_session_cookie_value);
+            let sid = session_token
+                .as_deref()
+                .and_then(|token| gateway_session::verify_session_token(token, secret, now_ms))
                 .map(|session| session.id);
             if sid.is_none() {
                 state.metrics.auth_failed();
@@ -505,12 +508,13 @@ fn enforce_security(
                 .unwrap_or_default();
 
             let now_ms = now_ms();
-            let sid = headers
+            let session_token = headers
                 .get_all(header::COOKIE)
                 .iter()
-                .find_map(|cookie| {
-                    gateway_session::verify_session_cookie(cookie, cookie_secret, now_ms)
-                })
+                .find_map(gateway_session::extract_session_cookie_value);
+            let sid = session_token
+                .as_deref()
+                .and_then(|token| gateway_session::verify_session_token(token, cookie_secret, now_ms))
                 .map(|session| session.id);
 
             if let Some(sid) = sid {
@@ -588,12 +592,13 @@ fn enforce_security(
             let expected = state.cfg.security.api_key.as_deref().unwrap_or_default();
 
             let now_ms = now_ms();
-            let sid = headers
+            let session_token = headers
                 .get_all(header::COOKIE)
                 .iter()
-                .find_map(|cookie| {
-                    gateway_session::verify_session_cookie(cookie, cookie_secret, now_ms)
-                })
+                .find_map(gateway_session::extract_session_cookie_value);
+            let sid = session_token
+                .as_deref()
+                .and_then(|token| gateway_session::verify_session_token(token, cookie_secret, now_ms))
                 .map(|session| session.id);
 
             if let Some(sid) = sid {
@@ -653,12 +658,13 @@ fn enforce_security(
             let expected = state.cfg.security.api_key.as_deref().unwrap_or_default();
 
             let now_ms = now_ms();
-            let sid = headers
+            let session_token = headers
                 .get_all(header::COOKIE)
                 .iter()
-                .find_map(|cookie| {
-                    gateway_session::verify_session_cookie(cookie, cookie_secret, now_ms)
-                })
+                .find_map(gateway_session::extract_session_cookie_value);
+            let sid = session_token
+                .as_deref()
+                .and_then(|token| gateway_session::verify_session_token(token, cookie_secret, now_ms))
                 .map(|session| session.id);
             let cookie_ok = sid.is_some();
 

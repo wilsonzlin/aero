@@ -1186,6 +1186,23 @@ async fn cookie_auth_requires_valid_session_cookie() {
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let _ = ws.send(Message::Close(None)).await;
 
+    // First cookie wins (matches gateway): a later valid cookie must not bypass an earlier invalid
+    // aero_session value.
+    let bad_token = tamper_session_token(&mint_session_token("sekrit", "sid", exp));
+    let mut req = base_ws_request(addr);
+    req.headers_mut().append(
+        "cookie",
+        HeaderValue::from_str(&format!("aero_session={bad_token}")).unwrap(),
+    );
+    req.headers_mut().append(
+        "cookie",
+        HeaderValue::from_str(&format!("aero_session={token}")).unwrap(),
+    );
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected first invalid cookie to poison the request");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
     // Expired cookies should be rejected.
     let expired = exp.saturating_sub(120);
     let token = mint_session_token("sekrit", "sid", expired);

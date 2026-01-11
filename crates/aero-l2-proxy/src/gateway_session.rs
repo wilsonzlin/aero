@@ -25,15 +25,6 @@ pub fn verify_session_token(token: &str, secret: &[u8], now_ms: u64) -> Option<V
 }
 
 /// Extracts and verifies the `aero_session` cookie from a `Cookie` header.
-pub fn verify_session_cookie(
-    cookie_header: &HeaderValue,
-    secret: &[u8],
-    now_ms: u64,
-) -> Option<VerifiedSession> {
-    let token = extract_session_cookie_value(cookie_header)?;
-    verify_session_token(&token, secret, now_ms)
-}
-
 pub(crate) fn extract_session_cookie_value(cookie_header: &HeaderValue) -> Option<String> {
     let raw = cookie_header.to_str().ok()?;
     extract_cookie_value(raw, SESSION_COOKIE_NAME)
@@ -56,9 +47,6 @@ fn extract_cookie_value(raw: &str, name: &str) -> Option<String> {
             continue;
         }
         let value = trimmed[idx + 1..].trim();
-        if value.is_empty() {
-            return None;
-        }
         return Some(percent_decode(value));
     }
     None
