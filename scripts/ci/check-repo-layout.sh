@@ -147,8 +147,10 @@ if command -v python3 >/dev/null 2>&1; then
 import re
 from pathlib import Path
 
-manifest_path = Path("drivers/aerogpu/tests/win7/tests_manifest.txt")
-readme_path = Path("drivers/aerogpu/tests/win7/README.md")
+suite_dir = Path("drivers/aerogpu/tests/win7")
+manifest_path = suite_dir / "tests_manifest.txt"
+readme_path = suite_dir / "README.md"
+cmake_path = suite_dir / "CMakeLists.txt"
 
 manifest_tests = []
 for raw in manifest_path.read_text(encoding="utf-8").splitlines():
@@ -156,6 +158,14 @@ for raw in manifest_path.read_text(encoding="utf-8").splitlines():
     if not line or line.startswith("#") or line.startswith(";"):
         continue
     manifest_tests.append(line)
+
+for test in manifest_tests:
+    test_dir = suite_dir / test
+    if not test_dir.is_dir():
+        raise SystemExit(f"{manifest_path}: listed test directory does not exist: {test_dir}")
+    build_script = test_dir / "build_vs2010.cmd"
+    if not build_script.is_file():
+        raise SystemExit(f"{manifest_path}: missing build_vs2010.cmd for test {test!r}: {build_script}")
 
 mentioned = set()
 for raw in readme_path.read_text(encoding="utf-8").splitlines():
@@ -170,10 +180,19 @@ if missing:
         f"{readme_path}: missing Expected results bullets for manifest test(s): {', '.join(missing)}"
     )
 
-print("Win7 test README check: OK")
+cmake_targets = set(
+    re.findall(r"^\s*aerogpu_add_win7_test\(\s*([A-Za-z0-9_]+)", cmake_path.read_text(encoding="utf-8"), re.M)
+)
+missing_cmake = [t for t in manifest_tests if t not in cmake_targets]
+if missing_cmake:
+    raise SystemExit(
+        f"{cmake_path}: missing aerogpu_add_win7_test entries for manifest test(s): {', '.join(missing_cmake)}"
+    )
+
+print("Win7 test suite manifest/doc/cmake check: OK")
 PY
 else
-  echo "warning: python3 not found; skipping Win7 test README check" >&2
+  echo "warning: python3 not found; skipping Win7 test suite manifest/doc/cmake check" >&2
 fi
 
 # npm workspaces: enforce a single repo-root lockfile to prevent dependency drift.
