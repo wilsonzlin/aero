@@ -23,6 +23,7 @@ Required headers (serve on the HTML document *and* all JS/WASM/worker responses)
 Recommended hardening (optional):
 
 - `Cross-Origin-Resource-Policy: same-origin` (CORP)
+- `Origin-Agent-Cluster: ?1` (OAC)
 
 For production hosting templates and CSP guidance, see:
 
@@ -33,15 +34,21 @@ Minimal Vite dev server configuration:
 
 ```ts
 // web/vite.config.ts
-export default {
+import { defineConfig } from "vite";
+
+import {
+  baselineSecurityHeaders,
+  crossOriginIsolationHeaders,
+} from "../scripts/security_headers.mjs";
+
+export default defineConfig({
   server: {
     headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-      'Cross-Origin-Resource-Policy': 'same-origin',
+      ...crossOriginIsolationHeaders,
+      ...baselineSecurityHeaders,
     },
   },
-};
+});
 ```
 
 ### Pitfalls
