@@ -61,12 +61,15 @@ pub fn exec<B: CpuBus>(
     let instr = &decoded.instr;
     match instr.mnemonic() {
         Mnemonic::Cli => {
-            state.set_flag(RFLAGS_IF, false);
-            Ok(ExecOutcome::Continue)
+            // `CLI` is privileged outside real/v8086 mode; Tier-0 delegates to the
+            // interrupt assist surface so higher layers can enforce IOPL/CPL and
+            // model interrupt shadowing.
+            Ok(ExecOutcome::Assist(AssistReason::Interrupt))
         }
         Mnemonic::Sti => {
-            state.set_flag(RFLAGS_IF, true);
-            Ok(ExecOutcome::Continue)
+            // `STI` has an interrupt shadow; delegate to the assist surface so the
+            // execution engine can inhibit interrupts for one instruction.
+            Ok(ExecOutcome::Assist(AssistReason::Interrupt))
         }
         Mnemonic::Nop | Mnemonic::Pause => Ok(ExecOutcome::Continue),
         Mnemonic::Jmp => {
