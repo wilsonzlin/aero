@@ -14,7 +14,11 @@ pub struct AcpiConfig {
     pub cpu_count: u8,
     pub guest_memory_size: u64,
 
-    /// Start of the PCI MMIO hole used for placing ACPI windows.
+    /// Start of the PCI MMIO window reserved for PCI device BAR allocations.
+    ///
+    /// ACPI reclaimable + NVS windows are placed at the top of low RAM, below the first reserved
+    /// MMIO region. On the PC platform that means clamping below both this address and the PCIe
+    /// ECAM window (`aero_pc_constants::PCIE_ECAM_BASE`).
     pub pci_mmio_start: PhysAddr,
 
     /// Address where the RSDP is written (must be 16-byte aligned).

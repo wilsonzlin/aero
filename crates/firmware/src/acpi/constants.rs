@@ -1,9 +1,11 @@
 //! Constants used by ACPI table generation.
 
-/// Start of the typical PCI MMIO hole on PC-compatible systems (3GiB).
+/// Start of the typical PCI MMIO window for PCI device BAR allocations on PC-compatible systems
+/// (3GiB).
 ///
-/// The firmware places ACPI reclaimable and NVS windows below this address so
-/// that they are addressable by both 32-bit and 64-bit guests.
+/// The firmware places ACPI reclaimable and NVS windows below the first reserved MMIO region. On
+/// the PC platform that means clamping below both this address and the PCIe ECAM window
+/// (`aero_pc_constants::PCIE_ECAM_BASE`).
 pub const DEFAULT_PCI_MMIO_START: u64 = 0xC000_0000;
 
 /// LAPIC MMIO base as expected by Windows on PC-compatible platforms.
