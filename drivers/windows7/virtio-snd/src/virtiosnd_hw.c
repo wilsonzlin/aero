@@ -466,6 +466,10 @@ _Use_decl_annotations_
 VOID VirtIoSndUninitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     LARGE_INTEGER delay;
+    ULONG attempts;
+    ULONG drained;
+    ULONG inflight;
+    KIRQL oldIrql;
 
     if (Dx == NULL) {
         return;
@@ -482,6 +486,34 @@ VOID VirtIoSndUninitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx)
     delay.QuadPart = -10 * 1000; /* 1ms */
     while (InterlockedCompareExchange(&Dx->Intx.DpcInFlight, 0, 0) > 0) {
         KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+
+    /*
+     * Drain completions before freeing the TX buffer pool so the txq does not
+     * retain cookies that point to freed allocations. txq interrupts are
+     * suppressed for Aero (to avoid immediate-completion interrupt storms), so
+     * we must poll for completion during teardown.
+     */
+    inflight = 0;
+    for (attempts = 0; attempts < 200; ++attempts) {
+        drained = VirtioSndTxDrainCompletions(&Dx->Tx);
+
+        KeAcquireSpinLock(&Dx->Tx.Lock, &oldIrql);
+        inflight = Dx->Tx.InflightCount;
+        KeReleaseSpinLock(&Dx->Tx.Lock, oldIrql);
+
+        if (inflight == 0) {
+            break;
+        }
+
+        /* If no progress was made, back off briefly to avoid busy-waiting. */
+        if (drained == 0) {
+            KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+    }
+
+    if (inflight != 0) {
+        VIRTIOSND_TRACE_ERROR("tx engine teardown: %lu buffer(s) still inflight\n", inflight);
     }
 
     VirtioSndTxUninit(&Dx->Tx);

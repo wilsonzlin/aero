@@ -388,7 +388,6 @@ VirtIoSndWaveRtDpcRoutine(
     ULONG startOffset;
     PVOID buffer;
     PKEVENT notifyEvent;
-    PVIRTIOSND_DEVICE_EXTENSION dx;
     PVIRTIOSND_BACKEND backend;
     ULONGLONG qpcValue;
     ULONGLONG frames;
@@ -409,10 +408,9 @@ VirtIoSndWaveRtDpcRoutine(
 
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
 
-    dx = (stream->Miniport != NULL) ? stream->Miniport->Dx : NULL;
     backend = (stream->Miniport != NULL) ? stream->Miniport->Backend : NULL;
-    if (stream->Stopping || stream->State != KSSTATE_RUN || dx == NULL || dx->Removed || !dx->Started || stream->Buffer == NULL ||
-        stream->BufferBytes == 0 || stream->PeriodBytes == 0 || stream->PeriodBytes > stream->BufferBytes) {
+    if (stream->Stopping || stream->State != KSSTATE_RUN || backend == NULL || stream->Buffer == NULL || stream->BufferBytes == 0 ||
+        stream->PeriodBytes == 0 || stream->PeriodBytes > stream->BufferBytes) {
         KeReleaseSpinLock(&stream->Lock, oldIrql);
         goto Exit;
     }
@@ -440,39 +438,18 @@ VirtIoSndWaveRtDpcRoutine(
 
     KeReleaseSpinLock(&stream->Lock, oldIrql);
 
-    /*
-     * Poll TX completions each period. The TX engine is initialized with
-     * SuppressInterrupts=TRUE so virtio doesn't generate an interrupt storm for
-     * immediate completions in Aero.
-     */
-    (VOID)VirtIoSndHwDrainTxCompletions(dx);
-
-    if (dx->Tx.FatalError) {
-        KeAcquireSpinLock(&stream->Lock, &oldIrql);
-        stream->FatalError = TRUE;
-        stream->FatalNtStatus = STATUS_DEVICE_HARDWARE_ERROR;
-        stream->FatalVirtioStatus = dx->Tx.LastVirtioStatus;
-        stream->Stopping = TRUE;
-        KeReleaseSpinLock(&stream->Lock, oldIrql);
-        KeCancelTimer(&stream->Timer);
-        KeRemoveQueueDpc(&stream->TimerDpc);
-        goto NotifyAndExit;
-    }
-
     {
         ULONG remaining = bufferBytes - startOffset;
         ULONG first = (remaining < periodBytes) ? remaining : periodBytes;
         ULONG second = periodBytes - first;
 
         status = STATUS_SUCCESS;
-        if (backend != NULL) {
-            status = VirtIoSndBackend_WritePeriod(
-                backend,
-                (const UCHAR *)buffer + startOffset,
-                (SIZE_T)first,
-                (second != 0) ? buffer : NULL,
-                (SIZE_T)second);
-        }
+        status = VirtIoSndBackend_WritePeriod(
+            backend,
+            (const UCHAR *)buffer + startOffset,
+            (SIZE_T)first,
+            (second != 0) ? buffer : NULL,
+            (SIZE_T)second);
 
         if (!NT_SUCCESS(status)) {
             KeAcquireSpinLock(&stream->Lock, &oldIrql);

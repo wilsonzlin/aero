@@ -266,10 +266,16 @@ VirtIoSndBackendVirtio_WritePeriod(
      * a playback clock; it's just resource reclamation.
      */
     (VOID)VirtIoSndHwDrainTxCompletions(dx);
+    if (dx->Tx.FatalError) {
+        return STATUS_DEVICE_HARDWARE_ERROR;
+    }
 
     status = VirtIoSndHwSubmitTx(dx, Pcm1, (ULONG)Pcm1Bytes, Pcm2, (ULONG)Pcm2Bytes, TRUE);
     if (status == STATUS_INSUFFICIENT_RESOURCES) {
         (VOID)VirtIoSndHwDrainTxCompletions(dx);
+        if (dx->Tx.FatalError) {
+            return STATUS_DEVICE_HARDWARE_ERROR;
+        }
         status = VirtIoSndHwSubmitTx(dx, Pcm1, (ULONG)Pcm1Bytes, Pcm2, (ULONG)Pcm2Bytes, TRUE);
         if (status == STATUS_INSUFFICIENT_RESOURCES) {
             /*
@@ -281,6 +287,9 @@ VirtIoSndBackendVirtio_WritePeriod(
     }
 
     (VOID)VirtIoSndHwDrainTxCompletions(dx);
+    if (dx->Tx.FatalError) {
+        return STATUS_DEVICE_HARDWARE_ERROR;
+    }
     return status;
 }
 
