@@ -2,7 +2,7 @@
 
 This directory contains small Windows 7 **guest-side** test programs intended to validate the AeroGPU WDDM driver stack end-to-end.
 
-Each test prints a clear `PASS:` / `FAIL:` line to stdout and returns a non-zero exit code on failure. Some tests can optionally dump a `.bmp` to disk for manual inspection (`--dump`).
+Each test prints a clear `PASS:` / `FAIL:` line to stdout and returns a non-zero exit code on failure. Some tests can optionally dump artifacts (usually `.bmp`, sometimes raw `.bin`) to disk for manual inspection (`--dump`).
 
 For D3D11 UMD bring-up (Win7 FL10_0), including which `d3d11umddi.h` function-table entries must be non-null vs safely stubbable, see:
 
