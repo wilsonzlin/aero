@@ -9,17 +9,6 @@
 
 #define AEROGPU_VBLANK_PERIOD_NS_DEFAULT 16666667u
 
-/*
- * Win7 WDDM 1.1 vertical blank notifications are delivered via a DXGK interrupt
- * type that predates later WDK naming. Some WDKs renamed the enum constant, but
- * the numeric value is stable and immediately precedes DMA_COMPLETED.
- *
- * Derive the value from DXGK_INTERRUPT_TYPE_DMA_COMPLETED so the driver builds
- * cleanly across WDK versions while still reporting the correct interrupt type
- * to dxgkrnl for D3DKMTWaitForVerticalBlankEvent.
- */
-#define AEROGPU_DXGK_INTERRUPT_TYPE_VSYNC ((DXGK_INTERRUPT_TYPE)(DXGK_INTERRUPT_TYPE_DMA_COMPLETED - 1))
-
 /* Internal-only bits stored in AEROGPU_ALLOCATION::Flags (not exposed to UMD). */
 #define AEROGPU_KMD_ALLOC_FLAG_OPENED 0x80000000u
 
@@ -2566,16 +2555,24 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
      * On Win7, dxgkrnl uses this mechanism to enable/disable vblank delivery for
      * D3DKMTWaitForVerticalBlankEvent and DWM pacing.
      */
-    if (InterruptType != AEROGPU_DXGK_INTERRUPT_TYPE_VSYNC) {
-        return STATUS_SUCCESS;
-    }
     if (!adapter->SupportsVblank) {
         return STATUS_NOT_SUPPORTED;
     }
 
-    adapter->VblankInterruptType = InterruptType;
-    adapter->VblankInterruptTypeValid = TRUE;
-    KeMemoryBarrier();
+    /*
+     * Record the vblank interrupt type that dxgkrnl expects and ignore other
+     * non-DMA interrupt types (if any) to avoid misprogramming vblank IRQ state.
+     */
+    if (!adapter->VblankInterruptTypeValid) {
+        if (!EnableInterrupt) {
+            return STATUS_SUCCESS;
+        }
+        adapter->VblankInterruptType = InterruptType;
+        adapter->VblankInterruptTypeValid = TRUE;
+        KeMemoryBarrier();
+    } else if (InterruptType != adapter->VblankInterruptType) {
+        return STATUS_SUCCESS;
+    }
 
     {
         KIRQL oldIrql;
