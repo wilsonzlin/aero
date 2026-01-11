@@ -155,3 +155,37 @@ test("AerogpuCmdWriter emits pipeline and binding packets", () => {
   const rastBase = depthBase + expected[5][1];
   assert.equal(view.getInt32(rastBase + 24, true), -1);
 });
+
+test("AerogpuCmdWriter emits copy packets", () => {
+  const w = new AerogpuCmdWriter();
+  w.copyBuffer(1, 2, 3n, 4n, 5n, 1);
+  w.copyTexture2d(10, 11, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0);
+  w.flush();
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  // COPY_BUFFER
+  const pkt0 = AEROGPU_CMD_STREAM_HEADER_SIZE;
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.CopyBuffer);
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), 48);
+  assert.equal(view.getUint32(pkt0 + 8, true), 1);
+  assert.equal(view.getUint32(pkt0 + 12, true), 2);
+  assert.equal(view.getBigUint64(pkt0 + 16, true), 3n);
+  assert.equal(view.getBigUint64(pkt0 + 24, true), 4n);
+  assert.equal(view.getBigUint64(pkt0 + 32, true), 5n);
+  assert.equal(view.getUint32(pkt0 + 40, true), 1);
+
+  // COPY_TEXTURE2D
+  const pkt1 = pkt0 + 48;
+  assert.equal(view.getUint32(pkt1 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.CopyTexture2d);
+  assert.equal(view.getUint32(pkt1 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), 64);
+  assert.equal(view.getUint32(pkt1 + 48, true), 7);
+  assert.equal(view.getUint32(pkt1 + 52, true), 8);
+
+  // FLUSH
+  const pkt2 = pkt1 + 64;
+  assert.equal(view.getUint32(pkt2 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.Flush);
+  assert.equal(view.getUint32(pkt2 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), 16);
+  assert.equal(pkt2 + 16, bytes.byteLength);
+});

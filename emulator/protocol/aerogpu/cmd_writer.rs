@@ -7,17 +7,18 @@
 use core::mem::{offset_of, size_of};
 
 use super::aerogpu_cmd::{
-    AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdClear, AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout,
-    AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout, AerogpuCmdDestroyResource,
-    AerogpuCmdDestroyShader, AerogpuCmdDraw, AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface, AerogpuCmdFlush,
-    AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx,
-    AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer,
-    AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState,
-    AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF,
-    AerogpuCmdSetTexture, AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags,
-    AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuCullMode, AerogpuFillMode,
-    AerogpuHandle, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding,
-    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_MAX_RENDER_TARGETS,
+    AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdClear, AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d,
+    AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout, AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d,
+    AerogpuCmdDestroyInputLayout, AerogpuCmdDestroyResource, AerogpuCmdDestroyShader, AerogpuCmdDraw,
+    AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface, AerogpuCmdFlush, AerogpuCmdImportSharedSurface,
+    AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx, AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState,
+    AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer, AerogpuCmdSetInputLayout,
+    AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState, AerogpuCmdSetRenderTargets,
+    AerogpuCmdSetSamplerState, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture,
+    AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader,
+    AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuCullMode, AerogpuFillMode, AerogpuHandle, AerogpuIndexFormat,
+    AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC,
+    AEROGPU_MAX_RENDER_TARGETS,
 };
 use super::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
@@ -179,6 +180,57 @@ impl AerogpuCmdWriter {
         self.write_u64_at(base + offset_of!(AerogpuCmdUploadResource, size_bytes), data.len() as u64);
         self.buf[base + size_of::<AerogpuCmdUploadResource>()..base + size_of::<AerogpuCmdUploadResource>() + data.len()]
             .copy_from_slice(data);
+    }
+
+    pub fn copy_buffer(
+        &mut self,
+        dst_buffer: AerogpuHandle,
+        src_buffer: AerogpuHandle,
+        dst_offset_bytes: u64,
+        src_offset_bytes: u64,
+        size_bytes: u64,
+        flags: u32,
+    ) {
+        let base = self.append_raw(AerogpuCmdOpcode::CopyBuffer, size_of::<AerogpuCmdCopyBuffer>());
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyBuffer, dst_buffer), dst_buffer);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyBuffer, src_buffer), src_buffer);
+        self.write_u64_at(base + offset_of!(AerogpuCmdCopyBuffer, dst_offset_bytes), dst_offset_bytes);
+        self.write_u64_at(base + offset_of!(AerogpuCmdCopyBuffer, src_offset_bytes), src_offset_bytes);
+        self.write_u64_at(base + offset_of!(AerogpuCmdCopyBuffer, size_bytes), size_bytes);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyBuffer, flags), flags);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn copy_texture2d(
+        &mut self,
+        dst_texture: AerogpuHandle,
+        src_texture: AerogpuHandle,
+        dst_mip_level: u32,
+        dst_array_layer: u32,
+        src_mip_level: u32,
+        src_array_layer: u32,
+        dst_x: u32,
+        dst_y: u32,
+        src_x: u32,
+        src_y: u32,
+        width: u32,
+        height: u32,
+        flags: u32,
+    ) {
+        let base = self.append_raw(AerogpuCmdOpcode::CopyTexture2d, size_of::<AerogpuCmdCopyTexture2d>());
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, dst_texture), dst_texture);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, src_texture), src_texture);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, dst_mip_level), dst_mip_level);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, dst_array_layer), dst_array_layer);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, src_mip_level), src_mip_level);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, src_array_layer), src_array_layer);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, dst_x), dst_x);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, dst_y), dst_y);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, src_x), src_x);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, src_y), src_y);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, width), width);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, height), height);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, flags), flags);
     }
 
     pub fn create_shader_dxbc(

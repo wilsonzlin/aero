@@ -288,3 +288,88 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
         -1
     );
 }
+
+#[test]
+fn cmd_writer_emits_copy_packets() {
+    use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d, AEROGPU_COPY_FLAG_WRITEBACK_DST};
+
+    let mut w = AerogpuCmdWriter::new();
+    w.copy_buffer(1, 2, 3, 4, 5, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+    w.copy_texture2d(10, 11, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0);
+    w.flush();
+
+    let buf = w.finish();
+    let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
+
+    let hdr0 = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode0 = hdr0.opcode;
+    let size0 = hdr0.size_bytes as usize;
+    assert_eq!(opcode0, AerogpuCmdOpcode::CopyBuffer as u32);
+    assert_eq!(size0, size_of::<AerogpuCmdCopyBuffer>());
+
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdCopyBuffer, dst_buffer)
+                ..cursor + offset_of!(AerogpuCmdCopyBuffer, dst_buffer) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        1
+    );
+    assert_eq!(
+        u64::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdCopyBuffer, size_bytes)
+                ..cursor + offset_of!(AerogpuCmdCopyBuffer, size_bytes) + 8]
+                .try_into()
+                .unwrap()
+        ),
+        5
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdCopyBuffer, flags)
+                ..cursor + offset_of!(AerogpuCmdCopyBuffer, flags) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AEROGPU_COPY_FLAG_WRITEBACK_DST
+    );
+
+    cursor += size0;
+
+    let hdr1 = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode1 = hdr1.opcode;
+    let size1 = hdr1.size_bytes as usize;
+    assert_eq!(opcode1, AerogpuCmdOpcode::CopyTexture2d as u32);
+    assert_eq!(size1, size_of::<AerogpuCmdCopyTexture2d>());
+
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdCopyTexture2d, width)
+                ..cursor + offset_of!(AerogpuCmdCopyTexture2d, width) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        7
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdCopyTexture2d, height)
+                ..cursor + offset_of!(AerogpuCmdCopyTexture2d, height) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        8
+    );
+
+    cursor += size1;
+
+    let hdr2 = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode2 = hdr2.opcode;
+    let size2 = hdr2.size_bytes as usize;
+    assert_eq!(opcode2, AerogpuCmdOpcode::Flush as u32);
+    assert_eq!(size2, size_of::<aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdFlush>());
+
+    cursor += size2;
+    assert_eq!(cursor, buf.len());
+}
