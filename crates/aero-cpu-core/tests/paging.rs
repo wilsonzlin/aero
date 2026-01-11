@@ -639,6 +639,14 @@ fn pagingbus_does_not_panic_on_wrapping_linear_addresses() {
             error_code: 1 << 1, // W=1, P=0, U=0
         })
     );
+    assert_eq!(
+        bus.write_u16(u64::MAX, 0x1234),
+        Err(Exception::PageFault {
+            addr: 0,
+            error_code: 1 << 1, // W=1, P=0, U=0
+        })
+    );
+    assert_eq!(bus.inner_mut().read_u8(high_page + 0xfff), 0x90);
 }
 
 #[test]
