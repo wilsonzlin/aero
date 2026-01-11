@@ -1344,18 +1344,46 @@ const cmdStreamHasVsyncPresent = (cmdStream: ArrayBuffer): boolean => {
   return false;
 };
 
+const cmdStreamRequiresD3d9Executor = (cmdStream: ArrayBuffer): boolean => {
+  try {
+    const iter = new AerogpuCmdStreamIter(cmdStream);
+    for (const packet of iter) {
+      switch (packet.hdr.opcode) {
+        // Opcodes handled by the lightweight TypeScript CPU executor.
+        case AerogpuCmdOpcode.CreateBuffer:
+        case AerogpuCmdOpcode.CreateTexture2d:
+        case AerogpuCmdOpcode.DestroyResource:
+        case AerogpuCmdOpcode.UploadResource:
+        case AerogpuCmdOpcode.ResourceDirtyRange:
+        case AerogpuCmdOpcode.CopyBuffer:
+        case AerogpuCmdOpcode.CopyTexture2d:
+        case AerogpuCmdOpcode.SetRenderTargets:
+        case AerogpuCmdOpcode.Present:
+        case AerogpuCmdOpcode.PresentEx:
+        case AerogpuCmdOpcode.Flush:
+          break;
+        default:
+          return true;
+      }
+    }
+  } catch {
+    // Malformed streams will be handled by the executor; don't force the wasm path here.
+  }
+  return false;
+};
+
 const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise<void> => {
   const signalFence = typeof req.signalFence === "bigint" ? req.signalFence : BigInt(req.signalFence);
   const vsyncPaced = cmdStreamHasVsyncPresent(req.cmdStream);
+  const requiresD3d9 = cmdStreamRequiresD3d9Executor(req.cmdStream);
 
   let presentCount: bigint | undefined = undefined;
   let submitOk = false;
   try {
     await maybeSendReady();
 
-    const backend = presenter?.backend ?? null;
-    const useWasm = backend != null && backend !== "webgl2_raw";
-    if (useWasm) {
+    if (requiresD3d9) {
+      const backend = presenter?.backend ?? "webgpu";
       const wasm = await ensureAerogpuWasmD3d9(backend);
 
       if (guestU8) {
