@@ -21,7 +21,9 @@
   },
   "scripts": {
     "check:node": "node scripts/check-node-version.mjs",
+    "predev": "npm run check:node",
     "dev": "vite web --config web/vite.config.ts",
+    "prebuild": "npm run check:node",
     "build": "vite build web --config web/vite.config.ts",
     "preview": "vite preview web --config web/vite.config.ts",
     "serve:coi": "vite build web --config web/vite.config.ts --emptyOutDir && vite preview web --config web/vite.config.ts --host 127.0.0.1 --port 4173 --strictPort",
