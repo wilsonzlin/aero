@@ -171,6 +171,10 @@ pub trait MemoryAccess {
 /// Firmware-only memory operations (mapping ROM).
 pub trait FirmwareMemory {
     /// Map a ROM blob at `base` and make it read-only for guest writes.
+    ///
+    /// Note: firmware may map ROM at addresses that are not backed by guest RAM (for example, the
+    /// x86 BIOS reset-vector alias at `0xFFFF_0000`). Implementations should treat ROM windows as
+    /// potentially sparse.
     fn map_rom(&mut self, base: u64, rom: &[u8]);
 }
 
