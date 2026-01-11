@@ -744,6 +744,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       contentType: s3Res.ContentType ?? "application/json",
       cacheControl: buildChunkedCacheControl(deps.config),
       crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+      contentEncoding: s3Res.ContentEncoding,
     });
     if (typeof s3Res.ContentLength === "number") {
       headers["content-length"] = String(s3Res.ContentLength);
@@ -812,6 +813,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       contentType: head.ContentType ?? "application/json",
       cacheControl: buildChunkedCacheControl(deps.config),
       crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+      contentEncoding: head.ContentEncoding,
     });
     if (typeof head.ContentLength === "number") headers["content-length"] = String(head.ContentLength);
     if (head.ETag) headers["etag"] = head.ETag;

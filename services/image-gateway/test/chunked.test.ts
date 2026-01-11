@@ -89,6 +89,50 @@ describe("chunked delivery", () => {
     expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
   });
 
+  it("propagates Content-Encoding for the manifest when provided by S3", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      chunkedPrefix: "images/user-1/image-1/v1/",
+      uploadId: "upload-1",
+      status: "complete",
+    });
+
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof HeadObjectCommand) {
+          expect(command.input.Key).toBe("images/user-1/image-1/v1/manifest.json");
+          return {
+            ContentLength: 10,
+            ContentType: "application/json",
+            ContentEncoding: "gzip",
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "HEAD",
+      url: `/v1/images/${imageId}/chunked/manifest`,
+      headers: { "x-user-id": ownerId },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-encoding"]).toBe("gzip");
+  });
+
   it("proxies a chunk object with identity encoding and no-transform", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();
