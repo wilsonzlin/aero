@@ -23,12 +23,9 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
     - at least one HID keyboard application collection exists
     - at least one HID mouse application collection exists
 - **virtio-snd**
-  - Detect a virtio-snd audio device (`PCI\\VEN_1AF4&DEV_1059`) via SetupAPI (`GUID_DEVCLASS_MEDIA`).
-  - If present, run a WaveOut playback smoke test (48kHz, 16-bit, stereo PCM).
-  - If absent, report `SKIP` by default (use `--require-snd` or env
-    `AERO_VIRTIO_SELFTEST_REQUIRE_SND=1` to make this a hard failure).
-  - To disable the audio test entirely, use `--disable-snd` (or env
-    `AERO_VIRTIO_SELFTEST_DISABLE_SND=1`).
+  - Enumerate audio render endpoints via MMDevice API.
+  - Find the virtio-snd endpoint and start a shared-mode WASAPI render stream.
+  - Render a short deterministic tone (440Hz).
 
 Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` is `host.lan`
 (with fallbacks like `gateway.lan` / `dns.lan`).
@@ -41,8 +38,8 @@ The host harness parses these markers from COM1 serial:
 AERO_VIRTIO_SELFTEST|START|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|...
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|...
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
@@ -57,6 +54,7 @@ AERO_VIRTIO_SELFTEST|RESULT|PASS
 Notes on Win7 compatibility:
 - The provided CMake config builds with the **static MSVC runtime** (`/MT`) and sets the subsystem version to **6.01**,
   so the resulting `aero-virtio-selftest.exe` can run on a clean Windows 7 SP1 install without an additional VC++ runtime step.
+- The virtio-snd test uses WASAPI/MMDevice and requires linking `mmdevapi`, `ole32`, and `uuid` (handled by the CMake config).
 
 ### Build with CMake (recommended)
 

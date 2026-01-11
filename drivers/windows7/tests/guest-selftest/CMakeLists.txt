@@ -34,9 +34,10 @@ endif()
 
 target_link_libraries(aero-virtio-selftest PRIVATE
   setupapi
-  cfgmgr32
   iphlpapi
-  winmm
+  mmdevapi
+  ole32
+  uuid
   winhttp
   ws2_32
 )
