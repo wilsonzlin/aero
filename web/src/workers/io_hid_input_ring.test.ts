@@ -43,5 +43,24 @@ describe("workers/io_hid_input_ring", () => {
     while (ring.tryPop()) remaining += 1;
     expect(remaining).toBe(5);
   });
-});
 
+  it("does not wedge the ring if the consumer throws", () => {
+    const kind = 1;
+    const sab = createIpcBuffer([{ kind, capacityBytes: 4096 }]).buffer;
+    const ring = openRingByKind(sab, kind);
+
+    ring.tryPush(encodeHidInputReportRingRecord({ deviceId: 1, reportId: 1, tsMs: 0, data: Uint8Array.of(1) }));
+    ring.tryPush(encodeHidInputReportRingRecord({ deviceId: 1, reportId: 2, tsMs: 0, data: Uint8Array.of(2) }));
+
+    const received: HidInputReportMessage[] = [];
+    const res = drainIoHidInputRing(ring, (msg) => {
+      if (msg.reportId === 1) throw new Error("boom");
+      received.push(msg);
+    });
+
+    expect(res.forwarded).toBe(1);
+    expect(res.invalid).toBe(1);
+    expect(received.map((m) => m.reportId)).toEqual([2]);
+    expect(ring.tryPop()).toBeNull();
+  });
+});

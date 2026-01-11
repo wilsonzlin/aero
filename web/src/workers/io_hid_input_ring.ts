@@ -33,17 +33,22 @@ export function drainIoHidInputRing(
         return;
       }
 
-      onReport({
-        type: "hid.inputReport",
-        deviceId: record.deviceId,
-        reportId: record.reportId,
-        // SAB-backed views can't be transferred over postMessage, but the guest-side
-        // WASM bridge accepts Uint8Array views regardless of buffer type. If a caller
-        // needs to retain the data beyond this synchronous callback, it must copy it.
-        data: record.data as unknown as Uint8Array<ArrayBuffer>,
-        ...(record.tsMs !== 0 ? { tsMs: record.tsMs } : {}),
-      });
-      forwarded += 1;
+      try {
+        onReport({
+          type: "hid.inputReport",
+          deviceId: record.deviceId,
+          reportId: record.reportId,
+          // SAB-backed views can't be transferred over postMessage, but the guest-side
+          // WASM bridge accepts Uint8Array views regardless of buffer type. If a caller
+          // needs to retain the data beyond this synchronous callback, it must copy it.
+          data: record.data as unknown as Uint8Array<ArrayBuffer>,
+          ...(record.tsMs !== 0 ? { tsMs: record.tsMs } : {}),
+        });
+        forwarded += 1;
+      } catch {
+        // Treat consumer errors as dropped records so the ring doesn't wedge.
+        invalid += 1;
+      }
     });
     if (!consumed) break;
   }
