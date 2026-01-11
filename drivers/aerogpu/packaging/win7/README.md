@@ -273,7 +273,8 @@ On a clean Win7 SP1 VM:
    packaging\win7\verify_umd_registration.cmd
    ```
 
-   If you installed the DX11-capable package (`aerogpu_dx11.inf`), require the D3D10/11 checks as well:
+   The script also validates D3D10/11 UMD registration if it detects `UserModeDriverName` is present.
+   If you installed the DX11-capable package (`aerogpu_dx11.inf`), you can additionally force the D3D10/11 checks:
 
    ```bat
    packaging\win7\verify_umd_registration.cmd dx11

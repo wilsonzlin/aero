@@ -58,7 +58,7 @@ if "%IS_X64%"=="1" (
     call :check_file_required "%SYS32%\aerogpu_d3d10_x64.dll"
     call :check_file_required "%SystemRoot%\SysWOW64\aerogpu_d3d10.dll"
   ) else (
-    echo INFO: Optional files (only if you installed aerogpu_dx11.inf)
+    echo INFO: Optional files (only required if D3D10/11 UMD registration is present)
     call :check_file_optional "%SYS32%\aerogpu_d3d10_x64.dll"
     call :check_file_optional "%SystemRoot%\SysWOW64\aerogpu_d3d10.dll"
   )
@@ -69,7 +69,7 @@ if "%IS_X64%"=="1" (
   if "%REQUIRE_DX11%"=="1" (
     call :check_file_required "%SYS32%\aerogpu_d3d10.dll"
   ) else (
-    echo INFO: Optional files (only if you installed aerogpu_dx11.inf)
+    echo INFO: Optional files (only required if D3D10/11 UMD registration is present)
     call :check_file_optional "%SYS32%\aerogpu_d3d10.dll"
   )
 )
@@ -156,7 +156,7 @@ if "%FAIL%"=="0" (
 rem -----------------------------------------------------------------------------
 :usage
 echo Usage:
-echo   verify_umd_registration.cmd           ^(D3D9-only checks; D3D10/11 optional^)
+echo   verify_umd_registration.cmd           ^(validates D3D9; validates D3D10/11 if UserModeDriverName is present^)
 echo   verify_umd_registration.cmd dx11      ^(require D3D10/11 registration/placement^)
 echo.
 exit /b 0
