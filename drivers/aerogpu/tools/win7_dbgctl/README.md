@@ -69,8 +69,9 @@ Minimum supported commands:
   Calls `D3DKMTGetScanLine` and prints the current scanline and vblank state.
 
 - `aerogpu_dbgctl --map-shared-handle HANDLE`  
-  Calls the KMD escape `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` to map a process-local Win32 shared handle to a stable 32-bit `share_token`.
-  Note: the handle must be valid in the `aerogpu_dbgctl.exe` process (inherit/duplicate the handle into this process if needed).
+  Calls the KMD escape `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` to map a process-local Win32 shared handle to a stable 32-bit **debug token**.
+  Note: this is *not* the `u64 share_token` used by `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
+  Also note: the handle must be valid in the `aerogpu_dbgctl.exe` process (inherit/duplicate the handle into this process if needed).
 
 - `aerogpu_dbgctl --selftest`  
   Triggers a simple KMD-side self-test.

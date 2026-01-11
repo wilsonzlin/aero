@@ -221,6 +221,11 @@ typedef aerogpu_escape_query_vblank_out aerogpu_escape_dump_vblank_inout;
 typedef struct aerogpu_escape_map_shared_handle_inout {
   aerogpu_escape_header hdr;
   aerogpu_escape_u64 shared_handle;
+  /*
+   * Debug-only 32-bit token for mapping a process-local NT handle to a stable
+   * value for bring-up tooling. This is NOT the `u64 share_token` used by
+   * `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
+   */
   aerogpu_escape_u32 share_token;
   aerogpu_escape_u32 reserved0;
 } aerogpu_escape_map_shared_handle_inout;
