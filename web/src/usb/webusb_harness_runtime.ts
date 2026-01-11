@@ -298,7 +298,9 @@ export class WebUsbUhciHarnessRuntime {
   readonly #capture: DescriptorCapture = { deviceDescriptor: null, configDescriptor: null };
 
   #actionRing: UsbProxyRing | null = null;
+  #actionRingBuffer: SharedArrayBuffer | null = null;
   #completionRingUnsubscribe: (() => void) | null = null;
+  #completionRingBuffer: SharedArrayBuffer | null = null;
 
   #tickCount = 0;
   #actionsForwarded = 0;
@@ -599,9 +601,20 @@ export class WebUsbUhciHarnessRuntime {
   }
 
   private attachRings(msg: UsbRingAttachMessage): void {
-    if (this.#actionRing && this.#completionRingUnsubscribe) return;
+    const currentActionBuf = this.#actionRingBuffer;
+    const currentCompletionBuf = this.#completionRingBuffer;
+    if (currentActionBuf === msg.actionRing && currentCompletionBuf === msg.completionRing) return;
+
+    // `postMessage` cloning produces a new SharedArrayBuffer wrapper object each time even
+    // when it references the same underlying shared memory. We must reattach so that all
+    // runtimes on the same port converge on a single completion-ring dispatcher key.
+    if (this.#actionRing || this.#completionRingUnsubscribe) {
+      this.detachRings();
+    }
     try {
       this.#actionRing = new UsbProxyRing(msg.actionRing);
+      this.#actionRingBuffer = msg.actionRing;
+      this.#completionRingBuffer = msg.completionRing;
       this.#completionRingUnsubscribe = subscribeUsbProxyCompletionRing(msg.completionRing, (completion) =>
         this.handleCompletion(completion),
       );
@@ -621,5 +634,7 @@ export class WebUsbUhciHarnessRuntime {
       this.#completionRingUnsubscribe = null;
     }
     this.#actionRing = null;
+    this.#actionRingBuffer = null;
+    this.#completionRingBuffer = null;
   }
 }

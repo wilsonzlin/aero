@@ -44,6 +44,45 @@ function createChannel(): { brokerPort: FakePort; workerPort: FakePort } {
   return { brokerPort, workerPort };
 }
 
+class CloningFakePort {
+  peer: CloningFakePort | null = null;
+  deliverToPeer = true;
+  readonly sent: Array<{ msg: unknown; transfer?: Transferable[] }> = [];
+  private readonly listeners = new Set<Listener>();
+
+  addEventListener(type: string, listener: Listener): void {
+    if (type !== "message") return;
+    this.listeners.add(listener);
+  }
+
+  removeEventListener(type: string, listener: Listener): void {
+    if (type !== "message") return;
+    this.listeners.delete(listener);
+  }
+
+  start(): void {
+    // No-op; browsers require MessagePort.start() when using addEventListener.
+  }
+
+  postMessage(msg: unknown, transfer?: Transferable[]): void {
+    this.sent.push({ msg, transfer });
+    if (!this.deliverToPeer) return;
+    const peer = this.peer;
+    if (!peer) return;
+    const cloned = structuredClone(msg);
+    const ev = { data: cloned } as MessageEvent<unknown>;
+    for (const listener of peer.listeners) listener(ev);
+  }
+}
+
+function createCloningChannel(): { brokerPort: CloningFakePort; workerPort: CloningFakePort } {
+  const brokerPort = new CloningFakePort();
+  const workerPort = new CloningFakePort();
+  brokerPort.peer = workerPort;
+  workerPort.peer = brokerPort;
+  return { brokerPort, workerPort };
+}
+
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<T>((_resolve, reject) => {
@@ -194,6 +233,80 @@ describe("usb/WebUSB proxy SAB ring integration", () => {
     expect(push_completion_2).toHaveBeenCalledTimes(1);
     expect(push_completion_1.mock.calls[0]?.[0]).toMatchObject({ kind: "bulkIn", id: 1 });
     expect(push_completion_2.mock.calls[0]?.[0]).toMatchObject({ kind: "bulkIn", id: 2 });
+
+    runtime1.destroy();
+    runtime2.destroy();
+    broker.detachWorkerPort(brokerPort as unknown as MessagePort);
+  });
+
+  it("re-attaches completion ring subscriptions when usb.ringAttach is resent (SAB wrapper clones)", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const broker = new UsbBroker({ ringDrainIntervalMs: 1 });
+    const { brokerPort, workerPort } = createCloningChannel();
+
+    let lastRingAttach: unknown = null;
+    const cacheListener: Listener = (ev) => {
+      const data = ev.data as { type?: unknown };
+      if (data && data.type === "usb.ringAttach") {
+        lastRingAttach = ev.data;
+      }
+    };
+    workerPort.addEventListener("message", cacheListener);
+
+    broker.attachWorkerPort(brokerPort as unknown as MessagePort);
+    expect(lastRingAttach).toBeTruthy();
+
+    const ringAttach1 = lastRingAttach as any;
+
+    // Prevent the runtime's constructor from triggering a ring resend: we want it to attach to
+    // the first ringAttach payload and only later receive a re-sent attach (with cloned SAB wrappers).
+    workerPort.deliverToPeer = false;
+
+    const actions1: UsbHostAction[] = [{ kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 }];
+    const push_completion_1 = vi.fn();
+    const bridge1: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => actions1),
+      push_completion: push_completion_1,
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+    const runtime1 = new WebUsbPassthroughRuntime({
+      bridge: bridge1,
+      port: workerPort as unknown as MessagePort,
+      pollIntervalMs: 0,
+      initialRingAttach: ringAttach1,
+    });
+
+    // Trigger a ring resend. `structuredClone` will create new SharedArrayBuffer wrapper objects.
+    workerPort.deliverToPeer = true;
+    workerPort.postMessage({ type: "usb.ringAttachRequest" });
+    expect(lastRingAttach).toBeTruthy();
+    const ringAttach2 = lastRingAttach as any;
+    expect(ringAttach2).not.toBe(ringAttach1);
+
+    // Disable postMessage deliveries again so subsequent usb.action messages can't reach the broker.
+    workerPort.deliverToPeer = false;
+
+    const actions2: UsbHostAction[] = [{ kind: "bulkIn", id: 2, endpoint: 0x81, length: 8 }];
+    const push_completion_2 = vi.fn();
+    const bridge2: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => actions2),
+      push_completion: push_completion_2,
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+    const runtime2 = new WebUsbPassthroughRuntime({
+      bridge: bridge2,
+      port: workerPort as unknown as MessagePort,
+      pollIntervalMs: 0,
+      initialRingAttach: ringAttach2,
+    });
+
+    await withTimeout(Promise.all([runtime1.pollOnce(), runtime2.pollOnce()]), 250);
+
+    expect(push_completion_1).toHaveBeenCalledTimes(1);
+    expect(push_completion_2).toHaveBeenCalledTimes(1);
 
     runtime1.destroy();
     runtime2.destroy();
