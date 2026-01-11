@@ -1212,10 +1212,14 @@ fn emit_instructions(
                 texture,
                 lod,
             } => {
+                // SM4 `ld` / `textureLoad` operates on integer texel coordinates and an integer mip
+                // level. Coordinates are currently represented as `vec4<f32>` and converted to
+                // `i32` on the call site. The mip level must preserve raw bits (it is frequently
+                // carried as an integer value inside those float lanes).
                 let coord = emit_src_vec4(coord, inst_index, "ld", ctx)?;
-                let lod_vec = emit_src_vec4(lod, inst_index, "ld", ctx)?;
+                let lod_vec = emit_src_vec4_i32(lod, inst_index, "ld", ctx)?;
                 let expr = format!(
-                    "textureLoad(t{}, vec2<i32>(i32(({coord}).x), i32(({coord}).y)), i32(({lod_vec}).x))",
+                    "textureLoad(t{}, vec2<i32>(i32(({coord}).x), i32(({coord}).y)), ({lod_vec}).x)",
                     texture.slot
                 );
                 let expr = maybe_saturate(dst, expr);
@@ -1258,6 +1262,46 @@ fn emit_src_vec4(
                 .collect();
             format!(
                 "vec4<f32>({}, {}, {}, {})",
+                lanes[0], lanes[1], lanes[2], lanes[3]
+            )
+        }
+    };
+
+    let mut expr = base;
+    if !src.swizzle.is_identity() {
+        let s = swizzle_suffix(src.swizzle);
+        expr = format!("({expr}).{s}");
+    }
+    expr = apply_modifier(expr, src.modifier);
+    Ok(expr)
+}
+
+fn emit_src_vec4_i32(
+    src: &crate::sm4_ir::SrcOperand,
+    _inst_index: usize,
+    _opcode: &'static str,
+    ctx: &EmitCtx<'_>,
+) -> Result<String, ShaderTranslateError> {
+    let base = match &src.kind {
+        SrcKind::Register(reg) => {
+            let expr = match reg.file {
+                RegFile::Temp => format!("r{}", reg.index),
+                RegFile::Output => format!("o{}", reg.index),
+                RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
+            };
+            format!("bitcast<vec4<i32>>({expr})")
+        }
+        SrcKind::ConstantBuffer { slot, reg } => {
+            let _ = ctx.resources.cbuffers.get(slot);
+            format!("bitcast<vec4<i32>>(cb{slot}.regs[{reg}])")
+        }
+        SrcKind::ImmediateF32(vals) => {
+            let lanes: Vec<String> = vals
+                .iter()
+                .map(|v| format!("bitcast<i32>(0x{v:08x}u)"))
+                .collect();
+            format!(
+                "vec4<i32>({}, {}, {}, {})",
                 lanes[0], lanes[1], lanes[2], lanes[3]
             )
         }

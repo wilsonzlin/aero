@@ -32,7 +32,10 @@ use crate::{
 };
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
-const DEFAULT_MAX_TEXTURE_SLOTS: usize = 16;
+// D3D11 exposes 128 SRV slots per stage. Our shader translation keeps the D3D register index as the
+// WGSL/WebGPU binding number (samplers live at an offset), so the executor must accept and track
+// slots up to 127 even if only a smaller subset is used by a given shader.
+const DEFAULT_MAX_TEXTURE_SLOTS: usize = 128;
 const DEFAULT_MAX_SAMPLER_SLOTS: usize = 16;
 const DEFAULT_MAX_CONSTANT_BUFFER_SLOTS: usize = 16;
 

@@ -137,7 +137,7 @@ fn aerogpu_cmd_set_texture_rejects_slot_out_of_range() {
 
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetTexture as u32);
         stream.extend_from_slice(&1u32.to_le_bytes()); // shader_stage = pixel
-        stream.extend_from_slice(&16u32.to_le_bytes()); // slot (0..15 supported)
+        stream.extend_from_slice(&128u32.to_le_bytes()); // slot (0..127 supported)
         stream.extend_from_slice(&0u32.to_le_bytes()); // texture handle (unbind)
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         end_cmd(&mut stream, start);
