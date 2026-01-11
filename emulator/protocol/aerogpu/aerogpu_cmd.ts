@@ -83,9 +83,6 @@ export function decodeCmdHdr(view: DataView, byteOffset = 0): AerogpuCmdHdr {
 }
 
 export interface AerogpuCmdPacket {
-  offsetBytes: number;
-  endBytes: number;
-  hdr: AerogpuCmdHdr;
   opcode: number;
   sizeBytes: number;
   /**
@@ -96,7 +93,14 @@ export interface AerogpuCmdPacket {
   payload: Uint8Array;
 }
 
-export class AerogpuCmdStreamIter implements IterableIterator<AerogpuCmdPacket> {
+// Extended packet view returned by `AerogpuCmdStreamIter`.
+export interface AerogpuCmdPacketView extends AerogpuCmdPacket {
+  offsetBytes: number;
+  endBytes: number;
+  hdr: AerogpuCmdHdr;
+}
+
+export class AerogpuCmdStreamIter implements IterableIterator<AerogpuCmdPacketView> {
   readonly bytes: Uint8Array;
   readonly view: DataView;
   readonly header: AerogpuCmdStreamHeader;
@@ -120,13 +124,13 @@ export class AerogpuCmdStreamIter implements IterableIterator<AerogpuCmdPacket> 
     this.cursor = AEROGPU_CMD_STREAM_HEADER_SIZE;
   }
 
-  [Symbol.iterator](): IterableIterator<AerogpuCmdPacket> {
+  [Symbol.iterator](): IterableIterator<AerogpuCmdPacketView> {
     return this;
   }
 
-  next(): IteratorResult<AerogpuCmdPacket> {
+  next(): IteratorResult<AerogpuCmdPacketView> {
     if (this.cursor >= this.end) {
-      return { done: true, value: undefined as unknown as AerogpuCmdPacket };
+      return { done: true, value: undefined as unknown as AerogpuCmdPacketView };
     }
 
     if (this.end - this.cursor < AEROGPU_CMD_HDR_SIZE) {
@@ -149,7 +153,7 @@ export class AerogpuCmdStreamIter implements IterableIterator<AerogpuCmdPacket> 
     }
 
     const payload = this.bytes.subarray(this.cursor + AEROGPU_CMD_HDR_SIZE, end);
-    const packet: AerogpuCmdPacket = {
+    const packet: AerogpuCmdPacketView = {
       offsetBytes: this.cursor,
       endBytes: end,
       hdr,
