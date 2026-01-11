@@ -1,7 +1,7 @@
 BITS 16
 ORG 0x7C00
 
-; Synthetic boot sector used by `crates/firmware/tests/boot_sector_integration.rs`.
+; Synthetic boot sector historically used by BIOS interrupt integration tests.
 ;
 ; It exercises a small subset of BIOS interrupts and writes observable results
 ; into low RAM so the host-side test harness can assert behaviour without a
@@ -49,4 +49,3 @@ hang:
 
 TIMES 510-($-$$) DB 0
 DW 0xAA55
-
