@@ -2,6 +2,7 @@
 
 #include "aerogpu_kmd.h"
 #include "aerogpu_dbgctl_escape.h"
+#include "aerogpu_cmd.h"
 #include "aerogpu_umd_private.h"
 #include "aerogpu_wddm_alloc.h"
 #include "aerogpu_win7_abi.h"
@@ -2173,13 +2174,28 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         }
 
         if ((handled & AEROGPU_IRQ_FENCE) != 0) {
-            const ULONGLONG completedFence = adapter->FencePageVa
-                                                 ? adapter->FencePageVa->completed_fence
-                                                 : ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_LO) |
-                                                    ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_HI)
-                                                        << 32));
+            const ULONGLONG completedFence64 = adapter->FencePageVa
+                                                   ? adapter->FencePageVa->completed_fence
+                                                   : ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_LO) |
+                                                      ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_HI)
+                                                          << 32));
 
-            adapter->LastCompletedFence = completedFence;
+            /*
+             * Win7 fences are ULONGs. Clamp to avoid sending a fence that appears
+             * to go backwards (e.g. if MMIO tears or the device reports a bogus
+             * value).
+             */
+            ULONG completedFence32 = (ULONG)completedFence64;
+            const ULONG lastCompleted32 = (ULONG)adapter->LastCompletedFence;
+            const ULONG lastSubmitted32 = (ULONG)adapter->LastSubmittedFence;
+            if (completedFence32 < lastCompleted32) {
+                completedFence32 = lastCompleted32;
+            }
+            if (completedFence32 > lastSubmitted32) {
+                completedFence32 = lastSubmitted32;
+            }
+
+            adapter->LastCompletedFence = (ULONGLONG)completedFence32;
             any = TRUE;
             queueDpc = TRUE;
 
@@ -2187,7 +2203,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                 DXGKARGCB_NOTIFY_INTERRUPT notify;
                 RtlZeroMemory(&notify, sizeof(notify));
                 notify.InterruptType = DXGK_INTERRUPT_TYPE_DMA_COMPLETED;
-                notify.DmaCompleted.SubmissionFenceId = (ULONG)completedFence;
+                notify.DmaCompleted.SubmissionFenceId = completedFence32;
                 notify.DmaCompleted.NodeOrdinal = AEROGPU_NODE_ORDINAL;
                 notify.DmaCompleted.EngineOrdinal = AEROGPU_ENGINE_ORDINAL;
                 adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
@@ -2235,10 +2251,20 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
             return FALSE;
         }
 
-        const ULONGLONG completedFence = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_FENCE_COMPLETED);
+        const ULONGLONG completedFence64 = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_FENCE_COMPLETED);
         AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, AEROGPU_LEGACY_INT_FENCE);
 
-        adapter->LastCompletedFence = completedFence;
+        ULONG completedFence32 = (ULONG)completedFence64;
+        const ULONG lastCompleted32 = (ULONG)adapter->LastCompletedFence;
+        const ULONG lastSubmitted32 = (ULONG)adapter->LastSubmittedFence;
+        if (completedFence32 < lastCompleted32) {
+            completedFence32 = lastCompleted32;
+        }
+        if (completedFence32 > lastSubmitted32) {
+            completedFence32 = lastSubmitted32;
+        }
+
+        adapter->LastCompletedFence = (ULONGLONG)completedFence32;
         any = TRUE;
         queueDpc = TRUE;
 
@@ -2246,7 +2272,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
             DXGKARGCB_NOTIFY_INTERRUPT notify;
             RtlZeroMemory(&notify, sizeof(notify));
             notify.InterruptType = DXGK_INTERRUPT_TYPE_DMA_COMPLETED;
-            notify.DmaCompleted.SubmissionFenceId = (ULONG)completedFence;
+            notify.DmaCompleted.SubmissionFenceId = completedFence32;
             notify.DmaCompleted.NodeOrdinal = AEROGPU_NODE_ORDINAL;
             notify.DmaCompleted.EngineOrdinal = AEROGPU_ENGINE_ORDINAL;
             adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
@@ -2848,6 +2874,44 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         }
         const ULONGLONG fenceNoop = completedFence;
 
+        /*
+         * For the new (AGPU) device ABI, command buffers must begin with an
+         * `aerogpu_cmd_stream_header`. Use a minimal NOP stream for selftest.
+         *
+         * For legacy devices, cmd_gpa/cmd_size_bytes is derived from the legacy
+         * submission descriptor.
+         */
+        PVOID dmaVa = NULL;
+        PHYSICAL_ADDRESS dmaPa;
+        ULONG dmaSizeBytes = 0;
+        dmaPa.QuadPart = 0;
+
+        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            dmaSizeBytes = sizeof(struct aerogpu_cmd_stream_header) + sizeof(struct aerogpu_cmd_hdr);
+            dmaVa = AeroGpuAllocContiguous(dmaSizeBytes, &dmaPa);
+            if (!dmaVa) {
+                io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES;
+                return STATUS_SUCCESS;
+            }
+
+            struct aerogpu_cmd_stream_header stream;
+            RtlZeroMemory(&stream, sizeof(stream));
+            stream.magic = AEROGPU_CMD_STREAM_MAGIC;
+            stream.abi_version = AEROGPU_ABI_VERSION_U32;
+            stream.size_bytes = (uint32_t)dmaSizeBytes;
+            stream.flags = AEROGPU_CMD_STREAM_FLAG_NONE;
+            stream.reserved0 = 0;
+            stream.reserved1 = 0;
+
+            struct aerogpu_cmd_hdr nop;
+            RtlZeroMemory(&nop, sizeof(nop));
+            nop.opcode = AEROGPU_CMD_NOP;
+            nop.size_bytes = (uint32_t)sizeof(struct aerogpu_cmd_hdr);
+
+            RtlCopyMemory(dmaVa, &stream, sizeof(stream));
+            RtlCopyMemory((PUCHAR)dmaVa + sizeof(stream), &nop, sizeof(nop));
+        }
+
         PVOID descVa = NULL;
         PHYSICAL_ADDRESS descPa;
         descPa.QuadPart = 0;
@@ -2912,8 +2976,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     entry->flags = AEROGPU_SUBMIT_FLAG_NO_IRQ;
                     entry->context_id = 0;
                     entry->engine_id = AEROGPU_ENGINE_0;
-                    entry->cmd_gpa = 0;
-                    entry->cmd_size_bytes = 0;
+                    entry->cmd_gpa = (uint64_t)dmaPa.QuadPart;
+                    entry->cmd_size_bytes = dmaSizeBytes;
                     entry->alloc_table_gpa = 0;
                     entry->alloc_table_size_bytes = 0;
                     entry->signal_fence = (uint64_t)fenceNoop;
@@ -2957,6 +3021,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
         if (!NT_SUCCESS(pushStatus)) {
             AeroGpuFreeContiguous(descVa);
+            AeroGpuFreeContiguous(dmaVa);
             io->error_code = (pushStatus == STATUS_DEVICE_BUSY)
                                  ? AEROGPU_DBGCTL_SELFTEST_ERR_GPU_BUSY
                                  : AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY;
@@ -2983,6 +3048,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
         if (NT_SUCCESS(testStatus)) {
             AeroGpuFreeContiguous(descVa);
+            AeroGpuFreeContiguous(dmaVa);
             io->passed = 1;
             io->error_code = AEROGPU_DBGCTL_SELFTEST_OK;
         } else {
