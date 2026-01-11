@@ -335,6 +335,32 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
 }
 
 fn validate_drivers(spec: &PackagingSpec, drivers_dir: &Path) -> Result<DriverPlan> {
+    let mut seen_driver_names = HashSet::<String>::new();
+    for drv in &spec.drivers {
+        let name = drv.name.trim();
+        if name.is_empty() {
+            bail!("packaging spec contains a driver with an empty name");
+        }
+        if name == "." || name == ".." {
+            bail!("packaging spec contains an invalid driver name: {}", drv.name);
+        }
+        if name.contains('/') || name.contains('\\') {
+            bail!(
+                "packaging spec contains an invalid driver name containing path separators: {}",
+                drv.name
+            );
+        }
+
+        // Deduplicate case-insensitively to avoid surprises on Windows hosts.
+        let key = name.to_ascii_lowercase();
+        if !seen_driver_names.insert(key) {
+            bail!(
+                "packaging spec lists the same driver multiple times (case-insensitive): {}",
+                drv.name
+            );
+        }
+    }
+
     let drivers_x86_dir = resolve_input_arch_dir(drivers_dir, "x86")
         .with_context(|| "resolve driver input directory for x86")?;
     let drivers_amd64_dir = resolve_input_arch_dir(drivers_dir, "amd64")
