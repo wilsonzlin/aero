@@ -147,3 +147,24 @@ test("explainWebUsbError: NotSupportedError mentions isochronous limitations", (
   assert.ok(res.title.toLowerCase().includes("not supported") || res.title.toLowerCase().includes("isochronous"));
   assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("isochronous")));
 });
+
+test("explainWebUsbError: InvalidAccessError hints at endpoints/interfaces", () => {
+  const res = explainWebUsbError({
+    name: "InvalidAccessError",
+    message: "The endpoint number is invalid.",
+  });
+
+  assert.ok(res.title.toLowerCase().includes("rejected") || res.title.toLowerCase().includes("endpoint"));
+  assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("endpoint")));
+  assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("claimed")));
+});
+
+test("explainWebUsbError: OperationError suggests reset/replug", () => {
+  const res = explainWebUsbError({
+    name: "OperationError",
+    message: "USB transfer failed.",
+  });
+
+  assert.ok(res.title.toLowerCase().includes("operation"));
+  assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("replug") || hint.toLowerCase().includes("reset")));
+});

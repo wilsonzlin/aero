@@ -159,6 +159,7 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
   const mentionsPermissionsPolicy = includesAny(msgLower, ["permissions policy", "permission policy", "feature policy"]);
   const mentionsAbort = includesAny(msgLower, ["abort", "aborted", "aborterror", "cancelled", "canceled"]);
   const mentionsIsochronous = includesAny(msgLower, ["isochronous"]);
+  const mentionsEndpoint = includesAny(msgLower, ["endpoint"]);
   const mentionsClaimInterface = includesAny(msgLower, ["claiminterface", "claim interface", "unable to claim"]);
   const mentionsOpen = includesAny(msgLower, ["failed to open", "unable to open", "open()"]);
   const mentionsDisconnected = includesAny(msgLower, ["disconnected", "not found", "no device selected"]);
@@ -202,6 +203,10 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
       title = "WebUSB request was rejected";
       details = "The requested device/interface/endpoint could not be accessed in the current context.";
       break;
+    case "OperationError":
+      title = "WebUSB device operation failed";
+      details = "The device did not complete the requested operation (transfer/open/claim).";
+      break;
     case "NotAllowedError":
       title = "WebUSB permission was denied";
       details = "The browser blocked the request (often due to user gesture or permission policy requirements).";
@@ -233,6 +238,8 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
         title = "WebUSB operation was aborted";
       } else if (mentionsIsochronous) {
         title = "WebUSB operation is not supported for isochronous endpoints";
+      } else if (mentionsEndpoint) {
+        title = "WebUSB endpoint access failed";
       }
       break;
   }
@@ -272,10 +279,21 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
     addHint("Close/release the device when done (`releaseInterface`, `close`) and avoid double-claiming interfaces.");
   }
 
+  if (name === "InvalidAccessError") {
+    addHint("Ensure the device is opened, a configuration is selected, and the interface is claimed before transfers.");
+    addHint("Double-check endpoint numbers and directions (IN/OUT) against the device descriptors.");
+    addHint("If the interface uses alternate settings, select the correct alternate setting before transfers.");
+  }
+
   if (name === "NotSupportedError" || mentionsIsochronous) {
     addHint(
       "WebUSB typically supports control/bulk/interrupt transfers only; isochronous endpoints (common for USB audio/video) are not generally supported.",
     );
+  }
+
+  if (name === "OperationError") {
+    addHint("Try unplug/replug the device and retry the operation.");
+    addHint("If supported, try resetting the device (`device.reset()`) or closing/re-opening it.");
   }
 
   if (name === "NotFoundError" || name === "AbortError" || mentionsDisconnected) {
