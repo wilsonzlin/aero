@@ -125,10 +125,11 @@ static void PrintUsage() {
            L"  --query-umd-private\n"
            L"  --query-fence\n"
            L"  --dump-ring\n"
-            L"  --dump-vblank  (alias: --query-vblank)\n"
-            L"  --wait-vblank  (D3DKMTWaitForVerticalBlankEvent)\n"
-            L"  --query-scanline  (D3DKMTGetScanLine)\n"
-            L"  --map-shared-handle HANDLE\n"
+           L"  --dump-createalloc  (DxgkDdiCreateAllocation trace)\n"
+             L"  --dump-vblank  (alias: --query-vblank)\n"
+             L"  --wait-vblank  (D3DKMTWaitForVerticalBlankEvent)\n"
+             L"  --query-scanline  (D3DKMTGetScanLine)\n"
+             L"  --map-shared-handle HANDLE\n"
             L"  --selftest\n");
 }
 
@@ -460,6 +461,49 @@ static int DoQueryFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long long)q.last_submitted_fence);
   wprintf(L"Last completed fence: 0x%I64x (%I64u)\n", (unsigned long long)q.last_completed_fence,
           (unsigned long long)q.last_completed_fence);
+  return 0;
+}
+
+static int DoDumpCreateAllocation(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
+  aerogpu_escape_dump_createallocation_inout q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.write_index = 0;
+  q.entry_count = 0;
+  q.entry_capacity = AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS;
+  q.reserved0 = 0;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    if (st == STATUS_NOT_SUPPORTED) {
+      wprintf(L"CreateAllocation trace: (not supported)\n");
+      return 2;
+    }
+    PrintNtStatus(L"D3DKMTEscape(dump-createalloc) failed", f, st);
+    return 2;
+  }
+
+  wprintf(L"CreateAllocation trace:\n");
+  wprintf(L"  write_index=%lu entry_count=%lu\n", (unsigned long)q.write_index, (unsigned long)q.entry_count);
+  for (uint32_t i = 0; i < q.entry_count && i < q.entry_capacity && i < AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS; ++i) {
+    const aerogpu_dbgctl_createallocation_desc &e = q.entries[i];
+    wprintf(L"  [%lu] seq=%lu call=%lu alloc[%lu/%lu] alloc_id=%lu share_token=0x%I64x size=%I64u priv_flags=0x%08lx pitch=%lu flags=0x%08lx->0x%08lx\n",
+            (unsigned long)i,
+            (unsigned long)e.seq,
+            (unsigned long)e.call_seq,
+            (unsigned long)e.alloc_index,
+            (unsigned long)e.num_allocations,
+            (unsigned long)e.alloc_id,
+            (unsigned long long)e.share_token,
+            (unsigned long long)e.size_bytes,
+            (unsigned long)e.priv_flags,
+            (unsigned long)e.pitch_bytes,
+            (unsigned long)e.flags_in,
+            (unsigned long)e.flags_out);
+  }
   return 0;
 }
 
@@ -1240,6 +1284,7 @@ int wmain(int argc, wchar_t **argv) {
     CMD_QUERY_UMD_PRIVATE,
     CMD_QUERY_FENCE,
     CMD_DUMP_RING,
+    CMD_DUMP_CREATEALLOCATION,
     CMD_DUMP_VBLANK,
     CMD_WAIT_VBLANK,
     CMD_QUERY_SCANLINE,
@@ -1363,6 +1408,13 @@ int wmain(int argc, wchar_t **argv) {
       }
       continue;
     }
+    if (wcscmp(a, L"--dump-createalloc") == 0 || wcscmp(a, L"--dump-createallocation") == 0 ||
+        wcscmp(a, L"--dump-allocations") == 0) {
+      if (!SetCommand(CMD_DUMP_CREATEALLOCATION)) {
+        return 1;
+      }
+      continue;
+    }
     if (wcscmp(a, L"--dump-vblank") == 0) {
       if (!SetCommand(CMD_DUMP_VBLANK)) {
         return 1;
@@ -1457,6 +1509,9 @@ int wmain(int argc, wchar_t **argv) {
     break;
   case CMD_DUMP_RING:
     rc = DoDumpRing(&f, open.hAdapter, ringId);
+    break;
+  case CMD_DUMP_CREATEALLOCATION:
+    rc = DoDumpCreateAllocation(&f, open.hAdapter);
     break;
   case CMD_DUMP_VBLANK:
     rc = DoDumpVblank(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, vblankIntervalMs);

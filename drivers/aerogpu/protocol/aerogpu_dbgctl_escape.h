@@ -31,8 +31,10 @@ extern "C" {
 /* Extended base Escape ops used by bring-up tooling. */
 #define AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2 7u
 #define AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE 8u
+#define AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION 9u
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
+#define AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS 32u
 
 #define AEROGPU_DBGCTL_CONCAT2_(a, b) a##b
 #define AEROGPU_DBGCTL_CONCAT_(a, b) AEROGPU_DBGCTL_CONCAT2_(a, b)
@@ -227,6 +229,48 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, vblank_pe
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, vblank_interrupt_type) == 52);
 
 typedef aerogpu_escape_query_vblank_out aerogpu_escape_dump_vblank_inout;
+
+/*
+ * Recent CreateAllocation trace entry (DxgkDdiCreateAllocation inputs/outputs).
+ *
+ * This is intended to capture the exact `DXGK_ALLOCATIONINFO::Flags.Value`
+ * values the Win7 runtime requests (and the final flags after the KMD applies
+ * required bits like CpuVisible/Aperture), without requiring a kernel debugger.
+ */
+typedef struct aerogpu_dbgctl_createallocation_desc {
+  aerogpu_escape_u32 seq;             /* Monotonic entry sequence number (KMD local). */
+  aerogpu_escape_u32 call_seq;        /* Monotonic CreateAllocation call sequence number (KMD local). */
+  aerogpu_escape_u32 alloc_index;     /* Allocation index within the CreateAllocation call. */
+  aerogpu_escape_u32 num_allocations; /* Total allocations in the CreateAllocation call. */
+  aerogpu_escape_u32 create_flags;    /* DXGKARG_CREATEALLOCATION::Flags.Value */
+  aerogpu_escape_u32 alloc_id;        /* AeroGPU alloc_id (UMD-provided or synthesized). */
+  aerogpu_escape_u32 priv_flags;      /* aerogpu_wddm_alloc_private_data.flags (0 if absent). */
+  aerogpu_escape_u32 pitch_bytes;     /* Optional pitch for linear surfaces (0 if unknown). */
+  aerogpu_escape_u64 share_token;     /* Protocol share_token (0 for non-shared). */
+  aerogpu_escape_u64 size_bytes;      /* DXGK_ALLOCATIONINFO::Size */
+  aerogpu_escape_u32 flags_in;        /* DXGK_ALLOCATIONINFO::Flags.Value (incoming). */
+  aerogpu_escape_u32 flags_out;       /* DXGK_ALLOCATIONINFO::Flags.Value (after KMD edits). */
+} aerogpu_dbgctl_createallocation_desc;
+
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_dbgctl_createallocation_desc) == 56);
+
+typedef struct aerogpu_escape_dump_createallocation_inout {
+  aerogpu_escape_header hdr;
+  /*
+   * Monotonic KMD write index (total entries written).
+   *
+   * Tooling can use this to detect whether the log wrapped between dumps.
+   */
+  aerogpu_escape_u32 write_index;
+  aerogpu_escape_u32 entry_count;
+  aerogpu_escape_u32 entry_capacity;
+  aerogpu_escape_u32 reserved0;
+  aerogpu_dbgctl_createallocation_desc entries[AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS];
+} aerogpu_escape_dump_createallocation_inout;
+
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_dump_createallocation_inout) ==
+                             (32 + (AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS * 56)));
+
 typedef struct aerogpu_escape_map_shared_handle_inout {
   aerogpu_escape_header hdr;
   aerogpu_escape_u64 shared_handle;

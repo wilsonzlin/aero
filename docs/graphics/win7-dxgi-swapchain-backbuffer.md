@@ -96,22 +96,34 @@ python scripts/parse_win7_dxgi_swapchain_trace.py --json=swapchain_trace.json ae
 To understand which **WDDM allocation flags** are required for `Present` stability, capture what
 dxgkrnl/runtime passes into the miniport via `DxgkDdiCreateAllocation`.
 
-`drivers/aerogpu/kmd/src/aerogpu_kmd.c` supports additional DBG logging when built with:
+`drivers/aerogpu/kmd/src/aerogpu_kmd.c` supports two capture paths:
 
-* `AEROGPU_KMD_TRACE_CREATEALLOCATION=1`
+1. **Escape-based (recommended; no kernel debugger required)**  
+   The KMD maintains a small ring buffer of recent `DxgkDdiCreateAllocation` events and exposes it via
+   the dbgctl escape `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION`.
 
-When enabled, the miniport logs the first few `CreateAllocation` calls and includes both:
+   Build and run the Win7 dbgctl tool (`drivers/aerogpu/tools/win7_dbgctl`) and use:
 
-* the **incoming** `DXGK_ALLOCATIONINFO::Flags.Value` from dxgkrnl/runtime, and
-* the **final** flags after AeroGPU applies its required bits (currently `CpuVisible` + `Aperture`).
+   ```cmd
+   aerogpu_dbgctl --dump-createalloc
+   ```
 
-Look for log lines like:
+   The dump includes:
+   * the **incoming** `DXGK_ALLOCATIONINFO::Flags.Value` from dxgkrnl/runtime (`flags_in`)
+   * the **final** flags after AeroGPU applies its required bits (`flags_out`, currently adds `CpuVisible` + `Aperture`)
 
-```
-aerogpu-kmd: CreateAllocation: alloc_id=... flags=0x12345678->0x1234D678
-```
+2. **DbgPrint-based (DBG builds; optional extra verbosity)**  
+   Build the KMD with:
 
-These are easiest to capture under WinDbg (kernel debug) or any setup that collects `DbgPrintEx`.
+   * `AEROGPU_KMD_TRACE_CREATEALLOCATION=1`
+
+   This logs the first few `CreateAllocation` calls via `DbgPrintEx` and includes `flags=0xIN->0xOUT` style lines:
+
+   ```
+   aerogpu-kmd: CreateAllocation: alloc_id=... flags=0x12345678->0x1234D678
+   ```
+
+   These are easiest to capture under WinDbg (kernel debug) or any setup that collects `DbgPrintEx`.
 
 ## Backbuffer allocation recipe (Win7 / WDDM 1.1)
 

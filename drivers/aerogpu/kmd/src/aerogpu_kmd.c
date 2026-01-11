@@ -260,6 +260,45 @@ static VOID AeroGpuLogSubmission(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONGLON
     Adapter->SubmissionLog.Entries[idx].Qpc = KeQueryPerformanceCounter(NULL);
 }
 
+static VOID AeroGpuTraceCreateAllocation(_Inout_ AEROGPU_ADAPTER* Adapter,
+                                        _In_ ULONG CallSeq,
+                                        _In_ ULONG AllocIndex,
+                                        _In_ ULONG NumAllocations,
+                                        _In_ ULONG CreateFlags,
+                                        _In_ ULONG AllocationId,
+                                        _In_ ULONGLONG ShareToken,
+                                        _In_ ULONGLONG SizeBytes,
+                                        _In_ ULONG FlagsIn,
+                                        _In_ ULONG FlagsOut,
+                                        _In_ ULONG PrivFlags,
+                                        _In_ ULONG PitchBytes)
+{
+    if (!Adapter) {
+        return;
+    }
+
+    KIRQL oldIrql;
+    KeAcquireSpinLock(&Adapter->CreateAllocationTraceLock, &oldIrql);
+
+    const ULONG seq = Adapter->CreateAllocationTrace.WriteIndex++;
+    const ULONG slot = seq % AEROGPU_CREATEALLOCATION_TRACE_SIZE;
+    AEROGPU_CREATEALLOCATION_TRACE_ENTRY* e = &Adapter->CreateAllocationTrace.Entries[slot];
+    e->Seq = seq;
+    e->CallSeq = CallSeq;
+    e->AllocIndex = AllocIndex;
+    e->NumAllocations = NumAllocations;
+    e->CreateFlags = CreateFlags;
+    e->AllocationId = AllocationId;
+    e->ShareToken = ShareToken;
+    e->SizeBytes = SizeBytes;
+    e->FlagsIn = FlagsIn;
+    e->FlagsOut = FlagsOut;
+    e->PrivFlags = PrivFlags;
+    e->PitchBytes = PitchBytes;
+
+    KeReleaseSpinLock(&Adapter->CreateAllocationTraceLock, oldIrql);
+}
+
 static PVOID AeroGpuAllocContiguous(_In_ SIZE_T Size, _Out_ PHYSICAL_ADDRESS* Pa)
 {
     PHYSICAL_ADDRESS low;
@@ -1346,6 +1385,7 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     InitializeListHead(&adapter->PendingMetaHandles);
     adapter->NextMetaHandle = 0;
     KeInitializeSpinLock(&adapter->AllocationsLock);
+    KeInitializeSpinLock(&adapter->CreateAllocationTraceLock);
     InitializeListHead(&adapter->Allocations);
     InitializeListHead(&adapter->ShareTokenRefs);
 
@@ -2303,6 +2343,7 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
      * handle creation (notably DWM redirected surfaces).
      */
     const BOOLEAN isShared = pCreate->Flags.CreateShared ? TRUE : FALSE;
+    const ULONG callSeq = (ULONG)InterlockedIncrement(&adapter->CreateAllocationCallSeq);
 
 #if DBG
     BOOLEAN logCall = FALSE;
@@ -2378,13 +2419,7 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
     for (i = 0; i < pCreate->NumAllocations; ++i) {
         DXGK_ALLOCATIONINFO* info = &pCreate->pAllocationInfo[i];
         info->hAllocation = NULL;
-
-#if DBG
-        ULONG preFlags = 0;
-        if (logCall) {
-            preFlags = info->Flags.Value;
-        }
-#endif
+        const ULONG preFlags = info->Flags.Value;
 
         ULONG allocId = 0;
         ULONGLONG shareToken = 0;
@@ -2395,6 +2430,7 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
         ULONG format = 0;
         ULONG rowPitchBytes = 0;
         ULONG pitchBytes = 0;
+        ULONG privFlags = 0;
 
         /*
          * WDDM allocation private driver data (if provided).
@@ -2449,6 +2485,7 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
 
                 allocId = (ULONG)priv->alloc_id;
                 shareToken = (ULONGLONG)priv->share_token;
+                privFlags = (ULONG)priv->flags;
 
                 /*
                  * Optional surface metadata.
@@ -2541,6 +2578,19 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
         info->SupportedWriteSegmentSet = 1;
 
         AeroGpuTrackAllocation(adapter, alloc);
+
+        AeroGpuTraceCreateAllocation(adapter,
+                                     callSeq,
+                                     (ULONG)i,
+                                     (ULONG)pCreate->NumAllocations,
+                                     (ULONG)pCreate->Flags.Value,
+                                     allocId,
+                                     shareToken,
+                                     (ULONGLONG)info->Size,
+                                     preFlags,
+                                     (ULONG)info->Flags.Value,
+                                     privFlags,
+                                     pitchBytes);
 
 #if DBG
         if (logCall) {
@@ -4531,6 +4581,70 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             out->flags |= AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID;
             out->vblank_interrupt_type = (uint32_t)adapter->VblankInterruptType;
         }
+        return STATUS_SUCCESS;
+    }
+
+    if (hdr->op == AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_dump_createallocation_inout)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+        aerogpu_escape_dump_createallocation_inout* io =
+            (aerogpu_escape_dump_createallocation_inout*)pEscape->pPrivateDriverData;
+
+        io->hdr.version = AEROGPU_ESCAPE_VERSION;
+        io->hdr.op = AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION;
+        io->hdr.size = sizeof(*io);
+        io->hdr.reserved0 = 0;
+
+        if (io->entry_capacity > AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS) {
+            io->entry_capacity = AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS;
+        }
+
+        io->write_index = 0;
+        io->entry_count = 0;
+        io->reserved0 = 0;
+        RtlZeroMemory(io->entries, sizeof(io->entries));
+
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&adapter->CreateAllocationTraceLock, &oldIrql);
+
+        const ULONG writeIndex = adapter->CreateAllocationTrace.WriteIndex;
+        ULONG available = writeIndex;
+        if (available > AEROGPU_CREATEALLOCATION_TRACE_SIZE) {
+            available = AEROGPU_CREATEALLOCATION_TRACE_SIZE;
+        }
+
+        ULONG outCount = available;
+        if (outCount > io->entry_capacity) {
+            outCount = io->entry_capacity;
+        }
+
+        io->write_index = writeIndex;
+        io->entry_count = outCount;
+
+        if (outCount != 0) {
+            const ULONG startSeq = writeIndex - outCount;
+            for (ULONG i = 0; i < outCount; ++i) {
+                const ULONG seq = startSeq + i;
+                const ULONG slot = seq % AEROGPU_CREATEALLOCATION_TRACE_SIZE;
+                const AEROGPU_CREATEALLOCATION_TRACE_ENTRY* e = &adapter->CreateAllocationTrace.Entries[slot];
+                aerogpu_dbgctl_createallocation_desc* out = &io->entries[i];
+                out->seq = (uint32_t)e->Seq;
+                out->call_seq = (uint32_t)e->CallSeq;
+                out->alloc_index = (uint32_t)e->AllocIndex;
+                out->num_allocations = (uint32_t)e->NumAllocations;
+                out->create_flags = (uint32_t)e->CreateFlags;
+                out->alloc_id = (uint32_t)e->AllocationId;
+                out->priv_flags = (uint32_t)e->PrivFlags;
+                out->pitch_bytes = (uint32_t)e->PitchBytes;
+                out->share_token = (uint64_t)e->ShareToken;
+                out->size_bytes = (uint64_t)e->SizeBytes;
+                out->flags_in = (uint32_t)e->FlagsIn;
+                out->flags_out = (uint32_t)e->FlagsOut;
+            }
+        }
+
+        KeReleaseSpinLock(&adapter->CreateAllocationTraceLock, oldIrql);
         return STATUS_SUCCESS;
     }
 

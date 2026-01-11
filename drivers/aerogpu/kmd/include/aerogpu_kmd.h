@@ -26,6 +26,7 @@
 #define AEROGPU_RING_ENTRY_COUNT_DEFAULT 256u
 
 #define AEROGPU_SUBMISSION_LOG_SIZE 64u
+#define AEROGPU_CREATEALLOCATION_TRACE_SIZE 64u
 
 /*
  * Driver-private submission types.
@@ -54,6 +55,26 @@ typedef struct _AEROGPU_SUBMISSION_LOG {
     ULONG WriteIndex;
     AEROGPU_SUBMISSION_LOG_ENTRY Entries[AEROGPU_SUBMISSION_LOG_SIZE];
 } AEROGPU_SUBMISSION_LOG;
+
+typedef struct _AEROGPU_CREATEALLOCATION_TRACE_ENTRY {
+    ULONG Seq;
+    ULONG CallSeq;
+    ULONG AllocIndex;
+    ULONG NumAllocations;
+    ULONG CreateFlags;
+    ULONG AllocationId;
+    ULONG PrivFlags;
+    ULONG PitchBytes;
+    ULONGLONG ShareToken;
+    ULONGLONG SizeBytes;
+    ULONG FlagsIn;
+    ULONG FlagsOut;
+} AEROGPU_CREATEALLOCATION_TRACE_ENTRY;
+
+typedef struct _AEROGPU_CREATEALLOCATION_TRACE {
+    ULONG WriteIndex;
+    AEROGPU_CREATEALLOCATION_TRACE_ENTRY Entries[AEROGPU_CREATEALLOCATION_TRACE_SIZE];
+} AEROGPU_CREATEALLOCATION_TRACE;
 
 typedef struct _AEROGPU_SUBMISSION_META {
     PVOID AllocTableVa;
@@ -215,6 +236,17 @@ typedef struct _AEROGPU_ADAPTER {
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastVblankTimeNs;
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastVblankInterruptTime100ns;
     ULONG VblankPeriodNs;
+
+    /*
+     * Recent CreateAllocation trace.
+     *
+     * Used by the dbgctl escape `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` to expose
+     * the incoming/outgoing `DXGK_ALLOCATIONINFO::Flags.Value` bits without
+     * requiring kernel debugging.
+     */
+    KSPIN_LOCK CreateAllocationTraceLock;
+    volatile LONG CreateAllocationCallSeq;
+    AEROGPU_CREATEALLOCATION_TRACE CreateAllocationTrace;
 
     AEROGPU_SUBMISSION_LOG SubmissionLog;
 } AEROGPU_ADAPTER;

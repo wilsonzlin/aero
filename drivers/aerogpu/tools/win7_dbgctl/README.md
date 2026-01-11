@@ -50,6 +50,11 @@ Minimum supported commands:
   - `flags`
   - (AGPU only) `alloc_table_gpa` / `alloc_table_size_bytes`
 
+- `aerogpu_dbgctl --dump-createalloc` *(aliases: `--dump-createallocation`, `--dump-allocations`)*  
+  Dumps a small KMD-maintained ring buffer of recent `DxgkDdiCreateAllocation` events, including:
+  - the incoming `DXGK_ALLOCATIONINFO::Flags.Value` from dxgkrnl/runtime
+  - the final flags after the miniport applies required bits (currently `CpuVisible` + `Aperture`)
+
 - `aerogpu_dbgctl --dump-vblank`  
   Dumps vblank timing counters (seq/last time/period) and IRQ status/enable masks.
   Works on both legacy and new AeroGPU devices as long as the device exposes
@@ -91,14 +96,15 @@ Examples:
 aerogpu_dbgctl --list-displays
 aerogpu_dbgctl --status
 aerogpu_dbgctl --query-device
-aerogpu_dbgctl --query-umd-private
-aerogpu_dbgctl --query-fence
-aerogpu_dbgctl --dump-ring --ring-id 0
-aerogpu_dbgctl --dump-vblank
-aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
-aerogpu_dbgctl --wait-vblank --vblank-samples 120 --timeout-ms 2000
-aerogpu_dbgctl --query-scanline --vblank-samples 20 --vblank-interval-ms 10
-aerogpu_dbgctl --map-shared-handle 0x1234
+ aerogpu_dbgctl --query-umd-private
+ aerogpu_dbgctl --query-fence
+ aerogpu_dbgctl --dump-ring --ring-id 0
+ aerogpu_dbgctl --dump-createalloc
+ aerogpu_dbgctl --dump-vblank
+ aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
+ aerogpu_dbgctl --wait-vblank --vblank-samples 120 --timeout-ms 2000
+ aerogpu_dbgctl --query-scanline --vblank-samples 20 --vblank-interval-ms 10
+ aerogpu_dbgctl --map-shared-handle 0x1234
 aerogpu_dbgctl --selftest --timeout-ms 2000
 ```
 
@@ -148,11 +154,12 @@ The AeroGPU KMD is expected to implement `DxgkDdiEscape` handling for these pack
 Escape ops used:
 
 - `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (fallback: `AEROGPU_ESCAPE_OP_QUERY_DEVICE`) → `--query-version` / `--query-device`
-- `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`
-- `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring`
-- `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
-- `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` → `--map-shared-handle`
-- `AEROGPU_ESCAPE_OP_SELFTEST` → `--selftest`
+ - `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`
+ - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring`
+ - `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` → `--dump-createalloc`
+ - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
+ - `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` → `--map-shared-handle`
+ - `AEROGPU_ESCAPE_OP_SELFTEST` → `--selftest`
 
 Additional WDDM queries (do not use the escape channel):
 

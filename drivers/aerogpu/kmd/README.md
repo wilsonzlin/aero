@@ -231,13 +231,24 @@ The driver uses `DbgPrintEx` in checked builds (`DBG=1`). Typical workflow:
 ### Optional tracing: `DxgkDdiCreateAllocation` flags
 
 DXGI swapchain backbuffers are often non-shared, single-allocation resources, so they may not show up in the default
-CreateAllocation debug logging. For bring-up/debugging you can enable a more verbose CreateAllocation trace by building
-with:
+CreateAllocation debug logging.
+
+For bring-up/debugging, the KMD maintains a small ring buffer of recent `DxgkDdiCreateAllocation` events and exposes it
+via the dbgctl escape `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` (see `drivers/aerogpu/tools/win7_dbgctl`):
+
+```cmd
+aerogpu_dbgctl --dump-createalloc
+```
+
+This includes `flags_in` (the incoming `DXGK_ALLOCATIONINFO::Flags.Value` from dxgkrnl/runtime) and `flags_out` (after the
+miniport applies its required bits, currently `CpuVisible` + `Aperture`).
+
+For additional verbosity in checked builds (`DBG=1`), build with:
 
 * `AEROGPU_KMD_TRACE_CREATEALLOCATION=1`
 
-This logs the first handful of `DxgkDdiCreateAllocation` calls and prints `DXGK_ALLOCATIONINFO::Flags.Value` both before
-and after the KMD applies its required bits (currently `CpuVisible` + `Aperture`).
+This logs the first handful of `DxgkDdiCreateAllocation` calls via `DbgPrintEx` and prints `DXGK_ALLOCATIONINFO::Flags.Value`
+both before and after the KMD applies its required bits.
 
 ## Escape channel
 
@@ -251,11 +262,12 @@ are defined in `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h`.
 
 Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
 
-- `AEROGPU_ESCAPE_OP_QUERY_FENCE` (see `aerogpu_dbgctl_escape.h`)
-- `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) (see `aerogpu_dbgctl_escape.h`)
-- `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (see `aerogpu_dbgctl_escape.h`)
-- `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` (see `aerogpu_dbgctl_escape.h`)
-- `AEROGPU_ESCAPE_OP_SELFTEST` (see `aerogpu_dbgctl_escape.h`)
+ - `AEROGPU_ESCAPE_OP_QUERY_FENCE` (see `aerogpu_dbgctl_escape.h`)
+ - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) (see `aerogpu_dbgctl_escape.h`)
+ - `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` (see `aerogpu_dbgctl_escape.h`)
+ - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (see `aerogpu_dbgctl_escape.h`)
+ - `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` (see `aerogpu_dbgctl_escape.h`)
+ - `AEROGPU_ESCAPE_OP_SELFTEST` (see `aerogpu_dbgctl_escape.h`)
 
 These are intended for a small user-mode tool to validate KMD↔emulator communication early.
 
