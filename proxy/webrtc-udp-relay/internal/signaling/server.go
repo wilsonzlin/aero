@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/origin"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/ratelimit"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
@@ -40,6 +42,11 @@ type Config struct {
 
 	RelayConfig relay.Config
 	Policy      *policy.DestinationPolicy
+
+	// AllowedOrigins configures the same origin allow-list used by the outer
+	// httpserver. When empty, the signaling WebSocket enforces same-host (host:port)
+	// semantics for browser clients.
+	AllowedOrigins []string
 
 	Authorizer Authorizer
 
@@ -78,6 +85,8 @@ type Server struct {
 	RelayConfig relay.Config
 	Policy      *policy.DestinationPolicy
 
+	AllowedOrigins []string
+
 	Authorizer          Authorizer
 	ICEGatheringTimeout time.Duration
 
@@ -98,6 +107,7 @@ func NewServer(cfg Config) *Server {
 		ICEServers:           cfg.ICEServers,
 		RelayConfig:          cfg.RelayConfig,
 		Policy:               cfg.Policy,
+		AllowedOrigins:       cfg.AllowedOrigins,
 		Authorizer:           cfg.Authorizer,
 		ICEGatheringTimeout:  cfg.ICEGatheringTimeout,
 		SignalingAuthTimeout: cfg.SignalingAuthTimeout,
@@ -486,9 +496,10 @@ func (s *Server) handleWebSocketSignal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	upgrader := websocket.Upgrader{
-		// Origin checks are enforced by the outer httpserver origin middleware. For
-		// unit tests that don't use httpserver.Server, accept all origins here.
-		CheckOrigin: func(r *http.Request) bool { return true },
+		// Origin checks are enforced by the outer httpserver origin middleware in
+		// production, but we also enforce them here as defense-in-depth and to
+		// protect standalone usage.
+		CheckOrigin: s.checkOrigin,
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -512,6 +523,19 @@ func (s *Server) handleWebSocketSignal(w http.ResponseWriter, r *http.Request) {
 		maxMessageBytes: s.maxSignalingMessageBytes(),
 	}
 	ws.run()
+}
+
+func (s *Server) checkOrigin(r *http.Request) bool {
+	originHeader := strings.TrimSpace(r.Header.Get("Origin"))
+	if originHeader == "" {
+		return true
+	}
+
+	normalizedOrigin, originHost, ok := origin.NormalizeHeader(originHeader)
+	if !ok {
+		return false
+	}
+	return origin.IsAllowed(normalizedOrigin, originHost, r.Host, s.AllowedOrigins)
 }
 
 func (s *Server) allocateRelaySession() (string, *relay.Session, error) {

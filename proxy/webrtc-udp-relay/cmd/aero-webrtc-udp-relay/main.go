@@ -97,6 +97,7 @@ func main() {
 		ICEServers:          cfg.PeerConnectionICEServers(),
 		RelayConfig:         relayCfg,
 		Policy:              destPolicy,
+		AllowedOrigins:      cfg.AllowedOrigins,
 		Authorizer:          authz,
 		ICEGatheringTimeout: cfg.ICEGatheringTimeout,
 

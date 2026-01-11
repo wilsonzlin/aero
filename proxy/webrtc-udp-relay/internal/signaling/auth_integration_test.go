@@ -448,3 +448,29 @@ func TestWebSocketRateLimitExceeded(t *testing.T) {
 		t.Fatalf("expected policy violation close; got %v", err)
 	}
 }
+
+func TestWebSocketSignal_RejectsCrossOrigin(t *testing.T) {
+	cfg := config.Config{
+		AuthMode: config.AuthModeNone,
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal"
+	headers := http.Header{}
+	headers.Set("Origin", "https://evil.example.com")
+
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	if resp != nil && resp.Body != nil {
+		resp.Body.Close()
+	}
+	if err == nil {
+		t.Fatalf("expected dial error")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		t.Fatalf("status=%d, want %d (err=%v)", status, http.StatusForbidden, err)
+	}
+}
