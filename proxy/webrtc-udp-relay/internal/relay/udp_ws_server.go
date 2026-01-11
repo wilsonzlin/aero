@@ -84,10 +84,16 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return s.sessions.Metrics()
 	}()
+	incAuthFailure := func() {
+		if metricsSink != nil {
+			metricsSink.Inc(metrics.AuthFailure)
+		}
+	}
 
 	authenticated := false
 	if cred, err := auth.CredentialFromQuery(s.cfg.AuthMode, r.URL.Query()); err == nil {
 		if err := s.verifier.Verify(cred); err != nil {
+			incAuthFailure()
 			closeConn(websocket.ClosePolicyViolation, wsUDPInvalidCredsCloseReason)
 			return
 		}
@@ -104,11 +110,13 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		msgType, msg, err := conn.ReadMessage()
 		if err != nil {
 			if isTimeout(err) {
+				incAuthFailure()
 				closeConn(websocket.ClosePolicyViolation, wsUDPAuthTimeoutCloseReason)
 			}
 			return
 		}
 		if msgType != websocket.TextMessage {
+			incAuthFailure()
 			closeConn(websocket.ClosePolicyViolation, wsUDPAuthCloseReason)
 			return
 		}
@@ -117,21 +125,25 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Type string `json:"type"`
 		}
 		if err := json.Unmarshal(msg, &envelope); err != nil || envelope.Type != "auth" {
+			incAuthFailure()
 			closeConn(websocket.ClosePolicyViolation, wsUDPAuthCloseReason)
 			return
 		}
 
 		var authMsg auth.WireAuthMessage
 		if err := json.Unmarshal(msg, &authMsg); err != nil {
+			incAuthFailure()
 			closeConn(websocket.CloseUnsupportedData, "invalid auth message")
 			return
 		}
 		cred, err := auth.CredentialFromAuthMessage(s.cfg.AuthMode, authMsg)
 		if err != nil {
+			incAuthFailure()
 			closeConn(websocket.ClosePolicyViolation, "missing credentials")
 			return
 		}
 		if err := s.verifier.Verify(cred); err != nil {
+			incAuthFailure()
 			closeConn(websocket.ClosePolicyViolation, wsUDPInvalidCredsCloseReason)
 			return
 		}

@@ -221,6 +221,9 @@ func TestUDPWebSocketServer_AuthMessageRequired(t *testing.T) {
 	if !websocket.IsCloseError(err, websocket.ClosePolicyViolation) {
 		t.Fatalf("expected policy violation close; got %v", err)
 	}
+	if m.Get(metrics.AuthFailure) == 0 {
+		t.Fatalf("expected auth_failure metric increment")
+	}
 }
 
 func TestUDPWebSocketServer_AuthMessageThenRelay(t *testing.T) {
