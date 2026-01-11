@@ -17,4 +17,5 @@ Same as `win7-virtio-win.json`, but also declares optional drivers:
 
 - Optional: `vioinput` (virtio-input) + `viosnd` (virtio-snd)
 
-This spec is used by `drivers/scripts/make-guest-tools-from-virtio-win.ps1` by default.
+This spec can be passed to `drivers/scripts/make-guest-tools-from-virtio-win.ps1` via `-SpecPath`
+to include the optional drivers when they are present in the virtio-win source.
