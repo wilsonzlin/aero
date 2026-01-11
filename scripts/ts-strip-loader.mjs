@@ -12,7 +12,21 @@
 // (node: builtins, bare specifiers, absolute URLs) is delegated unchanged.
 
 export async function resolve(specifier, context, nextResolve) {
-  const isRelative = specifier.startsWith('./') || specifier.startsWith('../');
+  if (specifier === "ws") {
+    try {
+      return await nextResolve(specifier, context);
+    } catch (err) {
+      // The repo's unit tests run offline (no `node_modules/`). Prefer the real
+      // `ws` package when available, but fall back to a tiny built-in shim that
+      // implements the subset of the API we rely on in tests (WebSocket + Server).
+      if (err && typeof err === "object" && "code" in err && err.code !== "ERR_MODULE_NOT_FOUND") {
+        throw err;
+      }
+      return nextResolve(new URL("./ws-shim.mjs", import.meta.url).href, context);
+    }
+  }
+
+  const isRelative = specifier.startsWith("./") || specifier.startsWith("../");
   if (!isRelative) {
     return nextResolve(specifier, context);
   }
