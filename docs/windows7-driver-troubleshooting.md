@@ -462,6 +462,9 @@ If you must keep the Aero GPU selected while recovering, use Safe Mode (below) s
 
 If the OS boots far enough that you can run tools (local console preferred; RDP may change the active display path), dump the scanout state:
 
+- `aerogpu_dbgctl --status`
+  - Captures a combined snapshot (device/ABI + fences + ring0 + scanout0 + vblank + CreateAllocation trace summary).
+
 - `aerogpu_dbgctl --query-scanout`
   - Confirms whether scanout is enabled, the current mode (`width/height/pitch`), and whether a framebuffer GPA is programmed.
   - Useful for diagnosing blank output caused by mode/pitch mismatches or a missing scanout surface address.
