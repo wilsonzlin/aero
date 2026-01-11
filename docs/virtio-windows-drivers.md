@@ -260,6 +260,12 @@ This produces a staging directory (by default) at:
 
 `drivers\out\aero-win7-driver-pack\`
 
+The staging directory includes:
+
+- `manifest.json` (provenance, including virtio-win ISO hash/volume label/version hints when available)
+- `THIRD_PARTY_NOTICES.md` (redistribution notices)
+- `licenses/virtio-win/` (best-effort copy of upstream virtio-win license/notice files)
+
 2) Build a mountable drivers ISO from that staging directory:
 
 ```powershell
@@ -313,6 +319,9 @@ Outputs:
 - `dist/guest-tools/aero-guest-tools.iso`
 - `dist/guest-tools/aero-guest-tools.zip`
 - `dist/guest-tools/manifest.json`
+
+The Guest Tools ISO/zip root also includes `THIRD_PARTY_NOTICES.md`, and will include
+upstream virtio-win license/notice files (if present) under `licenses/virtio-win/`.
 
 ---
 
