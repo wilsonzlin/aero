@@ -37,6 +37,7 @@
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_d3d9_submit.h"
 #include "aerogpu_d3d9_dma_priv.h"
+#include "aerogpu_wddm_submit_buffer_utils.h"
 #include "aerogpu_win7_abi.h"
 #include "aerogpu_log.h"
 #include "aerogpu_alloc.h"
@@ -4337,19 +4338,8 @@ HRESULT wddm_acquire_submit_buffers_allocate_impl(Device* dev, CallbackFn cb, ui
   if (!dma_ptr) {
     dma_ptr = cmd_ptr;
   }
-  if (cap_from_dma_buffer_size && cmd_ptr && dma_ptr && cmd_ptr != dma_ptr) {
-    // Some runtimes return pDmaBuffer as the base pointer + DmaBufferSize for the
-    // full buffer, but return a potentially offset pCommandBuffer for actual
-    // command emission. In that case, the effective command buffer capacity is
-    // reduced by the offset within the DMA buffer.
-    const uintptr_t base = reinterpret_cast<uintptr_t>(dma_ptr);
-    const uintptr_t cmd = reinterpret_cast<uintptr_t>(cmd_ptr);
-    if (cmd >= base) {
-      const uintptr_t offset = cmd - base;
-      if (offset <= static_cast<uintptr_t>(cap)) {
-        cap -= static_cast<uint32_t>(offset);
-      }
-    }
+  if (cap_from_dma_buffer_size) {
+    cap = AdjustCommandBufferSizeFromDmaBuffer(dma_ptr, cmd_ptr, cap);
   }
 
   WddmAllocationList* alloc_list = nullptr;
@@ -4489,15 +4479,8 @@ HRESULT wddm_acquire_submit_buffers_get_command_buffer_impl(Device* dev, Callbac
   if (!dma_ptr) {
     dma_ptr = cmd_ptr;
   }
-  if (cap_from_dma_buffer_size && cmd_ptr && dma_ptr && cmd_ptr != dma_ptr) {
-    const uintptr_t base = reinterpret_cast<uintptr_t>(dma_ptr);
-    const uintptr_t cmd = reinterpret_cast<uintptr_t>(cmd_ptr);
-    if (cmd >= base) {
-      const uintptr_t offset = cmd - base;
-      if (offset <= static_cast<uintptr_t>(cap)) {
-        cap -= static_cast<uint32_t>(offset);
-      }
-    }
+  if (cap_from_dma_buffer_size) {
+    cap = AdjustCommandBufferSizeFromDmaBuffer(dma_ptr, cmd_ptr, cap);
   }
 
   // Some runtimes only return the new command buffer via GetCommandBufferCb and

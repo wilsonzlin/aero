@@ -64,3 +64,18 @@ set_target_properties(aerogpu_dma_priv_tests PROPERTIES
 )
 
 add_test(NAME aerogpu_dma_priv_tests COMMAND aerogpu_dma_priv_tests)
+
+add_executable(aerogpu_wddm_submit_buffer_utils_tests
+    wddm_submit_buffer_utils_tests.cpp
+)
+
+target_include_directories(aerogpu_wddm_submit_buffer_utils_tests PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+)
+
+set_target_properties(aerogpu_wddm_submit_buffer_utils_tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
+
+add_test(NAME aerogpu_wddm_submit_buffer_utils_tests COMMAND aerogpu_wddm_submit_buffer_utils_tests)
