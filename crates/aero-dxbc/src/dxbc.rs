@@ -274,6 +274,7 @@ impl<'a> DxbcFile<'a> {
 
         match parse_first_matching(self, fallback_kind) {
             ok @ Some(Ok(_)) => ok,
+            Some(Err(err)) if primary.is_none() => Some(Err(err)),
             _ => primary,
         }
     }
