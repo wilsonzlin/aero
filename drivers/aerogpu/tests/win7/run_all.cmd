@@ -3,6 +3,15 @@ setlocal enabledelayedexpansion
 
 set "BIN=%~dp0bin"
 
+rem Prefer the native suite runner when available.
+rem It supports timeouts, JSON aggregation, per-test log capture, and optional dbgctl snapshots.
+set "SUITE_RUNNER=%BIN%\\aerogpu_test_runner.exe"
+if exist "%SUITE_RUNNER%" (
+  echo INFO: using suite runner: %SUITE_RUNNER%
+  "%SUITE_RUNNER%" %*
+  exit /b !errorlevel!
+)
+
 set "TIMEOUT_MS=%AEROGPU_TEST_TIMEOUT_MS%"
 if "%TIMEOUT_MS%"=="" set "TIMEOUT_MS=30000"
 

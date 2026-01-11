@@ -12,7 +12,12 @@ For D3D11 UMD bring-up (Win7 FL10_0), including which `d3d11umddi.h` function-ta
 
 For automation, tests can also optionally emit a machine-readable JSON report (`--json[=PATH]`) with a stable `schema_version`.
 
-The suite also includes an optional `aerogpu_timeout_runner.exe` helper (built by default) used by `run_all.cmd` to enforce a per-test timeout. Override the default timeout by setting `AEROGPU_TEST_TIMEOUT_MS` in the environment.
+The suite includes:
+
+* `aerogpu_test_runner.exe` (preferred) – runs the full manifest, enforces per-test timeouts, and can emit an aggregated suite JSON report.
+* `aerogpu_timeout_runner.exe` – legacy helper to run a single child process with a wall-clock timeout (used by older automation/scripts).
+
+Override the default per-test timeout by setting `AEROGPU_TEST_TIMEOUT_MS` in the environment (consumed by both helpers).
 
 Both `build_all_vs2010.cmd` and `run_all.cmd` are driven by `tests_manifest.txt`, which defines the ordered list of tests in the suite.
 
@@ -233,7 +238,7 @@ For suite usage:
 run_all.cmd --help
 ```
 
-When running `run_all.cmd --json`, tests write per-test JSON reports next to the binaries by default. If `aerogpu_timeout_runner.exe` is present, it also cleans up stale JSON outputs and writes a fallback JSON report for timeouts/crashes/missing binaries so automation can still consume a report for every attempted test.
+When running `run_all.cmd --json`, the script prefers delegating to `bin\\aerogpu_test_runner.exe`, producing a `report.json` suite summary plus per-test JSON outputs. If the suite runner is not present, `run_all.cmd` falls back to the legacy per-test loop (optionally using `aerogpu_timeout_runner.exe` to enforce timeouts and write fallback per-test JSON reports on failures/timeouts).
 
 To increase the per-test timeout (default: 30000 ms):
 
