@@ -2854,9 +2854,9 @@ void AEROGPU_APIENTRY PsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
 }
 
 void AEROGPU_APIENTRY GsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                   D3D11DDI_HGEOMETRYSHADER hShader,
-                                   const D3D11DDI_HCLASSINSTANCE*,
-                                   UINT) {
+                                    D3D11DDI_HGEOMETRYSHADER hShader,
+                                    const D3D11DDI_HCLASSINSTANCE*,
+                                    UINT) {
   if (!hCtx.pDrvPrivate) {
     return;
   }
@@ -2866,11 +2866,9 @@ void AEROGPU_APIENTRY GsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
   std::lock_guard<std::mutex> lock(ctx->mutex);
   ctx->current_gs = hShader.pDrvPrivate ? FromHandle<D3D11DDI_HGEOMETRYSHADER, AeroGpuShader>(hShader)->handle : 0;
-  // Geometry stage not yet translated into the command stream.
-  // Unbinding is benign (ClearState), but binding a non-null geometry shader is unsupported today.
-  if (ctx->current_gs != 0) {
-    SetError(ctx->device, E_NOTIMPL);
-  }
+  // Geometry shaders are currently ignored (no GS stage in the AeroGPU command
+  // stream / WebGPU backend). Binding/unbinding must not fail so apps can use
+  // pass-through GS shaders (e.g. to rename varyings).
 }
 
 template <typename THandle>
