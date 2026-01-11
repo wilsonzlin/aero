@@ -596,7 +596,21 @@ impl AeroGpuCommandProcessor {
                     offset_bytes,
                     size_bytes,
                 } => {
-                    let underlying = self.resolve_shared_surface(resource_handle);
+                    // Shared surfaces use protocol handles as the underlying resource id. When the
+                    // original handle is destroyed but imported aliases keep the resource alive,
+                    // the underlying id remains present in `shared_surface_refcounts` but its
+                    // handle mapping is removed. Treat commands that reference the destroyed
+                    // handle as invalid instead of accidentally accepting them via the resource
+                    // table entry.
+                    let underlying = if let Some(underlying) =
+                        self.shared_surface_handles.get(&resource_handle).copied()
+                    {
+                        underlying
+                    } else if self.shared_surface_refcounts.contains_key(&resource_handle) {
+                        return Err(CommandProcessorError::UnknownResourceHandle(resource_handle));
+                    } else {
+                        resource_handle
+                    };
                     let Some(entry) = self.resources.get(&underlying).copied() else {
                         return Err(CommandProcessorError::UnknownResourceHandle(
                             resource_handle,

@@ -511,3 +511,53 @@ fn command_processor_rejects_reexporting_token_after_release() {
     let err = proc.process_submission(&stream, 0).unwrap_err();
     assert!(matches!(err, CommandProcessorError::ShareTokenRetired(t) if t == TOKEN));
 }
+
+#[test]
+fn command_processor_rejects_dirty_range_for_destroyed_shared_surface_handle() {
+    let mut proc = AeroGpuCommandProcessor::new();
+
+    let stream = build_stream(|out| {
+        // Create + export + import shared surface.
+        emit_packet(out, AeroGpuOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, 0x10); // texture_handle
+            push_u32(out, 0); // usage_flags
+            push_u32(out, 3); // format
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+        emit_packet(out, AeroGpuOpcode::ExportSharedSurface as u32, |out| {
+            push_u32(out, 0x10); // resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0x1122_3344_5566_7788);
+        });
+        emit_packet(out, AeroGpuOpcode::ImportSharedSurface as u32, |out| {
+            push_u32(out, 0x20); // out_resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0x1122_3344_5566_7788);
+        });
+
+        // Destroy the original handle while keeping the underlying resource alive via alias.
+        emit_packet(out, AeroGpuOpcode::DestroyResource as u32, |out| {
+            push_u32(out, 0x10); // resource_handle
+            push_u32(out, 0); // reserved0
+        });
+
+        // Dirty range should not be accepted for the destroyed handle, even though the underlying
+        // resource entry is still alive.
+        emit_packet(out, AeroGpuOpcode::ResourceDirtyRange as u32, |out| {
+            push_u32(out, 0x10); // resource_handle (destroyed)
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, 4); // size_bytes
+        });
+    });
+
+    let err = proc.process_submission(&stream, 0).unwrap_err();
+    assert!(matches!(err, CommandProcessorError::UnknownResourceHandle(0x10)));
+}
