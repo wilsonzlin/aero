@@ -143,6 +143,10 @@ test("compare_storage_benchmarks CLI supports --candidate + --out-dir and writes
   assert.ok(fs.existsSync(path.join(outDir, "summary.json")));
   assert.ok(fs.existsSync(path.join(outDir, "compare.json")), "expected legacy compare.json copy when --json is set");
 
+  const md = fs.readFileSync(path.join(outDir, "compare.md"), "utf8");
+  assert.match(md, /## Context/);
+  assert.match(md, /config\.seq_total_mb/);
+
   const summary = JSON.parse(fs.readFileSync(path.join(outDir, "summary.json"), "utf8"));
   assert.equal(summary.status, "pass");
 });

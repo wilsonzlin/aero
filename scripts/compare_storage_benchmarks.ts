@@ -77,6 +77,96 @@ async function copyFileIfPresent(src: string, dest: string) {
   }
 }
 
+function mdCell(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  const raw = typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : JSON.stringify(value);
+  const escaped = raw.replaceAll("`", "\\`");
+  return `\`${escaped}\``;
+}
+
+async function injectContextIntoCompareMd(params: {
+  compareMdPath: string;
+  baselinePath: string;
+  candidatePath: string;
+}) {
+  const mdRaw = await fs.readFile(params.compareMdPath, "utf8").catch(() => null);
+  if (!mdRaw) return;
+  if (mdRaw.includes("\n## Context\n") || mdRaw.startsWith("## Context\n")) return;
+
+  const [baselineRaw, candidateRaw] = await Promise.all([
+    fs.readFile(params.baselinePath, "utf8").catch(() => null),
+    fs.readFile(params.candidatePath, "utf8").catch(() => null),
+  ]);
+  if (!baselineRaw || !candidateRaw) return;
+
+  let baseline: any;
+  let candidate: any;
+  try {
+    baseline = JSON.parse(baselineRaw);
+    candidate = JSON.parse(candidateRaw);
+  } catch {
+    return;
+  }
+
+  const rows: Array<[string, unknown, unknown]> = [
+    ["backend", baseline?.backend, candidate?.backend],
+    ["api_mode", baseline?.api_mode, candidate?.api_mode],
+    ["run_id", baseline?.run_id, candidate?.run_id],
+  ];
+
+  const cfgKeys = [
+    "random_seed",
+    "seq_total_mb",
+    "seq_chunk_mb",
+    "seq_runs",
+    "warmup_mb",
+    "random_ops",
+    "random_runs",
+    "random_space_mb",
+    "include_random_write",
+  ];
+  for (const k of cfgKeys) {
+    rows.push([`config.${k}`, baseline?.config?.[k], candidate?.config?.[k]]);
+  }
+
+  const baselineWarnings = Array.isArray(baseline?.warnings) ? baseline.warnings : [];
+  const candidateWarnings = Array.isArray(candidate?.warnings) ? candidate.warnings : [];
+
+  const contextLines: string[] = [];
+  contextLines.push("## Context");
+  contextLines.push("");
+  contextLines.push("| Field | Baseline | Candidate |");
+  contextLines.push("| --- | --- | --- |");
+  for (const [field, b, c] of rows) {
+    contextLines.push(`| ${field} | ${mdCell(b)} | ${mdCell(c)} |`);
+  }
+
+  if (baselineWarnings.length > 0 || candidateWarnings.length > 0) {
+    contextLines.push("");
+    contextLines.push("### Warnings");
+    contextLines.push("");
+    if (baselineWarnings.length > 0) {
+      contextLines.push("Baseline:");
+      for (const w of baselineWarnings) contextLines.push(`- ${w}`);
+      contextLines.push("");
+    }
+    if (candidateWarnings.length > 0) {
+      contextLines.push("Candidate:");
+      for (const w of candidateWarnings) contextLines.push(`- ${w}`);
+      contextLines.push("");
+    }
+  } else {
+    contextLines.push("");
+  }
+
+  const mdLines = mdRaw.split(/\r?\n/u);
+  const summaryIdx = mdLines.findIndex((line) => line.trim() === "## Summary");
+  if (summaryIdx === -1) return;
+
+  mdLines.splice(summaryIdx, 0, ...contextLines);
+  await fs.writeFile(params.compareMdPath, `${mdLines.join("\n")}\n`, "utf8");
+}
+
 async function main() {
   const rawArgs = process.argv.slice(2);
   if (rawArgs.includes("-h")) usage(0);
@@ -127,6 +217,12 @@ async function main() {
   const compareMdPath = path.join(resolvedOutDir, "compare.md");
   const summaryPath = path.join(resolvedOutDir, "summary.json");
 
+  await injectContextIntoCompareMd({
+    compareMdPath,
+    baselinePath: path.resolve(process.cwd(), baselinePath),
+    candidatePath: path.resolve(process.cwd(), candidatePath),
+  });
+
   let outputJson: string | null = null;
   if (args.outputJson) outputJson = args.outputJson;
   if (args["output-json"]) outputJson = args["output-json"];
@@ -151,4 +247,3 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exitCode = 1;
   });
 }
-
