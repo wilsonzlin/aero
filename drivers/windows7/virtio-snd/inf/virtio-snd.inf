@@ -1,0 +1,68 @@
+; virtio-snd (Windows 7) - clean-room PortCls/WaveRT render-only driver INF.
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = MEDIA
+ClassGuid   = {4d36e96c-e325-11ce-bfc1-08002be10318}
+Provider    = %ProviderName%
+DriverVer   = 01/10/2026,0.0.0.1
+CatalogFile = virtio-snd.cat
+
+[Manufacturer]
+%ProviderName% = VirtioSndModels,NTx86,NTamd64
+
+[VirtioSndModels.NTx86]
+; TODO: Confirm PCI device IDs against the Virtio specification.
+; - Modern virtio PCI IDs are typically 0x1040 + VIRTIO_ID_*
+; - Transitional virtio PCI IDs are typically 0x1000 + (VIRTIO_ID_* - 1)
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018
+
+[VirtioSndModels.NTamd64]
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018
+
+[DestinationDirs]
+VirtioSnd.CopyFiles = 12
+
+[VirtioSnd_Install]
+Include = ks.inf, wdmaudio.inf
+Needs   = KS.Registration, WDMAUDIO.Registration
+CopyFiles = VirtioSnd.CopyFiles
+AddReg   = VirtioSnd.AddReg
+
+[VirtioSnd.AddReg]
+HKR,,DevLoader,,*ntkern
+HKR,,NTMPDriver,,virtiosnd.sys
+HKR,Drivers,SubClasses,,"Wave,Topology"
+HKR,Drivers\Wave,Driver,,virtiosnd.sys
+HKR,Drivers\Wave,Description,,%VirtioSnd.WaveDesc%
+HKR,Drivers\Topology,Driver,,virtiosnd.sys
+HKR,Drivers\Topology,Description,,%VirtioSnd.TopoDesc%
+
+[VirtioSnd.CopyFiles]
+virtiosnd.sys
+
+[VirtioSnd_Install.Services]
+AddService = virtiosnd, 0x00000002, VirtioSnd_Service_Inst
+
+[VirtioSnd_Service_Inst]
+DisplayName   = %VirtioSnd.ServiceDesc%
+ServiceType   = 1
+StartType     = 3
+ErrorControl  = 1
+ServiceBinary = %12%\virtiosnd.sys
+
+[SourceDisksNames]
+1 = %DiskName%,,,
+
+[SourceDisksFiles]
+virtiosnd.sys = 1
+
+[Strings]
+ProviderName           = "Aero Project"
+DiskName               = "Aero virtio-snd Driver Disk"
+VirtioSnd.DeviceDesc   = "Aero VirtIO Sound Device"
+VirtioSnd.ServiceDesc  = "Aero VirtIO Sound Driver"
+VirtioSnd.WaveDesc     = "Aero VirtIO Sound (WaveRT)"
+VirtioSnd.TopoDesc     = "Aero VirtIO Sound (Topology)"

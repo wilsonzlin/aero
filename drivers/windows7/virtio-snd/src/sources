@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# virtio-snd (Windows 7) - clean-room WDM driver skeleton.
+# virtio-snd (Windows 7) - clean-room driver.
 #
 # Build with the WDK 7600/7.1 "build" utility from:
 #   drivers\windows7\virtio-snd
@@ -15,7 +15,10 @@ TARGETPATH=obj
 INCLUDES=$(INCLUDES);..\include;..\..\virtio\common\include;..\..\..\windows\virtio\common;..\..\..\win7\virtio\virtio-core\include;..\..\..\win7\virtio\virtio-core\portable
 
 SOURCES= \
-    driver.c \
+    adapter.c \
+    backend_null.c \
+    topology.c \
+    wavert.c \
     pci_interface.c \
     topology_miniport.cpp \
     virtio_pci_modern_wdm.c \
@@ -33,3 +36,7 @@ SOURCES= \
     ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c \
     ..\..\virtio\common\src\virtio_pci_contract.c \
     ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c
+
+TARGETLIBS= \
+    $(DDK_LIB_PATH)\portcls.lib \
+    $(DDK_LIB_PATH)\ks.lib

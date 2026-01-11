@@ -93,12 +93,14 @@
   <ItemDefinitionGroup Condition="'$(Platform)'=='Win32'">
     <Link>
       <TargetMachine>MachineX86</TargetMachine>
+      <AdditionalDependencies>portcls.lib;ks.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
 
   <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
     <Link>
       <TargetMachine>MachineX64</TargetMachine>
+      <AdditionalDependencies>portcls.lib;ks.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
 
@@ -112,6 +114,9 @@
     <ClCompile Include="..\virtio\common\src\*_wdm*.c">
       <AdditionalIncludeDirectories>$(ProjectDir)..\virtio\common\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
+
+    <!-- `src/driver.c` contains an experimental non-PortCls WDM entry point. -->
+    <ClCompile Remove="src\driver.c" />
   </ItemGroup>
 
   <ItemGroup>

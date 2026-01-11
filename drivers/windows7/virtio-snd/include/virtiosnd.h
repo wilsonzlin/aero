@@ -12,6 +12,37 @@
 
 #define VIRTIOSND_POOL_TAG 'dnSV' // 'VSnd' (endianness depends on debugger display)
 
+//
+// PortCls subdevice names (must match the driver's PcRegisterSubdevice names).
+//
+#define VIRTIOSND_SUBDEVICE_WAVE L"Wave"
+#define VIRTIOSND_SUBDEVICE_TOPOLOGY L"Topology"
+
+//
+// Miniport pin IDs.
+//
+#define VIRTIOSND_WAVE_PIN_RENDER 0
+#define VIRTIOSND_WAVE_PIN_BRIDGE 1
+
+#define VIRTIOSND_TOPO_PIN_BRIDGE 0
+#define VIRTIOSND_TOPO_PIN_SPEAKER 1
+
+//
+// Fixed audio format: 48kHz, 2ch, 16-bit PCM LE.
+//
+#define VIRTIOSND_SAMPLE_RATE 48000
+#define VIRTIOSND_CHANNELS 2
+#define VIRTIOSND_BITS_PER_SAMPLE 16
+#define VIRTIOSND_BYTES_PER_SAMPLE (VIRTIOSND_BITS_PER_SAMPLE / 8)
+#define VIRTIOSND_BLOCK_ALIGN (VIRTIOSND_CHANNELS * VIRTIOSND_BYTES_PER_SAMPLE)
+#define VIRTIOSND_AVG_BYTES_PER_SEC (VIRTIOSND_SAMPLE_RATE * VIRTIOSND_BLOCK_ALIGN)
+
+//
+// Fixed timer period (10ms).
+//
+#define VIRTIOSND_PERIOD_FRAMES 480
+#define VIRTIOSND_PERIOD_BYTES (VIRTIOSND_PERIOD_FRAMES * VIRTIOSND_BLOCK_ALIGN)
+
 /*
  * The Aero contract defines four virtqueues (control/event/tx/rx).
  *
@@ -29,8 +60,6 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     PDEVICE_OBJECT Self;
     PDEVICE_OBJECT Pdo;
     PDEVICE_OBJECT LowerDeviceObject;
-
-    IO_REMOVE_LOCK RemoveLock;
 
     VIRTIOSND_TRANSPORT Transport;
     UINT64 NegotiatedFeatures;

@@ -1,23 +1,33 @@
-# virtio-snd (Windows 7) driver skeleton
+# virtio-snd (Windows 7) PortCls/WaveRT driver (render-only)
 
-This directory contains an initial, clean-room **WDM kernel-mode function driver** for a PCI virtio-snd device.
+This directory contains a clean-room **PortCls + WaveRT** Windows 7 audio adapter driver for a PCI virtio-snd device.
 
 For a shorter end-to-end build + signing walkthrough, see `../README.md`.
 
-The driver currently:
+## Status
 
-- Loads on Windows 7 SP1 (x86/x64)
-- Attaches to the PCI PDO
-- Handles basic PnP (START/STOP/REMOVE)
-- Implements the Aero contract v1 **virtio-pci modern** transport core:
-  - parses vendor capabilities (COMMON/NOTIFY/ISR/DEVICE)
-  - maps BAR0 MMIO and validates the fixed Aero layout
-  - negotiates required features (`VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC`)
+PortCls / WaveRT:
+
+- Registers `Wave` (PortWaveRT + IMiniportWaveRT) and `Topology` (PortTopology + IMiniportTopology) subdevices.
+- Physically bridges them via `PcRegisterPhysicalConnection`.
+- Exposes a single **render** endpoint (fixed format):
+  - 48,000 Hz, stereo (2ch), 16-bit PCM LE (S16_LE)
+- Uses a periodic timer/DPC “software DMA” model that:
+  - advances play position
+  - signals the WaveRT notification event each period
+  - submits one period of PCM to a backend callback
+
+Backend:
+
+- The backend interface is defined in `include/backend.h`.
+- The default backend is a **Null backend** (silent; logs write sizes via `DbgPrint` in checked builds).
+
+Virtio transport:
 
 - Sets up split-ring virtqueues (control/event/tx/rx) using the reusable backend in `virtiosnd_queue_split.c`
   - Note: rxq (capture) is initialized for transport bring-up but capture buffers are not submitted yet.
 - Connects **INTx** and routes used-ring completions to the control/TX protocol engines in a DPC
-- Includes control/TX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c`), but they are not yet exposed via a PortCls miniport (WaveRT), so Windows will not enumerate an audio endpoint.
+- Includes control/TX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c`), but they are not yet wired into the WaveRT backend path.
 
 ## Compatibility / Aero contract v1
 
