@@ -52,7 +52,7 @@ impl From<ImageCatalogEntry> for ImageResponse {
             name: entry.name,
             description: entry.description,
             size_bytes: entry.meta.size,
-            etag: entry.meta.etag.unwrap_or_default(),
+            etag: cache::etag_or_fallback(&entry.meta),
             last_modified,
             content_type: entry.meta.content_type.to_string(),
             recommended_chunk_size_bytes: entry.recommended_chunk_size_bytes,
@@ -219,4 +219,33 @@ pub async fn head_image_meta(
         HeaderValue::from_static("application/json"),
     );
     Ok((headers, ()).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::{ImageCatalogEntry, ImageMeta, CONTENT_TYPE_DISK_IMAGE};
+    use std::time::Duration;
+
+    #[test]
+    fn image_response_includes_fallback_etag_when_missing() {
+        let meta = ImageMeta {
+            size: 123,
+            etag: None,
+            last_modified: Some(std::time::UNIX_EPOCH + Duration::from_secs(1)),
+            content_type: CONTENT_TYPE_DISK_IMAGE,
+        };
+        let entry = ImageCatalogEntry {
+            id: "disk".to_string(),
+            name: "Disk".to_string(),
+            description: None,
+            recommended_chunk_size_bytes: None,
+            public: true,
+            meta: meta.clone(),
+        };
+
+        let response = ImageResponse::from(entry);
+        assert_eq!(response.etag, cache::etag_or_fallback(&meta));
+        assert!(!response.etag.is_empty());
+    }
 }
