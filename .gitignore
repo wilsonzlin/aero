@@ -7,6 +7,7 @@ bench/compare.json
 scratchpad.md
 handoff.md
 .cargo-home/
+.cargo_home/
 /target-worker*/
 
 # Python
