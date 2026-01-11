@@ -9,17 +9,19 @@ See also:
 
 Scope:
 
-- **1 playback stream**
-- **Stereo (2ch), 48kHz, signed 16-bit little-endian (S16_LE)**
+- **2 PCM streams**
+  - Stream `0`: playback/output, **stereo (2ch)**, 48kHz, signed 16-bit little-endian (S16_LE)
+  - Stream `1`: capture/input, **mono (1ch)**, 48kHz, signed 16-bit little-endian (S16_LE)
 - **Split virtqueues** (virtio 1.2 subset)
 - **Control queue** for stream discovery/configuration
 - **TX queue** for PCM frame submission (playback)
+- **RX queue** for PCM capture (recording)
 
 ## Device Configuration
 
-The device reports a single playback stream:
+The device reports two PCM streams:
 
-- `streams = 1`
+- `streams = 2`
 - `jacks = 0`
 - `chmaps = 0`
 
@@ -37,10 +39,12 @@ The control virtqueue accepts requests prefixed by a 32-bit little-endian `code`
 ### Implemented request codes
 
 - `VIRTIO_SND_R_PCM_INFO (0x0100)`
-  - Returns a single `virtio_snd_pcm_info` entry for stream id `0`.
+  - Returns `virtio_snd_pcm_info` entries for streams `0` and/or `1` depending on the requested range.
 - `VIRTIO_SND_R_PCM_SET_PARAMS (0x0101)`
-  - Validates and stores parameters for stream id `0`.
-  - Only accepts `{ channels = 2, format = S16_LE, rate = 48000 }`.
+  - Validates and stores parameters for stream id `0` or `1`.
+  - Only accepts:
+    - Stream `0` (playback): `{ channels = 2, format = S16_LE, rate = 48000 }`
+    - Stream `1` (capture): `{ channels = 1, format = S16_LE, rate = 48000 }`
 - `VIRTIO_SND_R_PCM_PREPARE (0x0102)`
   - Requires parameters to have been set.
 - `VIRTIO_SND_R_PCM_START (0x0104)`
@@ -66,6 +70,22 @@ The device expects a descriptor chain with:
    - `latency_bytes: u32` (currently `0`)
 
 PCM writes are accepted only when the stream has been started; otherwise `VIRTIO_SND_S_IO_ERR` is returned.
+
+## RX Queue (Capture)
+
+The RX virtqueue is used by the guest to fetch captured PCM frames from the host.
+
+The device expects a descriptor chain with:
+
+1. One or more **out** descriptors containing:
+   - An 8-byte header: `stream_id: u32` + `reserved: u32`
+2. One or more **in** descriptors for PCM payload bytes (device writes captured PCM here)
+   - Raw PCM bytes (S16_LE mono, 48kHz)
+3. A final **in** descriptor containing an 8-byte response:
+   - `status: u32`
+   - `latency_bytes: u32` (currently `0`)
+
+Captured reads are serviced only when the capture stream has been started; otherwise `VIRTIO_SND_S_IO_ERR` is returned.
 
 ### AudioWorklet ring buffer layout
 
