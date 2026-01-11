@@ -168,7 +168,7 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <PreprocessorDefinitions Condition="'$(AeroGpuUseWdkHeaders)'=='1'">AEROGPU_UMD_USE_WDK_HEADERS=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories Condition="'$(AeroGpuUseWdkHeaders)'=='1'">$(AeroGpuWdkRoot)\inc\api;$(AeroGpuWdkRoot)\inc\ddk;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(AeroGpuUseWdkHeaders)'=='1' and '$(AeroGpuWdkRoot)'!=''">$(AeroGpuWdkRoot)\inc\api;$(AeroGpuWdkRoot)\inc\ddk;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
 
