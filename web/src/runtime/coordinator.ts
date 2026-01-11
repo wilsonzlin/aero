@@ -28,8 +28,6 @@ import {
   type ConfigUpdateMessage,
   MessageType,
   type ProtocolMessage,
-  type ResetRequestMessage,
-  type SerialOutputMessage,
   type SetAudioRingBufferMessage,
   type SetMicrophoneRingBufferMessage,
   type WorkerInitMessage,
