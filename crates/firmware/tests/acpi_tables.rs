@@ -1,6 +1,7 @@
 use aero_devices::apic::{IOAPIC_MMIO_BASE, LAPIC_MMIO_BASE};
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::pci::PciIntxRouterConfig;
+use aero_pc_constants::PCIE_ECAM_BASE;
 use firmware::acpi::{
     checksum8, find_rsdp_in_memory, parse_header, parse_rsdp_v2, parse_rsdt_entries,
     parse_xsdt_entries, validate_table_checksum, AcpiConfig, AcpiTables, DEFAULT_EBDA_BASE,
@@ -212,7 +213,8 @@ fn fadt_exposes_acpi_pm_blocks_and_reset_register() {
 
 #[test]
 fn placement_is_aligned_and_non_overlapping() {
-    let tables = build_tables(2);
+    let config = AcpiConfig::new(2, 0x1_0000_0000);
+    let tables = AcpiTables::build(&config).expect("ACPI tables should build");
 
     for (name, addr) in [
         ("RSDP", tables.rsdp_addr),
@@ -227,6 +229,16 @@ fn placement_is_aligned_and_non_overlapping() {
         assert_eq!(addr % 16, 0, "{name} not 16-byte aligned");
     }
     assert!(tables.rsdp_addr < 0x0010_0000, "RSDP must live below 1MiB");
+
+    let low_ram_top = config
+        .guest_memory_size
+        .min(config.pci_mmio_start)
+        .min(PCIE_ECAM_BASE);
+    let nvs_end = tables.nvs_base + tables.nvs_size;
+    assert!(
+        nvs_end <= low_ram_top,
+        "ACPI windows must fit below top-of-low-ram (nvs_end=0x{nvs_end:x} low_ram_top=0x{low_ram_top:x})"
+    );
 
     // Tables must fit within their windows.
     let reclaim_end = tables.reclaim_base + tables.reclaim_size;
@@ -244,7 +256,6 @@ fn placement_is_aligned_and_non_overlapping() {
             "{name} out of reclaim window"
         );
     }
-    let nvs_end = tables.nvs_base + tables.nvs_size;
     let facs_end = tables.facs_addr + tables.facs.len() as u64;
     assert!(
         tables.facs_addr >= tables.nvs_base && facs_end <= nvs_end,

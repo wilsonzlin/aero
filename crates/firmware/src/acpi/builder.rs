@@ -3,6 +3,7 @@ use crate::acpi::constants::{
     DEFAULT_EBDA_BASE, DEFAULT_PCI_MMIO_START,
 };
 use crate::acpi::structures::{RSDP_CHECKSUM_LEN_V1, RSDP_V2_SIZE};
+use aero_pc_constants::PCIE_ECAM_BASE;
 use memory::{GuestMemory, GuestMemoryError};
 
 pub type PhysAddr = u64;
@@ -110,7 +111,13 @@ impl AcpiTables {
             return Err(AcpiBuildError::RsdpNotAligned(config.rsdp_addr));
         }
 
-        let low_ram_top = config.guest_memory_size.min(config.pci_mmio_start);
+        // The PC platform also reserves a PCIe ECAM window (MCFG/MMCONFIG) below the typical PCI
+        // BAR MMIO window, so the "top of low RAM" must sit below whichever reserved region starts
+        // first.
+        let low_ram_top = config
+            .guest_memory_size
+            .min(config.pci_mmio_start)
+            .min(PCIE_ECAM_BASE);
         let total_acpi_window = config
             .reclaim_window_size
             .checked_add(config.nvs_window_size)
@@ -124,7 +131,7 @@ impl AcpiTables {
             });
         }
 
-        // Place ACPI windows at the top of low RAM, below the PCI MMIO hole.
+        // Place ACPI windows at the top of low RAM, below the first reserved MMIO window.
         let end = align_down(low_ram_top, ACPI_TABLE_ALIGNMENT);
         let reclaim_base = align_down(end - total_acpi_window, ACPI_TABLE_ALIGNMENT);
         let nvs_base = reclaim_base + config.reclaim_window_size;
