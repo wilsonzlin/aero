@@ -170,14 +170,19 @@ function isPublicUnicast(addr: ipaddr.IPv4 | ipaddr.IPv6): boolean {
 
 async function lookupAll(hostname: string, timeoutMs: number): Promise<LookupAddress[]> {
   const lookup = dns.lookup(hostname, { all: true, verbatim: true });
+  let handle: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_resolve, reject) => {
-    const handle = setTimeout(() => {
+    handle = setTimeout(() => {
       reject(new Error(`DNS lookup timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     handle.unref();
   });
 
-  return Promise.race([lookup, timeout]);
+  try {
+    return await Promise.race([lookup, timeout]);
+  } finally {
+    if (handle) clearTimeout(handle);
+  }
 }
 
 export interface ResolveAndAuthorizeOptions {
