@@ -1401,14 +1401,20 @@ impl CpuState {
         let v = val & mask_bits(bits);
         self.write_reg(reg, v);
     }
-    /// Applies real-mode A20 address masking to `addr` when the gate is disabled.
+    /// Applies architectural linear-address masking.
+    ///
+    /// - In non-long modes, linear addresses are 32-bit and wrap around on overflow.
+    /// - In real/v8086 mode when the A20 gate is disabled, addresses also wrap at 1MiB.
     #[inline]
     pub fn apply_a20(&self, addr: u64) -> u64 {
-        if !self.a20_enabled && matches!(self.mode, CpuMode::Real | CpuMode::Vm86) {
-            addr & !(1u64 << 20)
-        } else {
-            addr
+        let mut addr = addr;
+        if self.mode != CpuMode::Long {
+            addr &= 0xFFFF_FFFF;
         }
+        if !self.a20_enabled && matches!(self.mode, CpuMode::Real | CpuMode::Vm86) {
+            addr &= !(1u64 << 20);
+        }
+        addr
     }
 }
 

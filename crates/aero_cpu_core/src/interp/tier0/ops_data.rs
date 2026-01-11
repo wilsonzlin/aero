@@ -502,6 +502,24 @@ mod tests {
             0
         );
     }
+
+    #[test]
+    fn calc_ea_truncates_linear_address_to_32_bits_in_non_long_modes() {
+        // mov eax, dword ptr [0x00002000]
+        let bytes = [0xA1, 0x00, 0x20, 0x00, 0x00];
+        let ip = 0u64;
+        let decoded = aero_x86::decode(&bytes, ip, 32).expect("decode");
+        let next_ip = ip + decoded.len as u64;
+
+        let mut state = CpuState::new(CpuMode::Bit32);
+        state.segments.ds.base = 0xFFFF_F000;
+
+        // DS.base + disp32 = 0x1_0000_1000 -> 0x0000_1000 after 32-bit truncation.
+        assert_eq!(
+            calc_ea(&state, &decoded.instr, next_ip, true).expect("calc_ea"),
+            0x1000
+        );
+    }
 }
 
 pub(crate) fn read_mem<B: CpuBus>(bus: &mut B, addr: u64, bits: u32) -> Result<u64, Exception> {
