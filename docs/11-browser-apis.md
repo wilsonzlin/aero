@@ -145,7 +145,10 @@ Vite requires configuring both the dev server and the preview server:
 - `server.headers` → `npm run dev`
 - `preview.headers` → `npm run preview` / `vite preview` (serving `dist/`)
 
-See `vite.config.ts` in the repo for the canonical header values.
+See:
+
+- `web/vite.config.ts` for the production `web/` app
+- `vite.harness.config.ts` for the repo-root dev harness (Playwright, module import tests)
 
 For production hosting templates (Netlify / Cloudflare Pages) and caching defaults, see
 [`docs/deployment.md`](./deployment.md).

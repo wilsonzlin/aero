@@ -94,6 +94,9 @@ jobs:
       - name: Check security header templates
         run: node scripts/ci/check-security-headers.mjs
 
+      - name: Check repository layout
+        run: scripts/ci/check-repo-layout.sh
+
   toolchains:
     name: Toolchain policy (pinned stable + pinned nightly)
     needs: policy

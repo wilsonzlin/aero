@@ -13,7 +13,7 @@
   "include": [
     "src",
     "tests",
-    "vite.config.ts",
+    "vite.harness.config.ts",
     "vitest.config.ts",
     "playwright.config.ts",
     "playwright.gpu.config.ts",

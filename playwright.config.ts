@@ -113,12 +113,12 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `npm run dev -- --host 127.0.0.1 --port ${DEV_PORT} --strictPort`,
+      command: `npm run dev:harness -- --host 127.0.0.1 --port ${DEV_PORT} --strictPort`,
       port: DEV_PORT,
       reuseExistingServer: !process.env.CI,
     },
     {
-      command: 'npm run serve:coi',
+      command: 'npm run serve:coi:harness',
       port: PREVIEW_PORT,
       reuseExistingServer: !process.env.CI,
     },

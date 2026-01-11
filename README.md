@@ -59,6 +59,22 @@ The `justfile` is intentionally configurable so it can survive repo refactors:
 
 - `WEB_DIR` (default: `web`)
 
+## Repo layout
+
+This repo contains a mix of production code and older prototypes. Start here:
+
+- [`docs/repo-layout.md`](./docs/repo-layout.md) (canonical vs legacy/prototypes)
+- [`docs/adr/0001-repo-layout.md`](./docs/adr/0001-repo-layout.md) (why the canonical layout looks the way it does)
+
+Quick map:
+
+- `web/` – **production** browser host app (Vite)
+- `crates/` – Rust workspace crates (emulator core + supporting libs)
+- `backend/`, `services/` – maintained backend services
+- `server/` – **legacy** backend (see `server/LEGACY.md`)
+- `poc/`, `prototype/` – experiments / RFC companions (not production)
+- Repo root `index.html` + `src/main.ts` – **dev/test harness** (used by Playwright; not production)
+
 ## Documentation
 
 - Architecture & subsystem docs: [`AGENTS.md`](./AGENTS.md)

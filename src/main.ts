@@ -1,3 +1,7 @@
+// NOTE: Repo-root Vite harness entrypoint.
+//
+// This file exists for debugging and Playwright smoke tests. The production
+// browser host lives under `web/` (ADR 0001).
 import './style.css';
 
 import { PerfAggregator, PerfWriter, WorkerKind, createPerfChannel } from '../web/src/perf/index.js';

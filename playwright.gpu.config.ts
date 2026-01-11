@@ -19,7 +19,7 @@ export default defineConfig({
   reporter: [['list'], ['html', { open: 'never' }]],
   outputDir: 'test-results',
   webServer: {
-    command: `npm run dev -- --host 127.0.0.1 --port ${DEV_PORT} --strictPort`,
+    command: `npm run dev:harness -- --host 127.0.0.1 --port ${DEV_PORT} --strictPort`,
     port: DEV_PORT,
     reuseExistingServer: !process.env.CI,
   },

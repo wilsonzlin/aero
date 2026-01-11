@@ -1,3 +1,10 @@
+// NOTE: This Vite config is for the *repo-root dev harness*.
+//
+// It exists primarily for:
+// - Playwright E2E that exercises low-level primitives (workers, COOP/COEP, etc.)
+// - Importing source modules across the repo (e.g. `/web/src/...`) in a browser context
+//
+// The production/canonical browser host lives in `web/` (see ADR 0001).
 import { defineConfig } from 'vite';
 
 import {
