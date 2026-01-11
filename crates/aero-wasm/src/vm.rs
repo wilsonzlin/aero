@@ -14,10 +14,11 @@ use wasm_bindgen::prelude::*;
 
 use aero_cpu_core::{
     assist::AssistContext,
-    exception::Exception,
     interp::tier0::exec::{BatchExit, run_batch_with_assists},
+    interrupts::CpuCore,
     mem::CpuBus,
-    state::{CpuMode, CpuState, Segment},
+    state::{CpuMode, Segment},
+    Exception,
 };
 
 use crate::{RunExit, RunExitKind};
@@ -233,7 +234,7 @@ fn set_real_mode_seg(seg: &mut Segment, selector: u16) {
 pub struct WasmVm {
     guest_base: u32,
     guest_size: u64,
-    cpu: CpuState,
+    cpu: CpuCore,
     assist: AssistContext,
 }
 
@@ -267,27 +268,27 @@ impl WasmVm {
         Ok(Self {
             guest_base,
             guest_size: guest_size_u64,
-            cpu: CpuState::new(CpuMode::Real),
+            cpu: CpuCore::new(CpuMode::Real),
             assist: AssistContext::default(),
         })
     }
 
     /// Reset CPU state to 16-bit real mode and set `CS:IP = 0x0000:entry_ip`.
     pub fn reset_real_mode(&mut self, entry_ip: u32) {
-        self.cpu = CpuState::new(CpuMode::Real);
-        self.cpu.halted = false;
-        self.cpu.clear_pending_bios_int();
+        self.cpu = CpuCore::new(CpuMode::Real);
+        self.cpu.state.halted = false;
+        self.cpu.state.clear_pending_bios_int();
         self.assist = AssistContext::default();
 
         // Real-mode: base = selector<<4, 64KiB limit.
-        set_real_mode_seg(&mut self.cpu.segments.cs, 0);
-        set_real_mode_seg(&mut self.cpu.segments.ds, 0);
-        set_real_mode_seg(&mut self.cpu.segments.es, 0);
-        set_real_mode_seg(&mut self.cpu.segments.ss, 0);
-        set_real_mode_seg(&mut self.cpu.segments.fs, 0);
-        set_real_mode_seg(&mut self.cpu.segments.gs, 0);
+        set_real_mode_seg(&mut self.cpu.state.segments.cs, 0);
+        set_real_mode_seg(&mut self.cpu.state.segments.ds, 0);
+        set_real_mode_seg(&mut self.cpu.state.segments.es, 0);
+        set_real_mode_seg(&mut self.cpu.state.segments.ss, 0);
+        set_real_mode_seg(&mut self.cpu.state.segments.fs, 0);
+        set_real_mode_seg(&mut self.cpu.state.segments.gs, 0);
 
-        self.cpu.set_rip(entry_ip as u64);
+        self.cpu.state.set_rip(entry_ip as u64);
     }
 
     /// Execute up to `max_insts` instructions.
