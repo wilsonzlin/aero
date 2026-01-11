@@ -182,9 +182,15 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
         if dev.hardware_id_patterns.is_empty() {
             bail!("{name}: hardware_id_patterns is empty");
         }
+        let expected_substr = format!("VEN_{vendor:04X}&DEV_{did:04X}");
         for pat in &dev.hardware_id_patterns {
             validate_hwid_literal(pat)
                 .with_context(|| format!("{name}: invalid hardware_id_patterns entry"))?;
+            if !pat.to_ascii_uppercase().contains(&expected_substr) {
+                bail!(
+                    "{name}: hardware_id_patterns entry does not match pci_vendor_id/pci_device_id ({expected_substr}): {pat}"
+                );
+            }
         }
 
         if dev.driver_service_name.trim().is_empty() {
@@ -223,6 +229,31 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
             if trans != expected_transitional {
                 bail!(
                     "{name}: pci_device_id_transitional must be 0x1000 + (virtio_device_type - 1) (expected {expected_transitional:#06x}, found {trans:#06x})"
+                );
+            }
+
+            // Contract v1 is revision-gated (REV_01). The contract includes less-specific HWIDs for
+            // tooling convenience, but it must contain at least one REV_01-qualified HWID and must
+            // not include any other REV_.. values.
+            let mut revs = BTreeSet::<String>::new();
+            let rev_re =
+                regex::Regex::new(r"(?i)&REV_([0-9A-F]{2})").expect("static regex must compile");
+            for pat in &dev.hardware_id_patterns {
+                for caps in rev_re.captures_iter(pat) {
+                    let rev = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                    if !rev.is_empty() {
+                        revs.insert(rev.to_ascii_uppercase());
+                    }
+                }
+            }
+            if revs.is_empty() {
+                bail!("{name}: hardware_id_patterns must include at least one REV_01 entry (AERO-W7-VIRTIO v1)");
+            }
+            let bad: Vec<_> = revs.iter().filter(|r| r.as_str() != "01").cloned().collect();
+            if !bad.is_empty() {
+                bail!(
+                    "{name}: hardware_id_patterns contains unsupported PCI revision IDs for virtio devices (expected only REV_01): {:?}",
+                    bad
                 );
             }
         } else if dev.device == "aero-gpu" {
@@ -714,9 +745,17 @@ fn validate_packaging_specs(
 
             if dev.virtio_device_type.is_some() {
                 let mut offenders = BTreeSet::<String>::new();
-                for pat in &patterns {
-                    for dev_id in find_transitional_virtio_device_ids(pat) {
+                for (pat, re) in patterns.iter().zip(compiled.iter()) {
+                    let explicit = find_transitional_virtio_device_ids(pat);
+                    let explicit_set: BTreeSet<_> = explicit.iter().cloned().collect();
+                    for dev_id in explicit {
                         offenders.insert(format!("{name}: {pat} (contains 1AF4:{dev_id})"));
+                    }
+                    for dev_id in pattern_matches_transitional_virtio_device_ids(re) {
+                        if explicit_set.contains(&dev_id) {
+                            continue;
+                        }
+                        offenders.insert(format!("{name}: {pat} (matches 1AF4:{dev_id})"));
                     }
                 }
                 if !offenders.is_empty() {
@@ -1112,6 +1151,18 @@ fn find_transitional_virtio_device_ids(pattern: &str) -> Vec<String> {
     found.into_iter().collect()
 }
 
+fn pattern_matches_transitional_virtio_device_ids(re: &regex::Regex) -> Vec<String> {
+    let transitional = ["1000", "1001", "1011", "1018"];
+    let mut out = Vec::new();
+    for dev in transitional {
+        let hwid = format!(r"PCI\VEN_1AF4&DEV_{dev}");
+        if re.is_match(&hwid) {
+            out.push(dev.to_string());
+        }
+    }
+    out
+}
+
 fn format_bullets(items: &BTreeSet<String>) -> String {
     items
         .iter()
@@ -1249,5 +1300,21 @@ mod tests {
     fn hwid_literal_validation_rejects_regexy_forms() {
         assert!(validate_hwid_literal(r"PCI\VEN_1AF4&DEV_(1001|1042)").is_err());
         assert!(validate_hwid_literal(r"PCI\VEN_1AF4&DEV_1042.*").is_err());
+    }
+
+    #[test]
+    fn pattern_matches_transitional_virtio_ids_even_when_not_explicitly_listed() {
+        let re = regex::RegexBuilder::new(r"PCI\\VEN_1AF4&DEV_10..")
+            .case_insensitive(true)
+            .build()
+            .unwrap();
+        let matched = pattern_matches_transitional_virtio_device_ids(&re);
+        assert_eq!(matched, vec!["1000", "1001", "1011", "1018"]);
+
+        let re = regex::RegexBuilder::new(r"PCI\\VEN_1AF4&DEV_1041")
+            .case_insensitive(true)
+            .build()
+            .unwrap();
+        assert!(pattern_matches_transitional_virtio_device_ids(&re).is_empty());
     }
 }
