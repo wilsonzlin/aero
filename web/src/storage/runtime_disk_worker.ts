@@ -58,6 +58,26 @@ type DiskEntry = {
   backendSnapshot: DiskBackendSnapshot | null;
 };
 
+function bytesToHex(bytes: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < bytes.length; i++) {
+    out += bytes[i]!.toString(16).padStart(2, "0");
+  }
+  return out;
+}
+
+async function stableCacheId(key: string): Promise<string> {
+  try {
+    const subtle = (globalThis as typeof globalThis & { crypto?: Crypto }).crypto?.subtle;
+    if (!subtle) throw new Error("missing crypto.subtle");
+    const data = new TextEncoder().encode(key);
+    const digest = await subtle.digest("SHA-256", data);
+    return bytesToHex(new Uint8Array(digest));
+  } catch {
+    return encodeURIComponent(key).replaceAll("%", "_").slice(0, 128);
+  }
+}
+
 function defaultRemoteChunkedManifestUrl(base: RemoteCacheBinding["base"]): string {
   // See: docs/18-chunked-disk-image-format.md ("images/<imageId>/<version>/manifest.json").
   // Like `defaultRemoteRangeUrl`, this is intentionally *not* a signed URL.
@@ -347,10 +367,17 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
         // That cache can't evict individual blocks, so prefer the newer RemoteStreamingDisk
         // implementation (which supports bounded OPFS caching via chunk files).
         //
-        // Best-effort cleanup: drop any legacy cache file + binding so it doesn't consume quota.
+        // Best-effort cleanup: drop any legacy cache files so they don't consume quota.
         if (meta.cache.fileName !== meta.cache.overlayFileName) {
           await opfsDeleteDisk(meta.cache.fileName);
           await opfsDeleteDisk(`${meta.cache.fileName}.binding.json`);
+        }
+        const imageKey = `${meta.remote.imageId}:${meta.remote.version}:${meta.remote.delivery}`;
+        const cacheId = await stableCacheId(imageKey);
+        const legacyFiles = [`remote-range-cache-${cacheId}.aerospar`, `remote-range-cache-${cacheId}.json`];
+        for (const fileName of legacyFiles) {
+          if (fileName === meta.cache.overlayFileName) continue;
+          await opfsDeleteDisk(fileName);
         }
 
         const expectedEtag = expectedValidator?.kind === "etag" ? expectedValidator.value : undefined;
@@ -664,10 +691,17 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
     if (backend.base.deliveryType === "range") {
       const url = defaultRemoteRangeUrl(backend.base);
       // See openDisk(): prefer RemoteStreamingDisk for OPFS-cached Range delivery.
-      // Best-effort cleanup of any legacy sparse cache file.
+      // Best-effort cleanup of any legacy sparse cache files.
       if (backend.cache.fileName !== backend.overlay.fileName) {
         await opfsDeleteDisk(backend.cache.fileName);
         await opfsDeleteDisk(`${backend.cache.fileName}.binding.json`);
+      }
+      const imageKey = `${backend.base.imageId}:${backend.base.version}:${backend.base.deliveryType}`;
+      const cacheId = await stableCacheId(imageKey);
+      const legacyFiles = [`remote-range-cache-${cacheId}.aerospar`, `remote-range-cache-${cacheId}.json`];
+      for (const fileName of legacyFiles) {
+        if (fileName === backend.overlay.fileName) continue;
+        await opfsDeleteDisk(fileName);
       }
 
       const expectedEtag =
