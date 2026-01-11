@@ -20,10 +20,12 @@ The `*_HWIDS` values are stored as a list of individually quoted hardware IDs to
 `&` characters (e.g. `"PCI\VEN_1AF4&DEV_1042&REV_01"`).
 
 Contract v1 (`AERO-W7-VIRTIO`) is virtio-pci **modern-only** with PCI Revision `0x01`, so Guest Tools expects
-modern device IDs for net/blk:
+modern device IDs for all virtio devices:
 
 - `PCI\VEN_1AF4&DEV_1041` (virtio-net, `REV_01`)
 - `PCI\VEN_1AF4&DEV_1042` (virtio-blk, `REV_01`)
+- `PCI\VEN_1AF4&DEV_1052` (virtio-input keyboard/mouse, `REV_01`)
+- `PCI\VEN_1AF4&DEV_1059` (virtio-snd audio, `REV_01`)
 
 Some devices include multiple IDs (for example `REV`/`SUBSYS`-qualified variants) so Guest Tools can
 recognize either enumeration.
