@@ -8250,10 +8250,8 @@ HRESULT OpenAdapterCommon(const char* entrypoint,
 #if defined(_WIN32)
   // Emit the exact DLL path once so bring-up on Win7 x64 can quickly confirm the
   // correct UMD bitness was loaded (System32 vs SysWOW64).
-  static bool logged_module_path = false;
-  if (!logged_module_path) {
-    logged_module_path = true;
-
+  static std::once_flag logged_module_path_once;
+  std::call_once(logged_module_path_once, [] {
     HMODULE module = NULL;
     if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -8264,7 +8262,7 @@ HRESULT OpenAdapterCommon(const char* entrypoint,
         aerogpu::logf("aerogpu-d3d9: module_path=%s\n", path);
       }
     }
-  }
+  });
 #endif
 
   if (interface_version == 0 || umd_version == 0) {
