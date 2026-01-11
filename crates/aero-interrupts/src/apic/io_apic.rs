@@ -443,13 +443,23 @@ mod tests {
         ioapic.set_irq_level(1, true);
         assert_eq!(service_next(&lapic), None);
 
-        // Deassert then assert: should deliver again.
+        // Deassert then assert again: the IOAPIC still considers the interrupt in service
+        // (Remote-IRR remains set) so it must *not* re-deliver until the LAPIC EOI is observed.
         ioapic.set_irq_level(1, false);
         ioapic.set_irq_level(1, true);
-        assert_eq!(service_next(&lapic), Some(0x21));
+        assert_eq!(service_next(&lapic), None);
 
         // Now emulate EOI while still asserted; should re-deliver (remote IRR cleared).
         ioapic.notify_eoi(0x21);
+        assert_eq!(service_next(&lapic), Some(0x21));
+
+        // If the line is deasserted before EOI, the EOI should clear Remote-IRR but not
+        // re-deliver until the line asserts again.
+        ioapic.set_irq_level(1, false);
+        ioapic.notify_eoi(0x21);
+        assert_eq!(service_next(&lapic), None);
+
+        ioapic.set_irq_level(1, true);
         assert_eq!(service_next(&lapic), Some(0x21));
     }
 }
