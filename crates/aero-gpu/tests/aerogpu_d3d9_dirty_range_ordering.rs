@@ -219,13 +219,13 @@ fn d3d9_dirty_range_flush_respects_ordering_with_interleaved_draws() {
 
     let vb_data_a = make_vb(&[
         (-0.9, -0.9, 0.0, 1.0),
-        (-0.1, -0.9, 0.0, 1.0),
         (-0.5, 0.9, 0.0, 1.0),
+        (-0.1, -0.9, 0.0, 1.0),
     ]);
     let vb_data_b = make_vb(&[
         (0.1, -0.9, 0.0, 1.0),
-        (0.9, -0.9, 0.0, 1.0),
         (0.5, 0.9, 0.0, 1.0),
+        (0.9, -0.9, 0.0, 1.0),
     ]);
     assert_eq!(vb_data_a.len(), 3 * 16);
     assert_eq!(vb_data_b.len(), 3 * 16);

@@ -1238,11 +1238,11 @@ fn aerogpu_cmd_renders_with_texture_load_nonzero_coord_ps() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.0],
+                pos: [-1.0, 3.0, 0.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.0],
+                pos: [3.0, -1.0, 0.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
         ];

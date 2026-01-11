@@ -182,8 +182,8 @@ fn d3d9_cmd_stream_flushes_guest_backed_resources_from_dirty_ranges() {
     let mut vb_data = Vec::new();
     let verts = [
         (-1.0f32, -1.0f32, 0.0f32, 1.0f32),
-        (3.0f32, -1.0f32, 0.0f32, 1.0f32),
         (-1.0f32, 3.0f32, 0.0f32, 1.0f32),
+        (3.0f32, -1.0f32, 0.0f32, 1.0f32),
     ];
     for (x, y, z, w) in verts {
         push_f32(&mut vb_data, x);
@@ -466,8 +466,8 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
     let mut vb_data = Vec::new();
     let verts = [
         (-1.0f32, -1.0f32, 0.0f32, 1.0f32),
-        (3.0f32, -1.0f32, 0.0f32, 1.0f32),
         (-1.0f32, 3.0f32, 0.0f32, 1.0f32),
+        (3.0f32, -1.0f32, 0.0f32, 1.0f32),
     ];
     for (x, y, z, w) in verts {
         // position

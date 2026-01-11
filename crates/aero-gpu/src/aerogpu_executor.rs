@@ -1409,14 +1409,11 @@ fn fs_main() -> @location(0) vec4<f32> {
                     "COPY_BUFFER: missing staging buffer for writeback".into(),
                 ));
             };
-            let data = self.read_buffer_to_vec_blocking(&staging, size_bytes, "COPY_BUFFER")?;
-            if data.len() != size_usize {
-                return Err(ExecutorError::Validation(
-                    "COPY_BUFFER: internal writeback size mismatch".into(),
-                ));
-            }
             let table = alloc_table.ok_or_else(|| {
                 ExecutorError::Validation("COPY_BUFFER: WRITEBACK_DST requires alloc_table".into())
+            })?;
+            let dst_backing = dst_backing.ok_or_else(|| {
+                ExecutorError::Validation("COPY_BUFFER: missing dst backing for writeback".into())
             })?;
             let entry = table.get(dst_backing.alloc_id).ok_or_else(|| {
                 ExecutorError::Validation(format!(
@@ -1437,6 +1434,12 @@ fn fs_main() -> @location(0) vec4<f32> {
                     ExecutorError::Validation("COPY_BUFFER: dst alloc offset overflow".into())
                 })?;
             let dst_gpa = table.resolve_gpa(dst_backing.alloc_id, alloc_offset, size_bytes)?;
+            let data = self.read_buffer_to_vec_blocking(&staging, size_bytes, "COPY_BUFFER")?;
+            if data.len() != size_usize {
+                return Err(ExecutorError::Validation(
+                    "COPY_BUFFER: internal writeback size mismatch".into(),
+                ));
+            }
             guest_memory.write(dst_gpa, &data)?;
         }
         Ok(())
@@ -1653,6 +1656,14 @@ fn fs_main() -> @location(0) vec4<f32> {
                     "COPY_TEXTURE2D: missing staging buffer for writeback".into(),
                 ));
             };
+            let table = alloc_table.ok_or_else(|| {
+                ExecutorError::Validation(
+                    "COPY_TEXTURE2D: WRITEBACK_DST requires alloc_table".into(),
+                )
+            })?;
+            let dst_backing = dst_backing.ok_or_else(|| {
+                ExecutorError::Validation("COPY_TEXTURE2D: missing dst backing for writeback".into())
+            })?;
 
             let row_bytes = width.checked_mul(dst_bpp).ok_or_else(|| {
                 ExecutorError::Validation("COPY_TEXTURE2D: row size overflow".into())
@@ -1678,11 +1689,6 @@ fn fs_main() -> @location(0) vec4<f32> {
                     ExecutorError::Validation("COPY_TEXTURE2D: dst_x overflow".into())
                 })?;
 
-            let table = alloc_table.ok_or_else(|| {
-                ExecutorError::Validation(
-                    "COPY_TEXTURE2D: WRITEBACK_DST requires alloc_table".into(),
-                )
-            })?;
             let entry = table.get(dst_backing.alloc_id).ok_or_else(|| {
                 ExecutorError::Validation(format!(
                     "COPY_TEXTURE2D: missing alloc table entry for alloc_id={} (dst_texture={dst_texture})",

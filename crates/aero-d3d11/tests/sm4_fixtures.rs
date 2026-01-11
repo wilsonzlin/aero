@@ -4,6 +4,7 @@ use aero_d3d11::{
     parse_signatures, translate_sm4_to_wgsl, translate_sm4_to_wgsl_bootstrap, BindingKind,
     DxbcFile, FourCC, RegFile, ShaderStage, Sm4Decl, Sm4Inst, Sm4Program, SrcKind,
 };
+use aero_d3d11::sm4::opcode::OPCODE_ADD;
 
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
 const FOURCC_OSGN: FourCC = FourCC(*b"OSGN");
@@ -99,6 +100,45 @@ fn parses_and_translates_sm4_ps_passthrough_fixture() {
     assert!(wgsl.contains("return input.v1"));
 }
 
+#[test]
+fn parses_and_translates_sm4_ps_add_fixture() {
+    let bytes = load_fixture("ps_add.dxbc");
+    let dxbc = DxbcFile::parse(&bytes).expect("fixture should parse as DXBC");
+
+    assert!(dxbc.get_chunk(FOURCC_ISGN).is_some(), "missing ISGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_OSGN).is_some(), "missing OSGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_SHDR).is_some(), "missing SHDR chunk");
+
+    let signatures = parse_signatures(&dxbc).expect("signature parsing failed");
+    assert!(signatures.isgn.is_some(), "missing parsed ISGN");
+    assert!(signatures.osgn.is_some(), "missing parsed OSGN");
+
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse failed");
+    assert_eq!(program.stage, ShaderStage::Pixel);
+    assert_eq!(program.model.major, 4);
+
+    // This pixel shader includes an `add_sat` instruction so it cannot be translated by the legacy
+    // bootstrap (mov/ret-only) path.
+    let module = program.decode().expect("SM4 decode failed");
+    assert!(
+        module.instructions.iter().any(|i| matches!(
+            i,
+            Sm4Inst::Add { dst, .. } if dst.saturate
+        )),
+        "expected add_sat instruction"
+    );
+
+    let wgsl_full = translate_sm4_to_wgsl(&dxbc, &module, &signatures)
+        .expect("signature-driven translation failed")
+        .wgsl;
+    assert_wgsl_parses(&wgsl_full);
+
+    let err = translate_sm4_to_wgsl_bootstrap(&program).expect_err("bootstrap should fail");
+    assert!(matches!(
+        err,
+        aero_d3d11::WgslBootstrapError::UnsupportedInstruction { opcode } if opcode == OPCODE_ADD
+    ));
+}
 #[test]
 fn parses_and_translates_sm4_vs_matrix_fixture() {
     let bytes = load_fixture("vs_matrix.dxbc");
