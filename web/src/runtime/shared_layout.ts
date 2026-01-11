@@ -447,7 +447,11 @@ export function checkSharedMemorySupport(): { ok: boolean; reason?: string } {
   }
 
   try {
-    const mem = new WebAssembly.Memory({ initial: 1, maximum: MAX_WASM32_PAGES, shared: true });
+    // Only probe for *support* here; do not require the ability to declare a 4GiB
+    // maximum. Some runtimes may allow shared memories but enforce lower maxima
+    // depending on device/browser limits. The actual guest RAM allocation path
+    // will surface size-related failures with a more specific error message.
+    const mem = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
     if (!(mem.buffer instanceof SharedArrayBuffer)) {
       return { ok: false, reason: "Shared WebAssembly.Memory is unsupported in this browser configuration." };
     }
