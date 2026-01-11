@@ -235,6 +235,9 @@ See `aerogpu_wddm_alloc.h` for the exact private-data layout used to persist
 - If any command in a submission requires the host to **READ or WRITE guest backing
   memory** for an allocation (e.g., destination writeback for CPU readback), the
   submission MUST provide an allocation table entry for that allocation ID.
+- Commands that describe CPU writes to guest memory (e.g. `RESOURCE_DIRTY_RANGE`) are only meaningful for
+  guest-backed resources (`backing_alloc_id != 0`). Host-owned resources must upload bytes explicitly via
+  `UPLOAD_RESOURCE`.
 - The host must reject (validation error) any writeback to allocations marked
   `AEROGPU_ALLOC_FLAG_READONLY`.
 
@@ -288,6 +291,8 @@ Producers (the driver) must:
 The initial protocol defines an IR sufficient for D3D9-style rendering and can be extended for D3D10/11:
 
 - Resource management: create/destroy buffer/texture, dirty range notifications.
+  - `RESOURCE_DIRTY_RANGE` describes CPU writes to **guest-backed** memory (`backing_alloc_id != 0`).
+    Host-owned resources must use `UPLOAD_RESOURCE`.
 - Shader upload: DXBC blob upload + bind.
 - Pipeline state: blend/depth/raster state setting.
 - Render state: render targets, viewport, scissor.
