@@ -1,0 +1,158 @@
+use std::collections::HashMap;
+
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub(crate) enum SharedSurfaceError {
+    #[error("unknown shared surface handle 0x{0:08X}")]
+    UnknownHandle(u32),
+    #[error("unknown shared surface token 0x{0:016X}")]
+    UnknownToken(u64),
+    #[error(
+        "shared surface token 0x{share_token:016X} already exported (existing=0x{existing:08X} new=0x{new:08X})"
+    )]
+    TokenAlreadyExported {
+        share_token: u64,
+        existing: u32,
+        new: u32,
+    },
+    #[error(
+        "shared surface alias handle 0x{alias:08X} already bound (existing=0x{existing:08X} new=0x{new:08X})"
+    )]
+    AliasAlreadyBound {
+        alias: u32,
+        existing: u32,
+        new: u32,
+    },
+    #[error(
+        "shared surface token 0x{share_token:016X} refers to destroyed handle 0x{underlying:08X}"
+    )]
+    TokenRefersToDestroyed { share_token: u64, underlying: u32 },
+}
+
+/// Shared surface bookkeeping for `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
+///
+/// This models D3D9Ex / DWM sharing semantics at the host executor layer:
+/// - `EXPORT` associates a stable 64-bit `share_token` with a live resource.
+/// - `IMPORT` creates a new handle aliasing the exported resource.
+/// - `DESTROY_RESOURCE` decrements the reference count for the underlying resource and
+///   destroys it only once the last reference is released.
+#[derive(Debug, Default)]
+pub(crate) struct SharedSurfaceTable {
+    /// `share_token -> underlying resource handle`.
+    by_token: HashMap<u64, u32>,
+    /// `handle -> underlying resource handle`.
+    ///
+    /// - Original resources are stored as `handle -> handle`
+    /// - Imported aliases are stored as `alias_handle -> underlying_handle`
+    handles: HashMap<u32, u32>,
+    /// `underlying handle -> refcount`.
+    refcounts: HashMap<u32, u32>,
+}
+
+impl SharedSurfaceTable {
+    pub(crate) fn clear(&mut self) {
+        self.by_token.clear();
+        self.handles.clear();
+        self.refcounts.clear();
+    }
+
+    pub(crate) fn register_handle(&mut self, handle: u32) {
+        if handle == 0 {
+            return;
+        }
+        if self.handles.contains_key(&handle) {
+            return;
+        }
+        self.handles.insert(handle, handle);
+        *self.refcounts.entry(handle).or_insert(0) += 1;
+    }
+
+    pub(crate) fn resolve_handle(&self, handle: u32) -> u32 {
+        self.handles.get(&handle).copied().unwrap_or(handle)
+    }
+
+    pub(crate) fn export(
+        &mut self,
+        resource_handle: u32,
+        share_token: u64,
+    ) -> Result<(), SharedSurfaceError> {
+        let underlying = self
+            .handles
+            .get(&resource_handle)
+            .copied()
+            .ok_or(SharedSurfaceError::UnknownHandle(resource_handle))?;
+
+        if let Some(&existing) = self.by_token.get(&share_token) {
+            if existing != underlying {
+                return Err(SharedSurfaceError::TokenAlreadyExported {
+                    share_token,
+                    existing,
+                    new: underlying,
+                });
+            }
+            return Ok(());
+        }
+
+        self.by_token.insert(share_token, underlying);
+        Ok(())
+    }
+
+    pub(crate) fn import(
+        &mut self,
+        out_resource_handle: u32,
+        share_token: u64,
+    ) -> Result<(), SharedSurfaceError> {
+        let Some(&underlying) = self.by_token.get(&share_token) else {
+            return Err(SharedSurfaceError::UnknownToken(share_token));
+        };
+
+        if !self.refcounts.contains_key(&underlying) {
+            return Err(SharedSurfaceError::TokenRefersToDestroyed {
+                share_token,
+                underlying,
+            });
+        }
+
+        if let Some(&existing) = self.handles.get(&out_resource_handle) {
+            if existing != underlying {
+                return Err(SharedSurfaceError::AliasAlreadyBound {
+                    alias: out_resource_handle,
+                    existing,
+                    new: underlying,
+                });
+            }
+            return Ok(());
+        }
+
+        self.handles.insert(out_resource_handle, underlying);
+        *self.refcounts.entry(underlying).or_insert(0) += 1;
+        Ok(())
+    }
+
+    /// Releases a handle (original or alias). Returns `(underlying_handle, last_ref)` if the
+    /// handle was tracked.
+    pub(crate) fn destroy_handle(&mut self, handle: u32) -> Option<(u32, bool)> {
+        if handle == 0 {
+            return None;
+        }
+
+        let underlying = self.handles.remove(&handle)?;
+        let Some(count) = self.refcounts.get_mut(&underlying) else {
+            // Table invariant broken (handle tracked but no refcount entry). Treat as last-ref so
+            // callers can clean up the underlying resource instead of leaking it.
+            self.by_token.retain(|_, v| *v != underlying);
+            return Some((underlying, true));
+        };
+
+        *count = count.saturating_sub(1);
+        if *count != 0 {
+            return Some((underlying, false));
+        }
+
+        self.refcounts.remove(&underlying);
+        self.by_token.retain(|_, v| *v != underlying);
+        Some((underlying, true))
+    }
+}
+

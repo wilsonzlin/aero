@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
 use crate::readback_rgba8;
+use crate::shared_surface::SharedSurfaceTable;
 use crate::texture_manager::TextureRegion;
 use crate::GpuError;
 use aero_protocol::aerogpu::aerogpu_cmd as cmd;
@@ -45,6 +46,9 @@ pub struct AeroGpuAcmdExecutor {
     textures: HashMap<u32, Texture2d>,
     render_target: u32,
     presented_scanouts: HashMap<u32, u32>,
+
+    // D3D9Ex shared surface import/export bookkeeping (EXPORT/IMPORT_SHARED_SURFACE).
+    shared_surfaces: SharedSurfaceTable,
 }
 
 impl AeroGpuAcmdExecutor {
@@ -82,6 +86,7 @@ impl AeroGpuAcmdExecutor {
             textures: HashMap::new(),
             render_target: 0,
             presented_scanouts: HashMap::new(),
+            shared_surfaces: SharedSurfaceTable::default(),
         })
     }
 
@@ -89,6 +94,7 @@ impl AeroGpuAcmdExecutor {
         self.textures.clear();
         self.render_target = 0;
         self.presented_scanouts.clear();
+        self.shared_surfaces.clear();
     }
 
     pub fn execute_submission(
@@ -140,13 +146,16 @@ impl AeroGpuAcmdExecutor {
                             view,
                         },
                     );
+
+                    self.shared_surfaces.register_handle(texture_handle);
                 }
                 AeroGpuCmd::SetRenderTargets {
                     color_count,
                     colors,
                     ..
                 } => {
-                    self.render_target = if color_count == 0 { 0 } else { colors[0] };
+                    let rt = if color_count == 0 { 0 } else { colors[0] };
+                    self.render_target = self.shared_surfaces.resolve_handle(rt);
                 }
                 AeroGpuCmd::Clear {
                     flags,
@@ -211,6 +220,32 @@ impl AeroGpuAcmdExecutor {
                     if self.render_target != 0 {
                         self.presented_scanouts
                             .insert(scanout_id, self.render_target);
+                    }
+                }
+                AeroGpuCmd::ExportSharedSurface {
+                    resource_handle,
+                    share_token,
+                } => {
+                    self.shared_surfaces
+                        .export(resource_handle, share_token)
+                        .map_err(|e| AeroGpuAcmdExecutorError::Backend(e.to_string()))?;
+                }
+                AeroGpuCmd::ImportSharedSurface {
+                    out_resource_handle,
+                    share_token,
+                } => {
+                    self.shared_surfaces
+                        .import(out_resource_handle, share_token)
+                        .map_err(|e| AeroGpuAcmdExecutorError::Backend(e.to_string()))?;
+                }
+                AeroGpuCmd::DestroyResource { resource_handle } => {
+                    if let Some((underlying, last_ref)) = self.shared_surfaces.destroy_handle(resource_handle)
+                    {
+                        if last_ref {
+                            self.textures.remove(&underlying);
+                        }
+                    } else {
+                        self.textures.remove(&resource_handle);
                     }
                 }
                 _ => {}

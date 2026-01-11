@@ -22,6 +22,7 @@ mod error;
 mod error_event;
 mod guest_memory;
 mod present;
+mod shared_surface;
 #[cfg(feature = "diff-engine")]
 mod tile_diff;
 
