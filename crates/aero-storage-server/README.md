@@ -48,8 +48,8 @@ directory listing (development only).
 
 ## Reverse proxy (TLS + HTTP/2)
 
-See `deploy/nginx/nginx.conf` for an example nginx configuration. It highlights the important bits
-for disk image streaming:
+See `deploy/nginx/aero-storage-server.conf` for an example nginx configuration. It highlights the
+important bits for disk image streaming:
 
 - keep compression disabled on `/v1/images/…` (compression breaks byte ranges)
 - increase timeouts and avoid buffering whole responses
