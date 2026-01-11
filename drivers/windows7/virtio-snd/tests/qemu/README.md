@@ -259,12 +259,12 @@ The selftest logs to:
    C:\AeroTests\aero-virtio-selftest.exe --test-snd
    ```
 3. Review `C:\aero-virtio-selftest.log` and locate the virtio-snd marker:
-    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`
-    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL`
-    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing` (virtio-snd PCI function not detected)
-    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|topology_interface_missing` (driver bound but Topology KS interface missing)
-    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set` (you forgot `--test-snd`)
-    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled` (the test was disabled via `--disable-snd`)
+     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`
+     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|reason=<reason>|hr=0x........`
+     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|reason=device_missing|hr=0x........` (virtio-snd PCI function not detected)
+     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|topology_interface_missing` (driver bound but Topology KS interface missing)
+     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set` (you forgot `--test-snd`)
+     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled` (the test was disabled via `--disable-snd`)
 
 If WASAPI fails, the tool logs a line like:
 
