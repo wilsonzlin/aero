@@ -72,14 +72,14 @@ aero_virtio_input.sys = 1
 ; You can confirm in Device Manager -> Details -> Hardware Ids.
 
 [Aero.NTx86]
-%VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
-%VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
-%VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01
+%AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01
 
 [Aero.NTamd64]
-%VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
-%VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
-%VirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+%AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
 
 ;------------------------------------------------------------------------------
 ; DDInstall (x86)
@@ -156,5 +156,6 @@ AeroProvider = "Aero Project"
 MfgName      = "Aero Project"
 DiskName     = "Aero VirtIO Input Driver Install Disk"
 
-VirtioInput.DeviceDesc  = "Aero VirtIO Input Device"
 AeroVirtioInput.SvcDesc = "Aero VirtIO Input KMDF HID Minidriver"
+
+AeroVirtioInput.DeviceDesc  = "Aero VirtIO Input Device"
