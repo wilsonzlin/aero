@@ -738,6 +738,122 @@ fn aero_cpu_core_int15_e820_returns_first_entry() {
 }
 
 #[test]
+fn aero_cpu_core_int15_e820_loop_reports_pci_hole_and_high_memory_remap() {
+    // Exercise the full E820 iterator contract using the real CPU engine. The guest program loops
+    // over INT 15h AX=E820h until BX returns 0 and stores each 24-byte entry contiguously.
+    //
+    // Use a memory size large enough to force the BIOS to emit:
+    // - the PCIe ECAM window at 0xB000_0000
+    // - the PCI/MMIO hole below 4GiB
+    // - remapped RAM above 4GiB
+    let cfg = BiosConfig {
+        enable_acpi: false,
+        memory_size_bytes: 5 * 1024 * 1024 * 1024,
+        ..test_bios_config()
+    };
+    let bios = Bios::new(cfg);
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program:
+    //   xor ax,ax
+    //   mov es,ax
+    //   mov edx,'SMAP'
+    //   xor bx,bx
+    //   mov cx,24
+    //   mov di,0x0600
+    // loop:
+    //   mov ax,0xE820
+    //   int 15h
+    //   test bx,bx
+    //   jz done
+    //   add di,24
+    //   jmp loop
+    // done:
+    //   hlt
+    vm.mem.write_physical(
+        0x7C00,
+        &[
+            0x31, 0xC0, // xor ax, ax
+            0x8E, 0xC0, // mov es, ax
+            0x66, 0xBA, 0x50, 0x41, 0x4D, 0x53, // mov edx, 0x534D4150 ('SMAP')
+            0x31, 0xDB, // xor bx, bx
+            0xB9, 0x18, 0x00, // mov cx, 24
+            0xBF, 0x00, 0x06, // mov di, 0x0600
+            0xB8, 0x20, 0xE8, // mov ax, 0xE820
+            0xCD, 0x15, // int 15h
+            0x85, 0xDB, // test bx, bx
+            0x74, 0x05, // jz done
+            0x83, 0xC7, 0x18, // add di, 24
+            0xEB, 0xF2, // jmp loop
+            0xF4, // hlt
+        ],
+    );
+
+    let mut steps = 0u64;
+    loop {
+        steps += 1;
+        if steps > 100_000 {
+            panic!("E820 loop did not halt (steps={steps})");
+        }
+        match vm.step() {
+            StepExit::Continue | StepExit::Branch | StepExit::BiosInterrupt(_) => continue,
+            StepExit::Halted => break,
+            StepExit::Assist(r) => panic!("unexpected assist while running E820 loop: {r:?}"),
+        }
+    }
+
+    assert!(vm.cpu.halted);
+    assert_eq!(
+        vm.cpu.gpr[gpr::RBX] as u16,
+        0,
+        "expected E820 continuation (BX) to be 0 after final entry"
+    );
+
+    let last_di = (vm.cpu.gpr[gpr::RDI] & 0xFFFF) as u64;
+    assert!(last_di >= 0x0600, "E820 log DI underflow: {last_di:#x}");
+    let entries = ((last_di - 0x0600) / 24) + 1;
+    assert!(
+        (1..=32).contains(&entries),
+        "unexpected E820 entry count derived from DI: {entries}"
+    );
+
+    let mut found_ecam = false;
+    let mut found_pci_hole = false;
+    let mut found_high_ram = false;
+    for i in 0..entries {
+        let off = 0x0600 + i * 24;
+        let base = vm.mem.read_u64(off);
+        let length = vm.mem.read_u64(off + 8);
+        let kind = vm.mem.read_u32(off + 16);
+        let attrs = vm.mem.read_u32(off + 20);
+
+        if base == 0xB000_0000 {
+            assert_eq!(length, 0x1000_0000);
+            assert_eq!(kind, 2);
+            assert_eq!(attrs, 1);
+            found_ecam = true;
+        } else if base == 0xC000_0000 {
+            assert_eq!(length, 0x4000_0000);
+            assert_eq!(kind, 2);
+            assert_eq!(attrs, 1);
+            found_pci_hole = true;
+        } else if base == 0x1_0000_0000 {
+            assert_eq!(length, 0x9000_0000);
+            assert_eq!(kind, 1);
+            assert_eq!(attrs, 1);
+            found_high_ram = true;
+        }
+    }
+
+    assert!(found_ecam, "expected E820 map to include PCIe ECAM window");
+    assert!(found_pci_hole, "expected E820 map to include PCI/MMIO hole below 4GiB");
+    assert!(found_high_ram, "expected E820 map to include remapped RAM above 4GiB");
+}
+
+#[test]
 fn aero_cpu_core_int15_a20_support_returns_int15_bitmask() {
     let bios = Bios::new(test_bios_config());
     let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
