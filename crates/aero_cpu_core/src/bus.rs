@@ -12,50 +12,50 @@ pub trait Bus {
 
     fn read_u16(&mut self, addr: u64) -> u16 {
         let lo = self.read_u8(addr) as u16;
-        let hi = self.read_u8(addr + 1) as u16;
+        let hi = self.read_u8(addr.wrapping_add(1)) as u16;
         lo | (hi << 8)
     }
 
     fn read_u32(&mut self, addr: u64) -> u32 {
         let b0 = self.read_u8(addr) as u32;
-        let b1 = self.read_u8(addr + 1) as u32;
-        let b2 = self.read_u8(addr + 2) as u32;
-        let b3 = self.read_u8(addr + 3) as u32;
+        let b1 = self.read_u8(addr.wrapping_add(1)) as u32;
+        let b2 = self.read_u8(addr.wrapping_add(2)) as u32;
+        let b3 = self.read_u8(addr.wrapping_add(3)) as u32;
         b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
     }
 
     fn read_u64(&mut self, addr: u64) -> u64 {
         let lo = self.read_u32(addr) as u64;
-        let hi = self.read_u32(addr + 4) as u64;
+        let hi = self.read_u32(addr.wrapping_add(4)) as u64;
         lo | (hi << 32)
     }
 
     fn read_u128(&mut self, addr: u64) -> u128 {
         let lo = self.read_u64(addr) as u128;
-        let hi = self.read_u64(addr + 8) as u128;
+        let hi = self.read_u64(addr.wrapping_add(8)) as u128;
         lo | (hi << 64)
     }
 
     fn write_u16(&mut self, addr: u64, value: u16) {
         self.write_u8(addr, (value & 0x00FF) as u8);
-        self.write_u8(addr + 1, (value >> 8) as u8);
+        self.write_u8(addr.wrapping_add(1), (value >> 8) as u8);
     }
 
     fn write_u32(&mut self, addr: u64, value: u32) {
         self.write_u8(addr, (value & 0x0000_00FF) as u8);
-        self.write_u8(addr + 1, ((value >> 8) & 0x0000_00FF) as u8);
-        self.write_u8(addr + 2, ((value >> 16) & 0x0000_00FF) as u8);
-        self.write_u8(addr + 3, ((value >> 24) & 0x0000_00FF) as u8);
+        self.write_u8(addr.wrapping_add(1), ((value >> 8) & 0x0000_00FF) as u8);
+        self.write_u8(addr.wrapping_add(2), ((value >> 16) & 0x0000_00FF) as u8);
+        self.write_u8(addr.wrapping_add(3), ((value >> 24) & 0x0000_00FF) as u8);
     }
 
     fn write_u64(&mut self, addr: u64, value: u64) {
         self.write_u32(addr, (value & 0xFFFF_FFFF) as u32);
-        self.write_u32(addr + 4, (value >> 32) as u32);
+        self.write_u32(addr.wrapping_add(4), (value >> 32) as u32);
     }
 
     fn write_u128(&mut self, addr: u64, value: u128) {
         self.write_u64(addr, value as u64);
-        self.write_u64(addr + 8, (value >> 64) as u64);
+        self.write_u64(addr.wrapping_add(8), (value >> 64) as u64);
     }
 
     /// Perform a read-modify-write cycle as a single operation when possible.
