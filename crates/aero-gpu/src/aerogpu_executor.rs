@@ -1471,6 +1471,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                     ExecutorError::Validation("COPY_BUFFER: dst alloc offset overflow".into())
                 })?;
             let dst_gpa = table.resolve_gpa(dst_backing.alloc_id, alloc_offset, size_bytes)?;
+
             let data = self.read_buffer_to_vec_blocking(&staging, size_bytes, "COPY_BUFFER")?;
             if data.len() != size_usize {
                 return Err(ExecutorError::Validation(
