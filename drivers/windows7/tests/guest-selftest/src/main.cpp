@@ -863,6 +863,10 @@ static bool VirtioBlkTest(Logger& log, const Options& opt) {
 struct VirtioInputTestResult {
   bool ok = false;
   int matched_devices = 0;
+  int keyboard_devices = 0;
+  int mouse_devices = 0;
+  int ambiguous_devices = 0;
+  int unknown_devices = 0;
   int keyboard_collections = 0;
   int mouse_collections = 0;
   std::string reason;
@@ -1089,6 +1093,17 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
     }
 
     const auto summary = SummarizeHidReportDescriptor(*report_desc);
+    const bool has_keyboard = summary.keyboard_app_collections > 0;
+    const bool has_mouse = summary.mouse_app_collections > 0;
+    if (has_keyboard && has_mouse) {
+      out.ambiguous_devices++;
+    } else if (has_keyboard) {
+      out.keyboard_devices++;
+    } else if (has_mouse) {
+      out.mouse_devices++;
+    } else {
+      out.unknown_devices++;
+    }
     out.keyboard_collections += summary.keyboard_app_collections;
     out.mouse_collections += summary.mouse_app_collections;
 
@@ -1108,12 +1123,20 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
     out.reason = "ioctl_or_open_failed";
     return out;
   }
-  if (out.keyboard_collections <= 0) {
-    out.reason = "missing_keyboard_collection";
+  if (out.keyboard_devices <= 0) {
+    out.reason = "missing_keyboard_device";
     return out;
   }
-  if (out.mouse_collections <= 0) {
-    out.reason = "missing_mouse_collection";
+  if (out.mouse_devices <= 0) {
+    out.reason = "missing_mouse_device";
+    return out;
+  }
+  if (out.ambiguous_devices > 0) {
+    out.reason = "ambiguous_device";
+    return out;
+  }
+  if (out.unknown_devices > 0) {
+    out.reason = "unknown_device";
     return out;
   }
 
@@ -2284,10 +2307,12 @@ int wmain(int argc, wchar_t** argv) {
   all_ok = all_ok && blk_ok;
 
   const auto input = VirtioInputTest(log);
-  log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input|%s|devices=%d|keyboard_collections=%d|"
+  log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input|%s|devices=%d|keyboard_devices=%d|"
+           "mouse_devices=%d|ambiguous_devices=%d|unknown_devices=%d|keyboard_collections=%d|"
            "mouse_collections=%d|reason=%s",
-           input.ok ? "PASS" : "FAIL", input.matched_devices, input.keyboard_collections,
-           input.mouse_collections, input.reason.empty() ? "-" : input.reason.c_str());
+           input.ok ? "PASS" : "FAIL", input.matched_devices, input.keyboard_devices, input.mouse_devices,
+           input.ambiguous_devices, input.unknown_devices, input.keyboard_collections, input.mouse_collections,
+           input.reason.empty() ? "-" : input.reason.c_str());
   all_ok = all_ok && input.ok;
 
   if (opt.disable_snd) {
