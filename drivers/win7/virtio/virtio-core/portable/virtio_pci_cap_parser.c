@@ -33,15 +33,15 @@ static virtio_pci_cap_parse_result_t virtio_pci_cap_parser_sanitize_cap_ptr(
         return VIRTIO_PCI_CAP_PARSE_ERR_BAD_ARGUMENT;
     }
 
+    if (raw_ptr == 0) {
+        return VIRTIO_PCI_CAP_PARSE_ERR_NO_CAP_LIST;
+    }
+
     if ((raw_ptr & 0x3u) != 0) {
         return VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_UNALIGNED;
     }
 
     ptr = raw_ptr;
-    if (ptr == 0) {
-        return VIRTIO_PCI_CAP_PARSE_ERR_NO_CAP_LIST;
-    }
-
     if (ptr < VIRTIO_PCI_CAP_PARSER_CFG_MIN_LEN) {
         return VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_OUT_OF_RANGE;
     }
@@ -64,16 +64,16 @@ static virtio_pci_cap_parse_result_t virtio_pci_cap_parser_sanitize_cap_next(
         return VIRTIO_PCI_CAP_PARSE_ERR_BAD_ARGUMENT;
     }
 
-    if ((raw_next & 0x3u) != 0) {
-        return VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_UNALIGNED;
-    }
-
-    next = raw_next;
-    if (next == 0) {
+    if (raw_next == 0) {
         *out_next = 0;
         return VIRTIO_PCI_CAP_PARSE_OK;
     }
 
+    if ((raw_next & 0x3u) != 0) {
+        return VIRTIO_PCI_CAP_PARSE_ERR_CAP_NEXT_UNALIGNED;
+    }
+
+    next = raw_next;
     if (next < VIRTIO_PCI_CAP_PARSER_CFG_MIN_LEN) {
         return VIRTIO_PCI_CAP_PARSE_ERR_CAP_NEXT_OUT_OF_RANGE;
     }
@@ -308,6 +308,8 @@ const char *virtio_pci_cap_parse_result_str(virtio_pci_cap_parse_result_t result
             return "CAP_PTR_UNALIGNED";
         case VIRTIO_PCI_CAP_PARSE_ERR_CAP_HEADER_TRUNCATED:
             return "CAP_HEADER_TRUNCATED";
+        case VIRTIO_PCI_CAP_PARSE_ERR_CAP_NEXT_UNALIGNED:
+            return "CAP_NEXT_UNALIGNED";
         case VIRTIO_PCI_CAP_PARSE_ERR_CAP_NEXT_OUT_OF_RANGE:
             return "CAP_NEXT_OUT_OF_RANGE";
         case VIRTIO_PCI_CAP_PARSE_ERR_CAP_LIST_LOOP:

@@ -491,7 +491,7 @@ static void test_cap_next_unaligned(void) {
     bars[4] = 0xD0000000ULL;
 
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
-    expect_result("cap_next_unaligned.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_UNALIGNED);
+    expect_result("cap_next_unaligned.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_NEXT_UNALIGNED);
 }
 
 static void test_bad_argument_null_cfg_space(void) {
