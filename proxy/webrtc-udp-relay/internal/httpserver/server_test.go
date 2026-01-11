@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/pion/webrtc/v4"
+	xwebsocket "golang.org/x/net/websocket"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
@@ -701,5 +702,49 @@ func TestRecoverMiddleware(t *testing.T) {
 	resp2.Body.Close()
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("healthz status=%d, want %d", resp2.StatusCode, http.StatusOK)
+	}
+}
+
+func TestRequestLoggerMiddleware_AllowsWebSocketHijack(t *testing.T) {
+	cfg := config.Config{
+		ListenAddr:      "127.0.0.1:0",
+		LogFormat:       config.LogFormatText,
+		LogLevel:        slog.LevelInfo,
+		ShutdownTimeout: 2 * time.Second,
+		Mode:            config.ModeDev,
+		AuthMode:        config.AuthModeNone,
+	}
+
+	baseURL := startTestServer(t, cfg, func(srv *Server) {
+		wsSrv := &xwebsocket.Server{
+			Handler: xwebsocket.Handler(func(conn *xwebsocket.Conn) {
+				defer conn.Close()
+
+				var msg string
+				if err := xwebsocket.Message.Receive(conn, &msg); err != nil {
+					return
+				}
+				_ = xwebsocket.Message.Send(conn, msg)
+			}),
+		}
+		srv.Mux().Handle("GET /ws", wsSrv)
+	})
+
+	wsURL := "ws://" + strings.TrimPrefix(baseURL, "http://") + "/ws"
+	conn, err := xwebsocket.Dial(wsURL, "", baseURL)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.Close()
+
+	if err := xwebsocket.Message.Send(conn, "hello"); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	var got string
+	if err := xwebsocket.Message.Receive(conn, &got); err != nil {
+		t.Fatalf("receive: %v", err)
+	}
+	if got != "hello" {
+		t.Fatalf("got=%q, want %q", got, "hello")
 	}
 }
