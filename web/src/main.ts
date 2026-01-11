@@ -31,12 +31,10 @@ import { WorkerCoordinator } from "./runtime/coordinator";
 import { initWasm, type WasmVariant } from "./runtime/wasm_loader";
 import { precompileWasm } from "./runtime/wasm_preload";
 import type { WorkerRole } from "./runtime/shared_layout";
-import { createDefaultDiskImageStore } from "./storage/default_disk_image_store";
-import type { DiskImageInfo, WorkerOpenToken } from "./storage/disk_image_store";
-import { formatByteSize } from "./storage/disk_image_store";
-import { RuntimeDiskClient } from "./storage/runtime_disk_client";
-import type { RemoteDiskTelemetrySnapshot } from "./platform/remote_disk";
-import { IoWorkerClient } from "./workers/io_worker_client";
+import { DiskManager } from "./storage/disk_manager";
+import type { DiskImageMetadata, MountConfig } from "./storage/metadata";
+import { OPFS_DISKS_PATH, OPFS_LEGACY_IMAGES_DIR } from "./storage/metadata";
+import { RuntimeDiskClient, type OpenResult } from "./storage/runtime_disk_client";
 import { type JitWorkerResponse } from "./workers/jit_protocol";
 import { JitWorkerClient } from "./workers/jit_worker_client";
 import { DemoVmWorkerClient } from "./workers/demo_vm_worker_client";
@@ -68,6 +66,7 @@ const workerCoordinator = new WorkerCoordinator();
 const usbBroker = new UsbBroker();
 const webHidManager = new WebHidPassthroughManager();
 const webHidBroker = new WebHidBroker({ manager: webHidManager });
+const diskManagerPromise = DiskManager.create();
 configManager.subscribe((state) => {
   workerCoordinator.updateConfig(state.effective);
 });
@@ -97,6 +96,46 @@ const wasmInitPromise = perf.spanAsync("wasm:init", async () => {
   }
 });
 let frameScheduler: FrameSchedulerHandle | null = null;
+
+type OpenedDisk = { meta: DiskImageMetadata; open: OpenResult };
+type OpenedBootDisks = { client: RuntimeDiskClient; mounts: MountConfig; hdd?: OpenedDisk; cd?: OpenedDisk };
+type BootDiskSelection = { mounts: MountConfig; hdd?: DiskImageMetadata; cd?: DiskImageMetadata };
+
+let bootDiskSelection: BootDiskSelection | null = null;
+
+async function getBootDiskSelection(manager: DiskManager): Promise<BootDiskSelection> {
+  const [disks, mounts] = await Promise.all([manager.listDisks(), manager.getMounts()]);
+  const byId = new Map(disks.map((d) => [d.id, d]));
+  return {
+    mounts,
+    hdd: mounts.hddId ? byId.get(mounts.hddId) : undefined,
+    cd: mounts.cdId ? byId.get(mounts.cdId) : undefined,
+  };
+}
+
+async function openBootDisks(manager: DiskManager): Promise<OpenedBootDisks> {
+  const [disks, mounts] = await Promise.all([manager.listDisks(), manager.getMounts()]);
+  const byId = new Map(disks.map((d) => [d.id, d]));
+  const client = new RuntimeDiskClient();
+  const opened: OpenedBootDisks = { client, mounts };
+
+  try {
+    if (mounts.hddId) {
+      const meta = byId.get(mounts.hddId);
+      if (!meta) throw new Error(`Mounted HDD disk not found: ${mounts.hddId}`);
+      opened.hdd = { meta, open: await client.open(meta, { mode: "cow" }) };
+    }
+    if (mounts.cdId) {
+      const meta = byId.get(mounts.cdId);
+      if (!meta) throw new Error(`Mounted CD disk not found: ${mounts.cdId}`);
+      opened.cd = { meta, open: await client.open(meta, { mode: "direct" }) };
+    }
+    return opened;
+  } catch (err) {
+    client.close();
+    throw err;
+  }
+}
 
 // Updated by the microphone UI and read by the worker coordinator so that
 // newly-started workers inherit the current mic attachment (if any).
@@ -218,20 +257,6 @@ function formatMaybeBytes(bytes: number | null): string {
   return bytes === null ? "unknown" : formatBytes(bytes);
 }
 
-const ACTIVE_DISK_KEY = "aero.activeDiskImage";
-
-function getActiveDiskName(): string | null {
-  return localStorage.getItem(ACTIVE_DISK_KEY);
-}
-
-function setActiveDiskName(name: string | null): void {
-  if (name === null) {
-    localStorage.removeItem(ACTIVE_DISK_KEY);
-    return;
-  }
-  localStorage.setItem(ACTIVE_DISK_KEY, name);
-}
-
 function render(): void {
   const app = document.getElementById("app");
   if (!app) throw new Error("Missing #app element");
@@ -276,8 +301,7 @@ function render(): void {
     renderGpuWorkerPanel(),
     renderSm5TrianglePanel(),
     renderOpfsPanel(),
-    renderDiskImagesPanel(),
-    renderRemoteDiskPanel(),
+    renderDisksPanel(),
     renderAudioPanel(),
     renderMicrophonePanel(),
     renderWebUsbDiagnosticsPanel(report),
@@ -1222,7 +1246,7 @@ function renderOpfsPanel(): HTMLElement {
   const panel = el(
     "div",
     { class: "panel" },
-    el("h2", { text: "Disk Images" }),
+    el("h2", { text: "OPFS tools" }),
     el("h3", { text: "Quota & durability" }),
     el("div", { class: "row" }, refreshButton, requestPersistenceButton),
     quotaLine,
@@ -1234,7 +1258,7 @@ function renderOpfsPanel(): HTMLElement {
       { class: "row" },
       el("label", { text: "File:" }),
       fileInput,
-      el("label", { text: "Dest path:" }),
+      el("label", { text: "Dest path (relative):" }),
       destPathInput,
       importButton,
       progress,
@@ -1252,174 +1276,407 @@ function renderOpfsPanel(): HTMLElement {
   return panel;
 }
 
-function renderDiskImagesPanel(): HTMLElement {
-  const { store, persistent, warning } = createDefaultDiskImageStore();
-  const ioWorker = new IoWorkerClient();
+function renderDisksPanel(): HTMLElement {
+  const status = el("pre", { text: "" });
+  const progress = el("progress", { value: "0", max: "1", style: "width: 320px" }) as HTMLProgressElement;
+  progress.hidden = true;
+  const progressText = el("span", { class: "muted", text: "" });
 
-  const warningEl = el("div", {
-    class: "warning",
-    text: warning ?? "OPFS unavailable; using in-memory disk image store.",
-  });
-  warningEl.hidden = persistent;
+  const headerLine = el("div", { class: "mono", text: "Initializing disk manager…" });
 
-  const statusEl = el("span", { class: "muted", text: "" }) as HTMLSpanElement;
+  const createNameInput = el("input", { type: "text", placeholder: "Blank HDD name (e.g. win7.img)" }) as HTMLInputElement;
+  const createSizeGiB = el("input", { type: "number", min: "1", step: "1", value: "20" }) as HTMLInputElement;
 
-  const importNameInput = el("input", { type: "text", placeholder: "Defaults to file name" }) as HTMLInputElement;
+  const importNameInput = el("input", { type: "text", placeholder: "Optional display name (defaults to file name)" }) as HTMLInputElement;
   const fileInput = el("input", { type: "file", style: "display: none" }) as HTMLInputElement;
+  let importMode: "direct" | "convert" = "direct";
 
-  const importProgress = el("progress", { value: "0", max: "1", style: "width: 320px" }) as HTMLProgressElement;
-  importProgress.hidden = true;
-  const importProgressText = el("span", { class: "muted", text: "" }) as HTMLSpanElement;
+  const hddSelect = el("select") as HTMLSelectElement;
+  const cdSelect = el("select") as HTMLSelectElement;
 
   const tableBody = el("tbody");
 
-  const setProgress = (loaded: number, total: number) => {
-    importProgress.hidden = false;
-    importProgress.max = Math.max(total, 1);
-    importProgress.value = loaded;
-    const pct = total > 0 ? Math.floor((loaded / total) * 100) : 0;
-    importProgressText.textContent = `${formatByteSize(loaded)} / ${formatByteSize(total)} (${pct}%)`;
-  };
+  let manager: DiskManager | null = null;
+  let disks: DiskImageMetadata[] = [];
+  let mounts: MountConfig = {};
+  let adoptedLegacy = false;
 
-  const clearProgress = () => {
-    importProgress.hidden = true;
-    importProgress.value = 0;
-    importProgress.max = 1;
-    importProgressText.textContent = "";
-  };
+  function setProgress(phase: string, processed: number, total?: number): void {
+    progress.hidden = false;
+    progress.value = total ? Math.min(processed, total) : processed;
+    progress.max = total ? Math.max(total, 1) : Math.max(processed, 1);
+    const pct = total && total > 0 ? ` (${Math.floor((processed / total) * 100)}%)` : "";
+    progressText.textContent = `${phase}: ${formatBytes(processed)}${total ? ` / ${formatBytes(total)}` : ""}${pct}`;
+  }
 
-  const renderList = (images: DiskImageInfo[]) => {
-    const active = getActiveDiskName();
+  function clearProgress(): void {
+    progress.hidden = true;
+    progress.value = 0;
+    progress.max = 1;
+    progressText.textContent = "";
+  }
+
+  function diskLocationLabel(meta: DiskImageMetadata): string {
+    if (meta.source === "remote") {
+      return `remote:${meta.remote.delivery} cache=${meta.cache.backend}`;
+    }
+    if (meta.backend !== "opfs") return meta.backend;
+    if (meta.remote) return "remote+opfs-cache";
+    const dir = meta.opfsDirectory ?? OPFS_DISKS_PATH;
+    return dir === OPFS_DISKS_PATH ? "opfs" : `opfs:${dir}`;
+  }
+
+  function diskRow(meta: DiskImageMetadata): HTMLTableRowElement {
+    const mountHdd = el("button", {
+      text: "Mount HDD",
+      onclick: async () => {
+        if (!manager) return;
+        status.textContent = "";
+        try {
+          mounts = await manager.setMounts({ ...mounts, hddId: meta.kind === "hdd" ? meta.id : mounts.hddId });
+          await refresh();
+        } catch (err) {
+          status.textContent = err instanceof Error ? err.message : String(err);
+        }
+      },
+      disabled: meta.kind !== "hdd" ? "true" : undefined,
+    }) as HTMLButtonElement;
+
+    const mountCd = el("button", {
+      text: "Mount CD",
+      onclick: async () => {
+        if (!manager) return;
+        status.textContent = "";
+        try {
+          mounts = await manager.setMounts({ ...mounts, cdId: meta.kind === "cd" ? meta.id : mounts.cdId });
+          await refresh();
+        } catch (err) {
+          status.textContent = err instanceof Error ? err.message : String(err);
+        }
+      },
+      disabled: meta.kind !== "cd" ? "true" : undefined,
+    }) as HTMLButtonElement;
+
+    const exportBtn = el("button", {
+      text: "Export",
+      onclick: async () => {
+        if (!manager) return;
+        status.textContent = "";
+        clearProgress();
+        try {
+          await manager.exportDiskToFile(meta.id, {
+            onProgress(p) {
+              setProgress(p.phase, p.processedBytes, p.totalBytes);
+            },
+          });
+          status.textContent = "Export complete.";
+        } catch (err) {
+          status.textContent = err instanceof Error ? err.message : String(err);
+        } finally {
+          clearProgress();
+        }
+      },
+      disabled: meta.remote ? "true" : undefined,
+    }) as HTMLButtonElement;
+
+    const resizeBtn = el("button", {
+      text: "Resize",
+      onclick: async () => {
+        if (!manager) return;
+        const curGiB = (meta.sizeBytes / (1024 * 1024 * 1024)).toFixed(2);
+        const input = window.prompt(`New size in GiB (current ~${curGiB} GiB):`, curGiB);
+        if (!input) return;
+        const newGiB = Number(input);
+        if (!Number.isFinite(newGiB) || newGiB <= 0) {
+          status.textContent = "Invalid size.";
+          return;
+        }
+        const newBytes = Math.floor(newGiB * 1024 * 1024 * 1024);
+
+        status.textContent = "";
+        clearProgress();
+        try {
+          await manager.resizeDisk(meta.id, newBytes, {
+            onProgress(p) {
+              setProgress(p.phase, p.processedBytes, p.totalBytes);
+            },
+          });
+          await refresh();
+        } catch (err) {
+          status.textContent = err instanceof Error ? err.message : String(err);
+        } finally {
+          clearProgress();
+        }
+      },
+      disabled: meta.kind !== "hdd" || !!meta.remote ? "true" : undefined,
+    }) as HTMLButtonElement;
+
+    const deleteBtn = el("button", {
+      text: "Delete",
+      onclick: async () => {
+        if (!manager) return;
+        if (!confirm(`Delete disk "${meta.name}"?`)) return;
+        status.textContent = "";
+        try {
+          await manager.deleteDisk(meta.id);
+          await refresh();
+        } catch (err) {
+          status.textContent = err instanceof Error ? err.message : String(err);
+        }
+      },
+    }) as HTMLButtonElement;
+
+    const mountedLabel =
+      mounts.hddId === meta.id ? "HDD" : mounts.cdId === meta.id ? "CD" : "";
+
+    return el(
+      "tr",
+      {},
+      el("td", { text: mountedLabel }),
+      el("td", { text: meta.name }),
+      el("td", { text: meta.kind }),
+      el("td", { text: meta.format }),
+      el("td", { text: formatBytes(meta.sizeBytes) }),
+      el("td", { text: diskLocationLabel(meta) }),
+      el("td", { class: "actions" }, mountHdd, mountCd, exportBtn, resizeBtn, deleteBtn),
+    );
+  }
+
+  function renderTable(): void {
     tableBody.replaceChildren();
-
-    if (images.length === 0) {
-      tableBody.append(el("tr", {}, el("td", { colspan: "4", class: "muted", text: "No disk images imported yet." })));
+    if (disks.length === 0) {
+      tableBody.append(el("tr", {}, el("td", { colspan: "7", class: "muted", text: "No disks yet." })));
       return;
     }
-
-    for (const image of images) {
-      const radio = el("input", {
-        type: "radio",
-        name: "active-disk",
-        onchange: () => {
-          setActiveDiskName(image.name);
-          void refreshList();
-        },
-      }) as HTMLInputElement;
-      radio.checked = image.name === active;
-
-      const exportButton = el("button", {
-        text: "Export",
-        onclick: async () => {
-          const blob = await store.export(image.name);
-          const url = URL.createObjectURL(blob);
-          try {
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = image.name;
-            a.click();
-          } finally {
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-          }
-        },
-      });
-
-      const deleteButton = el("button", {
-        text: "Delete",
-        onclick: async () => {
-          if (!confirm(`Delete disk image "${image.name}"?`)) return;
-          await store.delete(image.name);
-          if (getActiveDiskName() === image.name) setActiveDiskName(null);
-          await refreshList();
-        },
-      });
-
-      tableBody.append(
-        el(
-          "tr",
-          {},
-          el("td", {}, radio),
-          el("td", { text: image.name }),
-          el("td", { text: formatByteSize(image.size) }),
-          el("td", { class: "actions" }, exportButton, deleteButton),
-        ),
-      );
+    for (const meta of disks) {
+      tableBody.append(diskRow(meta));
     }
-  };
+  }
 
-  const refreshList = async () => {
-    try {
-      const images = await store.list();
-      renderList(images);
-    } catch (err) {
-      statusEl.textContent = err instanceof Error ? err.message : String(err);
+  function renderMountSelects(): void {
+    function fill(select: HTMLSelectElement, kind: "hdd" | "cd", selectedId?: string): void {
+      select.replaceChildren();
+      select.append(el("option", { value: "", text: "(none)" }));
+      for (const d of disks) {
+        if (d.kind !== kind) continue;
+        let label = d.name;
+        if (d.source === "remote") {
+          label = `${d.name} (remote:${d.remote.delivery})`;
+        } else if (d.remote) {
+          label = `${d.name} (remote)`;
+        } else if (d.opfsDirectory === OPFS_LEGACY_IMAGES_DIR) {
+          label = `${d.name} (legacy)`;
+        }
+        select.append(el("option", { value: d.id, text: label }));
+      }
+      select.value = selectedId ?? "";
     }
-  };
 
-  const importButton = el("button", {
-    text: "Import…",
+    fill(hddSelect, "hdd", mounts.hddId);
+    fill(cdSelect, "cd", mounts.cdId);
+  }
+
+  async function refresh(): Promise<void> {
+    if (!manager) {
+      manager = await diskManagerPromise;
+      headerLine.textContent = `Disk backend: ${manager.backend}`;
+    }
+
+    // Auto-adopt legacy images once per session so users upgrading from the v1
+    // DiskImageStore flow see their existing OPFS `images/` files.
+    if (!adoptedLegacy && manager.backend === "opfs") {
+      adoptedLegacy = true;
+      try {
+        await manager.adoptLegacyOpfsImages();
+      } catch {
+        // ignore
+      }
+    }
+
+    disks = await manager.listDisks();
+    mounts = await manager.getMounts();
+    renderMountSelects();
+    renderTable();
+  }
+
+  const refreshBtn = el("button", {
+    text: "Refresh",
     onclick: () => {
-      statusEl.textContent = "";
+      status.textContent = "";
+      void refresh().catch((err) => {
+        status.textContent = err instanceof Error ? err.message : String(err);
+      });
+    },
+  }) as HTMLButtonElement;
+
+  const adoptLegacyBtn = el("button", {
+    text: "Scan legacy OPFS images/",
+    onclick: async () => {
+      status.textContent = "";
+      if (!manager) manager = await diskManagerPromise;
+      try {
+        const res = await manager.adoptLegacyOpfsImages();
+        status.textContent = `Legacy scan: adopted=${res.adopted} found=${res.found}`;
+        await refresh();
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  }) as HTMLButtonElement;
+
+  const createBtn = el("button", {
+    text: "Create blank HDD",
+    onclick: async () => {
+      status.textContent = "";
+      clearProgress();
+      if (!manager) manager = await diskManagerPromise;
+      const name = createNameInput.value.trim() || "blank.img";
+      const giB = Number(createSizeGiB.value);
+      const sizeBytes = Math.floor(giB * 1024 * 1024 * 1024);
+      if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+        status.textContent = "Invalid size.";
+        return;
+      }
+      try {
+        await manager.createBlankDisk({
+          name,
+          sizeBytes,
+          onProgress(p) {
+            setProgress(p.phase, p.processedBytes, p.totalBytes);
+          },
+        });
+        await refresh();
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+      } finally {
+        clearProgress();
+      }
+    },
+  }) as HTMLButtonElement;
+
+  const importBtn = el("button", {
+    text: "Import file…",
+    onclick: () => {
+      importMode = "direct";
+      status.textContent = "";
       clearProgress();
       fileInput.value = "";
       fileInput.click();
     },
   }) as HTMLButtonElement;
 
-  fileInput.addEventListener("change", async () => {
+  const importConvertBtn = el("button", {
+    text: "Import + convert…",
+    onclick: () => {
+      importMode = "convert";
+      status.textContent = "";
+      clearProgress();
+      fileInput.value = "";
+      fileInput.click();
+    },
+  }) as HTMLButtonElement;
+
+  fileInput.addEventListener("change", () => {
     const file = fileInput.files?.[0];
     if (!file) return;
-
-    statusEl.textContent = "";
-    importButton.disabled = true;
-    clearProgress();
-    setProgress(0, file.size);
-
-    try {
-      const desiredName = importNameInput.value.trim();
-      const imported = await store.import(
-        file,
-        desiredName.length > 0 ? desiredName : undefined,
-        ({ loaded, total }) => setProgress(loaded, total),
-      );
-      statusEl.textContent = `Imported "${imported.name}" (${formatByteSize(imported.size)})`;
-      if (!getActiveDiskName()) setActiveDiskName(imported.name);
-      await refreshList();
-    } catch (err) {
-      statusEl.textContent = err instanceof Error ? err.message : String(err);
-    } finally {
-      importButton.disabled = false;
+    void (async () => {
+      if (!manager) manager = await diskManagerPromise;
+      status.textContent = "";
       clearProgress();
-    }
-  });
-
-  const openWorkerStatus = el("span", { class: "muted", text: "" }) as HTMLSpanElement;
-  const openWorkerButton = el("button", {
-    text: "Open active disk in I/O worker",
-    onclick: async () => {
-      const activeName = getActiveDiskName();
-      if (!activeName) {
-        openWorkerStatus.textContent = "No active disk selected.";
-        return;
-      }
-
-      openWorkerButton.disabled = true;
-      openWorkerStatus.textContent = "Opening…";
 
       try {
-        const tokenOrHandle = await store.openForWorker(activeName);
-        if (!tokenOrHandle || typeof tokenOrHandle !== "object" || !("kind" in tokenOrHandle)) {
-          throw new Error("Disk store returned an unsupported worker handle descriptor.");
+        const nameOverride = importNameInput.value.trim() || undefined;
+        if (importMode === "convert") {
+          await manager.importDiskConverted(file, {
+            name: nameOverride,
+            onProgress(p) {
+              setProgress(p.phase, p.processedBytes, p.totalBytes);
+            },
+          });
+        } else {
+          await manager.importDisk(file, {
+            name: nameOverride,
+            onProgress(p) {
+              setProgress(p.phase, p.processedBytes, p.totalBytes);
+            },
+          });
         }
-
-        const result = await ioWorker.openActiveDisk(tokenOrHandle as WorkerOpenToken);
-        openWorkerStatus.textContent = result.syncAccessHandleAvailable
-          ? `Opened (size: ${formatByteSize(result.size)}).`
-          : `Opened without sync access handle (size: ${formatByteSize(result.size)}).`;
+        await refresh();
       } catch (err) {
-        openWorkerStatus.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = err instanceof Error ? err.message : String(err);
       } finally {
-        openWorkerButton.disabled = false;
+        clearProgress();
+      }
+    })();
+  });
+
+  const remoteUrlInput = el("input", { type: "url", placeholder: "https://example.com/win7.img" }) as HTMLInputElement;
+  const remoteBlockKiB = el("input", { type: "number", min: "4", step: "4", value: "1024" }) as HTMLInputElement;
+  const remoteCacheMiB = el("input", { type: "number", min: "0", step: "64", value: "512" }) as HTMLInputElement;
+
+  const addRemoteBtn = el("button", {
+    text: "Add remote disk",
+    onclick: async () => {
+      if (!manager) manager = await diskManagerPromise;
+      status.textContent = "";
+      const url = remoteUrlInput.value.trim();
+      if (!url) {
+        status.textContent = "Enter a URL.";
+        return;
+      }
+      const blockSizeBytes = Number(remoteBlockKiB.value) * 1024;
+      const cacheLimitMiB = Number(remoteCacheMiB.value);
+      const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
+      try {
+        await manager.addRemoteStreamingDisk({ url, blockSizeBytes, cacheLimitBytes, prefetchSequentialBlocks: 2 });
+        await refresh();
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  }) as HTMLButtonElement;
+
+  hddSelect.addEventListener("change", () => {
+    void (async () => {
+      if (!manager) manager = await diskManagerPromise;
+      mounts = await manager.setMounts({ ...mounts, hddId: hddSelect.value || undefined });
+      await refresh();
+    })().catch((err) => {
+      status.textContent = err instanceof Error ? err.message : String(err);
+    });
+  });
+  cdSelect.addEventListener("change", () => {
+    void (async () => {
+      if (!manager) manager = await diskManagerPromise;
+      mounts = await manager.setMounts({ ...mounts, cdId: cdSelect.value || undefined });
+      await refresh();
+    })().catch((err) => {
+      status.textContent = err instanceof Error ? err.message : String(err);
+    });
+  });
+
+  const runtimeTestBtn = el("button", {
+    text: "Open mounts via runtime disk worker",
+    onclick: async () => {
+      status.textContent = "";
+      if (!manager) manager = await diskManagerPromise;
+      const opened = await openBootDisks(manager);
+      try {
+        const lines: string[] = [];
+        if (opened.hdd) {
+          lines.push(`HDD opened: ${opened.hdd.meta.name} (${formatBytes(opened.hdd.open.capacityBytes)})`);
+        }
+        if (opened.cd) {
+          lines.push(`CD opened: ${opened.cd.meta.name} (${formatBytes(opened.cd.open.capacityBytes)})`);
+        }
+        status.textContent = lines.length ? lines.join("\n") : "No mounts configured.";
+      } finally {
+        try {
+          if (opened.hdd) await opened.client.closeDisk(opened.hdd.open.handle);
+          if (opened.cd) await opened.client.closeDisk(opened.cd.open.handle);
+        } finally {
+          opened.client.close();
+        }
       }
     },
   }) as HTMLButtonElement;
@@ -1433,615 +1690,55 @@ function renderDiskImagesPanel(): HTMLElement {
       el(
         "tr",
         {},
-        el("th", { text: "Active" }),
+        el("th", { text: "Mounted" }),
         el("th", { text: "Name" }),
+        el("th", { text: "Kind" }),
+        el("th", { text: "Format" }),
         el("th", { text: "Size" }),
+        el("th", { text: "Location" }),
         el("th", { text: "Actions" }),
       ),
     ),
     tableBody,
   );
 
-  void refreshList();
-
+  void refresh().catch((err) => {
+    status.textContent = err instanceof Error ? err.message : String(err);
+  });
   return el(
     "div",
     { class: "panel" },
-    el("h2", { text: "Disk Images" }),
-    warningEl,
-    el("div", { class: "row" }, el("label", { text: "Name:" }), importNameInput, importButton, fileInput),
-    el("div", { class: "row" }, importProgress, importProgressText),
-    el("div", { class: "row" }, openWorkerButton, openWorkerStatus),
-    el("div", { class: "row" }, statusEl),
-    table,
-  );
-}
-
-function renderRemoteDiskPanel(): HTMLElement {
-  const SETTINGS_KEY = "aero.remoteDiskPanel.settings.v1";
-
-  function stableUrlForStorage(url: string): string {
-    // Avoid persisting signed URLs / auth query params into localStorage.
-    try {
-      const u = new URL(url, location.href);
-      u.search = "";
-      u.hash = "";
-      return u.toString();
-    } catch {
-      const noHash = url.split("#", 1)[0] ?? url;
-      return (noHash.split("?", 1)[0] ?? noHash).trim();
-    }
-  }
-
-  const warning = el(
-    "div",
-    { class: "mono" },
-    "Remote disk images are experimental. Only use images you own/have rights to. ",
-    "The server must support either HTTP Range requests (single-file images) or the chunked manifest format (see docs/disk-images.md). ",
-    "For local testing, run `docker compose up` in `infra/local-object-store/` and upload an object to `disk-images/`. ",
-    "For CDN/edge emulation, run `docker compose --profile proxy up` and use port 9002.",
-  );
-
-  const enabledInput = el("input", { type: "checkbox" }) as HTMLInputElement;
-  const modeSelect = el(
-    "select",
-    {},
-    el("option", { value: "range", text: "HTTP Range" }),
-    el("option", { value: "chunked", text: "Chunked manifest.json" }),
-  ) as HTMLSelectElement;
-  const cacheBackendSelect = el(
-    "select",
-    {},
-    el("option", { value: "auto", text: "cache: auto" }),
-    el("option", { value: "opfs", text: "cache: OPFS" }),
-    el("option", { value: "idb", text: "cache: IndexedDB" }),
-  ) as HTMLSelectElement;
-  const credentialsSelect = el(
-    "select",
-    {},
-    el("option", { value: "same-origin", text: "credentials: same-origin" }),
-    el("option", { value: "include", text: "credentials: include" }),
-    el("option", { value: "omit", text: "credentials: omit" }),
-  ) as HTMLSelectElement;
-  const cacheImageIdInput = el("input", {
-    type: "text",
-    placeholder: "cache image id (optional)",
-  }) as HTMLInputElement;
-  const cacheVersionInput = el("input", {
-    type: "text",
-    placeholder: "cache version (optional)",
-  }) as HTMLInputElement;
-  const urlInput = el("input", { type: "url", placeholder: "http://localhost:9000/disk-images/large.bin" }) as HTMLInputElement;
-  const blockSizeInput = el("input", { type: "number", value: String(1024), min: "4" }) as HTMLInputElement;
-  const cacheLimitInput = el("input", { type: "number", value: String(512), min: "0" }) as HTMLInputElement;
-  const prefetchInput = el("input", { type: "number", value: String(2), min: "0" }) as HTMLInputElement;
-  const maxConcurrentFetchesInput = el("input", { type: "number", value: String(4), min: "1" }) as HTMLInputElement;
-  const stats = el("pre", { text: "" });
-  const output = el("pre", { text: "" });
-
-  const probeButton = el("button", { text: "Probe Range support" }) as HTMLButtonElement;
-  const readButton = el("button", { text: "Read sample bytes" }) as HTMLButtonElement;
-  const flushButton = el("button", { text: "Flush cache" }) as HTMLButtonElement;
-  const clearButton = el("button", { text: "Clear cache" }) as HTMLButtonElement;
-  const resetStatsButton = el("button", { text: "Reset stats" }) as HTMLButtonElement;
-  const closeButton = el("button", { text: "Close" }) as HTMLButtonElement;
-  const progress = el("progress", { value: "0", max: "1", style: "width: 320px" }) as HTMLProgressElement;
-
-  const ioWorker = new IoWorkerClient();
-  const client = new RuntimeDiskClient();
-  let handle: number | null = null;
-  let rangeOpened = false;
-  let rangeSize: number | null = null;
-  let guestMemory: WebAssembly.Memory | null = null;
-  let statsPollPending = false;
-  let statsBaseline: Awaited<ReturnType<RuntimeDiskClient["stats"]>> | null = null;
-  let statsBaselineAtMs: number | null = null;
-  let rangeStatsBaseline: RemoteDiskTelemetrySnapshot | null = null;
-  let rangeStatsBaselineAtMs: number | null = null;
-
-  const saveSettings = () => {
-    const payload = {
-      enabled: enabledInput.checked,
-      mode: modeSelect.value,
-      cacheBackend: cacheBackendSelect.value,
-      credentials: credentialsSelect.value,
-      url: stableUrlForStorage(urlInput.value),
-      blockKiB: blockSizeInput.value,
-      cacheLimitMiB: cacheLimitInput.value,
-      prefetch: prefetchInput.value,
-      maxConcurrentFetches: maxConcurrentFetchesInput.value,
-      cacheImageId: cacheImageIdInput.value,
-      cacheVersion: cacheVersionInput.value,
-    };
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(payload));
-  };
-
-  const restoreSettings = () => {
-    try {
-      const raw = localStorage.getItem(SETTINGS_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as Partial<Record<string, unknown>>;
-
-      if (typeof parsed.enabled === "boolean") enabledInput.checked = parsed.enabled;
-      if (typeof parsed.mode === "string" && ["range", "chunked"].includes(parsed.mode)) modeSelect.value = parsed.mode;
-      if (typeof parsed.cacheBackend === "string" && ["auto", "opfs", "idb"].includes(parsed.cacheBackend)) {
-        cacheBackendSelect.value = parsed.cacheBackend;
-      }
-      if (typeof parsed.credentials === "string" && ["same-origin", "include", "omit"].includes(parsed.credentials)) {
-        credentialsSelect.value = parsed.credentials;
-      }
-      if (typeof parsed.url === "string") urlInput.value = parsed.url;
-      if (typeof parsed.blockKiB === "string") blockSizeInput.value = parsed.blockKiB;
-      if (typeof parsed.cacheLimitMiB === "string") cacheLimitInput.value = parsed.cacheLimitMiB;
-      if (typeof parsed.prefetch === "string") prefetchInput.value = parsed.prefetch;
-      if (typeof parsed.maxConcurrentFetches === "string") maxConcurrentFetchesInput.value = parsed.maxConcurrentFetches;
-      if (typeof parsed.cacheImageId === "string") cacheImageIdInput.value = parsed.cacheImageId;
-      if (typeof parsed.cacheVersion === "string") cacheVersionInput.value = parsed.cacheVersion;
-    } catch {
-      // ignore
-    }
-  };
-
-  function hasOpenDisk(): boolean {
-    return modeSelect.value === "chunked" ? handle !== null : rangeOpened;
-  }
-
-  function formatCacheLimitBytes(cacheLimitBytes: number | null): string {
-    if (cacheLimitBytes === 0) return "off";
-    if (cacheLimitBytes === null) return "unlimited";
-    return formatBytes(cacheLimitBytes);
-  }
-
-  function updateButtons(): void {
-    const enabled = enabledInput.checked;
-    probeButton.disabled = !enabled;
-    readButton.disabled = !enabled;
-    flushButton.disabled = !enabled || !hasOpenDisk();
-    clearButton.disabled = !enabled || !hasOpenDisk();
-    resetStatsButton.disabled = !enabled || !hasOpenDisk();
-    closeButton.disabled = !enabled || !hasOpenDisk();
-  }
-
-  function updateModeUi(): void {
-    const chunked = modeSelect.value === "chunked";
-    blockSizeInput.disabled = chunked;
-    maxConcurrentFetchesInput.disabled = !chunked;
-    urlInput.placeholder = chunked
-      ? "http://localhost:9000/disk-images/manifest.json"
-      : "http://localhost:9000/disk-images/large.bin";
-    probeButton.textContent = chunked ? "Fetch manifest" : "Probe Range support";
-  }
-
-  enabledInput.addEventListener("change", () => {
-    if (!enabledInput.checked) {
-      void closeHandle();
-    }
-    saveSettings();
-    updateButtons();
-  });
-  modeSelect.addEventListener("change", () => {
-    void closeHandle();
-    updateModeUi();
-    saveSettings();
-    updateButtons();
-  });
-  for (const input of [
-    urlInput,
-    cacheBackendSelect,
-    credentialsSelect,
-    cacheImageIdInput,
-    cacheVersionInput,
-    blockSizeInput,
-    cacheLimitInput,
-    prefetchInput,
-    maxConcurrentFetchesInput,
-  ]) {
-    input.addEventListener("change", () => {
-      void closeHandle();
-      saveSettings();
-      updateButtons();
-    });
-  }
-  restoreSettings();
-  updateModeUi();
-  updateButtons();
-
-  async function closeHandle(): Promise<void> {
-    const cur = handle;
-    handle = null;
-    statsBaseline = null;
-    statsBaselineAtMs = null;
-    rangeStatsBaseline = null;
-    rangeStatsBaselineAtMs = null;
-
-    if (cur !== null) {
-      try {
-        await client.closeDisk(cur);
-      } catch (err) {
-        output.textContent = err instanceof Error ? err.message : String(err);
-      }
-    }
-
-    if (!rangeOpened) return;
-    rangeOpened = false;
-    rangeSize = null;
-    try {
-      await ioWorker.closeRemoteDisk();
-    } catch (err) {
-      output.textContent = err instanceof Error ? err.message : String(err);
-    }
-  }
-
-  async function ensureOpen():
-    Promise<
-      | { mode: "range"; size: number }
-      | { mode: "chunked"; handle: number }
-    > {
-    if (modeSelect.value === "chunked") {
-      if (handle !== null) return { mode: "chunked", handle };
-    } else {
-      if (rangeOpened && rangeSize !== null) return { mode: "range", size: rangeSize };
-    }
-    const url = urlInput.value.trim();
-    if (!url) throw new Error("Enter a URL first.");
-    statsBaseline = null;
-    statsBaselineAtMs = null;
-    rangeStatsBaseline = null;
-    rangeStatsBaselineAtMs = null;
-
-    const cacheLimitMiB = Number(cacheLimitInput.value);
-    const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
-
-    const prefetchSequential = Math.max(0, Number(prefetchInput.value) | 0);
-    const cacheImageId = cacheImageIdInput.value.trim();
-    const cacheVersion = cacheVersionInput.value.trim();
-    const cacheBackend =
-      cacheBackendSelect.value === "auto" ? undefined : (cacheBackendSelect.value as "opfs" | "idb");
-    const credentials = credentialsSelect.value as RequestCredentials;
-
-    if (modeSelect.value === "chunked") {
-      const opened = await client.openChunked(url, {
-        cacheLimitBytes,
-        credentials,
-        prefetchSequentialChunks: prefetchSequential,
-        maxConcurrentFetches: Math.max(1, Number(maxConcurrentFetchesInput.value) | 0),
-        cacheBackend,
-        ...(cacheImageId ? { cacheImageId } : {}),
-        ...(cacheVersion ? { cacheVersion } : {}),
-      });
-      handle = opened.handle;
-      updateButtons();
-      try {
-        statsBaseline = await client.stats(opened.handle);
-        statsBaselineAtMs = Date.now();
-      } catch {
-        statsBaseline = null;
-        statsBaselineAtMs = null;
-      }
-      return { mode: "chunked", handle: opened.handle };
-    }
-
-    const openRes = await ioWorker.openRemoteDisk(url, {
-      blockSize: Number(blockSizeInput.value) * 1024,
-      cacheLimitMiB: cacheLimitMiB <= 0 ? null : cacheLimitMiB,
-      credentials,
-      prefetchSequentialBlocks: prefetchSequential,
-      cacheBackend,
-      ...(cacheImageId ? { cacheImageId } : {}),
-      ...(cacheVersion ? { cacheVersion } : {}),
-    });
-    rangeOpened = true;
-    rangeSize = openRes.size;
-    updateButtons();
-    try {
-      const res = await ioWorker.getRemoteDiskTelemetry();
-      rangeStatsBaseline = res.telemetry;
-      rangeStatsBaselineAtMs = Date.now();
-    } catch {
-      rangeStatsBaseline = null;
-      rangeStatsBaselineAtMs = null;
-    }
-    return { mode: "range", size: openRes.size };
-  }
-
-  async function refreshStats(): Promise<void> {
-    if (!enabledInput.checked || !hasOpenDisk()) {
-      stats.textContent = "";
-      return;
-    }
-    if (statsPollPending) return;
-    statsPollPending = true;
-    try {
-      if (modeSelect.value === "chunked") {
-        const cur = handle;
-        if (cur === null) return;
-        const res = await client.stats(cur);
-        if (handle !== cur) return;
-
-        const remote = res.remote;
-        if (!remote) {
-          stats.textContent = `diskSize=${formatBytes(res.capacityBytes)} reads=${res.io.reads} writes=${res.io.writes}`;
-          return;
-        }
-
-        const baselineRemote = statsBaseline?.remote;
-        const baselineIo = statsBaseline?.io;
-        const baseBlockRequests = baselineRemote?.blockRequests ?? 0;
-        const baseCacheHits = baselineRemote?.cacheHits ?? 0;
-        const baseCacheMisses = baselineRemote?.cacheMisses ?? 0;
-        const baseInflightJoins = baselineRemote?.inflightJoins ?? 0;
-        const baseRequests = baselineRemote?.requests ?? 0;
-        const baseBytesDownloaded = baselineRemote?.bytesDownloaded ?? 0;
-        const baseIoReads = baselineIo?.reads ?? 0;
-        const baseIoBytesRead = baselineIo?.bytesRead ?? 0;
-
-        const deltaCacheHits = remote.cacheHits - baseCacheHits;
-        const deltaCacheMisses = remote.cacheMisses - baseCacheMisses;
-        const hitRateDenom = deltaCacheHits + deltaCacheMisses;
-        const hitRate = hitRateDenom > 0 ? deltaCacheHits / hitRateDenom : 0;
-        const cacheCoverage = remote.totalSize > 0 ? remote.cachedBytes / remote.totalSize : 0;
-        const cacheLimitText = formatCacheLimitBytes(remote.cacheLimitBytes);
-        const deltaIoBytesRead = res.io.bytesRead - baseIoBytesRead;
-        const deltaBytesDownloaded = remote.bytesDownloaded - baseBytesDownloaded;
-        const downloadAmplification = deltaIoBytesRead > 0 ? deltaBytesDownloaded / deltaIoBytesRead : 0;
-        const lastFetchRangeText = remote.lastFetchRange
-          ? `${formatBytes(remote.lastFetchRange.start)}-${formatBytes(remote.lastFetchRange.end - 1)}`
-          : "—";
-        const lastFetchAtText = remote.lastFetchAtMs === null ? "—" : new Date(remote.lastFetchAtMs).toLocaleTimeString();
-        const sinceText = statsBaselineAtMs === null ? "—" : new Date(statsBaselineAtMs).toLocaleTimeString();
-
-        stats.textContent =
-          `imageSize=${formatBytes(remote.totalSize)}\n` +
-          `cache=${formatBytes(remote.cachedBytes)} (${(cacheCoverage * 100).toFixed(2)}%) limit=${cacheLimitText}\n` +
-          `blockSize=${formatBytes(remote.blockSize)}\n` +
-          `since=${sinceText}\n` +
-          `ioReads=${res.io.reads - baseIoReads} inflightReads=${res.io.inflightReads} lastReadMs=${res.io.lastReadMs === null ? "—" : res.io.lastReadMs.toFixed(1)}\n` +
-          `ioBytesRead=${formatBytes(deltaIoBytesRead)} downloadAmp=${downloadAmplification.toFixed(2)}x\n` +
-          `requests=${remote.requests - baseRequests} bytesDownloaded=${formatBytes(deltaBytesDownloaded)}\n` +
-          `blockRequests=${remote.blockRequests - baseBlockRequests} hits=${deltaCacheHits} misses=${deltaCacheMisses} inflightJoins=${remote.inflightJoins - baseInflightJoins} hitRate=${(hitRate * 100).toFixed(1)}%\n` +
-          `inflightFetches=${remote.inflightFetches} lastFetch=${lastFetchAtText} ${lastFetchRangeText} (${remote.lastFetchMs === null ? "—" : remote.lastFetchMs.toFixed(1)}ms)`;
-        return;
-      }
-
-      if (!rangeOpened) return;
-      const res = await ioWorker.getRemoteDiskTelemetry();
-      if (!rangeOpened) return;
-      const remote = res.telemetry;
-
-      const baselineRemote = rangeStatsBaseline;
-      const baseBlockRequests = baselineRemote?.blockRequests ?? 0;
-      const baseCacheHits = baselineRemote?.cacheHits ?? 0;
-      const baseCacheMisses = baselineRemote?.cacheMisses ?? 0;
-      const baseInflightJoins = baselineRemote?.inflightJoins ?? 0;
-      const baseRequests = baselineRemote?.requests ?? 0;
-      const baseBytesDownloaded = baselineRemote?.bytesDownloaded ?? 0;
-
-      const deltaCacheHits = remote.cacheHits - baseCacheHits;
-      const deltaCacheMisses = remote.cacheMisses - baseCacheMisses;
-      const hitRateDenom = deltaCacheHits + deltaCacheMisses;
-      const hitRate = hitRateDenom > 0 ? deltaCacheHits / hitRateDenom : 0;
-      const cacheCoverage = remote.totalSize > 0 ? remote.cachedBytes / remote.totalSize : 0;
-      const cacheLimitText = formatCacheLimitBytes(remote.cacheLimitBytes);
-      const deltaBytesDownloaded = remote.bytesDownloaded - baseBytesDownloaded;
-      const lastFetchRangeText = remote.lastFetchRange
-        ? `${formatBytes(remote.lastFetchRange.start)}-${formatBytes(remote.lastFetchRange.end - 1)}`
-        : "—";
-      const lastFetchAtText = remote.lastFetchAtMs === null ? "—" : new Date(remote.lastFetchAtMs).toLocaleTimeString();
-      const sinceText = rangeStatsBaselineAtMs === null ? "—" : new Date(rangeStatsBaselineAtMs).toLocaleTimeString();
-
-      stats.textContent =
-        `imageSize=${formatBytes(remote.totalSize)}\n` +
-        `cache=${formatBytes(remote.cachedBytes)} (${(cacheCoverage * 100).toFixed(2)}%) limit=${cacheLimitText}\n` +
-        `blockSize=${formatBytes(remote.blockSize)}\n` +
-        `since=${sinceText}\n` +
-        `requests=${remote.requests - baseRequests} bytesDownloaded=${formatBytes(deltaBytesDownloaded)}\n` +
-        `blockRequests=${remote.blockRequests - baseBlockRequests} hits=${deltaCacheHits} misses=${deltaCacheMisses} inflightJoins=${remote.inflightJoins - baseInflightJoins} hitRate=${(hitRate * 100).toFixed(1)}%\n` +
-        `inflightFetches=${remote.inflightFetches} lastFetch=${lastFetchAtText} ${lastFetchRangeText} (${remote.lastFetchMs === null ? "—" : remote.lastFetchMs.toFixed(1)}ms)`;
-    } catch (err) {
-      stats.textContent = err instanceof Error ? err.message : String(err);
-    } finally {
-      statsPollPending = false;
-    }
-  }
-
-  window.setInterval(() => void refreshStats(), 250);
-
-  probeButton.onclick = async () => {
-    output.textContent = "";
-    progress.value = 0;
-
-    try {
-      await closeHandle();
-
-      output.textContent = "Probing… (this will make HTTP requests)\n";
-      const opened = await ensureOpen();
-      if (opened.mode === "chunked") {
-        const res = await client.stats(opened.handle);
-        output.textContent = JSON.stringify(res.remote, null, 2);
-      } else {
-        const res = await ioWorker.getRemoteDiskCacheStatus();
-        output.textContent = JSON.stringify(res.status, null, 2);
-      }
-      updateButtons();
-      void refreshStats();
-    } catch (err) {
-      output.textContent = err instanceof Error ? err.message : String(err);
-    }
-  };
-
-  readButton.onclick = async () => {
-    output.textContent = "";
-    progress.value = 0;
-
-    try {
-      const opened = await ensureOpen();
-      if (opened.mode === "chunked") {
-        const bytes = await client.read(opened.handle, 2, 512);
-        const res = await client.stats(opened.handle);
-        output.textContent = JSON.stringify(
-          { read: { lba: 2, byteLength: 512, first16: Array.from(bytes.slice(0, 16)) }, stats: res.remote },
-          null,
-          2,
-        );
-      } else {
-        if (!guestMemory) {
-          guestMemory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
-        }
-        const diskOffset = 2 * 512;
-        const length = 512;
-        const guestOffset = 0;
-        await ioWorker.diskReadIntoSharedMemory({ diskOffset, guestMemory, guestOffset, length });
-        const bytes = new Uint8Array(guestMemory.buffer, guestOffset, length);
-        const res = await ioWorker.getRemoteDiskCacheStatus();
-        output.textContent = JSON.stringify(
-          { read: { diskOffset, byteLength: length, first16: Array.from(bytes.slice(0, 16)) }, cache: res.status },
-          null,
-          2,
-        );
-      }
-      progress.value = 1;
-      void refreshStats();
-    } catch (err) {
-      output.textContent = err instanceof Error ? err.message : String(err);
-    }
-  };
-
-  flushButton.onclick = async () => {
-    output.textContent = "";
-    progress.value = 0;
-    try {
-      if (!hasOpenDisk()) {
-        output.textContent = "Nothing to flush (probe/open first).";
-        return;
-      }
-      if (modeSelect.value === "chunked") {
-        if (handle === null) throw new Error("No chunked disk handle is open.");
-        await client.flush(handle);
-      } else {
-        await ioWorker.flushRemoteDiskCache();
-      }
-      progress.value = 1;
-      void refreshStats();
-    } catch (err) {
-      output.textContent = err instanceof Error ? err.message : String(err);
-    }
-  };
-
-  clearButton.onclick = async () => {
-    output.textContent = "";
-    progress.value = 0;
-    try {
-      if (!hasOpenDisk()) {
-        output.textContent = "Nothing to clear (probe/open first).";
-        return;
-      }
-      if (modeSelect.value === "chunked") {
-        if (handle === null) throw new Error("No chunked disk handle is open.");
-        await client.clearCache(handle);
-        try {
-          statsBaseline = await client.stats(handle);
-          statsBaselineAtMs = Date.now();
-        } catch {
-          statsBaseline = null;
-          statsBaselineAtMs = null;
-        }
-      } else {
-        await ioWorker.clearRemoteDiskCache();
-        try {
-          const res = await ioWorker.getRemoteDiskTelemetry();
-          rangeStatsBaseline = res.telemetry;
-          rangeStatsBaselineAtMs = Date.now();
-        } catch {
-          rangeStatsBaseline = null;
-          rangeStatsBaselineAtMs = null;
-        }
-      }
-      progress.value = 1;
-      output.textContent = "Cache cleared.";
-      void refreshStats();
-      updateButtons();
-    } catch (err) {
-      output.textContent = err instanceof Error ? err.message : String(err);
-    }
-  };
-
-  resetStatsButton.onclick = async () => {
-    output.textContent = "";
-    progress.value = 0;
-    try {
-      if (!hasOpenDisk()) {
-        output.textContent = "Nothing to reset (probe/open first).";
-        return;
-      }
-      if (modeSelect.value === "chunked") {
-        if (handle === null) throw new Error("No chunked disk handle is open.");
-        statsBaseline = await client.stats(handle);
-        statsBaselineAtMs = Date.now();
-      } else {
-        const res = await ioWorker.getRemoteDiskTelemetry();
-        rangeStatsBaseline = res.telemetry;
-        rangeStatsBaselineAtMs = Date.now();
-      }
-      progress.value = 1;
-      output.textContent = "Stats reset.";
-      void refreshStats();
-    } catch (err) {
-      output.textContent = err instanceof Error ? err.message : String(err);
-    }
-  };
-
-  closeButton.onclick = async () => {
-    output.textContent = "";
-    progress.value = 0;
-    await closeHandle();
-    updateButtons();
-  };
-
-  return el(
-    "div",
-    { class: "panel" },
-    el("h2", { text: "Remote disk image (streaming)" }),
-    warning,
+    el("h2", { text: "Disks" }),
+    headerLine,
+    el("div", { class: "row" }, refreshBtn, adoptLegacyBtn, runtimeTestBtn),
+    el("h3", { text: "Mounts" }),
     el(
       "div",
       { class: "row" },
-      el("label", { text: "Enable:" }),
-      enabledInput,
-      el("label", { text: "Mode:" }),
-      modeSelect,
-      cacheBackendSelect,
-      credentialsSelect,
+      el("label", { text: "HDD:" }),
+      hddSelect,
+      el("label", { text: "CD:" }),
+      cdSelect,
+    ),
+    el("h3", { text: "Create blank" }),
+    el("div", { class: "row" }, el("label", { text: "Name:" }), createNameInput, el("label", { text: "GiB:" }), createSizeGiB, createBtn),
+    el("h3", { text: "Import" }),
+    el("div", { class: "row" }, importNameInput, importBtn, importConvertBtn, fileInput),
+    el("div", { class: "row" }, progress, progressText),
+    el("h3", { text: "Remote" }),
+    el(
+      "div",
+      { class: "row" },
       el("label", { text: "URL:" }),
-      urlInput,
+      remoteUrlInput,
+      el("label", { text: "Block KiB:" }),
+      remoteBlockKiB,
+      el("label", { text: "Cache MiB:" }),
+      remoteCacheMiB,
+      addRemoteBtn,
     ),
-    el(
-      "div",
-      { class: "row" },
-      el("label", { text: "Cache key override:" }),
-      cacheImageIdInput,
-      cacheVersionInput,
-    ),
-    el(
-      "div",
-      { class: "row" },
-      el("label", { text: "Block KiB (range):" }),
-      blockSizeInput,
-      el("label", { text: "Cache MiB (0=no eviction):" }),
-      cacheLimitInput,
-      el("label", { text: "Prefetch:" }),
-      prefetchInput,
-      el("label", { text: "Max inflight (chunked):" }),
-      maxConcurrentFetchesInput,
-      probeButton,
-      readButton,
-      flushButton,
-      clearButton,
-      resetStatsButton,
-      closeButton,
-      progress,
-    ),
-    stats,
-    output,
+    status,
+    table,
   );
 }
 
@@ -3092,11 +2789,13 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const statusList = el("ul");
   const vmStateLine = el("div", { class: "mono", text: "" });
   const heartbeatLine = el("div", { class: "mono", text: "" });
+  const diskLine = el("div", { class: "mono", text: "" });
   const frameLine = el("div", { class: "mono", text: "" });
   const sharedFramebufferLine = el("div", { class: "mono", text: "" });
   const gpuMetricsLine = el("div", { class: "mono", text: "" });
   const error = el("pre", { text: "" });
   const guestRamValue = el("span", { class: "mono", text: "" });
+
   const jitDemoLine = el("div", { class: "mono", text: "jit: (idle)" });
   const jitDemoError = el("pre", { text: "" });
 
@@ -3175,16 +2874,32 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     },
   }) as HTMLButtonElement;
 
+  let booting = false;
   const startButton = el("button", {
     text: "Start workers",
-    onclick: () => {
+    onclick: async () => {
+      error.textContent = "";
+      booting = true;
+      update();
       const config = configManager.getState().effective;
       try {
         const platformFeatures = forceJitCspBlock.checked ? { ...report, jit_dynamic_wasm: false } : report;
+        const diskManager = await diskManagerPromise;
+        const selection = await getBootDiskSelection(diskManager);
+        bootDiskSelection = selection;
+
         workerCoordinator.start(config, { platformFeatures });
         const ioWorker = workerCoordinator.getIoWorker();
         if (ioWorker) {
           usbBroker.attachWorkerPort(ioWorker);
+          webHidBroker.attachWorkerPort(ioWorker);
+          attachedIoWorker = ioWorker;
+          ioWorker.postMessage({
+            type: "setBootDisks",
+            mounts: selection.mounts,
+            hdd: selection.hdd ?? null,
+            cd: selection.cd ?? null,
+          });
         }
         const gpuWorker = workerCoordinator.getWorker("gpu");
         const frameStateSab = workerCoordinator.getFrameStateSab();
@@ -3239,6 +2954,9 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         }
       } catch (err) {
         error.textContent = err instanceof Error ? err.message : String(err);
+        bootDiskSelection = null;
+      } finally {
+        booting = false;
       }
       update();
     },
@@ -3246,7 +2964,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
 
   const stopButton = el("button", {
     text: "Stop workers",
-    onclick: () => {
+    onclick: async () => {
       jitClient?.destroy();
       jitClient = null;
       jitClientWorker = null;
@@ -3256,6 +2974,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       schedulerFrameStateSab = null;
       schedulerSharedFramebuffer = null;
       workerCoordinator.stop();
+      bootDiskSelection = null;
       useWorkerPresentation = false;
       teardownVgaPresenter();
       if (canvasTransferred) resetVgaCanvas();
@@ -3415,7 +3134,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     const anyActive = Object.values(statuses).some((s) => s.state !== "stopped");
     const config = configManager.getState().effective;
 
-    startButton.disabled = !support.ok || !report.wasmThreads || !config.enableWorkers || anyActive;
+    startButton.disabled = booting || !support.ok || !report.wasmThreads || !config.enableWorkers || anyActive;
     stopButton.disabled = !anyActive;
     restartButton.disabled = !support.ok || !report.wasmThreads || !config.enableWorkers;
     resetButton.disabled = !anyActive;
@@ -3438,6 +3157,14 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       if (ioWorker) {
         usbBroker.attachWorkerPort(ioWorker);
         webHidBroker.attachWorkerPort(ioWorker);
+        if (bootDiskSelection) {
+          ioWorker.postMessage({
+            type: "setBootDisks",
+            mounts: bootDiskSelection.mounts,
+            hdd: bootDiskSelection.hdd ?? null,
+            cd: bootDiskSelection.cd ?? null,
+          });
+        }
       }
       attachedIoWorker = ioWorker;
     }
@@ -3463,6 +3190,23 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       `status[HeartbeatCounter]=${workerCoordinator.getHeartbeatCounter()}  ` +
       `ring[Heartbeat]=${workerCoordinator.getLastHeartbeatFromRing()}  ` +
       `guestI32[0]=${workerCoordinator.getGuestCounter0()}`;
+
+    if (!bootDiskSelection) {
+      diskLine.textContent = "disks: (not configured)";
+    } else {
+      const parts: string[] = [];
+      if (bootDiskSelection.hdd) {
+        parts.push(`hdd=${bootDiskSelection.hdd.name} (${formatBytes(bootDiskSelection.hdd.sizeBytes)})`);
+      } else if (bootDiskSelection.mounts.hddId) {
+        parts.push(`hdd=${bootDiskSelection.mounts.hddId} (missing)`);
+      }
+      if (bootDiskSelection.cd) {
+        parts.push(`cd=${bootDiskSelection.cd.name} (${formatBytes(bootDiskSelection.cd.sizeBytes)})`);
+      } else if (bootDiskSelection.mounts.cdId) {
+        parts.push(`cd=${bootDiskSelection.mounts.cdId} (missing)`);
+      }
+      diskLine.textContent = parts.length ? `disks: ${parts.join(" ")}` : "disks: (no mounts)";
+    }
 
     const frameStateSab = workerCoordinator.getFrameStateSab();
     if (!frameStateSab) {
@@ -3612,6 +3356,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     vgaInfoLine,
     vmStateLine,
     heartbeatLine,
+    diskLine,
     frameLine,
     sharedFramebufferLine,
     gpuMetricsLine,

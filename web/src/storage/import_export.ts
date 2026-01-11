@@ -7,8 +7,8 @@
  */
 
 import { crc32Final, crc32Init, crc32ToHex, crc32Update } from "./crc32.ts";
-import { idbReq, idbTxDone, openDiskManagerDb, opfsGetDisksDir } from "./metadata.ts";
 import { CHUNKED_DISK_CHUNK_SIZE, RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes.ts";
+import { OPFS_DISKS_PATH, idbReq, idbTxDone, openDiskManagerDb, opfsGetDir, opfsGetDisksDir } from "./metadata.ts";
 
 /**
  * Chunk sizing notes (different subsystems use different units):
@@ -49,9 +49,10 @@ function report(
 
 export async function opfsGetDiskFileHandle(
   fileName: string,
-  options?: { create?: boolean },
+  options?: { create?: boolean; dirPath?: string },
 ): Promise<FileSystemFileHandle> {
-  const disksDir = await opfsGetDisksDir();
+  const dirPath = options?.dirPath ?? OPFS_DISKS_PATH;
+  const disksDir = dirPath === OPFS_DISKS_PATH ? await opfsGetDisksDir() : await opfsGetDir(dirPath, { create: options?.create ?? false });
   return disksDir.getFileHandle(fileName, { create: options?.create ?? false });
 }
 
@@ -59,8 +60,8 @@ export async function opfsGetDiskFileHandle(
  * @param {string} fileName
  * @returns {Promise<number>}
  */
-export async function opfsGetDiskSizeBytes(fileName: string): Promise<number> {
-  const file = await (await opfsGetDiskFileHandle(fileName, { create: false })).getFile();
+export async function opfsGetDiskSizeBytes(fileName: string, dirPath?: string): Promise<number> {
+  const file = await (await opfsGetDiskFileHandle(fileName, { create: false, dirPath })).getFile();
   return file.size;
 }
 
@@ -74,8 +75,9 @@ export async function opfsCreateBlankDisk(
   fileName: string,
   sizeBytes: number,
   onProgress: ((p: ImportProgress) => void) | undefined,
+  dirPath?: string,
 ): Promise<{ sizeBytes: number; checksumCrc32: string | undefined }> {
-  const handle = await opfsGetDiskFileHandle(fileName, { create: true });
+  const handle = await opfsGetDiskFileHandle(fileName, { create: true, dirPath });
   const writable = await handle.createWritable({ keepExistingData: false });
   report(onProgress, { phase: "create", processedBytes: 0, totalBytes: sizeBytes });
   await writable.truncate(sizeBytes);
@@ -108,8 +110,9 @@ export async function opfsImportFile(
   fileName: string,
   file: File,
   onProgress: ((p: ImportProgress) => void) | undefined,
+  dirPath?: string,
 ): Promise<{ sizeBytes: number; checksumCrc32: string | undefined }> {
-  const handle = await opfsGetDiskFileHandle(fileName, { create: true });
+  const handle = await opfsGetDiskFileHandle(fileName, { create: true, dirPath });
   const writable = await handle.createWritable({ keepExistingData: false });
   const reader = file.stream().getReader();
 
@@ -142,8 +145,9 @@ export async function opfsImportFile(
  * @param {string} fileName
  * @returns {Promise<void>}
  */
-export async function opfsDeleteDisk(fileName: string): Promise<void> {
-  const disksDir = await opfsGetDisksDir();
+export async function opfsDeleteDisk(fileName: string, dirPath?: string): Promise<void> {
+  const path = dirPath ?? OPFS_DISKS_PATH;
+  const disksDir = path === OPFS_DISKS_PATH ? await opfsGetDisksDir() : await opfsGetDir(path, { create: false });
   try {
     await disksDir.removeEntry(fileName);
   } catch (err) {
@@ -161,8 +165,9 @@ export async function opfsResizeDisk(
   fileName: string,
   newSizeBytes: number,
   onProgress: ((p: ImportProgress) => void) | undefined,
+  dirPath?: string,
 ): Promise<void> {
-  const handle = await opfsGetDiskFileHandle(fileName, { create: false });
+  const handle = await opfsGetDiskFileHandle(fileName, { create: false, dirPath });
   const writable = await handle.createWritable({ keepExistingData: true });
   report(onProgress, { phase: "resize", processedBytes: 0, totalBytes: newSizeBytes });
   await writable.truncate(newSizeBytes);
@@ -216,8 +221,9 @@ export async function opfsExportToPort(
   port: MessagePort,
   options: { gzip?: boolean } | undefined,
   onProgress: ((p: ImportProgress) => void) | undefined,
+  dirPath?: string,
 ): Promise<{ checksumCrc32: string }> {
-  const handle = await opfsGetDiskFileHandle(fileName, { create: false });
+  const handle = await opfsGetDiskFileHandle(fileName, { create: false, dirPath });
   const file = await handle.getFile();
   let stream = file.stream() as ReadableStream<Uint8Array>;
 

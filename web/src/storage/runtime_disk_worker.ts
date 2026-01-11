@@ -11,6 +11,7 @@ import {
   hasOpfsSyncAccessHandle,
   idbReq,
   idbTxDone,
+  OPFS_DISKS_PATH,
   openDiskManagerDb,
   pickDefaultBackend,
   type DiskBackend,
@@ -581,13 +582,24 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
     }
   }
   const localMeta = meta;
-  const readOnly = localMeta.kind === "cd" || localMeta.format === "iso";
+  const mediaReadOnly = localMeta.kind === "cd" || localMeta.format === "iso";
 
   if (localMeta.backend === "opfs") {
+    const baseDir = localMeta.opfsDirectory ?? OPFS_DISKS_PATH;
     async function openBase(): Promise<AsyncSectorDisk> {
+      if (localMeta.remote) {
+        const disk = await RemoteStreamingDisk.open(localMeta.remote.url, {
+          blockSize: localMeta.remote.blockSizeBytes,
+          cacheLimitBytes: localMeta.remote.cacheLimitBytes,
+          prefetchSequentialBlocks: localMeta.remote.prefetchSequentialBlocks,
+          cacheBackend: localMeta.backend,
+          expectedSizeBytes: localMeta.sizeBytes,
+        });
+        return disk;
+      }
       switch (localMeta.format) {
         case "aerospar": {
-          const disk = await OpfsAeroSparseDisk.open(localMeta.fileName);
+          const disk = await OpfsAeroSparseDisk.open(localMeta.fileName, { dirPath: baseDir });
           if (disk.capacityBytes !== localMeta.sizeBytes) {
             await disk.close?.();
             throw new Error(`disk size mismatch: expected=${localMeta.sizeBytes} actual=${disk.capacityBytes}`);
@@ -597,7 +609,7 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
         case "raw":
         case "iso":
         case "unknown":
-          return await OpfsRawDisk.open(localMeta.fileName, { create: false, sizeBytes: localMeta.sizeBytes });
+          return await OpfsRawDisk.open(localMeta.fileName, { create: false, sizeBytes: localMeta.sizeBytes, dirPath: baseDir });
         case "qcow2":
         case "vhd":
           throw new Error(`unsupported OPFS disk format ${localMeta.format} (convert to aerospar first)`);
@@ -605,7 +617,7 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
     }
 
     // For HDD images we default to a COW overlay so the imported base image remains unchanged.
-    if (mode === "cow" && !readOnly) {
+    if (mode === "cow" && !mediaReadOnly) {
       let base: AsyncSectorDisk | null = null;
       let overlay: OpfsAeroSparseDisk | null = null;
       try {
@@ -625,19 +637,22 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
           disk: new OpfsCowDisk(base, overlay),
           readOnly: false,
           io: emptyIoTelemetry(),
-          backendSnapshot: {
-            kind: "local",
-            backend: "opfs",
-            key: localMeta.fileName,
-            format: localMeta.format,
-            diskKind: localMeta.kind,
-            sizeBytes: localMeta.sizeBytes,
-            overlay: {
-              fileName: overlayName,
-              diskSizeBytes: localMeta.sizeBytes,
-              blockSizeBytes: overlay.blockSizeBytes,
-            },
-          },
+          backendSnapshot: localMeta.remote
+            ? null
+            : {
+                kind: "local",
+                backend: "opfs",
+                key: localMeta.fileName,
+                format: localMeta.format,
+                diskKind: localMeta.kind,
+                sizeBytes: localMeta.sizeBytes,
+                ...(baseDir !== OPFS_DISKS_PATH ? { dirPath: baseDir } : {}),
+                overlay: {
+                  fileName: overlayName,
+                  diskSizeBytes: localMeta.sizeBytes,
+                  blockSizeBytes: overlay.blockSizeBytes,
+                },
+              },
         };
       } catch (err) {
         await (overlay as OpfsAeroSparseDisk | null)?.close?.();
@@ -651,16 +666,19 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
     const disk = await openBase();
     return {
       disk,
-      readOnly,
+      readOnly: mediaReadOnly || !!localMeta.remote,
       io: emptyIoTelemetry(),
-      backendSnapshot: {
-        kind: "local",
-        backend: "opfs",
-        key: localMeta.fileName,
-        format: localMeta.format,
-        diskKind: localMeta.kind,
-        sizeBytes: localMeta.sizeBytes,
-      },
+      backendSnapshot: localMeta.remote
+        ? null
+        : {
+            kind: "local",
+            backend: "opfs",
+            key: localMeta.fileName,
+            format: localMeta.format,
+            diskKind: localMeta.kind,
+            sizeBytes: localMeta.sizeBytes,
+            ...(baseDir !== OPFS_DISKS_PATH ? { dirPath: baseDir } : {}),
+          },
     };
   }
 
@@ -668,7 +686,7 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
   const disk = await IdbChunkDisk.open(localMeta.id, localMeta.sizeBytes);
   return {
     disk,
-    readOnly,
+    readOnly: mediaReadOnly,
     io: emptyIoTelemetry(),
     backendSnapshot: {
       kind: "local",
@@ -750,10 +768,11 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
   const backend = entry.backend;
   if (backend.kind === "local") {
     if (backend.backend === "opfs") {
+      const baseDir = backend.dirPath ?? OPFS_DISKS_PATH;
       let base: AsyncSectorDisk;
       switch (backend.format) {
         case "aerospar": {
-          const disk = await OpfsAeroSparseDisk.open(backend.key);
+          const disk = await OpfsAeroSparseDisk.open(backend.key, { dirPath: baseDir });
           if (disk.capacityBytes !== backend.sizeBytes) {
             await disk.close?.();
             throw new Error(`disk size mismatch: expected=${backend.sizeBytes} actual=${disk.capacityBytes}`);
@@ -764,7 +783,7 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
         case "raw":
         case "iso":
         case "unknown":
-          base = await OpfsRawDisk.open(backend.key, { create: false, sizeBytes: backend.sizeBytes });
+          base = await OpfsRawDisk.open(backend.key, { create: false, sizeBytes: backend.sizeBytes, dirPath: baseDir });
           break;
         case "qcow2":
         case "vhd":

@@ -1,5 +1,5 @@
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
-import { opfsGetDisksDir } from "./metadata.ts";
+import { OPFS_DISKS_PATH, opfsGetDir } from "./metadata.ts";
 
 type SyncAccessHandle = {
   read(buffer: ArrayBufferView, options?: { at: number }): number;
@@ -21,10 +21,6 @@ type DirectoryHandle = {
   getFileHandle(name: string, options?: { create?: boolean }): Promise<FileHandle>;
 };
 
-async function getOpfsDisksDir(): Promise<DirectoryHandle> {
-  return (await opfsGetDisksDir()) as unknown as DirectoryHandle;
-}
-
 export class OpfsRawDisk implements AsyncSectorDisk {
   readonly sectorSize = SECTOR_SIZE;
   readonly capacityBytes: number;
@@ -40,9 +36,9 @@ export class OpfsRawDisk implements AsyncSectorDisk {
 
   static async open(
     fileName: string,
-    opts: { create?: boolean; sizeBytes?: number } = {},
+    opts: { create?: boolean; sizeBytes?: number; dirPath?: string } = {},
   ): Promise<OpfsRawDisk> {
-    const dir = await getOpfsDisksDir();
+    const dir = (await opfsGetDir(opts.dirPath ?? OPFS_DISKS_PATH, { create: true })) as unknown as DirectoryHandle;
     const file = await dir.getFileHandle(fileName, { create: opts.create ?? false });
     const syncFactory = file.createSyncAccessHandle;
     const sync = syncFactory ? await syncFactory.call(file) : undefined;

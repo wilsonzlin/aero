@@ -144,6 +144,17 @@ export class DiskManager {
   }
 
   /**
+   * Adopt legacy v1 disk images stored in OPFS under `images/` by creating v2
+   * metadata entries pointing at the existing files. This is a fast, no-copy
+   * migration.
+   *
+   * No-op on non-OPFS backends.
+   */
+  async adoptLegacyOpfsImages(): Promise<{ adopted: number; found: number }> {
+    return this.request("adopt_legacy_images", {});
+  }
+
+  /**
    * @returns {Promise<MountConfig>}
    */
   async getMounts(): Promise<MountConfig> {
@@ -228,6 +239,19 @@ export class DiskManager {
    */
   async statDisk(id: string): Promise<{ meta: DiskImageMetadata; actualSizeBytes: number }> {
     return this.request("stat_disk", { id });
+  }
+
+  /**
+   * Register a remote disk that will be streamed via HTTP Range and cached in OPFS.
+   */
+  async addRemoteStreamingDisk(options: {
+    url: string;
+    name?: string;
+    blockSizeBytes?: number;
+    cacheLimitBytes?: number | null;
+    prefetchSequentialBlocks?: number;
+  }): Promise<DiskImageMetadata> {
+    return this.request("add_remote", options);
   }
 
   /**

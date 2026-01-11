@@ -6,7 +6,11 @@ import {
   newDiskId,
   idbReq,
   idbTxDone,
+  OPFS_LEGACY_IMAGES_DIR,
+  OPFS_DISKS_PATH,
+  OPFS_REMOTE_CACHE_DIR,
   openDiskManagerDb,
+  opfsGetDir,
   opfsGetDisksDir,
   opfsGetRemoteCacheDir,
   type DiskBackend,
@@ -18,6 +22,7 @@ import {
   type RemoteDiskValidator,
   type RemoteDiskUrls,
 } from "./metadata";
+import { planLegacyOpfsImageAdoptions, type LegacyOpfsFile } from "./legacy_images";
 import { importConvertToOpfs } from "./import_convert.ts";
 import {
   idbCreateBlankDisk,
@@ -33,6 +38,8 @@ import {
   opfsResizeDisk,
   type ImportProgress,
 } from "./import_export";
+import { probeRemoteDisk, stableCacheKey } from "../platform/remote_disk";
+import { removeOpfsEntry } from "../platform/opfs";
 import { CHUNKED_DISK_CHUNK_SIZE, RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes.ts";
 import { RemoteCacheManager, remoteChunkedDeliveryType, remoteRangeDeliveryType } from "./remote_cache_manager";
 
@@ -288,6 +295,42 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
   const store = getStore(backend);
 
   switch (op) {
+    case "adopt_legacy_images": {
+      if (backend !== "opfs") {
+        postOk(requestId, { ok: true, adopted: 0, found: 0 });
+        return;
+      }
+
+      let legacyFiles: LegacyOpfsFile[] = [];
+      try {
+        const imagesDir = await opfsGetDir(OPFS_LEGACY_IMAGES_DIR, { create: false });
+        for await (const [name, handle] of imagesDir.entries()) {
+          if (handle.kind !== "file") continue;
+          const file = await (handle as FileSystemFileHandle).getFile();
+          legacyFiles.push({ name, sizeBytes: file.size, lastModifiedMs: file.lastModified });
+        }
+      } catch (err) {
+        // If the legacy directory is missing, treat as no-op.
+        if (!(err instanceof DOMException && err.name === "NotFoundError")) throw err;
+      }
+
+      const existing = await store.listDisks();
+      const now = Date.now();
+      const newMetas = planLegacyOpfsImageAdoptions({
+        existingDisks: existing,
+        legacyFiles,
+        nowMs: now,
+        newId: newDiskId,
+      });
+
+      for (const meta of newMetas) {
+        await store.putDisk(meta);
+      }
+
+      postOk(requestId, { ok: true, adopted: newMetas.length, found: legacyFiles.length });
+      return;
+    }
+
     case "list_disks": {
       const disks = await store.listDisks();
       postOk(requestId, disks);
@@ -354,6 +397,65 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         lastUsedAtMs: undefined,
         checksum: checksumCrc32 ? { algorithm: "crc32", value: checksumCrc32 } : undefined,
       } satisfies DiskImageMetadata;
+
+      await store.putDisk(meta);
+      postOk(requestId, meta);
+      return;
+    }
+
+    case "add_remote": {
+      if (backend !== "opfs") {
+        throw new Error("Remote disks are only supported when using the OPFS backend.");
+      }
+
+      const url = String(msg.payload?.url ?? "").trim();
+      if (!url) throw new Error("Missing url");
+
+      // Validate URL early to provide a clearer error than `fetch` might.
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+      } catch {
+        throw new Error("Invalid URL");
+      }
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new Error("Remote disks require an http(s) URL.");
+      }
+
+      const probe = await probeRemoteDisk(url);
+      if (probe.size % 512 !== 0) {
+        throw new Error(`Remote disk size is not sector-aligned (size=${probe.size}, sector=512).`);
+      }
+
+      const filename = msg.payload?.name ? String(msg.payload.name) : parsed.pathname.split("/").filter(Boolean).pop() || "remote.img";
+      const format = inferFormatFromFileName(filename);
+      if (format === "qcow2" || format === "vhd" || format === "aerospar") {
+        throw new Error(`Remote format ${format} is not supported for streaming mounts (use a raw .img or .iso).`);
+      }
+      const kind = inferKindFromFileName(filename);
+
+      const id = newDiskId();
+      const fileName = buildDiskFileName(id, format === "iso" ? "iso" : "raw");
+
+      const meta: DiskImageMetadata = {
+        source: "local",
+        id,
+        name: filename,
+        backend,
+        kind,
+        format: format === "iso" ? "iso" : "raw",
+        fileName,
+        sizeBytes: probe.size,
+        createdAtMs: Date.now(),
+        lastUsedAtMs: undefined,
+        checksum: undefined,
+        remote: {
+          url,
+          blockSizeBytes: typeof msg.payload?.blockSizeBytes === "number" ? msg.payload.blockSizeBytes : undefined,
+          cacheLimitBytes: typeof msg.payload?.cacheLimitBytes === "number" || msg.payload?.cacheLimitBytes === null ? msg.payload.cacheLimitBytes : undefined,
+          prefetchSequentialBlocks: typeof msg.payload?.prefetchSequentialBlocks === "number" ? msg.payload.prefetchSequentialBlocks : undefined,
+        },
+      };
 
       await store.putDisk(meta);
       postOk(requestId, meta);
@@ -647,8 +749,8 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       let actualSizeBytes = meta.sizeBytes;
 
       if (meta.source === "local") {
-        if (meta.backend === "opfs") {
-          actualSizeBytes = await opfsGetDiskSizeBytes(meta.fileName);
+        if (meta.backend === "opfs" && !meta.remote) {
+          actualSizeBytes = await opfsGetDiskSizeBytes(meta.fileName, meta.opfsDirectory);
         }
         postOk(requestId, { meta, actualSizeBytes });
         return;
@@ -859,11 +961,14 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       if (meta.kind !== "hdd") {
         throw new Error("Only HDD images can be resized");
       }
+      if (meta.remote) {
+        throw new Error("Remote disks cannot be resized.");
+      }
 
       const progressCb = (p: ImportProgress) => postProgress(requestId, p);
 
       if (meta.backend === "opfs") {
-        await opfsResizeDisk(meta.fileName, newSizeBytes, progressCb);
+        await opfsResizeDisk(meta.fileName, newSizeBytes, progressCb, meta.opfsDirectory);
         // Resizing invalidates COW overlays (table size depends on disk size).
         await opfsDeleteDisk(`${meta.id}.overlay.aerospar`);
       } else {
@@ -882,7 +987,20 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       const meta = await requireDisk(backend, msg.payload.id);
       if (meta.source === "local") {
         if (meta.backend === "opfs") {
-          await opfsDeleteDisk(meta.fileName);
+          if (meta.remote) {
+            // Best-effort cache cleanup for remote-streaming disks.
+            try {
+              const cacheKey = await stableCacheKey(meta.remote.url);
+              await removeOpfsEntry(`${OPFS_DISKS_PATH}/${OPFS_REMOTE_CACHE_DIR}/${cacheKey}`, { recursive: true });
+            } catch {
+              // ignore
+            }
+          } else {
+            await opfsDeleteDisk(meta.fileName, meta.opfsDirectory);
+          }
+
+          // Converted images write a sidecar manifest (best-effort cleanup).
+          await opfsDeleteDisk(`${meta.id}.manifest.json`);
           // Best-effort cleanup of runtime COW overlay files.
           await opfsDeleteDisk(`${meta.id}.overlay.aerospar`);
         } else {
@@ -962,6 +1080,17 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
             db.close();
           }
         }
+
+        // Best-effort cleanup for RemoteRangeDisk / RemoteChunkedDisk cache directories (if used).
+        const url = meta.remote.urls.url;
+          if (url) {
+            try {
+              const cacheKey = await stableCacheKey(url);
+              await removeOpfsEntry(`${OPFS_DISKS_PATH}/${OPFS_REMOTE_CACHE_DIR}/${cacheKey}`, { recursive: true });
+            } catch {
+              // ignore
+            }
+          }
       }
       await store.deleteDisk(meta.id);
       postOk(requestId, { ok: true });
@@ -972,6 +1101,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       const meta = await requireDisk(backend, msg.payload.id);
       if (meta.source !== "local") {
         throw new Error("Remote disks cannot be exported");
+      }
+      if (meta.remote) {
+        throw new Error("Export is not supported for remote streaming disks; download from the original source instead.");
       }
       const port = msg.port;
       if (!port) throw new Error("Missing MessagePort for export");
@@ -989,7 +1121,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       void (async () => {
         try {
           if (meta.backend === "opfs") {
-            await opfsExportToPort(meta.fileName, port, options, progressCb);
+            await opfsExportToPort(meta.fileName, port, options, progressCb, meta.opfsDirectory);
           } else {
             await idbExportToPort(meta.id, meta.sizeBytes, port, options, progressCb);
           }

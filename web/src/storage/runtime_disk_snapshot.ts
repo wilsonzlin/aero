@@ -38,6 +38,13 @@ export type LocalDiskBackendSnapshot = {
    * - IDB: disk id
    */
   key: string;
+  /**
+   * For OPFS-backed disks, the directory containing `key` relative to the OPFS root.
+   *
+   * This allows snapshot/restore to reopen adopted legacy images stored outside the
+   * default `aero/disks` directory.
+   */
+  dirPath?: string;
   format: DiskFormat;
   diskKind: DiskKind;
   sizeBytes: number;

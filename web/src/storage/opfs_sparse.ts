@@ -1,5 +1,5 @@
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
-import { opfsGetDisksDir } from "./metadata.ts";
+import { OPFS_DISKS_PATH, opfsGetDir } from "./metadata.ts";
 
 type SyncAccessHandle = {
   read(buffer: ArrayBufferView, options?: { at: number }): number;
@@ -44,8 +44,8 @@ function toSafeNumber(v: bigint, field: string): number {
   return n;
 }
 
-async function getOpfsDisksDir(): Promise<DirectoryHandle> {
-  return (await opfsGetDisksDir()) as unknown as DirectoryHandle;
+async function getOpfsDir(dirPath: string): Promise<DirectoryHandle> {
+  return (await opfsGetDir(dirPath, { create: true })) as unknown as DirectoryHandle;
 }
 
 type SparseHeader = {
@@ -143,6 +143,7 @@ export class OpfsAeroSparseDisk implements AsyncSectorDisk {
       blockSizeBytes: number;
       maxCachedBlocks?: number;
       dir?: DirectoryHandle;
+      dirPath?: string;
     },
   ): Promise<OpfsAeroSparseDisk> {
     if (!Number.isSafeInteger(opts.diskSizeBytes) || opts.diskSizeBytes <= 0) {
@@ -162,7 +163,7 @@ export class OpfsAeroSparseDisk implements AsyncSectorDisk {
     const tableBytes = tableEntries * 8;
     const dataOffset = alignUp(HEADER_SIZE + tableBytes, opts.blockSizeBytes);
 
-    const dir = opts.dir ?? (await getOpfsDisksDir());
+    const dir = opts.dir ?? (await getOpfsDir(opts.dirPath ?? OPFS_DISKS_PATH));
     const file = await dir.getFileHandle(name, { create: true });
     const sync = await file.createSyncAccessHandle();
 
@@ -190,9 +191,9 @@ export class OpfsAeroSparseDisk implements AsyncSectorDisk {
 
   static async open(
     name: string,
-    opts: { maxCachedBlocks?: number; dir?: DirectoryHandle } = {},
+    opts: { maxCachedBlocks?: number; dir?: DirectoryHandle; dirPath?: string } = {},
   ): Promise<OpfsAeroSparseDisk> {
-    const dir = opts.dir ?? (await getOpfsDisksDir());
+    const dir = opts.dir ?? (await getOpfsDir(opts.dirPath ?? OPFS_DISKS_PATH));
     const file = await dir.getFileHandle(name, { create: false });
     const sync = await file.createSyncAccessHandle();
 

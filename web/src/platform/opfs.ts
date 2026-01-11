@@ -70,6 +70,9 @@ export async function getOpfsRoot(): Promise<FileSystemDirectoryHandle> {
 
 export async function getOpfsImagesDir(): Promise<FileSystemDirectoryHandle> {
   const root = await getOpfsRoot();
+  // Legacy v1 disk images were stored directly under `images/`. The v2 disk
+  // manager stores disks under `aero/disks/` and can optionally adopt legacy
+  // images without copying.
   return await root.getDirectoryHandle("images", { create: true });
 }
 

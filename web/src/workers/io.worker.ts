@@ -30,10 +30,8 @@ import { I8042Controller } from "../io/devices/i8042";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
-import { openSyncAccessHandleInDedicatedWorker } from "../platform/opfs.ts";
-import { RemoteStreamingDisk, type RemoteDiskCacheStatus, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
-import { DEFAULT_OPFS_DISK_IMAGES_DIRECTORY } from "../storage/disk_image_store";
-import type { WorkerOpenToken } from "../storage/disk_image_store";
+import type { MountConfig } from "../storage/metadata";
+import { RuntimeDiskClient, type DiskImageMetadata } from "../storage/runtime_disk_client";
 import type { UsbActionMessage, UsbCompletionMessage, UsbHostAction, UsbSelectedMessage } from "../usb/usb_proxy_protocol";
 import { WebUsbPassthroughRuntime } from "../usb/webusb_passthrough_runtime";
 import {
@@ -300,26 +298,6 @@ let shuttingDown = false;
 let ioServerAbort: AbortController | null = null;
 let ioServerTask: Promise<void> | null = null;
 
-type OpenActiveDiskRequest = { id: number; type: "openActiveDisk"; token: WorkerOpenToken };
-type OpenRemoteDiskRequest = {
-  id: number;
-  type: "openRemoteDisk";
-  url: string;
-  options?: {
-    blockSize?: number;
-    cacheLimitMiB?: number | null;
-    credentials?: RequestCredentials;
-    prefetchSequentialBlocks?: number;
-    cacheBackend?: "opfs" | "idb";
-    cacheImageId?: string;
-    cacheVersion?: string;
-  };
-};
-type GetRemoteDiskCacheStatusRequest = { id: number; type: "getRemoteDiskCacheStatus" };
-type GetRemoteDiskTelemetryRequest = { id: number; type: "getRemoteDiskTelemetry" };
-type ClearRemoteDiskCacheRequest = { id: number; type: "clearRemoteDiskCache" };
-type FlushRemoteDiskCacheRequest = { id: number; type: "flushRemoteDiskCache" };
-type CloseRemoteDiskRequest = { id: number; type: "closeRemoteDisk" };
 type SetMicrophoneRingBufferMessage = {
   type: "setMicrophoneRingBuffer";
   ringBuffer: SharedArrayBuffer | null;
@@ -327,49 +305,24 @@ type SetMicrophoneRingBufferMessage = {
   sampleRate?: number;
 };
 
-type OpenActiveDiskResult =
-  | {
-      id: number;
-      type: "openActiveDiskResult";
-      ok: true;
-      size: number;
-      syncAccessHandleAvailable: boolean;
-    }
-  | {
-      id: number;
-      type: "openActiveDiskResult";
-      ok: false;
-      error: string;
-    };
+type SetBootDisksMessage = {
+  type: "setBootDisks";
+  mounts: MountConfig;
+  hdd: DiskImageMetadata | null;
+  cd: DiskImageMetadata | null;
+};
 
-type OpenRemoteDiskResult =
-  | { id: number; type: "openRemoteDiskResult"; ok: true; size: number }
-  | { id: number; type: "openRemoteDiskResult"; ok: false; error: string };
+type ActiveDisk = { handle: number; sectorSize: number; capacityBytes: number; readOnly: boolean };
+let diskClient: RuntimeDiskClient | null = null;
+let activeDisk: ActiveDisk | null = null;
+let cdDisk: ActiveDisk | null = null;
+let pendingBootDisks: SetBootDisksMessage | null = null;
+let diskIoChain: Promise<void> = Promise.resolve();
 
-type GetRemoteDiskCacheStatusResult =
-  | { id: number; type: "getRemoteDiskCacheStatusResult"; ok: true; status: RemoteDiskCacheStatus }
-  | { id: number; type: "getRemoteDiskCacheStatusResult"; ok: false; error: string };
-
-type GetRemoteDiskTelemetryResult =
-  | { id: number; type: "getRemoteDiskTelemetryResult"; ok: true; telemetry: RemoteDiskTelemetrySnapshot }
-  | { id: number; type: "getRemoteDiskTelemetryResult"; ok: false; error: string };
-
-type ClearRemoteDiskCacheResult =
-  | { id: number; type: "clearRemoteDiskCacheResult"; ok: true }
-  | { id: number; type: "clearRemoteDiskCacheResult"; ok: false; error: string };
-
-type FlushRemoteDiskCacheResult =
-  | { id: number; type: "flushRemoteDiskCacheResult"; ok: true }
-  | { id: number; type: "flushRemoteDiskCacheResult"; ok: false; error: string };
-
-type CloseRemoteDiskResult =
-  | { id: number; type: "closeRemoteDiskResult"; ok: true }
-  | { id: number; type: "closeRemoteDiskResult"; ok: false; error: string };
-
-let activeAccessHandle: FileSystemSyncAccessHandle | null = null;
-let activeDiskCapacityBytes: number | null = null;
-let activeRemoteDisk: RemoteStreamingDisk | null = null;
-let remoteDiskReadChain: Promise<void> = Promise.resolve();
+let bootDisksInitResolve: (() => void) | null = null;
+const bootDisksInitPromise = new Promise<void>((resolve) => {
+  bootDisksInitResolve = resolve;
+});
 
 let micRingBuffer: SharedArrayBuffer | null = null;
 let micSampleRate = 0;
@@ -442,220 +395,231 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
   micSampleRate = (sampleRate ?? 0) | 0;
 }
 
-async function openOpfsDisk(directory: string, name: string): Promise<{ size: number }> {
-  const dirToUse = directory || DEFAULT_OPFS_DISK_IMAGES_DIRECTORY;
-  const path = `${dirToUse}/${name}`;
-  await closeActiveRemoteDisk();
-  activeAccessHandle?.close();
-  activeDiskCapacityBytes = null;
-  activeAccessHandle = await openSyncAccessHandleInDedicatedWorker(path, { create: false });
-  activeDiskCapacityBytes = activeAccessHandle.getSize();
-  return { size: activeDiskCapacityBytes };
-}
-
-async function closeActiveRemoteDisk(): Promise<void> {
-  const disk = activeRemoteDisk;
-  if (!disk) return;
-  activeRemoteDisk = null;
-  activeDiskCapacityBytes = null;
-  remoteDiskReadChain = Promise.resolve();
-  try {
-    await disk.close();
-  } catch {
-    // Best-effort cleanup; ignore errors.
-  }
-}
-
-async function handleOpenActiveDisk(msg: OpenActiveDiskRequest): Promise<void> {
-  const t0 = performance.now();
-  try {
-    if (msg.token.kind === "opfs") {
-      const { size } = await openOpfsDisk(msg.token.directory, msg.token.name);
-      const res: OpenActiveDiskResult = {
-        id: msg.id,
-        type: "openActiveDiskResult",
-        ok: true,
-        size,
-        syncAccessHandleAvailable: true,
-      };
-      ctx.postMessage(res);
-      return;
-    }
-
-    const res: OpenActiveDiskResult = {
-      id: msg.id,
-      type: "openActiveDiskResult",
-      ok: true,
-      size: msg.token.blob.size,
-      syncAccessHandleAvailable: false,
-    };
-    ctx.postMessage(res);
-  } catch (err) {
-    const res: OpenActiveDiskResult = {
-      id: msg.id,
-      type: "openActiveDiskResult",
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
-    ctx.postMessage(res);
-  } finally {
-    perfIoMs += performance.now() - t0;
-  }
-}
-
-async function handleOpenRemoteDisk(msg: OpenRemoteDiskRequest): Promise<void> {
-  const t0 = performance.now();
-  try {
-    const url = msg.url.trim();
-    if (!url) throw new Error("openRemoteDisk: url is required");
-
-    const blockSize = msg.options?.blockSize;
-    const cacheLimitMiB = msg.options?.cacheLimitMiB;
-    const cacheLimitBytes =
-      cacheLimitMiB === null
-        ? null
-        : typeof cacheLimitMiB === "number"
-          ? cacheLimitMiB <= 0
-            ? 0
-            : cacheLimitMiB * 1024 * 1024
-          : undefined;
-
-    await closeActiveRemoteDisk();
-    activeAccessHandle?.close();
-    activeAccessHandle = null;
-    activeDiskCapacityBytes = null;
-
-    const disk = await RemoteStreamingDisk.open(url, {
-      blockSize,
-      cacheLimitBytes,
-      credentials: msg.options?.credentials,
-      prefetchSequentialBlocks: msg.options?.prefetchSequentialBlocks,
-      cacheBackend: msg.options?.cacheBackend,
-      cacheImageId: msg.options?.cacheImageId,
-      cacheVersion: msg.options?.cacheVersion,
+function queueDiskIo(op: () => Promise<void>): void {
+  // Preserve ordering. Some callers treat disk I/O as synchronous and assume
+  // responses arrive in the same order as commands.
+  diskIoChain = diskIoChain
+    .catch(() => {
+      // Keep chain alive after unexpected errors.
+    })
+    .then(op)
+    .catch((err) => {
+      console.error(`[io.worker] disk I/O failed: ${err instanceof Error ? err.message : String(err)}`);
     });
-    activeRemoteDisk = disk;
-    activeDiskCapacityBytes = disk.capacityBytes;
-    remoteDiskReadChain = Promise.resolve();
-
-    const res: OpenRemoteDiskResult = { id: msg.id, type: "openRemoteDiskResult", ok: true, size: disk.capacityBytes };
-    ctx.postMessage(res);
-  } catch (err) {
-    const res: OpenRemoteDiskResult = {
-      id: msg.id,
-      type: "openRemoteDiskResult",
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
-    ctx.postMessage(res);
-  } finally {
-    perfIoMs += performance.now() - t0;
-  }
 }
 
-async function handleGetRemoteDiskCacheStatus(msg: GetRemoteDiskCacheStatusRequest): Promise<void> {
-  const t0 = performance.now();
-  try {
-    if (!activeRemoteDisk) throw new Error("No remote disk is open.");
-    const status = await activeRemoteDisk.getCacheStatus();
-    const res: GetRemoteDiskCacheStatusResult = { id: msg.id, type: "getRemoteDiskCacheStatusResult", ok: true, status };
-    ctx.postMessage(res);
-  } catch (err) {
-    const res: GetRemoteDiskCacheStatusResult = {
-      id: msg.id,
-      type: "getRemoteDiskCacheStatusResult",
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
-    ctx.postMessage(res);
-  } finally {
-    perfIoMs += performance.now() - t0;
-  }
+function queueDiskIoResult(op: () => Promise<AeroIpcIoDiskResult>): Promise<AeroIpcIoDiskResult> {
+  const chained = diskIoChain
+    .catch(() => {
+      // Keep chain alive after unexpected errors.
+    })
+    .then(op)
+    .catch((err) => {
+      console.error(`[io.worker] disk I/O failed: ${err instanceof Error ? err.message : String(err)}`);
+      return { ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE };
+    });
+
+  diskIoChain = chained.then(
+    () => undefined,
+    () => undefined,
+  );
+  return chained;
 }
 
-async function handleGetRemoteDiskTelemetry(msg: GetRemoteDiskTelemetryRequest): Promise<void> {
-  const t0 = performance.now();
-  try {
-    if (!activeRemoteDisk) throw new Error("No remote disk is open.");
-    const telemetry = activeRemoteDisk.getTelemetrySnapshot();
-    const res: GetRemoteDiskTelemetryResult = {
-      id: msg.id,
-      type: "getRemoteDiskTelemetryResult",
-      ok: true,
-      telemetry,
-    };
-    ctx.postMessage(res);
-  } catch (err) {
-    const res: GetRemoteDiskTelemetryResult = {
-      id: msg.id,
-      type: "getRemoteDiskTelemetryResult",
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
-    ctx.postMessage(res);
-  } finally {
-    perfIoMs += performance.now() - t0;
+async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
+  if (!diskClient && !msg.hdd && !msg.cd) {
+    activeDisk = null;
+    cdDisk = null;
+    return;
   }
+
+  if (!diskClient) diskClient = new RuntimeDiskClient();
+  const client = diskClient;
+
+  // Close any existing handles first to avoid OPFS lock contention.
+  const handles = new Set<number>();
+  if (activeDisk) handles.add(activeDisk.handle);
+  if (cdDisk) handles.add(cdDisk.handle);
+  for (const handle of handles) {
+    try {
+      await client.flush(handle);
+    } catch {
+      // Ignore flush errors; close is best-effort during remount.
+    }
+    try {
+      await client.closeDisk(handle);
+    } catch {
+      // Best-effort; continue.
+    }
+  }
+
+  activeDisk = null;
+  cdDisk = null;
+
+  if (!msg.hdd && !msg.cd) return;
+
+  let openedHdd: ActiveDisk | null = null;
+  let openedCd: ActiveDisk | null = null;
+  try {
+    if (msg.hdd) {
+      const res = await client.open(msg.hdd, { mode: "cow" });
+      openedHdd = { handle: res.handle, sectorSize: res.sectorSize, capacityBytes: res.capacityBytes, readOnly: res.readOnly };
+    }
+    if (msg.cd) {
+      const res = await client.open(msg.cd, { mode: "direct" });
+      openedCd = { handle: res.handle, sectorSize: res.sectorSize, capacityBytes: res.capacityBytes, readOnly: res.readOnly };
+    }
+  } catch (err) {
+    if (openedHdd) await client.closeDisk(openedHdd.handle).catch(() => undefined);
+    if (openedCd) await client.closeDisk(openedCd.handle).catch(() => undefined);
+    throw err;
+  }
+
+  activeDisk = openedHdd ?? openedCd;
+  cdDisk = openedCd;
 }
 
-async function handleClearRemoteDiskCache(msg: ClearRemoteDiskCacheRequest): Promise<void> {
-  const t0 = performance.now();
+async function initWorker(init: WorkerInitMessage): Promise<void> {
+  perf.spanBegin("worker:boot");
   try {
-    if (!activeRemoteDisk) throw new Error("No remote disk is open.");
-    await activeRemoteDisk.clearCache();
-    const res: ClearRemoteDiskCacheResult = { id: msg.id, type: "clearRemoteDiskCacheResult", ok: true };
-    ctx.postMessage(res);
-  } catch (err) {
-    const res: ClearRemoteDiskCacheResult = {
-      id: msg.id,
-      type: "clearRemoteDiskCacheResult",
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
-    ctx.postMessage(res);
-  } finally {
-    perfIoMs += performance.now() - t0;
-  }
-}
+    void perf.spanAsync("wasm:init", async () => {
+      try {
+        const { api } = await initWasmForContext({
+          variant: init.wasmVariant ?? "auto",
+          module: init.wasmModule,
+          memory: init.guestMemory,
+        });
+        usbHid = new api.UsbHidBridge();
 
-async function handleFlushRemoteDiskCache(msg: FlushRemoteDiskCacheRequest): Promise<void> {
-  const t0 = performance.now();
-  try {
-    if (!activeRemoteDisk) throw new Error("No remote disk is open.");
-    await activeRemoteDisk.flushCache();
-    const res: FlushRemoteDiskCacheResult = { id: msg.id, type: "flushRemoteDiskCacheResult", ok: true };
-    ctx.postMessage(res);
-  } catch (err) {
-    const res: FlushRemoteDiskCacheResult = {
-      id: msg.id,
-      type: "flushRemoteDiskCacheResult",
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
-    ctx.postMessage(res);
-  } finally {
-    perfIoMs += performance.now() - t0;
-  }
-}
+        try {
+          const wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink);
+          // Replay any HID messages that arrived before WASM finished initializing so the
+          // guest bridge sees a consistent device + input report stream.
+          for (const attach of hidGuestInMemory.devices.values()) {
+            wasmHidGuest.attach(attach);
+            const reports = hidGuestInMemory.inputReports.get(attach.deviceId) ?? [];
+            for (const report of reports) {
+              wasmHidGuest.inputReport(report);
+            }
+          }
 
-async function handleCloseRemoteDisk(msg: CloseRemoteDiskRequest): Promise<void> {
-  const t0 = performance.now();
-  try {
-    if (!activeRemoteDisk) throw new Error("No remote disk is open.");
-    await closeActiveRemoteDisk();
-    const res: CloseRemoteDiskResult = { id: msg.id, type: "closeRemoteDiskResult", ok: true };
-    ctx.postMessage(res);
+          hidGuest = new CompositeHidGuestBridge([hidGuestInMemory, wasmHidGuest]);
+        } catch (err) {
+          console.warn("[io.worker] Failed to initialize WebHID passthrough WASM bridge", err);
+        }
+
+        if (import.meta.env.DEV && api.UsbPassthroughBridge && !usbPassthroughRuntime) {
+          try {
+            const bridge = new api.UsbPassthroughBridge();
+            usbPassthroughRuntime = new WebUsbPassthroughRuntime({ bridge, port: ctx, pollIntervalMs: 8 });
+            usbPassthroughRuntime.start();
+            usbPassthroughDebugTimer = setInterval(() => {
+              console.debug("[io.worker] UsbPassthroughBridge pending_summary()", usbPassthroughRuntime?.pendingSummary());
+            }, 1000) as unknown as number;
+          } catch (err) {
+            console.warn("[io.worker] Failed to initialize WebUSB passthrough runtime", err);
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[io.worker] wasm:init failed: ${message}`);
+        pushEvent({ kind: "log", level: "error", message: `wasm:init failed: ${message}` });
+      }
+    });
+
+    perf.spanBegin("worker:init");
+    try {
+      role = init.role ?? "io";
+      const segments = {
+        control: init.controlSab!,
+        guestMemory: init.guestMemory!,
+        vgaFramebuffer: init.vgaFramebuffer!,
+        ioIpc: init.ioIpcSab!,
+        sharedFramebuffer: init.sharedFramebuffer!,
+        sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes ?? 0,
+      };
+      const views = createSharedMemoryViews(segments);
+      status = views.status;
+      guestU8 = views.guestU8;
+      const regions = ringRegionsForWorker(role);
+      commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
+      eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
+      ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
+      ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
+
+      const irqSink: IrqSink = {
+        raiseIrq: (irq) => enqueueIoEvent(encodeEvent({ kind: "irqRaise", irq: irq & 0xff })),
+        lowerIrq: (irq) => enqueueIoEvent(encodeEvent({ kind: "irqLower", irq: irq & 0xff })),
+      };
+
+      const systemControl = {
+        setA20: (enabled: boolean) => {
+          enqueueIoEvent(encodeEvent({ kind: "a20Set", enabled: Boolean(enabled) }));
+        },
+        requestReset: () => {
+          // Forward reset requests to the CPU side; the CPU worker will relay
+          // this to the coordinator via the runtime event ring so the VM can
+          // be reset/restarted.
+          enqueueIoEvent(encodeEvent({ kind: "resetRequest" }));
+        },
+      };
+
+      const serialSink: SerialOutputSink = {
+        write: (port, data) => {
+          // Serial output is emitted by the device model; forward it over
+          // ioIpc so the CPU worker can decide how to surface it (console/UI,
+          // log capture, etc).
+          enqueueIoEvent(encodeEvent({ kind: "serialOutput", port: port & 0xffff, data }), { bestEffort: true });
+        },
+      };
+
+      const mgr = new DeviceManager(irqSink);
+      deviceManager = mgr;
+
+      i8042 = new I8042Controller(mgr.irqSink, { systemControl });
+      mgr.registerPortIo(0x0060, 0x0060, i8042);
+      mgr.registerPortIo(0x0064, 0x0064, i8042);
+
+      mgr.registerPciDevice(new PciTestDevice());
+
+      const uart = new Uart16550(UART_COM1, serialSink);
+      mgr.registerPortIo(uart.basePort, uart.basePort + 7, uart);
+
+      if (init.perfChannel) {
+        perfWriter = new PerfWriter(init.perfChannel.buffer, {
+          workerKind: init.perfChannel.workerKind,
+          runStartEpochMs: init.perfChannel.runStartEpochMs,
+        });
+        perfFrameHeader = new Int32Array(init.perfChannel.frameHeader);
+        perfLastFrameId = 0;
+        perfIoMs = 0;
+        perfIoReadBytes = 0;
+        perfIoWriteBytes = 0;
+      }
+
+      // Wait until the main thread provides the boot disk selection. This is required to
+      // ensure the first diskRead issued by the CPU worker does not race with disk open.
+      await bootDisksInitPromise;
+      if (pendingBootDisks) {
+        await applyBootDisks(pendingBootDisks);
+      }
+
+      pushEvent({ kind: "log", level: "info", message: "worker ready" });
+
+      setReadyFlag(status, role, true);
+      ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
+      if (perf.traceEnabled) perf.instant("boot:worker:ready", "p", { role });
+    } finally {
+      perf.spanEnd("worker:init");
+    }
   } catch (err) {
-    const res: CloseRemoteDiskResult = {
-      id: msg.id,
-      type: "closeRemoteDiskResult",
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
-    ctx.postMessage(res);
+    fatal(err);
+    return;
   } finally {
-    perfIoMs += performance.now() - t0;
+    perf.spanEnd("worker:boot");
   }
+
+  startIoIpcServer();
 }
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
@@ -664,13 +628,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<WorkerInitMessage>
       | Partial<ConfigUpdateMessage>
       | Partial<InputBatchMessage>
-      | Partial<OpenActiveDiskRequest>
-      | Partial<OpenRemoteDiskRequest>
-      | Partial<GetRemoteDiskCacheStatusRequest>
-      | Partial<GetRemoteDiskTelemetryRequest>
-      | Partial<ClearRemoteDiskCacheRequest>
-      | Partial<FlushRemoteDiskCacheRequest>
-      | Partial<CloseRemoteDiskRequest>
+      | Partial<SetBootDisksMessage>
       | Partial<SetMicrophoneRingBufferMessage>
       | Partial<HidProxyMessage>
       | Partial<UsbSelectedMessage>
@@ -686,38 +644,21 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       return;
     }
 
-    if ((data as Partial<OpenActiveDiskRequest>).type === "openActiveDisk") {
-      void handleOpenActiveDisk(data as OpenActiveDiskRequest);
-      return;
-    }
-
-    if ((data as Partial<OpenRemoteDiskRequest>).type === "openRemoteDisk") {
-      void handleOpenRemoteDisk(data as OpenRemoteDiskRequest);
-      return;
-    }
-
-    if ((data as Partial<GetRemoteDiskCacheStatusRequest>).type === "getRemoteDiskCacheStatus") {
-      void handleGetRemoteDiskCacheStatus(data as GetRemoteDiskCacheStatusRequest);
-      return;
-    }
-
-    if ((data as Partial<GetRemoteDiskTelemetryRequest>).type === "getRemoteDiskTelemetry") {
-      void handleGetRemoteDiskTelemetry(data as GetRemoteDiskTelemetryRequest);
-      return;
-    }
-
-    if ((data as Partial<ClearRemoteDiskCacheRequest>).type === "clearRemoteDiskCache") {
-      void handleClearRemoteDiskCache(data as ClearRemoteDiskCacheRequest);
-      return;
-    }
-
-    if ((data as Partial<FlushRemoteDiskCacheRequest>).type === "flushRemoteDiskCache") {
-      void handleFlushRemoteDiskCache(data as FlushRemoteDiskCacheRequest);
-      return;
-    }
-
-    if ((data as Partial<CloseRemoteDiskRequest>).type === "closeRemoteDisk") {
-      void handleCloseRemoteDisk(data as CloseRemoteDiskRequest);
+    if ((data as Partial<SetBootDisksMessage>).type === "setBootDisks") {
+      const msg = data as Partial<SetBootDisksMessage>;
+      pendingBootDisks = {
+        type: "setBootDisks",
+        mounts: (msg.mounts || {}) as MountConfig,
+        hdd: (msg.hdd as DiskImageMetadata | null) ?? null,
+        cd: (msg.cd as DiskImageMetadata | null) ?? null,
+      };
+      if (bootDisksInitResolve) {
+        bootDisksInitResolve();
+        bootDisksInitResolve = null;
+      }
+      if (started && pendingBootDisks) {
+        queueDiskIo(() => applyBootDisks(pendingBootDisks!));
+      }
       return;
     }
 
@@ -780,136 +721,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     // First message is the shared-memory init handshake.
     if ((data as Partial<WorkerInitMessage>).kind === "init") {
-      const init = data as WorkerInitMessage;
-      perf.spanBegin("worker:boot");
-      try {
-        void perf.spanAsync("wasm:init", async () => {
-          try {
-            const { api } = await initWasmForContext({
-              variant: init.wasmVariant ?? "auto",
-              module: init.wasmModule,
-              memory: init.guestMemory,
-            });
-            usbHid = new api.UsbHidBridge();
-
-            try {
-              const wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink);
-              // Replay any HID messages that arrived before WASM finished initializing so the
-              // guest bridge sees a consistent device + input report stream.
-              for (const attach of hidGuestInMemory.devices.values()) {
-                wasmHidGuest.attach(attach);
-                const reports = hidGuestInMemory.inputReports.get(attach.deviceId) ?? [];
-                for (const report of reports) {
-                  wasmHidGuest.inputReport(report);
-                }
-              }
-
-              hidGuest = new CompositeHidGuestBridge([hidGuestInMemory, wasmHidGuest]);
-            } catch (err) {
-              console.warn("[io.worker] Failed to initialize WebHID passthrough WASM bridge", err);
-            }
-
-            if (import.meta.env.DEV && api.UsbPassthroughBridge && !usbPassthroughRuntime) {
-              try {
-                const bridge = new api.UsbPassthroughBridge();
-                usbPassthroughRuntime = new WebUsbPassthroughRuntime({ bridge, port: ctx, pollIntervalMs: 8 });
-                usbPassthroughRuntime.start();
-                usbPassthroughDebugTimer = setInterval(() => {
-                  console.debug("[io.worker] UsbPassthroughBridge pending_summary()", usbPassthroughRuntime?.pendingSummary());
-                }, 1000) as unknown as number;
-              } catch (err) {
-                console.warn("[io.worker] Failed to initialize WebUSB passthrough runtime", err);
-              }
-            }
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            console.error(`[io.worker] wasm:init failed: ${message}`);
-            pushEvent({ kind: "log", level: "error", message: `wasm:init failed: ${message}` });
-          }
-        });
-
-        perf.spanBegin("worker:init");
-        try {
-          role = init.role ?? "io";
-          const segments = {
-            control: init.controlSab!,
-            guestMemory: init.guestMemory!,
-            vgaFramebuffer: init.vgaFramebuffer!,
-            ioIpc: init.ioIpcSab!,
-            sharedFramebuffer: init.sharedFramebuffer!,
-            sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes ?? 0,
-          };
-          const views = createSharedMemoryViews(segments);
-          status = views.status;
-          guestU8 = views.guestU8;
-          const regions = ringRegionsForWorker(role);
-          commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
-          eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
-          ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
-          ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
-
-          const irqSink: IrqSink = {
-            raiseIrq: (irq) => enqueueIoEvent(encodeEvent({ kind: "irqRaise", irq: irq & 0xff })),
-            lowerIrq: (irq) => enqueueIoEvent(encodeEvent({ kind: "irqLower", irq: irq & 0xff })),
-          };
-
-          const systemControl = {
-            setA20: (enabled: boolean) => {
-              enqueueIoEvent(encodeEvent({ kind: "a20Set", enabled: Boolean(enabled) }));
-            },
-            requestReset: () => {
-              // Forward reset requests to the CPU side; the CPU worker will relay
-              // this to the coordinator via the runtime event ring so the VM can
-              // be reset/restarted.
-              enqueueIoEvent(encodeEvent({ kind: "resetRequest" }));
-            },
-          };
-
-          const serialSink: SerialOutputSink = {
-            write: (port, data) => {
-              // Serial output is emitted by the device model; forward it over
-              // ioIpc so the CPU worker can decide how to surface it (console/UI,
-              // log capture, etc).
-              enqueueIoEvent(encodeEvent({ kind: "serialOutput", port: port & 0xffff, data }), { bestEffort: true });
-            },
-          };
-
-          const mgr = new DeviceManager(irqSink);
-          deviceManager = mgr;
-
-          i8042 = new I8042Controller(mgr.irqSink, { systemControl });
-          mgr.registerPortIo(0x0060, 0x0060, i8042);
-          mgr.registerPortIo(0x0064, 0x0064, i8042);
-
-          mgr.registerPciDevice(new PciTestDevice());
-
-          const uart = new Uart16550(UART_COM1, serialSink);
-          mgr.registerPortIo(uart.basePort, uart.basePort + 7, uart);
-
-          if (init.perfChannel) {
-            perfWriter = new PerfWriter(init.perfChannel.buffer, {
-              workerKind: init.perfChannel.workerKind,
-              runStartEpochMs: init.perfChannel.runStartEpochMs,
-            });
-            perfFrameHeader = new Int32Array(init.perfChannel.frameHeader);
-            perfLastFrameId = 0;
-            perfIoMs = 0;
-            perfIoReadBytes = 0;
-            perfIoWriteBytes = 0;
-          }
-          pushEvent({ kind: "log", level: "info", message: "worker ready" });
-
-          setReadyFlag(status, role, true);
-          ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
-          if (perf.traceEnabled) perf.instant("boot:worker:ready", "p", { role });
-        } finally {
-          perf.spanEnd("worker:init");
-        }
-      } finally {
-        perf.spanEnd("worker:boot");
-      }
-
-      startIoIpcServer();
+      void initWorker(data as WorkerInitMessage);
       return;
     }
 
@@ -1076,13 +888,6 @@ function enqueueIoEvent(bytes: Uint8Array, opts?: { bestEffort?: boolean }): voi
   pendingIoEvents.push(bytes);
 }
 
-function diskOffsetToJsNumber(diskOffset: bigint, len: number): number | null {
-  if (diskOffset < 0n) return null;
-  const end = diskOffset + BigInt(len >>> 0);
-  if (diskOffset > BigInt(Number.MAX_SAFE_INTEGER) || end > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-  return Number(diskOffset);
-}
-
 function guestRangeView(guestOffset: bigint, len: number): Uint8Array | null {
   const guestBytes = BigInt(guestU8.byteLength);
   if (guestOffset < 0n) return null;
@@ -1092,101 +897,118 @@ function guestRangeView(guestOffset: bigint, len: number): Uint8Array | null {
   return guestU8.subarray(start, start + (len >>> 0));
 }
 
+function computeAlignedDiskIoRange(
+  diskOffset: bigint,
+  lenU32: number,
+  sectorSize: number,
+): { lba: number; byteLength: number; offset: number } | null {
+  if (sectorSize <= 0) return null;
+  const sectorSizeBig = BigInt(sectorSize);
+  const startLbaBig = diskOffset / sectorSizeBig;
+  const offsetBig = diskOffset % sectorSizeBig;
+  if (startLbaBig > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+
+  const endByte = diskOffset + BigInt(lenU32);
+  const endLbaBig = lenU32 === 0 ? startLbaBig : (endByte + sectorSizeBig - 1n) / sectorSizeBig;
+  const sectorsBig = endLbaBig - startLbaBig;
+  const byteLengthBig = sectorsBig * sectorSizeBig;
+  if (byteLengthBig > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+
+  return { lba: Number(startLbaBig), byteLength: Number(byteLengthBig), offset: Number(offsetBig) };
+}
+
 function diskRead(diskOffset: bigint, len: number, guestOffset: bigint): AeroIpcIoDiskResult | Promise<AeroIpcIoDiskResult> {
   const length = len >>> 0;
 
+  const disk = activeDisk;
+  const client = diskClient;
+  if (!disk || !client) {
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_NO_ACTIVE_DISK };
+  }
+
   const view = guestRangeView(guestOffset, length);
   if (!view) {
     return { ok: false, bytes: 0, errorCode: DISK_ERROR_GUEST_OOB };
   }
 
-  const at = diskOffsetToJsNumber(diskOffset, length);
-  if (at === null) {
-    return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OFFSET_TOO_LARGE };
-  }
-
-  const remote = activeRemoteDisk;
-  if (remote) {
-    if (at + length > remote.capacityBytes) {
-      return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OOB };
-    }
-    // Preserve request ordering. Some callers treat disk I/O as synchronous and
-    // assume responses arrive in the same order as commands.
-    const op = remoteDiskReadChain
-      .catch(() => {
-        // Keep queue alive after unexpected errors.
-      })
-      .then(async () => {
-        try {
-          await remote.readInto(at, view);
-          perfIoReadBytes += length;
-          return { ok: true, bytes: length };
-        } catch {
-          return { ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE };
-        }
-      });
-
-    remoteDiskReadChain = op.then(
-      () => undefined,
-      () => undefined,
-    );
-    return op;
-  }
-
-  const handle = activeAccessHandle;
-  if (!handle) {
-    return { ok: false, bytes: 0, errorCode: DISK_ERROR_NO_ACTIVE_DISK };
-  }
-  const capacityBytes = activeDiskCapacityBytes;
-  if (capacityBytes !== null && at + length > capacityBytes) {
+  if (diskOffset < 0n || diskOffset + BigInt(length) > BigInt(disk.capacityBytes)) {
     return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OOB };
   }
 
-  try {
-    const bytes = handle.read(view, { at });
-    perfIoReadBytes += bytes >>> 0;
-    return { ok: true, bytes: bytes >>> 0 };
-  } catch {
-    return { ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE };
+  const range = computeAlignedDiskIoRange(diskOffset, length, disk.sectorSize);
+  if (!range) {
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OFFSET_TOO_LARGE };
   }
+
+  return queueDiskIoResult(async () => {
+    const perfActive = isPerfActive();
+    const t0 = perfActive ? performance.now() : 0;
+    try {
+      if (range.byteLength > 0) {
+        const data = await client.read(disk.handle, range.lba, range.byteLength);
+        view.set(data.subarray(range.offset, range.offset + length));
+        perfIoReadBytes += data.byteLength;
+      }
+      return { ok: true, bytes: length };
+    } catch {
+      return { ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE };
+    } finally {
+      if (perfActive) perfIoMs += performance.now() - t0;
+    }
+  });
 }
 
-function diskWrite(
-  diskOffset: bigint,
-  len: number,
-  guestOffset: bigint,
-): AeroIpcIoDiskResult | Promise<AeroIpcIoDiskResult> {
+function diskWrite(diskOffset: bigint, len: number, guestOffset: bigint): AeroIpcIoDiskResult | Promise<AeroIpcIoDiskResult> {
   const length = len >>> 0;
-  if (activeRemoteDisk) {
+
+  const disk = activeDisk;
+  const client = diskClient;
+  if (!disk || !client) {
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_NO_ACTIVE_DISK };
+  }
+
+  if (disk.readOnly) {
     return { ok: false, bytes: 0, errorCode: DISK_ERROR_READ_ONLY };
   }
 
-  const handle = activeAccessHandle;
-  if (!handle) {
-    return { ok: false, bytes: 0, errorCode: DISK_ERROR_NO_ACTIVE_DISK };
-  }
-
   const view = guestRangeView(guestOffset, length);
   if (!view) {
     return { ok: false, bytes: 0, errorCode: DISK_ERROR_GUEST_OOB };
   }
 
-  const at = diskOffsetToJsNumber(diskOffset, length);
-  if (at === null) {
-    return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OFFSET_TOO_LARGE };
-  }
-  const capacityBytes = activeDiskCapacityBytes;
-  if (capacityBytes !== null && at + length > capacityBytes) {
+  if (diskOffset < 0n || diskOffset + BigInt(length) > BigInt(disk.capacityBytes)) {
     return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OOB };
   }
 
-  try {
-    const bytes = handle.write(view, { at });
-    perfIoWriteBytes += bytes >>> 0;
-    return { ok: true, bytes: bytes >>> 0 };
-  } catch {
-    return { ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE };
+  const range = computeAlignedDiskIoRange(diskOffset, length, disk.sectorSize);
+  if (!range) {
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OFFSET_TOO_LARGE };
   }
+
+  const aligned = range.offset === 0 && length % disk.sectorSize === 0;
+  return queueDiskIoResult(async () => {
+    const perfActive = isPerfActive();
+    const t0 = perfActive ? performance.now() : 0;
+    try {
+      if (range.byteLength > 0) {
+        if (aligned) {
+          await client.write(disk.handle, range.lba, view);
+          perfIoWriteBytes += length;
+        } else {
+          const buf = await client.read(disk.handle, range.lba, range.byteLength);
+          buf.set(view, range.offset);
+          perfIoReadBytes += buf.byteLength;
+          await client.write(disk.handle, range.lba, buf);
+          perfIoWriteBytes += buf.byteLength;
+        }
+      }
+      return { ok: true, bytes: length };
+    } catch {
+      return { ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE };
+    } finally {
+      if (perfActive) perfIoMs += performance.now() - t0;
+    }
+  });
 }
 
 function handleInputBatch(buffer: ArrayBuffer): void {
@@ -1266,18 +1088,43 @@ function shutdown(): void {
 
   hidGuest.destroy?.();
 
-  activeAccessHandle?.close();
-  activeDiskCapacityBytes = null;
-  void closeActiveRemoteDisk();
-  usbHid?.free();
-  usbHid = null;
-  usbPassthroughRuntime?.destroy();
-  usbPassthroughRuntime = null;
-  deviceManager = null;
-  i8042 = null;
-  pushEvent({ kind: "log", level: "info", message: "worker shutdown" });
-  setReadyFlag(status, role, false);
-  ctx.close();
+  void (async () => {
+    try {
+      await diskIoChain.catch(() => undefined);
+      if (diskClient) {
+        const handles = new Set<number>();
+        if (activeDisk) handles.add(activeDisk.handle);
+        if (cdDisk) handles.add(cdDisk.handle);
+        for (const handle of handles) {
+          try {
+            await diskClient.flush(handle);
+          } catch {
+            // Ignore flush errors during shutdown.
+          }
+          try {
+            await diskClient.closeDisk(handle);
+          } catch {
+            // Ignore close errors during shutdown.
+          }
+        }
+      }
+    } finally {
+      activeDisk = null;
+      cdDisk = null;
+      diskClient?.close();
+      diskClient = null;
+
+      usbHid?.free();
+      usbHid = null;
+      usbPassthroughRuntime?.destroy();
+      usbPassthroughRuntime = null;
+      deviceManager = null;
+      i8042 = null;
+      pushEvent({ kind: "log", level: "info", message: "worker shutdown" });
+      setReadyFlag(status, role, false);
+      ctx.close();
+    }
+  })();
 }
 
 void currentConfig;

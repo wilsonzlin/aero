@@ -9,6 +9,10 @@ export const DISK_MANAGER_DB_VERSION = 3;
 
 export const OPFS_AERO_DIR = "aero";
 export const OPFS_DISKS_DIR = "disks";
+// Legacy v1 disk images live in OPFS under `images/` (no metadata). The v2 disk
+// manager can optionally adopt these without copying.
+export const OPFS_LEGACY_IMAGES_DIR = "images";
+export const OPFS_DISKS_PATH = `${OPFS_AERO_DIR}/${OPFS_DISKS_DIR}`;
 export const OPFS_METADATA_FILE = "metadata.json";
 export const OPFS_REMOTE_CACHE_DIR = "remote-cache";
 
@@ -53,11 +57,28 @@ export type LocalDiskImageMetadata = {
   kind: DiskKind;
   format: DiskFormat;
   fileName: string;
+  /**
+   * For OPFS-backed disks, the directory containing `fileName` relative to the
+   * OPFS root. Defaults to {@link OPFS_DISKS_PATH}.
+   *
+   * This supports adopting legacy v1 images in `images/` without copying.
+   */
+  opfsDirectory?: string;
   sizeBytes: number;
   createdAtMs: number;
   lastUsedAtMs?: number;
   checksum?: DiskChecksum;
   sourceFileName?: string;
+  /**
+   * Remote streaming source for this disk. When set, the disk's bytes are
+   * fetched on-demand via HTTP Range requests and cached in OPFS.
+   */
+  remote?: {
+    url: string;
+    blockSizeBytes?: number;
+    cacheLimitBytes?: number | null;
+    prefetchSequentialBlocks?: number;
+  };
 };
 
 export type RemoteDiskImageMetadata = {
@@ -311,10 +332,32 @@ export async function clearOpfs(): Promise<void> {
   }
 }
 
-export async function opfsGetDisksDir(): Promise<FileSystemDirectoryHandle> {
+function normalizeOpfsRelPath(path: string): string[] {
+  const parts = path
+    .split("/")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  for (const p of parts) {
+    if (p === "." || p === "..") {
+      throw new Error('OPFS paths must not contain "." or "..".');
+    }
+  }
+  return parts;
+}
+
+export async function opfsGetDir(dirPath: string, options: { create?: boolean } = {}): Promise<FileSystemDirectoryHandle> {
+  const create = options.create ?? false;
+  const parts = normalizeOpfsRelPath(dirPath);
   const root = await navigator.storage.getDirectory();
-  const aeroDir = await root.getDirectoryHandle(OPFS_AERO_DIR, { create: true });
-  return aeroDir.getDirectoryHandle(OPFS_DISKS_DIR, { create: true });
+  let dir: FileSystemDirectoryHandle = root;
+  for (const part of parts) {
+    dir = await dir.getDirectoryHandle(part, { create });
+  }
+  return dir;
+}
+
+export async function opfsGetDisksDir(): Promise<FileSystemDirectoryHandle> {
+  return await opfsGetDir(OPFS_DISKS_PATH, { create: true });
 }
 
 export async function opfsGetRemoteCacheDir(): Promise<FileSystemDirectoryHandle> {
