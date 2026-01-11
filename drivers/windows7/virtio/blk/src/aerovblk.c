@@ -386,6 +386,22 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
   }
   devExt->QueueNotifyOff = notifyOff;
 
+  /*
+   * Contract v1 requires INTx and only permits MSI-X as an optional enhancement.
+   * Disable (unassign) the queue MSI-X vector so the device must fall back to
+   * INTx + ISR semantics even if MSI-X is present/enabled.
+   */
+  {
+    KIRQL irql;
+
+    irql = AeroVirtioCommonCfgLock(&devExt->Vdev);
+    WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_select, (USHORT)AEROVBLK_QUEUE_INDEX);
+    KeMemoryBarrier();
+    WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector, 0xFFFFu);
+    KeMemoryBarrier();
+    AeroVirtioCommonCfgUnlock(&devExt->Vdev, irql);
+  }
+
   st = AeroVirtioSetupQueue(&devExt->Vdev,
                             (USHORT)AEROVBLK_QUEUE_INDEX,
                             (ULONGLONG)devExt->Vq->desc_pa,
