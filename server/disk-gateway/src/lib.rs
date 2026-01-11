@@ -796,8 +796,9 @@ mod tests {
     use tokio::io::{AsyncSeekExt, AsyncWriteExt, SeekFrom};
     use tower::ServiceExt;
 
-    const LARGE_FILE_SIZE: u64 = 5_368_709_120; // 5 GiB
-    const LARGE_HIGH_OFFSET: u64 = 4_294_967_296 + 123; // 2^32 + 123
+    const LARGE_FOUR_GIB: u64 = 4_294_967_296; // 2^32
+    const LARGE_FILE_SIZE: u64 = LARGE_FOUR_GIB + 1024; // just over 4GiB (avoid a 5GiB sparse file in tests)
+    const LARGE_HIGH_OFFSET: u64 = LARGE_FOUR_GIB + 123; // 2^32 + 123
     const LARGE_SENTINEL_HIGH: &[u8] = b"AERO_RANGE_4GB";
     const LARGE_SENTINEL_END: &[u8] = b"AERO_RANGE_END";
 
@@ -837,8 +838,6 @@ mod tests {
             .open(path)
             .await
             .unwrap();
-
-        file.set_len(LARGE_FILE_SIZE).await.unwrap();
 
         file.seek(SeekFrom::Start(LARGE_HIGH_OFFSET)).await.unwrap();
         file.write_all(LARGE_SENTINEL_HIGH).await.unwrap();

@@ -7,8 +7,9 @@ use std::time::{Duration, Instant};
 
 use aero_http_range::{parse_range_header, resolve_ranges};
 
-const FILE_SIZE: u64 = 5_368_709_120; // 5 GiB
-const HIGH_OFFSET: u64 = 4_294_967_296 + 123; // 2^32 + 123
+const FOUR_GIB: u64 = 4_294_967_296; // 2^32
+const FILE_SIZE: u64 = FOUR_GIB + 1024; // just over 4GiB (avoid a 5GiB sparse file in tests)
+const HIGH_OFFSET: u64 = FOUR_GIB + 123; // 2^32 + 123
 
 const SENTINEL_HIGH: &[u8] = b"AERO_RANGE_4GB";
 const SENTINEL_END: &[u8] = b"AERO_RANGE_END";
@@ -95,8 +96,6 @@ fn create_sparse_test_image() -> TempFile {
         .write(true)
         .open(&path)
         .expect("create temp image");
-
-    file.set_len(FILE_SIZE).expect("set_len");
 
     // Write a sentinel beyond 2^32 to catch 32-bit truncation bugs.
     file.seek(SeekFrom::Start(HIGH_OFFSET))

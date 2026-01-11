@@ -13,8 +13,9 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::sync::oneshot;
 use url::Url;
 
-const FILE_SIZE: u64 = 5_368_709_120; // 5 GiB
-const HIGH_OFFSET: u64 = 4_294_967_296 + 123; // 2^32 + 123
+const FOUR_GIB: u64 = 4_294_967_296; // 2^32
+const FILE_SIZE: u64 = FOUR_GIB + 1024; // just over 4GiB (avoid a 5GiB sparse file in tests)
+const HIGH_OFFSET: u64 = FOUR_GIB + 123; // 2^32 + 123
 
 const SENTINEL_HIGH: &[u8] = b"AERO_RANGE_4GB";
 const SENTINEL_END: &[u8] = b"AERO_RANGE_END";
@@ -185,8 +186,6 @@ async fn streaming_disk_reads_offsets_beyond_4gib_without_truncation() {
         .open(&path)
         .await
         .unwrap();
-
-    file.set_len(FILE_SIZE).await.unwrap();
 
     file.seek(SeekFrom::Start(HIGH_OFFSET)).await.unwrap();
     file.write_all(SENTINEL_HIGH).await.unwrap();
