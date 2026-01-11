@@ -77,21 +77,26 @@ runs:
         if (!workingDirectory) {
           // Prefer using the repo's shared resolver when available so workflows
           // (and local tooling) agree on the Node workspace directory.
-          const detectScript = path.resolve(workspace, 'scripts/ci/detect_node_workspace.mjs');
+          const detectScript = path.resolve(workspace, 'scripts/ci/detect-node-dir.mjs');
           if (fs.existsSync(detectScript)) {
             const { spawnSync } = require('child_process');
-            const result = spawnSync('node', [detectScript, '--json'], {
+            const result = spawnSync('node', [detectScript], {
               cwd: workspace,
               stdio: ['ignore', 'pipe', 'pipe'],
               encoding: 'utf8',
             });
             if ((result.status ?? 1) !== 0) {
               const details = (result.stderr || result.stdout || '').trim();
-              throw new Error(`setup-playwright: detect_node_workspace failed.\n\n${details}`);
+              throw new Error(`setup-playwright: detect-node-dir failed.\n\n${details}`);
             }
-            const parsed = JSON.parse(String(result.stdout || '').trim() || '{}');
-            if (typeof parsed.dir === 'string') workingDirectory = parsed.dir;
-            if (typeof parsed.lockfile === 'string') resolvedLockfile = parsed.lockfile;
+            for (const line of String(result.stdout || '').split(/\r?\n/u)) {
+              const idx = line.indexOf('=');
+              if (idx === -1) continue;
+              const key = line.slice(0, idx).trim();
+              const value = line.slice(idx + 1).trim();
+              if (key === 'dir') workingDirectory = value;
+              if (key === 'lockfile') resolvedLockfile = value;
+            }
           } else {
             const aeroNodeDir = (process.env.AERO_NODE_DIR || '').trim();
             const candidates = [aeroNodeDir || null, '.', 'frontend', 'web'].filter(Boolean);
