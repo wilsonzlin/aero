@@ -69,7 +69,7 @@ async function killProcess(
   const killGroup = opts.killGroup && pid && process.platform !== 'win32';
   try {
     if (killGroup) {
-      // Kill the entire process group (e.g. `cargo run` + its spawned binary).
+      // Kill the entire process group (e.g. `cargo run --locked` + its spawned binary).
       process.kill(-pid, 'SIGTERM');
     } else {
       proc.kill('SIGTERM');
@@ -156,7 +156,7 @@ async function startL2Proxy(opts: {
   allowedOrigin: string;
   udpEchoPort: number;
 }): Promise<ServerProcess> {
-  const proc = spawn('cargo', ['run', '--quiet', '-p', 'aero-l2-proxy'], {
+  const proc = spawn('cargo', ['run', '--locked', '--quiet', '-p', 'aero-l2-proxy'], {
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
@@ -189,7 +189,7 @@ async function startL2Proxy(opts: {
 
 test.describe.serial('l2 tunnel (cookie auth)', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'l2 tunnel regression test runs on Chromium only');
-  // This spec spawns `cargo run -p aero-l2-proxy`, which may need to compile the
+  // This spec spawns `cargo run --locked -p aero-l2-proxy`, which may need to compile the
   // Rust crate on first run. Give it ample time so CI isn't flaky on cold caches.
   test.describe.configure({ timeout: 600_000 });
 
