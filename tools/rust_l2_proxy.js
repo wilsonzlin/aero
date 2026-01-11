@@ -72,7 +72,9 @@ async function getCargoTargetDir() {
     if (targetDir) {
       return path.isAbsolute(targetDir) ? targetDir : path.join(REPO_ROOT, targetDir);
     }
-    return path.join(REPO_ROOT, "target");
+    // Build into a dedicated subdirectory to avoid contending with other cargo builds
+    // that use the default workspace target dir.
+    return path.join(REPO_ROOT, "target", "l2-proxy-node-tests");
   })();
   return cargoTargetDirPromise;
 }
@@ -106,8 +108,10 @@ async function ensureProxyBuilt() {
         // continue
       }
 
+      const targetDir = await getCargoTargetDir();
       await runCommand("cargo", ["build", "--quiet", "--locked", "-p", "aero-l2-proxy"], {
         cwd: REPO_ROOT,
+        env: { CARGO_TARGET_DIR: targetDir },
         // A cold `cargo build` of the full dependency graph can be slow on CI runners.
         // Keep this bounded (deterministic) but generous enough to avoid flakes.
         timeoutMs: 30 * 60_000,
