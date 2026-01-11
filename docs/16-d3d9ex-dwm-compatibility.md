@@ -204,7 +204,7 @@ Expected sequence:
    - dxgkrnl returns the preserved allocation private driver data bytes on `OpenResource`, so the opening UMD instance recovers the same `share_token` (from `aerogpu_wddm_alloc_priv.share_token`).
    - The UMD submits `IMPORT_SHARED_SURFACE { share_token } -> resource_handle` to obtain a host resource alias.
 
-**Key invariant:** `share_token` must be stable across processes inside the guest VM. The preserved allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token`) is stable; user-mode `HANDLE` numeric values are not.
+**Key invariant:** `share_token` must be stable across processes inside the guest VM. The preserved WDDM allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token`) is stable; user-mode `HANDLE` numeric values are not.
 
 See `docs/graphics/win7-shared-surfaces-share-token.md` for implementation details and the cross-process validation test.
 
