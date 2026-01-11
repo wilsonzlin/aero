@@ -380,6 +380,15 @@ impl VirtioDevice for VirtioInput {
         }
     }
 
+    fn pci_header_type(&self) -> u8 {
+        match self.kind {
+            // Mark the keyboard (function 0) as multi-function so guests can discover the mouse
+            // function (function 1) on the same device.
+            VirtioInputDeviceKind::Keyboard => 0x80,
+            VirtioInputDeviceKind::Mouse => 0x00,
+        }
+    }
+
     fn device_features(&self) -> u64 {
         VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC
     }

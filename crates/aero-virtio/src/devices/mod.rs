@@ -37,6 +37,14 @@ pub trait VirtioDevice: Any {
         self.device_type()
     }
 
+    /// PCI header type (`config[0x0e]`) for this device function.
+    ///
+    /// Most virtio-pci devices use a standard type-0 header (`0x00`). Devices that are exposed as
+    /// part of a multi-function PCI device should set bit 7 (`0x80`) on function 0.
+    fn pci_header_type(&self) -> u8 {
+        0x00
+    }
+
     /// Total set of device features offered to the guest driver.
     fn device_features(&self) -> u64;
 

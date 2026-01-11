@@ -537,7 +537,7 @@ impl VirtioPciDevice {
         self.config_space[0x09] = 0; // prog-if
         self.config_space[0x0a] = subclass;
         self.config_space[0x0b] = class;
-        self.config_space[0x0e] = 0x00; // header type
+        self.config_space[0x0e] = self.device.pci_header_type();
 
         // Subsystem vendor/device.
         //
@@ -657,14 +657,15 @@ impl VirtioPciDevice {
         buf[21] = self.config_generation;
         buf[22..24].copy_from_slice(&self.queue_select.to_le_bytes());
 
-        let q = self.selected_queue();
-        buf[24..26].copy_from_slice(&q.size.to_le_bytes());
-        buf[26..28].copy_from_slice(&q.msix_vector.to_le_bytes());
-        buf[28..30].copy_from_slice(&(q.enable as u16).to_le_bytes());
-        buf[30..32].copy_from_slice(&q.notify_off.to_le_bytes());
-        buf[32..40].copy_from_slice(&q.desc_addr.to_le_bytes());
-        buf[40..48].copy_from_slice(&q.avail_addr.to_le_bytes());
-        buf[48..56].copy_from_slice(&q.used_addr.to_le_bytes());
+        if let Some(q) = self.selected_queue() {
+            buf[24..26].copy_from_slice(&q.size.to_le_bytes());
+            buf[26..28].copy_from_slice(&q.msix_vector.to_le_bytes());
+            buf[28..30].copy_from_slice(&(q.enable as u16).to_le_bytes());
+            buf[30..32].copy_from_slice(&q.notify_off.to_le_bytes());
+            buf[32..40].copy_from_slice(&q.desc_addr.to_le_bytes());
+            buf[40..48].copy_from_slice(&q.avail_addr.to_le_bytes());
+            buf[48..56].copy_from_slice(&q.used_addr.to_le_bytes());
+        }
 
         let start = offset as usize;
         for (i, b) in data.iter_mut().enumerate() {
@@ -704,62 +705,78 @@ impl VirtioPciDevice {
             (0x16, 2) => self.queue_select = u16::from_le_bytes(data.try_into().unwrap()),
             (0x18, 2) => {
                 let val = u16::from_le_bytes(data.try_into().unwrap());
-                let q = self.selected_queue_mut();
-                if val != 0 && val <= q.max_size && val.is_power_of_two() {
-                    q.size = val;
+                if let Some(q) = self.selected_queue_mut() {
+                    if val != 0 && val <= q.max_size && val.is_power_of_two() {
+                        q.size = val;
+                    }
                 }
             }
             (0x1a, 2) => {
-                self.selected_queue_mut().msix_vector = u16::from_le_bytes(data.try_into().unwrap())
+                if let Some(q) = self.selected_queue_mut() {
+                    q.msix_vector = u16::from_le_bytes(data.try_into().unwrap());
+                }
             }
             (0x1c, 2) => {
                 let enabled = u16::from_le_bytes(data.try_into().unwrap()) != 0;
                 if enabled {
                     self.enable_selected_queue();
                 } else {
-                    let q = self.selected_queue_mut();
-                    q.enable = false;
-                    q.queue = None;
+                    if let Some(q) = self.selected_queue_mut() {
+                        q.enable = false;
+                        q.queue = None;
+                    }
                 }
             }
             (0x20, 8) => {
-                self.selected_queue_mut().desc_addr = u64::from_le_bytes(data.try_into().unwrap())
+                if let Some(q) = self.selected_queue_mut() {
+                    q.desc_addr = u64::from_le_bytes(data.try_into().unwrap());
+                }
             }
             (0x20, 4) => {
                 let val = u32::from_le_bytes(data.try_into().unwrap()) as u64;
-                let q = self.selected_queue_mut();
-                q.desc_addr = (q.desc_addr & 0xffff_ffff_0000_0000) | val;
+                if let Some(q) = self.selected_queue_mut() {
+                    q.desc_addr = (q.desc_addr & 0xffff_ffff_0000_0000) | val;
+                }
             }
             (0x24, 4) => {
                 let val = (u32::from_le_bytes(data.try_into().unwrap()) as u64) << 32;
-                let q = self.selected_queue_mut();
-                q.desc_addr = (q.desc_addr & 0x0000_0000_ffff_ffff) | val;
+                if let Some(q) = self.selected_queue_mut() {
+                    q.desc_addr = (q.desc_addr & 0x0000_0000_ffff_ffff) | val;
+                }
             }
             (0x28, 8) => {
-                self.selected_queue_mut().avail_addr = u64::from_le_bytes(data.try_into().unwrap())
+                if let Some(q) = self.selected_queue_mut() {
+                    q.avail_addr = u64::from_le_bytes(data.try_into().unwrap());
+                }
             }
             (0x28, 4) => {
                 let val = u32::from_le_bytes(data.try_into().unwrap()) as u64;
-                let q = self.selected_queue_mut();
-                q.avail_addr = (q.avail_addr & 0xffff_ffff_0000_0000) | val;
+                if let Some(q) = self.selected_queue_mut() {
+                    q.avail_addr = (q.avail_addr & 0xffff_ffff_0000_0000) | val;
+                }
             }
             (0x2c, 4) => {
                 let val = (u32::from_le_bytes(data.try_into().unwrap()) as u64) << 32;
-                let q = self.selected_queue_mut();
-                q.avail_addr = (q.avail_addr & 0x0000_0000_ffff_ffff) | val;
+                if let Some(q) = self.selected_queue_mut() {
+                    q.avail_addr = (q.avail_addr & 0x0000_0000_ffff_ffff) | val;
+                }
             }
             (0x30, 8) => {
-                self.selected_queue_mut().used_addr = u64::from_le_bytes(data.try_into().unwrap())
+                if let Some(q) = self.selected_queue_mut() {
+                    q.used_addr = u64::from_le_bytes(data.try_into().unwrap());
+                }
             }
             (0x30, 4) => {
                 let val = u32::from_le_bytes(data.try_into().unwrap()) as u64;
-                let q = self.selected_queue_mut();
-                q.used_addr = (q.used_addr & 0xffff_ffff_0000_0000) | val;
+                if let Some(q) = self.selected_queue_mut() {
+                    q.used_addr = (q.used_addr & 0xffff_ffff_0000_0000) | val;
+                }
             }
             (0x34, 4) => {
                 let val = (u32::from_le_bytes(data.try_into().unwrap()) as u64) << 32;
-                let q = self.selected_queue_mut();
-                q.used_addr = (q.used_addr & 0x0000_0000_ffff_ffff) | val;
+                if let Some(q) = self.selected_queue_mut() {
+                    q.used_addr = (q.used_addr & 0x0000_0000_ffff_ffff) | val;
+                }
             }
             // Ignore everything else (including writes to read-only fields).
             _ => {
@@ -786,7 +803,9 @@ impl VirtioPciDevice {
 
     fn enable_selected_queue(&mut self) {
         let event_idx = self.negotiated_event_idx();
-        let q = self.selected_queue_mut();
+        let Some(q) = self.selected_queue_mut() else {
+            return;
+        };
         q.enable = true;
         q.queue = VirtQueue::new(
             VirtQueueConfig {
@@ -800,18 +819,12 @@ impl VirtioPciDevice {
         .ok();
     }
 
-    fn selected_queue(&self) -> &QueueState {
-        self.queues
-            .get(self.queue_select as usize)
-            .unwrap_or_else(|| &self.queues[0])
+    fn selected_queue(&self) -> Option<&QueueState> {
+        self.queues.get(self.queue_select as usize)
     }
 
-    fn selected_queue_mut(&mut self) -> &mut QueueState {
-        let idx = self.queue_select as usize;
-        if idx >= self.queues.len() {
-            self.queue_select = 0;
-        }
-        &mut self.queues[self.queue_select as usize]
+    fn selected_queue_mut(&mut self) -> Option<&mut QueueState> {
+        self.queues.get_mut(self.queue_select as usize)
     }
 
     fn isr_cfg_read(&mut self, offset: u64, data: &mut [u8]) {

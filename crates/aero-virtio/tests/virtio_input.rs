@@ -55,6 +55,12 @@ fn bar_read_u32(dev: &mut VirtioPciDevice, off: u64) -> u32 {
     u32::from_le_bytes(buf)
 }
 
+fn bar_read_u16(dev: &mut VirtioPciDevice, off: u64) -> u16 {
+    let mut buf = [0u8; 2];
+    dev.bar0_read(off, &mut buf);
+    u16::from_le_bytes(buf)
+}
+
 fn bar_read_u8(dev: &mut VirtioPciDevice, off: u64) -> u8 {
     let mut buf = [0u8; 1];
     dev.bar0_read(off, &mut buf);
@@ -448,4 +454,29 @@ fn virtio_input_malformed_descriptor_chain_does_not_wedge_queue() {
     let used_len = read_u32_le(&mem, used + 8).unwrap();
     assert_eq!(used_id, 0);
     assert_eq!(used_len, 0);
+}
+
+#[test]
+fn virtio_pci_common_cfg_out_of_range_queue_select_reads_zero_and_ignores_writes() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x10000);
+
+    // Virtio-input exposes 2 queues (eventq + statusq). Select a non-existent queue index.
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 7);
+
+    // Contract v1 requires queue_size and queue_notify_off to read as 0 for out-of-range indices.
+    assert_eq!(bar_read_u16(&mut dev, caps.common + 0x18), 0);
+    assert_eq!(bar_read_u16(&mut dev, caps.common + 0x1e), 0);
+
+    // Writes to queue registers must be ignored and must not silently affect queue 0.
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, 0xdead_beef);
+    assert_eq!(bar_read_u16(&mut dev, caps.common + 0x16), 7);
+
+    // Selecting queue 0 should still show the default (unconfigured) addresses.
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 0);
+    let desc_lo = bar_read_u32(&mut dev, caps.common + 0x20);
+    let desc_hi = bar_read_u32(&mut dev, caps.common + 0x24);
+    assert_eq!((u64::from(desc_hi) << 32) | u64::from(desc_lo), 0);
 }
