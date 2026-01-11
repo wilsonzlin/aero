@@ -437,6 +437,10 @@ struct AeroGpuResource {
   uint32_t dxgi_format = 0;
   uint32_t row_pitch_bytes = 0;
 
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+  uint64_t wddm_allocation = 0;
+#endif
+
   // CPU-visible backing storage for resource uploads.
   //
   // The initial milestone keeps resource data management very conservative:
@@ -3666,6 +3670,90 @@ struct AeroGpuDevice {
   }
 };
 
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+static HRESULT UploadInitialDataToWddmAllocation(AeroGpuDevice* dev,
+                                                 uint64_t allocation,
+                                                 const void* src,
+                                                 size_t bytes) {
+  if (!dev || !dev->callbacks || !dev->callbacks->pfnLockCb || !dev->callbacks->pfnUnlockCb || !src || !bytes ||
+      !allocation) {
+    return E_INVALIDARG;
+  }
+
+  D3DDDICB_LOCK lock = {};
+  lock.hAllocation = static_cast<D3DKMT_HANDLE>(allocation);
+  HRESULT hr = dev->callbacks->pfnLockCb(dev->hrt_device, &lock);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  if (!lock.pData) {
+    D3DDDICB_UNLOCK unlock = {};
+    unlock.hAllocation = static_cast<D3DKMT_HANDLE>(allocation);
+    dev->callbacks->pfnUnlockCb(dev->hrt_device, &unlock);
+    return E_FAIL;
+  }
+
+  std::memcpy(lock.pData, src, bytes);
+
+  D3DDDICB_UNLOCK unlock = {};
+  unlock.hAllocation = static_cast<D3DKMT_HANDLE>(allocation);
+  hr = dev->callbacks->pfnUnlockCb(dev->hrt_device, &unlock);
+  return hr;
+}
+
+static HRESULT UploadInitialDataTex2DToWddmAllocation(AeroGpuDevice* dev,
+                                                      uint64_t allocation,
+                                                      const void* src,
+                                                      uint32_t width,
+                                                      uint32_t height,
+                                                      uint32_t bytes_per_pixel,
+                                                      uint32_t src_pitch,
+                                                      uint32_t dst_pitch) {
+  if (!dev || !dev->callbacks || !dev->callbacks->pfnLockCb || !dev->callbacks->pfnUnlockCb || !src || !width ||
+      !height || !bytes_per_pixel || !allocation) {
+    return E_INVALIDARG;
+  }
+
+  const uint64_t bytes_per_row = static_cast<uint64_t>(width) * static_cast<uint64_t>(bytes_per_pixel);
+  if (bytes_per_row > UINT32_MAX) {
+    return E_INVALIDARG;
+  }
+  if (src_pitch && src_pitch < bytes_per_row) {
+    return E_INVALIDARG;
+  }
+  if (dst_pitch < bytes_per_row) {
+    return E_INVALIDARG;
+  }
+
+  D3DDDICB_LOCK lock = {};
+  lock.hAllocation = static_cast<D3DKMT_HANDLE>(allocation);
+  HRESULT hr = dev->callbacks->pfnLockCb(dev->hrt_device, &lock);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  if (!lock.pData) {
+    D3DDDICB_UNLOCK unlock = {};
+    unlock.hAllocation = static_cast<D3DKMT_HANDLE>(allocation);
+    dev->callbacks->pfnUnlockCb(dev->hrt_device, &unlock);
+    return E_FAIL;
+  }
+
+  const uint8_t* src_bytes = static_cast<const uint8_t*>(src);
+  uint8_t* dst_bytes = static_cast<uint8_t*>(lock.pData);
+  const uint32_t effective_src_pitch = src_pitch ? src_pitch : static_cast<uint32_t>(bytes_per_row);
+  for (uint32_t y = 0; y < height; y++) {
+    std::memcpy(dst_bytes + static_cast<size_t>(y) * dst_pitch,
+                src_bytes + static_cast<size_t>(y) * effective_src_pitch,
+                static_cast<size_t>(bytes_per_row));
+  }
+
+  D3DDDICB_UNLOCK unlock = {};
+  unlock.hAllocation = static_cast<D3DKMT_HANDLE>(allocation);
+  hr = dev->callbacks->pfnUnlockCb(dev->hrt_device, &unlock);
+  return hr;
+}
+#endif
+
 template <typename THandle, typename TObject>
 TObject* FromHandle(THandle h) {
   return reinterpret_cast<TObject*>(h.pDrvPrivate);
@@ -4122,15 +4210,27 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return E_OUTOFMEMORY;
     }
 
-    bool has_initial = false;
-    if (pDesc->pInitialData && pDesc->InitialDataCount) {
+    const bool has_initial_data = (pDesc->pInitialData && pDesc->InitialDataCount);
+    bool wddm_initial_upload = false;
+    if (has_initial_data) {
       const auto& init = pDesc->pInitialData[0];
-      if (!init.pSysMem) {
+      if (!init.pSysMem || res->size_bytes == 0) {
         res->~AeroGpuResource();
         AEROGPU_D3D10_RET_HR(E_INVALIDARG);
       }
       std::memcpy(res->storage.data(), init.pSysMem, static_cast<size_t>(res->size_bytes));
-      has_initial = true;
+
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+      if (res->wddm_allocation) {
+        const HRESULT hr = UploadInitialDataToWddmAllocation(
+            dev, res->wddm_allocation, init.pSysMem, static_cast<size_t>(res->size_bytes));
+        if (FAILED(hr)) {
+          res->~AeroGpuResource();
+          return hr;
+        }
+        wddm_initial_upload = true;
+      }
+#endif
     }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
@@ -4147,13 +4247,21 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                          static_cast<unsigned long long>(res->size_bytes));
 #endif
 
-    if (has_initial) {
-      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
-      upload->resource_handle = res->handle;
-      upload->reserved0 = 0;
-      upload->offset_bytes = 0;
-      upload->size_bytes = res->size_bytes;
+    if (has_initial_data) {
+      if (!wddm_initial_upload) {
+        auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+            AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+        upload->resource_handle = res->handle;
+        upload->reserved0 = 0;
+        upload->offset_bytes = 0;
+        upload->size_bytes = res->size_bytes;
+      }
+
+      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      dirty->resource_handle = res->handle;
+      dirty->reserved0 = 0;
+      dirty->offset_bytes = 0;
+      dirty->size_bytes = res->size_bytes;
     }
     AEROGPU_D3D10_RET_HR(S_OK);
   }
@@ -4212,8 +4320,9 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return E_OUTOFMEMORY;
     }
 
-    bool has_initial = false;
-    if (pDesc->pInitialData && pDesc->InitialDataCount) {
+    const bool has_initial_data = (pDesc->pInitialData && pDesc->InitialDataCount);
+    bool wddm_initial_upload = false;
+    if (has_initial_data) {
       if (res->mip_levels != 1 || res->array_size != 1) {
         res->~AeroGpuResource();
         AEROGPU_D3D10_RET_HR(E_NOTIMPL);
@@ -4224,15 +4333,37 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
         res->~AeroGpuResource();
         AEROGPU_D3D10_RET_HR(E_INVALIDARG);
       }
+      const uint64_t bytes_per_row = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
+      const uint32_t src_pitch = init.SysMemPitch ? init.SysMemPitch : static_cast<uint32_t>(bytes_per_row);
+      if (bytes_per_row > UINT32_MAX || src_pitch < bytes_per_row || res->row_pitch_bytes < bytes_per_row) {
+        res->~AeroGpuResource();
+        return E_INVALIDARG;
+      }
+
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+      if (res->wddm_allocation) {
+        const HRESULT hr = UploadInitialDataTex2DToWddmAllocation(dev,
+                                                                  res->wddm_allocation,
+                                                                  init.pSysMem,
+                                                                  res->width,
+                                                                  res->height,
+                                                                  bpp,
+                                                                  src_pitch,
+                                                                  res->row_pitch_bytes);
+        if (FAILED(hr)) {
+          res->~AeroGpuResource();
+          return hr;
+        }
+        wddm_initial_upload = true;
+      }
+#endif
+
       const uint8_t* src = static_cast<const uint8_t*>(init.pSysMem);
-      const size_t src_pitch = init.SysMemPitch ? static_cast<size_t>(init.SysMemPitch)
-                                                : static_cast<size_t>(res->row_pitch_bytes);
       for (uint32_t y = 0; y < res->height; y++) {
         std::memcpy(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes,
                     src + static_cast<size_t>(y) * src_pitch,
-                    res->row_pitch_bytes);
+                    static_cast<size_t>(bytes_per_row));
       }
-      has_initial = true;
     }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
@@ -4256,13 +4387,21 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                          static_cast<unsigned>(res->row_pitch_bytes));
 #endif
 
-    if (has_initial) {
-      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
-      upload->resource_handle = res->handle;
-      upload->reserved0 = 0;
-      upload->offset_bytes = 0;
-      upload->size_bytes = res->storage.size();
+    if (has_initial_data) {
+      if (!wddm_initial_upload) {
+        auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+            AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+        upload->resource_handle = res->handle;
+        upload->reserved0 = 0;
+        upload->offset_bytes = 0;
+        upload->size_bytes = res->storage.size();
+      }
+
+      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      dirty->resource_handle = res->handle;
+      dirty->reserved0 = 0;
+      dirty->offset_bytes = 0;
+      dirty->size_bytes = static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
     }
     AEROGPU_D3D10_RET_HR(S_OK);
   }
