@@ -349,7 +349,7 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, clientOrigin, clientCredential, cleanup)
+	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, clientOrigin, clientCredential, aeroSessionCookieFromRequest(r), cleanup)
 	if err != nil {
 		cleanupRelaySession()
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
@@ -475,7 +475,7 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, clientOrigin, clientCredential, cleanup)
+	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, clientOrigin, clientCredential, aeroSessionCookieFromRequest(r), cleanup)
 	if err != nil {
 		cleanupRelaySession()
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
@@ -623,6 +623,18 @@ func newSessionID() (string, error) {
 		return "", fmt.Errorf("generate session id: %w", err)
 	}
 	return hex.EncodeToString(buf[:]), nil
+}
+
+func aeroSessionCookieFromRequest(r *http.Request) *string {
+	if r == nil {
+		return nil
+	}
+	cookie, err := r.Cookie("aero_session")
+	if err != nil {
+		return nil
+	}
+	v := cookie.Value
+	return &v
 }
 
 type httpOfferRequest struct {
@@ -903,7 +915,7 @@ func (wss *wsSession) handleOffer(offerWire SDP) error {
 		}
 	}
 
-	sess, err = webrtcpeer.NewSession(wss.srv.WebRTC, wss.srv.ICEServers, wss.srv.RelayConfig, wss.srv.Policy, relaySession, wss.origin, wss.credential, cleanup)
+	sess, err = webrtcpeer.NewSession(wss.srv.WebRTC, wss.srv.ICEServers, wss.srv.RelayConfig, wss.srv.Policy, relaySession, wss.origin, wss.credential, aeroSessionCookieFromRequest(wss.req), cleanup)
 	if err != nil {
 		cleanupRelaySession()
 		return err

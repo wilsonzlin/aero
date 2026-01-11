@@ -47,6 +47,13 @@ type l2BackendDialConfig struct {
 	// The negotiated subprotocol is still required to be `aero-l2-tunnel-v1`.
 	BackendToken string
 
+	// ForwardAeroSession controls whether the caller's `aero_session` cookie is
+	// forwarded to the backend as `Cookie: aero_session=<value>`.
+	ForwardAeroSession bool
+
+	AeroSessionCookie    string
+	HasAeroSessionCookie bool
+
 	MaxMessageBytes int
 }
 
@@ -168,6 +175,9 @@ func dialL2Backend(ctx context.Context, cfg l2BackendDialConfig) (*websocket.Con
 	}
 	if origin != "" {
 		header.Set("Origin", origin)
+	}
+	if cfg.ForwardAeroSession && cfg.HasAeroSessionCookie {
+		header.Set("Cookie", "aero_session="+cfg.AeroSessionCookie)
 	}
 
 	conn, resp, err := dialer.DialContext(ctx, dialURL, header)

@@ -40,6 +40,12 @@ func main() {
 
 	requiredOrigin := os.Getenv("REQUIRE_ORIGIN")
 	requiredToken := os.Getenv("REQUIRE_TOKEN")
+	requireCookieName := os.Getenv("REQUIRE_COOKIE_NAME")
+	requireCookieValue := os.Getenv("REQUIRE_COOKIE_VALUE")
+	if requireCookieValue != "" && requireCookieName == "" {
+		fmt.Fprintln(os.Stderr, "REQUIRE_COOKIE_VALUE set but REQUIRE_COOKIE_NAME is empty")
+		os.Exit(2)
+	}
 
 	listenAddr := net.JoinHostPort(bindHost, strconv.Itoa(port))
 	ln, err := net.Listen("tcp", listenAddr)
@@ -86,6 +92,18 @@ func main() {
 		if requiredToken != "" && token != requiredToken {
 			http.Error(w, "token mismatch", http.StatusForbidden)
 			return
+		}
+
+		if requireCookieName != "" {
+			cookie, err := r.Cookie(requireCookieName)
+			if err != nil {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if requireCookieValue != "" && cookie.Value != requireCookieValue {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
 		}
 
 		lastMu.Lock()

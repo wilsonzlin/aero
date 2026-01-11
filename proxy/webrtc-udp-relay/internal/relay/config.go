@@ -57,6 +57,14 @@ type Config struct {
 	// credential when dialing the L2 backend WebSocket.
 	L2BackendAuthForwardMode config.L2BackendAuthForwardMode
 
+	// L2BackendForwardAeroSession controls whether the relay forwards the
+	// caller's `aero_session` cookie to the L2 backend WebSocket.
+	//
+	// When enabled and the caller supplied the cookie during signaling, the relay
+	// dials the backend with `Cookie: aero_session=<value>`. No other cookies are
+	// forwarded.
+	L2BackendForwardAeroSession bool
+
 	// L2MaxMessageBytes bounds the size of individual L2 tunnel messages forwarded
 	// over the "l2" DataChannel and backend WebSocket.
 	L2MaxMessageBytes int
@@ -140,6 +148,7 @@ func (c Config) WithDefaults() Config {
 //   - L2_BACKEND_WS_ORIGIN (string; legacy)
 //   - L2_BACKEND_TOKEN (string; preferred)
 //   - L2_BACKEND_WS_TOKEN (string; legacy)
+//   - L2_BACKEND_FORWARD_AERO_SESSION (bool; optional)
 //   - L2_MAX_MESSAGE_BYTES (int)
 func ConfigFromEnv() Config {
 	c := DefaultConfig()
@@ -173,6 +182,11 @@ func ConfigFromEnv() Config {
 	} else if strings.TrimSpace(c.L2BackendWSURL) != "" {
 		// Default to forwarding Origin when L2 is enabled.
 		c.L2BackendForwardOrigin = true
+	}
+	if v := strings.TrimSpace(os.Getenv("L2_BACKEND_FORWARD_AERO_SESSION")); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			c.L2BackendForwardAeroSession = b
+		}
 	}
 	if v := os.Getenv("L2_MAX_MESSAGE_BYTES"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 {

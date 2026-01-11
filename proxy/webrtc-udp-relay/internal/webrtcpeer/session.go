@@ -23,13 +23,16 @@ type Session struct {
 	credential string
 	onClose    func()
 
+	aeroSessionCookie    string
+	hasAeroSessionCookie bool
+
 	mu    sync.Mutex
 	r     *relay.SessionRelay
 	l2    *l2Bridge
 	close sync.Once
 }
 
-func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, quota *relay.Session, origin, credential string, onClose func()) (*Session, error) {
+func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, quota *relay.Session, origin, credential string, aeroSessionCookie *string, onClose func()) (*Session, error) {
 	if api == nil {
 		api = webrtc.NewAPI()
 	}
@@ -46,6 +49,10 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 		origin:     origin,
 		credential: credential,
 		onClose:    onClose,
+	}
+	if aeroSessionCookie != nil {
+		s.aeroSessionCookie = *aeroSessionCookie
+		s.hasAeroSessionCookie = true
 	}
 
 	if quota != nil {
@@ -134,6 +141,9 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				AuthForwardMode:       cfg.L2BackendAuthForwardMode,
 				BackendOriginOverride: cfg.L2BackendWSOrigin,
 				BackendToken:          cfg.L2BackendWSToken,
+				ForwardAeroSession:    cfg.L2BackendForwardAeroSession,
+				AeroSessionCookie:     s.aeroSessionCookie,
+				HasAeroSessionCookie:  s.hasAeroSessionCookie,
 				MaxMessageBytes:       cfg.L2MaxMessageBytes,
 			}
 			b := newL2Bridge(dc, dialCfg, quota)

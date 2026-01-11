@@ -68,6 +68,9 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.L2BackendAuthForwardMode != L2BackendAuthForwardModeQuery {
 		t.Fatalf("L2BackendAuthForwardMode=%q, want %q", cfg.L2BackendAuthForwardMode, L2BackendAuthForwardModeQuery)
 	}
+	if cfg.L2BackendForwardAeroSession {
+		t.Fatalf("L2BackendForwardAeroSession=true, want false")
+	}
 	if cfg.L2MaxMessageBytes != DefaultL2MaxMessageBytes {
 		t.Fatalf("L2MaxMessageBytes=%d, want %d", cfg.L2MaxMessageBytes, DefaultL2MaxMessageBytes)
 	}
@@ -286,6 +289,19 @@ func TestL2BackendWSToken_AcceptsHTTPToken(t *testing.T) {
 	}
 	if cfg.L2BackendWSToken != "jwt_like.token-123" {
 		t.Fatalf("L2BackendWSToken=%q", cfg.L2BackendWSToken)
+	}
+}
+
+func TestL2BackendForwardAeroSession_EnvOverride(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                      "secret",
+		EnvL2BackendForwardAeroSession: "true",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !cfg.L2BackendForwardAeroSession {
+		t.Fatalf("expected L2BackendForwardAeroSession to be true")
 	}
 }
 

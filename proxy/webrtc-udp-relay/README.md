@@ -384,6 +384,9 @@ Env vars / flags:
   - `query`: append `token=<credential>` and `apiKey=<credential>` query parameters when dialing the backend
   - `subprotocol`: offer `Sec-WebSocket-Protocol: aero-l2-tunnel-v1, aero-l2-token.<credential>`
     (credential must be valid for `Sec-WebSocket-Protocol`, i.e. an HTTP token / RFC 7230 `tchar`)
+- `L2_BACKEND_FORWARD_AERO_SESSION` / `--l2-backend-forward-aero-session` (default `false`)
+  - When enabled, the relay extracts the caller's `aero_session` cookie from signaling and forwards **only** that cookie to the backend as `Cookie: aero_session=<value>`.
+  - This supports running `aero-l2-proxy` in session-cookie auth mode while the browser uses the WebRTC transport.
 
 The relay requires that the backend negotiates `aero-l2-tunnel-v1` (strict).
 

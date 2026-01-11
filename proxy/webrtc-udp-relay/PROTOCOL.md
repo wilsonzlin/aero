@@ -60,6 +60,27 @@ browser DataChannel "l2"  <->  webrtc-udp-relay  <->  backend WebSocket /l2
   4096 bytes). Messages larger than this limit may cause the relay to tear down
   the `l2` bridge.
 
+#### Backend dial options
+
+The relay dials the backend with a configurable set of headers/subprotocols:
+
+- `L2_BACKEND_ORIGIN` (optional):
+  - When set, the relay dials the backend with `Origin: <value>`.
+  - When unset, the relay forwards the browser's `Origin` header from the
+    signaling request (`GET /webrtc/signal` or `POST /webrtc/offer`) if present.
+- `L2_BACKEND_TOKEN` (optional):
+  - When set, the relay includes an additional WebSocket subprotocol entry
+    `aero-l2-token.<token>` alongside `aero-l2-tunnel-v1` (used by
+    `aero-l2-proxy` token auth).
+  - The negotiated subprotocol MUST still be `aero-l2-tunnel-v1`.
+- `L2_BACKEND_FORWARD_AERO_SESSION` (optional, default `false`):
+  - When enabled, the relay extracts the `aero_session` cookie from the
+    signaling request and forwards **only** that cookie to the backend as:
+    `Cookie: aero_session=<value>`.
+  - This allows `aero-l2-proxy` to run in session-cookie auth mode while the
+    browser uses the WebRTC transport.
+  - When disabled, the relay does not send any `Cookie` header.
+
 Rationale: the L2 tunnel carries guest Ethernet frames to a proxy that may run a
 user-space NAT/TCP stack (slirp-style). That stack can acknowledge upstream TCP
 data before the guest has received it, so allowing tunnel message loss (partial

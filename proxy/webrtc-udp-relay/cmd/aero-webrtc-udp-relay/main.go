@@ -82,18 +82,19 @@ func main() {
 		os.Exit(2)
 	}
 	relayCfg := relay.Config{
-		MaxUDPBindingsPerSession:  cfg.MaxUDPBindingsPerSession,
-		UDPBindingIdleTimeout:     cfg.UDPBindingIdleTimeout,
-		UDPReadBufferBytes:        cfg.UDPReadBufferBytes,
-		DataChannelSendQueueBytes: cfg.DataChannelSendQueueBytes,
-		MaxDatagramPayloadBytes:   cfg.MaxDatagramPayloadBytes,
-		L2BackendWSURL:            cfg.L2BackendWSURL,
-		L2BackendWSOrigin:         cfg.L2BackendWSOrigin,
-		L2BackendWSToken:          cfg.L2BackendWSToken,
-		L2BackendForwardOrigin:    cfg.L2BackendForwardOrigin,
-		L2BackendAuthForwardMode:  cfg.L2BackendAuthForwardMode,
-		L2MaxMessageBytes:         cfg.L2MaxMessageBytes,
-		PreferV2:                  cfg.PreferV2,
+		MaxUDPBindingsPerSession:    cfg.MaxUDPBindingsPerSession,
+		UDPBindingIdleTimeout:       cfg.UDPBindingIdleTimeout,
+		UDPReadBufferBytes:          cfg.UDPReadBufferBytes,
+		DataChannelSendQueueBytes:   cfg.DataChannelSendQueueBytes,
+		MaxDatagramPayloadBytes:     cfg.MaxDatagramPayloadBytes,
+		L2BackendWSURL:              cfg.L2BackendWSURL,
+		L2BackendWSOrigin:           cfg.L2BackendWSOrigin,
+		L2BackendWSToken:            cfg.L2BackendWSToken,
+		L2BackendForwardOrigin:      cfg.L2BackendForwardOrigin,
+		L2BackendAuthForwardMode:    cfg.L2BackendAuthForwardMode,
+		L2BackendForwardAeroSession: cfg.L2BackendForwardAeroSession,
+		L2MaxMessageBytes:           cfg.L2MaxMessageBytes,
+		PreferV2:                    cfg.PreferV2,
 	}
 	sig := signaling.NewServer(signaling.Config{
 		Sessions:            sessionMgr,

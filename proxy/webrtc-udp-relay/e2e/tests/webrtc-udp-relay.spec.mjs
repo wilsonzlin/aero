@@ -995,6 +995,210 @@ test("bridges an L2 tunnel DataChannel to a backend WebSocket", async ({ page })
   }
 });
 
+test("bridges an L2 tunnel DataChannel to a backend WebSocket (session cookie forwarding)", async ({ page }) => {
+  const web = await startWebServer();
+  const requiredCookieValue = "test-session-cookie";
+  const requiredOrigin = new URL(web.url).origin;
+  const backend = await spawnL2BackendServer({
+    REQUIRE_COOKIE_NAME: "aero_session",
+    REQUIRE_COOKIE_VALUE: requiredCookieValue,
+    REQUIRE_ORIGIN: requiredOrigin,
+  });
+
+  // Cookie must be set before WebSocket signaling so the relay can bind the L2
+  // backend dial to the caller's session.
+  await page.context().addCookies([
+    {
+      url: "http://127.0.0.1/",
+      name: "aero_session",
+      value: requiredCookieValue,
+    },
+  ]);
+
+  const relayWithCookie = await spawnRelayServer({
+    L2_BACKEND_WS_URL: `ws://127.0.0.1:${backend.port}/l2`,
+    L2_BACKEND_FORWARD_AERO_SESSION: "1",
+    // Forward the browser Origin by default; set explicitly to keep the test deterministic.
+    L2_BACKEND_FORWARD_ORIGIN: "1",
+  });
+  const relayWithoutCookie = await spawnRelayServer({
+    L2_BACKEND_WS_URL: `ws://127.0.0.1:${backend.port}/l2`,
+    L2_BACKEND_FORWARD_ORIGIN: "1",
+  });
+
+  const runPing = async (relayPort, expectPong) =>
+    await page.evaluate(
+      async ({ relayPort, expectPong }) => {
+        const iceResp = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`).then((r) => r.json());
+        if (!iceResp?.iceServers || !Array.isArray(iceResp.iceServers)) {
+          throw new Error("invalid ice server response");
+        }
+        const iceServers = iceResp.iceServers;
+
+        const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
+        await new Promise((resolve, reject) => {
+          ws.addEventListener("open", () => resolve(), { once: true });
+          ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+        });
+
+        const pc = new RTCPeerConnection({ iceServers });
+        const pendingCandidates = [];
+        let remoteDescriptionSet = false;
+        // L2 tunnel MUST be reliable (no partial reliability) and ordered. Do not set maxRetransmits/maxPacketLifeTime.
+        const dc = pc.createDataChannel("l2", { ordered: true });
+        dc.binaryType = "arraybuffer";
+
+        try {
+          const answerPromise = new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for answer")), 10_000);
+            let answered = false;
+            const onMessage = (event) => {
+              let msg;
+              try {
+                msg = JSON.parse(event.data);
+              } catch {
+                clearTimeout(timeout);
+                ws.removeEventListener("message", onMessage);
+                reject(new Error("invalid signaling message (not JSON)"));
+                return;
+              }
+
+              if (msg?.type === "error") {
+                clearTimeout(timeout);
+                ws.removeEventListener("message", onMessage);
+                reject(new Error(`signaling error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`));
+                return;
+              }
+
+              if (msg?.type === "candidate") {
+                if (!msg.candidate?.candidate) return;
+                if (remoteDescriptionSet) {
+                  pc.addIceCandidate(msg.candidate).catch(() => {});
+                } else {
+                  pendingCandidates.push(msg.candidate);
+                }
+                return;
+              }
+
+              if (msg?.type !== "answer") return;
+              if (answered) return;
+              answered = true;
+              clearTimeout(timeout);
+              resolve(msg);
+            };
+            ws.addEventListener("message", onMessage);
+          });
+
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          await new Promise((resolve) => {
+            if (pc.iceGatheringState === "complete") return resolve();
+            const onState = () => {
+              if (pc.iceGatheringState !== "complete") return;
+              pc.removeEventListener("icegatheringstatechange", onState);
+              resolve();
+            };
+            pc.addEventListener("icegatheringstatechange", onState);
+          });
+
+          if (!pc.localDescription?.sdp) {
+            throw new Error("missing local description");
+          }
+
+          ws.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: pc.localDescription.sdp } }));
+
+          const answerMsg = await answerPromise;
+          if (answerMsg?.type !== "answer" || !answerMsg.sdp?.sdp) {
+            throw new Error("invalid answer message shape");
+          }
+
+          await pc.setRemoteDescription(answerMsg.sdp);
+          remoteDescriptionSet = true;
+          for (const candidate of pendingCandidates) {
+            await pc.addIceCandidate(candidate);
+          }
+
+          let dcState = dc.readyState;
+          if (dcState !== "open" && dcState !== "closed") {
+            dcState = await new Promise((resolve, reject) => {
+              const timeout = setTimeout(() => reject(new Error("timed out waiting for datachannel state")), 10_000);
+              const cleanup = () => {
+                clearTimeout(timeout);
+                dc.removeEventListener("open", onOpen);
+                dc.removeEventListener("close", onClose);
+                dc.removeEventListener("error", onError);
+              };
+              const onOpen = () => {
+                cleanup();
+                resolve("open");
+              };
+              const onClose = () => {
+                cleanup();
+                resolve("close");
+              };
+              const onError = () => {
+                cleanup();
+                resolve("error");
+              };
+              dc.addEventListener("open", onOpen, { once: true });
+              dc.addEventListener("close", onClose, { once: true });
+              dc.addEventListener("error", onError, { once: true });
+            });
+          }
+
+          if (dcState !== "open") {
+            return { status: dcState };
+          }
+
+          // PING per docs/l2-tunnel-protocol.md: magic (0xA2) + ver (0x03) + type (0x01) + flags (0).
+          dc.send(new Uint8Array([0xa2, 0x03, 0x01, 0x00]));
+
+          const res = await new Promise((resolve) => {
+            const timeoutMs = expectPong ? 10_000 : 5_000;
+            const timeout = setTimeout(() => resolve({ status: "timeout" }), timeoutMs);
+            dc.addEventListener(
+              "message",
+              (event) => {
+                clearTimeout(timeout);
+                resolve({ status: "message", data: Array.from(new Uint8Array(event.data)) });
+              },
+              { once: true },
+            );
+            dc.addEventListener(
+              "close",
+              () => {
+                clearTimeout(timeout);
+                resolve({ status: "close" });
+              },
+              { once: true },
+            );
+          });
+
+          if (!expectPong) return res;
+          if (res.status !== "message") throw new Error(`expected message, got ${res.status}`);
+          return res;
+        } finally {
+          ws.close();
+          pc.close();
+        }
+      },
+      { relayPort, expectPong },
+    );
+
+  try {
+    await page.goto(web.url);
+
+    const pong = await runPing(relayWithCookie.port, true);
+    expect(pong.data).toEqual([0xa2, 0x03, 0x02, 0x00]); // PONG
+
+    const failure = await runPing(relayWithoutCookie.port, false);
+    expect(failure.status).not.toBe("message");
+  } finally {
+    await Promise.all([web.close(), relayWithCookie.kill(), relayWithoutCookie.kill(), backend.kill()]);
+  }
+});
+
 test("forwards client Origin + auth credential when bridging an L2 tunnel (query)", async ({ page }) => {
   const apiKey = "e2e-credential";
   const web = await startWebServer();
