@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import http.server
 import math
+import warnings
 import os
 import shlex
 import socketserver
@@ -1450,6 +1451,71 @@ def _compute_pcm16_metrics(path: Path, data_offset: int, data_size: int) -> tupl
     return peak, rms, count
 
 
+def _compute_pcm_metrics_16bit_equiv_audioop(
+    path: Path, data_offset: int, data_size: int, *, bits_per_sample: int
+) -> Optional[tuple[int, float, int]]:
+    """
+    Fast 16-bit-equivalent PCM metrics using `audioop` (C implementation).
+
+    `audioop` is part of the Python standard library on most CPython builds, but it is deprecated
+    and may be missing in some environments. This helper returns `None` when it cannot be used so
+    callers can fall back to the pure-Python implementation.
+    """
+    if bits_per_sample <= 0 or bits_per_sample % 8 != 0:
+        raise ValueError(f"unsupported bits_per_sample {bits_per_sample}")
+    sample_bytes = bits_per_sample // 8
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            import audioop  # type: ignore
+    except Exception:
+        return None
+
+    peak = 0
+    sum_sq = 0.0
+    count = 0
+
+    with path.open("rb") as f:
+        f.seek(data_offset)
+        remaining = data_size
+        carry = b""
+
+        while remaining > 0:
+            chunk = f.read(min(remaining, 1024 * 1024))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+
+            if carry:
+                chunk = carry + chunk
+                carry = b""
+
+            rem = len(chunk) % sample_bytes
+            if rem:
+                carry = chunk[-rem:]
+                chunk = chunk[:-rem]
+            if not chunk:
+                continue
+
+            try:
+                frag16 = chunk if sample_bytes == 2 else audioop.lin2lin(chunk, sample_bytes, 2)
+                chunk_peak = audioop.max(frag16, 2)
+                if chunk_peak > peak:
+                    peak = chunk_peak
+                chunk_rms = audioop.rms(frag16, 2)
+            except Exception:
+                # Fall back to the pure-Python path if the audioop pipeline rejects the fragment.
+                return None
+
+            samples = len(frag16) // 2
+            count += samples
+            sum_sq += float(chunk_rms) * float(chunk_rms) * float(samples)
+
+    rms = math.sqrt(sum_sq / count) if count else 0.0
+    return peak, rms, count
+
+
 def _compute_wave_metrics_16bit_equiv(
     path: Path, data_offset: int, data_size: int, *, kind: str, bits_per_sample: int
 ) -> tuple[int, float, int]:
@@ -1461,8 +1527,22 @@ def _compute_wave_metrics_16bit_equiv(
     This helper keeps verification deterministic across those variants by converting to a 16-bit
     equivalent scale.
     """
-    if kind == "pcm" and bits_per_sample == 16:
-        return _compute_pcm16_metrics(path, data_offset, data_size)
+    if kind == "pcm":
+        if bits_per_sample == 16:
+            # Prefer `audioop` for speed, but keep the pure-Python fallback for environments
+            # where `audioop` is unavailable or refuses the fragment.
+            audioop_metrics = _compute_pcm_metrics_16bit_equiv_audioop(
+                path, data_offset, data_size, bits_per_sample=bits_per_sample
+            )
+            if audioop_metrics is not None:
+                return audioop_metrics
+            return _compute_pcm16_metrics(path, data_offset, data_size)
+
+        audioop_metrics = _compute_pcm_metrics_16bit_equiv_audioop(
+            path, data_offset, data_size, bits_per_sample=bits_per_sample
+        )
+        if audioop_metrics is not None:
+            return audioop_metrics
 
     if bits_per_sample <= 0 or bits_per_sample % 8 != 0:
         raise ValueError(f"unsupported bits_per_sample {bits_per_sample}")
