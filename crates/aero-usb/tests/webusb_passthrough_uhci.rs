@@ -500,6 +500,104 @@ fn vendor_request_with_brequest_05_is_forwarded() {
 }
 
 #[test]
+fn control_in_zero_length_pending_naks_status_until_completion() {
+    let io_base = 0x5330;
+    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+
+    // Device-to-host control request with wLength=0: no DATA stage, STATUS is an OUT ZLP.
+    let setup = SetupPacket {
+        request_type: 0xC0, // Vendor, device-to-host.
+        request: 0x01,
+        value: 0x1234,
+        index: 0,
+        length: 0,
+    };
+
+    let qh_addr = alloc.alloc(0x20, 0x10);
+    let setup_buf = alloc.alloc(8, 0x10);
+    let setup_td = alloc.alloc(0x20, 0x10);
+    let status_td = alloc.alloc(0x20, 0x10);
+
+    mem.write(setup_buf, &setup_packet_bytes(setup));
+    write_td(
+        &mut mem,
+        setup_td,
+        status_td,
+        td_ctrl(true, false),
+        td_token(0x2D, 0, 0, false, 8),
+        setup_buf,
+    );
+    // Status stage: OUT zero-length, DATA1.
+    write_td(
+        &mut mem,
+        status_td,
+        LINK_PTR_T,
+        td_ctrl(true, true),
+        td_token(0xE1, 0, 0, true, 0),
+        0,
+    );
+
+    write_qh(&mut mem, qh_addr, LINK_PTR_T, setup_td);
+    install_frame_list(&mut mem, fl_base, qh_addr);
+
+    // Frame #1: SETUP completes; STATUS NAKs while the host action is pending.
+    ctrl.step_frame(&mut mem, &mut irq);
+    assert_eq!(mem.read_u32(setup_td + 4) & TD_CTRL_ACTIVE, 0);
+
+    let status_ctrl = mem.read_u32(status_td + 4);
+    assert_ne!(status_ctrl & TD_CTRL_ACTIVE, 0);
+    assert_ne!(status_ctrl & TD_CTRL_NAK, 0);
+    assert_eq!(status_ctrl & TD_CTRL_STALLED, 0);
+
+    let mut actions = passthrough_device_mut(&mut ctrl).drain_actions();
+    assert_eq!(actions.len(), 1, "expected exactly one queued host action");
+    let action = actions.pop().unwrap();
+    let (id, got_setup) = match action {
+        UsbHostAction::ControlIn { id, setup } => (id, setup),
+        other => panic!("unexpected action: {other:?}"),
+    };
+    assert_eq!(
+        got_setup,
+        HostSetupPacket {
+            bm_request_type: setup.request_type,
+            b_request: setup.request,
+            w_value: setup.value,
+            w_index: setup.index,
+            w_length: setup.length,
+        }
+    );
+
+    // Frame #2: still pending, no duplicate host actions should be emitted.
+    ctrl.step_frame(&mut mem, &mut irq);
+    let status_ctrl = mem.read_u32(status_td + 4);
+    assert_ne!(status_ctrl & TD_CTRL_ACTIVE, 0);
+    assert_ne!(status_ctrl & TD_CTRL_NAK, 0);
+    assert!(
+        passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
+        "expected no duplicate host actions while pending"
+    );
+
+    // Complete and ensure the next frame ACKs the status stage (OUT ZLP).
+    passthrough_device_mut(&mut ctrl).push_completion(UsbHostCompletion::ControlIn {
+        id,
+        result: UsbHostCompletionIn::Success {
+            // wLength=0; any payload is ignored/truncated.
+            data: vec![0xAA, 0xBB],
+        },
+    });
+
+    ctrl.step_frame(&mut mem, &mut irq);
+
+    let status_ctrl = mem.read_u32(status_td + 4);
+    assert_eq!(status_ctrl & TD_CTRL_ACTIVE, 0);
+    assert_eq!(actlen(status_ctrl), 0);
+    assert_eq!(mem.read_u32(qh_addr + 4), LINK_PTR_T);
+
+    assert_eq!(passthrough_device_mut(&mut ctrl).address(), 0);
+    assert!(passthrough_device_mut(&mut ctrl).drain_actions().is_empty());
+}
+
+#[test]
 fn bulk_in_pending_queues_once_and_naks_until_completion() {
     let io_base = 0x5400;
     let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
