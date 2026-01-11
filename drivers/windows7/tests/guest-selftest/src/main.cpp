@@ -16,6 +16,7 @@
 #include <mmddk.h>
 #include <propsys.h>
 #include <setupapi.h>
+#include <winsvc.h>
 
 #include <devguid.h>
 #include <initguid.h>
@@ -2140,6 +2141,64 @@ static const char* MmDeviceStateToString(DWORD state) {
     default:
       return "UNKNOWN";
   }
+}
+
+static bool QueryServiceIsRunning(SC_HANDLE svc, DWORD* state_out) {
+  if (state_out) *state_out = 0;
+  if (!svc) return false;
+
+  SERVICE_STATUS_PROCESS ssp{};
+  DWORD bytes_needed = 0;
+  if (!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, reinterpret_cast<LPBYTE>(&ssp), sizeof(ssp),
+                            &bytes_needed)) {
+    return false;
+  }
+  if (state_out) *state_out = ssp.dwCurrentState;
+  return ssp.dwCurrentState == SERVICE_RUNNING;
+}
+
+static void WaitForWindowsAudioServices(Logger& log, DWORD wait_ms) {
+  if (wait_ms == 0) return;
+
+  SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+  if (!scm) {
+    log.Logf("virtio-snd: OpenSCManager failed err=%lu", GetLastError());
+    return;
+  }
+
+  SC_HANDLE audiosrv = OpenServiceW(scm, L"AudioSrv", SERVICE_QUERY_STATUS);
+  SC_HANDLE builder = OpenServiceW(scm, L"AudioEndpointBuilder", SERVICE_QUERY_STATUS);
+
+  if (!audiosrv || !builder) {
+    log.Logf("virtio-snd: OpenService(AudioSrv/AudioEndpointBuilder) failed err=%lu", GetLastError());
+    if (audiosrv) CloseServiceHandle(audiosrv);
+    if (builder) CloseServiceHandle(builder);
+    CloseServiceHandle(scm);
+    return;
+  }
+
+  const DWORD deadline_ms = GetTickCount() + wait_ms;
+  int attempt = 0;
+  DWORD state_audio = 0;
+  DWORD state_builder = 0;
+  bool audio_running = false;
+  bool builder_running = false;
+
+  while (static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
+    attempt++;
+    audio_running = QueryServiceIsRunning(audiosrv, &state_audio);
+    builder_running = QueryServiceIsRunning(builder, &state_builder);
+    if (audio_running && builder_running) break;
+    Sleep(500);
+  }
+
+  log.Logf("virtio-snd: audio services AudioSrv=%s (state=%lu) AudioEndpointBuilder=%s (state=%lu) attempt=%d",
+           audio_running ? "RUNNING" : "NOT_RUNNING", static_cast<unsigned long>(state_audio),
+           builder_running ? "RUNNING" : "NOT_RUNNING", static_cast<unsigned long>(state_builder), attempt);
+
+  CloseServiceHandle(audiosrv);
+  CloseServiceHandle(builder);
+  CloseServiceHandle(scm);
 }
 
 static std::wstring GetPropertyString(IPropertyStore* store, const PROPERTYKEY& key) {
@@ -4572,17 +4631,24 @@ int wmain(int argc, wchar_t** argv) {
          } else {
            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|topology_interface_missing");
          }
-       } else {
-         std::vector<std::wstring> match_names;
-         for (const auto& d : snd_pci) {
-           if (!d.description.empty()) match_names.push_back(d.description);
-         }
+        } else {
+          std::vector<std::wstring> match_names;
+          for (const auto& d : snd_pci) {
+            if (!d.description.empty()) match_names.push_back(d.description);
+          }
 
-        if (want_snd_playback) {
-          bool snd_ok = false;
-          const auto snd = VirtioSndTest(log, match_names, opt.allow_virtio_snd_transitional);
-          if (snd.ok) {
-            snd_ok = true;
+          // The scheduled task that runs the selftest can start before the Windows audio services are
+          // fully initialized. Wait briefly for AudioSrv/AudioEndpointBuilder so endpoint enumeration
+          // doesn't fail spuriously (which would make host-side virtio-snd wav verification flaky).
+          if (want_snd_playback || want_snd_capture) {
+            WaitForWindowsAudioServices(log, 30000);
+          }
+
+         if (want_snd_playback) {
+           bool snd_ok = false;
+           const auto snd = VirtioSndTest(log, match_names, opt.allow_virtio_snd_transitional);
+           if (snd.ok) {
+             snd_ok = true;
           } else {
             log.Logf("virtio-snd: WASAPI failed reason=%s hr=0x%08lx",
                      snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
