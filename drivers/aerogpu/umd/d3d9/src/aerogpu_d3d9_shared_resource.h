@@ -18,6 +18,13 @@ namespace aerogpu {
 // the host maintains a global (share_token -> resource) map with no awareness of guest
 // process boundaries.
 //
+// NOTE: Preferred source for the protocol `share_token` is the AeroGPU KMD's per-allocation
+// ShareToken returned to the UMD via allocation private driver data
+// (`drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`).
+//
+// This allocator is a legacy/compatibility path used by the current D3D9 UMD while the
+// KMD ShareToken path is being wired end-to-end.
+//
 // The token value itself is persisted in the WDDM allocation private driver data
 // (aerogpu_wddm_alloc_priv.share_token), which dxgkrnl preserves and returns on
 // OpenResource/OpenAllocation so other processes can IMPORT using the same token.

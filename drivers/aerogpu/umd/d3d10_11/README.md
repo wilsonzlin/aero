@@ -77,17 +77,15 @@ All append helpers return `nullptr` (and set `CmdStreamError`) on failure (for e
 
 ### Shared surface note
 
-DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The protocol supports it (primarily for D3D9Ex/DWM) via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token` carried in preserved WDDM allocation private driver data (`aerogpu_wddm_alloc_priv`; see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The protocol supports it (primarily for D3D9Ex/DWM) via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token`.
 
-The allocation private data blob is treated as **UMD → KMD input**: the UMD chooses `alloc_id` / `share_token` at creation time, the KMD validates/consumes it, and dxgkrnl preserves the bytes for shared allocations and returns them verbatim on `OpenResource`/`OpenAllocation` so other processes can observe the same IDs.
+For AeroGPU, `share_token` is defined as the **KMD-generated allocation `ShareToken`** returned to the UMD via allocation private driver data (`drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`). Do **not** use the numeric value of the D3D shared `HANDLE` as `share_token` (it is process-local and not stable cross-process).
 
-For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`, non-zero). When DXGI/D3D10/11 sharing is implemented, follow the D3D9 UMD approach:
+Separately, the WDDM allocation private-data blob (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`) is treated as **UMD → KMD input** and should be used to persist a stable `alloc_id` across CreateAllocation/OpenAllocation so the KMD can build the per-submit allocation table for guest-backed resources.
 
-- allocate `alloc_id` from a cross-process monotonic counter (see `allocate_shared_alloc_id_token()` in `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp`), and
-- generate `share_token` independently as a collision-resistant 64-bit value (crypto RNG preferred; see `ShareTokenAllocator` in `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_shared_resource.h`), and
-- store both in `aerogpu_wddm_alloc_priv` so dxgkrnl can return them verbatim on `OpenResource`/`OpenAllocation`.
+For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`, non-zero).
 
-`share_token` must be stable across guest processes and collision-resistant across the entire guest (multi-process). Prefer generating a random non-zero 64-bit token via a cryptographically strong RNG (e.g. `RtlGenRandom`/`BCryptGenRandom`). `share_token` is **not** the process-local shared `HANDLE` value (do not use the numeric handle as a host mapping key).
+When DXGI/D3D10/11 sharing is implemented, follow the same export/import sequence as the D3D9Ex stack; see `docs/graphics/win7-shared-surfaces-share-token.md`.
 
 ## Build
 
