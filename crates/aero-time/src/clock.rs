@@ -80,7 +80,12 @@ impl Speed {
 
     #[inline]
     pub fn host_delta_to_guest_ns(self, host_delta_ns: u64) -> u64 {
-        (((host_delta_ns as u128) * (self.scale_fp as u128)) >> 32) as u64
+        let scaled = ((host_delta_ns as u128) * (self.scale_fp as u128)) >> 32;
+        if scaled > u64::MAX as u128 {
+            u64::MAX
+        } else {
+            scaled as u64
+        }
     }
 
     #[inline]
@@ -90,7 +95,12 @@ impl Speed {
         if denom == 0 {
             return u64::MAX;
         }
-        ((numer + denom - 1) / denom) as u64
+        let host_ns = (numer + denom - 1) / denom;
+        if host_ns > u64::MAX as u128 {
+            u64::MAX
+        } else {
+            host_ns as u64
+        }
     }
 }
 

@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Barrier};
 use std::time::Duration;
 
-use aero_time::{FakeHostClock, HostClock, Speed, TimeSource};
+use aero_time::{FakeHostClock, HostClock, Speed, TimeSource, Tsc};
 
 #[test]
 fn time_source_pause_resume_and_speed() {
@@ -89,4 +89,24 @@ fn host_duration_clamps_to_monotonic_now_ns() {
 
     let sleep = sleep_rx.recv().expect("sleep sender dropped");
     assert_eq!(sleep, Duration::ZERO);
+}
+
+#[test]
+fn speed_conversions_saturate_on_overflow() {
+    // Ensure fixed-point conversions never wrap on overflow; guest nanoseconds are modeled as a
+    // monotonic u64 and should saturate at u64::MAX rather than truncating.
+    let fast = Speed::from_ratio(2, 1);
+    assert_eq!(fast.host_delta_to_guest_ns(u64::MAX), u64::MAX);
+
+    let slow = Speed::from_ratio(1, 2);
+    assert_eq!(slow.guest_delta_to_host_ns_ceil(u64::MAX), u64::MAX);
+}
+
+#[test]
+fn tsc_guest_ns_for_tsc_saturates_on_overflow() {
+    // With an unrealistically low TSC frequency, mapping a large TSC delta back into guest
+    // nanoseconds can overflow u64. The conversion should saturate instead of wrapping.
+    let tsc = Tsc::new(1);
+    let ns = tsc.guest_ns_for_tsc(u64::MAX).expect("freq_hz != 0");
+    assert_eq!(ns, u64::MAX);
 }

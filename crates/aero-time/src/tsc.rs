@@ -64,6 +64,11 @@ impl Tsc {
         let numer = (delta_tsc as u128) * 1_000_000_000u128;
         let denom = self.freq_hz as u128;
         let delta_ns = (numer + denom - 1) / denom;
-        Some(self.base_guest_ns.saturating_add(delta_ns as u64))
+        let delta_ns = if delta_ns > u64::MAX as u128 {
+            u64::MAX
+        } else {
+            delta_ns as u64
+        };
+        Some(self.base_guest_ns.saturating_add(delta_ns))
     }
 }
