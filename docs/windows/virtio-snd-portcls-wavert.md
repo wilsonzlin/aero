@@ -4,6 +4,10 @@ This document is a **clean-room design reference** for a minimal Windows 7 audio
 
 The goal is to make the first bring-up deterministic: if the driver matches the shapes described here, Windows 7 should create a “Speakers” endpoint and the audio engine should be able to transition the stream to `RUN`.
 
+Note: the current in-tree Windows 7 virtio-snd driver (`drivers/windows7/virtio-snd/`) supports both **render**
+and **capture** streams. This document focuses on the minimal render-only bring-up; capture support adds a WaveRT
+capture pin and maps to the virtio-snd `rxq` stream.
+
 ## Scope / assumptions (minimum viable endpoint)
 
 * **Windows target:** Windows 7 SP1 (x86/x64). The driver can be built with a Win7-era WinDDK (7600) layout or with newer WDKs (CI uses WDK10/MSBuild).
