@@ -191,7 +191,7 @@ ring_gpa:
 | `0x04` | `u32` | `abi_version` | Must be `AEROGPU_ABI_VERSION_U32` |
 | `0x08` | `u32` | `size_bytes` | Total bytes of the ring mapping |
 | `0x0C` | `u32` | `entry_count` | Number of slots; must be power-of-two |
-| `0x10` | `u32` | `entry_stride_bytes` | Must be `sizeof(struct aerogpu_submit_desc)` |
+| `0x10` | `u32` | `entry_stride_bytes` | Must be `>= sizeof(struct aerogpu_submit_desc)` (forward-compatible extension space) |
 | `0x14` | `u32` | `flags` | Reserved (0) |
 | `0x18` | `volatile u32` | `head` | Device-owned; monotonically increasing submission index |
 | `0x1C` | `volatile u32` | `tail` | Driver-owned; monotonically increasing submission index |
@@ -218,11 +218,12 @@ The device consumes entries in order, updating `ring->head`.
 
 ### 3.3 Submission descriptor (`struct aerogpu_submit_desc`)
 
-The submit descriptor is fixed-size (packed; 64 bytes):
+The submit descriptor prefix is 64 bytes (packed). `desc_size_bytes` is a minimum so newer minor
+versions can append fields (and must be `<= ring.entry_stride_bytes`):
 
 | Offset | Type | Field | Description |
 |---:|---|---|---|
-| `0x00` | `u32` | `desc_size_bytes` | Must be `sizeof(struct aerogpu_submit_desc)` (64) |
+| `0x00` | `u32` | `desc_size_bytes` | Must be `>= sizeof(struct aerogpu_submit_desc)` (64) |
 | `0x04` | `u32` | `flags` | `enum aerogpu_submit_flags` |
 | `0x08` | `u32` | `context_id` | Driver-defined (0 == default/unknown) |
 | `0x0C` | `u32` | `engine_id` | `enum aerogpu_engine_id` (only `AEROGPU_ENGINE_0`) |

@@ -779,9 +779,10 @@ The submission transport is a shared ring in guest physical memory, defined in `
   - `magic = "ARNG"`, `abi_version = AEROGPU_ABI_VERSION_U32`
   - `size_bytes` covers the full mapping (`sizeof(ring_header) + entry_count * entry_stride_bytes`)
   - `entry_count` must be a power-of-two
-  - `entry_stride_bytes` must be `sizeof(struct aerogpu_submit_desc)` (64)
+  - `entry_stride_bytes` must be `>= sizeof(struct aerogpu_submit_desc)` (64)
   - `head` is device-owned; `tail` is driver-owned (both monotonic counters)
-- The ring entries are fixed-size `struct aerogpu_submit_desc` records (64 bytes).
+- The ring entries begin with a `struct aerogpu_submit_desc` prefix (64 bytes) stored in slots of
+  `entry_stride_bytes` bytes (forward-compatible extension space).
 - `ring->head` and `ring->tail` are monotonic indices; the slot index is `(index % entry_count)`.
   
 Submission sequence:
@@ -792,7 +793,7 @@ Submission sequence:
   
 ```
 struct aerogpu_submit_desc {
-  uint32_t desc_size_bytes; /* must be sizeof(struct aerogpu_submit_desc) */
+  uint32_t desc_size_bytes; /* >= sizeof(struct aerogpu_submit_desc) */
   uint32_t flags;           /* AEROGPU_SUBMIT_FLAG_* */
   uint32_t context_id;
   uint32_t engine_id;       /* AEROGPU_ENGINE_0 */
