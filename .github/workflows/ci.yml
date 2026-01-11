@@ -515,7 +515,11 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           toolchain: stable
+          targets: wasm32-unknown-unknown
           locked: auto
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
       - name: Setup Node (npm cache)
         uses: actions/setup-node@v4
         with:

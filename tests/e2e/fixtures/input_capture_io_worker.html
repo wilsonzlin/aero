@@ -53,8 +53,15 @@
       window.__ioInputBatchCounterIndex = StatusIndex.IoInputBatchCounter;
       window.__ioInputEventCounterIndex = StatusIndex.IoInputEventCounter;
 
-      const ioWorker = new Worker(new URL("/web/src/workers/io.worker.ts", import.meta.url), { type: "module" });
-      ioWorker.postMessage({ kind: "init", role: "io", controlSab: segments.control, guestMemory: segments.guestMemory });
+       const ioWorker = new Worker(new URL("/web/src/workers/io.worker.ts", import.meta.url), { type: "module" });
+       ioWorker.postMessage({
+         kind: "init",
+         role: "io",
+         controlSab: segments.control,
+         guestMemory: segments.guestMemory,
+         vgaFramebuffer: segments.vgaFramebuffer,
+         ioIpcSab: segments.ioIpc,
+       });
 
       window.__capture = new InputCapture(canvas, ioWorker, {
         flushHz: 1000,

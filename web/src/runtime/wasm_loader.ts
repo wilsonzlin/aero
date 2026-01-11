@@ -26,7 +26,6 @@ export interface WasmApi {
         strideBytes: number,
         nowMs: number,
     ) => number;
-
     /**
      * Guest RAM layout contract (see `docs/adr/0003-shared-memory-layout.md`).
      *
@@ -37,6 +36,15 @@ export interface WasmApi {
         readonly guest_base: number;
         readonly guest_size: number;
         readonly runtime_reserved: number;
+    };
+
+    UsbHidBridge: new () => {
+        keyboard_event(usage: number, pressed: boolean): void;
+        mouse_move(dx: number, dy: number): void;
+        mouse_buttons(buttons: number): void;
+        mouse_wheel(delta: number): void;
+        drain_next_keyboard_report(): Uint8Array | null;
+        drain_next_mouse_report(): Uint8Array | null;
         free(): void;
     };
     AeroApi: new () => { version(): string; free(): void };
@@ -206,6 +214,8 @@ function toApi(mod: RawWasmModule): WasmApi {
         mem_store_u32: mod.mem_store_u32,
         guest_ram_layout: mod.guest_ram_layout,
         mem_load_u32: mod.mem_load_u32,
+        demo_render_rgba8888: mod.demo_render_rgba8888,
+        UsbHidBridge: mod.UsbHidBridge,
         demo_render_rgba8888: mod.demo_render_rgba8888,
         AeroApi: mod.AeroApi,
         DemoVm: mod.DemoVm,

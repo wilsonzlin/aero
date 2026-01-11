@@ -1,6 +1,7 @@
 import { InputEventQueue, type InputBatchRecycleMessage, type InputBatchTarget } from "./event_queue";
 import { GamepadCapture } from "./gamepad";
 import { PointerLock } from "./pointer_lock";
+import { keyboardCodeToHidUsage } from "./hid_usage";
 import {
   ps2Set2ScancodeForCode,
   shouldPreventDefaultForKeyboardEvent,
@@ -167,7 +168,8 @@ export class InputCapture {
     }
 
     const sc = ps2Set2ScancodeForCode(event.code);
-    if (!sc) {
+    const usage = keyboardCodeToHidUsage(event.code);
+    if (!sc && usage === null) {
       return;
     }
 
@@ -180,7 +182,12 @@ export class InputCapture {
     }
 
     const tsUs = toTimestampUs(event.timeStamp);
-    pushSet2ScancodeSequence(this.queue, tsUs, sc, true);
+    if (!event.repeat && usage !== null) {
+      this.queue.pushKeyHidUsage(tsUs, usage, true);
+    }
+    if (sc) {
+      pushSet2ScancodeSequence(this.queue, tsUs, sc, true);
+    }
   };
 
   private readonly handleKeyUp = (event: KeyboardEvent): void => {
@@ -189,7 +196,8 @@ export class InputCapture {
     }
 
     const sc = ps2Set2ScancodeForCode(event.code);
-    if (!sc) {
+    const usage = keyboardCodeToHidUsage(event.code);
+    if (!sc && usage === null) {
       return;
     }
 
@@ -200,7 +208,12 @@ export class InputCapture {
     }
 
     const tsUs = toTimestampUs(event.timeStamp);
-    pushSet2ScancodeSequence(this.queue, tsUs, sc, false);
+    if (usage !== null) {
+      this.queue.pushKeyHidUsage(tsUs, usage, false);
+    }
+    if (sc) {
+      pushSet2ScancodeSequence(this.queue, tsUs, sc, false);
+    }
   };
 
   private readonly handleMouseMove = (event: MouseEvent): void => {
@@ -432,7 +445,13 @@ export class InputCapture {
     const nowUs = toTimestampUs(performance.now());
     for (const code of this.pressedCodes) {
       const sc = ps2Set2ScancodeForCode(code);
-      if (sc) pushSet2ScancodeSequence(this.queue, nowUs, sc, false);
+      if (sc) {
+        pushSet2ScancodeSequence(this.queue, nowUs, sc, false);
+      }
+      const usage = keyboardCodeToHidUsage(code);
+      if (usage !== null) {
+        this.queue.pushKeyHidUsage(nowUs, usage, false);
+      }
     }
     this.pressedCodes.clear();
   }

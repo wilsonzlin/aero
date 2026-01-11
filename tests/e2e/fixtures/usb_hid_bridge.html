@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>USB HID bridge fixture</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+      }
+      canvas {
+        width: 640px;
+        height: 480px;
+        border: 1px solid #000;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="emu" width="640" height="480"></canvas>
+    <script type="module">
+      import { InputCapture } from "/web/src/input/input_capture.ts";
+      import { InputEventType } from "/web/src/input/event_queue.ts";
+      import { initWasm } from "/web/src/runtime/wasm_loader.ts";
+
+      const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("emu"));
+
+      // Deterministic pointer lock shim for headless tests.
+      let plElement = null;
+      Object.defineProperty(document, "pointerLockElement", {
+        configurable: true,
+        get() {
+          return plElement;
+        },
+      });
+
+      canvas.requestPointerLock = () => {
+        plElement = canvas;
+        document.dispatchEvent(new Event("pointerlockchange"));
+      };
+
+      document.exitPointerLock = () => {
+        plElement = null;
+        document.dispatchEvent(new Event("pointerlockchange"));
+      };
+
+      // Build a tiny "target" that dispatches the captured batch into the WASM bridge.
+      const { api } = await initWasm({ variant: "single" });
+      const bridge = new api.UsbHidBridge();
+
+      const inputTarget = {
+        postMessage(msg, transfer) {
+          // Keep transfer list referenced so structured clone doesn't complain in some engines.
+          void transfer;
+
+          const words = new Int32Array(msg.buffer);
+          const count = words[0] >>> 0;
+          const base = 2;
+          for (let i = 0; i < count; i++) {
+            const off = base + i * 4;
+            const type = words[off] >>> 0;
+            switch (type) {
+              case InputEventType.KeyHidUsage: {
+                const packed = words[off + 2] >>> 0;
+                const usage = packed & 0xff;
+                const pressed = ((packed >>> 8) & 1) !== 0;
+                bridge.keyboard_event(usage, pressed);
+                break;
+              }
+              case InputEventType.MouseMove: {
+                const dx = words[off + 2] | 0;
+                const dyPs2 = words[off + 3] | 0;
+                // PS/2 convention: positive is up. HID convention: positive is down.
+                bridge.mouse_move(dx, -dyPs2);
+                break;
+              }
+              case InputEventType.MouseButtons: {
+                bridge.mouse_buttons(words[off + 2] & 0xff);
+                break;
+              }
+              case InputEventType.MouseWheel: {
+                bridge.mouse_wheel(words[off + 2] | 0);
+                break;
+              }
+              default:
+                break;
+            }
+          }
+        },
+      };
+
+      window.__usbHidBridge = bridge;
+
+      window.__capture = new InputCapture(canvas, inputTarget, {
+        flushHz: 1000,
+        mouseSensitivity: 1.0,
+        // Avoid buffer recycling logic in this fixture; the "target" isn't a Worker.
+        recycleBuffers: false,
+      });
+      window.__capture.start();
+
+      window.__usbHidReady = true;
+    </script>
+  </body>
+</html>
+

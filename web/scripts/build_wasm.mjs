@@ -264,12 +264,15 @@ const args = [
     cratePath,
 ];
 
-if (existsSync(path.join(repoRoot, "Cargo.lock"))) {
-    args.push("--locked");
-}
+ if (isThreaded) {
+     args.push("-Z", "build-std=std,panic_abort", "--features", "wasm-threaded");
+ }
 
-if (isThreaded) {
-    args.push("-Z", "build-std=std,panic_abort", "--features", "wasm-threaded");
+// Prefer reproducible builds when a workspace lockfile is present, but allow
+// building without `Cargo.lock` (e.g. minimal checkouts or downstream forks).
+const lockFile = path.join(repoRoot, "Cargo.lock");
+if (existsSync(lockFile)) {
+    args.push("--locked");
 }
 
 const result = spawnSync("wasm-pack", args, { env, stdio: "inherit" });

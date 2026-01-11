@@ -502,6 +502,8 @@ impl UsbDevice for UsbHidKeyboard {
             let Some(report) = self.pending_reports.pop_front() else {
                 return UsbHandshake::Nak;
             };
+            // Keyboard boot protocol reports are 8 bytes and match the report
+            // descriptor used here.
             let len = buf.len().min(report.len());
             buf[..len].copy_from_slice(&report[..len]);
             return UsbHandshake::Ack { bytes: len };
@@ -548,6 +550,9 @@ pub struct UsbHidMouse {
     ep0: Ep0Control,
 
     buttons: u8,
+    dx: i32,
+    dy: i32,
+    wheel: i32,
     pending_reports: VecDeque<[u8; 4]>,
 }
 
@@ -562,17 +567,21 @@ impl UsbHidMouse {
             idle_rate: 0,
             ep0: Ep0Control::new(),
             buttons: 0,
+            dx: 0,
+            dy: 0,
+            wheel: 0,
             pending_reports: VecDeque::new(),
         }
     }
 
     pub fn movement(&mut self, dx: i32, dy: i32) {
-        let dx = dx.clamp(-127, 127) as i8 as u8;
-        let dy = dy.clamp(-127, 127) as i8 as u8;
-        self.push_report([self.buttons & 0x07, dx, dy, 0]);
+        self.dx += dx;
+        self.dy += dy;
+        self.flush_motion();
     }
 
     pub fn button_event(&mut self, button_mask: u8, pressed: bool) {
+        self.flush_motion();
         if pressed {
             self.buttons |= button_mask;
         } else {
@@ -582,8 +591,27 @@ impl UsbHidMouse {
     }
 
     pub fn wheel(&mut self, delta: i32) {
-        let wheel = delta.clamp(-127, 127) as i8 as u8;
-        self.push_report([self.buttons & 0x07, 0, 0, wheel]);
+        self.wheel += delta;
+        self.flush_motion();
+    }
+
+    fn flush_motion(&mut self) {
+        while self.dx != 0 || self.dy != 0 || self.wheel != 0 {
+            let step_x = self.dx.clamp(-127, 127) as i8;
+            let step_y = self.dy.clamp(-127, 127) as i8;
+            let step_wheel = self.wheel.clamp(-127, 127) as i8;
+
+            self.dx -= step_x as i32;
+            self.dy -= step_y as i32;
+            self.wheel -= step_wheel as i32;
+
+            self.push_report([
+                self.buttons & 0x07,
+                step_x as u8,
+                step_y as u8,
+                step_wheel as u8,
+            ]);
+        }
     }
 
     fn push_report(&mut self, report: [u8; 4]) {
@@ -796,6 +824,9 @@ impl UsbDevice for UsbHidMouse {
         self.idle_rate = 0;
         self.ep0 = Ep0Control::new();
         self.buttons = 0;
+        self.dx = 0;
+        self.dy = 0;
+        self.wheel = 0;
         self.pending_reports.clear();
     }
 
@@ -866,7 +897,10 @@ impl UsbDevice for UsbHidMouse {
             let Some(report) = self.pending_reports.pop_front() else {
                 return UsbHandshake::Nak;
             };
-            let len = buf.len().min(report.len());
+            // Boot protocol reports are 3 bytes (buttons, X, Y). Report protocol adds a 4th
+            // wheel byte.
+            let report_len = if self.protocol == 0 { 3 } else { report.len() };
+            let len = buf.len().min(report_len);
             buf[..len].copy_from_slice(&report[..len]);
             return UsbHandshake::Ack { bytes: len };
         }
@@ -2039,5 +2073,35 @@ mod tests {
             composite.gamepad_axes(i as i32, -(i as i32));
         }
         assert!(composite.pending_gamepad_reports.len() <= MAX_PENDING_REPORTS_GAMEPAD);
+    }
+
+    #[test]
+    fn report_descriptor_lengths_match_constants() {
+        assert_eq!(
+            UsbHidKeyboard::report_descriptor().len(),
+            KEYBOARD_REPORT_DESCRIPTOR_LEN as usize
+        );
+        assert_eq!(
+            UsbHidMouse::report_descriptor().len(),
+            MOUSE_REPORT_DESCRIPTOR_LEN as usize
+        );
+        assert_eq!(
+            UsbHidGamepad::report_descriptor().len(),
+            GAMEPAD_REPORT_DESCRIPTOR_LEN as usize
+        );
+    }
+
+    #[test]
+    fn mouse_boot_protocol_report_is_three_bytes() {
+        let mut mouse = UsbHidMouse::new();
+        mouse.protocol = 0;
+        mouse.movement(1, -2);
+
+        let mut buf = [0u8; 8];
+        assert_eq!(
+            mouse.handle_in(1, &mut buf),
+            UsbHandshake::Ack { bytes: 3 }
+        );
+        assert_eq!(&buf[..3], &[0x00, 0x01, 0xfe]);
     }
 }

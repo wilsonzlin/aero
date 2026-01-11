@@ -10,6 +10,7 @@ import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
 import { PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { RingBuffer as RuntimeRingBuffer } from "../runtime/ring_buffer";
+import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
 import {
   IO_IPC_CMD_QUEUE_KIND,
   IO_IPC_EVT_QUEUE_KIND,
@@ -51,6 +52,9 @@ const DISK_ERROR_NO_ACTIVE_DISK = 1;
 const DISK_ERROR_GUEST_OOB = 2;
 const DISK_ERROR_DISK_OFFSET_TOO_LARGE = 3;
 const DISK_ERROR_IO_FAILURE = 4;
+
+type UsbHidBridge = InstanceType<WasmApi["UsbHidBridge"]>;
+let usbHid: UsbHidBridge | null = null;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
@@ -207,8 +211,19 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     const init = data as WorkerInitMessage;
     perf.spanBegin("worker:boot");
     try {
-      perf.spanBegin("wasm:init");
-      perf.spanEnd("wasm:init");
+      void perf.spanAsync("wasm:init", async () => {
+        try {
+          const { api } = await initWasmForContext({
+            variant: init.wasmVariant ?? "auto",
+            module: init.wasmModule,
+            memory: init.guestMemory,
+          });
+          usbHid = new api.UsbHidBridge();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[io.worker] wasm:init failed: ${message}`);
+        }
+      });
 
       perf.spanBegin("worker:init");
       try {
@@ -427,24 +442,41 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   Atomics.add(status, StatusIndex.IoInputBatchCounter, 1);
   Atomics.add(status, StatusIndex.IoInputEventCounter, count);
 
-  // The actual i8042 device model is implemented in Rust; once the WASM-side I/O devices are
-  // integrated, this loop should feed those devices directly.
-  // For now, we only track counters so tests can assert that the worker is receiving input.
+  // The actual i8042 device model is implemented in Rust; this worker currently
+  // only wires the browser's input batches into the USB HID models (for the UHCI
+  // path) while retaining PS/2 scancode events for the legacy path.
   const base = 2;
   for (let i = 0; i < count; i++) {
     const off = base + i * 4;
     const type = words[off] >>> 0;
     switch (type) {
-      case InputEventType.KeyScancode:
-        // Key payload is packed bytes + len. No-op for now.
+      case InputEventType.KeyHidUsage: {
+        const packed = words[off + 2] >>> 0;
+        const usage = packed & 0xff;
+        const pressed = ((packed >>> 8) & 1) !== 0;
+        usbHid?.keyboard_event(usage, pressed);
         break;
-      case InputEventType.MouseMove:
-      case InputEventType.MouseButtons:
-      case InputEventType.MouseWheel:
-        // PS/2 mouse events (not yet wired into the device model here).
+      }
+      case InputEventType.MouseMove: {
+        const dx = words[off + 2] | 0;
+        const dyPs2 = words[off + 3] | 0;
+        // PS/2 convention: positive is up. HID convention: positive is down.
+        usbHid?.mouse_move(dx, -dyPs2);
         break;
+      }
+      case InputEventType.MouseButtons: {
+        usbHid?.mouse_buttons(words[off + 2] & 0xff);
+        break;
+      }
+      case InputEventType.MouseWheel: {
+        usbHid?.mouse_wheel(words[off + 2] | 0);
+        break;
+      }
       case InputEventType.GamepadReport:
         // HID gamepad report: a/b are packed 8 bytes.
+        break;
+      case InputEventType.KeyScancode:
+        // Key payload is packed bytes + len. No-op for now.
         break;
       default:
         // Unknown event type; ignore.
@@ -463,6 +495,8 @@ function shutdown(): void {
   }
 
   activeAccessHandle?.close();
+  usbHid?.free();
+  usbHid = null;
   setReadyFlag(status, role, false);
   ctx.close();
 }

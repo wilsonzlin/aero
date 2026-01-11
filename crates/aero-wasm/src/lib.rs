@@ -15,10 +15,16 @@ use aero_opfs::OpfsSyncFile;
 use aero_platform::audio::mic_bridge::MicBridge;
 
 #[cfg(target_arch = "wasm32")]
-use js_sys::SharedArrayBuffer;
+use js_sys::{SharedArrayBuffer, Uint8Array};
 
 #[cfg(target_arch = "wasm32")]
-use aero_audio::pcm::{decode_pcm_to_stereo_f32, LinearResampler, StreamFormat};
+use aero_audio::pcm::{LinearResampler, StreamFormat, decode_pcm_to_stereo_f32};
+
+#[cfg(target_arch = "wasm32")]
+use aero_usb::{
+    hid::{UsbHidKeyboard, UsbHidMouse},
+    usb::{UsbDevice, UsbHandshake},
+};
 
 // wasm-bindgen's "threads" transform expects TLS metadata symbols (e.g.
 // `__tls_size`) to exist in shared-memory builds. Those symbols are only emitted
@@ -230,9 +236,90 @@ pub fn demo_render_rgba8888(
     }
 }
 
+/// Tiny WASM-side USB HID glue used by the browser I/O worker.
+///
+/// This object is intentionally self-contained: it exposes stateful "input
+/// injection" methods (`keyboard_event`, `mouse_move`, ...) and optional debug
+/// drains that return the raw boot-protocol reports for tests.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
-pub fn create_worklet_bridge(capacity_frames: u32, channel_count: u32) -> Result<WorkletBridge, JsValue> {
+pub struct UsbHidBridge {
+    keyboard: UsbHidKeyboard,
+    mouse: UsbHidMouse,
+    mouse_buttons: u8,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl UsbHidBridge {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            keyboard: UsbHidKeyboard::new(),
+            mouse: UsbHidMouse::new(),
+            mouse_buttons: 0,
+        }
+    }
+
+    /// Inject a single HID keyboard usage event.
+    pub fn keyboard_event(&mut self, usage: u8, pressed: bool) {
+        self.keyboard.key_event(usage, pressed);
+    }
+
+    /// Inject a relative mouse movement event.
+    ///
+    /// `dy` uses HID convention: positive is down.
+    pub fn mouse_move(&mut self, dx: i32, dy: i32) {
+        self.mouse.movement(dx, dy);
+    }
+
+    /// Set mouse button state as a bitmask (bit0=left, bit1=right, bit2=middle).
+    pub fn mouse_buttons(&mut self, buttons: u8) {
+        let next = buttons & 0x07;
+        let prev = self.mouse_buttons;
+        let delta = prev ^ next;
+
+        for bit in [0x01, 0x02, 0x04] {
+            if (delta & bit) != 0 {
+                self.mouse.button_event(bit, (next & bit) != 0);
+            }
+        }
+
+        self.mouse_buttons = next;
+    }
+
+    /// Inject a mouse wheel movement (positive = wheel up).
+    pub fn mouse_wheel(&mut self, delta: i32) {
+        self.mouse.wheel(delta);
+    }
+
+    /// Drain the next 8-byte boot keyboard report (or return `null` if none).
+    pub fn drain_next_keyboard_report(&mut self) -> JsValue {
+        let mut buf = [0u8; 8];
+        match self.keyboard.handle_in(1, &mut buf) {
+            UsbHandshake::Ack { bytes } if bytes > 0 => Uint8Array::from(&buf[..bytes]).into(),
+            _ => JsValue::NULL,
+        }
+    }
+
+    /// Drain the next mouse report (or return `null` if none).
+    ///
+    /// In report protocol this is 4 bytes: buttons, dx, dy, wheel.
+    pub fn drain_next_mouse_report(&mut self) -> JsValue {
+        let mut buf = [0u8; 4];
+        match self.mouse.handle_in(1, &mut buf) {
+            UsbHandshake::Ack { bytes } if bytes > 0 => Uint8Array::from(&buf[..bytes]).into(),
+            _ => JsValue::NULL,
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn create_worklet_bridge(
+    capacity_frames: u32,
+    channel_count: u32,
+) -> Result<WorkletBridge, JsValue> {
     WorkletBridge::new(capacity_frames, channel_count)
 }
 
@@ -388,9 +475,11 @@ impl HdaPcmWriter {
             return Ok(0);
         }
 
-        if fmt.sample_rate_hz != self.resampler.src_rate_hz() || self.dst_sample_rate_hz != self.resampler.dst_rate_hz()
+        if fmt.sample_rate_hz != self.resampler.src_rate_hz()
+            || self.dst_sample_rate_hz != self.resampler.dst_rate_hz()
         {
-            self.resampler.reset_rates(fmt.sample_rate_hz, self.dst_sample_rate_hz);
+            self.resampler
+                .reset_rates(fmt.sample_rate_hz, self.dst_sample_rate_hz);
         }
 
         let decoded = decode_pcm_to_stereo_f32(pcm_bytes, fmt);

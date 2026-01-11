@@ -8,6 +8,17 @@ export enum InputEventType {
    */
   KeyScancode = 1,
   /**
+   * A USB HID keyboard usage event (Usage Page 0x07).
+   *
+   * This is emitted in addition to `KeyScancode` so the runtime can drive both
+   * legacy PS/2 (i8042) and USB HID (UHCI) paths from the same captured input.
+   *
+   * Payload:
+   *   a = (usage & 0xFF) | ((pressed ? 1 : 0) << 8)
+   *   b = unused
+   */
+  KeyHidUsage = 6,
+  /**
    * Relative mouse movement in PS/2 coordinate space (dx right, dy up).
    *
    * Payload:
@@ -98,6 +109,11 @@ export class InputEventQueue {
 
   pushKeyScancode(timestampUs: number, packedBytes: number, byteLen: number): void {
     this.push(InputEventType.KeyScancode, timestampUs, packedBytes | 0, byteLen | 0);
+  }
+
+  pushKeyHidUsage(timestampUs: number, usage: number, pressed: boolean): void {
+    const packed = ((usage & 0xff) | ((pressed ? 1 : 0) << 8)) | 0;
+    this.push(InputEventType.KeyHidUsage, timestampUs, packed, 0);
   }
 
   pushMouseMove(timestampUs: number, dx: number, dy: number): void {
