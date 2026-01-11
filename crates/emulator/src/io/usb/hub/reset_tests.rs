@@ -172,9 +172,12 @@ fn hub_interrupt_endpoint_naks_when_unconfigured() {
         hub.handle_control_request(setup(0x00, 0x09, 1, 0, 0), None),
         ControlResponse::Ack
     );
-    assert!(matches!(hub.handle_interrupt_in(0x81), UsbInResult::Data(_)));
+    assert!(matches!(
+        hub.handle_in_transfer(0x81, 1),
+        UsbInResult::Data(_)
+    ));
 
     // Upstream reset must force interrupt IN to NAK when the hub is unconfigured.
     hub.reset();
-    assert_eq!(hub.handle_interrupt_in(0x81), UsbInResult::Nak);
+    assert_eq!(hub.handle_in_transfer(0x81, 1), UsbInResult::Nak);
 }

@@ -711,29 +711,29 @@ mod tests {
 
         pipeline.handle_gamepad_buttons(0x0001).unwrap();
         assert_eq!(
-            composite.handle_interrupt_in(0x83),
+            composite.handle_in_transfer(0x83, 8),
             UsbInResult::Data(vec![0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00])
         );
 
         pipeline.handle_gamepad_button(2, true).unwrap();
         assert_eq!(
-            composite.handle_interrupt_in(0x83),
+            composite.handle_in_transfer(0x83, 8),
             UsbInResult::Data(vec![0x03, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00])
         );
 
         pipeline.handle_gamepad_hat(Some(2)).unwrap();
         assert_eq!(
-            composite.handle_interrupt_in(0x83),
+            composite.handle_in_transfer(0x83, 8),
             UsbInResult::Data(vec![0x03, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00])
         );
 
         pipeline.handle_gamepad_axes(1, -1, 5, -5).unwrap();
         assert_eq!(
-            composite.handle_interrupt_in(0x83),
+            composite.handle_in_transfer(0x83, 8),
             UsbInResult::Data(vec![0x03, 0x00, 0x02, 0x01, 0xff, 0x05, 0xfb, 0x00])
         );
 
-        assert_eq!(composite.handle_interrupt_in(0x83), UsbInResult::Nak);
+        assert_eq!(composite.handle_in_transfer(0x83, 8), UsbInResult::Nak);
     }
 
     #[test]
@@ -746,29 +746,29 @@ mod tests {
 
         pipeline.handle_gamepad_buttons(0x0001).unwrap();
         assert_eq!(
-            gamepad.handle_interrupt_in(0x81),
+            gamepad.handle_in_transfer(0x81, 8),
             UsbInResult::Data(vec![0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00])
         );
 
         pipeline.handle_gamepad_button(2, true).unwrap();
         assert_eq!(
-            gamepad.handle_interrupt_in(0x81),
+            gamepad.handle_in_transfer(0x81, 8),
             UsbInResult::Data(vec![0x03, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00])
         );
 
         pipeline.handle_gamepad_hat(Some(2)).unwrap();
         assert_eq!(
-            gamepad.handle_interrupt_in(0x81),
+            gamepad.handle_in_transfer(0x81, 8),
             UsbInResult::Data(vec![0x03, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00])
         );
 
         pipeline.handle_gamepad_axes(1, -1, 5, -5).unwrap();
         assert_eq!(
-            gamepad.handle_interrupt_in(0x81),
+            gamepad.handle_in_transfer(0x81, 8),
             UsbInResult::Data(vec![0x03, 0x00, 0x02, 0x01, 0xff, 0x05, 0xfb, 0x00])
         );
 
-        assert_eq!(gamepad.handle_interrupt_in(0x81), UsbInResult::Nak);
+        assert_eq!(gamepad.handle_in_transfer(0x81, 8), UsbInResult::Nak);
     }
 
     #[test]
@@ -790,13 +790,13 @@ mod tests {
 
         pipeline.handle_gamepad_report(report).unwrap();
         assert_eq!(
-            composite.handle_interrupt_in(0x83),
+            composite.handle_in_transfer(0x83, 8),
             UsbInResult::Data(vec![0x03, 0x00, 0x02, 0x01, 0xff, 0x05, 0xfb, 0x00])
         );
 
         // Re-sending an identical report should not enqueue another update.
         pipeline.handle_gamepad_report(report).unwrap();
-        assert_eq!(composite.handle_interrupt_in(0x83), UsbInResult::Nak);
+        assert_eq!(composite.handle_in_transfer(0x83, 8), UsbInResult::Nak);
     }
 
     #[test]
@@ -818,12 +818,12 @@ mod tests {
 
         pipeline.handle_gamepad_report(report).unwrap();
         assert_eq!(
-            gamepad.handle_interrupt_in(0x81),
+            gamepad.handle_in_transfer(0x81, 8),
             UsbInResult::Data(vec![0x03, 0x00, 0x02, 0x01, 0xff, 0x05, 0xfb, 0x00])
         );
 
         pipeline.handle_gamepad_report(report).unwrap();
-        assert_eq!(gamepad.handle_interrupt_in(0x81), UsbInResult::Nak);
+        assert_eq!(gamepad.handle_in_transfer(0x81, 8), UsbInResult::Nak);
     }
 
     #[test]
@@ -840,8 +840,8 @@ mod tests {
         configure_usb_device(&mut composite);
         configure_usb_device(&mut gamepad);
 
-        assert_eq!(composite.handle_interrupt_in(0x83), UsbInResult::Nak);
-        assert_eq!(gamepad.handle_interrupt_in(0x81), UsbInResult::Nak);
+        assert_eq!(composite.handle_in_transfer(0x83, 8), UsbInResult::Nak);
+        assert_eq!(gamepad.handle_in_transfer(0x81, 8), UsbInResult::Nak);
     }
 
     #[test]
@@ -858,9 +858,9 @@ mod tests {
         pipeline.handle_gamepad_buttons(0x0001).unwrap();
 
         assert_eq!(
-            composite.handle_interrupt_in(0x83),
+            composite.handle_in_transfer(0x83, 8),
             UsbInResult::Data(vec![0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00])
         );
-        assert_eq!(gamepad.handle_interrupt_in(0x81), UsbInResult::Nak);
+        assert_eq!(gamepad.handle_in_transfer(0x81, 8), UsbInResult::Nak);
     }
 }

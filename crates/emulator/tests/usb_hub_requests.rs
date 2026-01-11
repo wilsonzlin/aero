@@ -265,7 +265,7 @@ fn usb_hub_standard_endpoint_halt_controls_interrupt_polling() {
         ControlResponse::Ack
     );
 
-    let UsbInResult::Data(bitmap) = hub.handle_interrupt_in(HUB_INTERRUPT_IN_EP) else {
+    let UsbInResult::Data(bitmap) = hub.handle_in_transfer(HUB_INTERRUPT_IN_EP, 1) else {
         panic!("expected port-change bitmap");
     };
     assert_eq!(bitmap.len(), 1);
@@ -280,7 +280,7 @@ fn usb_hub_standard_endpoint_halt_controls_interrupt_polling() {
     );
 
     assert_eq!(
-        hub.handle_interrupt_in(HUB_INTERRUPT_IN_EP),
+        hub.handle_in_transfer(HUB_INTERRUPT_IN_EP, 1),
         UsbInResult::Stall
     );
 
@@ -300,7 +300,7 @@ fn usb_hub_standard_endpoint_halt_controls_interrupt_polling() {
     );
 
     assert_ne!(
-        hub.handle_interrupt_in(HUB_INTERRUPT_IN_EP),
+        hub.handle_in_transfer(HUB_INTERRUPT_IN_EP, 1),
         UsbInResult::Stall,
         "clearing ENDPOINT_HALT should restore interrupt endpoint"
     );
@@ -312,7 +312,7 @@ fn usb_hub_standard_endpoint_halt_controls_interrupt_polling() {
     };
     assert_eq!(st, [0, 0]);
 
-    let UsbInResult::Data(bitmap) = hub.handle_interrupt_in(HUB_INTERRUPT_IN_EP) else {
+    let UsbInResult::Data(bitmap) = hub.handle_in_transfer(HUB_INTERRUPT_IN_EP, 1) else {
         panic!("expected port-change bitmap after clearing halt");
     };
     assert_ne!(bitmap[0] & 0x02, 0); // bit1 = port1 change
@@ -667,7 +667,7 @@ fn usb_hub_interrupt_bitmap_scales_with_port_count() {
         ControlResponse::Ack
     );
 
-    let UsbInResult::Data(bitmap) = hub.handle_interrupt_in(HUB_INTERRUPT_IN_EP) else {
+    let UsbInResult::Data(bitmap) = hub.handle_in_transfer(HUB_INTERRUPT_IN_EP, 2) else {
         panic!("expected port-change bitmap");
     };
     assert_eq!(bitmap.len(), 2);
