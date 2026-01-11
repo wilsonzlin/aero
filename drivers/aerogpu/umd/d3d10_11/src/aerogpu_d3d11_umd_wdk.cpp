@@ -519,6 +519,12 @@ static D3D10DDI_HRTDEVICE MakeRtDeviceHandle10(Device* dev) {
   return h;
 }
 
+static D3D11DDI_HDEVICE MakeDeviceHandle(Device* dev) {
+  D3D11DDI_HDEVICE h{};
+  h.pDrvPrivate = dev;
+  return h;
+}
+
 template <typename Fn, typename HandleA, typename HandleB, typename... Args>
 decltype(auto) CallCbMaybeHandle(Fn fn, HandleA handle_a, HandleB handle_b, Args&&... args);
 static void InitLockForWrite(D3DDDICB_LOCK* lock) {
@@ -541,8 +547,16 @@ static void SetError(Device* dev, HRESULT hr) {
     return;
   }
   auto* callbacks = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
-  if (callbacks && callbacks->pfnSetErrorCb && dev->runtime_device) {
-    callbacks->pfnSetErrorCb(MakeRtDeviceHandle(dev), hr);
+  if (callbacks && callbacks->pfnSetErrorCb) {
+    // Win7-era WDK headers disagree on whether pfnSetErrorCb takes HRTDEVICE or
+    // HDEVICE. Prefer the HDEVICE form when that's what the signature expects.
+    if constexpr (std::is_invocable_v<decltype(callbacks->pfnSetErrorCb), D3D11DDI_HDEVICE, HRESULT>) {
+      callbacks->pfnSetErrorCb(MakeDeviceHandle(dev), hr);
+      return;
+    }
+    if (dev->runtime_device) {
+      CallCbMaybeHandle(callbacks->pfnSetErrorCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), hr);
+    }
     return;
   }
 
