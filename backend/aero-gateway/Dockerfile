@@ -21,6 +21,8 @@ WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY backend/aero-gateway/package.json backend/aero-gateway/package.json
 
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
 RUN npm ci -w backend/aero-gateway --include-workspace-root --no-audit --no-fund
 
 COPY backend/aero-gateway backend/aero-gateway
@@ -37,6 +39,7 @@ FROM node:${NODE_VERSION}-alpine AS runtime
 WORKDIR /repo
 
 ENV NODE_ENV=production
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 ARG GIT_SHA=dev
 ARG VERSION=$GIT_SHA
