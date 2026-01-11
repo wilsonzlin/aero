@@ -590,7 +590,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
         required_groups = (("viostor",), ("netkvm",))
     elif spec_path.name == "win7-aero-virtio.json":
         required_groups = (("aerovblk",), ("aerovnet",))
-    elif spec_path.name == "win7-aero-guest-tools.json":
+    elif spec_path.name in ("win7-aero-guest-tools.json", "win7-signed.json"):
         required_groups = (("aerogpu",), ("virtio-blk",), ("virtio-net",), ("virtio-input",))
     else:
         required_groups = ()
@@ -602,6 +602,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             f"Remediation: update {spec_path} to include them."
         )
     matches: List[Tuple[str, Tuple[str, str]]] = []
+    skipped: List[str] = []
 
     def maybe_validate(
         driver_name: str, *, devices_var: str, hwids: Tuple[str, ...], driver_kind: str
@@ -627,6 +628,16 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
                 pat = re.escape(base)
                 if pat not in patterns:
                     patterns.append(pat)
+
+        if not patterns and spec_path.name == "win7-signed.json":
+            if not hwids:
+                raise ValidationError(
+                    f"{devices_var} is empty.\n"
+                    f"Remediation: set {devices_var} in guest-tools/config/devices.cmd to the emulator-presented PCI HWIDs for {driver_kind}."
+                )
+            skipped.append(driver_name)
+            return
+
         match = _validate_hwid_contract(
             spec_path=spec_path,
             driver_name=driver_name,
@@ -706,7 +717,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
         driver_kind="AeroGPU",
     )
 
-    if not matches:
+    if not matches and not skipped:
         supported = [
             "viostor",
             "netkvm",
@@ -730,6 +741,8 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
     print(f"- virtio-blk service : {devices.virtio_blk_service} (contract: {expected_blk_service})")
     for name, (pattern, hwid) in matches:
         print(f"- {name} HWID match : {pattern!r} matched {hwid!r}")
+    for name in sorted(set(skipped)):
+        print(f"- {name} HWID match : skipped (no expected_hardware_ids in {spec_path.name})")
 
 
 def main(argv: Sequence[str]) -> int:

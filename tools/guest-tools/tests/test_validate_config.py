@@ -161,6 +161,55 @@ class ValidateConfigTests(unittest.TestCase):
         )
         self.assertIsNotNone(match)
 
+    def test_win7_signed_spec_allows_empty_expected_hwid_patterns(self) -> None:
+        # `win7-signed.json` intentionally does not pin HWIDs. The validator should
+        # still accept it (after enforcing required driver entries and the
+        # boot-critical contract checks).
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-validate-config-") as tmp:
+            tmp_path = Path(tmp)
+            devices_cmd = tmp_path / "devices.cmd"
+
+            virtio_blk = _contract_device("virtio-blk")
+            virtio_net = _contract_device("virtio-net")
+            virtio_input = _contract_device("virtio-input")
+            virtio_snd = _contract_device("virtio-snd")
+            aerogpu = _contract_device("aero-gpu")
+
+            devices_cmd.write_text(
+                "\n".join(
+                    [
+                        f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
+                        f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
+                        f"set AERO_VIRTIO_INPUT_HWIDS={_quote_items(virtio_input.hardware_id_patterns)}",
+                        f"set AERO_VIRTIO_SND_HWIDS={_quote_items(virtio_snd.hardware_id_patterns)}",
+                        f"set AERO_GPU_HWIDS={_quote_items(aerogpu.hardware_id_patterns)}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            spec_path = tmp_path / "win7-signed.json"
+            spec_path.write_text(
+                json.dumps(
+                    {
+                        "drivers": [
+                            {"name": "aerogpu", "required": True, "expected_hardware_ids": []},
+                            {"name": "virtio-blk", "required": True, "expected_hardware_ids": []},
+                            {"name": "virtio-net", "required": True, "expected_hardware_ids": []},
+                            {"name": "virtio-input", "required": True, "expected_hardware_ids": []},
+                            {"name": "virtio-snd", "required": False, "expected_hardware_ids": []},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            devices = validate_config.load_devices_cmd(devices_cmd)
+            expected = validate_config.load_packaging_spec(spec_path)
+            with redirect_stdout(io.StringIO()):
+                validate_config.validate(devices, spec_path, expected)
+
 
 if __name__ == "__main__":
     unittest.main()
