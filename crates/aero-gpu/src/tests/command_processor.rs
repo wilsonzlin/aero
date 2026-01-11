@@ -455,3 +455,59 @@ fn command_processor_rejects_import_into_existing_buffer_handle() {
         CommandProcessorError::SharedSurfaceHandleInUse(0x10)
     ));
 }
+
+#[test]
+fn command_processor_rejects_reexporting_token_after_release() {
+    let mut proc = AeroGpuCommandProcessor::new();
+
+    const TEX_A: u32 = 0x10;
+    const TEX_B: u32 = 0x11;
+    const TOKEN: u64 = 0x1122_3344_5566_7788;
+
+    let stream = build_stream(|out| {
+        emit_packet(out, AeroGpuOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, TEX_A); // texture_handle
+            push_u32(out, 0); // usage_flags
+            push_u32(out, 3); // format (opaque numeric)
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+        emit_packet(out, AeroGpuOpcode::ExportSharedSurface as u32, |out| {
+            push_u32(out, TEX_A); // resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, TOKEN);
+        });
+        emit_packet(out, AeroGpuOpcode::ReleaseSharedSurface as u32, |out| {
+            push_u64(out, TOKEN);
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, AeroGpuOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, TEX_B); // texture_handle
+            push_u32(out, 0); // usage_flags
+            push_u32(out, 3); // format
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+        emit_packet(out, AeroGpuOpcode::ExportSharedSurface as u32, |out| {
+            push_u32(out, TEX_B); // resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, TOKEN);
+        });
+    });
+
+    let err = proc.process_submission(&stream, 0).unwrap_err();
+    assert!(matches!(err, CommandProcessorError::ShareTokenRetired(t) if t == TOKEN));
+}
