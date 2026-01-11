@@ -37,6 +37,13 @@ for %%A in (%*) do (
   if /i "%%~A"=="/no-reboot" set "ARG_NO_REBOOT=1"
 )
 
+call :require_admin_stdout
+if errorlevel 1 (
+  set "RC=%ERRORLEVEL%"
+  popd >nul 2>&1
+  exit /b %RC%
+)
+
 call :init_logging || goto :fail
 call :log "Aero Guest Tools uninstall starting..."
 call :log "Script dir: %SCRIPT_DIR%"
@@ -101,6 +108,16 @@ exit /b 0
 :log
 echo(%*
 >>"%LOG%" echo(%*
+exit /b 0
+
+:require_admin_stdout
+echo Checking for Administrator privileges...
+"%SYS32%\fsutil.exe" dirty query %SYSTEMDRIVE% >nul 2>&1
+if errorlevel 1 (
+  echo ERROR: Administrator privileges are required.
+  echo Right-click uninstall.cmd and choose 'Run as administrator'.
+  exit /b %EC_ADMIN_REQUIRED%
+)
 exit /b 0
 
 :require_admin
