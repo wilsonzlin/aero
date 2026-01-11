@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { parseIpcBuffer } from "../ipc/ipc";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { RECORD_ALIGN, ringCtrl } from "../ipc/layout";
 import { Worker, type WorkerOptions } from "node:worker_threads";
@@ -8,6 +9,12 @@ import {
   CONTROL_BYTES,
   CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES,
   EVENT_RING_CAPACITY_BYTES,
+  IO_IPC_CMD_QUEUE_KIND,
+  IO_IPC_EVT_QUEUE_KIND,
+  IO_IPC_NET_RING_CAPACITY_BYTES,
+  IO_IPC_NET_RX_QUEUE_KIND,
+  IO_IPC_NET_TX_QUEUE_KIND,
+  IO_IPC_RING_CAPACITY_BYTES,
   RUNTIME_RESERVED_BYTES,
   STATUS_BYTES,
   WORKER_ROLES,
@@ -138,5 +145,23 @@ describe("runtime/shared_layout", () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
     expect(segments.sharedFramebuffer).toBe(segments.guestMemory.buffer);
     expect(segments.sharedFramebufferOffsetBytes).toBe(RUNTIME_RESERVED_BYTES + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES);
+  });
+
+  it("allocates ioIpc AIPC queues for device I/O + raw Ethernet frames", () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB });
+    const { queues } = parseIpcBuffer(segments.ioIpc);
+
+    expect(queues.map((q) => q.kind).sort((a, b) => a - b)).toEqual([
+      IO_IPC_CMD_QUEUE_KIND,
+      IO_IPC_EVT_QUEUE_KIND,
+      IO_IPC_NET_TX_QUEUE_KIND,
+      IO_IPC_NET_RX_QUEUE_KIND,
+    ]);
+
+    const caps = new Map(queues.map((q) => [q.kind, q.capacityBytes]));
+    expect(caps.get(IO_IPC_CMD_QUEUE_KIND)).toBe(IO_IPC_RING_CAPACITY_BYTES);
+    expect(caps.get(IO_IPC_EVT_QUEUE_KIND)).toBe(IO_IPC_RING_CAPACITY_BYTES);
+    expect(caps.get(IO_IPC_NET_TX_QUEUE_KIND)).toBe(IO_IPC_NET_RING_CAPACITY_BYTES);
+    expect(caps.get(IO_IPC_NET_RX_QUEUE_KIND)).toBe(IO_IPC_NET_RING_CAPACITY_BYTES);
   });
 });

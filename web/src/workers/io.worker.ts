@@ -13,6 +13,8 @@ import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
 import {
   IO_IPC_CMD_QUEUE_KIND,
   IO_IPC_EVT_QUEUE_KIND,
+  IO_IPC_NET_RX_QUEUE_KIND,
+  IO_IPC_NET_TX_QUEUE_KIND,
   StatusIndex,
   createSharedMemoryViews,
   ringRegionsForWorker,
@@ -66,6 +68,8 @@ let eventRing: RingBuffer | null = null;
 
 let ioCmdRing: RingBuffer | null = null;
 let ioEvtRing: RingBuffer | null = null;
+let netTxRing: RingBuffer | null = null;
+let netRxRing: RingBuffer | null = null;
 const pendingIoEvents: Uint8Array[] = [];
 
 const DISK_ERROR_NO_ACTIVE_DISK = 1;
@@ -554,6 +558,8 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
       ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
       ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
+      netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
+      netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
 
       const irqSink: IrqSink = {
         raiseIrq: (irq) => enqueueIoEvent(encodeEvent({ kind: "irqRaise", irq: irq & 0xff })),

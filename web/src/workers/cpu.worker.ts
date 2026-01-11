@@ -37,6 +37,8 @@ import {
   CPU_WORKER_DEMO_GUEST_COUNTER_OFFSET_BYTES,
   IO_IPC_CMD_QUEUE_KIND,
   IO_IPC_EVT_QUEUE_KIND,
+  IO_IPC_NET_RX_QUEUE_KIND,
+  IO_IPC_NET_TX_QUEUE_KIND,
   StatusIndex,
   createSharedMemoryViews,
   ringRegionsForWorker,
@@ -120,6 +122,8 @@ let guestU8!: Uint8Array;
 let vgaFramebuffer: ReturnType<typeof wrapSharedFramebuffer> | null = null;
 let frameState: Int32Array | null = null;
 let io: AeroIpcIoClient | null = null;
+let ioNetTxRing: RingBuffer | null = null;
+let ioNetRxRing: RingBuffer | null = null;
 let didIoDemo = false;
 
 let irqBitmapLo = 0;
@@ -1036,6 +1040,8 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
       const ioCmd = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
       const ioEvt = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
+      ioNetTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
+      ioNetRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
       irqBitmapLo = 0;
       irqBitmapHi = 0;
       Atomics.store(status, StatusIndex.CpuIrqBitmapLo, 0);

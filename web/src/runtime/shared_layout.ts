@@ -74,6 +74,23 @@ export const IO_IPC_CMD_QUEUE_KIND = 0;
 export const IO_IPC_EVT_QUEUE_KIND = 1;
 export const IO_IPC_RING_CAPACITY_BYTES = 32 * 1024;
 
+// Raw Ethernet frame transport (guest <-> host) for the Option C L2 tunnel.
+//
+// These are separate from the command/event queues so bulk frame traffic does not
+// starve low-latency device operations.
+export const IO_IPC_NET_TX_QUEUE_KIND = 2;
+export const IO_IPC_NET_RX_QUEUE_KIND = 3;
+export const IO_IPC_NET_RING_CAPACITY_BYTES = 512 * 1024;
+
+export function createIoIpcSab(): SharedArrayBuffer {
+  return createIpcBuffer([
+    { kind: IO_IPC_CMD_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
+    { kind: IO_IPC_EVT_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
+    { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: IO_IPC_NET_RING_CAPACITY_BYTES },
+    { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: IO_IPC_NET_RING_CAPACITY_BYTES },
+  ]).buffer;
+}
+
 /**
  * Guest memory placeholder.
  *
@@ -89,8 +106,8 @@ export const IO_IPC_RING_CAPACITY_BYTES = 32 * 1024;
  *
  * Therefore we deliberately use multiple shared memory segments:
  * - `control`: a small SharedArrayBuffer for runtime IPC (status + START/STOP rings).
- * - `ioIpc`: a SharedArrayBuffer carrying the high-frequency AIPC command/event queues
- *   (disk I/O, device access, etc).
+ * - `ioIpc`: a SharedArrayBuffer carrying high-frequency AIPC queues
+ *   (device command/event traffic, raw Ethernet frames, etc).
  * - `guestMemory`: a shared WebAssembly.Memory for guest RAM.
  * - `vgaFramebuffer`: a shared framebuffer region for early VGA/VBE display.
  *
@@ -402,10 +419,7 @@ export function allocateSharedMemorySegments(options?: {
     vgaFramebuffer: new SharedArrayBuffer(
       requiredFramebufferBytes(VGA_FRAMEBUFFER_MAX_WIDTH, VGA_FRAMEBUFFER_MAX_HEIGHT, VGA_FRAMEBUFFER_MAX_WIDTH * 4),
     ),
-    ioIpc: createIpcBuffer([
-      { kind: IO_IPC_CMD_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
-      { kind: IO_IPC_EVT_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
-    ]).buffer,
+    ioIpc: createIoIpcSab(),
     sharedFramebuffer,
     sharedFramebufferOffsetBytes,
   };

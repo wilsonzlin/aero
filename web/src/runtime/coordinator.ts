@@ -1,5 +1,4 @@
 import type { AeroConfig } from "../config/aero_config";
-import { createIpcBuffer } from "../ipc/ipc";
 import { ringCtrl } from "../ipc/layout";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { decodeEvent, encodeCommand, type Command, type Event } from "../ipc/protocol";
@@ -11,13 +10,11 @@ import {
   WORKER_ROLES,
   type WorkerRole,
   CPU_WORKER_DEMO_GUEST_COUNTER_INDEX,
-  IO_IPC_CMD_QUEUE_KIND,
-  IO_IPC_EVT_QUEUE_KIND,
-  IO_IPC_RING_CAPACITY_BYTES,
   StatusIndex,
   allocateSharedMemorySegments,
   checkSharedMemorySupport,
   computeGuestRamLayout,
+  createIoIpcSab,
   createSharedMemoryViews,
   ringRegionsForWorker,
   setReadyFlag,
@@ -475,10 +472,7 @@ export class WorkerCoordinator {
     this.resetAllRings(shared.segments.control);
     // Reset the CPU↔I/O AIPC rings so the restarted workers don't observe stale
     // device-bus traffic from the previous run.
-    shared.segments.ioIpc = createIpcBuffer([
-      { kind: IO_IPC_CMD_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
-      { kind: IO_IPC_EVT_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
-    ]).buffer;
+    shared.segments.ioIpc = createIoIpcSab();
     if (this.frameStateSab) new Int32Array(this.frameStateSab).fill(0);
 
     this.nextCmdSeq = 1;
