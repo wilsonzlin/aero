@@ -91,6 +91,6 @@ msbuild drivers\aerogpu\aerogpu.sln /m /p:Configuration=Release /p:Platform=x64
 ```
 
 CI builds the same solution (and stages outputs under `out/drivers/aerogpu/`) via `ci/build-drivers.ps1`.
-If your checkout still contains `drivers\aerogpu\build\build_all.cmd`, treat it as a convenience wrapper around the MSBuild-based build/staging workflow (not a WDK 7.1 BUILD entrypoint).
+If your checkout still contains `drivers\aerogpu\build\build_all.cmd`, treat it as a convenience wrapper around MSBuild/WDK10 that stages outputs under `drivers\aerogpu\build\out\win7\...`.
 
 The project expects the Windows SDK/WDK to provide D3D10/11 DDI headers (e.g. `d3d10umddi.h`, `d3d11umddi.h`) when building the real UMD.  
