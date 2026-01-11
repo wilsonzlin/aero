@@ -407,13 +407,16 @@ typedef struct AEROGPU_D3D9DDIARG_CREATERESOURCE {
   // Optional per-allocation private driver data blob (`aerogpu_wddm_alloc_priv`).
   //
   // In real WDDM builds the D3D runtime provides this as a per-allocation buffer
-  // whose contents are persisted by dxgkrnl for shared allocations.
+  // which is treated as INPUT (UMD -> dxgkrnl -> KMD). For shared allocations,
+  // dxgkrnl preserves these bytes and returns them verbatim when another process
+  // opens the resource (OpenResource/OpenAllocation).
   //
-  // AeroGPU treats this as **UMD → KMD input**: the UMD writes
-  // `aerogpu_wddm_alloc_priv` (alloc_id/share_token/size) at creation time.
-  // dxgkrnl preserves the bytes for shared allocations and replays them when the
-  // resource is opened in another process, allowing both processes to observe
-  // identical IDs.
+  // AeroGPU uses this to persist a UMD-owned `aerogpu_wddm_alloc_priv`
+  // (alloc_id/share_token/size) for shared resources: the UMD writes the blob
+  // during create, and the KMD validates/consumes it. Do not rely on any KMD->UMD
+  // writeback semantics on Win7/WDDM 1.1.
+  //
+  // See also: drivers/aerogpu/protocol/aerogpu_wddm_alloc.h
   //
   // The "PrivateDriverData" naming matches WDK conventions; keep the legacy
   // "KmdAllocPrivateData" alias so repo-only callers can be explicit.
