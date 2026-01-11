@@ -1006,7 +1006,7 @@ function runEmulationLoop() {
 >
 > - `readFrameIndex` (bytes 0..4)
 > - `writeFrameIndex` (bytes 4..8)
-> - `underrunCount` (bytes 8..12, incremented by the worklet when it must output silence)
+> - `underrunCount` (bytes 8..12, total missing output frames rendered as silence due to underruns; wraps at 2^32)
 > - `overrunCount` (bytes 12..16, incremented by the producer when frames are dropped due to buffer full)
 >
 > followed by interleaved `f32` samples at byte 16. See:
@@ -1074,8 +1074,18 @@ class AeroAudioProcessor extends AudioWorkletProcessor {
             for (let channel = 0; channel < output.length; channel++) {
                 output[channel].fill(0);
             }
-            const newCount = Atomics.add(this.underrunCount, 0, 1) + 1;
-            this.port.postMessage({ type: 'underrun', underrunCount: newCount });
+            // Count missing output frames (not underrun *events*). A single render quantum is
+            // typically 128 frames.
+            const framesMissing = output[0].length;
+            const prev = Atomics.add(this.underrunCount, 0, framesMissing);
+            const newTotal = (prev + framesMissing) >>> 0;
+            this.port.postMessage({
+                type: 'underrun',
+                underrunFramesAdded: framesMissing,
+                underrunFramesTotal: newTotal,
+                // Backwards-compatible field name; this is a frame counter (not events).
+                underrunCount: newTotal,
+            });
         }
         
         return true;

@@ -47,9 +47,8 @@ describe("startAudioPerfSampling trace integration", () => {
     }
 
     expect(keys.has("audio.bufferLevelFrames")).toBe(true);
-    expect(keys.has("audio.underruns")).toBe(true);
-    expect(keys.has("audio.overruns")).toBe(true);
+    expect(keys.has("audio.underrunFrames")).toBe(true);
+    expect(keys.has("audio.overrunFrames")).toBe(true);
     expect(keys.has("audio.sampleRate")).toBe(true);
   });
 });
-
