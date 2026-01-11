@@ -181,15 +181,18 @@ struct RasterizerState {
     cull_mode: u32,
     front_ccw: bool,
     scissor_enable: bool,
+    depth_clip_enable: bool,
 }
 
 impl Default for RasterizerState {
     fn default() -> Self {
-        // D3D11 defaults: solid fill, backface culling, clockwise front, scissor disabled.
+        // D3D11 defaults: solid fill, backface culling, clockwise front, scissor disabled,
+        // depth clipping enabled.
         Self {
             cull_mode: cmd::AerogpuCullMode::Back as u32,
             front_ccw: false,
             scissor_enable: false,
+            depth_clip_enable: true,
         }
     }
 }
@@ -1476,7 +1479,7 @@ impl AeroGpuSoftwareExecutor {
                     // NDC -> viewport pixels.
                     let x = vp.x + (pos.0 * 0.5 + 0.5) * vp.width;
                     let y = vp.y + (1.0 - (pos.1 * 0.5 + 0.5)) * vp.height;
-                    let z = (vp.min_depth + pos.2 * (vp.max_depth - vp.min_depth)).clamp(0.0, 1.0);
+                    let z = vp.min_depth + pos.2 * (vp.max_depth - vp.min_depth);
                     vertices.push(Vertex {
                         pos: (x, y),
                         depth: z,
@@ -1580,6 +1583,16 @@ impl AeroGpuSoftwareExecutor {
                     };
 
                     for tri in vertices.chunks_exact(3) {
+                        if rast.depth_clip_enable
+                            && (tri[0].depth < vp.min_depth
+                                || tri[0].depth > vp.max_depth
+                                || tri[1].depth < vp.min_depth
+                                || tri[1].depth > vp.max_depth
+                                || tri[2].depth < vp.min_depth
+                                || tri[2].depth > vp.max_depth)
+                        {
+                            continue;
+                        }
                         if rast.cull_mode != cmd::AerogpuCullMode::None as u32 {
                             let area = (tri[1].pos.0 - tri[0].pos.0)
                                 * (tri[2].pos.1 - tri[0].pos.1)
@@ -1629,6 +1642,16 @@ impl AeroGpuSoftwareExecutor {
                     return;
                 };
                 for tri in vertices.chunks_exact(3) {
+                    if rast.depth_clip_enable
+                        && (tri[0].depth < vp.min_depth
+                            || tri[0].depth > vp.max_depth
+                            || tri[1].depth < vp.min_depth
+                            || tri[1].depth > vp.max_depth
+                            || tri[2].depth < vp.min_depth
+                            || tri[2].depth > vp.max_depth)
+                    {
+                        continue;
+                    }
                     if rast.cull_mode != cmd::AerogpuCullMode::None as u32 {
                         let area = (tri[1].pos.0 - tri[0].pos.0) * (tri[2].pos.1 - tri[0].pos.1)
                             - (tri[1].pos.1 - tri[0].pos.1) * (tri[2].pos.0 - tri[0].pos.0);
@@ -1698,6 +1721,16 @@ impl AeroGpuSoftwareExecutor {
                 };
 
                 for tri in vertices.chunks_exact(3) {
+                    if rast.depth_clip_enable
+                        && (tri[0].depth < vp.min_depth
+                            || tri[0].depth > vp.max_depth
+                            || tri[1].depth < vp.min_depth
+                            || tri[1].depth > vp.max_depth
+                            || tri[2].depth < vp.min_depth
+                            || tri[2].depth > vp.max_depth)
+                    {
+                        continue;
+                    }
                     if rast.cull_mode != cmd::AerogpuCullMode::None as u32 {
                         let area = (tri[1].pos.0 - tri[0].pos.0) * (tri[2].pos.1 - tri[0].pos.1)
                             - (tri[1].pos.1 - tri[0].pos.1) * (tri[2].pos.0 - tri[0].pos.0);
@@ -1743,6 +1776,16 @@ impl AeroGpuSoftwareExecutor {
                 return;
             };
             for tri in vertices.chunks_exact(3) {
+                if rast.depth_clip_enable
+                    && (tri[0].depth < vp.min_depth
+                        || tri[0].depth > vp.max_depth
+                        || tri[1].depth < vp.min_depth
+                        || tri[1].depth > vp.max_depth
+                        || tri[2].depth < vp.min_depth
+                        || tri[2].depth > vp.max_depth)
+                {
+                    continue;
+                }
                 if rast.cull_mode != cmd::AerogpuCullMode::None as u32 {
                     let area = (tri[1].pos.0 - tri[0].pos.0) * (tri[2].pos.1 - tri[0].pos.1)
                         - (tri[1].pos.1 - tri[0].pos.1) * (tri[2].pos.0 - tri[0].pos.0);
@@ -2992,6 +3035,7 @@ impl AeroGpuSoftwareExecutor {
                     cull_mode: u32::from_le(state.cull_mode),
                     front_ccw: u32::from_le(state.front_ccw) != 0,
                     scissor_enable: u32::from_le(state.scissor_enable) != 0,
+                    depth_clip_enable: u32::from_le(state.reserved0) != 0,
                 };
             }
             cmd::AerogpuCmdOpcode::SetDepthStencilState => {
