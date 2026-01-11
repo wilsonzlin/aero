@@ -16,8 +16,8 @@ on:
       timeout_seconds:
         description: Harness timeout in seconds
         required: false
-        default: 600
-        type: number
+        default: "600"
+        type: string
       snapshot:
         description: Run QEMU in snapshot mode (discard disk writes)
         required: false
