@@ -84,8 +84,8 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
 
           await ready;
 
-          // Ensure `screenshot` triggers an internal `handleTick()` call without using
-          // an explicit GPU-protocol `tick` message.
+          // Ensure \`screenshot\` triggers an internal \`handleTick()\` call without using
+          // an explicit GPU-protocol \`tick\` message.
           Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
 
           const writerVsync = new AerogpuCmdWriter();
@@ -272,8 +272,8 @@ test("GPU worker: multiple VSYNC submit_aerogpu completions advance one-per-tick
 
           await ready;
 
-          // Ensure `screenshot` triggers an internal `handleTick()` call without using
-          // an explicit GPU-protocol `tick` message.
+          // Ensure \`screenshot\` triggers an internal \`handleTick()\` call without using
+          // an explicit GPU-protocol \`tick\` message.
           Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
 
           const writer1 = new AerogpuCmdWriter();
