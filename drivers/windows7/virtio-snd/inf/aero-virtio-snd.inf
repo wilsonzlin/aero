@@ -79,12 +79,13 @@ HKR,,FriendlyName,,%VirtioSnd.DeviceDesc%
 HKR,,DevLoader,,*ntkern
 HKR,,NTMPDriver,,virtiosnd.sys
 HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
-; WDMAudio expects a list of audio subdevices exposed by the adapter. Provide
-; both a legacy comma-separated string and a REG_MULTI_SZ list for the modern
-; PnP audio stack.
+; WDMAudio expects a list of audio subdevices exposed by the adapter.
 HKR,Drivers,SubClasses,,"wave,topology"
-HKR,Drivers,SubClasses,0x00010000,"wave","topology"
 HKR,Drivers,Driver,,virtiosnd.sys
+HKR,Drivers\wave,Driver,,virtiosnd.sys
+HKR,Drivers\wave,Description,,%VirtioSnd.EndpointDesc%
+HKR,Drivers\topology,Driver,,virtiosnd.sys
+HKR,Drivers\topology,Description,,%VirtioSnd.TopologyDesc%
 
 HKR,%KSNAME_Wave%,CLSID,,%KSProxy.CLSID%
 HKR,%KSNAME_Wave%,FriendlyName,,%VirtioSnd.EndpointDesc%

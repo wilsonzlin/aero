@@ -1,5 +1,9 @@
 ; virtio-snd (Windows 7) - clean-room PortCls/WaveRT render-only driver INF.
 
+; NOTE: `aero-virtio-snd.inf` is the canonical INF used by Aero Guest Tools.
+; This legacy-named INF is kept for compatibility with workflows/tools that
+; still reference `virtio-snd.inf`. Keep it functionally equivalent.
+
 [Version]
 Signature   = "$WINDOWS NT$"
 Class       = MEDIA
@@ -31,25 +35,57 @@ CatalogFile = virtio-snd.cat
 [DestinationDirs]
 VirtioSnd.CopyFiles = 12
 
-[VirtioSnd_Install]
-Include = ks.inf, wdmaudio.inf
-Needs   = KS.Registration, WDMAUDIO.Registration
+; PortCls / KS / WDMAudio integration (in-box on Windows 7).
+[VirtioSnd_Install.NT]
+Include   = ks.inf, wdmaudio.inf
+Needs     = KS.Registration, WDMAUDIO.Registration
 CopyFiles = VirtioSnd.CopyFiles
-AddReg   = VirtioSnd.AddReg
+AddReg    = VirtioSnd.AddReg
+
+; Register KS interfaces so MMDevice / the audio stack can enumerate the render
+; endpoint exposed by the driver’s PortCls miniports.
+[VirtioSnd_Install.NT.Interfaces]
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Wave%,     VirtioSnd.Wave.Interface
+AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_Wave%,     VirtioSnd.Wave.Interface
+AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_Wave%,     VirtioSnd.Wave.Interface
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Topology%, VirtioSnd.Topology.Interface
+AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_Topology%, VirtioSnd.Topology.Interface
+
+[VirtioSnd.Wave.Interface]
+AddReg = VirtioSnd.Wave.Interface.AddReg
+
+[VirtioSnd.Wave.Interface.AddReg]
+HKR,,CLSID,,%KSProxy.CLSID%
+HKR,,FriendlyName,,%VirtioSnd.WaveDesc%
+
+[VirtioSnd.Topology.Interface]
+AddReg = VirtioSnd.Topology.Interface.AddReg
+
+[VirtioSnd.Topology.Interface.AddReg]
+HKR,,CLSID,,%KSProxy.CLSID%
+HKR,,FriendlyName,,%VirtioSnd.TopoDesc%
 
 [VirtioSnd.AddReg]
 HKR,,DevLoader,,*ntkern
 HKR,,NTMPDriver,,virtiosnd.sys
-HKR,Drivers,SubClasses,,"Wave,Topology"
-HKR,Drivers\Wave,Driver,,virtiosnd.sys
-HKR,Drivers\Wave,Description,,%VirtioSnd.WaveDesc%
-HKR,Drivers\Topology,Driver,,virtiosnd.sys
-HKR,Drivers\Topology,Description,,%VirtioSnd.TopoDesc%
+HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
+HKR,Drivers,SubClasses,,"wave,topology"
+HKR,Drivers,Driver,,virtiosnd.sys
+HKR,Drivers\wave,Driver,,virtiosnd.sys
+HKR,Drivers\wave,Description,,%VirtioSnd.WaveDesc%
+HKR,Drivers\topology,Driver,,virtiosnd.sys
+HKR,Drivers\topology,Description,,%VirtioSnd.TopoDesc%
+
+HKR,%KSNAME_Wave%,CLSID,,%KSProxy.CLSID%
+HKR,%KSNAME_Wave%,FriendlyName,,%VirtioSnd.WaveDesc%
+
+HKR,%KSNAME_Topology%,CLSID,,%KSProxy.CLSID%
+HKR,%KSNAME_Topology%,FriendlyName,,%VirtioSnd.TopoDesc%
 
 [VirtioSnd.CopyFiles]
 virtiosnd.sys
 
-[VirtioSnd_Install.Services]
+[VirtioSnd_Install.NT.Services]
 AddService = virtiosnd, 0x00000002, VirtioSnd_Service_Inst
 
 [VirtioSnd_Service_Inst]
@@ -72,3 +108,14 @@ VirtioSnd.DeviceDesc   = "Aero VirtIO Sound Device"
 VirtioSnd.ServiceDesc  = "Aero VirtIO Sound Driver"
 VirtioSnd.WaveDesc     = "Aero VirtIO Sound (WaveRT)"
 VirtioSnd.TopoDesc     = "Aero VirtIO Sound (Topology)"
+
+; KS / audio stack identifiers (Windows 7).
+KSProxy.CLSID        = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+KSCATEGORY_AUDIO     = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_RENDER    = "{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_REALTIME  = "{EB115FF2-0D1B-11D0-A8E0-00A0C9223196}"
+KSCATEGORY_TOPOLOGY  = "{DDA54A40-1E4C-11D1-A050-405705C10000}"
+
+; PortCls subdevice names (must match the driver's PcRegisterSubdevice names).
+KSNAME_Wave          = "Wave"
+KSNAME_Topology      = "Topology"
