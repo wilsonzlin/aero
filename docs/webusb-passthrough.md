@@ -556,7 +556,8 @@ negotiated by `{ type: "usb.ringAttach", actionRing, completionRing }`:
   - the main thread drains actions on a timer and executes them via `WebUsbBackend`.
 - **`completionRing` (main thread → worker):**
   - the main thread writes `UsbHostCompletion` records into the ring (SPSC producer).
-  - the worker drains completions (timer + opportunistic drain during polling) and pushes them into the WASM bridge.
+  - the worker drains completions via a shared dispatcher (`usb_proxy_ring_dispatcher.ts`) so multiple runtimes
+    on the same port can observe completions without racing each other to `popCompletion()`.
 
 The fast path is opportunistic: when a ring is full (or a record is too large to fit), the sender falls back
 to `postMessage` (`usb.action` / `usb.completion`) so passthrough continues to make forward progress even under
@@ -572,7 +573,8 @@ Implementation pointers (current code):
 - Ring buffer: `web/src/usb/usb_proxy_ring.ts` (`UsbProxyRing`)
 - Protocol schema: `web/src/usb/usb_proxy_protocol.ts` (`usb.ringAttach`)
 - Main thread setup + action-ring drain: `web/src/usb/usb_broker.ts` (`attachRings`, `drainActionRing`)
-- Worker-side attach + action/completion forwarding: `web/src/usb/webusb_passthrough_runtime.ts` (`attachRings`, `pollOnce`, `drainCompletionRing`)
+- Worker-side attach + action forwarding: `web/src/usb/webusb_passthrough_runtime.ts` (`attachRings`, `pollOnce`)
+- Worker-side completion drain + fan-out: `web/src/usb/usb_proxy_ring_dispatcher.ts`
 - Integration tests: `web/src/usb/usb_proxy_ring_integration.test.ts`
 
 If the emulator uses WASM threads / SharedArrayBuffer (preferred), use the existing
