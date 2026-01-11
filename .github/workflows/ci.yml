@@ -173,12 +173,14 @@ jobs:
       - name: Verify Cargo.lock files are present and in sync
         run: |
           set -euo pipefail
-          # `cargo generate-lockfile --locked` is a deterministic drift check: it fails if
-          # Cargo would change any lockfile due to `Cargo.toml`/`Cargo.lock` mismatches.
-          cargo generate-lockfile --locked
-          cargo generate-lockfile --locked --manifest-path tools/packaging/aero_packager/Cargo.toml
-          cargo generate-lockfile --locked --manifest-path server/disk-gateway/Cargo.toml
-          git diff --exit-code -- Cargo.lock tools/packaging/aero_packager/Cargo.lock server/disk-gateway/Cargo.lock
+          # Use `cargo metadata --locked` as the drift check.
+          #
+          # Note: `cargo generate-lockfile` is an updater (like `cargo update`) and will
+          # intentionally re-resolve to the latest compatible versions. Using it with
+          # `--locked` can make CI flaky when crates are published between runs.
+          cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --format-version 1 >/dev/null
+          cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --format-version 1 --manifest-path tools/packaging/aero_packager/Cargo.toml >/dev/null
+          cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --format-version 1 --manifest-path server/disk-gateway/Cargo.toml >/dev/null
 
       - name: Prepare net traces dir
         run: mkdir -p target/net-traces
