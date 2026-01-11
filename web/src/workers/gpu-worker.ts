@@ -593,9 +593,63 @@ function backendKindForEvent(): string {
   return "headless";
 }
 
+function sanitizeForPostMessage(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return value;
+  }
+
+  // Errors are not consistently structured-cloneable across browsers. Convert them to plain objects so
+  // telemetry/event reporting cannot crash the worker with a DataCloneError.
+  if (value instanceof PresenterError) {
+    return { name: value.name, code: value.code, message: value.message, stack: value.stack };
+  }
+  if (value instanceof Error) {
+    return { name: value.name, message: value.message, stack: value.stack };
+  }
+
+  // Try the platform structured-clone implementation first (handles ArrayBuffer, Map, Set, etc).
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value);
+    } catch {
+      // Fall back below.
+    }
+  }
+
+  // Best-effort JSON serialization for plain objects (converts nested Errors).
+  try {
+    return JSON.parse(
+      JSON.stringify(value, (_key, v) => {
+        if (typeof v === "bigint") return v.toString();
+        if (v instanceof PresenterError) {
+          return { name: v.name, code: v.code, message: v.message, stack: v.stack };
+        }
+        if (v instanceof Error) {
+          return { name: v.name, message: v.message, stack: v.stack };
+        }
+        return v as unknown;
+      }),
+    );
+  } catch {
+    // Fall through to string.
+  }
+
+  try {
+    return String(value);
+  } catch {
+    return undefined;
+  }
+}
+
 function postGpuEvents(events: GpuRuntimeErrorEvent[]): void {
   if (events.length === 0) return;
-  postToMain({ type: "events", version: 1, events });
+  const sanitized = events.map((event) => {
+    if (event.details === undefined) return event;
+    return { ...event, details: sanitizeForPostMessage(event.details) };
+  });
+  postToMain({ type: "events", version: 1, events: sanitized });
 }
 
 function emitGpuEvent(event: GpuRuntimeErrorEvent): void {
@@ -701,13 +755,14 @@ function getStatsCounters(): GpuRuntimeStatsCountersV1 {
 
 function postStatsMessage(wasmStats?: unknown): void {
   const backendKind = presenter?.backend ?? (runtimeCanvas ? undefined : "headless");
+  const wasm = wasmStats === undefined ? undefined : sanitizeForPostMessage(wasmStats);
   postToMain({
     type: "stats",
     version: 1,
     timeMs: performance.now(),
     ...(backendKind ? { backendKind } : {}),
     counters: getStatsCounters(),
-    ...(wasmStats === undefined ? {} : { wasm: wasmStats }),
+    ...(wasm === undefined ? {} : { wasm }),
   });
 }
 
