@@ -3,6 +3,7 @@ package relay
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
@@ -132,10 +133,13 @@ func (c Config) WithDefaults() Config {
 //   - UDP_READ_BUFFER_BYTES (int)
 //   - DATACHANNEL_SEND_QUEUE_BYTES (int)
 //   - L2_BACKEND_WS_URL (string)
-//   - L2_BACKEND_ORIGIN (string; preferred)
+//   - L2_BACKEND_FORWARD_ORIGIN (bool; defaults true when L2_BACKEND_WS_URL is set)
+//   - L2_BACKEND_AUTH_FORWARD_MODE (string: none|query|subprotocol; default query)
+//   - L2_BACKEND_ORIGIN (string; alias for L2_BACKEND_ORIGIN_OVERRIDE)
+//   - L2_BACKEND_ORIGIN_OVERRIDE (string; preferred)
+//   - L2_BACKEND_WS_ORIGIN (string; legacy)
 //   - L2_BACKEND_TOKEN (string; preferred)
-//   - L2_BACKEND_WS_ORIGIN (string; deprecated)
-//   - L2_BACKEND_WS_TOKEN (string; deprecated)
+//   - L2_BACKEND_WS_TOKEN (string; legacy)
 //   - L2_MAX_MESSAGE_BYTES (int)
 func ConfigFromEnv() Config {
 	c := DefaultConfig()
@@ -143,11 +147,32 @@ func ConfigFromEnv() Config {
 	c.L2BackendWSURL = os.Getenv("L2_BACKEND_WS_URL")
 	c.L2BackendWSOrigin = os.Getenv("L2_BACKEND_ORIGIN")
 	if c.L2BackendWSOrigin == "" {
+		c.L2BackendWSOrigin = os.Getenv("L2_BACKEND_ORIGIN_OVERRIDE")
+	}
+	if c.L2BackendWSOrigin == "" {
 		c.L2BackendWSOrigin = os.Getenv("L2_BACKEND_WS_ORIGIN")
 	}
 	c.L2BackendWSToken = os.Getenv("L2_BACKEND_TOKEN")
 	if c.L2BackendWSToken == "" {
 		c.L2BackendWSToken = os.Getenv("L2_BACKEND_WS_TOKEN")
+	}
+	if v := strings.TrimSpace(os.Getenv("L2_BACKEND_AUTH_FORWARD_MODE")); v != "" {
+		switch strings.ToLower(v) {
+		case string(config.L2BackendAuthForwardModeNone):
+			c.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeNone
+		case string(config.L2BackendAuthForwardModeQuery):
+			c.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeQuery
+		case string(config.L2BackendAuthForwardModeSubprotocol):
+			c.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeSubprotocol
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("L2_BACKEND_FORWARD_ORIGIN")); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			c.L2BackendForwardOrigin = b
+		}
+	} else if strings.TrimSpace(c.L2BackendWSURL) != "" {
+		// Default to forwarding Origin when L2 is enabled.
+		c.L2BackendForwardOrigin = true
 	}
 	if v := os.Getenv("L2_MAX_MESSAGE_BYTES"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 {
