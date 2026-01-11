@@ -70,6 +70,10 @@ Components should adhere to these interfaces for integration:
 // Canonical CPU bus trait used by `aero_cpu_core` Tier-0 + JIT.
 //
 // See: `aero_cpu_core::mem::CpuBus` (`crates/aero-cpu-core/src/mem.rs`)
+//
+// Note: this is intentionally abridged; the real trait also includes scalar
+// reads/writes, bulk byte operations, `atomic_rmw` (write-intent semantics),
+// and `preflight_write_bytes` (used to keep multi-byte writes fault-atomic).
 pub trait CpuBus {
     /// Sync paging/MMU view with architectural state (CR0/CR3/CR4/EFER/CPL).
     fn sync(&mut self, state: &aero_cpu_core::state::CpuState) {}

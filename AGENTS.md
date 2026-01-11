@@ -265,6 +265,11 @@ Each component produces and consumes well-defined interfaces:
 // Notes:
 // - Addresses are *linear* (paging translation is handled by the bus, e.g. `aero_cpu_core::PagingBus`).
 // - Operations return `Result` so the CPU can raise architectural faults (e.g. `#PF`, `#GP(0)`).
+// - This snippet is intentionally abridged; the real trait also includes:
+//   - scalar reads/writes (`read_u16`, `write_u32`, ...)
+//   - bulk byte ops (`read_bytes`, `write_bytes`, `bulk_copy`, `bulk_set`)
+//   - atomic RMW (`atomic_rmw`, with write-intent semantics)
+//   - `preflight_write_bytes` for fault-atomic multi-byte writes (no partial commits)
 pub trait CpuBus {
     fn sync(&mut self, state: &aero_cpu_core::state::CpuState) {}
     fn invlpg(&mut self, vaddr: u64) {}
