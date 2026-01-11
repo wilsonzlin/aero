@@ -173,8 +173,15 @@ fn src_reg(file: RegFile, index: u32) -> SrcOperand {
     }
 }
 
-fn assert_wgsl_parses(wgsl: &str) {
-    naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
+fn assert_wgsl_validates(wgsl: &str) {
+    let module = naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
+    let mut validator = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    );
+    validator
+        .validate(&module)
+        .expect("generated WGSL failed to validate");
 }
 
 #[test]
@@ -224,7 +231,7 @@ fn translates_vertex_id_and_instance_id_builtins() {
     let signatures = parse_signatures(&dxbc).expect("signature parse");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
 
-    assert_wgsl_parses(&translated.wgsl);
+    assert_wgsl_validates(&translated.wgsl);
     assert!(translated
         .wgsl
         .contains("@builtin(vertex_index) vertex_id: u32"));
@@ -250,9 +257,10 @@ fn translates_vertex_id_and_instance_id_builtins() {
 
 #[test]
 fn translates_vertex_id_and_instance_id_builtins_from_semantics() {
+    // Ensure semantic matching is case-insensitive (D3D semantics are case-insensitive).
     let isgn = build_signature_chunk(&[
-        sig_param("SV_VertexID", 0, 0, 0b0001, 0),
-        sig_param("SV_InstanceID", 0, 1, 0b0001, 0),
+        sig_param("SV_VERTEXID", 0, 0, 0b0001, 0),
+        sig_param("sv_instanceid", 0, 1, 0b0001, 0),
     ]);
     let osgn = build_signature_chunk(&[sig_param("SV_Position", 0, 0, 0b1111, 0)]);
 
@@ -283,7 +291,7 @@ fn translates_vertex_id_and_instance_id_builtins_from_semantics() {
     };
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
-    assert_wgsl_parses(&translated.wgsl);
+    assert_wgsl_validates(&translated.wgsl);
     assert!(translated
         .wgsl
         .contains("@builtin(vertex_index) vertex_id: u32"));
@@ -340,7 +348,7 @@ fn translates_vertex_id_and_instance_id_builtins_from_system_value_type() {
     };
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
-    assert_wgsl_parses(&translated.wgsl);
+    assert_wgsl_validates(&translated.wgsl);
     assert!(translated
         .wgsl
         .contains("@builtin(vertex_index) vertex_id: u32"));
@@ -391,7 +399,7 @@ fn translates_front_facing_builtin() {
     };
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
-    assert_wgsl_parses(&translated.wgsl);
+    assert_wgsl_validates(&translated.wgsl);
     assert!(translated
         .wgsl
         .contains("@builtin(front_facing) front_facing: bool"));
