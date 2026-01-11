@@ -303,9 +303,10 @@ Recommended guardrails:
 
 - **UHCI root hub: 2 ports**
   - Only two devices can be attached *directly* to the root hub.
-  - The emulator now includes an external USB hub device model (`UsbHubDevice`, USB class `0x09`)
-    that can be attached behind a root port to expose additional downstream ports (and is covered
-    by UHCI integration tests).
+  - The browser/WASM USB stack includes an external USB hub device model (`UsbHubDevice`, USB class
+    `0x09`) that can be attached behind a root port to expose additional downstream ports.
+    - Implementation: `crates/aero-usb/src/hub/device.rs`
+    - UHCI integration tests: `crates/aero-usb/tests/uhci_external_hub.rs`
   - Host integrations still need to decide *when* to attach a hub (e.g. always keep one root port
     reserved for a hub and hot-plug passthrough devices behind it).
 - **No low-speed modeling**
