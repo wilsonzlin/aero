@@ -7,7 +7,7 @@ rem
 rem Expects:
 rem   cert\aero-virtio-snd-test.pfx
 rem   inf\virtiosnd.sys
-rem   inf\aero-virtio-snd.cat
+rem   inf\aero-virtio-snd.cat and/or inf\virtio-snd.cat
 rem
 rem Usage:
 rem   sign-driver.cmd [PFX_PASSWORD]
@@ -20,12 +20,10 @@ set SCRIPT_DIR=%~dp0
 for %%I in ("%SCRIPT_DIR%..") do set ROOT_DIR=%%~fI
 set INF_DIR=%ROOT_DIR%\inf
 set SYS_FILE=%INF_DIR%\virtiosnd.sys
-set INF_FILE=%INF_DIR%\aero-virtio-snd.inf
-set CAT_FILE=%INF_DIR%\aero-virtio-snd.cat
-if not exist "%INF_FILE%" (
-  set INF_FILE=%INF_DIR%\virtio-snd.inf
-  set CAT_FILE=%INF_DIR%\virtio-snd.cat
-)
+set AERO_INF=%INF_DIR%\aero-virtio-snd.inf
+set AERO_CAT=%INF_DIR%\aero-virtio-snd.cat
+set LEGACY_INF=%INF_DIR%\virtio-snd.inf
+set LEGACY_CAT=%INF_DIR%\virtio-snd.cat
 set PFX_FILE=%ROOT_DIR%\cert\aero-virtio-snd-test.pfx
 
 if not exist "%PFX_FILE%" (
@@ -40,10 +38,30 @@ if not exist "%SYS_FILE%" (
   exit /b 1
 )
 
-if not exist "%CAT_FILE%" (
-  echo ERROR: Catalog not found: "%CAT_FILE%"
-  echo        Run: "%SCRIPT_DIR%make-cat.cmd"
-  exit /b 1
+if not exist "%AERO_INF%" (
+  if not exist "%LEGACY_INF%" (
+    echo ERROR: No INF found under: "%INF_DIR%"
+    echo        Expected one or both of:
+    echo          - "%AERO_INF%"
+    echo          - "%LEGACY_INF%"
+    exit /b 1
+  )
+)
+
+if exist "%AERO_INF%" (
+  if not exist "%AERO_CAT%" (
+    echo ERROR: Catalog not found: "%AERO_CAT%"
+    echo        Run: "%SCRIPT_DIR%make-cat.cmd"
+    exit /b 1
+  )
+)
+
+if exist "%LEGACY_INF%" (
+  if not exist "%LEGACY_CAT%" (
+    echo ERROR: Catalog not found: "%LEGACY_CAT%"
+    echo        Run: "%SCRIPT_DIR%make-cat.cmd"
+    exit /b 1
+  )
 )
 
 where signtool.exe >nul 2>nul
@@ -72,7 +90,8 @@ echo.
 echo == Signing driver package ==
 echo PFX: "%PFX_FILE%"
 echo SYS: "%SYS_FILE%"
-echo CAT: "%CAT_FILE%"
+if exist "%AERO_CAT%" echo CAT: "%AERO_CAT%"
+if exist "%LEGACY_CAT%" echo CAT: "%LEGACY_CAT%"
 echo.
 
 rem For maximum Windows 7 SP1 compatibility, use SHA1 file digests for test signing.
@@ -82,13 +101,33 @@ if errorlevel 1 (
   exit /b 1
 )
 
-signtool.exe sign /v /fd SHA1 /f "%PFX_FILE%" /p "%SIGN_PFX_PASS%" "%CAT_FILE%"
-if errorlevel 1 (
-  echo ERROR: Failed to sign CAT.
+set SIGNED_ANY_CAT=0
+
+if exist "%AERO_CAT%" (
+  signtool.exe sign /v /fd SHA1 /f "%PFX_FILE%" /p "%SIGN_PFX_PASS%" "%AERO_CAT%"
+  if errorlevel 1 (
+    echo ERROR: Failed to sign CAT: "%AERO_CAT%"
+    exit /b 1
+  )
+  set SIGNED_ANY_CAT=1
+)
+
+if exist "%LEGACY_CAT%" (
+  signtool.exe sign /v /fd SHA1 /f "%PFX_FILE%" /p "%SIGN_PFX_PASS%" "%LEGACY_CAT%"
+  if errorlevel 1 (
+    echo ERROR: Failed to sign CAT: "%LEGACY_CAT%"
+    exit /b 1
+  )
+  set SIGNED_ANY_CAT=1
+)
+
+if "%SIGNED_ANY_CAT%"=="0" (
+  echo ERROR: No catalog files found to sign under: "%INF_DIR%"
+  echo        Run: "%SCRIPT_DIR%make-cat.cmd"
   exit /b 1
 )
 
 echo.
-echo OK: Signed SYS and CAT.
+echo OK: Signed SYS and catalog(s).
 exit /b 0
 

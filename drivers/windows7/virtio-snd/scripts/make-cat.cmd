@@ -6,23 +6,26 @@ rem Generates a driver catalog for Windows 7 (x86 + x64) using Inf2Cat.
 rem
 rem Prerequisites:
 rem   - Inf2Cat.exe available in PATH (run from a WDK command prompt)
-rem   - inf\aero-virtio-snd.inf exists (or the legacy name inf\virtio-snd.inf)
+rem   - inf\aero-virtio-snd.inf and/or inf\virtio-snd.inf exists
 rem   - All files referenced by the INF exist in inf\ (at minimum virtiosnd.sys)
 
 set SCRIPT_DIR=%~dp0
 for %%I in ("%SCRIPT_DIR%..") do set ROOT_DIR=%%~fI
 set INF_DIR=%ROOT_DIR%\inf
-set INF_FILE=%INF_DIR%\aero-virtio-snd.inf
-set CAT_FILE=%INF_DIR%\aero-virtio-snd.cat
-if not exist "%INF_FILE%" (
-  set INF_FILE=%INF_DIR%\virtio-snd.inf
-  set CAT_FILE=%INF_DIR%\virtio-snd.cat
-)
+set AERO_INF=%INF_DIR%\aero-virtio-snd.inf
+set AERO_CAT=%INF_DIR%\aero-virtio-snd.cat
+set LEGACY_INF=%INF_DIR%\virtio-snd.inf
+set LEGACY_CAT=%INF_DIR%\virtio-snd.cat
 set SYS_FILE=%INF_DIR%\virtiosnd.sys
 
-if not exist "%INF_FILE%" (
-  echo ERROR: INF not found: "%INF_FILE%"
-  exit /b 1
+if not exist "%AERO_INF%" (
+  if not exist "%LEGACY_INF%" (
+    echo ERROR: No INF found under: "%INF_DIR%"
+    echo        Expected one or both of:
+    echo          - "%AERO_INF%"
+    echo          - "%LEGACY_INF%"
+    exit /b 1
+  )
 )
 
 if not exist "%SYS_FILE%" (
@@ -51,12 +54,29 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist "%CAT_FILE%" (
-  echo ERROR: Expected catalog not found: "%CAT_FILE%"
+set MISSING_CAT=0
+
+if exist "%AERO_INF%" (
+  if not exist "%AERO_CAT%" (
+    echo ERROR: Expected catalog not found: "%AERO_CAT%"
+    set MISSING_CAT=1
+  )
+)
+
+if exist "%LEGACY_INF%" (
+  if not exist "%LEGACY_CAT%" (
+    echo ERROR: Expected catalog not found: "%LEGACY_CAT%"
+    set MISSING_CAT=1
+  )
+)
+
+if "%MISSING_CAT%"=="1" (
   exit /b 1
 )
 
 echo.
-echo OK: Created "%CAT_FILE%"
+echo OK: Created catalog(s):
+if exist "%AERO_CAT%" echo   - "%AERO_CAT%"
+if exist "%LEGACY_CAT%" echo   - "%LEGACY_CAT%"
 exit /b 0
 
