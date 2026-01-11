@@ -605,3 +605,71 @@ fn cpu_core_bus_translates_long4_paging_via_mmu() {
     let pte_after_write = memory::MemoryBus::read_u64(&mut bus.platform.memory, pte_addr);
     assert_ne!(pte_after_write & (1 << 6), 0, "PTE dirty bit should be set");
 }
+
+#[test]
+fn pc_cpu_bus_invlpg_flushes_long_mode_translation() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    let vaddr = 0x0040_0000u64;
+    let pml4_phys = 0x1000u64;
+    let pdpt_phys = 0x2000u64;
+    let pd_phys = 0x3000u64;
+    let pt_phys = 0x4000u64;
+    let page0_phys = 0x5000u64;
+    let page1_phys = 0x6000u64;
+
+    let pml4_index = (vaddr >> 39) & 0x1ff;
+    let pdpt_index = (vaddr >> 30) & 0x1ff;
+    let pd_index = (vaddr >> 21) & 0x1ff;
+    let pt_index = (vaddr >> 12) & 0x1ff;
+
+    let pml4e_addr = pml4_phys + pml4_index * 8;
+    let pdpte_addr = pdpt_phys + pdpt_index * 8;
+    let pde_addr = pd_phys + pd_index * 8;
+    let pte_addr = pt_phys + pt_index * 8;
+
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pml4e_addr,
+        pdpt_phys | PTE_P | PTE_RW | PTE_US,
+    );
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pdpte_addr,
+        pd_phys | PTE_P | PTE_RW | PTE_US,
+    );
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pde_addr,
+        pt_phys | PTE_P | PTE_RW | PTE_US,
+    );
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pte_addr,
+        page0_phys | PTE_P | PTE_RW | PTE_US,
+    );
+
+    bus.platform.memory.write_u8(page0_phys, 0xAA);
+    bus.platform.memory.write_u8(page1_phys, 0xBB);
+
+    let state = long_state(pml4_phys, 3);
+    bus.sync(&state);
+
+    // Prime the TLB (and set accessed bits).
+    assert_eq!(bus.read_u8(vaddr).unwrap(), 0xAA);
+
+    // Change the leaf mapping in memory.
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pte_addr,
+        page1_phys | PTE_P | PTE_RW | PTE_US,
+    );
+
+    // Without `INVLPG`, the cached translation should still point at the old physical page.
+    assert_eq!(bus.read_u8(vaddr).unwrap(), 0xAA);
+
+    // Flush and retry.
+    bus.invlpg(vaddr);
+    assert_eq!(bus.read_u8(vaddr).unwrap(), 0xBB);
+}
