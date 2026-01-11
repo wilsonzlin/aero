@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use crate::io::usb::core::UsbInResult;
+use crate::io::usb::core::{UsbInResult, UsbOutResult};
 use crate::io::usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
 };
@@ -102,12 +102,12 @@ impl UsbDeviceModel for UsbHidMouseHandle {
             .handle_control_request(setup, data_stage)
     }
 
-    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
-        self.0.borrow_mut().poll_interrupt_in(ep)
+    fn handle_in_transfer(&mut self, ep_addr: u8, max_len: usize) -> UsbInResult {
+        self.0.borrow_mut().handle_in_transfer(ep_addr, max_len)
     }
 
-    fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
-        self.0.borrow_mut().handle_interrupt_in(ep_addr)
+    fn handle_out_transfer(&mut self, ep_addr: u8, data: &[u8]) -> UsbOutResult {
+        self.0.borrow_mut().handle_out_transfer(ep_addr, data)
     }
 }
 
@@ -475,6 +475,22 @@ impl UsbDeviceModel for UsbHidMouse {
         }
     }
 
+    fn handle_in_transfer(&mut self, ep_addr: u8, max_len: usize) -> UsbInResult {
+        match self.handle_interrupt_in(ep_addr) {
+            UsbInResult::Data(mut data) => {
+                if data.len() > max_len {
+                    data.truncate(max_len);
+                }
+                UsbInResult::Data(data)
+            }
+            other => other,
+        }
+    }
+
+    fn handle_out_transfer(&mut self, _ep_addr: u8, _data: &[u8]) -> UsbOutResult {
+        UsbOutResult::Stall
+    }
+
     fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
         if ep_addr != INTERRUPT_IN_EP {
             return UsbInResult::Stall;
@@ -489,18 +505,6 @@ impl UsbDeviceModel for UsbHidMouse {
             Some(r) => UsbInResult::Data(r.to_bytes(self.protocol)),
             None => UsbInResult::Nak,
         }
-    }
-
-    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
-        if ep != INTERRUPT_IN_EP {
-            return None;
-        }
-        if self.configuration == 0 || self.interrupt_in_halted {
-            return None;
-        }
-        self.pending_reports
-            .pop_front()
-            .map(|r| r.to_bytes(self.protocol))
     }
 }
 
@@ -607,6 +611,14 @@ mod tests {
         u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
     }
 
+    fn poll_interrupt_in(dev: &mut UsbHidMouse) -> Option<Vec<u8>> {
+        match dev.handle_in_transfer(INTERRUPT_IN_EP, 4) {
+            UsbInResult::Data(data) => Some(data),
+            UsbInResult::Nak => None,
+            UsbInResult::Stall => panic!("unexpected STALL on interrupt IN"),
+        }
+    }
+
     fn configure_mouse(mouse: &mut UsbHidMouse) {
         assert_eq!(
             mouse.handle_control_request(
@@ -653,10 +665,10 @@ mod tests {
         configure_mouse(&mut mouse);
         mouse.movement(200, 0);
 
-        let r1 = mouse.poll_interrupt_in(INTERRUPT_IN_EP).unwrap();
+        let r1 = poll_interrupt_in(&mut mouse).unwrap();
         assert_eq!(r1, vec![0x00, 127u8, 0u8, 0u8]);
 
-        let r2 = mouse.poll_interrupt_in(INTERRUPT_IN_EP).unwrap();
+        let r2 = poll_interrupt_in(&mut mouse).unwrap();
         assert_eq!(r2, vec![0x00, 73u8, 0u8, 0u8]);
     }
 
@@ -665,7 +677,7 @@ mod tests {
         let mut mouse = UsbHidMouse::new();
         configure_mouse(&mut mouse);
         mouse.button_event(0x01, true);
-        let r = mouse.poll_interrupt_in(INTERRUPT_IN_EP).unwrap();
+        let r = poll_interrupt_in(&mut mouse).unwrap();
         assert_eq!(r, vec![0x01, 0, 0, 0]);
     }
 
@@ -735,10 +747,10 @@ mod tests {
     fn does_not_send_interrupt_reports_until_configured() {
         let mut mouse = UsbHidMouse::new();
         mouse.movement(10, 0);
-        assert_eq!(mouse.poll_interrupt_in(INTERRUPT_IN_EP), None);
+        assert!(poll_interrupt_in(&mut mouse).is_none());
 
         configure_mouse(&mut mouse);
-        assert!(mouse.poll_interrupt_in(INTERRUPT_IN_EP).is_some());
+        assert!(poll_interrupt_in(&mut mouse).is_some());
     }
 
     #[test]

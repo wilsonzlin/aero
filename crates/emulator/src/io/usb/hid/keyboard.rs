@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use crate::io::usb::core::UsbInResult;
+use crate::io::usb::core::{UsbInResult, UsbOutResult};
 use crate::io::usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
 };
@@ -102,12 +102,12 @@ impl UsbDeviceModel for UsbHidKeyboardHandle {
             .handle_control_request(setup, data_stage)
     }
 
-    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
-        self.0.borrow_mut().poll_interrupt_in(ep)
+    fn handle_in_transfer(&mut self, ep_addr: u8, max_len: usize) -> UsbInResult {
+        self.0.borrow_mut().handle_in_transfer(ep_addr, max_len)
     }
 
-    fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
-        self.0.borrow_mut().handle_interrupt_in(ep_addr)
+    fn handle_out_transfer(&mut self, ep_addr: u8, data: &[u8]) -> UsbOutResult {
+        self.0.borrow_mut().handle_out_transfer(ep_addr, data)
     }
 }
 
@@ -491,6 +491,22 @@ impl UsbDeviceModel for UsbHidKeyboard {
         }
     }
 
+    fn handle_in_transfer(&mut self, ep_addr: u8, max_len: usize) -> UsbInResult {
+        match self.handle_interrupt_in(ep_addr) {
+            UsbInResult::Data(mut data) => {
+                if data.len() > max_len {
+                    data.truncate(max_len);
+                }
+                UsbInResult::Data(data)
+            }
+            other => other,
+        }
+    }
+
+    fn handle_out_transfer(&mut self, _ep_addr: u8, _data: &[u8]) -> UsbOutResult {
+        UsbOutResult::Stall
+    }
+
     fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
         if ep_addr != INTERRUPT_IN_EP {
             return UsbInResult::Stall;
@@ -505,16 +521,6 @@ impl UsbDeviceModel for UsbHidKeyboard {
             Some(r) => UsbInResult::Data(r.to_vec()),
             None => UsbInResult::Nak,
         }
-    }
-
-    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
-        if ep != INTERRUPT_IN_EP {
-            return None;
-        }
-        if self.configuration == 0 || self.interrupt_in_halted {
-            return None;
-        }
-        self.pending_reports.pop_front().map(|r| r.to_vec())
     }
 }
 
@@ -632,6 +638,14 @@ mod tests {
         u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
     }
 
+    fn poll_interrupt_in(dev: &mut UsbHidKeyboard) -> Option<Vec<u8>> {
+        match dev.handle_in_transfer(INTERRUPT_IN_EP, 8) {
+            UsbInResult::Data(data) => Some(data),
+            UsbInResult::Nak => None,
+            UsbInResult::Stall => panic!("unexpected STALL on interrupt IN"),
+        }
+    }
+
     fn configure_keyboard(kb: &mut UsbHidKeyboard) {
         assert_eq!(
             kb.handle_control_request(
@@ -708,11 +722,11 @@ mod tests {
         configure_keyboard(&mut kb);
 
         kb.key_event(0x04, true); // 'a'
-        let report = kb.poll_interrupt_in(INTERRUPT_IN_EP).unwrap();
+        let report = poll_interrupt_in(&mut kb).unwrap();
         assert_eq!(report, [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]);
 
         kb.key_event(0xe1, true); // LeftShift
-        let report = kb.poll_interrupt_in(INTERRUPT_IN_EP).unwrap();
+        let report = poll_interrupt_in(&mut kb).unwrap();
         assert_eq!(report[0], 0x02);
         assert_eq!(report[2], 0x04);
 
@@ -721,7 +735,7 @@ mod tests {
             kb.key_event(usage, true);
         }
         let mut rollover = None;
-        while let Some(report) = kb.poll_interrupt_in(INTERRUPT_IN_EP) {
+        while let Some(report) = poll_interrupt_in(&mut kb) {
             rollover = Some(report);
         }
         let rollover = rollover.unwrap();
@@ -729,7 +743,7 @@ mod tests {
 
         // Release one key; should go back to explicit list.
         kb.key_event(0x0a, false);
-        let report = kb.poll_interrupt_in(INTERRUPT_IN_EP).unwrap();
+        let report = poll_interrupt_in(&mut kb).unwrap();
         assert_ne!(&report[2..], &[0x01; 6]);
         assert_eq!(report[0], 0x02);
     }
@@ -884,10 +898,10 @@ mod tests {
         let mut kb = UsbHidKeyboard::new();
 
         kb.key_event(0x04, true);
-        assert_eq!(kb.poll_interrupt_in(INTERRUPT_IN_EP), None);
+        assert!(poll_interrupt_in(&mut kb).is_none());
 
         configure_keyboard(&mut kb);
-        assert!(kb.poll_interrupt_in(INTERRUPT_IN_EP).is_some());
+        assert!(poll_interrupt_in(&mut kb).is_some());
     }
 
     #[test]
