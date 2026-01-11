@@ -1,0 +1,1009 @@
+use std::collections::HashMap;
+
+use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
+use aero_gpu::pipeline_key::{
+    ColorTargetKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash, ShaderStage,
+    VertexAttributeKey, VertexBufferLayoutKey,
+};
+use aero_gpu::stats::PipelineCacheStats;
+use aero_gpu::GpuCapabilities;
+use anyhow::{anyhow, bail, Context, Result};
+
+use crate::{translate_sm4_to_wgsl, Sm4Program};
+
+use super::aerogpu_state::{
+    AerogpuHandle, BlendState, D3D11ShadowState, DepthStencilState, IndexBufferBinding,
+    PrimitiveTopology, RasterizerState, ScissorRect, VertexBufferBinding, Viewport,
+};
+
+#[derive(Debug)]
+pub struct BufferResource {
+    pub buffer: wgpu::Buffer,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Texture2dDesc {
+    pub width: u32,
+    pub height: u32,
+    pub format: wgpu::TextureFormat,
+}
+
+#[derive(Debug)]
+pub struct TextureResource {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub desc: Texture2dDesc,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShaderResource {
+    pub stage: ShaderStage,
+    pub wgsl: String,
+    pub hash: ShaderHash,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InputElement {
+    input_slot: u32,
+    offset: u32,
+    format: wgpu::VertexFormat,
+    step_mode: wgpu::VertexStepMode,
+    shader_location: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct InputLayoutResource {
+    elements: Vec<InputElement>,
+}
+
+#[derive(Debug, Default)]
+pub struct AerogpuResources {
+    buffers: HashMap<AerogpuHandle, BufferResource>,
+    textures: HashMap<AerogpuHandle, TextureResource>,
+    shaders: HashMap<AerogpuHandle, ShaderResource>,
+    input_layouts: HashMap<AerogpuHandle, InputLayoutResource>,
+}
+
+/// A minimal `aerogpu_cmd`-style executor focused on D3D10/11 rendering.
+///
+/// The guest streams D3D11-style incremental state updates; when a draw is
+/// issued we derive a [`RenderPipelineKey`] from the current [`D3D11ShadowState`]
+/// and use [`PipelineCache`] to materialize `wgpu` pipelines on demand.
+pub struct AerogpuCmdRuntime {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+
+    pub state: D3D11ShadowState,
+    pub resources: AerogpuResources,
+    pipelines: PipelineCache,
+}
+
+impl AerogpuCmdRuntime {
+    pub async fn new_for_tests() -> Result<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                .ok()
+                .map(|v| v.is_empty())
+                .unwrap_or(true);
+            if needs_runtime_dir {
+                let dir = std::env::temp_dir()
+                    .join(format!("aero-d3d11-aerogpu-xdg-runtime-{}", std::process::id()));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                std::env::set_var("XDG_RUNTIME_DIR", &dir);
+            }
+        }
+
+        let instance = wgpu::Instance::default();
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: true,
+            })
+            .await
+        {
+            Some(adapter) => Some(adapter),
+            None => {
+                instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    })
+                    .await
+            }
+        }
+        .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("aero-d3d11 aerogpu test device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                },
+                None,
+            )
+            .await
+            .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
+
+        let caps = GpuCapabilities::from_device(&device);
+        let pipelines = PipelineCache::new(PipelineCacheConfig::default(), caps);
+
+        Ok(Self {
+            device,
+            queue,
+            state: D3D11ShadowState::default(),
+            resources: AerogpuResources::default(),
+            pipelines,
+        })
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn poll_wait(&self) {
+        self.device.poll(wgpu::Maintain::Wait);
+    }
+
+    pub fn pipeline_cache_stats(&self) -> PipelineCacheStats {
+        self.pipelines.stats()
+    }
+
+    pub fn create_buffer(&mut self, handle: AerogpuHandle, size: u64, usage: wgpu::BufferUsages) {
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d11 aerogpu buffer"),
+            size,
+            usage,
+            mapped_at_creation: false,
+        });
+        self.resources
+            .buffers
+            .insert(handle, BufferResource { buffer, size });
+    }
+
+    pub fn write_buffer(&self, handle: AerogpuHandle, offset: u64, data: &[u8]) -> Result<()> {
+        let buf = self
+            .resources
+            .buffers
+            .get(&handle)
+            .ok_or_else(|| anyhow!("unknown buffer handle {handle}"))?;
+        if offset.saturating_add(data.len() as u64) > buf.size {
+            bail!(
+                "write_buffer out of bounds: offset={} len={} size={}",
+                offset,
+                data.len(),
+                buf.size
+            );
+        }
+        self.queue.write_buffer(&buf.buffer, offset, data);
+        Ok(())
+    }
+
+    pub fn create_texture2d(
+        &mut self,
+        handle: AerogpuHandle,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+        usage: wgpu::TextureUsages,
+    ) {
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("aero-d3d11 aerogpu texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.resources.textures.insert(
+            handle,
+            TextureResource {
+                texture,
+                view,
+                desc: Texture2dDesc {
+                    width,
+                    height,
+                    format,
+                },
+            },
+        );
+    }
+
+    pub fn create_shader_dxbc(&mut self, handle: AerogpuHandle, dxbc_bytes: &[u8]) -> Result<()> {
+        let program = Sm4Program::parse_from_dxbc_bytes(dxbc_bytes).context("parse DXBC")?;
+        let stage = match program.stage {
+            crate::ShaderStage::Vertex => ShaderStage::Vertex,
+            crate::ShaderStage::Pixel => ShaderStage::Fragment,
+            other => bail!("unsupported shader stage for aerogpu_cmd executor: {other:?}"),
+        };
+
+        let wgsl = translate_sm4_to_wgsl(&program)
+            .context("translate SM4/5 to WGSL")?
+            .wgsl;
+
+        // Register into the shared PipelineCache shader-module cache.
+        let (hash, _module) = self
+            .pipelines
+            .get_or_create_shader_module(&self.device, stage, &wgsl, Some("aerogpu shader"));
+
+        self.resources.shaders.insert(
+            handle,
+            ShaderResource {
+                stage,
+                wgsl,
+                hash,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn create_input_layout(&mut self, handle: AerogpuHandle, blob: &[u8]) -> Result<()> {
+        let layout = parse_input_layout_blob(blob)?;
+        self.resources.input_layouts.insert(handle, layout);
+        Ok(())
+    }
+
+    pub fn bind_shaders(&mut self, vs: Option<AerogpuHandle>, ps: Option<AerogpuHandle>) {
+        self.state.vs = vs;
+        self.state.ps = ps;
+    }
+
+    pub fn set_input_layout(&mut self, layout: Option<AerogpuHandle>) {
+        self.state.input_layout = layout;
+    }
+
+    pub fn set_vertex_buffers(&mut self, start_slot: usize, bindings: &[VertexBufferBinding]) {
+        let end = start_slot.saturating_add(bindings.len());
+        if end > self.state.vertex_buffers.len() {
+            self.state.vertex_buffers.resize(end, None);
+        }
+        for (i, binding) in bindings.iter().enumerate() {
+            self.state.vertex_buffers[start_slot + i] = Some(*binding);
+        }
+    }
+
+    pub fn set_index_buffer(&mut self, binding: Option<IndexBufferBinding>) {
+        self.state.index_buffer = binding;
+    }
+
+    pub fn set_primitive_topology(&mut self, topology: PrimitiveTopology) {
+        self.state.primitive_topology = topology;
+    }
+
+    pub fn set_render_targets(
+        &mut self,
+        colors: &[Option<AerogpuHandle>; 8],
+        depth_stencil: Option<AerogpuHandle>,
+    ) {
+        self.state.render_targets.colors = *colors;
+        self.state.render_targets.depth_stencil = depth_stencil;
+    }
+
+    pub fn set_viewport(&mut self, viewport: Option<Viewport>) {
+        self.state.viewport = viewport;
+    }
+
+    pub fn set_scissor(&mut self, scissor: Option<ScissorRect>) {
+        self.state.scissor = scissor;
+    }
+
+    pub fn set_blend_state(&mut self, state: BlendState) {
+        self.state.blend_state = state;
+    }
+
+    pub fn set_depth_stencil_state(&mut self, state: DepthStencilState) {
+        self.state.depth_stencil_state = state;
+    }
+
+    pub fn set_rasterizer_state(&mut self, state: RasterizerState) {
+        self.state.rasterizer_state = state;
+    }
+
+    pub fn draw(
+        &mut self,
+        vertex_count: u32,
+        instance_count: u32,
+        first_vertex: u32,
+        first_instance: u32,
+    ) -> Result<()> {
+        self.draw_internal(
+            DrawKind::NonIndexed {
+                vertex_count,
+                instance_count,
+                first_vertex,
+                first_instance,
+            },
+        )
+    }
+
+    pub fn draw_indexed(
+        &mut self,
+        index_count: u32,
+        instance_count: u32,
+        first_index: u32,
+        base_vertex: i32,
+        first_instance: u32,
+    ) -> Result<()> {
+        self.draw_internal(DrawKind::Indexed {
+            index_count,
+            instance_count,
+            first_index,
+            base_vertex,
+            first_instance,
+        })
+    }
+
+    fn draw_internal(&mut self, kind: DrawKind) -> Result<()> {
+        let vs_handle = self.state.vs.ok_or_else(|| anyhow!("draw without a bound VS"))?;
+        let ps_handle = self.state.ps.ok_or_else(|| anyhow!("draw without a bound PS"))?;
+
+        let vs = self
+            .resources
+            .shaders
+            .get(&vs_handle)
+            .ok_or_else(|| anyhow!("unknown VS handle {vs_handle}"))?;
+        let ps = self
+            .resources
+            .shaders
+            .get(&ps_handle)
+            .ok_or_else(|| anyhow!("unknown PS handle {ps_handle}"))?;
+        if vs.stage != ShaderStage::Vertex {
+            bail!("shader {vs_handle} is not a vertex shader");
+        }
+        if ps.stage != ShaderStage::Fragment {
+            bail!("shader {ps_handle} is not a pixel/fragment shader");
+        }
+
+        let (color_attachments, color_target_keys, target_size) =
+            build_color_attachments(&self.resources, &self.state)?;
+
+        let (depth_attachment, depth_target_key, depth_state) =
+            build_depth_attachment(&self.resources, &self.state)?;
+
+        let primitive_topology = map_topology(self.state.primitive_topology)?;
+        let cull_mode = self.state.rasterizer_state.cull_mode;
+        let front_face = self.state.rasterizer_state.front_face;
+        let scissor_enabled = self.state.rasterizer_state.scissor_enable;
+
+        let (owned_vertex_layouts, vertex_buffer_keys, vb_slots) =
+            build_vertex_state(&self.resources, &self.state)?;
+
+        let layout_key = PipelineLayoutKey::empty();
+
+        let key = RenderPipelineKey {
+            vertex_shader: vs.hash,
+            fragment_shader: ps.hash,
+            color_targets: color_target_keys,
+            depth_stencil: depth_target_key,
+            primitive_topology,
+            cull_mode,
+            front_face,
+            scissor_enabled,
+            vertex_buffers: vertex_buffer_keys,
+            sample_count: 1,
+            layout: layout_key,
+        };
+
+        let blend = self.state.blend_state;
+        let mut color_target_states: Vec<Option<wgpu::ColorTargetState>> = Vec::new();
+        for ct in &key.color_targets {
+            color_target_states.push(Some(wgpu::ColorTargetState {
+                format: ct.format,
+                blend: blend.blend,
+                write_mask: blend.write_mask,
+            }));
+        }
+
+        let depth_stencil_state = depth_state.clone();
+
+        // Fetch or create pipeline.
+        let pipeline = {
+            let owned_vertex_layouts = owned_vertex_layouts;
+            let color_target_states = color_target_states;
+            self.pipelines.get_or_create_render_pipeline(
+                &self.device,
+                key,
+                move |device, vs_module, fs_module| {
+                    let pipeline_layout = device.create_pipeline_layout(
+                        &wgpu::PipelineLayoutDescriptor {
+                            label: Some("aero-d3d11 aerogpu pipeline layout"),
+                            bind_group_layouts: &[],
+                            push_constant_ranges: &[],
+                        },
+                    );
+
+                    let vertex_buffers: Vec<wgpu::VertexBufferLayout<'_>> = owned_vertex_layouts
+                        .iter()
+                        .map(|l| wgpu::VertexBufferLayout {
+                            array_stride: l.array_stride,
+                            step_mode: l.step_mode,
+                            attributes: &l.attributes,
+                        })
+                        .collect();
+
+                    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some("aero-d3d11 aerogpu render pipeline"),
+                        layout: Some(&pipeline_layout),
+                        vertex: wgpu::VertexState {
+                            module: vs_module,
+                            entry_point: "main",
+                            buffers: &vertex_buffers,
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        },
+                        fragment: Some(wgpu::FragmentState {
+                            module: fs_module,
+                            entry_point: "main",
+                            targets: &color_target_states,
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        }),
+                        primitive: wgpu::PrimitiveState {
+                            topology: primitive_topology,
+                            front_face,
+                            cull_mode,
+                            ..Default::default()
+                        },
+                        depth_stencil: depth_stencil_state,
+                        multisample: wgpu::MultisampleState {
+                            count: 1,
+                            ..Default::default()
+                        },
+                        multiview: None,
+                    })
+                },
+            )?
+        };
+
+        // Encode the draw.
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aero-d3d11 aerogpu draw encoder"),
+            });
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("aero-d3d11 aerogpu draw pass"),
+            color_attachments: &color_attachments,
+            depth_stencil_attachment: depth_attachment,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        pass.set_pipeline(pipeline);
+
+        // Viewport/scissor are dynamic state; apply on every draw.
+        let Viewport {
+            x,
+            y,
+            width,
+            height,
+            min_depth,
+            max_depth,
+        } = self.state.viewport.unwrap_or(Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: target_size.0 as f32,
+            height: target_size.1 as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        });
+        pass.set_viewport(x, y, width, height, min_depth, max_depth);
+
+        if scissor_enabled {
+            let scissor = self.state.scissor.unwrap_or(ScissorRect {
+                x: 0,
+                y: 0,
+                width: target_size.0,
+                height: target_size.1,
+            });
+            pass.set_scissor_rect(scissor.x, scissor.y, scissor.width, scissor.height);
+        } else {
+            pass.set_scissor_rect(0, 0, target_size.0, target_size.1);
+        }
+
+        for slot in 0..vb_slots {
+            let Some(binding) = self.state.vertex_buffers.get(slot).and_then(|b| *b) else {
+                bail!("vertex buffer slot {slot} is required by input layout but not bound");
+            };
+            let buf = self
+                .resources
+                .buffers
+                .get(&binding.buffer)
+                .ok_or_else(|| anyhow!("unknown vertex buffer {}", binding.buffer))?;
+            pass.set_vertex_buffer(slot as u32, buf.buffer.slice(binding.offset..));
+        }
+
+        match kind {
+            DrawKind::NonIndexed {
+                vertex_count,
+                instance_count,
+                first_vertex,
+                first_instance,
+            } => {
+                pass.draw(first_vertex..first_vertex + vertex_count, first_instance..first_instance + instance_count);
+            }
+            DrawKind::Indexed {
+                index_count,
+                instance_count,
+                first_index,
+                base_vertex,
+                first_instance,
+            } => {
+                let index = self
+                    .state
+                    .index_buffer
+                    .ok_or_else(|| anyhow!("DrawIndexed without a bound index buffer"))?;
+                let buf = self
+                    .resources
+                    .buffers
+                    .get(&index.buffer)
+                    .ok_or_else(|| anyhow!("unknown index buffer {}", index.buffer))?;
+                pass.set_index_buffer(buf.buffer.slice(index.offset..), index.format);
+                pass.draw_indexed(
+                    first_index..first_index + index_count,
+                    base_vertex,
+                    first_instance..first_instance + instance_count,
+                );
+            }
+        }
+
+        drop(pass);
+        self.queue.submit([encoder.finish()]);
+
+        Ok(())
+    }
+
+    pub async fn read_texture_rgba8(&self, handle: AerogpuHandle) -> Result<Vec<u8>> {
+        let tex = self
+            .resources
+            .textures
+            .get(&handle)
+            .ok_or_else(|| anyhow!("unknown texture {handle}"))?;
+        if tex.desc.format != wgpu::TextureFormat::Rgba8Unorm {
+            bail!("read_texture_rgba8 only supports Rgba8Unorm (got {:?})", tex.desc.format);
+        }
+
+        let width = tex.desc.width;
+        let height = tex.desc.height;
+
+        let bytes_per_pixel = 4u32;
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
+        let buffer_size = padded_bytes_per_row as u64 * height as u64;
+
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d11 aerogpu readback staging"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aero-d3d11 aerogpu readback encoder"),
+            });
+
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                texture: &tex.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &staging,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.queue.submit([encoder.finish()]);
+
+        let slice = staging.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |v| {
+            sender.send(v).ok();
+        });
+        self.device.poll(wgpu::Maintain::Wait);
+        receiver
+            .receive()
+            .await
+            .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
+            .context("wgpu: map_async failed")?;
+
+        let mapped = slice.get_mapped_range();
+        let mut out = Vec::with_capacity((unpadded_bytes_per_row * height) as usize);
+        for row in 0..height as usize {
+            let start = row * padded_bytes_per_row as usize;
+            out.extend_from_slice(&mapped[start..start + unpadded_bytes_per_row as usize]);
+        }
+        drop(mapped);
+        staging.unmap();
+        Ok(out)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct OwnedVertexBufferLayout {
+    array_stride: u64,
+    step_mode: wgpu::VertexStepMode,
+    attributes: Vec<wgpu::VertexAttribute>,
+}
+
+#[derive(Debug, Copy, Clone)]
+enum DrawKind {
+    NonIndexed {
+        vertex_count: u32,
+        instance_count: u32,
+        first_vertex: u32,
+        first_instance: u32,
+    },
+    Indexed {
+        index_count: u32,
+        instance_count: u32,
+        first_index: u32,
+        base_vertex: i32,
+        first_instance: u32,
+    },
+}
+
+fn build_vertex_state(
+    resources: &AerogpuResources,
+    state: &D3D11ShadowState,
+) -> Result<(Vec<OwnedVertexBufferLayout>, Vec<VertexBufferLayoutKey>, usize)> {
+    let Some(layout_handle) = state.input_layout else {
+        return Ok((Vec::new(), Vec::new(), 0));
+    };
+
+    let layout = resources
+        .input_layouts
+        .get(&layout_handle)
+        .ok_or_else(|| anyhow!("unknown input layout handle {layout_handle}"))?;
+
+    let max_slot = layout
+        .elements
+        .iter()
+        .map(|e| e.input_slot)
+        .max()
+        .unwrap_or(0);
+    let vb_slots = max_slot as usize + 1;
+
+    // P0: require densely-packed slots (0..=max_slot).
+    for slot in 0..=max_slot {
+        if !layout.elements.iter().any(|e| e.input_slot == slot) {
+            bail!(
+                "input layout uses slot {max_slot} but leaves a gap at slot {slot} (not supported yet)"
+            );
+        }
+    }
+
+    let mut out_layouts: Vec<OwnedVertexBufferLayout> = Vec::with_capacity(vb_slots);
+    let mut out_keys: Vec<VertexBufferLayoutKey> = Vec::with_capacity(vb_slots);
+
+    for slot in 0..=max_slot {
+        let slot_usize = slot as usize;
+        let Some(vb) = state.vertex_buffers.get(slot_usize).and_then(|v| *v) else {
+            bail!(
+                "vertex buffer slot {slot} is required by input layout but not bound (stride is needed for pipeline creation)"
+            );
+        };
+
+        let slot_elements: Vec<InputElement> =
+            layout.elements.iter().copied().filter(|e| e.input_slot == slot).collect();
+
+        let step_mode = slot_elements[0].step_mode;
+        if slot_elements.iter().any(|e| e.step_mode != step_mode) {
+            bail!("input layout slot {slot} mixes per-vertex and per-instance elements");
+        }
+
+        let mut attrs: Vec<wgpu::VertexAttribute> = slot_elements
+            .iter()
+            .map(|e| wgpu::VertexAttribute {
+                format: e.format,
+                offset: e.offset as u64,
+                shader_location: e.shader_location,
+            })
+            .collect();
+
+        // Make ordering deterministic regardless of blob ordering.
+        attrs.sort_by_key(|a| a.shader_location);
+
+        out_keys.push(VertexBufferLayoutKey {
+            array_stride: vb.stride as u64,
+            step_mode,
+            attributes: attrs.iter().copied().map(VertexAttributeKey::from).collect(),
+        });
+        out_layouts.push(OwnedVertexBufferLayout {
+            array_stride: vb.stride as u64,
+            step_mode,
+            attributes: attrs,
+        });
+    }
+
+    Ok((out_layouts, out_keys, vb_slots))
+}
+
+fn build_color_attachments<'a>(
+    resources: &'a AerogpuResources,
+    state: &D3D11ShadowState,
+) -> Result<(
+    Vec<Option<wgpu::RenderPassColorAttachment<'a>>>,
+    Vec<ColorTargetKey>,
+    (u32, u32),
+)> {
+    let mut attachments = Vec::new();
+    let mut keys = Vec::new();
+
+    let mut size: Option<(u32, u32)> = None;
+    let mut seen_gap = false;
+    for (slot, handle) in state.render_targets.colors.iter().enumerate() {
+        let Some(handle) = handle else {
+            seen_gap = true;
+            continue;
+        };
+        if seen_gap {
+            bail!("render target slot {slot} is set after an earlier slot was unbound (gaps are not supported yet)");
+        }
+
+        let tex = resources
+            .textures
+            .get(handle)
+            .ok_or_else(|| anyhow!("unknown render target texture {handle}"))?;
+
+        let this_size = (tex.desc.width, tex.desc.height);
+        if let Some(expected) = size {
+            if expected != this_size {
+                bail!(
+                    "mismatched render target sizes: {:?} vs {:?}",
+                    expected,
+                    this_size
+                );
+            }
+        } else {
+            size = Some(this_size);
+        }
+
+        attachments.push(Some(wgpu::RenderPassColorAttachment {
+            view: &tex.view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 1.0,
+                }),
+                store: wgpu::StoreOp::Store,
+            },
+        }));
+
+        keys.push(ColorTargetKey {
+            format: tex.desc.format,
+            blend: state.blend_state.blend.map(Into::into),
+            write_mask: state.blend_state.write_mask,
+        });
+    }
+
+    if keys.is_empty() {
+        bail!("draw without bound render targets");
+    }
+
+    Ok((attachments, keys, size.unwrap_or((1, 1))))
+}
+
+fn build_depth_attachment<'a>(
+    resources: &'a AerogpuResources,
+    state: &D3D11ShadowState,
+) -> Result<(
+    Option<wgpu::RenderPassDepthStencilAttachment<'a>>,
+    Option<aero_gpu::pipeline_key::DepthStencilKey>,
+    Option<wgpu::DepthStencilState>,
+)> {
+    let Some(depth_handle) = state.render_targets.depth_stencil else {
+        return Ok((None, None, None));
+    };
+
+    let tex = resources
+        .textures
+        .get(&depth_handle)
+        .ok_or_else(|| anyhow!("unknown depth-stencil texture {depth_handle}"))?;
+
+    let DepthStencilState {
+        depth_enable,
+        depth_write_enable,
+        depth_compare,
+        stencil_enable,
+        stencil_read_mask,
+        stencil_write_mask,
+        depth_bias,
+    } = state.depth_stencil_state;
+
+    let depth_compare = if depth_enable {
+        depth_compare
+    } else {
+        wgpu::CompareFunction::Always
+    };
+    let depth_write_enabled = depth_enable && depth_write_enable;
+
+    let _ = stencil_enable;
+    // P0: the protocol doesn't carry full stencil ops/functions yet.
+    let stencil_state = wgpu::StencilState {
+        front: wgpu::StencilFaceState::IGNORE,
+        back: wgpu::StencilFaceState::IGNORE,
+        read_mask: stencil_read_mask as u32,
+        write_mask: stencil_write_mask as u32,
+    };
+
+    let depth_stencil_state = wgpu::DepthStencilState {
+        format: tex.desc.format,
+        depth_write_enabled,
+        depth_compare,
+        stencil: stencil_state,
+        bias: wgpu::DepthBiasState {
+            constant: depth_bias,
+            slope_scale: 0.0,
+            clamp: 0.0,
+        },
+    };
+
+    let attachment = wgpu::RenderPassDepthStencilAttachment {
+        view: &tex.view,
+        depth_ops: Some(wgpu::Operations {
+            load: wgpu::LoadOp::Clear(1.0),
+            store: wgpu::StoreOp::Store,
+        }),
+        stencil_ops: Some(wgpu::Operations {
+            load: wgpu::LoadOp::Clear(0),
+            store: wgpu::StoreOp::Store,
+        }),
+    };
+
+    Ok((
+        Some(attachment),
+        Some(depth_stencil_state.clone().into()),
+        Some(depth_stencil_state),
+    ))
+}
+
+fn map_topology(topology: PrimitiveTopology) -> Result<wgpu::PrimitiveTopology> {
+    Ok(match topology {
+        PrimitiveTopology::PointList => wgpu::PrimitiveTopology::PointList,
+        PrimitiveTopology::LineList => wgpu::PrimitiveTopology::LineList,
+        PrimitiveTopology::LineStrip => wgpu::PrimitiveTopology::LineStrip,
+        PrimitiveTopology::TriangleList => wgpu::PrimitiveTopology::TriangleList,
+        PrimitiveTopology::TriangleStrip => wgpu::PrimitiveTopology::TriangleStrip,
+        PrimitiveTopology::TriangleFan => bail!("TriangleFan is not supported by WebGPU"),
+    })
+}
+
+fn parse_input_layout_blob(blob: &[u8]) -> Result<InputLayoutResource> {
+    // Blob format mirrored from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
+    const MAGIC: u32 = 0x5941_4C49; // "ILAY" little-endian
+    const VERSION: u32 = 1;
+    const HEADER_SIZE: usize = 16;
+    const ELEM_SIZE: usize = 28;
+    const APPEND_ALIGNED_ELEMENT: u32 = 0xFFFF_FFFF;
+
+    if blob.len() < HEADER_SIZE {
+        bail!("input layout blob too small");
+    }
+    let magic = u32::from_le_bytes(blob[0..4].try_into().unwrap());
+    if magic != MAGIC {
+        bail!("invalid input layout blob magic 0x{magic:08X}");
+    }
+    let version = u32::from_le_bytes(blob[4..8].try_into().unwrap());
+    if version != VERSION {
+        bail!("unsupported input layout blob version {version}");
+    }
+    let element_count = u32::from_le_bytes(blob[8..12].try_into().unwrap()) as usize;
+    let expected = HEADER_SIZE + element_count * ELEM_SIZE;
+    if blob.len() < expected {
+        bail!(
+            "truncated input layout blob: need {} bytes for {} elements, got {}",
+            expected,
+            element_count,
+            blob.len()
+        );
+    }
+
+    let mut elements = Vec::with_capacity(element_count);
+    let mut next_shader_location = 0u32;
+    let mut next_offset_per_slot: HashMap<u32, u32> = HashMap::new();
+
+    for i in 0..element_count {
+        let base = HEADER_SIZE + i * ELEM_SIZE;
+        // Skip semantic_name_hash + semantic_index (we don't have signature-based mapping yet).
+        let dxgi_format = u32::from_le_bytes(blob[base + 8..base + 12].try_into().unwrap());
+        let input_slot = u32::from_le_bytes(blob[base + 12..base + 16].try_into().unwrap());
+        let mut aligned_byte_offset =
+            u32::from_le_bytes(blob[base + 16..base + 20].try_into().unwrap());
+        let input_slot_class = u32::from_le_bytes(blob[base + 20..base + 24].try_into().unwrap());
+        let instance_data_step_rate =
+            u32::from_le_bytes(blob[base + 24..base + 28].try_into().unwrap());
+
+        let step_mode = match input_slot_class {
+            0 => wgpu::VertexStepMode::Vertex,
+            1 => wgpu::VertexStepMode::Instance,
+            other => bail!("unknown input_slot_class {other}"),
+        };
+        if step_mode == wgpu::VertexStepMode::Instance && instance_data_step_rate != 1 {
+            bail!("instance_data_step_rate != 1 is not supported yet");
+        }
+
+        let format = map_dxgi_vertex_format(dxgi_format)?;
+        let size = vertex_format_size(format);
+
+        if aligned_byte_offset == APPEND_ALIGNED_ELEMENT {
+            let next = *next_offset_per_slot.get(&input_slot).unwrap_or(&0);
+            aligned_byte_offset = next;
+        }
+        let next = aligned_byte_offset
+            .checked_add(size)
+            .ok_or_else(|| anyhow!("aligned_byte_offset overflow"))?;
+        next_offset_per_slot.insert(input_slot, next);
+
+        elements.push(InputElement {
+            input_slot,
+            offset: aligned_byte_offset,
+            format,
+            step_mode,
+            shader_location: next_shader_location,
+        });
+        next_shader_location += 1;
+    }
+
+    Ok(InputLayoutResource { elements })
+}
+
+fn map_dxgi_vertex_format(dxgi: u32) -> Result<wgpu::VertexFormat> {
+    // Minimal subset for bring-up. The numeric values are DXGI_FORMAT.
+    Ok(match dxgi {
+        // DXGI_FORMAT_R32G32B32A32_FLOAT
+        2 => wgpu::VertexFormat::Float32x4,
+        // DXGI_FORMAT_R32G32B32_FLOAT
+        6 => wgpu::VertexFormat::Float32x3,
+        // DXGI_FORMAT_R32G32_FLOAT
+        16 => wgpu::VertexFormat::Float32x2,
+        // DXGI_FORMAT_R32_FLOAT
+        41 => wgpu::VertexFormat::Float32,
+        // DXGI_FORMAT_R8G8B8A8_UNORM
+        28 => wgpu::VertexFormat::Unorm8x4,
+        other => bail!("unsupported DXGI vertex format {other}"),
+    })
+}
+
+fn vertex_format_size(format: wgpu::VertexFormat) -> u32 {
+    match format {
+        wgpu::VertexFormat::Float32 => 4,
+        wgpu::VertexFormat::Float32x2 => 8,
+        wgpu::VertexFormat::Float32x3 => 12,
+        wgpu::VertexFormat::Float32x4 => 16,
+        wgpu::VertexFormat::Unorm8x4 => 4,
+        other => {
+            // Keep this exhaustive-ish; if we add a mapping above we should update here.
+            panic!("vertex_format_size: unsupported format {other:?}")
+        }
+    }
+}

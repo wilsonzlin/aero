@@ -220,6 +220,7 @@ pub struct RenderPipelineKey {
     pub primitive_topology: wgpu::PrimitiveTopology,
     pub cull_mode: Option<wgpu::Face>,
     pub front_face: wgpu::FrontFace,
+    pub scissor_enabled: bool,
 
     pub vertex_buffers: Vec<VertexBufferLayoutKey>,
     pub sample_count: u32,
@@ -253,6 +254,7 @@ mod tests {
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             cull_mode: Some(wgpu::Face::Back),
             front_face: wgpu::FrontFace::Ccw,
+            scissor_enabled: false,
             vertex_buffers: vec![],
             sample_count: 1,
             layout: PipelineLayoutKey::empty(),
@@ -270,6 +272,9 @@ mod tests {
         let mut k3 = k1.clone();
         k3.sample_count = 4;
         assert_ne!(k1, k3);
+
+        let mut k4 = k1.clone();
+        k4.scissor_enabled = true;
+        assert_ne!(k1, k4);
     }
 }
-

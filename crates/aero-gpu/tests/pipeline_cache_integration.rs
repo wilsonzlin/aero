@@ -93,6 +93,7 @@ fn render_pipeline_is_cached() {
         primitive_topology: wgpu::PrimitiveTopology::TriangleList,
         cull_mode: None,
         front_face: wgpu::FrontFace::Ccw,
+        scissor_enabled: false,
         vertex_buffers: vec![],
         sample_count: 1,
         layout: PipelineLayoutKey::empty(),
