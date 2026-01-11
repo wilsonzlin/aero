@@ -103,9 +103,15 @@ fn aerogpu_ring_submission_executes_and_updates_scanout() {
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
-    dev.set_backend(Box::new(
-        NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
-    ));
+    let backend = match NativeAeroGpuBackend::new_headless() {
+        Ok(backend) => backend,
+        Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping AeroGPU end-to-end test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to initialize native AeroGPU backend: {err}"),
+    };
+    dev.set_backend(Box::new(backend));
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;

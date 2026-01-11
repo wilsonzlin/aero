@@ -238,9 +238,8 @@ impl aero_gpu::GuestMemory for MemoryBusGuestMemory<'_> {
 
 #[cfg(feature = "aerogpu-native")]
 impl NativeAeroGpuBackend {
-    pub fn new_headless() -> Result<Self, String> {
-        let exec = pollster::block_on(aero_gpu::AerogpuD3d9Executor::new_headless())
-            .map_err(|e| format!("failed to initialize native AerogpuD3d9Executor backend: {e}"))?;
+    pub fn new_headless() -> Result<Self, aero_gpu::AerogpuD3d9Error> {
+        let exec = pollster::block_on(aero_gpu::AerogpuD3d9Executor::new_headless())?;
         Ok(Self {
             exec,
             completed: VecDeque::new(),
