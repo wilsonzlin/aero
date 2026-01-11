@@ -328,8 +328,9 @@ if ($SigningPolicy -ne "test") {
 
 # 4) Build the actual Guest Tools ISO/zip via the standard CI wrapper script.
 # Use the same staging logic as CI packaging so:
-# - the staged Guest Tools config matches the packaged driver INF AddService name (viostor, etc)
 # - outputs are deterministic via SOURCE_DATE_EPOCH / --source-date-epoch (wrapper default)
+# - `config/devices.cmd` in the packaged ISO/zip is regenerated from the device contract, with
+#   virtio-win service-name overrides applied by the packager (`viostor`, `netkvm`, etc).
 $wrapperScript = Join-Path (Join-Path $repoRoot "ci") "package-guest-tools.ps1"
 if (-not (Test-Path -LiteralPath $wrapperScript -PathType Leaf)) {
   throw "Expected Guest Tools packaging wrapper script not found: $wrapperScript"
