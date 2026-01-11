@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 
 use aero_snapshot::{
-    Compression, CpuState, DiskOverlayRef, RamMode, SectionId, SnapshotError, SnapshotIndex,
+    Compression, CpuState, RamMode, SectionId, SnapshotError, SnapshotIndex,
     SnapshotSectionInfo, SnapshotTarget,
 };
 
@@ -14,6 +14,7 @@ const MAX_DEVICES_SECTION_LEN: u64 = 256 * 1024 * 1024;
 const MAX_CPU_COUNT: u32 = 4096;
 const MAX_VCPU_INTERNAL_LEN: u64 = 64 * 1024 * 1024;
 const MAX_DISK_REFS: u32 = 256;
+const MAX_DISK_PATH_LEN: u32 = 64 * 1024;
 
 pub fn print_help() {
     println!(
@@ -479,8 +480,69 @@ fn validate_disks_section(file: &mut fs::File, section: &SnapshotSectionInfo) ->
     }
 
     for _ in 0..count {
-        let _ = DiskOverlayRef::decode(&mut limited)
-            .map_err(|e| XtaskError::Message(format!("decode disk ref: {e}")))?;
+        let _disk_id = read_u32_le(&mut limited)?;
+        validate_string_u32_utf8(&mut limited, MAX_DISK_PATH_LEN, "disk base_image")?;
+        validate_string_u32_utf8(&mut limited, MAX_DISK_PATH_LEN, "disk overlay_image")?;
+    }
+
+    Ok(())
+}
+
+fn validate_string_u32_utf8(
+    r: &mut impl Read,
+    max_len: u32,
+    what: &str,
+) -> Result<()> {
+    let len = read_u32_le(r)?;
+    if len > max_len {
+        return Err(XtaskError::Message(format!("{what} too long")));
+    }
+    let mut limited = r.take(len as u64);
+    validate_utf8_bytes(&mut limited, what)?;
+    if limited.limit() != 0 {
+        return Err(XtaskError::Message(format!("{what}: truncated string bytes")));
+    }
+    Ok(())
+}
+
+fn validate_utf8_bytes<R: Read>(r: &mut std::io::Take<R>, what: &str) -> Result<()> {
+    const CHUNK: usize = 8 * 1024;
+    let mut buf = [0u8; CHUNK];
+    let mut tmp = [0u8; CHUNK + 4];
+    let mut carry = [0u8; 4];
+    let mut carry_len = 0usize;
+
+    loop {
+        let n = r
+            .read(&mut buf)
+            .map_err(|e| XtaskError::Message(format!("{what}: {e}")))?;
+        if n == 0 {
+            break;
+        }
+
+        tmp[..carry_len].copy_from_slice(&carry[..carry_len]);
+        tmp[carry_len..carry_len + n].copy_from_slice(&buf[..n]);
+        let slice = &tmp[..carry_len + n];
+
+        match std::str::from_utf8(slice) {
+            Ok(_) => carry_len = 0,
+            Err(e) => match e.error_len() {
+                Some(_) => return Err(XtaskError::Message(format!("{what}: invalid utf-8"))),
+                None => {
+                    let valid = e.valid_up_to();
+                    let remaining = &slice[valid..];
+                    carry_len = remaining.len();
+                    carry[..carry_len].copy_from_slice(remaining);
+                }
+            },
+        }
+    }
+
+    if r.limit() != 0 {
+        return Err(XtaskError::Message(format!("{what}: truncated string bytes")));
+    }
+    if carry_len != 0 {
+        return Err(XtaskError::Message(format!("{what}: invalid utf-8")));
     }
 
     Ok(())
