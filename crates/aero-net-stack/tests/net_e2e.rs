@@ -37,6 +37,16 @@ async fn net_e2e() {
     )]))
     .await;
     let tcp_relay = TcpWsRelayServer::spawn().await;
+
+    // The canonical gateway contract requires the session cookie; ensure missing cookies are
+    // rejected before we bootstrap a session.
+    assert_tcp_relay_rejects_without_cookie(
+        tcp_relay.addr,
+        Ipv4Addr::LOCALHOST,
+        tcp_echo.addr.port(),
+    )
+    .await;
+
     let session_cookie = create_gateway_session(tcp_relay.addr).await;
 
     let mut stack = NetworkStack::new(StackConfig::default());
@@ -548,6 +558,29 @@ async fn create_gateway_session(addr: SocketAddr) -> String {
     parse_set_cookie_value(set_cookie, "aero_session").expect("parse aero_session cookie")
 }
 
+async fn assert_tcp_relay_rejects_without_cookie(
+    addr: SocketAddr,
+    remote_ip: Ipv4Addr,
+    remote_port: u16,
+) {
+    let mut stream = TcpStream::connect(addr)
+        .await
+        .expect("connect tcp relay /tcp (missing cookie)");
+
+    let req = format!(
+        "GET /tcp?v=1&host={remote_ip}&port={remote_port} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+    );
+    stream
+        .write_all(req.as_bytes())
+        .await
+        .expect("send tcp relay /tcp (missing cookie)");
+
+    let (_proto, status, _headers, _body) = read_http_response(&mut stream)
+        .await
+        .expect("read tcp relay /tcp response");
+    assert_eq!(status, "401", "expected 401 Unauthorized from /tcp");
+}
+
 fn parse_set_cookie_value(set_cookie: &str, cookie_name: &str) -> Option<String> {
     let first = set_cookie.split(';').next()?.trim();
     let (name, value) = first.split_once('=')?;
@@ -774,9 +807,9 @@ async fn handle_tcp_relay_client(mut stream: TcpStream) -> std::io::Result<()> {
                 }
             }
 
-            if let (Some(host), Some(port)) = (host, port) {
-                target = Some((host, port));
-            } else if let Some(legacy) = legacy_target {
+            // Match the documented gateway precedence: if both the canonical form and the legacy
+            // `target=` alias are provided, prefer `target`.
+            if let Some(legacy) = legacy_target {
                 if let Ok(parsed) = parse_target(&legacy) {
                     target = Some(parsed);
                 } else {
@@ -785,6 +818,8 @@ async fn handle_tcp_relay_client(mut stream: TcpStream) -> std::io::Result<()> {
                         .body(Some("invalid target".to_string()))
                         .expect("build response"));
                 }
+            } else if let (Some(host), Some(port)) = (host, port) {
+                target = Some((host, port));
             }
 
             if target.is_none() {
