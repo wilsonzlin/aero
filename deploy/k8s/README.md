@@ -39,11 +39,21 @@ helm lint "$CHART" -f "$CHART/values-prod.yaml"
 helm template aero-gateway "$CHART" -n aero -f "$CHART/values-dev.yaml" > /tmp/aero-dev.yaml
 helm template aero-gateway "$CHART" -n aero -f "$CHART/values-prod.yaml" > /tmp/aero-prod.yaml
 
-kubeconform -strict -ignore-missing-schemas -kubernetes-version 1.28.0 -summary /tmp/aero-dev.yaml
-kubeconform -strict -ignore-missing-schemas -kubernetes-version 1.28.0 -summary /tmp/aero-prod.yaml
+kubeconform -strict -ignore-missing-schemas \
+  -schema-location default \
+  -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
+  -kubernetes-version 1.28.0 -summary /tmp/aero-dev.yaml
+
+kubeconform -strict -ignore-missing-schemas \
+  -schema-location default \
+  -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
+  -kubernetes-version 1.28.0 -summary /tmp/aero-prod.yaml
 
 # Validate the non-Helm manifests in this repo too:
-kubeconform -strict -ignore-missing-schemas -kubernetes-version 1.28.0 -summary deploy/k8s/aero-storage-server
+kubeconform -strict -ignore-missing-schemas \
+  -schema-location default \
+  -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
+  -kubernetes-version 1.28.0 -summary deploy/k8s/aero-storage-server
 ```
 
 ## Optional: install ingress-nginx (example)
