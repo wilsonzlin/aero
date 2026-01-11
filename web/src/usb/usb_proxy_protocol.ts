@@ -1,10 +1,6 @@
-import type {
-  SetupPacket as UsbSetupPacket,
-  UsbHostAction,
-  UsbHostCompletion,
-} from "./usb_passthrough_types";
+import type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passthrough_types";
 
-export type { UsbHostAction, UsbHostCompletion, UsbSetupPacket };
+export type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passthrough_types";
 
 export type UsbActionMessage = { type: "usb.action"; action: UsbHostAction };
 export type UsbCompletionMessage = { type: "usb.completion"; completion: UsbHostCompletion };
@@ -26,7 +22,7 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-export function isUsbSetupPacket(value: unknown): value is UsbSetupPacket {
+export function isUsbSetupPacket(value: unknown): value is SetupPacket {
   if (!isRecord(value)) return false;
   return (
     isFiniteNumber(value.bmRequestType) &&
