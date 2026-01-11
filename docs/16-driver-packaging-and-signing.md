@@ -51,14 +51,13 @@ Example (explicit INF selection + WOW64 payload DLL in x64 package):
 
 For a real in-tree example (multiple INFs + WOW64 payloads), see: `drivers/aerogpu/ci-package.json`.
 
-Example (requires WDF coinstaller):
+Example (requires WDF coinstaller; `dllName` derived from `kmdfVersion`):
 
 ```json
 {
   "$schema": "../../ci/driver-package.schema.json",
   "wdfCoInstaller": {
-    "kmdfVersion": "1.11",
-    "dllName": "WdfCoInstaller01011.dll"
+    "kmdfVersion": "1.11"
   },
   "additionalFiles": ["README.md", "packaging/win7/install.cmd"]
 }

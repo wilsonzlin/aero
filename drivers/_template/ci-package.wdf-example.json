@@ -2,7 +2,6 @@
   "$schema": "../../ci/driver-package.schema.json",
   "additionalFiles": ["README.md"],
   "wdfCoInstaller": {
-    "kmdfVersion": "1.11",
-    "dllName": "WdfCoInstaller01011.dll"
+    "kmdfVersion": "1.11"
   }
 }
