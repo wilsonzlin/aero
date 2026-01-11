@@ -518,7 +518,11 @@ static bool PatchChildCommandLineSharedHandle(HANDLE child_process,
   return true;
 }
 
-static int RunChild(int argc, char** argv, const AdapterRequirements& req, bool dump) {
+static int RunChild(int argc,
+                    char** argv,
+                    const AdapterRequirements& req,
+                    bool dump,
+                    bool validate_sharing) {
   const char* kTestName = "d3d9ex_shared_surface(child)";
 
   std::string handle_str;
@@ -617,13 +621,15 @@ static int RunChild(int argc, char** argv, const AdapterRequirements& req, bool 
     return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::Flush", hr);
   }
 
-  rc = ValidateSurfacePixels(kTestName,
-                             L"d3d9ex_shared_surface_child.bmp",
-                             dump,
-                             dev.get(),
-                             surface.get());
-  if (rc != 0) {
-    return rc;
+  if (validate_sharing) {
+    rc = ValidateSurfacePixels(kTestName,
+                               L"d3d9ex_shared_surface_child.bmp",
+                               dump,
+                               dev.get(),
+                               surface.get());
+    if (rc != 0) {
+      return rc;
+    }
   }
 
   CloseHandle(shared_handle);
@@ -636,7 +642,8 @@ static int RunParent(int argc,
                      char** argv,
                      const AdapterRequirements& req,
                      bool dump,
-                     bool hidden) {
+                     bool hidden,
+                     bool validate_sharing) {
   const char* kTestName = "d3d9ex_shared_surface";
 
   const int kWidth = 64;
@@ -703,17 +710,32 @@ static int RunParent(int argc,
     }
   }
 
-  rc = RenderTriangleToSurface(kTestName, dev.get(), surface.get(), kWidth, kHeight);
-  if (rc != 0) {
-    CloseHandle(shared_handle);
-    return rc;
-  }
+  if (validate_sharing) {
+    rc = RenderTriangleToSurface(kTestName, dev.get(), surface.get(), kWidth, kHeight);
+    if (rc != 0) {
+      CloseHandle(shared_handle);
+      return rc;
+    }
 
-  rc = ValidateSurfacePixels(
-      kTestName, L"d3d9ex_shared_surface_parent.bmp", dump, dev.get(), surface.get());
-  if (rc != 0) {
-    CloseHandle(shared_handle);
-    return rc;
+    rc = ValidateSurfacePixels(
+        kTestName, L"d3d9ex_shared_surface_parent.bmp", dump, dev.get(), surface.get());
+    if (rc != 0) {
+      CloseHandle(shared_handle);
+      return rc;
+    }
+  } else {
+    // Minimal "use the resource" op in the parent. This intentionally does not validate pixels; the
+    // primary purpose of this test is cross-process open + submit, not correctness of data sharing.
+    hr = dev->ColorFill(surface.get(), NULL, D3DCOLOR_XRGB(255, 0, 0));
+    if (FAILED(hr)) {
+      CloseHandle(shared_handle);
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::ColorFill(parent)", hr);
+    }
+    hr = dev->Flush();
+    if (FAILED(hr)) {
+      CloseHandle(shared_handle);
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::Flush(parent)", hr);
+    }
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: parent shared handle=%s (%s)",
@@ -741,6 +763,9 @@ static int RunParent(int argc,
   cmdline += L" --hidden";
   if (dump) {
     cmdline += L" --dump";
+  }
+  if (validate_sharing) {
+    cmdline += L" --validate-sharing";
   }
   if (req.allow_microsoft) {
     cmdline += L" --allow-microsoft";
@@ -874,15 +899,18 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--hidden] [--require-vid=0x####] [--require-did=0x####] "
-        "[--allow-microsoft] [--allow-non-aerogpu]",
+        "Usage: %s.exe [--dump] [--hidden] [--validate-sharing] [--require-vid=0x####] "
+        "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu]",
         kTestName);
+    aerogpu_test::PrintfStdout("Note: --dump implies --validate-sharing.");
     aerogpu_test::PrintfStdout("Internal: %s.exe --child --shared-handle=0x... (used by parent)", kTestName);
     return 0;
   }
 
   const bool child = aerogpu_test::HasArg(argc, argv, "--child");
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
+  const bool validate_sharing =
+      aerogpu_test::HasArg(argc, argv, "--validate-sharing") || dump;
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
@@ -910,9 +938,9 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
   }
 
   if (child) {
-    return RunChild(argc, argv, req, dump);
+    return RunChild(argc, argv, req, dump, validate_sharing);
   }
-  return RunParent(argc, argv, req, dump, hidden);
+  return RunParent(argc, argv, req, dump, hidden, validate_sharing);
 }
 
 int main(int argc, char** argv) {
