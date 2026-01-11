@@ -230,7 +230,8 @@ services:
       #
       # In `AERO_L2_AUTH_MODE=api_key`, this is also accepted as a fallback value for `AERO_L2_API_KEY`.
       #
-      # This is ignored when `AERO_L2_AUTH_MODE` is explicitly set to `cookie`, `jwt`, `cookie_or_jwt`, or `none`.
+      # This is ignored when `AERO_L2_AUTH_MODE` is explicitly set to `cookie`, `jwt`, `cookie_or_jwt`,
+      # `cookie_or_api_key`, or `none`.
       AERO_L2_TOKEN: ${AERO_L2_TOKEN:-}
 
       # Egress policy (highly recommended to set allowlists for production deployments).

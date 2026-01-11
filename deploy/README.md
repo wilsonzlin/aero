@@ -187,7 +187,7 @@ cp deploy/.env.example deploy/.env
   - Authentication mode for `/l2` (handled by `crates/aero-l2-proxy`).
   - Supported values: `cookie`, `none`, `api_key`, `jwt`, `cookie_or_jwt`, `cookie_or_api_key`.
 - `AERO_L2_SESSION_SECRET` (optional override)
-  - Secret for validating the `aero_session` cookie when `AERO_L2_AUTH_MODE=cookie|cookie_or_jwt`.
+  - Secret for validating the `aero_session` cookie when `AERO_L2_AUTH_MODE=cookie|cookie_or_jwt|cookie_or_api_key`.
   - `crates/aero-l2-proxy` reads this from `AERO_L2_SESSION_SECRET` and falls back to
     `SESSION_SECRET` / `AERO_GATEWAY_SESSION_SECRET` (so the deploy stack can share one secret
     across both services).
@@ -203,7 +203,7 @@ cp deploy/.env.example deploy/.env
   - When `AERO_L2_AUTH_MODE` is unset, setting `AERO_L2_TOKEN` implicitly enables `api_key` mode with
     that value (equivalent to `AERO_L2_AUTH_MODE=api_key` + `AERO_L2_API_KEY=<value>`).
   - Also accepted as a fallback value for `AERO_L2_API_KEY` when `AERO_L2_AUTH_MODE=api_key`.
-  - Ignored when `AERO_L2_AUTH_MODE` is set to `cookie`, `jwt`, `cookie_or_jwt`, or `none`.
+  - Ignored when `AERO_L2_AUTH_MODE` is set to `cookie`, `jwt`, `cookie_or_jwt`, `cookie_or_api_key`, or `none`.
 - `AERO_WEBRTC_UDP_RELAY_IMAGE` (default: `aero-webrtc-udp-relay:dev`)
   - When unset, docker compose builds the UDP relay from `proxy/webrtc-udp-relay/`.
 - `AERO_WEBRTC_UDP_RELAY_UPSTREAM` (default: `aero-webrtc-udp-relay:8080`)
@@ -232,7 +232,7 @@ Gateway environment variables (used by `backend/aero-gateway` and passed through
   - Used to authenticate privileged endpoints like `/tcp` and `/l2` (default in this deploy stack).
   - If unset, the deploy stack generates and persists a random secret in a Docker volume (sessions
     survive restarts until `docker compose down -v`).
-  - When using cookie auth for the L2 tunnel (`AERO_L2_AUTH_MODE=cookie` / `cookie_or_jwt`), `crates/aero-l2-proxy`
+  - When using cookie auth for the L2 tunnel (`AERO_L2_AUTH_MODE=cookie` / `cookie_or_jwt` / `cookie_or_api_key`), `crates/aero-l2-proxy`
     must share the same signing secret so it can validate the `aero_session` cookie minted by the gateway.
 - `ALLOWED_ORIGINS` (optional, comma-separated)
   - Set explicitly if you need to allow additional origins (e.g. a dev server).

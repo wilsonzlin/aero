@@ -125,13 +125,13 @@ l2Proxy:
     #
     # Default: "cookie" (matches the gateway's session-cookie auth used by `/tcp`).
     #
-    # Note: when using `"cookie"` / `"cookie_or_jwt"`, `aero-l2-proxy` must share the gateway
+    # Note: when using `"cookie"` / `"cookie_or_jwt"` / `"cookie_or_api_key"`, `aero-l2-proxy` must share the gateway
     # `SESSION_SECRET` so it can validate `aero_session` cookies (see `l2Proxy.sessionSecret`).
     mode: "cookie"
 
   # Session cookie auth wiring.
   #
-  # When using `auth.mode: "cookie"` (or `"cookie_or_jwt"`), the L2 proxy must be able to verify the
+  # When using `auth.mode: "cookie"` (or `"cookie_or_jwt"` / `"cookie_or_api_key"`), the L2 proxy must be able to verify the
   # gateway-issued session cookie. This requires sharing the signing secret used by the gateway
   # (`SESSION_SECRET`).
   #
