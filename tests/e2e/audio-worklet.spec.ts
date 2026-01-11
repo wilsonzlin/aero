@@ -23,10 +23,12 @@ test("AudioWorklet output runs and does not underrun with synthetic tone", async
       enabled: out?.enabled,
       state: out?.context?.state,
       underruns: typeof out?.getUnderrunCount === "function" ? out.getUnderrunCount() : null,
+      overruns: typeof out?.getOverrunCount === "function" ? out.getOverrunCount() : null,
     };
   });
 
   expect(result.enabled).toBe(true);
   expect(result.state).toBe("running");
   expect(result.underruns).toBe(0);
+  expect(result.overruns).toBe(0);
 });
