@@ -314,7 +314,7 @@ portable virtio PCI capability parser used by the miniport and WDM transports.
 Build with CMake:
 
 ```sh
-cmake -S . -B build
+cmake -S tests -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
