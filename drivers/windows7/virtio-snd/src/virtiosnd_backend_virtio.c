@@ -424,10 +424,6 @@ VirtioSndBackendIsr(_In_ PKINTERRUPT Interrupt, _In_ PVOID ServiceContext)
         return FALSE;
     }
 
-    if (InterlockedCompareExchange(&backend->ShuttingDown, 0, 0) != 0) {
-        return TRUE;
-    }
-
     if (backend->Virtio.IsrStatus == NULL) {
         return FALSE;
     }
@@ -435,6 +431,15 @@ VirtioSndBackendIsr(_In_ PKINTERRUPT Interrupt, _In_ PVOID ServiceContext)
     isr = READ_REGISTER_UCHAR(backend->Virtio.IsrStatus);
     if (isr == 0) {
         return FALSE;
+    }
+
+    /*
+     * Always read-to-ack the ISR status register to deassert the INTx line,
+     * even during teardown. Otherwise a level-triggered line could remain
+     * asserted and cause an interrupt storm on a shared vector.
+     */
+    if (InterlockedCompareExchange(&backend->ShuttingDown, 0, 0) != 0) {
+        return TRUE;
     }
 
     InterlockedOr(&backend->PendingIsrStatus, (LONG)isr);
