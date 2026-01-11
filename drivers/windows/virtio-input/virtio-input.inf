@@ -52,7 +52,7 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLi
 [VirtioInput_Install.NT.Services]
 Include=hidclass.inf
 Needs=HID_Inst.NT.Services
-AddService=virtioinput,0x00000002,VirtioInput_ServiceInstall
+AddService = virtioinput,0x00000002,VirtioInput_ServiceInstall
 
 [VirtioInput_ServiceInstall]
 DisplayName=%VirtioInput.ServiceDesc%
