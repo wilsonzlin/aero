@@ -125,7 +125,11 @@ fn etag_from_size_and_mtime(size: u64, mtime: Option<SystemTime>) -> String {
         .map(|d| (d.as_secs(), d.subsec_nanos()))
         .unwrap_or((0, 0));
 
-    format!("\"{size:x}-{sec:x}-{nsec:x}\"", sec = mtime.0, nsec = mtime.1)
+    format!(
+        "\"{size:x}-{sec:x}-{nsec:x}\"",
+        sec = mtime.0,
+        nsec = mtime.1
+    )
 }
 
 fn map_not_found(err: std::io::Error) -> StoreError {
