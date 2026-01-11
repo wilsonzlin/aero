@@ -4,7 +4,7 @@ This directory contains performance/telemetry tooling used for CI regression tra
 
 ## Quick-start (canonical commands)
 
-- `npm run bench:browser` — **browser CI-parity** perf run (wrapper around `tools/perf/run.mjs` via `bench/run`; requires `cd tools/perf && npm ci` once).
+- `npm run bench:browser` — **browser CI-parity** perf run (wrapper around `tools/perf/run.mjs` via `bench/run`; requires `npm ci` + `npx playwright install chromium` once).
 - `npm run bench:node` — **lightweight Node** microbench for PF-009 (`bench/run.js` → `bench/results.json`).
 - `npm run bench:compare` — compare `bench/results.json` against the checked-in `bench/baseline.json` (PF-009).
 - `npm run bench:update-baseline` — re-record `bench/baseline.json` (PF-009).
