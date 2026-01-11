@@ -330,6 +330,11 @@ export async function clearOpfs(): Promise<void> {
   } catch (err) {
     // ignore NotFoundError
   }
+  try {
+    await root.removeEntry(OPFS_LEGACY_IMAGES_DIR, { recursive: true });
+  } catch (err) {
+    // ignore NotFoundError
+  }
 }
 
 function normalizeOpfsRelPath(path: string): string[] {

@@ -1486,7 +1486,7 @@ function renderDisksPanel(): HTMLElement {
     }
 
     // Auto-adopt legacy images once per session so users upgrading from the v1
-    // DiskImageStore flow see their existing OPFS `images/` files.
+    // disk storage flow see their existing OPFS `images/` files.
     if (!adoptedLegacy && manager.backend === "opfs") {
       adoptedLegacy = true;
       try {
