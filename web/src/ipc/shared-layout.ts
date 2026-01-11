@@ -6,7 +6,9 @@
 // The layout is intentionally "boring": a small atomic header followed by two
 // framebuffer slots (double buffering) and optional per-slot dirty-tile bitsets.
 
-export const SHARED_FRAMEBUFFER_MAGIC = 0xA3F0_FB01;
+// Stored in an Int32Array header (Atomics requires a signed typed array), so
+// the u32 literal is converted via ToInt32 and becomes negative in JS.
+export const SHARED_FRAMEBUFFER_MAGIC = 0xA3F0_FB01 | 0;
 export const SHARED_FRAMEBUFFER_VERSION = 1;
 
 export const SHARED_FRAMEBUFFER_SLOTS = 2 as const;
