@@ -920,7 +920,8 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
     // be returned for DO_NOT_WAIT polling, including `HRESULT_FROM_NT(STATUS_TIMEOUT)`
     // which is a SUCCEEDED() HRESULT.
     if (hr == kDxgiErrorWasStillDrawing || hr == kHrWaitTimeout || hr == kHrErrorTimeout ||
-        hr == kHrNtStatusTimeout || hr == kHrNtStatusGraphicsGpuBusy || hr == kHrPending) {
+        hr == kHrNtStatusTimeout || hr == kHrNtStatusGraphicsGpuBusy ||
+        (timeout_ms == 0 && hr == kHrPending)) {
       return kDxgiErrorWasStillDrawing;
     }
     if (FAILED(hr)) {
