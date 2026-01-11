@@ -46,7 +46,7 @@ jobs:
         shell: pwsh
         run: >
           pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1"
-          -OutRoot "out/virtio-win-packaging-smoke/full"
+          -OutRoot "$env:RUNNER_TEMP/virtio-win-packaging-smoke/full"
           -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-full.json"
           -TestIsoMode
           -TestSigningPolicies
@@ -55,7 +55,7 @@ jobs:
         shell: pwsh
         run: >
           pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1"
-          -OutRoot "out/virtio-win-packaging-smoke/full-no-optional"
+          -OutRoot "$env:RUNNER_TEMP/virtio-win-packaging-smoke/full-no-optional"
           -OmitOptionalDrivers
           -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-full.json"
           -SkipGuestToolsDefaultsCheck
@@ -64,7 +64,7 @@ jobs:
         shell: pwsh
         run: >
           pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1"
-          -OutRoot "out/virtio-win-packaging-smoke/minimal"
+          -OutRoot "$env:RUNNER_TEMP/virtio-win-packaging-smoke/minimal"
           -OmitOptionalDrivers
           -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-win.json"
           -SkipGuestToolsDefaultsCheck
@@ -76,5 +76,6 @@ jobs:
           name: virtio-win-packaging-smoke
           if-no-files-found: warn
           path: |
+            ${{ runner.temp }}/virtio-win-packaging-smoke/**
             out/virtio-win-packaging-smoke/**
             drivers/out/**
