@@ -1,3 +1,4 @@
+use crate::clock::AudioFrameClock;
 use crate::mem::MemoryAccess;
 use crate::pcm::{decode_pcm_to_stereo_f32, LinearResampler, StreamFormat};
 use crate::ring::AudioRingBuffer;
@@ -561,6 +562,25 @@ impl HdaController {
             sink.push_interleaved_f32(&out_samples);
         }
         self.update_position_buffer(mem);
+    }
+
+    /// Convenience helper that derives `output_frames` from an [`AudioFrameClock`].
+    ///
+    /// This allows callers to drive the device model from a monotonic clock without needing to
+    /// re-implement time→frames conversion (and avoids cumulative rounding drift).
+    pub fn process_with_clock(
+        &mut self,
+        mem: &mut dyn MemoryAccess,
+        clock: &mut AudioFrameClock,
+        now_ns: u64,
+        sink: &mut dyn AudioSink,
+    ) {
+        debug_assert_eq!(
+            clock.sample_rate_hz, self.output_rate_hz,
+            "AudioFrameClock sample rate must match HDA output rate"
+        );
+        let output_frames = clock.advance_to(now_ns);
+        self.process_into(mem, output_frames, sink);
     }
 
     pub fn mmio_read(&mut self, offset: u64, size: usize) -> u64 {

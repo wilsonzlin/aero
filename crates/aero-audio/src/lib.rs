@@ -5,6 +5,7 @@
 //! via a `SharedArrayBuffer` ring buffer.
 
 pub mod hda;
+pub mod clock;
 pub mod mem;
 pub mod pcm;
 pub mod ring;
