@@ -5,6 +5,7 @@ use std::rc::Rc;
 use emulator::io::usb::hid::composite::UsbCompositeHidInputHandle;
 use emulator::io::usb::hid::gamepad::UsbHidGamepadHandle;
 use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
+use emulator::io::usb::hid::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
 use emulator::io::usb::core::UsbOutResult;
 use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 use emulator::io::usb::uhci::regs::{REG_USBCMD, USBCMD_MAXP, USBCMD_RS};
@@ -504,6 +505,148 @@ fn uhci_interrupt_in_polling_reads_hid_reports() {
     let st = mem.read_u32(TD0 as u64 + 4);
     assert!(st & TD_STATUS_ACTIVE != 0);
     assert!(st & (1 << 19) != 0); // NAK
+}
+
+#[test]
+fn uhci_interrupt_in_out_passthrough_device_queues_reports() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+
+    let report_descriptor = vec![
+        0x05, 0x01, // Usage Page (Generic Desktop)
+        0x09, 0x00, // Usage (Undefined)
+        0xa1, 0x01, // Collection (Application)
+        0x85, 0x01, // Report ID (1)
+        0x09, 0x00, // Usage (Undefined)
+        0x15, 0x00, // Logical Minimum (0)
+        0x26, 0xff, 0x00, // Logical Maximum (255)
+        0x75, 0x08, // Report Size (8)
+        0x95, 0x02, // Report Count (2)
+        0x81, 0x02, // Input (Data,Var,Abs)
+        0x85, 0x02, // Report ID (2)
+        0x09, 0x00, // Usage (Undefined)
+        0x15, 0x00, // Logical Minimum (0)
+        0x26, 0xff, 0x00, // Logical Maximum (255)
+        0x75, 0x08, // Report Size (8)
+        0x95, 0x02, // Report Count (2)
+        0x91, 0x02, // Output (Data,Var,Abs)
+        0xc0, // End Collection
+    ];
+
+    let passthrough = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        report_descriptor,
+        true,
+        None,
+        None,
+        None,
+    );
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(passthrough.clone()));
+    reset_port(&mut uhci, &mut mem, 0x10);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    // SET_ADDRESS(5).
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x05, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 0, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    // SET_CONFIGURATION(1).
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 5, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 5, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    passthrough.push_input_report(1, &[0xaa, 0xbb]);
+
+    // Poll interrupt endpoint 1 at address 5. (Report ID prefix + 2 bytes payload)
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 5, 1, 0, 3),
+        BUF_INT,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    assert_eq!(
+        mem.slice(BUF_INT as usize..BUF_INT as usize + 3),
+        [1, 0xaa, 0xbb]
+    );
+
+    // Poll again without new input: should NAK and remain active.
+    mem.write_u32(TD0 as u64 + 4, td_status(true, false));
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    let st = mem.read_u32(TD0 as u64 + 4);
+    assert!(st & TD_STATUS_ACTIVE != 0);
+    assert!(st & (1 << 19) != 0); // NAK
+
+    // Interrupt OUT: first byte is report ID since report IDs are present.
+    let payload = [7u8, 0x10, 0x20];
+    mem.write_physical(BUF_DATA as u64, &payload);
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_OUT, 5, 1, 0, payload.len()),
+        BUF_DATA,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    assert_eq!(
+        passthrough.pop_output_report(),
+        Some(UsbHidPassthroughOutputReport {
+            report_type: 2,
+            report_id: 7,
+            data: vec![0x10, 0x20],
+        })
+    );
 }
 
 #[test]
