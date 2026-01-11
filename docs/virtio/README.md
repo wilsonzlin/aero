@@ -33,7 +33,8 @@ Reference code in this repo:
     - Host tests: `drivers/windows7/virtio/common/tests/` (`CMakeLists.txt`)
 
   In-tree include sites for `virtqueue_split_legacy.h`:
-  - Unit tests: `drivers/windows7/virtio/common/tests/{test_main.c,fake_pci_device.h,fake_pci_device_modern.h}`
+  - Unit tests: `drivers/windows7/virtio/common/tests/{test_main.c,fake_pci_device.h}`
+  - `drivers/windows7/virtio-snd/src/virtiosnd_backend_virtio.c` (experimental backend; not compiled by default)
 
 Header policy: `drivers/windows/virtio/common/virtqueue_split.h` is the **only**
 header named `virtqueue_split.h` in-tree. The Win7 portable header is named
