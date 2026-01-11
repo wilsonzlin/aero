@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "aerogpu_cmd_writer.h"
+#include "../../../protocol/aerogpu_umd_private.h"
 
 namespace aerogpu::d3d10_11 {
 
@@ -153,6 +154,9 @@ struct Adapter {
   // Opaque pointer to the runtime's adapter callback table (WDK type depends on
   // D3D10 vs D3D11 and the negotiated interface version).
   const void* runtime_callbacks = nullptr;
+
+  aerogpu_umd_private_v1 umd_private = {};
+  bool umd_private_valid = false;
 
   std::mutex fence_mutex;
   std::condition_variable fence_cv;
