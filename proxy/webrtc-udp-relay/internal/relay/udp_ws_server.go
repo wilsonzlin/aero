@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/auth"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/origin"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
@@ -51,16 +53,29 @@ func NewUDPWebSocketServer(cfg config.Config, sessions *SessionManager, relayCfg
 	if err != nil {
 		return nil, err
 	}
-	return &UDPWebSocketServer{
+	srv := &UDPWebSocketServer{
 		cfg:      cfg,
 		verifier: verifier,
 		sessions: sessions,
 		relayCfg: relayCfg.WithDefaults(),
 		policy:   pol,
-		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true },
-		},
-	}, nil
+		upgrader: websocket.Upgrader{},
+	}
+	srv.upgrader.CheckOrigin = srv.checkOrigin
+	return srv, nil
+}
+
+func (s *UDPWebSocketServer) checkOrigin(r *http.Request) bool {
+	originHeader := strings.TrimSpace(r.Header.Get("Origin"))
+	if originHeader == "" {
+		return true
+	}
+
+	normalizedOrigin, originHost, ok := origin.NormalizeHeader(originHeader)
+	if !ok {
+		return false
+	}
+	return origin.IsAllowed(normalizedOrigin, originHost, r.Host, s.cfg.AllowedOrigins)
 }
 
 func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {

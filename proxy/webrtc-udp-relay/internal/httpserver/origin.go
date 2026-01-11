@@ -2,8 +2,9 @@ package httpserver
 
 import (
 	"net/http"
-	"net/url"
 	"strings"
+
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/origin"
 )
 
 func (s *Server) originMiddleware() Middleware {
@@ -24,8 +25,8 @@ func (s *Server) withOriginPolicy(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		normalizedOrigin, originHost, ok := normalizeOriginHeader(originHeader)
-		if !ok || !s.isOriginAllowed(normalizedOrigin, originHost, r.Host) {
+		normalizedOrigin, originHost, ok := origin.NormalizeHeader(originHeader)
+		if !ok || !origin.IsAllowed(normalizedOrigin, originHost, r.Host, s.cfg.AllowedOrigins) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -52,45 +53,4 @@ func (s *Server) withOriginPolicy(next http.HandlerFunc) http.HandlerFunc {
 
 		next(w, r)
 	}
-}
-
-func normalizeOriginHeader(originHeader string) (normalizedOrigin string, host string, ok bool) {
-	trimmed := strings.TrimSpace(originHeader)
-	if trimmed == "null" {
-		return "null", "", true
-	}
-
-	u, err := url.Parse(trimmed)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return "", "", false
-	}
-	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return "", "", false
-	}
-	if u.Path != "" && u.Path != "/" {
-		return "", "", false
-	}
-
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return "", "", false
-	}
-	host = strings.ToLower(u.Host)
-	return scheme + "://" + host, host, true
-}
-
-func (s *Server) isOriginAllowed(normalizedOrigin, originHost, requestHost string) bool {
-	if len(s.cfg.AllowedOrigins) > 0 {
-		for _, allowed := range s.cfg.AllowedOrigins {
-			if allowed == "*" || allowed == normalizedOrigin {
-				return true
-			}
-		}
-		return false
-	}
-
-	// Default: same host only. This still allows a TLS-terminating reverse proxy
-	// that forwards the request over HTTP without an X-Forwarded-Proto header,
-	// because we compare only host:port here.
-	return originHost == strings.ToLower(strings.TrimSpace(requestHost))
 }

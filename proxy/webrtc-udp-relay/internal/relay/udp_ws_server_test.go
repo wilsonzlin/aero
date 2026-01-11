@@ -679,3 +679,93 @@ func TestUDPWebSocketServer_RecordsBackpressureDrops(t *testing.T) {
 	}
 	t.Fatalf("expected %s metric increment", wsUDPMetricDroppedBackpress)
 }
+
+func TestUDPWebSocketServer_OriginChecks(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/udp"
+
+	t.Run("rejects cross-origin by default", func(t *testing.T) {
+		h := http.Header{}
+		h.Set("Origin", "https://evil.example.com")
+		_, resp, err := websocket.DefaultDialer.Dial(wsURL, h)
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+		if err == nil {
+			t.Fatalf("expected dial error")
+		}
+		if resp == nil || resp.StatusCode != http.StatusForbidden {
+			status := 0
+			if resp != nil {
+				status = resp.StatusCode
+			}
+			t.Fatalf("status=%d, want %d (err=%v)", status, http.StatusForbidden, err)
+		}
+	})
+
+	t.Run("allows same-origin", func(t *testing.T) {
+		h := http.Header{}
+		h.Set("Origin", ts.URL)
+		c, resp, err := websocket.DefaultDialer.Dial(wsURL, h)
+		if err != nil {
+			if resp != nil && resp.Body != nil {
+				resp.Body.Close()
+			}
+			t.Fatalf("dial: %v", err)
+		}
+		t.Cleanup(func() { _ = c.Close() })
+	})
+}
+
+func TestUDPWebSocketServer_OriginChecks_AllowsConfiguredOrigin(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		AllowedOrigins:           []string{"https://app.example.com"},
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/udp"
+
+	h := http.Header{}
+	h.Set("Origin", "https://app.example.com")
+	c, resp, err := websocket.DefaultDialer.Dial(wsURL, h)
+	if err != nil {
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+}
