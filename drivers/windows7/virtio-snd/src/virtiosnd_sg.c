@@ -30,6 +30,8 @@ static NTSTATUS virtiosnd_sg_status_from_rc(int rc)
 _Use_decl_annotations_
 VOID VirtIoSndSgFlushIoBuffers(PMDL Mdl, BOOLEAN DeviceWrites)
 {
+    ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
+
     if (Mdl == NULL) {
         return;
     }
