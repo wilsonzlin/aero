@@ -191,9 +191,19 @@ static BOOLEAN VirtioIntxIsr(_In_ PKINTERRUPT Interrupt, _In_ PVOID ServiceConte
 
     (VOID)InterlockedOr(&intx->PendingIsrStatus, (LONG)isrStatus);
 
+    /*
+     * Track queued + running DPC instances.
+     *
+     * Increment the counter *before* queueing to avoid a race where the DPC runs
+     * on another CPU (target-processor DPC) before we increment.
+     */
+    (VOID)InterlockedIncrement(&intx->DpcInFlight);
     inserted = KeInsertQueueDpc(&intx->Dpc, NULL, NULL);
-    if (inserted) {
-        (VOID)InterlockedIncrement(&intx->DpcInFlight);
+    if (!inserted) {
+        LONG remaining = InterlockedDecrement(&intx->DpcInFlight);
+        if (remaining < 0) {
+            (VOID)InterlockedExchange(&intx->DpcInFlight, 0);
+        }
     }
 
     return TRUE;
@@ -244,4 +254,3 @@ static VOID VirtioIntxDpc(_In_ PKDPC Dpc, _In_ PVOID DeferredContext, _In_opt_ P
         (VOID)InterlockedExchange(&intx->DpcInFlight, 0);
     }
 }
-
