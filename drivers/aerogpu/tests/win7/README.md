@@ -195,7 +195,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d11_update_subresource_texture_sanity` uploads a deterministic `B8G8R8A8` pattern via `UpdateSubresource` (full + boxed update, padded RowPitch) and verifies it via staging readback
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
 * `d3d11_texture_sampling_sanity` renders a textured quad into an offscreen render target and validates a few sampled texels via readback
-* `d3d11_dynamic_constant_buffer_sanity` draws using a dynamic constant buffer updated with `Map(WRITE_DISCARD)` and validates output via readback
+* `d3d11_dynamic_constant_buffer_sanity` draws using a dynamic constant buffer updated with `Map(WRITE_DISCARD)` between draws (blue fullscreen, then green centered triangle) and validates output via readback
 * `d3d11_depth_test_sanity` draws overlapping triangles with a depth buffer and validates depth testing via readback
 
 All rendering tests also print the active adapter description + VendorId/DeviceId to help confirm the expected GPU/driver is being exercised.
