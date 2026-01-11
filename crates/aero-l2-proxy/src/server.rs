@@ -428,8 +428,9 @@ fn enforce_security(
                 .unwrap_or_default();
             let now_ms = now_ms();
             let sid = headers
-                .get(header::COOKIE)
-                .and_then(|cookie| gateway_session::verify_session_cookie(cookie, secret, now_ms))
+                .get_all(header::COOKIE)
+                .iter()
+                .find_map(|cookie| gateway_session::verify_session_cookie(cookie, secret, now_ms))
                 .map(|session| session.id);
             if sid.is_none() {
                 state.metrics.auth_failed();
@@ -505,8 +506,9 @@ fn enforce_security(
 
             let now_ms = now_ms();
             let sid = headers
-                .get(header::COOKIE)
-                .and_then(|cookie| {
+                .get_all(header::COOKIE)
+                .iter()
+                .find_map(|cookie| {
                     gateway_session::verify_session_cookie(cookie, cookie_secret, now_ms)
                 })
                 .map(|session| session.id);
@@ -587,8 +589,9 @@ fn enforce_security(
 
             let now_ms = now_ms();
             let sid = headers
-                .get(header::COOKIE)
-                .and_then(|cookie| {
+                .get_all(header::COOKIE)
+                .iter()
+                .find_map(|cookie| {
                     gateway_session::verify_session_cookie(cookie, cookie_secret, now_ms)
                 })
                 .map(|session| session.id);
@@ -651,8 +654,9 @@ fn enforce_security(
 
             let now_ms = now_ms();
             let sid = headers
-                .get(header::COOKIE)
-                .and_then(|cookie| {
+                .get_all(header::COOKIE)
+                .iter()
+                .find_map(|cookie| {
                     gateway_session::verify_session_cookie(cookie, cookie_secret, now_ms)
                 })
                 .map(|session| session.id);
@@ -1271,19 +1275,8 @@ fn token_present_in_subprotocol(headers: &HeaderMap) -> bool {
 }
 
 fn session_cookie_present(headers: &HeaderMap) -> bool {
-    let Some(cookie) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) else {
-        return false;
-    };
-
-    cookie.split(';').any(|part| {
-        let trimmed = part.trim();
-        if trimmed.is_empty() {
-            return false;
-        }
-        let Some((k, v)) = trimmed.split_once('=') else {
-            return false;
-        };
-        k.trim() == gateway_session::SESSION_COOKIE_NAME && !v.trim().is_empty()
+    headers.get_all(header::COOKIE).iter().any(|cookie| {
+        gateway_session::extract_session_cookie_value(cookie).is_some()
     })
 }
 

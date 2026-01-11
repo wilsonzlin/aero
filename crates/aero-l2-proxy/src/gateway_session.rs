@@ -45,7 +45,9 @@ fn extract_cookie_value(raw: &str, name: &str) -> Option<String> {
         if trimmed.is_empty() {
             continue;
         }
-        let idx = trimmed.find('=')?;
+        let Some(idx) = trimmed.find('=') else {
+            continue;
+        };
         if idx == 0 {
             continue;
         }

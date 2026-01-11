@@ -1166,6 +1166,26 @@ async fn cookie_auth_requires_valid_session_cookie() {
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let _ = ws.send(Message::Close(None)).await;
 
+    // Cookie parsing matches the gateway implementation: tolerate unrelated/malformed cookie
+    // segments and multiple Cookie headers.
+    let mut req = base_ws_request(addr);
+    req.headers_mut().insert(
+        "cookie",
+        HeaderValue::from_str(&format!("foo; aero_session={token}")).unwrap(),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .append("cookie", HeaderValue::from_static("foo=bar"));
+    req.headers_mut().append(
+        "cookie",
+        HeaderValue::from_str(&format!("aero_session={token}")).unwrap(),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
     // Expired cookies should be rejected.
     let expired = exp.saturating_sub(120);
     let token = mint_session_token("sekrit", "sid", expired);
