@@ -87,7 +87,9 @@ impl AeroGpuExecutor {
             let desc = AeroGpuSubmitDesc::read_from(mem, desc_gpa);
 
             regs.stats.submissions = regs.stats.submissions.saturating_add(1);
-            if desc.desc_size_bytes != AeroGpuSubmitDesc::SIZE_BYTES {
+            if desc.desc_size_bytes < AeroGpuSubmitDesc::SIZE_BYTES
+                || desc.desc_size_bytes > ring.entry_stride_bytes
+            {
                 regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
             }
 
@@ -141,4 +143,3 @@ impl AeroGpuExecutor {
         }
     }
 }
-

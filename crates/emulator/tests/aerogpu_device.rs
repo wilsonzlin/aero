@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control, AEROGPU_MMIO_MAGIC};
+use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control, AEROGPU_ABI_MAJOR, AEROGPU_MMIO_MAGIC};
 use emulator::devices::aerogpu_ring::{AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC};
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
 use emulator::io::pci::MmioDevice;
@@ -98,6 +98,94 @@ fn doorbell_updates_ring_head_fence_page_and_irq() {
     dev.mmio_write(&mut mem, mmio::IRQ_ACK, 4, irq_bits::FENCE);
     assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
     assert!(!dev.irq_level());
+}
+
+#[test]
+fn doorbell_accepts_unknown_minor_abi_version() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+
+    // Ring layout in guest memory.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = 64u32;
+
+    // Ring header with an unknown minor version (major must match).
+    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + 4, (AEROGPU_ABI_MAJOR << 16) | 999);
+    mem.write_u32(ring_gpa + 8, ring_size);
+    mem.write_u32(ring_gpa + 12, entry_count);
+    mem.write_u32(ring_gpa + 16, entry_stride);
+    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + 24, 0); // head
+    mem.write_u32(ring_gpa + 28, 1); // tail
+
+    // Submit descriptor at slot 0.
+    let desc_gpa = ring_gpa + 64;
+    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa + 4, 0); // flags
+    mem.write_u32(desc_gpa + 8, 0); // context_id
+    mem.write_u32(desc_gpa + 12, 0); // engine_id
+    mem.write_u64(desc_gpa + 16, 0); // cmd_gpa
+    mem.write_u32(desc_gpa + 24, 0); // cmd_size_bytes
+    mem.write_u64(desc_gpa + 32, 0); // alloc_table_gpa
+    mem.write_u32(desc_gpa + 40, 0); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + 48, 42); // signal_fence
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+
+    assert_eq!(dev.regs.stats.malformed_submissions, 0);
+    assert_eq!(mem.read_u32(ring_gpa + 24), 1);
+    assert_eq!(dev.regs.completed_fence, 42);
+}
+
+#[test]
+fn doorbell_accepts_larger_submit_desc_stride_and_size() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+
+    // Ring layout in guest memory.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = 128u32;
+
+    // Ring header.
+    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + 8, ring_size);
+    mem.write_u32(ring_gpa + 12, entry_count);
+    mem.write_u32(ring_gpa + 16, entry_stride);
+    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + 24, 0); // head
+    mem.write_u32(ring_gpa + 28, 1); // tail
+
+    // Submit descriptor at slot 0 with an extended size.
+    let desc_gpa = ring_gpa + 64;
+    mem.write_u32(desc_gpa + 0, 128); // desc_size_bytes
+    mem.write_u32(desc_gpa + 4, 0); // flags
+    mem.write_u32(desc_gpa + 8, 0); // context_id
+    mem.write_u32(desc_gpa + 12, 0); // engine_id
+    mem.write_u64(desc_gpa + 16, 0); // cmd_gpa
+    mem.write_u32(desc_gpa + 24, 0); // cmd_size_bytes
+    mem.write_u64(desc_gpa + 32, 0); // alloc_table_gpa
+    mem.write_u32(desc_gpa + 40, 0); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + 48, 42); // signal_fence
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+
+    assert_eq!(dev.regs.stats.malformed_submissions, 0);
+    assert_eq!(mem.read_u32(ring_gpa + 24), 1);
+    assert_eq!(dev.regs.completed_fence, 42);
 }
 
 #[test]

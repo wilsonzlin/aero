@@ -1,6 +1,6 @@
 use memory::MemoryBus;
 
-use crate::devices::aerogpu_regs::AEROGPU_ABI_VERSION_U32;
+use crate::devices::aerogpu_regs::{AEROGPU_ABI_MAJOR};
 
 // Constants mirrored from `drivers/aerogpu/protocol/aerogpu_ring.h`.
 
@@ -14,6 +14,10 @@ pub const AEROGPU_FENCE_PAGE_SIZE_BYTES: u64 = 56;
 
 pub const RING_HEAD_OFFSET: u64 = 24;
 pub const RING_TAIL_OFFSET: u64 = 28;
+
+const fn abi_major(version_u32: u32) -> u32 {
+    version_u32 >> 16
+}
 
 #[derive(Clone, Debug)]
 pub struct AeroGpuRingHeader {
@@ -63,17 +67,25 @@ impl AeroGpuRingHeader {
         if self.magic != AEROGPU_RING_MAGIC {
             return false;
         }
-        if self.abi_version != AEROGPU_ABI_VERSION_U32 {
+        if abi_major(self.abi_version) != AEROGPU_ABI_MAJOR {
             return false;
         }
         if self.entry_count == 0 || !self.entry_count.is_power_of_two() {
             return false;
         }
-        if self.entry_stride_bytes != AeroGpuSubmitDesc::SIZE_BYTES {
+        if self.entry_stride_bytes == 0 {
             return false;
         }
-        let required = AEROGPU_RING_HEADER_SIZE_BYTES
-            + u64::from(self.entry_count) * u64::from(self.entry_stride_bytes);
+        if self.entry_stride_bytes < AeroGpuSubmitDesc::SIZE_BYTES {
+            return false;
+        }
+        let required = match u64::from(self.entry_count).checked_mul(u64::from(self.entry_stride_bytes)) {
+            Some(bytes) => match AEROGPU_RING_HEADER_SIZE_BYTES.checked_add(bytes) {
+                Some(total) => total,
+                None => return false,
+            },
+            None => return false,
+        };
         let size_bytes = u64::from(self.size_bytes);
         let mmio_size = u64::from(mmio_ring_size_bytes);
         required <= size_bytes && size_bytes <= mmio_size
@@ -123,4 +135,3 @@ impl AeroGpuSubmitDesc {
         }
     }
 }
-
