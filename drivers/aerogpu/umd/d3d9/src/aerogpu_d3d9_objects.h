@@ -231,7 +231,7 @@ struct Device {
     // In WDK builds the runtime provides the DMA command buffer later during
     // device/context creation, so defer command stream initialization until the
     // buffer is bound (avoid any std::vector allocation in the WDDM path).
-#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
     cmd.reset();
 #endif
 

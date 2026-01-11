@@ -234,7 +234,7 @@ def _emit_header(x86: ProbeData, x64: ProbeData) -> str:
             "",
             "#pragma once",
             "",
-            "#if !defined(AEROGPU_D3D9_USE_WDK_DDI)",
+            "#if !(defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)",
             '  #error \"aerogpu_d3d9_wdk_abi_expected.h is only valid for WDK DDI builds (AEROGPU_D3D9_USE_WDK_DDI).\"',
             "#endif",
             "",

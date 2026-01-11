@@ -6,7 +6,7 @@
 
 namespace aerogpu {
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
 
 namespace {
 

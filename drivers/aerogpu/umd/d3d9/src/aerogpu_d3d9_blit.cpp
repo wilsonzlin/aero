@@ -1326,7 +1326,7 @@ HRESULT update_surface_locked(Device* dev,
   // Compat path: update CPU shadow storage. Host-owned resources are updated by
   // embedding raw bytes in the command stream; guest-backed resources must use
   // RESOURCE_DIRTY_RANGE so the host re-uploads from the guest allocation table.
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   if (dst->backing_alloc_id == 0 && dst->storage.size() >= dst_bytes) {
 #else
   if (dst->storage.size() >= dst_bytes) {
@@ -1354,7 +1354,7 @@ HRESULT update_surface_locked(Device* dev,
         }
       }
 
-#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
       if (dst->backing_alloc_id == 0) {
 #endif
         if (!upload_resource_bytes_locked(dev,
@@ -1364,12 +1364,12 @@ HRESULT update_surface_locked(Device* dev,
                                           row_bytes)) {
           return E_OUTOFMEMORY;
         }
-#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
       }
 #endif
     }
 
-#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
     if (dst->backing_alloc_id != 0) {
       const uint64_t dirty_offset = static_cast<uint64_t>(dst_top) * dst->row_pitch +
                                     static_cast<uint64_t>(dst_left) * bpp;
@@ -1398,7 +1398,7 @@ HRESULT update_surface_locked(Device* dev,
     return S_OK;
   }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   if (dst->wddm_hAllocation != 0 && dev->wddm_device != 0) {
     void* dst_ptr = nullptr;
     const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
@@ -1501,7 +1501,7 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
   // Compat path: update CPU shadow storage. Host-owned resources are updated by
   // embedding raw bytes via UPLOAD_RESOURCE. Guest-backed resources must use
   // RESOURCE_DIRTY_RANGE so the host re-uploads from guest memory.
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   if (dst->backing_alloc_id == 0 && dst->storage.size() >= dst->size_bytes) {
 #else
   if (dst->storage.size() >= dst->size_bytes) {
@@ -1519,7 +1519,7 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
       }
     }
 
-#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
     if (dst->backing_alloc_id == 0) {
 #endif
       if (!upload_resource_bytes_locked(dev,
@@ -1529,7 +1529,7 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
                                         dst->size_bytes)) {
         return E_OUTOFMEMORY;
       }
-#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
     } else {
       if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_resource_dirty_range), 4))) {
         return E_OUTOFMEMORY;
@@ -1551,7 +1551,7 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
     return S_OK;
   }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   if (dst->wddm_hAllocation != 0 && dev->wddm_device != 0 && dst->size_bytes) {
     void* dst_ptr = nullptr;
     const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
@@ -1616,7 +1616,7 @@ void destroy_blit_objects_locked(Device* dev) {
       cmd->resource_handle = dev->builtin_copy_vb->handle;
       cmd->reserved0 = 0;
     }
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     if (dev->builtin_copy_vb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
       (void)wddm_destroy_allocation(dev->wddm_callbacks, dev->wddm_device, dev->builtin_copy_vb->wddm_hAllocation);
       dev->builtin_copy_vb->wddm_hAllocation = 0;

@@ -7,7 +7,7 @@
 
 #if defined(_WIN32)
   #include "aerogpu_dbgctl_escape.h"
-#if defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   #include <d3dkmthk.h>
 #endif
 #endif
@@ -103,7 +103,7 @@ static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, FenceValueArra
 static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, Timeout) == 16, "Unexpected Timeout offset");
 #endif
 
-#if defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
 template <typename T, typename = void>
 struct has_member_ObjectHandleArray : std::false_type {};
 template <typename T>
@@ -743,7 +743,7 @@ long AerogpuKmdQuery::WaitForSyncObject(uint32_t sync_object, uint64_t fence_val
 
   const uint64_t timeout_kmt = (timeout_ms == INFINITE) ? ~0ull : static_cast<uint64_t>(timeout_ms);
 
-#if defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   using WaitFn = decltype(&D3DKMTWaitForSynchronizationObject);
   auto* wait_fn = reinterpret_cast<WaitFn>(wait_proc);
 
