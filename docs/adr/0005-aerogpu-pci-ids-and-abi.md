@@ -1,4 +1,4 @@
-# ADR 0013: AeroGPU PCI IDs and ABI (canonical + deprecation plan)
+# ADR 0005: AeroGPU PCI IDs and ABI (canonical + deprecation plan)
 
 ## Context
 
