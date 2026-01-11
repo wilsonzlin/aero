@@ -13,15 +13,13 @@ Why this exists:
 This check parses `virtio-snd.vcxproj` and enforces:
   - Required modern transport sources are included.
   - Known legacy transport sources are NOT included.
-  - Optional (recommended): the project output name matches the INF NTMPDriver
-    (`virtiosnd.sys`).
+  - The project output name matches the shipped INF's NTMPDriver (`virtiosnd.sys`).
 
 If files are renamed during migration, update REQUIRED_SOURCES / FORBIDDEN_*.
 """
 
 from __future__ import annotations
 
-import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -30,16 +28,16 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 VCXPROJ = REPO_ROOT / "drivers/windows7/virtio-snd/virtio-snd.vcxproj"
-#
-# virtio-snd ships with a primary, strict Aero contract INF
-# (`aero-virtio-snd.inf`). A legacy filename alias INF may optionally be present
-# as `virtio-snd.inf` (often checked in as `virtio-snd.inf.disabled` to avoid
-# accidental dual-INF shipping). Treat the alias as optional in this guardrail.
-#
-INF_FILES = [REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"]
-_ALIAS_INF = REPO_ROOT / "drivers/windows7/virtio-snd/inf/virtio-snd.inf"
-if _ALIAS_INF.exists():
-    INF_FILES.append(_ALIAS_INF)
+AERO_INF = REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"
+
+# virtio-snd ships with a primary, strict Aero contract INF (`aero-virtio-snd.inf`).
+# A legacy filename alias INF may optionally be present as `virtio-snd.inf`. In
+# this repo it may be checked in as `virtio-snd.inf.disabled` to avoid accidental
+# packaging; treat the alias as best-effort and always validate the Aero INF.
+LEGACY_ALIAS_INF = REPO_ROOT / "drivers/windows7/virtio-snd/inf/virtio-snd.inf"
+LEGACY_ALIAS_INF_DISABLED = (
+    REPO_ROOT / "drivers/windows7/virtio-snd/inf/virtio-snd.inf.disabled"
+)
 
 # These are project-relative paths (relative to drivers/windows7/virtio-snd/).
 REQUIRED_SOURCES = {
@@ -73,11 +71,12 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
+def warn(message: str) -> None:
+    print(f"warning: {message}", file=sys.stderr)
+
+
 def read_text(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8", errors="replace")
-    except FileNotFoundError:
-        fail(f"missing required file: {path.as_posix()}")
+    return path.read_text(encoding="utf-8", errors="replace")
 
 
 def normalize_path(value: str) -> str:
@@ -225,8 +224,28 @@ def extract_inf_ntmpdriver(inf_path: Path) -> str:
         if value:
             return value
 
-    fail(f"could not find NTMPDriver registry value in {inf_path.as_posix()}")
-    raise AssertionError("unreachable")
+    raise ValueError(f"could not find NTMPDriver registry value in {inf_path.as_posix()}")
+
+
+def extract_inf_ntmpdriver_required(inf_path: Path) -> str:
+    try:
+        return extract_inf_ntmpdriver(inf_path)
+    except FileNotFoundError:
+        fail(f"missing required file: {inf_path.as_posix()}")
+        raise AssertionError("unreachable")
+    except ValueError as e:
+        fail(str(e))
+        raise AssertionError("unreachable")
+
+
+def extract_inf_ntmpdriver_optional(inf_path: Path) -> str | None:
+    if not inf_path.exists():
+        return None
+    try:
+        return extract_inf_ntmpdriver(inf_path)
+    except ValueError as e:
+        warn(str(e))
+        return None
 
 
 def main() -> None:
@@ -259,21 +278,46 @@ def main() -> None:
             + "\n".join(f"  - {p}" for p in forbidden_found)
         )
 
-    # Optional/recommended: ensure the produced SYS name matches the INF's NTMPDriver.
+    # Ensure the produced SYS name matches the INF's NTMPDriver.
     output_name = parse_vcxproj_output_name(VCXPROJ)
-    inf_names = {extract_inf_ntmpdriver(p) for p in INF_FILES}
-    if len({n.lower() for n in inf_names}) != 1:
-        fail(
-            "virtio-snd INF files disagree on NTMPDriver:\n"
-            + "\n".join(f"  - {p.as_posix()}: {extract_inf_ntmpdriver(p)}" for p in INF_FILES)
-        )
-
-    expected = next(iter(inf_names))
+    expected = extract_inf_ntmpdriver_required(AERO_INF)
     if output_name.lower() != expected.lower():
         fail(
             "virtio-snd output name mismatch between MSBuild project and INF:\n"
             f"  {VCXPROJ.as_posix()}: {output_name}\n"
-            f"  NTMPDriver (INF): {expected}"
+            f"  {AERO_INF.as_posix()}: NTMPDriver={expected}"
+        )
+
+    # Best-effort: keep the legacy alias INF (if present) in sync with the shipped
+    # Aero INF. In-tree this may be stored as `virtio-snd.inf.disabled`, so this
+    # must not be a hard requirement.
+    legacy_expected = expected.lower()
+    legacy_checked = False
+
+    if (name := extract_inf_ntmpdriver_optional(LEGACY_ALIAS_INF)) is not None:
+        legacy_checked = True
+        if name.lower() != legacy_expected:
+            fail(
+                "virtio-snd legacy alias INF disagrees on NTMPDriver:\n"
+                f"  {LEGACY_ALIAS_INF.as_posix()}: NTMPDriver={name}\n"
+                f"  {AERO_INF.as_posix()}: NTMPDriver={expected}"
+            )
+
+    elif (name := extract_inf_ntmpdriver_optional(LEGACY_ALIAS_INF_DISABLED)) is not None:
+        legacy_checked = True
+        if name.lower() != legacy_expected:
+            fail(
+                "virtio-snd legacy alias INF (.disabled) disagrees on NTMPDriver:\n"
+                f"  {LEGACY_ALIAS_INF_DISABLED.as_posix()}: NTMPDriver={name}\n"
+                f"  {AERO_INF.as_posix()}: NTMPDriver={expected}"
+            )
+
+    if not legacy_checked and LEGACY_ALIAS_INF_DISABLED.exists():
+        # File exists but didn't pass best-effort validation (e.g. missing
+        # NTMPDriver). Keep this as a warning so the guardrail doesn't brick when
+        # the alias INF is intentionally not shipped.
+        warn(
+            f"legacy alias INF present but not validated: {LEGACY_ALIAS_INF_DISABLED.as_posix()}"
         )
 
 
