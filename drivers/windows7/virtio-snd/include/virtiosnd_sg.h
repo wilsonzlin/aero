@@ -53,6 +53,7 @@ ULONG VirtIoSndSgMaxElemsForMdlRegion(_In_ PMDL Mdl,
  * Note: For DeviceWrites == TRUE, callers must invoke this again after the
  * device completes (before reading device-written bytes).
  */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 VOID VirtIoSndSgFlushIoBuffers(_In_ PMDL Mdl, _In_ BOOLEAN DeviceWrites);
 
 /*

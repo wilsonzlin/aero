@@ -21,17 +21,20 @@
 extern "C" {
 #endif
 
+_IRQL_requires_max_(DISPATCH_LEVEL)
 ULONG VirtIoSndTxSgMaxElemsForMdlRegion(_In_ PMDL Mdl,
                                        _In_ ULONG BufferBytes,
                                        _In_ ULONG OffsetBytes,
                                        _In_ ULONG LengthBytes,
                                        _In_ BOOLEAN Wrap);
 
+_IRQL_requires_max_(DISPATCH_LEVEL)
+_Must_inspect_result_
 NTSTATUS VirtIoSndTxSgBuildFromMdlRegion(_In_ PMDL Mdl,
-                                         _In_ ULONG BufferBytes,
-                                         _In_ ULONG OffsetBytes,
-                                         _In_ ULONG LengthBytes,
-                                         _In_ BOOLEAN Wrap,
+                                          _In_ ULONG BufferBytes,
+                                          _In_ ULONG OffsetBytes,
+                                          _In_ ULONG LengthBytes,
+                                          _In_ BOOLEAN Wrap,
                                          _Out_writes_(MaxElems) VIRTIOSND_SG *Out,
                                          _In_ USHORT MaxElems,
                                          _Out_ USHORT *OutCount);
