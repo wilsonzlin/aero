@@ -87,8 +87,10 @@ type Result<T> = core::result::Result<T, HidDescriptorSynthesisError>;
 /// used by [`crate::io::usb::hid::report_descriptor`] and then reuses the canonical
 /// short-item encoder.
 pub fn synthesize_report_descriptor(collections: &[HidCollectionInfo]) -> Result<Vec<u8>> {
-    let converted: Vec<report_descriptor::HidCollectionInfo> =
-        collections.iter().map(convert_collection).collect::<Result<_>>()?;
+    let converted: Vec<report_descriptor::HidCollectionInfo> = collections
+        .iter()
+        .map(convert_collection)
+        .collect::<Result<_>>()?;
     Ok(report_descriptor::synthesize_report_descriptor(&converted)?)
 }
 

@@ -1,6 +1,6 @@
+use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::runtime::aerogpu_execute::AerogpuCmdRuntime;
 use aero_d3d11::runtime::aerogpu_state::{PrimitiveTopology, RasterizerState, VertexBufferBinding};
-use aero_d3d11::input_layout::fnv1a_32;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -9,7 +9,7 @@ struct Vertex {
     color: [f32; 4],
 }
 
-fn make_dxbc(chunks: &[( [u8; 4], Vec<u8> )]) -> Vec<u8> {
+fn make_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
     // Minimal DXBC container sufficient for `aero_dxbc` + our bootstrap SM4/5 parser.
     let chunk_count = u32::try_from(chunks.len()).expect("too many chunks for test DXBC");
     let header_size = 4 + 16 + 4 + 4 + 4 + (chunks.len() * 4);

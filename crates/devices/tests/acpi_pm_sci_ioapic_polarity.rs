@@ -1,5 +1,7 @@
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
-use aero_devices::acpi_pm::{register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN};
+use aero_devices::acpi_pm::{
+    register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN,
+};
 use aero_devices::apic::{IoApic, IoApicId, LocalApic};
 use aero_devices::irq::IrqLine;
 use aero_platform::io::IoPortBus;
@@ -63,7 +65,12 @@ fn ioapic_read_reg(ioapic: &mut IoApic, reg: u32) -> u32 {
     ioapic.mmio_read(0x10, 4) as u32
 }
 
-fn program_ioapic_redirection_from_iso_flags(ioapic: &mut IoApic, gsi: u32, vector: u8, iso_flags: u16) {
+fn program_ioapic_redirection_from_iso_flags(
+    ioapic: &mut IoApic,
+    gsi: u32,
+    vector: u8,
+    iso_flags: u16,
+) {
     // ACPI MADT ISO flags use the "MPS INTI" encoding (2-bit polarity + 2-bit trigger).
     let polarity = iso_flags & 0b11;
     let trigger = (iso_flags >> 2) & 0b11;
@@ -103,8 +110,8 @@ fn acpi_pm_sci_delivers_to_lapic_when_ioapic_polarity_matches_madt_iso() {
     let tables = AcpiTables::build(&AcpiConfig::default(), AcpiPlacement::default());
     let sci_irq = 9u8;
 
-    let iso =
-        parse_madt_iso_for_source_irq(tables.madt.as_slice(), sci_irq).expect("missing MADT ISO for SCI");
+    let iso = parse_madt_iso_for_source_irq(tables.madt.as_slice(), sci_irq)
+        .expect("missing MADT ISO for SCI");
     assert_eq!(iso.bus, 0, "SCI ISO must be for ISA bus 0");
     assert_eq!(iso.gsi, u32::from(sci_irq), "SCI ISO must map IRQ9 -> GSI9");
     assert_eq!(
@@ -118,7 +125,10 @@ fn acpi_pm_sci_delivers_to_lapic_when_ioapic_polarity_matches_madt_iso() {
 
     let ioapic = Arc::new(Mutex::new(IoApic::new(IoApicId(0), lapic.clone())));
     // Make wiring explicit for the test: SCI is typically active-low on PC platforms.
-    ioapic.lock().unwrap().set_pin_active_low(u32::from(sci_irq), true);
+    ioapic
+        .lock()
+        .unwrap()
+        .set_pin_active_low(u32::from(sci_irq), true);
 
     // Connect LAPIC EOI to IOAPIC Remote-IRR handling.
     {
@@ -135,9 +145,21 @@ fn acpi_pm_sci_delivers_to_lapic_when_ioapic_polarity_matches_madt_iso() {
 
         // Sanity check: polarity + trigger bits should reflect ISO flags.
         let low = ioapic_read_reg(&mut ioapic, 0x10u32 + u32::from(sci_irq) * 2);
-        assert_ne!(low & (1 << 13), 0, "IOAPIC redirection polarity must be active-low");
-        assert_ne!(low & (1 << 15), 0, "IOAPIC redirection trigger must be level");
-        assert_eq!(low & (1 << 16), 0, "IOAPIC redirection entry must be unmasked");
+        assert_ne!(
+            low & (1 << 13),
+            0,
+            "IOAPIC redirection polarity must be active-low"
+        );
+        assert_ne!(
+            low & (1 << 15),
+            0,
+            "IOAPIC redirection trigger must be level"
+        );
+        assert_eq!(
+            low & (1 << 16),
+            0,
+            "IOAPIC redirection entry must be unmasked"
+        );
     }
 
     let cfg = AcpiPmConfig::default();
@@ -159,7 +181,10 @@ fn acpi_pm_sci_delivers_to_lapic_when_ioapic_polarity_matches_madt_iso() {
     bus.write(cfg.smi_cmd_port, 1, u32::from(cfg.acpi_enable_cmd));
 
     pm.borrow_mut().trigger_power_button();
-    assert!(pm.borrow().sci_level(), "PM1 event should assert SCI once SCI_EN is set");
+    assert!(
+        pm.borrow().sci_level(),
+        "PM1 event should assert SCI once SCI_EN is set"
+    );
 
     // First delivery.
     assert_eq!(lapic.get_pending_vector(), Some(0x60));
@@ -169,7 +194,11 @@ fn acpi_pm_sci_delivers_to_lapic_when_ioapic_polarity_matches_madt_iso() {
     {
         let mut ioapic = ioapic.lock().unwrap();
         let low = ioapic_read_reg(&mut ioapic, 0x10u32 + u32::from(sci_irq) * 2);
-        assert_ne!(low & (1 << 14), 0, "Level-triggered SCI must set IOAPIC Remote-IRR once delivered");
+        assert_ne!(
+            low & (1 << 14),
+            0,
+            "Level-triggered SCI must set IOAPIC Remote-IRR once delivered"
+        );
     }
 
     // EOI should clear Remote-IRR and cause immediate re-delivery while SCI is still asserted.
@@ -184,4 +213,3 @@ fn acpi_pm_sci_delivers_to_lapic_when_ioapic_polarity_matches_madt_iso() {
     lapic.eoi();
     assert_eq!(lapic.get_pending_vector(), None);
 }
-

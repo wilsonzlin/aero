@@ -565,7 +565,10 @@ impl<C: Clock, I: IrqLine> IoSnapshot for RtcCmos<C, I> {
 
         w.field_bytes(
             TAG_INDEX,
-            Encoder::new().u8(self.index).bool(self.nmi_disabled).finish(),
+            Encoder::new()
+                .u8(self.index)
+                .bool(self.nmi_disabled)
+                .finish(),
         );
         w.field_bytes(TAG_NVRAM, self.nvram.to_vec());
         w.field_bytes(
@@ -663,9 +666,10 @@ impl<C: Clock, I: IrqLine> IoSnapshot for RtcCmos<C, I> {
         let now_ns = self.clock.now_ns();
         if let Some(phase_remainder_ns) = r.u32(TAG_PHASE_REMAINDER_NS)? {
             let now_mod = (now_ns % 1_000_000_000) as u32;
-            self.phase_offset_ns =
-                (phase_remainder_ns.wrapping_add(1_000_000_000u32).wrapping_sub(now_mod))
-                    % 1_000_000_000u32;
+            self.phase_offset_ns = (phase_remainder_ns
+                .wrapping_add(1_000_000_000u32)
+                .wrapping_sub(now_mod))
+                % 1_000_000_000u32;
         }
 
         if !self.set_mode {

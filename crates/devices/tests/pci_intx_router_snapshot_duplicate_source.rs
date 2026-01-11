@@ -1,4 +1,4 @@
-use aero_devices::pci::{PciBdf, PciIntxRouter, PciIntxRouterConfig, PciInterruptPin};
+use aero_devices::pci::{PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig};
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotWriter};
 
@@ -34,4 +34,3 @@ fn pci_intx_router_snapshot_rejects_duplicate_sources() {
         other => panic!("expected InvalidFieldEncoding, got {other:?}"),
     }
 }
-

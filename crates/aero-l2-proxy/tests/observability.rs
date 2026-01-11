@@ -97,10 +97,19 @@ async fn version_endpoint_returns_json() {
         .await
         .unwrap();
 
-    assert!(body.trim_start().starts_with('{'), "expected JSON object, got: {body}");
-    assert!(body.contains("\"version\""), "missing version field: {body}");
+    assert!(
+        body.trim_start().starts_with('{'),
+        "expected JSON object, got: {body}"
+    );
+    assert!(
+        body.contains("\"version\""),
+        "missing version field: {body}"
+    );
     assert!(body.contains("\"gitSha\""), "missing gitSha field: {body}");
-    assert!(body.contains("\"builtAt\""), "missing builtAt field: {body}");
+    assert!(
+        body.contains("\"builtAt\""),
+        "missing builtAt field: {body}"
+    );
 
     server.shutdown().await;
 }

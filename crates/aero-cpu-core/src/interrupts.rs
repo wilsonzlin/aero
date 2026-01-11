@@ -509,8 +509,9 @@ fn deliver_protected_mode<B: CpuBus>(
     is_interrupt: bool,
     source: InterruptSource,
 ) -> Result<(), CpuExit> {
-    let gate = match with_supervisor_access(bus, state, |bus, state| read_idt_gate32(bus, state, vector))
-    {
+    let gate = match with_supervisor_access(bus, state, |bus, state| {
+        read_idt_gate32(bus, state, vector)
+    }) {
         Ok(gate) => gate,
         Err(()) => {
             return deliver_exception(
@@ -571,7 +572,16 @@ fn deliver_protected_mode<B: CpuBus>(
             tss32_stack_for_cpl(bus, state, new_cpl)
         }) {
             Ok(stack) => stack,
-            Err(()) => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+            Err(()) => {
+                return deliver_exception(
+                    bus,
+                    state,
+                    pending,
+                    Exception::InvalidTss,
+                    saved_rip,
+                    Some(0),
+                )
+            }
         };
         // Hardware forces SS.RPL == CPL for the new stack segment.
         let new_ss = (new_ss_raw & !0b11) | (new_cpl as u16);
@@ -628,8 +638,9 @@ fn deliver_long_mode<B: CpuBus>(
     is_interrupt: bool,
     source: InterruptSource,
 ) -> Result<(), CpuExit> {
-    let gate = match with_supervisor_access(bus, state, |bus, state| read_idt_gate64(bus, state, vector))
-    {
+    let gate = match with_supervisor_access(bus, state, |bus, state| {
+        read_idt_gate64(bus, state, vector)
+    }) {
         Ok(gate) => gate,
         Err(()) => {
             return deliver_exception(
@@ -702,7 +713,16 @@ fn deliver_long_mode<B: CpuBus>(
             tss64_ist_stack(bus, state, gate.ist)
         }) {
             Ok(rsp) if rsp != 0 && is_canonical(rsp) => rsp,
-            _ => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+            _ => {
+                return deliver_exception(
+                    bus,
+                    state,
+                    pending,
+                    Exception::InvalidTss,
+                    saved_rip,
+                    Some(0),
+                )
+            }
         };
         state.write_gpr64(gpr::RSP, new_rsp);
     } else if new_cpl < current_cpl {
@@ -710,7 +730,16 @@ fn deliver_long_mode<B: CpuBus>(
             tss64_rsp_for_cpl(bus, state, new_cpl)
         }) {
             Ok(rsp) if rsp != 0 && is_canonical(rsp) => rsp,
-            _ => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+            _ => {
+                return deliver_exception(
+                    bus,
+                    state,
+                    pending,
+                    Exception::InvalidTss,
+                    saved_rip,
+                    Some(0),
+                )
+            }
         };
         state.write_gpr64(gpr::RSP, new_rsp);
     }
@@ -1088,11 +1117,7 @@ fn tss32_stack_for_cpl<B: CpuBus>(
     Ok((ss, esp))
 }
 
-fn tss64_rsp_for_cpl<B: CpuBus>(
-    bus: &mut B,
-    state: &state::CpuState,
-    cpl: u8,
-) -> Result<u64, ()> {
+fn tss64_rsp_for_cpl<B: CpuBus>(bus: &mut B, state: &state::CpuState, cpl: u8) -> Result<u64, ()> {
     if state.tables.tr.is_unusable()
         || !state.tables.tr.is_present()
         || (state.tables.tr.selector >> 3) == 0
@@ -1114,11 +1139,7 @@ fn tss64_rsp_for_cpl<B: CpuBus>(
     bus.read_u64(addr).map_err(|_| ())
 }
 
-fn tss64_ist_stack<B: CpuBus>(
-    bus: &mut B,
-    state: &state::CpuState,
-    ist: u8,
-) -> Result<u64, ()> {
+fn tss64_ist_stack<B: CpuBus>(bus: &mut B, state: &state::CpuState, ist: u8) -> Result<u64, ()> {
     if state.tables.tr.is_unusable()
         || !state.tables.tr.is_present()
         || (state.tables.tr.selector >> 3) == 0

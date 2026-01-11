@@ -639,7 +639,11 @@ impl IoSnapshot for Pit8254 {
                     } else {
                         BytePhase::Low
                     };
-                    ch.read_phase = if read_phase == 1 { BytePhase::High } else { BytePhase::Low };
+                    ch.read_phase = if read_phase == 1 {
+                        BytePhase::High
+                    } else {
+                        BytePhase::Low
+                    };
                     ch.write_latch_low = write_latch_low;
                     ch.null_count = null_count;
                     ch.reload = reload;

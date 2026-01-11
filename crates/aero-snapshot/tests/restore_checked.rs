@@ -120,7 +120,10 @@ impl SnapshotSource for DummySource {
     }
 }
 
-fn snapshot_bytes<S: SnapshotSource>(source: &mut S, options: SaveOptions) -> aero_snapshot::Result<Vec<u8>> {
+fn snapshot_bytes<S: SnapshotSource>(
+    source: &mut S,
+    options: SaveOptions,
+) -> aero_snapshot::Result<Vec<u8>> {
     let mut cursor = Cursor::new(Vec::new());
     save_snapshot(&mut cursor, source, options)?;
     Ok(cursor.into_inner())
@@ -245,7 +248,8 @@ fn dirty_snapshot_requires_meta_before_ram() {
     push_section(&mut bytes_missing_meta, SectionId::RAM, 1, 0, &ram_payload);
 
     let mut target = DummyTarget::new(total_len as usize);
-    let err = restore_snapshot(&mut Cursor::new(bytes_missing_meta.as_slice()), &mut target).unwrap_err();
+    let err =
+        restore_snapshot(&mut Cursor::new(bytes_missing_meta.as_slice()), &mut target).unwrap_err();
     assert!(matches!(err, SnapshotError::Corrupt(EXPECTED_ERR)));
 
     let err = restore_snapshot_checked(
@@ -273,7 +277,8 @@ fn dirty_snapshot_requires_meta_before_ram() {
     meta.encode(&mut meta_payload).unwrap();
     push_section(&mut bytes_meta_after, SectionId::META, 1, 0, &meta_payload);
 
-    let err = restore_snapshot(&mut Cursor::new(bytes_meta_after.as_slice()), &mut target).unwrap_err();
+    let err =
+        restore_snapshot(&mut Cursor::new(bytes_meta_after.as_slice()), &mut target).unwrap_err();
     assert!(matches!(err, SnapshotError::Corrupt(EXPECTED_ERR)));
 
     let err = restore_snapshot_checked(
@@ -365,4 +370,3 @@ fn restore_snapshot_checked_respects_custom_dirty_page_size() {
     .unwrap();
     assert_eq!(target.ram, source.ram);
 }
-

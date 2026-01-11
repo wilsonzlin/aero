@@ -86,17 +86,13 @@ impl MonoRingBuffer {
         if used > self.capacity_samples {
             // Consumer fell behind far enough that we no longer know what's valid.
             // Drop this block to avoid making things worse (mirrors JS worklet).
-            self.dropped_samples = self
-                .dropped_samples
-                .saturating_add(samples.len() as u64);
+            self.dropped_samples = self.dropped_samples.saturating_add(samples.len() as u64);
             return 0;
         }
 
         let free = self.capacity_samples - used;
         if free == 0 {
-            self.dropped_samples = self
-                .dropped_samples
-                .saturating_add(samples.len() as u64);
+            self.dropped_samples = self.dropped_samples.saturating_add(samples.len() as u64);
             return 0;
         }
 

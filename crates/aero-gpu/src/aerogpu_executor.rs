@@ -39,7 +39,9 @@ fn map_cmd_stream_parse_error(err: AeroGpuCmdStreamParseError) -> ExecutorError 
             size_bytes,
             buffer_len,
         },
-        AeroGpuCmdStreamParseError::InvalidCmdSizeBytes(found) => ExecutorError::InvalidPacketSize(found),
+        AeroGpuCmdStreamParseError::InvalidCmdSizeBytes(found) => {
+            ExecutorError::InvalidPacketSize(found)
+        }
         AeroGpuCmdStreamParseError::MisalignedCmdSizeBytes(found) => {
             ExecutorError::MisalignedPacketSize(found)
         }
@@ -131,11 +133,13 @@ impl AllocTable {
 
         let mut header_bytes = [0u8; ring::AerogpuAllocTableHeader::SIZE_BYTES];
         guest_memory.read(table_gpa, &mut header_bytes)?;
-        let header = ring::AerogpuAllocTableHeader::decode_from_le_bytes(&header_bytes)
-            .map_err(|err| ExecutorError::Validation(format!("failed to decode alloc table header: {err:?}")))?;
-        header
-            .validate_prefix()
-            .map_err(|err| ExecutorError::Validation(format!("invalid alloc table header: {err:?}")))?;
+        let header =
+            ring::AerogpuAllocTableHeader::decode_from_le_bytes(&header_bytes).map_err(|err| {
+                ExecutorError::Validation(format!("failed to decode alloc table header: {err:?}"))
+            })?;
+        header.validate_prefix().map_err(|err| {
+            ExecutorError::Validation(format!("invalid alloc table header: {err:?}"))
+        })?;
 
         let size_bytes = header.size_bytes;
         let size_usize = size_bytes as usize;
@@ -156,8 +160,12 @@ impl AllocTable {
             let mut entry_bytes = [0u8; ring::AerogpuAllocEntry::SIZE_BYTES];
             guest_memory.read(entry_gpa, &mut entry_bytes)?;
 
-            let entry = ring::AerogpuAllocEntry::decode_from_le_bytes(&entry_bytes)
-                .map_err(|err| ExecutorError::Validation(format!("failed to decode alloc table entry {i}: {err:?}")))?;
+            let entry =
+                ring::AerogpuAllocEntry::decode_from_le_bytes(&entry_bytes).map_err(|err| {
+                    ExecutorError::Validation(format!(
+                        "failed to decode alloc table entry {i}: {err:?}"
+                    ))
+                })?;
             let alloc_id = entry.alloc_id;
             if alloc_id == 0 {
                 return Err(ExecutorError::Validation(
@@ -475,7 +483,8 @@ fn fs_main() -> @location(0) vec4<f32> {
         guest_memory: &dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<u32, (usize, ExecutorError, u32)> {
-        let stream = parse_cmd_stream(bytes).map_err(|err| (0, map_cmd_stream_parse_error(err), 0))?;
+        let stream =
+            parse_cmd_stream(bytes).map_err(|err| (0, map_cmd_stream_parse_error(err), 0))?;
 
         let mut packets_processed = 0u32;
         for cmd in stream.cmds {
@@ -782,7 +791,8 @@ fn fs_main() -> @location(0) vec4<f32> {
             usage |= wgpu::TextureUsages::TEXTURE_BINDING;
         }
         if (usage_flags
-            & (cmd::AEROGPU_RESOURCE_USAGE_RENDER_TARGET | cmd::AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL))
+            & (cmd::AEROGPU_RESOURCE_USAGE_RENDER_TARGET
+                | cmd::AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL))
             != 0
         {
             usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
@@ -908,8 +918,9 @@ fn fs_main() -> @location(0) vec4<f32> {
             return Ok(());
         }
 
-        let data_len = usize::try_from(size_bytes)
-            .map_err(|_| ExecutorError::Validation("UPLOAD_RESOURCE size_bytes too large".into()))?;
+        let data_len = usize::try_from(size_bytes).map_err(|_| {
+            ExecutorError::Validation("UPLOAD_RESOURCE size_bytes too large".into())
+        })?;
         if data.len() != data_len {
             return Err(ExecutorError::Validation(format!(
                 "UPLOAD_RESOURCE payload size mismatch (expected {data_len}, found {})",
@@ -1118,7 +1129,6 @@ fn fs_main() -> @location(0) vec4<f32> {
         format_raw: u32,
         offset_bytes: u32,
     ) -> Result<(), ExecutorError> {
-
         if buffer == 0 {
             self.state.index_buffer = None;
             return Ok(());
@@ -1165,7 +1175,12 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(())
     }
 
-    fn exec_set_texture(&mut self, _shader_stage: u32, slot: u32, texture: u32) -> Result<(), ExecutorError> {
+    fn exec_set_texture(
+        &mut self,
+        _shader_stage: u32,
+        slot: u32,
+        texture: u32,
+    ) -> Result<(), ExecutorError> {
         if slot != 0 {
             return Err(ExecutorError::Validation(
                 "only texture slot 0 is supported".into(),
@@ -1249,7 +1264,6 @@ fn fs_main() -> @location(0) vec4<f32> {
         first_instance: u32,
         guest_memory: &dyn GuestMemory,
     ) -> Result<(), ExecutorError> {
-
         let Some(rt) = self.state.render_target else {
             return Err(ExecutorError::Validation(
                 "DRAW requires a bound render target".into(),
@@ -1359,7 +1373,6 @@ fn fs_main() -> @location(0) vec4<f32> {
         first_instance: u32,
         guest_memory: &dyn GuestMemory,
     ) -> Result<(), ExecutorError> {
-
         let Some(rt) = self.state.render_target else {
             return Err(ExecutorError::Validation(
                 "DRAW_INDEXED requires a bound render target".into(),

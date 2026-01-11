@@ -437,7 +437,11 @@ fn cpu_core_bus_translates_legacy32_paging_via_mmu() {
     assert_eq!(bus.read_u8(vaddr).unwrap(), 0xAA);
 
     let pte_after_read = memory::MemoryBus::read_u32(&mut bus.platform.memory, pte_addr);
-    assert_ne!(pte_after_read & (1 << 5), 0, "PTE accessed bit should be set");
+    assert_ne!(
+        pte_after_read & (1 << 5),
+        0,
+        "PTE accessed bit should be set"
+    );
     assert_eq!(pte_after_read & 0xffff_f000, page_phys as u32);
 
     // Write through the mapping; the MMU should mark the PTE dirty.
@@ -511,11 +515,23 @@ fn cpu_core_bus_translates_pae_paging_via_mmu() {
     );
 
     let pde_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pde_addr);
-    assert_ne!(pde_after_read & (1 << 5), 0, "PDE accessed bit should be set");
+    assert_ne!(
+        pde_after_read & (1 << 5),
+        0,
+        "PDE accessed bit should be set"
+    );
 
     let pte_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pte_addr);
-    assert_ne!(pte_after_read & (1 << 5), 0, "PTE accessed bit should be set");
-    assert_eq!(pte_after_read & (1 << 6), 0, "PTE dirty bit should not be set on read");
+    assert_ne!(
+        pte_after_read & (1 << 5),
+        0,
+        "PTE accessed bit should be set"
+    );
+    assert_eq!(
+        pte_after_read & (1 << 6),
+        0,
+        "PTE dirty bit should not be set on read"
+    );
     assert_eq!(pte_after_read & 0x000f_ffff_ffff_f000, page_phys);
 
     // Write through the mapping; the MMU should mark the PTE dirty (even if the translation hits
@@ -585,17 +601,37 @@ fn cpu_core_bus_translates_long4_paging_via_mmu() {
     assert_eq!(bus.read_u8(vaddr).unwrap(), 0xAA);
 
     let pml4e_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pml4e_addr);
-    assert_ne!(pml4e_after_read & (1 << 5), 0, "PML4E accessed bit should be set");
+    assert_ne!(
+        pml4e_after_read & (1 << 5),
+        0,
+        "PML4E accessed bit should be set"
+    );
 
     let pdpte_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pdpte_addr);
-    assert_ne!(pdpte_after_read & (1 << 5), 0, "PDPTE accessed bit should be set");
+    assert_ne!(
+        pdpte_after_read & (1 << 5),
+        0,
+        "PDPTE accessed bit should be set"
+    );
 
     let pde_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pde_addr);
-    assert_ne!(pde_after_read & (1 << 5), 0, "PDE accessed bit should be set");
+    assert_ne!(
+        pde_after_read & (1 << 5),
+        0,
+        "PDE accessed bit should be set"
+    );
 
     let pte_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pte_addr);
-    assert_ne!(pte_after_read & (1 << 5), 0, "PTE accessed bit should be set");
-    assert_eq!(pte_after_read & (1 << 6), 0, "PTE dirty bit should not be set on read");
+    assert_ne!(
+        pte_after_read & (1 << 5),
+        0,
+        "PTE accessed bit should be set"
+    );
+    assert_eq!(
+        pte_after_read & (1 << 6),
+        0,
+        "PTE dirty bit should not be set on read"
+    );
     assert_eq!(pte_after_read & 0x000f_ffff_ffff_f000, page_phys);
 
     // Write through the mapping; the MMU should mark the PTE dirty.
@@ -704,9 +740,21 @@ fn pc_cpu_bus_sync_cr3_flushes_long_mode_translation() {
     let pde_0 = pd_0 + pd_index * 8;
     let pte_0 = pt_0 + pt_index * 8;
 
-    memory::MemoryBus::write_u64(&mut bus.platform.memory, pml4e_0, pdpt_0 | PTE_P | PTE_RW | PTE_US);
-    memory::MemoryBus::write_u64(&mut bus.platform.memory, pdpte_0, pd_0 | PTE_P | PTE_RW | PTE_US);
-    memory::MemoryBus::write_u64(&mut bus.platform.memory, pde_0, pt_0 | PTE_P | PTE_RW | PTE_US);
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pml4e_0,
+        pdpt_0 | PTE_P | PTE_RW | PTE_US,
+    );
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pdpte_0,
+        pd_0 | PTE_P | PTE_RW | PTE_US,
+    );
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pde_0,
+        pt_0 | PTE_P | PTE_RW | PTE_US,
+    );
     memory::MemoryBus::write_u64(
         &mut bus.platform.memory,
         pte_0,
@@ -718,9 +766,21 @@ fn pc_cpu_bus_sync_cr3_flushes_long_mode_translation() {
     let pde_1 = pd_1 + pd_index * 8;
     let pte_1 = pt_1 + pt_index * 8;
 
-    memory::MemoryBus::write_u64(&mut bus.platform.memory, pml4e_1, pdpt_1 | PTE_P | PTE_RW | PTE_US);
-    memory::MemoryBus::write_u64(&mut bus.platform.memory, pdpte_1, pd_1 | PTE_P | PTE_RW | PTE_US);
-    memory::MemoryBus::write_u64(&mut bus.platform.memory, pde_1, pt_1 | PTE_P | PTE_RW | PTE_US);
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pml4e_1,
+        pdpt_1 | PTE_P | PTE_RW | PTE_US,
+    );
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pdpte_1,
+        pd_1 | PTE_P | PTE_RW | PTE_US,
+    );
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pde_1,
+        pt_1 | PTE_P | PTE_RW | PTE_US,
+    );
     memory::MemoryBus::write_u64(
         &mut bus.platform.memory,
         pte_1,

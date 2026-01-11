@@ -158,7 +158,10 @@ fn snapshot_round_trip_dirty_chain_preserves_stack_writes() {
     let mut wrong_base = Vm::new(16 * 1024 * 1024, bios2, disk2);
     wrong_base.reset();
     let err = wrong_base.restore_snapshot(&diff).unwrap_err();
-    assert!(matches!(err, SnapshotError::Corrupt("snapshot parent mismatch")));
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("snapshot parent mismatch")
+    ));
 
     // Restore base + diff into a fresh VM.
     let bios2 = Bios::new(cfg);

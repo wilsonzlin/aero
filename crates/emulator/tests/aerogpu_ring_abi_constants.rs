@@ -5,12 +5,24 @@ use emulator::devices::aerogpu_ring as emu;
 fn aerogpu_ring_constants_match_aero_protocol() {
     // Magic values.
     assert_eq!(emu::AEROGPU_RING_MAGIC, proto::AEROGPU_RING_MAGIC);
-    assert_eq!(emu::AEROGPU_ALLOC_TABLE_MAGIC, proto::AEROGPU_ALLOC_TABLE_MAGIC);
-    assert_eq!(emu::AEROGPU_FENCE_PAGE_MAGIC, proto::AEROGPU_FENCE_PAGE_MAGIC);
+    assert_eq!(
+        emu::AEROGPU_ALLOC_TABLE_MAGIC,
+        proto::AEROGPU_ALLOC_TABLE_MAGIC
+    );
+    assert_eq!(
+        emu::AEROGPU_FENCE_PAGE_MAGIC,
+        proto::AEROGPU_FENCE_PAGE_MAGIC
+    );
 
     // Submit flags.
-    assert_eq!(emu::AEROGPU_SUBMIT_FLAG_PRESENT, proto::AEROGPU_SUBMIT_FLAG_PRESENT);
-    assert_eq!(emu::AEROGPU_SUBMIT_FLAG_NO_IRQ, proto::AEROGPU_SUBMIT_FLAG_NO_IRQ);
+    assert_eq!(
+        emu::AEROGPU_SUBMIT_FLAG_PRESENT,
+        proto::AEROGPU_SUBMIT_FLAG_PRESENT
+    );
+    assert_eq!(
+        emu::AEROGPU_SUBMIT_FLAG_NO_IRQ,
+        proto::AEROGPU_SUBMIT_FLAG_NO_IRQ
+    );
     assert_eq!(
         emu::AeroGpuSubmitDesc::FLAG_PRESENT,
         proto::AEROGPU_SUBMIT_FLAG_PRESENT
@@ -46,4 +58,3 @@ fn aerogpu_ring_constants_match_aero_protocol() {
         proto::AerogpuFencePage::SIZE_BYTES as u64
     );
 }
-

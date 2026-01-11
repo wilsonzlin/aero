@@ -7,8 +7,8 @@ use aero_protocol::aerogpu::{
     },
     aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32},
     aerogpu_ring::{
-        AerogpuAllocEntry as ProtocolAllocEntry, AerogpuAllocTableHeader as ProtocolAllocTableHeader,
-        AEROGPU_ALLOC_TABLE_MAGIC,
+        AerogpuAllocEntry as ProtocolAllocEntry,
+        AerogpuAllocTableHeader as ProtocolAllocTableHeader, AEROGPU_ALLOC_TABLE_MAGIC,
     },
 };
 

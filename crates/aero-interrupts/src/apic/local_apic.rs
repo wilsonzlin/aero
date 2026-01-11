@@ -1,6 +1,8 @@
 use crate::clock::{Clock, NullClock};
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use std::sync::{Arc, Mutex};
 
 pub const LAPIC_MMIO_BASE: u64 = 0xFEE0_0000;

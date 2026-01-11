@@ -14,10 +14,7 @@ pub fn run(trace: &mut TraceIr) -> bool {
         .rev()
         .chain(trace.prologue.iter_mut().rev())
     {
-        if matches!(
-            inst,
-            Instr::Guard { .. } | Instr::SideExit { .. }
-        ) {
+        if matches!(inst, Instr::Guard { .. } | Instr::SideExit { .. }) {
             live = live.union(FlagSet::ALU);
         }
 

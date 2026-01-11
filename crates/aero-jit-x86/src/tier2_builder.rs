@@ -101,7 +101,9 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
                 start_rip: bb.entry_rip,
                 code_len,
                 instrs: Vec::new(),
-                term: Terminator::SideExit { exit_rip: bb.entry_rip },
+                term: Terminator::SideExit {
+                    exit_rip: bb.entry_rip,
+                },
             };
         }
 
@@ -134,9 +136,13 @@ fn lower_terminator<B: Tier1Bus>(
             then_bb: builder.get_or_create_block(target),
             else_bb: builder.get_or_create_block(fallthrough),
         },
-        IrTerminator::IndirectJump { .. } => Terminator::SideExit { exit_rip: bb.entry_rip },
+        IrTerminator::IndirectJump { .. } => Terminator::SideExit {
+            exit_rip: bb.entry_rip,
+        },
         IrTerminator::ExitToInterpreter { next_rip } => match bb.end_kind {
-            BlockEndKind::Limit { next_rip } => Terminator::Jump(builder.get_or_create_block(next_rip)),
+            BlockEndKind::Limit { next_rip } => {
+                Terminator::Jump(builder.get_or_create_block(next_rip))
+            }
             _ => Terminator::SideExit { exit_rip: next_rip },
         },
     }

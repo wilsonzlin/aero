@@ -45,7 +45,9 @@ impl fmt::Display for WgslBootstrapError {
                 f,
                 "unexpected SM4/5 instruction length {len} for opcode {opcode}"
             ),
-            WgslBootstrapError::OperandOutOfBounds => write!(f, "operand token stream out of bounds"),
+            WgslBootstrapError::OperandOutOfBounds => {
+                write!(f, "operand token stream out of bounds")
+            }
             WgslBootstrapError::UnsupportedOperand(msg) => {
                 write!(f, "unsupported operand encoding: {msg}")
             }
@@ -115,7 +117,11 @@ fn translate_vs(program: &Sm4Program) -> Result<WgslBootstrapTranslation, WgslBo
                     ));
                 }
             }
-            _ => return Err(WgslBootstrapError::UnsupportedOperand("expected output<-input mov")),
+            _ => {
+                return Err(WgslBootstrapError::UnsupportedOperand(
+                    "expected output<-input mov",
+                ))
+            }
         }
     }
 
@@ -136,7 +142,11 @@ fn translate_ps(program: &Sm4Program) -> Result<WgslBootstrapTranslation, WgslBo
 
     let max_in = match mov.src.kind {
         RegKind::Input => mov.src.index,
-        _ => return Err(WgslBootstrapError::UnsupportedOperand("expected o0<-input mov")),
+        _ => {
+            return Err(WgslBootstrapError::UnsupportedOperand(
+                "expected o0<-input mov",
+            ))
+        }
     };
 
     let mut s = String::new();
@@ -235,11 +245,15 @@ fn extract_movs(program: &Sm4Program) -> Result<Vec<Mov>, WgslBootstrapError> {
 
 fn parse_reg_operand(tokens: &[u32]) -> Result<RegRef, WgslBootstrapError> {
     if tokens.len() != 2 {
-        return Err(WgslBootstrapError::UnsupportedOperand("operand must be 2 dwords"));
+        return Err(WgslBootstrapError::UnsupportedOperand(
+            "operand must be 2 dwords",
+        ));
     }
     let token = tokens[0];
     if (token & 0x8000_0000) != 0 {
-        return Err(WgslBootstrapError::UnsupportedOperand("extended operand token"));
+        return Err(WgslBootstrapError::UnsupportedOperand(
+            "extended operand token",
+        ));
     }
 
     let ty = (token >> 4) & 0xff;

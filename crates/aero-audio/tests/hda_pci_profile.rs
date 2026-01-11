@@ -46,4 +46,3 @@ fn hda_pci_config_matches_canonical_profile() {
     dev.config_write(0x10, 4, 0xdead_beef);
     assert_eq!(read_u32(&dev, 0x10), 0xdead_bee0);
 }
-

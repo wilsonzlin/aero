@@ -27,4 +27,3 @@ fn pci_intx_router_snapshot_rejects_invalid_bdf_encoding() {
         other => panic!("expected InvalidFieldEncoding, got {other:?}"),
     }
 }
-

@@ -262,7 +262,10 @@ async fn byte_quota_closes_connection() {
     .unwrap();
 
     let frame = close.expect("expected close frame");
-    assert_eq!(frame.code, tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy);
+    assert_eq!(
+        frame.code,
+        tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy
+    );
 
     proxy.shutdown().await;
 }
@@ -307,7 +310,10 @@ async fn fps_quota_closes_connection() {
     .unwrap();
 
     let frame = close.expect("expected close frame");
-    assert_eq!(frame.code, tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy);
+    assert_eq!(
+        frame.code,
+        tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy
+    );
 
     proxy.shutdown().await;
 }

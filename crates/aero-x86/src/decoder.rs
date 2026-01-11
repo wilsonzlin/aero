@@ -175,10 +175,7 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
                         }
                     }
                     let mut b = b;
-                    if needs_rex_r_mask
-                        && (0x40..=0x4F).contains(&b)
-                        && last_rex_pos == Some(i)
-                    {
+                    if needs_rex_r_mask && (0x40..=0x4F).contains(&b) && last_rex_pos == Some(i) {
                         b &= !0b0100;
                     }
                     patched[out_len] = b;

@@ -1,8 +1,8 @@
 use std::fs;
 
 use aero_d3d11::{
-    parse_signatures, translate_sm4_to_wgsl, translate_sm4_to_wgsl_bootstrap, BindingKind, DxbcFile,
-    FourCC, RegFile, ShaderStage, Sm4Decl, Sm4Inst, Sm4Program, SrcKind,
+    parse_signatures, translate_sm4_to_wgsl, translate_sm4_to_wgsl_bootstrap, BindingKind,
+    DxbcFile, FourCC, RegFile, ShaderStage, Sm4Decl, Sm4Inst, Sm4Program, SrcKind,
 };
 
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
@@ -113,14 +113,20 @@ fn parses_and_translates_sm4_vs_matrix_fixture() {
 
     let module = program.decode().expect("SM4 decode failed");
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(d, Sm4Decl::ConstantBuffer { slot: 0, reg_count: 4 })),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::ConstantBuffer {
+                slot: 0,
+                reg_count: 4
+            }
+        )),
         "expected decoded cbuffer declaration"
     );
     assert!(
-        module.instructions.iter().any(|i| matches!(i, Sm4Inst::Dp4 { .. })),
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::Dp4 { .. })),
         "expected dp4 instructions"
     );
 
@@ -130,11 +136,13 @@ fn parses_and_translates_sm4_vs_matrix_fixture() {
     assert!(translated.wgsl.contains("struct Cb0"));
     assert!(translated.wgsl.contains("var<uniform> cb0"));
     assert!(translated.wgsl.contains("dot(("));
-    assert!(translated
-        .reflection
-        .bindings
-        .iter()
-        .any(|b| matches!(b.kind, BindingKind::ConstantBuffer { slot: 0, reg_count: 4 })));
+    assert!(translated.reflection.bindings.iter().any(|b| matches!(
+        b.kind,
+        BindingKind::ConstantBuffer {
+            slot: 0,
+            reg_count: 4
+        }
+    )));
 }
 
 #[test]
@@ -152,7 +160,10 @@ fn parses_and_translates_sm4_ps_sample_fixture() {
 
     let module = program.decode().expect("SM4 decode failed");
     assert!(
-        module.instructions.iter().any(|i| matches!(i, Sm4Inst::Sample { .. })),
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::Sample { .. })),
         "expected sample instruction"
     );
 

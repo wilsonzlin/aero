@@ -863,10 +863,7 @@ impl VirtioPciDevice {
 
             while let Ok(Some(chain)) = queue.pop_descriptor_chain(mem) {
                 let head_index = chain.head_index();
-                need_irq |= match self
-                    .device
-                    .process_queue(queue_index, chain, queue, mem)
-                {
+                need_irq |= match self.device.process_queue(queue_index, chain, queue, mem) {
                     Ok(irq) => irq,
                     Err(_) => {
                         // VirtioDevice implementations are expected to add a used entry for every

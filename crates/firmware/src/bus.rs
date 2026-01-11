@@ -15,4 +15,3 @@ pub trait Bus {
 
     fn serial_write(&mut self, byte: u8);
 }
-

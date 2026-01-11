@@ -10,14 +10,14 @@ use crate::abi::{MMU_ACCESS_READ, MMU_ACCESS_WRITE};
 use crate::jit_ctx::{self, JitContext};
 use crate::opt::RegAllocPlan;
 use crate::t2_ir::{BinOp, FlagValues, Instr, Operand, TraceIr, TraceKind, ValueId, REG_COUNT};
+use crate::wasm::{
+    IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
+    IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
+    IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE,
+};
 use crate::{
     JIT_TLB_ENTRY_SIZE, JIT_TLB_INDEX_MASK, PAGE_BASE_MASK, PAGE_OFFSET_MASK, PAGE_SHIFT,
     TLB_FLAG_IS_RAM, TLB_FLAG_READ, TLB_FLAG_WRITE,
-};
-use crate::wasm::{
-    IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
-    IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
-    IMPORT_MEMORY, IMPORT_MODULE, IMPORT_MMU_TRANSLATE,
 };
 
 /// Export name for a compiled Tier-2 trace.
@@ -120,12 +120,10 @@ impl Tier2WasmCodegen {
             .function([ValType::I32, ValType::I64, ValType::I64], []);
         let ty_mmu_translate = if options.inline_tlb {
             let ty = types.len();
-            types
-                .ty()
-                .function(
-                    [ValType::I32, ValType::I32, ValType::I64, ValType::I32],
-                    [ValType::I64],
-                );
+            types.ty().function(
+                [ValType::I32, ValType::I32, ValType::I64, ValType::I32],
+                [ValType::I64],
+            );
             Some(ty)
         } else {
             None
@@ -135,7 +133,9 @@ impl Tier2WasmCodegen {
             .ty()
             .function([ValType::I32, ValType::I64], [ValType::I64]);
         let ty_trace = types.len();
-        types.ty().function([ValType::I32, ValType::I32], [ValType::I64]);
+        types
+            .ty()
+            .function([ValType::I32, ValType::I32], [ValType::I64]);
         module.section(&types);
 
         let mut imports = ImportSection::new();
@@ -258,17 +258,25 @@ impl Tier2WasmCodegen {
         if options.inline_tlb {
             // Load JIT metadata (guest RAM base and TLB salt).
             f.instruction(&Instruction::LocalGet(layout.jit_ctx_ptr_local()));
-            f.instruction(&Instruction::I64Load(memarg(JitContext::RAM_BASE_OFFSET, 3)));
+            f.instruction(&Instruction::I64Load(memarg(
+                JitContext::RAM_BASE_OFFSET,
+                3,
+            )));
             f.instruction(&Instruction::LocalSet(layout.ram_base_local()));
 
             f.instruction(&Instruction::LocalGet(layout.jit_ctx_ptr_local()));
-            f.instruction(&Instruction::I64Load(memarg(JitContext::TLB_SALT_OFFSET, 3)));
+            f.instruction(&Instruction::I64Load(memarg(
+                JitContext::TLB_SALT_OFFSET,
+                3,
+            )));
             f.instruction(&Instruction::LocalSet(layout.tlb_salt_local()));
         }
 
         // Default exit reason is "none".
         f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-        f.instruction(&Instruction::I32Const(jit_ctx::TRACE_EXIT_REASON_NONE as i32));
+        f.instruction(&Instruction::I32Const(
+            jit_ctx::TRACE_EXIT_REASON_NONE as i32,
+        ));
         f.instruction(&Instruction::I32Store(memarg(
             jit_ctx::TRACE_EXIT_REASON_OFFSET,
             2,
@@ -422,11 +430,7 @@ impl Layout {
         let value_base = next;
         next += value_count;
 
-        assert_eq!(
-            next,
-            2 + i64_locals,
-            "local layout mismatch"
-        );
+        assert_eq!(next, 2 + i64_locals, "local layout mismatch");
 
         Self {
             ram_base,
@@ -906,7 +910,8 @@ impl Emitter<'_> {
 
             match width {
                 Width::W8 => {
-                    self.f.instruction(&Instruction::Call(self.imported.mem_read_u8));
+                    self.f
+                        .instruction(&Instruction::Call(self.imported.mem_read_u8));
                     self.f.instruction(&Instruction::I64ExtendI32U);
                 }
                 Width::W16 => {
@@ -950,7 +955,8 @@ impl Emitter<'_> {
         self.f
             .instruction(&Instruction::I64Const(PAGE_OFFSET_MASK as i64));
         self.f.instruction(&Instruction::I64And);
-        self.f.instruction(&Instruction::I64Const(cross_limit as i64));
+        self.f
+            .instruction(&Instruction::I64Const(cross_limit as i64));
         self.f.instruction(&Instruction::I64GtU);
 
         self.f.instruction(&Instruction::If(BlockType::Empty));
@@ -981,8 +987,7 @@ impl Emitter<'_> {
             self.f.instruction(&Instruction::I64And);
             self.f.instruction(&Instruction::I64Eqz);
 
-            self.f
-                .instruction(&Instruction::If(BlockType::Empty));
+            self.f.instruction(&Instruction::If(BlockType::Empty));
             self.depth += 1;
             {
                 self.f
@@ -1071,7 +1076,8 @@ impl Emitter<'_> {
         self.f
             .instruction(&Instruction::I64Const(PAGE_OFFSET_MASK as i64));
         self.f.instruction(&Instruction::I64And);
-        self.f.instruction(&Instruction::I64Const(cross_limit as i64));
+        self.f
+            .instruction(&Instruction::I64Const(cross_limit as i64));
         self.f.instruction(&Instruction::I64GtU);
 
         self.f.instruction(&Instruction::If(BlockType::Empty));
@@ -1114,8 +1120,7 @@ impl Emitter<'_> {
             self.f.instruction(&Instruction::I64And);
             self.f.instruction(&Instruction::I64Eqz);
 
-            self.f
-                .instruction(&Instruction::If(BlockType::Empty));
+            self.f.instruction(&Instruction::If(BlockType::Empty));
             self.depth += 1;
             {
                 // MMIO/ROM/unmapped: fall back to the slow helper.
@@ -1171,7 +1176,8 @@ impl Emitter<'_> {
         // vpn = vaddr >> 12
         self.f
             .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
-        self.f.instruction(&Instruction::I64Const(PAGE_SHIFT as i64));
+        self.f
+            .instruction(&Instruction::I64Const(PAGE_SHIFT as i64));
         self.f.instruction(&Instruction::I64ShrU);
         self.f
             .instruction(&Instruction::LocalSet(self.layout.scratch_vpn_local()));
@@ -1286,7 +1292,8 @@ impl Emitter<'_> {
             self.f
                 .instruction(&Instruction::I64Const(PAGE_BASE_MASK as i64));
             self.f.instruction(&Instruction::I64And);
-            self.f.instruction(&Instruction::I64Const(PAGE_SHIFT as i64));
+            self.f
+                .instruction(&Instruction::I64Const(PAGE_SHIFT as i64));
             self.f.instruction(&Instruction::I64ShrU); // -> page (i64)
 
             // Bounds check: page < table_len.
@@ -1315,7 +1322,8 @@ impl Emitter<'_> {
                 self.f
                     .instruction(&Instruction::I64Const(PAGE_BASE_MASK as i64));
                 self.f.instruction(&Instruction::I64And);
-                self.f.instruction(&Instruction::I64Const(PAGE_SHIFT as i64));
+                self.f
+                    .instruction(&Instruction::I64Const(PAGE_SHIFT as i64));
                 self.f.instruction(&Instruction::I64ShrU);
 
                 self.f.instruction(&Instruction::I64Const(4));

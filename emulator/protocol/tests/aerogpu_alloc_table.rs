@@ -1,7 +1,9 @@
-use aero_protocol::aerogpu::aerogpu_pci::{AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32};
+use aero_protocol::aerogpu::aerogpu_pci::{
+    AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32,
+};
 use aero_protocol::aerogpu::aerogpu_ring::{
-    decode_alloc_table_le, lookup_alloc, AerogpuAllocEntry, AerogpuAllocTableDecodeError, AerogpuAllocTableHeader,
-    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_ALLOC_FLAG_READONLY,
+    decode_alloc_table_le, lookup_alloc, AerogpuAllocEntry, AerogpuAllocTableDecodeError,
+    AerogpuAllocTableHeader, AEROGPU_ALLOC_FLAG_READONLY, AEROGPU_ALLOC_TABLE_MAGIC,
 };
 
 fn write_u32_le(buf: &mut [u8], off: usize, v: u32) {
@@ -24,7 +26,8 @@ fn backing_as_u8_mut(backing: &mut [u64]) -> &mut [u8] {
 #[test]
 fn decode_alloc_table_valid() {
     let entry_count = 2u32;
-    let total_size = AerogpuAllocTableHeader::SIZE_BYTES + (entry_count as usize * AerogpuAllocEntry::SIZE_BYTES);
+    let total_size = AerogpuAllocTableHeader::SIZE_BYTES
+        + (entry_count as usize * AerogpuAllocEntry::SIZE_BYTES);
 
     let mut backing = alloc_table_backing_u64(total_size);
     let buf = backing_as_u8_mut(&mut backing);
@@ -58,7 +61,10 @@ fn decode_alloc_table_valid() {
     assert_eq!(decoded.header.abi_version, AEROGPU_ABI_VERSION_U32);
     assert_eq!(decoded.header.size_bytes, total_size as u32);
     assert_eq!(decoded.header.entry_count, entry_count);
-    assert_eq!(decoded.header.entry_stride_bytes, AerogpuAllocEntry::SIZE_BYTES as u32);
+    assert_eq!(
+        decoded.header.entry_stride_bytes,
+        AerogpuAllocEntry::SIZE_BYTES as u32
+    );
 
     assert_eq!(decoded.entries.len(), 2);
     assert_eq!(decoded.entries[0].alloc_id, 10);
@@ -87,7 +93,10 @@ fn decode_alloc_table_rejects_bad_magic() {
     let mut buf = [0u8; AerogpuAllocTableHeader::SIZE_BYTES];
     write_u32_le(&mut buf, 0, 0xDEAD_BEEF);
     let err = decode_alloc_table_le(&buf).err().unwrap();
-    assert!(matches!(err, AerogpuAllocTableDecodeError::BadMagic { found: 0xDEAD_BEEF }));
+    assert!(matches!(
+        err,
+        AerogpuAllocTableDecodeError::BadMagic { found: 0xDEAD_BEEF }
+    ));
 }
 
 #[test]
@@ -112,7 +121,11 @@ fn decode_alloc_table_rejects_bad_size() {
         let mut buf = [0u8; AerogpuAllocTableHeader::SIZE_BYTES];
         write_u32_le(&mut buf, 0, AEROGPU_ALLOC_TABLE_MAGIC);
         write_u32_le(&mut buf, 4, AEROGPU_ABI_VERSION_U32);
-        write_u32_le(&mut buf, 8, (AerogpuAllocTableHeader::SIZE_BYTES as u32) - 1);
+        write_u32_le(
+            &mut buf,
+            8,
+            (AerogpuAllocTableHeader::SIZE_BYTES as u32) - 1,
+        );
         let err = decode_alloc_table_le(&buf).err().unwrap();
         assert!(matches!(err, AerogpuAllocTableDecodeError::BadSize { .. }));
     }
@@ -122,7 +135,11 @@ fn decode_alloc_table_rejects_bad_size() {
         let mut buf = [0u8; AerogpuAllocTableHeader::SIZE_BYTES];
         write_u32_le(&mut buf, 0, AEROGPU_ALLOC_TABLE_MAGIC);
         write_u32_le(&mut buf, 4, AEROGPU_ABI_VERSION_U32);
-        write_u32_le(&mut buf, 8, (AerogpuAllocTableHeader::SIZE_BYTES as u32) + 4);
+        write_u32_le(
+            &mut buf,
+            8,
+            (AerogpuAllocTableHeader::SIZE_BYTES as u32) + 4,
+        );
         let err = decode_alloc_table_le(&buf).err().unwrap();
         assert!(matches!(err, AerogpuAllocTableDecodeError::BadSize { .. }));
     }
@@ -138,7 +155,10 @@ fn decode_alloc_table_rejects_bad_stride() {
     write_u32_le(&mut buf, 16, 16);
 
     let err = decode_alloc_table_le(&buf).err().unwrap();
-    assert!(matches!(err, AerogpuAllocTableDecodeError::BadStride { .. }));
+    assert!(matches!(
+        err,
+        AerogpuAllocTableDecodeError::BadStride { .. }
+    ));
 }
 
 #[test]
@@ -154,13 +174,17 @@ fn decode_alloc_table_rejects_entry_count_out_of_bounds() {
     write_u32_le(buf, 20, 0);
 
     let err = decode_alloc_table_le(buf).err().unwrap();
-    assert!(matches!(err, AerogpuAllocTableDecodeError::CountOutOfBounds));
+    assert!(matches!(
+        err,
+        AerogpuAllocTableDecodeError::CountOutOfBounds
+    ));
 }
 
 #[test]
 fn decode_alloc_table_rejects_misaligned_entries() {
     let entry_count = 1u32;
-    let total_size = AerogpuAllocTableHeader::SIZE_BYTES + (entry_count as usize * AerogpuAllocEntry::SIZE_BYTES);
+    let total_size = AerogpuAllocTableHeader::SIZE_BYTES
+        + (entry_count as usize * AerogpuAllocEntry::SIZE_BYTES);
     assert_eq!(total_size % 8, 0);
 
     // Add 1 byte of padding so that the returned slice is misaligned.

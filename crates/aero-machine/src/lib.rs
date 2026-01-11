@@ -28,7 +28,7 @@ use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550}
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::io::IoPortBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
-use firmware::bios::{build_bios_rom, Bios, BiosConfig, BiosBus, BIOS_BASE};
+use firmware::bios::{build_bios_rom, Bios, BiosBus, BiosConfig, BIOS_BASE};
 use machine::{
     A20Gate as FirmwareA20Gate, BlockDevice, CpuState as FirmwareCpuState, FirmwareMemory,
     MemoryAccess, Segment as FirmwareSegment,
@@ -107,7 +107,10 @@ impl fmt::Display for MachineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             MachineError::InvalidCpuCount(count) => {
-                write!(f, "unsupported cpu_count {count} (only 1 is supported today)")
+                write!(
+                    f,
+                    "unsupported cpu_count {count} (only 1 is supported today)"
+                )
             }
             MachineError::InvalidDiskSize(len) => write!(
                 f,
@@ -151,9 +154,7 @@ impl VecBlockDevice {
 impl BlockDevice for VecBlockDevice {
     fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), machine::DiskError> {
         let idx = usize::try_from(lba).map_err(|_| machine::DiskError::OutOfRange)?;
-        let start = idx
-            .checked_mul(512)
-            .ok_or(machine::DiskError::OutOfRange)?;
+        let start = idx.checked_mul(512).ok_or(machine::DiskError::OutOfRange)?;
         let end = start
             .checked_add(512)
             .ok_or(machine::DiskError::OutOfRange)?;
@@ -392,8 +393,7 @@ impl Machine {
         self.io = IoPortBus::new();
 
         if self.cfg.enable_serial {
-            let uart: SharedSerial16550 =
-                Rc::new(RefCell::new(Serial16550::new(0x3F8)));
+            let uart: SharedSerial16550 = Rc::new(RefCell::new(Serial16550::new(0x3F8)));
             register_serial16550(&mut self.io, uart.clone());
             self.serial = Some(uart);
         } else {
@@ -406,8 +406,10 @@ impl Machine {
         }
 
         if self.cfg.enable_reset_ctrl {
-            self.io
-                .register(RESET_CTRL_PORT, Box::new(ResetCtrl::new(self.reset_latch.clone())));
+            self.io.register(
+                RESET_CTRL_PORT,
+                Box::new(ResetCtrl::new(self.reset_latch.clone())),
+            );
         }
 
         if self.cfg.enable_i8042 {
@@ -463,7 +465,8 @@ impl Machine {
                 io: &mut self.io,
             };
 
-            let batch = run_batch_with_assists(&mut self.assist, &mut self.cpu, &mut bus, remaining);
+            let batch =
+                run_batch_with_assists(&mut self.assist, &mut self.cpu, &mut bus, remaining);
             executed = executed.saturating_add(batch.executed);
 
             match batch.exit {
@@ -485,7 +488,10 @@ impl Machine {
                 }
                 BatchExit::Exception(exception) => {
                     self.flush_serial();
-                    return RunExit::Exception { exception, executed };
+                    return RunExit::Exception {
+                        exception,
+                        executed,
+                    };
                 }
             }
         }

@@ -115,12 +115,10 @@ impl Tier1WasmCodegen {
             .function([ValType::I32, ValType::I64, ValType::I64], []);
         let ty_mmu_translate = if options.inline_tlb {
             let ty = types.len();
-            types
-                .ty()
-                .function(
-                    [ValType::I32, ValType::I32, ValType::I64, ValType::I32],
-                    [ValType::I64],
-                );
+            types.ty().function(
+                [ValType::I32, ValType::I32, ValType::I64, ValType::I32],
+                [ValType::I64],
+            );
             Some(ty)
         } else {
             None
@@ -289,11 +287,17 @@ impl Tier1WasmCodegen {
         if options.inline_tlb {
             // Load JIT metadata (guest RAM base and TLB salt).
             func.instruction(&Instruction::LocalGet(layout.jit_ctx_ptr_local()));
-            func.instruction(&Instruction::I64Load(memarg(JitContext::RAM_BASE_OFFSET, 3)));
+            func.instruction(&Instruction::I64Load(memarg(
+                JitContext::RAM_BASE_OFFSET,
+                3,
+            )));
             func.instruction(&Instruction::LocalSet(layout.ram_base_local()));
 
             func.instruction(&Instruction::LocalGet(layout.jit_ctx_ptr_local()));
-            func.instruction(&Instruction::I64Load(memarg(JitContext::TLB_SALT_OFFSET, 3)));
+            func.instruction(&Instruction::I64Load(memarg(
+                JitContext::TLB_SALT_OFFSET,
+                3,
+            )));
             func.instruction(&Instruction::LocalSet(layout.tlb_salt_local()));
         }
 

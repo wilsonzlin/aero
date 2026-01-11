@@ -1,10 +1,12 @@
 use std::io::Cursor;
 
 use aero_devices::pci::{
-    MsiCapability, PciBarDefinition, PciBdf, PciBus, PciConfigPorts, PciConfigSpace, PciDevice,
-    PciIntxRouter, PciIntxRouterConfig, PciInterruptPin, GsiLevelSink,
+    GsiLevelSink, MsiCapability, PciBarDefinition, PciBdf, PciBus, PciConfigPorts, PciConfigSpace,
+    PciDevice, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
 };
-use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
+use aero_snapshot::io_snapshot_bridge::{
+    apply_io_snapshot_to_device, device_state_from_io_snapshot,
+};
 use aero_snapshot::{
     restore_snapshot, save_snapshot, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRefs,
     MmuState, Result, SaveOptions, SnapshotMeta, SnapshotSource, SnapshotTarget,
@@ -243,4 +245,3 @@ fn pci_io_snapshot_roundtrips_through_aero_snapshot_file() {
     target.pci_intx.sync_levels_to_sink(&mut restored_levels);
     assert_eq!(restored_levels.events, expected_intx_levels.events);
 }
-

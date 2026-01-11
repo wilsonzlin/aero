@@ -341,7 +341,8 @@ pub fn composite_cursor_rgba_over_scanout(
 
             let dst_off = (dst_y as usize * scanout_width + dst_x as usize) * 4;
             if src_a == 0xff {
-                scanout_rgba[dst_off..dst_off + 4].copy_from_slice(&cursor_rgba[src_off..src_off + 4]);
+                scanout_rgba[dst_off..dst_off + 4]
+                    .copy_from_slice(&cursor_rgba[src_off..src_off + 4]);
                 continue;
             }
 
@@ -371,7 +372,9 @@ mod tests {
 
     impl VecMemory {
         fn new(size: usize) -> Self {
-            Self { data: vec![0; size] }
+            Self {
+                data: vec![0; size],
+            }
         }
 
         fn range(&self, paddr: u64, len: usize) -> core::ops::Range<usize> {

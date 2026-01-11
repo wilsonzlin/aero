@@ -189,10 +189,9 @@ fn decode_alloc_table(bytes: &[u8]) -> Result<AllocTable, String> {
         let entry_offset = idx_u64
             .checked_mul(stride as u64)
             .ok_or_else(|| "alloc table entry offset overflow".to_string())?;
-        let start = AerogpuAllocTableHeader::SIZE_BYTES as u64
-            + entry_offset;
-        let start = usize::try_from(start)
-            .map_err(|_| "alloc table entry offset overflow".to_string())?;
+        let start = AerogpuAllocTableHeader::SIZE_BYTES as u64 + entry_offset;
+        let start =
+            usize::try_from(start).map_err(|_| "alloc table entry offset overflow".to_string())?;
         let end = start + AerogpuAllocEntry::SIZE_BYTES;
         if end > table_size {
             return Err(format!(

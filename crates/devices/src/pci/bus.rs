@@ -329,7 +329,9 @@ impl IoSnapshot for PciBusSnapshot {
         let mut d = Decoder::new(buf);
         let count = d.u32()? as usize;
         if count > MAX_PCI_FUNCTIONS {
-            return Err(SnapshotError::InvalidFieldEncoding("too many PCI BDF entries"));
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "too many PCI BDF entries",
+            ));
         }
         let mut by_bdf = BTreeMap::new();
         for _ in 0..count {
@@ -357,7 +359,9 @@ impl IoSnapshot for PciBusSnapshot {
                 bar_probe,
             };
             if by_bdf.insert(bdf, config).is_some() {
-                return Err(SnapshotError::InvalidFieldEncoding("duplicate PCI BDF entry"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "duplicate PCI BDF entry",
+                ));
             }
         }
         d.finish()?;

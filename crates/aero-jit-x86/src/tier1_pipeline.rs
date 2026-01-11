@@ -162,10 +162,9 @@ where
         )?;
         let meta = shrink_meta(pre_meta, compilation.byte_len);
 
-        let table_index = self.registry.register_tier1_block(
-            compilation.wasm_bytes,
-            compilation.exit_to_interpreter,
-        );
+        let table_index = self
+            .registry
+            .register_tier1_block(compilation.wasm_bytes, compilation.exit_to_interpreter);
 
         Ok(CompiledBlockHandle {
             entry_rip,

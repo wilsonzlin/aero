@@ -21,9 +21,9 @@ use aero_jit_x86::tier2::opt::{optimize_trace, OptConfig};
 use aero_jit_x86::tier2::trace::TraceBuilder;
 use aero_jit_x86::tier2::wasm::{Tier2WasmCodegen, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION};
 use aero_jit_x86::wasm::{
-    IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
-    IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
-    IMPORT_MEMORY, IMPORT_MODULE,
+    IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
+    IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
+    IMPORT_MEM_WRITE_U8, IMPORT_MODULE,
 };
 
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
@@ -64,7 +64,12 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
         v
     }
 
-    fn write<const N: usize>(caller: &mut Caller<'_, ()>, memory: &Memory, addr: usize, value: u64) {
+    fn write<const N: usize>(
+        caller: &mut Caller<'_, ()>,
+        memory: &Memory,
+        addr: usize,
+        value: u64,
+    ) {
         let mut buf = [0u8; N];
         for (i, b) in buf.iter_mut().enumerate() {
             *b = (value >> (i * 8)) as u8;
@@ -210,9 +215,10 @@ impl WasmiTraceBackend {
             .define(
                 IMPORT_MODULE,
                 IMPORT_CODE_PAGE_VERSION,
-                Func::wrap(&mut store, |_caller: Caller<'_, ()>, _cpu_ptr: i32, _page: i64| -> i64 {
-                    0
-                }),
+                Func::wrap(
+                    &mut store,
+                    |_caller: Caller<'_, ()>, _cpu_ptr: i32, _page: i64| -> i64 { 0 },
+                ),
             )
             .unwrap();
 
@@ -223,7 +229,11 @@ impl WasmiTraceBackend {
             .get_typed_func::<(i32, i32), i64>(&store, EXPORT_TRACE_FN)
             .expect("trace export");
 
-        Self { store, memory, trace }
+        Self {
+            store,
+            memory,
+            trace,
+        }
     }
 }
 
@@ -281,7 +291,10 @@ fn tier2_trace_is_invalidated_via_jit_runtime_page_versions() {
                         dst: v(0),
                         reg: Gpr::Rax,
                     },
-                    Instr::Const { dst: v(1), value: 1 },
+                    Instr::Const {
+                        dst: v(1),
+                        value: 1,
+                    },
                     Instr::BinOp {
                         dst: v(2),
                         op: BinOp::Add,
@@ -293,7 +306,10 @@ fn tier2_trace_is_invalidated_via_jit_runtime_page_versions() {
                         reg: Gpr::Rax,
                         src: Operand::Value(v(2)),
                     },
-                    Instr::Const { dst: v(3), value: 10 },
+                    Instr::Const {
+                        dst: v(3),
+                        value: 10,
+                    },
                     Instr::BinOp {
                         dst: v(4),
                         op: BinOp::LtU,

@@ -140,7 +140,12 @@ impl<B> PagingBus<B> {
     }
 
     #[inline]
-    fn write_u16_access(&mut self, vaddr: u64, access: AccessType, value: u16) -> Result<(), Exception>
+    fn write_u16_access(
+        &mut self,
+        vaddr: u64,
+        access: AccessType,
+        value: u16,
+    ) -> Result<(), Exception>
     where
         B: MemoryBus,
     {
@@ -155,7 +160,12 @@ impl<B> PagingBus<B> {
     }
 
     #[inline]
-    fn write_u32_access(&mut self, vaddr: u64, access: AccessType, value: u32) -> Result<(), Exception>
+    fn write_u32_access(
+        &mut self,
+        vaddr: u64,
+        access: AccessType,
+        value: u32,
+    ) -> Result<(), Exception>
     where
         B: MemoryBus,
     {
@@ -170,7 +180,12 @@ impl<B> PagingBus<B> {
     }
 
     #[inline]
-    fn write_u64_access(&mut self, vaddr: u64, access: AccessType, value: u64) -> Result<(), Exception>
+    fn write_u64_access(
+        &mut self,
+        vaddr: u64,
+        access: AccessType,
+        value: u64,
+    ) -> Result<(), Exception>
     where
         B: MemoryBus,
     {
@@ -292,7 +307,8 @@ impl<B: MemoryBus> CpuBus for WriteIntent<'_, B> {
 
     fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
         let mut buf = [0u8; 16];
-        self.bus.read_bytes_access(vaddr, &mut buf, AccessType::Write)?;
+        self.bus
+            .read_bytes_access(vaddr, &mut buf, AccessType::Write)?;
         Ok(u128::from_le_bytes(buf))
     }
 

@@ -436,7 +436,10 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
                         dst: v(0),
                         reg: Gpr::Rax,
                     },
-                    Instr::Const { dst: v(1), value: 1 },
+                    Instr::Const {
+                        dst: v(1),
+                        value: 1,
+                    },
                     Instr::BinOp {
                         dst: v(2),
                         op: BinOp::Add,
@@ -657,7 +660,10 @@ fn tier2_loop_trace_invalidates_on_mid_execution_code_version_bump() {
                         dst: v(0),
                         reg: Gpr::Rax,
                     },
-                    Instr::Const { dst: v(1), value: 1 },
+                    Instr::Const {
+                        dst: v(1),
+                        value: 1,
+                    },
                     Instr::BinOp {
                         dst: v(2),
                         op: BinOp::Add,

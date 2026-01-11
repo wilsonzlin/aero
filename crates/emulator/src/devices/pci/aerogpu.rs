@@ -8,9 +8,7 @@ use crate::devices::aerogpu_regs::{
     AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE, AEROGPU_PCI_SUBSYSTEM_ID, AEROGPU_PCI_SUBSYSTEM_VENDOR_ID,
     AEROGPU_PCI_VENDOR_ID, FEATURE_VBLANK,
 };
-use crate::devices::aerogpu_ring::{
-    write_fence_page, AeroGpuRingHeader, RING_TAIL_OFFSET,
-};
+use crate::devices::aerogpu_ring::{write_fence_page, AeroGpuRingHeader, RING_TAIL_OFFSET};
 use crate::devices::aerogpu_scanout::AeroGpuFormat;
 use crate::gpu_worker::aerogpu_backend::AeroGpuCommandBackend;
 use crate::gpu_worker::aerogpu_executor::{AeroGpuExecutor, AeroGpuExecutorConfig};

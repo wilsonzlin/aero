@@ -182,13 +182,18 @@ impl UsbHidPassthrough {
         interface_subclass: Option<u8>,
         interface_protocol: Option<u8>,
     ) -> Self {
-        let max_packet_size = sanitize_max_packet_size(max_packet_size.unwrap_or(DEFAULT_MAX_PACKET_SIZE));
+        let max_packet_size =
+            sanitize_max_packet_size(max_packet_size.unwrap_or(DEFAULT_MAX_PACKET_SIZE));
 
         let manufacturer_string_descriptor = string_descriptor_utf16le(&manufacturer);
         let product_string_descriptor = string_descriptor_utf16le(&product);
         let serial_string_descriptor = serial.as_deref().map(string_descriptor_utf16le);
 
-        let i_serial = if serial_string_descriptor.is_some() { 3 } else { 0 };
+        let i_serial = if serial_string_descriptor.is_some() {
+            3
+        } else {
+            0
+        };
 
         let device_descriptor = build_device_descriptor(
             vendor_id,
@@ -208,8 +213,12 @@ impl UsbHidPassthrough {
             interface_protocol.unwrap_or(0),
         );
 
-        let (report_ids_in_use, input_report_lengths, output_report_lengths, feature_report_lengths) =
-            report_descriptor_report_lengths(&hid_report_descriptor);
+        let (
+            report_ids_in_use,
+            input_report_lengths,
+            output_report_lengths,
+            feature_report_lengths,
+        ) = report_descriptor_report_lengths(&hid_report_descriptor);
 
         Self {
             address: 0,
@@ -300,7 +309,9 @@ impl UsbHidPassthrough {
 
     fn default_report(&self, report_type: u8, report_id: u8, w_length: u16) -> Vec<u8> {
         let requested = w_length as usize;
-        let expected = self.report_length(report_type, report_id).unwrap_or(requested);
+        let expected = self
+            .report_length(report_type, report_id)
+            .unwrap_or(requested);
         let len = expected.min(requested);
         if len == 0 {
             return Vec::new();
@@ -343,7 +354,9 @@ impl UsbHidPassthrough {
         match desc_type {
             DESC_DEVICE => Some(self.device_descriptor.clone()),
             DESC_CONFIGURATION => Some(self.config_descriptor.clone()),
-            DESC_STRING => self.string_descriptor(index).or_else(|| Some(vec![0, DESC_STRING])),
+            DESC_STRING => self
+                .string_descriptor(index)
+                .or_else(|| Some(vec![0, DESC_STRING])),
             DESC_HID => Some(self.hid_descriptor.clone()),
             DESC_REPORT => Some(self.hid_report_descriptor.clone()),
             _ => None,
@@ -369,7 +382,8 @@ impl UsbHidPassthrough {
             (0x82, REQ_GET_STATUS) => {
                 let halted = if setup.index == u16::from(INTERRUPT_IN_EP_ADDR) {
                     Some(self.interrupt_in_halted)
-                } else if setup.index == u16::from(INTERRUPT_OUT_EP_ADDR) && self.has_interrupt_out {
+                } else if setup.index == u16::from(INTERRUPT_OUT_EP_ADDR) && self.has_interrupt_out
+                {
                     Some(self.interrupt_out_halted)
                 } else {
                     None
@@ -387,17 +401,23 @@ impl UsbHidPassthrough {
                         .last_input_reports
                         .get(&report_id)
                         .cloned()
-                        .unwrap_or_else(|| self.default_report(report_type, report_id, setup.length)),
+                        .unwrap_or_else(|| {
+                            self.default_report(report_type, report_id, setup.length)
+                        }),
                     2 => self
                         .last_output_reports
                         .get(&report_id)
                         .cloned()
-                        .unwrap_or_else(|| self.default_report(report_type, report_id, setup.length)),
+                        .unwrap_or_else(|| {
+                            self.default_report(report_type, report_id, setup.length)
+                        }),
                     3 => self
                         .last_feature_reports
                         .get(&report_id)
                         .cloned()
-                        .unwrap_or_else(|| self.default_report(report_type, report_id, setup.length)),
+                        .unwrap_or_else(|| {
+                            self.default_report(report_type, report_id, setup.length)
+                        }),
                     _ => return None,
                 };
                 Some(data)
@@ -608,7 +628,9 @@ impl UsbDevice for UsbHidPassthrough {
                             if report_type == 2 || report_type == 3 {
                                 let payload = if report_id != 0 {
                                     self.report_length(report_type, report_id)
-                                        .filter(|&expected_len| expected_len == self.ep0.out_data.len())
+                                        .filter(|&expected_len| {
+                                            expected_len == self.ep0.out_data.len()
+                                        })
                                         .and_then(|_| self.ep0.out_data.first().copied())
                                         .filter(|&first| first == report_id)
                                         .map(|_| self.ep0.out_data[1..].to_vec())
@@ -716,10 +738,10 @@ fn build_device_descriptor(
         0x12, // bLength
         DESC_DEVICE,
         0x00,
-        0x02, // bcdUSB (2.00)
-        0x00, // bDeviceClass (per interface)
-        0x00, // bDeviceSubClass
-        0x00, // bDeviceProtocol
+        0x02,             // bcdUSB (2.00)
+        0x00,             // bDeviceClass (per interface)
+        0x00,             // bDeviceSubClass
+        0x00,             // bDeviceProtocol
         max_packet_size0, // bMaxPacketSize0
     ]);
     out.extend_from_slice(&vendor_id.to_le_bytes());
@@ -777,8 +799,8 @@ fn build_config_descriptor(
         // Interface descriptor
         0x09, // bLength
         DESC_INTERFACE,
-        0x00, // bInterfaceNumber
-        0x00, // bAlternateSetting
+        0x00,          // bInterfaceNumber
+        0x00,          // bAlternateSetting
         num_endpoints, // bNumEndpoints
         0x03,          // bInterfaceClass (HID)
         interface_subclass,
@@ -790,7 +812,7 @@ fn build_config_descriptor(
         0x07, // bLength
         DESC_ENDPOINT,
         INTERRUPT_IN_EP_ADDR, // bEndpointAddress
-        0x03,                // bmAttributes (Interrupt)
+        0x03,                 // bmAttributes (Interrupt)
     ]);
     out.extend_from_slice(&max_packet_size.to_le_bytes()); // wMaxPacketSize
     out.push(0x0a); // bInterval (10ms)
@@ -800,7 +822,7 @@ fn build_config_descriptor(
             0x07, // bLength
             DESC_ENDPOINT,
             INTERRUPT_OUT_EP_ADDR, // bEndpointAddress
-            0x03,                 // bmAttributes (Interrupt)
+            0x03,                  // bmAttributes (Interrupt)
         ]);
         out.extend_from_slice(&max_packet_size.to_le_bytes()); // wMaxPacketSize
         out.push(0x0a); // bInterval (10ms)
@@ -812,8 +834,14 @@ fn build_config_descriptor(
 
 fn report_descriptor_report_lengths(
     report_descriptor_bytes: &[u8],
-) -> (bool, BTreeMap<u8, usize>, BTreeMap<u8, usize>, BTreeMap<u8, usize>) {
-    let Ok(collections) = report_descriptor::parse_report_descriptor(report_descriptor_bytes) else {
+) -> (
+    bool,
+    BTreeMap<u8, usize>,
+    BTreeMap<u8, usize>,
+    BTreeMap<u8, usize>,
+) {
+    let Ok(collections) = report_descriptor::parse_report_descriptor(report_descriptor_bytes)
+    else {
         return (
             report_descriptor_uses_report_ids(report_descriptor_bytes),
             BTreeMap::new(),

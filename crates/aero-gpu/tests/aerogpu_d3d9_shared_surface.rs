@@ -1,7 +1,8 @@
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
-    AerogpuPrimitiveTopology, AerogpuShaderStage, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,
+    AerogpuShaderStage, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
     AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
@@ -102,10 +103,7 @@ fn to_bytes(words: &[u32]) -> Vec<u8> {
 fn assemble_vs_passthrough_pos() -> Vec<u8> {
     // vs_2_0: mov oPos, v0; end
     let mut words = vec![0xFFFE_0200];
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -113,10 +111,7 @@ fn assemble_vs_passthrough_pos() -> Vec<u8> {
 fn assemble_ps_solid_color_c0() -> Vec<u8> {
     // ps_2_0: mov oC0, c0; end
     let mut words = vec![0xFFFF_0200];
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -354,7 +349,7 @@ fn d3d9_shared_surface_import_export_renders_via_alias_handle() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // vec4_count
             push_u32(out, 0); // reserved0
-            // c0 = green
+                              // c0 = green
             push_f32(out, 0.0);
             push_f32(out, 1.0);
             push_f32(out, 0.0);
@@ -377,8 +372,8 @@ fn d3d9_shared_surface_import_export_renders_via_alias_handle() {
     exec.execute_cmd_stream(&stream)
         .expect("execute should succeed");
 
-    let (out_w, out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_ALIAS))
-        .expect("readback should succeed");
+    let (out_w, out_h, rgba) =
+        pollster::block_on(exec.readback_texture_rgba8(RT_ALIAS)).expect("readback should succeed");
     assert_eq!((out_w, out_h), (width, height));
     assert_eq!(rgba.len(), (width * height * 4) as usize);
 
@@ -511,5 +506,8 @@ fn d3d9_presented_scanout_survives_destroying_present_alias_handle() {
         .expect("scanout should be present");
     assert_eq!(rgba.len(), (width * height * 4) as usize);
     let center = (((height / 2) * width) + (width / 2)) * 4;
-    assert_eq!(&rgba[center as usize..center as usize + 4], &[255, 0, 0, 255]);
+    assert_eq!(
+        &rgba[center as usize..center as usize + 4],
+        &[255, 0, 0, 255]
+    );
 }

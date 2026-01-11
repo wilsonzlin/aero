@@ -80,7 +80,8 @@ fn operand_token(
     token |= num_components & OPERAND_NUM_COMPONENTS_MASK;
     token |= (selection_mode & OPERAND_SELECTION_MODE_MASK) << OPERAND_SELECTION_MODE_SHIFT;
     token |= (ty & OPERAND_TYPE_MASK) << OPERAND_TYPE_SHIFT;
-    token |= (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
+    token |=
+        (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
     token |= (index_dim & OPERAND_INDEX_DIMENSION_MASK) << OPERAND_INDEX_DIMENSION_SHIFT;
     token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX0_REP_SHIFT;
     token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX1_REP_SHIFT;
@@ -89,10 +90,7 @@ fn operand_token(
 }
 
 fn swizzle_bits(swz: [u8; 4]) -> u32 {
-    (swz[0] as u32)
-        | ((swz[1] as u32) << 2)
-        | ((swz[2] as u32) << 4)
-        | ((swz[3] as u32) << 6)
+    (swz[0] as u32) | ((swz[1] as u32) << 2) | ((swz[2] as u32) << 4) | ((swz[3] as u32) << 6)
 }
 
 fn reg_dst(ty: u32, idx: u32, mask: WriteMask) -> Vec<u32> {
@@ -104,13 +102,7 @@ fn reg_dst(ty: u32, idx: u32, mask: WriteMask) -> Vec<u32> {
 
 fn reg_src(ty: u32, idx: u32) -> Vec<u32> {
     vec![
-        operand_token(
-            ty,
-            2,
-            OPERAND_SEL_SWIZZLE,
-            swizzle_bits(Swizzle::XYZW.0),
-            1,
-        ),
+        operand_token(ty, 2, OPERAND_SEL_SWIZZLE, swizzle_bits(Swizzle::XYZW.0), 1),
         idx,
     ]
 }
@@ -147,7 +139,13 @@ fn build_signature_chunk(params: &[DxbcSignatureParameter]) -> Vec<u8> {
     bytes
 }
 
-fn sig_param(name: &str, index: u32, register: u32, mask: u8, sys_value: u32) -> DxbcSignatureParameter {
+fn sig_param(
+    name: &str,
+    index: u32,
+    register: u32,
+    mask: u8,
+    sys_value: u32,
+) -> DxbcSignatureParameter {
     DxbcSignatureParameter {
         semantic_name: name.to_owned(),
         semantic_index: index,
@@ -226,12 +224,15 @@ fn translates_vertex_id_and_instance_id_builtins() {
     let module = program.decode().expect("SM5 decode");
 
     let signatures = parse_signatures(&dxbc).expect("signature parse");
-    let translated =
-        translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
 
     assert_wgsl_parses(&translated.wgsl);
-    assert!(translated.wgsl.contains("@builtin(vertex_index) vertex_id: u32"));
-    assert!(translated.wgsl.contains("@builtin(instance_index) instance_id: u32"));
+    assert!(translated
+        .wgsl
+        .contains("@builtin(vertex_index) vertex_id: u32"));
+    assert!(translated
+        .wgsl
+        .contains("@builtin(instance_index) instance_id: u32"));
     assert!(translated
         .wgsl
         .contains("@builtin(position) pos: vec4<f32>"));
@@ -269,9 +270,9 @@ fn translates_front_facing_builtin() {
         ],
     };
 
-    let translated =
-        translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_parses(&translated.wgsl);
-    assert!(translated.wgsl.contains("@builtin(front_facing) front_facing: bool"));
+    assert!(translated
+        .wgsl
+        .contains("@builtin(front_facing) front_facing: bool"));
 }
-

@@ -752,7 +752,11 @@ fn instr_ins<B: CpuBus>(
     let addr_mask = mask_bits(addr_size);
 
     let has_rep = instr.has_rep_prefix() || instr.has_repne_prefix();
-    let mut count = if has_rep { state.read_reg(count_reg) } else { 1 };
+    let mut count = if has_rep {
+        state.read_reg(count_reg)
+    } else {
+        1
+    };
     if has_rep && count == 0 {
         return Ok(());
     }
@@ -808,13 +812,21 @@ fn instr_outs<B: CpuBus>(
     let addr_mask = mask_bits(addr_size);
 
     let has_rep = instr.has_rep_prefix() || instr.has_repne_prefix();
-    let mut count = if has_rep { state.read_reg(count_reg) } else { 1 };
+    let mut count = if has_rep {
+        state.read_reg(count_reg)
+    } else {
+        1
+    };
     if has_rep && count == 0 {
         return Ok(());
     }
     let mut si = state.read_reg(index_reg) & addr_mask;
     let seg = instr.segment_prefix();
-    let seg_reg = if seg == Register::None { Register::DS } else { seg };
+    let seg_reg = if seg == Register::None {
+        Register::DS
+    } else {
+        seg
+    };
     let seg_base = state.seg_base_reg(seg_reg);
 
     while count != 0 {

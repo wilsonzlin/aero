@@ -75,7 +75,11 @@ impl From<GuestMemoryError> for VirtQueueError {
 
 fn checked_offset(base: u64, offset: u64, len: usize, size: u64) -> Result<u64, VirtQueueError> {
     base.checked_add(offset).ok_or_else(|| {
-        VirtQueueError::GuestMemory(GuestMemoryError::OutOfRange { paddr: base, len, size })
+        VirtQueueError::GuestMemory(GuestMemoryError::OutOfRange {
+            paddr: base,
+            len,
+            size,
+        })
     })
 }
 
@@ -113,8 +117,7 @@ impl VirtQueue {
         }
 
         let ring_index = (self.last_avail_idx % self.size) as u64;
-        let head_index_addr =
-            checked_offset(self.avail_ring, 4 + ring_index * 2, 2, mem.size())?;
+        let head_index_addr = checked_offset(self.avail_ring, 4 + ring_index * 2, 2, mem.size())?;
         let head_index = mem.read_u16_le(head_index_addr)?;
         self.last_avail_idx = self.last_avail_idx.wrapping_add(1);
 
@@ -137,8 +140,7 @@ impl VirtQueue {
         }
 
         let ring_index = (self.last_avail_idx % self.size) as u64;
-        let head_index_addr =
-            checked_offset(self.avail_ring, 4 + ring_index * 2, 2, mem.size())?;
+        let head_index_addr = checked_offset(self.avail_ring, 4 + ring_index * 2, 2, mem.size())?;
         let head_index = mem.read_u16_le(head_index_addr)?;
         Ok(Some(self.read_chain(mem, head_index)?))
     }

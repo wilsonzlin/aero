@@ -4,18 +4,18 @@ pub mod jit_ctx;
 mod block;
 pub mod compiler;
 mod opt;
+pub mod profile;
+pub mod simd;
 mod t2_exec;
 mod t2_ir;
+pub mod tier1;
 mod tier1_bus;
 mod tier1_ir;
 mod tier1_pipeline;
-mod trace;
-mod translate;
-pub mod profile;
-pub mod simd;
-pub mod tier1;
 pub mod tier2;
 mod tier2_builder;
+mod trace;
+mod translate;
 pub mod wasm;
 
 // ---- JIT ABI constants ------------------------------------------------------

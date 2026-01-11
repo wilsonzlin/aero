@@ -248,8 +248,7 @@ fn read_tx_frame(
 
     let frame_len = total_len - VirtioNetHeader::SIZE;
     let mut frame = vec![0u8; frame_len];
-    if let Err(err) = read_chain_exact(mem, &chain.descriptors, VirtioNetHeader::SIZE, &mut frame)
-    {
+    if let Err(err) = read_chain_exact(mem, &chain.descriptors, VirtioNetHeader::SIZE, &mut frame) {
         return match err {
             VirtQueueError::DescriptorChainTooShort { .. } => Ok(None),
             VirtQueueError::GuestMemory(_) => Ok(None),
@@ -287,7 +286,11 @@ fn tx_total_len(descs: &[Descriptor]) -> Option<usize> {
     Some(total)
 }
 
-fn rx_chain_can_fit_frame(mem: &impl GuestMemory, chain: &DescriptorChain, frame_len: usize) -> bool {
+fn rx_chain_can_fit_frame(
+    mem: &impl GuestMemory,
+    chain: &DescriptorChain,
+    frame_len: usize,
+) -> bool {
     let needed = VirtioNetHeader::SIZE + frame_len;
     if needed > MAX_TX_TOTAL_LEN {
         return false;
@@ -625,7 +628,8 @@ mod tests {
 
         mem.write_from(header_addr, &VirtioNetHeader::default().to_bytes())
             .unwrap();
-        mem.write_from(payload_addr, &[0x99u8; MIN_FRAME_LEN]).unwrap();
+        mem.write_from(payload_addr, &[0x99u8; MIN_FRAME_LEN])
+            .unwrap();
 
         write_desc(
             &mut mem,

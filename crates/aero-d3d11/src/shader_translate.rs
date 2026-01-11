@@ -436,7 +436,8 @@ impl IoMaps {
         self.outputs
             .values()
             .map(|p| {
-                let is_target = is_sv_target(&p.param.semantic_name) || p.param.system_value_type == D3D_NAME_TARGET;
+                let is_target = is_sv_target(&p.param.semantic_name)
+                    || p.param.system_value_type == D3D_NAME_TARGET;
                 IoParam {
                     semantic_name: p.param.semantic_name.clone(),
                     semantic_index: p.param.semantic_index,
@@ -594,10 +595,7 @@ impl IoMaps {
                             register: reg,
                         },
                     )?;
-                    return Ok(expand_to_vec4(
-                        "select(0.0, 1.0, input.front_facing)",
-                        p,
-                    ));
+                    return Ok(expand_to_vec4("select(0.0, 1.0, input.front_facing)", p));
                 }
                 let p = self.inputs.get(&reg).ok_or(
                     ShaderTranslateError::SignatureMissingRegister {

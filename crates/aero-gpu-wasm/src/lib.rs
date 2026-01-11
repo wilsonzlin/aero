@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
-#![cfg_attr(all(target_arch = "wasm32", feature = "wasm-threaded"), feature(thread_local))]
+#![cfg_attr(
+    all(target_arch = "wasm32", feature = "wasm-threaded"),
+    feature(thread_local)
+)]
 
 // The full implementation is only meaningful on wasm32.
 #[cfg(target_arch = "wasm32")]
@@ -449,7 +452,13 @@ mod wasm {
             self.canvas.set_height(pixel_height.max(1));
         }
 
-        fn resize(&mut self, src_width: u32, src_height: u32, out_width_px: u32, out_height_px: u32) {
+        fn resize(
+            &mut self,
+            src_width: u32,
+            src_height: u32,
+            out_width_px: u32,
+            out_height_px: u32,
+        ) {
             let src_width = src_width.max(1);
             let src_height = src_height.max(1);
             let out_width_px = out_width_px.max(1);
@@ -542,7 +551,9 @@ mod wasm {
                 data = &rgba8[..expected_len];
             } else {
                 let total = upload_bpr as usize * height as usize;
-                if self.upload_scratch.len() != total || self.upload_scratch_bytes_per_row != upload_bpr {
+                if self.upload_scratch.len() != total
+                    || self.upload_scratch_bytes_per_row != upload_bpr
+                {
                     self.upload_scratch = vec![0u8; total];
                     self.upload_scratch_bytes_per_row = upload_bpr;
                 }
@@ -1030,7 +1041,9 @@ mod wasm {
             return Ok(wgpu::FilterMode::Nearest);
         }
         let Some(mode) = value.as_string() else {
-            return Err(JsValue::from_str("Presenter filter must be a string ('nearest' | 'linear')"));
+            return Err(JsValue::from_str(
+                "Presenter filter must be a string ('nearest' | 'linear')",
+            ));
         };
         match mode.as_str() {
             "nearest" => Ok(wgpu::FilterMode::Nearest),
@@ -1045,12 +1058,15 @@ mod wasm {
         if obj.is_undefined() || obj.is_null() {
             return Ok(ScaleMode::Fit);
         }
-        let value = Reflect::get(obj, &JsValue::from_str("scaleMode")).unwrap_or(JsValue::UNDEFINED);
+        let value =
+            Reflect::get(obj, &JsValue::from_str("scaleMode")).unwrap_or(JsValue::UNDEFINED);
         if value.is_undefined() || value.is_null() {
             return Ok(ScaleMode::Fit);
         }
         let Some(mode) = value.as_string() else {
-            return Err(JsValue::from_str("scaleMode must be a string ('stretch' | 'fit' | 'integer')"));
+            return Err(JsValue::from_str(
+                "scaleMode must be a string ('stretch' | 'fit' | 'integer')",
+            ));
         };
         match mode.as_str() {
             "stretch" => Ok(ScaleMode::Stretch),
@@ -1073,21 +1089,25 @@ mod wasm {
         if obj.is_undefined() || obj.is_null() {
             return Ok(default);
         }
-        let value = Reflect::get(obj, &JsValue::from_str("clearColor")).unwrap_or(JsValue::UNDEFINED);
+        let value =
+            Reflect::get(obj, &JsValue::from_str("clearColor")).unwrap_or(JsValue::UNDEFINED);
         if value.is_undefined() || value.is_null() {
             return Ok(default);
         }
         if !Array::is_array(&value) {
-            return Err(JsValue::from_str("clearColor must be a 4-element array [r,g,b,a]"));
+            return Err(JsValue::from_str(
+                "clearColor must be a 4-element array [r,g,b,a]",
+            ));
         }
         let arr: Array = value.unchecked_into();
         if arr.length() < 4 {
-            return Err(JsValue::from_str("clearColor must have at least 4 elements [r,g,b,a]"));
+            return Err(JsValue::from_str(
+                "clearColor must have at least 4 elements [r,g,b,a]",
+            ));
         }
         let to_num = |v: JsValue, idx: usize| -> Result<f64, JsValue> {
-            v.as_f64().ok_or_else(|| {
-                JsValue::from_str(&format!("clearColor[{idx}] must be a number"))
-            })
+            v.as_f64()
+                .ok_or_else(|| JsValue::from_str(&format!("clearColor[{idx}] must be a number")))
         };
         Ok(wgpu::Color {
             r: to_num(arr.get(0), 0)?,
@@ -1307,9 +1327,8 @@ mod wasm {
             }
         }
 
-        Err(last_err.unwrap_or_else(|| {
-            JsValue::from_str("No supported GPU backend could be initialized.")
-        }))
+        Err(last_err
+            .unwrap_or_else(|| JsValue::from_str("No supported GPU backend could be initialized.")))
     }
 
     #[wasm_bindgen]
@@ -1343,9 +1362,12 @@ mod wasm {
 
             let out_width_px = clamp_pixel_size(output_css_width, state.device_pixel_ratio);
             let out_height_px = clamp_pixel_size(output_css_height, state.device_pixel_ratio);
-            state
-                .presenter
-                .resize(state.src_width, state.src_height, out_width_px, out_height_px);
+            state.presenter.resize(
+                state.src_width,
+                state.src_height,
+                out_width_px,
+                out_height_px,
+            );
             Ok(())
         })
     }

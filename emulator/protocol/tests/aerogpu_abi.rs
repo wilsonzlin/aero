@@ -4,37 +4,40 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_hdr_le, AerogpuBlendFactor, AerogpuBlendOp, AerogpuBlendState, AerogpuCmdBindShaders,
-    AerogpuCmdClear, AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d, AerogpuCmdCreateBuffer,
-    AerogpuCmdCreateInputLayout, AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d,
-    AerogpuCmdDestroyInputLayout, AerogpuCmdDestroyResource, AerogpuCmdDestroyShader, AerogpuCmdDraw,
-    AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface, AerogpuCmdFlush, AerogpuCmdHdr,
-    AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx,
-    AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState, AerogpuCmdSetDepthStencilState,
-    AerogpuCmdSetIndexBuffer, AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology,
-    AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState, AerogpuCmdSetRenderTargets,
-    AerogpuCmdSetSamplerState, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF,
-    AerogpuCmdSetTexture, AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags,
-    AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuCullMode,
-    AerogpuDepthStencilState, AerogpuFillMode, AerogpuIndexFormat, AerogpuInputLayoutBlobHeader,
-    AerogpuInputLayoutElementDxgi, AerogpuPrimitiveTopology, AerogpuRasterizerState, AerogpuShaderStage,
+    decode_cmd_hdr_le, AerogpuBlendFactor, AerogpuBlendOp, AerogpuBlendState,
+    AerogpuCmdBindShaders, AerogpuCmdClear, AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d,
+    AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout, AerogpuCmdCreateShaderDxbc,
+    AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout, AerogpuCmdDestroyResource,
+    AerogpuCmdDestroyShader, AerogpuCmdDraw, AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface,
+    AerogpuCmdFlush, AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode,
+    AerogpuCmdPresent, AerogpuCmdPresentEx, AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState,
+    AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer, AerogpuCmdSetInputLayout,
+    AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState,
+    AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState, AerogpuCmdSetScissor,
+    AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture, AerogpuCmdSetVertexBuffers,
+    AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader, AerogpuCmdUploadResource,
+    AerogpuCompareFunc, AerogpuCullMode, AerogpuDepthStencilState, AerogpuFillMode,
+    AerogpuIndexFormat, AerogpuInputLayoutBlobHeader, AerogpuInputLayoutElementDxgi,
+    AerogpuPrimitiveTopology, AerogpuRasterizerState, AerogpuShaderStage,
     AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL,
     AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_NONE, AEROGPU_COPY_FLAG_WRITEBACK_DST,
     AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS,
     AEROGPU_PRESENT_FLAG_NONE, AEROGPU_PRESENT_FLAG_VSYNC, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
     AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
-    AEROGPU_RESOURCE_USAGE_NONE, AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
-    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AEROGPU_RESOURCE_USAGE_NONE, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
     parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuFormat, AEROGPU_ABI_MAJOR,
-    AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_FENCE_PAGE, AEROGPU_FEATURE_TRANSFER,
-    AEROGPU_FEATURE_VBLANK, AEROGPU_IRQ_FENCE, AEROGPU_MMIO_MAGIC, AEROGPU_MMIO_REG_DOORBELL,
-    AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
-    AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO, AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER,
+    AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_FENCE_PAGE,
+    AEROGPU_FEATURE_TRANSFER, AEROGPU_FEATURE_VBLANK, AEROGPU_IRQ_FENCE, AEROGPU_MMIO_MAGIC,
+    AEROGPU_MMIO_REG_DOORBELL, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS,
+    AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
+    AEROGPU_PCI_BAR0_INDEX, AEROGPU_PCI_BAR0_SIZE_BYTES, AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER,
     AEROGPU_PCI_DEVICE_ID, AEROGPU_PCI_PROG_IF, AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE,
     AEROGPU_PCI_SUBSYSTEM_ID, AEROGPU_PCI_SUBSYSTEM_VENDOR_ID, AEROGPU_PCI_VENDOR_ID,
-    AEROGPU_PCI_BAR0_INDEX, AEROGPU_PCI_BAR0_SIZE_BYTES, AEROGPU_RING_CONTROL_ENABLE,
+    AEROGPU_RING_CONTROL_ENABLE,
 };
 use aero_protocol::aerogpu::aerogpu_ring::{
     write_fence_page_completed_fence_le, AerogpuAllocEntry, AerogpuAllocTableHeader,
@@ -457,10 +460,16 @@ fn rust_layout_matches_c_headers() {
     expected_cmd_structs.sort();
     expected_cmd_structs.dedup();
 
-    let mut cmd_structs_seen: Vec<String> = cmd_structs_seen.iter().map(|name| (*name).to_string()).collect();
+    let mut cmd_structs_seen: Vec<String> = cmd_structs_seen
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
     cmd_structs_seen.sort();
     cmd_structs_seen.dedup();
-    assert_eq!(cmd_structs_seen, expected_cmd_structs, "command packet struct coverage");
+    assert_eq!(
+        cmd_structs_seen, expected_cmd_structs,
+        "command packet struct coverage"
+    );
 
     // Ring structs.
     assert_size!(AerogpuAllocTableHeader, "aerogpu_alloc_table_header");
@@ -507,7 +516,12 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(AerogpuAllocEntry, alloc_id, "aerogpu_alloc_entry", "alloc_id");
+    assert_off!(
+        AerogpuAllocEntry,
+        alloc_id,
+        "aerogpu_alloc_entry",
+        "alloc_id"
+    );
     assert_off!(AerogpuAllocEntry, flags, "aerogpu_alloc_entry", "flags");
     assert_off!(AerogpuAllocEntry, gpa, "aerogpu_alloc_entry", "gpa");
     assert_off!(
@@ -913,7 +927,12 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_cmd_copy_buffer",
         "size_bytes"
     );
-    assert_off!(AerogpuCmdCopyBuffer, flags, "aerogpu_cmd_copy_buffer", "flags");
+    assert_off!(
+        AerogpuCmdCopyBuffer,
+        flags,
+        "aerogpu_cmd_copy_buffer",
+        "flags"
+    );
     assert_off!(
         AerogpuCmdCopyBuffer,
         reserved0,
@@ -958,13 +977,48 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_cmd_copy_texture2d",
         "src_array_layer"
     );
-    assert_off!(AerogpuCmdCopyTexture2d, dst_x, "aerogpu_cmd_copy_texture2d", "dst_x");
-    assert_off!(AerogpuCmdCopyTexture2d, dst_y, "aerogpu_cmd_copy_texture2d", "dst_y");
-    assert_off!(AerogpuCmdCopyTexture2d, src_x, "aerogpu_cmd_copy_texture2d", "src_x");
-    assert_off!(AerogpuCmdCopyTexture2d, src_y, "aerogpu_cmd_copy_texture2d", "src_y");
-    assert_off!(AerogpuCmdCopyTexture2d, width, "aerogpu_cmd_copy_texture2d", "width");
-    assert_off!(AerogpuCmdCopyTexture2d, height, "aerogpu_cmd_copy_texture2d", "height");
-    assert_off!(AerogpuCmdCopyTexture2d, flags, "aerogpu_cmd_copy_texture2d", "flags");
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        dst_x,
+        "aerogpu_cmd_copy_texture2d",
+        "dst_x"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        dst_y,
+        "aerogpu_cmd_copy_texture2d",
+        "dst_y"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        src_x,
+        "aerogpu_cmd_copy_texture2d",
+        "src_x"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        src_y,
+        "aerogpu_cmd_copy_texture2d",
+        "src_y"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        width,
+        "aerogpu_cmd_copy_texture2d",
+        "width"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        height,
+        "aerogpu_cmd_copy_texture2d",
+        "height"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        flags,
+        "aerogpu_cmd_copy_texture2d",
+        "flags"
+    );
     assert_off!(
         AerogpuCmdCopyTexture2d,
         reserved0,
@@ -972,10 +1026,7 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_cmd_hdr_off!(
-        AerogpuCmdCreateShaderDxbc,
-        "aerogpu_cmd_create_shader_dxbc"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdCreateShaderDxbc, "aerogpu_cmd_create_shader_dxbc");
     assert_off!(
         AerogpuCmdCreateShaderDxbc,
         shader_handle,
@@ -1248,10 +1299,7 @@ fn rust_layout_matches_c_headers() {
         "state"
     );
 
-    assert_cmd_hdr_off!(
-        AerogpuCmdSetRenderTargets,
-        "aerogpu_cmd_set_render_targets"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdSetRenderTargets, "aerogpu_cmd_set_render_targets");
     assert_off!(
         AerogpuCmdSetRenderTargets,
         color_count,
@@ -1349,10 +1397,7 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_vertex_buffer_binding",
         "reserved0"
     );
-    assert_cmd_hdr_off!(
-        AerogpuCmdSetVertexBuffers,
-        "aerogpu_cmd_set_vertex_buffers"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdSetVertexBuffers, "aerogpu_cmd_set_vertex_buffers");
     assert_off!(
         AerogpuCmdSetVertexBuffers,
         start_slot,
@@ -1416,7 +1461,12 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_cmd_set_texture",
         "shader_stage"
     );
-    assert_off!(AerogpuCmdSetTexture, slot, "aerogpu_cmd_set_texture", "slot");
+    assert_off!(
+        AerogpuCmdSetTexture,
+        slot,
+        "aerogpu_cmd_set_texture",
+        "slot"
+    );
     assert_off!(
         AerogpuCmdSetTexture,
         texture,
@@ -1499,7 +1549,12 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_cmd_copy_buffer",
         "size_bytes"
     );
-    assert_off!(AerogpuCmdCopyBuffer, flags, "aerogpu_cmd_copy_buffer", "flags");
+    assert_off!(
+        AerogpuCmdCopyBuffer,
+        flags,
+        "aerogpu_cmd_copy_buffer",
+        "flags"
+    );
     assert_off!(
         AerogpuCmdCopyTexture2d,
         dst_texture,
@@ -1536,10 +1591,30 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_cmd_copy_texture2d",
         "src_array_layer"
     );
-    assert_off!(AerogpuCmdCopyTexture2d, dst_x, "aerogpu_cmd_copy_texture2d", "dst_x");
-    assert_off!(AerogpuCmdCopyTexture2d, dst_y, "aerogpu_cmd_copy_texture2d", "dst_y");
-    assert_off!(AerogpuCmdCopyTexture2d, src_x, "aerogpu_cmd_copy_texture2d", "src_x");
-    assert_off!(AerogpuCmdCopyTexture2d, src_y, "aerogpu_cmd_copy_texture2d", "src_y");
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        dst_x,
+        "aerogpu_cmd_copy_texture2d",
+        "dst_x"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        dst_y,
+        "aerogpu_cmd_copy_texture2d",
+        "dst_y"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        src_x,
+        "aerogpu_cmd_copy_texture2d",
+        "src_x"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        src_y,
+        "aerogpu_cmd_copy_texture2d",
+        "src_y"
+    );
     assert_off!(
         AerogpuCmdCopyTexture2d,
         width,
@@ -1552,7 +1627,12 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_cmd_copy_texture2d",
         "height"
     );
-    assert_off!(AerogpuCmdCopyTexture2d, flags, "aerogpu_cmd_copy_texture2d", "flags");
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        flags,
+        "aerogpu_cmd_copy_texture2d",
+        "flags"
+    );
 
     assert_cmd_hdr_off!(AerogpuCmdClear, "aerogpu_cmd_clear");
     assert_off!(AerogpuCmdClear, flags, "aerogpu_cmd_clear", "flags");
@@ -1562,18 +1642,8 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_cmd_clear",
         "color_rgba_f32"
     );
-    assert_off!(
-        AerogpuCmdClear,
-        depth_f32,
-        "aerogpu_cmd_clear",
-        "depth_f32"
-    );
-    assert_off!(
-        AerogpuCmdClear,
-        stencil,
-        "aerogpu_cmd_clear",
-        "stencil"
-    );
+    assert_off!(AerogpuCmdClear, depth_f32, "aerogpu_cmd_clear", "depth_f32");
+    assert_off!(AerogpuCmdClear, stencil, "aerogpu_cmd_clear", "stencil");
 
     assert_cmd_hdr_off!(AerogpuCmdDraw, "aerogpu_cmd_draw");
     assert_off!(
@@ -1715,18 +1785,8 @@ fn rust_layout_matches_c_headers() {
     );
 
     assert_cmd_hdr_off!(AerogpuCmdFlush, "aerogpu_cmd_flush");
-    assert_off!(
-        AerogpuCmdFlush,
-        reserved0,
-        "aerogpu_cmd_flush",
-        "reserved0"
-    );
-    assert_off!(
-        AerogpuCmdFlush,
-        reserved1,
-        "aerogpu_cmd_flush",
-        "reserved1"
-    );
+    assert_off!(AerogpuCmdFlush, reserved0, "aerogpu_cmd_flush", "reserved0");
+    assert_off!(AerogpuCmdFlush, reserved1, "aerogpu_cmd_flush", "reserved1");
 
     let mut cmd_offset_structs_seen: Vec<String> = cmd_offset_structs_seen
         .iter()
@@ -2017,13 +2077,19 @@ fn rust_layout_matches_c_headers() {
         AEROGPU_RESOURCE_USAGE_SCANOUT as u64
     );
 
-    assert_eq!(abi.konst("AEROGPU_COPY_FLAG_NONE"), AEROGPU_COPY_FLAG_NONE as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_COPY_FLAG_NONE"),
+        AEROGPU_COPY_FLAG_NONE as u64
+    );
     assert_eq!(
         abi.konst("AEROGPU_COPY_FLAG_WRITEBACK_DST"),
         AEROGPU_COPY_FLAG_WRITEBACK_DST as u64
     );
 
-    assert_eq!(abi.konst("AEROGPU_MAX_RENDER_TARGETS"), AEROGPU_MAX_RENDER_TARGETS as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_MAX_RENDER_TARGETS"),
+        AEROGPU_MAX_RENDER_TARGETS as u64
+    );
     for c_name in parse_c_cmd_opcode_const_names() {
         let expected_rust = upper_snake_to_pascal_case(
             c_name
@@ -2061,31 +2127,64 @@ fn rust_layout_matches_c_headers() {
         AEROGPU_PRESENT_FLAG_VSYNC as u64
     );
 
-    assert_eq!(abi.konst("AEROGPU_BLEND_ZERO"), AerogpuBlendFactor::Zero as u64);
-    assert_eq!(abi.konst("AEROGPU_BLEND_ONE"), AerogpuBlendFactor::One as u64);
-    assert_eq!(abi.konst("AEROGPU_BLEND_SRC_ALPHA"), AerogpuBlendFactor::SrcAlpha as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_BLEND_ZERO"),
+        AerogpuBlendFactor::Zero as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_BLEND_ONE"),
+        AerogpuBlendFactor::One as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_BLEND_SRC_ALPHA"),
+        AerogpuBlendFactor::SrcAlpha as u64
+    );
     assert_eq!(
         abi.konst("AEROGPU_BLEND_INV_SRC_ALPHA"),
         AerogpuBlendFactor::InvSrcAlpha as u64
     );
-    assert_eq!(abi.konst("AEROGPU_BLEND_DEST_ALPHA"), AerogpuBlendFactor::DestAlpha as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_BLEND_DEST_ALPHA"),
+        AerogpuBlendFactor::DestAlpha as u64
+    );
     assert_eq!(
         abi.konst("AEROGPU_BLEND_INV_DEST_ALPHA"),
         AerogpuBlendFactor::InvDestAlpha as u64
     );
 
-    assert_eq!(abi.konst("AEROGPU_BLEND_OP_ADD"), AerogpuBlendOp::Add as u64);
-    assert_eq!(abi.konst("AEROGPU_BLEND_OP_SUBTRACT"), AerogpuBlendOp::Subtract as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_BLEND_OP_ADD"),
+        AerogpuBlendOp::Add as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_BLEND_OP_SUBTRACT"),
+        AerogpuBlendOp::Subtract as u64
+    );
     assert_eq!(
         abi.konst("AEROGPU_BLEND_OP_REV_SUBTRACT"),
         AerogpuBlendOp::RevSubtract as u64
     );
-    assert_eq!(abi.konst("AEROGPU_BLEND_OP_MIN"), AerogpuBlendOp::Min as u64);
-    assert_eq!(abi.konst("AEROGPU_BLEND_OP_MAX"), AerogpuBlendOp::Max as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_BLEND_OP_MIN"),
+        AerogpuBlendOp::Min as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_BLEND_OP_MAX"),
+        AerogpuBlendOp::Max as u64
+    );
 
-    assert_eq!(abi.konst("AEROGPU_COMPARE_NEVER"), AerogpuCompareFunc::Never as u64);
-    assert_eq!(abi.konst("AEROGPU_COMPARE_LESS"), AerogpuCompareFunc::Less as u64);
-    assert_eq!(abi.konst("AEROGPU_COMPARE_EQUAL"), AerogpuCompareFunc::Equal as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_COMPARE_NEVER"),
+        AerogpuCompareFunc::Never as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_COMPARE_LESS"),
+        AerogpuCompareFunc::Less as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_COMPARE_EQUAL"),
+        AerogpuCompareFunc::Equal as u64
+    );
     assert_eq!(
         abi.konst("AEROGPU_COMPARE_LESS_EQUAL"),
         AerogpuCompareFunc::LessEqual as u64
@@ -2102,13 +2201,25 @@ fn rust_layout_matches_c_headers() {
         abi.konst("AEROGPU_COMPARE_GREATER_EQUAL"),
         AerogpuCompareFunc::GreaterEqual as u64
     );
-    assert_eq!(abi.konst("AEROGPU_COMPARE_ALWAYS"), AerogpuCompareFunc::Always as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_COMPARE_ALWAYS"),
+        AerogpuCompareFunc::Always as u64
+    );
 
-    assert_eq!(abi.konst("AEROGPU_FILL_SOLID"), AerogpuFillMode::Solid as u64);
-    assert_eq!(abi.konst("AEROGPU_FILL_WIREFRAME"), AerogpuFillMode::Wireframe as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_FILL_SOLID"),
+        AerogpuFillMode::Solid as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_FILL_WIREFRAME"),
+        AerogpuFillMode::Wireframe as u64
+    );
 
     assert_eq!(abi.konst("AEROGPU_CULL_NONE"), AerogpuCullMode::None as u64);
-    assert_eq!(abi.konst("AEROGPU_CULL_FRONT"), AerogpuCullMode::Front as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_CULL_FRONT"),
+        AerogpuCullMode::Front as u64
+    );
     assert_eq!(abi.konst("AEROGPU_CULL_BACK"), AerogpuCullMode::Back as u64);
 
     assert_eq!(

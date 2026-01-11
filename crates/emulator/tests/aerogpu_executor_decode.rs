@@ -8,8 +8,8 @@ use aero_protocol::aerogpu::aerogpu_ring::{
 use emulator::devices::aerogpu_regs::{irq_bits, ring_control, AeroGpuRegs};
 use emulator::devices::aerogpu_ring::{
     AeroGpuAllocEntry, AeroGpuSubmitDesc, AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES,
-    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC, RING_HEAD_OFFSET,
-    RING_TAIL_OFFSET,
+    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC,
+    RING_HEAD_OFFSET, RING_TAIL_OFFSET,
 };
 use emulator::gpu_worker::aerogpu_executor::{
     AeroGpuExecutor, AeroGpuExecutorConfig, AeroGpuFenceCompletionMode,
@@ -27,8 +27,10 @@ const RING_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, flags) 
 const SUBMIT_DESC_SIZE_BYTES_OFFSET: u64 =
     core::mem::offset_of!(ProtocolSubmitDesc, desc_size_bytes) as u64;
 const SUBMIT_DESC_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, flags) as u64;
-const SUBMIT_DESC_CONTEXT_ID_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, context_id) as u64;
-const SUBMIT_DESC_ENGINE_ID_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, engine_id) as u64;
+const SUBMIT_DESC_CONTEXT_ID_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, context_id) as u64;
+const SUBMIT_DESC_ENGINE_ID_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, engine_id) as u64;
 const SUBMIT_DESC_CMD_GPA_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, cmd_gpa) as u64;
 const SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET: u64 =
     core::mem::offset_of!(ProtocolSubmitDesc, cmd_size_bytes) as u64;
@@ -40,8 +42,10 @@ const SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET: u64 =
     core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_size_bytes) as u64;
 const SUBMIT_DESC_ALLOC_TABLE_RESERVED0_OFFSET: u64 =
     core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_reserved0) as u64;
-const SUBMIT_DESC_SIGNAL_FENCE_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, signal_fence) as u64;
-const SUBMIT_DESC_RESERVED0_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, reserved0) as u64;
+const SUBMIT_DESC_SIGNAL_FENCE_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, signal_fence) as u64;
+const SUBMIT_DESC_RESERVED0_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, reserved0) as u64;
 
 const ALLOC_TABLE_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolAllocTableHeader, magic) as u64;
 const ALLOC_TABLE_ABI_VERSION_OFFSET: u64 =
@@ -58,8 +62,10 @@ const ALLOC_TABLE_RESERVED0_OFFSET: u64 =
 const ALLOC_ENTRY_ALLOC_ID_OFFSET: u64 = core::mem::offset_of!(ProtocolAllocEntry, alloc_id) as u64;
 const ALLOC_ENTRY_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolAllocEntry, flags) as u64;
 const ALLOC_ENTRY_GPA_OFFSET: u64 = core::mem::offset_of!(ProtocolAllocEntry, gpa) as u64;
-const ALLOC_ENTRY_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolAllocEntry, size_bytes) as u64;
-const ALLOC_ENTRY_RESERVED0_OFFSET: u64 = core::mem::offset_of!(ProtocolAllocEntry, reserved0) as u64;
+const ALLOC_ENTRY_SIZE_BYTES_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolAllocEntry, size_bytes) as u64;
+const ALLOC_ENTRY_RESERVED0_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolAllocEntry, reserved0) as u64;
 
 const CMD_STREAM_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolCmdStreamHeader, magic) as u64;
 const CMD_STREAM_ABI_VERSION_OFFSET: u64 =
@@ -145,7 +151,10 @@ fn write_submit_desc(
     mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa);
     mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, cmd_size_bytes);
     mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_RESERVED0_OFFSET, 0);
-    mem.write_u64(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, alloc_table_gpa);
+    mem.write_u64(
+        desc_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET,
+        alloc_table_gpa,
+    );
     mem.write_u32(
         desc_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET,
         alloc_table_size_bytes,
@@ -298,13 +307,8 @@ fn accepts_unknown_minor_versions_for_submission_headers() {
     );
 
     let cmd_gpa = 0x6000u64;
-    let cmd_size_bytes = write_cmd_stream_header(
-        &mut mem,
-        cmd_gpa,
-        newer_minor,
-        24,
-        AEROGPU_CMD_STREAM_MAGIC,
-    );
+    let cmd_size_bytes =
+        write_cmd_stream_header(&mut mem, cmd_gpa, newer_minor, 24, AEROGPU_CMD_STREAM_MAGIC);
 
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
     write_submit_desc(

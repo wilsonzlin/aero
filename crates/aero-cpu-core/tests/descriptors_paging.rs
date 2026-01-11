@@ -163,4 +163,3 @@ fn gdt_descriptor_reads_ignore_user_supervisor_paging_bit() {
         })
     );
 }
-

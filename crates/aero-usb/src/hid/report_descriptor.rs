@@ -128,10 +128,7 @@ impl LocalState {
         self.usage_maximum = None;
     }
 
-    fn set_usage_page_override(
-        &mut self,
-        page: u32,
-    ) -> Result<(), HidDescriptorError> {
+    fn set_usage_page_override(&mut self, page: u32) -> Result<(), HidDescriptorError> {
         if let Some(existing) = self.usage_page_override {
             if existing != page {
                 return Err(HidDescriptorError::MultipleUsagePages {
@@ -225,9 +222,7 @@ fn get_or_create_report<'a>(
     }
 }
 
-pub fn parse_report_descriptor(
-    bytes: &[u8],
-) -> Result<Vec<HidCollectionInfo>, HidDescriptorError> {
+pub fn parse_report_descriptor(bytes: &[u8]) -> Result<Vec<HidCollectionInfo>, HidDescriptorError> {
     let mut global = GlobalState::default();
     let mut global_stack: Vec<GlobalState> = Vec::new();
     let mut local = LocalState::default();
@@ -286,12 +281,11 @@ pub fn parse_report_descriptor(
                         let is_buffered_bytes = (flags & (1 << 8)) != 0;
 
                         let usage_page = local.usage_page_override.unwrap_or(global.usage_page);
-                        let (is_range, usages) =
-                            match (local.usage_minimum, local.usage_maximum) {
-                                (Some(min), Some(max)) => (true, vec![min, max]),
-                                (None, None) => (false, local.usages.clone()),
-                                _ => return Err(HidDescriptorError::IncompleteUsageRange),
-                            };
+                        let (is_range, usages) = match (local.usage_minimum, local.usage_maximum) {
+                            (Some(min), Some(max)) => (true, vec![min, max]),
+                            (None, None) => (false, local.usages.clone()),
+                            _ => return Err(HidDescriptorError::IncompleteUsageRange),
+                        };
 
                         let item = HidReportItem {
                             is_array,
@@ -320,10 +314,9 @@ pub fn parse_report_descriptor(
                             9 => {
                                 get_or_create_report(&mut current.output_reports, global.report_id)
                             }
-                            11 => get_or_create_report(
-                                &mut current.feature_reports,
-                                global.report_id,
-                            ),
+                            11 => {
+                                get_or_create_report(&mut current.feature_reports, global.report_id)
+                            }
                             _ => unreachable!(),
                         };
                         report.items.push(item);
@@ -384,43 +377,41 @@ pub fn parse_report_descriptor(
                 }
             }
             // Global items.
-            1 => {
-                match tag {
-                    0 => global.usage_page = parse_unsigned(data),
-                    1 => global.logical_minimum = parse_signed(data),
-                    2 => global.logical_maximum = parse_signed(data),
-                    3 => global.physical_minimum = parse_signed(data),
-                    4 => global.physical_maximum = parse_signed(data),
-                    5 => global.unit_exponent = parse_unit_exponent(data)?,
-                    6 => global.unit = parse_unsigned(data),
-                    7 => global.report_size = parse_unsigned(data),
-                    8 => global.report_id = parse_unsigned(data),
-                    9 => global.report_count = parse_unsigned(data),
-                    10 => {
-                        if !data.is_empty() {
-                            return Err(HidDescriptorError::InvalidItemSize {
-                                context: "Push",
-                                size: data.len(),
-                            });
-                        }
-                        global_stack.push(global.clone());
+            1 => match tag {
+                0 => global.usage_page = parse_unsigned(data),
+                1 => global.logical_minimum = parse_signed(data),
+                2 => global.logical_maximum = parse_signed(data),
+                3 => global.physical_minimum = parse_signed(data),
+                4 => global.physical_maximum = parse_signed(data),
+                5 => global.unit_exponent = parse_unit_exponent(data)?,
+                6 => global.unit = parse_unsigned(data),
+                7 => global.report_size = parse_unsigned(data),
+                8 => global.report_id = parse_unsigned(data),
+                9 => global.report_count = parse_unsigned(data),
+                10 => {
+                    if !data.is_empty() {
+                        return Err(HidDescriptorError::InvalidItemSize {
+                            context: "Push",
+                            size: data.len(),
+                        });
                     }
-                    11 => {
-                        if !data.is_empty() {
-                            return Err(HidDescriptorError::InvalidItemSize {
-                                context: "Pop",
-                                size: data.len(),
-                            });
-                        }
-                        global = global_stack
-                            .pop()
-                            .ok_or(HidDescriptorError::GlobalStackUnderflow)?;
-                    }
-                    _ => {
-                        return Err(HidDescriptorError::UnsupportedItem { item_type, tag });
-                    }
+                    global_stack.push(global.clone());
                 }
-            }
+                11 => {
+                    if !data.is_empty() {
+                        return Err(HidDescriptorError::InvalidItemSize {
+                            context: "Pop",
+                            size: data.len(),
+                        });
+                    }
+                    global = global_stack
+                        .pop()
+                        .ok_or(HidDescriptorError::GlobalStackUnderflow)?;
+                }
+                _ => {
+                    return Err(HidDescriptorError::UnsupportedItem { item_type, tag });
+                }
+            },
             // Local items.
             2 => {
                 match tag {
@@ -716,57 +707,54 @@ impl<'a> Iterator for ReportsInSynthOrder<'a> {
                     mut stage,
                     mut report_idx,
                     mut item_idx,
-                } => {
-                    loop {
-                        let (kind, reports): (Option<HidReportKind>, &[HidReportInfo]) =
-                            match stage {
-                                0 => (
-                                    Some(HidReportKind::Input),
-                                    collection.input_reports.as_slice(),
-                                ),
-                                1 => (
-                                    Some(HidReportKind::Output),
-                                    collection.output_reports.as_slice(),
-                                ),
-                                2 => (
-                                    Some(HidReportKind::Feature),
-                                    collection.feature_reports.as_slice(),
-                                ),
-                                _ => (None, &[]),
-                            };
+                } => loop {
+                    let (kind, reports): (Option<HidReportKind>, &[HidReportInfo]) = match stage {
+                        0 => (
+                            Some(HidReportKind::Input),
+                            collection.input_reports.as_slice(),
+                        ),
+                        1 => (
+                            Some(HidReportKind::Output),
+                            collection.output_reports.as_slice(),
+                        ),
+                        2 => (
+                            Some(HidReportKind::Feature),
+                            collection.feature_reports.as_slice(),
+                        ),
+                        _ => (None, &[]),
+                    };
 
-                        if let Some(kind) = kind {
-                            if let Some(report) = reports.get(report_idx) {
-                                if let Some(item) = report.items.get(item_idx) {
-                                    item_idx += 1;
-                                    self.stack.push(Frame::Collection {
-                                        collection,
-                                        stage,
-                                        report_idx,
-                                        item_idx,
-                                    });
-                                    return Some((kind, report.report_id, item));
-                                }
-
-                                report_idx += 1;
-                                item_idx = 0;
-                                continue;
+                    if let Some(kind) = kind {
+                        if let Some(report) = reports.get(report_idx) {
+                            if let Some(item) = report.items.get(item_idx) {
+                                item_idx += 1;
+                                self.stack.push(Frame::Collection {
+                                    collection,
+                                    stage,
+                                    report_idx,
+                                    item_idx,
+                                });
+                                return Some((kind, report.report_id, item));
                             }
-                        }
 
-                        stage += 1;
-                        report_idx = 0;
-                        item_idx = 0;
-
-                        if stage >= 3 {
-                            self.stack.push(Frame::Collections {
-                                collections: &collection.children,
-                                next_idx: 0,
-                            });
-                            break;
+                            report_idx += 1;
+                            item_idx = 0;
+                            continue;
                         }
                     }
-                }
+
+                    stage += 1;
+                    report_idx = 0;
+                    item_idx = 0;
+
+                    if stage >= 3 {
+                        self.stack.push(Frame::Collections {
+                            collections: &collection.children,
+                            next_idx: 0,
+                        });
+                        break;
+                    }
+                },
             }
         }
     }
@@ -791,7 +779,11 @@ fn report_bits(items: &[HidReportItem]) -> u32 {
 }
 
 /// Returns the total number of bits for a given `(kind, report_id)` across the whole descriptor.
-pub fn report_bits_for_id(collections: &[HidCollectionInfo], kind: HidReportKind, report_id: u32) -> u32 {
+pub fn report_bits_for_id(
+    collections: &[HidCollectionInfo],
+    kind: HidReportKind,
+    report_id: u32,
+) -> u32 {
     let aggregated = aggregate_reports(collections);
     aggregated
         .get(&(kind, report_id))
@@ -1113,7 +1105,10 @@ mod tests {
                 break;
             }
         }
-        assert!(found, "expected 2-byte Input item with Buffered Bytes flag: {desc:02x?}");
+        assert!(
+            found,
+            "expected 2-byte Input item with Buffered Bytes flag: {desc:02x?}"
+        );
 
         let reparsed = parse_report_descriptor(&desc).unwrap();
         assert_eq!(collections, reparsed);
@@ -1220,8 +1215,14 @@ mod tests {
         assert_eq!(items[0].bit_len(), 8);
         assert_eq!(items[1].bit_len(), 16);
 
-        assert_eq!(report_bits_for_id(&collections, HidReportKind::Input, 1), 24);
-        assert_eq!(report_bytes_for_id(&collections, HidReportKind::Input, 1), 3);
+        assert_eq!(
+            report_bits_for_id(&collections, HidReportKind::Input, 1),
+            24
+        );
+        assert_eq!(
+            report_bytes_for_id(&collections, HidReportKind::Input, 1),
+            3
+        );
         assert_eq!(max_input_report_bytes(&collections), 3);
     }
 

@@ -260,7 +260,8 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     match decoded.instr.mnemonic() {
                         Mnemonic::Cli => {
                             let cpl = cpu.cpu.state.cpl();
-                            let iopl = ((cpu.cpu.state.rflags() & crate::state::RFLAGS_IOPL_MASK) >> 12) as u8;
+                            let iopl = ((cpu.cpu.state.rflags() & crate::state::RFLAGS_IOPL_MASK)
+                                >> 12) as u8;
                             if !matches!(
                                 cpu.cpu.state.mode,
                                 crate::state::CpuMode::Real | crate::state::CpuMode::Vm86
@@ -284,7 +285,8 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                         }
                         Mnemonic::Sti => {
                             let cpl = cpu.cpu.state.cpl();
-                            let iopl = ((cpu.cpu.state.rflags() & crate::state::RFLAGS_IOPL_MASK) >> 12) as u8;
+                            let iopl = ((cpu.cpu.state.rflags() & crate::state::RFLAGS_IOPL_MASK)
+                                >> 12) as u8;
                             if !matches!(
                                 cpu.cpu.state.mode,
                                 crate::state::CpuMode::Real | crate::state::CpuMode::Vm86
@@ -366,10 +368,11 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     let addr_size_override = has_addr_size_override(&bytes, bitness);
                     let decoded =
                         aero_x86::decode(&bytes, ip, bitness).expect("decode tier0 assist");
-                    let inhibits_interrupt = matches!(decoded.instr.mnemonic(), Mnemonic::Mov | Mnemonic::Pop)
-                        && decoded.instr.op_count() > 0
-                        && decoded.instr.op_kind(0) == OpKind::Register
-                        && decoded.instr.op0_register() == Register::SS;
+                    let inhibits_interrupt =
+                        matches!(decoded.instr.mnemonic(), Mnemonic::Mov | Mnemonic::Pop)
+                            && decoded.instr.op_count() > 0
+                            && decoded.instr.op_kind(0) == OpKind::Register
+                            && decoded.instr.op0_register() == Register::SS;
 
                     // `handle_assist_decoded` does not implicitly sync paging state (unlike
                     // `handle_assist`), so keep the bus coherent before and after.
@@ -381,7 +384,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                         &decoded,
                         addr_size_override,
                     )
-                        .expect("handle tier0 assist");
+                    .expect("handle tier0 assist");
                     cpu.bus.sync(&cpu.cpu.state);
                     cpu.cpu.pending.retire_instruction();
                     if inhibits_interrupt {

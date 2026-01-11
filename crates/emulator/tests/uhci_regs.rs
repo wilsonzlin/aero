@@ -212,10 +212,7 @@ fn uhci_usbint_sets_even_when_interrupts_disabled() {
 
     uhci.tick_1ms(&mut mem);
 
-    assert_ne!(
-        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBINT,
-        0
-    );
+    assert_ne!(uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBINT, 0);
     assert!(!uhci.irq_level());
 
     // Enabling IOC interrupts after the fact should raise IRQ immediately (level-triggered).
@@ -341,10 +338,7 @@ fn uhci_short_packet_does_not_irq_when_short_interrupt_disabled() {
     uhci.tick_1ms(&mut mem);
 
     // Status bit still latches.
-    assert_ne!(
-        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBINT,
-        0
-    );
+    assert_ne!(uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBINT, 0);
     // But IRQ should not assert because only a short-packet event occurred.
     assert!(!uhci.irq_level());
 
@@ -376,24 +370,15 @@ fn uhci_usbsts_byte_writes_do_not_cross_clear_w1c_bits() {
 
     uhci.tick_1ms(&mut mem);
 
-    assert_ne!(
-        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBERRINT,
-        0
-    );
+    assert_ne!(uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBERRINT, 0);
 
     // Writing the USBSTS high byte should not clear low-byte W1C bits.
     uhci.port_write(REG_USBSTS + 1, 1, 0xff);
-    assert_ne!(
-        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBERRINT,
-        0
-    );
+    assert_ne!(uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBERRINT, 0);
 
     // Clear via an 8-bit W1C write to the low byte.
     uhci.port_write(REG_USBSTS, 1, USBSTS_USBERRINT as u32);
-    assert_eq!(
-        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBERRINT,
-        0
-    );
+    assert_eq!(uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBERRINT, 0);
 }
 
 #[test]
@@ -454,11 +439,11 @@ fn uhci_register_block_supports_dword_accesses() {
     // A 32-bit write should behave like the corresponding byte/word writes.
     let w = ((USBSTS_USBERRINT as u32) << 16) | (USBCMD_CF | USBCMD_MAXP) as u32;
     uhci.port_write(REG_USBCMD, 4, w);
+    assert_eq!(uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBERRINT, 0);
     assert_eq!(
-        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBERRINT,
-        0
+        uhci.port_read(REG_USBCMD, 2) as u16,
+        USBCMD_CF | USBCMD_MAXP
     );
-    assert_eq!(uhci.port_read(REG_USBCMD, 2) as u16, USBCMD_CF | USBCMD_MAXP);
 }
 
 #[test]
@@ -715,7 +700,11 @@ fn uhci_regs_w1c_usb_sts() {
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
 
     uhci.controller.set_usbsts_bits(
-        USBSTS_USBINT | USBSTS_USBERRINT | USBSTS_RESUMEDETECT | USBSTS_HOSTSYSERR | USBSTS_HCPROCERR,
+        USBSTS_USBINT
+            | USBSTS_USBERRINT
+            | USBSTS_RESUMEDETECT
+            | USBSTS_HOSTSYSERR
+            | USBSTS_HCPROCERR,
     );
 
     let usbsts = uhci.port_read(REG_USBSTS, 2) as u16;

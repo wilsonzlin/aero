@@ -4,11 +4,8 @@ use aero_protocol::aerogpu::aerogpu_ring as protocol_ring;
 use memory::MemoryBus;
 
 pub use protocol_ring::{
-    AEROGPU_ALLOC_TABLE_MAGIC,
-    AEROGPU_FENCE_PAGE_MAGIC,
-    AEROGPU_RING_MAGIC,
-    AEROGPU_SUBMIT_FLAG_NO_IRQ,
-    AEROGPU_SUBMIT_FLAG_PRESENT,
+    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC,
+    AEROGPU_SUBMIT_FLAG_NO_IRQ, AEROGPU_SUBMIT_FLAG_PRESENT,
 };
 
 pub const AEROGPU_RING_HEADER_SIZE_BYTES: u64 = protocol_ring::AerogpuRingHeader::SIZE_BYTES as u64;
@@ -105,8 +102,8 @@ mod tests {
     fn make_valid_header_with_abi(abi_version: u32) -> AeroGpuRingHeader {
         let entry_count = 8;
         let entry_stride_bytes = AeroGpuSubmitDesc::SIZE_BYTES;
-        let size_bytes =
-            (AEROGPU_RING_HEADER_SIZE_BYTES + (entry_count as u64 * entry_stride_bytes as u64)) as u32;
+        let size_bytes = (AEROGPU_RING_HEADER_SIZE_BYTES
+            + (entry_count as u64 * entry_stride_bytes as u64)) as u32;
 
         AeroGpuRingHeader {
             magic: AEROGPU_RING_MAGIC,
@@ -250,8 +247,8 @@ impl AeroGpuAllocEntry {
     pub fn read_from(mem: &mut dyn MemoryBus, gpa: u64) -> Self {
         let mut buf = [0u8; protocol_ring::AerogpuAllocEntry::SIZE_BYTES];
         mem.read_physical(gpa, &mut buf);
-        let entry =
-            protocol_ring::AerogpuAllocEntry::decode_from_le_bytes(&buf).expect("buffer matches SIZE_BYTES");
+        let entry = protocol_ring::AerogpuAllocEntry::decode_from_le_bytes(&buf)
+            .expect("buffer matches SIZE_BYTES");
 
         Self {
             alloc_id: entry.alloc_id,

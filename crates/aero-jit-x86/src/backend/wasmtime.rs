@@ -401,7 +401,10 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U8,
-                move |mut caller: Caller<'_, HostExitState>, cpu_ptr: i32, addr: i64, value: i32| {
+                move |mut caller: Caller<'_, HostExitState>,
+                      cpu_ptr: i32,
+                      addr: i64,
+                      value: i32| {
                     let addr_u = addr as u64;
                     let mem_mut = mem.data_mut(&mut caller);
                     write::<1>(mem_mut, addr_u as usize, value as u64);
@@ -416,7 +419,10 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U16,
-                move |mut caller: Caller<'_, HostExitState>, cpu_ptr: i32, addr: i64, value: i32| {
+                move |mut caller: Caller<'_, HostExitState>,
+                      cpu_ptr: i32,
+                      addr: i64,
+                      value: i32| {
                     let addr_u = addr as u64;
                     let mem_mut = mem.data_mut(&mut caller);
                     write::<2>(mem_mut, addr_u as usize, value as u64);
@@ -431,7 +437,10 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U32,
-                move |mut caller: Caller<'_, HostExitState>, cpu_ptr: i32, addr: i64, value: i32| {
+                move |mut caller: Caller<'_, HostExitState>,
+                      cpu_ptr: i32,
+                      addr: i64,
+                      value: i32| {
                     let addr_u = addr as u64;
                     let mem_mut = mem.data_mut(&mut caller);
                     write::<4>(mem_mut, addr_u as usize, value as u64);
@@ -446,7 +455,10 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U64,
-                move |mut caller: Caller<'_, HostExitState>, cpu_ptr: i32, addr: i64, value: i64| {
+                move |mut caller: Caller<'_, HostExitState>,
+                      cpu_ptr: i32,
+                      addr: i64,
+                      value: i64| {
                     let addr_u = addr as u64;
                     let mem_mut = mem.data_mut(&mut caller);
                     write::<8>(mem_mut, addr_u as usize, value as u64);
@@ -529,14 +541,14 @@ fn define_stub_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
              _is_write: i32,
              _value: i64,
              rip: i64|
-              -> i64 {
-                 caller.data_mut().mmio_exit = true;
-                 // Return the RIP the block should resume at after the runtime has handled the
-                 // MMIO access. The Tier-1 code generator returns the sentinel separately.
-                 rip
-              },
-         )
-         .expect("define jit_exit_mmio");
+             -> i64 {
+                caller.data_mut().mmio_exit = true;
+                // Return the RIP the block should resume at after the runtime has handled the
+                // MMIO access. The Tier-1 code generator returns the sentinel separately.
+                rip
+            },
+        )
+        .expect("define jit_exit_mmio");
 
     linker
         .func_wrap(

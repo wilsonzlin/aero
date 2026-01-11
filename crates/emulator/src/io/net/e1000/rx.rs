@@ -1,6 +1,6 @@
 use super::{
-    E1000Device, GuestMemory, RxDesc, ICR_RXT0, MAX_L2_FRAME_LEN, MIN_L2_FRAME_LEN, RCTL_EN, RXD_ERR_RXE, RXD_STAT_DD,
-    RXD_STAT_EOP,
+    E1000Device, GuestMemory, RxDesc, ICR_RXT0, MAX_L2_FRAME_LEN, MIN_L2_FRAME_LEN, RCTL_EN,
+    RXD_ERR_RXE, RXD_STAT_DD, RXD_STAT_EOP,
 };
 
 impl E1000Device {

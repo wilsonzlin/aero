@@ -476,11 +476,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     {
                         let mut replay =
                             std::io::Cursor::new(ram_header).chain(&mut section_reader);
-                        ram::decode_ram_section_into(
-                            &mut replay,
-                            expected_len,
-                            |offset, data| target.write_ram(offset, data),
-                        )?;
+                        ram::decode_ram_section_into(&mut replay, expected_len, |offset, data| {
+                            target.write_ram(offset, data)
+                        })?;
                     }
 
                     seen_ram = true;
@@ -587,11 +585,7 @@ fn read_section_header<R: Read>(r: &mut R) -> Result<Option<SectionHeader>> {
     let version = r.read_u16_le()?;
     let _flags = r.read_u16_le()?;
     let len = r.read_u64_le()?;
-    Ok(Some(SectionHeader {
-        id,
-        version,
-        len,
-    }))
+    Ok(Some(SectionHeader { id, version, len }))
 }
 
 #[cfg(test)]

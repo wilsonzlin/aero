@@ -192,7 +192,12 @@ impl PcCpuBus {
         Ok(())
     }
 
-    fn preflight_range(&mut self, vaddr: u64, len: usize, access: AccessType) -> Result<(), Exception> {
+    fn preflight_range(
+        &mut self,
+        vaddr: u64,
+        len: usize,
+        access: AccessType,
+    ) -> Result<(), Exception> {
         if len == 0 {
             return Ok(());
         }

@@ -184,7 +184,7 @@ fn vertex_decl_pos() -> Vec<u8> {
     push_u8(&mut decl, 0); // method
     push_u8(&mut decl, 0); // usage = POSITION
     push_u8(&mut decl, 0); // usage_index
-    // End marker
+                           // End marker
     push_u16(&mut decl, 0x00FF); // stream = 0xFF
     push_u16(&mut decl, 0); // offset
     push_u8(&mut decl, 17); // type = UNUSED
@@ -207,14 +207,14 @@ fn vertex_decl_pos_tex() -> Vec<u8> {
     push_u8(&mut decl, 0); // method
     push_u8(&mut decl, 0); // usage = POSITION
     push_u8(&mut decl, 0); // usage_index
-    // TEXCOORD0
+                           // TEXCOORD0
     push_u16(&mut decl, 0); // stream
     push_u16(&mut decl, 16); // offset
     push_u8(&mut decl, 3); // type = FLOAT4
     push_u8(&mut decl, 0); // method
     push_u8(&mut decl, 5); // usage = TEXCOORD
     push_u8(&mut decl, 0); // usage_index
-    // End marker
+                           // End marker
     push_u16(&mut decl, 0x00FF); // stream = 0xFF
     push_u16(&mut decl, 0); // offset
     push_u8(&mut decl, 17); // type = UNUSED

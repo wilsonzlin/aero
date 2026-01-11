@@ -50,7 +50,11 @@ pub enum UsbHostAction {
     /// Bulk/interrupt transfer, IN direction.
     BulkIn { id: u64, endpoint: u8, length: u32 },
     /// Bulk/interrupt transfer, OUT direction.
-    BulkOut { id: u64, endpoint: u8, data: Vec<u8> },
+    BulkOut {
+        id: u64,
+        endpoint: u8,
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,7 +73,9 @@ pub enum UsbHostCompletionOut {
         bytes_written: u32,
     },
     Stall,
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 /// Host-side completion pushed back into a [`UsbPassthroughDevice`].
@@ -583,4 +589,3 @@ mod tests {
         assert_eq!(dev.handle_in_transfer(0x81, 8), UsbInResult::Nak);
     }
 }
-

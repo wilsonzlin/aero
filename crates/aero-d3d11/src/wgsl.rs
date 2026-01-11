@@ -9,4 +9,3 @@ pub use crate::shader_translate::{
     translate_sm4_module_to_wgsl as translate_sm4_to_wgsl, Binding, BindingKind, Builtin, IoParam,
     ShaderReflection, ShaderTranslateError as WgslError, ShaderTranslation as WgslTranslation,
 };
-

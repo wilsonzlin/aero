@@ -2,8 +2,8 @@
 
 use aero_protocol::aerogpu::aerogpu_pci as proto;
 use emulator::devices::pci::aerogpu_legacy::{AeroGpuLegacyDeviceConfig, AeroGpuLegacyPciDevice};
-use emulator::io::pci::PciDevice;
 use emulator::io::pci::MmioDevice;
+use emulator::io::pci::PciDevice;
 use memory::MemoryBus;
 use std::time::{Duration, Instant};
 
@@ -77,7 +77,10 @@ mod mmio {
 fn pci_identity_class_codes_match_aero_protocol() {
     let dev = AeroGpuLegacyPciDevice::new(AeroGpuLegacyDeviceConfig::default(), 0);
     assert_eq!(read_u8(&dev, 0x09), proto::AEROGPU_PCI_PROG_IF);
-    assert_eq!(read_u8(&dev, 0x0a), proto::AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE);
+    assert_eq!(
+        read_u8(&dev, 0x0a),
+        proto::AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE
+    );
     assert_eq!(
         read_u8(&dev, 0x0b),
         proto::AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER

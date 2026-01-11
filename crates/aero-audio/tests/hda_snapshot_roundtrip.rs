@@ -380,7 +380,10 @@ fn hda_snapshot_restore_clamps_corb_pointers_to_selected_ring_size() {
     restored.process(&mut mem, 0);
 
     // After processing, CORBRP should catch up to CORBWP.
-    assert_eq!(restored.mmio_read(REG_CORBRP, 2), restored.mmio_read(REG_CORBWP, 2));
+    assert_eq!(
+        restored.mmio_read(REG_CORBRP, 2),
+        restored.mmio_read(REG_CORBWP, 2)
+    );
 
     // Sanity check that a response was emitted into guest memory (entry index isn't important).
     let any_resp = mem.read_u32(rirb_base + 1 * 8);
@@ -493,9 +496,7 @@ fn hda_snapshot_restore_restores_capture_sample_rate_hz_for_capture_resampler_de
 
     let output_frames = 256usize;
     let mut capture = VecDequeCaptureSource::new();
-    let samples: Vec<f32> = (0..5000)
-        .map(|i| (i as f32 / 5000.0) * 2.0 - 1.0)
-        .collect();
+    let samples: Vec<f32> = (0..5000).map(|i| (i as f32 / 5000.0) * 2.0 - 1.0).collect();
     capture.push_samples(&samples);
 
     // Advance capture so the resampler has non-trivial queued/pos state at snapshot time.

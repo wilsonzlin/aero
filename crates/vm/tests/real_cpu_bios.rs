@@ -2,11 +2,11 @@ use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit, StepExit};
 use aero_cpu_core::mem::CpuBus as CoreCpuBus;
 use aero_cpu_core::state::{
-    gpr, CpuMode as CoreCpuMode, CpuState as CoreCpuState, Segment as CoreSegment, FLAG_CF, FLAG_ZF,
-    RFLAGS_IF,
+    gpr, CpuMode as CoreCpuMode, CpuState as CoreCpuState, Segment as CoreSegment, FLAG_CF,
+    FLAG_ZF, RFLAGS_IF,
 };
-use firmware::bda::BiosDataArea;
 use firmware::acpi::DEFAULT_PCI_MMIO_START;
+use firmware::bda::BiosDataArea;
 use firmware::bios::{
     build_bios_rom, Bios, BiosBus, BiosConfig, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR,
     BIOS_ALIAS_BASE, BIOS_BASE, BIOS_SEGMENT, PCIE_ECAM_BASE, PCIE_ECAM_SIZE, RESET_VECTOR_OFFSET,
@@ -1121,8 +1121,14 @@ fn aero_cpu_core_int15_e820_loop_reports_pci_hole_and_high_memory_remap() {
     }
 
     assert!(found_ecam, "expected E820 map to include PCIe ECAM window");
-    assert!(found_pci_hole, "expected E820 map to include PCI/MMIO hole below 4GiB");
-    assert!(found_high_ram, "expected E820 map to include remapped RAM above 4GiB");
+    assert!(
+        found_pci_hole,
+        "expected E820 map to include PCI/MMIO hole below 4GiB"
+    );
+    assert!(
+        found_high_ram,
+        "expected E820 map to include remapped RAM above 4GiB"
+    );
 }
 
 #[test]

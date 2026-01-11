@@ -1,9 +1,9 @@
-use aero_cpu_core::jit::runtime::PageVersionTracker;
-use aero_types::{Flag, FlagSet, Gpr};
 use crate::t2_ir::{
     eval_binop, FlagValues, Function, Instr, Operand, TraceIr, TraceKind, REG_COUNT,
 };
 use crate::Tier1Bus;
+use aero_cpu_core::jit::runtime::PageVersionTracker;
+use aero_types::{Flag, FlagSet, Gpr};
 
 #[derive(Clone, Debug)]
 pub struct T2State {
@@ -258,7 +258,9 @@ pub fn run_function_from_block(
                     cur = id;
                     continue 'outer;
                 }
-                return RunExit::SideExit { next_rip: *exit_rip };
+                return RunExit::SideExit {
+                    next_rip: *exit_rip,
+                };
             }
             crate::t2_ir::Terminator::Return => return RunExit::Returned,
         }

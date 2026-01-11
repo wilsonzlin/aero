@@ -70,4 +70,3 @@ fn docs_do_not_reference_retired_a0e0_abi() {
             .join("\n")
     );
 }
-

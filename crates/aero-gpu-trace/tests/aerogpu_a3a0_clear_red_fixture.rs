@@ -1,5 +1,7 @@
 use aero_gpu_trace::{TraceMeta, TraceReader, TraceRecord, TraceWriter};
-use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuCmdOpcode, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC};
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    AerogpuCmdOpcode, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
+};
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use std::fs;
 use std::io::Cursor;
@@ -7,7 +9,8 @@ use std::path::{Path, PathBuf};
 
 fn fixture_path() -> PathBuf {
     // `CARGO_MANIFEST_DIR` = `.../crates/aero-gpu-trace`
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/aerogpu_a3a0_clear_red.aerogputrace")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/aerogpu_a3a0_clear_red.aerogputrace")
 }
 
 fn generate_aerogpu_a3a0_clear_red_trace() -> Vec<u8> {
@@ -101,4 +104,3 @@ fn aerogpu_a3a0_clear_red_trace_fixture_is_stable() {
         fs::read(&path).expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1");
     assert_eq!(bytes, fixture);
 }
-

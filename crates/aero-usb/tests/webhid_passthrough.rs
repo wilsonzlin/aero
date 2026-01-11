@@ -13,7 +13,8 @@ fn fixture_mouse_collections() -> Vec<HidCollectionInfo> {
 #[test]
 fn webhid_fixture_synthesizes_non_empty_report_descriptor() {
     let collections = fixture_mouse_collections();
-    let desc = synthesize_report_descriptor(&collections).expect("report descriptor synthesis should succeed");
+    let desc = synthesize_report_descriptor(&collections)
+        .expect("report descriptor synthesis should succeed");
     assert!(!desc.is_empty(), "expected a non-empty report descriptor");
 }
 
@@ -36,7 +37,10 @@ fn sample_report_descriptor_output_with_id() -> Vec<u8> {
 fn control_no_data(dev: &mut UsbHidPassthrough, setup: SetupPacket) {
     dev.handle_setup(setup);
     let mut buf = [0u8; 0];
-    assert!(matches!(dev.handle_in(0, &mut buf), aero_usb::usb::UsbHandshake::Ack { .. }));
+    assert!(matches!(
+        dev.handle_in(0, &mut buf),
+        aero_usb::usb::UsbHandshake::Ack { .. }
+    ));
 }
 
 #[test]
@@ -84,9 +88,14 @@ fn set_report_enqueues_output_report() {
     ));
 
     let mut buf = [0u8; 0];
-    assert!(matches!(dev.handle_in(0, &mut buf), aero_usb::usb::UsbHandshake::Ack { .. }));
+    assert!(matches!(
+        dev.handle_in(0, &mut buf),
+        aero_usb::usb::UsbHandshake::Ack { .. }
+    ));
 
-    let got = dev.pop_output_report().expect("expected queued output report");
+    let got = dev
+        .pop_output_report()
+        .expect("expected queued output report");
     assert_eq!(
         got,
         UsbHidPassthroughOutputReport {

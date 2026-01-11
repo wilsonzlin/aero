@@ -176,7 +176,10 @@ async fn send_ws_message(
     if let Some(exceeded) = quotas.on_outbound_message(&msg) {
         return Err(exceeded);
     }
-    ws_out_tx.send(msg).await.map_err(|_| QuotaExceeded::Bytes)?;
+    ws_out_tx
+        .send(msg)
+        .await
+        .map_err(|_| QuotaExceeded::Bytes)?;
     Ok(())
 }
 

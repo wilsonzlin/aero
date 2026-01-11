@@ -240,15 +240,25 @@ impl AerogpuSoftwareExecutor {
 
             match packet.opcode {
                 Some(AerogpuCmdOpcode::Nop) | Some(AerogpuCmdOpcode::DebugMarker) => {}
-                Some(AerogpuCmdOpcode::CreateBuffer) => self.cmd_create_buffer(packet.payload, mem)?,
+                Some(AerogpuCmdOpcode::CreateBuffer) => {
+                    self.cmd_create_buffer(packet.payload, mem)?
+                }
                 Some(AerogpuCmdOpcode::CreateTexture2d) => {
                     self.cmd_create_texture2d(packet.payload, mem)?
                 }
-                Some(AerogpuCmdOpcode::DestroyResource) => self.cmd_destroy_resource(packet.payload)?,
-                Some(AerogpuCmdOpcode::SetRenderTargets) => self.cmd_set_render_targets(packet.payload)?,
+                Some(AerogpuCmdOpcode::DestroyResource) => {
+                    self.cmd_destroy_resource(packet.payload)?
+                }
+                Some(AerogpuCmdOpcode::SetRenderTargets) => {
+                    self.cmd_set_render_targets(packet.payload)?
+                }
                 Some(AerogpuCmdOpcode::SetViewport) => self.cmd_set_viewport(packet.payload)?,
-                Some(AerogpuCmdOpcode::SetVertexBuffers) => self.cmd_set_vertex_buffers(packet.payload)?,
-                Some(AerogpuCmdOpcode::SetPrimitiveTopology) => self.cmd_set_primitive_topology(packet.payload)?,
+                Some(AerogpuCmdOpcode::SetVertexBuffers) => {
+                    self.cmd_set_vertex_buffers(packet.payload)?
+                }
+                Some(AerogpuCmdOpcode::SetPrimitiveTopology) => {
+                    self.cmd_set_primitive_topology(packet.payload)?
+                }
                 Some(AerogpuCmdOpcode::Clear) => self.cmd_clear(packet.payload)?,
                 Some(AerogpuCmdOpcode::Draw) => self.cmd_draw(packet.payload)?,
                 Some(AerogpuCmdOpcode::Present) => self.cmd_present(packet.payload)?,

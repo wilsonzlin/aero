@@ -287,11 +287,24 @@ fn tier0_assists_rdtscp_reads_ia32_tsc_aux_from_cpu_state() {
         (msr::IA32_TSC_AUX as u32).to_le_bytes()[1],
         (msr::IA32_TSC_AUX as u32).to_le_bytes()[2],
         (msr::IA32_TSC_AUX as u32).to_le_bytes()[3],
-        0xB8, 0xDD, 0xCC, 0xBB, 0xAA, // mov eax, 0xAABB_CCDD
-        0x31, 0xD2, // xor edx, edx
-        0x0F, 0x30, // wrmsr
-        0x0F, 0x01, 0xF9, // rdtscp
-        0x89, 0x0D, 0x00, 0x05, 0x00, 0x00, // mov [0x500], ecx
+        0xB8,
+        0xDD,
+        0xCC,
+        0xBB,
+        0xAA, // mov eax, 0xAABB_CCDD
+        0x31,
+        0xD2, // xor edx, edx
+        0x0F,
+        0x30, // wrmsr
+        0x0F,
+        0x01,
+        0xF9, // rdtscp
+        0x89,
+        0x0D,
+        0x00,
+        0x05,
+        0x00,
+        0x00, // mov [0x500], ecx
         0xC3, // ret
     ];
     bus.load(CODE_BASE, &code);
@@ -314,7 +327,10 @@ fn tier0_assists_rdtscp_reads_ia32_tsc_aux_from_cpu_state() {
             BatchExit::Completed | BatchExit::Branch => continue,
             BatchExit::Halted => panic!("unexpected HLT at rip=0x{:X}", state.rip()),
             BatchExit::BiosInterrupt(vector) => {
-                panic!("unexpected BIOS interrupt {vector:#x} at rip=0x{:X}", state.rip())
+                panic!(
+                    "unexpected BIOS interrupt {vector:#x} at rip=0x{:X}",
+                    state.rip()
+                )
             }
             BatchExit::Assist(r) => panic!("unexpected unhandled assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),

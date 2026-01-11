@@ -15,11 +15,8 @@ use aero_x86::Register;
 use core::fmt;
 
 use crate::{
-    exception::Exception,
-    fpu::FpuState,
-    mem::CpuBus,
-    sse_state::SseState,
-    FxStateError, FXSAVE_AREA_SIZE,
+    exception::Exception, fpu::FpuState, mem::CpuBus, sse_state::SseState, FxStateError,
+    FXSAVE_AREA_SIZE,
 };
 
 /// Number of general purpose registers in [`CpuState::gpr`].
@@ -1220,7 +1217,8 @@ impl CpuState {
         bus.read_bytes(addr, &mut image)?;
 
         if (self.control.cr4 & CR4_OSXMMEXCPT) == 0 {
-            let mxcsr = u32::from_le_bytes(image[24..28].try_into().unwrap()) | Self::MXCSR_EXCEPTION_MASK;
+            let mxcsr =
+                u32::from_le_bytes(image[24..28].try_into().unwrap()) | Self::MXCSR_EXCEPTION_MASK;
             image[24..28].copy_from_slice(&mxcsr.to_le_bytes());
         }
 
@@ -1231,7 +1229,11 @@ impl CpuState {
 
     /// `FXRSTOR64` convenience wrapper that reads the 512-byte (64-bit) image from guest memory via
     /// [`crate::mem::CpuBus`].
-    pub fn fxrstor64_from_mem<B: CpuBus>(&mut self, bus: &mut B, addr: u64) -> Result<(), Exception> {
+    pub fn fxrstor64_from_mem<B: CpuBus>(
+        &mut self,
+        bus: &mut B,
+        addr: u64,
+    ) -> Result<(), Exception> {
         if addr & 0xF != 0 {
             return Err(Exception::gp0());
         }
@@ -1239,7 +1241,8 @@ impl CpuState {
         bus.read_bytes(addr, &mut image)?;
 
         if (self.control.cr4 & CR4_OSXMMEXCPT) == 0 {
-            let mxcsr = u32::from_le_bytes(image[24..28].try_into().unwrap()) | Self::MXCSR_EXCEPTION_MASK;
+            let mxcsr =
+                u32::from_le_bytes(image[24..28].try_into().unwrap()) | Self::MXCSR_EXCEPTION_MASK;
             image[24..28].copy_from_slice(&mxcsr.to_le_bytes());
         }
 

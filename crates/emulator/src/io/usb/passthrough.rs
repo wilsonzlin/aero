@@ -314,7 +314,13 @@ impl UsbDeviceModel for UsbPassthroughDevice {
             ep,
             data: data.to_vec(),
         });
-        self.ep_inflight.insert(ep, EpInflight { id, len: data.len() });
+        self.ep_inflight.insert(
+            ep,
+            EpInflight {
+                id,
+                len: data.len(),
+            },
+        );
         UsbOutResult::Nak
     }
 }

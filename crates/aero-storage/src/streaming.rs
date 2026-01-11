@@ -12,8 +12,8 @@ use std::{
 
 use crate::range_set::{ByteRange, RangeSet};
 use reqwest::header::{
-    HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH,
-    CONTENT_RANGE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE,
+    HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING,
+    CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1210,14 +1210,14 @@ async fn probe_remote_size_and_validator(
         .await
         .map_err(|e| StreamingDiskError::Http(format_reqwest_error(e)))?;
 
-        if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
-            if resp.status().is_success() {
-                return Err(StreamingDiskError::RangeNotSupported);
-            }
-            return Err(StreamingDiskError::HttpStatus {
-                status: resp.status().as_u16(),
-            });
+    if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+        if resp.status().is_success() {
+            return Err(StreamingDiskError::RangeNotSupported);
         }
+        return Err(StreamingDiskError::HttpStatus {
+            status: resp.status().as_u16(),
+        });
+    }
 
     let validator = extract_validator(resp.headers());
 

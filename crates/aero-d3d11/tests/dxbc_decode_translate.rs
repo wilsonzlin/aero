@@ -122,7 +122,8 @@ fn operand_token(
     token |= num_components & OPERAND_NUM_COMPONENTS_MASK;
     token |= (selection_mode & OPERAND_SELECTION_MODE_MASK) << OPERAND_SELECTION_MODE_SHIFT;
     token |= (ty & OPERAND_TYPE_MASK) << OPERAND_TYPE_SHIFT;
-    token |= (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
+    token |=
+        (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
     token |= (index_dim & OPERAND_INDEX_DIMENSION_MASK) << OPERAND_INDEX_DIMENSION_SHIFT;
     token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX0_REP_SHIFT;
     token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX1_REP_SHIFT;
@@ -134,10 +135,7 @@ fn operand_token(
 }
 
 fn swizzle_bits(swz: [u8; 4]) -> u32 {
-    (swz[0] as u32)
-        | ((swz[1] as u32) << 2)
-        | ((swz[2] as u32) << 4)
-        | ((swz[3] as u32) << 6)
+    (swz[0] as u32) | ((swz[1] as u32) << 2) | ((swz[2] as u32) << 4) | ((swz[3] as u32) << 6)
 }
 
 fn reg_dst(ty: u32, idx: u32, mask: WriteMask) -> Vec<u32> {
@@ -237,8 +235,14 @@ fn decodes_and_translates_sample_shader_from_dxbc() {
 
     let module = program.decode().expect("SM4 decode");
     assert_eq!(module.instructions.len(), 3);
-    assert!(module.decls.iter().any(|d| matches!(d, Sm4Decl::Input { .. })));
-    assert!(module.decls.iter().any(|d| matches!(d, Sm4Decl::Output { .. })));
+    assert!(module
+        .decls
+        .iter()
+        .any(|d| matches!(d, Sm4Decl::Input { .. })));
+    assert!(module
+        .decls
+        .iter()
+        .any(|d| matches!(d, Sm4Decl::Output { .. })));
     assert!(module
         .decls
         .iter()
@@ -274,8 +278,7 @@ fn decodes_and_translates_sample_shader_from_dxbc() {
     );
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
-    let translated =
-        translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_parses(&translated.wgsl);
     assert!(translated.wgsl.contains("@fragment"));
     assert!(translated.wgsl.contains("textureSample(t0, s0"));

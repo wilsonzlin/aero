@@ -851,9 +851,7 @@ fn rep_movsb_a20_disabled_above_1mib_can_still_use_bulk_copy_if_contiguous() {
     state.write_reg(Register::ECX, count as u64);
 
     for i in 0..count as u64 {
-        bus.inner
-            .write_u8(src_start + i, (i ^ 0xA5) as u8)
-            .unwrap();
+        bus.inner.write_u8(src_start + i, (i ^ 0xA5) as u8).unwrap();
     }
 
     run_to_halt(&mut state, &mut bus, 100_000);
@@ -864,10 +862,7 @@ fn rep_movsb_a20_disabled_above_1mib_can_still_use_bulk_copy_if_contiguous() {
     assert_eq!(state.read_reg(Register::EDI), dst_start + count as u64);
 
     for i in 0..count as u64 {
-        assert_eq!(
-            bus.inner.read_u8(dst_start + i).unwrap(),
-            (i ^ 0xA5) as u8
-        );
+        assert_eq!(bus.inner.read_u8(dst_start + i).unwrap(), (i ^ 0xA5) as u8);
     }
 }
 

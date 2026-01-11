@@ -3,7 +3,9 @@ use crate::io::{IoPortBus, PortIoDevice};
 use aero_interrupts::apic::{IoApic, IoApicId, LapicInterruptSink, LocalApic};
 use aero_interrupts::clock::Clock;
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -502,9 +504,11 @@ impl IoSnapshot for PlatformInterrupts {
                 .map(|v| match v {
                     0 => Ok(false),
                     1 => Ok(true),
-                    _ => Err(aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
-                        "gsi_level",
-                    )),
+                    _ => Err(
+                        aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
+                            "gsi_level",
+                        ),
+                    ),
                 })
                 .collect::<SnapshotResult<Vec<bool>>>()?;
         }

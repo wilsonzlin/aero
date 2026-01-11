@@ -8,12 +8,12 @@ use emulator::io::usb::hid::{
     UsbCompositeHidInputHandle, UsbHidGamepadHandle, UsbHidKeyboardHandle, UsbHidPassthroughHandle,
     UsbHidPassthroughOutputReport,
 };
-use emulator::io::usb::{
-    ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
-};
 use emulator::io::usb::uhci::regs::{REG_USBCMD, USBCMD_MAXP, USBCMD_RS};
 use emulator::io::usb::uhci::regs::{USBINTR_SHORT_PACKET, USBSTS_USBERRINT, USBSTS_USBINT};
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
+use emulator::io::usb::{
+    ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
+};
 use emulator::io::PortIO;
 use memory::MemoryBus;
 

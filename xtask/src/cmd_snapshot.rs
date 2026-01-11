@@ -101,12 +101,7 @@ fn cmd_inspect(args: Vec<String>) -> Result<()> {
                     .unwrap_or_else(|| "none".to_string())
             );
             println!("  created_unix_ms: {}", meta.created_unix_ms);
-            println!(
-                "  label: {}",
-                meta.label
-                    .as_deref()
-                    .unwrap_or("none")
-            );
+            println!("  label: {}", meta.label.as_deref().unwrap_or("none"));
         }
         None => println!("  <missing>"),
     }

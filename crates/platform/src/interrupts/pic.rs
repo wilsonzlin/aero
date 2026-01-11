@@ -132,4 +132,3 @@ impl IoSnapshot for Pic8259 {
         Ok(())
     }
 }
-

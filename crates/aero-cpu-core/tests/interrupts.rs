@@ -448,7 +448,8 @@ fn iretq_long_mode_non_canonical_rsp_delivers_gp() -> Result<(), CpuExit> {
 
     // Corrupt the saved RSP so `IRETQ` would restore a non-canonical stack pointer.
     let frame_base = cpu.state.read_gpr64(gpr::RSP);
-    mem.write_u64(frame_base + 24, 0x0001_0000_0000_0000).unwrap();
+    mem.write_u64(frame_base + 24, 0x0001_0000_0000_0000)
+        .unwrap();
 
     cpu.iret(&mut mem)?;
 

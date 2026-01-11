@@ -411,9 +411,16 @@ impl IoSnapshot for IoApic {
             .iter()
             .map(|val| if *val { 1 } else { 0 })
             .collect();
-        w.field_bytes(TAG_PIN_ACTIVE_LOW, Encoder::new().vec_u8(&pin_active_low).finish());
+        w.field_bytes(
+            TAG_PIN_ACTIVE_LOW,
+            Encoder::new().vec_u8(&pin_active_low).finish(),
+        );
 
-        let pin_level: Vec<u8> = self.pin_level.iter().map(|val| if *val { 1 } else { 0 }).collect();
+        let pin_level: Vec<u8> = self
+            .pin_level
+            .iter()
+            .map(|val| if *val { 1 } else { 0 })
+            .collect();
         w.field_bytes(TAG_PIN_LEVEL, Encoder::new().vec_u8(&pin_level).finish());
 
         w.finish()
@@ -440,7 +447,9 @@ impl IoSnapshot for IoApic {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count == 0 {
-                return Err(SnapshotError::InvalidFieldEncoding("ioapic redirection count"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "ioapic redirection count",
+                ));
             }
             let mut entries = Vec::with_capacity(count);
             for _ in 0..count {

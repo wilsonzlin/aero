@@ -1,8 +1,6 @@
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables, PhysicalMemory as AcpiPhysicalMemory};
 
-use super::{
-    BiosBus, PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_START_BUS,
-};
+use super::{BiosBus, PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_START_BUS};
 
 #[derive(Debug, Clone, Copy)]
 pub struct AcpiInfo {

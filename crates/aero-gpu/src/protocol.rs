@@ -522,8 +522,8 @@ pub fn parse_cmd_stream(
             Some(AeroGpuOpcode::UploadResource) => {
                 let cmd: protocol::AerogpuCmdUploadResource = read_packed_prefix(packet)?;
                 let size_bytes = u64::from_le(cmd.size_bytes);
-                let data_len =
-                    usize::try_from(size_bytes).map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let data_len = usize::try_from(size_bytes)
+                    .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 let data_start = size_of::<protocol::AerogpuCmdUploadResource>();
                 let data_end = data_start
                     .checked_add(data_len)

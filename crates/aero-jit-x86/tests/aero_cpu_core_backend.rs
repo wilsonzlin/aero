@@ -5,9 +5,9 @@ use std::rc::Rc;
 
 use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, StepOutcome};
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
-use aero_cpu_core::jit::runtime::{CompileRequestSink, JitConfig, JitRuntime};
 #[cfg(feature = "tier1-inline-tlb")]
 use aero_cpu_core::jit::runtime::JitBackend;
+use aero_cpu_core::jit::runtime::{CompileRequestSink, JitConfig, JitRuntime};
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::backend::{Tier1Cpu, WasmtimeBackend};
 use aero_jit_x86::tier1::ir::{BinOp, GuestReg, IrBuilder, IrTerminator};

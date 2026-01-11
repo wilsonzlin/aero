@@ -948,7 +948,9 @@ mod tests {
 
         assert!(
             map.iter().any(|e| {
-                e.base == PCIE_ECAM_BASE && e.length == PCIE_ECAM_SIZE && e.region_type == E820_RESERVED
+                e.base == PCIE_ECAM_BASE
+                    && e.length == PCIE_ECAM_SIZE
+                    && e.region_type == E820_RESERVED
             }),
             "E820 should reserve the PCIe ECAM window at 0x{PCIE_ECAM_BASE:x}..0x{:x}",
             PCIE_ECAM_BASE + PCIE_ECAM_SIZE
@@ -957,7 +959,9 @@ mod tests {
         let expected_high_len = FOUR_GIB - PCIE_ECAM_BASE;
         assert!(
             map.iter().any(|e| {
-                e.base == 0x1_0000_0000 && e.length == expected_high_len && e.region_type == E820_RAM
+                e.base == 0x1_0000_0000
+                    && e.length == expected_high_len
+                    && e.region_type == E820_RAM
             }),
             "E820 should remap RAM above 4GiB to preserve the configured memory size"
         );

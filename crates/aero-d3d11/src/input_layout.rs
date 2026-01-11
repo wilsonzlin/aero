@@ -63,7 +63,10 @@ impl MappedInputLayout {
     /// The returned layouts borrow from `self`, so `self` must outlive the pipeline descriptor
     /// creation call.
     pub fn wgpu_vertex_buffer_layouts(&self) -> Vec<wgpu::VertexBufferLayout<'_>> {
-        self.buffers.iter().map(VertexBufferLayoutOwned::as_wgpu).collect()
+        self.buffers
+            .iter()
+            .map(VertexBufferLayoutOwned::as_wgpu)
+            .collect()
     }
 }
 
@@ -753,11 +756,13 @@ pub fn map_layout_to_shader_locations_compact(
             });
         }
 
-        let end = offset.checked_add(fmt.size).ok_or(InputLayoutError::OffsetOverflow {
-            slot: elem.input_slot,
-            offset,
-            size: fmt.size,
-        })?;
+        let end = offset
+            .checked_add(fmt.size)
+            .ok_or(InputLayoutError::OffsetOverflow {
+                slot: elem.input_slot,
+                offset,
+                size: fmt.size,
+            })?;
         slot.next_offset = end;
         slot.required_stride = slot.required_stride.max(end);
 
@@ -781,7 +786,11 @@ pub fn map_layout_to_shader_locations_compact(
     for (wgpu_slot, (d3d_slot, mut slot_state)) in slots.into_iter().enumerate() {
         slot_map.insert(d3d_slot, wgpu_slot as u32);
 
-        let stride = layout.slot_strides.get(d3d_slot as usize).copied().unwrap_or(0);
+        let stride = layout
+            .slot_strides
+            .get(d3d_slot as usize)
+            .copied()
+            .unwrap_or(0);
         if stride == 0 {
             return Err(InputLayoutError::MissingSlotStride { slot: d3d_slot });
         }
@@ -1003,11 +1012,17 @@ mod tests {
         assert_eq!(mapped.buffers[0].array_stride, 8);
         assert_eq!(mapped.buffers[0].attributes.len(), 1);
         assert_eq!(mapped.buffers[0].attributes[0].shader_location, 0);
-        assert_eq!(mapped.buffers[0].attributes[0].format, wgpu::VertexFormat::Float32x2);
+        assert_eq!(
+            mapped.buffers[0].attributes[0].format,
+            wgpu::VertexFormat::Float32x2
+        );
 
         assert_eq!(mapped.buffers[1].array_stride, 12);
         assert_eq!(mapped.buffers[1].attributes.len(), 1);
         assert_eq!(mapped.buffers[1].attributes[0].shader_location, 1);
-        assert_eq!(mapped.buffers[1].attributes[0].format, wgpu::VertexFormat::Float32x3);
+        assert_eq!(
+            mapped.buffers[1].attributes[0].format,
+            wgpu::VertexFormat::Float32x3
+        );
     }
 }

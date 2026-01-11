@@ -37,7 +37,9 @@ fn assert_file_contains_case_insensitive(path: &std::path::Path, needle: &str) {
     let content = fs::read_to_string(path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
     assert!(
-        content.to_ascii_uppercase().contains(&needle.to_ascii_uppercase()),
+        content
+            .to_ascii_uppercase()
+            .contains(&needle.to_ascii_uppercase()),
         "{} is out of sync: expected to contain {needle:?}",
         path.display()
     );
@@ -54,12 +56,22 @@ fn virtio_snd_pci_ids_match_windows_device_contract() {
     let devices = contract_json
         .get("devices")
         .and_then(|value| value.as_array())
-        .unwrap_or_else(|| panic!("{}: expected top-level `devices` array", contract_path.display()));
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: expected top-level `devices` array",
+                contract_path.display()
+            )
+        });
 
     let virtio_snd = devices
         .iter()
         .find(|device| device.get("device").and_then(|v| v.as_str()) == Some("virtio-snd"))
-        .unwrap_or_else(|| panic!("{}: missing device entry for `virtio-snd`", contract_path.display()));
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: missing device entry for `virtio-snd`",
+                contract_path.display()
+            )
+        });
 
     let vendor_id = parse_hex_u16(require_str(virtio_snd, "pci_vendor_id"));
     let device_id = parse_hex_u16(require_str(virtio_snd, "pci_device_id"));

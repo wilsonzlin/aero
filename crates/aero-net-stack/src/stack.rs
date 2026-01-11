@@ -462,7 +462,11 @@ impl NetworkStack {
         };
 
         // We only implement Ethernet/IPv4 ARP.
-        if arp.htype() != HTYPE_ETHERNET || arp.ptype() != PTYPE_IPV4 || arp.hlen() != 6 || arp.plen() != 4 {
+        if arp.htype() != HTYPE_ETHERNET
+            || arp.ptype() != PTYPE_IPV4
+            || arp.hlen() != 6
+            || arp.plen() != 4
+        {
             return Vec::new();
         }
 
@@ -926,7 +930,9 @@ impl NetworkStack {
             _ => return Vec::new(),
         };
 
-        let icmp = match IcmpEchoBuilder::echo_reply(echo.identifier, echo.sequence, echo.payload).build_vec() {
+        let icmp = match IcmpEchoBuilder::echo_reply(echo.identifier, echo.sequence, echo.payload)
+            .build_vec()
+        {
             Ok(pkt) => pkt,
             Err(_) => return Vec::new(),
         };
@@ -992,28 +998,28 @@ impl NetworkStack {
             }
 
             // Enforce security policy *before* advertising a connection to the guest.
-         if !self.cfg.host_policy.enabled || !self.cfg.host_policy.allows_ip(ip.dst_ip()) {
-             return self.emit_tcp_rst_for_syn(
-                 ip.src_ip(),
-                 tcp.src_port(),
-                 ip.dst_ip(),
-                 tcp.dst_port(),
-                 tcp.seq_number(),
-             );
-         }
- 
-         // Cap concurrent connections to avoid unbounded memory use.
-         let max_tcp_connections = self.cfg.max_tcp_connections as usize;
-         if max_tcp_connections == 0 || self.tcp.len() >= max_tcp_connections {
-             return self.emit_tcp_rst_for_syn(
+            if !self.cfg.host_policy.enabled || !self.cfg.host_policy.allows_ip(ip.dst_ip()) {
+                return self.emit_tcp_rst_for_syn(
                     ip.src_ip(),
                     tcp.src_port(),
                     ip.dst_ip(),
                     tcp.dst_port(),
                     tcp.seq_number(),
-             );
-         }
- 
+                );
+            }
+
+            // Cap concurrent connections to avoid unbounded memory use.
+            let max_tcp_connections = self.cfg.max_tcp_connections as usize;
+            if max_tcp_connections == 0 || self.tcp.len() >= max_tcp_connections {
+                return self.emit_tcp_rst_for_syn(
+                    ip.src_ip(),
+                    tcp.src_port(),
+                    ip.dst_ip(),
+                    tcp.dst_port(),
+                    tcp.seq_number(),
+                );
+            }
+
             let guest_isn = tcp.seq_number();
             let our_isn = self.allocate_isn();
             let conn_id = self.next_tcp_id;
@@ -1166,7 +1172,8 @@ impl NetworkStack {
             return;
         };
 
-        let (remote_ip, remote_port, guest_port, seq_number, ack_number) = match self.tcp.get(&key) {
+        let (remote_ip, remote_port, guest_port, seq_number, ack_number) = match self.tcp.get(&key)
+        {
             Some(conn) => {
                 if conn.fin_sent || !conn.syn_acked {
                     return;
@@ -1436,18 +1443,13 @@ impl NetworkStack {
             Some(m) => m,
             None => return Vec::new(),
         };
-        let tcp = match TcpSegmentBuilder::rst(
-            remote_port,
-            guest_port,
-            0,
-            guest_seq.wrapping_add(1),
-            0,
-        )
-        .build_vec(remote_ip, guest_ip)
-        {
-            Ok(pkt) => pkt,
-            Err(_) => return Vec::new(),
-        };
+        let tcp =
+            match TcpSegmentBuilder::rst(remote_port, guest_port, 0, guest_seq.wrapping_add(1), 0)
+                .build_vec(remote_ip, guest_ip)
+            {
+                Ok(pkt) => pkt,
+                Err(_) => return Vec::new(),
+            };
 
         let Ok(ip) = Ipv4PacketBuilder {
             dscp_ecn: 0,

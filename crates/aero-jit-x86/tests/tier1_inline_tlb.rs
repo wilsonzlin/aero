@@ -14,8 +14,8 @@ use aero_jit_x86::wasm::{
     IMPORT_MODULE, IMPORT_PAGE_FAULT, JIT_EXIT_SENTINEL_I64,
 };
 use aero_jit_x86::{
-    JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, JIT_TLB_INDEX_MASK, PAGE_BASE_MASK, PAGE_SHIFT, TLB_FLAG_EXEC,
-    TLB_FLAG_IS_RAM, TLB_FLAG_READ, TLB_FLAG_WRITE,
+    JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, JIT_TLB_INDEX_MASK, PAGE_BASE_MASK, PAGE_SHIFT,
+    TLB_FLAG_EXEC, TLB_FLAG_IS_RAM, TLB_FLAG_READ, TLB_FLAG_WRITE,
 };
 use aero_types::{Gpr, Width};
 use tier1_common::{write_cpu_to_wasm_bytes, CpuSnapshot};
@@ -156,17 +156,15 @@ fn define_mem_helpers(
             .expect("memory write in bounds");
     }
 
-    fn read_ram_base(
-        caller: &mut Caller<'_, HostState>,
-        memory: &Memory,
-        cpu_ptr: i32,
-    ) -> usize {
+    fn read_ram_base(caller: &mut Caller<'_, HostState>, memory: &Memory, cpu_ptr: i32) -> usize {
         // Slow-path helpers only receive `cpu_ptr`; in our tests, the JIT context is stored at
         // `cpu_ptr + CPU_STATE_SIZE`.
         read_u64_from_memory(
             caller,
             memory,
-            cpu_ptr as usize + (abi::CPU_STATE_SIZE as usize) + (JitContext::RAM_BASE_OFFSET as usize),
+            cpu_ptr as usize
+                + (abi::CPU_STATE_SIZE as usize)
+                + (JitContext::RAM_BASE_OFFSET as usize),
         ) as usize
     }
 
@@ -426,7 +424,8 @@ fn run_wasm_inner(
     memory.read(&store, 0, &mut got_mem).unwrap();
 
     let cpu_base = CPU_PTR as usize;
-    let snap = CpuSnapshot::from_wasm_bytes(&got_mem[cpu_base..cpu_base + abi::CPU_STATE_SIZE as usize]);
+    let snap =
+        CpuSnapshot::from_wasm_bytes(&got_mem[cpu_base..cpu_base + abi::CPU_STATE_SIZE as usize]);
     let mut got_cpu = CpuState::default();
     got_cpu.gpr = snap.gpr;
     got_cpu.rip = snap.rip;
@@ -647,7 +646,10 @@ fn tier1_inline_tlb_permission_miss_write_calls_translate() {
 
     assert_eq!(next_rip, 0x3000);
     assert_eq!(got_cpu.rip, 0x3000);
-    assert_eq!(&got_ram[addr as usize..addr as usize + 2], &0xdead_u16.to_le_bytes());
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 2],
+        &0xdead_u16.to_le_bytes()
+    );
 
     assert_eq!(host_state.mmu_translate_calls, 1);
     assert_eq!(host_state.mmio_exit_calls, 0);

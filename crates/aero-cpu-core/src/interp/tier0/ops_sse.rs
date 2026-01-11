@@ -1177,7 +1177,11 @@ fn exec_sse2_int<B: CpuBus>(
             let b = u128_to_u16x8(src);
             let mut out = [0u16; 8];
             for i in 0..8 {
-                out[i] = if (a[i] as i16) > (b[i] as i16) { 0xFFFF } else { 0 };
+                out[i] = if (a[i] as i16) > (b[i] as i16) {
+                    0xFFFF
+                } else {
+                    0
+                };
             }
             u16x8_to_u128(out)
         }

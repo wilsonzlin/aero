@@ -720,7 +720,12 @@ fn build_vertex_state(
         .ok_or_else(|| anyhow!("unknown input layout handle {layout_handle}"))?;
 
     let mut slot_strides = vec![0u32; MAX_INPUT_SLOTS as usize];
-    for (slot, binding) in state.vertex_buffers.iter().enumerate().take(slot_strides.len()) {
+    for (slot, binding) in state
+        .vertex_buffers
+        .iter()
+        .enumerate()
+        .take(slot_strides.len())
+    {
         if let Some(binding) = binding {
             slot_strides[slot] = binding.stride;
         }
@@ -744,7 +749,12 @@ fn build_vertex_state(
         .map(|l| VertexBufferLayoutKey {
             array_stride: l.array_stride,
             step_mode: l.step_mode,
-            attributes: l.attributes.iter().copied().map(VertexAttributeKey::from).collect(),
+            attributes: l
+                .attributes
+                .iter()
+                .copied()
+                .map(VertexAttributeKey::from)
+                .collect(),
         })
         .collect();
 

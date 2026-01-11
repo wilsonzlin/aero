@@ -15,7 +15,9 @@ mod demo_renderer;
 use aero_platform::audio::worklet_bridge::WorkletBridge;
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
-use aero_shared::shared_framebuffer::{SharedFramebuffer, SharedFramebufferLayout, SharedFramebufferWriter};
+use aero_shared::shared_framebuffer::{
+    SharedFramebuffer, SharedFramebufferLayout, SharedFramebufferWriter,
+};
 
 #[cfg(target_arch = "wasm32")]
 use aero_opfs::OpfsSyncFile;
@@ -33,7 +35,7 @@ use aero_audio::hda::HdaController;
 use aero_audio::mem::{GuestMemory, MemoryAccess};
 
 #[cfg(target_arch = "wasm32")]
-use aero_audio::pcm::{decode_pcm_to_stereo_f32_into, LinearResampler, StreamFormat};
+use aero_audio::pcm::{LinearResampler, StreamFormat, decode_pcm_to_stereo_f32_into};
 
 #[cfg(target_arch = "wasm32")]
 use aero_audio::sink::AudioSink;
@@ -43,9 +45,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(target_arch = "wasm32")]
 use aero_usb::{
-    hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
     hid::passthrough::UsbHidPassthrough,
     hid::webhid,
+    hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
     passthrough::{
         PendingSummary as UsbPassthroughPendingSummary, UsbHostCompletion, UsbPassthroughDevice,
     },
@@ -135,11 +137,15 @@ impl GuestRamLayout {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn guest_ram_layout(desired_bytes: u32) -> GuestRamLayout {
-    let guest_base = guest_layout::align_up(guest_layout::RUNTIME_RESERVED_BYTES, guest_layout::WASM_PAGE_BYTES);
+    let guest_base = guest_layout::align_up(
+        guest_layout::RUNTIME_RESERVED_BYTES,
+        guest_layout::WASM_PAGE_BYTES,
+    );
     let base_pages = guest_base / guest_layout::WASM_PAGE_BYTES;
 
     // `desired_bytes` is u32 so it cannot represent 4GiB; align up safely in u64.
-    let desired_bytes_aligned = guest_layout::align_up(desired_bytes as u64, guest_layout::WASM_PAGE_BYTES);
+    let desired_bytes_aligned =
+        guest_layout::align_up(desired_bytes as u64, guest_layout::WASM_PAGE_BYTES);
     let desired_pages = desired_bytes_aligned / guest_layout::WASM_PAGE_BYTES;
 
     let total_pages = (base_pages + desired_pages).min(guest_layout::MAX_WASM32_PAGES);
@@ -390,11 +396,15 @@ impl WebHidPassthroughBridge {
         serial: Option<String>,
         collections: JsValue,
     ) -> Result<Self, JsValue> {
-        let collections: Vec<webhid::HidCollectionInfo> = serde_wasm_bindgen::from_value(collections)
-            .map_err(|e| JsValue::from_str(&format!("invalid WebHID collections metadata: {e}")))?;
+        let collections: Vec<webhid::HidCollectionInfo> =
+            serde_wasm_bindgen::from_value(collections).map_err(|e| {
+                JsValue::from_str(&format!("invalid WebHID collections metadata: {e}"))
+            })?;
 
-        let report_descriptor = webhid::synthesize_report_descriptor(&collections)
-            .map_err(|e| JsValue::from_str(&format!("failed to synthesize HID report descriptor: {e}")))?;
+        let report_descriptor =
+            webhid::synthesize_report_descriptor(&collections).map_err(|e| {
+                JsValue::from_str(&format!("failed to synthesize HID report descriptor: {e}"))
+            })?;
 
         let has_interrupt_out = collections_have_output_reports(&collections);
 
@@ -437,7 +447,11 @@ impl WebHidPassthroughBridge {
 
         let obj = Object::new();
         // These Reflect::set calls should be infallible for a fresh object with string keys.
-        let _ = Reflect::set(&obj, &JsValue::from_str("reportType"), &JsValue::from_str(report_type));
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("reportType"),
+            &JsValue::from_str(report_type),
+        );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("reportId"),
@@ -519,8 +533,8 @@ impl UsbPassthroughBridge {
 
     /// Push a single host completion into the passthrough device.
     pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
-        let completion: UsbHostCompletion =
-            serde_wasm_bindgen::from_value(completion).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         self.inner.push_completion(completion);
         Ok(())
     }
@@ -861,7 +875,9 @@ impl HdaPlaybackDemo {
         self.last_tick_written_frames = sink.written_frames;
         self.last_tick_dropped_frames = sink.dropped_frames;
 
-        self.total_frames_produced = self.total_frames_produced.wrapping_add(sink.produced_frames);
+        self.total_frames_produced = self
+            .total_frames_produced
+            .wrapping_add(sink.produced_frames);
         self.total_frames_written = self.total_frames_written.wrapping_add(sink.written_frames);
         self.total_frames_dropped = self.total_frames_dropped.wrapping_add(sink.dropped_frames);
 
@@ -956,7 +972,9 @@ impl AeroApi {
 ///
 /// Deprecated in favor of the canonical full-system VM (`Machine`).
 #[wasm_bindgen]
-#[deprecated(note = "DemoVm is a stub VM kept for snapshot demos; use `Machine` (aero_machine::Machine) instead")]
+#[deprecated(
+    note = "DemoVm is a stub VM kept for snapshot demos; use `Machine` (aero_machine::Machine) instead"
+)]
 pub struct DemoVm {
     #[allow(deprecated)]
     inner: aero_vm::Vm,
@@ -1085,7 +1103,13 @@ impl CpuWorkerDemo {
         tile_size: u32,
         guest_counter_offset_bytes: u32,
     ) -> Result<Self, JsValue> {
-        let _ = (framebuffer_offset_bytes, width, height, tile_size, guest_counter_offset_bytes);
+        let _ = (
+            framebuffer_offset_bytes,
+            width,
+            height,
+            tile_size,
+            guest_counter_offset_bytes,
+        );
 
         #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         {
@@ -1128,9 +1152,10 @@ impl CpuWorkerDemo {
             }
 
             // Safety: the caller provides an in-bounds region in linear memory.
-            let shared =
-                unsafe { SharedFramebuffer::from_raw_parts(framebuffer_offset_bytes as *mut u8, layout) }
-                    .map_err(|e| JsValue::from_str(&format!("Invalid shared framebuffer base: {e}")))?;
+            let shared = unsafe {
+                SharedFramebuffer::from_raw_parts(framebuffer_offset_bytes as *mut u8, layout)
+            }
+            .map_err(|e| JsValue::from_str(&format!("Invalid shared framebuffer base: {e}")))?;
             // The JS runtime may have already initialized the header (and in the
             // CPU worker we may start publishing frames via a JS fallback while
             // the threaded WASM module initializes asynchronously). Only
@@ -1318,7 +1343,8 @@ impl Machine {
             ram_size_bytes: ram_size_bytes as u64,
             ..Default::default()
         };
-        let inner = aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let inner =
+            aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Self { inner })
     }
 

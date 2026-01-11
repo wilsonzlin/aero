@@ -3,16 +3,15 @@ use std::{net::SocketAddr, sync::Arc};
 use axum::{
     extract::{
         ws::{WebSocket, WebSocketUpgrade},
-        OriginalUri,
-        State,
+        OriginalUri, State,
     },
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::get,
     Router,
 };
-use tokio::{sync::oneshot, task::JoinHandle};
 use tokio::sync::Semaphore;
+use tokio::{sync::oneshot, task::JoinHandle};
 
 use crate::{
     capture::CaptureManager, dns::DnsService, metrics::Metrics, session, ProxyConfig,
@@ -128,7 +127,8 @@ async fn readyz() -> impl IntoResponse {
 }
 
 async fn version() -> impl IntoResponse {
-    let version = std::env::var("AERO_L2_PROXY_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+    let version = std::env::var("AERO_L2_PROXY_VERSION")
+        .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
     let git_sha = std::env::var("AERO_L2_PROXY_GIT_SHA")
         .or_else(|_| std::env::var("GIT_SHA"))
         .unwrap_or_else(|_| "dev".to_string());
@@ -160,7 +160,10 @@ async fn version() -> impl IntoResponse {
         escape_json_string(&built_at)
     );
 
-    ([(axum::http::header::CONTENT_TYPE, "application/json")], body)
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        body,
+    )
 }
 
 async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
@@ -206,10 +209,11 @@ async fn l2_ws_handler(
         },
     };
 
-    ws.protocols([TUNNEL_SUBPROTOCOL]).on_upgrade(move |socket| async move {
-        let _permit = permit;
-        handle_l2_ws(socket, state).await;
-    })
+    ws.protocols([TUNNEL_SUBPROTOCOL])
+        .on_upgrade(move |socket| async move {
+            let _permit = permit;
+            handle_l2_ws(socket, state).await;
+        })
 }
 
 async fn handle_l2_ws(socket: WebSocket, state: AppState) {
@@ -232,7 +236,9 @@ fn enforce_security(
             .filter(|v| !v.is_empty());
 
         let Some(origin) = origin else {
-            return Err((StatusCode::FORBIDDEN, "missing Origin header".to_string()).into_response());
+            return Err(
+                (StatusCode::FORBIDDEN, "missing Origin header".to_string()).into_response()
+            );
         };
 
         match &state.cfg.security.allowed_origins {
@@ -252,8 +258,8 @@ fn enforce_security(
     if let Some(expected) = state.cfg.security.token.as_deref() {
         let query_token = token_from_query(uri);
         let protocol_token = token_from_subprotocol(headers);
-        let token_ok = query_token.as_deref() == Some(expected)
-            || protocol_token.as_deref() == Some(expected);
+        let token_ok =
+            query_token.as_deref() == Some(expected) || protocol_token.as_deref() == Some(expected);
         if !token_ok {
             return Err((StatusCode::UNAUTHORIZED, "invalid token".to_string()).into_response());
         }

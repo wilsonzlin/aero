@@ -3,8 +3,8 @@ use aero_protocol::aerogpu::{
     aerogpu_cmd::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
         AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CLEAR_COLOR,
-        AEROGPU_CMD_STREAM_MAGIC,
-        AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
+        AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+        AEROGPU_RESOURCE_USAGE_TEXTURE,
     },
     aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_MAJOR},
 };

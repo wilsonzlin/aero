@@ -309,7 +309,10 @@ fn drive_capture_to_prepared(
         ctrl_resp,
         &set_params,
     );
-    assert_eq!(u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()), VIRTIO_SND_S_OK);
+    assert_eq!(
+        u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
+        VIRTIO_SND_S_OK
+    );
 
     let prepare = [
         VIRTIO_SND_R_PCM_PREPARE.to_le_bytes(),
@@ -327,7 +330,10 @@ fn drive_capture_to_prepared(
         ctrl_resp,
         &prepare,
     );
-    assert_eq!(u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()), VIRTIO_SND_S_OK);
+    assert_eq!(
+        u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
+        VIRTIO_SND_S_OK
+    );
 
     ctrl_avail_idx
 }
@@ -341,7 +347,8 @@ fn drive_capture_to_running(
     ctrl_req: u64,
     ctrl_resp: u64,
 ) {
-    let mut ctrl_avail_idx = drive_capture_to_prepared(dev, mem, caps, ctrl_desc, ctrl_avail, ctrl_req, ctrl_resp);
+    let mut ctrl_avail_idx =
+        drive_capture_to_prepared(dev, mem, caps, ctrl_desc, ctrl_avail, ctrl_req, ctrl_resp);
 
     let start = [
         VIRTIO_SND_R_PCM_START.to_le_bytes(),
@@ -359,7 +366,10 @@ fn drive_capture_to_running(
         ctrl_resp,
         &start,
     );
-    assert_eq!(u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()), VIRTIO_SND_S_OK);
+    assert_eq!(
+        u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
+        VIRTIO_SND_S_OK
+    );
     let _ = ctrl_avail_idx;
 }
 
@@ -377,15 +387,7 @@ fn submit_rx(
 ) {
     let resp_index = payload_descs.len() as u16 + 1;
 
-    write_desc(
-        mem,
-        desc_table,
-        0,
-        out_addr,
-        out_len,
-        VIRTQ_DESC_F_NEXT,
-        1,
-    );
+    write_desc(mem, desc_table, 0, out_addr, out_len, VIRTQ_DESC_F_NEXT, 1);
 
     for (i, &(addr, len)) in payload_descs.iter().enumerate() {
         let idx = 1 + i as u16;
@@ -394,10 +396,26 @@ fn submit_rx(
         } else {
             idx + 1
         };
-        write_desc(mem, desc_table, idx, addr, len, VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT, next);
+        write_desc(
+            mem,
+            desc_table,
+            idx,
+            addr,
+            len,
+            VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT,
+            next,
+        );
     }
 
-    write_desc(mem, desc_table, resp_index, resp_addr, 8, VIRTQ_DESC_F_WRITE, 0);
+    write_desc(
+        mem,
+        desc_table,
+        resp_index,
+        resp_addr,
+        8,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
 
     let elem_addr = avail_addr + 4 + u64::from(avail_idx) * 2;
     write_u16_le(mem, elem_addr, 0).unwrap();
@@ -664,13 +682,7 @@ fn virtio_snd_rx_io_err_when_capture_stream_not_running() {
     let ctrl_req = 0x7000;
     let ctrl_resp = 0x7100;
     drive_capture_to_prepared(
-        &mut dev,
-        &mut mem,
-        &caps,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_req,
-        ctrl_resp,
+        &mut dev, &mut mem, &caps, ctrl_desc, ctrl_avail, ctrl_req, ctrl_resp,
     );
 
     let hdr_addr = 0x8000;
@@ -754,13 +766,7 @@ fn virtio_snd_rx_ok_writes_full_payload_and_pcm_status_in_last_descriptor() {
     );
 
     drive_capture_to_running(
-        &mut dev,
-        &mut mem,
-        &caps,
-        ctrl_desc,
-        ctrl_avail,
-        0x7000,
-        0x7100,
+        &mut dev, &mut mem, &caps, ctrl_desc, ctrl_avail, 0x7000, 0x7100,
     );
 
     let hdr_addr = 0x8000;
@@ -820,4 +826,3 @@ fn virtio_snd_rx_ok_writes_full_payload_and_pcm_status_in_last_descriptor() {
     assert_eq!(telem.underrun_samples, 0);
     assert_eq!(telem.underrun_responses, 0);
 }
-

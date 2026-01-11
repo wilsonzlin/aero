@@ -504,5 +504,8 @@ fn instruction_stream_mixed_sse_sse2() {
     step_with_config(&cfg, &mut state, &mut bus).unwrap();
     step_with_config(&cfg, &mut state, &mut bus).unwrap();
 
-    assert_eq!(bus.read_u128(0x80).unwrap(), u128_from_u32x4([11, 22, 33, 44]));
+    assert_eq!(
+        bus.read_u128(0x80).unwrap(),
+        u128_from_u32x4([11, 22, 33, 44])
+    );
 }

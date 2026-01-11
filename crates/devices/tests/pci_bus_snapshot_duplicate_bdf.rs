@@ -1,4 +1,4 @@
-use aero_devices::pci::{PciBusSnapshot, PciBdf};
+use aero_devices::pci::{PciBdf, PciBusSnapshot};
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotWriter};
 
@@ -42,4 +42,3 @@ fn pci_bus_snapshot_rejects_duplicate_bdf_entries() {
         other => panic!("expected InvalidFieldEncoding, got {other:?}"),
     }
 }
-

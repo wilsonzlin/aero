@@ -7,17 +7,20 @@
 use core::mem::{offset_of, size_of};
 
 use super::aerogpu_cmd::{
-    AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdClear, AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d,
-    AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout, AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d,
-    AerogpuCmdDestroyInputLayout, AerogpuCmdDestroyResource, AerogpuCmdDestroyShader, AerogpuCmdDraw,
-    AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface, AerogpuCmdFlush, AerogpuCmdImportSharedSurface,
-    AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx, AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState,
-    AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer, AerogpuCmdSetInputLayout,
-    AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState, AerogpuCmdSetRenderTargets,
-    AerogpuCmdSetSamplerState, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture,
-    AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader,
-    AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuCullMode, AerogpuFillMode, AerogpuHandle, AerogpuIndexFormat,
-    AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdClear, AerogpuCmdCopyBuffer,
+    AerogpuCmdCopyTexture2d, AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout,
+    AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout,
+    AerogpuCmdDestroyResource, AerogpuCmdDestroyShader, AerogpuCmdDraw, AerogpuCmdDrawIndexed,
+    AerogpuCmdExportSharedSurface, AerogpuCmdFlush, AerogpuCmdImportSharedSurface,
+    AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx, AerogpuCmdResourceDirtyRange,
+    AerogpuCmdSetBlendState, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer,
+    AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState,
+    AerogpuCmdSetRenderState, AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState,
+    AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture,
+    AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags,
+    AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuCullMode,
+    AerogpuFillMode, AerogpuHandle, AerogpuIndexFormat, AerogpuPrimitiveTopology,
+    AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC,
     AEROGPU_MAX_RENDER_TARGETS,
 };
 use super::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
@@ -112,11 +115,26 @@ impl AerogpuCmdWriter {
         backing_alloc_id: u32,
         backing_offset_bytes: u32,
     ) {
-        let base = self.append_raw(AerogpuCmdOpcode::CreateBuffer, size_of::<AerogpuCmdCreateBuffer>());
-        self.write_u32_at(base + offset_of!(AerogpuCmdCreateBuffer, buffer_handle), buffer_handle);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCreateBuffer, usage_flags), usage_flags);
-        self.write_u64_at(base + offset_of!(AerogpuCmdCreateBuffer, size_bytes), size_bytes);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCreateBuffer, backing_alloc_id), backing_alloc_id);
+        let base = self.append_raw(
+            AerogpuCmdOpcode::CreateBuffer,
+            size_of::<AerogpuCmdCreateBuffer>(),
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateBuffer, buffer_handle),
+            buffer_handle,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateBuffer, usage_flags),
+            usage_flags,
+        );
+        self.write_u64_at(
+            base + offset_of!(AerogpuCmdCreateBuffer, size_bytes),
+            size_bytes,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateBuffer, backing_alloc_id),
+            backing_alloc_id,
+        );
         self.write_u32_at(
             base + offset_of!(AerogpuCmdCreateBuffer, backing_offset_bytes),
             backing_offset_bytes,
@@ -141,15 +159,33 @@ impl AerogpuCmdWriter {
             AerogpuCmdOpcode::CreateTexture2d,
             size_of::<AerogpuCmdCreateTexture2d>(),
         );
-        self.write_u32_at(base + offset_of!(AerogpuCmdCreateTexture2d, texture_handle), texture_handle);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCreateTexture2d, usage_flags), usage_flags);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateTexture2d, texture_handle),
+            texture_handle,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateTexture2d, usage_flags),
+            usage_flags,
+        );
         self.write_u32_at(base + offset_of!(AerogpuCmdCreateTexture2d, format), format);
         self.write_u32_at(base + offset_of!(AerogpuCmdCreateTexture2d, width), width);
         self.write_u32_at(base + offset_of!(AerogpuCmdCreateTexture2d, height), height);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCreateTexture2d, mip_levels), mip_levels);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCreateTexture2d, array_layers), array_layers);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCreateTexture2d, row_pitch_bytes), row_pitch_bytes);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCreateTexture2d, backing_alloc_id), backing_alloc_id);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateTexture2d, mip_levels),
+            mip_levels,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateTexture2d, array_layers),
+            array_layers,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateTexture2d, row_pitch_bytes),
+            row_pitch_bytes,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateTexture2d, backing_alloc_id),
+            backing_alloc_id,
+        );
         self.write_u32_at(
             base + offset_of!(AerogpuCmdCreateTexture2d, backing_offset_bytes),
             backing_offset_bytes,
@@ -161,10 +197,18 @@ impl AerogpuCmdWriter {
             AerogpuCmdOpcode::DestroyResource,
             size_of::<AerogpuCmdDestroyResource>(),
         );
-        self.write_u32_at(base + offset_of!(AerogpuCmdDestroyResource, resource_handle), resource_handle);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdDestroyResource, resource_handle),
+            resource_handle,
+        );
     }
 
-    pub fn resource_dirty_range(&mut self, resource_handle: AerogpuHandle, offset_bytes: u64, size_bytes: u64) {
+    pub fn resource_dirty_range(
+        &mut self,
+        resource_handle: AerogpuHandle,
+        offset_bytes: u64,
+        size_bytes: u64,
+    ) {
         let base = self.append_raw(
             AerogpuCmdOpcode::ResourceDirtyRange,
             size_of::<AerogpuCmdResourceDirtyRange>(),
@@ -173,18 +217,39 @@ impl AerogpuCmdWriter {
             base + offset_of!(AerogpuCmdResourceDirtyRange, resource_handle),
             resource_handle,
         );
-        self.write_u64_at(base + offset_of!(AerogpuCmdResourceDirtyRange, offset_bytes), offset_bytes);
-        self.write_u64_at(base + offset_of!(AerogpuCmdResourceDirtyRange, size_bytes), size_bytes);
+        self.write_u64_at(
+            base + offset_of!(AerogpuCmdResourceDirtyRange, offset_bytes),
+            offset_bytes,
+        );
+        self.write_u64_at(
+            base + offset_of!(AerogpuCmdResourceDirtyRange, size_bytes),
+            size_bytes,
+        );
     }
 
-    pub fn upload_resource(&mut self, resource_handle: AerogpuHandle, offset_bytes: u64, data: &[u8]) {
+    pub fn upload_resource(
+        &mut self,
+        resource_handle: AerogpuHandle,
+        offset_bytes: u64,
+        data: &[u8],
+    ) {
         assert!(data.len() <= u64::MAX as usize);
         let unpadded_size = size_of::<AerogpuCmdUploadResource>() + data.len();
         let base = self.append_raw(AerogpuCmdOpcode::UploadResource, unpadded_size);
-        self.write_u32_at(base + offset_of!(AerogpuCmdUploadResource, resource_handle), resource_handle);
-        self.write_u64_at(base + offset_of!(AerogpuCmdUploadResource, offset_bytes), offset_bytes);
-        self.write_u64_at(base + offset_of!(AerogpuCmdUploadResource, size_bytes), data.len() as u64);
-        self.buf[base + size_of::<AerogpuCmdUploadResource>()..base + size_of::<AerogpuCmdUploadResource>() + data.len()]
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdUploadResource, resource_handle),
+            resource_handle,
+        );
+        self.write_u64_at(
+            base + offset_of!(AerogpuCmdUploadResource, offset_bytes),
+            offset_bytes,
+        );
+        self.write_u64_at(
+            base + offset_of!(AerogpuCmdUploadResource, size_bytes),
+            data.len() as u64,
+        );
+        self.buf[base + size_of::<AerogpuCmdUploadResource>()
+            ..base + size_of::<AerogpuCmdUploadResource>() + data.len()]
             .copy_from_slice(data);
     }
 
@@ -197,12 +262,30 @@ impl AerogpuCmdWriter {
         size_bytes: u64,
         flags: u32,
     ) {
-        let base = self.append_raw(AerogpuCmdOpcode::CopyBuffer, size_of::<AerogpuCmdCopyBuffer>());
-        self.write_u32_at(base + offset_of!(AerogpuCmdCopyBuffer, dst_buffer), dst_buffer);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCopyBuffer, src_buffer), src_buffer);
-        self.write_u64_at(base + offset_of!(AerogpuCmdCopyBuffer, dst_offset_bytes), dst_offset_bytes);
-        self.write_u64_at(base + offset_of!(AerogpuCmdCopyBuffer, src_offset_bytes), src_offset_bytes);
-        self.write_u64_at(base + offset_of!(AerogpuCmdCopyBuffer, size_bytes), size_bytes);
+        let base = self.append_raw(
+            AerogpuCmdOpcode::CopyBuffer,
+            size_of::<AerogpuCmdCopyBuffer>(),
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCopyBuffer, dst_buffer),
+            dst_buffer,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCopyBuffer, src_buffer),
+            src_buffer,
+        );
+        self.write_u64_at(
+            base + offset_of!(AerogpuCmdCopyBuffer, dst_offset_bytes),
+            dst_offset_bytes,
+        );
+        self.write_u64_at(
+            base + offset_of!(AerogpuCmdCopyBuffer, src_offset_bytes),
+            src_offset_bytes,
+        );
+        self.write_u64_at(
+            base + offset_of!(AerogpuCmdCopyBuffer, size_bytes),
+            size_bytes,
+        );
         self.write_u32_at(base + offset_of!(AerogpuCmdCopyBuffer, flags), flags);
     }
 
@@ -223,13 +306,34 @@ impl AerogpuCmdWriter {
         height: u32,
         flags: u32,
     ) {
-        let base = self.append_raw(AerogpuCmdOpcode::CopyTexture2d, size_of::<AerogpuCmdCopyTexture2d>());
-        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, dst_texture), dst_texture);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, src_texture), src_texture);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, dst_mip_level), dst_mip_level);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, dst_array_layer), dst_array_layer);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, src_mip_level), src_mip_level);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, src_array_layer), src_array_layer);
+        let base = self.append_raw(
+            AerogpuCmdOpcode::CopyTexture2d,
+            size_of::<AerogpuCmdCopyTexture2d>(),
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCopyTexture2d, dst_texture),
+            dst_texture,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCopyTexture2d, src_texture),
+            src_texture,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCopyTexture2d, dst_mip_level),
+            dst_mip_level,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCopyTexture2d, dst_array_layer),
+            dst_array_layer,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCopyTexture2d, src_mip_level),
+            src_mip_level,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCopyTexture2d, src_array_layer),
+            src_array_layer,
+        );
         self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, dst_x), dst_x);
         self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, dst_y), dst_y);
         self.write_u32_at(base + offset_of!(AerogpuCmdCopyTexture2d, src_x), src_x);
@@ -248,25 +352,41 @@ impl AerogpuCmdWriter {
         assert!(dxbc_bytes.len() <= u32::MAX as usize);
         let unpadded_size = size_of::<AerogpuCmdCreateShaderDxbc>() + dxbc_bytes.len();
         let base = self.append_raw(AerogpuCmdOpcode::CreateShaderDxbc, unpadded_size);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCreateShaderDxbc, shader_handle), shader_handle);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCreateShaderDxbc, stage), stage as u32);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateShaderDxbc, shader_handle),
+            shader_handle,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateShaderDxbc, stage),
+            stage as u32,
+        );
         self.write_u32_at(
             base + offset_of!(AerogpuCmdCreateShaderDxbc, dxbc_size_bytes),
             dxbc_bytes.len() as u32,
         );
-        self.buf[base + size_of::<AerogpuCmdCreateShaderDxbc>()..base + size_of::<AerogpuCmdCreateShaderDxbc>() + dxbc_bytes.len()]
+        self.buf[base + size_of::<AerogpuCmdCreateShaderDxbc>()
+            ..base + size_of::<AerogpuCmdCreateShaderDxbc>() + dxbc_bytes.len()]
             .copy_from_slice(dxbc_bytes);
     }
 
     pub fn destroy_shader(&mut self, shader_handle: AerogpuHandle) {
-        let base = self.append_raw(AerogpuCmdOpcode::DestroyShader, size_of::<AerogpuCmdDestroyShader>());
-        self.write_u32_at(base + offset_of!(AerogpuCmdDestroyShader, shader_handle), shader_handle);
+        let base = self.append_raw(
+            AerogpuCmdOpcode::DestroyShader,
+            size_of::<AerogpuCmdDestroyShader>(),
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdDestroyShader, shader_handle),
+            shader_handle,
+        );
     }
 
     pub fn bind_shaders(&mut self, vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle) {
         use super::aerogpu_cmd::AerogpuCmdBindShaders;
 
-        let base = self.append_raw(AerogpuCmdOpcode::BindShaders, size_of::<AerogpuCmdBindShaders>());
+        let base = self.append_raw(
+            AerogpuCmdOpcode::BindShaders,
+            size_of::<AerogpuCmdBindShaders>(),
+        );
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, vs), vs);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, ps), ps);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, cs), cs);
@@ -284,7 +404,8 @@ impl AerogpuCmdWriter {
             base + offset_of!(AerogpuCmdCreateInputLayout, blob_size_bytes),
             blob.len() as u32,
         );
-        self.buf[base + size_of::<AerogpuCmdCreateInputLayout>()..base + size_of::<AerogpuCmdCreateInputLayout>() + blob.len()]
+        self.buf[base + size_of::<AerogpuCmdCreateInputLayout>()
+            ..base + size_of::<AerogpuCmdCreateInputLayout>() + blob.len()]
             .copy_from_slice(blob);
     }
 
@@ -304,7 +425,10 @@ impl AerogpuCmdWriter {
             AerogpuCmdOpcode::SetInputLayout,
             size_of::<AerogpuCmdSetInputLayout>(),
         );
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetInputLayout, input_layout_handle), input_layout_handle);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetInputLayout, input_layout_handle),
+            input_layout_handle,
+        );
     }
 
     pub fn set_render_targets(&mut self, colors: &[AerogpuHandle], depth_stencil: AerogpuHandle) {
@@ -317,8 +441,14 @@ impl AerogpuCmdWriter {
             AerogpuCmdOpcode::SetRenderTargets,
             size_of::<AerogpuCmdSetRenderTargets>(),
         );
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetRenderTargets, color_count), colors.len() as u32);
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetRenderTargets, depth_stencil), depth_stencil);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetRenderTargets, color_count),
+            colors.len() as u32,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetRenderTargets, depth_stencil),
+            depth_stencil,
+        );
 
         let colors_base = base + offset_of!(AerogpuCmdSetRenderTargets, colors);
         for (i, &h) in colors.iter().enumerate() {
@@ -326,12 +456,29 @@ impl AerogpuCmdWriter {
         }
     }
 
-    pub fn set_viewport(&mut self, x: f32, y: f32, width: f32, height: f32, min_depth: f32, max_depth: f32) {
-        let base = self.append_raw(AerogpuCmdOpcode::SetViewport, size_of::<AerogpuCmdSetViewport>());
+    pub fn set_viewport(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        min_depth: f32,
+        max_depth: f32,
+    ) {
+        let base = self.append_raw(
+            AerogpuCmdOpcode::SetViewport,
+            size_of::<AerogpuCmdSetViewport>(),
+        );
         self.write_u32_at(base + offset_of!(AerogpuCmdSetViewport, x_f32), x.to_bits());
         self.write_u32_at(base + offset_of!(AerogpuCmdSetViewport, y_f32), y.to_bits());
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetViewport, width_f32), width.to_bits());
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetViewport, height_f32), height.to_bits());
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetViewport, width_f32),
+            width.to_bits(),
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetViewport, height_f32),
+            height.to_bits(),
+        );
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetViewport, min_depth_f32),
             min_depth.to_bits(),
@@ -343,7 +490,10 @@ impl AerogpuCmdWriter {
     }
 
     pub fn set_scissor(&mut self, x: i32, y: i32, width: i32, height: i32) {
-        let base = self.append_raw(AerogpuCmdOpcode::SetScissor, size_of::<AerogpuCmdSetScissor>());
+        let base = self.append_raw(
+            AerogpuCmdOpcode::SetScissor,
+            size_of::<AerogpuCmdSetScissor>(),
+        );
         self.write_i32_at(base + offset_of!(AerogpuCmdSetScissor, x), x);
         self.write_i32_at(base + offset_of!(AerogpuCmdSetScissor, y), y);
         self.write_i32_at(base + offset_of!(AerogpuCmdSetScissor, width), width);
@@ -352,9 +502,13 @@ impl AerogpuCmdWriter {
 
     pub fn set_vertex_buffers(&mut self, start_slot: u32, bindings: &[AerogpuVertexBufferBinding]) {
         assert!(bindings.len() <= u32::MAX as usize);
-        let unpadded_size = size_of::<AerogpuCmdSetVertexBuffers>() + core::mem::size_of_val(bindings);
+        let unpadded_size =
+            size_of::<AerogpuCmdSetVertexBuffers>() + core::mem::size_of_val(bindings);
         let base = self.append_raw(AerogpuCmdOpcode::SetVertexBuffers, unpadded_size);
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetVertexBuffers, start_slot), start_slot);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetVertexBuffers, start_slot),
+            start_slot,
+        );
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetVertexBuffers, buffer_count),
             bindings.len() as u32,
@@ -363,17 +517,40 @@ impl AerogpuCmdWriter {
         let bindings_base = base + size_of::<AerogpuCmdSetVertexBuffers>();
         for (i, binding) in bindings.iter().enumerate() {
             let b = bindings_base + i * size_of::<AerogpuVertexBufferBinding>();
-            self.write_u32_at(b + offset_of!(AerogpuVertexBufferBinding, buffer), binding.buffer);
-            self.write_u32_at(b + offset_of!(AerogpuVertexBufferBinding, stride_bytes), binding.stride_bytes);
-            self.write_u32_at(b + offset_of!(AerogpuVertexBufferBinding, offset_bytes), binding.offset_bytes);
+            self.write_u32_at(
+                b + offset_of!(AerogpuVertexBufferBinding, buffer),
+                binding.buffer,
+            );
+            self.write_u32_at(
+                b + offset_of!(AerogpuVertexBufferBinding, stride_bytes),
+                binding.stride_bytes,
+            );
+            self.write_u32_at(
+                b + offset_of!(AerogpuVertexBufferBinding, offset_bytes),
+                binding.offset_bytes,
+            );
         }
     }
 
-    pub fn set_index_buffer(&mut self, buffer: AerogpuHandle, format: AerogpuIndexFormat, offset_bytes: u32) {
-        let base = self.append_raw(AerogpuCmdOpcode::SetIndexBuffer, size_of::<AerogpuCmdSetIndexBuffer>());
+    pub fn set_index_buffer(
+        &mut self,
+        buffer: AerogpuHandle,
+        format: AerogpuIndexFormat,
+        offset_bytes: u32,
+    ) {
+        let base = self.append_raw(
+            AerogpuCmdOpcode::SetIndexBuffer,
+            size_of::<AerogpuCmdSetIndexBuffer>(),
+        );
         self.write_u32_at(base + offset_of!(AerogpuCmdSetIndexBuffer, buffer), buffer);
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetIndexBuffer, format), format as u32);
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetIndexBuffer, offset_bytes), offset_bytes);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetIndexBuffer, format),
+            format as u32,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetIndexBuffer, offset_bytes),
+            offset_bytes,
+        );
     }
 
     pub fn set_primitive_topology(&mut self, topology: AerogpuPrimitiveTopology) {
@@ -381,29 +558,55 @@ impl AerogpuCmdWriter {
             AerogpuCmdOpcode::SetPrimitiveTopology,
             size_of::<AerogpuCmdSetPrimitiveTopology>(),
         );
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetPrimitiveTopology, topology), topology as u32);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetPrimitiveTopology, topology),
+            topology as u32,
+        );
     }
 
-    pub fn set_texture(&mut self, shader_stage: AerogpuShaderStage, slot: u32, texture: AerogpuHandle) {
-        let base = self.append_raw(AerogpuCmdOpcode::SetTexture, size_of::<AerogpuCmdSetTexture>());
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetTexture, shader_stage), shader_stage as u32);
+    pub fn set_texture(
+        &mut self,
+        shader_stage: AerogpuShaderStage,
+        slot: u32,
+        texture: AerogpuHandle,
+    ) {
+        let base = self.append_raw(
+            AerogpuCmdOpcode::SetTexture,
+            size_of::<AerogpuCmdSetTexture>(),
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetTexture, shader_stage),
+            shader_stage as u32,
+        );
         self.write_u32_at(base + offset_of!(AerogpuCmdSetTexture, slot), slot);
         self.write_u32_at(base + offset_of!(AerogpuCmdSetTexture, texture), texture);
     }
 
-    pub fn set_sampler_state(&mut self, shader_stage: AerogpuShaderStage, slot: u32, state: u32, value: u32) {
+    pub fn set_sampler_state(
+        &mut self,
+        shader_stage: AerogpuShaderStage,
+        slot: u32,
+        state: u32,
+        value: u32,
+    ) {
         let base = self.append_raw(
             AerogpuCmdOpcode::SetSamplerState,
             size_of::<AerogpuCmdSetSamplerState>(),
         );
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetSamplerState, shader_stage), shader_stage as u32);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetSamplerState, shader_stage),
+            shader_stage as u32,
+        );
         self.write_u32_at(base + offset_of!(AerogpuCmdSetSamplerState, slot), slot);
         self.write_u32_at(base + offset_of!(AerogpuCmdSetSamplerState, state), state);
         self.write_u32_at(base + offset_of!(AerogpuCmdSetSamplerState, value), value);
     }
 
     pub fn set_render_state(&mut self, state: u32, value: u32) {
-        let base = self.append_raw(AerogpuCmdOpcode::SetRenderState, size_of::<AerogpuCmdSetRenderState>());
+        let base = self.append_raw(
+            AerogpuCmdOpcode::SetRenderState,
+            size_of::<AerogpuCmdSetRenderState>(),
+        );
         self.write_u32_at(base + offset_of!(AerogpuCmdSetRenderState, state), state);
         self.write_u32_at(base + offset_of!(AerogpuCmdSetRenderState, value), value);
     }
@@ -425,12 +628,18 @@ impl AerogpuCmdWriter {
         let vec4_count = (data.len() / 4) as u32;
         let unpadded_size = size_of::<AerogpuCmdSetShaderConstantsF>() + data.len() * 4;
         let base = self.append_raw(AerogpuCmdOpcode::SetShaderConstantsF, unpadded_size);
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetShaderConstantsF, stage), stage as u32);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetShaderConstantsF, stage),
+            stage as u32,
+        );
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetShaderConstantsF, start_register),
             start_register,
         );
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetShaderConstantsF, vec4_count), vec4_count);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetShaderConstantsF, vec4_count),
+            vec4_count,
+        );
 
         let payload_base = base + size_of::<AerogpuCmdSetShaderConstantsF>();
         for (i, &v) in data.iter().enumerate() {
@@ -448,13 +657,31 @@ impl AerogpuCmdWriter {
     ) {
         use super::aerogpu_cmd::AerogpuBlendState;
 
-        let base = self.append_raw(AerogpuCmdOpcode::SetBlendState, size_of::<AerogpuCmdSetBlendState>());
+        let base = self.append_raw(
+            AerogpuCmdOpcode::SetBlendState,
+            size_of::<AerogpuCmdSetBlendState>(),
+        );
         let state_base = base + offset_of!(AerogpuCmdSetBlendState, state);
-        self.write_u32_at(state_base + offset_of!(AerogpuBlendState, enable), enable as u32);
-        self.write_u32_at(state_base + offset_of!(AerogpuBlendState, src_factor), src_factor as u32);
-        self.write_u32_at(state_base + offset_of!(AerogpuBlendState, dst_factor), dst_factor as u32);
-        self.write_u32_at(state_base + offset_of!(AerogpuBlendState, blend_op), blend_op as u32);
-        self.write_u8_at(state_base + offset_of!(AerogpuBlendState, color_write_mask), color_write_mask);
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuBlendState, enable),
+            enable as u32,
+        );
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuBlendState, src_factor),
+            src_factor as u32,
+        );
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuBlendState, dst_factor),
+            dst_factor as u32,
+        );
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuBlendState, blend_op),
+            blend_op as u32,
+        );
+        self.write_u8_at(
+            state_base + offset_of!(AerogpuBlendState, color_write_mask),
+            color_write_mask,
+        );
     }
 
     pub fn set_depth_stencil_state(
@@ -481,7 +708,10 @@ impl AerogpuCmdWriter {
             state_base + offset_of!(AerogpuDepthStencilState, depth_write_enable),
             depth_write_enable as u32,
         );
-        self.write_u32_at(state_base + offset_of!(AerogpuDepthStencilState, depth_func), depth_func as u32);
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuDepthStencilState, depth_func),
+            depth_func as u32,
+        );
         self.write_u32_at(
             state_base + offset_of!(AerogpuDepthStencilState, stencil_enable),
             stencil_enable as u32,
@@ -511,8 +741,14 @@ impl AerogpuCmdWriter {
             size_of::<AerogpuCmdSetRasterizerState>(),
         );
         let state_base = base + offset_of!(AerogpuCmdSetRasterizerState, state);
-        self.write_u32_at(state_base + offset_of!(AerogpuRasterizerState, fill_mode), fill_mode as u32);
-        self.write_u32_at(state_base + offset_of!(AerogpuRasterizerState, cull_mode), cull_mode as u32);
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuRasterizerState, fill_mode),
+            fill_mode as u32,
+        );
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuRasterizerState, cull_mode),
+            cull_mode as u32,
+        );
         self.write_u32_at(
             state_base + offset_of!(AerogpuRasterizerState, front_ccw),
             front_ccw as u32,
@@ -521,7 +757,10 @@ impl AerogpuCmdWriter {
             state_base + offset_of!(AerogpuRasterizerState, scissor_enable),
             scissor_enable as u32,
         );
-        self.write_i32_at(state_base + offset_of!(AerogpuRasterizerState, depth_bias), depth_bias);
+        self.write_i32_at(
+            state_base + offset_of!(AerogpuRasterizerState, depth_bias),
+            depth_bias,
+        );
     }
 
     pub fn clear(&mut self, flags: u32, color_rgba: [f32; 4], depth: f32, stencil: u32) {
@@ -533,16 +772,37 @@ impl AerogpuCmdWriter {
             self.write_u32_at(color_base + i * 4, c.to_bits());
         }
 
-        self.write_u32_at(base + offset_of!(AerogpuCmdClear, depth_f32), depth.to_bits());
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdClear, depth_f32),
+            depth.to_bits(),
+        );
         self.write_u32_at(base + offset_of!(AerogpuCmdClear, stencil), stencil);
     }
 
-    pub fn draw(&mut self, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) {
+    pub fn draw(
+        &mut self,
+        vertex_count: u32,
+        instance_count: u32,
+        first_vertex: u32,
+        first_instance: u32,
+    ) {
         let base = self.append_raw(AerogpuCmdOpcode::Draw, size_of::<AerogpuCmdDraw>());
-        self.write_u32_at(base + offset_of!(AerogpuCmdDraw, vertex_count), vertex_count);
-        self.write_u32_at(base + offset_of!(AerogpuCmdDraw, instance_count), instance_count);
-        self.write_u32_at(base + offset_of!(AerogpuCmdDraw, first_vertex), first_vertex);
-        self.write_u32_at(base + offset_of!(AerogpuCmdDraw, first_instance), first_instance);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdDraw, vertex_count),
+            vertex_count,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdDraw, instance_count),
+            instance_count,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdDraw, first_vertex),
+            first_vertex,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdDraw, first_instance),
+            first_instance,
+        );
     }
 
     pub fn draw_indexed(
@@ -553,12 +813,30 @@ impl AerogpuCmdWriter {
         base_vertex: i32,
         first_instance: u32,
     ) {
-        let base = self.append_raw(AerogpuCmdOpcode::DrawIndexed, size_of::<AerogpuCmdDrawIndexed>());
-        self.write_u32_at(base + offset_of!(AerogpuCmdDrawIndexed, index_count), index_count);
-        self.write_u32_at(base + offset_of!(AerogpuCmdDrawIndexed, instance_count), instance_count);
-        self.write_u32_at(base + offset_of!(AerogpuCmdDrawIndexed, first_index), first_index);
-        self.write_i32_at(base + offset_of!(AerogpuCmdDrawIndexed, base_vertex), base_vertex);
-        self.write_u32_at(base + offset_of!(AerogpuCmdDrawIndexed, first_instance), first_instance);
+        let base = self.append_raw(
+            AerogpuCmdOpcode::DrawIndexed,
+            size_of::<AerogpuCmdDrawIndexed>(),
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdDrawIndexed, index_count),
+            index_count,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdDrawIndexed, instance_count),
+            instance_count,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdDrawIndexed, first_index),
+            first_index,
+        );
+        self.write_i32_at(
+            base + offset_of!(AerogpuCmdDrawIndexed, base_vertex),
+            base_vertex,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdDrawIndexed, first_instance),
+            first_instance,
+        );
     }
 
     pub fn present(&mut self, scanout_id: u32, flags: u32) {
@@ -568,8 +846,14 @@ impl AerogpuCmdWriter {
     }
 
     pub fn present_ex(&mut self, scanout_id: u32, flags: u32, d3d9_present_flags: u32) {
-        let base = self.append_raw(AerogpuCmdOpcode::PresentEx, size_of::<AerogpuCmdPresentEx>());
-        self.write_u32_at(base + offset_of!(AerogpuCmdPresentEx, scanout_id), scanout_id);
+        let base = self.append_raw(
+            AerogpuCmdOpcode::PresentEx,
+            size_of::<AerogpuCmdPresentEx>(),
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdPresentEx, scanout_id),
+            scanout_id,
+        );
         self.write_u32_at(base + offset_of!(AerogpuCmdPresentEx, flags), flags);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdPresentEx, d3d9_present_flags),
@@ -586,7 +870,10 @@ impl AerogpuCmdWriter {
             base + offset_of!(AerogpuCmdExportSharedSurface, resource_handle),
             resource_handle,
         );
-        self.write_u64_at(base + offset_of!(AerogpuCmdExportSharedSurface, share_token), share_token);
+        self.write_u64_at(
+            base + offset_of!(AerogpuCmdExportSharedSurface, share_token),
+            share_token,
+        );
     }
 
     pub fn import_shared_surface(&mut self, out_resource_handle: AerogpuHandle, share_token: u64) {
@@ -598,7 +885,10 @@ impl AerogpuCmdWriter {
             base + offset_of!(AerogpuCmdImportSharedSurface, out_resource_handle),
             out_resource_handle,
         );
-        self.write_u64_at(base + offset_of!(AerogpuCmdImportSharedSurface, share_token), share_token);
+        self.write_u64_at(
+            base + offset_of!(AerogpuCmdImportSharedSurface, share_token),
+            share_token,
+        );
     }
 
     pub fn flush(&mut self) {

@@ -243,7 +243,9 @@ fn no_aerogpu_1ae0_tokens_outside_archived_prototype_tree() {
             continue;
         };
 
-        if buf.windows(forbidden_vendor.len()).any(|w| w == forbidden_vendor)
+        if buf
+            .windows(forbidden_vendor.len())
+            .any(|w| w == forbidden_vendor)
             || buf.windows(forbidden_hex.len()).any(|w| w == forbidden_hex)
         {
             hits.push(rel_str.into_owned());

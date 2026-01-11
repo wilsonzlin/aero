@@ -75,14 +75,14 @@ impl OpfsSyncFileHandle for SparseMockHandle {
         let max_len = (self.size - offset).min(buf.len() as u64) as usize;
         buf[..max_len].fill(0);
 
-        let end = offset
-            .checked_add(max_len as u64)
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow"))?;
+        let end = offset.checked_add(max_len as u64).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow")
+        })?;
 
         for (pos, byte) in self.bytes.range(offset..end) {
-            let idx: usize = (*pos - offset)
-                .try_into()
-                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow"))?;
+            let idx: usize = (*pos - offset).try_into().map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow")
+            })?;
             buf[idx] = *byte;
         }
 
@@ -90,15 +90,15 @@ impl OpfsSyncFileHandle for SparseMockHandle {
     }
 
     fn write_at(&mut self, offset: u64, buf: &[u8]) -> std::io::Result<usize> {
-        let end = offset
-            .checked_add(buf.len() as u64)
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow"))?;
+        let end = offset.checked_add(buf.len() as u64).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow")
+        })?;
         self.size = self.size.max(end);
 
         for (idx, byte) in buf.iter().copied().enumerate() {
-            let pos = offset
-                .checked_add(idx as u64)
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow"))?;
+            let pos = offset.checked_add(idx as u64).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow")
+            })?;
             self.bytes.insert(pos, byte);
         }
 

@@ -126,11 +126,7 @@ pub enum AerogpuD3d9Error {
     #[error(
         "shared surface alias handle {alias} already bound (existing_handle={existing} new_handle={new})"
     )]
-    SharedSurfaceAliasAlreadyBound {
-        alias: u32,
-        existing: u32,
-        new: u32,
-    },
+    SharedSurfaceAliasAlreadyBound { alias: u32, existing: u32, new: u32 },
     #[error("missing alloc table entry for alloc_id={0}")]
     MissingAllocTable(u32),
     #[error("missing guest memory for dirty guest-backed resource {0}")]
@@ -1098,51 +1094,53 @@ impl AerogpuD3d9Executor {
 
                     let src_underlying = self.resolve_resource_handle(src_texture)?;
                     let dst_underlying = self.resolve_resource_handle(dst_texture)?;
-                    let ((src_format, src_w, src_h, src_mips, src_layers), (dst_format, dst_w, dst_h, dst_mips, dst_layers)) =
-                        {
-                            let src = self
-                                .resources
-                                .get(&src_underlying)
-                                .ok_or(AerogpuD3d9Error::UnknownResource(src_texture))?;
-                            let dst = self
-                                .resources
-                                .get(&dst_underlying)
-                                .ok_or(AerogpuD3d9Error::UnknownResource(dst_texture))?;
+                    let (
+                        (src_format, src_w, src_h, src_mips, src_layers),
+                        (dst_format, dst_w, dst_h, dst_mips, dst_layers),
+                    ) = {
+                        let src = self
+                            .resources
+                            .get(&src_underlying)
+                            .ok_or(AerogpuD3d9Error::UnknownResource(src_texture))?;
+                        let dst = self
+                            .resources
+                            .get(&dst_underlying)
+                            .ok_or(AerogpuD3d9Error::UnknownResource(dst_texture))?;
 
-                            let src_info = match src {
-                                Resource::Texture2d {
-                                    format,
-                                    width,
-                                    height,
-                                    mip_level_count,
-                                    array_layers,
-                                    ..
-                                } => (*format, *width, *height, *mip_level_count, *array_layers),
-                                _ => {
-                                    return Err(AerogpuD3d9Error::CopyNotSupported {
-                                        src: src_texture,
-                                        dst: dst_texture,
-                                    })
-                                }
-                            };
-                            let dst_info = match dst {
-                                Resource::Texture2d {
-                                    format,
-                                    width,
-                                    height,
-                                    mip_level_count,
-                                    array_layers,
-                                    ..
-                                } => (*format, *width, *height, *mip_level_count, *array_layers),
-                                _ => {
-                                    return Err(AerogpuD3d9Error::CopyNotSupported {
-                                        src: src_texture,
-                                        dst: dst_texture,
-                                    })
-                                }
-                            };
-                            (src_info, dst_info)
+                        let src_info = match src {
+                            Resource::Texture2d {
+                                format,
+                                width,
+                                height,
+                                mip_level_count,
+                                array_layers,
+                                ..
+                            } => (*format, *width, *height, *mip_level_count, *array_layers),
+                            _ => {
+                                return Err(AerogpuD3d9Error::CopyNotSupported {
+                                    src: src_texture,
+                                    dst: dst_texture,
+                                })
+                            }
                         };
+                        let dst_info = match dst {
+                            Resource::Texture2d {
+                                format,
+                                width,
+                                height,
+                                mip_level_count,
+                                array_layers,
+                                ..
+                            } => (*format, *width, *height, *mip_level_count, *array_layers),
+                            _ => {
+                                return Err(AerogpuD3d9Error::CopyNotSupported {
+                                    src: src_texture,
+                                    dst: dst_texture,
+                                })
+                            }
+                        };
+                        (src_info, dst_info)
+                    };
 
                     if src_format != dst_format {
                         return Err(AerogpuD3d9Error::CopyNotSupported {
@@ -1169,22 +1167,34 @@ impl AerogpuD3d9Executor {
                     let src_mip_w = mip_dim(src_w, src_mip_level);
                     let src_mip_h = mip_dim(src_h, src_mip_level);
 
-                    let dst_x_end = dst_x.checked_add(width).ok_or(AerogpuD3d9Error::CopyOutOfBounds {
-                        src: src_texture,
-                        dst: dst_texture,
-                    })?;
-                    let dst_y_end = dst_y.checked_add(height).ok_or(AerogpuD3d9Error::CopyOutOfBounds {
-                        src: src_texture,
-                        dst: dst_texture,
-                    })?;
-                    let src_x_end = src_x.checked_add(width).ok_or(AerogpuD3d9Error::CopyOutOfBounds {
-                        src: src_texture,
-                        dst: dst_texture,
-                    })?;
-                    let src_y_end = src_y.checked_add(height).ok_or(AerogpuD3d9Error::CopyOutOfBounds {
-                        src: src_texture,
-                        dst: dst_texture,
-                    })?;
+                    let dst_x_end =
+                        dst_x
+                            .checked_add(width)
+                            .ok_or(AerogpuD3d9Error::CopyOutOfBounds {
+                                src: src_texture,
+                                dst: dst_texture,
+                            })?;
+                    let dst_y_end =
+                        dst_y
+                            .checked_add(height)
+                            .ok_or(AerogpuD3d9Error::CopyOutOfBounds {
+                                src: src_texture,
+                                dst: dst_texture,
+                            })?;
+                    let src_x_end =
+                        src_x
+                            .checked_add(width)
+                            .ok_or(AerogpuD3d9Error::CopyOutOfBounds {
+                                src: src_texture,
+                                dst: dst_texture,
+                            })?;
+                    let src_y_end =
+                        src_y
+                            .checked_add(height)
+                            .ok_or(AerogpuD3d9Error::CopyOutOfBounds {
+                                src: src_texture,
+                                dst: dst_texture,
+                            })?;
 
                     if dst_x_end > dst_mip_w
                         || dst_y_end > dst_mip_h
@@ -1368,13 +1378,13 @@ impl AerogpuD3d9Executor {
                 // Use an encoder-ordered copy to guarantee the constants update is visible to
                 // subsequent draws in the same submission.
                 self.ensure_encoder();
-                let staging =
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("aerogpu-d3d9.constants_staging"),
-                            contents: data,
-                            usage: wgpu::BufferUsages::COPY_SRC,
-                        });
+                let staging = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("aerogpu-d3d9.constants_staging"),
+                        contents: data,
+                        usage: wgpu::BufferUsages::COPY_SRC,
+                    });
                 let mut encoder = self.encoder.take().unwrap();
                 encoder.copy_buffer_to_buffer(
                     &staging,
@@ -1663,7 +1673,8 @@ impl AerogpuD3d9Executor {
                         });
                     }
                 } else {
-                    self.resource_handles.insert(out_resource_handle, underlying);
+                    self.resource_handles
+                        .insert(out_resource_handle, underlying);
                     *self.resource_refcounts.entry(underlying).or_insert(0) += 1;
                 }
 
@@ -2217,7 +2228,9 @@ impl AerogpuD3d9Executor {
         let pipeline = if let Some(existing) = self.pipelines.get(&pipeline_key) {
             existing
         } else {
-            let pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            let pipeline = self
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some("aerogpu-d3d9.pipeline"),
                     layout: Some(&self.pipeline_layout),
                     vertex: wgpu::VertexState {
@@ -2263,7 +2276,8 @@ impl AerogpuD3d9Executor {
                                 front: wgpu::StencilFaceState::IGNORE,
                                 back: wgpu::StencilFaceState::IGNORE,
                                 read_mask: self.state.depth_stencil_state.stencil_read_mask as u32,
-                                write_mask: self.state.depth_stencil_state.stencil_write_mask as u32,
+                                write_mask: self.state.depth_stencil_state.stencil_write_mask
+                                    as u32,
                             }
                         } else {
                             wgpu::StencilState {
@@ -2464,7 +2478,10 @@ impl AerogpuD3d9Executor {
 
     fn set_render_state_u32(&mut self, state_id: u32, value: u32) {
         if state_id > MAX_REASONABLE_RENDER_STATE_ID {
-            debug!(state_id, value, "ignoring suspiciously large D3D9 render state id");
+            debug!(
+                state_id,
+                value, "ignoring suspiciously large D3D9 render state id"
+            );
             return;
         }
 
@@ -2479,7 +2496,9 @@ impl AerogpuD3d9Executor {
 
         match state_id {
             d3d9::D3DRS_ZENABLE => self.state.depth_stencil_state.depth_enable = value != 0,
-            d3d9::D3DRS_ZWRITEENABLE => self.state.depth_stencil_state.depth_write_enable = value != 0,
+            d3d9::D3DRS_ZWRITEENABLE => {
+                self.state.depth_stencil_state.depth_write_enable = value != 0
+            }
             d3d9::D3DRS_ZFUNC => match d3d9_compare_to_aerogpu(value) {
                 Some(func) => self.state.depth_stencil_state.depth_func = func,
                 None => debug!(state_id, value, "unknown D3D9 compare func"),
@@ -2517,7 +2536,9 @@ impl AerogpuD3d9Executor {
             d3d9::D3DRS_COLORWRITEENABLE => {
                 self.state.blend_state.color_write_mask = (value & 0xF) as u8
             }
-            d3d9::D3DRS_SCISSORTESTENABLE => self.state.rasterizer_state.scissor_enable = value != 0,
+            d3d9::D3DRS_SCISSORTESTENABLE => {
+                self.state.rasterizer_state.scissor_enable = value != 0
+            }
             d3d9::D3DRS_FRONTCOUNTERCLOCKWISE => {
                 self.state.rasterizer_state.front_ccw = value != 0;
                 self.update_cull_mode_from_render_state();
@@ -2572,7 +2593,10 @@ impl AerogpuD3d9Executor {
         }
 
         if state_id > MAX_REASONABLE_SAMPLER_STATE_ID {
-            debug!(slot, state_id, value, "ignoring suspiciously large D3D9 sampler state id");
+            debug!(
+                slot,
+                state_id, value, "ignoring suspiciously large D3D9 sampler state id"
+            );
             return;
         }
 
@@ -2595,12 +2619,16 @@ impl AerogpuD3d9Executor {
             d3d9::D3DSAMP_MIPFILTER => self.sampler_state_ps[slot].mip_filter = value,
             _ => {
                 affects_sampler = false;
-                debug!(slot, state_id, value, "ignoring unsupported D3D9 sampler state");
+                debug!(
+                    slot,
+                    state_id, value, "ignoring unsupported D3D9 sampler state"
+                );
             }
         }
 
         if affects_sampler {
-            self.samplers_ps[slot] = create_wgpu_sampler(&self.device, &self.sampler_state_ps[slot]);
+            self.samplers_ps[slot] =
+                create_wgpu_sampler(&self.device, &self.sampler_state_ps[slot]);
             self.bind_group_dirty = true;
         }
     }

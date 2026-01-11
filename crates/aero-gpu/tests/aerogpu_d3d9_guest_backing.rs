@@ -5,9 +5,8 @@ use aero_protocol::aerogpu::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
         AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,
         AerogpuShaderStage, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
-        AEROGPU_COPY_FLAG_WRITEBACK_DST,
-        AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
-        AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+        AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+        AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
     },
     aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_MAJOR},
 };

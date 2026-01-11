@@ -20,4 +20,3 @@ fn pci_bus_snapshot_rejects_excessive_bdf_count() {
         other => panic!("expected InvalidFieldEncoding, got {other:?}"),
     }
 }
-

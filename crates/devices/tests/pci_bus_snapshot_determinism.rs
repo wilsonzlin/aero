@@ -57,4 +57,3 @@ fn pci_bus_snapshot_roundtrips_bytes_through_load_save() {
 
     assert_eq!(bytes, bytes2);
 }
-

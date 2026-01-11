@@ -53,4 +53,3 @@ impl RealModeCpu {
         self.flags |= FLAG_CF;
     }
 }
-

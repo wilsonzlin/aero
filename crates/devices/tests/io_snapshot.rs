@@ -8,8 +8,8 @@ use aero_devices::ioapic::IoApic;
 use aero_devices::irq::IrqLine;
 use aero_devices::pci::{
     GsiLevelSink, MsiCapability, PciBarDefinition, PciBdf, PciBus, PciBusSnapshot,
-    PciConfigMechanism1, PciConfigSpace, PciDevice, PciIntxRouter, PciIntxRouterConfig,
-    PciInterruptPin,
+    PciConfigMechanism1, PciConfigSpace, PciDevice, PciInterruptPin, PciIntxRouter,
+    PciIntxRouterConfig,
 };
 use aero_devices::pit8254::{Pit8254, PIT_CH0, PIT_CMD};
 use aero_devices::rtc_cmos::RtcCmos;
@@ -109,7 +109,10 @@ fn snapshot_bytes_are_deterministic() {
     assert_eq!(a20.save_state(), a20.save_state());
 
     let mut bus = PciBus::new();
-    bus.add_device(PciBdf::new(0, 1, 0), Box::new(StubPciDev::new(0x1234, 0x0001)));
+    bus.add_device(
+        PciBdf::new(0, 1, 0),
+        Box::new(StubPciDev::new(0x1234, 0x0001)),
+    );
     let bus_snapshot = PciBusSnapshot::save_from(&bus);
     assert_eq!(bus_snapshot.save_state(), bus_snapshot.save_state());
 
@@ -176,7 +179,10 @@ fn pit_snapshot_restore_preserves_latched_read_phase() {
     let live_hi = pit.port_read(PIT_CH0, 1) as u8;
     let live_lo2 = restored.port_read(PIT_CH0, 1) as u8;
     let live_hi2 = restored.port_read(PIT_CH0, 1) as u8;
-    assert_eq!(u16::from_le_bytes([live_lo, live_hi]), u16::from_le_bytes([live_lo2, live_hi2]));
+    assert_eq!(
+        u16::from_le_bytes([live_lo, live_hi]),
+        u16::from_le_bytes([live_lo2, live_hi2])
+    );
 }
 
 #[test]
@@ -203,7 +209,10 @@ fn rtc_snapshot_restore_preserves_pending_irq_and_next_periodic_tick() {
     let mut rtc2 = RtcCmos::new(clock2.clone(), irq2.clone());
     rtc2.load_state(&snap).unwrap();
 
-    assert!(irq2.level(), "restored RTC should re-drive IRQ8 when flags are pending");
+    assert!(
+        irq2.level(),
+        "restored RTC should re-drive IRQ8 when flags are pending"
+    );
 
     let status_c = rtc_read_reg(&mut rtc2, RTC_REG_STATUS_C);
     assert_ne!(status_c & RTC_REG_C_PF, 0);
@@ -212,11 +221,17 @@ fn rtc_snapshot_restore_preserves_pending_irq_and_next_periodic_tick() {
     let remaining = INTERVAL_NS - DELTA_NS;
     clock2.advance_ns(remaining - 1);
     rtc2.tick();
-    assert!(!irq2.level(), "periodic IRQ should not fire before the remaining interval");
+    assert!(
+        !irq2.level(),
+        "periodic IRQ should not fire before the remaining interval"
+    );
 
     clock2.advance_ns(1);
     rtc2.tick();
-    assert!(irq2.level(), "periodic IRQ should fire when the remaining interval elapses");
+    assert!(
+        irq2.level(),
+        "periodic IRQ should fire when the remaining interval elapses"
+    );
 }
 
 #[test]
@@ -258,7 +273,10 @@ fn hpet_snapshot_restore_keeps_edge_interrupt_latched_without_refiring() {
         "edge-triggered HPET interrupts should not re-fire on restore"
     );
     assert_eq!(restored.mmio_read(HPET_REG_MAIN_COUNTER, 8, &mut sink2), 1);
-    assert_ne!(restored.mmio_read(HPET_REG_GENERAL_INT_STATUS, 8, &mut sink2) & 1, 0);
+    assert_ne!(
+        restored.mmio_read(HPET_REG_GENERAL_INT_STATUS, 8, &mut sink2) & 1,
+        0
+    );
 }
 
 #[test]
@@ -392,7 +410,11 @@ fn pci_snapshot_restore_preserves_msi_state_and_pending_bits() {
     assert_eq!(msi2.message_data(), 0x0045);
 
     let pending = cfg2.read(cap_offset + 0x14, 4);
-    assert_eq!(pending & 1, 1, "MSI pending bit should survive snapshot/restore");
+    assert_eq!(
+        pending & 1,
+        1,
+        "MSI pending bit should survive snapshot/restore"
+    );
 }
 
 #[derive(Default)]

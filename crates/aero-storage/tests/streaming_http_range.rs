@@ -245,10 +245,8 @@ async fn start_last_modified_server(
                                 );
                                 resp.headers_mut()
                                     .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
-                                resp.headers_mut().insert(
-                                    LAST_MODIFIED,
-                                    state.last_modified.parse().unwrap(),
-                                );
+                                resp.headers_mut()
+                                    .insert(LAST_MODIFIED, state.last_modified.parse().unwrap());
                                 Ok::<_, Infallible>(resp)
                             }
                             Method::GET => {
@@ -260,15 +258,17 @@ async fn start_last_modified_server(
                                     return Ok(resp);
                                 };
                                 state.counters.get_range.fetch_add(1, Ordering::SeqCst);
-                                let (start, end_exclusive) =
-                                    match parse_range_header(range_header, state.image.len() as u64) {
-                                        Ok(v) => v,
-                                        Err(status) => {
-                                            let mut resp = Response::new(Body::empty());
-                                            *resp.status_mut() = status;
-                                            return Ok(resp);
-                                        }
-                                    };
+                                let (start, end_exclusive) = match parse_range_header(
+                                    range_header,
+                                    state.image.len() as u64,
+                                ) {
+                                    Ok(v) => v,
+                                    Err(status) => {
+                                        let mut resp = Response::new(Body::empty());
+                                        *resp.status_mut() = status;
+                                        return Ok(resp);
+                                    }
+                                };
 
                                 let end_inclusive = end_exclusive - 1;
                                 let body =
@@ -281,18 +281,13 @@ async fn start_last_modified_server(
                                 );
                                 resp.headers_mut()
                                     .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
-                                resp.headers_mut().insert(
-                                    LAST_MODIFIED,
-                                    state.last_modified.parse().unwrap(),
-                                );
+                                resp.headers_mut()
+                                    .insert(LAST_MODIFIED, state.last_modified.parse().unwrap());
                                 resp.headers_mut().insert(
                                     CONTENT_RANGE,
-                                    format!(
-                                        "bytes {start}-{end_inclusive}/{}",
-                                        state.image.len()
-                                    )
-                                    .parse()
-                                    .unwrap(),
+                                    format!("bytes {start}-{end_inclusive}/{}", state.image.len())
+                                        .parse()
+                                        .unwrap(),
                                 );
                                 Ok(resp)
                             }
@@ -312,9 +307,9 @@ async fn start_last_modified_server(
     let builder = Server::try_bind(&addr).expect("bind");
     let local_addr = builder.local_addr();
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-    let server = builder
-        .serve(make_svc)
-        .with_graceful_shutdown(async move { let _ = shutdown_rx.await; });
+    let server = builder.serve(make_svc).with_graceful_shutdown(async move {
+        let _ = shutdown_rx.await;
+    });
     tokio::spawn(server);
 
     let url = Url::parse(&format!("http://{local_addr}/image.raw")).expect("url");
@@ -717,9 +712,7 @@ async fn http_errors_redact_url_query() {
 
 #[tokio::test]
 async fn last_modified_is_used_as_validator_when_etag_missing() {
-    let image: Vec<u8> = (0..(4096 + 123))
-        .map(|i| (i % 251) as u8)
-        .collect();
+    let image: Vec<u8> = (0..(4096 + 123)).map(|i| (i % 251) as u8).collect();
     let last_modified = "Mon, 01 Jan 2024 00:00:00 GMT";
     let (url, state, shutdown) = start_last_modified_server(image.clone(), last_modified).await;
 

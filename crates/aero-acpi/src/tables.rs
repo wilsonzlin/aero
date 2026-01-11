@@ -1258,20 +1258,8 @@ mod tests {
         let dsdt = build_dsdt(&cfg);
 
         let pnp0a03 = eisa_id_to_u32("PNP0A03").unwrap().to_le_bytes();
-        let hid_pnp0a03 = [
-            &[0x08][..],
-            &b"_HID"[..],
-            &[0x0C][..],
-            &pnp0a03[..],
-        ]
-        .concat();
-        let cid_pnp0a03 = [
-            &[0x08][..],
-            &b"_CID"[..],
-            &[0x0C][..],
-            &pnp0a03[..],
-        ]
-        .concat();
+        let hid_pnp0a03 = [&[0x08][..], &b"_HID"[..], &[0x0C][..], &pnp0a03[..]].concat();
+        let cid_pnp0a03 = [&[0x08][..], &b"_CID"[..], &[0x0C][..], &pnp0a03[..]].concat();
 
         assert!(
             contains_subslice(&dsdt, &hid_pnp0a03),
@@ -1292,27 +1280,9 @@ mod tests {
 
         let pnp0a03 = eisa_id_to_u32("PNP0A03").unwrap().to_le_bytes();
         let pnp0a08 = eisa_id_to_u32("PNP0A08").unwrap().to_le_bytes();
-        let hid_pnp0a03 = [
-            &[0x08][..],
-            &b"_HID"[..],
-            &[0x0C][..],
-            &pnp0a03[..],
-        ]
-        .concat();
-        let hid_pnp0a08 = [
-            &[0x08][..],
-            &b"_HID"[..],
-            &[0x0C][..],
-            &pnp0a08[..],
-        ]
-        .concat();
-        let cid_pnp0a03 = [
-            &[0x08][..],
-            &b"_CID"[..],
-            &[0x0C][..],
-            &pnp0a03[..],
-        ]
-        .concat();
+        let hid_pnp0a03 = [&[0x08][..], &b"_HID"[..], &[0x0C][..], &pnp0a03[..]].concat();
+        let hid_pnp0a08 = [&[0x08][..], &b"_HID"[..], &[0x0C][..], &pnp0a08[..]].concat();
+        let cid_pnp0a03 = [&[0x08][..], &b"_CID"[..], &[0x0C][..], &pnp0a03[..]].concat();
 
         assert!(
             contains_subslice(&dsdt, &hid_pnp0a08),

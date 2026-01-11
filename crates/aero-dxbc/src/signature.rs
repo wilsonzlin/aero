@@ -90,7 +90,9 @@ fn parse_signature_chunk_impl(
                 bytes.len()
             )));
         }
-        return Ok(SignatureChunk { entries: Vec::new() });
+        return Ok(SignatureChunk {
+            entries: Vec::new(),
+        });
     }
 
     if param_offset_usize < SIGNATURE_HEADER_LEN {
@@ -156,9 +158,9 @@ fn parse_signature_chunk_with_entry_size(
     let param_count_usize = param_count as usize;
     let param_offset_usize = param_offset as usize;
 
-    let table_bytes = param_count_usize
-        .checked_mul(entry_size)
-        .ok_or_else(|| DxbcError::invalid_chunk("signature parameter count overflows table size"))?;
+    let table_bytes = param_count_usize.checked_mul(entry_size).ok_or_else(|| {
+        DxbcError::invalid_chunk("signature parameter count overflows table size")
+    })?;
 
     let table_end = param_offset_usize
         .checked_add(table_bytes)
@@ -172,21 +174,21 @@ fn parse_signature_chunk_with_entry_size(
     }
 
     let mut entries = Vec::new();
-    entries
-        .try_reserve_exact(param_count_usize)
-        .map_err(|_| {
-            DxbcError::invalid_chunk(format!(
-                "signature entry count {param_count} is too large to allocate"
-            ))
-        })?;
+    entries.try_reserve_exact(param_count_usize).map_err(|_| {
+        DxbcError::invalid_chunk(format!(
+            "signature entry count {param_count} is too large to allocate"
+        ))
+    })?;
 
     for entry_index in 0..param_count_usize {
         let entry_offset = entry_index.checked_mul(entry_size).ok_or_else(|| {
             DxbcError::invalid_chunk(format!("signature entry {entry_index} offset overflows"))
         })?;
-        let entry_start = param_offset_usize.checked_add(entry_offset).ok_or_else(|| {
-            DxbcError::invalid_chunk(format!("signature entry {entry_index} start overflows"))
-        })?;
+        let entry_start = param_offset_usize
+            .checked_add(entry_offset)
+            .ok_or_else(|| {
+                DxbcError::invalid_chunk(format!("signature entry {entry_index} start overflows"))
+            })?;
 
         let semantic_name_offset =
             read_u32_le_entry(bytes, entry_start, entry_index, "semantic_name_offset")?;
@@ -202,7 +204,8 @@ fn parse_signature_chunk_with_entry_size(
                 )));
         }
 
-        let semantic_index = read_u32_le_entry(bytes, entry_start + 4, entry_index, "semantic_index")?;
+        let semantic_index =
+            read_u32_le_entry(bytes, entry_start + 4, entry_index, "semantic_index")?;
         let system_value_type =
             read_u32_le_entry(bytes, entry_start + 8, entry_index, "system_value_type")?;
         let component_type =
@@ -248,8 +251,8 @@ fn parse_signature_chunk_with_entry_size(
             }
         };
 
-        let semantic_name = read_cstring_entry(bytes, semantic_name_offset_usize, entry_index)?
-            .to_owned();
+        let semantic_name =
+            read_cstring_entry(bytes, semantic_name_offset_usize, entry_index)?.to_owned();
 
         entries.push(SignatureEntry {
             semantic_name,
@@ -273,10 +276,7 @@ fn read_u32_le_entry(
     field: &'static str,
 ) -> Result<u32, DxbcError> {
     read_u32_le(bytes, offset, field).map_err(|e| {
-        DxbcError::invalid_chunk(format!(
-            "entry {entry_index} {field}: {}",
-            e.context()
-        ))
+        DxbcError::invalid_chunk(format!("entry {entry_index} {field}: {}", e.context()))
     })
 }
 

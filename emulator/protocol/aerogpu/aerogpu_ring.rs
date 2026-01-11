@@ -143,7 +143,9 @@ impl From<AerogpuAbiError> for AerogpuAllocTableDecodeError {
     }
 }
 
-pub fn decode_alloc_table_le(buf: &[u8]) -> Result<AerogpuAllocTableView<'_>, AerogpuAllocTableDecodeError> {
+pub fn decode_alloc_table_le(
+    buf: &[u8],
+) -> Result<AerogpuAllocTableView<'_>, AerogpuAllocTableDecodeError> {
     if buf.len() < AerogpuAllocTableHeader::SIZE_BYTES {
         return Err(AerogpuAllocTableDecodeError::BufferTooSmall);
     }
@@ -158,7 +160,9 @@ pub fn decode_alloc_table_le(buf: &[u8]) -> Result<AerogpuAllocTableView<'_>, Ae
     };
 
     if header.magic != AEROGPU_ALLOC_TABLE_MAGIC {
-        return Err(AerogpuAllocTableDecodeError::BadMagic { found: header.magic });
+        return Err(AerogpuAllocTableDecodeError::BadMagic {
+            found: header.magic,
+        });
     }
 
     let _ = parse_and_validate_abi_version_u32(header.abi_version)?;
@@ -206,12 +210,23 @@ pub fn decode_alloc_table_le(buf: &[u8]) -> Result<AerogpuAllocTableView<'_>, Ae
         return Err(AerogpuAllocTableDecodeError::Misaligned);
     }
 
-    let entries = unsafe { core::slice::from_raw_parts(entries_buf.as_ptr() as *const AerogpuAllocEntry, entry_count) };
+    let entries = unsafe {
+        core::slice::from_raw_parts(
+            entries_buf.as_ptr() as *const AerogpuAllocEntry,
+            entry_count,
+        )
+    };
     Ok(AerogpuAllocTableView { header, entries })
 }
 
-pub fn lookup_alloc<'a>(table: &AerogpuAllocTableView<'a>, alloc_id: u32) -> Option<&'a AerogpuAllocEntry> {
-    table.entries.iter().find(|entry| entry.alloc_id == alloc_id)
+pub fn lookup_alloc<'a>(
+    table: &AerogpuAllocTableView<'a>,
+    alloc_id: u32,
+) -> Option<&'a AerogpuAllocEntry> {
+    table
+        .entries
+        .iter()
+        .find(|entry| entry.alloc_id == alloc_id)
 }
 
 /// Fixed-size submission descriptor written into the ring by the guest KMD.

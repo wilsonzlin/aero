@@ -46,4 +46,3 @@ fn d3d9_set_shader_constants_rejects_out_of_range_registers() {
         Err(other) => panic!("unexpected error: {other:?}"),
     }
 }
-

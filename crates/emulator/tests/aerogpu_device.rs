@@ -48,8 +48,7 @@ const SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET: u64 =
 const SUBMIT_DESC_SIGNAL_FENCE_OFFSET: u64 =
     core::mem::offset_of!(ProtocolSubmitDesc, signal_fence) as u64;
 
-const CMD_STREAM_MAGIC_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolCmdStreamHeader, magic) as u64;
+const CMD_STREAM_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolCmdStreamHeader, magic) as u64;
 const CMD_STREAM_ABI_VERSION_OFFSET: u64 =
     core::mem::offset_of!(ProtocolCmdStreamHeader, abi_version) as u64;
 const CMD_STREAM_SIZE_BYTES_OFFSET: u64 =
@@ -131,7 +130,10 @@ fn doorbell_updates_ring_head_fence_page_and_irq() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    ); // desc_size_bytes
     mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0); // flags
     mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0); // context_id
     mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
@@ -162,8 +164,14 @@ fn doorbell_updates_ring_head_fence_page_and_irq() {
     let head_after = mem.read_u32(ring_gpa + RING_HEAD_OFFSET);
     assert_eq!(head_after, 1);
 
-    assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), AEROGPU_FENCE_PAGE_MAGIC);
-    assert_eq!(mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET), 42);
+    assert_eq!(
+        mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+        AEROGPU_FENCE_PAGE_MAGIC
+    );
+    assert_eq!(
+        mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        42
+    );
 
     dev.mmio_write(&mut mem, mmio::IRQ_ACK, 4, irq_bits::FENCE);
     assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
@@ -196,7 +204,10 @@ fn doorbell_accepts_newer_minor_abi_version() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    ); // desc_size_bytes
     mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0); // flags
     mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0); // context_id
     mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
@@ -228,8 +239,14 @@ fn doorbell_accepts_newer_minor_abi_version() {
 
     assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
 
-    assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), AEROGPU_FENCE_PAGE_MAGIC);
-    assert_eq!(mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET), 42);
+    assert_eq!(
+        mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+        AEROGPU_FENCE_PAGE_MAGIC
+    );
+    assert_eq!(
+        mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        42
+    );
 }
 
 #[test]
@@ -300,7 +317,10 @@ fn doorbell_rejects_unknown_major_abi_version() {
 
     // Submit descriptor at slot 0 (should not be processed due to ABI mismatch).
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    ); // desc_size_bytes
     mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42); // signal_fence
 
     // Fence page.
@@ -364,7 +384,10 @@ fn ring_header_validation_checks_magic_and_abi_version() {
     mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, 0);
 
     let ring = AeroGpuRingHeader::read_from(&mut mem, ring_gpa);
-    assert!(!ring.is_valid(ring_size), "wrong ABI version must be rejected");
+    assert!(
+        !ring.is_valid(ring_size),
+        "wrong ABI version must be rejected"
+    );
 
     mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
 
@@ -476,22 +499,40 @@ fn vsynced_present_fence_completes_on_vblank() {
     let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32 + CMD_PRESENT_SIZE_BYTES;
 
     mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
-    mem.write_u32(cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(
+        cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET,
+        dev.regs.abi_version,
+    );
     mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, cmd_size_bytes);
     mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
     mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
     mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
 
     let present_gpa = cmd_gpa + CMD_STREAM_HEADER_SIZE_BYTES;
-    mem.write_u32(present_gpa + CMD_HDR_OPCODE_OFFSET, AerogpuCmdOpcode::Present as u32);
-    mem.write_u32(present_gpa + CMD_HDR_SIZE_BYTES_OFFSET, CMD_PRESENT_SIZE_BYTES);
+    mem.write_u32(
+        present_gpa + CMD_HDR_OPCODE_OFFSET,
+        AerogpuCmdOpcode::Present as u32,
+    );
+    mem.write_u32(
+        present_gpa + CMD_HDR_SIZE_BYTES_OFFSET,
+        CMD_PRESENT_SIZE_BYTES,
+    );
     mem.write_u32(present_gpa + CMD_PRESENT_SCANOUT_ID_OFFSET, 0);
-    mem.write_u32(present_gpa + CMD_PRESENT_FLAGS_OFFSET, AEROGPU_PRESENT_FLAG_VSYNC);
+    mem.write_u32(
+        present_gpa + CMD_PRESENT_FLAGS_OFFSET,
+        AEROGPU_PRESENT_FLAG_VSYNC,
+    );
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
-    mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, AeroGpuSubmitDesc::FLAG_PRESENT); // flags
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    ); // desc_size_bytes
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_FLAGS_OFFSET,
+        AeroGpuSubmitDesc::FLAG_PRESENT,
+    ); // flags
     mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0); // context_id
     mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
     mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa); // cmd_gpa
@@ -578,22 +619,40 @@ fn vsynced_present_fence_completes_on_vblank_with_deferred_backend() {
     let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32 + CMD_PRESENT_SIZE_BYTES;
 
     mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
-    mem.write_u32(cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(
+        cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET,
+        dev.regs.abi_version,
+    );
     mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, cmd_size_bytes);
     mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
     mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
     mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
 
     let present_gpa = cmd_gpa + CMD_STREAM_HEADER_SIZE_BYTES;
-    mem.write_u32(present_gpa + CMD_HDR_OPCODE_OFFSET, AerogpuCmdOpcode::Present as u32);
-    mem.write_u32(present_gpa + CMD_HDR_SIZE_BYTES_OFFSET, CMD_PRESENT_SIZE_BYTES);
+    mem.write_u32(
+        present_gpa + CMD_HDR_OPCODE_OFFSET,
+        AerogpuCmdOpcode::Present as u32,
+    );
+    mem.write_u32(
+        present_gpa + CMD_HDR_SIZE_BYTES_OFFSET,
+        CMD_PRESENT_SIZE_BYTES,
+    );
     mem.write_u32(present_gpa + CMD_PRESENT_SCANOUT_ID_OFFSET, 0);
-    mem.write_u32(present_gpa + CMD_PRESENT_FLAGS_OFFSET, AEROGPU_PRESENT_FLAG_VSYNC);
+    mem.write_u32(
+        present_gpa + CMD_PRESENT_FLAGS_OFFSET,
+        AEROGPU_PRESENT_FLAG_VSYNC,
+    );
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
-    mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, AeroGpuSubmitDesc::FLAG_PRESENT); // flags
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    ); // desc_size_bytes
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_FLAGS_OFFSET,
+        AeroGpuSubmitDesc::FLAG_PRESENT,
+    ); // flags
     mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0); // context_id
     mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
     mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa); // cmd_gpa
@@ -681,22 +740,40 @@ fn vsynced_present_does_not_complete_on_catchup_vblank_before_submission() {
     let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32 + CMD_PRESENT_SIZE_BYTES;
 
     mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
-    mem.write_u32(cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(
+        cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET,
+        dev.regs.abi_version,
+    );
     mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, cmd_size_bytes);
     mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
     mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
     mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
 
     let present_gpa = cmd_gpa + CMD_STREAM_HEADER_SIZE_BYTES;
-    mem.write_u32(present_gpa + CMD_HDR_OPCODE_OFFSET, AerogpuCmdOpcode::Present as u32);
-    mem.write_u32(present_gpa + CMD_HDR_SIZE_BYTES_OFFSET, CMD_PRESENT_SIZE_BYTES);
+    mem.write_u32(
+        present_gpa + CMD_HDR_OPCODE_OFFSET,
+        AerogpuCmdOpcode::Present as u32,
+    );
+    mem.write_u32(
+        present_gpa + CMD_HDR_SIZE_BYTES_OFFSET,
+        CMD_PRESENT_SIZE_BYTES,
+    );
     mem.write_u32(present_gpa + CMD_PRESENT_SCANOUT_ID_OFFSET, 0);
-    mem.write_u32(present_gpa + CMD_PRESENT_FLAGS_OFFSET, AEROGPU_PRESENT_FLAG_VSYNC);
+    mem.write_u32(
+        present_gpa + CMD_PRESENT_FLAGS_OFFSET,
+        AEROGPU_PRESENT_FLAG_VSYNC,
+    );
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
-    mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, AeroGpuSubmitDesc::FLAG_PRESENT); // flags
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    ); // desc_size_bytes
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_FLAGS_OFFSET,
+        AeroGpuSubmitDesc::FLAG_PRESENT,
+    ); // flags
     mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0); // context_id
     mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
     mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa); // cmd_gpa
@@ -793,7 +870,13 @@ fn fnv1a32(s: &str) -> u32 {
     hash
 }
 
-fn read_pixel_bgra(mem: &mut dyn MemoryBus, base_gpa: u64, pitch_bytes: u32, x: u32, y: u32) -> u32 {
+fn read_pixel_bgra(
+    mem: &mut dyn MemoryBus,
+    base_gpa: u64,
+    pitch_bytes: u32,
+    x: u32,
+    y: u32,
+) -> u32 {
     let addr = base_gpa + (y as u64) * (pitch_bytes as u64) + (x as u64) * 4;
     mem.read_u32(addr)
 }
@@ -818,7 +901,8 @@ fn cmd_exec_d3d9_triangle_renders_to_guest_memory() {
 
     // Allocation table (single entry).
     let alloc_table_gpa = 0x4000u64;
-    let alloc_table_size = ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
+    let alloc_table_size =
+        ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
     let mut alloc_table = Vec::with_capacity(alloc_table_size);
     push_u32(&mut alloc_table, ring::AEROGPU_ALLOC_TABLE_MAGIC);
     push_u32(&mut alloc_table, dev.regs.abi_version);
@@ -826,7 +910,7 @@ fn cmd_exec_d3d9_triangle_renders_to_guest_memory() {
     push_u32(&mut alloc_table, 1); // entry_count
     push_u32(&mut alloc_table, ring::AerogpuAllocEntry::SIZE_BYTES as u32);
     push_u32(&mut alloc_table, 0); // reserved0
-    // entry 0
+                                   // entry 0
     push_u32(&mut alloc_table, 1); // alloc_id
     push_u32(&mut alloc_table, 0); // flags
     push_u64(&mut alloc_table, rt_alloc_gpa);
@@ -878,7 +962,11 @@ fn cmd_exec_d3d9_triangle_renders_to_guest_memory() {
     let green_argb = 0xFF00FF00u32;
     let w = rt_width as f32;
     let h = rt_height as f32;
-    for (x, y) in [(w * 0.25, h * 0.25), (w * 0.75, h * 0.25), (w * 0.5, h * 0.75)] {
+    for (x, y) in [
+        (w * 0.25, h * 0.25),
+        (w * 0.75, h * 0.25),
+        (w * 0.5, h * 0.75),
+    ] {
         push_f32(&mut vb_payload, x);
         push_f32(&mut vb_payload, y);
         push_f32(&mut vb_payload, 0.5);
@@ -927,7 +1015,10 @@ fn cmd_exec_d3d9_triangle_renders_to_guest_memory() {
     push_u32(&mut stream, 0);
 
     // SET_PRIMITIVE_TOPOLOGY TRIANGLELIST.
-    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32);
+    push_u32(
+        &mut stream,
+        cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32,
+    );
     push_u32(&mut stream, 16);
     push_u32(&mut stream, 4); // AEROGPU_TOPOLOGY_TRIANGLELIST
     push_u32(&mut stream, 0);
@@ -993,7 +1084,13 @@ fn cmd_exec_d3d9_triangle_renders_to_guest_memory() {
     assert_eq!(dev.regs.completed_fence, 1);
     assert_eq!(mem.read_u32(fence_gpa + 0), AEROGPU_FENCE_PAGE_MAGIC);
 
-    let center = read_pixel_bgra(&mut mem, rt_alloc_gpa, rt_pitch, rt_width / 2, rt_height / 2);
+    let center = read_pixel_bgra(
+        &mut mem,
+        rt_alloc_gpa,
+        rt_pitch,
+        rt_width / 2,
+        rt_height / 2,
+    );
     let corner = read_pixel_bgra(&mut mem, rt_alloc_gpa, rt_pitch, 5, 5);
     assert_eq!(center & 0x00FF_FFFF, 0x0000_FF00); // green
     assert_eq!(corner & 0x00FF_FFFF, 0x00FF_0000); // red
@@ -1019,7 +1116,8 @@ fn cmd_exec_d3d11_input_layout_triangle_renders_to_guest_memory() {
 
     // Allocation table (single entry).
     let alloc_table_gpa = 0x4000u64;
-    let alloc_table_size = ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
+    let alloc_table_size =
+        ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
     let mut alloc_table = Vec::with_capacity(alloc_table_size);
     push_u32(&mut alloc_table, ring::AEROGPU_ALLOC_TABLE_MAGIC);
     push_u32(&mut alloc_table, dev.regs.abi_version);
@@ -1165,7 +1263,10 @@ fn cmd_exec_d3d11_input_layout_triangle_renders_to_guest_memory() {
     push_u32(&mut stream, 0);
 
     // SET_PRIMITIVE_TOPOLOGY TRIANGLELIST.
-    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32);
+    push_u32(
+        &mut stream,
+        cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32,
+    );
     push_u32(&mut stream, 16);
     push_u32(&mut stream, 4);
     push_u32(&mut stream, 0);
@@ -1224,7 +1325,13 @@ fn cmd_exec_d3d11_input_layout_triangle_renders_to_guest_memory() {
 
     assert_eq!(dev.regs.completed_fence, 2);
 
-    let center = read_pixel_bgra(&mut mem, rt_alloc_gpa, rt_pitch, rt_width / 2, rt_height / 2);
+    let center = read_pixel_bgra(
+        &mut mem,
+        rt_alloc_gpa,
+        rt_pitch,
+        rt_width / 2,
+        rt_height / 2,
+    );
     let corner = read_pixel_bgra(&mut mem, rt_alloc_gpa, rt_pitch, 0, 0);
     assert_eq!(center & 0x00FF_FFFF, 0x0000_FF00);
     assert_eq!(corner & 0x00FF_FFFF, 0x00FF_0000);
@@ -1247,7 +1354,8 @@ fn cmd_exec_copy_buffer_writeback_to_guest_memory() {
 
     // Allocation table (single entry).
     let alloc_table_gpa = 0x4000u64;
-    let alloc_table_size = ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
+    let alloc_table_size =
+        ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
     let mut alloc_table = Vec::with_capacity(alloc_table_size);
     push_u32(&mut alloc_table, ring::AEROGPU_ALLOC_TABLE_MAGIC);
     push_u32(&mut alloc_table, dev.regs.abi_version);
@@ -1255,7 +1363,7 @@ fn cmd_exec_copy_buffer_writeback_to_guest_memory() {
     push_u32(&mut alloc_table, 1); // entry_count
     push_u32(&mut alloc_table, ring::AerogpuAllocEntry::SIZE_BYTES as u32);
     push_u32(&mut alloc_table, 0); // reserved0
-    // entry 0
+                                   // entry 0
     push_u32(&mut alloc_table, 1); // alloc_id
     push_u32(&mut alloc_table, 0); // flags
     push_u64(&mut alloc_table, dst_alloc_gpa);
@@ -1378,7 +1486,8 @@ fn cmd_exec_copy_texture2d_writeback_to_guest_memory() {
 
     // Allocation table (single entry).
     let alloc_table_gpa = 0x4000u64;
-    let alloc_table_size = ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
+    let alloc_table_size =
+        ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
     let mut alloc_table = Vec::with_capacity(alloc_table_size);
     push_u32(&mut alloc_table, ring::AEROGPU_ALLOC_TABLE_MAGIC);
     push_u32(&mut alloc_table, dev.regs.abi_version);
@@ -1436,7 +1545,11 @@ fn cmd_exec_copy_texture2d_writeback_to_guest_memory() {
     let green_argb = 0xFF00FF00u32;
     let w = tex_width as f32;
     let h = tex_height as f32;
-    for (x, y) in [(w * 0.25, h * 0.25), (w * 0.75, h * 0.25), (w * 0.5, h * 0.75)] {
+    for (x, y) in [
+        (w * 0.25, h * 0.25),
+        (w * 0.75, h * 0.25),
+        (w * 0.5, h * 0.75),
+    ] {
         push_f32(&mut vb_payload, x);
         push_f32(&mut vb_payload, y);
         push_f32(&mut vb_payload, 0.5);
@@ -1485,7 +1598,10 @@ fn cmd_exec_copy_texture2d_writeback_to_guest_memory() {
     push_u32(&mut stream, 0);
 
     // SET_PRIMITIVE_TOPOLOGY TRIANGLELIST.
-    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32);
+    push_u32(
+        &mut stream,
+        cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32,
+    );
     push_u32(&mut stream, 16);
     push_u32(&mut stream, 4);
     push_u32(&mut stream, 0);
@@ -1577,7 +1693,13 @@ fn cmd_exec_copy_texture2d_writeback_to_guest_memory() {
 
     assert_eq!(dev.regs.completed_fence, 1);
 
-    let center = read_pixel_bgra(&mut mem, dst_alloc_gpa, tex_pitch, tex_width / 2, tex_height / 2);
+    let center = read_pixel_bgra(
+        &mut mem,
+        dst_alloc_gpa,
+        tex_pitch,
+        tex_width / 2,
+        tex_height / 2,
+    );
     let corner = read_pixel_bgra(&mut mem, dst_alloc_gpa, tex_pitch, 5, 5);
     assert_eq!(center & 0x00FF_FFFF, 0x0000_FF00);
     assert_eq!(corner & 0x00FF_FFFF, 0x00FF_0000);
@@ -1603,7 +1725,8 @@ fn cmd_exec_d3d11_scissor_clips_draw_when_enabled() {
 
     // Allocation table (single entry).
     let alloc_table_gpa = 0x4000u64;
-    let alloc_table_size = ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
+    let alloc_table_size =
+        ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
     let mut alloc_table = Vec::with_capacity(alloc_table_size);
     push_u32(&mut alloc_table, ring::AEROGPU_ALLOC_TABLE_MAGIC);
     push_u32(&mut alloc_table, dev.regs.abi_version);
@@ -1750,13 +1873,19 @@ fn cmd_exec_d3d11_scissor_clips_draw_when_enabled() {
     push_u32(&mut stream, 0);
 
     // SET_PRIMITIVE_TOPOLOGY TRIANGLELIST.
-    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32);
+    push_u32(
+        &mut stream,
+        cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32,
+    );
     push_u32(&mut stream, 16);
     push_u32(&mut stream, 4);
     push_u32(&mut stream, 0);
 
     // SET_RASTERIZER_STATE: enable scissor, no cull.
-    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetRasterizerState as u32);
+    push_u32(
+        &mut stream,
+        cmd::AerogpuCmdOpcode::SetRasterizerState as u32,
+    );
     push_u32(&mut stream, 32);
     push_u32(&mut stream, cmd::AerogpuFillMode::Solid as u32);
     push_u32(&mut stream, cmd::AerogpuCullMode::None as u32);
@@ -1828,7 +1957,13 @@ fn cmd_exec_d3d11_scissor_clips_draw_when_enabled() {
     assert_eq!(dev.regs.completed_fence, 1);
 
     let inside = read_pixel_bgra(&mut mem, rt_alloc_gpa, rt_pitch, 5, rt_height / 2);
-    let outside = read_pixel_bgra(&mut mem, rt_alloc_gpa, rt_pitch, rt_width - 5, rt_height / 2);
+    let outside = read_pixel_bgra(
+        &mut mem,
+        rt_alloc_gpa,
+        rt_pitch,
+        rt_width - 5,
+        rt_height / 2,
+    );
     assert_eq!(inside & 0x00FF_FFFF, 0x0000_FF00);
     assert_eq!(outside & 0x00FF_FFFF, 0x00FF_0000);
 }
@@ -1853,7 +1988,8 @@ fn cmd_exec_d3d11_cull_mode_culls_ccw_when_front_ccw_false() {
 
     // Allocation table (single entry).
     let alloc_table_gpa = 0x4000u64;
-    let alloc_table_size = ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
+    let alloc_table_size =
+        ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
     let mut alloc_table = Vec::with_capacity(alloc_table_size);
     push_u32(&mut alloc_table, ring::AEROGPU_ALLOC_TABLE_MAGIC);
     push_u32(&mut alloc_table, dev.regs.abi_version);
@@ -1997,13 +2133,19 @@ fn cmd_exec_d3d11_cull_mode_culls_ccw_when_front_ccw_false() {
     push_u32(&mut stream, 0);
 
     // SET_PRIMITIVE_TOPOLOGY.
-    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32);
+    push_u32(
+        &mut stream,
+        cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32,
+    );
     push_u32(&mut stream, 16);
     push_u32(&mut stream, 4);
     push_u32(&mut stream, 0);
 
     // SET_RASTERIZER_STATE: cull back, front_ccw=false (CCW triangle should be culled).
-    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetRasterizerState as u32);
+    push_u32(
+        &mut stream,
+        cmd::AerogpuCmdOpcode::SetRasterizerState as u32,
+    );
     push_u32(&mut stream, 32);
     push_u32(&mut stream, cmd::AerogpuFillMode::Solid as u32);
     push_u32(&mut stream, cmd::AerogpuCullMode::Back as u32);
@@ -2066,7 +2208,13 @@ fn cmd_exec_d3d11_cull_mode_culls_ccw_when_front_ccw_false() {
 
     assert_eq!(dev.regs.completed_fence, 1);
 
-    let center = read_pixel_bgra(&mut mem, rt_alloc_gpa, rt_pitch, rt_width / 2, rt_height / 2);
+    let center = read_pixel_bgra(
+        &mut mem,
+        rt_alloc_gpa,
+        rt_pitch,
+        rt_width / 2,
+        rt_height / 2,
+    );
     assert_eq!(center & 0x00FF_FFFF, 0x00FF_0000);
 }
 
@@ -2090,7 +2238,8 @@ fn cmd_exec_d3d11_cull_mode_keeps_ccw_when_front_ccw_true() {
 
     // Allocation table (single entry).
     let alloc_table_gpa = 0x4000u64;
-    let alloc_table_size = ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
+    let alloc_table_size =
+        ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
     let mut alloc_table = Vec::with_capacity(alloc_table_size);
     push_u32(&mut alloc_table, ring::AEROGPU_ALLOC_TABLE_MAGIC);
     push_u32(&mut alloc_table, dev.regs.abi_version);
@@ -2233,13 +2382,19 @@ fn cmd_exec_d3d11_cull_mode_keeps_ccw_when_front_ccw_true() {
     push_u32(&mut stream, 0);
 
     // SET_PRIMITIVE_TOPOLOGY.
-    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32);
+    push_u32(
+        &mut stream,
+        cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32,
+    );
     push_u32(&mut stream, 16);
     push_u32(&mut stream, 4);
     push_u32(&mut stream, 0);
 
     // SET_RASTERIZER_STATE: cull back, front_ccw=true (CCW triangle should be visible).
-    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetRasterizerState as u32);
+    push_u32(
+        &mut stream,
+        cmd::AerogpuCmdOpcode::SetRasterizerState as u32,
+    );
     push_u32(&mut stream, 32);
     push_u32(&mut stream, cmd::AerogpuFillMode::Solid as u32);
     push_u32(&mut stream, cmd::AerogpuCullMode::Back as u32);
@@ -2302,7 +2457,13 @@ fn cmd_exec_d3d11_cull_mode_keeps_ccw_when_front_ccw_true() {
 
     assert_eq!(dev.regs.completed_fence, 1);
 
-    let center = read_pixel_bgra(&mut mem, rt_alloc_gpa, rt_pitch, rt_width / 2, rt_height / 2);
+    let center = read_pixel_bgra(
+        &mut mem,
+        rt_alloc_gpa,
+        rt_pitch,
+        rt_width / 2,
+        rt_height / 2,
+    );
     assert_eq!(center & 0x00FF_FFFF, 0x0000_FF00);
 }
 
@@ -2326,7 +2487,8 @@ fn cmd_exec_d3d11_alpha_blend_matches_src_alpha_over() {
 
     // Allocation table (single entry).
     let alloc_table_gpa = 0x4000u64;
-    let alloc_table_size = ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
+    let alloc_table_size =
+        ring::AerogpuAllocTableHeader::SIZE_BYTES + ring::AerogpuAllocEntry::SIZE_BYTES;
     let mut alloc_table = Vec::with_capacity(alloc_table_size);
     push_u32(&mut alloc_table, ring::AEROGPU_ALLOC_TABLE_MAGIC);
     push_u32(&mut alloc_table, dev.regs.abi_version);
@@ -2471,7 +2633,10 @@ fn cmd_exec_d3d11_alpha_blend_matches_src_alpha_over() {
     push_u32(&mut stream, 0);
 
     // SET_PRIMITIVE_TOPOLOGY.
-    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32);
+    push_u32(
+        &mut stream,
+        cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32,
+    );
     push_u32(&mut stream, 16);
     push_u32(&mut stream, 4);
     push_u32(&mut stream, 0);
@@ -2539,7 +2704,13 @@ fn cmd_exec_d3d11_alpha_blend_matches_src_alpha_over() {
 
     assert_eq!(dev.regs.completed_fence, 1);
 
-    let center = read_pixel_bgra(&mut mem, rt_alloc_gpa, rt_pitch, rt_width / 2, rt_height / 2);
+    let center = read_pixel_bgra(
+        &mut mem,
+        rt_alloc_gpa,
+        rt_pitch,
+        rt_width / 2,
+        rt_height / 2,
+    );
     let b = (center & 0xFF) as u8;
     let g = ((center >> 8) & 0xFF) as u8;
     let r = ((center >> 16) & 0xFF) as u8;

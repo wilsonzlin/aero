@@ -110,7 +110,10 @@ fn program_ioapic_redirection_from_iso_flags(
     vector: u8,
     iso_flags: u16,
 ) {
-    assert!(gsi <= (u8::MAX / 2) as u32, "GSI too large for IOAPIC register math");
+    assert!(
+        gsi <= (u8::MAX / 2) as u32,
+        "GSI too large for IOAPIC register math"
+    );
     let redir_low_index = 0x10u8 + (2 * gsi as u8);
     let redir_high_index = redir_low_index + 1;
 

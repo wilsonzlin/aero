@@ -39,7 +39,11 @@ pub fn render_rgba8888(
     // stable across `wasm32` and host tests).
     //
     // We intentionally follow the JS demo's semantics: `floor(now_ms * rate / 1000)`.
-    let now = if now_ms.is_finite() && now_ms > 0.0 { now_ms } else { 0.0 };
+    let now = if now_ms.is_finite() && now_ms > 0.0 {
+        now_ms
+    } else {
+        0.0
+    };
     let r_off = ((now * 60.0) / 1000.0) as u32;
     let g_off = ((now * 35.0) / 1000.0) as u32;
     let b_off = ((now * 20.0) / 1000.0) as u32;

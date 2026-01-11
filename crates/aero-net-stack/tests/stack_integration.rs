@@ -511,9 +511,7 @@ fn tcp_connection_cap_rejects_new_syn() {
     );
     let frame = extract_single_frame(&actions_b);
     let seg = parse_tcp_from_frame(&frame);
-    assert!(seg
-        .flags()
-        .contains(TcpFlags::RST | TcpFlags::ACK));
+    assert!(seg.flags().contains(TcpFlags::RST | TcpFlags::ACK));
 }
 
 #[test]
@@ -593,9 +591,7 @@ fn tcp_buffered_payload_cap_sends_rst_and_frees_state() {
             .collect::<Vec<_>>(),
     );
     let seg = parse_tcp_from_frame(&frame);
-    assert!(seg
-        .flags()
-        .contains(TcpFlags::RST | TcpFlags::ACK));
+    assert!(seg.flags().contains(TcpFlags::RST | TcpFlags::ACK));
 
     // Connection state should be gone, freeing the only available slot.
     let syn_b = wrap_tcp_ipv4_eth(

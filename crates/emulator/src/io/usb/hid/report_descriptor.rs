@@ -1139,7 +1139,10 @@ mod tests {
     #[test]
     fn synth_preserves_hat_switch_null_state_flag() {
         let parsed = parse_report_descriptor(&gamepad::HID_REPORT_DESCRIPTOR).unwrap();
-        let collection = parsed.collections.first().expect("missing gamepad collection");
+        let collection = parsed
+            .collections
+            .first()
+            .expect("missing gamepad collection");
         let report = collection
             .input_reports
             .first()
@@ -1149,7 +1152,10 @@ mod tests {
             .iter()
             .find(|item| item.usage_page == 0x01 && item.usages.iter().any(|&u| u == 0x39))
             .expect("missing hat switch item");
-        assert!(hat_item.has_null, "expected hat switch item to have NullState flag");
+        assert!(
+            hat_item.has_null,
+            "expected hat switch item to have NullState flag"
+        );
 
         let synthesized = synthesize_report_descriptor(&parsed.collections).unwrap();
         assert!(
@@ -1229,7 +1235,8 @@ mod tests {
             0x25, 0x01, // Logical Maximum (1)
             0x75, 0x08, // Report Size (8)
             0x95, 0x01, // Report Count (1)
-            0x92, 0xFA, 0x01, // Output (0x01FA): Var,Wrap,NonLinear,NoPreferred,Null,Volatile,BufferedBytes
+            0x92, 0xFA,
+            0x01, // Output (0x01FA): Var,Wrap,NonLinear,NoPreferred,Null,Volatile,BufferedBytes
             0xC0, // End Collection
         ];
 
@@ -2156,8 +2163,8 @@ mod proptests {
         };
 
         (
-            any::<bool>(),                  // is_array
-            any::<bool>(),                  // is_absolute
+            any::<bool>(), // is_array
+            any::<bool>(), // is_absolute
             (
                 any::<bool>(),
                 any::<bool>(),
@@ -2236,21 +2243,27 @@ mod proptests {
             .boxed()
     }
 
-    fn report_list_strategy(kind: HidReportKind, use_report_ids: bool) -> BoxedStrategy<Vec<HidReportInfo>> {
+    fn report_list_strategy(
+        kind: HidReportKind,
+        use_report_ids: bool,
+    ) -> BoxedStrategy<Vec<HidReportInfo>> {
         if use_report_ids {
             // Generate a small set of unique IDs so parse doesn't need to guess whether multiple
             // occurrences should be merged.
             prop::collection::btree_set(1u32..=16, 0..=3)
                 .prop_flat_map(move |ids| {
                     let ids: Vec<u32> = ids.into_iter().collect();
-                    prop::collection::vec(prop::collection::vec(item_strategy(kind), 0..=8), ids.len())
-                        .prop_map(move |items| {
-                            ids.iter()
-                                .copied()
-                                .zip(items)
-                                .map(|(report_id, items)| HidReportInfo { report_id, items })
-                                .collect::<Vec<_>>()
-                        })
+                    prop::collection::vec(
+                        prop::collection::vec(item_strategy(kind), 0..=8),
+                        ids.len(),
+                    )
+                    .prop_map(move |items| {
+                        ids.iter()
+                            .copied()
+                            .zip(items)
+                            .map(|(report_id, items)| HidReportInfo { report_id, items })
+                            .collect::<Vec<_>>()
+                    })
                 })
                 .boxed()
         } else {
@@ -2258,10 +2271,12 @@ mod proptests {
             // report_id=0 report.
             prop_oneof![
                 Just(Vec::new()),
-                prop::collection::vec(item_strategy(kind), 0..=8).prop_map(|items| vec![HidReportInfo {
-                    report_id: 0,
-                    items,
-                }]),
+                prop::collection::vec(item_strategy(kind), 0..=8).prop_map(|items| vec![
+                    HidReportInfo {
+                        report_id: 0,
+                        items,
+                    }
+                ]),
             ]
             .boxed()
         }

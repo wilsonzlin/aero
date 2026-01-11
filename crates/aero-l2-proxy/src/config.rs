@@ -50,7 +50,12 @@ impl SecurityConfig {
     pub fn from_env() -> Self {
         let open = std::env::var("AERO_L2_OPEN")
             .ok()
-            .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"))
+            .map(|v| {
+                matches!(
+                    v.trim(),
+                    "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"
+                )
+            })
             .unwrap_or(false);
 
         let allowed_origins_raw = std::env::var("AERO_L2_ALLOWED_ORIGINS").ok();

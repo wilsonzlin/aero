@@ -283,7 +283,10 @@ mod tests {
         };
         let mut rb = InterleavedRingBuffer::new(8, 2);
         rb.restore_state(&state);
-        assert_eq!(rb.snapshot_state().capacity_frames, MAX_RESTORED_CAPACITY_FRAMES);
+        assert_eq!(
+            rb.snapshot_state().capacity_frames,
+            MAX_RESTORED_CAPACITY_FRAMES
+        );
     }
 }
 

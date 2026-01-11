@@ -1,11 +1,12 @@
 use core::mem::{offset_of, size_of};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdCreateInputLayout,
-    AerogpuCmdCreateShaderDxbc, AerogpuCmdExportSharedSurface, AerogpuCmdHdr, AerogpuCmdImportSharedSurface,
-    AerogpuCmdOpcode, AerogpuCmdPresentEx, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture, AerogpuCmdStreamHeader,
-    AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuCullMode, AerogpuFillMode, AerogpuShaderStage,
-    AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC,
+    decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuBlendFactor, AerogpuBlendOp,
+    AerogpuCmdCreateInputLayout, AerogpuCmdCreateShaderDxbc, AerogpuCmdExportSharedSurface,
+    AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresentEx,
+    AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture, AerogpuCmdStreamHeader,
+    AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuCullMode, AerogpuFillMode,
+    AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -20,7 +21,11 @@ fn cmd_writer_emits_aligned_packets_and_updates_stream_size() {
     let mut w = AerogpuCmdWriter::new();
 
     w.create_buffer(1, 0xDEAD_BEEF, 1024, 0, 0);
-    w.create_shader_dxbc(2, aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage::Vertex, &[0xAA, 0xBB, 0xCC]);
+    w.create_shader_dxbc(
+        2,
+        aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage::Vertex,
+        &[0xAA, 0xBB, 0xCC],
+    );
     w.create_input_layout(3, &[0x11]);
     w.upload_resource(1, 16, &[1, 2, 3, 4, 5]);
 
@@ -70,10 +75,17 @@ fn cmd_writer_emits_aligned_packets_and_updates_stream_size() {
         seen_opcodes.push(hdr.opcode);
         cursor += pkt_size;
     }
-    assert_eq!(cursor, buf.len(), "packet walk must land exactly on end of stream");
+    assert_eq!(
+        cursor,
+        buf.len(),
+        "packet walk must land exactly on end of stream"
+    );
 
     let expected_sizes: &[(u32, usize)] = &[
-        (AerogpuCmdOpcode::CreateBuffer as u32, size_of::<aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdCreateBuffer>()),
+        (
+            AerogpuCmdOpcode::CreateBuffer as u32,
+            size_of::<aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdCreateBuffer>(),
+        ),
         (
             AerogpuCmdOpcode::CreateShaderDxbc as u32,
             align_up(size_of::<AerogpuCmdCreateShaderDxbc>() + 3, 4),
@@ -91,8 +103,14 @@ fn cmd_writer_emits_aligned_packets_and_updates_stream_size() {
             size_of::<aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdSetVertexBuffers>()
                 + size_of::<AerogpuVertexBufferBinding>() * 2,
         ),
-        (AerogpuCmdOpcode::Draw as u32, size_of::<aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdDraw>()),
-        (AerogpuCmdOpcode::Flush as u32, size_of::<aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdFlush>()),
+        (
+            AerogpuCmdOpcode::Draw as u32,
+            size_of::<aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdDraw>(),
+        ),
+        (
+            AerogpuCmdOpcode::Flush as u32,
+            size_of::<aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdFlush>(),
+        ),
     ];
 
     // Validate `size_bytes` for each packet matches our expected padded size.
@@ -123,7 +141,9 @@ fn cmd_writer_emits_aligned_packets_and_updates_stream_size() {
     assert_eq!(
         u32::from_le_bytes(
             buf[input_layout_pkt_base + offset_of!(AerogpuCmdCreateInputLayout, blob_size_bytes)
-                ..input_layout_pkt_base + offset_of!(AerogpuCmdCreateInputLayout, blob_size_bytes) + 4]
+                ..input_layout_pkt_base
+                    + offset_of!(AerogpuCmdCreateInputLayout, blob_size_bytes)
+                    + 4]
                 .try_into()
                 .unwrap()
         ),
@@ -156,8 +176,9 @@ fn cmd_writer_emits_aligned_packets_and_updates_stream_size() {
 #[test]
 fn cmd_writer_emits_pipeline_and_binding_packets() {
     use aero_protocol::aerogpu::aerogpu_cmd::{
-        AerogpuBlendState, AerogpuCmdSetBlendState, AerogpuCmdSetDepthStencilState, AerogpuCmdSetRasterizerState,
-        AerogpuCmdSetRenderState, AerogpuCmdSetSamplerState, AerogpuDepthStencilState, AerogpuRasterizerState,
+        AerogpuBlendState, AerogpuCmdSetBlendState, AerogpuCmdSetDepthStencilState,
+        AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState, AerogpuCmdSetSamplerState,
+        AerogpuDepthStencilState, AerogpuRasterizerState,
     };
 
     let mut w = AerogpuCmdWriter::new();
@@ -192,7 +213,10 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
             AerogpuCmdOpcode::SetShaderConstantsF as u32,
             size_of::<AerogpuCmdSetShaderConstantsF>() + 16,
         ),
-        (AerogpuCmdOpcode::SetTexture as u32, size_of::<AerogpuCmdSetTexture>()),
+        (
+            AerogpuCmdOpcode::SetTexture as u32,
+            size_of::<AerogpuCmdSetTexture>(),
+        ),
         (
             AerogpuCmdOpcode::SetSamplerState as u32,
             size_of::<AerogpuCmdSetSamplerState>(),
@@ -225,7 +249,10 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
             AerogpuCmdOpcode::ImportSharedSurface as u32,
             size_of::<AerogpuCmdImportSharedSurface>(),
         ),
-        (AerogpuCmdOpcode::Flush as u32, size_of::<aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdFlush>()),
+        (
+            AerogpuCmdOpcode::Flush as u32,
+            size_of::<aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdFlush>(),
+        ),
     ];
 
     let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
@@ -261,23 +288,29 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
     );
 
     // Validate nested state structs have their byte-sized fields populated.
-    let blend_base = pkt0_base + expected_sizes[0].1 + expected_sizes[1].1 + expected_sizes[2].1 + expected_sizes[3].1;
-    let color_write_mask_off =
-        offset_of!(AerogpuCmdSetBlendState, state) + offset_of!(AerogpuBlendState, color_write_mask);
+    let blend_base = pkt0_base
+        + expected_sizes[0].1
+        + expected_sizes[1].1
+        + expected_sizes[2].1
+        + expected_sizes[3].1;
+    let color_write_mask_off = offset_of!(AerogpuCmdSetBlendState, state)
+        + offset_of!(AerogpuBlendState, color_write_mask);
     assert_eq!(buf[blend_base + color_write_mask_off], 0xF);
 
     let depth_base = blend_base + expected_sizes[4].1;
-    let stencil_read_mask_off =
-        offset_of!(AerogpuCmdSetDepthStencilState, state) + offset_of!(AerogpuDepthStencilState, stencil_read_mask);
-    let stencil_write_mask_off =
-        offset_of!(AerogpuCmdSetDepthStencilState, state) + offset_of!(AerogpuDepthStencilState, stencil_write_mask);
+    let stencil_read_mask_off = offset_of!(AerogpuCmdSetDepthStencilState, state)
+        + offset_of!(AerogpuDepthStencilState, stencil_read_mask);
+    let stencil_write_mask_off = offset_of!(AerogpuCmdSetDepthStencilState, state)
+        + offset_of!(AerogpuDepthStencilState, stencil_write_mask);
     assert_eq!(buf[depth_base + stencil_read_mask_off], 0xAA);
     assert_eq!(buf[depth_base + stencil_write_mask_off], 0xBB);
 
     let rast_base = depth_base + expected_sizes[5].1;
     assert_eq!(
         i32::from_le_bytes(
-            buf[rast_base + offset_of!(AerogpuCmdSetRasterizerState, state) + offset_of!(AerogpuRasterizerState, depth_bias)
+            buf[rast_base
+                + offset_of!(AerogpuCmdSetRasterizerState, state)
+                + offset_of!(AerogpuRasterizerState, depth_bias)
                 ..rast_base
                     + offset_of!(AerogpuCmdSetRasterizerState, state)
                     + offset_of!(AerogpuRasterizerState, depth_bias)
@@ -291,7 +324,9 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
 
 #[test]
 fn cmd_writer_emits_copy_packets() {
-    use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d, AEROGPU_COPY_FLAG_WRITEBACK_DST};
+    use aero_protocol::aerogpu::aerogpu_cmd::{
+        AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d, AEROGPU_COPY_FLAG_WRITEBACK_DST,
+    };
 
     let mut w = AerogpuCmdWriter::new();
     w.copy_buffer(1, 2, 3, 4, 5, AEROGPU_COPY_FLAG_WRITEBACK_DST);
@@ -368,7 +403,10 @@ fn cmd_writer_emits_copy_packets() {
     let opcode2 = hdr2.opcode;
     let size2 = hdr2.size_bytes as usize;
     assert_eq!(opcode2, AerogpuCmdOpcode::Flush as u32);
-    assert_eq!(size2, size_of::<aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdFlush>());
+    assert_eq!(
+        size2,
+        size_of::<aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdFlush>()
+    );
 
     cursor += size2;
     assert_eq!(cursor, buf.len());

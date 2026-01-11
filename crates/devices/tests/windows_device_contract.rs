@@ -11,10 +11,7 @@ fn parse_hex_u16(value: &str) -> u16 {
     u16::from_str_radix(value, 16).expect("invalid u16 hex string")
 }
 
-fn find_contract_device<'a>(
-    devices: &'a [serde_json::Value],
-    name: &str,
-) -> &'a serde_json::Value {
+fn find_contract_device<'a>(devices: &'a [serde_json::Value], name: &str) -> &'a serde_json::Value {
     devices
         .iter()
         .find(|d| d.get("device").and_then(|v| v.as_str()) == Some(name))
@@ -49,24 +46,44 @@ fn assert_contract_matches_profile(profile: PciDeviceProfile, contract: &serde_j
         .and_then(|v| v.as_str())
         .expect("device entry missing pci_device_id");
 
-    assert_eq!(parse_hex_u16(pci_vendor_id), profile.vendor_id, "{}", profile.name);
-    assert_eq!(parse_hex_u16(pci_device_id), profile.device_id, "{}", profile.name);
+    assert_eq!(
+        parse_hex_u16(pci_vendor_id),
+        profile.vendor_id,
+        "{}",
+        profile.name
+    );
+    assert_eq!(
+        parse_hex_u16(pci_device_id),
+        profile.device_id,
+        "{}",
+        profile.name
+    );
 
     let patterns: Vec<String> = contract
         .get("hardware_id_patterns")
         .and_then(|v| v.as_array())
         .expect("device entry missing hardware_id_patterns")
         .iter()
-        .map(|v| v.as_str().expect("hardware_id_patterns must be strings").to_string())
+        .map(|v| {
+            v.as_str()
+                .expect("hardware_id_patterns must be strings")
+                .to_string()
+        })
         .collect();
 
-    let expected_ven_dev =
-        format!("PCI\\VEN_{:04X}&DEV_{:04X}", profile.vendor_id, profile.device_id);
+    let expected_ven_dev = format!(
+        "PCI\\VEN_{:04X}&DEV_{:04X}",
+        profile.vendor_id, profile.device_id
+    );
     assert_has_pattern(&patterns, &expected_ven_dev);
 
     // If a subsystem-qualified pattern is present, it must match the canonical profile.
     if let Some((subsys_vendor, subsys_device)) = patterns.iter().find_map(|p| parse_subsys(p)) {
-        assert_eq!(subsys_vendor, profile.subsystem_vendor_id, "{}", profile.name);
+        assert_eq!(
+            subsys_vendor, profile.subsystem_vendor_id,
+            "{}",
+            profile.name
+        );
         assert_eq!(subsys_device, profile.subsystem_id, "{}", profile.name);
     } else {
         panic!(
@@ -101,7 +118,10 @@ fn windows_device_contract_virtio_snd_matches_pci_profile() {
         snd.get("inf_name").and_then(|v| v.as_str()),
         Some("aero-virtio-snd.inf")
     );
-    assert_eq!(snd.get("virtio_device_type").and_then(|v| v.as_u64()), Some(25));
+    assert_eq!(
+        snd.get("virtio_device_type").and_then(|v| v.as_u64()),
+        Some(25)
+    );
 }
 
 #[test]
@@ -128,7 +148,10 @@ fn windows_device_contract_virtio_blk_matches_pci_profile() {
         blk.get("inf_name").and_then(|v| v.as_str()),
         Some("aerovblk.inf")
     );
-    assert_eq!(blk.get("virtio_device_type").and_then(|v| v.as_u64()), Some(2));
+    assert_eq!(
+        blk.get("virtio_device_type").and_then(|v| v.as_u64()),
+        Some(2)
+    );
 }
 
 #[test]
@@ -155,5 +178,8 @@ fn windows_device_contract_virtio_net_matches_pci_profile() {
         net.get("inf_name").and_then(|v| v.as_str()),
         Some("aerovnet.inf")
     );
-    assert_eq!(net.get("virtio_device_type").and_then(|v| v.as_u64()), Some(1));
+    assert_eq!(
+        net.get("virtio_device_type").and_then(|v| v.as_u64()),
+        Some(1)
+    );
 }

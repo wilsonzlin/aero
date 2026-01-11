@@ -1122,7 +1122,10 @@ fn uhci_external_hub_enumerates_device_behind_nested_hubs() {
     );
     run_one_frame(&mut uhci, &mut mem, TD0);
     let st = mem.read_u32(TD0 as u64 + 4);
-    assert_eq!(st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK), 0);
+    assert_eq!(
+        st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK),
+        0
+    );
     assert_eq!(
         mem.slice(BUF_KBD_INT as usize..BUF_KBD_INT as usize + 8),
         [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]

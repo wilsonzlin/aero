@@ -46,11 +46,15 @@ pub fn exec<B: CpuBus>(
     let addr = calc_ea(state, instr, next_ip, true)?;
 
     match instr.mnemonic() {
-        Mnemonic::Stmxcsr => state.stmxcsr_to_mem(bus, addr).map(|()| ExecOutcome::Continue),
+        Mnemonic::Stmxcsr => state
+            .stmxcsr_to_mem(bus, addr)
+            .map(|()| ExecOutcome::Continue),
         Mnemonic::Ldmxcsr => state
             .ldmxcsr_from_mem(bus, addr)
             .map(|()| ExecOutcome::Continue),
-        Mnemonic::Fxsave => state.fxsave_to_mem(bus, addr).map(|()| ExecOutcome::Continue),
+        Mnemonic::Fxsave => state
+            .fxsave_to_mem(bus, addr)
+            .map(|()| ExecOutcome::Continue),
         Mnemonic::Fxsave64 => state
             .fxsave64_to_mem(bus, addr)
             .map(|()| ExecOutcome::Continue),

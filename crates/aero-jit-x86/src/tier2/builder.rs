@@ -4,9 +4,7 @@ use aero_types::{Cond, Flag, FlagSet, Width};
 
 use crate::Tier1Bus;
 
-use crate::t2_ir::{
-    BinOp, Block, BlockId, Function, Instr, Operand, Terminator, ValueId,
-};
+use crate::t2_ir::{BinOp, Block, BlockId, Function, Instr, Operand, Terminator, ValueId};
 use crate::tier1::{discover_block, translate_block, BlockLimits};
 use crate::tier1_ir::{
     BinOp as T1BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId as T1ValueId,

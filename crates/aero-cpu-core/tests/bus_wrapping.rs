@@ -44,11 +44,6 @@ fn bus_scalar_writes_use_wrapping_address_arithmetic() {
     bus.write_u32(u64::MAX - 1, 0x1122_3344);
     assert_eq!(
         bus.writes,
-        vec![
-            (u64::MAX - 1, 0x44),
-            (u64::MAX, 0x33),
-            (0, 0x22),
-            (1, 0x11),
-        ]
+        vec![(u64::MAX - 1, 0x44), (u64::MAX, 0x33), (0, 0x22), (1, 0x11),]
     );
 }

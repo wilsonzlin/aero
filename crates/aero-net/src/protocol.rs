@@ -160,7 +160,11 @@ pub struct UdpPacket<'a> {
     pub payload: &'a [u8],
 }
 
-pub fn parse_udp_packet(src_ip: Ipv4Addr, dst_ip: Ipv4Addr, packet: &[u8]) -> Option<UdpPacket<'_>> {
+pub fn parse_udp_packet(
+    src_ip: Ipv4Addr,
+    dst_ip: Ipv4Addr,
+    packet: &[u8],
+) -> Option<UdpPacket<'_>> {
     let udp = nt_udp::UdpPacket::parse(packet).ok()?;
     if !udp.checksum_valid_ipv4(src_ip, dst_ip) {
         return None;
@@ -461,4 +465,3 @@ pub fn build_dns_response_nxdomain(id: u16, query: &DnsQuery) -> Vec<u8> {
     .build_vec()
     .expect("dns response builder should not fail")
 }
-

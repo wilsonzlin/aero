@@ -535,7 +535,13 @@ impl AeroGpuSoftwareExecutor {
         }
     }
 
-    fn blend_and_write_pixel(tex: &mut Texture2DResource, x: i32, y: i32, rgba: [f32; 4], blend: BlendState) {
+    fn blend_and_write_pixel(
+        tex: &mut Texture2DResource,
+        x: i32,
+        y: i32,
+        rgba: [f32; 4],
+        blend: BlendState,
+    ) {
         if x < 0 || y < 0 {
             return;
         }
@@ -825,7 +831,11 @@ impl AeroGpuSoftwareExecutor {
                 let area = (tri[1].pos.0 - tri[0].pos.0) * (tri[2].pos.1 - tri[0].pos.1)
                     - (tri[1].pos.1 - tri[0].pos.1) * (tri[2].pos.0 - tri[0].pos.0);
                 if area != 0.0 {
-                    let front_facing = if rast.front_ccw { area < 0.0 } else { area > 0.0 };
+                    let front_facing = if rast.front_ccw {
+                        area < 0.0
+                    } else {
+                        area > 0.0
+                    };
                     let culled = match rast.cull_mode {
                         x if x == cmd::AerogpuCullMode::Front as u32 => front_facing,
                         x if x == cmd::AerogpuCullMode::Back as u32 => !front_facing,
@@ -1750,10 +1760,10 @@ impl AeroGpuSoftwareExecutor {
                 }
 
                 let enable = Self::cmd_read_u32(packet, 8).unwrap_or(0) != 0;
-                let src_factor = Self::cmd_read_u32(packet, 12)
-                    .unwrap_or(cmd::AerogpuBlendFactor::One as u32);
-                let dst_factor = Self::cmd_read_u32(packet, 16)
-                    .unwrap_or(cmd::AerogpuBlendFactor::Zero as u32);
+                let src_factor =
+                    Self::cmd_read_u32(packet, 12).unwrap_or(cmd::AerogpuBlendFactor::One as u32);
+                let dst_factor =
+                    Self::cmd_read_u32(packet, 16).unwrap_or(cmd::AerogpuBlendFactor::Zero as u32);
                 let blend_op =
                     Self::cmd_read_u32(packet, 20).unwrap_or(cmd::AerogpuBlendOp::Add as u32);
                 let write_mask = packet.get(24).copied().unwrap_or(0xF);
@@ -1772,8 +1782,8 @@ impl AeroGpuSoftwareExecutor {
                     return false;
                 }
 
-                let cull_mode = Self::cmd_read_u32(packet, 12)
-                    .unwrap_or(cmd::AerogpuCullMode::Back as u32);
+                let cull_mode =
+                    Self::cmd_read_u32(packet, 12).unwrap_or(cmd::AerogpuCullMode::Back as u32);
                 let front_ccw = Self::cmd_read_u32(packet, 16).unwrap_or(0) != 0;
                 let scissor_enable = Self::cmd_read_u32(packet, 20).unwrap_or(0) != 0;
 

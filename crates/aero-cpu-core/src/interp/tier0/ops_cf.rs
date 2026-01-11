@@ -2,7 +2,9 @@ use super::ops_data::{calc_ea, op_bits, read_op_sized};
 use super::ExecOutcome;
 use crate::exception::{AssistReason, Exception};
 use crate::mem::CpuBus;
-use crate::state::{mask_bits, CpuMode, CpuState, FLAG_OF, FLAG_ZF, RFLAGS_IF, RFLAGS_IOPL_MASK, RFLAGS_TF};
+use crate::state::{
+    mask_bits, CpuMode, CpuState, FLAG_OF, FLAG_ZF, RFLAGS_IF, RFLAGS_IOPL_MASK, RFLAGS_TF,
+};
 use aero_x86::{DecodedInst, Instruction, Mnemonic, OpKind, Register};
 
 pub fn handles_mnemonic(m: Mnemonic) -> bool {
@@ -251,7 +253,8 @@ pub fn exec<B: CpuBus>(
             write_mask &= mask_bits(bits);
 
             // Do not allow POPF to toggle virtualization/virtual interrupt bits in this model.
-            write_mask &= !(crate::state::RFLAGS_VM | crate::state::RFLAGS_VIF | crate::state::RFLAGS_VIP);
+            write_mask &=
+                !(crate::state::RFLAGS_VM | crate::state::RFLAGS_VIF | crate::state::RFLAGS_VIP);
 
             if !matches!(state.mode, CpuMode::Real | CpuMode::Vm86) {
                 let cpl = state.cpl();

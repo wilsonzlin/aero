@@ -27,23 +27,23 @@ pub mod dhcp {
 }
 
 pub mod dns {
-    pub use nt_packetlib::packet::dns::*;
     pub use super::DnsType;
+    pub use nt_packetlib::packet::dns::*;
 }
 
 pub mod ethernet {
-    pub use nt_packetlib::packet::ethernet::*;
     pub use super::EtherType;
+    pub use nt_packetlib::packet::ethernet::*;
 }
 
 pub mod icmp {
-    pub use nt_packetlib::packet::icmp::*;
     pub use super::{IcmpEchoPacket, IcmpPacket};
+    pub use nt_packetlib::packet::icmp::*;
 }
 
 pub mod ipv4 {
-    pub use nt_packetlib::packet::ipv4::*;
     pub use super::Ipv4Protocol;
+    pub use nt_packetlib::packet::ipv4::*;
 }
 
 pub mod tcp {

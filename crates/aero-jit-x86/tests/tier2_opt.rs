@@ -441,9 +441,18 @@ fn memory_ops_are_barriers_and_preserved_by_optimizations() {
     let trace = TraceIr {
         prologue: vec![],
         body: vec![
-            Instr::Const { dst: v(0), value: 0 },
-            Instr::Const { dst: v(1), value: 1 },
-            Instr::Const { dst: v(2), value: 2 },
+            Instr::Const {
+                dst: v(0),
+                value: 0,
+            },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
+            Instr::Const {
+                dst: v(2),
+                value: 2,
+            },
             Instr::StoreMem {
                 addr: Operand::Value(v(0)),
                 src: Operand::Value(v(1)),

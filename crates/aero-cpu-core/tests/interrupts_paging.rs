@@ -106,10 +106,7 @@ fn write_idt_gate32(
 }
 
 fn set_pte32(mem: &mut impl MemoryBus, pt_base: u64, page_idx: u64, flags: u32) {
-    mem.write_u32(
-        pt_base + page_idx * 4,
-        ((page_idx * 0x1000) as u32) | flags,
-    );
+    mem.write_u32(pt_base + page_idx * 4, ((page_idx * 0x1000) as u32) | flags);
 }
 
 #[test]
@@ -281,7 +278,8 @@ fn long_mode_interrupt_delivery_can_use_ist_stack_under_paging() -> Result<(), C
 }
 
 #[test]
-fn protected_mode_interrupt_delivery_can_access_supervisor_idt_tss_and_stack() -> Result<(), CpuExit> {
+fn protected_mode_interrupt_delivery_can_access_supervisor_idt_tss_and_stack() -> Result<(), CpuExit>
+{
     // Physical memory layout (identity-mapped for low pages):
     // - Guest pages:
     //   - 0x0000: user code (unused)
@@ -297,7 +295,10 @@ fn protected_mode_interrupt_delivery_can_access_supervisor_idt_tss_and_stack() -
     let pt_base = 0x11000u64;
 
     // Top-level PDE permits user access; leaf PTE controls U/S.
-    phys.write_u32(pd_base + 0 * 4, (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32));
+    phys.write_u32(
+        pd_base + 0 * 4,
+        (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32),
+    );
 
     set_pte32(&mut phys, pt_base, 0x0, PTE_P32 | PTE_RW32 | PTE_US32); // user code
     set_pte32(&mut phys, pt_base, 0x1, PTE_P32 | PTE_RW32); // IDT supervisor-only

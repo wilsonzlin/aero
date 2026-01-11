@@ -299,7 +299,8 @@ impl CpuState {
             return Err(Exception::gp(selector));
         }
 
-        let raw_low = self.with_supervisor_access(bus, |bus| bus.read_u64(table.base + byte_off))?;
+        let raw_low =
+            self.with_supervisor_access(bus, |bus| bus.read_u64(table.base + byte_off))?;
         Ok(parse_descriptor_8(raw_low))
     }
 

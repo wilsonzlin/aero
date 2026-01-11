@@ -178,4 +178,3 @@ fn read_u64(src: &[u8; FXSAVE_AREA_SIZE], offset: usize) -> u64 {
 fn read_u128(src: &[u8; FXSAVE_AREA_SIZE], offset: usize) -> u128 {
     u128::from_le_bytes(src[offset..offset + 16].try_into().unwrap())
 }
-

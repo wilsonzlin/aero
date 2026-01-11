@@ -8,9 +8,9 @@ use aero_jit_x86::tier2::wasm::{
     Tier2WasmCodegen, Tier2WasmOptions, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION,
 };
 use aero_jit_x86::wasm::{
-    IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
-    IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
-    IMPORT_MEMORY, IMPORT_MODULE, IMPORT_MMU_TRANSLATE,
+    IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
+    IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
+    IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE,
 };
 use aero_jit_x86::{
     JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, JIT_TLB_INDEX_MASK, PAGE_BASE_MASK, PAGE_SHIFT, PAGE_SIZE,
@@ -65,7 +65,13 @@ fn instantiate(
     let engine = Engine::default();
     let module = Module::new(&engine, wasm).unwrap();
 
-    let mut store = Store::new(&engine, HostState { ram_size, ..Default::default() });
+    let mut store = Store::new(
+        &engine,
+        HostState {
+            ram_size,
+            ..Default::default()
+        },
+    );
     let mut linker = Linker::new(&engine);
 
     let memory = Memory::new(&mut store, MemoryType::new(memory_pages, None)).unwrap();
@@ -101,7 +107,11 @@ fn read_u64_from_memory(caller: &mut Caller<'_, HostState>, memory: &Memory, add
     u64::from_le_bytes(buf)
 }
 
-fn define_mem_helpers(store: &mut Store<HostState>, linker: &mut Linker<HostState>, memory: Memory) {
+fn define_mem_helpers(
+    store: &mut Store<HostState>,
+    linker: &mut Linker<HostState>,
+    memory: Memory,
+) {
     fn read<const N: usize>(
         caller: &mut Caller<'_, HostState>,
         memory: &Memory,
@@ -118,7 +128,12 @@ fn define_mem_helpers(store: &mut Store<HostState>, linker: &mut Linker<HostStat
         v
     }
 
-    fn write<const N: usize>(caller: &mut Caller<'_, HostState>, memory: &Memory, addr: usize, v: u64) {
+    fn write<const N: usize>(
+        caller: &mut Caller<'_, HostState>,
+        memory: &Memory,
+        addr: usize,
+        v: u64,
+    ) {
         let mut buf = [0u8; N];
         for (i, b) in buf.iter_mut().enumerate() {
             *b = (v >> (i * 8)) as u8;
@@ -305,7 +320,11 @@ fn define_mem_helpers(store: &mut Store<HostState>, linker: &mut Linker<HostStat
         .unwrap();
 }
 
-fn define_mmu_translate(store: &mut Store<HostState>, linker: &mut Linker<HostState>, memory: Memory) {
+fn define_mmu_translate(
+    store: &mut Store<HostState>,
+    linker: &mut Linker<HostState>,
+    memory: Memory,
+) {
     let mem = memory;
     linker
         .define(
@@ -371,14 +390,12 @@ fn run_trace(
 
     let cpu_ptr_usize = cpu_ptr as usize;
     let jit_ctx_ptr_usize = cpu_ptr_usize + (abi::CPU_STATE_SIZE as usize);
-    let total_len = jit_ctx_ptr_usize + JitContext::TOTAL_BYTE_SIZE + (jit_ctx::TIER2_CTX_SIZE as usize);
+    let total_len =
+        jit_ctx_ptr_usize + JitContext::TOTAL_BYTE_SIZE + (jit_ctx::TIER2_CTX_SIZE as usize);
     let mut mem = vec![0u8; total_len];
 
     // RAM at `ram_base = 0`.
-    assert!(
-        ram.len() <= cpu_ptr as usize,
-        "ram must fit before cpu_ptr"
-    );
+    assert!(ram.len() <= cpu_ptr as usize, "ram must fit before cpu_ptr");
     mem[..ram.len()].copy_from_slice(&ram);
 
     // CPU state at `cpu_ptr`, JIT context immediately following.
