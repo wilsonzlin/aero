@@ -8,6 +8,15 @@ This script wraps:
 - `drivers/scripts/make-driver-pack.ps1` (extracts Win7 driver packages from virtio-win)
 - `tools/packaging/aero_packager/` (packages Guest Tools scripts + drivers into ISO/zip)
 
+On Windows, `-VirtioWinIso` mounts the ISO via `Mount-DiskImage` (and falls back to
+`tools/virtio-win/extract.py` when mounting is unavailable or fails).
+
+On Linux/macOS, run under PowerShell 7 (`pwsh`) and either:
+
+- pass `-VirtioWinIso` (the underlying driver pack script will automatically fall back to
+  `tools/virtio-win/extract.py` when `Mount-DiskImage` is unavailable or fails), or
+- extract first with `python3 tools/virtio-win/extract.py` and then pass `-VirtioWinRoot`.
+
 Use `-Profile` to choose a predictable driver set:
 
 - `full` (default): includes optional audio/input drivers when present (best-effort)

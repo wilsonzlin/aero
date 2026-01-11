@@ -21,6 +21,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# On Windows, `-VirtioWinIso` attempts to mount the ISO via `Mount-DiskImage`
+# (inside make-driver-pack.ps1). If mounting is unavailable or fails, make-driver-pack.ps1
+# falls back to `tools/virtio-win/extract.py`.
+#
+# On Linux/macOS, run under PowerShell 7 (`pwsh`) and either:
+# - pass `-VirtioWinIso` (make-driver-pack.ps1 will fall back to `tools/virtio-win/extract.py` when mounting is unavailable or fails), or
+# - extract first with `python3 tools/virtio-win/extract.py` and then pass `-VirtioWinRoot`.
+
 function Resolve-Python {
   $candidates = @("python", "python3", "py")
   foreach ($c in $candidates) {
