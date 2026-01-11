@@ -121,7 +121,13 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
 
   aerogpu_test::PrintfStdout("INFO: %s: feature level 0x%04X", kTestName, (unsigned)chosen_level);
   if (chosen_level < D3D_FEATURE_LEVEL_10_0) {
-    return reporter.Fail("feature level 0x%04X is below required FL10_0", (unsigned)chosen_level);
+    const std::string skip_reason = aerogpu_test::FormatString(
+        "feature level 0x%04X is below D3D_FEATURE_LEVEL_10_0 (0x%04X)",
+        (unsigned)chosen_level,
+        (unsigned)D3D_FEATURE_LEVEL_10_0);
+    reporter.SetSkipped(skip_reason.c_str());
+    aerogpu_test::PrintfStdout("SKIP: %s: %s", kTestName, skip_reason.c_str());
+    return reporter.Pass();
   }
 
   ComPtr<IDXGIDevice> dxgi_device;

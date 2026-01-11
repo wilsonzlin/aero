@@ -129,7 +129,13 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
 
   aerogpu_test::PrintfStdout("INFO: %s: feature level 0x%04X", kTestName, (unsigned)chosen_level);
   if (chosen_level < D3D_FEATURE_LEVEL_10_0) {
-    return reporter.Fail("feature level 0x%04X is below required FL10_0", (unsigned)chosen_level);
+    const std::string skip_reason = aerogpu_test::FormatString(
+        "feature level 0x%04X is below D3D_FEATURE_LEVEL_10_0 (0x%04X)",
+        (unsigned)chosen_level,
+        (unsigned)D3D_FEATURE_LEVEL_10_0);
+    reporter.SetSkipped(skip_reason.c_str());
+    aerogpu_test::PrintfStdout("SKIP: %s: %s", kTestName, skip_reason.c_str());
+    return reporter.Pass();
   }
 
   ComPtr<IDXGIDevice> dxgi_device;
@@ -333,7 +339,13 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
   src_pixels[14] = PackBGRA(255, 255, 255, 255);     // white
   src_pixels[15] = PackBGRA(255, 0, 0, 255);         // blue
 
-  context->UpdateSubresource(src_tex.get(), 0, NULL, src_pixels, kTexW * 4, 0);
+  // Upload with a padded RowPitch to catch bugs where the driver assumes RowPitch == Width*Bpp.
+  const int upload_row_pitch = kTexW * 4 + 8;
+  std::vector<uint8_t> upload((size_t)upload_row_pitch * (size_t)kTexH, 0);
+  for (int y = 0; y < kTexH; ++y) {
+    memcpy(&upload[y * upload_row_pitch], &src_pixels[y * kTexW], kTexW * 4);
+  }
+  context->UpdateSubresource(src_tex.get(), 0, NULL, &upload[0], upload_row_pitch, 0);
 
   D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc;
   ZeroMemory(&srv_desc, sizeof(srv_desc));
