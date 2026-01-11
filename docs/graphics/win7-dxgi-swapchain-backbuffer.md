@@ -31,7 +31,9 @@ The guest-side probe lives at:
 
 It creates:
 
-* a D3D11 device
+* a D3D11 device by default (`--api=d3d11`)
+  * or a D3D10 device (`--api=d3d10`)
+  * or a D3D10.1 device (`--api=d3d10_1`)
 * a **windowed** `DXGI_SWAP_CHAIN_DESC` swapchain with **2 buffers**
 * RTVs for both buffers
 * a few `Present(1,0)` frames (vsync)
@@ -46,7 +48,9 @@ build_all_vs2010.cmd
 Run:
 
 ```cmd
-bin\dxgi_swapchain_probe.exe --require-vid=0xA3A0 --require-did=0x0001
+bin\dxgi_swapchain_probe.exe --api=d3d11 --require-vid=0xA3A0 --require-did=0x0001
+bin\dxgi_swapchain_probe.exe --api=d3d10 --require-vid=0xA3A0 --require-did=0x0001
+bin\dxgi_swapchain_probe.exe --api=d3d10_1 --require-vid=0xA3A0 --require-did=0x0001
 ```
 
 ### 3) Capture the UMD output
