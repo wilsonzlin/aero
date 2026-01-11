@@ -26,6 +26,11 @@
 #include <utility>
 #include <vector>
 
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+  #include <d3dkmthk.h>
+  #include <d3dumddi.h>
+#endif
+
 #include "aerogpu_cmd_writer.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "aerogpu_d3d10_trace.h"
@@ -288,6 +293,14 @@ uint32_t HashSemanticName(const char* s) {
   return hash;
 }
 
+uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
+  if (alignment == 0) {
+    return value;
+  }
+  const uint64_t mask = alignment - 1;
+  return (value + mask) & ~mask;
+}
+
 uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
   switch (dxgi_format) {
     case kDxgiFormatB8G8R8A8Unorm:
@@ -500,6 +513,13 @@ struct AeroGpuResource {
   uint32_t mapped_map_type = 0;
   uint64_t mapped_offset_bytes = 0;
   uint64_t mapped_size_bytes = 0;
+
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
+  // WDDM handles returned by the runtime allocation callback (kernel-mode
+  // objects). The initial bring-up path uses a single allocation per resource.
+  D3DKMT_HANDLE hkm_resource = 0;
+  D3DKMT_HANDLE hkm_allocation = 0;
+#endif
 };
 
 struct AeroGpuShader {
@@ -4786,7 +4806,9 @@ struct AeroGpuDevice {
   std::atomic<uint64_t> last_submitted_fence{0};
   std::atomic<uint64_t> last_completed_fence{0};
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+  std::vector<AeroGpuResource*> live_resources;
+
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
   // Monitored fence state for Win7/WDDM 1.1.
   //
   // - `kmt_fence_syncobj` should be a monitored-fence sync object that advances as the KMD reports
@@ -4801,7 +4823,7 @@ struct AeroGpuDevice {
 
   // WDDM submission plumbing (dxgkrnl callback table + runtime handle).
   D3D10DDI_HRTDEVICE hrt_device = {};
-  const D3DDDI_DEVICECALLBACKS* callbacks = nullptr;
+  D3DDDI_DEVICECALLBACKS callbacks = {};
 
   // Mark that the next submission is triggered by Present; used to route the
   // final chunk through the Present callback so the KMD hits DxgkDdiPresent.
@@ -4920,7 +4942,24 @@ void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
   }
 }
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+void AddLiveResourceLocked(AeroGpuDevice* dev, AeroGpuResource* res) {
+  if (!dev || !res) {
+    return;
+  }
+  dev->live_resources.push_back(res);
+}
+
+void RemoveLiveResourceLocked(AeroGpuDevice* dev, const AeroGpuResource* res) {
+  if (!dev || !res) {
+    return;
+  }
+  auto it = std::find(dev->live_resources.begin(), dev->live_resources.end(), res);
+  if (it != dev->live_resources.end()) {
+    dev->live_resources.erase(it);
+  }
+}
+
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
 struct AeroGpuD3dkmtProcs {
   decltype(&D3DKMTEscape) pfn_escape = nullptr;
   decltype(&D3DKMTWaitForSynchronizationObject) pfn_wait_for_syncobj = nullptr;
@@ -5073,6 +5112,49 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
   return S_OK;
 #endif
 }
+
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
+void SetErrorIfPossible(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, HRESULT hr) {
+  if (!dev) {
+    return;
+  }
+  if (dev->callbacks.pfnSetErrorCb) {
+    dev->callbacks.pfnSetErrorCb(hDevice, hr);
+  }
+}
+
+HRESULT DeallocateResourceIfNeeded(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, AeroGpuResource* res) {
+  if (!dev || !res) {
+    return E_INVALIDARG;
+  }
+  if (!dev->callbacks.pfnDeallocateCb) {
+    return S_OK;
+  }
+  if (res->hkm_resource == 0 && res->hkm_allocation == 0) {
+    return S_OK;
+  }
+
+  D3DDDICB_DEALLOCATE dealloc = {};
+  dealloc.hKMResource = res->hkm_resource;
+  dealloc.NumAllocations = (res->hkm_allocation != 0) ? 1u : 0u;
+  dealloc.HandleList = (res->hkm_allocation != 0) ? &res->hkm_allocation : nullptr;
+
+  const HRESULT hr = dev->callbacks.pfnDeallocateCb(dev->hrt_device, &dealloc);
+  if (FAILED(hr)) {
+    SetErrorIfPossible(dev, hDevice, hr);
+    return hr;
+  }
+
+  res->hkm_allocation = 0;
+  res->hkm_resource = 0;
+  return S_OK;
+}
+#else
+inline void SetErrorIfPossible(AeroGpuDevice*, D3D10DDI_HDEVICE, HRESULT) {}
+inline HRESULT DeallocateResourceIfNeeded(AeroGpuDevice*, D3D10DDI_HDEVICE, AeroGpuResource*) {
+  return S_OK;
+}
+#endif
 
 uint64_t submit_locked(AeroGpuDevice* dev, HRESULT* out_hr) {
   if (out_hr) {
@@ -5318,9 +5400,231 @@ void AEROGPU_APIENTRY DestroyDevice(D3D10DDI_HDEVICE hDevice) {
     return;
   }
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    for (AeroGpuResource* res : dev->live_resources) {
+      if (res) {
+        DeallocateResourceIfNeeded(dev, hDevice, res);
+      }
+    }
+    dev->live_resources.clear();
+  }
+#endif
   dev->~AeroGpuDevice();
 }
 
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+SIZE_T AEROGPU_APIENTRY CalcPrivateResourceSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATERESOURCE*) {
+  return sizeof(AeroGpuResource);
+}
+
+HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
+                                        const D3D10DDIARG_CREATERESOURCE* pDesc,
+                                        D3D10DDI_HRESOURCE hResource,
+                                        D3D10DDI_HRTRESOURCE hRTResource) {
+  if (!hDevice.pDrvPrivate || !pDesc || !hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev || !dev->adapter) {
+    return E_FAIL;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (!dev->callbacks.pfnAllocateCb) {
+    SetErrorIfPossible(dev, hDevice, E_FAIL);
+    return E_FAIL;
+  }
+
+  auto allocate_one = [&](uint64_t size_bytes, bool cpu_visible, bool is_rt, bool is_ds, AeroGpuResource* res) -> HRESULT {
+    if (!pDesc->pAllocationInfo || !res) {
+      return E_INVALIDARG;
+    }
+
+    auto* alloc_info = pDesc->pAllocationInfo;
+    std::memset(alloc_info, 0, sizeof(*alloc_info));
+    alloc_info[0].Size = static_cast<SIZE_T>(size_bytes);
+    alloc_info[0].Alignment = 0;
+    alloc_info[0].Flags.Value = 0;
+    alloc_info[0].Flags.CpuVisible = cpu_visible ? 1u : 0u;
+    alloc_info[0].SupportedReadSegmentSet = 1;
+    alloc_info[0].SupportedWriteSegmentSet = 1;
+
+    D3DDDICB_ALLOCATE alloc = {};
+    alloc.hResource = hRTResource;
+    alloc.NumAllocations = 1;
+    alloc.pAllocationInfo = alloc_info;
+    alloc.Flags.Value = 0;
+    alloc.Flags.CreateResource = 1;
+    alloc.ResourceFlags.Value = 0;
+    alloc.ResourceFlags.RenderTarget = is_rt ? 1u : 0u;
+    alloc.ResourceFlags.ZBuffer = is_ds ? 1u : 0u;
+
+    const HRESULT hr = dev->callbacks.pfnAllocateCb(dev->hrt_device, &alloc);
+    if (FAILED(hr)) {
+      SetErrorIfPossible(dev, hDevice, hr);
+      return hr;
+    }
+
+    res->hkm_resource = alloc.hKMResource;
+    res->hkm_allocation = alloc_info[0].hKMAllocation;
+    return S_OK;
+  };
+
+  if (pDesc->Dimension == 1) {
+    auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
+    res->handle = dev->adapter->next_handle.fetch_add(1);
+    res->kind = ResourceKind::Buffer;
+    res->bind_flags = pDesc->BindFlags;
+    res->misc_flags = pDesc->MiscFlags;
+    res->size_bytes = pDesc->ByteWidth;
+
+    const uint64_t alloc_size = AlignUpU64(static_cast<uint64_t>(res->size_bytes), 256);
+    const bool cpu_visible = pDesc->CPUAccessFlags != 0;
+    const bool is_rt = (pDesc->BindFlags & kD3D11BindRenderTarget) != 0;
+    const bool is_ds = (pDesc->BindFlags & kD3D11BindDepthStencil) != 0;
+    HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, res);
+    if (FAILED(hr)) {
+      res->handle = kInvalidHandle;
+      res->~AeroGpuResource();
+      return hr;
+    }
+
+    if (pDesc->pInitialData && pDesc->InitialDataCount) {
+      const auto& init = pDesc->pInitialData[0];
+      if (!init.pSysMem) {
+        res->handle = kInvalidHandle;
+        res->~AeroGpuResource();
+        return E_INVALIDARG;
+      }
+      try {
+        res->storage.resize(static_cast<size_t>(res->size_bytes));
+      } catch (...) {
+        res->handle = kInvalidHandle;
+        res->~AeroGpuResource();
+        return E_OUTOFMEMORY;
+      }
+      std::memcpy(res->storage.data(), init.pSysMem, static_cast<size_t>(res->size_bytes));
+    }
+
+    AddLiveResourceLocked(dev, res);
+
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
+    cmd->buffer_handle = res->handle;
+    cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
+    cmd->size_bytes = res->size_bytes;
+    cmd->backing_alloc_id = 0;
+    cmd->backing_offset_bytes = 0;
+    cmd->reserved0 = 0;
+
+    if (!res->storage.empty()) {
+      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      dirty->resource_handle = res->handle;
+      dirty->reserved0 = 0;
+      dirty->offset_bytes = 0;
+      dirty->size_bytes = res->size_bytes;
+    }
+    return S_OK;
+  }
+
+  if (pDesc->Dimension == 3) {
+    if (pDesc->MipLevels != 1 || pDesc->ArraySize != 1 || pDesc->SampleDesc.Count != 1) {
+      return E_NOTIMPL;
+    }
+
+    const uint32_t aer_fmt = dxgi_format_to_aerogpu(pDesc->Format);
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      return E_NOTIMPL;
+    }
+
+    auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
+    res->handle = dev->adapter->next_handle.fetch_add(1);
+    res->kind = ResourceKind::Texture2D;
+    res->bind_flags = pDesc->BindFlags;
+    res->misc_flags = pDesc->MiscFlags;
+    res->width = pDesc->Width;
+    res->height = pDesc->Height;
+    res->mip_levels = pDesc->MipLevels;
+    res->array_size = pDesc->ArraySize;
+    res->dxgi_format = pDesc->Format;
+
+    const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+    const uint64_t tight_row_bytes = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
+    const uint64_t row_pitch_bytes = AlignUpU64(tight_row_bytes, 256);
+    res->row_pitch_bytes = static_cast<uint32_t>(row_pitch_bytes);
+    const uint64_t alloc_size = row_pitch_bytes * static_cast<uint64_t>(res->height);
+
+    const bool cpu_visible = pDesc->CPUAccessFlags != 0;
+    const bool is_rt = (pDesc->BindFlags & kD3D11BindRenderTarget) != 0;
+    const bool is_ds = (pDesc->BindFlags & kD3D11BindDepthStencil) != 0;
+    HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, res);
+    if (FAILED(hr)) {
+      res->handle = kInvalidHandle;
+      res->~AeroGpuResource();
+      return hr;
+    }
+
+    if (pDesc->pInitialData && pDesc->InitialDataCount) {
+      const auto& init = pDesc->pInitialData[0];
+      if (!init.pSysMem) {
+        res->handle = kInvalidHandle;
+        res->~AeroGpuResource();
+        return E_INVALIDARG;
+      }
+
+      if (alloc_size > static_cast<uint64_t>(SIZE_MAX)) {
+        res->handle = kInvalidHandle;
+        res->~AeroGpuResource();
+        return E_OUTOFMEMORY;
+      }
+      try {
+        res->storage.resize(static_cast<size_t>(alloc_size));
+      } catch (...) {
+        res->handle = kInvalidHandle;
+        res->~AeroGpuResource();
+        return E_OUTOFMEMORY;
+      }
+
+      const uint8_t* src = static_cast<const uint8_t*>(init.pSysMem);
+      const size_t src_pitch = init.SysMemPitch ? static_cast<size_t>(init.SysMemPitch) : static_cast<size_t>(tight_row_bytes);
+      for (uint32_t y = 0; y < res->height; y++) {
+        std::memcpy(res->storage.data() + static_cast<size_t>(y) * static_cast<size_t>(row_pitch_bytes),
+                    src + static_cast<size_t>(y) * src_pitch,
+                    static_cast<size_t>(tight_row_bytes));
+      }
+    }
+
+    AddLiveResourceLocked(dev, res);
+
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
+    cmd->texture_handle = res->handle;
+    cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags) | AEROGPU_RESOURCE_USAGE_TEXTURE;
+    cmd->format = aer_fmt;
+    cmd->width = res->width;
+    cmd->height = res->height;
+    cmd->mip_levels = res->mip_levels;
+    cmd->array_layers = 1;
+    cmd->row_pitch_bytes = res->row_pitch_bytes;
+    cmd->backing_alloc_id = 0;
+    cmd->backing_offset_bytes = 0;
+    cmd->reserved0 = 0;
+
+    if (!res->storage.empty()) {
+      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      dirty->resource_handle = res->handle;
+      dirty->reserved0 = 0;
+      dirty->offset_bytes = 0;
+      dirty->size_bytes = res->storage.size();
+    }
+    return S_OK;
+  }
+
+  return E_NOTIMPL;
+}
+#else
 SIZE_T AEROGPU_APIENTRY CalcPrivateResourceSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATERESOURCE*) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("CalcPrivateResourceSize");
@@ -5401,6 +5705,8 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       }
 #endif
     }
+
+    AddLiveResourceLocked(dev, res);
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     cmd->buffer_handle = res->handle;
@@ -5501,12 +5807,14 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     bool wddm_initial_upload = false;
     if (has_initial_data) {
       if (res->mip_levels != 1 || res->array_size != 1) {
+        res->handle = kInvalidHandle;
         res->~AeroGpuResource();
         AEROGPU_D3D10_RET_HR(E_NOTIMPL);
       }
 
       const auto& init = pDesc->pInitialData[0];
       if (!init.pSysMem) {
+        res->handle = kInvalidHandle;
         res->~AeroGpuResource();
         return E_INVALIDARG;
       }
@@ -5542,6 +5850,8 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                     static_cast<size_t>(bytes_per_row));
       }
     }
+
+    AddLiveResourceLocked(dev, res);
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
     cmd->texture_handle = res->handle;
@@ -5592,6 +5902,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 
   AEROGPU_D3D10_RET_HR(E_NOTIMPL);
 }
+#endif
 
 void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
   AEROGPU_D3D10_11_LOG_CALL();
@@ -5608,6 +5919,14 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  if (res->handle == kInvalidHandle) {
+    return;
+  }
+
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+  DeallocateResourceIfNeeded(dev, hDevice, res);
+#endif
+
   if (res->handle != kInvalidHandle) {
     // NOTE: For now we emit DESTROY_RESOURCE for both original resources and
     // shared-surface aliases. The host command processor is expected to
@@ -5617,6 +5936,8 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     cmd->resource_handle = res->handle;
     cmd->reserved0 = 0;
   }
+  RemoveLiveResourceLocked(dev, res);
+  res->handle = kInvalidHandle;
   res->~AeroGpuResource();
 }
 
@@ -7375,7 +7696,6 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDI
     device->callbacks = pCreateDevice->pDeviceCallbacks;
   }
 #endif
-
   AEROGPU_D3D10_11_DEVICEFUNCS funcs = {};
   funcs.pfnDestroyDevice = &DestroyDevice;
 

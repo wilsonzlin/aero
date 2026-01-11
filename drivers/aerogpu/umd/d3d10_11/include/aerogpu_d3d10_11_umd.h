@@ -193,6 +193,14 @@ struct D3D10DDIARG_CREATEDEVICE {
 };
 #endif // !_WIN32 || !AEROGPU_UMD_USE_WDK_HEADERS
 
+// -------------------------------------------------------------------------------------------------
+// Minimal D3D10/11 DDI ABI subset (Win7 milestone)
+// -------------------------------------------------------------------------------------------------
+//
+// Even when building against the real WDK DDI headers, we keep these internal
+// "AEROGPU_*" structures so that the translation layer can be compiled and
+// unit-tested without needing to mirror the full WDK surface.
+
 // Resource/shader descriptors (minimal).
 typedef enum AEROGPU_DDI_RESOURCE_DIMENSION {
   AEROGPU_DDI_RESOURCE_DIMENSION_BUFFER = 1,
@@ -369,14 +377,14 @@ typedef struct AEROGPU_DDI_BOX {
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYDEVICE)(D3D10DDI_HDEVICE);
 
 typedef SIZE_T(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CALCPRIVATERESOURCESIZE)(D3D10DDI_HDEVICE,
-                                                                        const AEROGPU_DDIARG_CREATERESOURCE *);
+                                                                         const AEROGPU_DDIARG_CREATERESOURCE *);
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATERESOURCE)(D3D10DDI_HDEVICE,
                                                                  const AEROGPU_DDIARG_CREATERESOURCE *,
                                                                  D3D10DDI_HRESOURCE);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYRESOURCE)(D3D10DDI_HDEVICE, D3D10DDI_HRESOURCE);
 
 typedef SIZE_T(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CALCPRIVATESHADERSIZE)(D3D10DDI_HDEVICE,
-                                                                      const AEROGPU_DDIARG_CREATESHADER *);
+                                                                       const AEROGPU_DDIARG_CREATESHADER *);
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATEVERTEXSHADER)(D3D10DDI_HDEVICE,
                                                                      const AEROGPU_DDIARG_CREATESHADER *,
                                                                      D3D10DDI_HSHADER);
@@ -386,28 +394,28 @@ typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATEPIXELSHADER)(D3D10DDI_HDE
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYSHADER)(D3D10DDI_HDEVICE, D3D10DDI_HSHADER);
 
 typedef SIZE_T(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CALCPRIVATEINPUTLAYOUTSIZE)(D3D10DDI_HDEVICE,
-                                                                           const AEROGPU_DDIARG_CREATEINPUTLAYOUT *);
+                                                                            const AEROGPU_DDIARG_CREATEINPUTLAYOUT *);
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATEINPUTLAYOUT)(D3D10DDI_HDEVICE,
                                                                     const AEROGPU_DDIARG_CREATEINPUTLAYOUT *,
                                                                     D3D10DDI_HELEMENTLAYOUT);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYINPUTLAYOUT)(D3D10DDI_HDEVICE, D3D10DDI_HELEMENTLAYOUT);
 
 typedef SIZE_T(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CALCPRIVATERTVSIZE)(D3D10DDI_HDEVICE,
-                                                                   const AEROGPU_DDIARG_CREATERENDERTARGETVIEW *);
+                                                                    const AEROGPU_DDIARG_CREATERENDERTARGETVIEW *);
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATERTV)(D3D10DDI_HDEVICE,
                                                             const AEROGPU_DDIARG_CREATERENDERTARGETVIEW *,
                                                             D3D10DDI_HRENDERTARGETVIEW);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYRTV)(D3D10DDI_HDEVICE, D3D10DDI_HRENDERTARGETVIEW);
 
 typedef SIZE_T(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CALCPRIVATEDSVSIZE)(D3D10DDI_HDEVICE,
-                                                                   const AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW *);
+                                                                    const AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW *);
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATEDSV)(D3D10DDI_HDEVICE,
                                                             const AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW *,
                                                             D3D10DDI_HDEPTHSTENCILVIEW);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYDSV)(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILVIEW);
 
 typedef SIZE_T(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CALCPRIVATEBLENDSTATESIZE)(D3D10DDI_HDEVICE,
-                                                                          const AEROGPU_DDIARG_CREATEBLENDSTATE *);
+                                                                           const AEROGPU_DDIARG_CREATEBLENDSTATE *);
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATEBLENDSTATE)(D3D10DDI_HDEVICE,
                                                                    const AEROGPU_DDIARG_CREATEBLENDSTATE *,
                                                                    D3D10DDI_HBLENDSTATE);
@@ -427,20 +435,20 @@ typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATEDEPTHSTENCILSTATE)(D3D10D
                                                                           D3D10DDI_HDEPTHSTENCILSTATE);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYDEPTHSTENCILSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILSTATE);
 
-  typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETRENDERTARGETS)(D3D10DDI_HDEVICE,
-                                                                D3D10DDI_HRENDERTARGETVIEW,
-                                                                D3D10DDI_HDEPTHSTENCILVIEW);
-  typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CLEARRTV)(D3D10DDI_HDEVICE, D3D10DDI_HRENDERTARGETVIEW, const float[4]);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETRENDERTARGETS)(D3D10DDI_HDEVICE,
+                                                                 D3D10DDI_HRENDERTARGETVIEW,
+                                                                 D3D10DDI_HDEPTHSTENCILVIEW);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CLEARRTV)(D3D10DDI_HDEVICE, D3D10DDI_HRENDERTARGETVIEW, const float[4]);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CLEARDSV)(D3D10DDI_HDEVICE,
-                                                       D3D10DDI_HDEPTHSTENCILVIEW,
-                                                       uint32_t clear_flags,
-                                                       float depth,
-                                                       uint8_t stencil);
+                                                        D3D10DDI_HDEPTHSTENCILVIEW,
+                                                        uint32_t clear_flags,
+                                                        float depth,
+                                                        uint8_t stencil);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETINPUTLAYOUT)(D3D10DDI_HDEVICE, D3D10DDI_HELEMENTLAYOUT);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETVERTEXBUFFER)(D3D10DDI_HDEVICE, D3D10DDI_HRESOURCE, uint32_t stride,
-                                                              uint32_t offset);
+                                                               uint32_t offset);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETINDEXBUFFER)(D3D10DDI_HDEVICE, D3D10DDI_HRESOURCE, uint32_t format,
-                                                             uint32_t offset);
+                                                              uint32_t offset);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETVIEWPORT)(D3D10DDI_HDEVICE, const AEROGPU_DDI_VIEWPORT *);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETDRAWSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HSHADER vs, D3D10DDI_HSHADER ps);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETBLENDSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HBLENDSTATE);
@@ -511,11 +519,11 @@ typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_UPDATESUBRESOURCEUP)(D3D10DDI_HDEV
                                                                    uint32_t SysMemSlicePitch);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_COPYRESOURCE)(D3D10DDI_HDEVICE, D3D10DDI_HRESOURCE dst, D3D10DDI_HRESOURCE src);
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_COPYSUBRESOURCEREGION)(D3D10DDI_HDEVICE,
-                                                                       D3D10DDI_HRESOURCE dst,
-                                                                       uint32_t dst_subresource,
-                                                                       uint32_t dst_x,
-                                                                       uint32_t dst_y,
-                                                                       uint32_t dst_z,
+                                                                        D3D10DDI_HRESOURCE dst,
+                                                                        uint32_t dst_subresource,
+                                                                        uint32_t dst_x,
+                                                                        uint32_t dst_y,
+                                                                        uint32_t dst_z,
                                                                         D3D10DDI_HRESOURCE src,
                                                                         uint32_t src_subresource,
                                                                         const AEROGPU_DDI_BOX* pSrcBox);
