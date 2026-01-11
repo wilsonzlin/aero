@@ -73,6 +73,26 @@
             "informational": true
           }
         }
+      },
+      "node": {
+        "metrics": {
+          "startup_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.2,
+            "maxValue": 100,
+            "extremeCvThreshold": 0.5
+          },
+          "json_parse_ops_s": {
+            "better": "higher",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "arith_ops_s": {
+            "better": "higher",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          }
+        }
       }
     },
     "nightly": {
@@ -147,7 +167,27 @@
             "informational": true
           }
         }
+      },
+      "node": {
+        "metrics": {
+          "startup_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.1,
+            "maxValue": 80,
+            "extremeCvThreshold": 0.5
+          },
+          "json_parse_ops_s": {
+            "better": "higher",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "arith_ops_s": {
+            "better": "higher",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          }
+        }
       }
     }
   }
-}
+} 

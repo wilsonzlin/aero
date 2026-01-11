@@ -114,6 +114,30 @@ test("buildCompareResult: missing candidate for informational metric does not fa
   assert.equal(exitCodeForStatus(result.status), 0);
 });
 
+test("compareCase: maxValue threshold triggers regression even when value improves", () => {
+  const result = buildCompareResult({
+    suite: "browser",
+    profile: "pr-smoke",
+    thresholdsFile: "bench/perf_thresholds.json",
+    baselineMeta: { gitSha: "base" },
+    candidateMeta: { gitSha: "head" },
+    cases: [
+      {
+        scenario: "browser",
+        metric: "chromium_startup_ms",
+        unit: "ms",
+        better: "lower",
+        threshold: { maxValue: 100 },
+        baseline: { value: 120, cv: 0.05, n: 3 },
+        candidate: { value: 110, cv: 0.05, n: 3 },
+      },
+    ],
+  });
+
+  assert.equal(result.status, "regression");
+  assert.equal(exitCodeForStatus(result.status), 1);
+});
+
 test("pickThresholdProfile: defaults to pr-smoke when profileName is omitted", () => {
   const policy = {
     schemaVersion: 1,

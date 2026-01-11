@@ -87,6 +87,8 @@ export function compareCase({
   const informational = Boolean(threshold?.informational);
   const maxRegressionPct = isFiniteNumber(threshold?.maxRegressionPct) ? threshold.maxRegressionPct : null;
   const extremeCvThreshold = isFiniteNumber(threshold?.extremeCvThreshold) ? threshold.extremeCvThreshold : null;
+  const minValue = isFiniteNumber(threshold?.minValue) ? threshold.minValue : null;
+  const maxValue = isFiniteNumber(threshold?.maxValue) ? threshold.maxValue : null;
 
   if (!baselineStats) {
     const unstable = !informational;
@@ -99,6 +101,8 @@ export function compareCase({
       threshold: {
         maxRegressionPct,
         extremeCvThreshold,
+        minValue,
+        maxValue,
         informational,
       },
       baseline: null,
@@ -124,6 +128,8 @@ export function compareCase({
       threshold: {
         maxRegressionPct,
         extremeCvThreshold,
+        minValue,
+        maxValue,
         informational,
       },
       baseline: baselineStats,
@@ -143,12 +149,20 @@ export function compareCase({
   const regressionPct = computeRegressionPct(better, baselineStats.value, candidateStats.value);
   const improvementPct = computeImprovementPct(better, baselineStats.value, candidateStats.value);
 
+  const maxValueRegression = isFiniteNumber(maxValue) ? candidateStats.value > maxValue : false;
+  const minValueRegression = isFiniteNumber(minValue) ? candidateStats.value < minValue : false;
+
   const regression =
     isFiniteNumber(maxRegressionPct) && regressionPct != null ? regressionPct >= maxRegressionPct : false;
 
   const unstable = isUnstable(extremeCvThreshold, baselineStats.cv, candidateStats.cv);
 
-  const status = regression ? (informational ? "informational_regression" : "regression") : "ok";
+  const status =
+    regression || maxValueRegression || minValueRegression
+      ? informational
+        ? "informational_regression"
+        : "regression"
+      : "ok";
 
   return {
     suite,
@@ -156,7 +170,7 @@ export function compareCase({
     metric,
     unit,
     better,
-    threshold: { maxRegressionPct, extremeCvThreshold, informational },
+    threshold: { maxRegressionPct, extremeCvThreshold, minValue, maxValue, informational },
     baseline: baselineStats,
     candidate: candidateStats,
     deltaAbs,
@@ -277,6 +291,12 @@ function renderThresholdSummary(threshold, unit) {
   const parts = [];
   if (isFiniteNumber(threshold?.maxRegressionPct)) {
     parts.push(`≤ ${(threshold.maxRegressionPct * 100).toFixed(0)}% regression`);
+  }
+  if (isFiniteNumber(threshold?.minValue)) {
+    parts.push(`min ${formatNumber(threshold.minValue)} ${unit ?? ""}`.trim());
+  }
+  if (isFiniteNumber(threshold?.maxValue)) {
+    parts.push(`max ${formatNumber(threshold.maxValue)} ${unit ?? ""}`.trim());
   }
   if (isFiniteNumber(threshold?.extremeCvThreshold)) {
     parts.push(`cv < ${threshold.extremeCvThreshold}`);

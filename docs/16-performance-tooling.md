@@ -420,8 +420,8 @@ In CI:
   - PR gating uses profile `pr-smoke`
   - Nightly runs should use profile `nightly`
 
-Separately, PF-009 adds a **checked-in baseline** file (`bench/baseline.json`) and threshold policy (`bench/thresholds.json`)
-used by `node bench/compare`.
+Separately, PF-009 adds a **checked-in baseline** file (`bench/baseline.json`) and a Node microbench compare tool (`node bench/compare`).
+It uses the same threshold policy file (`bench/perf_thresholds.json`) under the `node` suite.
 
 ### Updating the PF-009 baseline (`bench/baseline.json`)
 

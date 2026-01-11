@@ -1,14 +1,12 @@
 #!/usr/bin/env node
 
-import fs from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import compareLib from "./lib/compare.cjs";
-import reportLib from "./report.cjs";
-
-const { compareResults } = compareLib;
-const { renderMarkdown } = reportLib;
+import { buildCompareResult, exitCodeForStatus, renderCompareMarkdown, statsFromSamples } from "../tools/perf/lib/compare_core.mjs";
+import { DEFAULT_PROFILE, loadThresholdPolicy, pickThresholdProfile, getSuiteThresholds } from "../tools/perf/lib/thresholds.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,8 +15,9 @@ function parseArgs(argv) {
   const options = {
     baseline: path.join(__dirname, 'baseline.json'),
     current: path.join(__dirname, 'results.json'),
-    thresholds: path.join(__dirname, 'thresholds.json'),
-    profile: 'pr-smoke',
+    thresholdsFile: path.join(__dirname, 'perf_thresholds.json'),
+    profile: DEFAULT_PROFILE,
+    suite: 'node',
     outputMd: path.join(__dirname, 'compare.md'),
     outputJson: null,
     failOnRegression: false,
@@ -43,11 +42,19 @@ function parseArgs(argv) {
       continue;
     }
     if (arg === '--thresholds') {
-      options.thresholds = requireValue('--thresholds', args.shift());
+      options.thresholdsFile = requireValue('--thresholds', args.shift());
+      continue;
+    }
+    if (arg === '--thresholds-file') {
+      options.thresholdsFile = requireValue('--thresholds-file', args.shift());
       continue;
     }
     if (arg === '--profile') {
       options.profile = requireValue('--profile', args.shift());
+      continue;
+    }
+    if (arg === '--suite') {
+      options.suite = requireValue('--suite', args.shift());
       continue;
     }
     if (arg === '--output-md') {
@@ -78,7 +85,7 @@ function parseArgs(argv) {
 function printHelp() {
   process.stdout.write(`bench/compare
 
-Compares current benchmark results to a baseline and generates a Markdown report.
+Compares benchmark results to a baseline using the shared perf threshold policy.
 
 Usage:
   node bench/compare [options]
@@ -86,52 +93,105 @@ Usage:
 Options:
   --baseline <path>      Baseline JSON (default: bench/baseline.json)
   --current <path>       Current results JSON (default: bench/results.json)
-  --thresholds <path>    Thresholds JSON (default: bench/thresholds.json)
-  --profile <name>       Threshold profile (default: pr-smoke)
+  --thresholds-file <path>   Threshold policy file (default: bench/perf_thresholds.json)
+  --thresholds <path>        Alias for --thresholds-file (legacy)
+  --profile <name>           Threshold profile (default: ${DEFAULT_PROFILE})
+  --suite <name>             Threshold suite (default: node)
   --output-md <path>     Markdown output path (default: bench/compare.md)
   --output-json <path>   JSON output path (optional)
   --json                 Write JSON output to bench/compare.json
-  --fail-on-regression   Exit non-zero if any non-informational regression is detected
+  --fail-on-regression   Exit non-zero if regressions/instability are detected (exit codes: 1=regression, 2=unstable)
 `);
 }
 
-function readJsonFile(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+async function readJsonFile(filePath) {
+  return JSON.parse(await fs.readFile(filePath, 'utf8'));
 }
 
-function main() {
+function findMetric(result, metricName) {
+  const scenarios = result?.scenarios && typeof result.scenarios === 'object' ? result.scenarios : {};
+  const matches = [];
+  for (const [scenarioName, scenario] of Object.entries(scenarios)) {
+    const metrics = scenario?.metrics && typeof scenario.metrics === 'object' ? scenario.metrics : {};
+    const metric = metrics[metricName];
+    if (metric && typeof metric === 'object') {
+      matches.push({ scenarioName, metric });
+    }
+  }
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0];
+  throw new Error(
+    `Metric "${metricName}" is present in multiple scenarios: ${matches.map((m) => m.scenarioName).join(', ')}`,
+  );
+}
+
+async function main() {
   const { options, help } = parseArgs(process.argv.slice(2));
   if (help) {
     printHelp();
     return;
   }
 
-  const baseline = readJsonFile(options.baseline);
-  const current = readJsonFile(options.current);
-  const thresholds = readJsonFile(options.thresholds);
+  const baseline = await readJsonFile(options.baseline);
+  const current = await readJsonFile(options.current);
 
-  const result = compareResults({
-    baseline,
-    current,
-    thresholds,
-    profileName: options.profile,
+  const thresholdsPolicy = await loadThresholdPolicy(options.thresholdsFile);
+  const { name: profileName, profile } = pickThresholdProfile(thresholdsPolicy, options.profile);
+  const suiteThresholds = getSuiteThresholds(profile, options.suite);
+
+  const cases = [];
+  for (const [metricName, threshold] of Object.entries(suiteThresholds.metrics ?? {})) {
+    const better = threshold?.better;
+    if (better !== 'lower' && better !== 'higher') {
+      throw new Error(`thresholds: ${options.suite}.metrics.${metricName}.better must be "lower" or "higher"`);
+    }
+
+    const b = findMetric(baseline, metricName);
+    const c = findMetric(current, metricName);
+    const scenario = c?.scenarioName ?? b?.scenarioName ?? options.suite;
+    const unit = (b?.metric?.unit ?? c?.metric?.unit ?? '').toString();
+
+    const baselineStats = b?.metric?.samples ? statsFromSamples(b.metric.samples) : null;
+    const currentStats = c?.metric?.samples ? statsFromSamples(c.metric.samples) : null;
+
+    cases.push({
+      scenario,
+      metric: metricName,
+      unit,
+      better,
+      threshold,
+      baseline: baselineStats,
+      candidate: currentStats,
+    });
+  }
+
+  const result = buildCompareResult({
+    suite: options.suite,
+    profile: profileName,
+    thresholdsFile: options.thresholdsFile,
+    baselineMeta: baseline.meta ?? null,
+    candidateMeta: current.meta ?? null,
+    cases,
   });
 
-  const markdown = renderMarkdown(result);
-  fs.mkdirSync(path.dirname(options.outputMd), { recursive: true });
-  fs.writeFileSync(options.outputMd, markdown, 'utf8');
+  const markdown = renderCompareMarkdown(result, { title: 'Benchmark regression report' });
+  await fs.mkdir(path.dirname(options.outputMd), { recursive: true });
+  await fs.writeFile(options.outputMd, markdown, 'utf8');
 
   if (options.outputJson) {
-    fs.mkdirSync(path.dirname(options.outputJson), { recursive: true });
-    fs.writeFileSync(options.outputJson, JSON.stringify(result, null, 2) + '\n', 'utf8');
+    await fs.mkdir(path.dirname(options.outputJson), { recursive: true });
+    await fs.writeFile(options.outputJson, JSON.stringify(result, null, 2) + '\n', 'utf8');
   }
 
   process.stdout.write(`Wrote ${options.outputMd}\n`);
   if (options.outputJson) process.stdout.write(`Wrote ${options.outputJson}\n`);
 
-  if (options.failOnRegression && result.summary.regressions > 0) {
-    process.exitCode = 1;
+  if (options.failOnRegression) {
+    process.exitCode = exitCodeForStatus(result.status);
   }
 }
 
-main();
+main().catch((err) => {
+  console.error(err?.stack ?? String(err));
+  process.exitCode = 1;
+});

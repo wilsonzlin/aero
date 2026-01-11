@@ -74,7 +74,7 @@ regression report (Markdown for CI artifacts/PR comments + optional JSON details
 Files:
 
 - `bench/baseline.json` — checked-in baseline results (same schema as `bench/results.json`, plus optional metadata/variance expectations).
-- `bench/thresholds.json` — threshold policy (supports multiple profiles, e.g. `pr-smoke` vs `nightly`).
+- `bench/perf_thresholds.json` — threshold policy (shared across browser/GPU/storage/Node microbench tooling; the PF-009 compare uses the `node` suite).
 - `bench/compare` — compares baseline vs current and writes:
   - `bench/compare.md`
   - `bench/compare.json` (optional; machine-readable)
@@ -93,8 +93,8 @@ npm run bench:update-baseline -- --scenario all --iterations 15
 ```
 
 Comparisons use **median-of-N** (`samples`) per metric. If the current run has high variance, the
-report includes a warning section. Metrics can also be marked `informational` in thresholds so they
-never fail CI.
+per-metric CV is included in the report and can trigger an `unstable` result. Metrics can also be
+marked `informational` in thresholds so they never fail CI.
 
 ## GPU benchmark suite
 
