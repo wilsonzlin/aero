@@ -40,6 +40,7 @@ async fn net_e2e() {
 
     // The canonical gateway contract requires the session cookie; ensure missing cookies are
     // rejected before we bootstrap a session.
+    assert_doh_rejects_without_cookie(doh.addr).await;
     assert_tcp_relay_rejects_without_cookie(
         tcp_relay.addr,
         Ipv4Addr::LOCALHOST,
@@ -617,6 +618,23 @@ async fn assert_tcp_relay_rejects_without_cookie(
         .await
         .expect("read tcp relay /tcp response");
     assert_eq!(status, "401", "expected 401 Unauthorized from /tcp");
+}
+
+async fn assert_doh_rejects_without_cookie(addr: SocketAddr) {
+    let mut stream = TcpStream::connect(addr)
+        .await
+        .expect("connect doh /dns-query (missing cookie)");
+
+    let req = b"POST /dns-query HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    stream
+        .write_all(req)
+        .await
+        .expect("send doh /dns-query (missing cookie)");
+
+    let (_proto, status, _headers, _body) = read_http_response(&mut stream)
+        .await
+        .expect("read doh /dns-query response");
+    assert_eq!(status, "401", "expected 401 Unauthorized from /dns-query");
 }
 
 async fn assert_tcp_relay_rejects_invalid_target_over_host_port(
