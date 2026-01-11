@@ -76,6 +76,6 @@ Declare that the driver package requires a WDF coinstaller (`WdfCoInstaller*.dll
 
 Examples in this directory:
 
-- `ci-package.json` (minimal template)
+- `ci-package.json` (starter template; replace/remove the `infFiles` placeholder)
 - `ci-package.inf-wow64-example.json` (INF selection + WOW64 payload DLL example)
 - `ci-package.wdf-example.json` (WDF coinstaller example)
