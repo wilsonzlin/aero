@@ -38,7 +38,12 @@ param(
 
   # If set (and typically used with -EnableTestSigning), the provisioning script will reboot the VM at the end.
   [Parameter(Mandatory = $false)]
-  [switch]$AutoReboot
+  [switch]$AutoReboot,
+
+  # If set, the scheduled selftest will require the virtio-snd section to run and pass.
+  # This depends on guest selftest support for `--require-snd` (see Task 128).
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireSnd
 )
 
 Set-StrictMode -Version Latest
@@ -80,6 +85,11 @@ $blkArg = ""
 if (-not [string]::IsNullOrEmpty($BlkRoot)) {
   # schtasks /TR quoting: use backslash-escaped quotes (\"...\") so paths with spaces are safe.
   $blkArg = " --blk-root " + '\"' + $BlkRoot + '\"'
+}
+
+$requireSndArg = ""
+if ($RequireSnd) {
+  $requireSndArg = " --require-snd"
 }
 
 $enableTestSigningCmd = ""
@@ -134,7 +144,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$requireSndArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd

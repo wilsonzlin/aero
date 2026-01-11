@@ -98,9 +98,31 @@ def main() -> int:
         action="store_true",
         help="Stream newly captured COM1 serial output to stdout while waiting",
     )
+    parser.add_argument(
+        "--enable-virtio-snd",
+        action="store_true",
+        help="Attach a virtio-snd device (virtio-sound-pci)",
+    )
+    parser.add_argument(
+        "--virtio-snd-audio-backend",
+        choices=["none", "wav"],
+        default="none",
+        help="Audio backend for virtio-snd (default: none)",
+    )
+    parser.add_argument(
+        "--virtio-snd-wav-path",
+        default=None,
+        help="Output wav path when --virtio-snd-audio-backend=wav",
+    )
 
     # Any remaining args are passed directly to QEMU.
     args, qemu_extra = parser.parse_known_args()
+
+    if not args.enable_virtio_snd:
+        if args.virtio_snd_audio_backend != "none" or args.virtio_snd_wav_path is not None:
+            parser.error("--virtio-snd-* options require --enable-virtio-snd")
+    elif args.virtio_snd_audio_backend == "wav" and not args.virtio_snd_wav_path:
+        parser.error("--virtio-snd-wav-path is required when --virtio-snd-audio-backend=wav")
 
     disk_image = Path(args.disk_image).resolve()
     serial_log = Path(args.serial_log).resolve()
@@ -118,6 +140,25 @@ def main() -> int:
         drive = f"file={disk_image},if=virtio,cache=writeback"
         if args.snapshot:
             drive += ",snapshot=on"
+
+        virtio_snd_args: list[str] = []
+        if args.enable_virtio_snd:
+            device_arg = _get_qemu_virtio_sound_device_arg(args.qemu_system)
+            backend = args.virtio_snd_audio_backend
+            if backend == "none":
+                audiodev_arg = "none,id=snd0"
+            elif backend == "wav":
+                wav_path = Path(args.virtio_snd_wav_path).resolve()
+                wav_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    wav_path.unlink()
+                except FileNotFoundError:
+                    pass
+                audiodev_arg = f"wav,id=snd0,path={wav_path}"
+            else:
+                raise AssertionError(f"Unhandled backend: {backend}")
+
+            virtio_snd_args = ["-audiodev", audiodev_arg, "-device", device_arg]
 
         qemu_args = [
             args.qemu_system,
@@ -138,7 +179,7 @@ def main() -> int:
             "virtio-net-pci,netdev=net0",
             "-drive",
             drive,
-        ] + qemu_extra
+        ] + virtio_snd_args + qemu_extra
 
         print("Launching QEMU:")
         print("  " + " ".join(shlex.quote(str(a)) for a in qemu_args))
@@ -209,6 +250,30 @@ def _print_tail(path: Path) -> None:
     except Exception:
         # Fallback if stdout encoding is strict.
         sys.stdout.buffer.write(tail)
+
+
+def _get_qemu_virtio_sound_device_arg(qemu_system: str) -> str:
+    """
+    Return the virtio-sound-pci device arg string, enabling modern virtio where supported.
+    """
+    proc = subprocess.run(
+        [qemu_system, "-device", "virtio-sound-pci,help"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        out = (proc.stdout or "").strip()
+        raise SystemExit(
+            f"virtio-sound-pci is not supported by this QEMU binary ({qemu_system}). Output:\n{out}"
+        )
+
+    out = proc.stdout or ""
+    device = "virtio-sound-pci,audiodev=snd0"
+    if "disable-legacy" in out:
+        device += ",disable-legacy=on"
+    return device
 
 
 if __name__ == "__main__":

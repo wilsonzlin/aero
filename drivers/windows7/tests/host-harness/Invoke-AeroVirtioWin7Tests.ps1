@@ -38,6 +38,21 @@ param(
   [Parameter(Mandatory = $false)]
   [string]$HttpPath = "/aero-virtio-selftest",
 
+  # If set, attach a virtio-snd device (virtio-sound-pci).
+  [Parameter(Mandatory = $false)]
+  [switch]$EnableVirtioSnd,
+
+  # Audio backend for virtio-snd.
+  # - none: no host audio (device exists)
+  # - wav:  capture deterministic audio output to a wav file
+  [Parameter(Mandatory = $false)]
+  [ValidateSet("none", "wav")]
+  [string]$VirtioSndAudioBackend = "none",
+
+  # Output wav path when VirtioSndAudioBackend is "wav".
+  [Parameter(Mandatory = $false)]
+  [string]$VirtioSndWavPath = "",
+
   # Extra args passed verbatim to QEMU (advanced use).
   [Parameter(Mandatory = $false)]
   [string[]]$QemuExtraArgs = @()
@@ -178,6 +193,28 @@ function Wait-AeroSelftestResult {
   }
 }
 
+function Get-AeroVirtioSoundDeviceArg {
+  param(
+    [Parameter(Mandatory = $true)] [string]$QemuSystem
+  )
+
+  # Determine if QEMU supports the modern virtio `disable-legacy` property for virtio-sound-pci.
+  # If QEMU doesn't support virtio-sound-pci at all, fail early with a clear error.
+  $help = & $QemuSystem -device "virtio-sound-pci,help" 2>&1
+  $exitCode = $LASTEXITCODE
+  if ($exitCode -ne 0) {
+    $helpText = ($help | Out-String).Trim()
+    throw "virtio-sound-pci is not supported by this QEMU binary ($QemuSystem). Output:`n$helpText"
+  }
+
+  $helpText = $help -join "`n"
+  $device = "virtio-sound-pci,audiodev=snd0"
+  if ($helpText -match "disable-legacy") {
+    $device += ",disable-legacy=on"
+  }
+  return $device
+}
+
 $DiskImagePath = (Resolve-Path -LiteralPath $DiskImagePath).Path
 
 $serialParent = Split-Path -Parent $SerialLogPath
@@ -203,6 +240,46 @@ try {
     $drive += ",snapshot=on"
   }
 
+  $virtioSndArgs = @()
+  if ($EnableVirtioSnd) {
+    $audiodev = ""
+    switch ($VirtioSndAudioBackend) {
+      "none" {
+        $audiodev = "none,id=snd0"
+      }
+      "wav" {
+        if ([string]::IsNullOrEmpty($VirtioSndWavPath)) {
+          throw "VirtioSndWavPath is required when VirtioSndAudioBackend is 'wav'."
+        }
+
+        $wavParent = Split-Path -Parent $VirtioSndWavPath
+        if ([string]::IsNullOrEmpty($wavParent)) { $wavParent = "." }
+        if (-not (Test-Path -LiteralPath $wavParent)) {
+          New-Item -ItemType Directory -Path $wavParent -Force | Out-Null
+        }
+        $VirtioSndWavPath = Join-Path (Resolve-Path -LiteralPath $wavParent).Path (Split-Path -Leaf $VirtioSndWavPath)
+
+        if (Test-Path -LiteralPath $VirtioSndWavPath) {
+          Remove-Item -LiteralPath $VirtioSndWavPath -Force
+        }
+
+        # Quote the path so Start-Process (PowerShell 5.1) doesn't split it on spaces.
+        $audiodev = 'wav,id=snd0,path="' + $VirtioSndWavPath + '"'
+      }
+      default {
+        throw "Unexpected VirtioSndAudioBackend: $VirtioSndAudioBackend"
+      }
+    }
+
+    $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem
+    $virtioSndArgs = @(
+      "-audiodev", $audiodev,
+      "-device", $virtioSndDevice
+    )
+  } elseif (-not [string]::IsNullOrEmpty($VirtioSndWavPath) -or $VirtioSndAudioBackend -ne "none") {
+    throw "-VirtioSndAudioBackend/-VirtioSndWavPath require -EnableVirtioSnd."
+  }
+
   $qemuArgs = @(
     "-m", "$MemoryMB",
     "-smp", "$Smp",
@@ -213,7 +290,7 @@ try {
     "-netdev", $netdev,
     "-device", $nic,
     "-drive", $drive
-  ) + $QemuExtraArgs
+  ) + $virtioSndArgs + $QemuExtraArgs
 
   Write-Host "Launching QEMU:"
   Write-Host "  $QemuSystem $($qemuArgs -join ' ')"

@@ -67,6 +67,56 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 
 Add `--follow-serial` to stream COM1 serial output while waiting.
 
+### virtio-snd (audio) device
+
+To attach a virtio-snd device (virtio-sound-pci) during the run, enable it explicitly.
+
+PowerShell:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -EnableVirtioSnd `
+  -VirtioSndAudioBackend none
+```
+
+Python:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --enable-virtio-snd \
+  --virtio-snd-audio-backend none
+```
+
+#### Wav capture (deterministic)
+
+To capture guest audio output deterministically, use the `wav` backend and provide a path:
+
+PowerShell:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -EnableVirtioSnd `
+  -VirtioSndAudioBackend wav `
+  -VirtioSndWavPath ./out/virtio-snd.wav
+```
+
+Python:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --enable-virtio-snd \
+  --virtio-snd-audio-backend wav \
+  --virtio-snd-wav-path ./out/virtio-snd.wav
+```
+
 ## How the harness works
 
 - Starts a tiny HTTP server on `127.0.0.1:<HttpPort>`
@@ -101,6 +151,15 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -SelftestExePath ./aero-virtio-selftest.exe `
   -DriversDir ./drivers-out `
   -BlkRoot "D:\aero-virtio-selftest\"
+```
+
+To require the guest selftest's virtio-snd section to run and pass (depends on guest support for `--require-snd`):
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
+  -SelftestExePath ./aero-virtio-selftest.exe `
+  -DriversDir ./drivers-out `
+  -RequireSnd
 ```
 
 ### Enabling test-signing mode (unsigned / test-signed drivers)
