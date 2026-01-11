@@ -8,6 +8,10 @@
 
 using aerogpu_test::ComPtr;
 
+#ifndef DXGI_ERROR_WAS_STILL_DRAWING
+  #define DXGI_ERROR_WAS_STILL_DRAWING ((HRESULT)0x887A000AL)
+#endif
+
 struct Vertex {
   float pos[2];
   float color[4];
@@ -30,6 +34,39 @@ static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
     return reporter->FailHresult(what, hr);
   }
   return aerogpu_test::FailHresult(test_name, what, hr);
+}
+
+struct MapDoNotWaitThreadArgs {
+  ID3D11DeviceContext* ctx;
+  ID3D11Texture2D* tex;
+  HRESULT hr;
+  UINT row_pitch;
+  uint32_t corner_pixel;
+  bool has_pixel;
+};
+
+static DWORD WINAPI MapDoNotWaitThreadProc(LPVOID param) {
+  MapDoNotWaitThreadArgs* args = (MapDoNotWaitThreadArgs*)param;
+  args->hr = E_FAIL;
+  args->row_pitch = 0;
+  args->corner_pixel = 0;
+  args->has_pixel = false;
+
+  D3D11_MAPPED_SUBRESOURCE mapped;
+  ZeroMemory(&mapped, sizeof(mapped));
+  args->hr = args->ctx->Map(args->tex, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+  if (SUCCEEDED(args->hr) && mapped.pData) {
+    args->row_pitch = mapped.RowPitch;
+    args->corner_pixel = aerogpu_test::ReadPixelBGRA(mapped.pData, (int)mapped.RowPitch, 0, 0);
+    args->has_pixel = true;
+    args->ctx->Unmap(args->tex, 0);
+  }
+
+  args->tex->Release();
+  args->ctx->Release();
+  args->tex = NULL;
+  args->ctx = NULL;
+  return 0;
 }
 
 static void PrintDeviceRemovedReasonIfAny(const char* test_name, ID3D11Device* device) {
@@ -378,6 +415,55 @@ static int RunReadbackSanity(int argc, char** argv) {
   }
 
   context->CopyResource(staging.get(), rt_tex.get());
+
+  // Probe DO_NOT_WAIT map before any explicit Flush call. A correct UMD should
+  // either return DXGI_ERROR_WAS_STILL_DRAWING (in-flight copy) or succeed if the
+  // work completed quickly. DO_NOT_WAIT must never block.
+  {
+    MapDoNotWaitThreadArgs args;
+    ZeroMemory(&args, sizeof(args));
+    args.ctx = context.get();
+    args.tex = staging.get();
+    args.hr = E_FAIL;
+    context->AddRef();
+    staging->AddRef();
+
+    HANDLE thread = CreateThread(NULL, 0, &MapDoNotWaitThreadProc, &args, 0, NULL);
+    if (!thread) {
+      context->Release();
+      staging->Release();
+      return reporter.Fail("CreateThread(Map DO_NOT_WAIT) failed");
+    }
+    const DWORD wait = WaitForSingleObject(thread, 250);
+    CloseHandle(thread);
+    if (wait == WAIT_TIMEOUT) {
+      return reporter.Fail("Map(staging, DO_NOT_WAIT) appears to have blocked (>250ms)");
+    }
+
+    if (args.hr == DXGI_ERROR_WAS_STILL_DRAWING) {
+      // Expected: the CopyResource is still being processed by the GPU.
+    } else if (SUCCEEDED(args.hr)) {
+      // Allowed: work completed quickly.
+      if (!args.has_pixel) {
+        return reporter.Fail("Map(staging, DO_NOT_WAIT) returned NULL pData");
+      }
+      const UINT min_row_pitch = kWidth * 4u;
+      if (args.row_pitch < min_row_pitch) {
+        return reporter.Fail("Map(staging, DO_NOT_WAIT) returned too-small RowPitch=%u (min=%u)",
+                             (unsigned)args.row_pitch,
+                             (unsigned)min_row_pitch);
+      }
+      const uint32_t expected_corner = 0xFFFF0000u;  // red
+      if ((args.corner_pixel & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
+        return reporter.Fail("Map(staging, DO_NOT_WAIT) corner pixel mismatch: got 0x%08lX expected ~0x%08lX",
+                             (unsigned long)args.corner_pixel,
+                             (unsigned long)expected_corner);
+      }
+    } else {
+      return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging, DO_NOT_WAIT)", args.hr, device.get());
+    }
+  }
+
   context->Flush();
 
   D3D11_MAPPED_SUBRESOURCE map;
