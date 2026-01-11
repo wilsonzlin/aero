@@ -82,9 +82,13 @@ enum aerogpu_engine_id {
  *   - Note: gpa itself may be 0 (backing beginning at physical address 0 is valid).
  * - alloc_id values must be unique within a table (duplicates are a validation
  *   error).
- * - The host must reject (validation error) any command that references
- *   `backing_alloc_id != 0` if the table is absent or does not contain that
- *   alloc_id.
+ * - The host must reject (validation error) any command that requires `alloc_id`
+ *   resolution if the table is absent or does not contain that alloc_id. This
+ *   includes:
+ *   - Packets that carry `backing_alloc_id` fields directly (`CREATE_BUFFER`,
+ *     `CREATE_TEXTURE2D`).
+ *   - Packets that operate on a *guest-backed resource* and require host access
+ *     to guest memory, such as `RESOURCE_DIRTY_RANGE` and `COPY_* WRITEBACK_DST`.
  *
  * Backing layout (see `aerogpu_cmd.h`):
  * - backing_offset_bytes is relative to the alloc table entry's base GPA.
