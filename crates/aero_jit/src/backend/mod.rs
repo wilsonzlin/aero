@@ -27,6 +27,16 @@ pub trait Tier1Cpu {
     fn tier1_state_mut(&mut self) -> &mut CpuState;
 }
 
+impl Tier1Cpu for CpuState {
+    fn tier1_state(&self) -> &CpuState {
+        self
+    }
+
+    fn tier1_state_mut(&mut self) -> &mut CpuState {
+        self
+    }
+}
+
 mod wasmtime;
 
 pub use wasmtime::WasmtimeBackend;

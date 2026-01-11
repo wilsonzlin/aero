@@ -6,7 +6,7 @@ use aero_jit::wasm::tier1::{Tier1WasmCodegen, EXPORT_TIER1_BLOCK_FN};
 use aero_jit::wasm::{
     IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
     IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
-    IMPORT_MEM_WRITE_U8, IMPORT_MODULE, IMPORT_PAGE_FAULT,
+    IMPORT_MEM_WRITE_U8, IMPORT_MODULE, IMPORT_PAGE_FAULT, JIT_EXIT_SENTINEL_I64,
 };
 use aero_jit::{discover_block, translate_block, BlockLimits};
 use aero_types::{Gpr, Width};
@@ -230,7 +230,7 @@ fn run_wasm(
         .write(&mut store, CPU_PTR as usize, &cpu_bytes)
         .unwrap();
 
-    let next_rip = func.call(&mut store, CPU_PTR).unwrap() as u64;
+    let ret = func.call(&mut store, CPU_PTR).unwrap();
 
     // Read back guest memory region (page 0).
     let mut out_mem = vec![0u8; bus.mem().len()];
@@ -242,6 +242,12 @@ fn run_wasm(
         .read(&store, CPU_PTR as usize, &mut out_cpu_bytes)
         .unwrap();
     let out_cpu = CpuState::read_from_mem(&out_cpu_bytes, 0);
+
+    let next_rip = if ret == JIT_EXIT_SENTINEL_I64 {
+        out_cpu.rip
+    } else {
+        ret as u64
+    };
 
     (next_rip, out_cpu, out_mem)
 }
