@@ -283,6 +283,10 @@ static int ValidateAdapter(const char* test_name,
 static int RunConsumer(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface_ipc_consumer";
 
+  const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
+  const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
+
   std::string handle_str;
   if (!aerogpu_test::GetArgValue(argc, argv, "--shared-handle", &handle_str)) {
     return aerogpu_test::Fail(kTestName, "missing --shared-handle");
@@ -311,6 +315,13 @@ static int RunConsumer(int argc, char** argv) {
   int rc = CreateD3D9ExDevice(kTestName, hwnd, &d3d, &dev);
   if (rc != 0) {
     return rc;
+  }
+
+  if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(kTestName);
+    if (umd_rc != 0) {
+      return umd_rc;
+    }
   }
 
   HANDLE open_handle = shared_handle;
@@ -376,13 +387,14 @@ static int RunProducer(int argc, char** argv) {
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
         "Usage: %s.exe [--hidden] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
-        "[--allow-non-aerogpu]",
+        "[--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
 
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
   const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
 
   uint32_t require_vid = 0;
@@ -431,6 +443,13 @@ static int RunProducer(int argc, char** argv) {
                        require_did);
   if (rc != 0) {
     return rc;
+  }
+
+  if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(kTestName);
+    if (umd_rc != 0) {
+      return umd_rc;
+    }
   }
 
   HANDLE shared = NULL;
@@ -506,8 +525,17 @@ static int RunProducer(int argc, char** argv) {
 
   // Create the consumer suspended with a fixed-width placeholder for --shared-handle=0x...
   // We patch the placeholder digits in the child's command line before resuming it.
-  const std::wstring cmdline = std::wstring(L"\"") + exe_path +
-                               L"\" --consumer --shared-handle=0x0000000000000000";
+  std::wstring cmdline = std::wstring(L"\"") + exe_path +
+                         L"\" --consumer --shared-handle=0x0000000000000000";
+  if (allow_microsoft) {
+    cmdline += L" --allow-microsoft";
+  }
+  if (allow_non_aerogpu) {
+    cmdline += L" --allow-non-aerogpu";
+  }
+  if (require_umd) {
+    cmdline += L" --require-umd";
+  }
   std::vector<wchar_t> cmdline_buf(cmdline.begin(), cmdline.end());
   cmdline_buf.push_back(0);
 
@@ -619,4 +647,3 @@ int main(int argc, char** argv) {
   }
   return RunProducer(argc, argv);
 }
-
