@@ -41,7 +41,10 @@ All code that wants to *construct and run the Aero VM/machine* (including `crate
 - **Device attachment hooks**
   - Disk image: `Machine::set_disk_image(Vec<u8>)`
   - Serial drain: `Machine::take_serial_output()`
+  - Serial stats: `Machine::serial_output_len()` / `Machine::serial_output_bytes()`
   - Input injection: `Machine::inject_browser_key(code, pressed)`
+- **Debug/testing helpers**
+  - Read guest physical memory: `Machine::read_physical_u8/u16/bytes(...)`
 - **Snapshots (via `aero-snapshot`)**
   - `Machine` integrates with `aero_snapshot::{save_snapshot, restore_snapshot_with_options}` via snapshot helper methods.
 
