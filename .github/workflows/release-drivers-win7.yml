@@ -21,6 +21,7 @@ jobs:
         with:
           # Needed for `git describe --tags` in INF stamping/version derivation.
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Prepare WDK download cache directory
         shell: pwsh
