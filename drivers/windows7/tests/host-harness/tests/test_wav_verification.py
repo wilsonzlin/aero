@@ -117,6 +117,78 @@ def _write_ieee_float32_wav(
     path.write_bytes(header + fmt_chunk + data_chunk)
 
 
+def _write_extensible_wav(
+    path: Path,
+    *,
+    sample_rate: int,
+    channels: int,
+    frames: int,
+    bits_per_sample: int,
+    subformat_guid_le: bytes,
+    kind: str,
+    freq_hz: float = 440.0,
+    amp: float = 0.20,
+    data_chunk_size_override: int | None = None,
+) -> None:
+    """
+    Write a minimal WAVE_FORMAT_EXTENSIBLE file (fmt chunk size=40).
+
+    `subformat_guid_le` must be the 16-byte GUID in little-endian struct layout as used by
+    WAVEFORMATEXTENSIBLE (and as expected by the host harness verifier).
+    """
+    assert kind in ("silence", "tone")
+    assert bits_per_sample in (16, 32)
+    assert len(subformat_guid_le) == 16
+
+    def sample_value(i: int) -> float:
+        if kind == "silence":
+            return 0.0
+        return math.sin(2.0 * math.pi * freq_hz * (i / sample_rate)) * amp
+
+    if bits_per_sample == 16:
+        sample_bytes = 2
+        max_val = 32767.0
+    else:
+        sample_bytes = 4
+        max_val = 1.0  # float32 uses [-1.0, 1.0]
+
+    block_align = channels * sample_bytes
+    avg_bytes_per_sec = sample_rate * block_align
+
+    data = bytearray()
+    for i in range(frames):
+        s = sample_value(i)
+        for _ in range(channels):
+            if bits_per_sample == 16:
+                v = int(round(s * max_val))
+                data += v.to_bytes(2, "little", signed=True)
+            else:
+                data += struct.pack("<f", float(s))
+
+    data_size = len(data)
+    data_chunk_size = data_chunk_size_override if data_chunk_size_override is not None else data_size
+
+    fmt_head = struct.pack(
+        "<HHIIHH",
+        0xFFFE,  # WAVE_FORMAT_EXTENSIBLE
+        channels,
+        sample_rate,
+        avg_bytes_per_sec,
+        block_align,
+        bits_per_sample,
+    )
+    # cbSize (22) + wValidBitsPerSample + dwChannelMask + SubFormat
+    ext = struct.pack("<HHI", 22, bits_per_sample, 0) + subformat_guid_le
+    assert len(ext) == 24
+
+    fmt_chunk = b"fmt " + struct.pack("<I", len(fmt_head) + len(ext)) + fmt_head + ext
+    data_chunk = b"data" + struct.pack("<I", data_chunk_size) + data
+
+    riff_size = 4 + len(fmt_chunk) + len(data_chunk)
+    header = b"RIFF" + struct.pack("<I", riff_size) + b"WAVE"
+    path.write_bytes(header + fmt_chunk + data_chunk)
+
+
 class WavVerificationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -221,7 +293,74 @@ class WavVerificationTests(unittest.TestCase):
             self.assertTrue(ok)
             self.assertIn("|PASS|", out)
 
+    def test_extensible_pcm_and_float(self) -> None:
+        k_subformat_pcm = bytes.fromhex("0100000000001000800000aa00389b71")
+        k_subformat_float = bytes.fromhex("0300000000001000800000aa00389b71")
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+
+            # PCM16 in extensible container.
+            silence_pcm = td_path / "silence_ext_pcm16.wav"
+            tone_pcm = td_path / "tone_ext_pcm16.wav"
+            _write_extensible_wav(
+                silence_pcm,
+                sample_rate=8000,
+                channels=2,
+                frames=8000,
+                bits_per_sample=16,
+                subformat_guid_le=k_subformat_pcm,
+                kind="silence",
+            )
+            _write_extensible_wav(
+                tone_pcm,
+                sample_rate=8000,
+                channels=2,
+                frames=8000,
+                bits_per_sample=16,
+                subformat_guid_le=k_subformat_pcm,
+                kind="tone",
+            )
+
+            ok, out = self._verify(silence_pcm)
+            self.assertFalse(ok)
+            self.assertIn("reason=silent_pcm", out)
+
+            ok, out = self._verify(tone_pcm)
+            self.assertTrue(ok)
+            self.assertIn("|PASS|", out)
+
+            # Float32 in extensible container; also exercise data chunk size=0 recovery.
+            silence_f = td_path / "silence_ext_f32.wav"
+            tone_f_size0 = td_path / "tone_ext_f32_size0.wav"
+            _write_extensible_wav(
+                silence_f,
+                sample_rate=8000,
+                channels=1,
+                frames=8000,
+                bits_per_sample=32,
+                subformat_guid_le=k_subformat_float,
+                kind="silence",
+            )
+            _write_extensible_wav(
+                tone_f_size0,
+                sample_rate=8000,
+                channels=1,
+                frames=8000,
+                bits_per_sample=32,
+                subformat_guid_le=k_subformat_float,
+                kind="tone",
+                data_chunk_size_override=0,
+            )
+
+            ok, out = self._verify(silence_f)
+            self.assertFalse(ok)
+            self.assertIn("reason=silent_pcm", out)
+
+            ok, out = self._verify(tone_f_size0)
+            self.assertTrue(ok)
+            self.assertIn("|PASS|", out)
+
 
 if __name__ == "__main__":
     unittest.main()
-
