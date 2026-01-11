@@ -8,6 +8,7 @@ See also:
 
 - [`virtio/virtqueue-split-ring-win7.md`](./virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue implementation guide for Windows 7 KMDF drivers (descriptor mgmt, ordering/barriers, EVENT_IDX, indirect).
 - [`windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) — Aero’s definitive virtio device/feature/transport contract.
+- [`windows-device-contract.md`](./windows-device-contract.md) — PCI ID + driver service naming contract (Aero).
 - [`drivers/protocol/virtio/`](../drivers/protocol/virtio/) — canonical `#[repr(C)]` message layouts (with Rust unit tests) shared between the guest driver and device model.
 
 Scope:
@@ -155,7 +156,7 @@ Windows 7 does not ship a virtio-snd driver. Expected options:
 
 - Implement a WDM audio miniport (PortCls / WaveRT) that:
   - Enumerates as a standard Windows audio endpoint.
-  - Uses the virtio PCI transport and split virtqueues to:
+  - Uses the Aero virtio legacy (I/O-port) transport and split virtqueues to:
     - Query stream capabilities (`PCM_INFO`)
     - Negotiate fixed params (`PCM_SET_PARAMS`)
     - Start/stop streams and submit PCM buffers via the TX queue (playback) and RX queue (capture).

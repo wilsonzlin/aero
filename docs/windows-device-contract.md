@@ -181,6 +181,8 @@ Aero’s Windows drivers must:
 - Use the **PCI capability-based MMIO regions** (common config / notify / ISR / device config).
 - Not require legacy I/O-port operation for correctness.
 
+> Note: `drivers/windows7/virtio-snd` currently contains a PortCls (WaveRT) audio driver that uses the legacy virtio-pci I/O-port register layout via `drivers/windows7/virtio/common`. That driver requires the legacy I/O-port BAR to be present and can only negotiate the low 32 bits of virtio feature flags.
+
 ### Interrupts
 
 - MSI-X is recommended.
@@ -202,6 +204,8 @@ Virtqueue format:
 - Packed virtqueues must be treated as unsupported unless/until this contract is revised to require `VIRTIO_F_RING_PACKED` (bit 34).
 
 Additional features may be used for performance, but must be treated as optional unless the relevant contract is updated to require them.
+
+> Note: The legacy virtio-pci I/O-port `GuestFeatures` register only negotiates the low 32 bits. Drivers using the legacy interface must not depend on `VIRTIO_F_VERSION_1` (bit 32) being negotiated.
 
 For `AERO-W7-VIRTIO` v1 specifically:
 

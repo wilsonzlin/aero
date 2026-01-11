@@ -1,11 +1,15 @@
 ; SPDX-License-Identifier: MIT OR Apache-2.0
-
-; aero-virtio-snd.inf (Windows 7) - clean-room driver skeleton INF.
 ;
-; Aero Windows 7 virtio device contract:
-;   - Modern virtio-pci only (PCI vendor-specific capabilities + MMIO)
-;   - PCI Revision ID encodes the contract major version (v1 == REV_01)
-; See: docs/windows7-virtio-driver-contract.md
+; aero-virtio-snd.inf (Windows 7) - clean-room PortCls (WaveRT) audio driver.
+;
+; Matches the Aero Windows PCI device contract for virtio-snd:
+;   - PCI\VEN_1AF4&DEV_1059 (virtio-snd modern ID)
+;   - PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4 (optional subsystem qualifier)
+;   - PCI\VEN_1AF4&DEV_1018 (virtio-snd transitional ID)
+;   - PCI\VEN_1AF4&DEV_1018&SUBSYS_00191AF4 (optional subsystem qualifier)
+;
+; Note: Some environments also expose a PCI revision ID of 0x01. This INF
+; matches both REV_01 and the short form to avoid over-constraining installs.
 
 [Version]
 Signature   = "$WINDOWS NT$"
@@ -19,30 +23,30 @@ CatalogFile = aero-virtio-snd.cat
 %ProviderName% = VirtioSndModels,NTx86,NTamd64
 
 [VirtioSndModels.NTx86]
-; Aero virtio-snd (virtio device id 25) uses the modern virtio-pci ID space:
-;   DEV = 0x1040 + 25 = 0x1059
-;
-; Contract v1 devices MUST expose PCI Revision ID 0x01. Match REV_01 in the INF
-; to avoid binding to unsupported contract versions.
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
-;
-; Optional: Further restrict binding to Aero’s virtio-snd subsystem ID.
-; (Subsystem Device ID 0x0019, Subsystem Vendor ID 0x1AF4 => SUBSYS_00191AF4)
-; %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018&REV_01
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018&SUBSYS_00191AF4&REV_01
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018&SUBSYS_00191AF4
 
 [VirtioSndModels.NTamd64]
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
-; %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018&REV_01
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018&SUBSYS_00191AF4&REV_01
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018&SUBSYS_00191AF4
 
 [DestinationDirs]
 VirtioSnd.CopyFiles = 12
- 
+
 [VirtioSnd_Install.NT]
 ; PortCls / KS / WDMAudio integration (in-box on Windows 7).
-;
-; Using Include/Needs is the canonical Win7 mechanism for registering a
-; kernel-streaming audio adapter so that WDMAudio / MMDevice can enumerate
-; endpoints exposed by the PortCls miniports.
 Include  = ks.inf, wdmaudio.inf
 Needs    = KS.Registration, WDMAUDIO.Registration
 CopyFiles = VirtioSnd.CopyFiles
@@ -51,9 +55,9 @@ AddReg    = VirtioSnd.AddReg
 ; Register the KS device interfaces that the Windows audio stack enumerates.
 ; Reference strings match the PortCls subdevice names ("Wave" / "Topology").
 [VirtioSnd_Install.NT.Interfaces]
-AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Wave%, VirtioSnd.Wave.Interface
-AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_Wave%, VirtioSnd.Wave.Interface
-AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_Wave%, VirtioSnd.Wave.Interface
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Wave%,     VirtioSnd.Wave.Interface
+AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_Wave%,     VirtioSnd.Wave.Interface
+AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_Wave%,     VirtioSnd.Wave.Interface
 AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Topology%, VirtioSnd.Topology.Interface
 AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_Topology%, VirtioSnd.Topology.Interface
 
@@ -92,10 +96,10 @@ HKR,%KSNAME_Wave%,FriendlyName,,%VirtioSnd.EndpointDesc%
 
 HKR,%KSNAME_Topology%,CLSID,,%KSProxy.CLSID%
 HKR,%KSNAME_Topology%,FriendlyName,,%VirtioSnd.TopologyDesc%
- 
+
 [VirtioSnd.CopyFiles]
 virtiosnd.sys
-  
+
 [VirtioSnd_Install.NT.Services]
 AddService = aeroviosnd, 0x00000002, VirtioSnd_Service_Inst
 

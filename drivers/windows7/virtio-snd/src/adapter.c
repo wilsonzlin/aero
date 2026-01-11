@@ -4,10 +4,9 @@
 
 #include "portcls_compat.h"
 
+#include "aeroviosnd.h"
 #include "topology.h"
 #include "trace.h"
-#include "virtiosnd.h"
-#include "virtiosnd_intx.h"
 #include "wavert.h"
 
 DRIVER_INITIALIZE DriverEntry;
@@ -44,7 +43,7 @@ static NTSTATUS VirtIoSndAddDevice(PDRIVER_OBJECT DriverObject, PDEVICE_OBJECT P
         PhysicalDeviceObject,
         VirtIoSndStartDevice,
         2, // max miniports/subdevices
-        sizeof(VIRTIOSND_DEVICE_EXTENSION)
+        sizeof(AEROVIOSND_DEVICE_EXTENSION) // device extension size
     );
 }
 
@@ -58,49 +57,27 @@ static VOID VirtIoSndSafeRelease(_In_opt_ PUNKNOWN Unknown)
 static NTSTATUS
 VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
 {
-    PIO_STACK_LOCATION stack;
-    PVIRTIOSND_DEVICE_EXTENSION dx;
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+    PAEROVIOSND_DEVICE_EXTENSION dx = (PAEROVIOSND_DEVICE_EXTENSION)DeviceObject->DeviceExtension;
     NTSTATUS status;
 
-    stack = IoGetCurrentIrpStackLocation(Irp);
-    dx = VIRTIOSND_GET_DX(DeviceObject);
+    switch (stack->MinorFunction) {
+    case IRP_MN_STOP_DEVICE:
+        /*
+         * Let PortCls quiesce/close pins first so the WaveRT period timer is
+         * stopped before we tear down the virtio transport.
+         */
+        status = PcDispatchIrp(DeviceObject, Irp);
+        VirtIoSndHwStop(dx);
+        return status;
 
-    if (dx != NULL && dx->Signature == VIRTIOSND_DX_SIGNATURE && dx->Self == DeviceObject) {
-        switch (stack->MinorFunction) {
-        case IRP_MN_STOP_DEVICE:
-            /*
-             * Let PortCls quiesce/close pins first so the WaveRT period timer is
-             * stopped before we tear down the virtio transport.
-             */
-            status = PcDispatchIrp(DeviceObject, Irp);
-            VirtIoSndStopHardware(dx);
-            if (dx->LowerDeviceObject != NULL) {
-                ObDereferenceObject(dx->LowerDeviceObject);
-                dx->LowerDeviceObject = NULL;
-            }
-            if (dx->Pdo != NULL) {
-                ObDereferenceObject(dx->Pdo);
-                dx->Pdo = NULL;
-            }
-            return status;
+    case IRP_MN_SURPRISE_REMOVAL:
+    case IRP_MN_REMOVE_DEVICE:
+        VirtIoSndHwStop(dx);
+        break;
 
-        case IRP_MN_SURPRISE_REMOVAL:
-        case IRP_MN_REMOVE_DEVICE:
-            dx->Removed = TRUE;
-            VirtIoSndStopHardware(dx);
-            if (dx->LowerDeviceObject != NULL) {
-                ObDereferenceObject(dx->LowerDeviceObject);
-                dx->LowerDeviceObject = NULL;
-            }
-            if (dx->Pdo != NULL) {
-                ObDereferenceObject(dx->Pdo);
-                dx->Pdo = NULL;
-            }
-            break;
-
-        default:
-            break;
-        }
+    default:
+        break;
     }
 
     return PcDispatchIrp(DeviceObject, Irp);
@@ -110,10 +87,8 @@ _Use_decl_annotations_
 static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRESOURCELIST ResourceList)
 {
     NTSTATUS status;
-    PVIRTIOSND_DEVICE_EXTENSION dx;
-    PIO_STACK_LOCATION stack;
-    PCM_RESOURCE_LIST rawResources;
-    PCM_RESOURCE_LIST translatedResources;
+    PAEROVIOSND_DEVICE_EXTENSION dx = (PAEROVIOSND_DEVICE_EXTENSION)DeviceObject->DeviceExtension;
+    BOOLEAN hwStarted = FALSE;
     PUNKNOWN unknownAdapter = NULL;
     PUNKNOWN unknownWave = NULL;
     PUNKNOWN unknownWavePort = NULL;
@@ -123,42 +98,6 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
     PPORTTOPOLOGY portTopology = NULL;
 
     VIRTIOSND_TRACE("StartDevice\n");
-
-    dx = VIRTIOSND_GET_DX(DeviceObject);
-    if (dx != NULL) {
-        // IoCreateDevice() zero-initializes the extension; only initialize once.
-        if (dx->Signature != VIRTIOSND_DX_SIGNATURE) {
-            dx->Signature = VIRTIOSND_DX_SIGNATURE;
-            dx->Self = DeviceObject;
-            VirtIoSndIntxInitialize(dx);
-        }
-
-        // Refresh device stack pointers for this start.
-        if (dx->LowerDeviceObject != NULL) {
-            ObDereferenceObject(dx->LowerDeviceObject);
-            dx->LowerDeviceObject = NULL;
-        }
-        if (dx->Pdo != NULL) {
-            ObDereferenceObject(dx->Pdo);
-            dx->Pdo = NULL;
-        }
-
-        dx->LowerDeviceObject = IoGetLowerDeviceObject(DeviceObject);
-        dx->Pdo = IoGetDeviceAttachmentBaseRef(DeviceObject);
-
-        stack = IoGetCurrentIrpStackLocation(Irp);
-        rawResources = stack->Parameters.StartDevice.AllocatedResources;
-        translatedResources = stack->Parameters.StartDevice.AllocatedResourcesTranslated;
-
-        status = VirtIoSndStartHardware(dx, rawResources, translatedResources);
-        if (!NT_SUCCESS(status)) {
-            // For bring-up/debugging, allow PortCls to enumerate an endpoint even
-            // if the virtio transport cannot be started yet. In that case, the
-            // WaveRT miniport will fall back to the Null backend.
-            VIRTIOSND_TRACE_ERROR("VirtIoSndStartHardware failed: 0x%08X (falling back to null backend)\n", (UINT)status);
-            status = STATUS_SUCCESS;
-        }
-    }
 
     status = PcGetAdapterCommon(DeviceObject, &unknownAdapter);
     if (!NT_SUCCESS(status)) {
@@ -171,6 +110,22 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
         VIRTIOSND_TRACE_ERROR("PcRegisterAdapterPowerManagement failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
+
+    if (dx == NULL) {
+        status = STATUS_DEVICE_CONFIGURATION_ERROR;
+        goto Exit;
+    }
+
+    RtlZeroMemory(dx, sizeof(*dx));
+    dx->DeviceObject = DeviceObject;
+
+    status = VirtIoSndHwStart(dx, Irp);
+    if (!NT_SUCCESS(status)) {
+        VIRTIOSND_TRACE_ERROR("VirtIoSndHwStart failed: 0x%08X\n", status);
+        VirtIoSndHwStop(dx); // best-effort cleanup of partial allocations
+        goto Exit;
+    }
+    hwStarted = TRUE;
 
     status = VirtIoSndMiniportTopology_Create(&unknownTopo);
     if (!NT_SUCCESS(status)) {
@@ -253,5 +208,9 @@ Exit:
     VirtIoSndSafeRelease(unknownTopo);
 
     VirtIoSndSafeRelease(unknownAdapter);
+
+    if (!NT_SUCCESS(status) && hwStarted) {
+        VirtIoSndHwStop(dx);
+    }
     return status;
 }

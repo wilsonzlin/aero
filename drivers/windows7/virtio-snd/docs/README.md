@@ -1,80 +1,82 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 
-# virtio-snd (Windows 7) PortCls/WaveRT driver (render-only)
+# Aero virtio-snd (Windows 7) PortCls/WaveRT driver (render-only)
 
-This directory contains a clean-room **PortCls + WaveRT** Windows 7 audio adapter driver for a PCI virtio-snd device.
+This directory contains implementation notes for a clean-room **PortCls + WaveRT** Windows 7 audio driver that targets the Aero **virtio-snd** PCI device.
 
-For a shorter end-to-end build + signing walkthrough, see `../README.md`.
+The supported, default build produces `virtiosnd.sys` and exposes a single **render** endpoint:
 
-## Status
+* 48,000 Hz
+* Stereo (2 channels)
+* 16-bit PCM little-endian (S16_LE)
 
-PortCls / WaveRT:
+## Architecture (what’s built by default)
 
-- Registers `Wave` (PortWaveRT + IMiniportWaveRT) and `Topology` (PortTopology + IMiniportTopology) subdevices.
-- Physically bridges them via `PcRegisterPhysicalConnection`.
-- Exposes a single **render** endpoint (fixed format):
-  - 48,000 Hz, stereo (2ch), 16-bit PCM LE (S16_LE)
-- Uses a periodic timer/DPC “software DMA” model that:
-  - advances play position
-  - signals the WaveRT notification event each period
-  - submits one period of PCM to a backend callback
+PortCls miniports:
 
-Backend:
+* `src/adapter.c` — PortCls adapter driver (`PcInitializeAdapterDriver` / `PcAddAdapterDevice`)
+* `src/topology.c` — minimal topology miniport (speaker jack + channel config properties)
+* `src/wavert.c` — WaveRT miniport + stream (periodic timer/DPC advances the ring position and pushes PCM)
 
-- The backend interface is defined in `include/backend.h`.
-- The driver uses a **virtio backend** when the virtio transport is started successfully (controlq + txq).
-- If the transport cannot be started (bring-up/debug), the driver falls back to a **Null backend** (silent; logs write sizes via `DbgPrint` in checked builds).
+Virtio backend (legacy virtio-pci I/O-port):
 
-Virtio transport:
- 
+* `include/backend.h` — WaveRT “backend” interface used by `wavert.c`
+* `src/backend_virtio_legacy.c` — backend implementation that forwards to `aeroviosnd_hw.c`
+* `src/aeroviosnd_hw.c` — **legacy virtio-pci I/O-port** bring-up + controlq/txq protocol
+* `drivers/windows7/virtio/common` — reusable legacy virtio-pci + split virtqueue implementation
+
+Notes:
+
+* **Queues:** controlq (0) + txq (2) are used for basic playback.
+* **Interrupts:** **INTx** only (MSI/MSI-X not implemented yet).
+* Because this driver uses the legacy I/O-port interface, it only negotiates the **low 32 bits** of virtio feature flags.
+
+## Additional code in this directory (not built by default)
+
+The repository also contains bring-up code for a modern virtio-pci (MMIO/capability-based) WDM driver (for example `src/virtiosnd_hw.c` and related `virtiosnd_*` modules). That path is still under development and is not required for the PortCls endpoint driver.
+
+Modern virtio transport (bring-up notes):
+
 - Sets up split-ring virtqueues (control/event/tx/rx) using the reusable backend in `virtiosnd_queue_split.c`
   - Note: rxq (capture) is initialized for transport bring-up but capture buffers are not submitted yet.
 - Connects **INTx** and routes used-ring completions to the control/TX/RX protocol engines in a DPC
 - Includes control/TX/RX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c` / `virtiosnd_rx.c`) and thin wrappers (`VirtIoSndHwSendControl` / `VirtIoSndHwSubmitTx`) used by the WaveRT virtio backend (render). Capture endpoint plumbing is not implemented yet.
 
-## Compatibility / Aero contract v1
-
-This driver package targets the **Aero Windows 7 virtio device contract v1**:
-
-- **Transport:** virtio-pci **modern** only (virtio 1.0+; PCI vendor-specific capabilities + MMIO)
-- **Interrupts:** **INTx required** (this WDM driver does not opt into MSI/MSI-X)
-
-See: [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virtio-driver-contract.md) (virtio-snd §3.4, versioning §4).
-
 ## Design notes
 
-- Driver architecture overview: [`design.md`](design.md)
-- PortCls/WaveRT plan: [`portcls-wavert-design.md`](portcls-wavert-design.md)
-- Source tracking (clean-room policy): [`../SOURCES.md`](../SOURCES.md)
+* Driver architecture overview: [`design.md`](design.md)
+* PortCls/WaveRT plan: [`portcls-wavert-design.md`](portcls-wavert-design.md)
+* Source tracking (clean-room policy): [`../SOURCES.md`](../SOURCES.md)
 
-## See also (Aero docs / host implementation)
+## See also
 
-- [`docs/virtio-snd.md`](../../../../docs/virtio-snd.md) — high-level device-model notes (non-normative; the Windows 7 virtio contract + emulator implementation are definitive).
-- [`docs/windows7-virtio-driver-contract.md` (virtio-snd section)](../../../../docs/windows7-virtio-driver-contract.md#34-virtio-snd-audio) — queue indices, PCI IDs, and required transport features.
-- [`docs/windows/virtio-pci-modern-wdm.md`](../../../../docs/windows/virtio-pci-modern-wdm.md) — WDM virtio-pci modern transport bring-up notes (PCI caps, BAR0 mapping, feature negotiation, queues, INTx ISR/DPC).
+- [`docs/virtio-snd.md`](../../../../docs/virtio-snd.md) — device model scope + request/response layouts
+- [`docs/windows-device-contract.md`](../../../../docs/windows-device-contract.md) — PCI IDs + Windows service/INF naming contract
+- [`docs/windows7-virtio-driver-contract.md` (virtio-snd section)](../../../../docs/windows7-virtio-driver-contract.md#34-virtio-snd-audio) — queue indices, PCI IDs, and required transport features
+- [`docs/windows/virtio-pci-modern-wdm.md`](../../../../docs/windows/virtio-pci-modern-wdm.md) — WDM virtio-pci modern transport bring-up notes (PCI caps, BAR0 mapping, feature negotiation, queues, INTx ISR/DPC)
 - Canonical wire format / behavior reference (emulator side):
   - [`crates/aero-virtio/src/devices/snd.rs`](../../../../crates/aero-virtio/src/devices/snd.rs)
   - [`crates/aero-virtio/tests/virtio_snd.rs`](../../../../crates/aero-virtio/tests/virtio_snd.rs)
 
 ## Protocol implemented (Aero subset)
- 
+
 This driver targets the **Aero Windows 7 virtio device contract v1** (virtio-snd §3.4).
 The contract (and emulator) define two fixed-format PCM streams. The driver currently
 only exposes **stream 0** (playback/output) as a Windows render endpoint; capture is not
 yet exposed via PortCls.
- 
+
 - Stream 0 (playback/output): 48,000 Hz, stereo (2ch), signed 16-bit little-endian (`S16_LE`)
 - Stream 1 (capture/input): 48,000 Hz, mono (1ch), signed 16-bit little-endian (`S16_LE`) (capture endpoint TBD)
- 
-Basic playback uses `controlq` + `txq`. `rxq` is initialized for transport bring-up but
-capture buffers are not submitted by the current PortCls miniport yet.
+
+Basic playback uses `controlq` + `txq`. The device model also defines `rxq` for capture,
+but capture is not implemented by the current PortCls miniport.
 
 All multi-byte fields described below are **little-endian**.
 
 ### Controlq (queue 0) commands supported
 
 The controlq request payload begins with a 32-bit `code` and the response always begins with a 32-bit `status`.
- 
+
 Contract v1 requires these request codes (for both streams 0 and 1). The driver’s
 control engine implements the v1 subset for both streams, but the current PortCls
 integration only drives **stream 0** (playback):
@@ -259,16 +261,9 @@ If the miniport submits PCM faster than the period schedule (e.g. "fill the queu
 
 ### Supported: WDK10 / MSBuild
 
-This driver is built in CI using the WDK10 MSBuild project:
+CI builds the driver using:
 
-- `drivers/windows7/virtio-snd/virtio-snd.vcxproj`
-
-From a Windows host with the WDK installed:
-
-```powershell
-.\ci\install-wdk.ps1
-.\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json -Drivers windows7/virtio-snd
-```
+* `drivers/windows7/virtio-snd/virtio-snd.vcxproj`
 
 Build outputs are staged under:
 
@@ -421,31 +416,3 @@ guest-tools\drivers\<arch>\virtio-snd\
    - `aero-virtio-snd.cat` (signed)
    - (Optional) `virtio-snd.inf` + `virtio-snd.cat` (signed)
 2. Use Device Manager → Update Driver → "Have Disk..." and point to `inf\` (or `release\<arch>\virtio-snd\` once packaged). Pick the desired INF when prompted.
-
-For offline/slipstream installation into Windows 7 images (WIM or offline OS), see:
-
-- `../tests/offline-install/README.md`
-
-### PCI Hardware IDs
-
-Contract v1 virtio-snd devices enumerate as:
-
-- Vendor ID: `VEN_1AF4`
-- Device ID: `DEV_1059` (`0x1040 + VIRTIO_ID_SOUND` where `VIRTIO_ID_SOUND = 25`)
-- Revision ID: `REV_01` (contract major version = 1)
-- Subsystem ID: `SUBSYS_0019xxxx` (Aero uses `SUBSYS_00191AF4`)
-
-`inf/aero-virtio-snd.inf` matches the **revision-gated** modern HWID:
-
-- `PCI\VEN_1AF4&DEV_1059&REV_01`
-
-For additional safety in environments that expose multiple virtio-snd devices, you can further restrict the match to Aero’s subsystem ID:
-
-- `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
-
-Notes:
-
-- The **transitional/legacy** virtio-snd PCI device ID (`DEV_1018`) is intentionally **not** matched by this INF (Aero contract v1 is modern-only).
-- This WDM driver currently uses **INTx only**. The INF does **not** include the registry settings required to request MSI/MSI-X from Windows.
-
-If this README or the INF disagrees with `AERO-W7-VIRTIO`, treat the contract as authoritative.
