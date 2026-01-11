@@ -46,13 +46,13 @@ export type L2TunnelSink = (ev: L2TunnelEvent) => void;
 export type L2TunnelClientOptions = {
   /**
    * Maximum number of bytes allowed to be queued in JS before outbound frames
-   * cause the tunnel to be closed.
+   * are dropped.
    */
   maxQueuedBytes?: number;
 
   /**
    * If the underlying transport's buffered amount exceeds this, the client will
-   * pause flushing until it drains.
+   * drop outbound frames.
    */
   maxBufferedAmount?: number;
 
@@ -215,6 +215,15 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
       return;
     }
 
+    if (this.isTransportOpen() && this.getTransportBufferedAmount() > this.opts.maxBufferedAmount) {
+      this.emitSessionErrorThrottled(
+        new Error(
+          `dropping outbound frame: transport backpressure (bufferedAmount ${this.getTransportBufferedAmount()} > maxBufferedAmount ${this.opts.maxBufferedAmount})`,
+        ),
+      );
+      return;
+    }
+
     this.enqueue(encodeL2Frame(frame, { maxPayload: this.opts.maxFrameSize }));
   }
 
@@ -315,10 +324,11 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
 
   private enqueue(msg: Uint8Array): void {
     if (this.sendQueueBytes + msg.byteLength > this.opts.maxQueuedBytes) {
-      this.onTransportError(
-        new Error(`l2 tunnel send queue overflow (${this.sendQueueBytes} + ${msg.byteLength} > ${this.opts.maxQueuedBytes})`),
+      this.emitSessionErrorThrottled(
+        new Error(
+          `dropping outbound message: send queue overflow (${this.sendQueueBytes} + ${msg.byteLength} > ${this.opts.maxQueuedBytes})`,
+        ),
       );
-      this.close();
       return;
     }
 

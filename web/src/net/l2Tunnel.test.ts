@@ -259,7 +259,7 @@ describe("net/l2Tunnel", () => {
     }
   });
 
-  it("queues outbound frames while bufferedAmount exceeds maxBufferedAmount", async () => {
+  it("drops outbound frames while bufferedAmount exceeds maxBufferedAmount", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
@@ -289,7 +289,10 @@ describe("net/l2Tunnel", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       await microtask();
 
-      expect(FakeWebSocket.last!.sent.length).toBe(1);
+      // Frame should be dropped (not queued), even after the socket drains.
+      expect(FakeWebSocket.last!.sent.length).toBe(0);
+      const errEv = events.find((e) => (e as { type?: string }).type === "error") as { error?: unknown } | undefined;
+      expect(errEv?.error).toBeInstanceOf(Error);
     } finally {
       client.close();
       if (original === undefined) {
