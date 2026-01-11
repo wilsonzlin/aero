@@ -26,6 +26,27 @@
         "expectError": true
       },
       {
+        "name": "malformed.noDot",
+        "secret": "test-session-secret",
+        "token": "not-a-token",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "malformed.tooManyParts",
+        "secret": "test-session-secret",
+        "token": "a.b.c",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "malformed.emptySignature",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTcwMDAwMDA2MH0.",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
         "name": "invalidBase64url.payload",
         "secret": "test-session-secret",
         "token": "invalid!payload._oBcRLie1_KGm7HifmJyDVAsAUvnwmsOroHf3fwc5KQ",
@@ -139,6 +160,27 @@
         "name": "wrongAlg",
         "secret": "test-jwt-secret",
         "token": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.xxNREd57JHOFSEUoDFwMVDQ-xAYddSly_c1i09zWfXc",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidBase64url.signature",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.tVuxJptb-YWFqluNxv89qG0sd_jFcDIzVGn2ojD9wG!",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidBase64urlLength.signature",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.a",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "malformed.twoParts",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9",
         "nowSec": 1700000000,
         "expectError": true
       }
