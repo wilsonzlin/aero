@@ -1053,3 +1053,479 @@ fn d3d9_cmd_stream_sampler_wrap_vs_clamp() {
     assert_eq!(pixel_at(&rgba, width, 16, 32), [255, 255, 0, 255]);
     assert_eq!(pixel_at(&rgba, width, 48, 32), [255, 0, 0, 255]);
 }
+
+#[test]
+fn d3d9_cmd_stream_srgb_write_enable_encodes_linear_output() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    // Protocol constants from `aero-protocol`.
+    const OPC_CREATE_BUFFER: u32 = cmd::AerogpuCmdOpcode::CreateBuffer as u32;
+    const OPC_CREATE_TEXTURE2D: u32 = cmd::AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = cmd::AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_CREATE_SHADER_DXBC: u32 = cmd::AerogpuCmdOpcode::CreateShaderDxbc as u32;
+    const OPC_BIND_SHADERS: u32 = cmd::AerogpuCmdOpcode::BindShaders as u32;
+    const OPC_SET_SHADER_CONSTANTS_F: u32 = cmd::AerogpuCmdOpcode::SetShaderConstantsF as u32;
+    const OPC_CREATE_INPUT_LAYOUT: u32 = cmd::AerogpuCmdOpcode::CreateInputLayout as u32;
+    const OPC_SET_INPUT_LAYOUT: u32 = cmd::AerogpuCmdOpcode::SetInputLayout as u32;
+    const OPC_SET_RENDER_TARGETS: u32 = cmd::AerogpuCmdOpcode::SetRenderTargets as u32;
+    const OPC_SET_VIEWPORT: u32 = cmd::AerogpuCmdOpcode::SetViewport as u32;
+    const OPC_SET_VERTEX_BUFFERS: u32 = cmd::AerogpuCmdOpcode::SetVertexBuffers as u32;
+    const OPC_SET_PRIMITIVE_TOPOLOGY: u32 = cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32;
+    const OPC_SET_RENDER_STATE: u32 = cmd::AerogpuCmdOpcode::SetRenderState as u32;
+    const OPC_CLEAR: u32 = cmd::AerogpuCmdOpcode::Clear as u32;
+    const OPC_DRAW: u32 = cmd::AerogpuCmdOpcode::Draw as u32;
+
+    const D3DRS_SRGBWRITEENABLE: u32 = 194;
+
+    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = pci::AerogpuFormat::R8G8B8A8Unorm as u32;
+    const AEROGPU_RESOURCE_USAGE_TEXTURE: u32 = cmd::AEROGPU_RESOURCE_USAGE_TEXTURE;
+    const AEROGPU_RESOURCE_USAGE_RENDER_TARGET: u32 = cmd::AEROGPU_RESOURCE_USAGE_RENDER_TARGET;
+    const AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER: u32 = cmd::AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER;
+    const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = cmd::AerogpuPrimitiveTopology::TriangleList as u32;
+    const AEROGPU_CLEAR_COLOR: u32 = cmd::AEROGPU_CLEAR_COLOR;
+
+    const RT_HANDLE: u32 = 1;
+    const VB_HANDLE: u32 = 2;
+    const VS_HANDLE: u32 = 3;
+    const PS_HANDLE: u32 = 4;
+    const IL_HANDLE: u32 = 5;
+
+    let width = 16u32;
+    let height = 16u32;
+
+    let vertex_decl = vertex_decl_pos();
+    let vb_data = fullscreen_triangle_pos();
+
+    let vs_bytes = assemble_vs_passthrough_pos();
+    let ps_bytes = assemble_ps_solid_color_c0();
+
+    let stream = build_stream(|out| {
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, RT_HANDLE);
+            push_u32(
+                out,
+                AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            );
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, width * 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, VB_HANDLE);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
+            push_u64(out, vb_data.len() as u64);
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, VB_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, vb_data.len() as u64);
+            out.extend_from_slice(&vb_data);
+        });
+
+        emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
+            push_u32(out, VS_HANDLE);
+            push_u32(out, cmd::AerogpuShaderStage::Vertex as u32);
+            push_u32(out, vs_bytes.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&vs_bytes);
+        });
+        emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
+            push_u32(out, PS_HANDLE);
+            push_u32(out, cmd::AerogpuShaderStage::Pixel as u32);
+            push_u32(out, ps_bytes.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&ps_bytes);
+        });
+        emit_packet(out, OPC_BIND_SHADERS, |out| {
+            push_u32(out, VS_HANDLE);
+            push_u32(out, PS_HANDLE);
+            push_u32(out, 0); // cs
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_CREATE_INPUT_LAYOUT, |out| {
+            push_u32(out, IL_HANDLE);
+            push_u32(out, vertex_decl.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&vertex_decl);
+        });
+        emit_packet(out, OPC_SET_INPUT_LAYOUT, |out| {
+            push_u32(out, IL_HANDLE);
+            push_u32(out, 0); // reserved0
+        });
+        emit_packet(out, OPC_SET_VERTEX_BUFFERS, |out| {
+            push_u32(out, 0); // start_slot
+            push_u32(out, 1); // buffer_count
+            push_u32(out, VB_HANDLE);
+            push_u32(out, 16); // stride_bytes
+            push_u32(out, 0); // offset_bytes
+            push_u32(out, 0); // reserved0
+        });
+        emit_packet(out, OPC_SET_PRIMITIVE_TOPOLOGY, |out| {
+            push_u32(out, AEROGPU_TOPOLOGY_TRIANGLELIST);
+            push_u32(out, 0); // reserved0
+        });
+        emit_packet(out, OPC_SET_RENDER_TARGETS, |out| {
+            push_u32(out, 1); // color_count
+            push_u32(out, 0); // depth_stencil
+            push_u32(out, RT_HANDLE);
+            for _ in 0..7 {
+                push_u32(out, 0);
+            }
+        });
+        emit_packet(out, OPC_SET_VIEWPORT, |out| {
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, width as f32);
+            push_f32(out, height as f32);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+        });
+        emit_packet(out, OPC_CLEAR, |out| {
+            push_u32(out, AEROGPU_CLEAR_COLOR);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+            push_f32(out, 1.0); // depth
+            push_u32(out, 0); // stencil
+        });
+
+        emit_packet(out, OPC_SET_RENDER_STATE, |out| {
+            push_u32(out, D3DRS_SRGBWRITEENABLE);
+            push_u32(out, 1);
+        });
+
+        // Set c0 to 0.5 gray. With sRGB write enabled, 0.5 (linear) becomes ~188 (sRGB).
+        emit_packet(out, OPC_SET_SHADER_CONSTANTS_F, |out| {
+            push_u32(out, cmd::AerogpuShaderStage::Pixel as u32);
+            push_u32(out, 0); // start_register
+            push_u32(out, 1); // vec4_count
+            push_u32(out, 0); // reserved0
+            push_f32(out, 0.5);
+            push_f32(out, 0.5);
+            push_f32(out, 0.5);
+            push_f32(out, 1.0);
+        });
+
+        emit_packet(out, OPC_DRAW, |out| {
+            push_u32(out, 3); // vertex_count
+            push_u32(out, 1); // instance_count
+            push_u32(out, 0); // first_vertex
+            push_u32(out, 0); // first_instance
+        });
+    });
+
+    exec.execute_cmd_stream(&stream)
+        .expect("execute should succeed");
+
+    let (out_w, out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))
+        .expect("readback should succeed");
+    assert_eq!((out_w, out_h), (width, height));
+
+    let px = pixel_at(&rgba, width, 8, 8);
+    assert!(
+        (185..=190).contains(&px[0]) && px[0] == px[1] && px[1] == px[2],
+        "expected srgb-encoded ~188 gray, got {px:?}"
+    );
+    assert_eq!(px[3], 255);
+}
+
+#[test]
+fn d3d9_cmd_stream_sampler_srgb_texture_decodes_srgb_texels() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    // Protocol constants from `aero-protocol`.
+    const OPC_CREATE_BUFFER: u32 = cmd::AerogpuCmdOpcode::CreateBuffer as u32;
+    const OPC_CREATE_TEXTURE2D: u32 = cmd::AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = cmd::AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_CREATE_SHADER_DXBC: u32 = cmd::AerogpuCmdOpcode::CreateShaderDxbc as u32;
+    const OPC_BIND_SHADERS: u32 = cmd::AerogpuCmdOpcode::BindShaders as u32;
+    const OPC_CREATE_INPUT_LAYOUT: u32 = cmd::AerogpuCmdOpcode::CreateInputLayout as u32;
+    const OPC_SET_INPUT_LAYOUT: u32 = cmd::AerogpuCmdOpcode::SetInputLayout as u32;
+    const OPC_SET_RENDER_TARGETS: u32 = cmd::AerogpuCmdOpcode::SetRenderTargets as u32;
+    const OPC_SET_VIEWPORT: u32 = cmd::AerogpuCmdOpcode::SetViewport as u32;
+    const OPC_SET_SCISSOR: u32 = cmd::AerogpuCmdOpcode::SetScissor as u32;
+    const OPC_SET_VERTEX_BUFFERS: u32 = cmd::AerogpuCmdOpcode::SetVertexBuffers as u32;
+    const OPC_SET_PRIMITIVE_TOPOLOGY: u32 = cmd::AerogpuCmdOpcode::SetPrimitiveTopology as u32;
+    const OPC_SET_TEXTURE: u32 = cmd::AerogpuCmdOpcode::SetTexture as u32;
+    const OPC_SET_SAMPLER_STATE: u32 = cmd::AerogpuCmdOpcode::SetSamplerState as u32;
+    const OPC_SET_RENDER_STATE: u32 = cmd::AerogpuCmdOpcode::SetRenderState as u32;
+    const OPC_CLEAR: u32 = cmd::AerogpuCmdOpcode::Clear as u32;
+    const OPC_DRAW: u32 = cmd::AerogpuCmdOpcode::Draw as u32;
+
+    // D3D9 render/sampler state IDs (subset).
+    const D3DRS_SCISSORTESTENABLE: u32 = 174;
+    const D3DSAMP_ADDRESSU: u32 = 1;
+    const D3DSAMP_ADDRESSV: u32 = 2;
+    const D3DSAMP_MAGFILTER: u32 = 5;
+    const D3DSAMP_MINFILTER: u32 = 6;
+    const D3DSAMP_MIPFILTER: u32 = 7;
+    const D3DSAMP_SRGBTEXTURE: u32 = 11;
+
+    const D3DTADDRESS_CLAMP: u32 = 3;
+    const D3DTEXF_NONE: u32 = 0;
+    const D3DTEXF_POINT: u32 = 1;
+
+    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = pci::AerogpuFormat::R8G8B8A8Unorm as u32;
+    const AEROGPU_RESOURCE_USAGE_TEXTURE: u32 = cmd::AEROGPU_RESOURCE_USAGE_TEXTURE;
+    const AEROGPU_RESOURCE_USAGE_RENDER_TARGET: u32 = cmd::AEROGPU_RESOURCE_USAGE_RENDER_TARGET;
+    const AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER: u32 = cmd::AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER;
+    const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = cmd::AerogpuPrimitiveTopology::TriangleList as u32;
+    const AEROGPU_CLEAR_COLOR: u32 = cmd::AEROGPU_CLEAR_COLOR;
+
+    const STAGE_PIXEL: u32 = cmd::AerogpuShaderStage::Pixel as u32;
+
+    const RT_HANDLE: u32 = 1;
+    const TEX_HANDLE: u32 = 2;
+    const VB_HANDLE: u32 = 3;
+    const VS_HANDLE: u32 = 4;
+    const PS_HANDLE: u32 = 5;
+    const IL_HANDLE: u32 = 6;
+
+    let width = 64u32;
+    let height = 64u32;
+
+    let vertex_decl = vertex_decl_pos_tex();
+    let vb_data = fullscreen_triangle_pos_tex([[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]);
+
+    let vs_bytes = assemble_vs_passthrough_pos_tex();
+    let ps_bytes = assemble_ps_tex();
+
+    let stream = build_stream(|out| {
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, RT_HANDLE);
+            push_u32(
+                out,
+                AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            );
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, width * 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, TEX_HANDLE);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, 1);
+            push_u32(out, 1);
+            push_u32(out, 1);
+            push_u32(out, 1);
+            push_u32(out, 4);
+            push_u32(out, 0);
+            push_u32(out, 0);
+            push_u64(out, 0);
+        });
+
+        // Upload a 1x1 texel containing sRGB-coded ~0.5 gray (188).
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, TEX_HANDLE);
+            push_u32(out, 0);
+            push_u64(out, 0);
+            push_u64(out, 4);
+            out.extend_from_slice(&[188, 188, 188, 255]);
+        });
+
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, VB_HANDLE);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
+            push_u64(out, vb_data.len() as u64);
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, VB_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, vb_data.len() as u64);
+            out.extend_from_slice(&vb_data);
+        });
+
+        emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
+            push_u32(out, VS_HANDLE);
+            push_u32(out, cmd::AerogpuShaderStage::Vertex as u32);
+            push_u32(out, vs_bytes.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&vs_bytes);
+        });
+        emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
+            push_u32(out, PS_HANDLE);
+            push_u32(out, cmd::AerogpuShaderStage::Pixel as u32);
+            push_u32(out, ps_bytes.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&ps_bytes);
+        });
+        emit_packet(out, OPC_BIND_SHADERS, |out| {
+            push_u32(out, VS_HANDLE);
+            push_u32(out, PS_HANDLE);
+            push_u32(out, 0); // cs
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_CREATE_INPUT_LAYOUT, |out| {
+            push_u32(out, IL_HANDLE);
+            push_u32(out, vertex_decl.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&vertex_decl);
+        });
+        emit_packet(out, OPC_SET_INPUT_LAYOUT, |out| {
+            push_u32(out, IL_HANDLE);
+            push_u32(out, 0); // reserved0
+        });
+        emit_packet(out, OPC_SET_VERTEX_BUFFERS, |out| {
+            push_u32(out, 0); // start_slot
+            push_u32(out, 1); // buffer_count
+            push_u32(out, VB_HANDLE);
+            push_u32(out, 32); // stride_bytes
+            push_u32(out, 0); // offset_bytes
+            push_u32(out, 0); // reserved0
+        });
+        emit_packet(out, OPC_SET_PRIMITIVE_TOPOLOGY, |out| {
+            push_u32(out, AEROGPU_TOPOLOGY_TRIANGLELIST);
+            push_u32(out, 0); // reserved0
+        });
+        emit_packet(out, OPC_SET_RENDER_TARGETS, |out| {
+            push_u32(out, 1); // color_count
+            push_u32(out, 0); // depth_stencil
+            push_u32(out, RT_HANDLE);
+            for _ in 0..7 {
+                push_u32(out, 0);
+            }
+        });
+        emit_packet(out, OPC_SET_VIEWPORT, |out| {
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, width as f32);
+            push_f32(out, height as f32);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+        });
+        emit_packet(out, OPC_CLEAR, |out| {
+            push_u32(out, AEROGPU_CLEAR_COLOR);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+            push_f32(out, 1.0); // depth
+            push_u32(out, 0); // stencil
+        });
+
+        emit_packet(out, OPC_SET_TEXTURE, |out| {
+            push_u32(out, STAGE_PIXEL);
+            push_u32(out, 0); // slot
+            push_u32(out, TEX_HANDLE);
+            push_u32(out, 0); // reserved0
+        });
+
+        for (state, value) in [
+            (D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP),
+            (D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP),
+            (D3DSAMP_MINFILTER, D3DTEXF_POINT),
+            (D3DSAMP_MAGFILTER, D3DTEXF_POINT),
+            (D3DSAMP_MIPFILTER, D3DTEXF_NONE),
+        ] {
+            emit_packet(out, OPC_SET_SAMPLER_STATE, |out| {
+                push_u32(out, STAGE_PIXEL);
+                push_u32(out, 0); // slot
+                push_u32(out, state);
+                push_u32(out, value);
+            });
+        }
+
+        emit_packet(out, OPC_SET_RENDER_STATE, |out| {
+            push_u32(out, D3DRS_SCISSORTESTENABLE);
+            push_u32(out, 1);
+        });
+
+        // Left half: SRGBTEXTURE disabled -> sample returns ~0.737 -> stores ~188.
+        emit_packet(out, OPC_SET_SCISSOR, |out| {
+            push_i32(out, 0);
+            push_i32(out, 0);
+            push_i32(out, 32);
+            push_i32(out, 64);
+        });
+        emit_packet(out, OPC_SET_SAMPLER_STATE, |out| {
+            push_u32(out, STAGE_PIXEL);
+            push_u32(out, 0); // slot
+            push_u32(out, D3DSAMP_SRGBTEXTURE);
+            push_u32(out, 0);
+        });
+        emit_packet(out, OPC_DRAW, |out| {
+            push_u32(out, 3); // vertex_count
+            push_u32(out, 1); // instance_count
+            push_u32(out, 0); // first_vertex
+            push_u32(out, 0); // first_instance
+        });
+
+        // Right half: SRGBTEXTURE enabled -> sample decodes to 0.5 -> stores ~128.
+        emit_packet(out, OPC_SET_SCISSOR, |out| {
+            push_i32(out, 32);
+            push_i32(out, 0);
+            push_i32(out, 32);
+            push_i32(out, 64);
+        });
+        emit_packet(out, OPC_SET_SAMPLER_STATE, |out| {
+            push_u32(out, STAGE_PIXEL);
+            push_u32(out, 0); // slot
+            push_u32(out, D3DSAMP_SRGBTEXTURE);
+            push_u32(out, 1);
+        });
+        emit_packet(out, OPC_DRAW, |out| {
+            push_u32(out, 3); // vertex_count
+            push_u32(out, 1); // instance_count
+            push_u32(out, 0); // first_vertex
+            push_u32(out, 0); // first_instance
+        });
+    });
+
+    exec.execute_cmd_stream(&stream)
+        .expect("execute should succeed");
+
+    let (out_w, out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))
+        .expect("readback should succeed");
+    assert_eq!((out_w, out_h), (width, height));
+
+    let left = pixel_at(&rgba, width, 16, 32);
+    let right = pixel_at(&rgba, width, 48, 32);
+    assert!(
+        (185..=190).contains(&left[0]) && left[0] == left[1] && left[1] == left[2],
+        "expected non-srgb sample to stay ~188, got {left:?}"
+    );
+    assert!(
+        (120..=135).contains(&right[0]) && right[0] == right[1] && right[1] == right[2],
+        "expected srgb sample to decode to ~128, got {right:?}"
+    );
+}

@@ -220,6 +220,7 @@ enum Resource {
     Texture2d {
         texture: wgpu::Texture,
         view: wgpu::TextureView,
+        view_srgb: Option<wgpu::TextureView>,
         format: wgpu::TextureFormat,
         width: u32,
         height: u32,
@@ -1180,6 +1181,11 @@ impl AerogpuD3d9Executor {
                         size_bytes: required,
                     })
                 };
+                let view_formats = match format {
+                    wgpu::TextureFormat::Rgba8Unorm => vec![wgpu::TextureFormat::Rgba8UnormSrgb],
+                    wgpu::TextureFormat::Bgra8Unorm => vec![wgpu::TextureFormat::Bgra8UnormSrgb],
+                    _ => Vec::new(),
+                };
                 let texture = self.device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("aerogpu-d3d9.texture2d"),
                     size: wgpu::Extent3d {
@@ -1195,14 +1201,30 @@ impl AerogpuD3d9Executor {
                         | wgpu::TextureUsages::COPY_SRC
                         | wgpu::TextureUsages::TEXTURE_BINDING
                         | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    view_formats: &[],
+                    view_formats: &view_formats,
                 });
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let view_srgb = match format {
+                    wgpu::TextureFormat::Rgba8Unorm => Some(texture.create_view(
+                        &wgpu::TextureViewDescriptor {
+                            format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                            ..Default::default()
+                        },
+                    )),
+                    wgpu::TextureFormat::Bgra8Unorm => Some(texture.create_view(
+                        &wgpu::TextureViewDescriptor {
+                            format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+                            ..Default::default()
+                        },
+                    )),
+                    _ => None,
+                };
                 self.resources.insert(
                     texture_handle,
                     Resource::Texture2d {
                         texture,
                         view,
+                        view_srgb,
                         format,
                         width,
                         height,
@@ -3747,12 +3769,29 @@ impl AerogpuD3d9Executor {
             let samp_binding = tex_binding + 1;
 
             let tex_handle = self.state.textures_ps[slot];
+            let srgb_texture = self
+                .state
+                .sampler_states_ps[slot]
+                .get(d3d9::D3DSAMP_SRGBTEXTURE as usize)
+                .copied()
+                .unwrap_or(0)
+                != 0;
             let view: &wgpu::TextureView = if tex_handle == 0 {
                 &self.dummy_texture_view
             } else {
                 let underlying = self.resolve_resource_handle(tex_handle).ok();
                 match underlying.and_then(|h| self.resources.get(&h)) {
-                    Some(Resource::Texture2d { view, .. }) => view,
+                    Some(Resource::Texture2d {
+                        view,
+                        view_srgb,
+                        ..
+                    }) => {
+                        if srgb_texture {
+                            view_srgb.as_ref().unwrap_or(view)
+                        } else {
+                            view
+                        }
+                    }
                     _ => &self.dummy_texture_view,
                 }
             };
@@ -3838,6 +3877,9 @@ impl AerogpuD3d9Executor {
             | d3d9::D3DRS_BLENDOPALPHA => self.update_separate_alpha_blend_from_render_state(),
             d3d9::D3DRS_COLORWRITEENABLE => {
                 self.state.blend_state.color_write_mask = (value & 0xF) as u8
+            }
+            d3d9::D3DRS_SRGBWRITEENABLE => {
+                // sRGB write is handled by selecting an sRGB render-target view at draw time.
             }
             d3d9::D3DRS_SCISSORTESTENABLE => {
                 self.state.rasterizer_state.scissor_enable = value != 0
@@ -4026,15 +4068,40 @@ impl AerogpuD3d9Executor {
         }
         self.state.sampler_states_ps[slot][idx] = value;
 
-        let mut affects_sampler = true;
+        let mut affects_sampler = false;
+        let mut affects_bind_group = false;
         match state_id {
-            d3d9::D3DSAMP_ADDRESSU => self.sampler_state_ps[slot].address_u = value,
-            d3d9::D3DSAMP_ADDRESSV => self.sampler_state_ps[slot].address_v = value,
-            d3d9::D3DSAMP_MINFILTER => self.sampler_state_ps[slot].min_filter = value,
-            d3d9::D3DSAMP_MAGFILTER => self.sampler_state_ps[slot].mag_filter = value,
-            d3d9::D3DSAMP_MIPFILTER => self.sampler_state_ps[slot].mip_filter = value,
+            d3d9::D3DSAMP_ADDRESSU => {
+                self.sampler_state_ps[slot].address_u = value;
+                affects_sampler = true;
+                affects_bind_group = true;
+            }
+            d3d9::D3DSAMP_ADDRESSV => {
+                self.sampler_state_ps[slot].address_v = value;
+                affects_sampler = true;
+                affects_bind_group = true;
+            }
+            d3d9::D3DSAMP_MINFILTER => {
+                self.sampler_state_ps[slot].min_filter = value;
+                affects_sampler = true;
+                affects_bind_group = true;
+            }
+            d3d9::D3DSAMP_MAGFILTER => {
+                self.sampler_state_ps[slot].mag_filter = value;
+                affects_sampler = true;
+                affects_bind_group = true;
+            }
+            d3d9::D3DSAMP_MIPFILTER => {
+                self.sampler_state_ps[slot].mip_filter = value;
+                affects_sampler = true;
+                affects_bind_group = true;
+            }
+            d3d9::D3DSAMP_SRGBTEXTURE => {
+                // sRGB sampling is implemented by binding a view with an sRGB format, not by
+                // changing the wgpu sampler object.
+                affects_bind_group = true;
+            }
             _ => {
-                affects_sampler = false;
                 debug!(
                     slot,
                     state_id, value, "ignoring unsupported D3D9 sampler state"
@@ -4045,6 +4112,8 @@ impl AerogpuD3d9Executor {
         if affects_sampler {
             let state = self.sampler_state_ps[slot];
             self.samplers_ps[slot] = self.sampler_for_state(state);
+        }
+        if affects_bind_group {
             self.bind_group_dirty = true;
         }
     }
@@ -4120,6 +4189,13 @@ impl AerogpuD3d9Executor {
         &self,
     ) -> Result<(Vec<Option<&wgpu::TextureView>>, Option<&wgpu::TextureView>), AerogpuD3d9Error>
     {
+        let srgb_write = self
+            .state
+            .render_states
+            .get(d3d9::D3DRS_SRGBWRITEENABLE as usize)
+            .copied()
+            .unwrap_or(0)
+            != 0;
         let rt = &self.state.render_targets;
         if rt.color_count == 0 {
             return Err(AerogpuD3d9Error::MissingRenderTargets);
@@ -4137,7 +4213,18 @@ impl AerogpuD3d9Executor {
                 .get(&underlying)
                 .ok_or(AerogpuD3d9Error::UnknownResource(handle))?;
             match res {
-                Resource::Texture2d { view, .. } => colors.push(Some(view)),
+                Resource::Texture2d {
+                    view,
+                    view_srgb,
+                    ..
+                } => {
+                    let out = if srgb_write {
+                        view_srgb.as_ref().unwrap_or(view)
+                    } else {
+                        view
+                    };
+                    colors.push(Some(out));
+                }
                 _ => return Err(AerogpuD3d9Error::UnknownResource(handle)),
             }
         }
@@ -4169,6 +4256,13 @@ impl AerogpuD3d9Executor {
         ),
         AerogpuD3d9Error,
     > {
+        let srgb_write = self
+            .state
+            .render_states
+            .get(d3d9::D3DRS_SRGBWRITEENABLE as usize)
+            .copied()
+            .unwrap_or(0)
+            != 0;
         let rt = &self.state.render_targets;
         if rt.color_count == 0 {
             return Err(AerogpuD3d9Error::MissingRenderTargets);
@@ -4186,7 +4280,21 @@ impl AerogpuD3d9Executor {
                 .get(&underlying)
                 .ok_or(AerogpuD3d9Error::UnknownResource(handle))?;
             match res {
-                Resource::Texture2d { format, .. } => colors.push(Some(*format)),
+                Resource::Texture2d {
+                    format,
+                    view_srgb,
+                    ..
+                } => {
+                    let mut out = *format;
+                    if srgb_write && view_srgb.is_some() {
+                        out = match out {
+                            wgpu::TextureFormat::Rgba8Unorm => wgpu::TextureFormat::Rgba8UnormSrgb,
+                            wgpu::TextureFormat::Bgra8Unorm => wgpu::TextureFormat::Bgra8UnormSrgb,
+                            other => other,
+                        };
+                    }
+                    colors.push(Some(out));
+                }
                 _ => return Err(AerogpuD3d9Error::UnknownResource(handle)),
             }
         }
@@ -4604,6 +4712,7 @@ mod d3d9 {
     pub const D3DRS_BLENDOPALPHA: u32 = 209;
 
     pub const D3DRS_COLORWRITEENABLE: u32 = 168;
+    pub const D3DRS_SRGBWRITEENABLE: u32 = 194;
     pub const D3DRS_SCISSORTESTENABLE: u32 = 174;
 
     pub const D3DRS_STENCILENABLE: u32 = 52;
@@ -4616,6 +4725,7 @@ mod d3d9 {
     pub const D3DSAMP_MAGFILTER: u32 = 5;
     pub const D3DSAMP_MINFILTER: u32 = 6;
     pub const D3DSAMP_MIPFILTER: u32 = 7;
+    pub const D3DSAMP_SRGBTEXTURE: u32 = 11;
 
     // D3DTEXTUREADDRESS.
     pub const D3DTADDRESS_WRAP: u32 = 1;
