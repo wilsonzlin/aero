@@ -1014,25 +1014,41 @@ impl StreamingDisk {
         };
 
         if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
-            if matches!(
-                resp.status(),
-                reqwest::StatusCode::OK | reqwest::StatusCode::PRECONDITION_FAILED
-            ) && self.inner.validator.is_some()
-            {
+            if let Some(expected) = &self.inner.validator {
                 // Per RFC 7233, a server will return the full representation (200) when an
                 // `If-Range` validator does not match. Some implementations use `412
-                // Precondition Failed` instead. Either way, we should not treat this as a lack of
-                // Range support: it indicates the remote image validator changed while the disk
-                // is open.
-                let actual = resp
-                    .headers()
-                    .get(ETAG)
-                    .and_then(|v| v.to_str().ok())
-                    .map(|v| v.to_string());
-                return Err(StreamingDiskError::ValidatorMismatch {
-                    expected: self.inner.validator.clone(),
-                    actual,
-                });
+                // Precondition Failed` instead.
+                //
+                // However, a server that does *not* support Range may also reply with 200. To
+                // avoid mislabeling the error, only treat 200 as a validator mismatch when the
+                // server provides an ETag that differs from the requested validator.
+                if resp.status() == reqwest::StatusCode::PRECONDITION_FAILED {
+                    let actual = resp
+                        .headers()
+                        .get(ETAG)
+                        .and_then(|v| v.to_str().ok())
+                        .map(|v| v.to_string());
+                    return Err(StreamingDiskError::ValidatorMismatch {
+                        expected: Some(expected.clone()),
+                        actual,
+                    });
+                }
+                if resp.status() == reqwest::StatusCode::OK {
+                    let actual = resp
+                        .headers()
+                        .get(ETAG)
+                        .and_then(|v| v.to_str().ok())
+                        .map(|v| v.to_string());
+                    if actual
+                        .as_deref()
+                        .is_some_and(|etag| etag != expected.as_str())
+                    {
+                        return Err(StreamingDiskError::ValidatorMismatch {
+                            expected: Some(expected.clone()),
+                            actual,
+                        });
+                    }
+                }
             }
             if resp.status().is_success() {
                 return Err(StreamingDiskError::RangeNotSupported);
@@ -1040,6 +1056,20 @@ impl StreamingDisk {
             return Err(StreamingDiskError::Http(format!(
                 "unexpected status {}",
                 resp.status()
+            )));
+        }
+
+        let content_range = resp
+            .headers()
+            .get(CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| StreamingDiskError::Protocol("missing Content-Range".to_string()))?;
+        let (cr_start, cr_end_inclusive, cr_total) = parse_content_range(content_range)?;
+        if cr_start != start || cr_end_inclusive != end - 1 || cr_total != self.inner.total_size {
+            return Err(StreamingDiskError::Protocol(format!(
+                "unexpected Content-Range: {content_range} (expected bytes {start}-{} / {})",
+                end - 1,
+                self.inner.total_size
             )));
         }
 
@@ -1166,16 +1196,48 @@ fn cache_backend_looks_populated(
 }
 
 fn parse_total_size_from_content_range(content_range: &str) -> Result<u64, StreamingDiskError> {
+    let (_, _, total) = parse_content_range(content_range)?;
+    Ok(total)
+}
+
+fn parse_content_range(content_range: &str) -> Result<(u64, u64, u64), StreamingDiskError> {
     // Example: "bytes 0-0/12345"
     let content_range = content_range.trim();
-    let total = content_range
-        .split('/')
-        .nth(1)
-        .and_then(|v| v.parse::<u64>().ok())
-        .ok_or_else(|| {
-            StreamingDiskError::Protocol(format!("invalid Content-Range: {content_range}"))
-        })?;
-    Ok(total)
+    let mut parts = content_range.split_whitespace();
+    let unit = parts.next().ok_or_else(|| {
+        StreamingDiskError::Protocol(format!("invalid Content-Range: {content_range}"))
+    })?;
+    if !unit.eq_ignore_ascii_case("bytes") {
+        return Err(StreamingDiskError::Protocol(format!(
+            "invalid Content-Range unit: {content_range}"
+        )));
+    }
+    let spec = parts.next().ok_or_else(|| {
+        StreamingDiskError::Protocol(format!("invalid Content-Range: {content_range}"))
+    })?;
+
+    let (range_part, total_part) = spec.split_once('/').ok_or_else(|| {
+        StreamingDiskError::Protocol(format!("invalid Content-Range: {content_range}"))
+    })?;
+    let total: u64 = total_part.parse().map_err(|_| {
+        StreamingDiskError::Protocol(format!("invalid Content-Range: {content_range}"))
+    })?;
+
+    let (start_part, end_part) = range_part.split_once('-').ok_or_else(|| {
+        StreamingDiskError::Protocol(format!("invalid Content-Range: {content_range}"))
+    })?;
+    let start: u64 = start_part.parse().map_err(|_| {
+        StreamingDiskError::Protocol(format!("invalid Content-Range: {content_range}"))
+    })?;
+    let end: u64 = end_part.parse().map_err(|_| {
+        StreamingDiskError::Protocol(format!("invalid Content-Range: {content_range}"))
+    })?;
+    if end < start {
+        return Err(StreamingDiskError::Protocol(format!(
+            "invalid Content-Range: {content_range}"
+        )));
+    }
+    Ok((start, end, total))
 }
 
 // We use `hex` only for integrity error messages. Keep it private to avoid committing
