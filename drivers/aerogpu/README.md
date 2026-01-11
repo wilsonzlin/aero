@@ -26,10 +26,9 @@ Binaries are staged under:
 - `out/packages/aerogpu/x86/` and `out/packages/aerogpu/x64/` (INF+CAT staged packages)
 - `out/artifacts/` (ZIP/ISO bundles)
 
-Install using the INF that matches the desired user-mode components:
-
-- `aerogpu.inf`: D3D9-only
-- `aerogpu_dx11.inf`: D3D9 + optional D3D10/11 UMDs
+CI artifacts stage only `aerogpu.inf` (**D3D9-only**) by default. The optional DX11-capable
+variant uses `aerogpu_dx11.inf` (adds D3D10/11 UMDs) and is manual/opt-in (see below and
+`drivers/aerogpu/packaging/win7/README.md`).
 
 ## CI (GitHub Actions)
 
@@ -47,16 +46,14 @@ Artifacts produced by the workflow:
 
 Catalog generation (`ci/make-catalogs.ps1`) is driven by `drivers/aerogpu/ci-package.json`:
 
-- `infFiles` selects which INF(s) to stage. AeroGPU currently stages both:
-  - `packaging/win7/aerogpu.inf` (D3D9 UMD package)
-  - `packaging/win7/aerogpu_dx11.inf` (D3D9 + optional D3D10/11 UMD package)
-  Adjust `infFiles` if you want to stage only a subset (for example, to avoid packaging
-  multiple optional INFs together).
+- `infFiles` selects which INF(s) to stage. AeroGPU CI currently stages:
+  - `packaging/win7/aerogpu.inf` (D3D9-only package)
+  To stage the DX11-capable package in CI, add:
+  - `packaging/win7/aerogpu_dx11.inf`
 - `wow64Files` lists x86 UMD DLLs that must be present in the x64 package during `Inf2Cat`.
-  For AeroGPU this includes `aerogpu_d3d9.dll` and `aerogpu_d3d10.dll` so they can be hashed
-  into the x64 catalog.
-  This means you must build the Win32 outputs even if you only care about the x64 package
-  (the CI flow does this by default).
+  AeroGPU includes `aerogpu_d3d9.dll` by default (required for Win7 x64 WOW64).
+  If you stage `aerogpu_dx11.inf` in CI, also add `aerogpu_d3d10.dll` so it can be hashed into
+  the x64 catalog.
 
 Details: `docs/16-driver-packaging-and-signing.md`.
 
