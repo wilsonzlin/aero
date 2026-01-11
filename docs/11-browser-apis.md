@@ -245,7 +245,7 @@ Disk image streaming is implemented via `fetch()` (often with HTTP `Range` reque
 HTTP/1.1 204 No Content
 Access-Control-Allow-Origin: https://app.example.com
 Access-Control-Allow-Methods: GET, HEAD, OPTIONS
-Access-Control-Allow-Headers: Range, If-Range, Authorization
+Access-Control-Allow-Headers: Range, If-Range, If-None-Match, If-Modified-Since, Authorization
 Access-Control-Max-Age: 600
 Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
 ```
