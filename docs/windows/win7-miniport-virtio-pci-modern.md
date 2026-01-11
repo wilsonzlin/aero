@@ -11,6 +11,31 @@ It is intentionally **not KMDF/WDF**. The goal is to make it possible to impleme
 2) mapping **BAR0 MMIO** from the miniport’s resource list, and  
 3) the **INTx ACK rule** for virtio (read-to-clear ISR byte).
 
+## Recommended: use Aero’s canonical modern transport module
+
+In this repo, Aero’s Windows 7 miniport drivers (NDIS/StorPort) use the single
+canonical, WDF-free virtio-pci modern transport implementation:
+
+- `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.{c,h}`
+
+This module already handles:
+
+- strict contract-v1 checks (PCI identity + fixed BAR0 layout + notify multiplier),
+- PCI vendor-capability parsing (COMMON/NOTIFY/ISR/DEVICE),
+- queue programming helpers (`queue_desc/avail/used` + `queue_enable`),
+- feature negotiation helpers (64-bit + `VIRTIO_F_VERSION_1`).
+
+Miniports integrate it by implementing `VIRTIO_PCI_MODERN_OS_INTERFACE`:
+
+- PCI config reads (`PciRead8/16/32`) using `NdisReadPciSlotInformation` or `StorPortGetBusData`
+- BAR0 map/unmap (`MapMmio/UnmapMmio`) using `NdisMMapIoSpace` or `StorPortGetDeviceBase`
+- a microsecond stall (`StallUs`) for bounded reset polling
+- a selector-serialization lock (`Spinlock*`) for `common_cfg` selector registers
+
+The rest of this document explains the underlying mechanics (PCI config offsets,
+BAR discovery/mapping, INTx ISR semantics) and is useful when wiring up those OS
+callbacks or debugging contract failures.
+
 Definitive contract for what Aero expects from virtio devices/drivers:
 
 * [`../windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md)
