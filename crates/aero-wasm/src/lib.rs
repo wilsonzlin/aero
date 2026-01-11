@@ -29,6 +29,12 @@ mod webusb_uhci_passthrough_harness;
 pub use webusb_uhci_passthrough_harness::WebUsbUhciPassthroughHarness;
 
 #[cfg(target_arch = "wasm32")]
+mod uhci_controller_bridge;
+
+#[cfg(target_arch = "wasm32")]
+pub use uhci_controller_bridge::UhciControllerBridge;
+
+#[cfg(target_arch = "wasm32")]
 use aero_platform::audio::worklet_bridge::WorkletBridge;
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
