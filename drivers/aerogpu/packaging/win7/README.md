@@ -229,6 +229,12 @@ After installation, run the small guest-side Direct3D tests under:
 
 These programs render a known pattern and validate GPU readback (`PASS:`/`FAIL:` + non-zero exit code on failure). The suite includes a `run_all.cmd` harness.
 
+The rendering tests also validate that the expected AeroGPU **user-mode display driver (UMD)** DLL
+is actually loaded in-process (e.g. `aerogpu_d3d9.dll` vs `aerogpu_d3d9_x64.dll`, and the WOW64
+variants on x64). This helps catch common INF/registry issues where rendering appears to work but
+the runtime fell back to Microsoft Basic Render Driver / WARP, or where x64 works but WOW64 UMD
+registration is broken (`InstalledDisplayDriversWow` / `UserModeDriverNameWow`).
+
 Example:
 
 ```bat
