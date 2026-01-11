@@ -506,6 +506,127 @@ async fn stack_max_tcp_connections_zero_rejects_syn() {
 }
 
 #[tokio::test]
+async fn stack_max_tcp_connections_env_rejects_new_syn_when_at_capacity() {
+    let _lock = ENV_LOCK.lock().await;
+
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _allowed_origins = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _allowed_origins_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "none");
+    let _api_key = EnvVarGuard::unset("AERO_L2_API_KEY");
+    let _jwt_secret = EnvVarGuard::unset("AERO_L2_JWT_SECRET");
+    let _jwt_audience = EnvVarGuard::unset("AERO_L2_JWT_AUDIENCE");
+    let _jwt_issuer = EnvVarGuard::unset("AERO_L2_JWT_ISSUER");
+    let _session_secret = EnvVarGuard::unset("AERO_L2_SESSION_SECRET");
+    let _session_secret_alias = EnvVarGuard::unset("SESSION_SECRET");
+    let _gateway_session_secret = EnvVarGuard::unset("AERO_GATEWAY_SESSION_SECRET");
+    let _legacy_token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _ping_interval = EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0");
+    let _max_connections = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0");
+    let _max_connections_per_session =
+        EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
+    let _max_bytes = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
+    let _max_fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
+    let _allow_private_ips = EnvVarGuard::unset("AERO_L2_ALLOW_PRIVATE_IPS");
+    let _allowed_tcp_ports = EnvVarGuard::set("AERO_L2_ALLOWED_TCP_PORTS", "80");
+    let _stack_max_tcp = EnvVarGuard::set("AERO_L2_STACK_MAX_TCP_CONNECTIONS", "1");
+    let _stack_max_buffered =
+        EnvVarGuard::unset("AERO_L2_STACK_MAX_BUFFERED_TCP_BYTES_PER_CONN");
+
+    // Ensure the proxy-side connection will not complete quickly.
+    let _tcp_forward =
+        EnvVarGuard::set("AERO_L2_TCP_FORWARD", "203.0.113.10:80=10.255.255.1:80");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let req = ws_request(addr);
+    let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let (mut ws_tx, mut ws_rx) = ws.split();
+
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    let guest_ip = Ipv4Addr::new(10, 0, 2, 15);
+    let gateway_ip = Ipv4Addr::new(10, 0, 2, 2);
+    let stack_mac = MacAddr([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+
+    // Mark the guest IP as assigned so the stack emits TCP RSTs.
+    let dhcp_request = build_dhcp_request(0x1020_3040, guest_mac, guest_ip, gateway_ip);
+    let dhcp_frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        MacAddr::BROADCAST,
+        Ipv4Addr::UNSPECIFIED,
+        Ipv4Addr::BROADCAST,
+        68,
+        67,
+        &dhcp_request,
+    );
+    ws_tx
+        .send(Message::Binary(encode_l2_frame(&dhcp_frame).into()))
+        .await
+        .unwrap();
+    let _ = wait_for_udp_datagram(&mut ws_rx, |udp| udp.src_port() == 67 && udp.dst_port() == 68)
+        .await;
+
+    let remote_ip = Ipv4Addr::new(203, 0, 113, 10);
+    let remote_port = 80;
+
+    // First connection occupies the only available slot.
+    let syn1 = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack_mac,
+        guest_ip,
+        remote_ip,
+        40_000,
+        remote_port,
+        1000,
+        0,
+        TcpFlags::SYN,
+        &[],
+    );
+    ws_tx
+        .send(Message::Binary(encode_l2_frame(&syn1).into()))
+        .await
+        .unwrap();
+
+    // Second SYN should be rejected (RST) because the stack is at capacity.
+    let isn2 = 2000;
+    let guest_port2 = 40_001;
+    let syn2 = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack_mac,
+        guest_ip,
+        remote_ip,
+        guest_port2,
+        remote_port,
+        isn2,
+        0,
+        TcpFlags::SYN,
+        &[],
+    );
+    ws_tx
+        .send(Message::Binary(encode_l2_frame(&syn2).into()))
+        .await
+        .unwrap();
+
+    let (_flags, _src_port, _dst_port, _seq, ack) = wait_for_tcp_segment(&mut ws_rx, |seg| {
+        seg.src_port() == remote_port
+            && seg.dst_port() == guest_port2
+            && seg.flags().contains(TcpFlags::RST)
+            && seg.ack_number() == isn2 + 1
+    })
+    .await;
+    assert_eq!(ack, isn2 + 1);
+
+    ws_tx.send(Message::Close(None)).await.unwrap();
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn stack_max_buffered_tcp_bytes_env_controls_rst_vs_ack() {
     let _lock = ENV_LOCK.lock().await;
 
