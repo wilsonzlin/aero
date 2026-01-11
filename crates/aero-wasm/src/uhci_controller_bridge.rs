@@ -814,9 +814,9 @@ impl UhciControllerBridge {
         };
 
         if let Some(buf) = r.bytes(TAG_WEBUSB_DEVICE) {
-            let dev = self
-                .webusb_device_mut()
-                .ok_or_else(|| js_error("UHCI bridge snapshot missing WebUSB passthrough device"))?;
+            let dev = self.webusb_device_mut().ok_or_else(|| {
+                js_error("UHCI bridge snapshot missing WebUSB passthrough device")
+            })?;
             dev.load_state(buf)
                 .map_err(|e| js_error(format!("Invalid WebUSB device snapshot: {e}")))?;
             dev.reset_host_state_for_restore();

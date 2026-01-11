@@ -205,14 +205,14 @@ fn setup_webusb_control_in_frame_list(guest_base: u32) -> u32 {
         common::write_u32(guest_base + qh_addr + 0x00, LINK_PTR_T);
         common::write_u32(guest_base + qh_addr + 0x04, setup_td);
 
-    // Setup packet: GET_DESCRIPTOR (device), 8 bytes.
-    let setup_packet = [
-        0x80, // bmRequestType: device-to-host | standard | device
-        0x06, // bRequest: GET_DESCRIPTOR
-        0x00, 0x01, // wValue: (DEVICE=1)<<8 | index 0
-        0x00, 0x00, // wIndex
-        0x08, 0x00, // wLength: 8
-    ];
+        // Setup packet: GET_DESCRIPTOR (device), 8 bytes.
+        let setup_packet = [
+            0x80, // bmRequestType: device-to-host | standard | device
+            0x06, // bRequest: GET_DESCRIPTOR
+            0x00, 0x01, // wValue: (DEVICE=1)<<8 | index 0
+            0x00, 0x00, // wIndex
+            0x08, 0x00, // wLength: 8
+        ];
         common::write_bytes(guest_base + setup_buf, &setup_packet);
 
         // SETUP TD.

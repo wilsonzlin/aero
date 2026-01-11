@@ -333,5 +333,8 @@ fn decodes_xop_encoded_instruction_via_iced_backend() {
     let bytes = [0x8F, 0xA9, 0xA8, 0x90, 0xC0];
     let inst = decode(&bytes, DecodeMode::Bits16, 0).unwrap();
     assert_eq!(inst.length, 5);
-    assert!(inst.operands.iter().any(|op| matches!(op, Operand::Xmm { .. })));
+    assert!(inst
+        .operands
+        .iter()
+        .any(|op| matches!(op, Operand::Xmm { .. })));
 }

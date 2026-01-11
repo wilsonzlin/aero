@@ -6,8 +6,8 @@ pub mod store;
 
 use std::sync::Arc;
 
-use axum::middleware;
 use axum::http::HeaderValue;
+use axum::middleware;
 
 use metrics::Metrics;
 use store::ImageStore;

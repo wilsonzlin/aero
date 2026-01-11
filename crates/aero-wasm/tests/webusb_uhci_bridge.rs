@@ -188,8 +188,8 @@ fn uhci_controller_bridge_emits_host_actions_on_webusb_port() {
         common::write_u32(status_td_linear + 0x0C, 0);
     }
 
-    let mut bridge = UhciControllerBridge::new(guest_base, guest_size)
-        .expect("UhciControllerBridge::new ok");
+    let mut bridge =
+        UhciControllerBridge::new(guest_base, guest_size).expect("UhciControllerBridge::new ok");
     bridge.set_connected(true);
 
     bridge.io_write(REG_FRBASEADD as u16, 4, fl_guest);

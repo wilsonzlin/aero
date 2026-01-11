@@ -39,7 +39,9 @@ async fn cors_origin_override_is_applied_to_metadata_and_bytes_endpoints() {
 
         assert_eq!(resp.status(), StatusCode::OK, "{name}");
         assert_eq!(
-            resp.headers()["access-control-allow-origin"].to_str().unwrap(),
+            resp.headers()["access-control-allow-origin"]
+                .to_str()
+                .unwrap(),
             "https://example.com",
             "{name}"
         );
@@ -52,4 +54,3 @@ async fn cors_origin_override_is_applied_to_metadata_and_bytes_endpoints() {
         );
     }
 }
-

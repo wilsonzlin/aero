@@ -126,8 +126,8 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
     let guest =
         unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
 
-    let mut ctrl = UhciControllerBridge::new(guest_base, guest_size)
-        .expect("new UhciControllerBridge");
+    let mut ctrl =
+        UhciControllerBridge::new(guest_base, guest_size).expect("new UhciControllerBridge");
 
     // Attach a trivial device at root port 0 so we can complete a single IN TD.
     ctrl.connect_device_for_test(0, Box::new(SimpleInDevice::new(b"ABCD")));
