@@ -1268,9 +1268,9 @@ bool TestAllocBackedUnlockEmitsDirtyRange() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HRESOURCE hResource{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_resource = false;
@@ -1338,7 +1338,7 @@ bool TestAllocBackedUnlockEmitsDirtyRange() {
   aerogpu_wddm_alloc_priv priv{};
   std::memset(&priv, 0, sizeof(priv));
 
-  AEROGPU_D3D9DDIARG_CREATERESOURCE create_res{};
+  D3D9DDIARG_CREATERESOURCE create_res{};
   create_res.type = 6u; // D3DRTYPE_VERTEXBUFFER
   create_res.format = 0;
   create_res.width = 0;
@@ -1384,12 +1384,12 @@ bool TestAllocBackedUnlockEmitsDirtyRange() {
   constexpr uint32_t kOffset = 4;
   constexpr uint32_t kSize = 16;
 
-  AEROGPU_D3D9DDIARG_LOCK lock{};
+  D3D9DDIARG_LOCK lock{};
   lock.hResource = create_res.hResource;
   lock.offset_bytes = kOffset;
   lock.size_bytes = kSize;
   lock.flags = 0;
-  AEROGPU_D3D9DDI_LOCKED_BOX box{};
+  D3DDDI_LOCKEDBOX box{};
   hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
   if (!Check(hr == S_OK, "Lock(alloc-backed VB)")) {
     return false;
@@ -1399,7 +1399,7 @@ bool TestAllocBackedUnlockEmitsDirtyRange() {
   }
   std::memset(box.pData, 0xCD, kSize);
 
-  AEROGPU_D3D9DDIARG_UNLOCK unlock{};
+  D3D9DDIARG_UNLOCK unlock{};
   unlock.hResource = create_res.hResource;
   unlock.offset_bytes = 0;
   unlock.size_bytes = 0;

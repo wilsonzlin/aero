@@ -1,3 +1,9 @@
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    cmake_minimum_required(VERSION 3.15)
+    project(virtio_win7_tests C)
+    enable_testing()
+endif()
+
 add_executable(virtio_pci_cap_parser_test
     virtio_pci_cap_parser_test.c
     ${CMAKE_CURRENT_LIST_DIR}/../virtio-core/portable/virtio_pci_cap_parser.c
