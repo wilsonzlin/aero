@@ -262,6 +262,35 @@ See:
 
 - `proxy/webrtc-udp-relay/README.md` (authoritative)
 
+### Optional: L2 tunnel over WebRTC (relay bridging)
+
+`proxy/webrtc-udp-relay` can also bridge a **reliable** WebRTC DataChannel labeled `l2` to an
+L2 tunnel backend WebSocket (typically `aero-l2-proxy`):
+
+```
+browser DataChannel "l2"  <->  aero-webrtc-udp-relay  <->  aero-l2-proxy /l2
+```
+
+This is useful when you want to carry the L2 tunnel over a UDP-based transport (WebRTC) for
+experimentation under loss/NAT traversal.
+
+To enable it in the compose stack, set in `deploy/.env`:
+
+```bash
+L2_BACKEND_WS_URL=ws://aero-l2-proxy:8090/l2
+```
+
+The relay can forward the client’s **Origin** and **AUTH_MODE credential** (JWT/API key) to the
+backend dial. Relevant env vars are documented in `proxy/webrtc-udp-relay/README.md`, including:
+
+- `L2_BACKEND_AUTH_FORWARD_MODE=none|query|subprotocol`
+- `L2_BACKEND_FORWARD_ORIGIN=1`
+- `L2_BACKEND_ORIGIN_OVERRIDE=https://example.com` (optional)
+
+Note: `aero-l2-proxy` must be configured to accept whatever credential the relay forwards (e.g.
+`AERO_L2_AUTH_MODE=cookie_or_jwt` if browser clients use cookies directly but the relay uses JWT
+forwarding).
+
 ## Optional TURN server (coturn profile)
 
 Some client networks require TURN for reliable UDP connectivity. This repo includes an opt-in `coturn` service:
