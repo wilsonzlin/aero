@@ -496,6 +496,8 @@ static int RunConsumer(int argc, char** argv) {
   aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
+  const std::wstring dump_bmp_path =
+      aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_ipc.bmp");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
@@ -677,13 +679,15 @@ static int RunConsumer(int argc, char** argv) {
       if (SUCCEEDED(hr_dump)) {
         std::string dump_err;
         if (!aerogpu_test::WriteBmp32BGRA(
-                aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_ipc.bmp"),
+                dump_bmp_path,
                 64,
                 64,
                 lr.pBits,
                 (int)lr.Pitch,
                 &dump_err)) {
           aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, dump_err.c_str());
+        } else {
+          reporter.AddArtifactPathW(dump_bmp_path);
         }
         sysmem->UnlockRect();
       }
@@ -698,13 +702,15 @@ static int RunConsumer(int argc, char** argv) {
     if (SUCCEEDED(hr_dump)) {
       std::string dump_err;
       if (!aerogpu_test::WriteBmp32BGRA(
-              aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_ipc.bmp"),
+              dump_bmp_path,
               64,
               64,
               lr.pBits,
               (int)lr.Pitch,
               &dump_err)) {
         aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, dump_err.c_str());
+      } else {
+        reporter.AddArtifactPathW(dump_bmp_path);
       }
       sysmem->UnlockRect();
     }
@@ -1048,15 +1054,14 @@ static int RunProducer(int argc, char** argv) {
     CloseHandle(job);
   }
 
-  if (exit_code != 0) {
-    return reporter.Fail("consumer failed with exit code %lu", (unsigned long)exit_code);
-  }
-
   if (dump) {
     DWORD attr = GetFileAttributesW(bmp_path.c_str());
     if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
       reporter.AddArtifactPathW(bmp_path);
     }
+  }
+  if (exit_code != 0) {
+    return reporter.Fail("consumer failed with exit code %lu", (unsigned long)exit_code);
   }
   return reporter.Pass();
 }

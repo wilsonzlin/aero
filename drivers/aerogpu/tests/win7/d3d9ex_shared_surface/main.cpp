@@ -1089,6 +1089,12 @@ static int RunParent(aerogpu_test::TestReporter* reporter,
   const int kWidth = 64;
   const int kHeight = 64;
   const D3DFORMAT kFormat = D3DFMT_X8R8G8B8;
+  const std::wstring child_bmp_path =
+      aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_child.bmp");
+  if (dump) {
+    // Ensure we don't report a stale BMP from a previous run if the child fails before dumping.
+    DeleteFileW(child_bmp_path.c_str());
+  }
 
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExSharedSurface",
                                               L"AeroGPU D3D9Ex Shared Surface",
@@ -1643,18 +1649,17 @@ static int RunParent(aerogpu_test::TestReporter* reporter,
     CloseHandle(shared_handle);
   }
 
-  if (exit_code != 0) {
-    if (reporter) {
-      return reporter->Fail("child failed with exit code %lu", (unsigned long)exit_code);
-    }
-    return aerogpu_test::Fail(kTestName, "child failed with exit code %lu", (unsigned long)exit_code);
-  }
-
   if (dump && reporter) {
     DWORD attr = GetFileAttributesW(child_bmp_path.c_str());
     if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
       reporter->AddArtifactPathW(child_bmp_path);
     }
+  }
+  if (exit_code != 0) {
+    if (reporter) {
+      return reporter->Fail("child failed with exit code %lu", (unsigned long)exit_code);
+    }
+    return aerogpu_test::Fail(kTestName, "child failed with exit code %lu", (unsigned long)exit_code);
   }
   if (reporter) {
     return reporter->Pass();
