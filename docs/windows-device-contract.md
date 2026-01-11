@@ -156,7 +156,8 @@ Where:
 
 ### Binding requirements (normative)
 
-- Each driver INF must match **at least** the vendor/device pair: `PCI\VEN_xxxx&DEV_yyyy`.
+- Each driver INF must match at least one hardware ID that includes the vendor/device pair: `PCI\VEN_xxxx&DEV_yyyy`
+  (potentially with additional qualifiers like `&REV_..` and/or `&SUBSYS_...`).
 - For contract version safety, matching SHOULD be revision-gated (`&REV_01`) and/or the driver should validate the PCI Revision ID at runtime.
 - Matching MAY additionally be subsystem-qualified (`&SUBSYS_SSSSVVVV`) for safety, but then the emulator **must** keep those values stable.
 
@@ -205,7 +206,7 @@ For virtio devices listed in this contract (see `AERO-W7-VIRTIO` for the definit
 
 - `vendor_id = 0x1AF4`
 - `device_id` matches the table above
-- `revision_id = 0x01` (Aero virtio contract v1; used for optional `REV_01` INF matching)
+- `revision_id = 0x01` (Aero virtio contract v1; used for revision-gated `REV_01` INF matching)
 - `subsystem_vendor_id = 0x1AF4`
 - `subsystem_device_id` matches `AERO-W7-VIRTIO`
 - `class_code` matches the table above
