@@ -6,7 +6,14 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 aero-l2-protocol = { path = "../aero-l2-protocol" }
+aero-net-stack = { path = "../aero-net-stack" }
+anyhow = "1"
 axum = { version = "0.7.9", features = ["ws"] }
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+futures-util = "0.3"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+trust-dns-resolver = { version = "0.23", default-features = false, features = ["system-config", "tokio-runtime"] }
+
+[dev-dependencies]
+tokio-tungstenite = "0.26"
