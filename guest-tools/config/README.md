@@ -10,6 +10,12 @@
 
 - `docs/windows-device-contract.json`
 
+Regenerate it with:
+
+```bash
+python3 scripts/generate-guest-tools-devices-cmd.py
+```
+
 The `*_HWIDS` values are stored as a list of individually quoted hardware IDs to safely include
 `&` characters (e.g. `"PCI\VEN_1AF4&DEV_1042&REV_01"`).
 

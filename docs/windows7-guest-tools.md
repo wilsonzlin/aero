@@ -499,16 +499,18 @@ The **Device Binding: Audio (virtio-snd)** check in `report.txt` is derived from
 
 `verify.ps1` reads `AERO_VIRTIO_SND_SERVICE` from `config\devices.cmd` and checks it first, then falls back to common service names:
 
+- `aeroviosnd` (Aero clean-room / in-tree driver)
 - `viosnd` (upstream virtio-win)
 - `aerosnd`
 - `virtiosnd`
-- `aeroviosnd` (Aero clean-room)
 
-If you are using a virtio-snd driver with a different service name, copy the Guest Tools media to a writable folder and edit `config\devices.cmd` to set:
+If you are using a virtio-snd driver with a different service name, copy the Guest Tools media to a writable folder and edit `config\devices.cmd` to override:
 
 ```cmd
 set "AERO_VIRTIO_SND_SERVICE=your-service-name"
 ```
+
+Repo note: in this repository, `guest-tools/config/devices.cmd` is generated from `docs/windows-device-contract.json` via `scripts/generate-guest-tools-devices-cmd.py`. Update the JSON manifest + regenerate rather than editing the repo copy directly.
 
 Missing virtio-snd devices are reported as **WARN** (audio is optional).
 - Boot-critical storage readiness for switching AHCI → virtio-blk:

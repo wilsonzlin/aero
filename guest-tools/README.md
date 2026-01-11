@@ -11,7 +11,21 @@ It provides:
 - `licenses\`: third-party license/notice files (when present in the packaged media)
 - `certs\`: optional public certificate(s) needed to validate driver signatures (for test-signed/custom-signed drivers; may be empty for WHQL/production-signed media)
 - `drivers\`: PnP driver packages for x86 + amd64 (at minimum `.inf/.sys/.cat`, plus any INF-referenced payload files such as UMD/coinstaller `*.dll`)
-- `config\`: expected device IDs (PCI VEN/DEV pairs) used for boot-critical pre-seeding
+- `config\`: expected device IDs (PCI VEN/DEV pairs) used for boot-critical pre-seeding (generated; see below)
+
+## Regenerating `config/devices.cmd` (repo developers)
+
+`guest-tools/config/devices.cmd` is **generated** from the Windows device contract manifest:
+
+- `docs/windows-device-contract.json`
+
+To update device HWIDs / service names, edit the JSON manifest and regenerate:
+
+```bash
+python3 scripts/generate-guest-tools-devices-cmd.py
+```
+
+CI fails if `devices.cmd` is out of sync with the manifest.
 
 ## `setup.cmd`
 

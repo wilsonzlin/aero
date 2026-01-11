@@ -1,0 +1,37 @@
+name: Guest Tools (generated devices.cmd)
+
+on:
+  pull_request:
+    paths:
+      - "docs/windows-device-contract.json"
+      - "guest-tools/config/devices.cmd"
+      - "scripts/generate-guest-tools-devices-cmd.py"
+      - ".github/workflows/guest-tools-devices-cmd.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "docs/windows-device-contract.json"
+      - "guest-tools/config/devices.cmd"
+      - "scripts/generate-guest-tools-devices-cmd.py"
+      - ".github/workflows/guest-tools-devices-cmd.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guest-tools-devices-cmd-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-generated:
+    name: Check devices.cmd is up to date
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify generated guest-tools/config/devices.cmd
+        run: python3 scripts/generate-guest-tools-devices-cmd.py --check
+
