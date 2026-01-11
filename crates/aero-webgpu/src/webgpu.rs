@@ -25,7 +25,7 @@ impl Default for WebGpuInitOptions {
 /// A `wgpu` adapter/device/queue bundle with negotiated capabilities.
 ///
 /// On `wasm32`, this can represent either a WebGPU backend (`Backends::BROWSER_WEBGPU`)
-/// or a WebGL2 backend (`Backends::BROWSER_WEBGL`). Use [`WebGpuContext::kind`] to
+/// or a WebGL2 backend (`Backends::GL`). Use [`WebGpuContext::kind`] to
 /// distinguish between them.
 pub struct WebGpuContext {
     kind: BackendKind,

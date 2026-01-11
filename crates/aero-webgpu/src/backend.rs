@@ -24,7 +24,7 @@ pub struct BackendOptions {
     /// If `true`, [`RequestedBackend::Auto`] will fall back to WebGL2 when WebGPU
     /// is unavailable.
     ///
-    /// On `wasm32`, the WebGL2 path is intended to use `wgpu`'s `BROWSER_WEBGL`
+    /// On `wasm32`, the WebGL2 path is intended to use `wgpu`'s `GL`
     /// backend (surface/presentation required). In headless mode we currently
     /// return a stub backend with conservative caps.
     pub allow_webgl2_fallback: bool,
