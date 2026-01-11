@@ -6271,6 +6271,9 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
 
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (primitive_count == 0) {
+    return trace.ret(S_OK);
+  }
 
   // Fixed-function emulation path: for XYZRHW vertices we upload a transformed
   // (clip-space) copy of the referenced vertices into a scratch VB and draw
@@ -6447,7 +6450,13 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
                       static_cast<uint64_t>(type),
                       packed,
                       d3d9_trace_arg_ptr(pVertexData));
-  if (!hDevice.pDrvPrivate || !pVertexData || stride_bytes == 0) {
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  if (primitive_count == 0) {
+    return trace.ret(S_OK);
+  }
+  if (!pVertexData || stride_bytes == 0) {
     return trace.ret(E_INVALIDARG);
   }
 
@@ -6539,6 +6548,9 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     const D3DDDIARG_DRAWPRIMITIVE2* pDraw) {
   if (!hDevice.pDrvPrivate || !pDraw) {
     return E_INVALIDARG;
+  }
+  if (pDraw->PrimitiveCount == 0) {
+    return S_OK;
   }
   if (!pDraw->pVertexStreamZeroData || pDraw->VertexStreamZeroStride == 0) {
     return E_INVALIDARG;
@@ -6634,6 +6646,9 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
     const D3DDDIARG_DRAWINDEXEDPRIMITIVE2* pDraw) {
   if (!hDevice.pDrvPrivate || !pDraw) {
     return E_INVALIDARG;
+  }
+  if (pDraw->PrimitiveCount == 0) {
+    return S_OK;
   }
   if (!pDraw->pVertexStreamZeroData || pDraw->VertexStreamZeroStride == 0 || !pDraw->pIndexData) {
     return E_INVALIDARG;
@@ -6851,6 +6866,9 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
 
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (primitive_count == 0) {
+    return trace.ret(S_OK);
+  }
 
   // Fixed-function emulation for indexed draws: expand indices into a temporary
   // vertex stream and issue a non-indexed draw. This is intentionally
