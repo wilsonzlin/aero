@@ -245,7 +245,7 @@ VirtioSndCtrlSendSyncLocked(
 
     status = VirtioSndQueueSubmit(Ctrl->ControlQ, sg, sgCount, ctx);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("ctrlq Submit failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("ctrlq Submit failed: 0x%08X\n", (UINT)status);
 
         /* Drop both references (no completion will arrive). */
         VirtioSndCtrlRequestRelease(ctx);
@@ -272,7 +272,7 @@ VirtioSndCtrlSendSyncLocked(
     }
 
     if (!NT_SUCCESS(waitStatus)) {
-        VIRTIOSND_TRACE_ERROR("ctrlq wait failed: 0x%08X\n", waitStatus);
+        VIRTIOSND_TRACE_ERROR("ctrlq wait failed: 0x%08X\n", (UINT)waitStatus);
 
         /* Drop the send-thread reference; completion may still arrive. */
         VirtioSndCtrlRequestRelease(ctx);

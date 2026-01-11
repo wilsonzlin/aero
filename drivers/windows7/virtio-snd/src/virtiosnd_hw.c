@@ -112,8 +112,8 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             VIRTIOSND_TRACE_ERROR(
                 "queue %lu size mismatch: device=%u expected=%u\n",
                 q,
-                (ULONG)size,
-                (ULONG)expectedSize);
+                (UINT)size,
+                (UINT)expectedSize);
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 
@@ -126,7 +126,7 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             VIRTIOSND_TRACE_ERROR(
                 "queue %lu notify_off mismatch: device=%u expected=%lu\n",
                 q,
-                (ULONG)notifyOff,
+                (UINT)notifyOff,
                 q);
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
@@ -160,12 +160,12 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             VIRTIOSND_TRACE_ERROR(
                 "queue %lu notify_off readback mismatch: init=%u readback=%u\n",
                 q,
-                (ULONG)notifyOff,
-                (ULONG)notifyOffReadback);
+                (UINT)notifyOff,
+                (UINT)notifyOffReadback);
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 
-        VIRTIOSND_TRACE("queue %lu enabled (size=%u)\n", q, (ULONG)size);
+        VIRTIOSND_TRACE("queue %lu enabled (size=%u)\n", q, (UINT)size);
     }
 
     return STATUS_SUCCESS;
@@ -211,39 +211,39 @@ NTSTATUS VirtIoSndStartHardware(
 
     status = VirtIoSndTransportInit(&Dx->Transport, Dx->LowerDeviceObject, RawResources, TranslatedResources);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("transport init failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("transport init failed: 0x%08X\n", (UINT)status);
         goto fail;
     }
 
     VIRTIOSND_TRACE(
         "transport: rev=0x%02X bar0=0x%I64x len=0x%I64x notify_mult=%lu\n",
-        (ULONG)Dx->Transport.PciRevisionId,
+        (UINT)Dx->Transport.PciRevisionId,
         Dx->Transport.Bar0Base,
         (ULONGLONG)Dx->Transport.Bar0Length,
         Dx->Transport.NotifyOffMultiplier);
 
     status = VirtIoSndTransportNegotiateFeatures(&Dx->Transport, &Dx->NegotiatedFeatures);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("feature negotiation failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("feature negotiation failed: 0x%08X\n", (UINT)status);
         goto fail;
     }
 
     VIRTIOSND_TRACE("features negotiated: 0x%I64x\n", Dx->NegotiatedFeatures);
     status = VirtIoSndDmaInit(Dx->Pdo, &Dx->DmaCtx);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("VirtIoSndDmaInit failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("VirtIoSndDmaInit failed: 0x%08X\n", (UINT)status);
         goto fail;
     }
 
     status = VirtIoSndIntxCaptureResources(Dx, TranslatedResources);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("failed to locate INTx resource: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("failed to locate INTx resource: 0x%08X\n", (UINT)status);
         goto fail;
     }
 
     status = VirtIoSndSetupQueues(Dx);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("queue setup failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("queue setup failed: 0x%08X\n", (UINT)status);
         goto fail;
     }
 
@@ -251,7 +251,7 @@ NTSTATUS VirtIoSndStartHardware(
 
     status = VirtIoSndIntxConnect(Dx);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("failed to connect INTx: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("failed to connect INTx: 0x%08X\n", (UINT)status);
         goto fail;
     }
 
@@ -261,7 +261,7 @@ NTSTATUS VirtIoSndStartHardware(
     VirtIoSndWriteDeviceStatus(&Dx->Transport, devStatus);
     KeMemoryBarrier();
 
-    VIRTIOSND_TRACE("device_status=0x%02X\n", (ULONG)VirtIoSndReadDeviceStatus(&Dx->Transport));
+    VIRTIOSND_TRACE("device_status=0x%02X\n", (UINT)VirtIoSndReadDeviceStatus(&Dx->Transport));
 
     Dx->Started = TRUE;
     return STATUS_SUCCESS;

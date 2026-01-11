@@ -80,7 +80,7 @@ NTSTATUS VirtIoSndIntxCaptureResources(PVIRTIOSND_DEVICE_EXTENSION Dx, PCM_RESOU
                 (ULONG)Dx->InterruptIrql,
                 (ULONGLONG)Dx->InterruptAffinity,
                 (Dx->InterruptMode == Latched) ? "latched" : "level",
-                Dx->InterruptShareVector);
+                (UINT)Dx->InterruptShareVector);
 
             return STATUS_SUCCESS;
         }
@@ -131,7 +131,7 @@ NTSTATUS VirtIoSndIntxConnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
     if (!NT_SUCCESS(status)) {
         Dx->InterruptObject = NULL;
         Dx->Stopping = 1;
-        VIRTIOSND_TRACE_ERROR("IoConnectInterrupt failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("IoConnectInterrupt failed: 0x%08X\n", (UINT)status);
         return status;
     }
 

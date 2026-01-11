@@ -383,7 +383,7 @@ VirtioSndQueueSplitDrainUsed(VIRTIOSND_QUEUE_SPLIT* qs,
             break;
         }
         if (!NT_SUCCESS(status)) {
-            VIRTIOSND_TRACE_ERROR("queue[%u] VirtqSplitGetUsed failed: 0x%08X\n", (UINT)qs->QueueIndex, status);
+            VIRTIOSND_TRACE_ERROR("queue[%u] VirtqSplitGetUsed failed: 0x%08X\n", (UINT)qs->QueueIndex, (UINT)status);
             break;
         }
 

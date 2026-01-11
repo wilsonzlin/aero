@@ -284,7 +284,7 @@ VirtIoSndAddDevice(PDRIVER_OBJECT DriverObject, PDEVICE_OBJECT PhysicalDeviceObj
         FALSE,
         &deviceObject);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("IoCreateDevice failed: 0x%08X\n", (ULONG)status);
+        VIRTIOSND_TRACE_ERROR("IoCreateDevice failed: 0x%08X\n", (UINT)status);
         return status;
     }
 
@@ -393,7 +393,7 @@ VirtIoSndDispatchPnp(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 
         status = VirtIoSndForwardIrpSynchronously(dx->LowerDeviceObject, Irp);
         if (!NT_SUCCESS(status)) {
-            VIRTIOSND_TRACE_ERROR("Lower driver failed START_DEVICE: 0x%08X\n", (ULONG)status);
+            VIRTIOSND_TRACE_ERROR("Lower driver failed START_DEVICE: 0x%08X\n", (UINT)status);
             IoReleaseRemoveLock(&dx->RemoveLock, Irp);
             return VirtIoSndCompleteIrp(Irp, status, 0);
         }
