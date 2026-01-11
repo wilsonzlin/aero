@@ -4,6 +4,8 @@ use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
 use crate::readback_rgba8;
 use crate::texture_manager::TextureRegion;
 use crate::GpuError;
+use aero_protocol::aerogpu::aerogpu_cmd as cmd;
+use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AeroGpuAcmdExecutorError {
@@ -151,7 +153,7 @@ impl AeroGpuAcmdExecutor {
                     color_rgba_f32,
                     ..
                 } => {
-                    if (flags & 1) == 0 {
+                    if (flags & cmd::AEROGPU_CLEAR_COLOR) == 0 {
                         // Only color clear is currently supported.
                         continue;
                     }
@@ -264,8 +266,12 @@ impl AeroGpuAcmdExecutor {
 
 fn map_texture_format(format: u32) -> Result<wgpu::TextureFormat, AeroGpuAcmdExecutorError> {
     Ok(match format {
-        1 | 2 => wgpu::TextureFormat::Bgra8Unorm, // B8G8R8A8/B8G8R8X8
-        3 | 4 => wgpu::TextureFormat::Rgba8Unorm, // R8G8B8A8/R8G8B8X8
+        x if x == AerogpuFormat::B8G8R8A8Unorm as u32 || x == AerogpuFormat::B8G8R8X8Unorm as u32 => {
+            wgpu::TextureFormat::Bgra8Unorm
+        }
+        x if x == AerogpuFormat::R8G8B8A8Unorm as u32 || x == AerogpuFormat::R8G8B8X8Unorm as u32 => {
+            wgpu::TextureFormat::Rgba8Unorm
+        }
         other => return Err(AeroGpuAcmdExecutorError::UnsupportedTextureFormat(other)),
     })
 }

@@ -3,7 +3,9 @@ use std::ops::Range;
 
 use aero_d3d9::shader;
 use aero_d3d9::vertex::VertexDeclaration;
+use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST;
+use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use thiserror::Error;
 use tracing::debug;
 use wgpu::util::DeviceExt;
@@ -1478,8 +1480,10 @@ impl AerogpuD3d9Executor {
                     .map_err(|e| AerogpuD3d9Error::ShaderTranslation(e.to_string()))?;
                 let bytecode_stage = cached.ir.version.stage;
                 let expected_stage = match stage {
-                    0 => Some(shader::ShaderStage::Vertex),
-                    1 => Some(shader::ShaderStage::Pixel),
+                    s if s == cmd::AerogpuShaderStage::Vertex as u32 => {
+                        Some(shader::ShaderStage::Vertex)
+                    }
+                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => Some(shader::ShaderStage::Pixel),
                     _ => None,
                 };
                 if let Some(expected_stage) = expected_stage {
@@ -1531,8 +1535,8 @@ impl AerogpuD3d9Executor {
                 // D3D9 keeps separate constant register files per stage; match the shader
                 // translation layout (vertex constants first, then pixel constants).
                 let stage_base = match stage {
-                    0 => 0u64,
-                    1 => 256u64 * 16,
+                    s if s == cmd::AerogpuShaderStage::Vertex as u32 => 0u64,
+                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => 256u64 * 16,
                     _ => {
                         return Err(AerogpuD3d9Error::Validation(format!(
                             "SET_SHADER_CONSTANTS_F: unsupported stage {stage}"
@@ -1734,8 +1738,8 @@ impl AerogpuD3d9Executor {
                     return Ok(());
                 }
                 let format = match format {
-                    0 => wgpu::IndexFormat::Uint16,
-                    1 => wgpu::IndexFormat::Uint32,
+                    f if f == cmd::AerogpuIndexFormat::Uint16 as u32 => wgpu::IndexFormat::Uint16,
+                    f if f == cmd::AerogpuIndexFormat::Uint32 as u32 => wgpu::IndexFormat::Uint32,
                     _ => {
                         return Err(AerogpuD3d9Error::Validation(format!(
                             "SET_INDEX_BUFFER: unknown index format {format}"
@@ -1759,7 +1763,7 @@ impl AerogpuD3d9Executor {
                 texture,
             } => {
                 // For now, treat all sampler bindings as pixel shader (DWM path).
-                if shader_stage == 1 {
+                if shader_stage == cmd::AerogpuShaderStage::Pixel as u32 {
                     if (slot as usize) < self.state.textures_ps.len() {
                         self.state.textures_ps[slot as usize] = texture;
                         self.bind_group_dirty = true;
@@ -2210,9 +2214,9 @@ impl AerogpuD3d9Executor {
         depth: f32,
         stencil: u32,
     ) -> Result<(), AerogpuD3d9Error> {
-        let clear_color_enabled = (flags & 0x1) != 0;
-        let clear_depth_enabled = (flags & 0x2) != 0;
-        let clear_stencil_enabled = (flags & 0x4) != 0;
+        let clear_color_enabled = (flags & cmd::AEROGPU_CLEAR_COLOR) != 0;
+        let clear_depth_enabled = (flags & cmd::AEROGPU_CLEAR_DEPTH) != 0;
+        let clear_stencil_enabled = (flags & cmd::AEROGPU_CLEAR_STENCIL) != 0;
 
         if !clear_color_enabled || !clear_depth_enabled || !clear_stencil_enabled {
             let rt = self.state.render_targets;
@@ -2779,19 +2783,20 @@ impl AerogpuD3d9Executor {
 
         let front_ccw = self.state.rasterizer_state.front_ccw;
         let mapped = match raw {
-            0 | d3d9::D3DCULL_NONE => 0, // AEROGPU_CULL_NONE
+            0 | d3d9::D3DCULL_NONE => cmd::AerogpuCullMode::None as u32,
             d3d9::D3DCULL_CW => {
                 if front_ccw {
-                    2 // CW triangles are back faces when front faces are CCW.
+                    // CW triangles are back faces when front faces are CCW.
+                    cmd::AerogpuCullMode::Back as u32
                 } else {
-                    1
+                    cmd::AerogpuCullMode::Front as u32
                 }
             }
             d3d9::D3DCULL_CCW => {
                 if front_ccw {
-                    1
+                    cmd::AerogpuCullMode::Front as u32
                 } else {
-                    2
+                    cmd::AerogpuCullMode::Back as u32
                 }
             }
             other => {
@@ -2803,7 +2808,7 @@ impl AerogpuD3d9Executor {
     }
 
     fn set_sampler_state_u32(&mut self, shader_stage: u32, slot: u32, state_id: u32, value: u32) {
-        if shader_stage != 1 {
+        if shader_stage != cmd::AerogpuShaderStage::Pixel as u32 {
             // Only pixel-stage sampler state is currently needed for DWM/D3D9Ex bring-up.
             return;
         }
@@ -3088,14 +3093,14 @@ fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
 
 fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat, AerogpuD3d9Error> {
     Ok(match format {
-        // AEROGPU_FORMAT_B8G8R8A8_UNORM
-        1 | 2 => wgpu::TextureFormat::Bgra8Unorm,
-        // AEROGPU_FORMAT_R8G8B8A8_UNORM
-        3 | 4 => wgpu::TextureFormat::Rgba8Unorm,
-        // AEROGPU_FORMAT_D24_UNORM_S8_UINT
-        32 => wgpu::TextureFormat::Depth24PlusStencil8,
-        // AEROGPU_FORMAT_D32_FLOAT
-        33 => wgpu::TextureFormat::Depth32Float,
+        x if x == AerogpuFormat::B8G8R8A8Unorm as u32 || x == AerogpuFormat::B8G8R8X8Unorm as u32 => {
+            wgpu::TextureFormat::Bgra8Unorm
+        }
+        x if x == AerogpuFormat::R8G8B8A8Unorm as u32 || x == AerogpuFormat::R8G8B8X8Unorm as u32 => {
+            wgpu::TextureFormat::Rgba8Unorm
+        }
+        x if x == AerogpuFormat::D24UnormS8Uint as u32 => wgpu::TextureFormat::Depth24PlusStencil8,
+        x if x == AerogpuFormat::D32Float as u32 => wgpu::TextureFormat::Depth32Float,
         other => return Err(AerogpuD3d9Error::UnsupportedFormat(other)),
     })
 }
@@ -3114,12 +3119,19 @@ fn bytes_per_pixel(format: wgpu::TextureFormat) -> u32 {
 
 fn map_topology(topology: u32) -> Result<wgpu::PrimitiveTopology, AerogpuD3d9Error> {
     Ok(match topology {
-        1 => wgpu::PrimitiveTopology::PointList,
-        2 => wgpu::PrimitiveTopology::LineList,
-        3 => wgpu::PrimitiveTopology::LineStrip,
-        4 => wgpu::PrimitiveTopology::TriangleList,
-        5 => wgpu::PrimitiveTopology::TriangleStrip,
-        6 => wgpu::PrimitiveTopology::TriangleList, // TriangleFan: approximated for now.
+        x if x == cmd::AerogpuPrimitiveTopology::PointList as u32 => wgpu::PrimitiveTopology::PointList,
+        x if x == cmd::AerogpuPrimitiveTopology::LineList as u32 => wgpu::PrimitiveTopology::LineList,
+        x if x == cmd::AerogpuPrimitiveTopology::LineStrip as u32 => wgpu::PrimitiveTopology::LineStrip,
+        x if x == cmd::AerogpuPrimitiveTopology::TriangleList as u32 => {
+            wgpu::PrimitiveTopology::TriangleList
+        }
+        x if x == cmd::AerogpuPrimitiveTopology::TriangleStrip as u32 => {
+            wgpu::PrimitiveTopology::TriangleStrip
+        }
+        x if x == cmd::AerogpuPrimitiveTopology::TriangleFan as u32 => {
+            // TriangleFan: approximated for now.
+            wgpu::PrimitiveTopology::TriangleList
+        }
         other => return Err(AerogpuD3d9Error::UnsupportedTopology(other)),
     })
 }
