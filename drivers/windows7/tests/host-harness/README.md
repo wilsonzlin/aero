@@ -363,7 +363,7 @@ To run the virtio-snd **capture** smoke test when a capture endpoint exists, pro
 
 - Add `-RequireSndCapture` to fail if no virtio-snd capture endpoint is present.
 - Add `-RequireNonSilence` to fail the smoke test if only silence is captured.
-- Add `-AllowVirtioSndTransitional` to accept the transitional virtio-snd PCI ID (`DEV_1018`) in the guest selftest
+- Add `-AllowVirtioSndTransitional` to accept a transitional virtio-snd PCI ID in the guest selftest
   (intended for debugging/backcompat outside the strict harness setup).
 
 If your `-DriversDir` contains duplicate INF basenames, disambiguate by passing a relative path (e.g.
