@@ -1,8 +1,8 @@
 # L2 tunnel runbook (Option C)
 
 This document is a practical guide for running Aero’s **Option C** networking path:
-**tunnel raw Ethernet frames (L2) between the browser and a proxy that runs the user-space NAT
-stack**.
+**tunnel raw Ethernet frames (L2)** between the browser and a proxy that runs the user-space NAT
+stack, using the versioned framing described in [`l2-tunnel-protocol.md`](./l2-tunnel-protocol.md).
 
 For the design rationale, see [`networking-architecture-rfc.md`](./networking-architecture-rfc.md).
 For the wire protocol/framing, see [`l2-tunnel-protocol.md`](./l2-tunnel-protocol.md).
@@ -14,12 +14,20 @@ For the wire protocol/framing, see [`l2-tunnel-protocol.md`](./l2-tunnel-protoco
 The recommended dev setup uses a **single WebSocket per VM session** carrying the L2 tunnel framing
 as binary messages.
 
-Start the proxy service:
+Start the proxy service.
+
+Current implementations in this repo:
+
+- Rust (minimal L2 WebSocket endpoint; currently only implements protocol keepalive echo):
 
 ```bash
-cd proxy/aero-l2-proxy
-# Example (exact flags may differ; see the proxy's README/help once implemented):
-cargo run
+cargo run -p aero-l2-proxy
+```
+
+- Node (upgrade policy / quota enforcement; used by `tests/l2_proxy_security.test.js`):
+
+```bash
+node --experimental-strip-types proxy/aero-l2-proxy/src/index.ts
 ```
 
 Expected behavior:
@@ -60,7 +68,7 @@ node --test tests/networking-architecture-rfc.test.js
 ```
 
 This test spins up a minimal WebSocket frame-forwarding proxy and a local TCP echo server, then
-performs the probe over raw Ethernet frames.
+performs the probe over Ethernet frames wrapped in the `aero-l2-tunnel-v1` framing.
 
 DHCP verification (until the automated probe covers it):
 
@@ -99,4 +107,3 @@ Operational recommendations:
 - Provide `/healthz`, `/readyz`, and basic metrics endpoints for monitoring.
 - Consider explicit “open dev mode” toggles so production never accidentally runs with permissive
   settings.
-
