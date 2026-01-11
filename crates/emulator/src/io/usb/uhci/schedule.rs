@@ -179,7 +179,10 @@ fn process_single_td<M: MemoryBus + ?Sized>(
     let Some(dev) = ctx.hub.device_mut_for_address(dev_addr) else {
         status |= TD_STATUS_CRC_TIMEOUT;
         complete_td(ctx, td_addr, status, 0, true);
-        *ctx.usbsts |= USBSTS_USBERRINT;
+        if status & TD_CTRL_IOC != 0 {
+            *ctx.usbsts |= USBSTS_USBINT;
+            *ctx.usbint_causes |= USBINT_CAUSE_IOC;
+        }
         return TdProgress::Advanced {
             next_link,
             stop: true,
@@ -191,7 +194,10 @@ fn process_single_td<M: MemoryBus + ?Sized>(
             if max_len != 8 {
                 status |= TD_STATUS_DATA_BUFFER_ERROR;
                 complete_td(ctx, td_addr, status, 0, true);
-                *ctx.usbsts |= USBSTS_USBERRINT;
+                if status & TD_CTRL_IOC != 0 {
+                    *ctx.usbsts |= USBSTS_USBINT;
+                    *ctx.usbint_causes |= USBINT_CAUSE_IOC;
+                }
                 return TdProgress::Advanced {
                     next_link,
                     stop: true,
@@ -221,6 +227,10 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                 UsbOutResult::Stall => {
                     status |= TD_STATUS_STALLED;
                     complete_td(ctx, td_addr, status, 0, true);
+                    if status & TD_CTRL_IOC != 0 {
+                        *ctx.usbsts |= USBSTS_USBINT;
+                        *ctx.usbint_causes |= USBINT_CAUSE_IOC;
+                    }
                     TdProgress::Advanced {
                         next_link,
                         stop: true,
@@ -254,6 +264,10 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                 UsbOutResult::Stall => {
                     status |= TD_STATUS_STALLED;
                     complete_td(ctx, td_addr, status, 0, true);
+                    if status & TD_CTRL_IOC != 0 {
+                        *ctx.usbsts |= USBSTS_USBINT;
+                        *ctx.usbint_causes |= USBINT_CAUSE_IOC;
+                    }
                     TdProgress::Advanced {
                         next_link,
                         stop: true,
@@ -291,6 +305,10 @@ fn process_single_td<M: MemoryBus + ?Sized>(
             UsbInResult::Stall => {
                 status |= TD_STATUS_STALLED;
                 complete_td(ctx, td_addr, status, 0, true);
+                if status & TD_CTRL_IOC != 0 {
+                    *ctx.usbsts |= USBSTS_USBINT;
+                    *ctx.usbint_causes |= USBINT_CAUSE_IOC;
+                }
                 TdProgress::Advanced {
                     next_link,
                     stop: true,
@@ -300,6 +318,10 @@ fn process_single_td<M: MemoryBus + ?Sized>(
         _ => {
             status |= TD_STATUS_STALLED;
             complete_td(ctx, td_addr, status, 0, true);
+            if status & TD_CTRL_IOC != 0 {
+                *ctx.usbsts |= USBSTS_USBINT;
+                *ctx.usbint_causes |= USBINT_CAUSE_IOC;
+            }
             TdProgress::Advanced {
                 next_link,
                 stop: true,

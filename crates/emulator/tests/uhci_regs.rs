@@ -223,6 +223,39 @@ fn uhci_usbint_sets_even_when_interrupts_disabled() {
 }
 
 #[test]
+fn uhci_ioc_error_sets_usbint_and_can_irq() {
+    let mut mem = Bus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    // IOC IN TD to an address with no device attached: will error, but IOC should still latch USBINT.
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        TD_STATUS_ACTIVE | TD_CTRL_IOC,
+        td_token(PID_IN, 5, 1, 0, 8),
+        0,
+    );
+    write_qh(&mut mem, QH_ADDR, TD0);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    uhci.port_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.port_write(REG_USBINTR, 2, 0);
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
+
+    uhci.tick_1ms(&mut mem);
+
+    let sts = uhci.port_read(REG_USBSTS, 2) as u16;
+    assert_ne!(sts & USBSTS_USBERRINT, 0);
+    assert_ne!(sts & USBSTS_USBINT, 0);
+    assert!(!uhci.irq_level());
+
+    // Enabling IOC interrupts after the fact should raise IRQ, even though the TD errored.
+    uhci.port_write(REG_USBINTR, 2, USBINTR_IOC as u32);
+    assert!(uhci.irq_level());
+}
+
+#[test]
 fn uhci_short_packet_does_not_irq_when_short_interrupt_disabled() {
     #[derive(Clone)]
     struct ShortInDevice;
