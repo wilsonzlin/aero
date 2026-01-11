@@ -904,41 +904,57 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     }
 
     const ULONG magic = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_MAGIC);
+    ULONG abiVersion = 0;
+    ULONGLONG features = 0;
+
     adapter->DeviceMmioMagic = magic;
-    if (magic != AEROGPU_MMIO_MAGIC) {
-        AEROGPU_LOG("StartDevice: invalid MMIO magic=0x%08lx (expected 0x%08lx)", magic, (ULONG)AEROGPU_MMIO_MAGIC);
-        MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
-        adapter->Bar0 = NULL;
-        adapter->Bar0Length = 0;
-        return STATUS_NOT_SUPPORTED;
+    adapter->DeviceAbiVersion = 0;
+
+    /*
+     * ABI detection: treat the versioned "AGPU" MMIO magic as the new ABI, and
+     * fall back to the legacy register map otherwise.
+     *
+     * This keeps older emulator device models working even if they don't report
+     * the expected legacy magic value.
+     */
+    adapter->AbiKind = AEROGPU_ABI_KIND_LEGACY;
+    adapter->UsingNewAbi = FALSE;
+    if (magic == AEROGPU_MMIO_MAGIC) {
+        adapter->AbiKind = AEROGPU_ABI_KIND_V1;
+        adapter->UsingNewAbi = TRUE;
+
+        abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ABI_VERSION);
+        const ULONG abiMajor = abiVersion >> 16;
+        if (abiMajor != AEROGPU_ABI_MAJOR) {
+            AEROGPU_LOG("StartDevice: unsupported ABI major=%lu (abi=0x%08lx)", abiMajor, abiVersion);
+            MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
+            adapter->Bar0 = NULL;
+            adapter->Bar0Length = 0;
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
+                   ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
+
+        AEROGPU_LOG("StartDevice: ABI=v1 magic=0x%08lx (new) abi=0x%08lx features=0x%I64x",
+                    magic,
+                    abiVersion,
+                    (unsigned long long)features);
+    } else {
+        abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_VERSION);
+        if (magic != AEROGPU_LEGACY_MMIO_MAGIC) {
+            AEROGPU_LOG("StartDevice: unknown MMIO magic=0x%08lx (expected 0x%08x); assuming legacy ABI",
+                        magic,
+                        AEROGPU_LEGACY_MMIO_MAGIC);
+        }
+        AEROGPU_LOG("StartDevice: ABI=legacy magic=0x%08lx version=0x%08lx", magic, abiVersion);
     }
 
-    adapter->AbiKind = AEROGPU_ABI_KIND_V1;
-    adapter->UsingNewAbi = TRUE;
-
-    const ULONG abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ABI_VERSION);
     adapter->DeviceAbiVersion = abiVersion;
-    const ULONG abiMajor = abiVersion >> 16;
-    if (abiMajor != AEROGPU_ABI_MAJOR) {
-        AEROGPU_LOG("StartDevice: unsupported ABI major=%lu (abi=0x%08lx)", abiMajor, abiVersion);
-        MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
-        adapter->Bar0 = NULL;
-        adapter->Bar0Length = 0;
-        return STATUS_NOT_SUPPORTED;
-    }
-
-    const ULONGLONG features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
-                               ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
-
     adapter->DeviceFeatures = features;
     adapter->SupportsVblank = ((features & AEROGPU_FEATURE_VBLANK) != 0) ? TRUE : FALSE;
     adapter->VblankInterruptTypeValid = FALSE;
     adapter->VblankInterruptType = 0;
-
-    AEROGPU_LOG("StartDevice: ABI=v1 magic=0x%08lx abi=0x%08lx features=0x%I64x",
-                magic,
-                abiVersion,
-                (unsigned long long)features);
 
     InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankSeq, 0);
     InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankInterruptTime100ns, 0);
