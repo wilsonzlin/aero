@@ -69,7 +69,14 @@ class VirtioWinExtractTest(unittest.TestCase):
             return False
         return any(c.name.casefold() == name.casefold() for c in root.iterdir())
 
-    def _assert_extract_output(self, *, out_root: Path, iso_path: Path, expect_backend: str) -> None:
+    def _assert_extract_output(
+        self,
+        *,
+        out_root: Path,
+        iso_path: Path,
+        expect_backend: str,
+        expect_pycdlib_path_mode: Optional[str] = None,
+    ) -> None:
         # Required content should be present.
         self.assertTrue(self._resolve_case_insensitive(out_root, "viostor", "w7.1", "amd64", "viostor.inf").is_file())
         self.assertTrue(self._resolve_case_insensitive(out_root, "viostor", "w7.1", "x86", "viostor.inf").is_file())
@@ -98,6 +105,10 @@ class VirtioWinExtractTest(unittest.TestCase):
         prov = json.loads(prov_path.read_text(encoding="utf-8"))
 
         self.assertEqual(prov["backend"], expect_backend)
+        if expect_backend == "pycdlib":
+            self.assertEqual(prov.get("pycdlib_path_mode"), expect_pycdlib_path_mode)
+        else:
+            self.assertIsNone(prov.get("pycdlib_path_mode"))
         self.assertEqual(prov["virtio_win_iso"]["sha256"], _sha256(iso_path))
         self.assertEqual(prov["virtio_win_iso"]["volume_id"], "VIRTIOWIN_TEST")
         extracted = {(e["driver"], e["arch"]) for e in prov.get("extracted", [])}
@@ -207,7 +218,49 @@ class VirtioWinExtractTest(unittest.TestCase):
                     ],
                     check=True,
                 )
-                self._assert_extract_output(out_root=out_root, iso_path=iso_path, expect_backend="pycdlib")
+                self._assert_extract_output(
+                    out_root=out_root,
+                    iso_path=iso_path,
+                    expect_backend="pycdlib",
+                    expect_pycdlib_path_mode="joliet",
+                )
+
+                # Create an ISO without Joliet and ensure the extractor can fall back
+                # to Rock Ridge paths when using the pycdlib backend.
+                iso_rr_path = tmp_path / "virtio-win-rr.iso"
+                cmd_rr = [
+                    *iso_tool,
+                    "-iso-level",
+                    "3",
+                    "-R",
+                    "-V",
+                    "VIRTIOWIN_TEST",
+                    "-o",
+                    str(iso_rr_path),
+                    str(stage_root),
+                ]
+                subprocess.run(cmd_rr, check=True)
+
+                out_rr_root = tmp_path / "out-pycdlib-rr"
+                subprocess.run(
+                    [
+                        sys.executable,
+                        str(extract_script),
+                        "--virtio-win-iso",
+                        str(iso_rr_path),
+                        "--out-root",
+                        str(out_rr_root),
+                        "--backend",
+                        "pycdlib",
+                    ],
+                    check=True,
+                )
+                self._assert_extract_output(
+                    out_root=out_rr_root,
+                    iso_path=iso_rr_path,
+                    expect_backend="pycdlib",
+                    expect_pycdlib_path_mode="rr",
+                )
 
 
 if __name__ == "__main__":

@@ -343,7 +343,9 @@ def _extract_with_pycdlib(
     iso_path: Path,
     out_root: Path,
     targets: list[_ExtractTarget],
-    extra_joliet_paths: list[str],
+    extra_paths: list[str],
+    *,
+    path_mode: str,
 ) -> None:
     try:
         import pycdlib  # type: ignore
@@ -358,15 +360,17 @@ def _extract_with_pycdlib(
     iso = pycdlib.PyCdlib()
     iso.open(str(iso_path))
     try:
-        # Build a list of files to extract by walking Joliet paths. Virtio-win ISOs
-        # are typically authored with Joliet, which preserves the mixed-case paths.
+        # Build a list of files to extract by walking the chosen pycdlib path mode.
+        # Virtio-win ISOs are typically authored with Joliet, but fall back to Rock
+        # Ridge if needed.
         files: list[tuple[str, str]] = []  # (joliet_path, dest_rel)
         want_prefixes = ["/" + "/".join(t.iso_path_parts) + "/" for t in targets]
         want_prefixes = [p.replace("//", "/") for p in want_prefixes]
 
-        for root, _dirs, filelist in iso.walk(joliet_path="/"):
+        walk_kwargs: dict[str, str] = {f"{path_mode}_path": "/"}
+        for root, _dirs, filelist in iso.walk(**walk_kwargs):
             for f in filelist:
-                # `root` is a joliet_path like "/viostor/w7.1/amd64"
+                # `root` is a path like "/viostor/w7.1/amd64"
                 jp = f"{root.rstrip('/')}/{f}"
                 for pref in want_prefixes:
                     if jp.casefold().startswith(pref.casefold()):
@@ -375,20 +379,58 @@ def _extract_with_pycdlib(
                         break
 
         if not files:
-            raise SystemExit("no matching files found to extract (pycdlib)")
+            raise SystemExit(f"no matching files found to extract (pycdlib {path_mode})")
 
         # Root-level aux files (license/notice/version markers).
-        for jp in extra_joliet_paths:
-            dest_rel = jp.lstrip("/")
-            files.append((jp, dest_rel))
+        for p in extra_paths:
+            dest_rel = p.lstrip("/")
+            files.append((p, dest_rel))
 
-        for jp, dest_rel in files:
+        for p, dest_rel in files:
             dest = out_root / dest_rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             with dest.open("wb") as fp:
-                iso.get_file_from_iso_fp(fp, joliet_path=jp)
+                if path_mode == "joliet":
+                    iso.get_file_from_iso_fp(fp, joliet_path=p)
+                elif path_mode == "rr":
+                    iso.get_file_from_iso_fp(fp, rr_path=p)
+                else:
+                    iso.get_file_from_iso_fp(fp, iso_path=p)
     finally:
         iso.close()
+
+
+def _collect_pycdlib_paths(iso: Any) -> tuple[list[str], list[str], list[str], str]:
+    """
+    Returns (all_paths, notice_files, metadata_files, path_mode).
+
+    Prefer Joliet (mixed case). Fall back to Rock Ridge if Joliet isn't present.
+    """
+
+    last_err: Optional[BaseException] = None
+    for mode in ("joliet", "rr", "iso"):
+        all_paths: list[str] = []
+        notice_files: list[str] = []
+        metadata_files: list[str] = []
+        try:
+            walk_kwargs: dict[str, str] = {f"{mode}_path": "/"}
+            for root, dirs, files in iso.walk(**walk_kwargs):
+                for d in dirs:
+                    all_paths.append(f"{root.rstrip('/')}/{d}")
+                for f in files:
+                    all_paths.append(f"{root.rstrip('/')}/{f}")
+                if root == "/":
+                    for f in files:
+                        if _is_notice_file(f):
+                            notice_files.append(f)
+                        elif _is_metadata_file(f):
+                            metadata_files.append(f)
+            return all_paths, notice_files, metadata_files, mode
+        except BaseException as e:
+            last_err = e
+            continue
+
+    raise SystemExit(f"pycdlib failed to walk the ISO filesystem: {last_err}")
 
 
 def main() -> int:
@@ -443,6 +485,7 @@ def main() -> int:
     extracted_notice_files: list[str] = []
     extracted_metadata_files: list[str] = []
     backend_used = backend
+    pycdlib_path_mode: Optional[str] = None
 
     sep_for_7z = "/"
     if backend == "7z":
@@ -499,26 +542,15 @@ def main() -> int:
         iso = pycdlib.PyCdlib()
         iso.open(str(iso_path))
         try:
-            all_paths: list[str] = []
-            for root, dirs, files in iso.walk(joliet_path="/"):
-                for d in dirs:
-                    all_paths.append(f"{root.rstrip('/')}/{d}")
-                for f in files:
-                    all_paths.append(f"{root.rstrip('/')}/{f}")
-                if root == "/":
-                    for f in files:
-                        if _is_notice_file(f):
-                            extracted_notice_files.append(f)
-                        elif _is_metadata_file(f):
-                            extracted_metadata_files.append(f)
+            all_paths, extracted_notice_files, extracted_metadata_files, pycdlib_path_mode = _collect_pycdlib_paths(iso)
         finally:
             iso.close()
 
         tree = _build_tree_from_paths(all_paths)
         targets, missing_optional = _select_extract_targets(tree)
         extra_root_files = extracted_notice_files + extracted_metadata_files
-        extra_joliet_paths = ["/" + f for f in extra_root_files]
-        _extract_with_pycdlib(iso_path, out_root, targets, extra_joliet_paths)
+        extra_paths = ["/" + f for f in extra_root_files]
+        _extract_with_pycdlib(iso_path, out_root, targets, extra_paths, path_mode=pycdlib_path_mode or "joliet")
 
     # Quick sanity check: ensure each extracted target directory exists.
     # (This protects against 7z selection quirks.)
@@ -556,10 +588,12 @@ def main() -> int:
         },
         "backend": backend_used,
         "extracted": extracted,
-        "extracted_notice_files": sorted(set(extracted_notice_files), key=str.casefold),
-        "extracted_metadata_files": sorted(set(extracted_metadata_files), key=str.casefold),
-        "missing_optional": missing_optional,
-    }
+         "extracted_notice_files": sorted(set(extracted_notice_files), key=str.casefold),
+         "extracted_metadata_files": sorted(set(extracted_metadata_files), key=str.casefold),
+         "missing_optional": missing_optional,
+     }
+    if backend_used == "pycdlib" and pycdlib_path_mode:
+        provenance["pycdlib_path_mode"] = pycdlib_path_mode
 
     provenance_path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

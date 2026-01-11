@@ -60,6 +60,9 @@ Extraction backend selection is controlled by `--backend`:
 - `7z`: force the `7z` backend
 - `pycdlib`: force the pure-Python backend
 
+Note: the `pycdlib` backend prefers **Joliet** paths (mixed-case). If the ISO was authored
+without Joliet, it will fall back to **Rock Ridge** (and then ISO-9660) paths.
+
 Installing dependencies:
 
 - Linux (Ubuntu/Debian): `sudo apt-get install p7zip-full`
