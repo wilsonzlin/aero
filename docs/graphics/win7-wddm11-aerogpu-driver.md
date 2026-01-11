@@ -474,14 +474,14 @@ of either callback being used to release a handle.
 - **Can be deferred:** Context priority, preemption granularity, virtualization.
  
 #### `DxgkDdiRender` (or `DxgkDdiSubmitCommand` depending on the DDI version)
- 
+  
 - **Purpose:** Submit a command buffer plus its referenced allocations to the GPU.
 - **AeroGPU MVP behavior:**
    1. Validate the submission (bounds, known opcodes, allocation list sizes).
    2. Build a **sideband allocation table** for the emulator (optional but recommended; see `drivers/aerogpu/protocol/aerogpu_ring.h`):
       - `alloc_id` → {guest physical base address, size_bytes, flags}
    3. Write a submission descriptor into the shared ring and ring the doorbell.
-   4. Return a fence ID to dxgkrnl.
+   4. Choose a monotonically increasing fence value (`aerogpu_submit_desc::signal_fence`) and return it to dxgkrnl.
 - **Can be deferred:** Patch-location processing (we design the command stream to avoid it), hardware scheduling, multiple queues.
 
 #### `DxgkDdiPreemptCommand` / `DxgkDdiCancelCommand` (if required by the scheduler)
