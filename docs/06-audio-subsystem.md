@@ -6,7 +6,7 @@ Windows 7 uses HD Audio (High Definition Audio, Intel HDA) as the primary audio 
 
 Canonical implementation pointers (to avoid duplicated stacks):
 
-- `crates/aero-audio/src/hda.rs` — canonical HDA device model (playback) + PCM helpers.
+- `crates/aero-audio/src/hda.rs` — canonical HDA device model (playback + capture) + PCM helpers.
 - `crates/aero-virtio/src/devices/snd.rs` — canonical virtio-snd device model.
 - `crates/platform/src/audio/worklet_bridge.rs` — AudioWorklet output ring buffer (`SharedArrayBuffer`) layout.
 - `crates/platform/src/audio/mic_bridge.rs` — microphone capture ring buffer (`SharedArrayBuffer`) layout.
@@ -687,14 +687,19 @@ Reference implementation files:
 - `web/src/audio/mic_capture.ts` (permission + lifecycle + ring buffer allocation)
 - `web/src/audio/mic-worklet-processor.js` (AudioWorklet capture writer)
 - `crates/platform/src/audio/mic_bridge.rs` (ring buffer layout + wrap-around math)
-
-Guest-visible capture device integration is not yet implemented in the canonical audio stack; an earlier experimental implementation exists under `crates/emulator/src/io/audio/*` behind the `emulator/legacy-audio` feature.
+- `crates/aero-audio/src/capture.rs` (`AudioCaptureSource` + adapters for mic ring buffers)
+- `crates/aero-audio/src/hda.rs` (HDA capture stream servicing via `process_*_with_capture`)
 
 ### HDA capture exposure (guest)
 
-The canonical `aero-audio` HDA model is currently playback-only. Guest-visible
-capture (HDA input pin or virtio-snd capture stream) will be layered on once the
-guest driver strategy is finalized.
+The canonical `aero-audio` HDA model exposes:
+
+- **Stream descriptor 1** as a capture stream (input DMA into guest memory via BDL entries).
+- **Codec topology** with an input converter + microphone pin so Windows can enumerate a recording endpoint.
+
+Host code provides microphone samples via `aero_audio::capture::AudioCaptureSource` (implemented for
+`aero_platform::audio::mic_bridge::MicBridge` on wasm) and advances the device model via
+`HdaController::process_*_with_capture(...)`.
 
 ### Ring buffer layout
  
