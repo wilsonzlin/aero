@@ -96,3 +96,33 @@ fn i8042_snapshot_restore_resynchronizes_a20_line_when_sys_ctrl_attached() {
     assert!(!a20.get());
     assert_eq!(&*events.borrow(), &[false]);
 }
+
+#[test]
+fn i8042_snapshot_saves_guest_visible_output_port_a20_bit() {
+    let a20 = Rc::new(Cell::new(false));
+    let events = Rc::new(RefCell::new(Vec::new()));
+
+    let mut dev = I8042Controller::new();
+    dev.set_system_control_sink(Box::new(TestSysCtrl {
+        a20: a20.clone(),
+        events: events.clone(),
+    }));
+
+    // Enable A20 via i8042 output-port write.
+    dev.write_port(0x64, 0xD1);
+    dev.write_port(0x60, 0x03);
+    assert!(a20.get());
+
+    // External path (e.g. port 0x92) disables A20 without updating the i8042 output-port latch.
+    a20.set(false);
+    events.borrow_mut().clear();
+
+    let snap = dev.save_state();
+
+    // Restore with no sys_ctrl attached and read the output port. The stored value should reflect
+    // the guest-visible A20 bit at snapshot time (disabled).
+    let mut restored = I8042Controller::new();
+    restored.load_state(&snap).unwrap();
+    restored.write_port(0x64, 0xD0);
+    assert_eq!(restored.read_port(0x60), 0x01);
+}

@@ -697,7 +697,10 @@ impl IoSnapshot for I8042Controller {
                 .u8(self.command_byte)
                 .finish(),
         );
-        w.field_u8(TAG_OUTPUT_PORT, self.output_port);
+        // Store the guest-visible output port value. When the platform A20 line is observable via
+        // `SystemControlSink::a20_enabled`, this keeps snapshots consistent even if the internal
+        // latch is stale (e.g. A20 toggled via port 0x92).
+        w.field_u8(TAG_OUTPUT_PORT, self.output_port_for_guest());
 
         if let Some(out) = self.output_buffer {
             let source = match out.source {
