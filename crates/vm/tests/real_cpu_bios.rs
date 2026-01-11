@@ -552,3 +552,59 @@ fn aero_cpu_core_int1a_midnight_flag_is_reported_and_cleared() {
     assert_eq!(vm.mem.read_u8(BDA_MIDNIGHT_FLAG_ADDR), 0);
     assert!(!vm.cpu.get_flag(FLAG_CF));
 }
+
+#[test]
+fn aero_cpu_core_runs_int_sanity_boot_sector_fixture() {
+    // The fixture is built from `test_images/boot_sectors/int_sanity.asm` and exercises a small
+    // subset of BIOS interrupts (INT 10/13/15/16) while leaving observable state in low RAM.
+    let boot_sector: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test_images/boot_sectors/int_sanity.bin"
+    ));
+    assert_eq!(boot_sector.len(), 512);
+
+    // Two sectors: boot sector + one data sector read via INT 13h CHS (0,0,2) -> LBA 1.
+    let mut disk_bytes = vec![0u8; 2 * 512];
+    disk_bytes[..512].copy_from_slice(boot_sector);
+    disk_bytes[512] = 0x42;
+    let disk = machine::InMemoryDisk::new(disk_bytes);
+
+    let mut bios = Bios::new(test_bios_config());
+    bios.push_key(0x2C5A); // scan=0x2C, ascii='Z'
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Run until the boot sector's terminal HLT.
+    let mut steps = 0u64;
+    loop {
+        steps += 1;
+        if steps > 100_000 {
+            panic!("int_sanity boot sector did not halt (steps={steps})");
+        }
+        match vm.step() {
+            StepExit::Continue | StepExit::Branch | StepExit::BiosInterrupt(_) => continue,
+            StepExit::Halted => break,
+            StepExit::Assist(r) => panic!("unexpected assist while running boot sector: {r:?}"),
+        }
+    }
+
+    // INT 10h teletype should have emitted 'A'.
+    assert_eq!(vm.bios.tty_output(), b"A");
+
+    // INT 15h E820 should have written entry 0 to 0000:0600.
+    assert_eq!(vm.mem.read_u64(0x0600), 0);
+    assert_ne!(vm.mem.read_u64(0x0608), 0);
+    assert_eq!(vm.mem.read_u32(0x0610), 1);
+    assert_eq!(vm.mem.read_u32(0x0614), 1);
+
+    // INT 16h AH=00h stores AX at 0000:0510.
+    assert_eq!(vm.mem.read_u16(0x0510), 0x2C5A);
+
+    // INT 13h CHS read stores the first byte of the second sector at 0000:0520.
+    assert_eq!(vm.mem.read_u8(0x0520), 0x42);
+
+    // Signature written by the fixture for host-side validation.
+    assert_eq!(vm.mem.read_u8(0x0530), b'O');
+    assert_eq!(vm.mem.read_u8(0x0531), b'K');
+}
