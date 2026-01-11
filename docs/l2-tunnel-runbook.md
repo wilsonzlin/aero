@@ -73,8 +73,10 @@ cd proxy/webrtc-udp-relay
  # Bridge WebRTC DataChannel "l2" to the L2 proxy WebSocket endpoint.
  # (The relay will forward the client's Origin + AUTH_MODE credential by default.)
  export L2_BACKEND_WS_URL=ws://127.0.0.1:8090/l2
- 
+  
  # Optional knobs:
+ # If the backend uses session-cookie auth (`AERO_L2_AUTH_MODE=cookie` on `crates/aero-l2-proxy`):
+ # export L2_BACKEND_FORWARD_AERO_SESSION=1   # forwards Cookie: aero_session=... captured from signaling
  # export L2_BACKEND_AUTH_FORWARD_MODE=query        # default
  # export L2_BACKEND_AUTH_FORWARD_MODE=subprotocol  # Sec-WebSocket-Protocol: aero-l2-token.<credential> (credential must be a valid HTTP token / RFC 7230 tchar)
  # If your backend requires a static token (e.g. `AERO_L2_AUTH_MODE=api_key|jwt` on `crates/aero-l2-proxy`):
@@ -180,11 +182,14 @@ In the canonical compose stack, enable the backend wiring in `deploy/.env`:
 L2_BACKEND_WS_URL=ws://aero-l2-proxy:8090/l2
 L2_BACKEND_AUTH_FORWARD_MODE=query
 L2_BACKEND_FORWARD_ORIGIN=1
+L2_BACKEND_FORWARD_AERO_SESSION=1  # recommended when `aero-l2-proxy` uses AERO_L2_AUTH_MODE=cookie
 ```
 
 Then ensure auth is compatible end-to-end:
 
-- Configure `aero-l2-proxy` with `AERO_L2_TOKEN=...`.
+- If using cookie auth (`AERO_L2_AUTH_MODE=cookie`), ensure `aero-l2-proxy` shares the gateway `SESSION_SECRET`
+  and the relay has `L2_BACKEND_FORWARD_AERO_SESSION=1` enabled.
+- If using static token auth, configure `aero-l2-proxy` with `AERO_L2_TOKEN=...`.
 - Configure the relay auth mode (`AUTH_MODE=jwt` or `AUTH_MODE=api_key`) so the browser presents a
   credential that the relay can forward to the backend as `?token=...` (or via `aero-l2-token.*` when
   `L2_BACKEND_AUTH_FORWARD_MODE=subprotocol` is used).

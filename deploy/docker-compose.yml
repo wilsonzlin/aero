@@ -228,9 +228,10 @@ services:
       #   L2_BACKEND_ORIGIN=https://example.com       # alias: L2_BACKEND_ORIGIN_OVERRIDE
       #   L2_BACKEND_TOKEN=sekrit                     # Sec-WebSocket-Protocol: aero-l2-token.<token>
       #
-      # Then ensure the relay can forward token + Origin to the backend:
+      # Then ensure the relay can forward auth material / headers to the backend:
       #   L2_BACKEND_AUTH_FORWARD_MODE=query
       #   L2_BACKEND_FORWARD_ORIGIN=1
+      #   L2_BACKEND_FORWARD_AERO_SESSION=1           # forwards Cookie: aero_session=... (for AERO_L2_AUTH_MODE=cookie)
       - L2_BACKEND_WS_URL
       - L2_BACKEND_ORIGIN
       - L2_BACKEND_TOKEN
@@ -239,6 +240,7 @@ services:
       - L2_BACKEND_WS_TOKEN
       - L2_BACKEND_AUTH_FORWARD_MODE=${L2_BACKEND_AUTH_FORWARD_MODE:-query}
       - L2_BACKEND_FORWARD_ORIGIN=${L2_BACKEND_FORWARD_ORIGIN:-1}
+      - L2_BACKEND_FORWARD_AERO_SESSION=${L2_BACKEND_FORWARD_AERO_SESSION:-0}
       - L2_MAX_MESSAGE_BYTES
 
       # UDP egress policy (highly recommended for public deployments).

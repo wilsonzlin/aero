@@ -209,8 +209,8 @@ Gateway environment variables (used by `backend/aero-gateway` and passed through
   - Used to derive the default `ALLOWED_ORIGINS` allowlist.
 - `SESSION_SECRET` (strongly recommended for production)
   - If unset, the gateway generates a temporary secret at startup and sessions won’t survive restarts.
-  - Note: `crates/aero-l2-proxy` does not currently validate gateway sessions; configure
-    `AERO_L2_TOKEN` (and/or upstream auth at the edge) if you need L2 tunnel authentication.
+  - When using cookie auth for the L2 tunnel (`AERO_L2_AUTH_MODE=cookie`), `crates/aero-l2-proxy` must share
+    the same signing secret so it can validate the `aero_session` cookie minted by the gateway.
 - `ALLOWED_ORIGINS` (optional, comma-separated)
   - Set explicitly if you need to allow additional origins (e.g. a dev server).
 - `TRUST_PROXY` (default in compose: `1`)
@@ -288,11 +288,12 @@ backend dial. Relevant env vars are documented in `proxy/webrtc-udp-relay/README
 
 - `L2_BACKEND_AUTH_FORWARD_MODE=none|query|subprotocol`
 - `L2_BACKEND_FORWARD_ORIGIN=1`
+- `L2_BACKEND_FORWARD_AERO_SESSION=1` (recommended for `AERO_L2_AUTH_MODE=cookie`; forwards `Cookie: aero_session=...` captured from signaling)
 - `L2_BACKEND_ORIGIN_OVERRIDE=https://example.com` (optional)
 
-Note: `aero-l2-proxy` must be configured to accept whatever credential the relay forwards (e.g.
-`AERO_L2_AUTH_MODE=cookie_or_jwt` if browser clients use cookies directly but the relay uses JWT
-forwarding).
+Note: the backend `/l2` endpoint must be configured to accept whatever auth material the relay forwards. For
+cookie-auth `/l2` (`AERO_L2_AUTH_MODE=cookie`), enable `L2_BACKEND_FORWARD_AERO_SESSION=1` so WebRTC L2
+bridging continues to work while preserving session-cookie auth.
 
 ## Optional TURN server (coturn profile)
 
