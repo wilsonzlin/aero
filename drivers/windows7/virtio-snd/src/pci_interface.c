@@ -1,12 +1,10 @@
 /* SPDX-License-Identifier: MIT OR Apache-2.0 */
 
+#include "pci_interface.h"
+
 #include <initguid.h>
 #include <wdmguid.h>
 #undef INITGUID
-
-#include <ntddk.h>
-
-#include "pci_interface.h"
 
 #ifndef PCI_BUS_INTERFACE_STANDARD_VERSION
 #define PCI_BUS_INTERFACE_STANDARD_VERSION 1

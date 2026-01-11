@@ -4,6 +4,7 @@
 
 #include <ntddk.h>
 
+_IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS
 VirtIoSndAcquirePciBusInterface(
     _In_ PDEVICE_OBJECT LowerDevice,
@@ -11,12 +12,14 @@ VirtIoSndAcquirePciBusInterface(
     _Out_ BOOLEAN* AcquiredOut
     );
 
+_IRQL_requires_max_(PASSIVE_LEVEL)
 VOID
 VirtIoSndReleasePciBusInterface(
     _Inout_ PPCI_BUS_INTERFACE_STANDARD Iface,
     _Inout_ BOOLEAN* AcquiredInOut
     );
 
+_IRQL_requires_max_(PASSIVE_LEVEL)
 ULONG
 VirtIoSndPciReadConfig(
     _In_ PPCI_BUS_INTERFACE_STANDARD Iface,
@@ -25,6 +28,7 @@ VirtIoSndPciReadConfig(
     _In_ ULONG Length
     );
 
+_IRQL_requires_max_(PASSIVE_LEVEL)
 ULONG
 VirtIoSndPciWriteConfig(
     _In_ PPCI_BUS_INTERFACE_STANDARD Iface,
