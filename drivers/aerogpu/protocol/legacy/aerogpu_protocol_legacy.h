@@ -8,6 +8,11 @@
  * AeroGPU device model (feature `emulator/aerogpu-legacy`). The current AeroGPU
  * KMD/UMDs do **not** use this header directly.
  *
+ * NOTE: This ABI is deprecated/retired. The in-tree Win7 driver package binds only to the
+ * versioned `PCI\\VEN_A3A0&DEV_0001` device. Using the legacy bring-up device model (`PCI\\VEN_1AED`)
+ * requires the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` and (for the emulator)
+ * enabling the legacy device model feature (`emulator` feature `aerogpu-legacy`).
+ *
  * This file is intentionally isolated under `drivers/aerogpu/protocol/legacy/`.
  *
  * NOTE: This legacy header defines common macro names like `AEROGPU_PCI_VENDOR_ID`
@@ -17,6 +22,8 @@
  *
  * The canonical, versioned AeroGPU device ABI is defined in:
  *   - `drivers/aerogpu/protocol/README.md`
+ *
+ * New code should prefer the versioned ABI split across:
  *   - `aerogpu_pci.h`  (PCI/MMIO + versioning + features)
  *   - `aerogpu_ring.h` (submission descriptors + optional `aerogpu_alloc_table`)
  *   - `aerogpu_cmd.h`  (command stream packets and opcodes)

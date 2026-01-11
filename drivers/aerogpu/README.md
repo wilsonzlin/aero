@@ -45,7 +45,7 @@ Artifacts produced by the workflow:
 * Guest-side validation tests: `drivers/aerogpu/tests/win7/README.md`
 * AeroGPU PCI IDs + ABI generations (new vs legacy): `docs/abi/aerogpu-pci-identity.md`
 * Protocol / device ABI (canonical): `drivers/aerogpu/protocol/README.md`, `drivers/aerogpu/protocol/aerogpu_pci.h`, `drivers/aerogpu/protocol/aerogpu_ring.h`, `drivers/aerogpu/protocol/aerogpu_cmd.h`, `drivers/aerogpu/protocol/aerogpu_escape.h`
-  * Note: the legacy bring-up ABI is `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h` (deprecated; feature-gated in the emulator).
+  * Note: the legacy bring-up ABI is `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h` (deprecated/retired; PCI VEN=0x1AED; feature-gated in the emulator).
 * Debug control tool (bring-up): `drivers/aerogpu/tools/win7_dbgctl/README.md`
 
 ## Direct MSBuild (optional)

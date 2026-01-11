@@ -15,11 +15,31 @@ fn read_file(path: &Path) -> String {
         .unwrap_or_else(|err| panic!("{}: failed to read file: {err}", path.display()))
 }
 
-fn assert_file_contains(path: &Path, needle: &str) {
+fn assert_file_contains_noncomment_line(path: &Path, needle: &str) {
     let content = read_file(path);
+    let has = content.lines().any(|raw_line| {
+        let line = raw_line.trim_start();
+        if line.is_empty() {
+            return false;
+        }
+        // INF comments start with ';'. Batch file comments start with `rem` (case-insensitive) or `::`.
+        if path.extension().and_then(|ext| ext.to_str()) == Some("inf") {
+            if line.starts_with(';') {
+                return false;
+            }
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("cmd") {
+            if line.starts_with("::") {
+                return false;
+            }
+            if line.len() >= 3 && line[..3].eq_ignore_ascii_case("rem") {
+                return false;
+            }
+        }
+        line.contains(needle)
+    });
     assert!(
-        content.contains(needle),
-        "{} is out of sync: expected to contain `{needle}`",
+        has,
+        "{} is out of sync: expected a non-comment line to contain `{needle}`",
         path.display()
     );
 }
@@ -31,13 +51,6 @@ fn assert_file_not_contains(path: &Path, needle: &str) {
         "{} is out of sync: expected NOT to contain `{needle}`",
         path.display()
     );
-}
-
-fn file_contains_in_non_comment_lines(path: &Path, needle: &str) -> bool {
-    read_file(path)
-        .lines()
-        .filter(|line| !line.trim_start().starts_with(';'))
-        .any(|line| line.contains(needle))
 }
 
 fn parse_u16_literal(lit: &str, path: &Path, define: &str) -> u16 {
@@ -115,19 +128,13 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         parse_c_define_u16(&legacy_header, &legacy_header_path, "AEROGPU_PCI_DEVICE_ID");
     let legacy_hwid = format!("PCI\\VEN_{legacy_vendor_id:04X}&DEV_{legacy_device_id:04X}");
 
-    // The shipped driver package + guest-tools target the canonical, versioned ABI (A3A0:0001).
-    // The legacy bring-up device model still exists for debugging, but requires a custom INF.
     for relative_path in [
         "drivers/aerogpu/packaging/win7/aerogpu.inf",
         "drivers/aerogpu/packaging/win7/aerogpu_dx11.inf",
+        "guest-tools/config/devices.cmd",
     ] {
         let path = repo_root.join(relative_path);
-        assert!(
-            file_contains_in_non_comment_lines(&path, &new_hwid),
-            "{} is out of sync: expected to bind to `{new_hwid}` (in a non-comment line)",
-            path.display()
-        );
-
+        assert_file_contains_noncomment_line(&path, &new_hwid);
         assert_file_not_contains(&path, &legacy_hwid);
     }
 
@@ -136,20 +143,9 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         "drivers/aerogpu/packaging/win7/legacy/aerogpu_dx11.inf",
     ] {
         let path = repo_root.join(relative_path);
-        assert_file_contains(&path, &legacy_hwid);
+        assert_file_contains_noncomment_line(&path, &legacy_hwid);
+        assert_file_not_contains(&path, &new_hwid);
     }
-
-    // Guest Tools config is generated from the canonical Windows device contract, which binds only
-    // to the versioned ("AGPU") device by default.
-    let devices_cmd_path = repo_root.join("guest-tools/config/devices.cmd");
-    assert_file_contains(&devices_cmd_path, &new_hwid);
-    let devices_cmd_text = read_file(&devices_cmd_path);
-    assert!(
-        !devices_cmd_text.contains(&legacy_hwid),
-        "{} is out of sync: must not contain legacy bring-up HWID `{legacy_hwid}`",
-        devices_cmd_path.display()
-    );
-
     let contract_path = repo_root.join("docs/windows-device-contract.json");
     let contract_text = read_file(&contract_path);
     let contract_json: serde_json::Value = serde_json::from_str(&contract_text)

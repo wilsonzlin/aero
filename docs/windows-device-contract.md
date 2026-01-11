@@ -63,16 +63,15 @@ Subsystem IDs are Aero-specific and are used as stable secondary identifiers:
 
 Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual PCI IDs:
 
-- Primary HWID (new versioned ABI): `A3A0:0001` (`drivers/aerogpu/protocol/aerogpu_pci.h`)
+- Primary HWID (versioned ABI): `A3A0:0001` (`drivers/aerogpu/protocol/aerogpu_pci.h`)
   - Subsystem vendor/device: `A3A0:0001`
   - Class code: `03/00/00` (display / VGA)
   - Windows hardware IDs:
     - `PCI\VEN_A3A0&DEV_0001`
     - `PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0` (optional; only if the INF matches it)
- 
 Legacy bring-up ABI note:
 
-- The Win7 KMD still has a compatibility path for the deprecated legacy bring-up AeroGPU ABI (`PCI\VEN_1AED&DEV_0001`).
+- The Win7 KMD still has a compatibility path for the deprecated legacy bring-up AeroGPU ABI (`1AED:0001` / `PCI\VEN_1AED&DEV_0001`).
 - The canonical in-tree Win7 AeroGPU INFs (`drivers/aerogpu/packaging/win7/{aerogpu.inf,aerogpu_dx11.inf}`) intentionally bind **only** to `PCI\VEN_A3A0&DEV_0001`.
 - Installing against the legacy device model requires:
   - building the emulator with the legacy device model enabled (feature `emulator/aerogpu-legacy`), and
@@ -87,8 +86,11 @@ Legacy bring-up ABI note:
 > See also: `docs/abi/aerogpu-pci-identity.md` (context on why two IDs exist, and which emulator device models implement each ABI).
 >
 > Legacy note: some bring-up builds may still expose the deprecated legacy AeroGPU HWID `PCI\VEN_1AED&DEV_0001`. This is not
-> the default device model, and the shipped Win7 AeroGPU INFs do **not** match it (by design). If you
-> need it, use the legacy INFs and enable the legacy device model feature (`emulator/aerogpu-legacy`).
+> the default device model, and the shipped Win7 AeroGPU INFs do **not** match it (by design). If you need it, use the legacy
+> INFs under `drivers/aerogpu/packaging/win7/legacy/` and enable the legacy device model feature (`emulator/aerogpu-legacy`).
+>
+> Older prototypes used PCI vendor ID `1AE0`; those stacks are deprecated and must not be treated as the
+> Windows driver binding contract.
 
 ## Device table (normative)
 

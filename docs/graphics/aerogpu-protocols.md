@@ -31,14 +31,15 @@ Win7 KMD supports both the versioned and legacy submission transports and auto-d
 active ABI via BAR0 MMIO magic (see `drivers/aerogpu/protocol/README.md` and
 `drivers/aerogpu/kmd/README.md`).
 
-### Legacy bring-up ABI (still present, but not the long-term target)
+### Legacy bring-up ABI (retired; not the long-term target)
 
 There is also a **legacy bring-up** PCI/MMIO ABI:
 
 - Header: `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`
 - Host device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs` (feature `emulator/aerogpu-legacy`)
 
-It exists for migration/compatibility and should generally not be the target for new features.
+It is retained for historical reference and optional regression testing; it is not supported by the
+shipping Win7 driver package and should generally not be the target for new features.
 For a concise mapping of PCI IDs ↔ ABI ↔ device model, see `docs/abi/aerogpu-pci-identity.md`.
 
 ## Legacy prototype: toy CREATE_SURFACE/PRESENT protocol (removed)
