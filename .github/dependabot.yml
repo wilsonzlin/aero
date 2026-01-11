@@ -35,23 +35,6 @@ updates:
           - "major"
 
   - package-ecosystem: "cargo"
-    directory: "/drivers/protocol/virtio"
-    schedule:
-      interval: "weekly"
-    groups:
-      rust:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
-      rust-major:
-        patterns:
-          - "*"
-        update-types:
-          - "major"
-
-  - package-ecosystem: "cargo"
     directory: "/fuzz"
     schedule:
       interval: "weekly"
