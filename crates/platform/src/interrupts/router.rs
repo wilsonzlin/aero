@@ -2,6 +2,8 @@ use super::pic::Pic8259;
 use crate::io::{IoPortBus, PortIoDevice};
 use aero_interrupts::apic::{IoApic, IoApicId, LapicInterruptSink, LocalApic};
 use aero_interrupts::clock::Clock;
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -37,6 +39,10 @@ struct AtomicClock {
 impl AtomicClock {
     fn advance_ns(&self, delta_ns: u64) {
         self.now_ns.fetch_add(delta_ns, Ordering::SeqCst);
+    }
+
+    fn set_now_ns(&self, now_ns: u64) {
+        self.now_ns.store(now_ns, Ordering::SeqCst);
     }
 }
 
@@ -399,6 +405,136 @@ impl InterruptController for PlatformInterrupts {
                 self.lapic.eoi();
             }
         }
+    }
+}
+
+impl IoSnapshot for PlatformInterrupts {
+    const DEVICE_ID: [u8; 4] = *b"INTR";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_MODE: u16 = 1;
+        const TAG_ISA_IRQ_TO_GSI: u16 = 2;
+        const TAG_IMCR_SELECT: u16 = 3;
+        const TAG_IMCR: u16 = 4;
+        const TAG_PIC: u16 = 5;
+        const TAG_IOAPIC: u16 = 6;
+        const TAG_LAPIC: u16 = 7;
+        const TAG_GSI_LEVEL: u16 = 8;
+        const TAG_LAPIC_CLOCK_NOW_NS: u16 = 9;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        let mode = match self.mode {
+            PlatformInterruptMode::LegacyPic => 0u8,
+            PlatformInterruptMode::Apic => 1u8,
+        };
+        w.field_u8(TAG_MODE, mode);
+
+        let mut enc = Encoder::new();
+        for gsi in self.isa_irq_to_gsi {
+            enc = enc.u32(gsi);
+        }
+        w.field_bytes(TAG_ISA_IRQ_TO_GSI, enc.finish());
+
+        w.field_u8(TAG_IMCR_SELECT, self.imcr_select);
+        w.field_u8(TAG_IMCR, self.imcr);
+
+        let mut gsi_levels = Vec::with_capacity(self.gsi_level.len());
+        for &level in &self.gsi_level {
+            gsi_levels.push(if level { 1 } else { 0 });
+        }
+        w.field_bytes(TAG_GSI_LEVEL, Encoder::new().vec_u8(&gsi_levels).finish());
+
+        w.field_u64(TAG_LAPIC_CLOCK_NOW_NS, self.lapic_clock.now_ns());
+
+        w.field_bytes(TAG_PIC, self.pic.save_state());
+        w.field_bytes(TAG_IOAPIC, self.ioapic.lock().unwrap().save_state());
+        w.field_bytes(TAG_LAPIC, self.lapic.save_state());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_MODE: u16 = 1;
+        const TAG_ISA_IRQ_TO_GSI: u16 = 2;
+        const TAG_IMCR_SELECT: u16 = 3;
+        const TAG_IMCR: u16 = 4;
+        const TAG_PIC: u16 = 5;
+        const TAG_IOAPIC: u16 = 6;
+        const TAG_LAPIC: u16 = 7;
+        const TAG_GSI_LEVEL: u16 = 8;
+        const TAG_LAPIC_CLOCK_NOW_NS: u16 = 9;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        let mode = match r.u8(TAG_MODE)?.unwrap_or(0) {
+            0 => PlatformInterruptMode::LegacyPic,
+            1 => PlatformInterruptMode::Apic,
+            _ => PlatformInterruptMode::LegacyPic,
+        };
+        self.mode = mode;
+        self.apic_enabled
+            .store(mode == PlatformInterruptMode::Apic, Ordering::SeqCst);
+
+        if let Some(buf) = r.bytes(TAG_ISA_IRQ_TO_GSI) {
+            let mut d = Decoder::new(buf);
+            for slot in &mut self.isa_irq_to_gsi {
+                *slot = d.u32()?;
+            }
+            d.finish()?;
+        }
+
+        if let Some(imcr_select) = r.u8(TAG_IMCR_SELECT)? {
+            self.imcr_select = imcr_select;
+        }
+        if let Some(imcr) = r.u8(TAG_IMCR)? {
+            self.imcr = imcr & 1;
+        }
+
+        if let Some(buf) = r.bytes(TAG_GSI_LEVEL) {
+            let mut d = Decoder::new(buf);
+            let levels = d.vec_u8()?;
+            d.finish()?;
+            self.gsi_level = levels
+                .into_iter()
+                .map(|v| match v {
+                    0 => Ok(false),
+                    1 => Ok(true),
+                    _ => Err(aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
+                        "gsi_level",
+                    )),
+                })
+                .collect::<SnapshotResult<Vec<bool>>>()?;
+        }
+
+        if let Some(now) = r.u64(TAG_LAPIC_CLOCK_NOW_NS)? {
+            self.lapic_clock.set_now_ns(now);
+        }
+
+        if let Some(buf) = r.bytes(TAG_PIC) {
+            self.pic.load_state(buf)?;
+        }
+        if let Some(buf) = r.bytes(TAG_IOAPIC) {
+            self.ioapic.lock().unwrap().load_state(buf)?;
+        }
+        if let Some(buf) = r.bytes(TAG_LAPIC) {
+            self.lapic.restore_state(buf)?;
+        }
+
+        let num_gsis = self.ioapic.lock().unwrap().num_redirection_entries();
+        self.gsi_level.resize(num_gsis, false);
+
+        if self.mode == PlatformInterruptMode::Apic {
+            // Re-synchronize asserted level-triggered IOAPIC lines into the LAPIC.
+            //
+            // This avoids losing interrupts on restore without clearing Remote-IRR; the IOAPIC
+            // implementation gates level-triggered delivery on Remote-IRR.
+            self.ioapic.lock().unwrap().sync_level_triggered();
+        }
+
+        Ok(())
     }
 }
 

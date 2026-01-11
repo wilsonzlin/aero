@@ -1,4 +1,6 @@
 use crate::clock::{Clock, NullClock};
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
 use std::sync::{Arc, Mutex};
 
 pub const LAPIC_MMIO_BASE: u64 = 0xFEE0_0000;
@@ -469,6 +471,127 @@ impl LapicInterruptSink for LocalApic {
 
     fn inject_external_interrupt(&self, vector: u8) {
         self.inject_fixed_interrupt(vector);
+    }
+}
+
+impl LocalApic {
+    pub fn restore_state(&self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ID: u16 = 1;
+        const TAG_TPR: u16 = 2;
+        const TAG_SVR: u16 = 3;
+        const TAG_ICR_LOW: u16 = 4;
+        const TAG_ICR_HIGH: u16 = 5;
+        const TAG_IRR: u16 = 6;
+        const TAG_ISR: u16 = 7;
+        const TAG_LVT_TIMER: u16 = 8;
+        const TAG_DIVIDE_CONFIG: u16 = 9;
+        const TAG_INITIAL_COUNT: u16 = 10;
+        const TAG_NEXT_TIMER_DEADLINE_NS: u16 = 11;
+
+        let r = SnapshotReader::parse(bytes, <Self as IoSnapshot>::DEVICE_ID)?;
+        r.ensure_device_major(<Self as IoSnapshot>::DEVICE_VERSION.major)?;
+
+        let mut state = self.state.lock().unwrap();
+
+        if let Some(id) = r.u8(TAG_ID)? {
+            state.id = id;
+        }
+        if let Some(tpr) = r.u8(TAG_TPR)? {
+            state.tpr = tpr;
+        }
+        if let Some(svr) = r.u32(TAG_SVR)? {
+            state.svr = svr;
+        }
+        if let Some(icr_low) = r.u32(TAG_ICR_LOW)? {
+            state.icr_low = icr_low;
+        }
+        if let Some(icr_high) = r.u32(TAG_ICR_HIGH)? {
+            state.icr_high = icr_high;
+        }
+
+        if let Some(buf) = r.bytes(TAG_IRR) {
+            let mut d = Decoder::new(buf);
+            for word in &mut state.irr {
+                *word = d.u32()?;
+            }
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_ISR) {
+            let mut d = Decoder::new(buf);
+            for word in &mut state.isr {
+                *word = d.u32()?;
+            }
+            d.finish()?;
+        }
+
+        if let Some(lvt_timer) = r.u32(TAG_LVT_TIMER)? {
+            state.lvt_timer = lvt_timer;
+        }
+        if let Some(divide_config) = r.u32(TAG_DIVIDE_CONFIG)? {
+            state.divide_config = divide_config;
+        }
+        if let Some(initial_count) = r.u32(TAG_INITIAL_COUNT)? {
+            state.initial_count = initial_count;
+        }
+
+        state.next_timer_deadline_ns = r.u64(TAG_NEXT_TIMER_DEADLINE_NS)?;
+
+        Ok(())
+    }
+}
+
+impl IoSnapshot for LocalApic {
+    const DEVICE_ID: [u8; 4] = *b"LAPC";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ID: u16 = 1;
+        const TAG_TPR: u16 = 2;
+        const TAG_SVR: u16 = 3;
+        const TAG_ICR_LOW: u16 = 4;
+        const TAG_ICR_HIGH: u16 = 5;
+        const TAG_IRR: u16 = 6;
+        const TAG_ISR: u16 = 7;
+        const TAG_LVT_TIMER: u16 = 8;
+        const TAG_DIVIDE_CONFIG: u16 = 9;
+        const TAG_INITIAL_COUNT: u16 = 10;
+        const TAG_NEXT_TIMER_DEADLINE_NS: u16 = 11;
+
+        let state = self.state.lock().unwrap().clone();
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_u8(TAG_ID, state.id);
+        w.field_u8(TAG_TPR, state.tpr);
+        w.field_u32(TAG_SVR, state.svr);
+        w.field_u32(TAG_ICR_LOW, state.icr_low);
+        w.field_u32(TAG_ICR_HIGH, state.icr_high);
+
+        let mut irr = Encoder::new();
+        for word in state.irr {
+            irr = irr.u32(word);
+        }
+        w.field_bytes(TAG_IRR, irr.finish());
+
+        let mut isr = Encoder::new();
+        for word in state.isr {
+            isr = isr.u32(word);
+        }
+        w.field_bytes(TAG_ISR, isr.finish());
+
+        w.field_u32(TAG_LVT_TIMER, state.lvt_timer);
+        w.field_u32(TAG_DIVIDE_CONFIG, state.divide_config);
+        w.field_u32(TAG_INITIAL_COUNT, state.initial_count);
+
+        if let Some(deadline) = state.next_timer_deadline_ns {
+            w.field_u64(TAG_NEXT_TIMER_DEADLINE_NS, deadline);
+        }
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        self.restore_state(bytes)
     }
 }
 

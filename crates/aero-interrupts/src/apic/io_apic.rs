@@ -1,4 +1,8 @@
 use crate::apic::LapicInterruptSink;
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use std::sync::Arc;
 
 pub const IOAPIC_MMIO_BASE: u64 = 0xFEC0_0000;
@@ -339,6 +343,14 @@ impl IoApic {
         self.deliver(gsi);
     }
 
+    /// Scans for asserted level-triggered lines and delivers interrupts that are not blocked by
+    /// Remote-IRR.
+    pub fn sync_level_triggered(&mut self) {
+        for gsi in 0..self.redirection.len() {
+            self.maybe_deliver_level(gsi as u32);
+        }
+    }
+
     fn deliver(&mut self, gsi: u32) {
         let entry = &mut self.redirection[gsi as usize];
 
@@ -356,6 +368,144 @@ impl IoApic {
         }
 
         self.lapic.inject_external_interrupt(entry.vector);
+    }
+}
+
+impl IoSnapshot for IoApic {
+    const DEVICE_ID: [u8; 4] = *b"IOAP";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ID: u16 = 1;
+        const TAG_IOREGSEL: u16 = 2;
+        const TAG_REDIRECTION: u16 = 3;
+        const TAG_PIN_ACTIVE_LOW: u16 = 4;
+        const TAG_PIN_LEVEL: u16 = 5;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_u8(TAG_ID, self.id.0 & 0x0f);
+        w.field_u8(TAG_IOREGSEL, self.ioregsel);
+
+        let mut redir = Encoder::new().u32(self.redirection.len() as u32);
+        for entry in &self.redirection {
+            let trigger = match entry.trigger_mode {
+                TriggerMode::Edge => 0u8,
+                TriggerMode::Level => 1u8,
+            };
+            redir = redir
+                .u8(entry.vector)
+                .u8(entry.delivery_mode)
+                .bool(entry.destination_mode)
+                .bool(entry.polarity_low)
+                .u8(trigger)
+                .bool(entry.mask)
+                .u8(entry.destination)
+                .bool(entry.remote_irr);
+        }
+        w.field_bytes(TAG_REDIRECTION, redir.finish());
+
+        let mut pin_active_low = Vec::with_capacity(self.pin_active_low.len());
+        for &val in &self.pin_active_low {
+            pin_active_low.push(if val { 1 } else { 0 });
+        }
+        w.field_bytes(TAG_PIN_ACTIVE_LOW, Encoder::new().vec_u8(&pin_active_low).finish());
+
+        let mut pin_level = Vec::with_capacity(self.pin_level.len());
+        for &val in &self.pin_level {
+            pin_level.push(if val { 1 } else { 0 });
+        }
+        w.field_bytes(TAG_PIN_LEVEL, Encoder::new().vec_u8(&pin_level).finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ID: u16 = 1;
+        const TAG_IOREGSEL: u16 = 2;
+        const TAG_REDIRECTION: u16 = 3;
+        const TAG_PIN_ACTIVE_LOW: u16 = 4;
+        const TAG_PIN_LEVEL: u16 = 5;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        if let Some(id) = r.u8(TAG_ID)? {
+            self.id = IoApicId(id & 0x0f);
+        }
+        if let Some(sel) = r.u8(TAG_IOREGSEL)? {
+            self.ioregsel = sel;
+        }
+
+        if let Some(buf) = r.bytes(TAG_REDIRECTION) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            let mut entries = Vec::with_capacity(count);
+            for _ in 0..count {
+                let vector = d.u8()?;
+                let delivery_mode = d.u8()? & 0x7;
+                let destination_mode = d.bool()?;
+                let polarity_low = d.bool()?;
+                let trigger_mode = match d.u8()? {
+                    0 => TriggerMode::Edge,
+                    1 => TriggerMode::Level,
+                    _ => return Err(SnapshotError::InvalidFieldEncoding("ioapic trigger_mode")),
+                };
+                let mask = d.bool()?;
+                let destination = d.u8()?;
+                let remote_irr = d.bool()?;
+                entries.push(RedirectionEntry {
+                    vector,
+                    delivery_mode,
+                    destination_mode,
+                    polarity_low,
+                    trigger_mode,
+                    mask,
+                    destination,
+                    remote_irr,
+                });
+            }
+            d.finish()?;
+            self.redirection = entries;
+        }
+
+        if let Some(buf) = r.bytes(TAG_PIN_ACTIVE_LOW) {
+            let mut d = Decoder::new(buf);
+            let values = d.vec_u8()?;
+            d.finish()?;
+            self.pin_active_low = values
+                .into_iter()
+                .map(|v| match v {
+                    0 => Ok(false),
+                    1 => Ok(true),
+                    _ => Err(SnapshotError::InvalidFieldEncoding("ioapic pin_active_low")),
+                })
+                .collect::<SnapshotResult<Vec<bool>>>()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_PIN_LEVEL) {
+            let mut d = Decoder::new(buf);
+            let values = d.vec_u8()?;
+            d.finish()?;
+            self.pin_level = values
+                .into_iter()
+                .map(|v| match v {
+                    0 => Ok(false),
+                    1 => Ok(true),
+                    _ => Err(SnapshotError::InvalidFieldEncoding("ioapic pin_level")),
+                })
+                .collect::<SnapshotResult<Vec<bool>>>()?;
+        }
+
+        let pins = self.redirection.len();
+        let old_level_len = self.pin_level.len();
+        self.pin_active_low.resize(pins, false);
+        self.pin_level.resize(pins, false);
+        for idx in old_level_len..pins {
+            // Default new pins to the deasserted electrical level for their wiring.
+            self.pin_level[idx] = self.pin_active_low[idx];
+        }
+
+        Ok(())
     }
 }
 

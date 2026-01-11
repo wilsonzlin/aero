@@ -1,4 +1,5 @@
 use aero_interrupts::pic8259::{DualPic8259, MASTER_CMD, MASTER_DATA, SLAVE_CMD, SLAVE_DATA};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotResult, SnapshotVersion};
 
 /// Thin wrapper around [`DualPic8259`] that preserves the historical
 /// `aero_platform::interrupts::Pic8259` API used by the platform interrupt
@@ -114,3 +115,21 @@ impl Pic8259 {
         self.inner.port_write_u8(port, value);
     }
 }
+
+impl IoSnapshot for Pic8259 {
+    const DEVICE_ID: [u8; 4] = *b"PIC9";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        self.inner.save_state()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        self.inner.load_state(bytes)?;
+        let (master, slave) = self.inner.vector_bases();
+        self.master_base = master;
+        self.slave_base = slave;
+        Ok(())
+    }
+}
+

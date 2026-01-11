@@ -283,6 +283,9 @@ dependencies = [
 [[package]]
 name = "aero-interrupts"
 version = "0.1.0"
+dependencies = [
+ "aero-io-snapshot",
+]
 
 [[package]]
 name = "aero-io-snapshot"
