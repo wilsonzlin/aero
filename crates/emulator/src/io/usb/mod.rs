@@ -221,6 +221,18 @@ pub trait UsbDeviceModel {
     /// The default implementation delegates to [`UsbDeviceModel::handle_interrupt_in`] and
     /// truncates [`UsbInResult::Data`] payloads to `max_len`.
     fn handle_in_transfer(&mut self, ep: u8, max_len: usize) -> UsbInResult {
+        debug_assert!(
+            (ep & 0x80) != 0,
+            "handle_in_transfer expects an IN endpoint address (bit7=1), got {ep:#04x}"
+        );
+        debug_assert!(
+            (ep & 0x70) == 0,
+            "handle_in_transfer expects a valid endpoint number (0..=15), got {ep:#04x}"
+        );
+        debug_assert!(
+            (ep & 0x0f) != 0,
+            "handle_in_transfer should not be used for control endpoint 0, got {ep:#04x}"
+        );
         match self.handle_interrupt_in(ep) {
             UsbInResult::Data(mut data) => {
                 if data.len() > max_len {
@@ -239,6 +251,18 @@ pub trait UsbDeviceModel {
     /// The default implementation delegates to [`UsbDeviceModel::handle_interrupt_out`] for
     /// backwards compatibility with interrupt-only device models.
     fn handle_out_transfer(&mut self, ep: u8, data: &[u8]) -> UsbOutResult {
+        debug_assert!(
+            (ep & 0x80) == 0,
+            "handle_out_transfer expects an OUT endpoint address (bit7=0), got {ep:#04x}"
+        );
+        debug_assert!(
+            (ep & 0x70) == 0,
+            "handle_out_transfer expects a valid endpoint number (0..=15), got {ep:#04x}"
+        );
+        debug_assert!(
+            (ep & 0x0f) != 0,
+            "handle_out_transfer should not be used for control endpoint 0, got {ep:#04x}"
+        );
         self.handle_interrupt_out(ep, data)
     }
 
