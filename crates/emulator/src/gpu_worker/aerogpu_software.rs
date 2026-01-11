@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use aero_protocol::aerogpu::{aerogpu_cmd as cmd, aerogpu_ring as ring};
 use memory::MemoryBus;
@@ -269,6 +269,7 @@ pub struct AeroGpuSoftwareExecutor {
     shaders: HashMap<u32, ShaderResource>,
     input_layouts: HashMap<u32, InputLayoutResource>,
     shared_surfaces: HashMap<u64, u32>,
+    retired_shared_surface_tokens: HashSet<u64>,
     resource_aliases: HashMap<u32, u32>,
     texture_refcounts: HashMap<u32, u32>,
     state: PipelineState,
@@ -286,6 +287,7 @@ impl AeroGpuSoftwareExecutor {
         self.shaders.clear();
         self.input_layouts.clear();
         self.shared_surfaces.clear();
+        self.retired_shared_surface_tokens.clear();
         self.resource_aliases.clear();
         self.texture_refcounts.clear();
         self.state = PipelineState::default();
@@ -405,7 +407,7 @@ impl AeroGpuSoftwareExecutor {
             };
             off += ring::AerogpuAllocEntry::SIZE_BYTES;
 
-            if entry.alloc_id == 0 || entry.gpa == 0 || entry.size_bytes == 0 {
+            if entry.alloc_id == 0 || entry.size_bytes == 0 {
                 Self::record_error(regs);
                 return None;
             }
@@ -2336,12 +2338,28 @@ impl AeroGpuSoftwareExecutor {
                         destroyed_underlying = true;
                         self.texture_refcounts.remove(&resolved);
                         self.textures.remove(&resolved);
-                        self.shared_surfaces.retain(|_, v| *v != resolved);
+                        let to_retire: Vec<u64> = self
+                            .shared_surfaces
+                            .iter()
+                            .filter_map(|(k, v)| (*v == resolved).then_some(*k))
+                            .collect();
+                        for token in to_retire {
+                            self.shared_surfaces.remove(&token);
+                            self.retired_shared_surface_tokens.insert(token);
+                        }
                         self.resource_aliases.retain(|_, v| *v != resolved);
                     }
                 } else {
                     destroyed_underlying = self.textures.remove(&resolved).is_some();
-                    self.shared_surfaces.retain(|_, v| *v != resolved);
+                    let to_retire: Vec<u64> = self
+                        .shared_surfaces
+                        .iter()
+                        .filter_map(|(k, v)| (*v == resolved).then_some(*k))
+                        .collect();
+                    for token in to_retire {
+                        self.shared_surfaces.remove(&token);
+                        self.retired_shared_surface_tokens.insert(token);
+                    }
                     self.resource_aliases.retain(|_, v| *v != resolved);
                 }
                 self.state.render_targets.iter_mut().for_each(|rt| {
@@ -3409,6 +3427,10 @@ impl AeroGpuSoftwareExecutor {
                     Self::record_error(regs);
                     return true;
                 }
+                if self.retired_shared_surface_tokens.contains(&token) {
+                    Self::record_error(regs);
+                    return true;
+                }
                 let underlying = self.resolve_handle(handle);
                 if !self.texture_refcounts.contains_key(&underlying) {
                     Self::record_error(regs);
@@ -3484,6 +3506,7 @@ impl AeroGpuSoftwareExecutor {
                 let token = u64::from_le(packet_cmd.share_token);
                 if token != 0 {
                     self.shared_surfaces.remove(&token);
+                    self.retired_shared_surface_tokens.insert(token);
                 }
             }
             cmd::AerogpuCmdOpcode::Present
