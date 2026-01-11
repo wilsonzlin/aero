@@ -70,6 +70,39 @@ if ! grep -q "repo-root dev harness" vite.harness.config.ts; then
   die "vite.harness.config.ts should include the phrase 'repo-root dev harness' to make its role unambiguous"
 fi
 
+# Legacy Windows driver layout guardrails.
+#
+# The repo used to have a standalone GitHub Actions workflow for building a legacy Windows
+# driver stack. It was removed in favor of the consolidated Win7 pipeline:
+#   .github/workflows/drivers-win7.yml + ci/*.ps1 + drivers/*
+legacy_windows_driver_workflow=".github/workflows/windows-""drivers.yml"
+if [[ -f "$legacy_windows_driver_workflow" ]]; then
+  die "legacy Windows driver workflow must not exist (use '.github/workflows/drivers-win7.yml')"
+fi
+legacy_guest_windows_dir="guest/""windows"
+if [[ -d "$legacy_guest_windows_dir" ]]; then
+  # The legacy driver directory is kept as a tombstone for old links. It must remain a stub
+  # (no buildable driver projects or INFs).
+  allowed_guest_windows_files=(
+    "guest/""windows/README.md"
+    "guest/""windows/docs/driver_install.md"
+  )
+
+  mapfile -t guest_windows_files < <(git ls-files "$legacy_guest_windows_dir/**" || true)
+  for f in "${guest_windows_files[@]}"; do
+    allowed=0
+    for allow in "${allowed_guest_windows_files[@]}"; do
+      if [[ "$f" == "$allow" ]]; then
+        allowed=1
+        break
+      fi
+    done
+    if [[ "$allowed" -ne 1 ]]; then
+      die "unexpected file under ${legacy_guest_windows_dir}/ (tombstone should only contain README stub + driver_install stub): $f"
+    fi
+  done
+fi
+
 # Fail if someone reintroduces an ambiguous Vite config file name at the repo root
 # (it would be auto-picked up by `vite` and confuse dev/CI tooling).
 if [[ -f "vite.config.ts" || -f "vite.config.js" || -f "vite.config.mjs" || -f "vite.config.cjs" ]]; then
