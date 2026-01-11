@@ -2,6 +2,7 @@
 /// <reference types="@webgpu/types" />
 /// <reference types="wicg-file-system-access" />
 /// <reference types="w3c-web-hid" />
+/// <reference types="w3c-web-usb" />
 
 export {};
 
