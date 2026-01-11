@@ -221,10 +221,10 @@ Payload includes:
 
 #### Shared surface export/import
 
-Add commands:
+Add commands (see `drivers/aerogpu/protocol/aerogpu_cmd.h`):
 
-- `EXPORT_SHARED_SURFACE { resource_id, share_token }`
-- `IMPORT_SHARED_SURFACE { share_token } -> resource_id`
+- `AEROGPU_CMD_EXPORT_SHARED_SURFACE { resource_handle, share_token }`
+- `AEROGPU_CMD_IMPORT_SHARED_SURFACE { out_resource_handle, share_token }`
 
 If the host is the sole renderer (WebGPU), “export” typically means “make this resource reachable by a token”; “import” returns an alias/resource view.
 

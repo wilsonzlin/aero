@@ -19,7 +19,7 @@ Cross-process shared resources are expressed explicitly in the command stream:
 - `AEROGPU_CMD_EXPORT_SHARED_SURFACE` associates an existing `resource_handle` with a stable 64-bit `share_token`.
 - `AEROGPU_CMD_IMPORT_SHARED_SURFACE` creates a new `resource_handle` aliasing the exported resource by `share_token`.
 
-`share_token` must be stable across guest processes (in the current model it is derived from the underlying allocation’s stable `alloc_id`, i.e. it is **not** a process-local `HANDLE` value).
+`share_token` must be stable across guest processes. It is typically derived from a stable allocation identity such as `alloc_id` (or otherwise assigned by the driver stack), and it is **not** a process-local `HANDLE` value.
 
 ## Build
 

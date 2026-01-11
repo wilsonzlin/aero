@@ -105,7 +105,8 @@ Each submission may provide an optional **sideband allocation table**:
 
 - The submit descriptor points to `alloc_table_gpa/alloc_table_size_bytes`.
 - The table contains an `aerogpu_alloc_table_header` followed by `aerogpu_alloc_entry` items.
-- Commands may refer to backing memory by `alloc_id` (e.g., for resource creation).
+- Command packets identify protocol objects via `aerogpu_handle_t` (`resource_handle`, `buffer_handle`, `texture_handle`, etc).
+- When a resource uses guest memory as its backing store, packets may refer to backing memory by `backing_alloc_id` (an `alloc_id` from this table).
 
 This enables compact command streams that use small IDs instead of repeating GPAs.
 

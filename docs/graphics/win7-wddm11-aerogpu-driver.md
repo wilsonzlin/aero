@@ -122,7 +122,7 @@ Microsoft D3D9 runtime (user-mode)
   │  D3DDDI calls
   ▼
 AeroGPU D3D9 UMD (aerogpu_d3d9*.dll)
-  │  builds AeroGPU command stream + allocation list
+  │  builds AeroGPU command stream (+ optional alloc table)
   │  uses D3DKMT thunk (user→kernel)
   ▼
 dxgkrnl.sys / dxgmms1.sys (VidMM + scheduler)
@@ -149,10 +149,10 @@ Traditional GPU drivers emit a hardware ISA-like DMA stream and rely on complex:
 - patch location lists (relocations)
  
 For AeroGPU we control both sides (guest driver + emulator). The MVP should:
-  
+   
 - Keep the KMD thin (mostly plumbing + bookkeeping)
 - Keep the UMD as the main “translator” from D3D9 state to an emulator-friendly IR
-- Avoid patch lists by using **stable allocation IDs (`alloc_id`)** (see §5)
+- Avoid patch lists by using protocol object handles (`aerogpu_handle_t`) in the command stream, and resolving any guest-memory backing via stable allocation IDs (`alloc_id`) supplied in an `aerogpu_alloc_table` (see §5)
  
 ---
 
@@ -171,7 +171,7 @@ The D3D9Ex UMD is responsible for translating the Microsoft D3D9 runtime’s DDI
 - The UMD maintains:
   - A per-device command buffer builder
   - A small state cache (current shaders, render targets, blend state, etc.)
-  - A resource table mapping runtime handles to `alloc_id`/metadata
+  - A resource table mapping runtime handles to protocol `aerogpu_handle_t` plus optional backing info (`alloc_id`, offset, size/format)
 - On each draw/dispatch boundary, the UMD appends commands to a DMA buffer that is ultimately submitted through dxgkrnl to the KMD.
 - The UMD **must** be able to run under:
   - 32-bit (Windows 7 x86, and WOW64 on x64)
@@ -543,6 +543,8 @@ For each allocation created by the KMD:
 - Track:
   - Guest physical base address + size in bytes (for MVP, allocate physically-contiguous backing so this is a single range)
   - A non-zero stable `alloc_id` assigned by the KMD
+
+`alloc_id` identifies the **memory backing** for resources. Resources themselves are separate objects referenced in the command stream via protocol handles (`aerogpu_handle_t`).
   
 **Emulator access model:**
   
@@ -557,7 +559,8 @@ Traditional WDDM drivers rely on `PATCHLOCATIONLIST` to relocate GPU addresses i
   
 **In the command stream:**
   
-- Resources that are backed by guest memory reference their backing allocation via `alloc_id` (for example the `backing_alloc_id` fields in `drivers/aerogpu/protocol/aerogpu_cmd.h`).
+- Resources are referenced by protocol handle fields like `resource_handle` (`aerogpu_handle_t`).
+- Resources that are backed by guest memory reference their backing allocation via `backing_alloc_id` (an `alloc_id`) in `drivers/aerogpu/protocol/aerogpu_cmd.h`. `backing_alloc_id` is resolved via the per-submission `aerogpu_alloc_table` in `drivers/aerogpu/protocol/aerogpu_ring.h` (`0` means “host allocated”).
 - Offsets are explicit byte offsets from the start of that allocation.
   
 **Per-submit sideband table (built by KMD):**

@@ -103,7 +103,7 @@ This doc focuses on the *API contract* (D3D10/11 DDI) that the Microsoft runtime
 * The KMD is primarily **submission + memory bookkeeping plumbing** (WDDM 1.1):
   * accept DMA buffers / submission packets from the runtime
   * provide a stable fence + interrupt completion path (avoid TDRs)
-  * build a per-submission allocation table keyed by stable `alloc_id` values (see `drivers/aerogpu/protocol/aerogpu_ring.h`) and provide it via the submit descriptor; the emulator resolves guest GPAs via this table (ABI details: `drivers/aerogpu/protocol/README.md`)
+  * build a per-submission allocation table keyed by stable `alloc_id` values (see `drivers/aerogpu/protocol/aerogpu_ring.h`) and provide it via the submit descriptor, so command packets can reference guest-backed memory via `backing_alloc_id` (ABI details: `drivers/aerogpu/protocol/README.md`)
 
 Practical implication for D3D10/11 bring-up: whenever this doc says “flush/submit”, the concrete implementation should enqueue a bounded unit of work to the emulator and ensure the WDDM-visible fence monotonically advances.
 
