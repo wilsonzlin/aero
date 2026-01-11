@@ -61,6 +61,18 @@ function assertValidOpfsFileName(name: string, field: string): void {
   }
 }
 
+const IDB_REMOTE_CHUNK_MIN_BYTES = 512 * 1024;
+const IDB_REMOTE_CHUNK_MAX_BYTES = 8 * 1024 * 1024;
+
+function assertValidIdbRemoteChunkSize(value: number, field: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${field} must be a positive safe integer`);
+  }
+  if (value < IDB_REMOTE_CHUNK_MIN_BYTES || value > IDB_REMOTE_CHUNK_MAX_BYTES) {
+    throw new Error(`${field} must be within ${IDB_REMOTE_CHUNK_MIN_BYTES}..${IDB_REMOTE_CHUNK_MAX_BYTES} bytes`);
+  }
+}
+
 /**
  * @param {number} requestId
  * @param {any} payload
@@ -464,6 +476,10 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       if (overlayBlockSizeBytes % 512 !== 0 || !isPowerOfTwo(overlayBlockSizeBytes)) {
         throw new Error("overlayBlockSizeBytes must be a power of two and a multiple of 512");
       }
+      if (cacheBackend === "idb") {
+        assertValidIdbRemoteChunkSize(chunkSizeBytes, "chunkSizeBytes");
+        assertValidIdbRemoteChunkSize(overlayBlockSizeBytes, "overlayBlockSizeBytes");
+      }
 
       const urls: RemoteDiskUrls = {
         ...((payload.urls || {}) as RemoteDiskUrls),
@@ -582,6 +598,10 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       if (meta.cache.backend === "opfs") {
         assertValidOpfsFileName(meta.cache.fileName, "cacheFileName");
         assertValidOpfsFileName(meta.cache.overlayFileName, "overlayFileName");
+      }
+      if (meta.cache.backend === "idb") {
+        assertValidIdbRemoteChunkSize(meta.cache.chunkSizeBytes, "chunkSizeBytes");
+        assertValidIdbRemoteChunkSize(meta.cache.overlayBlockSizeBytes, "overlayBlockSizeBytes");
       }
 
       await store.putDisk(meta);
