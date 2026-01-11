@@ -203,6 +203,101 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     }
   }
 
+  // --- Device format/type probes: DWM can do these checks during bring-up ---
+  {
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    hr = d3d->CheckDeviceType(D3DADAPTER_DEFAULT,
+                              D3DDEVTYPE_HAL,
+                              D3DFMT_X8R8G8B8,
+                              D3DFMT_X8R8G8B8,
+                              TRUE);
+    LARGE_INTEGER after;
+    QueryPerformanceCounter(&after);
+    const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (call_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "CheckDeviceType appears to block (%.3f ms)", call_ms);
+    }
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CheckDeviceType", hr);
+    }
+  }
+  {
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    hr = d3d->CheckDeviceFormat(D3DADAPTER_DEFAULT,
+                                D3DDEVTYPE_HAL,
+                                D3DFMT_X8R8G8B8,
+                                D3DUSAGE_RENDERTARGET,
+                                D3DRTYPE_SURFACE,
+                                D3DFMT_X8R8G8B8);
+    LARGE_INTEGER after;
+    QueryPerformanceCounter(&after);
+    const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (call_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "CheckDeviceFormat(RT) appears to block (%.3f ms)", call_ms);
+    }
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CheckDeviceFormat(RT)", hr);
+    }
+  }
+  {
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    hr = d3d->CheckDeviceFormat(D3DADAPTER_DEFAULT,
+                                D3DDEVTYPE_HAL,
+                                D3DFMT_X8R8G8B8,
+                                D3DUSAGE_DEPTHSTENCIL,
+                                D3DRTYPE_SURFACE,
+                                D3DFMT_D24S8);
+    LARGE_INTEGER after;
+    QueryPerformanceCounter(&after);
+    const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (call_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "CheckDeviceFormat(DS) appears to block (%.3f ms)", call_ms);
+    }
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CheckDeviceFormat(DS)", hr);
+    }
+  }
+  {
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    hr = d3d->CheckDeviceFormat(D3DADAPTER_DEFAULT,
+                                D3DDEVTYPE_HAL,
+                                D3DFMT_X8R8G8B8,
+                                0,
+                                D3DRTYPE_TEXTURE,
+                                D3DFMT_A8R8G8B8);
+    LARGE_INTEGER after;
+    QueryPerformanceCounter(&after);
+    const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (call_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "CheckDeviceFormat(texture) appears to block (%.3f ms)", call_ms);
+    }
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CheckDeviceFormat(texture)", hr);
+    }
+  }
+  {
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    hr = d3d->CheckDepthStencilMatch(D3DADAPTER_DEFAULT,
+                                     D3DDEVTYPE_HAL,
+                                     D3DFMT_X8R8G8B8,
+                                     D3DFMT_X8R8G8B8,
+                                     D3DFMT_D24S8);
+    LARGE_INTEGER after;
+    QueryPerformanceCounter(&after);
+    const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (call_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "CheckDepthStencilMatch appears to block (%.3f ms)", call_ms);
+    }
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CheckDepthStencilMatch", hr);
+    }
+  }
+
   LUID adapter_luid;
   ZeroMemory(&adapter_luid, sizeof(adapter_luid));
   {

@@ -418,6 +418,9 @@ This test exists specifically to catch “DWM hang” failure modes caused by Ex
 
 - `IDirect3D9Ex::GetAdapterLUID`
 - `IDirect3D9Ex::GetDeviceCaps`
+- `IDirect3D9Ex::CheckDeviceType`
+- `IDirect3D9Ex::CheckDeviceFormat`
+- `IDirect3D9Ex::CheckDepthStencilMatch`
 - `IDirect3D9Ex::GetAdapterDisplayModeEx`
 - `IDirect3DDevice9Ex::CheckDeviceState`
 - `::ResetEx` (non-blocking)
