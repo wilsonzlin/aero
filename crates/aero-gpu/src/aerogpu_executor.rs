@@ -577,6 +577,42 @@ fn fs_main() -> @location(0) vec4<f32> {
         guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> ExecutionReport {
+        // Avoid partially executing streams on wasm when `WRITEBACK_DST` is present. The writeback
+        // requires `wgpu::Buffer::map_async` completion, which is delivered via the JS event loop
+        // and cannot be waited on synchronously.
+        #[cfg(target_arch = "wasm32")]
+        {
+            let stream = match parse_cmd_stream(bytes) {
+                Ok(stream) => stream,
+                Err(err) => {
+                    return ExecutionReport {
+                        packets_processed: 0,
+                        events: vec![ExecutorEvent::Error {
+                            at: 0,
+                            message: map_cmd_stream_parse_error(err).to_string(),
+                        }],
+                    };
+                }
+            };
+            let has_writeback = stream.cmds.iter().any(|cmd| match cmd {
+                AeroGpuCmd::CopyBuffer { flags, .. } | AeroGpuCmd::CopyTexture2d { flags, .. } => {
+                    (flags & cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0
+                }
+                _ => false,
+            });
+            if has_writeback {
+                return ExecutionReport {
+                    packets_processed: 0,
+                    events: vec![ExecutorEvent::Error {
+                        at: 0,
+                        message:
+                            "WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_async)"
+                                .into(),
+                    }],
+                };
+            }
+        }
+
         let mut pending_writebacks = Vec::new();
         match self.execute_cmd_stream_internal(
             bytes,
@@ -785,6 +821,23 @@ fn fs_main() -> @location(0) vec4<f32> {
         guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let stream = parse_cmd_stream(bytes).map_err(map_cmd_stream_parse_error)?;
+            let has_writeback = stream.cmds.iter().any(|cmd| match cmd {
+                AeroGpuCmd::CopyBuffer { flags, .. } | AeroGpuCmd::CopyTexture2d { flags, .. } => {
+                    (flags & cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0
+                }
+                _ => false,
+            });
+            if has_writeback {
+                return Err(ExecutorError::Validation(
+                    "WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_async)"
+                        .into(),
+                ));
+            }
+        }
+
         let mut pending_writebacks = Vec::new();
         self.execute_cmd_stream_internal(bytes, guest_memory, alloc_table, &mut pending_writebacks)
             .map(|_| ())
