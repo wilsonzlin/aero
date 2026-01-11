@@ -411,6 +411,11 @@ struct has_member_SysMemSlicePitch : std::false_type {};
 template <typename T>
 struct has_member_SysMemSlicePitch<T, std::void_t<decltype(std::declval<T>().SysMemSlicePitch)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_hAllocation : std::false_type {};
+template <typename T>
+struct has_member_hAllocation<T, std::void_t<decltype(std::declval<T>().hAllocation)>> : std::true_type {};
+
 static const void* GetAdapterCallbacks(const D3D10DDIARG_OPENADAPTER* open) {
   if (!open) {
     return nullptr;
@@ -1680,6 +1685,18 @@ static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, 
   cmd->size_bytes = upload_size;
 }
 
+static void EmitDirtyRangeLocked(Device* dev, Resource* res, uint64_t offset_bytes, uint64_t size_bytes) {
+  if (!dev || !res || !res->handle || size_bytes == 0) {
+    return;
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  cmd->resource_handle = res->handle;
+  cmd->reserved0 = 0;
+  cmd->offset_bytes = offset_bytes;
+  cmd->size_bytes = size_bytes;
+}
+
 static Device* DeviceFromHandle(D3D11DDI_HDEVICE hDevice);
 static Device* DeviceFromHandle(D3D11DDI_HDEVICECONTEXT hCtx);
 template <typename T>
@@ -2215,9 +2232,12 @@ static D3D11DDI_ADAPTERFUNCS MakeStubAdapterFuncs11() {
   return funcs;
 }
 
-static void UnmapLocked(Device* dev, Resource* res) {
-  if (!dev || !res || !res->mapped) {
-    return;
+static bool UnmapLocked(Device* dev, Resource* res) {
+  if (!dev || !res) {
+    return false;
+  }
+  if (!res->mapped) {
+    return false;
   }
 
   const bool is_write = (res->mapped_map_type != D3D11_MAP_READ);
@@ -2278,8 +2298,12 @@ static void UnmapLocked(Device* dev, Resource* res) {
     }
   }
 
-  if (is_write && !res->storage.empty()) {
-    EmitUploadLocked(dev, res, res->mapped_offset, res->mapped_size);
+  if (is_write && res->mapped_size != 0) {
+    if (res->backing_alloc_id != 0) {
+      EmitDirtyRangeLocked(dev, res, res->mapped_offset, res->mapped_size);
+    } else if (!res->storage.empty()) {
+      EmitUploadLocked(dev, res, res->mapped_offset, res->mapped_size);
+    }
   }
 
   res->mapped = false;
@@ -2291,6 +2315,7 @@ static void UnmapLocked(Device* dev, Resource* res) {
   res->mapped_wddm_allocation = 0;
   res->mapped_wddm_pitch = 0;
   res->mapped_wddm_slice_pitch = 0;
+  return true;
 }
 // -------------------------------------------------------------------------------------------------
 // Adapter DDI
@@ -2830,6 +2855,9 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     res->wddm.km_resource_handle = km_resource;
     res->wddm.km_allocation_handles.clear();
     res->wddm.km_allocation_handles.push_back(km_alloc);
+    if constexpr (has_member_hAllocation<AllocationInfoT>::value) {
+      res->wddm_allocation_handle = static_cast<uint32_t>(alloc_info[0].hAllocation);
+    }
     return S_OK;
   };
 
@@ -6099,20 +6127,31 @@ void AEROGPU_APIENTRY Map11Void(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 }
 
-void AEROGPU_APIENTRY Unmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, UINT) {
+void AEROGPU_APIENTRY Unmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, UINT subresource) {
   AEROGPU_D3D10_11_LOG_CALL();
   auto* dev = DeviceFromContext(hCtx);
-  if (!dev || !hResource.pDrvPrivate) {
+  if (!dev) {
+    return;
+  }
+  if (!hResource.pDrvPrivate) {
+    SetError(dev, E_INVALIDARG);
     return;
   }
 
   auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hResource);
   if (!res) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  if (subresource != 0) {
+    SetError(dev, E_INVALIDARG);
     return;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  UnmapLocked(dev, res);
+  if (!UnmapLocked(dev, res)) {
+    SetError(dev, E_INVALIDARG);
+  }
 }
 
 static HRESULT DynamicBufferMapCore11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -6195,18 +6234,29 @@ void AEROGPU_APIENTRY StagingResourceMap11Void(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 }
 
-void AEROGPU_APIENTRY StagingResourceUnmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, UINT) {
+void AEROGPU_APIENTRY StagingResourceUnmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, UINT subresource) {
   AEROGPU_D3D10_11_LOG_CALL();
   auto* dev = DeviceFromContext(hCtx);
-  if (!dev || !hResource.pDrvPrivate) {
+  if (!dev) {
+    return;
+  }
+  if (!hResource.pDrvPrivate) {
+    SetError(dev, E_INVALIDARG);
     return;
   }
   auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hResource);
   if (!res) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  if (res->usage != kD3D11UsageStaging || subresource != 0) {
+    SetError(dev, E_INVALIDARG);
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  UnmapLocked(dev, res);
+  if (!UnmapLocked(dev, res)) {
+    SetError(dev, E_INVALIDARG);
+  }
 }
 
 HRESULT AEROGPU_APIENTRY DynamicIABufferMapDiscard11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, void** ppData) {
@@ -6234,15 +6284,26 @@ void AEROGPU_APIENTRY DynamicIABufferMapNoOverwrite11Void(D3D11DDI_HDEVICECONTEX
 void AEROGPU_APIENTRY DynamicIABufferUnmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource) {
   AEROGPU_D3D10_11_LOG_CALL();
   auto* dev = DeviceFromContext(hCtx);
-  if (!dev || !hResource.pDrvPrivate) {
+  if (!dev) {
+    return;
+  }
+  if (!hResource.pDrvPrivate) {
+    SetError(dev, E_INVALIDARG);
     return;
   }
   auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hResource);
   if (!res) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  if (res->kind != ResourceKind::Buffer || (res->bind_flags & (kD3D11BindVertexBuffer | kD3D11BindIndexBuffer)) == 0) {
+    SetError(dev, E_INVALIDARG);
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  UnmapLocked(dev, res);
+  if (!UnmapLocked(dev, res)) {
+    SetError(dev, E_INVALIDARG);
+  }
 }
 
 HRESULT AEROGPU_APIENTRY DynamicConstantBufferMapDiscard11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, void** ppData) {
@@ -6257,15 +6318,26 @@ void AEROGPU_APIENTRY DynamicConstantBufferMapDiscard11Void(D3D11DDI_HDEVICECONT
 void AEROGPU_APIENTRY DynamicConstantBufferUnmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource) {
   AEROGPU_D3D10_11_LOG_CALL();
   auto* dev = DeviceFromContext(hCtx);
-  if (!dev || !hResource.pDrvPrivate) {
+  if (!dev) {
+    return;
+  }
+  if (!hResource.pDrvPrivate) {
+    SetError(dev, E_INVALIDARG);
     return;
   }
   auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hResource);
   if (!res) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  if (res->kind != ResourceKind::Buffer || (res->bind_flags & kD3D11BindConstantBuffer) == 0) {
+    SetError(dev, E_INVALIDARG);
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  UnmapLocked(dev, res);
+  if (!UnmapLocked(dev, res)) {
+    SetError(dev, E_INVALIDARG);
+  }
 }
 
 void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -6299,17 +6371,6 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
   const bool is_guest_backed = (res->backing_alloc_id != 0);
   const D3DDDI_DEVICECALLBACKS* ddi =
       is_guest_backed ? reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks) : nullptr;
-
-  const auto emit_dirty_range = [&](uint64_t offset_bytes, uint64_t size_bytes) {
-    if (!size_bytes) {
-      return;
-    }
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-    cmd->resource_handle = res->handle;
-    cmd->reserved0 = 0;
-    cmd->offset_bytes = offset_bytes;
-    cmd->size_bytes = size_bytes;
-  };
 
   const auto lock_for_write = [&](D3DDDICB_LOCK* lock_args) -> HRESULT {
     if (!lock_args || !ddi || !ddi->pfnLockCb || !dev->runtime_device) {
@@ -6415,7 +6476,7 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       return;
     }
 
-    emit_dirty_range(dst_off, bytes);
+    EmitDirtyRangeLocked(dev, res, dst_off, bytes);
     return;
   }
 
@@ -6549,7 +6610,10 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       return;
     }
 
-    emit_dirty_range(0, static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height));
+    EmitDirtyRangeLocked(dev,
+                         res,
+                         0,
+                         static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height));
     return;
   }
 
