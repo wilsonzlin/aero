@@ -142,18 +142,18 @@ pub fn exec<B: CpuBus>(
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Xadd => {
-            if instr.has_lock_prefix() && instr.op_kind(0) == OpKind::Register {
+            if instr.has_lock_prefix() && instr.op_kind(0) != OpKind::Memory {
                 return Err(Exception::InvalidOpcode);
             }
             let bits = op_bits(state, instr, 0)?;
             let src = read_op_sized(state, bus, instr, 1, bits, next_ip)?;
-            let (dst, flags) = if instr.has_lock_prefix() && instr.op_kind(0) == OpKind::Memory {
+            let (dst, flags) = if instr.has_lock_prefix() {
                 let addr = calc_ea(state, instr, next_ip, true)?;
                 let dst = super::atomic_rmw_sized(bus, addr, bits, |old| {
                     let new = old.wrapping_add(src) & mask_bits(bits);
                     (new, old)
                 })?;
-                let (_, flags) = super::ops_alu::add_with_flags(state, dst, src, 0, bits);
+                let (_res, flags) = super::ops_alu::add_with_flags(state, dst, src, 0, bits);
                 (dst, flags)
             } else {
                 let dst = read_op_sized(state, bus, instr, 0, bits, next_ip)?;

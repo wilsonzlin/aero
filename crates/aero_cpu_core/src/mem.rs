@@ -2,6 +2,7 @@ use core::ops::Range;
 
 use crate::exception::Exception;
 
+/// Scalar value types supported by [`CpuBus::atomic_rmw`].
 pub trait CpuBusValue: Copy + PartialEq {
     fn read_from(bus: &mut impl CpuBus, vaddr: u64) -> Result<Self, Exception>;
     fn write_to(bus: &mut impl CpuBus, vaddr: u64, val: Self) -> Result<(), Exception>;

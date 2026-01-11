@@ -2,6 +2,7 @@ pub mod exec;
 
 mod ops_atomic;
 mod ops_alu;
+mod ops_atomics;
 mod ops_cf;
 mod ops_data;
 mod ops_fx;
@@ -55,6 +56,9 @@ fn exec_decoded<B: CpuBus>(
     addr_size_override: bool,
 ) -> Result<ExecOutcome, Exception> {
     let mnem = decoded.instr.mnemonic();
+    if ops_atomics::handles_mnemonic(mnem) {
+        return ops_atomics::exec(state, bus, decoded, next_ip);
+    }
     if ops_cf::handles_mnemonic(mnem) {
         return ops_cf::exec(state, bus, decoded, next_ip);
     }
