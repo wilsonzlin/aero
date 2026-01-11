@@ -89,9 +89,9 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
 
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExDwmDdiSanity",
                                               L"AeroGPU D3D9Ex DWM DDI Sanity",
-                                               kWidth,
-                                               kHeight,
-                                               !hidden);
+                                              kWidth,
+                                              kHeight,
+                                              !hidden);
   if (!hwnd) {
     return reporter.Fail("CreateBasicWindow failed");
   }
@@ -134,17 +134,17 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
   ZeroMemory(&ident, sizeof(ident));
   hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
   if (SUCCEEDED(hr)) {
+    reporter.SetAdapterInfoA(ident.Description, (uint32_t)ident.VendorId, (uint32_t)ident.DeviceId);
     aerogpu_test::PrintfStdout("INFO: %s: adapter: %s (VID=0x%04X DID=0x%04X)",
                                kTestName,
                                ident.Description,
                                (unsigned)ident.VendorId,
                                (unsigned)ident.DeviceId);
-    reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
     if (!allow_microsoft && ident.VendorId == 0x1414) {
-      return reporter.Fail(
-          "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
-          (unsigned)ident.VendorId,
-          (unsigned)ident.DeviceId);
+      return reporter.Fail("refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
+                           "Install AeroGPU driver or pass --allow-microsoft.",
+                           (unsigned)ident.VendorId,
+                           (unsigned)ident.DeviceId);
     }
     if (has_require_vid && ident.VendorId != require_vid) {
       return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
@@ -159,9 +159,9 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
         !(ident.VendorId == 0x1414 && allow_microsoft) &&
         !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
-      return reporter.Fail(
-          "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu or use --require-vid/--require-did)",
-          ident.Description);
+      return reporter.Fail("adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
+                           "or use --require-vid/--require-did)",
+                           ident.Description);
     }
   } else if (has_require_vid || has_require_did) {
     return reporter.FailHresult("GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
@@ -213,10 +213,10 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "CheckDeviceType appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("CheckDeviceType appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CheckDeviceType", hr);
+      return reporter.FailHresult("IDirect3D9Ex::CheckDeviceType", hr);
     }
   }
   {
@@ -232,10 +232,10 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "CheckDeviceFormat(RT) appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("CheckDeviceFormat(RT) appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CheckDeviceFormat(RT)", hr);
+      return reporter.FailHresult("IDirect3D9Ex::CheckDeviceFormat(RT)", hr);
     }
   }
   {
@@ -251,10 +251,10 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "CheckDeviceFormat(DS) appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("CheckDeviceFormat(DS) appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CheckDeviceFormat(DS)", hr);
+      return reporter.FailHresult("IDirect3D9Ex::CheckDeviceFormat(DS)", hr);
     }
   }
   {
@@ -270,10 +270,10 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "CheckDeviceFormat(texture) appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("CheckDeviceFormat(texture) appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CheckDeviceFormat(texture)", hr);
+      return reporter.FailHresult("IDirect3D9Ex::CheckDeviceFormat(texture)", hr);
     }
   }
   {
@@ -288,10 +288,10 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "CheckDepthStencilMatch appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("CheckDepthStencilMatch appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CheckDepthStencilMatch", hr);
+      return reporter.FailHresult("IDirect3D9Ex::CheckDepthStencilMatch", hr);
     }
   }
 
@@ -335,8 +335,8 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
   }
   if (adapter_mode.Width == 0 || adapter_mode.Height == 0) {
     return reporter.Fail("GetAdapterDisplayModeEx returned %ux%u (expected nonzero mode)",
-                              (unsigned)adapter_mode.Width,
-                              (unsigned)adapter_mode.Height);
+                          (unsigned)adapter_mode.Width,
+                          (unsigned)adapter_mode.Height);
   }
 
   // --- CheckDeviceState: must be fast and non-fatal (S_OK / S_PRESENT_OCCLUDED) ---
@@ -457,8 +457,8 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
 
     if (st.PresentCount < last_present_count) {
       return reporter.Fail("present stats invalid: PresentCount=%u LastPresentCount=%u",
-                                (unsigned)st.PresentCount,
-                                (unsigned)last_present_count);
+                            (unsigned)st.PresentCount,
+                            (unsigned)last_present_count);
     }
   }
 
@@ -618,7 +618,7 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     }
     if (got < -7 || got > 7) {
       return reporter.Fail("GetGPUThreadPriority returned %d (expected clamped to [-7, 7])",
-                                got);
+                            got);
     }
   }
 

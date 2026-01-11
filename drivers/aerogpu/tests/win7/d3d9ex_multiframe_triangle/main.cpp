@@ -25,8 +25,8 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
   const char* kTestName = "d3d9ex_multiframe_triangle";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--hidden] [--frames=N] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
-        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
+        "Usage: %s.exe [--dump] [--hidden] [--frames=N] [--json[=PATH]] [--require-vid=0x####] "
+        "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
@@ -71,9 +71,9 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
 
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExMultiframeTriangle",
                                               L"AeroGPU D3D9Ex Multiframe Triangle",
-                                               kWidth,
-                                               kHeight,
-                                               !hidden);
+                                              kWidth,
+                                              kHeight,
+                                              !hidden);
   if (!hwnd) {
     return reporter.Fail("CreateBasicWindow failed");
   }
@@ -111,8 +111,8 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
                              hwnd,
                              create_flags,
                              &pp,
-                              NULL,
-                              dev.put());
+                             NULL,
+                             dev.put());
   }
   if (FAILED(hr)) {
     return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
@@ -122,17 +122,17 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
   ZeroMemory(&ident, sizeof(ident));
   hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
   if (SUCCEEDED(hr)) {
+    reporter.SetAdapterInfoA(ident.Description, (uint32_t)ident.VendorId, (uint32_t)ident.DeviceId);
     aerogpu_test::PrintfStdout("INFO: %s: adapter: %s (VID=0x%04X DID=0x%04X)",
                                kTestName,
                                ident.Description,
                                (unsigned)ident.VendorId,
                                (unsigned)ident.DeviceId);
-    reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
     if (!allow_microsoft && ident.VendorId == 0x1414) {
-      return reporter.Fail(
-          "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
-          (unsigned)ident.VendorId,
-          (unsigned)ident.DeviceId);
+      return reporter.Fail("refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
+                           "Install AeroGPU driver or pass --allow-microsoft.",
+                           (unsigned)ident.VendorId,
+                           (unsigned)ident.DeviceId);
     }
     if (has_require_vid && ident.VendorId != require_vid) {
       return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
@@ -147,9 +147,9 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
     if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
         !(ident.VendorId == 0x1414 && allow_microsoft) &&
         !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
-      return reporter.Fail(
-          "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu or use --require-vid/--require-did)",
-          ident.Description);
+      return reporter.Fail("adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
+                           "or use --require-vid/--require-did)",
+                           ident.Description);
     }
   } else if (has_require_vid || has_require_did) {
     return reporter.FailHresult("GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
@@ -181,8 +181,8 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
                                D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY,
                                D3DFVF_XYZRHW | D3DFVF_DIFFUSE,
                                D3DPOOL_DEFAULT,
-                                vb.put(),
-                                NULL);
+                               vb.put(),
+                               NULL);
   if (FAILED(hr)) {
     return reporter.FailHresult("CreateVertexBuffer", hr);
   }
@@ -211,8 +211,8 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
                                         desc.Height,
                                         desc.Format,
                                         D3DPOOL_SYSTEMMEM,
-                                         sysmem.put(),
-                                         NULL);
+                                        sysmem.put(),
+                                        NULL);
   if (FAILED(hr)) {
     return reporter.FailHresult("CreateOffscreenPlainSurface", hr);
   }
@@ -262,11 +262,11 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
       return reporter.FailHresult("IDirect3DDevice9Ex::BeginScene", hr);
     }
 
-      hr = dev->DrawPrimitive(D3DPT_TRIANGLELIST, 0, 1);
-      if (FAILED(hr)) {
-        dev->EndScene();
-        return reporter.FailHresult("IDirect3DDevice9Ex::DrawPrimitive", hr);
-      }
+    hr = dev->DrawPrimitive(D3DPT_TRIANGLELIST, 0, 1);
+    if (FAILED(hr)) {
+      dev->EndScene();
+      return reporter.FailHresult("IDirect3DDevice9Ex::DrawPrimitive", hr);
+    }
 
     hr = dev->EndScene();
     if (FAILED(hr)) {
