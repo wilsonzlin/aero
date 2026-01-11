@@ -9,6 +9,17 @@
 
 #define AEROGPU_VBLANK_PERIOD_NS_DEFAULT 16666667u
 
+/*
+ * Win7 WDDM 1.1 vertical blank notifications are delivered via a DXGK interrupt
+ * type that predates later WDK naming. Some WDKs renamed the enum constant, but
+ * the numeric value is stable and immediately precedes DMA_COMPLETED.
+ *
+ * Derive the value from DXGK_INTERRUPT_TYPE_DMA_COMPLETED so the driver builds
+ * cleanly across WDK versions while still reporting the correct interrupt type
+ * to dxgkrnl for D3DKMTWaitForVerticalBlankEvent.
+ */
+#define AEROGPU_DXGK_INTERRUPT_TYPE_VSYNC ((DXGK_INTERRUPT_TYPE)(DXGK_INTERRUPT_TYPE_DMA_COMPLETED - 1))
+
 /* Internal-only bits stored in AEROGPU_ALLOCATION::Flags (not exposed to UMD). */
 #define AEROGPU_KMD_ALLOC_FLAG_OPENED 0x80000000u
 
@@ -2287,7 +2298,6 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
     if (!adapter || !adapter->Bar0) {
         return FALSE;
     }
-
     BOOLEAN any = FALSE;
     BOOLEAN queueDpc = FALSE;
 
@@ -2302,10 +2312,13 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, handled);
 
         if ((handled & AEROGPU_IRQ_ERROR) != 0) {
-            DbgPrintEx(DPFLTR_IHVVIDEO_ID,
-                       DPFLTR_ERROR_LEVEL,
-                       "aerogpu-kmd: device IRQ error (IRQ_STATUS=0x%08lx)\n",
-                       status);
+            static LONG g_IrqErrorLogged = 0;
+            if (InterlockedExchange(&g_IrqErrorLogged, 1) == 0) {
+                DbgPrintEx(DPFLTR_IHVVIDEO_ID,
+                           DPFLTR_ERROR_LEVEL,
+                           "aerogpu-kmd: device IRQ error (IRQ_STATUS=0x%08lx)\n",
+                           status);
+            }
             any = TRUE;
             queueDpc = TRUE;
         }
@@ -2343,28 +2356,28 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
             }
         }
 
-         if ((handled & AEROGPU_IRQ_SCANOUT_VBLANK) != 0) {
-             /*
-              * Keep a guest-time anchor of the most recent vblank so GetScanLine callers don't
-              * need to poll the vblank sequence counter at high frequency.
-              */
-             const ULONGLONG now100ns = KeQueryInterruptTime();
-             const ULONGLONG seq = AeroGpuReadRegU64HiLoHi(adapter,
-                                                          AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
-                                                          AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
+        if ((handled & AEROGPU_IRQ_SCANOUT_VBLANK) != 0) {
+            /*
+             * Keep a guest-time anchor of the most recent vblank so GetScanLine callers don't
+             * need to poll the vblank sequence counter at high frequency.
+             */
+            const ULONGLONG now100ns = KeQueryInterruptTime();
+            const ULONGLONG seq = AeroGpuReadRegU64HiLoHi(adapter,
+                                                         AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
+                                                         AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
             const ULONGLONG timeNs = AeroGpuReadRegU64HiLoHi(adapter,
-                                                             AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
-                                                             AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
-             const ULONG periodNs = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
-             if (periodNs != 0) {
-                 adapter->VblankPeriodNs = periodNs;
-             }
-             AeroGpuAtomicWriteU64(&adapter->LastVblankSeq, seq);
+                                                            AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
+                                                            AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
+            const ULONG periodNs = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
+            if (periodNs != 0) {
+                adapter->VblankPeriodNs = periodNs;
+            }
+            AeroGpuAtomicWriteU64(&adapter->LastVblankSeq, seq);
             AeroGpuAtomicWriteU64(&adapter->LastVblankTimeNs, timeNs);
-             AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, now100ns);
- 
-             any = TRUE;
-             queueDpc = TRUE;
+            AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, now100ns);
+
+            any = TRUE;
+            queueDpc = TRUE;
 
             if (adapter->DxgkInterface.DxgkCbNotifyInterrupt && adapter->VblankInterruptTypeValid) {
                 DXGKARGCB_NOTIFY_INTERRUPT notify;
@@ -2442,8 +2455,12 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
                                                     _In_ BOOLEAN EnableInterrupt)
 {
     AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
-    if (!adapter || !adapter->Bar0) {
+    if (!adapter) {
         return STATUS_INVALID_PARAMETER;
+    }
+    if (!adapter->Bar0) {
+        /* Be tolerant of dxgkrnl calling ControlInterrupt during teardown. */
+        return STATUS_SUCCESS;
     }
 
     /*
@@ -2476,10 +2493,12 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
     }
 
     /*
-     * Treat all other interrupt types as "vblank/vsync". On Win7, dxgkrnl uses
-     * this mechanism to enable/disable vblank delivery for
+     * On Win7, dxgkrnl uses this mechanism to enable/disable vblank delivery for
      * D3DKMTWaitForVerticalBlankEvent and DWM pacing.
      */
+    if (InterruptType != AEROGPU_DXGK_INTERRUPT_TYPE_VSYNC) {
+        return STATUS_SUCCESS;
+    }
     if (!adapter->SupportsVblank) {
         return STATUS_NOT_SUPPORTED;
     }
@@ -3391,8 +3410,8 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
     init.DxgkDdiSubmitCommand = AeroGpuDdiSubmitCommand;
 
     init.DxgkDdiInterruptRoutine = AeroGpuDdiInterruptRoutine;
-    init.DxgkDdiDpcRoutine = AeroGpuDdiDpcRoutine;
     init.DxgkDdiControlInterrupt = AeroGpuDdiControlInterrupt;
+    init.DxgkDdiDpcRoutine = AeroGpuDdiDpcRoutine;
     init.DxgkDdiGetScanLine = AeroGpuDdiGetScanLine;
     init.DxgkDdiResetFromTimeout = AeroGpuDdiResetFromTimeout;
     init.DxgkDdiRestartFromTimeout = AeroGpuDdiRestartFromTimeout;
