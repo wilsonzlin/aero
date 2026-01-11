@@ -12,6 +12,35 @@ function Resolve-RepoRoot {
   return (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 }
 
+function Assert-SafeOutRoot {
+  param(
+    [Parameter(Mandatory = $true)][string]$RepoRoot,
+    [Parameter(Mandatory = $true)][string]$OutRoot
+  )
+
+  $repoFull = [System.IO.Path]::GetFullPath($RepoRoot)
+  $outFull = [System.IO.Path]::GetFullPath($OutRoot)
+  $driveRoot = [System.IO.Path]::GetPathRoot($outFull)
+
+  if ($outFull -eq $repoFull) {
+    throw "Refusing to use -OutRoot at the repo root (would delete the working tree): $outFull"
+  }
+  if ($outFull -eq $driveRoot) {
+    throw "Refusing to use -OutRoot at the drive root: $outFull"
+  }
+
+  $repoOut = [System.IO.Path]::GetFullPath((Join-Path $repoFull "out"))
+  if ($outFull.StartsWith($repoOut, [System.StringComparison]::OrdinalIgnoreCase)) {
+    return
+  }
+
+  if ($outFull -match '(?i)virtio-win-packaging-smoke') {
+    return
+  }
+
+  throw "Refusing to use -OutRoot outside '$repoOut' unless the path contains 'virtio-win-packaging-smoke': $outFull"
+}
+
 function Ensure-EmptyDirectory {
   param([Parameter(Mandatory = $true)][string]$Path)
   if (Test-Path -LiteralPath $Path) {
@@ -110,6 +139,7 @@ if (-not [System.IO.Path]::IsPathRooted($OutRoot)) {
 }
 $OutRoot = [System.IO.Path]::GetFullPath($OutRoot)
 
+Assert-SafeOutRoot -RepoRoot $repoRoot -OutRoot $OutRoot
 Ensure-EmptyDirectory -Path $OutRoot
 
 $logsDir = Join-Path $OutRoot "logs"
