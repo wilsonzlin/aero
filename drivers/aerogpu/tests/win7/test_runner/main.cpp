@@ -576,6 +576,7 @@ int main(int argc, char** argv) {
        "d3d10_1_map_do_not_wait",
        "d3d10_caps_smoke",
        "d3d11_triangle",
+       "d3d11_map_do_not_wait",
        "d3d11_texture",
        "d3d11_caps_smoke",
        "d3d11_rs_om_state_sanity",
