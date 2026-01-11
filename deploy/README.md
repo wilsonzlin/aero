@@ -466,7 +466,7 @@ handshakes include cookies automatically for same-origin connections.
 For non-browser clients or internal bridges, use token-based auth (`AERO_L2_AUTH_MODE=api_key|jwt`)
 and provide the credential via:
 
-- `?token=<value>` query param, or
+- `?token=<value>` query param (or `?apiKey=<value>` for API-key auth), or
 - an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside `aero-l2-tunnel-v1`)
 
 For mixed deployments (browser cookies + internal JWTs), use `AERO_L2_AUTH_MODE=cookie_or_jwt`.
@@ -525,7 +525,7 @@ websocat --insecure --protocol aero-l2-tunnel-v1 \
 # Token/JWT auth:
 # websocat --insecure --protocol aero-l2-tunnel-v1 \
 #   -H "Origin: https://localhost" \
-#   wss://localhost/l2?token=<AERO_L2_TOKEN>
+#   wss://localhost/l2?token=<credential>
 ```
 
 ### Production note: egress policy
