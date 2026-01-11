@@ -34,8 +34,8 @@ It creates:
 * a D3D11 device by default (`--api=d3d11`)
   * or a D3D10 device (`--api=d3d10`)
   * or a D3D10.1 device (`--api=d3d10_1`)
-* a **windowed** `DXGI_SWAP_CHAIN_DESC` swapchain with **2 buffers**
-* RTVs for both buffers
+* a **windowed** `DXGI_SWAP_CHAIN_DESC` swapchain (defaults to **2 buffers**; configurable via `--buffers` / `--swap-effect` / etc)
+* RTVs for each buffer
 * a few `Present(1,0)` frames (vsync)
 
 Build on Win7 (VS2010 toolchain):
@@ -58,7 +58,7 @@ The probe defaults to a 256x256 swapchain with 2 buffers (`DXGI_SWAP_EFFECT_DISC
 * `--height=N`
 * `--buffers=1|2`
 * `--swap-effect=discard|sequential`
-* `--format=b8g8r8a8_unorm|r8g8b8a8_unorm|87`
+* `--format=b8g8r8a8_unorm|b8g8r8x8_unorm|r8g8b8a8_unorm|87`
 * `--buffer-usage=0x########`
 * `--swapchain-flags=0x########`
 

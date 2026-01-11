@@ -360,7 +360,7 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
         "Usage: %s.exe [--api=d3d11|d3d10|d3d10_1] [--width=N] [--height=N] [--buffers=1|2] "
-        "[--swap-effect=discard|sequential] [--format=b8g8r8a8_unorm|r8g8b8a8_unorm|87] "
+        "[--swap-effect=discard|sequential] [--format=b8g8r8a8_unorm|b8g8r8x8_unorm|r8g8b8a8_unorm|87] "
         "[--buffer-usage=0x####] [--swapchain-flags=0x####] [--hidden] [--frames=N] [--json[=PATH]] "
         "[--require-vid=0x####] "
         "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
