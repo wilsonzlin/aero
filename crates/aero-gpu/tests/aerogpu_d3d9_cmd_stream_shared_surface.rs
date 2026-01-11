@@ -71,6 +71,7 @@ const OPC_CLEAR: u32 = AerogpuCmdOpcode::Clear as u32;
 const OPC_PRESENT: u32 = AerogpuCmdOpcode::Present as u32;
 const OPC_EXPORT_SHARED_SURFACE: u32 = AerogpuCmdOpcode::ExportSharedSurface as u32;
 const OPC_IMPORT_SHARED_SURFACE: u32 = AerogpuCmdOpcode::ImportSharedSurface as u32;
+const OPC_RELEASE_SHARED_SURFACE: u32 = AerogpuCmdOpcode::ReleaseSharedSurface as u32;
 
 const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
 
@@ -183,6 +184,147 @@ fn d3d9_cmd_stream_shared_surface_alias_survives_original_destroy() {
 
     let idx = ((2 * width + 2) * 4) as usize;
     assert_eq!(&rgba[idx..idx + 4], &[255, 0, 0, 255]);
+}
+
+#[test]
+fn d3d9_cmd_stream_release_shared_surface_invalidates_token_but_keeps_existing_alias_alive() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const TEX_ORIGINAL: u32 = 0x10;
+    const TEX_ALIAS_A: u32 = 0x20;
+    const TEX_ALIAS_B: u32 = 0x21;
+
+    const TOKEN: u64 = 0xAABB_CCDD_EEFF_0123;
+
+    let width = 4u32;
+    let height = 4u32;
+
+    // Create + export + import alias, then destroy the original handle. Alias remains alive.
+    let submit1 = build_stream(|out| {
+        emit_create_texture2d_rgba8(out, TEX_ORIGINAL, width, height);
+
+        emit_packet(out, OPC_EXPORT_SHARED_SURFACE, |out| {
+            push_u32(out, TEX_ORIGINAL);
+            push_u32(out, 0); // reserved0
+            push_u64(out, TOKEN);
+        });
+
+        emit_packet(out, OPC_IMPORT_SHARED_SURFACE, |out| {
+            push_u32(out, TEX_ALIAS_A);
+            push_u32(out, 0); // reserved0
+            push_u64(out, TOKEN);
+        });
+
+        // Drop the original handle so only the alias keeps the resource alive.
+        emit_packet(out, OPC_DESTROY_RESOURCE, |out| {
+            push_u32(out, TEX_ORIGINAL);
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_SET_RENDER_TARGETS, |out| {
+            push_u32(out, 1); // color_count
+            push_u32(out, 0); // depth_stencil
+            push_u32(out, TEX_ALIAS_A);
+            for _ in 0..7 {
+                push_u32(out, 0);
+            }
+        });
+
+        // Clear to solid red.
+        emit_packet(out, OPC_CLEAR, |out| {
+            push_u32(out, AEROGPU_CLEAR_COLOR);
+            push_f32(out, 1.0);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+            push_f32(out, 1.0); // depth
+            push_u32(out, 0); // stencil
+        });
+
+        emit_packet(out, OPC_PRESENT, |out| {
+            push_u32(out, 0); // scanout_id
+            push_u32(out, 0); // flags
+        });
+    });
+    exec.execute_cmd_stream(&submit1)
+        .expect("submission 1 should succeed");
+
+    let (_w, _h, rgba) = pollster::block_on(exec.readback_texture_rgba8(TEX_ALIAS_A))
+        .expect("readback should succeed");
+    let idx = ((2 * width + 2) * 4) as usize;
+    assert_eq!(&rgba[idx..idx + 4], &[255, 0, 0, 255]);
+
+    // Explicitly release the token mapping and ensure future imports fail, while the existing alias
+    // continues to function.
+    let submit2 = build_stream(|out| {
+        emit_packet(out, OPC_RELEASE_SHARED_SURFACE, |out| {
+            push_u64(out, TOKEN);
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_IMPORT_SHARED_SURFACE, |out| {
+            push_u32(out, TEX_ALIAS_B);
+            push_u32(out, 0); // reserved0
+            push_u64(out, TOKEN);
+        });
+    });
+    let err = exec
+        .execute_cmd_stream(&submit2)
+        .expect_err("import after RELEASE_SHARED_SURFACE should fail");
+    assert!(matches!(
+        err,
+        AerogpuD3d9Error::UnknownShareToken(t) if t == TOKEN
+    ));
+
+    let submit3 = build_stream(|out| {
+        emit_packet(out, OPC_SET_RENDER_TARGETS, |out| {
+            push_u32(out, 1); // color_count
+            push_u32(out, 0); // depth_stencil
+            push_u32(out, TEX_ALIAS_A);
+            for _ in 0..7 {
+                push_u32(out, 0);
+            }
+        });
+
+        // Clear to solid green.
+        emit_packet(out, OPC_CLEAR, |out| {
+            push_u32(out, AEROGPU_CLEAR_COLOR);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+            push_f32(out, 1.0); // depth
+            push_u32(out, 0); // stencil
+        });
+
+        emit_packet(out, OPC_PRESENT, |out| {
+            push_u32(out, 0); // scanout_id
+            push_u32(out, 0); // flags
+        });
+    });
+    exec.execute_cmd_stream(&submit3)
+        .expect("submission 3 should succeed");
+
+    let (_w, _h, rgba) = pollster::block_on(exec.readback_texture_rgba8(TEX_ALIAS_A))
+        .expect("readback should succeed");
+    let idx = ((2 * width + 2) * 4) as usize;
+    assert_eq!(&rgba[idx..idx + 4], &[0, 255, 0, 255]);
+
+    let teardown = build_stream(|out| {
+        emit_packet(out, OPC_DESTROY_RESOURCE, |out| {
+            push_u32(out, TEX_ALIAS_A);
+            push_u32(out, 0); // reserved0
+        });
+    });
+    exec.execute_cmd_stream(&teardown)
+        .expect("teardown should succeed");
 }
 
 #[test]
