@@ -145,7 +145,16 @@ fn exec_wrmsr<B: LoadableBus>(
     state.write_reg(Register::ECX, msr_index as u64);
     state.write_reg(Register::EAX, value as u32 as u64);
     state.write_reg(Register::EDX, (value >> 32) as u32 as u64);
-    exec_assist(ctx, time, state, bus, CODE_BASE, &[0x0F, 0x30], AssistReason::Msr).unwrap();
+    exec_assist(
+        ctx,
+        time,
+        state,
+        bus,
+        CODE_BASE,
+        &[0x0F, 0x30],
+        AssistReason::Msr,
+    )
+    .unwrap();
 }
 
 fn exec_rdmsr<B: LoadableBus>(
@@ -156,7 +165,15 @@ fn exec_rdmsr<B: LoadableBus>(
     msr_index: u32,
 ) -> Result<u64, Exception> {
     state.write_reg(Register::ECX, msr_index as u64);
-    exec_assist(ctx, time, state, bus, CODE_BASE, &[0x0F, 0x32], AssistReason::Msr)?;
+    exec_assist(
+        ctx,
+        time,
+        state,
+        bus,
+        CODE_BASE,
+        &[0x0F, 0x32],
+        AssistReason::Msr,
+    )?;
     let lo = state.read_reg(Register::EAX) as u32 as u64;
     let hi = state.read_reg(Register::EDX) as u32 as u64;
     Ok((hi << 32) | lo)
@@ -230,8 +247,14 @@ fn msr_roundtrip_supported() {
     assert_eq!(err, Exception::gp0());
 
     // IA32_APIC_BASE reset value has enable + BSP bits set.
-    let apic_base =
-        exec_rdmsr(&mut ctx, &mut time, &mut state, &mut bus, msr::IA32_APIC_BASE).unwrap();
+    let apic_base = exec_rdmsr(
+        &mut ctx,
+        &mut time,
+        &mut state,
+        &mut bus,
+        msr::IA32_APIC_BASE,
+    )
+    .unwrap();
     assert_ne!(apic_base & (1 << 11), 0);
     assert_ne!(apic_base & (1 << 8), 0);
 }

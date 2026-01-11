@@ -261,7 +261,14 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
         let next_ip_raw = ip.wrapping_add(decoded.len as u64);
         let next_ip = next_ip_raw & cpu.state.mode.ip_mask();
 
-        let outcome = match exec_decoded(cfg, &mut cpu.state, bus, &decoded, next_ip, addr_size_override) {
+        let outcome = match exec_decoded(
+            cfg,
+            &mut cpu.state,
+            bus,
+            &decoded,
+            next_ip,
+            addr_size_override,
+        ) {
             Ok(v) => v,
             Err(e) => {
                 if matches!(e, Exception::InvalidOpcode)
@@ -340,8 +347,7 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
                     bus,
                     &decoded,
                     addr_size_override,
-                )
-                {
+                ) {
                     return BatchResult {
                         executed,
                         exit: BatchExit::Exception(e),
