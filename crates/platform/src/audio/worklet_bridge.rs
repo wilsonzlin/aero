@@ -118,8 +118,18 @@ impl InterleavedRingBuffer {
         }
         self.storage.fill(0.0);
 
-        self.read_idx = state.read_pos;
-        self.write_idx = state.write_pos;
+        let mut read = state.read_pos;
+        let write = state.write_pos;
+        let available = frames_available(read, write);
+        if available > self.capacity_frames {
+            // Producer is ahead by more than the ring can hold. Clamp to a consistent "full"
+            // state so reads/writes can make progress immediately (rather than taking billions of
+            // frames to drain due to wrapping arithmetic).
+            read = write.wrapping_sub(self.capacity_frames);
+        }
+
+        self.read_idx = read;
+        self.write_idx = write;
     }
 
     pub fn write_interleaved(&mut self, samples: &[f32]) -> u32 {
@@ -287,6 +297,26 @@ mod tests {
             rb.snapshot_state().capacity_frames,
             MAX_RESTORED_CAPACITY_FRAMES
         );
+    }
+
+    #[test]
+    fn test_snapshot_restore_clamps_indices_when_write_ahead_of_capacity() {
+        let state = AudioWorkletRingState {
+            capacity_frames: 8,
+            read_pos: 0,
+            write_pos: 100,
+        };
+        let mut rb = InterleavedRingBuffer::new(8, 2);
+        rb.restore_state(&state);
+        assert_eq!(rb.buffer_level_frames(), 8);
+
+        // After reading part of the buffer, the level should decrease. Without index clamping,
+        // the ring would appear permanently full because `write_pos - read_pos` would remain
+        // far larger than `capacity_frames`.
+        let mut out = vec![0.0f32; 4 * 2];
+        let read = rb.read_interleaved(&mut out);
+        assert_eq!(read, 4);
+        assert_eq!(rb.buffer_level_frames(), 4);
     }
 }
 
@@ -529,8 +559,15 @@ mod wasm {
             // determinism), not the audio content itself.
             let _ = self.samples.fill(0.0, 0, self.samples.length());
 
-            atomic_store_u32(&self.header, READ_FRAME_INDEX, state.read_pos);
-            atomic_store_u32(&self.header, WRITE_FRAME_INDEX, state.write_pos);
+            let mut read = state.read_pos;
+            let write = state.write_pos;
+            let available = frames_available(read, write);
+            if available > self.capacity_frames {
+                read = write.wrapping_sub(self.capacity_frames);
+            }
+
+            atomic_store_u32(&self.header, READ_FRAME_INDEX, read);
+            atomic_store_u32(&self.header, WRITE_FRAME_INDEX, write);
         }
     }
 }
