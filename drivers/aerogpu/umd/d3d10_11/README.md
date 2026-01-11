@@ -75,7 +75,11 @@ DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The pr
 
 The allocation private data blob is treated as **UMD → KMD input**: the UMD chooses `alloc_id` / `share_token` at creation time, the KMD validates/consumes it, and dxgkrnl preserves the bytes for shared allocations and returns them verbatim on `OpenResource`/`OpenAllocation` so other processes can observe the same IDs.
 
-For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`). A robust scheme is to allocate a monotonic 64-bit `share_token` from a cross-process counter (for example via named shared memory) and derive `alloc_id` from it (e.g. `alloc_id = share_token & 0x7fffffff`, non-zero).
+For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`, non-zero). When DXGI/D3D10/11 sharing is implemented, follow the D3D9 UMD approach:
+
+- allocate `alloc_id` from a cross-process monotonic counter (see `allocate_share_token()` in `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp`), and
+- generate `share_token` independently as a collision-resistant 64-bit value (crypto RNG preferred; see `ShareTokenAllocator` in `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_shared_resource.h`), and
+- store both in `aerogpu_wddm_alloc_priv` so dxgkrnl can return them verbatim on `OpenResource`/`OpenAllocation`.
 
 `share_token` is **not** the process-local shared `HANDLE` value (do not use the numeric handle as a host mapping key).
 

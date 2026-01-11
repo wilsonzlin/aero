@@ -217,7 +217,11 @@ do not use raw Win32/D3DKMT handle values (which are process-local) as sharing k
 
 For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`).
 
-A robust scheme is to allocate a monotonic 64-bit `share_token` from a cross-process counter (for example via named shared memory) and derive a 31-bit `alloc_id` from it (e.g. `alloc_id = share_token & 0x7fffffff`, non-zero). Both values are then stored in preserved WDDM allocation private driver data so other processes can recover them on `OpenResource`.
+A robust scheme (and the one used by the current in-tree D3D9 UMD) is:
+
+- Allocate `alloc_id` from a cross-process monotonic counter (e.g. a named file mapping/shared memory region updated with `InterlockedIncrement64`) and keep it in the UMD-owned 31-bit range (e.g. `alloc_id = token & 0x7fffffff`, skipping 0).
+- Generate `share_token` **independently** as a collision-resistant 64-bit value (prefer a crypto RNG; fall back to mixed entropy + SplitMix64).
+- Store both values in preserved WDDM allocation private driver data so other processes can recover them verbatim on `OpenResource`/`OpenAllocation`.
 
 **Also:** `alloc_id` itself should avoid collisions across guest processes for
 shared allocations. DWM may open and compose many redirected surfaces from
