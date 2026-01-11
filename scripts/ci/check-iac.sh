@@ -71,7 +71,7 @@ values_files=(
 
 for values in "${values_files[@]}"; do
   echo "==> Helm lint ($values)"
-  helm lint "$CHART" --kube-version "$K8S_VERSION" -f "$CHART/$values"
+  helm lint "$CHART" --strict --kube-version "$K8S_VERSION" -f "$CHART/$values"
 
   echo "==> Helm template + kubeconform ($values)"
   out="/tmp/aero-gateway-${values%.yaml}.yaml"

@@ -75,7 +75,7 @@ for values in \
   values-prod-certmanager.yaml \
   values-prod-certmanager-issuer.yaml \
   values-prod-appheaders.yaml; do
-  helm lint "$CHART" -f "$CHART/$values"
+  helm lint "$CHART" --strict --kube-version 1.28.0 -f "$CHART/$values"
 done
 
 for values in \

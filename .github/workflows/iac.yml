@@ -167,12 +167,12 @@ jobs:
         run: |
           set -euo pipefail
           CHART="deploy/k8s/chart/aero-gateway"
-          helm lint "$CHART" --kube-version "$K8S_VERSION" -f "$CHART/values-dev.yaml"
-          helm lint "$CHART" --kube-version "$K8S_VERSION" -f "$CHART/values-prod.yaml"
-          helm lint "$CHART" --kube-version "$K8S_VERSION" -f "$CHART/values-traefik.yaml"
-          helm lint "$CHART" --kube-version "$K8S_VERSION" -f "$CHART/values-prod-certmanager.yaml"
-          helm lint "$CHART" --kube-version "$K8S_VERSION" -f "$CHART/values-prod-certmanager-issuer.yaml"
-          helm lint "$CHART" --kube-version "$K8S_VERSION" -f "$CHART/values-prod-appheaders.yaml"
+          helm lint "$CHART" --strict --kube-version "$K8S_VERSION" -f "$CHART/values-dev.yaml"
+          helm lint "$CHART" --strict --kube-version "$K8S_VERSION" -f "$CHART/values-prod.yaml"
+          helm lint "$CHART" --strict --kube-version "$K8S_VERSION" -f "$CHART/values-traefik.yaml"
+          helm lint "$CHART" --strict --kube-version "$K8S_VERSION" -f "$CHART/values-prod-certmanager.yaml"
+          helm lint "$CHART" --strict --kube-version "$K8S_VERSION" -f "$CHART/values-prod-certmanager-issuer.yaml"
+          helm lint "$CHART" --strict --kube-version "$K8S_VERSION" -f "$CHART/values-prod-appheaders.yaml"
 
       - name: helm template + kubeconform (example values)
         shell: bash
