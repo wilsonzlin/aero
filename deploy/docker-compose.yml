@@ -113,10 +113,13 @@ services:
 
       # Egress policy (highly recommended to set allowlists for production deployments).
       AERO_L2_ALLOW_PRIVATE_IPS: ${AERO_L2_ALLOW_PRIVATE_IPS:-0}
-      AERO_L2_ALLOWED_TCP_PORTS: ${AERO_L2_ALLOWED_TCP_PORTS:-}
-      AERO_L2_ALLOWED_UDP_PORTS: ${AERO_L2_ALLOWED_UDP_PORTS:-}
-      AERO_L2_ALLOWED_DOMAINS: ${AERO_L2_ALLOWED_DOMAINS:-}
-      AERO_L2_BLOCKED_DOMAINS: ${AERO_L2_BLOCKED_DOMAINS:-}
+      # NOTE: Leave these unset by default; setting them to an empty string means
+      # "deny all" (for port allowlists). Set them explicitly in `deploy/.env` to
+      # opt into a deny-by-default policy.
+      AERO_L2_ALLOWED_TCP_PORTS:
+      AERO_L2_ALLOWED_UDP_PORTS:
+      AERO_L2_ALLOWED_DOMAINS:
+      AERO_L2_BLOCKED_DOMAINS:
     expose:
       - "8090"
 
