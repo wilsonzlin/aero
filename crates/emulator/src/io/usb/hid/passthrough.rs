@@ -64,6 +64,8 @@ pub struct UsbHidPassthrough {
 
     pending_input_reports: VecDeque<Vec<u8>>,
     last_input_reports: HashMap<u8, Vec<u8>>,
+    last_output_reports: HashMap<u8, Vec<u8>>,
+    last_feature_reports: HashMap<u8, Vec<u8>>,
     pending_output_reports: VecDeque<UsbHidPassthroughOutputReport>,
 }
 
@@ -251,6 +253,8 @@ impl UsbHidPassthrough {
             max_pending_output_reports: DEFAULT_MAX_PENDING_OUTPUT_REPORTS,
             pending_input_reports: VecDeque::new(),
             last_input_reports: HashMap::new(),
+            last_output_reports: HashMap::new(),
+            last_feature_reports: HashMap::new(),
             pending_output_reports: VecDeque::new(),
         }
     }
@@ -273,6 +277,21 @@ impl UsbHidPassthrough {
     fn push_output_report(&mut self, report: UsbHidPassthroughOutputReport) {
         if self.pending_output_reports.len() >= self.max_pending_output_reports {
             self.pending_output_reports.pop_front();
+        }
+        match report.report_type {
+            2 => {
+                self.last_output_reports.insert(
+                    report.report_id,
+                    bytes_with_report_id(report.report_id, &report.data),
+                );
+            }
+            3 => {
+                self.last_feature_reports.insert(
+                    report.report_id,
+                    bytes_with_report_id(report.report_id, &report.data),
+                );
+            }
+            _ => {}
         }
         self.pending_output_reports.push_back(report);
     }
@@ -339,6 +358,8 @@ impl UsbDeviceModel for UsbHidPassthrough {
         self.pending_input_reports.clear();
         self.pending_output_reports.clear();
         self.last_input_reports.clear();
+        self.last_output_reports.clear();
+        self.last_feature_reports.clear();
     }
 
     fn handle_control_request(
@@ -434,6 +455,9 @@ impl UsbDeviceModel for UsbHidPassthrough {
                     if self.configuration == 0 {
                         self.pending_input_reports.clear();
                         self.pending_output_reports.clear();
+                        self.last_input_reports.clear();
+                        self.last_output_reports.clear();
+                        self.last_feature_reports.clear();
                     }
                     ControlResponse::Ack
                 }
@@ -572,8 +596,16 @@ impl UsbDeviceModel for UsbHidPassthrough {
                             .get(&report_id)
                             .cloned()
                             .unwrap_or_else(|| self.default_report(report_type, report_id, setup.w_length)),
-                        // Minimal behavior for output/feature: return zeros (with correct length when known).
-                        2 | 3 => self.default_report(report_type, report_id, setup.w_length),
+                        2 => self
+                            .last_output_reports
+                            .get(&report_id)
+                            .cloned()
+                            .unwrap_or_else(|| self.default_report(report_type, report_id, setup.w_length)),
+                        3 => self
+                            .last_feature_reports
+                            .get(&report_id)
+                            .cloned()
+                            .unwrap_or_else(|| self.default_report(report_type, report_id, setup.w_length)),
                         _ => return ControlResponse::Stall,
                     };
                     ControlResponse::Data(clamp_response(data, setup.w_length))
@@ -710,6 +742,16 @@ fn sanitize_max_packet_size(max_packet_size: u16) -> u16 {
         8 | 16 | 32 | 64 => max_packet_size,
         _ => DEFAULT_MAX_PACKET_SIZE,
     }
+}
+
+fn bytes_with_report_id(report_id: u8, payload: &[u8]) -> Vec<u8> {
+    if report_id == 0 {
+        return payload.to_vec();
+    }
+    let mut out = Vec::with_capacity(payload.len() + 1);
+    out.push(report_id);
+    out.extend_from_slice(payload);
+    out
 }
 
 fn build_device_descriptor(
@@ -1235,6 +1277,54 @@ mod tests {
                 data: vec![0x11, 0x22],
             })
         );
+    }
+
+    #[test]
+    fn get_report_output_returns_last_received_report() {
+        let report = sample_report_descriptor_output_with_id();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".to_string(),
+            "Product".to_string(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        // Deliver an Output report via SET_REPORT.
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x21, // HostToDevice | Class | Interface
+                    b_request: HID_REQUEST_SET_REPORT,
+                    w_value: (2u16 << 8) | 2u16, // Output, report ID 2
+                    w_index: 0,
+                    w_length: 3,
+                },
+                Some(&[2, 0x11, 0x22]),
+            ),
+            ControlResponse::Ack
+        );
+
+        // GET_REPORT should include the report ID prefix for non-zero IDs.
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+                b_request: HID_REQUEST_GET_REPORT,
+                w_value: (2u16 << 8) | 2u16, // Output, report ID 2
+                w_index: 0,
+                w_length: 64,
+            },
+            None,
+        );
+        let ControlResponse::Data(data) = resp else {
+            panic!("expected data response, got {resp:?}");
+        };
+        assert_eq!(data, vec![2, 0x11, 0x22]);
     }
 
     #[test]
