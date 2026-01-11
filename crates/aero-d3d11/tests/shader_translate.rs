@@ -1,28 +1,40 @@
 use aero_d3d11::{
-    translate_sm4_module_to_wgsl, BindingKind, DxbcFile, DxbcSignature, DxbcSignatureParameter,
-    FourCC, OperandModifier, RegFile, RegisterRef, SamplerRef, ShaderSignatures, ShaderStage,
-    Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
+    parse_signatures, translate_sm4_module_to_wgsl, BindingKind, DxbcFile, DxbcSignatureParameter,
+    FourCC, OperandModifier, RegFile, RegisterRef, SamplerRef, ShaderStage, Sm4Inst, Sm4Module,
+    SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
 };
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
+const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
+const FOURCC_OSGN: FourCC = FourCC(*b"OSGN");
 
-fn make_dxbc_with_single_chunk(fourcc: FourCC, chunk_data: &[u8]) -> Vec<u8> {
-    let header_size = 4 + 16 + 4 + 4 + 4 + 4; // magic + checksum + one + total + count + offset[0]
-    let chunk_offset = header_size;
-    let total_size = header_size + 8 + chunk_data.len();
+fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
+    let chunk_count = u32::try_from(chunks.len()).expect("too many chunks for test");
+    let header_len = 4 + 16 + 4 + 4 + 4 + (chunks.len() * 4);
 
-    let mut bytes = Vec::with_capacity(total_size);
+    let mut offsets = Vec::with_capacity(chunks.len());
+    let mut cursor = header_len;
+    for (_fourcc, data) in chunks {
+        offsets.push(cursor as u32);
+        cursor += 8 + data.len();
+    }
+    let total_size = cursor as u32;
+
+    let mut bytes = Vec::with_capacity(cursor);
     bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored by our parser)
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // "one"
-    bytes.extend_from_slice(&(total_size as u32).to_le_bytes());
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // chunk count
-    bytes.extend_from_slice(&(chunk_offset as u32).to_le_bytes());
-
-    bytes.extend_from_slice(&fourcc.0);
-    bytes.extend_from_slice(&(chunk_data.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(chunk_data);
-
+    bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored by parser)
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved/unknown
+    bytes.extend_from_slice(&total_size.to_le_bytes());
+    bytes.extend_from_slice(&chunk_count.to_le_bytes());
+    for off in offsets {
+        bytes.extend_from_slice(&off.to_le_bytes());
+    }
+    for (fourcc, data) in chunks {
+        bytes.extend_from_slice(&fourcc.0);
+        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(data);
+    }
+    assert_eq!(bytes.len(), total_size as usize);
     bytes
 }
 
@@ -40,8 +52,39 @@ fn sig_param(name: &str, index: u32, register: u32, mask: u8) -> DxbcSignaturePa
     }
 }
 
-fn sig(params: Vec<DxbcSignatureParameter>) -> DxbcSignature {
-    DxbcSignature { parameters: params }
+fn build_signature_chunk(params: &[DxbcSignatureParameter]) -> Vec<u8> {
+    // Header: param_count + param_offset.
+    let param_count = u32::try_from(params.len()).expect("too many signature params");
+    let header_len = 8usize;
+    let entry_size = 24usize;
+    let table_len = params.len() * entry_size;
+
+    // Strings appended after table.
+    let mut strings = Vec::<u8>::new();
+    let mut name_offsets = Vec::<u32>::with_capacity(params.len());
+    for p in params {
+        name_offsets.push((header_len + table_len + strings.len()) as u32);
+        strings.extend_from_slice(p.semantic_name.as_bytes());
+        strings.push(0);
+    }
+
+    let mut bytes = Vec::with_capacity(header_len + table_len + strings.len());
+    bytes.extend_from_slice(&param_count.to_le_bytes());
+    bytes.extend_from_slice(&(header_len as u32).to_le_bytes());
+
+    for (p, &name_off) in params.iter().zip(name_offsets.iter()) {
+        bytes.extend_from_slice(&name_off.to_le_bytes());
+        bytes.extend_from_slice(&p.semantic_index.to_le_bytes());
+        bytes.extend_from_slice(&p.system_value_type.to_le_bytes());
+        bytes.extend_from_slice(&p.component_type.to_le_bytes());
+        bytes.extend_from_slice(&p.register.to_le_bytes());
+        bytes.push(p.mask);
+        bytes.push(p.read_write_mask);
+        bytes.push(p.stream);
+        bytes.push(p.min_precision);
+    }
+    bytes.extend_from_slice(&strings);
+    bytes
 }
 
 fn dst(file: RegFile, index: u32, mask: WriteMask) -> aero_d3d11::DstOperand {
@@ -82,8 +125,22 @@ fn assert_wgsl_parses(wgsl: &str) {
 
 #[test]
 fn translates_vertex_passthrough_signature_io() {
-    let dxbc_bytes = make_dxbc_with_single_chunk(FOURCC_SHEX, &[]);
+    let isgn_params = vec![
+        sig_param("POSITION", 0, 0, 0b0011),
+        sig_param("COLOR", 0, 1, 0b1111),
+    ];
+    let osgn_params = vec![
+        sig_param("SV_Position", 0, 0, 0b1111),
+        sig_param("COLOR", 0, 1, 0b1111),
+    ];
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&isgn_params)),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
     let module = Sm4Module {
         stage: ShaderStage::Vertex,
@@ -100,18 +157,6 @@ fn translates_vertex_passthrough_signature_io() {
         ],
     };
 
-    let signatures = ShaderSignatures {
-        isgn: Some(sig(vec![
-            sig_param("POSITION", 0, 0, 0b0011),
-            sig_param("TEXCOORD", 0, 1, 0b0011),
-        ])),
-        osgn: Some(sig(vec![
-            sig_param("SV_Position", 0, 0, 0b1111),
-            sig_param("TEXCOORD", 0, 1, 0b0011),
-        ])),
-        psgn: None,
-    };
-
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_parses(&translated.wgsl);
     assert!(translated.wgsl.contains("@vertex"));
@@ -119,7 +164,7 @@ fn translates_vertex_passthrough_signature_io() {
     assert!(translated.wgsl.contains("@location(0) v0: vec2<f32>"));
     assert!(translated.wgsl.contains("@builtin(position) pos: vec4<f32>"));
     assert!(translated.wgsl.contains("out.pos = o0;"));
-    assert!(translated.wgsl.contains("out.o1 = vec2<f32>(o1.x, o1.y);"));
+    assert!(translated.wgsl.contains("out.o1 = o1;"));
 
     // Reflection should preserve the semantic ↔ register mapping.
     assert_eq!(translated.reflection.inputs.len(), 2);
@@ -129,8 +174,18 @@ fn translates_vertex_passthrough_signature_io() {
 
 #[test]
 fn translates_pixel_texture_sample_and_bindings() {
-    let dxbc_bytes = make_dxbc_with_single_chunk(FOURCC_SHEX, &[]);
+    let isgn_params = vec![
+        sig_param("SV_Position", 0, 0, 0b1111),
+        sig_param("TEXCOORD", 0, 1, 0b0011),
+    ];
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&isgn_params)),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
     let module = Sm4Module {
         stage: ShaderStage::Pixel,
@@ -147,15 +202,6 @@ fn translates_pixel_texture_sample_and_bindings() {
             },
             Sm4Inst::Ret,
         ],
-    };
-
-    let signatures = ShaderSignatures {
-        isgn: Some(sig(vec![
-            sig_param("SV_Position", 0, 0, 0b1111),
-            sig_param("TEXCOORD", 0, 1, 0b0011),
-        ])),
-        osgn: Some(sig(vec![sig_param("SV_Target", 0, 0, 0b1111)])),
-        psgn: None,
     };
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
@@ -178,8 +224,14 @@ fn translates_pixel_texture_sample_and_bindings() {
 
 #[test]
 fn translates_cbuffer_and_arithmetic_ops() {
-    let dxbc_bytes = make_dxbc_with_single_chunk(FOURCC_SHEX, &[]);
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
     let module = Sm4Module {
         stage: ShaderStage::Pixel,
@@ -222,12 +274,6 @@ fn translates_cbuffer_and_arithmetic_ops() {
         ],
     };
 
-    let signatures = ShaderSignatures {
-        isgn: Some(sig(vec![])),
-        osgn: Some(sig(vec![sig_param("SV_Target", 0, 0, 0b1111)])),
-        psgn: None,
-    };
-
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_parses(&translated.wgsl);
 
@@ -238,8 +284,18 @@ fn translates_cbuffer_and_arithmetic_ops() {
 
 #[test]
 fn translates_sample_l() {
-    let dxbc_bytes = make_dxbc_with_single_chunk(FOURCC_SHEX, &[]);
+    let isgn_params = vec![
+        sig_param("SV_Position", 0, 0, 0b1111),
+        sig_param("TEXCOORD", 0, 1, 0b0011),
+    ];
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&isgn_params)),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
     let module = Sm4Module {
         stage: ShaderStage::Pixel,
@@ -259,17 +315,7 @@ fn translates_sample_l() {
         ],
     };
 
-    let signatures = ShaderSignatures {
-        isgn: Some(sig(vec![
-            sig_param("SV_Position", 0, 0, 0b1111),
-            sig_param("TEXCOORD", 0, 1, 0b0011),
-        ])),
-        osgn: Some(sig(vec![sig_param("SV_Target", 0, 0, 0b1111)])),
-        psgn: None,
-    };
-
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_parses(&translated.wgsl);
     assert!(translated.wgsl.contains("textureSampleLevel"));
 }
-
