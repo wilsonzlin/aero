@@ -265,6 +265,15 @@ impl UsbPassthroughDevice {
         self.ep_inflight.clear();
     }
 
+    /// Cancel any in-flight control transfer.
+    ///
+    /// This matches USB control-pipe semantics: a new SETUP packet may legally abort a previous
+    /// control transfer. Host integrations should ignore any eventual completion for the canceled
+    /// request.
+    pub fn cancel_control_transfer(&mut self) {
+        self.cancel_inflight_control();
+    }
+
     fn take_result(&mut self, id: u32) -> Option<UsbHostResult> {
         self.completions.remove(&id)
     }
@@ -511,6 +520,14 @@ impl UsbWebUsbPassthroughDevice {
         self.address
     }
 
+    /// Reset the guest-visible device state and the underlying host-action queue.
+    ///
+    /// This is an inherent helper (in addition to the [`UsbDevice`] trait method) so that
+    /// host/wasm glue can reset the passthrough device without needing a `dyn UsbDevice`.
+    pub fn reset(&mut self) {
+        <Self as UsbDevice>::reset(self);
+    }
+
     pub fn pop_action(&mut self) -> Option<UsbHostAction> {
         self.passthrough.pop_action()
     }
@@ -565,6 +582,7 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
     fn handle_setup(&mut self, setup: UsbSetupPacket) {
         // Starting a new SETUP always aborts any in-flight control transfer.
         self.control = None;
+        self.passthrough.cancel_control_transfer();
         // `SET_ADDRESS` only takes effect after the STATUS stage; if the control transfer was
         // aborted by a new SETUP, discard the pending address.
         self.pending_address = None;

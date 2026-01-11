@@ -5,6 +5,7 @@
 
 mod memory;
 pub mod passthrough;
+pub mod passthrough_device;
 pub mod usb;
 
 pub mod hid;
@@ -12,3 +13,4 @@ pub mod uhci;
 pub mod web;
 
 pub use memory::GuestMemory;
+pub use passthrough_device::UsbWebUsbPassthroughDevice;
