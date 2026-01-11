@@ -444,8 +444,13 @@ fn shared_surface_release_invalidates_token_but_existing_alias_still_works() {
 
     let alloc_table_gpa = 0x1000u64;
     let backing_gpa = 0x8000u64;
-    let alloc_table_size_bytes =
-        write_alloc_table(&mut mem, alloc_table_gpa, regs.abi_version, backing_gpa, 0x1000);
+    let alloc_table_size_bytes = write_alloc_table(
+        &mut mem,
+        alloc_table_gpa,
+        regs.abi_version,
+        backing_gpa,
+        0x1000,
+    );
 
     let cmd_gpa = 0x2000u64;
     let (width, height) = (2u32, 2u32);
