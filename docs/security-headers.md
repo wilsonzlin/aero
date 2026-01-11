@@ -143,6 +143,8 @@ CI validates that the following stay in sync with the canonical values:
   - Backend (aero-gateway) middleware:
     - `backend/aero-gateway/src/middleware/crossOriginIsolation.ts`
     - `backend/aero-gateway/src/middleware/securityHeaders.ts`
+  - Legacy backend (`server/`):
+    - `server/src/http.js`
   - `deploy/caddy/Caddyfile`
   - `deploy/nginx/nginx.conf`
 

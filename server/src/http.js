@@ -25,7 +25,7 @@ function setContentSecurityPolicy(res) {
   // CSP controls this via `script-src 'wasm-unsafe-eval'` (preferred over 'unsafe-eval').
   res.setHeader(
     "Content-Security-Policy",
-    "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'; img-src 'self' data: blob:; style-src 'self'; font-src 'self'",
+    "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-gateway.invalid wss://aero-gateway.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'",
   );
 }
 

@@ -61,6 +61,7 @@ Currently validated files:
 - `backend/aero-gateway/src/middleware/crossOriginIsolation.ts`
 - `backend/aero-gateway/src/middleware/securityHeaders.ts`
 - `deploy/k8s/chart/aero-gateway/values.yaml` (Helm chart defaults)
+- `server/src/http.js` (legacy backend)
 - `web/public/_headers`
 - `deploy/cloudflare-pages/_headers`
 - `netlify.toml`

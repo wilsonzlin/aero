@@ -157,6 +157,18 @@ function parseFastifyHeaders(filePath) {
   return [{ matcher: 'fastify', headers }];
 }
 
+function parseNodeSetHeader(filePath) {
+  const headers = {};
+  const content = readText(filePath);
+  const re =
+    /(?:^|\W)(?:res|reply)\.setHeader\(\s*(['"])(.*?)\1\s*,\s*(['"])(.*?)\3\s*,?\s*\)/gs;
+  for (const match of content.matchAll(re)) {
+    const [, , key, , value] = match;
+    headers[key] = value;
+  }
+  return [{ matcher: 'node-http', headers }];
+}
+
 function parseSimpleYamlValues(filePath) {
   const out = {};
   const stack = [];
@@ -315,6 +327,21 @@ const targets = [
     path: 'backend/aero-gateway/src/middleware/securityHeaders.ts',
     expectedKeys: ['X-Content-Type-Options', 'Referrer-Policy', 'Permissions-Policy'],
   },
+  // Legacy backend (`server/`) that can optionally serve the frontend.
+  {
+    type: 'node-http',
+    path: 'server/src/http.js',
+    expectedKeys: [
+      'Cross-Origin-Opener-Policy',
+      'Cross-Origin-Embedder-Policy',
+      'Cross-Origin-Resource-Policy',
+      'Origin-Agent-Cluster',
+      'X-Content-Type-Options',
+      'Referrer-Policy',
+      'Permissions-Policy',
+      'Content-Security-Policy',
+    ],
+  },
   { type: 'headers', path: 'web/public/_headers' },
   { type: 'headers', path: 'deploy/cloudflare-pages/_headers' },
   { type: 'netlify', path: 'netlify.toml' },
@@ -363,6 +390,20 @@ for (const target of targets) {
       }
     } catch (err) {
       allErrors.push(`${target.path}: failed to validate Fastify headers: ${err?.message ?? String(err)}`);
+    }
+    continue;
+  }
+  if (target.type === 'node-http') {
+    try {
+      const expected = pickCanonicalHeaders(target.expectedKeys ?? []);
+      const rules = parseNodeSetHeader(filePath);
+      const diffs = diffHeaderMaps(expected, toLowerHeaderMap(rules[0].headers));
+      if (diffs.length !== 0) {
+        allErrors.push(`\n${target.path}`);
+        allErrors.push(...diffs.map((line) => `  ${line}`));
+      }
+    } catch (err) {
+      allErrors.push(`${target.path}: failed to validate Node header middleware: ${err?.message ?? String(err)}`);
     }
     continue;
   }
