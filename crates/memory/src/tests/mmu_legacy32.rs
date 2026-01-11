@@ -14,7 +14,7 @@ fn legacy32_minimal_4k_mapping_translation_and_ad_bits() {
 
     // PDE[1] -> PT
     bus.write_u32(cr3 + 1 * 4, (pt_base as u32) | 0x003); // P|RW
-                                                           // PTE[0] -> phys
+                                                          // PTE[0] -> phys
     bus.write_u32(pt_base, (phys_page as u32) | 0x003); // P|RW
 
     let mut mmu = new_mmu_legacy32(cr3);

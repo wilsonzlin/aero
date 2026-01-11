@@ -149,11 +149,7 @@ fn submit_control(
     *avail_idx = avail_idx.wrapping_add(1);
     write_u16_le(mem, avail + 2, *avail_idx).unwrap();
 
-    dev.bar0_write(
-        caps.notify,
-        &0u16.to_le_bytes(),
-        mem,
-    );
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), mem);
 
     let used_ring_index = (*used_idx % qsz) as u64;
     let used_elem = used + 4 + used_ring_index * 8;

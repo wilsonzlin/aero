@@ -280,11 +280,7 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     write_u16_le(&mut mem, rx_used, 0).unwrap();
     write_u16_le(&mut mem, rx_used + 2, 0).unwrap();
 
-    dev.bar0_write(
-        caps.notify,
-        &0u16.to_le_bytes(),
-        &mut mem,
-    );
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
     assert_eq!(read_u16_le(&mem, rx_used + 2).unwrap(), 0);
 
     let rx_packet = b"\xaa\xbb\xcc\xdd\xee\xff\x00\x01\x02\x03\x04\x05\x08\x00".to_vec();

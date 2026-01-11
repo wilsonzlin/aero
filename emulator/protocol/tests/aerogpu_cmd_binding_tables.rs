@@ -1,10 +1,11 @@
 use core::mem::offset_of;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_hdr_le, decode_cmd_set_constant_buffers_bindings_le, decode_cmd_set_samplers_handles_le,
-    AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdSetConstantBuffers, AerogpuCmdSetSamplers,
-    AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuConstantBufferBinding,
-    AerogpuSamplerAddressMode, AerogpuSamplerFilter, AerogpuShaderStage,
+    decode_cmd_hdr_le, decode_cmd_set_constant_buffers_bindings_le,
+    decode_cmd_set_samplers_handles_le, AerogpuCmdDecodeError, AerogpuCmdOpcode,
+    AerogpuCmdSetConstantBuffers, AerogpuCmdSetSamplers, AerogpuCmdStreamHeader,
+    AerogpuCmdStreamIter, AerogpuConstantBufferBinding, AerogpuSamplerAddressMode,
+    AerogpuSamplerFilter, AerogpuShaderStage,
 };
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
@@ -52,7 +53,10 @@ fn binding_table_payloads_round_trip_via_packet_and_free_function_decoders() {
     assert_eq!(packets.len(), 5);
     assert_eq!(packets[0].opcode, Some(AerogpuCmdOpcode::CreateSampler));
     assert_eq!(packets[1].opcode, Some(AerogpuCmdOpcode::SetSamplers));
-    assert_eq!(packets[2].opcode, Some(AerogpuCmdOpcode::SetConstantBuffers));
+    assert_eq!(
+        packets[2].opcode,
+        Some(AerogpuCmdOpcode::SetConstantBuffers)
+    );
     assert_eq!(packets[3].opcode, Some(AerogpuCmdOpcode::DestroySampler));
     assert_eq!(packets[4].opcode, Some(AerogpuCmdOpcode::Flush));
 
@@ -133,7 +137,9 @@ fn set_samplers_count_overrun_is_rejected() {
         ..packet_offset + offset_of!(AerogpuCmdSetSamplers, sampler_count) + 4]
         .copy_from_slice(&2u32.to_le_bytes());
 
-    let pkt_len = decode_cmd_hdr_le(&bytes[packet_offset..]).unwrap().size_bytes as usize;
+    let pkt_len = decode_cmd_hdr_le(&bytes[packet_offset..])
+        .unwrap()
+        .size_bytes as usize;
     let pkt = &bytes[packet_offset..packet_offset + pkt_len];
     assert!(matches!(
         decode_cmd_set_samplers_handles_le(pkt),
@@ -158,7 +164,9 @@ fn set_constant_buffers_count_overrun_is_rejected() {
         ..packet_offset + offset_of!(AerogpuCmdSetConstantBuffers, buffer_count) + 4]
         .copy_from_slice(&2u32.to_le_bytes());
 
-    let pkt_len = decode_cmd_hdr_le(&bytes[packet_offset..]).unwrap().size_bytes as usize;
+    let pkt_len = decode_cmd_hdr_le(&bytes[packet_offset..])
+        .unwrap()
+        .size_bytes as usize;
     let pkt = &bytes[packet_offset..packet_offset + pkt_len];
     assert!(matches!(
         decode_cmd_set_constant_buffers_bindings_le(pkt),

@@ -185,11 +185,7 @@ fn virtio_input_posts_buffers_then_delivers_events() {
     write_u16_le(&mut mem, used, 0).unwrap();
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
-    dev.bar0_write(
-        caps.notify,
-        &0u16.to_le_bytes(),
-        &mut mem,
-    );
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 0);
 
     // Host injects an input event.

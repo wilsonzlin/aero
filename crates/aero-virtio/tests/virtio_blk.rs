@@ -242,11 +242,7 @@ fn setup() -> (
 }
 
 fn kick_queue0(dev: &mut VirtioPciDevice, caps: &Caps, mem: &mut GuestRam) {
-    dev.bar0_write(
-        caps.notify,
-        &0u16.to_le_bytes(),
-        mem,
-    );
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), mem);
 }
 
 #[test]
