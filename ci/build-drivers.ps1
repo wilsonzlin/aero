@@ -659,14 +659,19 @@ function Get-MakefileSkipInfoForDriverTarget {
       })
     }
 
-    # A solution is considered CI-buildable if it references at least one *non-makefile* vcxproj.
-    # If every referenced vcxproj is a WDK 7.1 NMake wrapper (Keyword=MakeFileProj /
-    # ConfigurationType=Makefile), skip the entire solution to avoid invoking legacy build.exe.
-    if ($makefileProjects.Count -eq 0) { return $null } # no makefile wrapper projects
-    if ($makefileProjects.Count -lt $vcxprojs.Count) { return $null } # at least one non-makefile project exists
+    # Any MakeFileProj/Makefile wrapper project can invoke legacy WDK build.exe, which is not
+    # guaranteed to exist in CI. Therefore, a solution is only considered CI-buildable when
+    # it contains *no* such projects (unless -IncludeMakefileProjects is passed).
+    if ($makefileProjects.Count -eq 0) { return $null }
+
+    $reason = if ($makefileProjects.Count -eq $vcxprojs.Count) {
+      "it only contains MakeFileProj projects (legacy WDK build.exe)."
+    } else {
+      "it contains MakeFileProj projects (legacy WDK build.exe)."
+    }
 
     return [pscustomobject]@{
-      Reason = "it only contains MakeFileProj projects (legacy WDK build.exe)."
+      Reason = $reason
       MakefileProjects = $makefileProjects.ToArray()
     }
   }
