@@ -12,6 +12,7 @@ afterEach(() => {
   // stubbed properties after each test.
   if (typeof navigator !== "undefined") {
     delete (navigator as unknown as { gpu?: unknown }).gpu;
+    delete (navigator as unknown as { usb?: unknown }).usb;
     delete (navigator as unknown as { storage?: unknown }).storage;
   }
 
@@ -51,6 +52,7 @@ describe("detectPlatformFeatures", () => {
 
     // Node's global `navigator` is extensible. Stub the fields used by our detector.
     (navigator as unknown as { gpu?: unknown }).gpu = {};
+    (navigator as unknown as { usb?: unknown }).usb = {};
     (navigator as unknown as { storage?: unknown }).storage = {
       getDirectory: () => Promise.resolve(null),
     };
@@ -61,6 +63,7 @@ describe("detectPlatformFeatures", () => {
 
     const report = detectPlatformFeatures();
     expect(report.webgpu).toBe(true);
+    expect(report.webusb).toBe(true);
     expect(report.opfs).toBe(true);
     expect(report.audioWorklet).toBe(true);
     expect(report.offscreenCanvas).toBe(true);

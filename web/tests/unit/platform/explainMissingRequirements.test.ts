@@ -10,6 +10,7 @@ function report(overrides: Partial<PlatformFeatureReport> = {}): PlatformFeature
     wasmThreads: false,
     jit_dynamic_wasm: false,
     webgpu: false,
+    webusb: false,
     webgl2: false,
     opfs: false,
     opfsSyncAccessHandle: false,

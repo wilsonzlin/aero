@@ -143,6 +143,7 @@ function renderCapabilityTable(report: PlatformFeatureReport): HTMLTableElement 
     'wasmThreads',
     'jit_dynamic_wasm',
     'webgpu',
+    'webusb',
     'opfs',
     'opfsSyncAccessHandle',
     'audioWorklet',

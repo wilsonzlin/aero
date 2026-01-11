@@ -25,6 +25,8 @@ export type PlatformFeatureReport = {
   wasmThreads: boolean;
   /** Whether WebGPU is exposed (`navigator.gpu`). */
   webgpu: boolean;
+  /** Whether WebUSB is exposed (`navigator.usb`). */
+  webusb: boolean;
   /** Whether OPFS is exposed (`navigator.storage.getDirectory`). */
   opfs: boolean;
   /**
@@ -116,6 +118,7 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
   const jit_dynamic_wasm = detectDynamicWasmCompilation();
 
   const webgpu = typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
+  const webusb = typeof navigator !== 'undefined' && typeof (navigator as Navigator & { usb?: unknown }).usb !== 'undefined';
   const opfs =
     typeof navigator !== 'undefined' &&
     typeof navigator.storage !== 'undefined' &&
@@ -140,6 +143,7 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
     wasmThreads,
     jit_dynamic_wasm,
     webgpu,
+    webusb,
     opfs,
     opfsSyncAccessHandle,
     audioWorklet,

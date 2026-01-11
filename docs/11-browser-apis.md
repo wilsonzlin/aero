@@ -71,6 +71,30 @@ export default {
 | Fullscreen | ✓ | ✓ | ✓ | ✓ | Recommended |
 | Gamepad | ✓ | ✓ | 10.1+ | ✓ | Optional |
 | WebCodecs | 94+ | 🚧 | 🚧 | 94+ | Optional |
+| WebUSB (`navigator.usb`) | 61+ | ✗ | ✗ | 79+ | Optional |
+
+---
+
+## WebUSB (USB device access)
+
+WebUSB (`navigator.usb`) enables direct access to USB peripherals from the browser.
+
+- **Browser support:** Chromium-only (Chrome / Edge). No Firefox or Safari support.
+- **Secure context:** requires `https://` (or `http://localhost`).
+- **User activation:** `navigator.usb.requestDevice()` requires **transient user activation** and must be called directly from a user gesture handler on the **main thread**.
+- **Workers:** user activation does **not** propagate across `postMessage()` to workers, so a “click → postMessage → worker calls `requestDevice()`” flow will fail.
+
+### Architecture options for Aero
+
+Because Aero prefers worker-side I/O, there are two viable integration patterns:
+
+- **A) Main thread requests permission, worker performs I/O (best case):**
+  1. Main thread handles the user gesture and calls `navigator.usb.requestDevice()`.
+  2. The I/O worker calls `navigator.usb.getDevices()` and performs transfers **if** the browser exposes WebUSB in workers (`WorkerNavigator.usb`).
+- **B) Main thread proxies all WebUSB I/O (fallback):**
+  - If worker access is unavailable, or the `USBDevice` handle cannot be moved/shared, keep all WebUSB calls on the main thread and proxy operations over Aero’s existing main↔worker IPC.
+
+> `USBDevice` structured-clone / transferability support is **browser-dependent** and must be treated as a runtime capability. This should be probed at runtime (see the [WebUSB probe panel](../src/main.ts) once implemented).
 
 ---
 
