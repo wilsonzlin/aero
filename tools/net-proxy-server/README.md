@@ -44,6 +44,10 @@ const ws = new WebSocket("ws://127.0.0.1:8080/tcp-mux?token=dev-token", "aero-tc
 ws.binaryType = "arraybuffer";
 ```
 
+For a full browser-side implementation (stream parsing + backpressure + PING/PONG handling), see:
+
+- `web/src/net/tcpMuxProxy.ts` (`WebSocketTcpMuxProxyClient`)
+
 ## Security model
 This server is **powerful**: it can connect to any TCP endpoint that the host machine can reach.
 
