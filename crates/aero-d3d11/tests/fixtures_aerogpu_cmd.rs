@@ -49,7 +49,7 @@ fn parses_ilay_pos3_color_fixture_and_maps_to_vs_signature() {
     let mut vs_signature = Vec::new();
     for p in &isgn.parameters {
         vs_signature.push(VsInputSignatureElement {
-            semantic_name_hash: fnv1a_32(p.semantic_name.as_bytes()),
+            semantic_name_hash: fnv1a_32(p.semantic_name.to_ascii_uppercase().as_bytes()),
             semantic_index: p.semantic_index,
             input_register: p.register,
         });
