@@ -10228,8 +10228,9 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* p
   CAPS_LOG("aerogpu-d3d10_11: GetCaps type=%u size=%u\n", (unsigned)type, (unsigned)data_size);
 
   if (!data || data_size == 0) {
-    AEROGPU_D3D10_11_LOG("GetCaps type=%u called with null/empty buffer", (unsigned)type);
-    return E_INVALIDARG;
+    // Be conservative and avoid failing the runtime during bring-up: treat
+    // missing/empty output buffers as a no-op query.
+    return S_OK;
   }
 
   switch (type) {
