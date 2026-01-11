@@ -119,6 +119,32 @@ fn inf_has_line_containing_all(inf_text: &str, needles: &[&str]) -> bool {
     false
 }
 
+fn inf_contains_any_hardware_id_pattern(inf_text: &str, patterns: &[String]) -> bool {
+    if patterns.is_empty() {
+        return false;
+    }
+
+    let patterns_upper: Vec<String> = patterns.iter().map(|p| p.to_ascii_uppercase()).collect();
+    for raw_line in inf_text.lines() {
+        let mut line = raw_line.trim();
+        if line.is_empty() || line.starts_with(';') {
+            continue;
+        }
+
+        line = line.split(';').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let line_upper = line.to_ascii_uppercase();
+        if patterns_upper.iter().any(|p| line_upper.contains(p)) {
+            return true;
+        }
+    }
+
+    false
+}
+
 #[test]
 fn windows_device_contract_aerogpu_matches_protocol_constants() {
     // These are part of the stable Win7 driver ABI (`drivers/aerogpu/protocol/aerogpu_pci.h`).
@@ -462,6 +488,15 @@ fn windows_device_contract_driver_service_names_match_driver_infs() {
         let contract = contract_entry(device_name);
         let contract_service = require_json_str(contract, "driver_service_name");
         let contract_inf_name = require_json_str(contract, "inf_name");
+        let contract_hwids: Vec<String> = require_json_array(contract, "hardware_id_patterns")
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .unwrap_or_else(|| panic!("hardware_id_patterns entries must be strings"))
+                    .to_string()
+            })
+            .collect();
 
         assert!(
             inf_path.is_file(),
@@ -479,6 +514,12 @@ fn windows_device_contract_driver_service_names_match_driver_infs() {
 
         let inf_text = std::fs::read_to_string(&inf_path)
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", inf_path.display()));
+        assert!(
+            inf_contains_any_hardware_id_pattern(&inf_text, &contract_hwids),
+            "windows-device-contract.json hardware_id_patterns for {device_name} must include at least one HWID that appears in INF {}.\nContract patterns:\n{contract_hwids:#?}",
+            inf_path.display()
+        );
+
         let services: BTreeSet<String> = inf_add_service_names(&inf_text)
             .into_iter()
             .map(|service| service.to_ascii_lowercase())
