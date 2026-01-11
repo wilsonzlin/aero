@@ -1172,17 +1172,6 @@ HRESULT flush_locked(Device* dev) {
   return S_OK;
 }
 
-bool is_supported_readback_format(uint32_t d3d9_format) {
-  // For initial Win7 D3D9Ex bring-up we only require X8R8G8B8 / A8R8G8B8.
-  switch (d3d9_format) {
-    case 21u: // D3DFMT_A8R8G8B8
-    case 22u: // D3DFMT_X8R8G8B8
-      return true;
-    default:
-      return false;
-  }
-}
-
 HRESULT copy_surface_bytes(const Resource* src, Resource* dst) {
   if (!src || !dst) {
     return E_INVALIDARG;
@@ -1192,9 +1181,6 @@ HRESULT copy_surface_bytes(const Resource* src, Resource* dst) {
   }
   if (src->format != dst->format) {
     return E_INVALIDARG;
-  }
-  if (!is_supported_readback_format(src->format)) {
-    return E_NOTIMPL;
   }
 
   const uint32_t bpp = bytes_per_pixel(src->format);
@@ -1871,6 +1857,51 @@ HRESULT AEROGPU_D3D9_CALL device_create_swap_chain(
   return S_OK;
 }
 
+HRESULT copy_surface_rects(const Resource* src, Resource* dst, const RECT* rects, uint32_t rect_count) {
+  if (!rects || rect_count == 0) {
+    return copy_surface_bytes(src, dst);
+  }
+  if (!src || !dst) {
+    return E_INVALIDARG;
+  }
+  if (src->format != dst->format) {
+    return E_INVALIDARG;
+  }
+
+  const uint32_t bpp = bytes_per_pixel(src->format);
+
+  for (uint32_t i = 0; i < rect_count; ++i) {
+    const RECT& r = rects[i];
+    if (r.right <= r.left || r.bottom <= r.top) {
+      continue;
+    }
+
+    const uint32_t left = static_cast<uint32_t>(std::max<long>(0, r.left));
+    const uint32_t top = static_cast<uint32_t>(std::max<long>(0, r.top));
+    const uint32_t right = static_cast<uint32_t>(std::max<long>(0, r.right));
+    const uint32_t bottom = static_cast<uint32_t>(std::max<long>(0, r.bottom));
+
+    const uint32_t clamped_right = std::min<uint32_t>({right, src->width, dst->width});
+    const uint32_t clamped_bottom = std::min<uint32_t>({bottom, src->height, dst->height});
+
+    if (left >= clamped_right || top >= clamped_bottom) {
+      continue;
+    }
+
+    const uint32_t row_bytes = (clamped_right - left) * bpp;
+    for (uint32_t y = top; y < clamped_bottom; ++y) {
+      const size_t src_off = static_cast<size_t>(y) * src->row_pitch + static_cast<size_t>(left) * bpp;
+      const size_t dst_off = static_cast<size_t>(y) * dst->row_pitch + static_cast<size_t>(left) * bpp;
+      if (src_off + row_bytes > src->storage.size() || dst_off + row_bytes > dst->storage.size()) {
+        return E_INVALIDARG;
+      }
+      std::memcpy(dst->storage.data() + dst_off, src->storage.data() + src_off, row_bytes);
+    }
+  }
+
+  return S_OK;
+}
+
 HRESULT AEROGPU_D3D9_CALL device_destroy_swap_chain(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain) {
@@ -2269,11 +2300,6 @@ HRESULT AEROGPU_D3D9_CALL device_copy_rects(
     return E_INVALIDARG;
   }
 
-  // Minimal implementation: only full-surface copies are supported.
-  if (pCopyRects->pSrcRects != nullptr || pCopyRects->rect_count != 0) {
-    return E_NOTIMPL;
-  }
-
   uint64_t fence = 0;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
@@ -2291,7 +2317,7 @@ HRESULT AEROGPU_D3D9_CALL device_copy_rects(
     return kD3dErrWasStillDrawing;
   }
 
-  return copy_surface_bytes(src, dst);
+  return copy_surface_rects(src, dst, pCopyRects->pSrcRects, pCopyRects->rect_count);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_render_target(
