@@ -1,4 +1,5 @@
 use aero_usb::hid::passthrough::{UsbHidPassthrough, UsbHidPassthroughOutputReport};
+use aero_usb::hid::report_descriptor::parse_report_descriptor;
 use aero_usb::hid::webhid::{synthesize_report_descriptor, HidCollectionInfo};
 use aero_usb::usb::{SetupPacket, UsbDevice};
 
@@ -11,11 +12,25 @@ fn fixture_mouse_collections() -> Vec<HidCollectionInfo> {
 }
 
 #[test]
-fn webhid_fixture_synthesizes_non_empty_report_descriptor() {
+fn webhid_fixture_json_roundtrips_and_synthesizes_descriptor() {
     let collections = fixture_mouse_collections();
+
+    // Lock down the JSON wire contract: serde -> JSON must roundtrip without dropping/renaming any
+    // fields. This should match the output of `web/src/hid/webhid_normalize.ts`.
+    let expected_json: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/hid/webhid_normalized_mouse.json"
+    )))
+    .expect("fixture JSON should parse");
+    let actual_json = serde_json::to_value(&collections).expect("fixture should serialize");
+    assert_eq!(actual_json, expected_json);
+
     let desc = synthesize_report_descriptor(&collections)
         .expect("report descriptor synthesis should succeed");
     assert!(!desc.is_empty(), "expected a non-empty report descriptor");
+
+    // The synthesized bytes must also be parseable by our HID descriptor parser.
+    parse_report_descriptor(&desc).expect("synthesized report descriptor should parse");
 }
 
 fn sample_report_descriptor_output_with_id() -> Vec<u8> {
