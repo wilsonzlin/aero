@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { PerfSession } from "./session";
-import { PERF_FRAME_HEADER_FRAME_ID_INDEX } from "./shared.js";
+import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "./shared.js";
 
 describe("PerfSession", () => {
   it("updates the shared perf frame header on RAF ticks", () => {
@@ -39,6 +39,7 @@ describe("PerfSession", () => {
 
       const header = new Int32Array(session.getChannel().frameHeader);
       expect(Atomics.load(header, PERF_FRAME_HEADER_FRAME_ID_INDEX)).toBe(0);
+      expect(Atomics.load(header, PERF_FRAME_HEADER_ENABLED_INDEX)).toBe(1);
 
       let now = performance.now() + 1;
       for (let expectedFrameId = 1; expectedFrameId <= 3; expectedFrameId += 1) {
@@ -50,6 +51,7 @@ describe("PerfSession", () => {
       }
 
       session.setHudActive(false);
+      expect(Atomics.load(header, PERF_FRAME_HEADER_ENABLED_INDEX)).toBe(0);
       expect(rafQueue.length).toBe(0);
     } finally {
       if (originalWindow === undefined) {
@@ -72,4 +74,3 @@ describe("PerfSession", () => {
     }
   });
 });
-

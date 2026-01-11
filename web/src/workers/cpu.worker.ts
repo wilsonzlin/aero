@@ -1014,7 +1014,9 @@ async function runLoopInner(): Promise<void> {
       }
 
       if (now >= nextFrameMs) {
-        const t0 = performance.now();
+        const perfActive =
+          !!perfWriter && !!perfFrameHeader && Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
+        const t0 = perfActive ? performance.now() : 0;
 
         if (vgaFramebuffer) {
           if (now >= nextModeSwitchMs) {
@@ -1036,11 +1038,11 @@ async function runLoopInner(): Promise<void> {
           if (typeof wasmRender === "function") {
             const instructions = wasmRender(demoFbLinearOffset, mode.width, mode.height, strideBytes, now) >>> 0;
             vgaFramebuffer.pixelsU8Clamped.set(demoFbView);
-            perfInstructions += BigInt(instructions);
+            if (perfActive) perfInstructions += BigInt(instructions);
           } else {
             // Fallback for dev builds where the wasm package hasn't been rebuilt yet.
             renderTestPattern(vgaFramebuffer, mode.width, mode.height, now);
-            perfInstructions += BigInt(mode.width * mode.height);
+            if (perfActive) perfInstructions += BigInt(mode.width * mode.height);
           }
 
           addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_FRAME_COUNTER, 1);
@@ -1049,7 +1051,7 @@ async function runLoopInner(): Promise<void> {
         // Shared framebuffer demo: prefer the WASM-side publisher, fall back to the JS implementation.
         if (cpuDemo) {
           const seq = cpuDemo.render_frame(0, now);
-          perfInstructions += instructionsPerSharedFrame;
+          if (perfActive) perfInstructions += instructionsPerSharedFrame;
           if (frameState) {
             Atomics.store(frameState, FRAME_SEQ_INDEX, seq);
             Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
@@ -1058,7 +1060,7 @@ async function runLoopInner(): Promise<void> {
           publishSharedFramebufferFrame();
         }
 
-        perfCpuMs += performance.now() - t0;
+        if (perfActive) perfCpuMs += performance.now() - t0;
         nextFrameMs = now + frameIntervalMs;
       }
 

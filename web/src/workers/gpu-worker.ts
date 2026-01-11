@@ -1326,6 +1326,7 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
 
 const handleTick = async () => {
   syncPerfFrame();
+  const perfActive = !!perfWriter && perfCurrentFrameId !== 0;
   refreshFramebufferViews();
   maybeUpdateFramesReceivedFromSeq();
   await maybeSendReady();
@@ -1352,9 +1353,9 @@ const handleTick = async () => {
   presenting = true;
   try {
     presentsAttempted += 1;
-    const presentStartMs = performance.now();
+    const presentStartMs = perfActive ? performance.now() : 0;
     const didPresent = await presentOnce();
-    perfGpuMs += performance.now() - presentStartMs;
+    if (perfActive) perfGpuMs += performance.now() - presentStartMs;
     if (didPresent) {
       presentsSucceeded += 1;
       framesPresented += 1;
@@ -1371,7 +1372,7 @@ const handleTick = async () => {
             : 0;
         telemetry.recordTextureUploadBytes(textureUploadBytes);
         perf.counter("textureUploadBytes", textureUploadBytes);
-        perfUploadBytes += textureUploadBytes;
+        if (perfActive) perfUploadBytes += textureUploadBytes;
         telemetry.endFrame(now);
       }
       lastFrameStartMs = now;

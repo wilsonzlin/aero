@@ -83,6 +83,8 @@ export type WorkerInitMessage = {
   /**
    * Optional perf channel attachment that allows workers to write samples into the
    * shared Perf HUD ring buffers.
+   *
+   * `frameHeader` layout is defined in `src/perf/shared.js` (FRAME_ID, T_US, ENABLED).
    */
   perfChannel?: {
     runStartEpochMs: number;
