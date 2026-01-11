@@ -21,9 +21,15 @@ Then pass the extracted directory to the existing packaging scripts:
 pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root
 ```
 
-Note: `make-driver-pack.ps1 -VirtioWinIso ...` mounts ISOs via `Mount-DiskImage` and is
-therefore Windows-only. On Linux/macOS, use the extracted root (`-VirtioWinRoot`) or the
-one-shot shell wrapper that runs the extractor for you:
+Alternatively, you can pass `-VirtioWinIso` directly under `pwsh`. On Windows, `make-driver-pack.ps1`
+will mount the ISO via `Mount-DiskImage`. When `Mount-DiskImage` is not available (Linux/macOS, or
+minimal Windows installs), it falls back to invoking this extractor automatically (requires Python):
+
+```bash
+pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinIso virtio-win.iso
+```
+
+For convenience, you can also use the one-shot shell wrapper that runs the extractor for you:
 
 ```bash
 drivers/scripts/make-driver-pack.sh --virtio-win-iso virtio-win.iso
