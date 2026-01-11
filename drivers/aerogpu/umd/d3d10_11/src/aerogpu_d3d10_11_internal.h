@@ -20,6 +20,7 @@
 
 #include "aerogpu_cmd_writer.h"
 #include "../../common/aerogpu_win32_security.h"
+#include "aerogpu_d3d10_11_log.h"
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
   #include "aerogpu_d3d10_11_wddm_submit.h"
 #endif
@@ -606,6 +607,7 @@ inline uint64_t submit_locked(Device* dev, bool want_present = false, HRESULT* o
   dev->cmd.finalize();
 
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
+  const size_t submit_bytes = dev->cmd.size();
   uint64_t fence = 0;
   const HRESULT hr = dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, &fence);
   if (out_hr) {
@@ -627,7 +629,13 @@ inline uint64_t submit_locked(Device* dev, bool want_present = false, HRESULT* o
   }
   dev->pending_staging_writes.clear();
 
-  atomic_max_u64(&dev->last_completed_fence, dev->wddm_submit.QueryCompletedFence());
+  const uint64_t completed = dev->wddm_submit.QueryCompletedFence();
+  atomic_max_u64(&dev->last_completed_fence, completed);
+  AEROGPU_D3D10_11_LOG("submit_locked: present=%u bytes=%llu fence=%llu completed=%llu",
+                       want_present ? 1u : 0u,
+                       static_cast<unsigned long long>(submit_bytes),
+                       static_cast<unsigned long long>(fence),
+                       static_cast<unsigned long long>(completed));
   return fence;
 #else
   (void)want_present;
