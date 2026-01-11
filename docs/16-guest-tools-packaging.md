@@ -36,7 +36,9 @@ By default this will:
   - `drivers/amd64/<driver>/...`
 - map CI package roots (`out/packages/<driverRel>/{x86,x64}`) into stable Guest Tools-facing driver
   directory names (e.g. `drivers/aerogpu` → `aerogpu`, `windows7/virtio/blk` → `virtio-blk`)
-- stage `guest-tools/` and replace `guest-tools/certs/*` with `out/certs/aero-test.cer` (keeping `certs/README.md` if present)
+- stage `guest-tools/` and normalize `certs/` based on signing policy:
+  - `signing_policy=test`: inject `out/certs/aero-test.cer` (keeping `certs/README.md` if present)
+  - `signing_policy=production|none`: do **not** inject certs (any existing `*.cer/*.crt/*.p7b` are stripped, leaving docs)
 - produce:
   - `out/artifacts/aero-guest-tools.iso`
   - `out/artifacts/aero-guest-tools.zip`
@@ -55,6 +57,8 @@ do stricter local validation:
 |---|---|---|---|---|
 | `tools/packaging/specs/win7-signed.json` | CI/release workflows (packaging from `out/packages` + `out/certs`) | `aerogpu`, `virtio-blk`, `virtio-net`, `virtio-input` | `virtio-snd` | Derives HWIDs from `devices.cmd` (no hardcoded regex list) |
 | `tools/packaging/specs/win7-aero-guest-tools.json` | Local default (`ci/package-guest-tools.ps1` with no `-SpecPath`) | `aerogpu`, `virtio-blk`, `virtio-net`, `virtio-input` | `virtio-snd` | Stricter HWID validation (pins virtio HWIDs in the spec; AeroGPU HWIDs via `devices.cmd`) |
+
+Note: “required/optional drivers” here refers to **packaging validation** (what the ISO/zip is expected to contain), not whether a given device is required at runtime (for example PS/2/HDA remain fallbacks for optional devices).
 
 To reproduce CI packaging locally (assuming you already have `out/packages/` + `out/certs/`):
 
@@ -236,7 +240,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File ci/package-guest-tools.ps1
 Notes:
 
 - `ci/package-guest-tools.ps1` stages drivers into the packager input layout (`x86/<driver>/...`, `amd64/<driver>/...`),
-  copies `guest-tools/`, and (when `-SigningPolicy` resolves to `test`) replaces any placeholder certs with `out/certs/aero-test.cer`
+  copies `guest-tools/`, and (when `-SigningPolicy` resolves to `test`) injects `out/certs/aero-test.cer` into `certs/`
   so the resulting ISO matches the signed driver catalogs.
 - The wrapper drives inclusion/validation via a packager spec (`-SpecPath`):
   - Local default: `tools/packaging/specs/win7-aero-guest-tools.json` (stricter HWID validation).

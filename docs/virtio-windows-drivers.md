@@ -35,31 +35,55 @@ See also:
 
 ## Packaging options (Guest Tools)
 
-Aero can ship Windows 7 virtio drivers inside `aero-guest-tools.iso` in two ways:
+Aero can build Guest Tools media (`aero-guest-tools.iso` / `.zip`) from a few different driver sources:
 
-1) **Upstream virtio-win** (`viostor`, `netkvm`, etc.)
+1) **CI/release in-tree drivers (official artifacts)**
+   - CI builds signed packages under `out/packages/**` and a public signing cert under `out/certs/`.
+   - In GitHub Actions these are published as:
+     - `win7-drivers-signed-packages` (`out/packages/**` + `out/certs/aero-test.cer`)
+     - `aero-guest-tools` (`aero-guest-tools.iso/.zip` + manifest)
+   - Scripts:
+     - `ci/package-guest-tools.ps1`
+     - `drivers/scripts/make-guest-tools-from-ci.ps1` (convenience wrapper)
+   - CI/release spec: `tools/packaging/specs/win7-signed.json`
+   - Outputs:
+     - `aero-guest-tools.iso`
+     - `aero-guest-tools.zip`
+     - `manifest.json`
+     - `aero-guest-tools.manifest.json` (alias used by CI/release asset publishing)
+
+2) **Upstream virtio-win** (`viostor`, `netkvm`, etc.) *(optional / compatibility)*
    - Script: `drivers/scripts/make-guest-tools-from-virtio-win.ps1`
    - Spec (via `-Profile`):
        - Default (`-Profile full`): `tools/packaging/specs/win7-virtio-full.json` (expects modern IDs for core devices; `AERO-W7-VIRTIO` v1 is modern-only; includes best-effort `vioinput`/`viosnd` when present)
        - Optional (`-Profile minimal`): `tools/packaging/specs/win7-virtio-win.json` (storage+network only)
    - Device contract (for generated `config/devices.cmd`): `docs/windows-device-contract-virtio-win.json`
 
-2) **In-tree Aero virtio** (`aerovblk`, `aerovnet`)
+3) **In-tree Aero virtio** (`aerovblk`, `aerovnet`) *(local/dev)*
    - Script: `drivers/scripts/make-guest-tools-from-aero-virtio.ps1`
    - Spec: `tools/packaging/specs/win7-aero-virtio.json` (**modern-only** IDs; rejects virtio-pci transitional IDs at packaging time)
    - Device contract (for generated `config/devices.cmd` when using the CI packaging wrapper): `docs/windows-device-contract.json`
 
-## Chosen approach (short term): package upstream virtio-win drivers
+See also:
 
-**Longer term:** Aero also has ongoing work toward clean-room, permissively licensed Windows 7 virtio drivers under `drivers/windows7/`. Until the storage (`virtio-blk`) and network (`virtio-net`) drivers are production-ready, the practical path for enabling virtio acceleration is to package the upstream virtio-win driver set.
+- `docs/16-guest-tools-packaging.md` (specs, inputs/outputs, signing policy)
+- `drivers/README.md` (CI artifacts + virtio-win alternative tooling)
+
+## Chosen approach (what Aero ships): CI-built in-tree drivers
+
+Aero’s official Windows 7 driver artifacts (driver bundles + Guest Tools media) are produced by CI from the in-repo driver sources and published via the `drivers-win7.yml` / `release-drivers-win7.yml` workflows.
+
+The virtio-win packaging flow remains supported as an **alternative/compatibility** path (for example: to compare behavior/performance against upstream drivers or to bring your own WHQL/production-signed virtio stack).
 
 ### Why
 
-Implementing Windows 7 kernel drivers for Storport (block) and NDIS (network) from scratch is a major standalone project. For Aero’s near-term goals, the pragmatic path is to **reuse the existing, widely deployed virtio driver stack** used by QEMU/KVM.
+Shipping CI-built in-tree drivers keeps Aero releases reproducible and ensures the packaged HWIDs/service-name contract stays aligned with the emulator + Guest Tools scripts.
 
-### What we reuse
+The **virtio-win** packaging flow remains available as an optional compatibility/testing path.
 
-We target the **virtio-win** driver distribution (commonly shipped as `virtio-win.iso`) and specifically the packages:
+### virtio-win compatibility mapping
+
+When using the optional virtio-win flow, we target the **virtio-win** driver distribution (commonly shipped as `virtio-win.iso`) and specifically the packages:
 
 | Aero device | virtio PCI ID (Aero / `AERO-W7-VIRTIO` v1; REV `0x01`) | virtio-win package name (typical) |
 |------------|----------------------------------------|-----------------------------------|
@@ -106,9 +130,9 @@ Virtio-win Guest Tools builds must use the virtio-win contract so `guest-tools/s
 validate the boot-critical storage INF `AddService` name and pre-seed `CriticalDeviceDatabase`
 without requiring `/skipstorage` while keeping Aero’s modern-only PCI HWID patterns (`REV_01`).
 
-### Licensing policy (project requirement)
+### Licensing policy (virtio-win-derived artifacts)
 
-Aero aims for permissive licensing (MIT/Apache-2.0). This doc’s approach is only acceptable if the driver code we ship is under a license compatible with redistribution alongside an MIT/Apache project.
+Aero aims for permissive licensing (MIT/Apache-2.0). Official CI/release artifacts ship the in-tree drivers from this repo under the project licenses. If you redistribute **virtio-win-derived** media (driver packs / Guest Tools built from `virtio-win.iso`), you must comply with virtio-win’s licensing/redistribution terms and ship the corresponding license texts/notices.
 
 **Upstream reference points (to pin during implementation):**
 
@@ -134,9 +158,9 @@ Practical note: this repo generally avoids committing `.sys` driver binaries dir
 
 ---
 
-## Packaging layout (what Aero expects on disk)
+## Packaging layout (virtio-win driver packs)
 
-Drivers live under `drivers/virtio/`:
+The virtio-win extraction tooling (`drivers/scripts/make-driver-pack.ps1` and related wrappers) uses the following layout under `drivers/virtio/`:
 
 ```
 drivers/virtio/
@@ -165,8 +189,9 @@ drivers/virtio/
 
 Notes:
 
-- For Windows 7, Aero only **requires** `viostor` (storage) + `netkvm` (network).
+- For the virtio-win-derived pack, Aero only **requires** `viostor` (storage) + `netkvm` (network).
 - `vioinput` and `viosnd` are optional and may be missing from some virtio-win versions; the packaging scripts handle this by default.
+- CI/release Guest Tools uses **in-tree** driver packages and a different spec/driver naming (`virtio-blk`, `virtio-net`, ...). See `drivers/README.md`.
 
 ### Why we require `.inf` + `.sys` + `.cat`
 
@@ -267,7 +292,7 @@ python3 tools/driver-iso/build.py \
   --output dist/aero-virtio-win7-drivers-sample.iso
 ```
 
-### Build an ISO from an upstream virtio-win ISO (recommended flow)
+### Build an ISO from an upstream virtio-win ISO (optional / compatibility)
 
 On Windows you can mount `virtio-win.iso` directly via `Mount-DiskImage`.
 
@@ -362,7 +387,7 @@ Notes:
   - Linux/WSL: `xorriso` is easiest
   - Windows: `oscdimg.exe` (Windows ADK) is commonly used
 
-### Build `aero-guest-tools.iso` from a virtio-win ISO (recommended for end users)
+### Build `aero-guest-tools.iso` from a virtio-win ISO (optional / compatibility)
 
 This produces a Guest Tools ISO that includes virtio drivers plus install scripts.
 

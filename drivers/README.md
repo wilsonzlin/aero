@@ -2,34 +2,61 @@
 
 This directory contains the **Windows 7 guest driver** workflow for Aero: build tooling, packaging, and installation/injection steps for the **virtio performance drivers** required by the emulator.
 
-## What we ship today
+## CI/release artifacts (what Aero ships)
 
-To get a Windows 7 guest using high-performance virtio paths quickly and repeatably, Aero currently **packages drivers from the upstream virtio-win distribution** into an “Aero driver pack” ZIP.
+Aero’s CI/release pipeline builds, catalogs, and signs the **in-tree** Windows 7 drivers in this repo (virtio + AeroGPU), then packages distributable artifacts from the signed output directories:
 
-The driver pack contains (Win7 x86 + amd64). **Storage + network are required**; audio/input are best-effort because not all virtio-win releases ship Win7 packages for them:
+- `out/packages/**` (signed driver packages)
+- `out/certs/aero-test.cer` (public cert used to sign the driver catalogs)
 
-| Aero device | Upstream driver | Notes |
-|---|---|---|
-| `virtio-blk` | `viostor` | Storage (critical for install + performance). |
-| `virtio-net` | `NetKVM` | Network. |
-| `virtio-snd` | `viosnd` | Audio (optional; Win7 support varies by virtio-win version). |
-| `virtio-input` | `vioinput` | Keyboard/mouse (HID) (optional; Win7 support varies by virtio-win version). |
+Canonical workflows:
 
-This repo **does not commit** `.sys` binaries. Instead, we provide scripts that create a reproducible driver pack from a pinned virtio-win ISO.
+- `.github/workflows/drivers-win7.yml` (PR/push; builds + signs + packages)
+- `.github/workflows/release-drivers-win7.yml` (tagged releases; publishes assets)
 
-## CI (in-tree Win7 drivers)
+Primary CI artifacts (names matter; these are consumed by downstream workflows/scripts):
 
-The canonical GitHub Actions workflow for building the **in-tree** Windows 7 driver packages (virtio + AeroGPU), generating catalogs, test-signing, and producing installable bundles is:
+- `win7-drivers`
+  - Contents: `out/artifacts/` (installable driver bundle ZIPs + ISO, and optionally a FAT driver disk image)
+- `win7-drivers-signed-packages`
+  - Contents: `out/packages/**` + `out/certs/aero-test.cer` (raw signed packages)
+- `aero-guest-tools`
+  - Built from: `out/packages/` + `out/certs/`
+  - Files:
+    - `aero-guest-tools.iso`
+    - `aero-guest-tools.zip`
+    - `manifest.json`
+    - `aero-guest-tools.manifest.json` (copy of `manifest.json` used by CI/release asset publishing)
 
-- `.github/workflows/drivers-win7.yml`
+Driver set (Guest Tools media, by default):
 
-Primary artifacts:
+| Aero device | Guest Tools driver dir | Packaging | Notes |
+|---|---|---|---|
+| `virtio-blk` | `virtio-blk` | required | Storage (boot-critical when switching from AHCI). |
+| `virtio-net` | `virtio-net` | required | Network. |
+| `virtio-input` | `virtio-input` | required | Optional device (PS/2 fallback), but expected to be shipped. |
+| `virtio-snd` | `virtio-snd` | optional | Optional device (HDA/AC’97 fallback). |
+| `aerogpu` | `aerogpu` | required | Optional device (VGA fallback), but expected to be shipped. |
 
-- `win7-drivers` (from `out/artifacts/`; ZIP/ISO driver bundles)
-- `win7-drivers-signed-packages` (from `out/packages/**` + `out/certs/aero-test.cer`; raw signed packages)
-- `aero-guest-tools` (Guest Tools ISO/zip/manifest built from the signed packages)
+Notes:
 
-## Quickstart: build an Aero driver pack ZIP
+- “required/optional” above refers to the **packaging spec** (what the ISO/zip is expected to contain), not whether the emulator can boot without the device.
+- This repo generally does **not** commit `.sys` binaries. Official artifacts are built by CI from source.
+
+To build Guest Tools locally from CI outputs, use:
+
+- `ci/package-guest-tools.ps1` (CI wrapper around `tools/packaging/aero_packager/`)
+- `drivers/scripts/make-guest-tools-from-ci.ps1` (convenience wrapper)
+
+CI/release packaging uses the spec:
+
+- `tools/packaging/specs/win7-signed.json`
+
+## Alternative/compatibility: virtio-win-derived driver packs
+
+In addition to the in-tree CI/release driver artifacts, Aero also supports building driver packs and Guest Tools media from an **upstream `virtio-win.iso`**. This is useful for compatibility testing or when you want to bring your own WHQL/production-signed virtio driver set.
+
+## Quickstart (virtio-win): build a driver pack ZIP
 
 1. Download a **virtio-win ISO** (stable) on a build machine.
    - Example: `virtio-win.iso` from the virtio-win project’s “stable-virtio” direct downloads.
@@ -179,7 +206,15 @@ This validates the packaged drivers using:
 
 - `tools/packaging/specs/win7-aero-virtio.json` (modern-only virtio IDs; rejects virtio-pci transitional IDs)
 
-## In-guest install workflow (post-install)
+## In-guest install workflow (recommended): Guest Tools
+
+For end users, the intended flow is to mount **Aero Guest Tools** (`aero-guest-tools.iso`) in the Windows 7 guest and run `setup.cmd` as Administrator.
+
+See: `docs/windows7-guest-tools.md`.
+
+### Manual install (virtio-win driver pack ZIP)
+
+If you built a virtio-win-derived pack (`drivers/out/aero-win7-driver-pack.zip`), you can install those drivers manually:
 
 1. Copy `aero-win7-driver-pack.zip` into the Win7 guest.
 2. Extract it.
@@ -189,11 +224,18 @@ This validates the packaged drivers using:
 install.cmd
 ```
 
-This uses `pnputil` to add the correct-architecture Win7 driver INFs.
+This uses `pnputil` to add the correct-architecture Win7 driver INFs. For boot-disk switching (AHCI → virtio-blk), prefer Guest Tools (it performs boot-critical pre-seeding).
 
 ## Offline injection workflow (slipstream into install media)
 
-If you want Windows Setup to see virtio storage/network during install, inject drivers into the WIMs:
+If you want Windows Setup to see virtio storage/network during install, inject drivers into the WIMs.
+
+There are two common cases:
+
+- **Test-signed Aero driver bundles** (CI/release, `signing_policy=test`): inject both drivers **and** the public signing certificate into the offline images.
+- **WHQL/production-signed drivers** (for example, unmodified virtio-win packages): you can inject drivers with DISM and skip certificate injection.
+
+The helper script `drivers/scripts/inject-win7-wim.ps1` implements the **test-signed** case. It expects a `win7/<arch>/...` driver tree (like the staging output from `make-driver-pack.ps1`) and injects the certificate into the offline `ROOT` + `TrustedPublisher` stores.
 
 1. Build the driver pack and extract it to a folder (or use the staging folder).
 2. Ensure you have the **Aero test signing certificate** (`.cer`) that was used to sign the driver catalogs.
@@ -226,8 +268,10 @@ See: `drivers/docs/wdk-build.md`.
 ## Basic validation plan (in-guest)
 
 - **Device Manager**
-  - Verify devices bind to `viostor` and `NetKVM`.
-  - If present in your virtio-win version/driver pack, also verify `viosnd` and `vioinput`.
+  - Verify devices bind to the expected storage/network drivers.
+    - CI/in-tree Guest Tools typically uses `aerovblk` (virtio-blk) and `aerovnet` (virtio-net).
+    - virtio-win-derived packs typically use `viostor` and `NetKVM` (`netkvm`).
+  - If present in your media, also verify audio/input drivers (`virtio-snd`/`virtio-input` or `viosnd`/`vioinput` depending on source).
 - **Storage throughput**
   - `winsat disk -seq -read` and `winsat disk -seq -write`
   - Large file copy in/out of the guest.
