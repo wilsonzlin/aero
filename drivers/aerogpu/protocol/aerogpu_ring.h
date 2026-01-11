@@ -79,6 +79,7 @@ enum aerogpu_engine_id {
  *   header.size_bytes.
  * - Each entry must have alloc_id != 0, size_bytes != 0, and gpa+size_bytes
  *   must not overflow.
+ *   - Note: gpa itself may be 0 (backing beginning at physical address 0 is valid).
  * - alloc_id values must be unique within a table (duplicates are a validation
  *   error).
  * - The host must reject (validation error) any command that references

@@ -96,6 +96,7 @@ For each entry:
 - `alloc_id != 0`
 - `size_bytes != 0`
 - `gpa + size_bytes` must not overflow `u64`
+- `gpa` may be `0` (physical address 0 is valid backing; only `alloc_table_gpa` uses 0 as a sentinel).
 - `alloc_id` must be unique within the table (duplicates are an error).
 
 ### Cross-check rules with the command stream
