@@ -43,6 +43,8 @@ _DRIVER_NAME_ALIASES = {
     "aero-gpu": "aerogpu",
 }
 
+TRANSITIONAL_VIRTIO_DEVICE_IDS = frozenset({"1000", "1001", "1011", "1018"})
+
 
 @dataclass(frozen=True)
 class DevicesConfig:
@@ -383,6 +385,29 @@ def _format_bullets(items: Iterable[str]) -> str:
     return "\n".join(f"  - {item}" for item in items)
 
 
+def _find_transitional_virtio_device_ids(pattern: str) -> List[str]:
+    """
+    Return a sorted list of transitional virtio PCI device IDs referenced by `pattern`.
+
+    This is intended as a fast/safe guardrail for Aero packaging specs: Aero's virtio
+    contract v1 is virtio-pci **modern-only**, so packaging specs should not accept
+    transitional IDs (e.g. DEV_(1000|1041)).
+    """
+
+    if not re.search(r"(?i)VEN_1AF4", pattern):
+        return []
+
+    found: set[str] = set()
+    for match in re.finditer(r"(?i)DEV_([^&]+)", pattern):
+        segment = match.group(1)
+        for dev_match in re.finditer(r"(?i)[0-9A-F]{4}", segment):
+            dev = dev_match.group(0).upper()
+            if dev in TRANSITIONAL_VIRTIO_DEVICE_IDS:
+                found.add(dev)
+
+    return sorted(found)
+
+
 def _find_uncovered_hwids(patterns: Sequence[str], hwids: Sequence[str]) -> List[str]:
     compiled = _compile_patterns(patterns)
     uncovered: List[str] = []
@@ -601,6 +626,26 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             f"Spec {spec_path} is missing required driver entries: {', '.join(missing)}\n"
             f"Remediation: update {spec_path} to include them."
         )
+
+    if spec_path.name == "win7-aero-guest-tools.json":
+        offenders: List[str] = []
+        for driver_name, drv in spec_expected.items():
+            for pattern in drv.expected_hardware_ids:
+                for dev_id in _find_transitional_virtio_device_ids(pattern):
+                    offenders.append(f"{driver_name}: {pattern} (contains DEV_{dev_id})")
+        if offenders:
+            raise ValidationError(
+                "Aero packaging spec contains transitional virtio PCI IDs, but Aero virtio contract v1 is modern-only.\n"
+                "\n"
+                f"Offending expected_hardware_ids entries:\n{_format_bullets(offenders)}\n"
+                "\n"
+                "Remediation:\n"
+                "- Update the packaging spec to require modern virtio-pci IDs only:\n"
+                "  * virtio-net  : PCI\\VEN_1AF4&DEV_1041\n"
+                "  * virtio-blk  : PCI\\VEN_1AF4&DEV_1042\n"
+                "  * virtio-input: PCI\\VEN_1AF4&DEV_1052\n"
+                "  * virtio-snd  : PCI\\VEN_1AF4&DEV_1059\n"
+            )
     matches: List[Tuple[str, Tuple[str, str]]] = []
     skipped: List[str] = []
 
@@ -730,6 +775,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             "virtio-input",
             "virtio-snd",
             "aerogpu",
+            "aero-gpu",
         ]
         raise ValidationError(
             f"Spec {spec_path} does not contain any driver entries that this validator knows how to check.\n"

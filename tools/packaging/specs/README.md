@@ -6,6 +6,20 @@ driver artifacts before producing `aero-guest-tools.iso` / `aero-guest-tools.zip
 `drivers[].name` is the **driver directory name** under the packager input tree:
 `drivers/{x86,amd64}/<name>/`.
 
+All virtio HWID patterns in these specs are expected to follow the **Aero virtio contract v1**
+(virtio-pci **modern-only**), i.e.:
+
+- virtio-net: `PCI\\VEN_1AF4&DEV_1041`
+- virtio-blk: `PCI\\VEN_1AF4&DEV_1042`
+- virtio-input: `PCI\\VEN_1AF4&DEV_1052`
+- virtio-snd: `PCI\\VEN_1AF4&DEV_1059`
+
+To sanity-check drift between `guest-tools/config/devices.cmd` and these specs, run:
+
+```bash
+python3 tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-aero-guest-tools.json
+```
+
 ## `win7-virtio-win.json`
 
 Intended for packaging Guest Tools using a driver payload extracted from **virtio-win**.

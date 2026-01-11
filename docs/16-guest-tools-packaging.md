@@ -356,6 +356,10 @@ Before producing any output, the packager verifies that:
 
 These checks are driven by a small JSON spec passed via `--spec`.
 
+For Aero packaging profiles, the virtio HWID patterns are expected to match the **Aero virtio
+contract v1** (virtio-pci **modern-only**). Transitional device IDs (e.g. `DEV_1000`, `DEV_1001`,
+`DEV_1011`, `DEV_1018`) are intentionally not accepted in the in-repo specs.
+
 ### Spec schema: required + optional drivers
 
 The current schema uses a unified `drivers` list where each entry declares whether it is required:
@@ -365,8 +369,8 @@ The current schema uses a unified `drivers` list where each entry declares wheth
   "drivers": [
     {"name": "viostor", "required": true, "expected_hardware_ids": ["PCI\\\\VEN_1AF4&DEV_1042"]},
     {"name": "netkvm", "required": true, "expected_hardware_ids": ["PCI\\\\VEN_1AF4&DEV_1041"]},
-    {"name": "vioinput", "required": false, "expected_hardware_ids": ["PCI\\\\VEN_1AF4&DEV_(1011|1052)"]},
-    {"name": "viosnd", "required": false, "expected_hardware_ids": ["PCI\\\\VEN_1AF4&DEV_(1018|1059)"]}
+    {"name": "vioinput", "required": false, "expected_hardware_ids": ["PCI\\\\VEN_1AF4&DEV_1052"]},
+    {"name": "viosnd", "required": false, "expected_hardware_ids": ["PCI\\\\VEN_1AF4&DEV_1059"]}
   ]
 }
 ```
