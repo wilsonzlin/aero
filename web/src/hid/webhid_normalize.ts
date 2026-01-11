@@ -108,12 +108,22 @@ export type NormalizedHidReportInfo = Omit<HidReportInfo, "items"> & {
 
 export const MAX_RANGE_CONTIGUITY_CHECK_LEN = 4096;
 
-function normalizeCollectionType(type: HidCollectionTypeLike): HidCollectionTypeCode {
+type Path = string[];
+
+function pathToString(path: Path): string {
+  return path.join(".");
+}
+
+function err(path: Path, message: string): Error {
+  return new Error(`${message} (at ${pathToString(path)})`);
+}
+
+function normalizeCollectionType(type: HidCollectionTypeLike, path: Path): HidCollectionTypeCode {
   // Some environments surface numeric HID collection type codes directly, while others use the
   // WebHID string enum. Support both to keep the normalizer resilient to typing/library changes.
   if (typeof type === "number") {
     if (!Number.isInteger(type) || type < 0 || type > 6) {
-      throw new Error(`unknown HID collection type code: ${String(type)}`);
+      throw err(path, `unknown HID collection type code: ${String(type)}`);
     }
     return type;
   }
@@ -135,7 +145,7 @@ function normalizeCollectionType(type: HidCollectionTypeLike): HidCollectionType
       return 6;
     default: {
       const _exhaustive: never = type;
-      throw new Error(`unknown HID collection type: ${_exhaustive}`);
+      throw err(path, `unknown HID collection type: ${_exhaustive}`);
     }
   }
 }
@@ -167,13 +177,14 @@ export type NormalizeCollectionsOptions = {
   validate?: boolean;
 };
 
-function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
+function normalizeReportItem(item: HidReportItem, path: Path): NormalizedHidReportItem {
   const rawUsages = item.usages;
 
   // Reject the ambiguous case where the caller claims a non-degenerate range but only provides a
   // single usage entry; our normalizer would otherwise "collapse" the range when deriving min/max.
   if (item.isRange && rawUsages.length === 1 && item.usageMinimum !== item.usageMaximum) {
-    throw new Error(
+    throw err(
+      path,
       `Invalid HID report item: isRange=true with usageMinimum!=usageMaximum requires usages.length!=1 (got 1)`,
     );
   }
@@ -246,27 +257,51 @@ function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
   };
 }
 
-function normalizeReportInfo(report: HidReportInfo): NormalizedHidReportInfo {
+function normalizeReportInfo(report: HidReportInfo, path: Path): NormalizedHidReportInfo {
   const reportId = report.reportId;
   if (!Number.isInteger(reportId) || reportId < 0 || reportId > 0xff) {
-    throw new Error(`Invalid HID reportId: expected integer in [0,255], got ${String(reportId)}`);
+    throw err(path, `Invalid HID reportId: expected integer in [0,255], got ${String(reportId)}`);
+  }
+
+  const items: NormalizedHidReportItem[] = [];
+  for (let itemIdx = 0; itemIdx < report.items.length; itemIdx++) {
+    items.push(normalizeReportItem(report.items[itemIdx]!, [...path, `items[${itemIdx}]`]));
   }
 
   return {
     reportId,
-    items: Array.from(report.items, normalizeReportItem),
+    items,
   };
 }
 
-function normalizeCollection(collection: HidCollectionInfo): NormalizedHidCollectionInfo {
+type ReportListName = "inputReports" | "outputReports" | "featureReports";
+
+function normalizeReportList(
+  reports: readonly HidReportInfo[],
+  listName: ReportListName,
+  collectionPath: Path,
+): NormalizedHidReportInfo[] {
+  const out: NormalizedHidReportInfo[] = [];
+  for (let reportIdx = 0; reportIdx < reports.length; reportIdx++) {
+    out.push(normalizeReportInfo(reports[reportIdx]!, [...collectionPath, `${listName}[${reportIdx}]`]));
+  }
+  return out;
+}
+
+function normalizeCollection(collection: HidCollectionInfo, path: Path): NormalizedHidCollectionInfo {
+  const children: NormalizedHidCollectionInfo[] = [];
+  for (let childIdx = 0; childIdx < collection.children.length; childIdx++) {
+    children.push(normalizeCollection(collection.children[childIdx]!, [...path, `children[${childIdx}]`]));
+  }
+
   return {
     usagePage: collection.usagePage,
     usage: collection.usage,
-    collectionType: normalizeCollectionType(collection.type),
-    children: collection.children.map(normalizeCollection),
-    inputReports: collection.inputReports.map(normalizeReportInfo),
-    outputReports: collection.outputReports.map(normalizeReportInfo),
-    featureReports: collection.featureReports.map(normalizeReportInfo),
+    collectionType: normalizeCollectionType(collection.type, [...path, "type"]),
+    children,
+    inputReports: normalizeReportList(collection.inputReports, "inputReports", path),
+    outputReports: normalizeReportList(collection.outputReports, "outputReports", path),
+    featureReports: normalizeReportList(collection.featureReports, "featureReports", path),
   };
 }
 
@@ -284,21 +319,15 @@ export function normalizeCollections(
   collections: readonly unknown[],
   options: NormalizeCollectionsOptions = {},
 ): NormalizedHidCollectionInfo[] {
-  const normalized = Array.from(collections as readonly HidCollectionInfo[], normalizeCollection);
+  const rawCollections = collections as readonly HidCollectionInfo[];
+  const normalized: NormalizedHidCollectionInfo[] = [];
+  for (let i = 0; i < rawCollections.length; i++) {
+    normalized.push(normalizeCollection(rawCollections[i]!, [`collections[${i}]`]));
+  }
   if (options.validate) {
     validateCollections(normalized);
   }
   return normalized;
-}
-
-type Path = string[];
-
-function pathToString(path: Path): string {
-  return path.join(".");
-}
-
-function err(path: Path, message: string): Error {
-  return new Error(`${message} (at ${pathToString(path)})`);
 }
 
 function validateCollections(collections: readonly NormalizedHidCollectionInfo[]): void {

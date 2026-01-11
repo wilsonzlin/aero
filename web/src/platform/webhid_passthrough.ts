@@ -232,7 +232,10 @@ export class WebHidPassthroughManager {
       let normalizedCollections: ReturnType<typeof normalizeCollections>;
       try {
         const rawCollections = (device as unknown as { collections?: unknown }).collections;
-        normalizedCollections = normalizeCollections((rawCollections ?? []) as unknown as readonly HidCollectionInfo[]);
+        normalizedCollections = normalizeCollections(
+          (rawCollections ?? []) as unknown as readonly HidCollectionInfo[],
+          { validate: true },
+        );
       } catch (err) {
         console.warn("WebHID passthrough collection normalization failed during resync", err);
         continue;
@@ -336,7 +339,10 @@ export class WebHidPassthroughManager {
       let normalizedCollections: ReturnType<typeof normalizeCollections>;
       try {
         const rawCollections = (device as unknown as { collections?: unknown }).collections;
-        normalizedCollections = normalizeCollections((rawCollections ?? []) as unknown as readonly HidCollectionInfo[]);
+        normalizedCollections = normalizeCollections(
+          (rawCollections ?? []) as unknown as readonly HidCollectionInfo[],
+          { validate: true },
+        );
       } catch (err) {
         try {
           await device.close();

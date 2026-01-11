@@ -172,7 +172,9 @@ export class WebHidPassthroughRuntime {
       // as a loose dictionary shape with lots of optional fields. Chromium's runtime
       // objects are stricter (and match the shape expected by our normalizer), so
       // cast through `unknown` here to avoid infecting downstream code with `| undefined`.
-      const normalizedCollections = normalizeCollections(device.collections as unknown as readonly HidCollectionInfo[]);
+      const normalizedCollections = normalizeCollections(device.collections as unknown as readonly HidCollectionInfo[], {
+        validate: true,
+      });
       bridge = this.#createBridge({ device, normalizedCollections });
 
       const onInputReport = (event: HIDInputReportEvent): void => {
