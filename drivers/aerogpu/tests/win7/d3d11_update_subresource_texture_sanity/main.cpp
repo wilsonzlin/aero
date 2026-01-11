@@ -20,6 +20,39 @@ static int FailD3D11WithRemovedReason(const char* test_name,
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
+static void DumpBytesToFile(const char* test_name,
+                            const wchar_t* file_name,
+                            const void* data,
+                            UINT byte_count) {
+  if (!file_name || !data || byte_count == 0) {
+    return;
+  }
+  const std::wstring dir = aerogpu_test::GetModuleDir();
+  const std::wstring path = aerogpu_test::JoinPath(dir, file_name);
+  HANDLE h =
+      CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (h == INVALID_HANDLE_VALUE) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump CreateFileW(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return;
+  }
+  DWORD written = 0;
+  if (!WriteFile(h, data, byte_count, &written, NULL) || written != byte_count) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump WriteFile(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: dumped %u bytes to %ls",
+                               test_name,
+                               (unsigned)byte_count,
+                               path.c_str());
+  }
+  CloseHandle(h);
+}
+
 static uint32_t PackBGRA(uint8_t b, uint8_t g, uint8_t r, uint8_t a) {
   return ((uint32_t)b) | ((uint32_t)g << 8) | ((uint32_t)r << 16) | ((uint32_t)a << 24);
 }
@@ -319,6 +352,107 @@ static int RunD3D11UpdateSubresourceTextureSanity(int argc, char** argv) {
   }
 
   context->Unmap(staging.get(), 0);
+
+  // Also exercise UpdateSubresource on a DEFAULT constant buffer (common app path for constant
+  // buffer updates; on Win7 this still hits UpdateSubresourceUP in the UMD).
+  const UINT kCbBytes = 256;
+
+  D3D11_BUFFER_DESC cb_desc;
+  ZeroMemory(&cb_desc, sizeof(cb_desc));
+  cb_desc.ByteWidth = kCbBytes;
+  cb_desc.Usage = D3D11_USAGE_DEFAULT;
+  cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+  cb_desc.CPUAccessFlags = 0;
+  cb_desc.MiscFlags = 0;
+  cb_desc.StructureByteStride = 0;
+
+  ComPtr<ID3D11Buffer> cb;
+  hr = device->CreateBuffer(&cb_desc, NULL, cb.put());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(constant DEFAULT)", hr);
+  }
+
+  std::vector<uint8_t> cb_base(kCbBytes, 0);
+  for (size_t i = 0; i < cb_base.size(); ++i) {
+    cb_base[i] = (uint8_t)((i * 17u + 3u) & 0xFFu);
+  }
+
+  context->UpdateSubresource(cb.get(), 0, NULL, &cb_base[0], 0, 0);
+
+  // Boxed buffer update (left/right are byte offsets; top/bottom/front/back must be 0/1).
+  const UINT kCbPatchOffset = 32;
+  const UINT kCbPatchBytes = 64;
+  if (kCbPatchOffset + kCbPatchBytes > kCbBytes) {
+    return aerogpu_test::Fail(kTestName, "internal error: constant buffer patch out of bounds");
+  }
+
+  std::vector<uint8_t> cb_patch(kCbPatchBytes, 0);
+  for (size_t i = 0; i < cb_patch.size(); ++i) {
+    cb_patch[i] = (uint8_t)(((kCbPatchOffset + (UINT)i) * 9u + 11u) & 0xFFu);
+  }
+
+  D3D11_BOX cb_box;
+  cb_box.left = kCbPatchOffset;
+  cb_box.right = kCbPatchOffset + kCbPatchBytes;
+  cb_box.top = 0;
+  cb_box.bottom = 1;
+  cb_box.front = 0;
+  cb_box.back = 1;
+
+  context->UpdateSubresource(cb.get(), 0, &cb_box, &cb_patch[0], 0, 0);
+
+  D3D11_BUFFER_DESC cb_st_desc;
+  ZeroMemory(&cb_st_desc, sizeof(cb_st_desc));
+  cb_st_desc.ByteWidth = kCbBytes;
+  cb_st_desc.Usage = D3D11_USAGE_STAGING;
+  cb_st_desc.BindFlags = 0;
+  cb_st_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+  cb_st_desc.MiscFlags = 0;
+  cb_st_desc.StructureByteStride = 0;
+
+  ComPtr<ID3D11Buffer> cb_staging;
+  hr = device->CreateBuffer(&cb_st_desc, NULL, cb_staging.put());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(constant STAGING)", hr);
+  }
+
+  context->CopyResource(cb_staging.get(), cb.get());
+  context->Flush();
+
+  D3D11_MAPPED_SUBRESOURCE cb_map;
+  ZeroMemory(&cb_map, sizeof(cb_map));
+  hr = context->Map(cb_staging.get(), 0, D3D11_MAP_READ, 0, &cb_map);
+  if (FAILED(hr)) {
+    return FailD3D11WithRemovedReason(kTestName, "Map(constant staging, READ)", hr, device.get());
+  }
+  if (!cb_map.pData) {
+    context->Unmap(cb_staging.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(constant staging, READ) returned NULL pData");
+  }
+  if (dump) {
+    DumpBytesToFile(kTestName,
+                    L"d3d11_update_subresource_texture_sanity_cb.bin",
+                    cb_map.pData,
+                    kCbBytes);
+  }
+
+  const uint8_t* got_cb = (const uint8_t*)cb_map.pData;
+  for (UINT i = 0; i < kCbBytes; ++i) {
+    uint8_t expected = cb_base[i];
+    if (i >= kCbPatchOffset && i < kCbPatchOffset + kCbPatchBytes) {
+      expected = cb_patch[i - kCbPatchOffset];
+    }
+    if (got_cb[i] != expected) {
+      context->Unmap(cb_staging.get(), 0);
+      return aerogpu_test::Fail(kTestName,
+                                "constant buffer mismatch at offset %lu: got 0x%02X expected 0x%02X",
+                                (unsigned long)i,
+                                (unsigned)got_cb[i],
+                                (unsigned)expected);
+    }
+  }
+
+  context->Unmap(cb_staging.get(), 0);
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
   return 0;
