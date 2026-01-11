@@ -89,6 +89,9 @@ class VirtioWinExtractTest(unittest.TestCase):
             write("NetKVM/w7/x64/netkvm.inf", "netkvm amd64")
             write("NetKVM/w7/i386/netkvm.inf", "netkvm x86")
 
+            # Root-level notice file (should be extracted).
+            write("LICENSE.txt", "license")
+
             # Optional driver present for x86 only; amd64 missing should be reported.
             write("vioinput/win7/x86/vioinput.inf", "vioinput x86")
 
@@ -140,6 +143,8 @@ class VirtioWinExtractTest(unittest.TestCase):
             self.assertTrue(self._resolve_case_insensitive(out_root, "vioinput", "win7", "x86", "vioinput.inf").is_file())
             vioinput_win7 = self._resolve_case_insensitive(out_root, "vioinput", "win7")
             self.assertFalse(self._has_child_case_insensitive(vioinput_win7, "amd64"))
+
+            self.assertTrue(self._resolve_case_insensitive(out_root, "LICENSE.txt").is_file())
 
             # Noise should not be extracted.
             self.assertFalse(self._has_child_case_insensitive(out_root, "Balloon"))

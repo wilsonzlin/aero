@@ -416,6 +416,8 @@ def main() -> int:
                     extracted_notice_files.append(p)
 
             _extract_with_7z(sevenz, iso_path, out_root, targets, extracted_notice_files, sep_for_7z)
+            tree = _build_tree_from_paths(paths_norm)
+            targets, missing_optional = _select_extract_targets(tree)
         except subprocess.CalledProcessError as e:
             # In auto mode, fall back to a pure-Python extractor if 7z is present but
             # can't read the ISO on this platform.
