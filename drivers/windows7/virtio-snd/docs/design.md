@@ -75,9 +75,10 @@ Responsibilities:
   - prepare/start/stop/release for playback
 - Handle `eventq` for asynchronous device events (if used by the device model).
 - Implement the PCM data path:
-  - playback: submit PCM buffers on `txq`
-  - capture: `rxq` (stream id `1`) is initialized for contract conformance /
-    bring-up, but the driver does not submit capture buffers yet (render-only)
+   - playback: submit PCM buffers on `txq`
+   - capture: `rxq` (stream id `1`) is initialized for contract conformance and an
+     RX engine exists, but the current PortCls integration is render-only (no
+     capture endpoint wired up yet)
 
 The protocol engine should be written to:
 
@@ -157,7 +158,7 @@ Contract v1 requirements include:
   - `controlq = 64`
   - `eventq = 64` (initialized; currently unused unless the device model emits events)
   - `txq = 256`
-  - `rxq = 64` (initialized for bring-up; capture buffers are not submitted yet)
+  - `rxq = 64` (initialized; RX engine exists but capture endpoint integration is TBD)
 
 Driver stance:
 
