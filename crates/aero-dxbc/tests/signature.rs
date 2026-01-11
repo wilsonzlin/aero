@@ -126,6 +126,22 @@ fn dxbc_get_signature_parses_chunk() {
 }
 
 #[test]
+fn dxbc_get_signature_falls_back_to_v1_chunk_id() {
+    let sig_bytes = build_signature_chunk();
+    let dxbc_bytes = build_dxbc(&[(FourCC(*b"ISG1"), &sig_bytes)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    // Callers commonly ask for `ISGN`, but some toolchains emit `ISG1`.
+    let sig = dxbc
+        .get_signature(FourCC(*b"ISGN"))
+        .expect("missing signature chunk")
+        .expect("signature parse should succeed");
+
+    assert_eq!(sig.entries.len(), 2);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+}
+
+#[test]
 fn signature_chunk_table_out_of_bounds_is_rejected() {
     // Declares one entry, but doesn't provide enough bytes for the table.
     let mut bytes = Vec::new();
@@ -148,4 +164,3 @@ fn signature_chunk_bad_semantic_offset_is_rejected() {
     assert!(matches!(err, DxbcError::InvalidChunk { .. }));
     assert!(err.context().contains("semantic_name"));
 }
-

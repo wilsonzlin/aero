@@ -226,8 +226,32 @@ impl<'a> DxbcFile<'a> {
     /// Signature chunks include `ISGN`, `OSGN`, and `PSGN` (and may also appear
     /// as `ISG1`, `OSG1`, `PSG1` depending on the compiler/toolchain).
     pub fn get_signature(&self, kind: FourCC) -> Option<Result<SignatureChunk, DxbcError>> {
-        let chunk = self.get_chunk(kind)?;
-        Some(parse_signature_chunk(chunk.data))
+        if let Some(chunk) = self.get_chunk(kind) {
+            return Some(parse_signature_chunk(chunk.data).map_err(|e| {
+                DxbcError::invalid_chunk(format!(
+                    "{kind} signature chunk: {}",
+                    e.context()
+                ))
+            }));
+        }
+
+        // Some toolchains emit signature chunk variant IDs with a trailing `1`
+        // (e.g. `ISG1` instead of `ISGN`). Fall back to the corresponding
+        // variant when a caller asks for the base chunk ID.
+        let fallback_kind = match kind.0 {
+            [b'I', b'S', b'G', b'N'] => Some(FourCC(*b"ISG1")),
+            [b'O', b'S', b'G', b'N'] => Some(FourCC(*b"OSG1")),
+            [b'P', b'S', b'G', b'N'] => Some(FourCC(*b"PSG1")),
+            _ => None,
+        }?;
+
+        let chunk = self.get_chunk(fallback_kind)?;
+        Some(parse_signature_chunk(chunk.data).map_err(|e| {
+            DxbcError::invalid_chunk(format!(
+                "{fallback_kind} signature chunk: {}",
+                e.context()
+            ))
+        }))
     }
 
     /// Returns the first shader bytecode chunk (`SHEX` or `SHDR`) in file order.
