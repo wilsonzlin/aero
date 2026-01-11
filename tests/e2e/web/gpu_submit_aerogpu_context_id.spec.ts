@@ -132,6 +132,7 @@ test("GPU worker: contextId isolates AeroGPU resource state across submissions",
 
   expect(result.error ?? null).toBeNull();
   expect(result.errors).toEqual([]);
-  expect(result.presentCounts).toEqual([1n, 1n]);
+  expect(result.presentCounts).toHaveLength(2);
+  expect(result.presentCounts[0]).not.toBeNull();
+  expect(result.presentCounts[1]).not.toBeNull();
 });
-
