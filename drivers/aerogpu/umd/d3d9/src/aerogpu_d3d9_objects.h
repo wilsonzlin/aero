@@ -153,6 +153,7 @@ struct Adapter {
   // Optional best-effort KMD query path (Win7 user-mode D3DKMTEscape).
   // NOTE: Querying via D3DKMTEscape is relatively expensive; callers should use
   // a cached snapshot unless they truly need to refresh.
+  std::atomic<bool> kmd_query_available{false};
   uint64_t last_kmd_fence_query_ms = 0;
   AerogpuKmdQuery kmd_query;
 };
