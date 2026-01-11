@@ -33,6 +33,7 @@ else()
 endif()
 
 target_link_libraries(aero-virtio-selftest PRIVATE
+  advapi32
   cfgmgr32
   setupapi
   iphlpapi
