@@ -71,6 +71,15 @@ function isSafeNonNegativeInt(v: number): boolean {
   return Number.isSafeInteger(v) && v >= 0;
 }
 
+function toArrayBufferUint8(data: Uint8Array): Uint8Array<ArrayBuffer> {
+  // Newer TS libdefs model typed arrays as `Uint8Array<ArrayBufferLike>`, while
+  // OPFS `FileSystemWritableFileStream.write()` is still typed to accept only
+  // `ArrayBuffer`-backed views. Avoid copies when possible.
+  return data.buffer instanceof ArrayBuffer
+    ? (data as unknown as Uint8Array<ArrayBuffer>)
+    : new Uint8Array(data);
+}
+
 function signatureMatches(a: RemoteChunkCacheSignature | undefined, b: RemoteChunkCacheSignature): boolean {
   return (
     !!a &&
@@ -508,7 +517,7 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
 
       const writable = await handle.createWritable({ keepExistingData: false });
       try {
-        await writable.write(data);
+        await writable.write(toArrayBufferUint8(data));
         await writable.close();
       } catch (err) {
         try {

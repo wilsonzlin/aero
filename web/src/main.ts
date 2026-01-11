@@ -1379,12 +1379,15 @@ function renderRemoteDiskPanel(): HTMLElement {
   const readButton = el("button", { text: "Read sample bytes" }) as HTMLButtonElement;
   const flushButton = el("button", { text: "Flush cache" }) as HTMLButtonElement;
   const clearButton = el("button", { text: "Clear cache" }) as HTMLButtonElement;
+  const resetStatsButton = el("button", { text: "Reset stats" }) as HTMLButtonElement;
   const closeButton = el("button", { text: "Close" }) as HTMLButtonElement;
   const progress = el("progress", { value: "0", max: "1", style: "width: 320px" }) as HTMLProgressElement;
 
   const client = new RuntimeDiskClient();
   let handle: number | null = null;
   let statsPollPending = false;
+  let statsBaseline: Awaited<ReturnType<RuntimeDiskClient["stats"]>> | null = null;
+  let statsBaselineAtMs: number | null = null;
 
   const saveSettings = () => {
     const payload = {
@@ -1435,6 +1438,7 @@ function renderRemoteDiskPanel(): HTMLElement {
     readButton.disabled = !enabled;
     flushButton.disabled = !enabled || handle === null;
     clearButton.disabled = !enabled || handle === null;
+    resetStatsButton.disabled = !enabled || handle === null;
     closeButton.disabled = !enabled || handle === null;
   }
 
@@ -1488,6 +1492,8 @@ function renderRemoteDiskPanel(): HTMLElement {
     if (handle === null) return;
     const cur = handle;
     handle = null;
+    statsBaseline = null;
+    statsBaselineAtMs = null;
     try {
       await client.closeDisk(cur);
     } catch (err) {
@@ -1499,6 +1505,8 @@ function renderRemoteDiskPanel(): HTMLElement {
     if (handle !== null) return handle;
     const url = urlInput.value.trim();
     if (!url) throw new Error("Enter a URL first.");
+    statsBaseline = null;
+    statsBaselineAtMs = null;
 
     const cacheLimitMiB = Number(cacheLimitInput.value);
     const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
@@ -1547,24 +1555,41 @@ function renderRemoteDiskPanel(): HTMLElement {
         return;
       }
 
-      const hitRateDenom = remote.cacheHits + remote.cacheMisses;
-      const hitRate = hitRateDenom > 0 ? remote.cacheHits / hitRateDenom : 0;
+      const baselineRemote = statsBaseline?.remote;
+      const baselineIo = statsBaseline?.io;
+      const baseBlockRequests = baselineRemote?.blockRequests ?? 0;
+      const baseCacheHits = baselineRemote?.cacheHits ?? 0;
+      const baseCacheMisses = baselineRemote?.cacheMisses ?? 0;
+      const baseInflightJoins = baselineRemote?.inflightJoins ?? 0;
+      const baseRequests = baselineRemote?.requests ?? 0;
+      const baseBytesDownloaded = baselineRemote?.bytesDownloaded ?? 0;
+      const baseIoReads = baselineIo?.reads ?? 0;
+      const baseIoBytesRead = baselineIo?.bytesRead ?? 0;
+
+      const deltaCacheHits = remote.cacheHits - baseCacheHits;
+      const deltaCacheMisses = remote.cacheMisses - baseCacheMisses;
+      const hitRateDenom = deltaCacheHits + deltaCacheMisses;
+      const hitRate = hitRateDenom > 0 ? deltaCacheHits / hitRateDenom : 0;
       const cacheCoverage = remote.totalSize > 0 ? remote.cachedBytes / remote.totalSize : 0;
       const cacheLimitText = remote.cacheLimitBytes === null ? "off" : formatBytes(remote.cacheLimitBytes);
-      const downloadAmplification = res.io.bytesRead > 0 ? remote.bytesDownloaded / res.io.bytesRead : 0;
+      const deltaIoBytesRead = res.io.bytesRead - baseIoBytesRead;
+      const deltaBytesDownloaded = remote.bytesDownloaded - baseBytesDownloaded;
+      const downloadAmplification = deltaIoBytesRead > 0 ? deltaBytesDownloaded / deltaIoBytesRead : 0;
       const lastFetchRangeText = remote.lastFetchRange
         ? `${formatBytes(remote.lastFetchRange.start)}-${formatBytes(remote.lastFetchRange.end - 1)}`
         : "—";
       const lastFetchAtText = remote.lastFetchAtMs === null ? "—" : new Date(remote.lastFetchAtMs).toLocaleTimeString();
+      const sinceText = statsBaselineAtMs === null ? "—" : new Date(statsBaselineAtMs).toLocaleTimeString();
 
       stats.textContent =
         `imageSize=${formatBytes(remote.totalSize)}\n` +
         `cache=${formatBytes(remote.cachedBytes)} (${(cacheCoverage * 100).toFixed(2)}%) limit=${cacheLimitText}\n` +
         `blockSize=${formatBytes(remote.blockSize)}\n` +
-        `ioReads=${res.io.reads} inflightReads=${res.io.inflightReads} lastReadMs=${res.io.lastReadMs === null ? "—" : res.io.lastReadMs.toFixed(1)}\n` +
-        `ioBytesRead=${formatBytes(res.io.bytesRead)} downloadAmp=${downloadAmplification.toFixed(2)}x\n` +
-        `requests=${remote.requests} bytesDownloaded=${formatBytes(remote.bytesDownloaded)}\n` +
-        `blockRequests=${remote.blockRequests} hits=${remote.cacheHits} misses=${remote.cacheMisses} inflightJoins=${remote.inflightJoins} hitRate=${(hitRate * 100).toFixed(1)}%\n` +
+        `since=${sinceText}\n` +
+        `ioReads=${res.io.reads - baseIoReads} inflightReads=${res.io.inflightReads} lastReadMs=${res.io.lastReadMs === null ? "—" : res.io.lastReadMs.toFixed(1)}\n` +
+        `ioBytesRead=${formatBytes(deltaIoBytesRead)} downloadAmp=${downloadAmplification.toFixed(2)}x\n` +
+        `requests=${remote.requests - baseRequests} bytesDownloaded=${formatBytes(deltaBytesDownloaded)}\n` +
+        `blockRequests=${remote.blockRequests - baseBlockRequests} hits=${deltaCacheHits} misses=${deltaCacheMisses} inflightJoins=${remote.inflightJoins - baseInflightJoins} hitRate=${(hitRate * 100).toFixed(1)}%\n` +
         `inflightFetches=${remote.inflightFetches} lastFetch=${lastFetchAtText} ${lastFetchRangeText} (${remote.lastFetchMs === null ? "—" : remote.lastFetchMs.toFixed(1)}ms)`;
     } catch (err) {
       stats.textContent = err instanceof Error ? err.message : String(err);
@@ -1637,10 +1662,30 @@ function renderRemoteDiskPanel(): HTMLElement {
         return;
       }
       await client.clearCache(handle);
+      statsBaseline = null;
+      statsBaselineAtMs = null;
       progress.value = 1;
       output.textContent = "Cache cleared.";
       void refreshStats();
       updateButtons();
+    } catch (err) {
+      output.textContent = err instanceof Error ? err.message : String(err);
+    }
+  };
+
+  resetStatsButton.onclick = async () => {
+    output.textContent = "";
+    progress.value = 0;
+    try {
+      if (handle === null) {
+        output.textContent = "Nothing to reset (probe/open first).";
+        return;
+      }
+      statsBaseline = await client.stats(handle);
+      statsBaselineAtMs = Date.now();
+      progress.value = 1;
+      output.textContent = "Stats reset.";
+      void refreshStats();
     } catch (err) {
       output.textContent = err instanceof Error ? err.message : String(err);
     }
@@ -1692,6 +1737,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       readButton,
       flushButton,
       clearButton,
+      resetStatsButton,
       closeButton,
       progress,
     ),
