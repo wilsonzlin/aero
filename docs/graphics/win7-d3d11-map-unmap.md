@@ -7,6 +7,7 @@ It exists to stop future implementers from reverse‑engineering Win7 runtime be
 * `drivers/aerogpu/tests/win7/d3d11_triangle/`
 * `drivers/aerogpu/tests/win7/readback_sanity/`
 * `drivers/aerogpu/tests/win7/d3d11_map_roundtrip/`
+* `drivers/aerogpu/tests/win7/d3d11_map_do_not_wait/`
 
 > Header references: symbol/type names in this doc are from Win7-era user-mode DDI headers:
 > `d3d11umddi.h` (D3D11 UMD DDI), `d3d10umddi.h` (some D3D10-era shared DDI enums/types still used by D3D11 on Win7), and `d3dumddi.h` (common runtime callback types like `D3DDDICB_LOCK`).
@@ -428,5 +429,5 @@ An implementation matches Win7 expectations when:
 * `drivers/aerogpu/tests/win7/d3d11_triangle` reliably reads the expected center/corner pixels via staging `Map(READ)`.
 * `drivers/aerogpu/tests/win7/readback_sanity` reliably reads expected pixels via staging `Map(READ)`.
 * `drivers/aerogpu/tests/win7/d3d11_map_roundtrip` reliably round-trips a staging texture via `Map(WRITE)` + `Unmap` + `Map(READ)`.
-* `Map(DO_NOT_WAIT)` returns `DXGI_ERROR_WAS_STILL_DRAWING` when the staging destination is still busy (can be validated by adding a stress variant test).
+* `Map(DO_NOT_WAIT)` returns `DXGI_ERROR_WAS_STILL_DRAWING` when the staging destination is still busy (validated by `drivers/aerogpu/tests/win7/d3d11_map_do_not_wait`).
 * Invalid Map usage returns `E_INVALIDARG` and invalid Unmap reports `E_INVALIDARG` via `pfnSetErrorCb` (no silent success).
