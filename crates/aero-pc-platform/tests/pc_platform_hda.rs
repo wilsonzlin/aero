@@ -1,5 +1,7 @@
 use aero_devices::pci::profile::HDA_ICH6;
+use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::PcPlatform;
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
 use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -32,6 +34,15 @@ fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
     pc.io
         .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
     pc.io.write(0xCFC, 4, value);
+}
+
+fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_high);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, high);
 }
 
 #[test]
@@ -194,4 +205,48 @@ fn pc_platform_routes_hda_intx_via_pci_intx_router() {
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
     assert_eq!(irq, 10);
+}
+
+#[test]
+fn pc_platform_routes_hda_intx_via_ioapic_in_apic_mode() {
+    let mut pc = PcPlatform::new_with_hda(2 * 1024 * 1024);
+    let bar0_base = read_hda_bar0_base(&mut pc);
+
+    // Switch the platform into APIC mode via IMCR (0x22/0x23).
+    pc.io.write_u8(0x22, 0x70);
+    pc.io.write_u8(0x23, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Program IOAPIC entry for GSI10 to vector 0x60, level-triggered, active-low (default PCI INTx wiring).
+    let vector = 0x60u32;
+    let low = vector | (1 << 13) | (1 << 15); // polarity_low + level-triggered, unmasked
+    program_ioapic_entry(&mut pc, 10, low, 0);
+
+    // Bring controller out of reset.
+    pc.memory.write_u32(bar0_base + 0x08, 1);
+
+    // Set up CORB/RIRB and queue one verb so we can generate a CIS interrupt.
+    let corb_base = 0x1000u64;
+    let rirb_base = 0x2000u64;
+    pc.memory.write_u32(corb_base, 0x000f_0000);
+
+    pc.memory.write_u32(bar0_base + 0x40, corb_base as u32); // CORBLBASE
+    pc.memory.write_u32(bar0_base + 0x50, rirb_base as u32); // RIRBLBASE
+    pc.memory.write_u16(bar0_base + 0x4a, 0x00ff); // CORBRP
+    pc.memory.write_u16(bar0_base + 0x58, 0x00ff); // RIRBWP
+
+    pc.memory.write_u32(bar0_base + 0x20, 0x8000_0000 | (1 << 30)); // INTCTL: GIE + CIE
+    pc.memory.write_u8(bar0_base + 0x5c, 0x03); // RIRBCTL: RUN + RINTCTL
+    pc.memory.write_u8(bar0_base + 0x4c, 0x02); // CORBCTL: RUN
+    pc.memory.write_u16(bar0_base + 0x48, 0x0000); // CORBWP
+
+    pc.process_hda(0);
+    assert_eq!(pc.memory.read_u32(rirb_base), 0x1af4_1620);
+
+    pc.poll_pci_intx_lines();
+
+    // IOAPIC should have delivered the vector through the LAPIC.
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
+    pc.interrupts.borrow_mut().acknowledge(vector as u8);
+    pc.interrupts.borrow_mut().eoi(vector as u8);
 }
