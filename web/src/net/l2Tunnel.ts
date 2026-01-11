@@ -54,7 +54,7 @@ export type L2TunnelEvent =
 
 export type L2TunnelSink = (ev: L2TunnelEvent) => void;
 
-export type L2TunnelTokenTransport = "subprotocol" | "query" | "both";
+export type L2TunnelTokenTransport = "query" | "subprotocol" | "both";
 
 export type L2TunnelClientOptions = {
   /**
@@ -101,9 +101,9 @@ export type L2TunnelClientOptions = {
   /**
    * How to transport `token` to the server (WebSocket only).
    *
-   * - `"subprotocol"` (default): send `aero-l2-token.<token>` via
-   *   `Sec-WebSocket-Protocol` to avoid leaking tokens via URLs/logs/referrers.
-   * - `"query"`: send `?token=<token>` (legacy servers).
+   * - `"query"` (default): send `?token=<token>` (legacy servers).
+   * - `"subprotocol"`: send `aero-l2-token.<token>` via `Sec-WebSocket-Protocol`
+   *   to avoid leaking tokens via URLs/logs/referrers.
    * - `"both"`: send both mechanisms for compatibility during migrations.
    *
    * Note: `Sec-WebSocket-Protocol` values must be valid HTTP "tokens" (RFC
@@ -238,7 +238,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     this.token = opts.token;
     this.tokenTransport =
       opts.tokenTransport ??
-      (opts.tokenViaSubprotocol === undefined ? "subprotocol" : opts.tokenViaSubprotocol ? "subprotocol" : "query");
+      (opts.tokenViaSubprotocol ? "subprotocol" : "query");
 
     if (this.token !== undefined && this.tokenTransport !== "query") {
       const proto = `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}${this.token}`;

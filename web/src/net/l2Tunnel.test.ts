@@ -244,7 +244,7 @@ describe("net/l2Tunnel", () => {
     }
   });
 
-  it("WebSocket client sends token via Sec-WebSocket-Protocol by default", async () => {
+  it("WebSocket client sends token via query string by default", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
@@ -260,8 +260,8 @@ describe("net/l2Tunnel", () => {
 
     try {
       client.connect();
-      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2");
-      expect(FakeWebSocket.last?.protocols).toEqual([L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"]);
+      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2?token=sekrit");
+      expect(FakeWebSocket.last?.protocols).toBe(L2_TUNNEL_SUBPROTOCOL);
 
       FakeWebSocket.last?.open();
       expect(events[0]?.type).toBe("open");
@@ -275,7 +275,7 @@ describe("net/l2Tunnel", () => {
     }
   });
 
-  it("WebSocket client can send token via query params for legacy servers", async () => {
+  it("WebSocket client can send token via Sec-WebSocket-Protocol", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
@@ -288,13 +288,13 @@ describe("net/l2Tunnel", () => {
       keepaliveMinMs: 60_000,
       keepaliveMaxMs: 60_000,
       token: "sekrit",
-      tokenTransport: "query",
+      tokenTransport: "subprotocol",
     });
 
     try {
       client.connect();
-      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2?token=sekrit");
-      expect(FakeWebSocket.last?.protocols).toBe(L2_TUNNEL_SUBPROTOCOL);
+      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2");
+      expect(FakeWebSocket.last?.protocols).toEqual([L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"]);
 
       FakeWebSocket.last?.open();
       expect(events[0]?.type).toBe("open");
