@@ -109,3 +109,136 @@ jobs:
           path: head/storage-perf-results
           if-no-files-found: error
           retention-days: 14
+
+  storage-perf-comment:
+    name: PR comment (storage perf smoke)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    needs: [storage-perf-smoke]
+    if: always() && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Download storage perf artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: storage-perf-smoke-${{ github.run_id }}
+          path: storage-perf-results
+
+      - name: Comment on PR (summary)
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("node:fs");
+            const path = require("node:path");
+
+            const summaryPath = path.join(process.env.GITHUB_WORKSPACE, "storage-perf-results", "compare", "summary.json");
+            if (!fs.existsSync(summaryPath)) {
+              core.warning(`Storage perf summary not found at ${summaryPath}; skipping PR comment.`);
+              return;
+            }
+
+            const summary = JSON.parse(fs.readFileSync(summaryPath, "utf8"));
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+
+            const fmtPct = (pct) => `${pct > 0 ? "+" : ""}${(pct * 100).toFixed(1)}%`;
+            const fmtDelta = (n, unit) => `${n > 0 ? "+" : ""}${n.toFixed(1)}${unit ?? ""}`;
+
+            const pr = context.payload.pull_request;
+
+            const lines = [];
+            lines.push("<!-- aero-storage-perf-smoke -->");
+            lines.push("### Storage perf (smoke)");
+            lines.push("");
+            lines.push(`Report + artifacts: ${runUrl}`);
+            lines.push("");
+            if (pr?.base?.sha) lines.push(`Baseline: \`${pr.base.sha}\``);
+            if (pr?.head?.sha) lines.push(`Candidate: \`${pr.head.sha}\``);
+            lines.push(`Policy: \`${summary.profile ?? "unknown"}\` (\`${summary.thresholdsFile ?? "unknown"}\`)`);
+
+            const bBackend = summary.baselineMeta?.backend;
+            const cBackend = summary.candidateMeta?.backend;
+            if (typeof bBackend === "string" || typeof cBackend === "string") {
+              lines.push(`Backend: \`${bBackend ?? "unknown"}\` → \`${cBackend ?? "unknown"}\``);
+            }
+            const bApiMode = summary.baselineMeta?.api_mode;
+            const cApiMode = summary.candidateMeta?.api_mode;
+            if (typeof bApiMode === "string" || typeof cApiMode === "string") {
+              lines.push(`API mode: \`${bApiMode ?? "unknown"}\` → \`${cApiMode ?? "unknown"}\``);
+            }
+
+            if (summary.status === "unstable") {
+              lines.push("");
+              lines.push("Result: **Unstable** (see artifacts for details; possible variance / missing metrics / context mismatch)");
+            } else if (summary.status === "regression") {
+              lines.push("");
+              lines.push("Result: **Regression**");
+            } else if (summary.status === "pass") {
+              lines.push("");
+              lines.push("Result: **No significant regressions**");
+            }
+
+            const bullets = [];
+            const take = (arr) => (Array.isArray(arr) ? arr.slice(0, 5) : []);
+            for (const r of take(summary.topRegressions)) {
+              const label = `${r.scenario}.${r.metric}`;
+              const unit = r.unit ? ` ${r.unit}` : "";
+              const suffix = r.informational ? " _(info)_" : "";
+              bullets.push(`- \`${label}\`: ${fmtPct(r.deltaPct)} (${fmtDelta(r.deltaAbs, unit)})${suffix}`);
+            }
+            if (bullets.length) {
+              lines.push("");
+              lines.push("Top regressions:");
+              lines.push(...bullets);
+            }
+
+            const improvements = [];
+            for (const r of take(summary.topImprovements)) {
+              const label = `${r.scenario}.${r.metric}`;
+              const unit = r.unit ? ` ${r.unit}` : "";
+              const suffix = r.informational ? " _(info)_" : "";
+              improvements.push(`- \`${label}\`: ${fmtPct(r.deltaPct)} (${fmtDelta(r.deltaAbs, unit)})${suffix}`);
+            }
+            if (improvements.length) {
+              lines.push("");
+              lines.push("Top improvements:");
+              lines.push(...improvements);
+            }
+
+            const body = lines.join("\\n");
+
+            const { owner, repo } = context.repo;
+            const issue_number = pr.number;
+
+            const existing = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const marker = "<!-- aero-storage-perf-smoke -->";
+            const botLogin = "github-actions[bot]";
+            const previous = existing.find(
+              (c) => c.user?.login === botLogin && typeof c.body === "string" && c.body.includes(marker),
+            );
+
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: previous.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
