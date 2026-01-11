@@ -78,6 +78,10 @@ def check_docs() -> list[str]:
             re.compile(r"(?i)\bDefault\s*\(\s*`?-Profile\s+minimal`?\s*\)"),
         ),
         (
+            "claims defaults to -Profile minimal",
+            re.compile(r"(?i)\bdefault(?:s)?\s+to\s+(?:the\s+)?`?-Profile\s+minimal`?"),
+        ),
+        (
             "claims by-default uses -Profile minimal",
             # Allow line-wrapping but avoid crossing sentence boundaries (so we don't flag
             # "By default ... -Profile full. ... use -Profile minimal").
@@ -90,6 +94,10 @@ def check_docs() -> list[str]:
         (
             "claims Default(--profile minimal)",
             re.compile(r"(?i)\bDefault\s*\(\s*`?--profile\s+minimal`?\s*\)"),
+        ),
+        (
+            "claims defaults to --profile minimal",
+            re.compile(r"(?i)\bdefault(?:s)?\s+to\s+(?:the\s+)?`?--profile\s+minimal`?"),
         ),
         (
             "claims by-default uses --profile minimal",
