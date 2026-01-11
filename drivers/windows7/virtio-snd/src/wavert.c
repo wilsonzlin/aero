@@ -1719,37 +1719,36 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                 VirtIoSndWaveRtWriteClockRegister(stream, 0);
                 KeReleaseSpinLock(&stream->Lock, oldIrql);
 
-                if (dx == NULL || dx->Removed || !dx->Started) {
-                    return STATUS_INVALID_DEVICE_STATE;
-                }
                 if (bufferSize == 0 || periodBytes == 0 || periodBytes > bufferSize) {
                     return STATUS_INVALID_DEVICE_STATE;
                 }
 
-                if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) == 0) {
-                    status = VirtIoSndInitRxEngine(dx, VIRTIOSND_QUEUE_SIZE_RXQ);
-                    if (!NT_SUCCESS(status)) {
+                if (dx != NULL && dx->Started && !dx->Removed) {
+                    if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) == 0) {
+                        status = VirtIoSndInitRxEngine(dx, VIRTIOSND_QUEUE_SIZE_RXQ);
+                        if (!NT_SUCCESS(status)) {
 #ifdef STATUS_ALREADY_INITIALIZED
-                        if (status != STATUS_ALREADY_INITIALIZED) {
-                            return status;
-                        }
+                            if (status != STATUS_ALREADY_INITIALIZED) {
+                                return status;
+                            }
 #else
-                        return status;
+                            return status;
 #endif
+                        }
                     }
-                }
 
-                VirtIoSndHwSetRxCompletionCallback(dx, VirtIoSndWaveRtRxCompletion, NULL);
+                    VirtIoSndHwSetRxCompletionCallback(dx, VirtIoSndWaveRtRxCompletion, NULL);
 
-                status = VirtioSndCtrlSetParams1(&dx->Control, bufferSize, periodBytes);
-                if (!NT_SUCCESS(status)) {
-                    return status;
-                }
+                    status = VirtioSndCtrlSetParams1(&dx->Control, bufferSize, periodBytes);
+                    if (!NT_SUCCESS(status)) {
+                        return status;
+                    }
 
-                status = VirtioSndCtrlPrepare1(&dx->Control);
-                if (!NT_SUCCESS(status)) {
-                    (VOID)VirtioSndCtrlRelease1(&dx->Control);
-                    return status;
+                    status = VirtioSndCtrlPrepare1(&dx->Control);
+                    if (!NT_SUCCESS(status)) {
+                        (VOID)VirtioSndCtrlRelease1(&dx->Control);
+                        return status;
+                    }
                 }
 
                 KeAcquireSpinLock(&stream->Lock, &oldIrql);
@@ -1775,9 +1774,6 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                 periodBytes = stream->PeriodBytes;
                 KeReleaseSpinLock(&stream->Lock, oldIrql);
 
-                if (dx == NULL || dx->Removed || !dx->Started) {
-                    return STATUS_INVALID_DEVICE_STATE;
-                }
                 if (bufferSize == 0 || periodBytes == 0 || periodBytes > bufferSize) {
                     return STATUS_INVALID_DEVICE_STATE;
                 }
@@ -1785,9 +1781,11 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                     return STATUS_INVALID_DEVICE_STATE;
                 }
 
-                status = VirtioSndCtrlStart1(&dx->Control);
-                if (!NT_SUCCESS(status)) {
-                    return status;
+                if (dx != NULL && dx->Started && !dx->Removed) {
+                    status = VirtioSndCtrlStart1(&dx->Control);
+                    if (!NT_SUCCESS(status)) {
+                        return status;
+                    }
                 }
 
                 KeAcquireSpinLock(&stream->Lock, &oldIrql);
