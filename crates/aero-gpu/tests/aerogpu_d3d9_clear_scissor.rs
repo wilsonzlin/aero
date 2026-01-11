@@ -777,7 +777,7 @@ fn d3d9_cmd_stream_clear_depth_respects_scissor_rect() {
 
     // Fullscreen quad with z=0.5.
     let mut vb_data = Vec::new();
-    for (x, y) in [(-1.0f32, -1.0f32), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
+    for (x, y) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
         push_f32(&mut vb_data, x);
         push_f32(&mut vb_data, y);
         push_f32(&mut vb_data, 0.5);
@@ -1141,7 +1141,7 @@ fn d3d9_cmd_stream_clear_depth_d24s8_respects_scissor_rect() {
 
     // Fullscreen quad with z=0.5.
     let mut vb_data = Vec::new();
-    for (x, y) in [(-1.0f32, -1.0f32), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
+    for (x, y) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
         push_f32(&mut vb_data, x);
         push_f32(&mut vb_data, y);
         push_f32(&mut vb_data, 0.5);

@@ -3967,9 +3967,9 @@ impl AerogpuD3d9Executor {
                         topology: self.state.topology,
                         strip_index_format: None,
                         front_face: if self.state.rasterizer_state.front_ccw {
-                            wgpu::FrontFace::Ccw
-                        } else {
                             wgpu::FrontFace::Cw
+                        } else {
+                            wgpu::FrontFace::Ccw
                         },
                         cull_mode: match self.state.rasterizer_state.cull_mode {
                             1 => Some(wgpu::Face::Front),
