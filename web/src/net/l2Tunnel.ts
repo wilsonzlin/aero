@@ -239,16 +239,6 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     this.tokenTransport =
       opts.tokenTransport ??
       (opts.tokenViaSubprotocol ? "subprotocol" : "query");
-
-    if (this.token !== undefined && this.tokenTransport !== "query") {
-      const proto = `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}${this.token}`;
-      if (!WEBSOCKET_SUBPROTOCOL_TOKEN_RE.test(proto)) {
-        throw new RangeError(
-          `token contains characters not valid for Sec-WebSocket-Protocol; ` +
-            `use tokenTransport="query" or a header-safe token (got ${JSON.stringify(this.token)})`,
-        );
-      }
-    }
   }
 
   connect(): void {
@@ -538,6 +528,16 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
     opts: L2TunnelClientOptions = {},
   ) {
     super(sink, opts);
+
+    if (this.token !== undefined && this.tokenTransport !== "query") {
+      const proto = `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}${this.token}`;
+      if (!WEBSOCKET_SUBPROTOCOL_TOKEN_RE.test(proto)) {
+        throw new RangeError(
+          `token contains characters not valid for Sec-WebSocket-Protocol; ` +
+            `use tokenTransport="query" or a header-safe token (got ${JSON.stringify(this.token)})`,
+        );
+      }
+    }
   }
 
   connect(): void {
