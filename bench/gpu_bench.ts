@@ -8,36 +8,78 @@
  */
 
 import fs from "node:fs/promises";
+import { execFile as execFileCb } from "node:child_process";
 import http from "node:http";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
-export const GPU_BENCH_SCHEMA_VERSION = 1;
+import { RunningStats } from "../packages/aero-stats/src/running-stats.js";
+
+const execFile = promisify(execFileCb);
+
+export const GPU_BENCH_SCHEMA_VERSION = 2;
 
 /** @typedef {any} GpuTelemetrySnapshot */
+
+/**
+ * @typedef {{
+ *   fpsAvg: number|null,
+ *   frameTimeMsP50: number|null,
+ *   frameTimeMsP95: number|null,
+ *   presentLatencyMsP95: number|null,
+ *   shaderTranslationMsMean: number|null,
+ *   shaderCompilationMsMean: number|null,
+ *   pipelineCacheHitRate: number|null,
+ *   textureUploadMBpsAvg: number|null,
+ * }} GpuBenchDerivedMetrics
+ */
+
+/**
+ * @typedef {{
+ *   n: number,
+ *   mean: number,
+ *   stdev: number,
+ *   cv: number|null,
+ *   median: number,
+ *   p50: number,
+ *   p95: number,
+ * }} GpuBenchMetricStats
+ */
+
+/**
+ * @typedef {{
+ *   iteration: number,
+ *   status: "ok" | "skipped" | "error",
+ *   api?: string|null,
+ *   reason?: string|null,
+ *   error?: string,
+ *   durationMs: number,
+ *   params: any,
+ *   telemetry: GpuTelemetrySnapshot,
+ *   derived: GpuBenchDerivedMetrics,
+ * }} GpuBenchIterationSample
+ */
+
+/**
+ * @typedef {{
+ *   id: string,
+ *   name: string,
+ *   params: any,
+ *   iterations: GpuBenchIterationSample[],
+ * }} GpuBenchScenarioRaw
+ */
 
 /**
  * @typedef {{
  *   id: string,
  *   name: string,
  *   status: "ok" | "skipped" | "error",
- *   api?: string,
- *   reason?: string,
- *   error?: string,
- *   durationMs: number,
- *   params: any,
- *   telemetry: GpuTelemetrySnapshot,
- *   derived: {
- *     fpsAvg: number|null,
- *     frameTimeMsP50: number|null,
- *     frameTimeMsP95: number|null,
- *     presentLatencyMsP95: number|null,
- *     shaderTranslationMsMean: number|null,
- *     shaderCompilationMsMean: number|null,
- *     pipelineCacheHitRate: number|null,
- *     textureUploadMBpsAvg: number|null,
- *   }
- * }} GpuBenchScenarioResult
+ *   api?: string|null,
+ *   reason?: string|null,
+ *   error?: string|null,
+ *   metrics: Record<string, GpuBenchMetricStats|null>,
+ * }} GpuBenchScenarioSummary
  */
 
 /**
@@ -46,8 +88,10 @@ export const GPU_BENCH_SCHEMA_VERSION = 1;
  *   tool: string,
  *   startedAt: string,
  *   finishedAt: string,
+ *   meta: { iterations: number, gitSha?: string, gitRef?: string, nodeVersion: string },
  *   environment: { userAgent: string, webgpu: boolean, webgl2: boolean },
- *   scenarios: Record<string, GpuBenchScenarioResult>
+ *   raw: { scenarios: Record<string, GpuBenchScenarioRaw> },
+ *   summary: { scenarios: Record<string, GpuBenchScenarioSummary> },
  * }} GpuBenchReport
  */
 
@@ -84,6 +128,68 @@ function deriveMetrics(telemetry) {
   };
 }
 
+/**
+ * @param {number[]} values
+ * @param {number} q
+ */
+function quantile(values, q) {
+  if (values.length === 0) return null;
+  if (q <= 0) return Math.min(...values);
+  if (q >= 1) return Math.max(...values);
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = (sorted.length - 1) * q;
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo];
+  const t = idx - lo;
+  return sorted[lo] * (1 - t) + sorted[hi] * t;
+}
+
+/**
+ * @param {number[]} values
+ * @returns {GpuBenchMetricStats|null}
+ */
+function summarize(values) {
+  if (values.length === 0) return null;
+  const stats = new RunningStats();
+  for (const v of values) stats.push(v);
+
+  const mean = stats.mean;
+  const stdev = stats.stdevPopulation;
+  const median = quantile(values, 0.5);
+  const p95 = quantile(values, 0.95);
+  const cv = Number.isFinite(mean) && mean !== 0 ? stdev / mean : null;
+  if (
+    !Number.isFinite(mean) ||
+    !Number.isFinite(stdev) ||
+    median == null ||
+    p95 == null ||
+    !Number.isFinite(median) ||
+    !Number.isFinite(p95)
+  ) {
+    return null;
+  }
+
+  return {
+    n: stats.count,
+    mean,
+    stdev,
+    cv,
+    median,
+    p50: median,
+    p95,
+  };
+}
+
+async function gitValue(args) {
+  try {
+    const { stdout } = await execFile("git", args, { cwd: process.cwd() });
+    return stdout.trim();
+  } catch {
+    return undefined;
+  }
+}
+
 function resolveRepoRoot() {
   const here = path.dirname(fileURLToPath(import.meta.url));
   return path.resolve(here, "..");
@@ -94,12 +200,17 @@ function resolveRepoRoot() {
  * @param {{
  *   scenarios?: string[],
  *   scenarioParams?: Record<string, any>,
+ *   iterations?: number,
  * }=} opts
  * @returns {Promise<GpuBenchReport>}
  */
 export async function runGpuBenchmarksInPage(page, opts = {}) {
   const repoRoot = resolveRepoRoot();
   const startedAt = new Date().toISOString();
+  const iterations = opts.iterations ?? 1;
+  if (!Number.isInteger(iterations) || iterations <= 0) {
+    throw new Error("runGpuBenchmarksInPage: iterations must be a positive integer");
+  }
 
   const scenarioIds = opts.scenarios ?? [
     "vga_text_scroll",
@@ -123,7 +234,7 @@ export async function runGpuBenchmarksInPage(page, opts = {}) {
   }
 
   const { environment, scenarios } = await page.evaluate(
-    async ({ scenarioIds, scenarioParams }) => {
+    async ({ scenarioIds, scenarioParams, iterations }) => {
       const initialCanvas = /** @type {HTMLCanvasElement | null} */ (document.getElementById("bench-canvas"));
       if (!initialCanvas) {
         throw new Error("Benchmark page missing #bench-canvas");
@@ -166,75 +277,138 @@ export async function runGpuBenchmarksInPage(page, opts = {}) {
 
       for (const id of scenarioIds) {
         const scenario = ScenarioRegistry[id];
-        const telemetry = new Telemetry();
-        telemetry.reset();
-
         const params = scenarioParams?.[id] ?? {};
-        const t0 = performance.now();
-        const canvas = createFreshCanvas();
+        /** @type {any[]} */
+        const samples = [];
+        for (let iteration = 0; iteration < iterations; iteration += 1) {
+          const telemetry = new Telemetry();
+          telemetry.reset();
+          const t0 = performance.now();
+          const canvas = createFreshCanvas();
 
-        try {
-          if (!scenario) {
-            results[id] = {
-              id,
-              name: id,
+          try {
+            if (!scenario) {
+              samples.push({
+                iteration,
+                status: "error",
+                error: `Unknown scenario: ${id}`,
+                durationMs: 0,
+                params,
+                telemetry: telemetry.snapshot(),
+              });
+              continue;
+            }
+
+            const out = await scenario.run({ canvas, telemetry, params });
+            const t1 = performance.now();
+
+            samples.push({
+              iteration,
+              status: out?.status ?? "ok",
+              api: out?.api ?? null,
+              reason: out?.reason ?? null,
+              durationMs: t1 - t0,
+              params: out?.params ?? params,
+              telemetry: telemetry.snapshot(),
+            });
+          } catch (e) {
+            const t1 = performance.now();
+            samples.push({
+              iteration,
               status: "error",
-              error: `Unknown scenario: ${id}`,
-              durationMs: 0,
+              api: null,
+              error: e instanceof Error ? e.message : String(e),
+              durationMs: t1 - t0,
               params,
               telemetry: telemetry.snapshot(),
-            };
-            continue;
+            });
           }
-
-          const out = await scenario.run({ canvas, telemetry, params });
-          const t1 = performance.now();
-
-          results[id] = {
-            id,
-            name: scenario.name ?? id,
-            status: out?.status ?? "ok",
-            api: out?.api ?? null,
-            reason: out?.reason ?? null,
-            durationMs: t1 - t0,
-            params: out?.params ?? params,
-            telemetry: telemetry.snapshot(),
-          };
-        } catch (e) {
-          const t1 = performance.now();
-          results[id] = {
-            id,
-            name: scenario?.name ?? id,
-            status: "error",
-            error: e instanceof Error ? e.message : String(e),
-            durationMs: t1 - t0,
-            params,
-            telemetry: telemetry.snapshot(),
-          };
         }
+
+        results[id] = {
+          id,
+          name: scenario?.name ?? id,
+          params,
+          iterations: samples,
+        };
       }
 
       return { environment: env, scenarios: results };
     },
-    { scenarioIds, scenarioParams: opts.scenarioParams ?? {} },
+    { scenarioIds, scenarioParams: opts.scenarioParams ?? {}, iterations },
   );
 
-  /** @type {Record<string, GpuBenchScenarioResult>} */
-  const finalScenarios = {};
+  /** @type {Record<string, GpuBenchScenarioRaw>} */
+  const rawScenarios = {};
+  /** @type {Record<string, GpuBenchScenarioSummary>} */
+  const summaryScenarios = {};
+
   for (const [id, raw] of Object.entries(scenarios)) {
-    finalScenarios[id] = {
-      ...raw,
-      derived: deriveMetrics(raw.telemetry),
+    const iterationsRaw = raw.iterations.map((sample) => ({
+      ...sample,
+      derived: deriveMetrics(sample.telemetry),
+    }));
+
+    rawScenarios[id] = {
+      id,
+      name: raw.name ?? id,
+      params: raw.params ?? {},
+      iterations: iterationsRaw,
+    };
+
+    const okIterations = iterationsRaw.filter((r) => r.status === "ok");
+    /** @type {Record<string, number[]>} */
+    const metricSamples = {};
+    for (const r of okIterations) {
+      for (const [metric, value] of Object.entries(r.derived ?? {})) {
+        if (typeof value !== "number" || !Number.isFinite(value)) continue;
+        (metricSamples[metric] ??= []).push(value);
+      }
+    }
+
+    /** @type {Record<string, GpuBenchMetricStats|null>} */
+    const metrics = {};
+    for (const metric of Object.keys(deriveMetrics(okIterations[0]?.telemetry ?? {}))) {
+      metrics[metric] = summarize(metricSamples[metric] ?? []);
+    }
+
+    const status = iterationsRaw.some((r) => r.status === "error")
+      ? "error"
+      : okIterations.length > 0
+        ? "ok"
+        : "skipped";
+
+    const firstOk = okIterations[0] ?? null;
+    const firstSkipped = iterationsRaw.find((r) => r.status === "skipped") ?? null;
+    const firstError = iterationsRaw.find((r) => r.status === "error") ?? null;
+
+    summaryScenarios[id] = {
+      id,
+      name: raw.name ?? id,
+      status,
+      api: firstOk?.api ?? firstSkipped?.api ?? null,
+      reason: firstSkipped?.reason ?? null,
+      error: firstError?.error ?? null,
+      metrics,
     };
   }
+
+  const [gitSha, gitRef] = await Promise.all([gitValue(["rev-parse", "HEAD"]), gitValue(["rev-parse", "--abbrev-ref", "HEAD"])]);
 
   return {
     schemaVersion: GPU_BENCH_SCHEMA_VERSION,
     tool: "aero-gpu-bench",
     startedAt,
     finishedAt: new Date().toISOString(),
+    meta: {
+      iterations,
+      gitSha,
+      gitRef,
+      nodeVersion: process.version,
+    },
     environment,
-    scenarios: finalScenarios,
+    raw: { scenarios: rawScenarios },
+    summary: { scenarios: summaryScenarios },
   };
 }
 
@@ -296,8 +470,13 @@ async function runCli() {
   const outPath = args.output ?? null;
   const headless = args.headless !== "false";
   const swiftshader = args.swiftshader === "true";
+  const iterations = args.iterations ? Number.parseInt(args.iterations, 10) : 1;
   const scenarioParamsPath = args["scenario-params"] ?? null;
   const scenarioParamsJson = args["scenario-params-json"] ?? null;
+
+  if (!Number.isFinite(iterations) || iterations <= 0) {
+    throw new Error("--iterations must be a positive integer");
+  }
 
   /** @type {Record<string, any> | undefined} */
   let scenarioParams;
@@ -335,7 +514,7 @@ async function runCli() {
 
   try {
     await page.goto(server.url, { waitUntil: "load" });
-    const report = await runGpuBenchmarksInPage(page, { scenarios, scenarioParams });
+    const report = await runGpuBenchmarksInPage(page, { scenarios, scenarioParams, iterations });
     const json = JSON.stringify(report, null, 2);
     if (outPath) {
       await fs.mkdir(path.dirname(outPath), { recursive: true });

@@ -19,7 +19,9 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     env:
+      GPU_PERF_ITERATIONS: "3"
       GPU_PERF_REGRESSION_THRESHOLD_PCT: "15"
+      GPU_PERF_EXTREME_CV_THRESHOLD: "0.5"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - name: Checkout (candidate)
@@ -62,7 +64,7 @@ jobs:
       - name: Write scenario params
         working-directory: head
         run: |
-          mkdir -p gpu-perf-results
+          mkdir -p gpu-perf-results/{base,head,compare}
           cat > gpu-perf-results/scenario_params.json <<'JSON'
           {
             "vga_text_scroll": { "frames": 120 },
@@ -77,7 +79,8 @@ jobs:
             --scenarios vga_text_scroll,vbe_lfb_blit \
             --scenario-params ../head/gpu-perf-results/scenario_params.json \
             --swiftshader true \
-            --output ../head/gpu-perf-results/base.json
+            --iterations ${{ env.GPU_PERF_ITERATIONS }} \
+            --output ../head/gpu-perf-results/base/gpu_bench.json
 
       - name: Run GPU perf (candidate)
         working-directory: head
@@ -86,15 +89,22 @@ jobs:
             --scenarios vga_text_scroll,vbe_lfb_blit \
             --scenario-params gpu-perf-results/scenario_params.json \
             --swiftshader true \
-            --output gpu-perf-results/head.json
+            --iterations ${{ env.GPU_PERF_ITERATIONS }} \
+            --output gpu-perf-results/head/gpu_bench.json
 
-      - name: Compare (fail on regression)
+      - name: Compare GPU perf (job summary)
         working-directory: head
         run: |
+          set +e
           node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
-            --baseline gpu-perf-results/base.json \
-            --current gpu-perf-results/head.json \
-            --thresholdPct ${{ env.GPU_PERF_REGRESSION_THRESHOLD_PCT }}
+            --baseline gpu-perf-results/base/gpu_bench.json \
+            --current gpu-perf-results/head/gpu_bench.json \
+            --thresholdPct ${{ env.GPU_PERF_REGRESSION_THRESHOLD_PCT }} \
+            --cvThreshold ${{ env.GPU_PERF_EXTREME_CV_THRESHOLD }} \
+            --outDir gpu-perf-results/compare
+          status=$?
+          cat gpu-perf-results/compare/compare.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status
 
       - name: Upload GPU perf artifacts
         if: always()

@@ -104,13 +104,14 @@ report suitable for artifact upload and regression comparison.
 ### Running locally
 
 ```bash
-node --experimental-strip-types bench/gpu_bench.ts --output gpu_bench.json
+npm run bench:gpu -- --iterations 7 --output gpu_bench.json
 ```
 
 Common options:
 
 - `--scenarios vga_text_scroll,vbe_lfb_blit` (comma-separated)
 - `--scenario-params path/to/params.json` (per-scenario overrides)
+- `--iterations 7` (run each scenario N times and aggregate using median-of-N)
 - `--headless false` (run headful)
 - `--swiftshader true` (force software GL for more stable CI; may disable WebGPU on some platforms)
 
@@ -120,11 +121,13 @@ Common options:
 node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
   --baseline baseline.json \
   --current gpu_bench.json \
-  --thresholdPct 5
+  --thresholdPct 5 \
+  --cvThreshold 0.5
 ```
 
-The compare script exits non-zero if any primary metric regresses by more than the configured
-threshold.
+The compare script writes `compare.md` + `summary.json` (by default next to `--current`) and exits
+non-zero if the run is unstable (high coefficient-of-variation) or any metric regresses by more than
+the configured threshold.
 
 ## Storage I/O benchmark suite (OPFS + IndexedDB)
 

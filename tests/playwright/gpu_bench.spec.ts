@@ -40,7 +40,7 @@ test("gpu benchmark suite emits JSON report (smoke)", async ({ page }, testInfo)
       },
     });
 
-    expect(report.schemaVersion).toBe(1);
+    expect(report.schemaVersion).toBe(2);
     expect(report.tool).toBe("aero-gpu-bench");
 
     const outPath = testInfo.outputPath("gpu_bench.json");
