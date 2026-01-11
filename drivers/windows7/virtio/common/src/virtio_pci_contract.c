@@ -16,15 +16,17 @@ AeroVirtioPciGetBusSlotFromPdo(_In_ PDEVICE_OBJECT PhysicalDeviceObject, _Out_ U
 
     busNumber = 0;
     len = 0;
-    status = IoGetDeviceProperty(PhysicalDeviceObject, DevicePropertyBusNumber, sizeof(busNumber), &busNumber, &len);
-    if (!NT_SUCCESS(status) || len != sizeof(busNumber)) {
+    status = IoGetDeviceProperty(
+        PhysicalDeviceObject, DevicePropertyBusNumber, (ULONG)sizeof(busNumber), &busNumber, &len);
+    if (!NT_SUCCESS(status) || len != (ULONG)sizeof(busNumber)) {
         return STATUS_DEVICE_DATA_ERROR;
     }
 
     slotNumber = 0;
     len = 0;
-    status = IoGetDeviceProperty(PhysicalDeviceObject, DevicePropertyAddress, sizeof(slotNumber), &slotNumber, &len);
-    if (!NT_SUCCESS(status) || len != sizeof(slotNumber)) {
+    status = IoGetDeviceProperty(
+        PhysicalDeviceObject, DevicePropertyAddress, (ULONG)sizeof(slotNumber), &slotNumber, &len);
+    if (!NT_SUCCESS(status) || len != (ULONG)sizeof(slotNumber)) {
         return STATUS_DEVICE_DATA_ERROR;
     }
 
@@ -42,20 +44,22 @@ AeroVirtioPciValidateContractV1BusSlot(_In_ ULONG BusNumber,
 {
     UCHAR cfg[0x30];
     ULONG bytesRead;
+    ULONG cfgLen;
     virtio_pci_identity_t id;
     virtio_pci_identity_result_t res;
 
     RtlZeroMemory(cfg, sizeof(cfg));
     RtlZeroMemory(&id, sizeof(id));
 
-    bytesRead = HalGetBusDataByOffset(PCIConfiguration, BusNumber, SlotNumber, cfg, 0, sizeof(cfg));
-    if (bytesRead != sizeof(cfg)) {
+    cfgLen = (ULONG)sizeof(cfg);
+    bytesRead = HalGetBusDataByOffset(PCIConfiguration, BusNumber, SlotNumber, cfg, 0, cfgLen);
+    if (bytesRead != cfgLen) {
         DbgPrintEx(
             DPFLTR_IHVDRIVER_ID,
             DPFLTR_ERROR_LEVEL,
             "[aero-virtio] HalGetBusDataByOffset(PCI) failed (%lu/%lu)\n",
             bytesRead,
-            (ULONG)sizeof(cfg));
+            cfgLen);
         return STATUS_DEVICE_DATA_ERROR;
     }
 
@@ -102,4 +106,3 @@ AeroVirtioPciValidateContractV1Pdo(_In_ PDEVICE_OBJECT PhysicalDeviceObject,
 
     return AeroVirtioPciValidateContractV1BusSlot(busNumber, slotNumber, AllowedDeviceIds, AllowedDeviceIdCount);
 }
-
