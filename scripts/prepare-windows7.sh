@@ -19,9 +19,9 @@ To run the gated Windows 7 boot test locally:
      (or set AERO_WINDOWS7_GOLDEN=/path/to/golden.png)
 
   3) Run the ignored test:
-       cargo test --test windows7_boot -- --ignored
+       cargo test --locked --test windows7_boot -- --ignored
 
-Notes:
-  - Do NOT commit Windows images or golden screenshots.
-  - Use a valid Windows 7 license and installation media.
+ Notes:
+   - Do NOT commit Windows images or golden screenshots.
+   - Use a valid Windows 7 license and installation media.
 EOF

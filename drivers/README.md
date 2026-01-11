@@ -182,7 +182,7 @@ See: `drivers/docs/wdk-build.md`.
 Run:
 
 ```bash
-cargo test --manifest-path drivers/protocol/virtio/Cargo.toml
+cargo test --locked --manifest-path drivers/protocol/virtio/Cargo.toml
 ```
 
 ## Portable virtio-pci capability parser tests (hardware-free)

@@ -10,6 +10,5 @@ Why this exists:
 Run tests:
 
 ```bash
-cargo test --manifest-path drivers/protocol/virtio/Cargo.toml
+cargo test --locked --manifest-path drivers/protocol/virtio/Cargo.toml
 ```
-

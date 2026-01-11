@@ -156,10 +156,10 @@ Useful flags:
 
 ```bash
 # Show stdout/stderr for passing tests
-cargo test -p <crate-name> -- --nocapture
+cargo test --locked -p <crate-name> -- --nocapture
 
 # Run ignored tests (if any are marked #[ignore])
-cargo test -p <crate-name> -- --ignored
+cargo test --locked -p <crate-name> -- --ignored
 ```
 
 ---
@@ -413,7 +413,7 @@ Expected behavior when `AERO_REQUIRE_WEBGPU=1` is set:
 CI should be reproducible locally with the same top-level commands:
 
 - Full stack (recommended): `cargo xtask test-all` (or `./scripts/test-all.sh` wrapper)
-- Rust: `cargo test --workspace`
+- Rust: `cargo test --locked --workspace`
 - WASM tests (Node): `wasm-pack test --node`
 - WASM builds (single + threaded): `npm -w web run wasm:build`
   - Threaded builds require nightly + `rust-src` (see ADR 0004).
