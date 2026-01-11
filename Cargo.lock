@@ -74,6 +74,7 @@ version = "0.1.0"
 dependencies = [
  "aero-dxbc",
  "aero-gpu",
+ "aero-gpu-device",
  "aero-protocol",
  "anyhow",
  "bytemuck",

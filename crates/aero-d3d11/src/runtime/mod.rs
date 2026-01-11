@@ -1,3 +1,4 @@
+pub mod aerogpu_cmd_executor;
 pub mod aerogpu_execute;
 pub mod aerogpu_resources;
 pub mod aerogpu_state;

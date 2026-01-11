@@ -6,8 +6,9 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 aero-gpu = { path = "../aero-gpu" }
-aero-dxbc = { path = "../aero-dxbc" }
+aero-gpu-device = { path = "../aero-gpu-device" }
 aero-protocol = { path = "../../emulator/protocol" }
+aero-dxbc = { path = "../aero-dxbc" }
 anyhow = "1.0"
 futures-intrusive = "0.5"
 pollster = "0.3"
