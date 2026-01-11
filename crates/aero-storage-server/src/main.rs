@@ -23,12 +23,20 @@ async fn main() -> anyhow::Result<()> {
         // cookie-authenticated requests can succeed in cross-origin deployments.
         state = state.with_cors_allow_credentials(origin != "*");
     }
+    let corp_policy = config.cross_origin_resource_policy.trim();
+    if corp_policy != "same-origin" && corp_policy != "same-site" && corp_policy != "cross-origin" {
+        anyhow::bail!(
+            "invalid cross-origin resource policy: {corp_policy} (expected same-origin, same-site, or cross-origin)"
+        );
+    }
+    state = state.with_cross_origin_resource_policy(HeaderValue::from_str(corp_policy)?);
     let app = aero_storage_server::app(state);
 
     tracing::info!(
         listen_addr = %config.listen_addr,
         images_root = %config.images_root.display(),
         cors_origin = ?config.cors_origin,
+        cross_origin_resource_policy = %corp_policy,
         "aero-storage-server listening"
     );
 

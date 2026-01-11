@@ -41,6 +41,7 @@ pub struct ImagesState {
     range_options: RangeOptions,
     cors_allow_origin: HeaderValue,
     cors_allow_credentials: bool,
+    cross_origin_resource_policy: HeaderValue,
     public_cache_max_age: Duration,
 }
 
@@ -54,6 +55,7 @@ impl ImagesState {
             },
             cors_allow_origin: HeaderValue::from_static("*"),
             cors_allow_credentials: false,
+            cross_origin_resource_policy: HeaderValue::from_static("same-site"),
             public_cache_max_age: DEFAULT_PUBLIC_MAX_AGE,
         }
     }
@@ -70,6 +72,14 @@ impl ImagesState {
 
     pub fn with_cors_allow_credentials(mut self, cors_allow_credentials: bool) -> Self {
         self.cors_allow_credentials = cors_allow_credentials;
+        self
+    }
+
+    pub fn with_cross_origin_resource_policy(
+        mut self,
+        cross_origin_resource_policy: HeaderValue,
+    ) -> Self {
+        self.cross_origin_resource_policy = cross_origin_resource_policy;
         self
     }
 
@@ -410,6 +420,10 @@ pub(crate) fn insert_cors_headers(headers: &mut HeaderMap, state: &ImagesState) 
             "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length",
         ),
     );
+    headers.insert(
+        HeaderName::from_static("cross-origin-resource-policy"),
+        state.cross_origin_resource_policy.clone(),
+    );
 }
 
 pub(crate) fn insert_cors_preflight_headers(headers: &mut HeaderMap, state: &ImagesState) {
@@ -442,6 +456,10 @@ pub(crate) fn insert_cors_preflight_headers(headers: &mut HeaderMap, state: &Ima
     headers.insert(
         HeaderName::from_static("access-control-max-age"),
         HeaderValue::from_static("86400"),
+    );
+    headers.insert(
+        HeaderName::from_static("cross-origin-resource-policy"),
+        state.cross_origin_resource_policy.clone(),
     );
 }
 

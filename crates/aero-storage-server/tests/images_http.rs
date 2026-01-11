@@ -56,6 +56,12 @@ async fn get_without_range_returns_full_body() {
         res.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
         "13"
     );
+    assert_eq!(
+        res.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
 
     let body = res.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(&body[..], b"Hello, world!");

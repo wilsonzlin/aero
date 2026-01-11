@@ -20,6 +20,18 @@ struct Args {
     #[arg(long, env = "AERO_STORAGE_CORS_ORIGIN")]
     cors_origin: Option<String>,
 
+    /// Cross-Origin-Resource-Policy header value for image bytes responses.
+    ///
+    /// This is a defence-in-depth header for cross-origin isolation (`COEP: require-corp`). Common
+    /// values:
+    /// - `same-site` (default)
+    /// - `cross-origin`
+    /// - `same-origin`
+    ///
+    /// Environment variable: `AERO_STORAGE_CROSS_ORIGIN_RESOURCE_POLICY`.
+    #[arg(long, env = "AERO_STORAGE_CROSS_ORIGIN_RESOURCE_POLICY")]
+    cross_origin_resource_policy: Option<String>,
+
     /// Root directory used by the local filesystem store backend.
     ///
     /// Environment variable: `AERO_STORAGE_IMAGE_ROOT`.
@@ -37,6 +49,7 @@ struct Args {
 pub struct Config {
     pub listen_addr: SocketAddr,
     pub cors_origin: Option<String>,
+    pub cross_origin_resource_policy: String,
     pub images_root: PathBuf,
     pub log_level: String,
 }
@@ -71,6 +84,18 @@ impl Config {
             (!v.is_empty()).then_some(v)
         });
 
+        let cross_origin_resource_policy = args
+            .cross_origin_resource_policy
+            .or_else(|| env::var("AERO_STORAGE_CORP").ok())
+            .or_else(|| env::var("AERO_STORAGE_SERVER_CROSS_ORIGIN_RESOURCE_POLICY").ok())
+            .unwrap_or_else(|| "same-site".to_string());
+        let cross_origin_resource_policy = cross_origin_resource_policy.trim().to_string();
+        let cross_origin_resource_policy = if cross_origin_resource_policy.is_empty() {
+            "same-site".to_string()
+        } else {
+            cross_origin_resource_policy
+        };
+
         let log_level = args
             .log_level
             .or_else(|| env::var("AERO_STORAGE_SERVER_LOG_LEVEL").ok())
@@ -79,6 +104,7 @@ impl Config {
         Self {
             listen_addr,
             cors_origin,
+            cross_origin_resource_policy,
             images_root,
             log_level,
         }

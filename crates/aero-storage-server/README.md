@@ -23,6 +23,7 @@ Configuration is via **CLI flags with env var fallbacks** (powered by `clap`).
 | --- | --- | --- |
 | `--listen-addr` | `AERO_STORAGE_LISTEN_ADDR` | `0.0.0.0:8080` |
 | `--cors-origin` | `AERO_STORAGE_CORS_ORIGIN` | _(unset → `Access-Control-Allow-Origin: *`)_ |
+| `--cross-origin-resource-policy` | `AERO_STORAGE_CROSS_ORIGIN_RESOURCE_POLICY` | `same-site` |
 | `--images-root` | `AERO_STORAGE_IMAGE_ROOT` | `./images` |
 | `--log-level` | `AERO_STORAGE_LOG_LEVEL` | `info` |
 
@@ -31,6 +32,10 @@ Notes:
 - If `--cors-origin` is set to a specific origin (not `*`), the server will also send
   `Access-Control-Allow-Credentials: true` so cookie-authenticated cross-origin requests can
   succeed.
+- `--cross-origin-resource-policy` controls the `Cross-Origin-Resource-Policy` response header on
+  image bytes responses (defence-in-depth for `COEP: require-corp`). The default `same-site` works
+  well when the app and storage server are on the same eTLD+1 (e.g. `app.example.com` and
+  `images.example.com`).
 
 ## Run
 

@@ -17,6 +17,7 @@ pub struct AppState {
     pub store: Arc<dyn ImageStore>,
     pub cors_allow_origin: HeaderValue,
     pub cors_allow_credentials: bool,
+    pub cross_origin_resource_policy: HeaderValue,
 }
 
 impl AppState {
@@ -25,6 +26,7 @@ impl AppState {
             store,
             cors_allow_origin: HeaderValue::from_static("*"),
             cors_allow_credentials: false,
+            cross_origin_resource_policy: HeaderValue::from_static("same-site"),
         }
     }
 
@@ -37,11 +39,20 @@ impl AppState {
         self.cors_allow_credentials = cors_allow_credentials;
         self
     }
+
+    pub fn with_cross_origin_resource_policy(
+        mut self,
+        cross_origin_resource_policy: HeaderValue,
+    ) -> Self {
+        self.cross_origin_resource_policy = cross_origin_resource_policy;
+        self
+    }
 }
 
 pub fn app(state: AppState) -> axum::Router {
     let cors_allow_origin = state.cors_allow_origin.clone();
     let cors_allow_credentials = state.cors_allow_credentials;
+    let cross_origin_resource_policy = state.cross_origin_resource_policy.clone();
     let store = Arc::clone(&state.store);
     let metrics = Arc::new(Metrics::new());
 
@@ -49,7 +60,8 @@ pub fn app(state: AppState) -> axum::Router {
         .merge(http::router_with_state(
             http::images::ImagesState::new(store, Arc::clone(&metrics))
                 .with_cors_allow_origin(cors_allow_origin)
-                .with_cors_allow_credentials(cors_allow_credentials),
+                .with_cors_allow_credentials(cors_allow_credentials)
+                .with_cross_origin_resource_policy(cross_origin_resource_policy),
         ))
         .merge(api::router(state))
         .route_layer(middleware::from_fn_with_state(
