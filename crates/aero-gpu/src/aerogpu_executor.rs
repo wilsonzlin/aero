@@ -1420,6 +1420,9 @@ fn fs_main() -> @location(0) vec4<f32> {
                     "COPY_BUFFER: internal writeback size mismatch".into(),
                 ));
             }
+            let dst_backing = dst_backing.ok_or_else(|| {
+                ExecutorError::Validation("COPY_BUFFER: missing dst backing for writeback".into())
+            })?;
             let table = alloc_table.ok_or_else(|| {
                 ExecutorError::Validation("COPY_BUFFER: WRITEBACK_DST requires alloc_table".into())
             })?;
@@ -1688,6 +1691,11 @@ fn fs_main() -> @location(0) vec4<f32> {
                     ExecutorError::Validation("COPY_TEXTURE2D: dst_x overflow".into())
                 })?;
 
+            let dst_backing = dst_backing.ok_or_else(|| {
+                ExecutorError::Validation(
+                    "COPY_TEXTURE2D: missing dst backing for writeback".into(),
+                )
+            })?;
             let table = alloc_table.ok_or_else(|| {
                 ExecutorError::Validation(
                     "COPY_TEXTURE2D: WRITEBACK_DST requires alloc_table".into(),
