@@ -11,8 +11,10 @@ pub use composite::UsbCompositeHidInputHandle;
 pub use gamepad::UsbHidGamepadHandle;
 
 pub use report_descriptor::{
-    parse_report_descriptor, synthesize_report_descriptor, HidCollectionInfo, HidDescriptorError,
-    HidReportDescriptorParseResult, HidReportInfo, HidReportItem,
+    has_report_ids, max_feature_report_bytes, max_input_report_bytes, max_output_report_bytes,
+    parse_report_descriptor, report_bits, report_bytes, synthesize_report_descriptor,
+    HidCollectionInfo, HidDescriptorError, HidReportDescriptorParseResult, HidReportInfo,
+    HidReportItem,
 };
 
 pub use passthrough::{UsbHidPassthrough, UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};

@@ -54,8 +54,18 @@ pub struct HidReportItem {
 }
 
 impl HidReportItem {
+    #[track_caller]
     pub fn bit_len(&self) -> u32 {
-        self.report_size.saturating_mul(self.report_count)
+        assert!(
+            self.report_size != 0,
+            "invalid HID report item: report_size must be non-zero"
+        );
+        self.report_size.checked_mul(self.report_count).unwrap_or_else(|| {
+            panic!(
+                "invalid HID report item: report_size * report_count overflows u32 ({} * {})",
+                self.report_size, self.report_count
+            )
+        })
     }
 }
 
@@ -844,8 +854,87 @@ pub fn aggregate_reports(
     out
 }
 
-fn report_bits(items: &[HidReportItem]) -> u32 {
-    items.iter().map(HidReportItem::bit_len).sum()
+/// Returns the total number of bits in a report.
+///
+/// Computed as `sum(report_size * report_count)` across all items.
+///
+/// # Panics
+/// - If any `report_size == 0` (invalid HID descriptor).
+/// - If any `report_size * report_count` overflows `u32`.
+/// - If the sum overflows `u32`.
+#[track_caller]
+pub fn report_bits(items: &[HidReportItem]) -> u32 {
+    items
+        .iter()
+        .enumerate()
+        .fold(0u32, |acc, (idx, item)| {
+            assert!(
+                item.report_size != 0,
+                "invalid HID report item {idx}: report_size must be non-zero"
+            );
+            let bits = item
+                .report_size
+                .checked_mul(item.report_count)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "invalid HID report item {idx}: report_size * report_count overflows u32 ({} * {})",
+                        item.report_size, item.report_count
+                    )
+                });
+            acc.checked_add(bits).unwrap_or_else(|| {
+                panic!("invalid HID report: total bit length overflows u32")
+            })
+        })
+}
+
+#[track_caller]
+fn bits_to_bytes(bits: u32) -> u32 {
+    bits.checked_add(7)
+        .unwrap_or_else(|| panic!("invalid HID report: bit length too large to round to bytes"))
+        / 8
+}
+
+/// Returns the expected report byte length.
+///
+/// The bit length implied by `report.items` is rounded up to the next full byte.
+/// If the descriptor uses report IDs, HID reports are prefixed with an extra
+/// 1-byte report ID, so callers should pass `has_report_ids = true`.
+///
+/// Note: In WebHID metadata, report IDs are scoped to the full descriptor. A
+/// single on-the-wire report can be described across multiple collections; this
+/// helper only accounts for the items within `report`.
+///
+/// # Panics
+/// Panics if the computed size overflows `u32` or if [`report_bits`] panics.
+#[track_caller]
+pub fn report_bytes(report: &HidReportInfo, has_report_ids: bool) -> u32 {
+    let data_bytes = bits_to_bytes(report_bits(&report.items));
+    data_bytes
+        .checked_add(has_report_ids as u32)
+        .unwrap_or_else(|| panic!("invalid HID report: byte length overflows u32"))
+}
+
+/// Returns `true` if any report in the collection tree uses a non-zero report ID.
+pub fn has_report_ids(collections: &[HidCollectionInfo]) -> bool {
+    fn collection_has_ids(collection: &HidCollectionInfo) -> bool {
+        let mut any = false;
+        any |= collection
+            .input_reports
+            .iter()
+            .any(|report| report.report_id != 0);
+        any |= collection
+            .output_reports
+            .iter()
+            .any(|report| report.report_id != 0);
+        any |= collection
+            .feature_reports
+            .iter()
+            .any(|report| report.report_id != 0);
+        any |= collection.children.iter().any(collection_has_ids);
+        any
+    }
+
+    collections.iter().any(collection_has_ids)
 }
 
 /// Returns the total number of bits for a given `(kind, report_id)` across the whole descriptor.
@@ -864,28 +953,48 @@ pub fn report_bytes_for_id(
     report_id: u32,
 ) -> usize {
     let bits = report_bits_for_id(collections, kind, report_id);
-    usize::try_from((bits + 7) / 8).unwrap_or(usize::MAX)
+    usize::try_from(bits_to_bytes(bits)).unwrap_or(usize::MAX)
 }
 
-fn max_report_bytes(collections: &[HidCollectionInfo], kind: HidReportKind) -> usize {
+fn max_report_bytes(collections: &[HidCollectionInfo], kind: HidReportKind) -> u32 {
     let aggregated = aggregate_reports(collections);
-    aggregated
-        .iter()
-        .filter(|((k, _), _)| *k == kind)
-        .map(|(_, items)| usize::try_from((report_bits(items) + 7) / 8).unwrap_or(usize::MAX))
-        .max()
-        .unwrap_or(0)
+    let has_ids = has_report_ids(collections) as u32;
+
+    let mut max = 0u32;
+    let mut found = false;
+    for ((k, _), items) in aggregated.iter() {
+        if *k != kind {
+            continue;
+        }
+        found = true;
+        let bytes = bits_to_bytes(report_bits(items));
+        let bytes = bytes
+            .checked_add(has_ids)
+            .unwrap_or_else(|| panic!("invalid HID report: byte length overflows u32"));
+        max = max.max(bytes);
+    }
+
+    if found { max } else { 0 }
 }
 
-pub fn max_input_report_bytes(collections: &[HidCollectionInfo]) -> usize {
+/// Returns the maximum input report byte length across the descriptor.
+///
+/// If the descriptor uses report IDs, the returned size includes the 1-byte ID prefix.
+pub fn max_input_report_bytes(collections: &[HidCollectionInfo]) -> u32 {
     max_report_bytes(collections, HidReportKind::Input)
 }
 
-pub fn max_output_report_bytes(collections: &[HidCollectionInfo]) -> usize {
+/// Returns the maximum output report byte length across the descriptor.
+///
+/// If the descriptor uses report IDs, the returned size includes the 1-byte ID prefix.
+pub fn max_output_report_bytes(collections: &[HidCollectionInfo]) -> u32 {
     max_report_bytes(collections, HidReportKind::Output)
 }
 
-pub fn max_feature_report_bytes(collections: &[HidCollectionInfo]) -> usize {
+/// Returns the maximum feature report byte length across the descriptor.
+///
+/// If the descriptor uses report IDs, the returned size includes the 1-byte ID prefix.
+pub fn max_feature_report_bytes(collections: &[HidCollectionInfo]) -> u32 {
     max_report_bytes(collections, HidReportKind::Feature)
 }
 
@@ -906,6 +1015,75 @@ mod tests {
     fn roundtrip_keyboard_and_mouse() {
         roundtrip(&keyboard::HID_REPORT_DESCRIPTOR);
         roundtrip(&mouse::HID_REPORT_DESCRIPTOR);
+    }
+
+    #[test]
+    fn keyboard_descriptor_report_sizes_match_expected() {
+        let collections = parse_report_descriptor(&keyboard::HID_REPORT_DESCRIPTOR)
+            .unwrap()
+            .collections;
+        assert!(!has_report_ids(&collections));
+        assert_eq!(max_input_report_bytes(&collections), 8);
+        assert_eq!(max_output_report_bytes(&collections), 1);
+    }
+
+    #[test]
+    fn mouse_descriptor_report_size_matches_expected() {
+        let collections = parse_report_descriptor(&mouse::HID_REPORT_DESCRIPTOR)
+            .unwrap()
+            .collections;
+        assert!(!has_report_ids(&collections));
+        assert_eq!(max_input_report_bytes(&collections), 4);
+    }
+
+    #[test]
+    fn report_ids_add_prefix_byte() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![HidReportInfo {
+                report_id: 1,
+                items: vec![simple_item(8, 1)],
+            }],
+            output_reports: Vec::new(),
+            feature_reports: Vec::new(),
+            children: Vec::new(),
+        }];
+
+        assert!(has_report_ids(&collections));
+        assert_eq!(max_input_report_bytes(&collections), 2);
+
+        let report = &collections[0].input_reports[0];
+        assert_eq!(report_bytes(report, false), 1);
+        assert_eq!(report_bytes(report, true), 2);
+    }
+
+    #[test]
+    fn report_bytes_rounds_up() {
+        let report = HidReportInfo {
+            report_id: 0,
+            items: vec![simple_item(1, 1)],
+        };
+        assert_eq!(report_bytes(&report, false), 1);
+
+        let report = HidReportInfo {
+            report_id: 0,
+            items: vec![simple_item(9, 1)],
+        };
+        assert_eq!(report_bytes(&report, false), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "report_size must be non-zero")]
+    fn report_bits_panics_on_zero_report_size() {
+        let _ = report_bits(&[simple_item(0, 1)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "overflows u32")]
+    fn report_bits_panics_on_overflow() {
+        let _ = report_bits(&[simple_item(u32::MAX, 2)]);
     }
 
     #[test]
@@ -1394,7 +1572,7 @@ mod tests {
 
         assert_eq!(report_bits_for_id(&collections, HidReportKind::Input, 1), 24);
         assert_eq!(report_bytes_for_id(&collections, HidReportKind::Input, 1), 3);
-        assert_eq!(max_input_report_bytes(&collections), 3);
+        assert_eq!(max_input_report_bytes(&collections), 4);
     }
 }
 
@@ -1563,7 +1741,7 @@ mod proptests {
         reports.retain(|r| !r.items.is_empty());
         for report in reports.iter_mut() {
             for item in report.items.iter_mut() {
-                // `parse_report_descriptor()` expands small Usage Minimum/Maximum ranges into an
+                // `parse_report_descriptor()` may expand small Usage Minimum/Maximum ranges into an
                 // explicit list. Canonicalize to `[min, max]` so `is_range` items roundtrip
                 // regardless of whether the range was expanded.
                 if item.is_range && !item.usages.is_empty() {
@@ -1636,6 +1814,7 @@ mod proptests {
                 .expect("synthesized report descriptor must succeed for generated metadata");
             let parsed = parse_report_descriptor(&bytes)
                 .expect("descriptor synthesized by synthesize_report_descriptor must parse");
+            prop_assert!(!parsed.truncated_ranges);
 
             let mut expected = collections.clone();
             let mut actual = parsed.collections.clone();
