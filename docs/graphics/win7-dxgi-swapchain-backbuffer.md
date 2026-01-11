@@ -53,6 +53,16 @@ bin\dxgi_swapchain_probe.exe --require-vid=0xA3A0 --require-did=0x0001
 
 Use Sysinternals **DebugView** (or any debugger) to capture `OutputDebugStringA` output while the probe runs.
 
+Alternatively, the UMD logging helper can also append to a file (useful when DebugView/WinDbg is not convenient):
+
+```cmd
+set AEROGPU_D3D10_11_LOG=1
+set AEROGPU_D3D10_11_LOG_FILE=C:\aerogpu_d3d10_11_umd.log
+bin\dxgi_swapchain_probe.exe ...
+```
+
+Note: `AEROGPU_D3D10_11_LOG` defaults to enabled in `_DEBUG` builds; for Release builds you must set it explicitly.
+
 ## What to extract from the trace
 
 The UMD prints three key call sites:

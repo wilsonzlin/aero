@@ -2042,6 +2042,18 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
                                 (unsigned)info->Flags.Value,
                                 (unsigned)info->PrivateDriverDataSize,
                                 info->pPrivateDriverData);
+                    if (info->pPrivateDriverData &&
+                        info->PrivateDriverDataSize >= sizeof(aerogpu_wddm_alloc_private_data)) {
+                        const aerogpu_wddm_alloc_private_data* priv =
+                            (const aerogpu_wddm_alloc_private_data*)info->pPrivateDriverData;
+                        AEROGPU_LOG("    priv: magic=0x%08lx ver=%lu flags=0x%08lx alloc_id=%lu share_token=0x%I64x size_bytes=%I64u",
+                                    (ULONG)priv->magic,
+                                    (ULONG)priv->version,
+                                    (ULONG)priv->flags,
+                                    (ULONG)priv->alloc_id,
+                                    (ULONGLONG)priv->share_token,
+                                    (ULONGLONG)priv->size_bytes);
+                    }
                 }
             } else if (n == (kLogLimit + 1)) {
                 AEROGPU_LOG0("CreateAllocation: log limit reached; suppressing further messages");
