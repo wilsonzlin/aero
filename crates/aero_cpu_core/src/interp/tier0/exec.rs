@@ -193,6 +193,7 @@ pub fn run_batch_with_assists<B: CpuBus>(
                 let bytes = match bus.fetch(fetch_addr, 15) {
                     Ok(bytes) => bytes,
                     Err(e) => {
+                        state.apply_exception_side_effects(&e);
                         return BatchResult {
                             executed,
                             exit: BatchExit::Exception(e),
@@ -202,15 +203,18 @@ pub fn run_batch_with_assists<B: CpuBus>(
                 let decoded = match aero_x86::decode(&bytes, ip, state.bitness()) {
                     Ok(decoded) => decoded,
                     Err(_) => {
+                        let e = Exception::InvalidOpcode;
+                        state.apply_exception_side_effects(&e);
                         return BatchResult {
                             executed,
-                            exit: BatchExit::Exception(Exception::InvalidOpcode),
+                            exit: BatchExit::Exception(e),
                         };
                     }
                 };
                 let next_ip_raw = ip.wrapping_add(decoded.len as u64);
 
                 if let Err(e) = handle_assist(ctx, state, bus, r) {
+                    state.apply_exception_side_effects(&e);
                     return BatchResult {
                         executed,
                         exit: BatchExit::Exception(e),

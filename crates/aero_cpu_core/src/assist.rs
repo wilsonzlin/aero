@@ -52,11 +52,23 @@ pub fn handle_assist<B: CpuBus>(
 ) -> Result<(), Exception> {
     let ip = state.rip();
     let fetch_addr = state.seg_base_reg(Register::CS).wrapping_add(ip);
-    let bytes = bus.fetch(fetch_addr, 15)?;
-    let decoded =
-        aero_x86::decode(&bytes, ip, state.bitness()).map_err(|_| Exception::InvalidOpcode)?;
+    let bytes = bus.fetch(fetch_addr, 15).map_err(|e| {
+        state.apply_exception_side_effects(&e);
+        e
+    })?;
+    let decoded = match aero_x86::decode(&bytes, ip, state.bitness()) {
+        Ok(decoded) => decoded,
+        Err(_) => {
+            let e = Exception::InvalidOpcode;
+            state.apply_exception_side_effects(&e);
+            return Err(e);
+        }
+    };
 
-    exec_decoded(ctx, state, bus, &decoded)
+    exec_decoded(ctx, state, bus, &decoded).map_err(|e| {
+        state.apply_exception_side_effects(&e);
+        e
+    })
 }
 
 fn exec_decoded<B: CpuBus>(
@@ -187,7 +199,7 @@ fn exec_decoded<B: CpuBus>(
             Ok(())
         }
         Mnemonic::Invlpg => {
-            instr_invlpg(ctx, state, instr, next_ip_raw)?;
+            instr_invlpg(ctx, state, bus, instr, next_ip_raw)?;
             state.set_rip(next_ip_raw);
             Ok(())
         }
@@ -1387,12 +1399,19 @@ fn instr_lmsw_smsw<B: CpuBus>(
     }
 }
 
-fn instr_invlpg(ctx: &mut AssistContext, state: &CpuState, instr: &Instruction, next_ip: u64) -> Result<(), Exception> {
+fn instr_invlpg(
+    ctx: &mut AssistContext,
+    state: &CpuState,
+    bus: &mut impl CpuBus,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
     require_cpl0(state)?;
     if instr.op_kind(0) != OpKind::Memory {
         return Err(Exception::InvalidOpcode);
     }
     let addr = calc_ea(state, instr, next_ip, true)?;
+    bus.invlpg(addr);
     ctx.invlpg_log.push(addr);
     Ok(())
 }
