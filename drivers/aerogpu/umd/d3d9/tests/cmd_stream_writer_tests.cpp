@@ -5657,6 +5657,12 @@ bool TestGuestBackedUpdateSurfaceEmitsDirtyRangeNotUpload() {
 
   // Fill the source surface with some bytes.
   auto* src_res = reinterpret_cast<Resource*>(create_src.hResource.pDrvPrivate);
+  if (!Check(src_res != nullptr && src_res->handle == 0, "systemmem src surface has no GPU handle")) {
+    return false;
+  }
+  if (!Check(src_res->backing_alloc_id == 0, "systemmem src surface backing_alloc_id == 0")) {
+    return false;
+  }
   D3D9DDIARG_LOCK lock_src{};
   lock_src.hResource = create_src.hResource;
   lock_src.offset_bytes = 0;
@@ -5881,6 +5887,12 @@ bool TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload() {
   }
 
   auto* src_res = reinterpret_cast<Resource*>(create_src.hResource.pDrvPrivate);
+  if (!Check(src_res != nullptr && src_res->handle == 0, "systemmem src has no GPU handle")) {
+    return false;
+  }
+  if (!Check(src_res->backing_alloc_id == 0, "systemmem src backing_alloc_id == 0")) {
+    return false;
+  }
   if (!Check(src_res != nullptr && src_res->size_bytes != 0, "src size")) {
     return false;
   }
