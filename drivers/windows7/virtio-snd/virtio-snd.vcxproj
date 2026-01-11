@@ -100,6 +100,8 @@
     <ClCompile Include="src\**\*.c" />
     <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c" />
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
+    <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c" />
+    <ClCompile Include="..\virtio\common\src\virtio_pci_contract.c" />
     <ClCompile Include="..\virtio\common\src\virtio_pci_intx_wdm.c" />
   </ItemGroup>
 
@@ -116,6 +118,8 @@
     <ClCompile Remove="src\driver.c" />
     <ClCompile Remove="src\backend_virtio_legacy.c" />
     <ClCompile Remove="src\aeroviosnd_hw.c" />
+    <ClCompile Remove="..\virtio\common\src\virtio_pci_legacy.c" />
+    <ClCompile Remove="..\virtio\common\src\virtio_queue.c" />
   </ItemGroup>
 
   <ItemGroup>

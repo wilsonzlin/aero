@@ -7,6 +7,7 @@
 #include "adapter_context.h"
 #include "topology.h"
 #include "trace.h"
+#include "virtio_pci_contract.h"
 #include "virtiosnd.h"
 #include "virtiosnd_intx.h"
 #include "wavert.h"
@@ -256,6 +257,15 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
 
     VirtIoSndIntxInitialize(dx);
 
+    {
+        static const USHORT allowedIds[] = {0x1059u};
+        status = AeroVirtioPciValidateContractV1Pdo(dx->Pdo, allowedIds, RTL_NUMBER_OF(allowedIds));
+        if (!NT_SUCCESS(status)) {
+            VIRTIOSND_TRACE_ERROR("AERO-W7-VIRTIO contract identity check failed: 0x%08X\n", (UINT)status);
+            goto Exit;
+        }
+    }
+
     if (Irp == NULL) {
         status = STATUS_INVALID_PARAMETER;
         goto Exit;
@@ -396,4 +406,3 @@ Exit:
     }
     return status;
 }
-

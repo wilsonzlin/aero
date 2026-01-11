@@ -207,6 +207,8 @@ Implementation note:
 - `AERO-W7-VIRTIO` v1 requires virtio-pci **modern** feature negotiation
   (`VIRTIO_F_VERSION_1` is bit 32). The shipped driver package and INFs assume a
   modern-only device (`DEV_1059` + `REV_01`).
+- The adapter validates the contract PCI identity (requires `DEV_1059` + `REV_01`)
+  at `START_DEVICE` via `AeroVirtioPciValidateContractV1Pdo`.
 - The legacy/transitional I/O-port bring-up path only negotiates the low 32 bits
   of virtio feature flags (so it cannot negotiate `VIRTIO_F_VERSION_1`) and is
   not part of the supported binding contract.
