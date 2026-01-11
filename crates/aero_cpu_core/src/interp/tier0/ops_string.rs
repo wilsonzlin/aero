@@ -1,7 +1,7 @@
 use super::ExecOutcome;
 use crate::exception::Exception;
 use crate::mem::CpuBus;
-use crate::state::{CpuState, FLAG_DF, FLAG_ZF};
+use crate::state::{CpuMode, CpuState, FLAG_DF, FLAG_ZF};
 use aero_x86::{DecodedInst, Instruction, Mnemonic, OpKind, Register};
 
 const BULK_THRESHOLD_BYTES: usize = 64;
@@ -310,6 +310,24 @@ fn offsets_contiguous_without_wrap(offset: u64, count: u64, elem_size: usize, df
     }
 }
 
+fn a20_range_contiguous(state: &CpuState, start: u64, total_bytes: u64) -> bool {
+    if total_bytes == 0 {
+        return true;
+    }
+    if state.a20_enabled || !matches!(state.mode, CpuMode::Real | CpuMode::Vm86) {
+        return true;
+    }
+
+    let span = match total_bytes.checked_sub(1) {
+        Some(v) => v,
+        None => return true,
+    };
+    match start.checked_add(span) {
+        Some(end) => end <= 0xFFFFF,
+        None => false,
+    }
+}
+
 fn src_segment(instr: &Instruction) -> Register {
     let seg = instr.segment_prefix();
     if seg == Register::None {
@@ -402,30 +420,34 @@ fn exec_movs<B: CpuBus>(
                     let src_start = linear(state, src_seg, src_offset);
                     let dst_start = linear(state, Register::ES, dst_offset);
 
-                    if let (Some(src_end), Some(dst_end)) = (
-                        src_start.checked_add(total_bytes_u64),
-                        dst_start.checked_add(total_bytes_u64),
-                    ) {
-                        let overlap = src_start < dst_end && dst_start < src_end;
-                        let hazard = if !overlap {
-                            false
-                        } else if !df {
-                            // DF=0 copies low->high. Hazard when destination starts inside source at a higher
-                            // address.
-                            src_start < dst_start && dst_start < src_end
-                        } else {
-                            // DF=1 copies high->low. Hazard when source starts inside destination at a higher
-                            // address.
-                            dst_start < src_start && src_start < dst_end
-                        };
+                    if a20_range_contiguous(state, src_start, total_bytes_u64)
+                        && a20_range_contiguous(state, dst_start, total_bytes_u64)
+                    {
+                        if let (Some(src_end), Some(dst_end)) = (
+                            src_start.checked_add(total_bytes_u64),
+                            dst_start.checked_add(total_bytes_u64),
+                        ) {
+                            let overlap = src_start < dst_end && dst_start < src_end;
+                            let hazard = if !overlap {
+                                false
+                            } else if !df {
+                                // DF=0 copies low->high. Hazard when destination starts inside source at a higher
+                                // address.
+                                src_start < dst_start && dst_start < src_end
+                            } else {
+                                // DF=1 copies high->low. Hazard when source starts inside destination at a higher
+                                // address.
+                                dst_start < src_start && src_start < dst_end
+                            };
 
-                        if !hazard && bus.bulk_copy(dst_start, src_start, total_bytes_u64 as usize)? {
-                            let si_new = advance_n(si, elem_size, count, df, addr_size);
-                            let di_new = advance_n(di, elem_size, count, df, addr_size);
-                            write_si(state, addr_size, si_new);
-                            write_di(state, addr_size, di_new);
-                            write_count(state, addr_size, 0);
-                            return Ok(());
+                            if !hazard && bus.bulk_copy(dst_start, src_start, total_bytes_u64 as usize)? {
+                                let si_new = advance_n(si, elem_size, count, df, addr_size);
+                                let di_new = advance_n(di, elem_size, count, df, addr_size);
+                                write_si(state, addr_size, si_new);
+                                write_di(state, addr_size, di_new);
+                                write_count(state, addr_size, 0);
+                                return Ok(());
+                            }
                         }
                     }
                 }
@@ -496,7 +518,9 @@ fn exec_stos<B: CpuBus>(
                     let dst_start = linear(state, Register::ES, dst_offset);
 
                     let pattern = stos_pattern(state, elem_size)?;
-                    if bus.bulk_set(dst_start, &pattern[..elem_size], count as usize)? {
+                    if a20_range_contiguous(state, dst_start, total_bytes_u64)
+                        && bus.bulk_set(dst_start, &pattern[..elem_size], count as usize)?
+                    {
                         let di_new = advance_n(di, elem_size, count, df, addr_size);
                         write_di(state, addr_size, di_new);
                         write_count(state, addr_size, 0);

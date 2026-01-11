@@ -623,3 +623,80 @@ fn rep_stosb_addr16_wrap_skips_bulk_set_and_uses_wrapping_offsets() {
         assert_eq!(bus.inner.read_u8(0x10000 + i).unwrap(), 0xCC);
     }
 }
+
+#[test]
+fn rep_movsb_a20_wrap_skips_bulk_copy_and_uses_wrapping_addresses() {
+    // With A20 disabled, real-mode physical addresses wrap at 1MiB. Bulk-copy assumes contiguous
+    // linear memory, so we must not use it when the repeated range crosses the A20 boundary.
+    let count = 128u16;
+    let code_addr = 0x8000u64;
+
+    let code = [0xF3, 0xA4, 0xF4]; // rep movsb; hlt
+    let mut bus = CountingBus::new(0x100000);
+    bus.inner.load(code_addr, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit16);
+    state.set_rip(code_addr);
+    state.set_rflags(0x2);
+    state.a20_enabled = false;
+
+    // DS base at 0xFFFF0 makes SI=0 start 16 bytes before 1MiB; copying `count` bytes crosses
+    // 0x100000 and should wrap to 0x00000.
+    state.write_reg(Register::DS, 0xFFFF);
+    state.write_reg(Register::ES, 0x0000);
+    state.write_reg(Register::SI, 0x0000);
+    state.write_reg(Register::DI, 0x0100);
+    state.write_reg(Register::CX, count as u64);
+
+    let src_base = 0xFFFF0u64;
+    for i in 0..count as u64 {
+        let val = (i ^ 0x5A) as u8;
+        let addr = (src_base + i) & 0xFFFFF;
+        bus.inner.write_u8(addr, val).unwrap();
+    }
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(bus.bulk_copy_calls, 0);
+    assert_eq!(state.read_reg(Register::CX), 0);
+    assert_eq!(state.read_reg(Register::SI), count as u64);
+    assert_eq!(state.read_reg(Register::DI), 0x0100 + count as u64);
+
+    for i in 0..count as u64 {
+        let expected = (i ^ 0x5A) as u8;
+        assert_eq!(bus.inner.read_u8(0x0100 + i).unwrap(), expected);
+    }
+}
+
+#[test]
+fn rep_stosb_a20_wrap_skips_bulk_set_and_uses_wrapping_addresses() {
+    // Same idea as the MOVSB A20 test, but for STOSB bulk-set behavior.
+    let count = 128u16;
+    let code_addr = 0x8000u64;
+
+    let code = [0xF3, 0xAA, 0xF4]; // rep stosb; hlt
+    let mut bus = CountingBus::new(0x100000);
+    bus.inner.load(code_addr, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit16);
+    state.set_rip(code_addr);
+    state.set_rflags(0x2);
+    state.a20_enabled = false;
+
+    state.write_reg(Register::ES, 0xFFFF);
+    state.write_reg(Register::DI, 0x0000);
+    state.write_reg(Register::CX, count as u64);
+    state.write_reg(Register::AL, 0x5A);
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(bus.bulk_set_calls, 0);
+    assert_eq!(state.read_reg(Register::CX), 0);
+    assert_eq!(state.read_reg(Register::DI), count as u64);
+
+    let dst_base = 0xFFFF0u64;
+    for i in 0..count as u64 {
+        let addr = (dst_base + i) & 0xFFFFF;
+        assert_eq!(bus.inner.read_u8(addr).unwrap(), 0x5A);
+    }
+}
