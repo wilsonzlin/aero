@@ -295,10 +295,20 @@ export class WebUsbPassthroughRuntime {
             } catch (err) {
               this.#lastError = formatError(err);
             }
-          } else if (extractedId !== null) {
-            this.#lastError = "Invalid UsbHostAction received from WASM (missing kind).";
           } else {
-            this.#lastError = "Invalid UsbHostAction received from WASM (missing id/kind).";
+            // Without an id+kind we cannot fabricate a completion for the Rust-side queue.
+            // Reset the bridge to clear any stuck actions so the guest can recover.
+            this.#lastError =
+              extractedId !== null
+                ? "Invalid UsbHostAction received from WASM (missing kind)."
+                : "Invalid UsbHostAction received from WASM (missing id/kind).";
+            try {
+              this.#bridge.reset();
+            } catch (resetErr) {
+              this.#lastError = `${this.#lastError}; reset failed: ${formatError(resetErr)}`;
+            }
+            this.cancelPending("WebUSB passthrough reset due to invalid action from WASM.");
+            break;
           }
           continue;
         }

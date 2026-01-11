@@ -8,6 +8,11 @@ import { MemorySparseDisk } from "./memory_sparse_disk";
 
 function createRangeFetch(data: Uint8Array): { fetch: typeof fetch; calls: Array<{ method: string; range?: string }> } {
   const calls: Array<{ method: string; range?: string }> = [];
+  const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
+    const buf = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(buf).set(bytes);
+    return buf;
+  };
   const fetcher: typeof fetch = async (_url, init) => {
     const method = String(init?.method || "GET").toUpperCase();
     const headers = init?.headers;
@@ -30,13 +35,13 @@ function createRangeFetch(data: Uint8Array): { fetch: typeof fetch; calls: Array
       const start = Number(m[1]);
       const end = Number(m[2]);
       const slice = data.subarray(start, Math.min(end + 1, data.byteLength));
-      return new Response(slice, {
+      return new Response(toArrayBuffer(slice), {
         status: 206,
         headers: { "Content-Range": `bytes ${start}-${start + slice.byteLength - 1}/${data.byteLength}` },
       });
     }
 
-    return new Response(data, { status: 200, headers: { "Content-Length": String(data.byteLength) } });
+    return new Response(toArrayBuffer(data), { status: 200, headers: { "Content-Length": String(data.byteLength) } });
   };
 
   return { fetch: fetcher, calls };
@@ -54,6 +59,9 @@ describe("RuntimeDiskWorker (remote)", () => {
       expect(mode).toBe("cow");
       expect(overlayBlockSizeBytes).toBeUndefined();
 
+      if (spec.kind !== "remote") {
+        throw new Error("expected remote disk open spec");
+      }
       const remote = spec.remote;
       if (remote.delivery !== "range") {
         throw new Error("expected range remote disk spec");

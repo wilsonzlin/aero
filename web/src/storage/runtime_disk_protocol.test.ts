@@ -62,7 +62,7 @@ describe("runtime disk worker protocol", () => {
   });
 
   it("serializes remote open() as DiskOpenSpec(kind=remote)", async () => {
-    const spec: DiskOpenSpec = {
+    const spec = {
       kind: "remote",
       remote: {
         delivery: "range",
@@ -72,7 +72,7 @@ describe("runtime disk worker protocol", () => {
         credentials: "include",
         cacheKey: "win7-sp1-x64.sha256-deadbeef",
       },
-    };
+    } satisfies DiskOpenSpec;
 
     const w = new StubWorker();
     const client = new RuntimeDiskClient(w as unknown as Worker);

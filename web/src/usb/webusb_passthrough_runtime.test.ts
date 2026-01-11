@@ -226,4 +226,52 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     expect(completion.id).toBe(7);
     expect(completion.status).toBe("error");
   });
+
+  it("pushes an error completion when WASM emits an invalid action (but includes id/kind)", async () => {
+    const port = new FakePort();
+    const rawAction = { kind: "bulkIn", id: 3, endpoint: 1, length: "nope" };
+
+    const push_completion = vi.fn();
+    const reset = vi.fn();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => [rawAction]),
+      push_completion,
+      reset,
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+    await runtime.pollOnce();
+
+    expect(port.posted).toEqual([]);
+    expect(reset).not.toHaveBeenCalled();
+
+    expect(push_completion).toHaveBeenCalledTimes(1);
+    const completion = push_completion.mock.calls[0]?.[0] as UsbHostCompletion;
+    expect(completion.kind).toBe("bulkIn");
+    expect(completion.id).toBe(3);
+    expect(completion.status).toBe("error");
+  });
+
+  it("resets the bridge when WASM emits an invalid action without id/kind", async () => {
+    const port = new FakePort();
+    const rawAction = { endpoint: 1, length: 8 };
+
+    const push_completion = vi.fn();
+    const reset = vi.fn();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => [rawAction]),
+      push_completion,
+      reset,
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+    await runtime.pollOnce();
+
+    expect(port.posted).toEqual([]);
+    expect(push_completion).not.toHaveBeenCalled();
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(runtime.getMetrics().lastError).toMatch(/missing id/);
+  });
 });

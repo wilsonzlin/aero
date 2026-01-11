@@ -521,20 +521,23 @@ async function openDiskFromMetadata(
   const readOnly = meta.kind === "cd" || meta.format === "iso";
 
   if (meta.backend === "opfs") {
+    const fileName = meta.fileName;
+    const sizeBytes = meta.sizeBytes;
+
     async function openBase(): Promise<AsyncSectorDisk> {
       switch (meta.format) {
         case "aerospar": {
-          const disk = await OpfsAeroSparseDisk.open(meta.fileName);
-          if (disk.capacityBytes !== meta.sizeBytes) {
+          const disk = await OpfsAeroSparseDisk.open(fileName);
+          if (disk.capacityBytes !== sizeBytes) {
             await disk.close?.();
-            throw new Error(`disk size mismatch: expected=${meta.sizeBytes} actual=${disk.capacityBytes}`);
+            throw new Error(`disk size mismatch: expected=${sizeBytes} actual=${disk.capacityBytes}`);
           }
           return disk;
         }
         case "raw":
         case "iso":
         case "unknown":
-          return await OpfsRawDisk.open(meta.fileName, { create: false, sizeBytes: meta.sizeBytes });
+          return await OpfsRawDisk.open(fileName, { create: false, sizeBytes });
         case "qcow2":
         case "vhd":
           throw new Error(`unsupported OPFS disk format ${meta.format} (convert to aerospar first)`);
