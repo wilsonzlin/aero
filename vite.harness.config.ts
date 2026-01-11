@@ -20,6 +20,12 @@ export default defineConfig({
   // Reuse `web/public` across the repo so test assets and `_headers` templates
   // are consistently available in `vite preview` runs.
   publicDir: 'web/public',
+  // The repo heavily relies on module workers (`type: 'module'` + `import.meta.url`).
+  // Keep the harness build aligned with `web/vite.config.ts` so worker bundling
+  // supports code-splitting.
+  worker: {
+    format: 'es',
+  },
   server: {
     headers: {
       ...(coopCoepDisabled ? {} : crossOriginIsolationHeaders),

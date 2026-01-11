@@ -216,7 +216,7 @@ function summarizeUsbDevice(
 
 async function runWebUsbProbeWorker(
   msg: unknown,
-  { timeoutMs = 10_000 } = {},
+  { timeoutMs = 10_000, transfer = [] }: { timeoutMs?: number; transfer?: Transferable[] } = {},
 ): Promise<unknown> {
   const worker = new Worker(new URL('./workers/webusb-probe-worker.ts', import.meta.url), { type: 'module' });
 
@@ -247,7 +247,7 @@ async function runWebUsbProbeWorker(
     });
 
     try {
-      worker.postMessage(msg);
+      worker.postMessage(msg, transfer);
     } catch (err) {
       cleanup();
       reject(err);
@@ -262,12 +262,34 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   const errorDetails = el('div', { class: 'hint', text: '' });
   const errorRaw = el('pre', { class: 'mono', text: '' });
   const errorHints = el('ul');
-  const vendorIdInput = el('input', { type: 'text', placeholder: '0x1234 (optional)' }) as HTMLInputElement;
-  const productIdInput = el('input', { type: 'text', placeholder: '0x5678 (optional)' }) as HTMLInputElement;
+  const acceptAllDevicesInput = el('input', { type: 'checkbox' }) as HTMLInputElement;
+  const vendorIdInput = el('input', {
+    type: 'text',
+    placeholder: '0x1234 (optional)',
+    style: 'min-width: 0; width: 12ch;',
+  }) as HTMLInputElement;
+  const productIdInput = el('input', {
+    type: 'text',
+    placeholder: '0x5678 (optional)',
+    style: 'min-width: 0; width: 12ch;',
+  }) as HTMLInputElement;
   const interfaceSelect = el('select') as HTMLSelectElement;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let selectedDevice: any | null = null;
+  let selectedSummary: Record<string, unknown> | null = null;
+
+  function serializeError(err: unknown): { name: string; message: string } {
+    if (err instanceof DOMException) return { name: err.name, message: err.message };
+    if (err instanceof Error) return { name: err.name, message: err.message };
+    if (err && typeof err === 'object') {
+      const maybe = err as { name?: unknown; message?: unknown };
+      const name = typeof maybe.name === 'string' ? maybe.name : 'Error';
+      const message = typeof maybe.message === 'string' ? maybe.message : String(err);
+      return { name, message };
+    }
+    return { name: 'Error', message: String(err) };
+  }
 
   function clearError(): void {
     errorTitle.textContent = '';
@@ -318,12 +340,14 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   function updateInfo(): void {
     const userActivation = (navigator as unknown as { userActivation?: { isActive?: boolean; hasBeenActive?: boolean } })
       .userActivation;
+    const liveSummary = selectedDevice ? summarizeUsbDevice(selectedDevice) : selectedSummary;
+    if (selectedDevice) selectedSummary = liveSummary;
     info.textContent =
       `isSecureContext=${(globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true}\n` +
       `navigator.usb=${report.webusb ? 'present' : 'missing'}\n` +
       `userActivation.isActive=${userActivation?.isActive ?? 'n/a'}\n` +
       `userActivation.hasBeenActive=${userActivation?.hasBeenActive ?? 'n/a'}\n` +
-      `selectedDevice=${selectedDevice ? JSON.stringify(summarizeUsbDevice(selectedDevice)) : 'none'}\n`;
+      `selectedDevice=${liveSummary ? JSON.stringify(liveSummary) : 'none'}\n`;
 
     const hasSelected = !!selectedDevice;
     const enabled = report.webusb && hasSelected;
@@ -334,12 +358,33 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     refreshInterfaceSelect();
   }
 
+  function updateFilterInputs(): void {
+    const disabled = acceptAllDevicesInput.checked;
+    vendorIdInput.disabled = disabled;
+    productIdInput.disabled = disabled;
+  }
+  acceptAllDevicesInput.addEventListener('change', updateFilterInputs);
+  updateFilterInputs();
+
+  async function runWorkerProbe(): Promise<void> {
+    output.textContent = '';
+    clearError();
+    try {
+      const resp = await runWebUsbProbeWorker({ type: 'probe' });
+      output.textContent = JSON.stringify(resp, null, 2);
+    } catch (err) {
+      showError(err);
+      output.textContent = JSON.stringify({ ok: false, error: serializeError(err) }, null, 2);
+    }
+  }
+
   const requestButton = el('button', {
     text: 'Request USB device (chooser)',
     onclick: async () => {
       output.textContent = '';
       clearError();
       selectedDevice = null;
+      selectedSummary = null;
       updateInfo();
 
       if (!report.webusb) {
@@ -347,9 +392,10 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
         return;
       }
 
-      const vendorId = parseUsbId(vendorIdInput.value);
-      const productId = parseUsbId(productIdInput.value);
-      if (productId !== null && vendorId === null) {
+      const acceptAll = acceptAllDevicesInput.checked;
+      const vendorId = acceptAll ? null : parseUsbId(vendorIdInput.value);
+      const productId = acceptAll ? null : parseUsbId(productIdInput.value);
+      if (!acceptAll && productId !== null && vendorId === null) {
         output.textContent = 'productId filter requires vendorId.';
         return;
       }
@@ -361,24 +407,58 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
         return;
       }
 
-      // Note: some Chromium versions require at least one filter; `{}` is a best-effort "match all"
-      // filter for probing. If this fails, specify vendorId/productId explicitly.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const filters: any[] = [];
-      if (vendorId !== null) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const filter: any = { vendorId };
-        if (productId !== null) filter.productId = productId;
-        filters.push(filter);
-      } else {
-        filters.push({});
-      }
-
       try {
         // Must be called directly from the user gesture handler (transient user activation).
-        selectedDevice = await usb.requestDevice({ filters });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const options: any = {};
+        if (acceptAllDevicesInput.checked) {
+          options.filters = [];
+          options.acceptAllDevices = true;
+        } else {
+          // Note: some Chromium versions require at least one filter; `{}` is a best-effort "match all"
+          // filter for probing. If this fails, specify vendorId/productId explicitly.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const filters: any[] = [];
+          if (vendorId !== null) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const filter: any = { vendorId };
+            if (productId !== null) filter.productId = productId;
+            filters.push(filter);
+          } else {
+            filters.push({});
+          }
+          options.filters = filters;
+        }
+
+        selectedDevice = await usb.requestDevice(options);
+        selectedSummary = summarizeUsbDevice(selectedDevice);
         updateInfo();
-        output.textContent = JSON.stringify({ selected: summarizeUsbDevice(selectedDevice) }, null, 2);
+
+        const results: Record<string, unknown> = { selected: selectedSummary };
+
+        // 1) Structured clone attempt.
+        try {
+          const resp = await runWebUsbProbeWorker({ type: 'device', device: selectedDevice });
+          results.clone = { ok: true, response: resp };
+        } catch (err) {
+          results.clone = { ok: false, error: serializeError(err) };
+        }
+
+        // 2) Transfer attempt (via transfer list).
+        try {
+          const resp = await runWebUsbProbeWorker(
+            { type: 'device', device: selectedDevice },
+            { transfer: [selectedDevice as unknown as Transferable] },
+          );
+          results.transfer = { ok: true, response: resp };
+          // If transfer succeeds, the device may no longer be usable on the main thread.
+          selectedDevice = null;
+        } catch (err) {
+          results.transfer = { ok: false, error: serializeError(err) };
+        }
+
+        updateInfo();
+        output.textContent = JSON.stringify(results, null, 2);
       } catch (err) {
         showError(err);
       }
@@ -507,38 +587,14 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   const workerProbeButton = el('button', {
     text: 'Probe worker WebUSB (WorkerNavigator.usb)',
     onclick: async () => {
-      output.textContent = '';
-      clearError();
-      try {
-        const resp = await runWebUsbProbeWorker({ type: 'probe' });
-        output.textContent = JSON.stringify(resp, null, 2);
-      } catch (err) {
-        output.textContent = err instanceof Error ? err.message : String(err);
-      }
-    },
-  });
-
-  const cloneButton = el('button', {
-    text: 'Try sending selected device to worker (structured clone)',
-    onclick: async () => {
-      output.textContent = '';
-      clearError();
-      if (!selectedDevice) {
-        output.textContent = 'Select a device first (Request USB device).';
-        return;
-      }
-
-      try {
-        const resp = await runWebUsbProbeWorker({ type: 'clone-test', device: selectedDevice });
-        output.textContent = JSON.stringify(resp, null, 2);
-      } catch (err) {
-        output.textContent = err instanceof Error ? err.message : String(err);
-      }
+      await runWorkerProbe();
     },
   });
 
   // Initialize info + control state.
   updateInfo();
+  // Probe worker-side WebUSB semantics on load so the panel reports both main + worker support.
+  void runWorkerProbe();
 
   return el(
     'div',
@@ -553,6 +609,8 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     el(
       'div',
       { class: 'row' },
+      el('label', { text: 'acceptAllDevices:' }),
+      acceptAllDevicesInput,
       el('label', { text: 'vendorId:' }),
       vendorIdInput,
       el('label', { text: 'productId:' }),
@@ -561,7 +619,7 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       listButton,
     ),
     el('div', { class: 'row' }, openButton, closeButton, interfaceSelect, claimButton),
-    el('div', { class: 'row' }, workerProbeButton, cloneButton),
+    el('div', { class: 'row' }, workerProbeButton),
     output,
     errorTitle,
     errorDetails,
