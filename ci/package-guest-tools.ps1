@@ -839,13 +839,17 @@ function Assert-ZipContainsFile {
 function Show-PackagerHwidDiagnostics {
   param(
     [Parameter(Mandatory = $true)][string] $StageDriversRoot,
-    [Parameter(Mandatory = $true)][string] $SpecPath
+    [Parameter(Mandatory = $true)][string] $SpecPath,
+    [string] $WindowsDeviceContractPath = ""
   )
 
   Write-Host ""
   Write-Host "---- Packager HWID diagnostics (staged driver INFs) ----"
   Write-Host ("  drivers  : {0}" -f $StageDriversRoot)
   Write-Host ("  spec     : {0}" -f $SpecPath)
+  if (-not [string]::IsNullOrWhiteSpace($WindowsDeviceContractPath)) {
+    Write-Host ("  contract : {0}" -f $WindowsDeviceContractPath)
+  }
 
   if (-not (Test-Path -LiteralPath $StageDriversRoot -PathType Container)) {
     Write-Warning "Staged drivers directory not found; skipping HWID diagnostics."
@@ -872,6 +876,70 @@ function Show-PackagerHwidDiagnostics {
     return
   }
 
+  $contract = $null
+  if (-not [string]::IsNullOrWhiteSpace($WindowsDeviceContractPath) -and (Test-Path -LiteralPath $WindowsDeviceContractPath -PathType Leaf)) {
+    try {
+      $contract = Get-Content -LiteralPath $WindowsDeviceContractPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+      Write-Warning ("Failed to parse Windows device contract for HWID diagnostics: {0}" -f $_.Exception.Message)
+      $contract = $null
+    }
+  }
+
+  function Get-ContractHwidBasesFromDevicesCmdVar {
+    param(
+      [Parameter(Mandatory = $true)] $ContractObj,
+      [Parameter(Mandatory = $true)][string] $VarName
+    )
+
+    if (-not $ContractObj -or -not $ContractObj.devices) {
+      return @()
+    }
+
+    $deviceName = $null
+    switch ($VarName.Trim().ToUpperInvariant()) {
+      "AERO_VIRTIO_BLK_HWIDS" { $deviceName = "virtio-blk" }
+      "AERO_VIRTIO_NET_HWIDS" { $deviceName = "virtio-net" }
+      "AERO_VIRTIO_INPUT_HWIDS" { $deviceName = "virtio-input" }
+      "AERO_VIRTIO_SND_HWIDS" { $deviceName = "virtio-snd" }
+      "AERO_GPU_HWIDS" { $deviceName = "aero-gpu" }
+      default { return @() }
+    }
+
+    $dev = $null
+    foreach ($d in $ContractObj.devices) {
+      if ($d -and $d.device -and ($d.device -ieq $deviceName)) {
+        $dev = $d
+        break
+      }
+    }
+    if (-not $dev -or -not $dev.hardware_id_patterns) {
+      return @()
+    }
+
+    $bases = @()
+    foreach ($p in $dev.hardware_id_patterns) {
+      $t = ("" + $p).Trim()
+      if ($t.Length -eq 0) { continue }
+      $m = [regex]::Match($t, "(?i)(PCI\\VEN_[0-9A-F]{4}&DEV_[0-9A-F]{4})")
+      if ($m.Success) {
+        $bases += $m.Groups[1].Value
+      }
+    }
+
+    # Dedup while preserving order
+    $seen = @{}
+    $out = @()
+    foreach ($b in $bases) {
+      $k = $b.ToLowerInvariant()
+      if (-not $seen.ContainsKey($k)) {
+        $seen[$k] = $true
+        $out += $b
+      }
+    }
+    return ,$out
+  }
+
   # Best-effort: when a spec HWID regex doesn't match any line in the INF, print any PCI HWID-like
   # lines present so CI logs make it obvious whether the driver has the wrong DEV_XXXX (e.g. a
   # transitional virtio ID) or is missing hardware IDs entirely.
@@ -887,6 +955,21 @@ function Show-PackagerHwidDiagnostics {
       foreach ($p in $drv.expected_hardware_ids) {
         $t = ("" + $p).Trim()
         if ($t.Length -gt 0) { $patterns += $t }
+      }
+    }
+
+    # Derive base PCI\VEN_...&DEV_... patterns from the Windows device contract when the spec uses
+    # `expected_hardware_ids_from_devices_cmd_var` (used by win7-signed.json and AeroGPU).
+    $fromVar = $null
+    if ($drv.expected_hardware_ids_from_devices_cmd_var) {
+      $fromVar = ("" + $drv.expected_hardware_ids_from_devices_cmd_var).Trim()
+    }
+    if (-not [string]::IsNullOrWhiteSpace($fromVar) -and $contract) {
+      foreach ($base in (Get-ContractHwidBasesFromDevicesCmdVar -ContractObj $contract -VarName $fromVar)) {
+        $escaped = [regex]::Escape($base)
+        if (-not ($patterns -contains $escaped)) {
+          $patterns += $escaped
+        }
       }
     }
 
@@ -915,6 +998,9 @@ function Show-PackagerHwidDiagnostics {
 
       Write-Host ""
       Write-Host ("Driver: {0} ({1})" -f $driverName, $arch)
+      if (-not [string]::IsNullOrWhiteSpace($fromVar)) {
+        Write-Host ("  (derived from devices.cmd var: {0})" -f $fromVar)
+      }
       Write-Host "  Expected HWID regexes:"
       foreach ($p in $patterns) {
         Write-Host ("    - {0}" -f $p)
@@ -1137,7 +1223,7 @@ try {
     Write-Host ""
     Write-Host "aero_packager failed; collecting HWID diagnostics to aid debugging..."
     try {
-      Show-PackagerHwidDiagnostics -StageDriversRoot $stageDriversRoot -SpecPath $specPathResolved
+      Show-PackagerHwidDiagnostics -StageDriversRoot $stageDriversRoot -SpecPath $specPathResolved -WindowsDeviceContractPath $stageDeviceContract
     } catch {
       Write-Warning ("HWID diagnostics failed: {0}" -f $_.Exception.Message)
     }
