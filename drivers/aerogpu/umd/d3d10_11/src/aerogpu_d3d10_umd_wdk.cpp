@@ -242,6 +242,7 @@ static bool AllocateSharedAllocIds(uint32_t* out_alloc_id, uint64_t* out_share_t
 constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
 constexpr uint32_t kDxgiFormatR32G32B32Float = 6;
 constexpr uint32_t kDxgiFormatR32G32Float = 16;
+constexpr uint32_t kDxgiFormatR8G8B8A8Typeless = 27;
 constexpr uint32_t kDxgiFormatR8G8B8A8Unorm = 28;
 constexpr uint32_t kDxgiFormatR8G8B8A8UnormSrgb = 29;
 constexpr uint32_t kDxgiFormatD32Float = 40;
@@ -250,7 +251,9 @@ constexpr uint32_t kDxgiFormatR16Uint = 57;
 constexpr uint32_t kDxgiFormatR32Uint = 42;
 constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87;
 constexpr uint32_t kDxgiFormatB8G8R8X8Unorm = 88;
+constexpr uint32_t kDxgiFormatB8G8R8A8Typeless = 90;
 constexpr uint32_t kDxgiFormatB8G8R8A8UnormSrgb = 91;
+constexpr uint32_t kDxgiFormatB8G8R8X8Typeless = 92;
 constexpr uint32_t kDxgiFormatB8G8R8X8UnormSrgb = 93;
 
 uint32_t f32_bits(float v) {
@@ -277,12 +280,15 @@ uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
   switch (dxgi_format) {
     case kDxgiFormatB8G8R8A8Unorm:
     case kDxgiFormatB8G8R8A8UnormSrgb:
+    case kDxgiFormatB8G8R8A8Typeless:
       return AEROGPU_FORMAT_B8G8R8A8_UNORM;
     case kDxgiFormatB8G8R8X8Unorm:
     case kDxgiFormatB8G8R8X8UnormSrgb:
+    case kDxgiFormatB8G8R8X8Typeless:
       return AEROGPU_FORMAT_B8G8R8X8_UNORM;
     case kDxgiFormatR8G8B8A8Unorm:
     case kDxgiFormatR8G8B8A8UnormSrgb:
+    case kDxgiFormatR8G8B8A8Typeless:
       return AEROGPU_FORMAT_R8G8B8A8_UNORM;
     case kDxgiFormatD24UnormS8Uint:
       return AEROGPU_FORMAT_D24_UNORM_S8_UINT;
@@ -4180,6 +4186,7 @@ void APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTA
           switch (res->dxgi_format) {
             case kDxgiFormatR8G8B8A8Unorm:
             case kDxgiFormatR8G8B8A8UnormSrgb:
+            case kDxgiFormatR8G8B8A8Typeless:
               dst[0] = out_r;
               dst[1] = out_g;
               dst[2] = out_b;
@@ -4187,6 +4194,7 @@ void APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTA
               break;
             case kDxgiFormatB8G8R8X8Unorm:
             case kDxgiFormatB8G8R8X8UnormSrgb:
+            case kDxgiFormatB8G8R8X8Typeless:
               dst[0] = out_b;
               dst[1] = out_g;
               dst[2] = out_r;
@@ -4194,6 +4202,7 @@ void APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTA
               break;
             case kDxgiFormatB8G8R8A8Unorm:
             case kDxgiFormatB8G8R8A8UnormSrgb:
+            case kDxgiFormatB8G8R8A8Typeless:
             default:
               dst[0] = out_b;
               dst[1] = out_g;
@@ -4383,6 +4392,7 @@ void APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertexCount, UINT startVertex)
             switch (rt->dxgi_format) {
               case kDxgiFormatR8G8B8A8Unorm:
               case kDxgiFormatR8G8B8A8UnormSrgb:
+              case kDxgiFormatR8G8B8A8Typeless:
                 dst[0] = out_r;
                 dst[1] = out_g;
                 dst[2] = out_b;
@@ -4390,6 +4400,7 @@ void APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertexCount, UINT startVertex)
                 break;
               case kDxgiFormatB8G8R8X8Unorm:
               case kDxgiFormatB8G8R8X8UnormSrgb:
+              case kDxgiFormatB8G8R8X8Typeless:
                 dst[0] = out_b;
                 dst[1] = out_g;
                 dst[2] = out_r;
@@ -4397,6 +4408,7 @@ void APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertexCount, UINT startVertex)
                 break;
               case kDxgiFormatB8G8R8A8Unorm:
               case kDxgiFormatB8G8R8A8UnormSrgb:
+              case kDxgiFormatB8G8R8A8Typeless:
               default:
                 dst[0] = out_b;
                 dst[1] = out_g;
@@ -4759,10 +4771,13 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pCaps) {
         switch (format) {
           case kDxgiFormatB8G8R8A8Unorm:
           case kDxgiFormatB8G8R8A8UnormSrgb:
+          case kDxgiFormatB8G8R8A8Typeless:
           case kDxgiFormatB8G8R8X8Unorm:
           case kDxgiFormatB8G8R8X8UnormSrgb:
+          case kDxgiFormatB8G8R8X8Typeless:
           case kDxgiFormatR8G8B8A8Unorm:
           case kDxgiFormatR8G8B8A8UnormSrgb:
+          case kDxgiFormatR8G8B8A8Typeless:
             support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
                       D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY | D3D10_FORMAT_SUPPORT_BLENDABLE |
                       D3D10_FORMAT_SUPPORT_CPU_LOCKABLE;
@@ -4800,10 +4815,13 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pCaps) {
         switch (static_cast<uint32_t>(msaa_format)) {
           case kDxgiFormatB8G8R8A8Unorm:
           case kDxgiFormatB8G8R8A8UnormSrgb:
+          case kDxgiFormatB8G8R8A8Typeless:
           case kDxgiFormatB8G8R8X8Unorm:
           case kDxgiFormatB8G8R8X8UnormSrgb:
+          case kDxgiFormatB8G8R8X8Typeless:
           case kDxgiFormatR8G8B8A8Unorm:
           case kDxgiFormatR8G8B8A8UnormSrgb:
+          case kDxgiFormatR8G8B8A8Typeless:
           case kDxgiFormatD24UnormS8Uint:
           case kDxgiFormatD32Float:
             supported_format = true;
