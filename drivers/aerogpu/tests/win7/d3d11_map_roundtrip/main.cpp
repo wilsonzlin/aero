@@ -91,13 +91,13 @@ static int RunMapRoundtrip(int argc, char** argv) {
   HRESULT hr = D3D11CreateDevice(NULL,
                                  D3D_DRIVER_TYPE_HARDWARE,
                                  NULL,
-                                  D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                                  feature_levels,
                                  ARRAYSIZE(feature_levels),
                                  D3D11_SDK_VERSION,
                                  device.put(),
-                                  &chosen_level,
-                                  context.put());
+                                 &chosen_level,
+                                 context.put());
   if (FAILED(hr)) {
     return reporter.FailHresult("D3D11CreateDevice(HARDWARE)", hr);
   }
@@ -110,8 +110,7 @@ static int RunMapRoundtrip(int argc, char** argv) {
     HRESULT hr_adapter = dxgi_device->GetAdapter(adapter.put());
     if (FAILED(hr_adapter)) {
       if (has_require_vid || has_require_did) {
-        return aerogpu_test::FailHresult(
-            kTestName, "IDXGIDevice::GetAdapter (required for --require-vid/--require-did)", hr_adapter);
+        return reporter.FailHresult("IDXGIDevice::GetAdapter (required for --require-vid/--require-did)", hr_adapter);
       }
     } else {
       DXGI_ADAPTER_DESC ad;
@@ -119,8 +118,7 @@ static int RunMapRoundtrip(int argc, char** argv) {
       HRESULT hr_desc = adapter->GetDesc(&ad);
       if (FAILED(hr_desc)) {
         if (has_require_vid || has_require_did) {
-          return aerogpu_test::FailHresult(
-              kTestName, "IDXGIAdapter::GetDesc (required for --require-vid/--require-did)", hr_desc);
+          return reporter.FailHresult("IDXGIAdapter::GetDesc (required for --require-vid/--require-did)", hr_desc);
         }
       } else {
         aerogpu_test::PrintfStdout("INFO: %s: adapter: %ls (VID=0x%04X DID=0x%04X)",
@@ -162,6 +160,22 @@ static int RunMapRoundtrip(int argc, char** argv) {
     int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
+    }
+
+    if (!GetModuleHandleW(L"d3d11.dll")) {
+      return reporter.Fail("d3d11.dll is not loaded");
+    }
+    HMODULE umd = GetModuleHandleW(aerogpu_test::ExpectedAeroGpuD3D10UmdModuleBaseName());
+    if (!umd) {
+      return reporter.Fail("failed to locate loaded AeroGPU D3D10/11 UMD module");
+    }
+    FARPROC open_adapter_11 = GetProcAddress(umd, "OpenAdapter11");
+    if (!open_adapter_11) {
+      // On x86, stdcall decoration may be present depending on how the DLL was linked.
+      open_adapter_11 = GetProcAddress(umd, "_OpenAdapter11@4");
+    }
+    if (!open_adapter_11) {
+      return reporter.Fail("expected AeroGPU D3D10/11 UMD to export OpenAdapter11 (D3D11 entrypoint)");
     }
   }
 
