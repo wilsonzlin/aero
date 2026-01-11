@@ -1,5 +1,8 @@
 # Networking Architecture RFC: slirp-in-browser vs L3/L2 tunneling
 
+> **Final decision:** [ADR 0011: Networking via L2 tunnel (Option C) to an unprivileged proxy](./adr/0011-networking-l2-tunnel.md).  
+> This RFC is retained for background, tradeoff analysis, and prototype references.
+
 ## Context / goal
 
 Aero needs guest networking (Windows 7 TCP/IP stack → emulated NIC) to reach:
