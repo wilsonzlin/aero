@@ -1238,8 +1238,8 @@ impl AerogpuD3d9Executor {
                     }
 
                     // Flush any pending CPU writes before GPU reads/writes this buffer.
-                    self.flush_buffer_if_dirty(src_buffer, ctx.guest_memory)?;
-                    self.flush_buffer_if_dirty(dst_buffer, ctx.guest_memory)?;
+                    self.flush_buffer_if_dirty(Some(&mut encoder), src_buffer, ctx.guest_memory)?;
+                    self.flush_buffer_if_dirty(Some(&mut encoder), dst_buffer, ctx.guest_memory)?;
 
                     let src_buf = match self
                         .resources
@@ -1430,8 +1430,16 @@ impl AerogpuD3d9Executor {
                     }
 
                     // Flush any pending CPU writes before GPU reads/writes these subresources.
-                    self.flush_texture_if_dirty_strict(src_texture, ctx.guest_memory)?;
-                    self.flush_texture_if_dirty_strict(dst_texture, ctx.guest_memory)?;
+                    self.flush_texture_if_dirty_strict(
+                        Some(&mut encoder),
+                        src_texture,
+                        ctx.guest_memory,
+                    )?;
+                    self.flush_texture_if_dirty_strict(
+                        Some(&mut encoder),
+                        dst_texture,
+                        ctx.guest_memory,
+                    )?;
 
                     let src_tex = match self
                         .resources
@@ -2072,6 +2080,7 @@ impl AerogpuD3d9Executor {
 
     fn flush_buffer_if_dirty(
         &mut self,
+        encoder: Option<&mut wgpu::CommandEncoder>,
         handle: u32,
         guest_memory: Option<&dyn GuestMemory>,
     ) -> Result<(), AerogpuD3d9Error> {
@@ -2100,6 +2109,7 @@ impl AerogpuD3d9Executor {
             return Err(AerogpuD3d9Error::MissingGuestMemory(handle));
         };
 
+        let mut encoder = encoder;
         let ranges = dirty_ranges.clone();
         for range in &ranges {
             let aligned_start = align_down_u64(range.start, wgpu::COPY_BUFFER_ALIGNMENT);
@@ -2112,7 +2122,37 @@ impl AerogpuD3d9Executor {
                 AerogpuD3d9Error::Validation("buffer backing gpa overflow".into())
             })?;
             guest_memory.read(src_gpa, &mut data)?;
-            self.queue.write_buffer(buffer, aligned_start, &data);
+            if let Some(encoder) = encoder.as_deref_mut() {
+                // Prefer encoder-ordered buffer copies to preserve ordering with other operations
+                // in this command buffer. If the range isn't aligned for `copy_buffer_to_buffer`,
+                // submit the current encoder and fall back to `queue.write_buffer` so we still
+                // update exactly the requested bytes.
+                if (aligned_start % wgpu::COPY_BUFFER_ALIGNMENT) == 0
+                    && (len_u64 % wgpu::COPY_BUFFER_ALIGNMENT) == 0
+                {
+                    let staging =
+                        self.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("aerogpu-d3d9.flush_dirty_range.buffer_staging"),
+                                contents: &data,
+                                usage: wgpu::BufferUsages::COPY_SRC,
+                            });
+                    encoder.copy_buffer_to_buffer(&staging, 0, buffer, aligned_start, len_u64);
+                } else {
+                    let submitted = std::mem::replace(
+                        encoder,
+                        self.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("aerogpu-d3d9.encoder"),
+                            }),
+                    );
+                    self.queue.submit([submitted.finish()]);
+                    self.queue.write_buffer(buffer, aligned_start, &data);
+                }
+            } else {
+                // No active encoder yet: use `queue.write_buffer` as a fast path.
+                self.queue.write_buffer(buffer, aligned_start, &data);
+            }
         }
 
         dirty_ranges.clear();
@@ -2121,6 +2161,7 @@ impl AerogpuD3d9Executor {
 
     fn flush_texture_if_dirty(
         &mut self,
+        encoder: Option<&mut wgpu::CommandEncoder>,
         handle: u32,
         guest_memory: Option<&dyn GuestMemory>,
         strict: bool,
@@ -2166,6 +2207,7 @@ impl AerogpuD3d9Executor {
             return Err(AerogpuD3d9Error::MissingGuestMemory(handle));
         };
 
+        let mut encoder = encoder;
         let ranges = dirty_ranges.clone();
         let row_pitch = backing.row_pitch_bytes as u64;
         if row_pitch == 0 {
@@ -2223,29 +2265,65 @@ impl AerogpuD3d9Executor {
                 )?;
             }
 
-            self.queue.write_texture(
-                wgpu::ImageCopyTexture {
-                    texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: rows.start,
-                        z: 0,
+            if let Some(encoder) = encoder.as_deref_mut() {
+                let staging_buf =
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("aerogpu-d3d9.flush_dirty_range.texture_staging"),
+                            contents: &staging,
+                            usage: wgpu::BufferUsages::COPY_SRC,
+                        });
+                encoder.copy_buffer_to_texture(
+                    wgpu::ImageCopyBuffer {
+                        buffer: &staging_buf,
+                        layout: wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(upload_bpr),
+                            rows_per_image: Some(upload_h),
+                        },
                     },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &staging,
-                wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row: Some(upload_bpr),
-                    rows_per_image: Some(upload_h),
-                },
-                wgpu::Extent3d {
-                    width: *width,
-                    height: upload_h,
-                    depth_or_array_layers: 1,
-                },
-            );
+                    wgpu::ImageCopyTexture {
+                        texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: rows.start,
+                            z: 0,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: *width,
+                        height: upload_h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            } else {
+                // No active encoder yet: use `queue.write_texture` as a fast path.
+                self.queue.write_texture(
+                    wgpu::ImageCopyTexture {
+                        texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: rows.start,
+                            z: 0,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &staging,
+                    wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(upload_bpr),
+                        rows_per_image: Some(upload_h),
+                    },
+                    wgpu::Extent3d {
+                        width: *width,
+                        height: upload_h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
         }
 
         dirty_ranges.clear();
@@ -2254,18 +2332,20 @@ impl AerogpuD3d9Executor {
 
     fn flush_texture_if_dirty_strict(
         &mut self,
+        encoder: Option<&mut wgpu::CommandEncoder>,
         handle: u32,
         guest_memory: Option<&dyn GuestMemory>,
     ) -> Result<(), AerogpuD3d9Error> {
-        self.flush_texture_if_dirty(handle, guest_memory, true)
+        self.flush_texture_if_dirty(encoder, handle, guest_memory, true)
     }
 
     fn flush_texture_binding_if_dirty(
         &mut self,
+        encoder: Option<&mut wgpu::CommandEncoder>,
         handle: u32,
         guest_memory: Option<&dyn GuestMemory>,
     ) -> Result<(), AerogpuD3d9Error> {
-        self.flush_texture_if_dirty(handle, guest_memory, false)
+        self.flush_texture_if_dirty(encoder, handle, guest_memory, false)
     }
 
     fn encode_clear(
@@ -2289,11 +2369,15 @@ impl AerogpuD3d9Executor {
                     if handle == 0 {
                         continue;
                     }
-                    self.flush_texture_if_dirty_strict(handle, ctx.guest_memory)?;
+                    self.flush_texture_if_dirty_strict(Some(encoder), handle, ctx.guest_memory)?;
                 }
             }
             if (!clear_depth_enabled || !clear_stencil_enabled) && rt.depth_stencil != 0 {
-                self.flush_texture_if_dirty_strict(rt.depth_stencil, ctx.guest_memory)?;
+                self.flush_texture_if_dirty_strict(
+                    Some(encoder),
+                    rt.depth_stencil,
+                    ctx.guest_memory,
+                )?;
             }
         }
 
@@ -2394,10 +2478,10 @@ impl AerogpuD3d9Executor {
             if handle == 0 {
                 continue;
             }
-            self.flush_texture_if_dirty_strict(handle, ctx.guest_memory)?;
+            self.flush_texture_if_dirty_strict(Some(encoder), handle, ctx.guest_memory)?;
         }
         if rt.depth_stencil != 0 {
-            self.flush_texture_if_dirty_strict(rt.depth_stencil, ctx.guest_memory)?;
+            self.flush_texture_if_dirty_strict(Some(encoder), rt.depth_stencil, ctx.guest_memory)?;
         }
 
         for stream in streams {
@@ -2411,14 +2495,14 @@ impl AerogpuD3d9Executor {
                 continue;
             };
             if binding.buffer != 0 {
-                self.flush_buffer_if_dirty(binding.buffer, ctx.guest_memory)?;
+                self.flush_buffer_if_dirty(Some(encoder), binding.buffer, ctx.guest_memory)?;
             }
         }
 
         if let DrawParams::Indexed { .. } = draw {
             let index_binding = index_binding.ok_or(AerogpuD3d9Error::MissingIndexBuffer)?;
             if index_binding.buffer != 0 {
-                self.flush_buffer_if_dirty(index_binding.buffer, ctx.guest_memory)?;
+                self.flush_buffer_if_dirty(Some(encoder), index_binding.buffer, ctx.guest_memory)?;
             }
         }
 
@@ -2426,7 +2510,7 @@ impl AerogpuD3d9Executor {
             if tex_handle == 0 {
                 continue;
             }
-            self.flush_texture_binding_if_dirty(tex_handle, ctx.guest_memory)?;
+            self.flush_texture_binding_if_dirty(Some(encoder), tex_handle, ctx.guest_memory)?;
         }
         self.ensure_bind_group();
         let bind_group = self
