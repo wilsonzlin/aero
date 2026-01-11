@@ -2,7 +2,10 @@ use aero_devices::a20_gate::A20Gate as Port92A20Gate;
 use aero_devices::i8042::{I8042Ports, PlatformSystemControlSink};
 use aero_platform::{A20GateHandle, Platform};
 use firmware::bios::{Bios, BiosBus, BiosConfig};
-use machine::{A20Gate as MachineA20Gate, CpuState, FirmwareMemory, InMemoryDisk, MemoryAccess};
+use machine::{
+    A20Gate as MachineA20Gate, CpuState, FirmwareMemory, InMemoryDisk, MemoryAccess, FLAG_CF,
+    FLAG_IF,
+};
 
 struct BiosA20Bus {
     a20: A20GateHandle,
@@ -53,7 +56,7 @@ impl MemoryAccess for BiosA20Bus {
     }
 }
 
-fn bios_int15(bios: &mut Bios, bus: &mut dyn BiosBus, cpu: &mut CpuState, ax: u16) {
+fn bios_int15(bios: &mut Bios, bus: &mut dyn BiosBus, cpu: &mut CpuState, ax: u16) -> u16 {
     // `Bios::dispatch_interrupt` expects the CPU to have executed `INT` already. Provide a
     // minimal interrupt frame so the dispatcher can merge the handler flags into the IRET image.
     cpu.ss.selector = 0;
@@ -61,11 +64,21 @@ fn bios_int15(bios: &mut Bios, bus: &mut dyn BiosBus, cpu: &mut CpuState, ax: u1
 
     bus.write_u16(0x0100, 0); // return IP
     bus.write_u16(0x0102, 0); // return CS
-    bus.write_u16(0x0104, 0x0002); // return FLAGS (bit1 always set)
+    // Return FLAGS from the interrupt frame. Real-mode BIOS callers typically have IF=1, and the
+    // dispatcher should preserve IF from this saved image (the CPU clears IF before entering the
+    // handler stub).
+    bus.write_u16(0x0104, 0x0202); // return FLAGS (IF=1, bit1 always set)
 
     cpu.rax = ax as u64;
     let mut disk = InMemoryDisk::new(vec![0; 512]);
     bios.dispatch_interrupt(0x15, cpu, bus, &mut disk);
+
+    bus.read_u16(0x0104)
+}
+
+fn assert_int15_success(flags: u16) {
+    assert_eq!(flags & (FLAG_CF as u16), 0);
+    assert_ne!(flags & (FLAG_IF as u16), 0);
 }
 
 #[test]
@@ -96,7 +109,8 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     let mut bios_bus = BiosA20Bus::new(a20.clone(), 0x2000);
 
     // BIOS query should observe the reset default: A20 disabled.
-    bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2402);
+    let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2402);
+    assert_int15_success(flags);
     assert_eq!(cpu.rax as u8, 0);
 
     // Reset default: A20 disabled (0x1_00000 aliases 0x0).
@@ -112,7 +126,8 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     assert!(a20.enabled());
     assert_eq!(platform.io.read_u8(0x92) & 0x02, 0x02);
 
-    bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2402);
+    let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2402);
+    assert_int15_success(flags);
     assert_eq!(cpu.rax as u8, 1);
 
     platform.memory.write_u8(0x1_00000, 0x22);
@@ -134,7 +149,8 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     platform.io.write_u8(0x64, 0xD0);
     assert_eq!(platform.io.read_u8(0x60) & 0x02, 0x00);
 
-    bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2402);
+    let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2402);
+    assert_int15_success(flags);
     assert_eq!(cpu.rax as u8, 0);
 
     // Enable A20 via the i8042 output port path and verify separation again.
@@ -148,7 +164,8 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     platform.io.write_u8(0x64, 0xD0);
     assert_eq!(platform.io.read_u8(0x60) & 0x02, 0x02);
 
-    bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2402);
+    let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2402);
+    assert_int15_success(flags);
     assert_eq!(cpu.rax as u8, 1);
 
     // Disable A20 via the i8042 output port and verify aliasing.
@@ -162,11 +179,13 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     platform.io.write_u8(0x64, 0xD0);
     assert_eq!(platform.io.read_u8(0x60) & 0x02, 0x00);
 
-    bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2402);
+    let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2402);
+    assert_int15_success(flags);
     assert_eq!(cpu.rax as u8, 0);
 
     // Enable A20 via BIOS INT 15h and verify separation.
-    bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2401);
+    let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2401);
+    assert_int15_success(flags);
     assert!(a20.enabled());
     assert_eq!(platform.io.read_u8(0x92) & 0x02, 0x02);
     assert_eq!(platform.memory.read_u8(0x0), 0x11);
@@ -176,7 +195,8 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     assert_eq!(platform.io.read_u8(0x60) & 0x02, 0x02);
 
     // Disable A20 via BIOS INT 15h and verify aliasing.
-    bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2400);
+    let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2400);
+    assert_int15_success(flags);
     assert!(!a20.enabled());
     assert_eq!(platform.io.read_u8(0x92) & 0x02, 0x00);
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x11);
@@ -186,6 +206,7 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
 
     // BIOS should advertise that it supports the keyboard controller, port 0x92, and INT 15h.
     cpu.rbx = 0;
-    bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2403);
+    let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2403);
+    assert_int15_success(flags);
     assert_eq!(cpu.rbx as u16, 0x0007);
 }
