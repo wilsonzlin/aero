@@ -125,7 +125,10 @@ async fn oversized_control_payload_is_rejected() {
                         aero_l2_proxy::protocol::decode_error_payload(decoded.payload)
                     {
                         assert_eq!(code, aero_l2_proxy::protocol::ERROR_CODE_PROTOCOL_ERROR);
-                        assert!(!message.is_empty(), "expected ERROR message to be non-empty");
+                        assert!(
+                            !message.is_empty(),
+                            "expected ERROR message to be non-empty"
+                        );
                     }
                     saw_error = true;
                 }
@@ -146,7 +149,10 @@ async fn oversized_control_payload_is_rejected() {
     })
     .await;
 
-    assert!(saw_close, "expected websocket close for oversized control payload");
+    assert!(
+        saw_close,
+        "expected websocket close for oversized control payload"
+    );
     assert!(saw_error, "expected ERROR message before close");
 
     let body = reqwest::get(format!("http://{addr}/metrics"))
@@ -164,4 +170,3 @@ async fn oversized_control_payload_is_rejected() {
     let _ = ws_tx.send(Message::Close(None)).await;
     proxy.shutdown().await;
 }
-
