@@ -82,15 +82,6 @@ drivers/aerogpu/tests/win7/
   readback_sanity/
 ```
 
-## Adding a new test
-
-1. Create a new directory under `drivers/aerogpu/tests/win7/` (e.g. `my_new_test/`) containing:
-   * `main.cpp`
-   * `build_vs2010.cmd` that writes `bin\my_new_test.exe` (the executable name must match the directory name).
-2. Add the directory name (e.g. `my_new_test`) to `tests_manifest.txt` in the desired suite order.
-
-You do **not** need to edit `build_all_vs2010.cmd` or `run_all.cmd` when adding/removing tests; both scripts consume `tests_manifest.txt`.
-
 ## Prerequisites (Windows 7 guest)
 
 ### Runtime
