@@ -186,10 +186,13 @@ Define a guest/host handle model that does **not** attempt to expose host OS han
 - On “export” (resource creation with `pSharedHandle != nullptr`):
   1. The UMD requests a normal WDDM shared handle (the value written to
      `*pSharedHandle` is still the OS handle).
-  2. The KMD assigns a stable `alloc_id` / `share_token` pair and writes it into
-     the WDDM **allocation private driver data** blob (`aerogpu_wddm_alloc_priv`)
-     that dxgkrnl preserves and returns on `OpenResource`/`OpenAllocation` (see
-     `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). The UMD reads this blob.
+  2. The UMD chooses a stable `alloc_id` / `share_token` pair and writes it into
+     the WDDM **allocation private driver data** blob (`aerogpu_wddm_alloc_priv`).
+     The KMD treats this blob as **UMD → KMD input** and validates it.
+     For shared allocations, dxgkrnl preserves the blob and returns the exact
+     same bytes on `OpenResource`/`OpenAllocation` in another process, ensuring
+     both processes observe identical IDs (see
+     `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
   3. The UMD informs the host: `(share_token → host_resource_id)` mapping is created.
 
 - On “import” (open from a shared handle):
@@ -201,7 +204,7 @@ Define a guest/host handle model that does **not** attempt to expose host OS han
 **Key invariant:** `share_token` must be stable across processes inside the guest VM.
 In real Windows, the shared resource identity is represented by a kernel object
 referenced by per-process `HANDLE` values; in Aero, stability is provided by the
-KMD-provided `share_token` stored in preserved WDDM allocation private data and
+UMD-provided `share_token` stored in preserved WDDM allocation private data and
 the host mapping table keyed by that token.
 
 **Implementation note (AeroGPU/WDDM):**

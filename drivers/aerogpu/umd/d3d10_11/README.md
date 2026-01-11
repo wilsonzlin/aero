@@ -60,7 +60,7 @@ This provides both a `std::vector`-backed stream (portable bring-up/tests) and a
 
 ### Shared surface note
 
-DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The protocol supports it (primarily for D3D9Ex/DWM) via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token` provided by the KMD via preserved WDDM allocation private data (`aerogpu_wddm_alloc_priv`; see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). The recommended scheme is `share_token = (uint64_t)alloc_id` (it is **not** a process-local `HANDLE` value).
+DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The protocol supports it (primarily for D3D9Ex/DWM) via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token` stored in preserved WDDM allocation private data (`aerogpu_wddm_alloc_priv`; see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). The KMD treats this blob as UMD→KMD input and validates it. The recommended scheme is `share_token = (uint64_t)alloc_id` (it is **not** a process-local `HANDLE` value).
 
 ## Build
 
