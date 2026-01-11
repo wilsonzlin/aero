@@ -14,12 +14,19 @@ This requires building the emulator with the legacy device model enabled:
 
 `cargo build --locked -p emulator --features emulator/aerogpu-legacy`
 
-## Install
+## Install (repo/dev layout)
 
-The helper scripts live one directory up (`drivers/aerogpu/packaging/win7/`). From an elevated Command Prompt:
+These INFs are stored under `packaging/win7/legacy/` so the default driver package does not accidentally bind to
+`VEN_1AED`. They are designed to be used with the **same binaries staged into the parent directory**
+(`drivers/aerogpu/packaging/win7/`).
+
+From repo root (after building the driver), stage the packaging directory, sign it, then install using the legacy INF:
 
 ```bat
+drivers\aerogpu\build\stage_packaging_win7.cmd fre x64
+
 cd drivers\aerogpu\packaging\win7
+sign_test.cmd
 install.cmd legacy\aerogpu.inf
 :: or (DX11-capable variant)
 install.cmd legacy\aerogpu_dx11.inf

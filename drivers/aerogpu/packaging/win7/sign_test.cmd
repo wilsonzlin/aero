@@ -132,6 +132,19 @@ for %%F in (*.sys *.dll *.cat) do (
   )
 )
 
+rem Optional: also sign legacy bring-up catalog files (packaging\win7\legacy\*.cat).
+if exist "legacy\*.cat" (
+  for %%F in (legacy\*.cat) do (
+    echo [INFO]   signing %%F
+    signtool.exe sign /v /fd sha1 /f "%PFX_FILE%" /p "%CERT_PASSWORD%" "%%F"
+    if not "!ERRORLEVEL!"=="0" (
+      echo [ERROR] signtool failed for %%F
+      popd >nul
+      exit /b 1
+    )
+  )
+)
+
 echo [OK] Package signed.
 echo [NOTE] If you changed test-signing mode, reboot Windows before installing the driver.
 popd >nul
@@ -212,6 +225,38 @@ if exist "aerogpu_dx11.inf" (
   )
 )
 
+rem Optional: generate catalogs for legacy bring-up INFs under legacy\.
+rem These are not shipped by default, but are used for compatibility/regression installs.
+if exist "legacy\aerogpu.inf" (
+  set "INF2CAT_OUTDIR=%PACKAGE_DIR%legacy"
+  if /i "%INF2CAT_ARCH%"=="amd64" (
+    call :Inf2CatOne "legacy\aerogpu.inf" "aerogpu.cat" aerogpu.sys aerogpu_d3d9.dll aerogpu_d3d9_x64.dll
+  ) else (
+    call :Inf2CatOne "legacy\aerogpu.inf" "aerogpu.cat" aerogpu.sys aerogpu_d3d9.dll
+  )
+  if not "!ERRORLEVEL!"=="0" goto :Inf2CatFail
+  set "INF2CAT_OUTDIR="
+)
+if exist "legacy\aerogpu_dx11.inf" (
+  set "INF2CAT_OUTDIR=%PACKAGE_DIR%legacy"
+  if /i "%INF2CAT_ARCH%"=="amd64" (
+    if exist "aerogpu_d3d10.dll" if exist "aerogpu_d3d10_x64.dll" (
+      call :Inf2CatOne "legacy\aerogpu_dx11.inf" "aerogpu_dx11.cat" aerogpu.sys aerogpu_d3d9.dll aerogpu_d3d9_x64.dll aerogpu_d3d10.dll aerogpu_d3d10_x64.dll
+      if not "!ERRORLEVEL!"=="0" goto :Inf2CatFail
+    ) else (
+      echo [INFO] Skipping legacy\aerogpu_dx11.inf catalog generation (optional D3D10/11 UMDs not found).
+    )
+  ) else (
+    if exist "aerogpu_d3d10.dll" (
+      call :Inf2CatOne "legacy\aerogpu_dx11.inf" "aerogpu_dx11.cat" aerogpu.sys aerogpu_d3d9.dll aerogpu_d3d10.dll
+      if not "!ERRORLEVEL!"=="0" goto :Inf2CatFail
+    ) else (
+      echo [INFO] Skipping legacy\aerogpu_dx11.inf catalog generation (optional D3D10/11 UMDs not found).
+    )
+  )
+  set "INF2CAT_OUTDIR="
+)
+
 rd /s /q "%INF2CAT_TMPBASE%" >nul 2>&1
 set "INF2CAT_TMPBASE="
 exit /b 0
@@ -219,6 +264,7 @@ exit /b 0
 :Inf2CatFail
 rd /s /q "%INF2CAT_TMPBASE%" >nul 2>&1
 set "INF2CAT_TMPBASE="
+set "INF2CAT_OUTDIR="
 exit /b 1
 
 rem -----------------------------------------------------------------
@@ -229,7 +275,7 @@ set "INF2CAT_INFBASENAME=%~n1"
 shift
 shift
 
-set "INF2CAT_WORK=%INF2CAT_TMPBASE%\%INF2CAT_INFBASENAME%"
+set "INF2CAT_WORK=%INF2CAT_TMPBASE%\%INF2CAT_INFBASENAME%_%RANDOM%"
 mkdir "%INF2CAT_WORK%" >nul 2>&1
 if not "%ERRORLEVEL%"=="0" (
   echo [ERROR] Failed to create: "%INF2CAT_WORK%"
@@ -261,7 +307,9 @@ if not exist "%INF2CAT_WORK%\%INF2CAT_CAT%" (
   exit /b 1
 )
 
-copy /y "%INF2CAT_WORK%\%INF2CAT_CAT%" "%PACKAGE_DIR%" >nul
+set "INF2CAT_DEST_DIR=%PACKAGE_DIR%"
+if defined INF2CAT_OUTDIR set "INF2CAT_DEST_DIR=%INF2CAT_OUTDIR%"
+copy /y "%INF2CAT_WORK%\%INF2CAT_CAT%" "%INF2CAT_DEST_DIR%\%INF2CAT_CAT%" >nul
 exit /b 0
 
 rem -----------------------------------------------------------------

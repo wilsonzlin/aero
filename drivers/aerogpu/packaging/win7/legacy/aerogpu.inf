@@ -119,7 +119,9 @@ LoadOrderGroup = Video
 ; Source media
 ; -------------------------------
 [SourceDisksNames]
-1 = %AeroGPU.DiskName%,,,""
+; This INF lives under packaging\win7\legacy\ but uses the same binaries staged into the parent
+; directory (packaging\win7\). The relative source path of `..` points SetupAPI at the parent.
+1 = %AeroGPU.DiskName%,,,".."
 
 [SourceDisksFiles.x86]
 aerogpu.sys = 1
