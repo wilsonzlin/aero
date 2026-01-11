@@ -296,24 +296,21 @@ The selftest logs to:
    ```
 2. Run it (elevated CMD recommended):
    ```bat
-   REM Contract v1 device (DEV_1059 + REV_01):
-   C:\AeroTests\aero-virtio-selftest.exe --test-snd
- 
-    REM Stock QEMU transitional device (DEV_1018) + legacy INF/package:
-    C:\AeroTests\aero-virtio-selftest.exe --test-snd --allow-virtio-snd-transitional
+    REM Contract v1 device (DEV_1059 + REV_01):
+    C:\AeroTests\aero-virtio-selftest.exe --test-snd
     ```
     Notes:
     - `--test-snd` (alias: `--require-snd`) enables virtio-snd playback testing. Missing virtio-snd is treated as a FAIL in this mode.
     - The strict `aero-virtio-snd.inf` package expects the contract-v1 HWID (`...DEV_1059&REV_01`). Under QEMU, configure the device with
       `disable-legacy=on,x-pci-revision=0x01` so the strict INF can bind.
+    - If your device enumerates as transitional, install the opt-in legacy driver package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`)
+      and pass `--allow-virtio-snd-transitional` so the selftest accepts it (intended for QEMU bring-up/regression).
     - When `--test-snd` is enabled, the selftest also checks for a virtio-snd capture endpoint and emits
       `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|endpoint_present` when present.
       If the capture endpoint is missing, the capture test is reported as `SKIP|endpoint_missing` unless `--require-snd-capture` is set.
     - `--test-snd-capture` runs a capture smoke test (WASAPI, fallback to waveIn) that records for a short interval.
       This passes even on silence by default; use `--require-non-silence` to require a non-silent buffer.
     - `--require-snd-capture` fails the overall selftest if the capture endpoint is missing (instead of `SKIP`).
-    - If your device enumerates as transitional (`PCI\\VEN_1AF4&DEV_1018`), pass `--allow-virtio-snd-transitional`
-      so the selftest accepts the transitional ID (intended for QEMU bring-up/regression).
     - If you run without `--test-snd` / `--require-snd`, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`
       (and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`).
     - Use `--disable-snd` to force `SKIP` even when capture/playback flags are present.
