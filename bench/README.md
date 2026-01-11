@@ -179,6 +179,8 @@ The compare script also gates on:
 
 It also includes any `warnings[]` from the benchmark output in the Markdown report.
 When invoked with `--json`, it also writes `compare.json` for machine-readable CI consumers.
+The per-metric table includes the baseline/current coefficient-of-variation (CV) computed from the
+benchmark's per-run stdev/mean for quick noise inspection.
 
 ## Scenario runner (PF-008 macrobench framework)
 
