@@ -74,7 +74,8 @@ If you generate a catalog (`aerogpu.cat`) via `inf2cat`, include it as well.
 ## Notes
 
 - PCI IDs: the prototype INF binds to `PCI\VEN_1AE0&DEV_0001`. The supported driver package binds to
-  `PCI\VEN_A3A0&DEV_0001` (legacy bring-up `PCI\VEN_1AED&DEV_0001` is KMD-supported but requires a custom INF).
+  `PCI\VEN_A3A0&DEV_0001` (legacy bring-up `PCI\VEN_1AED&DEV_0001` is KMD-supported but requires enabling
+  `emulator/aerogpu-legacy` and using the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/`).
 - Do not use class-code matching: older revisions of this prototype INF matched by display class code
   (`PCI\CC_030000`), which is extremely broad and can hijack display binding on unrelated devices.
   This is intentionally disabled; see comments in the INF.

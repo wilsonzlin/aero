@@ -18,8 +18,9 @@ The in-tree, supported AeroGPU stack lives under `drivers/aerogpu/` and binds to
 ID `PCI\VEN_A3A0&DEV_0001`.
 
 The legacy bring-up PCI ID `PCI\VEN_1AED&DEV_0001` is supported by the KMD for compatibility but is
-intentionally **not** matched by the shipped Win7 INFs (installing against it requires a custom
-INF).
+intentionally **not** matched by the shipped Win7 INFs. Installing against it requires enabling
+the emulator legacy device model feature (`emulator/aerogpu-legacy`) and using the legacy INFs
+under `drivers/aerogpu/packaging/win7/legacy/`.
 
 The canonical source of truth for **Windows driver binding** (PCI IDs, service names, INF names) is:
 
