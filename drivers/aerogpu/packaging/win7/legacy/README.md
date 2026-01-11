@@ -13,3 +13,16 @@ legacy AeroGPU device model/ABI.
 This requires building the emulator with the legacy device model enabled:
 
 `cargo build -p emulator --features emulator/aerogpu-legacy`
+
+## Install
+
+The helper scripts live one directory up (`drivers/aerogpu/packaging/win7/`). From an elevated Command Prompt:
+
+```bat
+cd drivers\aerogpu\packaging\win7
+install.cmd legacy\aerogpu.inf
+:: or (DX11-capable variant)
+install.cmd legacy\aerogpu_dx11.inf
+```
+
+`install.cmd` runs `verify_umd_registration.cmd` after install to sanity-check UMD DLL placement and the key HKR registry values.
