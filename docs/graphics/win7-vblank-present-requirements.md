@@ -297,6 +297,7 @@ To validate the **kernel vblank interrupt/wait path** without involving DWM comp
 
 * `drivers/aerogpu/tests/win7/wait_vblank_pacing` – calls `D3DKMTWaitForVerticalBlankEvent` targeting **VidPn source 0** (the AeroGPU MVP contract) and reports avg/min/max wait deltas.
 * `drivers/aerogpu/tests/win7/vblank_wait_sanity` / `vblank_wait_pacing` – additional variants that exercise the same thunk with different harness behavior (e.g. fail-fast timeouts).
+* `drivers/aerogpu/tests/win7/vblank_state_sanity` – polls the KMD `QUERY_VBLANK` escape and sanity-checks vblank `seq/time/period` registers (monotonicity + rough cadence check).
 
 These tests fail on “totally broken” pacing patterns such as:
 
