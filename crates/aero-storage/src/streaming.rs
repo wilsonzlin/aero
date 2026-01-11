@@ -1063,11 +1063,19 @@ impl StreamingDisk {
                 .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?,
         );
         if let Some(validator) = &self.inner.validator {
+            // RFC 9110 disallows weak validators in `If-Range`. If the origin returns a weak ETag
+            // (e.g. `W/"..."`), sending it back can cause some servers to ignore the Range and
+            // return `200 OK` (full representation), which we would otherwise misclassify as
+            // "Range not supported". Prefer omitting `If-Range` in that case.
+            if validator.trim_start().starts_with("W/") {
+                // skip
+            } else {
             headers.insert(
                 IF_RANGE,
                 HeaderValue::from_str(validator)
                     .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?,
             );
+            }
         }
         let req = self
             .inner

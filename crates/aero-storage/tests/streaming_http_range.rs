@@ -29,6 +29,7 @@ struct State {
     fail_first_range: AtomicBool,
     required_header: Option<(String, String)>,
     ignore_range: bool,
+    enforce_strong_if_range: bool,
     wrong_content_range: bool,
     content_encoding: Option<String>,
     counters: Counters,
@@ -46,6 +47,7 @@ async fn start_range_server_with_options(
     fail_first_range: bool,
     required_header: Option<(&str, &str)>,
     ignore_range: bool,
+    enforce_strong_if_range: bool,
     wrong_content_range: bool,
     content_encoding: Option<&str>,
 ) -> (Url, Arc<State>, oneshot::Sender<()>) {
@@ -55,6 +57,7 @@ async fn start_range_server_with_options(
         fail_first_range: AtomicBool::new(fail_first_range),
         required_header: required_header.map(|(k, v)| (k.to_string(), v.to_string())),
         ignore_range,
+        enforce_strong_if_range,
         wrong_content_range,
         content_encoding: content_encoding.map(|v| v.to_string()),
         counters: Counters::default(),
@@ -121,7 +124,18 @@ async fn handle_request(
 
                 let current_etag = state.etag.lock().unwrap().clone();
                 if let Some(if_range) = req.headers().get(IF_RANGE).and_then(|v| v.to_str().ok()) {
-                    if if_range != current_etag {
+                    let is_mismatch = if state.enforce_strong_if_range
+                        && (if_range.trim_start().starts_with("W/")
+                            || current_etag.trim_start().starts_with("W/"))
+                    {
+                        // RFC 9110 requires strong comparison and disallows weak validators in
+                        // `If-Range`. Treat weak validators as not matching.
+                        true
+                    } else {
+                        if_range != current_etag
+                    };
+
+                    if is_mismatch {
                         // Simulate RFC 7233 `If-Range` mismatch behavior: ignore the Range and
                         // return the full representation with a 200.
                         let mut resp = Response::new(Body::from(state.image.as_ref().clone()));
@@ -348,7 +362,7 @@ fn parse_range_header(header: &str, total_size: u64) -> Result<(u64, u64), Statu
 async fn streaming_reads_and_reuses_cache() {
     let image: Vec<u8> = (0..(4096 + 123)).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) =
-        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false, None)
+        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false, false, None)
             .await;
 
     let cache_dir = tempdir().unwrap();
@@ -401,7 +415,7 @@ async fn streaming_reads_and_reuses_cache() {
 async fn cache_invalidates_on_validator_change() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
     let (url, state1, shutdown1) =
-        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false, None)
+        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false, false, None)
             .await;
 
     let cache_dir = tempdir().unwrap();
@@ -427,7 +441,7 @@ async fn cache_invalidates_on_validator_change() {
 
     // Same bytes endpoint, but validator changed => invalidate cache and re-fetch.
     let (url2, state2, shutdown2) =
-        start_range_server_with_options(image.clone(), "etag-v2", false, None, false, false, None)
+        start_range_server_with_options(image.clone(), "etag-v2", false, None, false, false, false, None)
             .await;
     let mut config2 = StreamingDiskConfig::new(url2, cache_dir.path());
     config2.cache_backend = StreamingCacheBackend::Directory;
@@ -455,6 +469,7 @@ async fn inflight_dedup_avoids_duplicate_fetches() {
         "etag-dedup",
         false,
         None,
+        false,
         false,
         false,
         None,
@@ -511,6 +526,7 @@ async fn retries_transient_http_errors() {
         None,
         false,
         false,
+        false,
         None,
     )
     .await;
@@ -545,6 +561,7 @@ async fn integrity_manifest_rejects_corrupt_chunk() {
         "etag-integrity",
         false,
         None,
+        false,
         false,
         false,
         None,
@@ -587,7 +604,7 @@ async fn integrity_manifest_rejects_corrupt_chunk() {
 async fn if_range_mismatch_is_reported_as_validator_mismatch() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) =
-        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false, None)
+        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false, false, None)
             .await;
 
     let cache_dir = tempdir().unwrap();
@@ -616,6 +633,7 @@ async fn request_headers_are_sent_on_all_http_requests() {
         "etag-auth",
         false,
         Some(("x-test-auth", "secret")),
+        false,
         false,
         false,
         None,
@@ -648,6 +666,7 @@ async fn missing_required_header_fails_open_with_http_error() {
         Some(("x-test-auth", "secret")),
         false,
         false,
+        false,
         None,
     )
     .await;
@@ -669,7 +688,7 @@ async fn missing_required_header_fails_open_with_http_error() {
 async fn open_fails_when_config_validator_mismatches_remote_etag() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) =
-        start_range_server_with_options(image, "etag-actual", false, None, false, false, None)
+        start_range_server_with_options(image, "etag-actual", false, None, false, false, false, None)
             .await;
 
     let cache_dir = tempdir().unwrap();
@@ -759,6 +778,7 @@ async fn range_not_supported_is_reported_when_server_ignores_range() {
         None,
         true,
         false,
+        false,
         None,
     )
     .await;
@@ -786,6 +806,7 @@ async fn content_range_mismatch_is_protocol_error() {
         "etag-badcr",
         false,
         None,
+        false,
         false,
         true,
         None,
@@ -817,6 +838,7 @@ async fn content_encoding_is_rejected() {
         None,
         false,
         false,
+        false,
         Some("gzip"),
     )
     .await;
@@ -844,6 +866,7 @@ async fn cache_invalidates_when_cache_backend_changes() {
         "etag-backend",
         false,
         None,
+        false,
         false,
         false,
         None,
@@ -896,6 +919,7 @@ async fn corrupt_cache_metadata_is_treated_as_invalidation() {
         None,
         false,
         false,
+        false,
         None,
     )
     .await;
@@ -933,6 +957,41 @@ async fn corrupt_cache_metadata_is_treated_as_invalidation() {
         2,
         "corrupt metadata should be treated as cache invalidation"
     );
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn weak_etag_does_not_break_range_fetches() {
+    // RFC 9110 disallows weak validators in `If-Range`. Some servers respond with `200 OK` (full
+    // representation) instead of `206 Partial Content` when clients send `If-Range: W/"..."`.
+    //
+    // `StreamingDisk` should omit `If-Range` when the validator is a weak ETag to avoid
+    // misclassifying the server as not supporting Range.
+    let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
+    let (url, _state, shutdown) = start_range_server_with_options(
+        image.clone(),
+        r#"W/"etag-weak""#,
+        false,
+        None,
+        false,
+        true,
+        false,
+        None,
+    )
+    .await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 1;
+
+    let disk = StreamingDisk::open(config).await.unwrap();
+    let mut buf = vec![0u8; 16];
+    disk.read_at(0, &mut buf).await.unwrap();
+    assert_eq!(&buf[..], &image[0..16]);
 
     let _ = shutdown.send(());
 }
