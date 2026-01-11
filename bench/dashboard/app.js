@@ -149,6 +149,7 @@ function renderDashboard(history) {
   const envParts = [];
   if (env.chromiumVersion) envParts.push(`Chromium ${env.chromiumVersion}`);
   if (env.node) envParts.push(`Node ${env.node}`);
+  if (env.gatewayMode) envParts.push(`Gateway ${env.gatewayMode}`);
   if (env.platform) {
     envParts.push(env.osRelease ? `${env.platform} ${env.osRelease}` : env.platform);
   }
