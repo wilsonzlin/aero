@@ -7,6 +7,9 @@
 #include "virtio_pci_modern_wdm.h"
 #include "virtiosnd_queue_split.h"
 
+/* Modern virtio split rings only require 16/2/4-byte alignment (contract v1). */
+#define VIRTIOSND_SPLIT_RING_ALIGN 16u
+
 typedef struct _VIRTIOSND_QUEUE_SPLIT_LOCK_STATE {
     KIRQL OldIrql;
     BOOLEAN AtDpcLevel;
@@ -210,7 +213,7 @@ VirtioSndQueueSplitCreate(
         qs->NotifyAddr = (volatile UINT16*)(notify_base + (ULONG)queue_notify_off * notify_off_multiplier);
     }
 
-    ring_bytes = VirtqSplitRingMemSize(queue_size, PAGE_SIZE, event_idx);
+    ring_bytes = VirtqSplitRingMemSize(queue_size, VIRTIOSND_SPLIT_RING_ALIGN, event_idx);
     if (ring_bytes == 0) {
         status = STATUS_INVALID_PARAMETER;
         goto Fail;
@@ -282,7 +285,7 @@ VirtioSndQueueSplitCreate(
         indirect,
         qs->Ring.Va,
         qs->Ring.DmaAddr,
-        PAGE_SIZE,
+        VIRTIOSND_SPLIT_RING_ALIGN,
         qs->IndirectPool.Va,
         qs->IndirectPool.DmaAddr,
         indirect_table_count,
