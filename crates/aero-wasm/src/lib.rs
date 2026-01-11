@@ -1199,28 +1199,101 @@ impl AeroApi {
 /// Deprecated in favor of the canonical full-system VM (`Machine`).
 #[wasm_bindgen]
 #[deprecated(
-    note = "DemoVm is a stub VM kept for snapshot demos; use `Machine` (aero_machine::Machine) instead"
+    note = "DemoVm is a legacy wrapper kept for snapshot demos; use `Machine` (aero_machine::Machine) instead"
 )]
+#[allow(deprecated)]
 pub struct DemoVm {
-    #[allow(deprecated)]
-    inner: aero_vm::Vm,
+    inner: aero_machine::Machine,
 }
 
 #[wasm_bindgen]
 #[allow(deprecated)]
 impl DemoVm {
+    fn demo_boot_sector() -> [u8; 512] {
+        let mut sector = [0u8; 512];
+        let mut i = 0usize;
+
+        // Real-mode loop that continuously writes bytes to COM1 and stores the same bytes into RAM.
+        //
+        // This is intentionally deterministic and self-contained: it does not rely on BIOS
+        // interrupts, timers, or external input.
+
+        // mov dx, 0x3f8
+        sector[i..i + 3].copy_from_slice(&[0xBA, 0xF8, 0x03]);
+        i += 3;
+        // xor ax, ax
+        sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
+        i += 2;
+        // mov di, 0x0500
+        sector[i..i + 3].copy_from_slice(&[0xBF, 0x00, 0x05]);
+        i += 3;
+        // cld (ensure stosb increments DI)
+        sector[i] = 0xFC;
+        i += 1;
+
+        let loop_off = i;
+
+        // out dx, al
+        sector[i] = 0xEE;
+        i += 1;
+        // stosb
+        sector[i] = 0xAA;
+        i += 1;
+        // inc al
+        sector[i..i + 2].copy_from_slice(&[0xFE, 0xC0]);
+        i += 2;
+        // cmp di, 0x7000
+        sector[i..i + 4].copy_from_slice(&[0x81, 0xFF, 0x00, 0x70]);
+        i += 4;
+        // jne loop
+        let jne_ip = i + 2;
+        let rel = loop_off as i32 - jne_ip as i32;
+        sector[i..i + 2].copy_from_slice(&[0x75, rel as i8 as u8]);
+        i += 2;
+        // mov di, 0x0500
+        sector[i..i + 3].copy_from_slice(&[0xBF, 0x00, 0x05]);
+        i += 3;
+        // jmp loop
+        let jmp_ip = i + 2;
+        let rel = loop_off as i32 - jmp_ip as i32;
+        sector[i..i + 2].copy_from_slice(&[0xEB, rel as i8 as u8]);
+
+        sector[510] = 0x55;
+        sector[511] = 0xAA;
+        sector
+    }
+
     #[wasm_bindgen(constructor)]
     pub fn new(ram_size_bytes: u32) -> Self {
-        let inner = aero_vm::Vm::new(ram_size_bytes as usize);
+        // The BIOS expects to use the EBDA at 0x9F000, so enforce a minimum RAM size.
+        let ram_size_bytes = (ram_size_bytes as u64)
+            .max(2 * 1024 * 1024)
+            .min(64 * 1024 * 1024);
+
+        let mut inner = aero_machine::Machine::new(aero_machine::MachineConfig {
+            ram_size_bytes,
+            // Keep the demo VM minimal and deterministic: only serial is required.
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            ..Default::default()
+        })
+        .expect("DemoVm machine init should succeed");
+
+        inner
+            .set_disk_image(Self::demo_boot_sector().to_vec())
+            .expect("DemoVm boot sector is always valid");
+        inner.reset();
+
         Self { inner }
     }
 
     pub fn run_steps(&mut self, steps: u32) {
-        self.inner.run_steps(steps as u64);
+        let _ = self.inner.run_slice(steps as u64);
     }
 
-    pub fn serial_output(&self) -> Vec<u8> {
-        self.inner.serial_output().to_vec()
+    pub fn serial_output(&mut self) -> Vec<u8> {
+        self.inner.take_serial_output()
     }
 
     /// Return the current serial output length without copying the bytes into JS.
@@ -1228,9 +1301,8 @@ impl DemoVm {
     /// The demo VM accumulates serial output as it runs; callers that only need
     /// a byte count should prefer this over `serial_output()` to avoid large
     /// allocations in JS.
-    pub fn serial_output_len(&self) -> u32 {
-        let len = self.inner.serial_output().len();
-        len.min(u32::MAX as usize) as u32
+    pub fn serial_output_len(&mut self) -> u32 {
+        self.inner.serial_output_len().min(u64::from(u32::MAX)) as u32
     }
 
     pub fn snapshot_full(&mut self) -> Result<Vec<u8>, JsValue> {

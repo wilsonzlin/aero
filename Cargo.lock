@@ -567,14 +567,6 @@ name = "aero-virtio-protocol"
 version = "0.1.0"
 
 [[package]]
-name = "aero-vm"
-version = "0.1.0"
-dependencies = [
- "aero-snapshot",
- "blake3",
-]
-
-[[package]]
 name = "aero-wasm"
 version = "0.1.0"
 dependencies = [
@@ -586,7 +578,6 @@ dependencies = [
  "aero-platform",
  "aero-shared",
  "aero-usb",
- "aero-vm",
  "js-sys",
  "linked_list_allocator",
  "serde-wasm-bindgen",

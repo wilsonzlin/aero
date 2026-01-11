@@ -22,7 +22,7 @@ crates/aero-wasm      (wasm-bindgen JS API)
   │     ├── crates/firmware       (BIOS HLE + ACPI/SMBIOS helpers)
   │     │     └── crates/machine  (firmware-facing CPU/memory traits used by BIOS)
   │     └── crates/aero-snapshot  (snapshot file format + save/restore machinery)
-  └── crates/aero-vm       (deprecated demo VM used by snapshot panels)
+  └── (deprecated) `DemoVm` export is implemented as a thin wrapper around `aero-machine`
 ```
 
 ## Crate responsibilities (inventory)
@@ -100,8 +100,9 @@ These were valuable stepping stones, but they are **not** used by production wir
 - Prototype emulator implementation (VBE/VGA/AeroGPU experiments).
 - Superseded by the current `crates/emulator` device stack + the canonical `crates/aero-machine` wiring crate.
 
-### `crates/aero-vm` (`aero-vm`) — deprecated demo VM (in-workspace)
+### `crates/legacy/aero-vm` (`aero-vm`) — legacy demo VM (excluded from workspace)
 
 - A deterministic toy VM used by snapshot demo panels.
 - Marked `#[deprecated]` in favor of `aero_machine::Machine`.
-- Must not be used as production VM wiring.
+- Archived under `crates/legacy/` once `crates/aero-wasm::DemoVm` switched to wrapping the canonical
+  `aero-machine` implementation.

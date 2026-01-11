@@ -37,7 +37,6 @@ members = [
     "crates/aero-opfs",
     "crates/aero-storage-server",
     "crates/aero-virtio",
-    "crates/aero-vm",
     "crates/aero-webgpu",
     "crates/aero-cpu-core",
     "crates/aero-types",
@@ -85,6 +84,7 @@ exclude = [
     # block workspace-wide builds, but mark them as excluded so they can still be built
     # directly via `--manifest-path` without Cargo treating them as a missing workspace member.
     "crates/legacy/aero-emulator",
+    "crates/legacy/aero-vm",
     "crates/legacy/vm",
     # Standalone tools with their own lockfiles (build by `cd tools/<name> && cargo ...`).
     # Legacy/diagnostic gateway prototype (NOT the production gateway).

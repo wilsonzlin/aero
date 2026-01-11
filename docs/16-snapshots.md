@@ -8,7 +8,7 @@ Snapshots allow Aero to:
 - Suspend/resume a running VM across page reloads
 - Capture reproducible bug reports (attach a snapshot file + disk overlay references)
 
-This repo contains a reference implementation of a versioned, forward-compatible snapshot format in `crates/aero-snapshot/` plus a minimal `Vm` integration in `crates/aero-vm/` with deterministic round-trip tests.
+This repo contains a reference implementation of a versioned, forward-compatible snapshot format in `crates/aero-snapshot/` plus a minimal `Vm` integration in `crates/legacy/aero-vm/` with deterministic round-trip tests.
 
 ---
 
@@ -272,7 +272,7 @@ that exercise snapshot round-trips end-to-end:
 
 - `crates/aero-machine/tests/bios_post_checkpoint.rs`
 
-The legacy stub VM (`crates/aero-vm/`) also contains deterministic tests (kept for the web demo):
+The legacy stub VM (`crates/legacy/aero-vm/`) also contains deterministic tests (kept for historical reference):
 
 - Run a deterministic program, snapshot mid-execution, restore into a fresh VM, and verify identical output + memory.
 - Chain `full snapshot -> dirty diff snapshot` to validate incremental restore.

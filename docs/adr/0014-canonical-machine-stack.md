@@ -6,7 +6,7 @@ The repository historically accumulated multiple “VM” stacks:
 
 - `crates/emulator`: full-system-ish device models + chipset glue (bespoke buses).
 - `crates/legacy/vm` (formerly `crates/vm`) + `crates/machine`: a toy real-mode CPU/VM used for early firmware tests.
-- `crates/aero-vm`: a deterministic stub VM used by `crates/aero-wasm` as a demo export.
+- `crates/legacy/aero-vm` (formerly `crates/aero-vm`): a deterministic stub VM used during early snapshot demo bring-up.
 - `crates/aero-wasm`: exported the stub `DemoVm`, leaving it unclear which machine is the
   intended browser runtime.
 
@@ -54,7 +54,7 @@ Establish a single canonical full-system “machine integration layer” crate:
 - `crates/aero-wasm` must export the canonical machine (`aero_machine::Machine`) so it is explicit
   which VM runs in-browser.
 - The following crates are considered **deprecated** and should not be used for new work:
-  - `crates/aero-vm` (stub VM)
+  - `crates/legacy/aero-vm` (stub VM)
   - `crates/legacy/vm` (toy BIOS VM)
   - `crates/machine` (toy real-mode CPU/memory primitives)
   - Emulator-internal duplicate device models/buses (migration TBD)

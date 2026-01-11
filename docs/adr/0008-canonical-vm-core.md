@@ -11,7 +11,7 @@ The repository historically contained multiple partially-overlapping "VM" / "emu
 - `crates/emulator` — large device + I/O stack (PCI/VGA/VBE/USB/storage/net/etc).
 - `crates/legacy/aero-emulator` (formerly `crates/aero-emulator`) — prototype emulator implementation (VBE/VGA/AeroGPU experiments).
 - `crates/legacy/vm` (formerly `crates/vm`) — "Minimal VM wiring for the BIOS firmware tests" (machine + firmware + snapshot glue).
-- `crates/aero-vm` — toy snapshot VM used by `crates/aero-wasm` for demo panels.
+- `crates/legacy/aero-vm` (formerly `crates/aero-vm`) — toy snapshot VM used during early snapshot demo bring-up.
 - `crates/aero-machine` — full-system machine wiring (CPU + memory + port I/O + firmware) introduced to make the canonical VM core explicit.
 
 This fragmentation created architectural ambiguity:
@@ -51,8 +51,9 @@ The following crates are **not** canonical VM wiring. They are kept under `crate
 
 - `crates/legacy/vm` — superseded by `crates/aero-machine`
 - `crates/legacy/aero-emulator` — superseded by `crates/emulator` (device stack) + `crates/aero-machine` (wiring)
+- `crates/legacy/aero-vm` — superseded by `crates/aero-machine` (with `crates/aero-wasm::DemoVm` as a deprecated wrapper)
 
-`crates/aero-vm` remains in the workspace for now, but is explicitly a **deprecated demo VM** and must not be used as production wiring.
+`crates/aero-wasm` retains a deprecated `DemoVm` export for the snapshot demo UI, but it is a thin wrapper around the canonical `aero_machine::Machine` (not a separate VM core).
 
 `crates/emulator` remains in the workspace as the current device + I/O model crate. It is *not* the canonical "VM wiring" surface consumed by `aero-wasm`.
 
