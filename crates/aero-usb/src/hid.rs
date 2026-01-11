@@ -24,6 +24,7 @@ const DESC_REPORT: u8 = 0x22;
 
 const KEYBOARD_REPORT_DESCRIPTOR_LEN: u16 = 45;
 const MOUSE_REPORT_DESCRIPTOR_LEN: u16 = 50;
+const GAMEPAD_REPORT_DESCRIPTOR_LEN: u16 = 39;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Ep0Stage {
@@ -844,6 +845,868 @@ impl UsbDevice for UsbHidMouse {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+#[repr(C, packed)]
+pub struct GamepadReport {
+    pub buttons: u8,
+    pub x: i8,
+    pub y: i8,
+}
+
+impl GamepadReport {
+    pub fn empty() -> Self {
+        Self {
+            buttons: 0,
+            x: 0,
+            y: 0,
+        }
+    }
+
+    fn to_bytes(self) -> [u8; 3] {
+        [self.buttons, self.x as u8, self.y as u8]
+    }
+}
+
+pub struct UsbHidGamepad {
+    address: u8,
+    pending_address: Option<u8>,
+    configuration: u8,
+    pending_configuration: Option<u8>,
+    protocol: u8,
+    idle_rate: u8,
+    ep0: Ep0Control,
+
+    report: GamepadReport,
+    pending_reports: VecDeque<[u8; 3]>,
+}
+
+impl UsbHidGamepad {
+    pub fn new() -> Self {
+        Self {
+            address: 0,
+            pending_address: None,
+            configuration: 0,
+            pending_configuration: None,
+            protocol: 1,
+            idle_rate: 0,
+            ep0: Ep0Control::new(),
+            report: GamepadReport::empty(),
+            pending_reports: VecDeque::new(),
+        }
+    }
+
+    pub fn button_event(&mut self, button_mask: u8, pressed: bool) {
+        if pressed {
+            self.report.buttons |= button_mask;
+        } else {
+            self.report.buttons &= !button_mask;
+        }
+        self.enqueue_report();
+    }
+
+    pub fn set_axes(&mut self, x: i32, y: i32) {
+        self.report.x = x.clamp(-127, 127) as i8;
+        self.report.y = y.clamp(-127, 127) as i8;
+        self.enqueue_report();
+    }
+
+    fn enqueue_report(&mut self) {
+        self.pending_reports.push_back(self.report.to_bytes());
+    }
+
+    fn finalize_control(&mut self) {
+        if let Some(addr) = self.pending_address.take() {
+            self.address = addr;
+        }
+        if let Some(cfg) = self.pending_configuration.take() {
+            self.configuration = cfg;
+        }
+    }
+
+    fn device_descriptor() -> &'static [u8] {
+        static DESC: [u8; 18] = [
+            18,
+            DESC_DEVICE,
+            0x10,
+            0x01,
+            0x00,
+            0x00,
+            0x00,
+            8,
+            0x34,
+            0x12,
+            0x03,
+            0x00,
+            0x00,
+            0x01,
+            1,
+            4,
+            0,
+            1,
+        ];
+        &DESC
+    }
+
+    fn report_descriptor() -> &'static [u8] {
+        static DESC: &[u8] = &[
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x05, // Usage (Game Pad)
+            0xA1, 0x01, // Collection (Application)
+            0x05, 0x09, // Usage Page (Button)
+            0x19, 0x01, // Usage Minimum (Button 1)
+            0x29, 0x08, // Usage Maximum (Button 8)
+            0x15, 0x00, // Logical Minimum (0)
+            0x25, 0x01, // Logical Maximum (1)
+            0x75, 0x01, // Report Size (1)
+            0x95, 0x08, // Report Count (8)
+            0x81, 0x02, // Input (Data, Variable, Absolute)
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x30, // Usage (X)
+            0x09, 0x31, // Usage (Y)
+            0x15, 0x81, // Logical Minimum (-127)
+            0x25, 0x7F, // Logical Maximum (127)
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x02, // Report Count (2)
+            0x81, 0x02, // Input (Data, Variable, Absolute)
+            0xC0, // End Collection
+        ];
+        DESC
+    }
+
+    fn configuration_descriptor() -> &'static [u8] {
+        static DESC: [u8; 34] = {
+            let [rl0, rl1] = GAMEPAD_REPORT_DESCRIPTOR_LEN.to_le_bytes();
+            let [tl0, tl1] = (34u16).to_le_bytes();
+            [
+                9,
+                DESC_CONFIGURATION,
+                tl0,
+                tl1,
+                1,
+                1,
+                0,
+                0xA0,
+                50,
+                9,
+                0x04,
+                0,
+                0,
+                1,
+                0x03,
+                0x00,
+                0x00,
+                0,
+                9,
+                DESC_HID,
+                0x11,
+                0x01,
+                0,
+                1,
+                DESC_REPORT,
+                rl0,
+                rl1,
+                7,
+                0x05,
+                0x81,
+                0x03,
+                3,
+                0,
+                10,
+            ]
+        };
+        &DESC
+    }
+
+    fn hid_descriptor_from_config() -> &'static [u8] {
+        &Self::configuration_descriptor()[18..27]
+    }
+
+    fn get_descriptor(&self, desc_type: u8, index: u8) -> Option<Vec<u8>> {
+        match desc_type {
+            DESC_DEVICE => Some(Self::device_descriptor().to_vec()),
+            DESC_CONFIGURATION => Some(Self::configuration_descriptor().to_vec()),
+            DESC_STRING => match index {
+                0 => Some(string_descriptor_langid(0x0409).to_vec()),
+                1 => Some(string_descriptor_utf16le("Aero")),
+                4 => Some(string_descriptor_utf16le("Aero HID Gamepad")),
+                _ => Some(vec![0, DESC_STRING]),
+            },
+            DESC_HID => Some(Self::hid_descriptor_from_config().to_vec()),
+            DESC_REPORT => Some(Self::report_descriptor().to_vec()),
+            _ => None,
+        }
+    }
+
+    fn handle_setup_inner(&mut self, setup: SetupPacket) -> Option<Vec<u8>> {
+        match (setup.request_type, setup.request) {
+            (0x80, REQ_GET_DESCRIPTOR) | (0x81, REQ_GET_DESCRIPTOR) => {
+                let desc_type = (setup.value >> 8) as u8;
+                let index = (setup.value & 0xFF) as u8;
+                self.get_descriptor(desc_type, index)
+            }
+            (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
+            (0x80, REQ_GET_STATUS) | (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0xA1, REQ_HID_GET_PROTOCOL) => Some(vec![self.protocol]),
+            (0xA1, REQ_HID_GET_IDLE) => Some(vec![self.idle_rate]),
+            _ => None,
+        }
+    }
+
+    fn handle_no_data_request(&mut self, setup: SetupPacket) -> bool {
+        match (setup.request_type, setup.request) {
+            (0x00, REQ_SET_ADDRESS) => {
+                self.pending_address = Some((setup.value & 0x7F) as u8);
+                true
+            }
+            (0x00, REQ_SET_CONFIGURATION) => {
+                self.pending_configuration = Some((setup.value & 0xFF) as u8);
+                true
+            }
+            (0x21, REQ_HID_SET_IDLE) => {
+                self.idle_rate = (setup.value >> 8) as u8;
+                true
+            }
+            (0x21, REQ_HID_SET_PROTOCOL) => {
+                self.protocol = (setup.value & 0xFF) as u8;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Default for UsbHidGamepad {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl UsbDevice for UsbHidGamepad {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
+        self
+    }
+
+    fn speed(&self) -> UsbSpeed {
+        UsbSpeed::Full
+    }
+
+    fn reset(&mut self) {
+        self.address = 0;
+        self.pending_address = None;
+        self.configuration = 0;
+        self.pending_configuration = None;
+        self.protocol = 1;
+        self.idle_rate = 0;
+        self.ep0 = Ep0Control::new();
+        self.report = GamepadReport::empty();
+        self.pending_reports.clear();
+    }
+
+    fn address(&self) -> u8 {
+        self.address
+    }
+
+    fn handle_setup(&mut self, setup: SetupPacket) {
+        self.ep0.begin(setup);
+
+        let supported = if setup.length == 0 {
+            self.handle_no_data_request(setup)
+        } else if setup.request_type & 0x80 != 0 {
+            if let Some(mut data) = self.handle_setup_inner(setup) {
+                data.truncate(setup.length as usize);
+                self.ep0.in_data = data;
+                true
+            } else {
+                false
+            }
+        } else {
+            matches!(
+                (setup.request_type, setup.request),
+                (0x21, REQ_HID_SET_REPORT)
+            )
+        };
+
+        if !supported {
+            self.ep0.stalled = true;
+        }
+    }
+
+    fn handle_out(&mut self, ep: u8, data: &[u8]) -> UsbHandshake {
+        if ep != 0 {
+            return UsbHandshake::Stall;
+        }
+        if self.ep0.stalled {
+            return UsbHandshake::Stall;
+        }
+
+        match self.ep0.stage {
+            Ep0Stage::DataOut => {
+                self.ep0.out_data.extend_from_slice(data);
+                if self.ep0.out_data.len() >= self.ep0.out_expected {
+                    let setup = self.ep0.setup();
+                    if matches!((setup.request_type, setup.request), (0x21, REQ_HID_SET_REPORT)) {
+                        // Ignore output reports.
+                    } else {
+                        let _ = self.handle_no_data_request(setup);
+                    }
+                    self.ep0.stage = Ep0Stage::StatusIn;
+                }
+                UsbHandshake::Ack { bytes: data.len() }
+            }
+            Ep0Stage::StatusOut => {
+                self.ep0.stage = Ep0Stage::Idle;
+                self.ep0.setup = None;
+                self.finalize_control();
+                UsbHandshake::Ack { bytes: 0 }
+            }
+            _ => UsbHandshake::Nak,
+        }
+    }
+
+    fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake {
+        if ep == 1 {
+            let Some(report) = self.pending_reports.pop_front() else {
+                return UsbHandshake::Nak;
+            };
+            let len = buf.len().min(report.len());
+            buf[..len].copy_from_slice(&report[..len]);
+            return UsbHandshake::Ack { bytes: len };
+        }
+
+        if ep != 0 {
+            return UsbHandshake::Stall;
+        }
+        if self.ep0.stalled {
+            return UsbHandshake::Stall;
+        }
+
+        match self.ep0.stage {
+            Ep0Stage::DataIn => {
+                let remaining = self.ep0.in_data.len().saturating_sub(self.ep0.in_offset);
+                let len = buf.len().min(remaining);
+                buf[..len].copy_from_slice(
+                    &self.ep0.in_data[self.ep0.in_offset..self.ep0.in_offset + len],
+                );
+                self.ep0.in_offset += len;
+                if self.ep0.in_offset >= self.ep0.in_data.len() {
+                    self.ep0.stage = Ep0Stage::StatusOut;
+                }
+                UsbHandshake::Ack { bytes: len }
+            }
+            Ep0Stage::StatusIn => {
+                self.ep0.stage = Ep0Stage::Idle;
+                self.ep0.setup = None;
+                self.finalize_control();
+                UsbHandshake::Ack { bytes: 0 }
+            }
+            _ => UsbHandshake::Nak,
+        }
+    }
+}
+
+pub struct UsbHidCompositeInput {
+    address: u8,
+    pending_address: Option<u8>,
+    configuration: u8,
+    pending_configuration: Option<u8>,
+    protocols: [u8; 3],
+    idle_rates: [u8; 3],
+    ep0: Ep0Control,
+
+    keyboard_report: KeyboardReport,
+    pending_keyboard_reports: VecDeque<[u8; 8]>,
+
+    mouse_buttons: u8,
+    pending_mouse_reports: VecDeque<[u8; 3]>,
+
+    gamepad_report: GamepadReport,
+    pending_gamepad_reports: VecDeque<[u8; 3]>,
+}
+
+impl UsbHidCompositeInput {
+    pub fn new() -> Self {
+        Self {
+            address: 0,
+            pending_address: None,
+            configuration: 0,
+            pending_configuration: None,
+            protocols: [1; 3],
+            idle_rates: [0; 3],
+            ep0: Ep0Control::new(),
+            keyboard_report: KeyboardReport::empty(),
+            pending_keyboard_reports: VecDeque::new(),
+            mouse_buttons: 0,
+            pending_mouse_reports: VecDeque::new(),
+            gamepad_report: GamepadReport::empty(),
+            pending_gamepad_reports: VecDeque::new(),
+        }
+    }
+
+    pub fn key_event(&mut self, usage: u8, pressed: bool) {
+        if (0xE0..=0xE7).contains(&usage) {
+            let bit = 1u8 << (usage - 0xE0);
+            if pressed {
+                self.keyboard_report.modifiers |= bit;
+            } else {
+                self.keyboard_report.modifiers &= !bit;
+            }
+            self.enqueue_keyboard_report();
+            return;
+        }
+
+        if pressed {
+            if self.keyboard_report.keys.iter().any(|&k| k == usage) {
+                return;
+            }
+            if let Some(slot) = self.keyboard_report.keys.iter_mut().find(|k| **k == 0) {
+                *slot = usage;
+            }
+        } else {
+            for key in &mut self.keyboard_report.keys {
+                if *key == usage {
+                    *key = 0;
+                }
+            }
+            let mut compacted = [0u8; 6];
+            let mut idx = 0;
+            for &k in &self.keyboard_report.keys {
+                if k != 0 && idx < compacted.len() {
+                    compacted[idx] = k;
+                    idx += 1;
+                }
+            }
+            self.keyboard_report.keys = compacted;
+        }
+
+        self.enqueue_keyboard_report();
+    }
+
+    pub fn mouse_movement(&mut self, dx: i32, dy: i32) {
+        let dx = dx.clamp(-127, 127) as i8 as u8;
+        let dy = dy.clamp(-127, 127) as i8 as u8;
+        self.pending_mouse_reports
+            .push_back([self.mouse_buttons & 0x07, dx, dy]);
+    }
+
+    pub fn mouse_button_event(&mut self, button_mask: u8, pressed: bool) {
+        if pressed {
+            self.mouse_buttons |= button_mask;
+        } else {
+            self.mouse_buttons &= !button_mask;
+        }
+        self.pending_mouse_reports
+            .push_back([self.mouse_buttons & 0x07, 0, 0]);
+    }
+
+    pub fn gamepad_button_event(&mut self, button_mask: u8, pressed: bool) {
+        if pressed {
+            self.gamepad_report.buttons |= button_mask;
+        } else {
+            self.gamepad_report.buttons &= !button_mask;
+        }
+        self.pending_gamepad_reports
+            .push_back(self.gamepad_report.to_bytes());
+    }
+
+    pub fn gamepad_axes(&mut self, x: i32, y: i32) {
+        self.gamepad_report.x = x.clamp(-127, 127) as i8;
+        self.gamepad_report.y = y.clamp(-127, 127) as i8;
+        self.pending_gamepad_reports
+            .push_back(self.gamepad_report.to_bytes());
+    }
+
+    fn enqueue_keyboard_report(&mut self) {
+        let mut bytes = [0u8; 8];
+        bytes[0] = self.keyboard_report.modifiers;
+        bytes[1] = self.keyboard_report.reserved;
+        bytes[2..].copy_from_slice(&self.keyboard_report.keys);
+        self.pending_keyboard_reports.push_back(bytes);
+    }
+
+    fn finalize_control(&mut self) {
+        if let Some(addr) = self.pending_address.take() {
+            self.address = addr;
+        }
+        if let Some(cfg) = self.pending_configuration.take() {
+            self.configuration = cfg;
+        }
+    }
+
+    fn device_descriptor() -> &'static [u8] {
+        static DESC: [u8; 18] = [
+            18,
+            DESC_DEVICE,
+            0x10,
+            0x01,
+            0x00,
+            0x00,
+            0x00,
+            8,
+            0x34,
+            0x12,
+            0x04,
+            0x00,
+            0x00,
+            0x01,
+            1,
+            5,
+            0,
+            1,
+        ];
+        &DESC
+    }
+
+    fn configuration_descriptor() -> &'static [u8] {
+        static DESC: [u8; 84] = {
+            let [krl0, krl1] = KEYBOARD_REPORT_DESCRIPTOR_LEN.to_le_bytes();
+            let [mrl0, mrl1] = MOUSE_REPORT_DESCRIPTOR_LEN.to_le_bytes();
+            let [grl0, grl1] = GAMEPAD_REPORT_DESCRIPTOR_LEN.to_le_bytes();
+            let [tl0, tl1] = (84u16).to_le_bytes();
+            [
+                // Configuration descriptor.
+                9,
+                DESC_CONFIGURATION,
+                tl0,
+                tl1,
+                3,
+                1,
+                0,
+                0xA0,
+                50,
+                // Interface 0: Keyboard.
+                9,
+                0x04,
+                0,
+                0,
+                1,
+                0x03,
+                0x01,
+                0x01,
+                0,
+                9,
+                DESC_HID,
+                0x11,
+                0x01,
+                0,
+                1,
+                DESC_REPORT,
+                krl0,
+                krl1,
+                7,
+                0x05,
+                0x81,
+                0x03,
+                8,
+                0,
+                10,
+                // Interface 1: Mouse.
+                9,
+                0x04,
+                1,
+                0,
+                1,
+                0x03,
+                0x01,
+                0x02,
+                0,
+                9,
+                DESC_HID,
+                0x11,
+                0x01,
+                0,
+                1,
+                DESC_REPORT,
+                mrl0,
+                mrl1,
+                7,
+                0x05,
+                0x82,
+                0x03,
+                3,
+                0,
+                10,
+                // Interface 2: Gamepad.
+                9,
+                0x04,
+                2,
+                0,
+                1,
+                0x03,
+                0x00,
+                0x00,
+                0,
+                9,
+                DESC_HID,
+                0x11,
+                0x01,
+                0,
+                1,
+                DESC_REPORT,
+                grl0,
+                grl1,
+                7,
+                0x05,
+                0x83,
+                0x03,
+                3,
+                0,
+                10,
+            ]
+        };
+        &DESC
+    }
+
+    fn report_descriptor_keyboard() -> &'static [u8] {
+        UsbHidKeyboard::report_descriptor()
+    }
+
+    fn report_descriptor_mouse() -> &'static [u8] {
+        UsbHidMouse::report_descriptor()
+    }
+
+    fn report_descriptor_gamepad() -> &'static [u8] {
+        UsbHidGamepad::report_descriptor()
+    }
+
+    fn hid_descriptor_for_interface(interface: u8) -> Option<&'static [u8]> {
+        let offset = match interface {
+            0 => 18,
+            1 => 43,
+            2 => 68,
+            _ => return None,
+        };
+        Some(&Self::configuration_descriptor()[offset..offset + 9])
+    }
+
+    fn get_descriptor(&self, desc_type: u8, index: u8, interface: u8) -> Option<Vec<u8>> {
+        match desc_type {
+            DESC_DEVICE => Some(Self::device_descriptor().to_vec()),
+            DESC_CONFIGURATION => Some(Self::configuration_descriptor().to_vec()),
+            DESC_STRING => match index {
+                0 => Some(string_descriptor_langid(0x0409).to_vec()),
+                1 => Some(string_descriptor_utf16le("Aero")),
+                5 => Some(string_descriptor_utf16le("Aero HID Composite Input")),
+                _ => Some(vec![0, DESC_STRING]),
+            },
+            DESC_HID => Self::hid_descriptor_for_interface(interface).map(|v| v.to_vec()),
+            DESC_REPORT => match interface {
+                0 => Some(Self::report_descriptor_keyboard().to_vec()),
+                1 => Some(Self::report_descriptor_mouse().to_vec()),
+                2 => Some(Self::report_descriptor_gamepad().to_vec()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn handle_setup_inner(&mut self, setup: SetupPacket) -> Option<Vec<u8>> {
+        let interface = (setup.index & 0xFF) as u8;
+        match (setup.request_type, setup.request) {
+            (0x80, REQ_GET_DESCRIPTOR) | (0x81, REQ_GET_DESCRIPTOR) => {
+                let desc_type = (setup.value >> 8) as u8;
+                let index = (setup.value & 0xFF) as u8;
+                self.get_descriptor(desc_type, index, interface)
+            }
+            (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
+            (0x80, REQ_GET_STATUS) | (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0xA1, REQ_HID_GET_PROTOCOL) => self.protocols.get(interface as usize).copied().map(|v| vec![v]),
+            (0xA1, REQ_HID_GET_IDLE) => self.idle_rates.get(interface as usize).copied().map(|v| vec![v]),
+            _ => None,
+        }
+    }
+
+    fn handle_no_data_request(&mut self, setup: SetupPacket) -> bool {
+        let interface = (setup.index & 0xFF) as usize;
+        match (setup.request_type, setup.request) {
+            (0x00, REQ_SET_ADDRESS) => {
+                self.pending_address = Some((setup.value & 0x7F) as u8);
+                true
+            }
+            (0x00, REQ_SET_CONFIGURATION) => {
+                self.pending_configuration = Some((setup.value & 0xFF) as u8);
+                true
+            }
+            (0x21, REQ_HID_SET_IDLE) => {
+                if let Some(rate) = self.idle_rates.get_mut(interface) {
+                    *rate = (setup.value >> 8) as u8;
+                    true
+                } else {
+                    false
+                }
+            }
+            (0x21, REQ_HID_SET_PROTOCOL) => {
+                if let Some(proto) = self.protocols.get_mut(interface) {
+                    *proto = (setup.value & 0xFF) as u8;
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Default for UsbHidCompositeInput {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl UsbDevice for UsbHidCompositeInput {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
+        self
+    }
+
+    fn speed(&self) -> UsbSpeed {
+        UsbSpeed::Full
+    }
+
+    fn reset(&mut self) {
+        self.address = 0;
+        self.pending_address = None;
+        self.configuration = 0;
+        self.pending_configuration = None;
+        self.protocols = [1; 3];
+        self.idle_rates = [0; 3];
+        self.ep0 = Ep0Control::new();
+        self.keyboard_report = KeyboardReport::empty();
+        self.pending_keyboard_reports.clear();
+        self.mouse_buttons = 0;
+        self.pending_mouse_reports.clear();
+        self.gamepad_report = GamepadReport::empty();
+        self.pending_gamepad_reports.clear();
+    }
+
+    fn address(&self) -> u8 {
+        self.address
+    }
+
+    fn handle_setup(&mut self, setup: SetupPacket) {
+        self.ep0.begin(setup);
+
+        let supported = if setup.length == 0 {
+            self.handle_no_data_request(setup)
+        } else if setup.request_type & 0x80 != 0 {
+            if let Some(mut data) = self.handle_setup_inner(setup) {
+                data.truncate(setup.length as usize);
+                self.ep0.in_data = data;
+                true
+            } else {
+                false
+            }
+        } else {
+            matches!(
+                (setup.request_type, setup.request),
+                (0x21, REQ_HID_SET_REPORT)
+            )
+        };
+
+        if !supported {
+            self.ep0.stalled = true;
+        }
+    }
+
+    fn handle_out(&mut self, ep: u8, data: &[u8]) -> UsbHandshake {
+        if ep != 0 {
+            return UsbHandshake::Stall;
+        }
+        if self.ep0.stalled {
+            return UsbHandshake::Stall;
+        }
+
+        match self.ep0.stage {
+            Ep0Stage::DataOut => {
+                self.ep0.out_data.extend_from_slice(data);
+                if self.ep0.out_data.len() >= self.ep0.out_expected {
+                    let setup = self.ep0.setup();
+                    if matches!((setup.request_type, setup.request), (0x21, REQ_HID_SET_REPORT)) {
+                        // Ignore output reports.
+                    } else {
+                        let _ = self.handle_no_data_request(setup);
+                    }
+                    self.ep0.stage = Ep0Stage::StatusIn;
+                }
+                UsbHandshake::Ack { bytes: data.len() }
+            }
+            Ep0Stage::StatusOut => {
+                self.ep0.stage = Ep0Stage::Idle;
+                self.ep0.setup = None;
+                self.finalize_control();
+                UsbHandshake::Ack { bytes: 0 }
+            }
+            _ => UsbHandshake::Nak,
+        }
+    }
+
+    fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake {
+        match ep {
+            1 => {
+                let Some(report) = self.pending_keyboard_reports.pop_front() else {
+                    return UsbHandshake::Nak;
+                };
+                let len = buf.len().min(report.len());
+                buf[..len].copy_from_slice(&report[..len]);
+                return UsbHandshake::Ack { bytes: len };
+            }
+            2 => {
+                let Some(report) = self.pending_mouse_reports.pop_front() else {
+                    return UsbHandshake::Nak;
+                };
+                let len = buf.len().min(report.len());
+                buf[..len].copy_from_slice(&report[..len]);
+                return UsbHandshake::Ack { bytes: len };
+            }
+            3 => {
+                let Some(report) = self.pending_gamepad_reports.pop_front() else {
+                    return UsbHandshake::Nak;
+                };
+                let len = buf.len().min(report.len());
+                buf[..len].copy_from_slice(&report[..len]);
+                return UsbHandshake::Ack { bytes: len };
+            }
+            _ => {}
+        }
+
+        if ep != 0 {
+            return UsbHandshake::Stall;
+        }
+        if self.ep0.stalled {
+            return UsbHandshake::Stall;
+        }
+
+        match self.ep0.stage {
+            Ep0Stage::DataIn => {
+                let remaining = self.ep0.in_data.len().saturating_sub(self.ep0.in_offset);
+                let len = buf.len().min(remaining);
+                buf[..len].copy_from_slice(
+                    &self.ep0.in_data[self.ep0.in_offset..self.ep0.in_offset + len],
+                );
+                self.ep0.in_offset += len;
+                if self.ep0.in_offset >= self.ep0.in_data.len() {
+                    self.ep0.stage = Ep0Stage::StatusOut;
+                }
+                UsbHandshake::Ack { bytes: len }
+            }
+            Ep0Stage::StatusIn => {
+                self.ep0.stage = Ep0Stage::Idle;
+                self.ep0.setup = None;
+                self.finalize_control();
+                UsbHandshake::Ack { bytes: 0 }
+            }
+            _ => UsbHandshake::Nak,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -876,5 +1739,35 @@ mod tests {
 
         let mut buf = [0u8; 16];
         assert_eq!(mouse.handle_in(0, &mut buf), UsbHandshake::Stall);
+    }
+
+    #[test]
+    fn gamepad_stalls_unknown_descriptor_types() {
+        let mut gamepad = UsbHidGamepad::new();
+        gamepad.handle_setup(SetupPacket {
+            request_type: 0x80,
+            request: REQ_GET_DESCRIPTOR,
+            value: 0x0600,
+            index: 0,
+            length: 10,
+        });
+
+        let mut buf = [0u8; 16];
+        assert_eq!(gamepad.handle_in(0, &mut buf), UsbHandshake::Stall);
+    }
+
+    #[test]
+    fn composite_stalls_unknown_descriptor_types() {
+        let mut dev = UsbHidCompositeInput::new();
+        dev.handle_setup(SetupPacket {
+            request_type: 0x80,
+            request: REQ_GET_DESCRIPTOR,
+            value: 0x0600,
+            index: 0,
+            length: 10,
+        });
+
+        let mut buf = [0u8; 16];
+        assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Stall);
     }
 }
