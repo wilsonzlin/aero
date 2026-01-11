@@ -65,7 +65,7 @@ VirtIoSndStartDevice(
         static const USHORT allowedIds[] = {0x1059};
         NTSTATUS status = AeroVirtioPciValidateContractV1Pdo(Dx->LowerDeviceObject, allowedIds, RTL_NUMBER_OF(allowedIds));
         if (!NT_SUCCESS(status)) {
-            VIRTIOSND_TRACE_ERROR("AERO-W7-VIRTIO identity check failed: 0x%08X\n", status);
+            VIRTIOSND_TRACE_ERROR("AERO-W7-VIRTIO identity check failed: 0x%08X\n", (UINT)status);
             return status;
         }
     }
@@ -107,7 +107,7 @@ VirtIoSndStartDevice(
                     VIRTIOSND_TRACE(
                         "StartDevice: MMIO[%lu] PA=%I64x len=%lu VA=%p\n",
                         Dx->MmioRangeCount,
-                        range->PhysicalAddress.QuadPart,
+                        (ULONGLONG)range->PhysicalAddress.QuadPart,
                         range->Length,
                         range->BaseAddress);
 
@@ -120,13 +120,13 @@ VirtIoSndStartDevice(
             case CmResourceTypePort:
                 if (!Dx->HasIoPort) {
                     Dx->HasIoPort = TRUE;
-                    Dx->IoPortBase = (ULONG_PTR)desc[i].u.Port.Start.QuadPart;
+                    Dx->IoPortBase = (ULONG_PTR)desc[i].u.Port.Start.LowPart;
                     Dx->IoPortLength = desc[i].u.Port.Length;
                 }
 
                 VIRTIOSND_TRACE(
                     "StartDevice: IO port start=%I64x len=%lu\n",
-                    desc[i].u.Port.Start.QuadPart,
+                    (ULONGLONG)desc[i].u.Port.Start.QuadPart,
                     desc[i].u.Port.Length);
                 break;
 
