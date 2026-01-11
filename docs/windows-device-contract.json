@@ -71,8 +71,7 @@
       "pci_device_id": "0x0001",
       "hardware_id_patterns": [
         "PCI\\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0",
-        "PCI\\VEN_A3A0&DEV_0001",
-        "PCI\\VEN_1AED&DEV_0001"
+        "PCI\\VEN_A3A0&DEV_0001"
       ],
       "driver_service_name": "aerogpu",
       "inf_name": "aerogpu.inf"
