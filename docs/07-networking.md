@@ -174,8 +174,9 @@ talks to a single HTTPS origin:
 - `/webrtc/*`, `/offer`, `/udp` → **webrtc-udp-relay**
 - `/l2` → **aero-l2-proxy** (Option C; `aero-l2-tunnel-v1`)
 
-Auth note (Option C): `/l2` should be treated like `/tcp` — **Origin allowlist + authentication**
-are required. The Rust L2 proxy (`crates/aero-l2-proxy`) enforces an Origin allowlist by default and
+Auth note (Option C): `/l2` should be treated like `/tcp` — for any internet-exposed deployment you
+should enable **Origin allowlisting + authentication**. The Rust L2 proxy (`crates/aero-l2-proxy`)
+enforces an Origin allowlist by default and
 supports multiple auth modes via `AERO_L2_AUTH_MODE`:
 
 - `cookie` (recommended for same-origin browser clients): requires the `aero_session` cookie issued
