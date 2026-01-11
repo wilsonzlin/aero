@@ -2,9 +2,6 @@
 
 #define AEROVNET_TAG 'tNvA'
 
-// Optional transport validation against the contract v1 virtio-pci capability layout.
-#include "virtio_pci_cap_parser.h"
-
 static NDIS_HANDLE g_NdisDriverHandle = NULL;
 
 static const NDIS_OID g_SupportedOids[] = {
@@ -57,127 +54,124 @@ static __forceinline ULONG AerovNetReceiveIndicationFlagsForCurrentIrql(VOID) {
   return (KeGetCurrentIrql() == DISPATCH_LEVEL) ? NDIS_RECEIVE_FLAGS_DISPATCH_LEVEL : 0;
 }
 
-static USHORT AerovNetReadLe16FromPciCfg(_In_reads_bytes_(256) const UCHAR* Cfg, _In_ ULONG Offset) {
-  USHORT V;
-
-  V = 0;
-  if (Offset + sizeof(V) > 256u) {
-    return 0;
-  }
-
-  RtlCopyMemory(&V, Cfg + Offset, sizeof(V));
-  return V;
-}
-
-static ULONG AerovNetReadLe32FromPciCfg(_In_reads_bytes_(256) const UCHAR* Cfg, _In_ ULONG Offset) {
-  ULONG V;
-
-  V = 0;
-  if (Offset + sizeof(V) > 256u) {
-    return 0;
-  }
-
-  RtlCopyMemory(&V, Cfg + Offset, sizeof(V));
-  return V;
-}
-
-static NDIS_STATUS AerovNetValidateVirtioPciCaps(_Inout_ AEROVNET_ADAPTER* Adapter) {
-  UCHAR Cfg[256];
-  uint64_t BarAddrs[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
-  virtio_pci_parsed_caps_t Caps;
-  virtio_pci_cap_parse_result_t Res;
-  ULONG BytesRead;
-  ULONG I;
+static UINT8 AerovNetOsPciRead8(void* Context, UINT16 Offset) {
+  AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)Context;
+  UINT8 v = 0;
+  ULONG read;
 
   if (!Adapter) {
-    return NDIS_STATUS_FAILURE;
+    return 0;
   }
 
-  RtlZeroMemory(Cfg, sizeof(Cfg));
-  for (I = 0; I < VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT; I++) {
-    BarAddrs[I] = 0;
+  read = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, (ULONG)Offset, &v, sizeof(v));
+  return (read == sizeof(v)) ? v : 0;
+}
+
+static UINT16 AerovNetOsPciRead16(void* Context, UINT16 Offset) {
+  AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)Context;
+  UINT16 v = 0;
+  ULONG read;
+
+  if (!Adapter) {
+    return 0;
   }
 
-  // Read full PCI config space.
-  BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, 0, Cfg, sizeof(Cfg));
-  if (BytesRead != sizeof(Cfg)) {
-    return NDIS_STATUS_FAILURE;
+  read = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, (ULONG)Offset, &v, sizeof(v));
+  return (read == sizeof(v)) ? v : 0;
+}
+
+static UINT32 AerovNetOsPciRead32(void* Context, UINT16 Offset) {
+  AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)Context;
+  UINT32 v = 0;
+  ULONG read;
+
+  if (!Adapter) {
+    return 0;
   }
 
-  if (AerovNetReadLe16FromPciCfg(Cfg, 0x00) != AEROVNET_VENDOR_ID || AerovNetReadLe16FromPciCfg(Cfg, 0x02) != 0x1041 ||
-      Cfg[0x08] != AEROVNET_PCI_REVISION_ID) {
-    return NDIS_STATUS_NOT_SUPPORTED;
+  read = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, (ULONG)Offset, &v, sizeof(v));
+  return (read == sizeof(v)) ? v : 0;
+}
+
+static NTSTATUS AerovNetOsMapMmio(void* Context, UINT64 PhysicalAddress, UINT32 Length, volatile void** MappedVaOut) {
+  AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)Context;
+  NDIS_PHYSICAL_ADDRESS Pa;
+  NDIS_STATUS Status;
+
+  if (!Adapter || !MappedVaOut || Length == 0) {
+    return STATUS_INVALID_PARAMETER;
   }
 
-  // Parse BARs (type 0 header).
-  for (I = 0; I < VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT; I++) {
-    ULONG Val;
+  *MappedVaOut = NULL;
+  Pa.QuadPart = PhysicalAddress;
+  Status = NdisMMapIoSpace((PVOID*)MappedVaOut, Adapter->MiniportAdapterHandle, Pa, Length);
+  return (Status == NDIS_STATUS_SUCCESS) ? STATUS_SUCCESS : STATUS_INSUFFICIENT_RESOURCES;
+}
 
-    Val = AerovNetReadLe32FromPciCfg(Cfg, 0x10u + (I * 4u));
-    if (Val == 0) {
-      continue;
-    }
+static void AerovNetOsUnmapMmio(void* Context, volatile void* MappedVa, UINT32 Length) {
+  AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)Context;
 
-    if ((Val & 0x1u) != 0) {
-      // I/O BAR (not supported for Aero virtio-pci modern contract v1).
-      return NDIS_STATUS_NOT_SUPPORTED;
-    }
-
-    // Memory BAR.
-    {
-      ULONG MemType;
-      uint64_t Base;
-
-      MemType = (Val >> 1) & 0x3u;
-      Base = (uint64_t)(Val & ~0xFu);
-
-      if (MemType == 0x2u) {
-        ULONG High;
-
-        if (I == (VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT - 1u)) {
-          return NDIS_STATUS_NOT_SUPPORTED;
-        }
-
-        High = AerovNetReadLe32FromPciCfg(Cfg, 0x10u + ((I + 1u) * 4u));
-        Base = ((uint64_t)High << 32) | Base;
-
-        BarAddrs[I] = Base;
-        BarAddrs[I + 1u] = 0;
-
-        I++; // Skip upper-half slot.
-      } else {
-        BarAddrs[I] = Base;
-      }
-    }
+  if (!Adapter || !MappedVa || Length == 0) {
+    return;
   }
 
-  Res = virtio_pci_cap_parse(Cfg, sizeof(Cfg), BarAddrs, &Caps);
-  if (Res != VIRTIO_PCI_CAP_PARSE_OK) {
-    return NDIS_STATUS_NOT_SUPPORTED;
+  NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, (PVOID)MappedVa, Length);
+}
+
+static void AerovNetOsStallUs(void* Context, UINT32 Microseconds) {
+  UNREFERENCED_PARAMETER(Context);
+  KeStallExecutionProcessor(Microseconds);
+}
+
+static void AerovNetOsMemoryBarrier(void* Context) {
+  UNREFERENCED_PARAMETER(Context);
+  KeMemoryBarrier();
+}
+
+static void* AerovNetOsSpinlockCreate(void* Context) {
+  KSPIN_LOCK* Lock;
+
+  UNREFERENCED_PARAMETER(Context);
+
+  Lock = (KSPIN_LOCK*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*Lock), AEROVNET_TAG);
+  if (!Lock) {
+    return NULL;
   }
 
-  if (Caps.common_cfg.bar != 0 || Caps.notify_cfg.bar != 0 || Caps.isr_cfg.bar != 0 || Caps.device_cfg.bar != 0) {
-    return NDIS_STATUS_NOT_SUPPORTED;
+  KeInitializeSpinLock(Lock);
+  return Lock;
+}
+
+static void AerovNetOsSpinlockDestroy(void* Context, void* Lock) {
+  UNREFERENCED_PARAMETER(Context);
+  if (!Lock) {
+    return;
+  }
+  ExFreePoolWithTag(Lock, AEROVNET_TAG);
+}
+
+static void AerovNetOsSpinlockAcquire(void* Context, void* Lock, VIRTIO_PCI_MODERN_SPINLOCK_STATE* StateOut) {
+  KIRQL OldIrql;
+
+  UNREFERENCED_PARAMETER(Context);
+
+  if (StateOut) {
+    *StateOut = 0;
+  }
+  if (!Lock || !StateOut) {
+    return;
   }
 
-  if (Caps.notify_off_multiplier != AERO_VIRTIO_PCI_MODERN_NOTIFY_OFF_MULTIPLIER) {
-    return NDIS_STATUS_NOT_SUPPORTED;
-  }
+  OldIrql = KeAcquireSpinLockRaiseToDpc((KSPIN_LOCK*)Lock);
+  *StateOut = (VIRTIO_PCI_MODERN_SPINLOCK_STATE)OldIrql;
+}
 
-  if (Caps.common_cfg.offset != AERO_VIRTIO_PCI_MODERN_COMMON_CFG_OFFSET || Caps.common_cfg.length < AERO_VIRTIO_PCI_MODERN_COMMON_CFG_SIZE) {
-    return NDIS_STATUS_NOT_SUPPORTED;
+static void AerovNetOsSpinlockRelease(void* Context, void* Lock, VIRTIO_PCI_MODERN_SPINLOCK_STATE State) {
+  UNREFERENCED_PARAMETER(Context);
+  if (!Lock) {
+    return;
   }
-  if (Caps.notify_cfg.offset != AERO_VIRTIO_PCI_MODERN_NOTIFY_OFFSET || Caps.notify_cfg.length < AERO_VIRTIO_PCI_MODERN_NOTIFY_SIZE) {
-    return NDIS_STATUS_NOT_SUPPORTED;
-  }
-  if (Caps.isr_cfg.offset != AERO_VIRTIO_PCI_MODERN_ISR_OFFSET || Caps.isr_cfg.length < AERO_VIRTIO_PCI_MODERN_ISR_SIZE) {
-    return NDIS_STATUS_NOT_SUPPORTED;
-  }
-  if (Caps.device_cfg.offset != AERO_VIRTIO_PCI_MODERN_DEVICE_CFG_OFFSET || Caps.device_cfg.length < AERO_VIRTIO_PCI_MODERN_DEVICE_CFG_SIZE) {
-    return NDIS_STATUS_NOT_SUPPORTED;
-  }
-
-  return NDIS_STATUS_SUCCESS;
+  KeReleaseSpinLock((KSPIN_LOCK*)Lock, (KIRQL)State);
 }
 
 static VOID AerovNetFreeTxRequestNoLock(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_TX_REQUEST* TxReq) {
@@ -306,21 +300,45 @@ static BOOLEAN AerovNetAcceptFrame(_In_ const AEROVNET_ADAPTER* Adapter, _In_rea
 
 static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ PNDIS_RESOURCE_LIST Resources) {
   ULONG I;
-  NDIS_STATUS Status;
   NTSTATUS NtStatus;
+  UINT32 Bar0Low;
+  UINT32 Bar0High;
+  UINT64 Bar0Base;
+  ULONG BytesRead;
 
-  Adapter->Bar0Va = NULL;
   Adapter->Bar0Length = 0;
   Adapter->Bar0Pa.QuadPart = 0;
-  RtlZeroMemory(&Adapter->Vdev, sizeof(Adapter->Vdev));
+  RtlZeroMemory(&Adapter->VirtioOs, sizeof(Adapter->VirtioOs));
+  RtlZeroMemory(&Adapter->Transport, sizeof(Adapter->Transport));
 
   if (!Resources) {
     return NDIS_STATUS_RESOURCES;
   }
 
+  // Prefer matching the assigned CmResourceTypeMemory range against BAR0 from
+  // PCI config space (BAR0 is required by the AERO-W7-VIRTIO contract).
+  Bar0Low = 0;
+  Bar0High = 0;
+  Bar0Base = 0;
+  BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, 0x10, &Bar0Low, sizeof(Bar0Low));
+  if (BytesRead == sizeof(Bar0Low) && (Bar0Low & 0x1u) == 0) {
+    Bar0Base = (UINT64)(Bar0Low & ~0xFu);
+
+    // 64-bit memory BAR uses BAR0/BAR1.
+    if (((Bar0Low >> 1) & 0x3u) == 0x2u) {
+      BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, 0x14, &Bar0High, sizeof(Bar0High));
+      if (BytesRead == sizeof(Bar0High)) {
+        Bar0Base |= ((UINT64)Bar0High << 32);
+      }
+    }
+  }
+
   for (I = 0; I < Resources->Count; I++) {
     PCM_PARTIAL_RESOURCE_DESCRIPTOR Desc = &Resources->PartialDescriptors[I];
     if (Desc->Type == CmResourceTypeMemory && Desc->u.Memory.Length >= AEROVNET_BAR0_MIN_LEN) {
+      if (Bar0Base != 0 && Desc->u.Memory.Start.QuadPart != Bar0Base) {
+        continue;
+      }
       Adapter->Bar0Pa = Desc->u.Memory.Start;
       Adapter->Bar0Length = Desc->u.Memory.Length;
       break;
@@ -331,29 +349,33 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
     return NDIS_STATUS_RESOURCES;
   }
 
-  {
-    NDIS_PHYSICAL_ADDRESS Pa;
-    Pa.QuadPart = Adapter->Bar0Pa.QuadPart;
+  Adapter->VirtioOs.Context = Adapter;
+  Adapter->VirtioOs.PciRead8 = AerovNetOsPciRead8;
+  Adapter->VirtioOs.PciRead16 = AerovNetOsPciRead16;
+  Adapter->VirtioOs.PciRead32 = AerovNetOsPciRead32;
+  Adapter->VirtioOs.MapMmio = AerovNetOsMapMmio;
+  Adapter->VirtioOs.UnmapMmio = AerovNetOsUnmapMmio;
+  Adapter->VirtioOs.StallUs = AerovNetOsStallUs;
+  Adapter->VirtioOs.MemoryBarrier = AerovNetOsMemoryBarrier;
+  Adapter->VirtioOs.SpinlockCreate = AerovNetOsSpinlockCreate;
+  Adapter->VirtioOs.SpinlockDestroy = AerovNetOsSpinlockDestroy;
+  Adapter->VirtioOs.SpinlockAcquire = AerovNetOsSpinlockAcquire;
+  Adapter->VirtioOs.SpinlockRelease = AerovNetOsSpinlockRelease;
+  Adapter->VirtioOs.Log = NULL;
 
-    Status = NdisMMapIoSpace((PVOID*)&Adapter->Bar0Va, Adapter->MiniportAdapterHandle, Pa, Adapter->Bar0Length);
-  }
-  if (Status != NDIS_STATUS_SUCCESS) {
-    Adapter->Bar0Va = NULL;
-    Adapter->Bar0Length = 0;
-    Adapter->Bar0Pa.QuadPart = 0;
-    return Status;
-  }
-
-  NtStatus = AeroVirtioPciModernInitFromBar0(&Adapter->Vdev, (volatile void*)Adapter->Bar0Va, Adapter->Bar0Length);
-  if (!NT_SUCCESS(NtStatus)) {
-    NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
-    Adapter->Bar0Va = NULL;
+  NtStatus = VirtioPciModernTransportInit(&Adapter->Transport,
+                                         &Adapter->VirtioOs,
+                                         VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT,
+                                         (UINT64)Adapter->Bar0Pa.QuadPart,
+                                         Adapter->Bar0Length);
+  if (!NT_SUCCESS(NtStatus) || Adapter->Transport.PciDeviceId != AEROVNET_PCI_DEVICE_ID) {
+    VirtioPciModernTransportUninit(&Adapter->Transport);
     Adapter->Bar0Length = 0;
     Adapter->Bar0Pa.QuadPart = 0;
     return NDIS_STATUS_NOT_SUPPORTED;
   }
 
-  return Status;
+  return NDIS_STATUS_SUCCESS;
 }
 
 static VOID AerovNetFreeRxBuffer(_Inout_ AEROVNET_RX_BUFFER* Rx) {
@@ -444,7 +466,6 @@ static VOID AerovNetFreeVq(_Inout_ AEROVNET_VQ* Vq) {
 
   Vq->QueueIndex = 0;
   Vq->QueueSize = 0;
-  Vq->QueueNotifyOff = 0;
 }
 
 static VOID AerovNetCleanupAdapter(_Inout_ AEROVNET_ADAPTER* Adapter) {
@@ -474,13 +495,9 @@ static VOID AerovNetCleanupAdapter(_Inout_ AEROVNET_ADAPTER* Adapter) {
   AerovNetFreeVq(&Adapter->RxVq);
   AerovNetFreeVq(&Adapter->TxVq);
 
-  if (Adapter->Bar0Va) {
-    NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
-    Adapter->Bar0Va = NULL;
-    Adapter->Bar0Length = 0;
-    Adapter->Bar0Pa.QuadPart = 0;
-  }
-  RtlZeroMemory(&Adapter->Vdev, sizeof(Adapter->Vdev));
+  VirtioPciModernTransportUninit(&Adapter->Transport);
+  Adapter->Bar0Length = 0;
+  Adapter->Bar0Pa.QuadPart = 0;
 
   NdisFreeSpinLock(&Adapter->Lock);
 
@@ -539,7 +556,7 @@ static VOID AerovNetFillRxQueueLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
     ShouldKick = VirtqSplitKickPrepare(Adapter->RxVq.Vq);
     if (ShouldKick) {
       KeMemoryBarrier();
-      AeroVirtioNotifyQueue(&Adapter->Vdev, Adapter->RxVq.QueueIndex, Adapter->RxVq.QueueNotifyOff);
+      (VOID)VirtioPciModernTransportNotifyQueue(&Adapter->Transport, Adapter->RxVq.QueueIndex);
     }
 
     // Reset batching bookkeeping even if notification is suppressed.
@@ -606,7 +623,7 @@ static VOID AerovNetFlushTxPendingLocked(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
     ShouldKick = VirtqSplitKickPrepare(Adapter->TxVq.Vq);
     if (ShouldKick) {
       KeMemoryBarrier();
-      AeroVirtioNotifyQueue(&Adapter->Vdev, Adapter->TxVq.QueueIndex, Adapter->TxVq.QueueNotifyOff);
+      (VOID)VirtioPciModernTransportNotifyQueue(&Adapter->Transport, Adapter->TxVq.QueueIndex);
     }
 
     // Reset batching bookkeeping even if notification is suppressed.
@@ -710,27 +727,9 @@ static NDIS_STATUS AerovNetAllocateTxResources(_Inout_ AEROVNET_ADAPTER* Adapter
   return NDIS_STATUS_SUCCESS;
 }
 
-static VOID AerovNetDisableQueueMsixVector(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ USHORT QueueIndex) {
-  KIRQL OldIrql;
-
-  if (!Adapter || !Adapter->Vdev.CommonCfg) {
-    return;
-  }
-
-  OldIrql = AeroVirtioCommonCfgLock(&Adapter->Vdev);
-
-  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_select, QueueIndex);
-  KeMemoryBarrier();
-  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_msix_vector, 0xFFFFu);
-  KeMemoryBarrier();
-
-  AeroVirtioCommonCfgUnlock(&Adapter->Vdev, OldIrql);
-}
-
 static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_VQ* Vq, _In_ USHORT QueueIndex,
                                   _In_ USHORT ExpectedQueueSize, _In_ USHORT IndirectMaxDesc) {
   USHORT QueueSize;
-  USHORT NotifyOff;
   size_t VqBytes;
   size_t RingBytes;
   PHYSICAL_ADDRESS Low = {0};
@@ -748,7 +747,7 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
   RtlZeroMemory(Vq, sizeof(*Vq));
   Vq->QueueIndex = QueueIndex;
 
-  NtStatus = AeroVirtioQueryQueue(&Adapter->Vdev, QueueIndex, &QueueSize, &NotifyOff);
+  NtStatus = VirtioPciModernTransportGetQueueSize(&Adapter->Transport, QueueIndex, &QueueSize);
   if (!NT_SUCCESS(NtStatus)) {
     return NDIS_STATUS_NOT_SUPPORTED;
   }
@@ -757,13 +756,7 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
     return NDIS_STATUS_NOT_SUPPORTED;
   }
 
-  // Contract v1: notify_off_multiplier=4 and queue_notify_off(q)=q.
-  if (NotifyOff != QueueIndex) {
-    return NDIS_STATUS_NOT_SUPPORTED;
-  }
-
   Vq->QueueSize = QueueSize;
-  Vq->QueueNotifyOff = NotifyOff;
 
   VqBytes = VirtqSplitStateSize(QueueSize);
   Vq->Vq = (VIRTQ_SPLIT*)ExAllocatePoolWithTag(NonPagedPool, VqBytes, AEROVNET_TAG);
@@ -830,10 +823,7 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
     Vq->Vq->indirect_threshold = 1;
   }
 
-  // Disable MSI-X for this queue; INTx/ISR is required by contract v1.
-  AerovNetDisableQueueMsixVector(Adapter, QueueIndex);
-
-  NtStatus = AeroVirtioSetupQueue(&Adapter->Vdev, QueueIndex, Vq->Vq->desc_pa, Vq->Vq->avail_pa, Vq->Vq->used_pa);
+  NtStatus = VirtioPciModernTransportSetupQueue(&Adapter->Transport, QueueIndex, Vq->Vq->desc_pa, Vq->Vq->avail_pa, Vq->Vq->used_pa);
   if (!NT_SUCCESS(NtStatus)) {
     return NDIS_STATUS_FAILURE;
   }
@@ -841,98 +831,92 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
   return NDIS_STATUS_SUCCESS;
 }
 
+static VOID AerovNetFailDevice(_Inout_ AEROVNET_ADAPTER* Adapter) {
+  if (!Adapter) {
+    return;
+  }
+
+  VirtioPciModernTransportAddStatus(&Adapter->Transport, VIRTIO_STATUS_FAILED);
+  VirtioPciModernTransportResetDevice(&Adapter->Transport);
+}
+
 static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   NDIS_STATUS Status;
   UCHAR Mac[ETH_LENGTH_OF_ADDRESS];
   USHORT LinkStatus;
-  USHORT MaxPairs;
-  ULONGLONG RequiredFeatures;
-  ULONGLONG WantedFeatures;
-  ULONGLONG NegotiatedFeatures;
-  UCHAR RevisionId;
-  ULONG BytesRead;
+  UINT64 RequiredFeatures;
+  UINT64 WantedFeatures;
+  UINT64 NegotiatedFeatures;
   NTSTATUS NtStatus;
   USHORT RxIndirectMaxDesc;
   USHORT TxIndirectMaxDesc;
 
-  if (!Adapter || !Adapter->Vdev.CommonCfg || !Adapter->Vdev.DeviceCfg || !Adapter->Vdev.IsrStatus || !Adapter->Vdev.NotifyBase) {
+  if (!Adapter || !Adapter->Transport.CommonCfg || !Adapter->Transport.DeviceCfg || !Adapter->Transport.IsrStatus || !Adapter->Transport.NotifyBase) {
     return NDIS_STATUS_FAILURE;
   }
 
-  // Contract major version is encoded in PCI Revision ID.
-  RevisionId = 0;
-  BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, 0x08, &RevisionId, sizeof(RevisionId));
-  if (BytesRead != sizeof(RevisionId) || RevisionId != AEROVNET_PCI_REVISION_ID) {
-    return NDIS_STATUS_NOT_SUPPORTED;
-  }
-
-  Status = AerovNetValidateVirtioPciCaps(Adapter);
-  if (Status != NDIS_STATUS_SUCCESS) {
-    return Status;
-  }
-
-  RequiredFeatures = (ULONGLONG)VIRTIO_NET_F_MAC | (ULONGLONG)VIRTIO_NET_F_STATUS;
-  WantedFeatures = (ULONGLONG)VIRTIO_F_RING_INDIRECT_DESC;
+  // Contract v1 features:
+  // - required: MAC + STATUS
+  // - accepted: INDIRECT_DESC (transport strict-mode also requires the device to offer it)
+  RequiredFeatures = VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS;
+  WantedFeatures = RequiredFeatures | VIRTIO_F_RING_INDIRECT_DESC;
   NegotiatedFeatures = 0;
 
-  NtStatus = AeroVirtioNegotiateFeatures(&Adapter->Vdev, RequiredFeatures, WantedFeatures, &NegotiatedFeatures);
+  NtStatus = VirtioPciModernTransportNegotiateFeatures(&Adapter->Transport, RequiredFeatures, WantedFeatures, &NegotiatedFeatures);
   if (!NT_SUCCESS(NtStatus)) {
+    AerovNetFailDevice(Adapter);
     return NDIS_STATUS_NOT_SUPPORTED;
   }
 
-  Adapter->HostFeatures = AeroVirtioReadDeviceFeatures(&Adapter->Vdev);
   Adapter->GuestFeatures = (UINT64)NegotiatedFeatures;
-
-  // Disable MSI-X config interrupt vector; INTx/ISR is required by contract v1.
-  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->msix_config, 0xFFFFu);
-  KeMemoryBarrier();
 
   // Read virtio-net device config (MAC + link status).
   RtlZeroMemory(Mac, sizeof(Mac));
-  NtStatus = AeroVirtioReadDeviceConfig(&Adapter->Vdev, 0, Mac, sizeof(Mac));
+  NtStatus = VirtioPciModernTransportReadDeviceConfig(&Adapter->Transport, 0, Mac, sizeof(Mac));
   if (!NT_SUCCESS(NtStatus)) {
-    AeroVirtioFailDevice(&Adapter->Vdev);
-    AeroVirtioResetDevice(&Adapter->Vdev);
+    AerovNetFailDevice(Adapter);
     return NDIS_STATUS_FAILURE;
   }
   RtlCopyMemory(Adapter->PermanentMac, Mac, ETH_LENGTH_OF_ADDRESS);
   RtlCopyMemory(Adapter->CurrentMac, Mac, ETH_LENGTH_OF_ADDRESS);
 
   LinkStatus = 0;
-  NtStatus = AeroVirtioReadDeviceConfig(&Adapter->Vdev, ETH_LENGTH_OF_ADDRESS, &LinkStatus, sizeof(LinkStatus));
+  NtStatus = VirtioPciModernTransportReadDeviceConfig(&Adapter->Transport, ETH_LENGTH_OF_ADDRESS, &LinkStatus, sizeof(LinkStatus));
   if (NT_SUCCESS(NtStatus)) {
     Adapter->LinkUp = (LinkStatus & VIRTIO_NET_S_LINK_UP) ? TRUE : FALSE;
   } else {
     Adapter->LinkUp = TRUE;
   }
 
-  MaxPairs = 0;
-  NtStatus = AeroVirtioReadDeviceConfig(&Adapter->Vdev, 0x08, &MaxPairs, sizeof(MaxPairs));
-  if (NT_SUCCESS(NtStatus) && MaxPairs != 1) {
-    DbgPrint("aerovnet: max_virtqueue_pairs=%hu (expected 1)\n", MaxPairs);
-  }
+  // Contract v1: max_virtqueue_pairs MUST be 1.
+  {
+    USHORT MaxPairs;
 
+    MaxPairs = 0;
+    NtStatus = VirtioPciModernTransportReadDeviceConfig(&Adapter->Transport, 0x08, &MaxPairs, sizeof(MaxPairs));
+    if (!NT_SUCCESS(NtStatus) || MaxPairs != 1) {
+      AerovNetFailDevice(Adapter);
+      return NDIS_STATUS_NOT_SUPPORTED;
+    }
+  }
   RxIndirectMaxDesc = (Adapter->GuestFeatures & VIRTIO_F_RING_INDIRECT_DESC) ? 2 : 0;
   TxIndirectMaxDesc = (Adapter->GuestFeatures & VIRTIO_F_RING_INDIRECT_DESC) ? (USHORT)(AEROVNET_MAX_TX_SG_ELEMENTS + 1) : 0;
 
   // Virtqueues: 0 = RX, 1 = TX.
-  if (AeroVirtioGetNumQueues(&Adapter->Vdev) < 2) {
-    AeroVirtioFailDevice(&Adapter->Vdev);
-    AeroVirtioResetDevice(&Adapter->Vdev);
+  if (VirtioPciModernTransportGetNumQueues(&Adapter->Transport) < 2) {
+    AerovNetFailDevice(Adapter);
     return NDIS_STATUS_NOT_SUPPORTED;
   }
 
   Status = AerovNetSetupVq(Adapter, &Adapter->RxVq, 0, 256, RxIndirectMaxDesc);
   if (Status != NDIS_STATUS_SUCCESS) {
-    AeroVirtioFailDevice(&Adapter->Vdev);
-    AeroVirtioResetDevice(&Adapter->Vdev);
+    AerovNetFailDevice(Adapter);
     return Status;
   }
 
   Status = AerovNetSetupVq(Adapter, &Adapter->TxVq, 1, 256, TxIndirectMaxDesc);
   if (Status != NDIS_STATUS_SUCCESS) {
-    AeroVirtioFailDevice(&Adapter->Vdev);
-    AeroVirtioResetDevice(&Adapter->Vdev);
+    AerovNetFailDevice(Adapter);
     return Status;
   }
 
@@ -945,15 +929,13 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
 
   Status = AerovNetAllocateRxResources(Adapter);
   if (Status != NDIS_STATUS_SUCCESS) {
-    AeroVirtioFailDevice(&Adapter->Vdev);
-    AeroVirtioResetDevice(&Adapter->Vdev);
+    AerovNetFailDevice(Adapter);
     return Status;
   }
 
   Status = AerovNetAllocateTxResources(Adapter);
   if (Status != NDIS_STATUS_SUCCESS) {
-    AeroVirtioFailDevice(&Adapter->Vdev);
-    AeroVirtioResetDevice(&Adapter->Vdev);
+    AerovNetFailDevice(Adapter);
     return Status;
   }
 
@@ -962,7 +944,7 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   AerovNetFillRxQueueLocked(Adapter);
   NdisReleaseSpinLock(&Adapter->Lock);
 
-  AeroVirtioAddStatus(&Adapter->Vdev, VIRTIO_STATUS_DRIVER_OK);
+  VirtioPciModernTransportAddStatus(&Adapter->Transport, VIRTIO_STATUS_DRIVER_OK);
   return NDIS_STATUS_SUCCESS;
 }
 
@@ -976,7 +958,7 @@ static VOID AerovNetVirtioStop(_Inout_ AEROVNET_ADAPTER* Adapter) {
   }
 
   // Stop the device first to prevent further DMA/interrupts.
-  AeroVirtioResetDevice(&Adapter->Vdev);
+  VirtioPciModernTransportResetDevice(&Adapter->Transport);
 
   // HaltEx is expected to run at PASSIVE_LEVEL; waiting here avoids freeing
   // memory while an NDIS SG mapping callback might still reference it.
@@ -1087,7 +1069,7 @@ static BOOLEAN AerovNetInterruptIsr(_In_ NDIS_HANDLE MiniportInterruptContext, _
     return FALSE;
   }
 
-  Isr = AeroVirtioReadIsr(&Adapter->Vdev);
+  Isr = VirtioPciModernTransportReadIsrStatus(&Adapter->Transport);
   if (Isr == 0) {
     return FALSE;
   }
@@ -1264,7 +1246,7 @@ static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_
     NTSTATUS NtStatus;
 
     LinkStatus = 0;
-    NtStatus = AeroVirtioReadDeviceConfig(&Adapter->Vdev, ETH_LENGTH_OF_ADDRESS, &LinkStatus, sizeof(LinkStatus));
+    NtStatus = VirtioPciModernTransportReadDeviceConfig(&Adapter->Transport, ETH_LENGTH_OF_ADDRESS, &LinkStatus, sizeof(LinkStatus));
     if (NT_SUCCESS(NtStatus)) {
       NewLinkUp = (LinkStatus & VIRTIO_NET_S_LINK_UP) ? TRUE : FALSE;
       if (NewLinkUp != Adapter->LinkUp) {
@@ -1398,7 +1380,7 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
         ShouldKick = VirtqSplitKickPrepare(Adapter->TxVq.Vq);
         if (ShouldKick) {
           KeMemoryBarrier();
-          AeroVirtioNotifyQueue(&Adapter->Vdev, Adapter->TxVq.QueueIndex, Adapter->TxVq.QueueNotifyOff);
+          (VOID)VirtioPciModernTransportNotifyQueue(&Adapter->Transport, Adapter->TxVq.QueueIndex);
         }
 
         // Reset batching bookkeeping even if notification is suppressed.
@@ -1958,11 +1940,11 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
       {
         ULONG FrameLen = NET_BUFFER_DATA_LENGTH(Nb);
         if (FrameLen < 14 || FrameLen > 1514) {
-        Adapter->StatTxErrors++;
-        AerovNetTxNblCompleteOneNetBufferLocked(Adapter, Nbl, NDIS_STATUS_SUCCESS, &CompleteHead, &CompleteTail);
-        NdisReleaseSpinLock(&Adapter->Lock);
-        continue;
-      }
+          Adapter->StatTxErrors++;
+          AerovNetTxNblCompleteOneNetBufferLocked(Adapter, Nbl, NDIS_STATUS_SUCCESS, &CompleteHead, &CompleteTail);
+          NdisReleaseSpinLock(&Adapter->Lock);
+          continue;
+        }
       }
 
       if (IsListEmpty(&Adapter->TxFreeList)) {
@@ -2127,7 +2109,7 @@ static VOID AerovNetMiniportDevicePnPEventNotify(_In_ NDIS_HANDLE MiniportAdapte
     NdisReleaseSpinLock(&Adapter->Lock);
 
     // Quiesce the device. Full cleanup happens in HaltEx (PASSIVE_LEVEL).
-    AeroVirtioSetStatus(&Adapter->Vdev, 0);
+    VirtioPciModernTransportSetStatus(&Adapter->Transport, 0);
   }
 }
 

@@ -9,22 +9,21 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 > - `disable-legacy=on` (ensures the device enumerates as `DEV_1041`)
 > - `x-pci-revision=0x01` (ensures the device enumerates as `REV_01`)
 >
-> See `docs/windows7-virtio-driver-contract.md`.
+> See [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virtio-driver-contract.md) (§3.2).
 
 ## What it provides
 
 - Presents a standard Ethernet NIC to Windows (NDIS 6.20)
 - Backs TX/RX using **virtio-net split virtqueues** (virtio 1.0+ **modern** virtio-pci, BAR0 MMIO transport)
-- Uses the shared virtio-pci modern transport helper in `drivers/windows7/virtio-modern/common/`
+- Uses the shared virtio-pci modern transport helper in `drivers/windows/virtio/pci-modern/`
 - Uses the shared split-ring engine in `drivers/windows/virtio/common/`
 
 ## Features (minimal bring-up)
 
 - Virtio handshake: `RESET → ACK → DRIVER → FEATURES_OK → DRIVER_OK`
 - Feature negotiation (minimal):
-  - `VIRTIO_F_VERSION_1`
-  - Required: `VIRTIO_NET_F_MAC`, `VIRTIO_NET_F_STATUS` (link state)
-  - Optional: `VIRTIO_F_RING_INDIRECT_DESC`
+  - Required: `VIRTIO_F_VERSION_1`, `VIRTIO_NET_F_MAC`, `VIRTIO_NET_F_STATUS`
+  - Also negotiates: `VIRTIO_F_RING_INDIRECT_DESC`
 - 1 RX/TX queue pair (queue 0 RX, queue 1 TX)
 - INTx interrupt path (via virtio ISR register; read-to-ack). MSI-X is intentionally disabled; INTx is required.
 - No checksum offloads / TSO / LRO

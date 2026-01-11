@@ -4,16 +4,17 @@
 
 /* Explicit include to avoid picking up the legacy virtqueue header via include path order. */
 #include "../../../../windows/virtio/common/virtqueue_split.h"
-#include "aero_virtio_pci_modern.h"
+#include "virtio_pci_modern_transport.h"
 
 // Driver identity
 #define AEROVNET_VENDOR_ID 0x1AF4 // virtio vendor
+#define AEROVNET_PCI_DEVICE_ID 0x1041u
 
 #define AEROVNET_MTU_DEFAULT 1500u
 
 #define AEROVNET_PCI_REVISION_ID 0x01u
 
-#define AEROVNET_BAR0_MIN_LEN AERO_VIRTIO_PCI_MODERN_BAR0_REQUIRED_SIZE
+#define AEROVNET_BAR0_MIN_LEN 0x4000u
 
 // Virtio feature bits.
 #define VIRTIO_F_RING_INDIRECT_DESC (1ull << 28)
@@ -112,7 +113,6 @@ typedef enum _AEROVNET_ADAPTER_STATE {
 typedef struct _AEROVNET_VQ {
   USHORT QueueIndex;
   USHORT QueueSize;
-  USHORT QueueNotifyOff;
 
   VIRTQ_SPLIT* Vq;
 
@@ -141,17 +141,16 @@ typedef struct _AEROVNET_ADAPTER {
 
   // PCI BAR0 MMIO resources
   PHYSICAL_ADDRESS Bar0Pa;
-  PUCHAR Bar0Va;
   ULONG Bar0Length;
 
-  // Virtio-pci modern transport (BAR0 fixed layout, contract v1).
-  AERO_VIRTIO_PCI_MODERN_DEVICE Vdev;
+  // Virtio-pci modern transport (AERO-W7-VIRTIO contract v1, BAR0 MMIO).
+  VIRTIO_PCI_MODERN_OS_INTERFACE VirtioOs;
+  VIRTIO_PCI_MODERN_TRANSPORT Transport;
 
   // Virtqueues
   AEROVNET_VQ RxVq;
   AEROVNET_VQ TxVq;
 
-  UINT64 HostFeatures;
   UINT64 GuestFeatures;
 
   BOOLEAN LinkUp;

@@ -47,7 +47,7 @@
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_KERNEL_MODE;NDIS_MINIPORT_DRIVER;NDIS620_MINIPORT;NDIS_SUPPORT_NDIS6;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\..\windows\virtio\common;$(ProjectDir)..\..\virtio-modern\common\include;$(ProjectDir)..\..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\..\windows\virtio\common;$(ProjectDir)..\..\..\windows\virtio\pci-modern;$(ProjectDir)..\..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <SpectreMitigation>false</SpectreMitigation>
     </ClCompile>
     <Link>
@@ -61,7 +61,7 @@
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_KERNEL_MODE;NDIS_MINIPORT_DRIVER;NDIS620_MINIPORT;NDIS_SUPPORT_NDIS6;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\..\windows\virtio\common;$(ProjectDir)..\..\virtio-modern\common\include;$(ProjectDir)..\..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\..\windows\virtio\common;$(ProjectDir)..\..\..\windows\virtio\pci-modern;$(ProjectDir)..\..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <SpectreMitigation>false</SpectreMitigation>
     </ClCompile>
     <Link>
@@ -73,7 +73,7 @@
   <ItemGroup>
     <ClCompile Include="src\aerovnet.c" />
     <ClCompile Include="..\..\..\windows\virtio\common\virtqueue_split.c" />
-    <ClCompile Include="..\..\virtio-modern\common\src\aero_virtio_pci_modern.c" />
+    <ClCompile Include="..\..\..\windows\virtio\pci-modern\virtio_pci_modern_transport.c" />
     <ClCompile Include="..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
     <ClInclude Include="include\aerovnet.h" />
     <None Include="aerovnet.inf" />
