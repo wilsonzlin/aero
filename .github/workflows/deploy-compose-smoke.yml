@@ -5,6 +5,7 @@ on:
     paths:
       - deploy/**
       - backend/aero-gateway/**
+      - crates/aero-l2-proxy/**
       - .github/workflows/deploy-compose-smoke.yml
     paths-ignore:
       - "**/*.md"
@@ -14,6 +15,7 @@ on:
     paths:
       - deploy/**
       - backend/aero-gateway/**
+      - crates/aero-l2-proxy/**
       - .github/workflows/deploy-compose-smoke.yml
     paths-ignore:
       - "**/*.md"
