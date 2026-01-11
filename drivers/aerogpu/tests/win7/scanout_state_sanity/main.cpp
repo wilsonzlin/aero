@@ -1,0 +1,137 @@
+#include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_kmt.h"
+#include "..\\common\\aerogpu_test_report.h"
+
+using aerogpu_test::kmt::D3DKMT_FUNCS;
+using aerogpu_test::kmt::D3DKMT_HANDLE;
+using aerogpu_test::kmt::NTSTATUS;
+
+static int RunScanoutStateSanity(int argc, char** argv) {
+  const char* kTestName = "scanout_state_sanity";
+  if (aerogpu_test::HasHelpArg(argc, argv)) {
+    aerogpu_test::PrintfStdout("Usage: %s.exe [--json[=PATH]] [--allow-remote]", kTestName);
+    aerogpu_test::PrintfStdout(
+        "Queries AeroGPU scanout state via a driver-private escape and validates it matches the desktop mode.");
+    return 0;
+  }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
+
+  const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
+  if (GetSystemMetrics(SM_REMOTESESSION)) {
+    if (allow_remote) {
+      aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping", kTestName);
+      reporter.SetSkipped("remote_session");
+      return reporter.Pass();
+    }
+    return reporter.Fail("running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
+  }
+
+  const int screen_width = GetSystemMetrics(SM_CXSCREEN);
+  const int screen_height = GetSystemMetrics(SM_CYSCREEN);
+
+  D3DKMT_FUNCS kmt;
+  std::string kmt_err;
+  if (!aerogpu_test::kmt::LoadD3DKMT(&kmt, &kmt_err)) {
+    return reporter.Fail("%s", kmt_err.c_str());
+  }
+
+  D3DKMT_HANDLE adapter = 0;
+  std::string open_err;
+  if (!aerogpu_test::kmt::OpenPrimaryAdapter(&kmt, &adapter, &open_err)) {
+    aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+    return reporter.Fail("%s", open_err.c_str());
+  }
+
+  aerogpu_escape_query_scanout_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.vidpn_source_id = 0;
+  q.reserved0 = 0;
+
+  NTSTATUS st = 0;
+  const bool ok = aerogpu_test::kmt::AerogpuEscapeWithTimeout(&kmt, adapter, &q, sizeof(q), 2000, &st);
+
+  aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+  aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+
+  if (!ok) {
+    if (st == aerogpu_test::kmt::kStatusNotSupported) {
+      return reporter.Fail("AeroGPU scanout escape not supported (NTSTATUS=0x%08lX)", (unsigned long)st);
+    }
+    return reporter.Fail("D3DKMTEscape(query-scanout) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
+  }
+
+  aerogpu_test::PrintfStdout("INFO: %s: screen=%dx%d", kTestName, screen_width, screen_height);
+  aerogpu_test::PrintfStdout(
+      "INFO: %s: cached: enable=%lu width=%lu height=%lu format=%lu pitch=%lu",
+      kTestName,
+      (unsigned long)q.cached_enable,
+      (unsigned long)q.cached_width,
+      (unsigned long)q.cached_height,
+      (unsigned long)q.cached_format,
+      (unsigned long)q.cached_pitch_bytes);
+  aerogpu_test::PrintfStdout(
+      "INFO: %s: mmio:   enable=%lu width=%lu height=%lu format=%lu pitch=%lu fb_gpa=0x%I64X",
+      kTestName,
+      (unsigned long)q.mmio_enable,
+      (unsigned long)q.mmio_width,
+      (unsigned long)q.mmio_height,
+      (unsigned long)q.mmio_format,
+      (unsigned long)q.mmio_pitch_bytes,
+      (unsigned long long)q.mmio_fb_gpa);
+
+  if (q.cached_enable == 0) {
+    return reporter.Fail("cached_enable==0 (expected scanout enabled)");
+  }
+  if (q.mmio_enable == 0) {
+    return reporter.Fail("mmio_enable==0 (expected scanout enabled)");
+  }
+  if (q.mmio_fb_gpa == 0) {
+    return reporter.Fail("mmio_fb_gpa==0 (expected framebuffer address programmed)");
+  }
+
+  if (q.cached_width == 0 || q.cached_height == 0) {
+    return reporter.Fail("cached_width/height are zero");
+  }
+  if (q.mmio_width == 0 || q.mmio_height == 0) {
+    return reporter.Fail("mmio_width/height are zero");
+  }
+
+  if (q.cached_width != q.mmio_width || q.cached_height != q.mmio_height) {
+    return reporter.Fail("cached mode does not match MMIO scanout regs");
+  }
+  if (q.cached_pitch_bytes == 0 || q.mmio_pitch_bytes == 0) {
+    return reporter.Fail("pitch is zero");
+  }
+  if (q.cached_pitch_bytes != q.mmio_pitch_bytes) {
+    return reporter.Fail("cached pitch does not match MMIO pitch (%lu vs %lu)",
+                         (unsigned long)q.cached_pitch_bytes,
+                         (unsigned long)q.mmio_pitch_bytes);
+  }
+
+  if (screen_width > 0 && screen_height > 0) {
+    if ((unsigned long)screen_width != (unsigned long)q.cached_width ||
+        (unsigned long)screen_height != (unsigned long)q.cached_height) {
+      return reporter.Fail("cached mode does not match desktop resolution (%dx%d)", screen_width, screen_height);
+    }
+  }
+
+  const unsigned long long row_bytes = (unsigned long long)q.cached_width * 4ull;
+  if ((unsigned long long)q.cached_pitch_bytes < row_bytes) {
+    return reporter.Fail("pitch too small for width: pitch=%lu width=%lu row_bytes=%I64u",
+                         (unsigned long)q.cached_pitch_bytes,
+                         (unsigned long)q.cached_width,
+                         row_bytes);
+  }
+
+  return reporter.Pass();
+}
+
+int main(int argc, char** argv) {
+  aerogpu_test::ConfigureProcessForAutomation();
+  return RunScanoutStateSanity(argc, argv);
+}
