@@ -10,6 +10,9 @@
 //! active one based on the BAR0 MMIO magic. This legacy device model is kept for
 //! compatibility/bring-up and is gated behind the `emulator` crate feature
 //! `aerogpu-legacy`.
+//!
+//! The versioned ("AGPU") device model is the primary execution path; new work
+//! should generally target the versioned ABI.
 
 use memory::MemoryBus;
 use std::time::{Duration, Instant};

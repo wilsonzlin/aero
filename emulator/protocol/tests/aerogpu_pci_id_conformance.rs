@@ -101,12 +101,22 @@ fn aerogpu_pci_ids_match_repo_contracts() {
     for relative_path in [
         "drivers/aerogpu/packaging/win7/aerogpu.inf",
         "drivers/aerogpu/packaging/win7/aerogpu_dx11.inf",
-        "guest-tools/config/devices.cmd",
     ] {
         let path = repo_root.join(relative_path);
         assert_file_contains(&path, &new_hwid);
         assert_file_contains(&path, &legacy_hwid);
     }
+
+    // Guest Tools config is generated from the canonical Windows device contract, which binds only
+    // to the versioned ("AGPU") device by default.
+    let devices_cmd_path = repo_root.join("guest-tools/config/devices.cmd");
+    assert_file_contains(&devices_cmd_path, &new_hwid);
+    let devices_cmd_text = read_file(&devices_cmd_path);
+    assert!(
+        !devices_cmd_text.contains(&legacy_hwid),
+        "{} is out of sync: must not contain legacy bring-up HWID `{legacy_hwid}`",
+        devices_cmd_path.display()
+    );
 
     let contract_path = repo_root.join("docs/windows-device-contract.json");
     let contract_text = read_file(&contract_path);
@@ -195,8 +205,8 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         contract_path.display()
     );
     assert!(
-        patterns.contains(&legacy_hwid),
-        "{}: aero-gpu hardware_id_patterns missing `{legacy_hwid}`. Found: {patterns:?}",
+        !patterns.contains(&legacy_hwid),
+        "{}: aero-gpu hardware_id_patterns must not include legacy bring-up HWID `{legacy_hwid}`. Found: {patterns:?}",
         contract_path.display()
     );
 }
