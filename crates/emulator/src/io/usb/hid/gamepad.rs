@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
+use crate::io::usb::core::UsbInResult;
 use crate::io::usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
 };
@@ -139,6 +140,10 @@ impl UsbDeviceModel for UsbHidGamepadHandle {
 
     fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
         self.0.borrow_mut().poll_interrupt_in(ep)
+    }
+
+    fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
+        self.0.borrow_mut().handle_interrupt_in(ep_addr)
     }
 }
 
@@ -532,6 +537,22 @@ impl UsbDeviceModel for UsbHidGamepad {
                 _ => ControlResponse::Stall,
             },
             _ => ControlResponse::Stall,
+        }
+    }
+
+    fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
+        if ep_addr != INTERRUPT_IN_EP {
+            return UsbInResult::Stall;
+        }
+        if self.configuration == 0 {
+            return UsbInResult::Nak;
+        }
+        if self.interrupt_in_halted {
+            return UsbInResult::Stall;
+        }
+        match self.pending_reports.pop_front() {
+            Some(r) => UsbInResult::Data(r.to_vec()),
+            None => UsbInResult::Nak,
         }
     }
 

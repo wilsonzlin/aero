@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
-use crate::io::usb::core::UsbOutResult;
+use crate::io::usb::core::{UsbInResult, UsbOutResult};
 use crate::io::usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
 };
@@ -153,6 +153,10 @@ impl UsbDeviceModel for UsbHidPassthroughHandle {
 
     fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
         self.inner.borrow_mut().poll_interrupt_in(ep)
+    }
+
+    fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
+        self.inner.borrow_mut().handle_interrupt_in(ep_addr)
     }
 
     fn handle_interrupt_out(&mut self, ep: u8, data: &[u8]) -> UsbOutResult {
@@ -603,6 +607,22 @@ impl UsbDeviceModel for UsbHidPassthrough {
                 _ => ControlResponse::Stall,
             },
             _ => ControlResponse::Stall,
+        }
+    }
+
+    fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
+        if ep_addr != INTERRUPT_IN_EP {
+            return UsbInResult::Stall;
+        }
+        if self.configuration == 0 {
+            return UsbInResult::Nak;
+        }
+        if self.interrupt_in_halted {
+            return UsbInResult::Stall;
+        }
+        match self.pending_input_reports.pop_front() {
+            Some(data) => UsbInResult::Data(data),
+            None => UsbInResult::Nak,
         }
     }
 

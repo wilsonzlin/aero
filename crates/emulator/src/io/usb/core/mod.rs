@@ -182,14 +182,14 @@ impl AttachedUsbDevice {
         }
 
         let ep_addr = 0x80 | (endpoint & 0x0f);
-        match self.model.poll_interrupt_in(ep_addr) {
-            Some(mut data) => {
+        match self.model.handle_interrupt_in(ep_addr) {
+            UsbInResult::Data(mut data) => {
                 if data.len() > max_len {
                     data.truncate(max_len);
                 }
                 UsbInResult::Data(data)
             }
-            None => UsbInResult::Nak,
+            other => other,
         }
     }
 

@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
+use crate::io::usb::core::UsbInResult;
 use crate::io::usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
 };
@@ -446,6 +447,10 @@ impl UsbDeviceModel for UsbCompositeHidInputHandle {
 
     fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
         self.0.borrow_mut().poll_interrupt_in(ep)
+    }
+
+    fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
+        self.0.borrow_mut().handle_interrupt_in(ep_addr)
     }
 }
 
@@ -946,6 +951,43 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                 }
             }
             _ => ControlResponse::Stall,
+        }
+    }
+
+    fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
+        if self.configuration == 0 {
+            return UsbInResult::Nak;
+        }
+
+        match ep_addr {
+            KEYBOARD_INTERRUPT_IN_EP => {
+                if self.keyboard_interrupt_in_halted {
+                    return UsbInResult::Stall;
+                }
+                match self.keyboard.poll_interrupt_in() {
+                    Some(data) => UsbInResult::Data(data),
+                    None => UsbInResult::Nak,
+                }
+            }
+            MOUSE_INTERRUPT_IN_EP => {
+                if self.mouse_interrupt_in_halted {
+                    return UsbInResult::Stall;
+                }
+                match self.mouse.poll_interrupt_in() {
+                    Some(data) => UsbInResult::Data(data),
+                    None => UsbInResult::Nak,
+                }
+            }
+            GAMEPAD_INTERRUPT_IN_EP => {
+                if self.gamepad_interrupt_in_halted {
+                    return UsbInResult::Stall;
+                }
+                match self.gamepad.poll_interrupt_in() {
+                    Some(data) => UsbInResult::Data(data),
+                    None => UsbInResult::Nak,
+                }
+            }
+            _ => UsbInResult::Stall,
         }
     }
 

@@ -1,4 +1,4 @@
-use crate::io::usb::core::AttachedUsbDevice;
+use crate::io::usb::core::{AttachedUsbDevice, UsbInResult};
 use crate::io::usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
     UsbHubAttachError,
@@ -575,6 +575,32 @@ impl UsbDeviceModel for UsbHubDevice {
                 _ => ControlResponse::Stall,
             },
             _ => ControlResponse::Stall,
+        }
+    }
+
+    fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
+        if ep_addr != HUB_INTERRUPT_IN_EP {
+            return UsbInResult::Stall;
+        }
+        if self.configuration == 0 {
+            return UsbInResult::Nak;
+        }
+        if self.interrupt_ep_halted {
+            return UsbInResult::Stall;
+        }
+
+        let mut bitmap = vec![0u8; HUB_CHANGE_BITMAP_LEN];
+        for (idx, port) in self.ports.iter().enumerate() {
+            if !port.has_change() {
+                continue;
+            }
+            let bit = idx + 1;
+            bitmap[bit / 8] |= 1u8 << (bit % 8);
+        }
+        if bitmap.iter().any(|&b| b != 0) {
+            UsbInResult::Data(bitmap)
+        } else {
+            UsbInResult::Nak
         }
     }
 

@@ -208,6 +208,18 @@ pub trait UsbDeviceModel {
     /// Returning `None` indicates the endpoint would NAK (no data available).
     fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>>;
 
+    /// Handles an interrupt IN transfer for a non-control endpoint.
+    ///
+    /// The default implementation bridges the legacy [`UsbDeviceModel::poll_interrupt_in`]
+    /// interface, treating `None` as NAK. Device models that implement endpoint halt should
+    /// override this to return [`crate::io::usb::core::UsbInResult::Stall`] when halted.
+    fn handle_interrupt_in(&mut self, ep_addr: u8) -> crate::io::usb::core::UsbInResult {
+        match self.poll_interrupt_in(ep_addr) {
+            Some(data) => crate::io::usb::core::UsbInResult::Data(data),
+            None => crate::io::usb::core::UsbInResult::Nak,
+        }
+    }
+
     /// Handles interrupt OUT transfers for non-control endpoints.
     ///
     /// Returning [`crate::io::usb::core::UsbOutResult::Stall`] indicates the endpoint is not
