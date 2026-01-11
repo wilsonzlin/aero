@@ -4344,7 +4344,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     }
   }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   // Guest-backed textures currently only support mip 0 / array layer 0. Reject
   // multi-subresource layouts until the host executor and protocol are extended.
   if (!wants_shared && (res->mip_levels > 1 || res->depth > 1)) {
