@@ -200,6 +200,14 @@ VirtIoSndWaveRtGetPositionSnapshot(
     }
 }
 
+static __forceinline VOID
+VirtIoSndWaveRtWriteClockRegister(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream, _In_ ULONGLONG Value)
+{
+    if (Stream->ClockRegister != NULL) {
+        (VOID)InterlockedExchange64((volatile LONGLONG *)Stream->ClockRegister, (LONGLONG)Value);
+    }
+}
+
 static VOID
 VirtIoSndWaveRtStopTimer(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
 {
@@ -263,7 +271,7 @@ VirtIoSndWaveRtUpdateRegisters(
     }
 
     if (Stream->ClockRegister != NULL) {
-        *Stream->ClockRegister = Qpc;
+        VirtIoSndWaveRtWriteClockRegister(Stream, Qpc);
     }
 }
 
@@ -790,7 +798,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_NewStream(
     }
 
     RtlZeroMemory(stream->PositionRegister, sizeof(*stream->PositionRegister));
-    *stream->ClockRegister = 0;
+    VirtIoSndWaveRtWriteClockRegister(stream, 0);
 
     KeAcquireSpinLock(&miniport->Lock, &oldIrql);
     if (miniport->Stream != NULL) {
@@ -1016,9 +1024,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
             stream->PositionRegister->PlayOffset = 0;
             stream->PositionRegister->WriteOffset = 0;
         }
-        if (stream->ClockRegister != NULL) {
-            *stream->ClockRegister = 0;
-        }
+        VirtIoSndWaveRtWriteClockRegister(stream, 0);
     }
 
     bufferSize = stream->BufferSize;
@@ -1199,9 +1205,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
             stream->PositionRegister->PlayOffset = 0;
             stream->PositionRegister->WriteOffset = 0;
         }
-        if (stream->ClockRegister != NULL) {
-            *stream->ClockRegister = 0;
-        }
+        VirtIoSndWaveRtWriteClockRegister(stream, 0);
         KeReleaseSpinLock(&stream->Lock, oldIrql);
 
         if (oldEvent != NULL) {
@@ -1517,9 +1521,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
         stream->PositionRegister->PlayOffset = 0;
         stream->PositionRegister->WriteOffset = 0;
     }
-    if (stream->ClockRegister != NULL) {
-        *stream->ClockRegister = 0;
-    }
+    VirtIoSndWaveRtWriteClockRegister(stream, 0);
     KeReleaseSpinLock(&stream->Lock, oldIrql);
 
     if (oldMdl != NULL) {
