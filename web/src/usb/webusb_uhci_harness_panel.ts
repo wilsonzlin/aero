@@ -17,12 +17,58 @@ export type UhciHarnessDrainResult = {
   readonly completions: UsbHostCompletion[];
 };
 
+function normalizeActionId(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (typeof value === "bigint") {
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error(`USB action id is too large for JS number: ${value.toString()}`);
+    }
+    return Number(value);
+  }
+  throw new Error(`Expected action id to be number or bigint, got ${typeof value}`);
+}
+
+function normalizeBytes(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (Array.isArray(value)) {
+    if (!value.every((v) => typeof v === "number")) {
+      throw new Error("Expected byte array to contain only numbers");
+    }
+    return Uint8Array.from(value as number[]);
+  }
+  throw new Error(`Expected bytes to be Uint8Array, ArrayBuffer, or number[]; got ${typeof value}`);
+}
+
+function normalizeUsbHostAction(raw: unknown): UsbHostAction {
+  if (!raw || typeof raw !== "object") {
+    throw new Error(`Expected USB action to be object, got ${raw === null ? "null" : typeof raw}`);
+  }
+  const obj = raw as Record<string, unknown>;
+  const kind = obj.kind;
+  const id = normalizeActionId(obj.id);
+  if (typeof kind !== "string") throw new Error("USB action missing kind");
+
+  switch (kind as UsbHostAction["kind"]) {
+    case "controlIn":
+      return { kind: "controlIn", id, setup: obj.setup as SetupPacket };
+    case "controlOut":
+      return { kind: "controlOut", id, setup: obj.setup as SetupPacket, data: normalizeBytes(obj.data) };
+    case "bulkIn":
+      return { kind: "bulkIn", id, endpoint: obj.endpoint as number, length: obj.length as number };
+    case "bulkOut":
+      return { kind: "bulkOut", id, endpoint: obj.endpoint as number, data: normalizeBytes(obj.data) };
+    default:
+      throw new Error(`Unknown USB action kind: ${String(kind)}`);
+  }
+}
+
 function asUsbHostActions(raw: unknown): UsbHostAction[] {
   if (raw === null || raw === undefined) return [];
   if (!Array.isArray(raw)) {
     throw new Error(`Expected harness.drain_actions() to return an array, got ${typeof raw}`);
   }
-  return raw as UsbHostAction[];
+  return raw.map((action) => normalizeUsbHostAction(action));
 }
 
 export async function bridgeHarnessDrainActions(
@@ -90,6 +136,15 @@ function maybeCaptureDescriptors(
 
 function formatHexBytes(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(" ");
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, (_key, v) => (typeof v === "bigint" ? v.toString() : v));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return `[unserializable: ${message}]`;
+  }
 }
 
 function describeUsbDevice(device: USBDevice): string {
@@ -358,8 +413,8 @@ export function renderWebUsbUhciHarnessPanel(
       `ticks: ${tickCount}\n` +
       `actions: ${actionCount}\n` +
       `completions: ${completionCount}\n` +
-      `lastAction: ${lastAction ? JSON.stringify(lastAction) : "n/a"}\n` +
-      `lastCompletion: ${lastCompletion ? JSON.stringify(lastCompletion) : "n/a"}\n`;
+      `lastAction: ${lastAction ? safeJson(lastAction) : "n/a"}\n` +
+      `lastCompletion: ${lastCompletion ? safeJson(lastCompletion) : "n/a"}\n`;
 
     deviceDescPre.textContent = capture.deviceDescriptor ? formatHexBytes(capture.deviceDescriptor) : "(none yet)";
     configDescPre.textContent = capture.configDescriptor ? formatHexBytes(capture.configDescriptor) : "(none yet)";

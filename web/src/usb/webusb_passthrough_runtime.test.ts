@@ -45,7 +45,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
         id: 1,
         setup: { bmRequestType: 0x80, bRequest: 6, wValue: 0x0100, wIndex: 0, wLength: 18 },
       },
-      { kind: "bulkOut", id: 2, ep: 1, data: Uint8Array.of(1, 2, 3) },
+      { kind: "bulkOut", id: 2, endpoint: 1, data: Uint8Array.of(1, 2, 3) },
     ];
 
     const bridge: UsbPassthroughBridgeLike = {
@@ -65,8 +65,14 @@ describe("usb/WebUsbPassthroughRuntime", () => {
       { type: "usb.action", action: actions[1] },
     ]);
 
-    port.emit({ type: "usb.completion", completion: { kind: "okIn", id: 1, data: Uint8Array.of(9) } satisfies UsbHostCompletion });
-    port.emit({ type: "usb.completion", completion: { kind: "okOut", id: 2, bytesWritten: 3 } satisfies UsbHostCompletion });
+    port.emit({
+      type: "usb.completion",
+      completion: { kind: "controlIn", id: 1, status: "success", data: Uint8Array.of(9) } satisfies UsbHostCompletion,
+    });
+    port.emit({
+      type: "usb.completion",
+      completion: { kind: "bulkOut", id: 2, status: "success", bytesWritten: 3 } satisfies UsbHostCompletion,
+    });
 
     await p;
   });
@@ -75,8 +81,8 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     const port = new FakePort();
 
     const actions: UsbHostAction[] = [
-      { kind: "bulkIn", id: 1, ep: 1, length: 8 },
-      { kind: "bulkOut", id: 2, ep: 2, data: Uint8Array.of(7, 7) },
+      { kind: "bulkIn", id: 1, endpoint: 1, length: 8 },
+      { kind: "bulkOut", id: 2, endpoint: 2, data: Uint8Array.of(7, 7) },
     ];
 
     const push_completion = vi.fn();
@@ -92,8 +98,8 @@ describe("usb/WebUsbPassthroughRuntime", () => {
 
     const p = runtime.pollOnce();
 
-    const c2: UsbHostCompletion = { kind: "okOut", id: 2, bytesWritten: 2 };
-    const c1: UsbHostCompletion = { kind: "okIn", id: 1, data: Uint8Array.of(1, 2) };
+    const c2: UsbHostCompletion = { kind: "bulkOut", id: 2, status: "success", bytesWritten: 2 };
+    const c1: UsbHostCompletion = { kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1, 2) };
 
     // Emit out-of-order to ensure the runtime matches by id.
     port.emit({ type: "usb.completion", completion: c2 });
@@ -111,7 +117,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
   it("stops pumping and resets the bridge on usb.selected ok:false", async () => {
     const port = new FakePort();
 
-    const action: UsbHostAction = { kind: "bulkIn", id: 1, ep: 1, length: 8 };
+    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 1, length: 8 };
     const drain_actions = vi.fn(() => [action]);
     const reset = vi.fn();
     const bridge: UsbPassthroughBridgeLike = {
@@ -137,4 +143,3 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     expect(drain_actions).toHaveBeenCalledTimes(1);
   });
 });
-
