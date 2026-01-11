@@ -189,8 +189,10 @@ enum aerogpu_copy_flags {
 
 /*
  * CREATE_BUFFER
- * - `backing_alloc_id` refers to an entry in the optional allocation table
- *   supplied with the submission.
+ * - `backing_alloc_id` is a stable per-allocation ID (`alloc_id`) which the host
+ *   resolves using the submission's optional allocation table.
+ *   - It is **not** an array index; allocation tables may be re-ordered between
+ *     submissions.
  * - The host must validate that `backing_offset_bytes + size_bytes` is within
  *   the allocation's size.
  */
@@ -211,6 +213,8 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_create_buffer) == 40);
 /*
  * CREATE_TEXTURE2D
  * - Textures are linear in guest memory when backed by an allocation.
+ * - `backing_alloc_id` follows the same `alloc_id` resolution rules as
+ *   CREATE_BUFFER.
  * - `row_pitch_bytes` is required when `backing_alloc_id != 0`.
  */
 #pragma pack(push, 1)

@@ -176,7 +176,7 @@ The D3D9Ex UMD is responsible for translating the Microsoft D3D9 runtime’s DDI
 - The UMD maintains:
   - A per-device command buffer builder
   - A small state cache (current shaders, render targets, blend state, etc.)
-  - A resource table mapping runtime handles to protocol `aerogpu_handle_t` plus optional backing info (`alloc_id`, offset, size/format)
+  - A resource table mapping runtime handles to protocol handles plus optional backing metadata (stable `alloc_id` + byte offset)
 - On each draw/dispatch boundary, the UMD appends commands to a DMA buffer that is ultimately submitted through dxgkrnl to the KMD.
 - The UMD **must** be able to run under:
   - 32-bit (Windows 7 x86, and WOW64 on x64)
@@ -483,7 +483,7 @@ of either callback being used to release a handle.
 - **Can be deferred:** Context priority, preemption granularity, virtualization.
  
 #### `DxgkDdiRender` (or `DxgkDdiSubmitCommand` depending on the DDI version)
-  
+   
 - **Purpose:** Submit a command buffer plus its referenced allocations to the GPU.
 - **AeroGPU MVP behavior:**
    1. Validate the submission (bounds, known opcodes, allocation list sizes).
@@ -601,9 +601,9 @@ For each allocation created by the KMD:
 `alloc_id` identifies the **memory backing** for resources. Resources themselves are separate objects referenced in the command stream via protocol handles (`aerogpu_handle_t`).
   
 **Emulator access model:**
-  
 - The emulator already implements guest physical memory (it must for CPU/MMU).
 - For each submission, KMD sends the emulator a sideband table mapping **`alloc_id` → guest physical address + size** so the emulator can read textures/buffers and write render targets.
+- The command stream references guest backing memory via `backing_alloc_id` (a stable `alloc_id`); see [`docs/graphics/aerogpu-backing-alloc-id.md`](./aerogpu-backing-alloc-id.md).
 
 `alloc_id` must be stable across shared-handle opens. The UMD persists it in **WDDM allocation private driver data**, and dxgkrnl returns the same bytes on both allocation create and open (`DxgkDdiCreateAllocation` / `DxgkDdiOpenAllocation`), so multiple guest processes can compute consistent IDs for the same underlying shared allocation.
 
@@ -616,7 +616,7 @@ Traditional WDDM drivers rely on `PATCHLOCATIONLIST` to relocate GPU addresses i
 **In the command stream:**
   
 - Resources are referenced by protocol handle fields like `resource_handle` (`aerogpu_handle_t`).
-- Resources that are backed by guest memory reference their backing allocation via `backing_alloc_id` (an `alloc_id`) in `drivers/aerogpu/protocol/aerogpu_cmd.h`. `backing_alloc_id` is resolved via the per-submission `aerogpu_alloc_table` in `drivers/aerogpu/protocol/aerogpu_ring.h` (`0` means “host allocated”).
+- Resources that are backed by guest memory reference their backing allocation via `backing_alloc_id` (an `alloc_id`) in `drivers/aerogpu/protocol/aerogpu_cmd.h`. `backing_alloc_id` is resolved via the per-submission `aerogpu_alloc_table` in `drivers/aerogpu/protocol/aerogpu_ring.h` (`0` means “host allocated”). See [`docs/graphics/aerogpu-backing-alloc-id.md`](./aerogpu-backing-alloc-id.md) for the stable-ID contract.
 - Offsets are explicit byte offsets from the start of that allocation.
   
 **Per-submit sideband table (built by KMD):**
@@ -635,8 +635,8 @@ This yields:
   
 - No relocation logic in KMD.
 - Minimal KMD validation (bounds check: `offset + size <= alloc.size_bytes`).
-- Emulator can resolve resource addresses by `alloc_id` quickly.
- 
+- Emulator can resolve resource addresses by `alloc_id` quickly (allocation table order is not significant).
+  
 ---
  
 ## 6. Present + scanout path (single output)

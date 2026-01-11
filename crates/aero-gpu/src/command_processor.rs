@@ -14,9 +14,86 @@
 use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
 use std::collections::HashMap;
 
+/// Per-submission allocation table entry (Win7 WDDM 1.1 legacy path).
+///
+/// Each AeroGPU submission may carry a sideband list that maps a stable `alloc_id`
+/// (referenced by `backing_alloc_id` in the command stream) to a guest physical
+/// address (GPA) and size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AeroGpuSubmissionAllocation {
+    pub alloc_id: u32,
+    pub gpa: u64,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResourceDesc {
+    Buffer { usage_flags: u32, size_bytes: u64 },
+    Texture2d {
+        usage_flags: u32,
+        format: u32,
+        width: u32,
+        height: u32,
+        mip_levels: u32,
+        array_layers: u32,
+        row_pitch_bytes: u32,
+    },
+}
+
+impl ResourceDesc {
+    fn size_bytes(&self) -> Result<u64, CommandProcessorError> {
+        match *self {
+            ResourceDesc::Buffer { size_bytes, .. } => Ok(size_bytes),
+            ResourceDesc::Texture2d {
+                width,
+                height,
+                mip_levels,
+                array_layers,
+                row_pitch_bytes,
+                ..
+            } => {
+                // Conservative linear-size estimate:
+                // - For mip0 we trust `row_pitch_bytes`.
+                // - For additional mips we approximate by shifting the mip0 row pitch / height.
+                //
+                // This is intentionally conservative validation used for bounds checking and is
+                // not relied upon for actual texture layout decisions.
+                if width == 0 || height == 0 || mip_levels == 0 || array_layers == 0 {
+                    return Err(CommandProcessorError::InvalidCreateTexture2d);
+                }
+
+                let mut total = 0u64;
+                for level in 0..mip_levels {
+                    let level_row_pitch = (u64::from(row_pitch_bytes) >> level).max(1);
+                    let level_height = (u64::from(height) >> level).max(1);
+                    let level_size = level_row_pitch
+                        .checked_mul(level_height)
+                        .ok_or(CommandProcessorError::SizeOverflow)?;
+                    total = total
+                        .checked_add(level_size)
+                        .ok_or(CommandProcessorError::SizeOverflow)?;
+                }
+                total = total
+                    .checked_mul(u64::from(array_layers))
+                    .ok_or(CommandProcessorError::SizeOverflow)?;
+                Ok(total)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ResourceEntry {
+    desc: ResourceDesc,
+    backing_alloc_id: u32,
+    backing_offset_bytes: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandProcessorError {
     Parse(AeroGpuCmdStreamParseError),
+
+    // Shared surfaces
     UnknownShareToken(u64),
     UnknownSharedSurfaceHandle(u32),
     SharedSurfaceHandleInUse(u32),
@@ -30,6 +107,26 @@ pub enum CommandProcessorError {
         existing: u32,
         new: u32,
     },
+
+    // Allocation-backed resources
+    UnknownResourceHandle(u32),
+    MissingAllocationTable(u32),
+    UnknownAllocId(u32),
+    SizeOverflow,
+    ResourceOutOfBounds {
+        resource_handle: u32,
+        offset_bytes: u64,
+        size_bytes: u64,
+        resource_size_bytes: u64,
+    },
+    AllocationOutOfBounds {
+        alloc_id: u32,
+        offset_bytes: u64,
+        size_bytes: u64,
+        alloc_size_bytes: u64,
+    },
+    CreateRebindMismatch { resource_handle: u32 },
+    InvalidCreateTexture2d,
 }
 
 impl std::fmt::Display for CommandProcessorError {
@@ -57,6 +154,42 @@ impl std::fmt::Display for CommandProcessorError {
                 f,
                 "shared surface alias handle 0x{alias:X} already bound (existing_handle=0x{existing:X} new_handle=0x{new:X})"
             ),
+            CommandProcessorError::UnknownResourceHandle(handle) => {
+                write!(f, "unknown resource handle 0x{handle:08X}")
+            }
+            CommandProcessorError::MissingAllocationTable(alloc_id) => write!(
+                f,
+                "submission is missing an allocation table required to resolve alloc_id={alloc_id}"
+            ),
+            CommandProcessorError::UnknownAllocId(alloc_id) => {
+                write!(f, "allocation table does not contain alloc_id={alloc_id}")
+            }
+            CommandProcessorError::SizeOverflow => write!(f, "size arithmetic overflow"),
+            CommandProcessorError::ResourceOutOfBounds {
+                resource_handle,
+                offset_bytes,
+                size_bytes,
+                resource_size_bytes,
+            } => write!(
+                f,
+                "resource 0x{resource_handle:08X} out-of-bounds: offset={offset_bytes} size={size_bytes} (resource_size={resource_size_bytes})"
+            ),
+            CommandProcessorError::AllocationOutOfBounds {
+                alloc_id,
+                offset_bytes,
+                size_bytes,
+                alloc_size_bytes,
+            } => write!(
+                f,
+                "allocation alloc_id={alloc_id} out-of-bounds: offset={offset_bytes} size={size_bytes} (alloc_size={alloc_size_bytes})"
+            ),
+            CommandProcessorError::CreateRebindMismatch { resource_handle } => write!(
+                f,
+                "CREATE_* for existing handle 0x{resource_handle:08X} has mismatched immutable properties; destroy and recreate the handle"
+            ),
+            CommandProcessorError::InvalidCreateTexture2d => {
+                write!(f, "invalid CREATE_TEXTURE2D parameters")
+            }
         }
     }
 }
@@ -96,6 +229,9 @@ pub struct AeroGpuCommandProcessor {
     ///
     /// Refcount includes the original handle entry plus all imported aliases.
     shared_surface_refcounts: HashMap<u32, u32>,
+
+    /// Tracked resource descriptors + stable allocation bindings.
+    resources: HashMap<u32, ResourceEntry>,
 }
 
 impl AeroGpuCommandProcessor {
@@ -144,20 +280,75 @@ impl AeroGpuCommandProcessor {
         self.shared_surface_handles.get(&handle).copied()
     }
 
-    fn destroy_shared_surface_handle(&mut self, handle: u32) {
+    fn destroy_shared_surface_handle(&mut self, handle: u32) -> Option<u32> {
         let Some(underlying) = self.shared_surface_handles.remove(&handle) else {
-            return;
+            return None;
         };
         let Some(count) = self.shared_surface_refcounts.get_mut(&underlying) else {
-            return;
+            return None;
         };
+
         *count = count.saturating_sub(1);
         if *count != 0 {
-            return;
+            return None;
         }
 
         self.shared_surface_refcounts.remove(&underlying);
         self.shared_surface_by_token.retain(|_, v| *v != underlying);
+        Some(underlying)
+    }
+
+    fn lookup_allocation(
+        allocations: Option<&[AeroGpuSubmissionAllocation]>,
+        alloc_id: u32,
+    ) -> Result<AeroGpuSubmissionAllocation, CommandProcessorError> {
+        let Some(allocations) = allocations else {
+            return Err(CommandProcessorError::MissingAllocationTable(alloc_id));
+        };
+        allocations
+            .iter()
+            .copied()
+            .find(|a| a.alloc_id == alloc_id)
+            .ok_or(CommandProcessorError::UnknownAllocId(alloc_id))
+    }
+
+    fn validate_range_in_resource(
+        handle: u32,
+        resource_size_bytes: u64,
+        offset_bytes: u64,
+        size_bytes: u64,
+    ) -> Result<(), CommandProcessorError> {
+        let end = offset_bytes
+            .checked_add(size_bytes)
+            .ok_or(CommandProcessorError::SizeOverflow)?;
+        if end > resource_size_bytes {
+            return Err(CommandProcessorError::ResourceOutOfBounds {
+                resource_handle: handle,
+                offset_bytes,
+                size_bytes,
+                resource_size_bytes,
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_range_in_allocation(
+        alloc: AeroGpuSubmissionAllocation,
+        offset_bytes: u64,
+        size_bytes: u64,
+    ) -> Result<(), CommandProcessorError> {
+        let end = offset_bytes
+            .checked_add(size_bytes)
+            .ok_or(CommandProcessorError::SizeOverflow)?;
+        if end > alloc.size_bytes {
+            return Err(CommandProcessorError::AllocationOutOfBounds {
+                alloc_id: alloc.alloc_id,
+                offset_bytes,
+                size_bytes,
+                alloc_size_bytes: alloc.size_bytes,
+            });
+        }
+        Ok(())
     }
 
     /// Process a single command buffer submission and update state.
@@ -171,16 +362,159 @@ impl AeroGpuCommandProcessor {
         cmd_stream_bytes: &[u8],
         signal_fence: u64,
     ) -> Result<Vec<AeroGpuEvent>, CommandProcessorError> {
+        self.process_submission_with_allocations(cmd_stream_bytes, None, signal_fence)
+    }
+
+    /// Process a single submission along with its (optional) allocation table.
+    ///
+    /// The allocation table is required to resolve any `backing_alloc_id != 0`
+    /// referenced by resource creation and dirty-range commands. It is expected
+    /// to be provided by the Win7 WDDM KMD submission descriptor.
+    pub fn process_submission_with_allocations(
+        &mut self,
+        cmd_stream_bytes: &[u8],
+        allocations: Option<&[AeroGpuSubmissionAllocation]>,
+        signal_fence: u64,
+    ) -> Result<Vec<AeroGpuEvent>, CommandProcessorError> {
         let stream = parse_cmd_stream(cmd_stream_bytes)?;
         let mut events = Vec::new();
 
         for cmd in stream.cmds {
             match cmd {
-                AeroGpuCmd::CreateTexture2d { texture_handle, .. } => {
+                AeroGpuCmd::CreateBuffer {
+                    buffer_handle,
+                    usage_flags,
+                    size_bytes,
+                    backing_alloc_id,
+                    backing_offset_bytes,
+                } => {
+                    let desc = ResourceDesc::Buffer {
+                        usage_flags,
+                        size_bytes,
+                    };
+
+                    if backing_alloc_id != 0 {
+                        let alloc = Self::lookup_allocation(allocations, backing_alloc_id)?;
+                        let offset = u64::from(backing_offset_bytes);
+                        Self::validate_range_in_allocation(alloc, offset, size_bytes)?;
+                    }
+
+                    match self.resources.get_mut(&buffer_handle) {
+                        Some(existing) => {
+                            if existing.desc != desc {
+                                return Err(CommandProcessorError::CreateRebindMismatch {
+                                    resource_handle: buffer_handle,
+                                });
+                            }
+                            existing.backing_alloc_id = backing_alloc_id;
+                            existing.backing_offset_bytes = backing_offset_bytes;
+                        }
+                        None => {
+                            self.resources.insert(
+                                buffer_handle,
+                                ResourceEntry {
+                                    desc,
+                                    backing_alloc_id,
+                                    backing_offset_bytes,
+                                },
+                            );
+                        }
+                    }
+                }
+                AeroGpuCmd::CreateTexture2d {
+                    texture_handle,
+                    usage_flags,
+                    format,
+                    width,
+                    height,
+                    mip_levels,
+                    array_layers,
+                    row_pitch_bytes,
+                    backing_alloc_id,
+                    backing_offset_bytes,
+                } => {
                     self.register_shared_surface(texture_handle)?;
+
+                    if backing_alloc_id != 0 && row_pitch_bytes == 0 {
+                        return Err(CommandProcessorError::InvalidCreateTexture2d);
+                    }
+
+                    let desc = ResourceDesc::Texture2d {
+                        usage_flags,
+                        format,
+                        width,
+                        height,
+                        mip_levels,
+                        array_layers,
+                        row_pitch_bytes,
+                    };
+
+                    let resource_size_bytes = desc.size_bytes()?;
+                    if backing_alloc_id != 0 {
+                        let alloc = Self::lookup_allocation(allocations, backing_alloc_id)?;
+                        let offset = u64::from(backing_offset_bytes);
+                        Self::validate_range_in_allocation(alloc, offset, resource_size_bytes)?;
+                    }
+
+                    match self.resources.get_mut(&texture_handle) {
+                        Some(existing) => {
+                            if existing.desc != desc {
+                                return Err(CommandProcessorError::CreateRebindMismatch {
+                                    resource_handle: texture_handle,
+                                });
+                            }
+                            existing.backing_alloc_id = backing_alloc_id;
+                            existing.backing_offset_bytes = backing_offset_bytes;
+                        }
+                        None => {
+                            self.resources.insert(
+                                texture_handle,
+                                ResourceEntry {
+                                    desc,
+                                    backing_alloc_id,
+                                    backing_offset_bytes,
+                                },
+                            );
+                        }
+                    }
                 }
                 AeroGpuCmd::DestroyResource { resource_handle } => {
-                    self.destroy_shared_surface_handle(resource_handle);
+                    if let Some(underlying) = self.destroy_shared_surface_handle(resource_handle) {
+                        self.resources.remove(&underlying);
+                        continue;
+                    }
+
+                    // If this handle is still the underlying ID of a shared surface, do not remove
+                    // the resource until the last alias is destroyed.
+                    if !self.shared_surface_refcounts.contains_key(&resource_handle) {
+                        self.resources.remove(&resource_handle);
+                    }
+                }
+                AeroGpuCmd::ResourceDirtyRange {
+                    resource_handle,
+                    offset_bytes,
+                    size_bytes,
+                } => {
+                    let underlying = self.resolve_shared_surface(resource_handle);
+                    let Some(entry) = self.resources.get(&underlying).copied() else {
+                        return Err(CommandProcessorError::UnknownResourceHandle(resource_handle));
+                    };
+
+                    let resource_size_bytes = entry.desc.size_bytes()?;
+                    Self::validate_range_in_resource(
+                        underlying,
+                        resource_size_bytes,
+                        offset_bytes,
+                        size_bytes,
+                    )?;
+
+                    if entry.backing_alloc_id != 0 {
+                        let alloc = Self::lookup_allocation(allocations, entry.backing_alloc_id)?;
+                        let alloc_offset = u64::from(entry.backing_offset_bytes)
+                            .checked_add(offset_bytes)
+                            .ok_or(CommandProcessorError::SizeOverflow)?;
+                        Self::validate_range_in_allocation(alloc, alloc_offset, size_bytes)?;
+                    }
                 }
                 AeroGpuCmd::Present { scanout_id, .. }
                 | AeroGpuCmd::PresentEx { scanout_id, .. } => {
@@ -231,16 +565,12 @@ impl AeroGpuCommandProcessor {
                         return Err(CommandProcessorError::UnknownShareToken(share_token));
                     }
 
-                    if let Some(existing) = self
-                        .shared_surface_handles
-                        .get(&out_resource_handle)
-                        .copied()
-                    {
+                    if let Some(existing) = self.shared_surface_handles.get(&out_resource_handle) {
                         // Idempotent re-import is allowed if it targets the same original.
-                        if existing != underlying {
+                        if *existing != underlying {
                             return Err(CommandProcessorError::SharedSurfaceAliasAlreadyBound {
                                 alias: out_resource_handle,
-                                existing,
+                                existing: *existing,
                                 new: underlying,
                             });
                         }

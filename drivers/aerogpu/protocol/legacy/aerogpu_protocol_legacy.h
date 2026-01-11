@@ -388,7 +388,7 @@ typedef struct aerogpu_submission_desc_allocation {
   aerogpu_u64 allocation_handle; /* driver-private token (for debugging) */
   aerogpu_u64 gpa;               /* base guest physical address */
   aerogpu_u32 size_bytes;
-  aerogpu_u32 reserved0;
+  aerogpu_u32 alloc_id; /* Stable per-allocation ID (matches backing_alloc_id in aerogpu_cmd.h) */
 } aerogpu_submission_desc_allocation;
 
 #ifdef __cplusplus

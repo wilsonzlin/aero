@@ -2608,7 +2608,7 @@ static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_In_ UINT AllocationCount,
         meta->Allocations[i].allocation_handle = (uint64_t)(ULONG_PTR)AllocationList[i].hAllocation;
         meta->Allocations[i].gpa = (uint64_t)AllocationList[i].PhysicalAddress.QuadPart;
         meta->Allocations[i].size_bytes = (uint32_t)(alloc ? alloc->SizeBytes : 0);
-        meta->Allocations[i].reserved0 = 0;
+        meta->Allocations[i].alloc_id = (uint32_t)(alloc ? alloc->AllocationId : 0);
 
         if (alloc) {
             alloc->LastKnownPa.QuadPart = AllocationList[i].PhysicalAddress.QuadPart;

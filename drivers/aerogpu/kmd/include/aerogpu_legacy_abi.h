@@ -78,5 +78,5 @@ typedef struct aerogpu_legacy_submission_desc_allocation {
     uint64_t allocation_handle; /* driver-private token (for debugging) */
     uint64_t gpa;               /* base guest physical address */
     uint32_t size_bytes;
-    uint32_t reserved0;
+    uint32_t alloc_id;          /* stable per-allocation ID referenced by backing_alloc_id */
 } aerogpu_legacy_submission_desc_allocation;

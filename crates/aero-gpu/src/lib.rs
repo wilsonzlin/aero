@@ -60,7 +60,9 @@ pub use bc_decompress::{
     decompress_bc1_rgba8, decompress_bc2_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8,
 };
 pub use buffer_arena::BufferArena;
-pub use command_processor::{AeroGpuCommandProcessor, AeroGpuEvent, CommandProcessorError};
+pub use command_processor::{
+    AeroGpuCommandProcessor, AeroGpuEvent, AeroGpuSubmissionAllocation, CommandProcessorError,
+};
 pub use context::WgpuContext;
 pub use dirty_rect::{merge_and_cap_rects, Rect, RectMergeOutcome};
 pub use error::GpuError;

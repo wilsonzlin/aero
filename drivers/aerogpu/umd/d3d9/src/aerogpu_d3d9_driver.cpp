@@ -2567,6 +2567,53 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     return trace.ret(S_OK);
   }
 
+  // On the real WDDM path we want GPU resources to be backed by WDDM allocations
+  // and referenced in the command stream via a stable per-allocation `alloc_id`
+  // (carried in aerogpu_wddm_alloc_priv and resolved via the per-submit allocation
+  // table).
+  if (!wants_shared && dev->wddm_context.hContext != 0) {
+    if (!res->backing_alloc_id) {
+      if (!pCreateResource->pKmdAllocPrivateData ||
+          pCreateResource->KmdAllocPrivateDataSize < sizeof(aerogpu_wddm_alloc_priv)) {
+        logf("aerogpu-d3d9: CreateResource missing private data buffer (have=%u need=%u)\n",
+             pCreateResource->KmdAllocPrivateDataSize,
+             static_cast<unsigned>(sizeof(aerogpu_wddm_alloc_priv)));
+        return kD3DErrInvalidCall;
+      }
+
+      // Use the same cross-process allocator as shared surfaces so alloc_id values
+      // never collide within a submission (DWM can reference shared + non-shared
+      // allocations together).
+      uint64_t alloc_token = 0;
+      uint32_t alloc_id = 0;
+      do {
+        alloc_token = allocate_share_token(dev->adapter);
+        alloc_id = static_cast<uint32_t>(alloc_token & AEROGPU_WDDM_ALLOC_ID_UMD_MAX);
+      } while (alloc_token != 0 && alloc_id == 0);
+
+      if (!alloc_token || !alloc_id) {
+        logf("aerogpu-d3d9: Failed to allocate alloc_id for non-shared resource (token=%llu alloc_id=%u)\n",
+             static_cast<unsigned long long>(alloc_token),
+             static_cast<unsigned>(alloc_id));
+        return E_FAIL;
+      }
+
+      aerogpu_wddm_alloc_priv priv{};
+      priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+      priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+      priv.alloc_id = alloc_id;
+      priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE;
+      priv.share_token = 0;
+      priv.size_bytes = static_cast<aerogpu_wddm_u64>(res->size_bytes);
+      priv.reserved0 = 0;
+      std::memcpy(pCreateResource->pKmdAllocPrivateData, &priv, sizeof(priv));
+
+      res->backing_alloc_id = alloc_id;
+      res->backing_offset_bytes = 0;
+      res->share_token = 0;
+    }
+  }
+
   if (wants_shared && !open_existing_shared) {
     if (!pCreateResource->pKmdAllocPrivateData ||
         pCreateResource->KmdAllocPrivateDataSize < sizeof(aerogpu_wddm_alloc_priv)) {

@@ -1,0 +1,350 @@
+#include "..\\common\\aerogpu_test_common.h"
+
+#include <d3d9.h>
+
+using aerogpu_test::ComPtr;
+
+struct Vertex {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  DWORD color;
+};
+
+static void PumpMessages() {
+  MSG msg;
+  while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+    TranslateMessage(&msg);
+    DispatchMessage(&msg);
+  }
+}
+
+static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
+  const char* kTestName = "d3d9ex_multiframe_triangle";
+  if (aerogpu_test::HasHelpArg(argc, argv)) {
+    aerogpu_test::PrintfStdout(
+        "Usage: %s.exe [--dump] [--hidden] [--frames=N] [--require-vid=0x####] [--require-did=0x####] "
+        "[--allow-microsoft] [--allow-non-aerogpu]",
+        kTestName);
+    return 0;
+  }
+
+  const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
+  const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
+  const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
+
+  uint32_t frames = 20;
+  aerogpu_test::GetArgUint32(argc, argv, "--frames", &frames);
+  if (frames < 2) {
+    frames = 2;
+  }
+
+  uint32_t require_vid = 0;
+  uint32_t require_did = 0;
+  bool has_require_vid = false;
+  bool has_require_did = false;
+  std::string require_vid_str;
+  std::string require_did_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
+    std::string err;
+    if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
+      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+    }
+    has_require_vid = true;
+  }
+  if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
+    std::string err;
+    if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
+      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+    }
+    has_require_did = true;
+  }
+
+  const int kWidth = 256;
+  const int kHeight = 256;
+
+  HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExMultiframeTriangle",
+                                              L"AeroGPU D3D9Ex Multiframe Triangle",
+                                              kWidth,
+                                              kHeight,
+                                              !hidden);
+  if (!hwnd) {
+    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+  }
+
+  ComPtr<IDirect3D9Ex> d3d;
+  HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, d3d.put());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "Direct3DCreate9Ex", hr);
+  }
+
+  D3DPRESENT_PARAMETERS pp;
+  ZeroMemory(&pp, sizeof(pp));
+  pp.BackBufferWidth = kWidth;
+  pp.BackBufferHeight = kHeight;
+  pp.BackBufferFormat = D3DFMT_X8R8G8B8;
+  pp.BackBufferCount = 1;
+  pp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+  pp.hDeviceWindow = hwnd;
+  pp.Windowed = TRUE;
+  pp.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+
+  ComPtr<IDirect3DDevice9Ex> dev;
+  DWORD create_flags = D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_NOWINDOWCHANGES;
+  hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT,
+                           D3DDEVTYPE_HAL,
+                           hwnd,
+                           create_flags,
+                           &pp,
+                           NULL,
+                           dev.put());
+  if (FAILED(hr)) {
+    create_flags = D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_NOWINDOWCHANGES;
+    hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT,
+                             D3DDEVTYPE_HAL,
+                             hwnd,
+                             create_flags,
+                             &pp,
+                             NULL,
+                             dev.put());
+  }
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CreateDeviceEx", hr);
+  }
+
+  D3DADAPTER_IDENTIFIER9 ident;
+  ZeroMemory(&ident, sizeof(ident));
+  hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
+  if (SUCCEEDED(hr)) {
+    aerogpu_test::PrintfStdout("INFO: %s: adapter: %s (VID=0x%04X DID=0x%04X)",
+                               kTestName,
+                               ident.Description,
+                               (unsigned)ident.VendorId,
+                               (unsigned)ident.DeviceId);
+    if (!allow_microsoft && ident.VendorId == 0x1414) {
+      return aerogpu_test::Fail(kTestName,
+                                "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
+                                "Install AeroGPU driver or pass --allow-microsoft.",
+                                (unsigned)ident.VendorId,
+                                (unsigned)ident.DeviceId);
+    }
+    if (has_require_vid && ident.VendorId != require_vid) {
+      return aerogpu_test::Fail(kTestName,
+                                "adapter VID mismatch: got 0x%04X expected 0x%04X",
+                                (unsigned)ident.VendorId,
+                                (unsigned)require_vid);
+    }
+    if (has_require_did && ident.DeviceId != require_did) {
+      return aerogpu_test::Fail(kTestName,
+                                "adapter DID mismatch: got 0x%04X expected 0x%04X",
+                                (unsigned)ident.DeviceId,
+                                (unsigned)require_did);
+    }
+    if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
+        !(ident.VendorId == 0x1414 && allow_microsoft) &&
+        !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
+      return aerogpu_test::Fail(kTestName,
+                                "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
+                                "or use --require-vid/--require-did)",
+                                ident.Description);
+    }
+  } else if (has_require_vid || has_require_did) {
+    return aerogpu_test::FailHresult(kTestName,
+                                     "GetAdapterIdentifier (required for --require-vid/--require-did)",
+                                     hr);
+  }
+
+  dev->SetRenderState(D3DRS_LIGHTING, FALSE);
+  dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+  dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+
+  hr = dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::SetFVF", hr);
+  }
+
+  const DWORD kRed = D3DCOLOR_XRGB(255, 0, 0);
+  const DWORD kGreen = D3DCOLOR_XRGB(0, 255, 0);
+  const DWORD kBlue = D3DCOLOR_XRGB(0, 0, 255);
+
+  // Create a dynamic vertex buffer once and update it each frame.
+  ComPtr<IDirect3DVertexBuffer9> vb;
+  hr = dev->CreateVertexBuffer(sizeof(Vertex) * 3,
+                               D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY,
+                               D3DFVF_XYZRHW | D3DFVF_DIFFUSE,
+                               D3DPOOL_DEFAULT,
+                               vb.put(),
+                               NULL);
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CreateVertexBuffer", hr);
+  }
+
+  hr = dev->SetStreamSource(0, vb.get(), 0, sizeof(Vertex));
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "SetStreamSource", hr);
+  }
+
+  // Reuse the backbuffer + system-memory surface for readback.
+  ComPtr<IDirect3DSurface9> backbuffer;
+  hr = dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, backbuffer.put());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetBackBuffer", hr);
+  }
+
+  D3DSURFACE_DESC desc;
+  ZeroMemory(&desc, sizeof(desc));
+  hr = backbuffer->GetDesc(&desc);
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DSurface9::GetDesc", hr);
+  }
+
+  ComPtr<IDirect3DSurface9> sysmem;
+  hr = dev->CreateOffscreenPlainSurface(desc.Width,
+                                        desc.Height,
+                                        desc.Format,
+                                        D3DPOOL_SYSTEMMEM,
+                                        sysmem.put(),
+                                        NULL);
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CreateOffscreenPlainSurface", hr);
+  }
+
+  uint32_t first_center = 0;
+  uint32_t second_center = 0;
+
+  for (uint32_t frame = 0; frame < frames; ++frame) {
+    PumpMessages();
+
+    const DWORD tri_color = (frame & 1) ? kBlue : kGreen;
+
+    // Update VB contents.
+    void* data = NULL;
+    hr = vb->Lock(0, sizeof(Vertex) * 3, &data, D3DLOCK_DISCARD);
+    if (FAILED(hr) || !data) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DVertexBuffer9::Lock", hr);
+    }
+    Vertex* verts = reinterpret_cast<Vertex*>(data);
+    verts[0].x = (float)kWidth * 0.25f;
+    verts[0].y = (float)kHeight * 0.25f;
+    verts[0].z = 0.5f;
+    verts[0].rhw = 1.0f;
+    verts[0].color = tri_color;
+    verts[1].x = (float)kWidth * 0.75f;
+    verts[1].y = (float)kHeight * 0.25f;
+    verts[1].z = 0.5f;
+    verts[1].rhw = 1.0f;
+    verts[1].color = tri_color;
+    verts[2].x = (float)kWidth * 0.5f;
+    verts[2].y = (float)kHeight * 0.75f;
+    verts[2].z = 0.5f;
+    verts[2].rhw = 1.0f;
+    verts[2].color = tri_color;
+
+    vb->Unlock();
+
+    hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kRed, 1.0f, 0);
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::Clear", hr);
+    }
+
+    hr = dev->BeginScene();
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::BeginScene", hr);
+    }
+
+    hr = dev->DrawPrimitive(D3DPT_TRIANGLELIST, 0, 1);
+    if (FAILED(hr)) {
+      dev->EndScene();
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::DrawPrimitive", hr);
+    }
+
+    hr = dev->EndScene();
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::EndScene", hr);
+    }
+
+    // Read back before PresentEx; with D3DSWAPEFFECT_DISCARD the contents after Present are undefined.
+    hr = dev->GetRenderTargetData(backbuffer.get(), sysmem.get());
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "GetRenderTargetData", hr);
+    }
+
+    D3DLOCKED_RECT lr;
+    ZeroMemory(&lr, sizeof(lr));
+    hr = sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY);
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DSurface9::LockRect", hr);
+    }
+
+    const int cx = (int)desc.Width / 2;
+    const int cy = (int)desc.Height / 2;
+    const uint32_t center = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
+    sysmem->UnlockRect();
+
+    if (frame == 0) {
+      first_center = center;
+    } else if (frame == 1) {
+      second_center = center;
+    }
+
+    hr = dev->PresentEx(NULL, NULL, NULL, NULL, 0);
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::PresentEx", hr);
+    }
+  }
+
+  // Validate that the center pixel changes across frames (green on frame 0, blue on frame 1).
+  const uint32_t expected0 = 0xFF00FF00u;  // BGRA = (0, 255, 0, 255)
+  const uint32_t expected1 = 0xFF0000FFu;  // BGRA = (255, 0, 0, 255) = blue
+  if ((first_center & 0x00FFFFFFu) != (expected0 & 0x00FFFFFFu) ||
+      (second_center & 0x00FFFFFFu) != (expected1 & 0x00FFFFFFu)) {
+    if (dump) {
+      // Dump the last-read sysmem surface by re-rendering one more green frame.
+      HRESULT dump_hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kRed, 1.0f, 0);
+      if (SUCCEEDED(dump_hr)) {
+        dump_hr = dev->BeginScene();
+      }
+      if (SUCCEEDED(dump_hr)) {
+        dump_hr = dev->DrawPrimitive(D3DPT_TRIANGLELIST, 0, 1);
+      }
+      if (SUCCEEDED(dump_hr)) {
+        dump_hr = dev->EndScene();
+      }
+      if (SUCCEEDED(dump_hr)) {
+        dump_hr = dev->GetRenderTargetData(backbuffer.get(), sysmem.get());
+      }
+      if (SUCCEEDED(dump_hr)) {
+        D3DLOCKED_RECT lr;
+        ZeroMemory(&lr, sizeof(lr));
+        if (SUCCEEDED(sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY))) {
+          std::string err;
+          aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(),
+                                                             L"d3d9ex_multiframe_triangle.bmp"),
+                                       (int)desc.Width,
+                                       (int)desc.Height,
+                                       lr.pBits,
+                                       (int)lr.Pitch,
+                                       &err);
+          sysmem->UnlockRect();
+        }
+      }
+    }
+
+    return aerogpu_test::Fail(kTestName,
+                              "pixel mismatch: frame0_center=0x%08lX frame1_center=0x%08lX",
+                              (unsigned long)first_center,
+                              (unsigned long)second_center);
+  }
+
+  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
+  return 0;
+}
+
+int main(int argc, char** argv) {
+  aerogpu_test::ConfigureProcessForAutomation();
+  int rc = RunD3D9ExMultiframeTriangle(argc, argv);
+  Sleep(30);
+  return rc;
+}

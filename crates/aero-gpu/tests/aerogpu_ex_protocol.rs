@@ -1,4 +1,7 @@
-use aero_gpu::{parse_cmd_stream, AeroGpuCommandProcessor, AeroGpuEvent, CommandProcessorError};
+use aero_gpu::{
+    parse_cmd_stream, AeroGpuCommandProcessor, AeroGpuEvent, AeroGpuSubmissionAllocation,
+    CommandProcessorError,
+};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
@@ -576,4 +579,67 @@ fn rejects_unsupported_abi_major() {
 fn accepts_unknown_abi_minor() {
     let stream = build_stream_with_abi((AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 1), |_| {});
     parse_cmd_stream(&stream).expect("unknown minor versions should be accepted");
+}
+
+#[test]
+fn backing_alloc_id_is_resolved_by_alloc_id_not_entry_index() {
+    // Create a buffer backed by alloc_id=2. Then reorder the allocation table in the next
+    // submission and issue a dirty-range. If the host incorrectly treats backing_alloc_id as
+    // (slot+1), the dirty-range would be validated against the wrong allocation and fail.
+
+    let create_stream = build_stream(|out| {
+        emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+            push_u32(out, 0x10); // buffer_handle
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 64); // size_bytes
+            push_u32(out, 2); // backing_alloc_id (stable alloc_id)
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+    });
+
+    let allocs_submit1 = [
+        AeroGpuSubmissionAllocation {
+            alloc_id: 1,
+            gpa: 0x1000,
+            size_bytes: 16,
+        },
+        AeroGpuSubmissionAllocation {
+            alloc_id: 2,
+            gpa: 0x2000,
+            size_bytes: 64,
+        },
+    ];
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    processor
+        .process_submission_with_allocations(&create_stream, Some(&allocs_submit1), 1)
+        .expect("CREATE_BUFFER should succeed");
+
+    let dirty_stream = build_stream(|out| {
+        emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
+            push_u32(out, 0x10); // resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, 32); // offset_bytes
+            push_u64(out, 16); // size_bytes
+        });
+    });
+
+    // Reorder entries and shrink alloc_id=1 so index-based resolution would go out-of-bounds.
+    let allocs_submit2 = [
+        AeroGpuSubmissionAllocation {
+            alloc_id: 2,
+            gpa: 0x3000,
+            size_bytes: 64,
+        },
+        AeroGpuSubmissionAllocation {
+            alloc_id: 1,
+            gpa: 0x4000,
+            size_bytes: 16,
+        },
+    ];
+
+    processor
+        .process_submission_with_allocations(&dirty_stream, Some(&allocs_submit2), 2)
+        .expect("dirty range should resolve alloc_id=2 even with reordered table");
 }
