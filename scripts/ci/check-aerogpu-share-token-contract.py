@@ -47,19 +47,23 @@ BANNED_SUBSTRINGS = [
     "aerogpu_alloc_privdata",
 ]
 
-# These files must continue to reference the canonical share_token carrier field.
+# These files must continue to reference the canonical share_token carrier field/header.
 REQUIRED_SUBSTRINGS = {
     ROOT / "drivers" / "aerogpu" / "protocol" / "aerogpu_cmd.h": [
         "aerogpu_wddm_alloc_priv.share_token",
+        "aerogpu_wddm_alloc.h",
     ],
     ROOT / "drivers" / "aerogpu" / "protocol" / "README.md": [
         "aerogpu_wddm_alloc_priv.share_token",
+        "aerogpu_wddm_alloc.h",
     ],
     ROOT / "docs" / "16-d3d9ex-dwm-compatibility.md": [
         "aerogpu_wddm_alloc_priv.share_token",
+        "aerogpu_wddm_alloc.h",
     ],
     ROOT / "docs" / "graphics" / "win7-shared-surfaces-share-token.md": [
         "aerogpu_wddm_alloc_priv.share_token",
+        "aerogpu_wddm_alloc.h",
     ],
 }
 
@@ -83,7 +87,9 @@ def main() -> int:
 
     deprecated_header = ROOT / "drivers" / "aerogpu" / "protocol" / "aerogpu_alloc_privdata.h"
     if deprecated_header.exists():
-        errors.append(f"{deprecated_header.relative_to(ROOT)}: deprecated header must not exist")
+        errors.append(
+            f"{deprecated_header.relative_to(ROOT)}: deprecated header present; use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead"
+        )
 
     # Banned substring scan.
     for base in SCAN_PATHS:

@@ -103,7 +103,7 @@ This path is **approximate** (good enough for most D3D9-era `GetRasterStatus` ca
 To support D3D9Ex + DWM redirected surfaces and other cross-process shared allocations, AeroGPU relies on stable identifiers:
 
 - `alloc_id` (32-bit, nonzero): UMD-owned allocation ID used by the per-submit allocation table (`alloc_id → {gpa, size_bytes, flags}`).
-- `share_token` (64-bit, nonzero for shared allocations): stable cross-process token persisted by the UMD and used by the AeroGPU command stream shared-surface ops (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`).
+- `share_token` (64-bit, nonzero for shared allocations): UMD-owned stable token used by the AeroGPU command stream shared-surface ops (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`).
 
 For robustness against Win7's varying `CloseAllocation` / `DestroyAllocation` call patterns, the KMD also maintains an adapter-global open refcount keyed by `share_token`. When the final cross-process allocation wrapper for a shared surface is released, the KMD emits `RELEASE_SHARED_SURFACE { share_token }` (a best-effort internal ring submission) so the host can remove the `share_token → resource` mapping used for future `IMPORT_SHARED_SURFACE` calls.
 
@@ -121,19 +121,17 @@ The preserved private-data layout is defined in:
 
 - `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`
 
-### `share_token` (UMD → KMD input; preserved across `OpenResource`)
+### `share_token` (UMD → KMD input; stable cross-process)
 
 For shared surfaces, the `share_token` used by the AeroGPU protocol is carried in the
-same preserved WDDM allocation private driver data blob as `alloc_id`
-(`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+preserved WDDM allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token`
+in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`):
 
-- The blob is treated as **UMD → KMD input**: the UMD generates a collision-resistant non-zero
-  `share_token` for shared allocations and stores it in the per-allocation private data.
-- For **shared allocations**, dxgkrnl preserves the blob and returns the exact same bytes on
-  `OpenResource`/`DxgkDdiOpenAllocation` in another process, ensuring both processes observe the
-  same `share_token`.
-- The KMD validates the private-data blob (magic/version/alloc_id/share_token) and can store the
-  token in its allocation bookkeeping as needed.
+- The UMD generates a collision-resistant token and writes it into the blob during
+  CreateResource/CreateAllocation.
+- For shared allocations, dxgkrnl preserves the blob and returns the exact same bytes
+  on `OpenResource`/`DxgkDdiOpenAllocation` in another process, ensuring both processes
+  observe the same `share_token`.
 
 Do **not** derive `share_token` from the numeric value of the D3D shared `HANDLE`: handle values are process-local and not stable cross-process.
 

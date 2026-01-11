@@ -955,9 +955,9 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_export_shared_surface) == 24);
  * IMPORT_SHARED_SURFACE:
  * - Creates an alias handle `out_resource_handle` which refers to the same
  *   underlying resource previously exported under `share_token`.
- * - `share_token` must match the value used during export (recovered from
- *   `aerogpu_wddm_alloc_priv.share_token` in the preserved WDDM allocation private
- *   driver data blob), not the user-mode shared `HANDLE` numeric value.
+ * - `share_token` must match the value used during export (and recovered from
+ *   the preserved allocation private driver data), not the user-mode shared
+ *   `HANDLE` value.
  * - If the `share_token` is unknown, the host should treat the command as a
  *   validation error (implementation-defined error reporting).
  */

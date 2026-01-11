@@ -14,7 +14,7 @@ That `HANDLE` is an **NT handle**, which means:
 
 Therefore: **AeroGPU must not use the numeric D3D shared `HANDLE` value as a protocol share identifier.**
 
-## AeroGPU contract: `share_token` is a stable token persisted in WDDM allocation private driver data
+## AeroGPU contract: `share_token` is a stable token persisted in WDDM allocation private data
 
 In the AeroGPU guest↔host command stream, shared surfaces are keyed by a stable `u64 share_token`:
 
@@ -40,7 +40,7 @@ same `share_token`.
 ### 2) Open shared resource → import (token)
 
 1. The OS duplicates/inherits the shared `HANDLE` into the consumer process.
-2. Consumer opens the resource; dxgkrnl returns the preserved allocation private driver data bytes so the UMD can recover the same `share_token`.
+2. Consumer opens the resource; dxgkrnl returns the preserved allocation private driver data so the UMD can recover the same `share_token`.
 3. The UMD sends `AEROGPU_CMD_IMPORT_SHARED_SURFACE` with `share_token`.
 
 At no point should the AeroGPU protocol key off the user-mode `HANDLE` numeric value.
