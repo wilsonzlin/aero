@@ -159,6 +159,14 @@ When a vblank occurs (device-side):
    * queue the miniport DPC via `DxgkCbQueueDpc` (if required by the platform/WDK contract)
 3. Miniport DPC (`DxgkDdiDpcRoutine`) performs any deferred work and calls the appropriate dxgkrnl DPC notification callback(s).
 
+On **Windows 7 (WDDM 1.1)** specifically, dxgkrnl uses:
+
+* `DXGK_INTERRUPT_TYPE_CRTC_VSYNC` for vblank/vsync.
+* `DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId` to identify the source that vblanked.
+
+Using the wrong `DXGK_INTERRUPT_TYPE` value or populating the wrong anonymous-union member can
+prevent `D3DKMTWaitForVerticalBlankEvent` from completing and can break D3D9 raster status pacing.
+
 The key requirement is that dxgkrnl observes “vblank happened for source S” so it can:
 * release threads waiting in `D3DKMTWaitForVerticalBlankEvent`
 * advance present/flip bookkeeping that is keyed to vblank
@@ -170,6 +178,9 @@ dxgkrnl uses this entrypoint to mask vblank interrupts when there are no waiters
 For a virtual device:
 * translate “enable vblank interrupt” into setting the device IRQ mask bit(s)
 * translate “disable” into clearing them
+
+On Win7/WDDM 1.1, dxgkrnl calls `DxgkDdiControlInterrupt` with `InterruptType = DXGK_INTERRUPT_TYPE_CRTC_VSYNC`
+to gate vblank delivery.
 
 ### GetScanLine (optional but recommended)
 
