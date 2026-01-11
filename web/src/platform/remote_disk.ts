@@ -623,6 +623,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       return await this.getBlockIdb(blockIndex, onLog);
     }
 
+    const generation = this.cacheGeneration;
     const blocksDir = this.blocksDir;
     if (!blocksDir) throw new Error("Remote disk OPFS blocks directory not initialized");
 
@@ -633,9 +634,14 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
         const file = await handle.getFile();
         const bytes = new Uint8Array(await file.arrayBuffer());
         if (bytes.length === r.end - r.start) {
-          this.telemetry.cacheHits++;
-          this.noteAccess(blockIndex);
-          await this.persistMeta();
+          // If the cache was cleared while we were awaiting OPFS reads, treat this as a
+          // best-effort read-through hit but avoid repopulating metadata/telemetry for
+          // the new generation.
+          if (generation === this.cacheGeneration) {
+            this.telemetry.cacheHits++;
+            this.noteAccess(blockIndex);
+            await this.persistMeta();
+          }
           return bytes;
         }
       } catch {
@@ -643,11 +649,13 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       }
 
       // Heal: metadata said cached but file missing/corrupt.
-      this.rangeSet.remove(r.start, r.end);
-      delete (this.meta.chunkLastAccess ?? {})[String(blockIndex)];
-      this.meta.cachedRanges = this.rangeSet.getRanges();
-      this.cachedBytes = this.rangeSet.totalLen();
-      await this.persistMeta();
+      if (generation === this.cacheGeneration) {
+        this.rangeSet.remove(r.start, r.end);
+        delete (this.meta.chunkLastAccess ?? {})[String(blockIndex)];
+        this.meta.cachedRanges = this.rangeSet.getRanges();
+        this.cachedBytes = this.rangeSet.totalLen();
+        await this.persistMeta();
+      }
     }
 
     const existing = this.inflight.get(blockIndex);
@@ -656,7 +664,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       return await existing;
     }
 
-    const generation = this.cacheGeneration;
+    const fetchGeneration = this.cacheGeneration;
     const task = (async () => {
       const start = performance.now();
       this.telemetry.cacheMisses++;
@@ -673,7 +681,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       }
       // If the caller cleared the cache while this fetch was in-flight, allow the read to
       // complete but avoid repopulating the cache/telemetry for the new generation.
-      if (generation !== this.cacheGeneration) {
+      if (fetchGeneration !== this.cacheGeneration) {
         return buf;
       }
       this.telemetry.bytesDownloaded += buf.byteLength;
@@ -721,16 +729,26 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       const cached = await this.idbCache!.get(blockIndex);
       if (cached) {
         if (cached.byteLength === r.end - r.start) {
-          this.telemetry.cacheHits++;
+          // Only attribute hits to the current generation; the cache might have been cleared
+          // while we were awaiting IndexedDB.
+          if (generation === this.cacheGeneration) {
+            this.telemetry.cacheHits++;
+          }
           return cached;
         }
         // Heal: cached but wrong size.
-        await this.idbCache!.delete(blockIndex);
+        // If the cache was cleared while we were awaiting IndexedDB, skip healing so we
+        // don't write into a new generation.
+        if (generation === this.cacheGeneration) {
+          await this.idbCache!.delete(blockIndex);
+        }
       }
 
-      this.telemetry.cacheMisses++;
-      this.telemetry.requests++;
-      this.telemetry.lastFetchRange = { ...r };
+      if (generation === this.cacheGeneration) {
+        this.telemetry.cacheMisses++;
+        this.telemetry.requests++;
+        this.telemetry.lastFetchRange = { ...r };
+      }
       onLog?.(`cache miss: fetching bytes=${r.start}-${r.end - 1}`);
       const resp = await fetch(this.url, { headers: { Range: `bytes=${r.start}-${r.end - 1}` } });
       if (resp.status !== 206) {
