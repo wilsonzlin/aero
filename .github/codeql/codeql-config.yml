@@ -1,0 +1,22 @@
+name: "Aero CodeQL config"
+
+# Start conservative to keep alert noise low while we establish triage flow.
+# We can expand to `security-extended` (or custom queries) once CodeQL is stable.
+queries:
+  - uses: security-and-quality
+
+query-filters:
+  - exclude:
+      precision: low
+
+paths-ignore:
+  - "**/node_modules/**"
+  - "**/dist/**"
+  - "**/build/**"
+  - "**/target/**"
+  - "**/*.min.js"
+  - "web/pkg/**"
+  - "web/pkg-dev/**"
+  - "web/pkg-release/**"
+  - "web/src/wasm/pkg-*/**"
+

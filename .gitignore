@@ -14,7 +14,17 @@ __pycache__/
 # Environment (secrets)
 .env
 .env.*
-!.env.example
+!**/.env.example
+.envrc
+
+# Credential / key files (secrets)
+.npmrc
+.netrc
+*.key
+*.pem
+*.p12
+*.pfx
+!tools/win-blob-dump/examples/*.pem
 
 # Local Helm values files (often contain secrets)
 aero-values.yaml
@@ -27,6 +37,8 @@ values-local.yaml
 *.tfstate
 *.tfstate.*
 *.tfplan
+*.tfvars
+!**/*.tfvars.example
 crash.log
 crash.*.log
 

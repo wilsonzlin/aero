@@ -7,7 +7,7 @@ Please **do not** open public issues for security vulnerabilities.
 Preferred reporting channels:
 
 1. GitHub Security Advisories (private report), if enabled for this repository.
-2. Email: `<security@your-domain.example>`
+2. If Security Advisories are not enabled, contact the maintainers via GitHub (without including sensitive details) to arrange a secure channel.
 
 Include:
 
@@ -28,3 +28,7 @@ Maintainers will aim to:
 
 Until the project has tagged releases, only the `main` branch is considered
 supported for security fixes.
+
+## Contributor security hygiene
+
+For contributor-focused guidance (handling secrets, responding to leaks, and triaging CodeQL findings), see [`docs/security.md`](./docs/security.md).
