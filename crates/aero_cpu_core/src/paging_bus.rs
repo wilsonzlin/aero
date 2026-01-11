@@ -77,6 +77,54 @@ impl<B> PagingBus<B> {
     }
 
     #[inline]
+    fn read_u16_access(&mut self, vaddr: u64, access: AccessType) -> Result<u16, Exception>
+    where
+        B: MemoryBus,
+    {
+        let page_off = vaddr & (PAGE_SIZE - 1);
+        if page_off <= PAGE_SIZE - 2 {
+            let paddr = self.translate(vaddr, access)?;
+            return Ok(self.phys.read_u16(paddr));
+        }
+
+        let mut buf = [0u8; 2];
+        self.read_bytes_access(vaddr, &mut buf, access)?;
+        Ok(u16::from_le_bytes(buf))
+    }
+
+    #[inline]
+    fn read_u32_access(&mut self, vaddr: u64, access: AccessType) -> Result<u32, Exception>
+    where
+        B: MemoryBus,
+    {
+        let page_off = vaddr & (PAGE_SIZE - 1);
+        if page_off <= PAGE_SIZE - 4 {
+            let paddr = self.translate(vaddr, access)?;
+            return Ok(self.phys.read_u32(paddr));
+        }
+
+        let mut buf = [0u8; 4];
+        self.read_bytes_access(vaddr, &mut buf, access)?;
+        Ok(u32::from_le_bytes(buf))
+    }
+
+    #[inline]
+    fn read_u64_access(&mut self, vaddr: u64, access: AccessType) -> Result<u64, Exception>
+    where
+        B: MemoryBus,
+    {
+        let page_off = vaddr & (PAGE_SIZE - 1);
+        if page_off <= PAGE_SIZE - 8 {
+            let paddr = self.translate(vaddr, access)?;
+            return Ok(self.phys.read_u64(paddr));
+        }
+
+        let mut buf = [0u8; 8];
+        self.read_bytes_access(vaddr, &mut buf, access)?;
+        Ok(u64::from_le_bytes(buf))
+    }
+
+    #[inline]
     fn write_u8_access(
         &mut self,
         vaddr: u64,
@@ -89,6 +137,51 @@ impl<B> PagingBus<B> {
         let paddr = self.translate(vaddr, access)?;
         self.phys.write_u8(paddr, value);
         Ok(())
+    }
+
+    #[inline]
+    fn write_u16_access(&mut self, vaddr: u64, access: AccessType, value: u16) -> Result<(), Exception>
+    where
+        B: MemoryBus,
+    {
+        let page_off = vaddr & (PAGE_SIZE - 1);
+        if page_off <= PAGE_SIZE - 2 {
+            let paddr = self.translate(vaddr, access)?;
+            self.phys.write_u16(paddr, value);
+            return Ok(());
+        }
+
+        self.write_bytes_access(vaddr, &value.to_le_bytes(), access)
+    }
+
+    #[inline]
+    fn write_u32_access(&mut self, vaddr: u64, access: AccessType, value: u32) -> Result<(), Exception>
+    where
+        B: MemoryBus,
+    {
+        let page_off = vaddr & (PAGE_SIZE - 1);
+        if page_off <= PAGE_SIZE - 4 {
+            let paddr = self.translate(vaddr, access)?;
+            self.phys.write_u32(paddr, value);
+            return Ok(());
+        }
+
+        self.write_bytes_access(vaddr, &value.to_le_bytes(), access)
+    }
+
+    #[inline]
+    fn write_u64_access(&mut self, vaddr: u64, access: AccessType, value: u64) -> Result<(), Exception>
+    where
+        B: MemoryBus,
+    {
+        let page_off = vaddr & (PAGE_SIZE - 1);
+        if page_off <= PAGE_SIZE - 8 {
+            let paddr = self.translate(vaddr, access)?;
+            self.phys.write_u64(paddr, value);
+            return Ok(());
+        }
+
+        self.write_bytes_access(vaddr, &value.to_le_bytes(), access)
     }
 
     fn read_bytes_access(
@@ -186,21 +279,15 @@ impl<B: MemoryBus> CpuBus for WriteIntent<'_, B> {
     }
 
     fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
-        let mut buf = [0u8; 2];
-        self.bus.read_bytes_access(vaddr, &mut buf, AccessType::Write)?;
-        Ok(u16::from_le_bytes(buf))
+        self.bus.read_u16_access(vaddr, AccessType::Write)
     }
 
     fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
-        let mut buf = [0u8; 4];
-        self.bus.read_bytes_access(vaddr, &mut buf, AccessType::Write)?;
-        Ok(u32::from_le_bytes(buf))
+        self.bus.read_u32_access(vaddr, AccessType::Write)
     }
 
     fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
-        let mut buf = [0u8; 8];
-        self.bus.read_bytes_access(vaddr, &mut buf, AccessType::Write)?;
-        Ok(u64::from_le_bytes(buf))
+        self.bus.read_u64_access(vaddr, AccessType::Write)
     }
 
     fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
@@ -214,18 +301,15 @@ impl<B: MemoryBus> CpuBus for WriteIntent<'_, B> {
     }
 
     fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
-        self.bus
-            .write_bytes_access(vaddr, &val.to_le_bytes(), AccessType::Write)
+        self.bus.write_u16_access(vaddr, AccessType::Write, val)
     }
 
     fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
-        self.bus
-            .write_bytes_access(vaddr, &val.to_le_bytes(), AccessType::Write)
+        self.bus.write_u32_access(vaddr, AccessType::Write, val)
     }
 
     fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
-        self.bus
-            .write_bytes_access(vaddr, &val.to_le_bytes(), AccessType::Write)
+        self.bus.write_u64_access(vaddr, AccessType::Write, val)
     }
 
     fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
@@ -272,21 +356,15 @@ where
     }
 
     fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
-        let mut buf = [0u8; 2];
-        self.read_bytes_access(vaddr, &mut buf, AccessType::Read)?;
-        Ok(u16::from_le_bytes(buf))
+        self.read_u16_access(vaddr, AccessType::Read)
     }
 
     fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
-        let mut buf = [0u8; 4];
-        self.read_bytes_access(vaddr, &mut buf, AccessType::Read)?;
-        Ok(u32::from_le_bytes(buf))
+        self.read_u32_access(vaddr, AccessType::Read)
     }
 
     fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
-        let mut buf = [0u8; 8];
-        self.read_bytes_access(vaddr, &mut buf, AccessType::Read)?;
-        Ok(u64::from_le_bytes(buf))
+        self.read_u64_access(vaddr, AccessType::Read)
     }
 
     fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
@@ -300,15 +378,15 @@ where
     }
 
     fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
-        self.write_bytes_access(vaddr, &val.to_le_bytes(), AccessType::Write)
+        self.write_u16_access(vaddr, AccessType::Write, val)
     }
 
     fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
-        self.write_bytes_access(vaddr, &val.to_le_bytes(), AccessType::Write)
+        self.write_u32_access(vaddr, AccessType::Write, val)
     }
 
     fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
-        self.write_bytes_access(vaddr, &val.to_le_bytes(), AccessType::Write)
+        self.write_u64_access(vaddr, AccessType::Write, val)
     }
 
     fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {

@@ -166,6 +166,117 @@ fn long_mode_4k_translation_read_write_exec() {
 }
 
 #[test]
+fn pagingbus_scalar_accesses_use_wide_physical_reads_and_writes_when_possible() {
+    #[derive(Clone, Debug)]
+    struct WideIoMemory {
+        data: Vec<u8>,
+        read_u8_calls: usize,
+        read_u32_calls: usize,
+        write_u8_calls: usize,
+        write_u32_calls: usize,
+    }
+
+    impl WideIoMemory {
+        fn new(size: usize) -> Self {
+            Self {
+                data: vec![0; size],
+                read_u8_calls: 0,
+                read_u32_calls: 0,
+                write_u8_calls: 0,
+                write_u32_calls: 0,
+            }
+        }
+
+        fn load(&mut self, paddr: u64, bytes: &[u8]) {
+            let off = paddr as usize;
+            self.data[off..off + bytes.len()].copy_from_slice(bytes);
+        }
+    }
+
+    impl MemoryBus for WideIoMemory {
+        fn read_u8(&mut self, _paddr: u64) -> u8 {
+            self.read_u8_calls += 1;
+            0
+        }
+
+        fn read_u16(&mut self, paddr: u64) -> u16 {
+            let off = paddr as usize;
+            u16::from_le_bytes(self.data[off..off + 2].try_into().unwrap())
+        }
+
+        fn read_u32(&mut self, paddr: u64) -> u32 {
+            self.read_u32_calls += 1;
+            let off = paddr as usize;
+            u32::from_le_bytes(self.data[off..off + 4].try_into().unwrap())
+        }
+
+        fn read_u64(&mut self, paddr: u64) -> u64 {
+            let off = paddr as usize;
+            u64::from_le_bytes(self.data[off..off + 8].try_into().unwrap())
+        }
+
+        fn write_u8(&mut self, _paddr: u64, _value: u8) {
+            self.write_u8_calls += 1;
+        }
+
+        fn write_u16(&mut self, paddr: u64, value: u16) {
+            let off = paddr as usize;
+            self.data[off..off + 2].copy_from_slice(&value.to_le_bytes());
+        }
+
+        fn write_u32(&mut self, paddr: u64, value: u32) {
+            self.write_u32_calls += 1;
+            let off = paddr as usize;
+            self.data[off..off + 4].copy_from_slice(&value.to_le_bytes());
+        }
+
+        fn write_u64(&mut self, paddr: u64, value: u64) {
+            let off = paddr as usize;
+            self.data[off..off + 8].copy_from_slice(&value.to_le_bytes());
+        }
+    }
+
+    let mut phys = WideIoMemory::new(0x20000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let data_page = 0x5000u64;
+
+    setup_long4_4k(
+        &mut phys,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        data_page | PTE_P | PTE_RW | PTE_US,
+        0,
+    );
+
+    phys.load(data_page, &[0x11, 0x22, 0x33, 0x44]);
+
+    let mut bus = PagingBus::new(phys);
+    let state = long_state(pml4_base, 0, 0);
+    bus.sync(&state);
+
+    bus.inner_mut().read_u8_calls = 0;
+    bus.inner_mut().read_u32_calls = 0;
+
+    assert_eq!(bus.read_u32(0).unwrap(), 0x4433_2211);
+    assert_eq!(bus.inner_mut().read_u8_calls, 0);
+    assert_eq!(bus.inner_mut().read_u32_calls, 1);
+
+    bus.inner_mut().write_u8_calls = 0;
+    bus.inner_mut().write_u32_calls = 0;
+
+    bus.write_u32(0, 0xAABB_CCDD).unwrap();
+    assert_eq!(bus.inner_mut().write_u8_calls, 0);
+    assert_eq!(bus.inner_mut().write_u32_calls, 1);
+    assert_eq!(bus.inner_mut().read_u32(data_page), 0xAABB_CCDD);
+}
+
+#[test]
 fn page_fault_error_codes_not_present_vs_protection() {
     let mut phys = TestMemory::new(0x20000);
 
