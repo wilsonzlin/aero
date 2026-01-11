@@ -1018,8 +1018,15 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
          * like vblank without requiring a full ring ABI migration.
          */
         if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG))) {
-            features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
-                       ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
+            const ULONGLONG maybeFeatures = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
+                                            ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
+            const ULONGLONG knownFeatures = AEROGPU_FEATURE_FENCE_PAGE | AEROGPU_FEATURE_CURSOR | AEROGPU_FEATURE_SCANOUT |
+                                            AEROGPU_FEATURE_VBLANK | AEROGPU_FEATURE_TRANSFER;
+            const ULONGLONG unknownFeatures = maybeFeatures & ~knownFeatures;
+            if (unknownFeatures != 0) {
+                AEROGPU_LOG("StartDevice: legacy FEATURES has unknown bits 0x%I64x; masking", (unsigned long long)unknownFeatures);
+            }
+            features = maybeFeatures & knownFeatures;
         }
         if (magic != AEROGPU_LEGACY_MMIO_MAGIC) {
             AEROGPU_LOG("StartDevice: unknown MMIO magic=0x%08lx (expected 0x%08x); assuming legacy ABI",
