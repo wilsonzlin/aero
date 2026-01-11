@@ -157,8 +157,9 @@ discourage accidental installs against the legacy device model). If you need the
 bring-up/compatibility, install using the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` and build the
 emulator with the legacy device model enabled (feature `emulator/aerogpu-legacy`).
 
-Note: these legacy INFs are kept in the repo source tree for compatibility/regression and are intentionally **not**
-included in the CI-staged packages under `out/packages/` by default.
+Note: the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` are kept in the repo source tree for
+compatibility/regression. CI-staged packages include a copy at `legacy/aerogpu.inf` so Guest Tools can support
+emulator builds that still expose the deprecated legacy device model.
 
 See `docs/abi/aerogpu-pci-identity.md` for the full context and the matching emulator device models. The Win7 KMD
 supports multiple ABIs and auto-detects which one is active based on MMIO magic; see `drivers/aerogpu/kmd/README.md`.
@@ -193,7 +194,7 @@ This produces:
 By default, these CI-staged packages are **D3D9-only** and include:
 
 - `aerogpu.inf` at the package root (canonical `PCI\VEN_A3A0&DEV_0001`)
-- `packaging/win7/legacy/aerogpu.inf` for the deprecated legacy bring-up device model (`PCI\VEN_1AED&DEV_0001`)
+- `legacy/aerogpu.inf` for the deprecated legacy bring-up device model (`PCI\VEN_1AED&DEV_0001`)
 
 The optional DX11 INF (`aerogpu_dx11.inf`) is not included unless you customize
 `drivers/aerogpu/ci-package.json` (see section 0).

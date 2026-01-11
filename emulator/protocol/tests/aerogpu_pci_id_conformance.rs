@@ -146,6 +146,7 @@ fn aerogpu_pci_ids_match_repo_contracts() {
     for relative_path in [
         "drivers/aerogpu/packaging/win7/legacy/aerogpu.inf",
         "drivers/aerogpu/packaging/win7/legacy/aerogpu_dx11.inf",
+        "drivers/aerogpu/legacy/aerogpu.inf",
     ] {
         let path = repo_root.join(relative_path);
         assert_file_contains_noncomment_line(&path, &legacy_hwid);
