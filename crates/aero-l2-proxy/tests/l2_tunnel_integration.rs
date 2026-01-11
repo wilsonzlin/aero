@@ -16,22 +16,34 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     let echo = start_tcp_echo_server().await;
     let udp_echo = start_udp_echo_server().await;
 
+    let tcp_allowed_port = echo.addr.port();
+    let tcp_denied_port = if tcp_allowed_port == u16::MAX {
+        u16::MAX - 1
+    } else {
+        tcp_allowed_port + 1
+    };
+
+    let udp_allowed_port = udp_echo.addr.port();
+    let udp_denied_port = if udp_allowed_port == u16::MAX {
+        u16::MAX - 1
+    } else {
+        udp_allowed_port + 1
+    };
+
     std::env::set_var("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     std::env::set_var("AERO_L2_DNS_A", "echo.local=203.0.113.10");
+    std::env::set_var("AERO_L2_ALLOWED_TCP_PORTS", tcp_allowed_port.to_string());
+    std::env::set_var("AERO_L2_ALLOWED_UDP_PORTS", udp_allowed_port.to_string());
     std::env::set_var(
         "AERO_L2_TCP_FORWARD",
         format!(
-            "203.0.113.10:{}=127.0.0.1:{}",
-            echo.addr.port(),
-            echo.addr.port()
+            "203.0.113.10:{tcp_allowed_port}=127.0.0.1:{tcp_allowed_port},203.0.113.10:{tcp_denied_port}=127.0.0.1:{tcp_allowed_port}",
         ),
     );
     std::env::set_var(
         "AERO_L2_UDP_FORWARD",
         format!(
-            "203.0.113.11:{}=127.0.0.1:{}",
-            udp_echo.addr.port(),
-            udp_echo.addr.port()
+            "203.0.113.11:{udp_allowed_port}=127.0.0.1:{udp_allowed_port},203.0.113.11:{udp_denied_port}=127.0.0.1:{udp_allowed_port}",
         ),
     );
 
@@ -176,6 +188,39 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     let rst_seg = parse_tcp_from_frame(&rst).unwrap();
     assert_eq!(rst_seg.ack_number(), denied_isn + 1);
 
+    // --- Policy sanity check: port allowlist is enforced even with forward-map overrides ---
+    let denied_port_guest_port = 40002;
+    let denied_port_isn = 2345;
+    let denied_port_syn = wrap_tcp_ipv4_eth(
+        guest_mac,
+        gateway_mac,
+        guest_ip,
+        Ipv4Addr::new(203, 0, 113, 10),
+        denied_port_guest_port,
+        tcp_denied_port,
+        denied_port_isn,
+        0,
+        TcpFlags::SYN,
+        &[],
+    );
+    ws_tx
+        .send(Message::Binary(encode_l2_frame(&denied_port_syn).into()))
+        .await
+        .unwrap();
+    let denied_port_rst = wait_for_eth_frame(&mut ws_rx, |f| {
+        let Ok(seg) = parse_tcp_from_frame(f) else {
+            return false;
+        };
+        seg.src_port() == tcp_denied_port
+            && seg.dst_port() == denied_port_guest_port
+            && seg.flags().contains(TcpFlags::RST)
+            && seg.ack_number() == denied_port_isn + 1
+    })
+    .await
+    .unwrap();
+    let denied_port_rst_seg = parse_tcp_from_frame(&denied_port_rst).unwrap();
+    assert_eq!(denied_port_rst_seg.ack_number(), denied_port_isn + 1);
+
     // --- UDP echo probe ---
     let udp_remote_ip = Ipv4Addr::new(203, 0, 113, 11);
     let udp_remote_port = udp_echo.addr.port();
@@ -207,6 +252,39 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     .unwrap();
     let udp = parse_udp_from_frame(&udp_resp).unwrap();
     assert_eq!(udp.payload(), udp_payload);
+
+    // UDP port allowlist should apply even with forward-map overrides.
+    let denied_udp_guest_port = 50001;
+    let denied_udp_payload = b"hi-udp-denied";
+    let denied_udp_frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        gateway_mac,
+        guest_ip,
+        udp_remote_ip,
+        denied_udp_guest_port,
+        udp_denied_port,
+        denied_udp_payload,
+    );
+    ws_tx
+        .send(Message::Binary(encode_l2_frame(&denied_udp_frame).into()))
+        .await
+        .unwrap();
+    let denied_udp_wait = tokio::time::timeout(std::time::Duration::from_millis(300), async {
+        wait_for_eth_frame(&mut ws_rx, |f| {
+            let Ok(udp) = parse_udp_from_frame(f) else {
+                return false;
+            };
+            udp.src_port() == udp_denied_port
+                && udp.dst_port() == denied_udp_guest_port
+                && udp.payload() == denied_udp_payload
+        })
+        .await
+    })
+    .await;
+    assert!(
+        denied_udp_wait.is_err(),
+        "unexpected UDP response on denied port"
+    );
 
     // --- DNS query for echo.local ---
     let dns_id = 0x1234;

@@ -22,7 +22,7 @@ impl TestServer {
             dns_default_ttl_secs: 60,
             dns_max_ttl_secs: 300,
             capture_dir,
-            policy: EgressPolicy::from_env().unwrap(),
+            policy: EgressPolicy::default(),
             test_overrides: Default::default(),
         };
 

@@ -34,7 +34,7 @@ static DEFAULT_DENY_IPV4: LazyLock<Vec<IpCidr>> = LazyLock::new(|| {
     ]
 });
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct EgressPolicy {
     allow_private_ips: bool,
     allowed_tcp_ports: Option<HashSet<u16>>,
