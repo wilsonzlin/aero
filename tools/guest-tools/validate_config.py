@@ -6,7 +6,8 @@ Why this exists:
 - `guest-tools/config/devices.cmd` drives boot-critical driver installation (service
   names + HWIDs).
 - `tools/packaging/specs/*.json` drives `aero_packager` validation when building Guest
-  Tools media (ISO/zip) from upstream virtio-win drivers.
+  Tools media (ISO/zip) from driver packages (either upstream virtio-win or the
+  in-repo Aero drivers produced by CI).
 
 If these drift (e.g. emulator PCI IDs change but only one side is updated), we can
 produce Guest Tools media that fails to install the correct drivers (storage/network
@@ -131,8 +132,16 @@ def load_devices_cmd(path: Path) -> DevicesConfig:
             + f"\nFile: {path}"
         )
 
+    virtio_blk_service = vars_map["AERO_VIRTIO_BLK_SERVICE"].strip()
+    if not virtio_blk_service:
+        raise ValidationError(
+            "devices.cmd AERO_VIRTIO_BLK_SERVICE is empty.\n"
+            "Remediation: set AERO_VIRTIO_BLK_SERVICE to the storage driver's INF AddService name.\n"
+            f"File: {path}"
+        )
+
     return DevicesConfig(
-        virtio_blk_service=vars_map["AERO_VIRTIO_BLK_SERVICE"],
+        virtio_blk_service=virtio_blk_service,
         virtio_blk_hwids=_parse_quoted_list(vars_map.get("AERO_VIRTIO_BLK_HWIDS", "")),
         virtio_net_hwids=_parse_quoted_list(vars_map.get("AERO_VIRTIO_NET_HWIDS", "")),
         virtio_input_hwids=_parse_quoted_list(vars_map.get("AERO_VIRTIO_INPUT_HWIDS", "")),
@@ -381,21 +390,18 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             f"Remediation: update {spec_path} to include them."
         )
 
-    # Only enforce the virtio-win service name when validating a spec that
-    # includes the virtio-win storage driver entry.
-    if "viostor" in spec_expected and devices.virtio_blk_service.strip().lower() != "viostor":
-        raise ValidationError(
-            "Mismatch: devices.cmd storage service name does not match the virtio-win storage driver.\n"
-            "\n"
-            f"devices.cmd AERO_VIRTIO_BLK_SERVICE: {devices.virtio_blk_service!r}\n"
-            "Expected (virtio-win): 'viostor'\n"
-            "\n"
-            "Remediation:\n"
-            "- If you are using the upstream virtio-win storage driver, set:\n"
-            "    set \"AERO_VIRTIO_BLK_SERVICE=viostor\"\n"
-            "- If you intentionally changed the storage miniport/service name, ensure the INF AddService name,\n"
-            "  Guest Tools preseed (devices.cmd), and packaging inputs are all updated together.\n"
-        )
+    # Storage service name: `devices.cmd` must declare the storage driver's INF AddService
+    # name so `guest-tools/setup.cmd` can preseed BOOT_START + CriticalDeviceDatabase keys.
+    #
+    # Note: we do *not* enforce a specific service name for the virtio-win specs here.
+    # The in-repo Guest Tools config tracks Aero's clean-room storage driver service name
+    # (currently `aerovblk`), while virtio-win uses `viostor`. Packaging wrappers that
+    # build media from a specific driver set are responsible for patching the staged
+    # `devices.cmd` to match the packaged INF(s).
+    # If the spec contains `viostor` but the in-repo Guest Tools config points at a different
+    # storage service (e.g. Aero clean-room `aerovblk`), that's OK: packaging wrappers that
+    # build media from virtio-win are expected to patch the staged `devices.cmd` to match
+    # the packaged INF AddService name.
 
     matches: List[Tuple[str, Tuple[str, str]]] = []
 
@@ -495,8 +501,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
 
     print("Guest Tools config/spec validation: OK")
     print(f"- spec: {spec_path}")
-    if "viostor" in spec_expected:
-        print(f"- virtio-blk service : {devices.virtio_blk_service}")
+    print(f"- virtio-blk service : {devices.virtio_blk_service}")
     for name, (pattern, hwid) in matches:
         print(f"- {name} HWID match : {pattern!r} matched {hwid!r}")
 

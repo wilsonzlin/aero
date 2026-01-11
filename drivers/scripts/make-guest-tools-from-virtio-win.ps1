@@ -276,30 +276,31 @@ if ($SigningPolicy -eq "none") {
 }
 
 # 4) Build the actual Guest Tools ISO/zip using the in-repo packager.
-Require-Command -Name "cargo" | Out-Null
-
-$packagerManifest = Join-Path (Join-Path (Join-Path (Join-Path $repoRoot "tools") "packaging") "aero_packager") "Cargo.toml"
-if (-not (Test-Path -LiteralPath $packagerManifest -PathType Leaf)) {
-  throw "Expected packager manifest not found: $packagerManifest"
+$wrapper = Join-Path (Join-Path $repoRoot "ci") "package-guest-tools.ps1"
+if (-not (Test-Path -LiteralPath $wrapper -PathType Leaf)) {
+  throw "Expected Guest Tools packaging wrapper script not found: $wrapper"
 }
 
 Ensure-Directory -Path $OutDir
 
-Write-Host "Packaging Guest Tools..."
+Write-Host "Packaging Guest Tools via CI wrapper..."
 Write-Host "  spec : $SpecPath"
 Write-Host "  out  : $OutDir"
 
-& cargo run --manifest-path $packagerManifest --release --locked -- `
-  --drivers-dir $packagerDriversRoot `
-  --guest-tools-dir $guestToolsStageDir `
-  --spec $SpecPath `
-  --out-dir $OutDir `
-  --version $Version `
-  --build-id $BuildId `
-  --signing-policy $SigningPolicy
-if ($LASTEXITCODE -ne 0) {
-  throw "aero_packager failed (exit $LASTEXITCODE)."
-}
+# Use the same staging logic as CI packaging so:
+# - the staged Guest Tools config matches the packaged driver INF AddService name (viostor, etc)
+# - outputs are deterministic via SOURCE_DATE_EPOCH / --source-date-epoch (wrapper default)
+$defaultCert = Join-Path (Join-Path $repoRoot "guest-tools") "certs/AeroTestRoot.cer"
+
+& $wrapper `
+  -InputRoot $packagerDriversRoot `
+  -GuestToolsDir $guestToolsStageDir `
+  -SigningPolicy $SigningPolicy `
+  -CertPath $defaultCert `
+  -SpecPath $SpecPath `
+  -OutDir $OutDir `
+  -Version $Version `
+  -BuildId $BuildId
 
 Write-Host "Done."
 
