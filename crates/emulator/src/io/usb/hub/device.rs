@@ -44,8 +44,7 @@ const HUB_PORT_CHANGE_RESET: u16 = 1 << 4;
 
 const HUB_INTERRUPT_IN_EP: u8 = 0x81;
 
-const HUB_NUM_PORTS: usize = 4;
-const HUB_CHANGE_BITMAP_LEN: usize = (HUB_NUM_PORTS + 1 + 7) / 8;
+const DEFAULT_HUB_NUM_PORTS: usize = 4;
 
 struct HubPort {
     device: Option<AttachedUsbDevice>,
@@ -195,16 +194,32 @@ impl HubPort {
 /// locate devices attached behind hubs.
 pub struct UsbHubDevice {
     configuration: u8,
-    ports: [HubPort; HUB_NUM_PORTS],
+    ports: Vec<HubPort>,
+    interrupt_bitmap_len: usize,
     interrupt_ep_halted: bool,
+    config_descriptor: Vec<u8>,
+    hub_descriptor: Vec<u8>,
 }
 
 impl UsbHubDevice {
     pub fn new() -> Self {
+        Self::new_with_ports(DEFAULT_HUB_NUM_PORTS)
+    }
+
+    pub fn new_with_ports(num_ports: usize) -> Self {
+        assert!(
+            (1..=u8::MAX as usize).contains(&num_ports),
+            "hub port count must be 1..=255"
+        );
+
+        let interrupt_bitmap_len = hub_bitmap_len(num_ports);
         Self {
             configuration: 0,
-            ports: std::array::from_fn(|_| HubPort::new()),
+            ports: (0..num_ports).map(|_| HubPort::new()).collect(),
+            interrupt_bitmap_len,
             interrupt_ep_halted: false,
+            config_descriptor: build_hub_config_descriptor(interrupt_bitmap_len),
+            hub_descriptor: build_hub_descriptor(num_ports),
         }
     }
 
@@ -257,7 +272,7 @@ impl Default for UsbHubDevice {
 
 impl UsbDeviceModel for UsbHubDevice {
     fn hub_port_count(&self) -> Option<u8> {
-        Some(HUB_NUM_PORTS as u8)
+        u8::try_from(self.ports.len()).ok()
     }
 
     fn hub_attach_device(
@@ -354,12 +369,12 @@ impl UsbDeviceModel for UsbHubDevice {
                     let desc_index = setup.descriptor_index();
                     let data = match desc_type {
                         USB_DESCRIPTOR_TYPE_DEVICE => Some(HUB_DEVICE_DESCRIPTOR.to_vec()),
-                        USB_DESCRIPTOR_TYPE_CONFIGURATION => Some(HUB_CONFIG_DESCRIPTOR.to_vec()),
+                        USB_DESCRIPTOR_TYPE_CONFIGURATION => Some(self.config_descriptor.clone()),
                         USB_DESCRIPTOR_TYPE_STRING => self.string_descriptor(desc_index),
                         // Accept hub descriptor fetch as both a class request (the common case) and
                         // a standard request. Some host stacks probe descriptor type 0x29 using a
                         // standard GET_DESCRIPTOR despite it being class-specific.
-                        USB_DESCRIPTOR_TYPE_HUB => Some(HUB_DESCRIPTOR.to_vec()),
+                        USB_DESCRIPTOR_TYPE_HUB => Some(self.hub_descriptor.clone()),
                         _ => None,
                     };
                     data.map(|v| ControlResponse::Data(clamp_response(v, setup.w_length)))
@@ -463,7 +478,7 @@ impl UsbDeviceModel for UsbHubDevice {
                     if setup.descriptor_type() != USB_DESCRIPTOR_TYPE_HUB {
                         return ControlResponse::Stall;
                     }
-                    ControlResponse::Data(clamp_response(HUB_DESCRIPTOR.to_vec(), setup.w_length))
+                    ControlResponse::Data(clamp_response(self.hub_descriptor.clone(), setup.w_length))
                 }
                 USB_REQUEST_GET_STATUS => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
@@ -576,7 +591,7 @@ impl UsbDeviceModel for UsbHubDevice {
             return UsbInResult::Stall;
         }
 
-        let mut bitmap = vec![0u8; HUB_CHANGE_BITMAP_LEN];
+        let mut bitmap = vec![0u8; self.interrupt_bitmap_len];
         for (idx, port) in self.ports.iter().enumerate() {
             if !port.has_change() {
                 continue;
@@ -596,7 +611,7 @@ impl UsbDeviceModel for UsbHubDevice {
             return None;
         }
 
-        let mut bitmap = vec![0u8; HUB_CHANGE_BITMAP_LEN];
+        let mut bitmap = vec![0u8; self.interrupt_bitmap_len];
         for (idx, port) in self.ports.iter().enumerate() {
             if !port.has_change() {
                 continue;
@@ -664,6 +679,72 @@ impl UsbHub for UsbHubDevice {
     }
 }
 
+fn hub_bitmap_len(num_ports: usize) -> usize {
+    (num_ports + 1 + 7) / 8
+}
+
+fn build_hub_config_descriptor(interrupt_bitmap_len: usize) -> Vec<u8> {
+    let max_packet_size: u16 = interrupt_bitmap_len
+        .try_into()
+        .expect("interrupt bitmap length fits in u16");
+    let w_max_packet_size = max_packet_size.to_le_bytes();
+
+    // Config(9) + Interface(9) + Endpoint(7) = 25 bytes
+    vec![
+        // Configuration descriptor
+        0x09, // bLength
+        USB_DESCRIPTOR_TYPE_CONFIGURATION,
+        25,
+        0x00, // wTotalLength
+        0x01, // bNumInterfaces
+        0x01, // bConfigurationValue
+        0x00, // iConfiguration
+        0x80, // bmAttributes (bus powered)
+        50,   // bMaxPower (100mA)
+        // Interface descriptor
+        0x09, // bLength
+        USB_DESCRIPTOR_TYPE_INTERFACE,
+        0x00, // bInterfaceNumber
+        0x00, // bAlternateSetting
+        0x01, // bNumEndpoints
+        0x09, // bInterfaceClass (Hub)
+        0x00, // bInterfaceSubClass
+        0x00, // bInterfaceProtocol
+        0x00, // iInterface
+        // Endpoint descriptor (Interrupt IN)
+        0x07, // bLength
+        USB_DESCRIPTOR_TYPE_ENDPOINT,
+        HUB_INTERRUPT_IN_EP, // bEndpointAddress
+        0x03,               // bmAttributes (Interrupt)
+        w_max_packet_size[0],
+        w_max_packet_size[1], // wMaxPacketSize
+        0x0c, // bInterval
+    ]
+}
+
+fn build_hub_descriptor(num_ports: usize) -> Vec<u8> {
+    const HUB_W_HUB_CHARACTERISTICS: u16 = 0x0011;
+
+    let bitmap_len = hub_bitmap_len(num_ports);
+    let mut port_pwr_ctrl_mask = vec![0u8; bitmap_len];
+    for port in 1..=num_ports {
+        let byte = port / 8;
+        let bit = port % 8;
+        port_pwr_ctrl_mask[byte] |= 1u8 << bit;
+    }
+
+    let mut desc = Vec::with_capacity(7 + 2 * bitmap_len);
+    desc.push((7 + 2 * bitmap_len) as u8); // bLength
+    desc.push(USB_DESCRIPTOR_TYPE_HUB);
+    desc.push(num_ports as u8); // bNbrPorts
+    desc.extend_from_slice(&HUB_W_HUB_CHARACTERISTICS.to_le_bytes()); // wHubCharacteristics
+    desc.push(0x01); // bPwrOn2PwrGood (2ms)
+    desc.push(0x00); // bHubContrCurrent
+    desc.extend(std::iter::repeat(0u8).take(bitmap_len)); // DeviceRemovable
+    desc.extend_from_slice(&port_pwr_ctrl_mask); // PortPwrCtrlMask
+    desc
+}
+
 fn clamp_response(mut data: Vec<u8>, setup_w_length: u16) -> Vec<u8> {
     let requested = setup_w_length as usize;
     if data.len() > requested {
@@ -702,54 +783,4 @@ static HUB_DEVICE_DESCRIPTOR: [u8; 18] = [
     0x02, // iProduct
     0x00, // iSerialNumber
     0x01, // bNumConfigurations
-];
-
-// Config(9) + Interface(9) + Endpoint(7) = 25 bytes
-static HUB_CONFIG_DESCRIPTOR: [u8; 25] = [
-    // Configuration descriptor
-    0x09, // bLength
-    USB_DESCRIPTOR_TYPE_CONFIGURATION,
-    25,
-    0x00, // wTotalLength
-    0x01, // bNumInterfaces
-    0x01, // bConfigurationValue
-    0x00, // iConfiguration
-    0x80, // bmAttributes (bus powered)
-    50,   // bMaxPower (100mA)
-    // Interface descriptor
-    0x09, // bLength
-    USB_DESCRIPTOR_TYPE_INTERFACE,
-    0x00, // bInterfaceNumber
-    0x00, // bAlternateSetting
-    0x01, // bNumEndpoints
-    0x09, // bInterfaceClass (Hub)
-    0x00, // bInterfaceSubClass
-    0x00, // bInterfaceProtocol
-    0x00, // iInterface
-    // Endpoint descriptor (Interrupt IN)
-    0x07, // bLength
-    USB_DESCRIPTOR_TYPE_ENDPOINT,
-    HUB_INTERRUPT_IN_EP, // bEndpointAddress
-    0x03,               // bmAttributes (Interrupt)
-    HUB_CHANGE_BITMAP_LEN as u8,
-    0x00, // wMaxPacketSize
-    0x0c, // bInterval
-];
-
-// Hub descriptor wHubCharacteristics (USB 2.0 spec 11.23.2.1):
-// - Per-port power switching (bits 0-1 = 01b).
-// - No over-current protection (bits 3-4 = 10b); not modelled.
-const HUB_W_HUB_CHARACTERISTICS: u16 = 0x0011;
-const HUB_PORT_PWR_CTRL_MASK: u8 = ((1u32 << (HUB_NUM_PORTS + 1)) - 2) as u8;
-
-static HUB_DESCRIPTOR: [u8; 9] = [
-    0x09, // bLength
-    USB_DESCRIPTOR_TYPE_HUB,
-    HUB_NUM_PORTS as u8, // bNbrPorts
-    (HUB_W_HUB_CHARACTERISTICS & 0x00ff) as u8,
-    (HUB_W_HUB_CHARACTERISTICS >> 8) as u8, // wHubCharacteristics
-    0x01, // bPwrOn2PwrGood (2ms)
-    0x00, // bHubContrCurrent
-    0x00, // DeviceRemovable
-    HUB_PORT_PWR_CTRL_MASK, // PortPwrCtrlMask
 ];

@@ -468,3 +468,56 @@ fn usb_hub_standard_get_descriptor_accepts_hub_descriptor_type() {
     assert_eq!(std_desc, class_desc);
     assert_eq!(std_desc[1], HUB_DESCRIPTOR_TYPE as u8);
 }
+
+#[test]
+fn usb_hub_interrupt_bitmap_scales_with_port_count() {
+    const HUB_DESCRIPTOR_TYPE: u16 = 0x29;
+
+    let mut hub = UsbHubDevice::new_with_ports(8);
+    hub.attach(8, Box::new(DummyUsbDevice::default()));
+
+    assert_eq!(
+        hub.handle_control_request(set_configuration(1), None),
+        ControlResponse::Ack
+    );
+
+    let bitmap = hub
+        .poll_interrupt_in(HUB_INTERRUPT_IN_EP)
+        .expect("expected port-change bitmap");
+    assert_eq!(bitmap.len(), 2);
+    assert_ne!(bitmap[1] & 0x01, 0); // bit8 = port8 change.
+
+    let ControlResponse::Data(desc) = hub.handle_control_request(
+        setup(0xa0, USB_REQUEST_GET_DESCRIPTOR, HUB_DESCRIPTOR_TYPE << 8, 0, 64),
+        None,
+    ) else {
+        panic!("expected Data response");
+    };
+
+    assert_eq!(desc.len(), 11);
+    assert_eq!(desc[0], 11);
+    assert_eq!(desc[1], HUB_DESCRIPTOR_TYPE as u8);
+    assert_eq!(desc[2], 8);
+
+    // DeviceRemovable + PortPwrCtrlMask bitmaps for 8 ports are 2 bytes each.
+    assert_eq!(desc[7], 0x00);
+    assert_eq!(desc[8], 0x00);
+    assert_eq!(desc[9], 0xFE);
+    assert_eq!(desc[10], 0x01);
+
+    // Interrupt endpoint wMaxPacketSize should match the bitmap length.
+    let ControlResponse::Data(cfg) = hub.handle_control_request(
+        setup(
+            0x80,
+            USB_REQUEST_GET_DESCRIPTOR,
+            USB_DESCRIPTOR_TYPE_CONFIGURATION << 8,
+            0,
+            255,
+        ),
+        None,
+    ) else {
+        panic!("expected configuration descriptor response");
+    };
+    assert_eq!(cfg[22], 2);
+    assert_eq!(cfg[23], 0);
+}
