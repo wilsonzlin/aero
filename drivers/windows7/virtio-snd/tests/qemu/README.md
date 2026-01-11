@@ -302,12 +302,13 @@ The selftest logs to:
    REM Contract v1 device (DEV_1059 + REV_01):
    C:\AeroTests\aero-virtio-selftest.exe --test-snd
    ```
-   Notes:
-   - `--test-snd` (alias: `--require-snd`) enables virtio-snd playback testing. Missing virtio-snd is treated as a FAIL in this mode.
-   - The selftest expects the contract-v1 HWID (`...DEV_1059&REV_01`). Under QEMU, configure the device with
-     `disable-legacy=on,x-pci-revision=0x01` so the strict INF can bind.
-   - If you run without `--test-snd` / `--require-snd`, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set`.
-   - Use `--disable-snd` to force `SKIP` even when capture/playback flags are present.
+    Notes:
+    - `--test-snd` (alias: `--require-snd`) enables virtio-snd playback testing. Missing virtio-snd is treated as a FAIL in this mode.
+    - The selftest expects the contract-v1 HWID (`...DEV_1059&REV_01`). Under QEMU, configure the device with
+      `disable-legacy=on,x-pci-revision=0x01` so the strict INF can bind.
+    - If you run without `--test-snd` / `--require-snd`, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`
+      (and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`).
+    - Use `--disable-snd` to force `SKIP` even when capture/playback flags are present.
 3. Review `C:\aero-virtio-selftest.log` and locate the virtio-snd marker:
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL` (playback failed; also used when the device is missing or the Topology KS interface is missing)
