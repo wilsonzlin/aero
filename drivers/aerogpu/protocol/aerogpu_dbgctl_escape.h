@@ -128,7 +128,13 @@ AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_selftest_inout) == 32);
 
 typedef struct aerogpu_escape_query_vblank_out {
   aerogpu_escape_header hdr;
-  uint32_t vidpn_source_id; /* input (0 for MVP), echoed back */
+  /*
+   * Requested VidPn source id.
+   *
+   * NOTE: Only source 0 is currently implemented. KMDs may ignore non-zero
+   * inputs and always return source 0 data.
+   */
+  uint32_t vidpn_source_id;
   uint32_t irq_enable;
   uint32_t irq_status;
   /*

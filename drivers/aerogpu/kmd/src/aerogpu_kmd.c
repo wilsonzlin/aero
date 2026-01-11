@@ -2589,10 +2589,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
         aerogpu_escape_query_vblank_out* out = (aerogpu_escape_query_vblank_out*)pEscape->pPrivateDriverData;
 
-        /* Only VidPn source 0 is currently implemented. */
-        if (out->vidpn_source_id != AEROGPU_VIDPN_SOURCE_ID) {
-            return STATUS_NOT_SUPPORTED;
-        }
+        /* Only scanout/source 0 is currently implemented; ignore other values. */
+        out->vidpn_source_id = AEROGPU_VIDPN_SOURCE_ID;
 
         out->hdr.version = AEROGPU_ESCAPE_VERSION;
         out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_VBLANK;
