@@ -192,7 +192,7 @@ export class WebSocketUdpProxyClient {
 
         if (opts.sendAuthMessage) {
           try {
-            ws.send(JSON.stringify({ type: "auth", token: this.authToken }));
+            ws.send(JSON.stringify({ type: "auth", token: this.authToken, apiKey: this.authToken }));
           } catch {
             // Ignore; we'll fail if the socket closes.
           }

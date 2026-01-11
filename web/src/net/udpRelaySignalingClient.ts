@@ -267,6 +267,12 @@ function sendSignal(ws: WebSocket, msg: SignalMessage | (SignalMessage & { apiKe
   ws.send(JSON.stringify(msg));
 }
 
+function sendAuth(ws: WebSocket, authToken: string): void {
+  // Forward/compat: different relay builds may accept either {token} or {apiKey}
+  // depending on auth mode. Supplying both allows the client to remain agnostic.
+  ws.send(JSON.stringify({ type: "auth", token: authToken, apiKey: authToken }));
+}
+
 async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string, authToken?: string): Promise<void> {
   const wsUrl = toWebSocketUrl(baseUrl, "/webrtc/signal", authToken).toString();
 
@@ -445,7 +451,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
     ws.addEventListener("error", onError);
 
     if (authFirst && authToken) {
-      sendSignal(ws, { type: "auth", token: authToken });
+      sendAuth(ws, authToken);
     }
 
     const offerMsg: SignalMessage = {
@@ -549,7 +555,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
     ws.addEventListener("error", onError);
 
     if (authFirst && authToken) {
-      ws.send(JSON.stringify({ type: "auth", token: authToken }));
+      sendAuth(ws, authToken);
     }
 
     const fullOffer = pc.localDescription;
