@@ -33,8 +33,10 @@ describe("usb/UsbProxyRing", () => {
     // Uint8Array payloads are copied; compare by bytes.
     const controlOut = roundTripped[1];
     if (controlOut?.kind !== "controlOut") throw new Error("unreachable");
-    expect(controlOut.setup).toEqual(actions[1]!.setup);
-    expect(Array.from(controlOut.data)).toEqual(Array.from((actions[1] as Extract<UsbHostAction, { kind: "controlOut" }>).data));
+    const expectedControlOut = actions[1];
+    if (!expectedControlOut || expectedControlOut.kind !== "controlOut") throw new Error("unreachable");
+    expect(controlOut.setup).toEqual(expectedControlOut.setup);
+    expect(Array.from(controlOut.data)).toEqual(Array.from(expectedControlOut.data));
 
     expect(roundTripped[2]).toEqual(actions[2]);
 
@@ -112,4 +114,3 @@ describe("usb/UsbProxyRing", () => {
     expect(ring.dropped()).toBe(1);
   });
 });
-
