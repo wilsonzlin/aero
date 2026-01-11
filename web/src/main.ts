@@ -1676,7 +1676,7 @@ function renderRemoteDiskPanel(): HTMLElement {
     rangeStatsBaselineAtMs = null;
 
     const cacheLimitMiB = Number(cacheLimitInput.value);
-    const cacheLimitBytes = cacheLimitMiB <= 0 ? 0 : cacheLimitMiB * 1024 * 1024;
+    const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
 
     const prefetchSequential = Math.max(0, Number(prefetchInput.value) | 0);
     const cacheImageId = cacheImageIdInput.value.trim();
@@ -1709,7 +1709,7 @@ function renderRemoteDiskPanel(): HTMLElement {
 
     const openRes = await ioWorker.openRemoteDisk(url, {
       blockSize: Number(blockSizeInput.value) * 1024,
-      cacheLimitMiB: cacheLimitMiB <= 0 ? 0 : cacheLimitMiB,
+      cacheLimitMiB: cacheLimitMiB <= 0 ? null : cacheLimitMiB,
       credentials,
       prefetchSequentialBlocks: prefetchSequential,
       cacheBackend,
@@ -2012,7 +2012,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       { class: "row" },
       el("label", { text: "Block KiB (range):" }),
       blockSizeInput,
-      el("label", { text: "Cache MiB (0=off):" }),
+      el("label", { text: "Cache MiB (0=no eviction):" }),
       cacheLimitInput,
       el("label", { text: "Prefetch:" }),
       prefetchInput,

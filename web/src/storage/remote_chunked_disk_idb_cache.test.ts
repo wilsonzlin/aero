@@ -109,6 +109,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
       retryBaseDelayMs: 0,
       cacheLimitBytes: null,
     });
+    expect(disk1.getTelemetrySnapshot().cacheLimitBytes).toBeNull();
 
     const buf = new Uint8Array(512);
     await disk1.readSectors(0, buf);

@@ -90,6 +90,7 @@ Additional tuning knobs:
   (useful when URLs include ephemeral auth query params or when you want to force a cache bust by bumping a version).
 - **Reset stats**: records a baseline snapshot and shows deltas for cumulative counters without clearing the cache.
 - **Settings persistence**: the panel stores its last-used options in `localStorage` (URLs are stored without query/hash).
+- **Cache limit**: set a positive MiB value to enable LRU eviction; set `0` to disable eviction (unbounded cache growth).
 
 ## Security / UX expectations
 
