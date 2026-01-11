@@ -22,8 +22,6 @@ jobs:
   build-web:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      NODE_VERSION: "20.11.1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,7 +32,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: web/package-lock.json
 
