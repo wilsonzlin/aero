@@ -31,8 +31,10 @@ param(
   #
   # Transitional mode is primarily a backcompat option for older QEMU builds and/or older guest images:
   # - It uses QEMU defaults for virtio-blk/net and relaxes per-test marker requirements.
-  # - It does not attach virtio-input keyboard/mouse devices; use the default harness mode for full
-  #   virtio-input coverage.
+  # - It attempts to attach virtio-input keyboard/mouse devices (virtio-keyboard-pci + virtio-mouse-pci) when
+  #   the QEMU binary advertises them; otherwise it warns that the guest virtio-input selftest will likely FAIL.
+  #   In transitional mode virtio-input enumerates with the older transitional ID space (e.g. DEV_1011), so the
+  #   guest must have a driver package that binds the transitional IDs.
   [Parameter(Mandatory = $false)]
   [switch]$VirtioTransitional,
 
