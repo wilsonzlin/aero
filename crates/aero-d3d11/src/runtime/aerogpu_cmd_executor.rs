@@ -161,9 +161,11 @@ enum ShaderStage {
 struct ShaderResource {
     stage: ShaderStage,
     wgsl_hash: ShaderHash,
+    dxbc_hash_fnv1a64: u64,
     entry_point: &'static str,
     vs_input_signature: Vec<VsInputSignatureElement>,
     #[cfg(debug_assertions)]
+    #[allow(dead_code)]
     wgsl_source: String,
 }
 
@@ -184,6 +186,7 @@ struct IndexBufferBinding {
 #[derive(Debug, Clone)]
 struct InputLayoutResource {
     layout: InputLayoutDesc,
+    mapping_cache: HashMap<u64, BuiltVertexState>,
 }
 
 #[derive(Debug)]
@@ -642,17 +645,17 @@ impl AerogpuD3d11Executor {
             }
         }
 
-        let state = &self.state;
-        let resources = &self.resources;
-
         let (_pipeline_key, pipeline, wgpu_slot_to_d3d_slot) =
             get_or_create_render_pipeline_for_state(
                 &self.device,
                 &mut self.pipeline_cache,
                 &self.pipeline_layout_empty,
-                resources,
-                state,
+                &mut self.resources,
+                &self.state,
             )?;
+
+        let state = &self.state;
+        let resources = &self.resources;
 
         let mut color_attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> =
             Vec::with_capacity(state.render_targets.len());
@@ -900,6 +903,17 @@ impl AerogpuD3d11Executor {
 
         let format = map_aerogpu_texture_format(format_u32)?;
         let usage = map_texture_usage_flags(usage_flags);
+        let required_row_pitch = width
+            .checked_mul(bytes_per_texel(format)?)
+            .ok_or_else(|| anyhow!("CREATE_TEXTURE2D: row_pitch overflow"))?;
+        if row_pitch_bytes != 0 && row_pitch_bytes < required_row_pitch {
+            bail!(
+                "CREATE_TEXTURE2D: row_pitch_bytes {row_pitch_bytes} is smaller than required {required_row_pitch}"
+            );
+        }
+        if backing_alloc_id != 0 && row_pitch_bytes == 0 {
+            bail!("CREATE_TEXTURE2D: row_pitch_bytes is required for allocation-backed textures");
+        }
 
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aerogpu texture2d"),
@@ -919,11 +933,7 @@ impl AerogpuD3d11Executor {
 
         let backing = if backing_alloc_id != 0 {
             // Only validate the allocation table range for mip0 layer0 for now.
-            let bytes_per_row = if row_pitch_bytes != 0 {
-                row_pitch_bytes as u64
-            } else {
-                (width as u64) * (bytes_per_texel(format)? as u64)
-            };
+            let bytes_per_row = row_pitch_bytes as u64;
             let total_size = bytes_per_row.saturating_mul(height as u64);
             allocs.validate_range(backing_alloc_id, backing_offset_bytes as u64, total_size)?;
             Some(ResourceBacking {
@@ -1301,7 +1311,7 @@ impl AerogpuD3d11Executor {
     }
 
     fn exec_create_shader_dxbc(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        let (cmd, dxbc) = decode_cmd_create_shader_dxbc_payload_le(cmd_bytes)
+        let (cmd, dxbc_bytes) = decode_cmd_create_shader_dxbc_payload_le(cmd_bytes)
             .map_err(|e| anyhow!("CREATE_SHADER_DXBC: invalid payload: {e:?}"))?;
         let shader_handle = cmd.shader_handle;
         let stage_u32 = cmd.stage;
@@ -1313,7 +1323,8 @@ impl AerogpuD3d11Executor {
             _ => bail!("CREATE_SHADER_DXBC: unknown shader stage {stage_u32}"),
         };
 
-        let dxbc = DxbcFile::parse(dxbc).context("DXBC parse failed")?;
+        let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
+        let dxbc = DxbcFile::parse(dxbc_bytes).context("DXBC parse failed")?;
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
         let program = Sm4Program::parse_from_dxbc(&dxbc).context("DXBC decode failed")?;
         let parsed_stage = match program.stage {
@@ -1357,6 +1368,7 @@ impl AerogpuD3d11Executor {
         let shader = ShaderResource {
             stage,
             wgsl_hash: hash,
+            dxbc_hash_fnv1a64,
             entry_point,
             vs_input_signature,
             wgsl_source: wgsl,
@@ -1365,6 +1377,7 @@ impl AerogpuD3d11Executor {
         let shader = ShaderResource {
             stage,
             wgsl_hash: hash,
+            dxbc_hash_fnv1a64,
             entry_point,
             vs_input_signature,
         };
@@ -1405,9 +1418,13 @@ impl AerogpuD3d11Executor {
 
         let layout = InputLayoutDesc::parse(blob)
             .map_err(|e| anyhow!("CREATE_INPUT_LAYOUT: failed to parse ILAY blob: {e}"))?;
-        self.resources
-            .input_layouts
-            .insert(handle, InputLayoutResource { layout });
+        self.resources.input_layouts.insert(
+            handle,
+            InputLayoutResource {
+                layout,
+                mapping_cache: HashMap::new(),
+            },
+        );
         Ok(())
     }
 
@@ -1907,7 +1924,7 @@ impl AerogpuD3d11Executor {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct BuiltVertexState {
     vertex_buffers: Vec<VertexBufferLayoutOwned>,
     vertex_buffer_keys: Vec<aero_gpu::pipeline_key::VertexBufferLayoutKey>,
@@ -1953,7 +1970,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
     device: &wgpu::Device,
     pipeline_cache: &'a mut PipelineCache,
     pipeline_layout_empty: &wgpu::PipelineLayout,
-    resources: &AerogpuD3d11Resources,
+    resources: &mut AerogpuD3d11Resources,
     state: &AerogpuD3d11State,
 ) -> Result<(RenderPipelineKey, &'a wgpu::RenderPipeline, Vec<u32>)> {
     let vs_handle = state
@@ -1962,27 +1979,42 @@ fn get_or_create_render_pipeline_for_state<'a>(
     let ps_handle = state
         .ps
         .ok_or_else(|| anyhow!("render draw without bound PS"))?;
-    let vs = resources
-        .shaders
-        .get(&vs_handle)
-        .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?;
-    let ps = resources
-        .shaders
-        .get(&ps_handle)
-        .ok_or_else(|| anyhow!("unknown PS shader {ps_handle}"))?;
-
-    if vs.stage != ShaderStage::Vertex {
-        bail!("shader {vs_handle} is not a vertex shader");
-    }
-    if ps.stage != ShaderStage::Pixel {
-        bail!("shader {ps_handle} is not a pixel shader");
-    }
+    let (vs_wgsl_hash, vs_dxbc_hash_fnv1a64, vs_entry_point, vs_input_signature) = {
+        let vs = resources
+            .shaders
+            .get(&vs_handle)
+            .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?;
+        if vs.stage != ShaderStage::Vertex {
+            bail!("shader {vs_handle} is not a vertex shader");
+        }
+        (
+            vs.wgsl_hash,
+            vs.dxbc_hash_fnv1a64,
+            vs.entry_point,
+            vs.vs_input_signature.clone(),
+        )
+    };
+    let (ps_wgsl_hash, fs_entry_point) = {
+        let ps = resources
+            .shaders
+            .get(&ps_handle)
+            .ok_or_else(|| anyhow!("unknown PS shader {ps_handle}"))?;
+        if ps.stage != ShaderStage::Pixel {
+            bail!("shader {ps_handle} is not a pixel shader");
+        }
+        (ps.wgsl_hash, ps.entry_point)
+    };
 
     let BuiltVertexState {
         vertex_buffers,
         vertex_buffer_keys,
         wgpu_slot_to_d3d_slot,
-    } = build_vertex_buffers_for_pipeline(resources, state, &vs.vs_input_signature)?;
+    } = build_vertex_buffers_for_pipeline(
+        resources,
+        state,
+        vs_dxbc_hash_fnv1a64,
+        &vs_input_signature,
+    )?;
 
     let mut color_targets = Vec::with_capacity(state.render_targets.len());
     let mut color_target_states = Vec::with_capacity(state.render_targets.len());
@@ -2005,8 +2037,8 @@ fn get_or_create_render_pipeline_for_state<'a>(
     }
 
     let key = RenderPipelineKey {
-        vertex_shader: vs.wgsl_hash,
-        fragment_shader: ps.wgsl_hash,
+        vertex_shader: vs_wgsl_hash,
+        fragment_shader: ps_wgsl_hash,
         color_targets,
         depth_stencil: None,
         primitive_topology: state.primitive_topology,
@@ -2021,8 +2053,6 @@ fn get_or_create_render_pipeline_for_state<'a>(
     let topology = state.primitive_topology;
     let cull_mode = state.cull_mode;
     let front_face = state.front_face;
-    let vs_entry_point = vs.entry_point;
-    let fs_entry_point = ps.entry_point;
 
     let pipeline = pipeline_cache
         .get_or_create_render_pipeline(device, key.clone(), move |device, vs, fs| {
@@ -2066,8 +2096,9 @@ fn get_or_create_render_pipeline_for_state<'a>(
 }
 
 fn build_vertex_buffers_for_pipeline(
-    resources: &AerogpuD3d11Resources,
+    resources: &mut AerogpuD3d11Resources,
     state: &AerogpuD3d11State,
+    vs_dxbc_hash_fnv1a64: u64,
     vs_signature: &[VsInputSignatureElement],
 ) -> Result<BuiltVertexState> {
     let Some(layout_handle) = state.input_layout else {
@@ -2075,7 +2106,7 @@ fn build_vertex_buffers_for_pipeline(
     };
     let layout = resources
         .input_layouts
-        .get(&layout_handle)
+        .get_mut(&layout_handle)
         .ok_or_else(|| anyhow!("unknown input layout {layout_handle}"))?;
 
     let mut slot_strides = vec![0u32; MAX_INPUT_SLOTS as usize];
@@ -2090,6 +2121,11 @@ fn build_vertex_buffers_for_pipeline(
         }
     }
 
+    let cache_key = hash_input_layout_mapping_key(vs_dxbc_hash_fnv1a64, &slot_strides);
+    if let Some(cached) = layout.mapping_cache.get(&cache_key) {
+        return Ok(cached.clone());
+    }
+
     let fallback_signature;
     let sig = if vs_signature.is_empty() {
         fallback_signature = build_fallback_vs_signature(&layout.layout);
@@ -2098,9 +2134,11 @@ fn build_vertex_buffers_for_pipeline(
         vs_signature
     };
 
-    let binding = InputLayoutBinding::new(&layout.layout, &slot_strides);
-    let mapped = map_layout_to_shader_locations_compact(&binding, sig)
-        .map_err(|e| anyhow!("input layout mapping failed: {e}"))?;
+    let mapped = {
+        let binding = InputLayoutBinding::new(&layout.layout, &slot_strides);
+        map_layout_to_shader_locations_compact(&binding, sig)
+            .map_err(|e| anyhow!("input layout mapping failed: {e}"))?
+    };
 
     let mut keys: Vec<aero_gpu::pipeline_key::VertexBufferLayoutKey> =
         Vec::with_capacity(mapped.buffers.len());
@@ -2114,11 +2152,13 @@ fn build_vertex_buffers_for_pipeline(
         wgpu_slot_to_d3d_slot[*wgpu_slot as usize] = *d3d_slot;
     }
 
-    Ok(BuiltVertexState {
+    let built = BuiltVertexState {
         vertex_buffers: mapped.buffers,
         vertex_buffer_keys: keys,
         wgpu_slot_to_d3d_slot,
-    })
+    };
+    layout.mapping_cache.insert(cache_key, built.clone());
+    Ok(built)
 }
 
 struct AllocTable {
@@ -2215,6 +2255,32 @@ fn build_fallback_vs_signature(layout: &InputLayoutDesc) -> Vec<VsInputSignature
     }
 
     out
+}
+
+const FNV1A64_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+const FNV1A64_PRIME: u64 = 0x100000001b3;
+
+fn hash_input_layout_mapping_key(vs_dxbc_hash_fnv1a64: u64, slot_strides: &[u32]) -> u64 {
+    let mut hash = FNV1A64_OFFSET_BASIS;
+    fnv1a64_update(&mut hash, &vs_dxbc_hash_fnv1a64.to_le_bytes());
+    fnv1a64_update(&mut hash, &(slot_strides.len() as u32).to_le_bytes());
+    for &stride in slot_strides {
+        fnv1a64_update(&mut hash, &stride.to_le_bytes());
+    }
+    hash
+}
+
+fn fnv1a64_update(hash: &mut u64, bytes: &[u8]) {
+    for &b in bytes {
+        *hash ^= b as u64;
+        *hash = hash.wrapping_mul(FNV1A64_PRIME);
+    }
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = FNV1A64_OFFSET_BASIS;
+    fnv1a64_update(&mut hash, bytes);
+    hash
 }
 
 fn map_buffer_usage_flags(flags: u32) -> wgpu::BufferUsages {
