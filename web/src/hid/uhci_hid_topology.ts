@@ -62,7 +62,21 @@ export class UhciHidTopologyManager {
       this.#hubAttachedPortCountByRoot.clear();
     }
     this.#uhci = bridge;
-    if (bridge) this.#flush();
+    if (!bridge) return;
+
+    // Root port 0 is reserved for an emulated external hub used for WebHID passthrough.
+    // Attach it eagerly so the guest OS can enumerate the hub even before any devices are
+    // attached behind it.
+    this.#maybeAttachHub(0, { minPortCount: this.#maxRequestedHubPort(0) });
+
+    // Other hubs are still generally attached lazily as devices demand them, but if the host
+    // configured a hub explicitly (via `setHubConfig`) before UHCI was initialized, attach it now.
+    for (const rootPort of this.#hubPortCountByRoot.keys()) {
+      if (rootPort === 0) continue;
+      this.#maybeAttachHub(rootPort, { minPortCount: this.#maxRequestedHubPort(rootPort) });
+    }
+
+    this.#flush();
   }
 
   setHubConfig(path: GuestUsbPath, portCount?: number): void {
@@ -85,8 +99,20 @@ export class UhciHidTopologyManager {
     this.#maybeDetachPath(rec.path);
   }
 
+  #maxRequestedHubPort(rootPort: number): number {
+    let maxPort = 0;
+    for (const rec of this.#devices.values()) {
+      if ((rec.path[0] ?? 0) !== rootPort) continue;
+      if (rec.path.length <= 1) continue;
+      const port = rec.path[1] ?? 0;
+      if (port > maxPort) maxPort = port;
+    }
+    return maxPort;
+  }
+
   #flush(): void {
-    // Hubs are attached lazily as devices demand them, so only flush devices here.
+    // Root port 0's external hub is attached eagerly when the UHCI bridge becomes available.
+    // Other hubs are attached lazily as devices demand them, so only flush devices here.
     for (const deviceId of this.#devices.keys()) {
       this.#maybeAttachDevice(deviceId);
     }

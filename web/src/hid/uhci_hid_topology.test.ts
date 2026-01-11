@@ -17,6 +17,16 @@ function createFakeUhci(): UhciTopologyBridge & {
 }
 
 describe("hid/UhciHidTopologyManager", () => {
+  it("attaches the default external hub at root port 0 when the UHCI bridge is set", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const uhci = createFakeUhci();
+
+    mgr.setUhciBridge(uhci);
+
+    expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
+    expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
+  });
+
   it("defers device attachment until the UHCI bridge is available", () => {
     const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
     const uhci = createFakeUhci();
