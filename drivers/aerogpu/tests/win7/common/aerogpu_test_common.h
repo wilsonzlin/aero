@@ -314,6 +314,22 @@ static inline const char* GetWow64SuffixString() {
   return IsRunningUnderWow64() ? " (WOW64)" : "";
 }
 
+static inline const wchar_t* ExpectedWindowsSystemDirSubstringForCurrentProcess() {
+  // These tests are primarily used in Win7 VMs to validate AeroGPU INF/registry
+  // correctness. The UMDs must be loaded from the canonical system directories:
+  // - x86 OS: System32
+  // - x64 OS:
+  //   - native x64 process: System32
+  //   - WOW64 x86 process: SysWOW64
+  if (Is64BitProcess()) {
+    return L"\\System32\\";
+  }
+  if (IsRunningUnderWow64()) {
+    return L"\\SysWOW64\\";
+  }
+  return L"\\System32\\";
+}
+
 static inline const wchar_t* ExpectedAeroGpuD3D9UmdModuleBaseName() {
   return Is64BitProcess() ? L"aerogpu_d3d9_x64.dll" : L"aerogpu_d3d9.dll";
 }
@@ -430,29 +446,44 @@ static inline int RequireAeroGpuUmdLoaded(const char* test_name,
   std::wstring path;
   std::string err;
   if (GetLoadedModulePathByBaseName(expected_module_base_name, &path, &err)) {
-    if (!path.empty()) {
-      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD (%s%s): %ls",
-                   test_name,
-                   api_label,
-                   GetProcessBitnessString(),
-                   GetWow64SuffixString(),
-                   path.c_str());
-    } else if (!err.empty()) {
-      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD module %ls (%s%s; path unavailable: %s)",
-                   test_name,
-                   api_label,
-                   expected_module_base_name,
-                   GetProcessBitnessString(),
-                   GetWow64SuffixString(),
-                   err.c_str());
-    } else {
-      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD module %ls (%s%s; path unavailable)",
-                   test_name,
-                   api_label,
-                   expected_module_base_name,
-                   GetProcessBitnessString(),
-                   GetWow64SuffixString());
+    if (path.empty()) {
+      DumpLoadedAeroGpuUmdModules(test_name);
+      if (!err.empty()) {
+        return Fail(test_name,
+                    "AeroGPU %s UMD module %ls is loaded (%s%s), but GetModuleFileNameW failed (%s).",
+                    api_label,
+                    expected_module_base_name,
+                    GetProcessBitnessString(),
+                    GetWow64SuffixString(),
+                    err.c_str());
+      }
+      return Fail(test_name,
+                  "AeroGPU %s UMD module %ls is loaded (%s%s), but module path is unavailable.",
+                  api_label,
+                  expected_module_base_name,
+                  GetProcessBitnessString(),
+                  GetWow64SuffixString());
     }
+
+    const wchar_t* expected_dir = ExpectedWindowsSystemDirSubstringForCurrentProcess();
+    if (!StrIContainsW(path.c_str(), expected_dir)) {
+      DumpLoadedAeroGpuUmdModules(test_name);
+      return Fail(test_name,
+                  "expected AeroGPU %s UMD DLL %ls to be loaded from %ls (process=%s%s), but got: %ls",
+                  api_label,
+                  expected_module_base_name,
+                  expected_dir,
+                  GetProcessBitnessString(),
+                  GetWow64SuffixString(),
+                  path.c_str());
+    }
+
+    PrintfStdout("INFO: %s: loaded AeroGPU %s UMD (%s%s): %ls",
+                 test_name,
+                 api_label,
+                 GetProcessBitnessString(),
+                 GetWow64SuffixString(),
+                 path.c_str());
     return 0;
   }
 
