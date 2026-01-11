@@ -313,7 +313,20 @@ export class WebSocketTcpMuxProxyClient {
     this.ws = new WebSocket(url.toString(), TCP_MUX_SUBPROTOCOL);
     this.ws.binaryType = "arraybuffer";
 
-    this.ws.onopen = () => this.scheduleFlush(0);
+    this.ws.onopen = () => {
+      // `aero-tcp-mux-v1` requires strict subprotocol negotiation. If the peer
+      // doesn't select it, close immediately to avoid speaking the wrong framing
+      // protocol on an otherwise-open WebSocket.
+      if (this.ws.protocol !== TCP_MUX_SUBPROTOCOL) {
+        this.onError?.(0, {
+          code: 0,
+          message: `tcp-mux subprotocol not negotiated (wanted ${TCP_MUX_SUBPROTOCOL}, got ${this.ws.protocol || "none"})`,
+        });
+        this.ws.close(1002);
+        return;
+      }
+      this.scheduleFlush(0);
+    };
     this.ws.onmessage = (evt) => this.onWsMessage(evt);
     this.ws.onerror = () => {
       // Browser WebSocket errors do not expose details; treat as session-level.
