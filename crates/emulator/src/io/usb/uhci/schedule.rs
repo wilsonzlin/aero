@@ -4,7 +4,7 @@ use crate::io::usb::core::{UsbInResult, UsbOutResult};
 use crate::io::usb::hub::RootHub;
 use crate::io::usb::SetupPacket;
 
-use super::regs::{USBINTR_IOC, USBINTR_SHORT_PACKET, USBSTS_USBERRINT, USBSTS_USBINT};
+use super::regs::{USBSTS_USBERRINT, USBSTS_USBINT};
 
 const PID_IN: u8 = 0x69;
 const PID_OUT: u8 = 0xe1;
@@ -43,7 +43,6 @@ pub(crate) struct ScheduleContext<'a, M: MemoryBus + ?Sized> {
     pub mem: &'a mut M,
     pub hub: &'a mut RootHub,
     pub usbsts: &'a mut u16,
-    pub usbintr: u16,
 }
 
 pub(crate) fn process_frame<M: MemoryBus + ?Sized>(
@@ -203,7 +202,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
             match dev.handle_setup(setup) {
                 UsbOutResult::Ack => {
                     complete_td(ctx, td_addr, status, 8, false);
-                    if status & TD_CTRL_IOC != 0 && ctx.usbintr & USBINTR_IOC != 0 {
+                    if status & TD_CTRL_IOC != 0 {
                         *ctx.usbsts |= USBSTS_USBINT;
                     }
                     TdProgress::Advanced {
@@ -235,7 +234,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
             match dev.handle_out(endpoint, &out_data) {
                 UsbOutResult::Ack => {
                     complete_td(ctx, td_addr, status, out_data.len(), false);
-                    if status & TD_CTRL_IOC != 0 && ctx.usbintr & USBINTR_IOC != 0 {
+                    if status & TD_CTRL_IOC != 0 {
                         *ctx.usbsts |= USBSTS_USBINT;
                     }
                     TdProgress::Advanced {
@@ -269,11 +268,11 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                 }
                 let short = data.len() < max_len;
                 complete_td(ctx, td_addr, status, data.len(), false);
-                if status & TD_CTRL_IOC != 0 && ctx.usbintr & USBINTR_IOC != 0 {
+                if status & TD_CTRL_IOC != 0 {
                     *ctx.usbsts |= USBSTS_USBINT;
                 }
                 let stop = short && status & TD_CTRL_SPD != 0;
-                if stop && ctx.usbintr & USBINTR_SHORT_PACKET != 0 {
+                if stop {
                     *ctx.usbsts |= USBSTS_USBINT;
                 }
                 TdProgress::Advanced { next_link, stop }

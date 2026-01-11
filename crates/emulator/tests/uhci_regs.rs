@@ -1,7 +1,7 @@
 use emulator::io::pci::PciDevice;
 use emulator::io::usb::uhci::regs::*;
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
-use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
+use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
 use emulator::io::PortIO;
 use memory::{Bus, MemoryBus};
 use std::cell::RefCell;
@@ -14,6 +14,7 @@ const TD0: u32 = 0x3000;
 const PID_IN: u8 = 0x69;
 
 const TD_STATUS_ACTIVE: u32 = 1 << 23;
+const TD_CTRL_IOC: u32 = 1 << 24;
 
 fn td_token(pid: u8, addr: u8, ep: u8, toggle: u8, max_len: usize) -> u32 {
     let max_field = if max_len == 0 {
@@ -164,6 +165,61 @@ fn uhci_usbsts_write_1_to_clear_clears_latched_interrupt_bits() {
     let sts = uhci.port_read(REG_USBSTS, 2) as u16;
     assert_eq!(sts & USBSTS_USBERRINT, 0);
     assert!(!uhci.irq_level());
+}
+
+#[test]
+fn uhci_usbint_sets_even_when_interrupts_disabled() {
+    #[derive(Clone)]
+    struct DummyInDevice;
+
+    impl UsbDeviceModel for DummyInDevice {
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Stall
+        }
+
+        fn handle_in_transfer(&mut self, _ep: u8, _max_len: usize) -> UsbInResult {
+            UsbInResult::Data(vec![0xaa])
+        }
+    }
+
+    const BUF: u32 = 0x4000;
+
+    let mut mem = Bus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        TD_STATUS_ACTIVE | TD_CTRL_IOC,
+        td_token(PID_IN, 0, 1, 0, 1),
+        BUF,
+    );
+    write_qh(&mut mem, QH_ADDR, TD0);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    uhci.controller.hub_mut().attach(0, Box::new(DummyInDevice));
+    uhci.controller.hub_mut().force_enable_for_tests(0);
+
+    uhci.port_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.port_write(REG_USBINTR, 2, 0);
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
+
+    uhci.tick_1ms(&mut mem);
+
+    assert_ne!(
+        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBINT,
+        0
+    );
+    assert!(!uhci.irq_level());
+
+    // Enabling IOC interrupts after the fact should raise IRQ immediately (level-triggered).
+    uhci.port_write(REG_USBINTR, 2, USBINTR_IOC as u32);
+    assert!(uhci.irq_level());
 }
 
 #[test]

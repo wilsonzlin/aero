@@ -271,7 +271,6 @@ impl UhciController {
                 mem,
                 hub: &mut self.hub,
                 usbsts: &mut self.regs.usbsts,
-                usbintr: self.regs.usbintr,
             };
             process_frame(&mut ctx, self.regs.flbaseadd, frame_index);
         }
