@@ -81,7 +81,11 @@ impl Metrics {
     }
 
     pub fn session_closed(&self) {
-        self.inner.sessions_active.fetch_sub(1, Ordering::Relaxed);
+        let _ = self.inner.sessions_active.fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |val| Some(val.saturating_sub(1)),
+        );
     }
 
     pub fn tcp_conn_opened(&self) {
@@ -89,7 +93,11 @@ impl Metrics {
     }
 
     pub fn tcp_conn_closed(&self) {
-        self.inner.tcp_conns_active.fetch_sub(1, Ordering::Relaxed);
+        let _ = self.inner.tcp_conns_active.fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |val| Some(val.saturating_sub(1)),
+        );
     }
 
     pub fn tcp_connect_failed(&self) {
@@ -103,7 +111,11 @@ impl Metrics {
     }
 
     pub fn udp_flow_closed(&self) {
-        self.inner.udp_flows_active.fetch_sub(1, Ordering::Relaxed);
+        let _ = self.inner.udp_flows_active.fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |val| Some(val.saturating_sub(1)),
+        );
     }
 
     pub fn udp_send_failed(&self) {
@@ -253,4 +265,40 @@ fn push_ping_rtt_histogram(out: &mut String, metrics: &MetricsInner) {
     out.push_str("l2_ping_rtt_ms_count ");
     out.push_str(&total.to_string());
     out.push('\n');
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_metric(body: &str, name: &str) -> u64 {
+        for line in body.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((k, v)) = line.split_once(' ') else {
+                continue;
+            };
+            if k == name {
+                return v.parse().unwrap();
+            }
+        }
+        panic!("metric {name:?} not found");
+    }
+
+    #[test]
+    fn gauges_saturate_on_underflow() {
+        let metrics = Metrics::new();
+
+        // These should not wrap around to `u64::MAX` if called out of order.
+        metrics.session_closed();
+        metrics.tcp_conn_closed();
+        metrics.udp_flow_closed();
+
+        let body = metrics.render_prometheus();
+        assert_eq!(parse_metric(&body, "l2_sessions_active"), 0);
+        assert_eq!(parse_metric(&body, "l2_tcp_conns_active"), 0);
+        assert_eq!(parse_metric(&body, "l2_udp_flows_active"), 0);
+    }
 }
