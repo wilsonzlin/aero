@@ -5,7 +5,7 @@
  * AeroGPU WDDM driver (guest) and the Aero emulator (host).
  *
  * Requirements:
- * - Must compile as C/C++ under WDK 7.1 toolchains.
+ * - Must compile as C/C++ under Windows driver toolchains (WDK10+ supported).
  * - All multi-byte fields are little-endian.
  * - MMIO registers are 32-bit wide unless documented otherwise.
  */

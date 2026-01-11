@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-/* Fixed-width protocol types (WDK 7.1 doesn't guarantee stdint.h in kernel-mode). */
+/* Fixed-width protocol types (kernel-mode builds don't reliably provide stdint.h). */
 #if defined(_NTDDK_) || defined(_NTIFS_) || defined(_WDMDDK_) || defined(_KERNEL_MODE)
 #include <ntdef.h>
 typedef UINT8 aerogpu_u8;

@@ -4,7 +4,7 @@
  * Lightweight debug logging for the AeroGPU WDDM miniport.
  *
  * This driver is expected to be brought up under WinDbg on Windows 7. DbgPrintEx
- * is the lowest-common-denominator logging facility available in WDK 7.1.
+ * is the lowest-common-denominator logging facility available across WDK versions.
  */
 
 #include <ntddk.h>
@@ -30,4 +30,3 @@
 #define AEROGPU_LOG(...) ((void)0)
 #define AEROGPU_LOG0(...) ((void)0)
 #endif
-

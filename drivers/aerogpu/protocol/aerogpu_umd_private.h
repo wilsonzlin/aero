@@ -12,7 +12,7 @@
  *  - device feature bits (vblank, fence page, etc.)
  *
  * Requirements:
- *  - Must compile in WDK 7.1 kernel-mode builds and in user-mode builds.
+ *  - Must compile in kernel-mode builds and in user-mode builds.
  *  - Packed, pointer-free POD layout (safe to memcpy across kernel/user).
  */
 #ifndef AEROGPU_PROTOCOL_AEROGPU_UMD_PRIVATE_H_
@@ -24,7 +24,7 @@ extern "C" {
 
 #include <stddef.h>
 
-/* Fixed-width types (WDK 7.1 doesn't guarantee stdint.h in kernel-mode). */
+/* Fixed-width types (kernel-mode builds don't reliably provide stdint.h). */
 #if defined(_NTDDK_) || defined(_NTIFS_) || defined(_WDMDDK_) || defined(_KERNEL_MODE)
 #include <ntdef.h>
 typedef UINT32 aerogpu_umdpriv_u32;

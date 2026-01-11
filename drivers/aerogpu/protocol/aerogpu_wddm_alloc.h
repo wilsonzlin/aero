@@ -14,7 +14,7 @@
  *   a writeback; that is not a stable contract for Win7 WDDM 1.1.
  *
  * Requirements:
- * - Must be usable in WDK 7.1 kernel-mode builds and in user-mode UMD projects.
+ * - Must be usable in kernel-mode builds and in user-mode UMD projects.
  * - Fixed-width fields and packed layout.
  * - Versioned so we can extend without breaking older binaries.
  *
@@ -34,8 +34,8 @@ extern "C" {
 /*
  * Fixed-width types without depending on C99 stdint in kernel-mode builds.
  *
- * WDK 7.1 kernel builds have UINT32/UINT64 via ntdef.h, but do not reliably
- * provide <stdint.h>.
+ * Kernel builds have UINT32/UINT64 via ntdef.h, but do not reliably provide
+ * <stdint.h>.
  */
 #if defined(_NTDDK_) || defined(_NTIFS_) || defined(_WDMDDK_) || defined(_KERNEL_MODE)
 #include <ntdef.h>

@@ -1410,9 +1410,9 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
      * handles that are still tracked.
      */
     /*
-     * WDK 7.1 exposes DXGKARG_CREATEALLOCATION::Flags.CreateShared for shared
-     * handle creation (DWM redirected surfaces).
-    */
+     * On Windows 7/WDDM 1.1, DXGKARG_CREATEALLOCATION::Flags.CreateShared is used for shared
+     * handle creation (notably DWM redirected surfaces).
+     */
     const BOOLEAN isShared = pCreate->Flags.CreateShared ? TRUE : FALSE;
 
 #if DBG
