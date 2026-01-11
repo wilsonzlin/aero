@@ -5,6 +5,7 @@
 ; Matches the Aero Windows 7 virtio device contract v1 (AERO-W7-VIRTIO):
 ;   - modern-only virtio-snd PCI ID (`DEV_1059`)
 ;   - contract major version encoded in PCI Revision ID (`REV_01`)
+;   - transitional virtio-pci IDs (e.g. `DEV_1018`) are out of scope and intentionally not matched
 ;
 ; This INF is intentionally strict and matches only:
 ;   - PCI\VEN_1AF4&DEV_1059&REV_01
