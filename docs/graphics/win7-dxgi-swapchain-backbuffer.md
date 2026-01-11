@@ -113,10 +113,11 @@ If you also captured `aerogpu_dbgctl --dump-createalloc` output, you can pass it
 correlate swapchain backbuffer handles to recent `DxgkDdiCreateAllocation` flag values (matched by
 allocation size):
 
-```bash
-rem Windows cmd example:
+```cmd
 aerogpu_dbgctl --dump-createalloc > createalloc.txt
+```
 
+```bash
 python scripts/parse_win7_dxgi_swapchain_trace.py --createalloc=createalloc.txt aerogpu_d3d10_11_umd.log
 python scripts/parse_win7_dxgi_swapchain_trace.py --json=swapchain_trace.json --createalloc=createalloc.txt aerogpu_d3d10_11_umd.log
 ```
