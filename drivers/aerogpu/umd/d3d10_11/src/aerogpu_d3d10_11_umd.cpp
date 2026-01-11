@@ -155,8 +155,10 @@ struct AeroGpuResource {
   aerogpu_handle_t handle = 0;
   ResourceKind kind = ResourceKind::Unknown;
 
-  // Host-visible backing allocation ID. Populated from KMD private data in a
-  // real WDDM build. 0 means "host allocated" (no allocation-table entry).
+  // Host-visible backing allocation ID. In a real WDDM build this comes from
+  // WDDM allocation private driver data (aerogpu_wddm_alloc_priv) so it remains
+  // stable across OpenResource/OpenAllocation. 0 means "host allocated" (no
+  // allocation-table entry).
   uint32_t backing_alloc_id = 0;
 
   // Stable cross-process token used by EXPORT/IMPORT_SHARED_SURFACE.
