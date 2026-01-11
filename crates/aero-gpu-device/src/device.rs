@@ -1,5 +1,8 @@
 //! Prototype emulator-side GPU device model.
 //!
+//! This device model speaks the experimental `aero-gpu-device` ABI (`crates/aero-gpu-device/src/abi.rs`)
+//! and is **not** compatible with the Win7/WDDM AeroGPU protocol in `drivers/aerogpu/protocol/*`.
+//!
 //! The real Aero emulator will expose this as a PCI device with a single MMIO
 //! BAR. The guest driver allocates shared memory in guest RAM for rings and
 //! programs their physical addresses via MMIO registers.

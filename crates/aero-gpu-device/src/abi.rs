@@ -1,5 +1,8 @@
 //! Prototype guest↔host GPU command ABI (AGRN/AGPC).
 //!
+//! This ABI is **not** the Windows 7 / WDDM AeroGPU protocol. The canonical Win7/WDDM ABI lives
+//! under `drivers/aerogpu/protocol/*` and is implemented by `crates/emulator`.
+//!
 //! The ABI is intentionally simple:
 //! - Commands are written by the guest into a byte ring (`GpuRingHeader` + data).
 //! - The host reads commands, executes them against a backend, and writes a
@@ -205,11 +208,13 @@ pub mod mmio {
     pub const REG_LAST_FAULT_SEQ_HI: u64 = 0x31C;
 }
 
-/// PCI enumeration info for the virtual GPU.
+/// PCI enumeration info for the experimental `aero-gpu-device` ABI.
+///
+/// These IDs are **not** used by the Win7/WDDM AeroGPU driver stack.
 pub mod pci {
-    /// Aero (unregistered) vendor ID.
+    /// Aero (unregistered) vendor ID used only by this prototype ABI.
     pub const VENDOR_ID: u16 = 0xA0E0;
-    /// Aero virtual GPU device ID.
+    /// Prototype virtual GPU device ID.
     pub const DEVICE_ID: u16 = 0x0001;
 
     /// PCI class: Display controller (0x03).
