@@ -137,9 +137,9 @@ cargo test --locked --workspace --all-features
 npm ci
 npm run test:unit
 
- # Playwright E2E
- npx playwright install --with-deps
- npm run test:e2e
+# Playwright E2E
+npx playwright install --with-deps
+npm run test:e2e
 ```
 
 Notes:
