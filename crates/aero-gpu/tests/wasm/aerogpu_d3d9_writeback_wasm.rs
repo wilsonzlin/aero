@@ -7,8 +7,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
     AEROGPU_COPY_FLAG_WRITEBACK_DST,
 };
-use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_MAJOR;
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
+use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_MAJOR;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -247,7 +247,8 @@ async fn aerogpu_d3d9_writeback_dst_updates_guest_memory_on_wasm() {
     let mut expected = dst_tex;
     for row in 0..TEX_HEIGHT as usize {
         let base = row * TEX_ROW_PITCH as usize;
-        expected[base..base + TEX_UNPADDED_BPR].copy_from_slice(&src_tex[base..base + TEX_UNPADDED_BPR]);
+        expected[base..base + TEX_UNPADDED_BPR]
+            .copy_from_slice(&src_tex[base..base + TEX_UNPADDED_BPR]);
     }
     assert_eq!(out_tex, expected);
 }

@@ -239,7 +239,8 @@ async fn aerogpu_cmd_writeback_dst_updates_guest_memory_on_wasm() {
     let mut expected = dst_tex;
     for row in 0..TEX_HEIGHT as usize {
         let base = row * TEX_ROW_PITCH as usize;
-        expected[base..base + TEX_UNPADDED_BPR].copy_from_slice(&src_tex[base..base + TEX_UNPADDED_BPR]);
+        expected[base..base + TEX_UNPADDED_BPR]
+            .copy_from_slice(&src_tex[base..base + TEX_UNPADDED_BPR]);
     }
     assert_eq!(out_tex, expected);
 }
