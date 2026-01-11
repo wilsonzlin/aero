@@ -253,6 +253,13 @@ fn decode_dirty<R: Read>(
 ) -> Result<()> {
     let page_size_u64 = page_size as u64;
     let count = r.read_u64_le()?;
+    let max_pages = total_len
+        .checked_add(page_size_u64 - 1)
+        .ok_or(SnapshotError::Corrupt("ram length overflow"))?
+        / page_size_u64;
+    if count > max_pages {
+        return Err(SnapshotError::Corrupt("too many dirty pages"));
+    }
     for _ in 0..count {
         let page_idx = r.read_u64_le()?;
         let offset = page_idx

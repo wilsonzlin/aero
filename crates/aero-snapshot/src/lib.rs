@@ -80,7 +80,8 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
     write_section(w, SectionId::MMU, 1, 0, |w| source.mmu_state().encode(w))?;
 
     write_section(w, SectionId::DEVICES, 1, 0, |w| {
-        let devices = source.device_states();
+        let mut devices = source.device_states();
+        devices.sort_by_key(|device| (device.id.0, device.version, device.flags));
         let count: u32 = devices
             .len()
             .try_into()
@@ -93,7 +94,9 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
     })?;
 
     write_section(w, SectionId::DISKS, 1, 0, |w| {
-        source.disk_overlays().encode(w)
+        let mut disks = source.disk_overlays();
+        disks.disks.sort_by_key(|disk| disk.disk_id);
+        disks.encode(w)
     })?;
 
     write_section(w, SectionId::RAM, 1, 0, |w| {
@@ -105,11 +108,27 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
                 let _ = source.take_dirty_pages();
                 None
             }
-            RamMode::Dirty => Some(
-                source
+            RamMode::Dirty => {
+                let mut dirty_pages = source
                     .take_dirty_pages()
-                    .ok_or(SnapshotError::Corrupt("dirty-page tracking not available"))?,
-            ),
+                    .ok_or(SnapshotError::Corrupt("dirty-page tracking not available"))?;
+                dirty_pages.sort_unstable();
+                dirty_pages.dedup();
+
+                let page_size = u64::from(options.ram.page_size);
+                if page_size == 0 {
+                    return Err(SnapshotError::Corrupt("invalid page size"));
+                }
+                let max_pages = total_len
+                    .checked_add(page_size - 1)
+                    .ok_or(SnapshotError::Corrupt("ram length overflow"))?
+                    / page_size;
+                if dirty_pages.iter().any(|&page_idx| page_idx >= max_pages) {
+                    return Err(SnapshotError::Corrupt("dirty page out of range"));
+                }
+
+                Some(dirty_pages)
+            }
         };
 
         ram::encode_ram_section(
@@ -127,10 +146,17 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
 pub fn restore_snapshot<R: Read, T: SnapshotTarget>(r: &mut R, target: &mut T) -> Result<()> {
     read_file_header(r)?;
 
+    const MAX_DEVICES_SECTION_LEN: u64 = 256 * 1024 * 1024;
+    const MAX_DEVICE_COUNT: usize = 4096;
+
     let mut seen_cpu = false;
     let mut seen_ram = false;
 
     while let Some(header) = read_section_header(r)? {
+        if header.id == SectionId::DEVICES && header.len > MAX_DEVICES_SECTION_LEN {
+            return Err(SnapshotError::Corrupt("devices section too large"));
+        }
+
         let mut section_reader = r.take(header.len);
         match header.id {
             id if id == SectionId::META => {
@@ -155,6 +181,9 @@ pub fn restore_snapshot<R: Read, T: SnapshotTarget>(r: &mut R, target: &mut T) -
             id if id == SectionId::DEVICES => {
                 if header.version == 1 {
                     let count = section_reader.read_u32_le()? as usize;
+                    if count > MAX_DEVICE_COUNT {
+                        return Err(SnapshotError::Corrupt("too many devices"));
+                    }
                     let mut devices = Vec::with_capacity(count.min(64));
                     for _ in 0..count {
                         devices.push(DeviceState::decode(&mut section_reader, 64 * 1024 * 1024)?);
@@ -186,6 +215,12 @@ pub fn restore_snapshot<R: Read, T: SnapshotTarget>(r: &mut R, target: &mut T) -
 
         // Consume any trailing bytes (forward-compatible additions inside known sections).
         std::io::copy(&mut section_reader, &mut std::io::sink())?;
+        if section_reader.limit() != 0 {
+            return Err(SnapshotError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "truncated section payload",
+            )));
+        }
     }
 
     if !seen_cpu {

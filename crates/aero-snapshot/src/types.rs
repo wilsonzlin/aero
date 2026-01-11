@@ -261,6 +261,9 @@ impl DiskOverlayRefs {
 
     pub fn decode<R: Read>(r: &mut R) -> Result<Self> {
         let count = r.read_u32_le()? as usize;
+        if count > 256 {
+            return Err(SnapshotError::Corrupt("too many disks"));
+        }
         let mut disks = Vec::with_capacity(count.min(64));
         for _ in 0..count {
             disks.push(DiskOverlayRef::decode(r)?);
