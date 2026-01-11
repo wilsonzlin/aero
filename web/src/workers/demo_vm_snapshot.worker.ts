@@ -50,6 +50,7 @@ let serialBytes: number | null = 0;
 const savedSerialBytesByPath = new Map<string, number | null>();
 
 let stepTimer: number | null = null;
+let stepLoopPaused = false;
 const STEPS_PER_TICK = 5_000;
 const TICK_MS = 250;
 
@@ -83,6 +84,7 @@ function ensureVm(): InstanceType<WasmApi["DemoVm"]> {
 }
 
 function stopStepLoop(): void {
+  stepLoopPaused = true;
   if (stepTimer !== null) {
     ctx.clearInterval(stepTimer);
     stepTimer = null;
@@ -91,8 +93,10 @@ function stopStepLoop(): void {
 
 function startStepLoop(): void {
   stopStepLoop();
+  stepLoopPaused = false;
   stepTimer = ctx.setInterval(() => {
     try {
+      if (stepLoopPaused) return;
       const current = ensureVm();
       current.run_steps(STEPS_PER_TICK);
       const maybeLen = getSerialOutputLenFromVm(current);
