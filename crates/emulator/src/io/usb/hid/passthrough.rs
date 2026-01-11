@@ -73,9 +73,6 @@ pub struct UsbHidPassthrough {
 #[derive(Clone, Debug)]
 pub struct UsbHidPassthroughHandle {
     inner: Rc<RefCell<UsbHidPassthrough>>,
-    device_descriptor: Rc<[u8]>,
-    config_descriptor: Rc<[u8]>,
-    hid_report_descriptor: Rc<[u8]>,
 }
 
 impl UsbHidPassthroughHandle {
@@ -105,15 +102,8 @@ impl UsbHidPassthroughHandle {
             interface_protocol.unwrap_or(0),
         );
 
-        let device_descriptor = model.device_descriptor.clone();
-        let config_descriptor = model.config_descriptor.clone();
-        let hid_report_descriptor = model.hid_report_descriptor.clone();
-
         Self {
             inner: Rc::new(RefCell::new(model)),
-            device_descriptor,
-            config_descriptor,
-            hid_report_descriptor,
         }
     }
 
