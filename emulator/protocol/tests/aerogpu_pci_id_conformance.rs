@@ -237,9 +237,9 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         contract_path.display()
     );
     // The contract manifest intentionally represents the canonical, versioned AeroGPU PCI identity
-    // only. The legacy bring-up ABI (`drivers/aerogpu/protocol/aerogpu_protocol.h`) remains in-tree
-    // for reference and optional compatibility, but must not be treated as part of the stable
-    // Windows device binding contract.
+    // only. The legacy bring-up ABI (`drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`)
+    // remains in-tree for reference and optional compatibility, but must not be treated as part of
+    // the stable Windows device binding contract.
     assert!(
         !patterns.contains(&legacy_hwid),
         "{}: aero-gpu hardware_id_patterns must not include legacy bring-up HWID `{legacy_hwid}`. Found: {patterns:?}",
