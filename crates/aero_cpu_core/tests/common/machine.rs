@@ -125,7 +125,7 @@ impl Tier0Machine {
                 BatchExit::Completed | BatchExit::Branch => continue,
                 BatchExit::Halted => return,
                 BatchExit::BiosInterrupt(vector) => {
-                    panic!("unexpected BIOS interrupt: {vector:#x}")
+                    panic!("unexpected BIOS interrupt {vector:#x} at rip=0x{:X}", self.cpu.rip())
                 }
                 BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
                 BatchExit::Assist(r) => {
