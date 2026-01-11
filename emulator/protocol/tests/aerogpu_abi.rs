@@ -30,7 +30,8 @@ use aero_protocol::aerogpu::aerogpu_pci::{
     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO, AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER,
     AEROGPU_PCI_DEVICE_ID, AEROGPU_PCI_PROG_IF, AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE,
-    AEROGPU_PCI_VENDOR_ID, AEROGPU_RING_CONTROL_ENABLE,
+    AEROGPU_PCI_SUBSYSTEM_ID, AEROGPU_PCI_SUBSYSTEM_VENDOR_ID, AEROGPU_PCI_VENDOR_ID,
+    AEROGPU_PCI_BAR0_INDEX, AEROGPU_PCI_BAR0_SIZE_BYTES, AEROGPU_RING_CONTROL_ENABLE,
 };
 use aero_protocol::aerogpu::aerogpu_ring::{
     write_fence_page_completed_fence_le, AerogpuAllocEntry, AerogpuAllocTableHeader,
@@ -625,6 +626,14 @@ fn rust_layout_matches_c_headers() {
         AEROGPU_PCI_DEVICE_ID as u64
     );
     assert_eq!(
+        abi.konst("AEROGPU_PCI_SUBSYSTEM_VENDOR_ID"),
+        AEROGPU_PCI_SUBSYSTEM_VENDOR_ID as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_PCI_SUBSYSTEM_ID"),
+        AEROGPU_PCI_SUBSYSTEM_ID as u64
+    );
+    assert_eq!(
         abi.konst("AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER"),
         AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER as u64
     );
@@ -633,6 +642,14 @@ fn rust_layout_matches_c_headers() {
         AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE as u64
     );
     assert_eq!(abi.konst("AEROGPU_PCI_PROG_IF"), AEROGPU_PCI_PROG_IF as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_PCI_BAR0_INDEX"),
+        AEROGPU_PCI_BAR0_INDEX as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_PCI_BAR0_SIZE_BYTES"),
+        AEROGPU_PCI_BAR0_SIZE_BYTES as u64
+    );
 
     assert_eq!(abi.konst("AEROGPU_MMIO_MAGIC"), AEROGPU_MMIO_MAGIC as u64);
     assert_eq!(
