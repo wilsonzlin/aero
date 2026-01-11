@@ -652,8 +652,8 @@ uint64_t submit(Device* dev) {
   adapter->fence_cv.notify_all();
 
   // Light logging so we can confirm command flow during integration.
-  logf("aerogpu-d3d9: submit cmd_bytes=%zu fence=%llu\n",
-       dev->cmd.size(),
+  logf("aerogpu-d3d9: submit cmd_bytes=%llu fence=%llu\n",
+       static_cast<unsigned long long>(dev->cmd.size()),
        static_cast<unsigned long long>(fence));
 
   dev->cmd.reset();
@@ -1005,9 +1005,9 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   if (wants_shared && !open_existing_shared) {
     if (!pCreateResource->pKmdAllocPrivateData ||
         pCreateResource->KmdAllocPrivateDataSize < sizeof(aerogpu_wddm_alloc_priv)) {
-      logf("aerogpu-d3d9: Create shared resource missing private data buffer (have=%u need=%zu)\n",
+      logf("aerogpu-d3d9: Create shared resource missing private data buffer (have=%u need=%u)\n",
            pCreateResource->KmdAllocPrivateDataSize,
-           sizeof(aerogpu_wddm_alloc_priv));
+           static_cast<unsigned>(sizeof(aerogpu_wddm_alloc_priv)));
       return kD3DErrInvalidCall;
     }
 
