@@ -160,6 +160,17 @@ typedef struct aerogpu_escape_dump_ring_v2_inout {
   aerogpu_escape_u32 ring_id;
   aerogpu_escape_u32 ring_format; /* enum aerogpu_dbgctl_ring_format */
   aerogpu_escape_u32 ring_size_bytes;
+  /*
+   * Ring indices.
+   *
+   * - For AEROGPU_DBGCTL_RING_FORMAT_AGPU, `head` and `tail` are monotonically increasing
+   *   indices (not masked). The returned `desc[]` is a recent tail-window of descriptors
+   *   ending at `tail - 1` (newest is `desc[desc_count - 1]`).
+   *
+   * - For AEROGPU_DBGCTL_RING_FORMAT_LEGACY, head/tail are device-specific indices.
+   *   Tooling should treat `desc[]` as a best-effort snapshot and may not assume it
+   *   contains completed history beyond the pending region.
+   */
   aerogpu_escape_u32 head;
   aerogpu_escape_u32 tail;
   aerogpu_escape_u32 desc_count;

@@ -667,7 +667,11 @@ static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ri
     wprintf(L"  size: %lu bytes\n", (unsigned long)q2.ring_size_bytes);
     wprintf(L"  head: 0x%08lx\n", (unsigned long)q2.head);
     wprintf(L"  tail: 0x%08lx\n", (unsigned long)q2.tail);
-    wprintf(L"  descriptors: %lu\n", (unsigned long)q2.desc_count);
+    if (q2.ring_format == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+      wprintf(L"  descriptors (recent tail window): %lu\n", (unsigned long)q2.desc_count);
+    } else {
+      wprintf(L"  descriptors: %lu\n", (unsigned long)q2.desc_count);
+    }
 
     uint32_t count = q2.desc_count;
     if (count > AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {

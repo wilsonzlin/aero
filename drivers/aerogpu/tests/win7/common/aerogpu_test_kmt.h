@@ -388,7 +388,7 @@ static inline bool GetLastWrittenRingDesc(const aerogpu_escape_dump_ring_v2_inou
     count = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
   }
 
-  // Newest descriptor is expected to be last in the returned array.
+  // Newest descriptor is expected to be last in the returned array (tail window for AGPU).
   uint32_t idx = count - 1;
 
   if (out_desc) {
