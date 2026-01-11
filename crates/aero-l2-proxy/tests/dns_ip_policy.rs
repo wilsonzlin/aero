@@ -219,8 +219,7 @@ async fn run_dns_case(allow_private_ips: bool, expect_addr: Option<[u8; 4]>) {
     let _legacy_token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _ping_interval = EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0");
     let _max_connections = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0");
-    let _max_connections_per_session =
-        EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
+    let _max_connections_per_session = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
     let _max_bytes = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
     let _max_fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
 
@@ -279,7 +278,10 @@ async fn run_dns_case(allow_private_ips: bool, expect_addr: Option<[u8; 4]>) {
         .await
         .unwrap();
     let dns_queries = parse_metric(&body, "l2_dns_queries_total").unwrap();
-    assert!(dns_queries >= 1, "expected at least 1 DNS query, got {dns_queries}");
+    assert!(
+        dns_queries >= 1,
+        "expected at least 1 DNS query, got {dns_queries}"
+    );
 
     let dns_fail = parse_metric(&body, "l2_dns_fail_total").unwrap();
     assert_eq!(dns_fail, 0, "expected no DNS failures, got {dns_fail}");
@@ -303,4 +305,3 @@ async fn dns_loopback_a_records_are_filtered_unless_private_ips_allowed() {
     run_dns_case(false, None).await;
     run_dns_case(true, Some([127, 0, 0, 1])).await;
 }
-

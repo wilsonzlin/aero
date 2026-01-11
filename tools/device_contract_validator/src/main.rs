@@ -287,12 +287,10 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
                     .iter()
                     .map(|s| s.to_ascii_uppercase())
                     .collect();
-                let expected_keyboard = format!(
-                    r"PCI\VEN_{vendor:04X}&DEV_{did:04X}&SUBSYS_0010{vendor:04X}&REV_01"
-                );
-                let expected_mouse = format!(
-                    r"PCI\VEN_{vendor:04X}&DEV_{did:04X}&SUBSYS_0011{vendor:04X}&REV_01"
-                );
+                let expected_keyboard =
+                    format!(r"PCI\VEN_{vendor:04X}&DEV_{did:04X}&SUBSYS_0010{vendor:04X}&REV_01");
+                let expected_mouse =
+                    format!(r"PCI\VEN_{vendor:04X}&DEV_{did:04X}&SUBSYS_0011{vendor:04X}&REV_01");
                 let missing = [expected_keyboard, expected_mouse]
                     .into_iter()
                     .filter(|hwid| !patterns.contains(hwid))
