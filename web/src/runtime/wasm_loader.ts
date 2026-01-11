@@ -83,6 +83,7 @@ export interface WasmApi {
 
             step_frames(frames: number): void;
             step_frame(): void;
+            tick_1ms(): void;
 
             irq_asserted(): boolean;
 

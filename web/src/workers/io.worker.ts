@@ -184,7 +184,7 @@ function maybeInitUhciDevice(): void {
   if (!Bridge) return;
 
   try {
-    const bridge = new Bridge(guestBase >>> 0);
+    const bridge = new Bridge(guestBase >>> 0, guestU8.byteLength >>> 0);
     const dev = new UhciPciDevice({ bridge, irqSink: mgr.irqSink });
     uhciDevice = dev;
     mgr.registerPciDevice(dev);
