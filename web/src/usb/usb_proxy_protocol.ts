@@ -5,6 +5,14 @@ export type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passth
 export type UsbActionMessage = { type: "usb.action"; action: UsbHostAction };
 export type UsbCompletionMessage = { type: "usb.completion"; completion: UsbHostCompletion };
 export type UsbSelectDeviceMessage = { type: "usb.selectDevice"; filters?: USBDeviceFilter[] };
+/**
+ * Request the current `usb.selected` state from the broker.
+ *
+ * This is useful when a worker-side runtime starts in a blocked state and may
+ * have missed an earlier `usb.selected ok:true` broadcast (e.g. WASM finished
+ * initializing after the user selected a device).
+ */
+export type UsbQuerySelectedMessage = { type: "usb.querySelected" };
 export type UsbSelectedMessage = {
   type: "usb.selected";
   ok: boolean;
@@ -12,7 +20,12 @@ export type UsbSelectedMessage = {
   info?: { vendorId: number; productId: number; productName?: string };
 };
 
-export type UsbProxyMessage = UsbActionMessage | UsbCompletionMessage | UsbSelectDeviceMessage | UsbSelectedMessage;
+export type UsbProxyMessage =
+  | UsbActionMessage
+  | UsbCompletionMessage
+  | UsbSelectDeviceMessage
+  | UsbQuerySelectedMessage
+  | UsbSelectedMessage;
 
 function transferablesForBytes(bytes: Uint8Array): Transferable[] | undefined {
   // Only `ArrayBuffer` instances are transferable. `SharedArrayBuffer` can be structured-cloned but not transferred.
@@ -143,6 +156,10 @@ export function isUsbSelectDeviceMessage(value: unknown): value is UsbSelectDevi
   return Array.isArray(value.filters);
 }
 
+export function isUsbQuerySelectedMessage(value: unknown): value is UsbQuerySelectedMessage {
+  return isRecord(value) && value.type === "usb.querySelected";
+}
+
 export function isUsbSelectedMessage(value: unknown): value is UsbSelectedMessage {
   if (!isRecord(value) || value.type !== "usb.selected") return false;
   if (typeof value.ok !== "boolean") return false;
@@ -157,7 +174,11 @@ export function isUsbSelectedMessage(value: unknown): value is UsbSelectedMessag
 
 export function isUsbProxyMessage(value: unknown): value is UsbProxyMessage {
   return (
-    isUsbActionMessage(value) || isUsbCompletionMessage(value) || isUsbSelectDeviceMessage(value) || isUsbSelectedMessage(value)
+    isUsbActionMessage(value) ||
+    isUsbCompletionMessage(value) ||
+    isUsbSelectDeviceMessage(value) ||
+    isUsbQuerySelectedMessage(value) ||
+    isUsbSelectedMessage(value)
   );
 }
 

@@ -167,6 +167,43 @@ describe("usb/UsbBroker", () => {
     ]);
   });
 
+  it("responds to usb.querySelected with the current usb.selected state", async () => {
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {}
+
+        async execute(): Promise<BackendUsbHostCompletion> {
+          throw new Error("not used");
+        }
+      },
+    }));
+
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker();
+
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    port.emit({ type: "usb.querySelected" });
+    expect(port.posted).toEqual([{ type: "usb.selected", ok: false }]);
+
+    const device = {
+      vendorId: 0x1234,
+      productId: 0x5678,
+      productName: "Demo",
+      close: async () => {},
+    } as unknown as USBDevice;
+
+    await broker.attachKnownDevice(device);
+
+    port.emit({ type: "usb.querySelected" });
+    expect(port.posted.at(-1)).toEqual({
+      type: "usb.selected",
+      ok: true,
+      info: { vendorId: 0x1234, productId: 0x5678, productName: "Demo" },
+    });
+  });
+
   it("serializes actions via FIFO queue", async () => {
     const callOrder: number[] = [];
     const resolvers: Array<(c: BackendUsbHostCompletion) => void> = [];

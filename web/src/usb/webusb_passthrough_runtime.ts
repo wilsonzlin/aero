@@ -7,6 +7,7 @@ import {
   type UsbActionMessage,
   type UsbHostAction,
   type UsbHostCompletion,
+  type UsbQuerySelectedMessage,
   type UsbSelectedMessage,
 } from "./usb_proxy_protocol";
 
@@ -168,9 +169,14 @@ export class WebUsbPassthroughRuntime {
    * (disconnect/revoked/chooser error). In that state we stop pumping and reset
    * the bridge until a subsequent `ok:true` arrives.
    *
-   * Keep the default as "not blocked" so the runtime still functions if it is
-   * instantiated after an `ok:true` broadcast (e.g. WASM finishes loading after
-   * the user selects a device).
+   * Keep the default as "not blocked" so the runtime still functions even in
+   * environments where no `usb.selected` messages are ever delivered (older
+   * brokers / direct execution paths).
+   *
+   * When `initiallyBlocked` is `true`, the runtime sends a one-time
+   * `usb.querySelected` request to the broker so it can recover if it missed an
+   * earlier `usb.selected ok:true` broadcast (e.g. WASM finished loading after
+   * the user selected a device).
    */
   #blocked: boolean;
   #desiredRunning = false;
@@ -247,6 +253,18 @@ export class WebUsbPassthroughRuntime {
     this.#port.addEventListener("message", this.#onMessage);
     // When using addEventListener() MessagePorts need start() to begin dispatch.
     (this.#port as unknown as { start?: () => void }).start?.();
+
+    // If we start blocked (common in worker runtimes), proactively query the broker
+    // for the current selection state so we don't wedge if we missed an earlier
+    // `usb.selected ok:true` broadcast (e.g. WASM initialized late).
+    if (this.#blocked) {
+      try {
+        this.#port.postMessage({ type: "usb.querySelected" } satisfies UsbQuerySelectedMessage);
+      } catch {
+        // Best-effort: if the broker isn't attached yet (or doesn't understand the
+        // message), we'll remain blocked until a real `usb.selected` broadcast arrives.
+      }
+    }
   }
 
   start(): void {
@@ -461,7 +479,7 @@ export class WebUsbPassthroughRuntime {
 
     this.#blocked = true;
     this.stopPolling();
-    this.cancelPending(msg.error ?? "WebUSB device disconnected.");
+    this.cancelPending(msg.error ?? "WebUSB device not selected.");
 
     try {
       this.#bridge.reset();

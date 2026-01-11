@@ -94,6 +94,8 @@ describe("usb/usb_proxy_protocol", () => {
     expect(isUsbCompletionMessage(completionMsg)).toBe(true);
     expect(isUsbProxyMessage(completionMsg)).toBe(true);
 
+    expect(isUsbProxyMessage({ type: "usb.querySelected" })).toBe(true);
+
     expect(isUsbProxyMessage({ type: "usb.action", action: { kind: "bulkIn", id: 1 } })).toBe(false);
     expect(isUsbProxyMessage({ type: "unknown" })).toBe(false);
   });

@@ -1,6 +1,7 @@
 import {
   getTransferablesForUsbCompletionMessage,
   isUsbActionMessage,
+  isUsbQuerySelectedMessage,
   isUsbSelectDeviceMessage,
   usbErrorCompletion,
   type UsbActionMessage,
@@ -299,6 +300,14 @@ export class UsbBroker {
           return;
         }
 
+        if (isUsbQuerySelectedMessage(data)) {
+          // Reply with the current selection state so the worker can synchronize.
+          // (This is distinct from `usb.selectDevice`, which triggers a chooser and
+          // requires a user activation.)
+          this.postToPort(port, this.currentSelectedMessage());
+          return;
+        }
+
         // If the message uses the `usb.action` envelope but fails schema validation, synthesize an
         // error completion (when possible) so worker-side runtimes don't deadlock waiting for a reply.
         if (isRecord(data) && data.type === "usb.action") {
@@ -347,6 +356,16 @@ export class UsbBroker {
       const message = formatWebUsbError(err);
       this.postToPort(port, { type: "usb.selected", ok: false, error: message } satisfies UsbSelectedMessage);
     }
+  }
+
+  private currentSelectedMessage(): UsbSelectedMessage {
+    if (this.selectedInfo && !this.disconnectError) {
+      return { type: "usb.selected", ok: true, info: this.selectedInfo } satisfies UsbSelectedMessage;
+    }
+    if (this.disconnectError) {
+      return { type: "usb.selected", ok: false, error: this.disconnectError } satisfies UsbSelectedMessage;
+    }
+    return { type: "usb.selected", ok: false } satisfies UsbSelectedMessage;
   }
 
   private async adoptDevice(device: USBDevice): Promise<UsbDeviceInfo> {

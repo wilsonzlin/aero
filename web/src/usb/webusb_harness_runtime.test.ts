@@ -63,21 +63,22 @@ describe("usb/WebUsbUhciHarnessRuntime", () => {
 
     // Harness should be blocked until `usb.selected ok:true`.
     runtime.pollOnce();
-    expect(port.posted).toEqual([]);
+    expect(port.posted).toEqual([{ type: "usb.querySelected" }]);
 
     port.emit({ type: "usb.selected", ok: true, info: { vendorId: 0x1234, productId: 0x5678 } });
 
     runtime.pollOnce();
     expect(harness.tick).toHaveBeenCalledTimes(1);
-    expect(port.posted).toHaveLength(2);
-    const posted = port.posted as Array<{ type: string; action: UsbHostAction }>;
-    expect(posted[0]?.type).toBe("usb.action");
-    expect(posted[1]?.type).toBe("usb.action");
-    expect(posted[0]?.action.kind).toBe(actions[0].kind);
-    expect(posted[1]?.action.kind).toBe(actions[1].kind);
+    const postedActions = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.action") as Array<{
+      type: "usb.action";
+      action: UsbHostAction;
+    }>;
+    expect(postedActions).toHaveLength(2);
+    expect(postedActions[0]?.action.kind).toBe(actions[0].kind);
+    expect(postedActions[1]?.action.kind).toBe(actions[1].kind);
 
-    const brokerId1 = posted[0]!.action.id;
-    const brokerId2 = posted[1]!.action.id;
+    const brokerId1 = postedActions[0]!.action.id;
+    const brokerId2 = postedActions[1]!.action.id;
 
     const c1Broker: UsbHostCompletion = { kind: "controlIn", id: brokerId1, status: "success", data: Uint8Array.of(9) };
     const c2Broker: UsbHostCompletion = { kind: "bulkOut", id: brokerId2, status: "success", bytesWritten: 3 };

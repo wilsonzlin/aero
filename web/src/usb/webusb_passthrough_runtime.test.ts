@@ -102,12 +102,12 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     });
 
     await runtime.pollOnce();
-    expect(port.posted).toEqual([]);
+    expect(port.posted).toEqual([{ type: "usb.querySelected" }]);
 
     port.emit({ type: "usb.selected", ok: true, info: { vendorId: 1, productId: 2 } });
 
     const p = runtime.pollOnce();
-    expect(port.posted).toEqual([{ type: "usb.action", action }]);
+    expect(port.posted).toEqual([{ type: "usb.querySelected" }, { type: "usb.action", action }]);
     port.emit({ type: "usb.completion", completion: { kind: "bulkIn", id: 1, status: "stall" } satisfies UsbHostCompletion });
     await p;
   });

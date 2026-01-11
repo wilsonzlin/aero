@@ -7,6 +7,7 @@ import {
   type UsbActionMessage,
   type UsbHostAction,
   type UsbHostCompletion,
+  type UsbQuerySelectedMessage,
   type UsbSelectedMessage,
 } from "./usb_proxy_protocol";
 
@@ -283,7 +284,9 @@ export class WebUsbUhciHarnessRuntime {
      *
      * Default is `true` so the harness doesn't immediately run before the user selects
      * a WebUSB device. `UsbBroker` will send `usb.selected ok:true` when a device is
-     * attached, unblocking the runtime.
+     * attached, unblocking the runtime. When starting blocked, the runtime also sends
+     * a `usb.querySelected` message to the broker so it can learn about devices that
+     * were selected before the harness runner initialized.
      */
     initiallyBlocked?: boolean;
   }) {
@@ -308,6 +311,17 @@ export class WebUsbUhciHarnessRuntime {
     this.#port.addEventListener("message", this.#onMessage);
     // When using addEventListener() MessagePorts need start() to begin dispatch.
     (this.#port as unknown as { start?: () => void }).start?.();
+
+    // If we start blocked, proactively ask the broker for the current selection
+    // state so we don't wedge when a device was selected before this harness
+    // runtime finished initializing.
+    if (this.#blocked) {
+      try {
+        this.#port.postMessage({ type: "usb.querySelected" } satisfies UsbQuerySelectedMessage);
+      } catch {
+        // ignore
+      }
+    }
 
     this.emitUpdate();
   }
@@ -479,7 +493,7 @@ export class WebUsbUhciHarnessRuntime {
     }
 
     this.#blocked = true;
-    this.stop(msg.error ?? "WebUSB device disconnected.");
+    this.stop(msg.error ?? "WebUSB device not selected.");
   }
 
   private emitUpdate(): void {
