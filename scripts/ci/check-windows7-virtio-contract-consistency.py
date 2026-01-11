@@ -924,12 +924,25 @@ def main() -> None:
 
         patterns = _require_str_list(entry, "hardware_id_patterns", device=device_name)
         base_hwid = f"PCI\\VEN_{contract_any.vendor_id:04X}&DEV_{contract_any.device_id:04X}"
-        if not any(p.upper() == base_hwid.upper() for p in patterns):
+        base_hwid_upper = base_hwid.upper()
+        if not any(p.upper() == base_hwid_upper for p in patterns):
             errors.append(
                 format_error(
                     f"{device_name}: manifest is missing the base VEN/DEV hardware ID pattern:",
                     [
                         f"expected: {base_hwid}",
+                        f"got: {patterns}",
+                    ],
+                )
+            )
+
+        expected_rev_fragment = f"REV_{contract_rev:02X}"
+        if not any(p.upper().startswith(base_hwid_upper) and expected_rev_fragment in p.upper() for p in patterns):
+            errors.append(
+                format_error(
+                    f"{device_name}: manifest is missing a revision-qualified hardware ID for the canonical VEN/DEV:",
+                    [
+                        f"expected at least one pattern starting with {base_hwid} and containing {expected_rev_fragment}",
                         f"got: {patterns}",
                     ],
                 )
@@ -968,16 +981,17 @@ def main() -> None:
                 )
             else:
                 expected_subsys_fragment = f"SUBSYS_{subsys_device:04X}{contract_any.subsystem_vendor_id:04X}"
-                expected_rev_fragment = f"REV_{contract_rev:02X}"
                 if not any(
-                    expected_subsys_fragment in pat.upper() and expected_rev_fragment in pat.upper()
+                    pat.upper().startswith(base_hwid_upper)
+                    and expected_subsys_fragment in pat.upper()
+                    and expected_rev_fragment in pat.upper()
                     for pat in patterns
                 ):
                     errors.append(
                         format_error(
                             f"{device_name}: manifest is missing a revision-qualified SUBSYS hardware ID:",
                             [
-                                f"expected at least one pattern containing: {expected_subsys_fragment} and {expected_rev_fragment}",
+                                f"expected at least one pattern containing: {base_hwid}&{expected_subsys_fragment}&{expected_rev_fragment}",
                                 f"got: {patterns}",
                             ],
                         )
