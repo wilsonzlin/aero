@@ -8,7 +8,9 @@ What this test plan verifies:
 2. Windows 7 binds the virtio-snd driver package (INF/SYS) to that PCI function
 3. The Windows audio stack enumerates a **render** endpoint (Control Panel → Sound)
 4. Audio playback works (audible on the host, or captured to a WAV file in headless runs)
-5. The guest audio smoke test passes (selftest **Task 128**)
+5. (Optional) The Windows audio stack enumerates a **capture** endpoint (Control Panel → Sound → Recording)
+6. (Optional) Audio capture works (records host input if available, otherwise records silence)
+7. The guest audio smoke test passes (selftest **Task 128**)
 
 References:
 
@@ -169,6 +171,17 @@ Reboot if prompted.
 4. Select it → **Properties** → **Advanced** → **Test** (or use the **Configure** wizard) to trigger playback.
 
 If you used the `wav` audio backend, the host-side `virtio-snd-*.wav` file should be created and grow when sound plays.
+
+### 4b) (Optional) Verify a capture endpoint exists
+
+1. Open **Control Panel** → **Sound** (or run `mmsys.cpl`).
+2. On the **Recording** tab, confirm a new recording device exists (capture endpoint).
+3. Use **Sound Recorder** (or any capture-capable app) to record a short sample.
+
+Notes:
+
+- QEMU capture requires an audio backend that provides an input source. If none is available,
+  capture may record silence, but endpoint enumeration should still work.
 
 ## Run the selftest audio check (Task 128)
 

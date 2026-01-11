@@ -12,12 +12,13 @@ review the driver without relying on untracked samples or “tribal knowledge”
 This design targets the simplest useful audio path for Aero:
 
 - Windows 7 SP1 (x86/x64).
-- One **render** endpoint (speaker/headphones style).
-- One `virtio-snd` PCM stream: **stream id 0**.
-- A single fixed format (see [Assumptions and limits](#assumptions-and-limits)).
+- One **render** endpoint (speaker/headphones style) backed by `virtio-snd` stream id `0` (TX).
+- One **capture** endpoint (microphone style) backed by `virtio-snd` stream id `1` (RX).
+- A single fixed format per stream (see [Assumptions and limits](#assumptions-and-limits)).
 
-Capture, multiple pins/streams, format negotiation, and advanced DSP/offload are
-out of scope for the first implementation.
+Multiple endpoints beyond the single render + single capture pins, format
+negotiation, and advanced DSP/offload are out of scope for the first
+implementation.
 
 ## Why PortCls + WaveRT (Windows 7+)
 
@@ -78,10 +79,10 @@ The intended structure is a classic PortCls “adapter + miniports” design:
 - **Adapter / FDO**: owns the virtio transport (virtio-pci + virtqueues) and
   provides shared device services.
 - **Topology miniport**: exposes the endpoint topology (minimal for a basic
-  render-only device).
-- **WaveRT miniport**: exposes one render pin that supports WaveRT.
-- **WaveRT stream object**: created per open render stream; owns the cyclic
-  buffer mapping, clock state, and notification timer.
+  render+capture device).
+- **WaveRT miniport**: exposes one render pin and one capture pin that support WaveRT.
+- **WaveRT stream object**: created per open stream (render or capture); owns the
+  cyclic buffer mapping, clock state, and notification timer.
 
 The KS pin state changes drive stream start/stop, and PortCls calls into the
 WaveRT stream’s `SetState` to request those transitions.
@@ -92,8 +93,9 @@ The `virtio-snd` device provides:
 
 - A **control queue** for PCM control commands (`PCM_SET_PARAMS`, `PREPARE`,
   `START`, `STOP`, `RELEASE`, ...).
-- One or more **PCM data queues**. For this design, we assume a single render TX
-  queue feeding stream id 0.
+- One or more **PCM data queues**. For this design, we assume:
+  - a render TX queue feeding stream id `0`
+  - a capture RX queue feeding stream id `1`
 
 The driver’s render loop:
 
@@ -104,6 +106,13 @@ The driver’s render loop:
 
 Because TX completions are not used for timing, virtqueue “used” processing is
 treated as backpressure/resource reclamation only.
+
+The driver’s capture loop:
+
+1. Waits for a period boundary (software timer).
+2. Submits a virtio-snd RX request for stream id `1` sized to one period.
+3. Copies the captured PCM bytes into the WaveRT capture cyclic buffer.
+4. Signals the WaveRT notification event for the audio engine.
 
 ## Buffer strategy (cyclic buffer + periods)
 
@@ -275,4 +284,3 @@ The initial virtio-snd WaveRT implementation intentionally starts narrow:
 If the device/host later supports a real playback clock or delayed completions,
 the QPC-based clock can be replaced or corrected, but the WaveRT contract should
 remain the same.
-
