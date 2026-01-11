@@ -19,8 +19,8 @@
 {{- $snippetParts := list -}}
 {{- if and .Values.ingress.websocket.enabled (eq $mode "nginx") -}}
 {{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-http-version" "1.1" -}}
-{{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-read-timeout" (printf "%d" .Values.ingress.websocket.readTimeoutSeconds) -}}
-{{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-send-timeout" (printf "%d" .Values.ingress.websocket.sendTimeoutSeconds) -}}
+{{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-read-timeout" (printf "%d" (int .Values.ingress.websocket.readTimeoutSeconds)) -}}
+{{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-send-timeout" (printf "%d" (int .Values.ingress.websocket.sendTimeoutSeconds)) -}}
 {{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-buffering" "off" -}}
 {{- end -}}
 {{- if .Values.ingress.coopCoep.enabled -}}
