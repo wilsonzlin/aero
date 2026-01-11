@@ -491,4 +491,69 @@ describe("net/l2Tunnel", () => {
       }
     }
   });
+
+  it("sendFrame() returns false when the WebSocket client is not connected", () => {
+    const events: L2TunnelEvent[] = [];
+    const client = new WebSocketL2TunnelClient("wss://gateway.example.com/l2", (ev) => events.push(ev), {
+      // No need to connect; keepalive timers are never armed.
+      keepaliveMinMs: 60_000,
+      keepaliveMaxMs: 60_000,
+    });
+
+    expect(client.sendFrame(Uint8Array.of(1, 2, 3))).toBe(false);
+    const errEv = events.find((e) => (e as { type?: string }).type === "error") as { error?: unknown } | undefined;
+    expect(errEv?.error).toBeInstanceOf(Error);
+  });
+
+  it("sendFrame() returns false when the outbound queue overflows", () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const original = g.WebSocket;
+
+    FakeWebSocket.nextProtocol = L2_TUNNEL_SUBPROTOCOL;
+    resetFakeWebSocket();
+    g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const client = new WebSocketL2TunnelClient("wss://gateway.example.com/l2", (ev) => events.push(ev), {
+      keepaliveMinMs: 60_000,
+      keepaliveMaxMs: 60_000,
+      maxQueuedBytes: 0,
+    });
+
+    try {
+      client.connect();
+      // Do not open the socket; we only need the client to have a transport so
+      // `canEnqueue()` passes and queue overflow logic runs.
+      expect(client.sendFrame(Uint8Array.of(1))).toBe(false);
+      const errEv = events.find((e) => (e as { type?: string }).type === "error") as { error?: unknown } | undefined;
+      expect(errEv?.error).toBeInstanceOf(Error);
+    } finally {
+      client.close();
+      if (original === undefined) {
+        delete (g as { WebSocket?: unknown }).WebSocket;
+      } else {
+        g.WebSocket = original;
+      }
+    }
+  });
+
+  it("sendFrame() returns false after closing the WebRTC client", async () => {
+    const channel = new FakeRtcDataChannel();
+    const events: L2TunnelEvent[] = [];
+
+    const client = new WebRtcL2TunnelClient(channel as unknown as RTCDataChannel, (ev) => events.push(ev), {
+      keepaliveMinMs: 60_000,
+      keepaliveMaxMs: 60_000,
+    });
+
+    try {
+      await microtask();
+      expect(events[0]?.type).toBe("open");
+      expect(client.sendFrame(Uint8Array.of(1))).toBe(true);
+      client.close();
+      expect(client.sendFrame(Uint8Array.of(2))).toBe(false);
+    } finally {
+      client.close();
+    }
+  });
 });
