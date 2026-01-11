@@ -512,6 +512,12 @@ set "AERO_VIRTIO_SND_SERVICE=your-service-name"
 
 Repo note: in this repository, `guest-tools/config/devices.cmd` is generated from `docs/windows-device-contract.json` via `scripts/generate-guest-tools-devices-cmd.py`. Update the JSON manifest + regenerate rather than editing the repo copy directly.
 
+CI-style drift check (no rewrite):
+
+```bash
+python3 scripts/ci/gen-guest-tools-devices-cmd.py --check
+```
+
 Missing virtio-snd devices are reported as **WARN** (audio is optional).
 - Boot-critical storage readiness for switching AHCI → virtio-blk:
   - storage service `Start=0` (BOOT_START)
