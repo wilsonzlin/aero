@@ -13,7 +13,7 @@ qemu-diff = ["dep:qemu_diff"]
 aero-x86 = { path = "../aero-x86" }
 aero-perf = { path = "../aero-perf" }
 aero-mmu = { path = "../aero-mmu" }
-qemu_diff = { path = "../../tools/qemu_diff", optional = true }
+qemu_diff = { package = "qemu-diff", path = "../../tools/qemu_diff", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"

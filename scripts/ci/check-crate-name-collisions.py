@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fail CI if any workspace packages would map to the same Rust crate identifier.
+Fail CI if the workspace violates Rust/Cargo crate naming policy.
 
 Cargo package names may contain `-`, but Rust crate idents use `_` instead. This
 means two different packages like:
@@ -14,6 +14,10 @@ maintenance hazards.
 This script uses `cargo metadata` (workspace truth) and checks for collisions of:
 
   normalized_ident = package_name.replace("-", "_")
+
+Additionally, it enforces the workspace naming convention from ADR 0007:
+
+  - workspace packages must use kebab-case (no `_`) in `[package].name`.
 """
 
 from __future__ import annotations
@@ -80,26 +84,39 @@ def main() -> int:
         groups.setdefault(p.normalized, []).append(p)
 
     collisions = {k: v for k, v in groups.items() if len(v) > 1}
+    underscored = [p for p in pkgs if "_" in p.name]
 
-    if not collisions:
-        print(f"crate-name collision check: OK ({len(pkgs)} workspace packages)")
+    if not collisions and not underscored:
+        print(f"crate-name policy check: OK ({len(pkgs)} workspace packages)")
         return 0
 
-    print("error: Rust crate-name collisions detected in the workspace.\n", file=sys.stderr)
-    for norm in sorted(collisions.keys()):
-        print(f"- normalized ident: {norm}", file=sys.stderr)
-        for p in collisions[norm]:
-            print(f"    - package: {p.name:25s} path: {p.path}", file=sys.stderr)
-        print("", file=sys.stderr)
+    print("error: workspace crate naming policy violations detected.\n", file=sys.stderr)
 
-    print(
-        "hint: rename one of the packages so their names do not normalize to the same ident "
-        "(`-` → `_`).",
-        file=sys.stderr,
-    )
+    if underscored:
+        print("underscore package names detected (use kebab-case):", file=sys.stderr)
+        for p in sorted(underscored, key=lambda p: (p.name, p.path)):
+            print(f"  - package: {p.name:25s} path: {p.path}", file=sys.stderr)
+        print("", file=sys.stderr)
+        print(
+            "hint: rename the package(s) to kebab-case (example: `qemu_diff` → `qemu-diff`).\n",
+            file=sys.stderr,
+        )
+
+    if collisions:
+        print("Rust crate-name collisions detected after `-` → `_` normalization:\n", file=sys.stderr)
+        for norm in sorted(collisions.keys()):
+            print(f"- normalized ident: {norm}", file=sys.stderr)
+            for p in collisions[norm]:
+                print(f"    - package: {p.name:25s} path: {p.path}", file=sys.stderr)
+            print("", file=sys.stderr)
+
+        print(
+            "hint: rename one of the packages so their names do not normalize to the same ident "
+            "(`-` → `_`).",
+            file=sys.stderr,
+        )
     return 1
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

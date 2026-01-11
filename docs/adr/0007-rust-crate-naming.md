@@ -36,7 +36,8 @@ dependency renames, and makes long-term maintenance brittle.
 ### 4) Enforcement
 
 CI runs `scripts/ci/check-crate-name-collisions.py` to ensure the workspace does
-not introduce any new package-name collisions after `-` → `_` normalization.
+not introduce any new package-name collisions after `-` → `_` normalization, and
+that workspace packages use `kebab-case` (no underscores) in `[package].name`.
 
 ## Alternatives considered
 
@@ -55,4 +56,3 @@ not introduce any new package-name collisions after `-` → `_` normalization.
 - Renaming existing crates requires updating workspace members and dependent
   `Cargo.toml` paths; some integration tests/examples may need import updates.
 - CI fails fast if a future change reintroduces a crate-name collision.
-
