@@ -86,13 +86,16 @@ pub struct HidReportItem {
     pub is_wrapped: bool,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum HidDescriptorSynthesisError {
     #[error("HID report id {report_id} is out of range (expected 0..=255)")]
     ReportIdOutOfRange { report_id: u32 },
 
     #[error("usage range is invalid: minimum {min} > maximum {max}")]
     InvalidUsageRange { min: u32, max: u32 },
+
+    #[error("unitExponent {unit_exponent} is out of range (expected -8..=7)")]
+    UnitExponentOutOfRange { unit_exponent: i32 },
 
     #[error("unsupported HID item data size: {0} bytes")]
     UnsupportedItemDataSize(usize),
@@ -337,7 +340,14 @@ fn write_physical_maximum(out: &mut Vec<u8>, value: i32) -> Result<()> {
 }
 
 fn write_unit_exponent(out: &mut Vec<u8>, value: i32) -> Result<()> {
-    push_global_i32(out, 0x05, value)
+    if !(-8..=7).contains(&value) {
+        return Err(HidDescriptorSynthesisError::UnitExponentOutOfRange { unit_exponent: value });
+    }
+
+    // HID 1.11: Unit Exponent (0x55) is a 4-bit signed value stored in the low nibble
+    // of a single byte. The high nibble is reserved and must be 0.
+    let encoded = (value as i8 as u8) & 0x0F;
+    push_short_item(out, 0x01, 0x05, &[encoded])
 }
 
 fn write_unit(out: &mut Vec<u8>, value: u32) -> Result<()> {
@@ -384,3 +394,114 @@ fn write_feature(out: &mut Vec<u8>, flags: u16) -> Result<()> {
     push_main_u16(out, 0x0B, flags)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unit_exponent_encodes_as_4bit_signed_nibble() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: HidCollectionType::Application,
+            children: vec![],
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    usage_page: 0x01,
+                    usages: vec![0x30],
+                    usage_minimum: 0,
+                    usage_maximum: 0,
+                    report_size: 8,
+                    report_count: 1,
+                    unit_exponent: -1,
+                    unit: 0,
+                    logical_minimum: 0,
+                    logical_maximum: 127,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    strings: vec![],
+                    string_minimum: 0,
+                    string_maximum: 0,
+                    designators: vec![],
+                    designator_minimum: 0,
+                    designator_maximum: 0,
+                    is_absolute: true,
+                    is_array: false,
+                    is_buffered_bytes: false,
+                    is_constant: false,
+                    is_linear: true,
+                    is_range: false,
+                    is_relative: false,
+                    is_volatile: false,
+                    has_null: false,
+                    has_preferred_state: true,
+                    is_wrapped: false,
+                }],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+        }];
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+        assert!(
+            desc.windows(2).any(|w| w == [0x55, 0x0F]),
+            "expected Unit Exponent (-1) encoding (0x55 0x0f): {desc:02x?}"
+        );
+        assert!(
+            !desc.windows(2).any(|w| w == [0x55, 0xFF]),
+            "Unit Exponent must not be encoded as signed i8 (0x55 0xff): {desc:02x?}"
+        );
+    }
+
+    #[test]
+    fn unit_exponent_out_of_range_is_rejected() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: HidCollectionType::Application,
+            children: vec![],
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    usage_page: 0x01,
+                    usages: vec![0x30],
+                    usage_minimum: 0,
+                    usage_maximum: 0,
+                    report_size: 8,
+                    report_count: 1,
+                    unit_exponent: 8,
+                    unit: 0,
+                    logical_minimum: 0,
+                    logical_maximum: 127,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    strings: vec![],
+                    string_minimum: 0,
+                    string_maximum: 0,
+                    designators: vec![],
+                    designator_minimum: 0,
+                    designator_maximum: 0,
+                    is_absolute: true,
+                    is_array: false,
+                    is_buffered_bytes: false,
+                    is_constant: false,
+                    is_linear: true,
+                    is_range: false,
+                    is_relative: false,
+                    is_volatile: false,
+                    has_null: false,
+                    has_preferred_state: true,
+                    is_wrapped: false,
+                }],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+        }];
+
+        assert_eq!(
+            synthesize_report_descriptor(&collections),
+            Err(HidDescriptorSynthesisError::UnitExponentOutOfRange { unit_exponent: 8 })
+        );
+    }
+}
