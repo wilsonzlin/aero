@@ -12,6 +12,18 @@ struct Vertex {
   float color[4];
 };
 
+static void PrintD3D11DeviceRemovedReasonIfFailed(const char* test_name, ID3D11Device* device) {
+  if (!device) {
+    return;
+  }
+  HRESULT reason = device->GetDeviceRemovedReason();
+  if (FAILED(reason)) {
+    aerogpu_test::PrintfStdout("INFO: %s: device removed reason: %s",
+                               test_name,
+                               aerogpu_test::HresultToString(reason).c_str());
+  }
+}
+
 static const char kDepthHlsl[] = R"(struct VSIn {
   float3 pos : POSITION;
   float4 color : COLOR0;
@@ -39,14 +51,7 @@ static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
                                       const char* what,
                                       HRESULT hr,
                                       ID3D11Device* device) {
-  if (device) {
-    HRESULT reason = device->GetDeviceRemovedReason();
-    if (FAILED(reason)) {
-      aerogpu_test::PrintfStdout("INFO: %s: device removed reason: %s",
-                                 test_name,
-                                 aerogpu_test::HresultToString(reason).c_str());
-    }
-  }
+  PrintD3D11DeviceRemovedReasonIfFailed(test_name, device);
   if (reporter) {
     return reporter->FailHresult(what, hr);
   }
@@ -509,6 +514,7 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   if ((corner & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu) ||
       (left_center & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu) ||
       (right_center & 0x00FFFFFFu) != (expected_blue & 0x00FFFFFFu)) {
+    PrintD3D11DeviceRemovedReasonIfFailed(kTestName, device.get());
     return reporter.Fail(
         "pixel mismatch: corner=0x%08lX expected 0x%08lX; left_center=0x%08lX expected 0x%08lX; "
         "right_center=0x%08lX expected 0x%08lX",

@@ -12,11 +12,25 @@ struct Vertex {
 };
 
 struct ConstantBufferData {
-  float color[4];
+  float vs_color[4];
+  float ps_mul[4];
 };
 
+static void PrintD3D11DeviceRemovedReasonIfFailed(const char* test_name, ID3D11Device* device) {
+  if (!device) {
+    return;
+  }
+  HRESULT reason = device->GetDeviceRemovedReason();
+  if (FAILED(reason)) {
+    aerogpu_test::PrintfStdout("INFO: %s: device removed reason: %s",
+                               test_name,
+                               aerogpu_test::HresultToString(reason).c_str());
+  }
+}
+
 static const char kCbHlsl[] = R"(cbuffer Cb0 : register(b0) {
-  float4 color;
+  float4 vs_color;
+  float4 ps_mul;
 };
 
 struct VSIn {
@@ -25,16 +39,18 @@ struct VSIn {
 
 struct VSOut {
   float4 pos : SV_Position;
+  float4 color : COLOR0;
 };
 
 VSOut vs_main(VSIn input) {
   VSOut o;
   o.pos = float4(input.pos.xy, 0.0f, 1.0f);
+  o.color = vs_color;
   return o;
 }
 
 float4 ps_main(VSOut input) : SV_Target {
-  return color;
+  return input.color * ps_mul;
 }
 )";
 
@@ -43,14 +59,7 @@ static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
                                       const char* what,
                                       HRESULT hr,
                                       ID3D11Device* device) {
-  if (device) {
-    HRESULT reason = device->GetDeviceRemovedReason();
-    if (FAILED(reason)) {
-      aerogpu_test::PrintfStdout("INFO: %s: device removed reason: %s",
-                                 test_name,
-                                 aerogpu_test::HresultToString(reason).c_str());
-    }
-  }
+  PrintD3D11DeviceRemovedReasonIfFailed(test_name, device);
   if (reporter) {
     return reporter->FailHresult(what, hr);
   }
@@ -348,10 +357,15 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
   }
 
   ConstantBufferData* cb_data = (ConstantBufferData*)cb_map.pData;
-  cb_data->color[0] = 0.0f;
-  cb_data->color[1] = 0.0f;
-  cb_data->color[2] = 1.0f;
-  cb_data->color[3] = 1.0f;
+  // Output blue: VS provides 0.5 blue, PS multiplies by 2.0 blue.
+  cb_data->vs_color[0] = 0.0f;
+  cb_data->vs_color[1] = 0.0f;
+  cb_data->vs_color[2] = 0.5f;
+  cb_data->vs_color[3] = 1.0f;
+  cb_data->ps_mul[0] = 0.0f;
+  cb_data->ps_mul[1] = 0.0f;
+  cb_data->ps_mul[2] = 2.0f;
+  cb_data->ps_mul[3] = 1.0f;
 
   context->Unmap(cb.get(), 0);
 
@@ -390,10 +404,15 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
     return reporter.Fail("Map(constant buffer, WRITE_DISCARD #2) returned NULL pData");
   }
   cb_data = (ConstantBufferData*)cb_map.pData;
-  cb_data->color[0] = 0.0f;
-  cb_data->color[1] = 1.0f;
-  cb_data->color[2] = 0.0f;
-  cb_data->color[3] = 1.0f;
+  // Output green: VS provides 0.5 green, PS multiplies by 2.0 green.
+  cb_data->vs_color[0] = 0.0f;
+  cb_data->vs_color[1] = 0.5f;
+  cb_data->vs_color[2] = 0.0f;
+  cb_data->vs_color[3] = 1.0f;
+  cb_data->ps_mul[0] = 0.0f;
+  cb_data->ps_mul[1] = 2.0f;
+  cb_data->ps_mul[2] = 0.0f;
+  cb_data->ps_mul[3] = 1.0f;
   context->Unmap(cb.get(), 0);
 
   context->Draw(3, 3);
@@ -471,6 +490,7 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
 
   if ((corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu) ||
       (center & 0x00FFFFFFu) != (expected_center & 0x00FFFFFFu)) {
+    PrintD3D11DeviceRemovedReasonIfFailed(kTestName, device.get());
     return reporter.Fail(
         "pixel mismatch: corner(5,5)=0x%08lX expected 0x%08lX; center=0x%08lX expected 0x%08lX",
         (unsigned long)corner,
