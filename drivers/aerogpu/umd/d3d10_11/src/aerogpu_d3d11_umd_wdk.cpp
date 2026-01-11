@@ -1482,7 +1482,13 @@ static bool ValidateNoNullDdiTable(const char* name, const void* table, size_t b
   X(pfnSetExceptionMode)                                                                                           \
   X(pfnPresent)                                                                                                    \
   X(pfnRotateResourceIdentities)                                                                                   \
-  X(pfnCheckDeferredContextHandleSizes)
+  X(pfnCheckDeferredContextHandleSizes)                                                                            \
+  X(pfnCalcPrivateDeviceContextSize)                                                                               \
+  X(pfnCreateDeviceContext)                                                                                        \
+  X(pfnDestroyDeviceContext)                                                                                       \
+  X(pfnCalcPrivateDeviceContextStateSize)                                                                          \
+  X(pfnCreateDeviceContextState)                                                                                   \
+  X(pfnDestroyDeviceContextState)
 
 #define AEROGPU_D3D11_DEVICECONTEXTFUNCS_FIELDS(X)                                                                \
   X(pfnVsSetShader)                                                                                                \
