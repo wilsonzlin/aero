@@ -46,7 +46,13 @@ cargo xtask test-all --skip-e2e
 ```
 
 By default, the test runner uses the **repo root** Node workspace (`package.json` in the root) which matches CI.
-If you want to run tests against a different Node workspace (e.g. `web/`), override it:
+In the npm-workspaces layout you typically **do not** need to override this; to run web-only scripts, prefer:
+
+```bash
+npm -w web run <script>
+```
+
+`AERO_NODE_DIR` is only needed when you specifically want `cargo xtask` to execute npm scripts from a different `package.json` (for example, `AERO_NODE_DIR=web` selects the `web/` workspace scripts, so you must skip E2E because that workspace does not define Playwright scripts).
 
 ```bash
 AERO_NODE_DIR=web cargo xtask test-all --skip-e2e
