@@ -19,6 +19,7 @@ Clean-room note: this document **does not** include sample-driver code. It refer
 Related docs:
 
 - High-level bring-up checklist: `docs/graphics/win7-d3d10-11-umd-minimal.md`
+- D3D11 function-table checklist (REQUIRED vs stubbable DDIs): `docs/graphics/win7-d3d11ddi-function-tables.md`
 - KMD submission/fence architecture: `docs/graphics/win7-wddm11-aerogpu-driver.md`
 
 ---
