@@ -25,6 +25,7 @@ Policy:
     - Current standalone lockfiles include:
       - `fuzz/Cargo.lock`
       - `server/disk-gateway/Cargo.lock`
+      - `tools/aero-gateway-rs/Cargo.lock`
       - `tools/packaging/aero_packager/Cargo.lock`
       - `tools/image-chunker/Cargo.lock`
       - `tools/win-offline-cert-injector/Cargo.lock`
