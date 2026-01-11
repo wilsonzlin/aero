@@ -105,9 +105,9 @@ ServiceBinary=%12%\aerogpu_kmd.sys
 [AeroGPU.AddReg]
 ; UMD registration
 HKR,,UserModeDriverName,%REG_SZ%,aerogpu_d3d9umd.dll
-; NOTE: This legacy prototype does not ship an x86/WOW64 UMD. This key is a leftover
-; from early experimentation and does not make 32-bit D3D9 apps work on Win7 x64.
-HKR,,UserModeDriverNameWow,%REG_SZ%,aerogpu_d3d9umd.dll
+; NOTE: This legacy prototype does not ship an x86/WOW64 UMD. Do not set a WOW64
+; UMD key: 32-bit D3D9 apps will not work with this archived stack on Win7 x64.
+; HKR,,UserModeDriverNameWow,%REG_SZ%,aerogpu_d3d9umd.dll
 
 ; Driver ranking (lower is better). Keep this non-zero: a FeatureScore of 0
 ; combined with broad compatible-ID matching (e.g. PCI\CC_030000) is dangerous.
