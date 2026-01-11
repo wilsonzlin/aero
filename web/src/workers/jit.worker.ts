@@ -129,13 +129,77 @@ async function waitForCommandRingDataNonBlocking(timeoutMs?: number): Promise<vo
 let perfWriter: PerfWriter | null = null;
 let perfFrameHeader: Int32Array | null = null;
 
+let pendingJitMs = 0;
+let pendingJitFlushTimer: number | null = null;
+let pendingJitFlushAttempts = 0;
+
+const PENDING_JIT_FLUSH_INTERVAL_MS = 20;
+const PENDING_JIT_FLUSH_MAX_ATTEMPTS = 10;
+
+function stopPendingJitFlushTimer(): void {
+  if (pendingJitFlushTimer === null) return;
+  clearInterval(pendingJitFlushTimer);
+  pendingJitFlushTimer = null;
+  pendingJitFlushAttempts = 0;
+}
+
+function maybeStartPendingJitFlushTimer(): void {
+  if (pendingJitFlushTimer !== null) return;
+  pendingJitFlushAttempts = 0;
+  pendingJitFlushTimer = setInterval(() => {
+    const writer = perfWriter;
+    const header = perfFrameHeader;
+    if (!writer || !header) {
+      pendingJitMs = 0;
+      stopPendingJitFlushTimer();
+      return;
+    }
+
+    const enabled = Atomics.load(header, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
+    if (!enabled) {
+      pendingJitMs = 0;
+      stopPendingJitFlushTimer();
+      return;
+    }
+
+    const frameId = Atomics.load(header, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
+    if (frameId !== 0) {
+      const jitMs = pendingJitMs;
+      pendingJitMs = 0;
+      stopPendingJitFlushTimer();
+      if (jitMs > 0) {
+        writer.frameSample(frameId, { durations: { jit_ms: jitMs } });
+      }
+      return;
+    }
+
+    pendingJitFlushAttempts += 1;
+    if (pendingJitFlushAttempts >= PENDING_JIT_FLUSH_MAX_ATTEMPTS) {
+      // Avoid keeping a hot timer alive indefinitely if RAF is throttled / paused.
+      pendingJitMs = 0;
+      stopPendingJitFlushTimer();
+    }
+  }, PENDING_JIT_FLUSH_INTERVAL_MS) as unknown as number;
+}
+
 function maybeWritePerfSample(jitMs: number): void {
-  if (!perfWriter || !perfFrameHeader) return;
-  const enabled = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
+  const writer = perfWriter;
+  const header = perfFrameHeader;
+  if (!writer || !header) return;
+  const enabled = Atomics.load(header, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
   if (!enabled) return;
-  const frameId = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
-  if (frameId === 0) return;
-  perfWriter.frameSample(frameId, { durations: { jit_ms: jitMs } });
+  const frameId = Atomics.load(header, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
+  if (frameId === 0) {
+    // Perf enabled but no published RAF frame ID yet; stash and retry briefly.
+    pendingJitMs += jitMs;
+    maybeStartPendingJitFlushTimer();
+    return;
+  }
+
+  const totalMs = pendingJitMs > 0 ? pendingJitMs + jitMs : jitMs;
+  pendingJitMs = 0;
+  stopPendingJitFlushTimer();
+  writer.frameSample(frameId, { durations: { jit_ms: totalMs } });
 }
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
