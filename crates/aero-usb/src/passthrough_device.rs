@@ -269,7 +269,9 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
                         ControlResponse::Data(_) => return UsbHandshake::Stall,
                     }
                 }
-                UsbHandshake::Ack { bytes: chunk_len }
+                // ACK covers the entire packet; we may ignore any bytes beyond wLength but must not
+                // report a short write to the UHCI layer.
+                UsbHandshake::Ack { bytes: data.len() }
             }
             ControlStage::StatusOut => {
                 if !data.is_empty() {
