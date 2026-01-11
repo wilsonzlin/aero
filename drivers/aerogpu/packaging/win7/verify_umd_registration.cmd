@@ -83,9 +83,15 @@ echo   %CLASSKEY%
 echo.
 
 set "AEROGPU_CLASS_KEY="
-for /f "delims=" %%K in ('"%REGEXE%" query "%CLASSKEY%" /s /f "AeroGPU Display Adapter" /d 2^>nul ^| findstr /i /r "^HKEY_"') do (
-  set "AEROGPU_CLASS_KEY=%%K"
-  goto :found_key
+call :find_class_key "AeroGPU Display Adapter"
+if not defined AEROGPU_CLASS_KEY (
+  rem Fallback: match by canonical HWID (helpful on localized OSes or when the
+  rem adapter description string differs).
+  call :find_class_key "PCI\\VEN_A3A0&DEV_0001"
+)
+if not defined AEROGPU_CLASS_KEY (
+  rem Optional legacy bring-up identity.
+  call :find_class_key "PCI\\VEN_1AED&DEV_0001"
 )
 
 :found_key
@@ -164,6 +170,15 @@ exit /b 0
 :usage_fail
 call :usage
 exit /b 1
+
+rem -----------------------------------------------------------------------------
+:find_class_key
+set "FIND_TERM=%~1"
+for /f "delims=" %%K in ('"%REGEXE%" query "%CLASSKEY%" /s /f "%FIND_TERM%" /d 2^>nul ^| findstr /i /r "^HKEY_"') do (
+  set "AEROGPU_CLASS_KEY=%%K"
+  goto :eof
+)
+exit /b 0
 
 rem -----------------------------------------------------------------------------
 :resolve_umd_reg_key
