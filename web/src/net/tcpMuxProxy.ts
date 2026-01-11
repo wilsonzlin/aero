@@ -513,7 +513,8 @@ export class WebSocketTcpMuxProxyClient {
     if (delayMs <= 0) {
       queueMicrotask(run);
     } else {
-      setTimeout(run, delayMs);
+      const timer = setTimeout(run, delayMs);
+      (timer as unknown as { unref?: () => void }).unref?.();
     }
   }
 

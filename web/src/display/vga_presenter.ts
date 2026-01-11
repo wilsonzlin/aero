@@ -185,14 +185,18 @@ export class VgaPresenter {
       if (delay <= 0) {
         this.rafHandle = requestAnimationFrame(() => this.tick());
       } else {
-        this.timerHandle = setTimeout(() => {
+        const timer = setTimeout(() => {
           this.rafHandle = requestAnimationFrame(() => this.tick());
         }, delay);
+        (timer as unknown as { unref?: () => void }).unref?.();
+        this.timerHandle = timer;
       }
       return;
     }
 
-    this.timerHandle = setTimeout(() => this.tick(), delay <= 0 ? 0 : Math.min(delay, intervalMs));
+    const timer = setTimeout(() => this.tick(), delay <= 0 ? 0 : Math.min(delay, intervalMs));
+    (timer as unknown as { unref?: () => void }).unref?.();
+    this.timerHandle = timer;
   }
 
   tick(): void {

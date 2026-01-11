@@ -128,7 +128,7 @@ function scheduleReconnect(): void {
     L2_RECONNECT_JITTER_FRACTION,
   );
 
-  l2ReconnectTimer = setTimeout(() => {
+  const timer = setTimeout(() => {
     l2ReconnectTimer = null;
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
     if (generation !== l2ReconnectGeneration) return;
@@ -143,7 +143,11 @@ function scheduleReconnect(): void {
       const message = err instanceof Error ? err.message : String(err);
       pushEvent({ kind: "log", level: "warn", message: `Failed to reconnect L2 tunnel: ${message}` });
     }
-  }, delayMs) as unknown as number;
+  }, delayMs);
+  // Unit tests run this worker under node/worker_threads; unref the backoff timer
+  // so a leaked net worker does not keep the test runner alive.
+  (timer as unknown as { unref?: () => void }).unref?.();
+  l2ReconnectTimer = timer as unknown as number;
 }
 
 function applyL2TunnelConfig(config: AeroConfig | null): void {
