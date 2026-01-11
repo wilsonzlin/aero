@@ -283,17 +283,19 @@ impl IoApic {
         let prev = entry.interpret_level(prev_raw);
         let asserted = entry.interpret_level(new_raw);
 
-        if entry.mask {
-            return;
-        }
-
         match entry.trigger_mode {
             TriggerMode::Edge => {
+                if entry.mask {
+                    return;
+                }
                 if !prev && asserted {
                     self.deliver(gsi);
                 }
             }
             TriggerMode::Level => {
+                if entry.mask {
+                    return;
+                }
                 if asserted {
                     self.maybe_deliver_level(gsi);
                 }
@@ -404,16 +406,14 @@ impl IoSnapshot for IoApic {
         }
         w.field_bytes(TAG_REDIRECTION, redir.finish());
 
-        let mut pin_active_low = Vec::with_capacity(self.pin_active_low.len());
-        for &val in &self.pin_active_low {
-            pin_active_low.push(if val { 1 } else { 0 });
-        }
+        let pin_active_low: Vec<u8> = self
+            .pin_active_low
+            .iter()
+            .map(|val| if *val { 1 } else { 0 })
+            .collect();
         w.field_bytes(TAG_PIN_ACTIVE_LOW, Encoder::new().vec_u8(&pin_active_low).finish());
 
-        let mut pin_level = Vec::with_capacity(self.pin_level.len());
-        for &val in &self.pin_level {
-            pin_level.push(if val { 1 } else { 0 });
-        }
+        let pin_level: Vec<u8> = self.pin_level.iter().map(|val| if *val { 1 } else { 0 }).collect();
         w.field_bytes(TAG_PIN_LEVEL, Encoder::new().vec_u8(&pin_level).finish());
 
         w.finish()
@@ -439,6 +439,9 @@ impl IoSnapshot for IoApic {
         if let Some(buf) = r.bytes(TAG_REDIRECTION) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
+            if count == 0 {
+                return Err(SnapshotError::InvalidFieldEncoding("ioapic redirection count"));
+            }
             let mut entries = Vec::with_capacity(count);
             for _ in 0..count {
                 let vector = d.u8()?;

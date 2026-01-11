@@ -476,8 +476,8 @@ impl IoSnapshot for DualPic8259 {
         const TAG_MASTER: u16 = 1;
         const TAG_SLAVE: u16 = 2;
 
-        fn encode_unit(unit: &Pic8259) -> Vec<u8> {
-            let init_state = match unit.init_state {
+        fn encode_pic(pic: &Pic8259) -> Vec<u8> {
+            let init_state = match pic.init_state {
                 InitState::None => 0u8,
                 InitState::Icw2 => 1,
                 InitState::Icw3 => 2,
@@ -485,25 +485,25 @@ impl IoSnapshot for DualPic8259 {
             };
 
             Encoder::new()
-                .u8(unit.imr)
-                .u8(unit.irr)
-                .u8(unit.isr)
-                .u8(unit.line_level)
-                .u8(unit.vector_base)
-                .u8(unit.icw3)
-                .bool(unit.read_isr)
-                .bool(unit.level_triggered)
-                .bool(unit.auto_eoi)
-                .bool(unit.single)
+                .u8(pic.imr)
+                .u8(pic.irr)
+                .u8(pic.isr)
+                .u8(pic.line_level)
+                .u8(pic.vector_base)
+                .u8(pic.icw3)
+                .bool(pic.read_isr)
+                .bool(pic.level_triggered)
+                .bool(pic.auto_eoi)
+                .bool(pic.single)
                 .u8(init_state)
-                .bool(unit.expect_icw4)
-                .u8(unit.lowest_priority)
+                .bool(pic.expect_icw4)
+                .u8(pic.lowest_priority)
                 .finish()
         }
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
-        w.field_bytes(TAG_MASTER, encode_unit(&self.master));
-        w.field_bytes(TAG_SLAVE, encode_unit(&self.slave));
+        w.field_bytes(TAG_MASTER, encode_pic(&self.master));
+        w.field_bytes(TAG_SLAVE, encode_pic(&self.slave));
         w.finish()
     }
 
@@ -511,28 +511,28 @@ impl IoSnapshot for DualPic8259 {
         const TAG_MASTER: u16 = 1;
         const TAG_SLAVE: u16 = 2;
 
-        fn decode_unit(unit: &mut Pic8259, buf: &[u8]) -> SnapshotResult<()> {
+        fn decode_pic(pic: &mut Pic8259, buf: &[u8]) -> SnapshotResult<()> {
             let mut d = Decoder::new(buf);
 
-            unit.imr = d.u8()?;
-            unit.irr = d.u8()?;
-            unit.isr = d.u8()?;
-            unit.line_level = d.u8()?;
-            unit.vector_base = d.u8()? & 0xF8;
-            unit.icw3 = d.u8()?;
-            unit.read_isr = d.bool()?;
-            unit.level_triggered = d.bool()?;
-            unit.auto_eoi = d.bool()?;
-            unit.single = d.bool()?;
-            unit.init_state = match d.u8()? {
+            pic.imr = d.u8()?;
+            pic.irr = d.u8()?;
+            pic.isr = d.u8()?;
+            pic.line_level = d.u8()?;
+            pic.vector_base = d.u8()? & 0xF8;
+            pic.icw3 = d.u8()?;
+            pic.read_isr = d.bool()?;
+            pic.level_triggered = d.bool()?;
+            pic.auto_eoi = d.bool()?;
+            pic.single = d.bool()?;
+            pic.init_state = match d.u8()? {
                 0 => InitState::None,
                 1 => InitState::Icw2,
                 2 => InitState::Icw3,
                 3 => InitState::Icw4,
                 _ => return Err(SnapshotError::InvalidFieldEncoding("pic init_state")),
             };
-            unit.expect_icw4 = d.bool()?;
-            unit.lowest_priority = d.u8()? & 0x07;
+            pic.expect_icw4 = d.bool()?;
+            pic.lowest_priority = d.u8()? & 7;
 
             d.finish()?;
             Ok(())
@@ -541,11 +541,13 @@ impl IoSnapshot for DualPic8259 {
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
+        *self = Self::new();
+
         if let Some(buf) = r.bytes(TAG_MASTER) {
-            decode_unit(&mut self.master, buf)?;
+            decode_pic(&mut self.master, buf)?;
         }
         if let Some(buf) = r.bytes(TAG_SLAVE) {
-            decode_unit(&mut self.slave, buf)?;
+            decode_pic(&mut self.slave, buf)?;
         }
 
         Ok(())
