@@ -272,6 +272,8 @@ Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint:
   an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
   `aero-l2-tunnel-v1`; requires a header-safe token value).
 - `cookie_or_jwt`: accepts either a valid gateway session cookie or a valid JWT.
+  - Requires both the cookie signing secret (`AERO_L2_SESSION_SECRET` or `SESSION_SECRET` /
+    `AERO_GATEWAY_SESSION_SECRET`) and `AERO_L2_JWT_SECRET`.
 
 Notes:
 
