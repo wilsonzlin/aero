@@ -227,11 +227,13 @@ static int RunReadbackSanity(int argc, char** argv) {
   std::vector<unsigned char> vs_bytes;
   std::vector<unsigned char> ps_bytes;
   std::string shader_err;
+  const char* vs_profile = (chosen_level >= D3D_FEATURE_LEVEL_10_0) ? "vs_4_0" : "vs_4_0_level_9_1";
+  const char* ps_profile = (chosen_level >= D3D_FEATURE_LEVEL_10_0) ? "ps_4_0" : "ps_4_0_level_9_1";
   if (!aerogpu_test::CompileHlslToBytecode(aerogpu_test::kAeroGpuTestBasicColorHlsl,
                                            strlen(aerogpu_test::kAeroGpuTestBasicColorHlsl),
                                            "readback_sanity.hlsl",
                                            "vs_main",
-                                           "vs_4_0_level_9_1",
+                                           vs_profile,
                                            &vs_bytes,
                                            &shader_err)) {
     return reporter.Fail("failed to compile vertex shader: %s", shader_err.c_str());
@@ -240,7 +242,7 @@ static int RunReadbackSanity(int argc, char** argv) {
                                            strlen(aerogpu_test::kAeroGpuTestBasicColorHlsl),
                                            "readback_sanity.hlsl",
                                            "ps_main",
-                                           "ps_4_0_level_9_1",
+                                           ps_profile,
                                            &ps_bytes,
                                            &shader_err)) {
     return reporter.Fail("failed to compile pixel shader: %s", shader_err.c_str());
