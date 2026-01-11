@@ -1079,11 +1079,6 @@ async fn trust_proxy_host_allows_forwarded_host_to_satisfy_allowlist() {
     let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
     let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
     let _allowed_hosts = EnvVarGuard::set("AERO_L2_ALLOWED_HOSTS", "allowed.test");
-    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
-    let _auth_mode = EnvVarGuard::unset("AERO_L2_AUTH_MODE");
-    let _api_key = EnvVarGuard::unset("AERO_L2_API_KEY");
-    let _jwt_secret = EnvVarGuard::unset("AERO_L2_JWT_SECRET");
-    let _session_secret = EnvVarGuard::unset("AERO_L2_SESSION_SECRET");
 
     // Without trusting proxy host headers, X-Forwarded-Host should not affect the allowlist.
     {
@@ -1769,8 +1764,6 @@ async fn max_connections_per_ip_enforced_with_forwarded_header_when_trusting_pro
     let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
     let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
     let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
-    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
-    let _auth_mode = EnvVarGuard::unset("AERO_L2_AUTH_MODE");
     let _trust_proxy = EnvVarGuard::set("AERO_L2_TRUST_PROXY", "1");
     let _max_per_ip = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_IP", "1");
 

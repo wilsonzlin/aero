@@ -194,6 +194,7 @@ async fn run_dns_case(
 ) {
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _insecure_allow_no_auth = EnvVarGuard::set("AERO_L2_INSECURE_ALLOW_NO_AUTH", "1");
     let _allowed_origins = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
     let _allowed_origins_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
     let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
