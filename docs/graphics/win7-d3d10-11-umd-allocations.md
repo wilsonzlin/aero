@@ -27,7 +27,11 @@ See also:
 
 ## Related AeroGPU code/docs (cross-links)
 
-* UMD D3D10/11 stubs: `drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_umd.cpp` (CreateResource/DestroyResource are currently “no-WDK” stubs).
+* Win7 WDK UMD implementations (real runtime/WDDM path):
+  * D3D10: `drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_umd_wdk.cpp`
+  * D3D10.1: `drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_1_umd_wdk.cpp`
+  * D3D11: `drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d11_umd_wdk.cpp`
+* Repo-only ABI subset / portable bring-up: `drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_umd.cpp` (no-WDK stubs).
 * KMD allocation behavior: `drivers/aerogpu/kmd/src/aerogpu_kmd.c` (`AeroGpuDdiCreateAllocation` / `AeroGpuDdiDestroyAllocation`).
 * WDDM memory model: `docs/graphics/win7-wddm11-aerogpu-driver.md` (§5 “Memory model (minimal)”).
 * Allocation private-data blob (AeroGPU `alloc_id` / `share_token`): `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`
