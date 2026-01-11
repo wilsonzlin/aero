@@ -2520,6 +2520,15 @@ HRESULT APIENTRY DynamicIABufferMapDiscard(D3D10DDI_HDEVICE hDevice, D3D10DDI_HR
   if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
     return E_INVALIDARG;
   }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
+  if (!dev || !res) {
+    return E_INVALIDARG;
+  }
+  if (res->kind != ResourceKind::Buffer ||
+      (res->bind_flags & (kD3D10BindVertexBuffer | kD3D10BindIndexBuffer)) == 0) {
+    return E_INVALIDARG;
+  }
 
   D3D10DDIARG_MAP map{};
   map.hResource = hResource;
@@ -2541,6 +2550,15 @@ HRESULT APIENTRY DynamicIABufferMapNoOverwrite(D3D10DDI_HDEVICE hDevice, D3D10DD
   }
   *ppData = nullptr;
   if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
+  if (!dev || !res) {
+    return E_INVALIDARG;
+  }
+  if (res->kind != ResourceKind::Buffer ||
+      (res->bind_flags & (kD3D10BindVertexBuffer | kD3D10BindIndexBuffer)) == 0) {
     return E_INVALIDARG;
   }
 
@@ -2581,6 +2599,14 @@ HRESULT APIENTRY DynamicConstantBufferMapDiscard(D3D10DDI_HDEVICE hDevice, D3D10
   }
   *ppData = nullptr;
   if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
+  if (!dev || !res) {
+    return E_INVALIDARG;
+  }
+  if (res->kind != ResourceKind::Buffer || (res->bind_flags & kD3D10BindConstantBuffer) == 0) {
     return E_INVALIDARG;
   }
 
