@@ -214,7 +214,7 @@ The fallback backend is implemented under `web/src/graphics/` and includes a sta
 
 To inspect what WebUSB can “see” on a developer machine (and why a device might not appear in the chooser), open:
 
-- `web/webusb_diagnostics.html`
+- `webusb_diagnostics.html`
 
 The diagnostics page:
 

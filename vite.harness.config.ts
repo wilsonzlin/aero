@@ -152,6 +152,7 @@ export default defineConfig({
       // preview server (served at `/web/`).
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        webusb_diagnostics: fileURLToPath(new URL('./webusb_diagnostics.html', import.meta.url)),
         web: fileURLToPath(new URL('./web/index.html', import.meta.url)),
         // Standalone pages linked from the legacy `web/` UI (keep them available in
         // `vite preview` runs of the harness).
