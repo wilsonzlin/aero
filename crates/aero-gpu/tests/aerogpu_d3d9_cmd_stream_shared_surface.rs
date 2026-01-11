@@ -184,6 +184,59 @@ fn d3d9_cmd_stream_shared_surface_alias_survives_original_destroy() {
 }
 
 #[test]
+fn d3d9_cmd_stream_reusing_underlying_handle_while_alias_alive_is_an_error() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping shared surface test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const TEX_ORIGINAL: u32 = 0x10;
+    const TEX_ALIAS: u32 = 0x20;
+    const TOKEN: u64 = 0xAABB_CCDD_EEFF_0001;
+
+    let width = 1u32;
+    let height = 1u32;
+
+    let stream = build_stream(|out| {
+        emit_create_texture2d_rgba8(out, TEX_ORIGINAL, width, height);
+
+        emit_packet(out, OPC_EXPORT_SHARED_SURFACE, |out| {
+            push_u32(out, TEX_ORIGINAL);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+
+        emit_packet(out, OPC_IMPORT_SHARED_SURFACE, |out| {
+            push_u32(out, TEX_ALIAS);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+
+        // Destroy the original handle; the alias keeps the underlying allocation alive.
+        emit_packet(out, OPC_DESTROY_RESOURCE, |out| {
+            push_u32(out, TEX_ORIGINAL);
+            push_u32(out, 0);
+        });
+
+        // Reusing the now-destroyed original handle would overwrite the underlying resource entry,
+        // corrupting any remaining aliases. Treat this as a validation error.
+        emit_create_texture2d_rgba8(out, TEX_ORIGINAL, width, height);
+    });
+
+    let err = exec
+        .execute_cmd_stream(&stream)
+        .expect_err("handle reuse should be rejected");
+    assert!(matches!(
+        err,
+        AerogpuD3d9Error::ResourceHandleInUse(TEX_ORIGINAL)
+    ));
+}
+
+#[test]
 fn d3d9_cmd_stream_import_is_idempotent_and_token_invalid_after_last_handle_destroyed() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,

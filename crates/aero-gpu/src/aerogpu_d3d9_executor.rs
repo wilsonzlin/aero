@@ -75,6 +75,8 @@ pub enum AerogpuD3d9Error {
     Parse(#[from] AeroGpuCmdStreamParseError),
     #[error("unknown resource handle {0}")]
     UnknownResource(u32),
+    #[error("resource handle {0} is already in use")]
+    ResourceHandleInUse(u32),
     #[error("unknown shader handle {0}")]
     UnknownShader(u32),
     #[error("unknown input layout handle {0}")]
@@ -695,6 +697,12 @@ impl AerogpuD3d9Executor {
                 backing_offset_bytes,
                 ..
             } => {
+                if self.resource_handles.contains_key(&buffer_handle)
+                    || self.resources.contains_key(&buffer_handle)
+                {
+                    return Err(AerogpuD3d9Error::ResourceHandleInUse(buffer_handle));
+                }
+
                 let backing = if backing_alloc_id == 0 {
                     None
                 } else {
@@ -749,6 +757,11 @@ impl AerogpuD3d9Executor {
                 backing_offset_bytes,
                 ..
             } => {
+                if self.resource_handles.contains_key(&texture_handle)
+                    || self.resources.contains_key(&texture_handle)
+                {
+                    return Err(AerogpuD3d9Error::ResourceHandleInUse(texture_handle));
+                }
                 if width == 0 || height == 0 {
                     return Err(AerogpuD3d9Error::Validation(
                         "CREATE_TEXTURE2D: width/height must be non-zero".into(),
