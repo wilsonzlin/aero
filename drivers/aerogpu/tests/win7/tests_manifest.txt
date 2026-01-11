@@ -33,6 +33,7 @@ d3d9ex_shared_allocations
 # D3D10 / D3D10.1
 d3d10_triangle
 d3d10_1_triangle
+d3d10_caps_smoke
 
 # D3D11
 # Some entries may not exist yet; build_all/run_all will pick them up automatically once present.
