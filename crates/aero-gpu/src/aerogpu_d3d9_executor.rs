@@ -2991,7 +2991,6 @@ impl AerogpuD3d9Executor {
                 self.flush_texture_if_dirty_strict(Some(encoder), handle, ctx.guest_memory)?;
             }
         }
-
         let scissor = self
             .state
             .scissor

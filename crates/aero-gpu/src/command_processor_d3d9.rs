@@ -91,6 +91,9 @@ impl SharedTextureState {
     }
 
     fn register_texture_handle(&mut self, handle: u32, underlying: u32) -> Result<(), String> {
+        if handle == 0 {
+            return Err("texture handle 0 is reserved".into());
+        }
         if self.texture_handles.contains_key(&handle) {
             return Err(format!("texture handle {handle} already exists"));
         }
@@ -132,12 +135,26 @@ impl SharedTextureState {
         resource_handle: u32,
         share_token: u64,
     ) -> Result<(), String> {
+        if resource_handle == 0 {
+            return Err("ExportSharedSurface resource_handle 0 is reserved".into());
+        }
+        if share_token == 0 {
+            return Err("ExportSharedSurface share_token 0 is reserved".into());
+        }
         let underlying = self
             .resolve_texture_handle(resource_handle)
             .ok_or_else(|| {
                 format!("ExportSharedSurface references unknown texture handle {resource_handle}")
             })?;
-        self.shared_surface_by_token.insert(share_token, underlying);
+        if let Some(existing) = self.shared_surface_by_token.get(&share_token).copied() {
+            if existing != underlying {
+                return Err(format!(
+                    "shared surface token 0x{share_token:016X} already exported (existing_handle={existing} new_handle={underlying})"
+                ));
+            }
+        } else {
+            self.shared_surface_by_token.insert(share_token, underlying);
+        }
         Ok(())
     }
 
@@ -146,6 +163,12 @@ impl SharedTextureState {
         out_resource_handle: u32,
         share_token: u64,
     ) -> Result<(), String> {
+        if out_resource_handle == 0 {
+            return Err("ImportSharedSurface out_resource_handle 0 is reserved".into());
+        }
+        if share_token == 0 {
+            return Err("ImportSharedSurface share_token 0 is reserved".into());
+        }
         let Some(&underlying) = self.shared_surface_by_token.get(&share_token) else {
             return Err(format!("unknown shared surface token 0x{share_token:016X}"));
         };
@@ -156,7 +179,16 @@ impl SharedTextureState {
             ));
         }
 
-        self.register_texture_handle(out_resource_handle, underlying)
+        if let Some(existing) = self.texture_handles.get(&out_resource_handle).copied() {
+            if existing != underlying {
+                return Err(format!(
+                    "texture handle {out_resource_handle} already exists (existing_handle={existing} new_handle={underlying})"
+                ));
+            }
+            Ok(())
+        } else {
+            self.register_texture_handle(out_resource_handle, underlying)
+        }
     }
 }
 
@@ -545,6 +577,9 @@ impl CommandProcessor {
                     return Err("TextureCreate payload must be exactly 28 bytes".into());
                 }
 
+                if texture_id == 0 {
+                    return Err("texture handle 0 is reserved".into());
+                }
                 if shared_textures.texture_handles.contains_key(&texture_id) {
                     return Err(format!("texture handle {texture_id} already exists"));
                 }
