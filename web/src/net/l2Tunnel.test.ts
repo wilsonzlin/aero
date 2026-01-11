@@ -274,6 +274,42 @@ describe("net/l2Tunnel", () => {
     }
   });
 
+  it("WebSocket client drops apiKey and overwrites token in query string auth mode", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const original = g.WebSocket;
+
+    FakeWebSocket.nextProtocol = L2_TUNNEL_SUBPROTOCOL;
+    resetFakeWebSocket();
+    g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const client = new WebSocketL2TunnelClient(
+      "wss://gateway.example.com/l2?token=old&apiKey=old&foo=bar",
+      (ev) => events.push(ev),
+      {
+        keepaliveMinMs: 60_000,
+        keepaliveMaxMs: 60_000,
+        token: "sekrit",
+      },
+    );
+
+    try {
+      client.connect();
+      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2?token=sekrit&foo=bar");
+      expect(FakeWebSocket.last?.protocols).toBe(L2_TUNNEL_SUBPROTOCOL);
+
+      FakeWebSocket.last?.open();
+      expect(events[0]?.type).toBe("open");
+    } finally {
+      client.close();
+      if (original === undefined) {
+        delete (g as { WebSocket?: unknown }).WebSocket;
+      } else {
+        g.WebSocket = original;
+      }
+    }
+  });
+
   it("WebSocket client can send token via Sec-WebSocket-Protocol", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
@@ -363,6 +399,43 @@ describe("net/l2Tunnel", () => {
     try {
       client.connect();
       expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2?token=sekrit");
+      expect(FakeWebSocket.last?.protocols).toEqual([L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"]);
+
+      FakeWebSocket.last?.open();
+      expect(events[0]?.type).toBe("open");
+    } finally {
+      client.close();
+      if (original === undefined) {
+        delete (g as { WebSocket?: unknown }).WebSocket;
+      } else {
+        g.WebSocket = original;
+      }
+    }
+  });
+
+  it("WebSocket client drops apiKey and overwrites token when tokenTransport=both", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const original = g.WebSocket;
+
+    FakeWebSocket.nextProtocol = L2_TUNNEL_SUBPROTOCOL;
+    resetFakeWebSocket();
+    g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const client = new WebSocketL2TunnelClient(
+      "wss://gateway.example.com/l2?token=old&apiKey=old&foo=bar",
+      (ev) => events.push(ev),
+      {
+        keepaliveMinMs: 60_000,
+        keepaliveMaxMs: 60_000,
+        token: "sekrit",
+        tokenTransport: "both",
+      },
+    );
+
+    try {
+      client.connect();
+      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2?token=sekrit&foo=bar");
       expect(FakeWebSocket.last?.protocols).toEqual([L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"]);
 
       FakeWebSocket.last?.open();
