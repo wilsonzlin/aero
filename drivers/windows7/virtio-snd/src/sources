@@ -12,7 +12,16 @@ TARGETNAME=virtiosnd
 TARGETTYPE=DRIVER
 TARGETPATH=obj
  
-INCLUDES=$(INCLUDES);..\include;..\..\virtio\common\include;..\..\..\windows\virtio\common;..\..\..\win7\virtio\virtio-core\include;..\..\..\win7\virtio\virtio-core\portable
+#
+# Include ordering matters:
+# - `drivers/windows/virtio/common` provides the WDF-free split virtqueue engine
+#   used by virtiosnd_queue_split.c and by the compiled-in virtqueue_split.c.
+# - `drivers/windows7/virtio/common/include` also contains a header named
+#   `virtqueue_split.h` (legacy/transitional implementation).
+# Ensure the split virtqueue engine's headers win by putting its directory
+# earlier in the include path.
+#
+INCLUDES=$(INCLUDES);..\include;..\..\..\windows\virtio\common;..\..\virtio\common\include;..\..\..\win7\virtio\virtio-core\include;..\..\..\win7\virtio\virtio-core\portable
 
 SOURCES= \
     adapter.c \
