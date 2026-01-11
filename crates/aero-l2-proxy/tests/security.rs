@@ -961,3 +961,69 @@ async fn fps_quota_closes_connection() {
 
     proxy.shutdown().await;
 }
+
+#[tokio::test]
+async fn oversized_ws_messages_are_rejected_at_websocket_layer() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _auth_mode = EnvVarGuard::unset("AERO_L2_AUTH_MODE");
+    let _api_key = EnvVarGuard::unset("AERO_L2_API_KEY");
+    let _jwt_secret = EnvVarGuard::unset("AERO_L2_JWT_SECRET");
+    let _session_secret = EnvVarGuard::unset("AERO_L2_SESSION_SECRET");
+    let _session_secret_fallback = EnvVarGuard::unset("SESSION_SECRET");
+
+    // Force tiny protocol limits so we can trip the WebSocket size caps with a small message.
+    let _max_frame_payload = EnvVarGuard::set("AERO_L2_MAX_FRAME_PAYLOAD", "1");
+    let _max_control_payload = EnvVarGuard::set("AERO_L2_MAX_CONTROL_PAYLOAD", "1");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+
+    let payload = vec![0u8; 1024];
+    let mut wire = Vec::with_capacity(aero_l2_protocol::L2_TUNNEL_HEADER_LEN + payload.len());
+    wire.push(aero_l2_protocol::L2_TUNNEL_MAGIC);
+    wire.push(aero_l2_protocol::L2_TUNNEL_VERSION);
+    wire.push(aero_l2_protocol::L2_TUNNEL_TYPE_FRAME);
+    wire.push(0);
+    wire.extend_from_slice(&payload);
+
+    ws.send(Message::Binary(wire.into())).await.unwrap();
+
+    let close = tokio::time::timeout(Duration::from_secs(2), async {
+        match ws.next().await {
+            Some(Ok(Message::Close(frame))) => frame,
+            Some(Ok(msg)) => panic!("expected connection close, got {msg:?}"),
+            Some(Err(_)) => None,
+            None => None,
+        }
+    })
+    .await
+    .unwrap();
+
+    if let Some(frame) = close {
+        assert_eq!(
+            frame.code,
+            tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Size
+        );
+    }
+
+    // After an oversized message, the server should have closed the connection so further sends
+    // must fail.
+    assert!(ws.send(Message::Binary(vec![0u8; 1].into())).await.is_err());
+
+    proxy.shutdown().await;
+}

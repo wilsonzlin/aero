@@ -297,6 +297,17 @@ To bound abuse and accidental infinite loops, the proxy applies coarse, best-eff
 
 When a per-connection quota is exceeded, the proxy closes the WebSocket (typically close code `1008`).
 
+### WebSocket message size caps
+
+The Rust proxy configures **WebSocket-level** `max_message_size` / `max_frame_size` so oversized
+messages are rejected **before** the full payload is buffered.
+
+The cap is derived from the configured protocol payload limits:
+
+```
+max_ws_message_size = 4 (header) + max(AERO_L2_MAX_FRAME_PAYLOAD, AERO_L2_MAX_CONTROL_PAYLOAD)
+```
+
 ### Recommended deployment behind an edge proxy
 
 For production, deploy the L2 proxy behind an edge proxy / load balancer that provides:

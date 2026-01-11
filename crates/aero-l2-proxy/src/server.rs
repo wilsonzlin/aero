@@ -352,7 +352,16 @@ async fn l2_ws_handler(
             .into_response();
     }
 
+    let max_payload = state
+        .l2_limits
+        .max_frame_payload
+        .max(state.l2_limits.max_control_payload);
+    let max_ws_message_size =
+        aero_l2_protocol::L2_TUNNEL_HEADER_LEN.saturating_add(max_payload);
+
     ws.protocols([TUNNEL_SUBPROTOCOL])
+        .max_message_size(max_ws_message_size)
+        .max_frame_size(max_ws_message_size)
         .on_upgrade(move |socket| async move {
             let _permit = permit;
             let _ip_permit = ip_permit;
