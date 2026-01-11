@@ -536,9 +536,9 @@ If you’re using the FAT driver disk image instead, the layout is typically:
 
 Windows 7 x64 enforces driver signature checks. There are three practical scenarios:
 
-1. **Using upstream signed virtio-win packages**: should install without enabling test mode.
-2. **Using modified drivers / self-built drivers**: requires test signing mode (or a production code-signing certificate + cross-signing, which is out of scope).
-3. **CI/dev-only experimentation**: test mode is acceptable.
+1. **Using Aero CI/release driver artifacts (in-tree drivers, typically test-signed)**: requires trusting the signing certificate and enabling Test Signing (or using `nointegritychecks`, not recommended). Guest Tools media (`signing_policy=test`) guides this flow.
+2. **Using upstream WHQL/production-signed virtio-win packages**: should install without enabling test mode.
+3. **Using modified drivers / self-built drivers**: requires test signing mode (or a production code-signing certificate + cross-signing, which is out of scope).
 
 ### SHA-256 signatures (Win7 update requirement)
 
