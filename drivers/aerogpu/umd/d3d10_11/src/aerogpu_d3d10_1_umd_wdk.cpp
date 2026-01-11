@@ -954,6 +954,9 @@ HRESULT InitKernelDeviceContext(AeroGpuDevice* dev, D3D10DDI_HADAPTER hAdapter) 
     __if_exists(D3DDDICB_CREATECONTEXT::DmaBufferPrivateDataSize) {
       dev->dma_buffer_private_data_size = create_ctx.DmaBufferPrivateDataSize;
     }
+    if (dev->dma_buffer_private_data && dev->dma_buffer_private_data_size == 0) {
+      dev->dma_buffer_private_data_size = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+    }
   }
   __if_not_exists(D3DDDICB_CREATECONTEXT) {
     DestroyKernelDeviceContext(dev);
@@ -1240,6 +1243,8 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     void* dma_priv_ptr = nullptr;
     size_t dma_priv_size = 0;
     size_t dma_priv_size_submit = 0;
+    void* dma_priv_ptr_dealloc = nullptr;
+    size_t dma_priv_size_dealloc = 0;
     bool dma_priv_ptr_present = false;
     bool dma_priv_size_present = false;
     __if_exists(D3DDDICB_ALLOCATE::pDmaBuffer) {
@@ -1280,9 +1285,26 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       return 0;
     }
 
+    dma_priv_ptr_dealloc = dma_priv_ptr;
+    dma_priv_size_dealloc = dma_priv_size;
+    if (!dma_priv_ptr_dealloc && dev->dma_buffer_private_data) {
+      // Some WDK/runtime combinations expose per-DMA-buffer private data via
+      // CreateContext rather than AllocateCb. Use it as a fallback for submit,
+      // but keep the AllocateCb pointer/size for DeallocateCb.
+      dma_priv_ptr = dev->dma_buffer_private_data;
+      dma_priv_ptr_present = true;
+      if (dma_priv_size == 0 && dev->dma_buffer_private_data_size != 0) {
+        dma_priv_size = static_cast<size_t>(dev->dma_buffer_private_data_size);
+      }
+    }
+    const size_t expected_dma_priv_bytes = static_cast<size_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+    if (dma_priv_ptr_dealloc && dma_priv_size_dealloc == 0) {
+      dma_priv_size_dealloc = expected_dma_priv_bytes;
+    }
+
     if (dma_priv_size_present) {
       if (dma_priv_ptr_present && dma_priv_ptr == nullptr) {
-        deallocate_buffers(alloc, dma_priv_ptr, dma_priv_size);
+        deallocate_buffers(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
 
         if (out_hr) {
           *out_hr = E_FAIL;
@@ -1299,7 +1321,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       }
 
       if (dma_priv_size < expected_dma_priv_bytes) {
-        deallocate_buffers(alloc, dma_priv_ptr, dma_priv_size);
+        deallocate_buffers(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
 
         if (out_hr) {
           *out_hr = E_FAIL;
@@ -1322,7 +1344,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       }
     } else if (dma_priv_ptr_present) {
       if (dma_priv_ptr == nullptr) {
-        deallocate_buffers(alloc, dma_priv_ptr, dma_priv_size);
+        deallocate_buffers(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
 
         if (out_hr) {
           *out_hr = E_FAIL;
@@ -1335,7 +1357,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     }
 
     if (dma_cap < sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_hdr)) {
-      deallocate_buffers(alloc, dma_priv_ptr, dma_priv_size);
+      deallocate_buffers(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
 
       if (out_hr) {
         *out_hr = E_OUTOFMEMORY;
@@ -1364,7 +1386,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     }
 
     if (chunk_end == chunk_begin) {
-      deallocate_buffers(alloc, dma_priv_ptr, dma_priv_size);
+      deallocate_buffers(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
 
       if (out_hr) {
         *out_hr = E_OUTOFMEMORY;
@@ -1492,7 +1514,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
 
     // Always return submission buffers to the runtime.
     {
-      deallocate_buffers(alloc, dma_priv_ptr, dma_priv_size);
+      deallocate_buffers(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
     }
 
     if (FAILED(submit_hr)) {

@@ -475,6 +475,11 @@ struct Device {
   uint32_t kmt_device = 0;
   uint32_t kmt_context = 0;
   uint32_t kmt_fence_syncobj = 0;
+  // Runtime-provided per-DMA-buffer private data (if exposed by CreateContext).
+  // Some WDK vintages do not expose this in Allocate/GetCommandBuffer, so keep
+  // the CreateContext-provided pointer as a fallback.
+  void* wddm_dma_private_data = nullptr;
+  uint32_t wddm_dma_private_data_bytes = 0;
 
   std::atomic<uint64_t> last_submitted_fence{0};
   std::atomic<uint64_t> last_completed_fence{0};

@@ -623,6 +623,16 @@ template <typename T>
 struct has_pfnWaitForSynchronizationObjectCb<T, std::void_t<decltype(std::declval<T>().pfnWaitForSynchronizationObjectCb)>>
     : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_pDmaBufferPrivateData : std::false_type {};
+template <typename T>
+struct has_member_pDmaBufferPrivateData<T, std::void_t<decltype(std::declval<T>().pDmaBufferPrivateData)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_DmaBufferPrivateDataSize : std::false_type {};
+template <typename T>
+struct has_member_DmaBufferPrivateDataSize<T, std::void_t<decltype(std::declval<T>().DmaBufferPrivateDataSize)>> : std::true_type {};
+
 template <typename CallbacksT>
 HRESULT create_device_from_callbacks(const CallbacksT& callbacks, void* hAdapter, D3DKMT_HANDLE* hDeviceOut) {
   if (!hDeviceOut) {
@@ -675,10 +685,12 @@ void destroy_device_if_present(const CallbacksT& callbacks, D3DKMT_HANDLE hDevic
 
 template <typename CallbacksT, typename FnT>
 HRESULT create_context_common(const CallbacksT& callbacks,
-                             FnT fn,
-                             D3DKMT_HANDLE hDevice,
-                             D3DKMT_HANDLE* hContextOut,
-                             D3DKMT_HANDLE* hSyncObjectOut) {
+                              FnT fn,
+                              D3DKMT_HANDLE hDevice,
+                              D3DKMT_HANDLE* hContextOut,
+                              D3DKMT_HANDLE* hSyncObjectOut,
+                              void** dma_private_data_out,
+                              UINT* dma_private_data_size_out) {
   (void)callbacks;
   if (!hContextOut || !hSyncObjectOut) {
     return E_INVALIDARG;
@@ -703,25 +715,64 @@ HRESULT create_context_common(const CallbacksT& callbacks,
 
   *hContextOut = data.hContext;
   *hSyncObjectOut = data.hSyncObject;
+
+  if (dma_private_data_out) {
+    *dma_private_data_out = nullptr;
+    if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
+      *dma_private_data_out = data.pDmaBufferPrivateData;
+    }
+  }
+  if (dma_private_data_size_out) {
+    *dma_private_data_size_out = 0;
+    if constexpr (has_member_DmaBufferPrivateDataSize<Arg>::value) {
+      *dma_private_data_size_out = data.DmaBufferPrivateDataSize;
+      if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
+        if (*dma_private_data_size_out == 0 && data.pDmaBufferPrivateData) {
+          // Some WDK/runtime combinations carry the size field but leave it as 0.
+          // Treat that as "unknown" and fall back to the fixed AeroGPU Win7
+          // contract size.
+          *dma_private_data_size_out = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+        }
+      }
+    } else if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
+      if (data.pDmaBufferPrivateData) {
+        *dma_private_data_size_out = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+      }
+    }
+  }
   return (*hContextOut != 0 && *hSyncObjectOut != 0) ? S_OK : E_FAIL;
 }
 
 template <typename CallbacksT>
 HRESULT create_context_from_callbacks(const CallbacksT& callbacks,
-                                      D3DKMT_HANDLE hDevice,
-                                      D3DKMT_HANDLE* hContextOut,
-                                      D3DKMT_HANDLE* hSyncObjectOut) {
+                                       D3DKMT_HANDLE hDevice,
+                                       D3DKMT_HANDLE* hContextOut,
+                                       D3DKMT_HANDLE* hSyncObjectOut,
+                                       void** dma_private_data_out,
+                                       UINT* dma_private_data_size_out) {
   // Prefer CreateContextCb2 when present (WDDM 1.1+), but fall back to the
   // original entrypoint for older interface versions.
   if constexpr (has_pfnCreateContextCb2<CallbacksT>::value) {
     if (callbacks.pfnCreateContextCb2) {
-      return create_context_common(callbacks, callbacks.pfnCreateContextCb2, hDevice, hContextOut, hSyncObjectOut);
+      return create_context_common(callbacks,
+                                   callbacks.pfnCreateContextCb2,
+                                   hDevice,
+                                   hContextOut,
+                                   hSyncObjectOut,
+                                   dma_private_data_out,
+                                   dma_private_data_size_out);
     }
   }
 
   if constexpr (has_pfnCreateContextCb<CallbacksT>::value) {
     if (callbacks.pfnCreateContextCb) {
-      return create_context_common(callbacks, callbacks.pfnCreateContextCb, hDevice, hContextOut, hSyncObjectOut);
+      return create_context_common(callbacks,
+                                   callbacks.pfnCreateContextCb,
+                                   hDevice,
+                                   hContextOut,
+                                   hSyncObjectOut,
+                                   dma_private_data_out,
+                                   dma_private_data_size_out);
     }
     return E_FAIL;
   }
@@ -772,6 +823,8 @@ static void DestroyWddmContext(Device* dev) {
     dev->kmt_device = 0;
     dev->kmt_context = 0;
     dev->kmt_fence_syncobj = 0;
+    dev->wddm_dma_private_data = nullptr;
+    dev->wddm_dma_private_data_bytes = 0;
     return;
   }
 
@@ -782,6 +835,8 @@ static void DestroyWddmContext(Device* dev) {
   dev->kmt_device = 0;
   dev->kmt_context = 0;
   dev->kmt_fence_syncobj = 0;
+  dev->wddm_dma_private_data = nullptr;
+  dev->wddm_dma_private_data_bytes = 0;
 }
 
 static HRESULT InitWddmContext(Device* dev, void* hAdapter) {
@@ -802,7 +857,9 @@ static HRESULT InitWddmContext(Device* dev, void* hAdapter) {
 
   D3DKMT_HANDLE hContext = 0;
   D3DKMT_HANDLE hSyncObject = 0;
-  hr = create_context_from_callbacks(*cb, hDevice, &hContext, &hSyncObject);
+  void* dma_private_data = nullptr;
+  UINT dma_private_data_bytes = 0;
+  hr = create_context_from_callbacks(*cb, hDevice, &hContext, &hSyncObject, &dma_private_data, &dma_private_data_bytes);
   if (FAILED(hr)) {
     destroy_device_if_present(*cb, hDevice);
     return hr;
@@ -811,6 +868,8 @@ static HRESULT InitWddmContext(Device* dev, void* hAdapter) {
   dev->kmt_device = static_cast<uint32_t>(hDevice);
   dev->kmt_context = static_cast<uint32_t>(hContext);
   dev->kmt_fence_syncobj = static_cast<uint32_t>(hSyncObject);
+  dev->wddm_dma_private_data = dma_private_data;
+  dev->wddm_dma_private_data_bytes = static_cast<uint32_t>(dma_private_data_bytes);
   return S_OK;
 }
 
@@ -1046,6 +1105,8 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
 
     void* dma_priv_ptr = nullptr;
     UINT dma_priv_size = 0;
+    void* dma_priv_ptr_dealloc = nullptr;
+    UINT dma_priv_size_dealloc = 0;
     UINT dma_priv_size_submit = 0;
     bool dma_priv_ptr_present = false;
     bool dma_priv_size_present = false;
@@ -1057,6 +1118,8 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
       dma_priv_size = alloc.DmaBufferPrivateDataSize;
       dma_priv_size_present = true;
     }
+    dma_priv_ptr_dealloc = dma_priv_ptr;
+    dma_priv_size_dealloc = dma_priv_size;
     dma_priv_size_submit = dma_priv_size;
 
     if (FAILED(alloc_hr) || !dma_ptr || dma_cap == 0) {
@@ -1068,9 +1131,23 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
       return 0;
     }
 
+    if (!dma_priv_ptr && dev->wddm_dma_private_data) {
+      dma_priv_ptr = dev->wddm_dma_private_data;
+      dma_priv_ptr_present = true;
+      if (!dma_priv_size && dev->wddm_dma_private_data_bytes) {
+        dma_priv_size = static_cast<UINT>(dev->wddm_dma_private_data_bytes);
+      }
+      dma_priv_size_submit = dma_priv_size;
+    }
+
+    const UINT expected_dma_priv_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+    if (dma_priv_ptr_dealloc && dma_priv_size_dealloc == 0) {
+      dma_priv_size_dealloc = expected_dma_priv_bytes;
+    }
+
     if (dma_priv_ptr_present) {
       if (dma_priv_ptr == nullptr) {
-        deallocate(alloc, dma_priv_ptr, dma_priv_size);
+        deallocate(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
         if (out_hr) {
           *out_hr = E_FAIL;
         }
@@ -1079,7 +1156,6 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
         return 0;
       }
 
-      const UINT expected_dma_priv_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
       if (dma_priv_size_present) {
         if (dma_priv_size == 0) {
           // Some header/runtime combinations carry the size field but leave it as
@@ -1087,7 +1163,7 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
           dma_priv_size = expected_dma_priv_bytes;
         }
         if (dma_priv_size < expected_dma_priv_bytes) {
-          deallocate(alloc, dma_priv_ptr, dma_priv_size);
+          deallocate(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
           if (out_hr) {
             *out_hr = E_FAIL;
           }
@@ -1114,7 +1190,7 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
     }
 
     if (dma_cap < sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_hdr)) {
-      deallocate(alloc, dma_priv_ptr, dma_priv_size);
+      deallocate(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
 
       if (out_hr) {
         *out_hr = E_OUTOFMEMORY;
@@ -1144,7 +1220,7 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
     }
 
     if (chunk_end == chunk_begin) {
-      deallocate(alloc, dma_priv_ptr, dma_priv_size);
+      deallocate(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
 
       if (out_hr) {
         *out_hr = E_OUTOFMEMORY;
@@ -1315,7 +1391,7 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
     }
 
     // Always return submission buffers to the runtime.
-    deallocate(alloc, dma_priv_ptr, dma_priv_size);
+    deallocate(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
 
     if (FAILED(submit_hr)) {
       if (out_hr) {
