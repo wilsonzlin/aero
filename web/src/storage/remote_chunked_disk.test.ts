@@ -1,0 +1,239 @@
+import { afterEach, describe, expect, it } from "vitest";
+
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
+
+import { RemoteChunkedDisk, type BinaryStore } from "./remote_chunked_disk";
+
+class TestMemoryStore implements BinaryStore {
+  private readonly files = new Map<string, Uint8Array>();
+
+  async read(path: string): Promise<Uint8Array | null> {
+    const data = this.files.get(path);
+    return data ? data.slice() : null;
+  }
+
+  async write(path: string, data: Uint8Array): Promise<void> {
+    this.files.set(path, data.slice());
+  }
+
+  async remove(path: string, options: { recursive?: boolean } = {}): Promise<void> {
+    if (options.recursive) {
+      const prefix = path.endsWith("/") ? path : `${path}/`;
+      for (const key of Array.from(this.files.keys())) {
+        if (key === path || key.startsWith(prefix)) this.files.delete(key);
+      }
+      return;
+    }
+    this.files.delete(path);
+  }
+}
+
+async function sha256Hex(data: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  const bytes = new Uint8Array(digest);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function buildTestImageBytes(totalSize: number): Uint8Array {
+  const bytes = new Uint8Array(totalSize);
+  for (let i = 0; i < bytes.length; i += 1) bytes[i] = i & 0xff;
+  return bytes;
+}
+
+async function withServer(handler: (req: IncomingMessage, res: ServerResponse) => void): Promise<{
+  baseUrl: string;
+  hits: Map<string, number>;
+  close: () => Promise<void>;
+}> {
+  const hits = new Map<string, number>();
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    hits.set(url.pathname, (hits.get(url.pathname) ?? 0) + 1);
+    handler(req, res);
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const addr = server.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${addr.port}`;
+
+  return {
+    baseUrl,
+    hits,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+describe("RemoteChunkedDisk", () => {
+  let closeServer: (() => Promise<void>) | null = null;
+  afterEach(async () => {
+    if (closeServer) await closeServer();
+    closeServer = null;
+  });
+
+  it("maps byte offsets to chunk indexes and serves data from cache on repeat reads", async () => {
+    const chunkSize = 1024; // multiple of 512
+    const totalSize = 2560; // 2 full chunks + 1 half chunk
+    const chunkCount = 3;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunks = [img.slice(0, 1024), img.slice(1024, 2048), img.slice(2048, 2560)];
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 8,
+      chunks: [
+        { size: 1024, sha256: await sha256Hex(chunks[0]!) },
+        { size: 1024, sha256: await sha256Hex(chunks[1]!) },
+        { size: 512, sha256: await sha256Hex(chunks[2]!) },
+      ],
+    };
+
+    const { baseUrl, hits, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+
+      const m = url.pathname.match(/^\/chunks\/(\d+)\.bin$/);
+      if (m) {
+        const idx = Number(m[1]);
+        const data = chunks[idx];
+        if (!data) {
+          res.statusCode = 404;
+          res.end("missing");
+          return;
+        }
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(data);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const store = new TestMemoryStore();
+    const manifestUrl = `${baseUrl}/manifest.json`;
+
+    const disk = await RemoteChunkedDisk.open(manifestUrl, {
+      store,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+    });
+
+    // Read spanning chunks 0 and 1: offset=512..2048.
+    const buf = new Uint8Array(1536);
+    await disk.readSectors(1, buf);
+    expect(buf).toEqual(img.slice(512, 2048));
+
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+    expect(hits.get("/chunks/00000001.bin")).toBe(1);
+
+    // Re-read: should be served from cache with no additional chunk GETs.
+    const buf2 = new Uint8Array(1536);
+    await disk.readSectors(1, buf2);
+    expect(buf2).toEqual(img.slice(512, 2048));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+    expect(hits.get("/chunks/00000001.bin")).toBe(1);
+
+    await disk.close();
+
+    // Re-open with the same store: should still hit cache (no extra chunk GETs).
+    const disk2 = await RemoteChunkedDisk.open(manifestUrl, {
+      store,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+    });
+
+    const buf3 = new Uint8Array(1024);
+    await disk2.readSectors(3, buf3);
+    expect(buf3).toEqual(img.slice(1536, 2560));
+    expect(hits.get("/chunks/00000001.bin")).toBe(1);
+    expect(hits.get("/chunks/00000002.bin")).toBe(1);
+
+    await disk2.close();
+  });
+
+  it("retries on integrity mismatch and then fails", async () => {
+    const chunkSize = 1024;
+    const totalSize = 2048;
+    const chunkCount = 2;
+
+    const img = buildTestImageBytes(totalSize);
+    const goodChunks = [img.slice(0, 1024), img.slice(1024, 2048)];
+
+    // Corrupt chunk 0 on the wire.
+    const corrupt0 = goodChunks[0]!.slice();
+    corrupt0[0] ^= 0xff;
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 8,
+      chunks: [
+        { size: 1024, sha256: await sha256Hex(goodChunks[0]!) },
+        { size: 1024, sha256: await sha256Hex(goodChunks[1]!) },
+      ],
+    };
+
+    const { baseUrl, hits, close } = await withServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(corrupt0);
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000001.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(goodChunks[1]);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      store: new TestMemoryStore(),
+      prefetchSequentialChunks: 0,
+      maxAttempts: 2,
+      retryBaseDelayMs: 0,
+    });
+
+    const buf = new Uint8Array(512);
+    await expect(disk.readSectors(0, buf)).rejects.toThrow(/sha256 mismatch/i);
+    expect(hits.get("/chunks/00000000.bin")).toBe(2);
+    await disk.close();
+  });
+});
+
