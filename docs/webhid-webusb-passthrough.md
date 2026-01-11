@@ -254,9 +254,13 @@ Recommended guardrails:
 - **No low-speed modeling**
   - Low-speed (1.5 Mbps) USB devices are not modeled correctly yet.
   - Expect some HID peripherals to fail enumeration or behave incorrectly.
-- **No WebUSB async passthrough yet**
-  - Only the WebHID report-based flow is planned for MVP.
-  - WebUSB support will require modeling async transfer completion semantics.
+- **WebUSB passthrough is separate (non-HID)**
+  - WebUSB passthrough uses a host action/completion bridge and is tracked
+    separately from the WebHID HID-device MVP. See:
+    - [`docs/webusb-passthrough.md`](./webusb-passthrough.md)
+    - [`docs/webusb.md`](./webusb.md)
+  - WebUSB cannot access many common USB classes in Chromium (protected interface
+    classes), so it is not a replacement for WebHID for HID peripherals.
 
 ## Testing strategy
 
