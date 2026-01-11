@@ -296,9 +296,11 @@ For HTTP endpoints (`GET /webrtc/ice`, `POST /offer`, `POST /webrtc/offer`, `POS
 - `AUTH_MODE=api_key`:
   - Preferred: `X-API-Key: ...`
   - Alternative: `Authorization: ApiKey ...`
+  - Compatibility: `Authorization: Bearer ...`
   - Fallback: `?apiKey=...` (or `?token=...` for compatibility)
 - `AUTH_MODE=jwt`:
   - Preferred: `Authorization: Bearer ...`
+  - Compatibility: `X-API-Key: ...` or `Authorization: ApiKey ...`
   - Fallback: `?token=...` (or `?apiKey=...` for compatibility)
 
 #### Auth & resource limits

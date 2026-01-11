@@ -63,14 +63,21 @@ func CredentialFromHeaders(mode config.AuthMode, h http.Header) string {
 			return v
 		}
 		scheme, token := parseAuthHeader(h.Get("Authorization"))
-		if scheme == "apikey" && token != "" {
+		// Support common variations for API-key auth so clients don't have to know
+		// the server's auth mode a priori.
+		if (scheme == "apikey" || scheme == "bearer") && token != "" {
 			return token
 		}
 		return ""
 	case config.AuthModeJWT:
 		scheme, token := parseAuthHeader(h.Get("Authorization"))
-		if scheme == "bearer" && token != "" {
+		if (scheme == "bearer" || scheme == "apikey") && token != "" {
 			return token
+		}
+		// Forward/compat: accept X-API-Key as a token carrier for mode-agnostic
+		// clients.
+		if v := strings.TrimSpace(h.Get("X-API-Key")); v != "" {
+			return v
 		}
 		return ""
 	default:

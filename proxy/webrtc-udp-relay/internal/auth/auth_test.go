@@ -117,4 +117,43 @@ func TestCredentialFromRequest(t *testing.T) {
 			t.Fatalf("cred=%q, want %q", cred, "t")
 		}
 	})
+
+	t.Run("api_key accepts Authorization bearer header", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+		req.Header.Set("Authorization", "Bearer k")
+
+		cred, err := CredentialFromRequest(config.AuthModeAPIKey, req)
+		if err != nil {
+			t.Fatalf("err=%v", err)
+		}
+		if cred != "k" {
+			t.Fatalf("cred=%q, want %q", cred, "k")
+		}
+	})
+
+	t.Run("jwt accepts X-API-Key header as alias", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+		req.Header.Set("X-API-Key", "t")
+
+		cred, err := CredentialFromRequest(config.AuthModeJWT, req)
+		if err != nil {
+			t.Fatalf("err=%v", err)
+		}
+		if cred != "t" {
+			t.Fatalf("cred=%q, want %q", cred, "t")
+		}
+	})
+
+	t.Run("jwt accepts Authorization apikey header as alias", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+		req.Header.Set("Authorization", "ApiKey t")
+
+		cred, err := CredentialFromRequest(config.AuthModeJWT, req)
+		if err != nil {
+			t.Fatalf("err=%v", err)
+		}
+		if cred != "t" {
+			t.Fatalf("cred=%q, want %q", cred, "t")
+		}
+	})
 }
