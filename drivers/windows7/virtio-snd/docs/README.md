@@ -168,7 +168,7 @@ Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 * `src/virtiosnd_control.c` / `src/virtiosnd_tx.c` / `src/virtiosnd_rx.c` — control/TX/RX protocol engines
 * `drivers/windows7/virtio/common/src/virtio_pci_contract.c` — `AERO-W7-VIRTIO` v1 contract identity validation used at `START_DEVICE` (requires `DEV_1059` + `REV_01`)
 * Shared virtqueue / PCI support code:
-  - `drivers/windows7/virtio/common/src/virtqueue_split.c`
+  - `drivers/windows/virtio/common/virtqueue_split.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
 
 Scatter/gather helpers (WaveRT cyclic buffer → virtio descriptors):

@@ -45,7 +45,7 @@ feature flags and is not suitable for contract v1 devices (`VIRTIO_F_VERSION_1` 
   - `src/virtiosnd_control.c`, `src/virtiosnd_tx.c`, `src/virtiosnd_rx.c`
   - `src/virtiosnd_intx.c`
 - Shared virtio support code linked in from:
-  - `drivers/windows7/virtio/common/src/virtqueue_split.c`
+  - `drivers/windows/virtio/common/virtqueue_split.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
   - `drivers/windows7/virtio/common/src/virtio_pci_contract.c`
 
