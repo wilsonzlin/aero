@@ -194,9 +194,10 @@ test("l2 proxy closes the socket when per-connection quotas are exceeded", async
 
     const conn2 = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`);
     assert.equal(conn2.ok, true);
-    conn2.ws.send(Buffer.from([1]));
-    conn2.ws.send(Buffer.from([2]));
-    conn2.ws.send(Buffer.from([3]));
+    // Use zero-length text frames to exercise the FPS limiter without consuming the byte quota.
+    conn2.ws.send("");
+    conn2.ws.send("");
+    conn2.ws.send("");
     const closedFps = await waitForClose(conn2.ws);
     assert.equal(closedFps.code, 1008);
     assert.match(closedFps.reason, /frame rate quota exceeded/i);
