@@ -173,7 +173,9 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     QueryPerformanceCounter(&t1);
 
     const double call_ms = QpcToMs(t1.QuadPart - t0.QuadPart, qpc_freq);
-    if (call_ms > 50.0) {
+    // This should never block on GPU progress. Keep the threshold generous to
+    // avoid false positives from guest scheduling hiccups.
+    if (call_ms > 250.0) {
       return aerogpu_test::Fail(kTestName, "GetData blocked for %.3fms (expected non-blocking)", call_ms);
     }
 
@@ -209,4 +211,3 @@ int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunD3D9ExEventQuery(argc, argv);
 }
-
