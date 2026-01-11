@@ -17,6 +17,7 @@
 #include "../../../protocol/aerogpu_win7_abi.h"
 
 #include "aerogpu_d3d10_11_log.h"
+#include "aerogpu_d3d10_11_wddm_alloc_list.h"
 
 #ifndef FAILED
   #define FAILED(hr) (((HRESULT)(hr)) < 0)
@@ -1483,18 +1484,20 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
       }
 
       used_allocation_list_entries = allocation_list_entries;
-      const size_t bytes = static_cast<size_t>(used_allocation_list_entries) * sizeof(*buf.allocation_list);
-      if (bytes) {
-        std::memset(buf.allocation_list, 0, bytes);
-      }
       for (UINT i = 0; i < used_allocation_list_entries; ++i) {
         if (allocation_handles[i] == 0) {
           release();
           return E_INVALIDARG;
         }
-        __if_exists(D3DDDI_ALLOCATIONLIST::hAllocation) {
-          buf.allocation_list[i].hAllocation = static_cast<D3DKMT_HANDLE>(allocation_handles[i]);
-        }
+        // Conservative: mark all referenced allocations as potentially written by
+        // the submission. The Win7 AeroGPU UMD can emit clears/draws/copies/uploads
+        // that write into any resource, and under-specifying write access can
+        // lead to stale CPU mappings.
+        aerogpu::wddm::InitAllocationListEntry(
+            buf.allocation_list[i],
+            static_cast<decltype(buf.allocation_list[i].hAllocation)>(allocation_handles[i]),
+            i,
+            /*write=*/true);
       }
     }
 
