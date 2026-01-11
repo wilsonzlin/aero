@@ -157,6 +157,10 @@ These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet
 - `pfnDrawIndexedPrimitiveUP` (returns `D3DERR_NOTAVAILABLE`)
 - `pfnGetSoftwareVertexProcessing`, `pfnGetTransform`, `pfnGetClipPlane`, `pfnGetViewport`, `pfnGetScissorRect`
   (returns `D3DERR_NOTAVAILABLE`)
+- `pfnBeginStateBlock` / `pfnEndStateBlock`, `pfnGetMaterial`, `pfnGetLight` / `pfnGetLightEnable`,
+  `pfnGetRenderTarget` / `pfnGetDepthStencil`, `pfnGetTexture`, `pfnGetTextureStageState`, `pfnGetSamplerState`,
+  `pfnGetRenderState`, `pfnGetPaletteEntries` / `pfnGetCurrentTexturePalette`, `pfnGetNPatchMode`,
+  `pfnGetFVF` / `pfnGetVertexDecl` (returns `D3DERR_NOTAVAILABLE`)
 
 ### Caps/feature gating
 

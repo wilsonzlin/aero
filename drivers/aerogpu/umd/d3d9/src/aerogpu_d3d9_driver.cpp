@@ -226,6 +226,22 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnGetTransform);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetClipPlane);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetViewport);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetScissorRect);
+AEROGPU_DEFINE_HAS_MEMBER(pfnBeginStateBlock);
+AEROGPU_DEFINE_HAS_MEMBER(pfnEndStateBlock);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetMaterial);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetLight);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetLightEnable);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetRenderTarget);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetDepthStencil);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetTexture);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetTextureStageState);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetSamplerState);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetRenderState);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetPaletteEntries);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetCurrentTexturePalette);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetNPatchMode);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetFVF);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetVertexDecl);
 
 // OpenResource arg fields (vary across WDK versions).
 AEROGPU_DEFINE_HAS_MEMBER(hAllocation);
@@ -379,6 +395,23 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetTransform, D3d9TraceFunc::DeviceGetTransform,
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetClipPlane, D3d9TraceFunc::DeviceGetClipPlane, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetViewport, D3d9TraceFunc::DeviceGetViewport, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetScissorRect, D3d9TraceFunc::DeviceGetScissorRect, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnBeginStateBlock, D3d9TraceFunc::DeviceBeginStateBlock, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnEndStateBlock, D3d9TraceFunc::DeviceEndStateBlock, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetMaterial, D3d9TraceFunc::DeviceGetMaterial, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetLight, D3d9TraceFunc::DeviceGetLight, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetLightEnable, D3d9TraceFunc::DeviceGetLightEnable, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetRenderTarget, D3d9TraceFunc::DeviceGetRenderTarget, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetDepthStencil, D3d9TraceFunc::DeviceGetDepthStencil, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetTexture, D3d9TraceFunc::DeviceGetTexture, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetTextureStageState, D3d9TraceFunc::DeviceGetTextureStageState, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetSamplerState, D3d9TraceFunc::DeviceGetSamplerState, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetRenderState, D3d9TraceFunc::DeviceGetRenderState, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetPaletteEntries, D3d9TraceFunc::DeviceGetPaletteEntries, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(
+    pfnGetCurrentTexturePalette, D3d9TraceFunc::DeviceGetCurrentTexturePalette, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetNPatchMode, D3d9TraceFunc::DeviceGetNPatchMode, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetFVF, D3d9TraceFunc::DeviceGetFVF, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetVertexDecl, D3d9TraceFunc::DeviceGetVertexDecl, D3DERR_NOTAVAILABLE);
 
 #undef AEROGPU_D3D9_DEFINE_DDI_STUB
 #endif
@@ -7889,6 +7922,77 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     AEROGPU_SET_D3D9DDI_FN(pfnGetScissorRect,
                            aerogpu_d3d9_stub_pfnGetScissorRect<decltype(
                                pDeviceFuncs->pfnGetScissorRect)>::pfnGetScissorRect);
+  }
+  if constexpr (aerogpu_has_member_pfnBeginStateBlock<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnBeginStateBlock,
+                           aerogpu_d3d9_stub_pfnBeginStateBlock<decltype(
+                               pDeviceFuncs->pfnBeginStateBlock)>::pfnBeginStateBlock);
+  }
+  if constexpr (aerogpu_has_member_pfnEndStateBlock<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnEndStateBlock,
+                           aerogpu_d3d9_stub_pfnEndStateBlock<decltype(pDeviceFuncs->pfnEndStateBlock)>::pfnEndStateBlock);
+  }
+  if constexpr (aerogpu_has_member_pfnGetMaterial<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetMaterial,
+                           aerogpu_d3d9_stub_pfnGetMaterial<decltype(pDeviceFuncs->pfnGetMaterial)>::pfnGetMaterial);
+  }
+  if constexpr (aerogpu_has_member_pfnGetLight<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetLight, aerogpu_d3d9_stub_pfnGetLight<decltype(pDeviceFuncs->pfnGetLight)>::pfnGetLight);
+  }
+  if constexpr (aerogpu_has_member_pfnGetLightEnable<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetLightEnable,
+                           aerogpu_d3d9_stub_pfnGetLightEnable<decltype(
+                               pDeviceFuncs->pfnGetLightEnable)>::pfnGetLightEnable);
+  }
+  if constexpr (aerogpu_has_member_pfnGetRenderTarget<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetRenderTarget,
+                           aerogpu_d3d9_stub_pfnGetRenderTarget<decltype(
+                               pDeviceFuncs->pfnGetRenderTarget)>::pfnGetRenderTarget);
+  }
+  if constexpr (aerogpu_has_member_pfnGetDepthStencil<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetDepthStencil,
+                           aerogpu_d3d9_stub_pfnGetDepthStencil<decltype(
+                               pDeviceFuncs->pfnGetDepthStencil)>::pfnGetDepthStencil);
+  }
+  if constexpr (aerogpu_has_member_pfnGetTexture<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetTexture,
+                           aerogpu_d3d9_stub_pfnGetTexture<decltype(pDeviceFuncs->pfnGetTexture)>::pfnGetTexture);
+  }
+  if constexpr (aerogpu_has_member_pfnGetTextureStageState<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetTextureStageState,
+                           aerogpu_d3d9_stub_pfnGetTextureStageState<decltype(
+                               pDeviceFuncs->pfnGetTextureStageState)>::pfnGetTextureStageState);
+  }
+  if constexpr (aerogpu_has_member_pfnGetSamplerState<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetSamplerState,
+                           aerogpu_d3d9_stub_pfnGetSamplerState<decltype(
+                               pDeviceFuncs->pfnGetSamplerState)>::pfnGetSamplerState);
+  }
+  if constexpr (aerogpu_has_member_pfnGetRenderState<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetRenderState,
+                           aerogpu_d3d9_stub_pfnGetRenderState<decltype(
+                               pDeviceFuncs->pfnGetRenderState)>::pfnGetRenderState);
+  }
+  if constexpr (aerogpu_has_member_pfnGetPaletteEntries<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetPaletteEntries,
+                           aerogpu_d3d9_stub_pfnGetPaletteEntries<decltype(
+                               pDeviceFuncs->pfnGetPaletteEntries)>::pfnGetPaletteEntries);
+  }
+  if constexpr (aerogpu_has_member_pfnGetCurrentTexturePalette<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetCurrentTexturePalette,
+                           aerogpu_d3d9_stub_pfnGetCurrentTexturePalette<decltype(
+                               pDeviceFuncs->pfnGetCurrentTexturePalette)>::pfnGetCurrentTexturePalette);
+  }
+  if constexpr (aerogpu_has_member_pfnGetNPatchMode<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetNPatchMode,
+                           aerogpu_d3d9_stub_pfnGetNPatchMode<decltype(pDeviceFuncs->pfnGetNPatchMode)>::pfnGetNPatchMode);
+  }
+  if constexpr (aerogpu_has_member_pfnGetFVF<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetFVF, aerogpu_d3d9_stub_pfnGetFVF<decltype(pDeviceFuncs->pfnGetFVF)>::pfnGetFVF);
+  }
+  if constexpr (aerogpu_has_member_pfnGetVertexDecl<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetVertexDecl,
+                           aerogpu_d3d9_stub_pfnGetVertexDecl<decltype(pDeviceFuncs->pfnGetVertexDecl)>::pfnGetVertexDecl);
   }
 
   AEROGPU_SET_D3D9DDI_FN(pfnCreateSwapChain, device_create_swap_chain);

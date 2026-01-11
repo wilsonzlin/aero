@@ -358,6 +358,38 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::GetViewport (stub)";
     case D3d9TraceFunc::DeviceGetScissorRect:
       return "Device::GetScissorRect (stub)";
+    case D3d9TraceFunc::DeviceBeginStateBlock:
+      return "Device::BeginStateBlock (stub)";
+    case D3d9TraceFunc::DeviceEndStateBlock:
+      return "Device::EndStateBlock (stub)";
+    case D3d9TraceFunc::DeviceGetMaterial:
+      return "Device::GetMaterial (stub)";
+    case D3d9TraceFunc::DeviceGetLight:
+      return "Device::GetLight (stub)";
+    case D3d9TraceFunc::DeviceGetLightEnable:
+      return "Device::GetLightEnable (stub)";
+    case D3d9TraceFunc::DeviceGetRenderTarget:
+      return "Device::GetRenderTarget (stub)";
+    case D3d9TraceFunc::DeviceGetDepthStencil:
+      return "Device::GetDepthStencil (stub)";
+    case D3d9TraceFunc::DeviceGetTexture:
+      return "Device::GetTexture (stub)";
+    case D3d9TraceFunc::DeviceGetTextureStageState:
+      return "Device::GetTextureStageState (stub)";
+    case D3d9TraceFunc::DeviceGetSamplerState:
+      return "Device::GetSamplerState (stub)";
+    case D3d9TraceFunc::DeviceGetRenderState:
+      return "Device::GetRenderState (stub)";
+    case D3d9TraceFunc::DeviceGetPaletteEntries:
+      return "Device::GetPaletteEntries (stub)";
+    case D3d9TraceFunc::DeviceGetCurrentTexturePalette:
+      return "Device::GetCurrentTexturePalette (stub)";
+    case D3d9TraceFunc::DeviceGetNPatchMode:
+      return "Device::GetNPatchMode (stub)";
+    case D3d9TraceFunc::DeviceGetFVF:
+      return "Device::GetFVF (stub)";
+    case D3d9TraceFunc::DeviceGetVertexDecl:
+      return "Device::GetVertexDecl (stub)";
     case D3d9TraceFunc::kCount:
       break;
   }
