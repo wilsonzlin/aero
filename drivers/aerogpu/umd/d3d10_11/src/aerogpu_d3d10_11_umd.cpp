@@ -1979,6 +1979,36 @@ struct HasMember_SysMemPitch : std::false_type {};
 template <typename T>
 struct HasMember_SysMemPitch<T, std::void_t<decltype(std::declval<T>().SysMemPitch)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct HasMember_pSysMemUP : std::false_type {};
+template <typename T>
+struct HasMember_pSysMemUP<T, std::void_t<decltype(std::declval<T>().pSysMemUP)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasMember_RowPitch : std::false_type {};
+template <typename T>
+struct HasMember_RowPitch<T, std::void_t<decltype(std::declval<T>().RowPitch)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasMember_DepthPitch : std::false_type {};
+template <typename T>
+struct HasMember_DepthPitch<T, std::void_t<decltype(std::declval<T>().DepthPitch)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasMember_SrcPitch : std::false_type {};
+template <typename T>
+struct HasMember_SrcPitch<T, std::void_t<decltype(std::declval<T>().SrcPitch)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasMember_SrcSlicePitch : std::false_type {};
+template <typename T>
+struct HasMember_SrcSlicePitch<T, std::void_t<decltype(std::declval<T>().SrcSlicePitch)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasMember_SysMemSlicePitch : std::false_type {};
+template <typename T>
+struct HasMember_SysMemSlicePitch<T, std::void_t<decltype(std::declval<T>().SysMemSlicePitch)>> : std::true_type {};
+
 HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
                                           const D3D11DDIARG_CREATERESOURCE* pDesc,
                                           D3D11DDI_HRESOURCE hResource,
@@ -4600,6 +4630,152 @@ struct UpdateSubresourceUPThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
         return;
       } else {
         return hr;
+      }
+    } else if constexpr (sizeof...(Args) == 2) {
+      using ArgTuple = std::tuple<Args...>;
+      using Arg1 = std::tuple_element_t<1, ArgTuple>;
+      if constexpr (std::is_pointer_v<std::decay_t<Arg1>> &&
+                    std::is_same_v<std::remove_cv_t<std::remove_pointer_t<std::decay_t<Arg1>>>, D3D11DDIARG_UPDATESUBRESOURCEUP>) {
+        const auto hCtx = std::get<0>(tup);
+        const auto* pArgs = std::get<1>(tup);
+
+        const void* pSysMem = nullptr;
+        if constexpr (HasMember_pSysMemUP<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+          pSysMem = pArgs ? pArgs->pSysMemUP : nullptr;
+        } else if constexpr (HasMember_pSysMem<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+          pSysMem = pArgs ? pArgs->pSysMem : nullptr;
+        }
+
+        uint32_t sys_pitch = 0;
+        if constexpr (HasMember_SrcPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+          sys_pitch = pArgs ? to_u32(pArgs->SrcPitch) : 0;
+        } else if constexpr (HasMember_RowPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+          sys_pitch = pArgs ? to_u32(pArgs->RowPitch) : 0;
+        } else if constexpr (HasMember_SysMemPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+          sys_pitch = pArgs ? to_u32(pArgs->SysMemPitch) : 0;
+        }
+
+        uint32_t sys_slice_pitch = 0;
+        if constexpr (HasMember_SrcSlicePitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+          sys_slice_pitch = pArgs ? to_u32(pArgs->SrcSlicePitch) : 0;
+        } else if constexpr (HasMember_DepthPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+          sys_slice_pitch = pArgs ? to_u32(pArgs->DepthPitch) : 0;
+        } else if constexpr (HasMember_SysMemSlicePitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+          sys_slice_pitch = pArgs ? to_u32(pArgs->SysMemSlicePitch) : 0;
+        }
+
+        if (!pArgs) {
+          if constexpr (!std::is_void_v<Ret>) {
+            return E_INVALIDARG;
+          } else {
+            return;
+          }
+        }
+
+        auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+        auto* res = FromHandle<decltype(pArgs->hDstResource), AeroGpuResource>(pArgs->hDstResource);
+        if (!ctx || !ctx->device || !res || !pSysMem) {
+          if (ctx && ctx->device) {
+            SetError(ctx->device, E_INVALIDARG);
+          }
+          if constexpr (!std::is_void_v<Ret>) {
+            return E_INVALIDARG;
+          } else {
+            return;
+          }
+        }
+
+        std::lock_guard<std::mutex> lock(ctx->mutex);
+        HRESULT hr = UpdateSubresourceUPImpl(ctx,
+                                            res,
+                                            to_u32(pArgs->DstSubresource),
+                                            pArgs->pDstBox,
+                                            pSysMem,
+                                            sys_pitch,
+                                            sys_slice_pitch);
+        if constexpr (std::is_void_v<Ret>) {
+          if (FAILED(hr)) {
+            SetError(ctx->device, hr);
+          }
+          return;
+        } else {
+          return hr;
+        }
+      } else {
+        (void)tup;
+        if constexpr (!std::is_void_v<Ret>) {
+          return E_NOTIMPL;
+        }
+      }
+    } else if constexpr (sizeof...(Args) == 3) {
+      using ArgTuple = std::tuple<Args...>;
+      using Arg1 = std::tuple_element_t<1, ArgTuple>;
+      if constexpr (std::is_pointer_v<std::decay_t<Arg1>> &&
+                    std::is_same_v<std::remove_cv_t<std::remove_pointer_t<std::decay_t<Arg1>>>, D3D11DDIARG_UPDATESUBRESOURCEUP>) {
+        const auto hCtx = std::get<0>(tup);
+        const auto* pArgs = std::get<1>(tup);
+        const void* pSysMem = std::get<2>(tup);
+
+        uint32_t sys_pitch = 0;
+        if constexpr (HasMember_SrcPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+          sys_pitch = pArgs ? to_u32(pArgs->SrcPitch) : 0;
+        } else if constexpr (HasMember_RowPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+          sys_pitch = pArgs ? to_u32(pArgs->RowPitch) : 0;
+        } else if constexpr (HasMember_SysMemPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+          sys_pitch = pArgs ? to_u32(pArgs->SysMemPitch) : 0;
+        }
+
+        uint32_t sys_slice_pitch = 0;
+        if constexpr (HasMember_SrcSlicePitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+          sys_slice_pitch = pArgs ? to_u32(pArgs->SrcSlicePitch) : 0;
+        } else if constexpr (HasMember_DepthPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+          sys_slice_pitch = pArgs ? to_u32(pArgs->DepthPitch) : 0;
+        } else if constexpr (HasMember_SysMemSlicePitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+          sys_slice_pitch = pArgs ? to_u32(pArgs->SysMemSlicePitch) : 0;
+        }
+
+        if (!pArgs) {
+          if constexpr (!std::is_void_v<Ret>) {
+            return E_INVALIDARG;
+          } else {
+            return;
+          }
+        }
+
+        auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+        auto* res = FromHandle<decltype(pArgs->hDstResource), AeroGpuResource>(pArgs->hDstResource);
+        if (!ctx || !ctx->device || !res || !pSysMem) {
+          if (ctx && ctx->device) {
+            SetError(ctx->device, E_INVALIDARG);
+          }
+          if constexpr (!std::is_void_v<Ret>) {
+            return E_INVALIDARG;
+          } else {
+            return;
+          }
+        }
+
+        std::lock_guard<std::mutex> lock(ctx->mutex);
+        HRESULT hr = UpdateSubresourceUPImpl(ctx,
+                                            res,
+                                            to_u32(pArgs->DstSubresource),
+                                            pArgs->pDstBox,
+                                            pSysMem,
+                                            sys_pitch,
+                                            sys_slice_pitch);
+        if constexpr (std::is_void_v<Ret>) {
+          if (FAILED(hr)) {
+            SetError(ctx->device, hr);
+          }
+          return;
+        } else {
+          return hr;
+        }
+      } else {
+        (void)tup;
+        if constexpr (!std::is_void_v<Ret>) {
+          return E_NOTIMPL;
+        }
       }
     } else {
       (void)tup;
