@@ -289,6 +289,15 @@ impl AeroGpuPciDevice {
                 self.update_irq_level();
             }
             mmio::IRQ_ENABLE => {
+                // Keep the vblank clock caught up before enabling vblank delivery. Without this,
+                // a vblank IRQ can "arrive" immediately on enable due to catch-up ticks, breaking
+                // `D3DKMTWaitForVerticalBlankEvent` pacing (it must wait for the *next* vblank).
+                let enabling_vblank = (value & irq_bits::SCANOUT_VBLANK) != 0
+                    && (self.regs.irq_enable & irq_bits::SCANOUT_VBLANK) == 0;
+                if enabling_vblank {
+                    self.tick(mem, Instant::now());
+                }
+
                 self.regs.irq_enable = value;
                 if (value & irq_bits::FENCE) == 0 {
                     self.regs.irq_status &= !irq_bits::FENCE;

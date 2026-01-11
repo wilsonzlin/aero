@@ -414,6 +414,34 @@ fn vblank_tick_sets_irq_status() {
 }
 
 #[test]
+fn enabling_vblank_irq_does_not_immediately_fire_on_catchup_ticks() {
+    let mut cfg = AeroGpuDeviceConfig::default();
+    cfg.vblank_hz = Some(10);
+    let mut mem = VecMemory::new(0x1000);
+    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+
+    // Create a vblank schedule anchored in the past without calling tick() again. This makes the
+    // next vblank deadline already elapsed by the time we enable vblank interrupts.
+    let past = Instant::now() - Duration::from_millis(500);
+    dev.tick(&mut mem, past);
+
+    dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::SCANOUT_VBLANK);
+
+    // A catch-up tick that covers vblanks that occurred *before* enabling must not latch the vblank
+    // IRQ bit (WaitForVerticalBlankEvent must wait for the next vblank after enabling).
+    let now = Instant::now();
+    dev.tick(&mut mem, now);
+    assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+    assert!(!dev.irq_level());
+
+    dev.tick(&mut mem, now + Duration::from_millis(100));
+    assert_ne!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+    assert!(dev.irq_level());
+}
+
+#[test]
 fn vsynced_present_fence_completes_on_vblank() {
     let mut cfg = AeroGpuDeviceConfig::default();
     cfg.vblank_hz = Some(10);
