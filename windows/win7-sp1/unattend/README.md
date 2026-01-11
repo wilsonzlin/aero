@@ -52,8 +52,8 @@ The templates reference driver and script paths relative to `%configsetroot%`:
     InstallDriversOnce.cmd   (copy from `windows/win7-sp1/unattend/scripts/InstallDriversOnce.cmd`)
     FirstLogon.cmd        (optional)
   Cert/
-    aero_test.cer         (optional; preferred name for the unattended scripts)
-    aero-test.cer         (optional; accepted)
+    aero-test.cer         (optional; preferred; matches CI output)
+    aero_test.cer         (optional; accepted)
     aero-test-root.cer    (optional; accepted)
   Certs/
     AeroTestRoot.cer      (optional; accepted for compatibility)

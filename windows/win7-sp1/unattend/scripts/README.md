@@ -17,8 +17,8 @@ C:\Aero\
   Drivers\
     ...\*.inf
   Cert\
-    aero_test.cer          (optional; preferred)
-    aero-test.cer          (optional; accepted)
+    aero-test.cer          (optional; preferred; matches CI output)
+    aero_test.cer          (optional; accepted)
     aero-test-root.cer     (optional; accepted)
   Certs\
     AeroTestRoot.cer       (optional; legacy compatibility)

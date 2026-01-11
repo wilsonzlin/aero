@@ -193,7 +193,7 @@ If you use the repo’s architecture-specific templates in `windows/win7-sp1/una
     SetupComplete.cmd
     InstallDriversOnce.cmd
   Cert/
-    aero_test.cer
+    aero-test.cer
 ```
 
 See `windows/win7-sp1/unattend/README.md` for the full expected structure and payload-location fallbacks.

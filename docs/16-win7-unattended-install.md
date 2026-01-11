@@ -175,8 +175,8 @@ REM Enable test signing (requires reboot to take effect)
 bcdedit /set testsigning on>>"%LOG%" 2>&1
 
 REM Trust the driver signing certificate (optional; adjust file name/store as needed)
-set CERT=%SRC%\Cert\aero_test.cer
-if not exist "%CERT%" set CERT=%SRC%\Cert\aero-test.cer
+set CERT=%SRC%\Cert\aero-test.cer
+if not exist "%CERT%" set CERT=%SRC%\Cert\aero_test.cer
 if not exist "%CERT%" set CERT=%SRC%\Cert\aero-test-root.cer
 if not exist "%CERT%" set CERT=%SRC%\Certs\AeroTestRoot.cer
 if exist "%CERT%" (
@@ -231,14 +231,14 @@ This setting does **not** take effect until you reboot.
 Import into both `Root` and `TrustedPublisher`:
 
 ```bat
-certutil -addstore -f Root "%configsetroot%\\Cert\\aero_test.cer"
-certutil -addstore -f TrustedPublisher "%configsetroot%\\Cert\\aero_test.cer"
+certutil -addstore -f Root "%configsetroot%\\Cert\\aero-test.cer"
+certutil -addstore -f TrustedPublisher "%configsetroot%\\Cert\\aero-test.cer"
 ```
 
 The unattended scripts in this repo accept several common certificate file names:
 
-- `Cert\\aero_test.cer` (preferred)
-- `Cert\\aero-test.cer`
+- `Cert\\aero-test.cer` (preferred; matches CI output)
+- `Cert\\aero_test.cer` (accepted)
 - `Cert\\aero-test-root.cer`
 - `Certs\\AeroTestRoot.cer` (legacy)
 
@@ -291,8 +291,8 @@ The reference templates assume a layout like:
     InstallDriversOnce.cmd
     FirstLogon.cmd        (optional)
   Cert/
-    aero_test.cer         (optional; preferred)
-    aero-test.cer         (optional; accepted)
+    aero-test.cer         (optional; preferred; matches CI output)
+    aero_test.cer         (optional; accepted)
     aero-test-root.cer    (optional; accepted)
   Certs/
     AeroTestRoot.cer      (optional; accepted for compatibility)
