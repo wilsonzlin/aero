@@ -13,3 +13,4 @@ Driver packages should also include any INF-referenced payload files alongside t
 Canonical naming:
 
 - Use `aerogpu` (not `aero-gpu`) for the AeroGPU driver directory name, matching the INF (`aerogpu.inf`) and source tree (`drivers/aerogpu/`).
+  - Legacy compatibility: the CI packager wrapper and validators accept `aero-gpu` as an alias for `aerogpu`.

@@ -63,6 +63,7 @@ Contract notes:
 Notes:
 
 - `aerogpu` is the canonical Guest Tools-facing directory name for the AeroGPU driver (source: `drivers/aerogpu/`).
+  - Backwards compatibility: the packager normalizes the legacy dashed name `aero-gpu` to `aerogpu` when loading specs.
 - The AeroGPU HWID validation is primarily sourced from `guest-tools/config/devices.cmd` (via
   `expected_hardware_ids_from_devices_cmd_var`) so the packager stays in sync with the in-guest
   installer configuration. Any additional `expected_hardware_ids` regexes in the spec are also
