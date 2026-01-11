@@ -58,7 +58,7 @@ Planned/active code paths:
 
 - Browser tunnel client: `web/src/net/l2Tunnel.ts`
 - Emulator tunnel abstraction: `crates/emulator/src/io/net/tunnel_backend.rs`
-- WebSocket L2 proxy (unprivileged): `proxy/aero-l2-proxy`
+- WebSocket L2 proxy (unprivileged): `crates/aero-l2-proxy`
 - WebRTC transport (optional): `proxy/webrtc-udp-relay` (DataChannel carrying the L2 tunnel)
 
 ## Migration from in-browser slirp/NAT

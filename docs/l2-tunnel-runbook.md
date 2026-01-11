@@ -23,6 +23,9 @@ Current implementations in this repo:
 
 ```bash
 cargo run -p aero-l2-proxy
+
+# Optional: override listen address (default: 0.0.0.0:8090)
+# AERO_L2_PROXY_LISTEN_ADDR=127.0.0.1:8090 cargo run -p aero-l2-proxy
 ```
 
 - Node (upgrade policy / quota enforcement; used by `tests/l2_proxy_security.test.js`):
@@ -33,7 +36,7 @@ node --experimental-strip-types proxy/aero-l2-proxy/src/index.ts
 
 Expected behavior:
 
-- Proxy listens on localhost (development default).
+- Proxy listens on `AERO_L2_PROXY_LISTEN_ADDR` (default: `0.0.0.0:8090`).
 - Proxy serves a liveness endpoint (typically `GET /healthz`) for basic checks.
 - Proxy is configured with a strict egress policy in production; local dev may enable “open” mode.
 
