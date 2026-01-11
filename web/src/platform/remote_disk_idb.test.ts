@@ -96,8 +96,8 @@ function installMockRangeFetch(data: Uint8Array, opts: { etag: string }): { stat
 }
 
 describe("RemoteStreamingDisk (IndexedDB cache)", () => {
-  // `RemoteStreamingDisk` treats `cacheLimitBytes: null` as "cache disabled".
-  // For these tests we want caching enabled without eviction, so pick a large cap.
+  // For these tests we want caching enabled without eviction. Use a large cap (or `null`)
+  // so we don't evict during the test runs.
   const cacheLimitBytes = 1024 * 1024 * 1024;
 
   beforeEach(async () => {
