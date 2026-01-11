@@ -588,10 +588,20 @@ impl UsbDeviceModel for UsbHidPassthrough {
                     let report_id = (setup.w_value & 0x00ff) as u8;
                     match (report_type, data_stage) {
                         (2 | 3, Some(data)) => {
+                            let payload = if report_id != 0 {
+                                self.report_length(report_type, report_id)
+                                    .filter(|&expected_len| expected_len == data.len())
+                                    .and_then(|_| data.first().copied())
+                                    .filter(|&first| first == report_id)
+                                    .map(|_| data[1..].to_vec())
+                                    .unwrap_or_else(|| data.to_vec())
+                            } else {
+                                data.to_vec()
+                            };
                             self.push_output_report(UsbHidPassthroughOutputReport {
                                 report_type,
                                 report_id,
-                                data: data.to_vec(),
+                                data: payload,
                             });
                             ControlResponse::Ack
                         }
@@ -1004,6 +1014,22 @@ mod tests {
         ]
     }
 
+    fn sample_report_descriptor_output_with_id() -> Vec<u8> {
+        vec![
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x00, // Usage (Undefined)
+            0xa1, 0x01, // Collection (Application)
+            0x85, 0x02, // Report ID (2)
+            0x09, 0x00, // Usage (Undefined)
+            0x15, 0x00, // Logical Minimum (0)
+            0x26, 0xff, 0x00, // Logical Maximum (255)
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x02, // Report Count (2)
+            0x91, 0x02, // Output (Data,Var,Abs)
+            0xc0, // End Collection
+        ]
+    }
+
     #[test]
     fn descriptors_are_well_formed() {
         let report = sample_report_descriptor_with_ids();
@@ -1168,6 +1194,46 @@ mod tests {
                 report_id: 9,
                 data: vec![0x01, 0x02]
             }
+        );
+    }
+
+    #[test]
+    fn set_report_strips_report_id_prefix_when_present() {
+        let report = sample_report_descriptor_output_with_id();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".to_string(),
+            "Product".to_string(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x21, // HostToDevice | Class | Interface
+                    b_request: HID_REQUEST_SET_REPORT,
+                    w_value: (2u16 << 8) | 2u16, // Output, report ID 2
+                    w_index: 0,
+                    w_length: 3,
+                },
+                Some(&[2, 0x11, 0x22]),
+            ),
+            ControlResponse::Ack
+        );
+
+        assert_eq!(
+            dev.pop_output_report(),
+            Some(UsbHidPassthroughOutputReport {
+                report_type: 2,
+                report_id: 2,
+                data: vec![0x11, 0x22],
+            })
         );
     }
 
