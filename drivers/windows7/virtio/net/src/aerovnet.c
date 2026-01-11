@@ -196,9 +196,15 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
   ULONG I;
   NDIS_STATUS Status;
 
-  Adapter->IoBase = NULL;
-  Adapter->IoLength = 0;
-  Adapter->IoPortStart = 0;
+  Adapter->Bar0Va = NULL;
+  Adapter->Bar0Length = 0;
+  Adapter->Bar0Pa.QuadPart = 0;
+
+  Adapter->CommonCfg = NULL;
+  Adapter->NotifyBase = NULL;
+  Adapter->NotifyOffMultiplier = 0;
+  Adapter->IsrCfg = NULL;
+  Adapter->DeviceCfg = NULL;
 
   if (!Resources) {
     return NDIS_STATUS_RESOURCES;
@@ -206,24 +212,35 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
 
   for (I = 0; I < Resources->Count; I++) {
     PCM_PARTIAL_RESOURCE_DESCRIPTOR Desc = &Resources->PartialDescriptors[I];
-    if (Desc->Type == CmResourceTypePort) {
-      Adapter->IoPortStart = (ULONG)Desc->u.Port.Start.QuadPart;
-      Adapter->IoLength = Desc->u.Port.Length;
+    if (Desc->Type == CmResourceTypeMemory && Desc->u.Memory.Length >= AEROVNET_BAR0_MIN_LEN) {
+      Adapter->Bar0Pa = Desc->u.Memory.Start;
+      Adapter->Bar0Length = Desc->u.Memory.Length;
       break;
     }
   }
 
-  if (Adapter->IoLength == 0) {
+  if (Adapter->Bar0Length < AEROVNET_BAR0_MIN_LEN) {
     return NDIS_STATUS_RESOURCES;
   }
 
-  Status = NdisMRegisterIoPortRange((PVOID*)&Adapter->IoBase, Adapter->MiniportAdapterHandle, Adapter->IoPortStart, Adapter->IoLength);
+  {
+    NDIS_PHYSICAL_ADDRESS Pa;
+    Pa.QuadPart = Adapter->Bar0Pa.QuadPart;
+
+    Status = NdisMMapIoSpace((PVOID*)&Adapter->Bar0Va, Adapter->MiniportAdapterHandle, Pa, Adapter->Bar0Length);
+  }
   if (Status != NDIS_STATUS_SUCCESS) {
-    Adapter->IoBase = NULL;
-    Adapter->IoLength = 0;
-    Adapter->IoPortStart = 0;
+    Adapter->Bar0Va = NULL;
+    Adapter->Bar0Length = 0;
+    Adapter->Bar0Pa.QuadPart = 0;
     return Status;
   }
+
+  Adapter->CommonCfg = (volatile virtio_pci_common_cfg*)(Adapter->Bar0Va + AEROVNET_MMIO_COMMON_CFG_OFF);
+  Adapter->NotifyBase = (volatile UCHAR*)(Adapter->Bar0Va + AEROVNET_MMIO_NOTIFY_OFF);
+  Adapter->NotifyOffMultiplier = AEROVNET_NOTIFY_OFF_MULTIPLIER;
+  Adapter->IsrCfg = (volatile UCHAR*)(Adapter->Bar0Va + AEROVNET_MMIO_ISR_OFF);
+  Adapter->DeviceCfg = (volatile UCHAR*)(Adapter->Bar0Va + AEROVNET_MMIO_DEVICE_CFG_OFF);
 
   return Status;
 }
@@ -290,6 +307,35 @@ static VOID AerovNetFreeRxResources(_Inout_ AEROVNET_ADAPTER* Adapter) {
   InitializeListHead(&Adapter->RxFreeList);
 }
 
+static VOID AerovNetFreeVq(_Inout_ AEROVNET_VQ* Vq) {
+  if (!Vq) {
+    return;
+  }
+
+  if (Vq->RingVa) {
+    MmFreeContiguousMemory(Vq->RingVa);
+    Vq->RingVa = NULL;
+  }
+  Vq->RingPa = 0;
+  Vq->RingBytes = 0;
+
+  if (Vq->IndirectVa) {
+    MmFreeContiguousMemory(Vq->IndirectVa);
+    Vq->IndirectVa = NULL;
+  }
+  Vq->IndirectPa = 0;
+  Vq->IndirectBytes = 0;
+
+  if (Vq->Vq) {
+    ExFreePoolWithTag(Vq->Vq, AEROVNET_TAG);
+    Vq->Vq = NULL;
+  }
+
+  Vq->QueueIndex = 0;
+  Vq->QueueSize = 0;
+  Vq->NotifyAddr = NULL;
+}
+
 static VOID AerovNetCleanupAdapter(_Inout_ AEROVNET_ADAPTER* Adapter) {
   if (!Adapter) {
     return;
@@ -314,20 +360,21 @@ static VOID AerovNetCleanupAdapter(_Inout_ AEROVNET_ADAPTER* Adapter) {
     Adapter->InterruptHandle = NULL;
   }
 
-  if (Adapter->RxVq.RingVa) {
-    VirtioQueueDelete(&Adapter->Vdev, &Adapter->RxVq);
+  AerovNetFreeVq(&Adapter->RxVq);
+  AerovNetFreeVq(&Adapter->TxVq);
+
+  if (Adapter->Bar0Va) {
+    NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
+    Adapter->Bar0Va = NULL;
+    Adapter->Bar0Length = 0;
+    Adapter->Bar0Pa.QuadPart = 0;
   }
 
-  if (Adapter->TxVq.RingVa) {
-    VirtioQueueDelete(&Adapter->Vdev, &Adapter->TxVq);
-  }
-
-  if (Adapter->IoBase) {
-    NdisMDeregisterIoPortRange(Adapter->MiniportAdapterHandle, Adapter->IoPortStart, Adapter->IoLength, Adapter->IoBase);
-    Adapter->IoBase = NULL;
-    Adapter->IoLength = 0;
-    Adapter->IoPortStart = 0;
-  }
+  Adapter->CommonCfg = NULL;
+  Adapter->NotifyBase = NULL;
+  Adapter->NotifyOffMultiplier = 0;
+  Adapter->IsrCfg = NULL;
+  Adapter->DeviceCfg = NULL;
 
   NdisFreeSpinLock(&Adapter->Lock);
 
@@ -340,12 +387,12 @@ static VOID AerovNetFillRxQueueLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
   while (!IsListEmpty(&Adapter->RxFreeList)) {
     PLIST_ENTRY Entry;
     AEROVNET_RX_BUFFER* Rx;
-    VIRTIO_SG_ENTRY Sg[2];
-    USHORT Head;
+    VIRTQ_SG Sg[2];
+    UINT16 Head;
     NTSTATUS Status;
 
     // Each receive buffer is posted as a 2-descriptor chain: header + payload.
-    if (Adapter->RxVq.NumFree < 2) {
+    if (!Adapter->RxVq.Vq || Adapter->RxVq.Vq->num_free < 2) {
       break;
     }
 
@@ -354,37 +401,40 @@ static VOID AerovNetFillRxQueueLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
 
     Rx->Indicated = FALSE;
 
-    Sg[0].Address = Rx->BufferPa;
-    Sg[0].Length = sizeof(VIRTIO_NET_HDR);
-    Sg[0].Write = TRUE;
+    Sg[0].addr = (UINT64)Rx->BufferPa.QuadPart;
+    Sg[0].len = (UINT32)sizeof(VIRTIO_NET_HDR);
+    Sg[0].write = TRUE;
 
-    Sg[1].Address = Rx->BufferPa;
-    Sg[1].Address.QuadPart += sizeof(VIRTIO_NET_HDR);
-    Sg[1].Length = Rx->BufferBytes - sizeof(VIRTIO_NET_HDR);
-    Sg[1].Write = TRUE;
+    Sg[1].addr = (UINT64)Rx->BufferPa.QuadPart + (UINT64)sizeof(VIRTIO_NET_HDR);
+    Sg[1].len = (UINT32)(Rx->BufferBytes - sizeof(VIRTIO_NET_HDR));
+    Sg[1].write = TRUE;
 
-    Status = VirtioQueueAddBuffer(&Adapter->RxVq, Sg, 2, Rx, &Head);
+    Status = VirtqSplitAddBuffer(Adapter->RxVq.Vq, Sg, 2, Rx, &Head);
     if (!NT_SUCCESS(Status)) {
       InsertHeadList(&Adapter->RxFreeList, &Rx->Link);
       break;
     }
 
+    VirtqSplitPublish(Adapter->RxVq.Vq, Head);
     Notify = TRUE;
   }
 
   if (Notify) {
-    VirtioQueueNotify(&Adapter->Vdev, &Adapter->RxVq);
+    if (VirtqSplitKickPrepare(Adapter->RxVq.Vq)) {
+      WRITE_REGISTER_USHORT((volatile USHORT*)Adapter->RxVq.NotifyAddr, Adapter->RxVq.QueueIndex);
+      VirtqSplitKickCommit(Adapter->RxVq.Vq);
+    }
   }
 }
 
 static VOID AerovNetFlushTxPendingLocked(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PLIST_ENTRY CompleteTxReqs,
                                         _Inout_ PNET_BUFFER_LIST* CompleteNblHead, _Inout_ PNET_BUFFER_LIST* CompleteNblTail) {
-  VIRTIO_SG_ENTRY Sg[AEROVNET_MAX_TX_SG_ELEMENTS + 1];
+  VIRTQ_SG Sg[AEROVNET_MAX_TX_SG_ELEMENTS + 1];
   BOOLEAN Notified = FALSE;
 
   while (!IsListEmpty(&Adapter->TxPendingList)) {
     AEROVNET_TX_REQUEST* TxReq;
-    USHORT Needed;
+    UINT16 Needed;
     ULONG I;
     NTSTATUS Status;
 
@@ -403,30 +453,27 @@ static VOID AerovNetFlushTxPendingLocked(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
       continue;
     }
 
-    Needed = (USHORT)(TxReq->SgList->NumberOfElements + 1);
-    if (Adapter->TxVq.NumFree < Needed) {
+    RtlZeroMemory(TxReq->HeaderVa, sizeof(VIRTIO_NET_HDR));
+
+    Needed = (UINT16)(TxReq->SgList->NumberOfElements + 1);
+
+    Sg[0].addr = (UINT64)TxReq->HeaderPa.QuadPart;
+    Sg[0].len = (UINT32)sizeof(VIRTIO_NET_HDR);
+    Sg[0].write = FALSE;
+
+    for (I = 0; I < TxReq->SgList->NumberOfElements; I++) {
+      Sg[1 + I].addr = (UINT64)TxReq->SgList->Elements[I].Address.QuadPart;
+      Sg[1 + I].len = (UINT32)TxReq->SgList->Elements[I].Length;
+      Sg[1 + I].write = FALSE;
+    }
+
+    Status = VirtqSplitAddBuffer(Adapter->TxVq.Vq, Sg, Needed, TxReq, &TxReq->DescHeadId);
+    if (!NT_SUCCESS(Status)) {
       break;
     }
 
     RemoveEntryList(&TxReq->Link);
-
-    RtlZeroMemory(TxReq->HeaderVa, sizeof(VIRTIO_NET_HDR));
-
-    Sg[0].Address = TxReq->HeaderPa;
-    Sg[0].Length = sizeof(VIRTIO_NET_HDR);
-    Sg[0].Write = FALSE;
-
-    for (I = 0; I < TxReq->SgList->NumberOfElements; I++) {
-      Sg[1 + I].Address = TxReq->SgList->Elements[I].Address;
-      Sg[1 + I].Length = TxReq->SgList->Elements[I].Length;
-      Sg[1 + I].Write = FALSE;
-    }
-
-    Status = VirtioQueueAddBuffer(&Adapter->TxVq, Sg, Needed, TxReq, &TxReq->DescHeadId);
-    if (!NT_SUCCESS(Status)) {
-      InsertHeadList(&Adapter->TxPendingList, &TxReq->Link);
-      break;
-    }
+    VirtqSplitPublish(Adapter->TxVq.Vq, TxReq->DescHeadId);
 
     TxReq->State = AerovNetTxSubmitted;
     InsertTailList(&Adapter->TxSubmittedList, &TxReq->Link);
@@ -434,7 +481,10 @@ static VOID AerovNetFlushTxPendingLocked(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
   }
 
   if (Notified) {
-    VirtioQueueNotify(&Adapter->Vdev, &Adapter->TxVq);
+    if (VirtqSplitKickPrepare(Adapter->TxVq.Vq)) {
+      WRITE_REGISTER_USHORT((volatile USHORT*)Adapter->TxVq.NotifyAddr, Adapter->TxVq.QueueIndex);
+      VirtqSplitKickCommit(Adapter->TxVq.Vq);
+    }
   }
 }
 
@@ -532,73 +582,302 @@ static NDIS_STATUS AerovNetAllocateTxResources(_Inout_ AEROVNET_ADAPTER* Adapter
   return NDIS_STATUS_SUCCESS;
 }
 
-static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
+static __forceinline UCHAR AerovNetVirtioReadDeviceStatus(_In_ const AEROVNET_ADAPTER* Adapter) {
+  return READ_REGISTER_UCHAR((volatile UCHAR*)&Adapter->CommonCfg->device_status);
+}
+
+static __forceinline VOID AerovNetVirtioWriteDeviceStatus(_In_ const AEROVNET_ADAPTER* Adapter, _In_ UCHAR Status) {
+  WRITE_REGISTER_UCHAR((volatile UCHAR*)&Adapter->CommonCfg->device_status, Status);
+}
+
+static VOID AerovNetVirtioResetDevice(_Inout_ AEROVNET_ADAPTER* Adapter) {
+  ULONG WaitedUs;
+  const ULONG ResetTimeoutUs = 1000000u;
+  const ULONG ResetPollDelayUs = 1000u;
+
+  if (!Adapter || !Adapter->CommonCfg) {
+    return;
+  }
+
+  KeMemoryBarrier();
+  AerovNetVirtioWriteDeviceStatus(Adapter, 0);
+  KeMemoryBarrier();
+
+  // Avoid long polling if called above PASSIVE_LEVEL (e.g. surprise removal paths).
+  if (KeGetCurrentIrql() > PASSIVE_LEVEL) {
+    return;
+  }
+
+  for (WaitedUs = 0; WaitedUs < ResetTimeoutUs; WaitedUs += ResetPollDelayUs) {
+    if (AerovNetVirtioReadDeviceStatus(Adapter) == 0) {
+      KeMemoryBarrier();
+      return;
+    }
+    KeStallExecutionProcessor(ResetPollDelayUs);
+  }
+}
+
+static __forceinline VOID AerovNetVirtioAddStatus(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ UCHAR Bits) {
+  UCHAR Status;
+
+  if (!Adapter || !Adapter->CommonCfg) {
+    return;
+  }
+
+  KeMemoryBarrier();
+  Status = AerovNetVirtioReadDeviceStatus(Adapter);
+  Status |= Bits;
+  AerovNetVirtioWriteDeviceStatus(Adapter, Status);
+  KeMemoryBarrier();
+}
+
+static __forceinline UCHAR AerovNetVirtioGetStatus(_Inout_ AEROVNET_ADAPTER* Adapter) {
+  if (!Adapter || !Adapter->CommonCfg) {
+    return 0;
+  }
+
+  KeMemoryBarrier();
+  return AerovNetVirtioReadDeviceStatus(Adapter);
+}
+
+static UINT64 AerovNetVirtioReadHostFeatures(_Inout_ AEROVNET_ADAPTER* Adapter) {
+  ULONG Lo;
+  ULONG Hi;
+
+  if (!Adapter || !Adapter->CommonCfg) {
+    return 0;
+  }
+
+  WRITE_REGISTER_ULONG((volatile ULONG*)&Adapter->CommonCfg->device_feature_select, 0);
+  KeMemoryBarrier();
+  Lo = READ_REGISTER_ULONG((volatile ULONG*)&Adapter->CommonCfg->device_feature);
+  KeMemoryBarrier();
+
+  WRITE_REGISTER_ULONG((volatile ULONG*)&Adapter->CommonCfg->device_feature_select, 1);
+  KeMemoryBarrier();
+  Hi = READ_REGISTER_ULONG((volatile ULONG*)&Adapter->CommonCfg->device_feature);
+  KeMemoryBarrier();
+
+  return ((UINT64)Hi << 32) | (UINT64)Lo;
+}
+
+static VOID AerovNetVirtioWriteGuestFeatures(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ UINT64 Features) {
+  ULONG Lo;
+  ULONG Hi;
+
+  if (!Adapter || !Adapter->CommonCfg) {
+    return;
+  }
+
+  Lo = (ULONG)(Features & 0xFFFFFFFFui64);
+  Hi = (ULONG)(Features >> 32);
+
+  WRITE_REGISTER_ULONG((volatile ULONG*)&Adapter->CommonCfg->driver_feature_select, 0);
+  KeMemoryBarrier();
+  WRITE_REGISTER_ULONG((volatile ULONG*)&Adapter->CommonCfg->driver_feature, Lo);
+  KeMemoryBarrier();
+
+  WRITE_REGISTER_ULONG((volatile ULONG*)&Adapter->CommonCfg->driver_feature_select, 1);
+  KeMemoryBarrier();
+  WRITE_REGISTER_ULONG((volatile ULONG*)&Adapter->CommonCfg->driver_feature, Hi);
+  KeMemoryBarrier();
+}
+
+static __forceinline VOID AerovNetVirtioSelectQueue(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ USHORT QueueIndex) {
+  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->CommonCfg->queue_select, QueueIndex);
+  KeMemoryBarrier();
+}
+
+static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_VQ* Vq, _In_ USHORT QueueIndex,
+                                  _In_ USHORT ExpectedQueueSize, _In_ USHORT IndirectMaxDesc) {
+  USHORT QueueSize;
+  USHORT NotifyOff;
+  size_t VqBytes;
+  size_t RingBytes;
+  PHYSICAL_ADDRESS Low = {0};
+  PHYSICAL_ADDRESS High;
+  PHYSICAL_ADDRESS Skip = {0};
   NTSTATUS NtStatus;
+
+  High.QuadPart = ~0ull;
+
+  if (!Adapter || !Adapter->CommonCfg || !Adapter->NotifyBase || !Vq) {
+    return NDIS_STATUS_FAILURE;
+  }
+
+  RtlZeroMemory(Vq, sizeof(*Vq));
+  Vq->QueueIndex = QueueIndex;
+
+  AerovNetVirtioSelectQueue(Adapter, QueueIndex);
+  QueueSize = READ_REGISTER_USHORT((volatile USHORT*)&Adapter->CommonCfg->queue_size);
+  NotifyOff = READ_REGISTER_USHORT((volatile USHORT*)&Adapter->CommonCfg->queue_notify_off);
+
+  if (QueueSize != ExpectedQueueSize) {
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+
+  // Contract v1: notify_off_multiplier=4 and queue_notify_off(q)=q.
+  if (NotifyOff != QueueIndex) {
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+
+  Vq->QueueSize = QueueSize;
+
+  VqBytes = VirtqSplitStateSize(QueueSize);
+  Vq->Vq = (VIRTQ_SPLIT*)ExAllocatePoolWithTag(NonPagedPool, VqBytes, AEROVNET_TAG);
+  if (!Vq->Vq) {
+    return NDIS_STATUS_RESOURCES;
+  }
+
+  RingBytes = VirtqSplitRingMemSize(QueueSize, 4, FALSE);
+  if (RingBytes == 0 || RingBytes > 0xFFFFFFFFu) {
+    return NDIS_STATUS_RESOURCES;
+  }
+
+  Vq->RingBytes = (ULONG)RingBytes;
+  Vq->RingVa = MmAllocateContiguousMemorySpecifyCache(Vq->RingBytes, Low, High, Skip, MmCached);
+  if (!Vq->RingVa) {
+    return NDIS_STATUS_RESOURCES;
+  }
+  RtlZeroMemory(Vq->RingVa, Vq->RingBytes);
+  Vq->RingPa = (UINT64)MmGetPhysicalAddress(Vq->RingVa).QuadPart;
+
+  if (IndirectMaxDesc != 0) {
+    const UINT16 TableCount = QueueSize;
+    size_t IndirectBytes = sizeof(VIRTQ_DESC) * (size_t)TableCount * (size_t)IndirectMaxDesc;
+
+    if (IndirectBytes == 0 || IndirectBytes > 0xFFFFFFFFu) {
+      return NDIS_STATUS_RESOURCES;
+    }
+
+    Vq->IndirectBytes = (ULONG)IndirectBytes;
+    Vq->IndirectVa = MmAllocateContiguousMemorySpecifyCache(Vq->IndirectBytes, Low, High, Skip, MmCached);
+    if (!Vq->IndirectVa) {
+      return NDIS_STATUS_RESOURCES;
+    }
+    RtlZeroMemory(Vq->IndirectVa, Vq->IndirectBytes);
+    Vq->IndirectPa = (UINT64)MmGetPhysicalAddress(Vq->IndirectVa).QuadPart;
+
+    NtStatus = VirtqSplitInit(Vq->Vq,
+                             QueueSize,
+                             FALSE,
+                             TRUE,
+                             Vq->RingVa,
+                             Vq->RingPa,
+                             4,
+                             Vq->IndirectVa,
+                             Vq->IndirectPa,
+                             TableCount,
+                             IndirectMaxDesc);
+  } else {
+    NtStatus = VirtqSplitInit(Vq->Vq, QueueSize, FALSE, TRUE, Vq->RingVa, Vq->RingPa, 4, NULL, 0, 0, 0);
+  }
+
+  if (!NT_SUCCESS(NtStatus)) {
+    return NDIS_STATUS_FAILURE;
+  }
+
+  Vq->NotifyAddr = (volatile USHORT*)((volatile UCHAR*)Adapter->NotifyBase + ((ULONG)NotifyOff * Adapter->NotifyOffMultiplier));
+
+  // Disable MSI-X for this queue; INTx/ISR is required by contract v1.
+  AerovNetVirtioSelectQueue(Adapter, QueueIndex);
+  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->CommonCfg->queue_msix_vector, 0xFFFFu);
+
+  WRITE_REGISTER_ULONG((volatile ULONG*)&Adapter->CommonCfg->queue_desc_lo, (ULONG)(Vq->Vq->desc_pa & 0xFFFFFFFFui64));
+  WRITE_REGISTER_ULONG((volatile ULONG*)&Adapter->CommonCfg->queue_desc_hi, (ULONG)(Vq->Vq->desc_pa >> 32));
+
+  WRITE_REGISTER_ULONG((volatile ULONG*)&Adapter->CommonCfg->queue_avail_lo, (ULONG)(Vq->Vq->avail_pa & 0xFFFFFFFFui64));
+  WRITE_REGISTER_ULONG((volatile ULONG*)&Adapter->CommonCfg->queue_avail_hi, (ULONG)(Vq->Vq->avail_pa >> 32));
+
+  WRITE_REGISTER_ULONG((volatile ULONG*)&Adapter->CommonCfg->queue_used_lo, (ULONG)(Vq->Vq->used_pa & 0xFFFFFFFFui64));
+  WRITE_REGISTER_ULONG((volatile ULONG*)&Adapter->CommonCfg->queue_used_hi, (ULONG)(Vq->Vq->used_pa >> 32));
+
+  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->CommonCfg->queue_enable, 1);
+  KeMemoryBarrier();
+
+  return NDIS_STATUS_SUCCESS;
+}
+
+static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   NDIS_STATUS Status;
   UCHAR DevStatus;
   UCHAR Mac[ETH_LENGTH_OF_ADDRESS];
   USHORT LinkStatus;
-  ULONG StatusOffset;
+  UINT64 RequiredFeatures;
+  UINT64 WantedFeatures;
+  UCHAR RevisionId;
+  ULONG BytesRead;
 
-  VirtioPciInitialize(&Adapter->Vdev, Adapter->IoBase, Adapter->IoLength, FALSE);
-
-  VirtioPciReset(&Adapter->Vdev);
-  VirtioPciAddStatus(&Adapter->Vdev, VIRTIO_STATUS_ACKNOWLEDGE);
-  VirtioPciAddStatus(&Adapter->Vdev, VIRTIO_STATUS_DRIVER);
-
-  Adapter->HostFeatures = VirtioPciReadHostFeatures(&Adapter->Vdev);
-
-  // Minimal feature set: MAC + status if present, no offloads, no indirect/event idx.
-  Adapter->GuestFeatures = Adapter->HostFeatures & (VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | VIRTIO_F_ANY_LAYOUT);
-  VirtioPciWriteGuestFeatures(&Adapter->Vdev, Adapter->GuestFeatures);
-
-  VirtioPciAddStatus(&Adapter->Vdev, VIRTIO_STATUS_FEATURES_OK);
-  DevStatus = VirtioPciGetStatus(&Adapter->Vdev);
-  if ((DevStatus & VIRTIO_STATUS_FEATURES_OK) == 0) {
-    VirtioPciAddStatus(&Adapter->Vdev, VIRTIO_STATUS_FAILED);
+  if (!Adapter || !Adapter->CommonCfg || !Adapter->DeviceCfg || !Adapter->IsrCfg || !Adapter->NotifyBase) {
     return NDIS_STATUS_FAILURE;
   }
 
+  // Contract major version is encoded in PCI Revision ID.
+  RevisionId = 0;
+  BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, &RevisionId, 0x08, sizeof(RevisionId));
+  if (BytesRead != sizeof(RevisionId) || RevisionId != AEROVNET_PCI_REVISION_ID) {
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+
+  AerovNetVirtioResetDevice(Adapter);
+  AerovNetVirtioAddStatus(Adapter, VIRTIO_STATUS_ACKNOWLEDGE);
+  AerovNetVirtioAddStatus(Adapter, VIRTIO_STATUS_DRIVER);
+
+  Adapter->HostFeatures = AerovNetVirtioReadHostFeatures(Adapter);
+
+  RequiredFeatures = VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS;
+  WantedFeatures = RequiredFeatures;
+
+  if ((Adapter->HostFeatures & RequiredFeatures) != RequiredFeatures) {
+    AerovNetVirtioAddStatus(Adapter, VIRTIO_STATUS_FAILED);
+    AerovNetVirtioResetDevice(Adapter);
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+
+  Adapter->GuestFeatures = Adapter->HostFeatures & WantedFeatures;
+  AerovNetVirtioWriteGuestFeatures(Adapter, Adapter->GuestFeatures);
+
+  AerovNetVirtioAddStatus(Adapter, VIRTIO_STATUS_FEATURES_OK);
+  DevStatus = AerovNetVirtioGetStatus(Adapter);
+  if ((DevStatus & VIRTIO_STATUS_FEATURES_OK) == 0) {
+    AerovNetVirtioAddStatus(Adapter, VIRTIO_STATUS_FAILED);
+    AerovNetVirtioResetDevice(Adapter);
+    return NDIS_STATUS_FAILURE;
+  }
+
+  // Disable MSI-X config interrupt vector; INTx/ISR is required by contract v1.
+  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->CommonCfg->msix_config, 0xFFFFu);
+
+  // Read virtio-net device config (MAC + link status).
   RtlZeroMemory(Mac, sizeof(Mac));
-  LinkStatus = 0;
-
-  // virtio-net config fields are conditional and therefore packed based on the
-  // negotiated feature set.
-  StatusOffset = 0;
-  if ((Adapter->GuestFeatures & VIRTIO_NET_F_MAC) != 0) {
-    NtStatus = VirtioPciReadDeviceConfig(&Adapter->Vdev, 0, Mac, sizeof(Mac));
-    if (!NT_SUCCESS(NtStatus)) {
-      return NDIS_STATUS_FAILURE;
+  {
+    ULONG i;
+    for (i = 0; i < ETH_LENGTH_OF_ADDRESS; i++) {
+      Mac[i] = READ_REGISTER_UCHAR((volatile UCHAR*)&Adapter->DeviceCfg[i]);
     }
-
-    RtlCopyMemory(Adapter->PermanentMac, Mac, ETH_LENGTH_OF_ADDRESS);
-    RtlCopyMemory(Adapter->CurrentMac, Mac, ETH_LENGTH_OF_ADDRESS);
-    StatusOffset += ETH_LENGTH_OF_ADDRESS;
-  } else {
-    AerovNetGenerateFallbackMac(Adapter->PermanentMac);
-    RtlCopyMemory(Adapter->CurrentMac, Adapter->PermanentMac, ETH_LENGTH_OF_ADDRESS);
   }
+  RtlCopyMemory(Adapter->PermanentMac, Mac, ETH_LENGTH_OF_ADDRESS);
+  RtlCopyMemory(Adapter->CurrentMac, Mac, ETH_LENGTH_OF_ADDRESS);
 
-  if ((Adapter->GuestFeatures & VIRTIO_NET_F_STATUS) != 0) {
-    NtStatus = VirtioPciReadDeviceConfig(&Adapter->Vdev, StatusOffset, &LinkStatus, sizeof(LinkStatus));
-    if (NT_SUCCESS(NtStatus)) {
-      Adapter->LinkUp = (LinkStatus & VIRTIO_NET_S_LINK_UP) ? TRUE : FALSE;
-    } else {
-      Adapter->LinkUp = TRUE;
-    }
-  } else {
-    Adapter->LinkUp = TRUE;
-  }
+  LinkStatus = READ_REGISTER_USHORT((volatile USHORT*)&Adapter->DeviceCfg[ETH_LENGTH_OF_ADDRESS]);
+  Adapter->LinkUp = (LinkStatus & VIRTIO_NET_S_LINK_UP) ? TRUE : FALSE;
 
   // Virtqueues: 0 = RX, 1 = TX.
-  NtStatus = VirtioQueueCreate(&Adapter->Vdev, &Adapter->RxVq, 0);
-  if (!NT_SUCCESS(NtStatus)) {
-    return NDIS_STATUS_RESOURCES;
+  if (READ_REGISTER_USHORT((volatile USHORT*)&Adapter->CommonCfg->num_queues) < 2) {
+    AerovNetVirtioResetDevice(Adapter);
+    return NDIS_STATUS_NOT_SUPPORTED;
   }
 
-  NtStatus = VirtioQueueCreate(&Adapter->Vdev, &Adapter->TxVq, 1);
-  if (!NT_SUCCESS(NtStatus)) {
-    return NDIS_STATUS_RESOURCES;
+  Status = AerovNetSetupVq(Adapter, &Adapter->RxVq, 0, 256, 0);
+  if (Status != NDIS_STATUS_SUCCESS) {
+    AerovNetVirtioResetDevice(Adapter);
+    return Status;
+  }
+
+  Status = AerovNetSetupVq(Adapter, &Adapter->TxVq, 1, 256, (USHORT)(AEROVNET_MAX_TX_SG_ELEMENTS + 1));
+  if (Status != NDIS_STATUS_SUCCESS) {
+    AerovNetVirtioResetDevice(Adapter);
+    return Status;
   }
 
   // Allocate packet buffers.
@@ -610,11 +889,13 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
 
   Status = AerovNetAllocateRxResources(Adapter);
   if (Status != NDIS_STATUS_SUCCESS) {
+    AerovNetVirtioResetDevice(Adapter);
     return Status;
   }
 
   Status = AerovNetAllocateTxResources(Adapter);
   if (Status != NDIS_STATUS_SUCCESS) {
+    AerovNetVirtioResetDevice(Adapter);
     return Status;
   }
 
@@ -623,7 +904,7 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   AerovNetFillRxQueueLocked(Adapter);
   NdisReleaseSpinLock(&Adapter->Lock);
 
-  VirtioPciAddStatus(&Adapter->Vdev, VIRTIO_STATUS_DRIVER_OK);
+  AerovNetVirtioAddStatus(Adapter, VIRTIO_STATUS_DRIVER_OK);
   return NDIS_STATUS_SUCCESS;
 }
 
@@ -637,7 +918,7 @@ static VOID AerovNetVirtioStop(_Inout_ AEROVNET_ADAPTER* Adapter) {
   }
 
   // Stop the device first to prevent further DMA/interrupts.
-  VirtioPciReset(&Adapter->Vdev);
+  AerovNetVirtioResetDevice(Adapter);
 
   // HaltEx is expected to run at PASSIVE_LEVEL; waiting here avoids freeing
   // memory while an NDIS SG mapping callback might still reference it.
@@ -698,16 +979,11 @@ static VOID AerovNetVirtioStop(_Inout_ AEROVNET_ADAPTER* Adapter) {
     AerovNetCompleteNblSend(Adapter, Nbl, NET_BUFFER_LIST_STATUS(Nbl));
   }
 
-  if (Adapter->RxVq.RingVa) {
-    VirtioQueueDelete(&Adapter->Vdev, &Adapter->RxVq);
-  }
-
-  if (Adapter->TxVq.RingVa) {
-    VirtioQueueDelete(&Adapter->Vdev, &Adapter->TxVq);
-  }
-
   AerovNetFreeTxResources(Adapter);
   AerovNetFreeRxResources(Adapter);
+
+  AerovNetFreeVq(&Adapter->RxVq);
+  AerovNetFreeVq(&Adapter->TxVq);
 }
 
 static VOID AerovNetIndicateLinkState(_In_ AEROVNET_ADAPTER* Adapter) {
@@ -753,7 +1029,12 @@ static BOOLEAN AerovNetInterruptIsr(_In_ NDIS_HANDLE MiniportInterruptContext, _
     return FALSE;
   }
 
-  Isr = VirtioPciReadIsr(&Adapter->Vdev);
+  if (!Adapter->IsrCfg) {
+    return FALSE;
+  }
+
+  // Contract v1: ISR is a read-to-ack 8-bit register at BAR0 + 0x2000.
+  Isr = READ_REGISTER_UCHAR(Adapter->IsrCfg);
   if (Isr == 0) {
     return FALSE;
   }
@@ -805,13 +1086,26 @@ static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_
 
   // TX completions.
   for (;;) {
-    USHORT Head;
-    ULONG Len;
+    PVOID Cookie;
     AEROVNET_TX_REQUEST* TxReq;
+    NTSTATUS VqStatus;
 
-    if (!VirtioQueuePopUsed(&Adapter->TxVq, &Head, &Len, (PVOID*)&TxReq)) {
+    Cookie = NULL;
+
+    if (!Adapter->TxVq.Vq) {
       break;
     }
+
+    VqStatus = VirtqSplitGetUsed(Adapter->TxVq.Vq, &Cookie, NULL);
+    if (VqStatus == STATUS_NOT_FOUND) {
+      break;
+    }
+    if (!NT_SUCCESS(VqStatus)) {
+      Adapter->StatTxErrors++;
+      break;
+    }
+
+    TxReq = (AEROVNET_TX_REQUEST*)Cookie;
 
     if (TxReq) {
       Adapter->StatTxPackets++;
@@ -833,26 +1127,48 @@ static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_
 
   // RX completions.
   for (;;) {
-    USHORT Head;
-    ULONG Len;
+    PVOID Cookie;
+    UINT32 UsedLen;
     AEROVNET_RX_BUFFER* Rx;
     ULONG PayloadLen;
+    NTSTATUS VqStatus;
 
-    if (!VirtioQueuePopUsed(&Adapter->RxVq, &Head, &Len, (PVOID*)&Rx)) {
+    Cookie = NULL;
+    UsedLen = 0;
+
+    if (!Adapter->RxVq.Vq) {
       break;
     }
+
+    VqStatus = VirtqSplitGetUsed(Adapter->RxVq.Vq, &Cookie, &UsedLen);
+    if (VqStatus == STATUS_NOT_FOUND) {
+      break;
+    }
+    if (!NT_SUCCESS(VqStatus)) {
+      Adapter->StatRxErrors++;
+      break;
+    }
+
+    Rx = (AEROVNET_RX_BUFFER*)Cookie;
 
     if (!Rx) {
       continue;
     }
 
-    if (Len <= sizeof(VIRTIO_NET_HDR) || Len > Rx->BufferBytes) {
+    if (UsedLen < sizeof(VIRTIO_NET_HDR) || UsedLen > Rx->BufferBytes) {
       Adapter->StatRxErrors++;
       InsertTailList(&Adapter->RxFreeList, &Rx->Link);
       continue;
     }
 
-    PayloadLen = Len - sizeof(VIRTIO_NET_HDR);
+    PayloadLen = UsedLen - sizeof(VIRTIO_NET_HDR);
+
+    // Contract v1: drop undersized/oversized Ethernet frames but always recycle.
+    if (PayloadLen < 14 || PayloadLen > 1514) {
+      Adapter->StatRxErrors++;
+      InsertTailList(&Adapter->RxFreeList, &Rx->Link);
+      continue;
+    }
 
     if (Adapter->State != AerovNetAdapterRunning) {
       InsertTailList(&Adapter->RxFreeList, &Rx->Link);
@@ -890,20 +1206,14 @@ static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_
   }
 
   // Link state change handling (config interrupt). Keep it cheap: read status only if supported.
-  if ((Isr & 0x2) != 0 && (Adapter->GuestFeatures & VIRTIO_NET_F_STATUS) != 0) {
+  if ((Isr & 0x2) != 0 && (Adapter->GuestFeatures & VIRTIO_NET_F_STATUS) != 0 && Adapter->DeviceCfg) {
     USHORT LinkStatus;
-    ULONG StatusOffset;
-    NTSTATUS NtStatus;
 
-    LinkStatus = 0;
-    StatusOffset = ((Adapter->GuestFeatures & VIRTIO_NET_F_MAC) != 0) ? ETH_LENGTH_OF_ADDRESS : 0;
-    NtStatus = VirtioPciReadDeviceConfig(&Adapter->Vdev, StatusOffset, &LinkStatus, sizeof(LinkStatus));
-    if (NT_SUCCESS(NtStatus)) {
-      NewLinkUp = (LinkStatus & VIRTIO_NET_S_LINK_UP) ? TRUE : FALSE;
-      if (NewLinkUp != Adapter->LinkUp) {
-        Adapter->LinkUp = NewLinkUp;
-        LinkChanged = TRUE;
-      }
+    LinkStatus = READ_REGISTER_USHORT((volatile USHORT*)&Adapter->DeviceCfg[ETH_LENGTH_OF_ADDRESS]);
+    NewLinkUp = (LinkStatus & VIRTIO_NET_S_LINK_UP) ? TRUE : FALSE;
+    if (NewLinkUp != Adapter->LinkUp) {
+      Adapter->LinkUp = NewLinkUp;
+      LinkChanged = TRUE;
     }
   }
 
@@ -948,9 +1258,9 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
                                  _In_ PSCATTER_GATHER_LIST ScatterGatherList, _In_ PVOID Context) {
   AEROVNET_TX_REQUEST* TxReq;
   AEROVNET_ADAPTER* Adapter;
-  VIRTIO_SG_ENTRY Sg[AEROVNET_MAX_TX_SG_ELEMENTS + 1];
+  VIRTQ_SG Sg[AEROVNET_MAX_TX_SG_ELEMENTS + 1];
   ULONG ElemCount;
-  USHORT Needed;
+  UINT16 Needed;
   ULONG I;
   NTSTATUS Status;
   PNET_BUFFER NbForFree;
@@ -1006,25 +1316,29 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
     // Prepare virtio descriptors: header + payload SG elements.
     RtlZeroMemory(TxReq->HeaderVa, sizeof(VIRTIO_NET_HDR));
 
-    Sg[0].Address = TxReq->HeaderPa;
-    Sg[0].Length = sizeof(VIRTIO_NET_HDR);
-    Sg[0].Write = FALSE;
+    Sg[0].addr = (UINT64)TxReq->HeaderPa.QuadPart;
+    Sg[0].len = (UINT32)sizeof(VIRTIO_NET_HDR);
+    Sg[0].write = FALSE;
 
     for (I = 0; I < ElemCount; I++) {
-      Sg[1 + I].Address = ScatterGatherList->Elements[I].Address;
-      Sg[1 + I].Length = ScatterGatherList->Elements[I].Length;
-      Sg[1 + I].Write = FALSE;
+      Sg[1 + I].addr = (UINT64)ScatterGatherList->Elements[I].Address.QuadPart;
+      Sg[1 + I].len = (UINT32)ScatterGatherList->Elements[I].Length;
+      Sg[1 + I].write = FALSE;
     }
 
-    Status = VirtioQueueAddBuffer(&Adapter->TxVq, Sg, Needed, TxReq, &TxReq->DescHeadId);
+    Status = VirtqSplitAddBuffer(Adapter->TxVq.Vq, Sg, Needed, TxReq, &TxReq->DescHeadId);
     if (!NT_SUCCESS(Status)) {
       // No descriptors yet; queue it for later retry (DPC will flush).
       TxReq->State = AerovNetTxPendingSubmit;
       InsertTailList(&Adapter->TxPendingList, &TxReq->Link);
     } else {
+      VirtqSplitPublish(Adapter->TxVq.Vq, TxReq->DescHeadId);
       TxReq->State = AerovNetTxSubmitted;
       InsertTailList(&Adapter->TxSubmittedList, &TxReq->Link);
-      VirtioQueueNotify(&Adapter->Vdev, &Adapter->TxVq);
+      if (VirtqSplitKickPrepare(Adapter->TxVq.Vq)) {
+        WRITE_REGISTER_USHORT((volatile USHORT*)Adapter->TxVq.NotifyAddr, Adapter->TxVq.QueueIndex);
+        VirtqSplitKickCommit(Adapter->TxVq.Vq);
+      }
     }
   }
 
@@ -1736,7 +2050,7 @@ static VOID AerovNetMiniportDevicePnPEventNotify(_In_ NDIS_HANDLE MiniportAdapte
     NdisReleaseSpinLock(&Adapter->Lock);
 
     // Quiesce the device. Full cleanup happens in HaltEx (PASSIVE_LEVEL).
-    VirtioPciReset(&Adapter->Vdev);
+    AerovNetVirtioResetDevice(Adapter);
   }
 }
 

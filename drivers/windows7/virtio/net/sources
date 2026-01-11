@@ -6,9 +6,7 @@ TARGETNAME=aerovnet
 TARGETTYPE=MINIPORT
 TARGETEXT=.sys
 
-INCLUDES=$(INCLUDES);.\include;..\common\include
+INCLUDES=$(INCLUDES);.\include;..\..\..\windows\virtio\common;..\..\..\win7\virtio\virtio-core\include
 
 SOURCES=src\aerovnet.c \
-        ..\common\src\virtio_pci_legacy.c \
-        ..\common\src\virtio_queue.c
-
+        ..\..\..\windows\virtio\common\virtqueue_split.c

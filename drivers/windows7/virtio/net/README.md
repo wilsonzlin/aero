@@ -5,17 +5,19 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 ## What it provides
 
 - Presents a standard Ethernet NIC to Windows (NDIS 6.20)
-- Backs TX/RX using **virtio-net split virtqueues** (legacy virtio-pci I/O transport)
-- Uses the shared virtio core library in `drivers/windows7/virtio/common/`
+- Backs TX/RX using **virtio-net split virtqueues** (virtio 1.0+ **modern** virtio-pci, BAR0 MMIO transport)
+- Uses the shared split-ring engine in `drivers/windows/virtio/common/`
 
 ## Features (minimal bring-up)
 
 - Virtio handshake: `RESET → ACK → DRIVER → FEATURES_OK → DRIVER_OK`
 - Feature negotiation (minimal):
+  - `VIRTIO_F_VERSION_1`
+  - `VIRTIO_F_RING_INDIRECT_DESC`
   - `VIRTIO_NET_F_MAC`
-  - `VIRTIO_NET_F_STATUS` (link state) when offered by device
+  - `VIRTIO_NET_F_STATUS` (link state)
 - 1 RX/TX queue pair (queue 0 RX, queue 1 TX)
-- INTx interrupt path (via virtio ISR register)
+- INTx interrupt path (via virtio ISR register; read-to-ack)
 - No checksum offloads / TSO / LRO
 
 ## Files
@@ -41,6 +43,4 @@ For local development you can use either:
 
 Hardware IDs matched by `aerovnet.inf`:
 
-- `PCI\\VEN_1AF4&DEV_1000` (legacy virtio-net)
-
-Note: modern virtio 1.0-only devices (e.g. `PCI\\VEN_1AF4&DEV_1041` with legacy interface disabled) are not supported by this legacy I/O transport driver.
+- `PCI\\VEN_1AF4&DEV_1041` (virtio 1.0+ modern virtio-net; `disable-legacy=on`)

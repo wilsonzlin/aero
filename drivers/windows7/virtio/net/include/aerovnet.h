@@ -2,14 +2,32 @@
 
 #include <ndis.h>
 
-#include "../../common/include/virtio_bits.h"
-#include "../../common/include/virtio_pci_legacy.h"
-#include "../../common/include/virtio_queue.h"
+#include "virtqueue_split.h"
+#include "virtio_spec.h"
 
 // Driver identity
 #define AEROVNET_VENDOR_ID 0x1AF4 // virtio vendor
 
 #define AEROVNET_MTU_DEFAULT 1500u
+
+// --------------------------------------------------------------------------
+// Aero virtio contract v1 (virtio-pci modern, BAR0 MMIO fixed layout)
+// --------------------------------------------------------------------------
+
+#define AEROVNET_PCI_REVISION_ID 0x01u
+
+#define AEROVNET_BAR0_MIN_LEN 0x4000u
+
+#define AEROVNET_MMIO_COMMON_CFG_OFF 0x0000u
+#define AEROVNET_MMIO_NOTIFY_OFF     0x1000u
+#define AEROVNET_MMIO_ISR_OFF        0x2000u
+#define AEROVNET_MMIO_DEVICE_CFG_OFF 0x3000u
+
+// Contract v1 notify semantics (docs/windows7-virtio-driver-contract.md §1.6).
+#define AEROVNET_NOTIFY_OFF_MULTIPLIER 4u
+
+// Virtio feature bits.
+#define VIRTIO_F_RING_INDIRECT_DESC (1ui64 << 28)
 
 // Virtio-net feature bits (lower 32 bits).
 #define VIRTIO_NET_F_CSUM      (1u << 0)
@@ -46,6 +64,8 @@ typedef struct _VIRTIO_NET_HDR {
   USHORT CsumStart;
   USHORT CsumOffset;
 } VIRTIO_NET_HDR;
+
+C_ASSERT(sizeof(VIRTIO_NET_HDR) == 10);
 
 typedef struct _VIRTIO_NET_CONFIG {
   UCHAR Mac[6];
@@ -99,6 +119,23 @@ typedef enum _AEROVNET_ADAPTER_STATE {
   AerovNetAdapterPaused,
 } AEROVNET_ADAPTER_STATE;
 
+typedef struct _AEROVNET_VQ {
+  USHORT QueueIndex;
+  USHORT QueueSize;
+
+  VIRTQ_SPLIT* Vq;
+
+  PVOID RingVa;
+  UINT64 RingPa;
+  ULONG RingBytes;
+
+  PVOID IndirectVa;
+  UINT64 IndirectPa;
+  ULONG IndirectBytes;
+
+  volatile USHORT* NotifyAddr;
+} AEROVNET_VQ;
+
 typedef struct _AEROVNET_ADAPTER {
   NDIS_HANDLE MiniportAdapterHandle;
   NDIS_HANDLE InterruptHandle;
@@ -113,18 +150,23 @@ typedef struct _AEROVNET_ADAPTER {
   volatile LONG OutstandingSgMappings;
   KEVENT OutstandingSgEvent;
 
-  // PCI resources
-  PUCHAR IoBase;
-  ULONG IoLength;
-  ULONG IoPortStart;
+  // PCI BAR0 MMIO resources
+  PHYSICAL_ADDRESS Bar0Pa;
+  PUCHAR Bar0Va;
+  ULONG Bar0Length;
 
-  // Virtio
-  VIRTIO_PCI_DEVICE Vdev;
-  VIRTIO_QUEUE RxVq;
-  VIRTIO_QUEUE TxVq;
+  volatile virtio_pci_common_cfg* CommonCfg;
+  volatile UCHAR* NotifyBase;
+  ULONG NotifyOffMultiplier;
+  volatile UCHAR* IsrCfg;
+  volatile UCHAR* DeviceCfg;
 
-  ULONG HostFeatures;
-  ULONG GuestFeatures;
+  // Virtqueues
+  AEROVNET_VQ RxVq;
+  AEROVNET_VQ TxVq;
+
+  UINT64 HostFeatures;
+  UINT64 GuestFeatures;
 
   BOOLEAN LinkUp;
 
