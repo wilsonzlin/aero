@@ -8,6 +8,8 @@ on:
       - "README*"
       - ".markdownlint-cli2.jsonc"
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
+      - "scripts/generate-guest-tools-devices-cmd.py"
+      - "guest-tools/config/devices.cmd"
       - "crates/devices/src/pci/profile.rs"
       - "crates/aero-virtio/src/devices/blk.rs"
       - "crates/aero-virtio/src/devices/net.rs"
@@ -22,6 +24,8 @@ on:
       - "README*"
       - ".markdownlint-cli2.jsonc"
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
+      - "scripts/generate-guest-tools-devices-cmd.py"
+      - "guest-tools/config/devices.cmd"
       - "crates/devices/src/pci/profile.rs"
       - "crates/aero-virtio/src/devices/blk.rs"
       - "crates/aero-virtio/src/devices/net.rs"
@@ -61,6 +65,9 @@ jobs:
 
       - name: Check Windows 7 virtio contract consistency
         run: python3 scripts/ci/check-windows7-virtio-contract-consistency.py
+
+      - name: Check Guest Tools devices.cmd is generated from contract
+        run: python3 scripts/generate-guest-tools-devices-cmd.py --check
 
       # Fast, deterministic check for broken relative links in markdown.
       # We intentionally run lychee in `--offline` mode so docs-only PRs get
