@@ -21,6 +21,26 @@ def _load_manifest(path: Path) -> dict:
         raise SystemExit(f"failed to parse manifest JSON ({path}): {e}")
 
 
+def _normalize_iso_path(path: str) -> str:
+    """
+    Normalize ISO paths for comparison.
+
+    - ensure forward slashes
+    - strip ISO9660 version suffixes like `;1`
+    - compare case-insensitively by lowercasing
+    """
+
+    p = path.strip()
+    if not p:
+        return p
+    p = p.replace("\\", "/")
+    if not p.startswith("/"):
+        p = "/" + p
+    if p.endswith(";1"):
+        p = p[:-2]
+    return p.lower()
+
+
 def _list_iso_files_with_xorriso(iso_path: Path) -> set[str]:
     xorriso = shutil.which("xorriso")
     if not xorriso:
@@ -37,7 +57,7 @@ def _list_iso_files_with_xorriso(iso_path: Path) -> set[str]:
             "xorriso failed while listing ISO files:\n"
             f"{proc.stderr.strip() or proc.stdout.strip() or '<no output>'}"
         )
-    return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+    return {_normalize_iso_path(line) for line in proc.stdout.splitlines() if line.strip()}
 
 
 def _list_iso_files_with_powershell_mount(iso_path: Path) -> set[str]:
@@ -91,7 +111,7 @@ def _list_iso_files_with_powershell_mount(iso_path: Path) -> set[str]:
             "PowerShell Mount-DiskImage failed while listing ISO files:\n"
             f"{proc.stderr.strip() or proc.stdout.strip() or '<no output>'}"
         )
-    return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+    return {_normalize_iso_path(line) for line in proc.stdout.splitlines() if line.strip()}
 
 
 def _list_iso_files(iso_path: Path) -> set[str]:
@@ -132,7 +152,7 @@ def main() -> int:
     files = _list_iso_files(args.iso.resolve())
 
     missing: list[str] = []
-    if "/THIRD_PARTY_NOTICES.md" not in files:
+    if _normalize_iso_path("/THIRD_PARTY_NOTICES.md") not in files:
         missing.append("/THIRD_PARTY_NOTICES.md")
     packages = manifest.get("packages", [])
     for pkg_id in REQUIRED_PACKAGE_IDS:
@@ -150,7 +170,7 @@ def main() -> int:
                 missing.append(f"<manifest missing inf> {pkg_id} ({arch})")
                 continue
             want = f"/{inf}"
-            if want not in files:
+            if _normalize_iso_path(want) not in files:
                 missing.append(want)
 
     if missing:
