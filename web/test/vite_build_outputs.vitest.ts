@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
@@ -6,18 +6,46 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+const VITE_BUILD_TIMEOUT_MS = 120_000;
+
 describe("web Vite build outputs", () => {
-  it("emits standalone HTML pages into dist", async () => {
+  it(
+    "emits standalone HTML pages into dist",
+    async () => {
     const webDir = fileURLToPath(new URL("..", import.meta.url));
     const viteBin = path.join(webDir, "..", "node_modules", "vite", "bin", "vite.js");
     const outDir = await mkdtemp(path.join(os.tmpdir(), "aero-web-dist-"));
 
     try {
-      execFileSync(process.execPath, [viteBin, "build", "--config", path.join(webDir, "vite.config.ts"), "--outDir", outDir], {
-        cwd: webDir,
-        stdio: "inherit",
+      // Run via spawn so the Vitest worker event loop stays responsive during the build.
+      // Blocking calls like `execFileSync` can stall worker RPC traffic and surface as
+      // unhandled "Timeout calling onTaskUpdate" errors.
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(
+          process.execPath,
+          [viteBin, "build", "--config", path.join(webDir, "vite.config.ts"), "--outDir", outDir],
+          { cwd: webDir, stdio: "inherit" },
+        );
+
         // Guard against hangs (e.g. if Vite config/plugins accidentally start a watch).
-        timeout: 120_000,
+        const timer = setTimeout(() => {
+          child.kill();
+          reject(new Error("vite build timed out"));
+        }, VITE_BUILD_TIMEOUT_MS);
+
+        child.on("error", (err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+
+        child.on("exit", (code, signal) => {
+          clearTimeout(timer);
+          if (code === 0) {
+            resolve();
+            return;
+          }
+          reject(new Error(`vite build failed (code=${code ?? "null"} signal=${signal ?? "null"})`));
+        });
       });
 
       expect(existsSync(path.join(outDir, "webusb_diagnostics.html"))).toBe(true);
@@ -25,5 +53,7 @@ describe("web Vite build outputs", () => {
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }
-  });
+    },
+    VITE_BUILD_TIMEOUT_MS,
+  );
 });
