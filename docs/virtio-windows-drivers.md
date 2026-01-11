@@ -85,12 +85,12 @@ The **virtio-win** packaging flow remains available as an optional compatibility
 
 When using the optional virtio-win flow, we target the **virtio-win** driver distribution (commonly shipped as `virtio-win.iso`) and specifically the packages:
 
-| Aero device | virtio PCI ID (Aero / `AERO-W7-VIRTIO` v1; REV `0x01`) | virtio-win package name (typical) |
+| Aero device | Windows PCI HWID (Aero / `AERO-W7-VIRTIO` v1) | virtio-win package name (typical) |
 |------------|----------------------------------------|-----------------------------------|
-| virtio-net | `VEN_1AF4&DEV_1041` | `NetKVM` (`netkvm.inf` / `netkvm.sys`) |
-| virtio-blk | `VEN_1AF4&DEV_1042` | `viostor` (`viostor.inf` / `viostor.sys`) |
-| virtio-input | `VEN_1AF4&DEV_1052` | `vioinput` (best-effort; Win7 package not present in all virtio-win releases) |
-| virtio-snd | `VEN_1AF4&DEV_1059` | `viosnd` (optional; Win7 package not present in all virtio-win releases) |
+| virtio-net | `PCI\VEN_1AF4&DEV_1041&REV_01` | `NetKVM` (`netkvm.inf` / `netkvm.sys`) |
+| virtio-blk | `PCI\VEN_1AF4&DEV_1042&REV_01` | `viostor` (`viostor.inf` / `viostor.sys`) |
+| virtio-input | `PCI\VEN_1AF4&DEV_1052&REV_01` | `vioinput` (best-effort; Win7 package not present in all virtio-win releases) |
+| virtio-snd | `PCI\VEN_1AF4&DEV_1059&REV_01` | `viosnd` (optional; Win7 package not present in all virtio-win releases) |
 
 Notes:
 
