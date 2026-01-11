@@ -171,7 +171,9 @@ fn decode_ep0(ep0: &mut Ep0Control, buf: &[u8]) -> SnapshotResult<()> {
     let out_expected = d.u32()? as usize;
     let out_len = d.u32()? as usize;
     if out_len > MAX_EP0_DATA_BYTES {
-        return Err(SnapshotError::InvalidFieldEncoding("ep0 out_data too large"));
+        return Err(SnapshotError::InvalidFieldEncoding(
+            "ep0 out_data too large",
+        ));
     }
     let out_data = d.bytes(out_len)?.to_vec();
     let stalled = d.bool()?;
@@ -918,7 +920,9 @@ impl IoSnapshot for UsbHidKeyboard {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count > MAX_REPORTS {
-                return Err(SnapshotError::InvalidFieldEncoding("too many keyboard reports"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "too many keyboard reports",
+                ));
             }
             let drop = count.saturating_sub(MAX_PENDING_REPORTS_KEYBOARD);
             for idx in 0..count {
@@ -1567,7 +1571,9 @@ impl IoSnapshot for UsbHidMouse {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count > MAX_REPORTS {
-                return Err(SnapshotError::InvalidFieldEncoding("too many mouse reports"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "too many mouse reports",
+                ));
             }
             let drop = count.saturating_sub(MAX_PENDING_REPORTS_MOUSE);
             for idx in 0..count {
@@ -2278,7 +2284,9 @@ impl IoSnapshot for UsbHidGamepad {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count > MAX_REPORTS {
-                return Err(SnapshotError::InvalidFieldEncoding("too many gamepad reports"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "too many gamepad reports",
+                ));
             }
             let drop = count.saturating_sub(MAX_PENDING_REPORTS_GAMEPAD);
             for idx in 0..count {
@@ -3171,7 +3179,9 @@ impl IoSnapshot for UsbHidCompositeInput {
             }
             self.protocols.copy_from_slice(buf);
             if self.protocols.iter().any(|&p| p > 1) {
-                return Err(SnapshotError::InvalidFieldEncoding("invalid composite protocol"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "invalid composite protocol",
+                ));
             }
         }
 

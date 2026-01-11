@@ -297,13 +297,12 @@ impl UsbPassthroughDevice {
                     endpoint,
                     length,
                 } => enc.u8(3).u32(*id).u8(*endpoint).u32(*length),
-                UsbHostAction::BulkOut { id, endpoint, data } => {
-                    enc.u8(4)
-                        .u32(*id)
-                        .u8(*endpoint)
-                        .u32(data.len() as u32)
-                        .bytes(data)
-                }
+                UsbHostAction::BulkOut { id, endpoint, data } => enc
+                    .u8(4)
+                    .u32(*id)
+                    .u8(*endpoint)
+                    .u32(data.len() as u32)
+                    .bytes(data),
             }
         }
 
@@ -317,7 +316,9 @@ impl UsbPassthroughDevice {
         }
 
         // Deterministic encoding: all HashMap-backed collections are sorted.
-        let mut enc = Encoder::new().u32(self.next_id).u32(self.actions.len() as u32);
+        let mut enc = Encoder::new()
+            .u32(self.next_id)
+            .u32(self.actions.len() as u32);
         for action in &self.actions {
             enc = enc_action(enc, action);
         }
@@ -348,10 +349,7 @@ impl UsbPassthroughDevice {
         eps.sort_by_key(|(ep, _)| *ep);
         enc = enc.u32(eps.len() as u32);
         for (endpoint, inflight) in eps {
-            enc = enc
-                .u8(endpoint)
-                .u32(inflight.id)
-                .u32(inflight.len as u32);
+            enc = enc.u8(endpoint).u32(inflight.id).u32(inflight.len as u32);
         }
 
         enc.finish()
@@ -389,7 +387,9 @@ impl UsbPassthroughDevice {
                 .checked_add(len)
                 .ok_or(SnapshotError::InvalidFieldEncoding("buffer too large"))?;
             if next_total > max_total {
-                return Err(SnapshotError::InvalidFieldEncoding("snapshot buffers too large"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "snapshot buffers too large",
+                ));
             }
             *total = next_total;
             Ok(d.bytes(len)?.to_vec())
@@ -403,7 +403,9 @@ impl UsbPassthroughDevice {
         self.actions.clear();
         let action_count = d.u32()? as usize;
         if action_count > MAX_ACTIONS {
-            return Err(SnapshotError::InvalidFieldEncoding("too many queued actions"));
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "too many queued actions",
+            ));
         }
         for _ in 0..action_count {
             let kind = d.u8()?;
@@ -415,8 +417,12 @@ impl UsbPassthroughDevice {
                 },
                 2 => {
                     let setup = dec_setup(&mut d)?;
-                    let data =
-                        dec_bytes_limited(&mut d, MAX_DATA_BYTES, &mut total_bytes, MAX_TOTAL_BYTES)?;
+                    let data = dec_bytes_limited(
+                        &mut d,
+                        MAX_DATA_BYTES,
+                        &mut total_bytes,
+                        MAX_TOTAL_BYTES,
+                    )?;
                     UsbHostAction::ControlOut { id, setup, data }
                 }
                 3 => UsbHostAction::BulkIn {
@@ -426,8 +432,12 @@ impl UsbPassthroughDevice {
                 },
                 4 => {
                     let endpoint = d.u8()?;
-                    let data =
-                        dec_bytes_limited(&mut d, MAX_DATA_BYTES, &mut total_bytes, MAX_TOTAL_BYTES)?;
+                    let data = dec_bytes_limited(
+                        &mut d,
+                        MAX_DATA_BYTES,
+                        &mut total_bytes,
+                        MAX_TOTAL_BYTES,
+                    )?;
                     UsbHostAction::BulkOut { id, endpoint, data }
                 }
                 _ => return Err(SnapshotError::InvalidFieldEncoding("invalid action kind")),
@@ -438,27 +448,42 @@ impl UsbPassthroughDevice {
         self.completions.clear();
         let completion_count = d.u32()? as usize;
         if completion_count > MAX_COMPLETIONS {
-            return Err(SnapshotError::InvalidFieldEncoding("too many queued completions"));
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "too many queued completions",
+            ));
         }
         for _ in 0..completion_count {
             let id = d.u32()?;
             let kind = d.u8()?;
             let result = match kind {
                 1 => UsbHostResult::OkIn {
-                    data: dec_bytes_limited(&mut d, MAX_DATA_BYTES, &mut total_bytes, MAX_TOTAL_BYTES)?,
+                    data: dec_bytes_limited(
+                        &mut d,
+                        MAX_DATA_BYTES,
+                        &mut total_bytes,
+                        MAX_TOTAL_BYTES,
+                    )?,
                 },
                 2 => UsbHostResult::OkOut {
                     bytes_written: d.u32()? as usize,
                 },
                 3 => UsbHostResult::Stall,
                 4 => {
-                    let msg_bytes =
-                        dec_bytes_limited(&mut d, MAX_ERROR_BYTES, &mut total_bytes, MAX_TOTAL_BYTES)?;
+                    let msg_bytes = dec_bytes_limited(
+                        &mut d,
+                        MAX_ERROR_BYTES,
+                        &mut total_bytes,
+                        MAX_TOTAL_BYTES,
+                    )?;
                     let msg = String::from_utf8(msg_bytes)
                         .map_err(|_| SnapshotError::InvalidFieldEncoding("invalid utf-8"))?;
                     UsbHostResult::Error(msg)
                 }
-                _ => return Err(SnapshotError::InvalidFieldEncoding("invalid completion kind")),
+                _ => {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "invalid completion kind",
+                    ))
+                }
             };
             self.completions.insert(id, result);
         }
@@ -469,7 +494,9 @@ impl UsbPassthroughDevice {
             let setup = dec_setup(&mut d)?;
             let has_data = d.bool()?;
             let data = has_data
-                .then(|| dec_bytes_limited(&mut d, MAX_DATA_BYTES, &mut total_bytes, MAX_TOTAL_BYTES))
+                .then(|| {
+                    dec_bytes_limited(&mut d, MAX_DATA_BYTES, &mut total_bytes, MAX_TOTAL_BYTES)
+                })
                 .transpose()?;
             Some(ControlInflight { id, setup, data })
         } else {
@@ -479,7 +506,9 @@ impl UsbPassthroughDevice {
         self.ep_inflight.clear();
         let ep_count = d.u32()? as usize;
         if ep_count > MAX_EP_INFLIGHT {
-            return Err(SnapshotError::InvalidFieldEncoding("too many inflight endpoints"));
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "too many inflight endpoints",
+            ));
         }
         for _ in 0..ep_count {
             let endpoint = d.u8()?;

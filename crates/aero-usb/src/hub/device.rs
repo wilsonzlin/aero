@@ -1,11 +1,11 @@
 use core::any::Any;
 
+use crate::hub::UsbHub;
+use crate::usb::{SetupPacket, UsbDevice, UsbHandshake};
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
-use crate::hub::UsbHub;
-use crate::usb::{SetupPacket, UsbDevice, UsbHandshake};
 
 extern crate alloc;
 
@@ -442,10 +442,13 @@ impl UsbHubDevice {
         r.ensure_device_major(<Self as IoSnapshot>::DEVICE_VERSION.major)?;
         let count = r
             .u32(TAG_NUM_PORTS)?
-            .ok_or(SnapshotError::InvalidFieldEncoding("missing hub port count"))?
-            as usize;
+            .ok_or(SnapshotError::InvalidFieldEncoding(
+                "missing hub port count",
+            ))? as usize;
         if count == 0 || count > u8::MAX as usize {
-            return Err(SnapshotError::InvalidFieldEncoding("invalid hub port count"));
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid hub port count",
+            ));
         }
         Ok(count)
     }
@@ -1099,7 +1102,9 @@ impl IoSnapshot for UsbHubDevice {
             for port in self.ports.iter_mut() {
                 let rec_len = d.u32()? as usize;
                 if rec_len > MAX_PORT_RECORD_BYTES {
-                    return Err(SnapshotError::InvalidFieldEncoding("hub port record too large"));
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "hub port record too large",
+                    ));
                 }
                 let rec = d.bytes(rec_len)?;
                 let mut pd = Decoder::new(rec);
@@ -1178,7 +1183,9 @@ impl IoSnapshot for UsbHubDevice {
             let out_expected = d.u32()? as usize;
             let out_len = d.u32()? as usize;
             if out_len > MAX_EP0_DATA_BYTES {
-                return Err(SnapshotError::InvalidFieldEncoding("ep0 out_data too large"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "ep0 out_data too large",
+                ));
             }
             let out_data = d.bytes(out_len)?.to_vec();
             let stalled = d.bool()?;

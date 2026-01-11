@@ -1,11 +1,11 @@
 use core::any::Any;
 use std::collections::{BTreeMap, VecDeque};
 
+use crate::usb::{SetupPacket, UsbDevice, UsbHandshake, UsbSpeed};
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
-use crate::usb::{SetupPacket, UsbDevice, UsbHandshake, UsbSpeed};
 
 use super::report_descriptor;
 
@@ -930,7 +930,9 @@ impl IoSnapshot for UsbHidPassthrough {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count > MAX_ENTRIES {
-                return Err(SnapshotError::InvalidFieldEncoding("too many report entries"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "too many report entries",
+                ));
             }
             map.clear();
             for _ in 0..count {
@@ -1061,15 +1063,21 @@ impl IoSnapshot for UsbHidPassthrough {
             }
             let out_expected = d.u32()? as usize;
             if out_expected > MAX_EP0_DATA_BYTES {
-                return Err(SnapshotError::InvalidFieldEncoding("ep0 out_expected too large"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "ep0 out_expected too large",
+                ));
             }
             let out_len = d.u32()? as usize;
             if out_len > MAX_EP0_DATA_BYTES {
-                return Err(SnapshotError::InvalidFieldEncoding("ep0 out_data too large"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "ep0 out_data too large",
+                ));
             }
             let out_data = d.bytes(out_len)?.to_vec();
             if out_data.len() > out_expected {
-                return Err(SnapshotError::InvalidFieldEncoding("ep0 out_data too large"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "ep0 out_data too large",
+                ));
             }
             let stalled = d.bool()?;
             d.finish()?;
@@ -1088,7 +1096,9 @@ impl IoSnapshot for UsbHidPassthrough {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count > MAX_PENDING_REPORTS {
-                return Err(SnapshotError::InvalidFieldEncoding("too many input reports"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "too many input reports",
+                ));
             }
 
             let drop = count.saturating_sub(self.max_pending_input_reports);
@@ -1096,7 +1106,9 @@ impl IoSnapshot for UsbHidPassthrough {
             for idx in 0..count {
                 let len = d.u32()? as usize;
                 if len > MAX_EP0_DATA_BYTES {
-                    return Err(SnapshotError::InvalidFieldEncoding("input report too large"));
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "input report too large",
+                    ));
                 }
                 let bytes = d.bytes(len)?;
                 if idx < drop {
@@ -1104,7 +1116,9 @@ impl IoSnapshot for UsbHidPassthrough {
                 }
                 total_bytes = total_bytes.saturating_add(len);
                 if total_bytes > MAX_REPORT_QUEUE_BYTES {
-                    return Err(SnapshotError::InvalidFieldEncoding("input report queue too large"));
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "input report queue too large",
+                    ));
                 }
                 self.pending_input_reports.push_back(bytes.to_vec());
             }
@@ -1116,7 +1130,9 @@ impl IoSnapshot for UsbHidPassthrough {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count > MAX_PENDING_REPORTS {
-                return Err(SnapshotError::InvalidFieldEncoding("too many output reports"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "too many output reports",
+                ));
             }
 
             let drop = count.saturating_sub(self.max_pending_output_reports);
@@ -1126,7 +1142,9 @@ impl IoSnapshot for UsbHidPassthrough {
                 let report_id = d.u8()?;
                 let len = d.u32()? as usize;
                 if len > MAX_EP0_DATA_BYTES {
-                    return Err(SnapshotError::InvalidFieldEncoding("output report too large"));
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "output report too large",
+                    ));
                 }
                 let data = d.bytes(len)?;
                 if idx < drop {
@@ -1134,7 +1152,9 @@ impl IoSnapshot for UsbHidPassthrough {
                 }
                 total_bytes = total_bytes.saturating_add(len);
                 if total_bytes > MAX_REPORT_QUEUE_BYTES {
-                    return Err(SnapshotError::InvalidFieldEncoding("output report queue too large"));
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "output report queue too large",
+                    ));
                 }
                 self.pending_output_reports
                     .push_back(UsbHidPassthroughOutputReport {

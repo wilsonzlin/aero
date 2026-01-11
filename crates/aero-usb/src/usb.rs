@@ -1,10 +1,10 @@
 use core::{any::Any, fmt};
 
+use crate::hub::UsbHub;
 use aero_io_snapshot::io::state::codec::Decoder;
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
-use crate::hub::UsbHub;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UsbSpeed {
@@ -427,7 +427,10 @@ impl IoSnapshot for UsbBus {
             if let Some(gamepad) = dev.as_any().downcast_ref::<crate::hid::UsbHidGamepad>() {
                 return gamepad.save_state();
             }
-            if let Some(comp) = dev.as_any().downcast_ref::<crate::hid::UsbHidCompositeInput>() {
+            if let Some(comp) = dev
+                .as_any()
+                .downcast_ref::<crate::hid::UsbHidCompositeInput>()
+            {
                 return comp.save_state();
             }
             if let Some(hidp) = dev
@@ -436,7 +439,10 @@ impl IoSnapshot for UsbBus {
             {
                 return hidp.save_state();
             }
-            if let Some(webusb) = dev.as_any().downcast_ref::<crate::UsbWebUsbPassthroughDevice>() {
+            if let Some(webusb) = dev
+                .as_any()
+                .downcast_ref::<crate::UsbWebUsbPassthroughDevice>()
+            {
                 return webusb.save_state();
             }
             panic!("USB device type is not snapshotable");
@@ -622,9 +628,11 @@ impl IoSnapshot for UsbBus {
         // restored without being clobbered by attach-side effects.
         for entry in entries {
             let path: Vec<usize> = entry.path.iter().map(|&v| v as usize).collect();
-            let dev = self.device_at_path_mut(&path).ok_or(SnapshotError::InvalidFieldEncoding(
-                "device missing at topology path",
-            ))?;
+            let dev = self
+                .device_at_path_mut(&path)
+                .ok_or(SnapshotError::InvalidFieldEncoding(
+                    "device missing at topology path",
+                ))?;
             let device_id = peek_device_id(entry.snap)?;
             match &device_id {
                 b"UHUB" => dev
@@ -709,13 +717,17 @@ impl UsbBus {
                 .ok_or(SnapshotError::InvalidFieldEncoding("device is not a hub"))?;
             let idx = hub_port
                 .checked_sub(1)
-                .ok_or(SnapshotError::InvalidFieldEncoding("hub port numbers are 1-based"))?;
+                .ok_or(SnapshotError::InvalidFieldEncoding(
+                    "hub port numbers are 1-based",
+                ))?;
             if idx >= hub.num_ports() {
                 return Err(SnapshotError::InvalidFieldEncoding("invalid hub port"));
             }
-            current = hub.downstream_device_mut(idx).ok_or(
-                SnapshotError::InvalidFieldEncoding("missing intermediate hub device"),
-            )?;
+            current = hub
+                .downstream_device_mut(idx)
+                .ok_or(SnapshotError::InvalidFieldEncoding(
+                    "missing intermediate hub device",
+                ))?;
         }
 
         let hub = current
@@ -724,7 +736,9 @@ impl UsbBus {
         let last_port = rest[rest.len() - 1];
         let idx = last_port
             .checked_sub(1)
-            .ok_or(SnapshotError::InvalidFieldEncoding("hub port numbers are 1-based"))?;
+            .ok_or(SnapshotError::InvalidFieldEncoding(
+                "hub port numbers are 1-based",
+            ))?;
         if idx >= hub.num_ports() {
             return Err(SnapshotError::InvalidFieldEncoding("invalid hub port"));
         }

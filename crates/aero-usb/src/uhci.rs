@@ -714,8 +714,7 @@ impl IoSnapshot for UhciController {
         w.field_bytes(TAG_PORTS, Encoder::new().vec_bytes(&port_records).finish());
 
         fn device_is_snapshotable(dev: &dyn crate::usb::UsbDevice) -> bool {
-            dev.as_any()
-                .is::<crate::hub::UsbHubDevice>()
+            dev.as_any().is::<crate::hub::UsbHubDevice>()
                 || dev.as_any().is::<crate::hid::UsbHidKeyboard>()
                 || dev.as_any().is::<crate::hid::UsbHidMouse>()
                 || dev.as_any().is::<crate::hid::UsbHidGamepad>()
@@ -790,7 +789,9 @@ impl IoSnapshot for UhciController {
         }
 
         if self.bus.num_ports() != self.ports.len() {
-            return Err(SnapshotError::InvalidFieldEncoding("UHCI bus port count mismatch"));
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "UHCI bus port count mismatch",
+            ));
         }
 
         if let Some(buf) = r.bytes(TAG_PORTS) {
@@ -799,13 +800,17 @@ impl IoSnapshot for UhciController {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count != self.ports.len() {
-                return Err(SnapshotError::InvalidFieldEncoding("UHCI port count mismatch"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "UHCI port count mismatch",
+                ));
             }
 
             for idx in 0..count {
                 let rec_len = d.u32()? as usize;
                 if rec_len > MAX_PORT_RECORD_BYTES {
-                    return Err(SnapshotError::InvalidFieldEncoding("UHCI port record too large"));
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "UHCI port record too large",
+                    ));
                 }
                 let rec = d.bytes(rec_len)?;
                 let mut pd = Decoder::new(rec);
