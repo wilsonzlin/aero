@@ -81,7 +81,7 @@ async function killProcess(
     proc.kill('SIGTERM');
   }
   await Promise.race([
-    once(proc, 'exit'),
+    once(proc, 'close'),
     new Promise<void>((_, reject) =>
       setTimeout(() => reject(new Error(`timeout waiting for process ${proc.pid ?? 'unknown'} to exit`)), 5_000),
     ),
@@ -98,7 +98,7 @@ async function killProcess(
         proc.kill('SIGKILL');
       }
     }
-    return once(proc, 'exit');
+    return once(proc, 'close');
   });
 }
 
