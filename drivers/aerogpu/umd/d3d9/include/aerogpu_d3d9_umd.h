@@ -168,8 +168,11 @@ typedef struct AEROGPU_D3D9DDIARG_CREATERESOURCE {
   // - pSharedHandle != NULL and *pSharedHandle != NULL: open an existing shared resource
   HANDLE* pSharedHandle;
 
-  // Optional KMD-written per-allocation private driver data.
-  // In real WDDM builds this comes from D3DDDI_ALLOCATIONINFO::pPrivateDriverData.
+  // Optional per-allocation private driver data blob (aerogpu_wddm_alloc_priv).
+  //
+  // In real WDDM builds this is the allocation private driver data that the UMD
+  // attaches to allocations. For shared resources, dxgkrnl preserves it and
+  // returns it to other processes on OpenResource/OpenAllocation.
   const void* pKmdAllocPrivateData;
   uint32_t KmdAllocPrivateDataSize;
 } AEROGPU_D3D9DDIARG_CREATERESOURCE;

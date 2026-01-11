@@ -57,9 +57,9 @@ struct Resource {
   uint32_t row_pitch = 0;
   uint32_t slice_pitch = 0;
 
-  // Host-visible backing allocation ID. Written by the KMD into per-allocation
-  // private driver data (aerogpu_wddm_alloc_priv). 0 means "host allocated"
-  // (no allocation-table entry).
+  // Host-visible backing allocation ID carried in per-allocation private driver
+  // data (aerogpu_wddm_alloc_priv). 0 means "host allocated" (no
+  // allocation-table entry).
   uint32_t backing_alloc_id = 0;
 
   // Stable cross-process token used by EXPORT/IMPORT_SHARED_SURFACE.

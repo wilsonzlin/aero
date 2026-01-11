@@ -172,18 +172,39 @@ DWM composition commonly depends on the ability to share render targets/textures
 
 Define a guest/host handle model that does **not** attempt to expose host OS handles:
 
-- Guest UMD treats `HANDLE` as an opaque **share token**.
-- On “export” (resource creation with `pSharedHandle != nullptr`):
-   1. Guest derives a stable `share_token` and writes it to `*pSharedHandle`.
-   2. Guest informs the host: `(share_token → resource_handle)` mapping is created (via `AEROGPU_CMD_EXPORT_SHARED_SURFACE`).
-- On “import” (open from a shared handle token):
-   1. Guest passes the `share_token` to the host and requests an alias handle (via `AEROGPU_CMD_IMPORT_SHARED_SURFACE`).
-   2. Host validates `share_token` and binds the requested alias `out_resource_handle` to the exported resource (or errors if unknown).
+- **Do not** treat the raw Win32 `HANDLE` value itself as a stable cross-process
+  token:
+  - shared handles may be duplicated (`DuplicateHandle`) and the numeric value is
+    not guaranteed to match across processes (or 32-bit vs 64-bit).
+  - the UMD also cannot "forge" a handle value; dxgkrnl owns the handle table.
+  The handle is still used for correctness (it is how another process asks
+  Windows to open the shared resource), but it is not a good host-mapping key.
 
-**Key invariant:** the token must be stable across processes inside the guest VM. In real Windows this stability is provided via NT handles + `DuplicateHandle`; in Aero, stability is provided by the virtualization driver + host mapping table.
+- Instead we introduce an AeroGPU-owned **share_token** (`u64`) that is stable
+  across guest processes for the lifetime of the shared resource.
+
+- On “export” (resource creation with `pSharedHandle != nullptr`):
+  1. The UMD requests a normal WDDM shared handle (the value written to
+     `*pSharedHandle` is still the OS handle).
+  2. The UMD chooses a stable `share_token` and stores it in the WDDM
+     **allocation private driver data** blob that dxgkrnl preserves and returns
+     on `OpenResource` (see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+  3. The UMD informs the host: `(share_token → host_resource_id)` mapping is created.
+
+- On “import” (open from a shared handle):
+  1. The UMD performs the normal WDDM open. dxgkrnl returns the preserved
+     allocation private driver data, which contains `share_token`.
+  2. The UMD passes `share_token` to the host.
+  3. Host returns an existing host-side resource ID or errors if unknown.
+
+**Key invariant:** `share_token` must be stable across processes inside the guest VM.
+In real Windows, the shared resource identity is represented by a kernel object
+referenced by per-process `HANDLE` values; in Aero, stability is provided by the
+UMD-generated `share_token` stored in preserved WDDM allocation private data and
+the host mapping table keyed by that token.
 
 **Implementation note (AeroGPU/WDDM):**
-prefer computing `share_token` from the KMD-provided stable allocation ID (`alloc_id`, returned via allocation private driver data on Create/Open),
+prefer deriving `share_token` from the preserved per-allocation ID (`alloc_id`, returned via allocation private driver data on Create/Open),
 instead of using raw Win32/D3DKMT handle values (which are process-local).
 The recommended scheme is:
 

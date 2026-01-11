@@ -36,12 +36,17 @@ enum aerogpu_engine_id {
 
 /*
  * Optional sideband allocation table:
- * - The submit descriptor can reference a table mapping allocation IDs (`alloc_id`)
- *   to guest physical addresses and sizes.
- * - `alloc_id` values are stable IDs assigned by the guest KMD for WDDM allocations
- *   (see `aerogpu_wddm_alloc.h` for the KMD<->UMD private-data contract).
- * - Commands may reference backing allocations by `alloc_id` (e.g. via
- *   `backing_alloc_id` in `aerogpu_cmd_create_buffer` / `aerogpu_cmd_create_texture2d`).
+ * - The submit descriptor can reference a table mapping small allocation IDs
+ *   (alloc_id) to guest physical addresses and sizes.
+ * - Commands may reference allocations by alloc_id (e.g. via `backing_alloc_id`
+ *   in `aerogpu_cmd_create_buffer` / `aerogpu_cmd_create_texture2d`).
+ *
+ * `alloc_id` values must remain stable for the lifetime of the underlying WDDM
+ * allocation. For shared allocations, the UMD stores alloc_id in the preserved
+ * WDDM allocation private data blob so it can be recovered on OpenResource (see
+ * `aerogpu_wddm_alloc.h`). For standard allocations created without AeroGPU
+ * private data, the KMD may synthesize alloc_id values from a reserved
+ * namespace.
  */
 
 #define AEROGPU_ALLOC_TABLE_MAGIC 0x434F4C41u /* "ALOC" little-endian */

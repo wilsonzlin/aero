@@ -612,6 +612,12 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     adapter->SourceVisible = TRUE;
     adapter->VblankPeriodNs = AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
 
+    /*
+     * Initialise so that the first InterlockedIncrement() yields
+     * AEROGPU_WDDM_ALLOC_ID_KMD_MIN.
+     */
+    adapter->NextKmdAllocId = (LONG)AEROGPU_WDDM_ALLOC_ID_UMD_MAX;
+
     *MiniportDeviceContext = adapter;
     AEROGPU_LOG0("AddDevice");
     return STATUS_SUCCESS;
@@ -1257,10 +1263,9 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
     /*
      * WDK 7.1 exposes DXGKARG_CREATEALLOCATION::Flags.CreateShared for shared
      * handle creation (DWM redirected surfaces).
-     */
+    */
     const BOOLEAN isShared = pCreate->Flags.CreateShared ? TRUE : FALSE;
 
-    static LONG g_CreateAllocPrivWarned = 0;
 #if DBG
     BOOLEAN logCall = FALSE;
     /*
@@ -1315,6 +1320,69 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
     for (UINT i = 0; i < pCreate->NumAllocations; ++i) {
         DXGK_ALLOCATIONINFO* info = &pCreate->pAllocationInfo[i];
 
+        ULONG allocId = 0;
+        ULONGLONG shareToken = 0;
+
+        /*
+         * WDDM allocation private driver data (if provided).
+         *
+         * This is an INPUT buffer (UMD->KMD). For standard allocations created
+         * by dxgkrnl (for example primary surfaces), the runtime may not provide
+         * an AeroGPU private-data blob; in that case we synthesize an internal
+         * alloc_id from a reserved namespace.
+         */
+        if (info->pPrivateDriverData && info->PrivateDriverDataSize >= sizeof(aerogpu_wddm_alloc_private_data)) {
+            const aerogpu_wddm_alloc_private_data* priv =
+                (const aerogpu_wddm_alloc_private_data*)info->pPrivateDriverData;
+
+            if (priv->magic == AEROGPU_WDDM_ALLOC_PRIVATE_DATA_MAGIC) {
+                if (priv->version != AEROGPU_WDDM_ALLOC_PRIVATE_DATA_VERSION || priv->alloc_id == 0 ||
+                    priv->alloc_id > AEROGPU_WDDM_ALLOC_ID_UMD_MAX) {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const BOOLEAN privShared = (priv->flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED) ? TRUE : FALSE;
+                if (privShared != isShared) {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                if (privShared && priv->share_token == 0) {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                if (!privShared && priv->share_token != 0) {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                if (priv->size_bytes != (aerogpu_wddm_u64)info->Size) {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                allocId = (ULONG)priv->alloc_id;
+                shareToken = (ULONGLONG)priv->share_token;
+            }
+        }
+
+        if (allocId == 0) {
+            if (isShared) {
+                /* Shared allocations must carry AeroGPU private data so the UMD can recover stable IDs on OpenResource. */
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            allocId = (ULONG)InterlockedIncrement(&adapter->NextKmdAllocId);
+            if (allocId < AEROGPU_WDDM_ALLOC_ID_KMD_MIN) {
+                AEROGPU_LOG("CreateAllocation: allocation id overflow (wrapped into UMD range), failing with 0x%08lx",
+                            STATUS_INTEGER_OVERFLOW);
+                /* Roll back allocations already created in this call. */
+                for (UINT j = 0; j < i; ++j) {
+                    HANDLE hAllocation = pCreate->pAllocationInfo[j].hAllocation;
+                    if (hAllocation) {
+                        AeroGpuUntrackAndFreeAllocation(adapter, hAllocation);
+                        pCreate->pAllocationInfo[j].hAllocation = NULL;
+                    }
+                }
+                return STATUS_INTEGER_OVERFLOW;
+            }
+            shareToken = 0;
+        }
+
         AEROGPU_ALLOCATION* alloc =
             (AEROGPU_ALLOCATION*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*alloc), AEROGPU_POOL_TAG);
         if (!alloc) {
@@ -1329,51 +1397,11 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
             return STATUS_INSUFFICIENT_RESOURCES;
         }
 
-        ULONG allocId = (ULONG)InterlockedIncrement(&adapter->NextAllocationId);
-        if (allocId == 0) {
-            AEROGPU_LOG("CreateAllocation: allocation id overflow (wrapped to 0), failing with 0x%08lx",
-                        STATUS_INTEGER_OVERFLOW);
-            ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
-            /* Roll back allocations already created in this call. */
-            for (UINT j = 0; j < i; ++j) {
-                HANDLE hAllocation = pCreate->pAllocationInfo[j].hAllocation;
-                if (hAllocation) {
-                    AeroGpuUntrackAndFreeAllocation(adapter, hAllocation);
-                    pCreate->pAllocationInfo[j].hAllocation = NULL;
-                }
-            }
-            return STATUS_INTEGER_OVERFLOW;
-        }
-
         alloc->AllocationId = allocId;
-        alloc->ShareToken = isShared ? (ULONGLONG)allocId : 0ull;
+        alloc->ShareToken = shareToken;
         alloc->SizeBytes = info->Size;
-        alloc->Flags = (isShared ? AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED : 0);
+        alloc->Flags = (isShared ? AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED : 0);
         alloc->LastKnownPa.QuadPart = 0;
-
-        if (info->pPrivateDriverData && info->PrivateDriverDataSize >= sizeof(aerogpu_wddm_alloc_priv)) {
-            aerogpu_wddm_alloc_priv* priv = (aerogpu_wddm_alloc_priv*)info->pPrivateDriverData;
-            RtlZeroMemory(priv, sizeof(*priv));
-            priv->magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
-            priv->version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
-            priv->alloc_id = alloc->AllocationId;
-            priv->flags = (aerogpu_wddm_u32)(alloc->Flags & ~AEROGPU_KMD_ALLOC_FLAG_OPENED);
-            priv->share_token = (aerogpu_wddm_u64)alloc->ShareToken;
-            priv->size_bytes = (aerogpu_wddm_u64)alloc->SizeBytes;
-            priv->reserved0 = 0;
-        } else {
-            /*
-             * Keep bring-up compatible with older UMDs that don't allocate a
-             * private-data buffer yet. The stable alloc_id will be unavailable
-             * to those UMDs, but allocation creation should still succeed.
-             */
-            if (InterlockedExchange(&g_CreateAllocPrivWarned, 1) == 0) {
-                const ULONG sz = info->pPrivateDriverData ? (ULONG)info->PrivateDriverDataSize : 0u;
-                AEROGPU_LOG("CreateAllocation: private data missing/too small (have=%lu need=%Iu) - alloc_id not returned",
-                           sz,
-                           sizeof(aerogpu_wddm_alloc_priv));
-            }
-        }
 
         info->hAllocation = (HANDLE)alloc;
         info->SegmentId = AEROGPU_SEGMENT_ID_SYSTEM;
@@ -1451,21 +1479,31 @@ static NTSTATUS APIENTRY AeroGpuDdiOpenAllocation(_In_ const HANDLE hAdapter,
     for (UINT i = 0; i < pOpen->NumAllocations; ++i) {
         DXGK_OPENALLOCATIONINFO* info = &pOpen->pOpenAllocation[i];
 
-        if (!info->pPrivateDriverData || info->PrivateDriverDataSize < sizeof(aerogpu_wddm_alloc_priv)) {
+        if (!info->pPrivateDriverData || info->PrivateDriverDataSize < sizeof(aerogpu_wddm_alloc_private_data)) {
             AEROGPU_LOG("OpenAllocation: missing/too small private data (have=%lu need=%Iu)",
                        (ULONG)info->PrivateDriverDataSize,
-                       sizeof(aerogpu_wddm_alloc_priv));
+                       sizeof(aerogpu_wddm_alloc_private_data));
             st = STATUS_INVALID_PARAMETER;
             goto Cleanup;
         }
 
-        const aerogpu_wddm_alloc_priv* priv = (const aerogpu_wddm_alloc_priv*)info->pPrivateDriverData;
-        if (priv->magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC || priv->version != AEROGPU_WDDM_ALLOC_PRIV_VERSION ||
-            priv->alloc_id == 0) {
+        const aerogpu_wddm_alloc_private_data* priv = (const aerogpu_wddm_alloc_private_data*)info->pPrivateDriverData;
+        if (priv->magic != AEROGPU_WDDM_ALLOC_PRIVATE_DATA_MAGIC ||
+            priv->version != AEROGPU_WDDM_ALLOC_PRIVATE_DATA_VERSION || priv->alloc_id == 0 ||
+            priv->alloc_id > AEROGPU_WDDM_ALLOC_ID_UMD_MAX) {
             AEROGPU_LOG("OpenAllocation: invalid private data (magic=0x%08lx version=%lu alloc_id=%lu)",
                        (ULONG)priv->magic,
                        (ULONG)priv->version,
                        (ULONG)priv->alloc_id);
+            st = STATUS_INVALID_PARAMETER;
+            goto Cleanup;
+        }
+
+        if ((priv->flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED) == 0 || priv->share_token == 0) {
+            AEROGPU_LOG("OpenAllocation: expected shared private data (alloc_id=%lu flags=0x%08lx share_token=0x%I64x)",
+                       (ULONG)priv->alloc_id,
+                       (ULONG)priv->flags,
+                       (ULONGLONG)priv->share_token);
             st = STATUS_INVALID_PARAMETER;
             goto Cleanup;
         }

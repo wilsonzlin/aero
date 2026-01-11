@@ -590,10 +590,10 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(AEROGPU_D3D9DDI_HDEVICE hDevice) {
   return S_OK;
 }
 
-void consume_kmd_alloc_priv(Resource* res,
-                            const void* priv_data,
-                            uint32_t priv_data_size,
-                            bool is_shared_resource) {
+static void consume_wddm_alloc_priv(Resource* res,
+                                   const void* priv_data,
+                                   uint32_t priv_data_size,
+                                   bool is_shared_resource) {
   if (!res || !priv_data || priv_data_size < sizeof(aerogpu_wddm_alloc_priv)) {
     return;
   }
@@ -611,7 +611,7 @@ void consume_kmd_alloc_priv(Resource* res,
     res->is_shared = true;
   }
 
-  // Some KMDs may only populate alloc_id; derive a stable token in that case.
+  // For compatibility, derive a stable token if share_token is missing.
   if (is_shared_resource && res->share_token == 0 && res->backing_alloc_id != 0) {
     res->share_token = static_cast<uint64_t>(res->backing_alloc_id);
   }
@@ -653,10 +653,10 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   res->is_shared = wants_shared;
   res->is_shared_alias = open_existing_shared;
 
-  consume_kmd_alloc_priv(res.get(),
-                         pCreateResource->pKmdAllocPrivateData,
-                         pCreateResource->KmdAllocPrivateDataSize,
-                         res->is_shared);
+  consume_wddm_alloc_priv(res.get(),
+                          pCreateResource->pKmdAllocPrivateData,
+                          pCreateResource->KmdAllocPrivateDataSize,
+                          res->is_shared);
 
   // Heuristic: if size is provided, treat as buffer; otherwise treat as a 2D image.
   if (pCreateResource->size) {

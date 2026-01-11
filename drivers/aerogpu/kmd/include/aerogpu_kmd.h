@@ -6,6 +6,7 @@
 #include "aerogpu_log.h"
 #include "aerogpu_pci.h"
 #include "aerogpu_ring.h"
+#include "aerogpu_wddm_alloc.h"
 #include "aerogpu_legacy_abi.h"
 
 /* Compatibility alias used by some KMD code paths. */
@@ -82,8 +83,8 @@ typedef struct _AEROGPU_SUBMISSION {
 
 typedef struct _AEROGPU_ALLOCATION {
     LIST_ENTRY ListEntry;
-    ULONG AllocationId;
-    ULONGLONG ShareToken;
+    ULONG AllocationId; /* aerogpu_wddm_alloc_priv.alloc_id */
+    ULONGLONG ShareToken; /* aerogpu_wddm_alloc_priv.share_token */
     SIZE_T SizeBytes;
     ULONG Flags;
     PHYSICAL_ADDRESS LastKnownPa; /* updated from allocation lists */
@@ -123,7 +124,15 @@ typedef struct _AEROGPU_ADAPTER {
 
     LIST_ENTRY Allocations;
     KSPIN_LOCK AllocationsLock;
-    volatile LONG NextAllocationId;
+    /*
+     * Atomic alloc_id generator for non-AeroGPU (kernel/runtime) allocations
+     * that do not carry an AeroGPU private-data blob.
+     *
+     * The counter is initialised so that the first generated ID is
+     * AEROGPU_WDDM_ALLOC_ID_KMD_MIN, keeping the namespace split described in
+     * `aerogpu_wddm_alloc.h`.
+     */
+    volatile LONG NextKmdAllocId;
 
     AEROGPU_ABI_KIND AbiKind;
 

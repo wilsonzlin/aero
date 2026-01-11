@@ -122,20 +122,24 @@ Each submission may provide an optional **sideband allocation table**:
 
 This enables compact command streams that use small IDs instead of repeating GPAs.
 
-#### Stable `alloc_id` and shared-surface `share_token`
+#### `alloc_id` ownership and stability
 
-`alloc_id` is a **stable identifier assigned by the Windows KMD** to a WDDM allocation (not a per-submit index).
-The KMD must persist this value in **WDDM allocation private driver data** so that the UMD can retrieve it on:
+`alloc_id` values are owned by the **guest UMD**:
 
-- allocation create (`DxgkDdiCreateAllocation`), and
-- allocation open (`DxgkDdiOpenAllocation`) when a shared handle is imported by another guest process.
-
-**Requirement:** the same underlying shared allocation must always report the same `alloc_id` across opens.
-
-For cross-process shared surfaces (`AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE`),
-the recommended scheme is:
-
-- `share_token = (uint64_t)alloc_id`
+- The UMD chooses a non-zero `alloc_id` for each WDDM allocation it wants the host to
+  be able to reference.
+- To avoid collisions with KMD-synthesized IDs, UMD-generated IDs must keep the
+  high bit clear (`alloc_id <= 0x7fffffff`). The KMD reserves
+  `0x80000000..0xffffffff` for internal/standard allocations (see
+  `aerogpu_wddm_alloc.h`).
+- For **shared allocations** (cross-process `OpenResource`), the UMD must embed
+  the chosen `alloc_id` + `share_token` into the preserved WDDM allocation
+  private data blob so it can be recovered in another process. See
+  `aerogpu_wddm_alloc.h`.
+- For D3D9Ex shared surfaces, a simple recommended scheme is
+  `share_token = (uint64_t)alloc_id` (as long as alloc_id is global and stable).
+- The KMD treats `alloc_id` as an **input** (UMD→KMD), validates it, and forwards
+  the corresponding GPA/size to the host in `aerogpu_alloc_entry`.
 
 See `aerogpu_wddm_alloc.h` for the exact private-data layout used to persist `alloc_id`/`share_token` across CreateAllocation/OpenAllocation.
 
