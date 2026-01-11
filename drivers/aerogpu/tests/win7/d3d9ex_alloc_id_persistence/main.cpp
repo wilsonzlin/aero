@@ -252,15 +252,18 @@ static int CreateD3D9ExDevice(const char* test_name,
 }
 
 static int ValidateAdapter(const char* test_name,
-                            IDirect3D9Ex* d3d,
-                            aerogpu_test::TestReporter* reporter,
-                            bool allow_microsoft,
-                            bool allow_non_aerogpu,
-                            bool has_require_vid,
-                            uint32_t require_vid,
-                            bool has_require_did,
+                           IDirect3D9Ex* d3d,
+                           aerogpu_test::TestReporter* reporter,
+                           bool allow_microsoft,
+                           bool allow_non_aerogpu,
+                           bool has_require_vid,
+                           uint32_t require_vid,
+                           bool has_require_did,
                            uint32_t require_did) {
   if (!d3d) {
+    if (reporter) {
+      return reporter->Fail("ValidateAdapter: d3d == NULL");
+    }
     return aerogpu_test::Fail(test_name, "ValidateAdapter: d3d == NULL");
   }
 
@@ -269,9 +272,11 @@ static int ValidateAdapter(const char* test_name,
   HRESULT hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
   if (FAILED(hr)) {
     if (has_require_vid || has_require_did) {
-      return aerogpu_test::FailHresult(test_name,
-                                       "GetAdapterIdentifier (required for --require-vid/--require-did)",
-                                       hr);
+      if (reporter) {
+        return reporter->FailHresult("GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
+      }
+      return aerogpu_test::FailHresult(
+          test_name, "GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
     }
     return 0;
   }
@@ -286,6 +291,12 @@ static int ValidateAdapter(const char* test_name,
   }
 
   if (!allow_microsoft && ident.VendorId == 0x1414) {
+    if (reporter) {
+      return reporter->Fail(
+          "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
+          (unsigned)ident.VendorId,
+          (unsigned)ident.DeviceId);
+    }
     return aerogpu_test::Fail(test_name,
                               "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
                               "Install AeroGPU driver or pass --allow-microsoft.",
@@ -293,12 +304,22 @@ static int ValidateAdapter(const char* test_name,
                               (unsigned)ident.DeviceId);
   }
   if (has_require_vid && ident.VendorId != require_vid) {
+    if (reporter) {
+      return reporter->Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                            (unsigned)ident.VendorId,
+                            (unsigned)require_vid);
+    }
     return aerogpu_test::Fail(test_name,
                               "adapter VID mismatch: got 0x%04X expected 0x%04X",
                               (unsigned)ident.VendorId,
                               (unsigned)require_vid);
   }
   if (has_require_did && ident.DeviceId != require_did) {
+    if (reporter) {
+      return reporter->Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                            (unsigned)ident.DeviceId,
+                            (unsigned)require_did);
+    }
     return aerogpu_test::Fail(test_name,
                               "adapter DID mismatch: got 0x%04X expected 0x%04X",
                               (unsigned)ident.DeviceId,
@@ -307,6 +328,11 @@ static int ValidateAdapter(const char* test_name,
   if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
       !(ident.VendorId == 0x1414 && allow_microsoft) &&
       !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
+    if (reporter) {
+      return reporter->Fail(
+          "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu or use --require-vid/--require-did)",
+          ident.Description);
+    }
     return aerogpu_test::Fail(test_name,
                               "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
                               "or use --require-vid/--require-did)",
@@ -390,6 +416,7 @@ static int ReadSurfacePixel(const char* test_name,
 }
 
 static void MaybeDumpSurface(const wchar_t* file_name,
+                             aerogpu_test::TestReporter* reporter,
                              bool dump,
                              IDirect3DSurface9* sysmem,
                              int width,
@@ -405,13 +432,13 @@ static void MaybeDumpSurface(const wchar_t* file_name,
     return;
   }
 
+  const std::wstring path = aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), file_name);
   std::string err;
-  aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), file_name),
-                               width,
-                               height,
-                               lr.pBits,
-                               (int)lr.Pitch,
-                               &err);
+  if (aerogpu_test::WriteBmp32BGRA(path, width, height, lr.pBits, (int)lr.Pitch, &err)) {
+    if (reporter) {
+      reporter->AddArtifactPathW(path);
+    }
+  }
   sysmem->UnlockRect();
 }
 
@@ -729,7 +756,7 @@ static int RunChild(int argc, char** argv) {
                  L"d3d9ex_alloc_id_persistence_child_src_%u.bmp",
                  (unsigned)i);
       dump_name[ARRAYSIZE(dump_name) - 1] = 0;
-      MaybeDumpSurface(dump_name, dump, sysmem.get(), kSize, kSize);
+      MaybeDumpSurface(dump_name, NULL, dump, sysmem.get(), kSize, kSize);
       return aerogpu_test::Fail(kTestName,
                                 "B mismatch @iter=%u: got=0x%08lX expected=0x%08lX",
                                 (unsigned)i,
@@ -1256,7 +1283,7 @@ static int RunParent(int argc, char** argv) {
                  L"d3d9ex_alloc_id_persistence_parent_dst_%u.bmp",
                  (unsigned)i);
       dump_name[ARRAYSIZE(dump_name) - 1] = 0;
-      MaybeDumpSurface(dump_name, dump, sysmem.get(), kSize, kSize);
+      MaybeDumpSurface(dump_name, &reporter, dump, sysmem.get(), kSize, kSize);
       TerminateProcess(pi.hProcess, 1);
       return aerogpu_test::Fail(kTestName,
                                 "A mismatch @iter=%u: got=0x%08lX expected=0x%08lX",
