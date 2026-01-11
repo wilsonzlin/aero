@@ -152,6 +152,34 @@ pCreateDevice->pDeviceContextFuncs->pfnDraw = &MyDraw;
 
 Don’t overthink the stub implementation: `E_NOTIMPL` + `SetErrorCb(E_NOTIMPL)` is enough as long as it never dereferences invalid handles.
 
+### Stub templates by signature (copy/paste starting point)
+
+Most of the D3D11 UMD DDI surface fits into a few signature patterns. For a skeleton driver, it’s common to implement a small set of generic stubs and use them to populate the tables.
+
+```c
+// CalcPrivate*Size: runtime uses this to allocate hXxx.pDrvPrivate storage.
+static SIZE_T APIENTRY Stub_CalcPrivateSize(...) {
+  return sizeof(uint64_t); // keep non-zero; easiest to reason about
+}
+
+// Create*: HRESULT-returning (common for object creation).
+static HRESULT APIENTRY Stub_Create_HRESULT(...) {
+  return E_NOTIMPL;
+}
+
+// Destroy*: void-returning (common for object destruction).
+static void APIENTRY Stub_Destroy_VOID(...) {
+  // Must be safe on partially-initialized objects.
+}
+
+// Context-state setters and draws are usually void and take HDEVICECONTEXT first.
+static void APIENTRY Stub_Ctx_VOID(D3D11DDI_HDEVICECONTEXT hCtx, ...) {
+  g_DeviceCallbacks.pfnSetErrorCb(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+```
+
+These are intentionally “dumb but safe”. Once you start implementing a feature, override the specific entrypoints while leaving unrelated ones stubbed.
+
 ---
 
 ## 1) Win7 loader flow (what calls what, in what order)
@@ -578,3 +606,20 @@ If your goal is “device creates and the two repo tests pass”:
    * device `pfnPresent` + `pfnRotateResourceIdentities`
 
 Everything else can initially be “present-but-stubbed”, as long as it fails cleanly and never dereferences invalid handles.
+
+---
+
+## Appendix: common early crash sources (and what the checklist prevents)
+
+If you’re bringing up a new UMD and seeing immediate access violations in `d3d11.dll` / `dxgi.dll`, the root cause is often one of:
+
+* **NULL DDI function pointer** in `D3D11DDI_DEVICEFUNCS` / `D3D11DDI_DEVICECONTEXTFUNCS`.
+  * Fix: stub-fill all fields (see §0 “Non-null discipline”).
+* **Wrong calling convention / prototype mismatch** (stack imbalance).
+  * Fix: make sure you compile with the exact `PFND3D11DDI_*` typedefs from `d3d11umddi.h` and use `__stdcall`/`APIENTRY`.
+* **`pfnGetCaps` writing past `DataSize`**, or assuming `pData` is always non-null.
+  * Fix: treat `pData == NULL` as a size query when applicable, validate `DataSize` before writing, and be conservative on unknown types.
+* **Returning “supported” in caps but failing creation later** (leads to confusing app behavior and sometimes runtime asserts).
+  * Fix: keep caps truthful; only advertise what you implement end-to-end.
+
+This doc’s core recommendation (“fill everything with safe stubs first; then incrementally implement”) is specifically to avoid the first class of bring-up crashes.
