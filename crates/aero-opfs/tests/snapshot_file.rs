@@ -121,3 +121,12 @@ fn seek_before_start_errors() {
     let err = file.seek(SeekFrom::Current(-1)).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
 }
+
+#[test]
+fn seek_after_close_errors() {
+    let mut file = OpfsSyncFile::from_handle(MockHandle::default());
+    file.write_all(b"abc").unwrap();
+    file.close().unwrap();
+    let err = file.seek(SeekFrom::Start(0)).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+}
