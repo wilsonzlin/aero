@@ -3,6 +3,8 @@ import {
   isUsbRingAttachMessage,
   isUsbSelectedMessage,
   isUsbSetupPacket,
+  isUsbHostAction,
+  isUsbHostCompletion,
   usbErrorCompletion,
   type SetupPacket,
   type UsbActionMessage,
@@ -49,9 +51,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function isNullableBytes(value: unknown): value is Uint8Array | null {
+  return value === null || value instanceof Uint8Array;
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isWebUsbUhciHarnessRuntimeSnapshot(value: unknown): value is WebUsbUhciHarnessRuntimeSnapshot {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.available === "boolean" &&
+    typeof value.enabled === "boolean" &&
+    typeof value.blocked === "boolean" &&
+    isNonNegativeSafeInteger(value.tickCount) &&
+    isNonNegativeSafeInteger(value.actionsForwarded) &&
+    isNonNegativeSafeInteger(value.completionsApplied) &&
+    isNonNegativeSafeInteger(value.pendingCompletions) &&
+    (value.lastAction === null || isUsbHostAction(value.lastAction)) &&
+    (value.lastCompletion === null || isUsbHostCompletion(value.lastCompletion)) &&
+    isNullableBytes(value.deviceDescriptor) &&
+    isNullableBytes(value.configDescriptor) &&
+    isNullableString(value.lastError)
+  );
+}
+
 export function isUsbUhciHarnessStatusMessage(value: unknown): value is UsbUhciHarnessStatusMessage {
   if (!isRecord(value) || value.type !== "usb.harness.status") return false;
-  return isRecord(value.snapshot);
+  return isWebUsbUhciHarnessRuntimeSnapshot(value.snapshot);
 }
 
 export type WebUsbUhciPassthroughHarnessLike = {

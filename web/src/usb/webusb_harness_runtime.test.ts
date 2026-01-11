@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { WebUsbUhciHarnessRuntime } from "./webusb_harness_runtime";
+import { isUsbUhciHarnessStatusMessage, WebUsbUhciHarnessRuntime } from "./webusb_harness_runtime";
 import type { UsbHostAction, UsbHostCompletion } from "./usb_proxy_protocol";
 
 type Listener = (ev: MessageEvent<unknown>) => void;
@@ -208,5 +208,35 @@ describe("usb/WebUsbUhciHarnessRuntime", () => {
     const snapshot = runtime.getSnapshot();
     expect(snapshot.enabled).toBe(false);
     expect(snapshot.lastError).toMatch(/uint32/i);
+  });
+
+  it("validates usb.harness.status messages with a strict type guard", () => {
+    const msg = {
+      type: "usb.harness.status",
+      snapshot: {
+        available: true,
+        enabled: false,
+        blocked: true,
+        tickCount: 0,
+        actionsForwarded: 0,
+        completionsApplied: 0,
+        pendingCompletions: 0,
+        lastAction: null,
+        lastCompletion: null,
+        deviceDescriptor: null,
+        configDescriptor: null,
+        lastError: null,
+      },
+    };
+    expect(isUsbUhciHarnessStatusMessage(msg)).toBe(true);
+
+    // Reject malformed shapes.
+    expect(isUsbUhciHarnessStatusMessage({ type: "usb.harness.status" })).toBe(false);
+    expect(
+      isUsbUhciHarnessStatusMessage({
+        type: "usb.harness.status",
+        snapshot: { ...msg.snapshot, lastAction: { kind: "bulkIn", id: 1, endpoint: 1, length: 8 } },
+      }),
+    ).toBe(false);
   });
 });
