@@ -223,7 +223,9 @@ function maybeInitUhciDevice(): void {
     const hasWebUsb =
       bridge &&
       typeof (bridge as unknown as { set_connected?: unknown }).set_connected === "function" &&
-      typeof (bridge as unknown as { drain_actions?: unknown }).drain_actions === "function";
+      typeof (bridge as unknown as { drain_actions?: unknown }).drain_actions === "function" &&
+      typeof (bridge as unknown as { push_completion?: unknown }).push_completion === "function" &&
+      typeof (bridge as unknown as { reset?: unknown }).reset === "function";
 
     if (bridge && hasWebUsb) {
       // `UhciPciDevice` owns the WASM bridge and calls `free()` during shutdown; wrap with a
@@ -233,7 +235,12 @@ function maybeInitUhciDevice(): void {
         drain_actions: () => bridge.drain_actions(),
         push_completion: (completion) => bridge.push_completion(completion),
         reset: () => bridge.reset(),
-        pending_summary: () => bridge.pending_summary(),
+        // Debug-only; tolerate older WASM builds that might not expose it.
+        pending_summary: () => {
+          const fn = (bridge as unknown as { pending_summary?: unknown }).pending_summary;
+          if (typeof fn !== "function") return null;
+          return fn.call(bridge) as unknown;
+        },
         free: () => {},
       };
 
