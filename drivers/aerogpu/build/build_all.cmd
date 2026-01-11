@@ -242,7 +242,10 @@ if exist "%CAND%\inc\ddk\d3d9umddi.h" set "HAS_D3D9=1"
 set "HAS_D3DUM="
 if exist "%CAND%\inc\api\d3dumddi.h" set "HAS_D3DUM=1"
 if exist "%CAND%\inc\ddk\d3dumddi.h" set "HAS_D3DUM=1"
-if defined HAS_D3D9 if defined HAS_D3DUM set "AEROGPU_WDKROOT_D3D9=%CAND%"
+set "HAS_D3DKMT="
+if exist "%CAND%\inc\api\d3dkmthk.h" set "HAS_D3DKMT=1"
+if exist "%CAND%\inc\ddk\d3dkmthk.h" set "HAS_D3DKMT=1"
+if defined HAS_D3D9 if defined HAS_D3DUM if defined HAS_D3DKMT set "AEROGPU_WDKROOT_D3D9=%CAND%"
 exit /b 0
 
 rem -----------------------------------------------------------------------------
@@ -265,5 +268,8 @@ if exist "%CAND%\inc\ddk\d3d11umddi.h" set "HAS_D3D11=1"
 set "HAS_D3DUM="
 if exist "%CAND%\inc\api\d3dumddi.h" set "HAS_D3DUM=1"
 if exist "%CAND%\inc\ddk\d3dumddi.h" set "HAS_D3DUM=1"
-if defined HAS_D3D10 if defined HAS_D3D10_1 if defined HAS_D3D11 if defined HAS_D3DUM set "AEROGPU_WDKROOT_D3D10_11=%CAND%"
+set "HAS_D3DKMT="
+if exist "%CAND%\inc\api\d3dkmthk.h" set "HAS_D3DKMT=1"
+if exist "%CAND%\inc\ddk\d3dkmthk.h" set "HAS_D3DKMT=1"
+if defined HAS_D3D10 if defined HAS_D3D10_1 if defined HAS_D3D11 if defined HAS_D3DUM if defined HAS_D3DKMT set "AEROGPU_WDKROOT_D3D10_11=%CAND%"
 exit /b 0
