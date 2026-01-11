@@ -6,6 +6,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// Keep enough stdout/stderr to surface useful errors without risking runaway logs in CI.
 const COMMAND_OUTPUT_LIMIT = 200_000;
 const BUILD_LOCK_TIMEOUT_MS = 35 * 60_000;
 const BUILD_LOCK_RETRY_MS = 200;
@@ -85,16 +86,35 @@ async function getProxyBinPath() {
 let buildPromise;
 async function ensureProxyBuilt() {
   if (buildPromise) return buildPromise;
-  buildPromise = withBuildLock(async () => {
-    await runCommand("cargo", ["build", "--quiet", "--locked", "-p", "aero-l2-proxy"], {
-      cwd: REPO_ROOT,
-      // A cold `cargo build` of the full dependency graph can be slow on CI runners.
-      // Keep this bounded (deterministic) but generous enough to avoid flakes.
-      timeoutMs: 30 * 60_000,
-    });
+  buildPromise = (async () => {
     const binPath = await getProxyBinPath();
-    await access(binPath);
-  });
+
+    // Fast path: binary already exists (e.g. tests running multiple files in the same checkout).
+    try {
+      await access(binPath);
+      return;
+    } catch {
+      // continue
+    }
+
+    await withBuildLock(async () => {
+      // Another worker may have completed the build while we were waiting.
+      try {
+        await access(binPath);
+        return;
+      } catch {
+        // continue
+      }
+
+      await runCommand("cargo", ["build", "--quiet", "--locked", "-p", "aero-l2-proxy"], {
+        cwd: REPO_ROOT,
+        // A cold `cargo build` of the full dependency graph can be slow on CI runners.
+        // Keep this bounded (deterministic) but generous enough to avoid flakes.
+        timeoutMs: 30 * 60_000,
+      });
+      await access(binPath);
+    });
+  })();
   return buildPromise;
 }
 

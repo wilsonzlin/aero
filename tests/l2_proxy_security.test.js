@@ -64,6 +64,12 @@ async function waitForClose(ws, timeoutMs = 2_000) {
   });
 }
 
+function encodeL2Frame(payload) {
+  // L2 tunnel v1 header (aero-l2-protocol): magic=0xa2, version=0x03, type=FRAME(0x00), flags=0.
+  const header = Buffer.from([0xa2, 0x03, 0x00, 0x00]);
+  return Buffer.concat([header, payload]);
+}
+
 test("l2 proxy requires Origin by default", async () => {
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "0",
@@ -187,7 +193,9 @@ test("l2 proxy closes the socket when per-connection quotas are exceeded", async
     const conn = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`);
     assert.equal(conn.ok, true);
 
-    conn.ws.send(Buffer.alloc(65));
+    // Byte quota is enforced on total WebSocket bytes (rx + tx), so send a single oversized tunnel
+    // message (wire header + payload) that exceeds the configured limit.
+    conn.ws.send(encodeL2Frame(Buffer.alloc(61)));
     const closedBytes = await waitForClose(conn.ws);
     assert.equal(closedBytes.code, 1008);
     assert.match(closedBytes.reason, /byte quota exceeded/i);
