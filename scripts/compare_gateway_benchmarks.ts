@@ -172,6 +172,18 @@ async function main() {
     cases,
   });
 
+  // Treat missing candidate metrics as unstable. This avoids silently passing
+  // when a benchmark run fails or a metric stops being reported.
+  //
+  // Note: missing baseline metrics are allowed so we can add new metrics without
+  // breaking comparisons against older baselines.
+  const missingCandidateRequired = (result.comparisons ?? []).some(
+    (c: any) => c?.status === "missing_candidate" && !c?.informational,
+  );
+  if (missingCandidateRequired) {
+    result.status = "unstable";
+  }
+
   const markdown = renderCompareMarkdown(result, { title: "Gateway perf comparison" });
   await Promise.all([
     fs.writeFile(path.join(outDir, "compare.md"), markdown),
@@ -187,4 +199,3 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exitCode = 1;
   });
 }
-
