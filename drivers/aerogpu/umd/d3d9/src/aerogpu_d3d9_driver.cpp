@@ -4836,7 +4836,7 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
     cmd->reserved0 = 0;
     cmd->offset_bytes = static_cast<uint64_t>(offset);
     cmd->size_bytes = static_cast<uint64_t>(size);
-    return S_OK;
+    return trace.ret(S_OK);
   }
 
   // Fallback: host-allocated resources are updated by embedding raw bytes in the
