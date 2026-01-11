@@ -15,7 +15,8 @@ This crate contains clean-room firmware components used by the Aero emulator.
 The BIOS is dispatched without trapping `INT xx` in the CPU core:
 
 1. The VM maps the ROM from `build_bios_rom()` at [`BIOS_BASE`] with size [`BIOS_SIZE`].
-   The reset vector lives at [`RESET_VECTOR_PHYS`] (alias `F000:FFF0` in real mode).
+   If the CPU models the architectural reset alias at the top of 4GiB, also map/alias the ROM at
+   [`BIOS_ALIAS_BASE`] so the reset vector at [`RESET_VECTOR_ALIAS_PHYS`] is valid.
 2. The CPU executes `INT imm8` normally in real mode (push FLAGS/CS/IP, clear IF/TF,
    and load CS:IP from the IVT).
 3. During POST the BIOS writes the IVT to point at tiny ROM stubs (one per INT).

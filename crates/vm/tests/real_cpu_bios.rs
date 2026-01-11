@@ -7,8 +7,8 @@ use aero_cpu_core::state::{
 };
 use firmware::bda::BiosDataArea;
 use firmware::bios::{
-    build_bios_rom, Bios, BiosConfig, BiosBus, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR,
-    TICKS_PER_DAY, BIOS_BASE, BIOS_SEGMENT,
+    build_bios_rom, Bios, BiosBus, BiosConfig, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR,
+    BIOS_ALIAS_BASE, BIOS_BASE, BIOS_SEGMENT, BIOS_SIZE, RESET_VECTOR_OFFSET, TICKS_PER_DAY,
 };
 use firmware::rtc::{CmosRtc, DateTime};
 use machine::{
@@ -48,10 +48,10 @@ fn core_reset_state() -> CoreCpuState {
     let mut state = CoreCpuState::new(CoreCpuMode::Real);
     // Hardware reset: CS.selector=0xF000, CS.base=0xFFFF_0000, IP=0xFFF0.
     state.segments.cs.selector = BIOS_SEGMENT;
-    state.segments.cs.base = 0xFFFF_0000;
+    state.segments.cs.base = BIOS_ALIAS_BASE;
     state.segments.cs.limit = 0xFFFF;
     state.segments.cs.access = 0;
-    state.set_rip(0xFFF0);
+    state.set_rip(RESET_VECTOR_OFFSET);
     set_real_mode_seg(&mut state.segments.ds, 0);
     set_real_mode_seg(&mut state.segments.es, 0);
     set_real_mode_seg(&mut state.segments.ss, 0);
@@ -132,8 +132,9 @@ impl BiosTestMemory {
     }
 
     fn translate_bios_alias(addr: u64) -> u64 {
-        if (0xFFFF_0000..=0xFFFF_FFFF).contains(&addr) {
-            BIOS_BASE + (addr - 0xFFFF_0000)
+        let alias_end = BIOS_ALIAS_BASE + (BIOS_SIZE as u64).saturating_sub(1);
+        if (BIOS_ALIAS_BASE..=alias_end).contains(&addr) {
+            BIOS_BASE + (addr - BIOS_ALIAS_BASE)
         } else {
             addr
         }

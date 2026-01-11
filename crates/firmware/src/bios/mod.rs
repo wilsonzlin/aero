@@ -44,10 +44,12 @@ pub use rom::build_bios_rom;
 pub use aero_acpi::AcpiPlacement;
 
 pub const BIOS_BASE: u64 = 0x000F_0000;
+pub const BIOS_ALIAS_BASE: u64 = 0xFFFF_0000;
 pub const BIOS_SIZE: usize = 0x10000; // 64KiB
 pub const BIOS_SEGMENT: u16 = 0xF000;
 pub const RESET_VECTOR_OFFSET: u64 = 0xFFF0;
 pub const RESET_VECTOR_PHYS: u64 = BIOS_BASE + RESET_VECTOR_OFFSET;
+pub const RESET_VECTOR_ALIAS_PHYS: u64 = BIOS_ALIAS_BASE + RESET_VECTOR_OFFSET;
 
 pub const IVT_BASE: u64 = 0x0000_0000;
 pub const BDA_BASE: u64 = 0x0000_0400;
