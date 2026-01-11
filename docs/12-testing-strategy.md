@@ -572,7 +572,7 @@ async fn test_directx_triangle() {
 
 #### Browser GPU smoke tests (Playwright)
 
-The repository includes a minimal harness page (`web/src/pages/gpu_smoke.html`) and a dedicated smoke-test GPU worker (`web/src/workers/gpu_smoke.worker.js`) used by Playwright (`tests/playwright/gpu_smoke.spec.ts`).
+The repository includes a minimal harness page (`web/src/pages/gpu_smoke.html`) and a dedicated smoke-test GPU worker (`web/src/workers/gpu_smoke.worker.js`) used by Playwright (`tests/e2e/playwright/gpu_smoke.spec.ts`).
 
 The smoke test does:
 
@@ -1027,7 +1027,7 @@ In addition to full-system screenshots, we need a deterministic GPU-only validat
 
 Use a simple **test card** (grayscale ramp + alpha gradient + corner markers) and hash the
 presented pixels per backend. See `web/src/gpu/validation-scene.ts` and the Playwright spec
-`web/tests/gpu_color.spec.ts`.
+`tests/e2e/web/gpu_color.spec.ts`.
 
 ### CSP/COOP/COEP regression tests (implemented)
 
@@ -1063,8 +1063,8 @@ This repository includes a minimal Playwright-based harness that:
 
 Key files:
 
-- `tests/playwright/gpu_golden.spec.ts` — microtests + capture
-- `tests/playwright/utils/image_diff.ts` — pixel diff + artifact emission
+- `tests/e2e/playwright/gpu_golden.spec.ts` — microtests + capture
+- `tests/e2e/playwright/utils/image_diff.ts` — pixel diff + artifact emission
 - `tests/golden/*.png` — committed goldens (synthetic scenes only)
 - `playwright.gpu.config.ts` — Playwright config (Chromium+WebGPU flags + Firefox WebGL2)
 

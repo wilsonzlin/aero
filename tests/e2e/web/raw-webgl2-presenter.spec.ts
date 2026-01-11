@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test('forceBackend=webgl2_raw can present and read back screenshot', async ({ page }) => {
-  await page.goto('/raw_webgl2_presenter_test.html');
+  await page.goto('/web/raw_webgl2_presenter_test.html');
 
   const width = 64;
   const height = 64;

@@ -27,5 +27,7 @@ jobs:
           browsers: chromium
           working-directory: ${{ steps.node-workspace.outputs.dir }}
           lockfile: ${{ steps.node-workspace.outputs.lockfile }}
-      - run: npx playwright test -c playwright.config.cjs
+
+      - name: Run WebGL2 fallback E2E spec
         working-directory: ${{ steps.node-workspace.outputs.dir }}
+        run: npm run test:e2e -- --project=chromium tests/e2e/web/webgl2-fallback-demo.spec.ts

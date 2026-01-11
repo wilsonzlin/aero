@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
-test('GPU worker: submit_aerogpu round-trips and presents deterministic triangle', async ({ page }) => {
-  await page.goto('/blank.html');
+test('GPU worker: malformed submit_aerogpu reports error but worker stays alive', async ({ page }) => {
+  await page.goto('/web/blank.html');
 
   await page.setContent(`
     <style>
@@ -10,7 +10,7 @@ test('GPU worker: submit_aerogpu round-trips and presents deterministic triangle
     </style>
     <canvas id="c"></canvas>
     <script type="module">
-      import { fnv1a32Hex } from "/src/utils/fnv1a.ts";
+       import { fnv1a32Hex } from "/web/src/utils/fnv1a.ts";
 
       const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("c"));
 
@@ -116,7 +116,7 @@ test('GPU worker: submit_aerogpu round-trips and presents deterministic triangle
 
       (async () => {
         try {
-          const worker = new Worker("/src/workers/gpu.worker.ts", { type: "module" });
+           const worker = new Worker("/web/src/workers/gpu.worker.ts", { type: "module" });
 
           let readyResolve;
           let readyReject;
@@ -128,6 +128,15 @@ test('GPU worker: submit_aerogpu round-trips and presents deterministic triangle
           let nextRequestId = 1;
           const pending = new Map();
 
+          /** @type {any[]} */
+          const errors = [];
+          let nextErrorResolve = null;
+
+          const waitForNextError = () =>
+            new Promise((resolve) => {
+              nextErrorResolve = resolve;
+            });
+
           const onMessage = (event) => {
             const msg = event.data;
             if (!msg || typeof msg !== "object" || typeof msg.type !== "string") return;
@@ -136,10 +145,11 @@ test('GPU worker: submit_aerogpu round-trips and presents deterministic triangle
               return;
             }
             if (msg.type === "error") {
-              // Treat any worker error as fatal for this test.
-              readyReject(new Error("gpu worker error: " + msg.message));
-              for (const [, v] of pending) v.reject(new Error("gpu worker error: " + msg.message));
-              pending.clear();
+              errors.push(String(msg.message ?? ""));
+              if (nextErrorResolve) {
+                nextErrorResolve(msg);
+                nextErrorResolve = null;
+              }
               return;
             }
             if (msg.type === "submit_complete" || msg.type === "screenshot") {
@@ -195,6 +205,29 @@ test('GPU worker: submit_aerogpu round-trips and presents deterministic triangle
 
           await ready;
 
+          // Malformed stream: wrong magic.
+          const bad = new ArrayBuffer(24);
+          const dv = new DataView(bad);
+          dv.setUint32(0, 0xdeadbeef, true);
+          dv.setUint32(4, 0x00010000, true);
+          dv.setUint32(8, 24, true);
+
+          const badSubmitRequestId = nextRequestId++;
+          const badSubmitPromise = new Promise((resolve, reject) => pending.set(badSubmitRequestId, { resolve, reject }));
+          const badErrorPromise = waitForNextError();
+          worker.postMessage(
+            {
+              type: "submit_aerogpu",
+              requestId: badSubmitRequestId,
+              signalFence: 1n,
+              cmdStream: bad,
+            },
+            [bad],
+          );
+
+          await Promise.all([badSubmitPromise, badErrorPromise]);
+
+          // Now a valid submit should still work.
           const expected = triangleRgba(W, H);
           const cmdStream = buildCmdStream(expected, W, H);
 
@@ -204,12 +237,12 @@ test('GPU worker: submit_aerogpu round-trips and presents deterministic triangle
             {
               type: "submit_aerogpu",
               requestId: submitRequestId,
-              signalFence: 1n,
+              signalFence: 2n,
               cmdStream,
             },
             [cmdStream],
           );
-          const submit = await submitPromise;
+          await submitPromise;
 
           const screenshotRequestId = nextRequestId++;
           const screenshotPromise = new Promise((resolve, reject) => pending.set(screenshotRequestId, { resolve, reject }));
@@ -220,25 +253,25 @@ test('GPU worker: submit_aerogpu round-trips and presents deterministic triangle
           const hash = fnv1a32Hex(actual);
           const expectedHash = fnv1a32Hex(expected);
 
-          window.__AERO_SUBMIT_RESULT__ = {
+          window.__AERO_SUBMIT_ERROR_RESULT__ = {
             pass: hash === expectedHash,
             hash,
             expectedHash,
-            presentCount: submit.presentCount?.toString?.() ?? null,
-            completedFence: submit.completedFence?.toString?.() ?? null,
+            errors,
           };
 
           worker.postMessage({ type: "shutdown" });
           worker.terminate();
         } catch (e) {
-          window.__AERO_SUBMIT_RESULT__ = { pass: false, error: String(e) };
+          window.__AERO_SUBMIT_ERROR_RESULT__ = { pass: false, error: String(e) };
         }
       })();
     </script>
   `);
 
-  await page.waitForFunction(() => (window as any).__AERO_SUBMIT_RESULT__);
-  const result = await page.evaluate(() => (window as any).__AERO_SUBMIT_RESULT__);
+  await page.waitForFunction(() => (window as any).__AERO_SUBMIT_ERROR_RESULT__);
+  const result = await page.evaluate(() => (window as any).__AERO_SUBMIT_ERROR_RESULT__);
   expect(result.error ?? null).toBeNull();
+  expect(result.errors.length).toBeGreaterThan(0);
   expect(result.pass).toBe(true);
 });

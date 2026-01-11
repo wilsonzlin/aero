@@ -3,6 +3,7 @@ import { defineConfig, devices } from '@playwright/test';
 const DEV_PORT = 5173;
 const PREVIEW_PORT = 4173;
 const CSP_POC_PORT = 4180;
+const DEV_ORIGIN = `http://127.0.0.1:${DEV_PORT}`;
 const EXPOSE_GC = process.env.AERO_PLAYWRIGHT_EXPOSE_GC === '1';
 const CHROMIUM_ARGS = [
   '--enable-unsafe-webgpu',
@@ -35,8 +36,7 @@ const CHROMIUM_WEBGPU_ARGS = [
 ];
 
 export default defineConfig({
-  // Keep Playwright tests under `tests/`, but only run the dedicated browser suites.
-  // (We also have Node/Vitest unit tests elsewhere under `tests/`.)
+  // Canonical Playwright suites live under `tests/e2e/`.
   timeout: 30_000,
   expect: {
     timeout: 5_000,
@@ -47,8 +47,8 @@ export default defineConfig({
       maxDiffPixelRatio: 0.005,
     },
   },
-  testDir: './tests',
-  testMatch: ['e2e/**/*.spec.ts', 'playwright/**/*.spec.ts'],
+  testDir: './tests/e2e',
+  testMatch: ['**/*.spec.ts'],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -67,6 +67,7 @@ export default defineConfig({
   snapshotPathTemplate:
     '{testDir}/{testFileDir}/__screenshots__/{testFileName}/{arg}{-projectName}{-platform}{ext}',
   use: {
+    baseURL: DEV_ORIGIN,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 
-import { MicCapture } from "../../../src/audio/mic_capture";
+import { MicCapture } from "./mic_capture";
 
 const ORIGINAL_AUDIO_CONTEXT = (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext;
 const ORIGINAL_MEDIA_DEVICES = (navigator as unknown as { mediaDevices?: unknown }).mediaDevices;
@@ -88,4 +88,3 @@ test("MicCapture exposes AudioContext.sampleRate as actualSampleRate (even if re
 
   await mic.stop();
 });
-

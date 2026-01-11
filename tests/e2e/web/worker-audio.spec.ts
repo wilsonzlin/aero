@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 test("worker audio fills the shared ring buffer (no postMessage audio copies)", async ({ page }) => {
-  await page.goto("/blank.html");
+  await page.goto("/web/blank.html");
 
   // Runtime worker audio depends on the threaded WASM bundle being built into
   // `web/src/wasm/pkg-threaded`. When running Playwright in environments that
@@ -42,8 +42,8 @@ test("worker audio fills the shared ring buffer (no postMessage audio copies)", 
     <button id="start">Start audio</button>
     <pre id="log"></pre>
     <script type="module">
-      import { WorkerCoordinator } from "/src/runtime/coordinator.ts";
-      import { createAudioOutput } from "/src/platform/audio.ts";
+      import { WorkerCoordinator } from "/web/src/runtime/coordinator.ts";
+      import { createAudioOutput } from "/web/src/platform/audio.ts";
 
       const log = document.getElementById("log");
       const coordinator = new WorkerCoordinator();

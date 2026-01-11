@@ -17,9 +17,8 @@
     "tests",
     "web/src/hid",
     "vite.harness.config.ts",
-    "vitest.config.ts",
     "playwright.config.ts",
     "playwright.gpu.config.ts"
   ],
-  "exclude": ["tests/e2e/**", "tests/playwright/**"]
+  "exclude": ["tests/e2e/**"]
 }

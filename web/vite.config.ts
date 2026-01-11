@@ -152,12 +152,25 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // These tests exercise blocking Atomics.wait() + Node worker_threads.
+    // On newer Node releases, Vitest's default thread pool can interfere with
+    // nested Worker scheduling / Atomics wakeups, causing flakes/timeouts.
+    // Run tests in forked processes for deterministic cross-thread behavior.
+    pool: "forks",
     // Keep Vitest scoped to unit tests under src/, plus any dedicated Vitest
     // suites under `web/test/` (suffixed `.vitest.ts`). The repo also contains:
     //  - `web/test/*.test.ts` which are Node's built-in `node:test` suites
-    //  - `web/tests/*` which are Playwright e2e specs
+    //  - `tests/e2e/*` which are Playwright specs
     include: ["src/**/*.test.ts", "test/**/*.vitest.ts"],
     exclude: ["test/**/*.test.ts", "tests/**"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "lcov"],
+      // Write coverage reports to the repo root (shared with Rust coverage, Codecov, etc).
+      reportsDirectory: resolve(rootDir, "../coverage"),
+      include: ["src/**/*.ts"],
+      exclude: ["src/**/*.d.ts"],
+    },
   },
   build: {
     outDir: "dist",

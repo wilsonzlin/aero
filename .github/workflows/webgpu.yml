@@ -34,7 +34,7 @@ jobs:
 
       - name: Run Playwright WebGPU tests
         working-directory: ${{ steps.node-workspace.outputs.dir }}
-        run: npx playwright test --project=chromium-webgpu
+        run: npm run test:webgpu
 
       - name: Upload Playwright report
         if: always()

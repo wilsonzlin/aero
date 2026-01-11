@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
 
 test("jit worker compiles wasm modules and caches by content hash", async ({ page }) => {
-  await page.goto("/blank.html");
+  await page.goto("/web/blank.html");
 
   const result = await page.evaluate(async () => {
-    const worker = new Worker("/src/workers/jit.worker.ts", { type: "module" });
+    const worker = new Worker("/web/src/workers/jit.worker.ts", { type: "module" });
 
     const compileOnce = (id: number, wasmBytes: ArrayBuffer) =>
       new Promise<any>((resolve, reject) => {
@@ -53,10 +53,10 @@ test("jit worker compiles wasm modules and caches by content hash", async ({ pag
 });
 
 test("jit worker returns csp_blocked when platformFeatures.jit_dynamic_wasm=false", async ({ page }) => {
-  await page.goto("/blank.html");
+  await page.goto("/web/blank.html");
 
   const result = await page.evaluate(async () => {
-    const worker = new Worker("/src/workers/jit.worker.ts", { type: "module" });
+    const worker = new Worker("/web/src/workers/jit.worker.ts", { type: "module" });
 
     // Simulate CSP gating via config.update (used by the WorkerCoordinator in the real app).
     worker.postMessage({

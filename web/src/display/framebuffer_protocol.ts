@@ -39,7 +39,11 @@ export type FramebufferHeaderConfig = Readonly<{
   format?: number;
 }>;
 
-export function requiredFramebufferBytes(width: number, height: number, strideBytes = width * 4): number {
+export function requiredFramebufferBytes(
+  width: number,
+  height: number,
+  strideBytes: number = width * 4,
+): number {
   if (!Number.isInteger(width) || width <= 0) {
     throw new Error(`Invalid width: ${width}`);
   }
@@ -106,7 +110,10 @@ export function initFramebufferHeader(
 /**
  * Wraps a framebuffer region stored in `buffer` at `byteOffset`.
  */
-export function wrapSharedFramebuffer(buffer: ArrayBuffer | SharedArrayBuffer, byteOffset = 0): SharedFramebufferView {
+export function wrapSharedFramebuffer(
+  buffer: ArrayBuffer | SharedArrayBuffer,
+  byteOffset: number = 0,
+): SharedFramebufferView {
   if (!Number.isInteger(byteOffset) || byteOffset < 0) {
     throw new Error(`Invalid byteOffset: ${byteOffset}`);
   }
@@ -149,10 +156,9 @@ export type FramebufferCopyMessageV1 = Readonly<{
 }>;
 
 export function isFramebufferCopyMessageV1(msg: unknown): msg is FramebufferCopyMessageV1 {
-  const obj = msg as any;
+  if (!msg || typeof msg !== "object") return false;
+  const obj = msg as Record<string, unknown>;
   return (
-    obj != null &&
-    typeof obj === "object" &&
     obj.type === FRAMEBUFFER_COPY_MESSAGE_TYPE &&
     typeof obj.width === "number" &&
     typeof obj.height === "number" &&

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { detectPlatformFeatures } from "../../../src/platform/features";
+import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./features";
 
 const originalValidate = WebAssembly.validate;
 
@@ -21,6 +21,24 @@ afterEach(() => {
   delete (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext;
   delete (globalThis as typeof globalThis & { OffscreenCanvas?: unknown }).OffscreenCanvas;
 });
+
+function report(overrides: Partial<PlatformFeatureReport> = {}): PlatformFeatureReport {
+  return {
+    crossOriginIsolated: false,
+    sharedArrayBuffer: false,
+    wasmSimd: false,
+    wasmThreads: false,
+    jit_dynamic_wasm: false,
+    webgpu: false,
+    webusb: false,
+    webgl2: false,
+    opfs: false,
+    opfsSyncAccessHandle: false,
+    audioWorklet: false,
+    offscreenCanvas: false,
+    ...overrides,
+  };
+}
 
 describe("detectPlatformFeatures", () => {
   it("treats WASM threads as requiring crossOriginIsolated, SharedArrayBuffer, and Atomics", () => {
@@ -87,5 +105,41 @@ describe("detectPlatformFeatures", () => {
     (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext = true;
     const secure = detectPlatformFeatures();
     expect(secure.webusb).toBe(true);
+  });
+});
+
+describe("explainMissingRequirements", () => {
+  it("returns no messages when all requirements are satisfied", () => {
+    expect(
+      explainMissingRequirements(
+        report({
+          crossOriginIsolated: true,
+          sharedArrayBuffer: true,
+          wasmSimd: true,
+          wasmThreads: true,
+          jit_dynamic_wasm: true,
+          webgpu: true,
+          webgl2: true,
+          opfs: true,
+          opfsSyncAccessHandle: true,
+          audioWorklet: true,
+          offscreenCanvas: true,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("returns actionable messages for missing capabilities", () => {
+    const messages = explainMissingRequirements(report());
+
+    // Keep this intentionally broad (copy edits shouldn't break tests).
+    expect(messages).toHaveLength(9);
+    expect(messages.join("\n")).toContain("cross-origin isolated");
+    expect(messages.join("\n")).toContain("SharedArrayBuffer");
+    expect(messages.join("\n")).toContain("WebAssembly SIMD");
+    expect(messages.join("\n")).toContain("Dynamic WebAssembly compilation");
+    expect(messages.join("\n")).toContain("WebGPU");
+    expect(messages.join("\n")).toContain("WebGL2");
+    expect(messages.join("\n")).toContain("wasm-unsafe-eval");
   });
 });

@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import fs from "node:fs/promises";
 import http from "node:http";
 
-import { runGpuBenchmarksInPage } from "../../bench/gpu_bench.ts";
+import { runGpuBenchmarksInPage } from "../../../bench/gpu_bench.ts";
 
 async function startServer(html: string) {
   const server = http.createServer((req, res) => {

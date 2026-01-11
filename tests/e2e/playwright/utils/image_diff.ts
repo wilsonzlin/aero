@@ -39,9 +39,9 @@ function writePng(filePath: string, img: RgbaImage): void {
 }
 
 function resolveGoldenPath(goldenName: string): string {
-  // tests/playwright/utils -> tests/golden
+  // tests/e2e/playwright/utils -> tests/golden
   const dir = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(dir, '..', '..', 'golden', `${goldenName}.png`);
+  return path.resolve(dir, "..", "..", "..", "golden", `${goldenName}.png`);
 }
 
 export async function expectRgbaToMatchGolden(

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { JitWorkerClient } from "../../../src/workers/jit_worker_client";
+import { JitWorkerClient } from "./jit_worker_client";
 
 type MessageListener = (event: { data: unknown }) => void;
 type GenericListener = (event: any) => void;

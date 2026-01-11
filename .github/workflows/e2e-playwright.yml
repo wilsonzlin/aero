@@ -34,7 +34,7 @@ jobs:
 
       - name: Run visual regression suite
         working-directory: ${{ steps.node-workspace.outputs.dir }}
-        run: npx playwright test --project=chromium tests/e2e/security-headers.spec.ts tests/e2e/visual.spec.ts
+        run: npm run test:e2e -- --project=chromium tests/e2e/security-headers.spec.ts tests/e2e/visual.spec.ts
 
       - name: Upload Playwright artifacts
         if: failure()

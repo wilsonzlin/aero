@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("gpu worker falls back to WebGL2 when WebGPU is disabled", async ({ page }) => {
-  await page.goto("/blank.html");
+  await page.goto("/web/blank.html");
 
   // Expected hash for a solid-white 64x64 RGBA8 frame (SHA-256 over raw bytes).
   const expectedWhiteHash = "0fbba07a833d4dcfc7024eaf313661a0ba8f80a05c6d29b8801c612e10e60dee";
@@ -38,7 +38,7 @@ test("gpu worker falls back to WebGL2 when WebGPU is disabled", async ({ page })
     frameState[0] = 0; // FRAME_PRESENTED
     frameState[1] = 0; // seq
 
-    const worker = new Worker("/src/workers/gpu.worker.ts", { type: "module" });
+    const worker = new Worker("/web/src/workers/gpu.worker.ts", { type: "module" });
 
     const readyMsg = await new Promise<any>((resolve, reject) => {
       worker.addEventListener("message", (ev: MessageEvent) => {

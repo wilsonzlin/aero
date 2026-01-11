@@ -396,7 +396,7 @@ test('GPU backend smoke: WebGPU presents expected frame (golden) @webgpu', async
 });
 
 test('GPU trace replay: triangle trace renders deterministically (golden)', async ({ page }, testInfo) => {
-  const toolPath = path.resolve(TEST_DIR, '../../web/tools/gpu_trace_replay.ts');
+  const toolPath = path.resolve(TEST_DIR, '../../../web/tools/gpu_trace_replay.ts');
   const tracePath = path.resolve(TEST_DIR, '../fixtures/triangle.aerogputrace');
   const traceB64 = fs.readFileSync(tracePath).toString('base64');
 

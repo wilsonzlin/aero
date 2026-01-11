@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { AeroPerf } from "../../../src/perf/perf";
-import { startAudioPerfSampling } from "../../../src/platform/audio";
+import { AeroPerf } from "../perf/perf";
+import { startAudioPerfSampling } from "./audio";
 
 describe("startAudioPerfSampling trace integration", () => {
   it("records audio.* counter events in exported traces when tracing is enabled", async () => {

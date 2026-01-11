@@ -4,21 +4,21 @@ import { expect, test } from "@playwright/test";
 // - WebGPU and raw WebGL2 presenter paths must produce identical output for the same policy.
 // - This catches accidental double-gamma, wrong alphaMode, and Y-flip mismatches.
 //
-// NOTE: This spec assumes Playwright is configured with a web server that serves `web/`
-// such that `/src/...` maps to `web/src/...` (e.g. via Vite).
+// NOTE: This spec assumes Playwright is configured with a Vite dev server rooted at the repo,
+// so `/web/...` serves files from the `web/` directory.
 
 async function renderHash(page: any, opts: any): Promise<string> {
-  await page.goto("/blank.html");
+  await page.goto("/web/blank.html");
   return await page.evaluate(async (opts: any) => {
     const canvas = document.createElement("canvas");
     document.body.appendChild(canvas);
-    const mod = await import("/src/gpu/validation-scene.ts");
+    const mod = await import("/web/src/gpu/validation-scene.ts");
     return await mod.renderGpuColorTestCardAndHash(canvas, opts);
   }, opts);
 }
 
 async function webGpuIsUsable(page: any): Promise<boolean> {
-  await page.goto("/blank.html");
+  await page.goto("/web/blank.html");
   return await page.evaluate(async () => {
     if (!navigator.gpu) return false;
 

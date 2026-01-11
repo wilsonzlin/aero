@@ -14,7 +14,7 @@ test('falls back to WebGL2 when WebGPU is unavailable', async ({ page }) => {
     } catch {}
   });
 
-  await page.goto('/webgl2_fallback_demo.html');
+  await page.goto('/web/webgl2_fallback_demo.html');
 
   await expect(page.locator('#backend')).toHaveText('WebGL2');
 

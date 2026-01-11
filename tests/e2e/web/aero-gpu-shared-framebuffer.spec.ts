@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("gpu worker can present shared-layout framebuffer and screenshot matches", async ({ page }) => {
-  await page.goto("/blank.html");
+  await page.goto("/web/blank.html");
 
   const width = 64;
   const height = 64;
@@ -11,8 +11,8 @@ test("gpu worker can present shared-layout framebuffer and screenshot matches", 
 
   const result = await page.evaluate(
     async ({ width, height, expectedHash }) => {
-      const shared = await import("/src/ipc/shared-layout.ts");
-      const fp = await import("/src/shared/frameProtocol.ts");
+      const shared = await import("/web/src/ipc/shared-layout.ts");
+      const fp = await import("/web/src/shared/frameProtocol.ts");
 
       const tileSize = 32;
       const strideBytes = width * 4;
@@ -76,7 +76,7 @@ test("gpu worker can present shared-layout framebuffer and screenshot matches", 
       document.body.appendChild(canvas);
       const offscreen = canvas.transferControlToOffscreen();
 
-      const worker = new Worker("/src/workers/gpu.worker.ts", { type: "module" });
+      const worker = new Worker("/web/src/workers/gpu.worker.ts", { type: "module" });
 
       const ready = new Promise<void>((resolve, reject) => {
         worker.addEventListener("message", (ev: MessageEvent) => {

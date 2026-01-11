@@ -2,8 +2,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { installHud } from "../../../src/perf/hud";
-import type { PerfApi } from "../../../src/perf/types";
+import { installHud } from "./hud";
+import type { PerfApi } from "./types";
 
 type Deferred<T> = {
   promise: Promise<T>;

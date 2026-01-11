@@ -12,7 +12,7 @@ const DEV_PORT = 5173;
  *   avoid GPU-dependent antialiasing / filtering.
  */
 export default defineConfig({
-  testDir: './tests/playwright',
+  testDir: './tests/e2e/playwright',
   testMatch: ['**/gpu_golden.spec.ts'],
   fullyParallel: true,
   retries: process.env.CI ? 1 : 0,

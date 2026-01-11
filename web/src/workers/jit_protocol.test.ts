@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isJitCompileRequest, isJitWorkerResponse } from "../../../src/workers/jit_protocol";
+import { isJitCompileRequest, isJitWorkerResponse } from "./jit_protocol";
 
 describe("jit_protocol", () => {
   it("validates jit:compile requests", () => {
@@ -25,4 +25,3 @@ describe("jit_protocol", () => {
     expect(isJitWorkerResponse({ type: "jit:error", id: 7, message: 123 })).toBe(false);
   });
 });
-

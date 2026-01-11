@@ -1,4 +1,4 @@
-import { FramePacer, type FramePresenter, type FrameSubmission } from "../../web/src/gpu/frame_pacing";
+import { FramePacer, type FramePresenter, type FrameSubmission } from "../../../web/src/gpu/frame_pacing";
 
 type ClearFrame = { clearColor: [number, number, number, number] };
 

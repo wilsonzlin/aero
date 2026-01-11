@@ -22,12 +22,10 @@ export const TcpMuxMsgType = {
 } as const;
 
 export type TcpMuxMsgType = (typeof TcpMuxMsgType)[keyof typeof TcpMuxMsgType];
-
 export const TcpMuxCloseFlags = {
   FIN: 0x01,
   RST: 0x02,
 } as const;
-
 // Close flags are a bitmask (FIN | RST), so keep the type permissive.
 export type TcpMuxCloseFlags = number;
 

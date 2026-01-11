@@ -271,6 +271,13 @@ Run unit tests:
 npm run test:unit
 ```
 
+### Test topology
+
+`npm run test:unit` runs two harnesses:
+
+- **Node-only tests (`node:test`)**: Node integration/unit suites (e.g. `web/test/**/*.test.ts`).
+- **Unit tests (Vitest)**: colocated unit tests under `web/src/**/*.test.ts` (configured via `web/vite.config.ts`).
+
 Run with coverage (most runners accept `--coverage` via argument passthrough):
 
 ```bash
@@ -286,6 +293,8 @@ Typical output locations:
 
 ## Playwright E2E tests
 
+Playwright specs live under `tests/e2e/**/*.spec.ts` (configured by the repo-root `playwright.config.ts`).
+
 Run headless E2E tests:
 
 ```bash
@@ -295,9 +304,9 @@ npm run test:e2e
 Run a specific browser project:
 
 ```bash
-npx playwright test --project=chromium
-npx playwright test --project=firefox
-npx playwright test --project=webkit
+npm run test:e2e -- --project=chromium
+npm run test:e2e -- --project=firefox
+npm run test:e2e -- --project=webkit
 ```
 
 Open Playwright UI mode (interactive runner):

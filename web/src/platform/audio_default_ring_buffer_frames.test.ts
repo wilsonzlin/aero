@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getDefaultRingBufferFrames } from "../../../src/platform/audio";
+import { getDefaultRingBufferFrames } from "./audio";
 
 describe("getDefaultRingBufferFrames", () => {
   it("defaults to ~200ms of audio (sampleRate/5) for common rates", () => {
@@ -19,4 +19,3 @@ describe("getDefaultRingBufferFrames", () => {
     expect(frames).toBe(38_400);
   });
 });
-
