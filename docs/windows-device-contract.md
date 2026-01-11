@@ -326,6 +326,8 @@ Consumers must not assume any particular device ordering and must tolerate new d
     `"PCI\\VEN_1AF4&DEV_1042&REV_01"`).
   - They are intended to be **directly usable** in INF matching and transformable into registry key names for `CriticalDeviceDatabase`.
   - Tools must treat them as case-insensitive.
+  - Each entry MUST include the canonical `VEN_xxxx&DEV_yyyy` pair for the device as declared by `pci_vendor_id` / `pci_device_id`
+    (do not mix multiple Vendor/Device families inside a single device entry).
   - Consumers MUST treat this list as an **unordered set** (do not assume ordering); tools like Guest Tools may sort/deduplicate patterns before use.
   - For virtio devices, this list is **modern-only** under `AERO-W7-VIRTIO` v1 (it must not contain transitional `DEV_10xx` IDs).
     Transitional IDs are tracked separately in `pci_device_id_transitional`.
