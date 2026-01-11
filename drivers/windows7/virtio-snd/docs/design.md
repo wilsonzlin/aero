@@ -4,9 +4,10 @@ This document is a **clean-room** design note for the Aero Windows 7 virtio-snd
 driver. It summarizes the intended architecture and how the pieces fit together.
 See `../SOURCES.md` for the authoritative list of references.
 
-The driver in this directory is currently a minimal WDM function driver that only
-binds to the device and maps hardware resources. The sections below describe the
-planned implementation work to evolve it into a functional audio driver.
+The driver in this directory is a clean-room WDM function driver targeting the
+Aero virtio device contract. It includes a virtio-pci modern transport core and
+split-ring virtqueue plumbing, but it does not yet integrate PortCls/WaveRT
+miniports, so it does not expose audio endpoints to Windows yet.
 
 ## High-level architecture
 

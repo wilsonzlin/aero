@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
 #include "virtio_pci_modern_wdm.h"
 
 #include "pci_interface.h"

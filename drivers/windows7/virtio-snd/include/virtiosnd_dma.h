@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
 #pragma once
 
 #include <ntddk.h>
@@ -43,4 +45,3 @@ NTSTATUS VirtIoSndAllocCommonBuffer(
     _Out_ PVIRTIOSND_DMA_BUFFER Out);
 
 VOID VirtIoSndFreeCommonBuffer(_In_ PVIRTIOSND_DMA_CONTEXT Ctx, _Inout_ PVIRTIOSND_DMA_BUFFER Buf);
-

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
 #include <ntddk.h>
 
 #include "trace.h"
@@ -590,4 +592,3 @@ VirtioSndCtrlRelease(_Inout_ VIRTIOSND_CONTROL* Ctrl)
     ExReleaseFastMutex(&Ctrl->Mutex);
     return status;
 }
-

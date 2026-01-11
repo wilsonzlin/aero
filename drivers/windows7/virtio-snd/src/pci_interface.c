@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
 #include <initguid.h>
 #include <wdmguid.h>
 #undef INITGUID

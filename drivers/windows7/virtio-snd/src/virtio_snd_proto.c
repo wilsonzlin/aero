@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
 #include <ntddk.h>
 
 #include "virtio_snd_proto.h"
@@ -46,4 +48,3 @@ VirtioSndStatusToString(_In_ ULONG virtio_status)
     return "";
 #endif
 }
-

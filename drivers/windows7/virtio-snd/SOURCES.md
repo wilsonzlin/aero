@@ -60,6 +60,13 @@ If, in the future, permissively licensed samples are consulted (for example the
 MIT-licensed `sysvad` sample in `microsoft/Windows-driver-samples`), record the
 exact upstream URL + revision/date here and ensure any required notices are preserved.
 
-- **In-repo shared code copied into this driver:** none (currently self-contained).
-  If future work copies code from other in-repo virtio libraries, list the exact paths
-  here.
+### In-repo shared code reused by this driver
+
+The virtio-snd driver is linked against in-repo virtio support code (no copying;
+the WDK build pulls these sources directly). Key paths:
+
+- `drivers/windows/virtio/common/virtqueue_split.c` (plus headers in that directory)
+- `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
+  (plus `virtio_pci_cap_parser.h`)
+- `drivers/win7/virtio/virtio-core/include/virtio_pci_modern.h`
+  (plus other `virtio-core/include` headers used for spec constants/layouts)

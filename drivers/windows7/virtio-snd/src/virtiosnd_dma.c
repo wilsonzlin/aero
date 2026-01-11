@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
 #include <ntddk.h>
 
 #include "trace.h"
@@ -180,4 +182,3 @@ VirtIoSndFreeCommonBuffer(PVIRTIOSND_DMA_CONTEXT Ctx, PVIRTIOSND_DMA_BUFFER Buf)
 
     RtlZeroMemory(Buf, sizeof(*Buf));
 }
-

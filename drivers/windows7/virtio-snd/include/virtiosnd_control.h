@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
 #pragma once
 
 #include <ntddk.h>
@@ -79,4 +81,3 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlStart(_Inout_ VIRTIOSND_CONTROL* Ctr
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlStop(_Inout_ VIRTIOSND_CONTROL* Ctrl);
 
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlRelease(_Inout_ VIRTIOSND_CONTROL* Ctrl);
-

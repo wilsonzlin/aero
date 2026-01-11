@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
 #pragma once
 
 #include <ntddk.h>
@@ -60,4 +62,3 @@ VirtioSndQueuePopUsed(
 {
     return Queue->Ops->PopUsed(Queue->Ctx, CookieOut, UsedLenOut);
 }
-
